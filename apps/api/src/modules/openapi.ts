@@ -25,6 +25,11 @@ import {
   ENVELOPE_STATUSES,
   RECIPIENT_STATUSES,
   FIELD_TYPES,
+  SealOptionsInput,
+  UpdateEvidenceSettingsInput,
+  UploadCertificateInput,
+  XmlSignInput,
+  XmlVerifyInput,
 } from "@calasign/shared";
 import { config } from "../config";
 
@@ -211,6 +216,19 @@ const OPS: Op[] = [
   { method: "post", path: "/v1/signing/{token}/request-copy", tag: "Firmante", summary: "Pedir de nuevo el documento final (máx. una vez cada 10 minutos)", auth: "token", response: z.object({ queued: z.literal(true), recipientId: z.string().uuid() }) },
   { method: "get", path: "/v1/reports/summary", tag: "Reportes", summary: "Resumen de actividad", description: "Query: from, to (ISO 8601; por defecto los últimos 6 meses). Totales, sobres por mes, remitentes y notificaciones por canal." },
   { method: "get", path: "/v1/reports/envelopes.csv", tag: "Reportes", summary: "Exportar sobres a CSV", description: "Query: from, to. UTF-8 con BOM; las celdas que empiezan con = + - @ se prefijan con ' (contra inyección de fórmulas)." },
+  // Evidencia (Fase 5)
+  { method: "get", path: "/v1/settings/evidence", tag: "Evidencia", summary: "Nivel PAdES de la organización y el que se aplica hoy" },
+  { method: "patch", path: "/v1/settings/evidence", tag: "Evidencia", summary: "Elegir nivel PAdES (auto, B-B, B-T, B-LT, B-LTA)", body: UpdateEvidenceSettingsInput },
+  { method: "get", path: "/v1/certificates", tag: "Evidencia", summary: "Listar certificados de la organización (sin material de clave)" },
+  { method: "post", path: "/v1/certificates", tag: "Evidencia", summary: "Subir un .p12/.pfx (base64 + contraseña)", description: "La clave privada se guarda cifrada (cifrado de sobre con KMS o clave local) y nunca se devuelve. Solo RSA.", body: UploadCertificateInput, status: 201 },
+  { method: "delete", path: "/v1/certificates/{id}", tag: "Evidencia", summary: "Eliminar certificado (borra el material de clave)", response: "none", status: 204 },
+  { method: "post", path: "/v1/xml/sign", tag: "Firma XML", summary: "Firmar XML (DGII e-CF, DIAN, XAdES-BES/EPES)", description: "Firma enveloped con el certificado de la organización. Perfiles: dgii-ecf (XMLDSig, C14N inclusiva), dian-fe (XAdES-EPES con política DIAN v2, dentro de ext:ExtensionContent), xades-bes, xades-epes (requiere policy). Devuelve el XML firmado y su verificación.", body: XmlSignInput },
+  { method: "post", path: "/v1/xml/verify", tag: "Firma XML", summary: "Verificar una firma XML (digests, SignatureValue, SigningCertificate)", body: XmlVerifyInput },
+  { method: "get", path: "/v1/envelopes/{id}/seal-options", tag: "Evidencia", summary: "Sello de empresa y nivel de firma del sobre" },
+  { method: "put", path: "/v1/envelopes/{id}/seal-options", tag: "Evidencia", summary: "Elegir sello de empresa (certificado) y nivel de firma declarado", body: SealOptionsInput },
+  { method: "post", path: "/v1/validate", tag: "Evidencia", summary: "Validar las firmas de un PDF (público)", description: "Multipart, campo file. Por firma: integridad, cobertura, sello de tiempo, cadena hasta raíces de confianza, revocación (DSS u online) y nivel PAdES.", multipart: true, auth: "none" },
+  { method: "get", path: "/v1/signature-providers", tag: "Evidencia", summary: "Conectores de firma (plataforma, CSC v2, CA de Calasign)" },
+  { method: "post", path: "/v1/signature-providers/{id}/test", tag: "Evidencia", summary: "Probar un conector CSC (lista credenciales y firma un hash de prueba)" },
 ];
 
 export function buildOpenApi() {

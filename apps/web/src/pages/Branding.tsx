@@ -51,7 +51,8 @@ export function BrandingPage() {
     try {
       const form = new FormData();
       form.append("file", file, file.name);
-      apply(await api<Branding>("/v1/settings/branding/logo", { method: "POST", form }));
+      // Solo el logo: no pisar color ni pie que el usuario esté editando sin guardar.
+      setB(await api<Branding>("/v1/settings/branding/logo", { method: "POST", form }));
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -63,7 +64,7 @@ export function BrandingPage() {
   const removeLogo = async () => {
     setBusy(true);
     try {
-      apply(await api<Branding>("/v1/settings/branding/logo", { method: "DELETE" }));
+      setB(await api<Branding>("/v1/settings/branding/logo", { method: "DELETE" }));
     } catch (e) {
       setError(errorText(e));
     } finally {

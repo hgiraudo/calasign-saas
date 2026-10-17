@@ -4,6 +4,7 @@ import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 import { useI18n } from "../lib/i18n";
 import { LocaleSwitcher, Logo } from "./ui";
+import { useIntText } from "../lib/integrations-i18n";
 
 export function useDevMailboxAvailable(): boolean {
   const [ok, setOk] = useState(false);
@@ -24,6 +25,7 @@ export function Layout() {
   const { t } = useI18n();
   const nav = useNavigate();
   const mailbox = useDevMailboxAvailable();
+  const tt = useIntText();
   const [open, setOpen] = useState(false);
 
   return (
@@ -40,6 +42,8 @@ export function Layout() {
             {t("nav.envelopes")}
           </NavLink>
           <NavLink to="/app/settings/api-keys">{t("nav.apiKeys")}</NavLink>
+          <NavLink to="/app/settings/integrations">{tt("nav.integrations")}</NavLink>
+          <NavLink to="/developers">{tt("nav.developers")}</NavLink>
           {mailbox && <NavLink to="/app/dev-mailbox">{t("nav.mailbox")}</NavLink>}
           <span className="topnav-spacer" />
           <span className="topnav-user" title={me?.user.email}>

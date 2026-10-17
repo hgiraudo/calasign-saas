@@ -8,6 +8,7 @@ import { formatDate, formatDateTime, useI18n } from "../lib/i18n";
 import { DocumentView } from "../components/DocumentView";
 import { SignaturePad } from "../components/SignaturePad";
 import { ErrorBox, LocaleSwitcher, Logo, Modal, Spinner } from "../components/ui";
+import { useEmbedBridge } from "../lib/embed";
 
 type Adopted = SignatureImageInput & { dataUrl: string };
 
@@ -36,6 +37,7 @@ export function SignerPage() {
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [base]);
+  useEmbedBridge(token, session, invalid);
 
   if (invalid)
     return (

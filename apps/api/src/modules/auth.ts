@@ -132,7 +132,7 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
   });
 
   app.delete<{ Params: { id: string } }>("/v1/api-keys/:id", { preHandler: auth }, async (req, reply) => {
-    const r = await s.db.query(`UPDATE api_keys SET revoked_at = now() WHERE id = $1 AND tenant_id = $2 AND revoked_at IS NULL RETURNING id`, [
+    const r = await s.db.query(`UPDATE api_keys SET revoked_at = now() WHERE id = $1 AND tenant_id = $2 AND revoked_at IS NULL AND oauth_client_id IS NULL RETURNING id`, [
       req.params.id,
       req.auth!.tenantId,
     ]);

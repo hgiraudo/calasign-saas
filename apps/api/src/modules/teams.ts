@@ -561,7 +561,7 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     if (input.role === "owner") throw badRequest("invalid_role", "Una API key no puede ser propietaria");
     const target = await resolveRole(s.db, a.tenantId, input);
     assertCanGrant(a, target, await permsOf(s.db, a.tenantId, target.role, target.roleId));
-    const r = await s.db.query(`UPDATE api_keys SET role = $3, role_id = $4 WHERE id = $1 AND tenant_id = $2 RETURNING id`, [
+    const r = await s.db.query(`UPDATE api_keys SET role = $3, role_id = $4 WHERE id = $1 AND tenant_id = $2 AND oauth_client_id IS NULL RETURNING id`, [
       req.params.id,
       a.tenantId,
       target.role,

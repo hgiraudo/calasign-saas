@@ -134,7 +134,7 @@
 | 1 — MVP | ✅ Hecha (incluye WhatsApp y Telegram, ES/PT-BR/EN) |
 | 2 — Productividad | ✅ Plantillas, campos nuevos (número, desplegable, empresa, cargo, adjunto), OTP por email/SMS/WhatsApp, aprobador, delegación y reasignación, recordatorios automáticos, branding básico. ⏳ Cobro (Pix/PSE) |
 | 3 — API y firma embebida | ✅ API v1 + OpenAPI + página /developers, firma embebida (iframe + postMessage), webhooks HMAC con reintentos, anclas de texto, idempotencia. ⏳ OAuth client credentials, SDKs |
-| 4 — Escala y equipos | ⏳ |
+| 4 — Escala y equipos | ✅ Miembros e invitaciones, roles y permisos (RBAC), grupos, auditoría de cuenta, retención, 2FA; envío masivo (CSV/API), formularios web públicos, campos condicionales y calculados; firma en persona, corrección en vuelo, reportes, PWA, reenvío de copias, accesibilidad. ⏳ Integraciones con Drive/Dropbox/OneDrive/Zapier/Slack, dominio propio (white-label) |
 | 5 — Evidencia fuerte y cumplimiento | Parcial: verificación pública de documentos (/verify) |
 | 6 — Plataforma e IA | ⏳ |
 

@@ -41,6 +41,8 @@ export function Layout() {
           <NavLink to="/app" end>
             {t("nav.envelopes")}
           </NavLink>
+          <NavLink to="/app/templates">{t("nav.templates")}</NavLink>
+          <NavLink to="/app/settings/branding">{t("nav.branding")}</NavLink>
           <NavLink to="/app/settings/api-keys">{t("nav.apiKeys")}</NavLink>
           <NavLink to="/app/settings/integrations">{tt("nav.integrations")}</NavLink>
           <NavLink to="/developers">{tt("nav.developers")}</NavLink>

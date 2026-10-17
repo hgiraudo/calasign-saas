@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useParams } from "react-router-dom";
 import type { CompleteSigningInput, Field, SignatureImageInput, SigningSession } from "@calasign/shared";
-import { AUTO_FIELD_TYPES } from "@calasign/shared";
+import { AUTO_FIELD_TYPES, ATTACHMENT_MAX_BYTES } from "@calasign/shared";
 import { api, errorText, HttpError } from "../lib/api";
 import { formatDate, formatDateTime, useI18n } from "../lib/i18n";
 import { DocumentView } from "../components/DocumentView";
@@ -105,18 +105,37 @@ export function SignerPage() {
   }
 
   return (
-    <SignerShell org={envelope.organizationName}>
+    <SignerShell org={envelope.organizationName} branding={session.branding}>
       {content}
     </SignerShell>
   );
 }
 
-function SignerShell({ children, org }: { children: ReactNode; org?: string }) {
+type SessionBranding = SigningSession["branding"];
+
+/** Estilo de la barra superior según el branding de la organización remitente. */
+function brandBarStyle(b: SessionBranding) {
+  return b?.primaryColor ? { background: b.primaryColor } : undefined;
+}
+
+function BrandOrg({ org, branding }: { org?: string; branding?: SessionBranding }) {
+  if (branding?.logoUrl)
+    return (
+      <span className="signer-brand">
+        <img src={branding.logoUrl} alt={org ?? ""} className="signer-logo" />
+      </span>
+    );
+  return <>{org ?? <Logo light />}</>;
+}
+
+function SignerShell({ children, org, branding }: { children: ReactNode; org?: string; branding?: SessionBranding }) {
   const { t } = useI18n();
   return (
     <div className="signer">
-      <header className="signer-bar">
-        <div className="signer-org">{org ?? <Logo light />}</div>
+      <header className="signer-bar" style={brandBarStyle(branding)}>
+        <div className="signer-org">
+          <BrandOrg org={org} branding={branding} />
+        </div>
         <LocaleSwitcher compact />
       </header>
       <main className="signer-main">{children}</main>
@@ -217,8 +236,11 @@ function CcView({ session, base, download }: { session: SigningSession; base: st
 // ───────────────────────────── Flujo de firma ─────────────────────────────
 
 function isAuto(f: Field) {
-  return AUTO_FIELD_TYPES.includes(f.type);
+  return AUTO_FIELD_TYPES.includes(f.type) || f.readOnly;
 }
+
+/** Campos en los que el firmante escribe o elige un valor. */
+const VALUE_TYPES = ["text", "number", "dropdown", "company", "title"];
 
 function SigningFlow({
   session,
@@ -236,8 +258,13 @@ function SigningFlow({
   const [delegating, setDelegating] = useState(false);
   const finishLabel = session.recipient.role === "approver" ? sx("approve.button") : t("sign.finish");
   const [values, setValues] = useState<Record<string, string>>(() =>
-    Object.fromEntries(session.fields.filter((f) => f.type === "text" || f.type === "checkbox").map((f) => [f.id, f.value ?? (f.type === "checkbox" ? "false" : "")])),
+    Object.fromEntries(
+      session.fields
+        .filter((f) => VALUE_TYPES.includes(f.type) || f.type === "checkbox" || f.type === "attachment")
+        .map((f) => [f.id, f.value ?? (f.type === "checkbox" ? "false" : "")]),
+    ),
   );
+  const [uploading, setUploading] = useState<string | null>(null);
   const [signature, setSignature] = useState<Adopted | null>(null);
   const [initials, setInitials] = useState<Adopted | null>(null);
   const [pad, setPad] = useState<"signature" | "initials" | null>(null);
@@ -260,7 +287,7 @@ function SigningFlow({
     (f: Field): boolean => {
       if (f.type === "signature") return !!signature;
       if (f.type === "initials") return !!initials;
-      if (f.type === "text") return (values[f.id] ?? "").trim().length > 0;
+      if (VALUE_TYPES.includes(f.type) || f.type === "attachment") return (values[f.id] ?? "").trim().length > 0;
       if (f.type === "checkbox") return values[f.id] === "true";
       return true;
     },
@@ -283,8 +310,8 @@ function SigningFlow({
     window.setTimeout(() => setFlash((x) => (x === f.id ? null : x)), 1600);
     if ((f.type === "signature" && !signature) || (f.type === "initials" && !initials)) {
       window.setTimeout(() => setPad(f.type as "signature" | "initials"), 450);
-    } else if (f.type === "text") {
-      window.setTimeout(() => (el?.querySelector("input") as HTMLInputElement | null)?.focus({ preventScroll: true }), 450);
+    } else if (VALUE_TYPES.includes(f.type)) {
+      window.setTimeout(() => (el?.querySelector("input,select") as HTMLInputElement | null)?.focus({ preventScroll: true }), 450);
     }
   };
 
@@ -350,7 +377,42 @@ function SigningFlow({
     .slice(0, 4);
 
   const autoValue = (f: Field) =>
-    f.type === "name" ? recipient.name : f.type === "email" ? (recipient.email ?? "") : formatDate(new Date().toISOString(), locale);
+    f.readOnly
+      ? (f.value ?? "")
+      : f.type === "name"
+        ? recipient.name
+        : f.type === "email"
+          ? (recipient.email ?? "")
+          : formatDate(new Date().toISOString(), locale);
+
+  const uploadAttachment = async (f: Field, file: File) => {
+    if (file.size > ATTACHMENT_MAX_BYTES) {
+      setError(t("sign.attachmentTooBig"));
+      return;
+    }
+    setUploading(f.id);
+    setError(null);
+    try {
+      const form = new FormData();
+      form.append("file", file, file.name);
+      const res = await api<Field>(`${base}/fields/${f.id}/attachment`, { method: "POST", form });
+      setValues((v) => ({ ...v, [f.id]: res.value ?? file.name }));
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setUploading(null);
+    }
+  };
+
+  const removeAttachment = async (f: Field) => {
+    setError(null);
+    try {
+      await api<Field>(`${base}/fields/${f.id}/attachment`, { method: "DELETE" });
+      setValues((v) => ({ ...v, [f.id]: "" }));
+    } catch (e) {
+      setError(errorText(e));
+    }
+  };
 
   const renderField = (f: Field, pageHeightPx: number) => {
     const hPx = f.height * pageHeightPx;
@@ -379,14 +441,71 @@ function SigningFlow({
         </button>
       );
     }
-    if (f.type === "text") {
+    if (f.readOnly) {
+      return (
+        <div key={f.id} className={`${cls} auto`} style={style} title={t("sign.readOnlyField")}>
+          <span style={{ fontSize }}>{f.value}</span>
+        </div>
+      );
+    }
+    if (f.type === "dropdown") {
+      return (
+        <div key={f.id} id={`f-${f.id}`} className={cls} style={style}>
+          <select
+            value={values[f.id] ?? ""}
+            onChange={(e) => setValues((v) => ({ ...v, [f.id]: e.target.value }))}
+            aria-label={f.label ?? t("field.dropdown")}
+            style={{ fontSize }}
+          >
+            <option value="">{f.label ?? t("sign.choose")}</option>
+            {(f.options ?? []).map((o) => (
+              <option key={o} value={o}>
+                {o}
+              </option>
+            ))}
+          </select>
+        </div>
+      );
+    }
+    if (f.type === "attachment") {
+      const name = values[f.id];
+      return (
+        <div key={f.id} id={`f-${f.id}`} className={`${cls} sfield-attach`} style={style}>
+          {name ? (
+            <span className="attach-chip" style={{ fontSize: Math.max(9, Math.min(fontSize, 14)) }}>
+              📎 <span className="attach-name">{name}</span>
+              <button type="button" className="attach-x" aria-label={t("common.delete")} onClick={() => removeAttachment(f)}>
+                ×
+              </button>
+            </span>
+          ) : (
+            <label className="attach-pick" style={{ fontSize: Math.max(9, Math.min(fontSize, 14)) }}>
+              {uploading === f.id ? t("sign.uploading") : `📎 ${f.label ?? t("sign.attachFile")}`}
+              <input
+                type="file"
+                accept="application/pdf,image/png,image/jpeg"
+                disabled={uploading !== null}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (file) void uploadAttachment(f, file);
+                }}
+              />
+            </label>
+          )}
+        </div>
+      );
+    }
+    if (VALUE_TYPES.includes(f.type)) {
+      const placeholder = f.label ?? t(`field.${f.type}`);
       return (
         <div key={f.id} id={`f-${f.id}`} className={cls} style={style}>
           <input
             value={values[f.id] ?? ""}
             onChange={(e) => setValues((v) => ({ ...v, [f.id]: e.target.value }))}
-            placeholder={f.label ?? t("field.text")}
-            aria-label={f.label ?? t("field.text")}
+            placeholder={f.type === "number" && (f.min != null || f.max != null) ? `${placeholder} (${f.min ?? "…"}–${f.max ?? "…"})` : placeholder}
+            aria-label={placeholder}
+            inputMode={f.type === "number" ? "decimal" : undefined}
             maxLength={2000}
             style={{ fontSize }}
           />
@@ -414,8 +533,10 @@ function SigningFlow({
 
   return (
     <div className="signer">
-      <header className="signer-bar sticky">
-        <div className="signer-org">{session.envelope.organizationName}</div>
+      <header className="signer-bar sticky" style={brandBarStyle(session.branding)}>
+        <div className="signer-org">
+          <BrandOrg org={session.envelope.organizationName} branding={session.branding} />
+        </div>
         <div className="signer-progress" aria-live="polite">
           <div className="progress">
             <div className="progress-bar" style={{ width: `${required.length ? (done / required.length) * 100 : 100}%` }} />

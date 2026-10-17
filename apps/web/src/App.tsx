@@ -11,6 +11,10 @@ import { DevMailboxPage } from "./pages/DevMailbox";
 import { IntegrationsPage } from "./pages/Integrations";
 import { DevelopersPage } from "./pages/Developers";
 import { VerifyPage } from "./pages/Verify";
+import { TemplatesPage } from "./pages/Templates";
+import { TemplateEditPage } from "./pages/TemplateEdit";
+import { TemplateUsePage } from "./pages/TemplateUse";
+import { BrandingPage } from "./pages/Branding";
 
 export function App() {
   return (
@@ -34,6 +38,10 @@ export function App() {
         <Route path="/app/settings/api-keys" element={<ApiKeysPage />} />
         <Route path="/app/dev-mailbox" element={<DevMailboxPage />} />
         <Route path="/app/settings/integrations" element={<IntegrationsPage />} />
+        <Route path="/app/templates" element={<TemplatesPage />} />
+        <Route path="/app/templates/:id/edit" element={<TemplateEditPage />} />
+        <Route path="/app/templates/:id/use" element={<TemplateUsePage />} />
+        <Route path="/app/settings/branding" element={<BrandingPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/app" replace />} />
     </Routes>

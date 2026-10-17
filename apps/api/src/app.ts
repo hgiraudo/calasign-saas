@@ -21,6 +21,7 @@ import { telegramRoutes } from "./modules/telegram";
 import { webhookRoutes } from "./modules/webhooks";
 import { embedRoutes } from "./modules/embed";
 import { openApiRoutes } from "./modules/openapi";
+import { productivityRoutes } from "./modules/productivity";
 
 export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolean | object }) {
   const app = Fastify({
@@ -96,6 +97,7 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
   await webhookRoutes(app, services);
   await embedRoutes(app, services);
   await openApiRoutes(app);
+  await productivityRoutes(app, services);
 
   if (config.devMailbox) {
     // Local: todo el buzón. Entornos compartidos (dev): solo los mensajes de la organización de la sesión.

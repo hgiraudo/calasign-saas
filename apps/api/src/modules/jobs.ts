@@ -12,6 +12,7 @@ import { loadDocuments } from "./mappers";
 import { embeddedAuthLabel } from "./embed";
 import { handleWebhookJob } from "./webhooks";
 import { runAutomaticReminders } from "./reminders";
+import { getLogoForPdf, getTenantBranding } from "./branding";
 
 interface Deps {
   db: Db;
@@ -42,6 +43,13 @@ async function notify(d: Deps, p: { kind: TemplateKind; envelopeId: string; tena
   const org = await d.db.one<any>(`SELECT name FROM tenants WHERE id = $1`, [e.tenant_id]);
   const sender = e.created_by ? await d.db.one<any>(`SELECT name, email, locale FROM users WHERE id = $1`, [e.created_by]) : null;
   const decliner = p.declinedBy ? await d.db.one<any>(`SELECT name, decline_reason FROM recipients WHERE id = $1`, [p.declinedBy]) : null;
+  const brand = await getTenantBranding(d.db, e.tenant_id);
+  const mailBrand = {
+    primaryColor: brand.primaryColor,
+    // Los clientes de correo no muestran SVG: solo PNG/JPG.
+    logoUrl: brand.logoContentType === "image/svg+xml" ? null : brand.logoUrl,
+    footer: brand.emailFooter,
+  };
   const base = {
     senderName: sender?.name ?? org?.name ?? "CalaSign",
     organizationName: org?.name ?? "",
@@ -54,7 +62,7 @@ async function notify(d: Deps, p: { kind: TemplateKind; envelopeId: string; tena
   if (p.kind === "sender_completed" || p.kind === "sender_declined") {
     if (!sender?.email) return;
     const link = `${config.appUrl}/app/envelopes/${e.id}`;
-    const m = render(p.kind, sender.locale ?? e.locale, { ...base, recipientName: sender.name, link });
+    const m = render(p.kind, sender.locale ?? e.locale, { ...base, recipientName: sender.name, link }, mailBrand);
     const res = await deliver({ channel: "email", to: sender.email, subject: m.subject, text: m.text, html: m.html, link, locale: e.locale, tenantId: e.tenant_id });
     await d.db.query(
       `INSERT INTO notifications (id, tenant_id, envelope_id, channel, template, destination, status, provider, provider_message_id, sent_at)
@@ -74,7 +82,7 @@ async function notify(d: Deps, p: { kind: TemplateKind; envelopeId: string; tena
   const locale = r.locale ?? e.locale;
   const token = r.access_token_enc ? decrypt(r.access_token_enc) : null;
   const link = token && LINK_KINDS.includes(p.kind) ? `${config.appUrl}/s/${token}` : null;
-  const m = render(p.kind, locale, { ...base, recipientName: r.name, message: p.kind === "invite" ? e.message : null, link });
+  const m = render(p.kind, locale, { ...base, recipientName: r.name, message: p.kind === "invite" ? e.message : null, link }, mailBrand);
 
   const channels: ("email" | "whatsapp" | "telegram")[] = r.channels ?? ["email"];
   const tgLink = token && channels.includes("telegram") && !r.telegram_chat_id ? telegramStartLink(token) : null;
@@ -192,10 +200,30 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
   const completedAt = new Date().toISOString();
   const chainHead = events[events.length - 1]?.hash ?? "";
 
+  // Adjuntos de los firmantes y branding de la organización.
+  const attachRows = await d.db.query<any>(
+    `SELECT f.value AS name, f.recipient_id, fl.storage_key, fl.content_type, fl.sha256
+     FROM fields f JOIN files fl ON fl.id = f.attachment_file_id
+     WHERE f.envelope_id = $1 AND f.type = 'attachment' ORDER BY f.page, f.y, f.x`,
+    [e.id],
+  );
+  const attachments = await Promise.all(
+    attachRows.map(async (x) => ({
+      name: x.name ?? "adjunto",
+      recipientName: recips.find((r) => r.id === x.recipient_id)?.name ?? "",
+      contentType: x.content_type,
+      bytes: await d.blobs.get(x.storage_key),
+      sha256: x.sha256 as string,
+    })),
+  );
+  const brand = await getTenantBranding(d.db, e.tenant_id);
+  const brandLogo = await getLogoForPdf(d.db, d.blobs, brand);
+
   const provider = await getSealProvider();
   const input = {
     documents: docs.map((x, i) => ({ name: x.name, bytes: docBytes[i] })),
     fields: stampFields,
+    attachments: attachments.map(({ sha256: _sha, ...x }) => x),
     certificate: {
       envelopeId: e.id,
       subject: e.subject,
@@ -217,6 +245,8 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
       })),
       chainHead,
       verifyUrl: `${config.appUrl}/verify`,
+      attachments: attachments.map((x) => ({ name: x.name, recipientName: x.recipientName, sha256: x.sha256, appended: true })),
+      branding: { primaryColor: brand.primaryColor, logo: brandLogo },
     },
   };
 

@@ -7,6 +7,7 @@ import { ErrorBox, Modal, RecipientStatusBadge, Spinner, StatusBadge, formatByte
 import { ReassignModal } from "../components/SignerExtras";
 import { useSignerText } from "../lib/i18n-signer";
 import type { Recipient } from "@calasign/shared";
+import { SaveAsTemplateButton } from "../components/SaveAsTemplate";
 
 export function EnvelopeDetailPage() {
   const { id = "" } = useParams();
@@ -123,6 +124,7 @@ export function EnvelopeDetailPage() {
               </button>
             </>
           )}
+          <SaveAsTemplateButton envelopeId={id} defaultName={env.subject} />
         </div>
       </div>
 

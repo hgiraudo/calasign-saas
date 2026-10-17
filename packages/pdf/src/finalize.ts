@@ -14,7 +14,19 @@ const signpdf = ((signpdfModule as unknown as { default?: typeof signpdfModule }
   sign(pdf: Buffer, signer: Signer, signingTime?: Date): Promise<Buffer>;
 };
 
-export type StampFieldType = "signature" | "initials" | "date_signed" | "name" | "email" | "text" | "checkbox";
+export type StampFieldType =
+  | "signature"
+  | "initials"
+  | "date_signed"
+  | "name"
+  | "email"
+  | "text"
+  | "checkbox"
+  | "number"
+  | "dropdown"
+  | "company"
+  | "title"
+  | "attachment";
 
 export interface StampField {
   documentIndex: number;
@@ -64,12 +76,25 @@ export interface CertificateData {
   chainHead: string;
   /** URL pública de verificación (se imprime al pie del certificado). */
   verifyUrl?: string | null;
+  /** Archivos que subieron los firmantes (se listan con su hash). */
+  attachments?: { name: string; recipientName: string; sha256: string; appended: boolean }[];
+  /** Logo y color de la organización. El logo solo se usa si es PNG o JPG. */
+  branding?: { primaryColor?: string | null; logo?: { bytes: Uint8Array; type: "png" | "jpg" } | null } | null;
+}
+
+/** Adjunto subido por un firmante: PDF o imagen, se agrega al final de los documentos. */
+export interface FinalizeAttachment {
+  name: string;
+  recipientName: string;
+  contentType: string;
+  bytes: Uint8Array;
 }
 
 export interface FinalizeInput {
   documents: { name: string; bytes: Uint8Array }[];
   fields: StampField[];
   certificate: CertificateData;
+  attachments?: FinalizeAttachment[];
 }
 
 export interface SealOptions extends CmsOptions {
@@ -112,11 +137,13 @@ export async function finalizeEnvelopePdf(input: FinalizeInput, seal: SealOption
       const pageFields = input.fields.filter((f) => f.documentIndex === di && f.page === pi);
       for (const f of pageFields) {
         const img = (f.type === "signature" || f.type === "initials") && f.imagePng ? await embedImage(f.imagePng) : null;
-        drawField(page, fonts, f, img);
+        drawField(page, fonts, f, img, L);
       }
       drawPageFooter(page, fonts, L, input.certificate.envelopeId);
     }
   }
+
+  for (const a of input.attachments ?? []) await appendAttachment(out, fonts, L, a, input.certificate.envelopeId);
 
   await drawCertificate(out, fonts, L, input.certificate, embedImage);
 
@@ -151,7 +178,39 @@ export async function sealPdfDocument(doc: PDFDocument, seal: SealOptions): Prom
   return new Uint8Array(signed);
 }
 
-function drawField(page: PDFPage, fonts: Fonts, f: StampField, img: PDFImage | null) {
+/** Agrega un adjunto: páginas del PDF o la imagen en una página A4, con un rótulo arriba. */
+async function appendAttachment(out: PDFDocument, fonts: Fonts, L: CertLabels, a: FinalizeAttachment, envelopeId: string) {
+  const caption = safeText(fonts.regular, `${L.attachment}: ${a.name} — ${L.uploadedBy} ${a.recipientName}`);
+  if (a.contentType === "application/pdf") {
+    const src = await PDFDocument.load(a.bytes, { updateMetadata: false });
+    try {
+      src.getForm().flatten();
+    } catch {
+      // se copia tal cual
+    }
+    const copied = await out.copyPages(src, src.getPageIndices());
+    for (const p of copied) {
+      const page = out.addPage(p);
+      withDisplayedSpace(page, (_W, H) => {
+        page.drawText(caption, { x: 8, y: H - 17, size: 5.5, font: fonts.regular, color: MUTED });
+      });
+      drawPageFooter(page, fonts, L, envelopeId);
+    }
+    return;
+  }
+  const img = a.contentType === "image/png" ? await out.embedPng(a.bytes) : await out.embedJpg(a.bytes);
+  const page = out.addPage([A4.w, A4.h]);
+  const maxW = A4.w - 2 * M;
+  const maxH = A4.h - 2 * M - 20;
+  const scale = Math.min(maxW / img.width, maxH / img.height, 1);
+  const w = img.width * scale;
+  const h = img.height * scale;
+  page.drawText(caption, { x: M, y: A4.h - M + 6, size: 8, font: fonts.regular, color: MUTED });
+  page.drawImage(img, { x: (A4.w - w) / 2, y: A4.h - M - 10 - h, width: w, height: h });
+  drawPageFooter(page, fonts, L, envelopeId);
+}
+
+function drawField(page: PDFPage, fonts: Fonts, f: StampField, img: PDFImage | null, L: CertLabels) {
   withDisplayedSpace(page, (W, H) => {
     const bx = f.x * W;
     const bw = f.width * W;
@@ -175,7 +234,8 @@ function drawField(page: PDFPage, fonts: Fonts, f: StampField, img: PDFImage | n
       }
       return;
     }
-    const text = safeText(fonts.regular, (f.value ?? "").replace(/\s+/g, " ").trim());
+    const raw = f.type === "attachment" ? (f.value ? `${L.attachment}: ${f.value}` : "") : (f.value ?? "");
+    const text = safeText(fonts.regular, raw.replace(/\s+/g, " ").trim());
     if (!text) return;
     const size = fitFontSize(fonts.regular, text, bw - 2, Math.min(bh * 0.7, 11));
     page.drawText(text, { x: bx + 1, y: by + (bh - size * 0.72) / 2, size, font: fonts.regular, color: INK });
@@ -203,6 +263,7 @@ async function drawCertificate(
   let page = doc.addPage([A4.w, A4.h]);
   let y = A4.h - M;
   const contentW = A4.w - 2 * M;
+  const accent = hexToRgb(c.branding?.primaryColor) ?? ACCENT;
   const pagesAdded: PDFPage[] = [page];
 
   const ensure = (needed: number) => {
@@ -236,7 +297,7 @@ async function drawCertificate(
   const section = (title: string) => {
     ensure(40);
     y -= 10;
-    page.drawText(safeText(fonts.bold, title), { x: M, y: y - 11, size: 11, font: fonts.bold, color: ACCENT });
+    page.drawText(safeText(fonts.bold, title), { x: M, y: y - 11, size: 11, font: fonts.bold, color: accent });
     y -= 16;
     page.drawLine({ start: { x: M, y }, end: { x: A4.w - M, y }, thickness: 0.6, color: LINE });
     y -= 8;
@@ -244,7 +305,16 @@ async function drawCertificate(
   const fmt = (iso: string | null | undefined) => (iso ? new Date(iso).toISOString().replace("T", " ").replace(/\.\d+Z$/, " UTC") : null);
 
   // Encabezado
-  page.drawRectangle({ x: 0, y: A4.h - 6, width: A4.w, height: 6, color: ACCENT });
+  page.drawRectangle({ x: 0, y: A4.h - 6, width: A4.w, height: 6, color: accent });
+  if (c.branding?.logo) {
+    try {
+      const logo = c.branding.logo.type === "png" ? await doc.embedPng(c.branding.logo.bytes) : await doc.embedJpg(c.branding.logo.bytes);
+      const scale = Math.min(130 / logo.width, 38 / logo.height, 1);
+      page.drawImage(logo, { x: A4.w - M - logo.width * scale, y: A4.h - M - logo.height * scale + 4, width: logo.width * scale, height: logo.height * scale });
+    } catch {
+      // Logo ilegible: el certificado sale sin logo.
+    }
+  }
   text(L.title, { size: 18, bold: true });
   text(L.subtitle, { size: 9.5, color: MUTED });
   y -= 6;
@@ -261,6 +331,14 @@ async function drawCertificate(
     text(`${i + 1}. ${d.name} (${d.pageCount} ${L.pages})`, { bold: true });
     kv(L.originalHash, d.sha256, M + 12, 108);
   });
+
+  if (c.attachments && c.attachments.length) {
+    section(L.attachments);
+    c.attachments.forEach((a, i) => {
+      text(`${i + 1}. ${a.name} — ${L.uploadedBy} ${a.recipientName}${a.appended ? ` (${L.appended})` : ""}`, { bold: true });
+      kv(L.originalHash, a.sha256, M + 12, 108);
+    });
+  }
 
   section(L.recipients);
   for (const r of c.recipients) {
@@ -343,4 +421,10 @@ function authLabel(L: CertLabels, m: string): string {
   if (m === "otp_sms") return L.auth_otp_sms;
   if (m === "otp_whatsapp") return L.auth_otp_whatsapp;
   return m === "link" ? L.auth_link : m;
+}
+
+function hexToRgb(hex: string | null | undefined) {
+  if (!hex || !/^#[0-9a-fA-F]{6}$/.test(hex)) return null;
+  const n = parseInt(hex.slice(1), 16);
+  return rgb(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255);
 }

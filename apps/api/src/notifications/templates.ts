@@ -150,7 +150,14 @@ export function normLocale(l: string | null | undefined): "es" | "pt-BR" | "en" 
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
-export function render(kind: TemplateKind, localeIn: string | null | undefined, v: TemplateVars) {
+export interface MailBranding {
+  primaryColor?: string | null;
+  logoUrl?: string | null;
+  footer?: string | null;
+}
+
+export function render(kind: TemplateKind, localeIn: string | null | undefined, v: TemplateVars, brand: MailBranding = {}) {
+  const color = brand.primaryColor && /^#[0-9a-fA-F]{6}$/.test(brand.primaryColor) ? brand.primaryColor : null;
   const locale = normLocale(localeIn);
   const t = T[locale][kind];
   const subject = t.subject(v);
@@ -159,6 +166,7 @@ export function render(kind: TemplateKind, localeIn: string | null | undefined, 
     ...lines,
     v.message ? `\n${MSG_LABEL[locale]}: ${v.message}` : "",
     v.link && t.cta ? `\n${t.cta}: ${v.link}` : "",
+    brand.footer ? `\n${brand.footer}` : "",
     `\n— ${FOOTER[locale]}`,
   ]
     .filter(Boolean)
@@ -166,15 +174,21 @@ export function render(kind: TemplateKind, localeIn: string | null | undefined, 
   const html = `<!doctype html><html><body style="margin:0;background:#f3f5f8;font-family:Arial,Helvetica,sans-serif;color:#0b1f3a">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:32px 12px">
 <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:10px;overflow:hidden">
-<tr><td style="background:#0b1f3a;padding:18px 28px;color:#ffffff;font-size:18px;font-weight:bold">Cala<span style="color:#2ec4b6">Sign</span></td></tr>
+${
+    brand.logoUrl
+      ? `<tr><td style="background:#ffffff;padding:18px 28px;border-top:5px solid ${color ?? "#0b1f3a"};border-bottom:1px solid #e5e9f0"><img src="${esc(brand.logoUrl)}" alt="${esc(v.organizationName)}" style="max-height:44px;max-width:220px;display:block"></td></tr>`
+      : color
+        ? `<tr><td style="background:${color};padding:18px 28px;color:#ffffff;font-size:18px;font-weight:bold">${esc(v.organizationName)}</td></tr>`
+        : `<tr><td style="background:#0b1f3a;padding:18px 28px;color:#ffffff;font-size:18px;font-weight:bold">Cala<span style="color:#2ec4b6">Sign</span></td></tr>`
+  }
 <tr><td style="padding:28px">
 <p style="margin:0 0 6px;font-size:13px;color:#5b6576">${esc(v.organizationName)}</p>
 <h1 style="margin:0 0 18px;font-size:20px">${esc(v.subject)}</h1>
 ${lines.map((l) => `<p style="margin:0 0 12px;font-size:15px;line-height:1.5">${esc(l)}</p>`).join("")}
 ${v.message ? `<div style="margin:16px 0;padding:12px 14px;background:#f3f5f8;border-left:3px solid #2ec4b6;font-size:14px;white-space:pre-wrap">${esc(v.message)}</div>` : ""}
-${v.link && t.cta ? `<p style="margin:24px 0"><a href="${esc(v.link)}" style="background:#0f7c7c;color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:6px;font-weight:bold;display:inline-block">${esc(t.cta)}</a></p><p style="font-size:12px;color:#5b6576;word-break:break-all">${esc(v.link)}</p>` : ""}
+${v.link && t.cta ? `<p style="margin:24px 0"><a href="${esc(v.link)}" style="background:${color ?? "#0f7c7c"};color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:6px;font-weight:bold;display:inline-block">${esc(t.cta)}</a></p><p style="font-size:12px;color:#5b6576;word-break:break-all">${esc(v.link)}</p>` : ""}
 </td></tr>
-<tr><td style="padding:16px 28px;border-top:1px solid #e5e9f0;font-size:12px;color:#5b6576">${esc(FOOTER[locale])}</td></tr>
+<tr><td style="padding:16px 28px;border-top:1px solid #e5e9f0;font-size:12px;color:#5b6576">${brand.footer ? `<p style="margin:0 0 8px;white-space:pre-wrap">${esc(brand.footer)}</p>` : ""}${esc(FOOTER[locale])}</td></tr>
 </table></td></tr></table></body></html>`;
   return { subject, text, html, cta: t.cta ?? null };
 }

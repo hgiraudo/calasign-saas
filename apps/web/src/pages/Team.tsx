@@ -13,7 +13,7 @@ import { api, errorText } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useAccess } from "../lib/access";
 import { formatDateTime, useI18n } from "../lib/i18n";
-import { useTeamsText } from "../lib/i18n-teams";
+import { useRoleLabel, useTeamsText } from "../lib/i18n-teams";
 import { ErrorBox, Modal, Spinner } from "../components/ui";
 
 type Tab = "members" | "invitations" | "roles" | "groups";
@@ -24,13 +24,14 @@ interface RolesResponse {
 
 /** Opciones de rol para los selects: integrados + personalizados ("custom:<id>"). */
 function RoleSelect({ value, onChange, roles, allowOwner }: { value: string; onChange: (v: string) => void; roles: RolesResponse | null; allowOwner: boolean }) {
+  const label = useRoleLabel();
   return (
     <select value={value} onChange={(e) => onChange(e.target.value)}>
       {(roles?.builtin ?? [])
         .filter((b) => allowOwner || b.role !== "owner")
         .map((b) => (
           <option key={b.role} value={b.role}>
-            {b.name}
+            {label(b.role)}
           </option>
         ))}
       {(roles?.items ?? []).map((r) => (
@@ -90,6 +91,7 @@ function MembersTab({ roles, manage }: { roles: RolesResponse | null; manage: bo
   const tt = useTeamsText();
   const { me } = useAuth();
   const { access } = useAccess();
+  const label = useRoleLabel();
   const [items, setItems] = useState<Member[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [removing, setRemoving] = useState<Member | null>(null);
@@ -155,7 +157,7 @@ function MembersTab({ roles, manage }: { roles: RolesResponse | null; manage: bo
                     {manage && (isOwner || m.role !== "owner") ? (
                       <RoleSelect value={value} roles={roles} allowOwner={isOwner} onChange={(v) => changeRole(m, v)} />
                     ) : (
-                      m.roleName
+                      label(m.role, m.roleName)
                     )}
                   </td>
                   <td className="hide-sm">{m.groups.map((g) => g.name).join(", ") || "—"}</td>
@@ -203,6 +205,7 @@ function InvitationsTab({ roles }: { roles: RolesResponse | null }) {
   const tt = useTeamsText();
   const { locale } = useI18n();
   const { access } = useAccess();
+  const label = useRoleLabel();
   const [items, setItems] = useState<Invitation[] | null>(null);
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("member");
@@ -286,7 +289,7 @@ function InvitationsTab({ roles }: { roles: RolesResponse | null }) {
               {items.map((i) => (
                 <tr key={i.id} className={i.status === "pending" ? "" : "muted"}>
                   <td>{i.email}</td>
-                  <td>{i.roleName}</td>
+                  <td>{label(i.role, i.roleName)}</td>
                   <td className="hide-sm">{i.invitedBy ?? "—"}</td>
                   <td className="hide-sm">{formatDateTime(i.expiresAt, locale)}</td>
                   <td className="right">
@@ -334,6 +337,7 @@ function PermissionChecklist({ value, onChange }: { value: Permission[]; onChang
 
 function RolesTab({ roles, reload }: { roles: RolesResponse | null; reload: () => Promise<unknown> }) {
   const tt = useTeamsText();
+  const label = useRoleLabel();
   const [editing, setEditing] = useState<Partial<CustomRole> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -373,7 +377,7 @@ function RolesTab({ roles, reload }: { roles: RolesResponse | null; reload: () =
         <h2>{tt("roles.builtin")}</h2>
         {roles.builtin.map((b) => (
           <div key={b.role}>
-            <strong>{b.name}</strong>
+            <strong>{label(b.role)}</strong>
             <div className="muted small">{b.permissions.map((p) => tt(`perm.${p}` as const)).join(" · ")}</div>
           </div>
         ))}

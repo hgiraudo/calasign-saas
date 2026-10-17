@@ -3,6 +3,17 @@
 import { useI18n } from "./i18n";
 
 const es = {
+  "nav.settings": "Ajustes",
+  "settings.title": "Ajustes",
+  "settings.team": "Miembros, invitaciones, roles y grupos.",
+  "settings.branding": "Logo y colores en la página de firma, los correos y el certificado.",
+  "settings.apiKeys": "Credenciales para integrar tus sistemas con la API.",
+  "settings.integrations": "Webhooks y firma embebida en tu aplicación.",
+  "settings.audit": "Quién hizo qué en la cuenta, con exportación CSV.",
+  "settings.security": "Verificación en dos pasos y retención de documentos.",
+  "role.owner": "Propietario",
+  "role.admin": "Administrador",
+  "role.member": "Miembro",
   "nav.team": "Equipo",
   "nav.security": "Seguridad",
   "nav.audit": "Auditoría",
@@ -64,7 +75,7 @@ const es = {
   "share.visibility.organization": "Toda la organización",
   "share.visibility.restricted": "Solo yo, gestores de plantillas y los grupos elegidos",
   "audit.title": "Auditoría de la cuenta",
-  "audit.intro": "Registro inalterable de las acciones administrativas: ingresos, miembros, roles, API keys, webhooks, ajustes y plantillas.",
+  "audit.intro": "Registro de las acciones administrativas (solo se agregan entradas): ingresos, miembros, roles, API keys, webhooks, ajustes y plantillas.",
   "audit.when": "Fecha",
   "audit.action": "Acción",
   "audit.actor": "Quién",
@@ -125,6 +136,17 @@ const es = {
 type Key = keyof typeof es;
 
 const pt: Record<Key, string> = {
+  "nav.settings": "Configurações",
+  "settings.title": "Configurações",
+  "settings.team": "Membros, convites, perfis e grupos.",
+  "settings.branding": "Logo e cores na página de assinatura, nos e-mails e no certificado.",
+  "settings.apiKeys": "Credenciais para integrar seus sistemas com a API.",
+  "settings.integrations": "Webhooks e assinatura incorporada no seu aplicativo.",
+  "settings.audit": "Quem fez o quê na conta, com exportação CSV.",
+  "settings.security": "Verificação em duas etapas e retenção de documentos.",
+  "role.owner": "Proprietário",
+  "role.admin": "Administrador",
+  "role.member": "Membro",
   "nav.team": "Equipe",
   "nav.security": "Segurança",
   "nav.audit": "Auditoria",
@@ -186,7 +208,7 @@ const pt: Record<Key, string> = {
   "share.visibility.organization": "Toda a organização",
   "share.visibility.restricted": "Só eu, gestores de modelos e os grupos escolhidos",
   "audit.title": "Auditoria da conta",
-  "audit.intro": "Registro inalterável das ações administrativas: acessos, membros, perfis, API keys, webhooks, configurações e modelos.",
+  "audit.intro": "Registro das ações administrativas (somente inclusão): acessos, membros, perfis, API keys, webhooks, configurações e modelos.",
   "audit.when": "Data",
   "audit.action": "Ação",
   "audit.actor": "Quem",
@@ -245,6 +267,17 @@ const pt: Record<Key, string> = {
 };
 
 const en: Record<Key, string> = {
+  "nav.settings": "Settings",
+  "settings.title": "Settings",
+  "settings.team": "Members, invitations, roles and groups.",
+  "settings.branding": "Logo and colors on the signing page, emails and certificate.",
+  "settings.apiKeys": "Credentials to integrate your systems with the API.",
+  "settings.integrations": "Webhooks and embedded signing in your application.",
+  "settings.audit": "Who did what in the account, with CSV export.",
+  "settings.security": "Two-step verification and document retention.",
+  "role.owner": "Owner",
+  "role.admin": "Administrator",
+  "role.member": "Member",
   "nav.team": "Team",
   "nav.security": "Security",
   "nav.audit": "Audit",
@@ -306,7 +339,7 @@ const en: Record<Key, string> = {
   "share.visibility.organization": "Whole organization",
   "share.visibility.restricted": "Only me, template managers and the selected groups",
   "audit.title": "Account audit log",
-  "audit.intro": "Tamper-evident record of administrative actions: sign-ins, members, roles, API keys, webhooks, settings and templates.",
+  "audit.intro": "Append-only record of administrative actions: sign-ins, members, roles, API keys, webhooks, settings and templates.",
   "audit.when": "Date",
   "audit.action": "Action",
   "audit.actor": "Who",
@@ -367,6 +400,13 @@ const en: Record<Key, string> = {
 const DICTS = { es, "pt-BR": pt, en } as const;
 
 export type TeamsKey = Key;
+
+/** Nombre visible de un rol: los integrados se traducen; los personalizados usan su nombre. */
+export function useRoleLabel() {
+  const tt = useTeamsText();
+  return (role: string, roleName?: string | null) =>
+    role === "owner" || role === "admin" || role === "member" ? tt(`role.${role}` as Key) : roleName ?? role;
+}
 
 export function useTeamsText() {
   const { locale } = useI18n();

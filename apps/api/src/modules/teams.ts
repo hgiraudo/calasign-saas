@@ -47,6 +47,11 @@ import { SESSION_COOKIE, authenticate, clientInfo, type AuthContext, type Servic
 const SESSION_DAYS = 14;
 const INVITE_DAYS = 7;
 const ROLE_LABEL: Record<string, string> = { owner: "Propietario", admin: "Administrador", member: "Miembro" };
+const ROLE_LABEL_I18N = {
+  es: ROLE_LABEL,
+  "pt-BR": { owner: "Proprietário", admin: "Administrador", member: "Membro" },
+  en: { owner: "Owner", admin: "Administrator", member: "Member" },
+} as const;
 
 // ───────────────────────────── Sesiones ─────────────────────────────
 
@@ -341,7 +346,9 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     const org = await s.db.one<any>(`SELECT name, default_locale FROM tenants WHERE id = $1`, [a.tenantId]);
     const inviter = a.userId ? (await s.db.one<any>(`SELECT name FROM users WHERE id = $1`, [a.userId]))?.name : a.actor.label;
     const acceptUrl = `${config.appUrl}/invite/${token}`;
-    await sendInvitationEmail(a.tenantId, input.email, org.name, inviter ?? org.name, target.roleName, acceptUrl, input.locale ?? org.default_locale);
+    const mailLocale = normLocale(input.locale ?? org.default_locale);
+    const roleForMail = target.role === "custom" ? target.roleName : ROLE_LABEL_I18N[mailLocale][target.role as "owner" | "admin" | "member"];
+    await sendInvitationEmail(a.tenantId, input.email, org.name, inviter ?? org.name, roleForMail, acceptUrl, mailLocale);
     await auditFromRequest(s.db, req, a, "member.invited", { targetType: "invitation", targetId: id, data: { email: input.email, role: target.role, roleId: target.roleId } });
     const row = await s.db.one<any>(
       `SELECT i.*, r.name AS role_name, u.name AS invited_by_name FROM invitations i LEFT JOIN roles r ON r.id = i.role_id LEFT JOIN users u ON u.id = i.invited_by WHERE i.id = $1`,
@@ -380,6 +387,7 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     return {
       organizationName: r.org_name,
       email: r.email,
+      role: r.role,
       roleName: r.role === "custom" ? r.role_name : ROLE_LABEL[r.role] ?? r.role,
       invitedByName: r.invited_by_name,
       existingAccount: Boolean(existing),

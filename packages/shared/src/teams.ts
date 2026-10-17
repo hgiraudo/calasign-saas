@@ -123,6 +123,7 @@ export interface CreateInvitationResponse {
 export interface InvitationPreview {
   organizationName: string;
   email: string;
+  role: MemberRole;
   roleName: string;
   invitedByName: string | null;
   existingAccount: boolean;

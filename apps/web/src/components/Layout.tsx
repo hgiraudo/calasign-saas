@@ -30,7 +30,7 @@ export function Layout() {
   const mailbox = useDevMailboxAvailable();
   const tt = useIntText();
   const tm = useTeamsText();
-  const { access, can } = useAccess();
+  const { access } = useAccess();
   const loc = useLocation();
   const [open, setOpen] = useState(false);
 
@@ -53,12 +53,8 @@ export function Layout() {
             {t("nav.envelopes")}
           </NavLink>
           <NavLink to="/app/templates">{t("nav.templates")}</NavLink>
-          <NavLink to="/app/settings/team">{tm("nav.team")}</NavLink>
-          {can("settings:manage") && <NavLink to="/app/settings/branding">{t("nav.branding")}</NavLink>}
-          {can("api_keys:manage") && <NavLink to="/app/settings/api-keys">{t("nav.apiKeys")}</NavLink>}
-          {can("webhooks:manage") && <NavLink to="/app/settings/integrations">{tt("nav.integrations")}</NavLink>}
-          {can("audit:view") && <NavLink to="/app/settings/audit">{tm("nav.audit")}</NavLink>}
-          <NavLink to="/app/settings/security">{tm("nav.security")}</NavLink>
+          {/* Equipo, marca, API keys, integraciones, auditoría y seguridad viven bajo Ajustes (índice según permisos). */}
+          <NavLink to="/app/settings">{tm("nav.settings")}</NavLink>
           <NavLink to="/developers">{tt("nav.developers")}</NavLink>
           {mailbox && <NavLink to="/app/dev-mailbox">{t("nav.mailbox")}</NavLink>}
           <span className="topnav-spacer" />

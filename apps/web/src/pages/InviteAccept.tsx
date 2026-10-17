@@ -4,13 +4,14 @@ import { useNavigate, useParams } from "react-router-dom";
 import type { InvitationPreview, MeResponse, TwoFactorChallenge } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
 import { useAuth } from "../lib/auth";
-import { useTeamsText } from "../lib/i18n-teams";
+import { useRoleLabel, useTeamsText } from "../lib/i18n-teams";
 import { ErrorBox, LocaleSwitcher, Logo, Spinner } from "../components/ui";
 import { TwoFactorStep } from "../components/TwoFactorStep";
 
 export function InviteAcceptPage() {
   const { token } = useParams();
   const tt = useTeamsText();
+  const roleLabel = useRoleLabel();
   const { me, setMe } = useAuth();
   const nav = useNavigate();
   const [inv, setInv] = useState<InvitationPreview | null>(null);
@@ -53,7 +54,7 @@ export function InviteAcceptPage() {
     if (!inv) return error ? <ErrorBox error={error} /> : <Spinner />;
     if (inv.status !== "pending") return <div className="alert alert-warn">{tt("inv.invalid", { status: inv.status })}</div>;
     if (challenge) return <TwoFactorStep challengeToken={challenge} onDone={done} onBack={() => setChallenge(null)} />;
-    const vars = { org: inv.organizationName, role: inv.roleName, inviter: inv.invitedByName ?? "", email: inv.email };
+    const vars = { org: inv.organizationName, role: roleLabel(inv.role, inv.roleName), inviter: inv.invitedByName ?? "", email: inv.email };
     return (
       <form className="stack" onSubmit={submit}>
         <p>{inv.invitedByName ? tt("inv.body", vars) : tt("inv.bodyNoInviter", vars)}</p>

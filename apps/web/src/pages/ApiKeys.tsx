@@ -3,10 +3,11 @@ import type { ApiKey, CreateApiKeyResponse } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
 import { formatDateTime, useI18n } from "../lib/i18n";
 import { ErrorBox, Spinner } from "../components/ui";
-import { useTeamsText } from "../lib/i18n-teams";
+import { useRoleLabel, useTeamsText } from "../lib/i18n-teams";
 
 interface KeyRole {
   id: string;
+  role: string;
   roleName: string;
 }
 interface RoleOption {
@@ -23,6 +24,7 @@ export function ApiKeysPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const tm = useTeamsText();
+  const roleLabel = useRoleLabel();
   const [role, setRole] = useState("admin");
   const [roleOptions, setRoleOptions] = useState<RoleOption[]>([]);
   const [keyRoles, setKeyRoles] = useState<Record<string, string>>({});
@@ -31,7 +33,7 @@ export function ApiKeysPage() {
     Promise.all([api<{ items: ApiKey[] }>("/v1/api-keys"), api<{ items: KeyRole[] }>("/v1/api-keys/roles")])
       .then(([r, kr]) => {
         setItems(r.items);
-        setKeyRoles(Object.fromEntries(kr.items.map((k) => [k.id, k.roleName])));
+        setKeyRoles(Object.fromEntries(kr.items.map((k) => [k.id, roleLabel(k.role, k.roleName)])));
       })
       .catch((e) => setError(errorText(e)));
 
@@ -39,7 +41,7 @@ export function ApiKeysPage() {
     api<{ items: { id: string; name: string }[]; builtin: { role: string; name: string }[] }>("/v1/roles")
       .then((r) =>
         setRoleOptions([
-          ...r.builtin.filter((b) => b.role !== "owner").map((b) => ({ value: b.role, label: b.name })),
+          ...r.builtin.filter((b) => b.role !== "owner").map((b) => ({ value: b.role, label: roleLabel(b.role) })),
           ...r.items.map((x) => ({ value: `custom:${x.id}`, label: x.name })),
         ]),
       )

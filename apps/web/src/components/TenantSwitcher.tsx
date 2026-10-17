@@ -4,12 +4,13 @@ import type { MeResponse } from "@calasign/shared";
 import { api } from "../lib/api";
 import { useAccess } from "../lib/access";
 import { useAuth } from "../lib/auth";
-import { useTeamsText } from "../lib/i18n-teams";
+import { useRoleLabel, useTeamsText } from "../lib/i18n-teams";
 
 export function TenantSwitcher() {
   const { access } = useAccess();
   const { setMe } = useAuth();
   const tm = useTeamsText();
+  const label = useRoleLabel();
   const nav = useNavigate();
   if (!access) return null;
   const current = access.tenants.find((t) => t.current);
@@ -28,7 +29,7 @@ export function TenantSwitcher() {
     >
       {access.tenants.map((t) => (
         <option key={t.id} value={t.id}>
-          {t.name} · {t.roleName}
+          {t.name} · {label(t.role, t.roleName)}
         </option>
       ))}
     </select>

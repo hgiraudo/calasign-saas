@@ -5,6 +5,8 @@ import { useAuth } from "../lib/auth";
 import { useI18n } from "../lib/i18n";
 import { LocaleSwitcher, Logo } from "./ui";
 import { useIntText } from "../lib/integrations-i18n";
+import { useExpText } from "../lib/i18n-experience";
+import { useInstallPrompt } from "../lib/pwa";
 
 export function useDevMailboxAvailable(): boolean {
   const [ok, setOk] = useState(false);
@@ -26,6 +28,8 @@ export function Layout() {
   const nav = useNavigate();
   const mailbox = useDevMailboxAvailable();
   const tt = useIntText();
+  const xt = useExpText();
+  const install = useInstallPrompt();
   const [open, setOpen] = useState(false);
 
   return (
@@ -42,6 +46,7 @@ export function Layout() {
             {t("nav.envelopes")}
           </NavLink>
           <NavLink to="/app/templates">{t("nav.templates")}</NavLink>
+          <NavLink to="/app/reports">{xt("nav.reports")}</NavLink>
           <NavLink to="/app/settings/branding">{t("nav.branding")}</NavLink>
           <NavLink to="/app/settings/api-keys">{t("nav.apiKeys")}</NavLink>
           <NavLink to="/app/settings/integrations">{tt("nav.integrations")}</NavLink>
@@ -51,6 +56,11 @@ export function Layout() {
           <span className="topnav-user" title={me?.user.email}>
             {me?.tenant.name}
           </span>
+          {install && (
+            <button type="button" className="btn btn-ghost btn-sm on-dark install-btn" onClick={() => void install()}>
+              ⤓ {xt("nav.install")}
+            </button>
+          )}
           <LocaleSwitcher compact />
           <button
             type="button"

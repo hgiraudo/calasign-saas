@@ -15,6 +15,7 @@ import { TemplatesPage } from "./pages/Templates";
 import { TemplateEditPage } from "./pages/TemplateEdit";
 import { TemplateUsePage } from "./pages/TemplateUse";
 import { BrandingPage } from "./pages/Branding";
+import { ReportsPage } from "./pages/Reports";
 
 export function App() {
   return (
@@ -42,6 +43,7 @@ export function App() {
         <Route path="/app/templates/:id/edit" element={<TemplateEditPage />} />
         <Route path="/app/templates/:id/use" element={<TemplateUsePage />} />
         <Route path="/app/settings/branding" element={<BrandingPage />} />
+        <Route path="/app/reports" element={<ReportsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/app" replace />} />
     </Routes>

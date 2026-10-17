@@ -1,8 +1,9 @@
 // Componentes de UI chicos y compartidos.
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useId, useRef, type ReactNode } from "react";
 import type { EnvelopeStatus, Locale, RecipientStatus } from "@calasign/shared";
 import { LOCALES } from "@calasign/shared";
 import { LOCALE_LABELS, useI18n } from "../lib/i18n";
+import { useExpText } from "../lib/i18n-experience";
 
 export function StatusBadge({ status }: { status: EnvelopeStatus }) {
   const { t } = useI18n();
@@ -28,24 +29,46 @@ export function Modal({
   wide?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  const x = useExpText();
   // onClose suele ser una función nueva en cada render: se guarda en un ref para no re-enfocar el modal
   // (y robarle el foco al input) cada vez que el padre se vuelve a dibujar.
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
   useEffect(() => {
+    // Al cerrar, el foco vuelve a donde estaba (el botón que abrió el modal).
+    const previous = document.activeElement as HTMLElement | null;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onCloseRef.current();
+      if (e.key !== "Tab" || !ref.current) return;
+      // Trampa de foco: Tab y Shift+Tab no salen del modal.
+      const items = [...ref.current.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      )].filter((el) => el.offsetParent !== null);
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (e.shiftKey && (document.activeElement === first || document.activeElement === ref.current)) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
     };
     document.addEventListener("keydown", onKey);
     if (!ref.current?.contains(document.activeElement)) ref.current?.focus();
-    return () => document.removeEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      if (previous && document.contains(previous)) previous.focus({ preventScroll: true });
+    };
   }, []);
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className={`modal ${wide ? "modal-wide" : ""}`} role="dialog" aria-modal="true" aria-label={title} tabIndex={-1} ref={ref}>
+      <div className={`modal ${wide ? "modal-wide" : ""}`} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} ref={ref}>
         <div className="modal-head">
-          <h2>{title}</h2>
-          <button type="button" className="icon-btn" onClick={onClose} aria-label="Cerrar">
+          <h2 id={titleId}>{title}</h2>
+          <button type="button" className="icon-btn" onClick={onClose} aria-label={x("a11y.close")}>
             ×
           </button>
         </div>

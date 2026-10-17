@@ -116,6 +116,9 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
       wildcard: true,
       setHeaders(res, path) {
         if (path.endsWith(".mjs")) res.header("content-type", "text/javascript; charset=utf-8");
+        // PWA: el service worker y el manifest se revalidan siempre (si no, una versión vieja queda pegada).
+        if (path.endsWith("/sw.js") || path.endsWith(".webmanifest") || path.endsWith("/offline.html")) res.header("cache-control", "no-cache");
+        if (path.endsWith(".webmanifest")) res.header("content-type", "application/manifest+json; charset=utf-8");
         if (path.includes("/assets/")) res.header("cache-control", "public, max-age=31536000, immutable");
       },
     });

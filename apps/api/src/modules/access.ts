@@ -208,6 +208,11 @@ export async function enforceRoutePolicy(db: Db, req: FastifyRequest, a: AuthCon
   }
   if (url.startsWith("/v1/webhooks") || url.startsWith("/v1/webhook-deliveries")) return requirePerm(a, "webhooks:manage");
   if (url.startsWith("/v1/audit-log")) return requirePerm(a, "audit:view");
+  // Evidencia: certificados de la organización (listarlos alcanza con poder crear sobres, para elegir el sello
+  // de empresa), conectores de firma y firma XML.
+  if (url === "/v1/certificates" && isRead) return requirePerm(a, "envelopes:create");
+  if (url.startsWith("/v1/certificates") || url.startsWith("/v1/signature-providers")) return requirePerm(a, "settings:manage");
+  if (url.startsWith("/v1/xml/")) return requirePerm(a, "envelopes:create");
   // Envío masivo y formularios web: crean sobres en nombre de quien los configura.
   if (/^\/v1\/(bulk-sends|web-forms)(\/|$)/.test(url)) return requirePerm(a, "envelopes:create");
   // Reportes: estadísticas de toda la organización.

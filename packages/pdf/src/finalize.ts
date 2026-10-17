@@ -80,6 +80,10 @@ export interface CertificateData {
   attachments?: { name: string; recipientName: string; sha256: string; appended: boolean }[];
   /** Logo y color de la organización. El logo solo se usa si es PNG o JPG. */
   branding?: { primaryColor?: string | null; logo?: { bytes: Uint8Array; type: "png" | "jpg" } | null } | null;
+  /** Nivel de firma declarado para el sobre (simple / avanzada / cualificada). */
+  signatureLevel?: "simple" | "advanced" | "qualified" | null;
+  /** Sello de empresa: el PDF se firma además con un certificado de la organización. */
+  companySeal?: { name: string; commonName: string | null } | null;
 }
 
 /** Adjunto subido por un firmante: PDF o imagen, se agrega al final de los documentos. */
@@ -325,6 +329,8 @@ async function drawCertificate(
   kv(L.created, fmt(c.createdAt));
   kv(L.sent, fmt(c.sentAt));
   kv(L.completed, fmt(c.completedAt));
+  if (c.signatureLevel) kv(L.signatureLevel, c.signatureLevel === "qualified" ? L.level_qualified : c.signatureLevel === "advanced" ? L.level_advanced : L.level_simple);
+  if (c.companySeal) kv(L.companySeal, c.companySeal.commonName ?? c.companySeal.name);
 
   section(L.documents);
   c.documents.forEach((d, i) => {

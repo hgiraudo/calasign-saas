@@ -30,6 +30,8 @@ export function Modal({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const titleId = useId();
+  // Quién tenía el foco al abrir: se toma en el primer render, antes de que un input con autoFocus del modal lo robe.
+  const opener = useRef<HTMLElement | null>(typeof document === "undefined" ? null : (document.activeElement as HTMLElement | null));
   const x = useExpText();
   // onClose suele ser una función nueva en cada render: se guarda en un ref para no re-enfocar el modal
   // (y robarle el foco al input) cada vez que el padre se vuelve a dibujar.
@@ -37,7 +39,7 @@ export function Modal({
   onCloseRef.current = onClose;
   useEffect(() => {
     // Al cerrar, el foco vuelve a donde estaba (el botón que abrió el modal).
-    const previous = document.activeElement as HTMLElement | null;
+    const previous = opener.current;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onCloseRef.current();
       if (e.key !== "Tab" || !ref.current) return;

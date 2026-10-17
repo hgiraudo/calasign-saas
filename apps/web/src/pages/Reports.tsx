@@ -1,5 +1,5 @@
 // Reportes de la organización: totales, sobres por mes (barras apiladas en SVG), remitentes y notificaciones.
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReportsSummary } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
 import { useI18n } from "../lib/i18n";
@@ -175,9 +175,19 @@ function MonthChart({ data }: { data: ReportsSummary }) {
     const [y, mo] = m.split("-").map(Number);
     return new Intl.DateTimeFormat(locale, { month: "short", year: "2-digit", timeZone: "UTC" }).format(new Date(Date.UTC(y, mo - 1, 1)));
   };
-  if (rows.every((r) => r.total === 0)) return <p className="muted">{x("reports.noData")}</p>;
+  // El ancho del SVG sigue al contenedor (1 unidad = 1 px): el texto no se agranda ni se achica con la pantalla.
+  const box = useRef<HTMLElement>(null);
+  const hasData = !rows.every((r) => r.total === 0);
+  const [W, setW] = useState(640);
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([e]) => setW(Math.max(280, Math.round(e.contentRect.width))));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [hasData]);
+  if (!hasData) return <p className="muted">{x("reports.noData")}</p>;
 
-  const W = 640;
   const H = 220;
   const pad = { l: 36, r: 8, t: 10, b: 28 };
   const bw = (W - pad.l - pad.r) / rows.length;
@@ -185,7 +195,7 @@ function MonthChart({ data }: { data: ReportsSummary }) {
   const ticks = [0, Math.ceil(max / 2), max];
 
   return (
-    <figure className="chart">
+    <figure className="chart" ref={box}>
       <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={x("reports.chartLabel")} className="chart-svg">
         {ticks.map((tk) => {
           const y = H - pad.b - scale(tk);

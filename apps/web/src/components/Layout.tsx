@@ -57,8 +57,14 @@ export function Layout() {
             {me?.tenant.name}
           </span>
           {install && (
-            <button type="button" className="btn btn-ghost btn-sm on-dark install-btn" onClick={() => void install()}>
-              ⤓ {xt("nav.install")}
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm on-dark install-btn"
+              onClick={() => void install()}
+              aria-label={xt("nav.install")}
+              title={xt("nav.install")}
+            >
+              ⤓<span className="install-text"> {xt("nav.install")}</span>
             </button>
           )}
           <LocaleSwitcher compact />

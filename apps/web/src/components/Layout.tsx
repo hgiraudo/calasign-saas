@@ -1,10 +1,13 @@
 // Estructura de la consola del remitente.
 import { useEffect, useState } from "react";
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { Navigate, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 import { useI18n } from "../lib/i18n";
 import { LocaleSwitcher, Logo } from "./ui";
 import { useIntText } from "../lib/integrations-i18n";
+import { useAccess } from "../lib/access";
+import { useTeamsText } from "../lib/i18n-teams";
+import { TenantSwitcher } from "./TenantSwitcher";
 
 export function useDevMailboxAvailable(): boolean {
   const [ok, setOk] = useState(false);
@@ -26,7 +29,15 @@ export function Layout() {
   const nav = useNavigate();
   const mailbox = useDevMailboxAvailable();
   const tt = useIntText();
+  const tm = useTeamsText();
+  const { access, can } = useAccess();
+  const loc = useLocation();
   const [open, setOpen] = useState(false);
+
+  // Organización que exige 2FA y el usuario no lo tiene: solo puede ir a Seguridad.
+  if (access?.twoFactor.setupRequired && loc.pathname !== "/app/settings/security") {
+    return <Navigate to="/app/settings/security" replace />;
+  }
 
   return (
     <div className="shell">
@@ -42,15 +53,22 @@ export function Layout() {
             {t("nav.envelopes")}
           </NavLink>
           <NavLink to="/app/templates">{t("nav.templates")}</NavLink>
-          <NavLink to="/app/settings/branding">{t("nav.branding")}</NavLink>
-          <NavLink to="/app/settings/api-keys">{t("nav.apiKeys")}</NavLink>
-          <NavLink to="/app/settings/integrations">{tt("nav.integrations")}</NavLink>
+          <NavLink to="/app/settings/team">{tm("nav.team")}</NavLink>
+          {can("settings:manage") && <NavLink to="/app/settings/branding">{t("nav.branding")}</NavLink>}
+          {can("api_keys:manage") && <NavLink to="/app/settings/api-keys">{t("nav.apiKeys")}</NavLink>}
+          {can("webhooks:manage") && <NavLink to="/app/settings/integrations">{tt("nav.integrations")}</NavLink>}
+          {can("audit:view") && <NavLink to="/app/settings/audit">{tm("nav.audit")}</NavLink>}
+          <NavLink to="/app/settings/security">{tm("nav.security")}</NavLink>
           <NavLink to="/developers">{tt("nav.developers")}</NavLink>
           {mailbox && <NavLink to="/app/dev-mailbox">{t("nav.mailbox")}</NavLink>}
           <span className="topnav-spacer" />
-          <span className="topnav-user" title={me?.user.email}>
-            {me?.tenant.name}
-          </span>
+          {access && access.tenants.length > 1 ? (
+            <TenantSwitcher />
+          ) : (
+            <span className="topnav-user" title={me?.user.email}>
+              {me?.tenant.name}
+            </span>
+          )}
           <LocaleSwitcher compact />
           <button
             type="button"

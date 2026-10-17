@@ -330,3 +330,7 @@ input[type="checkbox"] { width: 1.05rem; height: 1.05rem; accent-color: var(--te
 .sig-canvas { width: 100%; aspect-ratio: 3 / 1; border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; background-image: linear-gradient(to top, transparent 24%, #e2e8f0 24%, #e2e8f0 25%, transparent 25%); }
 .sig-canvas.drawable { touch-action: none; cursor: crosshair; }
 .sigpad-actions { display: flex; justify-content: space-between; align-items: center; }
+
+/* Equipos */
+.tenant-switcher { background: rgba(255, 255, 255, 0.08); color: #e2e8f0; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 7px; padding: 0.3rem 0.5rem; font: inherit; font-size: 0.85rem; max-width: 220px; }
+.tenant-switcher option { color: #0f172a; }

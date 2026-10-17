@@ -1,6 +1,7 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
-import type { MeResponse } from "@calasign/shared";
+import type { MeResponse, TwoFactorChallenge } from "@calasign/shared";
+import { TwoFactorStep } from "../components/TwoFactorStep";
 import { api, errorText } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useI18n } from "../lib/i18n";
@@ -33,16 +34,35 @@ export function LoginPage() {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [challenge, setChallenge] = useState<string | null>(null);
 
   if (loading) return <Spinner />;
   if (me) return <Navigate to={from} replace />;
+  if (challenge) {
+    return (
+      <AuthShell title={t("auth.login")}>
+        <TwoFactorStep
+          challengeToken={challenge}
+          onBack={() => setChallenge(null)}
+          onDone={(m) => {
+            setMe(m);
+            nav(from, { replace: true });
+          }}
+        />
+      </AuthShell>
+    );
+  }
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setBusy(true);
     setError(null);
     try {
-      const m = await api<MeResponse>("/v1/auth/login", { method: "POST", body: { email, password } });
+      const m = await api<MeResponse | TwoFactorChallenge>("/v1/auth/login", { method: "POST", body: { email, password } });
+      if ("twoFactorRequired" in m) {
+        setChallenge(m.challengeToken);
+        return;
+      }
       setMe(m);
       nav(from, { replace: true });
     } catch (err) {

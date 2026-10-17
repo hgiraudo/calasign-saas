@@ -8,6 +8,7 @@ import { ReassignModal } from "../components/SignerExtras";
 import { useSignerText } from "../lib/i18n-signer";
 import type { Recipient } from "@calasign/shared";
 import { SaveAsTemplateButton } from "../components/SaveAsTemplate";
+import { ShareControl } from "../components/ShareControl";
 
 export function EnvelopeDetailPage() {
   const { id = "" } = useParams();
@@ -107,6 +108,7 @@ export function EnvelopeDetailPage() {
               </span>
             )}
           </div>
+          <ShareControl kind="envelopes" id={id!} canEdit />
         </div>
         <div className="row-wrap">
           {env.status === "completed" && (

@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { RequireAuth } from "./lib/auth";
+import { AccessProvider } from "./lib/access";
 import { LoginPage, SignupPage } from "./pages/Auth";
 import { EnvelopeListPage } from "./pages/EnvelopeList";
 import { EnvelopeEditPage } from "./pages/EnvelopeEdit";
@@ -15,6 +16,10 @@ import { TemplatesPage } from "./pages/Templates";
 import { TemplateEditPage } from "./pages/TemplateEdit";
 import { TemplateUsePage } from "./pages/TemplateUse";
 import { BrandingPage } from "./pages/Branding";
+import { TeamPage } from "./pages/Team";
+import { AuditLogPage } from "./pages/AuditLog";
+import { SecurityPage } from "./pages/Security";
+import { InviteAcceptPage } from "./pages/InviteAccept";
 
 export function App() {
   return (
@@ -25,10 +30,13 @@ export function App() {
       <Route path="/s/:token" element={<SignerPage />} />
       <Route path="/developers" element={<DevelopersPage />} />
       <Route path="/verify" element={<VerifyPage />} />
+      <Route path="/invite/:token" element={<InviteAcceptPage />} />
       <Route
         element={
           <RequireAuth>
-            <Layout />
+            <AccessProvider>
+              <Layout />
+            </AccessProvider>
           </RequireAuth>
         }
       >
@@ -42,6 +50,9 @@ export function App() {
         <Route path="/app/templates/:id/edit" element={<TemplateEditPage />} />
         <Route path="/app/templates/:id/use" element={<TemplateUsePage />} />
         <Route path="/app/settings/branding" element={<BrandingPage />} />
+        <Route path="/app/settings/team" element={<TeamPage />} />
+        <Route path="/app/settings/audit" element={<AuditLogPage />} />
+        <Route path="/app/settings/security" element={<SecurityPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/app" replace />} />
     </Routes>

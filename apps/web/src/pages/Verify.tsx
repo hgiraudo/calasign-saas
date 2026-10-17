@@ -1,10 +1,11 @@
 // Verificación pública de un PDF sellado (sin sesión).
 import { useRef, useState } from "react";
-import type { VerifyResponse } from "@calasign/shared";
+import type { PdfValidationResponse, VerifyResponse } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
 import { formatDateTime, useI18n } from "../lib/i18n";
 import { useSignerText } from "../lib/i18n-signer";
 import { ErrorBox, LocaleSwitcher, Logo, Spinner } from "../components/ui";
+import { ValidationReportView } from "../components/EvidenceExtras";
 
 export function VerifyPage() {
   const { t, locale } = useI18n();
@@ -13,6 +14,7 @@ export function VerifyPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<VerifyResponse | null>(null);
+  const [report, setReport] = useState<PdfValidationResponse | null>(null);
   const [fileName, setFileName] = useState("");
   const [over, setOver] = useState(false);
 
@@ -25,7 +27,16 @@ export function VerifyPage() {
     try {
       const form = new FormData();
       form.append("file", file);
-      setResult(await api<VerifyResponse>("/v1/verify", { method: "POST", form }));
+      setReport(null);
+      const form2 = new FormData();
+      form2.append("file", file);
+      const [r, v] = await Promise.all([
+        api<VerifyResponse>("/v1/verify", { method: "POST", form }),
+        // Reporte técnico (integridad, cadena, revocación, nivel PAdES); si falla, se muestra igual la búsqueda por hash.
+        api<PdfValidationResponse>("/v1/validate", { method: "POST", form: form2 }).catch(() => null),
+      ]);
+      setResult(r);
+      setReport(v);
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -123,6 +134,11 @@ export function VerifyPage() {
             <p className="small mono break">
               {sx("verify.hash")}: {result.sha256}
             </p>
+          </div>
+        )}
+        {report && (
+          <div className="card pad">
+            <ValidationReportView report={report} />
           </div>
         )}
       </main>

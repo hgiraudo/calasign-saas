@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { SealOptionsPanel } from "../components/EvidenceExtras";
 import { useExpText } from "../lib/i18n-experience";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import type { Channel, Document, EnvelopeDetail, Locale, RecipientRole } from "@calasign/shared";
@@ -668,6 +669,7 @@ function ReviewStep({
             {sx("review.allowDelegation")}
           </label>
         </fieldset>
+        <SealOptionsPanel envelopeId={env.id} />
         <button type="button" className="btn btn-primary btn-block" disabled={busy || !subject.trim()} onClick={send}>
           {busy ? t("edit.sending") : t("edit.send")}
         </button>

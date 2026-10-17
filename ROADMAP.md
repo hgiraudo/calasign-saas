@@ -133,9 +133,9 @@
 | 0 — Fundaciones | ✅ Hecha |
 | 1 — MVP | ✅ Hecha (incluye WhatsApp y Telegram, ES/PT-BR/EN) |
 | 2 — Productividad | ✅ Plantillas, campos nuevos (número, desplegable, empresa, cargo, adjunto), OTP por email/SMS/WhatsApp, aprobador, delegación y reasignación, recordatorios automáticos, branding básico. ⏳ Cobro (Pix/PSE) |
-| 3 — API y firma embebida | ✅ API v1 + OpenAPI + página /developers, firma embebida (iframe + postMessage), webhooks HMAC con reintentos, anclas de texto, idempotencia. ⏳ OAuth client credentials, SDKs |
-| 4 — Escala y equipos | ✅ Miembros e invitaciones, roles y permisos (RBAC), grupos, auditoría de cuenta, retención, 2FA; envío masivo (CSV/API), formularios web públicos, campos condicionales y calculados; firma en persona, corrección en vuelo, reportes, PWA, reenvío de copias, accesibilidad. ⏳ Integraciones con Drive/Dropbox/OneDrive/Zapier/Slack, dominio propio (white-label) |
-| 5 — Evidencia fuerte y cumplimiento | Parcial: verificación pública de documentos (/verify) |
+| 3 — API y firma embebida | ✅ API v1 + OpenAPI + página /developers, firma embebida (iframe + postMessage), webhooks HMAC con reintentos, anclas de texto, idempotencia. ✅ OAuth 2.0 (client credentials y authorization code + PKCE), SDKs Node y Python |
+| 4 — Escala y equipos | ✅ Miembros e invitaciones, roles y permisos (RBAC), grupos, auditoría de cuenta, retención, 2FA; envío masivo (CSV/API), formularios web públicos, campos condicionales y calculados; firma en persona, corrección en vuelo, reportes, PWA, reenvío de copias, accesibilidad. ✅ Slack/Teams, guía Zapier/Make, exportación a Google Drive/Dropbox/OneDrive/S3, dominio propio |
+| 5 — Evidencia fuerte y cumplimiento | ✅ Verificación pública y validador de firmas, PAdES B-LT/B-LTA, firma XML (XAdES) para DGII/DIAN, custodia de certificados por organización, sello de empresa, nivel de firma, conectores CSC, verificación de identidad (mock/Truora/Veriff), SSO OIDC/SAML, SCIM. ⏳ Conectores reales por país (ICP-Brasil, ONAC, INDOTEL, Honduras), residencia de datos (celda São Paulo), BYOK, certificaciones SOC 2/ISO 27001 |
 | 6 — Plataforma e IA | ⏳ |
 
 ## 4. Roadmap de features (de menor a mayor)

@@ -410,8 +410,10 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     const cookie = req.cookies?.[SESSION_COOKIE];
     if (cookie) {
       const srow = await s.db.one<any>(
-        `SELECT u.id, u.email FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = $1 AND s.expires_at > now()`,
-        [sha256Hex(cookie)],
+        // Una sesión SSO solo sirve como prueba de identidad dentro de su propia organización (Fase 5).
+        `SELECT u.id, u.email FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = $1 AND s.expires_at > now()
+           AND (s.auth_method = 'password' OR s.sso_tenant_id = $2)`,
+        [sha256Hex(cookie), inv.tenant_id],
       );
       if (srow && srow.email.toLowerCase() === inv.email.toLowerCase()) sessionUserId = srow.id;
     }

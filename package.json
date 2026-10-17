@@ -15,7 +15,8 @@
     "@aws-sdk/client-kms": "^3.1152.0",
     "@aws-sdk/client-ssm": "^3.1152.0",
     "@calasign/pdf": "workspace:^",
-    "tsx": "^4.23.15"
+    "tsx": "^4.23.15",
+    "xml-crypto": "6.4.0"
   },
   "type": "module"
 }

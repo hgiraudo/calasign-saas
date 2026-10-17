@@ -13,6 +13,7 @@ import { toDocument, toField, loadDocuments } from "./mappers";
 import { canDelegate, isSignerAuthenticated, otpDestinationFor } from "./otp";
 import { checkValue, VALUE_FIELD_TYPES } from "./fieldvalues";
 import { getTenantBranding } from "./branding";
+import { inPersonSessionInfo } from "./experience";
 
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -85,6 +86,7 @@ export async function buildSession(db: Db, token: string, r: any, e: any, authed
     branding: await getTenantBranding(db, e.tenant_id).then((b) =>
       b.primaryColor || b.logoUrl ? { primaryColor: b.primaryColor, logoUrl: b.logoUrl ? new URL(b.logoUrl).pathname + new URL(b.logoUrl).search : null } : null,
     ),
+    inPerson: await inPersonSessionInfo(db, r, !otpRequired),
   };
 }
 

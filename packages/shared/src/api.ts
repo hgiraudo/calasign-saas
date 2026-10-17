@@ -2,6 +2,7 @@
 // Entradas: esquemas Zod (se validan en el servidor). Salidas: tipos TypeScript.
 import { z } from "zod";
 import { AUTH_METHODS, EnvelopeReminderSettings, type AuthMethod } from "./signer";
+import { InPersonInput, type InPersonHost, type SigningInPerson } from "./experience";
 
 // ───────────────────────────── Enumeraciones ─────────────────────────────
 
@@ -133,15 +134,18 @@ export const RecipientInput = z
     embedded: z.boolean().optional(),
     /** Autenticación previa a ver los documentos. Default "link". */
     authMethod: z.enum(AUTH_METHODS).optional(),
+    /** Firma en persona en el dispositivo del anfitrión: no recibe invitaciones (null = quitar). */
+    inPerson: InPersonInput.optional().nullable(),
   })
-  .refine((r) => r.embedded || r.email || r.phone, { message: "email o phone requerido" })
+  .refine((r) => r.embedded || r.inPerson || r.email || r.phone, { message: "email o phone requerido" })
+  .refine((r) => r.authMethod !== "in_person" || r.inPerson, { message: "la firma en persona se configura con inPerson" })
   .refine((r) => r.authMethod !== "otp_email" || r.email, { message: "el código por email requiere email" })
   .refine((r) => !(r.authMethod === "otp_sms" || r.authMethod === "otp_whatsapp") || r.phone, {
     message: "el código por SMS/WhatsApp requiere phone",
   })
-  .refine((r) => r.embedded || !r.channels.includes("email") || r.email, { message: "el canal email requiere email" })
-  .refine((r) => r.embedded || !r.channels.includes("whatsapp") || r.phone, { message: "el canal whatsapp requiere phone" })
-  .refine((r) => r.embedded || r.channels.some((c) => c !== "telegram") || r.telegramChatId, {
+  .refine((r) => r.embedded || r.inPerson || !r.channels.includes("email") || r.email, { message: "el canal email requiere email" })
+  .refine((r) => r.embedded || r.inPerson || !r.channels.includes("whatsapp") || r.phone, { message: "el canal whatsapp requiere phone" })
+  .refine((r) => r.embedded || r.inPerson || r.channels.some((c) => c !== "telegram") || r.telegramChatId, {
     message: "con solo Telegram hace falta telegramChatId (o agregar email/WhatsApp para enviar el link de vinculación)",
   });
 export type RecipientInput = z.input<typeof RecipientInput>;
@@ -223,6 +227,8 @@ export interface Recipient {
   authMethod: AuthMethod;
   /** Si fue delegado o reasignado: id del destinatario que lo reemplaza. */
   replacedBy: string | null;
+  /** Firma en persona: anfitrión que presenta al firmante. */
+  inPersonHost?: InPersonHost | null;
 }
 
 export interface Field {
@@ -357,6 +363,8 @@ export interface SigningSession {
   canDelegate: boolean;
   /** Logo y color de la organización remitente (null: estilo por defecto). */
   branding?: { primaryColor: string | null; logoUrl: string | null } | null;
+  /** Firma en persona (modo anfitrión). */
+  inPerson?: SigningInPerson | null;
 }
 
 // ───────────────────────────── Desarrollo ─────────────────────────────

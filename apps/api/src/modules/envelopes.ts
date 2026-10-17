@@ -17,6 +17,7 @@ import { encrypt, iso, randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { config } from "../config";
 import { authenticate, type AuthContext, type Services } from "./context";
 import { loadDetail, loadDocuments } from "./mappers";
+import { checkSenderValue, insertEnvelopeField } from "./fieldvalues";
 
 /** Bloquea el sobre para serializar cambios y eventos. */
 export async function lockEnvelope(db: Db, tenantId: string, id: string) {
@@ -361,11 +362,32 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
         if (!d) throw badRequest("invalid_field", `Campo ${i + 1}: documento inexistente`);
         if (f.page >= d.page_count) throw badRequest("invalid_field", `Campo ${i + 1}: página fuera de rango`);
         if (!signers.has(f.recipientId)) throw badRequest("invalid_field", `Campo ${i + 1}: el destinatario no es firmante de este sobre`);
-        await t.query(
-          `INSERT INTO fields (id, tenant_id, envelope_id, document_id, recipient_id, type, page, x, y, width, height, required, label)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-          [f.id ?? uuidv7(), a.tenantId, e.id, f.documentId, f.recipientId, f.type, f.page, f.x, f.y, f.width, f.height, f.required, f.label ?? null],
-        );
+        let value: string | null;
+        try {
+          value = checkSenderValue({ ...f, label: f.label ?? null }, `Campo ${i + 1}`);
+        } catch (err) {
+          throw badRequest("invalid_field", (err as Error).message);
+        }
+        await insertEnvelopeField(t, {
+          id: f.id ?? uuidv7(),
+          tenantId: a.tenantId,
+          envelopeId: e.id,
+          documentId: f.documentId,
+          recipientId: f.recipientId,
+          type: f.type,
+          page: f.page,
+          x: f.x,
+          y: f.y,
+          width: f.width,
+          height: f.height,
+          required: f.required,
+          label: f.label ?? null,
+          value,
+          readOnly: Boolean(f.readOnly && value),
+          options: f.options ?? null,
+          min: f.min ?? null,
+          max: f.max ?? null,
+        });
       }
       await touch(t, e.id);
     });
@@ -377,43 +399,7 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
   app.post<P>("/v1/envelopes/:id/send", { preHandler: auth }, async (req, reply) =>
     idempotent(s, req, reply, async () => {
       const a = A(req);
-      await s.db.tx(async (t) => {
-        const e = await lockEnvelope(t, a.tenantId, req.params.id);
-        requireDraft(e);
-        const docs = await loadDocuments(t, e.id);
-        const recips = await t.query<any>(`SELECT * FROM recipients WHERE envelope_id = $1`, [e.id]);
-        const fields = await t.query<any>(`SELECT recipient_id, type FROM fields WHERE envelope_id = $1`, [e.id]);
-        const problems: string[] = [];
-        if (docs.length === 0) problems.push("Agregá al menos un documento");
-        const signers = recips.filter((r) => r.role === "signer");
-        if (signers.length === 0) problems.push("Agregá al menos un firmante");
-        for (const s1 of signers) {
-          if (!fields.some((f) => f.recipient_id === s1.id && f.type === "signature"))
-            problems.push(`${s1.name} no tiene ningún campo de firma`);
-        }
-        if (e.expires_at && new Date(e.expires_at) <= new Date()) problems.push("La fecha de vencimiento ya pasó");
-        if (problems.length) throw new AppError(422, "envelope_incomplete", problems.join(". "), { problems });
-
-        await t.query(`UPDATE envelopes SET status = 'sent', sent_at = now(), updated_at = now(), version = version + 1 WHERE id = $1`, [e.id]);
-        await appendEvent(t, {
-          tenantId: a.tenantId,
-          envelopeId: e.id,
-          type: "envelope.sent",
-          actor: a.actor,
-          data: {
-            documents: docs.map((d) => ({ id: d.id, name: d.name, sha256: d.sha256 })),
-            recipients: recips.map((r) => ({ id: r.id, name: r.name, role: r.role, routingOrder: r.routing_order, channels: r.channels })),
-          },
-        });
-        // Todos los destinatarios reciben token ya (los CC lo usan al final para descargar).
-        for (const r of recips) {
-          if (!r.access_token_hash) {
-            const token = randomToken();
-            await t.query(`UPDATE recipients SET access_token_hash = $2, access_token_enc = $3 WHERE id = $1`, [r.id, sha256Hex(token), encrypt(token)]);
-          }
-        }
-        await advanceRouting(t, a.tenantId, e.id, a.actor);
-      });
+      await s.db.tx((t) => sendEnvelope(t, a.tenantId, req.params.id, a.actor));
       return { status: 200, body: await loadDetail(s.db, a.tenantId, req.params.id) };
     }),
   );
@@ -488,4 +474,43 @@ export function sendPdf(reply: FastifyReply, bytes: Uint8Array, name: string) {
     .header("content-disposition", `attachment; filename="${safe.replace(/[^\x20-\x7e]/g, "_")}.pdf"; filename*=UTF-8''${encodeURIComponent(safe)}.pdf`)
     .header("cache-control", "private, no-store");
   return reply.send(Buffer.from(bytes));
+}
+
+/** Valida y envía un borrador (dentro de la transacción del llamador). */
+export async function sendEnvelope(t: Db, tenantId: string, envelopeId: string, actor: Actor) {
+  const e = await lockEnvelope(t, tenantId, envelopeId);
+  requireDraft(e);
+  const docs = await loadDocuments(t, e.id);
+  const recips = await t.query<any>(`SELECT * FROM recipients WHERE envelope_id = $1`, [e.id]);
+  const fields = await t.query<any>(`SELECT recipient_id, type FROM fields WHERE envelope_id = $1`, [e.id]);
+  const problems: string[] = [];
+  if (docs.length === 0) problems.push("Agregá al menos un documento");
+  const signers = recips.filter((r) => r.role === "signer");
+  if (signers.length === 0) problems.push("Agregá al menos un firmante");
+  for (const s1 of signers) {
+    if (!fields.some((f) => f.recipient_id === s1.id && f.type === "signature"))
+      problems.push(`${s1.name} no tiene ningún campo de firma`);
+  }
+  if (e.expires_at && new Date(e.expires_at) <= new Date()) problems.push("La fecha de vencimiento ya pasó");
+  if (problems.length) throw new AppError(422, "envelope_incomplete", problems.join(". "), { problems });
+
+  await t.query(`UPDATE envelopes SET status = 'sent', sent_at = now(), updated_at = now(), version = version + 1 WHERE id = $1`, [e.id]);
+  await appendEvent(t, {
+    tenantId: tenantId,
+    envelopeId: e.id,
+    type: "envelope.sent",
+    actor: actor,
+    data: {
+      documents: docs.map((d) => ({ id: d.id, name: d.name, sha256: d.sha256 })),
+      recipients: recips.map((r) => ({ id: r.id, name: r.name, role: r.role, routingOrder: r.routing_order, channels: r.channels })),
+    },
+  });
+  // Todos los destinatarios reciben token ya (los CC lo usan al final para descargar).
+  for (const r of recips) {
+    if (!r.access_token_hash) {
+      const token = randomToken();
+      await t.query(`UPDATE recipients SET access_token_hash = $2, access_token_enc = $3 WHERE id = $1`, [r.id, sha256Hex(token), encrypt(token)]);
+    }
+  }
+  await advanceRouting(t, tenantId, e.id, actor);
 }

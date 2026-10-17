@@ -64,6 +64,10 @@ export const toField = (r: any): Field => ({
   required: r.required,
   label: r.label,
   value: r.value,
+  readOnly: Boolean(r.read_only),
+  options: r.options ?? null,
+  min: r.min_value ?? null,
+  max: r.max_value ?? null,
 });
 
 export async function loadDocuments(db: Db, envelopeId: string) {

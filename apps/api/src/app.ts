@@ -17,6 +17,7 @@ import { authenticate } from "./modules/context";
 import { envelopeRoutes } from "./modules/envelopes";
 import { signingRoutes } from "./modules/signing";
 import { telegramRoutes } from "./modules/telegram";
+import { productivityRoutes } from "./modules/productivity";
 
 export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolean | object }) {
   const app = Fastify({
@@ -88,6 +89,7 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
   await envelopeRoutes(app, services);
   await signingRoutes(app, services);
   await telegramRoutes(app, services);
+  await productivityRoutes(app, services);
 
   if (config.devMailbox) {
     // Local: todo el buzón. Entornos compartidos (dev): solo los mensajes de la organización de la sesión.

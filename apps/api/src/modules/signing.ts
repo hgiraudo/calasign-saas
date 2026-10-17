@@ -10,6 +10,8 @@ import { telegramStartLink } from "../notifications/channels";
 import { clientInfo, type Services } from "./context";
 import { advanceRouting, currentSignerGroup, lockEnvelope, sendPdf } from "./envelopes";
 import { toDocument, toField, loadDocuments } from "./mappers";
+import { checkValue, VALUE_FIELD_TYPES } from "./fieldvalues";
+import { getTenantBranding } from "./branding";
 
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -18,7 +20,7 @@ interface Resolved {
   envelope: any;
 }
 
-async function resolveToken(db: Db, token: string): Promise<Resolved> {
+export async function resolveToken(db: Db, token: string): Promise<Resolved> {
   if (!/^[A-Za-z0-9_-]{20,100}$/.test(token)) throw notFound("Link");
   const recipient = await db.one<any>(`SELECT * FROM recipients WHERE access_token_hash = $1`, [sha256Hex(token)]);
   if (!recipient) throw notFound("Link");
@@ -74,6 +76,9 @@ async function buildSession(db: Db, token: string, r: any, e: any): Promise<Sign
     fields: fields.map(toField),
     canSign,
     signedAvailable: e.status === "completed" && Boolean(e.signed_file_id),
+    branding: await getTenantBranding(db, e.tenant_id).then((b) =>
+      b.primaryColor || b.logoUrl ? { primaryColor: b.primaryColor, logoUrl: b.logoUrl ? new URL(b.logoUrl).pathname + new URL(b.logoUrl).search : null } : null,
+    ),
   };
 }
 
@@ -173,9 +178,24 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
       const hasSig = stored.some((x) => x.purpose === "signature");
       const hasIni = stored.some((x) => x.purpose === "initials");
 
+      const invalid: string[] = [];
       for (const f of fields) {
         let v: string | null = null;
-        if ((AUTO_FIELD_TYPES as string[]).includes(f.type)) {
+        if (f.read_only) {
+          v = f.value;
+        } else if (f.type === "attachment") {
+          v = f.attachment_file_id ? f.value : null;
+          if (f.required && !f.attachment_file_id) missing.push(f.label ?? "Adjunto");
+        } else if (VALUE_FIELD_TYPES.includes(f.type) && f.type !== "text") {
+          const res = checkValue(
+            { type: f.type, required: f.required, label: f.label, options: f.options, min: f.min_value, max: f.max_value },
+            values.has(f.id) ? values.get(f.id) : f.value,
+          );
+          if ("error" in res) {
+            if (res.error === "obligatorio") missing.push(f.label ?? f.type);
+            else invalid.push(`${f.label ?? f.type}: ${res.error}`);
+          } else v = res.value;
+        } else if ((AUTO_FIELD_TYPES as string[]).includes(f.type)) {
           v = f.type === "name" ? r.name : f.type === "email" ? r.email ?? "" : formatSigningDate(now, locale);
         } else if (f.type === "signature") {
           if (!hasSig) missing.push(f.label ?? "Firma");
@@ -187,12 +207,13 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
           v = values.get(f.id) === "true" ? "true" : "false";
           if (f.required && v !== "true") missing.push(f.label ?? "Casilla");
         } else {
-          v = (values.get(f.id) ?? "").trim() || null;
+          v = (values.has(f.id) ? values.get(f.id) ?? "" : f.value ?? "").trim() || null;
           if (f.required && !v) missing.push(f.label ?? "Texto");
         }
         await t.query(`UPDATE fields SET value = $2, filled_at = now() WHERE id = $1`, [f.id, v]);
       }
       if (missing.length) throw new AppError(422, "fields_incomplete", `Faltan completar: ${[...new Set(missing)].join(", ")}`, { missing });
+      if (invalid.length) throw new AppError(422, "fields_invalid", `Valores inválidos: ${invalid.join("; ")}`, { invalid });
 
       for (const x of stored) {
         await t.query(

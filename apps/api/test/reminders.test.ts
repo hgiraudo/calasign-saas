@@ -1,0 +1,52 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+
+// config.ts lee el entorno al importarse: DATA_DIR propio y PGlite (sin DATABASE_URL).
+process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "calasign-reminders-"));
+delete process.env.DATABASE_URL;
+
+describe("recordatorios automáticos y aviso de vencimiento", () => {
+  it("encola recordatorio cada N días y un solo aviso de vencimiento", async () => {
+    const { createDb, migrate } = await import("../src/infra/db");
+    const { runAutomaticReminders } = await import("../src/modules/reminders");
+    const { uuidv7 } = await import("../src/lib/util");
+    const db = await createDb();
+    await migrate(db);
+
+    const tenant = uuidv7();
+    const env = uuidv7();
+    const rec = uuidv7();
+    const now = new Date("2026-11-10T12:00:00Z");
+    const days = (n: number) => new Date(now.getTime() + n * 86400_000).toISOString();
+    await db.query(`INSERT INTO tenants (id, slug, name) VALUES ($1, $2, 'T')`, [tenant, `t-${tenant.slice(-8)}`]);
+    await db.query(
+      `INSERT INTO envelopes (id, tenant_id, subject, status, sent_at, expires_at, reminder_every_days, expiry_warning_days)
+       VALUES ($1, $2, 'S', 'sent', $3, $4, 2, 3)`,
+      [env, tenant, days(-3), days(2)],
+    );
+    await db.query(
+      `INSERT INTO recipients (id, tenant_id, envelope_id, role, routing_order, name, email, status) VALUES ($1,$2,$3,'signer',1,'Ana','a@x.com','sent')`,
+      [rec, tenant, env],
+    );
+
+    const jobs = async () => (await db.query<any>(`SELECT payload FROM jobs ORDER BY id`)).map((j) => j.payload.kind);
+
+    expect(await runAutomaticReminders(db, now)).toEqual({ reminded: 1, warned: 1 });
+    expect(await jobs()).toEqual(["reminder", "expiry_warning"]);
+
+    // Mismo momento otra vez: nada nuevo.
+    expect(await runAutomaticReminders(db, now)).toEqual({ reminded: 0, warned: 0 });
+    // Un día después: todavía no tocan (cada 2 días) y el aviso ya salió.
+    expect(await runAutomaticReminders(db, new Date(now.getTime() + 86400_000))).toEqual({ reminded: 0, warned: 0 });
+    // Dos días después: segundo recordatorio.
+    expect((await runAutomaticReminders(db, new Date(now.getTime() + 2 * 86400_000 + 1000))).reminded).toBe(1);
+    expect(await jobs()).toEqual(["reminder", "expiry_warning", "reminder"]);
+
+    const ev = await db.query<any>(`SELECT type, data FROM envelope_events WHERE envelope_id = $1 ORDER BY seq`, [env]);
+    expect(ev.map((e) => e.type)).toEqual(["envelope.reminded", "envelope.expiry_warning", "envelope.reminded"]);
+    expect(ev[0].data.automatic).toBe(true);
+    await db.close();
+  }, 60_000);
+});

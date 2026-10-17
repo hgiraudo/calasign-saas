@@ -6,6 +6,8 @@ import { api, errorText, uuid } from "../lib/api";
 import { LOCALE_LABELS, useI18n } from "../lib/i18n";
 import { forgetPdf } from "../lib/pdf";
 import { FieldEditor, type DraftField } from "../components/FieldEditor";
+import { AUTH_METHODS, type AuthMethod } from "@calasign/shared";
+import { useSignerText } from "../lib/i18n-signer";
 import { ErrorBox, Spinner, StatusBadge, formatBytes, recipientColor } from "../components/ui";
 
 interface DraftRecipient {
@@ -21,6 +23,7 @@ interface DraftRecipient {
   telegramLinked: boolean;
   idDocumentType: string;
   idDocumentNumber: string;
+  authMethod: AuthMethod;
 }
 
 const CHANNEL_LABELS: Record<Channel, string> = { email: "Email", whatsapp: "WhatsApp", telegram: "Telegram" };
@@ -42,6 +45,7 @@ function toDraftRecipients(d: EnvelopeDetail): DraftRecipient[] {
     telegramLinked: r.telegramLinked,
     idDocumentType: r.idDocumentType ?? "",
     idDocumentNumber: r.idDocumentNumber ?? "",
+    authMethod: r.authMethod ?? "link",
   }));
 }
 
@@ -122,6 +126,7 @@ export function EnvelopeEditPage() {
           ...(r.channels.includes("telegram") && r.telegramChatId.trim() ? { telegramChatId: r.telegramChatId.trim() } : {}),
           idDocumentType: r.idDocumentType || null,
           idDocumentNumber: r.idDocumentNumber.trim() || null,
+          authMethod: r.authMethod,
         })),
       };
       const d = await api<EnvelopeDetail>(`/v1/envelopes/${id}/recipients`, { method: "PUT", body });
@@ -170,7 +175,7 @@ export function EnvelopeEditPage() {
         setError(t("edit.noDocuments"));
         return;
       }
-      if (next >= 2 && recipients.filter((r) => r.role === "signer").length === 0) {
+      if (next >= 2 && recipients.filter((r) => r.role !== "cc").length === 0) {
         setError(t("edit.noRecipients"));
         return;
       }
@@ -382,6 +387,7 @@ function DocumentsStep({
 
 function RecipientsStep({ recipients, onChange }: { recipients: DraftRecipient[]; onChange: (r: DraftRecipient[]) => void }) {
   const { t } = useI18n();
+  const sx = useSignerText();
 
   const add = () => {
     const maxOrder = recipients.reduce((m, r) => Math.max(m, r.routingOrder), 0);
@@ -396,6 +402,7 @@ function RecipientsStep({ recipients, onChange }: { recipients: DraftRecipient[]
         phone: "",
         locale: "",
         channels: ["email"],
+        authMethod: "link",
         telegramChatId: "",
         telegramLinked: false,
         idDocumentType: "",
@@ -451,8 +458,21 @@ function RecipientsStep({ recipients, onChange }: { recipients: DraftRecipient[]
                 <select value={r.role} onChange={(e) => set(i, { role: e.target.value as RecipientRole })}>
                   <option value="signer">{t("edit.role.signer")}</option>
                   <option value="cc">{t("edit.role.cc")}</option>
+                  <option value="approver">{t("edit.role.approver")}</option>
                 </select>
               </label>
+              {r.role !== "cc" && (
+                <label className="field">
+                  <span>{sx("edit.authMethod")}</span>
+                  <select value={r.authMethod} onChange={(e) => set(i, { authMethod: e.target.value as AuthMethod })}>
+                    {AUTH_METHODS.map((m) => (
+                      <option key={m} value={m} disabled={(m === "otp_email" && !r.email.trim()) || ((m === "otp_sms" || m === "otp_whatsapp") && !r.phone.trim())}>
+                        {sx(`auth.${m}`)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <label className="field">
                 <span>{t("edit.locale")}</span>
                 <select value={r.locale} onChange={(e) => set(i, { locale: e.target.value as Locale | "" })}>
@@ -550,6 +570,10 @@ function ReviewStep({
   const [message, setMessage] = useState(env.message ?? "");
   const [expires, setExpires] = useState(toDateInput(env.expiresAt));
   const [idemKey] = useState(uuid);
+  const sx = useSignerText();
+  const [reminderEveryDays, setReminderEveryDays] = useState<number | null>(env.reminderEveryDays ?? null);
+  const [expiryWarningDays, setExpiryWarningDays] = useState<number | null>(env.expiryWarningDays ?? 3);
+  const [allowDelegation, setAllowDelegation] = useState(env.allowDelegation ?? true);
 
   const signers = useMemo(() => detail.recipients.filter((r) => r.role === "signer"), [detail.recipients]);
   const minDate = toDateInput(new Date(Date.now() + 86400000).toISOString());
@@ -561,7 +585,7 @@ function ReviewStep({
       const expiresAt = expires ? new Date(`${expires}T23:59:59`).toISOString() : null;
       const patched = await api<EnvelopeDetail>(`/v1/envelopes/${env.id}`, {
         method: "PATCH",
-        body: { subject: subject.trim(), message: message.trim() || null, expiresAt },
+        body: { subject: subject.trim(), message: message.trim() || null, expiresAt, reminderEveryDays, expiryWarningDays, allowDelegation },
       });
       onUpdated(patched);
       await api<EnvelopeDetail>(`/v1/envelopes/${env.id}/send`, { method: "POST", headers: { "Idempotency-Key": idemKey } });
@@ -592,6 +616,36 @@ function ReviewStep({
           </span>
           <input type="date" min={minDate} value={expires} onChange={(e) => setExpires(e.target.value)} />
         </label>
+        <fieldset className="field">
+          <legend>{sx("review.automation")}</legend>
+          <label className="field">
+            <span>{sx("review.reminders")}</span>
+            <select value={reminderEveryDays ?? ""} onChange={(e) => setReminderEveryDays(e.target.value ? Number(e.target.value) : null)}>
+              <option value="">{sx("review.none")}</option>
+              <option value="1">{sx("review.everyDay")}</option>
+              {[2, 3, 5, 7].map((n) => (
+                <option key={n} value={n}>
+                  {sx("review.everyDays", { n })}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            <span>{sx("review.expiryWarning")}</span>
+            <select value={expiryWarningDays ?? ""} onChange={(e) => setExpiryWarningDays(e.target.value ? Number(e.target.value) : null)}>
+              <option value="">{sx("review.none")}</option>
+              {[1, 2, 3, 5, 7].map((n) => (
+                <option key={n} value={n}>
+                  {sx("review.daysBefore", { n })}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="check">
+            <input type="checkbox" checked={allowDelegation} onChange={(e) => setAllowDelegation(e.target.checked)} />
+            {sx("review.allowDelegation")}
+          </label>
+        </fieldset>
         <button type="button" className="btn btn-primary btn-block" disabled={busy || !subject.trim()} onClick={send}>
           {busy ? t("edit.sending") : t("edit.send")}
         </button>
@@ -618,7 +672,8 @@ function ReviewStep({
                 <div className="grow">
                   <strong>{r.name}</strong>{" "}
                   <span className="muted small">
-                    #{r.routingOrder} · {r.role === "signer" ? t("edit.role.signer") : t("edit.role.cc")} · {r.channels.join(", ")}
+                    #{r.routingOrder} · {t(`edit.role.${r.role}`)} · {r.channels.join(", ")}
+                    {r.authMethod !== "link" ? ` · 🔒 ${sx(`auth.${r.authMethod}`)}` : ""}
                   </span>
                   <div className="muted small">{[r.email, r.phone].filter(Boolean).join(" · ")}</div>
                   {r.role === "signer" && (

@@ -16,6 +16,7 @@ import { authRoutes } from "./modules/auth";
 import { authenticate } from "./modules/context";
 import { envelopeRoutes } from "./modules/envelopes";
 import { signingRoutes } from "./modules/signing";
+import { signerFeatureRoutes } from "./modules/signer-features";
 import { telegramRoutes } from "./modules/telegram";
 import { webhookRoutes } from "./modules/webhooks";
 import { embedRoutes } from "./modules/embed";
@@ -89,6 +90,7 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
   });
   await authRoutes(app, services);
   await envelopeRoutes(app, services);
+  await signerFeatureRoutes(app, services);
   await signingRoutes(app, services);
   await telegramRoutes(app, services);
   await webhookRoutes(app, services);

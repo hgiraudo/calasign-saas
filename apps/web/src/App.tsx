@@ -10,6 +10,7 @@ import { SignerPage } from "./pages/Signer";
 import { DevMailboxPage } from "./pages/DevMailbox";
 import { IntegrationsPage } from "./pages/Integrations";
 import { DevelopersPage } from "./pages/Developers";
+import { VerifyPage } from "./pages/Verify";
 
 export function App() {
   return (
@@ -19,6 +20,7 @@ export function App() {
       <Route path="/signup" element={<SignupPage />} />
       <Route path="/s/:token" element={<SignerPage />} />
       <Route path="/developers" element={<DevelopersPage />} />
+      <Route path="/verify" element={<VerifyPage />} />
       <Route
         element={
           <RequireAuth>

@@ -1,6 +1,7 @@
 // Contrato de la API v1. Fuente de verdad para apps/api y apps/web.
 // Entradas: esquemas Zod (se validan en el servidor). Salidas: tipos TypeScript.
 import { z } from "zod";
+import { AUTH_METHODS, EnvelopeReminderSettings, type AuthMethod } from "./signer";
 
 // ───────────────────────────── Enumeraciones ─────────────────────────────
 
@@ -10,10 +11,10 @@ export type Locale = (typeof LOCALES)[number];
 export const ENVELOPE_STATUSES = ["draft", "sent", "finalizing", "completed", "declined", "voided", "expired"] as const;
 export type EnvelopeStatus = (typeof ENVELOPE_STATUSES)[number];
 
-export const RECIPIENT_ROLES = ["signer", "cc"] as const;
+export const RECIPIENT_ROLES = ["signer", "cc", "approver"] as const;
 export type RecipientRole = (typeof RECIPIENT_ROLES)[number];
 
-export const RECIPIENT_STATUSES = ["created", "sent", "viewed", "signed", "declined", "completed"] as const;
+export const RECIPIENT_STATUSES = ["created", "sent", "viewed", "signed", "declined", "completed", "delegated", "reassigned"] as const;
 export type RecipientStatus = (typeof RECIPIENT_STATUSES)[number];
 
 export const CHANNELS = ["email", "whatsapp", "telegram"] as const;
@@ -96,6 +97,7 @@ export const CreateEnvelopeInput = z.object({
   locale: z.enum(LOCALES).optional(),
   expiresAt: z.string().datetime().optional().nullable(),
   metadata: z.record(z.string(), z.unknown()).optional(),
+  ...EnvelopeReminderSettings,
 });
 export type CreateEnvelopeInput = z.infer<typeof CreateEnvelopeInput>;
 
@@ -129,8 +131,14 @@ export const RecipientInput = z
     idDocumentNumber: z.string().trim().max(50).optional().nullable(),
     /** Firma dentro de la app del integrador (URL de firma embebida): no recibe invitaciones. */
     embedded: z.boolean().optional(),
+    /** Autenticación previa a ver los documentos. Default "link". */
+    authMethod: z.enum(AUTH_METHODS).optional(),
   })
   .refine((r) => r.embedded || r.email || r.phone, { message: "email o phone requerido" })
+  .refine((r) => r.authMethod !== "otp_email" || r.email, { message: "el código por email requiere email" })
+  .refine((r) => !(r.authMethod === "otp_sms" || r.authMethod === "otp_whatsapp") || r.phone, {
+    message: "el código por SMS/WhatsApp requiere phone",
+  })
   .refine((r) => r.embedded || !r.channels.includes("email") || r.email, { message: "el canal email requiere email" })
   .refine((r) => r.embedded || !r.channels.includes("whatsapp") || r.phone, { message: "el canal whatsapp requiere phone" })
   .refine((r) => r.embedded || r.channels.some((c) => c !== "telegram") || r.telegramChatId, {
@@ -201,6 +209,9 @@ export interface Recipient {
   signedAt: string | null;
   declinedAt: string | null;
   declineReason: string | null;
+  authMethod: AuthMethod;
+  /** Si fue delegado o reasignado: id del destinatario que lo reemplaza. */
+  replacedBy: string | null;
 }
 
 export interface Field {
@@ -245,6 +256,9 @@ export interface Envelope {
   expiresAt: string | null;
   metadata: Record<string, unknown>;
   signedSha256: string | null;
+  reminderEveryDays: number | null;
+  expiryWarningDays: number | null;
+  allowDelegation: boolean;
 }
 
 export interface EnvelopeDetail {
@@ -311,6 +325,7 @@ export interface SigningSession {
     consented: boolean;
     /** Link t.me para recibir avisos por Telegram (null si el bot no está configurado o ya está vinculado). */
     telegramLink: string | null;
+    authMethod: AuthMethod;
   };
   documents: Document[];
   /** Solo los campos de este destinatario. */
@@ -319,6 +334,12 @@ export interface SigningSession {
   canSign: boolean;
   /** true cuando el PDF sellado está disponible para descargar. */
   signedAvailable: boolean;
+  /** true si falta validar el código (OTP): documentos y campos vienen vacíos hasta verificarlo. */
+  otpRequired: boolean;
+  /** Destino enmascarado del código (ej. jo***@mail.com). */
+  otpDestination: string | null;
+  /** Si este destinatario puede delegar la firma. */
+  canDelegate: boolean;
 }
 
 // ───────────────────────────── Desarrollo ─────────────────────────────

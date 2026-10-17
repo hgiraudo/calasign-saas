@@ -31,7 +31,7 @@ export interface StampField {
 
 export interface CertificateRecipient {
   name: string;
-  role: "signer" | "cc";
+  role: "signer" | "cc" | "approver";
   email: string | null;
   phone: string | null;
   idDocument: string | null;
@@ -44,6 +44,8 @@ export interface CertificateRecipient {
   ip: string | null;
   userAgent: string | null;
   signaturePng?: Uint8Array | null;
+  /** Ej. "Delegó en Ana Pérez: viaje" (destinatarios reemplazados). */
+  note?: string | null;
 }
 
 export interface CertificateData {
@@ -60,6 +62,8 @@ export interface CertificateData {
   recipients: CertificateRecipient[];
   events: { seq: number; type: string; occurredAt: string; actor: string; ip: string | null }[];
   chainHead: string;
+  /** URL pública de verificación (se imprime al pie del certificado). */
+  verifyUrl?: string | null;
 }
 
 export interface FinalizeInput {
@@ -261,7 +265,7 @@ async function drawCertificate(
   section(L.recipients);
   for (const r of c.recipients) {
     ensure(110);
-    const role = r.role === "cc" ? L.role_cc : L.role_signer;
+    const role = r.role === "cc" ? L.role_cc : r.role === "approver" ? L.role_approver : L.role_signer;
     text(`${r.name} — ${role}`, { bold: true, size: 9.5 });
     const top = y;
     const ix = M + 12;
@@ -269,11 +273,12 @@ async function drawCertificate(
     kv(L.phone, r.phone, ix);
     kv(L.idDocument, r.idDocument, ix);
     kv(L.channels, r.channels.join(", "), ix);
-    if (r.role === "signer") kv(L.auth, r.authMethod === "link" ? L.auth_link : r.authMethod, ix);
+    if (r.role !== "cc") kv(L.auth, authLabel(L, r.authMethod), ix);
     kv(L.sent, fmt(r.sentAt), ix);
     kv(L.viewed, fmt(r.viewedAt), ix);
     kv(L.consented, fmt(r.consentedAt), ix);
-    kv(L.signed, fmt(r.signedAt), ix);
+    kv(r.role === "approver" ? L.approved : L.signed, fmt(r.signedAt), ix);
+    kv(L.note, r.note ?? null, ix);
     kv(L.ip, r.ip, ix);
     kv(L.device, r.userAgent ? r.userAgent.slice(0, 160) : null, ix);
     if (r.signaturePng) {
@@ -320,6 +325,7 @@ async function drawCertificate(
   text(c.chainHead, { size: 8.5 });
   y -= 6;
   text(L.statement, { size: 8, color: MUTED });
+  if (c.verifyUrl) text(`${L.verifyAt} ${c.verifyUrl}`, { size: 8, color: MUTED });
 
   pagesAdded.forEach((p, i) => {
     p.drawText(safeText(fonts.regular, `${L.title} · ${c.envelopeId} · ${L.page} ${i + 1}/${pagesAdded.length}`), {
@@ -330,4 +336,11 @@ async function drawCertificate(
       color: MUTED,
     });
   });
+}
+
+function authLabel(L: CertLabels, m: string): string {
+  if (m === "otp_email") return L.auth_otp_email;
+  if (m === "otp_sms") return L.auth_otp_sms;
+  if (m === "otp_whatsapp") return L.auth_otp_whatsapp;
+  return m === "link" ? L.auth_link : m;
 }

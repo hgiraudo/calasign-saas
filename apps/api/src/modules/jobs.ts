@@ -11,6 +11,7 @@ import { render, type TemplateKind } from "../notifications/templates";
 import { loadDocuments } from "./mappers";
 import { embeddedAuthLabel } from "./embed";
 import { handleWebhookJob } from "./webhooks";
+import { runAutomaticReminders } from "./reminders";
 
 interface Deps {
   db: Db;
@@ -18,7 +19,7 @@ interface Deps {
   log: { info(o: object, m?: string): void; warn(o: object, m?: string): void; error(o: object, m?: string): void };
 }
 
-const LINK_KINDS: TemplateKind[] = ["invite", "reminder", "completed"];
+const LINK_KINDS: TemplateKind[] = ["invite", "reminder", "completed", "expiry_warning"];
 const TELEGRAM_HINT = {
   es: "¿Preferís recibir los avisos por Telegram?",
   "pt-BR": "Prefere receber os avisos pelo Telegram?",
@@ -66,9 +67,9 @@ async function notify(d: Deps, p: { kind: TemplateKind; envelopeId: string; tena
   const r = await d.db.one<any>(`SELECT * FROM recipients WHERE id = $1`, [p.recipientId]);
   if (!r) return;
   // Invitaciones/recordatorios obsoletos (el sobre cambió de estado mientras esperaban en la cola).
-  if ((p.kind === "invite" || p.kind === "reminder") && (e.status !== "sent" || !["sent", "viewed"].includes(r.status))) return;
-  // Firma embebida: el integrador muestra la ceremonia en su app; no se mandan invitaciones.
-  if ((p.kind === "invite" || p.kind === "reminder") && r.embedded) return;
+  if ((p.kind === "invite" || p.kind === "reminder" || p.kind === "expiry_warning") && (e.status !== "sent" || !["sent", "viewed"].includes(r.status))) return;
+  // Firma embebida: el integrador muestra la ceremonia en su app; no se mandan invitaciones ni avisos.
+  if ((p.kind === "invite" || p.kind === "reminder" || p.kind === "expiry_warning") && r.embedded) return;
 
   const locale = r.locale ?? e.locale;
   const token = r.access_token_enc ? decrypt(r.access_token_enc) : null;
@@ -186,6 +187,7 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
     ip: r.signed_ip ?? ev(r, "recipient.viewed")?.ip ?? null,
     userAgent: r.signed_user_agent ?? null,
     signaturePng: sigImages.get(`${r.id}:signature`) ?? null,
+    note: replacementNote(r, recips, e.locale),
   }));
   const completedAt = new Date().toISOString();
   const chainHead = events[events.length - 1]?.hash ?? "";
@@ -214,6 +216,7 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
         ip: x.ip,
       })),
       chainHead,
+      verifyUrl: `${config.appUrl}/verify`,
     },
   };
 
@@ -259,7 +262,8 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
         seal: { provider: provider.id, format: timestamped ? "PAdES-B-T" : "PAdES-B-B", tsa: timestamped ? config.seal.tsaUrl : null, tsaError },
       },
     });
-    for (const r of recips) await enqueue(t, "notify", { kind: "completed", envelopeId: e.id, recipientId: r.id, tenantId: e.tenant_id });
+    for (const r of recips.filter((x) => x.status !== "delegated" && x.status !== "reassigned"))
+      await enqueue(t, "notify", { kind: "completed", envelopeId: e.id, recipientId: r.id, tenantId: e.tenant_id });
     await enqueue(t, "notify", { kind: "sender_completed", envelopeId: e.id, tenantId: e.tenant_id });
   });
   d.log.info({ envelopeId: e.id, sha256: sha, bytes: pdf.length }, "sobre completado y sellado");
@@ -269,6 +273,7 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
 
 export async function sweep(d: Deps) {
   await requeueStuckJobs(d.db);
+  await runAutomaticReminders(d.db);
   const expired = await d.db.query<any>(`SELECT id, tenant_id FROM envelopes WHERE status = 'sent' AND expires_at < now() LIMIT 100`);
   for (const e of expired) {
     await d.db.tx(async (t) => {
@@ -278,4 +283,19 @@ export async function sweep(d: Deps) {
       await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "envelope.expired", actor: SYSTEM });
     });
   }
+}
+
+const REPLACED = {
+  es: { delegated: "Delegó en", reassigned: "Reasignado a" },
+  "pt-BR": { delegated: "Delegou para", reassigned: "Reatribuído a" },
+  en: { delegated: "Delegated to", reassigned: "Reassigned to" },
+} as const;
+
+/** Nota del certificado para destinatarios reemplazados (delegó / fue reasignado). */
+function replacementNote(r: any, all: any[], locale: string): string | null {
+  if (r.status !== "delegated" && r.status !== "reassigned") return null;
+  const to = all.find((x) => x.id === r.replaced_by);
+  const L = REPLACED[(locale in REPLACED ? locale : "es") as keyof typeof REPLACED];
+  const base = `${L[r.status as "delegated" | "reassigned"]} ${to?.name ?? "?"}`;
+  return r.replace_reason ? `${base}: ${r.replace_reason}` : base;
 }

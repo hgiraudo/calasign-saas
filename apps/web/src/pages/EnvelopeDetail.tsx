@@ -4,6 +4,9 @@ import type { EnvelopeDetail, EnvelopeEvent } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
 import { formatDateTime, useI18n } from "../lib/i18n";
 import { ErrorBox, Modal, RecipientStatusBadge, Spinner, StatusBadge, formatBytes, recipientColor } from "../components/ui";
+import { ReassignModal } from "../components/SignerExtras";
+import { useSignerText } from "../lib/i18n-signer";
+import type { Recipient } from "@calasign/shared";
 
 export function EnvelopeDetailPage() {
   const { id = "" } = useParams();
@@ -16,6 +19,8 @@ export function EnvelopeDetailPage() {
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [notFound, setNotFound] = useState(false);
+  const [reassigning, setReassigning] = useState<Recipient | null>(null);
+  const sx = useSignerText();
 
   const load = useCallback(async () => {
     try {
@@ -144,8 +149,14 @@ export function EnvelopeDetailPage() {
                       <strong>{r.name}</strong>
                       <RecipientStatusBadge status={r.status} />
                       <span className="muted small">
-                        #{r.routingOrder} · {r.role === "signer" ? t("edit.role.signer") : t("edit.role.cc")}
+                        #{r.routingOrder} · {t(`edit.role.${r.role}`)}
+                        {r.authMethod && r.authMethod !== "link" ? ` · 🔒 ${sx(`auth.${r.authMethod}`)}` : ""}
                       </span>
+                      {isOpen && r.role !== "cc" && ["created", "sent", "viewed"].includes(r.status) && (
+                        <button type="button" className="btn btn-ghost btn-sm" onClick={() => setReassigning(r)}>
+                          {sx("reassign.button")}
+                        </button>
+                      )}
                       {r.channels.includes("telegram") && (
                         <span className={`badge ${r.telegramLinked ? "chan-telegram" : "rbadge-created"}`}>
                           {r.telegramLinked ? `✓ ${t("detail.telegramLinked")}` : t("detail.telegramPending")}
@@ -159,6 +170,11 @@ export function EnvelopeDetailPage() {
                       {r.signedAt && <span>{t("detail.signed")}: {formatDateTime(r.signedAt, locale)}</span>}
                       {r.declinedAt && <span>{t("detail.declined")}: {formatDateTime(r.declinedAt, locale)}</span>}
                     </div>
+                    {r.replacedBy && (
+                      <div className="small">
+                        ↪ {sx("detail.replacedBy", { name: detail.recipients.find((x) => x.id === r.replacedBy)?.name ?? "" })}
+                      </div>
+                    )}
                     {r.declineReason && (
                       <div className="small">
                         {t("detail.declineReason")}: {r.declineReason}
@@ -220,6 +236,19 @@ export function EnvelopeDetailPage() {
           </ol>
         </section>
       </div>
+
+      {reassigning && (
+        <ReassignModal
+          envelopeId={id}
+          recipient={reassigning}
+          onClose={() => setReassigning(null)}
+          onDone={(d) => {
+            setDetail(d);
+            setReassigning(null);
+            load();
+          }}
+        />
+      )}
 
       {voiding && (
         <Modal

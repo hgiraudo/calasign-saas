@@ -9,6 +9,8 @@ import { DocumentView } from "../components/DocumentView";
 import { SignaturePad } from "../components/SignaturePad";
 import { ErrorBox, LocaleSwitcher, Logo, Modal, Spinner } from "../components/ui";
 import { useEmbedBridge } from "../lib/embed";
+import { DelegateModal, OtpGate } from "../components/SignerExtras";
+import { useSignerText } from "../lib/i18n-signer";
 
 type Adopted = SignatureImageInput & { dataUrl: string };
 
@@ -18,6 +20,8 @@ export function SignerPage() {
   const [session, setSession] = useState<SigningSession | null>(null);
   const [invalid, setInvalid] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [delegatedTo, setDelegatedTo] = useState<string | null>(null);
+  const sx = useSignerText();
   const base = `/v1/signing/${encodeURIComponent(token)}`;
 
   const apply = useCallback(
@@ -47,6 +51,18 @@ export function SignerPage() {
     );
   if (!session)
     return <SignerShell>{error ? <ErrorBox error={error} /> : <Spinner />}</SignerShell>;
+  if (delegatedTo)
+    return (
+      <SignerShell org={session.envelope.organizationName}>
+        <Final icon="↪" ok title={sx("delegate.doneTitle")} text={sx("delegate.doneText", { name: delegatedTo })} />
+      </SignerShell>
+    );
+  if (session.otpRequired)
+    return (
+      <SignerShell org={session.envelope.organizationName}>
+        <OtpGate session={session} base={base} onDone={apply} />
+      </SignerShell>
+    );
 
   const { envelope, recipient } = session;
   const download = session.signedAvailable ? (
@@ -61,7 +77,12 @@ export function SignerPage() {
       recipient.role === "cc" ? (
         <CcView session={session} base={base} download={download} />
       ) : (
-        <Final icon="✓" ok title={t("sign.doneTitle")} text={session.signedAvailable ? t("sign.doneAvailable") : t("sign.doneText")}>
+        <Final
+          icon="✓"
+          ok
+          title={recipient.role === "approver" ? sx("approve.doneTitle") : t("sign.doneTitle")}
+          text={session.signedAvailable ? t("sign.doneAvailable") : recipient.role === "approver" ? sx("approve.doneText") : t("sign.doneText")}
+        >
           {download}
         </Final>
       );
@@ -80,7 +101,7 @@ export function SignerPage() {
   } else if (!recipient.consented) {
     content = <Consent session={session} base={base} onDone={apply} />;
   } else {
-    return <SigningFlow session={session} base={base} onDone={apply} />;
+    return <SigningFlow session={session} base={base} onDone={apply} onDelegated={setDelegatedTo} />;
   }
 
   return (
@@ -199,8 +220,21 @@ function isAuto(f: Field) {
   return AUTO_FIELD_TYPES.includes(f.type);
 }
 
-function SigningFlow({ session, base, onDone }: { session: SigningSession; base: string; onDone: (s: SigningSession) => void }) {
+function SigningFlow({
+  session,
+  base,
+  onDone,
+  onDelegated,
+}: {
+  session: SigningSession;
+  base: string;
+  onDone: (s: SigningSession) => void;
+  onDelegated: (name: string) => void;
+}) {
   const { t, locale } = useI18n();
+  const sx = useSignerText();
+  const [delegating, setDelegating] = useState(false);
+  const finishLabel = session.recipient.role === "approver" ? sx("approve.button") : t("sign.finish");
   const [values, setValues] = useState<Record<string, string>>(() =>
     Object.fromEntries(session.fields.filter((f) => f.type === "text" || f.type === "checkbox").map((f) => [f.id, f.value ?? (f.type === "checkbox" ? "false" : "")])),
   );
@@ -399,7 +433,7 @@ function SigningFlow({ session, base, onDone }: { session: SigningSession; base:
             </button>
           ) : (
             <button type="button" className="btn btn-accent btn-sm" disabled={busy} onClick={finish}>
-              {busy ? t("sign.finishing") : t("sign.finish")}
+              {busy ? t("sign.finishing") : finishLabel}
             </button>
           )}
         </div>
@@ -425,13 +459,22 @@ function SigningFlow({ session, base, onDone }: { session: SigningSession; base:
         })}
 
         <div className="finish-box card pad">
-          <p className="small muted">{t("sign.progress", { done, total: required.length })}</p>
+          {session.recipient.role === "approver" ? (
+            <p className="small muted">{sx("approve.hint")}</p>
+          ) : (
+            <p className="small muted">{t("sign.progress", { done, total: required.length })}</p>
+          )}
           <button id="finish-btn" type="button" className="btn btn-primary btn-block" disabled={busy} onClick={finish}>
-            {busy ? t("sign.finishing") : t("sign.finish")}
+            {busy ? t("sign.finishing") : finishLabel}
           </button>
           <button type="button" className="btn btn-ghost btn-block" onClick={() => setDeclining(true)}>
             {t("sign.decline")}
           </button>
+          {session.canDelegate && (
+            <button type="button" className="btn btn-ghost btn-block" onClick={() => setDelegating(true)}>
+              ↪ {sx("delegate.button")}
+            </button>
+          )}
         </div>
       </main>
 
@@ -452,6 +495,8 @@ function SigningFlow({ session, base, onDone }: { session: SigningSession; base:
           }}
         />
       )}
+
+      {delegating && <DelegateModal base={base} onClose={() => setDelegating(false)} onDone={(name) => onDelegated(name)} />}
 
       {declining && (
         <Modal

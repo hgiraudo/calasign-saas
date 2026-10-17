@@ -35,7 +35,7 @@ function cspFrameAncestors(origins: string[]) {
 }
 
 /** Reemplaza la directiva frame-ancestors del CSP que puso helmet. */
-function setFrameAncestors(reply: FastifyReply, origins: string[]) {
+export function setFrameAncestors(reply: FastifyReply, origins: string[]) {
   const csp = String(reply.getHeader("content-security-policy") ?? "");
   const value = cspFrameAncestors(origins);
   const next = /frame-ancestors [^;]*/.test(csp) ? csp.replace(/frame-ancestors [^;]*/, `frame-ancestors ${value}`) : `${csp};frame-ancestors ${value}`;

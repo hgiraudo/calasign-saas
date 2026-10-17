@@ -505,6 +505,8 @@ export async function insertEnvelopeFromTemplate(
   input: FromTemplateInput,
   plan: TemplatePlan,
   extraMetadata: Record<string, unknown> = {},
+  /** Recibe rol de la plantilla → id del destinatario creado. */
+  onRecipients?: (byRole: Map<string, string>) => void,
 ): Promise<string> {
   const { tpl, row: tplRow, docs: tplDocs } = l;
   const envId = uuidv7();
@@ -573,6 +575,7 @@ export async function insertEnvelopeFromTemplate(
       ],
     );
   }
+  onRecipients?.(recMap);
   const fieldMap = new Map<string, string>();
   for (const f of tpl.fields) {
     const recipientId = recMap.get(f.roleId);

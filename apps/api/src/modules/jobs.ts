@@ -10,6 +10,7 @@ import { deliver, telegramStartLink } from "../notifications/channels";
 import { render, type TemplateKind } from "../notifications/templates";
 import { loadDocuments } from "./mappers";
 import { finalizeFieldLogic } from "./logic";
+import { handleBulkJob } from "./bulk";
 import { embeddedAuthLabel } from "./embed";
 import { handleWebhookJob } from "./webhooks";
 import { runAutomaticReminders } from "./reminders";
@@ -33,6 +34,7 @@ export function createJobHandlers(d: Deps): Record<JobQueueName, JobHandler> {
     notify: (p) => notify(d, p),
     finalize: (p) => finalize(d, p),
     webhook: (p, job) => handleWebhookJob(d, p, job),
+    bulk: (p) => handleBulkJob(d, p),
   };
 }
 

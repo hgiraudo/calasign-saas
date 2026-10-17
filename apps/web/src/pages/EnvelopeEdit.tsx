@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useExpText } from "../lib/i18n-experience";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import type { Channel, Document, EnvelopeDetail, Locale, RecipientRole } from "@calasign/shared";
 import { CHANNELS, ID_DOCUMENT_TYPES, LOCALES } from "@calasign/shared";
@@ -134,6 +135,8 @@ export function EnvelopeEditPage() {
           idDocumentType: r.idDocumentType || null,
           idDocumentNumber: r.idDocumentNumber.trim() || null,
           authMethod: r.authMethod,
+          // Firma en persona: la anfitriona es quien carga el sobre.
+          inPerson: r.authMethod === "in_person" ? {} : null,
         })),
       };
       const d = await api<EnvelopeDetail>(`/v1/envelopes/${id}/recipients`, { method: "PUT", body });
@@ -401,6 +404,8 @@ function DocumentsStep({
 function RecipientsStep({ recipients, onChange }: { recipients: DraftRecipient[]; onChange: (r: DraftRecipient[]) => void }) {
   const { t } = useI18n();
   const sx = useSignerText();
+  const x = useExpText();
+  const authLabel = (m: AuthMethod) => (m === "in_person" ? x("auth.in_person") : sx(`auth.${m}` as Parameters<typeof sx>[0]));
 
   const add = () => {
     const maxOrder = recipients.reduce((m, r) => Math.max(m, r.routingOrder), 0);
@@ -480,7 +485,7 @@ function RecipientsStep({ recipients, onChange }: { recipients: DraftRecipient[]
                   <select value={r.authMethod} onChange={(e) => set(i, { authMethod: e.target.value as AuthMethod })}>
                     {AUTH_METHODS.map((m) => (
                       <option key={m} value={m} disabled={(m === "otp_email" && !r.email.trim()) || ((m === "otp_sms" || m === "otp_whatsapp") && !r.phone.trim())}>
-                        {sx(`auth.${m}`)}
+                        {authLabel(m)}
                       </option>
                     ))}
                   </select>
@@ -584,6 +589,8 @@ function ReviewStep({
   const [expires, setExpires] = useState(toDateInput(env.expiresAt));
   const [idemKey] = useState(uuid);
   const sx = useSignerText();
+  const x = useExpText();
+  const authLabel = (m: AuthMethod) => (m === "in_person" ? x("auth.in_person") : sx(`auth.${m}` as Parameters<typeof sx>[0]));
   const [reminderEveryDays, setReminderEveryDays] = useState<number | null>(env.reminderEveryDays ?? null);
   const [expiryWarningDays, setExpiryWarningDays] = useState<number | null>(env.expiryWarningDays ?? 3);
   const [allowDelegation, setAllowDelegation] = useState(env.allowDelegation ?? true);
@@ -686,7 +693,7 @@ function ReviewStep({
                   <strong>{r.name}</strong>{" "}
                   <span className="muted small">
                     #{r.routingOrder} · {t(`edit.role.${r.role}`)} · {r.channels.join(", ")}
-                    {r.authMethod !== "link" ? ` · 🔒 ${sx(`auth.${r.authMethod}`)}` : ""}
+                    {r.authMethod !== "link" ? ` · 🔒 ${authLabel(r.authMethod)}` : ""}
                   </span>
                   <div className="muted small">{[r.email, r.phone].filter(Boolean).join(" · ")}</div>
                   {r.role === "signer" && (

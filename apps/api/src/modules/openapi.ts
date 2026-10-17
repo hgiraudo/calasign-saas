@@ -19,6 +19,8 @@ import {
   UpdateEnvelopeInput,
   UpdateWebhookInput,
   VoidEnvelopeInput,
+  CorrectEnvelopeInput,
+  InPersonConfirmInput,
   WEBHOOK_EVENT_TYPES,
   ENVELOPE_STATUSES,
   RECIPIENT_STATUSES,
@@ -200,6 +202,15 @@ const OPS: Op[] = [
   { method: "post", path: "/v1/signing/{token}/complete", tag: "Firmante", summary: "Completar y firmar", body: CompleteSigningInput, auth: "token" },
   { method: "post", path: "/v1/signing/{token}/decline", tag: "Firmante", summary: "Rechazar", body: DeclineInput, auth: "token" },
   { method: "get", path: "/v1/signing/{token}/signed.pdf", tag: "Firmante", summary: "PDF final (si el sobre está completo)", response: "pdf", auth: "token" },
+  // Experiencia (Fase 4)
+  { method: "post", path: "/v1/envelopes/{id}/corrections", tag: "Sobres", summary: "Corregir un sobre en curso", description: "Mensaje, vencimiento, datos de contacto (link nuevo y el anterior revocado), altas y bajas de destinatarios y campos solo para quien no abrió el sobre. Quien ya firmó es inmutable. `addRecipients` y `addFields` usan el formato de PUT /recipients y PUT /fields.", body: CorrectEnvelopeInput, response: EnvelopeDetail },
+  { method: "post", path: "/v1/envelopes/{id}/recipients/{recipientId}/in-person", tag: "Firma en persona", summary: "Abrir la firma en persona en el dispositivo del anfitrión", description: "Solo el usuario anfitrión (sesión web, no API key). Devuelve la ruta de la página del firmante y deja la sesión del firmante como cookie en ese navegador (1 h).", response: z.object({ url: z.string(), expiresAt: iso }) },
+  { method: "post", path: "/v1/signing/{token}/in-person/confirm", tag: "Firma en persona", summary: "El firmante confirma su identidad en el dispositivo", body: InPersonConfirmInput, auth: "token" },
+  { method: "post", path: "/v1/signing/{token}/in-person/end", tag: "Firma en persona", summary: "Cerrar la sesión en persona (el dispositivo vuelve al anfitrión)", auth: "token" },
+  { method: "post", path: "/v1/envelopes/{id}/recipients/{recipientId}/resend-copy", tag: "Sobres", summary: "Reenviar el documento final a un participante", response: z.object({ queued: z.literal(true), recipientId: z.string().uuid() }) },
+  { method: "post", path: "/v1/signing/{token}/request-copy", tag: "Firmante", summary: "Pedir de nuevo el documento final (máx. una vez cada 10 minutos)", auth: "token", response: z.object({ queued: z.literal(true), recipientId: z.string().uuid() }) },
+  { method: "get", path: "/v1/reports/summary", tag: "Reportes", summary: "Resumen de actividad", description: "Query: from, to (ISO 8601; por defecto los últimos 6 meses). Totales, sobres por mes, remitentes y notificaciones por canal." },
+  { method: "get", path: "/v1/reports/envelopes.csv", tag: "Reportes", summary: "Exportar sobres a CSV", description: "Query: from, to. UTF-8 con BOM; las celdas que empiezan con = + - @ se prefijan con ' (contra inyección de fórmulas)." },
 ];
 
 export function buildOpenApi() {

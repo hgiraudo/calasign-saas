@@ -3,7 +3,7 @@
 import { z } from "zod";
 
 /** Cómo se autentica el destinatario antes de ver los documentos. */
-export const AUTH_METHODS = ["link", "otp_email", "otp_sms", "otp_whatsapp"] as const;
+export const AUTH_METHODS = ["link", "otp_email", "otp_sms", "otp_whatsapp", "in_person"] as const;
 export type AuthMethod = (typeof AUTH_METHODS)[number];
 
 /** Configuración de recordatorios y delegación del sobre (se agrega a Create/UpdateEnvelopeInput). */

@@ -207,6 +207,8 @@ export async function enforceRoutePolicy(db: Db, req: FastifyRequest, a: AuthCon
   }
   if (url.startsWith("/v1/webhooks") || url.startsWith("/v1/webhook-deliveries")) return requirePerm(a, "webhooks:manage");
   if (url.startsWith("/v1/audit-log")) return requirePerm(a, "audit:view");
+  // Reportes: estadísticas de toda la organización.
+  if (url.startsWith("/v1/reports")) return requirePerm(a, "envelopes:view_all");
   if (/^\/v1\/(members|roles|groups|invitations)(\/|$)/.test(url) && !isRead) return requirePerm(a, "members:manage");
   if (url.startsWith("/v1/invitations") && isRead) return requirePerm(a, "members:manage");
 }

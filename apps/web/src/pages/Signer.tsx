@@ -11,6 +11,8 @@ import { ErrorBox, LocaleSwitcher, Logo, Modal, Spinner } from "../components/ui
 import { useEmbedBridge } from "../lib/embed";
 import { DelegateModal, OtpGate } from "../components/SignerExtras";
 import { useSignerText } from "../lib/i18n-signer";
+import { InPersonBlocked, InPersonDone, InPersonHandover, RequestCopyButton, useFocusOnMount } from "../components/ExperienceExtras";
+import { useExpText } from "../lib/i18n-experience";
 
 type Adopted = SignatureImageInput & { dataUrl: string };
 
@@ -42,6 +44,11 @@ export function SignerPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [base]);
   useEmbedBridge(token, session, invalid);
+  const reload = useCallback(() => {
+    api<SigningSession>(base)
+      .then(apply)
+      .catch((e) => setError(errorText(e)));
+  }, [base, apply]);
 
   if (invalid)
     return (
@@ -57,6 +64,12 @@ export function SignerPage() {
         <Final icon="↪" ok title={sx("delegate.doneTitle")} text={sx("delegate.doneText", { name: delegatedTo })} />
       </SignerShell>
     );
+  if (session.otpRequired && session.inPerson)
+    return (
+      <SignerShell org={session.envelope.organizationName} branding={session.branding}>
+        <InPersonBlocked session={session} />
+      </SignerShell>
+    );
   if (session.otpRequired)
     return (
       <SignerShell org={session.envelope.organizationName}>
@@ -66,13 +79,18 @@ export function SignerPage() {
 
   const { envelope, recipient } = session;
   const download = session.signedAvailable ? (
-    <a className="btn btn-primary" href={`${base}/signed.pdf`}>
-      ⬇ {t("sign.downloadSigned")}
-    </a>
+    <>
+      <a className="btn btn-primary" href={`${base}/signed.pdf`}>
+        ⬇ {t("sign.downloadSigned")}
+      </a>
+      <RequestCopyButton base={base} />
+    </>
   ) : null;
 
   let content: ReactNode;
-  if (recipient.status === "signed" || recipient.status === "completed") {
+  if (session.inPerson?.active && recipient.status === "signed") {
+    content = <InPersonDone session={session} base={base} />;
+  } else if (recipient.status === "signed" || recipient.status === "completed") {
     content =
       recipient.role === "cc" ? (
         <CcView session={session} base={base} download={download} />
@@ -98,6 +116,8 @@ export function SignerPage() {
     content = <CcView session={session} base={base} download={download} />;
   } else if (!session.canSign) {
     content = <Final icon="⏳" title={t("sign.notYourTurnTitle")} text={t("sign.notYourTurnText")} />;
+  } else if (session.inPerson?.active && !session.inPerson.identityConfirmed) {
+    content = <InPersonHandover session={session} base={base} onDone={reload} />;
   } else if (!recipient.consented) {
     content = <Consent session={session} base={base} onDone={apply} />;
   } else {
@@ -147,12 +167,15 @@ function SignerShell({ children, org, branding }: { children: ReactNode; org?: s
 }
 
 function Final({ icon, title, text, ok, children }: { icon: string; title: string; text: string; ok?: boolean; children?: ReactNode }) {
+  const heading = useFocusOnMount<HTMLHeadingElement>();
   return (
     <div className="final card">
       <div className={`final-icon ${ok ? "ok" : ""}`} aria-hidden="true">
         {icon}
       </div>
-      <h1>{title}</h1>
+      <h1 ref={heading} tabIndex={-1}>
+        {title}
+      </h1>
       <p className="muted">{text}</p>
       {children && <div className="final-actions">{children}</div>}
     </div>
@@ -255,6 +278,7 @@ function SigningFlow({
 }) {
   const { t, locale } = useI18n();
   const sx = useSignerText();
+  const x = useExpText();
   const [delegating, setDelegating] = useState(false);
   const finishLabel = session.recipient.role === "approver" ? sx("approve.button") : t("sign.finish");
   const [values, setValues] = useState<Record<string, string>>(() =>
@@ -429,7 +453,7 @@ function SigningFlow({
           className={cls}
           style={style}
           onClick={() => setPad(f.type as "signature" | "initials")}
-          aria-label={t(`field.${f.type}`)}
+          aria-label={`${f.label ?? t(`field.${f.type}`)}: ${adopted ? x("a11y.signed") : x("a11y.notSigned")}`}
         >
           {adopted ? (
             <img src={adopted.dataUrl} alt={t(`field.${f.type}`)} />
@@ -455,6 +479,7 @@ function SigningFlow({
             value={values[f.id] ?? ""}
             onChange={(e) => setValues((v) => ({ ...v, [f.id]: e.target.value }))}
             aria-label={f.label ?? t("field.dropdown")}
+            aria-required={f.required || undefined}
             style={{ fontSize }}
           >
             <option value="">{f.label ?? t("sign.choose")}</option>
@@ -505,6 +530,7 @@ function SigningFlow({
             onChange={(e) => setValues((v) => ({ ...v, [f.id]: e.target.value }))}
             placeholder={f.type === "number" && (f.min != null || f.max != null) ? `${placeholder} (${f.min ?? "…"}–${f.max ?? "…"})` : placeholder}
             aria-label={placeholder}
+            aria-required={f.required || undefined}
             inputMode={f.type === "number" ? "decimal" : undefined}
             maxLength={2000}
             style={{ fontSize }}
@@ -520,6 +546,7 @@ function SigningFlow({
             checked={values[f.id] === "true"}
             onChange={(e) => setValues((v) => ({ ...v, [f.id]: e.target.checked ? "true" : "false" }))}
             aria-label={f.label ?? t("field.checkbox")}
+            aria-required={f.required || undefined}
           />
         </label>
       );
@@ -538,7 +565,14 @@ function SigningFlow({
           <BrandOrg org={session.envelope.organizationName} branding={session.branding} />
         </div>
         <div className="signer-progress" aria-live="polite">
-          <div className="progress">
+          <div
+            className="progress"
+            role="progressbar"
+            aria-label={x("a11y.progress")}
+            aria-valuemin={0}
+            aria-valuemax={required.length}
+            aria-valuenow={done}
+          >
             <div className="progress-bar" style={{ width: `${required.length ? (done / required.length) * 100 : 100}%` }} />
           </div>
           <span className="small">{t("sign.progress", { done, total: required.length })}</span>
@@ -585,6 +619,7 @@ function SigningFlow({
           ) : (
             <p className="small muted">{t("sign.progress", { done, total: required.length })}</p>
           )}
+          {error && <p className="small error-text">{error}</p>}
           <button id="finish-btn" type="button" className="btn btn-primary btn-block" disabled={busy} onClick={finish}>
             {busy ? t("sign.finishing") : finishLabel}
           </button>

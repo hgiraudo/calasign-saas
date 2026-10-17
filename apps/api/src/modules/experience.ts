@@ -1,0 +1,609 @@
+// Experiencia (Fase 4): firma en persona (modo anfitrión), correcciones en vuelo, reportes y reenvío de copias.
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import {
+  CorrectEnvelopeInput,
+  FieldInput,
+  InPersonConfirmInput,
+  RecipientInput,
+  type CopyQueuedResponse,
+  type InPersonSessionResponse,
+  type ReportsMonth,
+  type ReportsSummary,
+  type SigningInPerson,
+} from "@calasign/shared";
+import { config } from "../config";
+import type { Db } from "../infra/db";
+import { appendEvent } from "../infra/evidence";
+import { enqueue } from "../infra/queue";
+import { AppError, badRequest, conflict, forbidden, notFound } from "../lib/errors";
+import { decrypt, encrypt, maskDestination, randomToken, sha256Hex, uuidv7 } from "../lib/util";
+import { authenticate, clientInfo, type AuthContext, type Services } from "./context";
+import { activateRecipient, advanceRouting, currentSignerGroup, lockEnvelope } from "./envelopes";
+import { checkSenderValue, insertEnvelopeField } from "./fieldvalues";
+import { loadDetail } from "./mappers";
+import { SIGNER_COOKIE } from "./otp";
+import { recipientActor, resolveToken } from "./signing";
+
+const IN_PERSON_SESSION_MIN = 60;
+const PENDING = ["created", "sent", "viewed"];
+const IMMUTABLE = ["signed", "declined", "completed", "delegated", "reassigned"];
+
+// ───────────────────────────── Firma en persona ─────────────────────────────
+
+/**
+ * Aplica `inPerson` de PUT /recipients (y de correcciones). Ausente = sin cambios; null = quitar.
+ * Corre después del upsert, que deja auth_method = authMethod ?? "link": acá se restaura "in_person".
+ */
+export async function applyInPersonFlags(
+  db: Db,
+  envelopeId: string,
+  list: { id: string; inPerson?: { hostUserId?: string | null } | null }[],
+  a: AuthContext,
+) {
+  for (const r of list) {
+    if (r.inPerson === undefined) continue;
+    if (r.inPerson === null) {
+      await db.query(
+        `UPDATE recipients SET in_person_host_user_id = NULL, auth_method = CASE WHEN auth_method = 'in_person' THEN 'link' ELSE auth_method END
+         WHERE id = $1 AND envelope_id = $2`,
+        [r.id, envelopeId],
+      );
+      continue;
+    }
+    const host = r.inPerson.hostUserId ?? a.userId;
+    if (!host) throw badRequest("host_required", "inPerson.hostUserId es obligatorio cuando se usa una API key");
+    const member = await db.one(`SELECT 1 FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [a.tenantId, host]);
+    if (!member) throw badRequest("invalid_host", "El anfitrión tiene que ser un usuario de la organización");
+    await db.query(`UPDATE recipients SET in_person_host_user_id = $3 WHERE id = $1 AND envelope_id = $2`, [r.id, envelopeId, host]);
+  }
+  await db.query(`UPDATE recipients SET auth_method = 'in_person' WHERE envelope_id = $1 AND in_person_host_user_id IS NOT NULL`, [envelopeId]);
+}
+
+const IN_PERSON_LABEL: Record<string, (host: string) => string> = {
+  es: (h) => `En persona, presentado por ${h} (identidad confirmada en el dispositivo del anfitrión)`,
+  "pt-BR": (h) => `Presencial, apresentado por ${h} (identidade confirmada no dispositivo do anfitrião)`,
+  en: (h) => `In person, presented by ${h} (identity confirmed on the host's device)`,
+};
+
+/** Etiquetas de autenticación "en persona" para el certificado, por id de destinatario. */
+export async function inPersonAuthLabels(db: Db, recips: any[], locale: string): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const ids = [...new Set(recips.map((r) => r.in_person_host_user_id).filter(Boolean))];
+  if (!ids.length) return out;
+  const users = new Map((await db.query<any>(`SELECT id, name, email FROM users WHERE id = ANY($1)`, [ids])).map((u) => [u.id, u]));
+  const fmt = IN_PERSON_LABEL[locale] ?? IN_PERSON_LABEL.es;
+  for (const r of recips) {
+    if (r.auth_method !== "in_person" || !r.in_person_host_user_id) continue;
+    const u = users.get(r.in_person_host_user_id);
+    out.set(r.id, fmt(u ? `${u.name} <${u.email}>` : "—"));
+  }
+  return out;
+}
+
+/** Datos de la sesión en persona para la página del firmante. */
+export async function inPersonSessionInfo(db: Db, r: any, authed: boolean): Promise<SigningInPerson | null> {
+  if (r.auth_method !== "in_person" || !r.in_person_host_user_id) return null;
+  const u = await db.one<any>(`SELECT name FROM users WHERE id = $1`, [r.in_person_host_user_id]);
+  return { hostName: u?.name ?? "", identityConfirmed: Boolean(r.identity_confirmed_at), active: authed };
+}
+
+// ───────────────────────────── Correcciones ─────────────────────────────
+
+function newToken() {
+  const token = randomToken();
+  return { hash: sha256Hex(token), enc: encrypt(token) };
+}
+
+function checkContact(c: { email?: string | null; phone?: string | null; channels: string[]; auth_method?: string; in_person?: boolean }, who: string) {
+  if (c.in_person) return;
+  if (!c.email && !c.phone) throw badRequest("invalid_contact", `${who}: hace falta correo o teléfono`);
+  if (c.channels.includes("email") && !c.email) throw badRequest("invalid_contact", `${who}: el canal email requiere correo`);
+  if (c.channels.includes("whatsapp") && !c.phone) throw badRequest("invalid_contact", `${who}: el canal WhatsApp requiere teléfono`);
+  if (c.auth_method === "otp_email" && !c.email) throw badRequest("invalid_contact", `${who}: el código por correo requiere correo`);
+  if ((c.auth_method === "otp_sms" || c.auth_method === "otp_whatsapp") && !c.phone)
+    throw badRequest("invalid_contact", `${who}: el código por SMS/WhatsApp requiere teléfono`);
+}
+
+const masked = (v: string | null | undefined) => (v ? maskDestination(v) : null);
+
+export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string, body: unknown) {
+  const input = CorrectEnvelopeInput.parse(body);
+  const e = await lockEnvelope(db, a.tenantId, envelopeId);
+  if (e.status !== "sent") throw conflict("not_in_progress", "Solo se corrige un sobre enviado y en curso");
+  const diff: Record<string, unknown> = {};
+  const recips = new Map((await db.query<any>(`SELECT * FROM recipients WHERE envelope_id = $1`, [e.id])).map((r) => [r.id, r]));
+  const groupBefore = await currentSignerGroup(db, e.id);
+
+  const requireUntouched = (r: any, what: string) => {
+    if (IMMUTABLE.includes(r.status)) throw conflict("recipient_immutable", `${r.name} ya firmó o terminó su participación: no se puede modificar`);
+    if (r.viewed_at || !["created", "sent"].includes(r.status))
+      throw conflict("recipient_viewed", `${r.name} ya abrió el sobre: no se puede ${what}`);
+  };
+
+  // Mensaje y vencimiento.
+  if (input.message !== undefined && (input.message ?? null) !== (e.message ?? null)) {
+    await db.query(`UPDATE envelopes SET message = $2 WHERE id = $1`, [e.id, input.message ?? null]);
+    diff.message = { from: e.message ?? null, to: input.message ?? null };
+  }
+  if (input.expiresAt !== undefined) {
+    if (new Date(input.expiresAt) <= new Date()) throw badRequest("invalid_expiry", "La fecha de vencimiento tiene que ser futura");
+    await db.query(`UPDATE envelopes SET expires_at = $2, expiry_warning_sent_at = NULL WHERE id = $1`, [e.id, input.expiresAt]);
+    diff.expiresAt = { from: e.expires_at ? new Date(e.expires_at).toISOString() : null, to: new Date(input.expiresAt).toISOString() };
+  }
+
+  // Quitar campos y destinatarios.
+  const removedFields: string[] = [];
+  for (const id of input.removeFieldIds ?? []) {
+    const f = await db.one<any>(`SELECT id, recipient_id, type FROM fields WHERE id = $1 AND envelope_id = $2`, [id, e.id]);
+    if (!f) throw notFound("Campo");
+    requireUntouched(recips.get(f.recipient_id), "cambiar sus campos");
+    await db.query(`DELETE FROM fields WHERE id = $1`, [id]);
+    removedFields.push(id);
+  }
+  const removedRecipients: { id: string; name: string }[] = [];
+  for (const id of input.removeRecipientIds ?? []) {
+    const r = recips.get(id);
+    if (!r) throw notFound("Destinatario");
+    requireUntouched(r, "quitarlo");
+    await db.query(`DELETE FROM recipients WHERE id = $1`, [id]);
+    recips.delete(id);
+    removedRecipients.push({ id, name: r.name });
+  }
+
+  // Cambios de contacto: link nuevo y el anterior revocado.
+  const updated: Record<string, unknown>[] = [];
+  for (const p of input.updateRecipients ?? []) {
+    const r = recips.get(p.id);
+    if (!r) throw notFound("Destinatario");
+    if (IMMUTABLE.includes(r.status)) throw conflict("recipient_immutable", `${r.name} ya firmó o terminó su participación: no se puede modificar`);
+    const next = {
+      name: p.name ?? r.name,
+      email: p.email !== undefined ? p.email : r.email,
+      phone: p.phone !== undefined ? p.phone : r.phone,
+      channels: p.channels ?? r.channels,
+      locale: p.locale !== undefined ? p.locale : r.locale,
+    };
+    checkContact({ ...next, auth_method: r.auth_method, in_person: r.auth_method === "in_person" }, next.name);
+    const changes: Record<string, unknown> = {};
+    if (next.name !== r.name) changes.name = { from: r.name, to: next.name };
+    if ((next.email ?? null) !== (r.email ?? null)) changes.email = { from: masked(r.email), to: masked(next.email) };
+    if ((next.phone ?? null) !== (r.phone ?? null)) changes.phone = { from: masked(r.phone), to: masked(next.phone) };
+    if (JSON.stringify(next.channels) !== JSON.stringify(r.channels)) changes.channels = { from: r.channels, to: next.channels };
+    if ((next.locale ?? null) !== (r.locale ?? null)) changes.locale = { from: r.locale, to: next.locale };
+    if (!Object.keys(changes).length) continue;
+    const contactChanged = Boolean(changes.email || changes.phone || changes.channels);
+    await db.query(`UPDATE recipients SET name = $2, email = $3, phone = $4, channels = $5, locale = $6 WHERE id = $1`, [
+      r.id,
+      next.name,
+      next.email ?? null,
+      next.phone ?? null,
+      next.channels,
+      next.locale ?? null,
+    ]);
+    let tokenRotated = false;
+    if (contactChanged && r.access_token_hash) {
+      const t = newToken();
+      await db.query(`UPDATE recipients SET access_token_hash = $2, access_token_enc = $3, telegram_chat_id = NULL WHERE id = $1`, [r.id, t.hash, t.enc]);
+      await db.query(`DELETE FROM signer_sessions WHERE recipient_id = $1`, [r.id]);
+      tokenRotated = true;
+      if (["sent", "viewed"].includes(r.status) && r.auth_method !== "in_person" && !r.embedded) {
+        await enqueue(db, "notify", { kind: "invite", envelopeId: e.id, recipientId: r.id, tenantId: e.tenant_id });
+      }
+    }
+    updated.push({ id: r.id, changes, tokenRotated });
+  }
+
+  // Destinatarios nuevos.
+  const added: { id: string; name: string; role: string; routingOrder: number }[] = [];
+  for (const [i, raw] of (input.addRecipients ?? []).entries()) {
+    const r = RecipientInput.parse(raw);
+    const id = r.id ?? uuidv7();
+    if (recips.has(id) || (await db.one(`SELECT 1 FROM recipients WHERE id = $1`, [id]))) throw conflict("id_in_use", "Id de destinatario en uso");
+    if (groupBefore.order !== null && (r.role === "signer" || r.role === "approver") && r.routingOrder < groupBefore.order)
+      throw conflict("routing_passed", `Destinatario nuevo ${i + 1}: el grupo de firma ${r.routingOrder} ya terminó`);
+    await db.query(
+      `INSERT INTO recipients (id, tenant_id, envelope_id, role, routing_order, name, email, phone, locale, channels, telegram_chat_id,
+         id_document_type, id_document_number, auth_method)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+      [
+        id,
+        e.tenant_id,
+        e.id,
+        r.role,
+        r.routingOrder,
+        r.name,
+        r.email ?? null,
+        r.phone ?? null,
+        r.locale ?? null,
+        r.channels,
+        r.telegramChatId ?? null,
+        r.idDocumentType ?? null,
+        r.idDocumentNumber ?? null,
+        r.authMethod && r.authMethod !== "in_person" ? r.authMethod : "link",
+      ],
+    );
+    if (r.embedded !== undefined) await db.query(`UPDATE recipients SET embedded = $2 WHERE id = $1`, [id, r.embedded]);
+    if (r.inPerson !== undefined) await applyInPersonFlags(db, e.id, [{ id, inPerson: r.inPerson }], a);
+    // Token ya (los CC lo usan al final); la invitación sale cuando llega su turno.
+    const t = newToken();
+    await db.query(`UPDATE recipients SET access_token_hash = $2, access_token_enc = $3 WHERE id = $1`, [id, t.hash, t.enc]);
+    const row = await db.one<any>(`SELECT * FROM recipients WHERE id = $1`, [id]);
+    recips.set(id, row);
+    added.push({ id, name: r.name, role: r.role, routingOrder: r.routingOrder });
+  }
+
+  // Campos nuevos.
+  const addedFields: string[] = [];
+  if (input.addFields?.length) {
+    const docs = new Map((await db.query<any>(`SELECT id, page_count FROM documents WHERE envelope_id = $1`, [e.id])).map((d) => [d.id, d]));
+    for (const [i, raw] of input.addFields.entries()) {
+      const f = FieldInput.parse(raw);
+      const r = recips.get(f.recipientId);
+      if (!r || r.role !== "signer") throw badRequest("invalid_field", `Campo ${i + 1}: el destinatario no es firmante de este sobre`);
+      requireUntouched(r, "cambiar sus campos");
+      const d = docs.get(f.documentId);
+      if (!d) throw badRequest("invalid_field", `Campo ${i + 1}: documento inexistente`);
+      if (f.page >= d.page_count) throw badRequest("invalid_field", `Campo ${i + 1}: página fuera de rango`);
+      let value: string | null;
+      try {
+        value = checkSenderValue({ ...f, label: f.label ?? null }, `Campo ${i + 1}`);
+      } catch (err) {
+        throw badRequest("invalid_field", (err as Error).message);
+      }
+      const id = f.id ?? uuidv7();
+      await insertEnvelopeField(db, {
+        id,
+        tenantId: e.tenant_id,
+        envelopeId: e.id,
+        documentId: f.documentId,
+        recipientId: f.recipientId,
+        type: f.type,
+        page: f.page,
+        x: f.x,
+        y: f.y,
+        width: f.width,
+        height: f.height,
+        required: f.required,
+        label: f.label ?? null,
+        value,
+        readOnly: Boolean(f.readOnly && value),
+        options: f.options ?? null,
+        min: f.min ?? null,
+        max: f.max ?? null,
+      });
+      addedFields.push(id);
+    }
+  }
+
+  // Invariantes: cada firmante pendiente sigue teniendo un campo de firma; queda alguien que firme o apruebe.
+  const now = await db.query<any>(`SELECT * FROM recipients WHERE envelope_id = $1`, [e.id]);
+  const sigFields = await db.query<any>(`SELECT DISTINCT recipient_id FROM fields WHERE envelope_id = $1 AND type = 'signature'`, [e.id]);
+  const withSig = new Set(sigFields.map((x) => x.recipient_id));
+  const problems = now
+    .filter((r) => r.role === "signer" && PENDING.includes(r.status) && !withSig.has(r.id))
+    .map((r) => `${r.name} no tiene ningún campo de firma`);
+  if (!now.some((r) => (r.role === "signer" || r.role === "approver") && !["delegated", "reassigned"].includes(r.status)))
+    problems.push("Tiene que quedar al menos un firmante o aprobador");
+  if (problems.length) throw new AppError(422, "envelope_incomplete", problems.join(". "), { problems });
+
+  if (removedFields.length) diff.fieldsRemoved = removedFields;
+  if (addedFields.length) diff.fieldsAdded = addedFields;
+  if (removedRecipients.length) diff.recipientsRemoved = removedRecipients;
+  if (added.length) diff.recipientsAdded = added;
+  if (updated.length) diff.recipientsUpdated = updated;
+  if (!Object.keys(diff).length) throw badRequest("no_changes", "No hay cambios para aplicar");
+
+  await db.query(`UPDATE envelopes SET updated_at = now(), version = version + 1 WHERE id = $1`, [e.id]);
+  await appendEvent(db, { tenantId: e.tenant_id, envelopeId: e.id, type: "envelope.corrected", actor: a.actor, data: { ...diff, reason: input.reason ?? null } });
+
+  // Ruteo: si se agregó alguien al grupo actual (o se vació), avanzar.
+  const group = await currentSignerGroup(db, e.id);
+  if (group.order === null) {
+    await advanceRouting(db, e.tenant_id, e.id, a.actor);
+  } else {
+    for (const r of group.recipients) {
+      if (r.status !== "created") continue;
+      if (r.auth_method === "in_person" || r.embedded) await db.query(`UPDATE recipients SET status = 'sent', sent_at = now() WHERE id = $1`, [r.id]);
+      else await activateRecipient(db, e.tenant_id, e.id, r);
+    }
+  }
+}
+
+// ───────────────────────────── Reportes ─────────────────────────────
+
+function parseRange(q: { from?: string; to?: string }) {
+  const to = q.to ? new Date(q.to) : new Date();
+  const from = q.from ? new Date(q.from) : new Date(Date.UTC(to.getUTCFullYear(), to.getUTCMonth() - 5, 1));
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) throw badRequest("invalid_range", "Fechas inválidas (usar ISO 8601)");
+  if (from > to) throw badRequest("invalid_range", "'from' es posterior a 'to'");
+  if (to.getTime() - from.getTime() > 3 * 366 * 86400_000) throw badRequest("invalid_range", "El rango máximo es de 3 años");
+  return { from, to };
+}
+
+function monthsBetween(from: Date, to: Date): string[] {
+  const out: string[] = [];
+  const d = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), 1));
+  while (d <= to) {
+    out.push(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`);
+    d.setUTCMonth(d.getUTCMonth() + 1);
+  }
+  return out;
+}
+
+export async function reportsSummary(db: Db, tenantId: string, q: { from?: string; to?: string }): Promise<ReportsSummary> {
+  const { from, to } = parseRange(q);
+  const p = [tenantId, from.toISOString(), to.toISOString()];
+  const [tot, rate, months, senders, notif] = await Promise.all([
+    db.one<any>(
+      `SELECT
+         count(*) FILTER (WHERE created_at BETWEEN $2 AND $3)::int AS created,
+         count(*) FILTER (WHERE sent_at BETWEEN $2 AND $3)::int AS sent,
+         count(*) FILTER (WHERE completed_at BETWEEN $2 AND $3)::int AS completed,
+         count(*) FILTER (WHERE status = 'declined' AND sent_at BETWEEN $2 AND $3)::int AS declined,
+         count(*) FILTER (WHERE status = 'voided' AND sent_at BETWEEN $2 AND $3)::int AS voided,
+         count(*) FILTER (WHERE status = 'expired' AND sent_at BETWEEN $2 AND $3)::int AS expired,
+         count(*) FILTER (WHERE status IN ('sent','finalizing'))::int AS in_progress,
+         (avg(extract(epoch FROM (completed_at - sent_at))) FILTER (WHERE completed_at BETWEEN $2 AND $3 AND sent_at IS NOT NULL))::float8 AS avg_secs
+       FROM envelopes WHERE tenant_id = $1`,
+      p,
+    ),
+    db.one<any>(
+      `SELECT count(*)::int AS sent, (count(*) FILTER (WHERE status = 'completed'))::int AS completed
+       FROM envelopes WHERE tenant_id = $1 AND sent_at BETWEEN $2 AND $3`,
+      p,
+    ),
+    db.query<any>(
+      `SELECT to_char(date_trunc('month', created_at AT TIME ZONE 'UTC'), 'YYYY-MM') AS month, status, count(*)::int AS n
+       FROM envelopes WHERE tenant_id = $1 AND created_at BETWEEN $2 AND $3 GROUP BY 1, 2`,
+      p,
+    ),
+    db.query<any>(
+      `SELECT e.created_by AS user_id, u.name, u.email, count(*)::int AS sent, (count(*) FILTER (WHERE e.status = 'completed'))::int AS completed
+       FROM envelopes e LEFT JOIN users u ON u.id = e.created_by
+       WHERE e.tenant_id = $1 AND e.sent_at BETWEEN $2 AND $3
+       GROUP BY e.created_by, u.name, u.email ORDER BY sent DESC, completed DESC LIMIT 10`,
+      p,
+    ),
+    db.query<any>(
+      `SELECT channel, (count(*) FILTER (WHERE status = 'sent'))::int AS sent, (count(*) FILTER (WHERE status = 'failed'))::int AS failed
+       FROM notifications WHERE tenant_id = $1 AND created_at BETWEEN $2 AND $3 GROUP BY channel ORDER BY channel`,
+      p,
+    ),
+  ]);
+  const byMonth: ReportsMonth[] = monthsBetween(from, to).map((month) => ({
+    month,
+    created: 0,
+    draft: 0,
+    inProgress: 0,
+    completed: 0,
+    declined: 0,
+    voided: 0,
+    expired: 0,
+  }));
+  const idx = new Map(byMonth.map((m) => [m.month, m]));
+  for (const r of months) {
+    const m = idx.get(r.month);
+    if (!m) continue;
+    m.created += r.n;
+    if (r.status === "draft") m.draft += r.n;
+    else if (r.status === "sent" || r.status === "finalizing") m.inProgress += r.n;
+    else if (r.status in m) (m as unknown as Record<string, number>)[r.status] += r.n;
+  }
+  return {
+    from: from.toISOString(),
+    to: to.toISOString(),
+    totals: {
+      created: tot.created,
+      sent: tot.sent,
+      completed: tot.completed,
+      declined: tot.declined,
+      voided: tot.voided,
+      expired: tot.expired,
+      inProgress: tot.in_progress,
+      completionRate: rate.sent ? Math.round((rate.completed / rate.sent) * 1000) / 1000 : null,
+      avgHoursToComplete: tot.avg_secs == null ? null : Math.round((Number(tot.avg_secs) / 3600) * 10) / 10,
+    },
+    byMonth,
+    topSenders: senders.map((s) => ({
+      userId: s.user_id,
+      name: s.name ?? "API",
+      email: s.email ?? null,
+      sent: s.sent,
+      completed: s.completed,
+    })),
+    notifications: notif.map((n) => ({ channel: n.channel, sent: n.sent, failed: n.failed })),
+  };
+}
+
+/** Celda CSV: comillas, y prefijo ' contra inyección de fórmulas en planillas. */
+export function csvCell(v: unknown): string {
+  let s = v == null ? "" : v instanceof Date ? v.toISOString() : String(v);
+  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+  return /[",\n\r;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+async function envelopesCsv(db: Db, tenantId: string, q: { from?: string; to?: string }) {
+  const { from, to } = parseRange(q);
+  const rows = await db.query<any>(
+    `SELECT e.id, e.subject, e.status, e.created_via, e.created_at, e.sent_at, e.completed_at, e.expires_at,
+       COALESCE(u.name, 'API') AS sender, u.email AS sender_email,
+       (SELECT string_agg(r.name || COALESCE(' <' || r.email || '>', '') || ' [' || r.role || ': ' || r.status || ']', '; ' ORDER BY r.routing_order, r.created_at)
+          FROM recipients r WHERE r.envelope_id = e.id) AS recipients
+     FROM envelopes e LEFT JOIN users u ON u.id = e.created_by
+     WHERE e.tenant_id = $1 AND e.created_at BETWEEN $2 AND $3
+     ORDER BY e.created_at DESC LIMIT 50000`,
+    [tenantId, from.toISOString(), to.toISOString()],
+  );
+  const head = ["id", "asunto", "estado", "origen", "creado", "enviado", "completado", "vence", "remitente", "correo_remitente", "destinatarios"];
+  const lines = [head.join(",")];
+  for (const r of rows)
+    lines.push(
+      [r.id, r.subject, r.status, r.created_via, r.created_at, r.sent_at, r.completed_at, r.expires_at, r.sender, r.sender_email, r.recipients]
+        .map(csvCell)
+        .join(","),
+    );
+  return "﻿" + lines.join("\r\n") + "\r\n";
+}
+
+// ───────────────────────────── Rutas ─────────────────────────────
+
+export async function experienceRoutes(app: FastifyInstance, s: Services) {
+  const auth = authenticate(s);
+  const A = (req: FastifyRequest) => req.auth as AuthContext;
+  type EP = { Params: { id: string; recipientId: string } };
+  type TP = { Params: { token: string } };
+
+  // ───────── En persona: el anfitrión abre la sesión en su dispositivo ─────────
+
+  app.post<EP>("/v1/envelopes/:id/recipients/:recipientId/in-person", { preHandler: auth }, async (req, reply): Promise<InPersonSessionResponse> => {
+    const a = A(req);
+    if (!a.userId) throw forbidden("La firma en persona la abre un usuario de la organización, no una API key");
+    const session = randomToken();
+    const expiresAt = new Date(Date.now() + IN_PERSON_SESSION_MIN * 60_000);
+    let path = "";
+    let token = "";
+    await s.db.tx(async (t) => {
+      const e = await lockEnvelope(t, a.tenantId, req.params.id);
+      if (e.status !== "sent") throw conflict("not_in_progress", "El sobre no está en curso");
+      const r = await t.one<any>(`SELECT * FROM recipients WHERE id = $1 AND envelope_id = $2`, [req.params.recipientId, e.id]);
+      if (!r) throw notFound("Destinatario");
+      if (r.auth_method !== "in_person") throw conflict("not_in_person", "Este destinatario no firma en persona");
+      if (r.in_person_host_user_id !== a.userId) throw forbidden("Solo el anfitrión asignado puede abrir la firma en persona");
+      if (!["sent", "viewed"].includes(r.status)) throw conflict("not_signable", "Este destinatario ya no está pendiente");
+      const group = await currentSignerGroup(t, e.id);
+      if (group.order !== r.routing_order) throw conflict("not_your_turn", "Todavía no es el turno de este firmante");
+      if (!r.access_token_enc) throw conflict("not_available", "El destinatario todavía no está activo");
+      token = decrypt(r.access_token_enc);
+      const { ip, userAgent } = clientInfo(req);
+      await t.query(`DELETE FROM signer_sessions WHERE recipient_id = $1`, [r.id]);
+      await t.query(`UPDATE recipients SET identity_confirmed_at = NULL WHERE id = $1`, [r.id]);
+      await t.query(
+        `INSERT INTO signer_sessions (token_hash, recipient_id, method, ip, expires_at) VALUES ($1,$2,'in_person',$3,$4)`,
+        [sha256Hex(session), r.id, ip, expiresAt.toISOString()],
+      );
+      await appendEvent(t, {
+        tenantId: e.tenant_id,
+        envelopeId: e.id,
+        type: "recipient.in_person_started",
+        actor: a.actor,
+        data: { recipientId: r.id, recipientName: r.name, hostUserId: a.userId, device: userAgent, ip },
+      });
+      path = `/s/${token}?inperson=1`;
+    });
+    reply.setCookie(SIGNER_COOKIE, session, {
+      path: `/v1/signing/${token}`,
+      httpOnly: true,
+      sameSite: "strict",
+      secure: config.cookieSecure,
+      maxAge: IN_PERSON_SESSION_MIN * 60,
+    });
+    reply.header("cache-control", "no-store");
+    return { url: path, expiresAt: expiresAt.toISOString() };
+  });
+
+  // El firmante confirma, en el dispositivo del anfitrión, que es la persona indicada.
+  app.post<TP>("/v1/signing/:token/in-person/confirm", { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } }, async (req) => {
+    const input = InPersonConfirmInput.parse(req.body);
+    const { recipient: r0, envelope: e0 } = await resolveToken(s.db, req.params.token);
+    if (r0.auth_method !== "in_person") throw conflict("not_in_person", "Este link no es de firma en persona");
+    await s.db.tx(async (t) => {
+      const e = await lockEnvelope(t, e0.tenant_id, e0.id);
+      if (e.status !== "sent") throw new AppError(410, "envelope_closed", "El sobre ya no está disponible");
+      const r = await t.one<any>(`SELECT * FROM recipients WHERE id = $1`, [r0.id]);
+      if (r.identity_confirmed_at) return;
+      const host = await t.one<any>(`SELECT name, email FROM users WHERE id = $1`, [r.in_person_host_user_id]);
+      await t.query(`UPDATE recipients SET identity_confirmed_at = now(), authenticated_at = now() WHERE id = $1`, [r.id]);
+      await appendEvent(t, {
+        tenantId: e.tenant_id,
+        envelopeId: e.id,
+        type: "recipient.identity_confirmed",
+        actor: recipientActor(req, r),
+        data: {
+          method: "in_person",
+          hostUserId: r.in_person_host_user_id,
+          host: host ? `${host.name} <${host.email}>` : null,
+          idDocumentDeclared: input.idDocumentNumber ? maskDestination(input.idDocumentNumber) : null,
+          idDocumentMatches:
+            input.idDocumentNumber && r.id_document_number
+              ? input.idDocumentNumber.replace(/\W/g, "") === String(r.id_document_number).replace(/\W/g, "")
+              : null,
+        },
+      });
+    });
+    return { confirmed: true };
+  });
+
+  // Fin de la sesión en persona: el dispositivo vuelve al anfitrión.
+  app.post<TP>("/v1/signing/:token/in-person/end", async (req, reply) => {
+    const { recipient: r, envelope: e } = await resolveToken(s.db, req.params.token);
+    const del = await s.db.query(`DELETE FROM signer_sessions WHERE recipient_id = $1 AND method = 'in_person' RETURNING token_hash`, [r.id]);
+    if (del.length) {
+      await s.db.tx(async (t) => {
+        await lockEnvelope(t, e.tenant_id, e.id);
+        await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "recipient.in_person_ended", actor: recipientActor(req, r) });
+      });
+    }
+    reply.clearCookie(SIGNER_COOKIE, { path: `/v1/signing/${req.params.token}` });
+    return { ended: true };
+  });
+
+  // ───────── Correcciones en vuelo ─────────
+
+  app.post<{ Params: { id: string } }>("/v1/envelopes/:id/corrections", { preHandler: auth }, async (req) => {
+    const a = A(req);
+    await s.db.tx((t) => correctEnvelope(t, a, req.params.id, req.body));
+    return loadDetail(s.db, a.tenantId, req.params.id);
+  });
+
+  // ───────── Reportes ─────────
+
+  app.get<{ Querystring: { from?: string; to?: string } }>("/v1/reports/summary", { preHandler: auth }, async (req) =>
+    reportsSummary(s.db, A(req).tenantId, req.query),
+  );
+
+  app.get<{ Querystring: { from?: string; to?: string } }>("/v1/reports/envelopes.csv", { preHandler: auth }, async (req, reply: FastifyReply) => {
+    const csv = await envelopesCsv(s.db, A(req).tenantId, req.query);
+    const day = new Date().toISOString().slice(0, 10);
+    reply
+      .header("content-type", "text/csv; charset=utf-8")
+      .header("content-disposition", `attachment; filename="calasign-sobres-${day}.csv"`)
+      .header("cache-control", "private, no-store");
+    return reply.send(csv);
+  });
+
+  // ───────── Copias del documento final ─────────
+
+  app.post<EP>("/v1/envelopes/:id/recipients/:recipientId/resend-copy", { preHandler: auth }, async (req): Promise<CopyQueuedResponse> => {
+    const a = A(req);
+    await s.db.tx(async (t) => {
+      const e = await lockEnvelope(t, a.tenantId, req.params.id);
+      if (e.status !== "completed") throw conflict("not_completed", "El sobre todavía no está completado");
+      const r = await t.one<any>(`SELECT * FROM recipients WHERE id = $1 AND envelope_id = $2`, [req.params.recipientId, e.id]);
+      if (!r) throw notFound("Destinatario");
+      if (["delegated", "reassigned"].includes(r.status)) throw conflict("replaced", "Ese destinatario fue reemplazado");
+      if (!r.email && !r.phone && !r.telegram_chat_id) throw conflict("no_destination", "El destinatario no tiene a dónde enviarle la copia");
+      await enqueue(t, "notify", { kind: "completed", envelopeId: e.id, recipientId: r.id, tenantId: e.tenant_id });
+      await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "envelope.copy_resent", actor: a.actor, data: { recipientId: r.id, recipientName: r.name } });
+    });
+    return { queued: true, recipientId: req.params.recipientId };
+  });
+
+  app.post<TP>("/v1/signing/:token/request-copy", { config: { rateLimit: { max: 5, timeWindow: "1 minute" } } }, async (req): Promise<CopyQueuedResponse> => {
+    const { recipient: r0, envelope: e0 } = await resolveToken(s.db, req.params.token);
+    await s.db.tx(async (t) => {
+      const e = await lockEnvelope(t, e0.tenant_id, e0.id);
+      if (e.status !== "completed") throw conflict("not_completed", "El documento final todavía no está disponible");
+      const r = await t.one<any>(`SELECT * FROM recipients WHERE id = $1`, [r0.id]);
+      if (!r.email && !r.phone && !r.telegram_chat_id) throw conflict("no_destination", "No hay a dónde enviarte la copia");
+      const recent = await t.one(
+        `SELECT 1 FROM envelope_events WHERE envelope_id = $1 AND type = 'recipient.copy_requested' AND actor_id = $2 AND occurred_at > now() - interval '10 minutes'`,
+        [e.id, r.id],
+      );
+      if (recent) throw new AppError(429, "copy_recently_requested", "Ya pediste una copia hace poco. Revisá tu correo o mensajes.");
+      await enqueue(t, "notify", { kind: "completed", envelopeId: e.id, recipientId: r.id, tenantId: e.tenant_id });
+      await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "recipient.copy_requested", actor: recipientActor(req, r) });
+    });
+    return { queued: true, recipientId: r0.id };
+  });
+}
+

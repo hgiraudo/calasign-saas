@@ -21,6 +21,7 @@ import { SettingsHomePage } from "./pages/SettingsHome";
 import { AuditLogPage } from "./pages/AuditLog";
 import { SecurityPage } from "./pages/Security";
 import { InviteAcceptPage } from "./pages/InviteAccept";
+import { ReportsPage } from "./pages/Reports";
 
 export function App() {
   return (
@@ -55,6 +56,7 @@ export function App() {
         <Route path="/app/settings/team" element={<TeamPage />} />
         <Route path="/app/settings/audit" element={<AuditLogPage />} />
         <Route path="/app/settings/security" element={<SecurityPage />} />
+        <Route path="/app/reports" element={<ReportsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/app" replace />} />
     </Routes>

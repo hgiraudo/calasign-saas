@@ -8,6 +8,8 @@ import { useIntText } from "../lib/integrations-i18n";
 import { useAccess } from "../lib/access";
 import { useTeamsText } from "../lib/i18n-teams";
 import { TenantSwitcher } from "./TenantSwitcher";
+import { useExpText } from "../lib/i18n-experience";
+import { useInstallPrompt } from "../lib/pwa";
 
 export function useDevMailboxAvailable(): boolean {
   const [ok, setOk] = useState(false);
@@ -32,6 +34,8 @@ export function Layout() {
   const tm = useTeamsText();
   const { access } = useAccess();
   const loc = useLocation();
+  const xt = useExpText();
+  const install = useInstallPrompt();
   const [open, setOpen] = useState(false);
 
   // Organización que exige 2FA y el usuario no lo tiene: solo puede ir a Seguridad.
@@ -53,6 +57,7 @@ export function Layout() {
             {t("nav.envelopes")}
           </NavLink>
           <NavLink to="/app/templates">{t("nav.templates")}</NavLink>
+          <NavLink to="/app/reports">{xt("nav.reports")}</NavLink>
           {/* Equipo, marca, API keys, integraciones, auditoría y seguridad viven bajo Ajustes (índice según permisos). */}
           <NavLink to="/app/settings">{tm("nav.settings")}</NavLink>
           <NavLink to="/developers">{tt("nav.developers")}</NavLink>
@@ -64,6 +69,17 @@ export function Layout() {
             <span className="topnav-user" title={me?.user.email}>
               {me?.tenant.name}
             </span>
+          )}
+          {install && (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm on-dark install-btn"
+              onClick={() => void install()}
+              aria-label={xt("nav.install")}
+              title={xt("nav.install")}
+            >
+              ⤓<span className="install-text"> {xt("nav.install")}</span>
+            </button>
           )}
           <LocaleSwitcher compact />
           <button

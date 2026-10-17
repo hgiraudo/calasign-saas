@@ -22,6 +22,7 @@ import { expandAnchorFields } from "./anchors";
 import { setEmbeddedFlags } from "./embed";
 import { applyEnvelopeSettings } from "./participants";
 import { checkSenderValue, insertEnvelopeField } from "./fieldvalues";
+import { applyInPersonFlags } from "./experience";
 
 /** Bloquea el sobre para serializar cambios y eventos. */
 export async function lockEnvelope(db: Db, tenantId: string, id: string) {
@@ -348,6 +349,7 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
         await t.query(`UPDATE recipients SET auth_method = $2 WHERE id = $1`, [r.id, r.authMethod ?? "link"]);
       }
       await setEmbeddedFlags(t, e.id, list);
+      await applyInPersonFlags(t, e.id, list, a);
       // Los campos de un destinatario que pasó a 'cc' ya no aplican.
       await t.query(`DELETE FROM fields f USING recipients r WHERE f.recipient_id = r.id AND r.envelope_id = $1 AND r.role IN ('cc','approver')`, [e.id]);
       await touch(t, e.id);

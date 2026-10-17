@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { SignatureImageInput } from "@calasign/shared";
 import { useI18n } from "../lib/i18n";
 import { Modal } from "./ui";
+import { useExpText } from "../lib/i18n-experience";
 
 const W = 720;
 const H = 240;
@@ -17,6 +18,7 @@ interface Props {
 
 export function SignaturePad({ purpose, defaultText, onAdopt, onClose }: Props) {
   const { t } = useI18n();
+  const x = useExpText();
   const [tab, setTab] = useState<"draw" | "type">("type");
   const [text, setText] = useState(defaultText);
   const [hasInk, setHasInk] = useState(false);
@@ -141,24 +143,54 @@ export function SignaturePad({ purpose, defaultText, onAdopt, onClose }: Props) 
         </>
       }
     >
-      <div className="tabs" role="tablist">
-        <button type="button" role="tab" aria-selected={tab === "type"} className={tab === "type" ? "active" : ""} onClick={() => setTab("type")}>
+      <div
+        className="tabs"
+        role="tablist"
+        onKeyDown={(e) => {
+          if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+            e.preventDefault();
+            const next = tab === "type" ? "draw" : "type";
+            setTab(next);
+            window.requestAnimationFrame(() => document.getElementById(`sigtab-${next}`)?.focus());
+          }
+        }}
+      >
+        <button
+          type="button"
+          role="tab"
+          id="sigtab-type"
+          aria-controls="sigpanel"
+          aria-selected={tab === "type"}
+          tabIndex={tab === "type" ? 0 : -1}
+          className={tab === "type" ? "active" : ""}
+          onClick={() => setTab("type")}
+        >
           {t("sign.type")}
         </button>
-        <button type="button" role="tab" aria-selected={tab === "draw"} className={tab === "draw" ? "active" : ""} onClick={() => setTab("draw")}>
+        <button
+          type="button"
+          role="tab"
+          id="sigtab-draw"
+          aria-controls="sigpanel"
+          aria-selected={tab === "draw"}
+          tabIndex={tab === "draw" ? 0 : -1}
+          className={tab === "draw" ? "active" : ""}
+          onClick={() => setTab("draw")}
+        >
           {t("sign.draw")}
         </button>
       </div>
       {tab === "type" ? (
-        <div className="sigpad">
+        <div className="sigpad" role="tabpanel" id="sigpanel" aria-labelledby="sigtab-type">
+          <p className="muted small">{x("a11y.typeHint")}</p>
           <label className="field">
             <span>{t("sign.typeHere")}</span>
             <input value={text} onChange={(e) => setText(e.target.value)} maxLength={purpose === "initials" ? 6 : 80} autoFocus />
           </label>
-          <canvas ref={typeRef} width={W} height={H} className="sig-canvas" aria-label={t("sign.typeHere")} />
+          <canvas ref={typeRef} width={W} height={H} className="sig-canvas" role="img" aria-label={text.trim() || t("sign.typeHere")} />
         </div>
       ) : (
-        <div className="sigpad">
+        <div className="sigpad" role="tabpanel" id="sigpanel" aria-labelledby="sigtab-draw">
           <canvas
             ref={drawRef}
             width={W}
@@ -168,6 +200,7 @@ export function SignaturePad({ purpose, defaultText, onAdopt, onClose }: Props) 
             onPointerMove={onMove}
             onPointerUp={onUp}
             onPointerCancel={onUp}
+            role="img"
             aria-label={t("sign.drawHere")}
           />
           <div className="sigpad-actions">

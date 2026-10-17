@@ -10,6 +10,7 @@ import { deliver, telegramStartLink } from "../notifications/channels";
 import { render, type TemplateKind } from "../notifications/templates";
 import { loadDocuments } from "./mappers";
 import { embeddedAuthLabel } from "./embed";
+import { inPersonAuthLabels } from "./experience";
 import { handleWebhookJob } from "./webhooks";
 import { runAutomaticReminders } from "./reminders";
 import { purgeExpiredEnvelopes } from "./retention";
@@ -78,7 +79,7 @@ async function notify(d: Deps, p: { kind: TemplateKind; envelopeId: string; tena
   // Invitaciones/recordatorios obsoletos (el sobre cambió de estado mientras esperaban en la cola).
   if ((p.kind === "invite" || p.kind === "reminder" || p.kind === "expiry_warning") && (e.status !== "sent" || !["sent", "viewed"].includes(r.status))) return;
   // Firma embebida: el integrador muestra la ceremonia en su app; no se mandan invitaciones ni avisos.
-  if ((p.kind === "invite" || p.kind === "reminder" || p.kind === "expiry_warning") && r.embedded) return;
+  if ((p.kind === "invite" || p.kind === "reminder" || p.kind === "expiry_warning") && (r.embedded || r.auth_method === "in_person")) return;
 
   const locale = r.locale ?? e.locale;
   const token = r.access_token_enc ? decrypt(r.access_token_enc) : null;
@@ -181,6 +182,7 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
   }));
 
   const ev = (r: any, type: string) => events.find((x) => x.type === type && x.actor_id === r.id);
+  const inPersonLabels = await inPersonAuthLabels(d.db, recips, e.locale);
   const certRecipients: CertificateRecipient[] = recips.map((r) => ({
     name: r.name,
     role: r.role,
@@ -188,7 +190,7 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
     phone: r.phone,
     idDocument: r.id_document_number ? `${(r.id_document_type ?? "").toUpperCase()} ${r.id_document_number}`.trim() : null,
     channels: r.channels,
-    authMethod: r.embedded ? embeddedAuthLabel(e.locale) : r.auth_method,
+    authMethod: inPersonLabels.get(r.id) ?? (r.embedded ? embeddedAuthLabel(e.locale) : r.auth_method),
     sentAt: r.sent_at ? new Date(r.sent_at).toISOString() : null,
     viewedAt: r.viewed_at ? new Date(r.viewed_at).toISOString() : null,
     consentedAt: r.consented_at ? new Date(r.consented_at).toISOString() : null,

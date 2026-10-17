@@ -9,6 +9,8 @@ import { useSignerText } from "../lib/i18n-signer";
 import type { Recipient } from "@calasign/shared";
 import { SaveAsTemplateButton } from "../components/SaveAsTemplate";
 import { ShareControl } from "../components/ShareControl";
+import { CorrectionModal, InPersonButton, ResendCopyButton } from "../components/EnvelopeExperience";
+import { useExpText } from "../lib/i18n-experience";
 
 export function EnvelopeDetailPage() {
   const { id = "" } = useParams();
@@ -23,6 +25,8 @@ export function EnvelopeDetailPage() {
   const [notFound, setNotFound] = useState(false);
   const [reassigning, setReassigning] = useState<Recipient | null>(null);
   const sx = useSignerText();
+  const x = useExpText();
+  const [correcting, setCorrecting] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -121,6 +125,9 @@ export function EnvelopeDetailPage() {
               <button type="button" className="btn" disabled={busy} onClick={remind}>
                 {t("detail.remind")}
               </button>
+              <button type="button" className="btn" disabled={busy} onClick={() => setCorrecting(true)}>
+                ✎ {x("correct.button")}
+              </button>
               <button type="button" className="btn btn-danger" disabled={busy} onClick={() => setVoiding(true)}>
                 {t("detail.void")}
               </button>
@@ -154,8 +161,18 @@ export function EnvelopeDetailPage() {
                       <RecipientStatusBadge status={r.status} />
                       <span className="muted small">
                         #{r.routingOrder} · {t(`edit.role.${r.role}`)}
-                        {r.authMethod && r.authMethod !== "link" ? ` · 🔒 ${sx(`auth.${r.authMethod}`)}` : ""}
+                        {r.authMethod === "in_person"
+                          ? ` · 🤝 ${x("inperson.host", { host: r.inPersonHost?.name ?? "" })}`
+                          : r.authMethod && r.authMethod !== "link"
+                            ? ` · 🔒 ${sx(`auth.${r.authMethod}` as Parameters<typeof sx>[0])}`
+                            : ""}
                       </span>
+                      {isOpen && r.authMethod === "in_person" && ["sent", "viewed"].includes(r.status) && (
+                        <InPersonButton envelopeId={id} recipient={r} onError={setError} />
+                      )}
+                      {env.status === "completed" && !["delegated", "reassigned"].includes(r.status) && (r.email || r.phone) && (
+                        <ResendCopyButton envelopeId={id} recipient={r} onDone={setNotice} onError={setError} />
+                      )}
                       {isOpen && r.role !== "cc" && ["created", "sent", "viewed"].includes(r.status) && (
                         <button type="button" className="btn btn-ghost btn-sm" onClick={() => setReassigning(r)}>
                           {sx("reassign.button")}
@@ -240,6 +257,19 @@ export function EnvelopeDetailPage() {
           </ol>
         </section>
       </div>
+
+      {correcting && (
+        <CorrectionModal
+          detail={detail}
+          onClose={() => setCorrecting(false)}
+          onDone={(d) => {
+            setDetail(d);
+            setCorrecting(false);
+            setNotice(x("correct.done"));
+            void load();
+          }}
+        />
+      )}
 
       {reassigning && (
         <ReassignModal

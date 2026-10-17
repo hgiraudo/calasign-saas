@@ -55,6 +55,7 @@ export const toRecipient = (r: any): Recipient => ({
   declineReason: r.decline_reason,
   authMethod: r.auth_method ?? "link",
   replacedBy: r.replaced_by ?? null,
+  inPersonHost: r.in_person_host_user_id ? { id: r.in_person_host_user_id, name: r.in_person_host_name ?? "" } : null,
 });
 
 export const toField = (r: any): Field => ({
@@ -93,7 +94,11 @@ export async function loadDetail(db: Db, tenantId: string, envelopeId: string): 
   if (!e) throw notFound("Sobre");
   const [docs, recips, fields] = await Promise.all([
     loadDocuments(db, envelopeId),
-    db.query(`SELECT * FROM recipients WHERE envelope_id = $1 ORDER BY routing_order, created_at, id`, [envelopeId]),
+    db.query(
+      `SELECT r.*, h.name AS in_person_host_name FROM recipients r LEFT JOIN users h ON h.id = r.in_person_host_user_id
+       WHERE r.envelope_id = $1 ORDER BY r.routing_order, r.created_at, r.id`,
+      [envelopeId],
+    ),
     db.query(`SELECT * FROM fields WHERE envelope_id = $1 ORDER BY page, y, x`, [envelopeId]),
   ]);
   return {

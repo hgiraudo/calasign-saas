@@ -25,6 +25,7 @@ import { productivityRoutes } from "./modules/productivity";
 import { teamRoutes } from "./modules/teams";
 import { auditRoutes, registerAuditHooks } from "./modules/audit";
 import { retentionRoutes } from "./modules/retention";
+import { experienceRoutes } from "./modules/experience";
 
 export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolean | object }) {
   const app = Fastify({
@@ -105,6 +106,7 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
   await teamRoutes(app, services);
   await auditRoutes(app, services);
   await retentionRoutes(app, services, app.log);
+  await experienceRoutes(app, services);
 
   if (config.devMailbox) {
     // Local: todo el buzón. Entornos compartidos (dev): solo los mensajes de la organización de la sesión.
@@ -121,6 +123,9 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
       wildcard: true,
       setHeaders(res, path) {
         if (path.endsWith(".mjs")) res.header("content-type", "text/javascript; charset=utf-8");
+        // PWA: el service worker y el manifest se revalidan siempre (si no, una versión vieja queda pegada).
+        if (path.endsWith("/sw.js") || path.endsWith(".webmanifest") || path.endsWith("/offline.html")) res.header("cache-control", "no-cache");
+        if (path.endsWith(".webmanifest")) res.header("content-type", "application/manifest+json; charset=utf-8");
         if (path.includes("/assets/")) res.header("cache-control", "public, max-age=31536000, immutable");
       },
     });

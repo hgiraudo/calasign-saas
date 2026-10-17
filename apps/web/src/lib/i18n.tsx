@@ -1,6 +1,7 @@
 // i18n mínimo: diccionarios planos es / pt-BR / en.
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 import type { Locale } from "@calasign/shared";
+import { prodEn, prodEs, prodPt, type ProdKey } from "./i18n-productivity";
 
 const es = {
   "app.name": "CalaSign",
@@ -192,8 +193,8 @@ const es = {
   "mailbox.open": "Abrir link",
 } as const;
 
-export type MessageKey = keyof typeof es;
-type Dict = Record<MessageKey, string>;
+export type MessageKey = keyof typeof es | ProdKey;
+type Dict = Record<keyof typeof es, string>;
 
 const ptBR: Dict = {
   "app.name": "CalaSign",
@@ -553,7 +554,11 @@ const en: Dict = {
   "mailbox.open": "Open link",
 };
 
-const DICTS: Record<Locale, Dict> = { es, "pt-BR": ptBR, en };
+const DICTS: Record<Locale, Record<MessageKey, string>> = {
+  es: { ...es, ...prodEs },
+  "pt-BR": { ...ptBR, ...prodPt },
+  en: { ...en, ...prodEn },
+};
 
 export const LOCALE_LABELS: Record<Locale, string> = { es: "Español", "pt-BR": "Português", en: "English" };
 
@@ -608,7 +613,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
 
   const t = useCallback<TFunc>(
     (key, vars) => {
-      let s: string = DICTS[locale][key] ?? es[key] ?? key;
+      let s: string = DICTS[locale][key] ?? DICTS.es[key] ?? key;
       if (vars) for (const [k, v] of Object.entries(vars)) s = s.replace(`{${k}}`, String(v));
       return s;
     },

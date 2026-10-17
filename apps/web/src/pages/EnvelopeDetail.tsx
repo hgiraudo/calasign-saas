@@ -4,6 +4,7 @@ import type { EnvelopeDetail, EnvelopeEvent } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
 import { formatDateTime, useI18n } from "../lib/i18n";
 import { ErrorBox, Modal, RecipientStatusBadge, Spinner, StatusBadge, formatBytes, recipientColor } from "../components/ui";
+import { SaveAsTemplateButton } from "../components/SaveAsTemplate";
 
 export function EnvelopeDetailPage() {
   const { id = "" } = useParams();
@@ -118,6 +119,7 @@ export function EnvelopeDetailPage() {
               </button>
             </>
           )}
+          <SaveAsTemplateButton envelopeId={id} defaultName={env.subject} />
         </div>
       </div>
 

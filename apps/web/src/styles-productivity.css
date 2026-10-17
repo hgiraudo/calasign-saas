@@ -1,0 +1,56 @@
+/* Fase 2 — productividad: campos nuevos del firmante, plantillas y marca. */
+
+/* Campos del firmante: número, desplegable, empresa, cargo, adjunto */
+.sfield-number, .sfield-dropdown, .sfield-company, .sfield-title, .sfield-attachment {
+  background: rgba(219, 234, 254, 0.6);
+  border: 1px solid #93c5fd;
+}
+.sfield-number.req:not(.filled), .sfield-dropdown.req:not(.filled), .sfield-company.req:not(.filled),
+.sfield-title.req:not(.filled), .sfield-attachment.req:not(.filled) {
+  border-color: #f59e0b;
+  background: rgba(254, 243, 199, 0.7);
+}
+.sfield-number input, .sfield-company input, .sfield-title input, .sfield-dropdown select {
+  border: 0; background: transparent; width: 100%; height: 100%; padding: 0 3px; border-radius: 0; font: inherit; min-width: 0;
+}
+.sfield-dropdown select { appearance: auto; cursor: pointer; }
+.sfield-number input:focus-visible, .sfield-company input:focus-visible, .sfield-title input:focus-visible,
+.sfield-dropdown select:focus-visible { outline: 2px solid var(--teal); outline-offset: 0; }
+.sfield-attach { justify-content: flex-start; }
+.attach-pick { display: flex; align-items: center; width: 100%; height: 100%; padding: 0 4px; cursor: pointer; font-weight: 600; color: #1e40af; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.attach-pick input { display: none; }
+.attach-chip { display: flex; align-items: center; gap: 4px; width: 100%; padding: 0 4px; min-width: 0; }
+.attach-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.attach-x { border: 0; background: transparent; cursor: pointer; font-size: 1.1em; line-height: 1; color: var(--muted); padding: 0 2px; }
+.attach-x:hover { color: var(--danger); }
+
+/* Logo de la organización en la barra del firmante */
+.signer-brand { display: inline-flex; align-items: center; background: #fff; border-radius: 6px; padding: 3px 8px; max-width: 100%; }
+.signer-logo { display: block; max-height: 32px; max-width: 180px; object-fit: contain; }
+
+/* Editor: propiedades */
+.row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+
+/* Plantillas */
+.tpl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1rem; }
+.tpl-card { display: flex; flex-direction: column; gap: 0.75rem; }
+.tpl-card h3 { margin: 0 0 0.25rem; font-size: 1.05rem; }
+.tpl-card p { margin: 0 0 0.2rem; }
+.role-grid { display: grid; grid-template-columns: 76px 2fr 1fr auto; gap: 0.65rem; align-items: end; }
+.use-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.65rem; }
+.recipient-row h3 { margin: 0 0 0.6rem; font-size: 1rem; }
+@media (max-width: 640px) {
+  .role-grid { grid-template-columns: 70px 1fr; }
+}
+
+/* Marca */
+.brand-layout { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 1.25rem; align-items: start; }
+@media (max-width: 860px) { .brand-layout { grid-template-columns: 1fr; } }
+.color-input { width: 46px; height: 38px; padding: 2px; border: 1px solid var(--border); border-radius: 8px; background: #fff; cursor: pointer; }
+.color-text { width: 110px; font-family: ui-monospace, monospace; }
+.logo-thumb { max-height: 48px; max-width: 200px; object-fit: contain; border: 1px solid var(--border); border-radius: 6px; padding: 4px; background: #fff; }
+.brand-preview { overflow: hidden; padding: 0; }
+.brand-preview-bar { color: #fff; padding: 0.6rem 1rem; min-height: 52px; display: flex; align-items: center; }
+.brand-preview-doc { height: 120px; border-radius: 6px; background: repeating-linear-gradient(180deg, #eef2f7 0 10px, #fff 10px 22px); border: 1px solid var(--border); }
+.brand-preview-btn { align-self: flex-start; color: #fff; }
+.brand-preview-footer { white-space: pre-wrap; border-top: 1px solid var(--border); padding-top: 0.5rem; }

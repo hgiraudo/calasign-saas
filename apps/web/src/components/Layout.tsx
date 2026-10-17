@@ -39,6 +39,8 @@ export function Layout() {
           <NavLink to="/app" end>
             {t("nav.envelopes")}
           </NavLink>
+          <NavLink to="/app/templates">{t("nav.templates")}</NavLink>
+          <NavLink to="/app/settings/branding">{t("nav.branding")}</NavLink>
           <NavLink to="/app/settings/api-keys">{t("nav.apiKeys")}</NavLink>
           {mailbox && <NavLink to="/app/dev-mailbox">{t("nav.mailbox")}</NavLink>}
           <span className="topnav-spacer" />

@@ -8,6 +8,10 @@ import { EnvelopeDetailPage } from "./pages/EnvelopeDetail";
 import { ApiKeysPage } from "./pages/ApiKeys";
 import { SignerPage } from "./pages/Signer";
 import { DevMailboxPage } from "./pages/DevMailbox";
+import { TemplatesPage } from "./pages/Templates";
+import { TemplateEditPage } from "./pages/TemplateEdit";
+import { TemplateUsePage } from "./pages/TemplateUse";
+import { BrandingPage } from "./pages/Branding";
 
 export function App() {
   return (
@@ -28,6 +32,10 @@ export function App() {
         <Route path="/app/envelopes/:id/edit" element={<EnvelopeEditPage />} />
         <Route path="/app/settings/api-keys" element={<ApiKeysPage />} />
         <Route path="/app/dev-mailbox" element={<DevMailboxPage />} />
+        <Route path="/app/templates" element={<TemplatesPage />} />
+        <Route path="/app/templates/:id/edit" element={<TemplateEditPage />} />
+        <Route path="/app/templates/:id/use" element={<TemplateUsePage />} />
+        <Route path="/app/settings/branding" element={<BrandingPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/app" replace />} />
     </Routes>

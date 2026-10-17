@@ -7,6 +7,7 @@ import { LOCALE_LABELS, useI18n } from "../lib/i18n";
 import { forgetPdf } from "../lib/pdf";
 import { FieldEditor, type DraftField } from "../components/FieldEditor";
 import { ErrorBox, Spinner, StatusBadge, formatBytes, recipientColor } from "../components/ui";
+import { SaveAsTemplateButton } from "../components/SaveAsTemplate";
 
 interface DraftRecipient {
   id: string;
@@ -58,6 +59,11 @@ function toDraftFields(d: EnvelopeDetail): DraftField[] {
     height: f.height,
     required: f.required,
     label: f.label,
+    value: f.value,
+    readOnly: f.readOnly,
+    options: f.options,
+    min: f.min,
+    max: f.max,
   }));
 }
 
@@ -146,7 +152,7 @@ export function EnvelopeEditPage() {
     try {
       const d = await api<EnvelopeDetail>(`/v1/envelopes/${id}/fields`, {
         method: "PUT",
-        body: { fields: fields.map((f) => ({ ...f })) },
+        body: { fields: fields.map((f) => ({ ...f, options: f.options ? f.options.map((o) => o.trim()).filter(Boolean) : f.options })) },
       });
       setDetail(d);
       setFields(toDraftFields(d));
@@ -197,6 +203,11 @@ export function EnvelopeEditPage() {
             {detail.envelope.subject} <StatusBadge status={detail.envelope.status} />
           </h1>
         </div>
+        <SaveAsTemplateButton
+          envelopeId={id}
+          defaultName={detail.envelope.subject}
+          beforeSave={async () => (await saveRecipients()) && (await saveFields())}
+        />
       </div>
 
       <ol className="stepper">

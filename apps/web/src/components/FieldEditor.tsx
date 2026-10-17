@@ -1,6 +1,6 @@
 // Editor de campos: ubicar, mover, redimensionar y borrar campos sobre las páginas.
 import { useCallback, useEffect, useRef, useState, type DragEvent, type PointerEvent as RPointerEvent } from "react";
-import type { Document, FieldType, Recipient } from "@calasign/shared";
+import type { Document, FieldType } from "@calasign/shared";
 import { FIELD_TYPES } from "@calasign/shared";
 import { uuid } from "../lib/api";
 import { useI18n } from "../lib/i18n";
@@ -19,7 +19,18 @@ export interface DraftField {
   height: number;
   required: boolean;
   label: string | null;
+  /** Valor prellenado por el remitente (texto, número, desplegable, empresa, cargo). */
+  value?: string | null;
+  readOnly?: boolean;
+  options?: string[] | null;
+  min?: number | null;
+  max?: number | null;
 }
+
+/** Tipos que el remitente puede prellenar o fijar como solo lectura. */
+const PREFILL_TYPES: FieldType[] = ["text", "number", "dropdown", "company", "title"];
+/** Tipos con etiqueta visible para el firmante. */
+const LABEL_TYPES: FieldType[] = ["text", "checkbox", "number", "dropdown", "company", "title", "attachment"];
 
 /** Tamaño por defecto en puntos PDF. */
 const DEFAULT_SIZE: Record<FieldType, [number, number]> = {
@@ -30,6 +41,11 @@ const DEFAULT_SIZE: Record<FieldType, [number, number]> = {
   email: [170, 20],
   text: [150, 20],
   checkbox: [16, 16],
+  number: [100, 20],
+  dropdown: [140, 20],
+  company: [170, 20],
+  title: [150, 20],
+  attachment: [170, 24],
 };
 
 const ICON: Record<FieldType, string> = {
@@ -40,6 +56,11 @@ const ICON: Record<FieldType, string> = {
   email: "@",
   text: "T",
   checkbox: "☑",
+  number: "#",
+  dropdown: "▾",
+  company: "🏢",
+  title: "💼",
+  attachment: "📎",
 };
 
 const MIN = 0.008;
@@ -47,16 +68,19 @@ const MIN = 0.008;
 interface Props {
   envelopeId: string;
   documents: Document[];
-  signers: Recipient[];
+  /** Firmantes del sobre, o roles de la plantilla (solo se usan id y nombre). */
+  signers: { id: string; name: string }[];
   fields: DraftField[];
   onChange: (fields: DraftField[]) => void;
+  /** URL del PDF de cada documento (por defecto, la del sobre). */
+  fileUrl?: (documentId: string) => string;
 }
 
 type Drag =
   | { kind: "move"; id: string; startX: number; startY: number; fx: number; fy: number; rect: DOMRect }
   | { kind: "resize"; id: string; startX: number; startY: number; fw: number; fh: number; rect: DOMRect };
 
-export function FieldEditor({ envelopeId, documents, signers, fields, onChange }: Props) {
+export function FieldEditor({ envelopeId, documents, signers, fields, onChange, fileUrl }: Props) {
   const { t } = useI18n();
   const [tool, setTool] = useState<FieldType | null>(null);
   const [activeRecipient, setActiveRecipient] = useState<string>(signers[0]?.id ?? "");
@@ -129,6 +153,7 @@ export function FieldEditor({ envelopeId, documents, signers, fields, onChange }
       height,
       required: type !== "checkbox",
       label: null,
+      options: type === "dropdown" ? [t("edit.optionDefault1"), t("edit.optionDefault2")] : null,
     };
     onChange([...fieldsRef.current, f]);
     setSelected(f.id);
@@ -266,13 +291,84 @@ export function FieldEditor({ envelopeId, documents, signers, fields, onChange }
                 {t("edit.required")}
               </label>
             )}
-            {(sel.type === "text" || sel.type === "checkbox") && (
+            {LABEL_TYPES.includes(sel.type) && (
               <label className="field">
                 <span>
                   {t("edit.label")} <span className="muted">({t("common.optional")})</span>
                 </span>
                 <input value={sel.label ?? ""} maxLength={200} onChange={(e) => update(sel.id, { label: e.target.value || null })} />
               </label>
+            )}
+            {sel.type === "dropdown" && (
+              <label className="field">
+                <span>{t("edit.options")}</span>
+                <textarea
+                  rows={4}
+                  value={(sel.options ?? []).join("\n")}
+                  onChange={(e) =>
+                    update(sel.id, {
+                      options: e.target.value
+                        .split("\n")
+                        .map((o) => o.trimStart())
+                        .slice(0, 50),
+                    })
+                  }
+                  onBlur={(e) => update(sel.id, { options: e.target.value.split("\n").map((o) => o.trim()).filter(Boolean) })}
+                />
+                <small className="muted">{t("edit.optionsHint")}</small>
+              </label>
+            )}
+            {sel.type === "number" && (
+              <div className="row-2">
+                <label className="field">
+                  <span>{t("edit.min")}</span>
+                  <input
+                    type="number"
+                    value={sel.min ?? ""}
+                    onChange={(e) => update(sel.id, { min: e.target.value === "" ? null : Number(e.target.value) })}
+                  />
+                </label>
+                <label className="field">
+                  <span>{t("edit.max")}</span>
+                  <input
+                    type="number"
+                    value={sel.max ?? ""}
+                    onChange={(e) => update(sel.id, { max: e.target.value === "" ? null : Number(e.target.value) })}
+                  />
+                </label>
+              </div>
+            )}
+            {PREFILL_TYPES.includes(sel.type) && (
+              <>
+                <label className="field">
+                  <span>
+                    {t("edit.prefill")} <span className="muted">({t("common.optional")})</span>
+                  </span>
+                  {sel.type === "dropdown" ? (
+                    <select value={sel.value ?? ""} onChange={(e) => update(sel.id, { value: e.target.value || null })}>
+                      <option value="">—</option>
+                      {(sel.options ?? []).filter(Boolean).map((o) => (
+                        <option key={o} value={o}>
+                          {o}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      value={sel.value ?? ""}
+                      maxLength={2000}
+                      inputMode={sel.type === "number" ? "decimal" : undefined}
+                      onChange={(e) => update(sel.id, { value: e.target.value || null, readOnly: e.target.value ? sel.readOnly : false })}
+                    />
+                  )}
+                </label>
+                {sel.value && (
+                  <label className="check">
+                    <input type="checkbox" checked={!!sel.readOnly} onChange={(e) => update(sel.id, { readOnly: e.target.checked })} />
+                    {t("edit.readOnly")}
+                  </label>
+                )}
+              </>
             )}
           </div>
         )}
@@ -286,7 +382,7 @@ export function FieldEditor({ envelopeId, documents, signers, fields, onChange }
           <DocumentView
             key={doc.id}
             doc={doc}
-            url={`/v1/envelopes/${envelopeId}/documents/${doc.id}/file`}
+            url={fileUrl ? fileUrl(doc.id) : `/v1/envelopes/${envelopeId}/documents/${doc.id}/file`}
             onPagePointerDown={onPagePointerDown(doc)}
             onPageDrop={onPageDrop(doc)}
             renderOverlay={(page) =>
@@ -311,7 +407,7 @@ export function FieldEditor({ envelopeId, documents, signers, fields, onChange }
                     title={`${t(`field.${f.type}`)} — ${signers.find((s) => s.id === f.recipientId)?.name ?? ""}`}
                   >
                     <span className="fbox-label" style={{ color: colorOf(f.recipientId) }}>
-                      {f.type === "checkbox" ? "☐" : (f.label ?? t(`field.${f.type}`))}
+                      {f.type === "checkbox" ? "☐" : f.readOnly && f.value ? `🔒 ${f.value}` : (f.label ?? t(`field.${f.type}`))}
                       {f.required && f.type !== "checkbox" ? " *" : ""}
                     </span>
                     {selected === f.id && (

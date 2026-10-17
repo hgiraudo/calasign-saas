@@ -1,0 +1,333 @@
+// Arma el PDF final de un sobre: estampa los campos completados en cada documento, une todo,
+// agrega el certificado de finalización y sella con PAdES.
+import { PDFDocument, PDFPage, rgb, type PDFImage } from "pdf-lib";
+import { pdflibAddPlaceholder } from "@signpdf/placeholder-pdf-lib";
+import { SUBFILTER_ETSI_CADES_DETACHED, Signer } from "@signpdf/utils";
+import signpdfModule from "@signpdf/signpdf";
+import { buildPadesCms, type CmsOptions } from "./cms";
+import { embedFonts, fitFontSize, safeText, withDisplayedSpace, wrapText, type Fonts } from "./layout";
+import { labels, type CertLabels } from "./i18n";
+import type { SignatureProvider } from "./provider";
+
+// @signpdf/signpdf exporta una instancia por defecto; según el bundler llega anidada.
+const signpdf = ((signpdfModule as unknown as { default?: typeof signpdfModule }).default ?? signpdfModule) as {
+  sign(pdf: Buffer, signer: Signer, signingTime?: Date): Promise<Buffer>;
+};
+
+export type StampFieldType = "signature" | "initials" | "date_signed" | "name" | "email" | "text" | "checkbox";
+
+export interface StampField {
+  documentIndex: number;
+  page: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  type: StampFieldType;
+  value: string | null;
+  /** PNG para signature / initials. */
+  imagePng?: Uint8Array | null;
+}
+
+export interface CertificateRecipient {
+  name: string;
+  role: "signer" | "cc";
+  email: string | null;
+  phone: string | null;
+  idDocument: string | null;
+  channels: string[];
+  authMethod: string;
+  sentAt: string | null;
+  viewedAt: string | null;
+  consentedAt: string | null;
+  signedAt: string | null;
+  ip: string | null;
+  userAgent: string | null;
+  signaturePng?: Uint8Array | null;
+}
+
+export interface CertificateData {
+  envelopeId: string;
+  subject: string;
+  organizationName: string;
+  senderName: string;
+  senderEmail: string | null;
+  createdAt: string;
+  sentAt: string | null;
+  completedAt: string;
+  locale: string;
+  documents: { name: string; pageCount: number; sha256: string }[];
+  recipients: CertificateRecipient[];
+  events: { seq: number; type: string; occurredAt: string; actor: string; ip: string | null }[];
+  chainHead: string;
+}
+
+export interface FinalizeInput {
+  documents: { name: string; bytes: Uint8Array }[];
+  fields: StampField[];
+  certificate: CertificateData;
+}
+
+export interface SealOptions extends CmsOptions {
+  provider: SignatureProvider;
+  reason?: string;
+  location?: string;
+  contactInfo?: string;
+  signerName?: string;
+}
+
+const INK = rgb(0.05, 0.1, 0.25);
+const MUTED = rgb(0.4, 0.43, 0.5);
+const LINE = rgb(0.82, 0.85, 0.9);
+const ACCENT = rgb(0.0, 0.5, 0.5);
+
+export async function finalizeEnvelopePdf(input: FinalizeInput, seal: SealOptions): Promise<Uint8Array> {
+  const out = await PDFDocument.create();
+  const fonts = await embedFonts(out);
+  const L = labels(input.certificate.locale);
+  const imageCache = new Map<Uint8Array, PDFImage>();
+  const embedImage = async (png: Uint8Array) => {
+    let img = imageCache.get(png);
+    if (!img) {
+      img = await out.embedPng(png);
+      imageCache.set(png, img);
+    }
+    return img;
+  };
+
+  for (let di = 0; di < input.documents.length; di++) {
+    const src = await PDFDocument.load(input.documents[di].bytes, { updateMetadata: false });
+    try {
+      src.getForm().flatten();
+    } catch {
+      // Formularios rotos: se copian tal cual.
+    }
+    const copied = await out.copyPages(src, src.getPageIndices());
+    for (let pi = 0; pi < copied.length; pi++) {
+      const page = out.addPage(copied[pi]);
+      const pageFields = input.fields.filter((f) => f.documentIndex === di && f.page === pi);
+      for (const f of pageFields) {
+        const img = (f.type === "signature" || f.type === "initials") && f.imagePng ? await embedImage(f.imagePng) : null;
+        drawField(page, fonts, f, img);
+      }
+      drawPageFooter(page, fonts, L, input.certificate.envelopeId);
+    }
+  }
+
+  await drawCertificate(out, fonts, L, input.certificate, embedImage);
+
+  out.setTitle(input.certificate.subject);
+  out.setProducer("CalaSign");
+  out.setCreator("CalaSign");
+  out.setModificationDate(new Date(input.certificate.completedAt));
+
+  return sealPdfDocument(out, seal);
+}
+
+/** Agrega el diccionario de firma y sella. El PDF se guarda sin object streams para poder ubicar el ByteRange. */
+export async function sealPdfDocument(doc: PDFDocument, seal: SealOptions): Promise<Uint8Array> {
+  pdflibAddPlaceholder({
+    pdfDoc: doc,
+    reason: seal.reason ?? "Sello de integridad CalaSign",
+    contactInfo: seal.contactInfo ?? "https://calasign.com",
+    name: seal.signerName ?? "CalaSign",
+    location: seal.location ?? "Cloud",
+    signatureLength: 24_000,
+    subFilter: SUBFILTER_ETSI_CADES_DETACHED,
+    widgetRect: [0, 0, 0, 0],
+  });
+  const unsigned = Buffer.from(await doc.save({ useObjectStreams: false }));
+
+  class PadesSigner extends Signer {
+    async sign(content: Buffer): Promise<Buffer> {
+      return Buffer.from(await buildPadesCms(new Uint8Array(content), seal.provider, seal));
+    }
+  }
+  const signed = await signpdf.sign(unsigned, new PadesSigner());
+  return new Uint8Array(signed);
+}
+
+function drawField(page: PDFPage, fonts: Fonts, f: StampField, img: PDFImage | null) {
+  withDisplayedSpace(page, (W, H) => {
+    const bx = f.x * W;
+    const bw = f.width * W;
+    const bh = f.height * H;
+    const by = H - f.y * H - bh; // abajo-izquierda del campo
+    if (img) {
+      const scale = Math.min(bw / img.width, bh / img.height);
+      const w = img.width * scale;
+      const h = img.height * scale;
+      page.drawImage(img, { x: bx + (bw - w) / 2, y: by + (bh - h) / 2, width: w, height: h });
+      return;
+    }
+    if (f.type === "checkbox") {
+      if (f.value === "true") {
+        const s = Math.min(bw, bh) * 0.8;
+        const ox = bx + (bw - s) / 2;
+        const oy = by + (bh - s) / 2;
+        const t = Math.max(0.8, s / 9);
+        page.drawLine({ start: { x: ox + s * 0.1, y: oy + s * 0.5 }, end: { x: ox + s * 0.4, y: oy + s * 0.15 }, thickness: t, color: INK });
+        page.drawLine({ start: { x: ox + s * 0.4, y: oy + s * 0.15 }, end: { x: ox + s * 0.92, y: oy + s * 0.88 }, thickness: t, color: INK });
+      }
+      return;
+    }
+    const text = safeText(fonts.regular, (f.value ?? "").replace(/\s+/g, " ").trim());
+    if (!text) return;
+    const size = fitFontSize(fonts.regular, text, bw - 2, Math.min(bh * 0.7, 11));
+    page.drawText(text, { x: bx + 1, y: by + (bh - size * 0.72) / 2, size, font: fonts.regular, color: INK });
+  });
+}
+
+function drawPageFooter(page: PDFPage, fonts: Fonts, L: CertLabels, envelopeId: string) {
+  withDisplayedSpace(page, (_W, H) => {
+    page.drawText(`${L.pageFooter} ${envelopeId}`, { x: 8, y: H - 9, size: 5.5, font: fonts.regular, color: MUTED });
+  });
+}
+
+// ───────────────────────────── Certificado de finalización ─────────────────────────────
+
+const A4 = { w: 595.28, h: 841.89 };
+const M = 42;
+
+async function drawCertificate(
+  doc: PDFDocument,
+  fonts: Fonts,
+  L: CertLabels,
+  c: CertificateData,
+  embedImage: (png: Uint8Array) => Promise<PDFImage>,
+) {
+  let page = doc.addPage([A4.w, A4.h]);
+  let y = A4.h - M;
+  const contentW = A4.w - 2 * M;
+  const pagesAdded: PDFPage[] = [page];
+
+  const ensure = (needed: number) => {
+    if (y - needed < M + 20) {
+      page = doc.addPage([A4.w, A4.h]);
+      pagesAdded.push(page);
+      y = A4.h - M;
+    }
+  };
+  const text = (s: string, opts: { size?: number; bold?: boolean; color?: ReturnType<typeof rgb>; x?: number; maxW?: number } = {}) => {
+    const size = opts.size ?? 8.5;
+    const font = opts.bold ? fonts.bold : fonts.regular;
+    const lines = wrapText(font, safeText(font, s), size, opts.maxW ?? contentW);
+    for (const line of lines) {
+      ensure(size * 1.4);
+      page.drawText(line, { x: opts.x ?? M, y: y - size, size, font, color: opts.color ?? INK });
+      y -= size * 1.4;
+    }
+  };
+  const kv = (k: string, v: string | null | undefined, x = M, keyW = 150) => {
+    if (!v) return;
+    const size = 8.5;
+    const lines = wrapText(fonts.regular, safeText(fonts.regular, v), size, contentW - (x - M) - keyW);
+    ensure(size * 1.4 * lines.length);
+    page.drawText(safeText(fonts.bold, k), { x, y: y - size, size, font: fonts.bold, color: MUTED });
+    for (const line of lines) {
+      page.drawText(line, { x: x + keyW, y: y - size, size, font: fonts.regular, color: INK });
+      y -= size * 1.4;
+    }
+  };
+  const section = (title: string) => {
+    ensure(40);
+    y -= 10;
+    page.drawText(safeText(fonts.bold, title), { x: M, y: y - 11, size: 11, font: fonts.bold, color: ACCENT });
+    y -= 16;
+    page.drawLine({ start: { x: M, y }, end: { x: A4.w - M, y }, thickness: 0.6, color: LINE });
+    y -= 8;
+  };
+  const fmt = (iso: string | null | undefined) => (iso ? new Date(iso).toISOString().replace("T", " ").replace(/\.\d+Z$/, " UTC") : null);
+
+  // Encabezado
+  page.drawRectangle({ x: 0, y: A4.h - 6, width: A4.w, height: 6, color: ACCENT });
+  text(L.title, { size: 18, bold: true });
+  text(L.subtitle, { size: 9.5, color: MUTED });
+  y -= 6;
+  kv(L.envelope, c.envelopeId);
+  kv(L.subject, c.subject);
+  kv(L.organization, c.organizationName);
+  kv(L.sender, c.senderEmail ? `${c.senderName} <${c.senderEmail}>` : c.senderName);
+  kv(L.created, fmt(c.createdAt));
+  kv(L.sent, fmt(c.sentAt));
+  kv(L.completed, fmt(c.completedAt));
+
+  section(L.documents);
+  c.documents.forEach((d, i) => {
+    text(`${i + 1}. ${d.name} (${d.pageCount} ${L.pages})`, { bold: true });
+    kv(L.originalHash, d.sha256, M + 12, 108);
+  });
+
+  section(L.recipients);
+  for (const r of c.recipients) {
+    ensure(110);
+    const role = r.role === "cc" ? L.role_cc : L.role_signer;
+    text(`${r.name} — ${role}`, { bold: true, size: 9.5 });
+    const top = y;
+    const ix = M + 12;
+    kv(L.email, r.email, ix);
+    kv(L.phone, r.phone, ix);
+    kv(L.idDocument, r.idDocument, ix);
+    kv(L.channels, r.channels.join(", "), ix);
+    if (r.role === "signer") kv(L.auth, r.authMethod === "link" ? L.auth_link : r.authMethod, ix);
+    kv(L.sent, fmt(r.sentAt), ix);
+    kv(L.viewed, fmt(r.viewedAt), ix);
+    kv(L.consented, fmt(r.consentedAt), ix);
+    kv(L.signed, fmt(r.signedAt), ix);
+    kv(L.ip, r.ip, ix);
+    kv(L.device, r.userAgent ? r.userAgent.slice(0, 160) : null, ix);
+    if (r.signaturePng) {
+      const img = await embedImage(r.signaturePng);
+      const boxW = 130;
+      const boxH = 48;
+      const scale = Math.min(boxW / img.width, boxH / img.height);
+      const bx = A4.w - M - boxW;
+      const byTop = Math.min(top, y + 200);
+      page.drawRectangle({ x: bx - 4, y: byTop - boxH - 8, width: boxW + 8, height: boxH + 8, borderColor: LINE, borderWidth: 0.6 });
+      page.drawImage(img, { x: bx + (boxW - img.width * scale) / 2, y: byTop - boxH - 4 + (boxH - img.height * scale) / 2, width: img.width * scale, height: img.height * scale });
+    }
+    y -= 8;
+  }
+
+  section(L.events);
+  const cols = [M, M + 28, M + 168, M + 300];
+  const header = () => {
+    ensure(14);
+    [["#", cols[0]], [L.when, cols[1]], [L.event, cols[2]], [`${L.actor} / ${L.ip}`, cols[3]]].forEach(([s, x]) =>
+      page.drawText(safeText(fonts.bold, String(s)), { x: Number(x), y: y - 8, size: 7.5, font: fonts.bold, color: MUTED }),
+    );
+    y -= 13;
+  };
+  header();
+  for (const e of c.events) {
+    const actor = safeText(fonts.regular, `${e.actor}${e.ip ? ` · ${e.ip}` : ""}`);
+    const actorLines = wrapText(fonts.regular, actor, 7.5, A4.w - M - cols[3]);
+    const rowH = Math.max(1, actorLines.length) * 10.5;
+    if (y - rowH < M + 20) {
+      page = doc.addPage([A4.w, A4.h]);
+      pagesAdded.push(page);
+      y = A4.h - M;
+      header();
+    }
+    page.drawText(String(e.seq), { x: cols[0], y: y - 8, size: 7.5, font: fonts.regular, color: INK });
+    page.drawText(fmt(e.occurredAt) ?? "", { x: cols[1], y: y - 8, size: 7.5, font: fonts.regular, color: INK });
+    page.drawText(safeText(fonts.regular, e.type), { x: cols[2], y: y - 8, size: 7.5, font: fonts.regular, color: INK });
+    actorLines.forEach((line, i) => page.drawText(line, { x: cols[3], y: y - 8 - i * 10.5, size: 7.5, font: fonts.regular, color: INK }));
+    y -= rowH;
+  }
+
+  section(L.chainHead);
+  text(c.chainHead, { size: 8.5 });
+  y -= 6;
+  text(L.statement, { size: 8, color: MUTED });
+
+  pagesAdded.forEach((p, i) => {
+    p.drawText(safeText(fonts.regular, `${L.title} · ${c.envelopeId} · ${L.page} ${i + 1}/${pagesAdded.length}`), {
+      x: M,
+      y: M - 18,
+      size: 7,
+      font: fonts.regular,
+      color: MUTED,
+    });
+  });
+}

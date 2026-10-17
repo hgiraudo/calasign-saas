@@ -1,0 +1,35 @@
+import { Navigate, Route, Routes } from "react-router-dom";
+import { Layout } from "./components/Layout";
+import { RequireAuth } from "./lib/auth";
+import { LoginPage, SignupPage } from "./pages/Auth";
+import { EnvelopeListPage } from "./pages/EnvelopeList";
+import { EnvelopeEditPage } from "./pages/EnvelopeEdit";
+import { EnvelopeDetailPage } from "./pages/EnvelopeDetail";
+import { ApiKeysPage } from "./pages/ApiKeys";
+import { SignerPage } from "./pages/Signer";
+import { DevMailboxPage } from "./pages/DevMailbox";
+
+export function App() {
+  return (
+    <Routes>
+      <Route path="/" element={<Navigate to="/app" replace />} />
+      <Route path="/login" element={<LoginPage />} />
+      <Route path="/signup" element={<SignupPage />} />
+      <Route path="/s/:token" element={<SignerPage />} />
+      <Route
+        element={
+          <RequireAuth>
+            <Layout />
+          </RequireAuth>
+        }
+      >
+        <Route path="/app" element={<EnvelopeListPage />} />
+        <Route path="/app/envelopes/:id" element={<EnvelopeDetailPage />} />
+        <Route path="/app/envelopes/:id/edit" element={<EnvelopeEditPage />} />
+        <Route path="/app/settings/api-keys" element={<ApiKeysPage />} />
+        <Route path="/app/dev-mailbox" element={<DevMailboxPage />} />
+      </Route>
+      <Route path="*" element={<Navigate to="/app" replace />} />
+    </Routes>
+  );
+}

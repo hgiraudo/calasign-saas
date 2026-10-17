@@ -1,0 +1,11 @@
+node_modules/
+dist/
+var/
+.env
+.env.*
+!.env.example
+*.log
+infra/**/.terraform/
+infra/**/*.tfstate*
+infra/**/*.tfvars
+!infra/**/example.tfvars

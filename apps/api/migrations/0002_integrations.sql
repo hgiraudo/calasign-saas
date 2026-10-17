@@ -43,8 +43,9 @@ CREATE INDEX webhook_deliveries_tenant_idx ON webhook_deliveries (tenant_id, cre
 
 -- Destinatarios que firman dentro de la aplicación del integrador: no reciben invitaciones.
 ALTER TABLE recipients ADD COLUMN embedded boolean NOT NULL DEFAULT false;
+-- Un destinatario embebido puede no tener email ni teléfono. La regla "email o teléfono salvo embebido"
+-- se valida en la API (RecipientInput): un CHECK no puede diferirse y el flag se fija después del upsert.
 ALTER TABLE recipients DROP CONSTRAINT IF EXISTS recipients_check;
-ALTER TABLE recipients ADD CONSTRAINT recipients_contact_check CHECK (email IS NOT NULL OR phone IS NOT NULL OR embedded);
 
 -- Orígenes autorizados a enmarcar la página de firma (CSP frame-ancestors), por organización.
 ALTER TABLE tenants ADD COLUMN embed_frame_ancestors text[] NOT NULL DEFAULT ARRAY[]::text[];

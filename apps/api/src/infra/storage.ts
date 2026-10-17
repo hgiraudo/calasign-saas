@@ -52,9 +52,14 @@ class S3BlobStore implements BlobStore {
     const r = await c.send(new m.GetObjectCommand({ Bucket: this.bucket, Key: this.prefix + key }));
     return new Uint8Array(await r.Body!.transformToByteArray());
   }
+  /** Borrado definitivo: con versionado activo, un DeleteObject solo agrega una marca; se borran todas las versiones. */
   async delete(key: string) {
     const { m, c } = await this.clientP;
-    await c.send(new m.DeleteObjectCommand({ Bucket: this.bucket, Key: this.prefix + key }));
+    const Key = this.prefix + key;
+    const r = await c.send(new m.ListObjectVersionsCommand({ Bucket: this.bucket, Prefix: Key }));
+    const all = [...(r.Versions ?? []), ...(r.DeleteMarkers ?? [])].filter((v) => v.Key === Key);
+    for (const v of all) await c.send(new m.DeleteObjectCommand({ Bucket: this.bucket, Key, VersionId: v.VersionId }));
+    if (all.length === 0) await c.send(new m.DeleteObjectCommand({ Bucket: this.bucket, Key }));
   }
 }
 

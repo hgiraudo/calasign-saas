@@ -155,7 +155,7 @@ resource "aws_iam_role_policy" "app" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
-      { Sid = "Archivos", Effect = "Allow", Action = ["s3:GetObject", "s3:PutObject", "s3:ListBucket"], Resource = [aws_s3_bucket.blobs.arn, "${aws_s3_bucket.blobs.arn}/*"] },
+      { Sid = "Archivos", Effect = "Allow", Action = ["s3:GetObject", "s3:PutObject", "s3:ListBucket", "s3:ListBucketVersions", "s3:DeleteObject", "s3:DeleteObjectVersion"], Resource = [aws_s3_bucket.blobs.arn, "${aws_s3_bucket.blobs.arn}/*"] },
       { Sid = "Sello", Effect = "Allow", Action = ["kms:Sign", "kms:GetPublicKey", "kms:DescribeKey"], Resource = aws_kms_key.seal.arn },
       { Sid = "Parametros", Effect = "Allow", Action = ["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath"], Resource = "arn:aws:ssm:us-east-1:${var.account_id}:parameter/calasign-saas/dev/*" },
       {

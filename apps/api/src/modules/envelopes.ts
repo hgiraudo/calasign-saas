@@ -15,6 +15,7 @@ import { enqueue } from "../infra/queue";
 import { AppError, badRequest, conflict, notFound } from "../lib/errors";
 import { encrypt, iso, randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { config } from "../config";
+import { envelopeVisibilitySql } from "./access";
 import { authenticate, type AuthContext, type Services } from "./context";
 import { loadDetail, loadDocuments } from "./mappers";
 import { expandAnchorFields } from "./anchors";
@@ -120,6 +121,7 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
       const limit = Math.min(100, Math.max(1, Number(req.query.limit ?? 25)));
       const params: unknown[] = [tenantId];
       let where = `e.tenant_id = $1`;
+      where += envelopeVisibilitySql(A(req), params);
       if (req.query.status) {
         params.push(req.query.status.split(","));
         where += ` AND e.status = ANY($${params.length})`;

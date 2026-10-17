@@ -12,6 +12,7 @@ import { useSignerText } from "../lib/i18n-signer";
 import { ErrorBox, Spinner, StatusBadge, formatBytes, recipientColor } from "../components/ui";
 import { SaveAsTemplateButton } from "../components/SaveAsTemplate";
 import { ShareControl } from "../components/ShareControl";
+import { IdentitySelect, draftToIdentity, identityToDraft } from "../components/IdentityControls";
 
 interface DraftRecipient {
   id: string;
@@ -27,6 +28,8 @@ interface DraftRecipient {
   idDocumentType: string;
   idDocumentNumber: string;
   authMethod: AuthMethod;
+  /** "proveedor:nivel" o "" (sin verificación de identidad). */
+  idVerification: string;
 }
 
 const CHANNEL_LABELS: Record<Channel, string> = { email: "Email", whatsapp: "WhatsApp", telegram: "Telegram" };
@@ -49,6 +52,7 @@ function toDraftRecipients(d: EnvelopeDetail): DraftRecipient[] {
     idDocumentType: r.idDocumentType ?? "",
     idDocumentNumber: r.idDocumentNumber ?? "",
     authMethod: r.authMethod ?? "link",
+    idVerification: identityToDraft(r.identity),
   }));
 }
 
@@ -139,6 +143,7 @@ export function EnvelopeEditPage() {
           authMethod: r.authMethod,
           // Firma en persona: la anfitriona es quien carga el sobre.
           inPerson: r.authMethod === "in_person" ? {} : null,
+          idVerification: r.role === "cc" ? null : draftToIdentity(r.idVerification),
         })),
       };
       const d = await api<EnvelopeDetail>(`/v1/envelopes/${id}/recipients`, { method: "PUT", body });
@@ -423,6 +428,7 @@ function RecipientsStep({ recipients, onChange }: { recipients: DraftRecipient[]
         locale: "",
         channels: ["email"],
         authMethod: "link",
+        idVerification: "",
         telegramChatId: "",
         telegramLinked: false,
         idDocumentType: "",
@@ -493,6 +499,7 @@ function RecipientsStep({ recipients, onChange }: { recipients: DraftRecipient[]
                   </select>
                 </label>
               )}
+              {r.role !== "cc" && <IdentitySelect value={r.idVerification} onChange={(v) => set(i, { idVerification: v })} />}
               <label className="field">
                 <span>{t("edit.locale")}</span>
                 <select value={r.locale} onChange={(e) => set(i, { locale: e.target.value as Locale | "" })}>

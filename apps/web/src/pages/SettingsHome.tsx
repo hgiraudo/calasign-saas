@@ -6,11 +6,13 @@ import { useI18n } from "../lib/i18n";
 import { useIntText } from "../lib/integrations-i18n";
 import { useTeamsText } from "../lib/i18n-teams";
 import { useScaleText } from "../lib/i18n-scale";
+import { useIdnText } from "../lib/i18n-identity";
 
 export function SettingsHomePage() {
   const { t } = useI18n();
   const tt = useIntText();
   const tm = useTeamsText();
+  const ti = useIdnText();
   const sc = useScaleText();
   const { can } = useAccess();
   const sections: { to: string; title: string; desc: string; perm?: Permission }[] = [
@@ -22,6 +24,9 @@ export function SettingsHomePage() {
     { to: "/app/settings/integrations", title: tt("nav.integrations"), desc: tm("settings.integrations"), perm: "webhooks:manage" },
     { to: "/app/settings/audit", title: tm("nav.audit"), desc: tm("settings.audit"), perm: "audit:view" },
     { to: "/app/settings/security", title: tm("nav.security"), desc: tm("settings.security") },
+    { to: "/app/settings/identity", title: ti("settings.identity"), desc: ti("settings.identityDesc"), perm: "settings:manage" },
+    { to: "/app/settings/sso", title: ti("settings.sso"), desc: ti("settings.ssoDesc"), perm: "settings:manage" },
+    { to: "/app/settings/scim", title: ti("settings.scim"), desc: ti("settings.scimDesc"), perm: "members:manage" },
   ];
   return (
     <div className="page">

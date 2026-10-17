@@ -6,6 +6,7 @@ import { api, errorText } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useI18n } from "../lib/i18n";
 import { ErrorBox, LocaleSwitcher, Logo, Spinner } from "../components/ui";
+import { SsoErrorNotice, SsoLoginBox, redirectIfSsoRequired } from "../components/SsoLogin";
 
 function AuthShell({ title, children }: { title: string; children: ReactNode }) {
   const { t } = useI18n();
@@ -66,6 +67,7 @@ export function LoginPage() {
       setMe(m);
       nav(from, { replace: true });
     } catch (err) {
+      if (redirectIfSsoRequired(err, from)) return;
       setError(errorText(err));
     } finally {
       setBusy(false);
@@ -74,6 +76,7 @@ export function LoginPage() {
 
   return (
     <AuthShell title={t("auth.login")}>
+      <SsoErrorNotice />
       <form onSubmit={submit} className="stack">
         <label className="field">
           <span>{t("auth.email")}</span>
@@ -97,6 +100,7 @@ export function LoginPage() {
           {t("auth.noAccount")} <Link to="/signup">{t("auth.signup")}</Link>
         </p>
       </form>
+      <SsoLoginBox email={email} redirect={from} />
     </AuthShell>
   );
 }

@@ -166,8 +166,8 @@ export const SsoSettingsInput = z
         entryPoint: z.string().trim().url(),
         /** EntityID del IdP (Issuer esperado en la respuesta). */
         idpIssuer: z.string().trim().min(1).max(1000),
-        /** Certificado de firma del IdP en PEM o base64. */
-        idpCert: z.string().trim().min(100).max(20000),
+        /** Certificado de firma del IdP en PEM o base64. Omitir para conservar el actual. */
+        idpCert: z.string().trim().min(100).max(20000).optional(),
         /** Atributo con el correo; vacío: se usa el NameID. */
         emailAttribute: z.string().trim().max(500).optional().nullable(),
       })

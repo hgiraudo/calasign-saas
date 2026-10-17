@@ -348,13 +348,14 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
     if (input.oidc && !allowedUrl(input.oidc.issuer)) throw badRequest("invalid_issuer", "El issuer tiene que ser https");
     if (input.saml && !allowedUrl(input.saml.entryPoint)) throw badRequest("invalid_entry_point", "La URL de inicio de sesión del IdP tiene que ser https");
     let cert: string | null = cur?.saml_idp_cert ?? null;
-    if (input.saml) {
+    if (input.saml?.idpCert) {
       try {
         cert = normalizeCert(input.saml.idpCert);
       } catch {
         throw badRequest("invalid_certificate", "El certificado del IdP no es un X.509 válido");
       }
     }
+    if (input.enabled && input.protocol === "saml" && !cert) throw badRequest("certificate_required", "Falta el certificado de firma del IdP");
     const secretEnc = input.oidc?.clientSecret ? encrypt(input.oidc.clientSecret) : cur?.oidc_client_secret_enc ?? null;
     if (input.enabled && input.protocol === "oidc" && !secretEnc) throw badRequest("client_secret_required", "Falta el client secret de OIDC");
     if (input.enabled && input.protocol === "oidc") {

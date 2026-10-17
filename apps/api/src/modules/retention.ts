@@ -32,9 +32,12 @@ async function purgeableFiles(db: Db, envelopeId: string) {
 }
 
 export async function purgeExpiredEnvelopes(d: Deps, opts: { tenantId?: string; ignoreAge?: boolean; limit?: number } = {}) {
-  const params: unknown[] = [daySeconds()];
+  const params: unknown[] = [];
   let where = `e.status = 'completed' AND e.purged_at IS NULL AND t.retention_days IS NOT NULL`;
-  if (!opts.ignoreAge) where += ` AND e.completed_at < now() - make_interval(secs => t.retention_days * $1::double precision)`;
+  if (!opts.ignoreAge) {
+    params.push(daySeconds());
+    where += ` AND e.completed_at < now() - make_interval(secs => t.retention_days * $${params.length}::double precision)`;
+  }
   if (opts.tenantId) {
     params.push(opts.tenantId);
     where += ` AND e.tenant_id = $${params.length}`;

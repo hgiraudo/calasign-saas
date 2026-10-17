@@ -28,6 +28,9 @@ import { retentionRoutes } from "./modules/retention";
 import { experienceRoutes } from "./modules/experience";
 import { scaleRoutes } from "./modules/scale";
 import { oauthRoutes } from "./modules/oauth";
+import { notificationIntegrationRoutes } from "./modules/notify-integrations";
+import { storageRoutes } from "./modules/storage-export";
+import { customDomainRoutes } from "./modules/custom-domains";
 
 export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolean | object }) {
   const app = Fastify({
@@ -111,6 +114,9 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
   await experienceRoutes(app, services);
   await scaleRoutes(app, services);
   await oauthRoutes(app, services);
+  await notificationIntegrationRoutes(app, services);
+  await storageRoutes(app, services);
+  await customDomainRoutes(app, services);
 
   if (config.devMailbox) {
     // Local: todo el buzón. Entornos compartidos (dev): solo los mensajes de la organización de la sesión.

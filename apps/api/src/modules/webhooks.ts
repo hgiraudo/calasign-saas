@@ -51,7 +51,7 @@ function validateUrl(raw: string) {
   return u.toString();
 }
 
-function isPrivateAddress(ip: string): boolean {
+export function isPrivateAddress(ip: string): boolean {
   if (isIP(ip) === 6) {
     const x = ip.toLowerCase();
     if (x === "::1" || x === "::") return true;
@@ -74,7 +74,7 @@ function isPrivateAddress(ip: string): boolean {
 }
 
 /** Rechaza destinos que resuelven a direcciones internas (metadata de la nube, red privada). */
-async function assertPublicDestination(url: string) {
+export async function assertPublicDestination(url: string) {
   if (isLocalEnv()) return;
   const host = new URL(url).hostname.replace(/^\[|\]$/g, "");
   const addrs = isIP(host) ? [{ address: host }] : await lookup(host, { all: true });

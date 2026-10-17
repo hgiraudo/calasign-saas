@@ -40,7 +40,7 @@ export async function verifyRoutes(app: FastifyInstance, s: Services) {
       sha256,
       envelope: { id: hit.id, subject: hit.subject, organizationName: hit.org, completedAt: iso(hit.completed_at) },
       participants: participants.map((p) => ({ name: p.name, role: p.role, signedAt: iso(p.signed_at) })),
-      seal: { format: seal.format ?? null, provider: seal.provider ?? null, timestamped: seal.format === "PAdES-B-T" },
+      seal: { format: seal.format ?? null, provider: seal.provider ?? null, timestamped: /^PAdES-B-(T|LT|LTA)$/.test(seal.format ?? "") },
       chain: { ok: chain.ok, events: events?.n ?? 0, head: chain.head },
     };
     return res;

@@ -1,0 +1,101 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { SignedXml } from "xml-crypto";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { LocalKeyProvider } from "@calasign/pdf";
+import { startLab, type LabPki, type LabServer } from "@calasign/pdf/lab";
+import { DIAN_POLICY_V2, signXml, verifyXml, type XmlProfile } from "../src";
+
+const VERIFIER = fileURLToPath(new URL("./verify_xmldsig.py", import.meta.url));
+
+/** Verificación independiente con libxml2 (lxml) si está disponible (XMLDSIG_PYTHONPATH o lxml del sistema). */
+function independent(xml: string): { valid: boolean; references?: { uri: string; valid: boolean }[]; error?: string } | null {
+  const dir = mkdtempSync(join(tmpdir(), "xmldsig-"));
+  const file = join(dir, "doc.xml");
+  writeFileSync(file, xml);
+  try {
+    const out = execFileSync("python3", [VERIFIER, file], { encoding: "utf8", env: { ...process.env, PYTHONPATH: process.env.XMLDSIG_PYTHONPATH ?? "" } });
+    return JSON.parse(out);
+  } catch {
+    return null;
+  }
+}
+
+const UBL_INVOICE = `<?xml version="1.0" encoding="UTF-8"?>
+<Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2" xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2" xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2" xmlns:ext="urn:oasis:names:specification:ubl:schema:xsd:CommonExtensionComponents-2" xmlns:sts="dian:gov:co:facturaelectronica:Structures-2-1">
+  <ext:UBLExtensions>
+    <ext:UBLExtension><ext:ExtensionContent><sts:DianExtensions><sts:SoftwareProvider><sts:ProviderID>900123456</sts:ProviderID></sts:SoftwareProvider></sts:DianExtensions></ext:ExtensionContent></ext:UBLExtension>
+    <ext:UBLExtension><ext:ExtensionContent/></ext:UBLExtension>
+  </ext:UBLExtensions>
+  <cbc:UBLVersionID>UBL 2.1</cbc:UBLVersionID>
+  <cbc:ID>SETP990000001</cbc:ID>
+  <cbc:IssueDate>2026-10-17</cbc:IssueDate>
+  <cac:LegalMonetaryTotal><cbc:PayableAmount currencyID="COP">119000.00</cbc:PayableAmount></cac:LegalMonetaryTotal>
+</Invoice>`;
+
+const ECF = `<?xml version="1.0" encoding="utf-8"?>
+<ECF><Encabezado><Version>1.0</Version><IdDoc><TipoeCF>31</TipoeCF><eNCF>E310000000001</eNCF></IdDoc><Emisor><RNCEmisor>101000000</RNCEmisor><RazonSocialEmisor>Empresa Ñandú SRL</RazonSocialEmisor></Emisor><Totales><MontoTotal>1180.00</MontoTotal></Totales></Encabezado><FechaHoraFirma>17-10-2026 10:00:00</FechaHoraFirma></ECF>`;
+
+let pki: LabPki;
+let server: LabServer;
+let signer: LocalKeyProvider;
+
+beforeAll(async () => {
+  ({ pki, server } = await startLab());
+  const id = await pki.issue("Empresa Facturadora S.A.S.");
+  signer = new LocalKeyProvider("xml", id.keyPem, id.certPem + pki.intermediate.certPem + pki.root.certPem);
+}, 60_000);
+afterAll(async () => server?.close());
+
+describe("firma XML", () => {
+  const cases: [XmlProfile, string][] = [
+    ["dgii-ecf", ECF],
+    ["dian-fe", UBL_INVOICE],
+    ["xades-bes", ECF],
+    ["xades-epes", UBL_INVOICE],
+  ];
+  for (const [profile, xml] of cases) {
+    it(`${profile}: firma y verifica (propio, xml-crypto y libxml2)`, async () => {
+      const signed = await signXml(xml, signer, { profile, policy: profile === "xades-epes" ? DIAN_POLICY_V2 : undefined });
+      const own = verifyXml(signed);
+      expect(own.errors).toEqual([]);
+      expect(own.valid).toBe(true);
+      if (profile === "dgii-ecf") expect(own.xades).toBeNull();
+      else expect(own.xades?.signingCertificateMatches).toBe(true);
+      if (profile === "dian-fe") {
+        expect(own.xades?.policyIdentifier).toBe(DIAN_POLICY_V2.identifier);
+        expect(own.xades?.signerRole).toBe("supplier");
+        expect(own.xades?.signingTime).toMatch(/-05:00$/);
+        // La firma quedó dentro del ExtensionContent vacío.
+        expect(signed).toMatch(/<ext:ExtensionContent><ds:Signature /);
+        expect(own.references).toHaveLength(3);
+      }
+
+      // xml-crypto como segundo verificador (misma canonicalización, otra lógica de referencias).
+      const sx = new SignedXml({ publicCert: Buffer.from(own.signer ? (await signer.certificateChain())[0] : []).toString("base64").replace(/(.{64})/g, "$1\n").replace(/^/, "-----BEGIN CERTIFICATE-----\n").concat("\n-----END CERTIFICATE-----\n") });
+      const sigNode = new (await import("@xmldom/xmldom")).DOMParser().parseFromString(signed, "text/xml").getElementsByTagNameNS("http://www.w3.org/2000/09/xmldsig#", "Signature")[0];
+      sx.loadSignature(sigNode as unknown as Node);
+      const xc = sx.checkSignature(signed);
+      const ind = independent(signed);
+      if (!xc) console.log("XMLCRYPTO", profile, JSON.stringify(ind), (sx as any).validationErrors ?? "");
+      expect(xc).toBe(true);
+      if (ind) {
+        expect(ind.error).toBeUndefined();
+        expect(ind.valid).toBe(true);
+      } else {
+        console.warn("verificador libxml2 no disponible (definir XMLDSIG_PYTHONPATH con lxml)");
+      }
+
+      // Alterar un dato firmado rompe la verificación.
+      const tampered = signed.replace(/119000\.00|1180\.00/, "999999.00");
+      expect(verifyXml(tampered).valid).toBe(false);
+    });
+  }
+
+  it("XAdES-EPES sin política es un error", async () => {
+    await expect(signXml(ECF, signer, { profile: "xades-epes" })).rejects.toThrow(/política/);
+  });
+});

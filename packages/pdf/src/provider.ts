@@ -142,7 +142,8 @@ export async function issueSealCertificate(
     extensions: [
       new x509.BasicConstraintsExtension(false, undefined, true),
       new x509.KeyUsagesExtension(x509.KeyUsageFlags.digitalSignature | x509.KeyUsageFlags.nonRepudiation, true),
-      new x509.ExtendedKeyUsageExtension(["1.3.6.1.5.5.7.3.36"], false), // id-kp-documentSigning
+      // documentSigning + emailProtection (NSS/pdfsig lo exige para firmas PDF) + Adobe Authentic Documents.
+      new x509.ExtendedKeyUsageExtension(["1.3.6.1.5.5.7.3.36", "1.3.6.1.5.5.7.3.4", "1.2.840.113583.1.1.5"], false),
       await x509.SubjectKeyIdentifierExtension.create(publicKey),
       await x509.AuthorityKeyIdentifierExtension.create(caCert),
     ],

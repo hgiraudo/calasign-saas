@@ -43,6 +43,18 @@ export const config = {
     tsaUrl: env.TSA_URL ?? "https://freetsa.org/tsr",
     /** Si es false y la TSA falla, se sella igual en B-B y se deja constancia en la evidencia. */
     tsaRequired: bool(env.TSA_REQUIRED, production),
+    /** Nivel PAdES por defecto del entorno: auto | B-B | B-T | B-LT | B-LTA (cada organización puede elegir otro). */
+    level: env.SEAL_LEVEL ?? "auto",
+  },
+  evidence: {
+    /** Clave KMS simétrica para envolver las claves de los certificados de las organizaciones. Sin valor: SECRET_KEY local. */
+    custodyKmsKeyId: env.CUSTODY_KMS_KEY_ID ?? null,
+    /** Directorio con raíces de confianza (PEM/DER) para validar firmas. Se suma la raíz del sello de plataforma. */
+    trustStoreDir: env.TRUST_STORE_DIR ?? null,
+    /** Consultar OCSP/CRL online al validar PDFs subidos (con protección SSRF). */
+    validateOnlineRevocation: bool(env.VALIDATE_ONLINE_REVOCATION, false),
+    /** Conectores CSC v2 en JSON: [{id, baseUrl, auth:{type,…}, credentialId?, pin?, level?}]. */
+    cscConnectors: env.CSC_CONNECTORS ?? null,
   },
   mail: {
     smtpUrl: env.SMTP_URL ?? null,

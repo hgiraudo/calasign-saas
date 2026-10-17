@@ -8,6 +8,7 @@ import { useTeamsText } from "../lib/i18n-teams";
 import { useScaleText } from "../lib/i18n-scale";
 import { usePlatformText } from "../lib/i18n-platform";
 import { useIdnText } from "../lib/i18n-identity";
+import { useEvidenceText } from "../lib/i18n-evidence";
 
 export function SettingsHomePage() {
   const { t } = useI18n();
@@ -16,9 +17,12 @@ export function SettingsHomePage() {
   const ti = useIdnText();
   const sc = useScaleText();
   const pl = usePlatformText();
+  const evt = useEvidenceText();
   const { can } = useAccess();
   const sections: { to: string; title: string; desc: string; perm?: Permission }[] = [
     { to: "/app/bulk", title: sc("nav.bulk"), desc: sc("bulk.intro"), perm: "envelopes:create" },
+    { to: "/app/xml", title: evt("nav.xml"), desc: evt("settings.xml"), perm: "envelopes:create" },
+    { to: "/app/settings/certificates", title: evt("nav.certificates"), desc: evt("settings.certificates"), perm: "settings:manage" },
     { to: "/app/forms", title: sc("nav.forms"), desc: sc("forms.intro"), perm: "envelopes:create" },
     { to: "/app/settings/team", title: tm("nav.team"), desc: tm("settings.team") },
     { to: "/app/settings/branding", title: t("nav.branding"), desc: tm("settings.branding"), perm: "settings:manage" },

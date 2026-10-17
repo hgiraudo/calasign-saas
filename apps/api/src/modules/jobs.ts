@@ -4,6 +4,7 @@ import type { Db } from "../infra/db";
 import { SYSTEM, appendEvent } from "../infra/evidence";
 import { enqueue, requeueStuckJobs, type JobHandler, type JobQueueName } from "../infra/queue";
 import { getSealProvider } from "../infra/seal";
+import { applyEvidencePipeline, planEvidence } from "./evidence-seal";
 import type { BlobStore } from "../infra/storage";
 import { decrypt, maskDestination, sha256Hex, uuidv7 } from "../lib/util";
 import { deliver, telegramStartLink } from "../notifications/channels";
@@ -233,6 +234,7 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
   const brandLogo = await getLogoForPdf(d.db, d.blobs, brand);
 
   const provider = await getSealProvider();
+  const evPlan = await planEvidence(d.db, e);
   const input = {
     documents: docs.map((x, i) => ({ name: x.name, bytes: docBytes[i] })),
     fields: stampFields,
@@ -260,6 +262,7 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
       verifyUrl: `${config.appUrl}/verify`,
       attachments: attachments.map((x) => ({ name: x.name, recipientName: x.recipientName, sha256: x.sha256, appended: true })),
       branding: { primaryColor: brand.primaryColor, logo: brandLogo },
+      ...evPlan.certificate,
     },
   };
 
@@ -276,6 +279,9 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
     d.log.warn({ envelopeId: e.id, err: tsaError }, "TSA no disponible: sellado sin sello de tiempo");
     pdf = await finalizeEnvelopePdf(input, { provider, tsaUrl: null });
   }
+  // Sello de empresa y PAdES B-LT/B-LTA (revisiones incrementales).
+  const evidence = await applyEvidencePipeline(d.db, d.log, e, pdf, evPlan, { timestamped, orgName: org?.name ?? "" });
+  pdf = evidence.pdf;
 
   const fileId = uuidv7();
   const key = `tenants/${e.tenant_id}/envelopes/${e.id}/${fileId}-signed.pdf`;
@@ -302,7 +308,16 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
       data: {
         signedSha256: sha,
         certificateChainHead: chainHead,
-        seal: { provider: provider.id, format: timestamped ? "PAdES-B-T" : "PAdES-B-B", tsa: timestamped ? config.seal.tsaUrl : null, tsaError },
+        seal: {
+          provider: provider.id,
+          format: evidence.format,
+          tsa: timestamped ? config.seal.tsaUrl : null,
+          tsaError,
+          ltv: evidence.ltv ? { ocsps: evidence.ltv.ocsps, crls: evidence.ltv.crls, certs: evidence.ltv.certs, missingRevocation: evidence.ltv.missingRevocation } : null,
+          ltvError: evidence.ltvError,
+          companySeal: evidence.companySeal,
+          signatureLevel: evPlan.signatureLevel,
+        },
       },
     });
     for (const r of recips.filter((x) => x.status !== "delegated" && x.status !== "reassigned"))

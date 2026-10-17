@@ -16,6 +16,7 @@
     "@aws-sdk/client-s3": "^3.1152.0",
     "@calasign/pdf": "workspace:*",
     "@calasign/shared": "workspace:*",
+    "@calasign/xades": "workspace:*",
     "@electric-sql/pglite": "^0.5.10",
     "@fastify/cookie": "^11.1.3",
     "@fastify/helmet": "^13.2.0",
@@ -24,6 +25,7 @@
     "@fastify/static": "^10.1.6",
     "@node-saml/node-saml": "5.1.0",
     "fastify": "^5.12.7",
+    "node-forge": "1.4.0",
     "nodemailer": "^7.0.13",
     "pg": "^8.23.1",
     "pino": "^9.7.0",
@@ -34,6 +36,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.19.0",
+    "@types/node-forge": "1.3.14",
     "@types/nodemailer": "^7.0.12",
     "@types/pg": "^8.15.5",
     "@types/qrcode": "^1.5.5",

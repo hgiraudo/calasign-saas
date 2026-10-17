@@ -18,6 +18,8 @@ import { TemplateUsePage } from "./pages/TemplateUse";
 import { BrandingPage } from "./pages/Branding";
 import { TeamPage } from "./pages/Team";
 import { SettingsHomePage } from "./pages/SettingsHome";
+import { CertificatesPage } from "./pages/Certificates";
+import { XmlSignPage } from "./pages/XmlSign";
 import { AuditLogPage } from "./pages/AuditLog";
 import { SecurityPage } from "./pages/Security";
 import { InviteAcceptPage } from "./pages/InviteAccept";
@@ -68,6 +70,8 @@ export function App() {
         <Route path="/app/templates/:id/use" element={<TemplateUsePage />} />
         <Route path="/app/settings/branding" element={<BrandingPage />} />
         <Route path="/app/settings" element={<SettingsHomePage />} />
+        <Route path="/app/settings/certificates" element={<CertificatesPage />} />
+        <Route path="/app/xml" element={<XmlSignPage />} />
         <Route path="/app/settings/team" element={<TeamPage />} />
         <Route path="/app/settings/audit" element={<AuditLogPage />} />
         <Route path="/app/settings/security" element={<SecurityPage />} />

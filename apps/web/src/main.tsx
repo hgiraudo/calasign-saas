@@ -4,6 +4,7 @@ import { BrowserRouter } from "react-router-dom";
 import "@fontsource/dancing-script/400.css";
 import "./styles.css";
 import "./styles-productivity.css";
+import "./styles-scale.css";
 import { App } from "./App";
 import { I18nProvider } from "./lib/i18n";
 import { AuthProvider } from "./lib/auth";

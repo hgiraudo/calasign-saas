@@ -1,4 +1,5 @@
 // Experiencia del firmante: /s/:token. Sin cuenta, mobile-first.
+import { formatComputedLocal, useFieldLogic } from "../lib/logic";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useParams } from "react-router-dom";
 import type { CompleteSigningInput, Field, SignatureImageInput, SigningSession } from "@calasign/shared";
@@ -273,6 +274,7 @@ function SigningFlow({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
+  const logic = useFieldLogic(session, values);
 
   const docOrder = useMemo(() => new Map(session.documents.map((d) => [d.id, d.position])), [session.documents]);
   const ordered = useMemo(
@@ -294,7 +296,7 @@ function SigningFlow({
     [signature, initials, values],
   );
 
-  const interactive = ordered.filter((f) => !isAuto(f));
+  const interactive = ordered.filter((f) => !isAuto(f) && !f.formula && !logic.hidden.has(f.id));
   const required = interactive.filter((f) => f.required || f.type === "signature" || f.type === "initials");
   const done = required.filter(filled).length;
   const pending = required.filter((f) => !filled(f));
@@ -419,6 +421,13 @@ function SigningFlow({
     const fontSize = Math.max(8, Math.min(hPx * 0.62, 28));
     const style = { left: `${f.x * 100}%`, top: `${f.y * 100}%`, width: `${f.width * 100}%`, height: `${f.height * 100}%` };
     const cls = `sfield sfield-${f.type} ${filled(f) ? "filled" : ""} ${flash === f.id ? "flash" : ""} ${f.required ? "req" : ""}`;
+    if (f.formula) {
+      return (
+        <div key={f.id} id={`f-${f.id}`} className={`${cls} auto computed`} style={style} title={f.formula}>
+          <span style={{ fontSize }}>{formatComputedLocal(logic.computed.get(f.id), locale)}</span>
+        </div>
+      );
+    }
     if (f.type === "signature" || f.type === "initials") {
       const adopted = f.type === "signature" ? signature : initials;
       return (
@@ -573,7 +582,7 @@ function SigningFlow({
               renderOverlay={(page, widthPx) => {
                 const size = d.pages[page];
                 const pageHeightPx = widthPx * (size.height / size.width);
-                return docFields.filter((f) => f.page === page).map((f) => renderField(f, pageHeightPx));
+                return docFields.filter((f) => f.page === page && !logic.hidden.has(f.id)).map((f) => renderField(f, pageHeightPx));
               }}
             />
           );

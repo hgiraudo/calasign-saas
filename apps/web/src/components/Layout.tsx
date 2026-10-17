@@ -5,6 +5,7 @@ import { useAuth } from "../lib/auth";
 import { useI18n } from "../lib/i18n";
 import { LocaleSwitcher, Logo } from "./ui";
 import { useIntText } from "../lib/integrations-i18n";
+import { useScaleText } from "../lib/i18n-scale";
 
 export function useDevMailboxAvailable(): boolean {
   const [ok, setOk] = useState(false);
@@ -26,6 +27,7 @@ export function Layout() {
   const nav = useNavigate();
   const mailbox = useDevMailboxAvailable();
   const tt = useIntText();
+  const sc = useScaleText();
   const [open, setOpen] = useState(false);
 
   return (
@@ -42,6 +44,8 @@ export function Layout() {
             {t("nav.envelopes")}
           </NavLink>
           <NavLink to="/app/templates">{t("nav.templates")}</NavLink>
+          <NavLink to="/app/bulk">{sc("nav.bulk")}</NavLink>
+          <NavLink to="/app/forms">{sc("nav.forms")}</NavLink>
           <NavLink to="/app/settings/branding">{t("nav.branding")}</NavLink>
           <NavLink to="/app/settings/api-keys">{t("nav.apiKeys")}</NavLink>
           <NavLink to="/app/settings/integrations">{tt("nav.integrations")}</NavLink>

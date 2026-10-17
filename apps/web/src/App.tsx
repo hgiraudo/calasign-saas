@@ -15,6 +15,9 @@ import { TemplatesPage } from "./pages/Templates";
 import { TemplateEditPage } from "./pages/TemplateEdit";
 import { TemplateUsePage } from "./pages/TemplateUse";
 import { BrandingPage } from "./pages/Branding";
+import { BulkDetailPage, BulkListPage, BulkNewPage } from "./pages/Bulk";
+import { WebFormDetailPage, WebFormsPage } from "./pages/WebForms";
+import { PublicFormPage } from "./pages/PublicForm";
 
 export function App() {
   return (
@@ -25,6 +28,7 @@ export function App() {
       <Route path="/s/:token" element={<SignerPage />} />
       <Route path="/developers" element={<DevelopersPage />} />
       <Route path="/verify" element={<VerifyPage />} />
+      <Route path="/f/:slug" element={<PublicFormPage />} />
       <Route
         element={
           <RequireAuth>
@@ -42,6 +46,11 @@ export function App() {
         <Route path="/app/templates/:id/edit" element={<TemplateEditPage />} />
         <Route path="/app/templates/:id/use" element={<TemplateUsePage />} />
         <Route path="/app/settings/branding" element={<BrandingPage />} />
+        <Route path="/app/bulk" element={<BulkListPage />} />
+        <Route path="/app/bulk/new" element={<BulkNewPage />} />
+        <Route path="/app/bulk/:id" element={<BulkDetailPage />} />
+        <Route path="/app/forms" element={<WebFormsPage />} />
+        <Route path="/app/forms/:id" element={<WebFormDetailPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/app" replace />} />
     </Routes>

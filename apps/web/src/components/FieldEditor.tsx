@@ -1,4 +1,6 @@
 // Editor de campos: ubicar, mover, redimensionar y borrar campos sobre las páginas.
+import { FieldLogicPanel } from "./FieldLogicPanel";
+import type { FieldCondition } from "@calasign/shared";
 import { useCallback, useEffect, useRef, useState, type DragEvent, type PointerEvent as RPointerEvent } from "react";
 import type { Document, FieldType } from "@calasign/shared";
 import { FIELD_TYPES } from "@calasign/shared";
@@ -25,6 +27,9 @@ export interface DraftField {
   options?: string[] | null;
   min?: number | null;
   max?: number | null;
+  /** Fase 4: se muestra solo si se cumplen las condiciones; fórmula de campo número calculado. */
+  conditions?: FieldCondition[] | null;
+  formula?: string | null;
 }
 
 /** Tipos que el remitente puede prellenar o fijar como solo lectura. */
@@ -338,7 +343,7 @@ export function FieldEditor({ envelopeId, documents, signers, fields, onChange, 
                 </label>
               </div>
             )}
-            {PREFILL_TYPES.includes(sel.type) && (
+            {PREFILL_TYPES.includes(sel.type) && !sel.formula && (
               <>
                 <label className="field">
                   <span>
@@ -370,6 +375,7 @@ export function FieldEditor({ envelopeId, documents, signers, fields, onChange, 
                 )}
               </>
             )}
+            <FieldLogicPanel field={sel} fields={fields} signers={signers} onChange={(patch) => update(sel.id, patch)} />
           </div>
         )}
         <p className="muted small">
@@ -408,6 +414,8 @@ export function FieldEditor({ envelopeId, documents, signers, fields, onChange, 
                   >
                     <span className="fbox-label" style={{ color: colorOf(f.recipientId) }}>
                       {f.type === "checkbox" ? "☐" : f.readOnly && f.value ? `🔒 ${f.value}` : (f.label ?? t(`field.${f.type}`))}
+                      {f.formula ? " ƒ" : ""}
+                      {f.conditions?.length ? " ⚙" : ""}
                       {f.required && f.type !== "checkbox" ? " *" : ""}
                     </span>
                     {selected === f.id && (

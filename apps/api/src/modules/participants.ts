@@ -10,6 +10,7 @@ import { authenticate, type Services } from "./context";
 import { activateRecipient, lockEnvelope } from "./envelopes";
 import { loadDetail } from "./mappers";
 import { recipientActor, resolveToken } from "./signing";
+import { inheritIdentityRequirement } from "./identity/kyc";
 
 /** Aplica los campos opcionales de recordatorios/delegación de Create/UpdateEnvelopeInput (solo los presentes). */
 export async function applyEnvelopeSettings(
@@ -83,6 +84,7 @@ export async function replaceRecipient(
     ],
   );
   await db.query(`UPDATE fields SET recipient_id = $2 WHERE recipient_id = $1`, [old.id, id]);
+  await inheritIdentityRequirement(db, old, id);
   await db.query(
     `UPDATE recipients SET status = $2, replaced_by = $3, replace_reason = $4, access_token_hash = NULL, access_token_enc = NULL WHERE id = $1`,
     [old.id, kind, id, c.reason ?? null],

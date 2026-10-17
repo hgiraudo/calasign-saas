@@ -27,6 +27,7 @@ import { auditRoutes, registerAuditHooks } from "./modules/audit";
 import { retentionRoutes } from "./modules/retention";
 import { experienceRoutes } from "./modules/experience";
 import { scaleRoutes } from "./modules/scale";
+import { identityRoutes } from "./modules/identity";
 
 export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolean | object }) {
   const app = Fastify({
@@ -97,6 +98,7 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
   await authRoutes(app, services);
   await envelopeRoutes(app, services);
   await signerFeatureRoutes(app, services);
+  await identityRoutes(app, services);
   await signingRoutes(app, services);
   await telegramRoutes(app, services);
   await webhookRoutes(app, services);

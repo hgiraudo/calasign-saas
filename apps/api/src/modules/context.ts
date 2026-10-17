@@ -5,6 +5,7 @@ import type { Actor } from "../infra/evidence";
 import { sha256Hex } from "../lib/util";
 import { unauthorized } from "../lib/errors";
 import { enforceRoutePolicy, loadAccess, type AccessInfo } from "./access";
+import { applySessionSsoPolicy } from "./identity/sso";
 
 export interface Services {
   db: Db;
@@ -58,7 +59,7 @@ export function authenticate(s: Services) {
     const token = req.cookies?.[SESSION_COOKIE];
     if (!token) throw unauthorized();
     const row = await s.db.one<any>(
-      `SELECT s.user_id, s.tenant_id, u.name, u.email FROM sessions s JOIN users u ON u.id = s.user_id
+      `SELECT s.user_id, s.tenant_id, s.auth_method, s.sso_tenant_id, u.name, u.email FROM sessions s JOIN users u ON u.id = s.user_id
        WHERE s.token_hash = $1 AND s.expires_at > now()`,
       [sha256Hex(token)],
     );
@@ -70,6 +71,7 @@ export function authenticate(s: Services) {
       actor: { type: "user", id: row.user_id, label: `${row.name} <${row.email}>`, ip, userAgent },
     };
     req.auth.access = await loadAccess(s.db, req.auth);
+    await applySessionSsoPolicy(s.db, req.auth, row);
     await enforceRoutePolicy(s.db, req, req.auth);
   };
 }

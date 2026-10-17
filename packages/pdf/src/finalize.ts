@@ -58,6 +58,22 @@ export interface CertificateRecipient {
   signaturePng?: Uint8Array | null;
   /** Ej. "Delegó en Ana Pérez: viaje" (destinatarios reemplazados). */
   note?: string | null;
+  /** Verificación de identidad (KYC) del firmante. */
+  identity?: CertificateIdentity | null;
+}
+
+export interface CertificateIdentity {
+  provider: string;
+  level: string;
+  result: "verified" | "failed";
+  /** Tipo · país · número enmascarado. */
+  document: string | null;
+  nameScore: number | null;
+  documentNumberMatched: boolean | null;
+  faceMatchScore: number | null;
+  liveness: boolean | null;
+  reference: string | null;
+  verifiedAt: string | null;
 }
 
 export interface CertificateData {
@@ -357,6 +373,19 @@ async function drawCertificate(
     kv(L.consented, fmt(r.consentedAt), ix);
     kv(r.role === "approver" ? L.approved : L.signed, fmt(r.signedAt), ix);
     kv(L.note, r.note ?? null, ix);
+    if (r.identity) {
+      const idv = r.identity;
+      const levelLabel = (L as Record<string, string>)[`idv_level_${idv.level}`] ?? idv.level;
+      kv(L.idv, `${idv.provider} · ${levelLabel} · ${idv.result === "verified" ? L.idv_verified : L.idv_failed}${idv.verifiedAt ? ` · ${fmt(idv.verifiedAt)}` : ""}`, ix);
+      kv(L.idv_document, idv.document, ix);
+      const matches: string[] = [];
+      if (idv.nameScore != null) matches.push(`${L.idv_name} ${Math.round(idv.nameScore * 100)} %`);
+      if (idv.documentNumberMatched === true) matches.push(L.idv_docnum);
+      if (idv.faceMatchScore != null) matches.push(`${L.idv_face} ${Math.round(idv.faceMatchScore * 100)} %`);
+      if (idv.liveness === true) matches.push(L.idv_liveness);
+      kv(L.idv_matched, matches.length ? matches.join(", ") : null, ix);
+      kv(L.idv_reference, idv.reference, ix);
+    }
     kv(L.ip, r.ip, ix);
     kv(L.device, r.userAgent ? r.userAgent.slice(0, 160) : null, ix);
     if (r.signaturePng) {

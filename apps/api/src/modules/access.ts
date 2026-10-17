@@ -181,6 +181,14 @@ export async function enforceRoutePolicy(db: Db, req: FastifyRequest, a: AuthCon
   if (url.startsWith("/v1/templates/:id")) return assertTemplateAccess(db, a, params.id, isRead ? "view" : "manage");
   if (url.startsWith("/v1/templates") && method === "POST") return requirePerm(a, "envelopes:create");
 
+  // Identidad (Fase 5): SSO exige settings:manage (también para leer la configuración); SCIM, members:manage.
+  if (url.startsWith("/v1/settings/sso")) return requirePerm(a, "settings:manage");
+  if (url.startsWith("/v1/settings/scim")) {
+    requirePerm(a, "members:manage");
+    if (!isRead) requirePerm(a, "settings:manage");
+    return;
+  }
+
   // Administración
   if (url.startsWith("/v1/settings/") && !isRead) return requirePerm(a, "settings:manage");
   if (url.startsWith("/v1/api-keys")) {

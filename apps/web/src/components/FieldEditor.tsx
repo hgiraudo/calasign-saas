@@ -210,7 +210,7 @@ export function FieldEditor({ envelopeId, documents, signers, fields, onChange }
                 style={{ borderColor: recipientColor(i) }}
                 onClick={() => {
                   setActiveRecipient(s.id);
-                  if (sel) update(sel.id, { recipientId: s.id });
+                  setSelected(null);
                 }}
               >
                 <span className="dot" style={{ background: recipientColor(i) }} />

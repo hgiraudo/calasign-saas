@@ -14,7 +14,14 @@ export function loadPdf(url: string): Promise<PDFDocumentProxy> {
   let p = cache.get(url);
   if (!p) {
     p = fetchArrayBuffer(url).then(
-      (data) => pdfjsLib.getDocument({ data: new Uint8Array(data), isEvalSupported: false }).promise,
+      (data) => pdfjsLib.getDocument({
+        data: new Uint8Array(data),
+        isEvalSupported: false,
+        // Fuentes estándar y CMaps servidos por la propia app (ver vite.config.ts).
+        standardFontDataUrl: "/pdfjs/standard_fonts/",
+        cMapUrl: "/pdfjs/cmaps/",
+        cMapPacked: true,
+      }).promise,
     );
     p.catch(() => cache.delete(url));
     cache.set(url, p);

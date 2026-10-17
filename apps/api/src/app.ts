@@ -101,14 +101,16 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
   if (existsSync(resolve(config.webDist, "index.html"))) {
     await app.register(fastifyStatic, {
       root: config.webDist,
-      wildcard: false,
+      wildcard: true,
       setHeaders(res, path) {
         if (path.endsWith(".mjs")) res.header("content-type", "text/javascript; charset=utf-8");
         if (path.includes("/assets/")) res.header("cache-control", "public, max-age=31536000, immutable");
       },
     });
     app.setNotFoundHandler((req, reply) => {
-      if (req.method === "GET" && !req.url.startsWith("/v1/") && !req.url.startsWith("/dev/")) {
+      const path = req.url.split("?")[0];
+      const isAsset = /\.[a-z0-9]{2,5}$/i.test(path) || path.startsWith("/assets/") || path.startsWith("/pdfjs/");
+      if (req.method === "GET" && !isAsset && !path.startsWith("/v1/") && !path.startsWith("/dev/")) {
         reply.header("cache-control", "no-cache");
         return reply.sendFile("index.html");
       }

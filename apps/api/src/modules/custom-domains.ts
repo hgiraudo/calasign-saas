@@ -119,9 +119,10 @@ export async function customDomainRoutes(app: FastifyInstance, s: Services) {
   app.put("/v1/domains", { preHandler: auth }, async (req) => {
     const a = req.auth!;
     const { domain } = SetCustomDomainInput.parse(req.body);
-    const root = platformRoot();
-    if (domain === appHost() || domain === root || domain.endsWith(`.${root}`)) {
-      throw badRequest("reserved_domain", `No se pueden usar dominios de ${root}`);
+    for (const root of new Set([platformRoot(), "calasign.com", "calasign.io"])) {
+      if (domain === appHost() || domain === root || domain.endsWith(`.${root}`)) {
+        throw badRequest("reserved_domain", `No se pueden usar dominios de ${root}`);
+      }
     }
     const taken = await s.db.one<any>(`SELECT tenant_id FROM custom_domains WHERE domain = $1`, [domain]);
     if (taken && taken.tenant_id !== a.tenantId) throw conflict("domain_taken", "Ese dominio ya está registrado por otra organización");

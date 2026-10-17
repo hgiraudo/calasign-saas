@@ -115,7 +115,7 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
   });
 
   app.get("/v1/api-keys", { preHandler: auth }, async (req) => {
-    const rows = await s.db.query(`SELECT * FROM api_keys WHERE tenant_id = $1 ORDER BY created_at DESC`, [req.auth!.tenantId]);
+    const rows = await s.db.query(`SELECT * FROM api_keys WHERE tenant_id = $1 AND oauth_client_id IS NULL ORDER BY created_at DESC`, [req.auth!.tenantId]);
     return { items: rows.map(toApiKey) };
   });
 

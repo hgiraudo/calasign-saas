@@ -5,6 +5,7 @@ import type { Actor } from "../infra/evidence";
 import { sha256Hex } from "../lib/util";
 import { unauthorized } from "../lib/errors";
 import { enforceRoutePolicy, loadAccess, type AccessInfo } from "./access";
+import { enforceOAuthScope, isOAuthAccessToken, oauthAuthContext, restrictAccessToScopes } from "./oauth-tokens";
 
 export interface Services {
   db: Db;
@@ -18,6 +19,8 @@ export interface AuthContext {
   actor: Actor;
   /** Rol, permisos y grupos (RBAC). Lo completa authenticate(). */
   access?: AccessInfo;
+  /** Presente si la petición vino con un access token OAuth: app y scopes concedidos. */
+  oauth?: { clientId: string; clientPublicId: string; scopes: string[] };
 }
 
 declare module "fastify" {
@@ -32,13 +35,21 @@ export function clientInfo(req: FastifyRequest) {
   return { ip: req.ip ?? null, userAgent: (req.headers["user-agent"] as string | undefined)?.slice(0, 500) ?? null };
 }
 
-/** Resuelve sesión (cookie) o API key (Bearer). */
+/** Resuelve sesión (cookie), API key o access token OAuth (Bearer). */
 export function authenticate(s: Services) {
   return async (req: FastifyRequest, _reply: FastifyReply) => {
     const { ip, userAgent } = clientInfo(req);
     const authz = req.headers.authorization;
     if (authz?.startsWith("Bearer ")) {
       const key = authz.slice(7).trim();
+      if (isOAuthAccessToken(key)) {
+        req.auth = await oauthAuthContext(s.db, key, ip, userAgent);
+        enforceOAuthScope(req, req.auth);
+        req.auth.access = await loadAccess(s.db, req.auth);
+        restrictAccessToScopes(req.auth);
+        await enforceRoutePolicy(s.db, req, req.auth);
+        return;
+      }
       const row = await s.db.one<any>(
         `SELECT id, tenant_id, name FROM api_keys WHERE key_hash = $1 AND revoked_at IS NULL`,
         [sha256Hex(key)],

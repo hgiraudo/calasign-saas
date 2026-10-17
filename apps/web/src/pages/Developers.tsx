@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { WEBHOOK_EVENT_TYPES } from "@calasign/shared";
 import { useIntText } from "../lib/integrations-i18n";
 import { LocaleSwitcher, Logo, Spinner } from "../components/ui";
+import { PlatformDocs } from "../components/PlatformDocs";
 
 interface Spec {
   info: { title: string; version: string };
@@ -177,6 +178,8 @@ export function DevelopersPage() {
             <Code>{VERIFY_NODE}</Code>
             <Code>{VERIFY_PY}</Code>
           </Section>
+
+          <PlatformDocs />
 
           <Section title={tt("dev.endpoints")}>
             {error ? (

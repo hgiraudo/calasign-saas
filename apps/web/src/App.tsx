@@ -25,6 +25,8 @@ import { ReportsPage } from "./pages/Reports";
 import { BulkDetailPage, BulkListPage, BulkNewPage } from "./pages/Bulk";
 import { WebFormDetailPage, WebFormsPage } from "./pages/WebForms";
 import { PublicFormPage } from "./pages/PublicForm";
+import { AutomationPage, CustomDomainPage, NotificationIntegrationsPage, OAuthAppsPage, StoragePage } from "./pages/PlatformSettings";
+import { OAuthConsentPage } from "./pages/OAuthConsent";
 
 export function App() {
   return (
@@ -37,6 +39,14 @@ export function App() {
       <Route path="/verify" element={<VerifyPage />} />
       <Route path="/invite/:token" element={<InviteAcceptPage />} />
       <Route path="/f/:slug" element={<PublicFormPage />} />
+      <Route
+        path="/oauth/authorize"
+        element={
+          <RequireAuth>
+            <OAuthConsentPage />
+          </RequireAuth>
+        }
+      />
       <Route
         element={
           <RequireAuth>
@@ -66,6 +76,11 @@ export function App() {
         <Route path="/app/bulk/:id" element={<BulkDetailPage />} />
         <Route path="/app/forms" element={<WebFormsPage />} />
         <Route path="/app/forms/:id" element={<WebFormDetailPage />} />
+        <Route path="/app/settings/oauth-apps" element={<OAuthAppsPage />} />
+        <Route path="/app/settings/notifications" element={<NotificationIntegrationsPage />} />
+        <Route path="/app/settings/automation" element={<AutomationPage />} />
+        <Route path="/app/settings/storage" element={<StoragePage />} />
+        <Route path="/app/settings/domain" element={<CustomDomainPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/app" replace />} />
     </Routes>

@@ -3,9 +3,10 @@ import { resolve } from "node:path";
 import nodemailer from "nodemailer";
 import { config } from "../config";
 import { uuidv7 } from "../lib/util";
+import { getSmsProvider } from "./sms";
 
 export interface OutboundMessage {
-  channel: "email" | "whatsapp" | "telegram";
+  channel: "email" | "whatsapp" | "telegram" | "sms";
   to: string;
   subject: string;
   text: string;
@@ -99,6 +100,13 @@ export async function sendTelegram(m: Pick<OutboundMessage, "to" | "text" | "lin
 const telegramReady = () => Boolean(config.telegram.botToken);
 
 export async function deliver(m: OutboundMessage & { cta?: string | null }): Promise<SendResult> {
+  if (m.channel === "sms") {
+    const sms = getSmsProvider();
+    const r = config.devMailbox || !sms ? await toMailbox(m) : null;
+    if (sms) return sms.send(m.to, m.text).then((x) => ({ provider: sms.id, messageId: x.messageId })).catch((e) => (r ? r : Promise.reject(e)));
+    if (!config.devMailbox) throw new Error("SMS no configurado");
+    return r!;
+  }
   if (config.devMailbox) {
     const r = await toMailbox(m);
     // En desarrollo, si además hay proveedor real configurado, se envía también.

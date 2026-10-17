@@ -17,6 +17,7 @@ import { encrypt, iso, randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { config } from "../config";
 import { authenticate, type AuthContext, type Services } from "./context";
 import { loadDetail, loadDocuments } from "./mappers";
+import { applyEnvelopeSettings } from "./participants";
 
 /** Bloquea el sobre para serializar cambios y eventos. */
 export async function lockEnvelope(db: Db, tenantId: string, id: string) {
@@ -36,7 +37,7 @@ async function touch(db: Db, id: string) {
 /** Destinatarios firmantes del grupo de ruteo actual (el menor routing_order con firmantes pendientes). */
 export async function currentSignerGroup(db: Db, envelopeId: string) {
   const pending = await db.query<any>(
-    `SELECT * FROM recipients WHERE envelope_id = $1 AND role = 'signer' AND status NOT IN ('signed','declined')
+    `SELECT * FROM recipients WHERE envelope_id = $1 AND role IN ('signer','approver') AND status NOT IN ('signed','declined','delegated','reassigned')
      ORDER BY routing_order`,
     [envelopeId],
   );
@@ -181,6 +182,7 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
             JSON.stringify(input.metadata ?? {}),
           ],
         );
+        await applyEnvelopeSettings(t, id, input);
         await appendEvent(t, { tenantId: a.tenantId, envelopeId: id, type: "envelope.created", actor: a.actor, data: { subject: input.subject } });
       });
       return { status: 201, body: await loadDetail(s.db, a.tenantId, id) };
@@ -211,6 +213,7 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
           input.metadata ? JSON.stringify(input.metadata) : null,
         ],
       );
+      await applyEnvelopeSettings(t, e.id, input);
       await touch(t, e.id);
     });
     return loadDetail(s.db, a.tenantId, req.params.id);
@@ -337,9 +340,10 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
             r.idDocumentNumber ?? null,
           ],
         );
+        await t.query(`UPDATE recipients SET auth_method = $2 WHERE id = $1`, [r.id, r.authMethod ?? "link"]);
       }
       // Los campos de un destinatario que pasó a 'cc' ya no aplican.
-      await t.query(`DELETE FROM fields f USING recipients r WHERE f.recipient_id = r.id AND r.envelope_id = $1 AND r.role = 'cc'`, [e.id]);
+      await t.query(`DELETE FROM fields f USING recipients r WHERE f.recipient_id = r.id AND r.envelope_id = $1 AND r.role IN ('cc','approver')`, [e.id]);
       await touch(t, e.id);
     });
     return loadDetail(s.db, a.tenantId, req.params.id);
@@ -386,7 +390,7 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
         const problems: string[] = [];
         if (docs.length === 0) problems.push("Agregá al menos un documento");
         const signers = recips.filter((r) => r.role === "signer");
-        if (signers.length === 0) problems.push("Agregá al menos un firmante");
+        if (signers.length === 0 && !recips.some((r) => r.role === "approver")) problems.push("Agregá al menos un firmante");
         for (const s1 of signers) {
           if (!fields.some((f) => f.recipient_id === s1.id && f.type === "signature"))
             problems.push(`${s1.name} no tiene ningún campo de firma`);

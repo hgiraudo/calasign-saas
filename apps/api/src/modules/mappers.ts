@@ -19,6 +19,9 @@ export const toEnvelope = (r: any, signedSha256: string | null = null): Envelope
   expiresAt: iso(r.expires_at),
   metadata: r.metadata ?? {},
   signedSha256,
+  reminderEveryDays: r.reminder_every_days ?? null,
+  expiryWarningDays: r.expiry_warning_days ?? null,
+  allowDelegation: r.allow_delegation ?? true,
 });
 
 export const toDocument = (r: any): Document => ({
@@ -49,6 +52,8 @@ export const toRecipient = (r: any): Recipient => ({
   signedAt: iso(r.signed_at),
   declinedAt: iso(r.declined_at),
   declineReason: r.decline_reason,
+  authMethod: r.auth_method ?? "link",
+  replacedBy: r.replaced_by ?? null,
 });
 
 export const toField = (r: any): Field => ({

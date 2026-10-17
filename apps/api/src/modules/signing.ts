@@ -10,6 +10,7 @@ import { telegramStartLink } from "../notifications/channels";
 import { clientInfo, type Services } from "./context";
 import { advanceRouting, currentSignerGroup, lockEnvelope, sendPdf } from "./envelopes";
 import { toDocument, toField, loadDocuments } from "./mappers";
+import { canDelegate, isSignerAuthenticated, otpDestinationFor } from "./otp";
 
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -18,7 +19,7 @@ interface Resolved {
   envelope: any;
 }
 
-async function resolveToken(db: Db, token: string): Promise<Resolved> {
+export async function resolveToken(db: Db, token: string): Promise<Resolved> {
   if (!/^[A-Za-z0-9_-]{20,100}$/.test(token)) throw notFound("Link");
   const recipient = await db.one<any>(`SELECT * FROM recipients WHERE access_token_hash = $1`, [sha256Hex(token)]);
   if (!recipient) throw notFound("Link");
@@ -27,7 +28,7 @@ async function resolveToken(db: Db, token: string): Promise<Resolved> {
   return { recipient, envelope };
 }
 
-function recipientActor(req: FastifyRequest, r: any): Actor {
+export function recipientActor(req: FastifyRequest, r: any): Actor {
   const { ip, userAgent } = clientInfo(req);
   return { type: "recipient", id: r.id, label: r.email ? `${r.name} <${r.email}>` : `${r.name} (${r.phone ?? "sin contacto"})`, ip, userAgent };
 }
@@ -40,7 +41,8 @@ export function formatSigningDate(d: Date, locale: string) {
   return locale === "en" ? `${yyyy}-${mm}-${dd}` : `${dd}/${mm}/${yyyy}`;
 }
 
-async function buildSession(db: Db, token: string, r: any, e: any): Promise<SigningSession> {
+export async function buildSession(db: Db, token: string, r: any, e: any, authed = true): Promise<SigningSession> {
+  const otpRequired = r.auth_method !== "link" && !authed;
   const [docs, fields, org, sender, group] = await Promise.all([
     loadDocuments(db, e.id),
     db.query(`SELECT * FROM fields WHERE recipient_id = $1 ORDER BY page, y, x`, [r.id]),
@@ -49,7 +51,7 @@ async function buildSession(db: Db, token: string, r: any, e: any): Promise<Sign
     currentSignerGroup(db, e.id),
   ]);
   const canSign =
-    e.status === "sent" && r.role === "signer" && ["sent", "viewed"].includes(r.status) && group.order === r.routing_order;
+    e.status === "sent" && (r.role === "signer" || r.role === "approver") && ["sent", "viewed"].includes(r.status) && group.order === r.routing_order;
   return {
     envelope: {
       id: e.id,
@@ -69,11 +71,15 @@ async function buildSession(db: Db, token: string, r: any, e: any): Promise<Sign
       locale: r.locale ?? e.locale,
       consented: Boolean(r.consented_at),
       telegramLink: r.channels?.includes("telegram") && !r.telegram_chat_id ? telegramStartLink(token) : null,
+      authMethod: r.auth_method ?? "link",
     },
-    documents: docs.map(toDocument),
-    fields: fields.map(toField),
+    documents: otpRequired ? [] : docs.map(toDocument),
+    fields: otpRequired ? [] : fields.map(toField),
     canSign,
-    signedAvailable: e.status === "completed" && Boolean(e.signed_file_id),
+    signedAvailable: !otpRequired && e.status === "completed" && Boolean(e.signed_file_id),
+    otpRequired,
+    otpDestination: otpRequired ? otpDestinationFor(r) : null,
+    canDelegate: canDelegate(r, e),
   };
 }
 
@@ -83,7 +89,8 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
 
   app.get<P>("/v1/signing/:token", rl, async (req) => {
     const { recipient: r0, envelope: e0 } = await resolveToken(s.db, req.params.token);
-    if (r0.status === "sent" && e0.status === "sent") {
+    const authed = await isSignerAuthenticated(s.db, req, r0);
+    if (authed && r0.status === "sent" && e0.status === "sent") {
       await s.db.tx(async (t) => {
         await lockEnvelope(t, e0.tenant_id, e0.id);
         const upd = await t.query(`UPDATE recipients SET status = 'viewed', viewed_at = now() WHERE id = $1 AND status = 'sent' RETURNING id`, [r0.id]);
@@ -91,7 +98,7 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
       });
     }
     const { recipient, envelope } = await resolveToken(s.db, req.params.token);
-    return buildSession(s.db, req.params.token, recipient, envelope);
+    return buildSession(s.db, req.params.token, recipient, envelope, authed);
   });
 
   app.get<P>("/v1/signing/:token/documents/:documentId/file", rl, async (req, reply) => {
@@ -157,7 +164,7 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
       const e = await lockEnvelope(t, e0.tenant_id, e0.id);
       const r = await t.one<any>(`SELECT * FROM recipients WHERE id = $1`, [r0.id]);
       if (e.status !== "sent") throw new AppError(410, "envelope_closed", "El sobre ya no está disponible para firmar");
-      if (r.role !== "signer") throw conflict("not_signer", "Este destinatario no firma");
+      if (r.role !== "signer" && r.role !== "approver") throw conflict("not_signer", "Este destinatario no firma");
       if (r.status === "signed") throw conflict("already_signed", "Ya firmaste este sobre");
       if (!["sent", "viewed"].includes(r.status)) throw conflict("not_signable", "No podés firmar este sobre");
       const group = await currentSignerGroup(t, e.id);
@@ -214,7 +221,7 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
       await appendEvent(t, {
         tenantId: e.tenant_id,
         envelopeId: e.id,
-        type: "recipient.signed",
+        type: r.role === "approver" ? "recipient.approved" : "recipient.signed",
         actor,
         data: {
           documents: docs.map((d) => ({ id: d.id, sha256: d.sha256 })),
@@ -235,7 +242,7 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
       const e = await lockEnvelope(t, e0.tenant_id, e0.id);
       const r = await t.one<any>(`SELECT * FROM recipients WHERE id = $1`, [r0.id]);
       if (e.status !== "sent") throw new AppError(410, "envelope_closed", "El sobre ya no está disponible");
-      if (r.role !== "signer" || !["sent", "viewed"].includes(r.status)) throw conflict("not_signable", "No podés rechazar este sobre");
+      if ((r.role !== "signer" && r.role !== "approver") || !["sent", "viewed"].includes(r.status)) throw conflict("not_signable", "No podés rechazar este sobre");
       await t.query(`UPDATE recipients SET status = 'declined', declined_at = now(), decline_reason = $2 WHERE id = $1`, [r.id, input.reason]);
       await t.query(`UPDATE envelopes SET status = 'declined', updated_at = now(), version = version + 1 WHERE id = $1`, [e.id]);
       await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "recipient.declined", actor: recipientActor(req, r), data: { reason: input.reason } });

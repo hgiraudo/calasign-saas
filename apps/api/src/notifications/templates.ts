@@ -1,4 +1,4 @@
-export type TemplateKind = "invite" | "reminder" | "completed" | "declined" | "voided" | "sender_completed" | "sender_declined";
+export type TemplateKind = "invite" | "reminder" | "completed" | "declined" | "voided" | "sender_completed" | "sender_declined" | "expiry_warning";
 
 export interface TemplateVars {
   recipientName: string;
@@ -23,6 +23,11 @@ const T: Record<"es" | "pt-BR" | "en", Dict> = {
     reminder: {
       subject: (v) => `Recordatorio: "${v.subject}" espera tu firma`,
       lines: (v) => [`Hola ${v.recipientName}:`, `Te recordamos que ${v.senderName} (${v.organizationName}) está esperando tu firma.`],
+      cta: "Revisar y firmar",
+    },
+    expiry_warning: {
+      subject: (v) => `Por vencer: "${v.subject}" espera tu firma`,
+      lines: (v) => [`Hola ${v.recipientName}:`, `El documento que te envió ${v.senderName} (${v.organizationName}) vence pronto. Firmalo antes de que caduque.`],
       cta: "Revisar y firmar",
     },
     completed: {
@@ -60,6 +65,11 @@ const T: Record<"es" | "pt-BR" | "en", Dict> = {
       lines: (v) => [`Olá ${v.recipientName},`, `Lembramos que ${v.senderName} (${v.organizationName}) está aguardando sua assinatura.`],
       cta: "Revisar e assinar",
     },
+    expiry_warning: {
+      subject: (v) => `Prestes a expirar: "${v.subject}" aguarda sua assinatura`,
+      lines: (v) => [`Olá ${v.recipientName},`, `O documento enviado por ${v.senderName} (${v.organizationName}) expira em breve. Assine antes que expire.`],
+      cta: "Revisar e assinar",
+    },
     completed: {
       subject: (v) => `Concluído: "${v.subject}"`,
       lines: (v) => [`Olá ${v.recipientName},`, `Todas as partes assinaram "${v.subject}". Você pode baixar o documento final com o certificado de conclusão.`],
@@ -93,6 +103,11 @@ const T: Record<"es" | "pt-BR" | "en", Dict> = {
     reminder: {
       subject: (v) => `Reminder: "${v.subject}" is waiting for your signature`,
       lines: (v) => [`Hi ${v.recipientName},`, `${v.senderName} (${v.organizationName}) is still waiting for your signature.`],
+      cta: "Review and sign",
+    },
+    expiry_warning: {
+      subject: (v) => `Expiring soon: "${v.subject}" is waiting for your signature`,
+      lines: (v) => [`Hi ${v.recipientName},`, `The document ${v.senderName} (${v.organizationName}) sent you expires soon. Please sign it before it expires.`],
       cta: "Review and sign",
     },
     completed: {

@@ -5,9 +5,11 @@ import type { TemplateDetail, TemplateSummary } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
 import { formatDateTime, useI18n } from "../lib/i18n";
 import { ErrorBox, Modal, Spinner } from "../components/ui";
+import { useScaleText } from "../lib/i18n-scale";
 
 export function TemplatesPage() {
   const { t, locale } = useI18n();
+  const sc = useScaleText();
   const nav = useNavigate();
   const [items, setItems] = useState<TemplateSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -86,6 +88,12 @@ export function TemplatesPage() {
               <div className="row-wrap">
                 <Link className="btn btn-primary btn-sm" to={`/app/templates/${it.id}/use`}>
                   {t("tpl.use")}
+                </Link>
+                <Link className="btn btn-sm" to={`/app/bulk/new?template=${it.id}`}>
+                  {sc("bulk.useFromTemplate")}
+                </Link>
+                <Link className="btn btn-sm" to={`/app/forms?template=${it.id}`}>
+                  {sc("forms.useFromTemplate")}
                 </Link>
                 <Link className="btn btn-sm" to={`/app/templates/${it.id}/edit`}>
                   {t("tpl.edit")}

@@ -14,13 +14,14 @@ import {
 import { InvalidPdfError, inspectPdf } from "@calasign/pdf";
 import { config } from "../config";
 import type { Db } from "../infra/db";
-import { appendEvent } from "../infra/evidence";
+import { appendEvent, type Actor } from "../infra/evidence";
 import { AppError, badRequest, notFound } from "../lib/errors";
 import { iso, sha256Hex, uuidv7 } from "../lib/util";
 import { templateVisibilitySql } from "./access";
 import { authenticate, type AuthContext, type Services } from "./context";
 import { sendEnvelope } from "./envelopes";
 import { checkSenderValue, insertEnvelopeField } from "./fieldvalues";
+import { assignFieldIds, copyFieldLogic, saveFieldLogic } from "./logic";
 import { loadDetail, loadDocuments, toDocument } from "./mappers";
 
 const toTemplate = (r: any) => ({
@@ -51,6 +52,8 @@ const toTemplateField = (r: any): TemplateField => ({
   options: r.options ?? null,
   min: r.min_value ?? null,
   max: r.max_value ?? null,
+  conditions: Array.isArray(r.conditions) && r.conditions.length ? r.conditions : null,
+  formula: r.formula ?? null,
 });
 
 async function loadTemplateDocuments(db: Db, templateId: string) {
@@ -87,7 +90,7 @@ async function touch(db: Db, id: string) {
   await db.query(`UPDATE templates SET updated_at = now() WHERE id = $1`, [id]);
 }
 
-async function insertTemplateField(db: Db, tenantId: string, templateId: string, f: Omit<TemplateField, "id"> & { id?: string }) {
+async function insertTemplateField(db: Db, tenantId: string, templateId: string, f: Omit<TemplateField, "id" | "conditions" | "formula"> & { id?: string }) {
   await db.query(
     `INSERT INTO template_fields (id, tenant_id, template_id, document_id, role_id, type, page, x, y, width, height, required, label,
        value, read_only, options, min_value, max_value)
@@ -290,6 +293,7 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
   app.put<P>("/v1/templates/:id/fields", { preHandler: auth }, async (req) => {
     const a = A(req);
     const input = PutTemplateFieldsInput.parse(req.body);
+    assignFieldIds(input.fields);
     await s.db.tx(async (t) => {
       const tpl = await lockTemplate(t, a.tenantId, req.params.id);
       const docs = new Map((await t.query<any>(`SELECT id, page_count FROM template_documents WHERE template_id = $1`, [tpl.id])).map((d) => [d.id, d]));
@@ -327,6 +331,7 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
           max: f.max ?? null,
         });
       }
+      await saveFieldLogic(t, "template_fields", input.fields);
       await touch(t, tpl.id);
     });
     return loadTemplateDetail(s.db, a.tenantId, req.params.id);
@@ -375,11 +380,14 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
         ]);
       }
       const fields = await t.query<any>(`SELECT * FROM fields WHERE envelope_id = $1`, [env.id]);
+      const fieldMap = new Map<string, string>();
       for (const f of fields) {
         const roleId = roleMap.get(f.recipient_id);
         const documentId = docMap.get(f.document_id);
         if (!roleId || !documentId) continue;
+        fieldMap.set(f.id, uuidv7());
         await insertTemplateField(t, a.tenantId, id, {
+          id: fieldMap.get(f.id),
           documentId,
           roleId,
           type: f.type,
@@ -398,6 +406,7 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
           max: f.max_value ?? null,
         });
       }
+      await copyFieldLogic(t, "template_fields", fields, fieldMap);
     });
     reply.code(201);
     return loadTemplateDetail(s.db, a.tenantId, id);
@@ -408,139 +417,196 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
   app.post("/v1/envelopes/from-template", { preHandler: auth }, async (req, reply) => {
     const a = A(req);
     const input = EnvelopeFromTemplateInput.parse(req.body);
-    const tpl = await loadTemplateDetail(s.db, a.tenantId, input.templateId);
-    const tplRow = await s.db.one<any>(`SELECT * FROM templates WHERE id = $1`, [tpl.template.id]);
-    const tplDocs = await loadTemplateDocuments(s.db, tpl.template.id);
-    if (tplDocs.length === 0) throw badRequest("template_empty", "La plantilla no tiene documentos");
-
-    // Asignar cada destinatario a un rol.
-    const byName = new Map(tpl.roles.map((r) => [r.name.toLowerCase(), r]));
-    const assigned = new Map<string, (typeof input.recipients)[number]>();
-    for (const r of input.recipients) {
-      const role = r.roleId ? tpl.roles.find((x) => x.id === r.roleId) : byName.get((r.role ?? "").toLowerCase());
-      if (!role) throw badRequest("unknown_role", `Rol desconocido: ${r.roleId ?? r.role}`);
-      if (assigned.has(role.id)) throw badRequest("duplicate_role", `El rol ${role.name} tiene más de un destinatario`);
-      assigned.set(role.id, r);
-    }
-    const missingRoles = tpl.roles.filter((r) => !assigned.has(r.id));
-    if (missingRoles.length) {
-      throw new AppError(422, "roles_missing", `Faltan destinatarios para: ${missingRoles.map((r) => r.name).join(", ")}`, {
-        roles: missingRoles.map((r) => r.name),
-      });
-    }
-
-    // Prellenado: por id de campo o por etiqueta (sin distinguir mayúsculas).
-    const prefill = new Map<string, string>();
-    for (const [k, v] of Object.entries(input.prefill ?? {})) {
-      const matches = tpl.fields.filter((f) => f.id === k || (f.label && f.label.toLowerCase() === k.toLowerCase()));
-      if (matches.length === 0) throw badRequest("unknown_prefill", `No hay ningún campo "${k}" en la plantilla`);
-      for (const f of matches) prefill.set(f.id, v);
-    }
-
-    const envId = uuidv7();
-    const tenant = await s.db.one<any>(`SELECT default_locale FROM tenants WHERE id = $1`, [a.tenantId]);
-    await s.db.tx(async (t) => {
-      await t.query(
-        `INSERT INTO envelopes (id, tenant_id, created_by, created_via, subject, message, locale, expires_at, metadata)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-        [
-          envId,
-          a.tenantId,
-          a.userId,
-          a.apiKeyId ? "api" : "web",
-          input.subject ?? tplRow.subject ?? tplRow.name,
-          input.message !== undefined ? input.message : tplRow.message,
-          input.locale ?? tplRow.locale ?? tenant?.default_locale ?? "es",
-          input.expiresAt ?? new Date(Date.now() + 30 * 86400_000).toISOString(),
-          JSON.stringify({ ...(input.metadata ?? {}), templateId: tpl.template.id }),
-        ],
-      );
-      await appendEvent(t, {
-        tenantId: a.tenantId,
-        envelopeId: envId,
-        type: "envelope.created",
-        actor: a.actor,
-        data: { subject: input.subject ?? tplRow.subject ?? tplRow.name, templateId: tpl.template.id, templateName: tplRow.name },
-      });
-      const docMap = new Map<string, string>();
-      for (const d of tplDocs) {
-        const nd = uuidv7();
-        docMap.set(d.id, nd);
-        await t.query(
-          `INSERT INTO documents (id, tenant_id, envelope_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-          [nd, a.tenantId, envId, d.position, d.name, d.file_id, d.page_count, JSON.stringify(d.pages)],
-        );
-        await appendEvent(t, {
-          tenantId: a.tenantId,
-          envelopeId: envId,
-          type: "document.added",
-          actor: a.actor,
-          data: { documentId: nd, name: d.name, sha256: d.sha256, pages: d.page_count, fromTemplate: true },
-        });
-      }
-      const recMap = new Map<string, string>();
-      for (const role of tpl.roles) {
-        const r = assigned.get(role.id)!;
-        const rid = uuidv7();
-        recMap.set(role.id, rid);
-        await t.query(
-          `INSERT INTO recipients (id, tenant_id, envelope_id, role, routing_order, name, email, phone, locale, channels, telegram_chat_id, id_document_type, id_document_number)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-          [
-            rid,
-            a.tenantId,
-            envId,
-            role.role,
-            role.routingOrder,
-            r.name,
-            r.email ?? null,
-            r.phone ?? null,
-            r.locale ?? null,
-            r.channels ?? ["email"],
-            r.telegramChatId ?? null,
-            r.idDocumentType ?? null,
-            r.idDocumentNumber ?? null,
-          ],
-        );
-      }
-      for (const f of tpl.fields) {
-        const recipientId = recMap.get(f.roleId);
-        const documentId = docMap.get(f.documentId);
-        if (!recipientId || !documentId) continue;
-        const pre = prefill.get(f.id);
-        let value = f.value;
-        if (pre !== undefined) {
-          if (f.readOnly) throw badRequest("readonly_field", `El campo "${f.label ?? f.id}" es de solo lectura en la plantilla`);
-          try {
-            value = checkSenderValue({ ...f, value: pre }, `Campo "${f.label ?? f.id}"`);
-          } catch (err) {
-            throw badRequest("invalid_prefill", (err as Error).message);
-          }
-        }
-        await insertEnvelopeField(t, {
-          id: uuidv7(),
-          tenantId: a.tenantId,
-          envelopeId: envId,
-          documentId,
-          recipientId,
-          type: f.type,
-          page: f.page,
-          x: f.x,
-          y: f.y,
-          width: f.width,
-          height: f.height,
-          required: f.required,
-          label: f.label,
-          value,
-          readOnly: Boolean(f.readOnly && value),
-          options: f.options,
-          min: f.min,
-          max: f.max,
-        });
-      }
-      if (input.send) await sendEnvelope(t, a.tenantId, envId, a.actor);
-    });
+    const loaded = await loadTemplateForUse(s.db, a.tenantId, input.templateId);
+    const plan = planFromTemplate(loaded, input);
+    const envId = await s.db.tx((t) => insertEnvelopeFromTemplate(t, { tenantId: a.tenantId, userId: a.userId, apiKeyId: a.apiKeyId, actor: a.actor }, loaded, input, plan));
     reply.code(201);
     return loadDetail(s.db, a.tenantId, envId);
   });
+}
+
+// ───────────────────────────── Creación de sobres desde plantilla (reutilizable) ─────────────────────────────
+// La usan /v1/envelopes/from-template, el envío masivo y los formularios web.
+
+type FromTemplateInput = ReturnType<typeof EnvelopeFromTemplateInput.parse>;
+
+export interface LoadedTemplate {
+  tpl: TemplateDetail;
+  row: any;
+  docs: any[];
+}
+
+export async function loadTemplateForUse(db: Db, tenantId: string, templateId: string): Promise<LoadedTemplate> {
+  const tpl = await loadTemplateDetail(db, tenantId, templateId);
+  const row = await db.one<any>(`SELECT * FROM templates WHERE id = $1`, [tpl.template.id]);
+  const docs = await loadTemplateDocuments(db, tpl.template.id);
+  if (docs.length === 0) throw badRequest("template_empty", "La plantilla no tiene documentos");
+  return { tpl, row, docs };
+}
+
+export interface TemplatePlan {
+  assigned: Map<string, FromTemplateInput["recipients"][number]>;
+  /** Valor final de cada campo de la plantilla (prellenado o el fijado en la plantilla). */
+  values: Map<string, string | null>;
+}
+
+/** Valida destinatarios y prellenado contra la plantilla, sin tocar la base. Lanza AppError con el problema. */
+export function planFromTemplate(l: LoadedTemplate, input: FromTemplateInput): TemplatePlan {
+  const { tpl } = l;
+  const byName = new Map(tpl.roles.map((r) => [r.name.toLowerCase(), r]));
+  const assigned = new Map<string, FromTemplateInput["recipients"][number]>();
+  for (const r of input.recipients) {
+    const role = r.roleId ? tpl.roles.find((x) => x.id === r.roleId) : byName.get((r.role ?? "").toLowerCase());
+    if (!role) throw badRequest("unknown_role", `Rol desconocido: ${r.roleId ?? r.role}`);
+    if (assigned.has(role.id)) throw badRequest("duplicate_role", `El rol ${role.name} tiene más de un destinatario`);
+    assigned.set(role.id, r);
+  }
+  const missingRoles = tpl.roles.filter((r) => !assigned.has(r.id));
+  if (missingRoles.length) {
+    throw new AppError(422, "roles_missing", `Faltan destinatarios para: ${missingRoles.map((r) => r.name).join(", ")}`, {
+      roles: missingRoles.map((r) => r.name),
+    });
+  }
+
+  // Prellenado: por id de campo o por etiqueta (sin distinguir mayúsculas).
+  const prefill = new Map<string, string>();
+  for (const [k, v] of Object.entries(input.prefill ?? {})) {
+    const matches = tpl.fields.filter((f) => f.id === k || (f.label && f.label.toLowerCase() === k.toLowerCase()));
+    if (matches.length === 0) throw badRequest("unknown_prefill", `No hay ningún campo "${k}" en la plantilla`);
+    for (const f of matches) prefill.set(f.id, v);
+  }
+  const values = new Map<string, string | null>();
+  for (const f of tpl.fields) {
+    const pre = prefill.get(f.id);
+    let value = f.value;
+    if (pre !== undefined) {
+      if (f.readOnly) throw badRequest("readonly_field", `El campo "${f.label ?? f.id}" es de solo lectura en la plantilla`);
+      try {
+        value = checkSenderValue({ ...f, value: pre }, `Campo "${f.label ?? f.id}"`);
+      } catch (err) {
+        throw badRequest("invalid_prefill", (err as Error).message);
+      }
+    }
+    values.set(f.id, value);
+  }
+  return { assigned, values };
+}
+
+export interface FromTemplateContext {
+  tenantId: string;
+  userId: string | null;
+  apiKeyId: string | null;
+  actor: Actor;
+}
+
+/** Crea el sobre (y lo envía si input.send) dentro de la transacción del llamador. Devuelve su id. */
+export async function insertEnvelopeFromTemplate(
+  t: Db,
+  ctx: FromTemplateContext,
+  l: LoadedTemplate,
+  input: FromTemplateInput,
+  plan: TemplatePlan,
+  extraMetadata: Record<string, unknown> = {},
+  /** Recibe rol de la plantilla → id del destinatario creado. */
+  onRecipients?: (byRole: Map<string, string>) => void,
+): Promise<string> {
+  const { tpl, row: tplRow, docs: tplDocs } = l;
+  const envId = uuidv7();
+  const tenant = await t.one<any>(`SELECT default_locale FROM tenants WHERE id = $1`, [ctx.tenantId]);
+  const subject = input.subject ?? tplRow.subject ?? tplRow.name;
+  await t.query(
+    `INSERT INTO envelopes (id, tenant_id, created_by, created_via, subject, message, locale, expires_at, metadata)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+    [
+      envId,
+      ctx.tenantId,
+      ctx.userId,
+      ctx.apiKeyId ? "api" : "web",
+      subject,
+      input.message !== undefined ? input.message : tplRow.message,
+      input.locale ?? tplRow.locale ?? tenant?.default_locale ?? "es",
+      input.expiresAt ?? new Date(Date.now() + 30 * 86400_000).toISOString(),
+      JSON.stringify({ ...(input.metadata ?? {}), ...extraMetadata, templateId: tpl.template.id }),
+    ],
+  );
+  await appendEvent(t, {
+    tenantId: ctx.tenantId,
+    envelopeId: envId,
+    type: "envelope.created",
+    actor: ctx.actor,
+    data: { subject, templateId: tpl.template.id, templateName: tplRow.name, ...extraMetadata },
+  });
+  const docMap = new Map<string, string>();
+  for (const d of tplDocs) {
+    const nd = uuidv7();
+    docMap.set(d.id, nd);
+    await t.query(
+      `INSERT INTO documents (id, tenant_id, envelope_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [nd, ctx.tenantId, envId, d.position, d.name, d.file_id, d.page_count, JSON.stringify(d.pages)],
+    );
+    await appendEvent(t, {
+      tenantId: ctx.tenantId,
+      envelopeId: envId,
+      type: "document.added",
+      actor: ctx.actor,
+      data: { documentId: nd, name: d.name, sha256: d.sha256, pages: d.page_count, fromTemplate: true },
+    });
+  }
+  const recMap = new Map<string, string>();
+  for (const role of tpl.roles) {
+    const r = plan.assigned.get(role.id)!;
+    const rid = uuidv7();
+    recMap.set(role.id, rid);
+    await t.query(
+      `INSERT INTO recipients (id, tenant_id, envelope_id, role, routing_order, name, email, phone, locale, channels, telegram_chat_id, id_document_type, id_document_number)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+      [
+        rid,
+        ctx.tenantId,
+        envId,
+        role.role,
+        role.routingOrder,
+        r.name,
+        r.email ?? null,
+        r.phone ?? null,
+        r.locale ?? null,
+        r.channels ?? ["email"],
+        r.telegramChatId ?? null,
+        r.idDocumentType ?? null,
+        r.idDocumentNumber ?? null,
+      ],
+    );
+  }
+  onRecipients?.(recMap);
+  const fieldMap = new Map<string, string>();
+  for (const f of tpl.fields) {
+    const recipientId = recMap.get(f.roleId);
+    const documentId = docMap.get(f.documentId);
+    if (!recipientId || !documentId) continue;
+    const value = plan.values.get(f.id) ?? null;
+    fieldMap.set(f.id, uuidv7());
+    await insertEnvelopeField(t, {
+      id: fieldMap.get(f.id)!,
+      tenantId: ctx.tenantId,
+      envelopeId: envId,
+      documentId,
+      recipientId,
+      type: f.type,
+      page: f.page,
+      x: f.x,
+      y: f.y,
+      width: f.width,
+      height: f.height,
+      required: f.required,
+      label: f.label,
+      value,
+      readOnly: Boolean(f.readOnly && value),
+      options: f.options,
+      min: f.min,
+      max: f.max,
+    });
+  }
+  await copyFieldLogic(t, "fields", tpl.fields, fieldMap);
+  if (input.send) await sendEnvelope(t, ctx.tenantId, envId, ctx.actor);
+  return envId;
 }

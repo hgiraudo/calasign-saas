@@ -38,6 +38,8 @@ function toDraftFields(d: TemplateDetail): DraftField[] {
     options: f.options,
     min: f.min,
     max: f.max,
+    conditions: f.conditions,
+    formula: f.formula,
   }));
 }
 

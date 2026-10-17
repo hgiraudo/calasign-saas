@@ -23,6 +23,7 @@ import { setEmbeddedFlags } from "./embed";
 import { applyEnvelopeSettings } from "./participants";
 import { checkSenderValue, insertEnvelopeField } from "./fieldvalues";
 import { applyInPersonFlags } from "./experience";
+import { assignFieldIds, saveFieldLogic } from "./logic";
 
 /** Bloquea el sobre para serializar cambios y eventos. */
 export async function lockEnvelope(db: Db, tenantId: string, id: string) {
@@ -360,6 +361,7 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
   app.put<P>("/v1/envelopes/:id/fields", { preHandler: auth }, async (req) => {
     const a = A(req);
     const input = PutFieldsInput.parse(await expandAnchorFields(s, a.tenantId, req.params.id, req.body));
+    assignFieldIds(input.fields);
     await s.db.tx(async (t) => {
       const e = await lockEnvelope(t, a.tenantId, req.params.id);
       requireDraft(e);
@@ -400,6 +402,7 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
           max: f.max ?? null,
         });
       }
+      await saveFieldLogic(t, "fields", input.fields);
       await touch(t, e.id);
     });
     return loadDetail(s.db, a.tenantId, req.params.id);

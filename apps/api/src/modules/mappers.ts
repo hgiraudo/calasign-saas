@@ -75,6 +75,8 @@ export const toField = (r: any): Field => ({
   options: r.options ?? null,
   min: r.min_value ?? null,
   max: r.max_value ?? null,
+  conditions: Array.isArray(r.conditions) && r.conditions.length ? r.conditions : null,
+  formula: r.formula ?? null,
 });
 
 export async function loadDocuments(db: Db, envelopeId: string) {

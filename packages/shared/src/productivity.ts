@@ -1,5 +1,6 @@
 // Fase 2 — productividad: plantillas y branding.
 import { z } from "zod";
+import { FieldConditions, FieldFormula, type FieldCondition } from "./scale-logic";
 import { CHANNELS, FIELD_TYPES, ID_DOCUMENT_TYPES, LOCALES, RECIPIENT_ROLES, type Document, type FieldType, type Locale } from "./api";
 
 /** Tipos que el firmante completa escribiendo y que el remitente puede prellenar. */
@@ -52,9 +53,12 @@ export const TemplateFieldInput = z
     options: z.array(z.string().trim().min(1).max(100)).max(50).optional().nullable(),
     min: z.number().finite().optional().nullable(),
     max: z.number().finite().optional().nullable(),
+    conditions: FieldConditions.optional().nullable(),
+    formula: FieldFormula.optional().nullable(),
   })
   .refine((f) => f.x + f.width <= 1.0001 && f.y + f.height <= 1.0001, { message: "el campo se sale de la página" })
-  .refine((f) => f.type !== "dropdown" || (f.options && f.options.length > 0), { message: "el desplegable necesita opciones" });
+  .refine((f) => f.type !== "dropdown" || (f.options && f.options.length > 0), { message: "el desplegable necesita opciones" })
+  .refine((f) => !f.formula || f.type === "number", { message: "solo un campo número puede tener fórmula" });
 export type TemplateFieldInput = z.input<typeof TemplateFieldInput>;
 
 export const PutTemplateFieldsInput = z.object({ fields: z.array(TemplateFieldInput).max(500) });
@@ -138,6 +142,8 @@ export interface TemplateField {
   options: string[] | null;
   min: number | null;
   max: number | null;
+  conditions: FieldCondition[] | null;
+  formula: string | null;
 }
 
 export interface Template {

@@ -4,3 +4,4 @@ export * from "./signer";
 export * from "./productivity";
 export * from "./teams";
 export * from "./experience";
+export * from "./scale";

@@ -14,6 +14,7 @@ import { canDelegate, isSignerAuthenticated, otpDestinationFor } from "./otp";
 import { checkValue, VALUE_FIELD_TYPES } from "./fieldvalues";
 import { getTenantBranding } from "./branding";
 import { inPersonSessionInfo } from "./experience";
+import { prepareCompletionLogic, signerLogicFields } from "./logic";
 
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -83,6 +84,7 @@ export async function buildSession(db: Db, token: string, r: any, e: any, authed
     otpRequired,
     otpDestination: otpRequired ? otpDestinationFor(r) : null,
     canDelegate: canDelegate(r, e),
+    logicFields: otpRequired ? [] : await signerLogicFields(db, e.id, r.id),
     branding: await getTenantBranding(db, e.tenant_id).then((b) =>
       b.primaryColor || b.logoUrl ? { primaryColor: b.primaryColor, logoUrl: b.logoUrl ? new URL(b.logoUrl).pathname + new URL(b.logoUrl).search : null } : null,
     ),
@@ -188,7 +190,14 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
       const hasIni = stored.some((x) => x.purpose === "initials");
 
       const invalid: string[] = [];
+      // Lógica (Fase 4): campos ocultos por sus condiciones no se exigen ni se estampan; los calculados los fija el servidor.
+      const logic = await prepareCompletionLogic(t, e.id, r.id, values);
       for (const f of fields) {
+        if (logic.hidden.has(f.id)) continue;
+        if (logic.computed.has(f.id)) {
+          await t.query(`UPDATE fields SET value = $2, filled_at = now() WHERE id = $1`, [f.id, logic.computed.get(f.id)]);
+          continue;
+        }
         let v: string | null = null;
         if (f.read_only) {
           v = f.value;

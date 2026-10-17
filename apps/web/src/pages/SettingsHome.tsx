@@ -5,13 +5,17 @@ import { useAccess } from "../lib/access";
 import { useI18n } from "../lib/i18n";
 import { useIntText } from "../lib/integrations-i18n";
 import { useTeamsText } from "../lib/i18n-teams";
+import { useScaleText } from "../lib/i18n-scale";
 
 export function SettingsHomePage() {
   const { t } = useI18n();
   const tt = useIntText();
   const tm = useTeamsText();
+  const sc = useScaleText();
   const { can } = useAccess();
   const sections: { to: string; title: string; desc: string; perm?: Permission }[] = [
+    { to: "/app/bulk", title: sc("nav.bulk"), desc: sc("bulk.intro"), perm: "envelopes:create" },
+    { to: "/app/forms", title: sc("nav.forms"), desc: sc("forms.intro"), perm: "envelopes:create" },
     { to: "/app/settings/team", title: tm("nav.team"), desc: tm("settings.team") },
     { to: "/app/settings/branding", title: t("nav.branding"), desc: tm("settings.branding"), perm: "settings:manage" },
     { to: "/app/settings/api-keys", title: t("nav.apiKeys"), desc: tm("settings.apiKeys"), perm: "api_keys:manage" },

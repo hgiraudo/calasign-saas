@@ -22,6 +22,9 @@ import { AuditLogPage } from "./pages/AuditLog";
 import { SecurityPage } from "./pages/Security";
 import { InviteAcceptPage } from "./pages/InviteAccept";
 import { ReportsPage } from "./pages/Reports";
+import { BulkDetailPage, BulkListPage, BulkNewPage } from "./pages/Bulk";
+import { WebFormDetailPage, WebFormsPage } from "./pages/WebForms";
+import { PublicFormPage } from "./pages/PublicForm";
 
 export function App() {
   return (
@@ -33,6 +36,7 @@ export function App() {
       <Route path="/developers" element={<DevelopersPage />} />
       <Route path="/verify" element={<VerifyPage />} />
       <Route path="/invite/:token" element={<InviteAcceptPage />} />
+      <Route path="/f/:slug" element={<PublicFormPage />} />
       <Route
         element={
           <RequireAuth>
@@ -57,6 +61,11 @@ export function App() {
         <Route path="/app/settings/audit" element={<AuditLogPage />} />
         <Route path="/app/settings/security" element={<SecurityPage />} />
         <Route path="/app/reports" element={<ReportsPage />} />
+        <Route path="/app/bulk" element={<BulkListPage />} />
+        <Route path="/app/bulk/new" element={<BulkNewPage />} />
+        <Route path="/app/bulk/:id" element={<BulkDetailPage />} />
+        <Route path="/app/forms" element={<WebFormsPage />} />
+        <Route path="/app/forms/:id" element={<WebFormDetailPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/app" replace />} />
     </Routes>

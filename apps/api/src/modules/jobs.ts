@@ -9,6 +9,8 @@ import { decrypt, maskDestination, sha256Hex, uuidv7 } from "../lib/util";
 import { deliver, telegramStartLink } from "../notifications/channels";
 import { render, type TemplateKind } from "../notifications/templates";
 import { loadDocuments } from "./mappers";
+import { finalizeFieldLogic } from "./logic";
+import { handleBulkJob } from "./bulk";
 import { embeddedAuthLabel } from "./embed";
 import { inPersonAuthLabels } from "./experience";
 import { handleWebhookJob } from "./webhooks";
@@ -34,6 +36,7 @@ export function createJobHandlers(d: Deps): Record<JobQueueName, JobHandler> {
     notify: (p) => notify(d, p),
     finalize: (p) => finalize(d, p),
     webhook: (p, job) => handleWebhookJob(d, p, job),
+    bulk: (p) => handleBulkJob(d, p),
   };
 }
 
@@ -145,9 +148,10 @@ async function notify(d: Deps, p: { kind: TemplateKind; envelopeId: string; tena
 async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
   const e = await d.db.one<any>(`SELECT * FROM envelopes WHERE id = $1`, [p.envelopeId]);
   if (!e || e.status !== "finalizing") return;
+  await finalizeFieldLogic(d.db, e.id);
   const [docs, fields, recips, sigs, org, sender, events] = await Promise.all([
     loadDocuments(d.db, e.id),
-    d.db.query<any>(`SELECT * FROM fields WHERE envelope_id = $1`, [e.id]),
+    d.db.query<any>(`SELECT * FROM fields WHERE envelope_id = $1 AND NOT hidden`, [e.id]),
     d.db.query<any>(`SELECT * FROM recipients WHERE envelope_id = $1 ORDER BY routing_order, created_at`, [e.id]),
     d.db.query<any>(
       `SELECT a.recipient_id, a.purpose, f.storage_key FROM adopted_signatures a JOIN files f ON f.id = a.image_file_id

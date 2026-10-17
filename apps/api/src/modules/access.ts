@@ -182,7 +182,29 @@ export async function enforceRoutePolicy(db: Db, req: FastifyRequest, a: AuthCon
 
   // Administración
   if (url.startsWith("/v1/settings/") && !isRead) return requirePerm(a, "settings:manage");
-  if (url.startsWith("/v1/api-keys")) return requirePerm(a, "api_keys:manage");
+  if (url.startsWith("/v1/api-keys")) {
+    requirePerm(a, "api_keys:manage");
+    // Una API key nueva nace con rol admin salvo que se pida otro: quien la crea tiene que tener
+    // todos los permisos que la key va a tener (si no, sería una escalada de privilegios).
+    if (method === "POST" && url === "/v1/api-keys") {
+      const body = (req.body ?? {}) as { role?: string; roleId?: string };
+      const role = body.role ?? "admin";
+      if (role === "owner") throw new AppError(400, "invalid_role", "Una API key no puede ser propietaria");
+      let perms: readonly Permission[] = BUILTIN_ROLE_PERMISSIONS[role as keyof typeof BUILTIN_ROLE_PERMISSIONS] ?? [];
+      if (role === "custom") {
+        const r = await db.one<any>(`SELECT permissions FROM roles WHERE id = $1 AND tenant_id = $2`, [body.roleId ?? null, a.tenantId]);
+        if (!r) throw new AppError(400, "invalid_role", "Rol inexistente");
+        perms = r.permissions;
+      } else if (!["admin", "member"].includes(role)) {
+        throw new AppError(400, "invalid_role", "Rol inválido");
+      }
+      if (a.access?.role !== "owner") {
+        const missing = perms.filter((p) => !hasPerm(a, p));
+        if (missing.length) throw new AppError(403, "forbidden", `No podés crear una API key con permisos que no tenés: ${missing.join(", ")}`, { missing });
+      }
+    }
+    return;
+  }
   if (url.startsWith("/v1/webhooks") || url.startsWith("/v1/webhook-deliveries")) return requirePerm(a, "webhooks:manage");
   if (url.startsWith("/v1/audit-log")) return requirePerm(a, "audit:view");
   if (/^\/v1\/(members|roles|groups|invitations)(\/|$)/.test(url) && !isRead) return requirePerm(a, "members:manage");

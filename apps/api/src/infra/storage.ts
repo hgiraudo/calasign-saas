@@ -1,10 +1,12 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { config } from "../config";
 
 export interface BlobStore {
   put(key: string, data: Uint8Array, contentType: string): Promise<void>;
   get(key: string): Promise<Uint8Array>;
+  /** Borra el objeto (retención). No falla si ya no existe. */
+  delete(key: string): Promise<void>;
 }
 
 class LocalBlobStore implements BlobStore {
@@ -21,6 +23,9 @@ class LocalBlobStore implements BlobStore {
   }
   async get(key: string) {
     return new Uint8Array(await readFile(this.path(key)));
+  }
+  async delete(key: string) {
+    await rm(this.path(key), { force: true });
   }
 }
 
@@ -46,6 +51,10 @@ class S3BlobStore implements BlobStore {
     const { m, c } = await this.clientP;
     const r = await c.send(new m.GetObjectCommand({ Bucket: this.bucket, Key: this.prefix + key }));
     return new Uint8Array(await r.Body!.transformToByteArray());
+  }
+  async delete(key: string) {
+    const { m, c } = await this.clientP;
+    await c.send(new m.DeleteObjectCommand({ Bucket: this.bucket, Key: this.prefix + key }));
   }
 }
 

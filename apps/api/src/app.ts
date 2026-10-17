@@ -22,6 +22,9 @@ import { webhookRoutes } from "./modules/webhooks";
 import { embedRoutes } from "./modules/embed";
 import { openApiRoutes } from "./modules/openapi";
 import { productivityRoutes } from "./modules/productivity";
+import { teamRoutes } from "./modules/teams";
+import { auditRoutes, registerAuditHooks } from "./modules/audit";
+import { retentionRoutes } from "./modules/retention";
 
 export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolean | object }) {
   const app = Fastify({
@@ -98,6 +101,10 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
   await embedRoutes(app, services);
   await openApiRoutes(app);
   await productivityRoutes(app, services);
+  registerAuditHooks(app, services);
+  await teamRoutes(app, services);
+  await auditRoutes(app, services);
+  await retentionRoutes(app, services, app.log);
 
   if (config.devMailbox) {
     // Local: todo el buzón. Entornos compartidos (dev): solo los mensajes de la organización de la sesión.

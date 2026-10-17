@@ -4,6 +4,7 @@ import { conflict, notFound, unauthorized } from "../lib/errors";
 import { hashPassword, iso, randomToken, sha256Hex, slugify, uuidv7, verifyPassword } from "../lib/util";
 import { config } from "../config";
 import { SESSION_COOKIE, authenticate, clientInfo, type Services } from "./context";
+import { createTwoFactorChallenge } from "./teams";
 
 const SESSION_DAYS = 14;
 
@@ -77,6 +78,8 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
     if (!u || !ok) throw unauthorized();
     const m = await s.db.one<any>(`SELECT tenant_id FROM memberships WHERE user_id = $1 ORDER BY created_at LIMIT 1`, [u.id]);
     if (!m) throw unauthorized();
+    const challenge = await createTwoFactorChallenge(s.db, u.id, m.tenant_id);
+    if (challenge) return challenge;
     await createSession(reply, req, u.id, m.tenant_id);
     return me(u.id, m.tenant_id);
   });

@@ -8,6 +8,8 @@ import { EnvelopeDetailPage } from "./pages/EnvelopeDetail";
 import { ApiKeysPage } from "./pages/ApiKeys";
 import { SignerPage } from "./pages/Signer";
 import { DevMailboxPage } from "./pages/DevMailbox";
+import { IntegrationsPage } from "./pages/Integrations";
+import { DevelopersPage } from "./pages/Developers";
 
 export function App() {
   return (
@@ -16,6 +18,7 @@ export function App() {
       <Route path="/login" element={<LoginPage />} />
       <Route path="/signup" element={<SignupPage />} />
       <Route path="/s/:token" element={<SignerPage />} />
+      <Route path="/developers" element={<DevelopersPage />} />
       <Route
         element={
           <RequireAuth>
@@ -28,6 +31,7 @@ export function App() {
         <Route path="/app/envelopes/:id/edit" element={<EnvelopeEditPage />} />
         <Route path="/app/settings/api-keys" element={<ApiKeysPage />} />
         <Route path="/app/dev-mailbox" element={<DevMailboxPage />} />
+        <Route path="/app/settings/integrations" element={<IntegrationsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/app" replace />} />
     </Routes>

@@ -41,6 +41,7 @@ export const toRecipient = (r: any): Recipient => ({
   locale: r.locale,
   channels: r.channels,
   telegramLinked: Boolean(r.telegram_chat_id),
+  embedded: Boolean(r.embedded),
   idDocumentType: r.id_document_type,
   idDocumentNumber: r.id_document_number,
   status: r.status,

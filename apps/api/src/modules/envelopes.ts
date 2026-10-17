@@ -17,6 +17,8 @@ import { encrypt, iso, randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { config } from "../config";
 import { authenticate, type AuthContext, type Services } from "./context";
 import { loadDetail, loadDocuments } from "./mappers";
+import { expandAnchorFields } from "./anchors";
+import { setEmbeddedFlags } from "./embed";
 
 /** Bloquea el sobre para serializar cambios y eventos. */
 export async function lockEnvelope(db: Db, tenantId: string, id: string) {
@@ -338,6 +340,7 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
           ],
         );
       }
+      await setEmbeddedFlags(t, e.id, list);
       // Los campos de un destinatario que pasó a 'cc' ya no aplican.
       await t.query(`DELETE FROM fields f USING recipients r WHERE f.recipient_id = r.id AND r.envelope_id = $1 AND r.role = 'cc'`, [e.id]);
       await touch(t, e.id);
@@ -347,7 +350,7 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
 
   app.put<P>("/v1/envelopes/:id/fields", { preHandler: auth }, async (req) => {
     const a = A(req);
-    const input = PutFieldsInput.parse(req.body);
+    const input = PutFieldsInput.parse(await expandAnchorFields(s, a.tenantId, req.params.id, req.body));
     await s.db.tx(async (t) => {
       const e = await lockEnvelope(t, a.tenantId, req.params.id);
       requireDraft(e);

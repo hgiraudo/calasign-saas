@@ -1,0 +1,8 @@
+/* Firma embebida: sin barra ni pie de CalaSign, fondo neutro y márgenes mínimos. */
+.cs-embedded .signer-bar,
+.cs-embedded .signer-foot {
+  display: none;
+}
+.cs-embedded .signer-main {
+  padding-top: 12px;
+}

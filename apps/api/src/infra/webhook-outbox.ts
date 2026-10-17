@@ -2,6 +2,7 @@
 // transacción que lo registra (outbox). Si la organización no tiene endpoints activos, no encola nada.
 import type { Db } from "./db";
 import { enqueue } from "./queue";
+import { queuePlatformFanout } from "../modules/platform-fanout";
 
 /** Tipo de evento de evidencia → tipos de webhook que dispara. */
 const MAP: Record<string, string[]> = {
@@ -23,6 +24,7 @@ export async function queueWebhookFanout(
   data: Record<string, unknown>,
   recipientId: string | null,
 ) {
+  await queuePlatformFanout(db, tenantId, envelopeId, evidenceType, seq, recipientId);
   const types = MAP[evidenceType];
   if (!types) return;
   const has = await db.one(`SELECT 1 FROM webhook_endpoints WHERE tenant_id = $1 AND active LIMIT 1`, [tenantId]);

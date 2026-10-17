@@ -210,6 +210,12 @@ export async function enforceRoutePolicy(db: Db, req: FastifyRequest, a: AuthCon
   if (url.startsWith("/v1/audit-log")) return requirePerm(a, "audit:view");
   // Envío masivo y formularios web: crean sobres en nombre de quien los configura.
   if (/^\/v1\/(bulk-sends|web-forms)(\/|$)/.test(url)) return requirePerm(a, "envelopes:create");
+  // Plataforma: apps OAuth (como las API keys), avisos a Slack/Teams, almacenamiento y dominio propio.
+  if (url.startsWith("/v1/oauth/apps")) return requirePerm(a, "api_keys:manage");
+  if (/^\/v1\/(notification-integrations|storage|domains)(\/|$)/.test(url)) {
+    if (url.startsWith("/v1/storage/oauth/") && url.endsWith("/callback")) return;
+    return requirePerm(a, "settings:manage");
+  }
   // Reportes: estadísticas de toda la organización.
   if (url.startsWith("/v1/reports")) return requirePerm(a, "envelopes:view_all");
   if (/^\/v1\/(members|roles|groups|invitations)(\/|$)/.test(url) && !isRead) return requirePerm(a, "members:manage");

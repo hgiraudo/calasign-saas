@@ -5,3 +5,4 @@ export * from "./productivity";
 export * from "./teams";
 export * from "./experience";
 export * from "./scale";
+export * from "./platform";

@@ -17,6 +17,8 @@ import { handleWebhookJob } from "./webhooks";
 import { runAutomaticReminders } from "./reminders";
 import { purgeExpiredEnvelopes } from "./retention";
 import { getLogoForPdf, getTenantBranding } from "./branding";
+import { handlePlatformJob } from "./platform-fanout";
+import { tenantBaseUrl } from "./custom-domains";
 
 interface Deps {
   db: Db;
@@ -37,6 +39,7 @@ export function createJobHandlers(d: Deps): Record<JobQueueName, JobHandler> {
     finalize: (p) => finalize(d, p),
     webhook: (p, job) => handleWebhookJob(d, p, job),
     bulk: (p) => handleBulkJob(d, p),
+    platform: (p) => handlePlatformJob(d, p),
   };
 }
 
@@ -66,7 +69,7 @@ async function notify(d: Deps, p: { kind: TemplateKind; envelopeId: string; tena
   // Avisos al remitente.
   if (p.kind === "sender_completed" || p.kind === "sender_declined") {
     if (!sender?.email) return;
-    const link = `${config.appUrl}/app/envelopes/${e.id}`;
+    const link = `${await tenantBaseUrl(d.db, e.tenant_id)}/app/envelopes/${e.id}`;
     const m = render(p.kind, sender.locale ?? e.locale, { ...base, recipientName: sender.name, link }, mailBrand);
     const res = await deliver({ channel: "email", to: sender.email, subject: m.subject, text: m.text, html: m.html, link, locale: e.locale, tenantId: e.tenant_id });
     await d.db.query(
@@ -86,7 +89,7 @@ async function notify(d: Deps, p: { kind: TemplateKind; envelopeId: string; tena
 
   const locale = r.locale ?? e.locale;
   const token = r.access_token_enc ? decrypt(r.access_token_enc) : null;
-  const link = token && LINK_KINDS.includes(p.kind) ? `${config.appUrl}/s/${token}` : null;
+  const link = token && LINK_KINDS.includes(p.kind) ? `${await tenantBaseUrl(d.db, e.tenant_id)}/s/${token}` : null;
   const m = render(p.kind, locale, { ...base, recipientName: r.name, message: p.kind === "invite" ? e.message : null, link }, mailBrand);
 
   const channels: ("email" | "whatsapp" | "telegram")[] = r.channels ?? ["email"];

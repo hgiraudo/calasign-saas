@@ -27,6 +27,8 @@ import {
   FIELD_TYPES,
 } from "@calasign/shared";
 import { config } from "../config";
+import { OAUTH2_SECURITY_SCHEME, PLATFORM_OPS } from "./platform-openapi";
+import { requiredScope } from "./oauth-tokens";
 
 const js = (schema: ZodTypeAny) => {
   const { $schema: _drop, ...rest } = zodToJsonSchema(schema, { target: "openApi3", $refStrategy: "none" }) as Record<string, unknown>;
@@ -156,8 +158,19 @@ interface Op {
   multipart?: boolean;
   response?: ZodTypeAny | "pdf" | "none";
   status?: number;
-  auth?: "key" | "token" | "none";
+  auth?: "key" | "token" | "none" | "client";
   idempotent?: boolean;
+  /** Cuerpo application/x-www-form-urlencoded (endpoints OAuth). */
+  form?: ZodTypeAny;
+}
+
+/** Seguridad de una operación: API key, OAuth 2.0 (con el scope que exige la ruta) o sesión web. */
+function securityFor(op: Op) {
+  if (op.auth === "none" || op.auth === "token") return [];
+  if (op.auth === "client") return [{ clientBasic: [] }];
+  const scope = requiredScope(op.path.replace(/\{(\w+)\}/g, ":$1"), op.method.toUpperCase());
+  const oauth = scope === "deny" ? [] : [{ oauth2: scope ? [scope] : [] }];
+  return [{ apiKey: [] }, ...oauth, { session: [] }];
 }
 
 const OPS: Op[] = [
@@ -215,7 +228,7 @@ const OPS: Op[] = [
 
 export function buildOpenApi() {
   const paths: Record<string, Record<string, unknown>> = {};
-  for (const op of OPS) {
+  for (const op of [...OPS, ...(PLATFORM_OPS as Op[])]) {
     const params = [...op.path.matchAll(/\{(\w+)\}/g)].map((m) => ({ name: m[1], in: "path", required: true, schema: { type: "string" } }));
     if (op.idempotent) params.push({ name: "Idempotency-Key", in: "header", required: false, schema: { type: "string" } } as never);
     const status = String(op.status ?? 200);
@@ -234,9 +247,10 @@ export function buildOpenApi() {
       ...(op.description ? { description: op.description } : {}),
       ...(params.length ? { parameters: params } : {}),
       responses,
-      security: op.auth === "none" || op.auth === "token" ? [] : [{ apiKey: [] }, { session: [] }],
+      security: securityFor(op),
     };
     if (op.body) entry.requestBody = { required: true, content: { "application/json": { schema: js(op.body) } } };
+    if (op.form) entry.requestBody = { required: true, content: { "application/x-www-form-urlencoded": { schema: js(op.form) } } };
     if (op.multipart)
       entry.requestBody = {
         required: true,
@@ -250,7 +264,7 @@ export function buildOpenApi() {
       title: "CalaSign API",
       version: "1.0.0",
       description:
-        "Firma electrónica en la nube. Autenticación con `Authorization: Bearer <API key>`. Errores: `{ error: { code, message, details? } }`. " +
+        "Firma electrónica en la nube. Autenticación con `Authorization: Bearer <API key o access token OAuth>`. Errores: `{ error: { code, message, details? } }`. " +
         "Webhooks firmados con `CalaSign-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, \"<t>.<body>\")>`. " +
         `Eventos: ${WEBHOOK_EVENT_TYPES.join(", ")}.`,
     },
@@ -259,6 +273,8 @@ export function buildOpenApi() {
       securitySchemes: {
         apiKey: { type: "http", scheme: "bearer", description: "API key de la organización (cs_live_… / cs_test_…)" },
         session: { type: "apiKey", in: "cookie", name: "cs_session" },
+        oauth2: OAUTH2_SECURITY_SCHEME,
+        clientBasic: { type: "http", scheme: "basic", description: "client_id:client_secret de la app OAuth" },
       },
     },
     paths,

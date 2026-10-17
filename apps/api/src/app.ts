@@ -31,6 +31,7 @@ import { oauthRoutes } from "./modules/oauth";
 import { notificationIntegrationRoutes } from "./modules/notify-integrations";
 import { storageRoutes } from "./modules/storage-export";
 import { customDomainRoutes } from "./modules/custom-domains";
+import { identityRoutes } from "./modules/identity";
 
 export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolean | object }) {
   const app = Fastify({
@@ -60,7 +61,12 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
   });
   await app.register(cookie);
   await app.register(multipart, { limits: { files: 1, fileSize: config.maxUploadBytes } });
-  await app.register(rateLimit, { max: 600, timeWindow: "1 minute" });
+  // En el entorno local (pruebas de punta a punta seguidas) la IP local no tiene límite; en dev y prod sí.
+  await app.register(rateLimit, {
+    max: 600,
+    timeWindow: "1 minute",
+    allowList: config.environment === "local" ? ["127.0.0.1", "::1", "::ffff:127.0.0.1"] : [],
+  });
 
   app.setErrorHandler((err: FastifyError | Error, req, reply) => {
     if (err instanceof ZodError) {
@@ -101,6 +107,7 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
   await authRoutes(app, services);
   await envelopeRoutes(app, services);
   await signerFeatureRoutes(app, services);
+  await identityRoutes(app, services);
   await signingRoutes(app, services);
   await telegramRoutes(app, services);
   await webhookRoutes(app, services);

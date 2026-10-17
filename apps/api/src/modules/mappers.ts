@@ -2,6 +2,7 @@ import type { Document, Envelope, EnvelopeDetail, Field, Recipient } from "@cala
 import type { Db } from "../infra/db";
 import { iso } from "../lib/util";
 import { notFound } from "../lib/errors";
+import { toRecipientIdentity } from "./identity/kyc";
 
 export const toEnvelope = (r: any, signedSha256: string | null = null): Envelope => ({
   id: r.id,
@@ -56,6 +57,7 @@ export const toRecipient = (r: any): Recipient => ({
   authMethod: r.auth_method ?? "link",
   replacedBy: r.replaced_by ?? null,
   inPersonHost: r.in_person_host_user_id ? { id: r.in_person_host_user_id, name: r.in_person_host_name ?? "" } : null,
+  identity: toRecipientIdentity(r),
 });
 
 export const toField = (r: any): Field => ({

@@ -43,6 +43,7 @@ import { normLocale } from "../notifications/templates";
 import { hasPerm } from "./access";
 import { auditFromRequest, recordAudit } from "./audit";
 import { SESSION_COOKIE, authenticate, clientInfo, type AuthContext, type Services } from "./context";
+import { assertSessionAllowed } from "./identity/sso";
 
 const SESSION_DAYS = 14;
 const INVITE_DAYS = 7;
@@ -224,8 +225,11 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     const a = A(req);
     if (!a.userId) throw forbidden("Solo para sesiones de usuario");
     const { tenantId } = SwitchTenantInput.parse(req.body);
-    const m = await s.db.one(`SELECT 1 FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [tenantId, a.userId]);
+    const m = await s.db.one<any>(`SELECT role FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [tenantId, a.userId]);
     if (!m) throw notFound("Organización");
+    // SSO (Fase 5): una sesión SSO no cambia de organización; una con contraseña no entra a una que exige SSO.
+    const sess = await s.db.one<any>(`SELECT auth_method, sso_tenant_id FROM sessions WHERE token_hash = $1`, [sha256Hex(req.cookies[SESSION_COOKIE]!)]);
+    await assertSessionAllowed(s.db, { authMethod: sess?.auth_method ?? "password", ssoTenantId: sess?.sso_tenant_id ?? null }, tenantId, m.role);
     await s.db.query(`UPDATE sessions SET tenant_id = $2 WHERE token_hash = $1`, [sha256Hex(req.cookies[SESSION_COOKIE]!), tenantId]);
     await recordAudit(s.db, { tenantId, action: "auth.tenant_switched", actor: { type: "user", id: a.userId, label: a.actor.label }, ...clientInfo(req), data: { from: a.tenantId } });
     return meResponse(s.db, a.userId, tenantId);
@@ -406,8 +410,10 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     const cookie = req.cookies?.[SESSION_COOKIE];
     if (cookie) {
       const srow = await s.db.one<any>(
-        `SELECT u.id, u.email FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = $1 AND s.expires_at > now()`,
-        [sha256Hex(cookie)],
+        // Una sesión SSO solo sirve como prueba de identidad dentro de su propia organización (Fase 5).
+        `SELECT u.id, u.email FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = $1 AND s.expires_at > now()
+           AND (s.auth_method = 'password' OR s.sso_tenant_id = $2)`,
+        [sha256Hex(cookie), inv.tenant_id],
       );
       if (srow && srow.email.toLowerCase() === inv.email.toLowerCase()) sessionUserId = srow.id;
     }

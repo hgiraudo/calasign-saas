@@ -26,7 +26,8 @@ async function purgeableFiles(db: Db, envelopeId: string) {
     `SELECT f.id, f.kind, f.storage_key FROM files f WHERE f.purged_at IS NULL AND f.kind <> 'signed' AND f.id IN (
        SELECT d.file_id FROM documents d WHERE d.envelope_id = $1
        UNION SELECT a.image_file_id FROM adopted_signatures a JOIN recipients r ON r.id = a.recipient_id WHERE r.envelope_id = $1
-       UNION SELECT fl.attachment_file_id FROM fields fl WHERE fl.envelope_id = $1 AND fl.attachment_file_id IS NOT NULL)`,
+       UNION SELECT fl.attachment_file_id FROM fields fl WHERE fl.envelope_id = $1 AND fl.attachment_file_id IS NOT NULL
+       UNION SELECT ic.file_id FROM identity_captures ic JOIN identity_verifications iv ON iv.id = ic.verification_id WHERE iv.envelope_id = $1)`,
     [envelopeId],
   );
 }

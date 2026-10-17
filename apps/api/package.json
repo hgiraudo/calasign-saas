@@ -22,6 +22,7 @@
     "@fastify/multipart": "^10.1.4",
     "@fastify/rate-limit": "^11.2.1",
     "@fastify/static": "^10.1.6",
+    "@node-saml/node-saml": "5.1.0",
     "fastify": "^5.12.7",
     "nodemailer": "^7.0.13",
     "pg": "^8.23.1",

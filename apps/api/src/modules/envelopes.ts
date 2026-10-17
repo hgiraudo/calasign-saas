@@ -23,6 +23,7 @@ import { setEmbeddedFlags } from "./embed";
 import { applyEnvelopeSettings } from "./participants";
 import { checkSenderValue, insertEnvelopeField } from "./fieldvalues";
 import { applyInPersonFlags } from "./experience";
+import { applyIdentityFlags } from "./identity/kyc";
 import { assignFieldIds, saveFieldLogic } from "./logic";
 
 /** Bloquea el sobre para serializar cambios y eventos. */
@@ -351,6 +352,7 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
       }
       await setEmbeddedFlags(t, e.id, list);
       await applyInPersonFlags(t, e.id, list, a);
+      await applyIdentityFlags(t, e.id, list);
       // Los campos de un destinatario que pasó a 'cc' ya no aplican.
       await t.query(`DELETE FROM fields f USING recipients r WHERE f.recipient_id = r.id AND r.envelope_id = $1 AND r.role IN ('cc','approver')`, [e.id]);
       await touch(t, e.id);

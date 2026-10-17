@@ -14,6 +14,7 @@ import { DelegateModal, OtpGate } from "../components/SignerExtras";
 import { useSignerText } from "../lib/i18n-signer";
 import { InPersonBlocked, InPersonDone, InPersonHandover, RequestCopyButton, useFocusOnMount } from "../components/ExperienceExtras";
 import { useExpText } from "../lib/i18n-experience";
+import { IdentityGate } from "../components/IdentityGate";
 
 type Adopted = SignatureImageInput & { dataUrl: string };
 
@@ -119,6 +120,8 @@ export function SignerPage() {
     content = <Final icon="⏳" title={t("sign.notYourTurnTitle")} text={t("sign.notYourTurnText")} />;
   } else if (session.inPerson?.active && !session.inPerson.identityConfirmed) {
     content = <InPersonHandover session={session} base={base} onDone={reload} />;
+  } else if (session.identity?.required && session.identity.status !== "verified") {
+    content = <IdentityGate session={session} base={base} onDone={apply} />;
   } else if (!recipient.consented) {
     content = <Consent session={session} base={base} onDone={apply} />;
   } else {

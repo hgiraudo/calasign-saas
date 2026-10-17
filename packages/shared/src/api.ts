@@ -4,6 +4,7 @@ import { z } from "zod";
 import { AUTH_METHODS, EnvelopeReminderSettings, type AuthMethod } from "./signer";
 import { InPersonInput, type InPersonHost, type SigningInPerson } from "./experience";
 import { FieldConditions, FieldFormula, type FieldCondition } from "./scale-logic";
+import { IdVerificationInput, type RecipientIdentity, type SigningIdentity } from "./identity";
 
 // ───────────────────────────── Enumeraciones ─────────────────────────────
 
@@ -137,6 +138,8 @@ export const RecipientInput = z
     authMethod: z.enum(AUTH_METHODS).optional(),
     /** Firma en persona en el dispositivo del anfitrión: no recibe invitaciones (null = quitar). */
     inPerson: InPersonInput.optional().nullable(),
+    /** Verificación de identidad (KYC) antes de ver los documentos (null = quitar). */
+    idVerification: IdVerificationInput.optional().nullable(),
   })
   .refine((r) => r.embedded || r.inPerson || r.email || r.phone, { message: "email o phone requerido" })
   .refine((r) => r.authMethod !== "in_person" || r.inPerson, { message: "la firma en persona se configura con inPerson" })
@@ -235,6 +238,8 @@ export interface Recipient {
   replacedBy: string | null;
   /** Firma en persona: anfitrión que presenta al firmante. */
   inPersonHost?: InPersonHost | null;
+  /** Verificación de identidad requerida y su estado. */
+  identity?: RecipientIdentity | null;
 }
 
 export interface Field {
@@ -375,6 +380,8 @@ export interface SigningSession {
   inPerson?: SigningInPerson | null;
   /** Campos de otros destinatarios citados por las condiciones o fórmulas de este firmante. */
   logicFields?: { id: string; label: string | null; type: string; value: string | null }[];
+  /** Verificación de identidad (KYC): si `required` y no está verificada, documentos y campos vienen vacíos. */
+  identity?: SigningIdentity | null;
 }
 
 // ───────────────────────────── Desarrollo ─────────────────────────────

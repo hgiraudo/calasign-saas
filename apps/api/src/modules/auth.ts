@@ -5,6 +5,8 @@ import { hashPassword, iso, randomToken, sha256Hex, slugify, uuidv7, verifyPassw
 import { config } from "../config";
 import { SESSION_COOKIE, authenticate, clientInfo, type Services } from "./context";
 import { createTwoFactorChallenge } from "./teams";
+import { passwordLoginTenant } from "./identity/sso";
+import { AppError } from "../lib/errors";
 
 const SESSION_DAYS = 14;
 
@@ -76,8 +78,15 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
     // Se verifica igual con un hash ficticio para no revelar qué correos existen por tiempo de respuesta.
     const ok = await verifyPassword(input.password, u?.password_hash ?? DUMMY_HASH);
     if (!u || !ok) throw unauthorized();
-    const m = await s.db.one<any>(`SELECT tenant_id FROM memberships WHERE user_id = $1 ORDER BY created_at LIMIT 1`, [u.id]);
-    if (!m) throw unauthorized();
+    // SSO obligatorio (Fase 5): se entra a la primera organización que admite contraseña.
+    const pick = await passwordLoginTenant(s.db, u.id);
+    if (!pick) throw unauthorized();
+    if ("ssoRequired" in pick) {
+      throw new AppError(403, "sso_required", "Tu organización exige ingresar con inicio de sesión único (SSO)", {
+        startUrl: `/v1/auth/sso/start?org=${encodeURIComponent(pick.ssoRequired.slug)}&login_hint=${encodeURIComponent(input.email)}`,
+      });
+    }
+    const m = { tenant_id: pick.tenantId };
     const challenge = await createTwoFactorChallenge(s.db, u.id, m.tenant_id);
     if (challenge) return challenge;
     await createSession(reply, req, u.id, m.tenant_id);

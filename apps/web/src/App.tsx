@@ -27,6 +27,7 @@ import { WebFormDetailPage, WebFormsPage } from "./pages/WebForms";
 import { PublicFormPage } from "./pages/PublicForm";
 import { AutomationPage, CustomDomainPage, NotificationIntegrationsPage, OAuthAppsPage, StoragePage } from "./pages/PlatformSettings";
 import { OAuthConsentPage } from "./pages/OAuthConsent";
+import { IdentitySettingsPage, ScimSettingsPage, SsoSettingsPage } from "./pages/IdentitySettings";
 
 export function App() {
   return (
@@ -70,6 +71,9 @@ export function App() {
         <Route path="/app/settings/team" element={<TeamPage />} />
         <Route path="/app/settings/audit" element={<AuditLogPage />} />
         <Route path="/app/settings/security" element={<SecurityPage />} />
+        <Route path="/app/settings/identity" element={<IdentitySettingsPage />} />
+        <Route path="/app/settings/sso" element={<SsoSettingsPage />} />
+        <Route path="/app/settings/scim" element={<ScimSettingsPage />} />
         <Route path="/app/reports" element={<ReportsPage />} />
         <Route path="/app/bulk" element={<BulkListPage />} />
         <Route path="/app/bulk/new" element={<BulkNewPage />} />

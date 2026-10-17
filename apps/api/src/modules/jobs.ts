@@ -19,6 +19,7 @@ import { purgeExpiredEnvelopes } from "./retention";
 import { getLogoForPdf, getTenantBranding } from "./branding";
 import { handlePlatformJob } from "./platform-fanout";
 import { tenantBaseUrl } from "./custom-domains";
+import { identityForCertificate } from "./identity/kyc";
 
 interface Deps {
   db: Db;
@@ -190,6 +191,7 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
 
   const ev = (r: any, type: string) => events.find((x) => x.type === type && x.actor_id === r.id);
   const inPersonLabels = await inPersonAuthLabels(d.db, recips, e.locale);
+  const identities = await identityForCertificate(d.db, recips);
   const certRecipients: CertificateRecipient[] = recips.map((r) => ({
     name: r.name,
     role: r.role,
@@ -206,6 +208,7 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
     userAgent: r.signed_user_agent ?? null,
     signaturePng: sigImages.get(`${r.id}:signature`) ?? null,
     note: replacementNote(r, recips, e.locale),
+    identity: identities.get(r.id) ?? null,
   }));
   const completedAt = new Date().toISOString();
   const chainHead = events[events.length - 1]?.hash ?? "";

@@ -15,6 +15,7 @@ import { checkValue, VALUE_FIELD_TYPES } from "./fieldvalues";
 import { getTenantBranding } from "./branding";
 import { inPersonSessionInfo } from "./experience";
 import { prepareCompletionLogic, signerLogicFields } from "./logic";
+import { identityBlocking, signingIdentityFor } from "./identity/kyc";
 
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -47,6 +48,8 @@ export function formatSigningDate(d: Date, locale: string) {
 
 export async function buildSession(db: Db, token: string, r: any, e: any, authed = true): Promise<SigningSession> {
   const otpRequired = r.auth_method !== "link" && !authed;
+  // KYC (Fase 5): sin identidad verificada tampoco se muestran documentos ni campos.
+  const blocked = otpRequired || identityBlocking(r);
   const [docs, fields, org, sender, group] = await Promise.all([
     loadDocuments(db, e.id),
     db.query(`SELECT * FROM fields WHERE recipient_id = $1 ORDER BY page, y, x`, [r.id]),
@@ -77,18 +80,19 @@ export async function buildSession(db: Db, token: string, r: any, e: any, authed
       telegramLink: r.channels?.includes("telegram") && !r.telegram_chat_id ? telegramStartLink(token) : null,
       authMethod: r.auth_method ?? "link",
     },
-    documents: otpRequired ? [] : docs.map(toDocument),
-    fields: otpRequired ? [] : fields.map(toField),
+    documents: blocked ? [] : docs.map(toDocument),
+    fields: blocked ? [] : fields.map(toField),
     canSign,
-    signedAvailable: !otpRequired && e.status === "completed" && Boolean(e.signed_file_id),
+    signedAvailable: !blocked && e.status === "completed" && Boolean(e.signed_file_id),
     otpRequired,
     otpDestination: otpRequired ? otpDestinationFor(r) : null,
     canDelegate: canDelegate(r, e),
-    logicFields: otpRequired ? [] : await signerLogicFields(db, e.id, r.id),
+    logicFields: blocked ? [] : await signerLogicFields(db, e.id, r.id),
     branding: await getTenantBranding(db, e.tenant_id).then((b) =>
       b.primaryColor || b.logoUrl ? { primaryColor: b.primaryColor, logoUrl: b.logoUrl ? new URL(b.logoUrl).pathname + new URL(b.logoUrl).search : null } : null,
     ),
     inPerson: await inPersonSessionInfo(db, r, !otpRequired),
+    identity: await signingIdentityFor(db, r, e, { revealSession: !otpRequired }),
   };
 }
 

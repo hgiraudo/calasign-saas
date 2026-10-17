@@ -11,6 +11,7 @@ import { SaveAsTemplateButton } from "../components/SaveAsTemplate";
 import { ShareControl } from "../components/ShareControl";
 import { CorrectionModal, InPersonButton, ResendCopyButton } from "../components/EnvelopeExperience";
 import { useExpText } from "../lib/i18n-experience";
+import { IdentityBadge } from "../components/IdentityControls";
 
 export function EnvelopeDetailPage() {
   const { id = "" } = useParams();
@@ -159,6 +160,7 @@ export function EnvelopeDetailPage() {
                     <div className="row-wrap">
                       <strong>{r.name}</strong>
                       <RecipientStatusBadge status={r.status} />
+                      <IdentityBadge identity={r.identity} />
                       <span className="muted small">
                         #{r.routingOrder} · {t(`edit.role.${r.role}`)}
                         {r.authMethod === "in_person"

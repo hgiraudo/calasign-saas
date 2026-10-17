@@ -13,6 +13,7 @@ import type { BlobStore } from "./infra/storage";
 import { AppError } from "./lib/errors";
 import { readMailbox } from "./notifications/channels";
 import { authRoutes } from "./modules/auth";
+import { authenticate } from "./modules/context";
 import { envelopeRoutes } from "./modules/envelopes";
 import { signingRoutes } from "./modules/signing";
 import { telegramRoutes } from "./modules/telegram";
@@ -89,7 +90,11 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
   await telegramRoutes(app, services);
 
   if (config.devMailbox) {
-    app.get("/dev/mailbox", async () => ({ items: await readMailbox() }));
+    // Local: todo el buzón. Entornos compartidos (dev): solo los mensajes de la organización de la sesión.
+    const auth = authenticate(services);
+    app.get("/dev/mailbox", { preHandler: config.environment === "local" ? [] : [auth] }, async (req) => ({
+      items: await readMailbox(req.auth?.tenantId ?? null),
+    }));
   }
 
   // Web (SPA) servida desde el mismo origen.

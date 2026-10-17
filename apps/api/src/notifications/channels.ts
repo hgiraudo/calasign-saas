@@ -14,6 +14,8 @@ export interface OutboundMessage {
   /** Para WhatsApp: parámetros de la plantilla aprobada. */
   templateParams?: string[];
   locale?: string;
+  /** Para filtrar el buzón de desarrollo por organización. */
+  tenantId?: string;
 }
 
 export interface SendResult {
@@ -28,15 +30,16 @@ async function toMailbox(m: OutboundMessage): Promise<SendResult> {
   const id = uuidv7();
   await writeFile(
     resolve(mailboxDir, `${id}.json`),
-    JSON.stringify({ id, channel: m.channel, to: m.to, subject: m.subject, text: m.text, link: m.link ?? null, createdAt: new Date().toISOString() }),
+    JSON.stringify({ id, tenantId: m.tenantId ?? null, channel: m.channel, to: m.to, subject: m.subject, text: m.text, link: m.link ?? null, createdAt: new Date().toISOString() }),
   );
   return { provider: "dev-mailbox", messageId: id };
 }
 
-export async function readMailbox(limit = 100) {
+export async function readMailbox(tenantId: string | null, limit = 100) {
   try {
-    const files = (await readdir(mailboxDir)).filter((f) => f.endsWith(".json")).sort().reverse().slice(0, limit);
-    return Promise.all(files.map(async (f) => JSON.parse(await readFile(resolve(mailboxDir, f), "utf8"))));
+    const files = (await readdir(mailboxDir)).filter((f) => f.endsWith(".json")).sort().reverse().slice(0, 2000);
+    const all = await Promise.all(files.map(async (f) => JSON.parse(await readFile(resolve(mailboxDir, f), "utf8"))));
+    return all.filter((m) => tenantId === null || m.tenantId === tenantId).slice(0, limit);
   } catch {
     return [];
   }

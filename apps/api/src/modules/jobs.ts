@@ -51,7 +51,7 @@ async function notify(d: Deps, p: { kind: TemplateKind; envelopeId: string; tena
     if (!sender?.email) return;
     const link = `${config.appUrl}/app/envelopes/${e.id}`;
     const m = render(p.kind, sender.locale ?? e.locale, { ...base, recipientName: sender.name, link });
-    const res = await deliver({ channel: "email", to: sender.email, subject: m.subject, text: m.text, html: m.html, link, locale: e.locale });
+    const res = await deliver({ channel: "email", to: sender.email, subject: m.subject, text: m.text, html: m.html, link, locale: e.locale, tenantId: e.tenant_id });
     await d.db.query(
       `INSERT INTO notifications (id, tenant_id, envelope_id, channel, template, destination, status, provider, provider_message_id, sent_at)
        VALUES ($1,$2,$3,'email',$4,$5,'sent',$6,$7,now())`,
@@ -94,6 +94,7 @@ async function notify(d: Deps, p: { kind: TemplateKind; envelopeId: string; tena
         cta: m.cta,
         locale,
         templateParams: [base.senderName, e.subject, link ?? ""],
+        tenantId: e.tenant_id,
       });
       await d.db.query(
         `INSERT INTO notifications (id, tenant_id, envelope_id, recipient_id, channel, template, destination, status, provider, provider_message_id, sent_at)

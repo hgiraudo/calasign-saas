@@ -8,6 +8,8 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 
 const BASE = (process.argv[2] ?? "http://localhost:4000").replace(/\/$/, "");
+// Fuera de local la API solo acepta orígenes https para embeber.
+const EMBED_ORIGIN = BASE.startsWith("https://") ? "https://partner.example.com" : "http://localhost:5199";
 let cookie = "";
 
 async function api(method, path, body, { raw = false, expect, anon = false } = {}) {
@@ -292,7 +294,7 @@ step("lógica en el servidor: condición exige el garante; total calculado (363)
 
 // ───────────────────────────── Formularios web ─────────────────────────────
 
-await api("PATCH", "/v1/settings/embed", { frameAncestors: ["http://localhost:5199"] });
+await api("PATCH", "/v1/settings/embed", { frameAncestors: [EMBED_ORIGIN] });
 await api(
   "POST",
   "/v1/web-forms",
@@ -314,7 +316,7 @@ let pub = await api("GET", `/v1/public/forms/${form.slug}`, null, { anon: true }
 assert(pub.available && pub.organizationName.includes("Financiera Demo"), "formulario público");
 const frame = await api("GET", `/f/${form.slug}?embed=1`, null, { raw: true, anon: true });
 const csp = frame.headers.get("content-security-policy") ?? "";
-assert(/frame-ancestors[^;]*http:\/\/localhost:5199/.test(csp), `frame-ancestors del formulario embebible: ${csp}`);
+assert(csp.includes(EMBED_ORIGIN) && /frame-ancestors/.test(csp), `frame-ancestors del formulario embebible: ${csp}`);
 const plain = await api("GET", `/f/${form.slug}`, null, { raw: true, anon: true });
 assert(/frame-ancestors 'none'/.test(plain.headers.get("content-security-policy") ?? ""), "sin embed=1 no se puede enmarcar");
 

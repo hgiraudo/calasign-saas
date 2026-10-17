@@ -126,6 +126,18 @@
 
 ---
 
+## Estado de implementación (dev.calasign.com)
+
+| Fase | Estado |
+|---|---|
+| 0 — Fundaciones | ✅ Hecha |
+| 1 — MVP | ✅ Hecha (incluye WhatsApp y Telegram, ES/PT-BR/EN) |
+| 2 — Productividad | ✅ Plantillas, campos nuevos (número, desplegable, empresa, cargo, adjunto), OTP por email/SMS/WhatsApp, aprobador, delegación y reasignación, recordatorios automáticos, branding básico. ⏳ Cobro (Pix/PSE) |
+| 3 — API y firma embebida | ✅ API v1 + OpenAPI + página /developers, firma embebida (iframe + postMessage), webhooks HMAC con reintentos, anclas de texto, idempotencia. ⏳ OAuth client credentials, SDKs |
+| 4 — Escala y equipos | ⏳ |
+| 5 — Evidencia fuerte y cumplimiento | Parcial: verificación pública de documentos (/verify) |
+| 6 — Plataforma e IA | ⏳ |
+
 ## 4. Roadmap de features (de menor a mayor)
 
 Cada fase entrega algo usable por sí solo. Las estimaciones suponen un equipo chico (2–4 devs) y son orientativas.

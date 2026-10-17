@@ -10,6 +10,7 @@ import { AUTH_METHODS, type AuthMethod } from "@calasign/shared";
 import { useSignerText } from "../lib/i18n-signer";
 import { ErrorBox, Spinner, StatusBadge, formatBytes, recipientColor } from "../components/ui";
 import { SaveAsTemplateButton } from "../components/SaveAsTemplate";
+import { ShareControl } from "../components/ShareControl";
 
 interface DraftRecipient {
   id: string;
@@ -207,6 +208,7 @@ export function EnvelopeEditPage() {
           <h1>
             {detail.envelope.subject} <StatusBadge status={detail.envelope.status} />
           </h1>
+          <ShareControl kind="envelopes" id={id!} canEdit />
         </div>
         <SaveAsTemplateButton
           envelopeId={id}

@@ -4,6 +4,7 @@ import type { BlobStore } from "../infra/storage";
 import type { Actor } from "../infra/evidence";
 import { sha256Hex } from "../lib/util";
 import { unauthorized } from "../lib/errors";
+import { enforceRoutePolicy, loadAccess, type AccessInfo } from "./access";
 
 export interface Services {
   db: Db;
@@ -15,6 +16,8 @@ export interface AuthContext {
   userId: string | null;
   apiKeyId: string | null;
   actor: Actor;
+  /** Rol, permisos y grupos (RBAC). Lo completa authenticate(). */
+  access?: AccessInfo;
 }
 
 declare module "fastify" {
@@ -48,6 +51,8 @@ export function authenticate(s: Services) {
         apiKeyId: row.id,
         actor: { type: "api_key", id: row.id, label: `API key: ${row.name}`, ip, userAgent },
       };
+      req.auth.access = await loadAccess(s.db, req.auth);
+      await enforceRoutePolicy(s.db, req, req.auth);
       return;
     }
     const token = req.cookies?.[SESSION_COOKIE];
@@ -64,5 +69,7 @@ export function authenticate(s: Services) {
       apiKeyId: null,
       actor: { type: "user", id: row.user_id, label: `${row.name} <${row.email}>`, ip, userAgent },
     };
+    req.auth.access = await loadAccess(s.db, req.auth);
+    await enforceRoutePolicy(s.db, req, req.auth);
   };
 }

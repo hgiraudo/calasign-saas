@@ -3,6 +3,17 @@ import type { ApiKey, CreateApiKeyResponse } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
 import { formatDateTime, useI18n } from "../lib/i18n";
 import { ErrorBox, Spinner } from "../components/ui";
+import { useRoleLabel, useTeamsText } from "../lib/i18n-teams";
+
+interface KeyRole {
+  id: string;
+  role: string;
+  roleName: string;
+}
+interface RoleOption {
+  value: string;
+  label: string;
+}
 
 export function ApiKeysPage() {
   const { t, locale } = useI18n();
@@ -12,11 +23,30 @@ export function ApiKeysPage() {
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const tm = useTeamsText();
+  const roleLabel = useRoleLabel();
+  const [role, setRole] = useState("admin");
+  const [roleOptions, setRoleOptions] = useState<RoleOption[]>([]);
+  const [keyRoles, setKeyRoles] = useState<Record<string, string>>({});
 
   const load = () =>
-    api<{ items: ApiKey[] }>("/v1/api-keys")
-      .then((r) => setItems(r.items))
+    Promise.all([api<{ items: ApiKey[] }>("/v1/api-keys"), api<{ items: KeyRole[] }>("/v1/api-keys/roles")])
+      .then(([r, kr]) => {
+        setItems(r.items);
+        setKeyRoles(Object.fromEntries(kr.items.map((k) => [k.id, roleLabel(k.role, k.roleName)])));
+      })
       .catch((e) => setError(errorText(e)));
+
+  useEffect(() => {
+    api<{ items: { id: string; name: string }[]; builtin: { role: string; name: string }[] }>("/v1/roles")
+      .then((r) =>
+        setRoleOptions([
+          ...r.builtin.filter((b) => b.role !== "owner").map((b) => ({ value: b.role, label: roleLabel(b.role) })),
+          ...r.items.map((x) => ({ value: `custom:${x.id}`, label: x.name })),
+        ]),
+      )
+      .catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     void load();
@@ -27,7 +57,8 @@ export function ApiKeysPage() {
     setBusy(true);
     setError(null);
     try {
-      const r = await api<CreateApiKeyResponse>("/v1/api-keys", { method: "POST", body: { name } });
+      const roleBody = role.startsWith("custom:") ? { role: "custom", roleId: role.slice(7) } : { role };
+      const r = await api<CreateApiKeyResponse>("/v1/api-keys", { method: "POST", body: { name, ...roleBody } });
       setSecret(r.secret);
       setCopied(false);
       setName("");
@@ -71,6 +102,18 @@ export function ApiKeysPage() {
           <span>{t("keys.name")}</span>
           <input required maxLength={100} value={name} onChange={(e) => setName(e.target.value)} placeholder="ERP producción" />
         </label>
+        {roleOptions.length > 0 && (
+          <label className="field">
+            <span>{tm("keys.role")}</span>
+            <select value={role} onChange={(e) => setRole(e.target.value)}>
+              {roleOptions.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <button className="btn btn-primary" disabled={busy || !name.trim()}>
           {t("keys.create")}
         </button>
@@ -101,6 +144,7 @@ export function ApiKeysPage() {
               <tr>
                 <th>{t("keys.name")}</th>
                 <th>Prefix</th>
+                <th className="hide-sm">{tm("keys.role")}</th>
                 <th className="hide-sm">{t("keys.lastUsed")}</th>
                 <th />
               </tr>
@@ -112,6 +156,7 @@ export function ApiKeysPage() {
                   <td>
                     <code>{k.prefix}…</code>
                   </td>
+                  <td className="hide-sm">{keyRoles[k.id] ?? "—"}</td>
                   <td className="hide-sm">{formatDateTime(k.lastUsedAt, locale)}</td>
                   <td className="right">
                     {k.revokedAt ? (

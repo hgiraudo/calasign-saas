@@ -17,6 +17,7 @@ import type { Db } from "../infra/db";
 import { appendEvent } from "../infra/evidence";
 import { AppError, badRequest, notFound } from "../lib/errors";
 import { iso, sha256Hex, uuidv7 } from "../lib/util";
+import { templateVisibilitySql } from "./access";
 import { authenticate, type AuthContext, type Services } from "./context";
 import { sendEnvelope } from "./envelopes";
 import { checkSenderValue, insertEnvelopeField } from "./fieldvalues";
@@ -125,8 +126,9 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
     let where = `t.tenant_id = $1`;
     if (req.query.q) {
       params.push(`%${req.query.q}%`);
-      where += ` AND (t.name ILIKE $2 OR t.description ILIKE $2)`;
+      where += ` AND (t.name ILIKE $${params.length} OR t.description ILIKE $${params.length})`;
     }
+    where += templateVisibilitySql(a, params);
     const rows = await s.db.query<any>(`SELECT t.* FROM templates t WHERE ${where} ORDER BY t.updated_at DESC LIMIT 200`, params);
     const ids = rows.map((r) => r.id);
     const [docs, roles] = ids.length

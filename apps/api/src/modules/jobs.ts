@@ -12,6 +12,7 @@ import { loadDocuments } from "./mappers";
 import { embeddedAuthLabel } from "./embed";
 import { handleWebhookJob } from "./webhooks";
 import { runAutomaticReminders } from "./reminders";
+import { purgeExpiredEnvelopes } from "./retention";
 import { getLogoForPdf, getTenantBranding } from "./branding";
 
 interface Deps {
@@ -304,6 +305,7 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
 export async function sweep(d: Deps) {
   await requeueStuckJobs(d.db);
   await runAutomaticReminders(d.db);
+  await purgeExpiredEnvelopes(d);
   const expired = await d.db.query<any>(`SELECT id, tenant_id FROM envelopes WHERE status = 'sent' AND expires_at < now() LIMIT 100`);
   for (const e of expired) {
     await d.db.tx(async (t) => {

@@ -8,6 +8,7 @@ import { LOCALE_LABELS, useI18n } from "../lib/i18n";
 import { forgetPdf } from "../lib/pdf";
 import { FieldEditor, type DraftField } from "../components/FieldEditor";
 import { ErrorBox, Spinner, formatBytes, recipientColor } from "../components/ui";
+import { ShareControl } from "../components/ShareControl";
 
 const STEPS = ["details", "documents", "roles", "fields"] as const;
 type Step = (typeof STEPS)[number];
@@ -157,6 +158,7 @@ export function TemplateEditPage() {
             ← {t("tpl.title")}
           </Link>
           <h1>{info.name || detail.template.name}</h1>
+          <ShareControl kind="templates" id={id!} canEdit />
         </div>
         <Link className="btn" to={`/app/templates/${id}/use`}>
           {t("tpl.use")}

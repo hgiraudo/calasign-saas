@@ -2,6 +2,7 @@
 // Entradas: esquemas Zod (se validan en el servidor). Salidas: tipos TypeScript.
 import { z } from "zod";
 import { AUTH_METHODS, EnvelopeReminderSettings, type AuthMethod } from "./signer";
+import { FieldConditions, FieldFormula, type FieldCondition } from "./scale-logic";
 
 // ───────────────────────────── Enumeraciones ─────────────────────────────
 
@@ -171,10 +172,15 @@ export const FieldInput = z
     /** Número: rango permitido. */
     min: z.number().finite().optional().nullable(),
     max: z.number().finite().optional().nullable(),
+    /** Se muestra (y exige) solo si se cumplen todas las condiciones. */
+    conditions: FieldConditions.optional().nullable(),
+    /** Campo número calculado: p. ej. `{Precio} * {Cantidad}`. */
+    formula: FieldFormula.optional().nullable(),
   })
   .refine((f) => f.x + f.width <= 1.0001 && f.y + f.height <= 1.0001, { message: "el campo se sale de la página" })
   .refine((f) => f.type !== "dropdown" || (f.options && f.options.length > 0), { message: "el desplegable necesita opciones" })
   .refine((f) => f.min == null || f.max == null || f.min <= f.max, { message: "min no puede ser mayor que max" })
+  .refine((f) => !f.formula || f.type === "number", { message: "solo un campo número puede tener fórmula" })
   .refine((f) => !f.readOnly || (f.value != null && f.value !== ""), { message: "un campo de solo lectura necesita valor" });
 export type FieldInput = z.input<typeof FieldInput>;
 
@@ -242,6 +248,8 @@ export interface Field {
   options: string[] | null;
   min: number | null;
   max: number | null;
+  conditions: FieldCondition[] | null;
+  formula: string | null;
 }
 
 export interface EnvelopeSummary {
@@ -357,6 +365,8 @@ export interface SigningSession {
   canDelegate: boolean;
   /** Logo y color de la organización remitente (null: estilo por defecto). */
   branding?: { primaryColor: string | null; logoUrl: string | null } | null;
+  /** Campos de otros destinatarios citados por las condiciones o fórmulas de este firmante. */
+  logicFields?: { id: string; label: string | null; type: string; value: string | null }[];
 }
 
 // ───────────────────────────── Desarrollo ─────────────────────────────

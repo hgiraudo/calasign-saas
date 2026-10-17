@@ -2,6 +2,7 @@
 // que ya tomó el lock del sobre (SELECT … FOR UPDATE), para serializar `seq`.
 import type { Db } from "./db";
 import { canonicalJson, sha256Hex } from "../lib/util";
+import { queueWebhookFanout } from "./webhook-outbox";
 
 export const GENESIS_HASH = "0".repeat(64);
 
@@ -56,6 +57,7 @@ export async function appendEvent(
       hash,
     ],
   );
+  await queueWebhookFanout(db, e.tenantId, e.envelopeId, e.type, seq, e.data ?? {}, e.actor.type === "recipient" ? e.actor.id ?? null : null);
   return { seq, hash };
 }
 

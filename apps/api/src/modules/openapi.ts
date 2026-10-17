@@ -1,0 +1,264 @@
+// OpenAPI 3.1 de la API v1, generado a partir de los esquemas Zod del contrato (packages/shared).
+// Las respuestas se describen con esquemas propios (las salidas son tipos TS, no Zod).
+import type { FastifyInstance } from "fastify";
+import { z, type ZodTypeAny } from "zod";
+import { zodToJsonSchema } from "zod-to-json-schema";
+import {
+  AnchorFieldInput,
+  CompleteSigningInput,
+  CreateApiKeyInput,
+  CreateEnvelopeInput,
+  CreateSigningUrlInput,
+  CreateWebhookInput,
+  DeclineInput,
+  EmbedSettingsInput,
+  FieldInput,
+  LoginInput,
+  PutRecipientsInput,
+  SignupInput,
+  UpdateEnvelopeInput,
+  UpdateWebhookInput,
+  VoidEnvelopeInput,
+  WEBHOOK_EVENT_TYPES,
+  ENVELOPE_STATUSES,
+  RECIPIENT_STATUSES,
+  FIELD_TYPES,
+} from "@calasign/shared";
+import { config } from "../config";
+
+const js = (schema: ZodTypeAny) => {
+  const { $schema: _drop, ...rest } = zodToJsonSchema(schema, { target: "openApi3", $refStrategy: "none" }) as Record<string, unknown>;
+  return rest;
+};
+
+// ───────── Esquemas de salida (espejo de los tipos de packages/shared/src/api.ts) ─────────
+
+const iso = z.string().datetime();
+const Document = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  position: z.number().int(),
+  pageCount: z.number().int(),
+  pages: z.array(z.object({ width: z.number(), height: z.number() })),
+  sha256: z.string(),
+  sizeBytes: z.number().int(),
+});
+const Recipient = z.object({
+  id: z.string().uuid(),
+  role: z.enum(["signer", "cc"]),
+  routingOrder: z.number().int(),
+  name: z.string(),
+  email: z.string().nullable(),
+  phone: z.string().nullable(),
+  locale: z.string().nullable(),
+  channels: z.array(z.string()),
+  embedded: z.boolean(),
+  telegramLinked: z.boolean(),
+  status: z.enum(RECIPIENT_STATUSES),
+  sentAt: iso.nullable(),
+  viewedAt: iso.nullable(),
+  signedAt: iso.nullable(),
+  declinedAt: iso.nullable(),
+  declineReason: z.string().nullable(),
+});
+const Field = z.object({
+  id: z.string().uuid(),
+  documentId: z.string().uuid(),
+  recipientId: z.string().uuid(),
+  type: z.enum(FIELD_TYPES),
+  page: z.number().int(),
+  x: z.number(),
+  y: z.number(),
+  width: z.number(),
+  height: z.number(),
+  required: z.boolean(),
+  label: z.string().nullable(),
+  value: z.string().nullable(),
+});
+const Envelope = z.object({
+  id: z.string().uuid(),
+  subject: z.string(),
+  message: z.string().nullable(),
+  locale: z.string(),
+  status: z.enum(ENVELOPE_STATUSES),
+  createdVia: z.enum(["web", "api"]),
+  createdAt: iso,
+  updatedAt: iso,
+  sentAt: iso.nullable(),
+  completedAt: iso.nullable(),
+  voidedAt: iso.nullable(),
+  voidReason: z.string().nullable(),
+  expiresAt: iso.nullable(),
+  metadata: z.record(z.string(), z.unknown()),
+  signedSha256: z.string().nullable(),
+});
+const EnvelopeDetail = z.object({ envelope: Envelope, documents: z.array(Document), recipients: z.array(Recipient), fields: z.array(Field) });
+const EnvelopeList = z.object({
+  items: z.array(
+    Envelope.pick({ id: true, subject: true, status: true, createdAt: true, sentAt: true, completedAt: true, expiresAt: true }).extend({
+      recipients: z.array(z.object({ name: z.string(), status: z.string(), role: z.string() })),
+    }),
+  ),
+  nextCursor: z.string().nullable(),
+});
+const EnvelopeEvent = z.object({
+  seq: z.number().int(),
+  type: z.string(),
+  actorType: z.enum(["user", "api_key", "recipient", "system"]),
+  actorLabel: z.string().nullable(),
+  ip: z.string().nullable(),
+  userAgent: z.string().nullable(),
+  data: z.record(z.string(), z.unknown()),
+  occurredAt: iso,
+  hash: z.string(),
+});
+const Webhook = z.object({
+  id: z.string().uuid(),
+  url: z.string().url(),
+  description: z.string().nullable(),
+  events: z.array(z.enum(WEBHOOK_EVENT_TYPES)),
+  active: z.boolean(),
+  secretPrefix: z.string(),
+  createdAt: iso,
+  updatedAt: iso,
+});
+const WebhookDelivery = z.object({
+  id: z.string().uuid(),
+  endpointId: z.string().uuid(),
+  eventId: z.string().uuid(),
+  eventType: z.string(),
+  envelopeId: z.string().uuid().nullable(),
+  status: z.enum(["pending", "succeeded", "failed"]),
+  attempts: z.number().int(),
+  lastStatusCode: z.number().int().nullable(),
+  lastResponse: z.string().nullable(),
+  lastError: z.string().nullable(),
+  lastAttemptAt: iso.nullable(),
+  nextRetryAt: iso.nullable(),
+  createdAt: iso,
+  deliveredAt: iso.nullable(),
+});
+const ApiKey = z.object({ id: z.string().uuid(), name: z.string(), prefix: z.string(), createdAt: iso, lastUsedAt: iso.nullable(), revokedAt: iso.nullable() });
+const Error = z.object({ error: z.object({ code: z.string(), message: z.string(), details: z.unknown().optional() }) });
+const PutFieldsWithAnchors = z.object({ fields: z.array(z.union([FieldInput, AnchorFieldInput])) });
+
+// ───────── Rutas ─────────
+
+interface Op {
+  method: "get" | "post" | "put" | "patch" | "delete";
+  path: string;
+  tag: string;
+  summary: string;
+  description?: string;
+  body?: ZodTypeAny;
+  multipart?: boolean;
+  response?: ZodTypeAny | "pdf" | "none";
+  status?: number;
+  auth?: "key" | "token" | "none";
+  idempotent?: boolean;
+}
+
+const OPS: Op[] = [
+  { method: "post", path: "/v1/auth/signup", tag: "Identidad", summary: "Crear cuenta y organización", body: SignupInput, status: 201, auth: "none" },
+  { method: "post", path: "/v1/auth/login", tag: "Identidad", summary: "Iniciar sesión (cookie)", body: LoginInput, auth: "none" },
+  { method: "get", path: "/v1/me", tag: "Identidad", summary: "Usuario y organización actuales" },
+  { method: "get", path: "/v1/api-keys", tag: "Identidad", summary: "Listar API keys", response: z.object({ items: z.array(ApiKey) }) },
+  { method: "post", path: "/v1/api-keys", tag: "Identidad", summary: "Crear API key (el secreto se devuelve una sola vez)", body: CreateApiKeyInput, status: 201, response: z.object({ apiKey: ApiKey, secret: z.string() }) },
+  { method: "delete", path: "/v1/api-keys/{id}", tag: "Identidad", summary: "Revocar API key", response: "none", status: 204 },
+
+  { method: "get", path: "/v1/envelopes", tag: "Sobres", summary: "Listar sobres", description: "Filtros: status (coma), q (asunto o destinatario), cursor, limit.", response: EnvelopeList },
+  { method: "post", path: "/v1/envelopes", tag: "Sobres", summary: "Crear sobre (borrador)", body: CreateEnvelopeInput, status: 201, response: EnvelopeDetail, idempotent: true },
+  { method: "get", path: "/v1/envelopes/{id}", tag: "Sobres", summary: "Detalle del sobre", response: EnvelopeDetail },
+  { method: "patch", path: "/v1/envelopes/{id}", tag: "Sobres", summary: "Modificar borrador", body: UpdateEnvelopeInput, response: EnvelopeDetail },
+  { method: "delete", path: "/v1/envelopes/{id}", tag: "Sobres", summary: "Borrar borrador", response: "none", status: 204 },
+  { method: "post", path: "/v1/envelopes/{id}/documents", tag: "Sobres", summary: "Agregar documento PDF (multipart, campo `file`)", multipart: true, status: 201, response: Document },
+  { method: "delete", path: "/v1/envelopes/{id}/documents/{documentId}", tag: "Sobres", summary: "Quitar documento", response: "none", status: 204 },
+  { method: "get", path: "/v1/envelopes/{id}/documents/{documentId}/file", tag: "Sobres", summary: "Descargar el PDF original", response: "pdf" },
+  { method: "put", path: "/v1/envelopes/{id}/recipients", tag: "Sobres", summary: "Reemplazar destinatarios", description: "Ids opcionales (UUID generados por el cliente para referenciarlos desde los campos). `embedded: true` = firma embebida, sin invitaciones.", body: PutRecipientsInput, response: EnvelopeDetail },
+  { method: "put", path: "/v1/envelopes/{id}/fields", tag: "Sobres", summary: "Reemplazar campos", description: "Cada campo va con coordenadas normalizadas (page, x, y, width, height; origen arriba a la izquierda) o con `anchor` para ubicarlo por un texto del PDF (se expande a una aparición por campo; offsets y tamaño en puntos).", body: PutFieldsWithAnchors, response: EnvelopeDetail },
+  { method: "post", path: "/v1/envelopes/{id}/send", tag: "Sobres", summary: "Enviar", response: EnvelopeDetail, idempotent: true },
+  { method: "post", path: "/v1/envelopes/{id}/void", tag: "Sobres", summary: "Anular un sobre en curso", body: VoidEnvelopeInput, response: EnvelopeDetail },
+  { method: "post", path: "/v1/envelopes/{id}/remind", tag: "Sobres", summary: "Reenviar a los firmantes pendientes", response: z.object({ notified: z.number().int() }) },
+  { method: "get", path: "/v1/envelopes/{id}/events", tag: "Sobres", summary: "Registro de eventos (cadena de hashes)", response: z.object({ items: z.array(EnvelopeEvent) }) },
+  { method: "get", path: "/v1/envelopes/{id}/signed.pdf", tag: "Sobres", summary: "PDF final sellado (PAdES) con certificado de finalización", response: "pdf" },
+
+  { method: "post", path: "/v1/envelopes/{id}/recipients/{recipientId}/signing-url", tag: "Firma embebida", summary: "URL de firma embebida (un solo uso, vence en 5 minutos)", body: CreateSigningUrlInput, status: 201, response: z.object({ url: z.string().url(), expiresAt: iso }) },
+  { method: "get", path: "/v1/settings/embed", tag: "Firma embebida", summary: "Orígenes autorizados a enmarcar la firma", response: z.object({ frameAncestors: z.array(z.string()) }) },
+  { method: "patch", path: "/v1/settings/embed", tag: "Firma embebida", summary: "Cambiar orígenes autorizados (CSP frame-ancestors)", body: EmbedSettingsInput, response: z.object({ frameAncestors: z.array(z.string()) }) },
+
+  { method: "get", path: "/v1/webhooks", tag: "Webhooks", summary: "Listar webhooks", response: z.object({ items: z.array(Webhook), eventTypes: z.array(z.string()) }) },
+  { method: "post", path: "/v1/webhooks", tag: "Webhooks", summary: "Crear webhook (el secreto se devuelve una sola vez)", body: CreateWebhookInput, status: 201, response: z.object({ webhook: Webhook, secret: z.string() }) },
+  { method: "get", path: "/v1/webhooks/{id}", tag: "Webhooks", summary: "Detalle", response: Webhook },
+  { method: "patch", path: "/v1/webhooks/{id}", tag: "Webhooks", summary: "Modificar", body: UpdateWebhookInput, response: Webhook },
+  { method: "delete", path: "/v1/webhooks/{id}", tag: "Webhooks", summary: "Borrar", response: "none", status: 204 },
+  { method: "get", path: "/v1/webhooks/{id}/deliveries", tag: "Webhooks", summary: "Entregas recientes", response: z.object({ items: z.array(WebhookDelivery) }) },
+  { method: "post", path: "/v1/webhooks/{id}/test", tag: "Webhooks", summary: "Enviar un evento de prueba", status: 202, response: WebhookDelivery },
+  { method: "post", path: "/v1/webhook-deliveries/{id}/retry", tag: "Webhooks", summary: "Reintentar una entrega", status: 202, response: WebhookDelivery },
+
+  { method: "get", path: "/v1/signing/{token}", tag: "Firmante", summary: "Sesión de firma (token del link)", auth: "token" },
+  { method: "post", path: "/v1/signing/{token}/consent", tag: "Firmante", summary: "Aceptar el uso de medios electrónicos", auth: "token" },
+  { method: "post", path: "/v1/signing/{token}/complete", tag: "Firmante", summary: "Completar y firmar", body: CompleteSigningInput, auth: "token" },
+  { method: "post", path: "/v1/signing/{token}/decline", tag: "Firmante", summary: "Rechazar", body: DeclineInput, auth: "token" },
+  { method: "get", path: "/v1/signing/{token}/signed.pdf", tag: "Firmante", summary: "PDF final (si el sobre está completo)", response: "pdf", auth: "token" },
+];
+
+export function buildOpenApi() {
+  const paths: Record<string, Record<string, unknown>> = {};
+  for (const op of OPS) {
+    const params = [...op.path.matchAll(/\{(\w+)\}/g)].map((m) => ({ name: m[1], in: "path", required: true, schema: { type: "string" } }));
+    if (op.idempotent) params.push({ name: "Idempotency-Key", in: "header", required: false, schema: { type: "string" } } as never);
+    const status = String(op.status ?? 200);
+    const responses: Record<string, unknown> = {
+      [status]:
+        op.response === "none"
+          ? { description: "Sin contenido" }
+          : op.response === "pdf"
+            ? { description: "PDF", content: { "application/pdf": { schema: { type: "string", format: "binary" } } } }
+            : { description: "OK", content: { "application/json": { schema: op.response ? js(op.response) : { type: "object" } } } },
+      "4XX": { description: "Error", content: { "application/json": { schema: js(Error) } } },
+    };
+    const entry: Record<string, unknown> = {
+      tags: [op.tag],
+      summary: op.summary,
+      ...(op.description ? { description: op.description } : {}),
+      ...(params.length ? { parameters: params } : {}),
+      responses,
+      security: op.auth === "none" || op.auth === "token" ? [] : [{ apiKey: [] }, { session: [] }],
+    };
+    if (op.body) entry.requestBody = { required: true, content: { "application/json": { schema: js(op.body) } } };
+    if (op.multipart)
+      entry.requestBody = {
+        required: true,
+        content: { "multipart/form-data": { schema: { type: "object", properties: { file: { type: "string", format: "binary" } }, required: ["file"] } } },
+      };
+    (paths[op.path] ??= {})[op.method] = entry;
+  }
+  return {
+    openapi: "3.1.0",
+    info: {
+      title: "CalaSign API",
+      version: "1.0.0",
+      description:
+        "Firma electrónica en la nube. Autenticación con `Authorization: Bearer <API key>`. Errores: `{ error: { code, message, details? } }`. " +
+        "Webhooks firmados con `CalaSign-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, \"<t>.<body>\")>`. " +
+        `Eventos: ${WEBHOOK_EVENT_TYPES.join(", ")}.`,
+    },
+    servers: [{ url: config.appUrl }],
+    components: {
+      securitySchemes: {
+        apiKey: { type: "http", scheme: "bearer", description: "API key de la organización (cs_live_… / cs_test_…)" },
+        session: { type: "apiKey", in: "cookie", name: "cs_session" },
+      },
+    },
+    paths,
+  };
+}
+
+export async function openApiRoutes(app: FastifyInstance) {
+  let cached: unknown = null;
+  app.get("/v1/openapi.json", async (_req, reply) => {
+    cached ??= buildOpenApi();
+    reply.header("cache-control", "public, max-age=300");
+    return cached;
+  });
+}

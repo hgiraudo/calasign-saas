@@ -2,7 +2,7 @@
 import { hostname } from "node:os";
 import type { Db } from "./db";
 
-export type JobQueueName = "notify" | "finalize";
+export type JobQueueName = "notify" | "finalize" | "webhook";
 
 export interface EnqueueOptions {
   runAt?: Date;

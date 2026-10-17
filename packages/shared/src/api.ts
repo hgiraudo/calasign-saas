@@ -127,11 +127,13 @@ export const RecipientInput = z
       .nullable(),
     idDocumentType: z.enum(ID_DOCUMENT_TYPES).optional().nullable(),
     idDocumentNumber: z.string().trim().max(50).optional().nullable(),
+    /** Firma dentro de la app del integrador (URL de firma embebida): no recibe invitaciones. */
+    embedded: z.boolean().optional(),
   })
-  .refine((r) => r.email || r.phone, { message: "email o phone requerido" })
-  .refine((r) => !r.channels.includes("email") || r.email, { message: "el canal email requiere email" })
-  .refine((r) => !r.channels.includes("whatsapp") || r.phone, { message: "el canal whatsapp requiere phone" })
-  .refine((r) => r.channels.some((c) => c !== "telegram") || r.telegramChatId, {
+  .refine((r) => r.embedded || r.email || r.phone, { message: "email o phone requerido" })
+  .refine((r) => r.embedded || !r.channels.includes("email") || r.email, { message: "el canal email requiere email" })
+  .refine((r) => r.embedded || !r.channels.includes("whatsapp") || r.phone, { message: "el canal whatsapp requiere phone" })
+  .refine((r) => r.embedded || r.channels.some((c) => c !== "telegram") || r.telegramChatId, {
     message: "con solo Telegram hace falta telegramChatId (o agregar email/WhatsApp para enviar el link de vinculación)",
   });
 export type RecipientInput = z.input<typeof RecipientInput>;
@@ -189,6 +191,8 @@ export interface Recipient {
   channels: Channel[];
   /** true si el destinatario ya vinculó su chat de Telegram. */
   telegramLinked: boolean;
+  /** Firma embebida (sin invitaciones). */
+  embedded: boolean;
   idDocumentType: string | null;
   idDocumentNumber: string | null;
   status: RecipientStatus;

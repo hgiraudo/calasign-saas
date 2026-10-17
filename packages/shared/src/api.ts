@@ -19,7 +19,7 @@ export type RecipientStatus = (typeof RECIPIENT_STATUSES)[number];
 export const CHANNELS = ["email", "whatsapp", "telegram"] as const;
 export type Channel = (typeof CHANNELS)[number];
 
-export const FIELD_TYPES = ["signature", "initials", "date_signed", "name", "email", "text", "checkbox"] as const;
+export const FIELD_TYPES = ["signature", "initials", "date_signed", "name", "email", "text", "checkbox", "number", "dropdown", "company", "title", "attachment"] as const;
 export type FieldType = (typeof FIELD_TYPES)[number];
 
 /** Campos que el servidor completa solo (el firmante no los edita). */
@@ -153,8 +153,19 @@ export const FieldInput = z
     height: z.number().gt(0).max(1),
     required: z.boolean().default(true),
     label: z.string().max(200).optional().nullable(),
+    /** Valor fijado por el remitente (prellenado). Con readOnly el firmante no lo puede cambiar. */
+    value: z.string().max(2000).optional().nullable(),
+    readOnly: z.boolean().optional(),
+    /** Desplegable: opciones posibles. */
+    options: z.array(z.string().trim().min(1).max(100)).max(50).optional().nullable(),
+    /** Número: rango permitido. */
+    min: z.number().finite().optional().nullable(),
+    max: z.number().finite().optional().nullable(),
   })
-  .refine((f) => f.x + f.width <= 1.0001 && f.y + f.height <= 1.0001, { message: "el campo se sale de la página" });
+  .refine((f) => f.x + f.width <= 1.0001 && f.y + f.height <= 1.0001, { message: "el campo se sale de la página" })
+  .refine((f) => f.type !== "dropdown" || (f.options && f.options.length > 0), { message: "el desplegable necesita opciones" })
+  .refine((f) => f.min == null || f.max == null || f.min <= f.max, { message: "min no puede ser mayor que max" })
+  .refine((f) => !f.readOnly || (f.value != null && f.value !== ""), { message: "un campo de solo lectura necesita valor" });
 export type FieldInput = z.input<typeof FieldInput>;
 
 export const PutFieldsInput = z.object({ fields: z.array(FieldInput).max(500) });
@@ -212,6 +223,10 @@ export interface Field {
   required: boolean;
   label: string | null;
   value: string | null;
+  readOnly: boolean;
+  options: string[] | null;
+  min: number | null;
+  max: number | null;
 }
 
 export interface EnvelopeSummary {
@@ -315,6 +330,8 @@ export interface SigningSession {
   canSign: boolean;
   /** true cuando el PDF sellado está disponible para descargar. */
   signedAvailable: boolean;
+  /** Logo y color de la organización remitente (null: estilo por defecto). */
+  branding?: { primaryColor: string | null; logoUrl: string | null } | null;
 }
 
 // ───────────────────────────── Desarrollo ─────────────────────────────

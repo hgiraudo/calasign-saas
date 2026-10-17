@@ -37,6 +37,10 @@ const L = {
     statement:
       "Este documento fue firmado electrónicamente mediante CalaSign. Cada evento queda encadenado por hash y el PDF está sellado " +
       "digitalmente (PAdES) con sello de tiempo: cualquier modificación posterior invalida el sello.",
+    attachments: "Adjuntos",
+    attachment: "Adjunto",
+    uploadedBy: "subido por",
+    appended: "agregado al final del documento",
     pageFooter: "CalaSign · Sobre",
     page: "Página",
   },
@@ -76,6 +80,10 @@ const L = {
     statement:
       "Este documento foi assinado eletronicamente por meio da CalaSign. Cada evento é encadeado por hash e o PDF é selado " +
       "digitalmente (PAdES) com carimbo do tempo: qualquer alteração posterior invalida o selo.",
+    attachments: "Anexos",
+    attachment: "Anexo",
+    uploadedBy: "enviado por",
+    appended: "incluído ao final do documento",
     pageFooter: "CalaSign · Envelope",
     page: "Página",
   },
@@ -115,6 +123,10 @@ const L = {
     statement:
       "This document was electronically signed with CalaSign. Every event is hash-chained and the PDF is digitally sealed " +
       "(PAdES) with a timestamp: any later modification invalidates the seal.",
+    attachments: "Attachments",
+    attachment: "Attachment",
+    uploadedBy: "uploaded by",
+    appended: "appended to the document",
     pageFooter: "CalaSign · Envelope",
     page: "Page",
   },

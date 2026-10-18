@@ -46,7 +46,7 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
   const resourceUrl = `${config.appUrl}/mcp`;
 
   function unauthorizedReply(reply: FastifyReply, message: string) {
-    reply
+    return reply
       .code(401)
       .header("www-authenticate", `Bearer resource_metadata="${config.appUrl}/.well-known/oauth-protected-resource"`)
       .send({ error: { code: "unauthorized", message } });

@@ -26,6 +26,7 @@ import {
   mpCancelPreapproval,
   mpCreatePreapproval,
   providerConfigured,
+  stripeCancelSubscription,
   stripeCreatePortal,
   stripeCreateSubscriptionCheckout,
 } from "./providers";
@@ -255,6 +256,16 @@ export async function subscriptionRoutes(app: FastifyInstance, s: Services) {
       const c = await loadMock(req.params.id, req.query.n);
       const outcome = ((req.body as any)?.outcome ?? "paid") as string;
       if (outcome === "paid" && c.status === "open") {
+        // Igual que el webhook de un proveedor real: si había una suscripción real vigente, se cancela; si no, seguiría
+        // cobrando y, al pisarse subscription_id, ya no se podría ver ni cancelar desde la app.
+        const t = await s.db.one<any>(`SELECT billing_provider, subscription_id FROM tenants WHERE id = $1`, [c.tenant_id]);
+        try {
+          if (t?.subscription_id && t.billing_provider === "stripe") await stripeCancelSubscription(t.subscription_id);
+          if (t?.subscription_id && t.billing_provider === "mercadopago") await mpCancelPreapproval(t.subscription_id);
+        } catch (err) {
+          if (err instanceof ProviderError) throw new AppError(502, "billing_provider_error", `No se pudo cancelar la suscripción anterior: ${err.message}`);
+          throw err;
+        }
         await s.db.query(`UPDATE billing_checkouts SET status = 'completed', completed_at = now() WHERE id = $1`, [c.id]);
         const renews = new Date(Date.now() + 30 * 86400_000).toISOString();
         await applySubscription(s.db, c.tenant_id, {

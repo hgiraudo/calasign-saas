@@ -467,8 +467,50 @@ const bob = new Client("bob");
 const bobEmail = `bob+${stamp}@example.com`;
 const invBob = await owner.api("POST", "/v1/invitations", { email: bobEmail, role: "member" }, 201);
 await bob.api("POST", `/v1/invite/${invBob.acceptUrl.split("/invite/")[1]}/accept`, { name: "Bob Pass", password: "clave-de-bob-1234" }, [200, 201]);
-await bob.api("GET", "/v1/me");
+const bobMe = await bob.api("GET", "/v1/me");
+
+// Tokens OAuth de usuario: valen solo mientras valdría la sesión con la que se autorizaron (ronda 13).
+const OAUTH_REDIRECT = "https://erp.example.com/cb";
+const oapp = await owner.api("POST", "/v1/oauth/apps", { name: "ERP IDN", grantTypes: ["authorization_code"], redirectUris: [OAUTH_REDIRECT], scopes: ["envelopes:read", "offline_access"] }, 201);
+const oauthBasic = `Basic ${Buffer.from(`${oapp.app.clientId}:${oapp.clientSecret}`).toString("base64")}`;
+async function oauthToken(params) {
+  const res = await fetch(`${BASE}/oauth/token`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", authorization: oauthBasic }, body: new URLSearchParams(params) });
+  return { status: res.status, body: await res.json() };
+}
+async function authorizeOAuth(client) {
+  const verifier = randomBytes(48).toString("base64url");
+  const challenge = createHash("sha256").update(verifier).digest("base64url");
+  const d = await client.api("POST", "/v1/oauth/authorize/decision", {
+    response_type: "code", client_id: oapp.app.clientId, redirect_uri: OAUTH_REDIRECT, scope: "envelopes:read offline_access",
+    state: "s", code_challenge: challenge, code_challenge_method: "S256", approve: true,
+  });
+  const r = await oauthToken({ grant_type: "authorization_code", code: new URL(d.redirectTo).searchParams.get("code"), redirect_uri: OAUTH_REDIRECT, code_verifier: verifier });
+  assert(r.status === 200, `canje del código OAuth: ${JSON.stringify(r.body)}`);
+  return r.body;
+}
+const bearerStatus = async (tok) => (await fetch(`${BASE}/v1/envelopes`, { headers: { authorization: `Bearer ${tok}` } })).status;
+
+// Quitar a un miembro y volver a agregarlo no revive sus tokens anteriores.
+const bobOld = await authorizeOAuth(bob);
+assert((await bearerStatus(bobOld.access_token)) === 200, "token OAuth de Bob funciona");
+await owner.api("DELETE", `/v1/members/${bobMe.user.id}`, undefined, [200, 204]);
+assert((await bearerStatus(bobOld.access_token)) === 401, "sin membresía el token deja de valer");
+const invBob2 = await owner.api("POST", "/v1/invitations", { email: bobEmail, role: "member" }, 201);
+await new Client("bob-back").api("POST", `/v1/invite/${invBob2.acceptUrl.split("/invite/")[1]}/accept`, { password: "clave-de-bob-1234" }, [200, 201]);
+assert((await bearerStatus(bobOld.access_token)) === 401, "al volver a agregarlo, el token de la membresía anterior no revive");
+assert((await oauthToken({ grant_type: "refresh_token", refresh_token: bobOld.refresh_token })).status === 400, "ni su refresh token");
+await bob.api("POST", "/v1/auth/login", { email: bobEmail, password: "clave-de-bob-1234" });
+
+// Con SSO obligatorio, un token autorizado con contraseña deja de valer; uno autorizado con SSO sigue.
+const bobTok = await authorizeOAuth(bob);
+const anaTok = await authorizeOAuth(ana2);
+assert((await bearerStatus(bobTok.access_token)) === 200, "token autorizado con contraseña funciona sin SSO obligatorio");
 await owner.api("PUT", "/v1/settings/sso", { enabled: true, protocol: "oidc", domains: [domain], jitEnabled: true, jitRole: "member", enforce: true, oidc: { issuer, clientId: "calasign-test" } });
+assert((await bearerStatus(bobTok.access_token)) === 401, "con SSO obligatorio, el token autorizado con contraseña deja de valer");
+const bobRefresh = await oauthToken({ grant_type: "refresh_token", refresh_token: bobTok.refresh_token });
+assert(bobRefresh.status === 400 && bobRefresh.body.error === "invalid_grant", "y su refresh no emite tokens nuevos");
+assert((await bearerStatus(anaTok.access_token)) === 200, "el token autorizado con SSO sigue valiendo");
+ok("tokens OAuth: no reviven al volver a agregar al miembro; con SSO obligatorio caen los autorizados con contraseña");
 await bob.api("GET", "/v1/me", undefined, 401);
 const err = await new Client("bob2").api("POST", "/v1/auth/login", { email: bobEmail, password: "clave-de-bob-1234" }, 403);
 assert(err.error.code === "sso_required" && err.error.details.startUrl.includes(slug), "login con contraseña bloqueado");

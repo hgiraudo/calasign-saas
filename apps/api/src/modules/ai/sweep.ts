@@ -8,7 +8,7 @@ import { config } from "../../config";
 import { uuidv7 } from "../../lib/util";
 import { deliver } from "../../notifications/channels";
 import { getAiProvider } from "./provider";
-import { assertAiAvailable, isAiError, loadEnvelopeDocs, recordAiUse, saveMetadata } from "./service";
+import { assertAiAvailable, isAiError, loadEnvelopeDocs, recordAiUse, saveMetadata, withAiReservation } from "./service";
 
 interface Deps {
   db: Db;
@@ -72,9 +72,9 @@ export async function runAiSweep(d: Deps, now = new Date()) {
   for (const e of pending) {
     await d.db.query(`UPDATE envelopes SET ai_metadata_attempted_at = now() WHERE id = $1`, [e.id]);
     try {
-      await assertAiAvailable(d.db, e.tenant_id);
       const docs = await loadEnvelopeDocs(d.db, d.blobs, e.id);
-      const r = await getAiProvider().extractMetadata(docs);
+      await assertAiAvailable(d.db, e.tenant_id);
+      const r = await withAiReservation(d.db, e.tenant_id, () => getAiProvider().extractMetadata(docs));
       await saveMetadata(d.db, e.id, e.tenant_id, r.result.metadata, r.result.confidence, "ai");
       await recordAiUse(d.db, { tenantId: e.tenant_id, envelopeId: e.id, feature: "extract_metadata", usage: r.usage, actor: SYSTEM, data: { automatic: true } });
       extracted++;

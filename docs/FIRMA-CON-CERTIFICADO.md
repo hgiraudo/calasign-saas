@@ -66,9 +66,11 @@ navegador del firmante                API CalaSign                           Fir
 POST /v1/signing/:token/certsign/pairing ─▶ código XXXXX-XXXXX (10 min, un solo uso)
   calasign-firmador://sign?api=<base>&code=<código> ───────────────────────▶ abre la interfaz local
                                        ◀── GET  /v1/certsign/sessions/:code         (datos del sobre)
-                                       ◀── GET  /v1/certsign/sessions/:code/document (PDF de trabajo, opcional)
+                                       ◀── GET  /v1/certsign/sessions/:code/document (PDF de trabajo)
                                        ◀── POST /v1/certsign/sessions/:code/certificate {chain}
                                             controles + reserva de la firma → {digestToSign, dataToSign, …}
+                                       ◀── GET  /v1/certsign/sessions/:code/prepared (PDF preparado)
+                                                                              vínculo documento–firma
                                                                               firma local (token/Windows/.p12)
                                        ◀── POST /v1/certsign/sessions/:code/signature {signature}
                                             CMS + sello de tiempo + validatePdf → evidencia → siguiente o sello
@@ -115,6 +117,17 @@ POST /v1/signing/:token/certsign/pairing ─▶ código XXXXX-XXXXX (10 min, un 
   conjunto de atributos firmados de CMS (contentType + messageDigest de 32 bytes, solo atributos conocidos) y el
   hash tiene que ser su SHA-256. Así no firma un hash arbitrario aunque el link apunte a un servidor falso. Exige
   https, salvo localhost.
+- **Vínculo documento–firma** (`assertPreparedMatchesDocument`). Antes de firmar, el Firmador descarga el PDF de
+  trabajo y el PDF preparado (`GET …/prepared`, disponible solo después de enviar el certificado) y comprueba con
+  bytes, sin confiar en el servidor:
+  1. el SHA-256 del PDF de trabajo es el `documentSha256` anunciado (el que ve el titular);
+  2. el PDF preparado empieza exactamente con esos bytes: la firma nueva es una revisión agregada;
+  3. el único `ByteRange` de la revisión nueva cubre todo el archivo salvo `/Contents`, que está en la revisión
+     nueva y solo tiene dígitos hexadecimales;
+  4. el SHA-256 de los bytes cubiertos es el `messageDigest` de los atributos a firmar.
+
+  Si algo no coincide, responde `document_mismatch` y no firma. Así un servidor (o un link) no puede hacer firmar
+  atributos de un documento distinto del que el titular tiene delante.
 - **Esquema `calasign-firmador://`.** Se registra con `calasign-firmador register-protocol`: un `.desktop` +
   `xdg-mime` en Linux, o `HKCU\Software\Classes` en Windows, sin permisos de administrador.
 - **Línea de comandos** (también para pruebas automáticas):

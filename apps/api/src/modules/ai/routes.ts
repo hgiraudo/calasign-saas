@@ -31,6 +31,7 @@ import { getAiProvider, type RawCitation } from "./provider";
 import {
   SIGNER_NOTICE,
   assertAiAvailable,
+  withAiReservation,
   callModel,
   disclaimerFor,
   getAiSettings,
@@ -138,7 +139,7 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
     if (t?.ai_enabled) {
       await assertAiAvailable(s.db, a.tenantId);
       const provider = getAiProvider();
-      const r = await callModel(() => provider.detectFields(docs));
+      const r = await withAiReservation(s.db, a.tenantId, () => callModel(() => provider.detectFields(docs)));
       const lineDoc = new Map(docs.flatMap((d) => d.pages.flatMap((p) => p.lines.map((l) => [l.id, { doc: d.id, page: p.page }] as const))));
       // Los ids de línea se repiten entre documentos: con varios documentos se usa el primero que coincide.
       ai = r.result
@@ -212,10 +213,11 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
 
   app.post<P>("/v1/envelopes/:id/ai/extract-metadata", { preHandler: auth }, async (req) => {
     const { a, e } = await envelopeOf(s, req);
-    await assertAiAvailable(s.db, a.tenantId);
+    await assertAiAvailable(s.db, a.tenantId, { reserve: false });
     const docs = await loadEnvelopeDocs(s.db, s.blobs, e.id);
+    await assertAiAvailable(s.db, a.tenantId);
     const provider = getAiProvider();
-    const r = await callModel(() => provider.extractMetadata(docs));
+    const r = await withAiReservation(s.db, a.tenantId, () => callModel(() => provider.extractMetadata(docs)));
     await saveMetadata(s.db, e.id, a.tenantId, r.result.metadata, r.result.confidence, "ai");
     await recordAiUse(s.db, { tenantId: a.tenantId, envelopeId: e.id, feature: "extract_metadata", usage: r.usage, actor: a.actor });
     return { ...(await metadataView(s, e.id)), usage: usageInfo(r.usage) };
@@ -242,13 +244,15 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
   app.post<P>("/v1/envelopes/:id/ai/review", { preHandler: auth }, async (req) => {
     const { a, e } = await envelopeOf(s, req);
     const input = PlaybookReviewInput.parse(req.body ?? {});
-    await assertAiAvailable(s.db, a.tenantId);
+    // Primero el chequeo sin reserva (IA deshabilitada → 403 antes que cualquier otra validación).
+    await assertAiAvailable(s.db, a.tenantId, { reserve: false });
     const t = await s.db.one<any>(`SELECT ai_playbook FROM tenants WHERE id = $1`, [a.tenantId]);
     const rules: string[] = input.rules ?? (Array.isArray(t?.ai_playbook) ? t.ai_playbook : []);
     if (rules.length === 0) throw badRequest("playbook_empty", "No hay reglas para revisar: cargá el playbook en Ajustes → IA");
     const docs = await loadEnvelopeDocs(s.db, s.blobs, e.id);
+    await assertAiAvailable(s.db, a.tenantId);
     const provider = getAiProvider();
-    const r = await callModel(() => provider.reviewPlaybook(docs, rules, e.locale));
+    const r = await withAiReservation(s.db, a.tenantId, () => callModel(() => provider.reviewPlaybook(docs, rules, e.locale)));
     const text = previewText(docs, "playbook_review");
     const out: PlaybookReviewResponse = {
       findings: r.result.map((f) => ({
@@ -306,7 +310,7 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
     } else {
       await assertAiAvailable(s.db, e.tenant_id);
       const provider = getAiProvider();
-      const res = await callModel(() => provider.summarize(docs, locale));
+      const res = await withAiReservation(s.db, e.tenant_id, () => callModel(() => provider.summarize(docs, locale)));
       out = {
         summary: res.result.summary,
         keyPoints: res.result.keyPoints.slice(0, 8),
@@ -328,10 +332,11 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
     const input = AiAskInput.parse(req.body);
     const { r, e, enabled, locale } = await signerGate(req);
     if (!enabled) throw new AppError(403, "ai_disabled", "La asistencia con IA no está disponible para este documento");
-    await assertAiAvailable(s.db, e.tenant_id);
+    await assertAiAvailable(s.db, e.tenant_id, { reserve: false });
     const docs = await loadEnvelopeDocs(s.db, s.blobs, e.id);
+    await assertAiAvailable(s.db, e.tenant_id);
     const provider = getAiProvider();
-    const res = await callModel(() => provider.answer(docs, input.question, locale));
+    const res = await withAiReservation(s.db, e.tenant_id, () => callModel(() => provider.answer(docs, input.question, locale)));
     const out: AiAnswerResponse = {
       answer: res.result.answer,
       answered: res.result.answered,

@@ -216,6 +216,8 @@ const info = await api("GET", `/v1/certsign/sessions/${pairA.code}`);
 assert(info.signerName === nameA && info.requirements.requireQualified && /^[0-9a-f]{64}$/.test(info.documentSha256), "el Firmador ve el documento y los requisitos");
 const docRes = await api("GET", `/v1/certsign/sessions/${pairA.code}/document`, null, { raw: true });
 assert(docRes.ok && Buffer.from(await docRes.arrayBuffer()).subarray(0, 5).toString() === "%PDF-", "el Firmador puede descargar el PDF");
+// El PDF preparado (para el vínculo documento–firma del Firmador) solo existe después de enviar el certificado.
+await api("GET", `/v1/certsign/sessions/${pairA.code}/prepared`, null, { expect: 409 });
 
 // Certificado de otra persona → rechazado (y queda en la evidencia).
 let rejected = false;

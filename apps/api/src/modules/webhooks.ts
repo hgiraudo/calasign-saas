@@ -187,7 +187,18 @@ export async function safeRequest(
   const payload = opts.body === undefined ? undefined : typeof opts.body === "string" ? Buffer.from(opts.body) : Buffer.from(opts.body);
   const headers: Record<string, string> = { ...(opts.headers ?? {}) };
   if (payload) headers["content-length"] = String(payload.length);
+  // Plazo TOTAL (conexión + respuesta completa). req.setTimeout solo mide inactividad del socket: un servidor que
+  // manda un byte cada pocos segundos lo esquivaría y retendría el pedido (p. ej. una URL de OCSP/CRL hostil en un
+  // PDF subido al validador público). Sin timeoutMs explícito se aplica igual un tope de 30 s.
+  const deadlineMs = opts.timeoutMs ?? 30_000;
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const done = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      fn();
+    };
     const req = (secure ? https : http).request(
       u,
       { method: opts.method ?? "GET", headers, agent: secure ? safeHttpsAgent : safeHttpAgent, signal: opts.signal },
@@ -205,13 +216,13 @@ export async function safeRequest(
         res.on("end", () => {
           const h: Record<string, string> = {};
           for (const [k, v] of Object.entries(res.headers)) if (v !== undefined) h[k] = Array.isArray(v) ? v.join(", ") : String(v);
-          resolve({ status: res.statusCode ?? 0, headers: h, body: Buffer.concat(chunks) });
+          done(() => resolve({ status: res.statusCode ?? 0, headers: h, body: Buffer.concat(chunks) }));
         });
-        res.on("error", reject);
+        res.on("error", (err) => done(() => reject(err)));
       },
     );
-    if (opts.timeoutMs) req.setTimeout(opts.timeoutMs, () => req.destroy(new Error(`timeout después de ${opts.timeoutMs} ms`)));
-    req.on("error", reject);
+    const deadline = setTimeout(() => req.destroy(new Error(`timeout después de ${deadlineMs} ms`)), deadlineMs);
+    req.on("error", (err) => done(() => reject(err)));
     req.end(payload);
   });
 }

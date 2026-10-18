@@ -19,3 +19,4 @@ export * from "./external";
 export * from "./certcheck";
 export { assertEmbeddableImage } from "./images";
 export { changesAfterRevision, type ChangesAfter } from "./revisions";
+export * from "./stream-budget";

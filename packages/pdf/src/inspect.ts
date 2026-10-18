@@ -1,6 +1,7 @@
 import { PDFDocument } from "pdf-lib";
 import { displayedSize } from "./layout";
 import { viewerDiffersFromPdfLib } from "./revisions";
+import { structureWithinBudget } from "./stream-budget";
 
 export class InvalidPdfError extends Error {
   constructor(
@@ -67,6 +68,8 @@ async function loadChecked(bytes: Uint8Array, maxPages: number): Promise<PDFDocu
   if (bytes.length < 5 || Buffer.from(bytes.subarray(0, 1024)).indexOf("%PDF-") === -1) {
     throw new InvalidPdfError("not_pdf", "El archivo no es un PDF");
   }
+  // Antes de cargarlo: un stream de objetos que al descomprimirse ocupa gigabytes dejaría sin memoria al proceso.
+  if (!structureWithinBudget(bytes)) throw new InvalidPdfError("unreadable", "El PDF tiene una estructura demasiado grande para procesarlo");
   let doc: PDFDocument;
   try {
     doc = await PDFDocument.load(bytes, { updateMetadata: false });

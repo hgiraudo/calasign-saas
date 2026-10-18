@@ -171,7 +171,7 @@ export async function customDomainRoutes(app: FastifyInstance, s: Services) {
     const r = await s.db.one<any>(`DELETE FROM custom_domains WHERE tenant_id = $1 RETURNING domain`, [a.tenantId]);
     invalidate();
     if (r) await auditFromRequest(s.db, req, a, "domain.removed", { targetType: "domain", targetId: r.domain });
-    reply.code(204).send();
+    return reply.code(204).send();
   });
 
   // Marca de la organización según el Host (la web la usa en el login y en el encabezado).

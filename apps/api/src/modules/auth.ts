@@ -87,6 +87,11 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
     const u = await s.db.one<any>(`SELECT id, password_hash FROM users WHERE lower(email) = lower($1)`, [input.email]);
     // Se verifica igual con un hash ficticio para no revelar qué correos existen por tiempo de respuesta.
     const ok = await verifyPassword(input.password, u?.password_hash ?? DUMMY_HASH);
+    // Límite por cuenta (además del de IP): muchos intentos fallidos recientes bloquean la cuenta 15 minutos,
+    // aunque lleguen desde IPs distintas. Se responde igual con la contraseña correcta, para no confirmarla.
+    if (u && (await recentFailedLogins(s.db, u.id)) >= MAX_FAILED_LOGINS) {
+      throw new AppError(429, "too_many_attempts", "Demasiados intentos fallidos. Probá de nuevo en unos minutos o restablecé tu contraseña.");
+    }
     if (!u || !ok) throw unauthorized();
     // SSO obligatorio (Fase 5): se entra a la primera organización que admite contraseña.
     const pick = await passwordLoginTenant(s.db, u.id);
@@ -160,14 +165,14 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
         userAgent,
       }).catch(() => {});
     }
-    reply.code(204).send();
+    return reply.code(204).send();
   });
 
   app.post("/v1/auth/logout", async (req, reply) => {
     const token = req.cookies?.[SESSION_COOKIE];
     if (token) await s.db.query(`DELETE FROM sessions WHERE token_hash = $1`, [sha256Hex(token)]);
     reply.clearCookie(SESSION_COOKIE, { path: "/" });
-    reply.code(204).send();
+    return reply.code(204).send();
   });
 
   app.get("/v1/me", { preHandler: auth }, async (req) => {
@@ -222,8 +227,25 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
       req.auth!.tenantId,
     ]);
     if (r.length === 0) throw notFound("API key");
-    reply.code(204).send();
+    return reply.code(204).send();
   });
+}
+
+const MAX_FAILED_LOGINS = 10;
+
+/** Intentos fallidos de los últimos 15 minutos (los registra la auditoría, una fila por organización del usuario). */
+async function recentFailedLogins(db: Services["db"], userId: string): Promise<number> {
+  const r = await db.one<{ n: number }>(
+    `WITH t AS (SELECT tenant_id FROM memberships WHERE user_id = $1::uuid ORDER BY created_at LIMIT 1)
+     SELECT count(*)::int AS n FROM account_audit_log
+     WHERE tenant_id = (SELECT tenant_id FROM t)
+       AND action = 'auth.login_failed' AND actor_id = $1::text AND occurred_at > now() - interval '15 minutes'
+       -- Restablecer la contraseña (no solo pedirlo) desbloquea la cuenta.
+       AND occurred_at > COALESCE((SELECT max(occurred_at) FROM account_audit_log
+                                   WHERE tenant_id = (SELECT tenant_id FROM t) AND action = 'user.password_reset' AND target_id = $1::text), '-infinity')`,
+    [userId],
+  );
+  return r?.n ?? 0;
 }
 
 const DUMMY_HASH = "scrypt$32768$8$1$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";

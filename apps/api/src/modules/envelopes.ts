@@ -260,7 +260,7 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
       await t.query(`DELETE FROM envelopes WHERE id = $1`, [e.id]);
       await t.query(`DELETE FROM envelope_events WHERE envelope_id = $1`, [e.id]);
     });
-    reply.code(204).send();
+    return reply.code(204).send();
   });
 
   // ───────── Documentos ─────────
@@ -321,7 +321,7 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
       await appendEvent(t, { tenantId: a.tenantId, envelopeId: e.id, type: "document.removed", actor: a.actor, data: { documentId: d.id, name: d.name } });
       await touch(t, e.id);
     });
-    reply.code(204).send();
+    return reply.code(204).send();
   });
 
   app.get<P>("/v1/envelopes/:id/documents/:documentId/file", { preHandler: auth }, async (req, reply) => {
@@ -491,6 +491,19 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
     let notified = 0;
     await s.db.tx(async (t) => {
       const e = await lockEnvelope(t, a.tenantId, req.params.id);
+      if (e.status === "awaiting_certificates") {
+        // Firma con certificado pendiente: se le vuelve a avisar al firmante al que le toca (sin dedupe: es un recordatorio).
+        const pending = await t.one<any>(
+          `SELECT recipient_id FROM certificate_signatures WHERE envelope_id = $1 AND status = 'pending' ORDER BY position LIMIT 1`,
+          [e.id],
+        );
+        if (pending) {
+          await enqueue(t, "notify", { kind: "certificate_request", envelopeId: e.id, recipientId: pending.recipient_id, tenantId: a.tenantId });
+          notified = 1;
+          await appendEvent(t, { tenantId: a.tenantId, envelopeId: e.id, type: "envelope.reminded", actor: a.actor, data: { recipients: 1, stage: "certificates" } });
+        }
+        return;
+      }
       if (e.status !== "sent") throw conflict("not_in_progress", "El sobre no está en curso");
       const group = await currentSignerGroup(t, e.id);
       for (const r of group.recipients.filter((r) => r.status === "sent" || r.status === "viewed")) {

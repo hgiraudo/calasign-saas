@@ -99,4 +99,19 @@ const r = await cur("POST", `/v1/envelopes/${envelope.id}/retry-finalize`, null,
 assert(r.error.code === "not_finalizing", "un borrador no se puede reintentar");
 step("retry-finalize rechaza sobres que no están en finalización (409)");
 
+// Bloqueo por cuenta: 10 intentos fallidos (desde cualquier IP) bloquean 15 minutos, aun con la contraseña correcta;
+// restablecer la contraseña desbloquea.
+const lockEmail = `lock+${stamp}@example.com`;
+await client()("POST", "/v1/auth/signup", { name: "Lucía Bloqueo", email: lockEmail, password: "clave-correcta-123", organization: `Bloqueo ${stamp}` });
+const atk = client();
+for (let i = 0; i < 10; i++) await atk("POST", "/v1/auth/login", { email: lockEmail, password: `incorrecta-${i}` }, { expect: 401 });
+await sleep(500); // la auditoría del intento fallido se registra al responder
+const locked = await atk("POST", "/v1/auth/login", { email: lockEmail, password: "clave-correcta-123" }, { expect: 429 });
+assert(locked.error.code === "too_many_attempts", "cuenta bloqueada tras 10 intentos fallidos");
+await anon("POST", "/v1/auth/password/forgot", { email: lockEmail }, { expect: 202 });
+const lockToken = (await resetLinkFor(anon, lockEmail)).link.split("/reset/")[1];
+await anon("POST", "/v1/auth/password/reset", { token: lockToken, password: "clave-renovada-456" }, { expect: 204 });
+await client()("POST", "/v1/auth/login", { email: lockEmail, password: "clave-renovada-456" });
+step("10 intentos fallidos bloquean la cuenta (429 aun con la contraseña correcta); restablecerla la desbloquea");
+
 console.log("\nE2E CONTRASEÑA OK");

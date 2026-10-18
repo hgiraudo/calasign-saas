@@ -357,7 +357,7 @@ export async function scimRoutes(app: FastifyInstance, s: Services) {
       req.auth!.tenantId,
     ]);
     if (!r.length) throw notFound("Token SCIM");
-    reply.code(204).send();
+    return reply.code(204).send();
   });
 
   // ───────── Endpoints SCIM ─────────
@@ -532,7 +532,7 @@ export async function scimRoutes(app: FastifyInstance, s: Services) {
         await t.query(`DELETE FROM scim_users WHERE tenant_id = $1 AND user_id = $2`, [tenantId, req.params.id]);
       });
       await audit(req, "member.scim_deleted", "user", req.params.id);
-      reply.code(204).send();
+      return reply.code(204).send();
     });
 
     // Groups
@@ -656,7 +656,7 @@ export async function scimRoutes(app: FastifyInstance, s: Services) {
         await t.query(`DELETE FROM groups WHERE id = $1`, [g.id]);
       });
       await audit(req, "group.scim_deleted", "group", g.id);
-      reply.code(204).send();
+      return reply.code(204).send();
     });
   });
 }

@@ -202,7 +202,7 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
     const a = A(req);
     const r = await s.db.query(`DELETE FROM templates WHERE id = $1 AND tenant_id = $2 RETURNING id`, [req.params.id, a.tenantId]);
     if (!r.length) throw notFound("Plantilla");
-    reply.code(204).send();
+    return reply.code(204).send();
   });
 
   // ───────── Documentos ─────────
@@ -255,7 +255,7 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
       if (!r.length) throw notFound("Documento");
       await touch(t, tpl.id);
     });
-    reply.code(204).send();
+    return reply.code(204).send();
   });
 
   app.get<P>("/v1/templates/:id/documents/:documentId/file", { preHandler: auth }, async (req, reply) => {

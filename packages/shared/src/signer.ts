@@ -71,4 +71,6 @@ export interface VerifyResponse {
   participants?: { name: string; role: string; signedAt: string | null }[];
   seal?: { format: string | null; provider: string | null; timestamped: boolean };
   chain?: { ok: boolean; events: number; head: string };
+  /** Qué versión del PDF final coincidió (las renovaciones de archivo B-LTA generan versiones nuevas). */
+  version?: { number: number; latest: number; isLatest: boolean; reason: "completed" | "archive_renewal"; createdAt: string | null };
 }

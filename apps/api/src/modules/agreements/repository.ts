@@ -388,7 +388,7 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
     if (!canManageAgreement(a, r)) throw forbidden();
     await s.db.query(`DELETE FROM agreements WHERE id = $1`, [r.id]);
     await auditFromRequest(s.db, req, a, "agreement.deleted", { targetType: "agreement", targetId: r.id, data: { title: r.title } });
-    reply.code(204).send();
+    return reply.code(204).send();
   });
 
   // Carga de un acuerdo firmado fuera de CalaSign. Multipart: "meta" (JSON) ANTES que "file" (PDF).
@@ -524,7 +524,7 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
     requirePerm(a, "settings:manage");
     const r = await s.db.query(`DELETE FROM agreement_fields WHERE id = $1 AND tenant_id = $2 RETURNING id`, [req.params.id, a.tenantId]);
     if (!r.length) throw notFound("Campo");
-    reply.code(204).send();
+    return reply.code(204).send();
   });
 
   // ───────── Vistas guardadas ─────────
@@ -559,6 +559,6 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
     if (!v) throw notFound("Vista");
     if (v.user_id !== a.userId && !hasPerm(a, "settings:manage")) throw forbidden();
     await s.db.query(`DELETE FROM agreement_views WHERE id = $1`, [v.id]);
-    reply.code(204).send();
+    return reply.code(204).send();
   });
 }

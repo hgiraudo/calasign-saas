@@ -434,7 +434,7 @@ export async function webhookRoutes(app: FastifyInstance, s: Services) {
     const a = A(req);
     await load(a.tenantId, req.params.id);
     await s.db.query(`DELETE FROM webhook_endpoints WHERE id = $1 AND tenant_id = $2`, [req.params.id, a.tenantId]);
-    reply.code(204).send();
+    return reply.code(204).send();
   });
 
   app.get<P & { Querystring: { limit?: string } }>("/v1/webhooks/:id/deliveries", { preHandler: auth }, async (req) => {

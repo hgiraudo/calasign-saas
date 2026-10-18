@@ -309,6 +309,8 @@ if (ev2.effectiveLevel !== "B-LTA") {
     await sleep(1000);
   }
   assert(st === "completed", "sobre completado");
+  // PDF tal como se descargó antes de renovar: /v1/verify lo tiene que seguir reconociendo.
+  const pdfV1 = Buffer.from(await (await A.api("GET", `/v1/envelopes/${ar.envelope.id}/signed.pdf`, null, { raw: true })).arrayBuffer());
   let info = await A.api("GET", `/v1/envelopes/${ar.envelope.id}/archive`);
   assert(info.validUntil && info.versions.length === 1 && info.renewals === 0, `vigencia del archivo: ${JSON.stringify(info)}`);
   const run = await A.api("POST", "/dev/archive/sweep", { days: 5000, envelopeId: ar.envelope.id });
@@ -325,7 +327,18 @@ if (ev2.effectiveLevel !== "B-LTA") {
   assert(events.some((e) => e.type === "envelope.archive_renewed"), "evento de renovación en la evidencia");
   const manual = await A.api("POST", `/v1/envelopes/${ar.envelope.id}/archive/renew`, {});
   assert(manual.renewals === 2 && manual.versions.length === 3, "renovación manual");
-  ok("archivo: vigencia calculada, barrido renueva con DSS + sello de documento nuevo (2 sellos válidos), historial de versiones, evento y renovación manual");
+  const verifyBytes = async (bytes) => {
+    const f = new FormData();
+    f.append("file", new Blob([bytes], { type: "application/pdf" }), "v.pdf");
+    return anon.api("POST", "/v1/verify", f);
+  };
+  const oldV = await verifyBytes(pdfV1);
+  assert(oldV.match && oldV.envelope.id === ar.envelope.id && oldV.version?.number === 1 && oldV.version.latest === 3 && oldV.version.isLatest === false,
+    `verify reconoce la versión anterior a la renovación: ${JSON.stringify(oldV.version)}`);
+  const latestPdf = Buffer.from(await (await A.api("GET", `/v1/envelopes/${ar.envelope.id}/signed.pdf`, null, { raw: true })).arrayBuffer());
+  const newV = await verifyBytes(latestPdf);
+  assert(newV.match && newV.version?.isLatest === true && newV.version.number === 3 && newV.version.reason === "archive_renewal", `verify de la versión vigente: ${JSON.stringify(newV.version)}`);
+  ok("archivo: vigencia calculada, barrido renueva con DSS + sello de documento nuevo (2 sellos válidos), historial de versiones, evento, renovación manual y verify de versiones anteriores");
 }
 await A.api("PATCH", "/v1/settings/evidence", { sealLevel: ev.sealLevel });
 

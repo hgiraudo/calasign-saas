@@ -402,7 +402,7 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
       await t.query(`UPDATE oauth_tokens SET revoked_at = now() WHERE client_id = $1 AND user_id = $2 AND tenant_id = $3 AND revoked_at IS NULL`, [c.id, a.userId, a.tenantId]);
     });
     await auditFromRequest(s.db, req, a, "oauth.disconnected", { targetType: "oauth_app", targetId: req.params.clientId, data: { app: c.name } });
-    reply.code(204).send();
+    return reply.code(204).send();
   });
 
   // ───────── Administración de apps (permiso api_keys:manage, ver access.ts) ─────────
@@ -493,6 +493,6 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
       if (r.service_api_key_id) await t.query(`UPDATE api_keys SET revoked_at = COALESCE(revoked_at, now()) WHERE id = $1`, [r.service_api_key_id]);
     });
     await auditFromRequest(s.db, req, a, "oauth_app.revoked", { targetType: "oauth_app", targetId: r.client_id, data: { name: r.name } });
-    reply.code(204).send();
+    return reply.code(204).send();
   });
 }

@@ -273,7 +273,7 @@ export async function byokRoutes(app: FastifyInstance, s: Services) {
     await s.db.query(`UPDATE tenants SET byok_status = 'none', byok_error = NULL WHERE id = $1`, [a.tenantId]);
     invalidateTenantStorage(a.tenantId);
     await auditFromRequest(s.db, req, a, "byok.disabled", { targetType: "kms_key", targetId: t?.byok_key_arn ?? null });
-    reply.code(204).send();
+    return reply.code(204).send();
   });
 }
 

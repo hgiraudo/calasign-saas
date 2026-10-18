@@ -209,7 +209,7 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
   app.delete<P>("/v1/web-forms/:id", { preHandler: auth }, async (req, reply) => {
     const r = await s.db.query(`DELETE FROM web_forms WHERE id = $1 AND tenant_id = $2 RETURNING id`, [req.params.id, A(req).tenantId]);
     if (!r.length) throw notFound("Formulario");
-    reply.code(204).send();
+    return reply.code(204).send();
   });
 
   app.get<P>("/v1/web-forms/:id/envelopes", { preHandler: auth }, async (req) => {

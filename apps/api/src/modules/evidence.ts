@@ -111,7 +111,7 @@ export async function evidenceRoutes(app: FastifyInstance, s: Services) {
     if (!r.length) throw notFound("Certificado");
     await s.db.query(`UPDATE envelopes SET company_seal_certificate_id = NULL WHERE company_seal_certificate_id = $1 AND status IN ('draft','sent')`, [req.params.id]);
     await auditFromRequest(s.db, req, req.auth!, "certificate.deleted", { targetType: "certificate", targetId: req.params.id, data: { name: r[0].name } });
-    reply.code(204).send();
+    return reply.code(204).send();
   });
 
   // ───────── Firma XML (facturación electrónica) ─────────

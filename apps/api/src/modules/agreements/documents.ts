@@ -342,7 +342,7 @@ export async function documentRoutes(app: FastifyInstance, s: Services) {
     // Archivada (no borrada): negociaciones y workflows pueden referenciarla.
     await s.db.query(`UPDATE document_templates SET archived_at = now() WHERE id = $1`, [cur.id]);
     await auditFromRequest(s.db, req, a, "document_template.deleted", { targetType: "document_template", targetId: cur.id, data: { name: cur.name } });
-    reply.code(204).send();
+    return reply.code(204).send();
   });
 
   app.post<{ Params: { id: string } }>("/v1/document-templates/:id/preview", { preHandler: auth }, async (req): Promise<RenderPreviewResponse> => {
@@ -470,7 +470,7 @@ export async function documentRoutes(app: FastifyInstance, s: Services) {
     requirePerm(a, "templates:manage");
     const r = await s.db.query(`DELETE FROM clauses WHERE id = $1 AND tenant_id = $2 RETURNING id`, [req.params.id, a.tenantId]);
     if (!r.length) throw notFound("Cláusula");
-    reply.code(204).send();
+    return reply.code(204).send();
   });
 }
 

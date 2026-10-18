@@ -95,13 +95,22 @@ export function ValidationReportView({ report }: { report: PdfValidationResponse
       {report.signatures.map((s) => {
         const title = s.kind === "document_timestamp" ? ev("val.docTimestamp") : ev("val.signature", { n: ++n });
         const ok = s.integrity.valid && (!s.timestamp || s.timestamp.valid) && s.changesAfter !== "content";
+        // "De confianza" solo si además ningún certificado estaba revocado ni vencido al firmar (mismo criterio que summary.allTrusted).
+        const chainLabel = s.chain.revoked
+          ? ev("val.rev.revoked")
+          : s.chain.timeValid === false
+            ? ev("val.expiredAtSigning")
+            : s.chain.trusted
+              ? ev("val.trusted")
+              : ev("val.untrusted");
+        const chainOk = s.chain.trusted && !s.chain.revoked && s.chain.timeValid !== false;
         return (
           <div key={s.index} className="card pad stack" data-testid="validation-signature">
             <div className="row-wrap">
               <strong>{title}</strong>
               <span className={`badge ${ok ? "badge-completed" : "badge-declined"}`}>{ok ? ev("val.intact") : ev("val.broken")}</span>
               {s.chain.entries.length > 0 && (
-                <span className={`badge ${s.chain.trusted ? "badge-completed" : "badge-sent"}`}>{s.chain.trusted ? ev("val.trusted") : ev("val.untrusted")}</span>
+                <span className={`badge ${chainOk ? "badge-completed" : s.chain.revoked || s.chain.timeValid === false ? "badge-declined" : "badge-sent"}`}>{chainLabel}</span>
               )}
               {s.level && <span className="badge badge-draft">{s.level}</span>}
             </div>
@@ -123,7 +132,7 @@ export function ValidationReportView({ report }: { report: PdfValidationResponse
                   <tr>
                     <th>{ev("val.timestamp")}</th>
                     <td>
-                      {formatDateTime(s.timestamp.time, locale)} · {s.timestamp.tsa ?? "TSA"} {s.timestamp.valid ? "✓" : "✕"}
+                      {formatDateTime(s.timestamp.time, locale)} · {s.timestamp.tsa ?? "TSA"} {s.timestamp.valid ? (s.timestamp.trusted === false ? `⚠ ${ev("val.tsaUntrusted")}` : "✓") : "✕"}
                     </td>
                   </tr>
                 )}

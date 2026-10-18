@@ -121,7 +121,8 @@ export interface PdfValidationSignature {
   subFilter: string | null;
   signer: PdfValidationCert | null;
   signingTime: string | null;
-  timestamp: { time: string; tsa: string | null; valid: boolean } | null;
+  /** trusted: la TSA llega a una raíz de confianza y estaba habilitada para sellar. */
+  timestamp: { time: string; tsa: string | null; valid: boolean; trusted?: boolean } | null;
   integrity: { valid: boolean; reason?: string };
   coversWholeDocument: boolean;
   modifiedAfter: boolean;
@@ -133,6 +134,8 @@ export interface PdfValidationSignature {
     entries: (PdfValidationCert & { revocation: { status: string; source: string | null; revokedAt?: string | null } })[];
     /** Todos los certificados de la cadena eran válidos al momento de firmar (sello de tiempo o fecha declarada). */
     timeValid?: boolean;
+    /** Algún certificado de la cadena estaba revocado al momento de evaluación. */
+    revoked?: boolean;
   };
   level: "B-B" | "B-T" | "B-LT" | "B-LTA" | null;
 }

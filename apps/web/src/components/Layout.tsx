@@ -97,7 +97,9 @@ export function Layout() {
           </button>
         </nav>
       </header>
-      <main className="content">
+      {/* La clave por organización vuelve a montar la página al cambiar de organización: sin esto, una vista ya
+          abierta (p. ej. el listado de sobres) seguiría mostrando los datos de la organización anterior. */}
+      <main className="content" key={me?.tenant.id ?? "none"}>
         <Outlet />
       </main>
     </div>

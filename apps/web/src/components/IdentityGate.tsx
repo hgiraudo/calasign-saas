@@ -217,11 +217,18 @@ function CaptureCard({ kind, busy, onCapture }: { kind: IdvCaptureKind; busy: bo
   const [camera, setCamera] = useState<"off" | "starting" | "on" | "error">("off");
   const face = kind === "selfie" || kind === "selfie_liveness";
 
+  const mounted = useRef(true);
   const stop = () => {
     stream.current?.getTracks().forEach((t) => t.stop());
     stream.current = null;
   };
-  useEffect(() => stop, []);
+  useEffect(
+    () => () => {
+      mounted.current = false;
+      stop();
+    },
+    [],
+  );
 
   const start = async () => {
     setCamera("starting");
@@ -230,6 +237,11 @@ function CaptureCard({ kind, busy, onCapture }: { kind: IdvCaptureKind; busy: bo
         video: { facingMode: face ? "user" : { ideal: "environment" }, width: { ideal: 1600 }, height: { ideal: 1200 } },
         audio: false,
       });
+      // Si el componente se desmontó mientras se pedía permiso, la cámara quedaría encendida.
+      if (!mounted.current) {
+        s.getTracks().forEach((t) => t.stop());
+        return;
+      }
       stream.current = s;
       if (video.current) {
         video.current.srcObject = s;

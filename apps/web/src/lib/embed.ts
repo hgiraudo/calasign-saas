@@ -63,7 +63,14 @@ export function useEmbedBridge(token: string, session: SigningSession | null, in
       setTimeout(() => {
         const url = returnUrl.current;
         if (!url) return;
-        const u = new URL(url);
+        let u: URL;
+        try {
+          u = new URL(url);
+        } catch {
+          return;
+        }
+        // Solo http(s): un returnUrl "javascript:" ejecutaría código en el origen de CalaSign con el token del firmante.
+        if (u.protocol !== "https:" && u.protocol !== "http:") return;
         u.searchParams.set("event", done!);
         u.searchParams.set("envelopeId", session.envelope.id);
         window.location.assign(u.toString());

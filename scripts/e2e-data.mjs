@@ -8,10 +8,22 @@
 //   (+ las variables de var/dev-pki/api.env para la parte de archivo) tsx apps/api/src/server.ts
 // Las partes que el servidor no soporta (sin CELLS, sin KMS simulado, sin PKI de laboratorio) se informan y se saltean.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+
+
+// Temporales del script (PDFs y claves de prueba): se borran al salir, aunque una aserción falle.
+const tempDirs = [];
+process.on("exit", () => {
+  for (const d of tempDirs) rmSync(d, { recursive: true, force: true });
+});
+function tempDir(prefix) {
+  const d = mkdtempSync(join(tmpdir(), prefix));
+  tempDirs.push(d);
+  return d;
+}
 
 const args = process.argv.slice(2);
 const BASE = (args.find((a) => /^https?:/.test(a)) ?? "http://localhost:4000").replace(/\/$/, "");
@@ -167,7 +179,7 @@ if (!mockOn) {
     assert(raw.subarray(0, 8).toString() === "CSBYOK1\n" && !raw.includes(Buffer.from("cifrado con BYOK")), "en disco queda cifrado con la clave del cliente");
   }
   // Certificado en custodia envuelto con la clave del cliente y usado para firmar XML.
-  const dir = mkdtempSync(join(tmpdir(), "p12-"));
+  const dir = tempDir("p12-");
   execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", join(dir, "k.pem"), "-out", join(dir, "c.pem"), "-days", "30", "-subj", "/CN=Empresa BYOK E2E"], { stdio: "ignore" });
   execFileSync("openssl", ["pkcs12", "-export", "-inkey", join(dir, "k.pem"), "-in", join(dir, "c.pem"), "-passout", "pass:e2e-pass", "-out", join(dir, "c.p12")]);
   const { certificate } = await A.api("POST", "/v1/certificates", { name: "BYOK", p12Base64: readFileSync(join(dir, "c.p12")).toString("base64"), password: "e2e-pass" }, { expect: 201 });

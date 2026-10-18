@@ -7,10 +7,22 @@
 // B-LTA, cadena de confianza, revocación y CSC. Sin PKI de laboratorio se genera un .p12 autofirmado y se
 // verifican integridad y mecánica (contra dev.calasign.com, por ejemplo).
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+
+
+// Temporales del script (PDFs y claves de prueba): se borran al salir, aunque una aserción falle.
+const tempDirs = [];
+process.on("exit", () => {
+  for (const d of tempDirs) rmSync(d, { recursive: true, force: true });
+});
+function tempDir(prefix) {
+  const d = mkdtempSync(join(tmpdir(), prefix));
+  tempDirs.push(d);
+  return d;
+}
 
 const args = process.argv.slice(2);
 const BASE = (args.find((a) => /^https?:/.test(a)) ?? "http://localhost:4000").replace(/\/$/, "");
@@ -72,7 +84,7 @@ function companyP12() {
       password: readFileSync(join(PKI_DIR, "company.p12.password"), "utf8").trim(),
     };
   }
-  const dir = mkdtempSync(join(tmpdir(), "p12-"));
+  const dir = tempDir("p12-");
   execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", join(dir, "k.pem"), "-out", join(dir, "c.pem"), "-days", "30", "-subj", "/CN=Empresa E2E Autofirmada/O=CalaSign E2E", "-addext", "extendedKeyUsage=emailProtection,1.3.6.1.5.5.7.3.36"], { stdio: "ignore" });
   execFileSync("openssl", ["pkcs12", "-export", "-inkey", join(dir, "k.pem"), "-in", join(dir, "c.pem"), "-passout", "pass:e2e-pass", "-out", join(dir, "c.p12")]);
   return { modern: readFileSync(join(dir, "c.p12")), legacy: null, password: "e2e-pass" };
@@ -199,7 +211,7 @@ step(`/v1/validate: ${report.signatures.length} firmas, válidas${LAB ? ", de co
 
 // pdfsig y certificado de finalización
 try {
-  const dir = mkdtempSync(join(tmpdir(), "ev-"));
+  const dir = tempDir("ev-");
   writeFileSync(join(dir, "f.pdf"), pdf);
   let out;
   try {

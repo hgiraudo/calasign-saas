@@ -8,9 +8,21 @@
 import { createHmac, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+
+// Temporales del script (PDFs y claves de prueba): se borran al salir, aunque una aserción falle.
+const tempDirs = [];
+process.on("exit", () => {
+  for (const d of tempDirs) rmSync(d, { recursive: true, force: true });
+});
+function tempDir(prefix) {
+  const d = mkdtempSync(join(tmpdir(), prefix));
+  tempDirs.push(d);
+  return d;
+}
 
 const BASE = (process.argv[2] ?? "http://localhost:4000").replace(/\/$/, "");
 let cookie = "";
@@ -102,7 +114,7 @@ async function waitFor(fn, what, secs = 60) {
 }
 
 function pdfText(bytes) {
-  const dir = mkdtempSync(join(tmpdir(), "agr-"));
+  const dir = tempDir("agr-");
   const f = join(dir, "x.pdf");
   writeFileSync(f, bytes);
   return execFileSync("pdftotext", ["-layout", f, "-"], { encoding: "utf8" });

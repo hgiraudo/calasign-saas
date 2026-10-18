@@ -15,8 +15,12 @@ read -r -s -p "Token del bot: " TOKEN; echo
 
 ACCOUNT=427064006935
 export AWS_PROFILE="${AWS_PROFILE:-bootstrap-terraform}"
-eval "$(aws sts assume-role --role-arn "arn:aws:iam::$ACCOUNT:role/OrganizationAccountAccessRole" --role-session-name telegram-setup \
-  --query Credentials --output json | python3 -c "import sys,json;c=json.load(sys.stdin);print(f\"export AWS_ACCESS_KEY_ID={c['AccessKeyId']} AWS_SECRET_ACCESS_KEY={c['SecretAccessKey']} AWS_SESSION_TOKEN={c['SessionToken']}\")")"
+# Las credenciales se guardan primero en una variable: con `eval "$(...)"` una falla de assume-role no corta
+# el script (set -e no mira la sustitución) y lo que sigue correría con las credenciales por defecto, de otra cuenta.
+CREDS=$(aws sts assume-role --role-arn "arn:aws:iam::$ACCOUNT:role/OrganizationAccountAccessRole" --role-session-name telegram-setup \
+  --query Credentials --output json | python3 -c "import sys,json;c=json.load(sys.stdin);print(f\"export AWS_ACCESS_KEY_ID={c['AccessKeyId']} AWS_SECRET_ACCESS_KEY={c['SecretAccessKey']} AWS_SESSION_TOKEN={c['SessionToken']}\")")
+[ -n "$CREDS" ] || { echo "No se pudo asumir el rol en la cuenta $ACCOUNT" >&2; exit 1; }
+eval "$CREDS"
 unset AWS_PROFILE
 export AWS_REGION=us-east-1
 

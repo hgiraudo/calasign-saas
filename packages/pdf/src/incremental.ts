@@ -131,6 +131,20 @@ export interface IncrementalSignatureOptions {
 
 /** Agrega una firma (o un sello de documento) como revisión incremental, sin alterar las anteriores. */
 export async function addSignatureIncremental(pdf: Uint8Array, o: IncrementalSignatureOptions): Promise<Uint8Array> {
+  const unsigned = Buffer.from(await buildSignaturePlaceholderIncremental(pdf, o));
+  class FnSigner extends Signer {
+    async sign(content: Buffer): Promise<Buffer> {
+      return Buffer.from(await o.sign(new Uint8Array(content)));
+    }
+  }
+  return new Uint8Array(await signpdf.sign(unsigned, new FnSigner()));
+}
+
+/**
+ * Revisión incremental con el campo de firma y el placeholder (ByteRange y Contents vacíos), sin firmar.
+ * Base de la firma en dos pasos (firma remota: el firmante firma un hash en su dispositivo).
+ */
+export async function buildSignaturePlaceholderIncremental(pdf: Uint8Array, o: Omit<IncrementalSignatureOptions, "sign">): Promise<Uint8Array> {
   const u = await IncrementalUpdate.open(pdf);
   const ctx = u.context;
   const byteRange = ctx.obj([0, PDFName.of(DEFAULT_BYTE_RANGE_PLACEHOLDER), PDFName.of(DEFAULT_BYTE_RANGE_PLACEHOLDER), PDFName.of(DEFAULT_BYTE_RANGE_PLACEHOLDER)]);
@@ -182,13 +196,7 @@ export async function addSignatureIncremental(pdf: Uint8Array, o: IncrementalSig
     u.touch(u.catalogRef);
   }
 
-  const unsigned = Buffer.from(u.serialize());
-  class FnSigner extends Signer {
-    async sign(content: Buffer): Promise<Buffer> {
-      return Buffer.from(await o.sign(new Uint8Array(content)));
-    }
-  }
-  return new Uint8Array(await signpdf.sign(unsigned, new FnSigner()));
+  return u.serialize();
 }
 
 /** Material de validación para el diccionario DSS (DER). */

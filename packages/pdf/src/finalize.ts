@@ -60,6 +60,8 @@ export interface CertificateRecipient {
   note?: string | null;
   /** Verificación de identidad (KYC) del firmante. */
   identity?: CertificateIdentity | null;
+  /** Firma además con su certificado digital (los datos del certificado van en la firma PAdES del PDF). */
+  certificateSignature?: boolean;
 }
 
 export interface CertificateIdentity {
@@ -133,6 +135,20 @@ const LINE = rgb(0.82, 0.85, 0.9);
 const ACCENT = rgb(0.0, 0.5, 0.5);
 
 export async function finalizeEnvelopePdf(input: FinalizeInput, seal: SealOptions): Promise<Uint8Array> {
+  return sealPdfDocument(await buildEnvelopeDocument(input), seal);
+}
+
+/**
+ * PDF final del sobre SIN sello de plataforma (documentos estampados + adjuntos + certificado de finalización).
+ * Lo usa la firma con certificado propio: los firmantes agregan sus firmas como revisiones incrementales y el
+ * sello de la plataforma se agrega al final, también incremental.
+ */
+export async function renderEnvelopePdf(input: FinalizeInput): Promise<Uint8Array> {
+  const doc = await buildEnvelopeDocument(input);
+  return new Uint8Array(await doc.save({ useObjectStreams: false }));
+}
+
+async function buildEnvelopeDocument(input: FinalizeInput): Promise<PDFDocument> {
   const out = await PDFDocument.create();
   const fonts = await embedFonts(out);
   const L = labels(input.certificate.locale);
@@ -173,8 +189,7 @@ export async function finalizeEnvelopePdf(input: FinalizeInput, seal: SealOption
   out.setProducer("CalaSign");
   out.setCreator("CalaSign");
   out.setModificationDate(new Date(input.certificate.completedAt));
-
-  return sealPdfDocument(out, seal);
+  return out;
 }
 
 /** Agrega el diccionario de firma y sella. El PDF se guarda sin object streams para poder ubicar el ByteRange. */
@@ -392,6 +407,7 @@ async function drawCertificate(
     kv(L.consented, fmt(r.consentedAt), ix);
     kv(r.role === "approver" ? L.approved : L.signed, fmt(r.signedAt), ix);
     kv(L.note, r.note ?? null, ix);
+    if (r.certificateSignature) kv(L.certSignature, L.certSignatureNote, ix);
     if (r.identity) {
       const idv = r.identity;
       const levelLabel = (L as Record<string, string>)[`idv_level_${idv.level}`] ?? idv.level;

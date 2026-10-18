@@ -17,6 +17,7 @@ const OID = {
   signatureTimeStampToken: "1.2.840.113549.1.9.16.2.14",
   sha256: "2.16.840.1.101.3.4.2.1",
   sha256WithRSA: "1.2.840.113549.1.1.11",
+  ecdsaWithSha256: "1.2.840.10045.4.3.2",
 };
 
 function toAB(u: Uint8Array): ArrayBuffer {
@@ -31,6 +32,16 @@ export interface CmsOptions {
 
 export async function buildPadesCms(content: Uint8Array, provider: SignatureProvider, opts: CmsOptions = {}) {
   const chainDer = await provider.certificateChain();
+  const signedAttrsDer = buildSignedAttributes(sha256(content), chainDer);
+  const signature = await provider.signDigest(sha256(signedAttrsDer));
+  return assembleCms({ signedAttrsDer, chainDer, signature, signatureAlgorithm: "RSASSA-PKCS1-v1_5" }, opts);
+}
+
+/**
+ * Atributos firmados PAdES (contentType, messageDigest, signingCertificateV2) en DER, como SET OF ordenado.
+ * Es exactamente lo que firma el titular: su SHA-256 es el "hash a firmar" de la firma en dos pasos.
+ */
+export function buildSignedAttributes(contentDigest: Uint8Array, chainDer: Uint8Array[]): Uint8Array {
   const certs = chainDer.map((d) => pkijs.Certificate.fromBER(toAB(d)));
   const signerCert = certs[0];
 
@@ -57,7 +68,7 @@ export async function buildPadesCms(content: Uint8Array, provider: SignatureProv
 
   const attrs = [
     new pkijs.Attribute({ type: OID.contentType, values: [new asn1js.ObjectIdentifier({ value: OID.data })] }),
-    new pkijs.Attribute({ type: OID.messageDigest, values: [new asn1js.OctetString({ valueHex: toAB(sha256(content)) })] }),
+    new pkijs.Attribute({ type: OID.messageDigest, values: [new asn1js.OctetString({ valueHex: toAB(contentDigest) })] }),
     new pkijs.Attribute({ type: OID.signingCertificateV2, values: [signingCertificateV2] }),
   ];
   // DER: SET OF ordenado por su codificación.
@@ -65,15 +76,32 @@ export async function buildPadesCms(content: Uint8Array, provider: SignatureProv
   encoded.sort((x, y) => Buffer.compare(Buffer.from(x.der), Buffer.from(y.der)));
   const sortedAttrs = encoded.map((e) => e.a);
 
-  const toBeSigned = new Uint8Array(new asn1js.Set({ value: sortedAttrs.map((a) => a.toSchema()) }).toBER(false));
-  const signature = await provider.signDigest(sha256(toBeSigned));
+  return new Uint8Array(new asn1js.Set({ value: sortedAttrs.map((a) => a.toSchema()) }).toBER(false));
+}
+
+export type CmsSignatureAlgorithm = "RSASSA-PKCS1-v1_5" | "ECDSA";
+
+/** Arma el CMS SignedData a partir de los atributos firmados y la firma del titular (RSA o ECDSA en DER). */
+export async function assembleCms(
+  x: { signedAttrsDer: Uint8Array; chainDer: Uint8Array[]; signature: Uint8Array; signatureAlgorithm: CmsSignatureAlgorithm },
+  opts: CmsOptions = {},
+): Promise<Uint8Array> {
+  const certs = x.chainDer.map((d) => pkijs.Certificate.fromBER(toAB(d)));
+  const signerCert = certs[0];
+  const parsed = asn1js.fromBER(toAB(x.signedAttrsDer));
+  if (parsed.offset === -1 || !(parsed.result instanceof asn1js.Set)) throw new Error("atributos firmados inválidos");
+  const sortedAttrs = (parsed.result.valueBlock.value as asn1js.Sequence[]).map((v) => new pkijs.Attribute({ schema: v }));
+  const signature = x.signature;
 
   const signerInfo = new pkijs.SignerInfo({
     version: 1,
     sid: new pkijs.IssuerAndSerialNumber({ issuer: signerCert.issuer, serialNumber: signerCert.serialNumber }),
     digestAlgorithm: new pkijs.AlgorithmIdentifier({ algorithmId: OID.sha256 }),
     signedAttrs: new pkijs.SignedAndUnsignedAttributes({ type: 0, attributes: sortedAttrs }),
-    signatureAlgorithm: new pkijs.AlgorithmIdentifier({ algorithmId: OID.sha256WithRSA, algorithmParams: new asn1js.Null() }),
+    signatureAlgorithm:
+      x.signatureAlgorithm === "ECDSA"
+        ? new pkijs.AlgorithmIdentifier({ algorithmId: OID.ecdsaWithSha256 })
+        : new pkijs.AlgorithmIdentifier({ algorithmId: OID.sha256WithRSA, algorithmParams: new asn1js.Null() }),
     signature: new asn1js.OctetString({ valueHex: toAB(signature) }),
   });
 

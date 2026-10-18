@@ -29,7 +29,32 @@ export interface LabPki {
   sealChainPem: string;
   /** Números de serie (hex) revocados por la CA intermedia. */
   revoked: Set<string>;
-  issue(cn: string, opts?: { ocsp?: boolean; years?: number }): Promise<LabIdentity>;
+  issue(cn: string, opts?: LabIssueOptions): Promise<LabIdentity>;
+}
+
+export interface LabIssueOptions {
+  ocsp?: boolean;
+  years?: number;
+  /** Atributo serialNumber (2.5.4.5) del sujeto, ej. "PNOPE-12345678" o "IDCCO-1020304050". */
+  serialNumber?: string;
+  /** CPF a incluir en el otherName 2.16.76.1.3.1 de ICP-Brasil. */
+  icpBrasilCpf?: string;
+  /** Tipo de clave del titular. */
+  key?: "rsa" | "ec-p256" | "ec-p384";
+}
+
+/** SubjectAltName con otherName ICP-Brasil pessoa física: nacimiento (8) + CPF (11) + NIS (11) + RG (15)… */
+function icpBrasilSan(cpf: string): x509.Extension {
+  const text = `01011980${cpf.replace(/\D/g, "").padStart(11, "0")}${"0".repeat(11)}${"0".repeat(15)}SSPSP`;
+  const otherName = new asn1js.Constructed({
+    idBlock: { tagClass: 3, tagNumber: 0 },
+    value: [
+      new asn1js.ObjectIdentifier({ value: "2.16.76.1.3.1" }),
+      new asn1js.Constructed({ idBlock: { tagClass: 3, tagNumber: 0 }, value: [new asn1js.OctetString({ valueHex: toAB(new Uint8Array(Buffer.from(text, "latin1"))) })] }),
+    ],
+  });
+  const der = new asn1js.Sequence({ value: [otherName] }).toBER(false);
+  return new x509.Extension("2.5.29.17", false, der);
 }
 
 function serial(): string {
@@ -91,11 +116,14 @@ export async function createLabPki(baseUrl: string): Promise<LabPki> {
   });
   const intermediate = await identity(interCert, ik);
 
-  const leaf = async (cn: string, eku: string[], opts: { ocsp?: boolean; years?: number } = {}) => {
-    const lk = await keys();
+  const leaf = async (cn: string, eku: string[], opts: LabIssueOptions = {}) => {
+    const lk =
+      opts.key === "ec-p256" || opts.key === "ec-p384"
+        ? ((await webcrypto.subtle.generateKey({ name: "ECDSA", namedCurve: opts.key === "ec-p256" ? "P-256" : "P-384" }, true, ["sign", "verify"])) as CryptoKeyPair)
+        : await keys();
     const cert = await x509.X509CertificateGenerator.create({
       serialNumber: serial(),
-      subject: `CN=${cn}, O=CalaSign Lab`,
+      subject: `CN=${cn}, O=CalaSign Lab${opts.serialNumber ? `, 2.5.4.5=${opts.serialNumber}` : ""}`,
       issuer: interCert.subject,
       notBefore: nb,
       notAfter: na(opts.years ?? 2),
@@ -113,6 +141,7 @@ export async function createLabPki(baseUrl: string): Promise<LabPki> {
           caIssuers: `${baseUrl}/ca/intermediate.cer`,
         }),
         new x509.CRLDistributionPointsExtension([`${baseUrl}/crl/intermediate.crl`]),
+        ...(opts.icpBrasilCpf ? [icpBrasilSan(opts.icpBrasilCpf)] : []),
       ],
     });
     return identity(cert, lk);

@@ -103,12 +103,12 @@ async function checkSecondFactor(db: Db, userId: string, code: string): Promise<
     return upd.length ? "totp" : null;
   }
   const h = sha256Hex(normalizeRecoveryCode(code));
-  const hashes: string[] = u.totp_recovery_hashes ?? [];
-  if (hashes.includes(h)) {
-    await db.query(`UPDATE users SET totp_recovery_hashes = array_remove(totp_recovery_hashes, $2) WHERE id = $1`, [userId, h]);
-    return "recovery";
-  }
-  return null;
+  // Consumo atómico: el mismo código de recuperación no sirve en dos pedidos simultáneos.
+  const used = await db.query(
+    `UPDATE users SET totp_recovery_hashes = array_remove(totp_recovery_hashes, $2) WHERE id = $1 AND $2 = ANY(totp_recovery_hashes) RETURNING id`,
+    [userId, h],
+  );
+  return used.length ? "recovery" : null;
 }
 
 // ───────────────────────────── Helpers de roles ─────────────────────────────
@@ -813,18 +813,21 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     const input = TwoFactorLoginInput.parse(req.body);
     const ch = await s.db.one<any>(`SELECT * FROM login_challenges WHERE token_hash = $1 AND expires_at > now()`, [sha256Hex(input.challengeToken)]);
     if (!ch) throw new AppError(401, "challenge_expired", "El ingreso venció: volvé a ingresar tu contraseña");
-    if (ch.attempts >= 5) {
+    // El intento se cuenta antes de comparar y de forma atómica: pedidos concurrentes no superan el límite.
+    const slot = await s.db.query(`UPDATE login_challenges SET attempts = attempts + 1 WHERE token_hash = $1 AND attempts < 5 RETURNING attempts`, [ch.token_hash]);
+    if (!slot.length) {
       await s.db.query(`DELETE FROM login_challenges WHERE token_hash = $1`, [ch.token_hash]);
       throw new AppError(401, "too_many_attempts", "Demasiados intentos: volvé a ingresar tu contraseña");
     }
     const method = await checkSecondFactor(s.db, ch.user_id, input.code);
     const u = await s.db.one<any>(`SELECT email FROM users WHERE id = $1`, [ch.user_id]);
     if (!method) {
-      await s.db.query(`UPDATE login_challenges SET attempts = attempts + 1 WHERE token_hash = $1`, [ch.token_hash]);
       await recordAudit(s.db, { tenantId: ch.tenant_id, action: "auth.login_failed", actor: { type: "anonymous", id: ch.user_id, label: u?.email }, data: { reason: "bad_2fa_code" }, ...clientInfo(req) });
       throw new AppError(401, "invalid_code", "Código incorrecto");
     }
-    await s.db.query(`DELETE FROM login_challenges WHERE token_hash = $1`, [ch.token_hash]);
+    // El desafío se canjea una sola vez.
+    const consumed = await s.db.query(`DELETE FROM login_challenges WHERE token_hash = $1 RETURNING user_id`, [ch.token_hash]);
+    if (!consumed.length) throw new AppError(401, "challenge_expired", "El ingreso venció: volvé a ingresar tu contraseña");
     await createUserSession(s.db, req, reply, ch.user_id, ch.tenant_id);
     await recordAudit(s.db, { tenantId: ch.tenant_id, action: "auth.login", actor: { type: "user", id: ch.user_id, label: u?.email }, data: { twoFactor: method }, ...clientInfo(req) });
     return meResponse(s.db, ch.user_id, ch.tenant_id);

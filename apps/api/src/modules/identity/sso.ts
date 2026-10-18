@@ -300,11 +300,21 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
     const { ip, userAgent } = clientInfo(req);
     email = email.trim().toLowerCase();
     if (!EMAIL_RE.test(email)) throw new AppError(400, "sso_no_email", "El proveedor de identidad no envió un correo válido");
-    const domains = (await s.db.query<{ domain: string }>(`SELECT domain FROM sso_domains WHERE tenant_id = $1`, [tenantId])).map((d) => d.domain);
-    if (domains.length && !domains.includes(email.split("@")[1])) throw new AppError(403, "sso_domain_mismatch", "El correo no pertenece a los dominios de la organización");
+    const domainRows = await s.db.query<{ domain: string; verified_at: string | null }>(`SELECT domain, verified_at FROM sso_domains WHERE tenant_id = $1`, [tenantId]);
+    const emailDomain = email.split("@")[1];
+    if (domainRows.length && !domainRows.some((d) => d.domain === emailDomain)) {
+      throw new AppError(403, "sso_domain_mismatch", "El correo no pertenece a los dominios de la organización");
+    }
+    // El IdP lo configura la organización: solo puede afirmar identidades de sus dominios VERIFICADOS. Sin eso, un IdP
+    // propio podría "presentar" el correo de un usuario de otra organización y abrir una sesión como esa persona.
+    const domainVerified = domainRows.some((d) => d.domain === emailDomain && d.verified_at);
 
     let user = await s.db.one<any>(`SELECT id, name FROM users WHERE lower(email) = $1`, [email]);
     let member = user ? await s.db.one<any>(`SELECT role FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [tenantId, user.id]) : null;
+    if (!member && !domainVerified) {
+      await recordAudit(s.db, { tenantId, action: "auth.sso_denied", actor: { type: "anonymous", label: email }, ip, userAgent, data: { protocol, reason: "domain_not_verified" } });
+      throw new AppError(403, "sso_domain_not_verified", "Para dar de alta usuarios por SSO, el dominio del correo tiene que estar verificado en la organización");
+    }
     if (!member) {
       if (!c.jit_enabled) {
         await recordAudit(s.db, { tenantId, action: "auth.sso_denied", actor: { type: "anonymous", label: email }, ip, userAgent, data: { protocol, reason: "not_member" } });

@@ -16,3 +16,4 @@ export { extractPdfPlainText, type PdfText } from "./plain-text";
 export { archiveTimestampInfo, type ArchiveTimestampInfo } from "./archive";
 export * from "./external";
 export * from "./certcheck";
+export { assertEmbeddableImage } from "./images";

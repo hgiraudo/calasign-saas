@@ -128,11 +128,6 @@ function displayNameOf(input: z.infer<typeof ScimUserInput>, email: string): str
   );
 }
 
-async function ownerCount(db: Db, tenantId: string): Promise<number> {
-  const r = await db.one<any>(`SELECT count(*)::int AS n FROM memberships WHERE tenant_id = $1 AND role = 'owner'`, [tenantId]);
-  return Number(r?.n ?? 0);
-}
-
 /** Activa / desactiva la membresía de un usuario aprovisionado. */
 async function setActive(db: Db, tenantId: string, userId: string, active: boolean) {
   const m = await db.one<any>(`SELECT role FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [tenantId, userId]);
@@ -145,7 +140,9 @@ async function setActive(db: Db, tenantId: string, userId: string, active: boole
     const t = await db.one<any>(`SELECT scim_default_role FROM tenants WHERE id = $1`, [tenantId]);
     await db.query(`INSERT INTO memberships (tenant_id, user_id, role) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`, [tenantId, userId, t?.scim_default_role ?? "member"]);
   } else if (!active && m) {
-    if (m.role === "owner" && (await ownerCount(db, tenantId)) <= 1) throw new ScimError(409, "No se puede desactivar al único propietario", "mutability");
+    // Los propietarios se administran desde la consola (allí solo otro propietario puede quitarlos): un token SCIM,
+    // que puede crear un administrador, no puede desactivarlos.
+    if (m.role === "owner") throw new ScimError(409, "Los propietarios no se pueden desactivar por SCIM", "mutability");
     await db.query(`DELETE FROM group_members gm USING groups g WHERE gm.group_id = g.id AND g.tenant_id = $1 AND gm.user_id = $2`, [tenantId, userId]);
     await db.query(`DELETE FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [tenantId, userId]);
     await db.query(`DELETE FROM sessions WHERE tenant_id = $1 AND user_id = $2`, [tenantId, userId]);
@@ -171,20 +168,25 @@ async function applyUserAttrs(db: Db, tenantId: string, userId: string, attrs: R
   if ("name.familyName" in attrs) set("family_name", attrs["name.familyName"] ?? null);
   if (sets.length) await db.query(`UPDATE scim_users SET ${sets.join(", ")}, updated_at = now() WHERE tenant_id = $1 AND user_id = $2`, params);
 
+  const membership = await db.one<any>(`SELECT role FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [tenantId, userId]);
+  const otherOrgs = Number((await db.one<any>(`SELECT count(*)::int AS n FROM memberships WHERE user_id = $1 AND tenant_id <> $2`, [userId, tenantId]))?.n ?? 0);
+
   let display = typeof attrs.displayName === "string" ? attrs.displayName.trim() : null;
   if (!display && ("name.givenName" in attrs || "name.familyName" in attrs)) {
     const su = await db.one<any>(`SELECT given_name, family_name FROM scim_users WHERE tenant_id = $1 AND user_id = $2`, [tenantId, userId]);
     display = [su?.given_name, su?.family_name].filter(Boolean).join(" ").trim() || null;
   }
-  if (display) await db.query(`UPDATE users SET name = $2 WHERE id = $1`, [userId, display.slice(0, 200)]);
+  // El nombre (como el correo) es de la cuenta, no de la organización: no se toca si la persona está en otras.
+  if (display && otherOrgs === 0) await db.query(`UPDATE users SET name = $2 WHERE id = $1`, [userId, display.slice(0, 200)]);
 
   if (typeof attrs.userName === "string" && attrs.userName) {
     const email = attrs.userName.trim().toLowerCase();
     const cur = await db.one<any>(`SELECT email FROM users WHERE id = $1`, [userId]);
     if (cur && cur.email.toLowerCase() !== email) {
       // El correo es global: solo se cambia si el usuario no pertenece a otras organizaciones.
-      const others = await db.one<any>(`SELECT count(*)::int AS n FROM memberships WHERE user_id = $1 AND tenant_id <> $2`, [userId, tenantId]);
-      if (Number(others?.n ?? 0) > 0) throw new ScimError(400, "No se puede cambiar el correo de un usuario que pertenece a otras organizaciones", "mutability");
+      if (otherOrgs > 0) throw new ScimError(400, "No se puede cambiar el correo de un usuario que pertenece a otras organizaciones", "mutability");
+      // Cambiar el correo de acceso de un propietario equivaldría a tomar su cuenta.
+      if (membership?.role === "owner") throw new ScimError(409, "El correo de un propietario no se puede cambiar por SCIM", "mutability");
       const taken = await db.one(`SELECT 1 FROM users WHERE lower(email) = $1 AND id <> $2`, [email, userId]);
       if (taken) throw new ScimError(409, "Ya existe un usuario con ese correo", "uniqueness");
       await db.query(`UPDATE users SET email = $2 WHERE id = $1`, [userId, email]);

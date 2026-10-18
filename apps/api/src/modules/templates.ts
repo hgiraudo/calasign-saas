@@ -75,7 +75,14 @@ export async function loadTemplateDetail(db: Db, tenantId: string, id: string): 
   return {
     template: toTemplate(t),
     documents: docs.map(toDocument),
-    roles: roles.map((r) => ({ id: r.id, name: r.name, role: r.role, routingOrder: r.routing_order })),
+    roles: roles.map((r) => ({
+      id: r.id,
+      name: r.name,
+      role: r.role,
+      routingOrder: r.routing_order,
+      signatureType: r.signature_type ?? "electronic",
+      certificateRequirements: r.certificate_requirements ?? null,
+    })),
     fields: fields.map(toTemplateField),
   };
 }
@@ -283,7 +290,16 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
            ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, role = EXCLUDED.role, routing_order = EXCLUDED.routing_order, position = EXCLUDED.position`,
           [r.id, a.tenantId, tpl.id, r.name, r.role, r.routingOrder, i],
         );
+        if (r.signatureType === "certificate" && r.role !== "signer") throw badRequest("certificate_not_applicable", "Solo un rol firmante puede firmar con certificado");
+        if (r.signatureType !== undefined || r.certificateRequirements !== undefined) {
+          await t.query(
+            `UPDATE template_roles SET signature_type = COALESCE($2, signature_type),
+               certificate_requirements = CASE WHEN $3::boolean THEN $4::jsonb ELSE certificate_requirements END WHERE id = $1`,
+            [r.id, r.signatureType ?? null, r.certificateRequirements !== undefined, r.certificateRequirements ? JSON.stringify(r.certificateRequirements) : null],
+          );
+        }
       }
+      await t.query(`UPDATE template_roles SET signature_type = 'electronic' WHERE template_id = $1 AND role <> 'signer'`, [tpl.id]);
       await t.query(`DELETE FROM template_fields f USING template_roles r WHERE f.role_id = r.id AND r.template_id = $1 AND r.role = 'cc'`, [tpl.id]);
       await touch(t, tpl.id);
     });
@@ -378,6 +394,11 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
           r.routing_order,
           i,
         ]);
+        if (r.role === "signer" && r.signature_type === "certificate")
+          await t.query(`UPDATE template_roles SET signature_type = 'certificate', certificate_requirements = $2 WHERE id = $1`, [
+            rid,
+            r.certificate_requirements ? JSON.stringify(r.certificate_requirements) : null,
+          ]);
       }
       const fields = await t.query<any>(`SELECT * FROM fields WHERE envelope_id = $1`, [env.id]);
       const fieldMap = new Map<string, string>();
@@ -575,6 +596,12 @@ export async function insertEnvelopeFromTemplate(
         r.idDocumentType ?? null,
         r.idDocumentNumber ?? null,
       ],
+    );
+    // Firma con certificado: la hereda del rol de la plantilla (sobres, envíos masivos y formularios web).
+    await t.query(
+      `UPDATE recipients SET signature_type = tr.signature_type, certificate_requirements = tr.certificate_requirements
+       FROM template_roles tr WHERE recipients.id = $1 AND tr.id = $2 AND tr.signature_type = 'certificate' AND recipients.role = 'signer'`,
+      [rid, role.id],
     );
   }
   onRecipients?.(recMap);

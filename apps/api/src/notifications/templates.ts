@@ -1,4 +1,13 @@
-export type TemplateKind = "invite" | "reminder" | "completed" | "declined" | "voided" | "sender_completed" | "sender_declined" | "expiry_warning";
+export type TemplateKind =
+  | "invite"
+  | "reminder"
+  | "completed"
+  | "declined"
+  | "voided"
+  | "sender_completed"
+  | "sender_declined"
+  | "expiry_warning"
+  | "certificate_request";
 
 export interface TemplateVars {
   recipientName: string;
@@ -29,6 +38,14 @@ const T: Record<"es" | "pt-BR" | "en", Dict> = {
       subject: (v) => `Por vencer: "${v.subject}" espera tu firma`,
       lines: (v) => [`Hola ${v.recipientName}:`, `El documento que te envió ${v.senderName} (${v.organizationName}) vence pronto. Firmalo antes de que caduque.`],
       cta: "Revisar y firmar",
+    },
+    certificate_request: {
+      subject: (v) => `Firmá con tu certificado digital: "${v.subject}"`,
+      lines: (v) => [
+        `Hola ${v.recipientName}:`,
+        `Todas las partes ya firmaron "${v.subject}". Falta tu firma con certificado digital (token, certificado instalado o archivo .p12), que se hace con el Firmador CalaSign.`,
+      ],
+      cta: "Firmar con certificado",
     },
     completed: {
       subject: (v) => `Completado: "${v.subject}"`,
@@ -70,6 +87,14 @@ const T: Record<"es" | "pt-BR" | "en", Dict> = {
       lines: (v) => [`Olá ${v.recipientName},`, `O documento enviado por ${v.senderName} (${v.organizationName}) expira em breve. Assine antes que expire.`],
       cta: "Revisar e assinar",
     },
+    certificate_request: {
+      subject: (v) => `Assine com seu certificado digital: "${v.subject}"`,
+      lines: (v) => [
+        `Olá ${v.recipientName},`,
+        `Todas as partes já assinaram "${v.subject}". Falta a sua assinatura com certificado digital (token, certificado instalado ou arquivo .p12), feita com o Firmador CalaSign.`,
+      ],
+      cta: "Assinar com certificado",
+    },
     completed: {
       subject: (v) => `Concluído: "${v.subject}"`,
       lines: (v) => [`Olá ${v.recipientName},`, `Todas as partes assinaram "${v.subject}". Você pode baixar o documento final com o certificado de conclusão.`],
@@ -109,6 +134,14 @@ const T: Record<"es" | "pt-BR" | "en", Dict> = {
       subject: (v) => `Expiring soon: "${v.subject}" is waiting for your signature`,
       lines: (v) => [`Hi ${v.recipientName},`, `The document ${v.senderName} (${v.organizationName}) sent you expires soon. Please sign it before it expires.`],
       cta: "Review and sign",
+    },
+    certificate_request: {
+      subject: (v) => `Sign with your digital certificate: "${v.subject}"`,
+      lines: (v) => [
+        `Hi ${v.recipientName},`,
+        `Everyone has signed "${v.subject}". Your digital-certificate signature (token, installed certificate or .p12 file) is still pending; it is done with the CalaSign Signer app.`,
+      ],
+      cta: "Sign with certificate",
     },
     completed: {
       subject: (v) => `Completed: "${v.subject}"`,

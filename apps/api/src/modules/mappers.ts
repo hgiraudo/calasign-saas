@@ -58,6 +58,18 @@ export const toRecipient = (r: any): Recipient => ({
   replacedBy: r.replaced_by ?? null,
   inPersonHost: r.in_person_host_user_id ? { id: r.in_person_host_user_id, name: r.in_person_host_name ?? "" } : null,
   identity: toRecipientIdentity(r),
+  signatureType: r.signature_type ?? "electronic",
+  certificateRequirements:
+    r.signature_type === "certificate"
+      ? {
+          matchIdDocument: typeof r.certificate_requirements?.matchIdDocument === "boolean" ? r.certificate_requirements.matchIdDocument : Boolean(r.id_document_number),
+          allowedIssuers: Array.isArray(r.certificate_requirements?.allowedIssuers) ? r.certificate_requirements.allowedIssuers : [],
+          requireQualified: r.certificate_requirements?.requireQualified === true,
+        }
+      : null,
+  certificateSignature: r.cert_sig_status
+    ? { status: r.cert_sig_status, position: r.cert_sig_position, signedAt: iso(r.cert_sig_signed_at), commonName: r.cert_sig_cn ?? null, issuer: r.cert_sig_issuer ?? null }
+    : null,
 });
 
 export const toField = (r: any): Field => ({
@@ -99,7 +111,11 @@ export async function loadDetail(db: Db, tenantId: string, envelopeId: string): 
   const [docs, recips, fields] = await Promise.all([
     loadDocuments(db, envelopeId),
     db.query(
-      `SELECT r.*, h.name AS in_person_host_name FROM recipients r LEFT JOIN users h ON h.id = r.in_person_host_user_id
+      `SELECT r.*, h.name AS in_person_host_name,
+         cs.status AS cert_sig_status, cs.position AS cert_sig_position, cs.signed_at AS cert_sig_signed_at,
+         cs.common_name AS cert_sig_cn, cs.issuer AS cert_sig_issuer
+       FROM recipients r LEFT JOIN users h ON h.id = r.in_person_host_user_id
+       LEFT JOIN certificate_signatures cs ON cs.recipient_id = r.id
        WHERE r.envelope_id = $1 ORDER BY r.routing_order, r.created_at, r.id`,
       [envelopeId],
     ),

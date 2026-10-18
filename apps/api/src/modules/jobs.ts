@@ -1,4 +1,5 @@
-import { finalizeEnvelopePdf, type CertificateRecipient, type StampField } from "@calasign/pdf";
+import { addCadesSignatureIncremental, finalizeEnvelopePdf, type CertificateRecipient, type StampField } from "@calasign/pdf";
+import { certsignStage } from "./certsign";
 import { config } from "../config";
 import type { Db } from "../infra/db";
 import { SYSTEM, appendEvent } from "../infra/evidence";
@@ -32,7 +33,7 @@ interface Deps {
   log: { info(o: object, m?: string): void; warn(o: object, m?: string): void; error(o: object, m?: string): void };
 }
 
-const LINK_KINDS: TemplateKind[] = ["invite", "reminder", "completed", "expiry_warning"];
+const LINK_KINDS: TemplateKind[] = ["invite", "reminder", "completed", "expiry_warning", "certificate_request"];
 const TELEGRAM_HINT = {
   es: "¿Preferís recibir los avisos por Telegram?",
   "pt-BR": "Prefere receber os avisos pelo Telegram?",
@@ -215,9 +216,10 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
     signaturePng: sigImages.get(`${r.id}:signature`) ?? null,
     note: replacementNote(r, recips, e.locale),
     identity: identities.get(r.id) ?? null,
+    certificateSignature: r.role === "signer" && r.signature_type === "certificate",
   }));
-  const completedAt = new Date().toISOString();
-  const chainHead = events[events.length - 1]?.hash ?? "";
+  let completedAt = new Date().toISOString();
+  let chainHead = events[events.length - 1]?.hash ?? "";
 
   // Adjuntos de los firmantes y branding de la organización.
   const attachRows = await d.db.query<any>(
@@ -272,18 +274,30 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
     },
   };
 
+  // Firma con certificado propio: primero firman los titulares sobre el PDF sin sello; después se sella encima.
+  const certStage = await certsignStage(d, e, recips, input);
+  if (certStage.kind === "waiting") return;
+  if (certStage.kind === "seal") {
+    completedAt = certStage.completedAt;
+    chainHead = certStage.chainHead;
+  }
+  const sealOnce = (tsaUrl: string | null) =>
+    certStage.kind === "seal"
+      ? addCadesSignatureIncremental(certStage.workingPdf, provider, { fieldName: "SelloCalaSign", reason: "Sello de integridad CalaSign", name: "CalaSign", location: "Cloud", tsaUrl })
+      : finalizeEnvelopePdf(input, { provider, tsaUrl });
+
   let timestamped = Boolean(config.seal.tsaUrl);
   let tsaError: string | null = null;
   let pdf: Uint8Array;
   try {
-    pdf = await finalizeEnvelopePdf(input, { provider, tsaUrl: config.seal.tsaUrl });
+    pdf = await sealOnce(config.seal.tsaUrl);
   } catch (err) {
     if (!config.seal.tsaUrl || config.seal.tsaRequired) throw err;
     // La TSA falló: si no es obligatoria, se sella en B-B y queda constancia.
     tsaError = String(err);
     timestamped = false;
     d.log.warn({ envelopeId: e.id, err: tsaError }, "TSA no disponible: sellado sin sello de tiempo");
-    pdf = await finalizeEnvelopePdf(input, { provider, tsaUrl: null });
+    pdf = await sealOnce(null);
   }
   // Sello de empresa y PAdES B-LT/B-LTA (revisiones incrementales).
   const evidence = await applyEvidencePipeline(d.db, d.log, e, pdf, evPlan, { timestamped, orgName: org?.name ?? "" });

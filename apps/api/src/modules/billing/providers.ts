@@ -119,6 +119,19 @@ export async function stripeCreateSubscriptionCheckout(p: {
   return { id: s.id, url: s.url };
 }
 
+/** Cancela una suscripción de inmediato. Si ya estaba cancelada o no existe, no es un error (el webhook se reintenta). */
+export async function stripeCancelSubscription(id: string) {
+  const path = `/v1/subscriptions/${encodeURIComponent(id)}`;
+  try {
+    await stripe(path, null, "DELETE");
+  } catch (err) {
+    if (!(err instanceof ProviderError) || (err.status !== 404 && err.status !== 400)) throw err;
+    if (err.status === 404) return;
+    const s = await stripe(path, null, "GET").catch(() => null);
+    if (s?.status !== "canceled") throw err;
+  }
+}
+
 export async function stripeCreatePortal(customerId: string, returnUrl: string): Promise<string> {
   const s = await stripe("/v1/billing_portal/sessions", { customer: customerId, return_url: returnUrl });
   return s.url;

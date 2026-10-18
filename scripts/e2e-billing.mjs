@@ -264,6 +264,7 @@ if (process.env.E2E_FAKE_PROVIDERS_PORT) {
   const mpPayments = new Map();
   const mpPreapprovals = new Map();
   const stripeSessions = new Map();
+  const cancelled = [];
   const fake = createServer((req, res) => {
     let body = "";
     req.on("data", (c) => (body += c));
@@ -283,6 +284,14 @@ if (process.env.E2E_FAKE_PROVIDERS_PORT) {
       if (req.method === "GET" && path.startsWith("/v1/checkout/sessions/")) {
         const ses = stripeSessions.get(path.split("/").pop());
         return ses ? send(200, ses) : send(404, { error: { message: "No such checkout.session" } });
+      }
+      if (req.method === "DELETE" && path.startsWith("/v1/subscriptions/")) {
+        cancelled.push(`stripe:${path.split("/").pop()}`);
+        return send(200, { id: path.split("/").pop(), status: "canceled" });
+      }
+      if (req.method === "PUT" && path.startsWith("/preapproval/")) {
+        cancelled.push(`mp:${path.split("/").pop()}`);
+        return send(200, { id: path.split("/").pop(), status: "cancelled" });
       }
       if (req.method === "POST" && path === "/checkout/preferences") return send(201, { id: "pref_e2e", init_point: "https://mp.test/pref_e2e", sandbox_init_point: "https://sandbox.mp.test/pref_e2e" });
       if (req.method === "GET" && path.startsWith("/v1/payments/")) return send(200, mpPayments.get(path.split("/").pop()) ?? {});
@@ -382,6 +391,18 @@ if (process.env.E2E_FAKE_PROVIDERS_PORT) {
   bill = await owner("GET", "/v1/billing");
   assert(bill.plan.id === "enterprise" && bill.subscription.provider === "mercadopago", "MP: preapproval autorizado → Enterprise");
   ok("Mercado Pago (servidor falso): Checkout Pro, x-signature verificada, pago aprobado consultado a la API, preapproval");
+
+  // Dos suscripciones pagadas con distintos medios: queda la última y la anterior se cancela (no cobran las dos).
+  await stripeHook({ id: `evt_${stamp}_sub2`, type: "checkout.session.completed", data: { object: { id: "cs_sub2", mode: "subscription", customer: "cus_e2e", subscription: "sub_e2e2", metadata: { tenantId: me.tenant.id, plan: "starter" } } } });
+  bill = await owner("GET", "/v1/billing");
+  assert(bill.plan.id === "starter" && bill.subscription.provider === "stripe", "Stripe pagada con MP vigente → queda Stripe");
+  assert(cancelled.includes("mp:pre_e2e"), "la suscripción de Mercado Pago anterior se canceló");
+  mpPreapprovals.set("pre_e2e2", { id: "pre_e2e2", status: "authorized", external_reference: `sub:${me.tenant.id}:business`, next_payment_date: null });
+  await mpHook("pre_e2e2", "subscription_preapproval");
+  bill = await owner("GET", "/v1/billing");
+  assert(bill.plan.id === "business" && bill.subscription.provider === "mercadopago", "MP autorizada con Stripe vigente → queda MP");
+  assert(cancelled.includes("stripe:sub_e2e2"), "la suscripción de Stripe anterior se canceló");
+  ok("suscripciones de dos medios a la vez: la anterior se cancela");
   fake.close();
 }
 

@@ -26,6 +26,9 @@ const cleanup = () => {
   if (work && process.env.E2E_KEEP_DATA !== "1") { try { rmSync(work, { recursive: true, force: true }); } catch {} }
 };
 process.on("exit", cleanup);
+// SIGINT/SIGTERM/SIGHUP (Ctrl+C, `timeout`, cierre de terminal) terminan sin el evento "exit": se convierten en
+// process.exit para que la limpieza corra también en esos casos.
+for (const [sig, n] of [["SIGINT", 2], ["SIGTERM", 15], ["SIGHUP", 1]]) process.on(sig, () => process.exit(128 + n));
 process.on("uncaughtException", (e) => { console.error(e); cleanup(); process.exit(1); });
 
 function assert(cond, msg) {

@@ -167,21 +167,26 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
 
     // Subir imágenes antes de la transacción (no se bloquea el sobre durante I/O externa).
     const stored: { purpose: "signature" | "initials"; kind: string; text: string | null; fileId: string; key: string; png: Buffer }[] = [];
-    for (const [purpose, png, meta] of [
-      ["signature", sigPng, input.signature],
-      ["initials", iniPng, input.initials],
-    ] as const) {
-      if (!png || !meta) continue;
-      const fileId = uuidv7();
-      const key = `tenants/${e0.tenant_id}/envelopes/${e0.id}/signatures/${fileId}.png`;
-      await s.blobs.put(key, png, "image/png");
-      stored.push({ purpose, kind: meta.kind, text: meta.text ?? null, fileId, key, png });
-    }
-
     // Si la firma no se completa (faltan campos, no es su turno, el sobre cerró…), las imágenes ya subidas no las
     // referencia nada: sin fila en `files` la retención nunca las borra y la firma del titular quedaba guardada para
     // siempre, una copia por cada intento fallido.
     const discardStored = () => Promise.all(stored.map((x) => s.blobs.delete(x.key).catch(() => {})));
+    try {
+      for (const [purpose, png, meta] of [
+        ["signature", sigPng, input.signature],
+        ["initials", iniPng, input.initials],
+      ] as const) {
+        if (!png || !meta) continue;
+        const fileId = uuidv7();
+        const key = `tenants/${e0.tenant_id}/envelopes/${e0.id}/signatures/${fileId}.png`;
+        await s.blobs.put(key, png, "image/png");
+        stored.push({ purpose, kind: meta.kind, text: meta.text ?? null, fileId, key, png });
+      }
+    } catch (err) {
+      // Falló la subida de las iniciales con la firma ya subida: esa firma tampoco la referencia nada.
+      await discardStored();
+      throw err;
+    }
     await s.db.tx(async (t) => {
       const e = await lockEnvelope(t, e0.tenant_id, e0.id);
       const r = await t.one<any>(`SELECT * FROM recipients WHERE id = $1`, [r0.id]);

@@ -25,9 +25,10 @@ import { checkSenderValue, insertEnvelopeField } from "./fieldvalues";
 import { applyInPersonFlags } from "./experience";
 import { applyIdentityFlags } from "./identity/kyc";
 import { applyCertificateFlags } from "./certsign";
-import { assignFieldIds, pruneDanglingConditions, saveFieldLogic } from "./logic";
+import { assignFieldIds, formulaRefs, pruneDanglingConditions, saveFieldLogic } from "./logic";
 import { paymentBlocksCompletion } from "./billing/payments";
 import { enforceEnvelopeQuota } from "./billing/plans";
+import { deleteFilesIfUnused } from "./file-cleanup";
 
 /** Bloquea el sobre para serializar cambios y eventos. */
 export async function lockEnvelope(db: Db, tenantId: string, id: string) {
@@ -281,12 +282,16 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
 
   app.delete<P>("/v1/envelopes/:id", { preHandler: auth }, async (req, reply) => {
     const a = A(req);
+    let fileIds: string[] = [];
     await s.db.tx(async (t) => {
       const e = await lockEnvelope(t, a.tenantId, req.params.id);
       requireDraft(e);
+      fileIds = (await t.query<any>(`SELECT file_id FROM documents WHERE envelope_id = $1`, [e.id])).map((d) => d.file_id);
       await t.query(`DELETE FROM envelopes WHERE id = $1`, [e.id]);
       await t.query(`DELETE FROM envelope_events WHERE envelope_id = $1`, [e.id]);
     });
+    // Los PDF del borrador que no usa nadie más (una plantilla, otro sobre) se borran del almacenamiento.
+    await deleteFilesIfUnused(s.db, s.blobs, fileIds);
     return reply.code(204).send();
   });
 
@@ -343,15 +348,18 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
 
   app.delete<P>("/v1/envelopes/:id/documents/:documentId", { preHandler: auth }, async (req, reply) => {
     const a = A(req);
+    let fileId: string | null = null;
     await s.db.tx(async (t) => {
       const e = await lockEnvelope(t, a.tenantId, req.params.id);
       requireDraft(e);
-      const d = await t.one<any>(`DELETE FROM documents WHERE id = $1 AND envelope_id = $2 RETURNING id, name`, [req.params.documentId, e.id]);
+      const d = await t.one<any>(`DELETE FROM documents WHERE id = $1 AND envelope_id = $2 RETURNING id, name, file_id`, [req.params.documentId, e.id]);
       if (!d) throw notFound("Documento");
+      fileId = d.file_id;
       await pruneDanglingConditions(t, "fields", e.id);
       await appendEvent(t, { tenantId: a.tenantId, envelopeId: e.id, type: "document.removed", actor: a.actor, data: { documentId: d.id, name: d.name } });
       await touch(t, e.id);
     });
+    await deleteFilesIfUnused(s.db, s.blobs, [fileId]);
     return reply.code(204).send();
   });
 
@@ -597,7 +605,7 @@ export async function sendEnvelope(t: Db, tenantId: string, envelopeId: string, 
   await enforceEnvelopeQuota(t, tenantId);
   const docs = await loadDocuments(t, e.id);
   const recips = await t.query<any>(`SELECT * FROM recipients WHERE envelope_id = $1`, [e.id]);
-  const fields = await t.query<any>(`SELECT recipient_id, type FROM fields WHERE envelope_id = $1`, [e.id]);
+  const fields = await t.query<any>(`SELECT recipient_id, type, label, formula FROM fields WHERE envelope_id = $1`, [e.id]);
   const problems: string[] = [];
   if (docs.length === 0) problems.push("Agregá al menos un documento");
   const signers = recips.filter((r) => r.role === "signer");
@@ -608,6 +616,21 @@ export async function sendEnvelope(t: Db, tenantId: string, envelopeId: string, 
       problems.push(`${s1.name} no tiene ningún campo de firma`);
   }
   if (e.expires_at && new Date(e.expires_at) <= new Date()) problems.push("La fecha de vencimiento ya pasó");
+  // Una fórmula que cita un campo número que ya no está (se borró con su destinatario o su documento, o el rol de la
+  // plantilla no firma) se calcularía con 0 y el PDF firmado diría, p. ej., "Total: 0". PUT fields lo valida; quitar
+  // destinatarios o documentos, y crear el sobre desde una plantilla, no.
+  const numberLabels = new Set(fields.filter((f) => f.type === "number" && f.label).map((f) => String(f.label).trim().toLowerCase()));
+  for (const f of fields) {
+    if (!f.formula) continue;
+    let refs: string[] = [];
+    try {
+      refs = formulaRefs(f.formula);
+    } catch {
+      /* se valida al guardar */
+    }
+    const missing = refs.filter((r) => !numberLabels.has(r.trim().toLowerCase()));
+    if (missing.length) problems.push(`La fórmula de "${f.label ?? "un campo"}" cita ${missing.map((m) => `{${m}}`).join(", ")}, que ya no está en el sobre`);
+  }
   // El cobro tiene que quedar a cargo de un firmante: si se le cambió el rol, el sobre no podría completarse.
   const pay = await t.one<any>(`SELECT recipient_id FROM envelope_payments WHERE envelope_id = $1`, [e.id]);
   if (pay && !signers.some((r) => r.id === pay.recipient_id)) problems.push("Quien paga el cobro tiene que ser un firmante");

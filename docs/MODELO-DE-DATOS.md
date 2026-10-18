@@ -88,6 +88,7 @@ El diagrama de arriba es el núcleo (0001). Cada bloque funcional agrega su prop
 | `0024_r10_core` | `templates.created_by_api_key`: una plantilla creada con una API key es de esa key (la completa y ve las restringidas que creó) |
 | `0025_r10_integrations` | `crm_mappings.created_by_api_key`: un mapeo de CRM creado con una API key tiene dueño; si la key se revoca, el webhook deja de enviar |
 | `0026_r10_evidence` | `workflows.created_by_api_key`: un workflow creado con una API key queda a su nombre; los envíos del link público se revisan contra esa key |
+| `0027_r11_identity` | `memberships.password_allowed`: las membresías creadas por alta JIT de SSO o por SCIM no aceptan sesiones con contraseña hasta que el dueño del correo la restablezca (evita el pre-secuestro de cuentas) |
 
 Reglas: una migración por bloque, solo aditiva salvo cuando se recrea un `CHECK` para sumar un valor; nunca se edita una
 migración ya aplicada en un entorno.

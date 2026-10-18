@@ -445,6 +445,8 @@ export function NegotiationPanel({ base, mode, initial }: { base: string; mode: 
       {proposing && (
         <ProposeModal
           view={view}
+          busy={busy}
+          error={error}
           onClose={() => setProposing(false)}
           onSubmit={async (body) => {
             const v = await call("/proposals", body);
@@ -456,7 +458,19 @@ export function NegotiationPanel({ base, mode, initial }: { base: string; mode: 
   );
 }
 
-function ProposeModal({ view, onClose, onSubmit }: { view: NegotiationView; onClose: () => void; onSubmit: (b: unknown) => void }) {
+function ProposeModal({
+  view,
+  busy,
+  error,
+  onClose,
+  onSubmit,
+}: {
+  view: NegotiationView;
+  busy: boolean;
+  error: string | null;
+  onClose: () => void;
+  onSubmit: (b: unknown) => void;
+}) {
   const ta = useAgrText();
   const { t } = useI18n();
   const [kind, setKind] = useState<"variable" | "clause">(view.variables.length ? "variable" : "clause");
@@ -513,11 +527,13 @@ function ProposeModal({ view, onClose, onSubmit }: { view: NegotiationView; onCl
           <span>{ta("neg.reason")}</span>
           <input value={reason} onChange={(e) => setReason(e.target.value)} />
         </label>
+        {/* El error de la propuesta se muestra acá: el del panel queda tapado por el modal. */}
+        <ErrorBox error={error} />
         <div className="modal-foot">
           <button type="button" className="btn btn-ghost" onClick={onClose}>
             {t("common.cancel")}
           </button>
-          <button type="submit" className="btn btn-primary" disabled={!key || value === current}>
+          <button type="submit" className="btn btn-primary" disabled={busy || !key || value === current}>
             {ta("neg.send")}
           </button>
         </div>

@@ -46,6 +46,7 @@ export function TemplatesPage() {
   const remove = async () => {
     if (!deleting) return;
     setBusy(true);
+    setError(null);
     try {
       await api(`/v1/templates/${deleting.id}`, { method: "DELETE" });
       setDeleting(null);
@@ -114,6 +115,7 @@ export function TemplatesPage() {
               <span>{t("tpl.name")}</span>
               <input required autoFocus maxLength={200} value={name} onChange={(e) => setName(e.target.value)} />
             </label>
+            <ErrorBox error={error} />
             <div className="modal-foot">
               <button type="button" className="btn btn-ghost" onClick={() => setCreating(false)}>
                 {t("common.cancel")}
@@ -142,6 +144,7 @@ export function TemplatesPage() {
           }
         >
           <p>{t("tpl.deleteConfirm")}</p>
+          <ErrorBox error={error} />
         </Modal>
       )}
     </div>

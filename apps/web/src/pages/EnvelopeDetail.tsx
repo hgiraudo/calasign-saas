@@ -350,6 +350,7 @@ export function EnvelopeDetailPage() {
             <span>{t("detail.voidReason")}</span>
             <textarea rows={3} value={reason} onChange={(e) => setReason(e.target.value)} autoFocus maxLength={1000} />
           </label>
+          <ErrorBox error={error} />
         </Modal>
       )}
     </div>

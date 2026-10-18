@@ -1,5 +1,5 @@
 // Envío masivo (Fase 4): listado, asistente (plantilla → CSV → revisar y enviar) y detalle con progreso.
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import type { BulkSend, BulkSendItem, BulkValidationResult, TemplateSummary } from "@calasign/shared";
 import { api, errorText, HttpError } from "../lib/api";
@@ -308,17 +308,21 @@ export function BulkDetailPage() {
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
 
+  // Solo se aplica la respuesta más reciente: al cambiar de filtro, una respuesta vieja no pisa la lista nueva.
+  const seq = useRef(0);
   const load = useCallback(async () => {
+    const mine = ++seq.current;
     try {
       const [bulk, list] = await Promise.all([
         api<BulkSend>(`/v1/bulk-sends/${id}`),
         api<{ items: BulkSendItem[]; total: number }>(`/v1/bulk-sends/${id}/items?limit=500${filter ? `&status=${filter}` : ""}`),
       ]);
+      if (mine !== seq.current) return;
       setB(bulk);
       setItems(list.items);
       setTotal(list.total);
     } catch (e) {
-      setError(errorText(e));
+      if (mine === seq.current) setError(errorText(e));
     }
   }, [id, filter]);
 
@@ -335,6 +339,7 @@ export function BulkDetailPage() {
 
   const cancel = async () => {
     setBusy(true);
+    setError(null);
     try {
       setB(await api<BulkSend>(`/v1/bulk-sends/${id}/cancel`, { method: "POST" }));
       setConfirm(false);
@@ -457,6 +462,7 @@ export function BulkDetailPage() {
           }
         >
           <p>{st("bulk.cancelConfirm")}</p>
+          <ErrorBox error={error} />
         </Modal>
       )}
     </div>

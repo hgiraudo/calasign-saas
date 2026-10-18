@@ -709,6 +709,8 @@ function SigningFlow({
             <span>{t("sign.declineReason")}</span>
             <textarea rows={3} maxLength={1000} value={reason} onChange={(e) => setReason(e.target.value)} autoFocus />
           </label>
+          {/* El error del rechazo se muestra acá: el de la página queda tapado por el modal. */}
+          <ErrorBox error={error} />
         </Modal>
       )}
     </div>

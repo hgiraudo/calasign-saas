@@ -15,6 +15,7 @@ import { useSignerText } from "../lib/i18n-signer";
 import { InPersonBlocked, InPersonDone, InPersonHandover, RequestCopyButton, useFocusOnMount } from "../components/ExperienceExtras";
 import { useExpText } from "../lib/i18n-experience";
 import { IdentityGate } from "../components/IdentityGate";
+import { AiSignerAssist } from "../components/AiPanels";
 
 type Adopted = SignatureImageInput & { dataUrl: string };
 
@@ -608,6 +609,7 @@ function SigningFlow({
 
       <main className="signer-main">
         <EnvelopeIntro session={session} />
+        <AiSignerAssist base={base} />
         <ErrorBox error={error} />
         {session.documents.map((d) => {
           const docFields = session.fields.filter((f) => f.documentId === d.id);

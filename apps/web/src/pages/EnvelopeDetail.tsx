@@ -9,6 +9,7 @@ import { useSignerText } from "../lib/i18n-signer";
 import type { Recipient } from "@calasign/shared";
 import { SaveAsTemplateButton } from "../components/SaveAsTemplate";
 import { ShareControl } from "../components/ShareControl";
+import { AiMetadataPanel } from "../components/AiPanels";
 import { CorrectionModal, InPersonButton, ResendCopyButton } from "../components/EnvelopeExperience";
 import { useExpText } from "../lib/i18n-experience";
 import { IdentityBadge } from "../components/IdentityControls";
@@ -146,6 +147,8 @@ export function EnvelopeDetailPage() {
         </div>
       )}
       {env.message && <p className="message-box">{env.message}</p>}
+
+      <AiMetadataPanel envelopeId={env.id} completed={env.status === "completed"} />
 
       <div className="grid-2">
         <section className="card pad">

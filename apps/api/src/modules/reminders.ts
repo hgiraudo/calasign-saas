@@ -37,12 +37,15 @@ export async function runAutomaticReminders(db: Db, now = new Date()) {
   );
   for (const e of expiring) {
     await db.tx(async (t) => {
-      const cur = await t.one<any>(`SELECT status, expiry_warning_sent_at FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
+      const cur = await t.one<any>(`SELECT status, expiry_warning_sent_at, expires_at FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
       if (cur?.status !== "sent" || cur.expiry_warning_sent_at) return;
       const group = await currentSignerGroup(t, e.id);
       const pending = group.recipients.filter((r) => r.status === "sent" || r.status === "viewed");
       for (const r of pending)
-        await enqueue(t, "notify", { kind: "expiry_warning", envelopeId: e.id, recipientId: r.id, tenantId: e.tenant_id }, { dedupeKey: `expiry-warning:${r.id}` });
+        await enqueue(t, "notify", { kind: "expiry_warning", envelopeId: e.id, recipientId: r.id, tenantId: e.tenant_id }, {
+          // La clave incluye el vencimiento: si se extiende (corrección en vuelo), el aviso del nuevo vencimiento sale.
+          dedupeKey: `expiry-warning:${r.id}:${new Date(cur.expires_at).toISOString()}`,
+        });
       await t.query(`UPDATE envelopes SET expiry_warning_sent_at = $2 WHERE id = $1`, [e.id, now.toISOString()]);
       if (pending.length)
         await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "envelope.expiry_warning", actor: SYSTEM, data: { recipients: pending.length } });

@@ -300,7 +300,8 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
         }
       }
       await t.query(`UPDATE template_roles SET signature_type = 'electronic' WHERE template_id = $1 AND role <> 'signer'`, [tpl.id]);
-      await t.query(`DELETE FROM template_fields f USING template_roles r WHERE f.role_id = r.id AND r.template_id = $1 AND r.role = 'cc'`, [tpl.id]);
+      // Como en los sobres: un rol que pasa a copia o a aprobador no conserva campos (el aprobador no firma).
+      await t.query(`DELETE FROM template_fields f USING template_roles r WHERE f.role_id = r.id AND r.template_id = $1 AND r.role IN ('cc','approver')`, [tpl.id]);
       await touch(t, tpl.id);
     });
     return loadTemplateDetail(s.db, a.tenantId, req.params.id);
@@ -617,7 +618,10 @@ export async function insertEnvelopeFromTemplate(
   }
   onRecipients?.(recMap);
   const fieldMap = new Map<string, string>();
+  // Plantillas guardadas antes de que el cambio de rol borrara los campos: copia y aprobador no llevan campos.
+  const fieldless = new Set(tpl.roles.filter((r) => r.role !== "signer").map((r) => r.id));
   for (const f of tpl.fields) {
+    if (fieldless.has(f.roleId)) continue;
     const recipientId = recMap.get(f.roleId);
     const documentId = docMap.get(f.documentId);
     if (!recipientId || !documentId) continue;

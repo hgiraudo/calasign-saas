@@ -232,4 +232,22 @@ assert(fromEnv.fields.find((f) => f.label === "Monto")?.value === null, "no copi
 assert(fromEnv.fields.find((f) => f.label === "Versión")?.value === "Condiciones v3", "conserva el valor fijo");
 step("plantilla creada desde el sobre (sin datos de los firmantes)");
 
+// ── Rol que pasa a aprobador: pierde sus campos (como en los sobres) ──
+const rolesNow = fromEnv.roles.map((r) => ({ id: r.id, name: r.name, role: r.role, routingOrder: r.routingOrder }));
+const second = rolesNow.find((r) => r.name === "Firmante 2");
+second.role = "approver";
+const afterRoles = await api("PUT", `/v1/templates/${fromEnv.template.id}/roles`, { roles: rolesNow });
+assert(!afterRoles.fields.some((f) => f.roleId === second.id), "el aprobador no conserva campos de la plantilla");
+const envAp = await api("POST", "/v1/envelopes/from-template", {
+  templateId: fromEnv.template.id,
+  recipients: [
+    { roleId: rolesNow[0].id, name: `Uno ${stamp}`, email: `uno+${stamp}@example.com` },
+    { roleId: second.id, name: `Aprueba ${stamp}`, email: `aprueba+${stamp}@example.com` },
+    { roleId: rolesNow[2].id, name: `Copia ${stamp}`, email: `copia+${stamp}@example.com` },
+  ],
+});
+const apRecipient = envAp.recipients.find((r) => r.role === "approver");
+assert(apRecipient && !envAp.fields.some((f) => f.recipientId === apRecipient.id), "el sobre no le da campos al aprobador");
+step("rol de plantilla cambiado a aprobador: sin campos en la plantilla ni en el sobre");
+
 console.log("\nE2E PRODUCTIVIDAD OK");

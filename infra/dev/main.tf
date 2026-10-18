@@ -196,6 +196,17 @@ resource "aws_iam_role_policy" "app" {
     Version = "2012-10-17"
     Statement = [
       { Sid = "Archivos", Effect = "Allow", Action = ["s3:GetObject", "s3:PutObject", "s3:ListBucket", "s3:ListBucketVersions", "s3:DeleteObject", "s3:DeleteObjectVersion"], Resource = [aws_s3_bucket.blobs.arn, "${aws_s3_bucket.blobs.arn}/*"] },
+      {
+        # El rol es de la instancia: lo usan la app (usuario calasign) y root (backup y deploy). Con la app
+        # comprometida no se puede reemplazar un paquete de deploy (lo extrae root) ni borrar los backups, ni
+        # siquiera sus versiones anteriores. Los paquetes los sube el operador con sus credenciales y la
+        # expiración de ambos prefijos la hace la regla de ciclo de vida.
+        Sid      = "SinTocarDeployNiBackups"
+        Effect   = "Deny"
+        Action   = ["s3:DeleteObject", "s3:DeleteObjectVersion"]
+        Resource = ["${aws_s3_bucket.blobs.arn}/releases/*", "${aws_s3_bucket.blobs.arn}/backups/*"]
+      },
+      { Sid = "PaquetesSoloLectura", Effect = "Deny", Action = ["s3:PutObject"], Resource = "${aws_s3_bucket.blobs.arn}/releases/*" },
       { Sid = "Sello", Effect = "Allow", Action = ["kms:Sign", "kms:GetPublicKey", "kms:DescribeKey"], Resource = aws_kms_key.seal.arn },
       { Sid = "Parametros", Effect = "Allow", Action = ["ssm:GetParameter"], Resource = "arn:aws:ssm:us-east-1:${var.account_id}:parameter/calasign-saas/dev/*" },
       {

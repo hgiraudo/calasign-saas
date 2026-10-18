@@ -45,15 +45,27 @@ trap 'rm -rf "$TMP"' EXIT
   | grep -vE '^var/|(^|/)tfplan$|\.tfplan$|\.tfstate|\.tfvars$' \
   | while IFS= read -r f; do if [ -e "$f" ]; then printf '%s\n' "$f"; fi; done > "$TMP/files"
 tar -czf "$TMP/rel.tgz" -T "$TMP/files"
+# El servidor verifica el paquete contra este hash: el rol de la instancia (el mismo que usa la app) puede escribir
+# en el bucket, y un paquete cambiado entre la subida y la descarga correría como root (backup, Caddy, hardening).
+SHA=$(sha256sum "$TMP/rel.tgz" | cut -d' ' -f1)
 aws s3 cp --only-show-errors "$TMP/rel.tgz" "s3://$BUCKET/releases/$REL.tgz"
 
 read -r -d '' REMOTE <<EOF || true
 set -euo pipefail
 export AWS_REGION=$REGION PATH=/opt/node/bin:/usr/local/bin:\$PATH
 D=/opt/calasign/releases/$REL
-mkdir -p \$D
+# releases/ es del usuario calasign (el de la app): sin -p, si alguien ya creó la carpeta el deploy corta en vez de
+# extraer como root dentro de una carpeta ajena.
+mkdir \$D
 PKG=\$(mktemp /var/tmp/calasign-rel.XXXXXX)
+# Lo que corre o se instala como root (script de backup, unidades, hardening, Caddyfile) sale de una copia solo de
+# root: la carpeta de la versión pasa a ser del usuario calasign, y la app (o un postinstall de pnpm) podía cambiar
+# esos archivos antes de que root los ejecute o instale.
+HOSTCFG=\$(mktemp -d /var/tmp/calasign-host.XXXXXX)
+trap 'rm -rf "\$PKG" "\$HOSTCFG"' EXIT
 aws s3 cp --only-show-errors s3://$BUCKET/releases/$REL.tgz \$PKG
+echo "$SHA  \$PKG" | sha256sum -c --quiet || { echo "El paquete descargado no coincide con el subido: deploy abortado" >&2; exit 1; }
+tar -xzf \$PKG -C \$HOSTCFG infra/dev/host
 # En líneas separadas: con "tar ... && rm", set -e no corta si tar falla (disco lleno, paquete corrupto) y el
 # deploy seguía con una versión a medio extraer.
 tar -xzf \$PKG -C \$D
@@ -66,7 +78,7 @@ sudo -u calasign env HOME=/var/lib/calasign PATH=\$PATH COREPACK_ENABLE_DOWNLOAD
 # Backup previo obligatorio, antes de tocar nada del host (secretos, hardening, Caddy): la versión nueva aplica
 # sus migraciones al arrancar y el rollback de abajo solo vuelve al código anterior, no deshace el esquema.
 # Sin backup no se despliega, y la versión activa sigue con su configuración intacta.
-H=\$D/infra/dev/host
+H=\$HOSTCFG/infra/dev/host
 # El script nuevo se prueba desde el paquete y recién se instala si el backup salió bien: si se instalaba antes y
 # fallaba, el deploy abortaba pero el backup diario ya corría con el script roto.
 if ! bash \$H/calasign-backup.sh; then

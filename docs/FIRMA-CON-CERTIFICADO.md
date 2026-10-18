@@ -15,7 +15,7 @@ privada nunca sale del dispositivo: el servidor manda un hash y recibe una firma
   "role": "signer",
   "signatureType": "certificate",          // "electronic" (por defecto) | "certificate"
   "certificateRequirements": {
-    "matchIdDocument": true,               // el certificado tiene que corresponder a idDocumentNumber
+    "matchIdDocument": true,               // el certificado tiene que corresponder a idDocumentNumber (exige cadena de confianza)
     "allowedIssuers": ["ICP-Brasil"],      // partes del DN del emisor; vacío = cualquiera (exige cadena de confianza)
     "requireQualified": false              // exigir una CA del almacén de confianza (TRUST_STORE_DIR)
   }
@@ -27,7 +27,7 @@ privada nunca sale del dispositivo: el servidor manda un hash y recibe una firma
   reasignación pasan el tipo de firma y los requisitos al nuevo destinatario.
 - Un firmante con certificado no necesita un campo de firma en el documento. Si tiene campos, los completa en la
   firma electrónica, como siempre.
-- `matchIdDocument` solo se aplica si el destinatario tiene `idDocumentNumber`.
+- `matchIdDocument` solo se aplica si el destinatario tiene `idDocumentNumber`. Cuando se aplica, la cadena tiene que llegar a una raíz de confianza (`TRUST_STORE_DIR`): cualquiera puede emitirse un certificado con el documento de otra persona, así que la coincidencia sola no prueba la identidad.
 
 ## 2. Ciclo del sobre
 
@@ -83,7 +83,7 @@ POST /v1/signing/:token/certsign/pairing ─▶ código XXXXX-XXXXX (10 min, un 
   - EKU compatible con firma de documentos, si el certificado declara EKU;
   - que no sea un certificado de CA;
   - emisor dentro de `allowedIssuers` (si se usa, la cadena tiene que llegar a una raíz de confianza: el nombre del emisor se puede falsificar);
-  - cadena hasta una raíz del almacén de confianza (obligatorio con `requireQualified`; si no, es una advertencia);
+  - cadena hasta una raíz del almacén de confianza (obligatorio con `requireQualified`, con `allowedIssuers` y cuando hay que verificar el documento de identidad; si no, es una advertencia);
   - **identidad**: un número del certificado tiene que coincidir con el documento declarado. Se busca primero en el
     otherName de ICP-Brasil (CPF `2.16.76.1.3.1`, CNPJ `2.16.76.1.3.3`), después en el `serialNumber` del sujeto
     (incluidos los prefijos ETSI como `PNOPE-`, `IDCCO-`) y al final en el CN (`NOMBRE:CPF`). Se comparan dígitos, así
@@ -155,7 +155,7 @@ POST /v1/signing/:token/certsign/pairing ─▶ código XXXXX-XXXXX (10 min, un 
 | Variable | Uso |
 |---|---|
 | `TSA_URL`, `TSA_REQUIRED` | Sello de tiempo de cada firma con certificado (los mismos que el sello de la plataforma) |
-| `TRUST_STORE_DIR` | Raíces de confianza para `requireQualified` y para marcar el certificado como confiable |
+| `TRUST_STORE_DIR` | Raíces de confianza para `requireQualified`, `allowedIssuers`, la verificación del documento de identidad y para marcar el certificado como confiable |
 | `FIRMADOR_DIST_DIR` | Carpeta con los binarios del Firmador que se ofrecen para descargar |
 
 ## 7. Pruebas

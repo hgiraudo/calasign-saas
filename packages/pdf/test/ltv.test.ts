@@ -153,6 +153,15 @@ describe("PAdES B-LT / B-LTA", () => {
     } finally {
       await csc.close();
     }
+    // Un prestador que firma con una clave que no es la del certificado de la credencial: se rechaza.
+    const other = await pki.issue("Otra Persona (CSC)");
+    const liar = await startMockCsc({ username: "u", password: "p", pin: "1234", credentials: { "cred-1": { identity: holder, chainDer: [other.certDer, pki.intermediate.certDer, pki.root.certDer] } } });
+    try {
+      const p2 = new CscSignatureProvider({ id: "csc:mock", baseUrl: liar.url, auth: { type: "basic", username: "u", password: "p" }, pin: "1234" });
+      await expect(p2.signDigest(new Uint8Array(32).fill(7))).rejects.toThrow(/no corresponde al certificado/);
+    } finally {
+      await liar.close();
+    }
   }, 120_000);
 });
 

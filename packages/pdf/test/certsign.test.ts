@@ -110,6 +110,11 @@ describe("controles del certificado", () => {
     expect(ca.errors.join(" ")).toMatch(/autoridad certificante|firmar/);
     const expired = await checkSigningCertificate(chainOf(id), { now: new Date(Date.now() + 5 * 365 * 86400_000) });
     expect(expired.errors.join(" ")).toMatch(/vencido/);
+ 
+    // Documento correcto pero cadena sin ancla de confianza: la identidad no queda probada.
+    const untrustedId = await checkSigningCertificate(chainOf(id), { idDocumentNumber: "12345678", trustAnchors: [] });
+    expect(untrustedId.ok).toBe(false);
+    expect(untrustedId.errors.join(" ")).toMatch(/para verificar la identidad/);
   });
 });
 

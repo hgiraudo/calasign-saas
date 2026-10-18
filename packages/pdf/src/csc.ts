@@ -1,6 +1,7 @@
 // Cliente de la Cloud Signature Consortium API v2 (CSC): firma remota con certificados custodiados por
 // un prestador (QTSP, ECD acreditada por ONAC, AC de ICP-Brasil, la CA de Calasign…). Implementa
 // SignatureProvider: el documento no sale de CalaSign, solo el hash.
+import { X509Certificate, constants, publicDecrypt, timingSafeEqual } from "node:crypto";
 import type { SignatureProvider } from "./provider";
 
 export type CscAuth =
@@ -158,6 +159,27 @@ export class CscSignatureProvider implements SignatureProvider {
     const sad = await this.client.authorize(id, [h]);
     const [sig] = await this.client.signHash(id, sad, [h]);
     if (!sig) throw new CscError("signatures/signHash no devolvió firma");
-    return new Uint8Array(Buffer.from(sig, "base64"));
+    const out = new Uint8Array(Buffer.from(sig, "base64"));
+    // No se incrusta una firma que no corresponda al certificado de la credencial y al hash pedido.
+    const [leaf] = await this.certificateChain();
+    if (!verifyRsaSha256Digest(leaf, digest, out)) {
+      throw new CscError("La firma devuelta por el prestador no corresponde al certificado de la credencial o al hash pedido");
+    }
+    return out;
+  }
+}
+
+const SHA256_DIGEST_INFO = Buffer.from("3031300d060960864801650304020105000420", "hex");
+
+/** Verifica una firma RSA PKCS#1 v1.5 sobre un digest SHA-256 ya calculado (lo que devuelve signHash con sha256WithRSA). */
+export function verifyRsaSha256Digest(certDer: Uint8Array, digest: Uint8Array, signature: Uint8Array): boolean {
+  try {
+    const key = new X509Certificate(Buffer.from(certDer)).publicKey;
+    if (key.asymmetricKeyType !== "rsa") return false;
+    const decoded = publicDecrypt({ key, padding: constants.RSA_PKCS1_PADDING }, Buffer.from(signature));
+    const expected = Buffer.concat([SHA256_DIGEST_INFO, Buffer.from(digest)]);
+    return decoded.length === expected.length && timingSafeEqual(decoded, expected);
+  } catch {
+    return false;
   }
 }

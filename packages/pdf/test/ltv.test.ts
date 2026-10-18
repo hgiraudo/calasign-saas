@@ -212,6 +212,41 @@ describe("PAdES B-LT / B-LTA", () => {
     expect(v.summary.allValid).toBe(false);
   }, 120_000);
 
+  it("una revisión posterior cuyo /Prev saltea el xref firmado no pasa como evidencia", async () => {
+    // rev0 dice "Monto: 1.000.000"; rev1 (antes de firmar) lo cambia a "Monto: 1.000"; después, la firma.
+    const doc = await PDFDocument.create();
+    const font = await doc.embedFont(StandardFonts.Helvetica);
+    doc.addPage([595, 842]).drawText("Monto: 1.000.000", { x: 50, y: 780, size: 14, font });
+    const base = await doc.save({ useObjectStreams: false });
+    const u = await IncrementalUpdate.open(base);
+    const page = u.doc.getPages()[0];
+    const fontName = (page.node.Resources()!.lookup(PDFName.of("Font")) as unknown as { entries(): [PDFName, unknown][] }).entries()[0][0].decodeText();
+    page.node.set(PDFName.of("Contents"), u.add(u.context.flateStream(`BT /${fontName} 14 Tf 50 780 Td (Monto: 1.000) Tj ET`)));
+    u.touch(page.ref);
+    const seal = new LocalKeyProvider("lab-seal", pki.seal.keyPem, pki.sealChainPem);
+    const signed = await addCadesSignatureIncremental(u.serialize(), seal, { fieldName: "Firma" });
+
+    // Revisión con un objeto inocuo y /Prev al xref de rev0: el lector resuelve la página con la versión de rev0.
+    const sd = await PDFDocument.load(signed, { updateMetadata: false });
+    const n = sd.context.largestObjectNumber + 1;
+    const obj = `${n} 0 obj\n<< /X 1 >>\nendobj\n`;
+    const xrefAt = signed.length + obj.length;
+    const rev0StartXref = Number([...Buffer.from(base).toString("latin1").matchAll(/startxref\s+(\d+)/g)].pop()![1]);
+    const tail =
+      `xref\n0 1\n0000000000 65535 f \n${n} 1\n${String(signed.length).padStart(10, "0")} 00000 n \n` +
+      `trailer\n<< /Size ${n + 1} /Root ${sd.context.trailerInfo.Root!.toString()} /Prev ${rev0StartXref} >>\nstartxref\n${xrefAt}\n%%EOF\n`;
+    const attacked = new Uint8Array(Buffer.concat([Buffer.from(signed), Buffer.from(obj + tail, "latin1")]));
+    const v = await validatePdf(attacked, { trustAnchors: [pki.root.certDer] });
+    expect(v.signatures[0].integrity.valid).toBe(true);
+    expect(v.signatures[0].changesAfter).toBe("content");
+    expect(v.summary.allValid).toBe(false);
+
+    // La misma revisión con /Prev al xref firmado sí es inocua.
+    const okTail = tail.replace(`/Prev ${rev0StartXref}`, `/Prev ${Number([...Buffer.from(signed).toString("latin1").matchAll(/startxref\s+(\d+)/g)].pop()![1])}`);
+    const benign = new Uint8Array(Buffer.concat([Buffer.from(signed), Buffer.from(obj + okTail, "latin1")]));
+    expect((await validatePdf(benign, { trustAnchors: [pki.root.certDer] })).signatures[0].changesAfter).toBe("evidence_only");
+  }, 120_000);
+
   it("una firma posterior visible o un cambio de capas en el catálogo no pasan como evidencia", async () => {
     const seal = new LocalKeyProvider("lab-seal", pki.seal.keyPem, pki.sealChainPem);
     const signed = await sealedBT(seal);

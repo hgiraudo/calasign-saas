@@ -36,4 +36,15 @@ describe("renderDocumentPdf", () => {
     expect(text).toContain("Ítem 80");
     expect(text).toContain("Firma — Cliente");
   });
+
+  it("una fila de tabla más alta que la página se parte entre páginas sin perder texto", async () => {
+    const words = Array.from({ length: 900 }, (_, i) => `palabra${i}`);
+    const { pdf, pageCount } = await renderDocumentPdf([
+      { type: "table", header: [[{ text: "Cláusula" }], [{ text: "Texto" }]], rows: [[[{ text: "1" }], [{ text: words.join(" ") + " FINAL" }]]] },
+    ]);
+    expect(pageCount).toBeGreaterThanOrEqual(2);
+    const text = (await extractPdfPlainText(pdf)).text;
+    expect(text).toContain("FINAL");
+    expect(words.filter((w) => !new RegExp(`\\b${w}\\b`).test(text))).toEqual([]);
+  });
 });

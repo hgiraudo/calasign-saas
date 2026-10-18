@@ -45,7 +45,7 @@ export const CreateBulkSendInput = z
     subject: z.string().trim().max(300).optional().nullable(),
     message: z.string().max(5000).optional().nullable(),
     locale: z.enum(LOCALES).optional(),
-    expiresAt: z.string().datetime().optional().nullable(),
+    expiresAt: z.string().datetime({ offset: true }).optional().nullable(),
     /** Filas en JSON… */
     rows: z.array(BulkRowInput).max(BULK_MAX_ROWS).optional(),
     /** …o un CSV (encabezados: `Rol.name`, `Rol.email`, `Rol.phone`, `Rol.channels`, `field.Etiqueta`, `subject`). */
@@ -125,7 +125,7 @@ export const WebFormInput = z.object({
   prefill: z.record(z.string(), z.string().max(2000)).optional(),
   active: z.boolean().default(true),
   maxUses: z.number().int().min(1).max(1_000_000).optional().nullable(),
-  expiresAt: z.string().datetime().optional().nullable(),
+  expiresAt: z.string().datetime({ offset: true }).optional().nullable(),
   /** Pide un código por correo antes de mostrar el documento. */
   requireOtp: z.boolean().default(false),
   /** Permite mostrarlo en un iframe desde los orígenes autorizados de la organización. */

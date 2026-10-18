@@ -209,7 +209,7 @@ export const GenerateDocumentInput = z.object({
   subject: z.string().trim().min(1).max(300).optional(),
   message: z.string().max(5000).nullable().optional(),
   locale: z.enum(LOCALES).optional(),
-  expiresAt: z.string().datetime().nullable().optional(),
+  expiresAt: z.string().datetime({ offset: true }).nullable().optional(),
   recipients: z.array(GenerateRecipientInput).min(1).max(30),
   send: z.boolean().default(true),
   /** Permite generar aunque falten variables (quedan vacías). */

@@ -72,7 +72,8 @@ const MARK_TAGS: Record<string, MarkKind> = {
 };
 
 const PATH = String.raw`@?[A-Za-zÀ-ÿ_][\wÀ-ÿ]*(?:\.[\wÀ-ÿ@]+)*`;
-const RE_IF_LINE = /^\s*\{\{#if\s+(.+?)\}\}\s*$/;
+// La condición no puede contener "}}": así "{{#if x}}texto{{/if}}" solo en una línea queda como if en línea.
+const RE_IF_LINE = /^\s*\{\{#if\s+((?:(?!\}\}).)+)\}\}\s*$/;
 const RE_ELSE_LINE = /^\s*\{\{else\}\}\s*$/;
 const RE_ENDIF_LINE = /^\s*\{\{\/if\}\}\s*$/;
 const RE_EACH_LINE = new RegExp(String.raw`^\s*\{\{#each\s+(${PATH})(?:\s+as\s+([A-Za-z_]\w*))?\s*\}\}\s*$`);
@@ -520,6 +521,8 @@ function toNum(v: unknown): number | null {
   if (typeof v === "boolean") return v ? 1 : 0;
   if (typeof v !== "string" || !v.trim()) return null;
   let s = v.trim().replace(/[^\d,.-]/g, "");
+  // Sin dígitos no es un número ("a convenir", "-"): Number("") daría 0 y el contrato diría "US$ 0,00".
+  if (!/\d/.test(s)) return null;
   // 1.234,56 → 1234.56 ; 1,234.56 → 1234.56
   if (s.includes(",") && s.includes(".")) s = s.lastIndexOf(",") > s.lastIndexOf(".") ? s.replace(/\./g, "").replace(",", ".") : s.replace(/,/g, "");
   else if (s.includes(",")) s = s.replace(",", ".");

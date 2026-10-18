@@ -33,6 +33,7 @@ import { storageRoutes } from "./modules/storage-export";
 import { customDomainRoutes } from "./modules/custom-domains";
 import { identityRoutes } from "./modules/identity";
 import { evidenceRoutes } from "./modules/evidence";
+import { agreementRoutes } from "./modules/agreements";
 
 export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolean | object }) {
   const app = Fastify({
@@ -126,6 +127,7 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
   await storageRoutes(app, services);
   await customDomainRoutes(app, services);
   await evidenceRoutes(app, services);
+  await agreementRoutes(app, services);
 
   if (config.devMailbox) {
     // Local: todo el buzón. Entornos compartidos (dev): solo los mensajes de la organización de la sesión.

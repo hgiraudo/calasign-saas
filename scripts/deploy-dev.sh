@@ -28,6 +28,7 @@ COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm --filter @calasign/web build >/d
 
 echo "▶ empaquetando $REL"
 TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
 # Nunca viajan: var/ (claves de desarrollo), ni planes/estados/variables de Terraform.
 { git ls-files -co --exclude-standard; find apps/web/dist -type f; } | sort -u \
   | grep -vE '^var/|(^|/)tfplan$|\.tfplan$|\.tfstate|\.tfvars$' > "$TMP/files"
@@ -46,14 +47,27 @@ chown -R calasign:calasign \$D
 cd \$D
 sudo -u calasign env HOME=/var/lib/calasign PATH=\$PATH COREPACK_ENABLE_DOWNLOAD_PROMPT=0 CI=true \
   corepack pnpm install --frozen-lockfile --filter '@calasign/api...' 2>&1 | tail -3
-aws ssm get-parameter --name /calasign-saas/dev/SEAL_CHAIN_PEM --query Parameter.Value --output text > /etc/calasign/seal.chain.pem
+# Cadena del sello y secretos: se arman en temporales y se reemplazan con mv. Si SSM falla, el deploy corta
+# antes de tocar los archivos vigentes (la versión activa y el rollback los siguen necesitando intactos).
+CHAIN_TMP=\$(mktemp /etc/calasign/seal.chain.pem.XXXXXX)
+aws ssm get-parameter --name /calasign-saas/dev/SEAL_CHAIN_PEM --query Parameter.Value --output text > \$CHAIN_TMP
+grep -q "BEGIN CERTIFICATE" \$CHAIN_TMP || { rm -f \$CHAIN_TMP; echo "SEAL_CHAIN_PEM vacío o inválido en SSM: deploy abortado" >&2; exit 1; }
 umask 077
-printf 'SECRET_KEY=%s\n' "\$(aws ssm get-parameter --with-decryption --name /calasign-saas/dev/SECRET_KEY --query Parameter.Value --output text)" > /etc/calasign/secrets.env
+SK=\$(aws ssm get-parameter --with-decryption --name /calasign-saas/dev/SECRET_KEY --query Parameter.Value --output text)
+[ -n "\$SK" ] || { rm -f \$CHAIN_TMP; echo "SECRET_KEY vacío en SSM: deploy abortado" >&2; exit 1; }
+# systemd interpreta comillas y barras invertidas en EnvironmentFile: cada valor va entre comillas dobles
+# con \ y " escapados, para que llegue a la app tal cual.
+envq() { local v; v=\$(printf '%s' "\$2" | sed -e 's/\\\\/\\\\\\\\/g' -e 's/"/\\\\"/g'); printf '%s="%s"\\n' "\$1" "\$v"; }
+SECRETS_TMP=\$(mktemp /etc/calasign/secrets.env.XXXXXX)
+envq SECRET_KEY "\$SK" > \$SECRETS_TMP
 for k in TELEGRAM_BOT_TOKEN TELEGRAM_BOT_USERNAME TELEGRAM_WEBHOOK_SECRET WHATSAPP_TOKEN WHATSAPP_PHONE_NUMBER_ID SMTP_URL ANTHROPIC_API_KEY TWILIO_ACCOUNT_SID TWILIO_AUTH_TOKEN TWILIO_FROM VERIFF_API_KEY VERIFF_SHARED_SECRET TRUORA_API_KEY TRUORA_FLOW_ID TRUORA_WEBHOOK_SECRET GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET DROPBOX_CLIENT_ID DROPBOX_CLIENT_SECRET MS_CLIENT_ID MS_CLIENT_SECRET STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET MP_ACCESS_TOKEN MP_WEBHOOK_SECRET; do
   v=\$(aws ssm get-parameter --with-decryption --name /calasign-saas/dev/\$k --query Parameter.Value --output text 2>/dev/null || true)
-  [ -n "\$v" ] && printf '%s=%s\n' "\$k" "\$v" >> /etc/calasign/secrets.env
+  if [ -n "\$v" ]; then envq "\$k" "\$v" >> \$SECRETS_TMP; fi
 done
-chmod 644 /etc/calasign/seal.chain.pem
+chmod 600 \$SECRETS_TMP
+chmod 644 \$CHAIN_TMP
+mv \$SECRETS_TMP /etc/calasign/secrets.env
+mv \$CHAIN_TMP /etc/calasign/seal.chain.pem
 umask 022
 
 # Configuración del host (idempotente): hardening de systemd, backup diario de Postgres y Caddy.

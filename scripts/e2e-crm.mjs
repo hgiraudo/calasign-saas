@@ -4,7 +4,7 @@
 // apuntando a ellos. Uso: node scripts/e2e-crm.mjs   (un argumento de URL se ignora)
 import { spawn } from "node:child_process";
 import { createHash, createHmac, randomUUID } from "node:crypto";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import http from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -278,6 +278,13 @@ const cleanup = () => {
   try {
     api_.kill("SIGTERM");
   } catch {}
+  // La base PGlite y los archivos de la corrida pesan decenas de MB: sin borrarlos /tmp se llena
+  // con cada ejecución (E2E_KEEP_DATA=1 los conserva para depurar).
+  if (process.env.E2E_KEEP_DATA !== "1") {
+    try {
+      rmSync(dataDir, { recursive: true, force: true });
+    } catch {}
+  }
 };
 process.on("exit", cleanup);
 process.on("uncaughtException", (e) => {

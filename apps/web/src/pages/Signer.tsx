@@ -16,6 +16,7 @@ import { InPersonBlocked, InPersonDone, InPersonHandover, RequestCopyButton, use
 import { useExpText } from "../lib/i18n-experience";
 import { IdentityGate } from "../components/IdentityGate";
 import { PaymentGate, SignerPaymentAfterSign } from "../components/BillingExtras";
+import { AiSignerAssist } from "../components/AiPanels";
 
 type Adopted = SignatureImageInput & { dataUrl: string };
 
@@ -621,6 +622,7 @@ function SigningFlow({
 
       <main className="signer-main">
         <EnvelopeIntro session={session} />
+        <AiSignerAssist base={base} />
         <ErrorBox error={error} />
         {session.documents.map((d) => {
           const docFields = session.fields.filter((f) => f.documentId === d.id);

@@ -10,6 +10,7 @@ import { usePlatformText } from "../lib/i18n-platform";
 import { useIdnText } from "../lib/i18n-identity";
 import { useEvidenceText } from "../lib/i18n-evidence";
 import { useBillingText } from "../lib/i18n-billing";
+import { useAiText } from "../lib/i18n-ai";
 
 export function SettingsHomePage() {
   const { t } = useI18n();
@@ -20,10 +21,12 @@ export function SettingsHomePage() {
   const pl = usePlatformText();
   const evt = useEvidenceText();
   const bl = useBillingText();
+  const ai = useAiText();
   const { can } = useAccess();
   const sections: { to: string; title: string; desc: string; perm?: Permission }[] = [
     { to: "/app/bulk", title: sc("nav.bulk"), desc: sc("bulk.intro"), perm: "envelopes:create" },
     { to: "/app/xml", title: evt("nav.xml"), desc: evt("settings.xml"), perm: "envelopes:create" },
+    { to: "/app/settings/ai", title: ai("nav.ai"), desc: ai("settings.ai"), perm: "settings:manage" },
     { to: "/app/settings/certificates", title: evt("nav.certificates"), desc: evt("settings.certificates"), perm: "settings:manage" },
     { to: "/app/forms", title: sc("nav.forms"), desc: sc("forms.intro"), perm: "envelopes:create" },
     { to: "/app/settings/team", title: tm("nav.team"), desc: tm("settings.team") },

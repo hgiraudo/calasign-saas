@@ -1,3 +1,4 @@
+import { AiSettingsPage } from "./pages/AiSettings";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { RequireAuth } from "./lib/auth";
@@ -73,6 +74,7 @@ export function App() {
         <Route path="/app/settings/billing" element={<BillingPage />} />
         <Route path="/app/settings" element={<SettingsHomePage />} />
         <Route path="/app/settings/certificates" element={<CertificatesPage />} />
+        <Route path="/app/settings/ai" element={<AiSettingsPage />} />
         <Route path="/app/xml" element={<XmlSignPage />} />
         <Route path="/app/settings/team" element={<TeamPage />} />
         <Route path="/app/settings/audit" element={<AuditLogPage />} />

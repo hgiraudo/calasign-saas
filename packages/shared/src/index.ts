@@ -9,3 +9,4 @@ export * from "./platform";
 export * from "./identity";
 export * from "./evidence";
 export * from "./billing";
+export * from "./ai";

@@ -10,3 +10,4 @@ export * from "./ltv";
 export * from "./validate";
 export * from "./csc";
 export { certUrls, hasRevocationInfo, parseCert, fingerprint, nameToString, commonName, serialHex } from "./pki";
+export { extractPdfText, substringBox, type PageText, type TextLine } from "./text";

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SealOptionsPanel } from "../components/EvidenceExtras";
 import { PaymentOptionsPanel } from "../components/BillingExtras";
+import { AiFieldDetect, AiReviewPanel } from "../components/AiPanels";
 import { useExpText } from "../lib/i18n-experience";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import type { Channel, Document, EnvelopeDetail, Locale, RecipientRole } from "@calasign/shared";
@@ -261,6 +262,18 @@ export function EnvelopeEditPage() {
         />
       )}
 
+      {step === "fields" && (
+        <AiFieldDetect
+          envelopeId={id}
+          documents={detail.documents}
+          signers={detail.recipients.filter((r) => r.role === "signer")}
+          fields={fields}
+          onAdd={(added) => {
+            setFields([...fields, ...added]);
+            setFieldsDirty(true);
+          }}
+        />
+      )}
       {step === "fields" && (
         <FieldEditor
           envelopeId={id}
@@ -679,6 +692,7 @@ function ReviewStep({
         </fieldset>
         <SealOptionsPanel envelopeId={env.id} />
         <PaymentOptionsPanel envelopeId={env.id} recipients={detail.recipients} />
+        <AiReviewPanel envelopeId={env.id} />
         <button type="button" className="btn btn-primary btn-block" disabled={busy || !subject.trim()} onClick={send}>
           {busy ? t("edit.sending") : t("edit.send")}
         </button>

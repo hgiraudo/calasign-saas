@@ -152,8 +152,12 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
       // Restablecerla prueba que controla el correo: la contraseña vale también en las organizaciones que lo sumaron
       // por SSO o SCIM (ver 0029_r11_identity).
       await t.query(`UPDATE memberships SET password_allowed = true WHERE user_id = $1 AND NOT password_allowed`, [row.user_id]);
-      // Se cierran todas las sesiones abiertas: si alguien tenía la contraseña vieja, queda afuera.
+      // Se cierran todas las sesiones abiertas: si alguien tenía la contraseña vieja, queda afuera. También los tokens
+      // de apps OAuth que autorizó (con la contraseña robada se podía autorizar una app propia y, con su refresh token,
+      // seguir entrando después del cambio) y los desafíos de 2FA pendientes de un login con la contraseña vieja.
       await t.query(`DELETE FROM sessions WHERE user_id = $1`, [row.user_id]);
+      await t.query(`UPDATE oauth_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL`, [row.user_id]);
+      await t.query(`DELETE FROM login_challenges WHERE user_id = $1`, [row.user_id]);
       await t.query(`UPDATE password_resets SET used_at = now() WHERE user_id = $1 AND used_at IS NULL`, [row.user_id]);
       return row.user_id as string;
     });

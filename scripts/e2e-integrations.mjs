@@ -198,6 +198,15 @@ try {
   if (!sent.valid || sent.evt.data.envelope.metadata.externalId !== `ORD-${stamp}`) fail("payload de envelope.sent");
   ok("webhook envelope.sent con metadata del integrador");
 
+  // Al firmante embebido no se le escribe: el recordatorio no lo cuenta ni deja un envelope.reminded en la evidencia.
+  {
+    const rem = await api("POST", `/v1/envelopes/${envelope.id}/remind`);
+    if (rem.notified !== 0) fail(`el recordatorio contó al firmante embebido (notified=${rem.notified})`);
+    const evs = await api("GET", `/v1/envelopes/${envelope.id}/events`);
+    if (evs.items.some((e) => e.type === "envelope.reminded")) fail("la evidencia registra un recordatorio que no se mandó");
+    ok("recordar a un firmante embebido no cuenta ni registra un recordatorio");
+  }
+
   // Reintentos: el endpoint 'flaky' falló → pendiente con próximo intento; reintento manual → OK
   const flakyList = await waitFor(async () => {
     const r = await api("GET", `/v1/webhooks/${flaky.webhook.id}/deliveries`);

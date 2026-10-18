@@ -59,4 +59,45 @@ describe("cola de trabajos", () => {
       await db.close();
     }
   }, 180_000);
+
+  it("un job vivo renueva su toma: el sweep no lo da por muerto aunque tarde más de 10 minutos", async () => {
+    const { createDb, migrate } = await import("../src/infra/db");
+    const { enqueue, requeueStuckJobs, startWorker } = await import("../src/infra/queue");
+    const db = await createDb();
+    await migrate(db);
+    await db.query(`DELETE FROM jobs`);
+
+    let release: () => void = () => {};
+    let calls = 0;
+    const worker = startWorker(db, {
+      handlers: {
+        finalize: () => {
+          calls++;
+          return new Promise<void>((resolve) => (release = resolve));
+        },
+      } as any,
+      pollMs: 20,
+      heartbeatMs: 50,
+      log: { info() {}, error() {} },
+    });
+    try {
+      await enqueue(db, "finalize", { envelopeId: "x" }, { maxAttempts: 1 });
+      await until(async () => calls === 1);
+
+      // Último intento, vivo, que ya lleva 11 minutos: el latido renueva la toma antes de que pase el sweep.
+      await db.query(`UPDATE jobs SET locked_at = now() - interval '11 minutes'`);
+      await new Promise((r) => setTimeout(r, 300));
+      const gaveUp = await requeueStuckJobs(db);
+      expect(gaveUp).toEqual([]);
+      expect(await db.one<any>(`SELECT status, attempts FROM jobs`)).toMatchObject({ status: "running", attempts: 1 });
+
+      release();
+      await until(async () => (await db.one<any>(`SELECT status FROM jobs`))?.status === "done");
+      expect(calls).toBe(1);
+    } finally {
+      release();
+      await worker.stop();
+      await db.close();
+    }
+  }, 180_000);
 });

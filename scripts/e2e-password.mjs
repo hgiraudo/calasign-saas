@@ -114,4 +114,38 @@ await anon("POST", "/v1/auth/password/reset", { token: lockToken, password: "cla
 await client()("POST", "/v1/auth/login", { email: lockEmail, password: "clave-renovada-456" });
 step("10 intentos fallidos bloquean la cuenta (429 aun con la contraseña correcta); restablecerla la desbloquea");
 
+// Restablecer la contraseña revoca también los tokens de apps OAuth: con la contraseña vieja (robada) se podía
+// autorizar una app propia y seguir entrando con su refresh token después del cambio.
+{
+  const { createHash, randomBytes } = await import("node:crypto");
+  const oEmail = `oauthpw+${stamp}@example.com`;
+  const u = client();
+  await u("POST", "/v1/auth/signup", { name: "Olga OAuth", email: oEmail, password: "clave-robada-12345", organization: `OAuth clave ${stamp}` });
+  const REDIRECT = "http://localhost:5998/callback";
+  const app = await u("POST", "/v1/oauth/apps", { name: "App propia", grantTypes: ["authorization_code"], redirectUris: [REDIRECT], scopes: ["envelopes:read", "offline_access"], role: "member" });
+  const verifier = Buffer.from(randomBytes(48)).toString("base64url");
+  const challenge = createHash("sha256").update(verifier).digest("base64url");
+  const params = { response_type: "code", client_id: app.app.clientId, redirect_uri: REDIRECT, scope: "envelopes:read offline_access", state: "s", code_challenge: challenge, code_challenge_method: "S256" };
+  const dec = await u("POST", "/v1/oauth/authorize/decision", { ...params, approve: true });
+  const code = new URL(dec.redirectTo).searchParams.get("code");
+  const tokenPost = async (body) => {
+    const res = await fetch(BASE + "/oauth/token", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded", authorization: `Basic ${Buffer.from(`${app.app.clientId}:${app.clientSecret}`).toString("base64")}` },
+      body: new URLSearchParams(body),
+    });
+    return { status: res.status, body: await res.json() };
+  };
+  const tok = await tokenPost({ grant_type: "authorization_code", code, redirect_uri: REDIRECT, code_verifier: verifier });
+  assert(tok.status === 200 && tok.body.refresh_token, `canje del código: ${JSON.stringify(tok.body)}`);
+  await anon("POST", "/v1/auth/password/forgot", { email: oEmail }, { expect: 202 });
+  const t2 = (await resetLinkFor(anon, oEmail)).link.split("/reset/")[1];
+  await anon("POST", "/v1/auth/password/reset", { token: t2, password: "clave-propia-67890" }, { expect: 204 });
+  const acc = await fetch(BASE + "/v1/envelopes", { headers: { authorization: `Bearer ${tok.body.access_token}` } });
+  assert(acc.status === 401, `el access token sigue valiendo después del reset (HTTP ${acc.status})`);
+  const ref = await tokenPost({ grant_type: "refresh_token", refresh_token: tok.body.refresh_token });
+  assert(ref.status === 400 && ref.body.error === "invalid_grant", `el refresh token sigue valiendo después del reset (HTTP ${ref.status})`);
+  step("restablecer la contraseña revoca los tokens de apps OAuth del usuario");
+}
+
 console.log("\nE2E CONTRASEÑA OK");

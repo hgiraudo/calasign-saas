@@ -108,6 +108,13 @@ export async function createEnvelopeFromPdf(
   spec: PdfEnvelopeSpec,
 ): Promise<string> {
   const signers = spec.recipients.filter((r) => !r.cc);
+  // Cada rol de firma es de un solo firmante: con dos "Cliente", las marcas del documento iban todas al último y el
+  // otro quedaba sin campos (el envío fallaba con "no tiene ningún campo de firma"; como borrador, pasaba sin aviso).
+  const seenRoles = new Set<string>();
+  const dupRoles = [...new Set(signers.map((r) => r.role.toLowerCase()).filter((k) => (seenRoles.has(k) ? true : (seenRoles.add(k), false))))];
+  if (dupRoles.length) {
+    throw new AppError(422, "duplicate_roles", `Cada rol firma una sola vez; repetidos: ${dupRoles.join(", ")}`, { roles: dupRoles });
+  }
   const markRoles = [...new Set(spec.marks.map((m) => m.role))];
   const byRole = new Map(signers.map((r) => [r.role.toLowerCase(), r]));
   const missingRoles = markRoles.filter((r) => !byRole.has(r.toLowerCase()));
@@ -162,7 +169,9 @@ export async function createEnvelopeFromPdf(
   const recIds = new Map<string, string>();
   for (const r of spec.recipients) {
     const id = uuidv7();
-    recIds.set(r.role.toLowerCase(), id);
+    // Solo los firmantes reciben las marcas de su rol: una copia (cc) con el mismo nombre de rol se quedaba con los
+    // campos de firma del firmante.
+    if (!r.cc) recIds.set(r.role.toLowerCase(), id);
     await t.query(
       `INSERT INTO recipients (id, tenant_id, envelope_id, role, routing_order, name, email, phone, locale, channels)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,

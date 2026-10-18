@@ -37,6 +37,8 @@ export interface WorkerOptions {
   pollMs?: number;
   log: { info(o: object, m?: string): void; error(o: object, m?: string): void };
   onTick?: () => Promise<void>;
+  /** Cada cuánto un job en curso renueva su `locked_at` (por defecto 60 s; el sweep da por muerto a uno sin renovar en 10 min). */
+  heartbeatMs?: number;
 }
 
 export function startWorker(db: Db, opts: WorkerOptions) {
@@ -65,6 +67,16 @@ export function startWorker(db: Db, opts: WorkerOptions) {
   // estado: un error tardío lo reprogramaría mientras corre el siguiente y saldría una vez más.
   async function run(job: JobRow) {
     const handler = opts.handlers[job.queue];
+    // Latido: mientras el job corre, renueva `locked_at`. Sin esto, un job vivo que tardaba más de 10 minutos (una
+    // finalización con TSA/OCSP lentos, un envío masivo grande) quedaba "trabado" para el sweep: lo devolvía a la cola
+    // y otro worker lo corría en paralelo, o, en el último intento, se registraba envelope.finalize_failed en la
+    // evidencia y se avisaba a los administradores aunque la finalización terminara bien.
+    const beat = setInterval(() => {
+      db.query(`UPDATE jobs SET locked_at = now() WHERE id = $1 AND attempts = $2 AND status = 'running'`, [job.id, job.attempts]).catch((e) =>
+        opts.log.error({ jobId: job.id, err: String(e) }, "no se pudo renovar el job en curso"),
+      );
+    }, opts.heartbeatMs ?? 60_000);
+    beat.unref?.();
     try {
       if (!handler) throw new Error(`sin handler para ${job.queue}`);
       await handler(job.payload, { id: job.id, attempts: job.attempts, maxAttempts: job.max_attempts });
@@ -80,6 +92,8 @@ export function startWorker(db: Db, opts: WorkerOptions) {
         [job.id, final ? "failed" : "pending", err.slice(0, 4000), String(backoffSec), job.attempts],
       );
       opts.log.error({ jobId: job.id, queue: job.queue, attempts: job.attempts, final, err: String(e) }, "job falló");
+    } finally {
+      clearInterval(beat);
     }
   }
 

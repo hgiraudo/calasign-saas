@@ -21,6 +21,17 @@ export async function attachmentRoutes(app: FastifyInstance, s: Services) {
   type P = { Params: { token: string; fieldId: string } };
   const rl = { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } };
 
+  /**
+   * Borra el archivo que el firmante reemplazó o quitó. Nada más lo referencia (la evidencia guarda su hash) y la
+   * retención solo borra el adjunto vigente de cada campo: si no, una foto del documento de identidad subida por error
+   * quedaba guardada para siempre.
+   */
+  async function discard(fileId: string | null) {
+    if (!fileId) return;
+    const row = await s.db.one<any>(`UPDATE files SET purged_at = now() WHERE id = $1 AND kind = 'attachment' AND purged_at IS NULL RETURNING storage_key`, [fileId]);
+    if (row) await s.blobs.delete(row.storage_key).catch(() => {});
+  }
+
   /** Verifica que el firmante pueda tocar ese campo ahora. Devuelve el campo. */
   async function guard(t: any, r0: any, e0: any, fieldId: string) {
     const e = await lockEnvelope(t, e0.tenant_id, e0.id);
@@ -66,8 +77,10 @@ export async function attachmentRoutes(app: FastifyInstance, s: Services) {
     await s.blobs.put(key, buf, type);
     const sha = sha256Hex(buf);
     const { ip, userAgent } = clientInfo(req);
+    let previous: string | null = null;
     const field = await s.db.tx(async (t) => {
       const { e, r, f } = await guard(t, r0, e0, req.params.fieldId);
+      previous = f.attachment_file_id ?? null;
       await t.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'attachment',$3,$4,$5,$6)`, [
         fileId,
         e.tenant_id,
@@ -86,16 +99,20 @@ export async function attachmentRoutes(app: FastifyInstance, s: Services) {
       });
       return t.one(`SELECT * FROM fields WHERE id = $1`, [f.id]);
     });
+    await discard(previous);
     return toField(field);
   });
 
   app.delete<P>("/v1/signing/:token/fields/:fieldId/attachment", rl, async (req) => {
     const { recipient: r0, envelope: e0 } = await resolveToken(s.db, req.params.token);
+    let previous: string | null = null;
     const field = await s.db.tx(async (t) => {
       const { f } = await guard(t, r0, e0, req.params.fieldId);
+      previous = f.attachment_file_id ?? null;
       await t.query(`UPDATE fields SET attachment_file_id = NULL, value = NULL, filled_at = NULL WHERE id = $1`, [f.id]);
       return t.one(`SELECT * FROM fields WHERE id = $1`, [f.id]);
     });
+    await discard(previous);
     return toField(field);
   });
 }

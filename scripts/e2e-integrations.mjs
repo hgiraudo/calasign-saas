@@ -154,10 +154,14 @@ try {
     fields: [
       { recipientId: signer, type: "signature", anchor: { text: "[[s1]]", offsetX: 0, offsetY: -45, width: 150, height: 40 } },
       { recipientId: signer, type: "date_signed", anchor: { text: "[[s1]]", offsetX: 60, offsetY: 0, width: 90, height: 14 } },
+      // Un desplegable por ancla conserva sus opciones (antes se perdían y el pedido daba 400).
+      { recipientId: signer, type: "dropdown", required: false, options: ["Contado", "Cuotas"], label: "Pago", anchor: { text: "[[s1]]", offsetX: 0, offsetY: 20, width: 90, height: 14 } },
       { documentId: doc.id, recipientId: signer, type: "name", page: 0, x: 0.1, y: 0.1, width: 0.3, height: 0.03 },
     ],
   });
   const sigField = withFields.fields.find((f) => f.type === "signature");
+  const dd = withFields.fields.find((f) => f.type === "dropdown");
+  if (!dd || JSON.stringify(dd.options) !== JSON.stringify(["Contado", "Cuotas"])) fail(`desplegable por ancla sin sus opciones: ${JSON.stringify(dd)}`);
   // "Firma: " en Helvetica 12 ≈ 37pt → el ancla empieza en x ≈ 337 de 595 (0.566); y del texto ≈ 842-200-12.
   if (!(sigField.x > 0.52 && sigField.x < 0.61)) fail(`x del ancla inesperada: ${sigField.x}`);
   if (!(sigField.y > (842 - 200 - 12 - 45 - 8) / 842 && sigField.y < (842 - 200 - 45 + 4) / 842)) fail(`y del ancla inesperada: ${sigField.y}`);

@@ -65,8 +65,9 @@ const hs = {
     "9001": { amount: "1500.50", dealname: "Renovación ACME", dealstage: "appointmentscheduled", contacts: ["c1"] },
     "9002": { amount: "980", dealname: "Alta Beta", dealstage: "appointmentscheduled", contacts: ["c2"] },
     "9003": { amount: "120", dealname: "Gamma en ráfaga", dealstage: "appointmentscheduled", contacts: ["c2"] },
+    "9004": { amount: "50", dealname: "Delta correo roto", dealstage: "appointmentscheduled", contacts: ["c3"] },
   },
-  contacts: { c1: { firstname: "Ana", lastname: "Pérez HS", email: "ana.hs@cliente.test", phone: "+573001112233" }, c2: { firstname: "Bruno", lastname: "Beta HS", email: "bruno.hs@cliente.test" } },
+  contacts: { c1: { firstname: "Ana", lastname: "Pérez HS", email: "ana.hs@cliente.test", phone: "+573001112233" }, c2: { firstname: "Bruno", lastname: "Beta HS", email: "bruno.hs@cliente.test" }, c3: { firstname: "Dora", lastname: "Delta HS", email: "dora@" } },
   files: [],
   notes: [],
   expire() {
@@ -436,6 +437,11 @@ assert(det.fields.some((f) => f.label === "Monto" && f.value === "1500.50"), "mo
 assert(det.envelope.metadata.crm?.objectId === "9001", "metadata del sobre con el registro");
 await waitFor(() => hs.deals["9001"].calasign_status === "sent", "write-back sent en HubSpot");
 step("HubSpot: envío desde el deal 9001 (contacto + monto mapeados) y write-back «sent»");
+
+// Un correo mal cargado en el CRM es un error del registro (422), no del servidor (antes: 500).
+const broken = await api("POST", `/v1/crm/mappings/${hsMap.id}/send`, { objectId: "9004" }, { raw: true });
+assert(broken.status === 422 && (await broken.json()).error?.code === "crm_invalid_record", `correo inválido en el CRM → 422 (HTTP ${broken.status})`);
+step("HubSpot: registro con un correo inválido → 422 crm_invalid_record");
 
 hs.expire(); // el access token vence: el próximo uso tiene que refrescar
 await signAll(sent.envelopeId, ["Ana Pérez HS", vendedor]);

@@ -189,6 +189,29 @@ describe("PAdES B-LT / B-LTA", () => {
     expect(v3.summary.allValid).toBe(true);
   }, 120_000);
 
+  it("una revisión posterior con un objeto duplicado se evalúa como la ve un lector (por el xref)", async () => {
+    const seal = new LocalKeyProvider("lab-seal", pki.seal.keyPem, pki.sealChainPem);
+    const signed = await sealedBT(seal);
+    // Revisión que cambia el contenido de la página (el xref apunta a la página alterada)…
+    const u = await IncrementalUpdate.open(signed);
+    const page = u.doc.getPages()[0];
+    const original = (await PDFDocument.load(signed, { updateMetadata: false })).getPages()[0].node.toString();
+    const ref = u.add(u.context.flateStream("BT /F1 24 Tf 50 700 Td (Monto: 1.000.000) Tj ET"));
+    page.node.set(PDFName.of("Contents"), ref);
+    u.touch(page.ref);
+    const altered = Buffer.from(u.serialize());
+    // …y deja después una copia del objeto de página original que el xref no referencia. pdf-lib se queda con la última
+    // definición en el archivo; un lector, con la que indica el xref.
+    const xrefAt = altered.lastIndexOf("xref\n", altered.lastIndexOf("startxref"));
+    const copy = Buffer.from(`${page.ref.objectNumber} ${page.ref.generationNumber} obj\n${original}\nendobj\n`, "latin1");
+    const tail = altered.subarray(xrefAt).toString("latin1").replace(/startxref\n(\d+)/, (_, n) => `startxref\n${Number(n) + copy.length}`);
+    const shadowed = new Uint8Array(Buffer.concat([altered.subarray(0, xrefAt), copy, Buffer.from(tail, "latin1")]));
+    const v = await validatePdf(shadowed, { trustAnchors: [pki.root.certDer] });
+    expect(v.signatures[0].integrity.valid).toBe(true);
+    expect(v.signatures[0].changesAfter).toBe("content");
+    expect(v.summary.allValid).toBe(false);
+  }, 120_000);
+
   it("una firma posterior visible o un cambio de capas en el catálogo no pasan como evidencia", async () => {
     const seal = new LocalKeyProvider("lab-seal", pki.seal.keyPem, pki.sealChainPem);
     const signed = await sealedBT(seal);

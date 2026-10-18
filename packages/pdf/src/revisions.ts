@@ -2,7 +2,22 @@
 // sello de documento) no toca lo que se ve; una que cambia páginas o anotaciones sí ("incremental saving attack"): la
 // firma anterior sigue verificando sobre su revisión, pero el documento que se muestra ya no es el firmado.
 import { createHash } from "node:crypto";
-import { PDFArray, PDFDict, PDFDocument, PDFName, PDFNumber, PDFRawStream, PDFRef, PDFStream, type PDFContext, type PDFObject } from "pdf-lib";
+import {
+  PDFArray,
+  PDFContext,
+  PDFDict,
+  PDFDocument,
+  PDFName,
+  PDFNumber,
+  PDFObjectParser,
+  PDFObjectStreamParser,
+  PDFRawStream,
+  PDFRef,
+  PDFStream,
+  decodePDFRawStream,
+  type PDFObject,
+} from "pdf-lib";
+import { findLastStartXref } from "./incremental";
 
 export type ChangesAfter = "none" | "evidence_only" | "content";
 
@@ -148,7 +163,8 @@ function lookupArray(ctx: PDFContext, o: PDFObject | undefined): PDFObject[] | u
 export async function changesAfterRevision(pdf: Uint8Array, end: number, laterSignatures: Set<string>, current?: PDFDocument): Promise<ChangesAfter> {
   if (end >= pdf.length) return "none";
   try {
-    const full = current ?? (await PDFDocument.load(pdf, { updateMetadata: false, ignoreEncryption: true }));
+    const loaded = current ?? (await PDFDocument.load(pdf, { updateMetadata: false, ignoreEncryption: true }));
+    const full = await asViewerSees(pdf, end, loaded);
     const signed = await PDFDocument.load(pdf.subarray(0, end), { updateMetadata: false, ignoreEncryption: true });
     const evidence = new Set([...laterSignatures].filter((k) => {
       const [, , c, d] = k.split(",").map(Number);
@@ -162,4 +178,208 @@ export async function changesAfterRevision(pdf: Uint8Array, end: number, laterSi
     // Si la revisión firmada no se puede leer, no se puede afirmar que lo que se muestra es lo firmado.
     return "content";
   }
+}
+
+// ───────────────────── Lo que muestra un lector de PDF ─────────────────────
+// pdf-lib ignora las tablas xref: lee los objetos en orden de archivo y se queda con la última definición de cada uno.
+// Un lector de PDF usa el xref (desde el último startxref, siguiendo /Prev). Una revisión agregada después de la firma
+// puede definir dos veces un objeto (el xref apunta a la versión alterada y una copia idéntica al original queda
+// después), apuntar un objeto a una versión vieja dentro de lo firmado o marcarlo libre: pdf-lib vería lo firmado y el
+// lector otra cosa. Por eso, en las revisiones posteriores a la firma, cada objeto se toma de donde lo toma el lector.
+
+type XrefEntry =
+  | { num: number; kind: "n"; offset: number }
+  | { num: number; kind: "f" }
+  | { num: number; kind: "c"; stream: number };
+
+interface XrefSection {
+  entries: XrefEntry[];
+  root: PDFObject | undefined;
+  prev: number | null;
+  xrefStm: number | null;
+}
+
+function numberOf(o: PDFObject | undefined): number | null {
+  return o instanceof PDFNumber ? o.asNumber() : null;
+}
+
+/** Objeto indirecto en `offset`: el encabezado tiene que ser "num gen obj" (con `expectNum`, ese número). */
+function objectAt(pdf: Uint8Array, offset: number, ctx: PDFContext, expectNum?: number): { num: number; gen: number; obj: PDFObject } {
+  const head = Buffer.from(pdf.subarray(offset, offset + 64)).toString("latin1");
+  const m = /^\s*(\d+)\s+(\d+)\s+obj/.exec(head);
+  if (!m || (expectNum !== undefined && Number(m[1]) !== expectNum)) throw new Error(`xref inconsistente en ${offset}`);
+  const obj = PDFObjectParser.forBytes(pdf.subarray(offset + m[0].length), ctx).parseObject();
+  return { num: Number(m[1]), gen: Number(m[2]), obj };
+}
+
+function readXrefSection(pdf: Uint8Array, offset: number, ctx: PDFContext): XrefSection {
+  const head = Buffer.from(pdf.subarray(offset, Math.min(pdf.length, offset + 16))).toString("latin1");
+  if (/^\s*xref/.test(head)) return readXrefTable(pdf, offset, ctx);
+  const { obj } = objectAt(pdf, offset, ctx);
+  if (!(obj instanceof PDFRawStream) || obj.dict.get(PDFName.of("Type")) !== PDFName.of("XRef")) throw new Error("startxref no apunta a un xref");
+  return readXrefStream(obj);
+}
+
+function readXrefTable(pdf: Uint8Array, offset: number, ctx: PDFContext): XrefSection {
+  const text = Buffer.from(pdf).toString("latin1");
+  let pos = offset;
+  const at = (src: string) => {
+    const r = new RegExp(src, "y");
+    r.lastIndex = pos;
+    const m = r.exec(text);
+    if (m) pos = r.lastIndex;
+    return m;
+  };
+  at("\\s*");
+  if (!at("xref")) throw new Error("xref esperado");
+  const entries: XrefEntry[] = [];
+  for (;;) {
+    at("\\s*");
+    if (text.startsWith("trailer", pos)) break;
+    const sub = at("(\\d+)[ \\t]+(\\d+)");
+    if (!sub) throw new Error("subsección xref inválida");
+    const first = Number(sub[1]);
+    const count = Number(sub[2]);
+    for (let k = 0; k < count; k++) {
+      at("\\s*");
+      const e = at("(\\d{10}) (\\d{5}) ([nf])");
+      if (!e) throw new Error("entrada xref inválida");
+      const num = first + k;
+      entries.push(e[3] === "n" ? { num, kind: "n", offset: Number(e[1]) } : { num, kind: "f" });
+    }
+  }
+  const trailer = PDFObjectParser.forBytes(pdf.subarray(pos + "trailer".length), ctx).parseObject();
+  if (!(trailer instanceof PDFDict)) throw new Error("trailer inválido");
+  return {
+    entries,
+    root: trailer.get(PDFName.of("Root")),
+    prev: numberOf(trailer.get(PDFName.of("Prev"))),
+    xrefStm: numberOf(trailer.get(PDFName.of("XRefStm"))),
+  };
+}
+
+function readXrefStream(stream: PDFRawStream): XrefSection {
+  const d = stream.dict;
+  const nums = (o: PDFObject | undefined) => (o instanceof PDFArray ? o.asArray().map((x) => numberOf(x) ?? 0) : null);
+  const w = nums(d.get(PDFName.of("W")));
+  if (!w || w.length !== 3) throw new Error("xref stream sin /W");
+  const index = nums(d.get(PDFName.of("Index"))) ?? [0, numberOf(d.get(PDFName.of("Size"))) ?? 0];
+  const data = decodePDFRawStream(stream).decode();
+  const field = (pos: number, len: number, def: number) => {
+    if (len === 0) return def;
+    let v = 0;
+    for (let i = 0; i < len; i++) v = v * 256 + data[pos + i];
+    return v;
+  };
+  const rowLen = w[0] + w[1] + w[2];
+  const entries: XrefEntry[] = [];
+  let pos = 0;
+  for (let i = 0; i + 1 < index.length; i += 2) {
+    for (let k = 0; k < index[i + 1]; k++, pos += rowLen) {
+      if (pos + rowLen > data.length) throw new Error("xref stream corto");
+      const type = field(pos, w[0], 1);
+      const a = field(pos + w[0], w[1], 0);
+      const num = index[i] + k;
+      if (type === 0) entries.push({ num, kind: "f" });
+      else if (type === 1) entries.push({ num, kind: "n", offset: a });
+      else if (type === 2) entries.push({ num, kind: "c", stream: a });
+    }
+  }
+  return { entries, root: d.get(PDFName.of("Root")), prev: numberOf(d.get(PDFName.of("Prev"))), xrefStm: null };
+}
+
+/**
+ * El documento completo tal como lo muestra un lector: la vista de pdf-lib (`loaded`) con los objetos que fijan los xref
+ * de las revisiones posteriores a `end`. Si coincide con `loaded`, lo devuelve sin tocarlo (se reutiliza entre firmas).
+ */
+async function asViewerSees(pdf: Uint8Array, end: number, loaded: PDFDocument): Promise<PDFDocument> {
+  const ctx = loaded.context;
+  const sections: XrefSection[] = [];
+  const seen = new Set<number>();
+  for (let off: number | null = findLastStartXref(pdf); off !== null && off >= end; ) {
+    if (seen.has(off) || off >= pdf.length) throw new Error("cadena de xref inválida");
+    seen.add(off);
+    const s = readXrefSection(pdf, off, ctx);
+    sections.push(s);
+    // Archivo híbrido: las entradas del xref stream (/XRefStm) valen menos que las de la tabla.
+    if (s.xrefStm !== null) {
+      const { obj } = objectAt(pdf, s.xrefStm, ctx);
+      if (!(obj instanceof PDFRawStream)) throw new Error("/XRefStm inválido");
+      sections.push({ ...readXrefStream(obj), root: undefined, prev: null });
+    }
+    off = s.prev;
+  }
+  if (!sections.length) throw new Error("revisión posterior sin xref");
+  // Un cambio de /Root reemplaza el documento entero: una revisión de evidencia no lo cambia.
+  const root = sections[0].root;
+  if (!(root instanceof PDFRef) || ctx.trailerInfo.Root?.toString() !== root.toString()) throw new Error("la revisión cambia /Root");
+
+  // Entrada efectiva de cada objeto: gana la sección más nueva (sections[0]).
+  const effective = new Map<number, XrefEntry>();
+  for (const s of sections) for (const e of s.entries) if (!effective.has(e.num)) effective.set(e.num, e);
+
+  const objStms = new Map<number, PDFContext>();
+  const objStmContext = async (num: number): Promise<PDFContext> => {
+    const cached = objStms.get(num);
+    if (cached) return cached;
+    const loc = effective.get(num);
+    if (!loc || loc.kind !== "n") throw new Error(`ObjStm ${num} fuera de las revisiones posteriores`);
+    const scratch = PDFContext.create();
+    const { obj } = objectAt(pdf, loc.offset, scratch, num);
+    if (!(obj instanceof PDFRawStream) || obj.dict.get(PDFName.of("Type")) !== PDFName.of("ObjStm")) throw new Error("ObjStm inválido");
+    await PDFObjectStreamParser.forStream(obj).parseIntoContext();
+    objStms.set(num, scratch);
+    return scratch;
+  };
+
+  // Lo que el lector ve de cada objeto de esas revisiones (null: objeto libre).
+  const viewer: { ref: PDFRef; obj: PDFObject | null; entry: XrefEntry }[] = [];
+  for (const e of effective.values()) {
+    if (e.num === 0) continue;
+    if (e.kind === "f") {
+      for (const [ref] of ctx.enumerateIndirectObjects()) if (ref.objectNumber === e.num) viewer.push({ ref, obj: null, entry: e });
+    } else if (e.kind === "n") {
+      const { gen, obj } = objectAt(pdf, e.offset, ctx, e.num);
+      const type = obj instanceof PDFRawStream ? obj.dict.get(PDFName.of("Type")) : undefined;
+      if (type === PDFName.of("ObjStm") || type === PDFName.of("XRef")) continue; // pdf-lib no los guarda como objetos
+      viewer.push({ ref: PDFRef.of(e.num, gen), obj, entry: e });
+    } else {
+      const ref = PDFRef.of(e.num, 0);
+      const obj = (await objStmContext(e.stream)).lookup(ref);
+      if (!obj) throw new Error(`objeto ${e.num} ausente de su ObjStm`);
+      viewer.push({ ref, obj, entry: e });
+    }
+  }
+
+  const canon = new Canon(ctx);
+  const differs = viewer.filter(({ ref, obj }) => {
+    const now = ctx.lookup(ref);
+    return obj === null ? now !== undefined : now === undefined || canon.of(obj) !== canon.of(now);
+  });
+  if (!differs.length) return loaded;
+
+  // Hay diferencias: documento nuevo con los objetos que ve el lector (los parseados arriba son del contexto de `loaded`).
+  const doc = await PDFDocument.load(pdf, { updateMetadata: false, ignoreEncryption: true });
+  // Objetos comprimidos: el ObjStm se parsea en el contexto nuevo (así resuelven sus referencias ahí) y se restauran los
+  // objetos de ese stream cuya entrada efectiva está en otro lado.
+  for (const stream of new Set(differs.flatMap(({ entry }) => (entry.kind === "c" ? [entry.stream] : [])))) {
+    const loc = effective.get(stream) as Extract<XrefEntry, { kind: "n" }>;
+    const refs = (await objStmContext(stream)).enumerateIndirectObjects().map(([ref]) => ref);
+    const before = refs.map((ref) => doc.context.lookup(ref));
+    const raw = objectAt(pdf, loc.offset, doc.context, stream).obj as PDFRawStream;
+    await PDFObjectStreamParser.forStream(raw).parseIntoContext();
+    refs.forEach((ref, i) => {
+      const e = effective.get(ref.objectNumber);
+      if (e?.kind === "c" && e.stream === stream) return;
+      if (before[i] === undefined) doc.context.delete(ref);
+      else doc.context.assign(ref, before[i]!);
+    });
+  }
+  for (const { ref, obj, entry } of differs) {
+    if (obj === null) doc.context.delete(ref);
+    else if (entry.kind === "n") doc.context.assign(ref, objectAt(pdf, entry.offset, doc.context, entry.num).obj);
+  }
+  // El catálogo y el árbol de páginas se toman de nuevo del contexto corregido.
+  const Doc = PDFDocument as unknown as new (ctx: PDFContext, ignoreEncryption: boolean, updateMetadata: boolean) => PDFDocument;
+  return new Doc(doc.context, true, false);
 }

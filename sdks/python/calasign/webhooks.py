@@ -32,7 +32,8 @@ def construct_event(payload: Union[str, bytes], header: Optional[str], secret: s
     # HMAC sobre los bytes crudos: un cuerpo que no es UTF-8 no rompe la verificación (simplemente no coincide).
     raw = payload if isinstance(payload, bytes) else payload.encode("utf-8")
     expected = hmac.new(secret.encode(), str(t).encode() + b"." + raw, hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(expected, v1):
+    # En bytes: compare_digest con un str no ASCII (un header manipulado) lanza TypeError en vez de no coincidir.
+    if not hmac.compare_digest(expected.encode(), v1.encode("utf-8", "surrogateescape")):
         raise WebhookSignatureError("Firma inválida")
     try:
         return json.loads(raw.decode("utf-8"))

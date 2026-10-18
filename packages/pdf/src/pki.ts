@@ -140,13 +140,29 @@ export async function issuedBy(cert: pkijs.Certificate, issuer: pkijs.Certificat
   }
 }
 
+/**
+ * ¿Puede emitir certificados? CA (basicConstraints cA) y, si declara key usage, con keyCertSign. Una raíz v1 sin
+ * extensiones (autofirmada) también cuenta. Sin este control, cualquier titular de un certificado de confianza
+ * podría "emitir" un certificado hijo con el nombre o el documento de otra persona y la cadena verificaría igual.
+ */
+export function canIssueCertificates(c: pkijs.Certificate): boolean {
+  const exts = c.extensions ?? [];
+  if (!exts.length) return isSelfSigned(c);
+  const bc = exts.find((e) => e.extnID === "2.5.29.19");
+  if (!(bc?.parsedValue as pkijs.BasicConstraints | undefined)?.cA) return false;
+  const ku = exts.find((e) => e.extnID === "2.5.29.15");
+  if (!ku) return true;
+  const bits = new Uint8Array((ku.parsedValue as asn1js.BitString | undefined)?.valueBlock?.valueHexView ?? []);
+  return Boolean((bits[0] ?? 0) & 0x04); // bit 5: keyCertSign
+}
+
 /** Arma la cadena desde `leaf` usando el pool; termina en un certificado autofirmado o donde no haya emisor. */
 export async function buildChain(leaf: pkijs.Certificate, pool: pkijs.Certificate[]): Promise<pkijs.Certificate[]> {
   const chain = [leaf];
   let cur = leaf;
   for (let i = 0; i < 10 && !isSelfSigned(cur); i++) {
     let next: pkijs.Certificate | undefined;
-    for (const cand of pool) if (await issuedBy(cur, cand)) { next = cand; break; }
+    for (const cand of pool) if (canIssueCertificates(cand) && (await issuedBy(cur, cand))) { next = cand; break; }
     if (!next) break;
     chain.push(next);
     cur = next;

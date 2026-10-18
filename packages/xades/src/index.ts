@@ -161,12 +161,18 @@ export function canonicalize(node: Node, algorithm: string): string {
 }
 
 function findById(doc: Document, id: string): Element | null {
+  const found = findAllById(doc, id);
+  return found[0] ?? null;
+}
+
+function findAllById(doc: Document, id: string): Element[] {
   const all = doc.getElementsByTagName("*");
+  const out: Element[] = [];
   for (let i = 0; i < all.length; i++) {
     const e = all[i];
-    if (e.getAttribute("Id") === id || e.getAttribute("ID") === id || e.getAttribute("id") === id) return e;
+    if (e.getAttribute("Id") === id || e.getAttribute("ID") === id || e.getAttribute("id") === id) out.push(e);
   }
-  return null;
+  return out;
 }
 
 function firstChildNS(el: Element, ns: string, local: string): Element | null {
@@ -379,7 +385,11 @@ export function verifyXml(xml: string): XmlVerifyResult {
       if (transforms.includes(ALG.enveloped)) s?.parentNode?.removeChild(s);
       target = clone.documentElement;
     } else {
-      target = findById(doc, uri.replace(/^#/, ""));
+      // Un Id repetido permite "envolver" la firma (signature wrapping): la referencia apuntaría a un elemento y el
+      // lector del documento leería el otro. Se rechaza.
+      const matches = findAllById(doc, uri.replace(/^#/, ""));
+      if (matches.length > 1) errors.push(`Id repetido en el documento: "${uri}"`);
+      target = matches.length === 1 ? matches[0] : null;
     }
     const valid = !!target && b64(digest(alg, canonicalize(target, refC14n))) === expected;
     if (!valid) errors.push(`digest no coincide en referencia "${uri}"`);
@@ -414,6 +424,13 @@ export function verifyXml(xml: string): XmlVerifyResult {
     };
     if (!references.some((r) => r.type === ALG.signedProps && r.valid)) errors.push("SignedProperties no está referenciado o no verifica");
   }
+
+  // La firma tiene que cubrir el documento entero (referencia URI="" con la transformación enveloped): una firma que
+  // solo referencia elementos sueltos (KeyInfo, SignedProperties…) no prueba nada sobre el contenido del documento.
+  const coversDocument = descendantsNS(signedInfo, NS.ds, "Reference").some(
+    (ref) => (ref.getAttribute("URI") ?? "") === "" && descendantsNS(ref, NS.ds, "Transform").some((t) => t.getAttribute("Algorithm") === ALG.enveloped),
+  );
+  if (!coversDocument) errors.push("la firma no cubre el documento completo (falta la referencia URI=\"\" enveloped)");
 
   return {
     valid: errors.length === 0 && signatureValid && references.every((r) => r.valid),

@@ -140,6 +140,18 @@ describe("firma XML", () => {
     await expect(signXml(sinExtension, signer, { profile: "sunat-cpe" })).rejects.toThrow(/ExtensionContent/);
   });
 
+  it("un Id repetido (signature wrapping) invalida la verificación", async () => {
+    const signed = await signXml(UBL_INVOICE, signer, { profile: "dian-fe" });
+    expect(verifyXml(signed).valid).toBe(true);
+    const m = /<xades:SignedProperties Id="([^"]+)"/.exec(signed);
+    expect(m).toBeTruthy();
+    // Se agrega en el documento un elemento con el mismo Id que SignedProperties.
+    const wrapped = signed.replace("<cbc:UBLVersionID>", `<cbc:Note Id="${m![1]}">otra cosa</cbc:Note><cbc:UBLVersionID>`);
+    const r = verifyXml(wrapped);
+    expect(r.valid).toBe(false);
+    expect(r.errors.join(" ")).toMatch(/Id repetido/);
+  });
+
   it("XAdES-EPES sin política es un error", async () => {
     await expect(signXml(ECF, signer, { profile: "xades-epes" })).rejects.toThrow(/política/);
   });

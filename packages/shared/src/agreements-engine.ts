@@ -649,16 +649,24 @@ export function diffWords(a: string, b: string): DiffPart[] {
   return parts;
 }
 
+/** Máximo de ediciones (inserciones + borrados de tokens) que se calculan en detalle. */
+const MAX_DIFF_EDITS = 2000;
+
 function myers(a: string[], b: string[]): DiffPart[] {
   const n = a.length;
   const m = b.length;
   if (n === 0) return m ? [{ op: "ins", text: b.join("") }] : [];
   if (m === 0) return [{ op: "del", text: a.join("") }];
   const max = n + m;
-  if (max > 40000) return [{ op: "del", text: a.join("") }, { op: "ins", text: b.join("") }];
+  const coarse: DiffPart[] = [{ op: "del", text: a.join("") }, { op: "ins", text: b.join("") }];
+  if (max > 40000) return coarse;
+  // El rastro guarda una copia de `v` por cada paso: la memoria crece como D². Con textos muy distintos se
+  // corta y se devuelve el cambio en bloque, en vez de agotar la memoria del proceso.
+  const maxD = Math.min(max, MAX_DIFF_EDITS);
   const v = new Map<number, number>([[1, 0]]);
   const trace: Map<number, number>[] = [];
-  outer: for (let d = 0; d <= max; d++) {
+  let done = false;
+  outer: for (let d = 0; d <= maxD; d++) {
     trace.push(new Map(v));
     for (let k = -d; k <= d; k += 2) {
       let x = k === -d || (k !== d && (v.get(k - 1) ?? -1) < (v.get(k + 1) ?? -1)) ? (v.get(k + 1) ?? 0) : (v.get(k - 1) ?? 0) + 1;
@@ -668,9 +676,13 @@ function myers(a: string[], b: string[]): DiffPart[] {
         y++;
       }
       v.set(k, x);
-      if (x >= n && y >= m) break outer;
+      if (x >= n && y >= m) {
+        done = true;
+        break outer;
+      }
     }
   }
+  if (!done) return coarse;
   // Backtrack
   const ops: DiffPart[] = [];
   let x = n;

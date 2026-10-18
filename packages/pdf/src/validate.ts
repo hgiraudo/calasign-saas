@@ -22,7 +22,7 @@ import {
   tstInfoOf,
 } from "./pki";
 import type { PadesLevel } from "./ltv";
-import { readPdfSignatures, signedContent, type PdfDss } from "./signatures";
+import { byteRangeIssue, readPdfSignatures, signedContent, type PdfDss } from "./signatures";
 
 export interface CertSummary {
   subject: string;
@@ -50,7 +50,8 @@ export interface SignatureReport {
   coversWholeDocument: boolean;
   /** true si después de esta firma hay revisiones incrementales (DSS, otra firma, sello de documento). */
   modifiedAfter: boolean;
-  chain: { trusted: boolean; anchor: string | null; entries: ChainEntry[] };
+  /** trusted: llega a una raíz de confianza. timeValid: todos los certificados eran válidos al momento de firmar. */
+  chain: { trusted: boolean; anchor: string | null; entries: ChainEntry[]; timeValid?: boolean };
   level: PadesLevel | null;
 }
 
@@ -102,8 +103,10 @@ async function chainReport(
   anchors: Set<string>,
   dss: PdfDss | null,
   opts: ValidateOptions,
+  at: Date,
 ): Promise<SignatureReport["chain"]> {
   const chain = await buildChain(leaf, pool);
+  const timeValid = chain.every((c) => c.notBefore.value <= at && at <= c.notAfter.value);
   const last = chain[chain.length - 1];
   const trusted = isSelfSigned(last) && anchors.has(fingerprint(certDer(last)));
   const entries: ChainEntry[] = [];
@@ -136,7 +139,7 @@ async function chainReport(
     }
     entries.push({ ...summary(c), revocation });
   }
-  return { trusted, anchor: trusted ? nameToString(last.subject) : null, entries };
+  return { trusted, anchor: trusted ? nameToString(last.subject) : null, entries, timeValid };
 }
 
 export async function validatePdf(pdf: Uint8Array, opts: ValidateOptions = {}): Promise<ValidationReport> {
@@ -162,6 +165,7 @@ export async function validatePdf(pdf: Uint8Array, opts: ValidateOptions = {}): 
       coversWholeDocument: s.byteRange[0] === 0 && end === pdf.length,
       modifiedAfter: end < pdf.length,
     };
+    const brIssue = byteRangeIssue(pdf, s.byteRange);
     const content = signedContent(pdf, s.byteRange);
     let sd: pkijs.SignedData;
     try {
@@ -190,8 +194,8 @@ export async function validatePdf(pdf: Uint8Array, opts: ValidateOptions = {}): 
         signer: signer ? summary(signer) : null,
         signingTime: ts.time,
         timestamp: ts,
-        integrity: ts.valid ? { valid: true } : { valid: false, reason: "El sello de documento no corresponde al contenido" },
-        chain: signer ? await chainReport(signer, pool, anchors, dss, opts) : { trusted: false, anchor: null, entries: [] },
+        integrity: brIssue ? { valid: false, reason: brIssue } : ts.valid ? { valid: true } : { valid: false, reason: "El sello de documento no corresponde al contenido" },
+        chain: signer ? await chainReport(signer, pool, anchors, dss, opts, new Date(ts.time)) : { trusted: false, anchor: null, entries: [] },
         level: null,
       });
       continue;
@@ -204,6 +208,7 @@ export async function validatePdf(pdf: Uint8Array, opts: ValidateOptions = {}): 
     } catch (e) {
       integrity = { valid: false, reason: (e as Error).message ?? "La firma no verifica" };
     }
+    if (brIssue) integrity = { valid: false, reason: brIssue };
     const tsToken = signatureTimestamp(sd);
     let timestamp: SignatureReport["timestamp"] = null;
     if (tsToken) {
@@ -228,7 +233,10 @@ export async function validatePdf(pdf: Uint8Array, opts: ValidateOptions = {}): 
       signingTime,
       timestamp,
       integrity,
-      chain: signer ? await chainReport(signer, pool, anchors, dss, opts) : { trusted: false, anchor: null, entries: [] },
+      // Validez de la cadena al momento de firmar: el del sello de tiempo si hay (y es válido), si no el declarado.
+      chain: signer
+        ? await chainReport(signer, pool, anchors, dss, opts, new Date(timestamp?.valid ? timestamp.time : signingTime ?? Date.now()))
+        : { trusted: false, anchor: null, entries: [] },
       level,
     });
   }
@@ -239,7 +247,7 @@ export async function validatePdf(pdf: Uint8Array, opts: ValidateOptions = {}): 
     summary: {
       count: reports.length,
       allValid: reports.length > 0 && reports.every((r) => r.integrity.valid && (!r.timestamp || r.timestamp.valid)),
-      allTrusted: reports.length > 0 && reports.every((r) => r.chain.trusted),
+      allTrusted: reports.length > 0 && reports.every((r) => r.chain.trusted && r.chain.timeValid !== false),
       anyRevoked: reports.some((r) => r.chain.entries.some((e) => e.revocation.status === "revoked")),
     },
   };

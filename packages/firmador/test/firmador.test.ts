@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import forge from "node-forge";
 import {
   CertsignClient,
+  apiHostTrusted,
   assertSignedAttributes,
   P12Source,
   WindowsStoreSource,
@@ -138,6 +139,20 @@ describe("registro del esquema", () => {
     const reg = windowsRegistryCommands("C:\\Firmador\\calasign-firmador.exe");
     expect(reg[0][1]).toBe("HKCU\\Software\\Classes\\calasign-firmador");
     expect(reg[2]).toContain('"C:\\Firmador\\calasign-firmador.exe" "%1"');
+  });
+});
+
+describe("servidores de confianza", () => {
+  it("confía en calasign.com, sus subdominios, la máquina local y los declarados", () => {
+    expect(apiHostTrusted("https://dev.calasign.com", [])).toBe(true);
+    expect(apiHostTrusted("https://calasign.com", [])).toBe(true);
+    expect(apiHostTrusted("http://127.0.0.1:4118", [])).toBe(true);
+    expect(apiHostTrusted("https://calasign.com.evil.example", [])).toBe(false);
+    expect(apiHostTrusted("https://evilcalasign.com", [])).toBe(false);
+    expect(apiHostTrusted("https://firmas.cliente.com", [])).toBe(false);
+    expect(apiHostTrusted("https://firmas.cliente.com", ["firmas.cliente.com"])).toBe(true);
+    expect(apiHostTrusted("https://a.cliente.com", ["*.cliente.com"])).toBe(true);
+    expect(apiHostTrusted("https://cliente.com", ["*.cliente.com"])).toBe(false);
   });
 });
 

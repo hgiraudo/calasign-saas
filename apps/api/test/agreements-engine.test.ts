@@ -99,6 +99,15 @@ describe("motor de plantillas", () => {
   });
 
   it("diff por palabras", () => {
+    // Textos muy distintos: no agota la memoria (diff en bloque) y el resultado sigue reconstruyendo ambos lados.
+    const big1 = Array.from({ length: 9000 }, (_, i) => `a${i}`).join(" ");
+    const big2 = Array.from({ length: 9000 }, (_, i) => `b${i}`).join(" ");
+    const t0 = Date.now();
+    const bd = diffWords(big1, big2);
+    expect(Date.now() - t0).toBeLessThan(5000);
+    expect(bd.filter((p) => p.op !== "ins").map((p) => p.text).join("")).toBe(big1);
+    expect(bd.filter((p) => p.op !== "del").map((p) => p.text).join("")).toBe(big2);
+
     const d = diffWords("El plazo es de 12 meses y se renueva", "El plazo es de 24 meses y no se renueva");
     expect(d.filter((p) => p.op === "del").map((p) => p.text.trim())).toEqual(["12"]);
     expect(d.filter((p) => p.op === "ins").map((p) => p.text.trim())).toEqual(["24", "no"]);

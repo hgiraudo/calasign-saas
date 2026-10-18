@@ -4,7 +4,7 @@
 import { randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { CertsignClient, CertsignError, parseDeepLink, signWithEntry } from "./protocol";
+import { CertsignClient, CertsignError, apiHost, apiHostTrusted, parseDeepLink, signWithEntry } from "./protocol";
 import { P12Source } from "./sources/p12";
 import { Pkcs11Source, detectPkcs11Modules } from "./sources/pkcs11";
 import { WindowsStoreSource } from "./sources/windows";
@@ -68,12 +68,18 @@ export async function startUi(initial: { api?: string | null; code?: string | nu
       const link = parseDeepLink(String(body.code ?? "")) ?? { api: null, code: String(body.code ?? "") };
       const api = String(body.api || link.api || "");
       const client = new CertsignClient(api, link.code);
-      if (path === "/info") return send(200, await client.info());
+      const host = apiHost(api);
+      const trustedHost = apiHostTrusted(api);
+      if (path === "/info") return send(200, { ...(await client.info()), apiHost: host, trustedHost });
       const source = openSource(body.source as SourceSpec);
       try {
         const certs = await source.list();
         if (path === "/list") return send(200, { certs: certs.map(({ chainDer, ...c }) => ({ ...c, chainLength: chainDer.length })) });
         if (path === "/sign") {
+          // Un servidor que no es de CalaSign solo se acepta con la confirmación explícita del usuario.
+          if (!trustedHost && body.confirmHost !== host) {
+            return send(409, { error: { code: "confirm_host", message: `${host} no es un servidor de CalaSign conocido. ¿Confiás en él para firmar este documento?`, details: { host } } });
+          }
           const entry = certs.find((c) => c.id === body.certId);
           if (!entry) return send(400, { error: { message: "Elegí un certificado" } });
           const out = await signWithEntry(client, source, entry);
@@ -133,11 +139,11 @@ button:disabled{opacity:.5;cursor:default}.tabs{display:flex;gap:8px;flex-wrap:w
 <div class="card" id="done" hidden><p class="ok">Listo: firmaste el documento con tu certificado.</p><p class="muted small" id="doneInfo"></p><p>Podés cerrar esta ventana y volver a CalaSign.</p></div>
 <script>
 const $=id=>document.getElementById(id);let kind=null,cert=null,p12=null;
-const post=async(p,b)=>{const r=await fetch(location.pathname+p,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)});const j=await r.json();if(!r.ok)throw new Error(j.error&&j.error.message||'Error');return j};
+const post=async(p,b)=>{const r=await fetch(location.pathname+p,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)});const j=await r.json();if(!r.ok){const e=new Error(j.error&&j.error.message||'Error');e.code=j.error&&j.error.code;e.details=j.error&&j.error.details;throw e}return j};
 const base=()=>({code:$('code').value.trim(),api:$('api').value.trim()});
 const src=()=>kind==='pkcs11'?{kind,module:$('modPath').value.trim()||$('mod').value,pin:$('pin').value}:kind==='p12'?{kind,p12,password:$('pw').value}:{kind:'windows'};
 $('load').onclick=async()=>{$('infoErr').textContent='';try{const i=await post('/info',base());$('doc').hidden=false;$('pick').hidden=false;
-$('docInfo').innerHTML='<b></b><div class=muted></div><div class="small muted"></div>';const d=$('docInfo').children;d[0].textContent=i.envelopeSubject;d[1].textContent=i.organizationName+' · firma '+i.signerName+(i.idDocument?' ('+i.idDocument+')':'');d[2].textContent='SHA-256 '+i.documentSha256+(i.requirements.allowedIssuers.length?' · emisores permitidos: '+i.requirements.allowedIssuers.join(', '):'');}catch(e){$('infoErr').textContent=e.message}};
+$('docInfo').innerHTML='<b></b><div class=muted></div><div class="small muted"></div><div class="small"></div>';const d=$('docInfo').children;d[3].textContent='Servidor: '+i.apiHost+(i.trustedHost?'':' (no es un servidor de CalaSign conocido)');if(!i.trustedHost)d[3].className='err small';d[0].textContent=i.envelopeSubject;d[1].textContent=i.organizationName+' · firma '+i.signerName+(i.idDocument?' ('+i.idDocument+')':'');d[2].textContent='SHA-256 '+i.documentSha256+(i.requirements.allowedIssuers.length?' · emisores permitidos: '+i.requirements.allowedIssuers.join(', '):'');}catch(e){$('infoErr').textContent=e.message}};
 document.querySelectorAll('.tabs button').forEach(b=>b.onclick=async()=>{kind=b.dataset.k;document.querySelectorAll('.tabs button').forEach(x=>x.classList.toggle('on',x===b));['windows','pkcs11','p12'].forEach(k=>$('src-'+k).hidden=k!==kind);$('list').disabled=false;
 if(kind==='pkcs11'&&!$('mod').options.length){const m=await post('/modules',{});$('mod').innerHTML=m.modules.map(x=>'<option value="'+x.path.replace(/"/g,'&quot;')+'">'+x.vendor+'</option>').join('')||'<option value="">(no se detectó ningún token: indicá la ruta)</option>'}});
 $('file').onchange=async()=>{const f=$('file').files[0];if(!f)return;const b=new Uint8Array(await f.arrayBuffer());let s='';for(let i=0;i<b.length;i+=8192)s+=String.fromCharCode.apply(null,b.subarray(i,i+8192));p12=btoa(s)};
@@ -145,7 +151,7 @@ $('list').onclick=async()=>{$('err').textContent='';$('certs').innerHTML='';$('s
 if(!r.certs.length){$('err').textContent='No hay certificados con clave privada disponibles.';return}
 r.certs.forEach(c=>{const el=document.createElement('div');el.className='cert';el.tabIndex=0;el.innerHTML='<b></b><div class="small muted"></div>';el.children[0].textContent=c.label;el.children[1].textContent=c.subject+' · emitido por '+c.issuer+' · vence '+c.notAfter.slice(0,10);
 el.onclick=el.onkeydown=()=>{cert=c.id;document.querySelectorAll('.cert').forEach(x=>x.classList.toggle('on',x===el));$('sign').hidden=false};$('certs').appendChild(el)})}catch(e){$('err').textContent=e.message}};
-$('sign').onclick=async()=>{$('err').textContent='';$('sign').disabled=true;try{const r=await post('/sign',{...base(),source:src(),certId:cert});$('pick').hidden=true;$('done').hidden=false;
+$('sign').onclick=async()=>{$('err').textContent='';$('sign').disabled=true;try{const body={...base(),source:src(),certId:cert};let r;try{r=await post('/sign',body)}catch(e){if(e.code!=='confirm_host'||!confirm(e.message))throw e;r=await post('/sign',{...body,confirmHost:e.details.host})}$('pick').hidden=true;$('done').hidden=false;
 $('doneInfo').textContent=r.prepared.certificate.commonName+' · '+r.prepared.certificate.issuer+(r.prepared.warnings.length?' · '+r.prepared.warnings.join('; '):'')}catch(e){$('err').textContent=e.message;$('sign').disabled=false}};
 if($('code').value&&$('api').value)$('load').click();
 </script></main></body></html>`;

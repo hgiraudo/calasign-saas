@@ -97,6 +97,25 @@ export async function readPdfSignatures(pdf: Uint8Array): Promise<{ signatures: 
   return { signatures, dss };
 }
 
+/**
+ * Controla que el ByteRange sea el de una firma bien formada: empieza en 0, no se sale del archivo y el único hueco es
+ * exactamente el valor hexadecimal de /Contents (`<…>`). Un ByteRange corrido dejaría bytes sin firmar.
+ * Devuelve el motivo del problema, o null si está bien.
+ */
+export function byteRangeIssue(pdf: Uint8Array, br: [number, number, number, number]): string | null {
+  const [a, b, c, d] = br;
+  if (![a, b, c, d].every((n) => Number.isInteger(n) && n >= 0)) return "ByteRange con valores inválidos";
+  if (a !== 0) return "ByteRange no empieza al principio del archivo";
+  if (c < a + b + 2 || c + d > pdf.length) return "ByteRange fuera del archivo";
+  if (pdf[a + b] !== 0x3c || pdf[c - 1] !== 0x3e) return "El hueco del ByteRange no es el valor de /Contents";
+  for (let i = a + b + 1; i < c - 1; i++) {
+    const x = pdf[i];
+    const hex = (x >= 0x30 && x <= 0x39) || (x >= 0x41 && x <= 0x46) || (x >= 0x61 && x <= 0x66);
+    if (!hex) return "El hueco del ByteRange contiene algo más que la firma";
+  }
+  return null;
+}
+
 /** Bytes cubiertos por un ByteRange. */
 export function signedContent(pdf: Uint8Array, br: [number, number, number, number]): Uint8Array {
   const [a, b, c, d] = br;

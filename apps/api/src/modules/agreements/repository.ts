@@ -251,6 +251,9 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
     const total = Number((await s.db.one<any>(`SELECT count(*)::int AS n FROM agreements ag WHERE ${where}`, countParams))?.n ?? 0);
     if (cursor) {
       const [ts, id] = Buffer.from(cursor, "base64url").toString().split("|");
+      if (!ts || Number.isNaN(Date.parse(ts)) || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id ?? "")) {
+        throw badRequest("invalid_cursor", "Cursor inválido");
+      }
       params.push(ts, id);
       where += ` AND (ag.created_at, ag.id) < ($${params.length - 1}::timestamptz, $${params.length}::uuid)`;
     }

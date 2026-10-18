@@ -466,8 +466,11 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
       if (missingRoles.length === 1 && me) recipients.push({ role: marks.find((m) => m.role.toLowerCase() === missingRoles[0]).role, name: me.name, email: me.email, cc: false });
     }
     const envelopeId = await s.db.tx(async (t) => {
-      const locked = await t.one<any>(`SELECT status FROM negotiations WHERE id = $1 FOR UPDATE`, [n.id]);
+      const locked = await t.one<any>(`SELECT status, current_version FROM negotiations WHERE id = $1 FOR UPDATE`, [n.id]);
       if (locked.status !== "open") throw conflict("closed", "La negociación ya está cerrada");
+      // El PDF se armó con la versión leída al principio: si mientras tanto se aceptó un cambio o se editó, el sobre
+      // saldría con un texto que ya no es el acordado.
+      if (locked.current_version !== n.current_version) throw conflict("version_changed", "La negociación cambió mientras se aceptaba: revisá la versión nueva y volvé a aceptar");
       let envId: string;
       if (n.source === "pdf") {
         // Sin marcas de firma: queda un sobre en borrador para ubicar los campos en el editor.

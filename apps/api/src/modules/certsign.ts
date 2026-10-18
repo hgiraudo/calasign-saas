@@ -370,6 +370,17 @@ export async function certsignRoutes(app: FastifyInstance, s: Services) {
     return res;
   });
 
+  // Firmador: el PDF preparado (con el espacio de la firma y el ByteRange). El Firmador recalcula el hash del
+  // documento sobre estos bytes y verifica que la revisión anterior sea idéntica al PDF de trabajo anunciado: así no
+  // firma atributos que no correspondan al documento que el titular puede ver.
+  app.get<{ Params: { code: string } }>("/v1/certsign/sessions/:code/prepared", rl(30), async (req, reply) => {
+    const sess = await sessionByCode(s.db, req.params.code);
+    if (sess.status !== "prepared" || !sess.prepared_key) throw conflict("not_prepared", "Primero hay que enviar el certificado");
+    await assertStillCurrent(s.db, sess);
+    reply.header("content-type", "application/pdf").header("cache-control", "private, no-store");
+    return reply.send(Buffer.from(await s.blobs.get(sess.prepared_key)));
+  });
+
   // Firmador: firma del hash → CMS + inserción incremental → avance.
   app.post<{ Params: { code: string } }>("/v1/certsign/sessions/:code/signature", rl(30), async (req) => {
     const input = CertsignSignatureInput.parse(req.body);

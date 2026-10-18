@@ -16,6 +16,15 @@ export const CERTSIGN_OPS = [
   { method: "get", path: "/v1/certsign/sessions/{code}", tag: TAG, summary: "Datos de la sesión del Firmador (sobre, firmante, requisitos, SHA-256 del documento)", auth: "none" },
   { method: "get", path: "/v1/certsign/sessions/{code}/document", tag: TAG, summary: "PDF de trabajo que se va a firmar", response: "pdf", auth: "none" },
   {
+    method: "get",
+    path: "/v1/certsign/sessions/{code}/prepared",
+    tag: TAG,
+    summary: "PDF preparado para la firma (revisión con el espacio reservado y el ByteRange)",
+    description: "Disponible después de enviar el certificado (si no, 409 not_prepared). El Firmador recalcula el messageDigest sobre el ByteRange y verifica que la revisión anterior sea el PDF de trabajo anunciado.",
+    response: "pdf",
+    auth: "none",
+  },
+  {
     method: "post",
     path: "/v1/certsign/sessions/{code}/certificate",
     tag: TAG,

@@ -9,6 +9,7 @@ import {
   CertsignClient,
   apiHostTrusted,
   assertSignedAttributes,
+  assertPreparedMatchesDocument,
   P12Source,
   WindowsStoreSource,
   linuxDesktopEntry,
@@ -174,5 +175,65 @@ describe("interfaz local", () => {
     } finally {
       await ui.close();
     }
+  });
+});
+
+describe("vínculo con el documento (assertPreparedMatchesDocument)", () => {
+  const A = forge.asn1;
+  const sha = (b: Buffer) => createHash("sha256").update(b).digest();
+  const attrsWithDigest = (digest: Buffer) => {
+    const attr = (oid: string, value: forge.asn1.Asn1) =>
+      A.create(A.Class.UNIVERSAL, A.Type.SEQUENCE, true, [A.create(A.Class.UNIVERSAL, A.Type.OID, false, A.oidToDer(oid).getBytes()), A.create(A.Class.UNIVERSAL, A.Type.SET, true, [value])]);
+    const ct = attr("1.2.840.113549.1.9.3", A.create(A.Class.UNIVERSAL, A.Type.OID, false, A.oidToDer("1.2.840.113549.1.7.1").getBytes()));
+    const md = attr("1.2.840.113549.1.9.4", A.create(A.Class.UNIVERSAL, A.Type.OCTETSTRING, false, digest.toString("binary")));
+    return new Uint8Array(Buffer.from(A.toDer(A.create(A.Class.UNIVERSAL, A.Type.SET, true, [ct, md])).getBytes(), "binary"));
+  };
+  // Igual que prepareExternalSignature: revisión incremental agregada con ByteRange real y /Contents reservado.
+  const working = Buffer.from("%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n", "latin1");
+  function prepare(base: Buffer) {
+    const placeholder = "[0 0000000000 0000000000 0000000000]";
+    const head = Buffer.concat([base, Buffer.from(`2 0 obj\n<< /Type /Sig /ByteRange ${placeholder} /Contents `, "latin1")]);
+    const b = head.length;
+    const hole = Buffer.from(`<${"0".repeat(64)}>`, "latin1");
+    const after = Buffer.from(" >>\nendobj\n%%EOF", "latin1");
+    const c = b + hole.length;
+    const d = after.length;
+    const br = `[0 ${String(b).padStart(10, "0")} ${String(c).padStart(10, "0")} ${String(d).padStart(10, "0")}]`;
+    const headFixed = Buffer.from(head.toString("latin1").replace(placeholder, br), "latin1");
+    const pdf = Buffer.concat([headFixed, hole, after]);
+    const covered = sha(Buffer.concat([pdf.subarray(0, b), pdf.subarray(c, c + d)]));
+    return { pdf, covered };
+  }
+  const announced = createHash("sha256").update(working).digest("hex");
+
+  it("acepta cuando el documento, el ByteRange y el messageDigest coinciden", () => {
+    const { pdf, covered } = prepare(working);
+    expect(() => assertPreparedMatchesDocument({ announcedSha256: announced, workingPdf: working, preparedPdf: pdf, signedAttrsDer: attrsWithDigest(covered) })).not.toThrow();
+  });
+  it("rechaza un messageDigest que no corresponde al documento", () => {
+    const { pdf } = prepare(working);
+    expect(() =>
+      assertPreparedMatchesDocument({ announcedSha256: announced, workingPdf: working, preparedPdf: pdf, signedAttrsDer: attrsWithDigest(sha(Buffer.from("otro documento"))) }),
+    ).toThrow(/no corresponden al documento/);
+  });
+  it("rechaza un PDF preparado sobre otro documento", () => {
+    const otro = Buffer.from(working.toString("latin1").replace("Catalog", "Catalgo"), "latin1");
+    const { pdf, covered } = prepare(otro);
+    expect(() => assertPreparedMatchesDocument({ announcedSha256: announced, workingPdf: working, preparedPdf: pdf, signedAttrsDer: attrsWithDigest(covered) })).toThrow(
+      /no conserva intacto/,
+    );
+  });
+  it("rechaza un documento descargado distinto del anunciado", () => {
+    const { pdf, covered } = prepare(working);
+    expect(() =>
+      assertPreparedMatchesDocument({ announcedSha256: "0".repeat(64), workingPdf: working, preparedPdf: pdf, signedAttrsDer: attrsWithDigest(covered) }),
+    ).toThrow(/no es el que anunció/);
+  });
+  it("rechaza un ByteRange que deja bytes sin cubrir", () => {
+    const { pdf, covered } = prepare(working);
+    const extra = Buffer.concat([pdf, Buffer.from("\n% bytes agregados fuera del ByteRange", "latin1")]);
+    expect(() => assertPreparedMatchesDocument({ announcedSha256: announced, workingPdf: working, preparedPdf: extra, signedAttrsDer: attrsWithDigest(covered) })).toThrow(
+      /no cubre el documento completo/,
+    );
   });
 });

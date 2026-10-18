@@ -108,6 +108,28 @@ export async function assertAiAvailable(db: Db, tenantId: string, opts: { reserv
   });
 }
 
+/** Libera una reserva de presupuesto (la llamada al modelo falló o no se hizo). */
+export async function releaseAiReservation(db: Db, tenantId: string) {
+  await db.query(`DELETE FROM ai_usage WHERE id = (SELECT id FROM ai_usage WHERE tenant_id = $1 AND feature = $2 ORDER BY created_at LIMIT 1)`, [
+    tenantId,
+    RESERVATION,
+  ]);
+}
+
+/**
+ * Corre la llamada al modelo con la reserva ya tomada: si falla (rechazo, respuesta cortada, proveedor caído), libera
+ * la reserva en el momento. Si no, una organización con presupuesto chico quedaba bloqueada (429) durante 10 minutos
+ * después de unas pocas fallas, aunque le sobrara presupuesto.
+ */
+export async function withAiReservation<T>(db: Db, tenantId: string, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    await releaseAiReservation(db, tenantId).catch(() => {});
+    throw err;
+  }
+}
+
 // ───────────────────────────── Documentos ─────────────────────────────
 
 /** Texto (con posiciones) de los documentos del sobre. Si los originales se purgaron por retención, usa el PDF sellado. */
@@ -158,10 +180,7 @@ export async function recordAiUse(
   await db.tx(async (t) => {
     if (args.envelopeId) await t.query(`SELECT id FROM envelopes WHERE id = $1 FOR UPDATE`, [args.envelopeId]);
     // Libera la reserva de presupuesto tomada por assertAiAvailable para esta llamada.
-    await t.query(
-      `DELETE FROM ai_usage WHERE id = (SELECT id FROM ai_usage WHERE tenant_id = $1 AND feature = $2 ORDER BY created_at LIMIT 1)`,
-      [args.tenantId, RESERVATION],
-    );
+    await releaseAiReservation(t, args.tenantId);
     await t.query(
       `INSERT INTO ai_usage (id, tenant_id, envelope_id, feature, provider, model, input_tokens, output_tokens, prompt_sha256, actor_type, actor_id)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,

@@ -117,6 +117,13 @@ export class CertsignClient {
     return new Uint8Array(await res.arrayBuffer());
   }
 
+  /** El PDF preparado por el servidor para esta firma (con el espacio reservado y el ByteRange). */
+  async prepared(): Promise<Uint8Array> {
+    const res = await this.fetcher(this.url("/prepared"), { signal: AbortSignal.timeout(60_000) });
+    if (!res.ok) throw new CertsignError(res.status, "prepared", `HTTP ${res.status}`);
+    return new Uint8Array(await res.arrayBuffer());
+  }
+
   certificate(chainDer: Uint8Array[]) {
     return this.call<Prepared>("POST", "/certificate", { chain: chainDer.map((d) => Buffer.from(d).toString("base64")) });
   }
@@ -126,10 +133,22 @@ export class CertsignClient {
   }
 }
 
-/** Ciclo completo: certificado → preparación → firma local → envío. La clave nunca sale de `source`. */
+/**
+ * Ciclo completo: certificado → preparación → controles del documento → firma local → envío. La clave nunca sale
+ * de `source`. Antes de firmar se comprueba, con bytes y no con lo que diga el servidor, que lo que se firma es el
+ * documento anunciado (ver assertPreparedMatchesDocument).
+ */
 export async function signWithEntry(client: CertsignClient, source: CertSource, entry: CertEntry): Promise<{ prepared: Prepared; result: SignResult }> {
+  const info = await client.info();
+  const working = await client.document();
   const prepared = await client.certificate(entry.chainDer);
   assertSignedAttributes(prepared);
+  assertPreparedMatchesDocument({
+    announcedSha256: info.documentSha256,
+    workingPdf: working,
+    preparedPdf: await client.prepared(),
+    signedAttrsDer: new Uint8Array(Buffer.from(prepared.dataToSign, "base64")),
+  });
   const sig = await source.sign(entry, {
     data: new Uint8Array(Buffer.from(prepared.dataToSign, "base64")),
     digest: new Uint8Array(Buffer.from(prepared.digestToSign, "base64")),
@@ -182,4 +201,60 @@ export function assertSignedAttributes(p: Pick<Prepared, "dataToSign" | "digestT
     }
   }
   if (!seen.has(ATTR.contentType) || !mdOk) throw new CertsignError(0, "bad_prepared", "Faltan atributos obligatorios de la firma CMS");
+}
+
+/**
+ * Vincula la firma con el documento. Con bytes, no con lo que diga el servidor:
+ *  1. el PDF de trabajo descargado es el anunciado (su SHA-256 coincide con documentSha256);
+ *  2. el PDF preparado empieza exactamente con esos bytes (la firma nueva es una revisión incremental agregada);
+ *  3. el ByteRange de la revisión nueva cubre todo el archivo salvo el espacio de /Contents, que está en la
+ *     revisión nueva y solo tiene dígitos hexadecimales;
+ *  4. el SHA-256 de los bytes cubiertos es el messageDigest de los atributos que se van a firmar.
+ * Si algo no coincide, el Firmador no firma.
+ */
+export function assertPreparedMatchesDocument(x: {
+  announcedSha256: string;
+  workingPdf: Uint8Array;
+  preparedPdf: Uint8Array;
+  signedAttrsDer: Uint8Array;
+}): void {
+  const fail = (m: string) => {
+    throw new CertsignError(0, "document_mismatch", `No se firma: ${m}`);
+  };
+  const working = Buffer.from(x.workingPdf);
+  const prepared = Buffer.from(x.preparedPdf);
+  if (createHash("sha256").update(working).digest("hex") !== x.announcedSha256.toLowerCase()) {
+    fail("el documento descargado no es el que anunció el servidor");
+  }
+  if (prepared.length <= working.length || !prepared.subarray(0, working.length).equals(working)) {
+    fail("el documento preparado no conserva intacto el documento que se mostró");
+  }
+  // ByteRange de la revisión nueva (el último del archivo, después del documento original).
+  const tail = prepared.subarray(working.length).toString("latin1");
+  const matches = [...tail.matchAll(/\/ByteRange\s*\[\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*\]/g)];
+  if (matches.length !== 1) fail("el documento preparado no tiene un único ByteRange nuevo");
+  const [a, b, c, d] = matches[0].slice(1, 5).map(Number);
+  if (a !== 0 || b <= working.length || c <= b || c + d !== prepared.length) fail("el ByteRange no cubre el documento completo");
+  if (prepared[b] !== 0x3c || prepared[c - 1] !== 0x3e) fail("el espacio de la firma no es una cadena hexadecimal");
+  const hole = prepared.subarray(b + 1, c - 1).toString("latin1");
+  if (!/^[0-9a-fA-F]*$/.test(hole)) fail("el espacio de la firma tiene contenido inesperado");
+  const covered = createHash("sha256").update(prepared.subarray(a, a + b)).update(prepared.subarray(c, c + d)).digest();
+  const md = messageDigestOf(x.signedAttrsDer);
+  if (!md || !covered.equals(md)) fail("los datos a firmar no corresponden al documento");
+}
+
+/** messageDigest (32 bytes) de un SET de atributos firmados en DER, o null. */
+function messageDigestOf(der: Uint8Array): Buffer | null {
+  try {
+    const set = forge.asn1.fromDer(forge.util.createBuffer(Buffer.from(der).toString("binary")), true);
+    for (const attr of set.value as forge.asn1.Asn1[]) {
+      const parts = attr.value as forge.asn1.Asn1[];
+      if (forge.asn1.derToOid(parts[0].value as string) !== ATTR.messageDigest) continue;
+      const v = (parts[1].value as forge.asn1.Asn1[])?.[0];
+      if (v?.type === forge.asn1.Type.OCTETSTRING && typeof v.value === "string") return Buffer.from(v.value, "binary");
+    }
+  } catch {
+    return null;
+  }
+  return null;
 }

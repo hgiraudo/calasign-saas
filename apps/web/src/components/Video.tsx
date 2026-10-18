@@ -286,7 +286,7 @@ export function SignerVideoDock() {
         </span>
       </div>
       {state.status === "connecting" && <p className="small muted">{v("room.connecting")}</p>}
-      {state.status === "ended" && <p className="small">{v("room.ended")}</p>}
+      {state.status === "ended" && <p className="small vdock-ended">{v("room.ended")}</p>}
       {state.status === "error" && <p className="small error-text">{v("room.error", { code: state.error ?? "" })}</p>}
       {!minimized && state.status === "connected" && (
         <>

@@ -129,19 +129,19 @@ export function VideoRoomPage() {
         </div>
         <div className="video-actions">
           {session?.recordingEnabled && state.you && !state.you.consented && (
-            <button type="button" className="btn btn-ghost" onClick={() => client.consent()}>
+            <button type="button" className="btn btn-ghost vroom-consent" onClick={() => client.consent()}>
               ✓ {v("dock.consent")}
             </button>
           )}
           {session?.recordingEnabled &&
             (recorder ? (
-              <button type="button" className="btn btn-ghost" onClick={stopRecording}>
+              <button type="button" className="btn btn-ghost vroom-rec-stop" onClick={stopRecording}>
                 ■ {v("room.recStop")}
               </button>
             ) : (
               <button
                 type="button"
-                className="btn btn-ghost"
+                className="btn btn-ghost vroom-rec-start"
                 onClick={startRecording}
                 disabled={state.recording.consentRequired || state.peers.length === 0 || state.recording.status === "recording"}
                 title={state.recording.consentRequired ? v("room.recNeedConsent") : undefined}
@@ -149,7 +149,7 @@ export function VideoRoomPage() {
                 ● {v("room.recStart")}
               </button>
             ))}
-          <button type="button" className="btn btn-primary" onClick={end}>
+          <button type="button" className="btn btn-primary vroom-end" onClick={end}>
             {v("room.endSession")}
           </button>
         </div>

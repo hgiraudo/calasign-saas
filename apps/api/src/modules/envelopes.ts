@@ -101,14 +101,20 @@ export async function advanceRouting(db: Db, tenantId: string, envelopeId: strin
 // ───────────────────────────── Idempotencia ─────────────────────────────
 
 async function idempotent<T>(s: Services, req: FastifyRequest, reply: FastifyReply, fn: () => Promise<{ status: number; body: T }>) {
-  const key = req.headers["idempotency-key"] as string | undefined;
+  let key = req.headers["idempotency-key"] as string | undefined;
   if (!key) {
     const r = await fn();
     reply.code(r.status);
     return r.body;
   }
   if (key.length > 200) throw badRequest("invalid_idempotency_key", "Idempotency-Key demasiado larga");
-  const tenantId = req.auth!.tenantId;
+  const a = req.auth!;
+  const tenantId = a.tenantId;
+  // La clave vale por credencial, no por organización: dos integraciones de la misma organización que usen la misma
+  // clave y el mismo cuerpo (p. ej. el id de un pedido) recibían una la respuesta guardada de la otra; su sobre no se
+  // creaba y veía uno que quizá no puede ver. Se guarda con el prefijo de quien llama (key, app OAuth o persona).
+  const principal = a.oauth ? `o:${a.oauth.clientId}:${a.userId ?? a.apiKeyId ?? ""}` : a.apiKeyId ? `k:${a.apiKeyId}` : `u:${a.userId ?? ""}`;
+  key = `${principal}|${key}`;
   const reqHash = sha256Hex(`${req.method} ${req.url} ${JSON.stringify(req.body ?? null)}`);
   // Se reserva la clave ANTES de ejecutar (status_code 0 = en curso): dos pedidos simultáneos con la misma
   // clave no pueden ejecutarse los dos. Una reserva vieja que quedó en curso (el proceso murió a mitad del

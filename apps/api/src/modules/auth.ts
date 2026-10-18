@@ -157,6 +157,9 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
       // seguir entrando después del cambio) y los desafíos de 2FA pendientes de un login con la contraseña vieja.
       await t.query(`DELETE FROM sessions WHERE user_id = $1`, [row.user_id]);
       await t.query(`UPDATE oauth_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL`, [row.user_id]);
+      // Y los códigos de autorización todavía sin canjear: canjeados después daban tokens nuevos que esta revocación
+      // ya no alcanzaba.
+      await t.query(`UPDATE oauth_authorization_codes SET used_at = now() WHERE user_id = $1 AND used_at IS NULL`, [row.user_id]);
       await t.query(`DELETE FROM login_challenges WHERE user_id = $1`, [row.user_id]);
       await t.query(`UPDATE password_resets SET used_at = now() WHERE user_id = $1 AND used_at IS NULL`, [row.user_id]);
       return row.user_id as string;

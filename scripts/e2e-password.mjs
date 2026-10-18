@@ -138,6 +138,10 @@ step("10 intentos fallidos bloquean la cuenta (429 aun con la contraseña correc
   };
   const tok = await tokenPost({ grant_type: "authorization_code", code, redirect_uri: REDIRECT, code_verifier: verifier });
   assert(tok.status === 200 && tok.body.refresh_token, `canje del código: ${JSON.stringify(tok.body)}`);
+  // Un segundo código autorizado con la contraseña vieja y guardado sin canjear: canjearlo después del reset no puede
+  // dar tokens nuevos (no los alcanzaría la revocación del reset).
+  const dec2 = await u("POST", "/v1/oauth/authorize/decision", { ...params, approve: true });
+  const code2 = new URL(dec2.redirectTo).searchParams.get("code");
   await anon("POST", "/v1/auth/password/forgot", { email: oEmail }, { expect: 202 });
   const t2 = (await resetLinkFor(anon, oEmail)).link.split("/reset/")[1];
   await anon("POST", "/v1/auth/password/reset", { token: t2, password: "clave-propia-67890" }, { expect: 204 });
@@ -145,7 +149,9 @@ step("10 intentos fallidos bloquean la cuenta (429 aun con la contraseña correc
   assert(acc.status === 401, `el access token sigue valiendo después del reset (HTTP ${acc.status})`);
   const ref = await tokenPost({ grant_type: "refresh_token", refresh_token: tok.body.refresh_token });
   assert(ref.status === 400 && ref.body.error === "invalid_grant", `el refresh token sigue valiendo después del reset (HTTP ${ref.status})`);
-  step("restablecer la contraseña revoca los tokens de apps OAuth del usuario");
+  const late = await tokenPost({ grant_type: "authorization_code", code: code2, redirect_uri: REDIRECT, code_verifier: verifier });
+  assert(late.status === 400 && late.body.error === "invalid_grant", `un código emitido antes del reset se canjea después (HTTP ${late.status})`);
+  step("restablecer la contraseña revoca los tokens de apps OAuth del usuario y los códigos sin canjear");
 }
 
 console.log("\nE2E CONTRASEÑA OK");

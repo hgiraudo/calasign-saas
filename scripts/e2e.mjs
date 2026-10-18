@@ -81,7 +81,21 @@ step("alta de cuenta y sesión");
 const { envelope } = await api("POST", "/v1/envelopes", { subject: `Contrato E2E ${stamp}`, message: "Por favor firmá" }, { headers: { "idempotency-key": `e2e-${stamp}` } });
 const again = await api("POST", "/v1/envelopes", { subject: `Contrato E2E ${stamp}`, message: "Por favor firmá" }, { headers: { "idempotency-key": `e2e-${stamp}` } });
 if (again.envelope.id !== envelope.id) throw new Error("idempotencia rota");
-step(`sobre creado ${envelope.id} (idempotente)`);
+// La clave vale por credencial: otra integración de la misma organización que use la misma clave y el mismo cuerpo
+// (p. ej. el id de un pedido) crea su propio sobre; no recibe la respuesta guardada de la sesión.
+{
+  const { secret } = await api("POST", "/v1/api-keys", { name: `idem ${stamp}` });
+  const res = await fetch(BASE + "/v1/envelopes", {
+    method: "POST",
+    headers: { authorization: `Bearer ${secret}`, "content-type": "application/json", "idempotency-key": `e2e-${stamp}` },
+    body: JSON.stringify({ subject: `Contrato E2E ${stamp}`, message: "Por favor firmá" }),
+  });
+  const other = await res.json();
+  if (res.status !== 201 || res.headers.get("idempotent-replay") || other.envelope?.id === envelope.id) {
+    throw new Error(`otra credencial recibió la respuesta guardada de la misma Idempotency-Key (HTTP ${res.status})`);
+  }
+}
+step(`sobre creado ${envelope.id} (idempotente, por credencial)`);
 
 const fd = new FormData();
 fd.append("file", new Blob([tinyPdf()], { type: "application/pdf" }), "contrato.pdf");

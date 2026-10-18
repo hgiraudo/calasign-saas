@@ -172,13 +172,22 @@ export async function closeStaleCheckouts(d: { db: Db; log: { error: (o: object,
       if (p.provider === "stripe") outcome = await stripeExpireCheckoutSession(p.checkout_id);
       else if (p.provider === "mercadopago") await mpExpirePreference(p.checkout_id);
       // "complete": se pagó antes de poder cerrarla; el webhook lo acredita y queda a la vista en la evidencia.
-      await d.db.query(`UPDATE envelope_payments SET checkout_closed_at = now(), checkout_url = NULL, updated_at = now() WHERE id = $1`, [p.id]);
-      await appendEvent(d.db, {
-        tenantId: p.tenant_id,
-        envelopeId: p.envelope_id,
-        type: "payment.checkout_closed",
-        actor: { ...SYSTEM, label: `Pago (${p.provider})` },
-        data: { paymentId: p.id, provider: p.provider, outcome },
+      // Marca y evento juntos, con el sobre bloqueado: sin el bloqueo, un webhook de pago simultáneo tomaba el mismo
+      // número de evento, el de cierre fallaba (UNIQUE) y, ya marcado como cerrado, no se reintentaba nunca.
+      await d.db.tx(async (t) => {
+        await lockEnvelope(t, p.tenant_id, p.envelope_id);
+        const marked = await t.query(
+          `UPDATE envelope_payments SET checkout_closed_at = now(), checkout_url = NULL, updated_at = now() WHERE id = $1 AND checkout_closed_at IS NULL RETURNING id`,
+          [p.id],
+        );
+        if (!marked.length) return;
+        await appendEvent(t, {
+          tenantId: p.tenant_id,
+          envelopeId: p.envelope_id,
+          type: "payment.checkout_closed",
+          actor: { ...SYSTEM, label: `Pago (${p.provider})` },
+          data: { paymentId: p.id, provider: p.provider, outcome },
+        });
       });
     } catch (err) {
       d.log.error({ err: String(err), paymentId: p.id }, "no se pudo cerrar el checkout de un sobre cerrado");

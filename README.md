@@ -12,6 +12,9 @@ Entorno de desarrollo: **https://dev.calasign.com**.
 | [`docs/IA.md`](docs/IA.md) | Funciones de IA, opt-in, presupuesto y proveedor (Claude o mock) |
 | [`docs/PAGOS-Y-AGENTES.md`](docs/PAGOS-Y-AGENTES.md) | Servidor MCP, cobro dentro de la firma, planes y facturación, medios de pago por país |
 | [`docs/CUSTOM-DOMAINS.md`](docs/CUSTOM-DOMAINS.md) | Dominio propio por cliente y TLS bajo demanda |
+| [`docs/VIDEO.md`](docs/VIDEO.md) | Sala de firma por videollamada, TURN y escalado |
+| [`docs/CRM.md`](docs/CRM.md) | Conectores HubSpot, Salesforce, Siigo y Alegra |
+| [`docs/DATOS.md`](docs/DATOS.md) | BYOK, celdas de residencia de datos y renovación de sellos de archivo |
 
 La API completa y vigente está en `GET /v1/openapi.json` y en la página `/developers`.
 
@@ -26,6 +29,8 @@ La API completa y vigente está en `GET /v1/openapi.json` y en la página `/deve
 | API e integraciones | API REST v1 + OpenAPI, API keys y OAuth 2.0 (client credentials, authorization code + PKCE), firma embebida en iframe, webhooks HMAC con reintentos, anclas de texto, idempotencia, SDKs Node y Python, servidor MCP para agentes de IA, Slack/Teams, exportación a Google Drive/Dropbox/OneDrive/S3, dominio propio |
 | Equipos y empresa | Miembros e invitaciones, roles y permisos personalizados, grupos, auditoría de cuenta, retención, 2FA, SSO OIDC/SAML, SCIM, branding, reportes |
 | Acuerdos e IA | Repositorio con búsqueda, generación de documentos desde plantillas, workflows sin código, negociación con versiones, detección de campos, metadatos y alertas de renovación, revisión contra playbook |
+| Video y CRM | Firma por videollamada con co-navegación y grabación; enviar a firmar desde HubSpot y Salesforce con write-back y PDF adjunto; Siigo y Alegra |
+| Datos | BYOK con KMS del cliente, residencia de datos por celdas, renovación automática de sellos de archivo |
 | Cobro | Planes Free/Starter/Business/Enterprise con límites, uso mensual, precios en USD/BRL/COP/DOP/HNL/PEN, Stripe y Mercado Pago |
 
 ## Desarrollo local
@@ -45,15 +50,16 @@ Configuración: `apps/api/src/config.ts` y las variables de cada documento de `d
 
 ```bash
 for t in e2e e2e-integrations e2e-signer e2e-productivity e2e-teams e2e-experience e2e-scale \
-         e2e-platform e2e-identity e2e-evidence e2e-mcp e2e-billing e2e-ai e2e-agreements; do
+         e2e-platform e2e-identity e2e-evidence e2e-mcp e2e-billing e2e-ai e2e-agreements e2e-video e2e-data; do
   node scripts/$t.mjs http://localhost:4000
 done
+node scripts/e2e-crm.mjs                 # levanta su propia API y simuladores de los proveedores
 (cd apps/api && ./node_modules/.bin/vitest run)
 (cd packages/pdf && ./node_modules/.bin/vitest run)
 (cd packages/xades && ../../apps/api/node_modules/.bin/vitest run)
 ```
 
-`e2e-integrations`, `e2e-teams`, `e2e-identity`, `e2e-ai` y `e2e-agreements` usan funciones que solo existen en el entorno
+`e2e-integrations`, `e2e-teams`, `e2e-identity`, `e2e-ai`, `e2e-agreements` y `e2e-data` usan funciones que solo existen en el entorno
 local (buzón sin sesión, barridos manuales, receptores en 127.0.0.1); el resto también corre contra
 `https://dev.calasign.com`.
 

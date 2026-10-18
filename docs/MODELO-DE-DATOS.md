@@ -85,6 +85,9 @@ El diagrama de arriba es el núcleo (0001). Cada bloque funcional agrega su prop
 | `0021_r6_custom_domains` | La unicidad de `custom_domains.domain` vale solo para dominios verificados: un dominio pendiente ya no bloquea a su dueño |
 | `0022_r9_identity` | `web_forms.created_by_api_key`: un formulario creado con una API key tiene dueño (la key lo edita y ve sus sobres; si se revoca, el formulario deja de crear sobres) |
 | `0023_r9_evidence` | `workflow_runs.started_by_api_key`: una ejecución iniciada por API queda a nombre de su key; las del link público ya no las ve cualquier key |
+| `0024_r10_core` | `templates.created_by_api_key`: una plantilla creada con una API key es de esa key (la completa y ve las restringidas que creó) |
+| `0025_r10_integrations` | `crm_mappings.created_by_api_key`: un mapeo de CRM creado con una API key tiene dueño; si la key se revoca, el webhook deja de enviar |
+| `0026_r10_evidence` | `workflows.created_by_api_key`: un workflow creado con una API key queda a su nombre; los envíos del link público se revisan contra esa key |
 
 Reglas: una migración por bloque, solo aditiva salvo cuando se recrea un `CHECK` para sumar un valor; nunca se edita una
 migración ya aplicada en un entorno.

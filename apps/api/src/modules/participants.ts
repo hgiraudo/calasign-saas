@@ -9,6 +9,7 @@ import { encrypt, maskDestination, randomToken, sha256Hex, uuidv7 } from "../lib
 import { authenticate, type Services } from "./context";
 import { activateRecipient, lockEnvelope } from "./envelopes";
 import { loadDetail } from "./mappers";
+import { isUnverifiedSelfRegistered } from "./otp";
 import { recipientActor, resolveToken } from "./signing";
 import { inheritIdentityRequirement } from "./identity/kyc";
 
@@ -57,7 +58,9 @@ export async function replaceRecipient(
   if (channels.includes("email") && !c.email) throw conflict("invalid_channels", "El canal email requiere email");
   if (channels.includes("whatsapp") && !c.phone) throw conflict("invalid_channels", "El canal WhatsApp requiere teléfono");
   // El reemplazo hereda la verificación que pidió el remitente: no se baja a "solo link" en silencio.
-  const auth = old.auth_method ?? "link";
+  // En persona: el reemplazo firma con el mismo anfitrión (sin anfitrión nadie podría abrirlo y no recibe invitación).
+  const host = old.auth_method === "in_person" ? (old.in_person_host_user_id ?? null) : null;
+  const auth = old.auth_method === "in_person" && !host ? "link" : (old.auth_method ?? "link");
   if (auth === "otp_email" && !c.email) throw conflict("otp_destination_required", "Este firmante se verifica con un código por correo: indicá el correo de la persona");
   if ((auth === "otp_sms" || auth === "otp_whatsapp") && !c.phone)
     throw conflict("otp_destination_required", "Este firmante se verifica con un código por SMS/WhatsApp: indicá el teléfono de la persona");
@@ -66,8 +69,8 @@ export async function replaceRecipient(
   const token = randomToken();
   await db.query(
     `INSERT INTO recipients (id, tenant_id, envelope_id, role, routing_order, name, email, phone, locale, channels, auth_method, replaces,
-       access_token_hash, access_token_enc)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+       access_token_hash, access_token_enc, in_person_host_user_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
     [
       id,
       e.tenant_id,
@@ -83,6 +86,7 @@ export async function replaceRecipient(
       old.id,
       sha256Hex(token),
       encrypt(token),
+      host,
     ],
   );
   await db.query(`UPDATE fields SET recipient_id = $2 WHERE recipient_id = $1`, [old.id, id]);
@@ -151,6 +155,9 @@ export async function participantRoutes(app: FastifyInstance, s: Services) {
         if (e.status !== "sent") throw conflict("envelope_closed", "El sobre ya no está disponible");
         if (!(e.allow_delegation ?? true)) throw forbidden("El remitente no permite delegar este sobre");
         const old = await t.one<any>(`SELECT * FROM recipients WHERE id = $1`, [r0.id]);
+        // Quien se registró solo en un formulario web (correo sin validar) no recibe correos: tampoco puede usar la
+        // delegación para que la plataforma le escriba a un tercero.
+        if (isUnverifiedSelfRegistered(old)) throw forbidden("Para delegar, validá primero tu correo");
         if (old.email && input.email && old.email.toLowerCase() === input.email.toLowerCase())
           throw conflict("same_person", "No podés delegar en vos mismo");
         await replaceRecipient(t, e, old, input, "delegated", recipientActor(req, old));

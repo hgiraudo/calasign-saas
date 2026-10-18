@@ -41,9 +41,15 @@ export function otpDestinationFor(r: any): string | null {
   return d ? maskDestination(d) : null;
 }
 
+/** Se registró solo en un formulario web y no validó su correo: no se le manda nada ni puede hacer que se mande a otros. */
+export function isUnverifiedSelfRegistered(r: any): boolean {
+  return Boolean(r.self_registered) && !(r.auth_method === "otp_email" && r.authenticated_at);
+}
+
 export function canDelegate(r: any, e: any): boolean {
   return (
     e.status === "sent" &&
+    !isUnverifiedSelfRegistered(r) &&
     (e.allow_delegation ?? true) &&
     (r.role === "signer" || r.role === "approver") &&
     ["sent", "viewed"].includes(r.status)

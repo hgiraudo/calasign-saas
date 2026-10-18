@@ -302,4 +302,23 @@ assert(csv.includes(envelope.id) && csv.includes(`Contrato en persona ${stamp}`)
 assert(csv.includes(`"'=HYPERLINK(""http://evil"",""x"")"`), "el CSV neutraliza fórmulas");
 step("reportes: totales, meses, remitentes, notificaciones y CSV seguro");
 
+// ───────────────────────────── Reasignar a quien firma en persona ─────────────────────────────
+
+{
+  const { envelope: e2 } = await sender("POST", "/v1/envelopes", { subject: `Reasignación en persona ${stamp}` });
+  const fd2 = new FormData();
+  fd2.append("file", new Blob([tinyPdf("Reasignación en persona")], { type: "application/pdf" }), "r.pdf");
+  const d2 = await sender("POST", `/v1/envelopes/${e2.id}/documents`, null, { form: fd2 });
+  const P1 = randomUUID();
+  await sender("PUT", `/v1/envelopes/${e2.id}/recipients`, { recipients: [{ id: P1, name: n("Paula Presencial"), routingOrder: 1, inPerson: {} }] });
+  await sender("PUT", `/v1/envelopes/${e2.id}/fields`, { fields: [{ documentId: d2.id, recipientId: P1, type: "signature", page: 0, x: 0.1, y: 0.2, width: 0.3, height: 0.06 }] });
+  await sender("POST", `/v1/envelopes/${e2.id}/send`);
+  const det = await sender("POST", `/v1/envelopes/${e2.id}/recipients/${P1}/reassign`, { name: n("Raúl Reemplazo"), email: `raul+${stamp}@example.com` });
+  const repl = det.recipients.find((r) => r.name === n("Raúl Reemplazo"));
+  assert(repl.authMethod === "in_person" && repl.inPersonHost?.id === me.user.id, "el reemplazo sigue en persona con la misma anfitriona");
+  const st = await device("POST", `/v1/envelopes/${e2.id}/recipients/${repl.id}/in-person`, {});
+  assert(st.url.includes("inperson=1"), "la anfitriona puede abrir la firma en persona del reemplazo");
+  step("reasignar a un firmante en persona conserva la anfitriona");
+}
+
 console.log("\nE2E EXPERIENCIA OK");

@@ -351,12 +351,23 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
 // ───────────────────────────── Tareas periódicas ─────────────────────────────
 
 export async function sweep(d: Deps) {
-  await requeueStuckJobs(d.db);
-  await runAutomaticReminders(d.db);
-  await purgeExpiredEnvelopes(d);
-  await runAiSweep(d);
-  await agreementsSweep(d);
-  await dataSweep(d);
+  // Cada tarea por separado: una que falla (p. ej. un proveedor caído) no puede frenar a las demás, en
+  // particular el vencimiento de sobres de más abajo.
+  const steps: [string, () => Promise<unknown>][] = [
+    ["requeue", () => requeueStuckJobs(d.db)],
+    ["reminders", () => runAutomaticReminders(d.db)],
+    ["retention", () => purgeExpiredEnvelopes(d)],
+    ["ai", () => runAiSweep(d)],
+    ["agreements", () => agreementsSweep(d)],
+    ["data", () => dataSweep(d)],
+  ];
+  for (const [name, step] of steps) {
+    try {
+      await step();
+    } catch (err) {
+      d.log.error({ err: String(err), step: name }, "tarea periódica falló");
+    }
+  }
   const expired = await d.db.query<any>(`SELECT id, tenant_id FROM envelopes WHERE status IN ('sent','awaiting_certificates') AND expires_at < now() LIMIT 100`);
   for (const e of expired) {
     await d.db.tx(async (t) => {

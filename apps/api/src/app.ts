@@ -90,6 +90,11 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
     if (err instanceof AppError) {
       return reply.code(err.status).send({ error: { code: err.code, message: err.message, details: err.details } });
     }
+    // Errores de Postgres que son del pedido, no del servidor: un id que no es UUID (22P02) o una carrera contra
+    // una restricción única (23505, p. ej. dos altas simultáneas con el mismo correo).
+    const pgCode = (err as { code?: unknown }).code;
+    if (pgCode === "22P02") return reply.code(400).send({ error: { code: "invalid_id", message: "Identificador inválido" } });
+    if (pgCode === "23505") return reply.code(409).send({ error: { code: "conflict", message: "El recurso ya existe o cambió al mismo tiempo; reintentá" } });
     const fe = err as FastifyError;
     if (fe.statusCode && fe.statusCode < 500) {
       return reply.code(fe.statusCode).send({ error: { code: fe.code ?? "bad_request", message: fe.message } });

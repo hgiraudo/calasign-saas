@@ -98,18 +98,35 @@ async function idempotent<T>(s: Services, req: FastifyRequest, reply: FastifyRep
   if (key.length > 200) throw badRequest("invalid_idempotency_key", "Idempotency-Key demasiado larga");
   const tenantId = req.auth!.tenantId;
   const reqHash = sha256Hex(`${req.method} ${req.url} ${JSON.stringify(req.body ?? null)}`);
-  const prev = await s.db.one<any>(`SELECT * FROM idempotency_keys WHERE tenant_id = $1 AND key = $2`, [tenantId, key]);
-  if (prev) {
-    if (prev.request_hash !== reqHash) throw conflict("idempotency_mismatch", "Idempotency-Key reutilizada con otro pedido");
+  // Se reserva la clave ANTES de ejecutar (status_code 0 = en curso): dos pedidos simultáneos con la misma
+  // clave no pueden ejecutarse los dos.
+  const reserved = await s.db.query(
+    `INSERT INTO idempotency_keys (tenant_id, key, request_hash, status_code, response) VALUES ($1,$2,$3,0,'{}'::jsonb)
+     ON CONFLICT DO NOTHING RETURNING key`,
+    [tenantId, key, reqHash],
+  );
+  if (!reserved.length) {
+    const prev = await s.db.one<any>(`SELECT * FROM idempotency_keys WHERE tenant_id = $1 AND key = $2`, [tenantId, key]);
+    if (prev && prev.request_hash !== reqHash) throw conflict("idempotency_mismatch", "Idempotency-Key reutilizada con otro pedido");
+    if (!prev || prev.status_code === 0) throw conflict("idempotency_in_progress", "Ya hay un pedido en curso con esta Idempotency-Key; reintentá en unos segundos");
     reply.code(prev.status_code);
     reply.header("idempotent-replay", "true");
     return prev.response;
   }
-  const r = await fn();
-  await s.db.query(
-    `INSERT INTO idempotency_keys (tenant_id, key, request_hash, status_code, response) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
-    [tenantId, key, reqHash, r.status, JSON.stringify(r.body)],
-  );
+  let r: { status: number; body: T };
+  try {
+    r = await fn();
+  } catch (e) {
+    // Falló: se libera la clave para que el cliente pueda reintentar.
+    await s.db.query(`DELETE FROM idempotency_keys WHERE tenant_id = $1 AND key = $2 AND status_code = 0`, [tenantId, key]).catch(() => {});
+    throw e;
+  }
+  await s.db.query(`UPDATE idempotency_keys SET status_code = $3, response = $4 WHERE tenant_id = $1 AND key = $2`, [
+    tenantId,
+    key,
+    r.status,
+    JSON.stringify(r.body),
+  ]);
   reply.code(r.status);
   return r.body;
 }
@@ -126,7 +143,8 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
     { preHandler: auth },
     async (req) => {
       const { tenantId } = A(req);
-      const limit = Math.min(100, Math.max(1, Number(req.query.limit ?? 25)));
+      const rawLimit = Number(req.query.limit ?? 25);
+      const limit = Number.isFinite(rawLimit) ? Math.min(100, Math.max(1, Math.trunc(rawLimit))) : 25;
       const params: unknown[] = [tenantId];
       let where = `e.tenant_id = $1`;
       where += envelopeVisibilitySql(A(req), params);
@@ -140,6 +158,7 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
       }
       if (req.query.cursor) {
         const [ts, id] = Buffer.from(req.query.cursor, "base64url").toString().split("|");
+        if (!ts || Number.isNaN(Date.parse(ts)) || !/^[0-9a-f-]{36}$/i.test(id ?? "")) throw badRequest("invalid_cursor", "Cursor inválido");
         params.push(ts, id);
         where += ` AND (e.created_at, e.id) < ($${params.length - 1}::timestamptz, $${params.length}::uuid)`;
       }
@@ -181,8 +200,8 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
       const tenant = await s.db.one<any>(`SELECT default_locale FROM tenants WHERE id = $1`, [a.tenantId]);
       await s.db.tx(async (t) => {
         await t.query(
-          `INSERT INTO envelopes (id, tenant_id, created_by, created_via, subject, message, locale, expires_at, metadata)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+          `INSERT INTO envelopes (id, tenant_id, created_by, created_via, subject, message, locale, expires_at, metadata, created_by_api_key)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
           [
             id,
             a.tenantId,
@@ -193,6 +212,7 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
             input.locale ?? tenant?.default_locale ?? "es",
             input.expiresAt ?? new Date(Date.now() + 30 * 86400_000).toISOString(),
             JSON.stringify(input.metadata ?? {}),
+            a.apiKeyId,
           ],
         );
         await applyEnvelopeSettings(t, id, input);

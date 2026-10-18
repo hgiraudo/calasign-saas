@@ -90,7 +90,9 @@ export function startWorker(db: Db, opts: WorkerOptions) {
         const jobs = free > 0 ? await claim(free) : [];
         for (const job of jobs) {
           running++;
-          run(job).finally(() => running--);
+          run(job)
+            .catch((e) => opts.log.error({ jobId: job.id, queue: job.queue, err: String(e) }, "no se pudo registrar el resultado del job"))
+            .finally(() => running--);
         }
         if (jobs.length === 0) await sleep(pollMs);
       } catch (e) {

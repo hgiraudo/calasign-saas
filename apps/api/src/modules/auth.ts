@@ -133,11 +133,17 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
 
   app.post("/v1/api-keys", { preHandler: auth }, async (req, reply) => {
     const input = CreateApiKeyInput.parse(req.body);
+    // El rol pedido se guarda en el mismo INSERT (la política de acceso ya validó que quien la crea puede otorgarlo).
+    // Antes lo aplicaba un hook posterior a la respuesta que, si fallaba, dejaba la key como admin.
+    const body = (req.body ?? {}) as { role?: unknown; roleId?: unknown };
+    const role = body.role === "member" || body.role === "custom" ? body.role : "admin";
+    const roleId = role === "custom" && typeof body.roleId === "string" ? body.roleId : null;
+    if (role === "custom" && !roleId) throw new AppError(400, "invalid_role", "Falta el rol personalizado");
     const secret = `cs_${config.environment === "prod" ? "live" : "test"}_${randomToken(24)}`;
     const id = uuidv7();
     const row = await s.db.one(
-      `INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash, created_by) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-      [id, req.auth!.tenantId, input.name, secret.slice(0, 12), sha256Hex(secret), req.auth!.userId],
+      `INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash, created_by, role, role_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [id, req.auth!.tenantId, input.name, secret.slice(0, 12), sha256Hex(secret), req.auth!.userId, role, roleId],
     );
     reply.code(201);
     return { apiKey: toApiKey(row), secret };

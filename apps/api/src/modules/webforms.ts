@@ -324,14 +324,18 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
       const input = SubmitWebFormInput.parse(req.body);
       // Protección básica contra bots: trampa invisible + tiempo de llenado + token firmado del formulario.
       if (input.website) throw new AppError(422, "rejected", "No se pudo procesar el formulario");
+      // Token vencido o ajeno: no hace falta recargar la página (se perderían los datos cargados). La web pide un token
+      // nuevo (GET del formulario) y vuelve a enviar pasados MIN_FILL_MS; el código es estable y el texto lo traduce la web.
+      const expiredToken = () =>
+        new AppError(400, "invalid_form_token", "El formulario venció: volvé a enviarlo en unos segundos", { retryAfterSeconds: Math.ceil(MIN_FILL_MS / 1000) });
       let tok: { s: string; t: number };
       try {
         tok = JSON.parse(decrypt(input.formToken));
       } catch {
-        throw badRequest("invalid_form_token", "El formulario venció: recargá la página");
+        throw expiredToken();
       }
       const age = Date.now() - tok.t;
-      if (tok.s !== req.params.slug || age > MAX_FILL_MS) throw badRequest("invalid_form_token", "El formulario venció: recargá la página");
+      if (tok.s !== req.params.slug || age > MAX_FILL_MS) throw expiredToken();
       if (age < MIN_FILL_MS) throw new AppError(422, "too_fast", "Esperá unos segundos y volvé a enviar");
 
       const form = await s.db.one<any>(`SELECT * FROM web_forms WHERE slug = $1`, [req.params.slug]);

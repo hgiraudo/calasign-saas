@@ -13,6 +13,7 @@ import { recordAudit } from "../audit";
 import { SESSION_COOKIE, authenticate, clientInfo, type AuthContext, type Services } from "../context";
 import { syncSsoDomains } from "../data/sso-domains";
 import { safeRequest } from "../webhooks";
+import { tenantPlan, usersCount } from "../billing/plans";
 
 const SESSION_DAYS = 14;
 const STATE_TTL_MIN = 10;
@@ -349,7 +350,13 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
         await recordAudit(s.db, { tenantId, action: "auth.sso_denied", actor: { type: "anonymous", label: email }, ip, userAgent, data: { protocol, reason: "not_member" } });
         throw new AppError(403, "sso_not_member", "No sos miembro de esta organización. Pedí una invitación al administrador.");
       }
-      await s.db.tx(async (t) => {
+      const overLimit = await s.db.tx(async (t) => {
+        // Cupo de usuarios del plan, como en invitaciones y SCIM (con la organización bloqueada: dos altas simultáneas
+        // no lo superan). El SSO es de Enterprise (sin cupo), pero la configuración queda al bajar de plan: sin esto,
+        // una organización que pasó a Business seguía sumando usuarios por JIT sin límite.
+        await t.query(`SELECT id FROM tenants WHERE id = $1 FOR UPDATE`, [tenantId]);
+        const { plan } = await tenantPlan(t, tenantId);
+        if (plan.users !== null && (await usersCount(t, tenantId)) >= plan.users) return plan;
         if (!user) {
           const id = uuidv7();
           await t.query(`INSERT INTO users (id, email, name, password_hash, locale) VALUES ($1,$2,$3,'sso-only','es')`, [id, email, name?.trim() || email.split("@")[0]]);
@@ -362,7 +369,12 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
           user.id,
           c.jit_role,
         ]);
+        return null;
       });
+      if (overLimit) {
+        await recordAudit(s.db, { tenantId, action: "auth.sso_denied", actor: { type: "anonymous", label: email }, ip, userAgent, data: { protocol, reason: "plan_limit", max: overLimit.users } });
+        throw new AppError(402, "sso_plan_limit", `El plan ${overLimit.name} permite hasta ${overLimit.users} usuario(s): pedí al administrador que amplíe el plan`);
+      }
       member = { role: c.jit_role };
       await recordAudit(s.db, {
         tenantId,

@@ -41,10 +41,13 @@ trap 'rm -rf "$TMP"' EXIT
 # Nunca viajan: var/ (claves de desarrollo), ni planes/estados/variables de Terraform.
 # `git ls-files -c` también lista los versionados borrados en el working tree (aún sin `git rm`): se saltean,
 # porque tar aborta con "Cannot stat" y el deploy debe reflejar el working tree tal cual.
+# Solo archivos regulares y tar sin recursión: un repo git anidado sin ignorar (p. ej. un clon de otro proyecto dentro
+# del working tree) aparece en `git ls-files -o` como una sola entrada "dir/", y tar la metía entera sin pasar por el
+# filtro de arriba (con su .git, su var/ y sus tfstate).
 { git ls-files -co --exclude-standard; find apps/web/dist -type f; } | sort -u \
   | grep -vE '^var/|(^|/)tfplan$|\.tfplan$|\.tfstate|\.tfvars$' \
-  | while IFS= read -r f; do if [ -e "$f" ]; then printf '%s\n' "$f"; fi; done > "$TMP/files"
-tar -czf "$TMP/rel.tgz" -T "$TMP/files"
+  | while IFS= read -r f; do if [ -f "$f" ]; then printf '%s\n' "$f"; fi; done > "$TMP/files"
+tar --no-recursion -czf "$TMP/rel.tgz" -T "$TMP/files"
 # El servidor verifica el paquete contra este hash: el rol de la instancia (el mismo que usa la app) puede escribir
 # en el bucket, y un paquete cambiado entre la subida y la descarga correría como root (backup, Caddy, hardening).
 SHA=$(sha256sum "$TMP/rel.tgz" | cut -d' ' -f1)

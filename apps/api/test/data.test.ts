@@ -151,6 +151,22 @@ describe("almacenamiento por celda y BYOK", () => {
     await expect(storage.createBlobStore(resolver).put(`tenants/${TENANT_A}/z.pdf`, new Uint8Array([1]), "application/pdf")).rejects.toMatchObject({ status: 503 });
     expect(failures).toHaveLength(1);
   });
+
+  it("una falla de red hacia S3 no marca la clave del cliente como fallida", async () => {
+    storage.setS3ClientFactory(() => ({
+      send: async () => {
+        const e = Object.assign(new Error("getaddrinfo ENOTFOUND b-us.s3.us-east-1.amazonaws.com"), { code: "ENOTFOUND" });
+        throw e;
+      },
+    }));
+    process.env.CELLS = JSON.stringify({ us: { default: true, storage: { driver: "s3", bucket: "b-us" } } });
+    cellsMod.resetCells();
+    const { resolver, failures } = fakeResolver({ [TENANT_A]: { cell: "us", byokKeyArn: OK_ARN, byokStatus: "active" } });
+    await expect(storage.createBlobStore(resolver).put(`tenants/${TENANT_A}/n.pdf`, new Uint8Array([1]), "application/pdf")).rejects.toThrow(/ENOTFOUND/);
+    expect(failures).toHaveLength(0);
+    expect(kms.isKeyError(Object.assign(new Error("KMS.DisabledException: key is disabled"), { name: "KMS.DisabledException" }))).toBe(true);
+    expect(kms.isKeyError(new Error("connect ETIMEDOUT kms.us-east-1.amazonaws.com"))).toBe(false);
+  });
 });
 
 describe("custodia de certificados con BYOK", () => {

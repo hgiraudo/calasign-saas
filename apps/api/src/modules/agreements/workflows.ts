@@ -343,13 +343,15 @@ async function executeStep(d: Deps, run: any, step: WorkflowStep, index: number)
         };
       });
       const userId = run.started_by ?? wf?.created_by ?? null;
+      // Iniciado por una API key: el sobre queda a nombre de esa key, así la key (con rol de miembro) lo ve y lo gestiona.
+      const apiKeyId = run.started_by ? null : (run.started_by_api_key ?? null);
       return {
         kind: "complete",
         output: {},
         tx: async (t, c) => {
           const envelopeId = await createEnvelopeFromPdf(
             t,
-            { tenantId: run.tenant_id, userId, apiKeyId: null, actor },
+            { tenantId: run.tenant_id, userId, apiKeyId, actor },
             {
               file: doc,
               fileName: doc.name ?? "documento.pdf",
@@ -520,15 +522,15 @@ function validateSteps(steps: WorkflowStep[]) {
 async function createRun(
   db: Db,
   wf: any,
-  p: { data: Record<string, unknown>; startedBy: string | null; startedByLabel: string; actor: Actor },
+  p: { data: Record<string, unknown>; startedBy: string | null; startedByApiKey?: string | null; startedByLabel: string; actor: Actor },
 ): Promise<{ runId: string; token: string | null }> {
   const steps: WorkflowStep[] = wf.steps;
   const runId = uuidv7();
   const token = steps.some((st) => st.type === "collect_data") ? randomToken() : null;
   await db.tx(async (t) => {
     await t.query(
-      `INSERT INTO workflow_runs (id, tenant_id, workflow_id, steps, context, started_by, started_by_label, public_token_hash, public_token_enc)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      `INSERT INTO workflow_runs (id, tenant_id, workflow_id, steps, context, started_by, started_by_label, public_token_hash, public_token_enc, started_by_api_key)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
       [
         runId,
         wf.tenant_id,
@@ -539,6 +541,7 @@ async function createRun(
         p.startedByLabel,
         token ? sha256Hex(token) : null,
         token ? encrypt(token) : null,
+        p.startedByApiKey ?? null,
       ],
     );
     for (const [idx, st] of steps.entries()) {
@@ -571,10 +574,19 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
     return r;
   }
 
+  /**
+   * Quién inició la ejecución: la persona (sesión) o la API key. Las iniciadas por el link público no son de nadie.
+   * Se compara solo con un id presente: una API key no tiene usuario y un run público no tiene started_by, y
+   * `null === null` hacía que cualquier API key viera, cancelara o reintentara esas ejecuciones.
+   */
+  const startedByMe = (a: AuthContext, r: any) =>
+    (a.userId != null && r.started_by === a.userId) || (a.apiKeyId != null && r.started_by_api_key === a.apiKeyId);
+
   async function loadRun(a: AuthContext, id: string) {
     const r = await s.db.one<any>(`SELECT * FROM workflow_runs WHERE id = $1 AND tenant_id = $2`, [id, a.tenantId]);
     if (!r) throw notFound("Ejecución");
-    const mine = r.started_by === a.userId || (r.steps as WorkflowStep[]).some((st) => st.type === "approval" && st.config.approverUserId === a.userId);
+    const mine =
+      startedByMe(a, r) || (a.userId != null && (r.steps as WorkflowStep[]).some((st) => st.type === "approval" && st.config.approverUserId === a.userId));
     if (!mine && !hasPerm(a, "templates:manage") && !hasPerm(a, "envelopes:view_all")) throw notFound("Ejecución");
     return r;
   }
@@ -671,7 +683,13 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
     const wf = await loadWorkflow(a, req.params.id);
     if (!wf.active) throw conflict("inactive", "El workflow está desactivado");
     const input = StartWorkflowInput.parse(req.body ?? {});
-    const { runId } = await createRun(s.db, wf, { data: input.data, startedBy: a.userId, startedByLabel: a.actor.label ?? "API", actor: a.actor });
+    const { runId } = await createRun(s.db, wf, {
+      data: input.data,
+      startedBy: a.userId,
+      startedByApiKey: a.userId ? null : a.apiKeyId,
+      startedByLabel: a.actor.label ?? "API",
+      actor: a.actor,
+    });
     await advanceNow(deps, runId);
     reply.code(201);
     return toRun(s.db, await s.db.one(`SELECT * FROM workflow_runs WHERE id = $1`, [runId]), a);
@@ -690,8 +708,13 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
       where += ` AND r.status = ANY($${params.length})`;
     }
     if (!hasPerm(a, "templates:manage") && !hasPerm(a, "envelopes:view_all")) {
-      params.push(a.userId);
-      where += ` AND (r.started_by = $${params.length} OR EXISTS (SELECT 1 FROM jsonb_array_elements(r.steps) st WHERE st->'config'->>'approverUserId' = $${params.length}::text))`;
+      if (a.userId) {
+        params.push(a.userId);
+        where += ` AND (r.started_by = $${params.length} OR EXISTS (SELECT 1 FROM jsonb_array_elements(r.steps) st WHERE st->'config'->>'approverUserId' = $${params.length}::text))`;
+      } else {
+        params.push(a.apiKeyId);
+        where += ` AND r.started_by_api_key = $${params.length}`;
+      }
     }
     const rows = await s.db.query(`SELECT r.* FROM workflow_runs r WHERE ${where} ORDER BY r.created_at DESC LIMIT 100`, params);
     return { items: await Promise.all(rows.map((r) => toRun(s.db, r, a))) };
@@ -732,7 +755,7 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
   app.post<{ Params: { id: string } }>("/v1/workflow-runs/:id/cancel", { preHandler: auth }, async (req) => {
     const a = A(req);
     const run0 = await loadRun(a, req.params.id);
-    if (run0.started_by !== a.userId && !hasPerm(a, "templates:manage")) throw forbidden();
+    if (!startedByMe(a, run0) && !hasPerm(a, "templates:manage")) throw forbidden();
     await s.db.tx(async (t) => {
       const run = await t.one<any>(`SELECT * FROM workflow_runs WHERE id = $1 FOR UPDATE`, [run0.id]);
       if (!["running", "waiting"].includes(run.status)) throw conflict("not_active", "La ejecución ya terminó");
@@ -760,7 +783,7 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
   app.post<{ Params: { id: string } }>("/v1/workflow-runs/:id/retry", { preHandler: auth }, async (req) => {
     const a = A(req);
     const run0 = await loadRun(a, req.params.id);
-    if (run0.started_by !== a.userId && !hasPerm(a, "templates:manage")) throw forbidden();
+    if (!startedByMe(a, run0) && !hasPerm(a, "templates:manage")) throw forbidden();
     await s.db.tx(async (t) => {
       const run = await t.one<any>(`SELECT * FROM workflow_runs WHERE id = $1 FOR UPDATE`, [run0.id]);
       const st = await t.one<any>(`SELECT * FROM workflow_run_steps WHERE run_id = $1 AND idx = $2`, [run.id, run.current_step]);

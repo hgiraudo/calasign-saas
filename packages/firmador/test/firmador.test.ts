@@ -307,6 +307,31 @@ describe("la revisión preparada solo agrega la firma (assertOnlySignatureAdded)
     await expect(assertOnlySignatureAdded(working, bad)).rejects.toThrow(/no encadena/);
   });
 
+  it("rechaza una revisión cuya tabla xref apunta a una copia alterada que pdf-lib no ve (la tapa otra copia idéntica)", async () => {
+    const working = await base();
+    const prepared = Buffer.from(await prep(working));
+    const doc = await PDFDocument.load(working);
+    // Contents: "N 0 R" o "[ N 0 R ]".
+    const [, num, gen] = /(\d+) (\d+) R/.exec(doc.getPages()[0].node.get(PDFName.of("Contents"))!.toString())!;
+    const w = Buffer.from(working).toString("latin1");
+    const start = w.search(new RegExp(`(^|\\n)${num} ${gen} obj`)) + (w.startsWith(`${num} ${gen} obj`) ? 0 : 1);
+    const original = w.slice(start, w.indexOf("endobj", start) + "endobj".length);
+    const body = "BT /F1 14 Tf 50 780 Td (Monto a pagar: 999999) Tj ET";
+    const tampered = `${num} ${gen} obj\n<< /Length ${body.length} >>\nstream\n${body}\nendstream\nendobj`;
+    const tamperedAt = prepared.length + 1;
+    const extra = `\n${tampered}\n${original}\n`;
+    const xrefAt = prepared.length + extra.length;
+    const bad = Buffer.concat([
+      prepared,
+      Buffer.from(
+        `${extra}xref\n0 1\n0000000000 65535 f\r\n${num} 1\n${String(tamperedAt).padStart(10, "0")} ${gen.padStart(5, "0")} n\r\n` +
+          `trailer\n<< /Size 99 /Root ${rootOf(prepared)} /Prev ${lastStartxref(prepared)} >>\nstartxref\n${xrefAt}\n%%EOF\n`,
+        "latin1",
+      ),
+    ]);
+    await expect(assertOnlySignatureAdded(working, bad)).rejects.toThrow(/No se firma/);
+  });
+
   it("rechaza un widget con acciones o un diccionario de firma con /Reference", async () => {
     const working = await base();
     const prepared = Buffer.from(await prep(working)).toString("latin1");

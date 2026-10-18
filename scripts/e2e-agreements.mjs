@@ -377,6 +377,22 @@ assert(r3.status === "cancelled" && r3.steps[0].status === "cancelled", "run can
 await api("POST", `/v1/workflow-runs/${r3.id}/steps/0/decision`, { approve: true }, { expect: 409 });
 step("workflow por API: rechazo y cancelación");
 
+// Una API key de miembro no "coincide" con las ejecuciones del link público (ambas sin usuario): no las ve ni las cancela.
+{
+  const { secret } = await api("POST", "/v1/api-keys", { name: `wf miembro ${stamp}`, role: "member" });
+  const asKey = { anon: true, headers: { authorization: `Bearer ${secret}` } };
+  await api("GET", `/v1/workflow-runs/${pv.runId}`, null, { ...asKey, expect: 404 });
+  await api("POST", `/v1/workflow-runs/${pv.runId}/cancel`, {}, { ...asKey, expect: 404 });
+  const listed = await api("GET", "/v1/workflow-runs", null, asKey);
+  assert(!listed.items.some((x) => x.id === pv.runId), "el run público no aparece en la lista de la key");
+  // La ejecución que inicia la propia key sí es suya: la ve, la lista y la cancela.
+  const own = await api("POST", `/v1/workflows/${wf2.id}/runs`, { data: {} }, asKey);
+  assert((await api("GET", "/v1/workflow-runs", null, asKey)).items.some((x) => x.id === own.id), "la key ve su propio run");
+  const cancelled = await api("POST", `/v1/workflow-runs/${own.id}/cancel`, {}, asKey);
+  assert(cancelled.status === "cancelled", "la key cancela su propio run");
+  step("workflow: una API key de miembro solo ve y cancela sus propias ejecuciones (no las del link público)");
+}
+
 // ───────────────────────────── Negociación ─────────────────────────────
 
 const negSrc = "# Propuesta comercial\nCliente: {{cliente.nombre}}\nPlazo: {{plazo}} meses. Precio mensual: {{precio | money:USD}}.\n{{clausula:confidencialidad}}\n{{firma:Cliente}}    {{firma:Empresa}}";

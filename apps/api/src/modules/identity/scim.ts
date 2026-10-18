@@ -150,6 +150,22 @@ async function setActive(db: Db, tenantId: string, userId: string, active: boole
   await db.query(`UPDATE scim_users SET active = $3, updated_at = now() WHERE tenant_id = $1 AND user_id = $2`, [tenantId, userId, active]);
 }
 
+/**
+ * SCIM solo puede crear o vincular cuentas (y cambiar correos) de los dominios VERIFICADOS de la organización, igual
+ * que el alta JIT por SSO. Sin esto, un token SCIM podría reservar el correo de cualquier persona, o sumar a la
+ * organización la cuenta de un usuario de otra, y después abrir sesiones como esa persona con un IdP propio.
+ */
+async function assertVerifiedDomain(db: Db, tenantId: string, email: string) {
+  const domain = email.split("@")[1]?.toLowerCase() ?? "";
+  const ok = await db.one(`SELECT 1 FROM sso_domains WHERE tenant_id = $1 AND domain = $2 AND verified_at IS NOT NULL`, [tenantId, domain]);
+  if (!ok) {
+    throw new ScimError(
+      403,
+      `El dominio ${domain || "(vacío)"} no está verificado en la organización: SCIM solo administra correos de dominios verificados (Ajustes → SSO). Para sumar a otra persona, invitala desde la consola.`,
+    );
+  }
+}
+
 async function ensureScimUser(db: Db, tenantId: string, userId: string) {
   await db.query(`INSERT INTO scim_users (tenant_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [tenantId, userId]);
 }
@@ -189,6 +205,7 @@ async function applyUserAttrs(db: Db, tenantId: string, userId: string, attrs: R
       if (membership?.role === "owner") throw new ScimError(409, "El correo de un propietario no se puede cambiar por SCIM", "mutability");
       const taken = await db.one(`SELECT 1 FROM users WHERE lower(email) = $1 AND id <> $2`, [email, userId]);
       if (taken) throw new ScimError(409, "Ya existe un usuario con ese correo", "uniqueness");
+      await assertVerifiedDomain(db, tenantId, email);
       await db.query(`UPDATE users SET email = $2 WHERE id = $1`, [userId, email]);
     }
   }
@@ -356,7 +373,9 @@ export async function scimRoutes(app: FastifyInstance, s: Services) {
     });
 
     sub.setErrorHandler((err, _req, reply) => {
-      const e = err as any;
+      let e = err as any;
+      // Carrera con otro alta del mismo correo o grupo (índice único): 409 SCIM en vez de 500.
+      if (e?.code === "23505") e = new ScimError(409, "Ya existe un recurso con ese valor", "uniqueness");
       const status = e instanceof ScimError ? e.status : e instanceof z.ZodError ? 400 : e.statusCode && e.statusCode < 500 ? e.statusCode : 500;
       const detail = e instanceof z.ZodError ? e.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") : status === 500 ? "Error interno" : e.message;
       if (status === 500) _req.log.error({ err }, "error SCIM");
@@ -456,6 +475,7 @@ export async function scimRoutes(app: FastifyInstance, s: Services) {
       const email = emailOf(input);
       if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new ScimError(400, "userName (correo) es obligatorio", "invalidValue");
       const active = input.active === undefined ? true : asBool(input.active);
+      await assertVerifiedDomain(s.db, tenantId, email);
       const userId = await s.db.tx(async (t) => {
         let u = await t.one<any>(`SELECT id FROM users WHERE lower(email) = $1`, [email]);
         if (u) {

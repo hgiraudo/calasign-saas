@@ -307,4 +307,90 @@ await bob3.api("GET", "/v1/envelopes", undefined, 401);
 await owner.api("DELETE", `/v1/members/${ownerMe.user.id}`, undefined, 409);
 step("quitar a un miembro cierra su acceso (401); el último propietario no se puede quitar (409)");
 
+// ───────────────────────────── 9. Regresiones de la revisión (ronda 3) ─────────────────────────────
+
+// (a) Dos propietarios que se quitan el rol (o se eliminan) al mismo tiempo: la organización nunca queda sin propietario.
+{
+  const p1 = new Client("dueño-1");
+  const p1Email = `p1+${stamp}@example.com`;
+  await p1.api("POST", "/v1/auth/signup", { name: "Pía Uno", email: p1Email, password: "clave-dueño-1-123", organization: `Dos dueños ${stamp}` });
+  const p1Me = await p1.api("GET", "/v1/me");
+  const p2Email = `p2+${stamp}@example.com`;
+  const invP2 = await p1.api("POST", "/v1/invitations", { email: p2Email, role: "owner" });
+  const p2 = new Client("dueño-2");
+  await p2.api("POST", `/v1/invite/${invP2.acceptUrl.split("/invite/")[1]}/accept`, { name: "Pablo Dos", password: "clave-dueño-2-123" });
+  const p2Me = await p2.api("GET", "/v1/me");
+  for (const [label, fn] of [
+    ["degradarse mutuamente", (a, b, bId, aId) => [a.raw("PATCH", `/v1/members/${bId}`, { role: "member" }), b.raw("PATCH", `/v1/members/${aId}`, { role: "member" })]],
+  ]) {
+    const results = await Promise.all(fn(p1, p2, p2Me.user.id, p1Me.user.id));
+    const statuses = results.map((r) => r.status);
+    const viewer = statuses[0] < 300 ? p1 : p2;
+    const { items } = await viewer.api("GET", "/v1/members");
+    const owners = items.filter((m) => m.role === "owner");
+    if (owners.length < 1) throw new Error(`${label}: la organización quedó sin propietario (${statuses.join("/")})`);
+    // El que pierde la carrera recibe 409 (último propietario, bajo el lock) o 401/403 (ya no es propietario).
+    if (statuses.filter((x) => x < 300).length !== 1 || !statuses.some((x) => [401, 403, 409].includes(x))) {
+      throw new Error(`${label}: tenía que ganar exactamente uno (${statuses.join("/")})`);
+    }
+  }
+  // Reponer a P2 como propietario y probar la eliminación cruzada simultánea.
+  const viewer = (await p1.raw("GET", "/v1/members")).status === 200 ? p1 : p2;
+  const other = viewer === p1 ? p2Me : p1Me;
+  await viewer.api("PATCH", `/v1/members/${other.user.id}`, { role: "owner" });
+  const del = await Promise.all([p1.raw("DELETE", `/v1/members/${p2Me.user.id}`), p2.raw("DELETE", `/v1/members/${p1Me.user.id}`)]);
+  const survivor = del[0].status < 300 ? p1 : p2;
+  const { items: after } = await survivor.api("GET", "/v1/members");
+  if (!after.some((m) => m.role === "owner")) throw new Error(`eliminación cruzada: la organización quedó sin propietario (${del.map((r) => r.status).join("/")})`);
+  if (del.filter((r) => r.status < 300).length !== 1) throw new Error(`eliminación cruzada: tenía que ganar exactamente uno (${del.map((r) => r.status).join("/")})`);
+  step("dos propietarios que se degradan o se eliminan a la vez: siempre queda un propietario (el otro pedido falla)");
+}
+
+// (b) Cambiar de organización exige una sesión de navegador: con API key → 403.
+{
+  const { secret } = await owner.api("POST", "/v1/api-keys", { name: "sin sesión" });
+  const keyClient = new Client("api-key");
+  keyClient.bearer = secret;
+  await keyClient.api("POST", "/v1/auth/switch-tenant", { tenantId: orgX }, 403);
+  step("/v1/auth/switch-tenant con API key → 403");
+}
+
+// (c) Plantillas con aprobador: se crean con el rol, y "desde sobre" conserva aprobadores y omite reemplazados.
+{
+  const tpl = await owner.api("POST", "/v1/templates", { name: `Con aprobador ${stamp}` });
+  const tplId = tpl.template?.id ?? tpl.id;
+  const rolesSet = await owner.api("PUT", `/v1/templates/${tplId}/roles`, {
+    roles: [
+      { name: "Cliente", role: "signer", routingOrder: 1 },
+      { name: "Gerencia", role: "approver", routingOrder: 2 },
+    ],
+  });
+  if (!rolesSet.roles.some((r) => r.role === "approver" && r.name === "Gerencia")) throw new Error("la plantilla no guardó el rol aprobador");
+
+  const env = await draftEnvelope(owner, `Desde sobre con aprobador ${stamp}`);
+  const fd = new FormData();
+  fd.append("file", new Blob([tinyPdf()], { type: "application/pdf" }), "c.pdf");
+  const doc = await owner.api("POST", `/v1/envelopes/${env.id}/documents`, fd);
+  const S = randomUUID(), A = randomUUID();
+  await owner.api("PUT", `/v1/envelopes/${env.id}/recipients`, {
+    recipients: [
+      { id: S, name: "Firma Original", email: `orig+${stamp}@example.com`, role: "signer", routingOrder: 1 },
+      { id: A, name: "Aprueba", email: `aprueba+${stamp}@example.com`, role: "approver", routingOrder: 2 },
+    ],
+  });
+  await owner.api("PUT", `/v1/envelopes/${env.id}/fields`, {
+    fields: [{ documentId: doc.id, recipientId: S, type: "signature", page: 0, x: 0.1, y: 0.7, width: 0.3, height: 0.08 }],
+  });
+  await owner.api("POST", `/v1/envelopes/${env.id}/send`);
+  await owner.api("POST", `/v1/envelopes/${env.id}/recipients/${S}/reassign`, { name: "Firma Nueva", email: `nueva+${stamp}@example.com`, reason: "prueba" });
+  const fromEnv = await owner.api("POST", `/v1/templates/from-envelope/${env.id}`, { name: `Desde sobre ${stamp}` });
+  const roles = fromEnv.roles;
+  const signers = roles.filter((r) => r.role === "signer");
+  const approvers = roles.filter((r) => r.role === "approver");
+  if (roles.length !== 2 || signers.length !== 1 || approvers.length !== 1) {
+    throw new Error(`desde sobre: se esperaba 1 firmante + 1 aprobador (sin el reemplazado), vino ${JSON.stringify(roles.map((r) => r.role))}`);
+  }
+  step("plantillas: rol aprobador al crear; «desde sobre» conserva el aprobador y omite al firmante reasignado");
+}
+
 console.log("\nE2E EQUIPOS OK");

@@ -722,7 +722,7 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
       params.push(req.query.status);
       where += ` AND r.status = $${params.length}`;
     }
-    params.push(Math.min(200, Math.max(1, Number(req.query.limit ?? 50))));
+    params.push(Math.min(200, Math.max(1, Math.trunc(Number(req.query.limit ?? 50)) || 50)));
     const rows = await s.db.query(
       `SELECT r.*, c.name AS connection_name, c.provider FROM crm_runs r LEFT JOIN crm_connections c ON c.id = r.connection_id
         WHERE ${where} ORDER BY r.created_at DESC LIMIT $${params.length}`,

@@ -133,11 +133,13 @@ try {
   fd.append("file", new Blob([anchorPdf()], { type: "application/pdf" }), "contrato.pdf");
   const doc = await api("POST", `/v1/envelopes/${envelope.id}/documents`, fd);
   const signer = randomUUID();
+  const approver = randomUUID();
   const cc = randomUUID();
   const det = await api("PUT", `/v1/envelopes/${envelope.id}/recipients`, {
     recipients: [
       { id: signer, name: `Cliente ${stamp}`, embedded: true, routingOrder: 1 },
-      { id: cc, name: `Backoffice ${stamp}`, email: `bo+${stamp}@example.com`, role: "cc", routingOrder: 2 },
+      { id: approver, name: `Aprobador ${stamp}`, embedded: true, role: "approver", routingOrder: 2 },
+      { id: cc, name: `Backoffice ${stamp}`, email: `bo+${stamp}@example.com`, role: "cc", routingOrder: 3 },
     ],
   });
   if (!det.recipients.find((r) => r.id === signer).embedded) fail("flag embedded no quedó");
@@ -211,9 +213,21 @@ try {
   await api("POST", `/v1/signing/${token}/complete`, { fields: [], signature: { kind: "drawn", imagePng: PNG } }, { useKey: false });
   ok("firmante embebido firmó");
 
+  // Aprobador (embebido): su aprobación dispara el webhook recipient.approved.
+  const sa = await api("POST", `/v1/envelopes/${envelope.id}/recipients/${approver}/signing-url`, {});
+  const ra = await fetch(BASE + new URL(sa.url).pathname, { redirect: "manual" });
+  const tokenA = (ra.headers.get("location") ?? "").split("/s/")[1]?.split("?")[0];
+  if (!tokenA) fail(`intercambio embebido del aprobador: ${ra.status}`);
+  await api("GET", `/v1/signing/${tokenA}`, null, { useKey: false });
+  await api("POST", `/v1/signing/${tokenA}/consent`, null, { useKey: false });
+  await api("POST", `/v1/signing/${tokenA}/complete`, { fields: [] }, { useKey: false });
+  const approvedHook = await waitFor(() => received.find((r) => r.path === "/hook" && r.type === "recipient.approved"), "recipient.approved");
+  if (!approvedHook.valid || approvedHook.evt.data.recipientId !== approver) fail(`payload de recipient.approved: ${JSON.stringify(approvedHook.evt?.data)}`);
+  ok("aprobador aprobó → webhook recipient.approved con firma válida");
+
   const completed = await waitFor(() => received.find((r) => r.path === "/hook" && r.type === "envelope.completed"), "envelope.completed", 60_000);
   const types = new Set(received.filter((r) => r.path === "/hook").map((r) => r.type));
-  for (const t of ["envelope.sent", "recipient.viewed", "recipient.signed", "envelope.completed"]) if (!types.has(t)) fail(`falta webhook ${t}`);
+  for (const t of ["envelope.sent", "recipient.viewed", "recipient.signed", "recipient.approved", "envelope.completed"]) if (!types.has(t)) fail(`falta webhook ${t}`);
   if (received.filter((r) => r.path === "/hook").some((r) => !r.valid)) fail("alguna firma de webhook inválida");
   if (completed.evt.data.envelope.status !== "completed" || !completed.evt.data.envelope.signedSha256) fail("payload de envelope.completed");
   ok(`webhooks del ciclo completo: ${[...types].join(", ")} — todas con firma válida`);

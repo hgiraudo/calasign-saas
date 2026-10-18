@@ -219,6 +219,11 @@ r = await oauthPost("/oauth/token", { grant_type: "client_credentials", scope: "
 const readOnly = r.body.access_token;
 res = await owner("POST", "/v1/envelopes", { subject: "no debería" }, { bearer: readOnly, raw: true });
 assert(res.status === 403 && (await res.json()).error.code === "insufficient_scope", "token solo lectura no puede crear sobres");
+// Firma XML (facturación electrónica): disponible con envelopes:write, no con solo lectura.
+res = await owner("POST", "/v1/xml/verify", { xml: "<a>sin firma</a>" }, { bearer: cc, raw: true });
+assert(res.status === 200, `/v1/xml/verify con envelopes:write (fue ${res.status})`);
+res = await owner("POST", "/v1/xml/verify", { xml: "<a>sin firma</a>" }, { bearer: readOnly, raw: true });
+assert(res.status === 403 && (await res.json()).error.code === "insufficient_scope", "firma XML exige envelopes:write");
 ok("client_credentials: token de 1 h, scopes recortados, RBAC del rol de la app y endpoints prohibidos");
 
 // ── authorization_code + PKCE ──

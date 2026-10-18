@@ -101,6 +101,7 @@ const es = {
   "ntf.ev.envelope.voided": "Anulado",
   "ntf.ev.envelope.expired": "Vencido",
   "ntf.ev.recipient.signed": "Un firmante firmó",
+  "ntf.ev.recipient.approved": "Un aprobador aprobó",
 
   // Zapier / Make
   "auto.title": "Zapier y Make",
@@ -271,6 +272,7 @@ const pt: Record<Key, string> = {
   "ntf.ev.envelope.voided": "Anulado",
   "ntf.ev.envelope.expired": "Expirado",
   "ntf.ev.recipient.signed": "Um signatário assinou",
+  "ntf.ev.recipient.approved": "Um aprovador aprovou",
 
   "auto.title": "Zapier e Make",
   "auto.intro": "Conecte a CalaSign a centenas de aplicações sem programar, usando os webhooks e a API.",
@@ -435,6 +437,7 @@ const en: Record<Key, string> = {
   "ntf.ev.envelope.voided": "Voided",
   "ntf.ev.envelope.expired": "Expired",
   "ntf.ev.recipient.signed": "A signer signed",
+  "ntf.ev.recipient.approved": "An approver approved",
 
   "auto.title": "Zapier and Make",
   "auto.intro": "Connect CalaSign with hundreds of apps without code, using webhooks and the API.",

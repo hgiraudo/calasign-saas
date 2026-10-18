@@ -522,7 +522,7 @@ export async function storageRoutes(app: FastifyInstance, s: Services) {
   });
 
   app.get<{ Querystring: { limit?: string } }>("/v1/storage/exports", { preHandler: auth }, async (req) => {
-    const limit = Math.min(200, Math.max(1, Number(req.query.limit ?? 50)));
+    const limit = Math.min(200, Math.max(1, Math.trunc(Number(req.query.limit ?? 50)) || 50));
     const rows = await s.db.query<any>(
       `SELECT x.*, c.name AS connection_name, e.subject FROM storage_exports x
          JOIN storage_connections c ON c.id = x.connection_id JOIN envelopes e ON e.id = x.envelope_id

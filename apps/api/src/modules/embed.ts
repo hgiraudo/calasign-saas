@@ -98,7 +98,8 @@ export async function embedRoutes(app: FastifyInstance, s: Services) {
       await s.db.tx(async (t) => {
         const e = await t.one<any>(`SELECT * FROM envelopes WHERE id = $1 AND tenant_id = $2 FOR UPDATE`, [req.params.id, a.tenantId]);
         if (!e) throw notFound("Sobre");
-        if (!["sent", "completed"].includes(e.status)) throw conflict("not_available", "El sobre no está en curso");
+        // awaiting_certificates: un firmante embebido con certificado necesita su link para emparejar el Firmador.
+        if (!["sent", "awaiting_certificates", "completed"].includes(e.status)) throw conflict("not_available", "El sobre no está en curso");
         const r = await t.one<any>(`SELECT * FROM recipients WHERE id = $1 AND envelope_id = $2`, [req.params.recipientId, e.id]);
         if (!r) throw notFound("Destinatario");
         if (!r.access_token_enc) throw conflict("not_available", "El destinatario todavía no está activo");

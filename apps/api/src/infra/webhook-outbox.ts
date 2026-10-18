@@ -14,6 +14,7 @@ const MAP: Record<string, string[]> = {
   "envelope.expired": ["envelope.expired"],
   "recipient.viewed": ["recipient.viewed"],
   "recipient.signed": ["recipient.signed"],
+  "recipient.approved": ["recipient.approved"],
   "recipient.declined": ["recipient.declined", "envelope.declined"],
 };
 

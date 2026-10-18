@@ -13,6 +13,7 @@ export const WEBHOOK_EVENT_TYPES = [
   "recipient.viewed",
   "recipient.signed",
   "recipient.declined",
+  "recipient.approved",
 ] as const;
 export type WebhookEventType = (typeof WEBHOOK_EVENT_TYPES)[number] | "webhook.test";
 

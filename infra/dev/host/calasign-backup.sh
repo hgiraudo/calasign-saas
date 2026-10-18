@@ -15,6 +15,8 @@ SIZE=$(stat -c %s "$F")
 echo "backup OK: s3://$BUCKET/backups/postgres/calasign-$TS.dump ($SIZE bytes)"
 # Latido para la alarma calasign-saas-dev-backup-missing (Terraform). No es fatal: si falta el permiso
 # (antes del terraform apply) el backup igual sirve, y la alarma termina avisando por falta de datos.
-aws cloudwatch put-metric-data --namespace CalaSign/Backup --dimensions Environment=dev \
-  --metric-data "MetricName=LastSuccess,Value=1,Unit=Count" "MetricName=SizeBytes,Value=$SIZE,Unit=Bytes" \
+# La dimensión va dentro de cada métrica: la CLI rechaza --dimensions junto con --metric-data.
+aws cloudwatch put-metric-data --namespace CalaSign/Backup \
+  --metric-data "MetricName=LastSuccess,Value=1,Unit=Count,Dimensions=[{Name=Environment,Value=dev}]" \
+  "MetricName=SizeBytes,Value=$SIZE,Unit=Bytes,Dimensions=[{Name=Environment,Value=dev}]" \
   || echo "AVISO: no se pudo publicar la métrica del backup en CloudWatch" >&2

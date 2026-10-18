@@ -86,6 +86,8 @@ export async function replaceRecipient(
     ],
   );
   await db.query(`UPDATE fields SET recipient_id = $2 WHERE recipient_id = $1`, [old.id, id]);
+  // El cobro pendiente pasa al reemplazo (si no, el sobre queda trabado o se firma sin pagar).
+  await db.query(`UPDATE envelope_payments SET recipient_id = $2, updated_at = now() WHERE recipient_id = $1 AND status <> 'paid'`, [old.id, id]);
   await inheritIdentityRequirement(db, old, id);
   // El reemplazo también firma con certificado si el original debía hacerlo.
   await db.query(`UPDATE recipients SET signature_type = $2, certificate_requirements = $3 WHERE id = $1`, [

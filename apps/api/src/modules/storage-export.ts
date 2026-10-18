@@ -273,11 +273,12 @@ async function uploadS3(creds: S3Creds, cfg: any, name: string, bytes: Uint8Arra
     requestChecksumCalculation: "WHEN_REQUIRED",
     responseChecksumValidation: "WHEN_REQUIRED",
     // El endpoint lo elige el cliente: cada conexión valida la IP resuelta (sin ventana para DNS rebinding).
-    requestHandler: { httpAgent: safeHttpAgent, httpsAgent: safeHttpsAgent },
+    // Con plazos: el endpoint lo controla el cliente y sin ellos un servidor que no responde retiene el job para siempre.
+    requestHandler: { httpAgent: safeHttpAgent, httpsAgent: safeHttpsAgent, connectionTimeout: 10_000, requestTimeout: 60_000 },
   });
   const key = `${String(cfg.prefix ?? "").replace(/^\/+/, "")}${name}`;
   try {
-    await client.send(new m.PutObjectCommand({ Bucket: cfg.bucket, Key: key, Body: bytes, ContentType: "application/pdf" }));
+    await client.send(new m.PutObjectCommand({ Bucket: cfg.bucket, Key: key, Body: bytes, ContentType: "application/pdf" }), { abortSignal: AbortSignal.timeout(120_000) });
   } finally {
     client.destroy();
   }

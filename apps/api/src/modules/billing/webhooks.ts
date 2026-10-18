@@ -9,7 +9,7 @@ import type { Db } from "../../infra/db";
 import { AppError } from "../../lib/errors";
 import type { Services } from "../context";
 import { markPaymentFailed, markPaymentPaid } from "./payments";
-import { mpGetPayment, mpGetPreapproval, toMinorUnits, verifyMercadoPagoSignature, verifyStripeSignature } from "./providers";
+import { mpCancelPreapproval, mpGetPayment, mpGetPreapproval, toMinorUnits, verifyMercadoPagoSignature, verifyStripeSignature } from "./providers";
 import { applySubscription } from "./subscriptions";
 
 /** true si el evento es nuevo (y queda registrado). */
@@ -121,10 +121,22 @@ export async function handleMercadoPagoNotification(db: Db, type: string, dataId
     const active = pre.status === "authorized";
     const ended = ["cancelled", "paused"].includes(pre.status);
     if (!active && !ended) return; // pending: todavía no autorizó
+    const t = await db.one<any>(`SELECT billing_provider, subscription_id FROM tenants WHERE id = $1`, [tenantId]);
+    if (!t) return;
     if (ended) {
       // Solo baja el plan si la que se cancela es la suscripción vigente (no una anterior reemplazada por otra).
-      const t = await db.one<any>(`SELECT billing_provider, subscription_id FROM tenants WHERE id = $1`, [tenantId]);
-      if (!t || t.billing_provider !== "mercadopago" || t.subscription_id !== pre.id) return;
+      if (t.billing_provider !== "mercadopago" || t.subscription_id !== pre.id) return;
+    } else if (t.billing_provider === "mercadopago" && t.subscription_id && t.subscription_id !== pre.id) {
+      // Dos suscripciones autorizadas: queda la del checkout más reciente y la otra se cancela para no cobrar dos veces
+      // (la notificación de una anterior puede llegar tarde y no tiene que pisar a la nueva).
+      const started = async (ref: string) =>
+        (await db.one<any>(`SELECT max(created_at) AS at FROM billing_checkouts WHERE tenant_id = $1 AND provider = 'mercadopago' AND provider_ref = $2`, [tenantId, ref]))?.at;
+      const [mine, theirs] = [await started(pre.id), await started(t.subscription_id)];
+      if (mine && theirs && new Date(mine) < new Date(theirs)) {
+        await mpCancelPreapproval(pre.id);
+        return;
+      }
+      await mpCancelPreapproval(t.subscription_id);
     }
     await applySubscription(db, tenantId, {
       plan: active ? (plan as PlanId) : "free",

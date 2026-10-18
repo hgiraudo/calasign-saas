@@ -164,8 +164,8 @@ export async function sendFromRecord(
   ctx: SendCtx,
   mapping: any,
   objectId: string,
-  opts: { send?: boolean; subject?: string; message?: string | null; runId?: string },
-): Promise<SendFromCrmRecordResponse> {
+  opts: { send?: boolean; subject?: string; message?: string | null; runId?: string; skipIfOpen?: boolean },
+): Promise<SendFromCrmRecordResponse | null> {
   const connRow = await db.one<any>(`SELECT * FROM crm_connections WHERE id = $1 AND tenant_id = $2`, [mapping.connection_id, ctx.tenantId]);
   if (!connRow) throw notFound("Conexión");
   if (!connRow.active) throw new AppError(409, "crm_connection_inactive", "La conexión está desactivada");
@@ -201,6 +201,24 @@ export async function sendFromRecord(
     const plan = planFromTemplate(l, input);
     const crmMeta = { connectionId: connRow.id, provider: connRow.provider, objectType: mapping.object_type, objectId: record.id, mappingId: mapping.id };
     const out = await db.tx(async (t) => {
+      if (opts.skipIfOpen) {
+        // Disparo por webhook: dos eventos del mismo registro procesados a la vez (la cola corre varios trabajos en
+        // paralelo) pasarían los dos el control previo y mandarían dos sobres. Con el mapeo bloqueado, el segundo
+        // espera al primero y ve su sobre.
+        await t.query(`SELECT id FROM crm_mappings WHERE id = $1 FOR UPDATE`, [mapping.id]);
+        const openEnv = await t.one<any>(
+          `SELECT l.envelope_id FROM crm_links l JOIN envelopes e ON e.id = l.envelope_id
+            WHERE l.mapping_id = $1 AND l.object_id = ANY($2::text[]) AND e.status IN ('draft','sent','awaiting_certificates','finalizing') LIMIT 1`,
+          [mapping.id, [...new Set([objectId, record.id])]],
+        );
+        if (openEnv) {
+          await t.query(`UPDATE crm_runs SET status = 'succeeded', error = NULL, detail = detail || $2::jsonb, updated_at = now() WHERE id = $1`, [
+            runId,
+            JSON.stringify({ skipped: "ya hay un sobre en curso para este registro", envelopeId: openEnv.envelope_id }),
+          ]);
+          return { envelopeId: openEnv.envelope_id as string, linkId: null as string | null, skipped: true };
+        }
+      }
       const envelopeId = await insertEnvelopeFromTemplate(t, ctx, l, input, plan, { crm: crmMeta });
       const linkId = uuidv7();
       // El vínculo va antes del envío: así el evento envelope.sent ya encuentra el registro para el write-back.
@@ -215,10 +233,11 @@ export async function sendFromRecord(
         linkId,
         JSON.stringify({ envelopeId, recipients: recipients.length, sent: send }),
       ]);
-      return { envelopeId, linkId };
+      return { envelopeId, linkId: linkId as string | null, skipped: false };
     });
     await db.query(`UPDATE crm_connections SET last_success_at = now(), last_error = NULL WHERE id = $1`, [connRow.id]);
-    return { envelopeId: out.envelopeId, status: send ? "sent" : "draft", linkId: out.linkId, runId };
+    if (out.skipped) return null; // ya había un sobre en curso (solo con skipIfOpen)
+    return { envelopeId: out.envelopeId, status: send ? "sent" : "draft", linkId: out.linkId!, runId };
   } catch (err) {
     const e = asAppError(err);
     await db.query(`UPDATE crm_runs SET status = 'failed', error = $2, updated_at = now() WHERE id = $1`, [runId, e.message.slice(0, 1000)]);
@@ -404,7 +423,7 @@ export async function handleCrmJob(d: { db: Db; blobs: BlobStore }, p: { runId: 
         { tenantId: run.tenant_id, userId: mapping.created_by, apiKeyId: null, actor: { type: "system", label: `${conn.provider} (webhook)` } },
         mapping,
         run.object_id,
-        { runId: run.id },
+        { runId: run.id, skipIfOpen: true },
       );
       await db.query(`UPDATE crm_connections SET last_success_at = now(), last_error = NULL WHERE id = $1`, [conn.row.id]);
       return;
@@ -694,7 +713,7 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
     if (m.template_id) await assertTemplateAccess(s.db, a, m.template_id, "view");
     const out = await sendFromRecord(s.db, { tenantId: a.tenantId, userId: a.userId, apiKeyId: a.apiKeyId, actor: a.actor }, m, input.objectId, input);
     reply.code(201);
-    return out;
+    return out!;
   });
 
   // ───────── Vínculos y ejecuciones ─────────

@@ -74,12 +74,12 @@ export function AiSettingsPage() {
         <h1>✨ {ai("ai.title")}</h1>
       </div>
       <p className="muted">{ai("ai.intro")}</p>
-      <section className="card pad">
+      <section className="card pad ai-form">
         <p className="small">
           <strong>{ai("ai.provider")}:</strong> {s.provider === "mock" ? ai("ai.provider.mock") : ai("ai.provider.anthropic", { model: s.model })}
         </p>
-        <fieldset className="field">
-          <legend>{ai("ai.notice.title")}</legend>
+        <div className="ai-notice">
+          <strong>{ai("ai.notice.title")}</strong>
           <p className="small">{ai("ai.notice.body")}</p>
           {noticeAccepted ? (
             <p className="muted small">{ai("ai.notice.accepted", { date: formatDateTime(s.noticeAcceptedAt, locale) })}</p>
@@ -89,7 +89,7 @@ export function AiSettingsPage() {
               {ai("ai.notice.accept")}
             </label>
           )}
-        </fieldset>
+        </div>
         <label className="check">
           <input
             type="checkbox"
@@ -129,8 +129,8 @@ export function AiSettingsPage() {
           {ai("ai.autoExtract")}
         </label>
         <label>
-          {ai("ai.playbook")}
-          <span className="muted small"> — {ai("ai.playbook.help")}</span>
+          <strong>{ai("ai.playbook")}</strong>
+          <span className="muted small ai-help">{ai("ai.playbook.help")}</span>
           <textarea rows={6} value={playbook} disabled={!canEdit} onChange={(e) => setPlaybook(e.target.value)} />
         </label>
         <ErrorBox error={error} />

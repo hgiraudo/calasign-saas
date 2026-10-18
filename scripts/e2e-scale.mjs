@@ -516,11 +516,18 @@ step("formulario con código por correo y desactivación");
   const memberForm = await r.json();
   let mp = await api("GET", `/v1/public/forms/${memberForm.slug}`, null, { anon: true });
   assert(mp.available, "el formulario del miembro está disponible");
+  let adm = await api("GET", `/v1/web-forms/${memberForm.id}`);
+  assert(adm.ownerInactiveReason === null, `con su creador habilitado la consola no marca nada: ${adm.ownerInactiveReason}`);
   const { items: members } = await api("GET", "/v1/members");
   const beto = members.find((m) => m.email === `beto+scale${stamp}@example.com`);
   await api("DELETE", `/v1/members/${beto.userId}`, null, { expect: 204 });
   mp = await api("GET", `/v1/public/forms/${memberForm.slug}`, null, { anon: true });
   assert(!mp.available && mp.unavailableReason === "inactive", `sin su creador el formulario no se ofrece: ${JSON.stringify(mp)}`);
+  // La consola muestra lo mismo que ve el público (antes figuraba "activo" sin más).
+  adm = await api("GET", `/v1/web-forms/${memberForm.id}`);
+  assert(adm.active && typeof adm.ownerInactiveReason === "string" && /miembro/.test(adm.ownerInactiveReason), `la consola marca el formulario sin dueño habilitado: ${JSON.stringify(adm.ownerInactiveReason)}`);
+  const listed = (await api("GET", "/v1/web-forms")).items.find((x) => x.id === memberForm.id);
+  assert(listed?.ownerInactiveReason === adm.ownerInactiveReason, "el listado también lo marca");
   await sleep(2600);
   await api("POST", `/v1/public/forms/${memberForm.slug}/submit`, { name: "Tercero", email: `tercero.${stamp}@example.com`, formToken: mp.formToken }, { expect: 410, anon: true });
 

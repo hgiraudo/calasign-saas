@@ -6,6 +6,7 @@ import type { Db } from "../infra/db";
 import { AppError, unauthorized } from "../lib/errors";
 import { randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import type { AuthContext } from "./context";
+import { assertSessionAllowed } from "./identity/sso";
 
 export const ACCESS_PREFIX = "csat_";
 export const REFRESH_PREFIX = "csrt_";
@@ -30,22 +31,25 @@ export async function issueTokens(
     familyId?: string;
     codeHash?: string | null;
     withRefresh: boolean;
+    /** Cómo se autenticó el usuario que autorizó (ver userTokenAllowed). */
+    authMethod?: string | null;
+    ssoTenantId?: string | null;
   },
 ) {
   const familyId = t.familyId ?? uuidv7();
   const access = ACCESS_PREFIX + randomToken(32);
   await db.query(
-    `INSERT INTO oauth_tokens (id, token_hash, kind, client_id, tenant_id, user_id, service_api_key_id, scopes, family_id, code_hash, expires_at)
-     VALUES ($1,$2,'access',$3,$4,$5,$6,$7,$8,$9, now() + ($10 || ' seconds')::interval)`,
-    [uuidv7(), sha256Hex(access), t.clientId, t.tenantId, t.userId, t.serviceApiKeyId, t.scopes, familyId, t.codeHash ?? null, String(ACCESS_TTL_SEC)],
+    `INSERT INTO oauth_tokens (id, token_hash, kind, client_id, tenant_id, user_id, service_api_key_id, scopes, family_id, code_hash, expires_at, auth_method, sso_tenant_id)
+     VALUES ($1,$2,'access',$3,$4,$5,$6,$7,$8,$9, now() + ($10 || ' seconds')::interval, $11, $12)`,
+    [uuidv7(), sha256Hex(access), t.clientId, t.tenantId, t.userId, t.serviceApiKeyId, t.scopes, familyId, t.codeHash ?? null, String(ACCESS_TTL_SEC), t.authMethod ?? null, t.ssoTenantId ?? null],
   );
   let refresh: string | null = null;
   if (t.withRefresh) {
     refresh = REFRESH_PREFIX + randomToken(32);
     await db.query(
-      `INSERT INTO oauth_tokens (id, token_hash, kind, client_id, tenant_id, user_id, service_api_key_id, scopes, family_id, code_hash, expires_at)
-       VALUES ($1,$2,'refresh',$3,$4,$5,$6,$7,$8,$9, now() + ($10 || ' seconds')::interval)`,
-      [uuidv7(), sha256Hex(refresh), t.clientId, t.tenantId, t.userId, t.serviceApiKeyId, t.scopes, familyId, t.codeHash ?? null, String(REFRESH_TTL_SEC)],
+      `INSERT INTO oauth_tokens (id, token_hash, kind, client_id, tenant_id, user_id, service_api_key_id, scopes, family_id, code_hash, expires_at, auth_method, sso_tenant_id)
+       VALUES ($1,$2,'refresh',$3,$4,$5,$6,$7,$8,$9, now() + ($10 || ' seconds')::interval, $11, $12)`,
+      [uuidv7(), sha256Hex(refresh), t.clientId, t.tenantId, t.userId, t.serviceApiKeyId, t.scopes, familyId, t.codeHash ?? null, String(REFRESH_TTL_SEC), t.authMethod ?? null, t.ssoTenantId ?? null],
     );
   }
   return {
@@ -67,12 +71,16 @@ export interface ResolvedOAuthToken {
   userLabel: string | null;
   serviceApiKeyId: string | null;
   scopes: OAuthScope[];
+  authMethod: string | null;
+  ssoTenantId: string | null;
+  createdAt: Date;
 }
 
 /** Resuelve un access token vigente; null si no existe, venció o fue revocado. */
 export async function resolveAccessToken(db: Db, token: string): Promise<ResolvedOAuthToken | null> {
   const r = await db.one<any>(
-    `SELECT t.id, t.client_id, t.tenant_id, t.user_id, t.service_api_key_id, t.scopes, c.client_id AS public_id, c.name AS client_name,
+    `SELECT t.id, t.client_id, t.tenant_id, t.user_id, t.service_api_key_id, t.scopes, t.auth_method, t.sso_tenant_id, t.created_at,
+            c.client_id AS public_id, c.name AS client_name,
             u.name AS user_name, u.email AS user_email
        FROM oauth_tokens t JOIN oauth_clients c ON c.id = t.client_id
        LEFT JOIN users u ON u.id = t.user_id
@@ -93,13 +101,34 @@ export async function resolveAccessToken(db: Db, token: string): Promise<Resolve
     userLabel: r.user_id ? `${r.user_name} <${r.user_email}>` : null,
     serviceApiKeyId: r.service_api_key_id,
     scopes: r.scopes,
+    authMethod: r.auth_method ?? null,
+    ssoTenantId: r.sso_tenant_id ?? null,
+    createdAt: new Date(r.created_at),
   };
+}
+
+/**
+ * Un token de usuario vale solo mientras valdría la sesión con la que se autorizó:
+ *  - el usuario sigue siendo miembro y el token es de su membresía actual (quitarlo y volver a agregarlo, por la
+ *    consola o por SCIM, no revive los tokens anteriores);
+ *  - la política de sesiones de la organización lo admite (assertSessionAllowed): con "SSO obligatorio", un token
+ *    autorizado con contraseña deja de valer, igual que las sesiones con contraseña.
+ * Los tokens anteriores a 0031_r13_integrations no tienen el método: se tratan como autorizados con contraseña.
+ */
+export async function assertUserTokenAllowed(
+  db: Db,
+  t: { tenantId: string; userId: string; authMethod: string | null; ssoTenantId: string | null; issuedAt: Date },
+) {
+  const m = await db.one<any>(`SELECT role, created_at FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [t.tenantId, t.userId]);
+  if (!m || t.issuedAt < new Date(m.created_at)) throw new AppError(401, "unauthorized", "Ya no sos miembro de esta organización");
+  await assertSessionAllowed(db, { authMethod: t.authMethod ?? "password", ssoTenantId: t.ssoTenantId, userId: t.userId }, t.tenantId, m.role);
 }
 
 /** Contexto de autenticación para un access token OAuth (sin acceso cargado todavía). */
 export async function oauthAuthContext(db: Db, token: string, ip: string | null, userAgent: string | null): Promise<AuthContext> {
   const o = await resolveAccessToken(db, token);
   if (!o) throw unauthorized();
+  if (o.userId) await assertUserTokenAllowed(db, { tenantId: o.tenantId, userId: o.userId, authMethod: o.authMethod, ssoTenantId: o.ssoTenantId, issuedAt: o.createdAt });
   const oauth = { clientId: o.clientId, clientPublicId: o.clientPublicId, scopes: o.scopes };
   if (o.userId) {
     return {

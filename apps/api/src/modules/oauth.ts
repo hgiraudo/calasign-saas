@@ -25,8 +25,8 @@ import { AppError, badRequest, notFound } from "../lib/errors";
 import { iso, randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { hasPerm } from "./access";
 import { auditFromRequest } from "./audit";
-import { authenticate, type AuthContext, type Services } from "./context";
-import { CODE_PREFIX, CODE_TTL_SEC, REFRESH_PREFIX, issueTokens, requireUserSession } from "./oauth-tokens";
+import { authenticate, SESSION_COOKIE, type AuthContext, type Services } from "./context";
+import { CODE_PREFIX, CODE_TTL_SEC, REFRESH_PREFIX, assertUserTokenAllowed, issueTokens, requireUserSession } from "./oauth-tokens";
 
 // ───────────────────────────── Utilidades ─────────────────────────────
 
@@ -85,6 +85,16 @@ async function authenticateClient(db: Db, req: FastifyRequest, body: Record<stri
     throw new OAuthError(401, "invalid_client", "Este endpoint requiere un cliente confidencial");
   }
   return c;
+}
+
+/** La política de la organización (membresía actual, SSO obligatorio) aplicada a un token de usuario, como error OAuth. */
+async function userGrantAllowed(db: Db, t: Parameters<typeof assertUserTokenAllowed>[1]) {
+  try {
+    await assertUserTokenAllowed(db, t);
+  } catch (e) {
+    if (e instanceof AppError) throw new OAuthError(400, "invalid_grant", e.message);
+    throw e;
+  }
 }
 
 async function revokeFamily(db: Db, familyId: string) {
@@ -234,9 +244,10 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
             if (code.redirect_uri !== body.redirect_uri) throw new OAuthError(400, "invalid_grant", "redirect_uri no coincide");
             if (pkceS256(body.code_verifier) !== code.code_challenge) throw new OAuthError(400, "invalid_grant", "code_verifier no coincide (PKCE)");
             await t.query(`UPDATE oauth_authorization_codes SET used_at = now() WHERE code_hash = $1`, [codeHash]);
-            const member = await t.one(`SELECT 1 FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [code.tenant_id, code.user_id]);
-            if (!member) throw new OAuthError(400, "invalid_grant", "El usuario ya no pertenece a la organización");
+            await userGrantAllowed(t, { tenantId: code.tenant_id, userId: code.user_id, authMethod: code.auth_method, ssoTenantId: code.sso_tenant_id, issuedAt: new Date(code.created_at) });
             return issueTokens(t, {
+              authMethod: code.auth_method,
+              ssoTenantId: code.sso_tenant_id,
               clientId: c.id,
               tenantId: code.tenant_id,
               userId: code.user_id,
@@ -267,8 +278,7 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
             const scopes = requested.length ? requested : old.scopes;
             if (scopes.some((x: string) => !old.scopes.includes(x))) throw new OAuthError(400, "invalid_scope", "No se pueden ampliar los scopes");
             if (old.user_id) {
-              const member = await t.one(`SELECT 1 FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [old.tenant_id, old.user_id]);
-              if (!member) throw new OAuthError(400, "invalid_grant", "El usuario ya no pertenece a la organización");
+              await userGrantAllowed(t, { tenantId: old.tenant_id, userId: old.user_id, authMethod: old.auth_method, ssoTenantId: old.sso_tenant_id, issuedAt: new Date(old.created_at) });
             }
             await t.query(`UPDATE oauth_tokens SET used_at = now() WHERE id = $1`, [old.id]);
             // El access token anterior de la familia deja de valer al rotar.
@@ -281,6 +291,8 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
               scopes,
               familyId: old.family_id,
               codeHash: old.code_hash,
+              authMethod: old.auth_method,
+              ssoTenantId: old.sso_tenant_id,
               withRefresh: scopes.includes("offline_access"),
             });
           });
@@ -375,12 +387,15 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
     if (!body.approve) {
       return { redirectTo: withParams(v.redirectUri, { error: "access_denied", error_description: "El usuario no autorizó la aplicación", state: v.req.state }) };
     }
+    // Cómo se autenticó la sesión que autoriza: los tokens lo heredan y valen solo mientras esa sesión valdría
+    // (p. ej. con "SSO obligatorio", un token autorizado con contraseña deja de valer).
+    const sess = await s.db.one<any>(`SELECT auth_method, sso_tenant_id FROM sessions WHERE token_hash = $1`, [sha256Hex(req.cookies?.[SESSION_COOKIE] ?? "")]);
     const code = CODE_PREFIX + randomToken(32);
     await s.db.tx(async (t) => {
       await t.query(
-        `INSERT INTO oauth_authorization_codes (code_hash, client_id, tenant_id, user_id, redirect_uri, scopes, code_challenge, code_challenge_method, expires_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,'S256', now() + ($8 || ' seconds')::interval)`,
-        [sha256Hex(code), v.client.id, a.tenantId, a.userId, v.redirectUri, v.scopes, v.req.code_challenge, String(CODE_TTL_SEC)],
+        `INSERT INTO oauth_authorization_codes (code_hash, client_id, tenant_id, user_id, redirect_uri, scopes, code_challenge, code_challenge_method, expires_at, auth_method, sso_tenant_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,'S256', now() + ($8 || ' seconds')::interval, $9, $10)`,
+        [sha256Hex(code), v.client.id, a.tenantId, a.userId, v.redirectUri, v.scopes, v.req.code_challenge, String(CODE_TTL_SEC), sess?.auth_method ?? "password", sess?.sso_tenant_id ?? null],
       );
       await t.query(
         `INSERT INTO oauth_consents (client_id, user_id, tenant_id, scopes) VALUES ($1,$2,$3,$4)

@@ -444,6 +444,15 @@ if (process.env.E2E_FAKE_PROVIDERS_PORT) {
   assert(bill.plan.id === "business" && bill.subscription.provider === "mercadopago", "MP autorizada con Stripe vigente → queda MP");
   assert(cancelled.includes("stripe:sub_e2e2"), "la suscripción de Stripe anterior se canceló");
   ok("suscripciones de dos medios a la vez: la anterior se cancela");
+
+  // Checkout simulado (fuera de producción) con una suscripción real vigente: también la cancela.
+  const coMock = await owner("POST", "/v1/billing/checkout", { plan: "enterprise", currency: "BRL", provider: "mock" });
+  const pgMock = await owner("GET", coMock.url.replace(BASE, ""));
+  await owner("POST", /action="([^"]+)"/.exec(pgMock)[1].replace(/&amp;/g, "&"), { outcome: "paid" }, { headers: { accept: "application/json" } });
+  bill = await owner("GET", "/v1/billing");
+  assert(bill.plan.id === "enterprise" && bill.subscription.provider === "mock", "checkout simulado aplicado");
+  assert(cancelled.includes("mp:pre_e2e2"), "el checkout simulado canceló la suscripción real de Mercado Pago");
+  ok("checkout simulado con una suscripción real vigente: la real se cancela");
   fake.close();
 }
 

@@ -41,6 +41,14 @@ except WebhookSignatureError:
     pass
 ok("verificación de webhooks: válida, alterada, secreto incorrecto, vieja y sin header")
 
+# Un error de red al pedir el token OAuth también llega como CalaSignError (no como URLError suelto).
+try:
+    CalaSign(oauth=ClientCredentials("cli", "sec"), base_url="http://127.0.0.1:9", timeout=2, max_retries=0).me()
+    raise AssertionError("debió fallar")
+except CalaSignError as e:
+    assert e.code == "network_error", e.code
+ok("error de red al pedir el token OAuth: CalaSignError network_error")
+
 if len(sys.argv) < 2:
     print("\n(sin URL de API: se omiten las pruebas en línea)")
     sys.exit(0)

@@ -8,8 +8,15 @@ import { SESSION_COOKIE, authenticate, clientInfo, type Services } from "./conte
 import { createTwoFactorChallenge } from "./teams";
 import { passwordLoginTenant } from "./identity/sso";
 import { AppError } from "../lib/errors";
+import { encrypt } from "../lib/util";
+import { enqueue } from "../infra/queue";
+import { recordAudit } from "./audit";
+import { z } from "zod";
 
 const SESSION_DAYS = 14;
+
+const ForgotPasswordInput = z.object({ email: z.string().trim().toLowerCase().email().max(320) });
+const ResetPasswordInput = z.object({ token: z.string().regex(/^[A-Za-z0-9_-]{20,100}$/), password: z.string().min(10).max(200) });
 
 export async function authRoutes(app: FastifyInstance, s: Services) {
   const auth = authenticate(s);
@@ -94,6 +101,66 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
     if (challenge) return challenge;
     await createSession(reply, req, u.id, m.tenant_id);
     return me(u.id, m.tenant_id);
+  });
+
+  // ───────── Recuperación de contraseña ─────────
+  // Siempre 202 (no revela si el correo existe). Límite por IP (ruta) y por cuenta (3 pedidos por hora).
+
+  app.post("/v1/auth/password/forgot", { config: { rateLimit: { max: 5, timeWindow: "15 minutes" } } }, async (req, reply) => {
+    const input = ForgotPasswordInput.parse(req.body);
+    const u = await s.db.one<any>(`SELECT id FROM users WHERE lower(email) = lower($1)`, [input.email]);
+    if (u) {
+      const recent = await s.db.one<any>(`SELECT count(*)::int AS n FROM password_resets WHERE user_id = $1 AND created_at > now() - interval '1 hour'`, [u.id]);
+      if ((recent?.n ?? 0) < 3) {
+        const token = randomToken();
+        await s.db.tx(async (t) => {
+          // Un pedido nuevo invalida los links anteriores que no se usaron.
+          await t.query(`UPDATE password_resets SET used_at = now() WHERE user_id = $1 AND used_at IS NULL`, [u.id]);
+          await t.query(`INSERT INTO password_resets (token_hash, user_id, ip, expires_at) VALUES ($1,$2,$3, now() + interval '30 minutes')`, [
+            sha256Hex(token),
+            u.id,
+            clientInfo(req).ip,
+          ]);
+          await enqueue(t, "notify", { kind: "password_reset", userId: u.id, tokenEnc: encrypt(token) });
+        });
+      }
+    }
+    reply.code(202);
+    return { ok: true };
+  });
+
+  app.post("/v1/auth/password/reset", { config: { rateLimit: { max: 10, timeWindow: "15 minutes" } } }, async (req, reply) => {
+    const input = ResetPasswordInput.parse(req.body);
+    const pw = await hashPassword(input.password);
+    const userId = await s.db.tx(async (t) => {
+      // Consumo atómico: el mismo link no sirve dos veces aunque lleguen dos pedidos a la vez.
+      const row = await t.one<any>(
+        `UPDATE password_resets SET used_at = now() WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now() RETURNING user_id`,
+        [sha256Hex(input.token)],
+      );
+      if (!row) return null;
+      await t.query(`UPDATE users SET password_hash = $2 WHERE id = $1`, [row.user_id, pw]);
+      // Se cierran todas las sesiones abiertas: si alguien tenía la contraseña vieja, queda afuera.
+      await t.query(`DELETE FROM sessions WHERE user_id = $1`, [row.user_id]);
+      await t.query(`UPDATE password_resets SET used_at = now() WHERE user_id = $1 AND used_at IS NULL`, [row.user_id]);
+      return row.user_id as string;
+    });
+    if (!userId) throw new AppError(400, "invalid_token", "El link para restablecer la contraseña no es válido o ya venció");
+    const u = await s.db.one<any>(`SELECT email FROM users WHERE id = $1`, [userId]);
+    const { ip, userAgent } = clientInfo(req);
+    const tenants = await s.db.query<any>(`SELECT tenant_id FROM memberships WHERE user_id = $1`, [userId]);
+    for (const m of tenants) {
+      await recordAudit(s.db, {
+        tenantId: m.tenant_id,
+        action: "user.password_reset",
+        actor: { type: "user", id: userId, label: u?.email ?? null },
+        targetType: "user",
+        targetId: userId,
+        ip,
+        userAgent,
+      }).catch(() => {});
+    }
+    reply.code(204).send();
   });
 
   app.post("/v1/auth/logout", async (req, reply) => {

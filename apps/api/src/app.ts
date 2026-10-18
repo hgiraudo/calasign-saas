@@ -11,6 +11,7 @@ import { config } from "./config";
 import type { Db } from "./infra/db";
 import type { BlobStore } from "./infra/storage";
 import { AppError } from "./lib/errors";
+import { LOG_REDACT_PATHS, safeRequestSerializer } from "./lib/redact";
 import { readMailbox } from "./notifications/channels";
 import { authRoutes } from "./modules/auth";
 import { authenticate } from "./modules/context";
@@ -43,8 +44,16 @@ import { dataRoutes } from "./modules/data";
 import { certsignRoutes } from "./modules/certsign";
 
 export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolean | object }) {
+  // Logs sin secretos: los tokens de firma, invitaciones, códigos y credenciales viajan en la URL o en headers.
+  const safeLogger = { level: config.logLevel, serializers: { req: safeRequestSerializer }, redact: { paths: LOG_REDACT_PATHS, censor: "[redactado]" } };
+  const logger =
+    deps.logger === undefined
+      ? safeLogger
+      : typeof deps.logger === "object"
+        ? { ...safeLogger, ...deps.logger, serializers: { ...safeLogger.serializers, ...((deps.logger as { serializers?: object }).serializers ?? {}) } }
+        : deps.logger;
   const app = Fastify({
-    logger: deps.logger ?? { level: config.logLevel },
+    logger,
     trustProxy: true,
     bodyLimit: 2 * 1024 * 1024,
     genReqId: () => crypto.randomUUID(),

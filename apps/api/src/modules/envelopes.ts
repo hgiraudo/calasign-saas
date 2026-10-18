@@ -468,6 +468,24 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
     return loadDetail(s.db, a.tenantId, req.params.id);
   });
 
+  // Reintento manual de una finalización que agotó sus intentos (el sobre quedó en 'finalizing').
+  app.post<P>("/v1/envelopes/:id/retry-finalize", { preHandler: auth }, async (req, reply) => {
+    const a = A(req);
+    await s.db.tx(async (t) => {
+      const e = await lockEnvelope(t, a.tenantId, req.params.id);
+      if (e.status !== "finalizing") throw conflict("not_finalizing", "El sobre no está esperando la finalización");
+      const busy = await t.one(
+        `SELECT 1 FROM jobs WHERE queue = 'finalize' AND status IN ('pending','running') AND payload->>'envelopeId' = $1 LIMIT 1`,
+        [e.id],
+      );
+      if (busy) throw conflict("finalize_in_progress", "La finalización ya está en curso");
+      await enqueue(t, "finalize", { envelopeId: e.id, tenantId: e.tenant_id }, { dedupeKey: `finalize:${e.id}:retry:${uuidv7()}` });
+      await appendEvent(t, { tenantId: a.tenantId, envelopeId: e.id, type: "envelope.finalize_retried", actor: a.actor });
+    });
+    reply.code(202);
+    return { queued: true };
+  });
+
   app.post<P>("/v1/envelopes/:id/remind", { preHandler: auth }, async (req) => {
     const a = A(req);
     let notified = 0;

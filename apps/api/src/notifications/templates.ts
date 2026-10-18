@@ -7,7 +7,9 @@ export type TemplateKind =
   | "sender_completed"
   | "sender_declined"
   | "expiry_warning"
-  | "certificate_request";
+  | "certificate_request"
+  | "finalize_failed"
+  | "password_reset";
 
 export interface TemplateVars {
   recipientName: string;
@@ -46,6 +48,24 @@ const T: Record<"es" | "pt-BR" | "en", Dict> = {
         `Todas las partes ya firmaron "${v.subject}". Falta tu firma con certificado digital (token, certificado instalado o archivo .p12), que se hace con el Firmador CalaSign.`,
       ],
       cta: "Firmar con certificado",
+    },
+    finalize_failed: {
+      subject: (v) => `No se pudo completar "${v.subject}"`,
+      lines: (v) => [
+        `Hola ${v.recipientName}:`,
+        `Todas las partes firmaron "${v.subject}", pero el sellado del documento final falló después de varios reintentos. No se perdió nada: el sobre quedó en espera.`,
+        "Podés reintentarlo desde el detalle del sobre. Si vuelve a fallar, escribinos a contacto@calasign.com.",
+      ],
+      cta: "Ver sobre",
+    },
+    password_reset: {
+      subject: () => "Restablecé tu contraseña de CalaSign",
+      lines: (v) => [
+        `Hola ${v.recipientName}:`,
+        "Recibimos un pedido para restablecer tu contraseña. El link vale 30 minutos y se puede usar una sola vez.",
+        "Si no lo pediste, ignorá este correo: tu contraseña no cambia.",
+      ],
+      cta: "Elegir una contraseña nueva",
     },
     completed: {
       subject: (v) => `Completado: "${v.subject}"`,
@@ -95,6 +115,24 @@ const T: Record<"es" | "pt-BR" | "en", Dict> = {
       ],
       cta: "Assinar com certificado",
     },
+    finalize_failed: {
+      subject: (v) => `Não foi possível concluir "${v.subject}"`,
+      lines: (v) => [
+        `Olá ${v.recipientName},`,
+        `Todas as partes assinaram "${v.subject}", mas a selagem do documento final falhou após várias tentativas. Nada foi perdido: o envelope ficou em espera.`,
+        "Você pode tentar novamente pelo detalhe do envelope. Se falhar de novo, escreva para contacto@calasign.com.",
+      ],
+      cta: "Ver envelope",
+    },
+    password_reset: {
+      subject: () => "Redefina sua senha da CalaSign",
+      lines: (v) => [
+        `Olá ${v.recipientName},`,
+        "Recebemos um pedido para redefinir sua senha. O link vale 30 minutos e pode ser usado uma única vez.",
+        "Se você não pediu, ignore este e-mail: sua senha não muda.",
+      ],
+      cta: "Escolher uma nova senha",
+    },
     completed: {
       subject: (v) => `Concluído: "${v.subject}"`,
       lines: (v) => [`Olá ${v.recipientName},`, `Todas as partes assinaram "${v.subject}". Você pode baixar o documento final com o certificado de conclusão.`],
@@ -142,6 +180,24 @@ const T: Record<"es" | "pt-BR" | "en", Dict> = {
         `Everyone has signed "${v.subject}". Your digital-certificate signature (token, installed certificate or .p12 file) is still pending; it is done with the CalaSign Signer app.`,
       ],
       cta: "Sign with certificate",
+    },
+    finalize_failed: {
+      subject: (v) => `"${v.subject}" could not be completed`,
+      lines: (v) => [
+        `Hi ${v.recipientName},`,
+        `Everyone signed "${v.subject}", but sealing the final document failed after several retries. Nothing was lost: the envelope is on hold.`,
+        "You can retry it from the envelope page. If it fails again, write to contacto@calasign.com.",
+      ],
+      cta: "View envelope",
+    },
+    password_reset: {
+      subject: () => "Reset your CalaSign password",
+      lines: (v) => [
+        `Hi ${v.recipientName},`,
+        "We received a request to reset your password. The link is valid for 30 minutes and can be used once.",
+        "If you didn't ask for this, ignore this email: your password stays the same.",
+      ],
+      cta: "Choose a new password",
     },
     completed: {
       subject: (v) => `Completed: "${v.subject}"`,

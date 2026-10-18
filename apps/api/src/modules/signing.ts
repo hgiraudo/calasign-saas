@@ -129,9 +129,12 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
 
   app.post<P>("/v1/signing/:token/consent", rl, async (req) => {
     const { recipient: r0, envelope: e0 } = await resolveToken(s.db, req.params.token);
-    if (!r0.consented_at) {
+    // Solo con el sobre en curso: un sobre cerrado (completado, anulado, vencido) no admite eventos nuevos de
+    // consentimiento, que quedarían en la cadena de evidencia después del certificado de finalización.
+    if (!r0.consented_at && e0.status === "sent") {
       await s.db.tx(async (t) => {
-        await lockEnvelope(t, e0.tenant_id, e0.id);
+        const e = await lockEnvelope(t, e0.tenant_id, e0.id);
+        if (e.status !== "sent") return;
         const upd = await t.query(`UPDATE recipients SET consented_at = now() WHERE id = $1 AND consented_at IS NULL RETURNING id`, [r0.id]);
         if (upd.length)
           await appendEvent(t, {

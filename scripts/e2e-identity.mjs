@@ -489,12 +489,20 @@ async function authorizeOAuth(client) {
   return r.body;
 }
 const bearerStatus = async (tok) => (await fetch(`${BASE}/v1/envelopes`, { headers: { authorization: `Bearer ${tok}` } })).status;
+// La introspección (RFC 7662) tiene que decir lo mismo que la API al usar el token.
+const introspectActive = async (tok) => {
+  const res = await fetch(`${BASE}/oauth/introspect`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", authorization: oauthBasic }, body: new URLSearchParams({ token: tok }) });
+  assert(res.status === 200, `introspección: HTTP ${res.status}`);
+  return (await res.json()).active;
+};
 
 // Quitar a un miembro y volver a agregarlo no revive sus tokens anteriores.
 const bobOld = await authorizeOAuth(bob);
 assert((await bearerStatus(bobOld.access_token)) === 200, "token OAuth de Bob funciona");
 await owner.api("DELETE", `/v1/members/${bobMe.user.id}`, undefined, [200, 204]);
 assert((await bearerStatus(bobOld.access_token)) === 401, "sin membresía el token deja de valer");
+assert((await introspectActive(bobOld.access_token)) === false, "sin membresía la introspección dice active: false");
+assert((await introspectActive(bobOld.refresh_token)) === false, "tampoco el refresh token figura activo");
 const invBob2 = await owner.api("POST", "/v1/invitations", { email: bobEmail, role: "member" }, 201);
 await new Client("bob-back").api("POST", `/v1/invite/${invBob2.acceptUrl.split("/invite/")[1]}/accept`, { password: "clave-de-bob-1234" }, [200, 201]);
 assert((await bearerStatus(bobOld.access_token)) === 401, "al volver a agregarlo, el token de la membresía anterior no revive");
@@ -507,6 +515,8 @@ const anaTok = await authorizeOAuth(ana2);
 assert((await bearerStatus(bobTok.access_token)) === 200, "token autorizado con contraseña funciona sin SSO obligatorio");
 await owner.api("PUT", "/v1/settings/sso", { enabled: true, protocol: "oidc", domains: [domain], jitEnabled: true, jitRole: "member", enforce: true, oidc: { issuer, clientId: "calasign-test" } });
 assert((await bearerStatus(bobTok.access_token)) === 401, "con SSO obligatorio, el token autorizado con contraseña deja de valer");
+assert((await introspectActive(bobTok.access_token)) === false, "con SSO obligatorio, la introspección del token con contraseña dice active: false");
+assert((await introspectActive(anaTok.access_token)) === true, "el token autorizado con SSO sigue activo en la introspección");
 const bobRefresh = await oauthToken({ grant_type: "refresh_token", refresh_token: bobTok.refresh_token });
 assert(bobRefresh.status === 400 && bobRefresh.body.error === "invalid_grant", "y su refresh no emite tokens nuevos");
 assert((await bearerStatus(anaTok.access_token)) === 200, "el token autorizado con SSO sigue valiendo");

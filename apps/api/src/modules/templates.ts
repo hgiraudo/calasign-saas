@@ -23,6 +23,7 @@ import { sendEnvelope } from "./envelopes";
 import { checkSenderValue, insertEnvelopeField } from "./fieldvalues";
 import { assignFieldIds, copyFieldLogic, pruneDanglingConditions, saveFieldLogic } from "./logic";
 import { loadDetail, loadDocuments, toDocument } from "./mappers";
+import { deleteFilesIfUnused } from "./file-cleanup";
 
 const toTemplate = (r: any) => ({
   id: r.id,
@@ -200,8 +201,14 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
 
   app.delete<P>("/v1/templates/:id", { preHandler: auth }, async (req, reply) => {
     const a = A(req);
-    const r = await s.db.query(`DELETE FROM templates WHERE id = $1 AND tenant_id = $2 RETURNING id`, [req.params.id, a.tenantId]);
-    if (!r.length) throw notFound("Plantilla");
+    let fileIds: string[] = [];
+    await s.db.tx(async (t) => {
+      const tpl = await lockTemplate(t, a.tenantId, req.params.id);
+      fileIds = (await t.query<any>(`SELECT file_id FROM template_documents WHERE template_id = $1`, [tpl.id])).map((d) => d.file_id);
+      await t.query(`DELETE FROM templates WHERE id = $1`, [tpl.id]);
+    });
+    // Los PDF que no usa ningún sobre creado desde la plantilla se borran del almacenamiento.
+    await deleteFilesIfUnused(s.db, s.blobs, fileIds);
     return reply.code(204).send();
   });
 
@@ -250,13 +257,16 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
 
   app.delete<P>("/v1/templates/:id/documents/:documentId", { preHandler: auth }, async (req, reply) => {
     const a = A(req);
+    let fileId: string | null = null;
     await s.db.tx(async (t) => {
       const tpl = await lockTemplate(t, a.tenantId, req.params.id);
-      const r = await t.query(`DELETE FROM template_documents WHERE id = $1 AND template_id = $2 RETURNING id`, [req.params.documentId, tpl.id]);
+      const r = await t.query<any>(`DELETE FROM template_documents WHERE id = $1 AND template_id = $2 RETURNING id, file_id`, [req.params.documentId, tpl.id]);
       if (!r.length) throw notFound("Documento");
+      fileId = r[0].file_id;
       await pruneDanglingConditions(t, "template_fields", tpl.id);
       await touch(t, tpl.id);
     });
+    await deleteFilesIfUnused(s.db, s.blobs, [fileId]);
     return reply.code(204).send();
   });
 

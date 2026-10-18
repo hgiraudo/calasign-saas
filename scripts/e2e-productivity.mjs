@@ -405,4 +405,83 @@ step(
   `adjunto de un campo oculto: fuera del PDF final${afterFail === null ? " (conteo de imágenes salteado: sin E2E_DATA_DIR)" : "; la firma de un intento fallido no queda guardada"}`,
 );
 
+// ── Borrar un borrador, un documento o una plantilla borra sus PDF del almacenamiento (si nadie más los usa) ──
+// Antes quedaban para siempre: la retención solo purga sobres completados.
+function countPdfBlobs(segment) {
+  const root = process.env.E2E_DATA_DIR;
+  if (!root) return null;
+  let n = 0;
+  const walk = (dir) => {
+    for (const name of readdirSync(dir)) {
+      const p = pjoin(dir, name);
+      if (statSync(p).isDirectory()) walk(p);
+      else if (p.includes(`/${segment}/`) && name.endsWith(".pdf")) n++;
+    }
+  };
+  walk(root);
+  return n;
+}
+const blobCheck = process.env.E2E_DATA_DIR ? "" : " (conteo de archivos salteado: sin E2E_DATA_DIR)";
+// Borrador con un documento propio: al borrarlo, el PDF se va.
+const dEnv = (await api("POST", "/v1/envelopes", { subject: `Borrador a borrar ${stamp}` })).envelope;
+const dFd = new FormData();
+dFd.append("file", new Blob([tinyPdf(1, "Borrador privado")], { type: "application/pdf" }), "borrador.pdf");
+const dDoc = await api("POST", `/v1/envelopes/${dEnv.id}/documents`, dFd);
+const dFd2 = new FormData();
+dFd2.append("file", new Blob([tinyPdf(1, "Anexo equivocado")], { type: "application/pdf" }), "anexo.pdf");
+const dDoc2 = await api("POST", `/v1/envelopes/${dEnv.id}/documents`, dFd2);
+if (blobCheck === "") assert(countPdfBlobs(dEnv.id) === 2, `el borrador tiene sus 2 PDF (${countPdfBlobs(dEnv.id)})`);
+await api("DELETE", `/v1/envelopes/${dEnv.id}/documents/${dDoc2.id}`, null, { expect: 204 });
+if (blobCheck === "") assert(countPdfBlobs(dEnv.id) === 1, `quitar un documento del borrador borra su PDF (quedaron ${countPdfBlobs(dEnv.id)})`);
+await api("DELETE", `/v1/envelopes/${dEnv.id}`, null, { expect: 204 });
+if (blobCheck === "") assert(countPdfBlobs(dEnv.id) === 0, `borrar el borrador borra su PDF (quedaron ${countPdfBlobs(dEnv.id)})`);
+void dDoc;
+// Plantilla compartida con un sobre: borrar la plantilla no rompe el sobre que usa su PDF; al borrar el sobre se va.
+const sTpl = (await api("POST", "/v1/templates", { name: `Plantilla a borrar ${stamp}` })).template;
+const sFd = new FormData();
+sFd.append("file", new Blob([tinyPdf(1, "Plantilla compartida")], { type: "application/pdf" }), "plantilla.pdf");
+await api("POST", `/v1/templates/${sTpl.id}/documents`, sFd);
+await api("PUT", `/v1/templates/${sTpl.id}/roles`, { roles: [{ name: "Cliente", role: "signer", routingOrder: 1 }] });
+const sEnv = await api("POST", "/v1/envelopes/from-template", {
+  templateId: sTpl.id,
+  recipients: [{ role: "Cliente", name: `Cliente borrado ${stamp}`, email: `borrado+${stamp}@example.com` }],
+});
+await api("DELETE", `/v1/templates/${sTpl.id}`, null, { expect: 204 });
+const sDocRes = await api("GET", `/v1/envelopes/${sEnv.envelope.id}/documents/${sEnv.documents[0].id}/file`, null, { raw: true });
+assert(sDocRes.status === 200, `borrar la plantilla no borra el PDF que usa un sobre (HTTP ${sDocRes.status})`);
+if (blobCheck === "") assert(countPdfBlobs(sTpl.id) === 1, "el PDF compartido sigue guardado");
+await api("DELETE", `/v1/envelopes/${sEnv.envelope.id}`, null, { expect: 204 });
+if (blobCheck === "") assert(countPdfBlobs(sTpl.id) === 0, `sin plantilla ni sobre, el PDF compartido se borra (quedaron ${countPdfBlobs(sTpl.id)})`);
+step(`borrar un borrador, un documento o una plantilla borra sus PDF sin romper lo que todavía los usa${blobCheck}`);
+
+// ── Una fórmula que cita un campo número borrado (con su destinatario) frena el envío ──
+// Si no, se calculaba con 0 y el PDF firmado decía "Total: 0".
+const fEnv = (await api("POST", "/v1/envelopes", { subject: `Fórmula huérfana ${stamp}` })).envelope;
+const fFd = new FormData();
+fFd.append("file", new Blob([tinyPdf(1, "Cotizacion")], { type: "application/pdf" }), "cotizacion.pdf");
+const fDoc = await api("POST", `/v1/envelopes/${fEnv.id}/documents`, fFd);
+const [fA, fB, fMonto, fTotal] = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
+await api("PUT", `/v1/envelopes/${fEnv.id}/recipients`, {
+  recipients: [
+    { id: fA, role: "signer", routingOrder: 1, name: `Vendedor ${stamp}`, email: `vendedor+${stamp}@example.com` },
+    { id: fB, role: "signer", routingOrder: 2, name: `Comprador ${stamp}`, email: `comprador+${stamp}@example.com` },
+  ],
+});
+await api("PUT", `/v1/envelopes/${fEnv.id}/fields`, {
+  fields: [
+    { id: fMonto, documentId: fDoc.id, recipientId: fA, type: "number", page: 0, x: 0.1, y: 0.2, width: 0.2, height: 0.04, label: "Monto" },
+    { documentId: fDoc.id, recipientId: fA, type: "signature", page: 0, x: 0.1, y: 0.3, width: 0.25, height: 0.06 },
+    { id: fTotal, documentId: fDoc.id, recipientId: fB, type: "number", page: 0, x: 0.5, y: 0.2, width: 0.2, height: 0.04, label: "Total", formula: "{Monto} * 2" },
+    { documentId: fDoc.id, recipientId: fB, type: "signature", page: 0, x: 0.5, y: 0.3, width: 0.25, height: 0.06 },
+  ],
+});
+// El remitente quita al vendedor: su campo "Monto" se borra con él y la fórmula queda citando un campo que no está.
+await api("PUT", `/v1/envelopes/${fEnv.id}/recipients`, {
+  recipients: [{ id: fB, role: "signer", routingOrder: 1, name: `Comprador ${stamp}`, email: `comprador+${stamp}@example.com` }],
+});
+const fSend = await api("POST", `/v1/envelopes/${fEnv.id}/send`, null, { raw: true });
+const fBody = await fSend.json();
+assert(fSend.status === 422 && /Monto/.test(fBody.error?.message ?? ""), `una fórmula que cita un campo borrado frena el envío (HTTP ${fSend.status} ${JSON.stringify(fBody.error ?? {})})`);
+step("una fórmula que cita un campo número que ya no está frena el envío");
+
 console.log("\nE2E PRODUCTIVIDAD OK");

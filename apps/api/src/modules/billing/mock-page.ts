@@ -3,6 +3,14 @@ export function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }
 
+/**
+ * CSP propia de la página simulada: sin scripts, estilos en línea y el formulario solo hacia este origen y el de
+ * regreso (que puede ser el dominio propio de la organización). Sin upgrade-insecure-requests, para que funcione en local.
+ */
+export function mockPageCsp(returnOrigin?: string | null) {
+  return `default-src 'none'; style-src 'unsafe-inline'; form-action 'self'${returnOrigin ? ` ${returnOrigin}` : ""}; frame-ancestors 'none'; base-uri 'none'`;
+}
+
 export function mockPage(p: { title: string; lead: string; amount: string; description: string; action: string; paid: boolean; payLabel?: string }) {
   const btn = (outcome: string, label: string, primary: boolean) =>
     `<button name="outcome" value="${outcome}" style="font:inherit;font-weight:600;padding:12px 20px;border-radius:8px;cursor:pointer;${

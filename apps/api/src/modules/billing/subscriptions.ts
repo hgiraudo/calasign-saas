@@ -19,7 +19,7 @@ import { AppError, badRequest, conflict, notFound } from "../../lib/errors";
 import { iso, randomToken, sha256Hex, uuidv7 } from "../../lib/util";
 import { recordAudit } from "../audit";
 import { authenticate, clientInfo, type Services } from "../context";
-import { mockPage } from "./mock-page";
+import { mockPage, mockPageCsp } from "./mock-page";
 import { tenantPlan, usageThisMonth } from "./plans";
 import {
   ProviderError,
@@ -234,7 +234,7 @@ export async function subscriptionRoutes(app: FastifyInstance, s: Services) {
     });
     o.get<M>("/v1/billing/mock/checkout/:id", async (req, reply: FastifyReply) => {
       const c = await loadMock(req.params.id, req.query.n);
-      reply.type("text/html; charset=utf-8");
+      reply.type("text/html; charset=utf-8").header("content-security-policy", mockPageCsp()).header("referrer-policy", "same-origin");
       return mockPage({
         title: "Suscripción simulada",
         lead: "Suscripción mensual",

@@ -20,7 +20,7 @@ import { tenantBaseUrl } from "../custom-domains";
 import { advanceRouting, lockEnvelope } from "../envelopes";
 import { resolveToken } from "../signing";
 import { ProviderError, mpCreatePreference, providerConfigured, stripeCreatePaymentCheckout } from "./providers";
-import { escapeHtml, mockPage } from "./mock-page";
+import { escapeHtml, mockPage, mockPageCsp } from "./mock-page";
 
 const PROVIDER_METHODS: Record<PaymentProvider, string[]> = {
   stripe: ["Tarjeta", "Pix (cuentas de Stripe en Brasil)", "Apple Pay / Google Pay"],
@@ -344,7 +344,11 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
   o.get<M>("/v1/payments/mock/checkout/:id", async (req, reply: FastifyReply) => {
     const p = await loadMock(req.params.id, req.query.n);
     const action = `/v1/payments/mock/checkout/${encodeURIComponent(p.id)}/complete?n=${encodeURIComponent(req.query.n!)}`;
-    reply.type("text/html; charset=utf-8");
+    // Referrer-Policy same-origin: con no-referrer el navegador manda "Origin: null" y el control de origen rechaza el POST.
+    reply
+      .type("text/html; charset=utf-8")
+      .header("content-security-policy", mockPageCsp(new URL(await tenantBaseUrl(s.db, p.tenant_id)).origin))
+      .header("referrer-policy", "same-origin");
     return mockPage({
       title: "Pago simulado",
       lead: `${escapeHtml(p.subject)}`,

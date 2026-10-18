@@ -126,6 +126,14 @@ function checkDictChange(prev: PDFDict, next: PDFDict, newWidgets: Set<string>) 
   }
 }
 
+/** Número del último "startxref" del archivo (espacios PDF opcionales antes del número), o null si no hay número. */
+function lastStartxref(buf: Buffer): number | null {
+  const at = buf.lastIndexOf("startxref");
+  if (at < 0) return null;
+  const m = /^startxref[ \t\r\n]*(\d+)/.exec(buf.subarray(at, at + 40).toString("latin1"));
+  return m ? Number(m[1]) : null;
+}
+
 /**
  * Revisa las tablas xref que agrega la revisión nueva (solo xref clásica: un xref en stream sería un objeto nuevo
  * que no es la firma y ya se rechaza arriba). Cada entrada tiene que ser "en uso" (salvo la entrada 0 estándar) y
@@ -135,6 +143,14 @@ function checkDictChange(prev: PDFDict, next: PDFDict, newWidgets: Set<string>) 
 function assertTailXref(working: Uint8Array, prepared: Uint8Array, root: string, encrypt: string) {
   const base = working.length;
   const buf = Buffer.from(prepared);
+  // Dónde empieza a leer un lector (pdf.js, el visor de la web): mide los offsets desde "%PDF-" y, si el primer objeto
+  // es un diccionario de linealización con /L igual al largo del archivo, empieza por el xref que le sigue. El documento
+  // mostrado lo arma CalaSign (empieza en "%PDF-" y no está linealizado): cualquier otra cosa haría que un lector lea
+  // otra tabla que la que se controla acá.
+  if (Buffer.from(working.subarray(0, 5)).toString("latin1") !== "%PDF-") fail("el documento mostrado no empieza con el encabezado PDF");
+  const head = buf.subarray(0, 1024);
+  const firstEnd = head.indexOf("endobj");
+  if (firstEnd >= 0 && /\/Linearized\b/.test(head.subarray(0, firstEnd).toString("latin1"))) fail("el documento usa linealización");
   const tail = buf.subarray(base).toString("latin1");
   if (/\/Type\s*\/XRef\b/.test(tail)) fail("el documento preparado usa una tabla de referencias comprimida");
   const sections = [...tail.matchAll(/(?:^|[\r\n])xref[ \t]*\r?\n/g)];
@@ -180,14 +196,16 @@ function assertTailXref(working: Uint8Array, prepared: Uint8Array, root: string,
   for (const m of tail.matchAll(/\/Encrypt\s+(\d+\s+\d+\s+R|<<)/g)) if (norm(m[1]) !== encrypt) fail("el documento preparado cambia el cifrado");
   // La cadena de tablas tiene que ser: startxref → una tabla de la revisión nueva → (/Prev entre ellas) → la última
   // tabla del documento mostrado. Saltear esa última haría que un lector muestre una revisión anterior del documento.
-  const last = [...tail.matchAll(/startxref\s+(\d+)/g)].pop();
-  if (!last || !starts.has(Number(last[1]))) fail("el documento preparado no usa su propia tabla de referencias");
-  // El último startxref del documento mostrado, buscado en todo el archivo (con relleno tras el %%EOF no está en los
-  // últimos 2 KB).
-  const workingStartxref = [...Buffer.from(working).subarray(0, base).toString("latin1").matchAll(/startxref\s+(\d+)/g)].pop();
+  // El startxref que usan los lectores es la ÚLTIMA aparición de la palabra, con el número aunque esté pegado
+  // ("startxref123", así lo lee pdf.js). Tiene que ser una tabla de la revisión nueva: si no, un "startxref" agregado al
+  // final haría que el lector vuelva a una revisión anterior del documento mostrado (con otro contenido).
+  const last = lastStartxref(buf);
+  if (last === null || !starts.has(last)) fail("el documento preparado no usa su propia tabla de referencias");
+  // El último startxref del documento mostrado, leído igual (en todo el archivo, no solo en los últimos 2 KB).
+  const workingStartxref = lastStartxref(Buffer.from(working));
   for (const m of tail.matchAll(/\/Prev\s+(\d+)/g)) {
     const prev = Number(m[1]);
-    if (prev >= base ? !starts.has(prev) : !workingStartxref || prev !== Number(workingStartxref[1])) {
+    if (prev >= base ? !starts.has(prev) : workingStartxref === null || prev !== workingStartxref) {
       fail("el documento preparado no encadena con la última revisión del documento mostrado");
     }
   }

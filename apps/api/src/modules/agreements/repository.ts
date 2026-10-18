@@ -222,6 +222,13 @@ function whereFor(a: AuthContext, f: AgreementFilters, params: unknown[]): strin
   return w.join(" AND ");
 }
 
+// Vistas guardadas: son de quien las creó, persona (user_id) o API key (created_by_api_key). Se compara solo con un id
+// presente: una key no tiene usuario, y `NULL === NULL` hacía que cualquier key fuera "dueña" de las vistas de otras.
+const viewVisibleSql = (n: number) => `(shared OR user_id = $${n} OR created_by_api_key = $${n + 1})`;
+const viewOwnerParams = (a: AuthContext) => [a.userId, a.userId ? null : a.apiKeyId];
+const ownsView = (a: AuthContext, r: { user_id: string | null; created_by_api_key: string | null }) =>
+  (a.userId != null && r.user_id === a.userId) || (a.userId == null && a.apiKeyId != null && r.created_by_api_key === a.apiKeyId);
+
 async function loadAgreementForUser(db: Db, a: AuthContext, id: string) {
   const params: unknown[] = [id];
   const vis = agreementVisibilitySql(a, params);
@@ -298,10 +305,10 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
 
   async function filtersFromQuery(a: AuthContext, q: Record<string, string | undefined>): Promise<AgreementFilters> {
     if (q.viewId) {
-      const v = await s.db.one<any>(`SELECT filters FROM agreement_views WHERE id = $1 AND tenant_id = $2 AND (shared OR user_id = $3)`, [
+      const v = await s.db.one<any>(`SELECT filters FROM agreement_views WHERE id = $1 AND tenant_id = $2 AND ${viewVisibleSql(3)}`, [
         q.viewId,
         a.tenantId,
-        a.userId,
+        ...viewOwnerParams(a),
       ]);
       if (!v) throw notFound("Vista");
       // Lo que venga en la URL refina la vista, filtro por filtro (también los campos propios: antes un `f.x` de la
@@ -563,11 +570,14 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
 
   // ───────── Vistas guardadas ─────────
 
-  const toView = (r: any, a: AuthContext): AgreementView => ({ id: r.id, name: r.name, filters: r.filters ?? {}, shared: r.shared, mine: r.user_id === a.userId });
+  const toView = (r: any, a: AuthContext): AgreementView => ({ id: r.id, name: r.name, filters: r.filters ?? {}, shared: r.shared, mine: ownsView(a, r) });
 
   app.get("/v1/agreement-views", { preHandler: auth }, async (req) => {
     const a = A(req);
-    const rows = await s.db.query(`SELECT * FROM agreement_views WHERE tenant_id = $1 AND (shared OR user_id = $2) ORDER BY name`, [a.tenantId, a.userId]);
+    const rows = await s.db.query(`SELECT * FROM agreement_views WHERE tenant_id = $1 AND ${viewVisibleSql(2)} ORDER BY name`, [
+      a.tenantId,
+      ...viewOwnerParams(a),
+    ]);
     return { items: rows.map((r) => toView(r, a)) };
   });
 
@@ -575,14 +585,10 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
     const a = A(req);
     const input = AgreementViewInput.parse(req.body);
     if (input.shared && !hasPerm(a, "settings:manage")) throw forbidden("Compartir una vista con toda la organización requiere settings:manage");
-    const row = await s.db.one(`INSERT INTO agreement_views (id, tenant_id, user_id, name, filters, shared) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`, [
-      uuidv7(),
-      a.tenantId,
-      a.userId,
-      input.name,
-      JSON.stringify(input.filters),
-      Boolean(input.shared),
-    ]);
+    const row = await s.db.one(
+      `INSERT INTO agreement_views (id, tenant_id, user_id, name, filters, shared, created_by_api_key) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [uuidv7(), a.tenantId, a.userId, input.name, JSON.stringify(input.filters), Boolean(input.shared), a.userId ? null : a.apiKeyId],
+    );
     reply.code(201);
     return toView(row, a);
   });
@@ -592,7 +598,7 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
     const v = await s.db.one<any>(`SELECT * FROM agreement_views WHERE id = $1 AND tenant_id = $2`, [req.params.id, a.tenantId]);
     if (!v) throw notFound("Vista");
     // Con una API key (userId null) y una vista creada por otra key (user_id NULL), null === null no la hace dueña.
-    if ((a.userId == null || v.user_id !== a.userId) && !hasPerm(a, "settings:manage")) throw forbidden();
+    if (!ownsView(a, v) && !hasPerm(a, "settings:manage")) throw forbidden();
     await s.db.query(`DELETE FROM agreement_views WHERE id = $1`, [v.id]);
     return reply.code(204).send();
   });

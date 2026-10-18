@@ -299,7 +299,16 @@ assert(clearedStatus.total === 1 && clearedStatus.items[0].id === ext.id, "statu
   const as2 = { anon: true, headers: { authorization: `Bearer ${k2.secret}` } };
   const kv = await api("POST", "/v1/agreement-views", { name: `de la key 1 ${stamp}`, filters: {} }, as1);
   await api("DELETE", `/v1/agreement-views/${kv.id}`, null, { ...as2, expect: 403 });
-  await api("DELETE", `/v1/agreement-views/${kv.id}`, null, { expect: 204 });
+  // La vista privada de una key es de esa key: la lista, la usa y la borra (antes quedaba con user_id NULL y no la
+  // veía nadie). Otra key no la ve ni la puede usar.
+  const mineK1 = (await api("GET", "/v1/agreement-views", null, as1)).items.find((x) => x.id === kv.id);
+  assert(mineK1 && mineK1.mine === true, "la key ve su vista privada como propia");
+  assert(!(await api("GET", "/v1/agreement-views", null, as2)).items.some((x) => x.id === kv.id), "otra key no ve la vista privada");
+  await api("GET", `/v1/agreements?viewId=${kv.id}`, null, as1);
+  await api("GET", `/v1/agreements?viewId=${kv.id}`, null, { ...as2, expect: 404 });
+  await api("DELETE", `/v1/agreement-views/${kv.id}`, null, { ...as1, expect: 204 });
+  const kv2 = await api("POST", "/v1/agreement-views", { name: `de la key 1 (2) ${stamp}`, filters: {} }, as1);
+  await api("DELETE", `/v1/agreement-views/${kv2.id}`, null, { expect: 204 });
 }
 const csvBytes = Buffer.from(await (await api("GET", "/v1/agreements/export.csv", null, { raw: true })).arrayBuffer());
 const csv = csvBytes.toString("utf8");

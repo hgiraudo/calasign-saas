@@ -332,6 +332,48 @@ describe("la revisión preparada solo agrega la firma (assertOnlySignatureAdded)
     await expect(assertOnlySignatureAdded(working, bad)).rejects.toThrow(/No se firma/);
   });
 
+  // Un servidor comprometido arma el documento mostrado con dos revisiones: la vieja dice otro monto y la nueva es la
+  // que ve el titular. Variantes de cómo elige pdf.js (y otros lectores) el xref donde empezar a leer.
+  async function twoRevisions() {
+    const doc = await PDFDocument.create();
+    const font = await doc.embedFont(StandardFonts.Helvetica);
+    doc.addPage([595, 842]).drawText("Monto a pagar: 999999", { x: 50, y: 780, size: 14, font });
+    const original = Buffer.from(await doc.save({ useObjectStreams: false }));
+    const u = await pdfmod.IncrementalUpdate.open(original);
+    const page = u.doc.getPages()[0];
+    const fontRef = page.node.Resources()!.lookup(PDFName.of("Font"), (await import("pdf-lib")).PDFDict).entries()[0];
+    page.node.set(PDFName.of("Contents"), u.add(u.context.flateStream(`BT /${fontRef[0].decodeText()} 14 Tf 50 780 Td (Monto a pagar: 100) Tj ET`)));
+    u.touch(page.ref);
+    return { original, working: Buffer.from(await u.serialize()) };
+  }
+  const viewerText = async (pdf: Buffer) => (await pdfmod.extractPdfPlainText(new Uint8Array(pdf))).text;
+
+  it("rechaza un startxref final pegado al número que hace mostrar una revisión anterior del documento", async () => {
+    const { original, working } = await twoRevisions();
+    expect(await viewerText(working)).toBe("Monto a pagar: 100");
+    const prepared = Buffer.from(await prep(working));
+    // pdf.js toma la ÚLTIMA aparición de "startxref" y el número aunque esté pegado: vuelve al xref de la revisión vieja.
+    const bad = Buffer.concat([prepared, Buffer.from(`startxref${lastStartxref(original)}\n%%EOF\n`, "latin1")]);
+    expect(await viewerText(bad)).toBe("Monto a pagar: 999999");
+    await expect(assertOnlySignatureAdded(working, bad)).rejects.toThrow(/No se firma/);
+  });
+
+  it("rechaza un documento mostrado con basura antes de %PDF- o que empieza con un diccionario de linealización", async () => {
+    const working = await base();
+    const prepared = Buffer.from(await prep(working));
+    const junk = Buffer.from("X-Mailer: x\r\n\r\n", "latin1");
+    await expect(assertOnlySignatureAdded(Buffer.concat([junk, working]), Buffer.concat([junk, prepared]))).rejects.toThrow(/No se firma/);
+    // /L con el largo del archivo preparado: pdf.js lo leería como linealizado y empezaría en otro xref.
+    const w = Buffer.from(working).toString("latin1");
+    const header = w.slice(0, w.indexOf("\n", w.indexOf("\n") + 1) + 1);
+    const lin = (n: number) => `9999 0 obj\n<< /Linearized 1 /L ${String(n).padStart(10, "0")} >>\nendobj\n`;
+    const w2 = header + lin(0) + w.slice(header.length);
+    const p2 = Buffer.from(await prep(Buffer.from(w2, "latin1")));
+    const w3 = header + lin(p2.length) + w.slice(header.length);
+    const p3 = Buffer.concat([Buffer.from(w3, "latin1"), p2.subarray(w2.length)]);
+    await expect(assertOnlySignatureAdded(Buffer.from(w3, "latin1"), p3)).rejects.toThrow(/No se firma/);
+  });
+
   it("rechaza un widget con acciones o un diccionario de firma con /Reference", async () => {
     const working = await base();
     const prepared = Buffer.from(await prep(working)).toString("latin1");

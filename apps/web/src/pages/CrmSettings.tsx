@@ -241,6 +241,9 @@ export function CrmSettingsPage() {
       >
         {editing !== null && conns && (
           <MappingEditor
+            // Con "Editar" en otro mapeo mientras el editor está abierto, el estado del formulario (inicializado con
+            // useState) seguía siendo el del primero y se guardaba sobre el segundo: la key lo vuelve a montar.
+            key={editing === "new" ? "new" : editing.id}
             mapping={editing === "new" ? null : editing}
             connections={conns}
             templates={templates}

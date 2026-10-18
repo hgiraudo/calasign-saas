@@ -49,9 +49,14 @@ export function SignerPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [base]);
   useEmbedBridge(token, session, invalid);
+  // Recarga después de pagar, firmar con certificado o la entrega presencial. Con la sesión ya cargada, un error
+  // de esta recarga se muestra arriba del contenido (antes solo se veía si todavía no había sesión).
   const reload = useCallback(() => {
     api<SigningSession>(base)
-      .then(apply)
+      .then((s) => {
+        setError(null);
+        apply(s);
+      })
       .catch((e) => setError(errorText(e)));
   }, [base, apply]);
 
@@ -142,6 +147,7 @@ export function SignerPage() {
         base={base}
         wrap={(n) => (
           <SignerShell org={envelope.organizationName} branding={session.branding}>
+            {error && <ErrorBox error={error} />}
             {n}
           </SignerShell>
         )}
@@ -153,6 +159,7 @@ export function SignerPage() {
 
   return (
     <SignerShell org={envelope.organizationName} branding={session.branding}>
+      {error && <ErrorBox error={error} />}
       {content}
     </SignerShell>
   );

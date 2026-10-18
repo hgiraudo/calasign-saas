@@ -5,6 +5,7 @@
 // (platform-fanout.ts) en la misma transacción que el evento.
 import { createHmac, randomBytes, createHash, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
+import { ZodError } from "zod";
 import {
   CRM_KIND,
   CRM_PROVIDERS,
@@ -126,6 +127,12 @@ const toRun = (r: any): CrmRun => ({
 function asAppError(err: unknown): AppError {
   if (err instanceof AppError) return err;
   if (err instanceof MappingError) return new AppError(422, err.code, err.message);
+  // Datos del registro que no pasan la validación del sobre (p. ej. un correo mal cargado en el CRM): es un error del
+  // registro, no del servidor. Sin esto el envío manual respondía 500 y el disparo por webhook se reintentaba en vano.
+  if (err instanceof ZodError) {
+    const detail = err.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
+    return new AppError(422, "crm_invalid_record", `El registro tiene datos que no sirven para el sobre: ${detail}`.slice(0, 1000));
+  }
   if (err instanceof CrmError) {
     if (err.authFailed) return new AppError(409, "crm_reauth_required", `La conexión ya no tiene acceso: hay que volver a conectarla (${err.message})`);
     if (err.status === 404) return new AppError(404, "crm_record_not_found", err.message);

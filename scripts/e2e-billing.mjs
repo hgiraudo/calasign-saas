@@ -370,6 +370,21 @@ if (process.env.E2E_FAKE_PROVIDERS_PORT) {
   assert(bill.plan.id === "free", "Stripe: suscripción borrada → Free");
   ok("Stripe (servidor falso): checkout, webhook firmado, monto verificado, idempotencia, suscripción alta/renovación/baja");
 
+  // Cambio de plan con una suscripción de Stripe vigente: el portal no puede cambiar de plan (los precios son de cada
+  // checkout), así que el cambio es un checkout nuevo y, al pagarse, la suscripción anterior se cancela.
+  await stripeHook({ id: `evt_${stamp}_sub3`, type: "checkout.session.completed", data: { object: { id: "cs_sub3", mode: "subscription", customer: "cus_e2e", subscription: "sub_e2e3", metadata: { tenantId: me.tenant.id, plan: "starter" } } } });
+  await owner("POST", "/v1/billing/checkout", { plan: "starter", currency: "USD", provider: "stripe" }, { expect: 409 });
+  const up = await owner("POST", "/v1/billing/checkout", { plan: "business", currency: "USD", provider: "stripe" });
+  assert(up.url.startsWith("https://checkout.stripe.test/"), "Stripe vigente: checkout para subir de plan");
+  await stripeHook({ id: `evt_${stamp}_sub4`, type: "checkout.session.completed", data: { object: { id: "cs_sub4", mode: "subscription", customer: "cus_e2e", subscription: "sub_e2e4", metadata: { tenantId: me.tenant.id, plan: "business" } } } });
+  bill = await owner("GET", "/v1/billing");
+  assert(bill.plan.id === "business" && bill.subscription.provider === "stripe", "Stripe: subió a Business");
+  assert(cancelled.includes("stripe:sub_e2e3"), "la suscripción Starter anterior se canceló");
+  await stripeHook({ id: `evt_${stamp}_del4`, type: "customer.subscription.deleted", data: { object: { ...subObj, id: "sub_e2e4", status: "canceled", metadata: { tenantId: me.tenant.id, plan: "business" } } } });
+  bill = await owner("GET", "/v1/billing");
+  assert(bill.plan.id === "free", "Stripe: Business borrada → Free");
+  ok("Stripe: cambio de plan con suscripción vigente (checkout nuevo; la anterior se cancela)");
+
   // Mercado Pago: cobro before_sign y suscripción
   const co2 = await owner("POST", "/v1/billing/checkout", { plan: "business", currency: "BRL", provider: "mock" });
   const pg2 = await owner("GET", co2.url.replace(BASE, ""));

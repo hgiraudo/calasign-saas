@@ -10,6 +10,11 @@ import { loadDocuments } from "./mappers";
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
+// Atributos de un campo que no dependen de la posición: pasan tal cual a cada campo que genera el ancla (los valida
+// después FieldInput). Sin esto, un desplegable por ancla perdía sus opciones (400) y un valor de solo lectura, el
+// rango o las condiciones se descartaban sin aviso.
+const PASS_THROUGH = ["value", "readOnly", "options", "min", "max", "conditions", "formula"] as const;
+
 export async function expandAnchorFields(s: Services, tenantId: string, envelopeId: string, body: unknown): Promise<unknown> {
   const fields = (body as { fields?: unknown[] } | null)?.fields;
   if (!Array.isArray(fields) || !fields.some((f) => f && typeof f === "object" && "anchor" in (f as object))) return body;
@@ -55,6 +60,7 @@ export async function expandAnchorFields(s: Services, tenantId: string, envelope
           height,
           required: f.required,
           label: f.label ?? null,
+          ...Object.fromEntries(PASS_THROUGH.filter((k) => k in (raw as object)).map((k) => [k, (raw as Record<string, unknown>)[k]])),
         });
         found++;
       }

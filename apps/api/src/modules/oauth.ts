@@ -69,8 +69,12 @@ async function authenticateClient(db: Db, req: FastifyRequest, body: Record<stri
     const raw = Buffer.from(h.slice(6), "base64").toString("utf8");
     const i = raw.indexOf(":");
     if (i < 0) throw new OAuthError(401, "invalid_client", "Credenciales del cliente mal formadas");
-    clientId = decodeURIComponent(raw.slice(0, i).replace(/\+/g, " "));
-    secret = decodeURIComponent(raw.slice(i + 1).replace(/\+/g, " "));
+    try {
+      clientId = decodeURIComponent(raw.slice(0, i).replace(/\+/g, " "));
+      secret = decodeURIComponent(raw.slice(i + 1).replace(/\+/g, " "));
+    } catch {
+      throw new OAuthError(401, "invalid_client", "Credenciales del cliente mal formadas");
+    }
   }
   if (!clientId) throw new OAuthError(401, "invalid_client", "Falta client_id");
   const c = await db.one<any>(`SELECT * FROM oauth_clients WHERE client_id = $1 AND revoked_at IS NULL`, [clientId]);

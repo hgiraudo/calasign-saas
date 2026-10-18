@@ -4,6 +4,7 @@ import type { Db } from "./db";
 import { enqueue } from "./queue";
 import { queuePlatformFanout } from "../modules/platform-fanout";
 import { queueAgreementEvents } from "../modules/agreements";
+import { tenantPlan } from "../modules/billing/plans";
 
 /** Tipo de evento de evidencia → tipos de webhook que dispara. */
 const MAP: Record<string, string[]> = {
@@ -31,6 +32,9 @@ export async function queueWebhookFanout(
   if (!types) return;
   const has = await db.one(`SELECT 1 FROM webhook_endpoints WHERE tenant_id = $1 AND active LIMIT 1`, [tenantId]);
   if (!has) return;
+  // Los endpoints creados en un plan anterior quedan, pero solo reciben eventos si el plan incluye webhooks.
+  const { plan } = await tenantPlan(db, tenantId);
+  if (!plan.features.includes("webhooks")) return;
   for (const type of types) {
     await enqueue(
       db,

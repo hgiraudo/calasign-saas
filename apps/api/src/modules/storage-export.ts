@@ -21,7 +21,7 @@ import { decrypt, encrypt, iso, randomToken, uuidv7 } from "../lib/util";
 import { hasPerm } from "./access";
 import { auditFromRequest } from "./audit";
 import { authenticate, type Services } from "./context";
-import { assertPublicDestination } from "./webhooks";
+import { assertPublicDestination, safeHttpAgent, safeHttpsAgent } from "./webhooks";
 
 const isLocalEnv = () => config.environment === "local";
 
@@ -272,6 +272,8 @@ async function uploadS3(creds: S3Creds, cfg: any, name: string, bytes: Uint8Arra
     // Compatibilidad con proveedores S3 que no implementan los checksums nuevos (MinIO, Wasabi, R2…).
     requestChecksumCalculation: "WHEN_REQUIRED",
     responseChecksumValidation: "WHEN_REQUIRED",
+    // El endpoint lo elige el cliente: cada conexión valida la IP resuelta (sin ventana para DNS rebinding).
+    requestHandler: { httpAgent: safeHttpAgent, httpsAgent: safeHttpsAgent },
   });
   const key = `${String(cfg.prefix ?? "").replace(/^\/+/, "")}${name}`;
   try {

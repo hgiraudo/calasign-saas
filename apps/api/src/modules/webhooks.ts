@@ -1,7 +1,10 @@
 // Webhooks (Fase 3): endpoints por organización, entregas firmadas con HMAC-SHA256, reintentos con
 // backoff exponencial (vía la cola de jobs), registro de entregas y reenvío manual.
 import { createHmac } from "node:crypto";
+import dns from "node:dns";
 import { lookup } from "node:dns/promises";
+import http from "node:http";
+import https from "node:https";
 import { isIP } from "node:net";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import {
@@ -81,6 +84,60 @@ export async function assertPublicDestination(url: string) {
   if (addrs.length === 0 || addrs.some((a) => isPrivateAddress(a.address))) {
     throw new Error(`destino no permitido: ${host} resuelve a una dirección interna`);
   }
+}
+
+/**
+ * `lookup` para sockets salientes hacia destinos que elige el cliente: resuelve y rechaza direcciones internas
+ * en la MISMA resolución que usa la conexión. Así no hay ventana entre validar y conectar (DNS rebinding).
+ */
+export function safeLookup(
+  hostname: string,
+  options: dns.LookupOptions,
+  callback: (err: NodeJS.ErrnoException | null, address: string | dns.LookupAddress[], family?: number) => void,
+) {
+  dns.lookup(hostname, { ...options, all: true }, (err, addrs) => {
+    if (err) return callback(err, "");
+    const list = addrs as dns.LookupAddress[];
+    if (!list.length || (!isLocalEnv() && list.some((a) => isPrivateAddress(a.address)))) {
+      const e: NodeJS.ErrnoException = new Error(`destino no permitido: ${hostname} resuelve a una dirección interna`);
+      e.code = "EPRIVATEADDR";
+      return callback(e, "");
+    }
+    if (options.all) return callback(null, list);
+    return callback(null, list[0].address, list[0].family);
+  });
+}
+
+/** Agentes HTTP(S) con la validación de destino en cada conexión (también los usa el cliente S3). */
+export const safeHttpsAgent = new https.Agent({ lookup: safeLookup as never });
+export const safeHttpAgent = new http.Agent({ lookup: safeLookup as never });
+
+/**
+ * POST a una URL de un cliente (webhook, Slack, Teams): valida literales IP y conecta con `safeLookup`,
+ * sin seguir redirecciones. Devuelve el status y el comienzo de la respuesta.
+ */
+export async function postToCustomerUrl(url: string, headers: Record<string, string>, body: string, timeoutMs: number): Promise<{ status: number; text: string }> {
+  await assertPublicDestination(url);
+  const u = new URL(url);
+  const secure = u.protocol === "https:";
+  return new Promise((resolve, reject) => {
+    const req = (secure ? https : http).request(
+      u,
+      { method: "POST", headers: { ...headers, "content-length": String(Buffer.byteLength(body)) }, agent: secure ? safeHttpsAgent : safeHttpAgent },
+      (res) => {
+        let text = "";
+        res.setEncoding("utf8");
+        res.on("data", (c: string) => {
+          if (text.length < 2000) text += c;
+        });
+        res.on("end", () => resolve({ status: res.statusCode ?? 0, text: text.slice(0, 2000) }));
+        res.on("error", reject);
+      },
+    );
+    req.setTimeout(timeoutMs, () => req.destroy(new Error(`timeout después de ${timeoutMs} ms`)));
+    req.on("error", reject);
+    req.end(body);
+  });
 }
 
 // ───────────────────────────── Mapeo ─────────────────────────────
@@ -192,10 +249,10 @@ async function deliverOne(d: Deps, deliveryId: string, attempt: number, manual: 
   let responseText: string | null = null;
   let error: string | null = null;
   try {
-    await assertPublicDestination(row.url);
-    const res = await fetch(row.url, {
-      method: "POST",
-      headers: {
+    // Sin seguir redirecciones (un 3xx cuenta como fallo) y con la IP validada en la misma conexión.
+    const res = await postToCustomerUrl(
+      row.url,
+      {
         "Content-Type": "application/json",
         "User-Agent": "CalaSign-Webhooks/1.0",
         [SIGNATURE_HEADER]: signature,
@@ -204,11 +261,10 @@ async function deliverOne(d: Deps, deliveryId: string, attempt: number, manual: 
         "CalaSign-Delivery-Id": row.id,
       },
       body,
-      redirect: "manual",
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-    });
+      TIMEOUT_MS,
+    );
     statusCode = res.status;
-    responseText = (await res.text().catch(() => "")).slice(0, 1000);
+    responseText = res.text.slice(0, 1000);
     if (res.status < 200 || res.status >= 300) error = `HTTP ${res.status}`;
   } catch (e) {
     error = String((e as Error).message ?? e).slice(0, 500);

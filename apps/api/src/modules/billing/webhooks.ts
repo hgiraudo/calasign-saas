@@ -117,6 +117,11 @@ export async function handleMercadoPagoNotification(db: Db, type: string, dataId
     const active = pre.status === "authorized";
     const ended = ["cancelled", "paused"].includes(pre.status);
     if (!active && !ended) return; // pending: todavía no autorizó
+    if (ended) {
+      // Solo baja el plan si la que se cancela es la suscripción vigente (no una anterior reemplazada por otra).
+      const t = await db.one<any>(`SELECT billing_provider, subscription_id FROM tenants WHERE id = $1`, [tenantId]);
+      if (!t || t.billing_provider !== "mercadopago" || t.subscription_id !== pre.id) return;
+    }
     await applySubscription(db, tenantId, {
       plan: active ? (plan as PlanId) : "free",
       provider: active ? "mercadopago" : null,

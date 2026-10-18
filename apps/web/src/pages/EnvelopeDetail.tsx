@@ -14,6 +14,7 @@ import { CorrectionModal, InPersonButton, ResendCopyButton } from "../components
 import { useExpText } from "../lib/i18n-experience";
 import { IdentityBadge } from "../components/IdentityControls";
 import { EnvelopePaymentSummary } from "../components/BillingExtras";
+import { VideoSessionsPanel } from "../components/Video";
 
 export function EnvelopeDetailPage() {
   const { id = "" } = useParams();
@@ -151,6 +152,7 @@ export function EnvelopeDetailPage() {
       <EnvelopePaymentSummary envelopeId={env.id} recipients={detail.recipients} envelopeStatus={env.status} />
 
       <AiMetadataPanel envelopeId={env.id} completed={env.status === "completed"} />
+      <VideoSessionsPanel envelopeId={env.id} envelopeStatus={env.status} recipients={detail.recipients} />
 
       <div className="grid-2">
         <section className="card pad">

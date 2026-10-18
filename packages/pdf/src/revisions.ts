@@ -164,16 +164,20 @@ export async function changesAfterRevision(pdf: Uint8Array, end: number, laterSi
   if (end >= pdf.length) return "none";
   try {
     const loaded = current ?? (await PDFDocument.load(pdf, { updateMetadata: false, ignoreEncryption: true }));
-    const full = await asViewerSees(pdf, end, loaded);
     const signed = await PDFDocument.load(pdf.subarray(0, end), { updateMetadata: false, ignoreEncryption: true });
     const evidence = new Set([...laterSignatures].filter((k) => {
       const [, , c, d] = k.split(",").map(Number);
       return c + d > end;
     }));
     const a = pageFingerprints(signed, evidence);
-    const b = pageFingerprints(full, evidence);
-    const samePages = a.length === b.length && a.every((x, i) => x === b[i]);
-    return samePages && documentFingerprint(signed) === documentFingerprint(full) ? "evidence_only" : "content";
+    // Cada lectura posible del documento completo tiene que mostrar lo firmado (más evidencia).
+    for (const start of viewerStarts(pdf)) {
+      const full = await asViewerSees(pdf, end, loaded, start);
+      const b = pageFingerprints(full, evidence);
+      const samePages = a.length === b.length && a.every((x, i) => x === b[i]);
+      if (!samePages || documentFingerprint(signed) !== documentFingerprint(full)) return "content";
+    }
+    return "evidence_only";
   } catch {
     // Si la revisión firmada no se puede leer, no se puede afirmar que lo que se muestra es lo firmado.
     return "content";
@@ -212,15 +216,19 @@ function objectAt(pdf: Uint8Array, offset: number, ctx: PDFContext, expectNum?: 
   return { num: Number(m[1]), gen: Number(m[2]), obj };
 }
 
-function readXrefSection(pdf: Uint8Array, offset: number, ctx: PDFContext): XrefSection {
+/**
+ * Sección xref en `offset` (absoluto). Los offsets del archivo (entradas, /Prev, /XRefStm) se miden desde el encabezado
+ * `%PDF-` (pdf.js hace `moveStart` ahí): se devuelven absolutos sumándoles `shift`.
+ */
+function readXrefSection(pdf: Uint8Array, offset: number, ctx: PDFContext, shift: number): XrefSection {
   const head = Buffer.from(pdf.subarray(offset, Math.min(pdf.length, offset + 16))).toString("latin1");
-  if (/^\s*xref/.test(head)) return readXrefTable(pdf, offset, ctx);
+  if (/^\s*xref/.test(head)) return readXrefTable(pdf, offset, ctx, shift);
   const { obj } = objectAt(pdf, offset, ctx);
   if (!(obj instanceof PDFRawStream) || obj.dict.get(PDFName.of("Type")) !== PDFName.of("XRef")) throw new Error("startxref no apunta a un xref");
-  return readXrefStream(obj);
+  return readXrefStream(obj, shift);
 }
 
-function readXrefTable(pdf: Uint8Array, offset: number, ctx: PDFContext): XrefSection {
+function readXrefTable(pdf: Uint8Array, offset: number, ctx: PDFContext, shift: number): XrefSection {
   const text = Buffer.from(pdf).toString("latin1");
   let pos = offset;
   const at = (src: string) => {
@@ -245,20 +253,21 @@ function readXrefTable(pdf: Uint8Array, offset: number, ctx: PDFContext): XrefSe
       const e = at("(\\d{10}) (\\d{5}) ([nf])");
       if (!e) throw new Error("entrada xref inválida");
       const num = first + k;
-      entries.push(e[3] === "n" ? { num, kind: "n", offset: Number(e[1]) } : { num, kind: "f" });
+      entries.push(e[3] === "n" ? { num, kind: "n", offset: Number(e[1]) + shift } : { num, kind: "f" });
     }
   }
   const trailer = PDFObjectParser.forBytes(pdf.subarray(pos + "trailer".length), ctx).parseObject();
   if (!(trailer instanceof PDFDict)) throw new Error("trailer inválido");
+  const plus = (n: number | null) => (n === null ? null : n + shift);
   return {
     entries,
     root: trailer.get(PDFName.of("Root")),
-    prev: numberOf(trailer.get(PDFName.of("Prev"))),
-    xrefStm: numberOf(trailer.get(PDFName.of("XRefStm"))),
+    prev: plus(numberOf(trailer.get(PDFName.of("Prev")))),
+    xrefStm: plus(numberOf(trailer.get(PDFName.of("XRefStm")))),
   };
 }
 
-function readXrefStream(stream: PDFRawStream): XrefSection {
+function readXrefStream(stream: PDFRawStream, shift: number): XrefSection {
   const d = stream.dict;
   const nums = (o: PDFObject | undefined) => (o instanceof PDFArray ? o.asArray().map((x) => numberOf(x) ?? 0) : null);
   const w = nums(d.get(PDFName.of("W")));
@@ -281,14 +290,86 @@ function readXrefStream(stream: PDFRawStream): XrefSection {
       const a = field(pos + w[0], w[1], 0);
       const num = index[i] + k;
       if (type === 0) entries.push({ num, kind: "f" });
-      else if (type === 1) entries.push({ num, kind: "n", offset: a });
+      else if (type === 1) entries.push({ num, kind: "n", offset: a + shift });
       else if (type === 2) entries.push({ num, kind: "c", stream: a });
     }
   }
-  return { entries, root: d.get(PDFName.of("Root")), prev: numberOf(d.get(PDFName.of("Prev"))), xrefStm: null };
+  const prev = numberOf(d.get(PDFName.of("Prev")));
+  return { entries, root: d.get(PDFName.of("Root")), prev: prev === null ? null : prev + shift, xrefStm: null };
 }
 
 class RootChangedError extends Error {}
+
+// ───────────────────── Dónde empieza a leer el lector ─────────────────────
+// pdf.js (el visor de la web) no lee el xref como pdf-lib ni como un parser estricto:
+//  - mide todos los offsets desde el encabezado "%PDF-" (lo busca en el primer KB), no desde el byte 0;
+//  - toma la ÚLTIMA aparición de "startxref" y el número que siga aunque esté pegado ("startxref123"); sin número usa 0
+//    (y entonces reconstruye el índice);
+//  - si el primer objeto es un diccionario de linealización con /L igual al largo del archivo, ignora el startxref y
+//    empieza en el xref que sigue al primer "endobj".
+// Con cualquiera de esas diferencias, un PDF podía mostrar en el visor una tabla distinta de la que se controlaba.
+// Se controlan todas las lecturas posibles: alcanza con que una difiera de pdf-lib.
+
+const isPdfjsSpace = (c: number) => c === 0x20 || c === 0x09 || c === 0x0d || c === 0x0a;
+
+interface ViewerStart {
+  /** Offset absoluto del xref inicial. */
+  at: number;
+  /** Desde dónde se miden los offsets del archivo (posición del encabezado). */
+  shift: number;
+}
+
+function headerOffset(buf: Buffer): number {
+  const i = buf.subarray(0, 1024).indexOf("%PDF-");
+  return i < 0 ? 0 : i;
+}
+
+/** El valor del último "startxref" como lo lee pdf.js (sin número: 0). */
+function pdfjsStartXref(buf: Buffer): number {
+  const at = buf.lastIndexOf("startxref");
+  if (at < 0) return 0;
+  let p = at + 9;
+  const next = () => (p < buf.length ? buf[p++] : -1);
+  let ch: number;
+  do ch = next();
+  while (isPdfjsSpace(ch));
+  let str = "";
+  while (ch >= 0x20 && ch <= 0x39) {
+    str += String.fromCharCode(ch);
+    ch = next();
+  }
+  const n = parseInt(str, 10);
+  return Number.isNaN(n) ? 0 : n;
+}
+
+/** Si pdf.js trataría el archivo como linealizado, el offset (relativo al encabezado) del xref que lee primero. */
+function pdfjsLinearizedStart(buf: Buffer, base: number): number | null {
+  const head = buf.subarray(base, base + 1024);
+  const end = head.indexOf("endobj");
+  if (end < 0) return null;
+  const first = head.subarray(0, end).toString("latin1");
+  const l = /\/L\s+\+?(\d+)(?![\d.])/.exec(first);
+  if (!/\/Linearized\b/.test(first) || !l || Number(l[1]) !== buf.length - base) return null;
+  let p = base + end + 6;
+  while (p < buf.length && isPdfjsSpace(buf[p])) p++;
+  return p - base;
+}
+
+/** Todos los puntos de arranque con los que un lector puede leer `pdf` (sin duplicados). */
+function viewerStarts(pdf: Uint8Array): ViewerStart[] {
+  const buf = Buffer.from(pdf.buffer, pdf.byteOffset, pdf.byteLength);
+  const base = headerOffset(buf);
+  const out: ViewerStart[] = [{ at: base + pdfjsStartXref(buf), shift: base }];
+  const lin = pdfjsLinearizedStart(buf, base);
+  if (lin !== null) out.push({ at: base + lin, shift: base });
+  // Un lector estricto: el último startxref con número, offsets desde el byte 0.
+  try {
+    out.push({ at: findLastStartXref(pdf), shift: 0 });
+  } catch {
+    // sin startxref válido: ese lector reconstruye el índice
+  }
+  return out.filter((s, i) => out.findIndex((o) => o.at === s.at && o.shift === s.shift) === i);
+}
 
 /**
  * ¿Lo que muestra un lector (por el xref) difiere de lo que ve pdf-lib (la última definición de cada objeto en el
@@ -297,20 +378,24 @@ class RootChangedError extends Error {}
  * reconstruyen el índice recorriendo el archivo (como pdf-lib), así que eso no cuenta como diferencia.
  */
 export async function viewerDiffersFromPdfLib(pdf: Uint8Array, loaded: PDFDocument): Promise<boolean> {
-  let viewer: PDFDocument;
-  try {
-    viewer = await asViewerSees(pdf, 0, loaded);
-  } catch (e) {
-    return e instanceof RootChangedError;
+  for (const start of viewerStarts(pdf)) {
+    let viewer: PDFDocument;
+    try {
+      viewer = await asViewerSees(pdf, 0, loaded, start);
+    } catch (e) {
+      if (e instanceof RootChangedError) return true;
+      continue;
+    }
+    if (viewer === loaded) continue;
+    try {
+      const a = pageFingerprints(loaded, new Set());
+      const b = pageFingerprints(viewer, new Set());
+      if (!(a.length === b.length && a.every((x, i) => x === b[i])) || documentFingerprint(loaded) !== documentFingerprint(viewer)) return true;
+    } catch {
+      return true;
+    }
   }
-  if (viewer === loaded) return false;
-  try {
-    const a = pageFingerprints(loaded, new Set());
-    const b = pageFingerprints(viewer, new Set());
-    return !(a.length === b.length && a.every((x, i) => x === b[i])) || documentFingerprint(loaded) !== documentFingerprint(viewer);
-  } catch {
-    return true;
-  }
+  return false;
 }
 
 /**
@@ -318,30 +403,31 @@ export async function viewerDiffersFromPdfLib(pdf: Uint8Array, loaded: PDFDocume
  * de las revisiones posteriores a `end`. Si coincide con `loaded`, lo devuelve sin tocarlo (se reutiliza entre firmas).
  * Con `end` = 0, el documento entero (toda la cadena de xref).
  */
-async function asViewerSees(pdf: Uint8Array, end: number, loaded: PDFDocument): Promise<PDFDocument> {
+async function asViewerSees(pdf: Uint8Array, end: number, loaded: PDFDocument, start: ViewerStart): Promise<PDFDocument> {
   const ctx = loaded.context;
   const sections: XrefSection[] = [];
   const seen = new Set<number>();
   // Los objetos que las revisiones posteriores no listan, el lector los busca siguiendo /Prev. La cadena tiene que
   // seguir en el xref de la revisión firmada: con un /Prev a un xref más viejo (o sin /Prev) el lector resolvería esos
   // objetos con versiones anteriores a lo firmado (o no los encontraría), y pdf-lib seguiría viendo lo firmado.
-  const signedStartXref = end > 0 ? findLastStartXref(pdf.subarray(0, end)) : null;
-  let off: number | null = findLastStartXref(pdf);
+  // La revisión firmada, leída con el mismo criterio que el documento completo.
+  const signedStarts = end > 0 ? viewerStarts(pdf.subarray(0, end)).filter((s) => s.shift === start.shift).map((s) => s.at) : [];
+  let off: number | null = start.at;
   while (off !== null && off >= end) {
     if (seen.has(off) || off >= pdf.length) throw new Error("cadena de xref inválida");
     seen.add(off);
-    const s = readXrefSection(pdf, off, ctx);
+    const s = readXrefSection(pdf, off, ctx, start.shift);
     sections.push(s);
     // Archivo híbrido: las entradas del xref stream (/XRefStm) valen menos que las de la tabla.
     if (s.xrefStm !== null) {
       const { obj } = objectAt(pdf, s.xrefStm, ctx);
       if (!(obj instanceof PDFRawStream)) throw new Error("/XRefStm inválido");
-      sections.push({ ...readXrefStream(obj), root: undefined, prev: null });
+      sections.push({ ...readXrefStream(obj, start.shift), root: undefined, prev: null });
     }
     off = s.prev;
   }
   if (!sections.length) throw new Error("revisión posterior sin xref");
-  if (off !== signedStartXref) throw new Error("la revisión posterior no continúa el xref de la revisión firmada");
+  if (end > 0 && (off === null || !signedStarts.includes(off))) throw new Error("la revisión posterior no continúa el xref de la revisión firmada");
   // Un cambio de /Root reemplaza el documento entero: una revisión de evidencia no lo cambia.
   const root = sections[0].root;
   if (!(root instanceof PDFRef) || ctx.trailerInfo.Root?.toString() !== root.toString()) throw new RootChangedError("la revisión cambia /Root");

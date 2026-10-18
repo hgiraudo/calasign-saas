@@ -45,13 +45,15 @@ export interface SignatureReport {
   subFilter: string | null;
   signer: CertSummary | null;
   signingTime: string | null;
-  timestamp: { time: string; tsa: string | null; valid: boolean } | null;
+  /** valid: el token verifica y corresponde a lo sellado. trusted: además la TSA llega a una raíz de confianza, tiene EKU
+   * timeStamping y su certificado era válido en esa fecha (solo entonces la fecha cuenta como prueba de existencia). */
+  timestamp: { time: string; tsa: string | null; valid: boolean; trusted?: boolean } | null;
   integrity: { valid: boolean; reason?: string };
   coversWholeDocument: boolean;
   /** true si después de esta firma hay revisiones incrementales (DSS, otra firma, sello de documento). */
   modifiedAfter: boolean;
   /** trusted: llega a una raíz de confianza. timeValid: todos los certificados eran válidos al momento de firmar. */
-  chain: { trusted: boolean; anchor: string | null; entries: ChainEntry[]; timeValid?: boolean };
+  chain: { trusted: boolean; anchor: string | null; entries: ChainEntry[]; timeValid?: boolean; revoked?: boolean };
   level: PadesLevel | null;
 }
 
@@ -81,7 +83,15 @@ function summary(c: pkijs.Certificate): CertSummary {
   };
 }
 
-async function verifyToken(token: pkijs.SignedData, imprintOf: Uint8Array) {
+const EKU_TIME_STAMPING = "1.3.6.1.5.5.7.3.8";
+
+function hasTimeStampingEku(c: pkijs.Certificate): boolean {
+  const ext = c.extensions?.find((e) => e.extnID === "2.5.29.37");
+  const ids: string[] = ((ext?.parsedValue as pkijs.ExtKeyUsage | undefined)?.keyPurposes ?? []).map(String);
+  return ids.includes(EKU_TIME_STAMPING);
+}
+
+async function verifyToken(token: pkijs.SignedData, imprintOf: Uint8Array, pool: pkijs.Certificate[], anchors: Set<string>) {
   const tst = tstInfoOf(token);
   const alg = HASH_BY_OID[tst.messageImprint.hashAlgorithm.algorithmId] ?? "sha256";
   const expected = Buffer.from(hash(alg, imprintOf));
@@ -94,7 +104,18 @@ async function verifyToken(token: pkijs.SignedData, imprintOf: Uint8Array) {
     sigOk = false;
   }
   const tsa = signerCertOf(token);
-  return { time: tst.genTime.toISOString(), tsa: tsa ? commonName(tsa.subject) ?? nameToString(tsa.subject) : null, valid: sigOk && expected.equals(got) };
+  const valid = sigOk && expected.equals(got);
+  let trusted = false;
+  if (valid && tsa && hasTimeStampingEku(tsa)) {
+    const at = tst.genTime;
+    const chain = await buildChain(tsa, [...cmsCertificates(token), ...pool]);
+    const last = chain[chain.length - 1];
+    trusted =
+      isSelfSigned(last) &&
+      anchors.has(fingerprint(certDer(last))) &&
+      chain.every((c) => c.notBefore.value <= at && at <= c.notAfter.value);
+  }
+  return { time: tst.genTime.toISOString(), tsa: tsa ? commonName(tsa.subject) ?? nameToString(tsa.subject) : null, valid, trusted };
 }
 
 async function chainReport(
@@ -139,7 +160,11 @@ async function chainReport(
     }
     entries.push({ ...summary(c), revocation });
   }
-  return { trusted, anchor: trusted ? nameToString(last.subject) : null, entries, timeValid };
+  // Revocado al momento de firmar: la revocación es anterior a esa fecha, o no se sabe cuándo ocurrió (OCSP).
+  const revoked = entries.some(
+    (e) => e.revocation.status === "revoked" && (!e.revocation.revokedAt || new Date(e.revocation.revokedAt) <= at),
+  );
+  return { trusted, anchor: trusted ? nameToString(last.subject) : null, entries, timeValid, revoked };
 }
 
 export async function validatePdf(pdf: Uint8Array, opts: ValidateOptions = {}): Promise<ValidationReport> {
@@ -165,7 +190,7 @@ export async function validatePdf(pdf: Uint8Array, opts: ValidateOptions = {}): 
       coversWholeDocument: s.byteRange[0] === 0 && end === pdf.length,
       modifiedAfter: end < pdf.length,
     };
-    const brIssue = byteRangeIssue(pdf, s.byteRange);
+    const brIssue = byteRangeIssue(pdf, s.byteRange, s.contents);
     const content = signedContent(pdf, s.byteRange);
     let sd: pkijs.SignedData;
     try {
@@ -187,7 +212,7 @@ export async function validatePdf(pdf: Uint8Array, opts: ValidateOptions = {}): 
     const pool = [...cmsCertificates(sd), ...dssCerts, ...anchorsDer.map(parseCert)];
 
     if (s.type === "DocTimeStamp") {
-      const ts = await verifyToken(sd, content);
+      const ts = await verifyToken(sd, content, pool, anchors);
       reports.push({
         ...base,
         kind: "document_timestamp",
@@ -213,8 +238,8 @@ export async function validatePdf(pdf: Uint8Array, opts: ValidateOptions = {}): 
     let timestamp: SignatureReport["timestamp"] = null;
     if (tsToken) {
       const sigValue = new Uint8Array(sd.signerInfos[0].signature.valueBlock.valueHexView);
-      timestamp = await verifyToken(tsToken, sigValue);
       pool.push(...cmsCertificates(tsToken));
+      timestamp = await verifyToken(tsToken, sigValue, pool, anchors);
     }
     const signingTimeAttr = sd.signerInfos[0].signedAttrs?.attributes.find((a) => a.type === OIDS.signingTime);
     const signingTime = s.signingTimeM ?? (signingTimeAttr ? (signingTimeAttr.values[0] as any).toDate?.()?.toISOString?.() ?? null : null);
@@ -233,9 +258,10 @@ export async function validatePdf(pdf: Uint8Array, opts: ValidateOptions = {}): 
       signingTime,
       timestamp,
       integrity,
-      // Validez de la cadena al momento de firmar: el del sello de tiempo si hay (y es válido), si no el declarado.
+      // Validez de la cadena al momento de firmar: la fecha del sello de tiempo solo si es de una TSA de confianza (prueba de
+      // existencia). Sin eso, la fecha declarada la elige quien firma: se evalúa al día de hoy (sin prueba de existencia).
       chain: signer
-        ? await chainReport(signer, pool, anchors, dss, opts, new Date(timestamp?.valid ? timestamp.time : signingTime ?? Date.now()))
+        ? await chainReport(signer, pool, anchors, dss, opts, timestamp?.valid && timestamp.trusted ? new Date(timestamp.time) : new Date())
         : { trusted: false, anchor: null, entries: [] },
       level,
     });
@@ -247,7 +273,7 @@ export async function validatePdf(pdf: Uint8Array, opts: ValidateOptions = {}): 
     summary: {
       count: reports.length,
       allValid: reports.length > 0 && reports.every((r) => r.integrity.valid && (!r.timestamp || r.timestamp.valid)),
-      allTrusted: reports.length > 0 && reports.every((r) => r.chain.trusted && r.chain.timeValid !== false),
+      allTrusted: reports.length > 0 && reports.every((r) => r.chain.trusted && r.chain.timeValid !== false && !r.chain.revoked),
       anyRevoked: reports.some((r) => r.chain.entries.some((e) => e.revocation.status === "revoked")),
     },
   };

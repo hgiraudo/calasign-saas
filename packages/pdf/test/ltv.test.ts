@@ -103,9 +103,17 @@ describe("PAdES B-LT / B-LTA", () => {
     expect(ts.kind).toBe("document_timestamp");
     expect(ts.coversWholeDocument).toBe(true);
     expect(s1.timestamp?.valid).toBe(true);
+    expect(s1.timestamp?.trusted).toBe(true);
+    expect(s1.chain.revoked).toBe(false);
     expect(s1.chain.entries[0].revocation).toMatchObject({ status: "good", source: "dss-ocsp" });
     expect(s1.chain.entries[1].revocation).toMatchObject({ status: "good", source: "dss-crl" });
     expect(s2.signer?.commonName).toBe("ACME S.A. Sello de empresa");
+
+    // Sin raíz de confianza, el sello de tiempo sigue verificando pero no cuenta como prueba de existencia.
+    const untrusted = await validatePdf(lta, {});
+    expect(untrusted.signatures[0].timestamp?.valid).toBe(true);
+    expect(untrusted.signatures[0].timestamp?.trusted).toBe(false);
+    expect(untrusted.summary.allTrusted).toBe(false);
 
     const dir = mkdtempSync(join(tmpdir(), "ltv-"));
     const file = join(dir, "lta.pdf");

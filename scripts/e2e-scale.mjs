@@ -238,6 +238,12 @@ step(`cancelación de un envío de 60 filas: ${big.sent} alcanzaron a salir, ${b
     kb = await keyApi("GET", `/v1/bulk-sends/${kb.id}`);
   }
   assert(kb.status === "completed" && kb.sent === 1, `envío masivo por API key: ${JSON.stringify(kb)}`);
+  // Una plantilla que crea la key es suya: la completa (roles) y la sigue viendo aunque la restrinja.
+  const kt = (await keyApi("POST", "/v1/templates", { name: `De la key ${stamp}` }, 201)).template;
+  await keyApi("PUT", `/v1/templates/${kt.id}/roles`, { roles: [{ id: randomUUID(), name: "Cliente", role: "signer", routingOrder: 1 }] });
+  await keyApi("PUT", `/v1/templates/${kt.id}/shares`, { groupIds: [], visibility: "restricted" });
+  await keyApi("GET", `/v1/templates/${kt.id}`);
+  assert((await keyApi("GET", "/v1/templates")).items.some((x) => x.id === kt.id), "la key ve en el listado su plantilla restringida");
   const { items: keyItems } = await keyApi("GET", `/v1/bulk-sends/${kb.id}/items?status=sent`);
   const keyEnv = await keyApi("GET", `/v1/envelopes/${keyItems[0].envelopeId}`);
   assert(keyEnv.envelope.metadata.bulkSendId === kb.id, "la API key ve el sobre de su envío masivo");
@@ -402,6 +408,23 @@ const fd = await api("GET", `/v1/envelopes/${sub.envelopeId}`);
 assert(fd.envelope.metadata.webFormId === form.id && fd.fields.find((f) => f.label === "Total").value === "121", "metadata y total del formulario");
 const { items: evs } = await api("GET", `/v1/envelopes/${sub.envelopeId}/events`);
 assert(evs.some((e) => e.type === "recipient.self_registered"), "evidencia del autorregistro");
+{
+  // El Oficial rechaza: el aviso de rechazo no va al correo autorregistrado sin validar (solo la copia final).
+  let tokO = null;
+  for (let i = 0; i < 60 && !tokO; i++) {
+    for (const m of (await api("GET", "/dev/mailbox")).items.filter((x) => x.to === `oficial.${stamp}@example.com` && x.link?.includes("/s/"))) {
+      const t = m.link.split("/s/")[1];
+      if ((await api("GET", `/v1/signing/${t}`, null, { anon: true })).envelope.id === sub.envelopeId) tokO = t;
+    }
+    if (!tokO) await sleep(500);
+  }
+  assert(tokO, "invitación del Oficial del formulario");
+  await api("POST", `/v1/signing/${tokO}/decline`, { reason: "Datos incompletos" }, { anon: true });
+  await waitStatus(sub.envelopeId, "declined");
+  await sleep(1500);
+  const { items } = await api("GET", "/dev/mailbox");
+  assert(!items.some((x) => x.to === me.email && /rechaz/i.test(x.subject ?? "")), "el rechazo no se le avisa al correo autorregistrado sin validar");
+}
 form = await api("GET", `/v1/web-forms/${form.id}`);
 assert(form.uses === 1, "uso contado");
 pub = await api("GET", `/v1/public/forms/${form.slug}`, null, { anon: true });

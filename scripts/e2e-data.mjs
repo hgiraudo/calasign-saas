@@ -11,7 +11,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 
 // Temporales del script (PDFs y claves de prueba): se borran al salir, aunque una aserción falle.
@@ -71,6 +71,10 @@ const assert = (c, m) => {
   if (!c) throw new Error(`falló: ${m}`);
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// La API guarda el PDF normalizado (reescrito al subir), así que lo que se lee se compara con el hash que registró
+// para el documento, no byte a byte con lo subido.
+const sha = (b) => createHash("sha256").update(b).digest("hex");
 
 function tinyPdf(text = "Documento E2E datos") {
   const content = `BT /F1 14 Tf 60 760 Td (${text}) Tj ET`;
@@ -148,7 +152,7 @@ if (br.available) {
     assert(existsSync(join(DATA_DIR, "blobs", "tenants", meA.tenant.id)) && !existsSync(join(DATA_DIR, "blobs", "tenants", meB.tenant.id)), "y los de la otra organización no");
   }
   const back = Buffer.from(await (await B.api("GET", `/v1/envelopes/${b.envelope.id}/documents/${b.doc.id}/file`, null, { raw: true })).arrayBuffer());
-  assert(back.equals(tinyPdf()), "el documento de Brasil se lee desde su celda");
+  assert(b.doc.sha256 && sha(back) === b.doc.sha256 && back.subarray(0, 5).toString() === "%PDF-", "el documento de Brasil se lee desde su celda");
   ok(`celdas: alta en ${usCell} y en br; cada organización guarda en su celda${DATA_DIR ? " (verificado en disco)" : ""}; región inexistente → 400`);
 } else {
   await new Client().api("POST", "/v1/auth/signup", { name: "Y", email: `y-${stamp}@example.com`, password: "una-clave-segura-123", organization: "Y", cell: "br" }, { expect: 400 });
@@ -175,7 +179,7 @@ if (!mockOn) {
   const pdf = tinyPdf("Contrato cifrado con BYOK");
   const d1 = await draftWithDoc(A, "BYOK 1", pdf);
   const got = Buffer.from(await (await A.api("GET", `/v1/envelopes/${d1.envelope.id}/documents/${d1.doc.id}/file`, null, { raw: true })).arrayBuffer());
-  assert(got.equals(pdf), "el documento se lee descifrado");
+  assert(d1.doc.sha256 && sha(got) === d1.doc.sha256 && got.subarray(0, 5).toString() === "%PDF-", "el documento se lee descifrado");
   if (DATA_DIR) {
     const f = findFile(join(DATA_DIR, "blobs", "tenants", meA.tenant.id, "envelopes", d1.envelope.id), "");
     const raw = readFileSync(f);
@@ -220,7 +224,7 @@ if (!mockOn) {
   }
   // Lo cifrado antes con la clave del cliente se sigue leyendo mientras la clave exista.
   const again = Buffer.from(await (await A.api("GET", `/v1/envelopes/${d1.envelope.id}/documents/${d1.doc.id}/file`, null, { raw: true })).arrayBuffer());
-  assert(again.equals(pdf), "lo anterior se sigue leyendo");
+  assert(sha(again) === d1.doc.sha256, "lo anterior se sigue leyendo");
   ok("BYOK: clave restablecida y probada → activa; desactivar vuelve a la clave de la plataforma sin perder lo anterior");
 }
 

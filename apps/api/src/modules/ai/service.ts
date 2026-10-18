@@ -243,7 +243,10 @@ export function renewalAlertDate(m: ContractMetadata | null, alertDays: number, 
   if (Number.isNaN(baseDate.getTime())) return null;
   const todayIso = today.toISOString().slice(0, 10);
   if (base <= todayIso) return null;
-  const lead = Math.max(alertDays, (m.noticePeriodDays ?? 0) + (m.autoRenewal ? 7 : 0));
+  // Tope de 10 años (lo mismo que acepta la edición manual): un preaviso absurdo daba una fecha fuera de rango y
+  // toISOString lanzaba RangeError, con lo que la extracción fallaba siempre.
+  const notice = Math.min(Math.max(Number(m.noticePeriodDays) || 0, 0), 3650);
+  const lead = Math.max(alertDays, notice + (m.autoRenewal ? 7 : 0));
   const alert = new Date(baseDate.getTime() - lead * 86400_000).toISOString().slice(0, 10);
   return alert < todayIso ? todayIso : alert;
 }
@@ -266,6 +269,43 @@ export function invalidMetadataDates(m: ContractMetadata): string[] {
   return META_DATES.filter((k) => m[k] != null && realIsoDate(m[k]) === null);
 }
 
+const clip = (v: unknown, max: number): string | null => {
+  if (typeof v !== "string") return null;
+  const t = v.trim();
+  return t ? t.slice(0, max) : null;
+};
+
+/**
+ * Lleva la salida del modelo al mismo esquema que acepta la edición manual (ContractMetadataSchema). Sin esto, un
+ * texto largo, una moneda como "pesos colombianos" o un preaviso de 99999 días quedaban guardados y después la
+ * edición manual respondía 400 por un campo que el usuario no tocó.
+ */
+export function sanitizeAiMetadata(m: ContractMetadata): ContractMetadata {
+  const parties = (Array.isArray(m.parties) ? m.parties : [])
+    .map((p) => ({ name: clip(p?.name, 300), role: clip(p?.role, 100) }))
+    .filter((p): p is { name: string; role: string | null } => !!p.name)
+    .slice(0, 20);
+  const amounts = (Array.isArray(m.amounts) ? m.amounts : [])
+    .filter((a) => typeof a?.value === "number" && Number.isFinite(a.value))
+    .map((a) => {
+      const c = clip(a.currency, 1000);
+      // Un código (ISO 4217 u otro corto); una descripción larga de la moneda no es un código.
+      return { value: a.value, currency: c && c.length <= 10 ? c.toUpperCase() : null, description: clip(a.description, 300) };
+    })
+    .slice(0, 30);
+  const d = m.noticePeriodDays;
+  return {
+    parties,
+    effectiveDate: realIsoDate(m.effectiveDate),
+    expiryDate: realIsoDate(m.expiryDate),
+    renewalDate: realIsoDate(m.renewalDate),
+    autoRenewal: typeof m.autoRenewal === "boolean" ? m.autoRenewal : null,
+    amounts,
+    governingLaw: clip(m.governingLaw, 300),
+    noticePeriodDays: typeof d === "number" && Number.isInteger(d) && d >= 0 && d <= 3650 ? d : null,
+  };
+}
+
 export async function saveMetadata(
   db: Db,
   envelopeId: string,
@@ -274,9 +314,9 @@ export async function saveMetadata(
   confidence: Record<string, number>,
   source: "ai" | "manual",
 ) {
-  // Lo que devuelve el modelo es texto libre: una fecha que no existe o con otro formato queda en null.
-  const metadata: ContractMetadata = { ...metadataIn };
-  for (const k of META_DATES) metadata[k] = realIsoDate(metadata[k]);
+  // Lo que devuelve el modelo es texto libre: fechas que no existen, textos largos o valores fuera de rango se
+  // normalizan (lo manual ya llega validado y no cambia).
+  const metadata: ContractMetadata = sanitizeAiMetadata(metadataIn);
   const t = await db.one<any>(`SELECT ai_renewal_alert_days FROM tenants WHERE id = $1`, [tenantId]);
   const alertAt = renewalAlertDate(metadata, Number(t?.ai_renewal_alert_days ?? 30));
   await db.query(

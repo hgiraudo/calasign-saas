@@ -25,6 +25,7 @@ const es = {
   "nav.apiKeys": "API keys",
   "nav.mailbox": "Buzón dev",
   "nav.logout": "Salir",
+  "nav.menu": "Menú",
 
   "auth.login": "Ingresar",
   "auth.signup": "Crear cuenta",
@@ -224,6 +225,7 @@ const ptBR: Dict = {
   "nav.apiKeys": "API keys",
   "nav.mailbox": "Caixa dev",
   "nav.logout": "Sair",
+  "nav.menu": "Menu",
   "auth.login": "Entrar",
   "auth.signup": "Criar conta",
   "auth.email": "E-mail",
@@ -410,6 +412,7 @@ const en: Dict = {
   "nav.apiKeys": "API keys",
   "nav.mailbox": "Dev mailbox",
   "nav.logout": "Log out",
+  "nav.menu": "Menu",
   "auth.login": "Log in",
   "auth.signup": "Create account",
   "auth.email": "Email",

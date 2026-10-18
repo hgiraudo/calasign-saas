@@ -44,7 +44,9 @@ export function OAuthConsentPage() {
     }
   };
 
-  const host = info ? new URL(info.redirectUri).host : "";
+  // Con un esquema propio de app nativa (com.ejemplo.app:/cb) la URL no tiene host: se muestra el esquema, para que
+  // la persona vea igual a dónde vuelve (antes decía "Después vas a volver a " sin nada).
+  const host = info ? redirectTarget(info.redirectUri) : "";
   return (
     <div className="shell">
       <header className="topbar">
@@ -107,4 +109,13 @@ export function OAuthConsentPage() {
       </main>
     </div>
   );
+}
+
+function redirectTarget(uri: string): string {
+  try {
+    const u = new URL(uri);
+    return u.host || u.protocol.replace(/:$/, "");
+  } catch {
+    return uri;
+  }
 }

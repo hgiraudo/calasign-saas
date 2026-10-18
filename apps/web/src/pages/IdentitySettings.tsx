@@ -34,11 +34,12 @@ function Page({ title, intro, children }: { title: string; intro: string; childr
 }
 
 function CopyRow({ label, value }: { label: string; value: string }) {
+  const { t } = useI18n();
   return (
     <div className="idn-copy">
       <span className="muted small">{label}</span>
       <code className="secret">{value}</code>
-      <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigator.clipboard?.writeText(value)} aria-label={`Copiar ${label}`}>
+      <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigator.clipboard?.writeText(value)} aria-label={`${t("common.copy")} ${label}`}>
         ⧉
       </button>
     </div>
@@ -203,7 +204,8 @@ export function SsoSettingsPage() {
         .filter(Boolean),
       jitEnabled: data.jitEnabled,
       jitRole: data.jitRole,
-      enforce: data.enforce,
+      // La API rechaza "exigir" sin SSO habilitado (sso_disabled): sin esto, apagar el SSO fallaba siempre.
+      enforce: data.enabled && data.enforce,
       oidc: data.protocol === "oidc" && oidc.issuer ? { issuer: oidc.issuer, clientId: oidc.clientId, scopes: oidc.scopes, ...(secret ? { clientSecret: secret } : {}) } : null,
       // Sin certificado nuevo, el servidor conserva el actual.
       saml:
@@ -230,7 +232,12 @@ export function SsoSettingsPage() {
       <form className="stack" onSubmit={save}>
         <div className="card pad stack">
           <label className="check">
-            <input type="checkbox" checked={data.enabled} onChange={(e) => setData({ ...data, enabled: e.target.checked })} />
+            <input
+              type="checkbox"
+              checked={data.enabled}
+              // Con el SSO apagado no se puede exigir: la casilla "exigir" queda deshabilitada y desmarcada.
+              onChange={(e) => setData({ ...data, enabled: e.target.checked, enforce: e.target.checked ? data.enforce : false })}
+            />
             <span>{tx("sso.enabled")}</span>
           </label>
           <div className="idn-grid">

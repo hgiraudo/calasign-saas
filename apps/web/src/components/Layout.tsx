@@ -51,7 +51,7 @@ export function Layout() {
         <NavLink to="/app" className="brand" onClick={() => setOpen(false)}>
           <Logo light />
         </NavLink>
-        <button type="button" className="menu-toggle" aria-expanded={open} aria-label="Menú" onClick={() => setOpen((o) => !o)}>
+        <button type="button" className="menu-toggle" aria-expanded={open} aria-label={t("nav.menu")} onClick={() => setOpen((o) => !o)}>
           ☰
         </button>
         <nav className={`topnav ${open ? "open" : ""}`} onClick={() => setOpen(false)}>

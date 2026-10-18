@@ -246,7 +246,7 @@ await serve(P.al, async ({ req, url, body, send }) => {
 // ───────────────────────────── API propia ─────────────────────────────
 
 const dataDir = mkdtempSync(join(tmpdir(), "calasign-crm-e2e-"));
-const api_ = spawn(join(ROOT, "apps/api/node_modules/.bin/tsx"), [join(ROOT, "apps/api/src/server.ts")], {
+const api_ = spawn(join(ROOT, "apps/api/node_modules/.bin/tsx"), [join(ROOT, "scripts/e2e-api-entry.mts")], {
   cwd: join(ROOT, "apps/api"),
   env: {
     ...process.env,

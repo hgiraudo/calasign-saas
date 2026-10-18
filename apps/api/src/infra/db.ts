@@ -100,7 +100,7 @@ export async function migrate(db: Db, log: (m: string) => void = () => {}) {
 
 function splitSql(sql: string): string[] {
   return sql
-    .replace(/--[^\n]*\n/g, "\n")
+    .replace(/--[^\n]*(\n|$)/g, "\n")
     .split(/;\s*(?:\n|$)/)
     .map((s) => s.trim())
     .filter(Boolean);

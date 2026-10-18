@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { dirname, resolve, sep } from "node:path";
 import { config } from "../config";
 import { AppError } from "../lib/errors";
 import { cellById, cells, type CellStorageConfig } from "./cells";
@@ -29,7 +29,7 @@ class LocalBlobStore implements BlobStore {
   constructor(private root: string) {}
   private path(key: string) {
     const p = resolve(this.root, key);
-    if (!p.startsWith(this.root)) throw new Error("clave inválida");
+    if (!p.startsWith(this.root + sep)) throw new Error("clave inválida");
     return p;
   }
   async put(key: string, data: Uint8Array, _contentType: string, opts?: PutOptions) {

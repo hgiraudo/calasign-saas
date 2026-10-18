@@ -20,6 +20,7 @@ import { decrypt, encrypt, maskDestination, randomToken, sha256Hex, uuidv7 } fro
 import { authenticate, clientInfo, type AuthContext, type Services } from "./context";
 import { activateRecipient, advanceRouting, currentSignerGroup, lockEnvelope } from "./envelopes";
 import { checkSenderValue, insertEnvelopeField } from "./fieldvalues";
+import { pruneDanglingConditions } from "./logic";
 import { loadDetail } from "./mappers";
 import { SIGNER_COOKIE } from "./otp";
 import { recipientActor, resolveToken } from "./signing";
@@ -154,6 +155,9 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
     recips.delete(id);
     removedRecipients.push({ id, name: r.name });
   }
+  // Una condición que cita un campo quitado dejaría oculto para siempre al campo que la tiene (p. ej. una firma
+  // obligatoria) y el firmante completaría sin firmar.
+  if (removedFields.length || removedRecipients.length) await pruneDanglingConditions(db, "fields", e.id);
 
   // Cambios de contacto: link nuevo y el anterior revocado.
   const updated: Record<string, unknown>[] = [];

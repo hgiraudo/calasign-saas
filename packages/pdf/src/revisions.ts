@@ -288,9 +288,35 @@ function readXrefStream(stream: PDFRawStream): XrefSection {
   return { entries, root: d.get(PDFName.of("Root")), prev: numberOf(d.get(PDFName.of("Prev"))), xrefStm: null };
 }
 
+class RootChangedError extends Error {}
+
+/**
+ * ¿Lo que muestra un lector (por el xref) difiere de lo que ve pdf-lib (la última definición de cada objeto en el
+ * archivo)? pdf-lib es lo que arma el PDF final; el visor de la web (pdf.js) y los lectores usan el xref. Un PDF con
+ * objetos duplicados mostraría una cosa al firmante y otra en el PDF firmado. Si el xref no se puede leer, los lectores
+ * reconstruyen el índice recorriendo el archivo (como pdf-lib), así que eso no cuenta como diferencia.
+ */
+export async function viewerDiffersFromPdfLib(pdf: Uint8Array, loaded: PDFDocument): Promise<boolean> {
+  let viewer: PDFDocument;
+  try {
+    viewer = await asViewerSees(pdf, 0, loaded);
+  } catch (e) {
+    return e instanceof RootChangedError;
+  }
+  if (viewer === loaded) return false;
+  try {
+    const a = pageFingerprints(loaded, new Set());
+    const b = pageFingerprints(viewer, new Set());
+    return !(a.length === b.length && a.every((x, i) => x === b[i])) || documentFingerprint(loaded) !== documentFingerprint(viewer);
+  } catch {
+    return true;
+  }
+}
+
 /**
  * El documento completo tal como lo muestra un lector: la vista de pdf-lib (`loaded`) con los objetos que fijan los xref
  * de las revisiones posteriores a `end`. Si coincide con `loaded`, lo devuelve sin tocarlo (se reutiliza entre firmas).
+ * Con `end` = 0, el documento entero (toda la cadena de xref).
  */
 async function asViewerSees(pdf: Uint8Array, end: number, loaded: PDFDocument): Promise<PDFDocument> {
   const ctx = loaded.context;
@@ -299,7 +325,7 @@ async function asViewerSees(pdf: Uint8Array, end: number, loaded: PDFDocument): 
   // Los objetos que las revisiones posteriores no listan, el lector los busca siguiendo /Prev. La cadena tiene que
   // seguir en el xref de la revisión firmada: con un /Prev a un xref más viejo (o sin /Prev) el lector resolvería esos
   // objetos con versiones anteriores a lo firmado (o no los encontraría), y pdf-lib seguiría viendo lo firmado.
-  const signedStartXref = findLastStartXref(pdf.subarray(0, end));
+  const signedStartXref = end > 0 ? findLastStartXref(pdf.subarray(0, end)) : null;
   let off: number | null = findLastStartXref(pdf);
   while (off !== null && off >= end) {
     if (seen.has(off) || off >= pdf.length) throw new Error("cadena de xref inválida");
@@ -318,7 +344,7 @@ async function asViewerSees(pdf: Uint8Array, end: number, loaded: PDFDocument): 
   if (off !== signedStartXref) throw new Error("la revisión posterior no continúa el xref de la revisión firmada");
   // Un cambio de /Root reemplaza el documento entero: una revisión de evidencia no lo cambia.
   const root = sections[0].root;
-  if (!(root instanceof PDFRef) || ctx.trailerInfo.Root?.toString() !== root.toString()) throw new Error("la revisión cambia /Root");
+  if (!(root instanceof PDFRef) || ctx.trailerInfo.Root?.toString() !== root.toString()) throw new RootChangedError("la revisión cambia /Root");
 
   // Entrada efectiva de cada objeto: gana la sección más nueva (sections[0]).
   const effective = new Map<number, XrefEntry>();
@@ -340,10 +366,12 @@ async function asViewerSees(pdf: Uint8Array, end: number, loaded: PDFDocument): 
 
   // Lo que el lector ve de cada objeto de esas revisiones (null: objeto libre).
   const viewer: { ref: PDFRef; obj: PDFObject | null; entry: XrefEntry }[] = [];
+  const refsByNum = new Map<number, PDFRef[]>();
+  for (const [ref] of ctx.enumerateIndirectObjects()) refsByNum.set(ref.objectNumber, [...(refsByNum.get(ref.objectNumber) ?? []), ref]);
   for (const e of effective.values()) {
     if (e.num === 0) continue;
     if (e.kind === "f") {
-      for (const [ref] of ctx.enumerateIndirectObjects()) if (ref.objectNumber === e.num) viewer.push({ ref, obj: null, entry: e });
+      for (const ref of refsByNum.get(e.num) ?? []) viewer.push({ ref, obj: null, entry: e });
     } else if (e.kind === "n") {
       const { gen, obj } = objectAt(pdf, e.offset, ctx, e.num);
       const type = obj instanceof PDFRawStream ? obj.dict.get(PDFName.of("Type")) : undefined;

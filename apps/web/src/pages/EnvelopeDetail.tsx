@@ -67,6 +67,24 @@ export function EnvelopeDetailPage() {
   const env = detail.envelope;
   const isOpen = env.status === "sent";
 
+  // La finalización falló definitivamente si el último evento de finalización es finalize_failed.
+  const lastFinalize = [...events].reverse().find((ev) => ev.type === "envelope.finalize_failed" || ev.type === "envelope.finalize_retried");
+  const finalizeFailed = detail?.envelope.status === "finalizing" && lastFinalize?.type === "envelope.finalize_failed";
+
+  const retryFinalize = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api(`/v1/envelopes/${id}/retry-finalize`, { method: "POST" });
+      setNotice(t("detail.finalizeRetried"));
+      await load();
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const remind = async () => {
     setBusy(true);
     setError(null);
@@ -149,6 +167,14 @@ export function EnvelopeDetailPage() {
 
       <ErrorBox error={error} />
       {notice && <div className="alert alert-success">{notice}</div>}
+      {finalizeFailed && (
+        <div className="alert alert-warn row-wrap" role="alert">
+          <span>{t("detail.finalizeFailed")}</span>
+          <button type="button" className="btn btn-sm" disabled={busy} onClick={retryFinalize}>
+            {t("detail.retryFinalize")}
+          </button>
+        </div>
+      )}
       {env.voidReason && (
         <div className="alert alert-warn">
           {t("detail.voidedReason")} {env.voidReason}

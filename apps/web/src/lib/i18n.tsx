@@ -138,6 +138,9 @@ const es = {
   "detail.declineReason": "Motivo",
   "detail.voidedReason": "Anulado:",
   "detail.sha": "SHA-256 del PDF final",
+  "detail.finalizeFailed": "No se pudo terminar de sellar el documento. Podés reintentarlo; si vuelve a fallar, contactá a soporte.",
+  "detail.retryFinalize": "Reintentar finalización",
+  "detail.finalizeRetried": "Reintento en curso",
 
   "keys.title": "API keys",
   "keys.intro": "Usá una API key para integrar CalaSign desde tu sistema: Authorization: Bearer <key>.",
@@ -327,6 +330,9 @@ const ptBR: Dict = {
   "detail.declineReason": "Motivo",
   "detail.voidedReason": "Cancelado:",
   "detail.sha": "SHA-256 do PDF final",
+  "detail.finalizeFailed": "Não foi possível concluir a selagem do documento. Você pode tentar novamente; se falhar de novo, contate o suporte.",
+  "detail.retryFinalize": "Tentar finalizar novamente",
+  "detail.finalizeRetried": "Nova tentativa em andamento",
   "keys.title": "API keys",
   "keys.intro": "Use uma API key para integrar o CalaSign ao seu sistema: Authorization: Bearer <key>.",
   "keys.name": "Nome",
@@ -510,6 +516,9 @@ const en: Dict = {
   "detail.declineReason": "Reason",
   "detail.voidedReason": "Voided:",
   "detail.sha": "SHA-256 of final PDF",
+  "detail.finalizeFailed": "The document could not be sealed. You can retry; if it fails again, contact support.",
+  "detail.retryFinalize": "Retry finalization",
+  "detail.finalizeRetried": "Retry in progress",
   "keys.title": "API keys",
   "keys.intro": "Use an API key to integrate CalaSign: Authorization: Bearer <key>.",
   "keys.name": "Name",
@@ -579,7 +588,7 @@ const STORAGE_KEY = "calasign.locale";
 function readStored(): Locale | null {
   try {
     const v = localStorage.getItem(STORAGE_KEY);
-    return v && v in DICTS ? (v as Locale) : null;
+    return v && Object.prototype.hasOwnProperty.call(DICTS, v) ? (v as Locale) : null;
   } catch {
     return null;
   }

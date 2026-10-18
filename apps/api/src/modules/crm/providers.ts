@@ -274,8 +274,8 @@ export async function testConnection(c: CrmConn): Promise<{ label: string | null
       return { label: info?.uiDomain ?? (info?.portalId ? `portal ${info.portalId}` : null), config: { portalId: str(info?.portalId) } };
     }
     case "salesforce": {
-      const limits = await crmFetch(c, { path: `/services/data/${SF_API_VERSION}/limits` });
-      return { label: new URL(baseFor(c)).host + (limits ? "" : ""), config: {} };
+      await crmFetch(c, { path: `/services/data/${SF_API_VERSION}/limits` });
+      return { label: new URL(baseFor(c)).host, config: {} };
     }
     case "siigo": {
       await crmFetch(c, { path: "/v1/customers?page_size=1" });

@@ -190,7 +190,7 @@ export function EnvelopeDetailPage() {
 
       <AiMetadataPanel envelopeId={env.id} completed={env.status === "completed"} />
       {env.status === "completed" && <ArchivePanel envelopeId={env.id} canManage />}
-      {detail.recipients.some((r) => r.signatureType === "certificate") && <CertificateProgressPanel envelopeId={env.id} status={env.status} />}
+      {detail.recipients.some((r) => r.signatureType === "certificate") && <CertificateProgressPanel envelopeId={env.id} status={env.status} refreshKey={events.length} />}
 
       <div className="grid-2">
         <section className="card pad">

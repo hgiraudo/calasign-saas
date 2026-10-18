@@ -7,7 +7,11 @@ import { useIdnText, type IdnKey } from "../lib/i18n-identity";
 
 let cache: Promise<IdentitySettings | null> | null = null;
 function loadSettings() {
-  cache ??= api<IdentitySettings>("/v1/settings/identity").catch(() => null);
+  // Un error no se cachea: si falló (red, sesión), el próximo uso vuelve a pedir.
+  cache ??= api<IdentitySettings>("/v1/settings/identity").catch(() => {
+    cache = null;
+    return null;
+  });
   return cache;
 }
 

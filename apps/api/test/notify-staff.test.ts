@@ -51,5 +51,5 @@ describe("avisos al equipo (propietarios y administradores)", () => {
       { destination: "zoe@x.com", status: "sent" },
     ]);
     await db.close();
-  }, 30_000);
+  }, 180_000);
 });

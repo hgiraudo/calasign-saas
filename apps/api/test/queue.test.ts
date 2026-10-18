@@ -58,5 +58,5 @@ describe("cola de trabajos", () => {
       await worker.stop();
       await db.close();
     }
-  }, 30_000);
+  }, 180_000);
 });

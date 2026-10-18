@@ -208,6 +208,9 @@ const sessC = await api("GET", `/v1/signing/${tC}`);
 assert(sessC.certificateSigning?.status === "waiting", "C: espera a A");
 await api("POST", `/v1/signing/${tC}/certsign/pairing`, {}, { expect: 409 });
 step("orden: C no puede emparejar el Firmador antes que A");
+const remind = await api("POST", `/v1/envelopes/${envelope.id}/remind`, {});
+assert(remind.notified === 1, `recordatorio al firmante con certificado pendiente (${JSON.stringify(remind)})`);
+step("el remitente puede recordarle al firmante al que le toca firmar con certificado");
 
 // ───────── Firmante A (Perú, RSA) ─────────
 const pairA = await api("POST", `/v1/signing/${tA}/certsign/pairing`, {});

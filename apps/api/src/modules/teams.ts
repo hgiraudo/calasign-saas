@@ -307,7 +307,7 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
       await t.query(`DELETE FROM sessions WHERE user_id = $1 AND tenant_id = $2`, [userId, a.tenantId]);
     });
     await auditFromRequest(s.db, req, a, "member.removed", { targetType: "user", targetId: userId });
-    reply.code(204).send();
+    return reply.code(204).send();
   });
 
   // ───────── Invitaciones ─────────
@@ -378,7 +378,7 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     );
     if (!r.length) throw notFound("Invitación");
     await auditFromRequest(s.db, req, a, "member.invitation_revoked", { targetType: "invitation", targetId: req.params.id, data: { email: (r[0] as any).email } });
-    reply.code(204).send();
+    return reply.code(204).send();
   });
 
   // Pública: vista previa y aceptación por token.
@@ -556,7 +556,7 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     const r = await s.db.query(`DELETE FROM roles WHERE id = $1 AND tenant_id = $2 RETURNING name`, [req.params.id, a.tenantId]);
     if (!r.length) throw notFound("Rol");
     await auditFromRequest(s.db, req, a, "role.deleted", { targetType: "role", targetId: req.params.id, data: { name: (r[0] as any).name } });
-    reply.code(204).send();
+    return reply.code(204).send();
   });
 
   // ───────── Rol de las API keys ─────────
@@ -671,7 +671,7 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     const r = await s.db.query(`DELETE FROM groups WHERE id = $1 AND tenant_id = $2 RETURNING name`, [req.params.id, a.tenantId]);
     if (!r.length) throw notFound("Grupo");
     await auditFromRequest(s.db, req, a, "group.deleted", { targetType: "group", targetId: req.params.id, data: { name: (r[0] as any).name } });
-    reply.code(204).send();
+    return reply.code(204).send();
   });
 
   // ───────── Compartir sobres y plantillas con grupos ─────────

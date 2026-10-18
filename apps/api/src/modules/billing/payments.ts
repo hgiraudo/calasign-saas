@@ -246,7 +246,7 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
       if (e.status !== "draft") throw conflict("not_draft", "El cobro solo se quita mientras el sobre es un borrador");
       await t.query(`DELETE FROM envelope_payments WHERE envelope_id = $1`, [e.id]);
     });
-    reply.code(204).send();
+    return reply.code(204).send();
   });
 
   // ───────── Firmante ─────────

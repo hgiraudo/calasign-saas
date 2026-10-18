@@ -661,7 +661,7 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
     if (active) throw conflict("runs_in_progress", "Hay ejecuciones en curso: cancelalas o desactivá el workflow");
     await s.db.query(`DELETE FROM workflows WHERE id = $1`, [cur.id]);
     await auditFromRequest(s.db, req, a, "workflow.deleted", { targetType: "workflow", targetId: cur.id, data: { name: cur.name } });
-    reply.code(204).send();
+    return reply.code(204).send();
   });
 
   app.post<{ Params: { id: string } }>("/v1/workflows/:id/runs", { preHandler: auth }, async (req, reply) => {

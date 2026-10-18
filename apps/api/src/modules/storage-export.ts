@@ -503,7 +503,7 @@ export async function storageRoutes(app: FastifyInstance, s: Services) {
     const r = await load(a.tenantId, req.params.id);
     await s.db.query(`DELETE FROM storage_connections WHERE id = $1`, [r.id]);
     await auditFromRequest(s.db, req, a, "storage.disconnected", { targetType: "storage_connection", targetId: r.id, data: { provider: r.provider, name: r.name } });
-    reply.code(204).send();
+    return reply.code(204).send();
   });
 
   app.post<{ Params: { id: string } }>("/v1/storage/connections/:id/test", { preHandler: auth, config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req) => {

@@ -555,7 +555,7 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
     const r = await loadConn(s.db, a.tenantId, req.params.id);
     await s.db.query(`DELETE FROM crm_connections WHERE id = $1`, [r.id]);
     await auditFromRequest(s.db, req, a, "crm.disconnected", { targetType: "crm_connection", targetId: r.id, data: { provider: r.provider, name: r.name } });
-    reply.code(204).send();
+    return reply.code(204).send();
   });
 
   app.post<{ Params: { id: string } }>("/v1/crm/connections/:id/test", { preHandler: auth, config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req) => {
@@ -662,7 +662,7 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
     const a = A(req);
     const m = await loadMapping(s.db, a.tenantId, req.params.id);
     await s.db.query(`DELETE FROM crm_mappings WHERE id = $1`, [m.id]);
-    reply.code(204).send();
+    return reply.code(204).send();
   });
 
   app.post<{ Params: { id: string } }>("/v1/crm/mappings/:id/send", { preHandler: auth, config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (req, reply) => {

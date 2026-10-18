@@ -236,7 +236,7 @@ export async function notificationIntegrationRoutes(app: FastifyInstance, s: Ser
     const r = await load(a.tenantId, req.params.id);
     await s.db.query(`DELETE FROM notification_integrations WHERE id = $1`, [r.id]);
     await auditFromRequest(s.db, req, a, "notification_integration.deleted", { targetType: "notification_integration", targetId: r.id, data: { name: r.name } });
-    reply.code(204).send();
+    return reply.code(204).send();
   });
 
   app.post<{ Params: { id: string } }>("/v1/notification-integrations/:id/test", { preHandler: auth, config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req) => {

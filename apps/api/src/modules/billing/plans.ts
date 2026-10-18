@@ -106,17 +106,35 @@ export async function enforcePlanForRequest(db: Db, req: FastifyRequest, a: Auth
   if (a.apiKeyId || a.oauth) requireFeature(plan, "api", "El acceso por API");
   const f = featureForRoute(url, req.method);
   if (f) requireFeature(plan, f.feature, f.label);
-  if (url === "/v1/invitations" && req.method === "POST" && plan.users !== null) {
-    const used = await usersCount(db, a.tenantId);
-    if (used >= plan.users) {
-      throw planLimitError(`El plan ${plan.name} permite hasta ${plan.users} usuario(s)`, {
-        plan: plan.id,
-        limit: "users",
-        used,
-        max: plan.users,
-        suggestedPlan: suggest((p) => p.users === null || p.users > plan.users!),
-      });
-    }
+  // El cupo de usuarios de las invitaciones lo controla la ruta (enforceUserSeat) dentro de su transacción.
+}
+
+/**
+ * Cupo de usuarios para una invitación nueva. Va dentro de la transacción que la crea, con la organización
+ * bloqueada: dos invitaciones simultáneas no superan el cupo (antes el chequeo corría antes, sin bloqueo).
+ * `replacingEmail`: la invitación pendiente a ese correo se reemplaza, así que no cuenta como un usuario más
+ * (antes, con el cupo lleno, reenviar una invitación daba 402 aunque no sumaba nadie).
+ */
+export async function enforceUserSeat(db: Db, tenantId: string, replacingEmail?: string) {
+  const { plan } = await tenantPlan(db, tenantId);
+  if (plan.users === null) return;
+  await db.query(`SELECT id FROM tenants WHERE id = $1 FOR UPDATE`, [tenantId]);
+  let used = await usersCount(db, tenantId);
+  if (replacingEmail) {
+    const r = await db.one<{ n: number }>(
+      `SELECT count(*)::int AS n FROM invitations WHERE tenant_id = $1 AND lower(email) = lower($2) AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now()`,
+      [tenantId, replacingEmail],
+    );
+    used -= Number(r?.n ?? 0);
+  }
+  if (used >= plan.users) {
+    throw planLimitError(`El plan ${plan.name} permite hasta ${plan.users} usuario(s)`, {
+      plan: plan.id,
+      limit: "users",
+      used,
+      max: plan.users,
+      suggestedPlan: suggest((p) => p.users === null || p.users > plan.users!),
+    });
   }
 }
 

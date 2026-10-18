@@ -24,11 +24,16 @@ import {
   ProviderError,
   mpCreatePreference,
   mpExpirePreference,
+  mpRefundPayment,
   providerConfigured,
   stripeCreatePaymentCheckout,
   stripeExpireCheckoutSession,
   stripeGetCheckoutSession,
+  stripeRefundPayment,
 } from "./providers";
+
+/** Estados en los que el sobre ya no se puede firmar: un pago que llega así se reembolsa. */
+const CLOSED_STATUSES = ["voided", "declined", "expired"];
 import { escapeHtml, mockPage, mockPageCsp } from "./mock-page";
 
 // Código estable (lo traduce la interfaz) y texto documental en español, en el mismo orden.
@@ -119,7 +124,8 @@ export async function markPaymentPaid(
     if (!p0) throw notFound("Pago");
     const e = await lockEnvelope(t, p0.tenant_id, p0.envelope_id);
     const p = await t.one<any>(`SELECT * FROM envelope_payments WHERE id = $1 FOR UPDATE`, [paymentId]);
-    if (p.status === "paid") return;
+    // Ya reembolsado: otro evento del mismo pago (p. ej. async_payment_succeeded) no lo vuelve a "pagado".
+    if (p.status === "paid" || p.status === "refunded") return;
     // Un monto no numérico (NaN) haría falsa cualquier comparación: se trata como diferencia.
     if (r.amount !== undefined && (!Number.isFinite(r.amount) || Math.abs(r.amount - Number(p.amount)) > 0.005)) {
       throw new AppError(400, "payment_mismatch", "El monto pagado no coincide con el cobro");
@@ -127,9 +133,14 @@ export async function markPaymentPaid(
     if (r.currency && r.currency.toUpperCase() !== String(p.currency).toUpperCase()) {
       throw new AppError(400, "payment_mismatch", "La moneda del pago no coincide con el cobro");
     }
+    // El pago llegó con el sobre ya cerrado (anulado, rechazado o vencido): p. ej. una sesión de Stripe pagada antes
+    // de que el barrido la venciera, o un Boleto/efectivo de Mercado Pago iniciado antes y acreditado días después.
+    // El dinero se cobró, así que se registra, pero queda marcado para reembolso (refundPaymentsOnClosedEnvelopes).
+    const closed = CLOSED_STATUSES.includes(e.status);
     await t.query(
-      `UPDATE envelope_payments SET status = 'paid', paid_at = now(), provider_payment_id = $2, receipt = $3, updated_at = now() WHERE id = $1`,
-      [p.id, r.providerPaymentId, JSON.stringify(r.receipt)],
+      `UPDATE envelope_payments SET status = 'paid', paid_at = now(), provider_payment_id = $2, receipt = $3,
+         refund_required_at = CASE WHEN $4::boolean THEN now() ELSE refund_required_at END, updated_at = now() WHERE id = $1`,
+      [p.id, r.providerPaymentId, JSON.stringify(r.receipt), closed],
     );
     const payer = await t.one<any>(`SELECT name FROM recipients WHERE id = $1`, [p.recipient_id]);
     await appendEvent(t, {
@@ -147,6 +158,15 @@ export async function markPaymentPaid(
         providerPaymentId: r.providerPaymentId,
       },
     });
+    if (closed) {
+      await appendEvent(t, {
+        tenantId: p.tenant_id,
+        envelopeId: p.envelope_id,
+        type: "payment.refund_required",
+        actor: { ...SYSTEM, label: `Pago (${p.provider})` },
+        data: { paymentId: p.id, envelopeStatus: e.status },
+      });
+    }
     // after_sign: si ya firmaron todos, el sobre pasa a finalizar ahora.
     if (e.status === "sent") await advanceRouting(t, p.tenant_id, p.envelope_id, SYSTEM);
   });
@@ -182,6 +202,42 @@ export async function closeStaleCheckouts(d: { db: Db; log: { error: (o: object,
       });
     } catch (err) {
       d.log.error({ err: String(err), paymentId: p.id }, "no se pudo cerrar el checkout de un sobre cerrado");
+    }
+  }
+}
+
+/**
+ * Reembolsa los pagos que llegaron con el sobre ya cerrado (refund_required_at). Corre en el barrido periódico y
+ * reintenta si el proveedor falla; la clave de idempotencia evita un doble reembolso si el resultado no se pudo guardar.
+ */
+export async function refundPaymentsOnClosedEnvelopes(d: { db: Db; log: { error: (o: object, m: string) => void } }, limit = 20) {
+  const rows = await d.db.query<any>(
+    `SELECT id, provider, provider_payment_id, envelope_id, tenant_id, amount, currency FROM envelope_payments
+      WHERE status = 'paid' AND refund_required_at IS NOT NULL AND refunded_at IS NULL
+      ORDER BY refund_required_at LIMIT $1`,
+    [limit],
+  );
+  for (const p of rows) {
+    try {
+      if (p.provider === "stripe") {
+        if (!p.provider_payment_id) throw new Error("pago de Stripe sin PaymentIntent");
+        await stripeRefundPayment(p.provider_payment_id, `refund:${p.id}`);
+      } else if (p.provider === "mercadopago") {
+        if (!p.provider_payment_id) throw new Error("pago de Mercado Pago sin id");
+        await mpRefundPayment(p.provider_payment_id, `refund:${p.id}`);
+      }
+      // mock: no hay dinero que devolver.
+      await d.db.query(`UPDATE envelope_payments SET status = 'refunded', refunded_at = now(), refund_error = NULL, updated_at = now() WHERE id = $1`, [p.id]);
+      await appendEvent(d.db, {
+        tenantId: p.tenant_id,
+        envelopeId: p.envelope_id,
+        type: "payment.refunded",
+        actor: { ...SYSTEM, label: `Pago (${p.provider})` },
+        data: { paymentId: p.id, amount: Number(p.amount), currency: p.currency, reason: "envelope_closed" },
+      });
+    } catch (err) {
+      await d.db.query(`UPDATE envelope_payments SET refund_error = $2, updated_at = now() WHERE id = $1`, [p.id, String(err).slice(0, 500)]).catch(() => {});
+      d.log.error({ err: String(err), paymentId: p.id }, "no se pudo reembolsar un pago de un sobre cerrado");
     }
   }
 }

@@ -42,6 +42,7 @@ import { deliver } from "../notifications/channels";
 import { normLocale } from "../notifications/templates";
 import { hasPerm } from "./access";
 import { auditFromRequest, recordAudit } from "./audit";
+import { enforceUserSeat } from "./billing/plans";
 import { SESSION_COOKIE, authenticate, clientInfo, type AuthContext, type Services } from "./context";
 import { assertSessionAllowed } from "./identity/sso";
 
@@ -369,18 +370,22 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
       [a.tenantId, input.email],
     );
     if (already) throw conflict("already_member", "Esa persona ya es miembro de la organización");
-    // Una invitación pendiente por correo: la anterior se revoca.
-    await s.db.query(
-      `UPDATE invitations SET revoked_at = now() WHERE tenant_id = $1 AND lower(email) = lower($2) AND accepted_at IS NULL AND revoked_at IS NULL`,
-      [a.tenantId, input.email],
-    );
     const token = randomToken();
     const id = uuidv7();
-    await s.db.query(
-      `INSERT INTO invitations (id, tenant_id, email, role, role_id, token_hash, invited_by, expires_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7, now() + interval '${INVITE_DAYS} days')`,
-      [id, a.tenantId, input.email, target.role, target.roleId, sha256Hex(token), a.userId],
-    );
+    await s.db.tx(async (t) => {
+      // Cupo del plan con la organización bloqueada; reenviar a un correo con invitación pendiente no suma usuarios.
+      await enforceUserSeat(t, a.tenantId, input.email);
+      // Una invitación pendiente por correo: la anterior se revoca.
+      await t.query(
+        `UPDATE invitations SET revoked_at = now() WHERE tenant_id = $1 AND lower(email) = lower($2) AND accepted_at IS NULL AND revoked_at IS NULL`,
+        [a.tenantId, input.email],
+      );
+      await t.query(
+        `INSERT INTO invitations (id, tenant_id, email, role, role_id, token_hash, invited_by, expires_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7, now() + interval '${INVITE_DAYS} days')`,
+        [id, a.tenantId, input.email, target.role, target.roleId, sha256Hex(token), a.userId],
+      );
+    });
     const org = await s.db.one<any>(`SELECT name, default_locale FROM tenants WHERE id = $1`, [a.tenantId]);
     const inviter = a.userId ? (await s.db.one<any>(`SELECT name FROM users WHERE id = $1`, [a.userId]))?.name : a.actor.label;
     const acceptUrl = `${config.appUrl}/invite/${token}`;

@@ -178,6 +178,10 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
       stored.push({ purpose, kind: meta.kind, text: meta.text ?? null, fileId, key, png });
     }
 
+    // Si la firma no se completa (faltan campos, no es su turno, el sobre cerró…), las imágenes ya subidas no las
+    // referencia nada: sin fila en `files` la retención nunca las borra y la firma del titular quedaba guardada para
+    // siempre, una copia por cada intento fallido.
+    const discardStored = () => Promise.all(stored.map((x) => s.blobs.delete(x.key).catch(() => {})));
     await s.db.tx(async (t) => {
       const e = await lockEnvelope(t, e0.tenant_id, e0.id);
       const r = await t.one<any>(`SELECT * FROM recipients WHERE id = $1`, [r0.id]);
@@ -271,6 +275,9 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
         },
       });
       await advanceRouting(t, e.tenant_id, e.id, { type: "system", label: "CalaSign" });
+    }).catch(async (err) => {
+      await discardStored();
+      throw err;
     });
     const { recipient, envelope } = await resolveToken(s.db, req.params.token);
     return buildSession(s.db, req.params.token, recipient, envelope);

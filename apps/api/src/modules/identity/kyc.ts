@@ -29,6 +29,7 @@ import { matchIdentity } from "./namematch";
 import { WebhookSignatureError, getAdapter, listProviders, mockDecide } from "./providers";
 import type { CertificateIdentity } from "@calasign/pdf";
 import { tenantBaseUrl } from "../custom-domains";
+import { requireFeature, tenantPlan } from "../billing/plans";
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MIN_IMAGE_BYTES = 1024;
@@ -71,6 +72,12 @@ export async function applyIdentityFlags(
   envelopeId: string,
   list: { id: string; role?: string; idVerification?: { provider: IdvProvider; level?: IdvLevel } | null }[],
 ) {
+  // Exigir la verificación es una funcionalidad del plan (cada verificación de Truora o Veriff se paga). Solo se
+  // controla al pedirla: un sobre ya enviado no se traba si después se baja de plan.
+  if (list.some((r) => r.idVerification)) {
+    const env = await db.one<{ tenant_id: string }>(`SELECT tenant_id FROM envelopes WHERE id = $1`, [envelopeId]);
+    if (env) requireFeature((await tenantPlan(db, env.tenant_id)).plan, "kyc", "La verificación de identidad");
+  }
   for (const r of list) {
     if (r.idVerification === undefined) continue;
     if (r.idVerification === null) {

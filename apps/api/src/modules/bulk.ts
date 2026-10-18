@@ -17,6 +17,7 @@ import { AppError, badRequest, conflict, forbidden, notFound } from "../lib/erro
 import { iso, uuidv7 } from "../lib/util";
 import { assertTemplateAccess, hasPerm } from "./access";
 import { ownerCanStillCreate } from "./owner-check";
+import { tenantPlan } from "./billing/plans";
 import { authenticate, type AuthContext, type Services } from "./context";
 import { insertEnvelopeFromTemplate, loadTemplateDetail, loadTemplateForUse, planFromTemplate, type LoadedTemplate } from "./templates";
 
@@ -464,6 +465,16 @@ export async function handleBulkJob(
   if (ownerGone) {
     loaded = null;
     loadError = ownerGone;
+  }
+  // El plan vigente, no el del momento en que se lanzó: si la organización pasó a un plan sin envío masivo (o, para
+  // un envío lanzado con API key, sin acceso por API), las filas que faltan no se envían. Lo mismo que los formularios web.
+  const { plan } = await tenantPlan(d.db, b.tenant_id);
+  if (!plan.features.includes("bulk_send")) {
+    loaded = null;
+    loadError = `El plan ${plan.name} no incluye el envío masivo`;
+  } else if (ctx.apiKeyId && !plan.features.includes("api")) {
+    loaded = null;
+    loadError = `El plan ${plan.name} no incluye el acceso por API`;
   }
 
   for (const itemId of p.itemIds) {

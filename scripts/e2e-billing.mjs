@@ -223,6 +223,24 @@ for (let i = 0; i < 60; i++) {
 assert(st === "completed", "before_sign: pagó, firmó y se completó");
 ok("before_sign: 402 hasta pagar; después firma y se completa");
 
+// ── Simulado: un sobre anulado no se paga ──
+// Como Stripe y Mercado Pago después de cerrarse el checkout: completar el pago simulado de un sobre anulado da 409.
+const Cv = `Paga y anulan simulado ${stamp}`;
+const e2v = await draft([Cv], `Reserva anulada ${stamp}`);
+await owner("PUT", `/v1/envelopes/${e2v.id}/payment`, { amount: 100, currency: "BRL", description: "Reserva", payerRecipientId: e2v.recips[0].id, timing: "before_sign", provider: "mock" });
+await owner("POST", `/v1/envelopes/${e2v.id}/send`);
+const tk2v = await linkFor(Cv);
+await owner("GET", `/v1/signing/${tk2v}`);
+await owner("POST", `/v1/signing/${tk2v}/consent`);
+const { url: vurl } = await owner("POST", `/v1/signing/${tk2v}/payment/checkout`);
+const vpage = await owner("GET", vurl.replace(BASE, ""));
+const vaction = /action="([^"]+)"/.exec(vpage)[1].replace(/&amp;/g, "&");
+await owner("POST", `/v1/envelopes/${e2v.id}/void`, { reason: "Se canceló la reserva" });
+const vres = await owner("POST", vaction, { outcome: "paid" }, { headers: { accept: "application/json" }, expect: 409 });
+assert(vres.error.code === "envelope_closed", `pago simulado de un sobre anulado: 409 envelope_closed (${JSON.stringify(vres)})`);
+assert((await owner("GET", `/v1/envelopes/${e2v.id}/payment`)).payment.status !== "paid", "el pago simulado no quedó acreditado en el sobre anulado");
+ok("simulado: un sobre anulado no admite el pago (409)");
+
 // ── Plan Free: límites ──
 bill = await owner("POST", "/v1/billing/cancel");
 assert(bill.plan.id === "free" && !bill.defaultPlan, "baja a Free");
@@ -426,6 +444,8 @@ if (process.env.E2E_FAKE_PROVIDERS_PORT) {
   for (let i = 0; i < 50 && (await owner("GET", `/v1/envelopes/${ev.id}/payment`)).payment.status !== "refunded"; i++) await sleep(1000);
   assert((await owner("GET", `/v1/envelopes/${ev.id}/payment`)).payment.status === "refunded", "el pago que llegó con el sobre anulado quedó reembolsado");
   assert(refunds.some((x) => x.paymentIntent === "pi_late" && x.key === `refund:${vpid}`), "reembolso pedido a Stripe con clave de idempotencia");
+  const vEvents = (await owner("GET", `/v1/envelopes/${ev.id}/events`)).items.map((x) => x.type);
+  assert(vEvents.includes("payment.refund_required") && vEvents.includes("payment.refunded"), `evidencia del reembolso (${vEvents.slice(-5)})`);
   ok("Stripe: anular el sobre cierra el checkout abierto; un pago tardío se reembolsa");
 
   // Stripe: suscripción

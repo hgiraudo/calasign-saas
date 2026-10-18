@@ -9,7 +9,7 @@ import { config } from "../config";
 import type { Db } from "../infra/db";
 import { AppError, badRequest, conflict, notFound } from "../lib/errors";
 import { iso, randomToken, sha256Hex, uuidv7 } from "../lib/util";
-import { auditFromRequest } from "./audit";
+import { auditFromRequest, recordAudit } from "./audit";
 import { getTenantBranding } from "./branding";
 import { authenticate, type Services } from "./context";
 
@@ -97,6 +97,69 @@ function toApi(r: any): CustomDomain {
     lastCheckedAt: iso(r.last_checked_at),
     lastError: r.last_error,
   };
+}
+
+// ───────────────────────────── Re-verificación periódica ─────────────────────────────
+
+const RECHECK_HOURS = 6;
+const MISSING_MARK = "Re-verificación: no se encontró el registro TXT";
+
+/**
+ * Vuelve a consultar el TXT de los dominios verificados. Sin esto un dominio quedaba verificado para siempre: si la
+ * organización lo perdía (venció y lo registró otro, o quedó un CNAME colgado que alguien reclamó), los correos seguían
+ * mandando los links de firma —que dan acceso al sobre— a un host que ya no controla. Si el TXT falta en dos controles
+ * seguidos (separados por RECHECK_HOURS), el dominio vuelve a "pendiente": los links pasan al dominio de la plataforma y
+ * Caddy deja de emitir certificados para él. Un error de DNS no cuenta como falta (no se arriesga a cortar por un
+ * problema de la consulta). La organización lo vuelve a verificar desde Ajustes.
+ */
+export async function recheckVerifiedDomains(
+  d: { db: Db; log: { warn(o: object, m?: string): void } },
+  resolve: (name: string) => Promise<string[]> = resolveTxt,
+  limit = 20,
+) {
+  const rows = await d.db.query<any>(
+    `SELECT * FROM custom_domains WHERE status = 'verified' AND (last_checked_at IS NULL OR last_checked_at < now() - make_interval(hours => $1))
+      ORDER BY last_checked_at NULLS FIRST LIMIT $2`,
+    [RECHECK_HOURS, limit],
+  );
+  let demoted = 0;
+  for (const r of rows) {
+    let values: string[];
+    try {
+      values = await resolve(txtName(r.domain));
+    } catch (e) {
+      await d.db.query(`UPDATE custom_domains SET last_checked_at = now() WHERE id = $1`, [r.id]);
+      d.log.warn({ domain: r.domain, err: String((e as Error).message ?? e) }, "no se pudo re-verificar el dominio propio");
+      continue;
+    }
+    if (values.includes(txtValue(r.verification_token))) {
+      await d.db.query(`UPDATE custom_domains SET last_checked_at = now(), last_error = NULL WHERE id = $1`, [r.id]);
+      continue;
+    }
+    if (!String(r.last_error ?? "").startsWith(MISSING_MARK)) {
+      await d.db.query(`UPDATE custom_domains SET last_checked_at = now(), last_error = $2 WHERE id = $1`, [
+        r.id,
+        `${MISSING_MARK} ${txtName(r.domain)}: si sigue faltando en el próximo control, el dominio deja de usarse`,
+      ]);
+      continue;
+    }
+    const down = await d.db.query(
+      `UPDATE custom_domains SET status = 'pending', last_checked_at = now(), last_error = $2 WHERE id = $1 AND status = 'verified' RETURNING id`,
+      [r.id, `${MISSING_MARK} ${txtName(r.domain)} en dos controles seguidos: el dominio dejó de usarse hasta que se vuelva a verificar`],
+    );
+    if (!down.length) continue;
+    demoted++;
+    invalidate();
+    await recordAudit(d.db, {
+      tenantId: r.tenant_id,
+      action: "domain.unverified",
+      actor: { type: "system", label: "Re-verificación de dominio" },
+      targetType: "domain",
+      targetId: r.domain,
+      data: { reason: "txt_missing" },
+    });
+  }
+  return { checked: rows.length, demoted };
 }
 
 /** El pedido viene por loopback y sin pasar por el proxy (Caddy agrega X-Forwarded-For a lo que proxea). */

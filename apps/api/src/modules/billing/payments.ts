@@ -274,7 +274,10 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
         if (prev.status === "open" && prev.url) return { url: prev.url };
         if (prev.status === "complete" && p.status === "checkout_created")
           throw conflict("payment_processing", "El pago se está procesando; en unos instantes queda confirmado");
-      } else if (p.provider === "mercadopago" && p.status === "checkout_created" && p.checkout_url) {
+      } else if (p.provider === "mercadopago" && p.checkout_url) {
+        // También después de un pago rechazado (status vuelve a "pending"): la preferencia de Checkout Pro sigue
+        // cobrable y el comprador puede reintentar en ella. Una preferencia nueva dejaría dos cobrables y, si se pagan
+        // las dos, el segundo cobro no se acredita.
         return { url: p.checkout_url as string };
       }
     } catch (err) {

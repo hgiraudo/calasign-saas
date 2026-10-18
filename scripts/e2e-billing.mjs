@@ -277,6 +277,7 @@ if (process.env.E2E_FAKE_PROVIDERS_PORT) {
   const { createHmac } = await import("node:crypto");
   const port = Number(process.env.E2E_FAKE_PROVIDERS_PORT);
   const mpPayments = new Map();
+  let mpPrefCount = 0;
   const mpPreapprovals = new Map();
   const stripeSessions = new Map();
   const cancelled = [];
@@ -308,7 +309,10 @@ if (process.env.E2E_FAKE_PROVIDERS_PORT) {
         cancelled.push(`mp:${path.split("/").pop()}`);
         return send(200, { id: path.split("/").pop(), status: "cancelled" });
       }
-      if (req.method === "POST" && path === "/checkout/preferences") return send(201, { id: "pref_e2e", init_point: "https://mp.test/pref_e2e", sandbox_init_point: "https://sandbox.mp.test/pref_e2e" });
+      if (req.method === "POST" && path === "/checkout/preferences") {
+        const id = `pref_e2e_${++mpPrefCount}`;
+        return send(201, { id, init_point: `https://mp.test/${id}`, sandbox_init_point: `https://sandbox.mp.test/${id}` });
+      }
       if (req.method === "GET" && path.startsWith("/v1/payments/")) return send(200, mpPayments.get(path.split("/").pop()) ?? {});
       if (req.method === "POST" && path === "/preapproval") return send(201, { id: "pre_e2e", init_point: "https://mp.test/pre_e2e" });
       if (req.method === "GET" && path.startsWith("/preapproval/")) return send(200, mpPreapprovals.get(path.split("/").pop()) ?? {});
@@ -397,9 +401,9 @@ if (process.env.E2E_FAKE_PROVIDERS_PORT) {
   await owner("GET", `/v1/signing/${tkm}`);
   await owner("POST", `/v1/signing/${tkm}/consent`);
   const mco = await owner("POST", `/v1/signing/${tkm}/payment/checkout`);
+  const prefsBefore = mpPrefCount;
   assert(mco.url.includes("sandbox.mp.test"), "Checkout Pro sandbox");
   const mpid = (await owner("GET", `/v1/envelopes/${em.id}/payment`)).payment.id;
-  mpPayments.set("777", { id: 777, status: "approved", external_reference: `pay:${mpid}`, transaction_amount: 25000, currency_id: "COP", payment_method_id: "pse", date_approved: new Date().toISOString() });
   const mpHook = (dataId, type = "payment", secret = "mp_e2e") => {
     const ts = String(Date.now());
     const reqId = randomUUID();
@@ -410,6 +414,13 @@ if (process.env.E2E_FAKE_PROVIDERS_PORT) {
       body: JSON.stringify({ type, action: `${type}.updated`, data: { id: dataId } }),
     });
   };
+  // Un pago rechazado no cierra la preferencia: el siguiente checkout la reutiliza (dos preferencias cobrables
+  // permitirían pagar dos veces, y el segundo cobro no se acreditaría).
+  mpPayments.set("776", { id: 776, status: "rejected", external_reference: `pay:${mpid}`, transaction_amount: 25000, currency_id: "COP" });
+  assert((await mpHook("776")).status === 200, "MP: notificación de pago rechazado");
+  const mcoRetry = await owner("POST", `/v1/signing/${tkm}/payment/checkout`);
+  assert(mcoRetry.url === mco.url && mpPrefCount === prefsBefore, `MP: tras un rechazo se reutiliza la preferencia (${mpPrefCount} creadas)`);
+  mpPayments.set("777", { id: 777, status: "approved", external_reference: `pay:${mpid}`, transaction_amount: 25000, currency_id: "COP", payment_method_id: "pse", date_approved: new Date().toISOString() });
   r = await mpHook("777", "payment", "secreto-incorrecto");
   assert(r.status === 400, "MP: firma inválida → 400");
   r = await mpHook("777");

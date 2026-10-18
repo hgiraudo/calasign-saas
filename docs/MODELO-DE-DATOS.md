@@ -95,6 +95,7 @@ El diagrama de arriba es el núcleo (0001). Cada bloque funcional agrega su prop
 | `0031_r14_evidence` | `agreement_views.created_by_api_key`: una vista de acuerdos creada con una API key es de esa key (la ve, la usa y la borra; otra key no la toma como propia) |
 | `0032_r14_checkout_closed` | `envelope_payments.checkout_closed_at`: un sobre anulado, rechazado o vencido cierra su checkout abierto en Stripe o Mercado Pago (barrido periódico) |
 | `0033_r15_integrations` | `envelope_payments.refund_required_at` y `refund_error`: un pago que se acredita con el sobre ya cerrado (anulado, rechazado o vencido) queda marcado y el barrido lo reembolsa en el proveedor |
+| `0034_r16_identity` | `login_challenges.invitation_id`: aceptar una invitación con contraseña y 2FA crea la membresía recién después de verificar el segundo factor |
 
 Reglas: una migración por bloque, solo aditiva salvo cuando se recrea un `CHECK` para sumar un valor; nunca se edita una
 migración ya aplicada en un entorno.

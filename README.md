@@ -84,7 +84,10 @@ Operación del host (lo aplica cada `deploy-dev.sh`, desde `infra/dev/host/`):
   El rollback **no deshace migraciones**: casi todas son aditivas, pero algunas no (`0016` cambia una clave primaria,
   `0017` borra tablas). Si el código anterior no anda con la base migrada, restaurar el backup previo (abajo).
 - **Backups:** `pg_dump` diario a `s3://<bucket>/backups/postgres/` (`calasign-backup.timer`) y uno en cada deploy, con
-  35 días de retención por regla de ciclo de vida. No hay alerta automática si el backup diario falla: revisar
+  35 días de retención por regla de ciclo de vida. Cada backup exitoso publica la métrica `CalaSign/Backup`
+  `LastSuccess`; la alarma `calasign-saas-dev-backup-missing` avisa por correo (topic SNS `calasign-saas-dev-alerts`,
+  variable `alert_email`) si pasan 24 horas sin un backup exitoso, y avisa de nuevo al recuperarse. La suscripción por
+  correo hay que confirmarla desde el mensaje de AWS después del `terraform apply`. Para investigar:
   `systemctl status calasign-backup` / `journalctl -u calasign-backup` (cada deploy igual hace uno y aborta si falla).
 - **Restaurar un backup** (en el EC2, como root por SSM; deja la base exactamente como en el dump):
 

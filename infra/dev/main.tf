@@ -29,6 +29,10 @@ variable "instance_type" {
 variable "subnet_id" {
   default = "subnet-0799813ecadb417aa" # calasign-sandbox-publica-us-east-1a
 }
+variable "alert_email" {
+  description = "Destino de las alertas operativas del entorno (hay que confirmar la suscripción desde el correo)"
+  default     = "hgiraudo@gmail.com"
+}
 
 provider "aws" {
   region  = "us-east-1"
@@ -195,6 +199,14 @@ resource "aws_iam_role_policy" "app" {
       { Sid = "Sello", Effect = "Allow", Action = ["kms:Sign", "kms:GetPublicKey", "kms:DescribeKey"], Resource = aws_kms_key.seal.arn },
       { Sid = "Parametros", Effect = "Allow", Action = ["ssm:GetParameter"], Resource = "arn:aws:ssm:us-east-1:${var.account_id}:parameter/calasign-saas/dev/*" },
       {
+        # PutMetricData no admite ARN de recurso: se acota por namespace.
+        Sid       = "MetricasBackup"
+        Effect    = "Allow"
+        Action    = ["cloudwatch:PutMetricData"]
+        Resource  = "*"
+        Condition = { StringEquals = { "cloudwatch:namespace" = local.backup_metric_namespace } }
+      },
+      {
         Sid       = "ClavesAdministradasPorAWS"
         Effect    = "Allow"
         Action    = ["kms:Decrypt", "kms:GenerateDataKey"]
@@ -275,6 +287,44 @@ resource "aws_eip" "app" {
   tags     = { Name = "calasign-saas-dev" }
 }
 
+# ───────────── Alertas ─────────────
+
+locals {
+  backup_metric_namespace = "CalaSign/Backup"
+}
+
+resource "aws_sns_topic" "alerts" {
+  name = "calasign-saas-dev-alerts"
+}
+
+resource "aws_sns_topic_subscription" "alerts_email" {
+  topic_arn = aws_sns_topic.alerts.arn
+  protocol  = "email"
+  endpoint  = var.alert_email
+}
+
+# calasign-backup.sh publica LastSuccess=1 en cada backup completo (diario a las 06:30 UTC y antes de cada deploy).
+# Alarma si no hubo ninguno en 24 períodos horarios seguidos: CloudWatch no permite evaluar más de un día
+# (EvaluationPeriods x Period <= 86400), así que es la ventana más larga posible; con el backup diario (jitter de
+# 15 min) nunca hay 24 horas seguidas sin dato salvo que un backup falle. Sin datos cuenta como falla: también
+# avisa si el timer deja de correr o la instancia está apagada.
+resource "aws_cloudwatch_metric_alarm" "backup_missing" {
+  alarm_name          = "calasign-saas-dev-backup-missing"
+  alarm_description   = "No hubo un backup exitoso de Postgres de dev en las últimas 24 h. Ver README, sección Backups."
+  namespace           = local.backup_metric_namespace
+  metric_name         = "LastSuccess"
+  dimensions          = { Environment = "dev" }
+  statistic           = "Sum"
+  period              = 3600
+  evaluation_periods  = 24
+  datapoints_to_alarm = 24
+  threshold           = 1
+  comparison_operator = "LessThanThreshold"
+  treat_missing_data  = "breaching"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+}
+
 output "public_ip" {
   value = aws_eip.app.public_ip
 }
@@ -286,4 +336,7 @@ output "bucket" {
 }
 output "kms_key_arn" {
   value = aws_kms_key.seal.arn
+}
+output "alerts_topic_arn" {
+  value = aws_sns_topic.alerts.arn
 }

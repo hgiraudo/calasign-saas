@@ -11,4 +11,10 @@ F=$(mktemp /var/tmp/calasign-backup.XXXXXX)
 trap 'rm -f "$F"' EXIT
 runuser -u postgres -- pg_dump -Fc calasign > "$F"
 aws s3 cp --only-show-errors "$F" "s3://$BUCKET/backups/postgres/calasign-$TS.dump"
-echo "backup OK: s3://$BUCKET/backups/postgres/calasign-$TS.dump ($(stat -c %s "$F") bytes)"
+SIZE=$(stat -c %s "$F")
+echo "backup OK: s3://$BUCKET/backups/postgres/calasign-$TS.dump ($SIZE bytes)"
+# Latido para la alarma calasign-saas-dev-backup-missing (Terraform). No es fatal: si falta el permiso
+# (antes del terraform apply) el backup igual sirve, y la alarma termina avisando por falta de datos.
+aws cloudwatch put-metric-data --namespace CalaSign/Backup --dimensions Environment=dev \
+  --metric-data "MetricName=LastSuccess,Value=1,Unit=Count" "MetricName=SizeBytes,Value=$SIZE,Unit=Bytes" \
+  || echo "AVISO: no se pudo publicar la métrica del backup en CloudWatch" >&2

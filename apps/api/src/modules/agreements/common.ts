@@ -54,6 +54,8 @@ export function toNumberOrNull(v: unknown): number | null {
   if (typeof v === "number") return Number.isFinite(v) ? v : null;
   if (typeof v !== "string" || !v.trim()) return null;
   let s = v.trim().replace(/[^\d,.-]/g, "");
+  // Sin dígitos no es un número ("a convenir"): Number("") daría 0 y el acuerdo quedaría con valor 0.
+  if (!/\d/.test(s)) return null;
   if (s.includes(",") && s.includes(".")) s = s.lastIndexOf(",") > s.lastIndexOf(".") ? s.replace(/\./g, "").replace(",", ".") : s.replace(/,/g, "");
   else if (s.includes(",")) s = s.replace(",", ".");
   const n = Number(s);

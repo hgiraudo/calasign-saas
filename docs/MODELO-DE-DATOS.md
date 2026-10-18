@@ -80,7 +80,11 @@ El diagrama de arriba es el núcleo (0001). Cada bloque funcional agrega su prop
 | `0016_data` | BYOK, directorio de celdas, versiones de PDF firmado (renovación de archivo), dominios SSO verificados |
 | `0017_drop_video` | Elimina las tablas de video: la firma por videollamada se descartó del producto |
 | `0018_certificate_signing` | Firma con certificado propio: `signature_type` y `certificate_requirements` en destinatarios y roles, estado `awaiting_certificates`, `envelope_certsign`, `certificate_signatures`, `certsign_sessions` |
+| `0019_password_reset` | `password_resets`: tokens de recuperación de contraseña de un solo uso (se guarda el SHA-256), válidos 30 minutos |
 | `0020_r3_identity` | Una sola verificación de identidad en curso por destinatario (índice único parcial); `recipients.self_registered`: quien se registró en un formulario web público no recibe invitaciones ni recordatorios hasta validar su correo con el código del formulario (la copia final después de firmar sí); `template_roles` admite el rol aprobador |
+| `0021_r6_custom_domains` | La unicidad de `custom_domains.domain` vale solo para dominios verificados: un dominio pendiente ya no bloquea a su dueño |
+| `0022_r9_identity` | `web_forms.created_by_api_key`: un formulario creado con una API key tiene dueño (la key lo edita y ve sus sobres; si se revoca, el formulario deja de crear sobres) |
+| `0023_r9_evidence` | `workflow_runs.started_by_api_key`: una ejecución iniciada por API queda a nombre de su key; las del link público ya no las ve cualquier key |
 
 Reglas: una migración por bloque, solo aditiva salvo cuando se recrea un `CHECK` para sumar un valor; nunca se edita una
 migración ya aplicada en un entorno.

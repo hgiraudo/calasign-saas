@@ -64,6 +64,7 @@ const hs = {
   deals: {
     "9001": { amount: "1500.50", dealname: "Renovación ACME", dealstage: "appointmentscheduled", contacts: ["c1"] },
     "9002": { amount: "980", dealname: "Alta Beta", dealstage: "appointmentscheduled", contacts: ["c2"] },
+    "9003": { amount: "120", dealname: "Gamma en ráfaga", dealstage: "appointmentscheduled", contacts: ["c2"] },
   },
   contacts: { c1: { firstname: "Ana", lastname: "Pérez HS", email: "ana.hs@cliente.test", phone: "+573001112233" }, c2: { firstname: "Bruno", lastname: "Beta HS", email: "bruno.hs@cliente.test" } },
   files: [],
@@ -472,6 +473,25 @@ const hookRun = await waitFor(async () => (await api("GET", "/v1/crm/runs")).ite
 const hookRuns = (await api("GET", "/v1/crm/runs")).items.filter((r) => r.mappingId === hsHook.id && r.kind === "send");
 assert(hookRuns.length === 1 && hookRun.envelopeId && hookRun.objectId === "9002", "un solo envío por evento repetido");
 step("HubSpot: webhook firmado (v3) dispara el envío del deal 9002; firma inválida 401; evento repetido no duplica");
+
+// Varios eventos distintos del mismo deal en una tanda (la cola los procesa en paralelo): un solo sobre.
+{
+  const burst = JSON.stringify(
+    [60001, 60002, 60003].map((eventId) => ({ eventId, subscriptionType: "deal.propertyChange", portalId: 777, objectId: 9003, propertyName: "dealstage", propertyValue: "contractsent" })),
+  );
+  const tsB = String(Date.now());
+  const sigB = createHmac("sha256", HS_SECRET).update(`POST${hookUrl}${burst}${tsB}`).digest("base64");
+  const rB = await fetch(hookUrl, { method: "POST", headers: { "content-type": "application/json", "x-hubspot-request-timestamp": tsB, "x-hubspot-signature-v3": sigB }, body: burst });
+  assert(rB.status === 200, "tanda de webhooks aceptada");
+  const runsB = await waitFor(async () => {
+    const items = (await api("GET", "/v1/crm/runs")).items.filter((r) => r.mappingId === hsHook.id && r.kind === "send" && r.objectId === "9003");
+    return items.length === 3 && items.every((r) => r.status !== "pending") ? items : null;
+  }, "tres ejecuciones del deal 9003");
+  const withEnvelope = runsB.filter((r) => r.envelopeId);
+  assert(runsB.every((r) => r.status === "succeeded"), `las tres terminan bien (${runsB.map((r) => r.status + ":" + (r.error ?? "")).join(", ")})`);
+  assert(withEnvelope.length === 1 && runsB.filter((r) => r.detail?.skipped).length === 2, `un solo sobre para el deal (${withEnvelope.length})`);
+  step("HubSpot: tres eventos del mismo deal en paralelo crean un solo sobre");
+}
 
 // Un mapeo por webhook creado por alguien que después deja la organización no sigue enviando a su nombre.
 {

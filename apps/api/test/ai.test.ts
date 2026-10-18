@@ -159,6 +159,30 @@ describe("alertas de renovación", () => {
     expect(renewalAlertDate({ ...base, expiryDate: "2026-09-01" }, 30, today)).toBeNull();
     expect(renewalAlertDate({ ...base, expiryDate: "2027-01-31" }, 0, today)).toBeNull();
   });
+  it("un preaviso absurdo del modelo no rompe el cálculo (antes: RangeError en toISOString)", () => {
+    expect(renewalAlertDate({ ...base, expiryDate: "2027-01-31", noticePeriodDays: 1_000_000_000 }, 30, today)).toBe("2026-10-01");
+  });
+  it("la salida del modelo queda dentro del esquema que acepta la edición manual", async () => {
+    const { sanitizeAiMetadata } = await import("../src/modules/ai/service");
+    const raw = {
+      parties: [{ name: "  ACME S.A.  ", role: "x".repeat(500) }, { name: "", role: null }, ...Array.from({ length: 30 }, (_, i) => ({ name: `P${i}`, role: null }))],
+      effectiveDate: "2027-02-31",
+      expiryDate: "31/01/2027",
+      renewalDate: "2027-06-30",
+      autoRenewal: true,
+      amounts: [{ value: 1500, currency: "pesos colombianos", description: "d".repeat(900) }, { value: 10, currency: " usd ", description: null }],
+      governingLaw: "L".repeat(1000),
+      noticePeriodDays: 99999,
+    } as any;
+    const m = sanitizeAiMetadata(raw);
+    expect(() => ContractMetadataSchema.parse(m)).not.toThrow();
+    expect(m.parties[0]).toEqual({ name: "ACME S.A.", role: "x".repeat(100) });
+    expect(m.parties.length).toBe(20);
+    expect([m.effectiveDate, m.expiryDate, m.renewalDate]).toEqual([null, null, "2027-06-30"]);
+    expect(m.amounts[0].currency).toBeNull();
+    expect(m.amounts[1].currency).toBe("USD");
+    expect(m.noticePeriodDays).toBeNull();
+  });
 });
 
 describe("esquemas", () => {

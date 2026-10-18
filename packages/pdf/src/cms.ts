@@ -154,5 +154,18 @@ export async function requestTimestampToken(url: string, digest: Uint8Array, aut
   if ((status !== 0 && status !== 1) || !resp.timeStampToken) {
     throw new Error(`TSA rechazó el pedido (status ${status})`);
   }
+  // El sello tiene que ser de ESTE pedido: mismo hash (SHA-256) y mismo nonce. Si no, quedaría incrustado un sello
+  // que no corresponde a la firma.
+  const token = new pkijs.SignedData({ schema: resp.timeStampToken.content });
+  const eContent = token.encapContentInfo.eContent;
+  if (!eContent) throw new Error("La TSA devolvió un sello sin TSTInfo");
+  const tst = pkijs.TSTInfo.fromBER(eContent.getValue().slice(0));
+  const imprint = new Uint8Array(tst.messageImprint.hashedMessage.valueBlock.valueHexView);
+  if (tst.messageImprint.hashAlgorithm.algorithmId !== OID.sha256 || !Buffer.from(imprint).equals(Buffer.from(digest))) {
+    throw new Error("La TSA devolvió un sello para otro contenido");
+  }
+  const gotNonce = tst.nonce ? Buffer.from(tst.nonce.valueBlock.valueHexView) : null;
+  const strip = (b: Buffer) => b.subarray(b.findIndex((x) => x !== 0) < 0 ? b.length : b.findIndex((x) => x !== 0));
+  if (!gotNonce || !strip(gotNonce).equals(strip(nonce))) throw new Error("La TSA devolvió un sello con otro nonce");
   return new Uint8Array(resp.timeStampToken.toSchema().toBER(false));
 }

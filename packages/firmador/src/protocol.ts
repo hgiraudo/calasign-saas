@@ -45,6 +45,40 @@ function isAllowedApi(api: string): boolean {
   return u.protocol === "http:" && !u.username && !u.password && ["localhost", "127.0.0.1", "[::1]"].includes(u.hostname);
 }
 
+/**
+ * Hosts en los que el Firmador confía sin preguntar: calasign.com y sus subdominios, esta computadora, y los que el
+ * usuario o su organización declaren en CALASIGN_FIRMADOR_TRUSTED_HOSTS (separados por coma; "*.dominio" admite
+ * subdominios; sirve para los dominios propios de los clientes). El link de firma lo arma quien lo envía: sin este
+ * control, un servidor ajeno podría pedir la firma de un documento que el usuario nunca vio en CalaSign.
+ */
+export function apiHostTrusted(api: string, extra: string[] = envTrustedHosts()): boolean {
+  let host: string;
+  try {
+    host = new URL(api).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  if (["localhost", "127.0.0.1", "[::1]"].includes(host)) return true;
+  if (host === "calasign.com" || host.endsWith(".calasign.com")) return true;
+  return extra.some((e) => {
+    const h = e.trim().toLowerCase();
+    if (!h) return false;
+    return h.startsWith("*.") ? host.endsWith(h.slice(1)) && host.length > h.length - 1 : host === h;
+  });
+}
+
+function envTrustedHosts(): string[] {
+  return (process.env.CALASIGN_FIRMADOR_TRUSTED_HOSTS ?? "").split(",").filter(Boolean);
+}
+
+export function apiHost(api: string): string {
+  try {
+    return new URL(api).host;
+  } catch {
+    return api;
+  }
+}
+
 export class CertsignClient {
   constructor(
     readonly api: string,

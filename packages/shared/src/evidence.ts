@@ -129,6 +129,8 @@ export interface PdfValidationSignature {
     trusted: boolean;
     anchor: string | null;
     entries: (PdfValidationCert & { revocation: { status: string; source: string | null; revokedAt?: string | null } })[];
+    /** Todos los certificados de la cadena eran válidos al momento de firmar (sello de tiempo o fecha declarada). */
+    timeValid?: boolean;
   };
   level: "B-B" | "B-T" | "B-LT" | "B-LTA" | null;
 }

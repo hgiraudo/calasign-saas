@@ -17,6 +17,7 @@ import { useExpText } from "../lib/i18n-experience";
 import { IdentityGate } from "../components/IdentityGate";
 import { PaymentGate, SignerPaymentAfterSign } from "../components/BillingExtras";
 import { AiSignerAssist } from "../components/AiPanels";
+import { SignerCertificateStep } from "../components/CertSign";
 
 type Adopted = SignatureImageInput & { dataUrl: string };
 
@@ -106,6 +107,7 @@ export function SignerPage() {
           text={session.signedAvailable ? t("sign.doneAvailable") : recipient.role === "approver" ? sx("approve.doneText") : t("sign.doneText")}
         >
           {download}
+          {session.certificateSigning && <SignerCertificateStep step={session.certificateSigning} base={base} onChange={reload} />}
           <SignerPaymentAfterSign base={base} onPaid={reload} />
         </Final>
       );

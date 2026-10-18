@@ -5,13 +5,21 @@ import { AUTH_METHODS, EnvelopeReminderSettings, type AuthMethod } from "./signe
 import { InPersonInput, type InPersonHost, type SigningInPerson } from "./experience";
 import { FieldConditions, FieldFormula, type FieldCondition } from "./scale-logic";
 import { IdVerificationInput, type RecipientIdentity, type SigningIdentity } from "./identity";
+import {
+  CertificateRequirementsInput,
+  SIGNATURE_TYPES,
+  type CertificateRequirements,
+  type RecipientCertificateSignature,
+  type SignatureType,
+  type SigningCertificateStep,
+} from "./certsign";
 
 // ───────────────────────────── Enumeraciones ─────────────────────────────
 
 export const LOCALES = ["es", "pt-BR", "en"] as const;
 export type Locale = (typeof LOCALES)[number];
 
-export const ENVELOPE_STATUSES = ["draft", "sent", "finalizing", "completed", "declined", "voided", "expired"] as const;
+export const ENVELOPE_STATUSES = ["draft", "sent", "finalizing", "completed", "declined", "voided", "expired", "awaiting_certificates"] as const;
 export type EnvelopeStatus = (typeof ENVELOPE_STATUSES)[number];
 
 export const RECIPIENT_ROLES = ["signer", "cc", "approver"] as const;
@@ -143,6 +151,13 @@ export const RecipientInput = z
     inPerson: InPersonInput.optional().nullable(),
     /** Verificación de identidad (KYC) antes de ver los documentos (null = quitar). */
     idVerification: IdVerificationInput.optional().nullable(),
+    /** "certificate": además firma con su certificado digital (token, Windows o .p12) con el Firmador CalaSign. */
+    signatureType: z.enum(SIGNATURE_TYPES).optional(),
+    /** Requisitos del certificado (solo con signatureType "certificate"). */
+    certificateRequirements: CertificateRequirementsInput.optional().nullable(),
+  })
+  .refine((r) => r.signatureType !== "certificate" || (r.role ?? "signer") === "signer", {
+    message: "solo un firmante puede firmar con certificado",
   })
   .refine((r) => r.embedded || r.inPerson || r.email || r.phone, { message: "email o phone requerido" })
   .refine((r) => r.authMethod !== "in_person" || r.inPerson, { message: "la firma en persona se configura con inPerson" })
@@ -243,6 +258,11 @@ export interface Recipient {
   inPersonHost?: InPersonHost | null;
   /** Verificación de identidad requerida y su estado. */
   identity?: RecipientIdentity | null;
+  /** Firma electrónica o con certificado propio. */
+  signatureType?: SignatureType;
+  certificateRequirements?: CertificateRequirements | null;
+  /** Estado de su firma con certificado (cuando el sobre llegó a esa etapa). */
+  certificateSignature?: RecipientCertificateSignature | null;
 }
 
 export interface Field {
@@ -385,6 +405,8 @@ export interface SigningSession {
   logicFields?: { id: string; label: string | null; type: string; value: string | null }[];
   /** Verificación de identidad (KYC): si `required` y no está verificada, documentos y campos vienen vacíos. */
   identity?: SigningIdentity | null;
+  /** Firma con certificado propio: presente si el destinatario firma con certificado. */
+  certificateSigning?: SigningCertificateStep | null;
 }
 
 // ───────────────────────────── Desarrollo ─────────────────────────────

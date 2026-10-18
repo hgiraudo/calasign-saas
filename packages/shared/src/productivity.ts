@@ -1,6 +1,7 @@
 // Fase 2 — productividad: plantillas y branding.
 import { z } from "zod";
 import { FieldConditions, FieldFormula, type FieldCondition } from "./scale-logic";
+import { CertificateRequirementsInput, SIGNATURE_TYPES, type CertificateRequirements, type SignatureType } from "./certsign";
 import { CHANNELS, FIELD_TYPES, ID_DOCUMENT_TYPES, LOCALES, RECIPIENT_ROLES, type Document, type FieldType, type Locale } from "./api";
 
 /** Tipos que el firmante completa escribiendo y que el remitente puede prellenar. */
@@ -29,6 +30,9 @@ export const TemplateRoleInput = z.object({
   name: z.string().trim().min(1).max(100),
   role: z.enum(RECIPIENT_ROLES).default("signer"),
   routingOrder: z.number().int().min(1).max(100).default(1),
+  /** Los destinatarios de este rol firman además con su certificado digital. */
+  signatureType: z.enum(SIGNATURE_TYPES).optional(),
+  certificateRequirements: CertificateRequirementsInput.optional().nullable(),
 });
 export type TemplateRoleInput = z.input<typeof TemplateRoleInput>;
 
@@ -123,6 +127,8 @@ export interface TemplateRole {
   name: string;
   role: "signer" | "cc";
   routingOrder: number;
+  signatureType?: SignatureType;
+  certificateRequirements?: CertificateRequirements | null;
 }
 
 export interface TemplateField {

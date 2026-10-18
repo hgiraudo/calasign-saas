@@ -85,6 +85,12 @@ export async function replaceRecipient(
   );
   await db.query(`UPDATE fields SET recipient_id = $2 WHERE recipient_id = $1`, [old.id, id]);
   await inheritIdentityRequirement(db, old, id);
+  // El reemplazo también firma con certificado si el original debía hacerlo.
+  await db.query(`UPDATE recipients SET signature_type = $2, certificate_requirements = $3 WHERE id = $1`, [
+    id,
+    old.signature_type ?? "electronic",
+    old.certificate_requirements ? JSON.stringify(old.certificate_requirements) : null,
+  ]);
   await db.query(
     `UPDATE recipients SET status = $2, replaced_by = $3, replace_reason = $4, access_token_hash = NULL, access_token_enc = NULL WHERE id = $1`,
     [old.id, kind, id, c.reason ?? null],

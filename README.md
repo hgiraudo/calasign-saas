@@ -14,6 +14,7 @@ Entorno de desarrollo: **https://dev.calasign.com**.
 | [`docs/CUSTOM-DOMAINS.md`](docs/CUSTOM-DOMAINS.md) | Dominio propio por cliente y TLS bajo demanda |
 | [`docs/CRM.md`](docs/CRM.md) | Conectores HubSpot, Salesforce, Siigo y Alegra |
 | [`docs/DATOS.md`](docs/DATOS.md) | BYOK, celdas de residencia de datos y renovación de sellos de archivo |
+| [`docs/FIRMA-CON-CERTIFICADO.md`](docs/FIRMA-CON-CERTIFICADO.md) | Firma con el certificado del titular (token PKCS#11, almacén de Windows, .p12) y el Firmador CalaSign |
 
 La API completa y vigente está en `GET /v1/openapi.json` y en la página `/developers`.
 
@@ -23,7 +24,7 @@ La API completa y vigente está en `GET /v1/openapi.json` y en la página `/deve
 |---|---|
 | Firma | Sobres con varios PDF, firmantes en secuencia/paralelo/mixto, copias y aprobadores, editor de campos (firma, iniciales, fecha, nombre, correo, texto, número, desplegable, empresa, cargo, casilla, adjunto), campos condicionales y calculados, plantillas con roles, envío masivo por CSV, formularios web públicos, firma en persona, corrección en vuelo, delegación y reasignación, recordatorios automáticos |
 | Firmante | Sin cuenta, por email, WhatsApp o Telegram, en ES/PT-BR/EN; OTP por email/SMS/WhatsApp; verificación de identidad (documento + selfie, mock/Truora/Veriff); firma dibujada o tipeada; resumen y preguntas con IA; pago dentro de la firma; PWA accesible |
-| Evidencia | Registro de eventos encadenado por hash, certificado de finalización, sello PAdES B-T/B-LT/B-LTA con clave en KMS, verificación pública (`/verify`) y validador de firmas, sello de empresa, nivel de firma |
+| Evidencia | Registro de eventos encadenado por hash, certificado de finalización, sello PAdES B-T/B-LT/B-LTA con clave en KMS, verificación pública (`/verify`) y validador de firmas, sello de empresa, nivel de firma, firma con el certificado del titular (token, Windows o .p12) con el Firmador CalaSign |
 | Facturación electrónica | Firma XML por API: DGII e-CF (RD), DIAN (CO, XAdES-EPES), SUNAT CPE (PE), XAdES-BES/EPES genéricos, con certificados de la organización en custodia cifrada |
 | API e integraciones | API REST v1 + OpenAPI, API keys y OAuth 2.0 (client credentials, authorization code + PKCE), firma embebida en iframe, webhooks HMAC con reintentos, anclas de texto, idempotencia, SDKs Node y Python, servidor MCP para agentes de IA, Slack/Teams, exportación a Google Drive/Dropbox/OneDrive/S3, dominio propio |
 | Equipos y empresa | Miembros e invitaciones, roles y permisos personalizados, grupos, auditoría de cuenta, retención, 2FA, SSO OIDC/SAML, SCIM, branding, reportes |
@@ -83,6 +84,7 @@ solo en `var/dev-ca/` (no se versiona). En dev los mensajes van al buzón de des
 apps/api         Fastify: API v1, worker de jobs, notificaciones, evidencia, módulos por área (TypeScript)
 apps/web         React + Vite: remitente (/app), firmante (/s/:token), páginas públicas
 packages/pdf     Estampado, certificado de finalización, PAdES + RFC 3161 + LTV, validador, CSC, texto y docgen
+packages/firmador Firmador CalaSign: agente de escritorio para firmar con token PKCS#11, almacén de Windows o .p12
 packages/xades   Firma XML: XMLDSig, XAdES-BES/EPES, perfiles DGII, DIAN y SUNAT
 packages/shared  Contrato de la API (Zod + tipos) y lógica compartida (condiciones, fórmulas, plantillas)
 packages/sdk-node SDK de Node (@calasign/sdk)

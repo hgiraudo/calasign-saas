@@ -9,6 +9,7 @@ import { forgetPdf } from "../lib/pdf";
 import { FieldEditor, type DraftField } from "../components/FieldEditor";
 import { ErrorBox, Spinner, formatBytes, recipientColor } from "../components/ui";
 import { ShareControl } from "../components/ShareControl";
+import { CertificateOption, EMPTY_CERT_DRAFT, certToDraft, draftToCert, type CertDraft } from "../components/CertSign";
 
 const STEPS = ["details", "documents", "roles", "fields"] as const;
 type Step = (typeof STEPS)[number];
@@ -18,6 +19,7 @@ interface DraftRole {
   name: string;
   role: RecipientRole;
   routingOrder: number;
+  cert?: CertDraft;
 }
 
 function toDraftFields(d: TemplateDetail): DraftField[] {
@@ -65,7 +67,7 @@ export function TemplateEditPage() {
       message: d.template.message ?? "",
       locale: d.template.locale,
     });
-    setRoles(d.roles.map((r) => ({ ...r })));
+    setRoles(d.roles.map((r) => ({ id: r.id, name: r.name, role: r.role, routingOrder: r.routingOrder, cert: certToDraft(r) })));
     setFields(toDraftFields(d));
     setDirty({ info: false, roles: false, fields: false });
   }, []);
@@ -97,10 +99,10 @@ export function TemplateEditPage() {
       if (step === "roles" && dirty.roles) {
         const d = await api<TemplateDetail>(`/v1/templates/${id}/roles`, {
           method: "PUT",
-          body: { roles: roles.map((r) => ({ ...r, name: r.name.trim() })) },
+          body: { roles: roles.map(({ cert, ...r }) => ({ ...r, name: r.name.trim(), ...draftToCert(cert ?? EMPTY_CERT_DRAFT, r.role) })) },
         });
         setDetail(d);
-        setRoles(d.roles.map((r) => ({ ...r })));
+        setRoles(d.roles.map((r) => ({ id: r.id, name: r.name, role: r.role, routingOrder: r.routingOrder, cert: certToDraft(r) })));
         setFields(toDraftFields(d));
         setDirty((x) => ({ ...x, roles: false }));
       }
@@ -430,6 +432,7 @@ function RolesStep({ roles, onChange }: { roles: DraftRole[]; onChange: (r: Draf
                   <option value="cc">{t("edit.role.cc")}</option>
                 </select>
               </label>
+              {r.role === "signer" && <CertificateOption value={r.cert ?? EMPTY_CERT_DRAFT} hasIdDocument onChange={(v) => set(i, { cert: v })} />}
               <button type="button" className="btn btn-ghost btn-sm" onClick={() => onChange(roles.filter((_, j) => j !== i))}>
                 {t("common.delete")}
               </button>

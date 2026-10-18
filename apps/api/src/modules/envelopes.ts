@@ -24,6 +24,7 @@ import { applyEnvelopeSettings } from "./participants";
 import { checkSenderValue, insertEnvelopeField } from "./fieldvalues";
 import { applyInPersonFlags } from "./experience";
 import { applyIdentityFlags } from "./identity/kyc";
+import { applyCertificateFlags } from "./certsign";
 import { assignFieldIds, saveFieldLogic } from "./logic";
 import { paymentBlocksCompletion } from "./billing/payments";
 import { enforceEnvelopeQuota } from "./billing/plans";
@@ -357,6 +358,7 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
       await setEmbeddedFlags(t, e.id, list);
       await applyInPersonFlags(t, e.id, list, a);
       await applyIdentityFlags(t, e.id, list);
+      await applyCertificateFlags(t, e.id, list);
       // Los campos de un destinatario que pasó a 'cc' ya no aplican.
       await t.query(`DELETE FROM fields f USING recipients r WHERE f.recipient_id = r.id AND r.envelope_id = $1 AND r.role IN ('cc','approver')`, [e.id]);
       await touch(t, e.id);
@@ -509,7 +511,8 @@ export async function sendEnvelope(t: Db, tenantId: string, envelopeId: string, 
   const signers = recips.filter((r) => r.role === "signer");
   if (signers.length === 0 && !recips.some((r) => r.role === "approver")) problems.push("Agregá al menos un firmante");
   for (const s1 of signers) {
-    if (!fields.some((f) => f.recipient_id === s1.id && f.type === "signature"))
+    // Quien firma con certificado puede no tener firma visual: su firma va en el certificado.
+    if (s1.signature_type !== "certificate" && !fields.some((f) => f.recipient_id === s1.id && f.type === "signature"))
       problems.push(`${s1.name} no tiene ningún campo de firma`);
   }
   if (e.expires_at && new Date(e.expires_at) <= new Date()) problems.push("La fecha de vencimiento ya pasó");

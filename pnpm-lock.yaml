@@ -158,6 +158,38 @@ importers:
         specifier: 6.4.4
         version: 6.4.4(@types/node@22.20.5)(tsx@4.23.15)
 
+  packages/firmador:
+    dependencies:
+      node-forge:
+        specifier: ^1.3.1
+        version: 1.4.0
+    optionalDependencies:
+      pkcs11js:
+        specifier: ^2.1.7
+        version: 2.1.7
+    devDependencies:
+      '@types/node':
+        specifier: ^22.19.0
+        version: 22.20.5
+      '@types/node-forge':
+        specifier: ^1.3.14
+        version: 1.3.14
+      esbuild:
+        specifier: ^0.25.12
+        version: 0.25.12
+      postject:
+        specifier: 1.0.0-alpha.6
+        version: 1.0.0-alpha.6
+      tsx:
+        specifier: ^4.23.15
+        version: 4.23.15
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@22.20.5)(tsx@4.23.15)
+
   packages/pdf:
     dependencies:
       '@pdf-lib/fontkit':
@@ -1369,6 +1401,10 @@ packages:
   color-name@1.1.4:
     resolution: {integrity: sha512-dOy+3AuW3a2wNbZHIuMZpTcgjGuLU/uBL/ubcZF9OXbDo8ff4O8yVp5Bf0efS8uEoYo5q4Fx7dY9OgQGXgAsQA==}
 
+  commander@9.5.0:
+    resolution: {integrity: sha512-KRs7WVDKg86PWiuAqhDrAQnTXZKraVcCc6vFdL14qrZ/DcWwuRo7VoiYXalXO7S5GKpqYiVEwCbgFDfxNHKJBQ==}
+    engines: {node: ^12.20.0 || >=14}
+
   content-disposition@2.0.1:
     resolution: {integrity: sha512-e+H0ZXHSWYrENhQzw1LPuP4oF5MzVKmDU6d3hxlvaPEYLLg62MxtQNPRx4SYSuYJSBUgnQIG4HIN2tEtNv7Dog==}
     engines: {node: '>=18'}
@@ -1892,6 +1928,10 @@ packages:
     resolution: {integrity: sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==}
     engines: {node: '>=16.20.0'}
 
+  pkcs11js@2.1.7:
+    resolution: {integrity: sha512-hstUuhkFoISF8BmTVRtaZzbF09WjE39K3gzZzUrI8WtRu4cYl4gakkd06I4Kq36kR/mkwVw2T2y3kHXk6JvuHQ==}
+    engines: {node: '>=18.0.0'}
+
   pkijs@3.4.1:
     resolution: {integrity: sha512-Oo/NZcSWccq8KyoG7gLE9fnltgHns+pNCjCAp/WmjsUySi+sX7y4z4Xqu4fVb42CDHzRPl33fjzT15V1wvcyhA==}
     engines: {node: '>=16.0.0'}
@@ -1919,6 +1959,11 @@ packages:
   postgres-interval@1.2.0:
     resolution: {integrity: sha512-9ZhXKM/rw350N1ovuWHbGxnGh/SNJ4cnxHiM0rxE4VN41wsg8P8zWn9hv/buK00RP4WvlOyr/RBDiptyxVbkZQ==}
     engines: {node: '>=0.10.0'}
+
+  postject@1.0.0-alpha.6:
+    resolution: {integrity: sha512-b9Eb8h2eVqNE8edvKdwqkrY6O7kAwmI8kcnBv1NScolYJbo59XUF0noFq+lxbC1yN20bmC0WBEbDC5H/7ASb0A==}
+    engines: {node: '>=14.0.0'}
+    hasBin: true
 
   process-warning@5.1.1:
     resolution: {integrity: sha512-oCkNVj4OKnKEcocVBcDfiIugN1/cE6rgfT3nCtzeqZPA8+rIxMaQ0xXzIkGP8Gj2qUaP1UR7uhJ1VD8lUCpzCg==}
@@ -3524,6 +3569,8 @@ snapshots:
 
   color-name@1.1.4: {}
 
+  commander@9.5.0: {}
+
   content-disposition@2.0.1: {}
 
   content-disposition@3.0.0: {}
@@ -4055,6 +4102,9 @@ snapshots:
 
   pkce-challenge@5.0.1: {}
 
+  pkcs11js@2.1.7:
+    optional: true
+
   pkijs@3.4.1:
     dependencies:
       '@noble/hashes': 1.8.0
@@ -4081,6 +4131,10 @@ snapshots:
   postgres-interval@1.2.0:
     dependencies:
       xtend: 4.0.2
+
+  postject@1.0.0-alpha.6:
+    dependencies:
+      commander: 9.5.0
 
   process-warning@5.1.1: {}
 

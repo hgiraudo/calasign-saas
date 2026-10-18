@@ -78,6 +78,15 @@ client_credentials, `credentials/list|info|authorize`, `signatures/signHash`) qu
 interfaz (`CALASIGN_CA_CSC_URL`, `CALASIGN_CA_TOKEN_URL`, `CALASIGN_CA_CLIENT_ID`, `CALASIGN_CA_CLIENT_SECRET`),
 sin cablear a la CA real. `GET /v1/signature-providers`, `POST /v1/signature-providers/:id/test`.
 
+## 6b. Firma con el certificado del titular
+
+Un firmante con `signatureType: "certificate"` agrega su propia firma PAdES B-T al PDF. La firma se hace con un
+token, el almacén de Windows o un `.p12`, usando el Firmador CalaSign. Va como revisión incremental, después de la
+firma electrónica y **antes** del sello de la plataforma, que se agrega al final con el LTV de siempre. El
+certificado de finalización ya está dentro del PDF de trabajo, así que solo anota «firmará con certificado digital».
+Los datos del certificado quedan en los eventos `recipient.certificate_signed` y `recipient.certificate_rejected`
+y en los reportes de `/verify` y `/v1/validate`. Detalle en [`FIRMA-CON-CERTIFICADO.md`](FIRMA-CON-CERTIFICADO.md).
+
 ## 7. Desarrollo y pruebas
 
 ```bash
@@ -98,6 +107,7 @@ No usar los puertos 4190/6000/… para la PKI: `fetch` los bloquea ("bad port").
 | `VALIDATE_ONLINE_REVOCATION` | `false` | OCSP/CRL online en `/v1/validate` |
 | `CSC_CONNECTORS` | — | JSON con conectores CSC v2 |
 | `CALASIGN_CA_*` | — | Conector `calasign-ca` |
+| `FIRMADOR_DIST_DIR` | `packages/firmador/dist` | Binarios del Firmador CalaSign que se ofrecen en `/firmador` |
 
 En AWS (dev/prod), el rol de la app necesita `kms:Encrypt` y `kms:Decrypt` sobre la clave de custodia (con la
 condición `kms:EncryptionContext:purpose = calasign-tenant-certificate`), y salida HTTP a las URLs OCSP/CRL de

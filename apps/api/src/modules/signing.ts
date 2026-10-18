@@ -16,6 +16,7 @@ import { getTenantBranding } from "./branding";
 import { inPersonSessionInfo } from "./experience";
 import { prepareCompletionLogic, signerLogicFields } from "./logic";
 import { identityBlocking, signingIdentityFor } from "./identity/kyc";
+import { certificateStepFor } from "./certsign";
 
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -93,6 +94,7 @@ export async function buildSession(db: Db, token: string, r: any, e: any, authed
     ),
     inPerson: await inPersonSessionInfo(db, r, !otpRequired),
     identity: await signingIdentityFor(db, r, e, { revealSession: !otpRequired }),
+    certificateSigning: blocked ? null : await certificateStepFor(db, r, e),
   };
 }
 

@@ -25,7 +25,9 @@ export function redirectIfSsoRequired(err: unknown, redirect = "/app"): boolean 
 export function SsoErrorNotice() {
   const tx = useIdnText();
   const loc = useLocation();
-  const code = new URLSearchParams(loc.search).get("sso_error");
+  const raw = new URLSearchParams(loc.search).get("sso_error");
+  // Solo códigos (p. ej. "invalid_state"): un texto libre en la URL permitiría mostrar mensajes falsos en el login.
+  const code = raw && /^[a-z0-9_.-]{1,60}$/i.test(raw) ? raw : raw ? "error" : null;
   if (!code) return null;
   return <ErrorBox error={tx("login.ssoError", { code })} />;
 }

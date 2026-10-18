@@ -1,6 +1,6 @@
 // Lectura de las firmas de un PDF: campos /FT /Sig del AcroForm (incluye sellos de documento) y el /DSS.
 import { PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFRawStream, PDFRef, PDFString, decodePDFRawStream } from "pdf-lib";
-import { structureWithinBudget } from "./stream-budget";
+import { structureWithinBudget, withDecodeBudget } from "./stream-budget";
 import { trimDer } from "./pki";
 
 export interface PdfSignature {
@@ -49,6 +49,10 @@ function pdfDateToIso(s: string | null): string | null {
 export async function readPdfSignatures(pdf: Uint8Array): Promise<{ signatures: PdfSignature[]; dss: PdfDss | null }> {
   // También lo usa la validación pública (/v1/validate): un PDF con streams que se descomprimen en gigabytes no se carga.
   if (!structureWithinBudget(pdf)) throw new Error("el PDF tiene una estructura demasiado grande para procesarlo");
+  return withDecodeBudget(() => readPdfSignaturesUnbudgeted(pdf));
+}
+
+async function readPdfSignaturesUnbudgeted(pdf: Uint8Array): Promise<{ signatures: PdfSignature[]; dss: PdfDss | null }> {
   const doc = await PDFDocument.load(pdf, { updateMetadata: false, ignoreEncryption: true });
   const acro = doc.catalog.lookupMaybe(PDFName.of("AcroForm"), PDFDict);
   const fields: PDFDict[] = [];

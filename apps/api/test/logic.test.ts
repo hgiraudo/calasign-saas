@@ -63,4 +63,17 @@ describe("números con separador de miles", () => {
     const out = computeFormulas(fields, (id) => (id === "a" ? "1.500.000" : null), new Set());
     expect(out.get("t")).toBe("3000000");
   });
+
+  it("1,500,000 (miles con coma) vale igual que en las plantillas y los acuerdos", () => {
+    expect(checkValue({ type: "number", min: 1000 }, "1,500,000")).toEqual({ value: "1,500,000" });
+    expect(checkValue({ type: "number" }, "1,500,000.50")).toEqual({ value: "1,500,000.50" });
+    const fields = [
+      { id: "a", type: "number", label: "Monto", conditions: null, formula: null },
+      { id: "t", type: "number", label: "Total", conditions: null, formula: "{Monto} * 2" },
+    ];
+    expect(computeFormulas(fields, (id) => (id === "a" ? "1,500,000" : null), new Set()).get("t")).toBe("3000000");
+    // Un solo separador sigue siendo decimal (sin cambios): 1,5 y 1,500 son 1,5.
+    expect(computeFormulas(fields, (id) => (id === "a" ? "1,5" : null), new Set()).get("t")).toBe("3");
+    expect(computeFormulas(fields, (id) => (id === "a" ? "1,500" : null), new Set()).get("t")).toBe("3");
+  });
 });

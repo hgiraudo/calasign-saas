@@ -1,7 +1,7 @@
 import { PDFDocument } from "pdf-lib";
 import { displayedSize } from "./layout";
 import { viewerDiffersFromPdfLib } from "./revisions";
-import { structureWithinBudget } from "./stream-budget";
+import { DecodeBudgetError, structureWithinBudget, withDecodeBudget } from "./stream-budget";
 
 export class InvalidPdfError extends Error {
   constructor(
@@ -24,6 +24,10 @@ export interface PdfInfo {
  * Para lo que termina dentro del PDF final de un sobre conviene `preparePdfUpload`, que elimina la ambigüedad.
  */
 export async function inspectPdf(bytes: Uint8Array, maxPages = 500): Promise<PdfInfo> {
+  return budgeted(() => inspectPdfUnbudgeted(bytes, maxPages));
+}
+
+async function inspectPdfUnbudgeted(bytes: Uint8Array, maxPages: number): Promise<PdfInfo> {
   const doc = await loadChecked(bytes, maxPages);
   // El firmante ve el documento en un lector (por el xref) y el PDF final se arma con pdf-lib: tienen que coincidir.
   if (await viewerDiffersFromPdfLib(bytes, doc)) throw ambiguous();
@@ -51,11 +55,16 @@ export interface PreparedPdf {
  * - Los campos de formulario se conservan con sus apariencias tal como venían (no se regeneran).
  */
 export async function preparePdfUpload(bytes: Uint8Array, maxPages = 500): Promise<PreparedPdf> {
+  return budgeted(() => preparePdfUploadUnbudgeted(bytes, maxPages));
+}
+
+async function preparePdfUploadUnbudgeted(bytes: Uint8Array, maxPages: number): Promise<PreparedPdf> {
   const doc = await loadChecked(bytes, maxPages);
   let out: Uint8Array;
   try {
     out = await doc.save({ useObjectStreams: true, updateFieldAppearances: false, addDefaultPage: false });
-  } catch {
+  } catch (e) {
+    if (e instanceof DecodeBudgetError) throw e;
     throw new InvalidPdfError("unreadable", "No se pudo leer el PDF");
   }
   // Se valida lo que se va a guardar, no lo subido: páginas, tamaños y (por las dudas) que ya no sea ambiguo.
@@ -69,11 +78,12 @@ async function loadChecked(bytes: Uint8Array, maxPages: number): Promise<PDFDocu
     throw new InvalidPdfError("not_pdf", "El archivo no es un PDF");
   }
   // Antes de cargarlo: un stream de objetos que al descomprimirse ocupa gigabytes dejaría sin memoria al proceso.
-  if (!structureWithinBudget(bytes)) throw new InvalidPdfError("unreadable", "El PDF tiene una estructura demasiado grande para procesarlo");
+  if (!structureWithinBudget(bytes)) throw tooLarge();
   let doc: PDFDocument;
   try {
     doc = await PDFDocument.load(bytes, { updateMetadata: false });
   } catch (e) {
+    if (e instanceof DecodeBudgetError) throw e;
     const msg = String((e as Error).message ?? e);
     if (/encrypt/i.test(msg)) throw new InvalidPdfError("encrypted", "El PDF está protegido con contraseña");
     throw new InvalidPdfError("unreadable", "No se pudo leer el PDF");
@@ -83,6 +93,20 @@ async function loadChecked(bytes: Uint8Array, maxPages: number): Promise<PDFDocu
   if (pages.length === 0) throw new InvalidPdfError("empty", "El PDF no tiene páginas");
   if (pages.length > maxPages) throw new InvalidPdfError("too_many_pages", `Máximo ${maxPages} páginas`);
   return doc;
+}
+
+/** Toda la operación (cargar, analizar revisiones, reescribir) con un tope total de descompresión. */
+async function budgeted<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await withDecodeBudget(fn);
+  } catch (e) {
+    if (e instanceof DecodeBudgetError) throw tooLarge();
+    throw e;
+  }
+}
+
+function tooLarge() {
+  return new InvalidPdfError("unreadable", "El PDF tiene una estructura demasiado grande para procesarlo");
 }
 
 function ambiguous() {

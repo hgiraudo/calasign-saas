@@ -1,7 +1,49 @@
 import { deflateSync } from "node:zlib";
 import { PDFDocument, StandardFonts } from "pdf-lib";
 import { describe, expect, it } from "vitest";
-import { InvalidPdfError, preparePdfUpload, structureWithinBudget } from "../src";
+import { InvalidPdfError, inspectPdf, preparePdfUpload, structureWithinBudget, validatePdf } from "../src";
+
+/**
+ * PDF mínimo con un stream de objetos que se descomprime en `size` bytes, escrito de forma que una lectura con
+ * expresiones regulares no lo ve como tal pero pdf-lib sí: /Type o /Filter indirectos, o un string con "obj".
+ */
+function pdfWithHiddenObjStm(size: number, variant: "type" | "filter" | "objstr") {
+  const comp = deflateSync(Buffer.alloc(size, 0x20), { level: 9 });
+  const parts: Buffer[] = [];
+  const offs: number[] = [];
+  let len = 0;
+  const push = (x: string | Buffer) => {
+    const b = typeof x === "string" ? Buffer.from(x, "latin1") : x;
+    parts.push(b);
+    len += b.length;
+  };
+  push("%PDF-1.7\n");
+  offs[1] = len;
+  push("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+  offs[2] = len;
+  push("2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n");
+  offs[3] = len;
+  push("3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>\nendobj\n");
+  offs[5] = len;
+  push("5 0 obj\n/ObjStm\nendobj\n");
+  offs[6] = len;
+  push("6 0 obj\n/FlateDecode\nendobj\n");
+  offs[4] = len;
+  const dict =
+    variant === "type"
+      ? "/Type 5 0 R /N 1 /First 4 /Filter /FlateDecode"
+      : variant === "filter"
+        ? "/Type /ObjStm /N 1 /First 4 /Filter 6 0 R"
+        : "/Type /ObjStm /N 1 /First 4 /X (obj) /Filter /FlateDecode";
+  push(`4 0 obj\n<< ${dict} /Length ${comp.length} >>\nstream\n`);
+  push(comp);
+  push("\nendstream\nendobj\n");
+  const xref = len;
+  let x = "xref\n0 7\n0000000000 65535 f \n";
+  for (let i = 1; i <= 6; i++) x += String(offs[i]).padStart(10, "0") + " 00000 n \n";
+  push(x + "trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n" + xref + "\n%%EOF\n");
+  return new Uint8Array(Buffer.concat(parts));
+}
 
 /** PDF mínimo con un stream de objetos (ObjStm) que se descomprime en `size` bytes. */
 function pdfWithObjStm(size: number) {
@@ -43,6 +85,20 @@ describe("tope de descompresión al cargar un PDF", () => {
     expect(err).toBeInstanceOf(InvalidPdfError);
     expect(err.code).toBe("unreadable");
   }, 60_000);
+
+  // La lectura con expresiones regulares no ve estos streams; el tope dentro de pdf-lib sí. Sin él, un archivo de
+  // ~300 KB se descomprimía entero (300 MB, y el doble en memoria) y se aceptaba.
+  for (const variant of ["type", "filter", "objstr"] as const) {
+    it(`rechaza un stream de objetos escondido (${variant}) en la subida, la inspección y la validación`, async () => {
+      const pdf = pdfWithHiddenObjStm(300 * 1024 * 1024, variant);
+      for (const run of [() => preparePdfUpload(pdf), () => inspectPdf(pdf)]) {
+        const err = await run().catch((e) => e);
+        expect(err).toBeInstanceOf(InvalidPdfError);
+        expect(err.code).toBe("unreadable");
+      }
+      await expect(validatePdf(pdf)).rejects.toThrow(/demasiado grande/);
+    }, 120_000);
+  }
 
   it("un PDF normal con streams de objetos pasa", async () => {
     const doc = await PDFDocument.create();

@@ -23,6 +23,7 @@ import {
 } from "./pki";
 import type { PadesLevel } from "./ltv";
 import { byteRangeIssue, readPdfSignatures, signedContent, type PdfDss } from "./signatures";
+import { withDecodeBudget } from "./stream-budget";
 import { PDFDocument } from "pdf-lib";
 import { changesAfterRevision, type ChangesAfter } from "./revisions";
 
@@ -173,6 +174,12 @@ async function chainReport(
 }
 
 export async function validatePdf(pdf: Uint8Array, opts: ValidateOptions = {}): Promise<ValidationReport> {
+  // Toda la validación con un tope de descompresión: la usa /v1/validate (público) y carga el PDF varias veces
+  // (firmas, revisiones de cada firma).
+  return withDecodeBudget(() => validatePdfUnbudgeted(pdf, opts));
+}
+
+async function validatePdfUnbudgeted(pdf: Uint8Array, opts: ValidateOptions): Promise<ValidationReport> {
   const { signatures, dss } = await readPdfSignatures(pdf);
   const anchorsDer = opts.trustAnchors ?? [];
   const anchors = new Set(anchorsDer.map(fingerprint));

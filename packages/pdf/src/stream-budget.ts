@@ -2,6 +2,8 @@
 // documento, y el análisis de revisiones descomprime los de referencias (XRef). Un archivo chico con un stream muy
 // comprimido puede ocupar gigabytes al descomprimirse y dejar sin memoria al proceso. Antes de cargarlo, se descomprimen
 // esos streams con un tope total (zlib con maxOutputLength, que corta sin reservar la memoria).
+import { AsyncLocalStorage } from "node:async_hooks";
+import { createRequire } from "node:module";
 import { constants, inflateSync } from "node:zlib";
 
 /** Total descomprimido admitido para los streams de objetos y de referencias de un PDF. */
@@ -44,4 +46,76 @@ export function structureWithinBudget(pdf: Uint8Array, budget = MAX_STRUCTURE_BY
     if (remaining <= 0) return false;
   }
   return true;
+}
+
+// ─── Tope dentro de pdf-lib ───
+// El chequeo de arriba lee el PDF con expresiones regulares y no ve lo que pdf-lib resuelve al cargarlo: un /Type o un
+// /Filter indirectos (`/Type 5 0 R` con 5 = /ObjStm) o un string con "obj" dentro del diccionario lo esquivaban, y
+// un archivo de 700 KB llevaba el proceso a 1,4 GB. Por eso el tope real va donde pdf-lib descomprime: todos sus filtros
+// (Flate, LZW, RunLength, ASCII85, ASCIIHex) crecen su buffer con DecodeStream.ensureBuffer.
+
+/** Descompresión total admitida en una operación sobre un PDF de afuera (carga, análisis de revisiones, validación). */
+export const MAX_DECODED_BYTES = 192 * 1024 * 1024;
+/** Fuera de una operación con tope: ningún stream individual puede descomprimirse por encima de esto. */
+export const MAX_DECODED_STREAM_BYTES = 256 * 1024 * 1024;
+
+export class DecodeBudgetError extends Error {
+  constructor() {
+    super("el PDF tiene una estructura demasiado grande para procesarlo");
+  }
+}
+
+interface Budget {
+  remaining: number;
+  exceeded: boolean;
+}
+const budgets = new AsyncLocalStorage<Budget>();
+
+// El mismo módulo que carga `import "pdf-lib"` en Node (el paquete no tiene "exports": Node usa cjs/index.js).
+const require = createRequire(import.meta.url);
+type Decoder = { buffer: Uint8Array; minBufferLength: number };
+const DecodeStream = require("pdf-lib/cjs/core/streams/DecodeStream").default as {
+  prototype: { ensureBuffer(this: Decoder, requested: number): Uint8Array; __calasignBudget?: true };
+};
+if (!DecodeStream.prototype.__calasignBudget) {
+  const ensureBuffer = DecodeStream.prototype.ensureBuffer;
+  DecodeStream.prototype.ensureBuffer = function (this: Decoder, requested: number) {
+    const have = this.buffer.byteLength;
+    if (requested > have) {
+      // Lo que va a reservar: la primera potencia de 2 (desde minBufferLength) que alcanza `requested`.
+      let size = this.minBufferLength || 512;
+      while (size < requested) size *= 2;
+      const b = budgets.getStore();
+      if (b) {
+        b.remaining -= size - have;
+        if (b.remaining < 0) {
+          b.exceeded = true;
+          throw new DecodeBudgetError();
+        }
+      } else if (size > MAX_DECODED_STREAM_BYTES) {
+        throw new DecodeBudgetError();
+      }
+    }
+    return ensureBuffer.call(this, requested);
+  };
+  DecodeStream.prototype.__calasignBudget = true;
+}
+
+/**
+ * Corre `fn` con un tope total de descompresión. pdf-lib a veces atrapa el error de un objeto que no puede leer y sigue
+ * (recupera el documento sin ese objeto): por eso, si el tope se superó en cualquier momento, el resultado se descarta.
+ * Anidado, usa el tope de la operación de afuera.
+ */
+export async function withDecodeBudget<T>(fn: () => Promise<T>, budget = MAX_DECODED_BYTES): Promise<T> {
+  if (budgets.getStore()) return fn();
+  const b: Budget = { remaining: budget, exceeded: false };
+  let out: T;
+  try {
+    out = await budgets.run(b, fn);
+  } catch (e) {
+    if (b.exceeded) throw new DecodeBudgetError();
+    throw e;
+  }
+  if (b.exceeded) throw new DecodeBudgetError();
+  return out;
 }

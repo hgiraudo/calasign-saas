@@ -219,6 +219,34 @@ assert(big.status === "cancelled" && big.sent + big.cancelled + big.failed === 6
 await api("POST", `/v1/bulk-sends/${big.id}/cancel`, null, { expect: 409 });
 step(`cancelación de un envío de 60 filas: ${big.sent} alcanzaron a salir, ${big.cancelled} cancelados`);
 
+// Una API key con rol miembro (sin envelopes:view_all) ve y opera los sobres de SU envío masivo.
+{
+  const { secret } = await api("POST", "/v1/api-keys", { name: `masivo miembro ${stamp}`, role: "member" });
+  const keyApi = async (method, path, body, expect = 200) => {
+    const res = await fetch(BASE + path, {
+      method,
+      headers: { authorization: `Bearer ${secret}`, ...(body ? { "content-type": "application/json" } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const text = await res.text();
+    if (res.status !== expect) throw new Error(`${method} ${path} (API key) → esperaba ${expect}, vino ${res.status} ${text.slice(0, 300)}`);
+    return text ? JSON.parse(text) : null;
+  };
+  let kb = await keyApi("POST", "/v1/bulk-sends", { templateId: template.id, rows: bigRows.slice(0, 1) }, 201);
+  for (let i = 0; i < 60 && kb.status !== "completed"; i++) {
+    await sleep(500);
+    kb = await keyApi("GET", `/v1/bulk-sends/${kb.id}`);
+  }
+  assert(kb.status === "completed" && kb.sent === 1, `envío masivo por API key: ${JSON.stringify(kb)}`);
+  const { items: keyItems } = await keyApi("GET", `/v1/bulk-sends/${kb.id}/items?status=sent`);
+  const keyEnv = await keyApi("GET", `/v1/envelopes/${keyItems[0].envelopeId}`);
+  assert(keyEnv.envelope.metadata.bulkSendId === kb.id, "la API key ve el sobre de su envío masivo");
+  const keyList = await keyApi("GET", "/v1/envelopes?limit=100");
+  assert(keyList.items.some((x) => x.id === keyEnv.envelope.id), "el sobre aparece en el listado de la API key");
+  await keyApi("POST", `/v1/envelopes/${keyEnv.envelope.id}/void`, { reason: "prueba" });
+  step("API key con rol miembro: ve, lista y anula los sobres de su propio envío masivo");
+}
+
 // ───────────────────────────── Lógica en /complete ─────────────────────────────
 
 const e1 = sentItems[0].envelopeId;

@@ -95,12 +95,19 @@ Operación del host (lo aplica cada `deploy-dev.sh`, desde `infra/dev/host/`):
   systemctl stop calasign
   aws s3 ls s3://<bucket>/backups/postgres/                       # elegir el dump
   aws s3 cp s3://<bucket>/backups/postgres/calasign-<TS>.dump /var/tmp/restore.dump
-  chown postgres /var/tmp/restore.dump
+  chown calasign /var/tmp/restore.dump
   # Se recrea la base: --clean no borraría tablas que una migración posterior al dump haya creado.
   runuser -u postgres -- dropdb calasign
   runuser -u postgres -- createdb -O calasign calasign
-  runuser -u postgres -- pg_restore --single-transaction -d calasign /var/tmp/restore.dump
-  rm -f /var/tmp/restore.dump
+  # El dump se restaura como calasign (el dueño de la base), nunca como postgres: el rol de la instancia —el mismo
+  # que usa la app— puede escribir en backups/, así que un dump podría estar armado por la app comprometida, y
+  # restaurado por un superusuario ejecutaría su SQL con todos los privilegios (COPY ... FROM PROGRAM corre comandos
+  # como el usuario postgres del sistema; un SET ROLE no alcanza, el dump podría hacer RESET ROLE). La base no usa
+  # extensiones: las entradas EXTENSION del dump (plpgsql) se sacan de la lista porque solo postgres puede tocarlas.
+  runuser -u calasign -- pg_restore -l /var/tmp/restore.dump | grep -vE ' EXTENSION - | COMMENT - EXTENSION ' > /var/tmp/restore.list
+  runuser -u calasign -- pg_restore --single-transaction --no-owner --no-privileges -L /var/tmp/restore.list \
+    -d calasign /var/tmp/restore.dump
+  rm -f /var/tmp/restore.dump /var/tmp/restore.list
   ln -sfn /opt/calasign/releases/<versión del código de ese momento> /opt/calasign/current   # si hace falta
   systemctl start calasign && curl -sf localhost:4000/healthz
   ```

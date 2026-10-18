@@ -54,8 +54,19 @@ read -r -d '' REMOTE <<EOF || true
 set -euo pipefail
 export AWS_REGION=$REGION PATH=/opt/node/bin:/usr/local/bin:\$PATH
 D=/opt/calasign/releases/$REL
-# releases/ es del usuario calasign (el de la app): sin -p, si alguien ya creó la carpeta el deploy corta en vez de
-# extraer como root dentro de una carpeta ajena.
+# /opt/calasign y releases/ quedan de root (bootstrap los dejaba del usuario calasign, el de la app). Root crea, extrae
+# y borra versiones ahí adentro: con la app comprometida, releases/ podía pasar a ser un symlink (p. ej. a /etc) y la
+# limpieza de versiones viejas de abajo borraba como root todo lo que hubiera en ese destino. Primero /opt/calasign
+# (/opt es de root, así que no se puede cambiar por un symlink); después ya nadie más puede reemplazar sus entradas.
+if [ -L /opt/calasign ] || [ ! -d /opt/calasign ]; then echo "/opt/calasign no es un directorio: deploy abortado" >&2; exit 1; fi
+chown root:root /opt/calasign
+chmod 0755 /opt/calasign
+[ -e /opt/calasign/releases ] || [ -L /opt/calasign/releases ] || mkdir /opt/calasign/releases
+if [ -L /opt/calasign/releases ] || [ ! -d /opt/calasign/releases ]; then echo "/opt/calasign/releases no es un directorio: deploy abortado" >&2; exit 1; fi
+chown root:root /opt/calasign/releases
+chmod 0755 /opt/calasign/releases
+if [ -e /opt/calasign/current ] && [ ! -L /opt/calasign/current ]; then echo "/opt/calasign/current no es un symlink: deploy abortado" >&2; exit 1; fi
+# Sin -p: si la carpeta ya existe, el deploy corta en vez de extraer como root dentro de una carpeta ajena.
 mkdir \$D
 PKG=\$(mktemp /var/tmp/calasign-rel.XXXXXX)
 # Lo que corre o se instala como root (script de backup, unidades, hardening, Caddyfile) sale de una copia solo de
@@ -166,9 +177,11 @@ if ! healthy; then
   exit 1
 fi
 curl -sf localhost:4000/healthz
-# Conserva las 3 versiones más nuevas y nunca borra la activa.
+# Conserva las 3 versiones más nuevas y nunca borra la activa. Nombres separados por NUL: una carpeta vieja con
+# comillas o espacios en el nombre (creada cuando releases/ era del usuario de la app) hacía fallar xargs.
 CUR=\$(readlink -f /opt/calasign/current)
-ls -1dt /opt/calasign/releases/* | tail -n +4 | { grep -vxF "\$CUR" || true; } | xargs -r rm -rf
+find /opt/calasign/releases -mindepth 1 -maxdepth 1 -printf '%T@ %p\\0' | sort -z -rn | tail -z -n +4 | cut -z -d' ' -f2- \
+  | { grep -zvxF "\$CUR" || true; } | xargs -0r rm -rf --
 echo DEPLOY_OK $REL
 EOF
 

@@ -393,6 +393,45 @@ step("workflow por API: rechazo y cancelación");
   step("workflow: una API key de miembro solo ve y cancela sus propias ejecuciones (no las del link público)");
 }
 
+// Workflow público creado con una API key: los sobres salen a nombre de la key y, si se revoca, el link deja de
+// ofrecerse y los runs en curso no envían (antes seguían enviando en nombre de quien ya no puede crear sobres).
+{
+  const key = await api("POST", "/v1/api-keys", { name: `wf público ${stamp}`, role: "admin" });
+  const asKey = { anon: true, headers: { authorization: `Bearer ${key.secret}` } };
+  const kIds = Array.from({ length: 3 }, () => randomUUID());
+  const kwf = await api("POST", "/v1/workflows", {
+    name: `Público por key ${stamp}`,
+    publicStart: true,
+    steps: [
+      { id: kIds[0], name: "Datos", type: "collect_data", config: { title: "Datos", target: "cliente", fields: [
+        { key: "nombre", label: "Nombre", type: "text", required: true },
+        { key: "email", label: "Correo", type: "email", required: true },
+        { key: "plazo", label: "Plazo", type: "number", required: true },
+      ] } },
+      { id: kIds[1], name: "Contrato", type: "generate_document", config: { documentTemplateId: altaTpl.id, output: "contrato" } },
+      { id: kIds[2], name: "Firmar", type: "send_for_signature", config: { document: "contrato", envelopeKey: "firma", subject: "Key {{cliente.nombre}}", recipients: [
+        { role: "Cliente", name: "{{cliente.nombre}}", email: "{{cliente.email}}" },
+        { role: "Empresa", name: "Ana Gómez", email: me.user.email },
+      ] } },
+    ],
+  }, asKey);
+  const kslug = kwf.publicUrl.split("/wf/")[1];
+  const values = { nombre: `Key ${stamp}`, email: `key+${stamp}@example.com`, plazo: "6" };
+  const s1 = await api("POST", `/v1/public/workflows/${kslug}/start`, {}, { anon: true });
+  const v1 = await api("POST", `/v1/public/workflow-runs/${s1.token}/steps/0`, { values }, { anon: true });
+  const kr1 = await api("GET", `/v1/workflow-runs/${v1.runId}`);
+  assert(kr1.status === "completed", `run público de la key enviado (${kr1.status} ${JSON.stringify(kr1.steps.map((x) => x.error))})`);
+  await api("GET", `/v1/envelopes/${kr1.context.envelopes.firma.envelopeId}`, null, asKey); // el sobre es de la key
+  const s2 = await api("POST", `/v1/public/workflows/${kslug}/start`, {}, { anon: true });
+  await api("DELETE", `/v1/api-keys/${key.apiKey.id}`, null, { expect: 204 });
+  await api("GET", `/v1/public/workflows/${kslug}`, null, { anon: true, expect: 404 });
+  await api("POST", `/v1/public/workflows/${kslug}/start`, {}, { anon: true, expect: 404 });
+  const v2 = await api("POST", `/v1/public/workflow-runs/${s2.token}/steps/0`, { values }, { anon: true });
+  const kr2 = await api("GET", `/v1/workflow-runs/${v2.runId}`);
+  assert(kr2.status === "failed" && !kr2.context.envelopes.firma && /revocada/.test(kr2.steps[2].error ?? ""), `con la key revocada no se envía (${kr2.status})`);
+  step("workflow público de una API key: sobres a su nombre; revocada, el link no se ofrece y los runs en curso no envían");
+}
+
 // ───────────────────────────── Negociación ─────────────────────────────
 
 const negSrc = "# Propuesta comercial\nCliente: {{cliente.nombre}}\nPlazo: {{plazo}} meses. Precio mensual: {{precio | money:USD}}.\n{{clausula:confidencialidad}}\n{{firma:Cliente}}    {{firma:Empresa}}";

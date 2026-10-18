@@ -29,6 +29,7 @@ import { deliver } from "../../notifications/channels";
 import { hasPerm, requirePerm } from "../access";
 import { auditFromRequest } from "../audit";
 import { authenticate, clientInfo, type AuthContext, type Services } from "../context";
+import { ownerCanStillCreate } from "../owner-check";
 import { tenantBaseUrl } from "../custom-domains";
 import { assertPublicDestination, safeRequest, signPayload } from "../webhooks";
 import { getPath, interpolate, refreshSearchVector, setPath, toIsoDate, toNumberOrNull, type Deps } from "./common";
@@ -258,7 +259,7 @@ export async function onEnvelopeEventForWorkflows(d: Deps, envelopeId: string) {
 async function executeStep(d: Deps, run: any, step: WorkflowStep, index: number): Promise<StepResult> {
   const ctx: RunContext = run.context;
   const data = ctx.data ?? {};
-  const wf = await d.db.one<any>(`SELECT name, created_by, signing_secret_enc FROM workflows WHERE id = $1`, [run.workflow_id]);
+  const wf = await d.db.one<any>(`SELECT name, created_by, created_by_api_key, signing_secret_enc FROM workflows WHERE id = $1`, [run.workflow_id]);
   const tenant = await d.db.one<any>(`SELECT default_locale, name FROM tenants WHERE id = $1`, [run.tenant_id]);
   const locale = tenant?.default_locale ?? "es";
   const actor: Actor = { type: "system", label: `Workflow: ${wf?.name ?? ""}` };
@@ -342,9 +343,11 @@ async function executeStep(d: Deps, run: any, step: WorkflowStep, index: number)
           cc: r.cc ?? false,
         };
       });
-      const userId = run.started_by ?? wf?.created_by ?? null;
-      // Iniciado por una API key: el sobre queda a nombre de esa key, así la key (con rol de miembro) lo ve y lo gestiona.
-      const apiKeyId = run.started_by ? null : (run.started_by_api_key ?? null);
+      const { userId, apiKeyId } = runOwner(run, wf);
+      // El sobre sale a nombre de ese dueño: tiene que seguir pudiendo crear sobres (miembro, o key sin revocar, con
+      // envelopes:create). Si no, un workflow público seguiría enviando en nombre de alguien que ya dejó la organización.
+      const ownerProblem = await ownerCanStillCreate(d.db, { tenantId: run.tenant_id, userId, apiKeyId }, null);
+      if (ownerProblem) throw new StepFailure(ownerProblem);
       return {
         kind: "complete",
         output: {},
@@ -472,6 +475,23 @@ async function executeStep(d: Deps, run: any, step: WorkflowStep, index: number)
       };
     }
   }
+}
+
+/**
+ * A nombre de quién salen los sobres de un run: quien lo inició (persona o API key) o, si se inició por el link
+ * público, quien creó el workflow (persona o API key).
+ */
+function runOwner(run: any, wf: any): { userId: string | null; apiKeyId: string | null } {
+  if (run.started_by) return { userId: run.started_by, apiKeyId: null };
+  if (run.started_by_api_key) return { userId: null, apiKeyId: run.started_by_api_key };
+  if (wf?.created_by) return { userId: wf.created_by, apiKeyId: null };
+  return { userId: null, apiKeyId: wf?.created_by_api_key ?? null };
+}
+
+/** Un workflow público que envía a firmar no se ofrece si su creador ya no puede crear sobres. */
+async function publicOwnerProblem(db: Db, wf: any): Promise<string | null> {
+  if (!(wf.steps as WorkflowStep[]).some((st) => st.type === "send_for_signature")) return null;
+  return ownerCanStillCreate(db, { tenantId: wf.tenant_id, ...runOwner({}, wf) }, null);
 }
 
 function checkOutboundUrl(raw: string): string {
@@ -617,8 +637,8 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
     validateSteps(input.steps as WorkflowStep[]);
     await checkApprovers(a.tenantId, input.steps as WorkflowStep[]);
     const row = await s.db.one(
-      `INSERT INTO workflows (id, tenant_id, name, description, active, public_start, public_slug, steps, signing_secret_enc, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      `INSERT INTO workflows (id, tenant_id, name, description, active, public_start, public_slug, steps, signing_secret_enc, created_by, created_by_api_key)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
       [
         uuidv7(),
         a.tenantId,
@@ -630,6 +650,7 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
         JSON.stringify(input.steps),
         encrypt(`wfsec_${randomToken(24)}`),
         a.userId,
+        a.userId ? null : a.apiKeyId,
       ],
     );
     await auditFromRequest(s.db, req, a, "workflow.created", { targetType: "workflow", targetId: (row as any).id, data: { name: input.name } });
@@ -802,7 +823,7 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
 
   app.get<{ Params: { slug: string } }>("/v1/public/workflows/:slug", rl, async (req): Promise<PublicWorkflowStart> => {
     const wf = await s.db.one<any>(`SELECT w.*, t.name AS org FROM workflows w JOIN tenants t ON t.id = w.tenant_id WHERE w.public_slug = $1 AND w.public_start`, [req.params.slug]);
-    if (!wf || !wf.active) throw notFound("Workflow");
+    if (!wf || !wf.active || (await publicOwnerProblem(s.db, wf))) throw notFound("Workflow");
     return { workflowName: wf.name, organizationName: wf.org, description: wf.description };
   });
 
@@ -810,7 +831,7 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
     const body = (req.body ?? {}) as { website?: string };
     if (body.website) throw badRequest("rejected", "No se pudo iniciar");
     const wf = await s.db.one<any>(`SELECT * FROM workflows WHERE public_slug = $1 AND public_start`, [req.params.slug]);
-    if (!wf || !wf.active) throw notFound("Workflow");
+    if (!wf || !wf.active || (await publicOwnerProblem(s.db, wf))) throw notFound("Workflow");
     const { ip } = clientInfo(req);
     const { runId, token } = await createRun(s.db, wf, { data: {}, startedBy: null, startedByLabel: `Link público (${ip ?? "?"})`, actor: { type: "system", label: "Link público" } });
     await advanceNow(deps, runId);

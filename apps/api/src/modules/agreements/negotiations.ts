@@ -471,6 +471,10 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
       // El PDF se armó con la versión leída al principio: si mientras tanto se aceptó un cambio o se editó, el sobre
       // saldría con un texto que ya no es el acordado.
       if (locked.current_version !== n.current_version) throw conflict("version_changed", "La negociación cambió mientras se aceptaba: revisá la versión nueva y volvé a aceptar");
+      // Una contraparte pudo proponer un cambio después del primer chequeo: con la negociación bloqueada, el sobre no
+      // sale con una propuesta sin decidir (quedaría pendiente para siempre en una negociación cerrada).
+      const late = await t.one<any>(`SELECT count(*)::int AS c FROM negotiation_proposals WHERE negotiation_id = $1 AND status = 'pending'`, [n.id]);
+      if (late?.c) throw conflict("pending_proposals", `Quedan ${late.c} propuestas sin decidir`);
       let envId: string;
       if (n.source === "pdf") {
         // Sin marcas de firma: queda un sobre en borrador para ubicar los campos en el editor.
@@ -581,18 +585,29 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
       old = c[input.key];
     }
     if (old === input.newValue) throw badRequest("no_change", "El valor propuesto es igual al actual");
-    await s.db.query(
-      `INSERT INTO negotiation_proposals (id, negotiation_id, version, author_type, author_id, author_name, kind, key, old_value, new_value, comment)
-       VALUES ($1,$2,$3,'participant',$4,$5,$6,$7,$8,$9,$10)`,
-      [uuidv7(), n.id, n.current_version, p.id, p.name, input.kind, input.key, old, input.newValue, input.comment ?? null],
-    );
-    // Aviso al remitente.
-    const sender = n.created_by ? await s.db.one<any>(`SELECT email FROM users WHERE id = $1`, [n.created_by]) : null;
-    if (sender) {
-      const link = `${await tenantBaseUrl(s.db, n.tenant_id)}/app/negotiations/${n.id}`;
+    // Con la negociación bloqueada: si mientras tanto se aceptó (el sobre ya salió) o cambió de versión, la propuesta
+    // no se guarda (quedaría pendiente en una negociación cerrada, o con un "valor actual" que ya no lo es).
+    await s.db.tx(async (t) => {
+      const locked = await t.one<any>(`SELECT status, current_version FROM negotiations WHERE id = $1 FOR UPDATE`, [n.id]);
+      if (locked?.status !== "open") throw conflict("closed", "La negociación ya está cerrada");
+      if (locked.current_version !== n.current_version) throw conflict("version_changed", "Hay una versión nueva: revisala y volvé a proponer");
+      await t.query(
+        `INSERT INTO negotiation_proposals (id, negotiation_id, version, author_type, author_id, author_name, kind, key, old_value, new_value, comment)
+         VALUES ($1,$2,$3,'participant',$4,$5,$6,$7,$8,$9,$10)`,
+        [uuidv7(), n.id, n.current_version, p.id, p.name, input.kind, input.key, old, input.newValue, input.comment ?? null],
+      );
+    });
+    // Aviso al remitente, si sigue en la organización; si no, a los propietarios (alguien tiene que decidir la
+    // propuesta para poder aceptar). Quien dejó la organización no recibe más datos de esta negociación.
+    let to = n.created_by
+      ? await s.db.query<any>(`SELECT u.email FROM users u JOIN memberships m ON m.user_id = u.id AND m.tenant_id = $2 WHERE u.id = $1`, [n.created_by, n.tenant_id])
+      : [];
+    if (!to.length) to = await s.db.query<any>(`SELECT u.email FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.tenant_id = $1 AND m.role = 'owner'`, [n.tenant_id]);
+    const link = `${await tenantBaseUrl(s.db, n.tenant_id)}/app/negotiations/${n.id}`;
+    for (const u of to) {
       await deliver({
         channel: "email",
-        to: sender.email,
+        to: u.email,
         subject: `${p.name} propuso un cambio en "${n.title}"`,
         text: `${p.name} propone cambiar ${input.kind === "variable" ? input.key : `la cláusula ${input.key}`}.\n\nRevisar: ${link}`,
         link,

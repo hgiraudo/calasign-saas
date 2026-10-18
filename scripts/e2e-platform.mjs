@@ -338,6 +338,32 @@ assert(connected.items.some((x) => x.clientId === pub.app.clientId), "apps conec
 await owner("DELETE", `/v1/oauth/connected-apps/${pub.app.clientId}`);
 res = await owner("GET", "/v1/envelopes", undefined, { bearer: r.body.access_token, raw: true });
 assert(res.status === 200, "desconectar otra app no afecta a la app de servicio");
+
+// Un código emitido antes de que la app cambie no da tokens con lo que se le quitó: el PATCH revoca los tokens
+// vigentes, pero el código (vale 10 min) seguía canjeándose con el scope o la URI de redirección quitados.
+const pubCode = async () => {
+  const p2 = pkcePair();
+  const d2 = await owner("POST", "/v1/oauth/authorize/decision", {
+    response_type: "code",
+    client_id: pub.app.clientId,
+    redirect_uri: REDIRECT,
+    scope: "envelopes:read",
+    code_challenge: p2.challenge,
+    code_challenge_method: "S256",
+    approve: true,
+  });
+  return { code: new URL(d2.redirectTo).searchParams.get("code"), verifier: p2.verifier };
+};
+let pc = await pubCode();
+await owner("PATCH", `/v1/oauth/apps/${pub.app.id}`, { scopes: ["templates:read"] });
+r = await oauthPost("/oauth/token", { grant_type: "authorization_code", code: pc.code, redirect_uri: REDIRECT, code_verifier: pc.verifier, client_id: pub.app.clientId });
+assert(r.status === 400 && r.body.error === "invalid_grant", `código con un scope que la app ya no tiene → invalid_grant (${r.status} ${JSON.stringify(r.body)})`);
+await owner("PATCH", `/v1/oauth/apps/${pub.app.id}`, { scopes: ["envelopes:read"] });
+pc = await pubCode();
+await owner("PATCH", `/v1/oauth/apps/${pub.app.id}`, { redirectUris: ["http://localhost:5998/otra"] });
+r = await oauthPost("/oauth/token", { grant_type: "authorization_code", code: pc.code, redirect_uri: REDIRECT, code_verifier: pc.verifier, client_id: pub.app.clientId });
+assert(r.status === 400 && r.body.error === "invalid_grant", `código con una URI de redirección quitada → invalid_grant (${r.status} ${JSON.stringify(r.body)})`);
+ok("un código emitido antes de quitarle a la app un scope o una URI de redirección ya no se canjea");
 ok("cliente público con PKCE, rotación de secreto y desconexión de apps");
 
 // ═════════════════════════ 2. Slack / Teams ═════════════════════════

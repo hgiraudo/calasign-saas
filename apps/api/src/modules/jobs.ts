@@ -20,7 +20,7 @@ import { runAutomaticReminders } from "./reminders";
 import { purgeExpiredEnvelopes } from "./retention";
 import { getLogoForPdf, getTenantBranding } from "./branding";
 import { handlePlatformJob } from "./platform-fanout";
-import { tenantBaseUrl } from "./custom-domains";
+import { recheckVerifiedDomains, tenantBaseUrl } from "./custom-domains";
 import { dataSweep } from "./data";
 import { identityForCertificate } from "./identity/kyc";
 import { closeStaleCheckouts, paymentsForCertificate, refundPaymentsOnClosedEnvelopes } from "./billing/payments";
@@ -473,6 +473,7 @@ export async function sweep(d: Deps) {
     ["ai", () => runAiSweep(d)],
     ["agreements", () => agreementsSweep(d)],
     ["data", () => dataSweep(d)],
+    ["domains", () => recheckVerifiedDomains(d)],
   ];
   for (const [name, step] of steps) {
     try {

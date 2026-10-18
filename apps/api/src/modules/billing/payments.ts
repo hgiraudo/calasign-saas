@@ -236,14 +236,15 @@ export async function refundPaymentsOnClosedEnvelopes(d: { db: Db; log: { error:
         await mpRefundPayment(p.provider_payment_id, `refund:${p.id}`);
       }
       // mock: no hay dinero que devolver.
-      // Marca y evento juntos, con el sobre bloqueado (appendEvent lo exige para numerar la cadena): sin el bloqueo,
-      // un evento simultáneo del mismo sobre tomaba el mismo número, el de reembolso fallaba (UNIQUE) y, con el pago
-      // ya marcado "refunded", no se reintentaba nunca: la evidencia no registraba el reembolso.
+      // Estado y evento juntos, con el sobre bloqueado: sin el bloqueo, un evento simultáneo del mismo sobre tomaba el
+      // mismo número, el de reembolso fallaba (UNIQUE) y, con el pago ya marcado "refunded", no se reintentaba nunca:
+      // la evidencia quedaba sin payment.refunded. Si la transacción falla, el próximo barrido repite el reembolso con
+      // la misma clave de idempotencia (el proveedor no devuelve dos veces).
       await d.db.tx(async (t) => {
         await lockEnvelope(t, p.tenant_id, p.envelope_id);
         const marked = await t.query(
           `UPDATE envelope_payments SET status = 'refunded', refunded_at = now(), refund_error = NULL, updated_at = now()
-            WHERE id = $1 AND refunded_at IS NULL RETURNING id`,
+            WHERE id = $1 AND status = 'paid' AND refunded_at IS NULL RETURNING id`,
           [p.id],
         );
         if (!marked.length) return;
@@ -473,7 +474,10 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
   type M = { Params: { id: string }; Querystring: { n?: string } };
   async function loadMock(id: string, nonce: string | undefined) {
     if (!config.billing.mockEnabled) throw notFound("Pago");
-    const p = await s.db.one<any>(`SELECT p.*, e.subject FROM envelope_payments p JOIN envelopes e ON e.id = p.envelope_id WHERE p.id = $1 AND p.provider = 'mock'`, [id]);
+    const p = await s.db.one<any>(
+      `SELECT p.*, e.subject, e.status AS envelope_status FROM envelope_payments p JOIN envelopes e ON e.id = p.envelope_id WHERE p.id = $1 AND p.provider = 'mock'`,
+      [id],
+    );
     if (!p || !nonce || !p.checkout_nonce_hash || sha256Hex(nonce) !== p.checkout_nonce_hash) throw notFound("Pago");
     return p;
   }
@@ -504,6 +508,8 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
 
   o.post<M & { Body: { outcome?: string } }>("/v1/payments/mock/checkout/:id/complete", async (req, reply) => {
     const p = await loadMock(req.params.id, req.query.n);
+    // Como los proveedores reales después de cerrarse el checkout: un sobre anulado, rechazado o vencido no se paga.
+    if (CLOSED_STATUSES.includes(p.envelope_status)) throw conflict("envelope_closed", "El sobre ya no admite pagos");
     const outcome = (req.body as any)?.outcome ?? "paid";
     if (outcome === "paid") {
       await markPaymentPaid(s.db, p.id, { providerPaymentId: `mock_pay_${p.id.slice(-8)}`, receipt: { provider: "mock", simulated: true } });

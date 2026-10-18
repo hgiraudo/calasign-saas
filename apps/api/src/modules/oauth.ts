@@ -243,6 +243,15 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
             if (new Date(code.expires_at) <= new Date()) throw new OAuthError(400, "invalid_grant", "El código venció");
             if (code.redirect_uri !== body.redirect_uri) throw new OAuthError(400, "invalid_grant", "redirect_uri no coincide");
             if (pkceS256(body.code_verifier) !== code.code_challenge) throw new OAuthError(400, "invalid_grant", "code_verifier no coincide (PKCE)");
+            // La app puede haber cambiado desde que se emitió el código (vale 10 minutos): si un administrador le quitó
+            // scopes o una URI de redirección (p. ej. una comprometida), el PATCH revoca los tokens vigentes, pero un
+            // código sin canjear seguía dando tokens con lo quitado.
+            if (!(c.redirect_uris as string[]).includes(code.redirect_uri)) {
+              throw new OAuthError(400, "invalid_grant", "La URI de redirección del código ya no está registrada para la aplicación");
+            }
+            if ((code.scopes as string[]).some((x) => !(c.scopes as string[]).includes(x))) {
+              throw new OAuthError(400, "invalid_grant", "La aplicación ya no tiene habilitados todos los scopes autorizados: hay que volver a autorizarla");
+            }
             await t.query(`UPDATE oauth_authorization_codes SET used_at = now() WHERE code_hash = $1`, [codeHash]);
             await userGrantAllowed(t, { tenantId: code.tenant_id, userId: code.user_id, authMethod: code.auth_method, ssoTenantId: code.sso_tenant_id, issuedAt: new Date(code.created_at) });
             return issueTokens(t, {

@@ -20,3 +20,4 @@ export * from "./certcheck";
 export { assertEmbeddableImage } from "./images";
 export { changesAfterRevision, type ChangesAfter } from "./revisions";
 export * from "./stream-budget";
+export { MAX_TEXT_STREAM_BYTES, textStreamBytes, assertTextReadable } from "./text-budget";

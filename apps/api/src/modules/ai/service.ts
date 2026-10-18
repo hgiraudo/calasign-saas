@@ -1,6 +1,6 @@
 // Reglas comunes de la IA: opt-in por organización, aviso de tratamiento de datos, presupuesto mensual
 // de tokens, registro de consumo, evidencia de cada interacción y texto de los documentos.
-import { extractPdfText } from "@calasign/pdf";
+import { extractPdfText, InvalidPdfError } from "@calasign/pdf";
 import {
   AI_NOTICE_VERSION,
   type AiFeature,
@@ -146,16 +146,26 @@ export async function loadEnvelopeDocs(db: Db, blobs: BlobStore, envelopeId: str
   const out: DocText[] = [];
   const purged = rows.filter((r) => r.purged_at);
   for (const r of rows.filter((x) => !x.purged_at)) {
-    out.push({ id: r.id, name: r.name, pages: await extractPdfText(await blobs.get(r.storage_key)) });
+    out.push({ id: r.id, name: r.name, pages: await readText(await blobs.get(r.storage_key)) });
   }
   if (purged.length && !opts.documentId) {
     const signed = await db.one<any>(
       `SELECT f.storage_key FROM envelopes e JOIN files f ON f.id = e.signed_file_id WHERE e.id = $1 AND f.purged_at IS NULL`,
       [envelopeId],
     );
-    if (signed) out.push({ id: purged[0].id, name: "documento-firmado.pdf", pages: await extractPdfText(await blobs.get(signed.storage_key)) });
+    if (signed) out.push({ id: purged[0].id, name: "documento-firmado.pdf", pages: await readText(await blobs.get(signed.storage_key)) });
   }
   return out;
+}
+
+/** Texto de un PDF; uno demasiado pesado para leer (tope de pdf.js) es 422, no un error interno. */
+async function readText(pdf: Uint8Array) {
+  try {
+    return await extractPdfText(pdf);
+  } catch (e) {
+    if (e instanceof InvalidPdfError) throw new AppError(422, "pdf_too_heavy", e.message);
+    throw e;
+  }
 }
 
 export function sentSummary(docs: DocText[], text: string): AiSentSummary {

@@ -1,7 +1,7 @@
 // Búsqueda de textos ancla en un PDF (para ubicar campos por contenido, p. ej. "\\firma1\\").
 // Devuelve rectángulos en el espacio "como se ve la página" (CropBox + rotación, origen arriba a la
 // izquierda, en puntos), el mismo que usa la web con pdf.js y que guardan las coordenadas de los campos.
-import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
+import { readPdfTextPages, toViewport } from "./pdfjs-run";
 
 export interface AnchorMatch {
   /** Página 0-based. */
@@ -25,34 +25,21 @@ interface TextItem {
 export async function findTextAnchors(pdf: Uint8Array, text: string, opts: { caseSensitive?: boolean } = {}): Promise<AnchorMatch[]> {
   const caseSensitive = opts.caseSensitive ?? true;
   const needle = caseSensitive ? text : text.toLowerCase();
-  const doc = await getDocument({
-    data: new Uint8Array(pdf), // pdf.js transfiere (y vacía) el buffer que recibe
-    isEvalSupported: false,
-    disableFontFace: true,
-    useSystemFonts: false,
-    verbosity: 0,
-  }).promise;
+  // pdf.js corre en un worker con tiempo y memoria acotados (ver pdfjs-run.ts).
+  const { pages } = await readPdfTextPages(pdf, { maxPages: Number.MAX_SAFE_INTEGER });
   const out: AnchorMatch[] = [];
-  try {
-    for (let p = 1; p <= doc.numPages; p++) {
-      const page = await doc.getPage(p);
-      const vp = page.getViewport({ scale: 1 });
-      const content = await page.getTextContent();
-      for (const raw of content.items) {
-        const item = raw as TextItem;
-        if (!item.str || item.width === 0) continue;
-        const hay = caseSensitive ? item.str : item.str.toLowerCase();
-        let idx = hay.indexOf(needle);
-        while (idx !== -1) {
-          out.push({ page: p - 1, ...boxFor(item, idx, needle.length, vp), pageWidth: vp.width, pageHeight: vp.height });
-          idx = hay.indexOf(needle, idx + needle.length);
-        }
+  pages.forEach((pg, p) => {
+    const vp = { convertToViewportPoint: (x: number, y: number) => toViewport(pg.transform, x, y) };
+    for (const item of pg.items) {
+      if (!item.str || item.width === 0) continue;
+      const hay = caseSensitive ? item.str : item.str.toLowerCase();
+      let idx = hay.indexOf(needle);
+      while (idx !== -1) {
+        out.push({ page: p, ...boxFor(item, idx, needle.length, vp), pageWidth: pg.width, pageHeight: pg.height });
+        idx = hay.indexOf(needle, idx + needle.length);
       }
-      page.cleanup();
     }
-  } finally {
-    await doc.destroy();
-  }
+  });
   return out;
 }
 

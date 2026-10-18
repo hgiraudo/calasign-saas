@@ -21,6 +21,7 @@ import { getLogoForPdf, getTenantBranding } from "./branding";
 import { handlePlatformJob } from "./platform-fanout";
 import { tenantBaseUrl } from "./custom-domains";
 import { identityForCertificate } from "./identity/kyc";
+import { runAiSweep } from "./ai";
 
 interface Deps {
   db: Db;
@@ -333,6 +334,7 @@ export async function sweep(d: Deps) {
   await requeueStuckJobs(d.db);
   await runAutomaticReminders(d.db);
   await purgeExpiredEnvelopes(d);
+  await runAiSweep(d);
   const expired = await d.db.query<any>(`SELECT id, tenant_id FROM envelopes WHERE status = 'sent' AND expires_at < now() LIMIT 100`);
   for (const e of expired) {
     await d.db.tx(async (t) => {

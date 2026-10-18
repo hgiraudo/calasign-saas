@@ -8,6 +8,7 @@ import { enqueue } from "../infra/queue";
 import type { BlobStore } from "../infra/storage";
 import { EVIDENCE_TO_NOTIFICATION, deliverNotificationJob } from "./notify-integrations";
 import { exportEnvelopeJob, queueStorageExports } from "./storage-export";
+import { handleCrmJob, queueCrmEvents } from "./crm";
 
 export async function queuePlatformFanout(db: Db, tenantId: string, envelopeId: string, evidenceType: string, seq: number, recipientId: string | null) {
   const event = EVIDENCE_TO_NOTIFICATION[evidenceType];
@@ -21,13 +22,16 @@ export async function queuePlatformFanout(db: Db, tenantId: string, envelopeId: 
     }
   }
   if (evidenceType === "envelope.completed") await queueStorageExports(db, tenantId, envelopeId);
+  await queueCrmEvents(db, tenantId, envelopeId, evidenceType);
 }
 
 type PlatformJob =
   | { kind: "notify"; integrationId: string; envelopeId: string; event: NotificationEvent; recipientId: string | null }
-  | { kind: "export"; connectionId: string; envelopeId: string };
+  | { kind: "export"; connectionId: string; envelopeId: string }
+  | { kind: "crm"; runId: string };
 
 export async function handlePlatformJob(d: { db: Db; blobs: BlobStore }, p: PlatformJob) {
   if (p.kind === "notify") return deliverNotificationJob(d.db, p);
   if (p.kind === "export") return exportEnvelopeJob(d.db, d.blobs, p);
+  if (p.kind === "crm") return handleCrmJob(d, p);
 }

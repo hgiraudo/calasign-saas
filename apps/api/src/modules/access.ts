@@ -239,6 +239,13 @@ export async function enforceRoutePolicy(db: Db, req: FastifyRequest, a: AuthCon
   if (/^\/v1\/(agreements|agreement-views|agreement-fields|document-templates|clauses|workflows|workflow-runs|negotiations)(\/|$)/.test(url)) {
     return requirePerm(a, "envelopes:create");
   }
+  // CRM y ERP: enviar desde un registro y vincular sobres crea/opera sobres; conexiones y mapeos son ajustes.
+  if (url.startsWith("/v1/crm/")) {
+    if (url.startsWith("/v1/crm/oauth/") && url.endsWith("/callback")) return;
+    if (url === "/v1/crm/mappings/:id/send" || url.startsWith("/v1/crm/links")) return requirePerm(a, "envelopes:create");
+    if (isRead && (url.startsWith("/v1/crm/runs") || url === "/v1/crm/providers")) return;
+    return requirePerm(a, "settings:manage");
+  }
   // Reportes: estadísticas de toda la organización.
   if (url.startsWith("/v1/reports")) return requirePerm(a, "envelopes:view_all");
   if (/^\/v1\/(members|roles|groups|invitations)(\/|$)/.test(url) && !isRead) return requirePerm(a, "members:manage");

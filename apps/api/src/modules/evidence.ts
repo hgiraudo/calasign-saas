@@ -96,20 +96,26 @@ export async function evidenceRoutes(app: FastifyInstance, s: Services) {
   });
 
   app.delete<{ Params: { id: string } }>("/v1/certificates/:id", { preHandler: auth }, async (req, reply) => {
-    // Un sobre que ya se está cerrando con sello de empresa necesita la clave: borrarla lo dejaría trabado.
-    const inUse = await s.db.one<any>(
-      `SELECT count(*)::int AS n FROM envelopes WHERE company_seal_certificate_id = $1 AND tenant_id = $2 AND status IN ('finalizing','awaiting_certificates')`,
-      [req.params.id, req.auth!.tenantId],
-    );
-    if (inUse?.n) throw conflict("certificate_in_use", `El certificado sella ${inUse.n} sobre(s) que se están finalizando: esperá a que terminen`);
-    // Borrado lógico; el material de clave se elimina de inmediato.
-    const r = await s.db.query(
-      `UPDATE tenant_certificates SET deleted_at = now(), key_ciphertext = NULL, key_wrapped = NULL
-       WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL RETURNING id, name`,
-      [req.params.id, req.auth!.tenantId],
-    );
-    if (!r.length) throw notFound("Certificado");
-    await s.db.query(`UPDATE envelopes SET company_seal_certificate_id = NULL WHERE company_seal_certificate_id = $1 AND status IN ('draft','sent')`, [req.params.id]);
+    // Un sobre que ya se está cerrando con sello de empresa necesita la clave: borrarla lo dejaría trabado. Se bloquean
+    // los sobres que lo usan (el pase sent → finalizing toma el mismo lock), así ninguno empieza a finalizar en el medio.
+    const r = await s.db.tx(async (t) => {
+      const users = await t.query<any>(
+        `SELECT id, status FROM envelopes WHERE company_seal_certificate_id = $1 AND tenant_id = $2
+           AND status IN ('draft','sent','finalizing','awaiting_certificates') FOR UPDATE`,
+        [req.params.id, req.auth!.tenantId],
+      );
+      const closing = users.filter((x) => x.status === "finalizing" || x.status === "awaiting_certificates").length;
+      if (closing) throw conflict("certificate_in_use", `El certificado sella ${closing} sobre(s) que se están finalizando: esperá a que terminen`);
+      // Borrado lógico; el material de clave se elimina de inmediato.
+      const del = await t.query<any>(
+        `UPDATE tenant_certificates SET deleted_at = now(), key_ciphertext = NULL, key_wrapped = NULL
+         WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL RETURNING id, name`,
+        [req.params.id, req.auth!.tenantId],
+      );
+      if (!del.length) throw notFound("Certificado");
+      await t.query(`UPDATE envelopes SET company_seal_certificate_id = NULL WHERE company_seal_certificate_id = $1 AND status IN ('draft','sent')`, [req.params.id]);
+      return del;
+    });
     await auditFromRequest(s.db, req, req.auth!, "certificate.deleted", { targetType: "certificate", targetId: req.params.id, data: { name: r[0].name } });
     return reply.code(204).send();
   });

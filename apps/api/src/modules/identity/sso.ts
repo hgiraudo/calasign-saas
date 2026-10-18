@@ -110,16 +110,25 @@ function allowedUrl(u: string): boolean {
 /**
  * Verifica que la sesión pueda usarse en la organización:
  *  - sesión SSO: solo en la organización que la abrió;
- *  - organización con SSO obligatorio: solo sesiones SSO, salvo propietarios (acceso de emergencia).
+ *  - organización con SSO obligatorio: solo sesiones SSO, salvo propietarios (acceso de emergencia);
+ *  - membresía creada por SSO o SCIM: sin sesiones con contraseña hasta que el usuario la restablezca (ver
+ *    0029_r11_identity: si no, quien registró una cuenta con el correo de otra persona entraría con su contraseña a la
+ *    organización de esa persona apenas el SSO o SCIM la vinculan).
  */
 export async function assertSessionAllowed(
   db: Db,
-  s: { authMethod: string; ssoTenantId: string | null },
+  s: { authMethod: string; ssoTenantId: string | null; userId?: string | null },
   tenantId: string,
   role: string | null,
 ) {
   if (s.authMethod === "sso" && s.ssoTenantId !== tenantId) {
     throw new AppError(401, "sso_reauth_required", "Esta sesión de inicio único es de otra organización: volvé a ingresar");
+  }
+  if (s.authMethod !== "sso" && s.userId) {
+    const m = await db.one<any>(`SELECT password_allowed FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [tenantId, s.userId]);
+    if (m && m.password_allowed === false) {
+      throw new AppError(401, "password_not_allowed", "En esta organización ingresá con inicio de sesión único (SSO) o restablecé tu contraseña");
+    }
   }
   if (s.authMethod !== "sso" && role !== "owner") {
     const c = await db.one<any>(`SELECT enforce, enabled FROM sso_configs WHERE tenant_id = $1`, [tenantId]);
@@ -130,21 +139,27 @@ export async function assertSessionAllowed(
 /** Para authenticate(): sesión de navegador → aplica la política y exime del alta obligatoria de 2FA a las sesiones SSO. */
 export async function applySessionSsoPolicy(db: Db, a: AuthContext, session: { auth_method?: string; sso_tenant_id?: string | null }) {
   const authMethod = session.auth_method ?? "password";
-  await assertSessionAllowed(db, { authMethod, ssoTenantId: session.sso_tenant_id ?? null }, a.tenantId, a.access?.role ?? null);
+  await assertSessionAllowed(db, { authMethod, ssoTenantId: session.sso_tenant_id ?? null, userId: a.userId }, a.tenantId, a.access?.role ?? null);
   if (authMethod === "sso" && a.access) a.access.twoFactorSetupRequired = false; // el IdP gestiona el segundo factor
 }
 
 /** Para el ingreso con contraseña: primera organización del usuario que admite contraseña. */
-export async function passwordLoginTenant(db: Db, userId: string): Promise<{ tenantId: string } | { ssoRequired: { slug: string } } | null> {
+export async function passwordLoginTenant(
+  db: Db,
+  userId: string,
+): Promise<{ tenantId: string } | { ssoRequired: { slug: string } } | { passwordResetRequired: true } | null> {
   const rows = await db.query<any>(
-    `SELECT m.tenant_id, m.role, t.slug, c.enabled, c.enforce FROM memberships m JOIN tenants t ON t.id = m.tenant_id
+    `SELECT m.tenant_id, m.role, m.password_allowed, t.slug, c.enabled, c.enforce FROM memberships m JOIN tenants t ON t.id = m.tenant_id
      LEFT JOIN sso_configs c ON c.tenant_id = m.tenant_id WHERE m.user_id = $1 ORDER BY m.created_at`,
     [userId],
   );
   if (!rows.length) return null;
-  const ok = rows.find((r) => !(r.enabled && r.enforce) || r.role === "owner");
+  const ok = rows.find((r) => r.password_allowed !== false && (!(r.enabled && r.enforce) || r.role === "owner"));
   if (ok) return { tenantId: ok.tenant_id };
-  return { ssoRequired: { slug: rows[0]?.slug ?? "" } };
+  // Solo quedan organizaciones que no admiten esta contraseña: por SSO si lo tienen; si no, restableciéndola.
+  const sso = rows.find((r) => r.enabled);
+  if (sso) return { ssoRequired: { slug: sso.slug ?? "" } };
+  return { passwordResetRequired: true };
 }
 
 // ───────────────────────────── OIDC ─────────────────────────────
@@ -340,7 +355,13 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
           await t.query(`INSERT INTO users (id, email, name, password_hash, locale) VALUES ($1,$2,$3,'sso-only','es')`, [id, email, name?.trim() || email.split("@")[0]]);
           user = { id, name };
         }
-        await t.query(`INSERT INTO memberships (tenant_id, user_id, role) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`, [tenantId, user.id, c.jit_role]);
+        // Sin contraseña en esta organización: si la cuenta ya existía, su contraseña pudo elegirla otra persona
+        // (el registro no verifica el correo). Restablecerla (que prueba el control del correo) la habilita.
+        await t.query(`INSERT INTO memberships (tenant_id, user_id, role, password_allowed) VALUES ($1,$2,$3,false) ON CONFLICT DO NOTHING`, [
+          tenantId,
+          user.id,
+          c.jit_role,
+        ]);
       });
       member = { role: c.jit_role };
       await recordAudit(s.db, {

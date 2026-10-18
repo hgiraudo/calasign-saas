@@ -113,16 +113,21 @@ async function checkSecondFactor(db: Db, userId: string, code: string): Promise<
 
 export const MAX_FAILED_LOGINS = 10;
 
-/** Intentos fallidos de los últimos 15 minutos (los registra la auditoría, una fila por organización del usuario). */
+/**
+ * Intentos fallidos de los últimos 15 minutos. La auditoría registra una fila por organización del usuario: se cuentan
+ * las de su primera organización. Sin organizaciones (p. ej. lo quitaron de la única que tenía), cada fallo queda en
+ * una sola fila (la de la organización que lo invitó) y se cuentan todas: si no, el bloqueo no lo alcanzaba nunca.
+ */
 export async function recentFailedLogins(db: Db, userId: string): Promise<number> {
   const r = await db.one<{ n: number }>(
     `WITH t AS (SELECT tenant_id FROM memberships WHERE user_id = $1::uuid ORDER BY created_at LIMIT 1)
      SELECT count(*)::int AS n FROM account_audit_log
-     WHERE tenant_id = (SELECT tenant_id FROM t)
+     WHERE (tenant_id = (SELECT tenant_id FROM t) OR NOT EXISTS (SELECT 1 FROM t))
        AND action = 'auth.login_failed' AND actor_id = $1::text AND occurred_at > now() - interval '15 minutes'
        -- Restablecer la contraseña (no solo pedirlo) desbloquea la cuenta.
        AND occurred_at > COALESCE((SELECT max(occurred_at) FROM account_audit_log
-                                   WHERE tenant_id = (SELECT tenant_id FROM t) AND action = 'user.password_reset' AND target_id = $1::text), '-infinity')`,
+                                   WHERE action = 'user.password_reset' AND target_id = $1::text
+                                     AND (tenant_id = (SELECT tenant_id FROM t) OR NOT EXISTS (SELECT 1 FROM t))), '-infinity')`,
     [userId],
   );
   return r?.n ?? 0;
@@ -250,7 +255,7 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     if (!cookie) throw forbidden("Solo para sesiones de usuario");
     const sess = await s.db.one<any>(`SELECT user_id, auth_method, sso_tenant_id FROM sessions WHERE token_hash = $1`, [sha256Hex(cookie)]);
     if (!sess || sess.user_id !== a.userId) throw forbidden("Solo para sesiones de usuario");
-    await assertSessionAllowed(s.db, { authMethod: sess?.auth_method ?? "password", ssoTenantId: sess?.sso_tenant_id ?? null }, tenantId, m.role);
+    await assertSessionAllowed(s.db, { authMethod: sess?.auth_method ?? "password", ssoTenantId: sess?.sso_tenant_id ?? null, userId: a.userId }, tenantId, m.role);
     await s.db.query(`UPDATE sessions SET tenant_id = $2 WHERE token_hash = $1`, [sha256Hex(cookie), tenantId]);
     await recordAudit(s.db, { tenantId, action: "auth.tenant_switched", actor: { type: "user", id: a.userId, label: a.actor.label }, ...clientInfo(req), data: { from: a.tenantId } });
     return meResponse(s.db, a.userId, tenantId);

@@ -96,6 +96,10 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
     // SSO obligatorio (Fase 5): se entra a la primera organización que admite contraseña.
     const pick = await passwordLoginTenant(s.db, u.id);
     if (!pick) throw unauthorized();
+    if ("passwordResetRequired" in pick) {
+      // Sus organizaciones la sumaron por SCIM o SSO (sin SSO habilitado ahora): la contraseña se habilita al restablecerla.
+      throw new AppError(403, "password_reset_required", "Para ingresar con contraseña, restablecela desde \"Olvidé mi contraseña\"");
+    }
     if ("ssoRequired" in pick) {
       throw new AppError(403, "sso_required", "Tu organización exige ingresar con inicio de sesión único (SSO)", {
         startUrl: `/v1/auth/sso/start?org=${encodeURIComponent(pick.ssoRequired.slug)}&login_hint=${encodeURIComponent(input.email)}`,
@@ -145,6 +149,9 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
       );
       if (!row) return null;
       await t.query(`UPDATE users SET password_hash = $2 WHERE id = $1`, [row.user_id, pw]);
+      // Restablecerla prueba que controla el correo: la contraseña vale también en las organizaciones que lo sumaron
+      // por SSO o SCIM (ver 0029_r11_identity).
+      await t.query(`UPDATE memberships SET password_allowed = true WHERE user_id = $1 AND NOT password_allowed`, [row.user_id]);
       // Se cierran todas las sesiones abiertas: si alguien tenía la contraseña vieja, queda afuera.
       await t.query(`DELETE FROM sessions WHERE user_id = $1`, [row.user_id]);
       await t.query(`UPDATE password_resets SET used_at = now() WHERE user_id = $1 AND used_at IS NULL`, [row.user_id]);

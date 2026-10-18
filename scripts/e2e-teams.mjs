@@ -323,6 +323,21 @@ if (/^http:\/\/(localhost|127\.0\.0\.1)/.test(BASE)) {
   if (dr.status !== 429 || drBody.error?.code !== "too_many_attempts" || doraGuess.cookie) throw new Error(`invitación con la cuenta bloqueada: ${dr.status} ${JSON.stringify(drBody)}`);
   await new Client("dora-login").api("POST", "/v1/auth/login", { email: doraEmail, password: "clave-de-dora-123" }, 429);
   step("invitación: las contraseñas incorrectas al aceptar cuentan para el bloqueo de la cuenta (429, también en el login)");
+
+  // Lo mismo para una cuenta que ya no pertenece a ninguna organización (la quitaron de la única que tenía): el
+  // bloqueo no puede depender de "su primera organización".
+  const evaEmail = `eva+${stamp}@example.com`;
+  const invEva = await owner.api("POST", "/v1/invitations", { email: evaEmail, role: "member" });
+  const evaMe = await new Client("eva").api("POST", `/v1/invite/${invEva.acceptUrl.split("/invite/")[1]}/accept`, { name: "Eva", password: "clave-de-eva-1234" });
+  await owner.api("DELETE", `/v1/members/${evaMe.user.id}`, undefined, 204);
+  const invEva2 = await owner.api("POST", "/v1/invitations", { email: evaEmail, role: "member" });
+  const evaToken = invEva2.acceptUrl.split("/invite/")[1];
+  const evaGuess = new Client("eva-guess");
+  for (let i = 0; i < 10; i++) await evaGuess.api("POST", `/v1/invite/${evaToken}/accept`, { password: `incorrecta-${i}` }, 401);
+  const er = await evaGuess.raw("POST", `/v1/invite/${evaToken}/accept`, { password: "clave-de-eva-1234" });
+  const erBody = await er.json();
+  if (er.status !== 429 || erBody.error?.code !== "too_many_attempts" || evaGuess.cookie) throw new Error(`invitación de una cuenta sin organizaciones: ${er.status} ${JSON.stringify(erBody)}`);
+  step("invitación: el bloqueo vale también para una cuenta sin organizaciones (429)");
 }
 
 // ───────────────────────────── 7. Auditoría ─────────────────────────────

@@ -92,7 +92,9 @@ export function normalizeIdNumber(s: string): string {
 export function matchesIdDocument(declared: string, candidates: IdentityCandidate[]): IdentityCandidate | null {
   const want = normalizeIdNumber(declared);
   if (want.length < 5) return null;
-  for (const c of candidates) {
+  // Primero la fuente más fuerte: OIDs de ICP-Brasil, después serialNumber, al final el CN.
+  const rank: Record<IdentityCandidate["source"], number> = { "icp-brasil-cpf": 0, "icp-brasil-cnpj": 0, serialNumber: 1, commonName: 2 };
+  for (const c of [...candidates].sort((a, b) => rank[a.source] - rank[b.source])) {
     if (normalizeIdNumber(c.value) === want) return c;
     // Grupos de dígitos dentro del valor (CN "NOMBRE:CPF", serialNumber con prefijo ETSI "IDCCO-…", "PNOPE-…").
     for (const g of c.value.match(/\d[\d.\-\s]*\d/g) ?? []) {

@@ -111,6 +111,23 @@ async function checkSecondFactor(db: Db, userId: string, code: string): Promise<
   return used.length ? "recovery" : null;
 }
 
+export const MAX_FAILED_LOGINS = 10;
+
+/** Intentos fallidos de los últimos 15 minutos (los registra la auditoría, una fila por organización del usuario). */
+export async function recentFailedLogins(db: Db, userId: string): Promise<number> {
+  const r = await db.one<{ n: number }>(
+    `WITH t AS (SELECT tenant_id FROM memberships WHERE user_id = $1::uuid ORDER BY created_at LIMIT 1)
+     SELECT count(*)::int AS n FROM account_audit_log
+     WHERE tenant_id = (SELECT tenant_id FROM t)
+       AND action = 'auth.login_failed' AND actor_id = $1::text AND occurred_at > now() - interval '15 minutes'
+       -- Restablecer la contraseña (no solo pedirlo) desbloquea la cuenta.
+       AND occurred_at > COALESCE((SELECT max(occurred_at) FROM account_audit_log
+                                   WHERE tenant_id = (SELECT tenant_id FROM t) AND action = 'user.password_reset' AND target_id = $1::text), '-infinity')`,
+    [userId],
+  );
+  return r?.n ?? 0;
+}
+
 // ───────────────────────────── Helpers de roles ─────────────────────────────
 
 async function resolveRole(db: Db, tenantId: string, input: { role: string; roleId?: string | null }) {
@@ -827,10 +844,21 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
       await s.db.query(`DELETE FROM login_challenges WHERE token_hash = $1`, [ch.token_hash]);
       throw new AppError(401, "too_many_attempts", "Demasiados intentos: volvé a ingresar tu contraseña");
     }
+    // El bloqueo por cuenta también corta los desafíos ya abiertos: si no, alguien con la contraseña junta muchos
+    // desafíos antes de fallar y prueba 5 códigos en cada uno.
+    if ((await recentFailedLogins(s.db, ch.user_id)) >= MAX_FAILED_LOGINS) {
+      await s.db.query(`DELETE FROM login_challenges WHERE token_hash = $1`, [ch.token_hash]);
+      throw new AppError(429, "too_many_attempts", "Demasiados intentos fallidos. Probá de nuevo en unos minutos o restablecé tu contraseña.");
+    }
     const method = await checkSecondFactor(s.db, ch.user_id, input.code);
     const u = await s.db.one<any>(`SELECT email FROM users WHERE id = $1`, [ch.user_id]);
     if (!method) {
-      await recordAudit(s.db, { tenantId: ch.tenant_id, action: "auth.login_failed", actor: { type: "anonymous", id: ch.user_id, label: u?.email }, data: { reason: "bad_2fa_code" }, ...clientInfo(req) });
+      // Se registra en todas sus organizaciones (como la contraseña incorrecta): el bloqueo se cuenta en la primera,
+      // que no siempre es la del desafío (p. ej. si la primera exige SSO).
+      const tenants = await s.db.query<any>(`SELECT tenant_id FROM memberships WHERE user_id = $1`, [ch.user_id]);
+      for (const m of tenants.length ? tenants : [{ tenant_id: ch.tenant_id }]) {
+        await recordAudit(s.db, { tenantId: m.tenant_id, action: "auth.login_failed", actor: { type: "anonymous", id: ch.user_id, label: u?.email }, data: { reason: "bad_2fa_code" }, ...clientInfo(req) });
+      }
       throw new AppError(401, "invalid_code", "Código incorrecto");
     }
     // El desafío se canjea una sola vez.

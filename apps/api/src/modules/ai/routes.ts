@@ -35,6 +35,7 @@ import {
   callModel,
   disclaimerFor,
   getAiSettings,
+  invalidMetadataDates,
   loadEnvelopeDocs,
   previewText,
   recordAiUse,
@@ -226,6 +227,8 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
   app.put<P>("/v1/envelopes/:id/ai/metadata", { preHandler: auth }, async (req) => {
     const { a, e } = await envelopeOf(s, req);
     const input = PutContractMetadataInput.parse(req.body);
+    const bad = invalidMetadataDates(input.metadata);
+    if (bad.length) throw badRequest("invalid_date", `Fecha inválida: ${bad.join(", ")} (tiene que existir, en formato AAAA-MM-DD)`);
     await saveMetadata(s.db, e.id, a.tenantId, input.metadata, {}, "manual");
     await s.db.tx(async (t) => {
       await t.query(`SELECT id FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);

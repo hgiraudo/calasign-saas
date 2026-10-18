@@ -227,6 +227,13 @@ assert(meta.metadata.parties.length === 2 && meta.metadata.noticePeriodDays === 
 assert(meta.renewalAlertAt && meta.renewalAlertAt < "2027-01-31", `alerta programada antes del vencimiento (${meta.renewalAlertAt})`);
 step(`metadatos extraídos al completarse; alerta de renovación programada para ${meta.renewalAlertAt}`);
 
+// Una fecha que no existe se rechaza (JS la correría al 3 de marzo y la alerta se programaría sobre esa fecha).
+await expectStatus(
+  sender("PUT", `/v1/envelopes/${envelope.id}/ai/metadata`, { metadata: { ...meta.metadata, expiryDate: "2027-02-31" } }),
+  400,
+  "vencimiento inexistente rechazado",
+);
+
 // Edición manual con un vencimiento cercano → la alerta queda para hoy y el sweeper la envía.
 const soon = new Date(Date.now() + 10 * 86400_000).toISOString().slice(0, 10);
 meta = await sender("PUT", `/v1/envelopes/${envelope.id}/ai/metadata`, { metadata: { ...meta.metadata, expiryDate: soon, renewalDate: null, noticePeriodDays: null, autoRenewal: false } });

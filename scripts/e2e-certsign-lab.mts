@@ -4,6 +4,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { startLab } from "@calasign/pdf/lab";
+import { parseCert, serialHex } from "@calasign/pdf";
 
 const dir = process.argv[2];
 if (!dir) throw new Error("uso: e2e-certsign-lab.mts <dir>");
@@ -24,6 +25,7 @@ async function p12(name: string, cn: string, opts: Parameters<typeof pki.issue>[
     "-out", join(dir, `${name}.p12`),
     "-passout", "pass:clave-del-titular",
   ]);
+  return id;
 }
 
 // Firmante 1 (Perú): DNI en serialNumber, RSA. Firmante 3 (Brasil): CPF en el otherName de ICP-Brasil, ECDSA P-256.
@@ -31,6 +33,8 @@ await p12("peru", "JUAN PEREZ", { serialNumber: "PNOPE-12345678" });
 await p12("brasil", "MARIA DA SILVA:12345678909", { icpBrasilCpf: "12345678909", key: "ec-p256" });
 // Certificado de otra persona (para probar que se rechaza).
 await p12("otro", "OTRA PERSONA", { serialNumber: "PNOPE-99999999" });
+// Mismo titular que "peru", pero revocado por la CA (OCSP y CRL lo informan): solo falla por la revocación.
+pki.revoked.add(serialHex(parseCert((await p12("revocado", "JUAN PEREZ", { serialNumber: "PNOPE-12345678" })).certDer)));
 
 console.log(`LAB_READY ${server.url}`);
 process.on("SIGTERM", async () => {

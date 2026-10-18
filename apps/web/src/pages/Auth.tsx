@@ -2,7 +2,7 @@ import { useState, type FormEvent, type ReactNode } from "react";
 import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
 import type { MeResponse, TwoFactorChallenge } from "@calasign/shared";
 import { TwoFactorStep } from "../components/TwoFactorStep";
-import { api, errorText } from "../lib/api";
+import { api, errorText, HttpError } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useI18n } from "../lib/i18n";
 import { ErrorBox, LocaleSwitcher, Logo, Spinner } from "../components/ui";
@@ -39,6 +39,8 @@ export function LoginPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [challenge, setChallenge] = useState<string | null>(null);
+  // Cuenta sumada por SSO/SCIM sin otra organización con contraseña: hay que restablecerla (403 password_reset_required).
+  const [resetRequired, setResetRequired] = useState(false);
 
   if (loading) return <Spinner />;
   if (me) return <Navigate to={from} replace />;
@@ -61,6 +63,7 @@ export function LoginPage() {
     e.preventDefault();
     setBusy(true);
     setError(null);
+    setResetRequired(false);
     try {
       const m = await api<MeResponse | TwoFactorChallenge>("/v1/auth/login", { method: "POST", body: { email, password } });
       if ("twoFactorRequired" in m) {
@@ -71,7 +74,8 @@ export function LoginPage() {
       nav(from, { replace: true });
     } catch (err) {
       if (redirectIfSsoRequired(err, from)) return;
-      setError(errorText(err));
+      if (err instanceof HttpError && err.code === "password_reset_required") setResetRequired(true);
+      else setError(errorText(err));
     } finally {
       setBusy(false);
     }
@@ -96,6 +100,14 @@ export function LoginPage() {
           />
         </label>
         <ErrorBox error={error} />
+        {resetRequired && (
+          <div className="alert alert-warn" role="alert">
+            {pw("resetRequired")}{" "}
+            <Link to="/forgot" state={{ email }}>
+              {pw("resetRequiredAction")}
+            </Link>
+          </div>
+        )}
         <button className="btn btn-primary btn-block" disabled={busy}>
           {busy ? t("common.loading") : t("auth.login")}
         </button>

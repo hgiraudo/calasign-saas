@@ -16,6 +16,9 @@ const es = {
   done: "Listo: tu contraseña cambió y se cerraron las sesiones abiertas. Ya podés ingresar.",
   invalid: "El link no es válido o ya venció. Pedí uno nuevo.",
   requestNew: "Pedir un link nuevo",
+  resetRequired: "Tu acceso se creó con inicio de sesión único (SSO) o SCIM. Para ingresar con contraseña, primero restablecela.",
+  resetRequiredAction: "Restablecer contraseña",
+  notAllowed: "En esa organización tu acceso se creó con inicio de sesión único (SSO) o SCIM: ingresá con SSO o restablecé tu contraseña para usarla ahí.",
 };
 type Key = keyof typeof es;
 
@@ -34,6 +37,9 @@ const pt: Record<Key, string> = {
   done: "Pronto: sua senha mudou e as sessões abertas foram encerradas. Você já pode entrar.",
   invalid: "O link não é válido ou expirou. Peça um novo.",
   requestNew: "Pedir um novo link",
+  resetRequired: "Seu acesso foi criado com login único (SSO) ou SCIM. Para entrar com senha, redefina-a primeiro.",
+  resetRequiredAction: "Redefinir senha",
+  notAllowed: "Nessa organização seu acesso foi criado com login único (SSO) ou SCIM: entre com SSO ou redefina sua senha para usá-la lá.",
 };
 
 const en: Record<Key, string> = {
@@ -51,6 +57,9 @@ const en: Record<Key, string> = {
   done: "Done: your password changed and open sessions were closed. You can sign in now.",
   invalid: "The link is invalid or expired. Request a new one.",
   requestNew: "Request a new link",
+  resetRequired: "Your access was created through single sign-on (SSO) or SCIM. To sign in with a password, reset it first.",
+  resetRequiredAction: "Reset password",
+  notAllowed: "In that organization your access was created through single sign-on (SSO) or SCIM: sign in with SSO or reset your password to use it there.",
 };
 
 const DICTS: Record<string, Record<Key, string>> = { es, "pt-BR": pt, en };

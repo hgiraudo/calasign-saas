@@ -115,7 +115,17 @@ export function FieldEditor({ envelopeId, documents, signers, fields, onChange, 
 
   const remove = useCallback(
     (id: string) => {
-      onChange(fieldsRef.current.filter((f) => f.id !== id));
+      // Las condiciones de otros campos que citaban al borrado también se quitan: si no, el panel mostraba otro campo
+      // en su lugar y "Guardar" fallaba con "la condición cita un campo que no existe".
+      onChange(
+        fieldsRef.current
+          .filter((f) => f.id !== id)
+          .map((f) => {
+            if (!f.conditions?.some((c) => c.fieldId === id)) return f;
+            const conditions = f.conditions.filter((c) => c.fieldId !== id);
+            return { ...f, conditions: conditions.length ? conditions : null };
+          }),
+      );
       setSelected((s) => (s === id ? null : s));
     },
     [onChange],

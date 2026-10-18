@@ -202,6 +202,10 @@ function parseInline(src: string, line: number): Inline[] {
     if (filter && !FILTERS.includes(filter)) throw new TemplateSyntaxError(`filtro desconocido: ${filter}`, line);
     let arg = vm[3]?.trim() ?? null;
     if (arg) arg = arg.replace(/^"(.*)"$|^'(.*)'$/, (_m, a, b) => a ?? b);
+    // Los decimales van a Intl.NumberFormat, que lanza RangeError fuera de 0–20: mejor un error de sintaxis al guardar.
+    if (filter === "number" && arg && !(/^\d{1,2}$/.test(arg) && Number(arg) <= 20)) {
+      throw new TemplateSyntaxError(`decimales inválidos en {{${tag}}}: un número de 0 a 20`, line);
+    }
     return [{ t: "var", path: vm[1], filter, arg }];
   }
   const res = parseSeq(() => false);

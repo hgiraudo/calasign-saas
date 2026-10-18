@@ -152,6 +152,20 @@ describe("firma XML", () => {
     expect(r.errors.join(" ")).toMatch(/Id repetido/);
   });
 
+  it("un SignedProperties sin firmar agregado en otro ds:Object no reemplaza las propiedades firmadas", async () => {
+    const signed = await signXml(UBL_INVOICE, signer, { profile: "dian-fe" });
+    const real = verifyXml(signed);
+    expect(real.valid).toBe(true);
+    // Se agrega, antes del ds:Object real, uno con propiedades falsas (sin Id: ninguna referencia lo cubre).
+    const forged = signed.replace(
+      "<ds:Object>",
+      `<ds:Object><xades:QualifyingProperties><xades:SignedProperties><xades:SignedSignatureProperties><xades:SigningTime>1999-01-01T00:00:00Z</xades:SigningTime></xades:SignedSignatureProperties></xades:SignedProperties></xades:QualifyingProperties></ds:Object><ds:Object>`,
+    );
+    const r = verifyXml(forged);
+    expect(r.xades?.signingTime).toBe(real.xades?.signingTime);
+    expect(r.valid).toBe(false);
+  });
+
   it("XAdES-EPES sin política es un error", async () => {
     await expect(signXml(ECF, signer, { profile: "xades-epes" })).rejects.toThrow(/política/);
   });

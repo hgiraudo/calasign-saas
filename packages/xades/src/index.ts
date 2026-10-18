@@ -370,6 +370,9 @@ export function verifyXml(xml: string): XmlVerifyResult {
   }
 
   const references: XmlVerifyResult["references"] = [];
+  // SignedProperties que efectivamente cubre la firma (destino de su referencia): las propiedades se leen de ahí y no del
+  // primer SignedProperties que aparezca, que podría ser uno agregado sin firmar dentro de otro ds:Object.
+  let signedPropsTarget: Element | null = null;
   for (const ref of descendantsNS(signedInfo, NS.ds, "Reference")) {
     const uri = ref.getAttribute("URI") ?? "";
     const type = ref.getAttribute("Type");
@@ -393,6 +396,7 @@ export function verifyXml(xml: string): XmlVerifyResult {
     }
     const valid = !!target && b64(digest(alg, canonicalize(target, refC14n))) === expected;
     if (!valid) errors.push(`digest no coincide en referencia "${uri}"`);
+    if (valid && type === ALG.signedProps && target?.namespaceURI === NS.xades && target.localName === "SignedProperties") signedPropsTarget ??= target;
     references.push({ uri, type, valid });
   }
 
@@ -407,7 +411,7 @@ export function verifyXml(xml: string): XmlVerifyResult {
   }
 
   let xades: XmlVerifyResult["xades"] = null;
-  const sp = descendantsNS(sigEl, NS.xades, "SignedProperties")[0];
+  const sp = signedPropsTarget ?? descendantsNS(sigEl, NS.xades, "SignedProperties")[0];
   if (sp) {
     const certDigestEl = descendantsNS(sp, NS.xades, "CertDigest")[0];
     let matches: boolean | null = null;
@@ -422,7 +426,8 @@ export function verifyXml(xml: string): XmlVerifyResult {
       policyIdentifier: descendantsNS(sp, NS.xades, "Identifier")[0]?.textContent ?? null,
       signerRole: descendantsNS(sp, NS.xades, "ClaimedRole")[0]?.textContent ?? null,
     };
-    if (!references.some((r) => r.type === ALG.signedProps && r.valid)) errors.push("SignedProperties no está referenciado o no verifica");
+    if (!signedPropsTarget) errors.push("SignedProperties no está referenciado o no verifica");
+    else if (descendantsNS(sigEl, NS.xades, "SignedProperties").some((e) => e !== signedPropsTarget)) errors.push("hay más de un SignedProperties en la firma");
   }
 
   // La firma tiene que cubrir el documento entero (referencia URI="" con la transformación enveloped): una firma que

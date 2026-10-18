@@ -47,4 +47,18 @@ describe("renderDocumentPdf", () => {
     expect(text).toContain("FINAL");
     expect(words.filter((w) => !new RegExp(`\\b${w}\\b`).test(text))).toEqual([]);
   });
+
+  it("una marca de firma en una columna angosta no se sale de la página", async () => {
+    const long = "Texto largo de la columna para ocupar ancho natural";
+    const { marks } = await renderDocumentPdf([
+      {
+        type: "table",
+        header: [[{ text: "Nombre" }], [{ text: "Cargo" }], [{ text: "Fecha" }], [{ text: "Firma" }]],
+        rows: [[[{ text: long }], [{ text: long }], [{ text: long }], [{ mark: "signature", role: "Cliente" }]]],
+      },
+    ]);
+    expect(marks).toHaveLength(1);
+    // El campo del sobre se valida con x + ancho <= 1 (si no: "el campo se sale de la página").
+    expect(marks[0].x + marks[0].width).toBeLessThanOrEqual(1);
+  });
 });

@@ -139,3 +139,16 @@ describe("verificación de webhooks", () => {
     expect(verifyWebhookSignature({ payload: body, header: "basura", secret, now })).toBe(false);
   });
 });
+
+describe("ids en la ruta", () => {
+  it("un id con '..', '/' o '?' no cambia el pedido (se codifica como un segmento)", async () => {
+    const f = fakeFetch([json(404, { error: { code: "not_found", message: "x" } }), json(404, { error: { code: "not_found", message: "x" } })]);
+    const cs = new CalaSign({ apiKey: "k", baseUrl: "http://api", fetch: f.fn, maxRetries: 0 });
+    await expect(cs.envelopes.get("../webhooks")).rejects.toBeInstanceOf(CalaSignError);
+    await expect(cs.webhooks.delete("../envelopes/e1?x=1")).rejects.toBeInstanceOf(CalaSignError);
+    expect(new URL(f.calls[0].url).pathname).toBe("/v1/envelopes/..%2Fwebhooks");
+    expect(f.calls[1].method).toBe("DELETE");
+    expect(new URL(f.calls[1].url).pathname).toBe("/v1/webhooks/..%2Fenvelopes%2Fe1%3Fx%3D1");
+  });
+});
+

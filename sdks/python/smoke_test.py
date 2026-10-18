@@ -49,6 +49,37 @@ except CalaSignError as e:
     assert e.code == "network_error", e.code
 ok("error de red al pedir el token OAuth: CalaSignError network_error")
 
+# Un id que llega de afuera no cambia la ruta del pedido ("../webhooks" no llega a /v1/webhooks).
+_paths = []
+
+
+class _Rec(http.server.BaseHTTPRequestHandler):
+    def _any(self):
+        _paths.append((self.command, self.path))
+        self.send_response(404)
+        self.send_header("content-type", "application/json")
+        self.end_headers()
+        self.wfile.write(b'{"error":{"code":"not_found","message":"x"}}')
+
+    do_GET = do_DELETE = _any
+
+    def log_message(self, *a):
+        pass
+
+
+_srv = http.server.HTTPServer(("127.0.0.1", 0), _Rec)
+threading.Thread(target=_srv.serve_forever, daemon=True).start()
+_cs = CalaSign(api_key="k", base_url=f"http://127.0.0.1:{_srv.server_address[1]}", max_retries=0)
+for call in (lambda: _cs.envelopes.get("../webhooks"), lambda: _cs.webhooks.delete("../envelopes/e1?x=1")):
+    try:
+        call()
+        raise AssertionError("debió fallar")
+    except CalaSignError:
+        pass
+_srv.shutdown()
+assert _paths == [("GET", "/v1/envelopes/..%2Fwebhooks"), ("DELETE", "/v1/webhooks/..%2Fenvelopes%2Fe1%3Fx%3D1")], _paths
+ok("ids en la ruta: se codifican como un segmento")
+
 if len(sys.argv) < 2:
     print("\n(sin URL de API: se omiten las pruebas en línea)")
     sys.exit(0)

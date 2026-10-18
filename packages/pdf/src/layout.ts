@@ -22,9 +22,34 @@ export async function embedFonts(doc: PDFDocument): Promise<Fonts> {
   };
 }
 
+type Box = { x: number; y: number; width: number; height: number };
+
+/** Rectángulo con esquinas en cualquier orden ([612 792 0 0] es válido) → ancho y alto positivos. */
+function normalized(b: Box): Box {
+  const x1 = Math.min(b.x, b.x + b.width);
+  const y1 = Math.min(b.y, b.y + b.height);
+  return { x: x1, y: y1, width: Math.abs(b.width), height: Math.abs(b.height) };
+}
+
+/**
+ * Área visible de la página, como la calcula pdf.js: la CropBox recortada contra la MediaBox (si no se cortan, la
+ * MediaBox), con las esquinas normalizadas. pdf-lib devuelve la CropBox tal cual: con una caja invertida daba tamaños
+ * negativos, y con una CropBox más grande que la MediaBox, un tamaño que el visor no muestra; los campos (fracciones
+ * del tamaño mostrado) se estampaban fuera del lugar que vio el firmante, o fuera de la página.
+ */
+export function visibleBox(page: PDFPage): Box {
+  const media = normalized(page.getMediaBox());
+  const crop = normalized(page.getCropBox());
+  const x1 = Math.max(media.x, crop.x);
+  const y1 = Math.max(media.y, crop.y);
+  const x2 = Math.min(media.x + media.width, crop.x + crop.width);
+  const y2 = Math.min(media.y + media.height, crop.y + crop.height);
+  return x2 > x1 && y2 > y1 ? { x: x1, y: y1, width: x2 - x1, height: y2 - y1 } : media;
+}
+
 /** Tamaño de la página tal como se ve (CropBox + /Rotate), igual que pdf.js. */
 export function displayedSize(page: PDFPage): { width: number; height: number; rotation: number } {
-  const box = page.getCropBox();
+  const box = visibleBox(page);
   const rotation = (((page.getRotation().angle % 360) + 360) % 360) as number;
   const swap = rotation === 90 || rotation === 270;
   return { width: swap ? box.height : box.width, height: swap ? box.width : box.height, rotation };
@@ -35,7 +60,7 @@ export function displayedSize(page: PDFPage): { width: number; height: number; r
  * de la página mostrada, sin rotación. Resuelve CropBox desplazado y /Rotate 90/180/270.
  */
 export function withDisplayedSpace(page: PDFPage, draw: (w: number, h: number) => void) {
-  const box = page.getCropBox();
+  const box = visibleBox(page);
   const { width, height, rotation } = displayedSize(page);
   const { x: cx, y: cy, width: W, height: H } = box;
   let m: [number, number, number, number, number, number];

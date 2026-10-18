@@ -237,3 +237,46 @@ describe("vínculo con el documento (assertPreparedMatchesDocument)", () => {
     );
   });
 });
+
+describe("la revisión preparada solo agrega la firma (assertOnlySignatureAdded)", async () => {
+  const { PDFDocument, StandardFonts, PDFName } = await import("pdf-lib");
+  const pdfmod = await import("@calasign/pdf");
+  const { assertOnlySignatureAdded } = await import("../src");
+  const ca = await pdfmod.generateDevRootCa("Firmador Test Root");
+  const seal = await pdfmod.issueSealCertificate(ca, { commonName: "Titular de prueba" });
+  const chain = pdfmod.pemToDerList(seal.chainPem);
+
+  async function base() {
+    const doc = await PDFDocument.create();
+    const font = await doc.embedFont(StandardFonts.Helvetica);
+    doc.addPage([595, 842]).drawText("Monto a pagar: 100", { x: 50, y: 780, size: 14, font });
+    return doc.save({ useObjectStreams: false });
+  }
+  const prep = async (pdf: Uint8Array) =>
+    (await pdfmod.prepareExternalSignature(pdf, chain, { fieldName: "FirmaCertificado1", reason: "Prueba", name: "Titular", location: "CalaSign" })).preparedPdf;
+
+  it("acepta la preparación legítima (firma + widget invisible enganchados)", async () => {
+    const working = await base();
+    await expect(assertOnlySignatureAdded(working, await prep(working))).resolves.toBeUndefined();
+  });
+
+  it("rechaza una revisión que además cambia el contenido de la página", async () => {
+    const working = await base();
+    const u = await pdfmod.IncrementalUpdate.open(working);
+    const page = u.doc.getPages()[0];
+    const stream = u.context.flateStream("BT /F1 14 Tf 50 780 Td (Monto a pagar: 999999) Tj ET");
+    page.node.set(PDFName.of("Contents"), u.add(stream));
+    u.touch(page.ref);
+    await expect(assertOnlySignatureAdded(working, await prep(u.serialize()))).rejects.toThrow(/No se firma/);
+  });
+
+  it("rechaza una revisión que agrega otra anotación visible", async () => {
+    const working = await base();
+    const u = await pdfmod.IncrementalUpdate.open(working);
+    const page = u.doc.getPages()[0];
+    const note = u.add(u.context.obj({ Type: "Annot", Subtype: "FreeText", Rect: [40, 770, 300, 800], Contents: "Monto: 999999" }));
+    page.node.set(PDFName.of("Annots"), u.context.obj([note]));
+    u.touch(page.ref);
+    await expect(assertOnlySignatureAdded(working, await prep(u.serialize()))).rejects.toThrow(/No se firma/);
+  });
+});

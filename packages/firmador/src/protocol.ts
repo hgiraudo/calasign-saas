@@ -2,6 +2,7 @@
 import { createHash } from "node:crypto";
 import forge from "node-forge";
 import type { CertEntry, CertSource, Prepared, SessionInfo, SignResult } from "./types";
+import { assertOnlySignatureAdded } from "./pdfdiff";
 
 export class CertsignError extends Error {
   constructor(
@@ -143,12 +144,15 @@ export async function signWithEntry(client: CertsignClient, source: CertSource, 
   const working = await client.document();
   const prepared = await client.certificate(entry.chainDer);
   assertSignedAttributes(prepared);
+  const preparedPdf = await client.prepared();
   assertPreparedMatchesDocument({
     announcedSha256: info.documentSha256,
     workingPdf: working,
-    preparedPdf: await client.prepared(),
+    preparedPdf,
     signedAttrsDer: new Uint8Array(Buffer.from(prepared.dataToSign, "base64")),
   });
+  // Además de los bytes: la revisión nueva solo puede agregar la firma (no cambiar lo que el titular vio).
+  await assertOnlySignatureAdded(working, preparedPdf);
   const sig = await source.sign(entry, {
     data: new Uint8Array(Buffer.from(prepared.dataToSign, "base64")),
     digest: new Uint8Array(Buffer.from(prepared.digestToSign, "base64")),

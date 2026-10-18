@@ -49,6 +49,40 @@ class Canon {
   }
 }
 
+/**
+ * Widget que no se ve: rectángulo de área cero o banderas Hidden (2) / NoView (32). Solo esos cuentan como evidencia:
+ * un widget de firma visible puede dibujar cualquier cosa encima de la página (su apariencia es un dibujo arbitrario),
+ * así que una firma posterior visible —aunque verifique, por ejemplo con un certificado autofirmado— sí cambia lo que se ve.
+ */
+function isInvisibleWidget(ctx: PDFContext, annot: PDFDict): boolean {
+  const f = annot.get(PDFName.of("F"));
+  const flags = f instanceof PDFNumber ? f.asNumber() : 0;
+  if (flags & 2 || flags & 32) return true;
+  const rect = lookupArray(ctx, annot.get(PDFName.of("Rect")));
+  if (!rect || rect.length !== 4) return false;
+  const [x1, y1, x2, y2] = rect.map((n) => (n instanceof PDFNumber ? n.asNumber() : NaN));
+  if ([x1, y1, x2, y2].some((n) => !Number.isFinite(n))) return false;
+  return Math.abs(x2 - x1) < 0.01 || Math.abs(y2 - y1) < 0.01;
+}
+
+/**
+ * Huella de lo que, a nivel de documento, cambia lo que se muestra sin tocar las páginas: capas opcionales (OCProperties
+ * decide qué contenido se ve), acciones al abrir (OpenAction/AA), JavaScript de documento, y en AcroForm XFA (reemplaza
+ * la vista entera) y NeedAppearances (regenera las apariencias de los campos). Las revisiones legítimas (DSS, firmas y
+ * sellos) solo tocan /DSS y AcroForm /Fields y /SigFlags.
+ */
+function documentFingerprint(doc: PDFDocument): string {
+  const ctx = doc.context;
+  const canon = new Canon(ctx);
+  const cat = doc.catalog;
+  const parts = ["OCProperties", "OpenAction", "AA"].map((k) => `${k}=${canon.of(cat.get(PDFName.of(k)))}`);
+  const names = lookupDict(ctx, cat.get(PDFName.of("Names")));
+  parts.push(`JavaScript=${canon.of(names?.get(PDFName.of("JavaScript")))}`);
+  const acro = lookupDict(ctx, cat.get(PDFName.of("AcroForm")));
+  for (const k of ["XFA", "NeedAppearances"]) parts.push(`AcroForm.${k}=${canon.of(acro?.get(PDFName.of(k)))}`);
+  return h(parts.join("|"));
+}
+
 function lookupDict(ctx: PDFContext, o: PDFObject | undefined): PDFDict | undefined {
   const v = o instanceof PDFRef ? ctx.lookup(o) : o;
   return v instanceof PDFDict ? v : undefined;
@@ -71,8 +105,8 @@ function signatureWidgetKey(ctx: PDFContext, annot: PDFDict): string | null {
 
 /**
  * Huella de cada página: diccionario (con atributos heredados), contenido, recursos y anotaciones. Se omiten solo los
- * widgets de firmas posteriores que verifican (`evidence`): cada uno tiene que ser el único widget con ese ByteRange,
- * para que no se pueda colgar una apariencia falsa del valor de una firma real.
+ * widgets invisibles de firmas posteriores que verifican (`evidence`): cada uno tiene que ser el único widget con ese
+ * ByteRange, para que no se pueda colgar una apariencia falsa del valor de una firma real.
  */
 function pageFingerprints(doc: PDFDocument, evidence: Set<string>): string[] {
   const ctx = doc.context;
@@ -93,7 +127,7 @@ function pageFingerprints(doc: PDFDocument, evidence: Set<string>): string[] {
     const visible = annots
       .filter((a) => {
         const key = signatureWidgetKey(ctx, a.d);
-        return !(key && evidence.has(key) && widgets.get(key)?.size === 1);
+        return !(key && evidence.has(key) && widgets.get(key)?.size === 1 && isInvisibleWidget(ctx, a.d));
       })
       .map((a) => h(canon.dict(a.d)))
       .sort();
@@ -122,7 +156,8 @@ export async function changesAfterRevision(pdf: Uint8Array, end: number, laterSi
     }));
     const a = pageFingerprints(signed, evidence);
     const b = pageFingerprints(full, evidence);
-    return a.length === b.length && a.every((x, i) => x === b[i]) ? "evidence_only" : "content";
+    const samePages = a.length === b.length && a.every((x, i) => x === b[i]);
+    return samePages && documentFingerprint(signed) === documentFingerprint(full) ? "evidence_only" : "content";
   } catch {
     // Si la revisión firmada no se puede leer, no se puede afirmar que lo que se muestra es lo firmado.
     return "content";

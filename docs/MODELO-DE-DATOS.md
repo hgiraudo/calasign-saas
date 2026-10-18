@@ -79,6 +79,7 @@ El diagrama de arriba es el núcleo (0001). Cada bloque funcional agrega su prop
 | `0015_crm` | Conexiones CRM/ERP, mapeos, vínculos y registro de ejecuciones |
 | `0016_data` | BYOK, directorio de celdas, versiones de PDF firmado (renovación de archivo), dominios SSO verificados |
 | `0017_drop_video` | Elimina las tablas de video: la firma por videollamada se descartó del producto |
+| `0018_certificate_signing` | Firma con certificado propio: `signature_type` y `certificate_requirements` en destinatarios y roles, estado `awaiting_certificates`, `envelope_certsign`, `certificate_signatures`, `certsign_sessions` |
 
 Reglas: una migración por bloque, solo aditiva salvo cuando se recrea un `CHECK` para sumar un valor; nunca se edita una
 migración ya aplicada en un entorno.

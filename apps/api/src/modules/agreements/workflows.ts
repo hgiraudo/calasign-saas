@@ -30,7 +30,7 @@ import { hasPerm, requirePerm } from "../access";
 import { auditFromRequest } from "../audit";
 import { authenticate, clientInfo, type AuthContext, type Services } from "../context";
 import { tenantBaseUrl } from "../custom-domains";
-import { assertPublicDestination, signPayload } from "../webhooks";
+import { assertPublicDestination, safeRequest, signPayload } from "../webhooks";
 import { getPath, interpolate, refreshSearchVector, setPath, toIsoDate, toNumberOrNull, type Deps } from "./common";
 import { agreementMetaFromMapping, createEnvelopeFromPdf, insertFileRow, renderDocument, storeGeneratedPdf } from "./documents";
 import { ingestEnvelope } from "./repository";
@@ -406,13 +406,14 @@ async function executeStep(d: Deps, run: any, step: WorkflowStep, index: number)
       headers["user-agent"] = "CalaSign-Workflows/1";
       headers["CalaSign-Signature"] = signPayload(decrypt(wf.signing_secret_enc), body);
       headers["CalaSign-Workflow-Run"] = run.id;
-      let res: Response;
+      let res: { status: number; body: Buffer };
       try {
-        res = await fetch(url, { method: step.config.method ?? "POST", headers, body, redirect: "manual", signal: AbortSignal.timeout(15_000) });
+        // safeRequest valida el destino en la misma resolución DNS que usa la conexión y no sigue redirecciones.
+        res = await safeRequest(url, { method: step.config.method ?? "POST", headers, body, timeoutMs: 15_000, maxBytes: 1024 * 1024 });
       } catch (e) {
         throw new Error(`No se pudo conectar: ${e instanceof Error ? e.message : String(e)}`);
       }
-      const text = (await res.text().catch(() => "")).slice(0, 65_536);
+      const text = res.body.toString("utf8").slice(0, 65_536);
       if (res.status < 200 || res.status >= 300) throw new Error(`El servicio respondió HTTP ${res.status}: ${text.slice(0, 200)}`);
       let parsed: unknown = null;
       try {

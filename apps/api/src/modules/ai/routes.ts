@@ -198,7 +198,7 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
   app.patch<P>("/v1/envelopes/:id/ai/settings", { preHandler: auth }, async (req) => {
     const { a, e } = await envelopeOf(s, req);
     const input = UpdateEnvelopeAiInput.parse(req.body);
-    if (input.signerAssist) await assertAiAvailable(s.db, a.tenantId);
+    if (input.signerAssist) await assertAiAvailable(s.db, a.tenantId, { reserve: false });
     await s.db.query(`UPDATE envelopes SET ai_signer_assist = $2, updated_at = now() WHERE id = $1`, [e.id, input.signerAssist]);
     return metadataView(s, e.id);
   });

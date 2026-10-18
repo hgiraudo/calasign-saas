@@ -88,8 +88,13 @@ export async function markKeyFailing(db: Db, tenantId: string, keyArn: string, e
 }
 
 export async function markKeyHealthy(db: Db, tenantId: string) {
-  await db.query(`UPDATE tenants SET byok_status = 'active', byok_error = NULL, byok_checked_at = now() WHERE id = $1 AND byok_status = 'failing'`, [tenantId]);
+  // Varios pedidos concurrentes pueden detectar la recuperación: solo el que cambia el estado deja constancia.
+  const upd = await db.query(
+    `UPDATE tenants SET byok_status = 'active', byok_error = NULL, byok_checked_at = now() WHERE id = $1 AND byok_status = 'failing' RETURNING id`,
+    [tenantId],
+  );
   invalidateTenantStorage(tenantId);
+  if (!upd.length) return;
   await recordAudit(db, { tenantId, action: "byok.key_recovered", actor: { type: "system", label: "CalaSign" } }).catch(() => {});
 }
 

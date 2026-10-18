@@ -85,17 +85,19 @@ export async function sealKey(
       dataKey.fill(0);
     }
   }
-  if (config.evidence.custodyKmsKeyId) {
-    const { m, c: client } = await kms();
-    const r = await client.send(
-      new m.EncryptCommand({ KeyId: config.evidence.custodyKmsKeyId, Plaintext: dataKey, EncryptionContext: { purpose: "calasign-tenant-certificate" } }),
-    );
+  try {
+    if (config.evidence.custodyKmsKeyId) {
+      const { m, c: client } = await kms();
+      const r = await client.send(
+        new m.EncryptCommand({ KeyId: config.evidence.custodyKmsKeyId, Plaintext: dataKey, EncryptionContext: { purpose: "calasign-tenant-certificate" } }),
+      );
+      return { ciphertext, wrapped: Buffer.from(r.CiphertextBlob!).toString("base64"), method: "kms" };
+    }
+    return { ciphertext, wrapped: encrypt(dataKey.toString("base64")), method: "local" };
+  } finally {
+    // La clave de datos no queda en memoria aunque KMS falle.
     dataKey.fill(0);
-    return { ciphertext, wrapped: Buffer.from(r.CiphertextBlob!).toString("base64"), method: "kms" };
   }
-  const wrapped = encrypt(dataKey.toString("base64"));
-  dataKey.fill(0);
-  return { ciphertext, wrapped, method: "local" };
 }
 
 export async function openKey(row: { key_ciphertext: string; key_wrapped: string; key_wrap_method: string; key_wrap_key_arn?: string | null; tenant_id?: string }): Promise<string> {
@@ -120,13 +122,16 @@ export async function openKey(row: { key_ciphertext: string; key_wrapped: string
   } else {
     dataKey = Buffer.from(decrypt(row.key_wrapped), "base64");
   }
-  const [v, iv, enc, tag] = row.key_ciphertext.split(".");
-  if (v !== "v1") throw new Error("formato de clave desconocido");
-  const d = createDecipheriv("aes-256-gcm", dataKey, Buffer.from(iv, "base64url"));
-  d.setAuthTag(Buffer.from(tag, "base64url"));
-  const plain = Buffer.concat([d.update(Buffer.from(enc, "base64url")), d.final()]).toString("utf8");
-  dataKey.fill(0);
-  return plain;
+  try {
+    const [v, iv, enc, tag] = row.key_ciphertext.split(".");
+    if (v !== "v1") throw new Error("formato de clave desconocido");
+    const d = createDecipheriv("aes-256-gcm", dataKey, Buffer.from(iv, "base64url"));
+    d.setAuthTag(Buffer.from(tag, "base64url"));
+    return Buffer.concat([d.update(Buffer.from(enc, "base64url")), d.final()]).toString("utf8");
+  } finally {
+    // También si el descifrado falla (texto alterado, formato desconocido).
+    dataKey.fill(0);
+  }
 }
 
 // ───────────── Acceso ─────────────

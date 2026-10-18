@@ -142,6 +142,7 @@ async function fullView(db: Db, n: any, me?: any): Promise<NegotiationView> {
 }
 
 async function diffFor(db: Db, n: any, from: number, to: number) {
+  if (![from, to].every((v) => Number.isInteger(v) && v >= 1 && v <= 1_000_000)) throw badRequest("invalid_version", "Versión inválida");
   const rows = await db.query<any>(`SELECT version, text_snapshot FROM negotiation_versions WHERE negotiation_id = $1 AND version = ANY($2)`, [n.id, [from, to]]);
   const a = rows.find((r) => r.version === from);
   const b = rows.find((r) => r.version === to);

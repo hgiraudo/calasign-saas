@@ -152,6 +152,8 @@ export async function archiveSweep(d: Deps, opts: { days?: number; force?: boole
     `SELECT id FROM envelopes WHERE status = 'completed' AND archive_valid_until IS NOT NULL
        AND archive_valid_until < now() + make_interval(days => $1)
        AND (archive_renewals = 0 OR $3::boolean OR archive_checked_at < now() - make_interval(days => $4))
+       -- Tras una falla (TSA caída, OCSP inaccesible) no se reintenta en cada barrido horario: una vez por día.
+       AND ($3::boolean OR archive_error IS NULL OR archive_checked_at < now() - interval '1 day')
        AND ($5::uuid IS NULL OR id = $5)
      ORDER BY archive_valid_until LIMIT $2`,
     [days, cfg.batch, Boolean(opts.force), cfg.minIntervalDays, opts.envelopeId ?? null],

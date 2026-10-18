@@ -78,7 +78,6 @@ export async function applyCertificateFlags(
   await db.query(`UPDATE recipients SET signature_type = 'electronic' WHERE envelope_id = $1 AND role <> 'signer' AND signature_type = 'certificate'`, [envelopeId]);
 }
 
-/** Estado de la firma con certificado de cada destinatario (para el detalle del sobre). */
 // ───────────────────────────── Worker: PDF de trabajo y sello final ─────────────────────────────
 
 export type CertsignStage =

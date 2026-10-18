@@ -37,7 +37,7 @@ export const disclaimerFor = (l: string | null | undefined) => DISCLAIMER[l ?? "
 export async function monthUsage(db: Db, tenantId: string): Promise<AiUsageSummary> {
   const rows = await db.query<any>(
     `SELECT feature, count(*)::int AS n, COALESCE(sum(input_tokens), 0)::int AS i, COALESCE(sum(output_tokens), 0)::int AS o
-     FROM ai_usage WHERE tenant_id = $1 AND created_at >= date_trunc('month', now()) GROUP BY feature`,
+     FROM ai_usage WHERE tenant_id = $1 AND created_at >= date_trunc('month', now()) AND feature <> '${RESERVATION}' GROUP BY feature`,
     [tenantId],
   );
   const inputTokens = rows.reduce((s, r) => s + Number(r.i), 0);
@@ -69,15 +69,43 @@ export async function getAiSettings(db: Db, tenantId: string): Promise<AiSetting
   };
 }
 
-/** Exige IA habilitada (403) y presupuesto disponible (429) antes de mandar nada al modelo. */
-export async function assertAiAvailable(db: Db, tenantId: string) {
-  const t = await db.one<any>(`SELECT ai_enabled, ai_monthly_token_budget FROM tenants WHERE id = $1`, [tenantId]);
-  if (!t?.ai_enabled) throw new AppError(403, "ai_disabled", "La IA no está habilitada para esta organización");
-  const used = (await monthUsage(db, tenantId)).totalTokens;
-  const budget = Number(t.ai_monthly_token_budget ?? 0);
-  if (used >= budget) {
-    throw new AppError(429, "ai_budget_exceeded", "Se agotó el presupuesto mensual de IA de la organización", { used, budget });
-  }
+// Reserva de presupuesto: cada llamada en curso cuenta como RESERVATION_TOKENS hasta que se registra su consumo
+// real. El chequeo y la reserva se hacen con la organización bloqueada, así que pedidos concurrentes no pueden
+// pasarse del tope por más de una llamada. Una reserva que nunca se registra (falla del modelo) vence sola.
+export const RESERVATION = "_reserved";
+const RESERVATION_TOKENS = Math.max(1, Number(process.env.AI_REQUEST_TOKEN_ESTIMATE ?? 8000));
+const RESERVATION_TTL = "10 minutes";
+
+/**
+ * Exige IA habilitada (403) y presupuesto disponible (429) antes de mandar nada al modelo, y reserva presupuesto
+ * para la llamada que sigue (`reserve: false` solo chequea, para validar una configuración).
+ */
+export async function assertAiAvailable(db: Db, tenantId: string, opts: { reserve?: boolean } = {}) {
+  const reserve = opts.reserve !== false;
+  await db.tx(async (t) => {
+    const tenant = await t.one<any>(`SELECT ai_enabled, ai_monthly_token_budget FROM tenants WHERE id = $1 FOR UPDATE`, [tenantId]);
+    if (!tenant?.ai_enabled) throw new AppError(403, "ai_disabled", "La IA no está habilitada para esta organización");
+    await t.query(`DELETE FROM ai_usage WHERE tenant_id = $1 AND feature = $2 AND created_at < now() - interval '${RESERVATION_TTL}'`, [tenantId, RESERVATION]);
+    const row = await t.one<any>(
+      `SELECT COALESCE(sum(input_tokens + output_tokens) FILTER (WHERE feature <> $2), 0)::bigint AS used,
+              (count(*) FILTER (WHERE feature = $2))::int AS inflight
+       FROM ai_usage WHERE tenant_id = $1 AND created_at >= date_trunc('month', now())`,
+      [tenantId, RESERVATION],
+    );
+    const used = Number(row?.used ?? 0);
+    const committed = used + Number(row?.inflight ?? 0) * RESERVATION_TOKENS;
+    const budget = Number(tenant.ai_monthly_token_budget ?? 0);
+    if (used >= budget || (reserve && committed >= budget && Number(row?.inflight ?? 0) > 0)) {
+      throw new AppError(429, "ai_budget_exceeded", "Se agotó el presupuesto mensual de IA de la organización", { used, budget });
+    }
+    if (reserve) {
+      await t.query(
+        `INSERT INTO ai_usage (id, tenant_id, envelope_id, feature, provider, model, input_tokens, output_tokens, prompt_sha256, actor_type)
+         VALUES ($1, $2, NULL, $3, 'reserva', '-', 0, 0, '', 'system')`,
+        [uuidv7(), tenantId, RESERVATION],
+      );
+    }
+  });
 }
 
 // ───────────────────────────── Documentos ─────────────────────────────
@@ -129,6 +157,11 @@ export async function recordAiUse(
 ) {
   await db.tx(async (t) => {
     if (args.envelopeId) await t.query(`SELECT id FROM envelopes WHERE id = $1 FOR UPDATE`, [args.envelopeId]);
+    // Libera la reserva de presupuesto tomada por assertAiAvailable para esta llamada.
+    await t.query(
+      `DELETE FROM ai_usage WHERE id = (SELECT id FROM ai_usage WHERE tenant_id = $1 AND feature = $2 ORDER BY created_at LIMIT 1)`,
+      [args.tenantId, RESERVATION],
+    );
     await t.query(
       `INSERT INTO ai_usage (id, tenant_id, envelope_id, feature, provider, model, input_tokens, output_tokens, prompt_sha256, actor_type, actor_id)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,

@@ -99,7 +99,12 @@ async function idempotent<T>(s: Services, req: FastifyRequest, reply: FastifyRep
   const tenantId = req.auth!.tenantId;
   const reqHash = sha256Hex(`${req.method} ${req.url} ${JSON.stringify(req.body ?? null)}`);
   // Se reserva la clave ANTES de ejecutar (status_code 0 = en curso): dos pedidos simultáneos con la misma
-  // clave no pueden ejecutarse los dos.
+  // clave no pueden ejecutarse los dos. Una reserva vieja que quedó en curso (el proceso murió a mitad del
+  // pedido) se descarta: si no, esa clave respondería idempotency_in_progress para siempre.
+  await s.db.query(
+    `DELETE FROM idempotency_keys WHERE tenant_id = $1 AND key = $2 AND status_code = 0 AND created_at < now() - interval '10 minutes'`,
+    [tenantId, key],
+  );
   const reserved = await s.db.query(
     `INSERT INTO idempotency_keys (tenant_id, key, request_hash, status_code, response) VALUES ($1,$2,$3,0,'{}'::jsonb)
      ON CONFLICT DO NOTHING RETURNING key`,

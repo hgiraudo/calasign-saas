@@ -1,6 +1,6 @@
 // Reglas comunes de la IA: opt-in por organización, aviso de tratamiento de datos, presupuesto mensual
 // de tokens, registro de consumo, evidencia de cada interacción y texto de los documentos.
-import { extractPdfText, InvalidPdfError } from "@calasign/pdf";
+import { extractPdfText, InvalidPdfError, PdfReaderBusyError } from "@calasign/pdf";
 import {
   AI_NOTICE_VERSION,
   type AiFeature,
@@ -164,6 +164,8 @@ async function readText(pdf: Uint8Array) {
     return await extractPdfText(pdf);
   } catch (e) {
     if (e instanceof InvalidPdfError) throw new AppError(422, "pdf_too_heavy", e.message);
+    // Lectores ocupados: es transitorio (503), no un PDF malo.
+    if (e instanceof PdfReaderBusyError) throw new AppError(503, "pdf_reader_busy", e.message);
     throw e;
   }
 }

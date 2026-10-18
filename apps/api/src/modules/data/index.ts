@@ -6,7 +6,7 @@ import type { Services } from "../context";
 import { archiveRoutes, archiveSweep } from "./archive";
 import { byokRoutes, byokSweep, kmsMockRoutes } from "./byok";
 import { cellRoutes } from "./cells";
-import { ssoDomainRoutes } from "./sso-domains";
+import { recheckVerifiedSsoDomains, ssoDomainRoutes } from "./sso-domains";
 
 type Log = { info(o: object, m?: string): void; warn(o: object, m?: string): void; error(o: object, m?: string): void };
 
@@ -22,6 +22,7 @@ export async function dataRoutes(app: FastifyInstance, s: Services) {
 export async function dataSweep(d: { db: Db; blobs: BlobStore; log: Log }) {
   await byokSweep(d.db).catch((err) => d.log.error({ err: String(err) }, "falló el chequeo de claves BYOK"));
   await archiveSweep(d).catch((err) => d.log.error({ err: String(err) }, "falló el barrido de sellos de archivo"));
+  await recheckVerifiedSsoDomains(d).catch((err) => d.log.error({ err: String(err) }, "falló la re-verificación de dominios SSO"));
 }
 
 export { createTenantStorageResolver } from "./byok";

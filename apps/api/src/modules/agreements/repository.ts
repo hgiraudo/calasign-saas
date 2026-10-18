@@ -11,7 +11,7 @@ import {
   type AgreementView,
   type ListAgreementsResponse,
 } from "@calasign/shared";
-import { extractPdfPlainText, inspectPdf, InvalidPdfError, readPdfSignatures } from "@calasign/pdf";
+import { extractPdfPlainText, inspectPdf, InvalidPdfError, PdfReaderBusyError, readPdfSignatures } from "@calasign/pdf";
 import { config } from "../../config";
 import type { Db } from "../../infra/db";
 import { AppError, badRequest, conflict, forbidden, notFound } from "../../lib/errors";
@@ -56,6 +56,9 @@ export async function ingestEnvelope(d: Pick<Deps, "db" | "blobs" | "log">, enve
   try {
     text = (await extractPdfPlainText(bytes)).text;
   } catch (err) {
+    // Lectores ocupados: que el job se reintente. Si no, el acuerdo quedaba para siempre sin texto (no aparece en
+    // las búsquedas) por algo transitorio.
+    if (err instanceof PdfReaderBusyError) throw err;
     d.log.warn({ envelopeId, err: String(err) }, "no se pudo extraer el texto del PDF");
   }
   try {
@@ -465,7 +468,8 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
     let signatures = 0;
     try {
       text = (await extractPdfPlainText(bytes)).text;
-    } catch {
+    } catch (e) {
+      if (e instanceof PdfReaderBusyError) throw new AppError(503, "pdf_reader_busy", e.message);
       /* PDF escaneado o sin texto */
     }
     try {

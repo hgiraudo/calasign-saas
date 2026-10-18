@@ -84,7 +84,8 @@ export async function prepareExternalSignature(pdf: Uint8Array, chainDer: Uint8A
 /** ECDSA: acepta DER o r||s (IEEE P1363, lo que devuelven PKCS#11 y Windows) y devuelve DER. */
 export function normalizeEcdsaSignature(sig: Uint8Array, namedCurve: string | null): Uint8Array {
   const coord = namedCurve === "secp384r1" ? 48 : 32;
-  if (sig.length === coord * 2 && sig[0] !== 0x30) {
+  // r||s cuyo primer byte es 0x30 (1 de cada 256) no es DER: se mira la estructura completa, no solo el tag.
+  if (sig.length === coord * 2 && !isDerEcdsa(sig)) {
     const int = (b: Uint8Array) => {
       let i = 0;
       while (i < b.length - 1 && b[i] === 0) i++;
@@ -98,6 +99,14 @@ export function normalizeEcdsaSignature(sig: Uint8Array, namedCurve: string | nu
     return Uint8Array.from([0x30, body.length, ...body]);
   }
   return sig;
+}
+
+/** SEQUENCE { INTEGER r, INTEGER s } en DER que ocupa exactamente `sig` (longitudes cortas: hasta P-384). */
+function isDerEcdsa(sig: Uint8Array): boolean {
+  if (sig.length < 8 || sig[0] !== 0x30 || sig[1] !== sig.length - 2 || sig[2] !== 0x02) return false;
+  const rLen = sig[3];
+  const sTag = 4 + rLen;
+  return sTag + 2 <= sig.length && sig[sTag] === 0x02 && sig[sTag + 1] === sig.length - sTag - 2;
 }
 
 /** Verifica la firma del titular sobre los atributos firmados con la clave pública de su certificado. */

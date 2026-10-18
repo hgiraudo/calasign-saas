@@ -367,7 +367,7 @@ export async function handleCrmJob(d: { db: Db; blobs: BlobStore }, p: { runId: 
       if (!mapping) throw new Error("mapeo inexistente");
       const openEnv = await db.one<any>(
         `SELECT l.envelope_id FROM crm_links l JOIN envelopes e ON e.id = l.envelope_id
-          WHERE l.mapping_id = $1 AND l.object_id = $2 AND e.status IN ('draft','sent','finalizing') LIMIT 1`,
+          WHERE l.mapping_id = $1 AND l.object_id = $2 AND e.status IN ('draft','sent','awaiting_certificates','finalizing') LIMIT 1`,
         [mapping.id, run.object_id],
       );
       if (openEnv) {

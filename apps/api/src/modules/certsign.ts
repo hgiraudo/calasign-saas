@@ -50,20 +50,13 @@ import { tenantBaseUrl } from "./custom-domains";
 import { lockEnvelope } from "./envelopes";
 import { trustAnchors } from "./evidence-seal";
 import { recipientActor, resolveToken } from "./signing";
+import { normalizeRequirements } from "./certsign-requirements";
+export { normalizeRequirements };
 
 const CODE_TTL_MS = 10 * 60_000;
 const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // sin 0/O, 1/I/L
 
 // ───────────────────────────── Destinatarios ─────────────────────────────
-
-export function normalizeRequirements(raw: any, hasIdDocument: boolean): CertificateRequirements {
-  const r = raw && typeof raw === "object" ? raw : {};
-  return {
-    matchIdDocument: typeof r.matchIdDocument === "boolean" ? r.matchIdDocument : hasIdDocument,
-    allowedIssuers: Array.isArray(r.allowedIssuers) ? r.allowedIssuers.filter((x: unknown) => typeof x === "string") : [],
-    requireQualified: r.requireQualified === true,
-  };
-}
 
 /** Aplica signatureType / certificateRequirements después del upsert de destinatarios (solo las claves presentes). */
 export async function applyCertificateFlags(
@@ -86,16 +79,6 @@ export async function applyCertificateFlags(
 }
 
 /** Estado de la firma con certificado de cada destinatario (para el detalle del sobre). */
-export async function certificateSignaturesByRecipient(db: Db, envelopeId: string) {
-  const rows = await db.query<any>(`SELECT * FROM certificate_signatures WHERE envelope_id = $1`, [envelopeId]);
-  return new Map(
-    rows.map((x) => [
-      x.recipient_id,
-      { status: x.status as "pending" | "signed", position: x.position, signedAt: iso(x.signed_at), commonName: x.common_name ?? null, issuer: x.issuer ?? null },
-    ]),
-  );
-}
-
 // ───────────────────────────── Worker: PDF de trabajo y sello final ─────────────────────────────
 
 export type CertsignStage =
@@ -352,9 +335,10 @@ export async function certsignRoutes(app: FastifyInstance, s: Services) {
     }
     const key = `tenants/${e.tenant_id}/envelopes/${e.id}/certsign/${sess.id}-prepared.pdf`;
     await s.blobs.put(key, prep.preparedPdf, "application/pdf");
-    await s.db.query(
+    // Solo si la sesión sigue abierta: una firma concurrente ya pudo completarla (o un código nuevo, vencerla).
+    const upd = await s.db.query(
       `UPDATE certsign_sessions SET status = 'prepared', prepared_key = $2, byte_range = $3, signed_attrs = $4, chain_der = $5,
-         signature_algorithm = $6, named_curve = $7, cert_check = $8 WHERE id = $1`,
+         signature_algorithm = $6, named_curve = $7, cert_check = $8 WHERE id = $1 AND status IN ('created','prepared') RETURNING id`,
       [
         sess.id,
         key,
@@ -366,6 +350,7 @@ export async function certsignRoutes(app: FastifyInstance, s: Services) {
         JSON.stringify({ ...check, chainDer: undefined }),
       ],
     );
+    if (!upd.length) throw new AppError(410, "code_used", "Este código ya no es válido: generá uno nuevo desde el link de firma");
     const res: CertsignPrepared = {
       digestToSign: Buffer.from(prep.digestToSign).toString("base64"),
       dataToSign: Buffer.from(prep.signedAttrsDer).toString("base64"),
@@ -509,6 +494,8 @@ export async function certsignRoutes(app: FastifyInstance, s: Services) {
 
   // Descargas del Firmador CalaSign (si hay binarios compilados en FIRMADOR_DIST_DIR).
   const distDir = resolve(process.env.FIRMADOR_DIST_DIR ?? resolve(config.repoRoot, "packages/firmador/dist"));
+  // El SHA-256 de cada binario (decenas de MB) se calcula una vez por versión del archivo, no en cada pedido.
+  const hashCache = new Map<string, { size: number; mtimeMs: number; sha256: string }>();
   const listDownloads = (): FirmadorDownload[] => {
     if (!existsSync(distDir)) return [];
     const out: FirmadorDownload[] = [];
@@ -516,11 +503,17 @@ export async function certsignRoutes(app: FastifyInstance, s: Services) {
       const m = /^calasign-firmador-(windows-x64|linux-x64|macos-arm64|macos-x64)(\.exe)?$/.exec(f);
       if (!m) continue;
       const p = resolve(distDir, f);
+      const st = statSync(p);
+      let cached = hashCache.get(f);
+      if (!cached || cached.size !== st.size || cached.mtimeMs !== st.mtimeMs) {
+        cached = { size: st.size, mtimeMs: st.mtimeMs, sha256: createHash("sha256").update(readFileSync(p)).digest("hex") };
+        hashCache.set(f, cached);
+      }
       out.push({
         platform: m[1] as FirmadorDownload["platform"],
         file: f,
-        sizeBytes: statSync(p).size,
-        sha256: createHash("sha256").update(readFileSync(p)).digest("hex"),
+        sizeBytes: st.size,
+        sha256: cached.sha256,
         url: `/v1/firmador/download/${encodeURIComponent(f)}`,
       });
     }

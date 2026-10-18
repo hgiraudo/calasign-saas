@@ -437,7 +437,12 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
         input.reason,
       ]);
       await appendEvent(t, { tenantId: a.tenantId, envelopeId: e.id, type: "envelope.voided", actor: a.actor, data: { reason: input.reason } });
-      const notified = await t.query<any>(`SELECT id FROM recipients WHERE envelope_id = $1 AND status IN ('sent','viewed')`, [e.id]);
+      // También quienes ya firmaron electrónicamente pero tenían pendiente la firma con certificado.
+      const notified = await t.query<any>(
+        `SELECT id FROM recipients r WHERE envelope_id = $1 AND (status IN ('sent','viewed')
+           OR EXISTS (SELECT 1 FROM certificate_signatures c WHERE c.recipient_id = r.id AND c.status = 'pending'))`,
+        [e.id],
+      );
       for (const r of notified) await enqueue(t, "notify", { kind: "voided", envelopeId: e.id, recipientId: r.id, tenantId: a.tenantId });
     });
     return loadDetail(s.db, a.tenantId, req.params.id);

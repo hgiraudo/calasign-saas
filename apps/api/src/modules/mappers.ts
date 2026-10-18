@@ -3,6 +3,7 @@ import type { Db } from "../infra/db";
 import { iso } from "../lib/util";
 import { notFound } from "../lib/errors";
 import { toRecipientIdentity } from "./identity/kyc";
+import { normalizeRequirements } from "./certsign-requirements";
 
 export const toEnvelope = (r: any, signedSha256: string | null = null): Envelope => ({
   id: r.id,
@@ -59,14 +60,7 @@ export const toRecipient = (r: any): Recipient => ({
   inPersonHost: r.in_person_host_user_id ? { id: r.in_person_host_user_id, name: r.in_person_host_name ?? "" } : null,
   identity: toRecipientIdentity(r),
   signatureType: r.signature_type ?? "electronic",
-  certificateRequirements:
-    r.signature_type === "certificate"
-      ? {
-          matchIdDocument: typeof r.certificate_requirements?.matchIdDocument === "boolean" ? r.certificate_requirements.matchIdDocument : Boolean(r.id_document_number),
-          allowedIssuers: Array.isArray(r.certificate_requirements?.allowedIssuers) ? r.certificate_requirements.allowedIssuers : [],
-          requireQualified: r.certificate_requirements?.requireQualified === true,
-        }
-      : null,
+  certificateRequirements: r.signature_type === "certificate" ? normalizeRequirements(r.certificate_requirements, Boolean(r.id_document_number)) : null,
   certificateSignature: r.cert_sig_status
     ? { status: r.cert_sig_status, position: r.cert_sig_position, signedAt: iso(r.cert_sig_signed_at), commonName: r.cert_sig_cn ?? null, issuer: r.cert_sig_issuer ?? null }
     : null,

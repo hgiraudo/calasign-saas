@@ -16,7 +16,7 @@ privada nunca sale del dispositivo: el servidor manda un hash y recibe una firma
   "signatureType": "certificate",          // "electronic" (por defecto) | "certificate"
   "certificateRequirements": {
     "matchIdDocument": true,               // el certificado tiene que corresponder a idDocumentNumber
-    "allowedIssuers": ["ICP-Brasil"],      // partes del DN del emisor; vacío = cualquiera
+    "allowedIssuers": ["ICP-Brasil"],      // partes del DN del emisor; vacío = cualquiera (exige cadena de confianza)
     "requireQualified": false              // exigir una CA del almacén de confianza (TRUST_STORE_DIR)
   }
 }
@@ -82,7 +82,7 @@ POST /v1/signing/:token/certsign/pairing ─▶ código XXXXX-XXXXX (10 min, un 
   - key usage `digitalSignature` o `nonRepudiation`;
   - EKU compatible con firma de documentos, si el certificado declara EKU;
   - que no sea un certificado de CA;
-  - emisor dentro de `allowedIssuers`;
+  - emisor dentro de `allowedIssuers` (si se usa, la cadena tiene que llegar a una raíz de confianza: el nombre del emisor se puede falsificar);
   - cadena hasta una raíz del almacén de confianza (obligatorio con `requireQualified`; si no, es una advertencia);
   - **identidad**: un número del certificado tiene que coincidir con el documento declarado. Se busca primero en el
     otherName de ICP-Brasil (CPF `2.16.76.1.3.1`, CNPJ `2.16.76.1.3.3`), después en el `serialNumber` del sujeto

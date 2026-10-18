@@ -342,7 +342,7 @@ export async function reportsSummary(db: Db, tenantId: string, q: { from?: strin
          count(*) FILTER (WHERE status = 'declined' AND sent_at BETWEEN $2 AND $3)::int AS declined,
          count(*) FILTER (WHERE status = 'voided' AND sent_at BETWEEN $2 AND $3)::int AS voided,
          count(*) FILTER (WHERE status = 'expired' AND sent_at BETWEEN $2 AND $3)::int AS expired,
-         count(*) FILTER (WHERE status IN ('sent','finalizing'))::int AS in_progress,
+         count(*) FILTER (WHERE status IN ('sent','awaiting_certificates','finalizing'))::int AS in_progress,
          (avg(extract(epoch FROM (completed_at - sent_at))) FILTER (WHERE completed_at BETWEEN $2 AND $3 AND sent_at IS NOT NULL))::float8 AS avg_secs
        FROM envelopes WHERE tenant_id = $1`,
       p,
@@ -386,7 +386,7 @@ export async function reportsSummary(db: Db, tenantId: string, q: { from?: strin
     if (!m) continue;
     m.created += r.n;
     if (r.status === "draft") m.draft += r.n;
-    else if (r.status === "sent" || r.status === "finalizing") m.inProgress += r.n;
+    else if (r.status === "sent" || r.status === "awaiting_certificates" || r.status === "finalizing") m.inProgress += r.n;
     else if (r.status in m) (m as unknown as Record<string, number>)[r.status] += r.n;
   }
   return {

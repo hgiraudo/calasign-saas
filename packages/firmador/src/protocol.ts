@@ -33,13 +33,25 @@ export function parseDeepLink(input: string): { api: string | null; code: string
   return null;
 }
 
+/** https, o http solo contra esta misma computadora (pruebas). Se mira el host ya parseado: "http://localhost@otro" no pasa. */
+function isAllowedApi(api: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(api);
+  } catch {
+    return false;
+  }
+  if (u.protocol === "https:") return true;
+  return u.protocol === "http:" && !u.username && !u.password && ["localhost", "127.0.0.1", "[::1]"].includes(u.hostname);
+}
+
 export class CertsignClient {
   constructor(
     readonly api: string,
     readonly code: string,
     private readonly fetcher: typeof fetch = fetch,
   ) {
-    if (!/^https:\/\//i.test(api) && !/^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?/i.test(api)) {
+    if (!isAllowedApi(api)) {
       throw new CertsignError(0, "insecure_api", "La dirección de CalaSign tiene que ser https");
     }
   }

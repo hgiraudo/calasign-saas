@@ -83,7 +83,7 @@ export async function otpRoutes(app: FastifyInstance, s: Services) {
     const { recipient: r, envelope: e } = await resolveToken(s.db, req.params.token);
     const method = r.auth_method as OtpMethod;
     if (!(method in METHOD_CHANNEL)) throw conflict("otp_not_required", "Este link no requiere código");
-    if (!["sent", "completed"].includes(e.status)) throw new AppError(410, "envelope_closed", "El sobre ya no está disponible");
+    if (!["sent", "awaiting_certificates", "completed"].includes(e.status)) throw new AppError(410, "envelope_closed", "El sobre ya no está disponible");
     const destination = destinationOf(r);
     if (!destination) throw conflict("otp_no_destination", "No hay a dónde enviar el código");
 

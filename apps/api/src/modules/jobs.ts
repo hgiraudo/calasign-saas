@@ -92,6 +92,7 @@ async function notify(d: Deps, p: { kind: TemplateKind; envelopeId: string; tena
   if (!r) return;
   // Invitaciones/recordatorios obsoletos (el sobre cambió de estado mientras esperaban en la cola).
   if ((p.kind === "invite" || p.kind === "reminder" || p.kind === "expiry_warning") && (e.status !== "sent" || !["sent", "viewed"].includes(r.status))) return;
+  if (p.kind === "certificate_request" && e.status !== "awaiting_certificates") return;
   // Firma embebida: el integrador muestra la ceremonia en su app; no se mandan invitaciones ni avisos.
   if ((p.kind === "invite" || p.kind === "reminder" || p.kind === "expiry_warning") && (r.embedded || r.auth_method === "in_person")) return;
 
@@ -356,11 +357,11 @@ export async function sweep(d: Deps) {
   await runAiSweep(d);
   await agreementsSweep(d);
   await dataSweep(d);
-  const expired = await d.db.query<any>(`SELECT id, tenant_id FROM envelopes WHERE status = 'sent' AND expires_at < now() LIMIT 100`);
+  const expired = await d.db.query<any>(`SELECT id, tenant_id FROM envelopes WHERE status IN ('sent','awaiting_certificates') AND expires_at < now() LIMIT 100`);
   for (const e of expired) {
     await d.db.tx(async (t) => {
       const cur = await t.one<any>(`SELECT status FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
-      if (cur?.status !== "sent") return;
+      if (cur?.status !== "sent" && cur?.status !== "awaiting_certificates") return;
       await t.query(`UPDATE envelopes SET status = 'expired', updated_at = now(), version = version + 1 WHERE id = $1`, [e.id]);
       await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "envelope.expired", actor: SYSTEM });
     });

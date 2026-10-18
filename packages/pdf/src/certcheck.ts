@@ -108,6 +108,17 @@ export function matchesIdDocument(declared: string, candidates: IdentityCandidat
   return null;
 }
 
+const isCa = (c: pkijs.Certificate) => Boolean(c.extensions?.some((e) => e.extnID === "2.5.29.19" && (e.parsedValue as pkijs.BasicConstraints | undefined)?.cA));
+
+/** CA (basicConstraints cA) y, si declara key usage, con keyCertSign. */
+function canIssueCertificates(c: pkijs.Certificate): boolean {
+  if (!isCa(c)) return false;
+  const ku = c.extensions?.find((e) => e.extnID === OID.keyUsage);
+  if (!ku) return true;
+  const bits = new Uint8Array((ku.parsedValue as asn1js.BitString | undefined)?.valueBlock?.valueHexView ?? []);
+  return Boolean((bits[0] ?? 0) & 0x04); // bit 5: keyCertSign
+}
+
 export interface CertificateCheckOptions {
   now?: Date;
   /** Si viene, el DN del emisor tiene que contener alguno (sin distinguir mayúsculas). */
@@ -143,7 +154,9 @@ export async function checkSigningCertificate(chainDerIn: Uint8Array[], o: Certi
   const warnings: string[] = [];
   const now = o.now ?? new Date();
   const leaf = parseCert(chainDerIn[0]);
-  const pool = [...chainDerIn.slice(1), ...(o.trustAnchors ?? [])].map(parseCert);
+  // Solo certificados de CA pueden emitir: si no, un titular con certificado confiable podría emitirse otro "hijo"
+  // con el documento de un tercero y la cadena verificaría igual. Las anclas vienen del almacén de confianza.
+  const pool = [...chainDerIn.slice(1).map(parseCert).filter(canIssueCertificates), ...(o.trustAnchors ?? []).map(parseCert)];
 
   const notBefore = leaf.notBefore.value;
   const notAfter = leaf.notAfter.value;
@@ -162,7 +175,7 @@ export async function checkSigningCertificate(chainDerIn: Uint8Array[], o: Certi
     const ids: string[] = ((eku.parsedValue as pkijs.ExtKeyUsage | undefined)?.keyPurposes ?? []).map(String);
     if (ids.length && !ids.some((x) => SIGNING_EKUS.has(x))) errors.push("el certificado no está habilitado para firmar documentos (extended key usage)");
   }
-  if (leaf.extensions?.some((e) => e.extnID === "2.5.29.19" && (e.parsedValue as pkijs.BasicConstraints | undefined)?.cA)) {
+  if (isCa(leaf)) {
     errors.push("es un certificado de autoridad certificante, no de una persona");
   }
 
@@ -183,6 +196,8 @@ export async function checkSigningCertificate(chainDerIn: Uint8Array[], o: Certi
   }
   if (!trusted) {
     if (o.requireTrusted) errors.push("el certificado no proviene de una autoridad certificante de confianza");
+    // El nombre del emisor lo puede poner cualquiera: filtrar por emisor solo tiene sentido con una cadena de confianza.
+    else if (o.allowedIssuers?.length) errors.push("para exigir emisores específicos, el certificado tiene que provenir de una autoridad certificante de confianza");
     else warnings.push(isSelfSigned(chain[chain.length - 1]) ? "la autoridad certificante no está en el almacén de confianza" : "no se pudo completar la cadena de certificación");
   }
   for (const c of chain.slice(1)) {

@@ -396,6 +396,10 @@ ok("exportación automática del PDF sellado a un bucket compatible con S3");
 // ═════════════════════════ 4. Dominio propio ═════════════════════════
 
 const DOMAIN = `firmas-${stamp}.cliente-e2e.com`;
+// Otra organización registra antes el mismo dominio sin poder verificarlo: no bloquea al dueño.
+const squatter = client();
+await squatter("POST", "/v1/auth/signup", { name: "Ocupa", email: `ocupa-plat+${stamp}@example.com`, password: "una-clave-segura-123", organization: `Ocupa ${stamp}` });
+assert((await squatter("PUT", "/v1/domains", { domain: DOMAIN })).domain.status === "pending", "otra organización registra el dominio (pendiente)");
 res = await owner("PUT", "/v1/domains", { domain: "algo.calasign.com" }, { raw: true });
 assert(res.status === 400, "subdominio de la plataforma → 400");
 let dom = (await owner("PUT", "/v1/domains", { domain: DOMAIN })).domain;
@@ -405,6 +409,7 @@ assert(dom.status === "pending" && dom.lastError, "sin el TXT no se verifica");
 await owner("POST", "/dev/dns-stub", { name: dom.txtName, values: ["otra-cosa", dom.txtValue] });
 dom = (await owner("POST", "/v1/domains/verify")).domain;
 assert(dom.status === "verified" && dom.verifiedAt, "con el TXT queda verificado");
+assert((await squatter("GET", "/v1/domains")).domain === null, "el registro pendiente de la otra organización se descarta al verificar");
 
 let hb = await getWithHost("/v1/public/host-branding", DOMAIN);
 assert(hb.status === 200 && JSON.parse(hb.body).organizationName === `Plataforma ${stamp}`, "marca según el Host");

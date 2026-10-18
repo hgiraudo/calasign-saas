@@ -111,7 +111,9 @@ if ! /usr/local/bin/calasign-backup.sh; then
   echo "El backup previo al deploy falló: deploy abortado sin tocar la versión activa" >&2
   exit 1
 fi
-PREV=\$(readlink -f /opt/calasign/current || true)
+# -e (no -f): en el primer deploy current no existe y `readlink -f` igual devuelve "/opt/calasign/current"; el
+# rollback lo tomaba como versión anterior y dejaba current apuntando a sí mismo.
+PREV=\$(readlink -e /opt/calasign/current || true)
 ln -sfn \$D /opt/calasign/current
 systemctl restart calasign
 if ! healthy; then

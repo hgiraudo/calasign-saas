@@ -17,6 +17,9 @@ const tempDirs = [];
 process.on("exit", () => {
   for (const d of tempDirs) rmSync(d, { recursive: true, force: true });
 });
+// SIGINT/SIGTERM/SIGHUP (Ctrl+C, `timeout`, cierre de terminal) terminan sin el evento "exit": se convierten en
+// process.exit para que la limpieza corra también en esos casos.
+for (const [sig, n] of [["SIGINT", 2], ["SIGTERM", 15], ["SIGHUP", 1]]) process.on(sig, () => process.exit(128 + n));
 function tempDir(prefix) {
   const d = mkdtempSync(join(tmpdir(), prefix));
   tempDirs.push(d);

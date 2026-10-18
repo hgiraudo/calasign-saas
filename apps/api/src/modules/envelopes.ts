@@ -431,7 +431,7 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
     const input = VoidEnvelopeInput.parse(req.body);
     await s.db.tx(async (t) => {
       const e = await lockEnvelope(t, a.tenantId, req.params.id);
-      if (e.status !== "sent") throw conflict("not_voidable", "Solo se puede anular un sobre enviado y en curso");
+      if (e.status !== "sent" && e.status !== "awaiting_certificates") throw conflict("not_voidable", "Solo se puede anular un sobre enviado y en curso");
       await t.query(`UPDATE envelopes SET status = 'voided', voided_at = now(), void_reason = $2, updated_at = now(), version = version + 1 WHERE id = $1`, [
         e.id,
         input.reason,

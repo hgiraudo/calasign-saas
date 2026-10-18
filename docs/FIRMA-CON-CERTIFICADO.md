@@ -44,7 +44,7 @@ privada nunca sale del dispositivo: el servidor manda un hash y recibe una firma
    agrega el sello de la plataforma como otra revisión incremental (campo `SelloCalaSign`) y después corre el
    proceso de evidencia de siempre (DSS/LTV según `SEAL_LEVEL`). El sobre queda `completed`.
 
-Mientras el sobre está en `awaiting_certificates` no se puede anular (limitación de esta versión).
+Mientras el sobre está en `awaiting_certificates` se puede anular: los códigos del Firmador ya emitidos dejan de servir (410).
 
 ### Decisión: el certificado de finalización
 
@@ -180,4 +180,3 @@ instalado.
   `windows-x64` está escrito pero no se corrió.
 - Firma de código: Authenticode para el `.exe` (sin firma, SmartScreen avisa) y codesign + notarización para macOS.
 - macOS: falta el bundle `.app` con `Info.plist` para registrar el esquema, y el binario.
-- Anular un sobre en `awaiting_certificates`.

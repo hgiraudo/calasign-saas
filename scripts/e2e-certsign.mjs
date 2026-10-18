@@ -293,6 +293,28 @@ try {
 } catch {}
 if (!softhsm) console.warn("⚠ softhsm2-util no está instalado: se omite la prueba de la fuente PKCS#11 (token)");
 
+// ───────── Anular un sobre que espera certificados ─────────
+{
+  const { envelope: e2 } = await api("POST", "/v1/envelopes", { subject: `Anular con certificado ${stamp}` });
+  const fd2 = new FormData();
+  fd2.append("file", new Blob([tinyPdf()], { type: "application/pdf" }), "contrato.pdf");
+  const d2 = await api("POST", `/v1/envelopes/${e2.id}/documents`, fd2);
+  const V = crypto.randomUUID();
+  const nameV = `Victor Anulado ${stamp}`;
+  await api("PUT", `/v1/envelopes/${e2.id}/recipients`, { recipients: [{ id: V, name: nameV, email: `v${stamp}@example.com`, signatureType: "certificate" }] });
+  await api("PUT", `/v1/envelopes/${e2.id}/fields`, { fields: [{ documentId: d2.id, recipientId: V, type: "name", page: 0, x: 0.1, y: 0.85, width: 0.3, height: 0.03 }] });
+  await api("POST", `/v1/envelopes/${e2.id}/send`);
+  const tV = await linkFor(nameV);
+  await api("POST", `/v1/signing/${tV}/consent`);
+  await api("POST", `/v1/signing/${tV}/complete`, { fields: [] });
+  await waitStatus(e2.id, "awaiting_certificates");
+  const pairV = await api("POST", `/v1/signing/${tV}/certsign/pairing`, {});
+  const voided = await api("POST", `/v1/envelopes/${e2.id}/void`, { reason: "prueba de anulación con certificados pendientes" });
+  assert(voided.envelope.status === "voided", "se puede anular un sobre que espera firmas con certificado");
+  await api("GET", `/v1/certsign/sessions/${pairV.code}`, null, { expect: 410 });
+  step("anular con certificados pendientes: el código del Firmador deja de servir (410)");
+}
+
 console.log("\nE2E CERTIFICADO PROPIO OK");
 cleanup();
 process.exit(0);

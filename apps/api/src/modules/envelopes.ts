@@ -25,6 +25,8 @@ import { checkSenderValue, insertEnvelopeField } from "./fieldvalues";
 import { applyInPersonFlags } from "./experience";
 import { applyIdentityFlags } from "./identity/kyc";
 import { assignFieldIds, saveFieldLogic } from "./logic";
+import { paymentBlocksCompletion } from "./billing/payments";
+import { enforceEnvelopeQuota } from "./billing/plans";
 
 /** Bloquea el sobre para serializar cambios y eventos. */
 export async function lockEnvelope(db: Db, tenantId: string, id: string) {
@@ -73,6 +75,8 @@ export async function activateRecipient(db: Db, tenantId: string, envelopeId: st
 export async function advanceRouting(db: Db, tenantId: string, envelopeId: string, actor: Actor) {
   const group = await currentSignerGroup(db, envelopeId);
   if (group.order === null) {
+    // Cobro al firmar: el sobre se completa recién con el pago confirmado.
+    if (await paymentBlocksCompletion(db, tenantId, envelopeId, actor)) return;
     await db.query(`UPDATE envelopes SET status = 'finalizing', updated_at = now() WHERE id = $1`, [envelopeId]);
     await appendEvent(db, { tenantId, envelopeId, type: "envelope.finalizing", actor });
     await enqueue(db, "finalize", { envelopeId, tenantId }, { dedupeKey: `finalize:${envelopeId}` });
@@ -496,6 +500,7 @@ export function sendPdf(reply: FastifyReply, bytes: Uint8Array, name: string) {
 export async function sendEnvelope(t: Db, tenantId: string, envelopeId: string, actor: Actor) {
   const e = await lockEnvelope(t, tenantId, envelopeId);
   requireDraft(e);
+  await enforceEnvelopeQuota(t, tenantId);
   const docs = await loadDocuments(t, e.id);
   const recips = await t.query<any>(`SELECT * FROM recipients WHERE envelope_id = $1`, [e.id]);
   const fields = await t.query<any>(`SELECT recipient_id, type FROM fields WHERE envelope_id = $1`, [e.id]);

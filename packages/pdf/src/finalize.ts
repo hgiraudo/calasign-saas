@@ -100,6 +100,8 @@ export interface CertificateData {
   signatureLevel?: "simple" | "advanced" | "qualified" | null;
   /** Sello de empresa: el PDF se firma además con un certificado de la organización. */
   companySeal?: { name: string; commonName: string | null } | null;
+  /** Cobros confirmados dentro del flujo de firma (comprobante). */
+  payments?: { description: string; amount: string; payerName: string; provider: string; reference: string; paidAt: string | null }[];
 }
 
 /** Adjunto subido por un firmante: PDF o imagen, se agrega al final de los documentos. */
@@ -359,6 +361,17 @@ async function drawCertificate(
     c.attachments.forEach((a, i) => {
       text(`${i + 1}. ${a.name} — ${L.uploadedBy} ${a.recipientName}${a.appended ? ` (${L.appended})` : ""}`, { bold: true });
       kv(L.originalHash, a.sha256, M + 12, 108);
+    });
+  }
+
+  if (c.payments && c.payments.length) {
+    section(L.payments);
+    c.payments.forEach((p, i) => {
+      text(`${i + 1}. ${p.description} — ${p.amount}`, { bold: true });
+      kv(L.paidBy, p.payerName, M + 12, 108);
+      kv(L.paymentProvider, p.provider, M + 12, 108);
+      kv(L.paymentReference, p.reference, M + 12, 108);
+      kv(L.paidAt, fmt(p.paidAt), M + 12, 108);
     });
   }
 

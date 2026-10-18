@@ -13,6 +13,7 @@ export const PERMISSIONS = [
   "api_keys:manage",
   "webhooks:manage",
   "audit:view",
+  "billing:manage",
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 

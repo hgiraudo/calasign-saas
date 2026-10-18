@@ -21,6 +21,7 @@ import { getLogoForPdf, getTenantBranding } from "./branding";
 import { handlePlatformJob } from "./platform-fanout";
 import { tenantBaseUrl } from "./custom-domains";
 import { identityForCertificate } from "./identity/kyc";
+import { paymentsForCertificate } from "./billing/payments";
 
 interface Deps {
   db: Db;
@@ -261,6 +262,7 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
       chainHead,
       verifyUrl: `${config.appUrl}/verify`,
       attachments: attachments.map((x) => ({ name: x.name, recipientName: x.recipientName, sha256: x.sha256, appended: true })),
+      payments: await paymentsForCertificate(d.db, e.id),
       branding: { primaryColor: brand.primaryColor, logo: brandLogo },
       ...evPlan.certificate,
     },

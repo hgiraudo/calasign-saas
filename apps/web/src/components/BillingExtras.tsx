@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   PAYMENT_CURRENCIES,
+  PAYMENT_METHOD_CODES,
   type EnvelopePayment,
   type PaymentProvider,
   type PaymentProviderInfo,
@@ -20,6 +21,19 @@ interface PaymentResponse {
 }
 
 const PROVIDER_LABEL: Record<Exclude<PaymentProvider, "mock">, string> = { stripe: "Stripe", mercadopago: "Mercado Pago" };
+
+/**
+ * Medios del proveedor traducidos por código (`methodCodes`). `methods` es texto en español de la API: se usa solo si
+ * una API vieja no manda los códigos, o para un código que esta versión de la web todavía no conoce.
+ */
+function methodLabels(p: PaymentProviderInfo | undefined, b: ReturnType<typeof useBillingText>): string {
+  if (!p) return "";
+  const codes = p.methodCodes ?? [];
+  if (!codes.length) return p.methods.join(", ");
+  return codes
+    .map((c, i) => ((PAYMENT_METHOD_CODES as readonly string[]).includes(c) ? b(`pay.method.${c}` as "pay.method.card") : p.methods[i] ?? c))
+    .join(", ");
+}
 
 /**
  * Monto escrito por el remitente, con el mismo criterio que la API: 1.234,56 · 1,234.56 · 1.500.000. Antes se hacía
@@ -185,7 +199,7 @@ export function PaymentOptionsPanel({ envelopeId, recipients }: { envelopeId: st
                 </select>
               </label>
             </div>
-            {provider && <p className="muted small">{b("pay.methods", { methods: configured.find((p) => p.id === provider)?.methods.join(", ") ?? "" })}</p>}
+            {provider && <p className="muted small">{b("pay.methods", { methods: methodLabels(configured.find((p) => p.id === provider), b) })}</p>}
             <fieldset className="stack-sm">
               <legend className="small strong">{b("pay.timing")}</legend>
               {(["after_sign", "before_sign"] as const).map((x) => (

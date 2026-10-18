@@ -341,4 +341,68 @@ await api("POST", `/v1/signing/${tCond}/complete`, { fields: [] }, { expect: 422
 await api("POST", `/v1/signing/${tCond}/complete`, { fields: [], signature: { kind: "typed", imagePng: PNG, text: "Firma" } });
 step("condición que citaba un campo borrado: se quita y la firma sigue siendo obligatoria");
 
+// ── Adjunto de un campo que quedó oculto: no va al PDF final. Firma fallida: sus imágenes no quedan guardadas ──
+// Las imágenes se cuentan en el almacenamiento local de la API (E2E_DATA_DIR = su DATA_DIR); sin eso se saltea.
+const { readdirSync, statSync } = await import("node:fs");
+const { join: pjoin } = await import("node:path");
+function countSignatureBlobs(envId) {
+  const root = process.env.E2E_DATA_DIR;
+  if (!root) return null;
+  let n = 0;
+  const walk = (dir) => {
+    for (const name of readdirSync(dir)) {
+      const p = pjoin(dir, name);
+      if (!statSync(p).isDirectory()) continue;
+      if (name === "signatures" && p.includes(`${envId}`)) n += readdirSync(p).length;
+      else walk(p);
+    }
+  };
+  walk(root);
+  return n;
+}
+const hEnv = (await api("POST", "/v1/envelopes", { subject: `Adjunto oculto ${stamp}` })).envelope;
+const hFd = new FormData();
+hFd.append("file", new Blob([tinyPdf(1, "Solicitud")], { type: "application/pdf" }), "solicitud.pdf");
+const hDoc = await api("POST", `/v1/envelopes/${hEnv.id}/documents`, hFd);
+const [noAplicaId, hAttId, rH] = [randomUUID(), randomUUID(), randomUUID()];
+const hName = `Adjunto oculto ${stamp}`;
+await api("PUT", `/v1/envelopes/${hEnv.id}/recipients`, {
+  recipients: [{ id: rH, role: "signer", routingOrder: 1, name: hName, email: `oculto+${stamp}@example.com` }],
+});
+await api("PUT", `/v1/envelopes/${hEnv.id}/fields`, {
+  fields: [
+    { id: noAplicaId, documentId: hDoc.id, recipientId: rH, type: "checkbox", page: 0, x: 0.1, y: 0.2, width: 0.04, height: 0.03, required: false, label: "No aplica" },
+    { id: hAttId, documentId: hDoc.id, recipientId: rH, type: "attachment", page: 0, x: 0.1, y: 0.3, width: 0.4, height: 0.05, required: true, label: "Comprobante", conditions: [{ fieldId: noAplicaId, operator: "unchecked" }] },
+    { documentId: hDoc.id, recipientId: rH, type: "signature", page: 0, x: 0.1, y: 0.6, width: 0.25, height: 0.06 },
+  ],
+});
+await api("POST", `/v1/envelopes/${hEnv.id}/send`);
+const tH = (await linkFor(hName)).token;
+await api("POST", `/v1/signing/${tH}/consent`);
+const hAfd = new FormData();
+hAfd.append("file", new Blob([tinyPdf(1, "Comprobante privado")], { type: "application/pdf" }), "comprobante.pdf");
+await api("POST", `/v1/signing/${tH}/fields/${hAttId}/attachment`, hAfd);
+// Intento fallido con firma: un campo desconocido lo rechaza dentro de la transacción, con las imágenes ya subidas.
+await api("POST", `/v1/signing/${tH}/complete`, { fields: [{ id: randomUUID(), value: "x" }], signature: { kind: "typed", imagePng: PNG, text: "Firma" } }, { expect: 400 });
+const afterFail = countSignatureBlobs(hEnv.id);
+if (afterFail !== null) assert(afterFail === 0, `la firma de un intento fallido no queda guardada (quedaron ${afterFail})`);
+// Marca "No aplica": el adjunto queda oculto.
+await api("POST", `/v1/signing/${tH}/complete`, { fields: [{ id: noAplicaId, value: "true" }], signature: { kind: "typed", imagePng: PNG, text: "Firma" } });
+if (afterFail !== null) assert(countSignatureBlobs(hEnv.id) === 1, "la firma completada sí queda guardada");
+let hDetail;
+for (let i = 0; i < 60; i++) {
+  hDetail = await api("GET", `/v1/envelopes/${hEnv.id}`);
+  if (hDetail.envelope.status === "completed") break;
+  await sleep(1000);
+}
+assert(hDetail.envelope.status === "completed", `sobre con adjunto oculto completado (estado ${hDetail.envelope.status})`);
+const hPdfRes = await api("GET", `/v1/envelopes/${hEnv.id}/signed.pdf`, null, { raw: true });
+const hOut = "var/e2e-productivity-hidden-attachment.pdf";
+writeFileSync(hOut, Buffer.from(await hPdfRes.arrayBuffer()));
+const hText = execFileSync("pdftotext", [hOut, "-"], { encoding: "utf8" });
+assert(!hText.includes("Comprobante privado"), "el adjunto de un campo oculto no se anexa al PDF final");
+step(
+  `adjunto de un campo oculto: fuera del PDF final${afterFail === null ? " (conteo de imágenes salteado: sin E2E_DATA_DIR)" : "; la firma de un intento fallido no queda guardada"}`,
+);
+
 console.log("\nE2E PRODUCTIVIDAD OK");

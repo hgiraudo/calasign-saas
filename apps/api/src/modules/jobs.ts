@@ -309,11 +309,13 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
   let completedAt = new Date().toISOString();
   let chainHead = events[events.length - 1]?.hash ?? "";
 
-  // Adjuntos de los firmantes y branding de la organización.
+  // Adjuntos de los firmantes y branding de la organización. Los de campos ocultos por la lógica no van: el
+  // firmante subió el archivo y después eligió una opción que lo deja fuera (p. ej. "no aplica"), y el PDF final
+  // igual anexaba ese documento (que podía ser una foto de su cédula).
   const attachRows = await d.db.query<any>(
     `SELECT f.value AS name, f.recipient_id, fl.storage_key, fl.content_type, fl.sha256
      FROM fields f JOIN files fl ON fl.id = f.attachment_file_id
-     WHERE f.envelope_id = $1 AND f.type = 'attachment' ORDER BY f.page, f.y, f.x`,
+     WHERE f.envelope_id = $1 AND f.type = 'attachment' AND NOT f.hidden ORDER BY f.page, f.y, f.x`,
     [e.id],
   );
   const attachments = await Promise.all(

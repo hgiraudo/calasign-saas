@@ -236,13 +236,24 @@ export async function refundPaymentsOnClosedEnvelopes(d: { db: Db; log: { error:
         await mpRefundPayment(p.provider_payment_id, `refund:${p.id}`);
       }
       // mock: no hay dinero que devolver.
-      await d.db.query(`UPDATE envelope_payments SET status = 'refunded', refunded_at = now(), refund_error = NULL, updated_at = now() WHERE id = $1`, [p.id]);
-      await appendEvent(d.db, {
-        tenantId: p.tenant_id,
-        envelopeId: p.envelope_id,
-        type: "payment.refunded",
-        actor: { ...SYSTEM, label: `Pago (${p.provider})` },
-        data: { paymentId: p.id, amount: Number(p.amount), currency: p.currency, reason: "envelope_closed" },
+      // Marca y evento juntos, con el sobre bloqueado (appendEvent lo exige para numerar la cadena): sin el bloqueo,
+      // un evento simultáneo del mismo sobre tomaba el mismo número, el de reembolso fallaba (UNIQUE) y, con el pago
+      // ya marcado "refunded", no se reintentaba nunca: la evidencia no registraba el reembolso.
+      await d.db.tx(async (t) => {
+        await lockEnvelope(t, p.tenant_id, p.envelope_id);
+        const marked = await t.query(
+          `UPDATE envelope_payments SET status = 'refunded', refunded_at = now(), refund_error = NULL, updated_at = now()
+            WHERE id = $1 AND refunded_at IS NULL RETURNING id`,
+          [p.id],
+        );
+        if (!marked.length) return;
+        await appendEvent(t, {
+          tenantId: p.tenant_id,
+          envelopeId: p.envelope_id,
+          type: "payment.refunded",
+          actor: { ...SYSTEM, label: `Pago (${p.provider})` },
+          data: { paymentId: p.id, amount: Number(p.amount), currency: p.currency, reason: "envelope_closed" },
+        });
       });
     } catch (err) {
       await d.db.query(`UPDATE envelope_payments SET refund_error = $2, updated_at = now() WHERE id = $1`, [p.id, String(err).slice(0, 500)]).catch(() => {});

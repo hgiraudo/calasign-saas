@@ -27,6 +27,7 @@ export const EVIDENCE_TO_NOTIFICATION: Record<string, NotificationEvent> = {
   "envelope.voided": "envelope.voided",
   "envelope.expired": "envelope.expired",
   "recipient.signed": "recipient.signed",
+  "recipient.approved": "recipient.approved",
 };
 
 export function validateIncomingWebhookUrl(raw: string): string {
@@ -72,6 +73,7 @@ const TXT = {
     "envelope.voided": "🚫 Sobre anulado",
     "envelope.expired": "⌛ Sobre vencido",
     "recipient.signed": "✍️ Firmó",
+    "recipient.approved": "👍 Aprobó",
     test: "🔔 Mensaje de prueba de CalaSign: la integración funciona.",
     open: "Ver sobre",
     by: "por",
@@ -83,6 +85,7 @@ const TXT = {
     "envelope.voided": "🚫 Envelope anulado",
     "envelope.expired": "⌛ Envelope expirado",
     "recipient.signed": "✍️ Assinou",
+    "recipient.approved": "👍 Aprovou",
     test: "🔔 Mensagem de teste da CalaSign: a integração funciona.",
     open: "Ver envelope",
     by: "por",
@@ -94,6 +97,7 @@ const TXT = {
     "envelope.voided": "🚫 Envelope voided",
     "envelope.expired": "⌛ Envelope expired",
     "recipient.signed": "✍️ Signed",
+    "recipient.approved": "👍 Approved",
     test: "🔔 CalaSign test message: the integration works.",
     open: "View envelope",
     by: "by",

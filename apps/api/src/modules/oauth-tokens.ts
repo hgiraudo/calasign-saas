@@ -154,6 +154,10 @@ export function requiredScope(url: string, method: string): OAuthScope | null | 
   if (/^\/v1\/(settings|notification-integrations|storage|domains)(\/|$)/.test(url)) return write ? "settings:write" : "settings:read";
   if (/^\/v1\/(members|roles|groups|invitations)(\/|$)/.test(url)) return write ? "members:write" : "members:read";
   if (url.startsWith("/v1/audit-log")) return "audit:read";
+  // Firma XML (facturación electrónica): es una operación de firma; los certificados en custodia son ajustes.
+  if (url.startsWith("/v1/xml/")) return "envelopes:write";
+  // Listar certificados exige envelopes:create en la política (para elegir con cuál firmar XML); subir o borrar, settings:manage.
+  if (url.startsWith("/v1/certificates")) return write ? "settings:write" : "envelopes:write";
   return "deny";
 }
 

@@ -13,7 +13,9 @@ import { fileURLToPath } from "node:url";
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const PORT = Number(process.env.E2E_CRM_PORT ?? 4115);
 const BASE = `http://localhost:${PORT}`;
-const P = { hs: 4291, sf: 4292, sg: 4293, al: 4294 };
+// Puertos de los simuladores (E2E_CRM_MOCK_BASE para evitar choques con otras pruebas en paralelo).
+const MB = Number(process.env.E2E_CRM_MOCK_BASE ?? 4291);
+const P = { hs: MB, sf: MB + 1, sg: MB + 2, al: MB + 3 };
 const HS_SECRET = "hs-client-secret-e2e";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const step = (m) => console.log(`✓ ${m}`);

@@ -429,7 +429,7 @@ export async function webhookRoutes(app: FastifyInstance, s: Services) {
   app.get<P & { Querystring: { limit?: string } }>("/v1/webhooks/:id/deliveries", { preHandler: auth }, async (req) => {
     const a = A(req);
     await load(a.tenantId, req.params.id);
-    const limit = Math.min(200, Math.max(1, Number(req.query.limit ?? 50)));
+    const limit = Math.min(200, Math.max(1, Math.trunc(Number(req.query.limit ?? 50)) || 50));
     const rows = await s.db.query(
       `SELECT * FROM webhook_deliveries WHERE endpoint_id = $1 AND tenant_id = $2 ORDER BY created_at DESC LIMIT $3`,
       [req.params.id, a.tenantId, limit],

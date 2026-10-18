@@ -150,6 +150,7 @@ export const NOTIFICATION_EVENTS = [
   "envelope.voided",
   "envelope.expired",
   "recipient.signed",
+  "recipient.approved",
 ] as const;
 export type NotificationEvent = (typeof NOTIFICATION_EVENTS)[number];
 

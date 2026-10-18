@@ -33,10 +33,11 @@ import { enqueue } from "../../infra/queue";
 import type { BlobStore } from "../../infra/storage";
 import { AppError, badRequest, notFound } from "../../lib/errors";
 import { decrypt, encrypt, iso, sha256Hex, uuidv7 } from "../../lib/util";
-import { assertEnvelopeAccess, assertTemplateAccess, hasPerm, loadAccess } from "../access";
+import { assertEnvelopeAccess, assertTemplateAccess, hasPerm } from "../access";
 import { auditFromRequest } from "../audit";
 import { authenticate, type AuthContext, type Services } from "../context";
 import { sendEnvelope } from "../envelopes";
+import { ownerCanStillCreate } from "../owner-check";
 import { insertEnvelopeFromTemplate, loadTemplateForUse, planFromTemplate } from "../templates";
 import { MappingError, mapPrefill, mapRecipients, neededProperties, statusForEvidence, statusValue, webhookMatches } from "./mapping";
 import {
@@ -172,13 +173,12 @@ export async function sendFromRecord(
   if (!mapping.active) throw new AppError(409, "crm_mapping_inactive", "El mapeo está desactivado");
   if (!mapping.template_id) throw badRequest("crm_template_required", "El mapeo no tiene plantilla");
   const runId = opts.runId ?? uuidv7();
+  // Con runId (envío por webhook) la ejecución ya existe y handleCrmJob ya contó el intento.
   if (!opts.runId) {
     await db.query(
       `INSERT INTO crm_runs (id, tenant_id, connection_id, mapping_id, kind, object_type, object_id, attempts, detail) VALUES ($1,$2,$3,$4,'send',$5,$6,1,$7)`,
       [runId, ctx.tenantId, connRow.id, mapping.id, mapping.object_type, objectId, JSON.stringify({ by: ctx.actor.label ?? ctx.actor.type })],
     );
-  } else {
-    await db.query(`UPDATE crm_runs SET attempts = attempts + 1, updated_at = now() WHERE id = $1`, [runId]);
   }
   try {
     const conn = open(db, connRow);
@@ -398,29 +398,19 @@ export async function handleCrmJob(d: { db: Db; blobs: BlobStore }, p: { runId: 
         ]);
         return;
       }
-      // El sobre queda a nombre de quien creó el mapeo: tiene que seguir siendo miembro y poder crear sobres con esa
-      // plantilla. Si no, un ex empleado (o alguien a quien le bajaron el rol) seguiría "enviando" sobres y recibiendo
+      // El sobre queda a nombre de quien creó el mapeo (un usuario o una API key): tiene que seguir pudiendo crear
+      // sobres con esa plantilla. Si no, un ex empleado (o una key revocada) seguiría "enviando" sobres y recibiendo
       // los avisos de cada contrato completado.
-      if (mapping.created_by) {
-        const owner: AuthContext = {
-          tenantId: run.tenant_id,
-          userId: mapping.created_by,
-          apiKeyId: null,
-          actor: { type: "system", label: `${conn.provider} (webhook)` },
-        } as AuthContext;
-        try {
-          owner.access = await loadAccess(db, owner);
-        } catch {
-          throw new AppError(409, "crm_mapping_owner_gone", "Quien creó el mapeo ya no es miembro de la organización: hay que volver a crearlo");
-        }
-        if (!hasPerm(owner, "envelopes:create")) {
-          throw new AppError(409, "crm_mapping_owner_forbidden", "Quien creó el mapeo ya no tiene permiso para crear sobres");
-        }
-        if (mapping.template_id) await assertTemplateAccess(db, owner, mapping.template_id, "view");
-      }
+      const owner = {
+        tenantId: run.tenant_id,
+        userId: mapping.created_by_api_key ? null : mapping.created_by,
+        apiKeyId: mapping.created_by_api_key ?? null,
+      };
+      const ownerGone = await ownerCanStillCreate(db, owner, mapping.template_id);
+      if (ownerGone) throw new AppError(409, "crm_mapping_owner_gone", `${ownerGone}: hay que volver a crear el mapeo`);
       await sendFromRecord(
         db,
-        { tenantId: run.tenant_id, userId: mapping.created_by, apiKeyId: null, actor: { type: "system", label: `${conn.provider} (webhook)` } },
+        { ...owner, actor: { type: "system", label: `${conn.provider} (webhook)` } },
         mapping,
         run.object_id,
         { runId: run.id, skipIfOpen: true },
@@ -639,8 +629,8 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
     if (input.templateId) await assertTemplateAccess(s.db, a, input.templateId, "view");
     const id = uuidv7();
     await s.db.query(
-      `INSERT INTO crm_mappings (id, tenant_id, connection_id, name, object_type, template_id, role_map, prefill_map, write_back, trigger, trigger_config, send, active, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+      `INSERT INTO crm_mappings (id, tenant_id, connection_id, name, object_type, template_id, role_map, prefill_map, write_back, trigger, trigger_config, send, active, created_by, created_by_api_key)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
       [
         id,
         a.tenantId,
@@ -656,6 +646,7 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
         input.send,
         input.active,
         a.userId,
+        a.apiKeyId,
       ],
     );
     await auditFromRequest(s.db, req, a, "crm.mapping_created", { targetType: "crm_mapping", targetId: id, data: { name: input.name, provider: conn.provider } });

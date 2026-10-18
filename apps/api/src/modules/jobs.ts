@@ -103,17 +103,7 @@ async function notify(
             )
           : [];
     const link = `${await tenantBaseUrl(d.db, e.tenant_id)}/app/envelopes/${e.id}`;
-    for (const u of to) {
-      if (!u.email) continue;
-      const m = render(p.kind, u.locale ?? e.locale, { ...base, recipientName: u.name, link }, mailBrand);
-      const res = await deliver({ channel: "email", to: u.email, subject: m.subject, text: m.text, html: m.html, link, locale: e.locale, tenantId: e.tenant_id });
-      await d.db.query(
-        `INSERT INTO notifications (id, tenant_id, envelope_id, channel, template, destination, status, provider, provider_message_id, sent_at)
-         VALUES ($1,$2,$3,'email',$4,$5,'sent',$6,$7,now())`,
-        [uuidv7(), e.tenant_id, e.id, p.kind, u.email, res.provider, res.messageId],
-      );
-    }
-    return;
+    return notifyStaff(d, e, p.kind, to, (u) => render(p.kind, u.locale ?? e.locale, { ...base, recipientName: u.name, link }, mailBrand), link, () => e.locale);
   }
 
   // Finalización fallida: a propietarios y administradores de la organización, y al remitente.
@@ -125,17 +115,7 @@ async function notify(
       [e.tenant_id, e.created_by],
     );
     const link = `${await tenantBaseUrl(d.db, e.tenant_id)}/app/envelopes/${e.id}`;
-    for (const u of to) {
-      if (!u.email) continue;
-      const m = render("finalize_failed", u.locale ?? e.locale, { ...base, recipientName: u.name, link }, mailBrand);
-      const res = await deliver({ channel: "email", to: u.email, subject: m.subject, text: m.text, html: m.html, link, locale: u.locale ?? e.locale, tenantId: e.tenant_id });
-      await d.db.query(
-        `INSERT INTO notifications (id, tenant_id, envelope_id, channel, template, destination, status, provider, provider_message_id, sent_at)
-         VALUES ($1,$2,$3,'email',$4,$5,'sent',$6,$7,now())`,
-        [uuidv7(), e.tenant_id, e.id, p.kind, u.email, res.provider, res.messageId],
-      );
-    }
-    return;
+    return notifyStaff(d, e, p.kind, to, (u) => render("finalize_failed", u.locale ?? e.locale, { ...base, recipientName: u.name, link }, mailBrand), link, (u) => u.locale ?? e.locale);
   }
 
   const r = await d.db.one<any>(`SELECT * FROM recipients WHERE id = $1`, [p.recipientId]);
@@ -206,6 +186,45 @@ async function notify(
     }
   }
   // Si no salió por ningún canal, reintentar el job.
+  if (delivered === 0 && errors.length) throw new Error(`no se pudo notificar: ${errors.join("; ")}`);
+}
+
+/**
+ * Avisos por correo a personas del equipo (remitente, propietarios, administradores). Cada dirección por separado:
+ * si una falla (p. ej. el SMTP rechaza una dirección), las demás igual se avisan y queda registrada la falla. El job
+ * se reintenta solo si no salió ninguno; si no, cada reintento les volvería a mandar el aviso a quienes ya lo
+ * recibieron (hasta agotar los intentos).
+ */
+async function notifyStaff(
+  d: Deps,
+  e: { id: string; tenant_id: string },
+  kind: TemplateKind,
+  to: { email: string; name: string; locale: string | null }[],
+  message: (u: { name: string; locale: string | null }) => { subject: string; text: string; html: string },
+  link: string,
+  localeOf: (u: { locale: string | null }) => string,
+) {
+  const errors: string[] = [];
+  let delivered = 0;
+  for (const u of to) {
+    if (!u.email) continue;
+    const m = message(u);
+    try {
+      const res = await deliver({ channel: "email", to: u.email, subject: m.subject, text: m.text, html: m.html, link, locale: localeOf(u), tenantId: e.tenant_id });
+      await d.db.query(
+        `INSERT INTO notifications (id, tenant_id, envelope_id, channel, template, destination, status, provider, provider_message_id, sent_at)
+         VALUES ($1,$2,$3,'email',$4,$5,'sent',$6,$7,now())`,
+        [uuidv7(), e.tenant_id, e.id, kind, u.email, res.provider, res.messageId],
+      );
+      delivered++;
+    } catch (err) {
+      errors.push(`${u.email}: ${String(err)}`);
+      await d.db.query(
+        `INSERT INTO notifications (id, tenant_id, envelope_id, channel, template, destination, status, error) VALUES ($1,$2,$3,'email',$4,$5,'failed',$6)`,
+        [uuidv7(), e.tenant_id, e.id, kind, u.email, String(err).slice(0, 1000)],
+      );
+    }
+  }
   if (delivered === 0 && errors.length) throw new Error(`no se pudo notificar: ${errors.join("; ")}`);
 }
 

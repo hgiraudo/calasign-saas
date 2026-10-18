@@ -60,12 +60,15 @@ export function startWorker(db: Db, opts: WorkerOptions) {
     );
   }
 
+  // El resultado se registra solo si el job sigue en este intento (`attempts` cambia con cada toma). Si el sweep lo
+  // devolvió a la cola por tardar más de 10 minutos y otro worker ya lo tomó, este intento viejo no puede pisar su
+  // estado: un error tardío lo reprogramaría mientras corre el siguiente y saldría una vez más.
   async function run(job: JobRow) {
     const handler = opts.handlers[job.queue];
     try {
       if (!handler) throw new Error(`sin handler para ${job.queue}`);
       await handler(job.payload, { id: job.id, attempts: job.attempts, maxAttempts: job.max_attempts });
-      await db.query(`UPDATE jobs SET status = 'done', finished_at = now(), locked_at = NULL WHERE id = $1`, [job.id]);
+      await db.query(`UPDATE jobs SET status = 'done', finished_at = now(), locked_at = NULL WHERE id = $1 AND attempts = $2`, [job.id, job.attempts]);
     } catch (e) {
       const err = e instanceof Error ? e.stack ?? e.message : String(e);
       const final = job.attempts >= job.max_attempts;
@@ -73,8 +76,8 @@ export function startWorker(db: Db, opts: WorkerOptions) {
       await db.query(
         `UPDATE jobs SET status = $2, last_error = $3, locked_at = NULL,
            run_at = now() + ($4 || ' seconds')::interval, finished_at = CASE WHEN $2 = 'failed' THEN now() END
-         WHERE id = $1`,
-        [job.id, final ? "failed" : "pending", err.slice(0, 4000), String(backoffSec)],
+         WHERE id = $1 AND attempts = $5`,
+        [job.id, final ? "failed" : "pending", err.slice(0, 4000), String(backoffSec), job.attempts],
       );
       opts.log.error({ jobId: job.id, queue: job.queue, attempts: job.attempts, final, err: String(e) }, "job falló");
     }

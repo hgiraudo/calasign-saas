@@ -156,16 +156,32 @@ export async function postToCustomerUrl(url: string, headers: Record<string, str
       { method: "POST", headers: { ...headers, "content-length": String(Buffer.byteLength(body)) }, agent: secure ? safeHttpsAgent : safeHttpAgent },
       (res) => {
         let text = "";
+        const done = () => {
+          clearTimeout(deadline);
+          resolve({ status: res.statusCode ?? 0, text: text.slice(0, 2000) });
+        };
         res.setEncoding("utf8");
         res.on("data", (c: string) => {
-          if (text.length < 2000) text += c;
+          text += c;
+          // Basta con el principio de la respuesta: no se sigue leyendo un cuerpo sin fin.
+          if (text.length >= 2000) {
+            done();
+            res.destroy();
+          }
         });
-        res.on("end", () => resolve({ status: res.statusCode ?? 0, text: text.slice(0, 2000) }));
-        res.on("error", reject);
+        res.on("end", done);
+        res.on("error", (e) => {
+          clearTimeout(deadline);
+          reject(e);
+        });
       },
     );
-    req.setTimeout(timeoutMs, () => req.destroy(new Error(`timeout después de ${timeoutMs} ms`)));
-    req.on("error", reject);
+    // Plazo TOTAL: setTimeout del socket solo mide inactividad, y un receptor que gotea bytes retendría al worker.
+    const deadline = setTimeout(() => req.destroy(new Error(`timeout después de ${timeoutMs} ms`)), timeoutMs);
+    req.on("error", (e) => {
+      clearTimeout(deadline);
+      reject(e);
+    });
     req.end(body);
   });
 }

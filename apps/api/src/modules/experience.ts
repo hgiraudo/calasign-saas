@@ -147,6 +147,9 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
     const r = recips.get(id);
     if (!r) throw notFound("Destinatario");
     requireUntouched(r, "quitarlo");
+    // Borrarlo eliminaría en cascada el cobro pendiente: el sobre seguiría sin cobrar.
+    if (await db.one(`SELECT 1 FROM envelope_payments WHERE recipient_id = $1 AND status <> 'paid'`, [id]))
+      throw conflict("recipient_is_payer", `${r.name} tiene un cobro pendiente: no se puede quitar`);
     await db.query(`DELETE FROM recipients WHERE id = $1`, [id]);
     recips.delete(id);
     removedRecipients.push({ id, name: r.name });

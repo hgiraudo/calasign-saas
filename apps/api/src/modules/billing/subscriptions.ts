@@ -132,6 +132,12 @@ export async function subscriptionRoutes(app: FastifyInstance, s: Services) {
     const amount = priceOf(input.plan, currency);
     if (!amount) throw badRequest("invalid_plan", "Ese plan no tiene precio en esa moneda");
     const provider = pickProvider(input.provider, currency);
+    // Con una suscripción real vigente, otro checkout crearía un segundo cobro recurrente (la anterior seguiría cobrando).
+    const current = t.subscription_id && ["stripe", "mercadopago"].includes(t.billing_provider) ? t.billing_provider : null;
+    if (current === "stripe") throw conflict("use_portal", "Para cambiar el plan de una suscripción de Stripe usá el portal de facturación");
+    if (current && current !== provider) {
+      throw conflict("subscription_exists", "Ya hay una suscripción activa con otro medio de pago: cancelala antes de contratar con este");
+    }
     const checkoutId = uuidv7();
     const back = `${config.appUrl}/app/settings/billing`;
     const user = a.userId ? await s.db.one<any>(`SELECT email FROM users WHERE id = $1`, [a.userId]) : null;

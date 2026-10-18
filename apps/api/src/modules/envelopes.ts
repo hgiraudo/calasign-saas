@@ -572,6 +572,9 @@ export async function sendEnvelope(t: Db, tenantId: string, envelopeId: string, 
       problems.push(`${s1.name} no tiene ningún campo de firma`);
   }
   if (e.expires_at && new Date(e.expires_at) <= new Date()) problems.push("La fecha de vencimiento ya pasó");
+  // El cobro tiene que quedar a cargo de un firmante: si se le cambió el rol, el sobre no podría completarse.
+  const pay = await t.one<any>(`SELECT recipient_id FROM envelope_payments WHERE envelope_id = $1`, [e.id]);
+  if (pay && !signers.some((r) => r.id === pay.recipient_id)) problems.push("Quien paga el cobro tiene que ser un firmante");
   if (problems.length) throw new AppError(422, "envelope_incomplete", problems.join(". "), { problems });
 
   await t.query(`UPDATE envelopes SET status = 'sent', sent_at = now(), updated_at = now(), version = version + 1 WHERE id = $1`, [e.id]);

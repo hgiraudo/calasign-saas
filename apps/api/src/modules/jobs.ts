@@ -88,15 +88,31 @@ async function notify(
 
   // Avisos al remitente.
   if (p.kind === "sender_completed" || p.kind === "sender_declined") {
-    if (!sender?.email) return;
+    // Solo a miembros actuales: quien dejó la organización no recibe más el asunto ni el link de sus sobres.
+    // Un rechazo pide que alguien actúe, así que sin remitente va a los propietarios; el "completado" se omite.
+    const isMember = e.created_by
+      ? Boolean(await d.db.one(`SELECT 1 FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [e.tenant_id, e.created_by]))
+      : false;
+    const to: { email: string; name: string; locale: string | null }[] =
+      isMember && sender?.email
+        ? [sender]
+        : p.kind === "sender_declined"
+          ? await d.db.query<any>(
+              `SELECT u.email, u.name, u.locale FROM users u JOIN memberships m ON m.user_id = u.id WHERE m.tenant_id = $1 AND m.role = 'owner'`,
+              [e.tenant_id],
+            )
+          : [];
     const link = `${await tenantBaseUrl(d.db, e.tenant_id)}/app/envelopes/${e.id}`;
-    const m = render(p.kind, sender.locale ?? e.locale, { ...base, recipientName: sender.name, link }, mailBrand);
-    const res = await deliver({ channel: "email", to: sender.email, subject: m.subject, text: m.text, html: m.html, link, locale: e.locale, tenantId: e.tenant_id });
-    await d.db.query(
-      `INSERT INTO notifications (id, tenant_id, envelope_id, channel, template, destination, status, provider, provider_message_id, sent_at)
-       VALUES ($1,$2,$3,'email',$4,$5,'sent',$6,$7,now())`,
-      [uuidv7(), e.tenant_id, e.id, p.kind, sender.email, res.provider, res.messageId],
-    );
+    for (const u of to) {
+      if (!u.email) continue;
+      const m = render(p.kind, u.locale ?? e.locale, { ...base, recipientName: u.name, link }, mailBrand);
+      const res = await deliver({ channel: "email", to: u.email, subject: m.subject, text: m.text, html: m.html, link, locale: e.locale, tenantId: e.tenant_id });
+      await d.db.query(
+        `INSERT INTO notifications (id, tenant_id, envelope_id, channel, template, destination, status, provider, provider_message_id, sent_at)
+         VALUES ($1,$2,$3,'email',$4,$5,'sent',$6,$7,now())`,
+        [uuidv7(), e.tenant_id, e.id, p.kind, u.email, res.provider, res.messageId],
+      );
+    }
     return;
   }
 

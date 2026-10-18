@@ -135,6 +135,14 @@ export interface EnvelopePayment {
   status: PaymentStatus;
   paidAt: string | null;
   providerPaymentId: string | null;
+  /**
+   * El pago llegó con el sobre ya cerrado (anulado, rechazado o vencido) y se tiene que devolver. Mientras
+   * `refundRequiredAt` tenga valor y `refundedAt` no, el reembolso está pendiente; `refundError` es el último error
+   * del proveedor al intentarlo (el barrido lo reintenta).
+   */
+  refundRequiredAt: string | null;
+  refundedAt: string | null;
+  refundError: string | null;
 }
 
 /** Lo que ve el firmante. `required` = este destinatario es quien paga. */

@@ -8,7 +8,7 @@ process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "calasign-domains-"));
 delete process.env.DATABASE_URL;
 
 describe("dominio propio: re-verificación periódica", () => {
-  it("si el TXT desaparece en dos controles seguidos, el dominio deja de usarse para los links", async () => {
+  it("si el TXT desaparece, el dominio deja de apuntar a la plataforma o el DNS falla seguido, deja de usarse para los links", async () => {
     const { createDb, migrate } = await import("../src/infra/db");
     const { recheckVerifiedDomains, tenantBaseUrl, tenantForHost } = await import("../src/modules/custom-domains");
     const { config } = await import("../src/config");
@@ -26,38 +26,69 @@ describe("dominio propio: re-verificación periódica", () => {
     );
     const log = { warn() {} };
     const age = () => db.query(`UPDATE custom_domains SET last_checked_at = now() - interval '7 hours' WHERE id = $1`, [domainId]);
+    const status = async () => (await db.one<any>(`SELECT status FROM custom_domains WHERE id = $1`, [domainId])).status;
+    const reverify = () => db.query(`UPDATE custom_domains SET status = 'verified', recheck_failures = 0 WHERE id = $1`, [domainId]);
 
-    // El TXT sigue publicado: queda verificado.
+    // El TXT sigue publicado y el dominio apunta a la plataforma: queda verificado.
     let txt: string[] = ["calasign-verify=tok123"];
-    const resolve = async () => txt;
-    await recheckVerifiedDomains({ db, log }, resolve);
-    expect((await db.one<any>(`SELECT status, last_error FROM custom_domains WHERE id = $1`, [domainId]))).toMatchObject({ status: "verified", last_error: null });
+    let routed = true;
+    const deps = { txt: async () => txt, routes: async () => routed };
+    await recheckVerifiedDomains({ db, log }, deps);
+    expect(await db.one<any>(`SELECT status, last_error FROM custom_domains WHERE id = $1`, [domainId])).toMatchObject({ status: "verified", last_error: null });
     expect(await tenantBaseUrl(db, tenant)).toBe("https://firmas.cliente.test");
 
-    // Un error de DNS no cuenta como falta.
+    // Un error de DNS suelto no lo desverifica.
+    const failing = {
+      txt: async (): Promise<string[]> => {
+        throw new Error("DNS 503");
+      },
+      routes: async () => true,
+    };
     await age();
-    await recheckVerifiedDomains({ db, log }, async () => {
-      throw new Error("DNS 503");
-    });
-    expect((await db.one<any>(`SELECT status FROM custom_domains WHERE id = $1`, [domainId])).status).toBe("verified");
+    await recheckVerifiedDomains({ db, log }, failing);
+    expect(await status()).toBe("verified");
 
-    // Falta una vez: sigue verificado, con aviso.
+    // Un control correcto pone el contador en cero. Después falta el TXT una vez: sigue verificado, con aviso.
+    await age();
+    await recheckVerifiedDomains({ db, log }, deps);
     txt = [];
     await age();
-    await recheckVerifiedDomains({ db, log }, resolve);
+    await recheckVerifiedDomains({ db, log }, deps);
     const once = await db.one<any>(`SELECT status, last_error FROM custom_domains WHERE id = $1`, [domainId]);
     expect(once.status).toBe("verified");
-    expect(once.last_error).toMatch(/próximo control/);
+    expect(once.last_error).toMatch(/si sigue fallando/);
 
     // Falta otra vez: vuelve a pendiente y los links usan el dominio de la plataforma.
     await age();
-    const r = await recheckVerifiedDomains({ db, log }, resolve);
+    const r = await recheckVerifiedDomains({ db, log }, deps);
     expect(r.demoted).toBe(1);
-    expect((await db.one<any>(`SELECT status FROM custom_domains WHERE id = $1`, [domainId])).status).toBe("pending");
+    expect(await status()).toBe("pending");
     expect(await tenantBaseUrl(db, tenant)).toBe(config.appUrl);
     expect(await tenantForHost(db, "firmas.cliente.test")).toBeNull();
     const audit = await db.one<any>(`SELECT action, target_id FROM account_audit_log WHERE tenant_id = $1 AND action = 'domain.unverified'`, [tenant]);
     expect(audit).toMatchObject({ action: "domain.unverified", target_id: "firmas.cliente.test" });
+
+    // Quien se quedó con el dominio vuelve a publicar el TXT viejo (es público: queda en los historiales de DNS) pero
+    // lo sirve desde otro lado. El dominio ya no apunta a la plataforma y se desverifica igual.
+    await reverify();
+    txt = ["calasign-verify=tok123"];
+    routed = false;
+    await age();
+    await recheckVerifiedDomains({ db, log }, deps);
+    await age();
+    await recheckVerifiedDomains({ db, log }, deps);
+    expect(await status()).toBe("pending");
+
+    // Un dominio que solo devuelve errores de DNS también termina desverificado (cuatro controles seguidos).
+    await reverify();
+    for (let i = 0; i < 3; i++) {
+      await age();
+      await recheckVerifiedDomains({ db, log }, failing);
+      expect(await status()).toBe("verified");
+    }
+    await age();
+    await recheckVerifiedDomains({ db, log }, failing);
+    expect(await status()).toBe("pending");
     await db.close();
   }, 180_000);
 });

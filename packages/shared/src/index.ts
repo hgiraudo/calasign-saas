@@ -13,3 +13,4 @@ export * from "./ai";
 export * from "./agreements";
 export * from "./crm";
 export * from "./video";
+export * from "./data";

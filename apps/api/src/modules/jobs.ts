@@ -20,6 +20,7 @@ import { purgeExpiredEnvelopes } from "./retention";
 import { getLogoForPdf, getTenantBranding } from "./branding";
 import { handlePlatformJob } from "./platform-fanout";
 import { tenantBaseUrl } from "./custom-domains";
+import { dataSweep } from "./data";
 import { identityForCertificate } from "./identity/kyc";
 import { paymentsForCertificate } from "./billing/payments";
 import { videoForCertificate } from "./video";
@@ -264,7 +265,7 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
         ip: x.ip,
       })),
       chainHead,
-      verifyUrl: `${config.appUrl}/verify`,
+      verifyUrl: `${await tenantBaseUrl(d.db, e.tenant_id)}/verify`,
       attachments: attachments.map((x) => ({ name: x.name, recipientName: x.recipientName, sha256: x.sha256, appended: true })),
       payments: await paymentsForCertificate(d.db, e.id),
       videoSessions: await videoForCertificate(d.db, e.id),
@@ -342,6 +343,7 @@ export async function sweep(d: Deps) {
   await purgeExpiredEnvelopes(d);
   await runAiSweep(d);
   await agreementsSweep(d);
+  await dataSweep(d);
   const expired = await d.db.query<any>(`SELECT id, tenant_id FROM envelopes WHERE status = 'sent' AND expires_at < now() LIMIT 100`);
   for (const e of expired) {
     await d.db.tx(async (t) => {

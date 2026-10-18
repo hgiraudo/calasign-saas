@@ -11,6 +11,7 @@ import { AppError, badRequest, conflict } from "../../lib/errors";
 import { decrypt, encrypt, randomToken, sha256Hex, uuidv7 } from "../../lib/util";
 import { recordAudit } from "../audit";
 import { SESSION_COOKIE, authenticate, clientInfo, type AuthContext, type Services } from "../context";
+import { syncSsoDomains } from "../data/sso-domains";
 
 const SESSION_DAYS = 14;
 const STATE_TTL_MIN = 10;
@@ -368,12 +369,8 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
     if (input.enforce && !input.enabled) throw badRequest("sso_disabled", "Para exigir SSO primero hay que habilitarlo");
 
     await s.db.tx(async (t) => {
-      for (const d of input.domains ?? []) {
-        const owner = await t.one<any>(`SELECT tenant_id FROM sso_domains WHERE domain = $1`, [d]);
-        if (owner && owner.tenant_id !== a.tenantId) throw conflict("domain_taken", `El dominio ${d} ya está asociado a otra organización`);
-      }
-      await t.query(`DELETE FROM sso_domains WHERE tenant_id = $1`, [a.tenantId]);
-      for (const d of input.domains ?? []) await t.query(`INSERT INTO sso_domains (domain, tenant_id) VALUES ($1,$2)`, [d, a.tenantId]);
+      // Conserva la verificación DNS de los dominios que siguen (ver modules/data/sso-domains.ts).
+      await syncSsoDomains(t, a.tenantId, input.domains ?? []);
       await t.query(
         `INSERT INTO sso_configs (tenant_id, enabled, protocol, jit_enabled, jit_role, enforce, oidc_issuer, oidc_client_id, oidc_client_secret_enc, oidc_scopes,
            saml_entry_point, saml_idp_issuer, saml_idp_cert, saml_email_attribute, updated_at)
@@ -418,7 +415,7 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
     const { email } = SsoDiscoverInput.parse(req.body);
     const r = await s.db.one<any>(
       `SELECT t.slug, t.name, c.enforce FROM sso_domains d JOIN tenants t ON t.id = d.tenant_id JOIN sso_configs c ON c.tenant_id = d.tenant_id
-       WHERE d.domain = $1 AND c.enabled`,
+       WHERE d.domain = $1 AND d.verified_at IS NOT NULL AND c.enabled`,
       [email.split("@")[1]],
     );
     if (!r) return { sso: false, startUrl: null, organizationName: null, enforced: false };

@@ -15,6 +15,7 @@ import { useExpText } from "../lib/i18n-experience";
 import { IdentityBadge } from "../components/IdentityControls";
 import { EnvelopePaymentSummary } from "../components/BillingExtras";
 import { VideoSessionsPanel } from "../components/Video";
+import { ArchivePanel } from "../components/DataExtras";
 
 export function EnvelopeDetailPage() {
   const { id = "" } = useParams();
@@ -153,6 +154,7 @@ export function EnvelopeDetailPage() {
 
       <AiMetadataPanel envelopeId={env.id} completed={env.status === "completed"} />
       <VideoSessionsPanel envelopeId={env.id} envelopeStatus={env.status} recipients={detail.recipients} />
+      {env.status === "completed" && <ArchivePanel envelopeId={env.id} canManage />}
 
       <div className="grid-2">
         <section className="card pad">

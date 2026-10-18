@@ -5,9 +5,10 @@ import { startWorker } from "./infra/queue";
 import { getSealProvider } from "./infra/seal";
 import { createBlobStore } from "./infra/storage";
 import { createJobHandlers, sweep } from "./modules/jobs";
+import { createTenantStorageResolver } from "./modules/data";
 
 const db = await createDb();
-const blobs = createBlobStore();
+const blobs = createBlobStore(createTenantStorageResolver(db));
 const app = await buildApp({ db, blobs });
 
 // En entornos chicos (local, dev) la API aplica migraciones y corre el worker en el mismo proceso.

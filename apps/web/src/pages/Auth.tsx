@@ -7,6 +7,7 @@ import { useAuth } from "../lib/auth";
 import { useI18n } from "../lib/i18n";
 import { ErrorBox, LocaleSwitcher, Logo, Spinner } from "../components/ui";
 import { SsoErrorNotice, SsoLoginBox, redirectIfSsoRequired } from "../components/SsoLogin";
+import { CellPicker } from "../components/DataExtras";
 
 function AuthShell({ title, children }: { title: string; children: ReactNode }) {
   const { t } = useI18n();
@@ -110,6 +111,7 @@ export function SignupPage() {
   const { me, loading, setMe } = useAuth();
   const nav = useNavigate();
   const [form, setForm] = useState({ organization: "", name: "", email: "", password: "" });
+  const [cell, setCell] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -123,7 +125,7 @@ export function SignupPage() {
     setBusy(true);
     setError(null);
     try {
-      const m = await api<MeResponse>("/v1/auth/signup", { method: "POST", body: { ...form, locale } });
+      const m = await api<MeResponse>("/v1/auth/signup", { method: "POST", body: { ...form, locale, ...(cell ? { cell } : {}) } });
       setMe(m);
       nav("/app", { replace: true });
     } catch (err) {
@@ -160,6 +162,7 @@ export function SignupPage() {
           />
           <small className="muted">{t("auth.passwordHint")}</small>
         </label>
+        <CellPicker value={cell} onChange={setCell} />
         <ErrorBox error={error} />
         <button className="btn btn-primary btn-block" disabled={busy}>
           {busy ? t("common.loading") : t("auth.signup")}

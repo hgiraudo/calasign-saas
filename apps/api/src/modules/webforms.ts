@@ -20,6 +20,7 @@ import { authenticate, clientInfo, type AuthContext, type Services } from "./con
 import { setFrameAncestors } from "./embed";
 import { sendEnvelope } from "./envelopes";
 import { insertEnvelopeFromTemplate, loadTemplateForUse, planFromTemplate, type LoadedTemplate } from "./templates";
+import { tenantBaseUrl } from "./custom-domains";
 
 /** Tiempo mínimo entre abrir el formulario y enviarlo (un humano tarda más; un bot, menos). */
 const MIN_FILL_MS = 2500;
@@ -27,11 +28,11 @@ const MAX_FILL_MS = 2 * 3600_000;
 
 type FormRow = any;
 
-function toWebForm(r: FormRow, templateName: string): WebForm {
+function toWebForm(r: FormRow, templateName: string, base: string): WebForm {
   return {
     id: r.id,
     slug: r.slug,
-    url: `${config.appUrl}/f/${r.slug}`,
+    url: `${base}/f/${r.slug}`,
     name: r.name,
     description: r.description,
     templateId: r.template_id,
@@ -123,7 +124,8 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
       `SELECT w.*, t.name AS template_name FROM web_forms w JOIN templates t ON t.id = w.template_id WHERE w.tenant_id = $1 ORDER BY w.created_at DESC`,
       [A(req).tenantId],
     );
-    return { items: rows.map((r) => toWebForm(r, r.template_name)) };
+    const base = await tenantBaseUrl(s.db, req.auth!.tenantId);
+    return { items: rows.map((r) => toWebForm(r, r.template_name, base)) };
   });
 
   app.post("/v1/web-forms", { preHandler: auth }, async (req, reply) => {
@@ -158,12 +160,12 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
     );
     reply.code(201);
     const r = await load(a.tenantId, id);
-    return toWebForm(r, r.template_name);
+    return toWebForm(r, r.template_name, await tenantBaseUrl(s.db, r.tenant_id));
   });
 
   app.get<P>("/v1/web-forms/:id", { preHandler: auth }, async (req) => {
     const r = await load(A(req).tenantId, req.params.id);
-    return toWebForm(r, r.template_name);
+    return toWebForm(r, r.template_name, await tenantBaseUrl(s.db, r.tenant_id));
   });
 
   app.patch<P>("/v1/web-forms/:id", { preHandler: auth }, async (req) => {
@@ -198,7 +200,7 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
       ],
     );
     const r = await load(a.tenantId, cur.id);
-    return toWebForm(r, r.template_name);
+    return toWebForm(r, r.template_name, await tenantBaseUrl(s.db, r.tenant_id));
   });
 
   app.delete<P>("/v1/web-forms/:id", { preHandler: auth }, async (req, reply) => {

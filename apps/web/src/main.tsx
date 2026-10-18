@@ -13,6 +13,7 @@ import "./styles-billing.css";
 import "./styles-ai.css";
 import "./styles-agreements.css";
 import "./styles-video.css";
+import "./styles-data.css";
 import { App } from "./App";
 import { I18nProvider } from "./lib/i18n";
 import { AuthProvider } from "./lib/auth";

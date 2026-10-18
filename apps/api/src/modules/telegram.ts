@@ -7,6 +7,7 @@ import { decrypt, sha256Hex } from "../lib/util";
 import { sendTelegram } from "../notifications/channels";
 import { normLocale } from "../notifications/templates";
 import type { Services } from "./context";
+import { tenantBaseUrl } from "./custom-domains";
 
 const MSG = {
   linked: {
@@ -50,7 +51,7 @@ export async function telegramRoutes(app: FastifyInstance, s: Services) {
       });
     });
     const locale = normLocale(r.locale ?? e.locale);
-    const link = e.status === "sent" && ["sent", "viewed"].includes(r.status) ? `${config.appUrl}/s/${decrypt(r.access_token_enc)}` : null;
+    const link = e.status === "sent" && ["sent", "viewed"].includes(r.status) ? `${await tenantBaseUrl(s.db, e.tenant_id)}/s/${decrypt(r.access_token_enc)}` : null;
     await sendTelegram({ to: String(chatId), text: MSG.linked[locale](e.subject), link, cta: MSG.cta[locale] }).catch((err) =>
       req.log.warn({ err: String(err) }, "no se pudo responder en Telegram"),
     );

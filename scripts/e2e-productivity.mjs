@@ -250,4 +250,91 @@ const apRecipient = envAp.recipients.find((r) => r.role === "approver");
 assert(apRecipient && !envAp.fields.some((f) => f.recipientId === apRecipient.id), "el sobre no le da campos al aprobador");
 step("rol de plantilla cambiado a aprobador: sin campos en la plantilla ni en el sobre");
 
+// ── Plantilla con aprobador de punta a punta: firma, aprueba y se completa ──
+const apTpl = (await api("POST", "/v1/templates", { name: `Con aprobador ${stamp}`, subject: `Aprobación ${stamp}` })).template;
+const apFd = new FormData();
+apFd.append("file", new Blob([tinyPdf(1, "Orden de compra")], { type: "application/pdf" }), "orden.pdf");
+const apDoc = await api("POST", `/v1/templates/${apTpl.id}/documents`, apFd);
+const apRoles = (
+  await api("PUT", `/v1/templates/${apTpl.id}/roles`, {
+    roles: [
+      { name: "Solicitante", role: "signer", routingOrder: 1 },
+      { name: "Gerencia", role: "approver", routingOrder: 2 },
+    ],
+  })
+).roles;
+const solicitante = apRoles.find((r) => r.name === "Solicitante");
+const gerencia = apRoles.find((r) => r.name === "Gerencia");
+assert(gerencia.role === "approver", "el rol aprobador se guarda en la plantilla");
+await api("PUT", `/v1/templates/${apTpl.id}/fields`, {
+  fields: [{ documentId: apDoc.id, roleId: gerencia.id, type: "signature", page: 0, x: 0.1, y: 0.7, width: 0.25, height: 0.06 }],
+}, { expect: 400 });
+await api("PUT", `/v1/templates/${apTpl.id}/fields`, {
+  fields: [{ documentId: apDoc.id, roleId: solicitante.id, type: "signature", page: 0, x: 0.1, y: 0.7, width: 0.25, height: 0.06 }],
+});
+const solName = `Solicita ${stamp}`;
+const gerName = `Gerente aprueba ${stamp}`;
+const apEnv = await api("POST", "/v1/envelopes/from-template", {
+  templateId: apTpl.id,
+  recipients: [
+    { role: "Solicitante", name: solName, email: `solicita+${stamp}@example.com` },
+    { role: "Gerencia", name: gerName, email: `gerencia+${stamp}@example.com` },
+  ],
+  send: true,
+});
+assert(apEnv.envelope.status === "sent", "sobre con aprobador enviado");
+const tSol = (await linkFor(solName)).token;
+await api("POST", `/v1/signing/${tSol}/consent`);
+const solSess = await api("GET", `/v1/signing/${tSol}`);
+await api("POST", `/v1/signing/${tSol}/complete`, { fields: [], signature: { kind: "typed", imagePng: PNG, text: "Solicita" } });
+assert(solSess.fields.length === 1, "el solicitante tiene su campo de firma");
+const tGer = (await linkFor(gerName)).token;
+const gerSess = await api("POST", `/v1/signing/${tGer}/consent`);
+assert(gerSess.recipient.role === "approver" && gerSess.canSign && gerSess.fields.length === 0, "el aprobador puede aprobar y no tiene campos");
+await api("POST", `/v1/signing/${tGer}/complete`, { fields: [] });
+let apDetail;
+for (let i = 0; i < 60; i++) {
+  apDetail = await api("GET", `/v1/envelopes/${apEnv.envelope.id}`);
+  if (apDetail.envelope.status === "completed") break;
+  await sleep(1000);
+}
+assert(apDetail.envelope.status === "completed", `sobre con aprobador completado (estado ${apDetail.envelope.status})`);
+const apEvents = (await api("GET", `/v1/envelopes/${apEnv.envelope.id}/events`)).items;
+assert(apEvents.some((e) => e.type === "recipient.approved"), "la evidencia registra la aprobación");
+step("plantilla con aprobador: el solicitante firma, gerencia aprueba sin campos y el sobre se completa");
+
+// ── Condición que cita un campo borrado: se quita, no deja el campo oculto para siempre ──
+const cEnv = (await api("POST", "/v1/envelopes", { subject: `Condición huérfana ${stamp}` })).envelope;
+const cFd = new FormData();
+cFd.append("file", new Blob([tinyPdf(1, "Anexo")], { type: "application/pdf" }), "anexo.pdf");
+const cDoc = await api("POST", `/v1/envelopes/${cEnv.id}/documents`, cFd);
+const ctrlId = randomUUID();
+const firmaId = randomUUID();
+const [rCtrl, rFirma] = [randomUUID(), randomUUID()];
+const cName = `Firma condicional ${stamp}`;
+const cRecips = [
+  { id: rCtrl, role: "signer", routingOrder: 1, name: `Controla ${stamp}`, email: `controla+${stamp}@example.com` },
+  { id: rFirma, role: "signer", routingOrder: 1, name: cName, email: `condicional+${stamp}@example.com` },
+];
+await api("PUT", `/v1/envelopes/${cEnv.id}/recipients`, { recipients: cRecips });
+await api("PUT", `/v1/envelopes/${cEnv.id}/fields`, {
+  fields: [
+    { id: ctrlId, documentId: cDoc.id, recipientId: rCtrl, type: "checkbox", page: 0, x: 0.1, y: 0.2, width: 0.04, height: 0.03, required: false, label: "Acepta anexo" },
+    { documentId: cDoc.id, recipientId: rCtrl, type: "signature", page: 0, x: 0.1, y: 0.4, width: 0.25, height: 0.06 },
+    { id: firmaId, documentId: cDoc.id, recipientId: rFirma, type: "signature", page: 0, x: 0.5, y: 0.7, width: 0.25, height: 0.06, conditions: [{ fieldId: ctrlId, operator: "checked" }] },
+  ],
+});
+// Quien controlaba la condición pasa a copia: su casilla se borra.
+cRecips[0].role = "cc";
+const cAfter = await api("PUT", `/v1/envelopes/${cEnv.id}/recipients`, { recipients: cRecips });
+assert(!cAfter.fields.some((f) => f.id === ctrlId), "la casilla de la copia se borró");
+assert(!cAfter.fields.find((f) => f.id === firmaId)?.conditions, "la condición que citaba la casilla borrada se quitó");
+await api("POST", `/v1/envelopes/${cEnv.id}/send`);
+const tCond = (await linkFor(cName)).token;
+await api("POST", `/v1/signing/${tCond}/consent`);
+// Sin la condición huérfana, la firma vuelve a ser obligatoria (antes quedaba oculta y se completaba sin firmar).
+await api("POST", `/v1/signing/${tCond}/complete`, { fields: [] }, { expect: 422 });
+await api("POST", `/v1/signing/${tCond}/complete`, { fields: [], signature: { kind: "typed", imagePng: PNG, text: "Firma" } });
+step("condición que citaba un campo borrado: se quita y la firma sigue siendo obligatoria");
+
 console.log("\nE2E PRODUCTIVIDAD OK");

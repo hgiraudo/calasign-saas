@@ -119,6 +119,24 @@ export async function copyFieldLogic(
   }
 }
 
+/**
+ * Quita las condiciones que citan campos que ya no existen (se borraron con su destinatario, rol o documento, o
+ * porque el destinatario pasó a copia o aprobador). Una condición huérfana deja el campo oculto para siempre:
+ * una firma obligatoria condicionada se saltearía y el firmante completaría sin firmar.
+ */
+export async function pruneDanglingConditions(db: Db, table: "fields" | "template_fields", ownerId: string) {
+  const col = table === "fields" ? "envelope_id" : "template_id";
+  const rows = await db.query<any>(`SELECT id, conditions FROM ${table} WHERE ${col} = $1`, [ownerId]);
+  const ids = new Set(rows.map((r) => r.id));
+  for (const r of rows) {
+    const conds = (Array.isArray(r.conditions) ? r.conditions : []) as FieldCondition[];
+    if (!conds.length) continue;
+    const kept = conds.filter((c) => ids.has(c.fieldId));
+    if (kept.length === conds.length) continue;
+    await db.query(`UPDATE ${table} SET conditions = $2 WHERE id = $1`, [r.id, kept.length ? JSON.stringify(kept) : null]);
+  }
+}
+
 const toLogic = (r: any): LogicField => ({
   id: r.id,
   type: r.type,

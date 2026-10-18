@@ -6,10 +6,22 @@
 // - uso del mes, moneda local, auditoría, permiso billing:manage
 // Uso: node scripts/e2e-billing.mjs [baseUrl]   (entorno local o dev: el proveedor simulado no existe en producción)
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+
+
+// Temporales del script (PDFs y claves de prueba): se borran al salir, aunque una aserción falle.
+const tempDirs = [];
+process.on("exit", () => {
+  for (const d of tempDirs) rmSync(d, { recursive: true, force: true });
+});
+function tempDir(prefix) {
+  const d = mkdtempSync(join(tmpdir(), prefix));
+  tempDirs.push(d);
+  return d;
+}
 
 const BASE = (process.argv[2] ?? "http://localhost:4000").replace(/\/$/, "");
 const stamp = Date.now();
@@ -172,7 +184,7 @@ assert(ev.some((x) => x.type === "payment.failed"), "evento payment.failed");
 await owner("POST", `/v1/signing/${s1.tk}/payment/checkout`, null, { expect: 409 });
 const pdf = Buffer.from(await (await owner("GET", `/v1/envelopes/${e1.id}/signed.pdf`, null, { raw: true })).arrayBuffer());
 try {
-  const dir = mkdtempSync(join(tmpdir(), "cs-bill-"));
+  const dir = tempDir("cs-bill-");
   writeFileSync(join(dir, "f.pdf"), pdf);
   const txt = execFileSync("pdftotext", [join(dir, "f.pdf"), "-"], { encoding: "utf8" });
   assert(/Pagos/.test(txt) && /150,50/.test(txt) && /Pagado por/.test(txt), "el certificado incluye el comprobante del pago");

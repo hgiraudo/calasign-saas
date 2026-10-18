@@ -3,10 +3,22 @@
 // inmutabilidad de quien ya firmó), reportes + CSV y reenvío/pedido de copias.
 // Uso: node scripts/e2e-experience.mjs [baseUrl]   (requiere el buzón de desarrollo)
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+
+
+// Temporales del script (PDFs y claves de prueba): se borran al salir, aunque una aserción falle.
+const tempDirs = [];
+process.on("exit", () => {
+  for (const d of tempDirs) rmSync(d, { recursive: true, force: true });
+});
+function tempDir(prefix) {
+  const d = mkdtempSync(join(tmpdir(), prefix));
+  tempDirs.push(d);
+  return d;
+}
 
 const BASE = (process.argv[2] ?? "http://localhost:4000").replace(/\/$/, "");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -252,7 +264,7 @@ for (let i = 0; i < 60; i++) {
 }
 assert(detail.envelope.status === "completed", `completado (estado ${detail.envelope.status})`);
 const pdf = Buffer.from(await (await sender("GET", `/v1/envelopes/${envelope.id}/signed.pdf`, null, { raw: true })).arrayBuffer());
-const dir = mkdtempSync(join(tmpdir(), "e2e-exp-"));
+const dir = tempDir("e2e-exp-");
 writeFileSync(join(dir, "s.pdf"), pdf);
 const text = execFileSync("pdftotext", [join(dir, "s.pdf"), "-"], { encoding: "utf8" });
 assert(/En persona, presentado por Ana Anfitriona/.test(text.replace(/\s+/g, " ")), "el certificado dice 'En persona, presentado por <anfitrión>'");

@@ -6,12 +6,24 @@
 // Uso: node scripts/e2e-identity.mjs [baseUrl]   (entorno local: issuer http y buzón de desarrollo sin sesión)
 import { createHash, generateKeyPairSync, randomBytes, randomUUID, sign as cryptoSign } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { inflateRawSync } from "node:zlib";
 import { SignedXml } from "xml-crypto";
+
+
+// Temporales del script (PDFs y claves de prueba): se borran al salir, aunque una aserción falle.
+const tempDirs = [];
+process.on("exit", () => {
+  for (const d of tempDirs) rmSync(d, { recursive: true, force: true });
+});
+function tempDir(prefix) {
+  const d = mkdtempSync(join(tmpdir(), prefix));
+  tempDirs.push(d);
+  return d;
+}
 
 const BASE = (process.argv[2] ?? "http://localhost:4000").replace(/\/$/, "");
 const stamp = Date.now();
@@ -209,7 +221,7 @@ assert(!/[A-Za-z0-9+/]{400,}/.test(evJson), "la evidencia no contiene imágenes"
 const verified = events.find((e) => e.type === "recipient.identity_verified").data;
 assert(verified.nameMatch.score >= 0.8 && verified.documentNumberMatched === true && verified.liveness === true && verified.faceMatchScore > 0.9, "resumen de la verificación");
 const pdf = Buffer.from(await (await owner.raw("GET", `/v1/envelopes/${k1.envelopeId}/signed.pdf`)).arrayBuffer());
-const dir = mkdtempSync(join(tmpdir(), "idn-"));
+const dir = tempDir("idn-");
 writeFileSync(join(dir, "signed.pdf"), pdf);
 const text = execFileSync("pdftotext", [join(dir, "signed.pdf"), "-"], { encoding: "utf8" });
 assert(/Verificación de identidad/.test(text) && /verificada/.test(text) && /prueba de vida/.test(text), "el certificado muestra la verificación de identidad");
@@ -424,7 +436,7 @@ ok("SSO obligatorio: sesiones con contraseña de miembros cerradas, login bloque
 
 // ───────────────────────────── SAML ─────────────────────────────
 
-const certDir = mkdtempSync(join(tmpdir(), "idp-"));
+const certDir = tempDir("idp-");
 execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", join(certDir, "k.pem"), "-out", join(certDir, "c.pem"), "-subj", "/CN=idp.test", "-days", "2"], {
   stdio: "ignore",
 });

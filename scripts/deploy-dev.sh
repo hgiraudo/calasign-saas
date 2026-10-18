@@ -18,8 +18,12 @@ REL="$(date -u +%Y%m%d%H%M%S)-$(git rev-parse --short HEAD)$(git diff --quiet ||
 chmod 600 infra/dev/terraform.tfstate* 2>/dev/null || true
 
 export AWS_PROFILE="${AWS_PROFILE:-bootstrap-terraform}"
-eval "$(aws sts assume-role --role-arn "arn:aws:iam::$ACCOUNT:role/OrganizationAccountAccessRole" --role-session-name deploy-dev \
-  --query Credentials --output json | python3 -c "import sys,json;c=json.load(sys.stdin);print(f\"export AWS_ACCESS_KEY_ID={c['AccessKeyId']} AWS_SECRET_ACCESS_KEY={c['SecretAccessKey']} AWS_SESSION_TOKEN={c['SessionToken']}\")")"
+# Las credenciales se guardan primero en una variable: con `eval "$(...)"` una falla de assume-role no corta
+# el script (set -e no mira la sustitución) y lo que sigue correría con las credenciales por defecto, de otra cuenta.
+CREDS=$(aws sts assume-role --role-arn "arn:aws:iam::$ACCOUNT:role/OrganizationAccountAccessRole" --role-session-name deploy-dev \
+  --query Credentials --output json | python3 -c "import sys,json;c=json.load(sys.stdin);print(f\"export AWS_ACCESS_KEY_ID={c['AccessKeyId']} AWS_SECRET_ACCESS_KEY={c['SecretAccessKey']} AWS_SESSION_TOKEN={c['SessionToken']}\")")
+[ -n "$CREDS" ] || { echo "No se pudo asumir el rol en la cuenta $ACCOUNT" >&2; exit 1; }
+eval "$CREDS"
 unset AWS_PROFILE
 export AWS_REGION=$REGION
 
@@ -30,8 +34,11 @@ echo "▶ empaquetando $REL"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 # Nunca viajan: var/ (claves de desarrollo), ni planes/estados/variables de Terraform.
+# `git ls-files -c` también lista los versionados borrados en el working tree (aún sin `git rm`): se saltean,
+# porque tar aborta con "Cannot stat" y el deploy debe reflejar el working tree tal cual.
 { git ls-files -co --exclude-standard; find apps/web/dist -type f; } | sort -u \
-  | grep -vE '^var/|(^|/)tfplan$|\.tfplan$|\.tfstate|\.tfvars$' > "$TMP/files"
+  | grep -vE '^var/|(^|/)tfplan$|\.tfplan$|\.tfstate|\.tfvars$' \
+  | while IFS= read -r f; do if [ -e "$f" ]; then printf '%s\n' "$f"; fi; done > "$TMP/files"
 tar -czf "$TMP/rel.tgz" -T "$TMP/files"
 aws s3 cp --only-show-errors "$TMP/rel.tgz" "s3://$BUCKET/releases/$REL.tgz"
 

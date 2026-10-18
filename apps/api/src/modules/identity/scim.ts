@@ -141,7 +141,13 @@ async function setActive(db: Db, tenantId: string, userId: string, active: boole
       throw new ScimError(402, `plan_limit: el plan ${plan.name} permite hasta ${plan.users} usuario(s); ampliá el plan en ${UPGRADE_URL}`, "plan_limit");
     }
     const t = await db.one<any>(`SELECT scim_default_role FROM tenants WHERE id = $1`, [tenantId]);
-    await db.query(`INSERT INTO memberships (tenant_id, user_id, role) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`, [tenantId, userId, t?.scim_default_role ?? "member"]);
+    // Sin contraseña en esta organización hasta que el usuario la restablezca: si la cuenta ya existía, su contraseña
+    // pudo elegirla otra persona (el registro no verifica el correo). Ver 0029_r11_identity.
+    await db.query(`INSERT INTO memberships (tenant_id, user_id, role, password_allowed) VALUES ($1,$2,$3,false) ON CONFLICT DO NOTHING`, [
+      tenantId,
+      userId,
+      t?.scim_default_role ?? "member",
+    ]);
   } else if (!active && m) {
     // Los propietarios se administran desde la consola (allí solo otro propietario puede quitarlos): un token SCIM,
     // que puede crear un administrador, no puede desactivarlos.

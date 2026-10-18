@@ -442,6 +442,26 @@ await oidcLogin(dana, `dana@${domain}`);
 await dana.api("POST", `/v1/invite/${inv.acceptUrl.split("/invite/")[1]}/accept`, {}, [400, 401, 403]);
 ok("SCIM ajeno no vincula ni reserva cuentas; una sesión SSO no cambia de organización ni acepta invitaciones de otra");
 
+// Pre-secuestro de cuenta: el registro no verifica el correo, así que alguien crea una cuenta con el correo de otra
+// persona y espera a que el SSO (alta JIT) de la organización de esa persona la vincule. Con la contraseña que eligió
+// no entra a esa organización: hace falta el SSO o restablecer la contraseña (que prueba el control del correo).
+const preEmail = `pre+${stamp}@${domain}`;
+await new Client("pre-squatter").api("POST", "/v1/auth/signup", { name: "Pre", email: preEmail, password: "clave-del-squatter-1", organization: `Squat ${stamp}` }, 201);
+const preVictim = new Client("pre-victim");
+idp.mode = "ok";
+await oidcLogin(preVictim, preEmail);
+assert((await preVictim.api("GET", "/v1/me")).tenant.id === me.tenant.id, "el SSO vinculó la cuenta existente a la organización");
+const preSquatter = new Client("pre-squatter-2");
+await preSquatter.api("POST", "/v1/auth/login", { email: preEmail, password: "clave-del-squatter-1" });
+await preSquatter.api("POST", "/v1/auth/switch-tenant", { tenantId: me.tenant.id }, 401);
+await new Client("pre-forgot").api("POST", "/v1/auth/password/forgot", { email: preEmail }, 202);
+const preMail = await waitMail((m) => m.to === preEmail && m.link?.includes("/reset/"), "reset del dueño del correo");
+await new Client("pre-reset").api("POST", "/v1/auth/password/reset", { token: preMail.link.split("/reset/")[1], password: "clave-del-dueño-12" }, 204);
+const preOwner = new Client("pre-owner");
+await preOwner.api("POST", "/v1/auth/login", { email: preEmail, password: "clave-del-dueño-12" });
+await preOwner.api("POST", "/v1/auth/switch-tenant", { tenantId: me.tenant.id });
+ok("pre-secuestro: la contraseña de una cuenta que vinculó el SSO no entra a esa organización hasta restablecerla");
+
 // SSO obligatorio: miembro con contraseña bloqueado; propietario entra (emergencia).
 const bob = new Client("bob");
 const bobEmail = `bob+${stamp}@example.com`;

@@ -1,7 +1,7 @@
 // Adjuntos del firmante: sube un archivo (PDF/JPG/PNG) para un campo de tipo "attachment".
 import type { FastifyInstance } from "fastify";
 import { ATTACHMENT_MAX_BYTES } from "@calasign/shared";
-import { assertEmbeddableImage, inspectPdf } from "@calasign/pdf";
+import { assertEmbeddableImage, preparePdfUpload } from "@calasign/pdf";
 import { appendEvent } from "../infra/evidence";
 import { AppError, badRequest, conflict, notFound } from "../lib/errors";
 import { sha256Hex, uuidv7 } from "../lib/util";
@@ -50,13 +50,15 @@ export async function attachmentRoutes(app: FastifyInstance, s: Services) {
     const { recipient: r0, envelope: e0 } = await resolveToken(s.db, req.params.token);
     const file = await req.file({ limits: { fileSize: ATTACHMENT_MAX_BYTES } });
     if (!file) throw badRequest("file_required", "Falta el archivo (campo 'file')");
-    const buf = await file.toBuffer();
+    let buf = await file.toBuffer();
     if (file.file.truncated) throw new AppError(413, "file_too_large", "El archivo supera los 10 MB");
     const type = sniff(buf);
     if (!type) throw badRequest("invalid_attachment", "Solo se aceptan PDF, JPG o PNG");
     if (type === "application/pdf") {
       try {
-        await inspectPdf(new Uint8Array(buf));
+        // Se guarda normalizado: el adjunto se copia al PDF final y tiene que verse igual que en el visor.
+        const prepared = await preparePdfUpload(new Uint8Array(buf));
+        buf = Buffer.from(prepared.bytes.buffer, prepared.bytes.byteOffset, prepared.bytes.byteLength);
       } catch {
         throw badRequest("invalid_attachment", "El PDF está dañado o protegido con contraseña");
       }

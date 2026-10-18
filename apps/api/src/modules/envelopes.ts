@@ -8,7 +8,7 @@ import {
   type EnvelopeEvent,
   type EnvelopeSummary,
 } from "@calasign/shared";
-import { InvalidPdfError, inspectPdf } from "@calasign/pdf";
+import { InvalidPdfError, preparePdfUpload } from "@calasign/pdf";
 import type { Db } from "../infra/db";
 import { appendEvent, type Actor } from "../infra/evidence";
 import { enqueue } from "../infra/queue";
@@ -290,16 +290,19 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
     const a = A(req);
     const file = await req.file({ limits: { fileSize: config.maxUploadBytes } });
     if (!file) throw badRequest("file_required", "Falta el archivo (campo 'file')");
-    const bytes = new Uint8Array(await file.toBuffer());
+    const uploaded = new Uint8Array(await file.toBuffer());
     if (file.file.truncated) throw new AppError(413, "file_too_large", "El archivo supera el tamaño máximo");
-    let info;
+    // Se guarda el PDF normalizado (reescrito por pdf-lib): el visor y el PDF final salen del mismo archivo, así que
+    // un PDF "ambiguo" no puede mostrar un contenido y firmar otro. El hash de lo subido queda en la evidencia.
+    let info, bytes: Uint8Array;
     try {
-      info = await inspectPdf(bytes);
+      ({ info, bytes } = await preparePdfUpload(uploaded));
     } catch (e) {
       if (e instanceof InvalidPdfError) throw badRequest(e.code, e.message);
       throw e;
     }
     const sha = sha256Hex(bytes);
+    const uploadedSha = sha256Hex(uploaded);
     const docId = uuidv7();
     const fileId = uuidv7();
     const key = `tenants/${a.tenantId}/envelopes/${req.params.id}/${fileId}.pdf`;
@@ -324,7 +327,7 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
         `INSERT INTO documents (id, tenant_id, envelope_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
         [docId, a.tenantId, e.id, pos.p, name, fileId, info.pageCount, JSON.stringify(info.pages)],
       );
-      await appendEvent(t, { tenantId: a.tenantId, envelopeId: e.id, type: "document.added", actor: a.actor, data: { documentId: docId, name, sha256: sha, pages: info.pageCount } });
+      await appendEvent(t, { tenantId: a.tenantId, envelopeId: e.id, type: "document.added", actor: a.actor, data: { documentId: docId, name, sha256: sha, uploadedSha256: uploadedSha, pages: info.pageCount } });
       await touch(t, e.id);
     });
     const d = (await loadDetail(s.db, a.tenantId, req.params.id)).documents.find((x) => x.id === docId);

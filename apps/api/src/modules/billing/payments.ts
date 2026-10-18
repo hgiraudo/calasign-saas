@@ -20,7 +20,15 @@ import { authenticate, type Services } from "../context";
 import { tenantBaseUrl } from "../custom-domains";
 import { advanceRouting, lockEnvelope } from "../envelopes";
 import { resolveToken } from "../signing";
-import { ProviderError, mpCreatePreference, providerConfigured, stripeCreatePaymentCheckout, stripeGetCheckoutSession } from "./providers";
+import {
+  ProviderError,
+  mpCreatePreference,
+  mpExpirePreference,
+  providerConfigured,
+  stripeCreatePaymentCheckout,
+  stripeExpireCheckoutSession,
+  stripeGetCheckoutSession,
+} from "./providers";
 import { escapeHtml, mockPage, mockPageCsp } from "./mock-page";
 
 // Código estable (lo traduce la interfaz) y texto documental en español, en el mismo orden.
@@ -142,6 +150,40 @@ export async function markPaymentPaid(
     // after_sign: si ya firmaron todos, el sobre pasa a finalizar ahora.
     if (e.status === "sent") await advanceRouting(t, p.tenant_id, p.envelope_id, SYSTEM);
   });
+}
+
+/**
+ * Cierra en el proveedor los checkouts que siguen abiertos en sobres que ya no se pueden firmar (anulados,
+ * rechazados o vencidos). Sin esto, el firmante podía seguir pagando en la sesión de Stripe (24 h) o en la
+ * preferencia de Mercado Pago y el cobro quedaba acreditado en un sobre cerrado, sin aviso ni reembolso.
+ * Corre en el barrido periódico, así cubre todos los caminos que cierran un sobre y reintenta si el proveedor falla.
+ */
+export async function closeStaleCheckouts(d: { db: Db; log: { error: (o: object, m: string) => void } }, limit = 50) {
+  const rows = await d.db.query<any>(
+    `SELECT p.id, p.provider, p.checkout_id, p.envelope_id, p.tenant_id FROM envelope_payments p JOIN envelopes e ON e.id = p.envelope_id
+      WHERE p.status IN ('pending','checkout_created') AND p.checkout_id IS NOT NULL AND p.checkout_closed_at IS NULL
+        AND e.status IN ('voided','declined','expired')
+      ORDER BY p.updated_at LIMIT $1`,
+    [limit],
+  );
+  for (const p of rows) {
+    try {
+      let outcome = "expired";
+      if (p.provider === "stripe") outcome = await stripeExpireCheckoutSession(p.checkout_id);
+      else if (p.provider === "mercadopago") await mpExpirePreference(p.checkout_id);
+      // "complete": se pagó antes de poder cerrarla; el webhook lo acredita y queda a la vista en la evidencia.
+      await d.db.query(`UPDATE envelope_payments SET checkout_closed_at = now(), checkout_url = NULL, updated_at = now() WHERE id = $1`, [p.id]);
+      await appendEvent(d.db, {
+        tenantId: p.tenant_id,
+        envelopeId: p.envelope_id,
+        type: "payment.checkout_closed",
+        actor: { ...SYSTEM, label: `Pago (${p.provider})` },
+        data: { paymentId: p.id, provider: p.provider, outcome },
+      });
+    } catch (err) {
+      d.log.error({ err: String(err), paymentId: p.id }, "no se pudo cerrar el checkout de un sobre cerrado");
+    }
+  }
 }
 
 export async function markPaymentFailed(db: Db, paymentId: string, reason: string) {

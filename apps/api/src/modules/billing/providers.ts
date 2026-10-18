@@ -85,6 +85,20 @@ export async function stripeGetCheckoutSession(id: string): Promise<{ id: string
   return { id: s.id, status: s.status, url: s.url ?? null };
 }
 
+/** Vence una sesión de Checkout abierta: deja de ser cobrable. Si ya no estaba abierta (completa o vencida), no hace nada. */
+export async function stripeExpireCheckoutSession(id: string): Promise<"expired" | "complete" | "already_expired"> {
+  try {
+    await stripe(`/v1/checkout/sessions/${encodeURIComponent(id)}/expire`, {});
+    return "expired";
+  } catch (err) {
+    // Stripe responde 400 si la sesión no está abierta: se mira en qué quedó.
+    const s = await stripeGetCheckoutSession(id);
+    if (s.status === "complete") return "complete";
+    if (s.status === "expired") return "already_expired";
+    throw err;
+  }
+}
+
 export async function stripeCreateSubscriptionCheckout(p: {
   planName: string;
   amount: number;
@@ -190,6 +204,11 @@ export async function mpCreatePreference(p: {
     payer: p.payerEmail ? { email: p.payerEmail } : undefined,
   });
   return { id: r.id, url: isMpTest() && r.sandbox_init_point ? r.sandbox_init_point : r.init_point };
+}
+
+/** Vence una preferencia de Checkout Pro: el link deja de aceptar pagos. */
+export async function mpExpirePreference(id: string) {
+  await mp(`/checkout/preferences/${encodeURIComponent(id)}`, { expires: true, expiration_date_to: new Date().toISOString() }, "PUT");
 }
 
 export async function mpGetPayment(id: string): Promise<{

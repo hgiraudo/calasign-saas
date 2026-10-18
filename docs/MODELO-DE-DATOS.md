@@ -92,6 +92,8 @@ El diagrama de arriba es el núcleo (0001). Cada bloque funcional agrega su prop
 | `0028_r12_integrations` | Quita de `oauth_clients.redirect_uris` las URIs con esquemas peligrosos (`javascript:`, `data:`, `vbscript:`, `file:`, `blob:`, `about:`, `filesystem:`) guardadas antes de que el alta las rechazara |
 | `0029_r12_identity` | `users.password_reset_at`: canjear un token de recuperación válido desbloquea la cuenta aunque no tenga organizaciones |
 | `0030_r13_integrations` | `auth_method` y `sso_tenant_id` en códigos de autorización y tokens OAuth: los tokens heredan cómo se autenticó la sesión y respetan el SSO obligatorio y la membresía vigente |
+| `0031_r14_evidence` | `agreement_views.created_by_api_key`: una vista de acuerdos creada con una API key es de esa key (la ve, la usa y la borra; otra key no la toma como propia) |
+| `0032_r14_checkout_closed` | `envelope_payments.checkout_closed_at`: un sobre anulado, rechazado o vencido cierra su checkout abierto en Stripe o Mercado Pago (barrido periódico) |
 
 Reglas: una migración por bloque, solo aditiva salvo cuando se recrea un `CHECK` para sumar un valor; nunca se edita una
 migración ya aplicada en un entorno.

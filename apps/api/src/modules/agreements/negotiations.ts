@@ -21,7 +21,7 @@ import {
   type NegotiationView,
   type ResolvedBlock,
 } from "@calasign/shared";
-import { extractPdfPlainText, inspectPdf, InvalidPdfError } from "@calasign/pdf";
+import { extractPdfPlainText, InvalidPdfError, preparePdfUpload } from "@calasign/pdf";
 import { z } from "zod";
 import { config } from "../../config";
 import type { Db } from "../../infra/db";
@@ -303,9 +303,10 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
     const meta = z
       .object({ title: z.string().trim().min(1).max(300), participants: z.array(NegotiationParticipantInput).min(1).max(20), message: z.string().max(5000).nullable().optional() })
       .parse(JSON.parse(metaField && "value" in metaField ? String(metaField.value) : "{}"));
-    const bytes = new Uint8Array(await file.toBuffer());
+    // PDF normalizado: el texto que se negocia y el documento que se firma salen del mismo archivo.
+    let bytes: Uint8Array;
     try {
-      await inspectPdf(bytes);
+      bytes = (await preparePdfUpload(new Uint8Array(await file.toBuffer()))).bytes;
     } catch (e) {
       if (e instanceof InvalidPdfError) throw badRequest(e.code, e.message);
       throw e;

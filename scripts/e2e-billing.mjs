@@ -301,6 +301,13 @@ if (process.env.E2E_FAKE_PROVIDERS_PORT) {
         stripeSessions.set(id, ses);
         return send(200, ses);
       }
+      if (req.method === "POST" && /^\/v1\/checkout\/sessions\/[^/]+\/expire$/.test(path)) {
+        const ses = stripeSessions.get(path.split("/")[4]);
+        if (!ses || ses.status !== "open") return send(400, { error: { message: "Only open sessions can be expired" } });
+        ses.status = "expired";
+        ses.url = null;
+        return send(200, ses);
+      }
       if (req.method === "GET" && path.startsWith("/v1/checkout/sessions/")) {
         const ses = stripeSessions.get(path.split("/").pop());
         return ses ? send(200, ses) : send(404, { error: { message: "No such checkout.session" } });
@@ -360,6 +367,21 @@ if (process.env.E2E_FAKE_PROVIDERS_PORT) {
   for (let i = 0; i < 60 && (await status(es.id)) !== "completed"; i++) await sleep(1000);
   assert((await status(es.id)) === "completed", "Stripe: pago confirmado por webhook → sobre completado");
 
+  // Anular un sobre con un checkout abierto lo cierra en el proveedor: si no, el firmante podía seguir pagando en la
+  // sesión de Stripe y el cobro quedaba acreditado en un sobre anulado. Lo cierra el barrido periódico (cada 30 s).
+  const SV = `Paga y anulan ${stamp}`;
+  const ev = await draft([SV], `Stripe anulado ${stamp}`);
+  await owner("PUT", `/v1/envelopes/${ev.id}/payment`, { amount: 10, currency: "USD", description: "Cuota", payerRecipientId: ev.recips[0].id, provider: "stripe" });
+  await owner("POST", `/v1/envelopes/${ev.id}/send`);
+  const sv = await sign(SV);
+  const vco = await owner("POST", `/v1/signing/${sv.tk}/payment/checkout`);
+  const vses = stripeSessions.get(vco.url.split("/").pop());
+  assert(vses?.status === "open", "checkout de Stripe abierto antes de anular");
+  await owner("POST", `/v1/envelopes/${ev.id}/void`, { reason: "Se canceló la operación" });
+  for (let i = 0; i < 50 && vses.status === "open"; i++) await sleep(1000);
+  assert(vses.status === "expired", "al anular el sobre, la sesión de Stripe se venció (no se puede pagar)");
+  ok("Stripe: anular el sobre cierra el checkout abierto");
+
   // Stripe: suscripción
   await owner("POST", "/v1/billing/cancel");
   const sco = await owner("POST", "/v1/billing/checkout", { plan: "starter", currency: "USD", provider: "stripe" });
@@ -377,6 +399,7 @@ if (process.env.E2E_FAKE_PROVIDERS_PORT) {
   bill = await owner("GET", "/v1/billing");
   assert(bill.plan.id === "free", "Stripe: suscripción borrada → Free");
   ok("Stripe (servidor falso): checkout, webhook firmado, monto verificado, idempotencia, suscripción alta/renovación/baja");
+
 
   // Cambio de plan con una suscripción de Stripe vigente: el portal no puede cambiar de plan (los precios son de cada
   // checkout), así que el cambio es un checkout nuevo y, al pagarse, la suscripción anterior se cancela.

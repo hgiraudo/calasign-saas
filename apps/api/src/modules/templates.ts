@@ -11,7 +11,7 @@ import {
   type TemplateField,
   type TemplateSummary,
 } from "@calasign/shared";
-import { InvalidPdfError, inspectPdf } from "@calasign/pdf";
+import { InvalidPdfError, preparePdfUpload } from "@calasign/pdf";
 import { config } from "../config";
 import type { Db } from "../infra/db";
 import { appendEvent, type Actor } from "../infra/evidence";
@@ -211,11 +211,12 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
     const a = A(req);
     const file = await req.file({ limits: { fileSize: config.maxUploadBytes } });
     if (!file) throw badRequest("file_required", "Falta el archivo (campo 'file')");
-    const bytes = new Uint8Array(await file.toBuffer());
+    const uploaded = new Uint8Array(await file.toBuffer());
     if (file.file.truncated) throw new AppError(413, "file_too_large", "El archivo supera el tamaño máximo");
-    let info;
+    // PDF normalizado: lo que muestra el visor es lo que termina en cada sobre creado desde la plantilla.
+    let info, bytes: Uint8Array;
     try {
-      info = await inspectPdf(bytes);
+      ({ info, bytes } = await preparePdfUpload(uploaded));
     } catch (e) {
       if (e instanceof InvalidPdfError) throw badRequest(e.code, e.message);
       throw e;

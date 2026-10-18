@@ -23,7 +23,7 @@ import { handlePlatformJob } from "./platform-fanout";
 import { tenantBaseUrl } from "./custom-domains";
 import { dataSweep } from "./data";
 import { identityForCertificate } from "./identity/kyc";
-import { paymentsForCertificate } from "./billing/payments";
+import { closeStaleCheckouts, paymentsForCertificate } from "./billing/payments";
 import { runAiSweep } from "./ai";
 import { agreementsSweep, handleAgreementsJob } from "./agreements";
 
@@ -488,6 +488,8 @@ export async function sweep(d: Deps) {
       await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "envelope.expired", actor: SYSTEM });
     });
   }
+  // Después del vencimiento, así los sobres que vencieron recién también cierran su checkout.
+  await closeStaleCheckouts(d).catch((err) => d.log.error({ err: String(err), step: "payments" }, "tarea periódica falló"));
 }
 
 const REPLACED = {

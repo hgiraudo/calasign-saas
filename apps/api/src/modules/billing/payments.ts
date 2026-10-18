@@ -19,7 +19,7 @@ import { authenticate, type Services } from "../context";
 import { tenantBaseUrl } from "../custom-domains";
 import { advanceRouting, lockEnvelope } from "../envelopes";
 import { resolveToken } from "../signing";
-import { ProviderError, mpCreatePreference, providerConfigured, stripeCreatePaymentCheckout } from "./providers";
+import { ProviderError, mpCreatePreference, providerConfigured, stripeCreatePaymentCheckout, stripeGetCheckoutSession } from "./providers";
 import { escapeHtml, mockPage, mockPageCsp } from "./mock-page";
 
 const PROVIDER_METHODS: Record<PaymentProvider, string[]> = {
@@ -266,6 +266,22 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
     if (p.status === "paid") throw conflict("already_paid", "El pago ya está confirmado");
     if (!info.canPay) throw conflict("payment_not_available", p.timing === "after_sign" ? "El pago se habilita después de firmar" : "El sobre no admite pagos ahora");
 
+    // Un checkout anterior que sigue cobrable se reutiliza: si se creara otro (doble clic, dos pestañas), el firmante
+    // podría pagar los dos y el segundo cobro quedaría sin acreditar (markPaymentPaid lo ignora).
+    try {
+      if (p.provider === "stripe" && p.checkout_id) {
+        const prev = await stripeGetCheckoutSession(p.checkout_id);
+        if (prev.status === "open" && prev.url) return { url: prev.url };
+        if (prev.status === "complete" && p.status === "checkout_created")
+          throw conflict("payment_processing", "El pago se está procesando; en unos instantes queda confirmado");
+      } else if (p.provider === "mercadopago" && p.status === "checkout_created" && p.checkout_url) {
+        return { url: p.checkout_url as string };
+      }
+    } catch (err) {
+      if (err instanceof ProviderError) throw new AppError(502, "payment_provider_error", `No se pudo iniciar el pago: ${err.message}`);
+      throw err;
+    }
+
     const base = await tenantBaseUrl(s.db, e.tenant_id);
     const back = `${base}/s/${token}`;
     let checkoutId: string;
@@ -287,6 +303,8 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
           cancelUrl: `${back}?payment=cancel`,
           metadata: { paymentId: p.id, envelopeId: e.id, tenantId: e.tenant_id },
           customerEmail: r.email,
+          // Misma clave para pedidos simultáneos sobre el mismo estado; cambia cuando la sesión anterior vence o falla.
+          idempotencyKey: `pay:${p.id}:${p.checkout_id ?? "first"}`,
         });
         checkoutId = c.id;
         url = c.url;

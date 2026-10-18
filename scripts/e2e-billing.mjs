@@ -263,6 +263,7 @@ if (process.env.E2E_FAKE_PROVIDERS_PORT) {
   const port = Number(process.env.E2E_FAKE_PROVIDERS_PORT);
   const mpPayments = new Map();
   const mpPreapprovals = new Map();
+  const stripeSessions = new Map();
   const fake = createServer((req, res) => {
     let body = "";
     req.on("data", (c) => (body += c));
@@ -275,7 +276,13 @@ if (process.env.E2E_FAKE_PROVIDERS_PORT) {
       if (req.method === "POST" && path === "/v1/checkout/sessions") {
         const p = new URLSearchParams(body);
         const id = `cs_test_${randomUUID().slice(0, 8)}`;
-        return send(200, { id, url: `https://checkout.stripe.test/${id}`, _mode: p.get("mode") });
+        const ses = { id, status: "open", url: `https://checkout.stripe.test/${id}`, _mode: p.get("mode") };
+        stripeSessions.set(id, ses);
+        return send(200, ses);
+      }
+      if (req.method === "GET" && path.startsWith("/v1/checkout/sessions/")) {
+        const ses = stripeSessions.get(path.split("/").pop());
+        return ses ? send(200, ses) : send(404, { error: { message: "No such checkout.session" } });
       }
       if (req.method === "POST" && path === "/checkout/preferences") return send(201, { id: "pref_e2e", init_point: "https://mp.test/pref_e2e", sandbox_init_point: "https://sandbox.mp.test/pref_e2e" });
       if (req.method === "GET" && path.startsWith("/v1/payments/")) return send(200, mpPayments.get(path.split("/").pop()) ?? {});
@@ -306,6 +313,8 @@ if (process.env.E2E_FAKE_PROVIDERS_PORT) {
   const ss = await sign(S);
   const { url } = await owner("POST", `/v1/signing/${ss.tk}/payment/checkout`);
   assert(url.startsWith("https://checkout.stripe.test/"), "checkout de Stripe");
+  const again = await owner("POST", `/v1/signing/${ss.tk}/payment/checkout`);
+  assert(again.url === url, "Stripe: un segundo pedido reutiliza la sesión abierta (no dos cobrables)");
   const pid = (await owner("GET", `/v1/envelopes/${es.id}/payment`)).payment.id;
   const session = { id: url.split("/").pop(), mode: "payment", payment_status: "paid", amount_total: 9990, currency: "usd", payment_intent: "pi_e2e", metadata: { paymentId: pid } };
   let r = await stripeHook({ id: `evt_${stamp}_bad`, type: "checkout.session.completed", data: { object: { ...session, amount_total: 100 } } });

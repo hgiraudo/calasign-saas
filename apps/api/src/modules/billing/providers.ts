@@ -33,12 +33,14 @@ export function stripeForm(params: Record<string, unknown>): string {
   return out.join("&");
 }
 
-async function stripe(path: string, params: Record<string, unknown> | null, method = "POST"): Promise<any> {
+async function stripe(path: string, params: Record<string, unknown> | null, method = "POST", idempotencyKey?: string): Promise<any> {
   const key = config.billing.stripe.secretKey;
   if (!key) throw new ProviderError("stripe", 503, "Stripe no está configurado (STRIPE_SECRET_KEY)");
+  const headers: Record<string, string> = { Authorization: `Bearer ${key}`, "Content-Type": "application/x-www-form-urlencoded", "Stripe-Version": "2024-06-20" };
+  if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
   const res = await fetch(`${config.billing.stripe.apiBase}${path}`, {
     method,
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/x-www-form-urlencoded", "Stripe-Version": "2024-06-20" },
+    headers,
     body: params ? stripeForm(params) : undefined,
     signal: AbortSignal.timeout(20_000),
   });
@@ -60,6 +62,8 @@ export async function stripeCreatePaymentCheckout(p: {
   cancelUrl: string;
   metadata: Record<string, string>;
   customerEmail?: string | null;
+  /** Pedidos simultáneos con la misma clave reciben la misma sesión (no dos sesiones cobrables). */
+  idempotencyKey?: string;
 }): Promise<{ id: string; url: string }> {
   // Sin payment_method_types: los medios (tarjeta, Pix en cuentas de Brasil, etc.) salen de la configuración de la cuenta.
   const s = await stripe("/v1/checkout/sessions", {
@@ -71,8 +75,14 @@ export async function stripeCreatePaymentCheckout(p: {
     metadata: p.metadata,
     payment_intent_data: { metadata: p.metadata, description: p.description },
     line_items: [{ quantity: 1, price_data: { currency: p.currency.toLowerCase(), unit_amount: toMinorUnits(p.amount), product_data: { name: p.description } } }],
-  });
+  }, "POST", p.idempotencyKey);
   return { id: s.id, url: s.url };
+}
+
+/** Estado de una sesión de Checkout: open (cobrable), complete o expired. */
+export async function stripeGetCheckoutSession(id: string): Promise<{ id: string; status: string; url: string | null }> {
+  const s = await stripe(`/v1/checkout/sessions/${encodeURIComponent(id)}`, null, "GET");
+  return { id: s.id, status: s.status, url: s.url ?? null };
 }
 
 export async function stripeCreateSubscriptionCheckout(p: {

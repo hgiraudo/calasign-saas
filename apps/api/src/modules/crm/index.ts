@@ -295,6 +295,8 @@ const pdfName = (subject: string, envelopeId: string) => `${subject.replace(/[\\
 async function writeBackAndAttach(db: Db, blobs: BlobStore, conn: CrmConn, link: any, mapping: any | null, status: string): Promise<Record<string, unknown>> {
   const wb = { attachPdf: true, ...(mapping?.write_back ?? {}) };
   const detail: Record<string, unknown> = {};
+  // Un "sent" que se reintenta después de que ya se escribió un estado final no lo pisa.
+  if (status === "sent" && link.last_status && link.last_status !== "sent") return { skipped: `el registro ya tiene el estado final ${link.last_status}` };
   if (CRM_KIND[conn.provider] === "crm" && wb.statusProperty) {
     const value = statusValue(wb, status as any);
     await writeStatus(conn, link.object_type, link.object_id, wb.statusProperty, value);

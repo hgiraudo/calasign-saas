@@ -124,8 +124,10 @@ export async function customDomainRoutes(app: FastifyInstance, s: Services) {
         throw badRequest("reserved_domain", `No se pueden usar dominios de ${root}`);
       }
     }
-    const taken = await s.db.one<any>(`SELECT tenant_id FROM custom_domains WHERE domain = $1`, [domain]);
-    if (taken && taken.tenant_id !== a.tenantId) throw conflict("domain_taken", "Ese dominio ya está registrado por otra organización");
+    // Solo un dominio verificado por otra organización lo bloquea: uno pendiente no prueba nada (cualquiera puede
+    // registrar un dominio ajeno) y gana quien publique su TXT.
+    const taken = await s.db.one<any>(`SELECT tenant_id FROM custom_domains WHERE domain = $1 AND status = 'verified' AND tenant_id <> $2`, [domain, a.tenantId]);
+    if (taken) throw conflict("domain_taken", "Ese dominio ya está registrado por otra organización");
     const existing = await s.db.one<any>(`SELECT * FROM custom_domains WHERE tenant_id = $1`, [a.tenantId]);
     if (existing?.domain === domain) return { domain: toApi(existing) };
     await s.db.tx(async (t) => {
@@ -155,12 +157,28 @@ export async function customDomainRoutes(app: FastifyInstance, s: Services) {
     } catch (e) {
       error = `No se pudo consultar el DNS: ${String((e as Error).message ?? e)}`;
     }
-    await s.db.query(
-      `UPDATE custom_domains SET status = CASE WHEN $2 THEN 'verified' ELSE status END,
-         verified_at = CASE WHEN $2 AND verified_at IS NULL THEN now() ELSE verified_at END,
-         last_checked_at = now(), last_error = $3 WHERE id = $1`,
-      [r.id, ok, error],
-    );
+    if (ok && r.status !== "verified") {
+      const other = await s.db.one(`SELECT 1 FROM custom_domains WHERE domain = $1 AND status = 'verified' AND tenant_id <> $2`, [r.domain, a.tenantId]);
+      if (other) {
+        ok = false;
+        error = "Ese dominio ya lo verificó otra organización";
+      }
+    }
+    try {
+      await s.db.query(
+        `UPDATE custom_domains SET status = CASE WHEN $2 THEN 'verified' ELSE status END,
+           verified_at = CASE WHEN $2 AND verified_at IS NULL THEN now() ELSE verified_at END,
+           last_checked_at = now(), last_error = $3 WHERE id = $1`,
+        [r.id, ok, error],
+      );
+    } catch (e) {
+      // Carrera con otra organización que verificó el mismo dominio a la vez (índice único de verificados).
+      if ((e as { code?: string }).code !== "23505") throw e;
+      ok = false;
+      await s.db.query(`UPDATE custom_domains SET last_checked_at = now(), last_error = $2 WHERE id = $1`, [r.id, "Ese dominio ya lo verificó otra organización"]);
+    }
+    // Verificado: los registros pendientes de otras organizaciones para el mismo dominio ya no sirven.
+    if (ok) await s.db.query(`DELETE FROM custom_domains WHERE domain = $1 AND status = 'pending' AND tenant_id <> $2`, [r.domain, a.tenantId]);
     invalidate();
     if (ok) await auditFromRequest(s.db, req, a, "domain.verified", { targetType: "domain", targetId: r.domain });
     return { domain: toApi(await s.db.one<any>(`SELECT * FROM custom_domains WHERE id = $1`, [r.id])) };

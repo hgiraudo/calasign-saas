@@ -9,6 +9,7 @@ import { registerServiceWorker } from "./lib/pwa";
 import "./styles-scale.css";
 import "./styles-identity.css";
 import "./styles-evidence.css";
+import "./styles-billing.css";
 import { App } from "./App";
 import { I18nProvider } from "./lib/i18n";
 import { AuthProvider } from "./lib/auth";

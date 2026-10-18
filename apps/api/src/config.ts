@@ -80,6 +80,27 @@ export const config = {
   maxUploadBytes: Number(env.MAX_UPLOAD_MB ?? 25) * 1024 * 1024,
   webDist: resolve(env.WEB_DIST ?? resolve(repoRoot, "apps/web/dist")),
   logLevel: env.LOG_LEVEL ?? "info",
+  /** Planes, cobros y servidor MCP (Fase 6). */
+  billing: {
+    /** Plan de las organizaciones sin suscripción. En producción "free"; fuera de producción "enterprise" (pruebas sin límites). */
+    defaultPlan: (env.BILLING_DEFAULT_PLAN ?? ((env.APP_ENV ?? (production ? "prod" : "local")) === "prod" ? "free" : "enterprise")) as
+      | "free"
+      | "starter"
+      | "business"
+      | "enterprise",
+    /** El proveedor de prueba ("mock") solo existe fuera de producción. */
+    mockEnabled: (env.APP_ENV ?? (production ? "prod" : "local")) !== "prod" || bool(env.PAYMENTS_MOCK_ENABLED, false),
+    stripe: { secretKey: env.STRIPE_SECRET_KEY ?? null, webhookSecret: env.STRIPE_WEBHOOK_SECRET ?? null, apiBase: env.STRIPE_API_BASE ?? "https://api.stripe.com" },
+    mercadopago: {
+      accessToken: env.MP_ACCESS_TOKEN ?? null,
+      webhookSecret: env.MP_WEBHOOK_SECRET ?? null,
+      apiBase: env.MP_API_BASE ?? "https://api.mercadopago.com",
+    },
+  },
+  mcp: {
+    /** Vida de los links de descarga que devuelve el servidor MCP. */
+    downloadLinkTtlSec: Number(env.MCP_DOWNLOAD_TTL_SEC ?? 900),
+  },
 };
 
 export type Config = typeof config;

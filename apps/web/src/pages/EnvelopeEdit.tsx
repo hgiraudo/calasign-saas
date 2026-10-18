@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SealOptionsPanel } from "../components/EvidenceExtras";
+import { PaymentOptionsPanel } from "../components/BillingExtras";
 import { useExpText } from "../lib/i18n-experience";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import type { Channel, Document, EnvelopeDetail, Locale, RecipientRole } from "@calasign/shared";
@@ -677,6 +678,7 @@ function ReviewStep({
           </label>
         </fieldset>
         <SealOptionsPanel envelopeId={env.id} />
+        <PaymentOptionsPanel envelopeId={env.id} recipients={detail.recipients} />
         <button type="button" className="btn btn-primary btn-block" disabled={busy || !subject.trim()} onClick={send}>
           {busy ? t("edit.sending") : t("edit.send")}
         </button>

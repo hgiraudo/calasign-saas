@@ -9,6 +9,7 @@ import { useScaleText } from "../lib/i18n-scale";
 import { usePlatformText } from "../lib/i18n-platform";
 import { useIdnText } from "../lib/i18n-identity";
 import { useEvidenceText } from "../lib/i18n-evidence";
+import { useBillingText } from "../lib/i18n-billing";
 
 export function SettingsHomePage() {
   const { t } = useI18n();
@@ -18,6 +19,7 @@ export function SettingsHomePage() {
   const sc = useScaleText();
   const pl = usePlatformText();
   const evt = useEvidenceText();
+  const bl = useBillingText();
   const { can } = useAccess();
   const sections: { to: string; title: string; desc: string; perm?: Permission }[] = [
     { to: "/app/bulk", title: sc("nav.bulk"), desc: sc("bulk.intro"), perm: "envelopes:create" },
@@ -38,6 +40,7 @@ export function SettingsHomePage() {
     { to: "/app/settings/identity", title: ti("settings.identity"), desc: ti("settings.identityDesc"), perm: "settings:manage" },
     { to: "/app/settings/sso", title: ti("settings.sso"), desc: ti("settings.ssoDesc"), perm: "settings:manage" },
     { to: "/app/settings/scim", title: ti("settings.scim"), desc: ti("settings.scimDesc"), perm: "members:manage" },
+    { to: "/app/settings/billing", title: bl("nav.billing"), desc: bl("settings.billing"), perm: "billing:manage" },
   ];
   return (
     <div className="page">

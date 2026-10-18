@@ -13,6 +13,7 @@ import { BUILTIN_ROLE_PERMISSIONS, PERMISSIONS, type MemberRole, type Permission
 import type { Db } from "../infra/db";
 import { AppError, forbidden, notFound } from "../lib/errors";
 import type { AuthContext } from "./context";
+import { enforcePlanForRequest } from "./billing/plans";
 
 export interface AccessInfo {
   role: MemberRole;
@@ -164,6 +165,10 @@ export async function enforceRoutePolicy(db: Db, req: FastifyRequest, a: AuthCon
   if (a.access?.twoFactorSetupRequired && !ALWAYS_ALLOWED_DURING_2FA_SETUP.some((r) => r.test(url))) {
     throw new AppError(403, "two_factor_setup_required", "Tu organización exige verificación en dos pasos: activala para continuar");
   }
+
+  // Plan y facturación: límites del plan (402 plan_limit) y permiso billing:manage.
+  await enforcePlanForRequest(db, req, a);
+  if (/^\/v1\/billing(\/|$)/.test(url)) return requirePerm(a, "billing:manage");
 
   // Sobres
   if (url.startsWith("/v1/envelopes/:id")) {

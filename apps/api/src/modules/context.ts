@@ -7,6 +7,7 @@ import { unauthorized } from "../lib/errors";
 import { enforceRoutePolicy, loadAccess, type AccessInfo } from "./access";
 import { enforceOAuthScope, isOAuthAccessToken, oauthAuthContext, restrictAccessToScopes } from "./oauth-tokens";
 import { applySessionSsoPolicy } from "./identity/sso";
+import { applyAgentActor } from "./mcp/agent-actor";
 
 export interface Services {
   db: Db;
@@ -38,7 +39,7 @@ export function clientInfo(req: FastifyRequest) {
 
 /** Resuelve sesión (cookie), API key o access token OAuth (Bearer). */
 export function authenticate(s: Services) {
-  return async (req: FastifyRequest, _reply: FastifyReply) => {
+  const inner = async (req: FastifyRequest, _reply: FastifyReply) => {
     const { ip, userAgent } = clientInfo(req);
     const authz = req.headers.authorization;
     if (authz?.startsWith("Bearer ")) {
@@ -84,5 +85,10 @@ export function authenticate(s: Services) {
     req.auth.access = await loadAccess(s.db, req.auth);
     await applySessionSsoPolicy(s.db, req.auth, row);
     await enforceRoutePolicy(s.db, req, req.auth);
+  };
+  return async (req: FastifyRequest, reply: FastifyReply) => {
+    await inner(req, reply);
+    // Pedidos que hace el servidor MCP en nombre de un agente de IA: la evidencia lo nombra.
+    if (req.auth) applyAgentActor(req, req.auth);
   };
 }

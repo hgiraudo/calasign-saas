@@ -12,6 +12,7 @@ import { ShareControl } from "../components/ShareControl";
 import { CorrectionModal, InPersonButton, ResendCopyButton } from "../components/EnvelopeExperience";
 import { useExpText } from "../lib/i18n-experience";
 import { IdentityBadge } from "../components/IdentityControls";
+import { EnvelopePaymentSummary } from "../components/BillingExtras";
 
 export function EnvelopeDetailPage() {
   const { id = "" } = useParams();
@@ -146,6 +147,7 @@ export function EnvelopeDetailPage() {
         </div>
       )}
       {env.message && <p className="message-box">{env.message}</p>}
+      <EnvelopePaymentSummary envelopeId={env.id} recipients={detail.recipients} envelopeStatus={env.status} />
 
       <div className="grid-2">
         <section className="card pad">

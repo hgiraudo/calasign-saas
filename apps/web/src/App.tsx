@@ -16,6 +16,7 @@ import { TemplatesPage } from "./pages/Templates";
 import { TemplateEditPage } from "./pages/TemplateEdit";
 import { TemplateUsePage } from "./pages/TemplateUse";
 import { BrandingPage } from "./pages/Branding";
+import { BillingPage } from "./pages/Billing";
 import { TeamPage } from "./pages/Team";
 import { SettingsHomePage } from "./pages/SettingsHome";
 import { CertificatesPage } from "./pages/Certificates";
@@ -69,6 +70,7 @@ export function App() {
         <Route path="/app/templates/:id/edit" element={<TemplateEditPage />} />
         <Route path="/app/templates/:id/use" element={<TemplateUsePage />} />
         <Route path="/app/settings/branding" element={<BrandingPage />} />
+        <Route path="/app/settings/billing" element={<BillingPage />} />
         <Route path="/app/settings" element={<SettingsHomePage />} />
         <Route path="/app/settings/certificates" element={<CertificatesPage />} />
         <Route path="/app/xml" element={<XmlSignPage />} />

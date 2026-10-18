@@ -5,6 +5,7 @@ import { WEBHOOK_EVENT_TYPES } from "@calasign/shared";
 import { useIntText } from "../lib/integrations-i18n";
 import { LocaleSwitcher, Logo, Spinner } from "../components/ui";
 import { PlatformDocs } from "../components/PlatformDocs";
+import { McpDocs } from "../components/McpDocs";
 
 interface Spec {
   info: { title: string; version: string };
@@ -180,6 +181,7 @@ export function DevelopersPage() {
           </Section>
 
           <PlatformDocs />
+          <McpDocs />
 
           <Section title={tt("dev.endpoints")}>
             {error ? (

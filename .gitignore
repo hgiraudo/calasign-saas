@@ -12,3 +12,5 @@ infra/**/*.tfvars
 .claude/worktrees/
 .claude/scheduled_tasks.lock
 __pycache__/
+infra/**/tfplan
+*.tfplan

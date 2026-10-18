@@ -78,6 +78,17 @@ Pago, WhatsApp, Telegram, SMTP) se cargan como parámetros SSM `/calasign-saas/d
 `deploy-dev.sh`. El certificado del sello lo emite `scripts/issue-dev-seal-cert.ts` con una CA raíz de desarrollo que queda
 solo en `var/dev-ca/` (no se versiona). En dev los mensajes van al buzón de desarrollo (SES de la cuenta en sandbox).
 
+Operación del host (lo aplica cada `deploy-dev.sh`, desde `infra/dev/host/`):
+- **Rollback automático:** si la versión nueva no responde `/healthz`, el deploy vuelve a la anterior y termina con error.
+  Las migraciones son solo aditivas, así que el código anterior sigue funcionando con la base migrada.
+- **Backups:** `pg_dump` diario a `s3://<bucket>/backups/postgres/` (`calasign-backup.timer`), con 35 días de retención
+  por regla de ciclo de vida. Para restaurar: `aws s3 cp` del dump y `pg_restore --clean -d calasign`.
+- **Logs de Caddy:** las rutas y queries con secretos (links de firma, invitaciones, descargas, callbacks OAuth) se
+  escriben como `[redacted]`.
+- **Estado de Terraform:** es local (`infra/dev/terraform.tfstate`) y contiene `SECRET_KEY` en claro: no se versiona,
+  `deploy-dev.sh` lo deja en `chmod 600`, y no hay que compartirlo. Para un entorno compartido, migrarlo a un backend S3
+  cifrado.
+
 ## Estructura
 
 ```

@@ -1,0 +1,17 @@
+# Caddy de dev.calasign.com. Lo instala scripts/deploy-dev.sh (valida antes de recargar) y bootstrap.sh en el
+# primer arranque. __DOMAIN__ se reemplaza al instalar.
+__DOMAIN__ {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:4000
+	header Strict-Transport-Security "max-age=31536000"
+	log {
+		output file /var/log/caddy-access.log {
+			mode 0640
+		}
+		# Los links de firma, invitaciones, descargas y callbacks OAuth llevan el secreto en la ruta o en la query:
+		# no se escriben en el log (Authorization y Cookie Caddy ya los oculta por defecto).
+		format filter {
+			request>uri regexp "(/(?:s|signing|embed|invite|n|w|sessions|downloads)/)[^/?]+|\?.*" "${1}[redacted]"
+		}
+	}
+}

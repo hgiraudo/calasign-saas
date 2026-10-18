@@ -1,0 +1,11 @@
+[Unit]
+Description=CalaSign dev: backup de Postgres a S3
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/calasign-backup.sh
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true

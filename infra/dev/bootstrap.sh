@@ -5,12 +5,16 @@ exec > >(tee -a /var/log/calasign-bootstrap.log) 2>&1
 
 NODE_VERSION=22.22.1
 CADDY_VERSION=2.10.2
+# Checksums publicados por nodejs.org (SHASUMS256.txt) y por el release de Caddy (SHA-512).
+NODE_SHA256=0f3550d58d45e5d3cf7103d9e3f69937f09fe82fb5dd474c66a5d816fa58c9ee
+CADDY_SHA512=6ce061a690312ab38367df3c5d5f89a2e4a263e7300d300d87356211bb81e79b15933e6d6203e03fbf26f15cc0311f264805f336147dbdd24938d84b57a4421c
 
 dnf -y update
 dnf -y install tar gzip git jq
 
 # Node.js
 curl -fsSL "https://nodejs.org/dist/v$${NODE_VERSION}/node-v$${NODE_VERSION}-linux-arm64.tar.xz" -o /tmp/node.tar.xz
+echo "$${NODE_SHA256}  /tmp/node.tar.xz" | sha256sum -c -
 mkdir -p /opt/node && tar -xJf /tmp/node.tar.xz -C /opt/node --strip-components=1
 ln -sf /opt/node/bin/node /usr/local/bin/node
 ln -sf /opt/node/bin/corepack /usr/local/bin/corepack
@@ -28,20 +32,28 @@ sudo -u postgres psql -v ON_ERROR_STOP=1 -c "CREATE DATABASE calasign OWNER cala
 
 # Caddy (TLS automático con Let's Encrypt)
 curl -fsSL "https://github.com/caddyserver/caddy/releases/download/v$${CADDY_VERSION}/caddy_$${CADDY_VERSION}_linux_arm64.tar.gz" -o /tmp/caddy.tgz
+echo "$${CADDY_SHA512}  /tmp/caddy.tgz" | sha512sum -c -
 tar -xzf /tmp/caddy.tgz -C /usr/local/bin caddy
 useradd --system --home /var/lib/caddy --create-home --shell /sbin/nologin caddy || true
 mkdir -p /etc/caddy
+# Igual a infra/dev/host/Caddyfile (deploy-dev.sh lo vuelve a instalar desde ahí). Los secretos de los links
+# (ruta y query) no van al log.
 cat > /etc/caddy/Caddyfile <<'EOF'
 ${domain} {
 	encode zstd gzip
 	reverse_proxy 127.0.0.1:4000
 	header Strict-Transport-Security "max-age=31536000"
 	log {
-		output file /var/log/caddy-access.log
+		output file /var/log/caddy-access.log {
+			mode 0640
+		}
+		format filter {
+			request>uri regexp "(/(?:s|signing|embed|invite|n|w|sessions|downloads)/)[^/?]+|\?.*" "$${1}[redacted]"
+		}
 	}
 }
 EOF
-touch /var/log/caddy-access.log && chown caddy /var/log/caddy-access.log
+touch /var/log/caddy-access.log && chown caddy /var/log/caddy-access.log && chmod 0640 /var/log/caddy-access.log
 cat > /etc/systemd/system/caddy.service <<'EOF'
 [Unit]
 Description=Caddy
@@ -54,6 +66,11 @@ Group=caddy
 ExecStart=/usr/local/bin/caddy run --environ --config /etc/caddy/Caddyfile
 ExecReload=/usr/local/bin/caddy reload --config /etc/caddy/Caddyfile --force
 AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
 Restart=on-failure
 LimitNOFILE=1048576
 

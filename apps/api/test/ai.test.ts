@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { PageText, TextLine } from "@calasign/pdf";
+import type { DocText } from "../src/modules/ai/heuristics";
 import { ContractMetadataSchema, PlaybookReviewInput, UpdateAiSettingsInput } from "@calasign/shared";
 
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "calasign-ai-"));
@@ -18,7 +19,7 @@ function line(id: string, text: string, y: number, x = 72): TextLine {
   return { id, text, x, y, width, height: 10, spans: [{ text, x, width }] };
 }
 
-function doc(lines: string[][]): H.DocText {
+function doc(lines: string[][]): DocText {
   const pages: PageText[] = lines.map((ls, p) => ({
     page: p,
     width: 595,

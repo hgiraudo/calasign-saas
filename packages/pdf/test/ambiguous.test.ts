@@ -3,6 +3,7 @@
 import { PDFArray, PDFDocument, PDFName, PDFRawStream, PDFRef, StandardFonts } from "pdf-lib";
 import { describe, expect, it } from "vitest";
 import { IncrementalUpdate, InvalidPdfError, inspectPdf } from "../src";
+import { extractPdfPlainText } from "../src/plain-text";
 
 async function base(text: string) {
   const doc = await PDFDocument.create();
@@ -25,6 +26,48 @@ async function shadowed(visible: Uint8Array, hiddenText: string) {
   const xrefAt = buf.lastIndexOf("xref\n", buf.lastIndexOf("startxref"));
   const tail = buf.subarray(xrefAt).toString("latin1").replace(/startxref\n(\d+)/, (_, n) => `startxref\n${Number(n) + copy.length}`);
   return { bytes: new Uint8Array(Buffer.concat([buf.subarray(0, xrefAt), copy, Buffer.from(tail, "latin1")])), contents };
+}
+
+
+/**
+ * Variantes donde el visor (pdf.js) elige un xref distinto del que tomaba el control: el contenido de la página está
+ * definido dos veces; pdf-lib (lo que arma el PDF final) ve la última definición y el xref "visible" apunta a la otra.
+ */
+async function twoDefinitions(visible: string, hidden: string) {
+  const buf = Buffer.from(await base(visible));
+  const root = /\/Root (\d+ 0 R)/.exec(buf.toString("latin1"))![1];
+  const { bytes, contents } = await shadowed(new Uint8Array(buf), hidden);
+  const all = Buffer.from(bytes);
+  const objs = all.subarray(0, all.lastIndexOf("xref\n", all.lastIndexOf("startxref")));
+  const text = objs.toString("latin1");
+  const visibleAt = new RegExp(`(?<=[\\r\\n])${contents.objectNumber} 0 obj`).exec(text)!.index;
+  /** Tabla xref: cada objeto en su última definición (lo que ve pdf-lib), salvo `visibleFor`. */
+  const xref = (body: Buffer, visibleShift: number | null, shift = 0) => {
+    const last = new Map<number, number>();
+    for (const m of body.toString("latin1").matchAll(/(?<=^|[\r\n])(\d+) 0 obj/g)) last.set(Number(m[1]), m.index! - shift);
+    if (visibleShift !== null) last.set(contents.objectNumber, visibleAt + visibleShift - shift);
+    const max = Math.max(...last.keys());
+    let t = `xref\n0 ${max + 1}\n0000000000 65535 f\r\n`;
+    for (let i = 1; i <= max; i++) t += last.has(i) ? `${String(last.get(i)).padStart(10, "0")} 00000 n\r\n` : "0000000000 00000 f\r\n";
+    return `${t}trailer\n<< /Size ${max + 1} /Root ${root} >>\n`;
+  };
+  return { objs, xref };
+}
+
+/** Lo que muestra el visor de la web (pdf.js) y lo que queda en el PDF final (pdf-lib). */
+async function views(pdf: Buffer) {
+  const viewer = (await extractPdfPlainText(new Uint8Array(pdf))).text;
+  const src = await PDFDocument.load(pdf);
+  const out = await PDFDocument.create();
+  out.addPage((await out.copyPages(src, [0]))[0]);
+  return { viewer, final: (await extractPdfPlainText(await out.save())).text };
+}
+
+async function expectAmbiguous(pdf: Buffer) {
+  expect(await views(pdf)).toEqual({ viewer: "Monto: 1.000", final: "Monto: 1.000.000" });
+  const err = await inspectPdf(new Uint8Array(pdf)).catch((e) => e);
+  expect(err).toBeInstanceOf(InvalidPdfError);
+  expect((err as InvalidPdfError).code).toBe("ambiguous_pdf");
 }
 
 describe("PDF ambiguo al subirlo", () => {
@@ -68,6 +111,50 @@ describe("PDF ambiguo al subirlo", () => {
     const err = await inspectPdf(new Uint8Array(buf)).catch((e) => e);
     expect(err).toBeInstanceOf(InvalidPdfError);
     expect((err as InvalidPdfError).code).toBe("ambiguous_pdf");
+  });
+
+  it("basura antes de %PDF-: pdf.js mide los offsets desde el encabezado", async () => {
+    const { objs, xref } = await twoDefinitions("Monto: 1.000", "Monto: 1.000.000");
+    const pdf = Buffer.concat([objs, Buffer.from(`${xref(objs, 0)}startxref\n${objs.length}\n%%EOF\n`, "latin1")]);
+    await expectAmbiguous(Buffer.concat([Buffer.from("X-Adjunto: contrato.pdf\r\n\r\n", "latin1"), pdf]));
+  });
+
+  it("startxref pegado al número: pdf.js lo lee y no usa el startxref anterior", async () => {
+    const { objs, xref } = await twoDefinitions("Monto: 1.000", "Monto: 1.000.000");
+    const visibleXref = objs.length;
+    const mid = Buffer.concat([objs, Buffer.from(xref(objs, 0), "latin1")]);
+    const tail = `${xref(objs, null)}startxref\n${mid.length}\n%%EOF\nstartxref${visibleXref}\n%%EOF\n`;
+    await expectAmbiguous(Buffer.concat([mid, Buffer.from(tail, "latin1")]));
+  });
+
+  it("diccionario de linealización: pdf.js empieza en el xref que sigue al primer endobj", async () => {
+    const { objs, xref } = await twoDefinitions("Monto: 1.000", "Monto: 1.000.000");
+    const header = /^%PDF-[^\n]*\n(%[^\n]*\n)?/.exec(objs.toString("latin1"))![0];
+    const rest = objs.subarray(header.length);
+    const lin = (L: number) => `999 0 obj\n<< /Linearized 1 /L ${String(L).padStart(10, "0")} /H [ 1 1 ] /O 1 /E 1 /N 1 /T 1 >>\nendobj\n`;
+    // El xref de la "primera página" (después del endobj) apunta a la definición visible; las tablas tienen largo fijo.
+    const shift = lin(0).length + xref(objs, 0).length;
+    const shifted = Buffer.concat([Buffer.from(header, "latin1"), Buffer.alloc(shift, 0x20), rest]);
+    const body = Buffer.concat([Buffer.from(header + lin(0) + xref(shifted, shift), "latin1"), rest]);
+    const pdf = Buffer.concat([body, Buffer.from(`${xref(body, null)}startxref\n${body.length}\n%%EOF\n`, "latin1")]);
+    await expectAmbiguous(Buffer.from(pdf.toString("latin1").replace(lin(0), lin(pdf.length)), "latin1"));
+  });
+
+  it("acepta un PDF linealizado coherente y uno con un encabezado de correo antes de %PDF-", async () => {
+    // Mismo armado que el linealizado de arriba, pero las dos tablas apuntan a la definición que ve pdf-lib.
+    const { objs, xref } = await twoDefinitions("Monto: 1.000", "Monto: 1.000.000");
+    const header = /^%PDF-[^\n]*\n(%[^\n]*\n)?/.exec(objs.toString("latin1"))![0];
+    const rest = objs.subarray(header.length);
+    const lin = (L: number) => `999 0 obj\n<< /Linearized 1 /L ${String(L).padStart(10, "0")} /H [ 1 1 ] /O 1 /E 1 /N 1 /T 1 >>\nendobj\n`;
+    const shift = lin(0).length + xref(objs, null).length;
+    const shifted = Buffer.concat([Buffer.from(header, "latin1"), Buffer.alloc(shift, 0x20), rest]);
+    const body = Buffer.concat([Buffer.from(header + lin(0) + xref(shifted, null), "latin1"), rest]);
+    let pdf = Buffer.concat([body, Buffer.from(`${xref(body, null)}startxref\n${body.length}\n%%EOF\n`, "latin1")]);
+    pdf = Buffer.from(pdf.toString("latin1").replace(lin(0), lin(pdf.length)), "latin1");
+    expect((await views(pdf)).viewer).toBe("Monto: 1.000.000");
+    expect((await inspectPdf(new Uint8Array(pdf))).pageCount).toBe(1);
+    const plain = Buffer.from(await base("Contrato"));
+    expect((await inspectPdf(new Uint8Array(Buffer.concat([Buffer.from("X-Adjunto: contrato.pdf\r\n\r\n", "latin1"), plain])))).pageCount).toBe(1);
   });
 
   it("acepta PDFs normales y con revisiones incrementales", async () => {

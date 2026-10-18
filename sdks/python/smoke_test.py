@@ -33,6 +33,7 @@ assert verify_signature(body.encode(), sig, secret, now=t)
 assert not verify_signature(body.replace("completed", "voided"), sig, secret, now=t)
 assert not verify_signature(body, sig, "otro", now=t)
 assert not verify_signature(body, sig, secret, now=t + 1000)
+assert not verify_signature(body, f"t={t},v1=é", secret, now=t)  # header no ASCII: no coincide, no lanza TypeError
 try:
     construct_event(body, None, secret)
     raise AssertionError("debió fallar")

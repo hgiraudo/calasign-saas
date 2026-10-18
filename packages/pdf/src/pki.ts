@@ -315,7 +315,13 @@ export function signerCertOf(sd: pkijs.SignedData): pkijs.Certificate | null {
     const sid = si.sid;
     return certs.find((c) => c.issuer.isEqual(sid.issuer) && c.serialNumber.isEqual(sid.serialNumber)) ?? null;
   }
-  return certs[0] ?? null;
+  // subjectKeyIdentifier: el mismo criterio que usa pkijs al verificar (SHA-1 de la clave pública). Devolver otro
+  // certificado (p. ej. el primero) haría que la firma verifique con la clave de uno y se informe a nombre de otro.
+  const sid = si.sid as asn1js.BaseBlock<any>;
+  const keyId: ArrayBuffer | undefined = sid?.idBlock?.isConstructed ? sid.valueBlock.value[0]?.valueBlock?.valueHex : sid?.valueBlock?.valueHex;
+  if (!keyId) return null;
+  const want = Buffer.from(keyId);
+  return certs.find((c) => Buffer.from(hash("sha1", new Uint8Array(c.subjectPublicKeyInfo.subjectPublicKey.valueBlock.valueHexView))).equals(want)) ?? null;
 }
 
 export { asn1js, pkijs };

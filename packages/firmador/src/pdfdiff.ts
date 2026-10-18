@@ -139,6 +139,10 @@ function assertTailXref(working: Uint8Array, prepared: Uint8Array, root: string,
   if (/\/Type\s*\/XRef\b/.test(tail)) fail("el documento preparado usa una tabla de referencias comprimida");
   const sections = [...tail.matchAll(/(?:^|[\r\n])xref[ \t]*\r?\n/g)];
   if (sections.length === 0) fail("el documento preparado no tiene tabla de referencias propia");
+  // Última definición de cada objeto en la revisión nueva: es la que lee pdf-lib (y la que se compara arriba). Si la
+  // tabla apuntara a otra copia anterior del mismo objeto, un lector mostraría esa copia, que nadie comparó.
+  const lastDef = new Map<string, number>();
+  for (const m of tail.matchAll(/(^|[\s>\]])(\d+)\s+(\d+)\s+obj\b/g)) lastDef.set(`${Number(m[2])} ${Number(m[3])}`, base + (m.index ?? 0) + m[1].length);
   const starts = new Set<number>();
   for (const sec of sections) {
     const lead = sec[0].startsWith("x") ? 0 : 1;
@@ -164,6 +168,7 @@ function assertTailXref(working: Uint8Array, prepared: Uint8Array, root: string,
         if (offset < base) fail("el documento preparado redirige objetos a otras partes del documento");
         const at = buf.subarray(offset, offset + 40).toString("latin1");
         if (!new RegExp(`^${num}\\s+${gen}\\s+obj\\b`).test(at)) fail("la tabla de referencias no corresponde a los objetos agregados");
+        if (lastDef.get(`${num} ${gen}`) !== offset) fail("la tabla de referencias apunta a una copia del objeto distinta de la que se revisó");
       }
     }
     if (!/^\s*trailer\b/.test(tail.slice(pos))) fail("tabla de referencias inválida");

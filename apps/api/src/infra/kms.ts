@@ -170,6 +170,13 @@ export const kmsForKey = (arn: string) => kmsClient(regionOfArn(arn) ?? config.s
 
 /** true si el error es de la clave (permisos, estado, inexistente) y no un problema transitorio de red. */
 export function isKeyError(e: unknown): boolean {
-  const s = `${(e as any)?.name ?? ""} ${(e as Error)?.message ?? e}`;
-  return /AccessDenied|KMSInvalidState|Disabled|NotFound|InvalidKeyUsage|IncorrectKey|InvalidCiphertext|KeyUnavailable|not authorized|no está habilitada|KMS\.|kms/i.test(s);
+  const err = e as any;
+  // Red caída, DNS o timeout (hacia S3 o KMS): no dice nada de la clave. Antes "getaddrinfo ENOTFOUND
+  // bucket.s3…" coincidía con /NotFound/i y la clave del cliente quedaba «failing» con aviso a los administradores.
+  const code = String(err?.code ?? err?.errno ?? err?.cause?.code ?? "");
+  if (/^(ENOTFOUND|EAI_AGAIN|ECONNRESET|ECONNREFUSED|ECONNABORTED|ETIMEDOUT|EPIPE|EHOSTUNREACH|ENETUNREACH|UND_ERR)/.test(code)) return false;
+  if (/^(TimeoutError|AbortError)$/.test(String(err?.name ?? ""))) return false;
+  const s = `${err?.name ?? ""} ${err?.Code ?? ""} ${err?.message ?? e}`;
+  // Nombres de error de KMS (y de S3 con SSE-KMS: "KMS.DisabledException"), con mayúsculas: un host "kms.…" no cuenta.
+  return /AccessDenied|KMSInvalidState|DisabledException|NotFoundException|InvalidKeyUsage|IncorrectKey|InvalidCiphertext|KeyUnavailable|KMS\.|not authorized|no está habilitada/.test(s);
 }

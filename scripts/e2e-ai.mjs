@@ -4,6 +4,7 @@
 // evidencia de cada interacción, IA deshabilitada (403) y presupuesto agotado (429).
 // Uso: node scripts/e2e-ai.mjs [baseUrl]   (entorno local: usa /dev/mailbox y /dev/ai/sweep)
 import { randomUUID } from "node:crypto";
+import { deflateSync } from "node:zlib";
 
 const BASE = (process.argv[2] ?? "http://localhost:4000").replace(/\/$/, "");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -87,6 +88,43 @@ function contractPdf() {
   return Buffer.from(out, "latin1");
 }
 
+/**
+ * PDF chico (~120 KB) con un stream de contenido que se descomprime a 120 MB. pdf.js lo descomprime entero sin tope
+ * para leer el texto: antes la API quedaba un rato largo sin responder a nadie y ocupaba cientos de MB.
+ */
+function heavyPdf() {
+  const text = "BT /F1 12 Tf 72 760 Td (Contrato pesado) Tj ET";
+  const big = deflateSync(Buffer.alloc(120 * 1024 * 1024, "q Q "), { level: 1 });
+  const parts = [];
+  let len = 0;
+  const offsets = [];
+  const push = (b) => {
+    parts.push(b);
+    len += b.length;
+  };
+  push(Buffer.from("%PDF-1.4\n", "latin1"));
+  const obj = (n, head, body) => {
+    offsets[n] = len;
+    push(Buffer.from(`${n} 0 obj\n${head}`, "latin1"));
+    if (body) {
+      push(Buffer.from("\nstream\n", "latin1"));
+      push(body);
+      push(Buffer.from("\nendstream", "latin1"));
+    }
+    push(Buffer.from("\nendobj\n", "latin1"));
+  };
+  obj(1, "<< /Type /Catalog /Pages 2 0 R >>");
+  obj(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+  obj(3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents [4 0 R 5 0 R] /Resources << /Font << /F1 6 0 R >> >> >>");
+  obj(4, `<< /Length ${text.length} >>`, Buffer.from(text, "latin1"));
+  obj(5, `<< /Length ${big.length} /Filter /FlateDecode >>`, big);
+  obj(6, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>");
+  const xref = len;
+  push(Buffer.from(`xref\n0 7\n0000000000 65535 f \n` + offsets.slice(1).map((o) => `${String(o).padStart(10, "0")} 00000 n \n`).join(""), "latin1"));
+  push(Buffer.from(`trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`, "latin1"));
+  return Buffer.concat(parts);
+}
+
 const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
 const stamp = Date.now();
 const sender = client();
@@ -148,6 +186,22 @@ for (const s of det.suggestions) assert(s.x >= 0 && s.y >= 0 && s.x + s.width <=
 step(`detección por heurísticas sin IA: ${det.suggestions.length} sugerencias («Firma del cliente: ____» → firmante 1)`);
 
 await expectStatus(sender("POST", `/v1/envelopes/${envelope.id}/ai/review`, {}), 403, "revisión con IA deshabilitada");
+
+// Un PDF que pdf.js no puede leer sin descomprimir cientos de MB: 422 enseguida y la API sigue respondiendo.
+{
+  const { envelope: heavy } = await sender("POST", "/v1/envelopes", { subject: `Pesado IA ${stamp}` });
+  const hf = new FormData();
+  hf.append("file", new Blob([heavyPdf()], { type: "application/pdf" }), "pesado.pdf");
+  await sender("POST", `/v1/envelopes/${heavy.id}/documents`, null, { form: hf });
+  const t0 = Date.now();
+  const preview = sender("GET", `/v1/envelopes/${heavy.id}/ai/preview?feature=summary`);
+  const h0 = Date.now();
+  const health = await fetch(`${BASE}/healthz`);
+  assert(health.ok && Date.now() - h0 < 3000, `la API responde mientras lee el PDF pesado (${Date.now() - h0} ms)`);
+  const e = await expectStatus(preview, 422, "PDF demasiado pesado para leer su texto");
+  assert(e?.error?.code === "pdf_too_heavy" && Date.now() - t0 < 5000, `422 pdf_too_heavy enseguida (${Date.now() - t0} ms, ${JSON.stringify(e)})`);
+  step(`PDF con un stream de 120 MB: 422 pdf_too_heavy en ${Date.now() - t0} ms, sin dejar a la API sin responder`);
+}
 await expectStatus(sender("PATCH", `/v1/envelopes/${envelope.id}/ai/settings`, { signerAssist: true }), 403, "asistencia al firmante con IA deshabilitada");
 step("IA deshabilitada → 403");
 

@@ -1,5 +1,5 @@
 // Extracción del texto de un PDF (para el buscador del repositorio de acuerdos).
-import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
+import { readPdfTextPages } from "./pdfjs-run";
 
 export interface PdfText {
   text: string;
@@ -9,34 +9,21 @@ export interface PdfText {
 }
 
 export async function extractPdfPlainText(pdf: Uint8Array, maxChars = 300_000): Promise<PdfText> {
-  const doc = await getDocument({
-    data: new Uint8Array(pdf),
-    isEvalSupported: false,
-    disableFontFace: true,
-    useSystemFonts: false,
-    verbosity: 0,
-  }).promise;
+  // pdf.js corre en un worker con tiempo y memoria acotados (ver pdfjs-run.ts).
+  const { numPages, pages } = await readPdfTextPages(pdf, { maxPages: Number.MAX_SAFE_INTEGER, maxChars });
   let text = "";
   let truncated = false;
-  try {
-    for (let p = 1; p <= doc.numPages; p++) {
-      const page = await doc.getPage(p);
-      const content = await page.getTextContent();
-      for (const raw of content.items) {
-        const item = raw as { str?: string; hasEOL?: boolean };
-        if (item.str) text += item.str;
-        text += item.hasEOL ? "\n" : item.str ? " " : "";
-      }
-      text += "\n";
-      page.cleanup();
-      if (text.length > maxChars) {
-        text = text.slice(0, maxChars);
-        truncated = true;
-        break;
-      }
+  for (const page of pages) {
+    for (const item of page.items) {
+      if (item.str) text += item.str;
+      text += item.hasEOL ? "\n" : item.str ? " " : "";
     }
-    return { text: text.replace(/[ \t]{2,}/g, " ").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim(), pageCount: doc.numPages, truncated };
-  } finally {
-    await doc.destroy();
+    text += "\n";
+    if (text.length > maxChars) {
+      text = text.slice(0, maxChars);
+      truncated = true;
+      break;
+    }
   }
+  return { text: text.replace(/[ \t]{2,}/g, " ").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim(), pageCount: numPages, truncated };
 }

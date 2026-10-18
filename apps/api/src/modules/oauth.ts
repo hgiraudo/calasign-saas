@@ -331,11 +331,24 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
         const c = await authenticateClient(s.db, req, body, { allowPublic: false });
         if (!body.token) throw new OAuthError(400, "invalid_request", "Falta token");
         const t = await s.db.one<any>(
-          `SELECT t.*, u.email FROM oauth_tokens t LEFT JOIN users u ON u.id = t.user_id WHERE t.token_hash = $1`,
+          `SELECT t.*, u.email, k.revoked_at AS key_revoked_at FROM oauth_tokens t LEFT JOIN users u ON u.id = t.user_id
+             LEFT JOIN api_keys k ON k.id = t.service_api_key_id WHERE t.token_hash = $1`,
           [sha256Hex(body.token)],
         );
         reply.header("cache-control", "no-store");
-        const active = t && t.client_id === c.id && !t.revoked_at && !(t.kind === "refresh" && t.used_at) && new Date(t.expires_at) > new Date();
+        let active = t && t.client_id === c.id && !t.revoked_at && !(t.kind === "refresh" && t.used_at) && new Date(t.expires_at) > new Date();
+        // "active" tiene que decir lo mismo que la API al usar el token: un token de un miembro quitado (o de una
+        // membresía anterior), uno autorizado con contraseña cuando la organización exige SSO, o uno de una identidad de
+        // servicio revocada ya no autorizan nada, aunque no estén revocados ni vencidos.
+        if (active && t.service_api_key_id && t.key_revoked_at) active = false;
+        if (active && t.user_id) {
+          try {
+            await assertUserTokenAllowed(s.db, { tenantId: t.tenant_id, userId: t.user_id, authMethod: t.auth_method, ssoTenantId: t.sso_tenant_id, issuedAt: new Date(t.created_at) });
+          } catch (e) {
+            if (!(e instanceof AppError)) throw e;
+            active = false;
+          }
+        }
         if (!active) return { active: false };
         return {
           active: true,

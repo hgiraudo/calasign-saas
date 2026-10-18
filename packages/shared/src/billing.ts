@@ -154,9 +154,14 @@ export interface SignerPaymentInfo {
 export interface PaymentProviderInfo {
   id: PaymentProvider;
   configured: boolean;
-  /** Medios locales que ofrece el proveedor (documental). */
+  /** Medios locales que ofrece el proveedor (documental, en español). */
   methods: string[];
+  /** Los mismos medios como códigos estables, en el mismo orden que `methods`: la interfaz los traduce. */
+  methodCodes: PaymentMethodCode[];
 }
+
+export const PAYMENT_METHOD_CODES = ["card", "pix", "wallet", "pse", "boleto", "cash", "simulated"] as const;
+export type PaymentMethodCode = (typeof PAYMENT_METHOD_CODES)[number];
 
 // ───────────────────────────── MCP ─────────────────────────────
 

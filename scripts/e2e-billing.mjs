@@ -134,6 +134,10 @@ let bill = await owner("GET", "/v1/billing");
 assert(bill.defaultPlan && bill.plans.length === 4 && bill.providers.some((p) => p.id === "mock" && p.configured), `resumen de facturación: ${JSON.stringify(bill.plan)}`);
 const provs = await owner("GET", "/v1/payments/providers");
 assert(provs.items.find((p) => p.id === "mercadopago").methods.some((m) => m.includes("PSE")), "medios por proveedor (Pix/PSE)");
+// Códigos estables (los traduce la web), uno por medio y en el mismo orden.
+for (const p of provs.items) assert(Array.isArray(p.methodCodes) && p.methodCodes.length === p.methods.length, `methodCodes de ${p.id}: ${JSON.stringify(p.methodCodes)}`);
+assert(JSON.stringify(provs.items.find((p) => p.id === "mock").methodCodes) === '["simulated"]', "el proveedor simulado se informa con el código simulated");
+assert(provs.items.find((p) => p.id === "mercadopago").methodCodes.includes("pse"), "Mercado Pago informa pse");
 ok(`plan por defecto del entorno: ${bill.plan.name}; proveedores: ${bill.providers.map((p) => `${p.id}${p.configured ? "" : " (no configurado)"}`).join(", ")}`);
 
 // ── after_sign ──

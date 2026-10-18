@@ -6,6 +6,7 @@ import {
   EnvelopePaymentInput,
   PAYMENT_PROVIDERS,
   type EnvelopePayment,
+  type PaymentMethodCode,
   type PaymentProvider,
   type PaymentProviderInfo,
   type SignerPaymentInfo,
@@ -22,10 +23,11 @@ import { resolveToken } from "../signing";
 import { ProviderError, mpCreatePreference, providerConfigured, stripeCreatePaymentCheckout, stripeGetCheckoutSession } from "./providers";
 import { escapeHtml, mockPage, mockPageCsp } from "./mock-page";
 
-const PROVIDER_METHODS: Record<PaymentProvider, string[]> = {
-  stripe: ["Tarjeta", "Pix (cuentas de Stripe en Brasil)", "Apple Pay / Google Pay"],
-  mercadopago: ["Tarjeta", "Pix (Brasil)", "PSE (Colombia)", "Boleto (Brasil)", "Efectivo según país"],
-  mock: ["Simulado (solo pruebas)"],
+// Código estable (lo traduce la interfaz) y texto documental en español, en el mismo orden.
+const PROVIDER_METHODS: Record<PaymentProvider, [PaymentMethodCode, string][]> = {
+  stripe: [["card", "Tarjeta"], ["pix", "Pix (cuentas de Stripe en Brasil)"], ["wallet", "Apple Pay / Google Pay"]],
+  mercadopago: [["card", "Tarjeta"], ["pix", "Pix (Brasil)"], ["pse", "PSE (Colombia)"], ["boleto", "Boleto (Brasil)"], ["cash", "Efectivo según país"]],
+  mock: [["simulated", "Simulado (solo pruebas)"]],
 };
 
 export function toPayment(r: any): EnvelopePayment {
@@ -47,7 +49,8 @@ export function paymentProviders(): PaymentProviderInfo[] {
   return PAYMENT_PROVIDERS.filter((p) => p !== "mock" || config.billing.mockEnabled).map((id) => ({
     id,
     configured: providerConfigured(id),
-    methods: PROVIDER_METHODS[id],
+    methods: PROVIDER_METHODS[id].map(([, label]) => label),
+    methodCodes: PROVIDER_METHODS[id].map(([code]) => code),
   }));
 }
 

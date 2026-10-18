@@ -9,7 +9,15 @@ import type { Db } from "../../infra/db";
 import { AppError } from "../../lib/errors";
 import type { Services } from "../context";
 import { markPaymentFailed, markPaymentPaid } from "./payments";
-import { mpCancelPreapproval, mpGetPayment, mpGetPreapproval, toMinorUnits, verifyMercadoPagoSignature, verifyStripeSignature } from "./providers";
+import {
+  mpCancelPreapproval,
+  mpGetPayment,
+  mpGetPreapproval,
+  stripeCancelSubscription,
+  toMinorUnits,
+  verifyMercadoPagoSignature,
+  verifyStripeSignature,
+} from "./providers";
 import { applySubscription } from "./subscriptions";
 
 /** true si el evento es nuevo (y queda registrado). */
@@ -49,11 +57,20 @@ export async function handleStripeEvent(db: Db, event: any) {
         const tenantId = obj.metadata?.tenantId;
         const plan = obj.metadata?.plan;
         if (!tenantId || !isPlan(plan)) return;
+        const subscriptionId = typeof obj.subscription === "string" ? obj.subscription : null;
+        // Otra suscripción vigente (otro checkout de Stripe pagado en paralelo, o una de Mercado Pago autorizada mientras
+        // este seguía abierto): queda la que se acaba de pagar y la anterior se cancela. Si no, la anterior seguiría
+        // cobrando y, al pisarse subscription_id, ya no se podría ver ni cancelar desde la app.
+        const t = await db.one<any>(`SELECT billing_provider, subscription_id FROM tenants WHERE id = $1`, [tenantId]);
+        if (t?.subscription_id && t.subscription_id !== subscriptionId) {
+          if (t.billing_provider === "stripe") await stripeCancelSubscription(t.subscription_id);
+          else if (t.billing_provider === "mercadopago") await mpCancelPreapproval(t.subscription_id);
+        }
         await applySubscription(db, tenantId, {
           plan,
           provider: "stripe",
           customerId: typeof obj.customer === "string" ? obj.customer : null,
-          subscriptionId: typeof obj.subscription === "string" ? obj.subscription : null,
+          subscriptionId,
           status: "active",
           source: "Stripe",
         });
@@ -137,6 +154,9 @@ export async function handleMercadoPagoNotification(db: Db, type: string, dataId
         return;
       }
       await mpCancelPreapproval(t.subscription_id);
+    } else if (t.billing_provider === "stripe" && t.subscription_id) {
+      // Una de Stripe pagada antes: queda la recién autorizada y la de Stripe se cancela (si no, cobrarían las dos).
+      await stripeCancelSubscription(t.subscription_id);
     }
     await applySubscription(db, tenantId, {
       plan: active ? (plan as PlanId) : "free",

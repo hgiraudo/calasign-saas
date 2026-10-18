@@ -156,6 +156,12 @@ export interface WebForm {
   requireOtp: boolean;
   embeddable: boolean;
   collectPhone: boolean;
+  /**
+   * Motivo por el que el formulario no crea sobres aunque esté activo: quien lo creó dejó la organización, perdió el
+   * permiso o el acceso a la plantilla, o se revocó su API key. null si su dueño sigue habilitado. Mientras tenga
+   * motivo, la página pública lo muestra como no disponible.
+   */
+  ownerInactiveReason: string | null;
   createdAt: string;
   updatedAt: string;
 }

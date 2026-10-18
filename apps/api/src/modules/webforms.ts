@@ -30,7 +30,7 @@ const MAX_FILL_MS = 2 * 3600_000;
 
 type FormRow = any;
 
-function toWebForm(r: FormRow, templateName: string, base: string): WebForm {
+function toWebForm(r: FormRow, templateName: string, base: string, ownerInactiveReason: string | null): WebForm {
   return {
     id: r.id,
     slug: r.slug,
@@ -56,6 +56,7 @@ function toWebForm(r: FormRow, templateName: string, base: string): WebForm {
     requireOtp: r.require_otp,
     embeddable: r.embeddable,
     collectPhone: r.collect_phone,
+    ownerInactiveReason,
     createdAt: iso(r.created_at)!,
     updatedAt: iso(r.updated_at)!,
   };
@@ -110,6 +111,28 @@ function checkConfig(l: LoadedTemplate, form: { template_id: string; signer_role
 /** Dueño de los sobres del formulario: el usuario o la API key que lo creó. */
 const formOwner = (form: FormRow) => ({ tenantId: form.tenant_id as string, userId: (form.created_by ?? null) as string | null, apiKeyId: (form.created_by_api_key ?? null) as string | null });
 
+/**
+ * Estado del dueño para la administración: el mismo chequeo que hace la página pública. Sin esto, un formulario cuyo
+ * creador ya no puede crear sobres figuraba "activo" en la consola mientras el público lo veía no disponible.
+ * Se calcula una vez por dueño y plantilla (en un listado, varios formularios suelen compartirlos).
+ */
+async function ownerStates(db: Db, rows: FormRow[]): Promise<Map<string, string | null>> {
+  const memo = new Map<string, Promise<string | null>>();
+  const out = new Map<string, string | null>();
+  for (const r of rows) {
+    const o = formOwner(r);
+    const k = `${o.userId ?? ""}|${o.apiKeyId ?? ""}|${r.template_id}`;
+    if (!memo.has(k)) memo.set(k, ownerCanStillCreate(db, o, r.template_id));
+    out.set(r.id, await memo.get(k)!);
+  }
+  return out;
+}
+
+async function webFormOut(db: Db, r: FormRow, base?: string): Promise<WebForm> {
+  const reason = (await ownerStates(db, [r])).get(r.id) ?? null;
+  return toWebForm(r, r.template_name, base ?? (await tenantBaseUrl(db, r.tenant_id)), reason);
+}
+
 async function uniqueSlug(db: Db, name: string) {
   for (let i = 0; i < 5; i++) {
     const slug = `${slugify(name).slice(0, 32)}-${randomBytes(3).toString("hex")}`;
@@ -143,7 +166,8 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
       params,
     );
     const base = await tenantBaseUrl(s.db, req.auth!.tenantId);
-    return { items: rows.map((r) => toWebForm(r, r.template_name, base)) };
+    const owners = await ownerStates(s.db, rows);
+    return { items: rows.map((r) => toWebForm(r, r.template_name, base, owners.get(r.id) ?? null)) };
   });
 
   app.post("/v1/web-forms", { preHandler: auth }, async (req, reply) => {
@@ -181,13 +205,13 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
     );
     reply.code(201);
     const r = await load(a.tenantId, id);
-    return toWebForm(r, r.template_name, await tenantBaseUrl(s.db, r.tenant_id));
+    return webFormOut(s.db, r);
   });
 
   app.get<P>("/v1/web-forms/:id", { preHandler: auth }, async (req) => {
     const r = await load(A(req).tenantId, req.params.id);
     await assertTemplateAccess(s.db, A(req), r.template_id, "view");
-    return toWebForm(r, r.template_name, await tenantBaseUrl(s.db, r.tenant_id));
+    return webFormOut(s.db, r);
   });
 
   app.patch<P>("/v1/web-forms/:id", { preHandler: auth }, async (req) => {
@@ -225,7 +249,7 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
       ],
     );
     const r = await load(a.tenantId, cur.id);
-    return toWebForm(r, r.template_name, await tenantBaseUrl(s.db, r.tenant_id));
+    return webFormOut(s.db, r);
   });
 
   app.delete<P>("/v1/web-forms/:id", { preHandler: auth }, async (req, reply) => {

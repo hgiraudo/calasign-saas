@@ -46,13 +46,15 @@ export function TemplateUsePage() {
   /** Campos prellenables, agrupados por etiqueta (el valor se aplica a todos los campos con esa etiqueta). */
   const prefillable = useMemo(() => {
     if (!tpl) return [];
-    const seen = new Map<string, (typeof tpl.fields)[number]>();
+    const seen = new Map<string, { field: (typeof tpl.fields)[number]; ids: string[] }>();
     for (const f of tpl.fields) {
-      if (f.readOnly || !PREFILLABLE_FIELD_TYPES.includes(f.type)) continue;
+      if (f.readOnly || f.formula || !PREFILLABLE_FIELD_TYPES.includes(f.type)) continue;
       const key = f.label?.trim() || f.id;
-      if (!seen.has(key)) seen.set(key, f);
+      const g = seen.get(key);
+      if (g) g.ids.push(f.id);
+      else seen.set(key, { field: f, ids: [f.id] });
     }
-    return [...seen.entries()].map(([key, f]) => ({ key, field: f }));
+    return [...seen.entries()].map(([key, g]) => ({ key, ...g }));
   }, [tpl]);
 
   const submit = async (send: boolean, e?: FormEvent) => {
@@ -75,7 +77,12 @@ export function TemplateUsePage() {
           channels: p.channels,
         };
       }),
-      prefill: Object.fromEntries(Object.entries(prefill).filter(([, v]) => v.trim() !== "")),
+      // Por id de campo: la API busca por etiqueta exacta (con espacios) e incluye los campos de solo lectura con la
+      // misma etiqueta, así que mandar la etiqueta recortada daba "no hay ningún campo" o "es de solo lectura".
+      // Un valor borrado se manda vacío para quitar el valor por defecto de la plantilla (antes quedaba igual).
+      prefill: Object.fromEntries(
+        prefillable.flatMap((g) => (g.key in prefill && (prefill[g.key].trim() !== "" || g.field.value) ? g.ids.map((fid) => [fid, prefill[g.key].trim()]) : [])),
+      ),
       send,
     };
     try {
@@ -111,7 +118,7 @@ export function TemplateUsePage() {
         return (
           <div key={r.id} className="card pad recipient-row" style={{ borderLeftColor: r.role === "signer" ? recipientColor(signerIdx) : "#94a3b8" }}>
             <h3>
-              {t("tpl.recipientFor")} «{r.name}» <span className="muted small">({t(r.role === "cc" ? "edit.role.cc" : (r.role as string) === "approver" ? "edit.role.approver" : "edit.role.signer")})</span>
+              {t("tpl.recipientFor")} «{r.name}» <span className="muted small">({t(r.role === "cc" ? "edit.role.cc" : r.role === "approver" ? "edit.role.approver" : "edit.role.signer")})</span>
             </h3>
             <div className="use-grid">
               <label className="field">

@@ -20,7 +20,9 @@ export function SaveAsTemplateButton({ envelopeId, defaultName, beforeSave }: { 
     setError(null);
     try {
       if (beforeSave && !(await beforeSave())) {
+        // El error del guardado previo lo muestra la página, detrás del modal: se cierra para que se vea.
         setBusy(false);
+        setOpen(false);
         return;
       }
       const d = await api<TemplateDetail>(`/v1/templates/from-envelope/${envelopeId}`, { method: "POST", body: { name: name.trim() } });

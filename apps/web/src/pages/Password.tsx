@@ -1,6 +1,6 @@
 // Recuperación de contraseña: pedir el link (/forgot) y elegir la contraseña nueva (/reset/:token).
 import { useState, type FormEvent } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useLocation, useParams } from "react-router-dom";
 import { api, errorText, HttpError } from "../lib/api";
 import { useI18n } from "../lib/i18n";
 import { usePasswordText } from "../lib/i18n-password";
@@ -10,7 +10,9 @@ import { AuthShell } from "./Auth";
 export function ForgotPasswordPage() {
   const { t } = useI18n();
   const pw = usePasswordText();
-  const [email, setEmail] = useState("");
+  // Desde el login (p. ej. "restablecé tu contraseña") llega el correo ya escrito.
+  const initialEmail = (useLocation().state as { email?: string } | null)?.email ?? "";
+  const [email, setEmail] = useState(initialEmail);
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);

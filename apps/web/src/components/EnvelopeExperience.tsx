@@ -117,6 +117,11 @@ export function CorrectionModal({ detail, onClose, onDone }: { detail: EnvelopeD
   const setNew = (i: number, p: Partial<NewDraft>) => setAdded((as) => as.map((a, j) => (j === i ? { ...a, ...p } : a)));
 
   const save = async () => {
+    // Una fila nueva a medio completar se descartaba sin aviso: el remitente creía haber sumado al destinatario.
+    if (added.some((a) => Boolean(a.name.trim()) !== Boolean(a.email.trim()))) {
+      setError(x("correct.newIncomplete"));
+      return;
+    }
     setBusy(true);
     setError(null);
     const body: CorrectEnvelopeInput = { reason: reason.trim() || null };

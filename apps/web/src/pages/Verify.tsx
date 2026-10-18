@@ -17,9 +17,13 @@ export function VerifyPage() {
   const [report, setReport] = useState<PdfValidationResponse | null>(null);
   const [fileName, setFileName] = useState("");
   const [over, setOver] = useState(false);
+  // Solo vale la respuesta del último archivo: si se elige otro mientras el anterior se verifica, el resultado viejo
+  // (que puede llegar después) se mostraba junto al nombre del archivo nuevo.
+  const seq = useRef(0);
 
   const check = async (file: File | undefined) => {
     if (!file) return;
+    const mine = ++seq.current;
     setBusy(true);
     setError(null);
     setResult(null);
@@ -35,12 +39,13 @@ export function VerifyPage() {
         // Reporte técnico (integridad, cadena, revocación, nivel PAdES); si falla, se muestra igual la búsqueda por hash.
         api<PdfValidationResponse>("/v1/validate", { method: "POST", form: form2 }).catch(() => null),
       ]);
+      if (mine !== seq.current) return;
       setResult(r);
       setReport(v);
     } catch (e) {
-      setError(errorText(e));
+      if (mine === seq.current) setError(errorText(e));
     } finally {
-      setBusy(false);
+      if (mine === seq.current) setBusy(false);
       if (input.current) input.current.value = "";
     }
   };

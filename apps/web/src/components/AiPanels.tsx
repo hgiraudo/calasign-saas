@@ -474,7 +474,9 @@ export function AiMetadataPanel({ envelopeId, completed }: { envelopeId: string;
               {m.amounts.length
                 ? m.amounts.map((a, i) => (
                     <div key={i}>
+                      {/* Con varios montos, sin la descripción no se sabía cuál es cuál (p. ej. cuota mensual y depósito). */}
                       {formatAmount(a.value, a.currency, locale)}
+                      {a.description && <span className="muted"> — {a.description}</span>}
                     </div>
                   ))
                 : ai("meta.unknown")}

@@ -1,9 +1,9 @@
 // Workflows sin código (Fase 6): listado, editor de pasos (lista vertical), ejecuciones y detalle con aprobación.
-import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import type { CollectField, DocumentTemplate, Member, Workflow, WorkflowRun, WorkflowStep, WorkflowStepType } from "@calasign/shared";
 import { WORKFLOW_STEP_TYPES } from "@calasign/shared";
-import { api, errorText } from "../lib/api";
+import { api, errorText, uuid } from "../lib/api";
 import { formatDateTime, useI18n } from "../lib/i18n";
 import { useAccess } from "../lib/access";
 import { useAuth } from "../lib/auth";
@@ -79,7 +79,8 @@ export function WorkflowsPage() {
 
 // ───────────────────────────── Editor ─────────────────────────────
 
-const uid = () => crypto.randomUUID();
+// uuid() de lib/api: crypto.randomUUID no existe fuera de contextos seguros (p. ej. http://IP) y agregar un paso fallaba.
+const uid = () => uuid();
 
 function newStep(type: WorkflowStepType, ta: (k: AgreementsTextKey) => string, me: string | null): WorkflowStep {
   const name = ta(`step.${type}` as AgreementsTextKey);
@@ -499,6 +500,10 @@ function StartModal({ workflowId, onClose, onStarted }: { workflowId: string; on
   const { t } = useI18n();
   const [json, setJson] = useState("{}");
   const [error, setError] = useState<string | null>(null);
+  // Sin esto, un doble clic iniciaba dos ejecuciones (y, con un paso de firma, mandaba dos sobres).
+  // El ref corta también dos clics seguidos, antes de que el botón llegue a deshabilitarse.
+  const [busy, setBusy] = useState(false);
+  const inFlight = useRef(false);
   const data = parseJsonObject(json);
   return (
     <Modal title={ta("wf.start")} onClose={onClose}>
@@ -506,10 +511,16 @@ function StartModal({ workflowId, onClose, onStarted }: { workflowId: string; on
         className="stack"
         onSubmit={async (e) => {
           e.preventDefault();
+          if (inFlight.current) return;
+          inFlight.current = true;
+          setBusy(true);
+          setError(null);
           try {
             onStarted(await api<WorkflowRun>(`/v1/workflows/${workflowId}/runs`, { method: "POST", body: { data: data ?? {} } }));
           } catch (err) {
             setError(errorText(err));
+            inFlight.current = false;
+            setBusy(false);
           }
         }}
       >
@@ -522,7 +533,7 @@ function StartModal({ workflowId, onClose, onStarted }: { workflowId: string; on
           <button type="button" className="btn btn-ghost" onClick={onClose}>
             {t("common.cancel")}
           </button>
-          <button type="submit" className="btn btn-primary" disabled={!data}>
+          <button type="submit" className="btn btn-primary" disabled={!data || busy}>
             {ta("wf.start")}
           </button>
         </div>

@@ -109,9 +109,19 @@ export function AgreementsPage() {
     }
   };
 
+  // Vista abierta: sus filtros siguen aplicándose en el servidor (lo de la URL solo los refina).
+  const openView = views.find((v) => v.id === params.get("viewId")) ?? null;
+  const viewFilters = (openView?.filters ?? {}) as Record<string, unknown> & { fields?: Record<string, string> };
+  // Igual que el servidor: un campo propio en la URL reemplaza todos los de la vista (no se combinan).
+  const urlHasFields = [...params.keys()].some((k) => k.startsWith("f."));
+  const viewFields = urlHasFields ? {} : (viewFilters.fields ?? {});
+
   const currentFilters = () => {
-    const f: Record<string, unknown> = {};
-    const fieldsF: Record<string, string> = {};
+    // Se parte de los filtros de la vista abierta: guardar una vista desde otra se quedaba solo con los refinamientos
+    // de la URL y perdía los de la vista (p. ej. "vencen en 30 días").
+    const f: Record<string, unknown> = { ...viewFilters };
+    delete f.fields;
+    const fieldsF: Record<string, string> = { ...viewFields };
     for (const [k, v] of params.entries()) {
       if (k === "viewId" || k === "cursor" || !v) continue;
       if (k.startsWith("f.")) fieldsF[k.slice(2)] = v;
@@ -149,7 +159,7 @@ export function AgreementsPage() {
 
       <div className="agr-filters" role="search">
         <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder={ta("repo.search")} aria-label={ta("repo.search")} />
-        <select value={params.get("status") ?? ""} onChange={(e) => setParam("status", e.target.value)} aria-label={ta("col.status")}>
+        <select value={params.get("status") ?? String(viewFilters.status ?? "")} onChange={(e) => setParam("status", e.target.value)} aria-label={ta("col.status")}>
           <option value="">{ta("repo.allStatus")}</option>
           {(["active", "expired", "terminated"] as const).map((s) => (
             <option key={s} value={s}>
@@ -157,12 +167,12 @@ export function AgreementsPage() {
             </option>
           ))}
         </select>
-        <select value={params.get("source") ?? ""} onChange={(e) => setParam("source", e.target.value)} aria-label={ta("col.source")}>
+        <select value={params.get("source") ?? String(viewFilters.source ?? "")} onChange={(e) => setParam("source", e.target.value)} aria-label={ta("col.source")}>
           <option value="">{ta("repo.allSources")}</option>
           <option value="envelope">{ta("source.envelope")}</option>
           <option value="external">{ta("source.external")}</option>
         </select>
-        <select value={params.get("expiresWithinDays") ?? ""} onChange={(e) => setParam("expiresWithinDays", e.target.value)} aria-label={ta("repo.expiringIn")}>
+        <select value={params.get("expiresWithinDays") ?? String(viewFilters.expiresWithinDays ?? "")} onChange={(e) => setParam("expiresWithinDays", e.target.value)} aria-label={ta("repo.expiringIn")}>
           <option value="">{ta("repo.anyTime")}</option>
           {[30, 60, 90, 180].map((n) => (
             <option key={n} value={n}>
@@ -173,7 +183,7 @@ export function AgreementsPage() {
         {fields
           .filter((f) => f.type === "select")
           .map((f) => (
-            <select key={f.id} value={params.get(`f.${f.key}`) ?? ""} onChange={(e) => setParam(`f.${f.key}`, e.target.value)} aria-label={f.label}>
+            <select key={f.id} value={params.get(`f.${f.key}`) ?? viewFields[f.key] ?? ""} onChange={(e) => setParam(`f.${f.key}`, e.target.value)} aria-label={f.label}>
               <option value="">{f.label}</option>
               {(f.options ?? []).map((o) => (
                 <option key={o} value={o}>

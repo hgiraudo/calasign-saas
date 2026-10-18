@@ -17,7 +17,7 @@ import type { Db } from "../infra/db";
 import { appendEvent, type Actor } from "../infra/evidence";
 import { AppError, badRequest, notFound } from "../lib/errors";
 import { iso, sha256Hex, uuidv7 } from "../lib/util";
-import { templateVisibilitySql } from "./access";
+import { assertTemplateAccess, templateVisibilitySql } from "./access";
 import { authenticate, type AuthContext, type Services } from "./context";
 import { sendEnvelope } from "./envelopes";
 import { checkSenderValue, insertEnvelopeField } from "./fieldvalues";
@@ -377,20 +377,26 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
           [nd, a.tenantId, id, d.position, d.name, d.file_id, d.page_count, JSON.stringify(d.pages)],
         );
       }
-      const recips = await t.query<any>(`SELECT * FROM recipients WHERE envelope_id = $1 ORDER BY routing_order, created_at, id`, [env.id]);
+      // Los destinatarios reemplazados (delegó / reasignado) no son un rol: su reemplazo ya está en la lista.
+      const recips = await t.query<any>(
+        `SELECT * FROM recipients WHERE envelope_id = $1 AND status NOT IN ('delegated','reassigned') ORDER BY routing_order, created_at, id`,
+        [env.id],
+      );
       const roleMap = new Map<string, string>();
       let signerN = 0;
       let ccN = 0;
+      let approverN = 0;
       for (const [i, r] of recips.entries()) {
         const rid = uuidv7();
         roleMap.set(r.id, rid);
-        const name = r.role === "cc" ? `Copia ${++ccN}` : `Firmante ${++signerN}`;
+        const role = r.role === "cc" ? "cc" : r.role === "approver" ? "approver" : "signer";
+        const name = role === "cc" ? `Copia ${++ccN}` : role === "approver" ? `Aprobador ${++approverN}` : `Firmante ${++signerN}`;
         await t.query(`INSERT INTO template_roles (id, tenant_id, template_id, name, role, routing_order, position) VALUES ($1,$2,$3,$4,$5,$6,$7)`, [
           rid,
           a.tenantId,
           id,
           name,
-          r.role === "cc" ? "cc" : "signer",
+          role,
           r.routing_order,
           i,
         ]);
@@ -438,6 +444,8 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
   app.post("/v1/envelopes/from-template", { preHandler: auth }, async (req, reply) => {
     const a = A(req);
     const input = EnvelopeFromTemplateInput.parse(req.body);
+    // Una plantilla restringida (compartida solo con algunos grupos) no se puede usar sin poder verla.
+    await assertTemplateAccess(s.db, a, input.templateId, "view");
     const loaded = await loadTemplateForUse(s.db, a.tenantId, input.templateId);
     const plan = planFromTemplate(loaded, input);
     const envId = await s.db.tx((t) => insertEnvelopeFromTemplate(t, { tenantId: a.tenantId, userId: a.userId, apiKeyId: a.apiKeyId, actor: a.actor }, loaded, input, plan));

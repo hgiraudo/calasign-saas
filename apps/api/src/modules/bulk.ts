@@ -15,6 +15,7 @@ import type { Actor } from "../infra/evidence";
 import { enqueue } from "../infra/queue";
 import { AppError, badRequest, conflict, notFound } from "../lib/errors";
 import { iso, uuidv7 } from "../lib/util";
+import { assertTemplateAccess } from "./access";
 import { authenticate, type AuthContext, type Services } from "./context";
 import { insertEnvelopeFromTemplate, loadTemplateDetail, loadTemplateForUse, planFromTemplate, type LoadedTemplate } from "./templates";
 
@@ -213,8 +214,11 @@ function prepareRows(l: LoadedTemplate, rows: BulkRowInput[], base: { templateId
   });
 }
 
-async function resolveRows(s: Services, tenantId: string, raw: unknown) {
+async function resolveRows(s: Services, a: AuthContext, raw: unknown) {
+  const tenantId = a.tenantId;
   const input = CreateBulkSendInput.parse(raw);
+  // Una plantilla restringida no se puede usar sin poder verla.
+  await assertTemplateAccess(s.db, a, input.templateId, "view");
   const loaded = await loadTemplateForUse(s.db, tenantId, input.templateId);
   let rows: BulkRowInput[];
   let columns: string[] = [];
@@ -301,13 +305,13 @@ export async function bulkRoutes(app: FastifyInstance, s: Services) {
   });
 
   app.post("/v1/bulk-sends/validate", big, async (req) => {
-    const { prepared, columns } = await resolveRows(s, A(req).tenantId, req.body);
+    const { prepared, columns } = await resolveRows(s, A(req), req.body);
     return validationResult(prepared, columns);
   });
 
   app.post("/v1/bulk-sends", big, async (req, reply) => {
     const a = A(req);
-    const { input, loaded, prepared, columns } = await resolveRows(s, a.tenantId, req.body);
+    const { input, loaded, prepared, columns } = await resolveRows(s, a, req.body);
     const result = validationResult(prepared, columns);
     if (result.invalid > 0 && !input.skipInvalid) {
       throw new AppError(422, "rows_invalid", `${result.invalid} de ${result.total} filas tienen errores`, result);

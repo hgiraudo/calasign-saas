@@ -129,6 +129,8 @@ async function notify(
   if (p.kind === "certificate_request" && e.status !== "awaiting_certificates") return;
   // Firma embebida: el integrador muestra la ceremonia en su app; no se mandan invitaciones ni avisos.
   if ((p.kind === "invite" || p.kind === "reminder" || p.kind === "expiry_warning") && (r.embedded || r.auth_method === "in_person")) return;
+  // Autoregistrado en un formulario web público: sin correo verificado no se le escribe (salvo la copia final).
+  if ((p.kind === "invite" || p.kind === "reminder" || p.kind === "expiry_warning") && r.self_registered && !(r.auth_method === "otp_email" && r.authenticated_at)) return;
 
   const locale = r.locale ?? e.locale;
   const token = r.access_token_enc ? decrypt(r.access_token_enc) : null;

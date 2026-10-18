@@ -6,6 +6,7 @@ import { OtpVerifyInput, type OtpSendResponse } from "@calasign/shared";
 import { config } from "../config";
 import type { Db } from "../infra/db";
 import { appendEvent } from "../infra/evidence";
+import { enqueue } from "../infra/queue";
 import { AppError, conflict } from "../lib/errors";
 import { maskDestination, randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { deliver } from "../notifications/channels";
@@ -87,39 +88,51 @@ export async function otpRoutes(app: FastifyInstance, s: Services) {
     const destination = destinationOf(r);
     if (!destination) throw conflict("otp_no_destination", "No hay a dónde enviar el código");
 
-    const last = await s.db.one<any>(
-      `SELECT created_at, (SELECT count(*) FROM otp_challenges WHERE recipient_id = $1 AND created_at > now() - interval '1 hour') AS n
-       FROM otp_challenges WHERE recipient_id = $1 ORDER BY created_at DESC LIMIT 1`,
-      [r.id],
-    );
-    if (last) {
-      const wait = RESEND_COOLDOWN_S - Math.floor((Date.now() - new Date(last.created_at).getTime()) / 1000);
-      if (wait > 0) throw new AppError(429, "otp_cooldown", `Esperá ${wait} s para pedir otro código`, { resendInSeconds: wait });
-      if (Number(last.n) >= MAX_SENDS_PER_HOUR) throw new AppError(429, "otp_too_many", "Demasiados códigos pedidos. Probá más tarde.");
-    }
-
     const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
     const expiresAt = new Date(Date.now() + CODE_TTL_MIN * 60_000);
     const locale = normLocale(r.locale ?? e.locale);
     const m = MSG[locale];
     const channel = METHOD_CHANNEL[method];
-    const res = await deliver({
-      channel,
-      to: destination,
-      subject: m.subject,
-      text: m.text(code, e.subject),
-      locale,
-      templateParams: [code],
-      tenantId: e.tenant_id,
-    });
+    const challengeId = uuidv7();
+    // Se reserva el código con el sobre bloqueado ANTES de enviarlo: pedidos simultáneos no esquivan la espera
+    // entre envíos ni el máximo por hora (cada SMS/WhatsApp cuesta).
     await s.db.tx(async (t) => {
       await lockEnvelope(t, e.tenant_id, e.id);
+      const last = await t.one<any>(
+        `SELECT created_at, (SELECT count(*) FROM otp_challenges WHERE recipient_id = $1 AND created_at > now() - interval '1 hour') AS n
+         FROM otp_challenges WHERE recipient_id = $1 ORDER BY created_at DESC LIMIT 1`,
+        [r.id],
+      );
+      if (last) {
+        const wait = RESEND_COOLDOWN_S - Math.floor((Date.now() - new Date(last.created_at).getTime()) / 1000);
+        if (wait > 0) throw new AppError(429, "otp_cooldown", `Esperá ${wait} s para pedir otro código`, { resendInSeconds: wait });
+        if (Number(last.n) >= MAX_SENDS_PER_HOUR) throw new AppError(429, "otp_too_many", "Demasiados códigos pedidos. Probá más tarde.");
+      }
       // Un código nuevo invalida los anteriores.
       await t.query(`UPDATE otp_challenges SET expires_at = LEAST(expires_at, now()) WHERE recipient_id = $1 AND verified_at IS NULL`, [r.id]);
       await t.query(
         `INSERT INTO otp_challenges (id, tenant_id, recipient_id, method, destination, code_hash, expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-        [uuidv7(), e.tenant_id, r.id, method, destination, codeHash(r.id, code), expiresAt.toISOString()],
+        [challengeId, e.tenant_id, r.id, method, destination, codeHash(r.id, code), expiresAt.toISOString()],
       );
+    });
+    let res;
+    try {
+      res = await deliver({
+        channel,
+        to: destination,
+        subject: m.subject,
+        text: m.text(code, e.subject),
+        locale,
+        templateParams: [code],
+        tenantId: e.tenant_id,
+      });
+    } catch (err) {
+      // No salió: el código reservado no sirve (cuenta igual para la espera, para no reintentar en ráfaga).
+      await s.db.query(`UPDATE otp_challenges SET expires_at = now() WHERE id = $1`, [challengeId]);
+      throw new AppError(502, "otp_delivery_failed", "No se pudo enviar el código. Probá de nuevo en unos segundos.");
+    }
+    await s.db.tx(async (t) => {
+      await lockEnvelope(t, e.tenant_id, e.id);
       await t.query(
         `INSERT INTO notifications (id, tenant_id, envelope_id, recipient_id, channel, template, destination, status, provider, provider_message_id, sent_at)
          VALUES ($1,$2,$3,$4,$5,'otp',$6,'sent',$7,$8,now())`,
@@ -194,6 +207,10 @@ export async function otpRoutes(app: FastifyInstance, s: Services) {
         actor,
         data: { method: r.auth_method, destination: maskDestination(ch.destination) },
       });
+      // Autoregistrado en un formulario web: con el correo ya verificado sale la invitación de respaldo (una sola vez).
+      if (r.self_registered && r.auth_method === "otp_email" && e.status === "sent") {
+        await enqueue(t, "notify", { kind: "invite", envelopeId: e.id, recipientId: r.id, tenantId: e.tenant_id }, { dedupeKey: `invite-verified:${r.id}` });
+      }
       if (r.status === "sent" && e.status === "sent") {
         const v = await t.query(`UPDATE recipients SET status = 'viewed', viewed_at = now() WHERE id = $1 AND status = 'sent' RETURNING id`, [r.id]);
         if (v.length) await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "recipient.viewed", actor });

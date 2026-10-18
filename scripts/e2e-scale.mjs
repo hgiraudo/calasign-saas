@@ -360,6 +360,12 @@ sess = await api(
   { anon: true },
 );
 assert(sess.recipient.status === "signed", "firmó desde el formulario");
+// Sin código por correo, el correo autorregistrado no recibe la invitación de respaldo (no se puede usar para spam).
+await sleep(1500);
+{
+  const { items } = await api("GET", "/dev/mailbox");
+  assert(!items.some((x) => x.to === me.email && /para firmar/.test(x.subject ?? "")), "sin OTP no se envía la invitación al correo autorregistrado");
+}
 const { items: formEnvs } = await api("GET", `/v1/web-forms/${form.id}/envelopes`);
 assert(formEnvs.length === 1 && formEnvs[0].id === sub.envelopeId, "sobres creados desde el formulario");
 const fd = await api("GET", `/v1/envelopes/${sub.envelopeId}`);
@@ -387,6 +393,31 @@ await sleep(2700);
 const sub2 = await api("POST", `/v1/public/forms/${otpForm.slug}/submit`, { name: "Con Código", email: `otp.${stamp}@example.com`, formToken: pub2.formToken }, { expect: 201, anon: true });
 const s2 = await api("GET", `/v1/signing/${sub2.signingPath.slice(3)}`, null, { anon: true });
 assert(s2.otpRequired && s2.documents.length === 0, "con OTP no se ven documentos sin el código");
+// Con OTP: la invitación de respaldo sale recién después de validar el correo.
+{
+  const otpEmail = `otp.${stamp}@example.com`;
+  const tok2 = sub2.signingPath.slice(3);
+  await sleep(1500);
+  let { items } = await api("GET", "/dev/mailbox");
+  assert(!items.some((x) => x.to === otpEmail && /para firmar/.test(x.subject ?? "")), "sin validar el código no hay invitación");
+  await api("POST", `/v1/signing/${tok2}/otp/send`, {}, { anon: true });
+  let code = null;
+  for (let i = 0; i < 40 && !code; i++) {
+    ({ items } = await api("GET", "/dev/mailbox"));
+    const m = items.find((x) => x.to === otpEmail && /\b\d{6}\b/.test(x.text));
+    if (m) code = m.text.match(/\b(\d{6})\b/)[1];
+    else await sleep(500);
+  }
+  assert(code, "llegó el código por correo");
+  await api("POST", `/v1/signing/${tok2}/otp/verify`, { code }, { anon: true });
+  let invited = false;
+  for (let i = 0; i < 40 && !invited; i++) {
+    ({ items } = await api("GET", "/dev/mailbox"));
+    invited = items.some((x) => x.to === otpEmail && /para firmar/.test(x.subject ?? ""));
+    if (!invited) await sleep(500);
+  }
+  assert(invited, "con el correo validado sale la invitación de respaldo");
+}
 await api("PATCH", `/v1/web-forms/${otpForm.id}`, { active: false });
 const pub3 = await api("GET", `/v1/public/forms/${otpForm.slug}`, null, { anon: true });
 assert(!pub3.available && pub3.unavailableReason === "inactive", "desactivado");

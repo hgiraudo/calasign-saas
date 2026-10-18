@@ -27,7 +27,13 @@ async function purgeableFiles(db: Db, envelopeId: string) {
        SELECT d.file_id FROM documents d WHERE d.envelope_id = $1
        UNION SELECT a.image_file_id FROM adopted_signatures a JOIN recipients r ON r.id = a.recipient_id WHERE r.envelope_id = $1
        UNION SELECT fl.attachment_file_id FROM fields fl WHERE fl.envelope_id = $1 AND fl.attachment_file_id IS NOT NULL
-       UNION SELECT ic.file_id FROM identity_captures ic JOIN identity_verifications iv ON iv.id = ic.verification_id WHERE iv.envelope_id = $1)`,
+       UNION SELECT ic.file_id FROM identity_captures ic JOIN identity_verifications iv ON iv.id = ic.verification_id WHERE iv.envelope_id = $1)
+     -- Los PDF de un sobre creado desde plantilla (o de una plantilla creada desde un sobre) son el MISMO archivo:
+     -- no se borra lo que todavía usa una plantilla u otro sobre sin purgar.
+     AND NOT EXISTS (SELECT 1 FROM template_documents td WHERE td.file_id = f.id)
+     AND NOT EXISTS (
+       SELECT 1 FROM documents d2 JOIN envelopes e2 ON e2.id = d2.envelope_id
+       WHERE d2.file_id = f.id AND d2.envelope_id <> $1 AND e2.purged_at IS NULL)`,
     [envelopeId],
   );
 }

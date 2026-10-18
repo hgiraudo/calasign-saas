@@ -193,7 +193,10 @@ function Deliveries({ webhookId }: { webhookId: string }) {
 
   const load = () =>
     api<{ items: WebhookDelivery[] }>(`/v1/webhooks/${webhookId}/deliveries?limit=25`)
-      .then((r) => setItems(r.items))
+      .then((r) => {
+        setItems(r.items);
+        setError(null); // un error transitorio no debe ocultar las entregas para siempre
+      })
       .catch((e) => setError(errorText(e)));
 
   useEffect(() => {

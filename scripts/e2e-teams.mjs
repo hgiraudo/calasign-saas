@@ -201,6 +201,18 @@ const bobScim = await bob.api("POST", "/v1/settings/scim/tokens", { name: "miemb
 await owner.api("DELETE", `/v1/settings/scim/tokens/${bobScim.token.id}`, undefined, 204);
 step("SCIM: sin los permisos de admin no se elige admin como rol por defecto ni se crea un token que lo otorga");
 
+// Con members:manage pero sin todos los permisos de otro miembro, no se le baja el rol, no se lo quita ni se recorta su
+// rol personalizado (Carol es "Revisor": envelopes:view_all y audit:view, que el rol "Gente" de Bob no tiene).
+{
+  const carolId = (await owner.api("GET", "/v1/members")).items.find((m) => m.email === carolEmail).userId;
+  await bob.api("PATCH", `/v1/members/${carolId}`, { role: "member" }, 403);
+  await bob.api("DELETE", `/v1/members/${carolId}`, undefined, 403);
+  await bob.api("PATCH", `/v1/roles/${revisor.id}`, { permissions: [] }, 403);
+  const carolNow = (await owner.api("GET", "/v1/members")).items.find((m) => m.email === carolEmail);
+  if (carolNow?.roleId !== revisor.id) throw new Error("Carol tiene que seguir con su rol");
+  step("members:manage no alcanza para bajar de rol, quitar o recortar el rol de quien tiene permisos que uno no tiene (403)");
+}
+
 await owner.api("PATCH", `/v1/members/${bobMe.user.id}`, { role: "custom", roleId: integrador.id });
 await bob.api("POST", "/v1/api-keys", { name: "admin?" }, 403);
 await bob.api("POST", "/v1/api-keys", { name: "member?", role: "member" }, 403);
@@ -278,6 +290,26 @@ await bob3.api("POST", "/v1/auth/2fa/verify", { challengeToken: ch2.challengeTok
 await bob3.api("POST", "/v1/auth/2fa/verify", { challengeToken: ch2.challengeToken, code: totp(setup.secret, nowStep() + 1) });
 await bob3.api("GET", "/v1/me");
 step("2FA: login pide segundo factor; código incorrecto → 401; código de recuperación de un solo uso; TOTP válido crea la sesión");
+
+// Aceptar una invitación con contraseña, con 2FA activo, no suma a nadie hasta el segundo factor: alguien con solo la
+// contraseña de Bob lo invita a su propia organización y acepta por él; Bob no tiene que quedar como miembro.
+{
+  const mallory = new Client("mallory");
+  await mallory.api("POST", "/v1/auth/signup", { name: "Mallory", email: `mallory+${stamp}@example.com`, password: "clave-de-mallory-123", organization: `Mallory SA ${stamp}` });
+  const invM = await mallory.api("POST", "/v1/invitations", { email: bobEmail, role: "member" });
+  const tokM = invM.acceptUrl.split("/invite/")[1];
+  const thief = new Client("thief");
+  const chM = await thief.api("POST", `/v1/invite/${tokM}/accept`, { password: "clave-de-bob-123" });
+  if (!chM?.twoFactorRequired || thief.cookie) throw new Error("aceptar con contraseña y 2FA debe pedir el segundo factor sin crear sesión");
+  let { items: mm } = await mallory.api("GET", "/v1/members");
+  if (mm.some((m) => m.email === bobEmail)) throw new Error("con solo la contraseña (sin 2FA) la invitación sumó a Bob a la organización");
+  const prevM = await thief.api("GET", `/v1/invite/${tokM}`);
+  if (prevM.status !== "pending") throw new Error(`la invitación no debe quedar aceptada antes del 2FA: ${prevM.status}`);
+  await thief.api("POST", "/v1/auth/2fa/verify", { challengeToken: chM.challengeToken, code: recoveryCodes[1] });
+  ({ items: mm } = await mallory.api("GET", "/v1/members"));
+  if (!mm.some((m) => m.email === bobEmail)) throw new Error("con el segundo factor la invitación tiene que sumar a Bob");
+  step("invitación aceptada con contraseña y 2FA: la membresía se crea recién al verificar el segundo factor");
+}
 
 // Exigir 2FA a la organización.
 await owner.api("PATCH", "/v1/settings/security", { require2fa: true }, 409);

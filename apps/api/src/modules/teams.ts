@@ -79,14 +79,17 @@ async function meResponse(db: Db, userId: string, tenantId: string) {
 
 // ───────────────────────────── 2FA en el ingreso ─────────────────────────────
 
-/** Si el usuario tiene 2FA, crea un desafío y devuelve su token (no se crea sesión todavía). */
-export async function createTwoFactorChallenge(db: Db, userId: string, tenantId: string): Promise<TwoFactorChallenge | null> {
+/**
+ * Si el usuario tiene 2FA, crea un desafío y devuelve su token (no se crea sesión todavía). `invitationId`: el
+ * desafío viene de aceptar una invitación, que se acepta recién al verificar el segundo factor.
+ */
+export async function createTwoFactorChallenge(db: Db, userId: string, tenantId: string, invitationId: string | null = null): Promise<TwoFactorChallenge | null> {
   const u = await db.one<any>(`SELECT totp_enabled_at FROM users WHERE id = $1`, [userId]);
   if (!u?.totp_enabled_at) return null;
   const token = randomToken();
   await db.query(
-    `INSERT INTO login_challenges (token_hash, user_id, tenant_id, expires_at) VALUES ($1,$2,$3, now() + interval '10 minutes')`,
-    [sha256Hex(token), userId, tenantId],
+    `INSERT INTO login_challenges (token_hash, user_id, tenant_id, invitation_id, expires_at) VALUES ($1,$2,$3,$4, now() + interval '10 minutes')`,
+    [sha256Hex(token), userId, tenantId, invitationId],
   );
   return { twoFactorRequired: true, challengeToken: token };
 }
@@ -153,6 +156,17 @@ function assertCanGrant(a: AuthContext, target: { role: string }, perms: readonl
   if (a.access?.role === "owner") return;
   const missing = perms.filter((p) => !hasPerm(a, p));
   if (missing.length) throw new AppError(403, "forbidden", `No podés otorgar permisos que no tenés: ${missing.join(", ")}`, { missing });
+}
+
+/**
+ * Cambiar el rol de un miembro, quitarlo o editar un rol que ya tiene permisos: solo si quien lo hace tiene todos los
+ * permisos actuales (salvo propietarios). Si no, un rol personalizado con members:manage quitaba o bajaba de rol a
+ * un administrador (o le recortaba un rol personalizado) aunque tuviera menos permisos que él.
+ */
+function assertCanManage(a: AuthContext, current: readonly Permission[], what: string) {
+  if (a.access?.role === "owner") return;
+  const missing = current.filter((p) => !hasPerm(a, p));
+  if (missing.length) throw new AppError(403, "forbidden", `No podés ${what}: tiene permisos que vos no tenés (${missing.join(", ")})`, { missing });
 }
 
 async function permsOf(db: Db, tenantId: string, role: string, roleId: string | null): Promise<readonly Permission[]> {
@@ -301,6 +315,7 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     const cur = await s.db.one<any>(`SELECT role, role_id FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [a.tenantId, req.params.userId]);
     if (!cur) throw notFound("Miembro");
     if (cur.role === "owner" && a.access?.role !== "owner") throw forbidden("Solo un propietario puede cambiar el rol de otro propietario");
+    assertCanManage(a, await permsOf(s.db, a.tenantId, cur.role, cur.role_id), "cambiar el rol de este miembro");
     assertCanGrant(a, target, await permsOf(s.db, a.tenantId, target.role, target.roleId));
     await s.db.tx(async (t) => {
       // Serializa los cambios de propietarios de la organización: dos bajas simultáneas no la dejan sin ninguno.
@@ -321,9 +336,10 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
   app.delete<P>("/v1/members/:userId", { preHandler: auth }, async (req, reply) => {
     const a = A(req);
     const userId = req.params.userId!;
-    const cur = await s.db.one<any>(`SELECT role FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [a.tenantId, userId]);
+    const cur = await s.db.one<any>(`SELECT role, role_id FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [a.tenantId, userId]);
     if (!cur) throw notFound("Miembro");
     if (cur.role === "owner" && a.access?.role !== "owner") throw forbidden("Solo un propietario puede quitar a otro propietario");
+    if (userId !== a.userId) assertCanManage(a, await permsOf(s.db, a.tenantId, cur.role, cur.role_id), "quitar a este miembro");
     await s.db.tx(async (t) => {
       // Serializa los cambios de propietarios de la organización: dos bajas simultáneas no la dejan sin ninguno.
       await t.query(`SELECT id FROM tenants WHERE id = $1 FOR UPDATE`, [a.tenantId]);
@@ -440,6 +456,33 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     };
   });
 
+  /** Marca la invitación como aceptada y crea la membresía (una sola vez; una invitación revocada o vencida no sirve). */
+  async function joinByInvitation(req: FastifyRequest, invitationId: string, userId: string, email: string) {
+    const inv = await s.db.tx(async (t) => {
+      const upd = await t.query<any>(
+        `UPDATE invitations SET accepted_at = now(), accepted_by = $2
+          WHERE id = $1 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now() RETURNING id, tenant_id, role, role_id`,
+        [invitationId, userId],
+      );
+      if (!upd.length) throw new AppError(410, "invitation_used", "La invitación ya no es válida");
+      const i = upd[0];
+      await t.query(
+        `INSERT INTO memberships (tenant_id, user_id, role, role_id) VALUES ($1,$2,$3,$4) ON CONFLICT (tenant_id, user_id) DO NOTHING`,
+        [i.tenant_id, userId, i.role, i.role_id],
+      );
+      return i;
+    });
+    await recordAudit(s.db, {
+      tenantId: inv.tenant_id,
+      action: "member.joined",
+      actor: { type: "user", id: userId, label: email },
+      targetType: "invitation",
+      targetId: inv.id,
+      data: { role: inv.role, roleId: inv.role_id },
+      ...clientInfo(req),
+    });
+  }
+
   app.post<P>("/v1/invite/:token/accept", { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } }, async (req, reply) => {
     const input = AcceptInvitationInput.parse(req.body ?? {});
     const inv = await invitationByToken(req.params.token!);
@@ -494,31 +537,12 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
       user = { id, totp_enabled_at: null };
     }
 
-    await s.db.tx(async (t) => {
-      const upd = await t.query(
-        `UPDATE invitations SET accepted_at = now(), accepted_by = $2 WHERE id = $1 AND accepted_at IS NULL AND revoked_at IS NULL RETURNING id`,
-        [inv.id, user.id],
-      );
-      if (!upd.length) throw new AppError(410, "invitation_used", "La invitación ya fue usada");
-      await t.query(
-        `INSERT INTO memberships (tenant_id, user_id, role, role_id) VALUES ($1,$2,$3,$4) ON CONFLICT (tenant_id, user_id) DO NOTHING`,
-        [inv.tenant_id, user.id, inv.role, inv.role_id],
-      );
-    });
-    await recordAudit(s.db, {
-      tenantId: inv.tenant_id,
-      action: "member.joined",
-      actor: { type: "user", id: user.id, label: inv.email },
-      targetType: "invitation",
-      targetId: inv.id,
-      data: { role: inv.role, roleId: inv.role_id },
-      ...clientInfo(req),
-    });
-
-    // Si entró con contraseña y tiene 2FA, falta el segundo factor antes de crear la sesión.
+    // Si entró con contraseña y tiene 2FA, falta el segundo factor: la invitación se acepta recién al verificarlo.
+    // Si no, alguien con solo la contraseña sumaba la cuenta de la víctima a su propia organización.
     if (verifiedByPassword && user.totp_enabled_at) {
-      return createTwoFactorChallenge(s.db, user.id, inv.tenant_id);
+      return createTwoFactorChallenge(s.db, user.id, inv.tenant_id, inv.id);
     }
+    await joinByInvitation(req, inv.id, user.id, inv.email);
     if (sessionUserId) {
       await s.db.query(`UPDATE sessions SET tenant_id = $2 WHERE token_hash = $1`, [sha256Hex(cookie!), inv.tenant_id]);
     } else {
@@ -577,7 +601,10 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     const input = UpdateRoleInput.parse(req.body);
     const cur = await s.db.one<any>(`SELECT * FROM roles WHERE id = $1 AND tenant_id = $2`, [req.params.id, a.tenantId]);
     if (!cur) throw notFound("Rol");
-    if (input.permissions) assertCanGrant(a, { role: "custom" }, input.permissions);
+    if (input.permissions) {
+      assertCanManage(a, cur.permissions ?? [], "editar los permisos de este rol");
+      assertCanGrant(a, { role: "custom" }, input.permissions);
+    }
     try {
       await s.db.query(
         `UPDATE roles SET name = COALESCE($2, name), description = CASE WHEN $3::boolean THEN $4 ELSE description END,
@@ -894,6 +921,8 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     // El desafío se canjea una sola vez.
     const consumed = await s.db.query(`DELETE FROM login_challenges WHERE token_hash = $1 RETURNING user_id`, [ch.token_hash]);
     if (!consumed.length) throw new AppError(401, "challenge_expired", "El ingreso venció: volvé a ingresar tu contraseña");
+    // Desafío de una invitación aceptada con contraseña: recién ahora, con el segundo factor, se suma a la organización.
+    if (ch.invitation_id) await joinByInvitation(req, ch.invitation_id, ch.user_id, u?.email ?? "");
     await createUserSession(s.db, req, reply, ch.user_id, ch.tenant_id);
     await recordAudit(s.db, { tenantId: ch.tenant_id, action: "auth.login", actor: { type: "user", id: ch.user_id, label: u?.email }, data: { twoFactor: method }, ...clientInfo(req) });
     return meResponse(s.db, ch.user_id, ch.tenant_id);

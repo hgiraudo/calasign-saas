@@ -624,10 +624,21 @@ step("un miembro no modifica formularios ni envíos masivos ajenos; un formulari
   await api("POST", "/v1/invitations", { email: pending.email, role: "member" }, { expect: 201 });
   assert((await used()) === 3, "reenviar no suma un usuario");
   await api("POST", "/v1/invitations", { email: `otra.${stamp}@example.com`, role: "member" }, { expect: 402 });
+  // La verificación de identidad (KYC) es del plan Business: en Starter no se puede exigir (cada verificación de un
+  // proveedor real se paga). Antes se aceptaba en cualquier plan.
+  const { envelope: kycEnv } = await api("POST", "/v1/envelopes", { subject: `KYC en Starter ${stamp}` });
+  const kycRes = await fetch(BASE + `/v1/envelopes/${kycEnv.id}/recipients`, {
+    method: "PUT",
+    headers: { cookie, "content-type": "application/json" },
+    body: JSON.stringify({ recipients: [{ name: "Kai", email: `kai.${stamp}@example.com`, idVerification: { provider: "mock", level: "document" } }] }),
+  });
+  const kycBody = await kycRes.json();
+  assert(kycRes.status === 402 && kycBody.error?.details?.feature === "kyc", `en Starter no se puede exigir la verificación de identidad (${kycRes.status} ${kycBody.error?.code})`);
+  await api("PUT", `/v1/envelopes/${kycEnv.id}/recipients`, { recipients: [{ name: "Kai", email: `kai.${stamp}@example.com` }] });
   await toPlan("business");
   pp = await api("GET", `/v1/public/forms/${planForm.slug}`, null, { anon: true });
   assert(pp.available, "de vuelta en Business el formulario se ofrece otra vez");
 }
-step("plan sin formularios web: los formularios no crean sobres (código plan_feature); invitaciones: cupo con bloqueo y reenvío sin 402");
+step("plan sin formularios web: los formularios no crean sobres (código plan_feature); sin KYC en el plan no se exige verificación; invitaciones: cupo con bloqueo y reenvío sin 402");
 
 console.log("\nE2E ESCALA OK");

@@ -738,11 +738,15 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
       // Los sobres enviados por el run que siguen en curso se anulan.
       for (const e of Object.values((run.context?.envelopes ?? {}) as Record<string, { envelopeId: string }>)) {
         const env = await t.one<any>(`SELECT id, tenant_id, status FROM envelopes WHERE id = $1 FOR UPDATE`, [e.envelopeId]);
-        if (env?.status !== "sent") continue;
+        if (env?.status !== "sent" && env?.status !== "awaiting_certificates") continue;
         const reason = "Workflow cancelado";
         await t.query(`UPDATE envelopes SET status = 'voided', voided_at = now(), void_reason = $2, updated_at = now(), version = version + 1 WHERE id = $1`, [env.id, reason]);
         await appendEvent(t, { tenantId: env.tenant_id, envelopeId: env.id, type: "envelope.voided", actor: a.actor, data: { reason, workflowRunId: run.id } });
-        const notified = await t.query<any>(`SELECT id FROM recipients WHERE envelope_id = $1 AND status IN ('sent','viewed')`, [env.id]);
+        const notified = await t.query<any>(
+          `SELECT r.id FROM recipients r WHERE r.envelope_id = $1 AND (r.status IN ('sent','viewed')
+             OR EXISTS (SELECT 1 FROM certificate_signatures c WHERE c.recipient_id = r.id AND c.status = 'pending'))`,
+          [env.id],
+        );
         for (const r of notified) await enqueue(t, "notify", { kind: "voided", envelopeId: env.id, recipientId: r.id, tenantId: env.tenant_id });
       }
     });
@@ -806,14 +810,26 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
         : null;
     // Link de firma para quien completó los datos (si el sobre del run lo tiene como firmante).
     let signingUrl: string | null = null;
-    const emails: string[] = run.context?.collectEmails ?? [];
+    // Solo se entrega el link de un firmante cuyo correo SALE de los datos cargados en el formulario (plantilla con
+    // variables). Si no, quien completa el formulario podría poner el correo de un firmante fijo (por ejemplo,
+    // alguien de la organización) y recibir su link de firma.
+    const selfService = new Set<string>();
+    for (const st of run.steps as WorkflowStep[]) {
+      if (st.type !== "send_for_signature") continue;
+      for (const r of st.config.recipients) {
+        if (!r.email?.includes("{{")) continue;
+        const e = interpolate(r.email, run.context?.data ?? {}).trim().toLowerCase();
+        if (e) selfService.add(e);
+      }
+    }
+    const emails: string[] = (run.context?.collectEmails ?? []).map((x: string) => x.toLowerCase()).filter((x: string) => selfService.has(x));
     const envIds = Object.values((run.context?.envelopes ?? {}) as Record<string, { envelopeId: string }>).map((e) => e.envelopeId);
     if (emails.length && envIds.length) {
       const r = await s.db.one<any>(
         `SELECT r.access_token_enc FROM recipients r JOIN envelopes e ON e.id = r.envelope_id
          WHERE r.envelope_id = ANY($1) AND lower(r.email) = ANY($2) AND r.role = 'signer' AND r.status IN ('sent','viewed') AND e.status = 'sent'
            AND r.access_token_enc IS NOT NULL ORDER BY r.routing_order LIMIT 1`,
-        [envIds, emails.map((x) => x.toLowerCase())],
+        [envIds, emails],
       );
       if (r) signingUrl = `${await tenantBaseUrl(s.db, run.tenant_id)}/s/${decrypt(r.access_token_enc)}`;
     }

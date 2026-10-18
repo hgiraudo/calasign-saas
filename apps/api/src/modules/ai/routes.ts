@@ -314,7 +314,11 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
         disclaimer: disclaimerFor(locale),
         usage: usageInfo(res.usage),
       };
-      summaryCache.set(key, { at: Date.now(), value: out });
+      // Caché acotada: se descartan los vencidos y, si sigue llena, los más viejos.
+      const now = Date.now();
+      for (const [k, v] of summaryCache) if (now - v.at >= 3600_000) summaryCache.delete(k);
+      while (summaryCache.size >= 500) summaryCache.delete(summaryCache.keys().next().value!);
+      summaryCache.set(key, { at: now, value: out });
       await recordAiUse(s.db, { tenantId: e.tenant_id, envelopeId: e.id, feature: "summary", usage: res.usage, actor: recipientActor(req, r), data: { locale } });
     }
     return out;

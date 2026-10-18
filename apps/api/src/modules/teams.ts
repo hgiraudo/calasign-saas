@@ -446,7 +446,21 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     let user = await s.db.one<any>(`SELECT id, password_hash, totp_enabled_at FROM users WHERE lower(email) = lower($1)`, [inv.email]);
     let verifiedByPassword = false;
     if (user && !sessionUserId) {
-      if (!input.password || !(await verifyPassword(input.password, user.password_hash))) throw unauthorized();
+      // Es un ingreso con contraseña: mismo bloqueo por cuenta que /v1/auth/login, y los fallos cuentan para ese
+      // bloqueo. Si no, alguien que invita el correo de otra persona a su propia organización prueba contraseñas acá
+      // sin límite por cuenta (solo el de IP) y, si acierta, se queda con una sesión de esa persona.
+      if ((await recentFailedLogins(s.db, user.id)) >= MAX_FAILED_LOGINS) {
+        throw new AppError(429, "too_many_attempts", "Demasiados intentos fallidos. Probá de nuevo en unos minutos o restablecé tu contraseña.");
+      }
+      if (!input.password || !(await verifyPassword(input.password, user.password_hash))) {
+        if (input.password) {
+          const tenants = await s.db.query<any>(`SELECT tenant_id FROM memberships WHERE user_id = $1`, [user.id]);
+          for (const m of tenants.length ? tenants : [{ tenant_id: inv.tenant_id }]) {
+            await recordAudit(s.db, { tenantId: m.tenant_id, action: "auth.login_failed", actor: { type: "anonymous", id: user.id, label: inv.email }, data: { reason: "bad_password_invitation" }, ...clientInfo(req) });
+          }
+        }
+        throw unauthorized();
+      }
       verifiedByPassword = true;
     }
     if (!user) {

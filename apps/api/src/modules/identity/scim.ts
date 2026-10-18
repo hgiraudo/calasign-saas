@@ -169,6 +169,18 @@ async function assertVerifiedDomain(db: Db, tenantId: string, email: string) {
   }
 }
 
+/** ¿El rol del miembro tiene algún permiso que el rol por defecto de SCIM no tiene? */
+async function exceedsScimDefaultRole(db: Db, tenantId: string, role: string, roleId: string | null): Promise<boolean> {
+  const t = await db.one<any>(`SELECT scim_default_role FROM tenants WHERE id = $1`, [tenantId]);
+  const allowed = new Set<string>(BUILTIN_ROLE_PERMISSIONS[(t?.scim_default_role ?? "member") as keyof typeof BUILTIN_ROLE_PERMISSIONS] ?? []);
+  let perms: readonly string[];
+  if (role === "custom") {
+    const r = await db.one<any>(`SELECT permissions FROM roles WHERE id = $1 AND tenant_id = $2`, [roleId, tenantId]);
+    perms = r?.permissions ?? [];
+  } else perms = BUILTIN_ROLE_PERMISSIONS[role as keyof typeof BUILTIN_ROLE_PERMISSIONS] ?? [];
+  return perms.some((p) => !allowed.has(p));
+}
+
 async function ensureScimUser(db: Db, tenantId: string, userId: string) {
   await db.query(`INSERT INTO scim_users (tenant_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [tenantId, userId]);
 }
@@ -187,7 +199,7 @@ async function applyUserAttrs(db: Db, tenantId: string, userId: string, attrs: R
   if ("name.familyName" in attrs) set("family_name", attrs["name.familyName"] ?? null);
   if (sets.length) await db.query(`UPDATE scim_users SET ${sets.join(", ")}, updated_at = now() WHERE tenant_id = $1 AND user_id = $2`, params);
 
-  const membership = await db.one<any>(`SELECT role FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [tenantId, userId]);
+  const membership = await db.one<any>(`SELECT role, role_id FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [tenantId, userId]);
   const otherOrgs = Number((await db.one<any>(`SELECT count(*)::int AS n FROM memberships WHERE user_id = $1 AND tenant_id <> $2`, [userId, tenantId]))?.n ?? 0);
 
   let display = typeof attrs.displayName === "string" ? attrs.displayName.trim() : null;
@@ -206,6 +218,12 @@ async function applyUserAttrs(db: Db, tenantId: string, userId: string, attrs: R
       if (otherOrgs > 0) throw new ScimError(400, "No se puede cambiar el correo de un usuario que pertenece a otras organizaciones", "mutability");
       // Cambiar el correo de acceso de un propietario equivaldría a tomar su cuenta.
       if (membership?.role === "owner") throw new ScimError(409, "El correo de un propietario no se puede cambiar por SCIM", "mutability");
+      // Lo mismo con quien tiene más permisos que el rol por defecto de SCIM: el token lo puede crear quien tiene esos
+      // permisos y no más; cambiar el correo de un administrador por uno propio (y restablecer la contraseña) sería
+      // quedarse con su cuenta. Esos correos se cambian desde el IdP con el rol por defecto adecuado o desde la consola.
+      if (membership && (await exceedsScimDefaultRole(db, tenantId, membership.role, membership.role_id))) {
+        throw new ScimError(409, "El correo de un usuario con más permisos que el rol por defecto de SCIM no se puede cambiar por SCIM", "mutability");
+      }
       const taken = await db.one(`SELECT 1 FROM users WHERE lower(email) = $1 AND id <> $2`, [email, userId]);
       if (taken) throw new ScimError(409, "Ya existe un usuario con ese correo", "uniqueness");
       await assertVerifiedDomain(db, tenantId, email);

@@ -109,7 +109,8 @@ export async function markPaymentPaid(
     const e = await lockEnvelope(t, p0.tenant_id, p0.envelope_id);
     const p = await t.one<any>(`SELECT * FROM envelope_payments WHERE id = $1 FOR UPDATE`, [paymentId]);
     if (p.status === "paid") return;
-    if (r.amount !== undefined && Math.abs(r.amount - Number(p.amount)) > 0.005) {
+    // Un monto no numérico (NaN) haría falsa cualquier comparación: se trata como diferencia.
+    if (r.amount !== undefined && (!Number.isFinite(r.amount) || Math.abs(r.amount - Number(p.amount)) > 0.005)) {
       throw new AppError(400, "payment_mismatch", "El monto pagado no coincide con el cobro");
     }
     if (r.currency && r.currency.toUpperCase() !== String(p.currency).toUpperCase()) {

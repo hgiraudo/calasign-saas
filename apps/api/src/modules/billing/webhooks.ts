@@ -98,6 +98,10 @@ export async function handleMercadoPagoNotification(db: Db, type: string, dataId
     if (!ref.startsWith("pay:")) return;
     const paymentId = ref.slice(4);
     if (pay.status === "approved") {
+      // Monto y moneda son obligatorios: sin ellos no se puede comprobar que se pagó lo que se cobra.
+      if (!Number.isFinite(pay.amount) || !pay.currency) {
+        throw new AppError(400, "payment_mismatch", "Mercado Pago no informó el monto o la moneda del pago");
+      }
       await markPaymentPaid(db, paymentId, {
         providerPaymentId: pay.id,
         amount: pay.amount,

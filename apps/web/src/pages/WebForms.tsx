@@ -265,6 +265,12 @@ function WebFormEditor({ form, initialTemplateId, onClose, onSaved }: { form: We
   );
 }
 
+/** Motivo por el que el formulario no se ofrece al público, traducido por código (el texto de la API viene en español). */
+function inactiveWhy(f: WebForm, st: ReturnType<typeof useScaleText>): string | null {
+  if (f.ownerInactiveCode) return st(`forms.why.${f.ownerInactiveCode}` as const);
+  return f.ownerInactiveReason ?? null;
+}
+
 // ───────────────────────────── Listado ─────────────────────────────
 
 export function WebFormsPage() {
@@ -309,13 +315,13 @@ export function WebFormsPage() {
               <div className="grow">
                 <h3>
                   <Link to={`/app/forms/${f.id}`}>{f.name}</Link> {!f.active && <span className="badge badge-voided">{st("forms.inactive")}</span>}
-                  {f.active && f.ownerInactiveReason && (
-                    <span className="badge badge-declined" title={f.ownerInactiveReason}>
+                  {f.active && inactiveWhy(f, st) && (
+                    <span className="badge badge-declined" title={inactiveWhy(f, st) ?? undefined}>
                       {st("forms.ownerInactive")}
                     </span>
                   )}
                 </h3>
-                {f.ownerInactiveReason && <p className="small error-text">{f.ownerInactiveReason}</p>}
+                {inactiveWhy(f, st) && <p className="small error-text">{inactiveWhy(f, st)}</p>}
                 <p className="muted small">
                   {f.templateName} · {st("forms.uses")}: {f.uses}
                   {f.maxUses ? `/${f.maxUses}` : ""}
@@ -407,10 +413,10 @@ export function WebFormDetailPage() {
         </div>
       </div>
       <ErrorBox error={error} />
-      {form.ownerInactiveReason && (
+      {inactiveWhy(form, st) && (
         <div className="alert alert-warn" role="status">
-          <strong>{st("forms.ownerInactive")}:</strong> {form.ownerInactiveReason}
-          <p className="small">{st("forms.ownerInactiveHint")}</p>
+          <strong>{st("forms.ownerInactive")}:</strong> {inactiveWhy(form, st)}
+          <p className="small">{st(form.ownerInactiveCode === "plan_feature" ? "forms.planHint" : "forms.ownerInactiveHint")}</p>
         </div>
       )}
       <div className="card pad stack">

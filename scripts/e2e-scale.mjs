@@ -528,7 +528,7 @@ step("formulario con código por correo y desactivación");
   let mp = await api("GET", `/v1/public/forms/${memberForm.slug}`, null, { anon: true });
   assert(mp.available, "el formulario del miembro está disponible");
   let adm = await api("GET", `/v1/web-forms/${memberForm.id}`);
-  assert(adm.ownerInactiveReason === null, `con su creador habilitado la consola no marca nada: ${adm.ownerInactiveReason}`);
+  assert(adm.ownerInactiveReason === null && adm.ownerInactiveCode === null, `con su creador habilitado la consola no marca nada: ${adm.ownerInactiveReason}`);
   const { items: members } = await api("GET", "/v1/members");
   const beto = members.find((m) => m.email === `beto+scale${stamp}@example.com`);
   await api("DELETE", `/v1/members/${beto.userId}`, null, { expect: 204 });
@@ -539,6 +539,7 @@ step("formulario con código por correo y desactivación");
   assert(adm.active && typeof adm.ownerInactiveReason === "string" && /miembro/.test(adm.ownerInactiveReason), `la consola marca el formulario sin dueño habilitado: ${JSON.stringify(adm.ownerInactiveReason)}`);
   const listed = (await api("GET", "/v1/web-forms")).items.find((x) => x.id === memberForm.id);
   assert(listed?.ownerInactiveReason === adm.ownerInactiveReason, "el listado también lo marca");
+  assert(adm.ownerInactiveCode === "not_member" && listed?.ownerInactiveCode === "not_member", `código estable del motivo: ${adm.ownerInactiveCode}`);
   await sleep(2600);
   await api("POST", `/v1/public/forms/${memberForm.slug}/submit`, { name: "Tercero", email: `tercero.${stamp}@example.com`, formToken: mp.formToken }, { expect: 410, anon: true });
 
@@ -572,5 +573,61 @@ step("formulario con código por correo y desactivación");
   assert(!kp.available, "con la key revocada el formulario no se ofrece");
 }
 step("un miembro no modifica formularios ni envíos masivos ajenos; un formulario sin dueño habilitado no crea sobres");
+
+// ───────── Bajar a un plan sin formularios web ni cupo: los formularios dejan de crear sobres; invitaciones con cupo ─────────
+{
+  const planForm = await api("POST", "/v1/web-forms", {
+    templateId: template.id,
+    name: `Antes de bajar de plan ${stamp}`,
+    signerRoleId: rCliente,
+    fixedRecipients: [{ roleId: rEmpresa, name: `Oficial ${stamp}`, email: `oficial.${stamp}@example.com` }],
+  });
+  let pp = await api("GET", `/v1/public/forms/${planForm.slug}`, null, { anon: true });
+  assert(pp.available, "el formulario está disponible antes de bajar de plan");
+  const toPlan = async (plan) => {
+    const co = await api("POST", "/v1/billing/checkout", { plan, currency: "BRL", provider: "mock" });
+    const page = await api("GET", co.url.replace(BASE, ""));
+    const action = /action="([^"]+)"/.exec(page)[1].replace(/&amp;/g, "&");
+    const res = await fetch(BASE + action, { method: "POST", headers: { cookie, "content-type": "application/json", accept: "application/json" }, body: JSON.stringify({ outcome: "paid" }) });
+    assert(res.status < 400, `checkout simulado a ${plan}: ${res.status}`);
+    const bill = await api("GET", "/v1/billing");
+    assert(bill.plan.id === plan, `plan ${plan} activo (${bill.plan.id})`);
+  };
+  await toPlan("starter"); // Starter no incluye formularios web y admite 3 usuarios
+  pp = await api("GET", `/v1/public/forms/${planForm.slug}`, null, { anon: true });
+  assert(!pp.available && pp.unavailableReason === "inactive", `sin formularios web en el plan, el formulario no se ofrece: ${JSON.stringify(pp.unavailableReason)}`);
+  const padm = await api("GET", `/v1/web-forms/${planForm.id}`);
+  assert(padm.ownerInactiveCode === "plan_feature", `la consola marca el plan como motivo: ${padm.ownerInactiveCode}`);
+  await sleep(2600);
+  await api("POST", `/v1/public/forms/${planForm.slug}/submit`, { name: "Tras bajar", email: `tras.bajar.${stamp}@example.com`, formToken: pp.formToken }, { expect: 410, anon: true });
+
+  // Cupo de usuarios: miembros + invitaciones pendientes. Se deja un solo lugar libre y se mandan 4 invitaciones a la
+  // vez: entra una sola (antes el control corría sin bloqueo y entraban varias).
+  const used = async () =>
+    (await api("GET", "/v1/members")).items.length + (await api("GET", "/v1/invitations")).items.filter((i) => i.status === "pending").length;
+  let n = await used();
+  let k = 0;
+  while (n < 2) {
+    await api("POST", "/v1/invitations", { email: `cupo.${k++}.${stamp}@example.com`, role: "member" }, { expect: 201 });
+    n = await used();
+  }
+  assert(n === 2, `queda un lugar libre en Starter (${n} de 3)`);
+  const burst = await Promise.all(
+    [0, 1, 2, 3].map((i) =>
+      fetch(BASE + "/v1/invitations", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ email: `rafaga.${i}.${stamp}@example.com`, role: "member" }) }).then((r) => r.status),
+    ),
+  );
+  assert(burst.filter((x) => x === 201).length === 1 && burst.filter((x) => x === 402).length === 3, `invitaciones simultáneas con un lugar libre: entra una (${burst.join(",")})`);
+  assert((await used()) === 3, "el cupo no se supera");
+  // Con el cupo lleno, reenviar una invitación pendiente la reemplaza (no suma): no es 402.
+  const pending = (await api("GET", "/v1/invitations")).items.find((i) => i.status === "pending");
+  await api("POST", "/v1/invitations", { email: pending.email, role: "member" }, { expect: 201 });
+  assert((await used()) === 3, "reenviar no suma un usuario");
+  await api("POST", "/v1/invitations", { email: `otra.${stamp}@example.com`, role: "member" }, { expect: 402 });
+  await toPlan("business");
+  pp = await api("GET", `/v1/public/forms/${planForm.slug}`, null, { anon: true });
+  assert(pp.available, "de vuelta en Business el formulario se ofrece otra vez");
+}
+step("plan sin formularios web: los formularios no crean sobres (código plan_feature); invitaciones: cupo con bloqueo y reenvío sin 402");
 
 console.log("\nE2E ESCALA OK");

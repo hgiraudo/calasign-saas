@@ -57,13 +57,37 @@ export async function enforceEnvelopeQuota(db: Db, tenantId: string) {
   }
 }
 
-export async function usersCount(db: Db, tenantId: string): Promise<number> {
+/**
+ * Miembros más invitaciones pendientes. `exceptPendingEmail`: no cuenta la invitación pendiente de ese correo (al
+ * reenviarla, la nueva la reemplaza y no suma un usuario).
+ */
+export async function usersCount(db: Db, tenantId: string, exceptPendingEmail?: string): Promise<number> {
   const r = await db.one<{ n: number }>(
     `SELECT (SELECT count(*) FROM memberships WHERE tenant_id = $1)::int
-          + (SELECT count(*) FROM invitations WHERE tenant_id = $1 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now())::int AS n`,
-    [tenantId],
+          + (SELECT count(*) FROM invitations WHERE tenant_id = $1 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now()
+               AND ($2::text IS NULL OR lower(email) <> lower($2)))::int AS n`,
+    [tenantId, exceptPendingEmail ?? null],
   );
   return Number(r?.n ?? 0);
+}
+
+/**
+ * Cupo de usuarios para una invitación nueva. Se llama otra vez dentro de la transacción de la invitación, con la
+ * organización bloqueada: dos invitaciones simultáneas no superan el cupo.
+ */
+export async function assertInvitationCapacity(db: Db, tenantId: string, email: string) {
+  const { plan } = await tenantPlan(db, tenantId);
+  if (plan.users === null) return;
+  const used = await usersCount(db, tenantId, email);
+  if (used >= plan.users) {
+    throw planLimitError(`El plan ${plan.name} permite hasta ${plan.users} usuario(s)`, {
+      plan: plan.id,
+      limit: "users",
+      used,
+      max: plan.users,
+      suggestedPlan: suggest((p) => p.users === null || p.users > plan.users!),
+    });
+  }
 }
 
 export function requireFeature(plan: PlanDefinition, feature: PlanFeature, label: string) {
@@ -107,16 +131,9 @@ export async function enforcePlanForRequest(db: Db, req: FastifyRequest, a: Auth
   const f = featureForRoute(url, req.method);
   if (f) requireFeature(plan, f.feature, f.label);
   if (url === "/v1/invitations" && req.method === "POST" && plan.users !== null) {
-    const used = await usersCount(db, a.tenantId);
-    if (used >= plan.users) {
-      throw planLimitError(`El plan ${plan.name} permite hasta ${plan.users} usuario(s)`, {
-        plan: plan.id,
-        limit: "users",
-        used,
-        max: plan.users,
-        suggestedPlan: suggest((p) => p.users === null || p.users > plan.users!),
-      });
-    }
+    // Reenviar la invitación pendiente de un correo la reemplaza: no suma un usuario (antes daba 402 con el cupo lleno).
+    const email = typeof (req.body as any)?.email === "string" ? (req.body as any).email : "";
+    await assertInvitationCapacity(db, a.tenantId, email);
   }
 }
 

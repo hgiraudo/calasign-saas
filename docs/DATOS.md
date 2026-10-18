@@ -92,6 +92,13 @@ antes de la migración quedan sin verificar.
 
 - **SCIM respeta el cupo de usuarios del plan:** una alta o reactivación sin cupo responde 402 con el esquema
   de error de SCIM (`scimType: "plan_limit"`).
+- **SCIM solo administra correos de dominios verificados:** crear o vincular un usuario (`POST /Users`) y cambiar
+  su correo exigen que el dominio esté verificado en la organización; si no, 403. Igual que el alta JIT por SSO:
+  sin esto, un token SCIM podría reservar el correo de cualquier persona o sumar la cuenta de un usuario de otra
+  organización y abrir sesiones como esa persona con un IdP propio. Para sumar a alguien de otro dominio, se lo
+  invita desde la consola (la persona acepta con su cuenta).
+- **Las llamadas al IdP de OIDC** (descubrimiento, JWKS, token) pasan por el cliente HTTP seguro (`safeRequest`):
+  sin destinos internos, sin seguir redirecciones y con tope de tamaño.
 - **Dominio propio en todos los links:** formularios web, URL de firma embebida, Telegram, regreso de la
   verificación de identidad y «verificá este documento» del certificado usan el dominio verificado de la
   organización (`tenantBaseUrl`). Un test (`apps/api/test/data.test.ts`) falla si un link público vuelve a

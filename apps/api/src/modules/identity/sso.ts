@@ -12,6 +12,7 @@ import { decrypt, encrypt, randomToken, sha256Hex, uuidv7 } from "../../lib/util
 import { recordAudit } from "../audit";
 import { SESSION_COOKIE, authenticate, clientInfo, type AuthContext, type Services } from "../context";
 import { syncSsoDomains } from "../data/sso-domains";
+import { safeRequest } from "../webhooks";
 
 const SESSION_DAYS = 14;
 const STATE_TTL_MIN = 10;
@@ -145,16 +146,23 @@ export async function passwordLoginTenant(db: Db, userId: string): Promise<{ ten
 const discoveryCache = new Map<string, { doc: any; at: number }>();
 const jwksCache = new Map<string, { keys: JsonWebKey[]; at: number }>();
 
-async function getJson(url: string, init?: RequestInit) {
-  const res = await fetch(url, { ...init, signal: AbortSignal.timeout(10_000) });
-  const text = await res.text();
+/**
+ * GET/POST JSON a un IdP. Las URLs las configura la organización (issuer, endpoints del documento de descubrimiento):
+ * van por `safeRequest` (sin destinos internos, validados en la misma resolución DNS que usa la conexión, sin seguir
+ * redirecciones y con tope de tamaño) y el error no reproduce el cuerpo de la respuesta.
+ */
+async function getJson(url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) {
+  const res = await safeRequest(url, { method: init?.method ?? "GET", headers: init?.headers, body: init?.body, timeoutMs: 10_000, maxBytes: 1024 * 1024 });
   let body: any;
   try {
-    body = JSON.parse(text);
+    body = JSON.parse(res.body.toString("utf8"));
   } catch {
     throw new Error(`${url}: respuesta no JSON (HTTP ${res.status})`);
   }
-  if (!res.ok) throw new Error(`${url}: HTTP ${res.status} ${JSON.stringify(body).slice(0, 200)}`);
+  if (res.status < 200 || res.status >= 300) {
+    const code = typeof body?.error === "string" ? `: ${body.error.slice(0, 60)}` : "";
+    throw new Error(`${url}: HTTP ${res.status}${code}`);
+  }
   return body;
 }
 

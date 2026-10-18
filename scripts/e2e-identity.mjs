@@ -374,20 +374,38 @@ ok("OIDC rechaza nonce, aud y firma inválidos, y el state no se puede reusar");
 const other = new Client("other-owner");
 await other.api("POST", "/v1/auth/signup", { name: "Otra", email: `otra+${stamp}@example.com`, password: ownerPw, organization: `Otra ${stamp}` }, 201);
 const otherTok = await other.api("POST", "/v1/settings/scim/tokens", { name: "otra" }, 201);
+// SCIM de OTRA organización no puede sumar (ni crear) cuentas de un dominio que no verificó: sería tomar la cuenta.
 const linked = await fetch(`${BASE}/scim/v2/Users`, {
   method: "POST",
   headers: { authorization: `Bearer ${otherTok.secret}`, "content-type": "application/scim+json" },
   body: JSON.stringify({ userName: `ana@${domain}`, active: true }),
 });
-assert(linked.status === 201, `SCIM vincula al usuario existente (${linked.status})`);
+assert(linked.status === 403, `SCIM de otra organización no vincula al usuario existente (${linked.status})`);
+const squat = await fetch(`${BASE}/scim/v2/Users`, {
+  method: "POST",
+  headers: { authorization: `Bearer ${otherTok.secret}`, "content-type": "application/scim+json" },
+  body: JSON.stringify({ userName: `nadie-aun@${domain}`, active: true }),
+});
+assert(squat.status === 403, `SCIM no reserva correos de dominios ajenos (${squat.status})`);
+// Ana se suma a la otra organización por invitación (con contraseña: la obtiene con "olvidé mi contraseña").
 const otherTenantId = (await other.api("GET", "/v1/me")).tenant.id;
-await ana.api("POST", "/v1/auth/switch-tenant", { tenantId: otherTenantId }, 401);
+const invAna = await other.api("POST", "/v1/invitations", { email: `ana@${domain}`, role: "member" }, 201);
+await new Client("ana-forgot").api("POST", "/v1/auth/password/forgot", { email: `ana@${domain}` }, 202);
+const resetMail = await waitMail((m) => m.to === `ana@${domain}` && m.link?.includes("/reset/"), "reset de Ana");
+const anaPw = "clave-de-ana-12345";
+await new Client("ana-reset").api("POST", "/v1/auth/password/reset", { token: resetMail.link.split("/reset/")[1], password: anaPw }, 204);
+await new Client("ana-accept").api("POST", `/v1/invite/${invAna.acceptUrl.split("/invite/")[1]}/accept`, { password: anaPw }, [200, 201]);
+// El reset cerró sus sesiones: vuelve a entrar por SSO a su organización y, con esa sesión, no puede cambiar a la otra.
+const ana2 = new Client("ana-sso");
+idp.mode = "ok";
+await oidcLogin(ana2, `ana@${domain}`);
+await ana2.api("POST", "/v1/auth/switch-tenant", { tenantId: otherTenantId }, 401);
 const inv = await other.api("POST", "/v1/invitations", { email: `dana@${domain}`, role: "member" }, 201);
 const dana = new Client("dana");
 idp.mode = "ok";
 await oidcLogin(dana, `dana@${domain}`);
 await dana.api("POST", `/v1/invite/${inv.acceptUrl.split("/invite/")[1]}/accept`, {}, [400, 401, 403]);
-ok("una sesión SSO no cambia de organización ni acepta invitaciones de otra");
+ok("SCIM ajeno no vincula ni reserva cuentas; una sesión SSO no cambia de organización ni acepta invitaciones de otra");
 
 // SSO obligatorio: miembro con contraseña bloqueado; propietario entra (emergencia).
 const bob = new Client("bob");
@@ -401,7 +419,7 @@ const err = await new Client("bob2").api("POST", "/v1/auth/login", { email: bobE
 assert(err.error.code === "sso_required" && err.error.details.startUrl.includes(slug), "login con contraseña bloqueado");
 await owner.api("GET", "/v1/me");
 await new Client("owner2").api("POST", "/v1/auth/login", { email: ownerEmail, password: ownerPw });
-await ana.api("GET", "/v1/me");
+await ana2.api("GET", "/v1/me");
 ok("SSO obligatorio: sesiones con contraseña de miembros cerradas, login bloqueado; propietario y sesión SSO siguen");
 
 // ───────────────────────────── SAML ─────────────────────────────

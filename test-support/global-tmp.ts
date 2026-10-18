@@ -22,7 +22,14 @@ export default function setup() {
   const base = tmpdir();
   for (const name of readdirSync(base)) {
     const m = name.startsWith(PREFIX) ? /^(\d+)-/.exec(name.slice(PREFIX.length)) : null;
-    if (m && !alive(Number(m[1]))) rmSync(join(base, name), { recursive: true, force: true });
+    if (!m || alive(Number(m[1]))) continue;
+    // Una carpeta vieja que no se puede borrar (de otro usuario en el /tmp compartido, o de una corrida con sudo)
+    // no puede frenar la corrida: rmSync con force igual lanza EACCES/EPERM y vitest cortaba todos los tests.
+    try {
+      rmSync(join(base, name), { recursive: true, force: true });
+    } catch {
+      /* se saltea */
+    }
   }
   const run = mkdtempSync(join(base, `${PREFIX}${process.pid}-`));
   const clean = () => rmSync(run, { recursive: true, force: true });

@@ -18,12 +18,17 @@ REL="$(date -u +%Y%m%d%H%M%S)-$(git rev-parse --short HEAD)$(git diff --quiet ||
 chmod 600 infra/dev/terraform.tfstate* 2>/dev/null || true
 
 export AWS_PROFILE="${AWS_PROFILE:-bootstrap-terraform}"
-# Las credenciales se guardan primero en una variable: con `eval "$(...)"` una falla de assume-role no corta
-# el script (set -e no mira la sustitución) y lo que sigue correría con las credenciales por defecto, de otra cuenta.
-CREDS=$(aws sts assume-role --role-arn "arn:aws:iam::$ACCOUNT:role/OrganizationAccountAccessRole" --role-session-name deploy-dev \
-  --query Credentials --output json | python3 -c "import sys,json;c=json.load(sys.stdin);print(f\"export AWS_ACCESS_KEY_ID={c['AccessKeyId']} AWS_SECRET_ACCESS_KEY={c['SecretAccessKey']} AWS_SESSION_TOKEN={c['SessionToken']}\")")
-[ -n "$CREDS" ] || { echo "No se pudo asumir el rol en la cuenta $ACCOUNT" >&2; exit 1; }
-eval "$CREDS"
+# Si ya hay credenciales de la cuenta del entorno en el entorno (setup-telegram-dev.sh llama a este script
+# después de asumir el rol), se usan tal cual: la CLI les da prioridad sobre AWS_PROFILE, y volver a asumir
+# OrganizationAccountAccessRole desde la propia cuenta da AccessDenied (el rol solo confía en la cuenta de gestión).
+if [ "$(aws sts get-caller-identity --query Account --output text 2>/dev/null || true)" != "$ACCOUNT" ]; then
+  # Las credenciales se guardan primero en una variable: con `eval "$(...)"` una falla de assume-role no corta
+  # el script (set -e no mira la sustitución) y lo que sigue correría con las credenciales por defecto, de otra cuenta.
+  CREDS=$(aws sts assume-role --role-arn "arn:aws:iam::$ACCOUNT:role/OrganizationAccountAccessRole" --role-session-name deploy-dev \
+    --query Credentials --output json | python3 -c "import sys,json;c=json.load(sys.stdin);print(f\"export AWS_ACCESS_KEY_ID={c['AccessKeyId']} AWS_SECRET_ACCESS_KEY={c['SecretAccessKey']} AWS_SESSION_TOKEN={c['SessionToken']}\")")
+  [ -n "$CREDS" ] || { echo "No se pudo asumir el rol en la cuenta $ACCOUNT" >&2; exit 1; }
+  eval "$CREDS"
+fi
 unset AWS_PROFILE
 export AWS_REGION=$REGION
 
@@ -62,15 +67,17 @@ sudo -u calasign env HOME=/var/lib/calasign PATH=\$PATH COREPACK_ENABLE_DOWNLOAD
 # sus migraciones al arrancar y el rollback de abajo solo vuelve al código anterior, no deshace el esquema.
 # Sin backup no se despliega, y la versión activa sigue con su configuración intacta.
 H=\$D/infra/dev/host
+# El script nuevo se prueba desde el paquete y recién se instala si el backup salió bien: si se instalaba antes y
+# fallaba, el deploy abortaba pero el backup diario ya corría con el script roto.
+if ! bash \$H/calasign-backup.sh; then
+  echo "El backup previo al deploy falló: deploy abortado sin tocar la versión activa" >&2
+  exit 1
+fi
 install -m 0755 \$H/calasign-backup.sh /usr/local/bin/calasign-backup.sh
 install -m 0644 \$H/calasign-backup.service /etc/systemd/system/calasign-backup.service
 install -m 0644 \$H/calasign-backup.timer /etc/systemd/system/calasign-backup.timer
 systemctl daemon-reload
 systemctl enable --now calasign-backup.timer >/dev/null
-if ! /usr/local/bin/calasign-backup.sh; then
-  echo "El backup previo al deploy falló: deploy abortado sin tocar la versión activa" >&2
-  exit 1
-fi
 
 # Cadena del sello y secretos: se arman en temporales y se reemplazan con mv. Si SSM falla, el deploy corta
 # antes de tocar los archivos vigentes (la versión activa y el rollback los siguen necesitando intactos).

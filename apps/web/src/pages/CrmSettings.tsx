@@ -339,6 +339,11 @@ function SendFromRecord({ mappings, onDone }: { mappings: CrmMapping[]; onDone: 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<SendFromCrmRecordResponse | null>(null);
+  // Si el mapeo elegido se borra o desactiva (o no había ninguno al montar), se elige el primero disponible: si no,
+  // el select muestra otro pero se enviaba al viejo (404) o el botón quedaba deshabilitado.
+  useEffect(() => {
+    if (!mappings.some((m) => m.id === mappingId)) setMappingId(mappings[0]?.id ?? "");
+  }, [mappings, mappingId]);
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setBusy(true);
@@ -393,6 +398,13 @@ function SendFromRecord({ mappings, onDone }: { mappings: CrmMapping[]; onDone: 
 // ───────────────────────────── Editor de mapeos ─────────────────────────────
 
 type RoleRow = CrmRoleMapping;
+
+function statusValuesFor(prev: Record<string, string> | undefined, completed: string): Record<string, string> | undefined {
+  const next: Record<string, string> = { ...(prev ?? {}) };
+  if (completed) next.completed = completed;
+  else delete next.completed;
+  return Object.keys(next).length ? next : undefined;
+}
 
 function MappingEditor({
   mapping,
@@ -470,7 +482,8 @@ function MappingEditor({
       templateId: templateId || null,
       roles: isErp ? [] : roles.map((r) => Object.fromEntries(Object.entries(r).filter(([, v]) => v !== "" && v !== null))),
       prefill: isErp ? [] : prefill.filter((p) => p.field && p.property),
-      writeBack: { statusProperty: statusProperty || null, statusValues: completedValue ? { completed: completedValue } : undefined, attachPdf },
+      // Se conservan los valores de los otros estados (enviado, rechazado, …), que solo se configuran por API.
+      writeBack: { statusProperty: statusProperty || null, statusValues: statusValuesFor(mapping?.writeBack.statusValues, completedValue), attachPdf },
       trigger,
       triggerConfig:
         trigger === "webhook" ? { property: tProp || null, value: tVal || null } : trigger === "on_completion" ? { matchBy: "recipient_id_document", templateId: onlyTemplate || null } : {},

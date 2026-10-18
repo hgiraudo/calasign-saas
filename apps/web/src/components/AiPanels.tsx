@@ -278,6 +278,28 @@ export function AiReviewPanel({ envelopeId }: { envelopeId: string }) {
 
 // ───────────────────────────── Datos del contrato (detalle) ─────────────────────────────
 
+/** Monto con su moneda; una moneda que no es ISO 4217 ("pesos", "US$") hacía lanzar a Intl y dejaba la página en blanco. */
+function formatAmount(value: number, currency: string | null, locale: string) {
+  if (currency) {
+    try {
+      return new Intl.NumberFormat(locale, { style: "currency", currency }).format(value);
+    } catch {
+      return `${currency} ${value.toLocaleString(locale)}`;
+    }
+  }
+  return value.toLocaleString(locale);
+}
+
+/** Acepta 1.234,56 y 1,234.56 (igual que la API). Con un simple replace(",", "."), "1.500,00" daba NaN y se descartaba. */
+function parseAmountText(raw: string): number | null {
+  let s = raw.trim().replace(/[^\d,.-]/g, "");
+  if (!/\d/.test(s)) return null;
+  if (s.includes(",") && s.includes(".")) s = s.lastIndexOf(",") > s.lastIndexOf(".") ? s.replace(/\./g, "").replace(",", ".") : s.replace(/,/g, "");
+  else if (s.includes(",")) s = s.replace(",", ".");
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
 const EMPTY_META: ContractMetadata = {
   parties: [],
   effectiveDate: null,
@@ -334,11 +356,18 @@ export function AiMetadataPanel({ envelopeId, completed }: { envelopeId: string;
       .map((l) => l.split("|").map((x) => x.trim()))
       .filter((p) => p[0])
       .map(([name, role]) => ({ name, role: role || null }));
-    const amounts = edit.amounts
+    const rows = edit.amounts
       .split("\n")
       .map((l) => l.split("|").map((x) => x.trim()))
-      .filter((p) => p[0] && Number.isFinite(Number(p[0].replace(",", "."))))
-      .map(([v, currency, description]) => ({ value: Number(v.replace(",", ".")), currency: currency || null, description: description || null }));
+      .filter((p) => p[0]);
+    // Una línea con un valor que no es número se avisa en vez de descartarse sin decir nada.
+    const bad = rows.find(([v]) => parseAmountText(v) === null);
+    if (bad) return setError(ai("meta.invalidAmount", { value: bad[0] }));
+    const amounts = rows.map(([v, currency, description]) => ({
+      value: parseAmountText(v) as number,
+      currency: currency ? currency.toUpperCase() : null,
+      description: description || null,
+    }));
     try {
       setData(await api<EnvelopeAiMetadata>(`/v1/envelopes/${envelopeId}/ai/metadata`, { method: "PUT", body: { metadata: { ...edit.m, parties, amounts } } }));
       setEdit(null);
@@ -445,9 +474,7 @@ export function AiMetadataPanel({ envelopeId, completed }: { envelopeId: string;
               {m.amounts.length
                 ? m.amounts.map((a, i) => (
                     <div key={i}>
-                      {a.currency
-                        ? new Intl.NumberFormat(locale, { style: "currency", currency: a.currency }).format(a.value)
-                        : a.value.toLocaleString(locale)}
+                      {formatAmount(a.value, a.currency, locale)}
                     </div>
                   ))
                 : ai("meta.unknown")}

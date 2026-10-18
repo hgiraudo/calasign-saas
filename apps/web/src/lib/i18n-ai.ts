@@ -90,6 +90,7 @@ const es = {
   "meta.alertSent": "Aviso de renovación enviado el {date}",
   "meta.partiesHelp": "Una parte por línea: Nombre | rol",
   "meta.amountsHelp": "Un monto por línea: valor | moneda | descripción",
+  "meta.invalidAmount": "«{value}» no es un monto válido (por ejemplo 1.500,00 | USD | Honorarios).",
 
   "signer.title": "Asistente del documento",
   "signer.summary": "Resumen en lenguaje simple",
@@ -187,6 +188,7 @@ const ptBR: Record<Key, string> = {
   "meta.alertSent": "Aviso de renovação enviado em {date}",
   "meta.partiesHelp": "Uma parte por linha: Nome | papel",
   "meta.amountsHelp": "Um valor por linha: valor | moeda | descrição",
+  "meta.invalidAmount": "«{value}» não é um valor válido (por exemplo 1.500,00 | BRL | Honorários).",
   "signer.title": "Assistente do documento",
   "signer.summary": "Resumo em linguagem simples",
   "signer.ask": "Perguntar sobre o documento",
@@ -281,6 +283,7 @@ const en: Record<Key, string> = {
   "meta.alertSent": "Renewal reminder sent on {date}",
   "meta.partiesHelp": "One party per line: Name | role",
   "meta.amountsHelp": "One amount per line: value | currency | description",
+  "meta.invalidAmount": "“{value}” is not a valid amount (for example 1,500.00 | USD | Fees).",
   "signer.title": "Document assistant",
   "signer.summary": "Plain-language summary",
   "signer.ask": "Ask about the document",

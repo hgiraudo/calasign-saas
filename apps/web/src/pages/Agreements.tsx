@@ -208,7 +208,13 @@ export function AgreementsPage() {
             type="button"
             className="btn btn-sm btn-ghost"
             onClick={async () => {
-              await api(`/v1/agreement-views/${params.get("viewId")}`, { method: "DELETE" }).catch((e) => setError(errorText(e)));
+              // Solo se sale de la vista si se borró: si no, el error se perdía (la recarga de la lista lo limpia).
+              try {
+                await api(`/v1/agreement-views/${params.get("viewId")}`, { method: "DELETE" });
+              } catch (e) {
+                setError(errorText(e));
+                return;
+              }
               setParams(new URLSearchParams(), { replace: true });
               loadMeta();
             }}
@@ -315,13 +321,18 @@ function SaveViewModal({ filters, canShare, onClose, onSaved }: { filters: Recor
   const { t } = useI18n();
   const [name, setName] = useState("");
   const [shared, setShared] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    setError(null);
     try {
       onSaved(await api<AgreementView>("/v1/agreement-views", { method: "POST", body: { name: name.trim(), filters, shared } }));
     } catch (err) {
       setError(errorText(err));
+      setBusy(false);
     }
   };
   return (
@@ -341,7 +352,7 @@ function SaveViewModal({ filters, canShare, onClose, onSaved }: { filters: Recor
           <button type="button" className="btn btn-ghost" onClick={onClose}>
             {t("common.cancel")}
           </button>
-          <button type="submit" className="btn btn-primary" disabled={!name.trim()}>
+          <button type="submit" className="btn btn-primary" disabled={busy || !name.trim()}>
             {t("common.save")}
           </button>
         </div>
@@ -382,11 +393,26 @@ function draftFrom(a: Agreement | null): MetaDraft {
   };
 }
 
-function draftToBody(d: MetaDraft, fields: AgreementFieldDef[]) {
+/**
+ * Número escrito por el usuario: acepta 1.234,56 y 1,234.56 (igual que la API). Antes, "1.500,00" daba NaN, que en
+ * JSON viaja como null: el valor del acuerdo se borraba sin aviso. Si no es un número, se avisa en vez de guardar.
+ */
+class InvalidNumber extends Error {}
+function parseAmount(raw: string, label: string): number | null {
+  if (!raw.trim()) return null;
+  let s = raw.trim().replace(/[^\d,.-]/g, "");
+  if (s.includes(",") && s.includes(".")) s = s.lastIndexOf(",") > s.lastIndexOf(".") ? s.replace(/\./g, "").replace(",", ".") : s.replace(/,/g, "");
+  else if (s.includes(",")) s = s.replace(",", ".");
+  const n = Number(s);
+  if (!/\d/.test(s) || !Number.isFinite(n)) throw new InvalidNumber(label);
+  return n;
+}
+
+function draftToBody(d: MetaDraft, fields: AgreementFieldDef[], valueLabel: string) {
   const metadata: Record<string, string | number | null> = {};
   for (const f of fields) {
     const v = d.metadata[f.key] ?? "";
-    metadata[f.key] = v === "" ? null : f.type === "number" ? Number(v.replace(",", ".")) : v;
+    metadata[f.key] = v === "" ? null : f.type === "number" ? parseAmount(v, f.label) : v;
   }
   return {
     title: d.title.trim(),
@@ -395,7 +421,7 @@ function draftToBody(d: MetaDraft, fields: AgreementFieldDef[]) {
     expiryDate: d.expiryDate || null,
     renewalDate: d.renewalDate || null,
     noticeDays: d.noticeDays ? Number(d.noticeDays) : null,
-    value: d.value ? Number(d.value.replace(",", ".")) : null,
+    value: d.value.trim() ? parseAmount(d.value, valueLabel) : null,
     currency: d.currency.trim().toUpperCase() || null,
     tags: d.tags
       .split(",")
@@ -522,10 +548,17 @@ function UploadModal({ fields, onClose, onDone }: { fields: AgreementFieldDef[];
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (!file) return;
-    setBusy(true);
     setError(null);
+    let meta: ReturnType<typeof draftToBody>;
+    try {
+      meta = draftToBody({ ...d, title: d.title || file.name.replace(/\.pdf$/i, "") }, fields, ta("ag.value"));
+    } catch (err) {
+      if (err instanceof InvalidNumber) return setError(ta("ag.invalidNumber", { field: err.message }));
+      throw err;
+    }
+    setBusy(true);
     const fd = new FormData();
-    fd.append("meta", JSON.stringify(draftToBody({ ...d, title: d.title || file.name.replace(/\.pdf$/i, "") }, fields)));
+    fd.append("meta", JSON.stringify(meta));
     fd.append("file", file);
     try {
       onDone(await api<Agreement>("/v1/agreements/upload", { method: "POST", form: fd }));
@@ -623,8 +656,13 @@ function FieldsModal({ fields, onClose }: { fields: AgreementFieldDef[]; onClose
                       type="button"
                       className="btn btn-sm btn-ghost"
                       onClick={async () => {
-                        await api(`/v1/agreement-fields/${f.id}`, { method: "DELETE" }).catch((e) => setError(errorText(e)));
-                        setList(list.filter((x) => x.id !== f.id));
+                        setError(null);
+                        try {
+                          await api(`/v1/agreement-fields/${f.id}`, { method: "DELETE" });
+                          setList((cur) => cur.filter((x) => x.id !== f.id));
+                        } catch (e) {
+                          setError(errorText(e));
+                        }
                       }}
                     >
                       {t("common.delete")}
@@ -716,10 +754,17 @@ export function AgreementDetailPage() {
 
   const save = async (e: FormEvent) => {
     e.preventDefault();
-    setBusy(true);
     setError(null);
+    let body: ReturnType<typeof draftToBody>;
     try {
-      const x = await api<Agreement>(`/v1/agreements/${id}`, { method: "PATCH", body: draftToBody(d, fields) });
+      body = draftToBody(d, fields, ta("ag.value"));
+    } catch (err) {
+      if (err instanceof InvalidNumber) return setError(ta("ag.invalidNumber", { field: err.message }));
+      throw err;
+    }
+    setBusy(true);
+    try {
+      const x = await api<Agreement>(`/v1/agreements/${id}`, { method: "PATCH", body });
       setA(x);
       setD(draftFrom(x));
       setSaved(true);

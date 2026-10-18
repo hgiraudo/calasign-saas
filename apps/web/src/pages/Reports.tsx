@@ -16,9 +16,13 @@ type SeriesKey = (typeof SERIES)[number]["key"];
 
 function monthStart(offset: number) {
   const d = new Date();
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + offset, 1));
+  return new Date(d.getFullYear(), d.getMonth() + offset, 1);
 }
-const toInput = (d: Date) => d.toISOString().slice(0, 10);
+/** Fecha local (YYYY-MM-DD): con toISOString, de noche en América el "hoy" ya era mañana. */
+const toInput = (d: Date) => {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+};
 
 export function ReportsPage() {
   const x = useExpText();
@@ -31,8 +35,10 @@ export function ReportsPage() {
 
   const range = useMemo(() => {
     const q = new URLSearchParams();
-    if (from) q.set("from", new Date(`${from}T00:00:00Z`).toISOString());
-    if (to) q.set("to", new Date(`${to}T23:59:59Z`).toISOString());
+    // Días locales del usuario: con límites en UTC, "hasta el 31" dejaba afuera lo creado ese día desde las 19-21 h
+    // (UTC-3 a UTC-5) y "desde el 1" sumaba la noche anterior.
+    if (from) q.set("from", new Date(`${from}T00:00:00`).toISOString());
+    if (to) q.set("to", new Date(`${to}T23:59:59.999`).toISOString());
     return q.toString();
   }, [from, to]);
 

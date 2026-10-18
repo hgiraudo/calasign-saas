@@ -106,6 +106,8 @@ export function EnvelopeEditPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [notFound, setNotFound] = useState(false);
+  // Lo cargado en "Revisar y enviar" sobrevive a volver a un paso anterior (antes se perdía al desmontar el paso).
+  const reviewDraft = useRef<ReviewDraft | null>(null);
 
   const apply = useCallback((d: EnvelopeDetail) => {
     setDetail(d);
@@ -146,9 +148,11 @@ export function EnvelopeEditPage() {
           ...(r.channels.includes("telegram") && r.telegramChatId.trim() ? { telegramChatId: r.telegramChatId.trim() } : {}),
           idDocumentType: r.idDocumentType || null,
           idDocumentNumber: r.idDocumentNumber.trim() || null,
-          authMethod: r.authMethod,
+          // Una copia no firma: el método (oculto en el formulario) se descarta. Si quedaba "en persona" de cuando era
+          // firmante, la copia nunca recibía su invitación.
+          authMethod: r.role === "cc" ? "link" : r.authMethod,
           // Firma en persona: la anfitriona es quien carga el sobre.
-          inPerson: r.authMethod === "in_person" ? {} : null,
+          inPerson: r.role !== "cc" && r.authMethod === "in_person" ? {} : null,
           idVerification: r.role === "cc" ? null : draftToIdentity(r.idVerification),
           ...draftToCert(r.cert, r.role),
         })),
@@ -299,6 +303,7 @@ export function EnvelopeEditPage() {
           setError={setError}
           onSent={() => nav(`/app/envelopes/${id}`)}
           onUpdated={(d) => setDetail(d)}
+          draft={reviewDraft}
         />
       )}
 
@@ -597,6 +602,15 @@ function RecipientsStep({ recipients, onChange }: { recipients: DraftRecipient[]
 
 // ───────────────────────────── Paso 4: revisar y enviar ─────────────────────────────
 
+interface ReviewDraft {
+  subject: string;
+  message: string;
+  expires: string;
+  reminderEveryDays: number | null;
+  expiryWarningDays: number | null;
+  allowDelegation: boolean;
+}
+
 function ReviewStep({
   detail,
   busy,
@@ -604,6 +618,7 @@ function ReviewStep({
   setError,
   onSent,
   onUpdated,
+  draft,
 }: {
   detail: EnvelopeDetail;
   busy: boolean;
@@ -611,19 +626,24 @@ function ReviewStep({
   setError: (e: string | null) => void;
   onSent: () => void;
   onUpdated: (d: EnvelopeDetail) => void;
+  draft: { current: ReviewDraft | null };
 }) {
   const { t } = useI18n();
   const env = detail.envelope;
-  const [subject, setSubject] = useState(env.subject);
-  const [message, setMessage] = useState(env.message ?? "");
-  const [expires, setExpires] = useState(toDateInput(env.expiresAt));
+  const init = draft.current;
+  const [subject, setSubject] = useState(init?.subject ?? env.subject);
+  const [message, setMessage] = useState(init?.message ?? env.message ?? "");
+  const [expires, setExpires] = useState(init?.expires ?? toDateInput(env.expiresAt));
   const [idemKey] = useState(uuid);
   const sx = useSignerText();
   const x = useExpText();
   const authLabel = (m: AuthMethod) => (m === "in_person" ? x("auth.in_person") : sx(`auth.${m}` as Parameters<typeof sx>[0]));
-  const [reminderEveryDays, setReminderEveryDays] = useState<number | null>(env.reminderEveryDays ?? null);
-  const [expiryWarningDays, setExpiryWarningDays] = useState<number | null>(env.expiryWarningDays ?? 3);
-  const [allowDelegation, setAllowDelegation] = useState(env.allowDelegation ?? true);
+  const [reminderEveryDays, setReminderEveryDays] = useState<number | null>(init ? init.reminderEveryDays : (env.reminderEveryDays ?? null));
+  const [expiryWarningDays, setExpiryWarningDays] = useState<number | null>(init ? init.expiryWarningDays : (env.expiryWarningDays ?? 3));
+  const [allowDelegation, setAllowDelegation] = useState(init?.allowDelegation ?? env.allowDelegation ?? true);
+  useEffect(() => {
+    draft.current = { subject, message, expires, reminderEveryDays, expiryWarningDays, allowDelegation };
+  }, [draft, subject, message, expires, reminderEveryDays, expiryWarningDays, allowDelegation]);
 
   const signers = useMemo(() => detail.recipients.filter((r) => r.role === "signer"), [detail.recipients]);
   const minDate = toDateInput(new Date(Date.now() + 86400000).toISOString());

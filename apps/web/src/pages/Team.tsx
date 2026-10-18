@@ -338,9 +338,14 @@ function PermissionChecklist({ value, onChange }: { value: Permission[]; onChang
 function RolesTab({ roles, reload }: { roles: RolesResponse | null; reload: () => Promise<unknown> }) {
   const tt = useTeamsText();
   const label = useRoleLabel();
-  const [editing, setEditing] = useState<Partial<CustomRole> | null>(null);
+  const [editing, setEditingRaw] = useState<Partial<CustomRole> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Al abrir o cerrar el modal se limpia el error del intento anterior (si no, aparecía en el modal siguiente).
+  const setEditing = (v: Partial<CustomRole> | null) => {
+    if ((v === null) !== (editing === null)) setError(null);
+    setEditingRaw(v);
+  };
 
   const save = async () => {
     if (!editing) return;
@@ -458,9 +463,14 @@ function GroupsTab({ manage }: { manage: boolean }) {
   const tt = useTeamsText();
   const [groups, setGroups] = useState<Group[] | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
-  const [editing, setEditing] = useState<{ id?: string; name: string; description: string; memberIds: string[] } | null>(null);
+  type Draft = { id?: string; name: string; description: string; memberIds: string[] };
+  const [editing, setEditingRaw] = useState<Draft | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const setEditing = (v: Draft | null) => {
+    if ((v === null) !== (editing === null)) setError(null);
+    setEditingRaw(v);
+  };
 
   const load = async () => {
     try {

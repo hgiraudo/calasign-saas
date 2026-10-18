@@ -111,7 +111,7 @@ export function TemplateUsePage() {
         return (
           <div key={r.id} className="card pad recipient-row" style={{ borderLeftColor: r.role === "signer" ? recipientColor(signerIdx) : "#94a3b8" }}>
             <h3>
-              {t("tpl.recipientFor")} «{r.name}» <span className="muted small">({t(r.role === "cc" ? "edit.role.cc" : "edit.role.signer")})</span>
+              {t("tpl.recipientFor")} «{r.name}» <span className="muted small">({t(r.role === "cc" ? "edit.role.cc" : (r.role as string) === "approver" ? "edit.role.approver" : "edit.role.signer")})</span>
             </h3>
             <div className="use-grid">
               <label className="field">

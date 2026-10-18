@@ -212,9 +212,13 @@ export function DocumentTemplateEditPage() {
     });
   };
 
-  const save = async (e?: FormEvent) => {
+  /** Guarda la plantilla; devuelve false si no se pudo (para no generar desde la versión anterior del servidor). */
+  const save = async (e?: FormEvent): Promise<boolean> => {
     e?.preventDefault();
-    if (!sampleObj) return setError(ta("docs.sampleInvalid"));
+    if (!sampleObj) {
+      setError(ta("docs.sampleInvalid"));
+      return false;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -239,8 +243,10 @@ export function DocumentTemplateEditPage() {
       setTpl(d);
       setSaved(true);
       window.setTimeout(() => setSaved(false), 2000);
+      return true;
     } catch (err) {
       setError(errorText(err));
+      return false;
     } finally {
       setBusy(false);
     }
@@ -301,7 +307,8 @@ export function DocumentTemplateEditPage() {
               type="button"
               className="btn btn-primary"
               onClick={async () => {
-                if (editable) await save();
+                // Se genera desde lo guardado en el servidor: si el guardado falla, generar mandaría la versión anterior.
+                if (editable && !(await save())) return;
                 setGenerating(true);
               }}
               disabled={!!preview.error}
@@ -455,8 +462,13 @@ export function DocumentTemplateEditPage() {
               type="button"
               className="btn btn-ghost"
               onClick={async () => {
-                await api(`/v1/document-templates/${id}`, { method: "DELETE" }).catch((e) => setError(errorText(e)));
-                nav("/app/documents");
+                setError(null);
+                try {
+                  await api(`/v1/document-templates/${id}`, { method: "DELETE" });
+                  nav("/app/documents");
+                } catch (e) {
+                  setError(errorText(e));
+                }
               }}
             >
               {ta("docs.delete")}

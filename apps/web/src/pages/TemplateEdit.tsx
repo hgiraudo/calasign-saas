@@ -430,6 +430,8 @@ function RolesStep({ roles, onChange }: { roles: DraftRole[]; onChange: (r: Draf
                 <select value={r.role} onChange={(e) => set(i, { role: e.target.value as RecipientRole })}>
                   <option value="signer">{t("edit.role.signer")}</option>
                   <option value="cc">{t("edit.role.cc")}</option>
+                  {/* Las plantillas admiten aprobadores (p. ej. las creadas desde un sobre): sin esta opción se veían como firmante. */}
+                  <option value="approver">{t("edit.role.approver")}</option>
                 </select>
               </label>
               {r.role === "signer" && <CertificateOption value={r.cert ?? EMPTY_CERT_DRAFT} hasIdDocument onChange={(v) => set(i, { cert: v })} />}

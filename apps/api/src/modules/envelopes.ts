@@ -598,6 +598,28 @@ export function sendPdf(reply: FastifyReply, bytes: Uint8Array, name: string) {
   return reply.send(Buffer.from(bytes));
 }
 
+/**
+ * Fórmulas que citan un campo número que ya no está (se borró con su destinatario o su documento, el rol de la
+ * plantilla no firma, o una corrección en vuelo lo quitó): se calcularían con 0 y el PDF firmado diría, p. ej.,
+ * "Total: 0". PUT fields lo valida; los demás caminos que borran campos, no.
+ */
+export function danglingFormulaProblems(fields: { type: string; label: string | null; formula: string | null }[]): string[] {
+  const numberLabels = new Set(fields.filter((f) => f.type === "number" && f.label).map((f) => String(f.label).trim().toLowerCase()));
+  const problems: string[] = [];
+  for (const f of fields) {
+    if (!f.formula) continue;
+    let refs: string[] = [];
+    try {
+      refs = formulaRefs(f.formula);
+    } catch {
+      /* se valida al guardar */
+    }
+    const missing = refs.filter((r) => !numberLabels.has(r.trim().toLowerCase()));
+    if (missing.length) problems.push(`La fórmula de "${f.label ?? "un campo"}" cita ${missing.map((m) => `{${m}}`).join(", ")}, que ya no está en el sobre`);
+  }
+  return problems;
+}
+
 /** Valida y envía un borrador (dentro de la transacción del llamador). */
 export async function sendEnvelope(t: Db, tenantId: string, envelopeId: string, actor: Actor) {
   const e = await lockEnvelope(t, tenantId, envelopeId);
@@ -616,21 +638,7 @@ export async function sendEnvelope(t: Db, tenantId: string, envelopeId: string, 
       problems.push(`${s1.name} no tiene ningún campo de firma`);
   }
   if (e.expires_at && new Date(e.expires_at) <= new Date()) problems.push("La fecha de vencimiento ya pasó");
-  // Una fórmula que cita un campo número que ya no está (se borró con su destinatario o su documento, o el rol de la
-  // plantilla no firma) se calcularía con 0 y el PDF firmado diría, p. ej., "Total: 0". PUT fields lo valida; quitar
-  // destinatarios o documentos, y crear el sobre desde una plantilla, no.
-  const numberLabels = new Set(fields.filter((f) => f.type === "number" && f.label).map((f) => String(f.label).trim().toLowerCase()));
-  for (const f of fields) {
-    if (!f.formula) continue;
-    let refs: string[] = [];
-    try {
-      refs = formulaRefs(f.formula);
-    } catch {
-      /* se valida al guardar */
-    }
-    const missing = refs.filter((r) => !numberLabels.has(r.trim().toLowerCase()));
-    if (missing.length) problems.push(`La fórmula de "${f.label ?? "un campo"}" cita ${missing.map((m) => `{${m}}`).join(", ")}, que ya no está en el sobre`);
-  }
+  problems.push(...danglingFormulaProblems(fields));
   // El cobro tiene que quedar a cargo de un firmante: si se le cambió el rol, el sobre no podría completarse.
   const pay = await t.one<any>(`SELECT recipient_id FROM envelope_payments WHERE envelope_id = $1`, [e.id]);
   if (pay && !signers.some((r) => r.id === pay.recipient_id)) problems.push("Quien paga el cobro tiene que ser un firmante");

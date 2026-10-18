@@ -18,7 +18,7 @@ import { enqueue } from "../infra/queue";
 import { AppError, badRequest, conflict, forbidden, notFound } from "../lib/errors";
 import { decrypt, encrypt, maskDestination, randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { authenticate, clientInfo, type AuthContext, type Services } from "./context";
-import { activateRecipient, advanceRouting, currentSignerGroup, lockEnvelope } from "./envelopes";
+import { activateRecipient, advanceRouting, currentSignerGroup, danglingFormulaProblems, lockEnvelope } from "./envelopes";
 import { checkSenderValue, insertEnvelopeField } from "./fieldvalues";
 import { pruneDanglingConditions } from "./logic";
 import { loadDetail } from "./mappers";
@@ -313,6 +313,8 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
     .map((r) => `${r.name} no tiene ningún campo de firma`);
   if (!now.some((r) => (r.role === "signer" || r.role === "approver") && !["delegated", "reassigned"].includes(r.status)))
     problems.push("Tiene que quedar al menos un firmante o aprobador");
+  // Quitar un campo número que cita una fórmula dejaría el total en 0 en el PDF firmado.
+  problems.push(...danglingFormulaProblems(await db.query<any>(`SELECT type, label, formula FROM fields WHERE envelope_id = $1`, [e.id])));
   if (problems.length) throw new AppError(422, "envelope_incomplete", problems.join(". "), { problems });
 
   if (removedFields.length) diff.fieldsRemoved = removedFields;

@@ -126,7 +126,9 @@ const A = `Pagador ${stamp}`;
 const B = `Segundo ${stamp}`;
 const e1 = await draft([A, B], `Contrato con cobro ${stamp}`);
 await owner("PUT", `/v1/envelopes/${e1.id}/payment`, { amount: 10, currency: "BRL", description: "Tasa", payerRecipientId: randomUUID(), provider: "mock" }, { expect: 400 });
-await owner("PUT", `/v1/envelopes/${e1.id}/payment`, { amount: 10, currency: "BRL", description: "Tasa", payerRecipientId: e1.recips[0].id, provider: "stripe" }, { expect: 400 });
+if (!provs.items.find((p) => p.id === "stripe").configured) {
+  await owner("PUT", `/v1/envelopes/${e1.id}/payment`, { amount: 10, currency: "BRL", description: "Tasa", payerRecipientId: e1.recips[0].id, provider: "stripe" }, { expect: 400 });
+}
 const pay = await owner("PUT", `/v1/envelopes/${e1.id}/payment`, {
   amount: 150.5,
   currency: "BRL",
@@ -249,5 +251,129 @@ assert(audit.items.filter((x) => x.action === "billing.plan_changed").length >= 
 const wh = await owner("POST", "/v1/integrations/payments/stripe/webhook", { id: "evt_x", type: "checkout.session.completed" }, { raw: true });
 assert(wh.status === 400, "webhook de Stripe sin firma válida → 400");
 ok("moneda local (COP), auditoría billing.plan_changed, webhook sin firma rechazado");
+
+// ── Opcional: Stripe y Mercado Pago contra un servidor falso de los proveedores ──
+// Requiere arrancar la API con:
+//   STRIPE_SECRET_KEY=sk_test_fake STRIPE_API_BASE=http://127.0.0.1:$PORT STRIPE_WEBHOOK_SECRET=whsec_e2e
+//   MP_ACCESS_TOKEN=TEST-fake MP_API_BASE=http://127.0.0.1:$PORT MP_WEBHOOK_SECRET=mp_e2e
+// y correr este script con E2E_FAKE_PROVIDERS_PORT=$PORT.
+if (process.env.E2E_FAKE_PROVIDERS_PORT) {
+  const { createServer } = await import("node:http");
+  const { createHmac } = await import("node:crypto");
+  const port = Number(process.env.E2E_FAKE_PROVIDERS_PORT);
+  const mpPayments = new Map();
+  const mpPreapprovals = new Map();
+  const fake = createServer((req, res) => {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      const send = (status, obj) => {
+        res.writeHead(status, { "content-type": "application/json" });
+        res.end(JSON.stringify(obj));
+      };
+      const path = req.url.split("?")[0];
+      if (req.method === "POST" && path === "/v1/checkout/sessions") {
+        const p = new URLSearchParams(body);
+        const id = `cs_test_${randomUUID().slice(0, 8)}`;
+        return send(200, { id, url: `https://checkout.stripe.test/${id}`, _mode: p.get("mode") });
+      }
+      if (req.method === "POST" && path === "/checkout/preferences") return send(201, { id: "pref_e2e", init_point: "https://mp.test/pref_e2e", sandbox_init_point: "https://sandbox.mp.test/pref_e2e" });
+      if (req.method === "GET" && path.startsWith("/v1/payments/")) return send(200, mpPayments.get(path.split("/").pop()) ?? {});
+      if (req.method === "POST" && path === "/preapproval") return send(201, { id: "pre_e2e", init_point: "https://mp.test/pre_e2e" });
+      if (req.method === "GET" && path.startsWith("/preapproval/")) return send(200, mpPreapprovals.get(path.split("/").pop()) ?? {});
+      send(404, { message: "not found" });
+    });
+  });
+  await new Promise((r) => fake.listen(port, "127.0.0.1", r));
+  const stripeSig = (payload) => {
+    const t = Math.floor(Date.now() / 1000);
+    return `t=${t},v1=${createHmac("sha256", "whsec_e2e").update(`${t}.${payload}`).digest("hex")}`;
+  };
+  const stripeHook = async (event, sig = true) => {
+    const payload = JSON.stringify(event);
+    return fetch(`${BASE}/v1/integrations/payments/stripe/webhook`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...(sig ? { "stripe-signature": stripeSig(payload) } : {}) },
+      body: payload,
+    });
+  };
+
+  // Stripe: cobro after_sign
+  const S = `Paga Stripe ${stamp}`;
+  const es = await draft([S], `Stripe ${stamp}`);
+  await owner("PUT", `/v1/envelopes/${es.id}/payment`, { amount: 99.9, currency: "USD", description: "Cuota", payerRecipientId: es.recips[0].id, provider: "stripe" });
+  await owner("POST", `/v1/envelopes/${es.id}/send`);
+  const ss = await sign(S);
+  const { url } = await owner("POST", `/v1/signing/${ss.tk}/payment/checkout`);
+  assert(url.startsWith("https://checkout.stripe.test/"), "checkout de Stripe");
+  const pid = (await owner("GET", `/v1/envelopes/${es.id}/payment`)).payment.id;
+  const session = { id: url.split("/").pop(), mode: "payment", payment_status: "paid", amount_total: 9990, currency: "usd", payment_intent: "pi_e2e", metadata: { paymentId: pid } };
+  let r = await stripeHook({ id: `evt_${stamp}_bad`, type: "checkout.session.completed", data: { object: { ...session, amount_total: 100 } } });
+  assert(r.status === 400, "Stripe: monto distinto → 400 (no se acredita)");
+  r = await stripeHook({ id: `evt_${stamp}_nosig`, type: "checkout.session.completed", data: { object: session } }, false);
+  assert(r.status === 400, "Stripe: sin firma → 400");
+  r = await stripeHook({ id: `evt_${stamp}_ok`, type: "checkout.session.completed", data: { object: session } });
+  assert(r.status === 200, "Stripe: evento válido");
+  r = await stripeHook({ id: `evt_${stamp}_ok`, type: "checkout.session.completed", data: { object: session } });
+  assert((await r.json()).duplicate === true, "Stripe: evento repetido se ignora");
+  for (let i = 0; i < 60 && (await status(es.id)) !== "completed"; i++) await sleep(1000);
+  assert((await status(es.id)) === "completed", "Stripe: pago confirmado por webhook → sobre completado");
+
+  // Stripe: suscripción
+  await owner("POST", "/v1/billing/cancel");
+  const sco = await owner("POST", "/v1/billing/checkout", { plan: "starter", currency: "USD", provider: "stripe" });
+  assert(sco.url.startsWith("https://checkout.stripe.test/"), "checkout de suscripción en Stripe");
+  const me = await owner("GET", "/v1/me");
+  const subObj = { id: "sub_e2e", status: "active", customer: "cus_e2e", metadata: { tenantId: me.tenant.id, plan: "starter" }, current_period_end: Math.floor(Date.now() / 1000) + 30 * 86400 };
+  await stripeHook({ id: `evt_${stamp}_sub`, type: "checkout.session.completed", data: { object: { id: "cs_sub", mode: "subscription", customer: "cus_e2e", subscription: "sub_e2e", metadata: { tenantId: me.tenant.id, plan: "starter" } } } });
+  bill = await owner("GET", "/v1/billing");
+  assert(bill.plan.id === "starter" && bill.subscription.provider === "stripe", "Stripe: suscripción Starter activa");
+  await stripeHook({ id: `evt_${stamp}_upd`, type: "customer.subscription.updated", data: { object: subObj } });
+  bill = await owner("GET", "/v1/billing");
+  assert(bill.subscription.renewsAt, "Stripe: fecha de renovación");
+  await owner("POST", "/v1/billing/cancel", null, { expect: 409 }); // Stripe se cancela desde el portal
+  await stripeHook({ id: `evt_${stamp}_del`, type: "customer.subscription.deleted", data: { object: { ...subObj, status: "canceled" } } });
+  bill = await owner("GET", "/v1/billing");
+  assert(bill.plan.id === "free", "Stripe: suscripción borrada → Free");
+  ok("Stripe (servidor falso): checkout, webhook firmado, monto verificado, idempotencia, suscripción alta/renovación/baja");
+
+  // Mercado Pago: cobro before_sign y suscripción
+  const co2 = await owner("POST", "/v1/billing/checkout", { plan: "business", currency: "BRL", provider: "mock" });
+  const pg2 = await owner("GET", co2.url.replace(BASE, ""));
+  await owner("POST", /action="([^"]+)"/.exec(pg2)[1].replace(/&amp;/g, "&"), { outcome: "paid" }, { headers: { accept: "application/json" } });
+  const Mm = `Paga MP ${stamp}`;
+  const em = await draft([Mm], `MP ${stamp}`);
+  await owner("PUT", `/v1/envelopes/${em.id}/payment`, { amount: 25000, currency: "COP", description: "Reserva", payerRecipientId: em.recips[0].id, timing: "before_sign", provider: "mercadopago" });
+  await owner("POST", `/v1/envelopes/${em.id}/send`);
+  const tkm = await linkFor(Mm);
+  await owner("GET", `/v1/signing/${tkm}`);
+  await owner("POST", `/v1/signing/${tkm}/consent`);
+  const mco = await owner("POST", `/v1/signing/${tkm}/payment/checkout`);
+  assert(mco.url.includes("sandbox.mp.test"), "Checkout Pro sandbox");
+  const mpid = (await owner("GET", `/v1/envelopes/${em.id}/payment`)).payment.id;
+  mpPayments.set("777", { id: 777, status: "approved", external_reference: `pay:${mpid}`, transaction_amount: 25000, currency_id: "COP", payment_method_id: "pse", date_approved: new Date().toISOString() });
+  const mpHook = (dataId, type = "payment", secret = "mp_e2e") => {
+    const ts = String(Date.now());
+    const reqId = randomUUID();
+    const v1 = createHmac("sha256", secret).update(`id:${dataId};request-id:${reqId};ts:${ts};`).digest("hex");
+    return fetch(`${BASE}/v1/integrations/payments/mercadopago/webhook?data.id=${dataId}&type=${type}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-signature": `ts=${ts},v1=${v1}`, "x-request-id": reqId },
+      body: JSON.stringify({ type, action: `${type}.updated`, data: { id: dataId } }),
+    });
+  };
+  r = await mpHook("777", "payment", "secreto-incorrecto");
+  assert(r.status === 400, "MP: firma inválida → 400");
+  r = await mpHook("777");
+  assert(r.status === 200, "MP: notificación de pago aprobada");
+  const okSign = await owner("POST", `/v1/signing/${tkm}/complete`, { fields: [], signature: { kind: "drawn", imagePng: PNG } }, { raw: true });
+  assert(okSign.status === 200, "MP: pagado (PSE) → puede firmar");
+  mpPreapprovals.set("pre_e2e", { id: "pre_e2e", status: "authorized", external_reference: `sub:${me.tenant.id}:enterprise`, next_payment_date: new Date(Date.now() + 30 * 86400_000).toISOString() });
+  await mpHook("pre_e2e", "subscription_preapproval");
+  bill = await owner("GET", "/v1/billing");
+  assert(bill.plan.id === "enterprise" && bill.subscription.provider === "mercadopago", "MP: preapproval autorizado → Enterprise");
+  ok("Mercado Pago (servidor falso): Checkout Pro, x-signature verificada, pago aprobado consultado a la API, preapproval");
+  fake.close();
+}
 
 console.log("\nE2E BILLING OK");

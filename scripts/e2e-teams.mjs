@@ -338,6 +338,23 @@ if (/^http:\/\/(localhost|127\.0\.0\.1)/.test(BASE)) {
   const erBody = await er.json();
   if (er.status !== 429 || erBody.error?.code !== "too_many_attempts" || evaGuess.cookie) throw new Error(`invitación de una cuenta sin organizaciones: ${er.status} ${JSON.stringify(erBody)}`);
   step("invitación: el bloqueo vale también para una cuenta sin organizaciones (429)");
+
+  // Restablecer la contraseña la desbloquea, también sin organizaciones (antes el restablecimiento no dejaba registro
+  // en ninguna y la cuenta seguía bloqueada 15 minutos).
+  const evaPw = new Client("eva-reset");
+  await evaPw.api("POST", "/v1/auth/password/forgot", { email: evaEmail }, 202);
+  let evaReset = null;
+  for (let i = 0; i < 50 && !evaReset; i++) {
+    const { items } = await owner.api("GET", "/dev/mailbox");
+    evaReset = items.find((x) => x.to === evaEmail && x.link?.includes("/reset/"))?.link.split("/reset/")[1] ?? null;
+    if (!evaReset) await new Promise((r) => setTimeout(r, 200));
+  }
+  if (!evaReset) throw new Error("no llegó el correo de restablecimiento de Eva");
+  await evaPw.api("POST", "/v1/auth/password/reset", { token: evaReset, password: "clave-nueva-de-eva-1234" }, 204);
+  const evaBack = new Client("eva-back");
+  const evaJoined = await evaBack.api("POST", `/v1/invite/${evaToken}/accept`, { password: "clave-nueva-de-eva-1234" });
+  if (!evaJoined?.tenant?.id || !evaBack.cookie) throw new Error(`después de restablecer la contraseña, Eva sigue bloqueada: ${JSON.stringify(evaJoined)}`);
+  step("restablecer la contraseña desbloquea también una cuenta sin organizaciones");
 }
 
 // ───────────────────────────── 7. Auditoría ─────────────────────────────

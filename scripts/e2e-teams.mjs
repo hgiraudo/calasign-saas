@@ -184,6 +184,12 @@ step("grupos: sobre compartido visible para el grupo (solo lectura); plantilla r
 
 // ───────────────────────────── 4. API keys sin escalada ─────────────────────────────
 
+// Configurar el SSO equivale a poder entrar como cualquier miembro: con settings:manage no alcanza.
+const ajustes = await owner.api("POST", "/v1/roles", { name: "Ajustes", permissions: ["settings:manage"] });
+await owner.api("PATCH", `/v1/members/${bobMe.user.id}`, { role: "custom", roleId: ajustes.id });
+await bob.api("PUT", "/v1/settings/sso", { enabled: false, protocol: "oidc", domains: [] }, 403);
+step("SSO: solo un propietario lo configura (un rol con settings:manage → 403)");
+
 await owner.api("PATCH", `/v1/members/${bobMe.user.id}`, { role: "custom", roleId: integrador.id });
 await bob.api("POST", "/v1/api-keys", { name: "admin?" }, 403);
 await bob.api("POST", "/v1/api-keys", { name: "member?", role: "member" }, 403);

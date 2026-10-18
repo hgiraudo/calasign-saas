@@ -7,7 +7,7 @@ import { SAML, ValidateInResponseTo, type CacheProvider } from "@node-saml/node-
 import { SsoDiscoverInput, SsoSettingsInput, type SsoDiscoverResponse, type SsoSettings } from "@calasign/shared";
 import { config } from "../../config";
 import type { Db } from "../../infra/db";
-import { AppError, badRequest, conflict } from "../../lib/errors";
+import { AppError, badRequest, conflict, forbidden } from "../../lib/errors";
 import { decrypt, encrypt, randomToken, sha256Hex, uuidv7 } from "../../lib/util";
 import { recordAudit } from "../audit";
 import { SESSION_COOKIE, authenticate, clientInfo, type AuthContext, type Services } from "../context";
@@ -362,6 +362,9 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
 
   app.put("/v1/settings/sso", { preHandler: auth }, async (req) => {
     const a = req.auth!;
+    // El IdP configurado puede abrir sesión como cualquier miembro (también los propietarios): configurarlo
+    // equivale a poder ser propietario, así que solo lo hace un propietario.
+    if (a.access?.role !== "owner") throw forbidden("Solo un propietario puede configurar el inicio de sesión único (SSO)");
     const input = SsoSettingsInput.parse(req.body);
     const cur = await loadConfig(s.db, a.tenantId);
     if (input.oidc && !allowedUrl(input.oidc.issuer)) throw badRequest("invalid_issuer", "El issuer tiene que ser https");

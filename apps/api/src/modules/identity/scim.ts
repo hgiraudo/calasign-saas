@@ -133,6 +133,8 @@ async function setActive(db: Db, tenantId: string, userId: string, active: boole
   const m = await db.one<any>(`SELECT role FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [tenantId, userId]);
   if (active && !m) {
     // Cupo de usuarios del plan: una alta o reactivación por SCIM ocupa un lugar igual que una invitación.
+    // Con la organización bloqueada (como en miembros e invitaciones): dos altas simultáneas no superan el cupo.
+    await db.query(`SELECT id FROM tenants WHERE id = $1 FOR UPDATE`, [tenantId]);
     const { plan } = await tenantPlan(db, tenantId);
     if (plan.users !== null && (await usersCount(db, tenantId)) >= plan.users) {
       throw new ScimError(402, `plan_limit: el plan ${plan.name} permite hasta ${plan.users} usuario(s); ampliá el plan en ${UPGRADE_URL}`, "plan_limit");

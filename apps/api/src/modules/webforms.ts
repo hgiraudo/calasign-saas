@@ -16,7 +16,7 @@ import { appendEvent, type Actor } from "../infra/evidence";
 import { AppError, badRequest, conflict, notFound } from "../lib/errors";
 import { decrypt, encrypt, iso, slugify, uuidv7 } from "../lib/util";
 import { getTenantBranding } from "./branding";
-import { assertTemplateAccess } from "./access";
+import { assertTemplateAccess, envelopeVisibilitySql } from "./access";
 import { authenticate, clientInfo, type AuthContext, type Services } from "./context";
 import { setFrameAncestors } from "./embed";
 import { sendEnvelope } from "./envelopes";
@@ -215,9 +215,12 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
   app.get<P>("/v1/web-forms/:id/envelopes", { preHandler: auth }, async (req) => {
     const a = A(req);
     await load(a.tenantId, req.params.id);
+    // Los sobres del formulario son de quien lo creó: cada uno ve solo los que puede ver en el listado de sobres.
+    const params: unknown[] = [a.tenantId, req.params.id];
+    const visible = envelopeVisibilitySql(a, params);
     const envs = await s.db.query<any>(
-      `SELECT * FROM envelopes WHERE tenant_id = $1 AND metadata->>'webFormId' = $2 ORDER BY created_at DESC LIMIT 200`,
-      [a.tenantId, req.params.id],
+      `SELECT * FROM envelopes e WHERE e.tenant_id = $1 AND e.metadata->>'webFormId' = $2${visible} ORDER BY e.created_at DESC LIMIT 200`,
+      params,
     );
     const ids = envs.map((e) => e.id);
     const recips = ids.length

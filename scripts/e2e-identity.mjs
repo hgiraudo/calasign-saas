@@ -330,6 +330,14 @@ await owner.api(
   { enabled: true, protocol: "oidc", domains: [domain], jitEnabled: true, jitRole: "member", enforce: false, oidc: { issuer, clientId: "calasign-test", clientSecret: "s3cr3t" } },
   200,
 );
+// El dominio no se usa para el descubrimiento hasta verificarlo por DNS (TXT de prueba en local).
+const before = await new Client("probe").api("POST", "/v1/auth/sso/discover", { email: `x@${domain}` });
+assert(before.sso === false, "un dominio sin verificar no se usa para el descubrimiento");
+const dstat = (await owner.api("GET", "/v1/settings/sso/domains")).items.find((x) => x.domain === domain);
+assert(dstat && !dstat.verified && dstat.txtName === `_calasign-sso.${domain}`, "dominio pendiente con su TXT");
+await owner.api("POST", "/dev/dns-stub", { name: dstat.txtName, values: [dstat.txtValue] });
+const ver = await owner.api("POST", `/v1/settings/sso/domains/${domain}/verify`, {});
+assert(ver.verified, "dominio verificado por DNS");
 const sso = await owner.api("GET", "/v1/settings/sso");
 assert(sso.oidc.hasClientSecret && !JSON.stringify(sso).includes("s3cr3t"), "el client secret no se devuelve");
 const ana = new Client("ana");

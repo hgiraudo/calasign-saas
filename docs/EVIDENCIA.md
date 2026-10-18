@@ -28,22 +28,15 @@ el nivel que se alcanzó y queda constancia en el evento `envelope.completed` (`
 de sello llevan EKU `emailProtection` además de `documentSigning` porque NSS lo exige. poppler todavía no
 valida `ETSI.RFC3161` (lo muestra como "unknown"); el validador propio sí.
 
-## 2. Renovación de sellos de archivo (concepto, no implementado)
+## 2. Renovación de sellos de archivo
 
-Un B-LTA vale mientras el algoritmo y el certificado de la TSA del último sello de documento sigan siendo
-confiables. Antes de que venza ese certificado (o si se debilita SHA-256/RSA-2048) hay que **re-sellar**:
-
-1. Job periódico (`archive-renewal`, mensual) que busca PDF finales cuyo último sello de documento vence en
-   menos de N meses (se guarda `last_doc_timestamp_until` al completar).
-2. Para cada uno: descargar de S3, `collectValidationData` para la cadena de la **TSA del último sello**
-   (OCSP/CRL vigentes hoy), agregar ese DSS y un **nuevo** sello de documento con una TSA vigente (todo
-   incremental, ver `applyLtv`).
-3. Guardar la nueva versión (S3 con versionado + Object Lock: la anterior se conserva), registrar evento
-   `envelope.archive_renewed` con el hash nuevo y actualizar `signed_file_id`. La cadena de hashes de
-   `/v1/verify` sigue encontrando ambas versiones por SHA-256.
-
-La librería ya soporta los pasos 2 y 3 (`applyLtv` sobre un B-LTA agrega DSS + otro sello); falta el job y
-la columna de vencimiento.
+Implementado (`apps/api/src/modules/data/archive.ts`, detalle en [`DATOS.md`](DATOS.md) §3). Un B-LTA vale
+mientras el algoritmo y el certificado de la TSA del último sello de documento sigan siendo confiables. El
+barrido calcula `archive_valid_until` (vencimiento del certificado de esa TSA) y, cuando faltan menos de
+`ARCHIVE_RENEWAL_DAYS`, agrega DSS + un sello de documento nuevo (`applyLtv` nivel B-LTA, incremental), valida
+el resultado, guarda la nueva versión (historial en `envelope_signed_versions`, la anterior se conserva) y
+registra `envelope.archive_renewed`. Pendiente: renovar también ante el debilitamiento de algoritmos
+(SHA-256/RSA-2048), no solo por vencimiento de la TSA.
 
 ## 3. Validación
 

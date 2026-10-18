@@ -4,7 +4,7 @@ import type { Db } from "../../infra/db";
 import type { BlobStore } from "../../infra/storage";
 import type { Services } from "../context";
 import { archiveRoutes, archiveSweep } from "./archive";
-import { byokRoutes, byokSweep } from "./byok";
+import { byokRoutes, byokSweep, kmsMockRoutes } from "./byok";
 import { cellRoutes } from "./cells";
 import { ssoDomainRoutes } from "./sso-domains";
 
@@ -13,6 +13,7 @@ type Log = { info(o: object, m?: string): void; warn(o: object, m?: string): voi
 export async function dataRoutes(app: FastifyInstance, s: Services) {
   await cellRoutes(app, s);
   await byokRoutes(app, s);
+  await kmsMockRoutes(app);
   await ssoDomainRoutes(app, s);
   await archiveRoutes(app, s, app.log);
 }

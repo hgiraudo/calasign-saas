@@ -26,7 +26,7 @@ export function CellPicker({ value, onChange }: { value: string; onChange: (cell
       {cells.map((c) => (
         <label key={c.id} className={`data-cell${c.available ? "" : " data-cell-soon"}`}>
           <input type="radio" name="cell" value={c.id} checked={value === c.id} disabled={!c.available} onChange={() => onChange(c.id)} />
-          <span>{c.label}</span>
+          <span>{c.id === "us" || c.id === "br" ? dt(`cells.${c.id}`) : c.label}</span>
           {!c.available && <span className="badge data-soon">{dt("cells.soon")}</span>}
         </label>
       ))}

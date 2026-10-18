@@ -72,7 +72,13 @@ function mockSecret(): Buffer {
 function mockKeyFor(arn: string): Buffer {
   return createHmac("sha256", mockSecret()).update(`kms-mock:${arn}`).digest();
 }
-const unusable = (arn: string) => /failing|disabled/i.test(arn);
+/** Claves simuladas deshabilitadas en tiempo de ejecución (solo local: POST /dev/kms-mock). */
+const mockDisabled = new Set<string>();
+export function setMockKeyDisabled(arn: string, disabled: boolean) {
+  if (disabled) mockDisabled.add(arn);
+  else mockDisabled.delete(arn);
+}
+const unusable = (arn: string) => /failing|disabled/i.test(arn) || mockDisabled.has(arn);
 const ctxString = (c?: Record<string, string>) =>
   Object.keys(c ?? {})
     .sort()

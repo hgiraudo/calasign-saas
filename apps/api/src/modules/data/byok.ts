@@ -7,7 +7,8 @@ import type { FastifyInstance } from "fastify";
 import { SetByokInput, type ByokSettings, type ByokStatus, type ByokTestResult } from "@calasign/shared";
 import type { Db } from "../../infra/db";
 import { cellById } from "../../infra/cells";
-import { isKeyError, kmsForKey, regionOfArn } from "../../infra/kms";
+import { isKeyError, kmsForKey, kmsMockEnabled, regionOfArn, setMockKeyDisabled } from "../../infra/kms";
+import { config } from "../../config";
 import type { TenantStorage, TenantStorageResolver } from "../../infra/storage";
 import { AppError } from "../../lib/errors";
 import { iso } from "../../lib/util";
@@ -269,3 +270,14 @@ export async function byokRoutes(app: FastifyInstance, s: Services) {
 }
 
 export { isKeyError };
+
+/** Solo local con KMS simulado: deshabilita/rehabilita una clave para probar la falla cerrada. */
+export async function kmsMockRoutes(app: FastifyInstance) {
+  if (config.environment !== "local" || !kmsMockEnabled()) return;
+  app.post("/dev/kms-mock", async (req) => {
+    const b = (req.body ?? {}) as { keyArn?: string; disabled?: boolean };
+    if (!b.keyArn) throw new AppError(400, "invalid_request", "keyArn requerido");
+    setMockKeyDisabled(b.keyArn, Boolean(b.disabled));
+    return { ok: true };
+  });
+}

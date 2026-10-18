@@ -1,0 +1,121 @@
+# Datos: BYOK, celdas, archivo a largo plazo y dominios SSO
+
+Código: `apps/api/src/modules/data/`, `apps/api/src/infra/{cells,kms,storage}.ts`, migración `0016_data.sql`.
+Pruebas: `apps/api/test/{data,archive}.test.ts` y `scripts/e2e-data.mjs`.
+
+## 1. BYOK (clave KMS del cliente)
+
+Ajustes → **Cifrado con tu clave (BYOK)** (`/v1/settings/byok`, permiso `settings:manage`).
+
+1. La organización agrega a su clave KMS la política que muestra la página (statements `CalaSignDescribe`,
+   `CalaSignDirect` y, si la celda usa S3, `CalaSignS3`). Autoriza al rol de la plataforma
+   (`BYOK_PLATFORM_PRINCIPAL`) solo con el contexto de cifrado de **esa** organización
+   (`kms:EncryptionContext:tenant`) o vía S3 sobre el bucket de su celda.
+2. Carga el ARN y «Probar y activar»: se verifica región (misma que los datos), estado/uso/tipo de clave
+   (`DescribeKey`), cifrado + descifrado y generación de claves de datos. Si algo falla, no se activa (422 con
+   el detalle de cada chequeo).
+
+Con la clave activa:
+
+- **S3:** cada objeto nuevo de la organización se guarda con `SSE-KMS` + `SSEKMSKeyId` = su clave
+  (`BucketKeyEnabled`).
+- **Disco (local/dev):** el archivo se cifra con AES-256-GCM con una clave de datos generada por su clave
+  (`GenerateDataKey`, contexto `purpose=calasign-blob, tenant=<id>`); encabezado `CSBYOK1`.
+- **Custodia de certificados:** la clave de datos de cada `.p12` nuevo se envuelve con su clave
+  (`key_wrap_method = kms-byok`, contexto `purpose=calasign-tenant-certificate, tenant=<id>`).
+
+**Falla cerrada:** si la clave deja de funcionar (deshabilitada, política cambiada, borrada), guardar o leer
+documentos y firmar con certificados en custodia responde **503 `byok_key_unavailable`**; nada se guarda sin
+cifrar con su clave. La clave pasa a `failing`, se registra `byok.key_failing` en la auditoría y se avisa por
+correo a propietarios y administradores (como mucho cada 6 h). El barrido vuelve a probar las claves activas
+cada 6 h y las fallidas cada hora; cuando vuelve a funcionar queda `active` (`byok.key_recovered`).
+
+**Desactivar** (`DELETE`): lo nuevo vuelve a la clave de la plataforma; lo ya cifrado con la clave del
+cliente la sigue necesitando (no hay re-cifrado masivo: queda como trabajo futuro).
+
+En local, `KMS_MOCK=1` usa un KMS simulado determinista (sin AWS); `POST /dev/kms-mock {keyArn, disabled}`
+simula una clave caída. Nunca disponible en producción.
+
+## 2. Celdas (residencia de datos)
+
+Cada organización tiene una celda (`tenant_directory.cell`, el directorio global tenant → celda) que fija
+dónde se guardan sus archivos. Se elige al darse de alta («Dónde se guardan tus documentos»,
+`GET /v1/public/cells`); las celdas del catálogo que no están configuradas se muestran «Próximamente».
+
+```bash
+CELLS='{"us":{"label":"Estados Unidos","region":"us-east-1","default":true,"storage":{"driver":"s3","bucket":"calasign-us"}},
+        "br":{"label":"Brasil","region":"sa-east-1","storage":{"driver":"s3","bucket":"calasign-br","region":"sa-east-1"},
+              "baseUrl":"https://br.calasign.com"}}'
+SERVED_CELLS=us   # celdas que atiende este proceso (por defecto: todas las configuradas)
+```
+
+- Sin `CELLS` hay una sola celda (`DEFAULT_CELL`, «us») con el almacenamiento de siempre. Ids viejos
+  (`local`, `dev`) caen en la celda por defecto.
+- En disco, la celda por defecto sigue en `var/blobs`; las demás en `var/blobs-<id>` (o `storage.dir`).
+- **Enrutamiento:** si un proceso no atiende la celda de la organización (API key, token OAuth, sesión o link
+  de firma de otra celda), responde **421 `wrong_cell`** con `location` = `baseUrl` de la celda correcta. Con
+  un solo despliegue que atiende todo, no se consulta nada.
+- **Fuera de alcance:** mover una organización existente de celda (copiar archivos, re-cifrar, cambiar el
+  directorio). Hoy la celda se fija en el alta.
+- Producción: la base de cada celda es independiente; el directorio global debería vivir en una base
+  compartida (hoy lo comparte el mismo Postgres). La organización AWS limita regiones (`limitar-regiones`):
+  una celda en `sa-east-1` exige cambiar esa SCP primero.
+
+## 3. Renovación de sellos de archivo (PAdES B-LTA)
+
+Ver también `EVIDENCIA.md` §2. El barrido (`archiveSweep`, en el worker, como mucho una vez por hora):
+
+1. A cada sobre completado sin revisar le calcula `archive_valid_until` = vencimiento del certificado de la TSA
+   del **último** sello de tiempo (sello de documento o, si no hay, el de la firma). Solo los PDF con DSS
+   (B-LT/B-LTA) tienen vigencia de archivo; los B-B/B-T no se renuevan.
+2. Si vence dentro de `ARCHIVE_RENEWAL_DAYS` (180), agrega DSS (OCSP/CRL de hoy, incluida la cadena de esa
+   TSA) + un **sello de documento nuevo** como revisión incremental, valida el resultado (todas las firmas
+   íntegras y un sello de documento más), guarda la nueva versión y actualiza `signed_file_id`.
+3. Historial en `envelope_signed_versions` (v1 = original, v2… = renovaciones); la versión anterior se
+   conserva y `/v1/verify` encuentra cualquiera por hash. Evento `envelope.archive_renewed` con ambos hashes.
+4. No se vuelve a renovar el mismo sobre antes de `ARCHIVE_RENEWAL_MIN_INTERVAL_DAYS` (30). Si la TSA vigente
+   vence igual o antes que la anterior, se deja `archive_error` (conviene configurar otra TSA).
+
+API: `GET /v1/envelopes/:id/archive` (vigencia y versiones), `POST /v1/envelopes/:id/archive/renew` (manual).
+La web lo muestra en el detalle del sobre completado. En local, `POST /dev/archive/sweep {days, envelopeId}`.
+
+## 4. Dominios SSO verificados
+
+Un dominio cargado en SSO queda **pendiente** hasta publicar `TXT _calasign-sso.<dominio> =
+calasign-sso-verify=<token>` y verificarlo (`POST /v1/settings/sso/domains/:domain/verify`). Pendiente, no se
+usa para el descubrimiento por correo («Continuar con SSO»). Varias organizaciones pueden reclamar el mismo
+dominio mientras ninguna lo verifique; verificado, es de una sola (409 `domain_taken` para las demás).
+Guardar la configuración de SSO conserva la verificación de los dominios que siguen. Los dominios que existían
+antes de la migración quedan sin verificar.
+
+## 5. Otros ajustes
+
+- **SCIM respeta el cupo de usuarios del plan:** una alta o reactivación sin cupo responde 402 con el esquema
+  de error de SCIM (`scimType: "plan_limit"`).
+- **Dominio propio en todos los links:** formularios web, URL de firma embebida, Telegram, regreso de la
+  verificación de identidad y «verificá este documento» del certificado usan el dominio verificado de la
+  organización (`tenantBaseUrl`). Un test (`apps/api/test/data.test.ts`) falla si un link público vuelve a
+  armarse con `APP_URL` fijo.
+
+## Variables de entorno
+
+| Variable | Default | Para qué |
+|---|---|---|
+| `BYOK_PLATFORM_PRINCIPAL` | marcador | ARN del rol de la app que la política del cliente autoriza |
+| `KMS_MOCK` | apagado | KMS simulado (solo fuera de producción) |
+| `CELLS` | una celda | Celdas de este despliegue (JSON) |
+| `DEFAULT_CELL` | `us` | Celda por defecto sin `CELLS` |
+| `SERVED_CELLS` | todas | Celdas que atiende este proceso |
+| `ARCHIVE_RENEWAL_ENABLED` | `true` | Barrido de renovación |
+| `ARCHIVE_RENEWAL_DAYS` | `180` | Umbral de vencimiento |
+| `ARCHIVE_RENEWAL_MIN_INTERVAL_DAYS` | `30` | Intervalo mínimo entre renovaciones de un sobre |
+| `ARCHIVE_RENEWAL_BATCH` | `10` | Sobres por barrido |
+
+## Permisos de IAM para el rol de la app (dev)
+
+- **BYOK en S3:** nada nuevo en el rol propio (S3 usa la clave del cliente con la política del cliente).
+- **BYOK directo** (custodia y disco): `kms:Encrypt`, `kms:Decrypt`, `kms:GenerateDataKey`, `kms:DescribeKey`
+  sobre `arn:aws:kms:*:*:key/*` (claves de otras cuentas: el permiso efectivo lo da la política de la clave del
+  cliente). Conviene limitarlo con `kms:EncryptionContextKeys` = `purpose`, `tenant`.
+- **Celdas S3 adicionales:** los mismos permisos de S3 que hoy (`s3:GetObject/PutObject/ListBucket`,
+  `ListBucketVersions`, `DeleteObject`, `DeleteObjectVersion`) sobre cada bucket de celda.

@@ -125,7 +125,7 @@ export async function renewEnvelopeArchive(d: Deps, envelopeId: string, actor: A
 let lastRun = 0;
 
 /** Barrido: completa la fecha de vencimiento de los archivos nuevos y renueva los que vencen pronto. */
-export async function archiveSweep(d: Deps, opts: { days?: number; force?: boolean } = {}) {
+export async function archiveSweep(d: Deps, opts: { days?: number; force?: boolean; envelopeId?: string } = {}) {
   const cfg = archiveConfig();
   if (!cfg.enabled || !config.seal.tsaUrl) return { inspected: 0, renewed: 0, failed: 0 };
   if (!opts.force && Date.now() - lastRun < 3600_000) return { inspected: 0, renewed: 0, failed: 0 };
@@ -135,8 +135,9 @@ export async function archiveSweep(d: Deps, opts: { days?: number; force?: boole
   let renewed = 0;
   let failed = 0;
   const pending = await d.db.query<any>(
-    `SELECT id FROM envelopes WHERE status = 'completed' AND signed_file_id IS NOT NULL AND archive_checked_at IS NULL ORDER BY completed_at LIMIT $1`,
-    [cfg.batch * 5],
+    `SELECT id FROM envelopes WHERE status = 'completed' AND signed_file_id IS NOT NULL AND archive_checked_at IS NULL AND ($2::uuid IS NULL OR id = $2)
+     ORDER BY completed_at LIMIT $1`,
+    [cfg.batch * 5, opts.envelopeId ?? null],
   );
   for (const p of pending) {
     try {
@@ -151,8 +152,9 @@ export async function archiveSweep(d: Deps, opts: { days?: number; force?: boole
     `SELECT id FROM envelopes WHERE status = 'completed' AND archive_valid_until IS NOT NULL
        AND archive_valid_until < now() + make_interval(days => $1)
        AND (archive_renewals = 0 OR $3::boolean OR archive_checked_at < now() - make_interval(days => $4))
+       AND ($5::uuid IS NULL OR id = $5)
      ORDER BY archive_valid_until LIMIT $2`,
-    [days, cfg.batch, Boolean(opts.force), cfg.minIntervalDays],
+    [days, cfg.batch, Boolean(opts.force), cfg.minIntervalDays, opts.envelopeId ?? null],
   );
   for (const e of due) {
     try {
@@ -207,8 +209,8 @@ export async function archiveRoutes(app: FastifyInstance, s: Services, log: Deps
   if (config.environment === "local") {
     // Solo local: fuerza el barrido (pruebas automáticas).
     app.post("/dev/archive/sweep", async (req) => {
-      const b = (req.body ?? {}) as { days?: number };
-      return archiveSweep(deps(), { days: b.days, force: true });
+      const b = (req.body ?? {}) as { days?: number; envelopeId?: string };
+      return archiveSweep(deps(), { days: b.days, force: true, envelopeId: b.envelopeId });
     });
   }
 }

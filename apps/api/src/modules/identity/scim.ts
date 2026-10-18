@@ -2,14 +2,15 @@
 // Autenticación con token Bearer por organización (guardado como hash). Desactivar un usuario le quita la
 // membresía, los grupos y las sesiones en la organización, pero sigue visible para el IdP (active: false).
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { CreateScimTokenInput, type ScimSettings, type ScimToken } from "@calasign/shared";
+import { BUILTIN_ROLE_PERMISSIONS, CreateScimTokenInput, type ScimSettings, type ScimToken } from "@calasign/shared";
 import { z } from "zod";
 import { config } from "../../config";
 import type { Db } from "../../infra/db";
-import { notFound } from "../../lib/errors";
+import { AppError, notFound } from "../../lib/errors";
 import { iso, randomToken, sha256Hex, uuidv7 } from "../../lib/util";
 import { recordAudit } from "../audit";
-import { authenticate, clientInfo, type Services } from "../context";
+import { hasPerm } from "../access";
+import { authenticate, clientInfo, type AuthContext, type Services } from "../context";
 import { UPGRADE_URL, tenantPlan, usersCount } from "../billing/plans";
 
 const SCHEMA_USER = "urn:ietf:params:scim:schemas:core:2.0:User";
@@ -314,6 +315,19 @@ function memberIds(value: unknown): string[] {
 
 // ───────────────────────────── Rutas ─────────────────────────────
 
+/**
+ * Las altas por SCIM entran con el rol por defecto: elegirlo o crear un token que lo otorga equivale a asignar ese
+ * rol, así que (como en invitaciones y miembros) solo lo hace quien tiene todos sus permisos o un propietario.
+ */
+function assertCanGrantScimRole(a: AuthContext, role: string) {
+  if (a.access?.role === "owner") return;
+  const perms = BUILTIN_ROLE_PERMISSIONS[role as keyof typeof BUILTIN_ROLE_PERMISSIONS] ?? [];
+  const missing = perms.filter((p) => !hasPerm(a, p));
+  if (missing.length) {
+    throw new AppError(403, "forbidden", `No podés aprovisionar usuarios con el rol ${role}: te faltan permisos (${missing.join(", ")})`, { missing });
+  }
+}
+
 export async function scimRoutes(app: FastifyInstance, s: Services) {
   const auth = authenticate(s);
 
@@ -338,12 +352,15 @@ export async function scimRoutes(app: FastifyInstance, s: Services) {
 
   app.patch("/v1/settings/scim", { preHandler: auth }, async (req) => {
     const input = z.object({ defaultRole: z.enum(["admin", "member"]) }).parse(req.body);
+    assertCanGrantScimRole(req.auth!, input.defaultRole);
     await s.db.query(`UPDATE tenants SET scim_default_role = $2 WHERE id = $1`, [req.auth!.tenantId, input.defaultRole]);
     return settingsOut(req.auth!.tenantId);
   });
 
   app.post("/v1/settings/scim/tokens", { preHandler: auth }, async (req, reply) => {
     const input = CreateScimTokenInput.parse(req.body);
+    const t = await s.db.one<any>(`SELECT scim_default_role FROM tenants WHERE id = $1`, [req.auth!.tenantId]);
+    assertCanGrantScimRole(req.auth!, t?.scim_default_role ?? "member");
     const secret = `cs_scim_${randomToken(32)}`;
     const row = await s.db.one(
       `INSERT INTO scim_tokens (id, tenant_id, name, prefix, token_hash, created_by) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,

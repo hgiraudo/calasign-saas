@@ -190,6 +190,17 @@ await owner.api("PATCH", `/v1/members/${bobMe.user.id}`, { role: "custom", roleI
 await bob.api("PUT", "/v1/settings/sso", { enabled: false, protocol: "oidc", domains: [] }, 403);
 step("SSO: solo un propietario lo configura (un rol con settings:manage → 403)");
 
+// SCIM da de alta con el rol por defecto: elegir "admin" o crear un token que lo otorga exige tener sus permisos.
+const gente = await owner.api("POST", "/v1/roles", { name: "Gente", permissions: ["envelopes:create", "members:manage", "settings:manage"] });
+await owner.api("PATCH", `/v1/members/${bobMe.user.id}`, { role: "custom", roleId: gente.id });
+await bob.api("PATCH", "/v1/settings/scim", { defaultRole: "admin" }, 403);
+await owner.api("PATCH", "/v1/settings/scim", { defaultRole: "admin" });
+await bob.api("POST", "/v1/settings/scim/tokens", { name: "escalada" }, 403);
+await owner.api("PATCH", "/v1/settings/scim", { defaultRole: "member" });
+const bobScim = await bob.api("POST", "/v1/settings/scim/tokens", { name: "miembros" }, 201);
+await owner.api("DELETE", `/v1/settings/scim/tokens/${bobScim.token.id}`, undefined, 204);
+step("SCIM: sin los permisos de admin no se elige admin como rol por defecto ni se crea un token que lo otorga");
+
 await owner.api("PATCH", `/v1/members/${bobMe.user.id}`, { role: "custom", roleId: integrador.id });
 await bob.api("POST", "/v1/api-keys", { name: "admin?" }, 403);
 await bob.api("POST", "/v1/api-keys", { name: "member?", role: "member" }, 403);

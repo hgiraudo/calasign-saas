@@ -40,6 +40,18 @@ describe("PDF ambiguo al subirlo", () => {
     expect((err as InvalidPdfError).code).toBe("ambiguous_pdf");
   });
 
+  it("relleno después del %%EOF no apaga la detección", async () => {
+    const { bytes } = await shadowed(await base("Monto: 1.000"), "Monto: 1.000.000");
+    // pdf.js busca el startxref en todo el archivo (no solo en los últimos 2 KB) y sigue mostrando "Monto: 1.000".
+    const padded = new Uint8Array(Buffer.concat([Buffer.from(bytes), Buffer.from("% relleno\n".repeat(300), "latin1")]));
+    const err = await inspectPdf(padded).catch((e) => e);
+    expect(err).toBeInstanceOf(InvalidPdfError);
+    expect((err as InvalidPdfError).code).toBe("ambiguous_pdf");
+    // Un PDF normal con el mismo relleno se sigue aceptando.
+    const plain = await base("Contrato");
+    expect((await inspectPdf(new Uint8Array(Buffer.concat([Buffer.from(plain), Buffer.from("% relleno\n".repeat(300), "latin1")])))).pageCount).toBe(1);
+  });
+
   it("una entrada rota del xref (de un objeto que nadie usa) no apaga la detección", async () => {
     // Un objeto huérfano: el lector nunca lo pide, así que no reconstruye el índice por él y sigue usando el xref.
     const withOrphan = await PDFDocument.load(await base("Monto: 1.000"));

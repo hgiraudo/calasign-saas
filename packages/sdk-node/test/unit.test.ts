@@ -74,6 +74,22 @@ describe("paginación", () => {
   });
 });
 
+describe("subida de documentos", () => {
+  it("un Buffer chico de Node sube solo sus bytes, no el pool compartido", async () => {
+    const pdf = Buffer.from("%PDF-1.4 chico\n%%EOF\n"); // sale del pool de 8 KB de Node
+    const f = fakeFetch([json(201, { id: "d1" })]);
+    const cs = new CalaSign({ apiKey: "k", baseUrl: "http://api", fetch: f.fn });
+    await cs.envelopes.uploadDocument("e1", pdf, "c.pdf");
+    const sent = (f.calls[0].body as FormData).get("file") as Blob;
+    expect(Buffer.from(await sent.arrayBuffer()).equals(pdf)).toBe(true);
+    // Una vista sobre parte de otro buffer también sube solo su porción.
+    const big = new Uint8Array([1, 2, 3, 4, 5, 6]);
+    const f2 = fakeFetch([json(201, { id: "d2" })]);
+    await new CalaSign({ apiKey: "k", baseUrl: "http://api", fetch: f2.fn }).envelopes.uploadDocument("e1", big.subarray(2, 4));
+    expect([...new Uint8Array(await ((f2.calls[0].body as FormData).get("file") as Blob).arrayBuffer())]).toEqual([3, 4]);
+  });
+});
+
 describe("OAuth client credentials", () => {
   it("pide el token, lo reutiliza y lo renueva ante un 401", async () => {
     const f = fakeFetch([

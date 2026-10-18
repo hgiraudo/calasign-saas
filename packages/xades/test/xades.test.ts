@@ -157,6 +157,12 @@ describe("firma XML", () => {
     await expect(signXml(sinLugar, signer, { profile: "dian-fe" })).rejects.toThrow(/ExtensionContent/);
   });
 
+  it("una ds:Signature sin SignedInfo es inválida, no un error", () => {
+    const r = verifyXml('<a><ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#"><ds:SignatureValue>AA==</ds:SignatureValue></ds:Signature></a>');
+    expect(r.valid).toBe(false);
+    expect(r.errors.join(" ")).toMatch(/SignedInfo/);
+  });
+
   it("un Id repetido (signature wrapping) invalida la verificación", async () => {
     const signed = await signXml(UBL_INVOICE, signer, { profile: "dian-fe" });
     expect(verifyXml(signed).valid).toBe(true);

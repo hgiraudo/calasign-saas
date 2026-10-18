@@ -93,10 +93,15 @@ export class IncrementalUpdate {
 }
 
 export function findLastStartXref(pdf: Uint8Array): number {
-  const tail = Buffer.from(pdf.subarray(Math.max(0, pdf.length - 2048))).toString("latin1");
-  const m = [...tail.matchAll(/startxref\s+(\d+)/g)].pop();
-  if (!m) throw new Error("PDF sin startxref");
-  return Number(m[1]);
+  // En todo el archivo, de atrás hacia adelante, como pdf.js: no solo en los últimos 2 KB. Con relleno después del %%EOF
+  // (comentarios, basura) no se encontraba, y la detección de PDF ambiguo (inspectPdf) daba el archivo por bueno
+  // mientras el visor seguía usando el xref.
+  const buf = Buffer.from(pdf.buffer, pdf.byteOffset, pdf.byteLength);
+  for (let at = buf.lastIndexOf("startxref"); at >= 0; at = at > 0 ? buf.lastIndexOf("startxref", at - 1) : -1) {
+    const m = /^startxref\s+(\d+)/.exec(buf.subarray(at, at + 40).toString("latin1"));
+    if (m) return Number(m[1]);
+  }
+  throw new Error("PDF sin startxref");
 }
 
 /** Agrega `ref` al array `key` de `dict` (directo o indirecto) y marca lo que haya que reescribir. */

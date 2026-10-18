@@ -125,6 +125,15 @@ describe("motor de plantillas", () => {
     expect(text("{{#if empresa}}\nS.A.\n{{/if}}", { empresa: "x" })).toBe("S.A.");
   });
 
+  it("montos con miles repetidos (1.500.000 / 1,500,000) se formatean y se comparan como números", () => {
+    const text = (src: string, data: unknown) => blocksToText(renderTemplate(src, data, { locale: "es" }).blocks);
+    const src = "{{valor | number}}{{#if valor > 1000000}} (grande){{/if}}";
+    expect(text(src, { valor: "1.500.000" })).toBe("1.500.000 (grande)");
+    expect(text(src, { valor: "1,500,000" })).toBe("1.500.000 (grande)");
+    expect(text(src, { valor: "$ 2.000.000,50" })).toBe("2.000.000,5 (grande)");
+    expect(text(src, { valor: "1,5" })).toBe("1,5");
+  });
+
   it("una fecha inexistente se imprime tal cual, no corrida a otro día", () => {
     const text = (data: unknown) => blocksToText(renderTemplate("Vence: {{f | date:long}}", data, { locale: "es" }).blocks);
     expect(text({ f: "31/02/2027" })).toBe("Vence: 31/02/2027");

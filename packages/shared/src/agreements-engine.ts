@@ -525,6 +525,9 @@ function toNum(v: unknown): number | null {
   if (!/\d/.test(s)) return null;
   // 1.234,56 → 1234.56 ; 1,234.56 → 1234.56
   if (s.includes(",") && s.includes(".")) s = s.lastIndexOf(",") > s.lastIndexOf(".") ? s.replace(/\./g, "").replace(",", ".") : s.replace(/,/g, "");
+  // 1.500.000 / 1,500,000: el mismo separador repetido entre grupos de 3 cifras son miles (no hay otra lectura).
+  // Antes daba NaN: {{valor | money:COP}} salía sin formato y {{#if valor > 1000000}} era falso.
+  else if (/^-?\d{1,3}([.,])\d{3}(?:\1\d{3})+$/.test(s)) s = s.replace(/[.,]/g, "");
   else if (s.includes(",")) s = s.replace(",", ".");
   const n = Number(s);
   return Number.isFinite(n) ? n : null;

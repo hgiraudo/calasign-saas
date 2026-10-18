@@ -396,6 +396,9 @@ async function drawCertificate(
     const role = r.role === "cc" ? L.role_cc : r.role === "approver" ? L.role_approver : L.role_signer;
     text(`${r.name} — ${role}`, { bold: true, size: 9.5 });
     const top = y;
+    // Si los datos del destinatario siguen en la página siguiente, la firma va junto a su nombre (en la página donde
+    // empezó el bloque): `top` es una coordenada de esa página, y en la nueva caía encima del destinatario siguiente.
+    const topPage = page;
     const ix = M + 12;
     kv(L.email, r.email, ix);
     kv(L.phone, r.phone, ix);
@@ -429,9 +432,9 @@ async function drawCertificate(
       const boxH = 48;
       const scale = Math.min(boxW / img.width, boxH / img.height);
       const bx = A4.w - M - boxW;
-      const byTop = Math.min(top, y + 200);
-      page.drawRectangle({ x: bx - 4, y: byTop - boxH - 8, width: boxW + 8, height: boxH + 8, borderColor: LINE, borderWidth: 0.6 });
-      page.drawImage(img, { x: bx + (boxW - img.width * scale) / 2, y: byTop - boxH - 4 + (boxH - img.height * scale) / 2, width: img.width * scale, height: img.height * scale });
+      const byTop = topPage === page ? Math.min(top, y + 200) : top;
+      topPage.drawRectangle({ x: bx - 4, y: byTop - boxH - 8, width: boxW + 8, height: boxH + 8, borderColor: LINE, borderWidth: 0.6 });
+      topPage.drawImage(img, { x: bx + (boxW - img.width * scale) / 2, y: byTop - boxH - 4 + (boxH - img.height * scale) / 2, width: img.width * scale, height: img.height * scale });
     }
     y -= 8;
   }

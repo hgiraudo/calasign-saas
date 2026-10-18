@@ -361,7 +361,9 @@ export function verifyXml(xml: string): XmlVerifyResult {
   const doc = new DOMParser().parseFromString(xml, "text/xml");
   const sigEl = descendantsNS(doc, NS.ds, "Signature")[0];
   if (!sigEl) return { valid: false, signatureValid: false, references: [], signer: null, xades: null, errors: ["sin ds:Signature"] };
-  const signedInfo = firstChildNS(sigEl, NS.ds, "SignedInfo")!;
+  const signedInfo = firstChildNS(sigEl, NS.ds, "SignedInfo");
+  // Una ds:Signature sin SignedInfo es inválida, no un error interno (/v1/xml/verify respondía 500).
+  if (!signedInfo) return { valid: false, signatureValid: false, references: [], signer: null, xades: null, errors: ["ds:Signature sin ds:SignedInfo"] };
   const c14nAlg = firstChildNS(signedInfo, NS.ds, "CanonicalizationMethod")?.getAttribute("Algorithm") ?? ALG.c14n;
   const certB64 = descendantsNS(sigEl, NS.ds, "X509Certificate")[0]?.textContent?.replace(/\s+/g, "") ?? "";
   let cert: X509Certificate | null = null;

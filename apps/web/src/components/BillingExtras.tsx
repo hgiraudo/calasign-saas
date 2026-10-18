@@ -253,9 +253,11 @@ export function EnvelopePaymentSummary({ envelopeId, recipients, envelopeStatus 
   return (
     <section className="card pad stack-sm" aria-labelledby="payment-summary-title" data-testid="payment-summary">
       <h2 id="payment-summary-title" className="h3">
-        {b("pay.detailTitle")} <span className={`badge ${p.status === "paid" ? "badge-ok" : ""}`}>{b(`pay.status.${p.status}`)}</span>
+        {b("pay.detailTitle")}{" "}
+        <span className={`badge ${p.status === "paid" ? "badge-ok" : p.status === "refunded" ? "badge-voided" : ""}`}>{b(`pay.status.${p.status}`)}</span>
       </h2>
       <p className="small">{b("pay.detailLine", { amount: formatMoney(p.amount, p.currency, locale), description: p.description, payer })}</p>
+      {p.status === "refunded" && <p className="small muted">{b("pay.refundedLine")}</p>}
       {p.status !== "paid" && envelopeStatus === "sent" && allSigned && <p className="small muted">{b("pay.waitingEnvelope")}</p>}
     </section>
   );

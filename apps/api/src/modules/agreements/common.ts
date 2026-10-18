@@ -64,11 +64,16 @@ export function toNumberOrNull(v: unknown): number | null {
 export function toIsoDate(v: unknown): string | null {
   if (typeof v !== "string" || !v.trim()) return null;
   const s = v.trim();
+  let y: string, mo: string, d: string;
   let m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
-  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
-  m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s);
-  if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
-  return null;
+  if (m) [y, mo, d] = [m[1], m[2], m[3]];
+  else if ((m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s))) [y, mo, d] = [m[3], m[2].padStart(2, "0"), m[1].padStart(2, "0")];
+  else return null;
+  // Tiene que ser una fecha que exista ("31/02/2027" no): si no, Postgres la rechaza al guardarla como date y la
+  // ingesta del acuerdo o el paso del workflow fallan.
+  const dt = new Date(Date.UTC(Number(y), Number(mo) - 1, Number(d)));
+  if (Number(y) < 1 || dt.getUTCFullYear() !== Number(y) || dt.getUTCMonth() !== Number(mo) - 1 || dt.getUTCDate() !== Number(d)) return null;
+  return `${y}-${mo}-${d}`;
 }
 
 // ───────────────────────────── Repositorio: visibilidad y mapeo ─────────────────────────────

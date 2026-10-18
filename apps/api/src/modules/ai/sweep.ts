@@ -87,7 +87,9 @@ export async function runAiSweep(d: Deps, now = new Date()) {
   const today = now.toISOString().slice(0, 10);
   const due = await d.db.query<any>(
     `SELECT e.id, e.tenant_id, e.subject, e.locale, e.ai_metadata, e.created_by, u.name AS sender_name, u.email AS sender_email, u.locale AS sender_locale
-     FROM envelopes e LEFT JOIN users u ON u.id = e.created_by
+     FROM envelopes e
+     -- Solo si el remitente sigue en la organización: a alguien que se fue no se le mandan datos de sus contratos.
+     LEFT JOIN users u ON u.id = e.created_by AND EXISTS (SELECT 1 FROM memberships m WHERE m.user_id = u.id AND m.tenant_id = e.tenant_id)
      WHERE e.ai_renewal_alert_at IS NOT NULL AND e.ai_renewal_alert_at <= $1::date AND e.ai_renewal_alert_sent_at IS NULL
      LIMIT 50`,
     [today],

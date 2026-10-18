@@ -236,6 +236,8 @@ step("ingesta automática: título/valor/vencimiento desde la plantilla; búsque
 await api("POST", "/v1/agreement-fields", { key: "region", label: "Región", type: "select", options: ["Caribe", "Andina"] });
 await api("POST", "/v1/agreement-fields", { key: "region", label: "x", type: "text" }, { expect: 409 });
 await api("PATCH", `/v1/agreements/${ag.id}`, { metadata: { region: "Patagonia" } }, { expect: 400 });
+// Una fecha con formato válido que no existe es 400 (antes: 500 al guardarla como date).
+await api("PATCH", `/v1/agreements/${ag.id}`, { expiryDate: "2027-02-31" }, { expect: 400 });
 const upd = await api("PATCH", `/v1/agreements/${ag.id}`, { metadata: { region: "Andina" }, tags: ["servicios", "clave"], noticeDays: 15 });
 assert(upd.metadata.region === "Andina" && upd.tags.length === 2 && upd.noticeDays === 15, "metadatos propios validados");
 
@@ -293,6 +295,7 @@ const wfInput = {
       { key: "nombre", label: "Nombre", type: "text", required: true },
       { key: "email", label: "Correo", type: "email", required: true },
       { key: "plazo", label: "Plazo (meses)", type: "number", required: true },
+      { key: "inicio", label: "Inicio", type: "date", required: false },
     ] } },
     { id: ids[1], name: "Aprobación comercial", type: "approval", config: { approverUserId: me.user.id, message: "Revisá el alta" } },
     { id: ids[2], name: "Generar contrato", type: "generate_document", config: { documentTemplateId: altaTpl.id, output: "contrato" } },
@@ -314,8 +317,10 @@ assert(pub.workflowName === wfInput.name, "inicio público");
 await api("POST", `/v1/public/workflows/${slug}/start`, { website: "spam" }, { anon: true, expect: 400 });
 const started = await api("POST", `/v1/public/workflows/${slug}/start`, {}, { anon: true });
 let pv = await api("GET", `/v1/public/workflow-runs/${started.token}`, null, { anon: true });
-assert(pv.status === "waiting" && pv.step?.fields.length === 3, "el run espera los datos");
+assert(pv.status === "waiting" && pv.step?.fields.length === 4, "el run espera los datos");
 await api("POST", `/v1/public/workflow-runs/${started.token}/steps/0`, { values: { nombre: "x" } }, { anon: true, expect: 400 });
+// 31/02 no existe: se rechaza en el formulario (antes pasaba y el repositorio fallaba al guardarla como date).
+await api("POST", `/v1/public/workflow-runs/${started.token}/steps/0`, { values: { nombre: "x", email: "x@example.com", plazo: "1", inicio: "31/02/2027" } }, { anon: true, expect: 400 });
 const wfClient = `María Gonçalves ${stamp}`;
 const wfEmail = `maria+${stamp}@example.com`;
 pv = await api("POST", `/v1/public/workflow-runs/${started.token}/steps/0`, { values: { nombre: wfClient, email: wfEmail.toUpperCase(), plazo: "18" } }, { anon: true });

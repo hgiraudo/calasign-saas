@@ -170,8 +170,6 @@ export async function enforceRoutePolicy(db: Db, req: FastifyRequest, a: AuthCon
   await enforcePlanForRequest(db, req, a);
   if (/^\/v1\/billing(\/|$)/.test(url)) return requirePerm(a, "billing:manage");
 
-  // Video: la conexión del anfitrión a la sala (WebSocket por GET) exige poder gestionar el sobre.
-  if (url === "/v1/envelopes/:id/video-sessions/:sid/ws") return assertEnvelopeAccess(db, a, params.id, "manage");
 
   // Sobres
   if (url.startsWith("/v1/envelopes/:id")) {

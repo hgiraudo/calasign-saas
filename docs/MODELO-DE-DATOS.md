@@ -75,9 +75,10 @@ El diagrama de arriba es el núcleo (0001). Cada bloque funcional agrega su prop
 | `0011_ai` | Opt-in y presupuesto de IA, metadatos y revisión, uso de tokens |
 | `0012_agreements` | Repositorio de acuerdos, plantillas de documentos, cláusulas, workflows, negociaciones |
 | `0013_agents_billing` | Links de descarga para agentes, pagos en la firma, webhooks de pago, planes y suscripciones |
-| `0014_video` | Salas de video, participantes, grabaciones y sus fragmentos |
+| `0014_video` | Salas de video (función descartada; las tablas se eliminan en `0017`) |
 | `0015_crm` | Conexiones CRM/ERP, mapeos, vínculos y registro de ejecuciones |
 | `0016_data` | BYOK, directorio de celdas, versiones de PDF firmado (renovación de archivo), dominios SSO verificados |
+| `0017_drop_video` | Elimina las tablas de video: la firma por videollamada se descartó del producto |
 
 Reglas: una migración por bloque, solo aditiva salvo cuando se recrea un `CHECK` para sumar un valor; nunca se edita una
 migración ya aplicada en un entorno.

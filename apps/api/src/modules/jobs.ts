@@ -23,7 +23,6 @@ import { tenantBaseUrl } from "./custom-domains";
 import { dataSweep } from "./data";
 import { identityForCertificate } from "./identity/kyc";
 import { paymentsForCertificate } from "./billing/payments";
-import { videoForCertificate } from "./video";
 import { runAiSweep } from "./ai";
 import { agreementsSweep, handleAgreementsJob } from "./agreements";
 
@@ -268,7 +267,6 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
       verifyUrl: `${await tenantBaseUrl(d.db, e.tenant_id)}/verify`,
       attachments: attachments.map((x) => ({ name: x.name, recipientName: x.recipientName, sha256: x.sha256, appended: true })),
       payments: await paymentsForCertificate(d.db, e.id),
-      videoSessions: await videoForCertificate(d.db, e.id),
       branding: { primaryColor: brand.primaryColor, logo: brandLogo },
       ...evPlan.certificate,
     },

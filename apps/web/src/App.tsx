@@ -9,8 +9,6 @@ import { EnvelopeEditPage } from "./pages/EnvelopeEdit";
 import { EnvelopeDetailPage } from "./pages/EnvelopeDetail";
 import { ApiKeysPage } from "./pages/ApiKeys";
 import { SignerPage } from "./pages/Signer";
-import { SignerVideoDock } from "./components/Video";
-import { VideoRoomPage } from "./pages/VideoRoom";
 import { DevMailboxPage } from "./pages/DevMailbox";
 import { IntegrationsPage } from "./pages/Integrations";
 import { DevelopersPage } from "./pages/Developers";
@@ -48,7 +46,7 @@ export function App() {
       <Route path="/" element={<Navigate to="/app" replace />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/signup" element={<SignupPage />} />
-      <Route path="/s/:token" element={<><SignerPage /><SignerVideoDock /></>} />
+      <Route path="/s/:token" element={<SignerPage />} />
       <Route path="/developers" element={<DevelopersPage />} />
       <Route path="/verify" element={<VerifyPage />} />
       <Route path="/invite/:token" element={<InviteAcceptPage />} />
@@ -76,7 +74,6 @@ export function App() {
         <Route path="/app" element={<EnvelopeListPage />} />
         <Route path="/app/envelopes/:id" element={<EnvelopeDetailPage />} />
         <Route path="/app/envelopes/:id/edit" element={<EnvelopeEditPage />} />
-        <Route path="/app/envelopes/:id/video/:sid" element={<VideoRoomPage />} />
         <Route path="/app/settings/api-keys" element={<ApiKeysPage />} />
         <Route path="/app/dev-mailbox" element={<DevMailboxPage />} />
         <Route path="/app/settings/integrations" element={<IntegrationsPage />} />

@@ -102,14 +102,6 @@ export interface CertificateData {
   companySeal?: { name: string; commonName: string | null } | null;
   /** Cobros confirmados dentro del flujo de firma (comprobante). */
   payments?: { description: string; amount: string; payerName: string; provider: string; reference: string; paidAt: string | null }[];
-  /** Sesiones de firma por videollamada: participantes, inicio, fin y hash de cada grabación. */
-  videoSessions?: {
-    host: string;
-    startedAt: string | null;
-    endedAt: string | null;
-    participants: { name: string; role: "host" | "recipient"; joinedAt: string | null; consentedAt: string | null; identityConfirmedAt: string | null }[];
-    recordings: { sha256: string; bytes: number; startedAt: string; finishedAt: string | null }[];
-  }[];
 }
 
 /** Adjunto subido por un firmante: PDF o imagen, se agrega al final de los documentos. */
@@ -380,23 +372,6 @@ async function drawCertificate(
       kv(L.paymentProvider, p.provider, M + 12, 108);
       kv(L.paymentReference, p.reference, M + 12, 108);
       kv(L.paidAt, fmt(p.paidAt), M + 12, 108);
-    });
-  }
-
-  if (c.videoSessions && c.videoSessions.length) {
-    section(L.videoSessions);
-    c.videoSessions.forEach((v, i) => {
-      text(`${i + 1}. ${L.videoHost}: ${v.host}`, { bold: true });
-      kv(L.videoStart, fmt(v.startedAt), M + 12, 108);
-      kv(L.videoEnd, fmt(v.endedAt), M + 12, 108);
-      const people = v.participants
-        .map((p) => {
-          const extra = [p.consentedAt ? L.videoConsent : null, p.identityConfirmedAt ? L.videoIdentity : null].filter(Boolean).join(", ");
-          return `${p.name}${p.role === "host" ? ` (${L.videoHost})` : ""}${extra ? ` — ${extra}` : ""}`;
-        })
-        .join("; ");
-      kv(L.videoParticipants, people || "—", M + 12, 108);
-      for (const r of v.recordings) kv(L.videoRecording, `${r.sha256} (${r.bytes} B, ${fmt(r.startedAt)})`, M + 12, 108);
     });
   }
 

@@ -7,7 +7,6 @@ import { SYSTEM, appendEvent } from "../infra/evidence";
 import type { BlobStore } from "../infra/storage";
 import { AppError } from "../lib/errors";
 import { authenticate, type Services } from "./context";
-import { purgeVideoRecordings } from "./video";
 
 interface Deps {
   db: Db;
@@ -64,7 +63,6 @@ export async function purgeExpiredEnvelopes(d: Deps, opts: { tenantId?: string; 
         d.log.error({ envelopeId: e.id, fileId: f.id, err: String(err) }, "retención: no se pudo borrar el archivo");
       }
     }
-    failed += await purgeVideoRecordings(d, e.id); // grabaciones de la sala de video
     await d.db.tx(async (t) => {
       const cur = await t.one<any>(`SELECT status, purged_at FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
       if (cur?.status !== "completed" || cur.purged_at) return;

@@ -63,7 +63,7 @@
 - Rechazar con motivo, delegar/reasignar, descargar copia, comentarios.
 - **Consentimiento de registros electrónicos** (requisito ESIGN/UETA en EE. UU.).
 - Autenticación: link por email, código de acceso, OTP por SMS/email, KBA, verificación de identidad (foto de DNI + selfie con prueba de vida), SSO, certificado.
-- Firma en persona (host con tablet), firma en videollamada (tipo Virtual Room).
+- Firma en persona (host con tablet). *(La firma por videollamada tipo Virtual Room se descartó del producto el 2026-10-18.)*
 
 ### 3.3 Administración y empresa
 
@@ -153,7 +153,7 @@
 | 3 — API y firma embebida | ✅ API v1 + OpenAPI + página /developers, firma embebida (iframe + postMessage), webhooks HMAC con reintentos, anclas de texto, idempotencia. ✅ OAuth 2.0 (client credentials y authorization code + PKCE), SDKs Node y Python |
 | 4 — Escala y equipos | ✅ Miembros e invitaciones, roles y permisos (RBAC), grupos, auditoría de cuenta, retención, 2FA; envío masivo (CSV/API), formularios web públicos, campos condicionales y calculados; firma en persona, corrección en vuelo, reportes, PWA, reenvío de copias, accesibilidad. ✅ Slack/Teams, guía Zapier/Make, exportación a Google Drive/Dropbox/OneDrive/S3, dominio propio |
 | 5 — Evidencia fuerte y cumplimiento | ✅ Verificación pública y validador de firmas, PAdES B-LT/B-LTA, firma XML para DGII/DIAN/SUNAT (Perú), custodia de certificados por organización, sello de empresa, nivel de firma, conectores CSC, verificación de identidad (mock/Truora/Veriff), SSO OIDC/SAML, SCIM. ✅ BYOK (clave KMS del cliente), residencia de datos por celdas (enrutamiento listo), renovación automática de sellos de archivo B-LTA, dominios SSO verificados por DNS. ⏳ Conectores reales por país (ICP-Brasil, ONAC, INDOTEL, Honduras, INDECOPI/RENIEC), celda São Paulo desplegada (requiere cambiar la SCP de regiones), certificaciones SOC 2/ISO 27001 |
-| 6 — Plataforma e IA | ✅ IA (detección de campos, resumen y preguntas del firmante, metadatos y alertas de renovación, revisión contra playbook), repositorio de acuerdos con búsqueda, generación de documentos, workflows sin código, negociación con versiones, servidor MCP para agentes, cobro dentro de la firma. ✅ Firma por videollamada (WebRTC, co-navegación, grabación con consentimiento), CRM/ERP: HubSpot, Salesforce, Siigo, Alegra. ⏳ TOTVS y RD Station, servidor TURN de producción |
+| 6 — Plataforma e IA | ✅ IA (detección de campos, resumen y preguntas del firmante, metadatos y alertas de renovación, revisión contra playbook), repositorio de acuerdos con búsqueda, generación de documentos, workflows sin código, negociación con versiones, servidor MCP para agentes, cobro dentro de la firma. ✅ CRM/ERP: HubSpot, Salesforce, Siigo, Alegra. ⏳ TOTVS y RD Station. Firma por videollamada: descartada |
 
 ## 4. Roadmap de features (de menor a mayor)
 
@@ -256,7 +256,7 @@ Cada fase entrega algo usable por sí solo. Las estimaciones suponen un equipo c
 - **Servidor MCP** y herramientas para agentes de IA (crear sobres, consultar estado, extraer datos) con permisos y aprobación humana.
 - Integraciones enterprise: Salesforce, HubSpot, Microsoft 365/Teams, SAP; regionales: TOTVS y RD Station (Brasil), Siigo y Alegra (Colombia), core bancarios.
 - Verticales con plantillas listas: crédito y pagarés, onboarding bancario, contratos laborales, inmobiliario, seguros.
-- Firma en videollamada (tipo Virtual Room): co-browsing, video, grabación como evidencia.
+- ~~Firma en videollamada (tipo Virtual Room)~~ — descartada el 2026-10-18.
 - Negociación/redlining colaborativo antes de firmar.
 
 ---

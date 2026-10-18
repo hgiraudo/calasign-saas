@@ -38,7 +38,6 @@ import { mcpRoutes } from "./modules/mcp";
 import { aiRoutes } from "./modules/ai";
 import { agreementRoutes } from "./modules/agreements";
 import { crmRoutes } from "./modules/crm";
-import { videoRoutes } from "./modules/video";
 
 import { dataRoutes } from "./modules/data";
 
@@ -139,7 +138,6 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
   await aiRoutes(app, services);
   await agreementRoutes(app, services);
   await crmRoutes(app, services);
-  await videoRoutes(app, services);
   await dataRoutes(app, services);
 
   if (config.devMailbox) {

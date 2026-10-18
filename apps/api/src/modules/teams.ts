@@ -169,6 +169,34 @@ function assertCanManage(a: AuthContext, current: readonly Permission[], what: s
   if (missing.length) throw new AppError(403, "forbidden", `No podés ${what}: tiene permisos que vos no tenés (${missing.join(", ")})`, { missing });
 }
 
+/**
+ * Revocar una API key o cambiarle el rol: como con los miembros, solo si quien lo hace tiene todos sus permisos
+ * actuales (salvo propietarios, y salvo la propia key). Si no, un rol con api_keys:manage revocaba o bajaba a "member"
+ * la key de administración de una integración aunque tuviera menos permisos que ella.
+ */
+export async function assertCanManageApiKey(db: Db, a: AuthContext, keyId: string) {
+  if (a.apiKeyId === keyId) return;
+  const k = await db.one<any>(`SELECT role, role_id FROM api_keys WHERE id = $1 AND tenant_id = $2 AND oauth_client_id IS NULL`, [keyId, a.tenantId]);
+  if (!k) return; // la ruta responde 404
+  assertCanManage(a, await permsOf(db, a.tenantId, k.role, k.role_id), "administrar esta API key");
+}
+
+/**
+ * Sumar personas a un grupo les da acceso a lo que se compartió con él (sobres y plantillas restringidas): como con
+ * los roles, no se otorga lo que uno no tiene. Lo hace un propietario, un miembro del grupo (ya ve todo lo compartido)
+ * o quien ve todos los sobres y administra las plantillas. Si no, un rol con members:manage se sumaba a sí mismo a un
+ * grupo ajeno y veía los sobres compartidos con él.
+ */
+async function assertCanAddToGroup(db: Db, a: AuthContext, groupId: string, userIds: string[]) {
+  if (a.access?.role === "owner" || (hasPerm(a, "envelopes:view_all") && hasPerm(a, "templates:manage"))) return;
+  const cur = new Set((await db.query<any>(`SELECT user_id FROM group_members WHERE group_id = $1`, [groupId])).map((r) => r.user_id as string));
+  if (!userIds.some((u) => !cur.has(u))) return;
+  if (a.userId && cur.has(a.userId)) return;
+  throw new AppError(403, "forbidden", "Sumar personas a este grupo les da acceso a lo que se compartió con él: lo hace un miembro del grupo o quien ve todos los sobres y plantillas", {
+    permission: "envelopes:view_all",
+  });
+}
+
 async function permsOf(db: Db, tenantId: string, role: string, roleId: string | null): Promise<readonly Permission[]> {
   if (role !== "custom") return BUILTIN_ROLE_PERMISSIONS[role as keyof typeof BUILTIN_ROLE_PERMISSIONS] ?? [];
   const r = await db.one<any>(`SELECT permissions FROM roles WHERE id = $1 AND tenant_id = $2`, [roleId, tenantId]);
@@ -647,6 +675,7 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     const a = A(req);
     const input = RoleAssignment.parse(req.body);
     if (input.role === "owner") throw badRequest("invalid_role", "Una API key no puede ser propietaria");
+    await assertCanManageApiKey(s.db, a, req.params.id!);
     const target = await resolveRole(s.db, a.tenantId, input);
     assertCanGrant(a, target, await permsOf(s.db, a.tenantId, target.role, target.roleId));
     const r = await s.db.query(`UPDATE api_keys SET role = $3, role_id = $4 WHERE id = $1 AND tenant_id = $2 AND oauth_client_id IS NULL RETURNING id`, [
@@ -730,7 +759,10 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
           `UPDATE groups SET name = COALESCE($2, name), description = CASE WHEN $3::boolean THEN $4 ELSE description END WHERE id = $1`,
           [cur.id, input.name ?? null, input.description !== undefined, input.description ?? null],
         );
-        if (input.memberIds) await setGroupMembers(t, a.tenantId, cur.id, input.memberIds);
+        if (input.memberIds) {
+          await assertCanAddToGroup(t, a, cur.id, input.memberIds);
+          await setGroupMembers(t, a.tenantId, cur.id, input.memberIds);
+        }
       });
     } catch (e) {
       if (/groups_tenant_name_uq/.test(String(e))) throw conflict("group_exists", "Ya existe un grupo con ese nombre");

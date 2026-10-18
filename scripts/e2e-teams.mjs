@@ -211,6 +211,19 @@ step("SCIM: sin los permisos de admin no se elige admin como rol por defecto ni 
   const carolNow = (await owner.api("GET", "/v1/members")).items.find((m) => m.email === carolEmail);
   if (carolNow?.roleId !== revisor.id) throw new Error("Carol tiene que seguir con su rol");
   step("members:manage no alcanza para bajar de rol, quitar o recortar el rol de quien tiene permisos que uno no tiene (403)");
+
+  // Sumar a alguien a un grupo le da acceso a lo compartido con él: con members:manage, Bob no se suma a un grupo ajeno
+  // (ni lo hace con otros); sí puede sumar gente a un grupo del que ya es parte (ya ve lo compartido con él).
+  const directorio = await owner.api("POST", "/v1/groups", { name: `Directorio ${stamp}`, memberIds: [carolId] });
+  const dirEnv = await draftEnvelope(owner, `Sobre del directorio ${stamp}`);
+  await owner.api("PUT", `/v1/envelopes/${dirEnv.id}/shares`, { groupIds: [directorio.id] });
+  await bob.api("PATCH", `/v1/groups/${directorio.id}`, { memberIds: [carolId, bobMe.user.id] }, 403);
+  await bob.api("GET", `/v1/envelopes/${dirEnv.id}`, undefined, 404);
+  const dirNow = await owner.api("GET", `/v1/groups/${directorio.id}`);
+  if (dirNow.members.some((m) => m.userId === bobMe.user.id)) throw new Error("Bob no tiene que haber quedado en el grupo ajeno");
+  await bob.api("PATCH", `/v1/groups/${group.id}`, { memberIds: [bobMe.user.id, carolId] });
+  await bob.api("PATCH", `/v1/groups/${group.id}`, { memberIds: [bobMe.user.id] });
+  step("grupos: members:manage no alcanza para sumarse (o sumar a otros) a un grupo ajeno y ver lo compartido con él (403)");
 }
 
 await owner.api("PATCH", `/v1/members/${bobMe.user.id}`, { role: "custom", roleId: integrador.id });
@@ -223,6 +236,14 @@ const keyClient = new Client("key");
 keyClient.bearer = bobKey.secret;
 await keyClient.api("GET", "/v1/envelopes");
 await keyClient.api("POST", "/v1/envelopes", { subject: "no" }, 403);
+// Con api_keys:manage pero sin los permisos de una key de administración, no se la revoca ni se le baja el rol.
+const adminKey = await owner.api("POST", "/v1/api-keys", { name: `integración admin ${stamp}` });
+// Bajarla a "Integrador" (un rol que Bob sí puede otorgar) también exige tener los permisos que la key tiene hoy.
+await bob.api("PATCH", `/v1/api-keys/${adminKey.apiKey.id}/role`, { role: "custom", roleId: integrador.id }, 403);
+await bob.api("DELETE", `/v1/api-keys/${adminKey.apiKey.id}`, undefined, 403);
+if ((await owner.api("GET", "/v1/api-keys/roles")).items.find((k) => k.id === adminKey.apiKey.id)?.role !== "admin") throw new Error("la key admin tiene que seguir admin");
+if ((await owner.api("GET", "/v1/api-keys")).items.find((k) => k.id === adminKey.apiKey.id)?.revokedAt) throw new Error("la key admin no tiene que quedar revocada");
+await owner.api("DELETE", `/v1/api-keys/${adminKey.apiKey.id}`, undefined, 204);
 await owner.api("PATCH", `/v1/members/${ownerMe.user.id}`, { role: "member" }, 409);
 await owner.api("PATCH", `/v1/members/${bobMe.user.id}`, { role: "member" });
 step("API keys: no se puede crear una key con más permisos que los propios (403); la key respeta su rol; último propietario protegido (409)");

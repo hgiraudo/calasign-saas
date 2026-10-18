@@ -88,6 +88,15 @@ except CalaSignError as e:
     assert e.status == 404
 ok("sobre: crear (idempotente), subir, destinatarios, campos, enviar, iterar, eventos y 404 tipado")
 
+# Fecha con zona horaria (lo que da datetime.isoformat() con tzinfo) y nombre de archivo con comillas.
+import datetime as _dt  # noqa: E402
+
+exp = (_dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(days=7)).isoformat()
+c2 = cs.envelopes.create({"subject": f"Python tz {stamp}", "expiresAt": exp})
+d2 = cs.envelopes.upload_document(c2["envelope"]["id"], PDF, 'Contrato "ACME".pdf')
+assert d2["name"].startswith("Contrato %22ACME%22") or d2["name"].startswith('Contrato "ACME"'), d2["name"]
+ok("expiresAt con zona horaria y nombre de archivo con comillas")
+
 received = []
 
 

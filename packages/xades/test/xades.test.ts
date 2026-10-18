@@ -140,6 +140,12 @@ describe("firma XML", () => {
     await expect(signXml(sinExtension, signer, { profile: "sunat-cpe" })).rejects.toThrow(/ExtensionContent/);
   });
 
+  it("dian-fe: sin un ExtensionContent vacío no firma en la raíz (la DIAN lo rechazaría)", async () => {
+    const sinLugar = UBL_INVOICE.replace("<ext:UBLExtension><ext:ExtensionContent/></ext:UBLExtension>", "");
+    expect(sinLugar).not.toBe(UBL_INVOICE);
+    await expect(signXml(sinLugar, signer, { profile: "dian-fe" })).rejects.toThrow(/ExtensionContent/);
+  });
+
   it("un Id repetido (signature wrapping) invalida la verificación", async () => {
     const signed = await signXml(UBL_INVOICE, signer, { profile: "dian-fe" });
     expect(verifyXml(signed).valid).toBe(true);

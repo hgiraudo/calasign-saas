@@ -314,7 +314,8 @@ export async function signXml(xml: string, signer: XmlSigner, options: XmlSignOp
   if (p.placement !== "root") {
     const contents = descendantsNS(doc, NS.ublExt, "ExtensionContent").filter((e) => !Array.from({ length: e.childNodes.length }, (_, i) => e.childNodes[i]).some((n) => n.nodeType === 1));
     if (contents.length) parent = p.placement === "ubl-first-empty" ? contents[0] : contents[contents.length - 1];
-    else if (options.profile === "sunat-cpe") throw new Error("El XML de SUNAT necesita un ext:UBLExtensions/ext:UBLExtension/ext:ExtensionContent vacío para la firma");
+    // Sin lugar para la firma no se la pone en la raíz: el XML saldría "firmado" pero la DIAN / SUNAT lo rechazan.
+    else throw new Error(`El XML de ${options.profile === "sunat-cpe" ? "SUNAT" : "la DIAN"} necesita un ext:UBLExtensions/ext:UBLExtension/ext:ExtensionContent vacío para la firma`);
   }
   const fragment = new DOMParser().parseFromString(sigXml, "text/xml").documentElement!;
   const sigEl = doc.importNode(fragment, true) as Element;

@@ -355,7 +355,10 @@ def _encode_multipart(fields: Dict[str, Any]) -> "tuple[bytes, str]":
         out += f"--{boundary}\r\n".encode()
         if isinstance(value, tuple):
             filename, content, ctype = value
-            out += f'Content-Disposition: form-data; name="{name}"; filename="{filename}"\r\nContent-Type: {ctype}\r\n\r\n'.encode()
+            # Como los navegadores (y FormData de Node): comillas y saltos de línea escapados, para que un nombre como
+            # 'Contrato "ACME".pdf' no corte el encabezado ni agregue otros.
+            safe_name = str(filename).replace("\r", "%0D").replace("\n", "%0A").replace('"', "%22")
+            out += f'Content-Disposition: form-data; name="{name}"; filename="{safe_name}"\r\nContent-Type: {ctype}\r\n\r\n'.encode()
             out += content
         else:
             out += f'Content-Disposition: form-data; name="{name}"\r\n\r\n{value}'.encode()

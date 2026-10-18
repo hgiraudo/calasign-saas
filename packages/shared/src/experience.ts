@@ -59,7 +59,7 @@ export type RecipientContactPatch = z.infer<typeof RecipientContactPatch>;
 
 const CorrectEnvelopeSchema = z.object({
   message: z.string().max(5000).optional().nullable(),
-  expiresAt: z.string().datetime().optional(),
+  expiresAt: z.string().datetime({ offset: true }).optional(),
   /** Cambios de datos de contacto: el link anterior se revoca y se envía uno nuevo. */
   updateRecipients: z.array(RecipientContactPatch).max(50).optional(),
   /** Destinatarios nuevos (mismo formato que PUT /recipients). Solo en grupos de ruteo que no empezaron. */

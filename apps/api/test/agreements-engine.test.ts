@@ -114,4 +114,14 @@ describe("motor de plantillas", () => {
     expect(d.filter((p) => p.op !== "ins").map((p) => p.text).join("")).toBe("El plazo es de 12 meses y se renueva");
     expect(d.filter((p) => p.op !== "del").map((p) => p.text).join("")).toBe("El plazo es de 24 meses y no se renueva");
   });
+
+  it("un valor sin dígitos no se imprime como 0 y un if en línea puede ocupar la línea entera", () => {
+    const text = (src: string, data: unknown) => blocksToText(renderTemplate(src, data).blocks);
+    expect(text("Precio: {{precio | money:USD}} / {{precio | number}}{{#if precio == 0}} GRATIS{{/if}}", { precio: "a convenir" })).toBe(
+      "Precio: a convenir / a convenir",
+    );
+    expect(text("{{#if empresa}}S.A.{{/if}}", { empresa: "x" })).toBe("S.A.");
+    expect(text('{{#if tipo == "a"}}Hola{{else}}Chau{{/if}}', { tipo: "b" })).toBe("Chau");
+    expect(text("{{#if empresa}}\nS.A.\n{{/if}}", { empresa: "x" })).toBe("S.A.");
+  });
 });

@@ -289,13 +289,40 @@ export async function renderDocumentPdf(blocks: DocBlock[], opts: RenderDocOptio
       ensure(header.h + 20);
       drawRow(header, true);
     }
+    const linesH = (ls: Line[]) => ls.reduce((a, l) => a + l.height, 0);
     for (const row of block.rows) {
-      const r = layoutRow(row, false);
-      if (y - r.h < M.bottom) {
+      // Una fila más alta que lo que queda de página se parte entre páginas (repitiendo el encabezado):
+      // si no, el resto del texto de la celda se dibujaba debajo del borde de la hoja y no se veía.
+      let rest = layoutRow(row, false).cells;
+      for (;;) {
+        const h = Math.max(...rest.map(linesH)) + pad * 2;
+        if (y - h >= M.bottom) {
+          drawRow({ cells: rest, h }, false);
+          break;
+        }
+        const avail = y - M.bottom - pad * 2;
+        const firstH = Math.max(...rest.map((ls) => ls[0]?.height ?? 0));
+        if (avail < firstH) {
+          // No entra ni la primera línea: a la página siguiente (si la página ya está vacía, se dibuja igual).
+          if (pageHasContent() && !(header && y === PAGE.h - M.top - header.h)) {
+            newPage();
+            if (header) drawRow(header, true);
+            continue;
+          }
+        }
+        const take = rest.map((ls) => {
+          let n = 0;
+          let acc = 0;
+          while (n < ls.length && acc + ls[n].height <= avail) acc += ls[n++].height;
+          return Math.max(n, Math.min(1, ls.length));
+        });
+        const part = rest.map((ls, c) => ls.slice(0, take[c]));
+        drawRow({ cells: part, h: Math.max(...part.map(linesH)) + pad * 2 }, false);
+        rest = rest.map((ls, c) => ls.slice(take[c]));
+        if (rest.every((ls) => ls.length === 0)) break;
         newPage();
         if (header) drawRow(header, true);
       }
-      drawRow(r, false);
     }
     y -= 10;
   }

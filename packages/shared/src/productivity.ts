@@ -112,7 +112,7 @@ export const EnvelopeFromTemplateInput = z.object({
   subject: z.string().trim().min(1).max(300).optional(),
   message: z.string().max(5000).optional().nullable(),
   locale: z.enum(LOCALES).optional(),
-  expiresAt: z.string().datetime().optional().nullable(),
+  expiresAt: z.string().datetime({ offset: true }).optional().nullable(),
   metadata: z.record(z.string(), z.unknown()).optional(),
   recipients: z.array(TemplateRecipientInput).min(1).max(50),
   /** Valores para campos de la plantilla, por id de campo o por etiqueta. */

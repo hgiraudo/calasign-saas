@@ -296,7 +296,12 @@ async function asViewerSees(pdf: Uint8Array, end: number, loaded: PDFDocument): 
   const ctx = loaded.context;
   const sections: XrefSection[] = [];
   const seen = new Set<number>();
-  for (let off: number | null = findLastStartXref(pdf); off !== null && off >= end; ) {
+  // Los objetos que las revisiones posteriores no listan, el lector los busca siguiendo /Prev. La cadena tiene que
+  // seguir en el xref de la revisión firmada: con un /Prev a un xref más viejo (o sin /Prev) el lector resolvería esos
+  // objetos con versiones anteriores a lo firmado (o no los encontraría), y pdf-lib seguiría viendo lo firmado.
+  const signedStartXref = findLastStartXref(pdf.subarray(0, end));
+  let off: number | null = findLastStartXref(pdf);
+  while (off !== null && off >= end) {
     if (seen.has(off) || off >= pdf.length) throw new Error("cadena de xref inválida");
     seen.add(off);
     const s = readXrefSection(pdf, off, ctx);
@@ -310,6 +315,7 @@ async function asViewerSees(pdf: Uint8Array, end: number, loaded: PDFDocument): 
     off = s.prev;
   }
   if (!sections.length) throw new Error("revisión posterior sin xref");
+  if (off !== signedStartXref) throw new Error("la revisión posterior no continúa el xref de la revisión firmada");
   // Un cambio de /Root reemplaza el documento entero: una revisión de evidencia no lo cambia.
   const root = sections[0].root;
   if (!(root instanceof PDFRef) || ctx.trailerInfo.Root?.toString() !== root.toString()) throw new Error("la revisión cambia /Root");

@@ -109,7 +109,7 @@ export const CreateEnvelopeInput = z.object({
   subject: z.string().trim().min(1).max(300),
   message: z.string().max(5000).optional().nullable(),
   locale: z.enum(LOCALES).optional(),
-  expiresAt: z.string().datetime().optional().nullable(),
+  expiresAt: z.string().datetime({ offset: true }).optional().nullable(),
   metadata: z.record(z.string(), z.unknown()).optional(),
   ...EnvelopeReminderSettings,
 });

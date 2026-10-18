@@ -270,6 +270,64 @@ describe("la revisión preparada solo agrega la firma (assertOnlySignatureAdded)
     await expect(assertOnlySignatureAdded(working, await prep(u.serialize()))).rejects.toThrow(/No se firma/);
   });
 
+  // Variantes que pdf-lib leería igual (ignora la tabla xref) pero un lector de PDF mostraría distinto.
+  const lastStartxref = (b: Buffer) => Number([...b.toString("latin1").matchAll(/startxref\s+(\d+)/g)].pop()![1]);
+  const rootOf = (b: Buffer) => [...b.toString("latin1").matchAll(/\/Root (\d+ \d+ R)/g)].pop()![1];
+  function appendRevision(prepared: Buffer, xrefBody: string) {
+    const off = prepared.length + 1;
+    return Buffer.concat([
+      prepared,
+      Buffer.from(`\nxref\n${xrefBody}trailer\n<< /Size 99 /Root ${rootOf(prepared)} /Prev ${lastStartxref(prepared)} >>\nstartxref\n${off}\n%%EOF\n`, "latin1"),
+    ]);
+  }
+
+  it("rechaza una revisión que libera un objeto del documento en la tabla xref", async () => {
+    const working = await base();
+    const prepared = Buffer.from(await prep(working));
+    const bad = appendRevision(prepared, "0 1\n0000000000 65535 f\r\n4 1\n0000000000 00001 f\r\n");
+    await expect(assertOnlySignatureAdded(working, bad)).rejects.toThrow(/libera objetos/);
+  });
+
+  it("rechaza una revisión que redirige un objeto a otros bytes del documento", async () => {
+    const working = await base();
+    const prepared = Buffer.from(await prep(working));
+    const bad = appendRevision(prepared, "4 1\n0000000009 00000 n\r\n");
+    await expect(assertOnlySignatureAdded(working, bad)).rejects.toThrow(/redirige objetos/);
+  });
+
+  it("rechaza una revisión que salta la última revisión del documento mostrado (/Prev)", async () => {
+    const original = await base();
+    const u = await pdfmod.IncrementalUpdate.open(original);
+    u.touch(u.doc.getPages()[0].ref);
+    const working = await u.serialize();
+    const firstXref = lastStartxref(Buffer.from(original));
+    const prepared = Buffer.from(await prep(working)).toString("latin1");
+    const tamperedTail = prepared.slice(working.length).replace(/\/Prev \d+/, `/Prev ${firstXref}`);
+    const bad = Buffer.from(prepared.slice(0, working.length) + tamperedTail, "latin1");
+    await expect(assertOnlySignatureAdded(working, bad)).rejects.toThrow(/no encadena/);
+  });
+
+  it("rechaza un widget con acciones o un diccionario de firma con /Reference", async () => {
+    const working = await base();
+    const prepared = Buffer.from(await prep(working)).toString("latin1");
+    const tail = prepared.slice(working.length);
+    const withAA = tail.replace("/F 132", "/F 132 /AA << /PO << /S /JavaScript /JS (x) >> >>");
+    expect(withAA).not.toBe(tail);
+    await expect(assertOnlySignatureAdded(working, Buffer.from(prepared.slice(0, working.length) + withAA, "latin1"))).rejects.toThrow(/No se firma/);
+    const withRef = tail.replace("/Filter /Adobe.PPKLite", "/Filter /Adobe.PPKLite /Reference [ << /TransformMethod /DocMDP >> ]");
+    expect(withRef).not.toBe(tail);
+    await expect(assertOnlySignatureAdded(working, Buffer.from(prepared.slice(0, working.length) + withRef, "latin1"))).rejects.toThrow(/No se firma/);
+  });
+
+  it("rechaza una revisión que cambia la raíz del documento", async () => {
+    const working = await base();
+    const prepared = Buffer.from(await prep(working)).toString("latin1");
+    const tail = prepared.slice(working.length);
+    const sigNum = /(\d+) 0 obj\s*<<\s*\/Type \/Sig/.exec(tail)![1];
+    const bad = prepared.slice(0, working.length) + tail.replace(/\/Root \d+ 0 R/, `/Root ${sigNum} 0 R`);
+    await expect(assertOnlySignatureAdded(working, Buffer.from(bad, "latin1"))).rejects.toThrow(/raíz|No se firma/);
+  });
+
   it("rechaza una revisión que agrega otra anotación visible", async () => {
     const working = await base();
     const u = await pdfmod.IncrementalUpdate.open(working);

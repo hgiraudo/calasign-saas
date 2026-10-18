@@ -6,6 +6,10 @@ import { CertsignError } from "./protocol";
 
 /** Claves que la revisión de firma puede tocar en objetos existentes. */
 const ALLOWED_KEYS = new Set(["Annots", "AcroForm", "Fields", "SigFlags"]);
+/** Claves de un diccionario de firma común (sin /Reference: DocMDP/FieldMDP cambiarían los permisos del documento). */
+const SIG_KEYS = new Set(["Type", "Filter", "SubFilter", "ByteRange", "Contents", "M", "Reason", "Name", "Location", "ContactInfo"]);
+/** Claves del widget invisible del campo de firma (sin acciones /A o /AA, sin apariencia). */
+const WIDGET_KEYS = new Set(["Type", "Subtype", "FT", "Rect", "V", "T", "F", "P"]);
 
 const fail = (m: string): never => {
   throw new CertsignError(0, "document_mismatch", `No se firma: ${m}`);
@@ -49,6 +53,15 @@ export async function assertOnlySignatureAdded(working: Uint8Array, prepared: Ui
   const after = new Map(B.context.enumerateIndirectObjects().map(([r, o]) => [r.toString(), o] as const));
 
   for (const key of before.keys()) if (!after.has(key)) fail("el documento preparado elimina partes del documento");
+  // La raíz del documento (y su cifrado) no pueden cambiar: otro catálogo mostraría otras páginas.
+  if (str(A.context.trailerInfo.Root) !== str(B.context.trailerInfo.Root)) fail("el documento preparado cambia la raíz del documento");
+  if (str(A.context.trailerInfo.Encrypt) !== str(B.context.trailerInfo.Encrypt)) fail("el documento preparado cambia el cifrado");
+  // Un objeto nuevo no puede reusar el número de uno existente (otra generación lo "taparía" para los lectores).
+  const beforeNums = new Set([...before.keys()].map((k) => k.split(" ")[0]));
+  for (const key of after.keys()) if (!before.has(key) && beforeNums.has(key.split(" ")[0])) fail("el documento preparado reemplaza objetos existentes");
+  // Lo que pdf-lib no ve (lee los objetos en orden e ignora la tabla xref): la revisión nueva solo puede listar
+  // objetos que escribe ella misma, sin liberar ni redirigir objetos del documento mostrado.
+  assertTailXref(working, prepared, str(A.context.trailerInfo.Root), str(A.context.trailerInfo.Encrypt));
 
   // Objetos nuevos: solo el diccionario de firma y su widget invisible.
   const newSigs = new Set<string>();
@@ -60,11 +73,13 @@ export async function assertOnlySignatureAdded(working: Uint8Array, prepared: Ui
     const type = str(d.get(PDFName.of("Type")));
     const subtype = str(d.get(PDFName.of("Subtype")));
     if (type === "/Sig" && d.has(PDFName.of("ByteRange"))) {
+      for (const k of d.keys()) if (!SIG_KEYS.has(k.decodeText())) fail(`la firma agregada trae /${k.decodeText()}`);
       newSigs.add(key);
     } else if (subtype === "/Widget" && str(d.get(PDFName.of("FT"))) === "/Sig") {
       const rect = d.lookupMaybe(PDFName.of("Rect"), PDFArray);
       const zero = rect?.asArray().every((n) => n instanceof PDFNumber && n.asNumber() === 0);
       if (!zero || d.has(PDFName.of("AP"))) fail("la firma agregada no es invisible");
+      for (const k of d.keys()) if (!WIDGET_KEYS.has(k.decodeText())) fail(`el campo de firma trae /${k.decodeText()}`);
       newWidgets.add(key);
     } else {
       fail("el documento preparado agrega objetos que no son la firma");
@@ -108,5 +123,65 @@ function checkDictChange(prev: PDFDict, next: PDFDict, newWidgets: Set<string>) 
     // AcroForm directo en el catálogo: solo puede cambiar Fields/SigFlags.
     if (!(b instanceof PDFDict) || (a !== undefined && !(a instanceof PDFDict))) fail("el documento preparado reemplaza /AcroForm");
     checkDictChange((a as PDFDict | undefined) ?? (b as PDFDict).context.obj({}), b as PDFDict, newWidgets);
+  }
+}
+
+/**
+ * Revisa las tablas xref que agrega la revisión nueva (solo xref clásica: un xref en stream sería un objeto nuevo
+ * que no es la firma y ya se rechaza arriba). Cada entrada tiene que ser "en uso" (salvo la entrada 0 estándar) y
+ * apuntar a un objeto escrito en la revisión nueva con ese mismo número: si apuntara a bytes del documento mostrado
+ * o liberara un objeto, un lector mostraría otro contenido aunque pdf-lib lea lo mismo.
+ */
+function assertTailXref(working: Uint8Array, prepared: Uint8Array, root: string, encrypt: string) {
+  const base = working.length;
+  const buf = Buffer.from(prepared);
+  const tail = buf.subarray(base).toString("latin1");
+  if (/\/Type\s*\/XRef\b/.test(tail)) fail("el documento preparado usa una tabla de referencias comprimida");
+  const sections = [...tail.matchAll(/(?:^|[\r\n])xref[ \t]*\r?\n/g)];
+  if (sections.length === 0) fail("el documento preparado no tiene tabla de referencias propia");
+  const starts = new Set<number>();
+  for (const sec of sections) {
+    const lead = sec[0].startsWith("x") ? 0 : 1;
+    starts.add(base + (sec.index ?? 0) + lead);
+    let pos = (sec.index ?? 0) + sec[0].length;
+    for (;;) {
+      const head = /^[ \t]*(\d+)[ \t]+(\d+)[ \t]*\r?\n/.exec(tail.slice(pos));
+      if (!head) break;
+      pos += head[0].length;
+      const start = Number(head[1]);
+      const count = Number(head[2]);
+      for (let i = 0; i < count; i++) {
+        const e = /^(\d{10}) (\d{5}) ([nf])[ \t]?\r?\n?/.exec(tail.slice(pos, pos + 22));
+        if (!e) fail("tabla de referencias inválida");
+        pos += e![0].length;
+        const num = start + i;
+        const offset = Number(e![1]);
+        const gen = Number(e![2]);
+        if (e![3] === "f") {
+          if (num !== 0) fail("el documento preparado libera objetos del documento");
+          continue;
+        }
+        if (offset < base) fail("el documento preparado redirige objetos a otras partes del documento");
+        const at = buf.subarray(offset, offset + 40).toString("latin1");
+        if (!new RegExp(`^${num}\\s+${gen}\\s+obj\\b`).test(at)) fail("la tabla de referencias no corresponde a los objetos agregados");
+      }
+    }
+    if (!/^\s*trailer\b/.test(tail.slice(pos))) fail("tabla de referencias inválida");
+  }
+  // pdf-lib "recupera" un /Root que no es un catálogo y lo reemplaza por otro: se mira el trailer tal cual está escrito.
+  const norm = (r: string) => r.replace(/\s+/g, " ");
+  if ((tail.match(/\/Root\b/g) ?? []).length !== [...tail.matchAll(/\/Root\s+\d+\s+\d+\s+R/g)].length) fail("el documento preparado cambia la raíz del documento");
+  for (const m of tail.matchAll(/\/Root\s+(\d+\s+\d+\s+R)/g)) if (norm(m[1]) !== root) fail("el documento preparado cambia la raíz del documento");
+  for (const m of tail.matchAll(/\/Encrypt\s+(\d+\s+\d+\s+R|<<)/g)) if (norm(m[1]) !== encrypt) fail("el documento preparado cambia el cifrado");
+  // La cadena de tablas tiene que ser: startxref → una tabla de la revisión nueva → (/Prev entre ellas) → la última
+  // tabla del documento mostrado. Saltear esa última haría que un lector muestre una revisión anterior del documento.
+  const last = [...tail.matchAll(/startxref\s+(\d+)/g)].pop();
+  if (!last || !starts.has(Number(last[1]))) fail("el documento preparado no usa su propia tabla de referencias");
+  const workingStartxref = [...Buffer.from(working).subarray(Math.max(0, base - 2048)).toString("latin1").matchAll(/startxref\s+(\d+)/g)].pop();
+  for (const m of tail.matchAll(/\/Prev\s+(\d+)/g)) {
+    const prev = Number(m[1]);
+    if (prev >= base ? !starts.has(prev) : !workingStartxref || prev !== Number(workingStartxref[1])) {
+      fail("el documento preparado no encadena con la última revisión del documento mostrado");
+    }
   }
 }

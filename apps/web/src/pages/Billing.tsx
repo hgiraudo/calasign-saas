@@ -6,7 +6,7 @@ import { formatDateTime, useI18n } from "../lib/i18n";
 import { formatMoney, useBillingText } from "../lib/i18n-billing";
 import { ErrorBox, Spinner } from "../components/ui";
 
-const PROVIDER_LABEL: Record<BillingProvider, string> = { stripe: "Stripe", mercadopago: "Mercado Pago", mock: "Simulado (pruebas)" };
+const PROVIDER_LABEL: Record<Exclude<BillingProvider, "mock">, string> = { stripe: "Stripe", mercadopago: "Mercado Pago" };
 
 function UsageBar({ used, max }: { used: number; max: number | null }) {
   if (max === null) return null;
@@ -100,7 +100,7 @@ export function BillingPage() {
             </h2>
             {data.subscription.provider && (
               <p className="small muted" style={{ margin: "4px 0 0" }}>
-                {b("billing.provider", { provider: PROVIDER_LABEL[data.subscription.provider] })}
+                {b("billing.provider", { provider: (data.subscription.provider === "mock" ? b("pay.provider.mock") : PROVIDER_LABEL[data.subscription.provider]) })}
                 {data.subscription.status ? ` · ${b("billing.status", { status: data.subscription.status })}` : ""}
                 {data.subscription.renewsAt ? ` · ${b("billing.renews", { date: formatDateTime(data.subscription.renewsAt, locale) })}` : ""}
               </p>
@@ -179,7 +179,7 @@ export function BillingPage() {
             <select value={provider} onChange={(e) => setProvider(e.target.value as BillingProvider)} data-testid="billing-provider">
               {data.providers.map((p) => (
                 <option key={p.id} value={p.id} disabled={!p.configured}>
-                  {PROVIDER_LABEL[p.id]}
+                  {p.id === "mock" ? b("pay.provider.mock") : PROVIDER_LABEL[p.id]}
                   {p.configured ? "" : ` (${b("billing.notConfigured")})`}
                 </option>
               ))}

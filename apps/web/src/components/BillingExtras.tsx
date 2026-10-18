@@ -19,7 +19,22 @@ interface PaymentResponse {
   providers: PaymentProviderInfo[];
 }
 
-const PROVIDER_LABEL: Record<PaymentProvider, string> = { stripe: "Stripe", mercadopago: "Mercado Pago", mock: "Simulado (pruebas)" };
+const PROVIDER_LABEL: Record<Exclude<PaymentProvider, "mock">, string> = { stripe: "Stripe", mercadopago: "Mercado Pago" };
+
+/**
+ * Monto escrito por el remitente, con el mismo criterio que la API: 1.234,56 · 1,234.56 · 1.500.000. Antes se hacía
+ * Number(amount.replace(",", ".")): "1.500,00" (el formato habitual en Brasil, la moneda por defecto) daba NaN, que
+ * viaja como null, y el cobro no se podía guardar ("Expected number, received null").
+ */
+function parsePaymentAmount(raw: string): number | null {
+  let s = raw.trim().replace(/[^\d,.-]/g, "");
+  if (!/\d/.test(s)) return null;
+  if (s.includes(",") && s.includes(".")) s = s.lastIndexOf(",") > s.lastIndexOf(".") ? s.replace(/\./g, "").replace(",", ".") : s.replace(/,/g, "");
+  else if (/^-?\d{1,3}([.,])\d{3}(?:\1\d{3})+$/.test(s)) s = s.replace(/[.,]/g, "");
+  else if (s.includes(",")) s = s.replace(",", ".");
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
 
 /** Configuración del cobro en el paso de revisión de un borrador. */
 export function PaymentOptionsPanel({ envelopeId, recipients }: { envelopeId: string; recipients: Recipient[] }) {
@@ -65,13 +80,18 @@ export function PaymentOptionsPanel({ envelopeId, recipients }: { envelopeId: st
   const configured = data?.providers.filter((p) => p.configured) ?? [];
 
   const save = async () => {
-    setBusy(true);
     setError(null);
     setSaved(false);
+    const value = parsePaymentAmount(amount);
+    if (value === null) {
+      setError(b("pay.amountInvalid"));
+      return;
+    }
+    setBusy(true);
     try {
       const r = await api<PaymentResponse>(`/v1/envelopes/${envelopeId}/payment`, {
         method: "PUT",
-        body: { amount: Number(amount.replace(",", ".")), currency, description: description.trim(), payerRecipientId: payer, timing, provider },
+        body: { amount: value, currency, description: description.trim(), payerRecipientId: payer, timing, provider },
       });
       setData(r);
       setSaved(true);
@@ -159,7 +179,7 @@ export function PaymentOptionsPanel({ envelopeId, recipients }: { envelopeId: st
                 <select value={provider} onChange={(e) => setProvider(e.target.value as PaymentProvider)}>
                   {configured.map((p) => (
                     <option key={p.id} value={p.id}>
-                      {PROVIDER_LABEL[p.id]}
+                      {p.id === "mock" ? b("pay.provider.mock") : PROVIDER_LABEL[p.id]}
                     </option>
                   ))}
                 </select>

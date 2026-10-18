@@ -372,7 +372,7 @@ export function NegotiationPanel({ base, mode, initial }: { base: string; mode: 
               <div key={p.id} className="agr-proposal small">
                 <div className="row-between">
                   <span>
-                    <strong>{p.author.name}</strong> · <code>{p.kind === "clause" ? `cláusula ${p.key}` : p.key}</code>
+                    <strong>{p.author.name}</strong> · <code>{p.kind === "clause" ? ta("neg.clauseKey", { key: p.key }) : p.key}</code>
                   </span>
                   <span className={`badge ${p.status === "accepted" ? "badge-completed" : p.status === "rejected" ? "badge-declined" : "badge-expired"}`}>{ta(`neg.${p.status}` as AgreementsTextKey)}</span>
                 </div>

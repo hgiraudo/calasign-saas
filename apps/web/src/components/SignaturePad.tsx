@@ -107,6 +107,12 @@ export function SignaturePad({ purpose, defaultText, onAdopt, onClose }: Props) 
     last.current = null;
   };
 
+  // El lienzo de dibujo se desmonta al pasar a "Escribir": al volver está vacío. Sin esto, hasInk seguía en true y
+  // "Adoptar" adoptaba una firma en blanco.
+  useEffect(() => {
+    if (tab === "draw") setHasInk(false);
+  }, [tab]);
+
   const clear = useCallback(() => {
     const c = drawRef.current;
     c?.getContext("2d")?.clearRect(0, 0, W, H);
@@ -118,7 +124,10 @@ export function SignaturePad({ purpose, defaultText, onAdopt, onClose }: Props) 
   const adopt = () => {
     const c = tab === "draw" ? drawRef.current : typeRef.current;
     if (!c || !canAdopt) return;
-    const dataUrl = trimCanvas(c).toDataURL("image/png");
+    const trimmed = trimCanvas(c);
+    // Sin ningún trazo no hay firma que adoptar (nunca una imagen en blanco).
+    if (!trimmed) return;
+    const dataUrl = trimmed.toDataURL("image/png");
     onAdopt({
       kind: tab === "draw" ? "drawn" : "typed",
       imagePng: dataUrl.split(",")[1] ?? "",
@@ -215,8 +224,8 @@ export function SignaturePad({ purpose, defaultText, onAdopt, onClose }: Props) 
   );
 }
 
-/** Recorta el área transparente alrededor del trazo (con margen). */
-function trimCanvas(src: HTMLCanvasElement): HTMLCanvasElement {
+/** Recorta el área transparente alrededor del trazo (con margen). null si el lienzo está vacío. */
+function trimCanvas(src: HTMLCanvasElement): HTMLCanvasElement | null {
   const ctx = src.getContext("2d");
   if (!ctx) return src;
   const { width, height } = src;
@@ -235,7 +244,7 @@ function trimCanvas(src: HTMLCanvasElement): HTMLCanvasElement {
       }
     }
   }
-  if (maxX < 0) return src;
+  if (maxX < 0) return null;
   const pad = 8;
   minX = Math.max(0, minX - pad);
   minY = Math.max(0, minY - pad);

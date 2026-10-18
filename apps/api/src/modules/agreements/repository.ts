@@ -132,12 +132,19 @@ export async function agreementExpirySweep(d: Deps) {
      LIMIT 50`,
   );
   for (const a of due) {
-    // Responsable: el dueño; si no hay (subido por API), los propietarios de la organización.
-    const to = a.owner_user_id
-      ? await d.db.query<any>(`SELECT email, locale FROM users WHERE id = $1`, [a.owner_user_id])
-      : await d.db.query<any>(`SELECT u.email, u.locale FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.tenant_id = $1 AND m.role = 'owner'`, [
+    // Responsable: el dueño si sigue en la organización; si no hay (subido por API) o ya no es miembro, los
+    // propietarios. Alguien que dejó la organización no tiene que seguir recibiendo datos de sus acuerdos.
+    let to = a.owner_user_id
+      ? await d.db.query<any>(`SELECT u.email, u.locale FROM users u JOIN memberships m ON m.user_id = u.id AND m.tenant_id = $2 WHERE u.id = $1`, [
+          a.owner_user_id,
           a.tenant_id,
-        ]);
+        ])
+      : [];
+    if (!to.length) {
+      to = await d.db.query<any>(`SELECT u.email, u.locale FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.tenant_id = $1 AND m.role = 'owner'`, [
+        a.tenant_id,
+      ]);
+    }
     const base = await tenantBaseUrl(d.db, a.tenant_id);
     const date = String(a.expiry_date instanceof Date ? a.expiry_date.toISOString().slice(0, 10) : a.expiry_date).slice(0, 10);
     for (const u of to) {
@@ -222,6 +229,14 @@ async function loadAgreementForUser(db: Db, a: AuthContext, id: string) {
   const r = await db.one<any>(`${AGREEMENT_SELECT} WHERE ag.id = $1 AND ag.tenant_id = $${params.length} AND ${vis}`, params);
   if (!r) throw notFound("Acuerdo");
   return r;
+}
+
+/** Las fechas AAAA-MM-DD tienen que existir ("2027-02-31" pasa el formato, pero Postgres la rechaza: sería un 500). */
+function assertRealDates(input: Record<string, unknown>) {
+  for (const k of ["effectiveDate", "expiryDate", "renewalDate"]) {
+    const v = input[k];
+    if (typeof v === "string" && toIsoDate(v) !== v) throw badRequest("invalid_date", `${k}: la fecha no existe`);
+  }
 }
 
 /** Valida los metadatos personalizados contra los campos definidos por la organización. */
@@ -355,6 +370,7 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
   app.patch<{ Params: { id: string } }>("/v1/agreements/:id", { preHandler: auth }, async (req) => {
     const a = A(req);
     const input = UpdateAgreementInput.parse(req.body);
+    assertRealDates(input);
     const r = await loadAgreementForUser(s.db, a, req.params.id);
     if (!canManageAgreement(a, r)) throw forbidden("Solo el responsable del acuerdo (o quien gestiona todos los sobres) puede modificarlo");
     await checkCustomFields(s.db, a.tenantId, input.metadata as Record<string, unknown> | undefined);
@@ -411,6 +427,7 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
       if (e instanceof SyntaxError) throw badRequest("invalid_meta", "El campo 'meta' no es JSON válido");
       throw e;
     }
+    assertRealDates(meta);
     const bytes = new Uint8Array(await file.toBuffer());
     if (file.file.truncated) throw new AppError(413, "file_too_large", "El archivo supera el tamaño máximo");
     try {

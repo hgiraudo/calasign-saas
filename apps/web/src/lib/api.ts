@@ -13,6 +13,8 @@ export class HttpError extends Error {
   }
 }
 
+export const UNAUTHORIZED_EVENT = "calasign:unauthorized";
+
 interface RequestOptions {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;
@@ -55,6 +57,10 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
   }
   if (!res.ok) {
     const err = (data as ApiError | undefined)?.error;
+    // Un 401 en medio de un flujo puede ser la sesión del remitente que venció o se cerró (p. ej. al activar SSO
+    // obligatorio): AuthProvider revisa /v1/me y, si la sesión ya no existe, manda al login. Un 401 de firmante
+    // (OTP) no cierra nada porque /v1/me sigue respondiendo.
+    if (res.status === 401 && path !== "/v1/me" && typeof window !== "undefined") window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
     throw new HttpError(res.status, err?.code ?? `http_${res.status}`, err?.message ?? res.statusText, err?.details);
   }
   return data as T;

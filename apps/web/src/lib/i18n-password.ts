@@ -19,6 +19,7 @@ const es = {
   resetRequired: "Tu acceso se creó con inicio de sesión único (SSO) o SCIM. Para ingresar con contraseña, primero restablecela.",
   resetRequiredAction: "Restablecer contraseña",
   notAllowed: "En esa organización tu acceso se creó con inicio de sesión único (SSO) o SCIM: ingresá con SSO o restablecé tu contraseña para usarla ahí.",
+  sessionExpired: "Tu sesión terminó (venció o se cerró). Volvé a ingresar para seguir donde estabas.",
 };
 type Key = keyof typeof es;
 
@@ -40,6 +41,7 @@ const pt: Record<Key, string> = {
   resetRequired: "Seu acesso foi criado com login único (SSO) ou SCIM. Para entrar com senha, redefina-a primeiro.",
   resetRequiredAction: "Redefinir senha",
   notAllowed: "Nessa organização seu acesso foi criado com login único (SSO) ou SCIM: entre com SSO ou redefina sua senha para usá-la lá.",
+  sessionExpired: "Sua sessão terminou (expirou ou foi encerrada). Entre novamente para continuar de onde parou.",
 };
 
 const en: Record<Key, string> = {
@@ -60,6 +62,7 @@ const en: Record<Key, string> = {
   resetRequired: "Your access was created through single sign-on (SSO) or SCIM. To sign in with a password, reset it first.",
   resetRequiredAction: "Reset password",
   notAllowed: "In that organization your access was created through single sign-on (SSO) or SCIM: sign in with SSO or reset your password to use it there.",
+  sessionExpired: "Your session ended (it expired or was closed). Sign in again to pick up where you left off.",
 };
 
 const DICTS: Record<string, Record<Key, string>> = { es, "pt-BR": pt, en };

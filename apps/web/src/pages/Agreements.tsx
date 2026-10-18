@@ -74,17 +74,37 @@ export function AgreementsPage() {
   }, []);
   useEffect(loadMeta, [loadMeta]);
 
+  // Vista abierta: sus filtros siguen aplicándose en el servidor; lo de la URL los refina filtro por filtro (también
+  // los campos propios) y un parámetro presente pero vacío QUITA ese filtro de la vista (contrato de
+  // GET /v1/agreements con viewId).
+  const openView = views.find((v) => v.id === params.get("viewId")) ?? null;
+  const viewFilters = (openView?.filters ?? {}) as Record<string, unknown> & { fields?: Record<string, string> };
+  const viewFields = viewFilters.fields ?? {};
+  const viewHas = (k: string) => {
+    const x = k.startsWith("f.") ? viewFields[k.slice(2)] : viewFilters[k];
+    return x !== undefined && x !== null && x !== "";
+  };
+
   const setParam = (k: string, v: string) => {
     const next = new URLSearchParams(params);
     if (v) next.set(k, v);
+    // "Todos" con una vista que filtra por esto: se manda la clave vacía para quitar el filtro de la vista (si se
+    // borraba el parámetro, el filtro de la vista seguía aplicándose y el selector volvía a mostrarlo).
+    else if (viewHas(k)) next.set(k, "");
     else next.delete(k);
     next.delete("cursor");
     setParams(next, { replace: true });
   };
 
+  // Lo que la búsqueda aplica hoy: el parámetro de la URL o, si no está, la búsqueda guardada en la vista.
+  const appliedQ = params.has("q") ? (params.get("q") ?? "") : String(viewFilters.q ?? "");
+  useEffect(() => {
+    if (!params.has("q")) setQ(String(viewFilters.q ?? ""));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openView?.id]);
   useEffect(() => {
     const h = window.setTimeout(() => {
-      if ((params.get("q") ?? "") !== q) setParam("q", q.trim());
+      if (appliedQ !== q.trim()) setParam("q", q.trim());
     }, 350);
     return () => window.clearTimeout(h);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -109,13 +129,6 @@ export function AgreementsPage() {
     }
   };
 
-  // Vista abierta: sus filtros siguen aplicándose en el servidor (lo de la URL solo los refina).
-  const openView = views.find((v) => v.id === params.get("viewId")) ?? null;
-  const viewFilters = (openView?.filters ?? {}) as Record<string, unknown> & { fields?: Record<string, string> };
-  // Igual que el servidor: un campo propio en la URL reemplaza todos los de la vista (no se combinan).
-  const urlHasFields = [...params.keys()].some((k) => k.startsWith("f."));
-  const viewFields = urlHasFields ? {} : (viewFilters.fields ?? {});
-
   const currentFilters = () => {
     // Se parte de los filtros de la vista abierta: guardar una vista desde otra se quedaba solo con los refinamientos
     // de la URL y perdía los de la vista (p. ej. "vencen en 30 días").
@@ -123,7 +136,13 @@ export function AgreementsPage() {
     delete f.fields;
     const fieldsF: Record<string, string> = { ...viewFields };
     for (const [k, v] of params.entries()) {
-      if (k === "viewId" || k === "cursor" || !v) continue;
+      if (k === "viewId" || k === "cursor") continue;
+      // Vacío: ese filtro de la vista se quitó.
+      if (!v) {
+        if (k.startsWith("f.")) delete fieldsF[k.slice(2)];
+        else delete f[k];
+        continue;
+      }
       if (k.startsWith("f.")) fieldsF[k.slice(2)] = v;
       else if (k === "expiresWithinDays") f[k] = Number(v);
       else f[k] = v;

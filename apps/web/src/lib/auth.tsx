@@ -1,8 +1,8 @@
 // Sesión del remitente: GET /v1/me.
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import type { MeResponse } from "@calasign/shared";
-import { api, HttpError } from "./api";
+import { api, HttpError, UNAUTHORIZED_EVENT } from "./api";
 import { Spinner } from "../components/ui";
 
 interface AuthCtx {
@@ -11,6 +11,8 @@ interface AuthCtx {
   refresh: () => Promise<MeResponse | null>;
   setMe: (m: MeResponse | null) => void;
   logout: () => Promise<void>;
+  /** La sesión terminó mientras se usaba la app (no es un logout propio). */
+  expired: boolean;
 }
 
 const Ctx = createContext<AuthCtx | null>(null);
@@ -18,6 +20,9 @@ const Ctx = createContext<AuthCtx | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<MeResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [expired, setExpired] = useState(false);
+  const meRef = useRef(me);
+  meRef.current = me;
 
   const refresh = useCallback(async () => {
     try {
@@ -25,7 +30,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setMe(m);
       return m;
     } catch (e) {
-      if (!(e instanceof HttpError) || e.status === 401 || e.status === 403) setMe(null);
+      if (!(e instanceof HttpError) || e.status === 401 || e.status === 403) {
+        // Había sesión y ya no: terminó mientras se usaba la app (el login lo avisa).
+        if (meRef.current && e instanceof HttpError && e.status === 401) setExpired(true);
+        setMe(null);
+      }
       return null;
     } finally {
       setLoading(false);
@@ -44,7 +53,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void refresh();
   }, [refresh]);
 
-  return <Ctx.Provider value={{ me, loading, refresh, setMe, logout }}>{children}</Ctx.Provider>;
+  // Un 401 en cualquier pedido: si había sesión, se revisa /v1/me. Si ya no existe (venció, se cerró en otro lado o
+  // la organización pasó a exigir SSO), se marca como vencida y RequireAuth manda al login con un aviso. Antes cada
+  // acción fallaba con "Autenticación requerida" y no había forma de seguir sin recargar la página.
+  const checking = useRef(false);
+  useEffect(() => {
+    const onUnauthorized = async () => {
+      if (!meRef.current || checking.current) return;
+      checking.current = true;
+      try {
+        await api<MeResponse>("/v1/me");
+      } catch (e) {
+        if (e instanceof HttpError && e.status === 401) {
+          setExpired(true);
+          setMe(null);
+        }
+      } finally {
+        checking.current = false;
+      }
+    };
+    window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+    return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+  }, []);
+  const setMeAndClear = useCallback((m: MeResponse | null) => {
+    if (m) setExpired(false);
+    setMe(m);
+  }, []);
+
+  return <Ctx.Provider value={{ me, loading, refresh, setMe: setMeAndClear, logout, expired }}>{children}</Ctx.Provider>;
 }
 
 export function useAuth(): AuthCtx {

@@ -251,8 +251,19 @@ await signer2.api("POST", `/v1/signing/${k2.token}/identity/start`, undefined, 4
 await signer2.api("POST", `/v1/signing/${k2.token}/consent`, undefined, 403);
 const ev2 = (await owner.api("GET", `/v1/envelopes/${k2.envelopeId}/events`)).items.filter((e) => e.type === "recipient.identity_failed");
 assert(ev2.length === 2 && ev2[0].data.reason === "name_mismatch" && ev2[1].data.reason === "document_front_back_identical", "dos fallas registradas");
-await signer2.api("POST", `/v1/signing/${k2.token}/decline`, { reason: "No pude verificar mi identidad" });
-ok("KYC fallido: nombre distinto del documento, foto repetida, intentos agotados; el firmante puede rechazar");
+ok("KYC fallido: nombre distinto del documento, foto repetida, intentos agotados");
+// El remitente corrige el nombre (estaba mal cargado): la verificación empieza de nuevo, con todos los intentos.
+// Antes el firmante seguía sin intentos y el sobre quedaba trabado.
+await owner.api("POST", `/v1/envelopes/${k2.envelopeId}/corrections`, { updateRecipients: [{ id: k2.rid, name: "Pedro Ramírez Sosa" }], reason: "nombre mal cargado" });
+idn = (await signer2.api("GET", `/v1/signing/${k2.token}/identity`)).identity;
+assert(idn.status === "pending" && idn.attemptsLeft === 2 && !idn.failureReason, `la corrección reinicia la verificación (${JSON.stringify(idn)})`);
+await signer2.api("POST", `/v1/signing/${k2.token}/identity/start`);
+await upload(signer2, k2.token, "document_front");
+await upload(signer2, k2.token, "document_back");
+idn = (await signer2.api("POST", `/v1/signing/${k2.token}/identity/submit`)).identity;
+assert(idn.status === "verified", `verificado tras corregir el nombre (${JSON.stringify(idn)})`);
+await signer2.api("POST", `/v1/signing/${k2.token}/decline`, { reason: "Prefiero no firmar" });
+ok("corrección del nombre: anula las verificaciones anteriores y devuelve los intentos; el firmante puede rechazar");
 
 // ───────────────────────────── IdP OIDC de prueba ─────────────────────────────
 
@@ -382,7 +393,16 @@ const cbAgain = (await fetch(authUrl, { redirect: "manual" })).headers.get("loca
 const stateReused = new URL(cbAgain);
 r0 = await new Client("replay2").raw("GET", `${stateReused.pathname}${stateReused.search}`);
 assert(/sso_state_invalid/.test(r0.headers.get("location") ?? ""), "state de un solo uso");
-ok("OIDC rechaza nonce, aud y firma inválidos, y el state no se puede reusar");
+// Login CSRF: alguien completa el ingreso con su cuenta del IdP y le pasa el link del callback a otra persona.
+// El state está atado al navegador que inició el ingreso: en otro navegador no abre sesión.
+const csrfAttacker = new Client("csrf-attacker");
+idp.email = `ana@${domain}`;
+const csrfStart = await csrfAttacker.raw("GET", (await csrfAttacker.api("POST", "/v1/auth/sso/discover", { email: `ana@${domain}` })).startUrl);
+const csrfCb = new URL((await fetch(csrfStart.headers.get("location"), { redirect: "manual" })).headers.get("location"));
+const csrfVictim = new Client("csrf-victim");
+const csrfRes = await csrfVictim.raw("GET", `${csrfCb.pathname}${csrfCb.search}`);
+assert(/sso_state_invalid/.test(csrfRes.headers.get("location") ?? "") && !csrfVictim.cookies.has("cs_session"), "el callback de otro navegador no abre sesión (login CSRF)");
+ok("OIDC rechaza nonce, aud y firma inválidos; el state no se puede reusar ni usar desde otro navegador");
 
 // Sesión SSO atada a su organización: Ana también es miembro de otra organización (vía SCIM de esa organización),
 // pero con la sesión SSO no puede cambiar a ella, ni usarla para aceptar invitaciones de otra organización.
@@ -577,6 +597,13 @@ await scimApi("PATCH", `/Groups/${grp.id}`, { Operations: [{ op: "add", path: "m
 assert((await scimApi("GET", `/Groups/${grp.id}`)).members.length === 1, "PATCH add members");
 await scimApi("PATCH", `/Groups/${grp.id}`, { Operations: [{ op: "remove", path: `members[value eq "${carla.id}"]` }] }, 204);
 assert((await scimApi("GET", `/Groups/${grp.id}`)).members.length === 0, "PATCH remove members");
+// El correo de alguien con más permisos que el rol por defecto de SCIM (member) no se cambia por SCIM: el token lo
+// puede crear quien solo tiene esos permisos, y cambiar el correo de un administrador sería quedarse con su cuenta.
+await owner.api("PATCH", `/v1/members/${carla.id}`, { role: "admin" });
+await scimApi("PATCH", `/Users/${carla.id}`, { Operations: [{ op: "replace", path: "userName", value: `carla.nueva-${stamp}@${domain}` }] }, 409);
+await owner.api("PATCH", `/v1/members/${carla.id}`, { role: "member" });
+upd = await scimApi("PATCH", `/Users/${carla.id}`, { Operations: [{ op: "replace", path: "userName", value: `carla.nueva-${stamp}@${domain}` }] });
+assert(upd.userName === `carla.nueva-${stamp}@${domain}`, "el correo de un miembro sí se cambia por SCIM");
 await scimApi("DELETE", `/Users/${carla.id}`, undefined, 204);
 await scimApi("GET", `/Users/${carla.id}`, undefined, 404);
 await scimApi("DELETE", `/Groups/${grp.id}`, undefined, 204);

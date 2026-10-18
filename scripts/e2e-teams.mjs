@@ -302,11 +302,27 @@ if (/^http:\/\/(localhost|127\.0\.0\.1)/.test(BASE)) {
   const chs = [];
   for (let i = 0; i < 3; i++) chs.push((await new Client(`carol-ch${i}`).api("POST", "/v1/auth/login", { email: carolEmail, password: "clave-de-carol-123" })).challengeToken);
   const guesser = new Client("carol-guess");
-  for (const c of chs.slice(0, 2)) for (let i = 0; i < 5; i++) await guesser.api("POST", "/v1/auth/2fa/verify", { challengeToken: c, code: "000000" }, 401);
+  // 401 hasta llegar al límite; Carol ya tenía fallos (la contraseña incorrecta al aceptar la invitación también
+  // cuenta), así que el bloqueo (429) puede llegar antes del décimo código.
+  for (const c of chs.slice(0, 2)) for (let i = 0; i < 5; i++) await guesser.api("POST", "/v1/auth/2fa/verify", { challengeToken: c, code: "000000" }, [401, 429]);
   const res = await guesser.raw("POST", "/v1/auth/2fa/verify", { challengeToken: chs[2], code: totp(cSetup.secret, nowStep()) });
   const body = await res.json();
   if (res.status !== 429 || body.error?.code !== "too_many_attempts" || guesser.cookie) throw new Error(`2FA con la cuenta bloqueada: ${res.status} ${JSON.stringify(body)}`);
   step("2FA: tras 10 códigos incorrectos la cuenta se bloquea también en los desafíos ya abiertos (429)");
+
+  // Aceptar una invitación con una cuenta existente es un ingreso con contraseña: cuenta para el mismo bloqueo.
+  // (Si no, alguien que invita el correo de otra persona a su organización prueba contraseñas sin límite por cuenta.)
+  const doraEmail = `dora+${stamp}@example.com`;
+  await new Client("dora").api("POST", "/v1/auth/signup", { name: "Dora", email: doraEmail, password: "clave-de-dora-123", organization: `Dora SA ${stamp}` });
+  const invDora = await owner.api("POST", "/v1/invitations", { email: doraEmail, role: "member" });
+  const doraToken = invDora.acceptUrl.split("/invite/")[1];
+  const doraGuess = new Client("dora-guess");
+  for (let i = 0; i < 10; i++) await doraGuess.api("POST", `/v1/invite/${doraToken}/accept`, { password: `incorrecta-${i}` }, 401);
+  const dr = await doraGuess.raw("POST", `/v1/invite/${doraToken}/accept`, { password: "clave-de-dora-123" });
+  const drBody = await dr.json();
+  if (dr.status !== 429 || drBody.error?.code !== "too_many_attempts" || doraGuess.cookie) throw new Error(`invitación con la cuenta bloqueada: ${dr.status} ${JSON.stringify(drBody)}`);
+  await new Client("dora-login").api("POST", "/v1/auth/login", { email: doraEmail, password: "clave-de-dora-123" }, 429);
+  step("invitación: las contraseñas incorrectas al aceptar cuentan para el bloqueo de la cuenta (429, también en el login)");
 }
 
 // ───────────────────────────── 7. Auditoría ─────────────────────────────

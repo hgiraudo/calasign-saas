@@ -185,10 +185,19 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
       next.channels,
       next.locale ?? null,
     ]);
-    // Si cambió la persona (nombre o contacto), su verificación de identidad previa ya no la representa.
-    if ((changes.name || contactChanged) && r.id_verification_provider && r.identity_status === "verified") {
-      await db.query(`UPDATE recipients SET identity_status = 'pending', identity_verified_at = NULL, identity_failure_reason = NULL WHERE id = $1`, [r.id]);
-      changes.identityReset = true;
+    // Si cambió la persona (nombre o contacto), su verificación de identidad previa ya no la representa: ni la
+    // aprobada ni las fallidas. Se anulan y la verificación empieza de nuevo, con todos los intentos. Si no, el caso
+    // típico (el nombre estaba mal tipeado, la verificación falló por name_mismatch hasta agotar los intentos y el
+    // remitente lo corrige) dejaba al firmante sin intentos y el sobre trabado.
+    if ((changes.name || contactChanged) && r.id_verification_provider) {
+      const canceled = await db.query(
+        `UPDATE identity_verifications SET status = 'canceled', updated_at = now() WHERE recipient_id = $1 AND status IN ('created','pending','verified','failed') RETURNING id`,
+        [r.id],
+      );
+      if (canceled.length || (r.identity_status ?? "pending") !== "pending") {
+        await db.query(`UPDATE recipients SET identity_status = 'pending', identity_verified_at = NULL, identity_failure_reason = NULL WHERE id = $1`, [r.id]);
+        changes.identityReset = true;
+      }
     }
     // El contacto lo cargó ahora el remitente: deja de ser el correo sin validar de un formulario web (si no, la
     // invitación al contacto corregido no saldría nunca).

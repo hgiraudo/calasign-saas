@@ -16,6 +16,12 @@ import { safeRequest } from "../webhooks";
 
 const SESSION_DAYS = 14;
 const STATE_TTL_MIN = 10;
+/**
+ * El state queda atado al navegador que inició el ingreso (cookie). Sin esto, alguien completa el ingreso con SU
+ * cuenta del IdP, frena antes del callback y le pasa ese link a otra persona, que queda conectada a la cuenta del
+ * atacante (y lo que suba queda en ella): "login CSRF".
+ */
+const STATE_COOKIE = "cs_sso_state";
 const CLOCK_SKEW_S = 120;
 
 // ───────────────────────────── Configuración ─────────────────────────────
@@ -352,6 +358,27 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
     await recordAudit(s.db, { tenantId, action: "auth.login_sso", actor: { type: "user", id: user!.id, label: email }, ip, userAgent, data: { protocol } });
   }
 
+  /**
+   * Cookie del state. El ACS de SAML recibe un POST cross-site del IdP: con SameSite=Lax el navegador no mandaría la
+   * cookie, así que va con SameSite=None (que exige Secure); sin HTTPS (desarrollo local) queda en Lax.
+   */
+  function setStateCookie(reply: FastifyReply, state: string) {
+    reply.setCookie(STATE_COOKIE, state, {
+      path: "/v1/",
+      httpOnly: true,
+      secure: config.cookieSecure,
+      sameSite: config.cookieSecure ? "none" : "lax",
+      maxAge: STATE_TTL_MIN * 60,
+    });
+  }
+
+  /** El state del callback tiene que ser el que este navegador recibió al iniciar el ingreso. */
+  function stateFromThisBrowser(req: FastifyRequest, reply: FastifyReply, state: string): boolean {
+    const cookie = req.cookies?.[STATE_COOKIE] ?? "";
+    reply.clearCookie(STATE_COOKIE, { path: "/v1/" });
+    return cookie.length > 0 && cookie.length === state.length && sha256Hex(cookie) === sha256Hex(state);
+  }
+
   function failRedirect(reply: FastifyReply, code: string) {
     return reply.redirect(`/login?sso_error=${encodeURIComponent(code)}`, 302);
   }
@@ -468,6 +495,7 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
              VALUES ($1,$2,'oidc',$3,$4,$5, now() + interval '${STATE_TTL_MIN} minutes')`,
             [sha256Hex(state), t.id, encrypt(verifier), nonce, redirectPath],
           );
+          setStateCookie(reply, state);
           const url = new URL(doc.authorization_endpoint);
           url.searchParams.set("response_type", "code");
           url.searchParams.set("client_id", c.oidc_client_id!);
@@ -484,6 +512,7 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
           `INSERT INTO sso_states (state_hash, tenant_id, protocol, redirect_path, expires_at) VALUES ($1,$2,'saml',$3, now() + interval '${STATE_TTL_MIN} minutes')`,
           [sha256Hex(state), t.id, redirectPath],
         );
+        setStateCookie(reply, state);
         const url = await samlFor(s.db, t.slug, c).getAuthorizeUrlAsync(state, undefined, {});
         return reply.redirect(url, 302);
       } catch (err) {
@@ -506,6 +535,7 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
   app.get<{ Querystring: { code?: string; state?: string; error?: string } }>("/v1/auth/sso/oidc/callback", async (req, reply) => {
     if (req.query.error) return failRedirect(reply, "sso_idp_error");
     if (!req.query.code || !req.query.state) return failRedirect(reply, "sso_invalid_response");
+    if (!stateFromThisBrowser(req, reply, req.query.state)) return failRedirect(reply, "sso_state_invalid");
     const st = await consumeState(req.query.state, "oidc");
     if (!st) return failRedirect(reply, "sso_state_invalid");
     const t = await s.db.one<any>(`SELECT id, slug FROM tenants WHERE id = $1`, [st.tenant_id]);
@@ -562,7 +592,8 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
         const c = t ? await loadConfig(s.db, t.id) : null;
         if (!t || !c?.enabled || c.protocol !== "saml") return failRedirect(reply, "sso_not_configured");
         const body = (req.body ?? {}) as Record<string, string>;
-        const st = body.RelayState ? await consumeState(body.RelayState, "saml") : null;
+        if (!body.RelayState || !stateFromThisBrowser(req, reply, body.RelayState)) return failRedirect(reply, "sso_state_invalid");
+        const st = await consumeState(body.RelayState, "saml");
         if (!st || st.tenant_id !== t.id) return failRedirect(reply, "sso_state_invalid");
         try {
           const { profile } = await samlFor(s.db, t.slug, c).validatePostResponseAsync({ SAMLResponse: body.SAMLResponse ?? "", RelayState: body.RelayState });

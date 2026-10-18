@@ -54,13 +54,43 @@ function validateUrl(raw: string) {
   return u.toString();
 }
 
+/** IPv6 en sus 8 grupos de 16 bits (acepta "::" y una IPv4 punteada al final). null si no es válida. */
+function ipv6Groups(ip: string): number[] | null {
+  let x = ip.toLowerCase().replace(/%.*$/, "");
+  const dotted = /(\d+\.\d+\.\d+\.\d+)$/.exec(x);
+  if (dotted) {
+    const p = dotted[1].split(".").map(Number);
+    x = x.slice(0, -dotted[1].length) + `${((p[0] << 8) | p[1]).toString(16)}:${((p[2] << 8) | p[3]).toString(16)}`;
+  }
+  const [head, tail] = x.split("::");
+  const h = head ? head.split(":") : [];
+  const t = tail !== undefined && tail !== "" ? tail.split(":") : [];
+  const fill = x.includes("::") ? 8 - h.length - t.length : 0;
+  const parts = [...h, ...Array(Math.max(fill, 0)).fill("0"), ...t];
+  if (parts.length !== 8) return null;
+  const g = parts.map((s) => parseInt(s || "0", 16));
+  return g.some((n) => Number.isNaN(n) || n < 0 || n > 0xffff) ? null : g;
+}
+
+const v4FromGroups = (hi: number, lo: number) => `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`;
+
 export function isPrivateAddress(ip: string): boolean {
   if (isIP(ip) === 6) {
-    const x = ip.toLowerCase();
-    if (x === "::1" || x === "::") return true;
-    if (x.startsWith("fc") || x.startsWith("fd") || x.startsWith("fe80")) return true;
-    const m = /::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(x);
-    return m ? isPrivateAddress(m[1]) : false;
+    const g = ipv6Groups(ip);
+    if (!g) return true; // no la entendemos: no se arriesga
+    const zeros = (from: number, to: number) => g.slice(from, to).every((n) => n === 0);
+    if (zeros(0, 7) && g[7] <= 1) return true; // :: y ::1
+    if ((g[0] & 0xfe00) === 0xfc00) return true; // fc00::/7 (ULA)
+    if ((g[0] & 0xffc0) === 0xfe80 || (g[0] & 0xffc0) === 0xfec0) return true; // link-local y site-local
+    if ((g[0] & 0xff00) === 0xff00) return true; // multicast
+    if (g[0] === 0x0100 && zeros(1, 4)) return true; // 100::/64 (descarte)
+    if (g[0] === 0x2001 && g[1] === 0) return true; // Teredo: IPv4 embebida ofuscada
+    // Formatos con una IPv4 adentro: se valida la IPv4.
+    if (zeros(0, 5) && g[5] === 0xffff) return isPrivateAddress(v4FromGroups(g[6], g[7])); // ::ffff:a.b.c.d
+    if (zeros(0, 6)) return isPrivateAddress(v4FromGroups(g[6], g[7])); // ::a.b.c.d (IPv4-compatible)
+    if (g[0] === 0x64 && g[1] === 0xff9b) return isPrivateAddress(v4FromGroups(g[6], g[7])); // NAT64
+    if (g[0] === 0x2002) return isPrivateAddress(v4FromGroups(g[1], g[2])); // 6to4
+    return false;
   }
   const [a, b] = ip.split(".").map(Number);
   return (

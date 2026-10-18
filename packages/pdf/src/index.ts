@@ -11,3 +11,5 @@ export * from "./validate";
 export * from "./csc";
 export { certUrls, hasRevocationInfo, parseCert, fingerprint, nameToString, commonName, serialHex } from "./pki";
 export { extractPdfText, substringBox, type PageText, type TextLine } from "./text";
+export { renderDocumentPdf, type DocBlock, type DocRun, type DocMarkKind, type DocMarkPosition, type RenderDocOptions } from "./docgen";
+export { extractPdfPlainText, type PdfText } from "./plain-text";

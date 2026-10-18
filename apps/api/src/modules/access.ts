@@ -234,6 +234,11 @@ export async function enforceRoutePolicy(db: Db, req: FastifyRequest, a: AuthCon
     if (url.startsWith("/v1/storage/oauth/") && url.endsWith("/callback")) return;
     return requirePerm(a, "settings:manage");
   }
+  // Acuerdos (Fase 6): repositorio, documentos generados, cláusulas, workflows y negociación. Los permisos
+  // finos (plantillas y workflows: templates:manage; campos: settings:manage) se validan en cada ruta.
+  if (/^\/v1\/(agreements|agreement-views|agreement-fields|document-templates|clauses|workflows|workflow-runs|negotiations)(\/|$)/.test(url)) {
+    return requirePerm(a, "envelopes:create");
+  }
   // Reportes: estadísticas de toda la organización.
   if (url.startsWith("/v1/reports")) return requirePerm(a, "envelopes:view_all");
   if (/^\/v1\/(members|roles|groups|invitations)(\/|$)/.test(url) && !isRead) return requirePerm(a, "members:manage");

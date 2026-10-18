@@ -143,6 +143,11 @@ export function requiredScope(url: string, method: string): OAuthScope | null | 
   if (url === "/v1/templates/from-envelope/:envelopeId") return "templates:write";
   if (url.startsWith("/v1/envelopes") || /^\/v1\/(bulk-sends|web-forms|reports)(\/|$)/.test(url)) return write ? "envelopes:write" : "envelopes:read";
   if (url.startsWith("/v1/templates")) return write ? "templates:write" : "templates:read";
+  if (/^\/v1\/(agreements|agreement-views|agreement-fields|workflow-runs|negotiations)(\/|$)/.test(url)) return write ? "envelopes:write" : "envelopes:read";
+  if (/^\/v1\/(document-templates|clauses|workflows)(\/|$)/.test(url)) {
+    if (/\/(generate|preview|runs)$/.test(url) || url === "/v1/document-templates/render") return write ? "envelopes:write" : "envelopes:read";
+    return write ? "templates:write" : "templates:read";
+  }
   if (/^\/v1\/(webhooks|webhook-deliveries)(\/|$)/.test(url)) return "webhooks:manage";
   if (/^\/v1\/(settings|notification-integrations|storage|domains)(\/|$)/.test(url)) return write ? "settings:write" : "settings:read";
   if (/^\/v1\/(members|roles|groups|invitations)(\/|$)/.test(url)) return write ? "members:write" : "members:read";

@@ -3,6 +3,7 @@
 import type { Db } from "./db";
 import { enqueue } from "./queue";
 import { queuePlatformFanout } from "../modules/platform-fanout";
+import { queueAgreementEvents } from "../modules/agreements";
 
 /** Tipo de evento de evidencia → tipos de webhook que dispara. */
 const MAP: Record<string, string[]> = {
@@ -25,6 +26,7 @@ export async function queueWebhookFanout(
   recipientId: string | null,
 ) {
   await queuePlatformFanout(db, tenantId, envelopeId, evidenceType, seq, recipientId);
+  await queueAgreementEvents(db, envelopeId, evidenceType);
   const types = MAP[evidenceType];
   if (!types) return;
   const has = await db.one(`SELECT 1 FROM webhook_endpoints WHERE tenant_id = $1 AND active LIMIT 1`, [tenantId]);

@@ -33,6 +33,7 @@ import {
 } from "@calasign/shared";
 import { config } from "../config";
 import { OAUTH2_SECURITY_SCHEME, PLATFORM_OPS } from "./platform-openapi";
+import { AGREEMENTS_OPS } from "./agreements/openapi";
 import { requiredScope } from "./oauth-tokens";
 import { AI_OPS } from "./ai/openapi";
 
@@ -247,7 +248,7 @@ const OPS: Op[] = [
 
 export function buildOpenApi() {
   const paths: Record<string, Record<string, unknown>> = {};
-  for (const op of [...OPS, ...(PLATFORM_OPS as Op[]), ...(AI_OPS as unknown as Op[])]) {
+  for (const op of [...OPS, ...(PLATFORM_OPS as Op[]), ...(AI_OPS as unknown as Op[]), ...(AGREEMENTS_OPS as Op[])]) {
     const params = [...op.path.matchAll(/\{(\w+)\}/g)].map((m) => ({ name: m[1], in: "path", required: true, schema: { type: "string" } }));
     if (op.idempotent) params.push({ name: "Idempotency-Key", in: "header", required: false, schema: { type: "string" } } as never);
     const status = String(op.status ?? 200);

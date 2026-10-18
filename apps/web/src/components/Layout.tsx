@@ -10,6 +10,7 @@ import { useTeamsText } from "../lib/i18n-teams";
 import { TenantSwitcher } from "./TenantSwitcher";
 import { useExpText } from "../lib/i18n-experience";
 import { useInstallPrompt } from "../lib/pwa";
+import { useAgrText } from "../lib/i18n-agreements";
 
 export function useDevMailboxAvailable(): boolean {
   const [ok, setOk] = useState(false);
@@ -36,6 +37,7 @@ export function Layout() {
   const loc = useLocation();
   const xt = useExpText();
   const install = useInstallPrompt();
+  const ag = useAgrText();
   const [open, setOpen] = useState(false);
 
   // Organización que exige 2FA y el usuario no lo tiene: solo puede ir a Seguridad.
@@ -57,6 +59,7 @@ export function Layout() {
             {t("nav.envelopes")}
           </NavLink>
           <NavLink to="/app/templates">{t("nav.templates")}</NavLink>
+          <NavLink to="/app/agreements">{ag("nav.agreements")}</NavLink>
           <NavLink to="/app/reports">{xt("nav.reports")}</NavLink>
           {/* Equipo, marca, API keys, integraciones, auditoría y seguridad viven bajo Ajustes (índice según permisos). */}
           <NavLink to="/app/settings">{tm("nav.settings")}</NavLink>

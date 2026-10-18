@@ -1,0 +1,661 @@
+// Workflows sin código (Fase 6): listado, editor de pasos (lista vertical), ejecuciones y detalle con aprobación.
+import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import type { CollectField, DocumentTemplate, Member, Workflow, WorkflowRun, WorkflowStep, WorkflowStepType } from "@calasign/shared";
+import { WORKFLOW_STEP_TYPES } from "@calasign/shared";
+import { api, errorText } from "../lib/api";
+import { formatDateTime, useI18n } from "../lib/i18n";
+import { useAccess } from "../lib/access";
+import { useAuth } from "../lib/auth";
+import { useAgrText, type AgreementsTextKey } from "../lib/i18n-agreements";
+import { AgreementsTabs, parseJsonObject } from "../components/AgreementsUi";
+import { ErrorBox, Modal, Spinner } from "../components/ui";
+
+type WorkflowWithSecret = Workflow & { signingSecret?: string };
+
+function RunStatus({ status }: { status: WorkflowRun["status"] }) {
+  const ta = useAgrText();
+  const cls = status === "completed" ? "badge-completed" : status === "failed" || status === "rejected" ? "badge-declined" : status === "cancelled" ? "badge-voided" : "badge-sent";
+  return <span className={`badge ${cls}`}>{ta(`run.status.${status}` as AgreementsTextKey)}</span>;
+}
+
+// ───────────────────────────── Listado ─────────────────────────────
+
+export function WorkflowsPage() {
+  const ta = useAgrText();
+  const { can } = useAccess();
+  const nav = useNavigate();
+  const [items, setItems] = useState<Workflow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api<{ items: Workflow[] }>("/v1/workflows")
+      .then((r) => setItems(r.items))
+      .catch((e) => setError(errorText(e)));
+  }, []);
+
+  return (
+    <div className="page">
+      <AgreementsTabs />
+      <div className="page-head">
+        <div>
+          <h1>{ta("wf.title")}</h1>
+          <p className="muted">{ta("wf.intro")}</p>
+        </div>
+        {can("templates:manage") && (
+          <Link className="btn btn-primary" to="/app/workflows/new">
+            {ta("wf.new")}
+          </Link>
+        )}
+      </div>
+      <ErrorBox error={error} />
+      {items === null ? (
+        <Spinner />
+      ) : items.length === 0 ? (
+        <div className="empty">{ta("wf.empty")}</div>
+      ) : (
+        <div className="card table-scroll">
+          <table className="table">
+            <tbody>
+              {items.map((w) => (
+                <tr key={w.id} className="clickable" onClick={() => nav(`/app/workflows/${w.id}`)}>
+                  <td>
+                    <Link to={`/app/workflows/${w.id}`} onClick={(e) => e.stopPropagation()}>
+                      <strong>{w.name}</strong>
+                    </Link>
+                    <div className="muted small">{w.steps.map((s) => ta(`step.${s.type}` as AgreementsTextKey)).join(" → ")}</div>
+                  </td>
+                  <td className="small">{w.runs.running > 0 ? ta("wf.running", { n: w.runs.running }) : `${w.runs.total}`}</td>
+                  <td>{!w.active && <span className="badge badge-voided">—</span>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ───────────────────────────── Editor ─────────────────────────────
+
+const uid = () => crypto.randomUUID();
+
+function newStep(type: WorkflowStepType, ta: (k: AgreementsTextKey) => string, me: string | null): WorkflowStep {
+  const name = ta(`step.${type}` as AgreementsTextKey);
+  switch (type) {
+    case "collect_data":
+      return { id: uid(), name, type, config: { title: name, target: "cliente", fields: [{ key: "nombre", label: "Nombre", type: "text", required: true }, { key: "email", label: "Correo", type: "email", required: true }] } };
+    case "approval":
+      return { id: uid(), name, type, config: { approverUserId: me ?? "", message: null } };
+    case "generate_document":
+      return { id: uid(), name, type, config: { documentTemplateId: "", output: "documento", allowMissing: false } };
+    case "send_for_signature":
+      return { id: uid(), name, type, config: { document: "documento", envelopeKey: "firma", subject: "Documento para {{cliente.nombre}}", recipients: [{ role: "Cliente", name: "{{cliente.nombre}}", email: "{{cliente.email}}" }] } };
+    case "wait_for_completion":
+      return { id: uid(), name, type, config: { envelopeKey: "firma" } };
+    case "http_request":
+      return { id: uid(), name, type, config: { url: "https://", method: "POST", headers: null, bodyTemplate: null, saveAs: null } };
+    case "update_repository":
+      return { id: uid(), name, type, config: { envelopeKey: "firma", tags: [], metadata: null } };
+  }
+}
+
+function F({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <label className="field">
+      <span>{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function StepConfig({ step, onChange, members, templates }: { step: WorkflowStep; onChange: (s: WorkflowStep) => void; members: Member[]; templates: DocumentTemplate[] }) {
+  const ta = useAgrText();
+  const set = (patch: Record<string, unknown>) => onChange({ ...step, config: { ...step.config, ...patch } } as WorkflowStep);
+  switch (step.type) {
+    case "collect_data": {
+      const c = step.config;
+      const setField = (i: number, patch: Partial<CollectField>) => set({ fields: c.fields.map((f, j) => (j === i ? { ...f, ...patch } : f)) });
+      return (
+        <>
+          <div className="grid-2">
+            <F label={ta("cfg.title")}>
+              <input value={c.title} onChange={(e) => set({ title: e.target.value })} />
+            </F>
+            <F label={ta("cfg.target")}>
+              <input value={c.target ?? ""} onChange={(e) => set({ target: e.target.value || null })} placeholder="cliente" />
+            </F>
+          </div>
+          <fieldset className="field">
+            <legend>{ta("cfg.fields")}</legend>
+            {c.fields.map((f, i) => (
+              <div key={i} className="agr-subrow">
+                <input aria-label="label" value={f.label} onChange={(e) => setField(i, { label: e.target.value })} placeholder="Etiqueta" />
+                <input aria-label="key" value={f.key} onChange={(e) => setField(i, { key: e.target.value })} placeholder="clave" />
+                <select aria-label="type" value={f.type} onChange={(e) => setField(i, { type: e.target.value as CollectField["type"] })}>
+                  {(["text", "textarea", "email", "number", "date", "select"] as const).map((x) => (
+                    <option key={x}>{x}</option>
+                  ))}
+                </select>
+                {f.type === "select" && (
+                  <input aria-label="options" value={(f.options ?? []).join(", ")} onChange={(e) => setField(i, { options: e.target.value.split(",").map((x) => x.trim()).filter(Boolean) })} placeholder="A, B" />
+                )}
+                <label className="check">
+                  <input type="checkbox" checked={f.required} onChange={(e) => setField(i, { required: e.target.checked })} /> {ta("cfg.required")}
+                </label>
+                <button type="button" className="btn btn-sm btn-ghost" onClick={() => set({ fields: c.fields.filter((_, j) => j !== i) })} aria-label="×">
+                  ×
+                </button>
+              </div>
+            ))}
+            <div>
+              <button type="button" className="btn btn-sm" onClick={() => set({ fields: [...c.fields, { key: `campo${c.fields.length + 1}`, label: "Campo", type: "text", required: false }] })}>
+                {ta("cfg.addField")}
+              </button>
+            </div>
+          </fieldset>
+        </>
+      );
+    }
+    case "approval":
+      return (
+        <div className="grid-2">
+          <F label={ta("cfg.approver")}>
+            <select value={step.config.approverUserId} onChange={(e) => set({ approverUserId: e.target.value })}>
+              <option value="">—</option>
+              {members.map((m) => (
+                <option key={m.userId} value={m.userId}>
+                  {m.name} ({m.email})
+                </option>
+              ))}
+            </select>
+          </F>
+          <F label={ta("cfg.message")}>
+            <input value={step.config.message ?? ""} onChange={(e) => set({ message: e.target.value || null })} />
+          </F>
+        </div>
+      );
+    case "generate_document":
+      return (
+        <div className="grid-2">
+          <F label={ta("cfg.template")}>
+            <select value={step.config.documentTemplateId} onChange={(e) => set({ documentTemplateId: e.target.value })}>
+              <option value="">—</option>
+              {templates.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+          </F>
+          <F label={ta("cfg.output")}>
+            <input value={step.config.output} onChange={(e) => set({ output: e.target.value })} />
+          </F>
+          <label className="check">
+            <input type="checkbox" checked={!!step.config.allowMissing} onChange={(e) => set({ allowMissing: e.target.checked })} /> {ta("cfg.allowMissing")}
+          </label>
+        </div>
+      );
+    case "send_for_signature": {
+      const c = step.config;
+      const setR = (i: number, patch: Record<string, unknown>) => set({ recipients: c.recipients.map((r, j) => (j === i ? { ...r, ...patch } : r)) });
+      return (
+        <>
+          <div className="grid-2">
+            <F label={ta("cfg.document")}>
+              <input value={c.document} onChange={(e) => set({ document: e.target.value })} />
+            </F>
+            <F label={ta("cfg.envelopeKey")}>
+              <input value={c.envelopeKey} onChange={(e) => set({ envelopeKey: e.target.value })} />
+            </F>
+          </div>
+          <F label={ta("cfg.subject")}>
+            <input value={c.subject} onChange={(e) => set({ subject: e.target.value })} />
+          </F>
+          <fieldset className="field">
+            <legend>{ta("cfg.recipients")}</legend>
+            {c.recipients.map((r, i) => (
+              <div key={i} className="agr-subrow">
+                <input aria-label={ta("neg.role")} value={r.role} onChange={(e) => setR(i, { role: e.target.value })} placeholder="Rol" />
+                <input aria-label={ta("ag.name")} value={r.name} onChange={(e) => setR(i, { name: e.target.value })} placeholder="{{cliente.nombre}}" />
+                <input aria-label={ta("ag.email")} value={r.email ?? ""} onChange={(e) => setR(i, { email: e.target.value })} placeholder="{{cliente.email}}" />
+                <label className="check">
+                  <input type="checkbox" checked={!!r.cc} onChange={(e) => setR(i, { cc: e.target.checked })} /> {ta("cfg.cc")}
+                </label>
+                <button type="button" className="btn btn-sm btn-ghost" onClick={() => set({ recipients: c.recipients.filter((_, j) => j !== i) })} aria-label="×">
+                  ×
+                </button>
+              </div>
+            ))}
+            <div>
+              <button type="button" className="btn btn-sm" onClick={() => set({ recipients: [...c.recipients, { role: "", name: "", email: "" }] })}>
+                {ta("cfg.addRecipient")}
+              </button>
+            </div>
+          </fieldset>
+        </>
+      );
+    }
+    case "wait_for_completion":
+      return (
+        <F label={ta("cfg.envelopeKey")}>
+          <input value={step.config.envelopeKey} onChange={(e) => set({ envelopeKey: e.target.value })} />
+        </F>
+      );
+    case "http_request":
+      return (
+        <>
+          <div className="grid-2">
+            <F label={ta("cfg.url")}>
+              <input type="url" value={step.config.url} onChange={(e) => set({ url: e.target.value })} />
+            </F>
+            <div className="grid-2">
+              <F label={ta("cfg.method")}>
+                <select value={step.config.method} onChange={(e) => set({ method: e.target.value })}>
+                  <option>POST</option>
+                  <option>PUT</option>
+                </select>
+              </F>
+              <F label={ta("cfg.saveAs")}>
+                <input value={step.config.saveAs ?? ""} onChange={(e) => set({ saveAs: e.target.value || null })} />
+              </F>
+            </div>
+          </div>
+          <F label={ta("cfg.body")}>
+            <textarea className="agr-json" value={step.config.bodyTemplate ?? ""} onChange={(e) => set({ bodyTemplate: e.target.value || null })} placeholder='{"cliente": {{cliente.nombre}}}' />
+          </F>
+        </>
+      );
+    case "update_repository":
+      return (
+        <div className="grid-2">
+          <F label={ta("cfg.envelopeKey")}>
+            <input value={step.config.envelopeKey} onChange={(e) => set({ envelopeKey: e.target.value })} />
+          </F>
+          <F label={ta("cfg.tags")}>
+            <input value={(step.config.tags ?? []).join(", ")} onChange={(e) => set({ tags: e.target.value.split(",").map((x) => x.trim()).filter(Boolean) })} />
+          </F>
+          <F label={ta("cfg.expiry")}>
+            <input value={step.config.expiryDate ?? ""} onChange={(e) => set({ expiryDate: e.target.value || null })} placeholder="{{contrato.vencimiento}}" />
+          </F>
+          <F label={ta("cfg.value")}>
+            <input value={step.config.value ?? ""} onChange={(e) => set({ value: e.target.value || null })} placeholder="{{total}}" />
+          </F>
+        </div>
+      );
+  }
+}
+
+export function WorkflowEditPage() {
+  const { id } = useParams();
+  const isNew = id === "new";
+  const ta = useAgrText();
+  const { t, locale } = useI18n();
+  const { can } = useAccess();
+  const { me: session } = useAuth();
+  const nav = useNavigate();
+  const [wf, setWf] = useState<WorkflowWithSecret | null>(null);
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [active, setActive] = useState(true);
+  const [publicStart, setPublicStart] = useState(false);
+  const [steps, setSteps] = useState<WorkflowStep[]>([]);
+  const [members, setMembers] = useState<Member[]>([]);
+  const [templates, setTemplates] = useState<DocumentTemplate[]>([]);
+  const [runs, setRuns] = useState<WorkflowRun[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [adding, setAdding] = useState<WorkflowStepType>("collect_data");
+  const [starting, setStarting] = useState(false);
+  const editable = can("templates:manage");
+
+  const loadRuns = useCallback(() => {
+    if (isNew) return;
+    api<{ items: WorkflowRun[] }>(`/v1/workflow-runs?workflowId=${id}`)
+      .then((r) => setRuns(r.items))
+      .catch(() => undefined);
+  }, [id, isNew]);
+
+  useEffect(() => {
+    api<{ items: Member[] }>("/v1/members").then((r) => setMembers(r.items)).catch(() => undefined);
+    api<{ items: DocumentTemplate[] }>("/v1/document-templates").then((r) => setTemplates(r.items)).catch(() => undefined);
+    if (isNew) {
+      setName(ta("wf.new"));
+      return;
+    }
+    api<WorkflowWithSecret>(`/v1/workflows/${id}`)
+      .then((w) => {
+        setWf(w);
+        setName(w.name);
+        setDescription(w.description ?? "");
+        setActive(w.active);
+        setPublicStart(w.publicStart);
+        setSteps(w.steps);
+      })
+      .catch((e) => setError(errorText(e)));
+    loadRuns();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
+  const me = session?.user.id ?? null;
+  const move = (i: number, d: number) => {
+    const next = [...steps];
+    const [x] = next.splice(i, 1);
+    next.splice(i + d, 0, x);
+    setSteps(next);
+  };
+
+  const save = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const body = { name: name.trim(), description: description.trim() || null, active, publicStart, steps };
+      const w = isNew ? await api<WorkflowWithSecret>("/v1/workflows", { method: "POST", body }) : await api<WorkflowWithSecret>(`/v1/workflows/${id}`, { method: "PATCH", body });
+      if (isNew) nav(`/app/workflows/${w.id}`, { replace: true });
+      setWf(w);
+      setSteps(w.steps);
+      setSaved(true);
+      window.setTimeout(() => setSaved(false), 2000);
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="page">
+      <AgreementsTabs />
+      <Link to="/app/workflows" className="muted small">
+        {ta("wf.back")}
+      </Link>
+      <form className="stack" onSubmit={save}>
+        <div className="page-head">
+          <input className="agr-title-input" value={name} onChange={(e) => setName(e.target.value)} aria-label={ta("wf.name")} required disabled={!editable} />
+          <div className="row-wrap">
+            {saved && <span className="muted small">✓ {ta("wf.saved")}</span>}
+            {wf && wf.active && (
+              <button type="button" className="btn" onClick={() => setStarting(true)}>
+                {ta("wf.start")}
+              </button>
+            )}
+            {editable && (
+              <button type="submit" className="btn btn-primary" disabled={busy || steps.length === 0}>
+                {busy ? t("common.saving") : ta("wf.save")}
+              </button>
+            )}
+          </div>
+        </div>
+        <ErrorBox error={error} />
+        <div className="agr-split-wide">
+          <div className="stack">
+            <fieldset className="stack" disabled={!editable} style={{ border: 0, padding: 0, margin: 0 }}>
+              <label className="field">
+                <span>{ta("wf.description")}</span>
+                <input value={description} onChange={(e) => setDescription(e.target.value)} />
+              </label>
+              <div className="row-wrap">
+                <label className="check">
+                  <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} /> {ta("wf.active")}
+                </label>
+                <label className="check">
+                  <input type="checkbox" checked={publicStart} onChange={(e) => setPublicStart(e.target.checked)} /> {ta("wf.public")}
+                </label>
+              </div>
+              <h2>{ta("wf.steps")}</h2>
+              <ol className="agr-steps">
+                {steps.map((s, i) => (
+                  <li key={s.id} className="agr-step">
+                    <div className="agr-step-head">
+                      <span className="agr-step-num" aria-hidden="true" />
+                      <div className="grow">
+                        <div className="agr-step-type">{ta(`step.${s.type}` as AgreementsTextKey)}</div>
+                        <input aria-label={ta("step.name")} value={s.name} onChange={(e) => setSteps(steps.map((x, j) => (j === i ? ({ ...x, name: e.target.value } as WorkflowStep) : x)))} />
+                      </div>
+                      <div className="agr-step-actions">
+                        <button type="button" className="btn btn-sm btn-ghost" onClick={() => move(i, -1)} disabled={i === 0} aria-label={ta("wf.moveUp")} title={ta("wf.moveUp")}>
+                          ↑
+                        </button>
+                        <button type="button" className="btn btn-sm btn-ghost" onClick={() => move(i, 1)} disabled={i === steps.length - 1} aria-label={ta("wf.moveDown")} title={ta("wf.moveDown")}>
+                          ↓
+                        </button>
+                        <button type="button" className="btn btn-sm btn-ghost" onClick={() => setSteps(steps.filter((_, j) => j !== i))} aria-label={ta("wf.remove")} title={ta("wf.remove")}>
+                          ×
+                        </button>
+                      </div>
+                    </div>
+                    <div className="agr-step-body">
+                      <StepConfig step={s} members={members} templates={templates} onChange={(ns) => setSteps(steps.map((x, j) => (j === i ? ns : x)))} />
+                    </div>
+                  </li>
+                ))}
+              </ol>
+              <div className="row-wrap">
+                <select value={adding} onChange={(e) => setAdding(e.target.value as WorkflowStepType)} aria-label={ta("wf.addStep")}>
+                  {WORKFLOW_STEP_TYPES.map((x) => (
+                    <option key={x} value={x}>
+                      {ta(`step.${x}` as AgreementsTextKey)}
+                    </option>
+                  ))}
+                </select>
+                <button type="button" className="btn" onClick={() => setSteps([...steps, newStep(adding, ta, me)])}>
+                  {ta("wf.addStep")}
+                </button>
+              </div>
+            </fieldset>
+          </div>
+          <div className="agr-sticky">
+            {wf?.publicUrl && (
+              <div className="card pad stack small">
+                <strong>{ta("wf.publicUrl")}</strong>
+                <a href={wf.publicUrl} target="_blank" rel="noreferrer" style={{ wordBreak: "break-all" }}>
+                  {wf.publicUrl}
+                </a>
+              </div>
+            )}
+            {wf?.signingSecret && (
+              <div className="card pad stack small">
+                <strong>{ta("wf.secret")}</strong>
+                <code style={{ wordBreak: "break-all" }}>{wf.signingSecret}</code>
+              </div>
+            )}
+            {!isNew && (
+              <div className="card pad stack">
+                <strong>{ta("wf.runs")}</strong>
+                {runs.length === 0 ? (
+                  <span className="muted small">{ta("wf.noRuns")}</span>
+                ) : (
+                  runs.slice(0, 20).map((r) => (
+                    <Link key={r.id} to={`/app/workflow-runs/${r.id}`} className="row-between small">
+                      <span>{formatDateTime(r.createdAt, locale)}</span>
+                      <RunStatus status={r.status} />
+                    </Link>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </form>
+      {starting && wf && (
+        <StartModal
+          workflowId={wf.id}
+          onClose={() => setStarting(false)}
+          onStarted={(r) => {
+            setStarting(false);
+            nav(`/app/workflow-runs/${r.id}`);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function StartModal({ workflowId, onClose, onStarted }: { workflowId: string; onClose: () => void; onStarted: (r: WorkflowRun) => void }) {
+  const ta = useAgrText();
+  const { t } = useI18n();
+  const [json, setJson] = useState("{}");
+  const [error, setError] = useState<string | null>(null);
+  const data = parseJsonObject(json);
+  return (
+    <Modal title={ta("wf.start")} onClose={onClose}>
+      <form
+        className="stack"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          try {
+            onStarted(await api<WorkflowRun>(`/v1/workflows/${workflowId}/runs`, { method: "POST", body: { data: data ?? {} } }));
+          } catch (err) {
+            setError(errorText(err));
+          }
+        }}
+      >
+        <ErrorBox error={error} />
+        <label className="field">
+          <span>{ta("wf.startData")}</span>
+          <textarea className="agr-json" value={json} onChange={(e) => setJson(e.target.value)} aria-invalid={!data} />
+        </label>
+        <div className="modal-foot">
+          <button type="button" className="btn btn-ghost" onClick={onClose}>
+            {t("common.cancel")}
+          </button>
+          <button type="submit" className="btn btn-primary" disabled={!data}>
+            {ta("wf.start")}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// ───────────────────────────── Ejecución ─────────────────────────────
+
+export function WorkflowRunPage() {
+  const { id } = useParams();
+  const ta = useAgrText();
+  const { locale } = useI18n();
+  const [run, setRun] = useState<WorkflowRun | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [comment, setComment] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(() => {
+    api<WorkflowRun>(`/v1/workflow-runs/${id}`)
+      .then(setRun)
+      .catch((e) => setError(errorText(e)));
+  }, [id]);
+  useEffect(load, [load]);
+  // Mientras está en curso, se refresca.
+  useEffect(() => {
+    if (!run || !["running", "waiting"].includes(run.status)) return;
+    const h = window.setInterval(load, 4000);
+    return () => window.clearInterval(h);
+  }, [run, load]);
+
+  const act = async (path: string, body: unknown = {}) => {
+    setBusy(true);
+    setError(null);
+    try {
+      setRun(await api<WorkflowRun>(path, { method: "POST", body }));
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!run) return <div className="page">{error ? <ErrorBox error={error} /> : <Spinner />}</div>;
+  const failedStep = run.steps.find((s) => s.status === "failed");
+  return (
+    <div className="page">
+      <AgreementsTabs />
+      <Link to={`/app/workflows/${run.workflowId}`} className="muted small">
+        {ta("run.back")}
+      </Link>
+      <div className="page-head">
+        <div>
+          <h1>{run.workflowName}</h1>
+          <div className="row-wrap small muted">
+            <RunStatus status={run.status} />
+            <span>
+              {ta("run.startedBy")}: {run.startedBy ?? "—"} · {formatDateTime(run.createdAt, locale)}
+            </span>
+          </div>
+        </div>
+        <div className="row-wrap">
+          {run.status === "failed" && failedStep && failedStep.type !== "approval" && failedStep.type !== "wait_for_completion" && (
+            <button type="button" className="btn" disabled={busy} onClick={() => act(`/v1/workflow-runs/${run.id}/retry`)}>
+              {ta("run.retry")}
+            </button>
+          )}
+          {["running", "waiting"].includes(run.status) && (
+            <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => act(`/v1/workflow-runs/${run.id}/cancel`)}>
+              {ta("run.cancel")}
+            </button>
+          )}
+        </div>
+      </div>
+      <ErrorBox error={error} />
+      {run.collectUrl && (
+        <div className="card pad small stack" style={{ marginBottom: "1rem" }}>
+          <strong>{ta("run.collectLink")}</strong>
+          <a href={run.collectUrl} target="_blank" rel="noreferrer" style={{ wordBreak: "break-all" }}>
+            {run.collectUrl}
+          </a>
+        </div>
+      )}
+      <div className="agr-split-wide">
+        <div className="card pad">
+          {run.steps.map((s) => (
+            <div key={s.index} className="agr-run-step">
+              <span className={`agr-dot agr-dot-${s.status}`} aria-hidden="true" />
+              <div>
+                <div>
+                  <strong>{s.name}</strong> <span className="muted small">· {ta(`step.${s.type}` as AgreementsTextKey)}</span>
+                </div>
+                {s.error && <div className="agr-run-err">{s.error}</div>}
+                {s.output && Object.keys(s.output).length > 0 && <div className="agr-run-out">{formatOutput(s.output)}</div>}
+                {s.output?.envelopeId ? (
+                  <Link className="small" to={`/app/envelopes/${String(s.output.envelopeId)}`}>
+                    → {String(s.output.envelopeId).slice(0, 8)}…
+                  </Link>
+                ) : null}
+                {s.type === "approval" && s.status === "waiting" && s.canDecide && (
+                  <div className="stack" style={{ marginTop: "0.6rem" }}>
+                    <input value={comment} onChange={(e) => setComment(e.target.value)} placeholder={ta("run.comment")} aria-label={ta("run.comment")} />
+                    <div className="row-wrap">
+                      <button type="button" className="btn btn-primary btn-sm" disabled={busy} onClick={() => act(`/v1/workflow-runs/${run.id}/steps/${s.index}/decision`, { approve: true, comment: comment || null })}>
+                        {ta("run.approve")}
+                      </button>
+                      <button type="button" className="btn btn-sm" disabled={busy} onClick={() => act(`/v1/workflow-runs/${run.id}/steps/${s.index}/decision`, { approve: false, comment: comment || null })}>
+                        {ta("run.reject")}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="small muted" style={{ textAlign: "right" }}>
+                {ta(`stepst.${s.status}` as AgreementsTextKey)}
+                {s.attempts > 1 && <div>{ta("run.attempts", { n: s.attempts })}</div>}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="card pad stack">
+          <strong>{ta("run.data")}</strong>
+          <pre className="agr-run-out">{JSON.stringify(run.context.data, null, 2)}</pre>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function formatOutput(o: Record<string, unknown>) {
+  return Object.entries(o)
+    .filter(([k]) => k !== "envelopeId")
+    .map(([k, v]) => `${k}: ${typeof v === "object" ? JSON.stringify(v) : String(v)}`)
+    .join("\n");
+}

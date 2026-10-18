@@ -15,7 +15,7 @@ import { decrypt, encrypt, iso, uuidv7 } from "../lib/util";
 import { auditFromRequest } from "./audit";
 import { authenticate, type Services } from "./context";
 import { tenantBaseUrl } from "./custom-domains";
-import { assertPublicDestination } from "./webhooks";
+import { postToCustomerUrl } from "./webhooks";
 
 const isLocalEnv = () => config.environment === "local";
 
@@ -143,16 +143,13 @@ function teamsPayload(m: Message) {
 }
 
 export async function postToChannel(kind: NotificationKind, url: string, m: Message) {
-  await assertPublicDestination(url);
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json", "user-agent": "CalaSign-Notifications/1.0" },
-    body: JSON.stringify(kind === "slack" ? slackPayload(m) : teamsPayload(m)),
-    redirect: "error",
-    signal: AbortSignal.timeout(10_000),
-  });
-  const text = (await res.text().catch(() => "")).slice(0, 300);
-  return { status: res.status, ok: res.ok, text };
+  const res = await postToCustomerUrl(
+    url,
+    { "content-type": "application/json", "user-agent": "CalaSign-Notifications/1.0" },
+    JSON.stringify(kind === "slack" ? slackPayload(m) : teamsPayload(m)),
+    10_000,
+  );
+  return { status: res.status, ok: res.status >= 200 && res.status < 300, text: res.text.slice(0, 300) };
 }
 
 async function recordResult(db: Db, id: string, r: { status: number | null; ok: boolean; error: string | null }) {

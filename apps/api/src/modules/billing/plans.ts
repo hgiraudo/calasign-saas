@@ -43,6 +43,8 @@ export async function envelopesSentThisMonth(db: Db, tenantId: string): Promise<
 export async function enforceEnvelopeQuota(db: Db, tenantId: string) {
   const { plan } = await tenantPlan(db, tenantId);
   if (plan.envelopesPerMonth === null) return;
+  // Corre dentro de la transacción de envío: el lock de la organización serializa envíos concurrentes.
+  await db.query(`SELECT id FROM tenants WHERE id = $1 FOR UPDATE`, [tenantId]);
   const used = await envelopesSentThisMonth(db, tenantId);
   if (used >= plan.envelopesPerMonth) {
     throw planLimitError(`Llegaste al límite de ${plan.envelopesPerMonth} sobres por mes del plan ${plan.name}`, {

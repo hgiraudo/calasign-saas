@@ -163,6 +163,10 @@ export async function renderDocumentPdf(blocks: DocBlock[], opts: RenderDocOptio
         }
         continue;
       }
+      // Una marca más ancha que el espacio (p. ej. la columna "Firma" de una tabla de 4 columnas) se achica: si no,
+      // se salía de la celda y hasta de la página (x + ancho > 1), la firma se estampaba en parte fuera de la hoja y
+      // el editor rechazaba guardar los campos del sobre ("el campo se sale de la página").
+      if (it.k === "mark" && it.w > width) it.w = Math.max(1, width);
       let w = it.w;
       if (x + w > width && x > 0) push();
       if (it.k === "word" && w > width) {

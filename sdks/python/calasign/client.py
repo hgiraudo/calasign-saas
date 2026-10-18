@@ -255,44 +255,44 @@ class _Envelopes:
                 return
 
     def get(self, envelope_id: str) -> EnvelopeDetail:
-        return self._c.request("GET", f"/v1/envelopes/{envelope_id}")
+        return self._c.request("GET", f"/v1/envelopes/{_seg(envelope_id)}")
 
     def create(self, data: Dict[str, Any], *, idempotency_key: Optional[str] = None) -> EnvelopeDetail:
         return self._c.request("POST", "/v1/envelopes", json_body=data, idempotency_key=idempotency_key or str(uuid.uuid4()))
 
     def update(self, envelope_id: str, data: Dict[str, Any]) -> EnvelopeDetail:
-        return self._c.request("PATCH", f"/v1/envelopes/{envelope_id}", json_body=data, retryable=True)
+        return self._c.request("PATCH", f"/v1/envelopes/{_seg(envelope_id)}", json_body=data, retryable=True)
 
     def delete(self, envelope_id: str) -> None:
-        self._c.request("DELETE", f"/v1/envelopes/{envelope_id}")
+        self._c.request("DELETE", f"/v1/envelopes/{_seg(envelope_id)}")
 
     def upload_document(self, envelope_id: str, content: bytes, filename: str = "documento.pdf") -> Document:
-        return self._c.request("POST", f"/v1/envelopes/{envelope_id}/documents", multipart={"file": (filename, content, "application/pdf")})
+        return self._c.request("POST", f"/v1/envelopes/{_seg(envelope_id)}/documents", multipart={"file": (filename, content, "application/pdf")})
 
     def set_recipients(self, envelope_id: str, recipients: List[Dict[str, Any]]) -> EnvelopeDetail:
-        return self._c.request("PUT", f"/v1/envelopes/{envelope_id}/recipients", json_body={"recipients": recipients})
+        return self._c.request("PUT", f"/v1/envelopes/{_seg(envelope_id)}/recipients", json_body={"recipients": recipients})
 
     def set_fields(self, envelope_id: str, fields: List[Dict[str, Any]]) -> EnvelopeDetail:
-        return self._c.request("PUT", f"/v1/envelopes/{envelope_id}/fields", json_body={"fields": fields})
+        return self._c.request("PUT", f"/v1/envelopes/{_seg(envelope_id)}/fields", json_body={"fields": fields})
 
     def send(self, envelope_id: str, *, idempotency_key: Optional[str] = None) -> EnvelopeDetail:
-        return self._c.request("POST", f"/v1/envelopes/{envelope_id}/send", idempotency_key=idempotency_key or f"send-{envelope_id}")
+        return self._c.request("POST", f"/v1/envelopes/{_seg(envelope_id)}/send", idempotency_key=idempotency_key or f"send-{_seg(envelope_id)}")
 
     def void(self, envelope_id: str, reason: str) -> EnvelopeDetail:
-        return self._c.request("POST", f"/v1/envelopes/{envelope_id}/void", json_body={"reason": reason}, retryable=True)
+        return self._c.request("POST", f"/v1/envelopes/{_seg(envelope_id)}/void", json_body={"reason": reason}, retryable=True)
 
     def remind(self, envelope_id: str) -> Dict[str, Any]:
-        return self._c.request("POST", f"/v1/envelopes/{envelope_id}/remind")
+        return self._c.request("POST", f"/v1/envelopes/{_seg(envelope_id)}/remind")
 
     def events(self, envelope_id: str) -> List[Dict[str, Any]]:
-        return self._c.request("GET", f"/v1/envelopes/{envelope_id}/events")["items"]
+        return self._c.request("GET", f"/v1/envelopes/{_seg(envelope_id)}/events")["items"]
 
     def download_signed(self, envelope_id: str) -> bytes:
-        return self._c.request("GET", f"/v1/envelopes/{envelope_id}/signed.pdf", raw=True)
+        return self._c.request("GET", f"/v1/envelopes/{_seg(envelope_id)}/signed.pdf", raw=True)
 
     def signing_url(self, envelope_id: str, recipient_id: str, *, return_url: Optional[str] = None) -> Dict[str, Any]:
         body = {"returnUrl": return_url} if return_url else {}
-        return self._c.request("POST", f"/v1/envelopes/{envelope_id}/recipients/{recipient_id}/signing-url", json_body=body)
+        return self._c.request("POST", f"/v1/envelopes/{_seg(envelope_id)}/recipients/{_seg(recipient_id)}/signing-url", json_body=body)
 
     def from_template(self, data: Dict[str, Any], *, idempotency_key: Optional[str] = None) -> EnvelopeDetail:
         return self._c.request("POST", "/v1/envelopes/from-template", json_body=data, idempotency_key=idempotency_key or str(uuid.uuid4()))
@@ -306,7 +306,7 @@ class _Templates:
         return self._c.request("GET", "/v1/templates", query={"q": q})["items"]
 
     def get(self, template_id: str) -> Dict[str, Any]:
-        return self._c.request("GET", f"/v1/templates/{template_id}")
+        return self._c.request("GET", f"/v1/templates/{_seg(template_id)}")
 
 
 class _Webhooks:
@@ -326,13 +326,19 @@ class _Webhooks:
         return self._c.request("POST", "/v1/webhooks", json_body=body)
 
     def delete(self, webhook_id: str) -> None:
-        self._c.request("DELETE", f"/v1/webhooks/{webhook_id}")
+        self._c.request("DELETE", f"/v1/webhooks/{_seg(webhook_id)}")
 
     def test(self, webhook_id: str) -> Dict[str, Any]:
-        return self._c.request("POST", f"/v1/webhooks/{webhook_id}/test")
+        return self._c.request("POST", f"/v1/webhooks/{_seg(webhook_id)}/test")
 
 
 # ───────────────────────────── Utilidades ─────────────────────────────
+
+
+def _seg(value: str) -> str:
+    """Un id como segmento de la ruta: sin codificar, un id que llega de afuera ("../webhooks", "x?y") cambiaba el
+    pedido (otra ruta de la API con la credencial del integrador)."""
+    return urllib.parse.quote(str(value), safe="")
 
 
 def _json_or_empty(raw: bytes) -> Dict[str, Any]:

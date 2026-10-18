@@ -226,6 +226,15 @@ export interface ListEnvelopesParams {
   cursor?: string;
 }
 
+/**
+ * Un id como segmento de la ruta. Sin codificar, un id que llega de afuera ("../webhooks", "x?y") cambiaba el pedido:
+ * `fetch` resuelve los "..", así que `envelopes.get("../webhooks")` pedía GET /v1/webhooks con la credencial del
+ * integrador, y `webhooks.delete("../envelopes/<id>")` borraba un sobre.
+ */
+function seg(v: string): string {
+  return encodeURIComponent(String(v));
+}
+
 class EnvelopesApi {
   constructor(private readonly c: CalaSign) {}
 
@@ -246,7 +255,7 @@ class EnvelopesApi {
   }
 
   get(id: string): Promise<EnvelopeDetail> {
-    return this.c.request("GET", `/v1/envelopes/${id}`);
+    return this.c.request("GET", `/v1/envelopes/${seg(id)}`);
   }
 
   /** Crea un borrador. Con idempotencia automática: un reintento no crea un segundo sobre. */
@@ -255,11 +264,11 @@ class EnvelopesApi {
   }
 
   update(id: string, input: UpdateEnvelopeInput): Promise<EnvelopeDetail> {
-    return this.c.request("PATCH", `/v1/envelopes/${id}`, { body: input, retryable: true });
+    return this.c.request("PATCH", `/v1/envelopes/${seg(id)}`, { body: input, retryable: true });
   }
 
   delete(id: string): Promise<void> {
-    return this.c.request("DELETE", `/v1/envelopes/${id}`);
+    return this.c.request("DELETE", `/v1/envelopes/${seg(id)}`);
   }
 
   uploadDocument(id: string, file: Uint8Array | ArrayBuffer | Blob, filename = "documento.pdf") {
@@ -271,46 +280,46 @@ class EnvelopesApi {
         ? file
         : new Blob([file instanceof ArrayBuffer ? new Uint8Array(file) : Uint8Array.prototype.slice.call(file)], { type: "application/pdf" });
     fd.append("file", blob, filename);
-    return this.c.request<EnvelopeDetail["documents"][number]>("POST", `/v1/envelopes/${id}/documents`, { form: fd });
+    return this.c.request<EnvelopeDetail["documents"][number]>("POST", `/v1/envelopes/${seg(id)}/documents`, { form: fd });
   }
 
   removeDocument(id: string, documentId: string): Promise<void> {
-    return this.c.request("DELETE", `/v1/envelopes/${id}/documents/${documentId}`);
+    return this.c.request("DELETE", `/v1/envelopes/${seg(id)}/documents/${seg(documentId)}`);
   }
 
   setRecipients(id: string, recipients: RecipientInput[]): Promise<EnvelopeDetail> {
-    return this.c.request("PUT", `/v1/envelopes/${id}/recipients`, { body: { recipients } });
+    return this.c.request("PUT", `/v1/envelopes/${seg(id)}/recipients`, { body: { recipients } });
   }
 
   setFields(id: string, fields: (FieldInput | Record<string, unknown>)[]): Promise<EnvelopeDetail> {
-    return this.c.request("PUT", `/v1/envelopes/${id}/fields`, { body: { fields } });
+    return this.c.request("PUT", `/v1/envelopes/${seg(id)}/fields`, { body: { fields } });
   }
 
   send(id: string, o: { idempotencyKey?: string } = {}): Promise<EnvelopeDetail> {
-    return this.c.request("POST", `/v1/envelopes/${id}/send`, { idempotencyKey: o.idempotencyKey ?? `send-${id}` });
+    return this.c.request("POST", `/v1/envelopes/${seg(id)}/send`, { idempotencyKey: o.idempotencyKey ?? `send-${seg(id)}` });
   }
 
   void(id: string, reason: string): Promise<EnvelopeDetail> {
-    return this.c.request("POST", `/v1/envelopes/${id}/void`, { body: { reason }, retryable: true });
+    return this.c.request("POST", `/v1/envelopes/${seg(id)}/void`, { body: { reason }, retryable: true });
   }
 
   remind(id: string): Promise<{ notified: number }> {
-    return this.c.request("POST", `/v1/envelopes/${id}/remind`);
+    return this.c.request("POST", `/v1/envelopes/${seg(id)}/remind`);
   }
 
   async events(id: string): Promise<EnvelopeEvent[]> {
-    return (await this.c.request<{ items: EnvelopeEvent[] }>("GET", `/v1/envelopes/${id}/events`)).items;
+    return (await this.c.request<{ items: EnvelopeEvent[] }>("GET", `/v1/envelopes/${seg(id)}/events`)).items;
   }
 
   /** PDF sellado (solo con el sobre completado). */
   async downloadSigned(id: string): Promise<Uint8Array> {
-    const res = await this.c.request<Response>("GET", `/v1/envelopes/${id}/signed.pdf`, { raw: true });
+    const res = await this.c.request<Response>("GET", `/v1/envelopes/${seg(id)}/signed.pdf`, { raw: true });
     return new Uint8Array(await res.arrayBuffer());
   }
 
   /** URL de firma embebida (5 min, un solo uso) para un destinatario con `embedded: true`. */
   signingUrl(envelopeId: string, recipientId: string, input: CreateSigningUrlInput = {}): Promise<SigningUrlResponse> {
-    return this.c.request("POST", `/v1/envelopes/${envelopeId}/recipients/${recipientId}/signing-url`, { body: input });
+    return this.c.request("POST", `/v1/envelopes/${seg(envelopeId)}/recipients/${seg(recipientId)}/signing-url`, { body: input });
   }
 
   /** Crea (y opcionalmente envía) un sobre desde una plantilla. */
@@ -327,7 +336,7 @@ class TemplatesApi {
   }
 
   get(id: string): Promise<TemplateDetail> {
-    return this.c.request("GET", `/v1/templates/${id}`);
+    return this.c.request("GET", `/v1/templates/${seg(id)}`);
   }
 }
 
@@ -344,19 +353,19 @@ class WebhooksApi {
   }
 
   update(id: string, input: UpdateWebhookInput): Promise<WebhookEndpoint> {
-    return this.c.request("PATCH", `/v1/webhooks/${id}`, { body: input, retryable: true });
+    return this.c.request("PATCH", `/v1/webhooks/${seg(id)}`, { body: input, retryable: true });
   }
 
   delete(id: string): Promise<void> {
-    return this.c.request("DELETE", `/v1/webhooks/${id}`);
+    return this.c.request("DELETE", `/v1/webhooks/${seg(id)}`);
   }
 
   async deliveries(id: string): Promise<WebhookDelivery[]> {
-    return (await this.c.request<{ items: WebhookDelivery[] }>("GET", `/v1/webhooks/${id}/deliveries`)).items;
+    return (await this.c.request<{ items: WebhookDelivery[] }>("GET", `/v1/webhooks/${seg(id)}/deliveries`)).items;
   }
 
   test(id: string): Promise<WebhookDelivery> {
-    return this.c.request("POST", `/v1/webhooks/${id}/test`);
+    return this.c.request("POST", `/v1/webhooks/${seg(id)}/test`);
   }
 }
 

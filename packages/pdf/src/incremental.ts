@@ -125,6 +125,10 @@ export interface IncrementalSignatureOptions {
   name?: string;
   location?: string;
   contactInfo?: string;
+  /** Rectángulo del widget en la primera página. Por defecto invisible ([0,0,0,0]). */
+  widgetRect?: [number, number, number, number];
+  /** Operadores PDF de la apariencia visible (solo con widgetRect de área no nula). */
+  appearance?: string;
   /** Recibe los bytes cubiertos por el ByteRange y devuelve el CMS (o el TimeStampToken) en DER. */
   sign: (content: Uint8Array) => Promise<Uint8Array>;
 }
@@ -167,16 +171,22 @@ export async function buildSignaturePlaceholderIncremental(pdf: Uint8Array, o: O
   const sigRef = u.add(sigDict);
 
   const page = u.doc.getPages()[0];
+  const rect = o.widgetRect ?? [0, 0, 0, 0];
   const widget = ctx.obj({
     Type: "Annot",
     Subtype: "Widget",
     FT: "Sig",
-    Rect: [0, 0, 0, 0],
+    Rect: rect,
     V: sigRef,
     T: PDFString.of(o.fieldName),
     F: 132,
     P: page.ref,
-  });
+  }) as PDFDict;
+  const [x1, y1, x2, y2] = rect;
+  if (o.appearance && Math.abs(x2 - x1) > 0 && Math.abs(y2 - y1) > 0) {
+    const ap = u.add(ctx.flateStream(o.appearance, { Type: "XObject", Subtype: "Form", BBox: [0, 0, Math.abs(x2 - x1), Math.abs(y2 - y1)] }));
+    widget.set(PDFName.of("AP"), ctx.obj({ N: ap }));
+  }
   const widgetRef = u.add(widget);
   appendToArray(u, page.ref, page.node, "Annots", widgetRef);
 

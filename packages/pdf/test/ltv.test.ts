@@ -7,6 +7,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   CscSignatureProvider,
   IncrementalUpdate,
+  addSignatureIncremental,
+  buildPadesCms,
+  generateDevRootCa,
+  issueSealCertificate,
   addDssIncremental,
   LocalKeyProvider,
   addCadesSignatureIncremental,
@@ -183,6 +187,40 @@ describe("PAdES B-LT / B-LTA", () => {
     const v3 = await validatePdf(withDss, { trustAnchors: [pki.root.certDer] });
     expect(v3.signatures[0].changesAfter).toBe("evidence_only");
     expect(v3.summary.allValid).toBe(true);
+  }, 120_000);
+
+  it("una firma posterior visible o un cambio de capas en el catálogo no pasan como evidencia", async () => {
+    const seal = new LocalKeyProvider("lab-seal", pki.seal.keyPem, pki.sealChainPem);
+    const signed = await sealedBT(seal);
+    // Firmante cualquiera con un certificado autofirmado: su firma verifica criptográficamente (no es de confianza).
+    const ca = await generateDevRootCa("Atacante");
+    const own = await issueSealCertificate(ca, { commonName: "Atacante" });
+    const attacker = new LocalKeyProvider("attacker", own.keyPem!, own.chainPem);
+    const later = (extra: { widgetRect?: [number, number, number, number]; appearance?: string }) =>
+      addSignatureIncremental(signed, { type: "Sig", fieldName: `Otra${Math.random()}`, signatureLength: 16_000, sign: (c) => buildPadesCms(c, attacker, {}), ...extra });
+
+    // Firma posterior invisible: solo evidencia.
+    const inv = await validatePdf(await later({}), { trustAnchors: [pki.root.certDer] });
+    expect(inv.signatures.every((x) => x.integrity.valid)).toBe(true);
+    expect(inv.signatures[0].changesAfter).toBe("evidence_only");
+
+    // Firma posterior con widget visible que dibuja encima de la página: cambia lo que se ve.
+    const vis = await validatePdf(
+      await later({ widgetRect: [0, 0, 595, 842], appearance: "1 1 1 rg 0 0 595 842 re f 0 0 0 rg BT /Helv 24 Tf 50 700 Td (Monto: 1.000.000) Tj ET" }),
+      { trustAnchors: [pki.root.certDer] },
+    );
+    expect(vis.signatures.every((x) => x.integrity.valid)).toBe(true);
+    expect(vis.signatures[0].changesAfter).toBe("content");
+    expect(vis.summary.allValid).toBe(false);
+
+    // Capas opcionales agregadas al catálogo (deciden qué contenido se ve) sin tocar las páginas.
+    const u = await IncrementalUpdate.open(signed);
+    const ocg = u.add(u.context.obj({ Type: "OCG", Name: PDFString.of("Capa") }));
+    u.doc.catalog.set(PDFName.of("OCProperties"), u.context.obj({ OCGs: [ocg], D: { OFF: [ocg] } }));
+    u.touch(u.catalogRef);
+    const oc = await validatePdf(u.serialize(), { trustAnchors: [pki.root.certDer] });
+    expect(oc.signatures[0].changesAfter).toBe("content");
+    expect(oc.summary.modifiedAfterSigning).toBe(true);
   }, 120_000);
 
   it("firma remota por CSC v2 (servidor de prueba)", async () => {

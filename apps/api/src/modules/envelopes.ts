@@ -162,14 +162,18 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
         where += ` AND (e.subject ILIKE $${params.length} OR EXISTS (SELECT 1 FROM recipients r WHERE r.envelope_id = e.id AND (r.name ILIKE $${params.length} OR r.email ILIKE $${params.length})))`;
       }
       if (req.query.cursor) {
+        // created_at va en microsegundos (Postgres guarda µs; un Date de JS solo ms): con ms, los sobres creados en el
+        // mismo milisegundo que el último de la página (p. ej. varios en una misma transacción) se saltaban.
+        // Se aceptan también los cursores viejos con fecha ISO.
         const [ts, id] = Buffer.from(req.query.cursor, "base64url").toString().split("|");
-        if (!ts || Number.isNaN(Date.parse(ts)) || !/^[0-9a-f-]{36}$/i.test(id ?? "")) throw badRequest("invalid_cursor", "Cursor inválido");
-        params.push(ts, id);
-        where += ` AND (e.created_at, e.id) < ($${params.length - 1}::timestamptz, $${params.length}::uuid)`;
+        const us = /^\d{1,17}$/.test(ts ?? "") ? ts : ts && !Number.isNaN(Date.parse(ts)) ? String(Date.parse(ts) * 1000) : null;
+        if (!us || !/^[0-9a-f-]{36}$/i.test(id ?? "")) throw badRequest("invalid_cursor", "Cursor inválido");
+        params.push(us, id);
+        where += ` AND (e.created_at, e.id) < ('epoch'::timestamptz + $${params.length - 1}::bigint * interval '1 microsecond', $${params.length}::uuid)`;
       }
       params.push(limit + 1);
       const rows = await s.db.query<any>(
-        `SELECT e.* FROM envelopes e WHERE ${where} ORDER BY e.created_at DESC, e.id DESC LIMIT $${params.length}`,
+        `SELECT e.*, ((extract(epoch FROM e.created_at) * 1000000)::bigint)::text AS cursor_us FROM envelopes e WHERE ${where} ORDER BY e.created_at DESC, e.id DESC LIMIT $${params.length}`,
         params,
       );
       const page = rows.slice(0, limit);
@@ -192,7 +196,7 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
       }));
       const last = page[page.length - 1];
       const nextCursor =
-        rows.length > limit && last ? Buffer.from(`${new Date(last.created_at).toISOString()}|${last.id}`).toString("base64url") : null;
+        rows.length > limit && last ? Buffer.from(`${last.cursor_us}|${last.id}`).toString("base64url") : null;
       return { items, nextCursor };
     },
   );

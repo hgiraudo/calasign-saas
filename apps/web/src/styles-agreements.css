@@ -86,3 +86,4 @@
 .table-scroll { overflow-x: auto; }
 .agr-title-input { font-size: 1.4rem; font-weight: 700; border: 1px solid transparent; background: transparent; padding: 0.2rem 0.4rem; border-radius: 6px; flex: 1 1 260px; min-width: 0; }
 .agr-title-input:hover, .agr-title-input:focus { border-color: var(--border); background: #fff; }
+.agr-toolbar input { width: auto; font-size: 0.82rem; padding: 0.2rem 0.45rem; min-height: 0; }

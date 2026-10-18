@@ -1,5 +1,5 @@
 // Cobro al firmar: panel del remitente (borrador), resumen en el detalle y panel/puerta del firmante.
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   PAYMENT_CURRENCIES,
   type EnvelopePayment,
@@ -234,6 +234,9 @@ function SignerPaymentPanel({ base, info, onPaid }: { base: string; info: Signer
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const returned = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("payment") : null;
+  // onPaid suele venir como función inline: con una ref, el sondeo no se reinicia (ni reinicia su tope) en cada render.
+  const onPaidRef = useRef(onPaid);
+  onPaidRef.current = onPaid;
 
   // Al volver del proveedor, el webhook puede tardar unos segundos: se consulta hasta ver el pago confirmado.
   useEffect(() => {
@@ -245,14 +248,14 @@ function SignerPaymentPanel({ base, info, onPaid }: { base: string; info: Signer
         .then((r) => {
           if (r.status === "paid") {
             window.clearInterval(id);
-            onPaid();
+            onPaidRef.current();
           }
         })
         .catch(() => {});
       if (n > 30) window.clearInterval(id);
     }, 3000);
     return () => window.clearInterval(id);
-  }, [returned, info.status, base, onPaid]);
+  }, [returned, info.status, base]);
 
   const pay = async () => {
     setBusy(true);

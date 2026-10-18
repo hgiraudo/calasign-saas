@@ -55,7 +55,7 @@ export function EnvelopeDetailPage() {
   // Refresco automático mientras el sobre está en curso.
   const status = detail?.envelope.status;
   useEffect(() => {
-    if (status !== "sent" && status !== "finalizing") return;
+    if (status !== "sent" && status !== "finalizing" && status !== "awaiting_certificates") return;
     const h = window.setInterval(load, status === "finalizing" ? 3000 : 10000);
     return () => window.clearInterval(h);
   }, [status, load]);
@@ -124,6 +124,11 @@ export function EnvelopeDetailPage() {
             <a className="btn btn-primary" href={`/v1/envelopes/${id}/signed.pdf`}>
               ⬇ {t("detail.download")}
             </a>
+          )}
+          {env.status === "awaiting_certificates" && (
+            <button type="button" className="btn btn-danger" disabled={busy} onClick={() => setVoiding(true)}>
+              {t("detail.void")}
+            </button>
           )}
           {isOpen && (
             <>

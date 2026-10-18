@@ -158,6 +158,10 @@ function BuiltinCapture({
 }) {
   const tx = useIdnText();
   const [previews, setPreviews] = useState<Partial<Record<IdvCaptureKind, string>>>({});
+  const previewsRef = useRef(previews);
+  previewsRef.current = previews;
+  // Al salir de la captura se liberan las vistas previas (no quedan las fotos del documento en memoria).
+  useEffect(() => () => Object.values(previewsRef.current).forEach((u) => u && URL.revokeObjectURL(u)), []);
   const [uploading, setUploading] = useState<IdvCaptureKind | null>(null);
   const next = idn.requiredCaptures.find((k) => !idn.capturedKinds.includes(k)) ?? null;
   const [current, setCurrent] = useState<IdvCaptureKind | null>(next);
@@ -170,7 +174,11 @@ function BuiltinCapture({
       const fd = new FormData();
       fd.append("file", blob, `${kind}.jpg`);
       const r = await api<IdentityStartResponse>(`${base}/identity/captures/${kind}`, { method: "POST", form: fd });
-      setPreviews((p) => ({ ...p, [kind]: URL.createObjectURL(blob) }));
+      setPreviews((p) => {
+        // Las fotos del documento son datos sensibles: se libera la vista previa anterior de ese paso.
+        if (p[kind]) URL.revokeObjectURL(p[kind]!);
+        return { ...p, [kind]: URL.createObjectURL(blob) };
+      });
       await onIdentity(r.identity);
     } catch (e) {
       onError(errorText(e));

@@ -543,9 +543,11 @@ export async function insertEnvelopeFromTemplate(
   const envId = uuidv7();
   const tenant = await t.one<any>(`SELECT default_locale FROM tenants WHERE id = $1`, [ctx.tenantId]);
   const subject = input.subject ?? tplRow.subject ?? tplRow.name;
+  // created_by_api_key: una API key sin envelopes:view_all solo ve los sobres que creó ella (también los de sus
+  // envíos masivos y envíos desde el CRM, que no pasan por POST /v1/envelopes).
   await t.query(
-    `INSERT INTO envelopes (id, tenant_id, created_by, created_via, subject, message, locale, expires_at, metadata)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+    `INSERT INTO envelopes (id, tenant_id, created_by, created_via, subject, message, locale, expires_at, metadata, created_by_api_key)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
     [
       envId,
       ctx.tenantId,
@@ -556,6 +558,7 @@ export async function insertEnvelopeFromTemplate(
       input.locale ?? tplRow.locale ?? tenant?.default_locale ?? "es",
       input.expiresAt ?? new Date(Date.now() + 30 * 86400_000).toISOString(),
       JSON.stringify({ ...(input.metadata ?? {}), ...extraMetadata, templateId: tpl.template.id }),
+      ctx.apiKeyId,
     ],
   );
   await appendEvent(t, {

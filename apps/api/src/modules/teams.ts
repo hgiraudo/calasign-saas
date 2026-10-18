@@ -124,10 +124,14 @@ export async function recentFailedLogins(db: Db, userId: string): Promise<number
      SELECT count(*)::int AS n FROM account_audit_log
      WHERE (tenant_id = (SELECT tenant_id FROM t) OR NOT EXISTS (SELECT 1 FROM t))
        AND action = 'auth.login_failed' AND actor_id = $1::text AND occurred_at > now() - interval '15 minutes'
-       -- Restablecer la contraseña (no solo pedirlo) desbloquea la cuenta.
-       AND occurred_at > COALESCE((SELECT max(occurred_at) FROM account_audit_log
-                                   WHERE action = 'user.password_reset' AND target_id = $1::text
-                                     AND (tenant_id = (SELECT tenant_id FROM t) OR NOT EXISTS (SELECT 1 FROM t))), '-infinity')`,
+       -- Restablecer la contraseña (no solo pedirlo) desbloquea la cuenta. users.password_reset_at vale también sin
+       -- organizaciones (ahí el restablecimiento no deja auditoría); la auditoría cubre los restablecimientos anteriores
+       -- a esa columna.
+       AND occurred_at > COALESCE(GREATEST(
+             (SELECT password_reset_at FROM users WHERE id = $1::uuid),
+             (SELECT max(occurred_at) FROM account_audit_log
+               WHERE action = 'user.password_reset' AND target_id = $1::text
+                 AND (tenant_id = (SELECT tenant_id FROM t) OR NOT EXISTS (SELECT 1 FROM t)))), '-infinity')`,
     [userId],
   );
   return r?.n ?? 0;

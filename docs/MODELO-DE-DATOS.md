@@ -89,6 +89,8 @@ El diagrama de arriba es el núcleo (0001). Cada bloque funcional agrega su prop
 | `0025_r10_integrations` | `crm_mappings.created_by_api_key`: un mapeo de CRM creado con una API key tiene dueño; si la key se revoca, el webhook deja de enviar |
 | `0026_r10_evidence` | `workflows.created_by_api_key`: un workflow creado con una API key queda a su nombre; los envíos del link público se revisan contra esa key |
 | `0027_r11_identity` | `memberships.password_allowed`: las membresías creadas por alta JIT de SSO o por SCIM no aceptan sesiones con contraseña hasta que el dueño del correo la restablezca (evita el pre-secuestro de cuentas) |
+| `0028_r12_integrations` | Quita de `oauth_clients.redirect_uris` las URIs con esquemas peligrosos (`javascript:`, `data:`, `vbscript:`, `file:`, `blob:`, `about:`, `filesystem:`) guardadas antes de que el alta las rechazara |
+| `0029_r12_identity` | `users.password_reset_at`: canjear un token de recuperación válido desbloquea la cuenta aunque no tenga organizaciones |
 
 Reglas: una migración por bloque, solo aditiva salvo cuando se recrea un `CHECK` para sumar un valor; nunca se edita una
 migración ya aplicada en un entorno.

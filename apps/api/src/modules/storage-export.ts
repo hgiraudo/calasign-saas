@@ -144,10 +144,20 @@ async function check(res: Response, what: string) {
   throw new Error(`${what}: HTTP ${res.status} ${t}`);
 }
 
+/**
+ * Consulta de Drive para la carpeta. Dentro de '…' se escapan la comilla y también la barra invertida: sin escapar
+ * la barra, una carpeta "Contratos\Firmados" (o que termina en \) arma una consulta inválida (HTTP 400) y no
+ * funcionan ni las exportaciones ni la prueba de conexión.
+ */
+export function gdriveFolderQuery(folder: string): string {
+  const lit = folder.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+  return `name = '${lit}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+}
+
 /** Con el scope drive.file la app solo ve lo que creó: se busca (o crea) la carpeta por nombre. */
 async function findOrCreateGdriveFolder(token: string, folder: string): Promise<string> {
   const auth = { authorization: `Bearer ${token}` };
-  const q = `name = '${folder.replace(/'/g, "\\'")}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+  const q = gdriveFolderQuery(folder);
   const found: any = await (await check(await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id)`, { headers: auth }), "buscar carpeta")).json();
   if (found.files?.[0]?.id) return found.files[0].id;
   const created: any = await (

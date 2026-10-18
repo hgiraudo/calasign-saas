@@ -472,6 +472,7 @@ for (let i = 0; i < 2; i++) {
 const hookRun = await waitFor(async () => (await api("GET", "/v1/crm/runs")).items.find((r) => r.mappingId === hsHook.id && r.kind === "send" && r.status === "succeeded"), "envío por webhook");
 const hookRuns = (await api("GET", "/v1/crm/runs")).items.filter((r) => r.mappingId === hsHook.id && r.kind === "send");
 assert(hookRuns.length === 1 && hookRun.envelopeId && hookRun.objectId === "9002", "un solo envío por evento repetido");
+assert(hookRun.attempts === 1, `un envío por webhook que sale al primer intento cuenta 1 intento (${hookRun.attempts})`);
 step("HubSpot: webhook firmado (v3) dispara el envío del deal 9002; firma inválida 401; evento repetido no duplica");
 
 // Varios eventos distintos del mismo deal en una tanda (la cola los procesa en paralelo): un solo sobre.
@@ -532,6 +533,52 @@ step("HubSpot: webhook firmado (v3) dispara el envío del deal 9002; firma invá
   const failed = await waitFor(async () => (await api("GET", "/v1/crm/runs")).items.find((r) => r.mappingId === inesMap.id && r.kind === "send" && r.status === "failed"), "envío rechazado");
   assert(!failed.envelopeId && /ya no es miembro/.test(failed.error ?? ""), `sin sobre a nombre de una ex miembro (${failed.error})`);
   step("HubSpot: el webhook no envía a nombre de quien creó el mapeo si ya no es miembro");
+}
+
+// Un mapeo por webhook creado con una API key: el sobre queda a nombre de la key (la key lo ve) y, revocada la key,
+// el webhook deja de enviar.
+{
+  const { apiKey, secret } = await api("POST", "/v1/api-keys", { name: `crm key ${stamp}`, role: "admin" });
+  const asKey = async (method, path, body) => {
+    const r = await fetch(BASE + path, { method, headers: { authorization: `Bearer ${secret}`, "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+    return { status: r.status, body: await r.json().catch(() => null) };
+  };
+  const created = await asKey("POST", "/v1/crm/mappings", {
+    connectionId: hsConn.id,
+    name: "Deal en qualifiedtobuy (API key)",
+    objectType: "deal",
+    templateId: template.id,
+    roles: [
+      { role: "Cliente", source: "contact", index: 0 },
+      { role: "Vendedor", source: "fixed", name: `Vendedor Key ${stamp}`, email: `ventas4+${stamp}@acme.test` },
+    ],
+    trigger: "webhook",
+    triggerConfig: { property: "dealstage", value: "qualifiedtobuy" },
+    writeBack: { attachPdf: false },
+  });
+  assert(created.status === 201, `mapeo creado con la API key (${created.status})`);
+  const keyMap = created.body;
+  const fire = async (eventId) => {
+    const ev = JSON.stringify([{ eventId, subscriptionType: "deal.propertyChange", portalId: 777, objectId: 9001, propertyName: "dealstage", propertyValue: "qualifiedtobuy" }]);
+    const t = String(Date.now());
+    const sg = createHmac("sha256", HS_SECRET).update(`POST${hookUrl}${ev}${t}`).digest("base64");
+    const r = await fetch(hookUrl, { method: "POST", headers: { "content-type": "application/json", "x-hubspot-request-timestamp": t, "x-hubspot-signature-v3": sg }, body: ev });
+    assert(r.status === 200, "webhook aceptado");
+  };
+  await fire(50003);
+  const okRun = await waitFor(async () => (await api("GET", "/v1/crm/runs")).items.find((r) => r.mappingId === keyMap.id && r.kind === "send" && r.status !== "pending"), "envío con mapeo de la key");
+  assert(okRun.status === "succeeded" && okRun.envelopeId, `el webhook envió con el mapeo de la key (${okRun.status} ${okRun.error ?? ""})`);
+  const seen = await asKey("GET", `/v1/envelopes/${okRun.envelopeId}`);
+  assert(seen.status === 200, `la key ve el sobre que mandó su mapeo (${seen.status})`);
+  await api("POST", `/v1/envelopes/${okRun.envelopeId}/void`, { reason: "prueba e2e" });
+  await api("DELETE", `/v1/api-keys/${apiKey.id}`);
+  await fire(50004);
+  const goneRun = await waitFor(
+    async () => (await api("GET", "/v1/crm/runs")).items.find((r) => r.mappingId === keyMap.id && r.kind === "send" && r.id !== okRun.id && r.status !== "pending"),
+    "envío rechazado con la key revocada",
+  );
+  assert(goneRun.status === "failed" && !goneRun.envelopeId && /revocada/.test(goneRun.error ?? ""), `con la key revocada no hay sobre (${goneRun.status} ${goneRun.error})`);
+  step("HubSpot: mapeo creado con una API key → el sobre es de la key; revocada la key, el webhook no envía");
 }
 
 // ── Salesforce con PKCE ──

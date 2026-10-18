@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PDFDocument, PDFName, PDFString, StandardFonts } from "pdf-lib";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   CscSignatureProvider,
   IncrementalUpdate,
@@ -17,6 +17,7 @@ import {
   applyLtv,
   defaultSealLevel,
   finalizeEnvelopePdf,
+  inspectPdf,
   parseCert,
   pemToDerList,
   serialHex,
@@ -24,6 +25,7 @@ import {
 } from "../src";
 import { startLab, type LabPki, type LabServer } from "../src/lab";
 import { startMockCsc } from "../src/csc-mock";
+import { fetchOcsp } from "../src/pki";
 
 let pki: LabPki;
 let server: LabServer;
@@ -40,7 +42,7 @@ async function samplePdf() {
   return doc.save();
 }
 
-async function sealedBT(provider: LocalKeyProvider) {
+async function sealedBT(provider: LocalKeyProvider, withTimestamp = true) {
   const now = new Date().toISOString();
   return finalizeEnvelopePdf(
     {
@@ -62,7 +64,7 @@ async function sealedBT(provider: LocalKeyProvider) {
         chainHead: "c".repeat(64),
       },
     },
-    { provider, tsaUrl: `${server.url}/tsr` },
+    { provider, tsaUrl: withTimestamp ? `${server.url}/tsr` : null },
   );
 }
 
@@ -153,6 +155,32 @@ describe("PAdES B-LT / B-LTA", () => {
     expect(v2.signatures[0].integrity.valid).toBe(false);
   }, 120_000);
 
+  it("un OCSP \"good\" viejo del DSS no oculta una revocación posterior", async () => {
+    const company = await pki.issue("Firmante Comprometido");
+    const provider = new LocalKeyProvider("comp", company.keyPem, company.certPem + pki.intermediate.certPem + pki.root.certPem);
+    // Firma sin sello de tiempo (el momento de la firma no está probado: se evalúa al día de hoy) con un OCSP "good" de hoy.
+    const bb = await sealedBT(provider, false);
+    const ocsp = await fetchOcsp(parseCert(company.certDer), parseCert(pki.intermediate.certDer));
+    expect(ocsp).not.toBeNull();
+    const pdf = await addDssIncremental(bb, { certs: [], ocsps: [ocsp!], crls: [] });
+    const fresh = await validatePdf(pdf, { trustAnchors: [pki.root.certDer] });
+    expect(fresh.signatures[0].chain.entries[0].revocation).toMatchObject({ status: "good", source: "dss-ocsp" });
+
+    // Diez días después el certificado está revocado (la clave se comprometió). El OCSP del DSS ya venció.
+    pki.revoked.add(serialHex(parseCert(company.certDer)));
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(Date.now() + 10 * 86400_000);
+      const offline = await validatePdf(pdf, { trustAnchors: [pki.root.certDer] });
+      expect(offline.signatures[0].chain.entries[0].revocation.status).toBe("not_checked");
+      const online = await validatePdf(pdf, { trustAnchors: [pki.root.certDer], online: true });
+      expect(online.signatures[0].chain.revoked).toBe(true);
+      expect(online.summary.allTrusted).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  }, 120_000);
+
   it("detecta una revisión posterior que cambia el contenido (incremental saving attack)", async () => {
     const seal = new LocalKeyProvider("lab-seal", pki.seal.keyPem, pki.sealChainPem);
     const signed = await sealedBT(seal);
@@ -187,6 +215,9 @@ describe("PAdES B-LT / B-LTA", () => {
     const v3 = await validatePdf(withDss, { trustAnchors: [pki.root.certDer] });
     expect(v3.signatures[0].changesAfter).toBe("evidence_only");
     expect(v3.summary.allValid).toBe(true);
+    // Un PDF firmado con revisiones incrementales legítimas se puede volver a subir (no es ambiguo).
+    expect((await inspectPdf(signed)).pageCount).toBeGreaterThan(0);
+    expect((await inspectPdf(withDss)).pageCount).toBeGreaterThan(0);
   }, 120_000);
 
   it("una revisión posterior con un objeto duplicado se evalúa como la ve un lector (por el xref)", async () => {
@@ -210,6 +241,8 @@ describe("PAdES B-LT / B-LTA", () => {
     expect(v.signatures[0].integrity.valid).toBe(true);
     expect(v.signatures[0].changesAfter).toBe("content");
     expect(v.summary.allValid).toBe(false);
+    // Subido como documento, se rechaza: el firmante vería una cosa y el PDF final tendría otra.
+    expect((await inspectPdf(shadowed).catch((e) => e)).code).toBe("ambiguous_pdf");
   }, 120_000);
 
   it("una revisión posterior cuyo /Prev saltea el xref firmado no pasa como evidencia", async () => {

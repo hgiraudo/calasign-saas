@@ -222,8 +222,24 @@ export interface RevocationResult {
   revokedAt?: string | null;
 }
 
-/** Estado según una respuesta OCSP (DER de OCSPResponse) ya obtenida. */
-export async function statusFromOcsp(ocspDer: Uint8Array, cert: pkijs.Certificate, issuer: pkijs.Certificate): Promise<RevocationResult | null> {
+/** Margen por diferencias de reloj entre la TSA y el respondedor OCSP / emisor de la CRL. */
+const REVOCATION_SKEW_MS = 15 * 60_000;
+
+/**
+ * ¿Un "no revocado" emitido en [thisUpdate, nextUpdate] vale para el momento `at`? Sí si es posterior a `at` (una
+ * revocación no se deshace) o si `at` cae dentro de su vigencia. Una respuesta vieja no prueba nada: un PDF podría
+ * traer en su DSS un OCSP "good" de antes de que se revocara el certificado.
+ */
+function goodCovers(thisUpdate: Date | undefined, nextUpdate: Date | undefined, at: Date): boolean {
+  if (thisUpdate && thisUpdate.getTime() >= at.getTime() - REVOCATION_SKEW_MS) return true;
+  return !!nextUpdate && at.getTime() <= nextUpdate.getTime();
+}
+
+/**
+ * Estado según una respuesta OCSP (DER de OCSPResponse) ya obtenida. Con `at`, una respuesta "good"/"unknown" que no
+ * cubre ese momento no cuenta (devuelve null); "revoked" cuenta siempre.
+ */
+export async function statusFromOcsp(ocspDer: Uint8Array, cert: pkijs.Certificate, issuer: pkijs.Certificate, at?: Date): Promise<RevocationResult | null> {
   try {
     const resp = pkijs.OCSPResponse.fromBER(toAB(ocspDer));
     if (!resp.responseBytes || resp.responseBytes.responseType !== OIDS.basicOcsp) return null;
@@ -244,6 +260,7 @@ export async function statusFromOcsp(ocspDer: Uint8Array, cert: pkijs.Certificat
     if (!sigOk) return null;
     const st = single.certStatus as any;
     const tag = st?.idBlock?.tagNumber;
+    if (at && tag !== 1 && !goodCovers(single.thisUpdate, single.nextUpdate, at)) return null;
     if (tag === 0) return { status: "good", source: "ocsp" };
     if (tag === 1) return { status: "revoked", source: "ocsp", revokedAt: null };
     return { status: "unknown", source: "ocsp" };
@@ -269,7 +286,8 @@ async function verifyWithIssuerKey(basic: pkijs.BasicOCSPResponse, issuer: pkijs
   }
 }
 
-export async function statusFromCrl(crlDer: Uint8Array, cert: pkijs.Certificate, issuer: pkijs.Certificate): Promise<RevocationResult | null> {
+/** Estado según una CRL. Con `at`, una CRL que no cubre ese momento solo cuenta si revoca al certificado. */
+export async function statusFromCrl(crlDer: Uint8Array, cert: pkijs.Certificate, issuer: pkijs.Certificate, at?: Date): Promise<RevocationResult | null> {
   try {
     const crl = pkijs.CertificateRevocationList.fromBER(toAB(crlDer));
     if (!crl.issuer.isEqual(issuer.subject)) return null;
@@ -277,6 +295,7 @@ export async function statusFromCrl(crlDer: Uint8Array, cert: pkijs.Certificate,
     const serial = serialHex(cert);
     const hit = (crl.revokedCertificates ?? []).find((r) => Buffer.from(r.userCertificate.valueBlock.valueHexView).toString("hex") === serial);
     if (hit) return { status: "revoked", source: "crl", revokedAt: hit.revocationDate.value.toISOString() };
+    if (at && !goodCovers(crl.thisUpdate.value, crl.nextUpdate?.value, at)) return null;
     return { status: "good", source: "crl" };
   } catch {
     return null;

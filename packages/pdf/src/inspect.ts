@@ -1,9 +1,10 @@
 import { PDFDocument } from "pdf-lib";
 import { displayedSize } from "./layout";
+import { viewerDiffersFromPdfLib } from "./revisions";
 
 export class InvalidPdfError extends Error {
   constructor(
-    readonly code: "not_pdf" | "encrypted" | "empty" | "too_many_pages" | "unreadable",
+    readonly code: "not_pdf" | "encrypted" | "empty" | "too_many_pages" | "unreadable" | "ambiguous_pdf",
     message: string,
   ) {
     super(message);
@@ -32,6 +33,13 @@ export async function inspectPdf(bytes: Uint8Array, maxPages = 500): Promise<Pdf
   const pages = doc.getPages();
   if (pages.length === 0) throw new InvalidPdfError("empty", "El PDF no tiene páginas");
   if (pages.length > maxPages) throw new InvalidPdfError("too_many_pages", `Máximo ${maxPages} páginas`);
+  // El firmante ve el documento en un lector (por el xref) y el PDF final se arma con pdf-lib: tienen que coincidir.
+  if (await viewerDiffersFromPdfLib(bytes, doc)) {
+    throw new InvalidPdfError(
+      "ambiguous_pdf",
+      "El PDF muestra contenido distinto según el programa que lo abra (tiene objetos duplicados). Exportalo o imprimilo de nuevo a PDF y volvé a subirlo.",
+    );
+  }
   return {
     pageCount: pages.length,
     pages: pages.map((p) => {

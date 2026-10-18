@@ -143,22 +143,22 @@ async function chainReport(
     if (isSelfSigned(c)) revocation = { status: "trust_anchor", source: null };
     else if (issuer) {
       for (const o of dss?.ocsps ?? []) {
-        const r = await statusFromOcsp(o, c, issuer);
+        const r = await statusFromOcsp(o, c, issuer, at);
         if (r) { revocation = { status: r.status, source: "dss-ocsp" }; break; }
       }
       if (revocation.status === "not_checked") {
         for (const crl of dss?.crls ?? []) {
-          const r = await statusFromCrl(crl, c, issuer);
+          const r = await statusFromCrl(crl, c, issuer, at);
           if (r) { revocation = { status: r.status, source: "dss-crl", revokedAt: r.revokedAt ?? null }; break; }
         }
       }
       if (revocation.status === "not_checked" && opts.online) {
         const o = await fetchOcsp(c, issuer, opts.fetcher);
-        const r = o ? await statusFromOcsp(o, c, issuer) : null;
+        const r = o ? await statusFromOcsp(o, c, issuer, at) : null;
         if (r) revocation = { status: r.status, source: "online-ocsp" };
         else {
           const crl = await fetchCrl(c, opts.fetcher);
-          const r2 = crl ? await statusFromCrl(crl, c, issuer) : null;
+          const r2 = crl ? await statusFromCrl(crl, c, issuer, at) : null;
           if (r2) revocation = { status: r2.status, source: "online-crl", revokedAt: r2.revokedAt ?? null };
         }
       }

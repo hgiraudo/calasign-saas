@@ -11,7 +11,8 @@ __DOMAIN__ {
 		# Los links de firma, invitaciones, descargas y callbacks OAuth llevan el secreto en la ruta o en la query:
 		# no se escriben en el log (Authorization y Cookie Caddy ya los oculta por defecto).
 		format filter {
-			request>uri regexp "(/(?:s|signing|embed|invite|n|w|sessions|downloads)/)[^/?]+|\?.*" "${1}[redacted]"
+			request>uri regexp "(/(?:s|signing|embed|invite|n|w|sessions|downloads|negotiations|workflow-runs|reset)/)[^/?]+|\?.*" "${1}[redacted]"
+			request>headers>Referer delete
 		}
 	}
 }

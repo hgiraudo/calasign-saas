@@ -79,10 +79,30 @@ Pago, WhatsApp, Telegram, SMTP) se cargan como parámetros SSM `/calasign-saas/d
 solo en `var/dev-ca/` (no se versiona). En dev los mensajes van al buzón de desarrollo (SES de la cuenta en sandbox).
 
 Operación del host (lo aplica cada `deploy-dev.sh`, desde `infra/dev/host/`):
-- **Rollback automático:** si la versión nueva no responde `/healthz`, el deploy vuelve a la anterior y termina con error.
-  Las migraciones son solo aditivas, así que el código anterior sigue funcionando con la base migrada.
-- **Backups:** `pg_dump` diario a `s3://<bucket>/backups/postgres/` (`calasign-backup.timer`), con 35 días de retención
-  por regla de ciclo de vida. Para restaurar: `aws s3 cp` del dump y `pg_restore --clean -d calasign`.
+- **Backup previo y rollback:** antes de cambiar de versión el deploy hace un backup de Postgres (si falla, aborta sin
+  tocar la versión activa). Si la versión nueva no responde `/healthz`, vuelve al código anterior y termina con error.
+  El rollback **no deshace migraciones**: casi todas son aditivas, pero algunas no (`0016` cambia una clave primaria,
+  `0017` borra tablas). Si el código anterior no anda con la base migrada, restaurar el backup previo (abajo).
+- **Backups:** `pg_dump` diario a `s3://<bucket>/backups/postgres/` (`calasign-backup.timer`) y uno en cada deploy, con
+  35 días de retención por regla de ciclo de vida. No hay alerta automática si el backup diario falla: revisar
+  `systemctl status calasign-backup` / `journalctl -u calasign-backup` (cada deploy igual hace uno y aborta si falla).
+- **Restaurar un backup** (en el EC2, como root por SSM; deja la base exactamente como en el dump):
+
+  ```bash
+  systemctl stop calasign
+  aws s3 ls s3://<bucket>/backups/postgres/                       # elegir el dump
+  aws s3 cp s3://<bucket>/backups/postgres/calasign-<TS>.dump /var/tmp/restore.dump
+  chown postgres /var/tmp/restore.dump
+  # Se recrea la base: --clean no borraría tablas que una migración posterior al dump haya creado.
+  runuser -u postgres -- dropdb calasign
+  runuser -u postgres -- createdb -O calasign calasign
+  runuser -u postgres -- pg_restore --single-transaction -d calasign /var/tmp/restore.dump
+  rm -f /var/tmp/restore.dump
+  ln -sfn /opt/calasign/releases/<versión del código de ese momento> /opt/calasign/current   # si hace falta
+  systemctl start calasign && curl -sf localhost:4000/healthz
+  ```
+
+  Los archivos (PDF, imágenes) viven en S3 con versionado y no se tocan al restaurar la base.
 - **Logs de Caddy:** las rutas y queries con secretos (links de firma, invitaciones, descargas, callbacks OAuth) se
   escriben como `[redacted]`.
 - **Estado de Terraform:** es local (`infra/dev/terraform.tfstate`) y contiene `SECRET_KEY` en claro: no se versiona,

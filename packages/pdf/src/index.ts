@@ -10,3 +10,5 @@ export * from "./ltv";
 export * from "./validate";
 export * from "./csc";
 export { certUrls, hasRevocationInfo, parseCert, fingerprint, nameToString, commonName, serialHex } from "./pki";
+export { renderDocumentPdf, type DocBlock, type DocRun, type DocMarkKind, type DocMarkPosition, type RenderDocOptions } from "./docgen";
+export { extractPdfText, type PdfText } from "./text";

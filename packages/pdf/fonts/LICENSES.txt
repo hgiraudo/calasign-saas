@@ -1,0 +1,2 @@
+Liberation Sans (LiberationSans-*.ttf): SIL Open Font License 1.1 — https://github.com/liberationfonts/liberation-fonts
+DejaVu Sans (DejaVuSans*.ttf): Bitstream Vera / DejaVu license — https://dejavu-fonts.github.io/License.html

@@ -1,4 +1,6 @@
 // Cliente del protocolo de firma remota de CalaSign (/v1/certsign/sessions/:code).
+import { createHash } from "node:crypto";
+import forge from "node-forge";
 import type { CertEntry, CertSource, Prepared, SessionInfo, SignResult } from "./types";
 
 export class CertsignError extends Error {
@@ -81,6 +83,7 @@ export class CertsignClient {
 /** Ciclo completo: certificado → preparación → firma local → envío. La clave nunca sale de `source`. */
 export async function signWithEntry(client: CertsignClient, source: CertSource, entry: CertEntry): Promise<{ prepared: Prepared; result: SignResult }> {
   const prepared = await client.certificate(entry.chainDer);
+  assertSignedAttributes(prepared);
   const sig = await source.sign(entry, {
     data: new Uint8Array(Buffer.from(prepared.dataToSign, "base64")),
     digest: new Uint8Array(Buffer.from(prepared.digestToSign, "base64")),
@@ -88,4 +91,49 @@ export async function signWithEntry(client: CertsignClient, source: CertSource, 
   });
   const result = await client.signature(sig);
   return { prepared, result };
+}
+
+const ATTR = {
+  contentType: "1.2.840.113549.1.9.3",
+  messageDigest: "1.2.840.113549.1.9.4",
+  signingTime: "1.2.840.113549.1.9.5",
+  signingCertificateV2: "1.2.840.113549.1.9.16.2.47",
+};
+const ALLOWED_ATTRS = new Set(Object.values(ATTR));
+
+/**
+ * Lo que manda el servidor tiene que ser un conjunto de atributos firmados de CMS (contentType + messageDigest de
+ * 32 bytes, nada más que atributos conocidos) y el hash tiene que ser su SHA-256. Así el Firmador no firma un hash
+ * arbitrario aunque la dirección de CalaSign sea falsa (no sirve como "oráculo" para otros protocolos).
+ */
+export function assertSignedAttributes(p: Pick<Prepared, "dataToSign" | "digestToSign">): void {
+  const data = Buffer.from(p.dataToSign, "base64");
+  const digest = createHash("sha256").update(data).digest("base64");
+  if (digest !== p.digestToSign) throw new CertsignError(0, "bad_prepared", "El servidor mandó un hash que no corresponde a los datos a firmar");
+  let set: forge.asn1.Asn1;
+  try {
+    set = forge.asn1.fromDer(forge.util.createBuffer(data.toString("binary")), true);
+  } catch {
+    throw new CertsignError(0, "bad_prepared", "Los datos a firmar no son atributos de una firma CMS");
+  }
+  const U = forge.asn1.Class.UNIVERSAL;
+  if (set.tagClass !== U || set.type !== forge.asn1.Type.SET || !Array.isArray(set.value)) {
+    throw new CertsignError(0, "bad_prepared", "Los datos a firmar no son atributos de una firma CMS");
+  }
+  const seen = new Set<string>();
+  let mdOk = false;
+  for (const attr of set.value as forge.asn1.Asn1[]) {
+    const parts = attr.value as forge.asn1.Asn1[];
+    if (attr.type !== forge.asn1.Type.SEQUENCE || !Array.isArray(parts) || parts.length !== 2 || parts[0].type !== forge.asn1.Type.OID) {
+      throw new CertsignError(0, "bad_prepared", "Atributo de firma inválido");
+    }
+    const oid = forge.asn1.derToOid(parts[0].value as string);
+    if (!ALLOWED_ATTRS.has(oid) || seen.has(oid)) throw new CertsignError(0, "bad_prepared", `Atributo de firma no esperado: ${oid}`);
+    seen.add(oid);
+    if (oid === ATTR.messageDigest) {
+      const v = (parts[1].value as forge.asn1.Asn1[])?.[0];
+      mdOk = v?.type === forge.asn1.Type.OCTETSTRING && typeof v.value === "string" && v.value.length === 32;
+    }
+  }
+  if (!seen.has(ATTR.contentType) || !mdOk) throw new CertsignError(0, "bad_prepared", "Faltan atributos obligatorios de la firma CMS");
 }

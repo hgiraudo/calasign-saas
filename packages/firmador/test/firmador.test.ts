@@ -4,8 +4,10 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import forge from "node-forge";
 import {
   CertsignClient,
+  assertSignedAttributes,
   P12Source,
   WindowsStoreSource,
   linuxDesktopEntry,
@@ -53,6 +55,27 @@ describe("deep link y cliente", () => {
   it("exige https (salvo localhost)", () => {
     expect(() => new CertsignClient("http://evil.example", "ABCDE-FGHJK")).toThrow(/https/);
     expect(() => new CertsignClient("http://localhost:4000", "ABCDE-FGHJK")).not.toThrow();
+  });
+});
+
+describe("solo firma atributos de CMS", () => {
+  const A = forge.asn1;
+  const attr = (oid: string, value: forge.asn1.Asn1) => A.create(A.Class.UNIVERSAL, A.Type.SEQUENCE, true, [A.create(A.Class.UNIVERSAL, A.Type.OID, false, A.oidToDer(oid).getBytes()), A.create(A.Class.UNIVERSAL, A.Type.SET, true, [value])]);
+  const pack = (attrs: forge.asn1.Asn1[]) => {
+    const der = Buffer.from(A.toDer(A.create(A.Class.UNIVERSAL, A.Type.SET, true, attrs)).getBytes(), "binary");
+    return { dataToSign: der.toString("base64"), digestToSign: createHash("sha256").update(der).digest("base64") };
+  };
+  const ct = attr("1.2.840.113549.1.9.3", A.create(A.Class.UNIVERSAL, A.Type.OID, false, A.oidToDer("1.2.840.113549.1.7.1").getBytes()));
+  const md = attr("1.2.840.113549.1.9.4", A.create(A.Class.UNIVERSAL, A.Type.OCTETSTRING, false, "x".repeat(32)));
+  it("acepta contentType + messageDigest", () => {
+    expect(() => assertSignedAttributes(pack([ct, md]))).not.toThrow();
+  });
+  it("rechaza hashes arbitrarios, atributos desconocidos o un hash que no corresponde", () => {
+    const random = Buffer.from("cualquier cosa que no es CMS");
+    expect(() => assertSignedAttributes({ dataToSign: random.toString("base64"), digestToSign: createHash("sha256").update(random).digest("base64") })).toThrow();
+    expect(() => assertSignedAttributes(pack([ct]))).toThrow(/obligatorios/);
+    expect(() => assertSignedAttributes(pack([ct, md, attr("1.2.3.4", A.create(A.Class.UNIVERSAL, A.Type.NULL, false, ""))]))).toThrow(/no esperado/);
+    expect(() => assertSignedAttributes({ ...pack([ct, md]), digestToSign: Buffer.alloc(32).toString("base64") })).toThrow(/no corresponde/);
   });
 });
 

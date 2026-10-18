@@ -33,7 +33,7 @@ import { enqueue } from "../../infra/queue";
 import type { BlobStore } from "../../infra/storage";
 import { AppError, badRequest, notFound } from "../../lib/errors";
 import { decrypt, encrypt, iso, sha256Hex, uuidv7 } from "../../lib/util";
-import { assertEnvelopeAccess, assertTemplateAccess, hasPerm } from "../access";
+import { assertEnvelopeAccess, assertTemplateAccess, hasPerm, loadAccess } from "../access";
 import { auditFromRequest } from "../audit";
 import { authenticate, type AuthContext, type Services } from "../context";
 import { sendEnvelope } from "../envelopes";
@@ -378,6 +378,26 @@ export async function handleCrmJob(d: { db: Db; blobs: BlobStore }, p: { runId: 
           JSON.stringify({ skipped: "ya hay un sobre en curso para este registro", envelopeId: openEnv.envelope_id }),
         ]);
         return;
+      }
+      // El sobre queda a nombre de quien creó el mapeo: tiene que seguir siendo miembro y poder crear sobres con esa
+      // plantilla. Si no, un ex empleado (o alguien a quien le bajaron el rol) seguiría "enviando" sobres y recibiendo
+      // los avisos de cada contrato completado.
+      if (mapping.created_by) {
+        const owner: AuthContext = {
+          tenantId: run.tenant_id,
+          userId: mapping.created_by,
+          apiKeyId: null,
+          actor: { type: "system", label: `${conn.provider} (webhook)` },
+        } as AuthContext;
+        try {
+          owner.access = await loadAccess(db, owner);
+        } catch {
+          throw new AppError(409, "crm_mapping_owner_gone", "Quien creó el mapeo ya no es miembro de la organización: hay que volver a crearlo");
+        }
+        if (!hasPerm(owner, "envelopes:create")) {
+          throw new AppError(409, "crm_mapping_owner_forbidden", "Quien creó el mapeo ya no tiene permiso para crear sobres");
+        }
+        if (mapping.template_id) await assertTemplateAccess(db, owner, mapping.template_id, "view");
       }
       await sendFromRecord(
         db,

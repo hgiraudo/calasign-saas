@@ -470,6 +470,47 @@ const hookRuns = (await api("GET", "/v1/crm/runs")).items.filter((r) => r.mappin
 assert(hookRuns.length === 1 && hookRun.envelopeId && hookRun.objectId === "9002", "un solo envío por evento repetido");
 step("HubSpot: webhook firmado (v3) dispara el envío del deal 9002; firma inválida 401; evento repetido no duplica");
 
+// Un mapeo por webhook creado por alguien que después deja la organización no sigue enviando a su nombre.
+{
+  const email = `ines+${stamp}@example.com`;
+  const inv = await api("POST", "/v1/invitations", { email, role: "admin" });
+  const accept = await fetch(`${BASE}/v1/invite/${inv.acceptUrl.split("/invite/")[1]}/accept`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: "Inés Ex", password: "clave-de-ines-123" }),
+  });
+  assert(accept.ok, `Inés aceptó la invitación (${accept.status})`);
+  const ines = accept.headers.get("set-cookie").split(";")[0];
+  const asInes = async (method, path, body) => {
+    const r = await fetch(BASE + path, { method, headers: { cookie: ines, "content-type": "application/json" }, body: JSON.stringify(body) });
+    assert(r.ok, `${method} ${path} como Inés → ${r.status}`);
+    return r.json();
+  };
+  const inesMap = await asInes("POST", "/v1/crm/mappings", {
+    connectionId: hsConn.id,
+    name: "Deal en closedwon (Inés)",
+    objectType: "deal",
+    templateId: template.id,
+    roles: [
+      { role: "Cliente", source: "contact", index: 0 },
+      { role: "Vendedor", source: "fixed", name: `Vendedor Ex ${stamp}`, email: `ventas3+${stamp}@acme.test` },
+    ],
+    trigger: "webhook",
+    triggerConfig: { property: "dealstage", value: "closedwon" },
+    writeBack: { attachPdf: false },
+  });
+  const inesMe = await (await fetch(`${BASE}/v1/me`, { headers: { cookie: ines } })).json();
+  await api("DELETE", `/v1/members/${inesMe.user.id}`);
+  const ev2 = JSON.stringify([{ eventId: 50002, subscriptionType: "deal.propertyChange", portalId: 777, objectId: 9001, propertyName: "dealstage", propertyValue: "closedwon" }]);
+  const ts2 = String(Date.now());
+  const sig2 = createHmac("sha256", HS_SECRET).update(`POST${hookUrl}${ev2}${ts2}`).digest("base64");
+  const r2 = await fetch(hookUrl, { method: "POST", headers: { "content-type": "application/json", "x-hubspot-request-timestamp": ts2, "x-hubspot-signature-v3": sig2 }, body: ev2 });
+  assert(r2.status === 200, "webhook aceptado");
+  const failed = await waitFor(async () => (await api("GET", "/v1/crm/runs")).items.find((r) => r.mappingId === inesMap.id && r.kind === "send" && r.status === "failed"), "envío rechazado");
+  assert(!failed.envelopeId && /ya no es miembro/.test(failed.error ?? ""), `sin sobre a nombre de una ex miembro (${failed.error})`);
+  step("HubSpot: el webhook no envía a nombre de quien creó el mapeo si ya no es miembro");
+}
+
 // ── Salesforce con PKCE ──
 const sfConn = await oauthConnect("salesforce", "Salesforce Gamma");
 assert(sfConn?.accountLabel === `127.0.0.1:${P.sf}`, "etiqueta = instance_url");

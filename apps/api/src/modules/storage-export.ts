@@ -144,29 +144,56 @@ async function check(res: Response, what: string) {
   throw new Error(`${what}: HTTP ${res.status} ${t}`);
 }
 
+/** Con el scope drive.file la app solo ve lo que creó: se busca (o crea) la carpeta por nombre. */
+async function findOrCreateGdriveFolder(token: string, folder: string): Promise<string> {
+  const auth = { authorization: `Bearer ${token}` };
+  const q = `name = '${folder.replace(/'/g, "\\'")}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+  const found: any = await (await check(await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id)`, { headers: auth }), "buscar carpeta")).json();
+  if (found.files?.[0]?.id) return found.files[0].id;
+  const created: any = await (
+    await check(
+      await fetch("https://www.googleapis.com/drive/v3/files?fields=id", {
+        method: "POST",
+        headers: { ...auth, "content-type": "application/json" },
+        body: JSON.stringify({ name: folder, mimeType: "application/vnd.google-apps.folder" }),
+      }),
+      "crear carpeta",
+    )
+  ).json();
+  return created.id;
+}
+
+/**
+ * Drive: resuelve la carpeta UNA vez por conexión, con la fila bloqueada. Si no, varias exportaciones en paralelo
+ * (p. ej. un envío masivo que se completa) no la encuentran todavía, cada una crea una carpeta con el mismo nombre
+ * y los PDF quedan repartidos entre carpetas duplicadas.
+ */
+async function ensureGdriveFolder(db: Db, connId: string): Promise<any> {
+  await db.tx(async (t) => {
+    const row = await t.one<any>(`SELECT provider, config, credentials_enc FROM storage_connections WHERE id = $1 FOR UPDATE`, [connId]);
+    const cfg = row?.config ?? {};
+    if (!row || row.provider !== "gdrive" || !cfg.folder || cfg.folderId) return;
+    const { token, updated } = await freshToken("gdrive", JSON.parse(decrypt(row.credentials_enc)));
+    const folderId = await findOrCreateGdriveFolder(token, String(cfg.folder));
+    if (updated) await t.query(`UPDATE storage_connections SET credentials_enc = $2 WHERE id = $1`, [connId, encrypt(JSON.stringify(updated))]);
+    await t.query(`UPDATE storage_connections SET config = config || $2::jsonb, updated_at = now() WHERE id = $1`, [connId, JSON.stringify({ folderId })]);
+  });
+  return db.one<any>(`SELECT * FROM storage_connections WHERE id = $1`, [connId]);
+}
+
+/** La carpeta ya resuelta y fijada para esta conexión (Drive con carpeta elegida); si no, la fila tal cual. */
+async function withResolvedFolder(db: Db, c: any): Promise<any> {
+  if (c.provider !== "gdrive" || !c.config?.folder || c.config?.folderId) return c;
+  return (await ensureGdriveFolder(db, c.id)) ?? c;
+}
+
 async function uploadGdrive(creds: OAuthCreds, cfg: any, name: string, bytes: Uint8Array): Promise<UploadResult> {
   const { token, updated } = await freshToken("gdrive", creds);
   const auth = { authorization: `Bearer ${token}` };
   let folderId: string | null = cfg.folderId ?? null;
   const newCfg: Record<string, unknown> = {};
   if (!folderId && cfg.folder) {
-    // Con el scope drive.file la app solo ve lo que creó: se busca (o crea) la carpeta por nombre.
-    const q = `name = '${String(cfg.folder).replace(/'/g, "\\'")}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
-    const found: any = await (await check(await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id)`, { headers: auth }), "buscar carpeta")).json();
-    folderId = found.files?.[0]?.id ?? null;
-    if (!folderId) {
-      const created: any = await (
-        await check(
-          await fetch("https://www.googleapis.com/drive/v3/files?fields=id", {
-            method: "POST",
-            headers: { ...auth, "content-type": "application/json" },
-            body: JSON.stringify({ name: cfg.folder, mimeType: "application/vnd.google-apps.folder" }),
-          }),
-          "crear carpeta",
-        )
-      ).json();
-      folderId = created.id;
-    }
+    folderId = await findOrCreateGdriveFolder(token, String(cfg.folder));
     newCfg.folderId = folderId;
   }
   const boundary = `calasign${randomToken(12)}`;
@@ -321,7 +348,8 @@ export async function exportEnvelopeJob(db: Db, blobs: BlobStore, p: { connectio
   await db.query(`UPDATE storage_exports SET attempts = attempts + 1, updated_at = now() WHERE id = $1`, [ex.id]);
   try {
     const bytes = await blobs.get(e.storage_key);
-    const r = await uploadTo(c.provider, c.credentials_enc, c.config ?? {}, fileName(e.subject, p.envelopeId), bytes);
+    const cur = await withResolvedFolder(db, c);
+    const r = await uploadTo(cur.provider, cur.credentials_enc, cur.config ?? {}, fileName(e.subject, p.envelopeId), bytes);
     await persistUpload(db, c.id, r);
     await db.query(`UPDATE storage_exports SET status = 'succeeded', remote_ref = $2, error = NULL, updated_at = now() WHERE id = $1`, [ex.id, r.ref]);
     await db.query(`UPDATE storage_connections SET last_success_at = now(), last_error = NULL WHERE id = $1`, [c.id]);
@@ -509,8 +537,9 @@ export async function storageRoutes(app: FastifyInstance, s: Services) {
 
   app.post<{ Params: { id: string } }>("/v1/storage/connections/:id/test", { preHandler: auth, config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req) => {
     const a = req.auth!;
-    const r = await load(a.tenantId, req.params.id);
+    let r = await load(a.tenantId, req.params.id);
     try {
+      r = await withResolvedFolder(s.db, r);
       const res = await uploadTo(r.provider, r.credentials_enc, r.config ?? {}, "calasign-connection-test.pdf", Buffer.from("%PDF-1.4\n% CalaSign: prueba de conexión\n"));
       await persistUpload(s.db, r.id, res);
       await s.db.query(`UPDATE storage_connections SET last_success_at = now(), last_error = NULL WHERE id = $1`, [r.id]);

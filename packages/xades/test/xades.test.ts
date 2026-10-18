@@ -140,6 +140,17 @@ describe("firma XML", () => {
     await expect(signXml(sinExtension, signer, { profile: "sunat-cpe" })).rejects.toThrow(/ExtensionContent/);
   });
 
+  it("sunat-cpe: un cbc:ID con comillas o & se escapa en el Id de la firma", async () => {
+    const xml = SUNAT_INVOICE.replace("<cbc:ID>SignSUNAT</cbc:ID>", '<cbc:ID>Sign"A&amp;B</cbc:ID>');
+    const signed = await signXml(xml, signer, { profile: "sunat-cpe" });
+    expect(signed).toContain('Id="Sign&quot;A&amp;B"');
+    const own = verifyXml(signed);
+    expect(own.errors).toEqual([]);
+    expect(own.valid).toBe(true);
+    const ind = independent(signed);
+    if (ind) expect(ind.valid).toBe(true);
+  });
+
   it("dian-fe: sin un ExtensionContent vacío no firma en la raíz (la DIAN lo rechazaría)", async () => {
     const sinLugar = UBL_INVOICE.replace("<ext:UBLExtension><ext:ExtensionContent/></ext:UBLExtension>", "");
     expect(sinLugar).not.toBe(UBL_INVOICE);

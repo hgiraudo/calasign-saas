@@ -40,6 +40,24 @@ describe("PDF ambiguo al subirlo", () => {
     expect((err as InvalidPdfError).code).toBe("ambiguous_pdf");
   });
 
+  it("una entrada rota del xref (de un objeto que nadie usa) no apaga la detección", async () => {
+    // Un objeto huérfano: el lector nunca lo pide, así que no reconstruye el índice por él y sigue usando el xref.
+    const withOrphan = await PDFDocument.load(await base("Monto: 1.000"));
+    const orphan = withOrphan.context.register(withOrphan.context.obj({ Huerfano: true }));
+    const { bytes } = await shadowed(await withOrphan.save({ useObjectStreams: false }), "Monto: 1.000.000");
+    // La entrada del huérfano apunta al objeto 1 (offset de otro objeto).
+    const buf = Buffer.from(bytes);
+    const text = buf.toString("latin1");
+    const table = [...text.matchAll(/\nxref\n0 \d+\n/g)].pop()!;
+    const one = /\n1 0 obj/.exec(text)!.index + 1;
+    const entryAt = table.index + table[0].length + orphan.objectNumber * 20;
+    expect(text.slice(entryAt + 17, entryAt + 18)).toBe("n");
+    buf.write(String(one).padStart(10, "0"), entryAt, "latin1");
+    const err = await inspectPdf(new Uint8Array(buf)).catch((e) => e);
+    expect(err).toBeInstanceOf(InvalidPdfError);
+    expect((err as InvalidPdfError).code).toBe("ambiguous_pdf");
+  });
+
   it("acepta PDFs normales y con revisiones incrementales", async () => {
     const plain = await base("Contrato");
     expect((await inspectPdf(plain)).pageCount).toBe(1);

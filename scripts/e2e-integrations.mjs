@@ -167,6 +167,32 @@ try {
   if (!(sigField.y > (842 - 200 - 12 - 45 - 8) / 842 && sigField.y < (842 - 200 - 45 + 4) / 842)) fail(`y del ancla inesperada: ${sigField.y}`);
   ok(`campos por ancla ubicados (x=${sigField.x.toFixed(3)}, y=${sigField.y.toFixed(3)}); ancla inexistente → 400`);
 
+  // Un campo por ancla conserva sus propiedades (valor fijo de solo lectura, opciones de desplegable, rango).
+  {
+    const { envelope: e2 } = await api("POST", "/v1/envelopes", { subject: `Anclas con propiedades ${stamp}` });
+    const fd2 = new FormData();
+    fd2.append("file", new Blob([anchorPdf()], { type: "application/pdf" }), "contrato.pdf");
+    await api("POST", `/v1/envelopes/${e2.id}/documents`, fd2);
+    const s2 = randomUUID();
+    await api("PUT", `/v1/envelopes/${e2.id}/recipients`, { recipients: [{ id: s2, name: `Cliente ${stamp}`, embedded: true }] });
+    const res = await api("PUT", `/v1/envelopes/${e2.id}/fields`, {
+      fields: [
+        { recipientId: s2, type: "text", value: "ACME S.A.", readOnly: true, anchor: { text: "[[s1]]", offsetY: -80, width: 150, height: 14 } },
+        { recipientId: s2, type: "dropdown", options: ["Contado", "Cuotas"], anchor: { text: "[[s1]]", offsetY: -100, width: 150, height: 14 } },
+        { recipientId: s2, type: "number", min: 1, max: 12, label: "Cuotas", anchor: { text: "[[s1]]", offsetY: -120, width: 80, height: 14 } },
+      ],
+    });
+    const fs2 = res.fields;
+    const ro = fs2.find((f) => f.type === "text");
+    if (!ro || !ro.readOnly || ro.value !== "ACME S.A.") fail(`el campo de solo lectura por ancla perdió su valor: ${JSON.stringify(ro)}`);
+    const dd = fs2.find((f) => f.type === "dropdown");
+    if (!dd || JSON.stringify(dd.options) !== JSON.stringify(["Contado", "Cuotas"])) fail(`el desplegable por ancla perdió sus opciones: ${JSON.stringify(dd)}`);
+    const nm = fs2.find((f) => f.type === "number");
+    if (!nm || nm.min !== 1 || nm.max !== 12) fail(`el número por ancla perdió su rango: ${JSON.stringify(nm)}`);
+    await api("DELETE", `/v1/envelopes/${e2.id}`, undefined, { raw: true }); // borrador de prueba (si falla, no importa)
+    ok("campos por ancla conservan valor de solo lectura, opciones y rango");
+  }
+
   await api("POST", `/v1/envelopes/${envelope.id}/send`);
   const sent = await waitFor(() => received.find((r) => r.path === "/hook" && r.type === "envelope.sent"), "envelope.sent");
   if (!sent.valid || sent.evt.data.envelope.metadata.externalId !== `ORD-${stamp}`) fail("payload de envelope.sent");

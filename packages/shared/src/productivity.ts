@@ -2,7 +2,7 @@
 import { z } from "zod";
 import { FieldConditions, FieldFormula, type FieldCondition } from "./scale-logic";
 import { CertificateRequirementsInput, SIGNATURE_TYPES, type CertificateRequirements, type SignatureType } from "./certsign";
-import { CHANNELS, FIELD_TYPES, ID_DOCUMENT_TYPES, LOCALES, RECIPIENT_ROLES, type Document, type FieldType, type Locale } from "./api";
+import { CHANNELS, FIELD_TYPES, ID_DOCUMENT_TYPES, LOCALES, RECIPIENT_ROLES, type Document, type FieldType, type Locale, type RecipientRole } from "./api";
 
 /** Tipos que el firmante completa escribiendo y que el remitente puede prellenar. */
 export const PREFILLABLE_FIELD_TYPES: readonly FieldType[] = ["text", "number", "dropdown", "company", "title"];
@@ -125,7 +125,7 @@ export type EnvelopeFromTemplateInput = z.input<typeof EnvelopeFromTemplateInput
 export interface TemplateRole {
   id: string;
   name: string;
-  role: "signer" | "cc";
+  role: RecipientRole;
   routingOrder: number;
   signatureType?: SignatureType;
   certificateRequirements?: CertificateRequirements | null;
@@ -165,7 +165,7 @@ export interface Template {
 
 export interface TemplateSummary extends Template {
   documentCount: number;
-  roles: { name: string; role: "signer" | "cc" }[];
+  roles: { name: string; role: RecipientRole }[];
 }
 
 export interface TemplateDetail {

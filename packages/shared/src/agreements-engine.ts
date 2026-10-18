@@ -534,8 +534,17 @@ function parseDate(v: unknown): Date | null {
   if (v instanceof Date) return v;
   if (typeof v !== "string" && typeof v !== "number") return null;
   const s = String(v).trim();
+  // Día, mes y año explícitos tienen que existir: Date.UTC (y new Date con "2027-02-31") corren el 31/02 al 3 de
+  // marzo, y el contrato decía una fecha que nadie escribió. Una fecha inexistente se imprime tal cual vino.
   const dmy = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s);
-  const d = dmy ? new Date(Date.UTC(+dmy[3], +dmy[2] - 1, +dmy[1])) : new Date(s);
+  const ymd = /^(\d{4})-(\d{2})-(\d{2})(?=$|T)/.exec(s);
+  const parts = dmy ? { y: +dmy[3], m: +dmy[2], d: +dmy[1] } : ymd ? { y: +ymd[1], m: +ymd[2], d: +ymd[3] } : null;
+  if (parts) {
+    const check = new Date(Date.UTC(parts.y, parts.m - 1, parts.d));
+    if (check.getUTCFullYear() !== parts.y || check.getUTCMonth() !== parts.m - 1 || check.getUTCDate() !== parts.d) return null;
+    if (dmy) return check;
+  }
+  const d = new Date(s);
   return Number.isNaN(d.getTime()) ? null : d;
 }
 

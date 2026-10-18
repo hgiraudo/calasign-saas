@@ -100,7 +100,9 @@ WORKER_INLINE=true
 MIGRATE_ON_START=1
 COOKIE_SECURE=true
 EOF
-chown -R calasign:calasign /var/lib/calasign /opt/calasign
+# /opt/calasign y releases/ quedan de root: root crea, extrae y borra versiones ahí (deploy-dev.sh). Cada versión
+# pasa a ser del usuario calasign al desplegarla.
+chown -R calasign:calasign /var/lib/calasign
 
 cat > /etc/systemd/system/calasign.service <<'EOF'
 [Unit]

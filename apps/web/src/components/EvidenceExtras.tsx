@@ -6,8 +6,19 @@ import { formatDateTime, useI18n } from "../lib/i18n";
 import { useEvidenceText } from "../lib/i18n-evidence";
 import { ErrorBox } from "./ui";
 
-/** Sello de empresa y nivel de firma declarado de un sobre (borrador o en curso). */
-export function SealOptionsPanel({ envelopeId, disabled }: { envelopeId: string; disabled?: boolean }) {
+/**
+ * Sello de empresa y nivel de firma declarado de un sobre (borrador o en curso).
+ * `sealOnly`: sobre trabado en la finalización; solo se puede cambiar o quitar el sello (no el nivel), y solo si tiene uno.
+ */
+export function SealOptionsPanel({
+  envelopeId,
+  disabled,
+  sealOnly,
+}: {
+  envelopeId: string;
+  disabled?: boolean;
+  sealOnly?: boolean;
+}) {
   const ev = useEvidenceText();
   const [opts, setOpts] = useState<SealOptions | null>(null);
   const [certs, setCerts] = useState<TenantCertificate[]>([]);
@@ -33,14 +44,19 @@ export function SealOptionsPanel({ envelopeId, disabled }: { envelopeId: string;
   };
 
   if (!opts) return error ? <ErrorBox error={error} /> : null;
+  if (sealOnly && !opts.companySealCertificateId && !saved) return null;
+  // El certificado actual puede no estar en la lista (vencido o borrado): se muestra igual para no aparentar "sin sello".
+  const currentMissing = !!opts.companySealCertificateId && !certs.some((c) => c.id === opts.companySealCertificateId);
   return (
     <section className="card pad stack" aria-labelledby="seal-options-title">
       <h2 id="seal-options-title" className="h3">
         {ev("seal.title")}
       </h2>
+      {sealOnly && <p className="muted small">{ev("seal.recover")}</p>}
       <div className="row-wrap">
-        <label className="field grow">
-          <span>{ev("seal.level")}</span>
+        {!sealOnly && (
+          <label className="field grow">
+            <span>{ev("seal.level")}</span>
           <select
             value={opts.signatureLevel}
             disabled={disabled}
@@ -53,16 +69,22 @@ export function SealOptionsPanel({ envelopeId, disabled }: { envelopeId: string;
               </option>
             ))}
           </select>
-        </label>
+          </label>
+        )}
         <label className="field grow">
           <span>{ev("seal.company")}</span>
           <select
             value={opts.companySealCertificateId ?? ""}
-            disabled={disabled || certs.length === 0}
+            disabled={disabled || (certs.length === 0 && !opts.companySealCertificateId)}
             onChange={(e) => void save({ companySealCertificateId: e.target.value || null })}
             data-testid="company-seal"
           >
             <option value="">{ev("seal.none")}</option>
+            {currentMissing && (
+              <option value={opts.companySealCertificateId!} disabled>
+                {ev("seal.current")}
+              </option>
+            )}
             {certs.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name} — {c.commonName ?? c.subject}

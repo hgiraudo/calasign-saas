@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import type { DocumentTemplate, NegotiationDiff, NegotiationSummary, NegotiationView } from "@calasign/shared";
-import { api, errorText } from "../lib/api";
+import { api, errorText, HttpError } from "../lib/api";
 import { formatDateTime, useI18n } from "../lib/i18n";
 import { useAgrText, type AgreementsTextKey } from "../lib/i18n-agreements";
 import { AgreementsTabs, DiffView, DocPreview, parseJsonObject } from "../components/AgreementsUi";
@@ -264,6 +264,13 @@ export function NegotiationPanel({ base, mode, initial }: { base: string; mode: 
       return v;
     } catch (e) {
       setError(errorText(e));
+      // 409 (p. ej. version_changed): la negociación cambió en el servidor. Se trae la versión nueva para que el
+      // remitente la vea antes de volver a aceptar, en vez de aceptar a ciegas un texto que no tiene en pantalla.
+      if (e instanceof HttpError && e.status === 409) {
+        await api<NegotiationView>(base)
+          .then(setView)
+          .catch(() => {});
+      }
       return null;
     } finally {
       setBusy(false);

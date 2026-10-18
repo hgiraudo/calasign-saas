@@ -24,6 +24,8 @@ export function EnvelopeDetailPage() {
   const [detail, setDetail] = useState<EnvelopeDetail | null>(null);
   const [events, setEvents] = useState<EnvelopeEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // Error del refresco automático, aparte del de las acciones: el refresco limpia el suyo sin borrar el de una acción.
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [voiding, setVoiding] = useState(false);
   const [reason, setReason] = useState("");
@@ -42,10 +44,10 @@ export function EnvelopeDetailPage() {
       ]);
       setDetail(d);
       setEvents(ev.items);
-      setError(null);
+      setLoadError(null);
     } catch (e) {
       if ((e as { status?: number }).status === 404) setNotFound(true);
-      setError(errorText(e));
+      setLoadError(errorText(e));
     }
   }, [id]);
 
@@ -62,7 +64,7 @@ export function EnvelopeDetailPage() {
   }, [status, load]);
 
   if (notFound) return <Navigate to="/app" replace />;
-  if (!detail) return error ? <div className="page"><ErrorBox error={error} /></div> : <Spinner />;
+  if (!detail) return loadError ? <div className="page"><ErrorBox error={loadError} /></div> : <Spinner />;
   if (detail.envelope.status === "draft") return <Navigate to={`/app/envelopes/${id}/edit`} replace />;
 
   const env = detail.envelope;
@@ -171,7 +173,7 @@ export function EnvelopeDetailPage() {
         </div>
       </div>
 
-      <ErrorBox error={error} />
+      <ErrorBox error={error ?? loadError} />
       {notice && <div className="alert alert-success">{notice}</div>}
       {finalizeFailed && (
         <div className="alert alert-warn row-wrap" role="alert">

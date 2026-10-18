@@ -32,6 +32,13 @@ function CopyButton({ text }: { text: string }) {
 
 // ───────────────────────────── Editor ─────────────────────────────
 
+function localDateInput(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
 interface FixedDraft {
   name: string;
   email: string;
@@ -52,7 +59,8 @@ function WebFormEditor({ form, initialTemplateId, onClose, onSaved }: { form: We
   const [prefill, setPrefill] = useState<Record<string, string>>(form?.prefill ?? {});
   const [active, setActive] = useState(form?.active ?? true);
   const [maxUses, setMaxUses] = useState<string>(form?.maxUses ? String(form.maxUses) : "");
-  const [expiresAt, setExpiresAt] = useState(form?.expiresAt ? form.expiresAt.slice(0, 10) : "");
+  // Fecha local (el guardado usa 23:59:59 local): con slice del ISO en UTC, en América la fecha corría un día en cada edición.
+  const [expiresAt, setExpiresAt] = useState(form?.expiresAt ? localDateInput(form.expiresAt) : "");
   const [requireOtp, setRequireOtp] = useState(form?.requireOtp ?? false);
   const [collectPhone, setCollectPhone] = useState(form?.collectPhone ?? false);
   const [embeddable, setEmbeddable] = useState(form?.embeddable ?? false);

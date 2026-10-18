@@ -539,13 +539,18 @@ export function WorkflowRunPage() {
   const { locale } = useI18n();
   const [run, setRun] = useState<WorkflowRun | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Error del refresco, aparte del de las acciones: se limpia cuando el refresco vuelve a responder.
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [comment, setComment] = useState("");
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(() => {
     api<WorkflowRun>(`/v1/workflow-runs/${id}`)
-      .then(setRun)
-      .catch((e) => setError(errorText(e)));
+      .then((r) => {
+        setRun(r);
+        setLoadError(null);
+      })
+      .catch((e) => setLoadError(errorText(e)));
   }, [id]);
   useEffect(load, [load]);
   // Mientras está en curso, se refresca.
@@ -567,7 +572,7 @@ export function WorkflowRunPage() {
     }
   };
 
-  if (!run) return <div className="page">{error ? <ErrorBox error={error} /> : <Spinner />}</div>;
+  if (!run) return <div className="page">{loadError ? <ErrorBox error={loadError} /> : <Spinner />}</div>;
   const failedStep = run.steps.find((s) => s.status === "failed");
   return (
     <div className="page">
@@ -598,7 +603,7 @@ export function WorkflowRunPage() {
           )}
         </div>
       </div>
-      <ErrorBox error={error} />
+      <ErrorBox error={error ?? loadError} />
       {run.collectUrl && (
         <div className="card pad small stack" style={{ marginBottom: "1rem" }}>
           <strong>{ta("run.collectLink")}</strong>

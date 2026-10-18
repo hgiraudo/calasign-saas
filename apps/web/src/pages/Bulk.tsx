@@ -36,7 +36,11 @@ export function BulkListPage() {
     let alive = true;
     const load = () =>
       api<{ items: BulkSend[] }>("/v1/bulk-sends")
-        .then((r) => alive && setItems(r.items))
+        .then((r) => {
+          if (!alive) return;
+          setItems(r.items);
+          setError(null); // un corte de red pasajero no deja el error a la vista mientras el refresco ya responde
+        })
         .catch((e) => alive && setError(errorText(e)));
     void load();
     const timer = window.setInterval(load, 4000);
@@ -305,6 +309,8 @@ export function BulkDetailPage() {
   const [total, setTotal] = useState(0);
   const [filter, setFilter] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
+  // Error del refresco periódico, aparte del de cancelar: el refresco lo limpia sin borrar el mensaje del modal.
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -321,8 +327,9 @@ export function BulkDetailPage() {
       setB(bulk);
       setItems(list.items);
       setTotal(list.total);
+      setLoadError(null);
     } catch (e) {
-      if (mine === seq.current) setError(errorText(e));
+      if (mine === seq.current) setLoadError(errorText(e));
     }
   }, [id, filter]);
 
@@ -353,7 +360,7 @@ export function BulkDetailPage() {
 
   const filters = useMemo(() => ["", "sent", "failed", "pending", "cancelled"], []);
 
-  if (!b) return error ? <ErrorBox error={error} /> : <Spinner />;
+  if (!b) return loadError ? <ErrorBox error={loadError} /> : <Spinner />;
   return (
     <div className="page">
       <div className="page-head">
@@ -377,7 +384,7 @@ export function BulkDetailPage() {
           )}
         </div>
       </div>
-      <ErrorBox error={error} />
+      <ErrorBox error={confirm ? loadError : (error ?? loadError)} />
       <div className="card pad stack">
         <BulkBar b={b} />
         <div className="stats">

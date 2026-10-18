@@ -94,7 +94,7 @@ export function ValidationReportView({ report }: { report: PdfValidationResponse
       {report.dss && <p className="muted small">{ev("val.dss", report.dss)}</p>}
       {report.signatures.map((s) => {
         const title = s.kind === "document_timestamp" ? ev("val.docTimestamp") : ev("val.signature", { n: ++n });
-        const ok = s.integrity.valid && (!s.timestamp || s.timestamp.valid);
+        const ok = s.integrity.valid && (!s.timestamp || s.timestamp.valid) && s.changesAfter !== "content";
         return (
           <div key={s.index} className="card pad stack" data-testid="validation-signature">
             <div className="row-wrap">
@@ -135,7 +135,7 @@ export function ValidationReportView({ report }: { report: PdfValidationResponse
                 )}
                 <tr>
                   <th>{ev("val.coverage")}</th>
-                  <td>{s.coversWholeDocument ? ev("val.coversAll") : ev("val.modifiedAfter")}</td>
+                  <td>{s.coversWholeDocument ? ev("val.coversAll") : s.changesAfter === "content" ? ev("val.changedAfter") : ev("val.modifiedAfter")}</td>
                 </tr>
                 {s.chain.entries.length > 0 && (
                   <tr>

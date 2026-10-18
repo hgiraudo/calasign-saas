@@ -23,6 +23,8 @@ import {
 } from "./pki";
 import type { PadesLevel } from "./ltv";
 import { byteRangeIssue, readPdfSignatures, signedContent, type PdfDss } from "./signatures";
+import { PDFDocument } from "pdf-lib";
+import { changesAfterRevision, type ChangesAfter } from "./revisions";
 
 export interface CertSummary {
   subject: string;
@@ -52,6 +54,9 @@ export interface SignatureReport {
   coversWholeDocument: boolean;
   /** true si después de esta firma hay revisiones incrementales (DSS, otra firma, sello de documento). */
   modifiedAfter: boolean;
+  /** Qué cambiaron esas revisiones: solo evidencia (firmas, sellos, DSS) o lo que se ve (páginas, anotaciones). Con
+   * "content" la firma verifica sobre su revisión, pero el documento que se muestra ya no es el firmado. */
+  changesAfter: ChangesAfter;
   /** trusted: llega a una raíz de confianza. timeValid: todos los certificados eran válidos al momento de firmar. */
   chain: { trusted: boolean; anchor: string | null; entries: ChainEntry[]; timeValid?: boolean; revoked?: boolean };
   level: PadesLevel | null;
@@ -60,7 +65,7 @@ export interface SignatureReport {
 export interface ValidationReport {
   signatures: SignatureReport[];
   dss: { certs: number; ocsps: number; crls: number } | null;
-  summary: { count: number; allValid: boolean; allTrusted: boolean; anyRevoked: boolean };
+  summary: { count: number; allValid: boolean; allTrusted: boolean; anyRevoked: boolean; modifiedAfterSigning: boolean };
 }
 
 export interface ValidateOptions {
@@ -189,6 +194,7 @@ export async function validatePdf(pdf: Uint8Array, opts: ValidateOptions = {}): 
       subFilter: s.subFilter,
       coversWholeDocument: s.byteRange[0] === 0 && end === pdf.length,
       modifiedAfter: end < pdf.length,
+      changesAfter: "none" as ChangesAfter,
     };
     const brIssue = byteRangeIssue(pdf, s.byteRange, s.contents);
     const content = signedContent(pdf, s.byteRange);
@@ -267,14 +273,28 @@ export async function validatePdf(pdf: Uint8Array, opts: ValidateOptions = {}): 
     });
   }
 
+  // Lo agregado después de cada firma: solo cuentan como evidencia los widgets de firmas y sellos posteriores que verifican.
+  const verified = new Set(
+    reports.filter((r) => r.integrity.valid && (!r.timestamp || r.timestamp.valid)).map((r) => signatures[r.index].byteRange.join(",")),
+  );
+  const current = reports.some((r) => r.modifiedAfter) ? await PDFDocument.load(pdf, { updateMetadata: false, ignoreEncryption: true }) : undefined;
+  for (const r of reports) {
+    if (r.modifiedAfter) {
+      const [, , c, d] = signatures[r.index].byteRange;
+      r.changesAfter = await changesAfterRevision(pdf, c + d, verified, current);
+    }
+  }
+  const modifiedAfterSigning = reports.some((r) => r.changesAfter === "content");
+
   return {
     signatures: reports,
     dss: dss ? { certs: dss.certs.length, ocsps: dss.ocsps.length, crls: dss.crls.length } : null,
     summary: {
       count: reports.length,
-      allValid: reports.length > 0 && reports.every((r) => r.integrity.valid && (!r.timestamp || r.timestamp.valid)),
+      allValid: reports.length > 0 && !modifiedAfterSigning && reports.every((r) => r.integrity.valid && (!r.timestamp || r.timestamp.valid)),
       allTrusted: reports.length > 0 && reports.every((r) => r.chain.trusted && r.chain.timeValid !== false && !r.chain.revoked),
       anyRevoked: reports.some((r) => r.chain.entries.some((e) => e.revocation.status === "revoked")),
+      modifiedAfterSigning,
     },
   };
 }

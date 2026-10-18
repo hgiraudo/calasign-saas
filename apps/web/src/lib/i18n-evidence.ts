@@ -94,6 +94,7 @@ const es = {
   "val.coverage": "Cobertura",
   "val.coversAll": "Cubre todo el documento",
   "val.modifiedAfter": "Con revisiones posteriores (evidencia agregada)",
+  "val.changedAfter": "Modificado después de firmar: lo que se muestra no es lo firmado",
   "val.dss": "Datos de validación incrustados: {certs} certificados, {ocsps} OCSP, {crls} CRL",
   "val.none": "El PDF no tiene firmas digitales.",
 };
@@ -187,6 +188,7 @@ const pt: Record<Key, string> = {
   "val.coverage": "Cobertura",
   "val.coversAll": "Cobre todo o documento",
   "val.modifiedAfter": "Com revisões posteriores (evidência adicionada)",
+  "val.changedAfter": "Modificado após a assinatura: o que é exibido não é o que foi assinado",
   "val.dss": "Dados de validação incorporados: {certs} certificados, {ocsps} OCSP, {crls} CRL",
   "val.none": "O PDF não tem assinaturas digitais.",
 };
@@ -278,6 +280,7 @@ const en: Record<Key, string> = {
   "val.coverage": "Coverage",
   "val.coversAll": "Covers the whole document",
   "val.modifiedAfter": "With later revisions (added evidence)",
+  "val.changedAfter": "Modified after signing: what is displayed is not what was signed",
   "val.dss": "Embedded validation data: {certs} certificates, {ocsps} OCSP, {crls} CRL",
   "val.none": "The PDF has no digital signatures.",
 };

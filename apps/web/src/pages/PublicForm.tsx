@@ -33,28 +33,46 @@ export function PublicFormPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug]);
 
+  // Mensaje por código (traducido): el texto de la API llega en español sea cual sea el idioma.
+  const submitError = (err: unknown) => {
+    if (err instanceof HttpError && err.code === "invalid_form_token") return st("pub.err.formToken");
+    if (err instanceof HttpError && err.code === "too_fast") return st("pub.err.tooFast");
+    return errorText(err);
+  };
+
+  const send = (formToken: string) =>
+    api<SubmitWebFormResponse>(`/v1/public/forms/${encodeURIComponent(slug)}/submit`, {
+      method: "POST",
+      body: { name: name.trim(), email: email.trim(), phone: phone.trim() || null, locale, formToken, website, embed },
+    });
+
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (!form) return;
     setBusy(true);
     setError(null);
     try {
-      const r = await api<SubmitWebFormResponse>(`/v1/public/forms/${encodeURIComponent(slug)}/submit`, {
-        method: "POST",
-        body: { name: name.trim(), email: email.trim(), phone: phone.trim() || null, locale, formToken: form.formToken, website, embed },
-      });
-      nav(r.signingPath);
+      nav((await send(form.formToken)).signingPath);
     } catch (err) {
-      // Si el token venció (pestaña abierta mucho tiempo), se pide uno nuevo y se reintenta una vez.
+      // Token vencido (pestaña abierta mucho tiempo): se pide uno nuevo y, pasada la espera mínima que indica la API
+      // (antes respondería too_fast), se reenvía una vez. Los datos cargados se conservan.
       if (err instanceof HttpError && err.code === "invalid_form_token") {
         try {
           const fresh = await api<PublicWebForm>(`/v1/public/forms/${encodeURIComponent(slug)}`);
           setForm(fresh);
-        } catch {
-          /* se muestra el error original */
+          if (fresh.available) {
+            const wait = Number((err.details as { retryAfterSeconds?: unknown } | undefined)?.retryAfterSeconds);
+            await new Promise((r) => setTimeout(r, (Number.isFinite(wait) && wait > 0 ? Math.min(wait, 30) : 3) * 1000 + 300));
+            nav((await send(fresh.formToken)).signingPath);
+            return;
+          }
+        } catch (retryErr) {
+          setError(submitError(retryErr));
         }
+        setBusy(false);
+        return;
       }
-      setError(errorText(err));
+      setError(submitError(err));
       setBusy(false);
     }
   };

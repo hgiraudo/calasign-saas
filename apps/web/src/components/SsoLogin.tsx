@@ -29,6 +29,8 @@ export function SsoErrorNotice() {
   // Solo códigos (p. ej. "invalid_state"): un texto libre en la URL permitiría mostrar mensajes falsos en el login.
   const code = raw && /^[a-z0-9_.-]{1,60}$/i.test(raw) ? raw : raw ? "error" : null;
   if (!code) return null;
+  // Los códigos que la persona puede resolver (o tiene que pedirle a alguien) tienen un mensaje propio.
+  if (code === "sso_plan_limit" || code === "sso_state_invalid") return <ErrorBox error={tx(`login.ssoError.${code}`)} />;
   return <ErrorBox error={tx("login.ssoError", { code })} />;
 }
 

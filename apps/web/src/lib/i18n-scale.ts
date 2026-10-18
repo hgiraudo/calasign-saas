@@ -131,6 +131,8 @@ const es = {
   "pub.unavailable.expired": "Venció la fecha de disponibilidad.",
   "pub.unavailable.exhausted": "Ya se alcanzó el máximo de respuestas.",
   "pub.notFound": "No encontramos este formulario.",
+  "pub.err.formToken": "El formulario venció. Volvé a tocar Continuar: tus datos siguen cargados.",
+  "pub.err.tooFast": "Esperá unos segundos y volvé a tocar Continuar.",
   "pub.poweredBy": "Firma electrónica con CalaSign",
 } as const;
 
@@ -258,6 +260,8 @@ const pt: Record<Key, string> = {
   "pub.unavailable.expired": "A data de disponibilidade expirou.",
   "pub.unavailable.exhausted": "O número máximo de respostas foi atingido.",
   "pub.notFound": "Não encontramos este formulário.",
+  "pub.err.formToken": "O formulário expirou. Toque em Continuar novamente: seus dados continuam preenchidos.",
+  "pub.err.tooFast": "Aguarde alguns segundos e toque em Continuar novamente.",
   "pub.poweredBy": "Assinatura eletrônica com CalaSign",
 };
 
@@ -383,6 +387,8 @@ const en: Record<Key, string> = {
   "pub.unavailable.expired": "The availability date has passed.",
   "pub.unavailable.exhausted": "The maximum number of responses was reached.",
   "pub.notFound": "We couldn't find this form.",
+  "pub.err.formToken": "The form expired. Tap Continue again: your details are still filled in.",
+  "pub.err.tooFast": "Wait a few seconds and tap Continue again.",
   "pub.poweredBy": "Electronic signature by CalaSign",
 };
 

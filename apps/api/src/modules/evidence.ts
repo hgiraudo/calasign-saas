@@ -179,7 +179,23 @@ export async function evidenceRoutes(app: FastifyInstance, s: Services) {
     if (input.companySealCertificateId) await loadTenantCertificate(s.db, a.tenantId, input.companySealCertificateId, "pdf_seal");
     await s.db.tx(async (t) => {
       const e = await lockEnvelope(t, a.tenantId, req.params.id);
-      if (!["draft", "sent"].includes(e.status)) throw conflict("not_editable", "El sobre ya está finalizado");
+      // Un sobre trabado en la finalización porque su sello de empresa venció (o lo va a reemplazar otro) solo puede
+      // cambiar el sello, y solo mientras no haya una finalización en curso; después se reintenta con retry-finalize.
+      const recovering =
+        e.status === "finalizing" &&
+        input.signatureLevel === undefined &&
+        input.companySealCertificateId !== undefined &&
+        !(await t.one(`SELECT 1 FROM jobs WHERE queue = 'finalize' AND status IN ('pending','running') AND payload->>'envelopeId' = $1 LIMIT 1`, [e.id]));
+      if (!["draft", "sent"].includes(e.status) && !recovering) throw conflict("not_editable", "El sobre ya está finalizado");
+      // El certificado se vuelve a leer con la fila bloqueada: si se borró entre el chequeo y acá, el sobre no puede
+      // quedar apuntando a un certificado sin clave (la finalización fallaría para siempre).
+      if (input.companySealCertificateId) {
+        const c = await t.one(`SELECT id FROM tenant_certificates WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL FOR SHARE`, [
+          input.companySealCertificateId,
+          a.tenantId,
+        ]);
+        if (!c) throw notFound("Certificado");
+      }
       await t.query(
         `UPDATE envelopes SET company_seal_certificate_id = CASE WHEN $2::boolean THEN $3::uuid ELSE company_seal_certificate_id END,
            signature_level = COALESCE($4, signature_level), updated_at = now(), version = version + 1 WHERE id = $1`,

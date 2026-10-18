@@ -51,6 +51,8 @@ interface RunContext {
   waitingEnvelope?: string | null;
   /** Correos ingresados en los pasos de recolección (para ofrecer el link de firma a quien completó). */
   collectEmails?: string[];
+  /** Rutas de los datos que el formulario público completó con un correo. */
+  collectEmailPaths?: string[];
 }
 
 type StepResult =
@@ -811,19 +813,22 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
         : null;
     // Link de firma para quien completó los datos (si el sobre del run lo tiene como firmante).
     let signingUrl: string | null = null;
-    // Solo se entrega el link de un firmante cuyo correo SALE de los datos cargados en el formulario (plantilla con
-    // variables). Si no, quien completa el formulario podría poner el correo de un firmante fijo (por ejemplo,
-    // alguien de la organización) y recibir su link de firma.
+    // Solo se entrega el link de un firmante cuyo correo es exactamente una variable que completó el propio formulario
+    // ({{cliente.email}} con cliente.email cargado en un paso de recolección). Si no, quien completa el formulario
+    // podría escribir el correo de un firmante fijo, o de uno que vino en los datos con que se inició el run (por
+    // ejemplo, alguien de la organización), en cualquier campo de correo y recibir su link de firma.
+    const collected = new Set<string>(run.context?.collectEmailPaths ?? []);
     const selfService = new Set<string>();
     for (const st of run.steps as WorkflowStep[]) {
       if (st.type !== "send_for_signature") continue;
       for (const r of st.config.recipients) {
-        if (!r.email?.includes("{{")) continue;
-        const e = interpolate(r.email, run.context?.data ?? {}).trim().toLowerCase();
-        if (e) selfService.add(e);
+        const m = /^\s*\{\{\s*([A-Za-z_@][\w.@]*)\s*\}\}\s*$/.exec(r.email ?? "");
+        if (!m || !collected.has(m[1])) continue;
+        const v = getPath(run.context?.data ?? {}, m[1]);
+        if (typeof v === "string" && v.trim()) selfService.add(v.trim().toLowerCase());
       }
     }
-    const emails: string[] = (run.context?.collectEmails ?? []).map((x: string) => x.toLowerCase()).filter((x: string) => selfService.has(x));
+    const emails: string[] = [...selfService];
     const envIds = Object.values((run.context?.envelopes ?? {}) as Record<string, { envelopeId: string }>).map((e) => e.envelopeId);
     if (emails.length && envIds.length) {
       const r = await s.db.one<any>(
@@ -871,6 +876,10 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
       for (const [k, v] of Object.entries(values)) setPath(ctx.data, def.config.target ? `${def.config.target}.${k}` : k, v);
       const emails = def.config.fields.filter((f) => f.type === "email").map((f) => values[f.key]).filter((x): x is string => typeof x === "string");
       ctx.collectEmails = [...new Set([...(ctx.collectEmails ?? []), ...emails])];
+      const emailPaths = def.config.fields
+        .filter((f) => f.type === "email" && typeof values[f.key] === "string")
+        .map((f) => (def.config.target ? `${def.config.target}.${f.key}` : f.key));
+      ctx.collectEmailPaths = [...new Set([...(ctx.collectEmailPaths ?? []), ...emailPaths])];
       await t.query(`UPDATE workflow_run_steps SET status = 'completed', output = $3, finished_at = now() WHERE run_id = $1 AND idx = $2`, [
         run.id,
         index,

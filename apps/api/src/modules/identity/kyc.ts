@@ -347,10 +347,19 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
     const actor = recipientActor(req, r);
     await s.db.tx(async (t) => {
       await lockEnvelope(t, e.tenant_id, e.id);
+      // Con el sobre bloqueado se vuelve a mirar: dos inicios simultáneos no crean dos verificaciones en curso
+      // ni consumen dos intentos (el índice único de 0019 lo garantiza también a nivel base).
+      const active = await t.one<any>(
+        `SELECT id FROM identity_verifications WHERE recipient_id = $1 AND status IN ('created','pending') LIMIT 1`,
+        [r.id],
+      );
+      if (active) return;
+      const usedNow = (await t.one<any>(`SELECT count(*)::int AS n FROM identity_verifications WHERE recipient_id = $1 AND status = 'failed'`, [r.id])).n;
+      if (usedNow >= settings.maxAttempts) throw new AppError(429, "identity_attempts_exhausted", "Se agotaron los intentos de verificación");
       await t.query(
         `INSERT INTO identity_verifications (id, tenant_id, envelope_id, recipient_id, provider, level, status, attempt, provider_ref, redirect_url)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-        [id, e.tenant_id, e.id, r.id, provider, r.id_verification_level, adapter.mode === "redirect" ? "pending" : "created", used + 1, providerRef, redirectUrl],
+        [id, e.tenant_id, e.id, r.id, provider, r.id_verification_level, adapter.mode === "redirect" ? "pending" : "created", usedNow + 1, providerRef, redirectUrl],
       );
       await t.query(`UPDATE recipients SET identity_status = 'in_progress' WHERE id = $1`, [r.id]);
       await appendEvent(t, {
@@ -358,7 +367,7 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
         envelopeId: e.id,
         type: "recipient.identity_started",
         actor,
-        data: { verificationId: id, provider, level: r.id_verification_level, attempt: used + 1, reference: providerRef },
+        data: { verificationId: id, provider, level: r.id_verification_level, attempt: usedNow + 1, reference: providerRef },
       });
     });
     return sessionOut(req.params.token);

@@ -228,9 +228,13 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     const m = await s.db.one<any>(`SELECT role FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [tenantId, a.userId]);
     if (!m) throw notFound("Organización");
     // SSO (Fase 5): una sesión SSO no cambia de organización; una con contraseña no entra a una que exige SSO.
-    const sess = await s.db.one<any>(`SELECT auth_method, sso_tenant_id FROM sessions WHERE token_hash = $1`, [sha256Hex(req.cookies[SESSION_COOKIE]!)]);
+    // Solo una sesión web (cookie) cambia de organización; un token OAuth/API no tiene sesión que mover.
+    const cookie = req.cookies?.[SESSION_COOKIE];
+    if (!cookie) throw forbidden("Solo para sesiones de usuario");
+    const sess = await s.db.one<any>(`SELECT user_id, auth_method, sso_tenant_id FROM sessions WHERE token_hash = $1`, [sha256Hex(cookie)]);
+    if (!sess || sess.user_id !== a.userId) throw forbidden("Solo para sesiones de usuario");
     await assertSessionAllowed(s.db, { authMethod: sess?.auth_method ?? "password", ssoTenantId: sess?.sso_tenant_id ?? null }, tenantId, m.role);
-    await s.db.query(`UPDATE sessions SET tenant_id = $2 WHERE token_hash = $1`, [sha256Hex(req.cookies[SESSION_COOKIE]!), tenantId]);
+    await s.db.query(`UPDATE sessions SET tenant_id = $2 WHERE token_hash = $1`, [sha256Hex(cookie), tenantId]);
     await recordAudit(s.db, { tenantId, action: "auth.tenant_switched", actor: { type: "user", id: a.userId, label: a.actor.label }, ...clientInfo(req), data: { from: a.tenantId } });
     return meResponse(s.db, a.userId, tenantId);
   });
@@ -272,6 +276,8 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     if (cur.role === "owner" && a.access?.role !== "owner") throw forbidden("Solo un propietario puede cambiar el rol de otro propietario");
     assertCanGrant(a, target, await permsOf(s.db, a.tenantId, target.role, target.roleId));
     await s.db.tx(async (t) => {
+      // Serializa los cambios de propietarios de la organización: dos bajas simultáneas no la dejan sin ninguno.
+      await t.query(`SELECT id FROM tenants WHERE id = $1 FOR UPDATE`, [a.tenantId]);
       await t.query(`UPDATE memberships SET role = $3, role_id = $4 WHERE tenant_id = $1 AND user_id = $2`, [a.tenantId, req.params.userId, target.role, target.roleId]);
       if (cur.role === "owner" && target.role !== "owner" && (await ownerCount(t, a.tenantId)) === 0) {
         throw conflict("last_owner", "La organización tiene que tener al menos un propietario");
@@ -292,6 +298,8 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     if (!cur) throw notFound("Miembro");
     if (cur.role === "owner" && a.access?.role !== "owner") throw forbidden("Solo un propietario puede quitar a otro propietario");
     await s.db.tx(async (t) => {
+      // Serializa los cambios de propietarios de la organización: dos bajas simultáneas no la dejan sin ninguno.
+      await t.query(`SELECT id FROM tenants WHERE id = $1 FOR UPDATE`, [a.tenantId]);
       await t.query(`DELETE FROM group_members gm USING groups g WHERE gm.group_id = g.id AND g.tenant_id = $1 AND gm.user_id = $2`, [a.tenantId, userId]);
       await t.query(`DELETE FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [a.tenantId, userId]);
       if (cur.role === "owner" && (await ownerCount(t, a.tenantId)) === 0) throw conflict("last_owner", "La organización tiene que tener al menos un propietario");

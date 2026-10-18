@@ -80,6 +80,7 @@ El diagrama de arriba es el núcleo (0001). Cada bloque funcional agrega su prop
 | `0016_data` | BYOK, directorio de celdas, versiones de PDF firmado (renovación de archivo), dominios SSO verificados |
 | `0017_drop_video` | Elimina las tablas de video: la firma por videollamada se descartó del producto |
 | `0018_certificate_signing` | Firma con certificado propio: `signature_type` y `certificate_requirements` en destinatarios y roles, estado `awaiting_certificates`, `envelope_certsign`, `certificate_signatures`, `certsign_sessions` |
+| `0019_r3_identity` | Una sola verificación de identidad en curso por destinatario (índice único parcial); `recipients.self_registered`: quien se registró en un formulario web público no recibe invitaciones ni recordatorios hasta validar su correo con el código del formulario (la copia final después de firmar sí) |
 
 Reglas: una migración por bloque, solo aditiva salvo cuando se recrea un `CHECK` para sumar un valor; nunca se edita una
 migración ya aplicada en un entorno.

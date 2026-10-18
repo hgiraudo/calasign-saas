@@ -16,6 +16,7 @@ import { appendEvent, type Actor } from "../infra/evidence";
 import { AppError, badRequest, conflict, notFound } from "../lib/errors";
 import { decrypt, encrypt, iso, slugify, uuidv7 } from "../lib/util";
 import { getTenantBranding } from "./branding";
+import { assertTemplateAccess } from "./access";
 import { authenticate, clientInfo, type AuthContext, type Services } from "./context";
 import { setFrameAncestors } from "./embed";
 import { sendEnvelope } from "./envelopes";
@@ -131,6 +132,8 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
   app.post("/v1/web-forms", { preHandler: auth }, async (req, reply) => {
     const a = A(req);
     const input = WebFormInput.parse(req.body);
+    // Una plantilla restringida no se puede publicar sin poder verla.
+    await assertTemplateAccess(s.db, a, input.templateId, "view");
     const l = await loadTemplateForUse(s.db, a.tenantId, input.templateId);
     const row = { template_id: input.templateId, signer_role_id: input.signerRoleId, fixed_recipients: input.fixedRecipients, prefill: input.prefill ?? {} };
     checkConfig(l, row);
@@ -307,6 +310,10 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
           { webFormId: form.id, webFormName: form.name },
           (byRole) => (signerRecipientId = byRole.get(form.signer_role_id) ?? ""),
         );
+        // El correo lo escribió quien completa el formulario y no está verificado: no recibe invitaciones ni
+        // recordatorios (evita usar el formulario para mandar correos a terceros). Con OTP por correo, la invitación
+        // de respaldo sale recién cuando valida el código; la copia final después de firmar sale igual.
+        await t.query(`UPDATE recipients SET self_registered = true WHERE id = $1`, [signerRecipientId]);
         if (form.require_otp) await t.query(`UPDATE recipients SET auth_method = 'otp_email' WHERE id = $1`, [signerRecipientId]);
         await appendEvent(t, {
           tenantId: form.tenant_id,

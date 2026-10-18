@@ -9,7 +9,9 @@ TS=$(date -u +%Y%m%dT%H%M%SZ)
 umask 077
 F=$(mktemp /var/tmp/calasign-backup.XXXXXX)
 trap 'rm -f "$F"' EXIT
-runuser -u postgres -- pg_dump -Fc calasign > "$F"
+# Como calasign (dueño de la base), no como el superusuario postgres: la base la controla la app, y un pg_dump de
+# superusuario sobre objetos ajenos es el vector de CVE-2024-7348. El archivo lo crea root (la redirección es de root).
+runuser -u calasign -- pg_dump -Fc calasign > "$F"
 aws s3 cp --only-show-errors "$F" "s3://$BUCKET/backups/postgres/calasign-$TS.dump"
 SIZE=$(stat -c %s "$F")
 echo "backup OK: s3://$BUCKET/backups/postgres/calasign-$TS.dump ($SIZE bytes)"

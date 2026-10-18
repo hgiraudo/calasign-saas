@@ -112,12 +112,19 @@ interface Message {
   linkLabel?: string;
 }
 
+// El asunto y los nombres pueden venir de afuera (p. ej. quien completa un formulario web): sin escapar, un nombre
+// "<!channel>" avisaría a todo el canal y "<https://…|Ver sobre>" sería un link falso en el mensaje.
+// Slack: &, < y > se escapan (https://api.slack.com/reference/surfaces/formatting#escaping).
+const slackEscape = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+// Teams (Adaptive Cards) no tiene escape: se corta la sintaxis de link markdown [texto](url).
+const teamsEscape = (t: string) => t.replace(/\]\s*\(/g, "] (");
+
 function slackPayload(m: Message) {
-  const text = [m.title, m.subject ? `*${m.subject}*` : null, m.detail].filter(Boolean).join(" — ");
+  const parts = [m.title, m.subject, m.detail].map((x) => (x ? slackEscape(x) : x));
   return {
-    text: text.replace(/\*/g, ""),
+    text: parts.filter(Boolean).join(" — "),
     blocks: [
-      { type: "section", text: { type: "mrkdwn", text: [`*${m.title}*`, m.subject, m.detail].filter(Boolean).join("\n") } },
+      { type: "section", text: { type: "mrkdwn", text: [`*${parts[0]}*`, parts[1], parts[2]].filter(Boolean).join("\n") } },
       ...(m.link ? [{ type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: m.linkLabel ?? "Abrir" }, url: m.link }] }] : []),
     ],
   };
@@ -135,9 +142,9 @@ function teamsPayload(m: Message) {
           type: "AdaptiveCard",
           version: "1.4",
           body: [
-            { type: "TextBlock", text: m.title, weight: "Bolder", size: "Medium", wrap: true },
-            ...(m.subject ? [{ type: "TextBlock", text: m.subject, wrap: true }] : []),
-            ...(m.detail ? [{ type: "TextBlock", text: m.detail, isSubtle: true, wrap: true }] : []),
+            { type: "TextBlock", text: teamsEscape(m.title), weight: "Bolder", size: "Medium", wrap: true },
+            ...(m.subject ? [{ type: "TextBlock", text: teamsEscape(m.subject), wrap: true }] : []),
+            ...(m.detail ? [{ type: "TextBlock", text: teamsEscape(m.detail), isSubtle: true, wrap: true }] : []),
           ],
           actions: m.link ? [{ type: "Action.OpenUrl", title: m.linkLabel ?? "Abrir", url: m.link }] : [],
         },

@@ -141,7 +141,7 @@ async function linkFor(api, name) {
 
 /** Sobre de un firmante, enviado. Devuelve ids y el nombre del firmante. */
 async function sendEnvelope(api, label, opts = {}) {
-  const { envelope } = await api("POST", "/v1/envelopes", { subject: `Plataforma ${label} ${stamp}` }, { bearer: opts.bearer });
+  const { envelope } = await api("POST", "/v1/envelopes", { subject: `Plataforma ${label} ${stamp}${opts.subjectSuffix ?? ""}` }, { bearer: opts.bearer });
   const fd = new FormData();
   fd.append("file", new Blob([tinyPdf(label)], { type: "application/pdf" }), "contrato.pdf");
   const doc = await api("POST", `/v1/envelopes/${envelope.id}/documents`, fd, { bearer: opts.bearer });
@@ -365,7 +365,8 @@ assert(conn.target === "calasign-e2e/firmados/" && s3Objects.has("/calasign-e2e/
 assert(!JSON.stringify(conn).includes("secreto"), "el secreto del bucket no se devuelve");
 
 // Sobre completo → aviso a Slack (enviado + completado), Teams (completado) y PDF sellado en el bucket.
-const flow = await sendEnvelope(owner, "canales");
+// El asunto trae marcado de Slack/Teams: tiene que llegar como texto (sin @channel ni links falsos).
+const flow = await sendEnvelope(owner, "canales", { subjectSuffix: " <!channel> [Ver](https://evil.example)" });
 await signAll(owner, flow.signerName);
 const done = await waitFor(async () => {
   const d = await owner("GET", `/v1/envelopes/${flow.envelopeId}`);
@@ -379,6 +380,8 @@ assert(slackDone?.blocks?.[1]?.elements?.[0]?.url?.endsWith(`/app/envelopes/${fl
 await waitFor(() => channelHits.some((h) => h.path === `/teams/${stamp}`), "aviso de Teams");
 const teamsMsg = channelHits.find((h) => h.path === `/teams/${stamp}`).body;
 assert(teamsMsg.attachments?.[0]?.contentType === "application/vnd.microsoft.card.adaptive" && /completado/i.test(teamsMsg.attachments[0].content.body[0].text), "Teams: tarjeta adaptable");
+assert(slackMsgs.every((m) => !JSON.stringify(m).includes("<!channel>")) && slackMsgs.some((m) => m.text.includes("&lt;!channel&gt;")), "Slack: el asunto va escapado (sin @channel)");
+assert(teamsMsg.attachments[0].content.body[1].text.includes("[Ver] (https://evil.example)"), "Teams: el asunto no arma links markdown");
 const integrations = await owner("GET", "/v1/notification-integrations");
 assert(integrations.items.find((i) => i.id === slack.id).lastStatus === 200, "última entrega registrada");
 ok("Slack y Teams: prueba, eventos elegidos, enlaces al sobre y estado de la última entrega");

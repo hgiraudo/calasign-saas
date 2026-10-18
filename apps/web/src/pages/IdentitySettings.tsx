@@ -6,6 +6,7 @@ import { api, errorText } from "../lib/api";
 import { formatDateTime, useI18n } from "../lib/i18n";
 import { useIdnText, type IdnKey } from "../lib/i18n-identity";
 import { ErrorBox, Spinner } from "../components/ui";
+import { SsoDomainVerification } from "../components/DataExtras";
 
 function useLoad<T>(path: string) {
   const [data, setData] = useState<T | null>(null);
@@ -325,6 +326,7 @@ export function SsoSettingsPage() {
         )}
         <CopyRow label={tx("sso.loginUrl")} value={sp.loginUrl} />
       </div>
+      <SsoDomainVerification refreshKey={data.domains.join(",")} />
     </Page>
   );
 }

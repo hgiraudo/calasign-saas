@@ -1,0 +1,17 @@
+/* Bloque Datos: celdas en el alta, BYOK, dominios SSO y archivo. */
+.data-cells { border: 1px solid var(--line, #e2e8f0); border-radius: 8px; padding: 10px 12px; display: grid; gap: 6px; }
+.data-cells legend { font-weight: 600; padding: 0 4px; }
+.data-cell { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.data-cell-soon { opacity: 0.65; cursor: not-allowed; }
+.data-soon { background: #e2e8f0; color: #334155; font-size: 11px; }
+.data-policy { background: #0b1f3a; color: #e2e8f0; padding: 12px; border-radius: 8px; font-size: 12px; overflow-x: auto; max-height: 340px; white-space: pre; }
+.data-checks { list-style: none; padding: 0; margin: 0; display: grid; gap: 4px; }
+.data-checks .ok { color: #047857; }
+.data-checks .fail { color: #b91c1c; }
+.data-domains, .data-archive { margin-top: 16px; }
+.data-domain-list { list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 10px; }
+.data-domain-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.data-txt { margin-top: 4px; font-size: 12px; overflow-wrap: anywhere; }
+.data-txt code { overflow-wrap: anywhere; }
+.data-versions { margin: 4px 0 8px 18px; padding: 0; display: grid; gap: 2px; }
+.data-byok .row-wrap code { overflow-wrap: anywhere; }

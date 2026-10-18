@@ -37,6 +37,7 @@ import { ClausesPage, DocumentTemplateEditPage, DocumentTemplatesPage } from "./
 import { WorkflowEditPage, WorkflowRunPage, WorkflowsPage } from "./pages/Workflows";
 import { NegotiationDetailPage, NegotiationsPage } from "./pages/Negotiations";
 import { PublicNegotiationPage, PublicWorkflowRunPage, PublicWorkflowStartPage } from "./pages/PublicAgreements";
+import { ByokSettingsPage } from "./pages/ByokSettings";
 
 export function App() {
   return (
@@ -89,6 +90,7 @@ export function App() {
         <Route path="/app/settings/security" element={<SecurityPage />} />
         <Route path="/app/settings/identity" element={<IdentitySettingsPage />} />
         <Route path="/app/settings/sso" element={<SsoSettingsPage />} />
+        <Route path="/app/settings/byok" element={<ByokSettingsPage />} />
         <Route path="/app/settings/scim" element={<ScimSettingsPage />} />
         <Route path="/app/reports" element={<ReportsPage />} />
         <Route path="/app/bulk" element={<BulkListPage />} />

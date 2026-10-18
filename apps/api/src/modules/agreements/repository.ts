@@ -250,12 +250,15 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
     const countParams = [...params];
     const total = Number((await s.db.one<any>(`SELECT count(*)::int AS n FROM agreements ag WHERE ${where}`, countParams))?.n ?? 0);
     if (cursor) {
+      // created_at va en microsegundos (un Date de JS solo tiene ms: con ms se saltaban los acuerdos del mismo
+      // milisegundo que el último de la página). Se aceptan también los cursores viejos con fecha ISO.
       const [ts, id] = Buffer.from(cursor, "base64url").toString().split("|");
-      if (!ts || Number.isNaN(Date.parse(ts)) || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id ?? "")) {
+      const us = /^\d{1,17}$/.test(ts ?? "") ? ts : ts && !Number.isNaN(Date.parse(ts)) ? String(Date.parse(ts) * 1000) : null;
+      if (!us || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id ?? "")) {
         throw badRequest("invalid_cursor", "Cursor inválido");
       }
-      params.push(ts, id);
-      where += ` AND (ag.created_at, ag.id) < ($${params.length - 1}::timestamptz, $${params.length}::uuid)`;
+      params.push(us, id);
+      where += ` AND (ag.created_at, ag.id) < ('epoch'::timestamptz + $${params.length - 1}::bigint * interval '1 microsecond', $${params.length}::uuid)`;
     }
     let excerpt = "";
     if (f.q?.trim()) {
@@ -265,7 +268,7 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
     }
     params.push(limit + 1);
     const rows = await s.db.query<any>(
-      `SELECT ag.*, f.sha256, u.name AS owner_name ${excerpt} FROM agreements ag JOIN files f ON f.id = ag.file_id
+      `SELECT ag.*, ((extract(epoch FROM ag.created_at) * 1000000)::bigint)::text AS cursor_us, f.sha256, u.name AS owner_name ${excerpt} FROM agreements ag JOIN files f ON f.id = ag.file_id
        LEFT JOIN users u ON u.id = ag.owner_user_id WHERE ${where} ORDER BY ag.created_at DESC, ag.id DESC LIMIT $${params.length}`,
       params,
     );
@@ -273,7 +276,7 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
     const last = page[page.length - 1];
     return {
       items: page.map((r) => toAgreement({ ...r, excerpt: f.q ? (r.excerpt && /«/.test(r.excerpt) ? r.excerpt : null) : undefined })),
-      nextCursor: rows.length > limit && last ? Buffer.from(`${new Date(last.created_at).toISOString()}|${last.id}`).toString("base64url") : null,
+      nextCursor: rows.length > limit && last ? Buffer.from(`${last.cursor_us}|${last.id}`).toString("base64url") : null,
       total,
     };
   }

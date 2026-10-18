@@ -29,11 +29,15 @@ def construct_event(payload: Union[str, bytes], header: Optional[str], secret: s
         raise WebhookSignatureError("Header de firma mal formado") from None
     if abs(int(now if now is not None else time.time()) - t) > tolerance:
         raise WebhookSignatureError("Firma fuera de la tolerancia de tiempo")
-    body = payload.decode("utf-8") if isinstance(payload, bytes) else payload
-    expected = hmac.new(secret.encode(), f"{t}.{body}".encode(), hashlib.sha256).hexdigest()
+    # HMAC sobre los bytes crudos: un cuerpo que no es UTF-8 no rompe la verificación (simplemente no coincide).
+    raw = payload if isinstance(payload, bytes) else payload.encode("utf-8")
+    expected = hmac.new(secret.encode(), str(t).encode() + b"." + raw, hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected, v1):
         raise WebhookSignatureError("Firma inválida")
-    return json.loads(body)
+    try:
+        return json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        raise WebhookSignatureError("El cuerpo del webhook no es JSON válido") from None
 
 
 def verify_signature(payload: Union[str, bytes], header: Optional[str], secret: str, *, tolerance: int = 300, now: Optional[float] = None) -> bool:

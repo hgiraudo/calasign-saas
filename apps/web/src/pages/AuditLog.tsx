@@ -1,5 +1,5 @@
 // Auditoría de la cuenta: filtros, paginación y export CSV.
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { AuditLogEntry, AuditLogResponse } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
 import { formatDateTime, useI18n } from "../lib/i18n";
@@ -31,15 +31,29 @@ export function AuditLogPage() {
   const [items, setItems] = useState<AuditLogEntry[] | null>(null);
   const [cursor, setCursor] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  // Solo vale la respuesta del último pedido: con filtros nuevos, una página extra vieja no se mezcla en la lista.
+  const seq = useRef(0);
+  const moreInFlight = useRef(false);
 
   const load = async (f: Filters, more = false) => {
+    if (more && moreInFlight.current) return;
+    const n = ++seq.current;
+    moreInFlight.current = more;
     setError(null);
+    setLoadingMore(more);
     try {
       const r = await api<AuditLogResponse>(`/v1/audit-log?${query(f, more ? cursor : null)}`);
+      if (n !== seq.current) return;
       setItems((prev) => (more && prev ? [...prev, ...r.items] : r.items));
       setCursor(r.nextCursor);
     } catch (e) {
-      setError(errorText(e));
+      if (n === seq.current) setError(errorText(e));
+    } finally {
+      if (n === seq.current) {
+        moreInFlight.current = false;
+        setLoadingMore(false);
+      }
     }
   };
   useEffect(() => {
@@ -121,7 +135,7 @@ export function AuditLogPage() {
       )}
       {cursor && (
         <div className="row-end" style={{ marginTop: "1rem" }}>
-          <button type="button" className="btn" onClick={() => load(applied, true)}>
+          <button type="button" className="btn" disabled={loadingMore} onClick={() => load(applied, true)}>
             {tt("audit.more")}
           </button>
         </div>

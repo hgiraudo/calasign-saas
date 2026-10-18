@@ -82,7 +82,11 @@ export function PublicWorkflowRunPage() {
   const trap = useRef<HTMLInputElement>(null);
   const load = useCallback(() => {
     api<PublicWorkflowRun>(`/v1/public/workflow-runs/${token}`)
-      .then(setView)
+      .then((v) => {
+        // Un refresco que falló (corte de red) no deja el error en pantalla cuando el siguiente responde bien.
+        setView(v);
+        setError(null);
+      })
       .catch((e) => setError(e instanceof HttpError && e.status === 404 ? ta("pub.notFound") : errorText(e)));
   }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(load, [load]);

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import type { EnvelopeDetail, EnvelopeStatus, ListEnvelopesResponse, EnvelopeSummary } from "@calasign/shared";
 import { api, errorText, uuid } from "../lib/api";
@@ -18,6 +18,10 @@ export function EnvelopeListPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  // Cada cambio de filtro o búsqueda abre una "generación": una página extra pedida antes no se agrega a la lista nueva.
+  const gen = useRef(0);
+  const moreInFlight = useRef(false);
 
   useEffect(() => {
     const h = window.setTimeout(() => setQuery(q.trim()), 300);
@@ -38,6 +42,9 @@ export function EnvelopeListPage() {
 
   useEffect(() => {
     const ac = new AbortController();
+    gen.current++;
+    moreInFlight.current = false;
+    setLoadingMore(false);
     setLoading(true);
     setError(null);
     load(null, ac.signal)
@@ -53,13 +60,22 @@ export function EnvelopeListPage() {
   }, [load]);
 
   const more = async () => {
-    if (!cursor) return;
+    if (!cursor || moreInFlight.current) return;
+    const g = gen.current;
+    moreInFlight.current = true;
+    setLoadingMore(true);
     try {
       const r = await load(cursor);
+      if (g !== gen.current) return;
       setItems((prev) => [...prev, ...r.items]);
       setCursor(r.nextCursor);
     } catch (e) {
-      setError(errorText(e));
+      if (g === gen.current) setError(errorText(e));
+    } finally {
+      if (g === gen.current) {
+        moreInFlight.current = false;
+        setLoadingMore(false);
+      }
     }
   };
 
@@ -134,7 +150,7 @@ export function EnvelopeListPage() {
           </table>
           {cursor && (
             <div className="center pad">
-              <button type="button" className="btn btn-ghost" onClick={more}>
+              <button type="button" className="btn btn-ghost" disabled={loadingMore} onClick={more}>
                 {t("list.loadMore")}
               </button>
             </div>

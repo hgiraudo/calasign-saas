@@ -16,6 +16,7 @@ import { IdentityBadge } from "../components/IdentityControls";
 import { EnvelopePaymentSummary } from "../components/BillingExtras";
 import { ArchivePanel } from "../components/DataExtras";
 import { CertificateProgressPanel } from "../components/CertSign";
+import { SealOptionsPanel } from "../components/EvidenceExtras";
 
 export function EnvelopeDetailPage() {
   const { id = "" } = useParams();
@@ -180,6 +181,8 @@ export function EnvelopeDetailPage() {
           </button>
         </div>
       )}
+      {/* Si falló por el sello de empresa (vencido o borrado), se puede cambiar o quitar antes de reintentar. */}
+      {finalizeFailed && <SealOptionsPanel envelopeId={env.id} sealOnly />}
       {env.voidReason && (
         <div className="alert alert-warn">
           {t("detail.voidedReason")} {env.voidReason}

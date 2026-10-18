@@ -54,6 +54,7 @@ export function AgreementsPage() {
   const query = params.toString();
   // Solo se aplica la respuesta de la búsqueda más reciente (una lenta no pisa a la nueva).
   const seq = useRef(0);
+  const moreInFlight = useRef(false);
   const load = useCallback(async () => {
     const mine = ++seq.current;
     setError(null);
@@ -90,16 +91,20 @@ export function AgreementsPage() {
   }, [q]);
 
   const loadMore = async () => {
-    if (!data?.nextCursor) return;
+    if (!data?.nextCursor || moreInFlight.current) return;
+    // Si mientras tanto cambió la búsqueda o un filtro, esta página es de la lista vieja y se descarta.
+    const mine = seq.current;
+    moreInFlight.current = true;
     setLoadingMore(true);
     try {
       const next = new URLSearchParams(params);
       next.set("cursor", data.nextCursor);
       const more = await api<ListAgreementsResponse>(`/v1/agreements?${next.toString()}`);
-      setData({ ...more, items: [...data.items, ...more.items] });
+      if (mine === seq.current) setData({ ...more, items: [...data.items, ...more.items] });
     } catch (e) {
-      setError(errorText(e));
+      if (mine === seq.current) setError(errorText(e));
     } finally {
+      moreInFlight.current = false;
       setLoadingMore(false);
     }
   };

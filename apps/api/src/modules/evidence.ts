@@ -96,6 +96,12 @@ export async function evidenceRoutes(app: FastifyInstance, s: Services) {
   });
 
   app.delete<{ Params: { id: string } }>("/v1/certificates/:id", { preHandler: auth }, async (req, reply) => {
+    // Un sobre que ya se está cerrando con sello de empresa necesita la clave: borrarla lo dejaría trabado.
+    const inUse = await s.db.one<any>(
+      `SELECT count(*)::int AS n FROM envelopes WHERE company_seal_certificate_id = $1 AND tenant_id = $2 AND status IN ('finalizing','awaiting_certificates')`,
+      [req.params.id, req.auth!.tenantId],
+    );
+    if (inUse?.n) throw conflict("certificate_in_use", `El certificado sella ${inUse.n} sobre(s) que se están finalizando: esperá a que terminen`);
     // Borrado lógico; el material de clave se elimina de inmediato.
     const r = await s.db.query(
       `UPDATE tenant_certificates SET deleted_at = now(), key_ciphertext = NULL, key_wrapped = NULL

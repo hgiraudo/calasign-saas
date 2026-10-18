@@ -84,6 +84,9 @@ export async function assertAiAvailable(db: Db, tenantId: string) {
 
 /** Texto (con posiciones) de los documentos del sobre. Si los originales se purgaron por retención, usa el PDF sellado. */
 export async function loadEnvelopeDocs(db: Db, blobs: BlobStore, envelopeId: string, opts: { documentId?: string } = {}): Promise<DocText[]> {
+  if (opts.documentId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(opts.documentId)) {
+    throw new AppError(404, "not_found", "Documento no encontrado");
+  }
   const rows = await db.query<any>(
     `SELECT d.id, d.name, f.storage_key, f.purged_at FROM documents d JOIN files f ON f.id = d.file_id
      WHERE d.envelope_id = $1 ${opts.documentId ? "AND d.id = $2" : ""} ORDER BY d.position`,

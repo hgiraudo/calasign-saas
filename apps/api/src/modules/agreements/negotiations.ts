@@ -194,6 +194,12 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
     if (n.created_by !== a.userId && !hasPerm(a, "envelopes:view_all")) throw notFound("Negociación");
     return n;
   }
+  /** Cambiar la negociación (versiones, decisiones, cancelar, aceptar) es de quien la creó o de quien gestiona todos los sobres. */
+  async function loadForManage(a: AuthContext, id: string, lock = false, db: Db = s.db) {
+    const n = await loadForUser(a, id, lock, db);
+    if (n.created_by !== a.userId && !hasPerm(a, "envelopes:manage_all")) throw forbidden("Solo quien creó la negociación puede modificarla");
+    return n;
+  }
   const userAuthor = (a: AuthContext): NegotiationAuthor => ({ type: "user", name: (a.actor.label ?? "Remitente").replace(/\s*<.*>$/, "") });
 
   async function insertParticipants(t: Db, negotiationId: string, tenantId: string, participants: z.infer<typeof NegotiationParticipantInput>[]) {
@@ -357,7 +363,7 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
       })
       .parse(req.body);
     await s.db.tx(async (t) => {
-      const n = await loadForUser(a, req.params.id, true, t);
+      const n = await loadForManage(a, req.params.id, true, t);
       if (n.status !== "open") throw conflict("closed", "La negociación ya está cerrada");
       if (n.source === "pdf") throw conflict("pdf_source", "Un PDF subido no se edita: subí una versión nueva como otra negociación");
       await newVersion(t, n, input.data ?? n.data, { ...(n.clause_overrides ?? {}), ...(input.clauseOverrides ?? {}) }, userAuthor(a), input.summary ?? "Edición del remitente");
@@ -384,7 +390,7 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
   app.patch<{ Params: { id: string; commentId: string } }>("/v1/negotiations/:id/comments/:commentId", { preHandler: auth }, async (req) => {
     const a = A(req);
     const input = z.object({ resolved: z.boolean() }).parse(req.body);
-    const n = await loadForUser(a, req.params.id);
+    const n = await loadForManage(a, req.params.id);
     const r = await s.db.query(`UPDATE negotiation_comments SET resolved = $3 WHERE id = $1 AND negotiation_id = $2 RETURNING id`, [req.params.commentId, n.id, input.resolved]);
     if (!r.length) throw notFound("Comentario");
     return fullView(s.db, n);
@@ -395,7 +401,7 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
     const input = ProposalDecisionInput.parse(req.body);
     let accepted: any = null;
     await s.db.tx(async (t) => {
-      const n = await loadForUser(a, req.params.id, true, t);
+      const n = await loadForManage(a, req.params.id, true, t);
       if (n.status !== "open") throw conflict("closed", "La negociación ya está cerrada");
       const p = await t.one<any>(`SELECT * FROM negotiation_proposals WHERE id = $1 AND negotiation_id = $2 FOR UPDATE`, [req.params.proposalId, n.id]);
       if (!p) throw notFound("Propuesta");
@@ -416,7 +422,7 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
 
   app.post<{ Params: { id: string } }>("/v1/negotiations/:id/cancel", { preHandler: auth }, async (req) => {
     const a = A(req);
-    const n = await loadForUser(a, req.params.id);
+    const n = await loadForManage(a, req.params.id);
     if (n.status !== "open") throw conflict("closed", "La negociación ya está cerrada");
     await s.db.query(`UPDATE negotiations SET status = 'cancelled', updated_at = now() WHERE id = $1`, [n.id]);
     return fullView(s.db, await loadForUser(a, n.id));
@@ -426,7 +432,7 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
   app.post<{ Params: { id: string } }>("/v1/negotiations/:id/accept", { preHandler: auth }, async (req) => {
     const a = A(req);
     const input = AcceptNegotiationInput.parse(req.body ?? {});
-    const n = await loadForUser(a, req.params.id);
+    const n = await loadForManage(a, req.params.id);
     if (n.status !== "open") throw conflict("closed", "La negociación ya está cerrada");
     const pending = await s.db.one<any>(`SELECT count(*)::int AS c FROM negotiation_proposals WHERE negotiation_id = $1 AND status = 'pending'`, [n.id]);
     if (pending?.c) throw conflict("pending_proposals", `Quedan ${pending.c} propuestas sin decidir`);

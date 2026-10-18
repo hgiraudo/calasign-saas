@@ -56,12 +56,14 @@ const ALERT_EVERY_MS = 6 * 3600_000;
 /** Marca la clave como fallida y avisa a propietarios y administradores (como mucho cada 6 h). */
 export async function markKeyFailing(db: Db, tenantId: string, keyArn: string, error: string) {
   const prev = await db.one<any>(`SELECT byok_status, byok_alerted_at, name FROM tenants WHERE id = $1`, [tenantId]);
-  await db.query(`UPDATE tenants SET byok_status = 'failing', byok_error = $2, byok_checked_at = now() WHERE id = $1 AND byok_key_arn = $3`, [
+  // Una clave desactivada (status 'none') no vuelve a usarse por un chequeo fallido: lo nuevo sigue con la de la plataforma.
+  const upd = await db.query(`UPDATE tenants SET byok_status = 'failing', byok_error = $2, byok_checked_at = now() WHERE id = $1 AND byok_key_arn = $3 AND byok_status <> 'none' RETURNING id`, [
     tenantId,
     error.slice(0, 500),
     keyArn,
   ]);
   invalidateTenantStorage(tenantId);
+  if (!upd.length) return;
   const recent = prev?.byok_alerted_at && Date.now() - new Date(prev.byok_alerted_at).getTime() < ALERT_EVERY_MS;
   if (prev?.byok_status === "failing" && recent) return;
   await db.query(`UPDATE tenants SET byok_alerted_at = now() WHERE id = $1`, [tenantId]);
@@ -249,7 +251,8 @@ export async function byokRoutes(app: FastifyInstance, s: Services) {
     const ts = await tenantStorage(s.db, a.tenantId);
     const res = await testKey(t.byok_key_arn, a.tenantId, ts.cell);
     if (res.ok) {
-      await s.db.query(`UPDATE tenants SET byok_status = 'active', byok_error = NULL, byok_checked_at = now() WHERE id = $1`, [a.tenantId]);
+      // Probar no reactiva una clave desactivada: para eso está PUT /v1/settings/byok.
+      await s.db.query(`UPDATE tenants SET byok_status = 'active', byok_error = NULL, byok_checked_at = now() WHERE id = $1 AND byok_status <> 'none'`, [a.tenantId]);
       invalidateTenantStorage(a.tenantId);
     } else {
       await markKeyFailing(s.db, a.tenantId, t.byok_key_arn, res.error ?? "error");

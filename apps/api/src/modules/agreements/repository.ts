@@ -292,7 +292,7 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
 
   app.get<{ Querystring: Record<string, string | undefined> }>("/v1/agreements", { preHandler: auth }, async (req) => {
     const a = A(req);
-    const limit = Math.min(100, Math.max(1, Number(req.query.limit ?? 25)));
+    const limit = Math.min(100, Math.max(1, Math.trunc(Number(req.query.limit ?? 25)) || 25));
     return list(a, await filtersFromQuery(a, req.query), req.query.cursor, limit);
   });
 

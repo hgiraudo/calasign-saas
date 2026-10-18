@@ -1,6 +1,7 @@
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import nodemailer from "nodemailer";
+import SMTPTransport from "nodemailer/lib/smtp-transport/index.js";
 import { config } from "../config";
 import { uuidv7 } from "../lib/util";
 import { getSmsProvider } from "./sms";
@@ -48,8 +49,13 @@ export async function readMailbox(tenantId: string | null, limit = 100) {
 
 let transporter: nodemailer.Transporter | null = null;
 
+// Timeouts explícitos: los de nodemailer por defecto llegan a 10 minutos de inactividad, lo mismo que espera el sweep
+// para devolver a la cola un job "trabado". Un SMTP colgado haría que el aviso vuelva a la cola mientras el primer
+// envío sigue vivo, y saldría dos veces. Los parámetros de la URL (p. ej. ?socketTimeout=) siguen teniendo prioridad.
+const SMTP_TIMEOUTS = { dnsTimeout: 15_000, connectionTimeout: 30_000, greetingTimeout: 30_000, socketTimeout: 60_000 };
+
 async function sendEmail(m: OutboundMessage): Promise<SendResult> {
-  transporter ??= nodemailer.createTransport(config.mail.smtpUrl!);
+  transporter ??= nodemailer.createTransport(new SMTPTransport({ ...SMTP_TIMEOUTS, url: config.mail.smtpUrl! }));
   const info = await transporter.sendMail({ from: config.mail.from, to: m.to, subject: m.subject, text: m.text, html: m.html });
   return { provider: "smtp", messageId: info.messageId ?? null };
 }
@@ -102,9 +108,10 @@ const telegramReady = () => Boolean(config.telegram.botToken);
 export async function deliver(m: OutboundMessage & { cta?: string | null }): Promise<SendResult> {
   if (m.channel === "sms") {
     const sms = getSmsProvider();
-    const r = config.devMailbox || !sms ? await toMailbox(m) : null;
+    // Sin buzón de desarrollo no se escribe nada en disco: el SMS lleva el código de verificación del firmante.
+    if (!sms && !config.devMailbox) throw new Error("SMS no configurado");
+    const r = config.devMailbox ? await toMailbox(m) : null;
     if (sms) return sms.send(m.to, m.text).then((x) => ({ provider: sms.id, messageId: x.messageId })).catch((e) => (r ? r : Promise.reject(e)));
-    if (!config.devMailbox) throw new Error("SMS no configurado");
     return r!;
   }
   if (config.devMailbox) {

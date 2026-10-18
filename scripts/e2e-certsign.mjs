@@ -241,6 +241,16 @@ try {
 assert(rejected, "certificado de otra persona rechazado");
 step("certificado que no corresponde al DNI declarado: rechazado");
 
+// Mismo titular y DNI, pero el certificado está revocado por la CA (OCSP de la PKI de laboratorio).
+let revokedOut = "";
+try {
+  firmador(pairA.code, join(labDir, "revocado.p12"));
+} catch (e) {
+  revokedOut = String(e.stderr ?? "") + String(e.stdout ?? "") + String(e.message ?? "");
+}
+assert(/revocado/.test(revokedOut), `certificado revocado rechazado (${revokedOut.slice(0, 300)})`);
+step("certificado revocado (mismo DNI): rechazado");
+
 const outA = firmador(pairA.code, join(labDir, "peru.p12"));
 assert(outA.ok && outA.envelopeStatus === "awaiting_certificates", `A firmó con su certificado (${JSON.stringify(outA)})`);
 await api("GET", `/v1/certsign/sessions/${pairA.code}`, null, { expect: 410 });
@@ -287,6 +297,11 @@ assert(types.filter((t) => t === "recipient.certificate_signed").length === 2, "
 assert(types.includes("recipient.certificate_rejected"), "evento del certificado rechazado");
 const csA = events.find((e) => e.type === "recipient.certificate_signed" && e.data.recipientId === A);
 assert(csA.data.identityMatch === "serialNumber" && csA.data.trusted === true && csA.data.timestamped, "evidencia: identidad por serialNumber, confiable, con sello de tiempo");
+assert(csA.data.revocation === "good" && csA.data.revocationSource === "ocsp", `evidencia: revocación consultada por OCSP (${csA.data.revocation}/${csA.data.revocationSource})`);
+assert(
+  events.some((e) => e.type === "recipient.certificate_rejected" && e.data.revocation === "revoked" && e.data.errors.some((x) => /revocado/.test(x))),
+  "evidencia: rechazo por revocación",
+);
 const csC = events.find((e) => e.type === "recipient.certificate_signed" && e.data.recipientId === C);
 assert(csC.data.identityMatch === "icp-brasil-cpf" && csC.data.signatureAlgorithm === "ECDSA", "evidencia: CPF de ICP-Brasil, ECDSA");
 assert(events.find((e) => e.type === "envelope.completed").data.signedSha256 === final.envelope.signedSha256, "envelope.completed coincide con el PDF");

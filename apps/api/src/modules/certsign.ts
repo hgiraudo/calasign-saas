@@ -31,7 +31,13 @@ import {
 } from "@calasign/shared";
 import {
   checkSigningCertificate,
+  commonName,
   completeExternalSignature,
+  fetchCrl,
+  fetchOcsp,
+  parseCert,
+  statusFromCrl,
+  statusFromOcsp,
   pemToDerList,
   prepareExternalSignature,
   renderEnvelopePdf,
@@ -48,7 +54,7 @@ import { iso, sha256Hex, uuidv7 } from "../lib/util";
 import { authenticate, clientInfo, type Services } from "./context";
 import { tenantBaseUrl } from "./custom-domains";
 import { lockEnvelope } from "./envelopes";
-import { trustAnchors } from "./evidence-seal";
+import { guardedFetch, trustAnchors } from "./evidence-seal";
 import { recipientActor, resolveToken } from "./signing";
 import { normalizeRequirements } from "./certsign-requirements";
 export { normalizeRequirements };
@@ -218,6 +224,72 @@ function parseChain(chain: string[]): Uint8Array[] {
   return out;
 }
 
+/**
+ * Revocación del certificado del firmante y de las intermedias (OCSP y, si no hay respuesta concluyente, CRL), con las
+ * URLs del propio certificado vía guardedFetch (SSRF). Decisión: se rechaza solo si alguno está REVOCADO; si el
+ * respondedor no contesta o no hay URLs, la firma sigue y la evidencia queda con "not_checked" (y una advertencia),
+ * para no bloquear firmas por una caída de la CA. La raíz (autofirmada) no se consulta.
+ */
+export interface CertsignRevocation {
+  status: "good" | "revoked" | "not_checked";
+  /** Fuente de la respuesta para el certificado del firmante. */
+  source: "ocsp" | "crl" | null;
+  /** Qué certificado de la cadena está revocado (si alguno). */
+  revokedSubject?: string;
+  checkedAt: string;
+}
+
+const REVOCATION_DEADLINE_MS = 20_000;
+
+export async function checkChainRevocation(chainDer: Uint8Array[], fetcher = guardedFetch): Promise<CertsignRevocation> {
+  const checkedAt = new Date();
+  const run = async (): Promise<CertsignRevocation> => {
+    const certs = chainDer.map(parseCert);
+    if (certs.length < 2) return { status: "not_checked", source: null, checkedAt: checkedAt.toISOString() };
+    let leafStatus: CertsignRevocation["status"] = "not_checked";
+    let leafSource: CertsignRevocation["source"] = null;
+    let allGood = true;
+    for (let i = 0; i < certs.length - 1; i++) {
+      const cert = certs[i];
+      const issuer = certs[i + 1];
+      let st: "good" | "revoked" | null = null;
+      let src: "ocsp" | "crl" | null = null;
+      const ocsp = await fetchOcsp(cert, issuer, fetcher);
+      const fromOcsp = ocsp ? await statusFromOcsp(ocsp, cert, issuer, checkedAt) : null;
+      if (fromOcsp && fromOcsp.status !== "unknown") {
+        st = fromOcsp.status;
+        src = "ocsp";
+      } else {
+        const crl = await fetchCrl(cert, fetcher);
+        const fromCrl = crl ? await statusFromCrl(crl, cert, issuer, checkedAt) : null;
+        if (fromCrl && fromCrl.status !== "unknown") {
+          st = fromCrl.status;
+          src = "crl";
+        }
+      }
+      if (st === "revoked") {
+        const cn = commonName(cert.subject);
+        return { status: "revoked", source: i === 0 ? src : leafSource, revokedSubject: cn ?? undefined, checkedAt: checkedAt.toISOString() };
+      }
+      if (st !== "good") allGood = false;
+      if (i === 0) {
+        leafStatus = st === "good" ? "good" : "not_checked";
+        leafSource = src;
+      }
+    }
+    return { status: allGood ? leafStatus : "not_checked", source: leafSource, checkedAt: checkedAt.toISOString() };
+  };
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<CertsignRevocation>((res) => {
+    timer = setTimeout(() => res({ status: "not_checked", source: null, checkedAt: checkedAt.toISOString() }), REVOCATION_DEADLINE_MS);
+  });
+  try {
+    return await Promise.race([run().catch(() => ({ status: "not_checked", source: null, checkedAt: checkedAt.toISOString() }) as CertsignRevocation), deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ───────────────────────────── Rutas ─────────────────────────────
 
 export async function certsignRoutes(app: FastifyInstance, s: Services) {
@@ -306,6 +378,21 @@ export async function certsignRoutes(app: FastifyInstance, s: Services) {
     } catch (err) {
       throw badRequest("invalid_certificate", `Certificado ilegible: ${(err as Error).message}`);
     }
+    // Revocación: solo si pasó los demás controles (evita consultas de red con certificados que igual se rechazan).
+    let revocation: CertsignRevocation | null = null;
+    if (check.ok) {
+      revocation = await checkChainRevocation(check.chainDer);
+      if (revocation.status === "revoked") {
+        check.errors.push(
+          revocation.revokedSubject && revocation.revokedSubject !== check.commonName
+            ? `un certificado de la cadena está revocado (${revocation.revokedSubject})`
+            : "el certificado está revocado",
+        );
+        check.ok = false;
+      } else if (revocation.status === "not_checked") {
+        check.warnings.push("no se pudo verificar si el certificado está revocado (la autoridad certificante no respondió)");
+      }
+    }
     const actor = recipientActorFromSession(req, r);
     if (!check.ok) {
       await s.db.tx(async (t) => {
@@ -315,7 +402,15 @@ export async function certsignRoutes(app: FastifyInstance, s: Services) {
           envelopeId: e.id,
           type: "recipient.certificate_rejected",
           actor,
-          data: { recipientId: r.id, subject: check.subject, issuer: check.issuer, serialNumber: check.serialNumber, certSha256: check.sha256, errors: check.errors },
+          data: {
+            recipientId: r.id,
+            subject: check.subject,
+            issuer: check.issuer,
+            serialNumber: check.serialNumber,
+            certSha256: check.sha256,
+            errors: check.errors,
+            ...(revocation ? { revocation: revocation.status, revocationSource: revocation.source } : {}),
+          },
         });
       });
       throw new AppError(422, "certificate_rejected", check.errors.join(". "), { errors: check.errors, warnings: check.warnings });
@@ -346,7 +441,7 @@ export async function certsignRoutes(app: FastifyInstance, s: Services) {
         JSON.stringify(check.chainDer.map((d) => Buffer.from(d).toString("base64"))),
         prep.signatureAlgorithm,
         prep.namedCurve,
-        JSON.stringify({ ...check, chainDer: undefined }),
+        JSON.stringify({ ...check, chainDer: undefined, revocation }),
       ],
     );
     if (!upd.length) throw new AppError(410, "code_used", "Este código ya no es válido: generá uno nuevo desde el link de firma");
@@ -459,6 +554,10 @@ export async function certsignRoutes(app: FastifyInstance, s: Services) {
           certSha256: check.sha256,
           trusted: Boolean(check.trusted),
           identityMatch: check.identityMatch?.source ?? null,
+          // Estado de revocación al momento de preparar la firma ("not_checked" si la CA no respondió).
+          revocation: check.revocation?.status ?? "not_checked",
+          revocationSource: check.revocation?.source ?? null,
+          revocationCheckedAt: check.revocation?.checkedAt ?? null,
           signatureAlgorithm: sess.signature_algorithm,
           timestamped,
           signedPdfSha256: sha,

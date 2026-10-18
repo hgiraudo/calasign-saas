@@ -248,14 +248,35 @@ export function renewalAlertDate(m: ContractMetadata | null, alertDays: number, 
   return alert < todayIso ? todayIso : alert;
 }
 
+/** AAAA-MM-DD de una fecha que existe, o null ("2027-02-31" no: JS la corre al 3 de marzo y la alerta saldría mal). */
+export function realIsoDate(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v.trim());
+  if (!m) return null;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  if (y < 1 || dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d) return null;
+  return `${m[1]}-${m[2]}-${m[3]}`;
+}
+
+const META_DATES = ["effectiveDate", "expiryDate", "renewalDate"] as const;
+
+/** Fechas de metadatos que no existen o no son AAAA-MM-DD (la edición manual las rechaza con 400). */
+export function invalidMetadataDates(m: ContractMetadata): string[] {
+  return META_DATES.filter((k) => m[k] != null && realIsoDate(m[k]) === null);
+}
+
 export async function saveMetadata(
   db: Db,
   envelopeId: string,
   tenantId: string,
-  metadata: ContractMetadata,
+  metadataIn: ContractMetadata,
   confidence: Record<string, number>,
   source: "ai" | "manual",
 ) {
+  // Lo que devuelve el modelo es texto libre: una fecha que no existe o con otro formato queda en null.
+  const metadata: ContractMetadata = { ...metadataIn };
+  for (const k of META_DATES) metadata[k] = realIsoDate(metadata[k]);
   const t = await db.one<any>(`SELECT ai_renewal_alert_days FROM tenants WHERE id = $1`, [tenantId]);
   const alertAt = renewalAlertDate(metadata, Number(t?.ai_renewal_alert_days ?? 30));
   await db.query(

@@ -39,6 +39,7 @@ import { WorkflowEditPage, WorkflowRunPage, WorkflowsPage } from "./pages/Workfl
 import { NegotiationDetailPage, NegotiationsPage } from "./pages/Negotiations";
 import { PublicNegotiationPage, PublicWorkflowRunPage, PublicWorkflowStartPage } from "./pages/PublicAgreements";
 import { ByokSettingsPage } from "./pages/ByokSettings";
+import { FirmadorPage } from "./pages/Firmador";
 
 export function App() {
   return (
@@ -49,6 +50,7 @@ export function App() {
       <Route path="/s/:token" element={<SignerPage />} />
       <Route path="/developers" element={<DevelopersPage />} />
       <Route path="/verify" element={<VerifyPage />} />
+      <Route path="/firmador" element={<FirmadorPage />} />
       <Route path="/invite/:token" element={<InviteAcceptPage />} />
       <Route path="/f/:slug" element={<PublicFormPage />} />
       <Route path="/wf/:slug" element={<PublicWorkflowStartPage />} />

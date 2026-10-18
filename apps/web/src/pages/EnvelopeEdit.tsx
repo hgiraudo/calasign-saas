@@ -16,6 +16,7 @@ import { ErrorBox, Spinner, StatusBadge, formatBytes, recipientColor } from "../
 import { SaveAsTemplateButton } from "../components/SaveAsTemplate";
 import { ShareControl } from "../components/ShareControl";
 import { IdentitySelect, draftToIdentity, identityToDraft } from "../components/IdentityControls";
+import { CertificateOption, EMPTY_CERT_DRAFT, certToDraft, draftToCert, type CertDraft } from "../components/CertSign";
 
 interface DraftRecipient {
   id: string;
@@ -33,6 +34,7 @@ interface DraftRecipient {
   authMethod: AuthMethod;
   /** "proveedor:nivel" o "" (sin verificación de identidad). */
   idVerification: string;
+  cert: CertDraft;
 }
 
 const CHANNEL_LABELS: Record<Channel, string> = { email: "Email", whatsapp: "WhatsApp", telegram: "Telegram" };
@@ -56,6 +58,7 @@ function toDraftRecipients(d: EnvelopeDetail): DraftRecipient[] {
     idDocumentNumber: r.idDocumentNumber ?? "",
     authMethod: r.authMethod ?? "link",
     idVerification: identityToDraft(r.identity),
+    cert: certToDraft(r),
   }));
 }
 
@@ -147,6 +150,7 @@ export function EnvelopeEditPage() {
           // Firma en persona: la anfitriona es quien carga el sobre.
           inPerson: r.authMethod === "in_person" ? {} : null,
           idVerification: r.role === "cc" ? null : draftToIdentity(r.idVerification),
+          ...draftToCert(r.cert, r.role),
         })),
       };
       const d = await api<EnvelopeDetail>(`/v1/envelopes/${id}/recipients`, { method: "PUT", body });
@@ -444,6 +448,7 @@ function RecipientsStep({ recipients, onChange }: { recipients: DraftRecipient[]
         channels: ["email"],
         authMethod: "link",
         idVerification: "",
+        cert: EMPTY_CERT_DRAFT,
         telegramChatId: "",
         telegramLinked: false,
         idDocumentType: "",
@@ -515,6 +520,7 @@ function RecipientsStep({ recipients, onChange }: { recipients: DraftRecipient[]
                 </label>
               )}
               {r.role !== "cc" && <IdentitySelect value={r.idVerification} onChange={(v) => set(i, { idVerification: v })} />}
+              {r.role === "signer" && <CertificateOption value={r.cert} hasIdDocument={!!r.idDocumentNumber.trim()} onChange={(v) => set(i, { cert: v })} />}
               <label className="field">
                 <span>{t("edit.locale")}</span>
                 <select value={r.locale} onChange={(e) => set(i, { locale: e.target.value as Locale | "" })}>

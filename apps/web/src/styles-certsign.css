@@ -1,0 +1,17 @@
+/* Firma con certificado propio y página del Firmador. */
+.certsign-option { display: contents; }
+.certsign-reqs { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; border-left: 3px solid var(--brand, #0ea5a4); background: rgba(14, 165, 164, 0.06); border-radius: 6px; }
+.certsign-reqs .check { display: flex; gap: 8px; align-items: center; }
+.certsign-progress h3, .certsign-step h3 { margin: 0 0 6px; }
+.certsign-list { margin: 8px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
+.certsign-list li.is-signed strong { color: #059669; }
+.certsign-step { margin-top: 16px; padding: 16px; border: 1px solid rgba(148, 163, 184, 0.4); border-radius: 10px; text-align: left; }
+.certsign-step.is-active { border-color: var(--brand, #0ea5a4); }
+.certsign-steps { padding-left: 20px; margin: 8px 0 12px; }
+.certsign-code { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.certsign-code-value { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 28px; letter-spacing: 3px; font-weight: 700; }
+.firmador-main { max-width: 760px; margin: 0 auto; padding: 16px; }
+.firmador-os { margin-bottom: 12px; }
+.firmador-os.is-current { border-color: var(--brand, #0ea5a4); }
+.firmador-file { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.firmador-file .mono { word-break: break-all; }

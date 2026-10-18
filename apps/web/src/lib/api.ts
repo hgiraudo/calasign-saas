@@ -1,5 +1,6 @@
 // Cliente HTTP mínimo para la API v1 (mismo origen, cookie de sesión).
 import type { ApiError } from "@calasign/shared";
+import { currentLocale } from "./i18n";
 
 export class HttpError extends Error {
   status: number;
@@ -66,9 +67,43 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
   return data as T;
 }
 
+// Errores de archivo con código estable que la API describe en español: en pt-BR y en se muestran traducidos (en
+// español queda el texto de la API, que puede traer detalle, p. ej. el máximo de páginas).
+const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
+  network_error: { "pt-BR": "Não foi possível conectar ao servidor.", en: "Couldn't connect to the server." },
+  invalid_code: { "pt-BR": "Código incorreto.", en: "Incorrect code." },
+  challenge_expired: { "pt-BR": "O acesso expirou: digite sua senha novamente.", en: "The sign-in expired: enter your password again." },
+  too_many_attempts: {
+    "pt-BR": "Muitas tentativas. Tente de novo em alguns minutos ou redefina sua senha.",
+    en: "Too many attempts. Try again in a few minutes or reset your password.",
+  },
+  invitation_used: { "pt-BR": "O convite não é mais válido.", en: "The invitation is no longer valid." },
+  not_pdf: { "pt-BR": "O arquivo não é um PDF.", en: "The file isn't a PDF." },
+  encrypted: { "pt-BR": "O PDF está protegido por senha.", en: "The PDF is password-protected." },
+  empty: { "pt-BR": "O PDF não tem páginas.", en: "The PDF has no pages." },
+  too_many_pages: { "pt-BR": "O PDF tem páginas demais.", en: "The PDF has too many pages." },
+  unreadable: {
+    "pt-BR": "Não foi possível ler o PDF: ele está danificado ou é pesado demais.",
+    en: "The PDF couldn't be read: it's damaged or too heavy.",
+  },
+  pdf_too_heavy: { "pt-BR": "O PDF é pesado demais para ler o seu texto.", en: "The PDF is too heavy to read its text." },
+  ambiguous_pdf: {
+    "pt-BR": "O PDF tem conteúdo ambíguo (mostra coisas diferentes em cada leitor). Gere-o novamente a partir do original.",
+    en: "The PDF has ambiguous content (it shows different things in different readers). Export it again from the original.",
+  },
+  file_too_large: { "pt-BR": "O arquivo excede o tamanho máximo.", en: "The file exceeds the maximum size." },
+  invalid_attachment: {
+    "pt-BR": "Só são aceitos PDF, JPG ou PNG que não estejam danificados nem protegidos.",
+    en: "Only PDF, JPG or PNG files that aren't damaged or protected are accepted.",
+  },
+};
+
 /** Texto legible de un error, incluyendo detalles de validación si vienen. */
 export function errorText(e: unknown): string {
   if (e instanceof HttpError) {
+    const loc = currentLocale();
+    const tr = loc !== "es" ? CODE_TEXT[e.code]?.[loc] : undefined;
+    if (tr) return tr;
     const d = e.details;
     if (Array.isArray(d) && d.length) {
       const parts = d

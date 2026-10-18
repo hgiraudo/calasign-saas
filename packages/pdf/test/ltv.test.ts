@@ -2,10 +2,12 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PDFDocument, StandardFonts } from "pdf-lib";
+import { PDFDocument, PDFName, PDFString, StandardFonts } from "pdf-lib";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   CscSignatureProvider,
+  IncrementalUpdate,
+  addDssIncremental,
   LocalKeyProvider,
   addCadesSignatureIncremental,
   applyLtv,
@@ -100,6 +102,10 @@ describe("PAdES B-LT / B-LTA", () => {
     expect(s1.level).toBe("B-LTA");
     expect(s2.level).toBe("B-LTA");
     expect(s1.modifiedAfter).toBe(true);
+    expect(s1.changesAfter).toBe("evidence_only");
+    expect(s2.changesAfter).toBe("evidence_only");
+    expect(ts.changesAfter).toBe("none");
+    expect(v.summary.modifiedAfterSigning).toBe(false);
     expect(ts.kind).toBe("document_timestamp");
     expect(ts.coversWholeDocument).toBe(true);
     expect(s1.timestamp?.valid).toBe(true);
@@ -141,6 +147,42 @@ describe("PAdES B-LT / B-LTA", () => {
     tampered[idx + 1] = "K".charCodeAt(0);
     const v2 = await validatePdf(tampered, { trustAnchors: [pki.root.certDer] });
     expect(v2.signatures[0].integrity.valid).toBe(false);
+  }, 120_000);
+
+  it("detecta una revisión posterior que cambia el contenido (incremental saving attack)", async () => {
+    const seal = new LocalKeyProvider("lab-seal", pki.seal.keyPem, pki.sealChainPem);
+    const signed = await sealedBT(seal);
+    const ok = await validatePdf(signed, { trustAnchors: [pki.root.certDer] });
+    expect(ok.summary).toMatchObject({ allValid: true, modifiedAfterSigning: false });
+
+    // Revisión incremental que reemplaza el contenido de la primera página: la firma sigue verificando sobre su revisión.
+    const u = await IncrementalUpdate.open(signed);
+    const page = u.doc.getPages()[0];
+    const ref = u.add(u.context.flateStream("BT /F1 24 Tf 50 700 Td (Monto: 1.000.000) Tj ET"));
+    page.node.set(PDFName.of("Contents"), ref);
+    u.touch(page.ref);
+    const altered = u.serialize();
+    const v = await validatePdf(altered, { trustAnchors: [pki.root.certDer] });
+    expect(v.signatures[0].integrity.valid).toBe(true);
+    expect(v.signatures[0].changesAfter).toBe("content");
+    expect(v.summary.modifiedAfterSigning).toBe(true);
+    expect(v.summary.allValid).toBe(false);
+
+    // Una anotación nueva (texto superpuesto) también cambia lo que se ve.
+    const u2 = await IncrementalUpdate.open(signed);
+    const p2 = u2.doc.getPages()[0];
+    const annot = u2.add(u2.context.obj({ Type: "Annot", Subtype: "FreeText", Rect: [50, 700, 300, 730], Contents: PDFString.of("Anulado") }));
+    p2.node.set(PDFName.of("Annots"), u2.context.obj([annot]));
+    u2.touch(p2.ref);
+    const v2 = await validatePdf(u2.serialize(), { trustAnchors: [pki.root.certDer] });
+    expect(v2.signatures[0].changesAfter).toBe("content");
+    expect(v2.summary.allValid).toBe(false);
+
+    // Agregar solo evidencia (DSS) no cuenta como cambio.
+    const withDss = await addDssIncremental(signed, { certs: [pki.root.certDer], ocsps: [], crls: [] });
+    const v3 = await validatePdf(withDss, { trustAnchors: [pki.root.certDer] });
+    expect(v3.signatures[0].changesAfter).toBe("evidence_only");
+    expect(v3.summary.allValid).toBe(true);
   }, 120_000);
 
   it("firma remota por CSC v2 (servidor de prueba)", async () => {

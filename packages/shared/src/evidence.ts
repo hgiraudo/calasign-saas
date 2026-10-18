@@ -125,6 +125,8 @@ export interface PdfValidationSignature {
   integrity: { valid: boolean; reason?: string };
   coversWholeDocument: boolean;
   modifiedAfter: boolean;
+  /** Qué cambiaron las revisiones posteriores: solo evidencia (firmas, sellos, DSS) o lo que se ve (páginas, anotaciones). */
+  changesAfter?: "none" | "evidence_only" | "content";
   chain: {
     trusted: boolean;
     anchor: string | null;
@@ -139,7 +141,7 @@ export interface PdfValidationResponse {
   sha256: string;
   signatures: PdfValidationSignature[];
   dss: { certs: number; ocsps: number; crls: number } | null;
-  summary: { count: number; allValid: boolean; allTrusted: boolean; anyRevoked: boolean };
+  summary: { count: number; allValid: boolean; allTrusted: boolean; anyRevoked: boolean; modifiedAfterSigning?: boolean };
   /** true si se consultó OCSP/CRL online además del DSS. */
   onlineRevocation: boolean;
 }

@@ -174,15 +174,31 @@ async function findOrCreateGdriveFolder(token: string, folder: string): Promise<
 }
 
 /**
+ * ¿La carpeta fijada sigue sirviendo? Drive acepta subir a una carpeta que está en la papelera, pero el archivo queda
+ * en la papelera con ella ("trashed … from a trashed parent folder") y se borra solo a los 30 días: la exportación
+ * daría OK y el PDF se perdería. Y si la papelera se vació, la carpeta da 404 y todas las exportaciones fallarían.
+ */
+export async function gdriveFolderUsable(token: string, folderId: string): Promise<boolean> {
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(folderId)}?fields=id,trashed`, {
+    headers: { authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (res.status === 404) return false;
+  const f: any = await (await check(res, "revisar carpeta")).json();
+  return f?.trashed !== true;
+}
+
+/**
  * Drive: resuelve la carpeta UNA vez por conexión, con la fila bloqueada. Si no, varias exportaciones en paralelo
  * (p. ej. un envío masivo que se completa) no la encuentran todavía, cada una crea una carpeta con el mismo nombre
- * y los PDF quedan repartidos entre carpetas duplicadas.
+ * y los PDF quedan repartidos entre carpetas duplicadas. `stale`: id de una carpeta que ya no sirve (se reemplaza,
+ * salvo que otra exportación ya lo haya hecho).
  */
-async function ensureGdriveFolder(db: Db, connId: string): Promise<any> {
+async function ensureGdriveFolder(db: Db, connId: string, stale?: string): Promise<any> {
   await db.tx(async (t) => {
     const row = await t.one<any>(`SELECT provider, config, credentials_enc FROM storage_connections WHERE id = $1 FOR UPDATE`, [connId]);
     const cfg = row?.config ?? {};
-    if (!row || row.provider !== "gdrive" || !cfg.folder || cfg.folderId) return;
+    if (!row || row.provider !== "gdrive" || !cfg.folder || (cfg.folderId && cfg.folderId !== stale)) return;
     const { token, updated } = await freshToken("gdrive", JSON.parse(decrypt(row.credentials_enc)));
     const folderId = await findOrCreateGdriveFolder(token, String(cfg.folder));
     if (updated) await t.query(`UPDATE storage_connections SET credentials_enc = $2 WHERE id = $1`, [connId, encrypt(JSON.stringify(updated))]);
@@ -193,8 +209,16 @@ async function ensureGdriveFolder(db: Db, connId: string): Promise<any> {
 
 /** La carpeta ya resuelta y fijada para esta conexión (Drive con carpeta elegida); si no, la fila tal cual. */
 async function withResolvedFolder(db: Db, c: any): Promise<any> {
-  if (c.provider !== "gdrive" || !c.config?.folder || c.config?.folderId) return c;
-  return (await ensureGdriveFolder(db, c.id)) ?? c;
+  if (c.provider !== "gdrive" || !c.config?.folder) return c;
+  const folderId = c.config?.folderId;
+  if (!folderId) return (await ensureGdriveFolder(db, c.id)) ?? c;
+  const { token, updated } = await freshToken("gdrive", JSON.parse(decrypt(c.credentials_enc)));
+  if (updated) {
+    c = { ...c, credentials_enc: encrypt(JSON.stringify(updated)) };
+    await db.query(`UPDATE storage_connections SET credentials_enc = $2, updated_at = now() WHERE id = $1`, [c.id, c.credentials_enc]);
+  }
+  if (await gdriveFolderUsable(token, String(folderId))) return c;
+  return (await ensureGdriveFolder(db, c.id, String(folderId))) ?? c;
 }
 
 async function uploadGdrive(creds: OAuthCreds, cfg: any, name: string, bytes: Uint8Array): Promise<UploadResult> {

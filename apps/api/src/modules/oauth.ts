@@ -159,11 +159,25 @@ async function validateAuthorize(db: Db, raw: unknown): Promise<ValidatedAuthori
   if (!client.grant_types.includes("authorization_code")) throw badRequest("unauthorized_client", "La aplicación no admite autorización de usuarios");
   // La URI de redirección tiene que coincidir exactamente con una registrada (sin comodines).
   if (!client.redirect_uris.includes(q.redirect_uri)) throw badRequest("invalid_redirect_uri", "URI de redirección no registrada para esta aplicación");
+  // Apps registradas antes de que el alta rechazara estos esquemas: la pantalla de consentimiento navegaría a la URI
+  // (también al rechazar) y `javascript:` ejecutaría código en el origen de CalaSign.
+  if (!isSafeRedirectUri(q.redirect_uri)) throw badRequest("invalid_redirect_uri", "Esquema de URI de redirección no permitido");
   const requested = parseScopes(q.scope);
   const scopes = (requested.length ? requested : client.scopes) as OAuthScope[];
   const unknown = scopes.filter((s) => !(OAUTH_SCOPES as readonly string[]).includes(s) || !client.scopes.includes(s));
   if (unknown.length) throw badRequest("invalid_scope", `Scopes no permitidos para esta aplicación: ${unknown.join(", ")}`);
   return { client, scopes, redirectUri: q.redirect_uri, req: q };
+}
+
+/** Esquemas que no son un destino de redirección (ejecutan código o leen archivos locales). Igual que en el alta. */
+const FORBIDDEN_REDIRECT_SCHEMES = new Set(["javascript:", "data:", "vbscript:", "file:", "blob:", "about:", "filesystem:"]);
+
+function isSafeRedirectUri(uri: string) {
+  try {
+    return !FORBIDDEN_REDIRECT_SCHEMES.has(new URL(uri).protocol.toLowerCase());
+  } catch {
+    return false;
+  }
 }
 
 function withParams(uri: string, params: Record<string, string | undefined>) {

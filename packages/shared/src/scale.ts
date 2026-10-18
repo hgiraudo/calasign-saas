@@ -162,9 +162,20 @@ export interface WebForm {
    * motivo, la página pública lo muestra como no disponible.
    */
   ownerInactiveReason: string | null;
+  /**
+   * Código estable del motivo (para traducirlo; `ownerInactiveReason` viene en español). null si no hay motivo.
+   * - `not_member`: quien lo configuró ya no es miembro de la organización.
+   * - `missing_permission`: ya no tiene permiso para crear sobres.
+   * - `template_access`: ya no tiene acceso a la plantilla.
+   * - `key_revoked`: la API key que lo configuró fue revocada.
+   * - `plan_feature`: el plan actual de la organización no incluye formularios web.
+   */
+  ownerInactiveCode: WebFormInactiveCode | null;
   createdAt: string;
   updatedAt: string;
 }
+
+export type WebFormInactiveCode = "not_member" | "missing_permission" | "template_access" | "key_revoked" | "plan_feature";
 
 /** Lo que ve el público al abrir /f/:slug. */
 export interface PublicWebForm {

@@ -9,6 +9,7 @@ import {
   type PublicWebForm,
   type SubmitWebFormResponse,
   type WebForm,
+  type WebFormInactiveCode,
 } from "@calasign/shared";
 import { config } from "../config";
 import type { Db } from "../infra/db";
@@ -17,7 +18,8 @@ import { AppError, badRequest, conflict, forbidden, notFound } from "../lib/erro
 import { decrypt, encrypt, iso, slugify, uuidv7 } from "../lib/util";
 import { getTenantBranding } from "./branding";
 import { assertTemplateAccess, envelopeVisibilitySql, hasPerm, templateVisibilitySql } from "./access";
-import { ownerCanStillCreate } from "./owner-check";
+import { ownerProblem } from "./owner-check";
+import { tenantPlan } from "./billing/plans";
 import { authenticate, clientInfo, type AuthContext, type Services } from "./context";
 import { setFrameAncestors } from "./embed";
 import { sendEnvelope } from "./envelopes";
@@ -30,7 +32,9 @@ const MAX_FILL_MS = 2 * 3600_000;
 
 type FormRow = any;
 
-function toWebForm(r: FormRow, templateName: string, base: string, ownerInactiveReason: string | null): WebForm {
+type FormProblem = { code: WebFormInactiveCode; message: string };
+
+function toWebForm(r: FormRow, templateName: string, base: string, problem: FormProblem | null): WebForm {
   return {
     id: r.id,
     slug: r.slug,
@@ -56,7 +60,8 @@ function toWebForm(r: FormRow, templateName: string, base: string, ownerInactive
     requireOtp: r.require_otp,
     embeddable: r.embeddable,
     collectPhone: r.collect_phone,
-    ownerInactiveReason,
+    ownerInactiveReason: problem?.message ?? null,
+    ownerInactiveCode: problem?.code ?? null,
     createdAt: iso(r.created_at)!,
     updatedAt: iso(r.updated_at)!,
   };
@@ -112,25 +117,37 @@ function checkConfig(l: LoadedTemplate, form: { template_id: string; signer_role
 const formOwner = (form: FormRow) => ({ tenantId: form.tenant_id as string, userId: (form.created_by ?? null) as string | null, apiKeyId: (form.created_by_api_key ?? null) as string | null });
 
 /**
- * Estado del dueño para la administración: el mismo chequeo que hace la página pública. Sin esto, un formulario cuyo
- * creador ya no puede crear sobres figuraba "activo" en la consola mientras el público lo veía no disponible.
- * Se calcula una vez por dueño y plantilla (en un listado, varios formularios suelen compartirlos).
+ * Por qué un formulario activo no crea sobres: el plan de la organización ya no incluye formularios web (bajó de plan:
+ * sin esto, los formularios existentes seguían creando sobres desde la página pública), o quien lo configuró ya no
+ * puede crearlos. null si está habilitado. Lo usan la página pública, el envío y la consola (mismo criterio).
  */
-async function ownerStates(db: Db, rows: FormRow[]): Promise<Map<string, string | null>> {
-  const memo = new Map<string, Promise<string | null>>();
-  const out = new Map<string, string | null>();
+async function formProblem(db: Db, r: FormRow, planHasForms?: boolean): Promise<FormProblem | null> {
+  const has = planHasForms ?? (await tenantPlan(db, r.tenant_id)).plan.features.includes("web_forms");
+  if (!has) return { code: "plan_feature", message: "El plan actual de la organización no incluye formularios web" };
+  return ownerProblem(db, formOwner(r), r.template_id);
+}
+
+/**
+ * Estado para la administración: el mismo chequeo que hace la página pública. Sin esto, un formulario que no crea
+ * sobres figuraba "activo" en la consola mientras el público lo veía no disponible. Se calcula una vez por dueño y
+ * plantilla (en un listado, varios formularios suelen compartirlos).
+ */
+async function formStates(db: Db, tenantId: string, rows: FormRow[]): Promise<Map<string, FormProblem | null>> {
+  const planHasForms = (await tenantPlan(db, tenantId)).plan.features.includes("web_forms");
+  const memo = new Map<string, Promise<FormProblem | null>>();
+  const out = new Map<string, FormProblem | null>();
   for (const r of rows) {
     const o = formOwner(r);
     const k = `${o.userId ?? ""}|${o.apiKeyId ?? ""}|${r.template_id}`;
-    if (!memo.has(k)) memo.set(k, ownerCanStillCreate(db, o, r.template_id));
+    if (!memo.has(k)) memo.set(k, formProblem(db, r, planHasForms));
     out.set(r.id, await memo.get(k)!);
   }
   return out;
 }
 
 async function webFormOut(db: Db, r: FormRow, base?: string): Promise<WebForm> {
-  const reason = (await ownerStates(db, [r])).get(r.id) ?? null;
-  return toWebForm(r, r.template_name, base ?? (await tenantBaseUrl(db, r.tenant_id)), reason);
+  const problem = (await formStates(db, r.tenant_id, [r])).get(r.id) ?? null;
+  return toWebForm(r, r.template_name, base ?? (await tenantBaseUrl(db, r.tenant_id)), problem);
 }
 
 async function uniqueSlug(db: Db, name: string) {
@@ -166,7 +183,7 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
       params,
     );
     const base = await tenantBaseUrl(s.db, req.auth!.tenantId);
-    const owners = await ownerStates(s.db, rows);
+    const owners = await formStates(s.db, req.auth!.tenantId, rows);
     return { items: rows.map((r) => toWebForm(r, r.template_name, base, owners.get(r.id) ?? null)) };
   });
 
@@ -299,8 +316,9 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
       getTenantBranding(s.db, r.tenant_id),
       s.db.one<any>(`SELECT locale FROM templates WHERE id = $1`, [r.template_id]),
     ]);
-    // Si quien lo creó ya no puede crear sobres (dejó la organización, perdió el permiso, key revocada), no se ofrece.
-    const reason = availability(r) ?? ((await ownerCanStillCreate(s.db, formOwner(r), r.template_id)) ? "inactive" : null);
+    // Si quien lo creó ya no puede crear sobres (dejó la organización, perdió el permiso, key revocada) o el plan ya
+    // no incluye formularios web, no se ofrece.
+    const reason = availability(r) ?? ((await formProblem(s.db, r)) ? "inactive" : null);
     const logoPath = brand.logoUrl ? new URL(brand.logoUrl).pathname + new URL(brand.logoUrl).search : null;
     return {
       slug: r.slug,
@@ -342,10 +360,11 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
       if (!form) throw notFound("Formulario");
       const reason = availability(form);
       if (reason) throw new AppError(410, `form_${reason}`, "Este formulario ya no está disponible");
-      // Los sobres se crean a nombre de quien lo configuró: si ya no puede crearlos, el formulario no los crea.
-      const ownerGone = await ownerCanStillCreate(s.db, formOwner(form), form.template_id);
-      if (ownerGone) {
-        req.log.warn({ webFormId: form.id, reason: ownerGone }, "formulario web sin dueño habilitado");
+      // Los sobres se crean a nombre de quien lo configuró: si ya no puede crearlos (o el plan ya no incluye
+      // formularios web), el formulario no los crea.
+      const problem = await formProblem(s.db, form);
+      if (problem) {
+        req.log.warn({ webFormId: form.id, reason: problem.code }, "formulario web no habilitado");
         throw new AppError(410, "form_inactive", "Este formulario ya no está disponible");
       }
       if (form.collect_phone && !input.phone) throw badRequest("phone_required", "El teléfono es obligatorio");

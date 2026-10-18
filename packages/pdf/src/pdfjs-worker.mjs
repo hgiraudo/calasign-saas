@@ -1,7 +1,16 @@
 // Lectura del texto de un PDF con pdf.js, en un proceso aparte (ver pdfjs-run.ts). JavaScript plano a propósito: así
 // carga igual con tsx, con vitest y en producción, sin depender del loader de TypeScript.
 // Atiende un trabajo a la vez; si uno se pasa de tiempo o de memoria, la API mata el proceso.
+import { writeFileSync } from "node:fs";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
+
+// Si falta memoria, que el kernel mate primero a este lector y no a la API ni a Postgres (un proceso sin privilegios
+// puede subir su propio oom_score_adj). Fuera de Linux, o si no se puede, sigue igual.
+try {
+  writeFileSync("/proc/self/oom_score_adj", "1000");
+} catch {
+  /* no es Linux o no se permite */
+}
 
 async function read({ data, maxPages, maxChars, maxItems }) {
   const doc = await getDocument({ data, isEvalSupported: false, disableFontFace: true, useSystemFonts: false, verbosity: 0 }).promise;

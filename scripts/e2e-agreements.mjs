@@ -280,6 +280,27 @@ assert(expiring.items.map((x) => x.id).join() === ext.id, "filtro: vencen en 30 
 const view = await api("POST", "/v1/agreement-views", { name: "Caribe", filters: { fields: { region: "Caribe" } } });
 const viaView = await api("GET", `/v1/agreements?viewId=${view.id}`);
 assert(viaView.total === 1 && viaView.items[0].id === ext.id, "vista guardada");
+// Los campos propios de la URL se combinan con los de la vista (antes los reemplazaban todos), y un filtro vacío
+// en la URL quita ese filtro de la vista.
+const view2 = await api("POST", "/v1/agreement-views", { name: "Caribe oro", filters: { fields: { region: "Caribe", tier: "Oro" } } });
+assert((await api("GET", `/v1/agreements?viewId=${view2.id}`)).total === 0, "vista con todos sus filtros");
+assert((await api("GET", `/v1/agreements?viewId=${view2.id}&f.region=Andina`)).total === 0, "un campo de la URL no borra los otros campos de la vista");
+const clearedField = await api("GET", `/v1/agreements?viewId=${view2.id}&f.tier=`);
+assert(clearedField.total === 1 && clearedField.items[0].id === ext.id, "f.tier= vacío quita ese campo de la vista");
+const view3 = await api("POST", "/v1/agreement-views", { name: "Caribe terminados", filters: { status: "terminated", fields: { region: "Caribe" } } });
+assert((await api("GET", `/v1/agreements?viewId=${view3.id}`)).total === 0, "vista con estado");
+const clearedStatus = await api("GET", `/v1/agreements?viewId=${view3.id}&status=`);
+assert(clearedStatus.total === 1 && clearedStatus.items[0].id === ext.id, "status= vacío quita el estado de la vista");
+{
+  // Una API key de miembro no borra la vista privada de otra key (antes null === null la hacía "dueña").
+  const k1 = await api("POST", "/v1/api-keys", { name: `vistas 1 ${stamp}`, role: "member" });
+  const k2 = await api("POST", "/v1/api-keys", { name: `vistas 2 ${stamp}`, role: "member" });
+  const as1 = { anon: true, headers: { authorization: `Bearer ${k1.secret}` } };
+  const as2 = { anon: true, headers: { authorization: `Bearer ${k2.secret}` } };
+  const kv = await api("POST", "/v1/agreement-views", { name: `de la key 1 ${stamp}`, filters: {} }, as1);
+  await api("DELETE", `/v1/agreement-views/${kv.id}`, null, { ...as2, expect: 403 });
+  await api("DELETE", `/v1/agreement-views/${kv.id}`, null, { expect: 204 });
+}
 const csvBytes = Buffer.from(await (await api("GET", "/v1/agreements/export.csv", null, { raw: true })).arrayBuffer());
 const csv = csvBytes.toString("utf8");
 assert(csvBytes[0] === 0xef && csvBytes[1] === 0xbb && csvBytes[2] === 0xbf, "CSV con BOM (Excel)");
@@ -470,6 +491,9 @@ assert(sview.negotiation.currentVersion === 2 && sview.text.includes("Plazo: 24 
 const diff = await api("GET", `/v1/public/negotiations/${nlink}/diff?from=1&to=2`, null, { anon: true });
 assert(diff.parts.some((p) => p.op === "del" && p.text.includes("12")) && diff.parts.some((p) => p.op === "ins" && p.text.includes("24")), "diff entre versiones");
 await mail((x) => x.subject.includes("Nueva versión") && x.text.includes(negClient), "aviso de nueva versión");
+// Una cláusula editada con sintaxis inválida es 400 (antes 500) y no crea versión.
+await api("PATCH", `/v1/negotiations/${neg.negotiation.id}`, { clauseOverrides: { confidencialidad: "{{#if x}}sin cierre" } }, { expect: 400 });
+assert((await api("GET", `/v1/negotiations/${neg.negotiation.id}`)).negotiation.currentVersion === 2, "la edición inválida no crea versión");
 const acc = await api("POST", `/v1/negotiations/${neg.negotiation.id}/accept`, { subject: "Propuesta final" });
 assert(acc.negotiation.status === "accepted" && acc.envelope.status === "sent", "aceptada: sobre enviado");
 const accEnv = await api("GET", `/v1/envelopes/${acc.envelope.id}`);

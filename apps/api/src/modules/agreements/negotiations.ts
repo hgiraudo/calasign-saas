@@ -14,6 +14,7 @@ import {
   blocksToText,
   diffWords,
   renderTemplate,
+  TemplateSyntaxError,
   type NegotiationAuthor,
   type NegotiationParticipant,
   type NegotiationSummary,
@@ -153,7 +154,14 @@ async function diffFor(db: Db, n: any, from: number, to: number) {
 /** Nueva versión con los datos/cláusulas dados. Debe correr en una transacción con la negociación bloqueada. */
 async function newVersion(t: Db, n: any, data: Record<string, unknown>, overrides: Record<string, string>, by: NegotiationAuthor, summaryText: string) {
   const version = n.current_version + 1;
-  const text = renderNegotiation(n, data, overrides).text;
+  let text: string;
+  try {
+    text = renderNegotiation(n, data, overrides).text;
+  } catch (e) {
+    // Una cláusula editada por el remitente con sintaxis inválida: 400 con la línea (antes, un 500).
+    if (e instanceof TemplateSyntaxError) throw badRequest("template_syntax", e.message, { line: e.line });
+    throw e;
+  }
   await t.query(
     `INSERT INTO negotiation_versions (negotiation_id, version, data, clause_overrides, text_snapshot, author_type, author_name, summary)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,

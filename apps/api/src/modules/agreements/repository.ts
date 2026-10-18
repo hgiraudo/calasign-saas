@@ -304,9 +304,20 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
         a.userId,
       ]);
       if (!v) throw notFound("Vista");
-      // Lo que venga en la URL refina la vista (sin pisar sus filtros con valores vacíos).
-      const extra = Object.fromEntries(Object.entries(parseFilters(q)).filter(([, x]) => x !== undefined));
-      return AgreementFilters.parse({ ...v.filters, ...extra });
+      // Lo que venga en la URL refina la vista, filtro por filtro (también los campos propios: antes un `f.x` de la
+      // URL reemplazaba TODOS los campos propios de la vista). Para quitar un filtro de la vista se lo manda vacío:
+      // `status=`, `expiresWithinDays=`, `f.region=` (la web nunca manda parámetros vacíos por otro motivo).
+      const base: Record<string, unknown> = { ...(v.filters ?? {}) };
+      const fields: Record<string, string> = { ...((base.fields as Record<string, string> | undefined) ?? {}) };
+      for (const [k, x] of Object.entries(q)) {
+        if (x !== "" || k === "viewId" || k === "cursor" || k === "limit") continue;
+        if (k.startsWith("f.")) delete fields[k.slice(2)];
+        else delete base[k];
+      }
+      const url = parseFilters(q);
+      Object.assign(fields, url.fields ?? {});
+      const extra = Object.fromEntries(Object.entries(url).filter(([k, x]) => x !== undefined && k !== "fields"));
+      return AgreementFilters.parse({ ...base, ...extra, fields: Object.keys(fields).length ? fields : undefined });
     }
     return parseFilters(q);
   }
@@ -580,7 +591,8 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
     const a = A(req);
     const v = await s.db.one<any>(`SELECT * FROM agreement_views WHERE id = $1 AND tenant_id = $2`, [req.params.id, a.tenantId]);
     if (!v) throw notFound("Vista");
-    if (v.user_id !== a.userId && !hasPerm(a, "settings:manage")) throw forbidden();
+    // Con una API key (userId null) y una vista creada por otra key (user_id NULL), null === null no la hace dueña.
+    if ((a.userId == null || v.user_id !== a.userId) && !hasPerm(a, "settings:manage")) throw forbidden();
     await s.db.query(`DELETE FROM agreement_views WHERE id = $1`, [v.id]);
     return reply.code(204).send();
   });

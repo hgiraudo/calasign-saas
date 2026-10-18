@@ -15,6 +15,7 @@ import { useSignerText } from "../lib/i18n-signer";
 import { InPersonBlocked, InPersonDone, InPersonHandover, RequestCopyButton, useFocusOnMount } from "../components/ExperienceExtras";
 import { useExpText } from "../lib/i18n-experience";
 import { IdentityGate } from "../components/IdentityGate";
+import { PaymentGate, SignerPaymentAfterSign } from "../components/BillingExtras";
 
 type Adopted = SignatureImageInput & { dataUrl: string };
 
@@ -104,6 +105,7 @@ export function SignerPage() {
           text={session.signedAvailable ? t("sign.doneAvailable") : recipient.role === "approver" ? sx("approve.doneText") : t("sign.doneText")}
         >
           {download}
+          <SignerPaymentAfterSign base={base} onPaid={reload} />
         </Final>
       );
   } else if (recipient.status === "declined") {
@@ -125,7 +127,18 @@ export function SignerPage() {
   } else if (!recipient.consented) {
     content = <Consent session={session} base={base} onDone={apply} />;
   } else {
-    return <SigningFlow session={session} base={base} onDone={apply} onDelegated={setDelegatedTo} />;
+    return (
+      <PaymentGate
+        base={base}
+        wrap={(n) => (
+          <SignerShell org={envelope.organizationName} branding={session.branding}>
+            {n}
+          </SignerShell>
+        )}
+      >
+        <SigningFlow session={session} base={base} onDone={apply} onDelegated={setDelegatedTo} />
+      </PaymentGate>
+    );
   }
 
   return (

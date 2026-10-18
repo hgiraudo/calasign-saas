@@ -1,0 +1,18 @@
+/* Plan y facturación, cobro al firmar. */
+.badge-ok { background: #ccfbf1; color: #0f766e; }
+.stack-sm { display: flex; flex-direction: column; gap: 0.4rem; border: 0; padding: 0; margin: 0; }
+.strong { font-weight: 650; }
+
+.plans-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 1rem; }
+.plan-card { display: flex; flex-direction: column; gap: 0.6rem; border: 1px solid #e2e8f0; position: relative; }
+.plan-card.current { border-color: #0f766e; box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.18); }
+.plan-card .price { font-size: 1.6rem; font-weight: 750; line-height: 1.1; }
+.plan-card .price small { font-size: 0.85rem; font-weight: 500; color: #5b6576; }
+.plan-card ul { margin: 0; padding-left: 1.1rem; display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.9rem; }
+.plan-card .spacer { flex: 1; }
+
+.usage-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
+.usage-item { display: flex; flex-direction: column; gap: 0.35rem; }
+.usage-bar { height: 8px; border-radius: 999px; background: #e2e8f0; overflow: hidden; }
+.usage-bar > span { display: block; height: 100%; background: #0f766e; border-radius: 999px; }
+.usage-bar.warn > span { background: #b45309; }

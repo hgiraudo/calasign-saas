@@ -56,9 +56,11 @@ export async function replaceRecipient(
   const channels = c.channels?.length ? c.channels : [...(c.email ? (["email"] as const) : []), ...(!c.email && c.phone ? (["whatsapp"] as const) : [])];
   if (channels.includes("email") && !c.email) throw conflict("invalid_channels", "El canal email requiere email");
   if (channels.includes("whatsapp") && !c.phone) throw conflict("invalid_channels", "El canal WhatsApp requiere teléfono");
-  let auth = old.auth_method ?? "link";
-  if (auth === "otp_email" && !c.email) auth = "link";
-  if ((auth === "otp_sms" || auth === "otp_whatsapp") && !c.phone) auth = "link";
+  // El reemplazo hereda la verificación que pidió el remitente: no se baja a "solo link" en silencio.
+  const auth = old.auth_method ?? "link";
+  if (auth === "otp_email" && !c.email) throw conflict("otp_destination_required", "Este firmante se verifica con un código por correo: indicá el correo de la persona");
+  if ((auth === "otp_sms" || auth === "otp_whatsapp") && !c.phone)
+    throw conflict("otp_destination_required", "Este firmante se verifica con un código por SMS/WhatsApp: indicá el teléfono de la persona");
 
   const id = uuidv7();
   const token = randomToken();

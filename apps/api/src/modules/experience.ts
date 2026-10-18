@@ -23,6 +23,8 @@ import { checkSenderValue, insertEnvelopeField } from "./fieldvalues";
 import { loadDetail } from "./mappers";
 import { SIGNER_COOKIE } from "./otp";
 import { recipientActor, resolveToken } from "./signing";
+import { applyIdentityFlags } from "./identity/kyc";
+import { applyCertificateFlags } from "./certsign";
 
 const IN_PERSON_SESSION_MIN = 60;
 const PENDING = ["created", "sent", "viewed"];
@@ -180,6 +182,11 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
       next.channels,
       next.locale ?? null,
     ]);
+    // Si cambió la persona (nombre o contacto), su verificación de identidad previa ya no la representa.
+    if ((changes.name || contactChanged) && r.id_verification_provider && r.identity_status === "verified") {
+      await db.query(`UPDATE recipients SET identity_status = 'pending', identity_verified_at = NULL, identity_failure_reason = NULL WHERE id = $1`, [r.id]);
+      changes.identityReset = true;
+    }
     let tokenRotated = false;
     if (contactChanged && r.access_token_hash) {
       const t = newToken();
@@ -224,6 +231,9 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
     );
     if (r.embedded !== undefined) await db.query(`UPDATE recipients SET embedded = $2 WHERE id = $1`, [id, r.embedded]);
     if (r.inPerson !== undefined) await applyInPersonFlags(db, e.id, [{ id, inPerson: r.inPerson }], a);
+    // Lo que pidió el remitente para esta persona (verificación de identidad, firma con certificado) también aplica acá.
+    await applyIdentityFlags(db, e.id, [{ id, role: r.role, idVerification: r.idVerification }]);
+    await applyCertificateFlags(db, e.id, [{ id, role: r.role, signatureType: r.signatureType, certificateRequirements: r.certificateRequirements }]);
     // Token ya (los CC lo usan al final); la invitación sale cuando llega su turno.
     const t = newToken();
     await db.query(`UPDATE recipients SET access_token_hash = $2, access_token_enc = $3 WHERE id = $1`, [id, t.hash, t.enc]);

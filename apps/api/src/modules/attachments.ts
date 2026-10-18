@@ -1,7 +1,7 @@
 // Adjuntos del firmante: sube un archivo (PDF/JPG/PNG) para un campo de tipo "attachment".
 import type { FastifyInstance } from "fastify";
 import { ATTACHMENT_MAX_BYTES } from "@calasign/shared";
-import { inspectPdf } from "@calasign/pdf";
+import { assertEmbeddableImage, inspectPdf } from "@calasign/pdf";
 import { appendEvent } from "../infra/evidence";
 import { AppError, badRequest, conflict, notFound } from "../lib/errors";
 import { sha256Hex, uuidv7 } from "../lib/util";
@@ -48,6 +48,13 @@ export async function attachmentRoutes(app: FastifyInstance, s: Services) {
         await inspectPdf(new Uint8Array(buf));
       } catch {
         throw badRequest("invalid_attachment", "El PDF está dañado o protegido con contraseña");
+      }
+    } else {
+      // Una imagen con cabecera válida pero dañada haría fallar el sellado del sobre más adelante.
+      try {
+        await assertEmbeddableImage(new Uint8Array(buf), type);
+      } catch {
+        throw badRequest("invalid_attachment", "La imagen está dañada o no se puede leer");
       }
     }
     const name = (file.filename || "adjunto").replace(/[\r\n]/g, " ").slice(0, 200);

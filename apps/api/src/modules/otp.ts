@@ -150,11 +150,15 @@ export async function otpRoutes(app: FastifyInstance, s: Services) {
       [r.id],
     );
     if (!ch) throw new AppError(400, "otp_expired", "El código venció o no existe. Pedí uno nuevo.");
-    if (ch.attempts >= ch.max_attempts) throw new AppError(429, "otp_locked", "Demasiados intentos. Pedí un código nuevo.");
+    // El intento se cuenta ANTES de comparar y de forma atómica: pedidos concurrentes no pueden superar max_attempts.
+    const upd = await s.db.one<any>(
+      `UPDATE otp_challenges SET attempts = attempts + 1 WHERE id = $1 AND attempts < max_attempts AND verified_at IS NULL RETURNING attempts, max_attempts`,
+      [ch.id],
+    );
+    if (!upd) throw new AppError(429, "otp_locked", "Demasiados intentos. Pedí un código nuevo.");
 
     const ok = timingSafeEqual(Buffer.from(codeHash(r.id, input.code)), Buffer.from(ch.code_hash));
     if (!ok) {
-      const upd = await s.db.one<any>(`UPDATE otp_challenges SET attempts = attempts + 1 WHERE id = $1 RETURNING attempts, max_attempts`, [ch.id]);
       await s.db.tx(async (t) => {
         await lockEnvelope(t, e.tenant_id, e.id);
         await appendEvent(t, {
@@ -175,7 +179,9 @@ export async function otpRoutes(app: FastifyInstance, s: Services) {
     const actor = recipientActor(req, r);
     await s.db.tx(async (t) => {
       await lockEnvelope(t, e.tenant_id, e.id);
-      await t.query(`UPDATE otp_challenges SET verified_at = now() WHERE id = $1`, [ch.id]);
+      // Un código se canjea una sola vez (dos verificaciones concurrentes no generan dos sesiones).
+      const used = await t.query(`UPDATE otp_challenges SET verified_at = now() WHERE id = $1 AND verified_at IS NULL RETURNING id`, [ch.id]);
+      if (!used.length) throw new AppError(400, "otp_expired", "El código ya se usó. Pedí uno nuevo.");
       await t.query(`UPDATE recipients SET authenticated_at = now() WHERE id = $1`, [r.id]);
       await t.query(
         `INSERT INTO signer_sessions (token_hash, recipient_id, method, ip, expires_at) VALUES ($1,$2,$3,$4, now() + interval '${SESSION_HOURS} hours')`,

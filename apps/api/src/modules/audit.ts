@@ -4,6 +4,7 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { AuditLogEntry, AuditLogResponse } from "@calasign/shared";
 import type { Db } from "../infra/db";
+import { badRequest } from "../lib/errors";
 import { iso } from "../lib/util";
 import { authenticate, clientInfo, type AuthContext, type Services } from "./context";
 
@@ -138,6 +139,13 @@ interface AuditQuery {
   limit?: string;
 }
 
+/** Fecha del filtro; una inválida es un 400 (no un error interno). */
+function qDate(v: string, name: string) {
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) throw badRequest("invalid_query", `'${name}' no es una fecha válida`);
+  return d.toISOString();
+}
+
 function buildWhere(tenantId: string, q: AuditQuery) {
   const params: unknown[] = [tenantId];
   let where = `tenant_id = $1`;
@@ -154,11 +162,11 @@ function buildWhere(tenantId: string, q: AuditQuery) {
     where += ` AND target_type = $${params.length}`;
   }
   if (q.from) {
-    params.push(new Date(q.from).toISOString());
+    params.push(qDate(q.from, "from"));
     where += ` AND occurred_at >= $${params.length}::timestamptz`;
   }
   if (q.to) {
-    params.push(new Date(q.to).toISOString());
+    params.push(qDate(q.to, "to"));
     where += ` AND occurred_at <= $${params.length}::timestamptz`;
   }
   return { params, where };
@@ -191,9 +199,11 @@ export async function auditRoutes(app: FastifyInstance, s: Services) {
   app.get<{ Querystring: AuditQuery }>("/v1/audit-log", { preHandler: auth }, async (req): Promise<AuditLogResponse> => {
     const { params, where: w0 } = buildWhere(req.auth!.tenantId, req.query);
     let where = w0;
-    const limit = Math.min(200, Math.max(1, Number(req.query.limit ?? 50)));
+    const limit = Math.min(200, Math.max(1, Math.trunc(Number(req.query.limit ?? 50)) || 50));
     if (req.query.cursor) {
-      params.push(Number(Buffer.from(req.query.cursor, "base64url").toString()));
+      const cur = Number(Buffer.from(req.query.cursor, "base64url").toString());
+      if (!Number.isSafeInteger(cur)) throw badRequest("invalid_cursor", "Cursor inválido");
+      params.push(cur);
       where += ` AND id < $${params.length}`;
     }
     params.push(limit + 1);

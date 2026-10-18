@@ -1,8 +1,8 @@
 // Un PDF con objetos duplicados se ve distinto en un lector (que usa el xref) y en pdf-lib (que se queda con la última
 // definición del archivo). El firmante lo ve en el visor de la web; el PDF final se arma con pdf-lib.
-import { PDFArray, PDFDocument, PDFName, PDFRawStream, PDFRef, StandardFonts } from "pdf-lib";
+import { PDFArray, PDFDocument, PDFName, PDFRawStream, PDFRef, StandardFonts, degrees } from "pdf-lib";
 import { describe, expect, it } from "vitest";
-import { IncrementalUpdate, InvalidPdfError, inspectPdf } from "../src";
+import { IncrementalUpdate, InvalidPdfError, inspectPdf, preparePdfUpload } from "../src";
 import { extractPdfPlainText } from "../src/plain-text";
 
 async function base(text: string) {
@@ -168,5 +168,78 @@ describe("PDF ambiguo al subirlo", () => {
     // Con object streams y xref stream.
     const doc = await PDFDocument.load(plain);
     expect((await inspectPdf(await doc.save({ useObjectStreams: true }))).pageCount).toBe(1);
+  });
+});
+
+/** Las variantes ambiguas conocidas (rondas 10 a 13), armadas igual que en las pruebas de detección. */
+async function ambiguousVariants(): Promise<[string, Buffer][]> {
+  const out: [string, Buffer][] = [];
+  out.push(["objeto duplicado", Buffer.from((await shadowed(await base("Monto: 1.000"), "Monto: 1.000.000")).bytes)]);
+  {
+    const { bytes } = await shadowed(await base("Monto: 1.000"), "Monto: 1.000.000");
+    out.push(["relleno tras %%EOF", Buffer.concat([Buffer.from(bytes), Buffer.from("% relleno\n".repeat(300), "latin1")])]);
+  }
+  {
+    const { objs, xref } = await twoDefinitions("Monto: 1.000", "Monto: 1.000.000");
+    const pdf = Buffer.concat([objs, Buffer.from(`${xref(objs, 0)}startxref\n${objs.length}\n%%EOF\n`, "latin1")]);
+    out.push(["prefijo antes de %PDF-", Buffer.concat([Buffer.from("X-Adjunto: contrato.pdf\r\n\r\n", "latin1"), pdf])]);
+  }
+  {
+    const { objs, xref } = await twoDefinitions("Monto: 1.000", "Monto: 1.000.000");
+    const mid = Buffer.concat([objs, Buffer.from(xref(objs, 0), "latin1")]);
+    const tail = `${xref(objs, null)}startxref\n${mid.length}\n%%EOF\nstartxref${objs.length}\n%%EOF\n`;
+    out.push(["startxref pegado", Buffer.concat([mid, Buffer.from(tail, "latin1")])]);
+  }
+  {
+    const { objs, xref } = await twoDefinitions("Monto: 1.000", "Monto: 1.000.000");
+    const header = /^%PDF-[^\n]*\n(%[^\n]*\n)?/.exec(objs.toString("latin1"))![0];
+    const rest = objs.subarray(header.length);
+    const lin = (L: number) => `999 0 obj\n<< /Linearized 1 /L ${String(L).padStart(10, "0")} /H [ 1 1 ] /O 1 /E 1 /N 1 /T 1 >>\nendobj\n`;
+    const shift = lin(0).length + xref(objs, 0).length;
+    const shifted = Buffer.concat([Buffer.from(header, "latin1"), Buffer.alloc(shift, 0x20), rest]);
+    const body = Buffer.concat([Buffer.from(header + lin(0) + xref(shifted, shift), "latin1"), rest]);
+    const pdf = Buffer.concat([body, Buffer.from(`${xref(body, null)}startxref\n${body.length}\n%%EOF\n`, "latin1")]);
+    out.push(["linealización falsa", Buffer.from(pdf.toString("latin1").replace(lin(0), lin(pdf.length)), "latin1")]);
+  }
+  return out;
+}
+
+describe("preparePdfUpload: el PDF guardado es el que ve pdf-lib", () => {
+  it("con cualquier variante ambigua, el visor muestra lo mismo que queda en el PDF final", async () => {
+    for (const [name, pdf] of await ambiguousVariants()) {
+      // Sin normalizar, el visor y el PDF final difieren.
+      expect(await views(pdf), name).toEqual({ viewer: "Monto: 1.000", final: "Monto: 1.000.000" });
+      const prepared = await preparePdfUpload(new Uint8Array(pdf));
+      // Guardando la versión reescrita, el visor muestra lo que termina en el PDF final.
+      expect(await views(Buffer.from(prepared.bytes)), name).toEqual({ viewer: "Monto: 1.000.000", final: "Monto: 1.000.000" });
+      expect(prepared.info.pageCount, name).toBe(1);
+    }
+  });
+
+  it("conserva texto, tamaño de página, rotación y campos de formulario de un PDF normal", async () => {
+    const doc = await PDFDocument.create();
+    const font = await doc.embedFont(StandardFonts.Helvetica);
+    const p = doc.addPage([612, 792]);
+    p.drawText("Contrato de servicios", { x: 50, y: 700, size: 14, font });
+    p.setRotation(degrees(90));
+    const tf = doc.getForm().createTextField("cliente");
+    tf.setText("ACME S.A.");
+    tf.addToPage(p, { x: 50, y: 600, width: 200, height: 20 });
+    const original = await doc.save();
+    const prepared = await preparePdfUpload(original);
+    expect(prepared.info).toEqual(await inspectPdf(original));
+    expect((await extractPdfPlainText(prepared.bytes)).text).toBe((await extractPdfPlainText(original)).text);
+    const again = await PDFDocument.load(prepared.bytes);
+    expect(again.getForm().getTextField("cliente").getText()).toBe("ACME S.A.");
+    expect(again.getPages()[0].getRotation().angle).toBe(90);
+  });
+
+  it("rechaza lo mismo que inspectPdf (no es PDF, demasiadas páginas)", async () => {
+    const codeOf = (b: Uint8Array, max?: number) => preparePdfUpload(b, max).then(() => "ok", (e) => (e as InvalidPdfError).code);
+    expect(await codeOf(new Uint8Array(Buffer.from("hola mundo")))).toBe("not_pdf");
+    const two = await PDFDocument.create();
+    two.addPage();
+    two.addPage();
+    expect(await codeOf(await two.save(), 1)).toBe("too_many_pages");
   });
 });

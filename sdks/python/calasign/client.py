@@ -159,6 +159,10 @@ class CalaSign:
         except urllib.error.HTTPError as e:
             body = _json_or_empty(e.read())
             raise CalaSignError(body.get("error_description", "No se pudo obtener el token OAuth"), e.code, body.get("error", "oauth_error")) from None
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+            # Igual que en `request`: quien captura CalaSignError para los errores de red no recibe un URLError suelto
+            # cuando el que falla es el pedido del token (el primero de cada cliente, o el refresh tras un 401).
+            raise CalaSignError(f"Error de red al pedir el token OAuth: {e}", 0, "network_error") from None
         self._token = _Token(body["access_token"], time.time() + float(body.get("expires_in", 3600)))
         return self._token.value
 

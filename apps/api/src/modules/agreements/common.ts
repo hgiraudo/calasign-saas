@@ -57,6 +57,9 @@ export function toNumberOrNull(v: unknown): number | null {
   // Sin dígitos no es un número ("a convenir"): Number("") daría 0 y el acuerdo quedaría con valor 0.
   if (!/\d/.test(s)) return null;
   if (s.includes(",") && s.includes(".")) s = s.lastIndexOf(",") > s.lastIndexOf(".") ? s.replace(/\./g, "").replace(",", ".") : s.replace(/,/g, "");
+  // 1.500.000 / 1,500,000: el mismo separador repetido entre grupos de 3 cifras son miles (como en el motor de
+  // plantillas). Antes daba "número inválido" en los formularios de workflow.
+  else if (/^-?\d{1,3}([.,])\d{3}(?:\1\d{3})+$/.test(s)) s = s.replace(/[.,]/g, "");
   else if (s.includes(",")) s = s.replace(",", ".");
   const n = Number(s);
   return Number.isFinite(n) ? n : null;

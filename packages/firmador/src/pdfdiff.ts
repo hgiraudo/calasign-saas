@@ -182,7 +182,9 @@ function assertTailXref(working: Uint8Array, prepared: Uint8Array, root: string,
   // tabla del documento mostrado. Saltear esa última haría que un lector muestre una revisión anterior del documento.
   const last = [...tail.matchAll(/startxref\s+(\d+)/g)].pop();
   if (!last || !starts.has(Number(last[1]))) fail("el documento preparado no usa su propia tabla de referencias");
-  const workingStartxref = [...Buffer.from(working).subarray(Math.max(0, base - 2048)).toString("latin1").matchAll(/startxref\s+(\d+)/g)].pop();
+  // El último startxref del documento mostrado, buscado en todo el archivo (con relleno tras el %%EOF no está en los
+  // últimos 2 KB).
+  const workingStartxref = [...Buffer.from(working).subarray(0, base).toString("latin1").matchAll(/startxref\s+(\d+)/g)].pop();
   for (const m of tail.matchAll(/\/Prev\s+(\d+)/g)) {
     const prev = Number(m[1]);
     if (prev >= base ? !starts.has(prev) : !workingStartxref || prev !== Number(workingStartxref[1])) {

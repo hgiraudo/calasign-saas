@@ -102,7 +102,7 @@ export async function readPdfSignatures(pdf: Uint8Array): Promise<{ signatures: 
  * exactamente el valor hexadecimal de /Contents (`<…>`). Un ByteRange corrido dejaría bytes sin firmar.
  * Devuelve el motivo del problema, o null si está bien.
  */
-export function byteRangeIssue(pdf: Uint8Array, br: [number, number, number, number]): string | null {
+export function byteRangeIssue(pdf: Uint8Array, br: [number, number, number, number], contents?: Uint8Array): string | null {
   const [a, b, c, d] = br;
   if (![a, b, c, d].every((n) => Number.isInteger(n) && n >= 0)) return "ByteRange con valores inválidos";
   if (a !== 0) return "ByteRange no empieza al principio del archivo";
@@ -112,6 +112,16 @@ export function byteRangeIssue(pdf: Uint8Array, br: [number, number, number, num
     const x = pdf[i];
     const hex = (x >= 0x30 && x <= 0x39) || (x >= 0x41 && x <= 0x46) || (x >= 0x61 && x <= 0x66);
     if (!hex) return "El hueco del ByteRange contiene algo más que la firma";
+  }
+  // El hueco tiene que ser el /Contents de ESTA firma: si fuera otra cadena hexadecimal del documento (por ejemplo un
+  // texto visible), esos bytes quedarían sin firmar y se podrían cambiar sin invalidar la firma.
+  if (contents) {
+    const gapHex = Buffer.from(pdf.subarray(a + b + 1, c - 1)).toString("latin1");
+    if (gapHex.length % 2 !== 0) return "El hueco del ByteRange no es el valor de /Contents";
+    const gap = Buffer.from(gapHex, "hex");
+    if (gap.length < contents.length || !gap.subarray(0, contents.length).equals(Buffer.from(contents))) {
+      return "El hueco del ByteRange no corresponde al /Contents de esta firma";
+    }
   }
   return null;
 }

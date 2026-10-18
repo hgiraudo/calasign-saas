@@ -13,4 +13,10 @@ describe("byteRangeIssue", () => {
     expect(byteRangeIssue(pdf, [1, 8, 15, 4])).toMatch(/principio/);
     expect(byteRangeIssue(new Uint8Array(Buffer.from("%PDF-AAAA<0Xab>BBBB", "latin1")), [0, 9, 15, 4])).toMatch(/algo más/);
   });
+  it("rechaza un hueco que no es el /Contents de la firma", () => {
+    // El hueco <00ab> es una cadena hexadecimal válida, pero la firma de este diccionario es otra (por ejemplo un
+    // texto visible excluido de lo firmado).
+    expect(byteRangeIssue(pdf, [0, 9, 15, 4], new Uint8Array([0x00, 0xab]))).toBeNull();
+    expect(byteRangeIssue(pdf, [0, 9, 15, 4], new Uint8Array([0x30, 0x82]))).toMatch(/no corresponde/);
+  });
 });

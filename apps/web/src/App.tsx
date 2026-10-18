@@ -30,6 +30,11 @@ import { PublicFormPage } from "./pages/PublicForm";
 import { AutomationPage, CustomDomainPage, NotificationIntegrationsPage, OAuthAppsPage, StoragePage } from "./pages/PlatformSettings";
 import { OAuthConsentPage } from "./pages/OAuthConsent";
 import { IdentitySettingsPage, ScimSettingsPage, SsoSettingsPage } from "./pages/IdentitySettings";
+import { AgreementDetailPage, AgreementsPage } from "./pages/Agreements";
+import { ClausesPage, DocumentTemplateEditPage, DocumentTemplatesPage } from "./pages/Documents";
+import { WorkflowEditPage, WorkflowRunPage, WorkflowsPage } from "./pages/Workflows";
+import { NegotiationDetailPage, NegotiationsPage } from "./pages/Negotiations";
+import { PublicNegotiationPage, PublicWorkflowRunPage, PublicWorkflowStartPage } from "./pages/PublicAgreements";
 
 export function App() {
   return (
@@ -42,6 +47,9 @@ export function App() {
       <Route path="/verify" element={<VerifyPage />} />
       <Route path="/invite/:token" element={<InviteAcceptPage />} />
       <Route path="/f/:slug" element={<PublicFormPage />} />
+      <Route path="/wf/:slug" element={<PublicWorkflowStartPage />} />
+      <Route path="/w/:token" element={<PublicWorkflowRunPage />} />
+      <Route path="/n/:token" element={<PublicNegotiationPage />} />
       <Route
         path="/oauth/authorize"
         element={
@@ -89,6 +97,16 @@ export function App() {
         <Route path="/app/settings/automation" element={<AutomationPage />} />
         <Route path="/app/settings/storage" element={<StoragePage />} />
         <Route path="/app/settings/domain" element={<CustomDomainPage />} />
+        <Route path="/app/agreements" element={<AgreementsPage />} />
+        <Route path="/app/agreements/:id" element={<AgreementDetailPage />} />
+        <Route path="/app/documents" element={<DocumentTemplatesPage />} />
+        <Route path="/app/documents/:id" element={<DocumentTemplateEditPage />} />
+        <Route path="/app/clauses" element={<ClausesPage />} />
+        <Route path="/app/workflows" element={<WorkflowsPage />} />
+        <Route path="/app/workflows/:id" element={<WorkflowEditPage />} />
+        <Route path="/app/workflow-runs/:id" element={<WorkflowRunPage />} />
+        <Route path="/app/negotiations" element={<NegotiationsPage />} />
+        <Route path="/app/negotiations/:id" element={<NegotiationDetailPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/app" replace />} />
     </Routes>

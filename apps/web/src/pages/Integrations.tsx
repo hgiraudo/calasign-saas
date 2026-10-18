@@ -301,8 +301,10 @@ function EmbedSection() {
     <section className="stack" style={{ marginTop: 32 }}>
       <h2>{tt("embed.title")}</h2>
       <p className="muted small">{tt("embed.intro")}</p>
-      {text === null && !error ? (
-        <Spinner />
+      {/* Sin la lista cargada no se ofrece el formulario: guardar desde un textarea vacío por un error de carga
+          reemplazaba (borraba) los orígenes que ya estaban configurados. */}
+      {text === null ? (
+        !error && <Spinner />
       ) : (
         <form onSubmit={save} className="card pad stack">
           <label className="field">

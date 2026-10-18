@@ -13,9 +13,9 @@ import {
 import type { Db } from "../infra/db";
 import type { Actor } from "../infra/evidence";
 import { enqueue } from "../infra/queue";
-import { AppError, badRequest, conflict, notFound } from "../lib/errors";
+import { AppError, badRequest, conflict, forbidden, notFound } from "../lib/errors";
 import { iso, uuidv7 } from "../lib/util";
-import { assertTemplateAccess } from "./access";
+import { assertTemplateAccess, hasPerm } from "./access";
 import { authenticate, type AuthContext, type Services } from "./context";
 import { insertEnvelopeFromTemplate, loadTemplateDetail, loadTemplateForUse, planFromTemplate, type LoadedTemplate } from "./templates";
 
@@ -247,9 +247,23 @@ function validationResult(prepared: Prepared[], columns: string[]): BulkValidati
 
 // ───────────────────────────── Lectura ─────────────────────────────
 
-async function loadBulk(db: Db, tenantId: string, id: string): Promise<BulkSend> {
-  const b = await db.one<any>(`SELECT * FROM bulk_sends WHERE id = $1 AND tenant_id = $2`, [id, tenantId]);
-  if (!b) throw notFound("Envío masivo");
+/**
+ * Un envío masivo crea sobres a nombre de quien lo lanzó: lo ve quien lo creó o quien ve todos los sobres, y lo cancela
+ * quien lo creó o quien administra todos los sobres (como con los sobres sueltos).
+ */
+function ownsBulk(a: AuthContext, b: any): boolean {
+  if (a.apiKeyId) return b.actor?.type === "api_key" && b.actor?.id === a.apiKeyId;
+  return Boolean(a.userId) && b.created_by === a.userId;
+}
+
+function canViewBulk(a: AuthContext, b: any): boolean {
+  return hasPerm(a, "envelopes:view_all") || hasPerm(a, "envelopes:manage_all") || ownsBulk(a, b);
+}
+
+async function loadBulk(db: Db, a: AuthContext, id: string): Promise<BulkSend> {
+  if (!/^[0-9a-f-]{36}$/i.test(id)) throw notFound("Envío masivo");
+  const b = await db.one<any>(`SELECT * FROM bulk_sends WHERE id = $1 AND tenant_id = $2`, [id, a.tenantId]);
+  if (!b || !canViewBulk(a, b)) throw notFound("Envío masivo");
   return toBulk(b, await countsFor(db, [b.id]));
 }
 
@@ -360,24 +374,32 @@ export async function bulkRoutes(app: FastifyInstance, s: Services) {
       }
     });
     reply.code(201);
-    return loadBulk(s.db, a.tenantId, id);
+    return loadBulk(s.db, a, id);
   });
 
   app.get("/v1/bulk-sends", { preHandler: auth }, async (req) => {
     const a = A(req);
-    const rows = await s.db.query<any>(`SELECT * FROM bulk_sends WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT 100`, [a.tenantId]);
+    const all = hasPerm(a, "envelopes:view_all") || hasPerm(a, "envelopes:manage_all");
+    const rows = await s.db.query<any>(
+      all
+        ? `SELECT * FROM bulk_sends WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT 100`
+        : a.apiKeyId
+          ? `SELECT * FROM bulk_sends WHERE tenant_id = $1 AND actor->>'type' = 'api_key' AND actor->>'id' = $2 ORDER BY created_at DESC LIMIT 100`
+          : `SELECT * FROM bulk_sends WHERE tenant_id = $1 AND created_by = $2 ORDER BY created_at DESC LIMIT 100`,
+      all ? [a.tenantId] : [a.tenantId, a.apiKeyId ?? a.userId],
+    );
     const n = await countsFor(s.db, rows.map((r) => r.id));
     return { items: rows.map((b) => toBulk(b, n)) };
   });
 
-  app.get<{ Params: { id: string } }>("/v1/bulk-sends/:id", { preHandler: auth }, async (req) => loadBulk(s.db, A(req).tenantId, req.params.id));
+  app.get<{ Params: { id: string } }>("/v1/bulk-sends/:id", { preHandler: auth }, async (req) => loadBulk(s.db, A(req), req.params.id));
 
   app.get<{ Params: { id: string }; Querystring: { status?: string; offset?: string; limit?: string } }>(
     "/v1/bulk-sends/:id/items",
     { preHandler: auth },
     async (req) => {
       const a = A(req);
-      await loadBulk(s.db, a.tenantId, req.params.id);
+      await loadBulk(s.db, a, req.params.id);
       const limit = Math.min(500, Math.max(1, Math.trunc(Number(req.query.limit ?? 100)) || 100));
       const offset = Math.max(0, Math.trunc(Number(req.query.offset ?? 0)) || 0);
       const params: unknown[] = [req.params.id];
@@ -394,7 +416,7 @@ export async function bulkRoutes(app: FastifyInstance, s: Services) {
 
   app.get<{ Params: { id: string } }>("/v1/bulk-sends/:id/results.csv", { preHandler: auth }, async (req, reply) => {
     const a = A(req);
-    await loadBulk(s.db, a.tenantId, req.params.id);
+    await loadBulk(s.db, a, req.params.id);
     const rows = await s.db.query<any>(`SELECT * FROM bulk_send_items WHERE bulk_send_id = $1 ORDER BY row_number`, [req.params.id]);
     const lines = [["row", "status", "envelopeId", "recipients", "error"].join(",")];
     for (const r of rows.map(toItem)) lines.push([r.row, r.status, r.envelopeId ?? "", r.recipients.join(" | "), r.error ?? ""].map(csvEscape).join(","));
@@ -406,12 +428,13 @@ export async function bulkRoutes(app: FastifyInstance, s: Services) {
     const a = A(req);
     await s.db.tx(async (t) => {
       const b = await t.one<any>(`SELECT * FROM bulk_sends WHERE id = $1 AND tenant_id = $2 FOR UPDATE`, [req.params.id, a.tenantId]);
-      if (!b) throw notFound("Envío masivo");
+      if (!b || !canViewBulk(a, b)) throw notFound("Envío masivo");
+      if (!ownsBulk(a, b) && !hasPerm(a, "envelopes:manage_all")) throw forbidden("Solo quien lanzó el envío masivo (o quien administra todos los sobres) puede cancelarlo");
       if (!["queued", "running"].includes(b.status)) throw conflict("not_cancellable", "El envío ya terminó");
       await t.query(`UPDATE bulk_sends SET status = 'cancelled', cancelled_at = now(), updated_at = now() WHERE id = $1`, [b.id]);
       await t.query(`UPDATE bulk_send_items SET status = 'cancelled', processed_at = now() WHERE bulk_send_id = $1 AND status = 'pending'`, [b.id]);
     });
-    return loadBulk(s.db, a.tenantId, req.params.id);
+    return loadBulk(s.db, a, req.params.id);
   });
 }
 

@@ -13,10 +13,10 @@ import {
 import { config } from "../config";
 import type { Db } from "../infra/db";
 import { appendEvent, type Actor } from "../infra/evidence";
-import { AppError, badRequest, conflict, notFound } from "../lib/errors";
+import { AppError, badRequest, conflict, forbidden, notFound } from "../lib/errors";
 import { decrypt, encrypt, iso, slugify, uuidv7 } from "../lib/util";
 import { getTenantBranding } from "./branding";
-import { assertTemplateAccess, envelopeVisibilitySql } from "./access";
+import { assertTemplateAccess, envelopeVisibilitySql, hasPerm } from "./access";
 import { authenticate, clientInfo, type AuthContext, type Services } from "./context";
 import { setFrameAncestors } from "./embed";
 import { sendEnvelope } from "./envelopes";
@@ -79,6 +79,16 @@ function buildInput(form: FormRow, signer: { name: string; email: string; phone?
     prefill: form.prefill ?? {},
     send: false,
   };
+}
+
+/**
+ * Los sobres de un formulario son de quien lo creó: cambiarlo (p. ej. poner otro firmante fijo, que recibe cada envío)
+ * o borrarlo es como operar sobre sus sobres, así que lo hace quien lo creó o quien administra todos los sobres.
+ */
+function assertCanManageForm(a: AuthContext, form: FormRow) {
+  if (hasPerm(a, "envelopes:manage_all")) return;
+  if (a.userId && form.created_by === a.userId) return;
+  throw forbidden("Solo quien creó el formulario (o quien administra todos los sobres) puede modificarlo");
 }
 
 /** Valida la configuración del formulario contra su plantilla (roles y prellenado). */
@@ -175,6 +185,7 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
     const a = A(req);
     const input = UpdateWebFormInput.parse(req.body);
     const cur = await load(a.tenantId, req.params.id);
+    assertCanManageForm(a, cur);
     // Igual que al crearlo: no se modifica un formulario de una plantilla restringida que no se puede ver.
     await assertTemplateAccess(s.db, a, cur.template_id, "view");
     const next = {
@@ -211,6 +222,7 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
   app.delete<P>("/v1/web-forms/:id", { preHandler: auth }, async (req, reply) => {
     const a = A(req);
     const cur = await load(a.tenantId, req.params.id);
+    assertCanManageForm(a, cur);
     await assertTemplateAccess(s.db, a, cur.template_id, "view");
     await s.db.query(`DELETE FROM web_forms WHERE id = $1 AND tenant_id = $2`, [cur.id, a.tenantId]);
     return reply.code(204).send();

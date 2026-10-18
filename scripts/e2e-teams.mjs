@@ -295,6 +295,20 @@ await carol.api("GET", "/v1/envelopes");
 await bob3.api("POST", "/v1/me/2fa/disable", { code: totp(setup.secret, nowStep() + 1) }, [400, 409]);
 step("exigir 2FA: no se puede activar sin tenerlo uno mismo (409); sin 2FA se bloquea el acceso (403) hasta activarlo");
 
+// Bloqueo por cuenta en el segundo paso: con la contraseña se juntan varios desafíos antes de fallar; tras 10 códigos
+// incorrectos, ni un desafío ya abierto acepta el código correcto. (Solo en local: en un entorno remoto el límite
+// por IP de la ruta corta antes.)
+if (/^http:\/\/(localhost|127\.0\.0\.1)/.test(BASE)) {
+  const chs = [];
+  for (let i = 0; i < 3; i++) chs.push((await new Client(`carol-ch${i}`).api("POST", "/v1/auth/login", { email: carolEmail, password: "clave-de-carol-123" })).challengeToken);
+  const guesser = new Client("carol-guess");
+  for (const c of chs.slice(0, 2)) for (let i = 0; i < 5; i++) await guesser.api("POST", "/v1/auth/2fa/verify", { challengeToken: c, code: "000000" }, 401);
+  const res = await guesser.raw("POST", "/v1/auth/2fa/verify", { challengeToken: chs[2], code: totp(cSetup.secret, nowStep()) });
+  const body = await res.json();
+  if (res.status !== 429 || body.error?.code !== "too_many_attempts" || guesser.cookie) throw new Error(`2FA con la cuenta bloqueada: ${res.status} ${JSON.stringify(body)}`);
+  step("2FA: tras 10 códigos incorrectos la cuenta se bloquea también en los desafíos ya abiertos (429)");
+}
+
 // ───────────────────────────── 7. Auditoría ─────────────────────────────
 
 await owner.api("PATCH", "/v1/settings/branding", { primaryColor: "#0f7c7c" });

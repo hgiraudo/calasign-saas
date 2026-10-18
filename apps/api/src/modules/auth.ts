@@ -5,7 +5,7 @@ import { hashPassword, iso, randomToken, sha256Hex, slugify, uuidv7, verifyPassw
 import { config } from "../config";
 import { cellForSignup, registerTenantCell } from "./data/cells";
 import { SESSION_COOKIE, authenticate, clientInfo, type Services } from "./context";
-import { createTwoFactorChallenge } from "./teams";
+import { MAX_FAILED_LOGINS, createTwoFactorChallenge, recentFailedLogins } from "./teams";
 import { passwordLoginTenant } from "./identity/sso";
 import { AppError } from "../lib/errors";
 import { encrypt } from "../lib/util";
@@ -229,23 +229,6 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
     if (r.length === 0) throw notFound("API key");
     return reply.code(204).send();
   });
-}
-
-const MAX_FAILED_LOGINS = 10;
-
-/** Intentos fallidos de los últimos 15 minutos (los registra la auditoría, una fila por organización del usuario). */
-async function recentFailedLogins(db: Services["db"], userId: string): Promise<number> {
-  const r = await db.one<{ n: number }>(
-    `WITH t AS (SELECT tenant_id FROM memberships WHERE user_id = $1::uuid ORDER BY created_at LIMIT 1)
-     SELECT count(*)::int AS n FROM account_audit_log
-     WHERE tenant_id = (SELECT tenant_id FROM t)
-       AND action = 'auth.login_failed' AND actor_id = $1::text AND occurred_at > now() - interval '15 minutes'
-       -- Restablecer la contraseña (no solo pedirlo) desbloquea la cuenta.
-       AND occurred_at > COALESCE((SELECT max(occurred_at) FROM account_audit_log
-                                   WHERE tenant_id = (SELECT tenant_id FROM t) AND action = 'user.password_reset' AND target_id = $1::text), '-infinity')`,
-    [userId],
-  );
-  return r?.n ?? 0;
 }
 
 const DUMMY_HASH = "scrypt$32768$8$1$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";

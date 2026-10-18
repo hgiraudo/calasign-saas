@@ -425,4 +425,34 @@ const pub3 = await api("GET", `/v1/public/forms/${otpForm.slug}`, null, { anon: 
 assert(!pub3.available && pub3.unavailableReason === "inactive", "desactivado");
 step("formulario con código por correo y desactivación");
 
+// Un miembro (con envelopes:create, sin ver ni administrar todos los sobres) no opera los envíos ni los formularios de otro.
+{
+  const inv = await api("POST", "/v1/invitations", { email: `beto+scale${stamp}@example.com`, role: "member" }, { expect: 201 });
+  const token = inv.acceptUrl.split("/invite/")[1];
+  const acc = await fetch(`${BASE}/v1/invite/${token}/accept`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: "Beto Miembro", password: "otra-clave-segura-456" }),
+  });
+  assert(acc.ok, `aceptar invitación: ${acc.status}`);
+  const memberCookie = acc.headers.get("set-cookie").split(";")[0];
+  const asMember = async (method, path, body) =>
+    fetch(BASE + path, { method, headers: { cookie: memberCookie, ...(body ? { "content-type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined });
+  let r = await asMember("PATCH", `/v1/web-forms/${form.id}`, { fixedRecipients: [{ roleId: rEmpresa, name: "Beto", email: `beto+scale${stamp}@example.com` }] });
+  assert(r.status === 403, `un miembro no cambia el formulario de otro: ${r.status}`);
+  r = await asMember("DELETE", `/v1/web-forms/${form.id}`);
+  assert(r.status === 403, `un miembro no borra el formulario de otro: ${r.status}`);
+  r = await asMember("POST", `/v1/bulk-sends/${bulk.id}/cancel`);
+  assert(r.status === 404, `un miembro no cancela el envío masivo de otro: ${r.status}`);
+  r = await asMember("GET", `/v1/bulk-sends/${bulk.id}/items`);
+  assert(r.status === 404, `un miembro no ve las filas del envío masivo de otro: ${r.status}`);
+  const list = await (await asMember("GET", "/v1/bulk-sends")).json();
+  assert(!list.items.some((b) => b.id === bulk.id), "el listado del miembro no muestra envíos ajenos");
+  const own = await api("GET", "/v1/bulk-sends");
+  assert(own.items.some((b) => b.id === bulk.id), "quien lo lanzó sigue viendo su envío");
+  const f2 = await api("GET", `/v1/web-forms/${form.id}`);
+  assert(f2.fixedRecipients[0].email === `oficial.${stamp}@example.com`, "el firmante fijo no cambió");
+}
+step("un miembro no modifica formularios ni envíos masivos ajenos");
+
 console.log("\nE2E ESCALA OK");

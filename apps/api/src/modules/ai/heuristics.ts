@@ -262,26 +262,30 @@ const MONTHS: Record<string, number> = {
   january: 1, february: 2, march: 3, april: 4, may: 5, june: 6, july: 7, august: 8, september: 9, october: 10, november: 11, december: 12,
 };
 
-/** Fechas dd/mm/aaaa, aaaa-mm-dd o "15 de marzo de 2027" → ISO. */
-export function findDates(text: string): string[] {
-  const out: string[] = [];
+/** Fechas dd/mm/aaaa, aaaa-mm-dd o "15 de marzo de 2027" → ISO, con su posición en el texto normalizado. */
+export function findDatesAt(text: string): { iso: string; index: number }[] {
+  const out: { iso: string; index: number }[] = [];
   const n = norm(text);
   const pad = (v: number) => String(v).padStart(2, "0");
-  for (const m of n.matchAll(/\b(\d{4})-(\d{2})-(\d{2})\b/g)) out.push(`${m[1]}-${m[2]}-${m[3]}`);
+  for (const m of n.matchAll(/\b(\d{4})-(\d{2})-(\d{2})\b/g)) out.push({ iso: `${m[1]}-${m[2]}-${m[3]}`, index: m.index! });
   for (const m of n.matchAll(/\b(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})\b/g)) {
     const d = Number(m[1]);
     const mo = Number(m[2]);
-    if (d >= 1 && d <= 31 && mo >= 1 && mo <= 12) out.push(`${m[3]}-${pad(mo)}-${pad(d)}`);
+    if (d >= 1 && d <= 31 && mo >= 1 && mo <= 12) out.push({ iso: `${m[3]}-${pad(mo)}-${pad(d)}`, index: m.index! });
   }
   for (const m of n.matchAll(/\b(\d{1,2}) de ([a-z]+) de (\d{4})\b/g)) {
     const mo = MONTHS[m[2]];
-    if (mo) out.push(`${m[3]}-${pad(mo)}-${pad(Number(m[1]))}`);
+    if (mo) out.push({ iso: `${m[3]}-${pad(mo)}-${pad(Number(m[1]))}`, index: m.index! });
   }
   for (const m of n.matchAll(/\b([a-z]+) (\d{1,2}), (\d{4})\b/g)) {
     const mo = MONTHS[m[1]];
-    if (mo) out.push(`${m[3]}-${pad(mo)}-${pad(Number(m[2]))}`);
+    if (mo) out.push({ iso: `${m[3]}-${pad(mo)}-${pad(Number(m[2]))}`, index: m.index! });
   }
-  return out;
+  return out.sort((a, b) => a.index - b.index);
+}
+
+export function findDates(text: string): string[] {
+  return findDatesAt(text).map((d) => d.iso);
 }
 
 export function mockMetadata(docs: DocText[]): { metadata: ContractMetadata; confidence: Record<string, number> } {
@@ -305,10 +309,15 @@ export function mockMetadata(docs: DocText[]): { metadata: ContractMetadata; con
   }
   if (parties.length) confidence.parties = 0.6;
 
+  // La fecha que sigue a la palabra clave (una misma línea puede tener inicio y vencimiento).
   const dateNear = (re: RegExp) => {
-    for (const l of lines) if (re.test(l.n)) {
-      const d = findDates(l.text);
-      if (d.length) return d[d.length - 1];
+    for (const l of lines) {
+      const m = re.exec(l.n);
+      if (!m) continue;
+      const dates = findDatesAt(l.text);
+      const after = dates.find((d) => d.index >= m.index);
+      if (after) return after.iso;
+      if (dates.length) return dates[dates.length - 1].iso;
     }
     return null;
   };
@@ -328,7 +337,7 @@ export function mockMetadata(docs: DocText[]): { metadata: ContractMetadata; con
 
   const amounts: ContractMetadata["amounts"] = [];
   for (const l of lines) {
-    for (const m of l.text.matchAll(/((?:US\$|U\$S|R\$|RD\$|\$|€|L\.)\s?[\d.,]+\d|[\d.,]+\d\s?(?:USD|COP|BRL|DOP|HNL|EUR|d[oó]lares|reais|lempiras|euros))/gi)) {
+    for (const m of l.text.matchAll(/((?:US\$|U\$S|R\$|RD\$|\$|€|L\.|\b(?:USD|COP|BRL|DOP|HNL|EUR)\b)\s?[\d.,]*\d|[\d.,]*\d\s?(?:USD|COP|BRL|DOP|HNL|EUR|d[oó]lares|reais|lempiras|euros))/gi)) {
       const value = parseAmount(m[1]);
       if (value === null || value === 0) continue;
       const cur = CURRENCIES.find(([re]) => re.test(m[1]) || re.test(l.text));

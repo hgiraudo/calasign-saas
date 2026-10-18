@@ -14,13 +14,19 @@ const BAD_ARN = "arn:aws:kms:us-east-1:111122223333:key/mock-failing";
 let kms: typeof import("../src/infra/kms");
 let storage: typeof import("../src/infra/storage");
 let cellsMod: typeof import("../src/infra/cells");
+let custody: typeof import("../src/modules/custody");
+let byok: typeof import("../src/modules/data/byok");
 
+// Importar custody/byok arrastra media API (pdf, forge, AWS SDK): bajo carga eso solo tardaba más que el timeout
+// por defecto del test. Se cargan una vez acá, con un timeout holgado, y los tests quedan deterministas.
 beforeAll(async () => {
   kms = await import("../src/infra/kms");
   storage = await import("../src/infra/storage");
   cellsMod = await import("../src/infra/cells");
   kms.setKmsClientFactory(() => kms.mockKms());
-});
+  custody = await import("../src/modules/custody");
+  byok = await import("../src/modules/data/byok");
+}, 120_000);
 
 afterEach(() => {
   delete process.env.CELLS;
@@ -149,7 +155,7 @@ describe("almacenamiento por celda y BYOK", () => {
 
 describe("custodia de certificados con BYOK", () => {
   it("envuelve y abre la clave con la clave del cliente, atada a la organización", async () => {
-    const { sealKey, openKey } = await import("../src/modules/custody");
+    const { sealKey, openKey } = custody;
     const sealed = await sealKey("-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n", { tenantId: TENANT_A, keyArn: OK_ARN });
     expect(sealed.method).toBe("kms-byok");
     expect(sealed.keyArn).toBe(OK_ARN);
@@ -158,12 +164,12 @@ describe("custodia de certificados con BYOK", () => {
     // Con el contexto de otra organización no abre.
     await expect(openKey({ ...row, tenant_id: TENANT_B })).rejects.toMatchObject({ code: "byok_key_unavailable" });
     await expect(sealKey("x", { tenantId: TENANT_A, keyArn: BAD_ARN })).rejects.toMatchObject({ code: "byok_key_unavailable" });
-  });
+  }, 30_000);
 });
 
 describe("prueba de clave BYOK", () => {
   it("pasa con una clave usable y falla con una deshabilitada o de otra región", async () => {
-    const { testKey } = await import("../src/modules/data/byok");
+    const { testKey } = byok;
     const ok = await testKey(OK_ARN, TENANT_A, "us");
     expect(ok.ok).toBe(true);
     expect(ok.checks.map((c) => c.name)).toEqual(["describe", "encrypt_decrypt", "generate_data_key"]);
@@ -175,7 +181,7 @@ describe("prueba de clave BYOK", () => {
     const region = await testKey(OK_ARN, TENANT_A, "br");
     expect(region.ok).toBe(false);
     expect(region.error).toMatch(/misma región/);
-  });
+  }, 30_000);
 });
 
 describe("links con el dominio de la organización", () => {

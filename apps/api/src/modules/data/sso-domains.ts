@@ -69,15 +69,19 @@ export async function ssoDomainRoutes(app: FastifyInstance, s: Services) {
       }
       const ok = values.includes(ssoTxtValue(r.verification_token));
       if (!ok && !error) error = `No se encontró el registro TXT ${ssoTxtName(domain)} con el valor esperado`;
-      if (ok) {
-        const other = await s.db.one<any>(`SELECT tenant_id FROM sso_domains WHERE domain = $1 AND verified_at IS NOT NULL AND tenant_id <> $2`, [domain, a.tenantId]);
-        if (other) throw conflict("domain_taken", `El dominio ${domain} ya está verificado por otra organización`);
-      }
-      const row = await s.db.one<any>(
-        `UPDATE sso_domains SET verified_at = CASE WHEN $3 THEN COALESCE(verified_at, now()) ELSE verified_at END, last_checked_at = now(), last_error = $4
-         WHERE domain = $1 AND tenant_id = $2 RETURNING *`,
-        [domain, a.tenantId, ok, ok ? null : error],
-      );
+      // Chequeo y verificación con todas las filas del dominio bloqueadas: dos organizaciones que verifican a la vez
+      // no pueden quedar ambas como dueñas del mismo dominio.
+      const row = await s.db.tx(async (t) => {
+        const rows = await t.query<any>(`SELECT tenant_id, verified_at FROM sso_domains WHERE domain = $1 FOR UPDATE`, [domain]);
+        if (ok && rows.some((x) => x.verified_at && x.tenant_id !== a.tenantId)) {
+          throw conflict("domain_taken", `El dominio ${domain} ya está verificado por otra organización`);
+        }
+        return t.one<any>(
+          `UPDATE sso_domains SET verified_at = CASE WHEN $3 THEN COALESCE(verified_at, now()) ELSE verified_at END, last_checked_at = now(), last_error = $4
+           WHERE domain = $1 AND tenant_id = $2 RETURNING *`,
+          [domain, a.tenantId, ok, ok ? null : error],
+        );
+      });
       if (ok && !r.verified_at) await auditFromRequest(s.db, req, a, "sso.domain_verified", { targetType: "domain", targetId: domain });
       return toStatus(row);
     },

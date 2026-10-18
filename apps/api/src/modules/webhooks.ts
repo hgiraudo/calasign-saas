@@ -170,6 +170,52 @@ export async function postToCustomerUrl(url: string, headers: Record<string, str
   });
 }
 
+/**
+ * Pedido HTTP(S) saliente a un destino que no controlamos (URLs de certificados ajenos, pasos HTTP de workflows):
+ * valida literales IP, conecta con `safeLookup` (sin ventana de DNS rebinding), no sigue redirecciones y
+ * corta la respuesta en `maxBytes`.
+ */
+export async function safeRequest(
+  url: string,
+  opts: { method?: string; headers?: Record<string, string>; body?: string | Uint8Array; timeoutMs?: number; maxBytes?: number; signal?: AbortSignal } = {},
+): Promise<{ status: number; headers: Record<string, string>; body: Buffer }> {
+  const u = new URL(url);
+  if (u.protocol !== "https:" && u.protocol !== "http:") throw new Error("protocolo no permitido");
+  await assertPublicDestination(url);
+  const secure = u.protocol === "https:";
+  const maxBytes = opts.maxBytes ?? 20 * 1024 * 1024;
+  const payload = opts.body === undefined ? undefined : typeof opts.body === "string" ? Buffer.from(opts.body) : Buffer.from(opts.body);
+  const headers: Record<string, string> = { ...(opts.headers ?? {}) };
+  if (payload) headers["content-length"] = String(payload.length);
+  return new Promise((resolve, reject) => {
+    const req = (secure ? https : http).request(
+      u,
+      { method: opts.method ?? "GET", headers, agent: secure ? safeHttpsAgent : safeHttpAgent, signal: opts.signal },
+      (res) => {
+        const chunks: Buffer[] = [];
+        let size = 0;
+        res.on("data", (c: Buffer) => {
+          size += c.length;
+          if (size > maxBytes) {
+            req.destroy(new Error(`respuesta demasiado grande (más de ${maxBytes} bytes)`));
+            return;
+          }
+          chunks.push(c);
+        });
+        res.on("end", () => {
+          const h: Record<string, string> = {};
+          for (const [k, v] of Object.entries(res.headers)) if (v !== undefined) h[k] = Array.isArray(v) ? v.join(", ") : String(v);
+          resolve({ status: res.statusCode ?? 0, headers: h, body: Buffer.concat(chunks) });
+        });
+        res.on("error", reject);
+      },
+    );
+    if (opts.timeoutMs) req.setTimeout(opts.timeoutMs, () => req.destroy(new Error(`timeout después de ${opts.timeoutMs} ms`)));
+    req.on("error", reject);
+    req.end(payload);
+  });
+}
+
 // ───────────────────────────── Mapeo ─────────────────────────────
 
 const toEndpoint = (r: any): WebhookEndpoint => ({

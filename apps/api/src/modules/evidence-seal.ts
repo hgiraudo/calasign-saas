@@ -1,8 +1,6 @@
 // Pipeline de evidencia al finalizar un sobre: sello de empresa (segunda firma CAdES) y PAdES B-LT/B-LTA
 // (DSS + sello de documento) como revisiones incrementales sobre el PDF ya sellado por la plataforma.
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { isIP } from "node:net";
-import { lookup } from "node:dns/promises";
 import { resolve } from "node:path";
 import {
   CscSignatureProvider,
@@ -21,6 +19,7 @@ import { config } from "../config";
 import type { Db } from "../infra/db";
 import { getSealProvider } from "../infra/seal";
 import { loadTenantCertificate, tenantCertificateProvider } from "./custody";
+import { safeRequest } from "./webhooks";
 
 // ───────────── Nivel PAdES ─────────────
 
@@ -74,27 +73,23 @@ export async function trustAnchors(): Promise<Uint8Array[]> {
 
 // ───────────── Fetch con protección SSRF (URLs que vienen dentro de certificados ajenos) ─────────────
 
-function isPrivate(ip: string): boolean {
-  if (isIP(ip) === 6) {
-    const x = ip.toLowerCase();
-    if (x === "::1" || x === "::" || x.startsWith("fc") || x.startsWith("fd") || x.startsWith("fe80")) return true;
-    const m = /::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(x);
-    return m ? isPrivate(m[1]) : false;
-  }
-  const [a, b] = ip.split(".").map(Number);
-  return a === 0 || a === 10 || a === 127 || (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || a >= 224;
-}
-
-/** Solo http(s) a direcciones públicas (en local se permite todo, para la PKI de laboratorio). */
+/**
+ * Fetch para URLs que vienen dentro de certificados ajenos (OCSP, CRL, AIA) y conectores: solo http(s), sin
+ * redirecciones y con la validación de destino en la misma resolución DNS que usa la conexión (`safeRequest`).
+ * En local se permite todo (PKI de laboratorio), como en los webhooks.
+ */
 export const guardedFetch = async (url: string, init?: RequestInit): Promise<Response> => {
-  const u = new URL(url);
-  if (!["http:", "https:"].includes(u.protocol)) throw new Error("protocolo no permitido");
-  if (config.environment !== "local") {
-    const host = u.hostname.replace(/^\[|\]$/g, "");
-    const addrs = isIP(host) ? [{ address: host }] : await lookup(host, { all: true });
-    if (!addrs.length || addrs.some((a) => isPrivate(a.address))) throw new Error("destino interno no permitido");
-  }
-  return fetch(url, { ...init, redirect: "error" });
+  const headers: Record<string, string> = {};
+  new Headers(init?.headers ?? {}).forEach((v, k) => (headers[k] = v));
+  let body: string | Uint8Array | undefined;
+  const b = init?.body;
+  if (typeof b === "string") body = b;
+  else if (b instanceof ArrayBuffer) body = new Uint8Array(b);
+  else if (ArrayBuffer.isView(b)) body = new Uint8Array(b.buffer, b.byteOffset, b.byteLength);
+  else if (b != null) throw new Error("tipo de cuerpo no soportado");
+  const r = await safeRequest(url, { method: init?.method ?? "GET", headers, body, signal: init?.signal ?? undefined, timeoutMs: 15_000 });
+  if (r.status >= 300 && r.status < 400) throw new Error("redirección no permitida");
+  return new Response(r.status === 204 || r.status === 304 ? null : new Uint8Array(r.body), { status: r.status, headers: r.headers });
 };
 
 // ───────────── Plan y pipeline ─────────────

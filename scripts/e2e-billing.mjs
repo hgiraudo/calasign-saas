@@ -444,6 +444,8 @@ if (process.env.E2E_FAKE_PROVIDERS_PORT) {
   for (let i = 0; i < 50 && (await owner("GET", `/v1/envelopes/${ev.id}/payment`)).payment.status !== "refunded"; i++) await sleep(1000);
   assert((await owner("GET", `/v1/envelopes/${ev.id}/payment`)).payment.status === "refunded", "el pago que llegó con el sobre anulado quedó reembolsado");
   assert(refunds.some((x) => x.paymentIntent === "pi_late" && x.key === `refund:${vpid}`), "reembolso pedido a Stripe con clave de idempotencia");
+  const vpay = (await owner("GET", `/v1/envelopes/${ev.id}/payment`)).payment;
+  assert(vpay.refundRequiredAt && vpay.refundedAt && vpay.refundError === null, `el pago expone el reembolso (${JSON.stringify(vpay)})`);
   const vEvents = (await owner("GET", `/v1/envelopes/${ev.id}/events`)).items.map((x) => x.type);
   assert(vEvents.includes("payment.refund_required") && vEvents.includes("payment.refunded"), `evidencia del reembolso (${vEvents.slice(-5)})`);
   ok("Stripe: anular el sobre cierra el checkout abierto; un pago tardío se reembolsa");

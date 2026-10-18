@@ -55,6 +55,9 @@ export function toPayment(r: any): EnvelopePayment {
     status: r.status,
     paidAt: iso(r.paid_at),
     providerPaymentId: r.provider_payment_id,
+    refundRequiredAt: iso(r.refund_required_at),
+    refundedAt: iso(r.refunded_at),
+    refundError: r.refund_error ?? null,
   };
 }
 

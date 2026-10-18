@@ -14,6 +14,11 @@ links de otras organizaciones.
 3. **Verificar** (`POST /v1/domains/verify`): el TXT se consulta por DNS-over-HTTPS (Cloudflare, y Google si falla).
 4. Verificado: Caddy emite el certificado la primera vez que alguien entra (TLS bajo demanda), preguntándole a la API
    si el dominio está autorizado.
+5. Re-verificación cada 6 h: el TXT tiene que seguir publicado **y** el dominio tiene que seguir apuntando a la
+   plataforma (CNAME al host de la plataforma, o una dirección A de la plataforma). El TXT solo no alcanza: es público
+   y quien se quede con un dominio vencido puede volver a publicarlo. Cada control fallido suma puntos (falta o no
+   apunta: 2; error de DNS: 1) y con 4 el dominio vuelve a "pendiente" y los links pasan al dominio de la plataforma.
+   Por eso el CNAME no puede estar detrás de un proxy (en Cloudflare, "solo DNS"): un proxy esconde el destino real.
 
 ## Cambio en Caddy (no aplicado)
 

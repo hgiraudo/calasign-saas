@@ -281,8 +281,10 @@ async function uploadDropbox(creds: OAuthCreds, cfg: any, name: string, bytes: U
 
 async function uploadOnedrive(creds: OAuthCreds, cfg: any, name: string, bytes: Uint8Array): Promise<UploadResult> {
   const { token, updated } = await freshToken("onedrive", creds);
-  const folder = String(cfg.folder ?? "").replace(/^\/+|\/+$/g, "");
-  const path = [folder, name].filter(Boolean).map(encodeURIComponent).join("/");
+  // Cada segmento por separado: con la carpeta entera en encodeURIComponent, "Contratos/2026" viajaba como
+  // "Contratos%2F2026" y Graph lo toma como un nombre con "/" (inválido) en lugar de una subcarpeta.
+  const folder = String(cfg.folder ?? "").split("/").filter(Boolean);
+  const path = [...folder, name].map(encodeURIComponent).join("/");
   const auth = { authorization: `Bearer ${token}` };
   let item: any;
   if (bytes.length <= 4 * 1024 * 1024) {

@@ -26,27 +26,43 @@ const txtValue = (token: string) => `calasign-verify=${token}`;
 /** Registros de prueba (solo entorno local): POST /dev/dns-stub. */
 const dnsStub = new Map<string, string[]>();
 
-async function dohTxt(endpoint: string, name: string): Promise<string[]> {
-  const res = await fetch(`${endpoint}?name=${encodeURIComponent(name)}&type=TXT`, {
+async function dohQuery(endpoint: string, name: string, type: "TXT" | "A"): Promise<{ type: number; data: string }[]> {
+  const res = await fetch(`${endpoint}?name=${encodeURIComponent(name)}&type=${type}`, {
     headers: { accept: "application/dns-json" },
     signal: AbortSignal.timeout(8000),
   });
   if (!res.ok) throw new Error(`DNS ${res.status}`);
   const body: any = await res.json();
-  return (body.Answer ?? [])
-    .filter((a: any) => a.type === 16)
-    .map((a: any) => String(a.data).replace(/"\s+"/g, "").replace(/^"|"$/g, ""));
+  return (body.Answer ?? []).map((a: any) => ({ type: Number(a.type), data: String(a.data) }));
 }
 
-/** TXT por DNS-over-HTTPS (Cloudflare y, si falla, Google). En local, primero los registros de prueba. */
+/** Consulta por DNS-over-HTTPS: Cloudflare y, si falla, Google. */
+async function doh(name: string, type: "TXT" | "A") {
+  try {
+    return await dohQuery("https://cloudflare-dns.com/dns-query", name, type);
+  } catch {
+    return dohQuery("https://dns.google/resolve", name, type);
+  }
+}
+
+/** TXT por DNS-over-HTTPS. En local, primero los registros de prueba. */
 export async function resolveTxt(name: string): Promise<string[]> {
   const key = name.toLowerCase();
   if (isLocalEnv() && dnsStub.has(key)) return dnsStub.get(key)!;
-  try {
-    return await dohTxt("https://cloudflare-dns.com/dns-query", key);
-  } catch {
-    return dohTxt("https://dns.google/resolve", key);
-  }
+  return (await doh(key, "TXT")).filter((a) => a.type === 16).map((a) => a.data.replace(/"\s+"/g, "").replace(/^"|"$/g, ""));
+}
+
+/**
+ * ¿El dominio sigue llevando a la plataforma? Sí si su cadena de CNAME pasa por el host de la plataforma, o si alguna
+ * de sus direcciones A es de la plataforma. Un dominio servido por otro (o detrás de un proxy ajeno) da false.
+ */
+export async function routesToPlatform(domain: string): Promise<boolean> {
+  const host = appHost();
+  const strip = (v: string) => v.replace(/\.$/, "").toLowerCase();
+  const ans = await doh(domain.toLowerCase(), "A");
+  if (ans.some((a) => a.type === 5 && strip(a.data) === host)) return true;
+  const mine = new Set((await doh(host, "A")).filter((a) => a.type === 1).map((a) => a.data));
+  return ans.some((a) => a.type === 1 && mine.has(a.data));
 }
 
 // ───────────────────────────── Dominio por tenant ─────────────────────────────
@@ -102,50 +118,67 @@ function toApi(r: any): CustomDomain {
 // ───────────────────────────── Re-verificación periódica ─────────────────────────────
 
 const RECHECK_HOURS = 6;
-const MISSING_MARK = "Re-verificación: no se encontró el registro TXT";
+/** Puntos por control fallido: falta el TXT o el dominio ya no apunta a la plataforma (2), error de DNS (1). */
+const MISS_POINTS = 2;
+const ERROR_POINTS = 1;
+const DEMOTE_AT = 4;
 
 /**
- * Vuelve a consultar el TXT de los dominios verificados. Sin esto un dominio quedaba verificado para siempre: si la
- * organización lo perdía (venció y lo registró otro, o quedó un CNAME colgado que alguien reclamó), los correos seguían
- * mandando los links de firma —que dan acceso al sobre— a un host que ya no controla. Si el TXT falta en dos controles
- * seguidos (separados por RECHECK_HOURS), el dominio vuelve a "pendiente": los links pasan al dominio de la plataforma y
- * Caddy deja de emitir certificados para él. Un error de DNS no cuenta como falta (no se arriesga a cortar por un
- * problema de la consulta). La organización lo vuelve a verificar desde Ajustes.
+ * Vuelve a consultar los dominios verificados. Sin esto un dominio quedaba verificado para siempre: si la organización
+ * lo perdía (venció y lo registró otro, o quedó un CNAME colgado que alguien reclamó), los correos seguían mandando los
+ * links de firma —que dan acceso al sobre— a un host que ya no controla.
+ * - El TXT solo no alcanza: es público (queda en los historiales de DNS) y quien se quede con el dominio puede volver
+ *   a publicarlo. Por eso también se exige que el dominio siga apuntando a la plataforma (CNAME o IP).
+ * - Cada control fallido suma puntos (falta: 2, error de DNS: 1) y con DEMOTE_AT seguidos el dominio vuelve a
+ *   "pendiente": dos faltas (12 h) o cuatro errores (24 h). Antes un error nunca contaba, así que un dominio que solo
+ *   devolvía errores no se desverificaba nunca. Un control correcto pone el contador en cero.
+ * Al desverificarse, los links pasan al dominio de la plataforma y Caddy deja de emitir certificados para él. La
+ * organización lo vuelve a verificar desde Ajustes.
  */
 export async function recheckVerifiedDomains(
   d: { db: Db; log: { warn(o: object, m?: string): void } },
-  resolve: (name: string) => Promise<string[]> = resolveTxt,
-  limit = 20,
+  deps: { txt?: (name: string) => Promise<string[]>; routes?: (domain: string) => Promise<boolean>; limit?: number } = {},
 ) {
+  const txt = deps.txt ?? resolveTxt;
+  const routes = deps.routes ?? routesToPlatform;
   const rows = await d.db.query<any>(
     `SELECT * FROM custom_domains WHERE status = 'verified' AND (last_checked_at IS NULL OR last_checked_at < now() - make_interval(hours => $1))
       ORDER BY last_checked_at NULLS FIRST LIMIT $2`,
-    [RECHECK_HOURS, limit],
+    [RECHECK_HOURS, deps.limit ?? 20],
   );
   let demoted = 0;
   for (const r of rows) {
-    let values: string[];
+    let points: number;
+    let problem: string;
     try {
-      values = await resolve(txtName(r.domain));
+      const values = await txt(txtName(r.domain));
+      if (!values.includes(txtValue(r.verification_token))) {
+        points = MISS_POINTS;
+        problem = `Re-verificación: no se encontró el registro TXT ${txtName(r.domain)}`;
+      } else if (!(await routes(r.domain))) {
+        points = MISS_POINTS;
+        problem = `Re-verificación: ${r.domain} ya no apunta a ${appHost()} (CNAME o dirección IP)`;
+      } else {
+        await d.db.query(`UPDATE custom_domains SET last_checked_at = now(), last_error = NULL, recheck_failures = 0 WHERE id = $1`, [r.id]);
+        continue;
+      }
     } catch (e) {
-      await d.db.query(`UPDATE custom_domains SET last_checked_at = now() WHERE id = $1`, [r.id]);
+      points = ERROR_POINTS;
+      problem = `Re-verificación: no se pudo consultar el DNS (${String((e as Error).message ?? e).slice(0, 200)})`;
       d.log.warn({ domain: r.domain, err: String((e as Error).message ?? e) }, "no se pudo re-verificar el dominio propio");
-      continue;
     }
-    if (values.includes(txtValue(r.verification_token))) {
-      await d.db.query(`UPDATE custom_domains SET last_checked_at = now(), last_error = NULL WHERE id = $1`, [r.id]);
-      continue;
-    }
-    if (!String(r.last_error ?? "").startsWith(MISSING_MARK)) {
-      await d.db.query(`UPDATE custom_domains SET last_checked_at = now(), last_error = $2 WHERE id = $1`, [
+    const failures = Number(r.recheck_failures ?? 0) + points;
+    if (failures < DEMOTE_AT) {
+      await d.db.query(`UPDATE custom_domains SET last_checked_at = now(), last_error = $2, recheck_failures = $3 WHERE id = $1`, [
         r.id,
-        `${MISSING_MARK} ${txtName(r.domain)}: si sigue faltando en el próximo control, el dominio deja de usarse`,
+        `${problem}: si sigue fallando, el dominio deja de usarse`,
+        failures,
       ]);
       continue;
     }
     const down = await d.db.query(
-      `UPDATE custom_domains SET status = 'pending', last_checked_at = now(), last_error = $2 WHERE id = $1 AND status = 'verified' RETURNING id`,
-      [r.id, `${MISSING_MARK} ${txtName(r.domain)} en dos controles seguidos: el dominio dejó de usarse hasta que se vuelva a verificar`],
+      `UPDATE custom_domains SET status = 'pending', last_checked_at = now(), last_error = $2, recheck_failures = 0 WHERE id = $1 AND status = 'verified' RETURNING id`,
+      [r.id, `${problem} en controles seguidos: el dominio dejó de usarse hasta que se vuelva a verificar`],
     );
     if (!down.length) continue;
     demoted++;
@@ -156,7 +189,7 @@ export async function recheckVerifiedDomains(
       actor: { type: "system", label: "Re-verificación de dominio" },
       targetType: "domain",
       targetId: r.domain,
-      data: { reason: "txt_missing" },
+      data: { reason: points === ERROR_POINTS ? "dns_error" : problem.includes("TXT") ? "txt_missing" : "not_routed" },
     });
   }
   return { checked: rows.length, demoted };
@@ -231,7 +264,7 @@ export async function customDomainRoutes(app: FastifyInstance, s: Services) {
       await s.db.query(
         `UPDATE custom_domains SET status = CASE WHEN $2 THEN 'verified' ELSE status END,
            verified_at = CASE WHEN $2 AND verified_at IS NULL THEN now() ELSE verified_at END,
-           last_checked_at = now(), last_error = $3 WHERE id = $1`,
+           last_checked_at = now(), last_error = $3, recheck_failures = CASE WHEN $2 THEN 0 ELSE recheck_failures END WHERE id = $1`,
         [r.id, ok, error],
       );
     } catch (e) {

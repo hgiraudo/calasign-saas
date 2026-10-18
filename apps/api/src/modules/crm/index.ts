@@ -39,6 +39,7 @@ import { auditFromRequest } from "../audit";
 import { authenticate, type AuthContext, type Services } from "../context";
 import { sendEnvelope } from "../envelopes";
 import { ownerCanStillCreate } from "../owner-check";
+import { tenantBaseUrl } from "../custom-domains";
 import { insertEnvelopeFromTemplate, loadTemplateForUse, planFromTemplate } from "../templates";
 import { MappingError, mapPrefill, mapRecipients, neededProperties, statusForEvidence, statusValue, webhookMatches } from "./mapping";
 import {
@@ -337,7 +338,8 @@ async function writeBackAndAttach(db: Db, blobs: BlobStore, conn: CrmConn, link:
         subject: pdf.subject,
         envelopeId: link.envelope_id,
         sha256: pdf.sha256,
-        url: `${config.appUrl}/app/envelopes/${link.envelope_id}`,
+        // El dominio propio de la organización si lo tiene (como en los correos), no siempre el de la plataforma.
+        url: `${await tenantBaseUrl(db, link.tenant_id)}/app/envelopes/${link.envelope_id}`,
       });
       await db.query(`UPDATE crm_links SET pdf_attached_at = now(), remote_ref = $2 WHERE id = $1`, [link.id, ref]);
       detail.attached = ref;

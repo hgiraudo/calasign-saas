@@ -32,7 +32,10 @@ export function parseNumberLoose(raw: string): number | null {
   if (!s) return null;
   const lastComma = s.lastIndexOf(",");
   const lastDot = s.lastIndexOf(".");
-  if (lastComma > lastDot) s = s.replace(/\./g, "").replace(",", ".");
+  // 1,500,000: la coma repetida entre grupos de 3 cifras son miles (formato en inglés), como en el motor de plantillas
+  // (toNum) y en los acuerdos (toNumberOrNull). Antes daba null: el campo lo rechazaba y la fórmula no lo contaba.
+  if (/^[-+]?\d{1,3}(,\d{3}){2,}$/.test(s)) s = s.replace(/,/g, "");
+  else if (lastComma > lastDot) s = s.replace(/\./g, "").replace(",", ".");
   // 1.500.000: el punto repetido entre grupos de 3 cifras son miles (el formato habitual en CO y BR). Antes daba null:
   // el campo número rechazaba el valor ("no es un número") y una fórmula que lo citaba lo ignoraba.
   else if (/^[-+]?\d{1,3}(\.\d{3}){2,}$/.test(s)) s = s.replace(/\./g, "");

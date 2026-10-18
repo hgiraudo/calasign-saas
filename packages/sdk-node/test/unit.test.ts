@@ -109,6 +109,16 @@ describe("OAuth client credentials", () => {
   });
 });
 
+describe("OAuth: error de red al pedir el token", () => {
+  it("sale como CalaSignError network_error, como los demás errores de red", async () => {
+    const f = fakeFetch([new TypeError("fetch failed")]);
+    const cs = new CalaSign({ oauth: { clientId: "c", clientSecret: "s" }, baseUrl: "http://api", fetch: f.fn, maxRetries: 0 });
+    const err = await cs.me().catch((e) => e);
+    expect(err).toBeInstanceOf(CalaSignError);
+    expect(err.code).toBe("network_error");
+  });
+});
+
 describe("verificación de webhooks", () => {
   const secret = "whsec_test";
   const body = JSON.stringify({ id: "evt_1", type: "envelope.completed", data: {} });

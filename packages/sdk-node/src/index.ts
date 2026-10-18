@@ -131,16 +131,22 @@ export class CalaSign {
     if (!forceRefresh && this.token && this.token.expiresAt - 60_000 > Date.now()) return this.token.value;
     const o = this.opts.oauth!;
     const body = new URLSearchParams({ grant_type: "client_credentials", ...(o.scope ? { scope: o.scope } : {}) });
-    const res = await this.fetchImpl(`${this.baseUrl}/oauth/token`, {
-      method: "POST",
-      headers: {
-        authorization: `Basic ${Buffer.from(`${encodeURIComponent(o.clientId)}:${encodeURIComponent(o.clientSecret)}`).toString("base64")}`,
-        "content-type": "application/x-www-form-urlencoded",
-        "user-agent": this.userAgent,
-      },
-      body,
-      signal: AbortSignal.timeout(this.timeoutMs),
-    });
+    let res: Response;
+    try {
+      res = await this.fetchImpl(`${this.baseUrl}/oauth/token`, {
+        method: "POST",
+        headers: {
+          authorization: `Basic ${Buffer.from(`${encodeURIComponent(o.clientId)}:${encodeURIComponent(o.clientSecret)}`).toString("base64")}`,
+          "content-type": "application/x-www-form-urlencoded",
+          "user-agent": this.userAgent,
+        },
+        body,
+        signal: AbortSignal.timeout(this.timeoutMs),
+      });
+    } catch (err) {
+      // Igual que los demás errores de red: quien atrapa CalaSignError no recibía un TypeError ("fetch failed") suelto.
+      throw new CalaSignError(`Error de red al pedir el token OAuth: ${(err as Error).message}`, 0, "network_error");
+    }
     const data: any = await res.json().catch(() => ({}));
     if (!res.ok) throw new CalaSignError(data.error_description ?? "No se pudo obtener el token OAuth", res.status, data.error ?? "oauth_error");
     this.token = { value: data.access_token, expiresAt: Date.now() + Number(data.expires_in ?? 3600) * 1000 };

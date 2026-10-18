@@ -175,6 +175,10 @@ const att = byLabel("Cédula");
 const afd = new FormData();
 afd.append("file", new Blob([Buffer.from("no soy un pdf")], { type: "application/pdf" }), "x.pdf");
 await api("POST", `/v1/signing/${t1}/fields/${att.id}/attachment`, afd, { expect: 400 });
+// Primero sube otro archivo y después lo reemplaza: el anterior se descarta (no queda guardado).
+const afd0 = new FormData();
+afd0.append("file", new Blob([tinyPdf(1, "Archivo equivocado")], { type: "application/pdf" }), "equivocado.pdf");
+await api("POST", `/v1/signing/${t1}/fields/${att.id}/attachment`, afd0);
 const afd2 = new FormData();
 afd2.append("file", new Blob([tinyPdf(1, "Cedula escaneada")], { type: "application/pdf" }), "cedula.pdf");
 const attField = await api("POST", `/v1/signing/${t1}/fields/${att.id}/attachment`, afd2);

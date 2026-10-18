@@ -2,7 +2,7 @@
 import type { Db } from "../infra/db";
 import { SYSTEM, appendEvent } from "../infra/evidence";
 import { enqueue } from "../infra/queue";
-import { currentSignerGroup } from "./envelopes";
+import { currentSignerGroup, receivesSignerNotices } from "./envelopes";
 
 export async function runAutomaticReminders(db: Db, now = new Date()) {
   const day = now.toISOString().slice(0, 10);
@@ -19,7 +19,7 @@ export async function runAutomaticReminders(db: Db, now = new Date()) {
       const cur = await t.one<any>(`SELECT status FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
       if (cur?.status !== "sent") return;
       const group = await currentSignerGroup(t, e.id);
-      const pending = group.recipients.filter((r) => r.status === "sent" || r.status === "viewed");
+      const pending = group.recipients.filter((r) => (r.status === "sent" || r.status === "viewed") && receivesSignerNotices(r));
       for (const r of pending)
         await enqueue(t, "notify", { kind: "reminder", envelopeId: e.id, recipientId: r.id, tenantId: e.tenant_id }, { dedupeKey: `auto-reminder:${r.id}:${day}` });
       await t.query(`UPDATE envelopes SET last_reminder_at = $2 WHERE id = $1`, [e.id, now.toISOString()]);
@@ -40,7 +40,7 @@ export async function runAutomaticReminders(db: Db, now = new Date()) {
       const cur = await t.one<any>(`SELECT status, expiry_warning_sent_at, expires_at FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
       if (cur?.status !== "sent" || cur.expiry_warning_sent_at) return;
       const group = await currentSignerGroup(t, e.id);
-      const pending = group.recipients.filter((r) => r.status === "sent" || r.status === "viewed");
+      const pending = group.recipients.filter((r) => (r.status === "sent" || r.status === "viewed") && receivesSignerNotices(r));
       for (const r of pending)
         await enqueue(t, "notify", { kind: "expiry_warning", envelopeId: e.id, recipientId: r.id, tenantId: e.tenant_id }, {
           // La clave incluye el vencimiento: si se extiende (corrección en vuelo), el aviso del nuevo vencimiento sale.

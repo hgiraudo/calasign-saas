@@ -216,6 +216,29 @@ await api(
   { data, recipients: [{ role: "Cliente", name: cliente, email: `jose+${stamp}@example.com` }, { role: "Empresa", name: "Ana", email: me.user.email }, { role: "Testigo", name: "T", email: "t@example.com" }] },
   { expect: 422 },
 );
+{
+  // Dos firmantes con el mismo rol: antes las marcas iban todas al último y el otro quedaba sin campos.
+  const dup = await api(
+    "POST",
+    `/v1/document-templates/${tpl.id}/generate`,
+    { data, recipients: [{ role: "Cliente", name: cliente, email: `jose+${stamp}@example.com` }, { role: "cliente", name: "Otro", email: `otro+${stamp}@example.com` }, { role: "Empresa", name: "Ana", email: me.user.email }] },
+    { expect: 422 },
+  );
+  assert(dup?.error?.code === "duplicate_roles" || dup?.code === "duplicate_roles", `rol repetido → duplicate_roles (${JSON.stringify(dup).slice(0, 200)})`);
+  // Una copia con el mismo nombre de rol que un firmante no se queda con sus campos de firma.
+  const ccSame = await api("POST", `/v1/document-templates/${tpl.id}/generate`, {
+    data,
+    recipients: [
+      { role: "Cliente", name: cliente, email: `jose+${stamp}@example.com` },
+      { role: "Empresa", name: "Ana Gómez", email: me.user.email },
+      { role: "Cliente", name: "Copia", email: `copia+${stamp}@example.com`, cc: true },
+    ],
+  });
+  const ccDet = await api("GET", `/v1/envelopes/${ccSame.envelopeId}`);
+  const ccRec = ccDet.recipients.find((r) => r.role === "cc");
+  assert(ccSame.status === "sent" && ccRec && !ccDet.fields.some((f) => f.recipientId === ccRec.id), "la copia con el mismo rol no recibe campos y el sobre se envía");
+  await api("POST", `/v1/envelopes/${ccSame.envelopeId}/void`, { reason: "prueba" }, { raw: true });
+}
 const gen = await api("POST", `/v1/document-templates/${tpl.id}/generate`, {
   data,
   recipients: [

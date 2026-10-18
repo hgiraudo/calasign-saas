@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { computeFormulas, computeHidden, evaluateFormula, formatComputed, validateLogic } from "../src/modules/logic";
 import { csvToRows, parseCsv } from "../src/modules/bulk";
+import { checkValue } from "../src/modules/fieldvalues";
 
 describe("fórmulas", () => {
   it("respeta precedencia, paréntesis, unarios y coma decimal", () => {
@@ -47,5 +48,19 @@ describe("CSV", () => {
     const r = csvToRows("Cliente.nombre,Cliente.email,field.Plan,Otro\nAna,ANA@x.com,Anual,1\n", [{ id: "r1", name: "Cliente" }]);
     expect(r.fileErrors.length).toBe(1);
     expect(r.rows[0]).toMatchObject({ recipients: [{ roleId: "r1", name: "Ana", email: "ana@x.com" }], prefill: { Plan: "Anual" } });
+  });
+});
+
+describe("números con separador de miles", () => {
+  it("1.500.000 es un número válido en el campo y cuenta en las fórmulas", () => {
+    expect(checkValue({ type: "number", min: 1000 }, "1.500.000")).toEqual({ value: "1.500.000" });
+    expect(checkValue({ type: "number" }, "1.500.000,50")).toEqual({ value: "1.500.000,50" });
+    expect(checkValue({ type: "number" }, "1.5.0")).toEqual({ error: "no es un número" });
+    const fields = [
+      { id: "a", type: "number", label: "Monto", conditions: null, formula: null },
+      { id: "t", type: "number", label: "Total", conditions: null, formula: "{Monto} * 2" },
+    ];
+    const out = computeFormulas(fields, (id) => (id === "a" ? "1.500.000" : null), new Set());
+    expect(out.get("t")).toBe("3000000");
   });
 });

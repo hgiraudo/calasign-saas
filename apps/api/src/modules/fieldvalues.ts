@@ -1,4 +1,5 @@
 // Validación y normalización de valores de campos (los escribe el remitente al prellenar o el firmante al completar).
+import { parseNumberLoose } from "@calasign/shared";
 import type { Db } from "../infra/db";
 
 export interface FieldSpec {
@@ -10,18 +11,9 @@ export interface FieldSpec {
   max?: number | null;
 }
 
-/** Convierte "1.234,5" / "1234.5" / "1 234,50" en número. null si no es un número. */
-export function parseNumber(raw: string): number | null {
-  let s = raw.trim().replace(/\s+/g, "");
-  if (!s) return null;
-  const lastComma = s.lastIndexOf(",");
-  const lastDot = s.lastIndexOf(".");
-  if (lastComma > lastDot) s = s.replace(/\./g, "").replace(",", ".");
-  else s = s.replace(/,/g, "");
-  if (!/^[-+]?\d+(\.\d+)?$/.test(s)) return null;
-  const n = Number(s);
-  return Number.isFinite(n) ? n : null;
-}
+/** Convierte "1.234,5" / "1234.5" / "1 234,50" / "1.500.000" en número. null si no es un número. Es la misma regla que
+ * usan las fórmulas (parseNumberLoose): si no, un valor aceptado acá podía no contar en un total calculado. */
+export const parseNumber = parseNumberLoose;
 
 /**
  * Valida un valor escrito para un campo de texto/número/desplegable/empresa/cargo.

@@ -56,6 +56,18 @@ export async function currentSignerGroup(db: Db, envelopeId: string) {
   return { order, recipients: pending.filter((r) => r.routing_order === order) };
 }
 
+/**
+ * Si al destinatario se le mandan invitaciones, recordatorios y avisos de vencimiento. No a los embebidos (el
+ * integrador muestra la ceremonia en su app), a los en persona (firma en el dispositivo del anfitrión) ni a un
+ * autorregistrado sin correo validado. El job de notificaciones aplica la misma regla; los recordatorios cuentan solo
+ * a quienes la cumplen, así la evidencia no dice que se le recordó a alguien a quien no se le escribió.
+ */
+export function receivesSignerNotices(r: { embedded?: boolean; auth_method?: string; self_registered?: boolean; authenticated_at?: unknown }) {
+  if (r.embedded || r.auth_method === "in_person") return false;
+  if (r.self_registered && !(r.auth_method === "otp_email" && r.authenticated_at)) return false;
+  return true;
+}
+
 /** Genera (si falta) el token del destinatario y lo deja en estado 'sent'. Encola la invitación. */
 export async function activateRecipient(db: Db, tenantId: string, envelopeId: string, r: any, kind: "invite" | "completed" = "invite") {
   if (!r.access_token_hash) {
@@ -506,10 +518,13 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
       if (e.status === "awaiting_certificates") {
         // Firma con certificado pendiente: se le vuelve a avisar al firmante al que le toca (sin dedupe: es un recordatorio).
         const pending = await t.one<any>(
-          `SELECT recipient_id FROM certificate_signatures WHERE envelope_id = $1 AND status = 'pending' ORDER BY position LIMIT 1`,
+          `SELECT cs.recipient_id, r.self_registered, r.auth_method, r.authenticated_at
+             FROM certificate_signatures cs JOIN recipients r ON r.id = cs.recipient_id
+            WHERE cs.envelope_id = $1 AND cs.status = 'pending' ORDER BY cs.position LIMIT 1`,
           [e.id],
         );
-        if (pending) {
+        // El pedido de firma con certificado no se le manda a un autorregistrado sin correo validado (ver notify).
+        if (pending && !(pending.self_registered && !(pending.auth_method === "otp_email" && pending.authenticated_at))) {
           await enqueue(t, "notify", { kind: "certificate_request", envelopeId: e.id, recipientId: pending.recipient_id, tenantId: a.tenantId });
           notified = 1;
           await appendEvent(t, { tenantId: a.tenantId, envelopeId: e.id, type: "envelope.reminded", actor: a.actor, data: { recipients: 1, stage: "certificates" } });
@@ -518,7 +533,7 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
       }
       if (e.status !== "sent") throw conflict("not_in_progress", "El sobre no está en curso");
       const group = await currentSignerGroup(t, e.id);
-      for (const r of group.recipients.filter((r) => r.status === "sent" || r.status === "viewed")) {
+      for (const r of group.recipients.filter((r) => (r.status === "sent" || r.status === "viewed") && receivesSignerNotices(r))) {
         await enqueue(t, "notify", { kind: "reminder", envelopeId: e.id, recipientId: r.id, tenantId: a.tenantId });
         notified++;
       }

@@ -63,6 +63,7 @@ export function BrandingPage() {
 
   const removeLogo = async () => {
     setBusy(true);
+    setError(null);
     try {
       setB(await api<Branding>("/v1/settings/branding/logo", { method: "DELETE" }));
     } catch (e) {

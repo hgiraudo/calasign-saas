@@ -618,8 +618,15 @@ interface I18nCtx {
 
 const Ctx = createContext<I18nCtx | null>(null);
 
+// Idioma activo para código fuera de React (p. ej. errorText en lib/api.ts, que traduce errores por código).
+let activeLocale: Locale = "es";
+export function currentLocale(): Locale {
+  return activeLocale;
+}
+
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [locale, setLocaleState] = useState<Locale>(detect);
+  activeLocale = locale;
   const [explicit, setExplicit] = useState<boolean>(() => readStored() !== null);
 
   const setLocale = useCallback((l: Locale, persist = true) => {

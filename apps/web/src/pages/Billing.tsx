@@ -3,10 +3,25 @@ import { useEffect, useState } from "react";
 import { BILLING_CURRENCIES, PLAN_FEATURES, type BillingOverview, type BillingProvider, type PlanDefinition, type PlanFeature, type PlanId } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
 import { formatDateTime, useI18n } from "../lib/i18n";
-import { formatMoney, useBillingText } from "../lib/i18n-billing";
+import { formatMoney, useBillingText, type BillingKey } from "../lib/i18n-billing";
 import { ErrorBox, Spinner } from "../components/ui";
 
 const PROVIDER_LABEL: Record<Exclude<BillingProvider, "mock">, string> = { stripe: "Stripe", mercadopago: "Mercado Pago" };
+
+// Estados de suscripción de Stripe y de Mercado Pago (preapproval): se muestran traducidos; uno desconocido, tal cual.
+const SUB_STATUS: Record<string, BillingKey> = {
+  active: "billing.st.active",
+  authorized: "billing.st.active",
+  trialing: "billing.st.trialing",
+  past_due: "billing.st.past_due",
+  unpaid: "billing.st.unpaid",
+  canceled: "billing.st.canceled",
+  cancelled: "billing.st.canceled",
+  incomplete: "billing.st.incomplete",
+  incomplete_expired: "billing.st.incomplete_expired",
+  paused: "billing.st.paused",
+  pending: "billing.st.pending",
+};
 
 function UsageBar({ used, max }: { used: number; max: number | null }) {
   if (max === null) return null;
@@ -101,7 +116,7 @@ export function BillingPage() {
             {data.subscription.provider && (
               <p className="small muted" style={{ margin: "4px 0 0" }}>
                 {b("billing.provider", { provider: (data.subscription.provider === "mock" ? b("pay.provider.mock") : PROVIDER_LABEL[data.subscription.provider]) })}
-                {data.subscription.status ? ` · ${b("billing.status", { status: data.subscription.status })}` : ""}
+                {data.subscription.status ? ` · ${b("billing.status", { status: SUB_STATUS[data.subscription.status] ? b(SUB_STATUS[data.subscription.status]) : data.subscription.status })}` : ""}
                 {data.subscription.renewsAt ? ` · ${b("billing.renews", { date: formatDateTime(data.subscription.renewsAt, locale) })}` : ""}
               </p>
             )}

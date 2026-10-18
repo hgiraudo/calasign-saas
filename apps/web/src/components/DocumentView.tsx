@@ -3,6 +3,7 @@ import { useEffect, useState, type PointerEvent as RPointerEvent, type ReactNode
 import type { Document } from "@calasign/shared";
 import { loadPdf, type PDFDocumentProxy } from "../lib/pdf";
 import { errorText } from "../lib/api";
+import { useI18n } from "../lib/i18n";
 import { PdfPage } from "./PdfPage";
 import { ErrorBox } from "./ui";
 
@@ -17,6 +18,7 @@ interface Props {
 }
 
 export function DocumentView({ doc, url, renderOverlay, onPagePointerDown, onPageDrop, overlayClassName, showTitle = true }: Props) {
+  const { t } = useI18n();
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -35,7 +37,7 @@ export function DocumentView({ doc, url, renderOverlay, onPagePointerDown, onPag
     <section className="doc-view" data-document={doc.id}>
       {showTitle && (
         <h3 className="doc-title">
-          {doc.name} <span className="muted small">· {doc.pageCount} pág.</span>
+          {doc.name} <span className="muted small">· {doc.pageCount} {t("edit.pages")}</span>
         </h3>
       )}
       <ErrorBox error={error} />

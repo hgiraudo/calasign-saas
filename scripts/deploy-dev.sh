@@ -84,6 +84,12 @@ else
 fi
 
 healthy() { for i in \$(seq 1 60); do curl -sf localhost:4000/healthz >/dev/null && return 0; sleep 1; done; return 1; }
+# Backup previo obligatorio: la versión nueva aplica sus migraciones al arrancar y el rollback de abajo solo
+# vuelve al código anterior, no deshace el esquema. Sin backup no se despliega.
+if ! /usr/local/bin/calasign-backup.sh; then
+  echo "El backup previo al deploy falló: deploy abortado sin tocar la versión activa" >&2
+  exit 1
+fi
 PREV=\$(readlink -f /opt/calasign/current || true)
 ln -sfn \$D /opt/calasign/current
 systemctl restart calasign
@@ -95,6 +101,7 @@ if ! healthy; then
     if [ "\$NEW_DROPIN" = 1 ]; then rm -f /etc/systemd/system/calasign.service.d/hardening.conf; systemctl daemon-reload; fi
     systemctl restart calasign
     if healthy; then echo "ROLLBACK_OK \$PREV"; else echo "ROLLBACK_FALLIDO \$PREV"; fi
+    echo "Si la versión nueva ya migró la base, restaurar el backup previo (README → Restaurar un backup)."
   fi
   exit 1
 fi

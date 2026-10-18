@@ -7,7 +7,7 @@
 // reporte de /v1/validate y progreso del remitente. Si hay SoftHSM, prueba también la fuente PKCS#11.
 // Uso: node scripts/e2e-certsign.mjs      (no recibe URL: usa la API que levanta en el puerto 4118)
 import { execFileSync, spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,7 +18,13 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const TSX = join(ROOT, "apps/api/node_modules/.bin/tsx");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const procs = [];
-const cleanup = () => procs.forEach((p) => { try { p.kill("SIGTERM"); } catch {} });
+let work = null;
+const cleanup = () => {
+  procs.forEach((p) => { try { p.kill("SIGTERM"); } catch {} });
+  // PKI de laboratorio, base PGlite y archivos de la corrida: sin borrarlos /tmp se llena con cada ejecución
+  // (E2E_KEEP_DATA=1 los conserva para depurar).
+  if (work && process.env.E2E_KEEP_DATA !== "1") { try { rmSync(work, { recursive: true, force: true }); } catch {} }
+};
 process.on("exit", cleanup);
 process.on("uncaughtException", (e) => { console.error(e); cleanup(); process.exit(1); });
 
@@ -30,7 +36,7 @@ function step(msg) {
 }
 
 // ───────── PKI de laboratorio ─────────
-const work = mkdtempSync(join(tmpdir(), "calasign-certsign-e2e-"));
+work = mkdtempSync(join(tmpdir(), "calasign-certsign-e2e-"));
 const labDir = join(work, "lab");
 const lab = spawn(TSX, [join(ROOT, "scripts/e2e-certsign-lab.mts"), labDir], { cwd: ROOT, stdio: ["ignore", "pipe", "inherit"] });
 procs.push(lab);

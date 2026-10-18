@@ -144,9 +144,14 @@ export function EnvelopeDetailPage() {
             </a>
           )}
           {env.status === "awaiting_certificates" && (
-            <button type="button" className="btn btn-danger" disabled={busy} onClick={() => setVoiding(true)}>
-              {t("detail.void")}
-            </button>
+            <>
+              <button type="button" className="btn" disabled={busy} onClick={remind}>
+                {t("detail.remind")}
+              </button>
+              <button type="button" className="btn btn-danger" disabled={busy} onClick={() => setVoiding(true)}>
+                {t("detail.void")}
+              </button>
+            </>
           )}
           {isOpen && (
             <>

@@ -91,6 +91,13 @@ export function VerifyPage() {
             </div>
             <h1>{result.match ? sx("verify.matchTitle") : sx("verify.noMatchTitle")}</h1>
             <p className="muted">{result.match ? sx("verify.matchText") : sx("verify.noMatchText")}</p>
+            {result.match && result.version && !result.version.isLatest && (
+              <p className="notice" role="status" data-testid="verify-older-version">
+                {sx("verify.olderVersion")
+                  .replace("{n}", String(result.version.number))
+                  .replace("{latest}", String(result.version.latest))}
+              </p>
+            )}
             {result.match && result.envelope && (
               <table className="table" style={{ textAlign: "left" }}>
                 <tbody>

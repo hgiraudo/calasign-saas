@@ -269,13 +269,19 @@ ok("dominios SSO: pendiente hasta el TXT; verificado queda de una sola organizac
 
 // ───────────────────────────── SCIM: cupo de usuarios del plan ─────────────────────────────
 
+// SCIM solo da de alta correos de dominios verificados por la organización.
+const SCIM_DOMAIN = `scim-${stamp}.empresa-e2e.test`;
+await D.api("PUT", "/v1/settings/sso", { ...ssoBase, domains: [SCIM_DOMAIN] });
+const sd = (await D.api("GET", "/v1/settings/sso/domains")).items.find((x) => x.domain === SCIM_DOMAIN);
+await D.api("POST", "/dev/dns-stub", { name: sd.txtName, values: [sd.txtValue] });
+assert((await D.api("POST", `/v1/settings/sso/domains/${SCIM_DOMAIN}/verify`, {})).verified, "dominio SCIM verificado");
 const tok = (await D.api("POST", "/v1/settings/scim/tokens", { name: "IdP" }, { expect: 201 })).secret;
 const scim = (method, path, body) =>
   fetch(`${BASE}/scim/v2${path}`, { method, headers: { authorization: `Bearer ${tok}`, "content-type": "application/scim+json" }, body: body ? JSON.stringify(body) : undefined });
-const u1 = await scim("POST", "/Users", { schemas: ["urn:ietf:params:scim:schemas:core:2.0:User"], userName: `scim1-${stamp}@example.com`, active: true });
+const u1 = await scim("POST", "/Users", { schemas: ["urn:ietf:params:scim:schemas:core:2.0:User"], userName: `scim1-${stamp}@${SCIM_DOMAIN}`, active: true });
 assert(u1.status === 201, `alta SCIM con cupo: ${u1.status}`);
 await D.api("POST", "/v1/billing/cancel", {}); // baja a Free (1 usuario)
-const u2 = await scim("POST", "/Users", { schemas: ["urn:ietf:params:scim:schemas:core:2.0:User"], userName: `scim2-${stamp}@example.com`, active: true });
+const u2 = await scim("POST", "/Users", { schemas: ["urn:ietf:params:scim:schemas:core:2.0:User"], userName: `scim2-${stamp}@${SCIM_DOMAIN}`, active: true });
 const e2 = await u2.json();
 assert(u2.status === 402 && e2.schemas?.[0]?.includes("Error") && e2.scimType === "plan_limit" && /plan_limit/.test(e2.detail), `SCIM sin cupo: ${u2.status} ${JSON.stringify(e2)}`);
 ok("SCIM: alta con cupo (201); sin cupo en el plan → 402 plan_limit con el esquema de error de SCIM");

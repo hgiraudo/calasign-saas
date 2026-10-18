@@ -235,6 +235,7 @@ const CURRENCIES: [RegExp, string][] = [
   [/\bBRL\b|R\$|reais/i, "BRL"],
   [/\bDOP\b|RD\$|pesos dominicanos/i, "DOP"],
   [/\bHNL\b|lempiras?|\bL\.\s?\d/i, "HNL"],
+  [/\bPEN\b|S\/\s?\d|soles/i, "PEN"],
   [/\bEUR\b|€|euros?/i, "EUR"],
 ];
 
@@ -337,7 +338,7 @@ export function mockMetadata(docs: DocText[]): { metadata: ContractMetadata; con
 
   const amounts: ContractMetadata["amounts"] = [];
   for (const l of lines) {
-    for (const m of l.text.matchAll(/((?:US\$|U\$S|R\$|RD\$|\$|€|L\.|\b(?:USD|COP|BRL|DOP|HNL|EUR)\b)\s?[\d.,]*\d|[\d.,]*\d\s?(?:USD|COP|BRL|DOP|HNL|EUR|d[oó]lares|reais|lempiras|euros))/gi)) {
+    for (const m of l.text.matchAll(/((?:US\$|U\$S|R\$|RD\$|S\/|\$|€|L\.|\b(?:USD|COP|BRL|DOP|HNL|PEN|EUR)\b)\s?[\d.,]*\d|[\d.,]*\d\s?(?:USD|COP|BRL|DOP|HNL|PEN|EUR|d[oó]lares|reais|lempiras|soles|euros))/gi)) {
       const value = parseAmount(m[1]);
       if (value === null || value === 0) continue;
       const cur = CURRENCIES.find(([re]) => re.test(m[1]) || re.test(l.text));

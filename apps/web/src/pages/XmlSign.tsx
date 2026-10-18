@@ -5,7 +5,7 @@ import { api, errorText } from "../lib/api";
 import { useEvidenceText } from "../lib/i18n-evidence";
 import { ErrorBox, Spinner } from "../components/ui";
 
-const PROFILES: XmlProfileName[] = ["dgii-ecf", "dian-fe", "xades-bes", "xades-epes"];
+const PROFILES: XmlProfileName[] = ["dgii-ecf", "dian-fe", "sunat-cpe", "xades-bes", "xades-epes"];
 
 export function XmlSignPage() {
   const ev = useEvidenceText();

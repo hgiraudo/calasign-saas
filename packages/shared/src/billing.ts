@@ -43,14 +43,14 @@ export const PLANS: Record<PlanId, PlanDefinition> = {
   enterprise: { id: "enterprise", name: "Enterprise", envelopesPerMonth: null, users: null, features: PLAN_FEATURES },
 };
 
-export const BILLING_CURRENCIES = ["USD", "BRL", "COP", "DOP", "HNL"] as const;
+export const BILLING_CURRENCIES = ["USD", "BRL", "COP", "DOP", "HNL", "PEN"] as const;
 export type BillingCurrency = (typeof BILLING_CURRENCIES)[number];
 
 /** Precio mensual por plan y moneda (lista de precios local, no conversión al tipo de cambio del día). */
 export const PLAN_PRICES: Record<Exclude<PlanId, "free">, Record<BillingCurrency, number>> = {
-  starter: { USD: 15, BRL: 79, COP: 59000, DOP: 890, HNL: 370 },
-  business: { USD: 49, BRL: 249, COP: 199000, DOP: 2890, HNL: 1210 },
-  enterprise: { USD: 199, BRL: 990, COP: 790000, DOP: 11500, HNL: 4900 },
+  starter: { USD: 15, BRL: 79, COP: 59000, DOP: 890, HNL: 370, PEN: 55 },
+  business: { USD: 49, BRL: 249, COP: 199000, DOP: 2890, HNL: 1210, PEN: 179 },
+  enterprise: { USD: 199, BRL: 990, COP: 790000, DOP: 11500, HNL: 4900, PEN: 729 },
 };
 
 export const BILLING_PROVIDERS = ["stripe", "mercadopago", "mock"] as const;
@@ -109,7 +109,7 @@ export const PAYMENT_PROVIDERS = ["stripe", "mercadopago", "mock"] as const;
 export type PaymentProvider = (typeof PAYMENT_PROVIDERS)[number];
 export const PAYMENT_TIMINGS = ["before_sign", "after_sign"] as const;
 export type PaymentTiming = (typeof PAYMENT_TIMINGS)[number];
-export const PAYMENT_CURRENCIES = ["USD", "BRL", "COP", "DOP", "HNL", "MXN", "ARS", "EUR"] as const;
+export const PAYMENT_CURRENCIES = ["USD", "BRL", "COP", "DOP", "HNL", "PEN", "MXN", "ARS", "EUR"] as const;
 
 export const EnvelopePaymentInput = z.object({
   amount: z.number().positive().max(100_000_000).multipleOf(0.01),

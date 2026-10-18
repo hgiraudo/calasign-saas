@@ -121,14 +121,15 @@ assert(list.items.some((c) => c.id === cert.id), "listado");
 step(`certificado de la organización en custodia: ${cert.commonName} (${cert.keyAlgorithm}, cadena ${cert.chainLength})${legacyId ? " + .p12 legado" : ""}; contraseña incorrecta → 400`);
 
 // Firma XML
-for (const [profile, xml] of [["dgii-ecf", ECF], ["dian-fe", UBL], ["xades-bes", ECF], ["xades-epes", UBL]]) {
+const SUNAT = `<?xml version="1.0" encoding="UTF-8"?><Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2" xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2" xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2" xmlns:ext="urn:oasis:names:specification:ubl:schema:xsd:CommonExtensionComponents-2"><ext:UBLExtensions><ext:UBLExtension><ext:ExtensionContent/></ext:UBLExtension></ext:UBLExtensions><cbc:UBLVersionID>2.1</cbc:UBLVersionID><cbc:ID>F001-00000123</cbc:ID><cac:Signature><cbc:ID>SignSUNAT</cbc:ID></cac:Signature><cac:LegalMonetaryTotal><cbc:PayableAmount currencyID="PEN">1180.00</cbc:PayableAmount></cac:LegalMonetaryTotal></Invoice>`;
+for (const [profile, xml] of [["dgii-ecf", ECF], ["dian-fe", UBL], ["sunat-cpe", SUNAT], ["xades-bes", ECF], ["xades-epes", UBL]]) {
   const body = { xml, profile, certificateId: legacyId && profile === "dgii-ecf" ? legacyId : cert.id };
   if (profile === "xades-epes") body.policy = { identifier: "https://example.com/politica.pdf", hashBase64: "dMoMvtcG5aIzgYo0tIsSQeVJBDnUnfSOfBpxXrmor0Y=" };
   const r = await api("POST", "/v1/xml/sign", body);
   assert(r.verification.valid, `${profile}: verificación ${JSON.stringify(r.verification.errors)}`);
   const v = await api("POST", "/v1/xml/verify", { xml: r.signedXml });
   assert(v.valid, `${profile}: /v1/xml/verify`);
-  const t = await api("POST", "/v1/xml/verify", { xml: r.signedXml.replace(/2360\.00|119000\.00/, "1.00") });
+  const t = await api("POST", "/v1/xml/verify", { xml: r.signedXml.replace(/2360\.00|119000\.00|1180\.00/, "1.00") });
   assert(!t.valid, `${profile}: alteración detectada`);
   if (profile === "dian-fe") assert(v.xades?.policyIdentifier?.includes("dian.gov.co") && v.xades?.signerRole === "supplier", "política y rol DIAN");
   if (profile === "dgii-ecf") assert(v.xades === null, "DGII: XMLDSig sin XAdES");

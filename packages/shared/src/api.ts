@@ -29,7 +29,8 @@ export type FieldType = (typeof FIELD_TYPES)[number];
 /** Campos que el servidor completa solo (el firmante no los edita). */
 export const AUTO_FIELD_TYPES: readonly FieldType[] = ["date_signed", "name", "email"];
 
-export const ID_DOCUMENT_TYPES = ["cedula", "cpf", "dni", "passport", "other"] as const;
+/** cedula (RD, CO), cpf (BR), dni (HN, PE), ce = carné de extranjería (PE, CO), passport, other. */
+export const ID_DOCUMENT_TYPES = ["cedula", "cpf", "dni", "passport", "other", "ce"] as const;
 
 // ───────────────────────────── Errores ─────────────────────────────
 

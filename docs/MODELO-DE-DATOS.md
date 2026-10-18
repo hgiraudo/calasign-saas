@@ -54,13 +54,27 @@ Cada evento: actor (`user`, `api_key`, `recipient`, `system`), IP, user agent, d
 
 - Originales e imágenes de firma: se pueden borrar al vencer la retención del plan.
 - PDF final sellado y `envelope_events`: se conservan durante todo el plazo legal (Object Lock).
-- Datos personales de destinatarios: anonimizables a pedido (LGPD / Ley 1581 / Ley 172-13) salvo lo que la evidencia legal exige conservar.
+- Datos personales de destinatarios: anonimizables a pedido (LGPD / Ley 1581 / Ley 172-13 / Ley 29733) salvo lo que la evidencia legal exige conservar.
 
-## Tablas previstas para fases siguientes
+## Migraciones
 
-| Fase | Tablas |
+El diagrama de arriba es el núcleo (0001). Cada bloque funcional agrega su propia migración:
+
+| Migración | Qué agrega |
 |---|---|
-| 2 | `templates`, `template_recipients`, `template_fields`, `otp_challenges`, `subscriptions`, `usage_records` |
-| 3 | `webhook_endpoints`, `webhook_deliveries`, `oauth_clients` |
-| 4 | `groups`, `group_members`, `bulk_sends`, `bulk_send_items`, `web_forms`, `account_audit_log` |
-| 5 | `identity_verifications`, `certificate_signatures` (proveedor, certificado, nivel), `retention_policies` |
+| `0001_init` | Organizaciones, usuarios, sesiones, API keys, archivos, sobres, documentos, destinatarios, campos, firmas adoptadas, eventos encadenados, jobs, notificaciones, idempotencia |
+| `0002_integrations` | Webhooks y entregas, firma embebida (códigos de un solo uso, orígenes permitidos), destinatarios `embedded` |
+| `0003_productivity` | Plantillas (documentos, roles, campos), campos número/desplegable/empresa/cargo/adjunto con valores de solo lectura, branding |
+| `0004_signer` | OTP del firmante, aprobador, delegación y reasignación, recordatorios automáticos |
+| `0005_teams` | Roles personalizados, invitaciones, grupos, compartir sobres y plantillas, auditoría de cuenta, retención, 2FA TOTP |
+| `0006_scale` | Envíos masivos, formularios web, condiciones y fórmulas de campos |
+| `0007_experience` | Firma en persona, confirmación de identidad del anfitrión, índices de reportes |
+| `0008_platform` | Servidor OAuth 2.0, integraciones de notificaciones, exportación a almacenamiento, dominios propios |
+| `0009_evidence` | Nivel de sello por organización, certificados en custodia, sello de empresa |
+| `0010_identity` | Verificación de identidad (KYC), SSO OIDC/SAML, SCIM |
+| `0011_ai` | Opt-in y presupuesto de IA, metadatos y revisión, uso de tokens |
+| `0012_agreements` | Repositorio de acuerdos, plantillas de documentos, cláusulas, workflows, negociaciones |
+| `0013_agents_billing` | Links de descarga para agentes, pagos en la firma, webhooks de pago, planes y suscripciones |
+
+Reglas: una migración por bloque, solo aditiva salvo cuando se recrea un `CHECK` para sumar un valor; nunca se edita una
+migración ya aplicada en un entorno.

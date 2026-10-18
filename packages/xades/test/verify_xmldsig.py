@@ -58,7 +58,9 @@ def main(path):
     cert = x509.load_der_x509_certificate(base64.b64decode(cert_b64))
     value = base64.b64decode("".join(sig.find(f"{{{DS}}}SignatureValue").text.split()))
     try:
-        cert.public_key().verify(value, c14n(si, c14n_alg), padding.PKCS1v15(), hashes.SHA256())
+        sig_method = si.find(f"{{{DS}}}SignatureMethod").get("Algorithm")
+        algo = hashes.SHA1() if sig_method.endswith("#rsa-sha1") else hashes.SHA256()
+        cert.public_key().verify(value, c14n(si, c14n_alg), padding.PKCS1v15(), algo)
         sig_ok = True
     except Exception:
         sig_ok = False

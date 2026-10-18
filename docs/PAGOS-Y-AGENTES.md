@@ -25,6 +25,8 @@ Flujo del firmante: `GET /v1/signing/:token/payment` (si le toca pagar, monto y 
 
 Para RD y Honduras: Stripe (tarjeta) o un procesador local que se agregue como adaptador nuevo (`modules/billing/providers.ts`).
 
+**Perú:** Mercado Pago opera en Perú (tarjetas y medios locales según la cuenta); Yape/Plin y procesadores como Niubiz, Izipay o Culqi quedan como adaptadores futuros. Verificar disponibilidad de Stripe para empresas peruanas antes de ofrecerlo. Los planes tienen precio en **PEN** (`BILLING_CURRENCIES`) y los cobros dentro de la firma aceptan PEN.
+
 ### Webhooks
 
 | Proveedor | URL | Verificación |

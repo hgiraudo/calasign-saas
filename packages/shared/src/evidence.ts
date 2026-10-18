@@ -8,7 +8,7 @@ export type SealLevelSetting = (typeof SEAL_LEVELS)[number];
 export const SIGNATURE_LEVELS = ["simple", "advanced", "qualified"] as const;
 export type SignatureLevel = (typeof SIGNATURE_LEVELS)[number];
 
-export const XML_PROFILES = ["dgii-ecf", "dian-fe", "xades-bes", "xades-epes"] as const;
+export const XML_PROFILES = ["dgii-ecf", "dian-fe", "sunat-cpe", "xades-bes", "xades-epes"] as const;
 export type XmlProfileName = (typeof XML_PROFILES)[number];
 
 // ───────────── Ajustes de evidencia ─────────────
@@ -66,6 +66,8 @@ export const XmlSignInput = z.object({
     .optional()
     .nullable(),
   signerRole: z.string().max(100).optional().nullable(),
+  /** sunat-cpe usa RSA-SHA1 por defecto (guía UBL 2.1 de SUNAT); se puede pedir RSA-SHA256 si el OSE lo acepta. */
+  signatureAlgorithm: z.enum(["rsa-sha256", "rsa-sha1"]).optional(),
 });
 export type XmlSignInput = z.infer<typeof XmlSignInput>;
 

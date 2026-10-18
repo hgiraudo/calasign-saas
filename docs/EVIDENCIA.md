@@ -56,7 +56,7 @@ confianza (`TRUST_STORE_DIR` + la raíz del sello de plataforma), revocación (O
 ## 4. Firma XML (facturación electrónica)
 
 `packages/xades`, `POST /v1/xml/sign` y `POST /v1/xml/verify`. Firma enveloped, RSA-SHA256, digests SHA-256
-(configurable SHA-512). C14N 1.0 inclusiva y exclusiva de `xml-crypto`, con un ajuste: en la inclusiva se
+(configurable SHA-512); el perfil `sunat-cpe` usa RSA-SHA1 y SHA-1 por defecto (ver tabla). C14N 1.0 inclusiva y exclusiva de `xml-crypto`, con un ajuste: en la inclusiva se
 emite el namespace por defecto heredado en el ápice (xml-crypto no lo hace). La salida se contrasta en los
 tests con un verificador propio, con `xml-crypto` y con **libxml2** (lxml, `packages/xades/test/verify_xmldsig.py`).
 
@@ -64,6 +64,7 @@ tests con un verificador propio, con `xml-crypto` y con **libxml2** (lxml, `pack
 |---|---|
 | `dgii-ecf` | DGII e-CF (RD): XMLDSig enveloped **sin XAdES**, C14N inclusiva, `ds:Signature` al final del elemento raíz, `X509Certificate` del firmante en `KeyInfo`. |
 | `dian-fe` | DIAN (CO): XAdES-EPES v1.3.2, política v2 (`https://facturaelectronica.dian.gov.co/politicadefirma/v2/politicadefirmav2.pdf`, hash configurable — el valor por defecto debe verificarse contra el Anexo Técnico), rol `supplier`, C14N inclusiva, `SigningTime` con −05:00, referencias a documento + `KeyInfo` + `SignedProperties`, firma dentro del último `ext:ExtensionContent` vacío. |
+| `sunat-cpe` | SUNAT (PE), comprobantes electrónicos UBL 2.1: XMLDSig enveloped **sin XAdES**, C14N inclusiva, **RSA-SHA1 con digest SHA-1 por defecto** (como la guía de elaboración de documentos XML UBL 2.1 de SUNAT; `signatureAlgorithm: "rsa-sha256"` si el OSE/SEE lo acepta), firma dentro del **primer** `ext:ExtensionContent` vacío, `Id` de `ds:Signature` tomado de `cac:Signature/cbc:ID` (o `SignatureSP`). RSA-SHA1 solo lo puede hacer un certificado en custodia propia (KMS no firma SHA-1). |
 | `xades-bes` | Genérico: C14N exclusiva, `SigningCertificate` + `DataObjectFormat`. |
 | `xades-epes` | Igual que BES + `SignaturePolicyIdentifier` (política obligatoria en el pedido). |
 

@@ -1,5 +1,5 @@
 // Firma XML enveloped: XMLDSig, XAdES-BES y XAdES-EPES (ETSI TS 101 903 v1.3.2), con perfiles para
-// facturación electrónica de RD (DGII e-CF) y Colombia (DIAN). La canonicalización (C14N 1.0 inclusiva y
+// facturación electrónica de RD (DGII e-CF), Colombia (DIAN) y Perú (SUNAT CPE). La canonicalización (C14N 1.0 inclusiva y
 // exclusiva) es la de xml-crypto; la firma la hace un XmlSigner (compatible con SignatureProvider), así la
 // clave puede estar en KMS, en un HSM, en un prestador CSC o cifrada en la base.
 import { createHash, createVerify, randomUUID, X509Certificate } from "node:crypto";
@@ -18,18 +18,23 @@ export const ALG = {
   excC14n: "http://www.w3.org/2001/10/xml-exc-c14n#",
   enveloped: "http://www.w3.org/2000/09/xmldsig#enveloped-signature",
   rsaSha256: "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256",
+  rsaSha1: "http://www.w3.org/2000/09/xmldsig#rsa-sha1",
+  sha1: "http://www.w3.org/2000/09/xmldsig#sha1",
   sha256: "http://www.w3.org/2001/04/xmlenc#sha256",
   sha512: "http://www.w3.org/2001/04/xmlenc#sha512",
   signedProps: "http://uri.etsi.org/01903#SignedProperties",
 };
 
-export type XmlProfile = "xades-bes" | "xades-epes" | "dian-fe" | "dgii-ecf";
+export type XmlProfile = "xades-bes" | "xades-epes" | "dian-fe" | "dgii-ecf" | "sunat-cpe";
+export type XmlSignatureAlgorithm = "rsa-sha256" | "rsa-sha1";
 
 export interface XmlSigner {
   /** DER: [firmante, intermedias…]. */
   certificateChain(): Promise<Uint8Array[]>;
   /** RSA PKCS#1 v1.5 sobre un digest SHA-256. */
   signDigest(digest: Uint8Array): Promise<Uint8Array>;
+  /** RSA PKCS#1 v1.5 sobre un digest SHA-1. Solo hace falta para perfiles que exigen RSA-SHA1 (SUNAT). */
+  signDigestSha1?(digest: Uint8Array): Promise<Uint8Array>;
 }
 
 export interface SignaturePolicy {
@@ -52,6 +57,10 @@ export interface XmlSignOptions {
   digest?: "sha256" | "sha512";
   /** Incluir todos los certificados de la cadena en KeyInfo (por defecto solo el firmante). */
   includeChain?: boolean;
+  /** Algoritmo de firma y de digest. Por defecto RSA-SHA256; sunat-cpe usa RSA-SHA1 (guía UBL 2.1 de SUNAT). */
+  signatureAlgorithm?: XmlSignatureAlgorithm;
+  /** Id de ds:Signature. sunat-cpe lo toma de cac:Signature/cbc:ID (o usa "SignatureSP"). */
+  signatureId?: string;
 }
 
 /**
@@ -73,6 +82,9 @@ interface ProfileDefaults {
   timeZoneOffset: string | null;
   keyInfoReference: boolean;
   dataObjectFormat: boolean;
+  signatureAlgorithm: XmlSignatureAlgorithm;
+  /** Dónde va ds:Signature: al final de la raíz o en un ext:ExtensionContent vacío (UBL). */
+  placement: "root" | "ubl-last-empty" | "ubl-first-empty";
 }
 
 /**
@@ -80,16 +92,20 @@ interface ProfileDefaults {
  * - dgii-ecf: XMLDSig enveloped (sin XAdES), C14N inclusiva, RSA-SHA256, firma al final del elemento raíz.
  * - dian-fe: XAdES-EPES 1.3.2 con política DIAN v2, rol "supplier", C14N inclusiva, firma dentro del
  *   último ext:ExtensionContent vacío (UBLExtensions), SigningTime con -05:00 y referencia a KeyInfo.
+ * - sunat-cpe: XMLDSig enveloped (sin XAdES), C14N inclusiva, RSA-SHA1 y digest SHA-1 por defecto
+ *   (como la guía de elaboración de documentos XML UBL 2.1 de SUNAT; configurable a RSA-SHA256),
+ *   firma dentro del primer ext:ExtensionContent vacío y Id tomado de cac:Signature/cbc:ID.
  * - xades-bes / xades-epes: genéricos, C14N exclusiva, con DataObjectFormat.
  */
 const PROFILES: Record<XmlProfile, ProfileDefaults> = {
-  "dgii-ecf": { xades: false, canonicalization: "c14n", policy: null, signerRole: null, timeZoneOffset: null, keyInfoReference: false, dataObjectFormat: false },
-  "dian-fe": { xades: true, canonicalization: "c14n", policy: DIAN_POLICY_V2, signerRole: "supplier", timeZoneOffset: "-05:00", keyInfoReference: true, dataObjectFormat: false },
-  "xades-bes": { xades: true, canonicalization: "exc-c14n", policy: null, signerRole: null, timeZoneOffset: null, keyInfoReference: false, dataObjectFormat: true },
-  "xades-epes": { xades: true, canonicalization: "exc-c14n", policy: null, signerRole: null, timeZoneOffset: null, keyInfoReference: false, dataObjectFormat: true },
+  "dgii-ecf": { xades: false, canonicalization: "c14n", policy: null, signerRole: null, timeZoneOffset: null, keyInfoReference: false, dataObjectFormat: false, signatureAlgorithm: "rsa-sha256", placement: "root" },
+  "dian-fe": { xades: true, canonicalization: "c14n", policy: DIAN_POLICY_V2, signerRole: "supplier", timeZoneOffset: "-05:00", keyInfoReference: true, dataObjectFormat: false, signatureAlgorithm: "rsa-sha256", placement: "ubl-last-empty" },
+  "sunat-cpe": { xades: false, canonicalization: "c14n", policy: null, signerRole: null, timeZoneOffset: null, keyInfoReference: false, dataObjectFormat: false, signatureAlgorithm: "rsa-sha1", placement: "ubl-first-empty" },
+  "xades-bes": { xades: true, canonicalization: "exc-c14n", policy: null, signerRole: null, timeZoneOffset: null, keyInfoReference: false, dataObjectFormat: true, signatureAlgorithm: "rsa-sha256", placement: "root" },
+  "xades-epes": { xades: true, canonicalization: "exc-c14n", policy: null, signerRole: null, timeZoneOffset: null, keyInfoReference: false, dataObjectFormat: true, signatureAlgorithm: "rsa-sha256", placement: "root" },
 };
 
-const DIGEST_URI = { sha256: ALG.sha256, sha512: ALG.sha512 } as const;
+const DIGEST_URI = { sha256: ALG.sha256, sha512: ALG.sha512, sha1: ALG.sha1 } as const;
 const DIGEST_BY_URI: Record<string, "sha256" | "sha512" | "sha1"> = {
   [ALG.sha256]: "sha256",
   [ALG.sha512]: "sha512",
@@ -198,12 +214,24 @@ function formatTime(d: Date, offset: string | null): string {
   return `${local}${offset}`;
 }
 
+/** Id que el UBL declara para su firma (cac:Signature/cbc:ID), usado por SUNAT como Id de ds:Signature. */
+function ublSignatureId(doc: Document): string | null {
+  const cac = "urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2";
+  const cbc = "urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2";
+  const sig = descendantsNS(doc, cac, "Signature")[0];
+  const id = sig ? firstChildNS(sig, cbc, "ID")?.textContent?.trim() : null;
+  return id || null;
+}
+
 // ───────────────────────────── Firma ─────────────────────────────
 
 export async function signXml(xml: string, signer: XmlSigner, options: XmlSignOptions): Promise<string> {
   const p = PROFILES[options.profile];
   const c14nAlg = (options.canonicalization ?? p.canonicalization) === "exc-c14n" ? ALG.excC14n : ALG.c14n;
-  const dAlg = options.digest ?? "sha256";
+  const sigAlg: XmlSignatureAlgorithm = options.signatureAlgorithm ?? p.signatureAlgorithm;
+  // Con RSA-SHA1 los digests de referencia también son SHA-1 (así lo pide SUNAT); si no, SHA-256 o el indicado.
+  const dAlg: "sha256" | "sha512" | "sha1" = sigAlg === "rsa-sha1" ? "sha1" : options.digest ?? "sha256";
+  if (sigAlg === "rsa-sha1" && !signer.signDigestSha1) throw new Error("Este certificado o proveedor no puede firmar con RSA-SHA1");
   const dUri = DIGEST_URI[dAlg];
   const policy = options.policy !== undefined ? options.policy : p.policy;
   if (options.profile === "xades-epes" && !policy) throw new Error("XAdES-EPES requiere una política de firma");
@@ -220,7 +248,7 @@ export async function signXml(xml: string, signer: XmlSigner, options: XmlSignOp
 
   const uid = randomUUID();
   const ids = {
-    sig: `xmldsig-${uid}`,
+    sig: options.signatureId ?? (options.profile === "sunat-cpe" ? ublSignatureId(doc) ?? "SignatureSP" : `xmldsig-${uid}`),
     ref0: `xmldsig-${uid}-ref0`,
     keyInfo: `xmldsig-${uid}-keyinfo`,
     signedProps: `xmldsig-${uid}-signedprops`,
@@ -269,17 +297,18 @@ export async function signXml(xml: string, signer: XmlSigner, options: XmlSignOp
       : "");
   const sigXml =
     `<ds:Signature xmlns:ds="${NS.ds}"${xadesNs} Id="${ids.sig}">` +
-    `<ds:SignedInfo><ds:CanonicalizationMethod Algorithm="${c14nAlg}"/><ds:SignatureMethod Algorithm="${ALG.rsaSha256}"/>${refs}</ds:SignedInfo>` +
+    `<ds:SignedInfo><ds:CanonicalizationMethod Algorithm="${c14nAlg}"/><ds:SignatureMethod Algorithm="${sigAlg === "rsa-sha1" ? ALG.rsaSha1 : ALG.rsaSha256}"/>${refs}</ds:SignedInfo>` +
     `<ds:SignatureValue Id="${ids.sigValue}">SIGVALUE</ds:SignatureValue>` +
     `<ds:KeyInfo Id="${ids.keyInfo}"><ds:X509Data>${certs}</ds:X509Data></ds:KeyInfo>` +
     signedProps +
     `</ds:Signature>`;
 
-  // 3) Ubicación: en DIAN, dentro del último ext:ExtensionContent vacío; si no, al final de la raíz.
+  // 3) Ubicación: DIAN en el último ext:ExtensionContent vacío, SUNAT en el primero; si no, al final de la raíz.
   let parent: Element = root;
-  if (options.profile === "dian-fe") {
+  if (p.placement !== "root") {
     const contents = descendantsNS(doc, NS.ublExt, "ExtensionContent").filter((e) => !Array.from({ length: e.childNodes.length }, (_, i) => e.childNodes[i]).some((n) => n.nodeType === 1));
-    if (contents.length) parent = contents[contents.length - 1];
+    if (contents.length) parent = p.placement === "ubl-first-empty" ? contents[0] : contents[contents.length - 1];
+    else if (options.profile === "sunat-cpe") throw new Error("El XML de SUNAT necesita un ext:UBLExtensions/ext:UBLExtension/ext:ExtensionContent vacío para la firma");
   }
   const fragment = new DOMParser().parseFromString(sigXml, "text/xml").documentElement!;
   const sigEl = doc.importNode(fragment, true) as Element;
@@ -298,7 +327,10 @@ export async function signXml(xml: string, signer: XmlSigner, options: XmlSignOp
 
   // 5) Firma de SignedInfo.
   const siC14n = canonicalize(signedInfo, c14nAlg);
-  const sig = await signer.signDigest(new Uint8Array(digest("sha256", siC14n)));
+  const sig =
+    sigAlg === "rsa-sha1"
+      ? await signer.signDigestSha1!(new Uint8Array(digest("sha1", siC14n)))
+      : await signer.signDigest(new Uint8Array(digest("sha256", siC14n)));
   firstChildNS(sigEl, NS.ds, "SignatureValue")!.textContent = b64(sig);
 
   return new XMLSerializer().serializeToString(doc);
@@ -357,7 +389,8 @@ export function verifyXml(xml: string): XmlVerifyResult {
   let signatureValid = false;
   if (cert) {
     const value = Buffer.from(firstChildNS(sigEl, NS.ds, "SignatureValue")?.textContent?.replace(/\s+/g, "") ?? "", "base64");
-    const v = createVerify("RSA-SHA256");
+    const sigMethod = firstChildNS(signedInfo, NS.ds, "SignatureMethod")?.getAttribute("Algorithm");
+    const v = createVerify(sigMethod === ALG.rsaSha1 ? "RSA-SHA1" : "RSA-SHA256");
     v.update(canonicalize(signedInfo, c14nAlg));
     signatureValid = v.verify(cert.publicKey, value);
     if (!signatureValid) errors.push("SignatureValue no verifica");

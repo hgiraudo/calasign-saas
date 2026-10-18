@@ -18,6 +18,8 @@ export interface SignatureProvider {
 
 // DigestInfo DER prefix para SHA-256 (RFC 8017 §9.2).
 const SHA256_DIGEST_INFO_PREFIX = Buffer.from("3031300d060960864801650304020105000420", "hex");
+// DigestInfo DER prefix para SHA-1: solo para perfiles heredados que lo exigen (SUNAT CPE).
+const SHA1_DIGEST_INFO_PREFIX = Buffer.from("3021300906052b0e03021a05000414", "hex");
 
 /** Clave RSA en PEM (PKCS#8) + cadena en PEM. Para desarrollo y entornos sin KMS. */
 export class LocalKeyProvider implements SignatureProvider {
@@ -44,6 +46,13 @@ export class LocalKeyProvider implements SignatureProvider {
     const digestInfo = Buffer.concat([SHA256_DIGEST_INFO_PREFIX, Buffer.from(digest)]);
     return new Uint8Array(privateEncrypt({ key: this.key, padding: constants.RSA_PKCS1_PADDING }, digestInfo));
   }
+  /** Firma RSA PKCS#1 v1.5 sobre un digest SHA-1 (perfiles heredados como SUNAT CPE). */
+  async signDigestSha1(digest: Uint8Array) {
+    if (digest.length !== 20) throw new Error("se esperaba un digest SHA-1");
+    const digestInfo = Buffer.concat([SHA1_DIGEST_INFO_PREFIX, Buffer.from(digest)]);
+    return new Uint8Array(privateEncrypt({ key: this.key, padding: constants.RSA_PKCS1_PADDING }, digestInfo));
+  }
+
 }
 
 export function pemToDerList(pem: string): Uint8Array[] {

@@ -2,6 +2,27 @@
 
 > Octubre 2026. Producto standalone. Se integrará después con *dynamic-form* (como cliente de la API) y con la
 > Autoridad Certificante de Calasign (como proveedor de firma con certificado), sin depender de ninguno.
+> Mercados: República Dominicana, Honduras, Colombia, Brasil y Perú.
+
+## Estado actual (2026-10-17)
+
+El roadmap de las fases 1 a 6 está implementado (ver la tabla de estado en [`ROADMAP.md`](../ROADMAP.md)). La arquitectura
+de abajo se mantiene: un monolito modular en `apps/api` con un módulo por área, todos registrados en `src/app.ts` y
+protegidos por una única política de permisos (`modules/access.ts`, RBAC + scopes OAuth + límites de plan):
+
+| Área | Módulos (`apps/api/src/modules/`) | Documento |
+|---|---|---|
+| Núcleo | `envelopes`, `signing`, `mappers`, `jobs`, `templates`, `participants`, `reminders` | este |
+| Integraciones | `webhooks`, `embed`, `anchors`, `openapi`, `oauth*`, `notify-integrations`, `storage-export`, `custom-domains`, `mcp/` | [`CUSTOM-DOMAINS.md`](CUSTOM-DOMAINS.md), [`PAGOS-Y-AGENTES.md`](PAGOS-Y-AGENTES.md) |
+| Firmante | `otp`, `signer-features`, `experience`, `identity/` (KYC, SSO, SCIM) | — |
+| Equipos | `teams`, `access`, `audit`, `retention` | — |
+| Escala | `bulk`, `webforms`, `logic`, `scale` | — |
+| Evidencia | `evidence`, `evidence-seal`, `custody`, `verify` + `packages/pdf`, `packages/xades` | [`EVIDENCIA.md`](EVIDENCIA.md) |
+| Acuerdos e IA | `agreements/`, `ai/` | [`IA.md`](IA.md) |
+| Cobro | `billing/` | [`PAGOS-Y-AGENTES.md`](PAGOS-Y-AGENTES.md) |
+
+Cada área tiene su prueba de punta a punta en `scripts/e2e-*.mjs`; el contrato completo y vigente de la API se publica en
+`GET /v1/openapi.json` y en la página `/developers`. La §12 de abajo es el contrato original del MVP y queda como referencia.
 
 ## 1. Requisitos que mandan sobre el diseño
 
@@ -168,7 +189,7 @@ draft ──send──► sent ──(todos los firmantes firman)──► final
 
 `pnpm dev` levanta todo sin Docker: Postgres embebido (**PGlite**) si no hay `DATABASE_URL`, almacenamiento en disco (`var/`), un certificado de sello de desarrollo autogenerado, y un **buzón de desarrollo** (`/dev/mailbox`) donde caen los correos y mensajes de WhatsApp con sus links de firma. Con `DATABASE_URL`, `S3_BUCKET`, `KMS_KEY_ID` y `SMTP_URL` configurados, el mismo código usa la infraestructura real.
 
-## 12. Contrato de la API v1 (MVP)
+## 12. Contrato de la API v1 (MVP, referencia histórica: el vigente es `/v1/openapi.json`)
 
 Todas las respuestas son JSON. Errores: `{ "error": { "code": "string", "message": "string", "details"?: any } }`. Autenticación: cookie de sesión o `Authorization: Bearer <api key>` (excepto `/v1/auth/*` y `/v1/signing/*`). `Idempotency-Key` opcional en `POST /v1/envelopes` y `POST /v1/envelopes/:id/send`.
 

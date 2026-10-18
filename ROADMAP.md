@@ -1,7 +1,7 @@
 # CalaSign — Análisis de mercado y roadmap de features
 
 > Motor de firma electrónica en la nube (SaaS + API). Documento de trabajo, octubre 2026.
-> **Mercados objetivo: República Dominicana, Honduras, Colombia y Brasil.**
+> **Mercados objetivo: República Dominicana, Honduras, Colombia, Brasil y Perú** (Perú agregado el 2026-10-17).
 
 ---
 
@@ -92,7 +92,7 @@
 ### 3.5 Capa legal y criptográfica (lo que no se ve pero define el producto)
 
 - **Niveles de firma**:
-  - *Simple (SES)*: email + click + evidencia. Suficiente para la mayoría de contratos comerciales (ESIGN/UETA en EE. UU.; firma electrónica simple en RD, Honduras, Colombia y Brasil).
+  - *Simple (SES)*: email + click + evidencia. Suficiente para la mayoría de contratos comerciales (ESIGN/UETA en EE. UU.; firma electrónica simple en RD, Honduras, Colombia, Brasil y Perú).
   - *Avanzada (AES)*: vinculada únicamente al firmante, con control exclusivo y detección de cambios (eIDAS).
   - *Cualificada (QES) / Firma digital*: certificado emitido por un prestador acreditado y dispositivo seguro (HSM). Ver sección 3.6 para los cuatro países objetivo. Referencia internacional: en la UE, QES remota vía prestadores cualificados (eIDAS 2).
 - **Sellado del PDF**: firma PAdES (B-B → B-T con sello de tiempo → B-LT con datos de validación → B-LTA para archivo a largo plazo), certificado de la plataforma en HSM/KMS.
@@ -116,13 +116,29 @@
 | **Pagos** | Tarjeta, transferencia | Tarjeta, transferencia | PSE, tarjeta, Nequi | **Pix**, boleto, tarjeta |
 | **Oportunidades** | Mercado SaaS poco atendido; ola de facturación electrónica 2026 | Mercado temprano; primer jugador SaaS serio puede definir la categoría | Fintech y crédito: **pagaré electrónico**, onboarding bancario, contratos laborales | Mercado más grande y competido; diferenciarse por API, white-label y precio |
 
+#### Perú
+
+| | Perú |
+|---|---|
+| **Ley base** | Ley 27269, Ley de Firmas y Certificados Digitales; Reglamento aprobado por D.S. 052-2008-PCM y modificatorias |
+| **Regulador / acreditador** | INDECOPI, Autoridad Administrativa Competente de la IOFE (Infraestructura Oficial de Firma Electrónica) |
+| **Niveles** | Firma electrónica / firma digital (certificado de una entidad acreditada en la IOFE, con presunción de validez equivalente a la manuscrita) |
+| **Proveedores de certificados** | RENIEC (entidad de certificación del Estado y DNI electrónico) y entidades privadas acreditadas por INDECOPI |
+| **Casos que exigen firma digital** | Comprobantes de pago electrónicos de la SUNAT (UBL 2.1 con XMLDSig, emitidos vía SEE u OSE), trámites con el Estado |
+| **Protección de datos** | Ley 29733 de Protección de Datos Personales y su reglamento (Autoridad Nacional de Protección de Datos Personales) |
+| **Idioma / canales** | ES · WhatsApp |
+| **Pagos** | Tarjeta, Yape/Plin, transferencia; Mercado Pago opera en Perú; procesadores locales (Niubiz, Izipay, Culqi) como adaptadores futuros |
+| **Oportunidades** | Facturación electrónica masiva (SUNAT) como puerta de entrada; banca, seguros y crédito con DNI electrónico |
+
+> Hay que confirmar con un abogado local el encuadre de cada caso de uso y, con el OSE/SEE elegido, los algoritmos de firma aceptados para los CPE.
+
 **Conclusiones para el producto:**
 
-1. Un **solo motor** con niveles de firma configurables y **conectores de certificación por país** (interfaz común: obtener certificado, firmar hash, validar). Se empieza con firma simple robusta, que es legal en los cuatro países para contratos privados.
-2. El **formato de firma** debe soportar PAdES (PDF) y **XAdES** (XML, para facturación electrónica de DGII y DIAN).
-3. **Internacionalización** desde el día uno: ES y PT-BR, zonas horarias, formatos de fecha/moneda, documentos de identidad locales (cédula RD, DNI Honduras, cédula Colombia, CPF/CNPJ Brasil).
+1. Un **solo motor** con niveles de firma configurables y **conectores de certificación por país** (interfaz común: obtener certificado, firmar hash, validar). Se empieza con firma simple robusta, que es legal en los cinco países para contratos privados.
+2. El **formato de firma** debe soportar PAdES (PDF) y **XAdES** (XML, para facturación electrónica de DGII, DIAN y SUNAT).
+3. **Internacionalización** desde el día uno: ES y PT-BR, zonas horarias, formatos de fecha/moneda, documentos de identidad locales (cédula RD, DNI Honduras, cédula Colombia, CPF/CNPJ Brasil, DNI y carné de extranjería Perú).
 4. **Residencia de datos**: Brasil es el más exigente (LGPD); tener región en São Paulo facilita ventas a bancos y gobierno.
-5. Validación de identidad con fuentes locales: Registraduría (Colombia), JCE (RD), RNP (Honduras), base de CPF / gov.br (Brasil), vía proveedores de KYC con cobertura regional.
+5. Validación de identidad con fuentes locales: Registraduría (Colombia), JCE (RD), RNP (Honduras), base de CPF / gov.br (Brasil), RENIEC (Perú), vía proveedores de KYC con cobertura regional.
 
 ---
 
@@ -131,11 +147,12 @@
 | Fase | Estado |
 |---|---|
 | 0 — Fundaciones | ✅ Hecha |
+| Perú | ✅ Mercado agregado: perfil XML `sunat-cpe`, precios en PEN, carné de extranjería, montos en soles en la IA, página pública. Certificación por país «Próximamente» en el sitio para los cinco países |
 | 1 — MVP | ✅ Hecha (incluye WhatsApp y Telegram, ES/PT-BR/EN) |
 | 2 — Productividad | ✅ Plantillas, campos nuevos (número, desplegable, empresa, cargo, adjunto), OTP por email/SMS/WhatsApp, aprobador, delegación y reasignación, recordatorios automáticos, branding básico, planes y facturación (Stripe / Mercado Pago) |
 | 3 — API y firma embebida | ✅ API v1 + OpenAPI + página /developers, firma embebida (iframe + postMessage), webhooks HMAC con reintentos, anclas de texto, idempotencia. ✅ OAuth 2.0 (client credentials y authorization code + PKCE), SDKs Node y Python |
 | 4 — Escala y equipos | ✅ Miembros e invitaciones, roles y permisos (RBAC), grupos, auditoría de cuenta, retención, 2FA; envío masivo (CSV/API), formularios web públicos, campos condicionales y calculados; firma en persona, corrección en vuelo, reportes, PWA, reenvío de copias, accesibilidad. ✅ Slack/Teams, guía Zapier/Make, exportación a Google Drive/Dropbox/OneDrive/S3, dominio propio |
-| 5 — Evidencia fuerte y cumplimiento | ✅ Verificación pública y validador de firmas, PAdES B-LT/B-LTA, firma XML (XAdES) para DGII/DIAN, custodia de certificados por organización, sello de empresa, nivel de firma, conectores CSC, verificación de identidad (mock/Truora/Veriff), SSO OIDC/SAML, SCIM. ⏳ Conectores reales por país (ICP-Brasil, ONAC, INDOTEL, Honduras), residencia de datos (celda São Paulo), BYOK, certificaciones SOC 2/ISO 27001 |
+| 5 — Evidencia fuerte y cumplimiento | ✅ Verificación pública y validador de firmas, PAdES B-LT/B-LTA, firma XML para DGII/DIAN/SUNAT (Perú), custodia de certificados por organización, sello de empresa, nivel de firma, conectores CSC, verificación de identidad (mock/Truora/Veriff), SSO OIDC/SAML, SCIM. ⏳ Conectores reales por país (ICP-Brasil, ONAC, INDOTEL, Honduras, INDECOPI/RENIEC), residencia de datos (celda São Paulo), BYOK, certificaciones SOC 2/ISO 27001 |
 | 6 — Plataforma e IA | ✅ IA (detección de campos, resumen y preguntas del firmante, metadatos y alertas de renovación, revisión contra playbook), repositorio de acuerdos con búsqueda, generación de documentos, workflows sin código, negociación con versiones, servidor MCP para agentes, cobro dentro de la firma. ⏳ Firma por videollamada, integraciones CRM/ERP (Salesforce, HubSpot, TOTVS, Siigo) |
 
 ## 4. Roadmap de features (de menor a mayor)
@@ -210,20 +227,21 @@ Cada fase entrega algo usable por sí solo. Las estimaciones suponen un equipo c
 ### Fase 5 — Evidencia fuerte y cumplimiento (8–12 semanas)
 *Objetivo: entrar en sectores regulados (banca, seguros, salud, gobierno, inmobiliario).*
 
-- **Verificación de identidad**: foto de cédula/CPF + selfie con prueba de vida, contrastada con fuentes oficiales (Registraduría en Colombia, JCE en RD, RNP en Honduras, CPF/gov.br en Brasil) vía proveedor KYC con cobertura regional (ej. Truora, MetaMap, Unico, idwall). Resultado incorporado al audit trail.
+- **Verificación de identidad**: foto de cédula/CPF + selfie con prueba de vida, contrastada con fuentes oficiales (Registraduría en Colombia, JCE en RD, RNP en Honduras, CPF/gov.br en Brasil, RENIEC en Perú) vía proveedor KYC con cobertura regional (ej. Truora, MetaMap, Unico, idwall). Resultado incorporado al audit trail.
 - **Niveles de firma configurables por sobre**: simple / avanzada / digital-cualificada, con reglas por país.
 - **Firma digital con certificado — conectores por país** (orden sugerido por tamaño de mercado y madurez):
   1. **Brasil**: ICP-Brasil — certificados A1 (archivo) y A3 (token/nube); firma en la nube con AC que ofrecen certificado remoto (tipo BirdID, VIDaaS, SafeID). Firma avanzada vía gov.br para trámites con el gobierno.
   2. **Colombia**: entidades acreditadas por ONAC (Certicámara, GSE, Andes SCD) — certificados en la nube, estampado de tiempo; **pagaré electrónico** y registro en depósito (Deceval) como caso de uso fintech.
   3. **República Dominicana**: entidades autorizadas por INDOTEL (Digifirma, Avansi, Viafirma).
   4. **Honduras**: PSC acreditados por el Instituto de la Propiedad (BCH y los que se sumen).
+  5. **Perú**: entidades acreditadas por INDECOPI en la IOFE (RENIEC y privadas), incluido el DNI electrónico.
   - Firma con token/certificado local (componente de escritorio o WebAuthn/PKCS#11 donde sea posible).
-- **Firma de XML (XAdES)** por API para facturación electrónica: e-CF de la DGII (RD) y factura electrónica DIAN (Colombia, XAdES-EPES). Producto de entrada, independiente del flujo de sobres.
+- **Firma de XML (XAdES)** por API para facturación electrónica: e-CF de la DGII (RD), factura electrónica DIAN (Colombia, XAdES-EPES) y comprobantes electrónicos SUNAT (Perú, XMLDSig sobre UBL 2.1). Producto de entrada, independiente del flujo de sobres.
 - PAdES **B-LT / B-LTA** para archivo a largo plazo; validador público de firmas.
 - **Sello electrónico de empresa** (firma automática de la organización).
 - SSO SAML/OIDC, SCIM, 2FA obligatorio por política.
 - Residencia de datos por región (primero **São Paulo** para LGPD; luego región en Colombia o EE. UU. Este para el Caribe y Centroamérica), BYOK.
-- Certificaciones: SOC 2 Type II, ISO 27001; pruebas de penetración; cumplimiento de LGPD, Ley 1581 (Colombia) y Ley 172-13 (RD): DPA, registro de tratamiento, borrado a pedido.
+- Certificaciones: SOC 2 Type II, ISO 27001; pruebas de penetración; cumplimiento de LGPD, Ley 1581 (Colombia), Ley 172-13 (RD) y Ley 29733 (Perú): DPA, registro de tratamiento, borrado a pedido.
 
 ### Fase 6 — Plataforma de acuerdos e IA (continuo)
 *Objetivo: dejar de ser "solo firma" y competir con DocuSign IAM / PandaDoc.*
@@ -252,7 +270,7 @@ Cada fase entrega algo usable por sí solo. Las estimaciones suponen un equipo c
 | WhatsApp y PT-BR en el MVP | En los cuatro países el firmante vive en WhatsApp; sin portugués no se puede vender en Brasil. |
 | Firma digital por país en Fase 5 (con Brasil primero) | Diferenciador fuerte frente a proveedores globales, que suelen cubrirlo mal o caro. Brasil es el mercado más grande; Colombia el más atractivo para fintech. Si el primer cliente es regulado, adelantar solo ese conector. |
 | Firma XAdES para facturación electrónica como producto aparte | En RD la obligatoriedad de e-CF para pequeñas empresas llega en noviembre 2026: es demanda inmediata para captar clientes y luego venderles firma de contratos. |
-| Orden de entrada sugerido | **Colombia y RD primero** (mismo idioma, menos competencia SaaS local, demanda por facturación y fintech), **Brasil** después con producto maduro y en PT-BR, **Honduras** como extensión de bajo costo. |
+| Orden de entrada sugerido | **Colombia y RD primero** (mismo idioma, menos competencia SaaS local, demanda por facturación y fintech), **Brasil** después con producto maduro y en PT-BR, **Honduras** como extensión de bajo costo. **Perú** junto con Colombia: mismo idioma, facturación electrónica SUNAT como producto de entrada. |
 | IA en Fase 6 pero diseñada desde antes | Guardar texto extraído y metadatos desde el principio deja la base lista para el repositorio inteligente. |
 
 ---

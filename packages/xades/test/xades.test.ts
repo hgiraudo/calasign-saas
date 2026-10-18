@@ -39,6 +39,21 @@ const UBL_INVOICE = `<?xml version="1.0" encoding="UTF-8"?>
 const ECF = `<?xml version="1.0" encoding="utf-8"?>
 <ECF><Encabezado><Version>1.0</Version><IdDoc><TipoeCF>31</TipoeCF><eNCF>E310000000001</eNCF></IdDoc><Emisor><RNCEmisor>101000000</RNCEmisor><RazonSocialEmisor>Empresa Ñandú SRL</RazonSocialEmisor></Emisor><Totales><MontoTotal>1180.00</MontoTotal></Totales></Encabezado><FechaHoraFirma>17-10-2026 10:00:00</FechaHoraFirma></ECF>`;
 
+// Factura UBL 2.1 de Perú (SUNAT): la firma va en el primer ExtensionContent vacío y su Id es cac:Signature/cbc:ID.
+const SUNAT_INVOICE = `<?xml version="1.0" encoding="UTF-8"?>
+<Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2" xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2" xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2" xmlns:ext="urn:oasis:names:specification:ubl:schema:xsd:CommonExtensionComponents-2">
+  <ext:UBLExtensions><ext:UBLExtension><ext:ExtensionContent/></ext:UBLExtension></ext:UBLExtensions>
+  <cbc:UBLVersionID>2.1</cbc:UBLVersionID>
+  <cbc:CustomizationID>2.0</cbc:CustomizationID>
+  <cbc:ID>F001-00000123</cbc:ID>
+  <cbc:IssueDate>2026-10-17</cbc:IssueDate>
+  <cbc:InvoiceTypeCode listID="0101">01</cbc:InvoiceTypeCode>
+  <cbc:DocumentCurrencyCode>PEN</cbc:DocumentCurrencyCode>
+  <cac:Signature><cbc:ID>SignSUNAT</cbc:ID><cac:SignatoryParty><cac:PartyIdentification><cbc:ID>20123456789</cbc:ID></cac:PartyIdentification></cac:SignatoryParty><cac:DigitalSignatureAttachment><cac:ExternalReference><cbc:URI>#SignSUNAT</cbc:URI></cac:ExternalReference></cac:DigitalSignatureAttachment></cac:Signature>
+  <cac:AccountingSupplierParty><cac:Party><cac:PartyLegalEntity><cbc:RegistrationName>Empresa Ñandú S.A.C.</cbc:RegistrationName></cac:PartyLegalEntity></cac:Party></cac:AccountingSupplierParty>
+  <cac:LegalMonetaryTotal><cbc:PayableAmount currencyID="PEN">1180.00</cbc:PayableAmount></cac:LegalMonetaryTotal>
+</Invoice>`;
+
 let pki: LabPki;
 let server: LabServer;
 let signer: LocalKeyProvider;
@@ -94,6 +109,36 @@ describe("firma XML", () => {
       expect(verifyXml(tampered).valid).toBe(false);
     });
   }
+
+  it("sunat-cpe: XMLDSig RSA-SHA1 en el primer ExtensionContent, Id de cac:Signature (propio, xml-crypto y libxml2)", async () => {
+    const signed = await signXml(SUNAT_INVOICE, signer, { profile: "sunat-cpe" });
+    const own = verifyXml(signed);
+    expect(own.errors).toEqual([]);
+    expect(own.valid).toBe(true);
+    expect(own.xades).toBeNull();
+    expect(signed).toMatch(/<ext:ExtensionContent><ds:Signature [^>]*Id="SignSUNAT"/);
+    expect(signed).toContain('SignatureMethod Algorithm="http://www.w3.org/2000/09/xmldsig#rsa-sha1"');
+    expect(signed).toContain('DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"');
+    expect(own.references).toHaveLength(1);
+
+    const pem = Buffer.from((await signer.certificateChain())[0]).toString("base64").replace(/(.{64})/g, "$1\n");
+    const sx = new SignedXml({ publicCert: `-----BEGIN CERTIFICATE-----\n${pem}\n-----END CERTIFICATE-----\n` });
+    const sigNode = new (await import("@xmldom/xmldom")).DOMParser().parseFromString(signed, "text/xml").getElementsByTagNameNS("http://www.w3.org/2000/09/xmldsig#", "Signature")[0];
+    sx.loadSignature(sigNode as unknown as Node);
+    expect(sx.checkSignature(signed)).toBe(true);
+    const ind = independent(signed);
+    if (ind) expect(ind.valid).toBe(true);
+
+    expect(verifyXml(signed.replace("1180.00", "9999.00")).valid).toBe(false);
+  });
+
+  it("sunat-cpe: admite RSA-SHA256 si el OSE lo acepta, y exige un ExtensionContent vacío", async () => {
+    const signed = await signXml(SUNAT_INVOICE, signer, { profile: "sunat-cpe", signatureAlgorithm: "rsa-sha256" });
+    expect(verifyXml(signed).valid).toBe(true);
+    expect(signed).toContain("xmldsig-more#rsa-sha256");
+    const sinExtension = SUNAT_INVOICE.replace("<ext:UBLExtensions><ext:UBLExtension><ext:ExtensionContent/></ext:UBLExtension></ext:UBLExtensions>", "");
+    await expect(signXml(sinExtension, signer, { profile: "sunat-cpe" })).rejects.toThrow(/ExtensionContent/);
+  });
 
   it("XAdES-EPES sin política es un error", async () => {
     await expect(signXml(ECF, signer, { profile: "xades-epes" })).rejects.toThrow(/política/);

@@ -118,6 +118,7 @@ export async function evidenceRoutes(app: FastifyInstance, s: Services) {
         profile: input.profile,
         ...(input.policy !== undefined ? { policy: input.policy } : {}),
         ...(input.signerRole !== undefined ? { signerRole: input.signerRole } : {}),
+        ...(input.signatureAlgorithm ? { signatureAlgorithm: input.signatureAlgorithm } : {}),
       });
     } catch (e) {
       if (e instanceof AppError) throw e;

@@ -357,7 +357,12 @@ assert(/frame-ancestors 'none'/.test(plain.headers.get("content-security-policy"
 const me = { name: `Público ${stamp}`, email: `publico.${stamp}@example.com` };
 await api("POST", `/v1/public/forms/${form.slug}/submit`, { ...me, formToken: pub.formToken }, { expect: 422, anon: true }); // demasiado rápido
 await api("POST", `/v1/public/forms/${form.slug}/submit`, { ...me, formToken: pub.formToken, website: "http://spam" }, { expect: 422, anon: true });
-await api("POST", `/v1/public/forms/${form.slug}/submit`, { ...me, formToken: "x".repeat(40) }, { expect: 400, anon: true });
+{
+  // Token vencido o inválido: código estable y "volvé a enviarlo" (la web pide un token nuevo), no "recargá la página",
+  // que hace perder lo que la persona cargó.
+  const bad = await api("POST", `/v1/public/forms/${form.slug}/submit`, { ...me, formToken: "x".repeat(40) }, { expect: 400, anon: true });
+  assert(bad.error.code === "invalid_form_token" && bad.error.details?.retryAfterSeconds >= 1 && !/recarg/i.test(bad.error.message), `token del formulario inválido: ${JSON.stringify(bad.error)}`);
+}
 await sleep(2700);
 const sub = await api("POST", `/v1/public/forms/${form.slug}/submit`, { ...me, formToken: pub.formToken, embed: true }, { expect: 201, anon: true });
 assert(sub.signingPath.startsWith("/s/") && sub.signingPath.endsWith("?embed=1"), "va directo a firmar");
@@ -472,6 +477,12 @@ assert(s2.otpRequired && s2.documents.length === 0, "con OTP no se ven documento
   assert(invited, "con el correo validado sale la invitación de respaldo");
 }
 await api("PATCH", `/v1/web-forms/${otpForm.id}`, { active: false });
+{
+  // Altas y cambios de formularios quedan en la auditoría de la cuenta (como los webhooks).
+  const { items: au } = await api("GET", "/v1/audit-log?action=web_form.*&limit=200");
+  assert(au.some((x) => x.action === "web_form.created" && x.targetId === otpForm.id), "alta del formulario en la auditoría");
+  assert(au.some((x) => x.action === "web_form.updated" && x.targetId === otpForm.id && x.data.fields.includes("active")), "cambio del formulario en la auditoría");
+}
 const pub3 = await api("GET", `/v1/public/forms/${otpForm.slug}`, null, { anon: true });
 assert(!pub3.available && pub3.unavailableReason === "inactive", "desactivado");
 step("formulario con código por correo y desactivación");

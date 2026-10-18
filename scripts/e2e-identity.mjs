@@ -683,5 +683,30 @@ const audit = (await owner.api("GET", "/v1/audit-log?action=member.scim_*")).ite
 assert(audit.length >= 3, `auditoría de SCIM (${audit.length})`);
 ok("SCIM 2.0: alta, filtros, duplicado 409, desactivar/reactivar (membresía y grupos), grupos con PATCH, baja y auditoría");
 
+// ───────────────────────────── Cupo del plan en el alta JIT ─────────────────────────────
+// El SSO queda configurado aunque la organización baje a un plan con cupo de usuarios: el alta JIT respeta ese cupo
+// (como las invitaciones y SCIM); quien ya es miembro sigue entrando.
+await owner.api("PUT", "/v1/settings/sso", { enabled: true, protocol: "oidc", domains: [domain], jitEnabled: true, jitRole: "member", enforce: false, oidc: { issuer, clientId: "calasign-test" } });
+{
+  const co = await owner.api("POST", "/v1/billing/checkout", { plan: "starter", currency: "BRL", provider: "mock" }, [200, 201]);
+  const page = await owner.api("GET", co.url.replace(BASE, ""));
+  const action = /action="([^"]+)"/.exec(page)[1].replace(/&amp;/g, "&");
+  await owner.api("POST", action, { outcome: "paid" }, [200, 201, 302, 303], { accept: "application/json" });
+  const bill = await owner.api("GET", "/v1/billing");
+  assert(bill.plan.id === "starter", `plan Starter activo (${bill.plan.id})`);
+}
+const memberCount = (await owner.api("GET", "/v1/members")).items.length;
+assert(memberCount >= 3, `la organización ya llena el cupo de Starter (${memberCount} miembros)`);
+idp.mode = "ok";
+const zed = new Client("zed");
+const zedLoc = await oidcLogin(zed, `zed-${stamp}@${domain}`);
+assert(zedLoc === "/login?sso_error=sso_plan_limit", `alta JIT por encima del cupo del plan rechazada (${zedLoc})`);
+assert(!(await owner.api("GET", "/v1/members")).items.some((m) => m.email === `zed-${stamp}@${domain}`), "sin membresía nueva");
+const denied = (await owner.api("GET", "/v1/audit-log?action=auth.sso_denied")).items ?? [];
+assert(denied.some((x) => x.data?.reason === "plan_limit" && x.actorLabel === `zed-${stamp}@${domain}`), "rechazo por cupo en la auditoría");
+const anaAgain = new Client("ana-again");
+assert((await oidcLogin(anaAgain, `ana@${domain}`)) === "/app", "un miembro existente sigue entrando por SSO");
+ok("alta JIT por SSO: respeta el cupo de usuarios del plan (auditado); los miembros existentes siguen entrando");
+
 oidcServer.close();
 console.log("\nE2E IDENTIDAD OK");

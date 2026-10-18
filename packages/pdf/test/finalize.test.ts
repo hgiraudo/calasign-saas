@@ -2,9 +2,9 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PDFDocument, StandardFonts, degrees } from "pdf-lib";
+import { PDFArray, PDFDict, PDFDocument, PDFName, PDFRawStream, StandardFonts, decodePDFRawStream, degrees } from "pdf-lib";
 import { describe, expect, it } from "vitest";
-import { LocalKeyProvider, finalizeEnvelopePdf, generateDevRootCa, inspectPdf, issueSealCertificate } from "../src";
+import { LocalKeyProvider, finalizeEnvelopePdf, generateDevRootCa, inspectPdf, issueSealCertificate, renderEnvelopePdf } from "../src";
 
 // PNG 1x1 negro.
 const PNG = Uint8Array.from(
@@ -106,4 +106,69 @@ describe("finalizeEnvelopePdf", () => {
     expect(report).toMatch(/ETSI\.CAdES\.detached/);
     console.log(report, "\n→", out);
   }, 60_000);
+});
+
+describe("certificado de finalización", () => {
+  it("la firma de cada destinatario va en la página de su nombre aunque sus datos sigan en la siguiente", async () => {
+    const now = new Date().toISOString();
+    const recipients = Array.from({ length: 12 }, (_, i) => ({
+      name: `Firmante ${i + 1}`,
+      role: "signer" as const,
+      email: `f${i}@test.com`,
+      phone: i % 2 ? "+5491100000000" : null,
+      idDocument: i % 3 ? "DNI 12345678" : null,
+      channels: ["email"],
+      authMethod: "otp_email",
+      sentAt: now,
+      viewedAt: now,
+      consentedAt: now,
+      signedAt: now,
+      ip: "203.0.113.7",
+      userAgent: (i % 2 ? "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36 " : "") + "UA",
+      note: i % 4 === 0 ? "Delegó en otra persona: viaje" : null,
+      signaturePng: PNG,
+    }));
+    const pdf = await renderEnvelopePdf({
+      documents: [{ name: "a.pdf", bytes: await samplePdf() }],
+      fields: [],
+      certificate: {
+        envelopeId: "0192f0e0-0000-7000-8000-000000000002",
+        subject: "Contrato",
+        organizationName: "ACME",
+        senderName: "Ana",
+        senderEmail: null,
+        createdAt: now,
+        sentAt: now,
+        completedAt: now,
+        locale: "es",
+        documents: [{ name: "a.pdf", pageCount: 2, sha256: "a".repeat(64) }],
+        recipients,
+        events: [],
+        chainHead: "c".repeat(64),
+      },
+    });
+    const doc = await PDFDocument.load(pdf);
+    let names = 0;
+    let images = 0;
+    for (const page of doc.getPages().slice(2)) {
+      const fonts = page.node.Resources()?.lookupMaybe(PDFName.of("Font"), PDFDict);
+      const bold = (fonts?.keys() ?? [])
+        .filter((k) => String(fonts!.lookup(k, PDFDict).get(PDFName.of("BaseFont"))).includes("Bold"))
+        .map((k) => k.toString());
+      const raw = page.node.Contents();
+      const streams = raw instanceof PDFArray ? raw.asArray().map((r) => doc.context.lookup(r)) : [raw];
+      const ops = streams
+        .filter((s): s is PDFRawStream => s instanceof PDFRawStream)
+        .map((s) => Buffer.from(decodePDFRawStream(s).decode()).toString("latin1"))
+        .join("\n");
+      const pageNames = bold.reduce((n, f) => n + ops.split(`${f} 9.5 Tf`).length - 1, 0);
+      const pageImages = (ops.match(/ Do\b/g) ?? []).length;
+      // Cada destinatario tiene firma: en cada página hay tantas firmas como nombres de destinatarios.
+      expect(pageImages).toBe(pageNames);
+      names += pageNames;
+      images += pageImages;
+    }
+    expect(names).toBe(12);
+    expect(images).toBe(12);
+  });
 });

@@ -258,7 +258,12 @@ class EnvelopesApi {
 
   uploadDocument(id: string, file: Uint8Array | ArrayBuffer | Blob, filename = "documento.pdf") {
     const fd = new FormData();
-    const blob = file instanceof Blob ? file : new Blob([new Uint8Array(file instanceof ArrayBuffer ? file : file.slice().buffer)], { type: "application/pdf" });
+    // Copia exacta de los bytes de la vista: un Buffer chico de Node es una ventana sobre un pool compartido de 8 KB y
+    // su `.buffer` (también el de `buf.slice()`, que no copia) traería todo el pool, con datos de otras partes del proceso.
+    const blob =
+      file instanceof Blob
+        ? file
+        : new Blob([file instanceof ArrayBuffer ? new Uint8Array(file) : Uint8Array.prototype.slice.call(file)], { type: "application/pdf" });
     fd.append("file", blob, filename);
     return this.c.request<EnvelopeDetail["documents"][number]>("POST", `/v1/envelopes/${id}/documents`, { form: fd });
   }

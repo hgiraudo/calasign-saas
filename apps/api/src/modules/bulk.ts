@@ -16,6 +16,7 @@ import { enqueue } from "../infra/queue";
 import { AppError, badRequest, conflict, forbidden, notFound } from "../lib/errors";
 import { iso, uuidv7 } from "../lib/util";
 import { assertTemplateAccess, hasPerm } from "./access";
+import { ownerCanStillCreate } from "./owner-check";
 import { authenticate, type AuthContext, type Services } from "./context";
 import { insertEnvelopeFromTemplate, loadTemplateDetail, loadTemplateForUse, planFromTemplate, type LoadedTemplate } from "./templates";
 
@@ -457,6 +458,13 @@ export async function handleBulkJob(
   }
   const actor = b.actor as Actor;
   const ctx = { tenantId: b.tenant_id, userId: b.created_by, apiKeyId: actor.type === "api_key" ? actor.id ?? null : null, actor };
+  // Los sobres salen a nombre de quien lanzó el envío: si mientras tanto dejó la organización, perdió el permiso o
+  // se revocó su API key, las filas que faltan no se envían.
+  const ownerGone = await ownerCanStillCreate(d.db, { tenantId: ctx.tenantId, userId: ctx.apiKeyId ? null : ctx.userId, apiKeyId: ctx.apiKeyId }, b.template_id);
+  if (ownerGone) {
+    loaded = null;
+    loadError = ownerGone;
+  }
 
   for (const itemId of p.itemIds) {
     try {

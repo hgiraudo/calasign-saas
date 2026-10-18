@@ -480,7 +480,56 @@ step("formulario con código por correo y desactivación");
   assert(own.items.some((b) => b.id === bulk.id), "quien lo lanzó sigue viendo su envío");
   const f2 = await api("GET", `/v1/web-forms/${form.id}`);
   assert(f2.fixedRecipients[0].email === `oficial.${stamp}@example.com`, "el firmante fijo no cambió");
+
+  // El formulario del miembro deja de crear sobres cuando sale de la organización.
+  const formBody = (name) => ({
+    templateId: template.id,
+    name,
+    signerRoleId: rCliente,
+    fixedRecipients: [{ roleId: rEmpresa, name: `Oficial ${stamp}`, email: `oficial.${stamp}@example.com` }],
+  });
+  r = await asMember("POST", "/v1/web-forms", formBody(`Del miembro ${stamp}`));
+  assert(r.status === 201, `el miembro crea su formulario: ${r.status}`);
+  const memberForm = await r.json();
+  let mp = await api("GET", `/v1/public/forms/${memberForm.slug}`, null, { anon: true });
+  assert(mp.available, "el formulario del miembro está disponible");
+  const { items: members } = await api("GET", "/v1/members");
+  const beto = members.find((m) => m.email === `beto+scale${stamp}@example.com`);
+  await api("DELETE", `/v1/members/${beto.userId}`, null, { expect: 204 });
+  mp = await api("GET", `/v1/public/forms/${memberForm.slug}`, null, { anon: true });
+  assert(!mp.available && mp.unavailableReason === "inactive", `sin su creador el formulario no se ofrece: ${JSON.stringify(mp)}`);
+  await sleep(2600);
+  await api("POST", `/v1/public/forms/${memberForm.slug}/submit`, { name: "Tercero", email: `tercero.${stamp}@example.com`, formToken: mp.formToken }, { expect: 410, anon: true });
+
+  // Un formulario creado por API key es de la key: la key lo edita y, revocada, el formulario deja de crear sobres.
+  const key = await api("POST", "/v1/api-keys", { name: `formularios ${stamp}`, role: "member" });
+  const asKey = (method, path, body) =>
+    fetch(BASE + path, { method, headers: { authorization: `Bearer ${key.secret}`, ...(body ? { "content-type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined });
+  r = await asKey("POST", "/v1/web-forms", formBody(`De la key ${stamp}`));
+  assert(r.status === 201, `la key crea su formulario: ${r.status}`);
+  const keyForm = await r.json();
+  r = await asKey("PATCH", `/v1/web-forms/${keyForm.id}`, { name: `De la key (editado) ${stamp}` });
+  assert(r.status === 200, `la key edita su propio formulario: ${r.status}`);
+  let kp = await api("GET", `/v1/public/forms/${keyForm.slug}`, null, { anon: true });
+  await sleep(2600);
+  const ks = await api("POST", `/v1/public/forms/${keyForm.slug}/submit`, { name: "Cliente Key", email: `cliente.key.${stamp}@example.com`, formToken: kp.formToken }, { expect: 201, anon: true });
+  r = await asKey("GET", `/v1/envelopes/${ks.envelopeId}`);
+  assert(r.status === 200, `la key ve el sobre de su formulario: ${r.status}`);
+  // El remitente corrige el correo de quien lo completó: ese correo ya lo cargó el remitente, así que la invitación sale.
+  const kd = await api("GET", `/v1/envelopes/${ks.envelopeId}`);
+  const selfReg = kd.recipients.find((x) => x.email === `cliente.key.${stamp}@example.com`);
+  const fixed = `cliente.corregido.${stamp}@example.com`;
+  await api("POST", `/v1/envelopes/${ks.envelopeId}/corrections`, { updateRecipients: [{ id: selfReg.id, email: fixed }], reason: "correo mal escrito" });
+  let gotInvite = false;
+  for (let i = 0; i < 40 && !gotInvite; i++) {
+    gotInvite = (await api("GET", "/dev/mailbox")).items.some((x) => x.to === fixed && /para firmar/.test(x.subject ?? ""));
+    if (!gotInvite) await sleep(500);
+  }
+  assert(gotInvite, "el contacto corregido por el remitente recibe la invitación");
+  await api("DELETE", `/v1/api-keys/${key.apiKey.id}`, null, { expect: 204 });
+  kp = await api("GET", `/v1/public/forms/${keyForm.slug}`, null, { anon: true });
+  assert(!kp.available, "con la key revocada el formulario no se ofrece");
 }
-step("un miembro no modifica formularios ni envíos masivos ajenos");
+step("un miembro no modifica formularios ni envíos masivos ajenos; un formulario sin dueño habilitado no crea sobres");
 
 console.log("\nE2E ESCALA OK");

@@ -59,7 +59,10 @@ export async function replaceRecipient(
   if (channels.includes("whatsapp") && !c.phone) throw conflict("invalid_channels", "El canal WhatsApp requiere teléfono");
   // El reemplazo hereda la verificación que pidió el remitente: no se baja a "solo link" en silencio.
   // En persona: el reemplazo firma con el mismo anfitrión (sin anfitrión nadie podría abrirlo y no recibe invitación).
-  const host = old.auth_method === "in_person" ? (old.in_person_host_user_id ?? null) : null;
+  // Si el anfitrión ya no es miembro de la organización (no puede abrir la sesión en persona), el reemplazo firma por link.
+  const hostId = old.auth_method === "in_person" ? (old.in_person_host_user_id ?? null) : null;
+  const host =
+    hostId && (await db.one(`SELECT 1 FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [e.tenant_id, hostId])) ? hostId : null;
   const auth = old.auth_method === "in_person" && !host ? "link" : (old.auth_method ?? "link");
   if (auth === "otp_email" && !c.email) throw conflict("otp_destination_required", "Este firmante se verifica con un código por correo: indicá el correo de la persona");
   if ((auth === "otp_sms" || auth === "otp_whatsapp") && !c.phone)

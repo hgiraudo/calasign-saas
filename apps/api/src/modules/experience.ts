@@ -190,6 +190,9 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
       await db.query(`UPDATE recipients SET identity_status = 'pending', identity_verified_at = NULL, identity_failure_reason = NULL WHERE id = $1`, [r.id]);
       changes.identityReset = true;
     }
+    // El contacto lo cargó ahora el remitente: deja de ser el correo sin validar de un formulario web (si no, la
+    // invitación al contacto corregido no saldría nunca).
+    if (contactChanged && r.self_registered) await db.query(`UPDATE recipients SET self_registered = false WHERE id = $1`, [r.id]);
     let tokenRotated = false;
     if (contactChanged && r.access_token_hash) {
       const t = newToken();

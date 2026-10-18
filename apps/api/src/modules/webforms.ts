@@ -16,7 +16,8 @@ import { appendEvent, type Actor } from "../infra/evidence";
 import { AppError, badRequest, conflict, forbidden, notFound } from "../lib/errors";
 import { decrypt, encrypt, iso, slugify, uuidv7 } from "../lib/util";
 import { getTenantBranding } from "./branding";
-import { assertTemplateAccess, envelopeVisibilitySql, hasPerm } from "./access";
+import { assertTemplateAccess, envelopeVisibilitySql, hasPerm, templateVisibilitySql } from "./access";
+import { ownerCanStillCreate } from "./owner-check";
 import { authenticate, clientInfo, type AuthContext, type Services } from "./context";
 import { setFrameAncestors } from "./embed";
 import { sendEnvelope } from "./envelopes";
@@ -87,7 +88,7 @@ function buildInput(form: FormRow, signer: { name: string; email: string; phone?
  */
 function assertCanManageForm(a: AuthContext, form: FormRow) {
   if (hasPerm(a, "envelopes:manage_all")) return;
-  if (a.userId && form.created_by === a.userId) return;
+  if (a.apiKeyId ? form.created_by_api_key === a.apiKeyId : a.userId && form.created_by === a.userId) return;
   throw forbidden("Solo quien creó el formulario (o quien administra todos los sobres) puede modificarlo");
 }
 
@@ -105,6 +106,9 @@ function checkConfig(l: LoadedTemplate, form: { template_id: string; signer_role
     throw badRequest("invalid_form", `La plantilla no queda completa con esta configuración: ${(e as Error).message}`);
   }
 }
+
+/** Dueño de los sobres del formulario: el usuario o la API key que lo creó. */
+const formOwner = (form: FormRow) => ({ tenantId: form.tenant_id as string, userId: (form.created_by ?? null) as string | null, apiKeyId: (form.created_by_api_key ?? null) as string | null });
 
 async function uniqueSlug(db: Db, name: string) {
   for (let i = 0; i < 5; i++) {
@@ -131,9 +135,12 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
   // ───────── Administración (remitente) ─────────
 
   app.get("/v1/web-forms", { preHandler: auth }, async (req) => {
+    // Como al crearlo: los formularios de una plantilla restringida solo los ve quien puede ver la plantilla.
+    const params: unknown[] = [A(req).tenantId];
+    const visible = templateVisibilitySql(A(req), params);
     const rows = await s.db.query<any>(
-      `SELECT w.*, t.name AS template_name FROM web_forms w JOIN templates t ON t.id = w.template_id WHERE w.tenant_id = $1 ORDER BY w.created_at DESC`,
-      [A(req).tenantId],
+      `SELECT w.*, t.name AS template_name FROM web_forms w JOIN templates t ON t.id = w.template_id WHERE w.tenant_id = $1${visible} ORDER BY w.created_at DESC`,
+      params,
     );
     const base = await tenantBaseUrl(s.db, req.auth!.tenantId);
     return { items: rows.map((r) => toWebForm(r, r.template_name, base)) };
@@ -150,8 +157,8 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
     const id = uuidv7();
     await s.db.query(
       `INSERT INTO web_forms (id, tenant_id, template_id, slug, name, description, signer_role_id, fixed_recipients, prefill, active, max_uses,
-         expires_at, require_otp, embeddable, collect_phone, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+         expires_at, require_otp, embeddable, collect_phone, created_by, created_by_api_key)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
       [
         id,
         a.tenantId,
@@ -169,6 +176,7 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
         input.embeddable,
         input.collectPhone,
         a.userId,
+        a.apiKeyId,
       ],
     );
     reply.code(201);
@@ -178,6 +186,7 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
 
   app.get<P>("/v1/web-forms/:id", { preHandler: auth }, async (req) => {
     const r = await load(A(req).tenantId, req.params.id);
+    await assertTemplateAccess(s.db, A(req), r.template_id, "view");
     return toWebForm(r, r.template_name, await tenantBaseUrl(s.db, r.tenant_id));
   });
 
@@ -266,7 +275,8 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
       getTenantBranding(s.db, r.tenant_id),
       s.db.one<any>(`SELECT locale FROM templates WHERE id = $1`, [r.template_id]),
     ]);
-    const reason = availability(r);
+    // Si quien lo creó ya no puede crear sobres (dejó la organización, perdió el permiso, key revocada), no se ofrece.
+    const reason = availability(r) ?? ((await ownerCanStillCreate(s.db, formOwner(r), r.template_id)) ? "inactive" : null);
     const logoPath = brand.logoUrl ? new URL(brand.logoUrl).pathname + new URL(brand.logoUrl).search : null;
     return {
       slug: r.slug,
@@ -304,6 +314,12 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
       if (!form) throw notFound("Formulario");
       const reason = availability(form);
       if (reason) throw new AppError(410, `form_${reason}`, "Este formulario ya no está disponible");
+      // Los sobres se crean a nombre de quien lo configuró: si ya no puede crearlos, el formulario no los crea.
+      const ownerGone = await ownerCanStillCreate(s.db, formOwner(form), form.template_id);
+      if (ownerGone) {
+        req.log.warn({ webFormId: form.id, reason: ownerGone }, "formulario web sin dueño habilitado");
+        throw new AppError(410, "form_inactive", "Este formulario ya no está disponible");
+      }
       if (form.collect_phone && !input.phone) throw badRequest("phone_required", "El teléfono es obligatorio");
 
       const loaded = await loadTemplateForUse(s.db, form.tenant_id, form.template_id);
@@ -322,7 +338,7 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
         if (availability(locked)) throw new AppError(410, "form_unavailable", "Este formulario ya no está disponible");
         const id = await insertEnvelopeFromTemplate(
           t,
-          { tenantId: form.tenant_id, userId: form.created_by, apiKeyId: null, actor },
+          { ...formOwner(form), actor },
           loaded,
           fromTpl as any,
           plan,

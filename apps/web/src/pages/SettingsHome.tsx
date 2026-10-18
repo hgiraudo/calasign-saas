@@ -26,7 +26,7 @@ export function SettingsHomePage() {
   const bl = useBillingText();
   const ai = useAiText();
   const dt = useDataText();
-  const { can } = useAccess();
+  const { can, access } = useAccess();
   const sections: { to: string; title: string; desc: string; perm?: Permission }[] = [
     { to: "/app/bulk", title: sc("nav.bulk"), desc: sc("bulk.intro"), perm: "envelopes:create" },
     { to: "/app/xml", title: evt("nav.xml"), desc: evt("settings.xml"), perm: "envelopes:create" },
@@ -46,7 +46,8 @@ export function SettingsHomePage() {
     { to: "/app/settings/domain", title: pl("card.domain"), desc: pl("card.domain.desc"), perm: "settings:manage" },
     { to: "/app/settings/crm", title: crm("card.crm"), desc: crm("card.crm.desc"), perm: "settings:manage" },
     { to: "/app/settings/identity", title: ti("settings.identity"), desc: ti("settings.identityDesc"), perm: "settings:manage" },
-    { to: "/app/settings/sso", title: ti("settings.sso"), desc: ti("settings.ssoDesc"), perm: "settings:manage" },
+    // SSO solo lo configura el propietario (con SSO se puede entrar como cualquier miembro).
+    ...(access && access.role !== "owner" ? [] : [{ to: "/app/settings/sso", title: ti("settings.sso"), desc: ti("settings.ssoDesc"), perm: "settings:manage" as Permission }]),
     { to: "/app/settings/byok", title: dt("nav.byok"), desc: dt("settings.byok"), perm: "settings:manage" },
     { to: "/app/settings/scim", title: ti("settings.scim"), desc: ti("settings.scimDesc"), perm: "members:manage" },
     { to: "/app/settings/billing", title: bl("nav.billing"), desc: bl("settings.billing"), perm: "billing:manage" },

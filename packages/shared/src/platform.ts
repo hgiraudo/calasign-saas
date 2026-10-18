@@ -39,12 +39,21 @@ export const OAUTH_SCOPE_PERMISSIONS: Record<OAuthScope, readonly string[]> = {
 export const OAUTH_GRANT_TYPES = ["client_credentials", "authorization_code"] as const;
 export type OAuthGrantType = (typeof OAUTH_GRANT_TYPES)[number];
 
+/** Esquemas que no son un destino de redirección (ejecutan código o leen archivos locales). */
+const FORBIDDEN_REDIRECT_SCHEMES = new Set(["javascript:", "data:", "vbscript:", "file:", "blob:", "about:", "filesystem:"]);
+
 const RedirectUri = z
   .string()
   .trim()
   .url()
   .max(500)
-  .refine((u) => !u.includes("#"), { message: "la URI de redirección no puede tener fragmento (#)" });
+  .refine((u) => !u.includes("#"), { message: "la URI de redirección no puede tener fragmento (#)" })
+  // La pantalla de consentimiento navega a esta URI (también al rechazar): `javascript:` ejecutaría código en el
+  // origen de CalaSign para cualquier usuario al que le llegue el link. Se admiten https, http y esquemas propios
+  // de apps de escritorio o móviles (RFC 8252).
+  .refine((u) => !FORBIDDEN_REDIRECT_SCHEMES.has(new URL(u).protocol.toLowerCase()), {
+    message: "esquema de URI de redirección no permitido",
+  });
 
 export const CreateOAuthAppInput = z
   .object({

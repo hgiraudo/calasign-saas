@@ -124,4 +124,13 @@ describe("motor de plantillas", () => {
     expect(text('{{#if tipo == "a"}}Hola{{else}}Chau{{/if}}', { tipo: "b" })).toBe("Chau");
     expect(text("{{#if empresa}}\nS.A.\n{{/if}}", { empresa: "x" })).toBe("S.A.");
   });
+
+  it("una fecha inexistente se imprime tal cual, no corrida a otro día", () => {
+    const text = (data: unknown) => blocksToText(renderTemplate("Vence: {{f | date:long}}", data, { locale: "es" }).blocks);
+    expect(text({ f: "31/02/2027" })).toBe("Vence: 31/02/2027");
+    expect(text({ f: "2027-02-31" })).toBe("Vence: 2027-02-31");
+    expect(text({ f: "28/02/2027" })).toBe("Vence: 28 de febrero de 2027");
+    expect(text({ f: "2028-02-29" })).toBe("Vence: 29 de febrero de 2028");
+    expect(text({ f: "2027-03-01T10:00:00Z" })).toBe("Vence: 1 de marzo de 2027");
+  });
 });

@@ -262,7 +262,9 @@ export const CollectField = z.object({
   type: z.enum(["text", "textarea", "email", "number", "date", "select"]),
   required: z.boolean().default(true),
   options: z.array(z.string().trim().min(1).max(100)).max(50).nullable().optional(),
-});
+})
+  // Sin opciones, la lista sale vacía y la validación del envío rechaza cualquier valor: el run quedaba trabado.
+  .refine((f) => f.type !== "select" || (f.options?.length ?? 0) > 0, { message: "un campo de lista necesita opciones" });
 export type CollectField = z.infer<typeof CollectField>;
 
 export const WorkflowStep = z.discriminatedUnion("type", [

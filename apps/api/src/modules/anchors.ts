@@ -55,6 +55,13 @@ export async function expandAnchorFields(s: Services, tenantId: string, envelope
           height,
           required: f.required,
           label: f.label ?? null,
+          value: f.value,
+          readOnly: f.readOnly,
+          options: f.options,
+          min: f.min,
+          max: f.max,
+          conditions: f.conditions,
+          formula: f.formula,
         });
         found++;
       }

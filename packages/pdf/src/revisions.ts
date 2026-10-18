@@ -368,20 +368,28 @@ async function asViewerSees(pdf: Uint8Array, end: number, loaded: PDFDocument): 
   const viewer: { ref: PDFRef; obj: PDFObject | null; entry: XrefEntry }[] = [];
   const refsByNum = new Map<number, PDFRef[]>();
   for (const [ref] of ctx.enumerateIndirectObjects()) refsByNum.set(ref.objectNumber, [...(refsByNum.get(ref.objectNumber) ?? []), ref]);
+  // En el documento entero (end = 0), una entrada suelta que no se puede leer se saltea: un lector solo reconstruye el
+  // índice (como pdf-lib) si llega a pedir ese objeto. Cortar todo el control ahí dejaba pasar un PDF con contenido
+  // duplicado con solo romper la entrada de un objeto que nadie usa. Tras una firma (end > 0) sigue siendo estricto.
+  const tolerant = end === 0;
   for (const e of effective.values()) {
     if (e.num === 0) continue;
-    if (e.kind === "f") {
-      for (const ref of refsByNum.get(e.num) ?? []) viewer.push({ ref, obj: null, entry: e });
-    } else if (e.kind === "n") {
-      const { gen, obj } = objectAt(pdf, e.offset, ctx, e.num);
-      const type = obj instanceof PDFRawStream ? obj.dict.get(PDFName.of("Type")) : undefined;
-      if (type === PDFName.of("ObjStm") || type === PDFName.of("XRef")) continue; // pdf-lib no los guarda como objetos
-      viewer.push({ ref: PDFRef.of(e.num, gen), obj, entry: e });
-    } else {
-      const ref = PDFRef.of(e.num, 0);
-      const obj = (await objStmContext(e.stream)).lookup(ref);
-      if (!obj) throw new Error(`objeto ${e.num} ausente de su ObjStm`);
-      viewer.push({ ref, obj, entry: e });
+    try {
+      if (e.kind === "f") {
+        for (const ref of refsByNum.get(e.num) ?? []) viewer.push({ ref, obj: null, entry: e });
+      } else if (e.kind === "n") {
+        const { gen, obj } = objectAt(pdf, e.offset, ctx, e.num);
+        const type = obj instanceof PDFRawStream ? obj.dict.get(PDFName.of("Type")) : undefined;
+        if (type === PDFName.of("ObjStm") || type === PDFName.of("XRef")) continue; // pdf-lib no los guarda como objetos
+        viewer.push({ ref: PDFRef.of(e.num, gen), obj, entry: e });
+      } else {
+        const ref = PDFRef.of(e.num, 0);
+        const obj = (await objStmContext(e.stream)).lookup(ref);
+        if (!obj) throw new Error(`objeto ${e.num} ausente de su ObjStm`);
+        viewer.push({ ref, obj, entry: e });
+      }
+    } catch (err) {
+      if (!tolerant) throw err;
     }
   }
 

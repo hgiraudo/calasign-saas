@@ -135,9 +135,15 @@ export type UpdateEnvelopeAiInput = z.infer<typeof UpdateEnvelopeAiInput>;
 
 // ───────── Metadatos del contrato ─────────
 
+// La fecha tiene que existir en el calendario: "2027-02-31" pasaba la expresión regular y la alerta de renovación
+// se calculaba sobre el 3 de marzo, con la fecha imposible en el correo.
 const IsoDate = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/)
+  .refine((s) => {
+    const d = new Date(`${s}T00:00:00Z`);
+    return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+  }, "fecha inexistente")
   .nullable();
 
 export const ContractMetadataSchema = z.object({

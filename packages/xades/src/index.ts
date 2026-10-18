@@ -284,7 +284,7 @@ export async function signXml(xml: string, signer: XmlSigner, options: XmlSignOp
       ? `<xades:SignedDataObjectProperties><xades:DataObjectFormat ObjectReference="#${ids.ref0}"><xades:MimeType>text/xml</xades:MimeType></xades:DataObjectFormat></xades:SignedDataObjectProperties>`
       : "";
     signedProps =
-      `<ds:Object><xades:QualifyingProperties Id="${ids.qualifying}" Target="#${ids.sig}">` +
+      `<ds:Object><xades:QualifyingProperties Id="${ids.qualifying}" Target="#${esc(ids.sig)}">` +
       `<xades:SignedProperties Id="${ids.signedProps}"><xades:SignedSignatureProperties>` +
       `<xades:SigningTime>${formatTime(signingTime, options.timeZoneOffset !== undefined ? options.timeZoneOffset : p.timeZoneOffset)}</xades:SigningTime>` +
       `<xades:SigningCertificate><xades:Cert><xades:CertDigest><ds:DigestMethod Algorithm="${dUri}"/><ds:DigestValue>${certDigest}</ds:DigestValue></xades:CertDigest>` +
@@ -302,7 +302,8 @@ export async function signXml(xml: string, signer: XmlSigner, options: XmlSignOp
         }<ds:DigestMethod Algorithm="${dUri}"/><ds:DigestValue>SIGNEDPROPS</ds:DigestValue></ds:Reference>`
       : "");
   const sigXml =
-    `<ds:Signature xmlns:ds="${NS.ds}"${xadesNs} Id="${ids.sig}">` +
+    // El Id puede venir del propio XML (cac:Signature/cbc:ID en SUNAT): se escapa como cualquier atributo.
+    `<ds:Signature xmlns:ds="${NS.ds}"${xadesNs} Id="${esc(ids.sig)}">` +
     `<ds:SignedInfo><ds:CanonicalizationMethod Algorithm="${c14nAlg}"/><ds:SignatureMethod Algorithm="${sigAlg === "rsa-sha1" ? ALG.rsaSha1 : ALG.rsaSha256}"/>${refs}</ds:SignedInfo>` +
     `<ds:SignatureValue Id="${ids.sigValue}">SIGVALUE</ds:SignatureValue>` +
     `<ds:KeyInfo Id="${ids.keyInfo}"><ds:X509Data>${certs}</ds:X509Data></ds:KeyInfo>` +

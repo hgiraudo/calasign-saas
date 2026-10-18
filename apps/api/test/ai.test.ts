@@ -167,5 +167,8 @@ describe("esquemas", () => {
     expect(UpdateAiSettingsInput.parse({ playbook: ["Jurisdicción debe ser Bogotá"] }).playbook).toHaveLength(1);
     expect(() => PlaybookReviewInput.parse({ rules: ["ab"] })).toThrow();
     expect(() => ContractMetadataSchema.parse({ ...H.mockMetadata([CONTRACT]).metadata, expiryDate: "31/01/2027" })).toThrow();
+    // Fecha con forma válida pero que no existe en el calendario.
+    expect(() => ContractMetadataSchema.parse({ ...H.mockMetadata([CONTRACT]).metadata, renewalDate: "2027-02-31" })).toThrow();
+    expect(ContractMetadataSchema.parse({ ...H.mockMetadata([CONTRACT]).metadata, renewalDate: "2028-02-29" }).renewalDate).toBe("2028-02-29");
   });
 });

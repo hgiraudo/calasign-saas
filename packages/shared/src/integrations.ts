@@ -1,6 +1,7 @@
 // Contrato de la API v1 — integraciones (Fase 3): webhooks, firma embebida, anclas de texto.
 import { z } from "zod";
 import { FIELD_TYPES } from "./api";
+import { FieldConditions, FieldFormula } from "./scale-logic";
 
 // ───────────────────────────── Webhooks ─────────────────────────────
 
@@ -155,6 +156,15 @@ export const AnchorFieldInput = z.object({
   type: z.enum(FIELD_TYPES),
   required: z.boolean().default(true),
   label: z.string().max(200).optional().nullable(),
+  // Las mismas propiedades que un campo con coordenadas: sin declararlas acá, zod las descartaba en silencio
+  // (un campo "solo lectura" con valor quedaba vacío y editable; un desplegable, sin opciones).
+  value: z.string().max(2000).optional().nullable(),
+  readOnly: z.boolean().optional(),
+  options: z.array(z.string().trim().min(1).max(100)).max(50).optional().nullable(),
+  min: z.number().finite().optional().nullable(),
+  max: z.number().finite().optional().nullable(),
+  conditions: FieldConditions.optional().nullable(),
+  formula: FieldFormula.optional().nullable(),
   anchor: z.object({
     text: z.string().min(1).max(100),
     offsetX: z.number().min(-2000).max(2000).default(0),

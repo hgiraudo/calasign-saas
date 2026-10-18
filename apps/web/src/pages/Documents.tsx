@@ -248,6 +248,8 @@ export function DocumentTemplateEditPage() {
 
   const openPdf = async () => {
     setError(null);
+    // La ventana se abre en el clic (después de un await los navegadores la bloquean como popup).
+    const win = window.open("", "_blank");
     try {
       const res = await fetch("/v1/document-templates/render", {
         method: "POST",
@@ -257,9 +259,19 @@ export function DocumentTemplateEditPage() {
       });
       if (!res.ok) throw new Error((await res.json().catch(() => null))?.error?.message ?? res.statusText);
       const url = URL.createObjectURL(await res.blob());
-      window.open(url, "_blank", "noopener");
+      if (win) {
+        win.opener = null;
+        win.location.href = url;
+      } else {
+        // Ventanas emergentes bloqueadas: se descarga en lugar de salir del editor (se perderían cambios).
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${name || "documento"}.pdf`;
+        a.click();
+      }
       window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
     } catch (e) {
+      win?.close();
       setError(errorText(e));
     }
   };

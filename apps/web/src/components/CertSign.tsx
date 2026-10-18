@@ -78,7 +78,8 @@ export function CertificateOption({ value, hasIdDocument, onChange }: { value: C
 }
 
 /** Detalle del sobre: firmas con certificado y su estado. No se muestra si nadie firma con certificado. */
-export function CertificateProgressPanel({ envelopeId, status }: { envelopeId: string; status: string }) {
+/** `refreshKey` cambia cuando hay eventos nuevos del sobre (una firma con certificado no siempre cambia el estado). */
+export function CertificateProgressPanel({ envelopeId, status, refreshKey }: { envelopeId: string; status: string; refreshKey?: number }) {
   const c = useCertsignText();
   const [data, setData] = useState<EnvelopeCertificateProgress | null>(null);
   useEffect(() => {
@@ -89,7 +90,7 @@ export function CertificateProgressPanel({ envelopeId, status }: { envelopeId: s
     return () => {
       alive = false;
     };
-  }, [envelopeId, status]);
+  }, [envelopeId, status, refreshKey]);
   if (!data || data.signers.length === 0) return null;
   return (
     <div className="card pad certsign-progress">

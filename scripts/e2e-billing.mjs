@@ -247,6 +247,36 @@ assert(q.error.code === "plan_limit" && q.error.details.limit === "envelopes_per
 assert((await status(over.id)) === "draft", "el sobre excedido queda en borrador");
 ok("Free: API, invitaciones y cobros bloqueados (402 con plan sugerido); 6.º sobre del mes → 402 plan_limit");
 
+// ── Starter (3 usuarios): cupo de invitaciones ──
+// Reenviar a un correo con invitación pendiente la reemplaza (no suma usuarios), y dos invitaciones simultáneas
+// por el último lugar no superan el cupo.
+{
+  const sco = await owner("POST", "/v1/billing/checkout", { plan: "starter", currency: "USD", provider: "mock" });
+  const spage = await owner("GET", sco.url.replace(BASE, ""));
+  await owner("POST", /action="([^"]+)"/.exec(spage)[1].replace(/&amp;/g, "&"), { outcome: "paid" }, { headers: { accept: "application/json" } });
+  assert((await owner("GET", "/v1/billing")).plan.id === "starter", "plan Starter activo");
+  const members = (await owner("GET", "/v1/members")).items.length;
+  const free = 3 - members;
+  assert(free >= 2, `Starter con lugar para 2 invitaciones (miembros: ${members})`);
+  const invs = [];
+  for (let i = 0; i < free; i++) invs.push((await owner("POST", "/v1/invitations", { email: `seat${i}-${stamp}@example.com`, role: "member" })).invitation);
+  const full = await owner("POST", "/v1/invitations", { email: `seat-x-${stamp}@example.com`, role: "member" }, { expect: 402 });
+  assert(full.error.details.limit === "users", "cupo lleno → 402 users");
+  const again = await owner("POST", "/v1/invitations", { email: `SEAT0-${stamp}@example.com`, role: "member" }, { raw: true });
+  assert(again.status === 201, `con el cupo lleno, reenviar a un correo con invitación pendiente la reemplaza (${again.status})`);
+  const resent = (await again.json()).invitation;
+  await owner("DELETE", `/v1/invitations/${resent.id}`, null, { expect: 204 });
+  const race = await Promise.all(
+    [0, 1].map((i) => owner("POST", "/v1/invitations", { email: `race${i}-${stamp}@example.com`, role: "member" }, { raw: true }).then((r) => r.status)),
+  );
+  assert(race.filter((x) => x === 201).length === 1 && race.filter((x) => x === 402).length === 1, `dos invitaciones simultáneas por el último lugar: una entra (${race})`);
+  for (const it of (await owner("GET", "/v1/invitations")).items) {
+    if (it.status === "pending") await owner("DELETE", `/v1/invitations/${it.id}`, null, { expect: 204 });
+  }
+  void invs;
+}
+ok("Starter: reenviar una invitación no consume cupo; dos invitaciones simultáneas no lo superan");
+
 // ── Mejora a Business con checkout simulado en BRL ──
 const co = await owner("POST", "/v1/billing/checkout", { plan: "business", currency: "BRL", provider: "mock" });
 assert(co.provider === "mock" && co.url.includes("/v1/billing/mock/checkout/"), "checkout de suscripción");
@@ -285,6 +315,7 @@ if (process.env.E2E_FAKE_PROVIDERS_PORT) {
   const mpPreapprovals = new Map();
   const stripeSessions = new Map();
   const cancelled = [];
+  const refunds = [];
   const fake = createServer((req, res) => {
     let body = "";
     req.on("data", (c) => (body += c));
@@ -300,6 +331,10 @@ if (process.env.E2E_FAKE_PROVIDERS_PORT) {
         const ses = { id, status: "open", url: `https://checkout.stripe.test/${id}`, _mode: p.get("mode") };
         stripeSessions.set(id, ses);
         return send(200, ses);
+      }
+      if (req.method === "POST" && path === "/v1/refunds") {
+        refunds.push({ paymentIntent: new URLSearchParams(body).get("payment_intent"), key: req.headers["idempotency-key"] });
+        return send(200, { id: `re_${refunds.length}`, status: "succeeded" });
       }
       if (req.method === "POST" && /^\/v1\/checkout\/sessions\/[^/]+\/expire$/.test(path)) {
         const ses = stripeSessions.get(path.split("/")[4]);
@@ -380,7 +415,18 @@ if (process.env.E2E_FAKE_PROVIDERS_PORT) {
   await owner("POST", `/v1/envelopes/${ev.id}/void`, { reason: "Se canceló la operación" });
   for (let i = 0; i < 50 && vses.status === "open"; i++) await sleep(1000);
   assert(vses.status === "expired", "al anular el sobre, la sesión de Stripe se venció (no se puede pagar)");
-  ok("Stripe: anular el sobre cierra el checkout abierto");
+  // Un pago que igual llega con el sobre cerrado (pagado antes de que se venciera la sesión) se reembolsa.
+  const vpid = (await owner("GET", `/v1/envelopes/${ev.id}/payment`)).payment.id;
+  r = await stripeHook({
+    id: `evt_${stamp}_late`,
+    type: "checkout.session.completed",
+    data: { object: { id: vses.id, mode: "payment", payment_status: "paid", amount_total: 1000, currency: "usd", payment_intent: "pi_late", metadata: { paymentId: vpid } } },
+  });
+  assert(r.status === 200, "Stripe: pago tardío recibido");
+  for (let i = 0; i < 50 && (await owner("GET", `/v1/envelopes/${ev.id}/payment`)).payment.status !== "refunded"; i++) await sleep(1000);
+  assert((await owner("GET", `/v1/envelopes/${ev.id}/payment`)).payment.status === "refunded", "el pago que llegó con el sobre anulado quedó reembolsado");
+  assert(refunds.some((x) => x.paymentIntent === "pi_late" && x.key === `refund:${vpid}`), "reembolso pedido a Stripe con clave de idempotencia");
+  ok("Stripe: anular el sobre cierra el checkout abierto; un pago tardío se reembolsa");
 
   // Stripe: suscripción
   await owner("POST", "/v1/billing/cancel");

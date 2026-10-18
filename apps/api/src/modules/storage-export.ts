@@ -158,7 +158,14 @@ export function gdriveFolderQuery(folder: string): string {
 async function findOrCreateGdriveFolder(token: string, folder: string): Promise<string> {
   const auth = { authorization: `Bearer ${token}` };
   const q = gdriveFolderQuery(folder);
-  const found: any = await (await check(await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id)`, { headers: auth }), "buscar carpeta")).json();
+  // Con timeout: corre con la fila de la conexión bloqueada, y sin él undici espera hasta 5 min a un Drive colgado,
+  // trabando las demás exportaciones de esa conexión.
+  const found: any = await (
+    await check(
+      await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id)`, { headers: auth, signal: AbortSignal.timeout(15_000) }),
+      "buscar carpeta",
+    )
+  ).json();
   if (found.files?.[0]?.id) return found.files[0].id;
   const created: any = await (
     await check(
@@ -166,6 +173,7 @@ async function findOrCreateGdriveFolder(token: string, folder: string): Promise<
         method: "POST",
         headers: { ...auth, "content-type": "application/json" },
         body: JSON.stringify({ name: folder, mimeType: "application/vnd.google-apps.folder" }),
+        signal: AbortSignal.timeout(15_000),
       }),
       "crear carpeta",
     )
@@ -297,6 +305,7 @@ async function uploadOnedrive(creds: OAuthCreds, cfg: any, name: string, bytes: 
           method: "POST",
           headers: { ...auth, "content-type": "application/json" },
           body: JSON.stringify({ item: { "@microsoft.graph.conflictBehavior": "rename" } }),
+          signal: AbortSignal.timeout(15_000),
         }),
         "sesión de carga OneDrive",
       )

@@ -168,12 +168,14 @@ export function verifyStripeSignature(payload: string, header: string | undefine
 
 // ───────────────────────────── Mercado Pago ─────────────────────────────
 
-async function mp(path: string, body: unknown | null, method = "POST"): Promise<any> {
+async function mp(path: string, body: unknown | null, method = "POST", idempotencyKey?: string): Promise<any> {
   const token = config.billing.mercadopago.accessToken;
   if (!token) throw new ProviderError("mercadopago", 503, "Mercado Pago no está configurado (MP_ACCESS_TOKEN)");
+  const headers: Record<string, string> = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+  if (idempotencyKey) headers["X-Idempotency-Key"] = idempotencyKey;
   const res = await fetch(`${config.billing.mercadopago.apiBase}${path}`, {
     method,
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    headers,
     body: body ? JSON.stringify(body) : undefined,
     signal: AbortSignal.timeout(20_000),
   });
@@ -208,7 +210,21 @@ export async function mpCreatePreference(p: {
 
 /** Vence una preferencia de Checkout Pro: el link deja de aceptar pagos. */
 export async function mpExpirePreference(id: string) {
-  await mp(`/checkout/preferences/${encodeURIComponent(id)}`, { expires: true, expiration_date_to: new Date().toISOString() }, "PUT");
+  // Mercado Pago documenta las fechas con offset ("2026-10-18T05:35:00.000-03:00"): se manda "+00:00" en vez de "Z".
+  await mp(`/checkout/preferences/${encodeURIComponent(id)}`, { expires: true, expiration_date_to: new Date().toISOString().replace("Z", "+00:00") }, "PUT");
+}
+
+/**
+ * Reembolso total de un pago. Una preferencia vencida no frena un pago iniciado antes (Boleto, efectivo y PSE se
+ * acreditan días después): si llega cuando el sobre ya está cerrado, se devuelve.
+ */
+export async function mpRefundPayment(paymentId: string, idempotencyKey: string) {
+  await mp(`/v1/payments/${encodeURIComponent(paymentId)}/refunds`, {}, "POST", idempotencyKey);
+}
+
+/** Reembolso total de un PaymentIntent de Stripe. */
+export async function stripeRefundPayment(paymentIntent: string, idempotencyKey: string) {
+  await stripe("/v1/refunds", { payment_intent: paymentIntent }, "POST", idempotencyKey);
 }
 
 export async function mpGetPayment(id: string): Promise<{

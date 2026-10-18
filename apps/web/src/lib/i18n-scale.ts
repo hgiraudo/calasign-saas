@@ -113,6 +113,8 @@ const es = {
   "forms.delete": "Eliminar",
   "forms.deleteConfirm": "El link deja de funcionar. Los sobres ya creados no se tocan. ¿Eliminar?",
   "forms.inactive": "Inactivo",
+  "forms.ownerInactive": "No disponible para el público",
+  "forms.ownerInactiveHint": "El formulario no acepta envíos mientras quien lo configuró no pueda crear sobres con esta plantilla. Para reactivarlo, devolvele el acceso o creá el formulario de nuevo con otra persona.",
   "forms.useFromTemplate": "Formulario web",
 
   // Página pública
@@ -240,6 +242,8 @@ const pt: Record<Key, string> = {
   "forms.delete": "Excluir",
   "forms.deleteConfirm": "O link deixa de funcionar. Os envelopes já criados não são alterados. Excluir?",
   "forms.inactive": "Inativo",
+  "forms.ownerInactive": "Indisponível para o público",
+  "forms.ownerInactiveHint": "O formulário não aceita envios enquanto quem o configurou não puder criar envelopes com este modelo. Para reativá-lo, devolva o acesso ou crie o formulário novamente com outra pessoa.",
   "forms.useFromTemplate": "Formulário web",
   "pub.yourData": "Seus dados",
   "pub.name": "Nome completo",
@@ -363,6 +367,8 @@ const en: Record<Key, string> = {
   "forms.delete": "Delete",
   "forms.deleteConfirm": "The link stops working. Envelopes already created are not affected. Delete?",
   "forms.inactive": "Inactive",
+  "forms.ownerInactive": "Not available to the public",
+  "forms.ownerInactiveHint": "The form accepts no submissions while the person who set it up cannot create envelopes with this template. To reactivate it, restore their access or create the form again with someone else.",
   "forms.useFromTemplate": "Web form",
   "pub.yourData": "Your details",
   "pub.name": "Full name",

@@ -30,7 +30,7 @@ export function AuthShell({ title, children }: { title: string; children: ReactN
 export function LoginPage() {
   const { t } = useI18n();
   const pw = usePasswordText();
-  const { me, loading, setMe } = useAuth();
+  const { me, loading, setMe, expired } = useAuth();
   const nav = useNavigate();
   const loc = useLocation();
   const from = (loc.state as { from?: string } | null)?.from ?? "/app";
@@ -84,6 +84,11 @@ export function LoginPage() {
   return (
     <AuthShell title={t("auth.login")}>
       <SsoErrorNotice />
+      {expired && (
+        <div className="alert alert-warn" role="status">
+          {pw("sessionExpired")}
+        </div>
+      )}
       <form onSubmit={submit} className="stack">
         <label className="field">
           <span>{t("auth.email")}</span>

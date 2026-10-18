@@ -152,6 +152,47 @@ describe("almacenamiento por celda y BYOK", () => {
     expect(failures).toHaveLength(1);
   });
 
+  it("un archivo cifrado con una clave BYOK anterior que falla no marca como fallida la clave actual", async () => {
+    const OLD_ARN = "arn:aws:kms:us-east-1:111122223333:key/mock-old";
+    const broken = new Set<string>();
+    kms.setKmsClientFactory(() => {
+      const base = kms.mockKms();
+      return {
+        ...base,
+        async decrypt(i: any) {
+          const r = await base.decrypt(i);
+          if (broken.has(r.KeyId ?? "")) throw new Error(`KMSInvalidStateException: la clave ${r.KeyId} está deshabilitada`);
+          return r;
+        },
+      };
+    });
+    try {
+      const key = `tenants/${TENANT_A}/byok/viejo.pdf`;
+      await storage.createBlobStore(fakeResolver({ [TENANT_A]: { cell: "us", byokKeyArn: OLD_ARN, byokStatus: "active" } }).resolver).put(key, new Uint8Array([7]), "application/pdf");
+      broken.add(OLD_ARN);
+      const { resolver, failures } = fakeResolver({ [TENANT_A]: { cell: "us", byokKeyArn: OK_ARN, byokStatus: "active" } });
+      await expect(storage.createBlobStore(resolver).get(key)).rejects.toMatchObject({ status: 503, code: "byok_key_unavailable" });
+      expect(failures).toEqual([`${TENANT_A}:${OLD_ARN}`]);
+    } finally {
+      kms.setKmsClientFactory(() => kms.mockKms());
+    }
+  });
+
+  it("en S3, un objeto cifrado con una clave anterior que falla se atribuye a esa clave (HeadObject)", async () => {
+    const OLD_ARN = "arn:aws:kms:us-east-1:111122223333:key/mock-old";
+    storage.setS3ClientFactory(() => ({
+      send: async (cmd: any) => {
+        if (cmd.constructor.name === "HeadObjectCommand") return { SSEKMSKeyId: OLD_ARN };
+        throw Object.assign(new Error("The ciphertext refers to a customer master key that is disabled"), { name: "KMS.DisabledException" });
+      },
+    }));
+    process.env.CELLS = JSON.stringify({ us: { default: true, storage: { driver: "s3", bucket: "b-us" } } });
+    cellsMod.resetCells();
+    const { resolver, failures } = fakeResolver({ [TENANT_A]: { cell: "us", byokKeyArn: OK_ARN, byokStatus: "active" } });
+    await expect(storage.createBlobStore(resolver).get(`tenants/${TENANT_A}/viejo.pdf`)).rejects.toMatchObject({ status: 503 });
+    expect(failures).toEqual([`${TENANT_A}:${OLD_ARN}`]);
+  });
+
   it("una falla de red hacia S3 no marca la clave del cliente como fallida", async () => {
     storage.setS3ClientFactory(() => ({
       send: async () => {

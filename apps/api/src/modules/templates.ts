@@ -161,8 +161,8 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
     const id = uuidv7();
     const tenant = await s.db.one<any>(`SELECT default_locale FROM tenants WHERE id = $1`, [a.tenantId]);
     await s.db.query(
-      `INSERT INTO templates (id, tenant_id, name, description, subject, message, locale, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-      [id, a.tenantId, input.name, input.description ?? null, input.subject ?? null, input.message ?? null, input.locale ?? tenant?.default_locale ?? "es", a.userId],
+      `INSERT INTO templates (id, tenant_id, name, description, subject, message, locale, created_by, created_by_api_key) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [id, a.tenantId, input.name, input.description ?? null, input.subject ?? null, input.message ?? null, input.locale ?? tenant?.default_locale ?? "es", a.userId, a.apiKeyId],
     );
     reply.code(201);
     return loadTemplateDetail(s.db, a.tenantId, id);
@@ -364,8 +364,8 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
     const id = uuidv7();
     await s.db.tx(async (t) => {
       await t.query(
-        `INSERT INTO templates (id, tenant_id, name, description, subject, message, locale, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-        [id, a.tenantId, input.name, input.description ?? null, env.subject, env.message, env.locale, a.userId],
+        `INSERT INTO templates (id, tenant_id, name, description, subject, message, locale, created_by, created_by_api_key) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [id, a.tenantId, input.name, input.description ?? null, env.subject, env.message, env.locale, a.userId, a.apiKeyId],
       );
       const docs = await loadDocuments(t, env.id);
       const docMap = new Map<string, string>();

@@ -129,19 +129,20 @@ export async function assertEnvelopeAccess(db: Db, a: AuthContext, envelopeId: s
 
 export function templateVisibilitySql(a: AuthContext, params: unknown[], alias = "t"): string {
   if (hasPerm(a, "templates:manage")) return "";
-  params.push(a.userId);
-  const u = `$${params.length}`;
+  // Dueño: el usuario que la creó o, si la creó una API key, esa key.
+  params.push(a.apiKeyId ?? a.userId);
+  const owner = a.apiKeyId ? `${alias}.created_by_api_key = $${params.length}` : `${alias}.created_by = $${params.length}`;
   params.push(a.access?.groupIds ?? []);
   const g = `$${params.length}::uuid[]`;
-  return ` AND (${alias}.visibility = 'organization' OR ${alias}.created_by = ${u} OR EXISTS (SELECT 1 FROM template_shares ts WHERE ts.template_id = ${alias}.id AND ts.group_id = ANY(${g})))`;
+  return ` AND (${alias}.visibility = 'organization' OR ${owner} OR EXISTS (SELECT 1 FROM template_shares ts WHERE ts.template_id = ${alias}.id AND ts.group_id = ANY(${g})))`;
 }
 
 export async function assertTemplateAccess(db: Db, a: AuthContext, templateId: string, mode: "view" | "manage") {
   if (!/^[0-9a-f-]{36}$/i.test(templateId)) throw notFound("Plantilla");
-  const t = await db.one<any>(`SELECT id, created_by, visibility FROM templates WHERE id = $1 AND tenant_id = $2`, [templateId, a.tenantId]);
+  const t = await db.one<any>(`SELECT id, created_by, created_by_api_key, visibility FROM templates WHERE id = $1 AND tenant_id = $2`, [templateId, a.tenantId]);
   if (!t) throw notFound("Plantilla");
   if (hasPerm(a, "templates:manage")) return;
-  const own = a.userId !== null && t.created_by === a.userId;
+  const own = a.apiKeyId ? t.created_by_api_key === a.apiKeyId : a.userId !== null && t.created_by === a.userId;
   if (own) return;
   let canView = t.visibility === "organization";
   if (!canView && (a.access?.groupIds.length ?? 0) > 0) {

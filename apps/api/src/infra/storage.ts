@@ -119,7 +119,18 @@ class S3BlobStore implements BlobStore {
   }
   async get(key: string) {
     const { m, c } = await this.clientP;
-    const r = await c.send(new m.GetObjectCommand({ Bucket: this.bucket, Key: this.prefix + key }));
+    let r: any;
+    try {
+      r = await c.send(new m.GetObjectCommand({ Bucket: this.bucket, Key: this.prefix + key }));
+    } catch (e) {
+      // El error de KMS no dice con qué clave está cifrado el objeto (puede ser una clave BYOK anterior).
+      // HeadObject no necesita KMS y la informa: así no se marca como fallida la clave actual por un objeto viejo.
+      if (isKeyError(e)) {
+        const h = await c.send(new m.HeadObjectCommand({ Bucket: this.bucket, Key: this.prefix + key })).catch(() => null);
+        if (h?.SSEKMSKeyId) throw new KmsUnavailableError(h.SSEKMSKeyId, String((e as Error)?.message ?? e));
+      }
+      throw e;
+    }
     return new Uint8Array(await r.Body!.transformToByteArray());
   }
   /** Borrado definitivo: con versionado activo, un DeleteObject solo agrega una marca; se borran todas las versiones. */
@@ -212,8 +223,10 @@ export class RoutingBlobStore implements BlobStore {
     try {
       return await store.get(key);
     } catch (e) {
-      if (tenantId && ts?.byokKeyArn && (e instanceof KmsUnavailableError || isKeyError(e))) return this.keyFailure(tenantId, ts.byokKeyArn, e);
-      if (e instanceof KmsUnavailableError && tenantId) return this.keyFailure(tenantId, e.keyArn, e);
+      // La falla es de la clave con la que se cifró ESE archivo (puede ser una BYOK anterior a la actual): se le
+      // atribuye a esa clave. Solo si no se sabe cuál es se supone la actual.
+      if (tenantId && e instanceof KmsUnavailableError) return this.keyFailure(tenantId, e.keyArn, e);
+      if (tenantId && ts?.byokKeyArn && isKeyError(e)) return this.keyFailure(tenantId, ts.byokKeyArn, e);
       throw e;
     }
   }

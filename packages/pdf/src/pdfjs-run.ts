@@ -32,7 +32,20 @@ export const PDFJS_LIMITS = {
   maxConcurrent: 2,
   maxItems: 300_000,
   idleMs: 30_000,
+  /** Lecturas que pueden esperar lugar, y cuánto. Sin tope, unas cuantas lecturas lentas a la vez (de cualquier
+   * organización) dejaban esperando minutos a todas las demás de la instancia, también la ingesta de sobres. */
+  maxQueue: 8,
+  queueWaitMs: 15_000,
 };
+
+/** No hay lugar para leer el texto ahora (cola llena o espera vencida): conviene reintentar en unos segundos. */
+export class PdfReaderBusyError extends Error {
+  readonly code = "pdf_reader_busy";
+  constructor() {
+    super("Hay muchos documentos leyéndose en este momento; probá de nuevo en unos segundos");
+    this.name = "PdfReaderBusyError";
+  }
+}
 
 interface Slot {
   worker: ChildProcess;
@@ -42,7 +55,17 @@ interface Slot {
 }
 
 const pool: Slot[] = [];
-const waiting: ((s: Slot) => void)[] = [];
+interface Waiter {
+  resolve: (s: Slot) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+const waiting: Waiter[] = [];
+
+function nextWaiter(): Waiter | undefined {
+  const w = waiting.shift();
+  if (w) clearTimeout(w.timer);
+  return w;
+}
 
 function spawn(): Slot {
   const worker = fork(fileURLToPath(new URL("./pdfjs-worker.mjs", import.meta.url)), [], {
@@ -69,8 +92,8 @@ function discard(slot: Slot) {
   if (slot.idle) clearTimeout(slot.idle);
   slot.worker.kill("SIGKILL");
   // Lugar libre: si alguien espera, arranca un worker nuevo para él.
-  const next = waiting.shift();
-  if (next) next(spawn());
+  const next = nextWaiter();
+  if (next) next.resolve(spawn());
 }
 
 async function acquire(): Promise<Slot> {
@@ -81,13 +104,24 @@ async function acquire(): Promise<Slot> {
     return free;
   }
   if (pool.length < PDFJS_LIMITS.maxConcurrent) return spawn();
-  return new Promise((resolve) => waiting.push(resolve));
+  if (waiting.length >= PDFJS_LIMITS.maxQueue) throw new PdfReaderBusyError();
+  return new Promise((resolve, reject) => {
+    const w: Waiter = {
+      resolve,
+      timer: setTimeout(() => {
+        const i = waiting.indexOf(w);
+        if (i >= 0) waiting.splice(i, 1);
+        reject(new PdfReaderBusyError());
+      }, PDFJS_LIMITS.queueWaitMs),
+    };
+    waiting.push(w);
+  });
 }
 
 function release(slot: Slot) {
   slot.worker.channel?.unref();
-  const next = waiting.shift();
-  if (next) return next(slot);
+  const next = nextWaiter();
+  if (next) return next.resolve(slot);
   slot.busy = false;
   slot.idle = setTimeout(() => discard(slot), PDFJS_LIMITS.idleMs);
   slot.idle.unref();

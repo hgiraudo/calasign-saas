@@ -4,7 +4,7 @@
 import { deflateSync } from "node:zlib";
 import { PDFDocument, PDFName, PDFRawStream, StandardFonts, type PDFDict } from "pdf-lib";
 import { afterEach, describe, expect, it } from "vitest";
-import { extractPdfPlainText, extractPdfText, findTextAnchors, InvalidPdfError } from "../src";
+import { extractPdfPlainText, extractPdfText, findTextAnchors, InvalidPdfError, PdfReaderBusyError } from "../src";
 import { PDFJS_LIMITS } from "../src/pdfjs-run";
 
 const defaults = { ...PDFJS_LIMITS };
@@ -92,6 +92,28 @@ describe("leer el texto de un PDF con tope", () => {
     expect(r.error).toBeInstanceOf(InvalidPdfError);
     expect(r.ms).toBeLessThan(3000);
     expect(r.blockMs).toBeLessThan(500);
+    Object.assign(PDFJS_LIMITS, defaults);
+    const ok = await PDFDocument.create();
+    const font = await ok.embedFont(StandardFonts.Helvetica);
+    ok.addPage([595, 842]).drawText("Hola", { x: 50, y: 700, size: 12, font });
+    expect((await extractPdfPlainText(await ok.save())).text).toBe("Hola");
+  }, 60_000);
+
+  it("con los lectores ocupados, la cola tiene tope y espera acotada: no deja colgadas las demás lecturas", async () => {
+    const slow = await pdfWithContent(30, "q Q "); // dentro del tope, pero lento para pdf.js
+    PDFJS_LIMITS.timeoutMs = 4000;
+    PDFJS_LIMITS.maxQueue = 1;
+    PDFJS_LIMITS.queueWaitMs = 600;
+    const running = [extractPdfPlainText(slow), extractPdfPlainText(slow)].map((p) => p.catch((e) => e));
+    await new Promise((r) => setTimeout(r, 300)); // los dos lectores ya están ocupados
+    const t0 = Date.now();
+    const queued = extractPdfPlainText(slow).catch((e) => e); // entra a la cola y vence la espera
+    const rejected = extractPdfPlainText(slow).catch((e) => e); // cola llena: ocupado al instante
+    const [q, r] = await Promise.all([queued, rejected]);
+    expect(r).toBeInstanceOf(PdfReaderBusyError);
+    expect(q).toBeInstanceOf(PdfReaderBusyError);
+    expect(Date.now() - t0).toBeLessThan(2000);
+    await Promise.all(running); // terminan bien o por tiempo: lo que importa es que no colgaron a las demás
     Object.assign(PDFJS_LIMITS, defaults);
     const ok = await PDFDocument.create();
     const font = await ok.embedFont(StandardFonts.Helvetica);

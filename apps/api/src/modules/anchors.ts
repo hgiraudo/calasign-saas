@@ -2,7 +2,7 @@
 // page/x/y. Antes de validar, se buscan las apariciones del texto en los PDF y cada una se convierte
 // en un campo concreto con coordenadas normalizadas.
 import { AnchorFieldInput } from "@calasign/shared";
-import { findTextAnchors, InvalidPdfError, type AnchorMatch } from "@calasign/pdf";
+import { findTextAnchors, InvalidPdfError, PdfReaderBusyError, type AnchorMatch } from "@calasign/pdf";
 import { AppError, badRequest } from "../lib/errors";
 import { uuidv7 } from "../lib/util";
 import type { Services } from "./context";
@@ -32,6 +32,7 @@ export async function expandAnchorFields(s: Services, tenantId: string, envelope
       } catch (e) {
         // PDF demasiado pesado para leer su texto (tope de pdf.js): 422, no un error interno.
         if (e instanceof InvalidPdfError) throw new AppError(422, "pdf_too_heavy", e.message);
+        if (e instanceof PdfReaderBusyError) throw new AppError(503, "pdf_reader_busy", e.message);
         throw e;
       }
     }

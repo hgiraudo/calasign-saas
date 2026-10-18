@@ -7,7 +7,7 @@ import type { SsoDomainStatus } from "@calasign/shared";
 import type { Db } from "../../infra/db";
 import { conflict, notFound } from "../../lib/errors";
 import { iso, randomToken } from "../../lib/util";
-import { auditFromRequest } from "../audit";
+import { auditFromRequest, recordAudit } from "../audit";
 import { authenticate, type Services } from "../context";
 import { resolveTxt } from "../custom-domains";
 
@@ -42,6 +42,67 @@ export async function syncSsoDomains(db: Db, tenantId: string, domains: string[]
       randomToken(18),
     ]);
   }
+}
+
+const RECHECK_HOURS = 6;
+const MISSING_MARK = "Re-verificación: no se encontró el registro TXT";
+
+/**
+ * Re-verifica los dominios SSO verificados. Antes la verificación valía para siempre: si la organización perdía el
+ * dominio (vencía y lo registraba otro), su IdP seguía siendo el destino del «Continuar con SSO» para esos correos,
+ * SCIM podía seguir dando de alta usuarios del dominio y el dueño nuevo no podía verificarlo (domain_taken). Si el TXT
+ * falta en dos controles seguidos (separados por RECHECK_HOURS), el dominio deja de estar verificado. Un error de DNS
+ * no cuenta como falta. La organización lo vuelve a verificar desde Ajustes.
+ */
+export async function recheckVerifiedSsoDomains(
+  d: { db: Db; log: { warn(o: object, m?: string): void } },
+  resolve: (name: string) => Promise<string[]> = resolveTxt,
+  limit = 20,
+) {
+  const rows = await d.db.query<any>(
+    `SELECT * FROM sso_domains WHERE verified_at IS NOT NULL AND (last_checked_at IS NULL OR last_checked_at < now() - make_interval(hours => $1))
+      ORDER BY last_checked_at NULLS FIRST LIMIT $2`,
+    [RECHECK_HOURS, limit],
+  );
+  let demoted = 0;
+  for (const r of rows) {
+    let values: string[];
+    try {
+      values = await resolve(ssoTxtName(r.domain));
+    } catch (e) {
+      await d.db.query(`UPDATE sso_domains SET last_checked_at = now() WHERE domain = $1 AND tenant_id = $2`, [r.domain, r.tenant_id]);
+      d.log.warn({ domain: r.domain, err: String((e as Error).message ?? e) }, "no se pudo re-verificar el dominio SSO");
+      continue;
+    }
+    if (values.includes(ssoTxtValue(r.verification_token))) {
+      await d.db.query(`UPDATE sso_domains SET last_checked_at = now(), last_error = NULL WHERE domain = $1 AND tenant_id = $2`, [r.domain, r.tenant_id]);
+      continue;
+    }
+    if (!String(r.last_error ?? "").startsWith(MISSING_MARK)) {
+      await d.db.query(`UPDATE sso_domains SET last_checked_at = now(), last_error = $3 WHERE domain = $1 AND tenant_id = $2`, [
+        r.domain,
+        r.tenant_id,
+        `${MISSING_MARK} ${ssoTxtName(r.domain)}: si sigue faltando en el próximo control, el dominio deja de estar verificado`,
+      ]);
+      continue;
+    }
+    const down = await d.db.query(
+      `UPDATE sso_domains SET verified_at = NULL, last_checked_at = now(), last_error = $3
+        WHERE domain = $1 AND tenant_id = $2 AND verified_at IS NOT NULL RETURNING domain`,
+      [r.domain, r.tenant_id, `${MISSING_MARK} ${ssoTxtName(r.domain)} en dos controles seguidos: el dominio dejó de estar verificado`],
+    );
+    if (!down.length) continue;
+    demoted++;
+    await recordAudit(d.db, {
+      tenantId: r.tenant_id,
+      action: "sso.domain_unverified",
+      actor: { type: "system", label: "Re-verificación de dominio SSO" },
+      targetType: "domain",
+      targetId: r.domain,
+      data: { reason: "txt_missing" },
+    });
+  }
+  return { checked: rows.length, demoted };
 }
 
 export async function ssoDomainRoutes(app: FastifyInstance, s: Services) {

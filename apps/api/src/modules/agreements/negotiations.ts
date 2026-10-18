@@ -21,7 +21,7 @@ import {
   type NegotiationView,
   type ResolvedBlock,
 } from "@calasign/shared";
-import { extractPdfPlainText, InvalidPdfError, preparePdfUpload } from "@calasign/pdf";
+import { extractPdfPlainText, InvalidPdfError, PdfReaderBusyError, preparePdfUpload } from "@calasign/pdf";
 import { z } from "zod";
 import { config } from "../../config";
 import type { Db } from "../../infra/db";
@@ -314,7 +314,9 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
     let text = "";
     try {
       text = (await extractPdfPlainText(bytes)).text;
-    } catch {
+    } catch (e) {
+      // Lectores ocupados: 503 para reintentar. Si no, la negociación quedaba para siempre sin texto que comparar.
+      if (e instanceof PdfReaderBusyError) throw new AppError(503, "pdf_reader_busy", e.message);
       /* PDF sin texto */
     }
     const f = await storeGeneratedPdf(s.blobs, a.tenantId, bytes);

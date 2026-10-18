@@ -175,6 +175,8 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
     const a = A(req);
     const input = UpdateWebFormInput.parse(req.body);
     const cur = await load(a.tenantId, req.params.id);
+    // Igual que al crearlo: no se modifica un formulario de una plantilla restringida que no se puede ver.
+    await assertTemplateAccess(s.db, a, cur.template_id, "view");
     const next = {
       template_id: cur.template_id,
       signer_role_id: input.signerRoleId ?? cur.signer_role_id,
@@ -207,8 +209,10 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
   });
 
   app.delete<P>("/v1/web-forms/:id", { preHandler: auth }, async (req, reply) => {
-    const r = await s.db.query(`DELETE FROM web_forms WHERE id = $1 AND tenant_id = $2 RETURNING id`, [req.params.id, A(req).tenantId]);
-    if (!r.length) throw notFound("Formulario");
+    const a = A(req);
+    const cur = await load(a.tenantId, req.params.id);
+    await assertTemplateAccess(s.db, a, cur.template_id, "view");
+    await s.db.query(`DELETE FROM web_forms WHERE id = $1 AND tenant_id = $2`, [cur.id, a.tenantId]);
     return reply.code(204).send();
   });
 

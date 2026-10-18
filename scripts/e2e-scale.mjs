@@ -330,6 +330,8 @@ assert(sub.signingPath.startsWith("/s/") && sub.signingPath.endsWith("?embed=1")
 const tokF = sub.signingPath.slice(3).replace("?embed=1", "");
 sess = await api("GET", `/v1/signing/${tokF}`, null, { anon: true });
 assert(sess.canSign && sess.recipient.name === me.name, "la persona del formulario puede firmar en la misma sesión");
+assert(sess.canDelegate === false, "quien se autoregistró sin validar el correo no ve la opción de delegar");
+await api("POST", `/v1/signing/${tokF}/delegate`, { name: "Tercero", email: `tercero.${stamp}@example.com`, reason: "x" }, { expect: 403, anon: true });
 assert(byLabel(sess, "Plan").value === "Anual", "prellenado del formulario");
 assert(byLabel(sess, "Detalle anual") && sess.logicFields !== undefined, "sesión con campos de lógica");
 await api("POST", `/v1/signing/${tokF}/consent`, null, { anon: true });

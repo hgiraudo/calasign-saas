@@ -10,8 +10,12 @@ cd "$(dirname "$0")/.."
 ACCOUNT=427064006935
 REGION=us-east-1
 BUCKET="calasign-saas-dev-$ACCOUNT"
+DOMAIN=dev.calasign.com
 INSTANCE="${INSTANCE_ID:-$(cd infra/dev && terraform output -raw instance_id)}"
 REL="$(date -u +%Y%m%d%H%M%S)-$(git rev-parse --short HEAD)$(git diff --quiet || echo -dirty)"
+
+# El estado local de Terraform guarda SECRET_KEY en claro: que solo lo lea el usuario.
+chmod 600 infra/dev/terraform.tfstate* 2>/dev/null || true
 
 export AWS_PROFILE="${AWS_PROFILE:-bootstrap-terraform}"
 eval "$(aws sts assume-role --role-arn "arn:aws:iam::$ACCOUNT:role/OrganizationAccountAccessRole" --role-session-name deploy-dev \
@@ -24,7 +28,9 @@ COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm --filter @calasign/web build >/d
 
 echo "▶ empaquetando $REL"
 TMP=$(mktemp -d)
-{ git ls-files -co --exclude-standard; find apps/web/dist -type f; } | sort -u | grep -v '^var/' > "$TMP/files"
+# Nunca viajan: var/ (claves de desarrollo), ni planes/estados/variables de Terraform.
+{ git ls-files -co --exclude-standard; find apps/web/dist -type f; } | sort -u \
+  | grep -vE '^var/|(^|/)tfplan$|\.tfplan$|\.tfstate|\.tfvars$' > "$TMP/files"
 tar -czf "$TMP/rel.tgz" -T "$TMP/files"
 aws s3 cp --only-show-errors "$TMP/rel.tgz" "s3://$BUCKET/releases/$REL.tgz"
 
@@ -33,8 +39,9 @@ set -euo pipefail
 export AWS_REGION=$REGION PATH=/opt/node/bin:/usr/local/bin:\$PATH
 D=/opt/calasign/releases/$REL
 mkdir -p \$D
-aws s3 cp --only-show-errors s3://$BUCKET/releases/$REL.tgz /tmp/rel.tgz
-tar -xzf /tmp/rel.tgz -C \$D && rm /tmp/rel.tgz
+PKG=\$(mktemp /var/tmp/calasign-rel.XXXXXX)
+aws s3 cp --only-show-errors s3://$BUCKET/releases/$REL.tgz \$PKG
+tar -xzf \$PKG -C \$D && rm -f \$PKG
 chown -R calasign:calasign \$D
 cd \$D
 sudo -u calasign env HOME=/var/lib/calasign PATH=\$PATH COREPACK_ENABLE_DOWNLOAD_PROMPT=0 CI=true \
@@ -47,11 +54,54 @@ for k in TELEGRAM_BOT_TOKEN TELEGRAM_BOT_USERNAME TELEGRAM_WEBHOOK_SECRET WHATSA
   [ -n "\$v" ] && printf '%s=%s\n' "\$k" "\$v" >> /etc/calasign/secrets.env
 done
 chmod 644 /etc/calasign/seal.chain.pem
+umask 022
+
+# Configuración del host (idempotente): hardening de systemd, backup diario de Postgres y Caddy.
+H=\$D/infra/dev/host
+NEW_DROPIN=0
+mkdir -p /etc/systemd/system/calasign.service.d
+if ! cmp -s \$H/calasign-hardening.conf /etc/systemd/system/calasign.service.d/hardening.conf; then
+  install -m 0644 \$H/calasign-hardening.conf /etc/systemd/system/calasign.service.d/hardening.conf
+  NEW_DROPIN=1
+fi
+install -m 0755 \$H/calasign-backup.sh /usr/local/bin/calasign-backup.sh
+install -m 0644 \$H/calasign-backup.service /etc/systemd/system/calasign-backup.service
+install -m 0644 \$H/calasign-backup.timer /etc/systemd/system/calasign-backup.timer
+systemctl daemon-reload
+systemctl enable --now calasign-backup.timer >/dev/null
+sed 's/__DOMAIN__/$DOMAIN/' \$H/Caddyfile > /etc/caddy/Caddyfile.new
+if /usr/local/bin/caddy adapt --config /etc/caddy/Caddyfile.new >/dev/null 2>&1; then
+  if ! cmp -s /etc/caddy/Caddyfile.new /etc/caddy/Caddyfile; then
+    mv /etc/caddy/Caddyfile.new /etc/caddy/Caddyfile
+    chmod 0640 /var/log/caddy-access.log 2>/dev/null || true
+    systemctl reload caddy || systemctl restart caddy
+  else
+    rm -f /etc/caddy/Caddyfile.new
+  fi
+else
+  echo "AVISO: el Caddyfile nuevo no valida; se mantiene el actual" >&2
+  rm -f /etc/caddy/Caddyfile.new
+fi
+
+healthy() { for i in \$(seq 1 60); do curl -sf localhost:4000/healthz >/dev/null && return 0; sleep 1; done; return 1; }
+PREV=\$(readlink -f /opt/calasign/current || true)
 ln -sfn \$D /opt/calasign/current
 systemctl restart calasign
-for i in \$(seq 1 60); do curl -sf localhost:4000/healthz && break; sleep 1; done
-curl -sf localhost:4000/healthz >/dev/null || { journalctl -u calasign -n 60 --no-pager; exit 1; }
-ls -1dt /opt/calasign/releases/* | tail -n +4 | xargs -r rm -rf
+if ! healthy; then
+  journalctl -u calasign -n 60 --no-pager
+  # Rollback: vuelve a la versión anterior (y saca el hardening si recién se instaló, por si es la causa).
+  if [ -n "\$PREV" ] && [ -d "\$PREV" ] && [ "\$PREV" != "\$D" ]; then
+    ln -sfn "\$PREV" /opt/calasign/current
+    if [ "\$NEW_DROPIN" = 1 ]; then rm -f /etc/systemd/system/calasign.service.d/hardening.conf; systemctl daemon-reload; fi
+    systemctl restart calasign
+    if healthy; then echo "ROLLBACK_OK \$PREV"; else echo "ROLLBACK_FALLIDO \$PREV"; fi
+  fi
+  exit 1
+fi
+curl -sf localhost:4000/healthz
+# Conserva las 3 versiones más nuevas y nunca borra la activa.
+CUR=\$(readlink -f /opt/calasign/current)
+ls -1dt /opt/calasign/releases/* | tail -n +4 | { grep -vxF "\$CUR" || true; } | xargs -r rm -rf
 echo DEPLOY_OK $REL
 EOF
 

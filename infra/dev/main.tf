@@ -72,6 +72,42 @@ resource "aws_s3_bucket_versioning" "blobs" {
   }
 }
 
+# Paquetes de deploy y backups de Postgres no se acumulan para siempre (el bucket es versionado).
+# No toca los archivos de las organizaciones: su retención la maneja la aplicación.
+resource "aws_s3_bucket_lifecycle_configuration" "blobs" {
+  bucket = aws_s3_bucket.blobs.id
+
+  rule {
+    id     = "releases"
+    status = "Enabled"
+    filter {
+      prefix = "releases/"
+    }
+    expiration {
+      days = 30
+    }
+    noncurrent_version_expiration {
+      noncurrent_days = 7
+    }
+  }
+
+  rule {
+    id     = "backups-postgres"
+    status = "Enabled"
+    filter {
+      prefix = "backups/postgres/"
+    }
+    expiration {
+      days = 35
+    }
+    noncurrent_version_expiration {
+      noncurrent_days = 7
+    }
+  }
+
+  depends_on = [aws_s3_bucket_versioning.blobs]
+}
+
 resource "aws_s3_bucket_server_side_encryption_configuration" "blobs" {
   bucket = aws_s3_bucket.blobs.id
   rule {
@@ -157,12 +193,12 @@ resource "aws_iam_role_policy" "app" {
     Statement = [
       { Sid = "Archivos", Effect = "Allow", Action = ["s3:GetObject", "s3:PutObject", "s3:ListBucket", "s3:ListBucketVersions", "s3:DeleteObject", "s3:DeleteObjectVersion"], Resource = [aws_s3_bucket.blobs.arn, "${aws_s3_bucket.blobs.arn}/*"] },
       { Sid = "Sello", Effect = "Allow", Action = ["kms:Sign", "kms:GetPublicKey", "kms:DescribeKey"], Resource = aws_kms_key.seal.arn },
-      { Sid = "Parametros", Effect = "Allow", Action = ["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath"], Resource = "arn:aws:ssm:us-east-1:${var.account_id}:parameter/calasign-saas/dev/*" },
+      { Sid = "Parametros", Effect = "Allow", Action = ["ssm:GetParameter"], Resource = "arn:aws:ssm:us-east-1:${var.account_id}:parameter/calasign-saas/dev/*" },
       {
-        Sid      = "ClavesAdministradasPorAWS"
-        Effect   = "Allow"
-        Action   = ["kms:Decrypt", "kms:GenerateDataKey"]
-        Resource = "*"
+        Sid       = "ClavesAdministradasPorAWS"
+        Effect    = "Allow"
+        Action    = ["kms:Decrypt", "kms:GenerateDataKey"]
+        Resource  = "*"
         Condition = { StringEquals = { "kms:ViaService" = ["s3.us-east-1.amazonaws.com", "ssm.us-east-1.amazonaws.com"] } }
       },
     ]

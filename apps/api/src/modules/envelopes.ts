@@ -25,7 +25,7 @@ import { checkSenderValue, insertEnvelopeField } from "./fieldvalues";
 import { applyInPersonFlags } from "./experience";
 import { applyIdentityFlags } from "./identity/kyc";
 import { applyCertificateFlags } from "./certsign";
-import { assignFieldIds, saveFieldLogic } from "./logic";
+import { assignFieldIds, pruneDanglingConditions, saveFieldLogic } from "./logic";
 import { paymentBlocksCompletion } from "./billing/payments";
 import { enforceEnvelopeQuota } from "./billing/plans";
 
@@ -327,6 +327,7 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
       requireDraft(e);
       const d = await t.one<any>(`DELETE FROM documents WHERE id = $1 AND envelope_id = $2 RETURNING id, name`, [req.params.documentId, e.id]);
       if (!d) throw notFound("Documento");
+      await pruneDanglingConditions(t, "fields", e.id);
       await appendEvent(t, { tenantId: a.tenantId, envelopeId: e.id, type: "document.removed", actor: a.actor, data: { documentId: d.id, name: d.name } });
       await touch(t, e.id);
     });
@@ -390,6 +391,8 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
       await applyCertificateFlags(t, e.id, list);
       // Los campos de un destinatario que pasó a 'cc' ya no aplican.
       await t.query(`DELETE FROM fields f USING recipients r WHERE f.recipient_id = r.id AND r.envelope_id = $1 AND r.role IN ('cc','approver')`, [e.id]);
+      // Campos borrados (con su destinatario o por el cambio de rol): las condiciones que los citaban se quitan.
+      await pruneDanglingConditions(t, "fields", e.id);
       await touch(t, e.id);
     });
     return loadDetail(s.db, a.tenantId, req.params.id);

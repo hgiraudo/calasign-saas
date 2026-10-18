@@ -21,7 +21,7 @@ import { assertTemplateAccess, templateVisibilitySql } from "./access";
 import { authenticate, type AuthContext, type Services } from "./context";
 import { sendEnvelope } from "./envelopes";
 import { checkSenderValue, insertEnvelopeField } from "./fieldvalues";
-import { assignFieldIds, copyFieldLogic, saveFieldLogic } from "./logic";
+import { assignFieldIds, copyFieldLogic, pruneDanglingConditions, saveFieldLogic } from "./logic";
 import { loadDetail, loadDocuments, toDocument } from "./mappers";
 
 const toTemplate = (r: any) => ({
@@ -253,6 +253,7 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
       const tpl = await lockTemplate(t, a.tenantId, req.params.id);
       const r = await t.query(`DELETE FROM template_documents WHERE id = $1 AND template_id = $2 RETURNING id`, [req.params.documentId, tpl.id]);
       if (!r.length) throw notFound("Documento");
+      await pruneDanglingConditions(t, "template_fields", tpl.id);
       await touch(t, tpl.id);
     });
     return reply.code(204).send();
@@ -302,6 +303,8 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
       await t.query(`UPDATE template_roles SET signature_type = 'electronic' WHERE template_id = $1 AND role <> 'signer'`, [tpl.id]);
       // Como en los sobres: un rol que pasa a copia o a aprobador no conserva campos (el aprobador no firma).
       await t.query(`DELETE FROM template_fields f USING template_roles r WHERE f.role_id = r.id AND r.template_id = $1 AND r.role IN ('cc','approver')`, [tpl.id]);
+      // Campos borrados (con su rol o por el cambio de rol): las condiciones que los citaban se quitan.
+      await pruneDanglingConditions(t, "template_fields", tpl.id);
       await touch(t, tpl.id);
     });
     return loadTemplateDetail(s.db, a.tenantId, req.params.id);

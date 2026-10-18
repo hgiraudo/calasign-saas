@@ -239,6 +239,8 @@ export async function enforceRoutePolicy(db: Db, req: FastifyRequest, a: AuthCon
   if (/^\/v1\/(agreements|agreement-views|agreement-fields|document-templates|clauses|workflows|workflow-runs|negotiations)(\/|$)/.test(url)) {
     return requirePerm(a, "envelopes:create");
   }
+  // Datos: la clave BYOK (y su política) solo la ven y administran quienes manejan los ajustes.
+  if (url.startsWith("/v1/settings/byok") || url.startsWith("/v1/settings/sso/domains")) return requirePerm(a, "settings:manage");
   // Reportes: estadísticas de toda la organización.
   if (url.startsWith("/v1/reports")) return requirePerm(a, "envelopes:view_all");
   if (/^\/v1\/(members|roles|groups|invitations)(\/|$)/.test(url) && !isRead) return requirePerm(a, "members:manage");

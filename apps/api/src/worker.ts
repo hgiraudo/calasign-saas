@@ -6,10 +6,11 @@ import { startWorker } from "./infra/queue";
 import { getSealProvider } from "./infra/seal";
 import { createBlobStore } from "./infra/storage";
 import { createJobHandlers, sweep } from "./modules/jobs";
+import { createTenantStorageResolver } from "./modules/data";
 
 const log = pino({ level: config.logLevel });
 const db = await createDb();
-const blobs = createBlobStore();
+const blobs = createBlobStore(createTenantStorageResolver(db));
 await getSealProvider();
 const deps = { db, blobs, log };
 const worker = startWorker(db, {

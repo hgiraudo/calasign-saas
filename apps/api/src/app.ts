@@ -38,6 +38,8 @@ import { mcpRoutes } from "./modules/mcp";
 import { aiRoutes } from "./modules/ai";
 import { agreementRoutes } from "./modules/agreements";
 
+import { dataRoutes } from "./modules/data";
+
 export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolean | object }) {
   const app = Fastify({
     logger: deps.logger ?? { level: config.logLevel },
@@ -134,6 +136,7 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
   await mcpRoutes(app, services);
   await aiRoutes(app, services);
   await agreementRoutes(app, services);
+  await dataRoutes(app, services);
 
   if (config.devMailbox) {
     // Local: todo el buzón. Entornos compartidos (dev): solo los mensajes de la organización de la sesión.

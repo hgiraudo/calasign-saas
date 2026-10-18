@@ -8,7 +8,10 @@ import { LocalKeyProvider, type SignatureProvider } from "@calasign/pdf";
 import type { TenantCertificate } from "@calasign/shared";
 import { config } from "../config";
 import type { Db } from "../infra/db";
-import { badRequest, notFound } from "../lib/errors";
+import { AppError, badRequest, notFound } from "../lib/errors";
+import { kmsForKey } from "../infra/kms";
+
+const CUSTODY_PURPOSE = "calasign-tenant-certificate";
 import { decrypt, encrypt, iso } from "../lib/util";
 
 export interface ParsedP12 {
@@ -62,12 +65,26 @@ export function parseP12(p12: Buffer, password: string): ParsedP12 {
 let kmsP: Promise<{ m: typeof import("@aws-sdk/client-kms"); c: import("@aws-sdk/client-kms").KMSClient }> | null = null;
 const kms = () => (kmsP ??= import("@aws-sdk/client-kms").then((m) => ({ m, c: new m.KMSClient({ region: config.storage.region }) })));
 
-export async function sealKey(plain: string): Promise<{ ciphertext: string; wrapped: string; method: "local" | "kms" }> {
+export async function sealKey(
+  plain: string,
+  byok?: { tenantId: string; keyArn: string } | null,
+): Promise<{ ciphertext: string; wrapped: string; method: "local" | "kms" | "kms-byok"; keyArn?: string }> {
   const dataKey = randomBytes(32);
   const iv = randomBytes(12);
   const c = createCipheriv("aes-256-gcm", dataKey, iv);
   const enc = Buffer.concat([c.update(plain, "utf8"), c.final()]);
   const ciphertext = `v1.${iv.toString("base64url")}.${enc.toString("base64url")}.${c.getAuthTag().toString("base64url")}`;
+  if (byok) {
+    // BYOK: la clave de datos se envuelve con la clave KMS de la organización (contexto atado a la organización).
+    try {
+      const r = await kmsForKey(byok.keyArn).encrypt({ KeyId: byok.keyArn, Plaintext: dataKey, EncryptionContext: { purpose: CUSTODY_PURPOSE, tenant: byok.tenantId } });
+      return { ciphertext, wrapped: Buffer.from(r.CiphertextBlob).toString("base64"), method: "kms-byok", keyArn: byok.keyArn };
+    } catch (e) {
+      throw new AppError(503, "byok_key_unavailable", "La clave de cifrado de tu organización (BYOK) no está disponible", { cause: String((e as Error)?.message ?? e).slice(0, 300) });
+    } finally {
+      dataKey.fill(0);
+    }
+  }
   if (config.evidence.custodyKmsKeyId) {
     const { m, c: client } = await kms();
     const r = await client.send(
@@ -81,9 +98,20 @@ export async function sealKey(plain: string): Promise<{ ciphertext: string; wrap
   return { ciphertext, wrapped, method: "local" };
 }
 
-export async function openKey(row: { key_ciphertext: string; key_wrapped: string; key_wrap_method: string }): Promise<string> {
+export async function openKey(row: { key_ciphertext: string; key_wrapped: string; key_wrap_method: string; key_wrap_key_arn?: string | null; tenant_id?: string }): Promise<string> {
   let dataKey: Buffer;
-  if (row.key_wrap_method === "kms") {
+  if (row.key_wrap_method === "kms-byok") {
+    try {
+      const r = await kmsForKey(row.key_wrap_key_arn!).decrypt({
+        CiphertextBlob: Buffer.from(row.key_wrapped, "base64"),
+        KeyId: row.key_wrap_key_arn!,
+        EncryptionContext: { purpose: CUSTODY_PURPOSE, tenant: row.tenant_id ?? "" },
+      });
+      dataKey = Buffer.from(r.Plaintext);
+    } catch (e) {
+      throw new AppError(503, "byok_key_unavailable", "La clave de cifrado de tu organización (BYOK) no está disponible", { cause: String((e as Error)?.message ?? e).slice(0, 300) });
+    }
+  } else if (row.key_wrap_method === "kms") {
     const { m, c } = await kms();
     const r = await c.send(
       new m.DecryptCommand({ CiphertextBlob: Buffer.from(row.key_wrapped, "base64"), EncryptionContext: { purpose: "calasign-tenant-certificate" } }),

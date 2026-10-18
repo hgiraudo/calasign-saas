@@ -1,13 +1,29 @@
+import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { config } from "../config";
+import { AppError } from "../lib/errors";
+import { cellById, cells, type CellStorageConfig } from "./cells";
+import { KmsUnavailableError, isKeyError, kmsForKey } from "./kms";
+
+export interface PutOptions {
+  /** Clave KMS del cliente (BYOK): S3 la usa como SSE-KMS; en disco se cifra con una clave de datos de esa clave. */
+  kmsKeyId?: string | null;
+  /** Organización dueña (contexto de cifrado BYOK en disco). */
+  tenantId?: string | null;
+}
 
 export interface BlobStore {
-  put(key: string, data: Uint8Array, contentType: string): Promise<void>;
+  put(key: string, data: Uint8Array, contentType: string, opts?: PutOptions): Promise<void>;
   get(key: string): Promise<Uint8Array>;
   /** Borra el objeto (retención). No falla si ya no existe. */
   delete(key: string): Promise<void>;
 }
+
+// ───────────── Disco ─────────────
+
+/** Encabezado de archivos cifrados con BYOK en disco: "CSBYOK1\n" + largo (u32) + JSON + cifrado. */
+const BYOK_MAGIC = Buffer.from("CSBYOK1\n");
 
 class LocalBlobStore implements BlobStore {
   constructor(private root: string) {}
@@ -16,26 +32,79 @@ class LocalBlobStore implements BlobStore {
     if (!p.startsWith(this.root)) throw new Error("clave inválida");
     return p;
   }
-  async put(key: string, data: Uint8Array) {
+  async put(key: string, data: Uint8Array, _contentType: string, opts?: PutOptions) {
     const p = this.path(key);
+    let body: Uint8Array = data;
+    if (opts?.kmsKeyId) {
+      const ctx = { purpose: "calasign-blob", tenant: opts.tenantId ?? "" };
+      let dk: { Plaintext: Uint8Array; CiphertextBlob: Uint8Array };
+      try {
+        dk = await kmsForKey(opts.kmsKeyId).generateDataKey({ KeyId: opts.kmsKeyId, KeySpec: "AES_256", EncryptionContext: ctx });
+      } catch (e) {
+        throw new KmsUnavailableError(opts.kmsKeyId, String((e as Error)?.message ?? e));
+      }
+      const iv = randomBytes(12);
+      const key32 = Buffer.from(dk.Plaintext);
+      const c = createCipheriv("aes-256-gcm", key32, iv);
+      const enc = Buffer.concat([c.update(data), c.final()]);
+      key32.fill(0);
+      const header = Buffer.from(
+        JSON.stringify({ arn: opts.kmsKeyId, ctx, wrapped: Buffer.from(dk.CiphertextBlob).toString("base64"), iv: iv.toString("base64"), tag: c.getAuthTag().toString("base64") }),
+      );
+      const len = Buffer.alloc(4);
+      len.writeUInt32BE(header.length);
+      body = Buffer.concat([BYOK_MAGIC, len, header, enc]);
+    }
     await mkdir(dirname(p), { recursive: true });
-    await writeFile(p, data, { mode: 0o600 });
+    await writeFile(p, body, { mode: 0o600 });
   }
   async get(key: string) {
-    return new Uint8Array(await readFile(this.path(key)));
+    const raw = await readFile(this.path(key));
+    if (!raw.subarray(0, BYOK_MAGIC.length).equals(BYOK_MAGIC)) return new Uint8Array(raw);
+    const n = raw.readUInt32BE(BYOK_MAGIC.length);
+    const start = BYOK_MAGIC.length + 4;
+    const h = JSON.parse(raw.subarray(start, start + n).toString("utf8"));
+    let plainKey: Buffer;
+    try {
+      const r = await kmsForKey(h.arn).decrypt({ CiphertextBlob: Buffer.from(h.wrapped, "base64"), KeyId: h.arn, EncryptionContext: h.ctx });
+      plainKey = Buffer.from(r.Plaintext);
+    } catch (e) {
+      throw new KmsUnavailableError(h.arn, String((e as Error)?.message ?? e));
+    }
+    const d = createDecipheriv("aes-256-gcm", plainKey, Buffer.from(h.iv, "base64"));
+    d.setAuthTag(Buffer.from(h.tag, "base64"));
+    const out = Buffer.concat([d.update(raw.subarray(start + n)), d.final()]);
+    plainKey.fill(0);
+    return new Uint8Array(out);
   }
   async delete(key: string) {
     await rm(this.path(key), { force: true });
   }
 }
 
+// ───────────── S3 ─────────────
+
+type S3Mod = typeof import("@aws-sdk/client-s3");
+/** Cliente mínimo de S3 (tests: setS3ClientFactory). */
+export interface S3Like {
+  send(cmd: any): Promise<any>;
+}
+let s3Factory: ((region: string) => S3Like) | null = null;
+/** Tests: reemplaza el cliente de S3. `null` vuelve al SDK real. */
+export function setS3ClientFactory(f: ((region: string) => S3Like) | null) {
+  s3Factory = f;
+}
+
 class S3BlobStore implements BlobStore {
-  private clientP = import("@aws-sdk/client-s3").then((m) => ({ m, c: new m.S3Client({ region: config.storage.region }) }));
+  private clientP: Promise<{ m: S3Mod; c: S3Like }>;
   constructor(
     private bucket: string,
     private prefix: string,
-  ) {}
-  async put(key: string, data: Uint8Array, contentType: string) {
+    region: string,
+  ) {
+    this.clientP = import("@aws-sdk/client-s3").then((m) => ({ m, c: s3Factory ? s3Factory(region) : new m.S3Client({ region }) }));
+  }
+  async put(key: string, data: Uint8Array, contentType: string, opts?: PutOptions) {
     const { m, c } = await this.clientP;
     await c.send(
       new m.PutObjectCommand({
@@ -44,6 +113,7 @@ class S3BlobStore implements BlobStore {
         Body: data,
         ContentType: contentType,
         ServerSideEncryption: "aws:kms",
+        ...(opts?.kmsKeyId ? { SSEKMSKeyId: opts.kmsKeyId, BucketKeyEnabled: true } : {}),
       }),
     );
   }
@@ -57,16 +127,107 @@ class S3BlobStore implements BlobStore {
     const { m, c } = await this.clientP;
     const Key = this.prefix + key;
     const r = await c.send(new m.ListObjectVersionsCommand({ Bucket: this.bucket, Prefix: Key }));
-    const all = [...(r.Versions ?? []), ...(r.DeleteMarkers ?? [])].filter((v) => v.Key === Key);
+    const all = [...(r.Versions ?? []), ...(r.DeleteMarkers ?? [])].filter((v: any) => v.Key === Key);
     for (const v of all) await c.send(new m.DeleteObjectCommand({ Bucket: this.bucket, Key, VersionId: v.VersionId }));
     if (all.length === 0) await c.send(new m.DeleteObjectCommand({ Bucket: this.bucket, Key }));
   }
 }
 
-export function createBlobStore(): BlobStore {
-  if (config.storage.driver === "s3") {
-    if (!config.storage.bucket) throw new Error("S3_BUCKET requerido");
-    return new S3BlobStore(config.storage.bucket, config.storage.prefix);
+export function storeFor(st: CellStorageConfig): BlobStore {
+  if (st.driver === "s3") {
+    if (!st.bucket) throw new Error("S3_BUCKET requerido");
+    return new S3BlobStore(st.bucket, st.prefix ?? "", st.region ?? config.storage.region);
   }
-  return new LocalBlobStore(resolve(config.dataDir, "blobs"));
+  return new LocalBlobStore(resolve(st.dir ?? resolve(config.dataDir, "blobs")));
+}
+
+// ───────────── Enrutamiento por organización (celda + BYOK) ─────────────
+
+export interface TenantStorage {
+  cell: string;
+  byokKeyArn: string | null;
+  byokStatus: "none" | "active" | "failing";
+}
+
+/** Lo implementa modules/data/byok.ts (lee tenants, marca la clave como fallida y avisa a los administradores). */
+export interface TenantStorageResolver {
+  resolve(tenantId: string): Promise<TenantStorage>;
+  onKeyFailure(tenantId: string, keyArn: string, error: string): Promise<void>;
+  onKeySuccess(tenantId: string): Promise<void>;
+}
+
+const TENANT_KEY_RE = /^tenants\/([0-9a-f-]{36})\//;
+
+/**
+ * Elige el almacenamiento de la celda de la organización (por el prefijo tenants/<id>/ de la clave) y aplica
+ * su clave BYOK. Si la clave del cliente no se puede usar, falla cerrado: no se guarda nada sin cifrar con ella.
+ */
+export class RoutingBlobStore implements BlobStore {
+  private stores = new Map<string, BlobStore>();
+  constructor(private resolver: TenantStorageResolver) {}
+
+  private storeForCell(cellId: string): BlobStore {
+    const cell = cellById(cellId);
+    let s = this.stores.get(cell.id);
+    if (!s) {
+      s = storeFor(cell.storage);
+      this.stores.set(cell.id, s);
+    }
+    return s;
+  }
+
+  private async target(key: string) {
+    const m = TENANT_KEY_RE.exec(key);
+    if (!m) return { tenantId: null, store: this.storeForCell(cells().find((c) => c.default)!.id), ts: null as TenantStorage | null };
+    const ts = await this.resolver.resolve(m[1]);
+    return { tenantId: m[1], store: this.storeForCell(ts.cell), ts };
+  }
+
+  private async keyFailure(tenantId: string, arn: string, e: unknown): Promise<never> {
+    const msg = String((e as Error)?.message ?? e);
+    await this.resolver.onKeyFailure(tenantId, arn, msg).catch(() => {});
+    throw new AppError(
+      503,
+      "byok_key_unavailable",
+      "La clave de cifrado de tu organización (BYOK) no está disponible: no se pueden guardar ni leer documentos hasta que se restablezca el acceso a la clave.",
+      { keyArn: arn, cause: msg.slice(0, 300) },
+    );
+  }
+
+  async put(key: string, data: Uint8Array, contentType: string, opts?: PutOptions) {
+    const { tenantId, store, ts } = await this.target(key);
+    const arn = ts && ts.byokStatus !== "none" ? ts.byokKeyArn : null;
+    if (!arn || !tenantId) return store.put(key, data, contentType, opts);
+    try {
+      await store.put(key, data, contentType, { ...opts, kmsKeyId: arn, tenantId });
+    } catch (e) {
+      if (e instanceof KmsUnavailableError || isKeyError(e)) return this.keyFailure(tenantId, arn, e);
+      throw e;
+    }
+    if (ts!.byokStatus === "failing") await this.resolver.onKeySuccess(tenantId).catch(() => {});
+  }
+
+  async get(key: string) {
+    const { tenantId, store, ts } = await this.target(key);
+    try {
+      return await store.get(key);
+    } catch (e) {
+      if (tenantId && ts?.byokKeyArn && (e instanceof KmsUnavailableError || isKeyError(e))) return this.keyFailure(tenantId, ts.byokKeyArn, e);
+      if (e instanceof KmsUnavailableError && tenantId) return this.keyFailure(tenantId, e.keyArn, e);
+      throw e;
+    }
+  }
+
+  async delete(key: string) {
+    const { store } = await this.target(key);
+    return store.delete(key);
+  }
+}
+
+/**
+ * Sin resolver: el almacenamiento de siempre (una celda, sin BYOK). Con resolver: enrutamiento por celda y BYOK.
+ */
+export function createBlobStore(resolver?: TenantStorageResolver): BlobStore {
+  if (resolver) return new RoutingBlobStore(resolver);
+  return storeFor(cells().find((c) => c.default)!.storage);
 }

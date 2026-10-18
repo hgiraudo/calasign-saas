@@ -46,6 +46,8 @@ export const SignupInput = z.object({
   password: z.string().min(10).max(200),
   organization: z.string().trim().min(1).max(200),
   locale: z.enum(LOCALES).optional(),
+  /** Celda donde se guardan los datos (ver GET /v1/public/cells). Sin valor: la celda por defecto. */
+  cell: z.string().trim().regex(/^[a-z0-9-]{1,40}$/).optional(),
 });
 export type SignupInput = z.infer<typeof SignupInput>;
 

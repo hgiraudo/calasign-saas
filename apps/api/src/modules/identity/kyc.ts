@@ -28,6 +28,7 @@ import { recipientActor, resolveToken } from "../signing";
 import { matchIdentity } from "./namematch";
 import { WebhookSignatureError, getAdapter, listProviders, mockDecide } from "./providers";
 import type { CertificateIdentity } from "@calasign/pdf";
+import { tenantBaseUrl } from "../custom-domains";
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MIN_IMAGE_BYTES = 1024;
@@ -336,7 +337,7 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
         verificationId: id,
         level: r.id_verification_level,
         person: { fullName: r.name, documentNumber: r.id_document_number ?? null, email: r.email, phone: r.phone },
-        returnUrl: `${config.appUrl}/s/${req.params.token}?identity=return`,
+        returnUrl: `${await tenantBaseUrl(s.db, e.tenant_id)}/s/${req.params.token}?identity=return`,
         callbackUrl: `${config.appUrl}/v1/integrations/identity/${provider}/webhook`,
         locale: r.locale ?? e.locale,
       });

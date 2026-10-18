@@ -23,6 +23,7 @@ import { sha256Hex, uuidv7 } from "../lib/util";
 import { auditFromRequest } from "./audit";
 import { authenticate, type Services } from "./context";
 import { loadTenantCertificate, parseP12, sealKey, tenantCertificateProvider, toTenantCertificate } from "./custody";
+import { byokForCustody } from "./data/byok";
 import { lockEnvelope } from "./envelopes";
 import { getCscProvider, guardedFetch, listSignatureProviders, resolveSealLevel, trustAnchors } from "./evidence-seal";
 
@@ -56,14 +57,14 @@ export async function evidenceRoutes(app: FastifyInstance, s: Services) {
     const input = UploadCertificateInput.parse(req.body);
     const parsed = parseP12(Buffer.from(input.p12Base64, "base64"), input.password);
     if (new Date(parsed.leaf.validTo) < new Date()) throw badRequest("certificate_expired", "El certificado está vencido");
-    const sealed = await sealKey(parsed.keyPkcs8Pem);
+    const sealed = await sealKey(parsed.keyPkcs8Pem, await byokForCustody(s.db, req.auth!.tenantId));
     const leaf = parsed.leaf;
     const id = uuidv7();
     const cn = /(?:^|\n)CN=([^\n]+)/.exec(leaf.subject)?.[1] ?? null;
     const row = await s.db.one(
       `INSERT INTO tenant_certificates (id, tenant_id, name, subject, issuer, common_name, serial_number, not_before, not_after, sha256,
-         key_algorithm, chain_pem, key_ciphertext, key_wrapped, key_wrap_method, usages, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *`,
+         key_algorithm, chain_pem, key_ciphertext, key_wrapped, key_wrap_method, usages, created_by, key_wrap_key_arn)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING *`,
       [
         id,
         req.auth!.tenantId,
@@ -82,6 +83,7 @@ export async function evidenceRoutes(app: FastifyInstance, s: Services) {
         sealed.method,
         input.usages ?? ["xml", "pdf_seal"],
         req.auth!.userId,
+        sealed.keyArn ?? null,
       ],
     );
     await auditFromRequest(s.db, req, req.auth!, "certificate.uploaded", {

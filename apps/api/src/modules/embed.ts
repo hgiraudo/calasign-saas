@@ -9,6 +9,7 @@ import { appendEvent } from "../infra/evidence";
 import { badRequest, conflict, notFound } from "../lib/errors";
 import { decrypt, randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { authenticate, clientInfo, type AuthContext, type Services } from "./context";
+import { tenantBaseUrl } from "./custom-domains";
 
 const CODE_TTL_MS = 5 * 60_000;
 
@@ -115,7 +116,7 @@ export async function embedRoutes(app: FastifyInstance, s: Services) {
         });
       });
       reply.code(201);
-      return { url: `${config.appUrl}/embed/${code}`, expiresAt: expiresAt.toISOString() };
+      return { url: `${await tenantBaseUrl(s.db, a.tenantId)}/embed/${code}`, expiresAt: expiresAt.toISOString() };
     },
   );
 

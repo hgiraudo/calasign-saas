@@ -3,6 +3,7 @@ import { CreateApiKeyInput, LoginInput, SignupInput, type ApiKey, type MeRespons
 import { conflict, notFound, unauthorized } from "../lib/errors";
 import { hashPassword, iso, randomToken, sha256Hex, slugify, uuidv7, verifyPassword } from "../lib/util";
 import { config } from "../config";
+import { cellForSignup, registerTenantCell } from "./data/cells";
 import { SESSION_COOKIE, authenticate, clientInfo, type Services } from "./context";
 import { createTwoFactorChallenge } from "./teams";
 import { passwordLoginTenant } from "./identity/sso";
@@ -48,6 +49,7 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
     const tenantId = uuidv7();
     const pw = await hashPassword(input.password);
     const locale = input.locale ?? "es";
+    const cell = cellForSignup(input.cell);
     await s.db.tx(async (t) => {
       let slug = slugify(input.organization);
       if (await t.one(`SELECT 1 FROM tenants WHERE slug = $1`, [slug])) slug = `${slug}-${tenantId.slice(-6)}`;
@@ -56,8 +58,9 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
         slug,
         input.organization,
         locale,
-        config.environment,
+        cell,
       ]);
+      await registerTenantCell(t, tenantId, slug, cell);
       await t.query(`INSERT INTO users (id, email, name, password_hash, locale) VALUES ($1,$2,$3,$4,$5)`, [
         userId,
         input.email,

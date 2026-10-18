@@ -10,6 +10,7 @@ import { notFound } from "../../lib/errors";
 import { iso, randomToken, sha256Hex, uuidv7 } from "../../lib/util";
 import { recordAudit } from "../audit";
 import { authenticate, clientInfo, type Services } from "../context";
+import { UPGRADE_URL, tenantPlan, usersCount } from "../billing/plans";
 
 const SCHEMA_USER = "urn:ietf:params:scim:schemas:core:2.0:User";
 const SCHEMA_GROUP = "urn:ietf:params:scim:schemas:core:2.0:Group";
@@ -136,6 +137,11 @@ async function ownerCount(db: Db, tenantId: string): Promise<number> {
 async function setActive(db: Db, tenantId: string, userId: string, active: boolean) {
   const m = await db.one<any>(`SELECT role FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [tenantId, userId]);
   if (active && !m) {
+    // Cupo de usuarios del plan: una alta o reactivación por SCIM ocupa un lugar igual que una invitación.
+    const { plan } = await tenantPlan(db, tenantId);
+    if (plan.users !== null && (await usersCount(db, tenantId)) >= plan.users) {
+      throw new ScimError(402, `plan_limit: el plan ${plan.name} permite hasta ${plan.users} usuario(s); ampliá el plan en ${UPGRADE_URL}`, "plan_limit");
+    }
     const t = await db.one<any>(`SELECT scim_default_role FROM tenants WHERE id = $1`, [tenantId]);
     await db.query(`INSERT INTO memberships (tenant_id, user_id, role) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`, [tenantId, userId, t?.scim_default_role ?? "member"]);
   } else if (!active && m) {

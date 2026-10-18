@@ -13,3 +13,4 @@ export { certUrls, hasRevocationInfo, parseCert, fingerprint, nameToString, comm
 export { extractPdfText, substringBox, type PageText, type TextLine } from "./text";
 export { renderDocumentPdf, type DocBlock, type DocRun, type DocMarkKind, type DocMarkPosition, type RenderDocOptions } from "./docgen";
 export { extractPdfPlainText, type PdfText } from "./plain-text";
+export { archiveTimestampInfo, type ArchiveTimestampInfo } from "./archive";

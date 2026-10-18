@@ -1,5 +1,5 @@
 // Repositorio de acuerdos (Fase 6): búsqueda, filtros, vistas guardadas, detalle editable, carga externa y campos propios.
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import type { Agreement, AgreementFieldDef, AgreementStatus, AgreementView, Counterparty, ListAgreementsResponse } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
@@ -52,12 +52,16 @@ export function AgreementsPage() {
   const [loadingMore, setLoadingMore] = useState(false);
 
   const query = params.toString();
+  // Solo se aplica la respuesta de la búsqueda más reciente (una lenta no pisa a la nueva).
+  const seq = useRef(0);
   const load = useCallback(async () => {
+    const mine = ++seq.current;
     setError(null);
     try {
-      setData(await api<ListAgreementsResponse>(`/v1/agreements?${query}`));
+      const r = await api<ListAgreementsResponse>(`/v1/agreements?${query}`);
+      if (mine === seq.current) setData(r);
     } catch (e) {
-      setError(errorText(e));
+      if (mine === seq.current) setError(errorText(e));
     }
   }, [query]);
   useEffect(() => {

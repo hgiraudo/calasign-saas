@@ -93,7 +93,14 @@ export function SignerPage() {
   ) : null;
 
   let content: ReactNode;
-  if (session.inPerson?.active && recipient.status === "signed") {
+  // Un firmante con certificado pendiente ya figura como "signed" (etapa electrónica): si el sobre se anuló o
+  // venció mientras esperaba su certificado, se muestra el cierre en lugar del paso del Firmador.
+  const certPending = session.certificateSigning != null && session.certificateSigning.status !== "signed";
+  if (certPending && envelope.status === "voided") {
+    content = <Final icon="⊘" title={t("sign.voidedTitle")} text={t("sign.closedText")} />;
+  } else if (certPending && envelope.status === "expired") {
+    content = <Final icon="⌛" title={t("sign.expiredTitle")} text={t("sign.closedText")} />;
+  } else if (session.inPerson?.active && recipient.status === "signed") {
     content = <InPersonDone session={session} base={base} />;
   } else if (recipient.status === "signed" || recipient.status === "completed") {
     content =

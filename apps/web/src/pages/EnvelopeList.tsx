@@ -27,7 +27,8 @@ export function EnvelopeListPage() {
   const load = useCallback(
     async (after: string | null, signal?: AbortSignal) => {
       const p = new URLSearchParams({ limit: "25" });
-      if (status !== "all") p.set("status", status);
+      // "En curso" incluye los sobres que se están sellando o esperan firmas con certificado.
+      if (status !== "all") p.set("status", status === "sent" ? "sent,finalizing,awaiting_certificates" : status);
       if (query) p.set("q", query);
       if (after) p.set("cursor", after);
       return api<ListEnvelopesResponse>(`/v1/envelopes?${p}`, { signal });

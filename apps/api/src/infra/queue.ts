@@ -28,7 +28,8 @@ interface JobRow {
   max_attempts: number;
 }
 
-export type JobHandler = (payload: any, job: { id: number; attempts: number }) => Promise<void>;
+/** `attempts` incluye el intento en curso; si es >= `maxAttempts`, un error deja el job en 'failed'. */
+export type JobHandler = (payload: any, job: { id: number; attempts: number; maxAttempts: number }) => Promise<void>;
 
 export interface WorkerOptions {
   handlers: Record<JobQueueName, JobHandler>;
@@ -63,7 +64,7 @@ export function startWorker(db: Db, opts: WorkerOptions) {
     const handler = opts.handlers[job.queue];
     try {
       if (!handler) throw new Error(`sin handler para ${job.queue}`);
-      await handler(job.payload, { id: job.id, attempts: job.attempts });
+      await handler(job.payload, { id: job.id, attempts: job.attempts, maxAttempts: job.max_attempts });
       await db.query(`UPDATE jobs SET status = 'done', finished_at = now(), locked_at = NULL WHERE id = $1`, [job.id]);
     } catch (e) {
       const err = e instanceof Error ? e.stack ?? e.message : String(e);
@@ -111,11 +112,22 @@ export function startWorker(db: Db, opts: WorkerOptions) {
   };
 }
 
-/** Devuelve a la cola trabajos que quedaron tomados por un worker que murió. */
-export async function requeueStuckJobs(db: Db) {
-  await db.query(
-    `UPDATE jobs SET status = 'pending', locked_at = NULL WHERE status = 'running' AND locked_at < now() - interval '10 minutes'`,
+/**
+ * Devuelve a la cola trabajos que quedaron tomados por un worker que murió. Un job que ya agotó sus intentos
+ * (p. ej. uno que tumba el proceso cada vez) pasa a 'failed' en vez de reintentarse para siempre; se devuelven
+ * esos jobs para que el llamador pueda reaccionar.
+ */
+export async function requeueStuckJobs(db: Db): Promise<{ id: number; queue: JobQueueName; payload: any }[]> {
+  const rows = await db.query<{ id: number; queue: JobQueueName; payload: any; status: string }>(
+    `UPDATE jobs SET
+       status = CASE WHEN attempts >= max_attempts THEN 'failed' ELSE 'pending' END,
+       locked_at = NULL,
+       finished_at = CASE WHEN attempts >= max_attempts THEN now() END,
+       last_error = CASE WHEN attempts >= max_attempts THEN left(COALESCE(last_error || E'\\n', '') || 'el worker se detuvo durante el job (intentos agotados)', 4000) ELSE last_error END
+     WHERE status = 'running' AND locked_at < now() - interval '10 minutes'
+     RETURNING id, queue, payload, status`,
   );
+  return rows.filter((r) => r.status === "failed").map(({ id, queue, payload }) => ({ id, queue, payload }));
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

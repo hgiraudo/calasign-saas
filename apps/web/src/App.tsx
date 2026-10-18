@@ -4,6 +4,7 @@ import { Layout } from "./components/Layout";
 import { RequireAuth } from "./lib/auth";
 import { AccessProvider } from "./lib/access";
 import { LoginPage, SignupPage } from "./pages/Auth";
+import { ForgotPasswordPage, ResetPasswordPage } from "./pages/Password";
 import { EnvelopeListPage } from "./pages/EnvelopeList";
 import { EnvelopeEditPage } from "./pages/EnvelopeEdit";
 import { EnvelopeDetailPage } from "./pages/EnvelopeDetail";
@@ -47,6 +48,8 @@ export function App() {
       <Route path="/" element={<Navigate to="/app" replace />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/signup" element={<SignupPage />} />
+      <Route path="/forgot" element={<ForgotPasswordPage />} />
+      <Route path="/reset/:token" element={<ResetPasswordPage />} />
       <Route path="/s/:token" element={<SignerPage />} />
       <Route path="/developers" element={<DevelopersPage />} />
       <Route path="/verify" element={<VerifyPage />} />

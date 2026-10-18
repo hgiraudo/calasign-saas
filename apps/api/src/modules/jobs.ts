@@ -43,7 +43,15 @@ const TELEGRAM_HINT = {
 export function createJobHandlers(d: Deps): Record<JobQueueName, JobHandler> {
   return {
     notify: (p) => notify(d, p),
-    finalize: (p) => finalize(d, p),
+    finalize: async (p, job) => {
+      try {
+        await finalize(d, p);
+      } catch (err) {
+        // Último intento: el sobre no puede quedar en 'finalizing' sin que nadie se entere.
+        if (job.attempts >= job.maxAttempts) await finalizeGaveUp(d, p, err).catch((e) => d.log.error({ err: String(e), envelopeId: p.envelopeId }, "no se pudo registrar el fallo de finalización"));
+        throw err;
+      }
+    },
     webhook: (p, job) => handleWebhookJob(d, p, job),
     bulk: (p) => handleBulkJob(d, p),
     platform: (p) => handlePlatformJob(d, p),
@@ -53,7 +61,11 @@ export function createJobHandlers(d: Deps): Record<JobQueueName, JobHandler> {
 
 // ───────────────────────────── Notificaciones ─────────────────────────────
 
-async function notify(d: Deps, p: { kind: TemplateKind; envelopeId: string; tenantId: string; recipientId?: string; declinedBy?: string }) {
+async function notify(
+  d: Deps,
+  p: { kind: TemplateKind; envelopeId: string; tenantId: string; recipientId?: string; declinedBy?: string; userId?: string; tokenEnc?: string },
+) {
+  if (p.kind === "password_reset") return notifyPasswordReset(d, p);
   const e = await d.db.one<any>(`SELECT * FROM envelopes WHERE id = $1`, [p.envelopeId]);
   if (!e) return;
   const org = await d.db.one<any>(`SELECT name FROM tenants WHERE id = $1`, [e.tenant_id]);
@@ -85,6 +97,28 @@ async function notify(d: Deps, p: { kind: TemplateKind; envelopeId: string; tena
        VALUES ($1,$2,$3,'email',$4,$5,'sent',$6,$7,now())`,
       [uuidv7(), e.tenant_id, e.id, p.kind, sender.email, res.provider, res.messageId],
     );
+    return;
+  }
+
+  // Finalización fallida: a propietarios y administradores de la organización, y al remitente.
+  if (p.kind === "finalize_failed") {
+    if (e.status !== "finalizing") return;
+    const to = await d.db.query<any>(
+      `SELECT DISTINCT u.email, u.name, u.locale FROM users u JOIN memberships m ON m.user_id = u.id
+       WHERE m.tenant_id = $1 AND (m.role IN ('owner','admin') OR u.id = $2)`,
+      [e.tenant_id, e.created_by],
+    );
+    const link = `${await tenantBaseUrl(d.db, e.tenant_id)}/app/envelopes/${e.id}`;
+    for (const u of to) {
+      if (!u.email) continue;
+      const m = render("finalize_failed", u.locale ?? e.locale, { ...base, recipientName: u.name, link }, mailBrand);
+      const res = await deliver({ channel: "email", to: u.email, subject: m.subject, text: m.text, html: m.html, link, locale: u.locale ?? e.locale, tenantId: e.tenant_id });
+      await d.db.query(
+        `INSERT INTO notifications (id, tenant_id, envelope_id, channel, template, destination, status, provider, provider_message_id, sent_at)
+         VALUES ($1,$2,$3,'email',$4,$5,'sent',$6,$7,now())`,
+        [uuidv7(), e.tenant_id, e.id, p.kind, u.email, res.provider, res.messageId],
+      );
+    }
     return;
   }
 
@@ -153,6 +187,20 @@ async function notify(d: Deps, p: { kind: TemplateKind; envelopeId: string; tena
   }
   // Si no salió por ningún canal, reintentar el job.
   if (delivered === 0 && errors.length) throw new Error(`no se pudo notificar: ${errors.join("; ")}`);
+}
+
+/** Correo de restablecimiento de contraseña. El token viaja cifrado en el job y se descarta si ya no sirve. */
+async function notifyPasswordReset(d: Deps, p: { userId?: string; tokenEnc?: string }) {
+  if (!p.userId || !p.tokenEnc) return;
+  const token = decrypt(p.tokenEnc);
+  const valid = await d.db.one(`SELECT 1 FROM password_resets WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now()`, [sha256Hex(token)]);
+  if (!valid) return;
+  const u = await d.db.one<any>(`SELECT email, name, locale FROM users WHERE id = $1`, [p.userId]);
+  if (!u?.email) return;
+  const link = `${config.appUrl}/reset/${token}`;
+  const vars = { recipientName: u.name, senderName: "CalaSign", organizationName: "CalaSign", subject: "", link };
+  const m = render("password_reset", u.locale, { ...vars, subject: render("password_reset", u.locale, vars).subject });
+  await deliver({ channel: "email", to: u.email, subject: m.subject, text: m.text, html: m.html, link, locale: u.locale });
 }
 
 // ───────────────────────────── Finalización y sellado ─────────────────────────────
@@ -348,13 +396,37 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
   d.log.info({ envelopeId: e.id, sha256: sha, bytes: pdf.length }, "sobre completado y sellado");
 }
 
+/**
+ * La finalización agotó sus reintentos: queda constancia en la evidencia y se avisa a los administradores.
+ * El sobre sigue en 'finalizing' (no se completa ni se pierde nada) hasta que alguien lo reintente con
+ * POST /v1/envelopes/:id/retry-finalize.
+ */
+export async function finalizeGaveUp(d: Deps, p: { envelopeId: string; tenantId: string }, err: unknown) {
+  const message = (err instanceof Error ? err.message : String(err)).slice(0, 500);
+  await d.db.tx(async (t) => {
+    const e = await t.one<any>(`SELECT id, tenant_id, status FROM envelopes WHERE id = $1 FOR UPDATE`, [p.envelopeId]);
+    if (!e || e.status !== "finalizing") return;
+    await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "envelope.finalize_failed", actor: SYSTEM, data: { error: message } });
+    await enqueue(t, "notify", { kind: "finalize_failed", envelopeId: e.id, tenantId: e.tenant_id });
+  });
+  d.log.error({ envelopeId: p.envelopeId, err: message }, "la finalización del sobre falló definitivamente");
+}
+
 // ───────────────────────────── Tareas periódicas ─────────────────────────────
 
 export async function sweep(d: Deps) {
   // Cada tarea por separado: una que falla (p. ej. un proveedor caído) no puede frenar a las demás, en
   // particular el vencimiento de sobres de más abajo.
   const steps: [string, () => Promise<unknown>][] = [
-    ["requeue", () => requeueStuckJobs(d.db)],
+    [
+      "requeue",
+      async () => {
+        // Jobs que agotaron sus intentos con el worker caído: una finalización no puede quedar trabada en silencio.
+        for (const j of await requeueStuckJobs(d.db)) {
+          if (j.queue === "finalize") await finalizeGaveUp(d, j.payload, new Error("el worker se detuvo durante la finalización (intentos agotados)"));
+        }
+      },
+    ],
     ["reminders", () => runAutomaticReminders(d.db)],
     ["retention", () => purgeExpiredEnvelopes(d)],
     ["ai", () => runAiSweep(d)],

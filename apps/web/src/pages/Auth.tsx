@@ -8,8 +8,9 @@ import { useI18n } from "../lib/i18n";
 import { ErrorBox, LocaleSwitcher, Logo, Spinner } from "../components/ui";
 import { SsoErrorNotice, SsoLoginBox, redirectIfSsoRequired } from "../components/SsoLogin";
 import { CellPicker } from "../components/DataExtras";
+import { usePasswordText } from "../lib/i18n-password";
 
-function AuthShell({ title, children }: { title: string; children: ReactNode }) {
+export function AuthShell({ title, children }: { title: string; children: ReactNode }) {
   const { t } = useI18n();
   return (
     <div className="auth-page">
@@ -28,6 +29,7 @@ function AuthShell({ title, children }: { title: string; children: ReactNode }) 
 
 export function LoginPage() {
   const { t } = useI18n();
+  const pw = usePasswordText();
   const { me, loading, setMe } = useAuth();
   const nav = useNavigate();
   const loc = useLocation();
@@ -97,6 +99,9 @@ export function LoginPage() {
         <button className="btn btn-primary btn-block" disabled={busy}>
           {busy ? t("common.loading") : t("auth.login")}
         </button>
+        <p className="muted center">
+          <Link to="/forgot">{pw("forgotLink")}</Link>
+        </p>
         <p className="muted center">
           {t("auth.noAccount")} <Link to="/signup">{t("auth.signup")}</Link>
         </p>

@@ -3,7 +3,8 @@
 
 export interface SmsProvider {
   readonly id: string;
-  send(to: string, text: string): Promise<{ messageId: string | null }>;
+  /** `from`: remitente alfanumérico de la marca (Twilio lo acepta en los países que lo permiten). */
+  send(to: string, text: string, from?: string): Promise<{ messageId: string | null }>;
 }
 
 class TwilioSmsProvider implements SmsProvider {
@@ -13,14 +14,14 @@ class TwilioSmsProvider implements SmsProvider {
     private token: string,
     private from: string,
   ) {}
-  async send(to: string, text: string) {
+  async send(to: string, text: string, from?: string) {
     const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(this.sid)}/Messages.json`, {
       method: "POST",
       headers: {
         Authorization: `Basic ${Buffer.from(`${this.sid}:${this.token}`).toString("base64")}`,
         "Content-Type": "application/x-www-form-urlencoded",
       },
-      body: new URLSearchParams({ To: to, From: this.from, Body: text }),
+      body: new URLSearchParams({ To: to, From: from && process.env.TWILIO_ALLOW_ALPHANUMERIC === "true" ? from : this.from, Body: text }),
       signal: AbortSignal.timeout(15_000),
     });
     const body: any = await res.json().catch(() => ({}));

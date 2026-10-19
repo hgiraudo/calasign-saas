@@ -1,3 +1,4 @@
+import { fillTemplate } from "@calasign/shared";
 export type TemplateKind =
   | "invite"
   | "reminder"
@@ -243,41 +244,112 @@ export interface MailBranding {
   primaryColor?: string | null;
   logoUrl?: string | null;
   footer?: string | null;
+  /** Marca blanca: nombre del producto que reemplaza a la plataforma (null: la plataforma). */
+  productName?: string | null;
+  /** Marca blanca total: sin el pie "Enviado con …" ni el logotipo de la plataforma. */
+  hidePoweredBy?: boolean;
+  /** Nombre visible de la marca (encabezado sin logo). */
+  brandName?: string | null;
+  secondaryColor?: string | null;
+  buttonColor?: string | null;
+  buttonTextColor?: string | null;
+  backgroundColor?: string | null;
+  textColor?: string | null;
+  fontFamily?: string | null;
+  /** Hoja de Google Fonts (los clientes de correo que no la cargan usan la pila de respaldo). */
+  fontCssUrl?: string | null;
+  borderRadius?: number | null;
+  supportUrl?: string | null;
+  /** Plantilla propia de la organización para este evento e idioma ({{variables}}). */
+  template?: { subject?: string | null; body?: string | null; cta?: string | null } | null;
 }
 
+/** Nombre de la plataforma (lo que se reemplaza en marca blanca). */
+export const PLATFORM_NAME = "CalaSign";
+
+/** Reemplaza el nombre de la plataforma por el de la marca (y quita el correo de contacto de la plataforma). */
+export function brandText(s: string, brand: Pick<MailBranding, "productName" | "hidePoweredBy" | "brandName" | "supportUrl">): string {
+  const name = brand.productName || (brand.hidePoweredBy ? brand.brandName : null);
+  if (!name) return s;
+  return s
+    .replace(/contacto@calasign\.com/gi, brand.supportUrl || name)
+    .replace(/calasign\.com/gi, brand.supportUrl || name)
+    .replace(/CalaSign/g, name);
+}
+
+const okHex = (c: string | null | undefined): c is string => typeof c === "string" && /^#[0-9a-fA-F]{6}$/.test(c);
+const okFont = (f: string | null | undefined): f is string => typeof f === "string" && /^[A-Za-z0-9][A-Za-z0-9 ]{0,59}$/.test(f);
+
 export function render(kind: TemplateKind, localeIn: string | null | undefined, v: TemplateVars, brand: MailBranding = {}) {
-  const color = brand.primaryColor && /^#[0-9a-fA-F]{6}$/.test(brand.primaryColor) ? brand.primaryColor : null;
+  const color = okHex(brand.primaryColor) ? brand.primaryColor : null;
+  const accent = okHex(brand.secondaryColor) ? brand.secondaryColor : "#2ec4b6";
+  const btn = okHex(brand.buttonColor) ? brand.buttonColor : color ?? "#0f7c7c";
+  const btnText = okHex(brand.buttonTextColor) ? brand.buttonTextColor : "#ffffff";
+  const bg = okHex(brand.backgroundColor) ? brand.backgroundColor : "#f3f5f8";
+  const ink = okHex(brand.textColor) ? brand.textColor : "#0b1f3a";
+  const radius = typeof brand.borderRadius === "number" && brand.borderRadius >= 0 && brand.borderRadius <= 24 ? brand.borderRadius : 6;
+  const font = okFont(brand.fontFamily) ? `'${brand.fontFamily}',Arial,Helvetica,sans-serif` : "Arial,Helvetica,sans-serif";
   const locale = normLocale(localeIn);
   const t = T[locale][kind];
-  const subject = t.subject(v);
-  const lines = t.lines(v).filter(Boolean);
+  const B = (s: string) => brandText(s, brand);
+  const vars: Record<string, string> = {
+    recipientName: v.recipientName,
+    senderName: v.senderName,
+    organizationName: v.organizationName,
+    subject: v.subject,
+    message: v.message ?? "",
+    link: v.link ?? "",
+    reason: v.reason ?? "",
+    declinedBy: v.declinedBy ?? "",
+    productName: brand.productName || brand.brandName || PLATFORM_NAME,
+    supportUrl: brand.supportUrl ?? "",
+  };
+  const tpl = brand.template ?? null;
+  const subject = B(tpl?.subject?.trim() ? fillTemplate(tpl.subject, vars).replace(/[\r\n]+/g, " ").trim() : t.subject(v));
+  const lines = (
+    tpl?.body?.trim()
+      ? fillTemplate(tpl.body, vars)
+          .split(/\n\s*\n/)
+          .map((p) => p.trim())
+      : t.lines(v)
+  )
+    .filter(Boolean)
+    .map(B);
+  const cta = tpl?.cta?.trim() ? tpl.cta.trim() : t.cta ?? null;
+  const footer = brand.hidePoweredBy ? null : B(FOOTER[locale]);
   const text = [
     ...lines,
-    v.message ? `\n${MSG_LABEL[locale]}: ${v.message}` : "",
-    v.link && t.cta ? `\n${t.cta}: ${v.link}` : "",
+    v.message && !tpl?.body?.includes("{{message}}") ? `\n${MSG_LABEL[locale]}: ${v.message}` : "",
+    v.link && cta ? `\n${cta}: ${v.link}` : "",
     brand.footer ? `\n${brand.footer}` : "",
-    `\n— ${FOOTER[locale]}`,
+    footer ? `\n— ${footer}` : "",
   ]
     .filter(Boolean)
     .join("\n");
-  const html = `<!doctype html><html><body style="margin:0;background:#f3f5f8;font-family:Arial,Helvetica,sans-serif;color:#0b1f3a">
+  const headerName = brand.brandName || v.organizationName;
+  const fontLink = brand.fontCssUrl && /^https:\/\/fonts\.googleapis\.com\//.test(brand.fontCssUrl) ? `<link rel="stylesheet" href="${esc(brand.fontCssUrl)}">` : "";
+  const html = `<!doctype html><html><head><meta charset="utf-8">${fontLink}</head><body style="margin:0;background:${bg};font-family:${font};color:${ink}">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:32px 12px">
-<table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:10px;overflow:hidden">
+<table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:${Math.max(radius, 4)}px;overflow:hidden">
 ${
     brand.logoUrl
-      ? `<tr><td style="background:#ffffff;padding:18px 28px;border-top:5px solid ${color ?? "#0b1f3a"};border-bottom:1px solid #e5e9f0"><img src="${esc(brand.logoUrl)}" alt="${esc(v.organizationName)}" style="max-height:44px;max-width:220px;display:block"></td></tr>`
-      : color
-        ? `<tr><td style="background:${color};padding:18px 28px;color:#ffffff;font-size:18px;font-weight:bold">${esc(v.organizationName)}</td></tr>`
+      ? `<tr><td style="background:#ffffff;padding:18px 28px;border-top:5px solid ${color ?? "#0b1f3a"};border-bottom:1px solid #e5e9f0"><img src="${esc(brand.logoUrl)}" alt="${esc(headerName)}" style="max-height:44px;max-width:220px;display:block"></td></tr>`
+      : color || brand.productName || brand.hidePoweredBy || brand.brandName
+        ? `<tr><td style="background:${color ?? "#0b1f3a"};padding:18px 28px;color:#ffffff;font-size:18px;font-weight:bold">${esc(headerName || brand.productName || "")}</td></tr>`
         : `<tr><td style="background:#0b1f3a;padding:18px 28px;color:#ffffff;font-size:18px;font-weight:bold">Cala<span style="color:#2ec4b6">Sign</span></td></tr>`
   }
 <tr><td style="padding:28px">
 <p style="margin:0 0 6px;font-size:13px;color:#5b6576">${esc(v.organizationName)}</p>
 <h1 style="margin:0 0 18px;font-size:20px">${esc(v.subject)}</h1>
-${lines.map((l) => `<p style="margin:0 0 12px;font-size:15px;line-height:1.5">${esc(l)}</p>`).join("")}
-${v.message ? `<div style="margin:16px 0;padding:12px 14px;background:#f3f5f8;border-left:3px solid #2ec4b6;font-size:14px;white-space:pre-wrap">${esc(v.message)}</div>` : ""}
-${v.link && t.cta ? `<p style="margin:24px 0"><a href="${esc(v.link)}" style="background:${color ?? "#0f7c7c"};color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:6px;font-weight:bold;display:inline-block">${esc(t.cta)}</a></p><p style="font-size:12px;color:#5b6576;word-break:break-all">${esc(v.link)}</p>` : ""}
+${lines.map((l) => `<p style="margin:0 0 12px;font-size:15px;line-height:1.5;white-space:pre-wrap">${esc(l)}</p>`).join("")}
+${v.message && !tpl?.body?.includes("{{message}}") ? `<div style="margin:16px 0;padding:12px 14px;background:${bg};border-left:3px solid ${accent};font-size:14px;white-space:pre-wrap">${esc(v.message)}</div>` : ""}
+${v.link && cta ? `<p style="margin:24px 0"><a href="${esc(v.link)}" style="background:${btn};color:${btnText};text-decoration:none;padding:12px 22px;border-radius:${radius}px;font-weight:bold;display:inline-block">${esc(cta)}</a></p><p style="font-size:12px;color:#5b6576;word-break:break-all">${esc(v.link)}</p>` : ""}
 </td></tr>
-<tr><td style="padding:16px 28px;border-top:1px solid #e5e9f0;font-size:12px;color:#5b6576">${brand.footer ? `<p style="margin:0 0 8px;white-space:pre-wrap">${esc(brand.footer)}</p>` : ""}${esc(FOOTER[locale])}</td></tr>
+${
+    brand.footer || footer
+      ? `<tr><td style="padding:16px 28px;border-top:1px solid #e5e9f0;font-size:12px;color:#5b6576">${brand.footer ? `<p style="margin:0 0 8px;white-space:pre-wrap">${esc(brand.footer)}</p>` : ""}${footer ? esc(footer) : ""}</td></tr>`
+      : ""
+  }
 </table></td></tr></table></body></html>`;
-  return { subject, text, html, cta: t.cta ?? null };
+  return { subject, text, html, cta };
 }

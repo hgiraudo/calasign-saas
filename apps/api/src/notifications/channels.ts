@@ -20,6 +20,13 @@ export interface OutboundMessage {
   locale?: string;
   /** Para filtrar el buzón de desarrollo por organización. */
   tenantId?: string;
+  /** Marca blanca: remitente propio ("Firmas ACME <firmas@acme.com>"); sin esto, MAIL_FROM. */
+  from?: string | null;
+  replyTo?: string | null;
+  /** Firma DKIM con la clave del dominio de correo verificado de la organización. */
+  dkim?: { domainName: string; keySelector: string; privateKey: string } | null;
+  /** SMS: remitente alfanumérico de la marca (si el proveedor y el país lo permiten). */
+  smsFrom?: string | null;
 }
 
 export interface SendResult {
@@ -34,7 +41,20 @@ async function toMailbox(m: OutboundMessage): Promise<SendResult> {
   const id = uuidv7();
   await writeFile(
     resolve(mailboxDir, `${id}.json`),
-    JSON.stringify({ id, tenantId: m.tenantId ?? null, channel: m.channel, to: m.to, subject: m.subject, text: m.text, link: m.link ?? null, createdAt: new Date().toISOString() }),
+    JSON.stringify({
+      id,
+      tenantId: m.tenantId ?? null,
+      channel: m.channel,
+      to: m.to,
+      // Remitente y HTML: las pruebas de marca blanca revisan que no aparezca la marca de la plataforma.
+      from: m.channel === "email" ? m.from ?? config.mail.from : m.channel === "sms" ? m.smsFrom ?? null : null,
+      replyTo: m.replyTo ?? null,
+      subject: m.subject,
+      text: m.text,
+      html: m.html ?? null,
+      link: m.link ?? null,
+      createdAt: new Date().toISOString(),
+    }),
   );
   return { provider: "dev-mailbox", messageId: id };
 }
@@ -58,8 +78,24 @@ const SMTP_TIMEOUTS = { dnsTimeout: 15_000, connectionTimeout: 30_000, greetingT
 
 async function sendEmail(m: OutboundMessage): Promise<SendResult> {
   transporter ??= nodemailer.createTransport(new SMTPTransport({ ...SMTP_TIMEOUTS, url: config.mail.smtpUrl! }));
-  const info = await transporter.sendMail({ from: config.mail.from, to: m.to, subject: m.subject, text: m.text, html: m.html });
+  const info = await transporter.sendMail({
+    from: m.from ?? config.mail.from,
+    // Con un remitente propio sin DKIM (dominio no verificado no llega acá: ver white-label/mail.ts) el sobre SMTP
+    // sigue saliendo con la dirección de la plataforma, que es la que el proveedor autoriza (SPF).
+    ...(m.from && !m.dkim ? { envelope: { from: addressOf(config.mail.from), to: m.to } } : {}),
+    replyTo: m.replyTo ?? undefined,
+    to: m.to,
+    subject: m.subject,
+    text: m.text,
+    html: m.html,
+    ...(m.dkim ? { dkim: m.dkim } : {}),
+  });
   return { provider: "smtp", messageId: info.messageId ?? null };
+}
+
+/** "Nombre <a@b.com>" → "a@b.com". */
+function addressOf(from: string): string {
+  return /<([^>]+)>/.exec(from)?.[1] ?? from;
 }
 
 const WA_LANG: Record<string, string> = { es: "es", "pt-BR": "pt_BR", en: "en" };
@@ -113,7 +149,7 @@ export async function deliver(m: OutboundMessage & { cta?: string | null }): Pro
     // Sin buzón de desarrollo no se escribe nada en disco: el SMS lleva el código de verificación del firmante.
     if (!sms && !config.devMailbox) throw new Error("SMS no configurado");
     const r = config.devMailbox ? await toMailbox(m) : null;
-    if (sms) return sms.send(m.to, m.text).then((x) => ({ provider: sms.id, messageId: x.messageId })).catch((e) => (r ? r : Promise.reject(e)));
+    if (sms) return sms.send(m.to, m.text, m.smsFrom ?? undefined).then((x) => ({ provider: sms.id, messageId: x.messageId })).catch((e) => (r ? r : Promise.reject(e)));
     return r!;
   }
   if (config.devMailbox) {

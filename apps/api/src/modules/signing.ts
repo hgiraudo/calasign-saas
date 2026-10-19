@@ -8,7 +8,7 @@ import { AppError, badRequest, conflict, notFound } from "../lib/errors";
 import { sha256Hex, uuidv7 } from "../lib/util";
 import { telegramStartLink } from "../notifications/channels";
 import { clientInfo, type Services } from "./context";
-import { advanceRouting, currentSignerGroup, lockEnvelope, sendPdf } from "./envelopes";
+import { advanceRouting, currentSignerGroup, lockEnvelope, pastExpiry, sendPdf } from "./envelopes";
 import { toDocument, toField, loadDocuments } from "./mappers";
 import { loadSignatureImages, toStampFields } from "./stamp-fields";
 import { assertEmbeddableImage, renderProgressCopyPdf } from "@calasign/pdf";
@@ -81,7 +81,7 @@ function assertCanReadDocuments(r: any, e: any) {
  * (p. ej. un correo equivocado, el motivo típico para anular) seguía bajando el contrato para siempre.
  */
 function closedForSigner(e: any): boolean {
-  return e.status === "voided" || e.status === "expired";
+  return e.status === "voided" || e.status === "expired" || (e.status === "sent" && pastExpiry(e));
 }
 
 export async function buildSession(db: Db, token: string, r: any, e: any, authed = true): Promise<SigningSession> {
@@ -99,13 +99,14 @@ export async function buildSession(db: Db, token: string, r: any, e: any, authed
   const wl = await brandForEnvelope(db, e);
   const theme = publicTheme(wl);
   const canSign =
-    e.status === "sent" && (r.role === "signer" || r.role === "approver") && ["sent", "viewed"].includes(r.status) && group.order === r.routing_order;
+    e.status === "sent" && !pastExpiry(e) && (r.role === "signer" || r.role === "approver") && ["sent", "viewed"].includes(r.status) && group.order === r.routing_order;
   return {
     envelope: {
       id: e.id,
       subject: e.subject,
       message: e.message,
-      status: e.status,
+      // Vencido sin barrer todavía: la página muestra el cierre por vencimiento, no un sobre firmable a medias.
+      status: e.status === "sent" && pastExpiry(e) ? "expired" : e.status,
       // Sin usuario remitente (API key): el nombre de la marca, como en los correos (jobs.ts); no el de la organización.
       senderName: sender?.name ?? (rebrands(wl) || e.brand_id ? wl.name : org?.name) ?? productLabel(wl),
       organizationName: rebrands(wl) || e.brand_id ? wl.name : org?.name ?? "",
@@ -185,7 +186,7 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
     if (!r0.consented_at && e0.status === "sent") {
       await s.db.tx(async (t) => {
         const e = await lockEnvelope(t, e0.tenant_id, e0.id);
-        if (e.status !== "sent") return;
+        if (e.status !== "sent" || pastExpiry(e)) return;
         // Solo con el link vigente: el consentimiento de quien tenía el link anterior no pasa al contacto corregido.
         const upd = await t.query(`UPDATE recipients SET consented_at = now() WHERE id = $1 AND consented_at IS NULL AND access_token_hash = $2 RETURNING id`, [
           r0.id,
@@ -256,7 +257,7 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
       const e = await lockEnvelope(t, e0.tenant_id, e0.id);
       const r = await t.one<any>(`SELECT * FROM recipients WHERE id = $1`, [r0.id]);
       assertLinkCurrent(r, req.params.token);
-      if (e.status !== "sent") throw new AppError(410, "envelope_closed", "El sobre ya no está disponible para firmar");
+      if (e.status !== "sent" || pastExpiry(e)) throw new AppError(410, "envelope_closed", "El sobre ya no está disponible para firmar");
       if (r.role !== "signer" && r.role !== "approver") throw conflict("not_signer", "Este destinatario no firma");
       if (r.status === "signed") throw conflict("already_signed", "Ya firmaste este sobre");
       if (!["sent", "viewed"].includes(r.status)) throw conflict("not_signable", "No podés firmar este sobre");
@@ -368,7 +369,7 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
       const e = await lockEnvelope(t, e0.tenant_id, e0.id);
       const r = await t.one<any>(`SELECT * FROM recipients WHERE id = $1`, [r0.id]);
       assertLinkCurrent(r, req.params.token);
-      if (e.status !== "sent") throw new AppError(410, "envelope_closed", "El sobre ya no está disponible");
+      if (e.status !== "sent" || pastExpiry(e)) throw new AppError(410, "envelope_closed", "El sobre ya no está disponible");
       if ((r.role !== "signer" && r.role !== "approver") || !["sent", "viewed"].includes(r.status)) throw conflict("not_signable", "No podés rechazar este sobre");
       await t.query(`UPDATE recipients SET status = 'declined', declined_at = now(), decline_reason = $2 WHERE id = $1`, [r.id, input.reason]);
       await t.query(`UPDATE envelopes SET status = 'declined', updated_at = now(), version = version + 1 WHERE id = $1`, [e.id]);

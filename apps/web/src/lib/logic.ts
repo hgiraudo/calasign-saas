@@ -1,7 +1,7 @@
 // Lógica de campos en vivo para el firmante (Fase 4). Usa las mismas funciones que el servidor;
 // el servidor vuelve a evaluar todo al completar, esto es solo para mostrarlo.
 import { useMemo } from "react";
-import { computeFormulas, computeHidden, type Field, type LogicField, type SigningSession } from "@calasign/shared";
+import { computeLogic, type Field, type LogicField, type SigningSession } from "@calasign/shared";
 
 export function useFieldLogic(session: SigningSession, values: Record<string, string>) {
   return useMemo(() => {
@@ -23,9 +23,8 @@ export function useFieldLogic(session: SigningSession, values: Record<string, st
       }
       return otherById.get(id)?.value ?? null;
     };
-    const hidden = computeHidden(all, valueOf);
-    const computed = computeFormulas(all, valueOf, hidden);
-    return { hidden, computed };
+    // Igual que el servidor: las condiciones sobre un campo calculado miran el valor calculado.
+    return computeLogic(all, valueOf);
   }, [session.fields, session.logicFields, values]);
 }
 

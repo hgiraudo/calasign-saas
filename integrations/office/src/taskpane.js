@@ -206,7 +206,7 @@ function attachmentPdf(id) {
   return new Promise((resolve, reject) => {
     Office.context.mailbox.item.getAttachmentContentAsync(id, (r) => {
       if (r.status !== Office.AsyncResultStatus.Succeeded) return reject(new Error(r.error?.message || "attachment"));
-      if (r.value.format !== Office.MailboxEnums.AttachmentContentFormat.Base64) return reject(new Error("El adjunto no es un archivo (¿está en la nube?)"));
+      if (r.value.format !== Office.MailboxEnums.AttachmentContentFormat.Base64) return reject(new Error(t("attachmentNotFile")));
       resolve(fromBase64(r.value.content));
     });
   });

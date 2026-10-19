@@ -1,3 +1,5 @@
+import { setLanguage, t } from "./i18n.js";
+setLanguage(navigator.language);
 // Vuelta de /oauth/authorize: le pasa el resultado ({code, state} o {error}) al panel y se cierra.
 // En Office: Office.context.ui.messageParent. Fuera de Office (pruebas en un navegador): postMessage a quien abrió.
 const ORIGIN = window.location.origin;
@@ -26,13 +28,13 @@ function send() {
   try {
     if (globalThis.Office?.context?.ui?.messageParent) {
       Office.context.ui.messageParent(JSON.stringify(payload));
-      done("Listo. Podés cerrar esta ventana.");
+      done(t("dialogDone"));
       return;
     }
   } catch {
     /* sigue con la alternativa */
   }
-  if (!viaOpener()) done("No se pudo volver al complemento. Cerrá esta ventana e intentá de nuevo.");
+  if (!viaOpener()) done(t("dialogNoReturn"));
 }
 
 if (globalThis.Office?.onReady) Office.onReady(() => send());

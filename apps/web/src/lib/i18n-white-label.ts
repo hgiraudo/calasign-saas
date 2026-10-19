@@ -108,6 +108,9 @@ const es = {
   "mock.sign": "Firmar",
   "mock.finish": "Finalizar",
   "mock.powered": "Firma electrónica segura con",
+  "mock.sender": "Juan García",
+  "mock.subject": "Contrato de servicios",
+  "mock.view": "Ver documento",
 };
 type Key = keyof typeof es;
 
@@ -216,6 +219,9 @@ const ptBR: Record<Key, string> = {
   "mock.sign": "Assinar",
   "mock.finish": "Concluir",
   "mock.powered": "Assinatura eletrônica segura com",
+  "mock.sender": "João Silva",
+  "mock.subject": "Contrato de serviços",
+  "mock.view": "Ver documento",
 };
 
 const en: Record<Key, string> = {
@@ -323,6 +329,9 @@ const en: Record<Key, string> = {
   "mock.sign": "Sign",
   "mock.finish": "Finish",
   "mock.powered": "Secure e-signature by",
+  "mock.sender": "John Smith",
+  "mock.subject": "Services agreement",
+  "mock.view": "View document",
 };
 
 const DICTS: Record<string, Record<Key, string>> = { es, "pt-BR": ptBR, en };

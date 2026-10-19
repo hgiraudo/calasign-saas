@@ -99,8 +99,8 @@ main{padding:14px;flex:1}.card{background:#fff;border-radius:var(--radius);paddi
 .signer-foot{text-align:center;padding:10px;color:#64748b;font-size:12px}
 </style><style>${o.css.replace(/<\//g, "<\\/")}</style></head><body><div class="signer">
 <div class="signer-bar">${o.logo ? `<img src="${esc(o.logo)}" alt="">` : esc(o.name)}</div>
-<main><div class="card"><p class="muted"><b>Juan García</b> (${esc(o.name)}) ${esc(o.w("mock.sentBy"))}</p><h3 style="margin:4px 0">Contrato de servicios</h3>
-<div class="progress"><i></i></div><div class="doc"></div><a href="#">Ver documento</a><p style="margin-top:12px"><span class="btn btn-primary">✍ ${esc(o.w("mock.sign"))}</span> <span class="btn">${esc(o.w("mock.finish"))}</span></p></div></main>
+<main><div class="card"><p class="muted"><b>${esc(o.w("mock.sender"))}</b> (${esc(o.name)}) ${esc(o.w("mock.sentBy"))}</p><h3 style="margin:4px 0">${esc(o.w("mock.subject"))}</h3>
+<div class="progress"><i></i></div><div class="doc"></div><a href="#">${esc(o.w("mock.view"))}</a><p style="margin-top:12px"><span class="btn btn-primary">✍ ${esc(o.w("mock.sign"))}</span> <span class="btn">${esc(o.w("mock.finish"))}</span></p></div></main>
 ${o.powered ? `<div class="signer-foot">${esc(o.powered)}</div>` : ""}</div></body></html>`;
 }
 

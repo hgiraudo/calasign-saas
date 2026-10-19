@@ -228,6 +228,17 @@ export function computeHidden(fields: LogicField[], valueOf: (id: string) => str
   return hidden;
 }
 
+/**
+ * Ocultos y calculados juntos. Una condición que cita un campo con fórmula mira el valor CALCULADO, no el que haya
+ * mandado el firmante ni el guardado (antes, mandando "" en el total se ocultaba un campo obligatorio que dependía de él).
+ */
+export function computeLogic(fields: LogicField[], valueOf: (id: string) => string | null): { hidden: Set<string>; computed: Map<string, string | null> } {
+  const isFormula = new Set(fields.filter((f) => f.formula).map((f) => f.id));
+  const pre = computeFormulas(fields, valueOf, new Set());
+  const hidden = computeHidden(fields, (id) => (isFormula.has(id) ? pre.get(id) ?? null : valueOf(id)));
+  return { hidden, computed: computeFormulas(fields, valueOf, hidden) };
+}
+
 /** Calcula las fórmulas (en orden de dependencias). Los campos ocultos valen 0 y no se calculan. */
 export function computeFormulas(fields: LogicField[], valueOf: (id: string) => string | null, hidden: Set<string>): Map<string, string | null> {
   const out = new Map<string, string | null>();

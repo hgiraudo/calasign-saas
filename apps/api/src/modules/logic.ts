@@ -2,7 +2,7 @@
 // Todo se evalúa en el servidor al completar; la web lo replica solo para mostrarlo en vivo.
 import {
   computeFormulas,
-  computeHidden,
+  computeLogic,
   formulaRefs,
   parseFormula,
   type FieldCondition,
@@ -25,7 +25,15 @@ export function validateLogic(fields: LogicField[]) {
   for (const f of fields) {
     if (f.type !== "number" || !f.label) continue;
     const k = f.label.trim().toLowerCase();
-    if (numberLabels.has(k) && fields.some((x) => x.formula && formulaRefs(x.formula).some((r) => r.trim().toLowerCase() === k))) {
+    // Una fórmula mal formada no corta acá con un 500: la informa el recorrido de abajo (400 invalid_formula).
+    const refsOf = (src: string) => {
+      try {
+        return formulaRefs(src);
+      } catch {
+        return [];
+      }
+    };
+    if (numberLabels.has(k) && fields.some((x) => x.formula && refsOf(x.formula).some((r) => r.trim().toLowerCase() === k))) {
       throw badRequest("invalid_formula", `Hay dos campos número con la etiqueta "${f.label}" y una fórmula la usa`);
     }
     numberLabels.set(k, f);
@@ -165,8 +173,7 @@ export async function prepareCompletionLogic(db: Db, envelopeId: string, recipie
     }
     return r.value ?? null;
   };
-  const hidden = computeHidden(all, valueOf);
-  const computed = computeFormulas(all, valueOf, hidden);
+  const { hidden, computed } = computeLogic(all, valueOf);
   const ownHidden = [...hidden].filter((id) => own.has(id));
   await db.query(`UPDATE fields SET hidden = (id = ANY($2)) WHERE recipient_id = $1`, [recipientId, ownHidden]);
   if (ownHidden.length) await db.query(`UPDATE fields SET value = NULL WHERE id = ANY($1)`, [ownHidden]);

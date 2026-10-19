@@ -554,6 +554,8 @@ export const AcceptNegotiationInput = z.object({
   subject: z.string().trim().min(1).max(300).optional(),
   message: z.string().max(5000).nullable().optional(),
   send: z.boolean().default(true),
+  /** La versión que vio quien acepta: si cambió mientras tanto, 409 version_changed (no sale un texto que no vio). */
+  expectedVersion: z.number().int().min(1).optional(),
 });
 
 export interface NegotiationDiff {

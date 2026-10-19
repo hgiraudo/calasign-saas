@@ -36,18 +36,23 @@ Process asynchronously and deduplicate by `CalaSign-Event-Id`.
 
 ## Verifying the signature
 
-Always verify against the **raw** body bytes, and reject timestamps older than ~5 minutes.
+Always verify against the **raw** body bytes, and reject timestamps older than ~5 minutes. While a secret is being
+rotated the header carries one `v1=` per active secret (`t=…,v1=<new>,v1=<old>`): accept the event if **any** of them
+matches.
 
 Node:
 
 ```js
 import crypto from "node:crypto";
 function verify(rawBody, header, secret, toleranceSec = 300) {
-  const parts = Object.fromEntries(header.split(",").map((kv) => kv.split("=").map((s) => s.trim())));
-  const t = Number(parts.t);
+  const items = header.split(",").map((kv) => kv.trim());
+  const t = Number(items.find((kv) => kv.startsWith("t="))?.slice(2));
   if (!t || Math.abs(Date.now() / 1000 - t) > toleranceSec) return false;
-  const expected = crypto.createHmac("sha256", secret).update(`${t}.${rawBody}`).digest("hex");
-  return parts.v1?.length === expected.length && crypto.timingSafeEqual(Buffer.from(parts.v1), Buffer.from(expected));
+  const expected = Buffer.from(crypto.createHmac("sha256", secret).update(`${t}.${rawBody}`).digest("hex"));
+  return items
+    .filter((kv) => kv.startsWith("v1="))
+    .map((kv) => Buffer.from(kv.slice(3)))
+    .some((sig) => sig.length === expected.length && crypto.timingSafeEqual(sig, expected));
 }
 ```
 
@@ -56,12 +61,12 @@ Python:
 ```python
 import hashlib, hmac, time
 def verify(raw: bytes, header: str, secret: str, tolerance=300) -> bool:
-    p = dict(kv.strip().split("=", 1) for kv in header.split(","))
-    t = int(p.get("t", 0))
+    items = [kv.strip() for kv in header.split(",")]
+    t = int(next((kv[2:] for kv in items if kv.startswith("t=")), "0") or 0)
     if abs(time.time() - t) > tolerance:
         return False
     exp = hmac.new(secret.encode(), f"{t}.".encode() + raw, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(exp, p.get("v1", ""))
+    return any(hmac.compare_digest(exp, kv[3:]) for kv in items if kv.startswith("v1="))
 ```
 
 SDKs: Python `calasign.construct_event(raw, header, secret)`; Node `constructWebhookEvent({...})`.

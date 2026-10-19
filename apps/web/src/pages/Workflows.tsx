@@ -4,7 +4,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import type { CollectField, DocumentTemplate, Member, Workflow, WorkflowRun, WorkflowStep, WorkflowStepType } from "@calasign/shared";
 import { WORKFLOW_STEP_TYPES } from "@calasign/shared";
 import { api, errorText, uuid } from "../lib/api";
-import { formatDateTime, useI18n } from "../lib/i18n";
+import { confirmAction, formatDateTime, useI18n } from "../lib/i18n";
 import { useAccess } from "../lib/access";
 import { useAuth } from "../lib/auth";
 import { useAgrText, type AgreementsTextKey } from "../lib/i18n-agreements";
@@ -161,8 +161,8 @@ function StepConfig({ step, onChange, members, templates }: { step: WorkflowStep
             <legend>{ta("cfg.fields")}</legend>
             {c.fields.map((f, i) => (
               <div key={i} className="agr-subrow">
-                <input aria-label="label" value={f.label} onChange={(e) => setField(i, { label: e.target.value })} placeholder="Etiqueta" />
-                <input aria-label="key" value={f.key} onChange={(e) => setField(i, { key: e.target.value })} placeholder="clave" />
+                <input aria-label="label" value={f.label} onChange={(e) => setField(i, { label: e.target.value })} placeholder={ta("fields.label")} />
+                <input aria-label="key" value={f.key} onChange={(e) => setField(i, { key: e.target.value })} placeholder={ta("fields.key")} />
                 <select aria-label="type" value={f.type} onChange={(e) => setField(i, { type: e.target.value as CollectField["type"] })}>
                   {(["text", "textarea", "email", "number", "date", "select"] as const).map((x) => (
                     <option key={x}>{x}</option>
@@ -257,7 +257,7 @@ function StepConfig({ step, onChange, members, templates }: { step: WorkflowStep
             <legend>{ta("cfg.recipients")}</legend>
             {c.recipients.map((r, i) => (
               <div key={i} className="agr-subrow">
-                <input aria-label={ta("neg.role")} value={r.role} onChange={(e) => setR(i, { role: e.target.value })} placeholder="Rol" />
+                <input aria-label={ta("neg.role")} value={r.role} onChange={(e) => setR(i, { role: e.target.value })} placeholder={ta("neg.role")} />
                 <input aria-label={ta("ag.name")} value={r.name} onChange={(e) => setR(i, { name: e.target.value })} placeholder="{{cliente.nombre}}" />
                 <input aria-label={ta("ag.email")} value={r.email ?? ""} onChange={(e) => setR(i, { email: e.target.value })} placeholder="{{cliente.email}}" />
                 <label className="check">
@@ -678,7 +678,7 @@ export function WorkflowRunPage() {
             </button>
           )}
           {["running", "waiting"].includes(run.status) && (
-            <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => act(`/v1/workflow-runs/${run.id}/cancel`)}>
+            <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => confirmAction() && act(`/v1/workflow-runs/${run.id}/cancel`)}>
               {ta("run.cancel")}
             </button>
           )}

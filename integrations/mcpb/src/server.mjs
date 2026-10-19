@@ -33,9 +33,16 @@ const INSTRUCTIONS =
 
 let upstream = null; // Promise<Client>
 
+// La API key viaja a esta URL: solo https (o http a la propia máquina), sin ruta. Un error de tipeo o un http://
+// mandaba la key en claro o a otro host.
+const baseUrlOk = /^https:\/\/[a-z0-9.-]+(:\d+)?$/i.test(baseUrl) || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(baseUrl);
+
 function connectUpstream() {
   if (!apiKey) {
     throw new McpError(ErrorCode.InvalidRequest, "Falta la API key de CalaSign: configurala en Ajustes → Extensiones → CalaSign.");
+  }
+  if (!baseUrlOk) {
+    throw new McpError(ErrorCode.InvalidRequest, `URL de CalaSign inválida (${baseUrl}): tiene que ser https://host, sin ruta.`);
   }
   if (!upstream) {
     upstream = (async () => {

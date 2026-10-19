@@ -23,8 +23,8 @@ describe("recordatorios automáticos y aviso de vencimiento", () => {
     await db.query(`INSERT INTO tenants (id, slug, name) VALUES ($1, $2, 'T')`, [tenant, `t-${tenant.slice(-8)}`]);
     await db.query(
       `INSERT INTO envelopes (id, tenant_id, subject, status, sent_at, expires_at, reminder_every_days, expiry_warning_days)
-       VALUES ($1, $2, 'S', 'sent', $3, $4, 2, 3)`,
-      [env, tenant, days(-3), days(2)],
+       VALUES ($1, $2, 'S', 'sent', $3, $4, 2, 6)`,
+      [env, tenant, days(-3), days(5)],
     );
     await db.query(
       `INSERT INTO recipients (id, tenant_id, envelope_id, role, routing_order, name, email, status) VALUES ($1,$2,$3,'signer',1,'Ana','a@x.com','sent')`,
@@ -43,6 +43,8 @@ describe("recordatorios automáticos y aviso de vencimiento", () => {
     // Dos días después: segundo recordatorio.
     expect((await runAutomaticReminders(db, new Date(now.getTime() + 2 * 86400_000 + 1000))).reminded).toBe(1);
     expect(await jobs()).toEqual(["reminder", "expiry_warning", "reminder"]);
+    // Pasado el vencimiento (aunque el barrido no lo haya marcado 'expired'): sin recordatorio.
+    expect((await runAutomaticReminders(db, new Date(now.getTime() + 6 * 86400_000))).reminded).toBe(0);
 
     const ev = await db.query<any>(`SELECT type, data FROM envelope_events WHERE envelope_id = $1 ORDER BY seq`, [env]);
     expect(ev.map((e) => e.type)).toEqual(["envelope.reminded", "envelope.expiry_warning", "envelope.reminded"]);

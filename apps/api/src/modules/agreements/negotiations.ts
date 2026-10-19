@@ -479,6 +479,9 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
     const input = AcceptNegotiationInput.parse(req.body ?? {});
     const n = await loadForManage(a, req.params.id);
     if (n.status !== "open") throw conflict("closed", "La negociación ya está cerrada");
+    if (input.expectedVersion !== undefined && input.expectedVersion !== n.current_version) {
+      throw conflict("version_changed", "Hay una versión nueva: revisala y volvé a aceptar");
+    }
     const pending = await s.db.one<any>(`SELECT count(*)::int AS c FROM negotiation_proposals WHERE negotiation_id = $1 AND status = 'pending'`, [n.id]);
     if (pending?.c) throw conflict("pending_proposals", `Quedan ${pending.c} propuestas sin decidir`);
     const parts = await s.db.query<any>(`SELECT * FROM negotiation_participants WHERE negotiation_id = $1 ORDER BY created_at`, [n.id]);

@@ -6,7 +6,7 @@ import { appendEvent } from "../infra/evidence";
 import { AppError, badRequest, conflict, notFound } from "../lib/errors";
 import { sha256Hex, uuidv7 } from "../lib/util";
 import { clientInfo, type Services } from "./context";
-import { currentSignerGroup, lockEnvelope } from "./envelopes";
+import { currentSignerGroup, lockEnvelope, pastExpiry } from "./envelopes";
 import { assertLinkCurrent, resolveToken } from "./signing";
 import { toField } from "./mappers";
 
@@ -37,7 +37,7 @@ export async function attachmentRoutes(app: FastifyInstance, s: Services) {
     const e = await lockEnvelope(t, e0.tenant_id, e0.id);
     const r = await t.one(`SELECT * FROM recipients WHERE id = $1`, [r0.id]);
     assertLinkCurrent(r, token);
-    if (e.status !== "sent") throw new AppError(410, "envelope_closed", "El sobre ya no está disponible para firmar");
+    if (e.status !== "sent" || pastExpiry(e)) throw new AppError(410, "envelope_closed", "El sobre ya no está disponible para firmar");
     if (r.role !== "signer" || !["sent", "viewed"].includes(r.status)) throw conflict("not_signable", "No podés modificar este sobre");
     const group = await currentSignerGroup(t, e.id);
     if (group.order !== r.routing_order) throw conflict("not_your_turn", "Todavía no es tu turno de firmar");

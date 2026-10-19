@@ -66,6 +66,13 @@ const ES = {
   errSession: "La sesión venció. Volvé a iniciar sesión.",
   errNetwork: "No se pudo conectar con CalaSign.",
   errInsert: "No se pudo insertar el texto en el documento.",
+  attachmentNotFile: "El adjunto no es un archivo (¿está en la nube?)",
+  loginBadResponse: "Respuesta inválida del inicio de sesión",
+  loginState: "El inicio de sesión no corresponde a este pedido: intentá de nuevo",
+  popupBlocked: "El navegador bloqueó la ventana de inicio de sesión",
+  dialogBadParams: "Parámetros inválidos.",
+  dialogDone: "Listo. Podés cerrar esta ventana.",
+  dialogNoReturn: "No se pudo volver al complemento. Cerrá esta ventana e intentá de nuevo.",
 };
 
 const PT = {
@@ -134,6 +141,13 @@ const PT = {
   errSession: "A sessão expirou. Entre novamente.",
   errNetwork: "Não foi possível conectar à CalaSign.",
   errInsert: "Não foi possível inserir o texto no documento.",
+  attachmentNotFile: "O anexo não é um arquivo (está na nuvem?)",
+  loginBadResponse: "Resposta inválida do login",
+  loginState: "O login não corresponde a este pedido: tente de novo",
+  popupBlocked: "O navegador bloqueou a janela de login",
+  dialogBadParams: "Parâmetros inválidos.",
+  dialogDone: "Pronto. Você pode fechar esta janela.",
+  dialogNoReturn: "Não foi possível voltar ao suplemento. Feche esta janela e tente de novo.",
 };
 
 const EN = {
@@ -202,6 +216,13 @@ const EN = {
   errSession: "Your session expired. Sign in again.",
   errNetwork: "Couldn't connect to CalaSign.",
   errInsert: "Couldn't insert the text in the document.",
+  attachmentNotFile: "The attachment isn't a file (is it in the cloud?)",
+  loginBadResponse: "Invalid sign-in response",
+  loginState: "The sign-in doesn't match this request: try again",
+  popupBlocked: "The browser blocked the sign-in window",
+  dialogBadParams: "Invalid parameters.",
+  dialogDone: "Done. You can close this window.",
+  dialogNoReturn: "Couldn't return to the add-in. Close this window and try again.",
 };
 
 let dict = ES;

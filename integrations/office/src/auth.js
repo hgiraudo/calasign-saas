@@ -1,3 +1,4 @@
+import { t } from "./i18n.js";
 // Inicio de sesión del complemento: OAuth 2.0 authorization code + PKCE (S256) con un cliente público.
 // - El client_id se obtiene una sola vez con registro dinámico (RFC 7591, POST /oauth/register) y se guarda.
 // - La pantalla de consentimiento se abre con Office.context.ui.displayDialogAsync: el diálogo arranca en
@@ -152,7 +153,7 @@ function openDialog(url) {
           try {
             resolve(JSON.parse(arg.message));
           } catch {
-            reject(new Error("Respuesta inválida del inicio de sesión"));
+            reject(new Error(t("loginBadResponse")));
           }
         });
         // 12006: la persona cerró la ventana. Otros códigos: la página no cargó.
@@ -164,7 +165,7 @@ function openDialog(url) {
     }
     // Fuera de Office (probar el panel en un navegador): ventana emergente y postMessage.
     const w = window.open(url, "calasign-login", "width=520,height=720");
-    if (!w) return reject(new Error("popup bloqueado"));
+    if (!w) return reject(new Error(t("popupBlocked")));
     const onMsg = (ev) => {
       if (ev.origin !== ORIGIN || ev.data?.type !== "calasign-oauth") return;
       window.removeEventListener("message", onMsg);
@@ -189,7 +190,7 @@ export async function signIn() {
     if (result.error === "invalid_client" || result.error === "unauthorized_client") forgetClient();
     throw new Error(result.error_description || result.error);
   }
-  if (result.state !== state) throw new Error("state no coincide");
+  if (result.state !== state) throw new Error(t("loginState"));
   const tok = await tokenRequest({ grant_type: "authorization_code", code: result.code, redirect_uri: REDIRECT_URI, client_id: cid, code_verifier: verifier });
   saveTokens(tok);
   return tok;

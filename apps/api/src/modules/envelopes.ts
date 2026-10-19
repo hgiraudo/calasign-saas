@@ -33,6 +33,14 @@ import { createEnvelopeRoute, ONE_SHOT_JSON_BODY_LIMIT } from "./envelope-onesho
 import { envelopeSearchSql } from "./devapi/search";
 
 /** Bloquea el sobre para serializar cambios y eventos. */
+/**
+ * Vencido aunque el barrido todavía no lo haya pasado a 'expired' (corre cada 30 s, de a tandas, y con el worker
+ * caído puede tardar más): firmar, rechazar o adjuntar después de expires_at no vale.
+ */
+export function pastExpiry(e: { expires_at?: string | Date | null }): boolean {
+  return e.expires_at != null && new Date(e.expires_at).getTime() <= Date.now();
+}
+
 export async function lockEnvelope(db: Db, tenantId: string, id: string) {
   const e = await db.one<any>(`SELECT * FROM envelopes WHERE id = $1 AND tenant_id = $2 FOR UPDATE`, [id, tenantId]);
   if (!e) throw notFound("Sobre");

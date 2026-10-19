@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import type { DocumentTemplate, NegotiationDiff, NegotiationSummary, NegotiationView } from "@calasign/shared";
 import { api, errorText, HttpError } from "../lib/api";
-import { formatDateTime, useI18n } from "../lib/i18n";
+import { confirmAction, formatDateTime, useI18n } from "../lib/i18n";
 import { useAgrText, type AgreementsTextKey } from "../lib/i18n-agreements";
 import { AgreementsTabs, DiffView, DocPreview, parseJsonObject } from "../components/AgreementsUi";
 import { ErrorBox, Modal, Spinner } from "../components/ui";
@@ -453,7 +453,9 @@ export function NegotiationPanel({
                   className="btn btn-primary"
                   disabled={busy || view.proposals.some((p) => p.status === "pending")}
                   onClick={async () => {
-                    const v = await call("/accept", {});
+                    // Crea y envía el sobre: con confirmación y con la versión que se está viendo.
+                    if (!confirmAction()) return;
+                    const v = await call("/accept", { expectedVersion: n.currentVersion });
                     if (v?.envelope) nav(`/app/envelopes/${v.envelope.id}`);
                   }}
                 >
@@ -461,7 +463,7 @@ export function NegotiationPanel({
                 </button>
               )}
               {open && (
-                <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => call("/cancel", {})}>
+                <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => confirmAction() && call("/cancel", {})}>
                   {ta("neg.cancel")}
                 </button>
               )}

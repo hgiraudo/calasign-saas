@@ -1,3 +1,5 @@
+import { setLanguage, t } from "./i18n.js";
+setLanguage(navigator.language);
 // Primera página del diálogo de inicio de sesión. Office exige que el diálogo abra en el mismo dominio que el
 // panel; desde acá se redirige a la pantalla de consentimiento de CalaSign (siempre del mismo origen: esta página no
 // redirige a URLs arbitrarias, solo arma la de /oauth/authorize con parámetros validados).
@@ -22,5 +24,5 @@ if (ok(clientId, /^[A-Za-z0-9._~-]{1,100}$/) && ok(challenge, /^[A-Za-z0-9_-]{43
   });
   window.location.replace(`${ORIGIN}/oauth/authorize?${p}`);
 } else {
-  document.getElementById("status").textContent = "Parámetros inválidos.";
+  document.getElementById("status").textContent = t("dialogBadParams");
 }

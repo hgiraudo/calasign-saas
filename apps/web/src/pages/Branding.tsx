@@ -116,6 +116,8 @@ export function BrandingPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
+  // Cambios sin guardar en la configuración o el nombre de la marca (si no hay, Guardar no hace el PUT).
+  const [dirty, setDirty] = useState(false);
   const [newName, setNewName] = useState("");
 
   const brand = brands?.find((b) => b.id === sel) ?? null;
@@ -128,6 +130,7 @@ export function BrandingPage() {
     setSel(b.id);
     setCfg(b.config ?? {});
     setName(b.name);
+    setDirty(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -145,12 +148,14 @@ export function BrandingPage() {
     setCfg(b.config ?? {});
     setName(b.name);
     setSaved(false);
+    setDirty(false);
   };
   const replaceBrand = (b: Brand) => setBrands((list) => (list ?? []).map((x) => (x.id === b.id ? b : x)));
 
   const set = <K extends keyof BrandConfigInput>(k: K, v: BrandConfigInput[K]) => {
     setCfg((c) => ({ ...c, [k]: v }));
     setSaved(false);
+    setDirty(true);
   };
   const setIn = <K extends "theme" | "links" | "email" | "sms">(k: K, field: string, v: unknown) =>
     set(k, { ...((cfg[k] as Record<string, unknown>) ?? {}), [field]: v } as BrandConfigInput[K]);
@@ -169,13 +174,21 @@ export function BrandingPage() {
 
   const save = () =>
     run(async () => {
-      const b = await api<Brand>(`/v1/settings/brands/${sel}`, { method: "PUT", body: { config: clean(cfg), ...(sel !== "default" && name.trim() ? { name: name.trim() } : {}) } });
-      replaceBrand(b);
-      setCfg(b.config);
+      // El nombre de la organización va primero y por su cuenta: PATCH /v1/settings/branding no exige el plan con
+      // marca propia (PUT /v1/settings/brands sí), así que en Free renombrar no puede depender de guardar la marca.
+      // Con menos de 2 caracteres el servidor responde el error (antes se ignoraba y se mostraba "Guardado").
       const n = orgName.trim();
-      if (sel === "default" && n.length >= 2 && n !== me?.tenant.name) {
+      if (sel === "default" && n && n !== me?.tenant.name) {
         await api("/v1/settings/branding", { method: "PATCH", body: { organizationName: n } });
         await Promise.all([refresh(), refreshAccess()]);
+        // El nombre de la marca por defecto es el de la organización (selector de marcas).
+        setBrands((list) => (list ?? []).map((x) => (x.isDefault ? { ...x, name: n } : x)));
+      }
+      if (dirty) {
+        const b = await api<Brand>(`/v1/settings/brands/${sel}`, { method: "PUT", body: { config: clean(cfg), ...(sel !== "default" && name.trim() ? { name: name.trim() } : {}) } });
+        replaceBrand(b);
+        setCfg(b.config);
+        setDirty(false);
       }
       setSaved(true);
     });
@@ -290,11 +303,26 @@ export function BrandingPage() {
             <>
               {brand.isDefault ? (
                 <Field label={w("orgName")}>
-                  <input value={orgName} maxLength={120} onChange={(e) => setOrgName(e.target.value)} />
+                  <input
+                    value={orgName}
+                    maxLength={120}
+                    onChange={(e) => {
+                      setOrgName(e.target.value);
+                      setSaved(false);
+                    }}
+                  />
                 </Field>
               ) : (
                 <Field label={w("brand")}>
-                  <input value={name} maxLength={120} onChange={(e) => setName(e.target.value)} />
+                  <input
+                    value={name}
+                    maxLength={120}
+                    onChange={(e) => {
+                      setName(e.target.value);
+                      setSaved(false);
+                      setDirty(true);
+                    }}
+                  />
                 </Field>
               )}
               <Field label={w("displayName")} hint={w("displayNameHint")}>
@@ -360,7 +388,7 @@ export function BrandingPage() {
 
           {tab === "email" && <EmailEditor brand={brand} cfg={cfg} set={set} setIn={setIn} />}
 
-          {tab === "domains" && <DomainsEditor brand={brand} onBrand={replaceBrand} />}
+          {tab === "domains" && <DomainsEditor key={brand.id} brand={brand} onBrand={replaceBrand} />}
 
           {tab === "advanced" && (
             <>
@@ -445,6 +473,13 @@ function TextsEditor({ cfg, onChange }: { cfg: BrandConfigInput; onChange: (v: B
   const [locale, setLocale] = useState<Locale>(uiLocale);
   const rows = Object.entries(cfg.texts?.[locale] ?? {});
   const update = (next: [string, string][]) => onChange({ ...(cfg.texts ?? {}), [locale]: Object.fromEntries(next) });
+  // Las filas se guardan como objeto: una clave repetida fusionaba dos filas (la nueva pisaba el texto de la otra y
+  // desaparecía; "+ Agregar" con una fila sin clave no hacía nada). No se acepta una clave que ya usa otra fila.
+  const setKey = (i: number, k: string) => {
+    if (rows.some(([x], j) => j !== i && x === k)) return;
+    update(rows.map((r, j) => (j === i ? [k, r[1]] : r)));
+  };
+  const hasBlank = rows.some(([k]) => k === "");
   return (
     <>
       <p className="muted small">{w("texts.intro")}</p>
@@ -464,14 +499,14 @@ function TextsEditor({ cfg, onChange }: { cfg: BrandConfigInput; onChange: (v: B
       </datalist>
       {rows.map(([k, v], i) => (
         <div key={i} className="row-wrap">
-          <input list="wl-text-keys" aria-label={w("texts.key")} placeholder={w("texts.key")} value={k} maxLength={80} onChange={(e) => update(rows.map((r, j) => (j === i ? [e.target.value, r[1]] : r)))} />
+          <input list="wl-text-keys" aria-label={w("texts.key")} placeholder={w("texts.key")} value={k} maxLength={80} onChange={(e) => setKey(i, e.target.value)} />
           <input className="grow" aria-label={w("texts.value")} placeholder={w("texts.value")} value={v} maxLength={1000} onChange={(e) => update(rows.map((r, j) => (j === i ? [r[0], e.target.value] : r)))} />
           <button type="button" className="btn btn-ghost btn-sm" aria-label="✕" onClick={() => update(rows.filter((_, j) => j !== i))}>
             ✕
           </button>
         </div>
       ))}
-      <button type="button" className="btn btn-sm" onClick={() => update([...rows, ["", ""]])}>
+      <button type="button" className="btn btn-sm" disabled={hasBlank} onClick={() => update([...rows, ["", ""]])}>
         + {w("texts.add")}
       </button>
     </>
@@ -575,6 +610,9 @@ function EmailPreview({ brandId, cfg }: { brandId: string; cfg: BrandConfigInput
   useEffect(() => {
     const l = () => setTarget({ ...previewTarget });
     previewListeners.add(l);
+    // El efecto de EmailPreviewTarget (columna izquierda) corre antes que este y avisa cuando todavía no hay oyente:
+    // sin esta lectura la vista previa quedaba con el evento/idioma anteriores (p. ej. "es" con la web en inglés).
+    l();
     return () => void previewListeners.delete(l);
   }, []);
   const body = JSON.stringify(clean(cfg));

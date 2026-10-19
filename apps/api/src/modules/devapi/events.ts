@@ -155,15 +155,47 @@ export async function eventRoutes(app: FastifyInstance, s: Services) {
     });
     let closed = false;
     req.raw.on("close", () => (closed = true));
+    // Respeta la contrapresión: con un `since` lejano y un cliente lento (o que no lee), escribir sin esperar 'drain'
+    // acumulaba en memoria todo el historial de la organización durante hasta una hora. Un cliente que nunca lee no
+    // retiene el stream más allá de `max_seconds`.
+    const deadline = Date.now() + maxSec * 1000;
+    const write = async (chunk: string) => {
+      if (res.write(chunk) || closed) return;
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(() => done(), Math.max(0, deadline - Date.now()));
+        const done = () => {
+          clearTimeout(timer);
+          res.off("drain", done);
+          res.off("close", done);
+          resolve();
+        };
+        res.on("drain", done);
+        res.on("close", done);
+      });
+    };
+    // La credencial se validó al abrir: una API key revocada o un miembro dado de baja no siguen recibiendo eventos.
+    const stillAllowed = async () => {
+      if (a.apiKeyId) return Boolean(await s.db.one(`SELECT 1 FROM api_keys WHERE id = $1 AND revoked_at IS NULL`, [a.apiKeyId]));
+      if (a.userId) return Boolean(await s.db.one(`SELECT 1 FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [a.tenantId, a.userId]));
+      return true;
+    };
     // Sin cursor ni since: el stream empieza en "ahora" (no repite las últimas 24 h como el polling).
     const filters: Filters = { ...f, since: f.after || f.since ? f.since : new Date(Date.now() - SETTLE_MS).toISOString() };
     res.write(`retry: 3000\n: calasign events\n\n`);
-    const deadline = Date.now() + maxSec * 1000;
     let lastBeat = Date.now();
+    let lastAuthCheck = Date.now();
+    let endReason = "max_seconds";
     try {
       while (!closed && Date.now() < deadline) {
+        if (Date.now() - lastAuthCheck > 60_000) {
+          if (!(await stillAllowed())) {
+            endReason = "unauthorized";
+            break;
+          }
+          lastAuthCheck = Date.now();
+        }
         const page = await readEvents(s, a, filters, 100);
-        for (const ev of page.items) res.write(`id: ${ev.cursor}\nevent: ${ev.type}\ndata: ${JSON.stringify(ev)}\n\n`);
+        for (const ev of page.items) if (!closed && Date.now() < deadline) await write(`id: ${ev.cursor}\nevent: ${ev.type}\ndata: ${JSON.stringify(ev)}\n\n`);
         if (page.nextCursor) filters.after = page.nextCursor;
         if (page.hasMore) continue;
         if (Date.now() - lastBeat > 15_000) {
@@ -172,7 +204,7 @@ export async function eventRoutes(app: FastifyInstance, s: Services) {
         }
         await new Promise((r) => setTimeout(r, 1000));
       }
-      if (!closed) res.write(`event: end\ndata: {"reason":"max_seconds"}\n\n`);
+      if (!closed) res.write(`event: end\ndata: {"reason":"${endReason}"}\n\n`);
     } catch (err) {
       req.log.warn({ err }, "stream de eventos cortado");
     } finally {

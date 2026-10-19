@@ -81,7 +81,7 @@ async function notify(
   const sendAs = await senderFor(d.db, wl);
   const from = { from: sendAs.from, replyTo: sendAs.replyTo, dkim: sendAs.dkim };
   const base = {
-    senderName: sender?.name ?? (rebrands(wl) ? wl.name : org?.name) ?? productLabel(wl),
+    senderName: sender?.name ?? (rebrands(wl) || e.brand_id ? wl.name : org?.name) ?? productLabel(wl),
     organizationName: rebrands(wl) || e.brand_id ? wl.name : org?.name ?? "",
     subject: e.subject,
     declinedBy: decliner?.name ?? null,

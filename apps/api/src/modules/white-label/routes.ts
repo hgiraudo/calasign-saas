@@ -26,7 +26,7 @@ import { render, type TemplateKind } from "../../notifications/templates";
 import { auditFromRequest, recordAudit } from "../audit";
 import { authenticate, type AuthContext, type Services } from "../context";
 import { requireFeature, tenantPlan } from "../billing/plans";
-import { resolveTxt, routesToPlatform } from "../custom-domains";
+import { invalidateDomainCache, resolveTxt, routesToPlatform } from "../custom-domains";
 import { deleteFileIfUnused, discardBlobsOnFailure } from "../file-cleanup";
 import {
   brandForHost,
@@ -273,6 +273,7 @@ export async function recheckWhiteLabelDomains(d: { db: Db; log: { warn(o: objec
         r.id,
         "Re-verificación: el registro TXT o el CNAME ya no están publicados",
       ]);
+      invalidateDomainCache();
       await recordAudit(d.db, { tenantId: r.tenant_id, action: "brand.domain_unverified", actor: { type: "system", label: "Re-verificación de dominio" }, targetType: "domain", targetId: r.domain });
     } else {
       await d.db.query(`UPDATE brand_domains SET recheck_failures = $2, last_checked_at = now(), last_error = $3 WHERE id = $1`, [r.id, failures, ok ? null : "Re-verificación fallida"]);
@@ -376,6 +377,7 @@ export async function whiteLabelRoutes(app: FastifyInstance, s: Services) {
     if (req.params.id === DEFAULT_BRAND) throw badRequest("default_brand", "La marca de la organización no se puede borrar");
     const b = await loadBrand(s.db, a.tenantId, req.params.id);
     await s.db.query(`DELETE FROM brands WHERE id = $1 AND tenant_id = $2`, [b.brandId, a.tenantId]);
+    invalidateDomainCache();
     for (const k of BRAND_ASSET_KINDS) await deleteFileIfUnused(s.db, s.blobs, b.ownAssets[k]?.fileId).catch(() => {});
     await auditFromRequest(s.db, req, a, "brand.deleted", { targetType: "brand", targetId: b.brandId! });
     return reply.code(204).send();
@@ -474,6 +476,7 @@ export async function whiteLabelRoutes(app: FastifyInstance, s: Services) {
         await t.query(`DELETE FROM brand_domains WHERE brand_id = $1`, [b.brandId]);
         await t.query(`INSERT INTO brand_domains (id, tenant_id, brand_id, domain, verification_token) VALUES ($1,$2,$3,$4,$5)`, [uuidv7(), a.tenantId, b.brandId, domain, randomToken(18)]);
       });
+      invalidateDomainCache();
       await auditFromRequest(s.db, req, a, "brand.domain_set", { targetType: "domain", targetId: domain });
     }
     return { domain: domainToApi(await s.db.one<any>(`SELECT * FROM brand_domains WHERE brand_id = $1`, [b.brandId])) };
@@ -509,8 +512,10 @@ export async function whiteLabelRoutes(app: FastifyInstance, s: Services) {
       );
     } catch (e) {
       if ((e as { code?: string }).code !== "23505") throw e;
+      ok = false;
       await s.db.query(`UPDATE brand_domains SET last_checked_at = now(), last_error = $2 WHERE id = $1`, [r.id, "Ese dominio ya lo verificó otra organización"]);
     }
+    invalidateDomainCache();
     if (ok) await auditFromRequest(s.db, req, a, "brand.domain_verified", { targetType: "domain", targetId: r.domain });
     return { domain: domainToApi(await s.db.one<any>(`SELECT * FROM brand_domains WHERE id = $1`, [r.id])) };
   });
@@ -519,6 +524,7 @@ export async function whiteLabelRoutes(app: FastifyInstance, s: Services) {
     const a = A(req);
     const b = await loadBrand(s.db, a.tenantId, req.params.id);
     if (b.brandId) await s.db.query(`DELETE FROM brand_domains WHERE brand_id = $1`, [b.brandId]);
+    invalidateDomainCache();
     return reply.code(204).send();
   });
 
@@ -620,18 +626,8 @@ export async function whiteLabelRoutes(app: FastifyInstance, s: Services) {
     return reply.code(r ? 200 : 404).send(r ? "ok" : "");
   });
 
-  // En el dominio de una sub-marca, los links de firma de OTRAS organizaciones no funcionan (como en custom-domains).
-  app.addHook("onRequest", async (req, reply) => {
-    if (!req.url.startsWith("/v1/signing/")) return;
-    const h = (req.headers.host ?? "").split(":")[0].toLowerCase();
-    if (!h || h === appHost()) return;
-    const bd = await s.db.one<{ tenant_id: string }>(`SELECT tenant_id FROM brand_domains WHERE domain = $1 AND status = 'verified'`, [h]);
-    if (!bd) return;
-    const token = req.url.split("/")[3]?.split("?")[0] ?? "";
-    if (!/^[A-Za-z0-9_-]{20,100}$/.test(token)) return;
-    const r = await s.db.one<any>(`SELECT tenant_id FROM recipients WHERE access_token_hash = $1`, [sha256Hex(token)]);
-    if (r && r.tenant_id !== bd.tenant_id) return reply.code(404).send({ error: { code: "not_found", message: "Link no encontrado" } });
-  });
+  // En el dominio de una sub-marca valen los mismos ganchos que en un dominio propio (custom-domains.ts): sin sesión de
+  // cuenta y sin links de firma de OTRAS organizaciones.
 }
 
 /** Marca por clave pública (id de sub-marca o slug de organización) o, sin clave, por el Host. */

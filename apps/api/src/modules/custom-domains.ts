@@ -93,6 +93,9 @@ function invalidate() {
   cache.clear();
 }
 
+/** Cambió un dominio web de sub-marca (white-label/routes.ts): la caché de Host → organización ya no vale. */
+export const invalidateDomainCache = invalidate;
+
 /** URL base para los links de una organización: su dominio verificado o la de la plataforma. */
 export async function tenantBaseUrl(db: Db, tenantId: string): Promise<string> {
   const d = await cached(`t:${tenantId}`, async () => {
@@ -110,6 +113,24 @@ export async function tenantForHost(db: Db, host: string | undefined): Promise<s
   if (!h || h === appHost() || h === "localhost" || h === "127.0.0.1") return null;
   return cached(`h:${h}`, async () => {
     const r = await db.one<any>(`SELECT tenant_id FROM custom_domains WHERE domain = $1 AND status = 'verified'`, [h]);
+    return r?.tenant_id ?? null;
+  });
+}
+
+/**
+ * Organización dueña del Host como dominio "de firmantes": su dominio propio verificado o el dominio web verificado de
+ * una de sus sub-marcas (brand_domains). En los dos la organización controla el DNS, así que los dos necesitan el mismo
+ * aislamiento de la sesión de cuenta y de los links de firma de otras organizaciones.
+ */
+async function signerHostTenant(db: Db, host: string | undefined): Promise<string | null> {
+  const h = (host ?? "").split(":")[0].toLowerCase().replace(/\.+$/, "");
+  if (!h || h === appHost() || h === "localhost" || h === "127.0.0.1") return null;
+  return cached(`s:${h}`, async () => {
+    const r = await db.one<any>(
+      `SELECT tenant_id FROM custom_domains WHERE domain = $1 AND status = 'verified'
+       UNION ALL SELECT tenant_id FROM brand_domains WHERE domain = $1 AND status = 'verified' LIMIT 1`,
+      [h],
+    );
     return r?.tenant_id ?? null;
   });
 }
@@ -282,6 +303,12 @@ export async function customDomainRoutes(app: FastifyInstance, s: Services) {
         error = "Ese dominio ya lo verificó otra organización";
       }
     }
+    // Ni como dominio web de una sub-marca (white-label/routes.ts hace el chequeo inverso): con los dos verificados, la
+    // marca, los links y el aislamiento de sesión dependían de qué tabla se consultaba primero.
+    if (ok && (await s.db.one(`SELECT 1 FROM brand_domains WHERE domain = $1 AND status = 'verified'`, [r.domain]))) {
+      ok = false;
+      error = "Ese dominio ya está en uso";
+    }
     try {
       await s.db.query(
         `UPDATE custom_domains SET status = CASE WHEN $2 THEN 'verified' ELSE status END,
@@ -333,12 +360,12 @@ export async function customDomainRoutes(app: FastifyInstance, s: Services) {
     return reply.code(r ? 200 : 404).send(r ? "ok" : "");
   });
 
-  // Un dominio propio sirve lo que ven los firmantes (/s, /f, /wf, /n, /verify…), nunca la cuenta: la organización
+  // Un dominio propio (o el de una sub-marca) sirve lo que ven los firmantes (/s, /f, /wf, /n, /verify…), nunca la cuenta: la organización
   // controla su DNS y podría quedarse con la cookie de sesión de quien entra ahí, que vale en el dominio de la
   // plataforma y en sus otras organizaciones. Las páginas de la cuenta redirigen a la plataforma, las rutas que crean
   // una sesión no existen acá, y la cookie de sesión de cuenta se ignora.
   app.addHook("onRequest", async (req, reply) => {
-    const tenantId = await tenantForHost(s.db, req.headers.host);
+    const tenantId = await signerHostTenant(s.db, req.headers.host);
     if (!tenantId) return;
     const path = req.url.split("?")[0];
     if (req.method === "GET" && (path === "/" || ACCOUNT_PAGES.some((p) => under(path, p)))) {
@@ -361,7 +388,7 @@ export async function customDomainRoutes(app: FastifyInstance, s: Services) {
   // En un dominio propio, los links de firma de OTRAS organizaciones no funcionan.
   app.addHook("onRequest", async (req, reply) => {
     if (!req.url.startsWith("/v1/signing/")) return;
-    const tenantId = await tenantForHost(s.db, req.headers.host);
+    const tenantId = await signerHostTenant(s.db, req.headers.host);
     if (!tenantId) return;
     const token = req.url.split("/")[3]?.split("?")[0] ?? "";
     if (!/^[A-Za-z0-9_-]{20,100}$/.test(token)) return;

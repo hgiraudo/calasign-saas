@@ -1,5 +1,6 @@
 // Textos de los conectores de RR. HH. y contratos (BambooHR, HiBob, Factorial, Ironclad, Juro) y de los gestores
 // documentales nuevos del archivado automático (SharePoint, Box, certificado de evidencia).
+import { brandText } from "./white-label";
 import { useI18n } from "./i18n";
 
 const es = {
@@ -357,7 +358,7 @@ export function useConnText() {
   const { locale } = useI18n();
   const d = DICTS[locale] ?? es;
   return (k: Key | string, vars?: Record<string, string | number>) => {
-    let s: string = (d as Record<string, string>)[k] ?? (es as Record<string, string>)[k] ?? k;
+    let s: string = brandText(locale, k, (d as Record<string, string>)[k] ?? (es as Record<string, string>)[k] ?? k);
     if (vars) for (const [n, v] of Object.entries(vars)) s = s.replace(`{${n}}`, () => String(v));
     return s;
   };

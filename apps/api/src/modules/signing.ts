@@ -95,7 +95,8 @@ export async function buildSession(db: Db, token: string, r: any, e: any, authed
       subject: e.subject,
       message: e.message,
       status: e.status,
-      senderName: sender?.name ?? org?.name ?? productLabel(wl),
+      // Sin usuario remitente (API key): el nombre de la marca, como en los correos (jobs.ts); no el de la organización.
+      senderName: sender?.name ?? (rebrands(wl) || e.brand_id ? wl.name : org?.name) ?? productLabel(wl),
       organizationName: rebrands(wl) || e.brand_id ? wl.name : org?.name ?? "",
       expiresAt: e.expires_at ? new Date(e.expires_at).toISOString() : null,
     },

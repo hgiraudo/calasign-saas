@@ -51,6 +51,8 @@ const ENVELOPE_CONFIG_COLUMNS = [
   "expiry_warning_days",
   "ai_signer_assist",
   "company_seal_certificate_id",
+  // Sub-marca (marca blanca): sin ella, el clon de un sobre de un cliente de la revendedora salía con la marca de la organización.
+  "brand_id",
 ] as const;
 
 export async function loadFormData(s: Services, tenantId: string, envelopeId: string): Promise<EnvelopeFormData> {
@@ -118,6 +120,8 @@ export async function loadFormData(s: Services, tenantId: string, envelopeId: st
 export async function cloneEnvelope(t: Services["db"], a: AuthContext, sourceId: string, input: CloneEnvelopeInput): Promise<string> {
   const src = await t.one<any>(`SELECT * FROM envelopes WHERE id = $1 AND tenant_id = $2`, [sourceId, a.tenantId]);
   if (!src) throw notFound("Sobre");
+  // Los originales de un sobre purgado por la política de retención ya no existen: el clon quedaría con documentos vacíos.
+  if (src.purged_at) throw new AppError(409, "purged", "Los originales de este sobre se eliminaron por la política de retención: no se puede clonar");
   const includeRecipients = input.includeRecipients ?? true;
   const includeFields = includeRecipients && (input.includeFields ?? true);
   const id = uuidv7();
@@ -141,6 +145,12 @@ export async function cloneEnvelope(t: Services["db"], a: AuthContext, sourceId:
     `UPDATE envelopes d SET ${ENVELOPE_CONFIG_COLUMNS.map((c) => `${c} = s.${c}`).join(", ")} FROM envelopes s WHERE d.id = $1 AND s.id = $2`,
     [id, src.id],
   );
+  // El sello de empresa del original pudo borrarse después (el borrado solo lo quita de borradores y enviados): un
+  // borrador que apunta a un certificado sin clave no podría finalizar nunca. Se relee con FOR SHARE, como evidence.ts.
+  if (src.company_seal_certificate_id) {
+    const cert = await t.one(`SELECT 1 FROM tenant_certificates WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL FOR SHARE`, [src.company_seal_certificate_id, a.tenantId]);
+    if (!cert) await t.query(`UPDATE envelopes SET company_seal_certificate_id = NULL WHERE id = $1`, [id]);
+  }
   await appendEvent(t, { tenantId: a.tenantId, envelopeId: id, type: "envelope.created", actor: a.actor, data: { subject: input.subject ?? src.subject, clonedFrom: src.id } });
 
   // Documentos: los archivos son inmutables, el clon referencia los mismos originales.

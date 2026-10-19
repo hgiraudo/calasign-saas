@@ -478,11 +478,13 @@ export async function webhookRoutes(app: FastifyInstance, s: Services) {
     const secret = `whsec_${randomToken(24)}`;
     const row = await s.db.one(
       `UPDATE webhook_endpoints SET secret_enc = $3, secret_prefix = $4,
-         previous_secret_enc = CASE WHEN $5::int > 0 THEN $6 ELSE NULL END,
+         previous_secret_enc = CASE WHEN $5::int > 0 THEN secret_enc ELSE NULL END,
          previous_secret_expires_at = CASE WHEN $5::int > 0 THEN now() + ($5::int * interval '1 hour') ELSE NULL END,
          updated_at = now()
        WHERE id = $1 AND tenant_id = $2 RETURNING *`,
-      [ep.id, a.tenantId, encrypt(secret), secret.slice(0, 12), grace, ep.secret_enc],
+      // El anterior es el de la fila al actualizar (no el leído antes): con dos rotaciones simultáneas, la segunda
+      // guardaba como "anterior" el secreto original y el que devolvió la primera dejaba de valer en el acto.
+      [ep.id, a.tenantId, encrypt(secret), secret.slice(0, 12), grace],
     );
     return { webhook: toEndpoint(row), secret };
   });

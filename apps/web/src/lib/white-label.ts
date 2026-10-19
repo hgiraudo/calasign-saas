@@ -98,7 +98,10 @@ export function brandText(locale: Locale, key: string, original: string): string
   if (!t) return original;
   const own = t.texts?.[locale]?.[key];
   const s = own ?? original;
-  return rebrands(t) ? s.replace(/CalaSign/g, productName(t)).replace(/contacto@calasign\.com/gi, t.links.supportUrl ?? productName(t)) : s;
+  if (!rebrands(t)) return s;
+  // Reemplazos con función: un "$&", "$'" o "$$" en el nombre o el link no se interpreta como patrón.
+  const name = productName(t);
+  return s.replace(/CalaSign/g, () => name).replace(/contacto@calasign\.com/gi, () => t.links.supportUrl ?? name);
 }
 
 apply(current);

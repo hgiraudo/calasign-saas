@@ -10,15 +10,18 @@ const res = await fetch(\`\${BASE}/v1/events/stream?types=envelope.completed\`, 
   headers: { authorization: \`Bearer \${process.env.CALASIGN_KEY}\`, "last-event-id": savedCursor ?? "" },
 });
 const reader = res.body.getReader();
+const decoder = new TextDecoder(); // stream: true no corta un carácter UTF-8 partido entre dos lecturas
 let buf = "";
 for (;;) {
   const { value, done } = await reader.read();
   if (done) break; // se cerró (max_seconds): reconectar con el último id
-  buf += new TextDecoder().decode(value);
+  buf += decoder.decode(value, { stream: true });
   const blocks = buf.split("\\n\\n");
   buf = blocks.pop();
   for (const b of blocks) {
-    const data = b.split("\\n").find((l) => l.startsWith("data: "));
+    const lines = b.split("\\n");
+    if (lines.includes("event: end")) continue; // aviso de cierre ({"reason":"max_seconds"}), no es un evento
+    const data = lines.find((l) => l.startsWith("data: "));
     if (data) handle(JSON.parse(data.slice(6))); // ApiEvent; guardá ev.cursor
   }
 }`;

@@ -62,7 +62,12 @@ function loadPdf(url: string): Promise<PDFDocumentProxy> {
         cMapPacked: true,
       }).promise,
     );
-    p.catch(() => cache.delete(url));
+    // Solo si sigue siendo la entrada del caché: una carga desalojada que falla después no borra la que la reemplazó
+    // (quedaba fuera del caché, sin destroy() al liberarse, y el PDF se volvía a bajar en la próxima vista).
+    const mine = p;
+    p.catch(() => {
+      if (cache.get(url) === mine) cache.delete(url);
+    });
     cache.set(url, p);
   }
   return p;

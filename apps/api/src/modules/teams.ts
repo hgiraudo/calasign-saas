@@ -383,6 +383,12 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
 
   // ───────── Invitaciones ─────────
 
+  /** Revocar o reemplazar una invitación pendiente: como con los miembros, solo quien tiene todos los permisos de su rol. */
+  async function assertCanManageInvitation(a: AuthContext, inv: { role: string; role_id: string | null }) {
+    if (inv.role === "owner" && a.access?.role !== "owner") throw forbidden("Solo un propietario puede revocar o reemplazar una invitación de propietario");
+    assertCanManage(a, await permsOf(s.db, a.tenantId, inv.role, inv.role_id), "revocar o reemplazar esta invitación");
+  }
+
   const toInvitation = (r: any): Invitation => ({
     id: r.id,
     email: r.email,
@@ -414,6 +420,14 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
       [a.tenantId, input.email],
     );
     if (already) throw conflict("already_member", "Esa persona ya es miembro de la organización");
+    // La invitación nueva reemplaza (revoca) la pendiente para ese correo: como al cambiar el rol de un miembro, solo
+    // quien podría otorgar el rol pendiente. Si no, un rol con members:manage cambiaba por "miembro" la invitación de
+    // administrador (o de propietario) que había mandado otro.
+    const pending = await s.db.one<any>(
+      `SELECT role, role_id FROM invitations WHERE tenant_id = $1 AND lower(email) = lower($2) AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now()`,
+      [a.tenantId, input.email],
+    );
+    if (pending) await assertCanManageInvitation(a, pending);
     const token = randomToken();
     const id = uuidv7();
     await s.db.tx(async (t) => {
@@ -449,6 +463,8 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
 
   app.delete<P>("/v1/invitations/:id", { preHandler: auth }, async (req, reply) => {
     const a = A(req);
+    const cur =await s.db.one<any>(`SELECT role, role_id FROM invitations WHERE id = $1 AND tenant_id = $2`, [req.params.id, a.tenantId]);
+    if (cur) await assertCanManageInvitation(a, cur);
     const r = await s.db.query(
       `UPDATE invitations SET revoked_at = now() WHERE id = $1 AND tenant_id = $2 AND accepted_at IS NULL AND revoked_at IS NULL RETURNING email`,
       [req.params.id, a.tenantId],
@@ -866,9 +882,24 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
 
   // ───────── 2FA del usuario ─────────
 
+  /**
+   * La 2FA es de la cuenta (vale en todas sus organizaciones), pero una sesión SSO solo prueba la identidad dentro de
+   * la organización que la abrió, cuyo IdP lo configura esa organización (y sin dominios cargados puede afirmar el
+   * correo de cualquier miembro). Activarla desde ahí dejaba a un propietario ajeno con el segundo factor de la cuenta
+   * de un miembro: sus ingresos con contraseña en las demás organizaciones quedaban bloqueados.
+   */
+  async function assertAccountSession(req: FastifyRequest) {
+    const cookie = req.cookies?.[SESSION_COOKIE];
+    const sess = cookie ? await s.db.one<any>(`SELECT auth_method FROM sessions WHERE token_hash = $1`, [sha256Hex(cookie)]) : null;
+    if (sess?.auth_method === "sso") {
+      throw forbidden("Con inicio de sesión único (SSO) el segundo factor lo gestiona el proveedor de identidad: ingresá con tu contraseña para activarlo");
+    }
+  }
+
   app.post("/v1/me/2fa/setup", { preHandler: auth }, async (req) => {
     const a = A(req);
     if (!a.userId) throw forbidden("Solo para usuarios");
+    await assertAccountSession(req);
     const u = await s.db.one<any>(`SELECT email, totp_enabled_at FROM users WHERE id = $1`, [a.userId]);
     if (u.totp_enabled_at) throw conflict("2fa_already_enabled", "La verificación en dos pasos ya está activa");
     const secret = generateTotpSecret();
@@ -881,6 +912,7 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
   app.post("/v1/me/2fa/enable", { preHandler: auth, config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req) => {
     const a = A(req);
     if (!a.userId) throw forbidden("Solo para usuarios");
+    await assertAccountSession(req);
     const { code } = TotpCodeInput.parse(req.body);
     const u = await s.db.one<any>(`SELECT totp_pending_enc, totp_enabled_at FROM users WHERE id = $1`, [a.userId]);
     if (u.totp_enabled_at) throw conflict("2fa_already_enabled", "La verificación en dos pasos ya está activa");

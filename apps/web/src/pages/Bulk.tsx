@@ -191,10 +191,20 @@ export function BulkNewPage() {
     }
   };
 
+  // Solo vale la lectura del último archivo elegido: si una lectura anterior terminaba después, quedaba el CSV de un
+  // archivo con el nombre de otro. Un archivo que no se puede leer (movido, sin permiso) muestra el error en lugar de
+  // un rechazo sin manejar.
+  const fileSeq = useRef(0);
   const onFile = async (f: File | undefined) => {
     if (!f) return;
+    const mine = ++fileSeq.current;
     setFileName(f.name);
-    setCsv(await f.text());
+    try {
+      const text = await f.text();
+      if (mine === fileSeq.current) setCsv(text);
+    } catch (e) {
+      if (mine === fileSeq.current) setError(errorText(e));
+    }
   };
 
   const sendCount = result ? (skipInvalid ? result.valid : result.invalid === 0 ? result.total : 0) : 0;

@@ -133,19 +133,32 @@ export function uuid(): string {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }
 
-export async function fetchArrayBuffer(path: string): Promise<ArrayBuffer> {
+/**
+ * fetch para respuestas que no son JSON (PDF) con los mismos errores que api(): sin conexión, network_error (no el
+ * TypeError del navegador, "Failed to fetch", en inglés en cualquier idioma); un 401 avisa la sesión vencida (lleva al
+ * login en lugar de dejar la pantalla a medias) y un error HTTP es un HttpError con el código y mensaje de la API.
+ */
+export async function fetchResponse(path: string, init: RequestInit = {}): Promise<Response> {
   let res: Response;
   try {
-    res = await fetch(path, { credentials: "include" });
-  } catch {
-    // Sin esto se mostraba el TypeError del navegador ("Failed to fetch") en inglés y en cualquier idioma.
+    res = await fetch(path, { credentials: "include", ...init });
+  } catch (e) {
+    if ((e as Error).name === "AbortError") throw e;
     throw new HttpError(0, "network_error", "No se pudo conectar con el servidor.");
   }
   if (!res.ok) {
-    // Igual que api(): la sesión vencida mientras se ve el editor lleva al login en lugar de dejar páginas en blanco.
-    if (res.status === 401 && typeof window !== "undefined") window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
-    // Código propio (no http_N): así se traduce para firmantes en pt-BR o en (antes el texto quedaba en español).
-    throw new HttpError(res.status, "download_failed", "No se pudo descargar el documento.");
+    if (res.status === 401 && path !== "/v1/me" && typeof window !== "undefined") window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+    const err = ((await res.json().catch(() => null)) as ApiError | null)?.error;
+    throw new HttpError(res.status, err?.code ?? `http_${res.status}`, err?.message || res.statusText, err?.details);
   }
+  return res;
+}
+
+export async function fetchArrayBuffer(path: string): Promise<ArrayBuffer> {
+  const res = await fetchResponse(path).catch((e: unknown) => {
+    // Código propio (no http_N): así se traduce para firmantes en pt-BR o en (antes el texto quedaba en español).
+    if (e instanceof HttpError && e.status > 0) throw new HttpError(e.status, "download_failed", "No se pudo descargar el documento.");
+    throw e;
+  });
   return res.arrayBuffer();
 }

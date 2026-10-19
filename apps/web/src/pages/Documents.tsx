@@ -9,7 +9,7 @@ import {
   type GenerateDocumentResponse,
   type TemplateAnalysis,
 } from "@calasign/shared";
-import { api, errorText, HttpError } from "../lib/api";
+import { api, errorText, fetchResponse } from "../lib/api";
 import { formatDateTime, useI18n, confirmAction } from "../lib/i18n";
 import { useAccess } from "../lib/access";
 import { useAgrText } from "../lib/i18n-agreements";
@@ -260,17 +260,12 @@ export function DocumentTemplateEditPage() {
     // La ventana se abre en el clic (después de un await los navegadores la bloquean como popup).
     const win = window.open("", "_blank");
     try {
-      const res = await fetch("/v1/document-templates/render", {
+      // fetchResponse: errores como los de api() (sin conexión traducido, 401 al login, 502 sin cuerpo con mensaje).
+      const res = await fetchResponse("/v1/document-templates/render", {
         method: "POST",
-        credentials: "include",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ source, data: sampleObj ?? {}, locale: tpl?.locale, title: name }),
       });
-      if (!res.ok) {
-        // HttpError (no Error con `?? statusText`): un 502 sin cuerpo en HTTP/2 dejaba el mensaje vacío y no se veía nada.
-        const err = (await res.json().catch(() => null))?.error;
-        throw new HttpError(res.status, err?.code ?? `http_${res.status}`, err?.message || res.statusText);
-      }
       const url = URL.createObjectURL(await res.blob());
       if (win) {
         win.opener = null;

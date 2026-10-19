@@ -9,6 +9,7 @@ import { uuidv7 } from "../../lib/util";
 import { deliver } from "../../notifications/channels";
 import { getAiProvider } from "./provider";
 import { assertAiAvailable, inputEstimate, isAiError, loadEnvelopeDocs, recordAiUse, saveMetadata, withAiReservation } from "./service";
+import type { AppError } from "../../lib/errors";
 
 interface Deps {
   db: Db;
@@ -80,16 +81,19 @@ export async function runAiSweep(d: Deps, now = new Date()) {
     try {
       await assertAiAvailable(d.db, e.tenant_id, { reserve: false }); // antes de analizar el PDF
       const docs = await loadEnvelopeDocs(d.db, d.blobs, e.id);
-      await assertAiAvailable(d.db, e.tenant_id, { estimate: inputEstimate(docs) });
-      const r = await withAiReservation(d.db, e.tenant_id, () => getAiProvider().extractMetadata(docs));
+      const rid = await assertAiAvailable(d.db, e.tenant_id, { estimate: inputEstimate(docs) });
+      const r = await withAiReservation(d.db, e.tenant_id, () => getAiProvider().extractMetadata(docs), rid);
       await saveMetadata(d.db, e.id, e.tenant_id, r.result.metadata, r.result.confidence, "ai");
-      await recordAiUse(d.db, { tenantId: e.tenant_id, envelopeId: e.id, feature: "extract_metadata", usage: r.usage, actor: SYSTEM, data: { automatic: true } });
+      await recordAiUse(d.db, { reservationId: rid, tenantId: e.tenant_id, envelopeId: e.id, feature: "extract_metadata", usage: r.usage, actor: SYSTEM, data: { automatic: true } });
       extracted++;
     } catch (err) {
-      if (isAiError(err)) {
-        // Sin presupuesto (o IA apagada) no es un intento: queda para cuando vuelva a haber (p. ej. el mes siguiente).
-        await d.db.query(`UPDATE envelopes SET ai_metadata_attempted_at = NULL WHERE id = $1`, [e.id]);
-      } else if (!isAiError(err)) d.log.warn({ envelopeId: e.id, err: String(err) }, "extracción automática de metadatos falló");
+      // Presupuesto del mes agotado (o IA apagada): no es un intento, queda para cuando vuelva a haber. Un sobre que
+      // solo no entra en lo que queda (o choca con otras llamadas en curso) sí cuenta como intento: si no, se volvía a
+      // tomar en cada pasada y ocupaba la tanda de todas las organizaciones.
+      const det = (err as AppError)?.details as { used?: number; budget?: number } | undefined;
+      const monthSpent = isAiError(err) && ((err as AppError).code === "ai_disabled" || (det?.used != null && det.budget != null && det.used >= det.budget));
+      if (monthSpent) await d.db.query(`UPDATE envelopes SET ai_metadata_attempted_at = NULL WHERE id = $1`, [e.id]);
+      else if (!isAiError(err)) d.log.warn({ envelopeId: e.id, err: String(err) }, "extracción automática de metadatos falló");
     }
   }
 

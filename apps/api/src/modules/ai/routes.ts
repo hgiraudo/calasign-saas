@@ -140,9 +140,9 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
     let usage: DetectFieldsResponse["usage"] = null;
     let sent: DetectFieldsResponse["sent"] = null;
     if (t?.ai_enabled) {
-      await assertAiAvailable(s.db, a.tenantId, { estimate: inputEstimate(docs) });
+      const rid = await assertAiAvailable(s.db, a.tenantId, { estimate: inputEstimate(docs) });
       const provider = getAiProvider();
-      const r = await withAiReservation(s.db, a.tenantId, () => callModel(() => provider.detectFields(docs)));
+      const r = await withAiReservation(s.db, a.tenantId, () => callModel(() => provider.detectFields(docs)), rid);
       const lineDoc = new Map(docs.flatMap((d) => d.pages.flatMap((p) => p.lines.map((l) => [l.id, { doc: d.id, page: p.page }] as const))));
       // Los ids de línea se repiten entre documentos: con varios documentos se usa el primero que coincide.
       ai = r.result
@@ -160,7 +160,7 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
       const text = previewText(docs, "detect_fields");
       sent = sentSummary(docs, text);
       usage = usageInfo(r.usage);
-      await recordAiUse(s.db, { tenantId: a.tenantId, envelopeId: e.id, feature: "detect_fields", usage: r.usage, actor: a.actor, data: { suggestions: ai.length } });
+      await recordAiUse(s.db, { reservationId: rid, tenantId: a.tenantId, envelopeId: e.id, feature: "detect_fields", usage: r.usage, actor: a.actor, data: { suggestions: ai.length } });
     }
 
     const merged = new Map<string, RawSuggestion>();
@@ -218,11 +218,11 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
     const { a, e } = await envelopeOf(s, req);
     await assertAiAvailable(s.db, a.tenantId, { reserve: false });
     const docs = await loadEnvelopeDocs(s.db, s.blobs, e.id);
-    await assertAiAvailable(s.db, a.tenantId, { estimate: inputEstimate(docs) });
+    const rid = await assertAiAvailable(s.db, a.tenantId, { estimate: inputEstimate(docs) });
     const provider = getAiProvider();
-    const r = await withAiReservation(s.db, a.tenantId, () => callModel(() => provider.extractMetadata(docs)));
+    const r = await withAiReservation(s.db, a.tenantId, () => callModel(() => provider.extractMetadata(docs)), rid);
     await saveMetadata(s.db, e.id, a.tenantId, r.result.metadata, r.result.confidence, "ai");
-    await recordAiUse(s.db, { tenantId: a.tenantId, envelopeId: e.id, feature: "extract_metadata", usage: r.usage, actor: a.actor });
+    await recordAiUse(s.db, { reservationId: rid, tenantId: a.tenantId, envelopeId: e.id, feature: "extract_metadata", usage: r.usage, actor: a.actor });
     return { ...(await metadataView(s, e.id)), usage: usageInfo(r.usage) };
   });
 
@@ -255,9 +255,9 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
     const rules: string[] = input.rules ?? (Array.isArray(t?.ai_playbook) ? t.ai_playbook : []);
     if (rules.length === 0) throw badRequest("playbook_empty", "No hay reglas para revisar: cargá el playbook en Ajustes → IA");
     const docs = await loadEnvelopeDocs(s.db, s.blobs, e.id);
-    await assertAiAvailable(s.db, a.tenantId, { estimate: inputEstimate(docs) });
+    const rid = await assertAiAvailable(s.db, a.tenantId, { estimate: inputEstimate(docs) });
     const provider = getAiProvider();
-    const r = await withAiReservation(s.db, a.tenantId, () => callModel(() => provider.reviewPlaybook(docs, rules, e.locale)));
+    const r = await withAiReservation(s.db, a.tenantId, () => callModel(() => provider.reviewPlaybook(docs, rules, e.locale)), rid);
     const text = previewText(docs, "playbook_review");
     const out: PlaybookReviewResponse = {
       findings: r.result.map((f) => ({
@@ -273,6 +273,7 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
     };
     await s.db.query(`UPDATE envelopes SET ai_review = $2 WHERE id = $1`, [e.id, JSON.stringify(out)]);
     await recordAiUse(s.db, {
+      reservationId: rid,
       tenantId: a.tenantId,
       envelopeId: e.id,
       feature: "playbook_review",
@@ -318,9 +319,9 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
         await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "ai.summary", actor: recipientActor(req, r), data: { feature: "summary", cached: true, model: out.usage.model } });
       });
     } else {
-      await assertAiAvailable(s.db, e.tenant_id, { estimate: inputEstimate(docs) });
+      const rid = await assertAiAvailable(s.db, e.tenant_id, { estimate: inputEstimate(docs) });
       const provider = getAiProvider();
-      const res = await withAiReservation(s.db, e.tenant_id, () => callModel(() => provider.summarize(docs, locale)));
+      const res = await withAiReservation(s.db, e.tenant_id, () => callModel(() => provider.summarize(docs, locale)), rid);
       out = {
         summary: res.result.summary,
         keyPoints: res.result.keyPoints.slice(0, 8),
@@ -333,7 +334,7 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
       for (const [k, v] of summaryCache) if (now - v.at >= 3600_000) summaryCache.delete(k);
       while (summaryCache.size >= 500) summaryCache.delete(summaryCache.keys().next().value!);
       summaryCache.set(key, { at: now, value: out });
-      await recordAiUse(s.db, { tenantId: e.tenant_id, envelopeId: e.id, feature: "summary", usage: res.usage, actor: recipientActor(req, r), data: { locale }, skipEventIfClosed: true });
+      await recordAiUse(s.db, { reservationId: rid, tenantId: e.tenant_id, envelopeId: e.id, feature: "summary", usage: res.usage, actor: recipientActor(req, r), data: { locale }, skipEventIfClosed: true });
     }
     return out;
   });
@@ -345,9 +346,9 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
     if (!enabled) throw new AppError(403, "ai_disabled", "La asistencia con IA no está disponible para este documento");
     await assertAiAvailable(s.db, e.tenant_id, { reserve: false });
     const docs = await loadEnvelopeDocs(s.db, s.blobs, e.id);
-    await assertAiAvailable(s.db, e.tenant_id, { estimate: inputEstimate(docs) });
+    const rid = await assertAiAvailable(s.db, e.tenant_id, { estimate: inputEstimate(docs) });
     const provider = getAiProvider();
-    const res = await withAiReservation(s.db, e.tenant_id, () => callModel(() => provider.answer(docs, input.question, locale)));
+    const res = await withAiReservation(s.db, e.tenant_id, () => callModel(() => provider.answer(docs, input.question, locale)), rid);
     const out: AiAnswerResponse = {
       answer: res.result.answer,
       answered: res.result.answered,
@@ -356,6 +357,7 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
       usage: usageInfo(res.usage),
     };
     await recordAiUse(s.db, {
+      reservationId: rid,
       tenantId: e.tenant_id,
       envelopeId: e.id,
       feature: "ask",

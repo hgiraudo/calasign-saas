@@ -15,7 +15,7 @@ import { useI18n } from "../lib/i18n";
 import { formatMoney, useBillingText } from "../lib/i18n-billing";
 import { parseAmountText } from "../lib/logic";
 import { ErrorBox, Spinner } from "./ui";
-import { openProvider, tokenOfBase } from "../lib/embed";
+import { prepareProviderTab, tokenOfBase } from "../lib/embed";
 
 interface PaymentResponse {
   payment: EnvelopePayment | null;
@@ -327,13 +327,15 @@ function SignerPaymentPanel({ base, info, onPaid }: { base: string; info: Signer
   const pay = async () => {
     setBusy(true);
     setError(null);
+    const tab = prepareProviderTab(tokenOfBase(base));
     try {
       const r = await api<{ url: string }>(`${base}/payment/checkout`, { method: "POST" });
-      if (openProvider(r.url, tokenOfBase(base)) === "tab") {
+      if (tab.open(r.url) === "tab") {
         setOpenedTab(true);
         setBusy(false);
       }
     } catch (e) {
+      tab.cancel();
       setError(errorText(e));
       setBusy(false);
     }

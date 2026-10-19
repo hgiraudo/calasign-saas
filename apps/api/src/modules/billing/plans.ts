@@ -199,7 +199,8 @@ export async function usageThisMonth(db: Db, tenantId: string): Promise<BillingU
   if (await tableExists(db, "ai_usage")) {
     try {
       const r = await db.one<{ n: number }>(
-        `SELECT COALESCE(sum(input_tokens + output_tokens), 0)::bigint AS n FROM ai_usage WHERE tenant_id = $1 AND created_at >= $2`,
+        // Sin las reservas de llamadas en curso (ahora pesan lo estimado): no son consumo.
+        `SELECT COALESCE(sum(input_tokens + output_tokens), 0)::bigint AS n FROM ai_usage WHERE tenant_id = $1 AND created_at >= $2 AND feature <> '_reserved'`,
         [tenantId, start.toISOString()],
       );
       aiTokens = Number(r?.n ?? 0);

@@ -791,7 +791,7 @@ export function StoragePage() {
                     <div className="muted break">{x.status === "succeeded" ? x.remoteRef : x.error}</div>
                   </td>
                   <td>
-                    {x.status === "failed" && (
+                    {(x.status === "failed" || (x.status === "pending" && Date.now() - new Date(x.updatedAt).getTime() > 15 * 60_000)) && (
                       <button type="button" className="btn btn-sm" onClick={() => act(() => api(`/v1/storage/exports/${x.id}/retry`, { method: "POST" }))}>
                         {p("common.retry")}
                       </button>

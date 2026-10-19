@@ -35,7 +35,15 @@ function SignerDownload({ path, name, label, primary, onAuth }: { path: string; 
     setBusy(true);
     setErr(null);
     try {
-      const blob = await readBody((await fetchResponse(path)).blob());
+      const res = await fetchResponse(path);
+      // Navegadores dentro de apps en iOS (Instagram, Facebook…) ignoran la descarga de un blob: ahí, con el pedido ya
+      // comprobado, se abre el PDF directamente, como antes.
+      if (/iPhone|iPad|iPod/.test(navigator.userAgent) && !/Safari\//.test(navigator.userAgent)) {
+        res.body?.cancel().catch(() => {});
+        window.location.assign(path);
+        return;
+      }
+      const blob = await readBody(res.blob());
       const url = URL.createObjectURL(blob);
       const a = Object.assign(document.createElement("a"), { href: url, download: `${(name || "document").replace(/[\\/:*?"<>|]+/g, "_").slice(0, 120)}.pdf` });
       document.body.appendChild(a);
@@ -442,7 +450,7 @@ function SigningFlow({
   // Números que la API rechazaría (no es número o fuera de rango): antes contaban como completos, el envío daba 422
   // y no se sabía cuál era.
   const badNumber = interactive.find((f) => {
-    if (f.type !== "number") return false;
+    if (f.type !== "number" || f.readOnly) return false; // los de solo lectura no los valida la API
     const v = (values[f.id] ?? "").trim();
     if (!v) return false;
     const n = parseNumberLoose(v);

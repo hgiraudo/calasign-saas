@@ -34,14 +34,33 @@ export function isEmbedded(token?: string): boolean {
 /**
  * Abre la página de un proveedor (pago, verificación de identidad). Embebido, en otra pestaña: muchos proveedores no
  * cargan dentro de un iframe; la página del firmante sigue consultando hasta ver el resultado.
+ * La pestaña se abre en el mismo clic (antes de esperar a la API): abierta después, el navegador la bloquea. Si no se
+ * pudo abrir (iframe sin allow-popups), se navega en el mismo marco como antes.
  */
-export function openProvider(url: string, token: string): "tab" | "same" {
-  if (isEmbedded(token)) {
-    window.open(url, "_blank", "noopener");
-    return "tab";
-  }
-  window.location.assign(url);
-  return "same";
+export function prepareProviderTab(token: string): { open(url: string): "tab" | "same"; cancel(): void } {
+  const w = isEmbedded(token) ? window.open("about:blank", "_blank") : null;
+  return {
+    open(url: string) {
+      if (w && !w.closed) {
+        try {
+          w.opener = null;
+        } catch {
+          /* ignorado */
+        }
+        w.location.href = url;
+        return "tab";
+      }
+      window.location.assign(url);
+      return "same";
+    },
+    cancel() {
+      try {
+        w?.close();
+      } catch {
+        /* ignorado */
+      }
+    },
+  };
 }
 
 /** Token de la base de la API del firmante (/v1/signing/<token>). */

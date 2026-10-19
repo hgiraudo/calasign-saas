@@ -171,7 +171,10 @@ async function notify(
     if (channel === "telegram") to = r.telegram_chat_id;
     if (!to) continue; // Telegram sin vincular: va el link de vinculación por los otros canales.
     const waTemplate = channel === "whatsapp" ? whatsappTemplate(p.kind) : null;
-    if (channel === "whatsapp" && !waTemplate) continue;
+    if (channel === "whatsapp" && !waTemplate) {
+      d.log.warn({ envelopeId: e.id, kind: p.kind }, "aviso sin plantilla de WhatsApp aprobada (WHATSAPP_*_TEMPLATE): no sale por WhatsApp");
+      continue;
+    }
     const nid = uuidv7();
     // Solo el envío decide si salió: un error al registrarlo después (insert, evento) no lo marca como fallido ni hace
     // reintentar el job, que volvería a mandarlo por todos los canales.

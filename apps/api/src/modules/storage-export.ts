@@ -549,7 +549,13 @@ export async function exportEnvelopeJob(db: Db, blobs: BlobStore, p: { connectio
       WHERE id = $1 AND status <> 'succeeded' AND (claimed_until IS NULL OR claimed_until < now()) RETURNING id`,
     [ex.id],
   );
-  if (!claimed.length) return;
+  if (!claimed.length) {
+    const cur = await db.one<any>(`SELECT status FROM storage_exports WHERE id = $1`, [ex.id]);
+    if (!cur || cur.status === "succeeded") return;
+    // Otro trabajo la tiene tomada (o uno que murió, hasta que venza el reclamo): se reintenta más tarde con la cola.
+    // Terminar sin error dejaba la exportación 'pending' para siempre si el que la tenía se había caído.
+    throw new Error("exportación en curso en otro trabajo; se reintenta");
+  }
   try {
     await runExport(db, blobs, p, c, ex, e);
   } finally {
@@ -852,7 +858,10 @@ export async function storageRoutes(app: FastifyInstance, s: Services) {
     if (x.status === "succeeded") throw new AppError(409, "already_exported", "Ya se exportó");
     // Solo una fallida: una pendiente ya está en la cola (o subiéndose), y un segundo trabajo subía el PDF dos veces.
     const upd = await s.db.query(
-      `UPDATE storage_exports SET status = 'pending', error = NULL, updated_at = now() WHERE id = $1 AND status = 'failed' RETURNING id`,
+      // También una pendiente abandonada (sin reclamo vigente y sin cambios en 15 minutos: el trabajo murió).
+      `UPDATE storage_exports SET status = 'pending', error = NULL, updated_at = now()
+        WHERE id = $1 AND (status = 'failed' OR (status = 'pending' AND (claimed_until IS NULL OR claimed_until < now()) AND updated_at < now() - interval '15 minutes'))
+        RETURNING id`,
       [x.id],
     );
     if (!upd.length) throw new AppError(409, "export_in_progress", "La exportación ya está en curso");

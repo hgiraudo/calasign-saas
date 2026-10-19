@@ -143,6 +143,12 @@ const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
   fields_invalid: { "pt-BR": "Há campos com valores inválidos.", en: "Some fields have invalid values." },
   invalid_image: { "pt-BR": "A imagem da assinatura não é válida.", en: "The signature image isn't valid." },
   busy: { "pt-BR": "Estamos preparando outras cópias: tente de novo em alguns segundos.", en: "We're preparing other copies: try again in a few seconds." },
+  version_changed: { "pt-BR": "Há uma versão nova: revise-a e tente de novo.", en: "There's a new version: review it and try again." },
+  idempotency_mismatch: {
+    "pt-BR": "Os dados mudaram desde a tentativa anterior: recarregue a página e tente de novo.",
+    en: "The data changed since the previous attempt: reload the page and try again.",
+  },
+  idempotency_in_progress: { "pt-BR": "O pedido anterior ainda está em andamento: aguarde alguns segundos.", en: "The previous request is still in progress: wait a few seconds." },
   invalid_path: { "pt-BR": "Link inválido.", en: "Invalid link." },
   invalid_date: { "pt-BR": "Data inválida ou fora do intervalo.", en: "Invalid or out-of-range date." },
   invalid_attachment: {

@@ -1,5 +1,6 @@
 // Exportación automática del PDF sellado a almacenamiento de la organización:
-// Google Drive, Dropbox y OneDrive (OAuth de la organización) y cualquier bucket compatible con S3.
+// Google Drive, Dropbox, OneDrive, SharePoint y Box (OAuth de la organización) y cualquier bucket compatible con S3.
+// Opcionalmente también el certificado de evidencia (JSON con la cadena de eventos, connectors/evidence-file.ts).
 // Al completarse un sobre se encola un job por conexión activa (ver platform-fanout.ts).
 import type { FastifyInstance } from "fastify";
 import {
@@ -22,8 +23,17 @@ import { hasPerm } from "./access";
 import { auditFromRequest } from "./audit";
 import { authenticate, type Services } from "./context";
 import { assertPublicDestination, safeHttpAgent, safeHttpsAgent } from "./webhooks";
+import { evidenceCertificate, safeBaseName } from "./connectors/evidence-file";
 
 const isLocalEnv = () => config.environment === "local";
+
+// Bases de las API (variables solo para pruebas con simuladores; por defecto las públicas).
+const env = process.env;
+const GRAPH = () => (env.MS_GRAPH_BASE ?? "https://graph.microsoft.com/v1.0").replace(/\/$/, "");
+const MS_LOGIN = () => (env.MS_LOGIN_BASE ?? "https://login.microsoftonline.com").replace(/\/$/, "");
+const BOX_API = () => (env.BOX_API_BASE ?? "https://api.box.com").replace(/\/$/, "");
+const BOX_UPLOAD = () => (env.BOX_UPLOAD_BASE ?? "https://upload.box.com").replace(/\/$/, "");
+const BOX_AUTHORIZE = () => env.BOX_AUTHORIZE_URL ?? "https://account.box.com/api/oauth2/authorize";
 
 // ───────────────────────────── Proveedores OAuth ─────────────────────────────
 
@@ -39,7 +49,6 @@ interface ProviderCfg {
 }
 
 function providerCfg(p: OAuthProvider): ProviderCfg {
-  const env = process.env;
   if (p === "gdrive")
     return {
       clientId: env.GOOGLE_CLIENT_ID,
@@ -58,13 +67,24 @@ function providerCfg(p: OAuthProvider): ProviderCfg {
       scope: "files.content.write account_info.read",
       extraAuthorize: { token_access_type: "offline" },
     };
+  if (p === "box")
+    return {
+      clientId: env.BOX_CLIENT_ID,
+      clientSecret: env.BOX_CLIENT_SECRET,
+      authorizeUrl: BOX_AUTHORIZE(),
+      tokenUrl: `${BOX_API()}/oauth2/token`,
+      // Los permisos de Box se fijan en la app (Read/Write all files and folders); el scope es informativo.
+      scope: "root_readwrite",
+      extraAuthorize: {},
+    };
   const tenant = env.MS_TENANT || "common";
   return {
     clientId: env.MS_CLIENT_ID,
     clientSecret: env.MS_CLIENT_SECRET,
-    authorizeUrl: `https://login.microsoftonline.com/${tenant}/oauth2/v2.0/authorize`,
-    tokenUrl: `https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`,
-    scope: "offline_access Files.ReadWrite User.Read",
+    authorizeUrl: `${MS_LOGIN()}/${tenant}/oauth2/v2.0/authorize`,
+    tokenUrl: `${MS_LOGIN()}/${tenant}/oauth2/v2.0/token`,
+    // Misma app de Entra ID para OneDrive y SharePoint; SharePoint pide además acceso a los sitios.
+    scope: p === "sharepoint" ? "offline_access Sites.ReadWrite.All User.Read" : "offline_access Files.ReadWrite User.Read",
     extraAuthorize: {},
   };
 }
@@ -118,10 +138,14 @@ async function accountLabel(p: OAuthProvider, tokenBody: any): Promise<string | 
       });
       return ((await r.json()) as any)?.email ?? null;
     }
-    if (p === "onedrive") {
-      const r = await fetch("https://graph.microsoft.com/v1.0/me", { headers: { authorization: `Bearer ${tokenBody.access_token}` }, signal: AbortSignal.timeout(10_000) });
+    if (p === "onedrive" || p === "sharepoint") {
+      const r = await fetch(`${GRAPH()}/me`, { headers: { authorization: `Bearer ${tokenBody.access_token}` }, signal: AbortSignal.timeout(10_000) });
       const me: any = await r.json();
       return me?.mail ?? me?.userPrincipalName ?? null;
+    }
+    if (p === "box") {
+      const r = await fetch(`${BOX_API()}/2.0/users/me?fields=login,name`, { headers: { authorization: `Bearer ${tokenBody.access_token}` }, signal: AbortSignal.timeout(10_000) });
+      return ((await r.json()) as any)?.login ?? null;
     }
   } catch {
     /* la etiqueta es opcional */
@@ -229,7 +253,7 @@ async function withResolvedFolder(db: Db, c: any): Promise<any> {
   return (await ensureGdriveFolder(db, c.id, String(folderId))) ?? c;
 }
 
-async function uploadGdrive(creds: OAuthCreds, cfg: any, name: string, bytes: Uint8Array): Promise<UploadResult> {
+async function uploadGdrive(creds: OAuthCreds, cfg: any, name: string, bytes: Uint8Array, contentType: string): Promise<UploadResult> {
   const { token, updated } = await freshToken("gdrive", creds);
   const auth = { authorization: `Bearer ${token}` };
   let folderId: string | null = cfg.folderId ?? null;
@@ -239,9 +263,9 @@ async function uploadGdrive(creds: OAuthCreds, cfg: any, name: string, bytes: Ui
     newCfg.folderId = folderId;
   }
   const boundary = `calasign${randomToken(12)}`;
-  const meta = JSON.stringify({ name, mimeType: "application/pdf", ...(folderId ? { parents: [folderId] } : {}) });
+  const meta = JSON.stringify({ name, mimeType: contentType, ...(folderId ? { parents: [folderId] } : {}) });
   const body = Buffer.concat([
-    Buffer.from(`--${boundary}\r\ncontent-type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\ncontent-type: application/pdf\r\n\r\n`),
+    Buffer.from(`--${boundary}\r\ncontent-type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\ncontent-type: ${contentType}\r\n\r\n`),
     Buffer.from(bytes),
     Buffer.from(`\r\n--${boundary}--`),
   ]);
@@ -259,7 +283,7 @@ async function uploadGdrive(creds: OAuthCreds, cfg: any, name: string, bytes: Ui
   return { ref: res.webViewLink ?? `gdrive:${res.id}`, creds: updated ?? undefined, config: Object.keys(newCfg).length ? newCfg : undefined };
 }
 
-async function uploadDropbox(creds: OAuthCreds, cfg: any, name: string, bytes: Uint8Array): Promise<UploadResult> {
+async function uploadDropbox(creds: OAuthCreds, cfg: any, name: string, bytes: Uint8Array, _contentType: string): Promise<UploadResult> {
   const { token, updated } = await freshToken("dropbox", creds);
   const folder = String(cfg.folder ?? "").replace(/^\/+|\/+$/g, "");
   const path = `/${folder ? `${folder}/` : ""}${name}`;
@@ -279,8 +303,58 @@ async function uploadDropbox(creds: OAuthCreds, cfg: any, name: string, bytes: U
   return { ref: `dropbox:${res.path_display ?? path}`, creds: updated ?? undefined };
 }
 
-async function uploadOnedrive(creds: OAuthCreds, cfg: any, name: string, bytes: Uint8Array): Promise<UploadResult> {
+async function uploadOnedrive(creds: OAuthCreds, cfg: any, name: string, bytes: Uint8Array, contentType: string): Promise<UploadResult> {
   const { token, updated } = await freshToken("onedrive", creds);
+  const item = await graphUpload(token, `${GRAPH()}/me/drive`, cfg, name, bytes, contentType, "OneDrive");
+  return { ref: item?.webUrl ?? `onedrive:${item?.id ?? name}`, creds: updated ?? undefined };
+}
+
+async function uploadSharepoint(creds: OAuthCreds, cfg: any, name: string, bytes: Uint8Array, contentType: string): Promise<UploadResult> {
+  const { token, updated } = await freshToken("sharepoint", creds);
+  if (!cfg.driveId) throw new Error("conexión de SharePoint sin biblioteca resuelta: volvé a conectarla");
+  const item = await graphUpload(token, `${GRAPH()}/drives/${encodeURIComponent(String(cfg.driveId))}`, cfg, name, bytes, contentType, "SharePoint");
+  return { ref: item?.webUrl ?? `sharepoint:${item?.id ?? name}`, creds: updated ?? undefined };
+}
+
+/** Valida la URL de un sitio de SharePoint (https://empresa.sharepoint.com/sites/Legal). */
+export function parseSharepointSite(raw: string): { host: string; path: string } {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    throw badRequest("invalid_url", "URL de sitio de SharePoint inválida");
+  }
+  const local = ["localhost", "127.0.0.1"].includes(u.hostname) && isLocalEnv();
+  if (!local && (u.protocol !== "https:" || !/\.sharepoint(-df)?\.com$/i.test(u.hostname) || u.username || u.password)) {
+    throw badRequest("invalid_url", "El sitio tiene que ser https://<empresa>.sharepoint.com/sites/<sitio>");
+  }
+  // Solo la ruta del sitio (/sites/X o /teams/X); lo que venga después (/Shared Documents/Forms/…) se descarta.
+  const m = /^\/(sites|teams)\/[^/]+/i.exec(decodeURIComponent(u.pathname));
+  return { host: u.hostname, path: m ? m[0] : "" };
+}
+
+/** Resuelve sitio y biblioteca de SharePoint a ids de Graph (se guardan en la conexión). */
+export async function resolveSharepointDrive(token: string, siteUrl: string, library?: string | null): Promise<{ siteId: string; driveId: string; driveName: string | null }> {
+  const { host, path } = parseSharepointSite(siteUrl);
+  const auth = { authorization: `Bearer ${token}` };
+  const siteRef = path ? `${host}:${path.split("/").map(encodeURIComponent).join("/")}` : host;
+  const site: any = await (await check(await fetch(`${GRAPH()}/sites/${siteRef}?$select=id,webUrl`, { headers: auth, signal: AbortSignal.timeout(15_000) }), "buscar sitio")).json();
+  if (library) {
+    const drives: any = await (
+      await check(await fetch(`${GRAPH()}/sites/${encodeURIComponent(site.id)}/drives?$select=id,name`, { headers: auth, signal: AbortSignal.timeout(15_000) }), "listar bibliotecas")
+    ).json();
+    const d = (drives.value ?? []).find((x: any) => String(x.name).toLowerCase() === library.toLowerCase());
+    if (!d) throw new Error(`no existe la biblioteca "${library}" en el sitio`);
+    return { siteId: site.id, driveId: d.id, driveName: d.name };
+  }
+  const d: any = await (
+    await check(await fetch(`${GRAPH()}/sites/${encodeURIComponent(site.id)}/drive?$select=id,name`, { headers: auth, signal: AbortSignal.timeout(15_000) }), "biblioteca del sitio")
+  ).json();
+  return { siteId: site.id, driveId: d.id, driveName: d.name ?? null };
+}
+
+/** Subida a un drive de Graph (OneDrive del usuario o biblioteca de SharePoint). */
+async function graphUpload(token: string, driveBase: string, cfg: any, name: string, bytes: Uint8Array, contentType: string, what: string): Promise<any> {
   // Cada segmento por separado: con la carpeta entera en encodeURIComponent, "Contratos/2026" viajaba como
   // "Contratos%2F2026" y Graph lo toma como un nombre con "/" (inválido) en lugar de una subcarpeta.
   const folder = String(cfg.folder ?? "").split("/").filter(Boolean);
@@ -290,26 +364,26 @@ async function uploadOnedrive(creds: OAuthCreds, cfg: any, name: string, bytes: 
   if (bytes.length <= 4 * 1024 * 1024) {
     item = await (
       await check(
-        await fetch(`https://graph.microsoft.com/v1.0/me/drive/root:/${path}:/content?@microsoft.graph.conflictBehavior=rename`, {
+        await fetch(`${driveBase}/root:/${path}:/content?@microsoft.graph.conflictBehavior=rename`, {
           method: "PUT",
-          headers: { ...auth, "content-type": "application/pdf" },
+          headers: { ...auth, "content-type": contentType },
           body: Buffer.from(bytes),
           signal: AbortSignal.timeout(60_000),
         }),
-        "subir a OneDrive",
+        `subir a ${what}`,
       )
     ).json();
   } else {
     // Archivos grandes: sesión de carga en partes de 5 MiB (múltiplo de 320 KiB).
     const session: any = await (
       await check(
-        await fetch(`https://graph.microsoft.com/v1.0/me/drive/root:/${path}:/createUploadSession`, {
+        await fetch(`${driveBase}/root:/${path}:/createUploadSession`, {
           method: "POST",
           headers: { ...auth, "content-type": "application/json" },
           body: JSON.stringify({ item: { "@microsoft.graph.conflictBehavior": "rename" } }),
           signal: AbortSignal.timeout(15_000),
         }),
-        "sesión de carga OneDrive",
+        `sesión de carga ${what}`,
       )
     ).json();
     const CHUNK = 16 * 320 * 1024;
@@ -321,11 +395,63 @@ async function uploadOnedrive(creds: OAuthCreds, cfg: any, name: string, bytes: 
         body: Buffer.from(bytes.subarray(off, end)),
         signal: AbortSignal.timeout(60_000),
       });
-      await check(r, "parte OneDrive");
+      await check(r, `parte ${what}`);
       if (end === bytes.length) item = await r.json();
     }
   }
-  return { ref: item?.webUrl ?? `onedrive:${item?.id ?? path}`, creds: updated ?? undefined };
+  return item;
+}
+
+// ───── Box ─────
+
+/** Busca o crea cada segmento de la carpeta en Box. Ante un 409 (ya existe) usa el id que informa Box. */
+export async function ensureBoxFolder(token: string, folder: string): Promise<string> {
+  let parent = "0";
+  for (const seg of folder.split("/").map((x) => x.trim()).filter(Boolean)) {
+    const res = await fetch(`${BOX_API()}/2.0/folders?fields=id`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ name: seg.slice(0, 255), parent: { id: parent } }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (res.status === 409) {
+      const b: any = await res.json().catch(() => ({}));
+      const c = b?.context_info?.conflicts;
+      const id = Array.isArray(c) ? c[0]?.id : c?.id;
+      if (!id) throw new Error("crear carpeta en Box: HTTP 409 sin el id de la carpeta existente");
+      parent = String(id);
+      continue;
+    }
+    parent = String(((await (await check(res, "crear carpeta en Box")).json()) as any).id);
+  }
+  return parent;
+}
+
+async function uploadBox(creds: OAuthCreds, cfg: any, name: string, bytes: Uint8Array, contentType: string): Promise<UploadResult> {
+  const { token, updated } = await freshToken("box", creds);
+  let folderId: string = cfg.folderId ?? "";
+  const newCfg: Record<string, unknown> = {};
+  if (!folderId) {
+    folderId = cfg.folder ? await ensureBoxFolder(token, String(cfg.folder)) : "0";
+    newCfg.folderId = folderId;
+  }
+  const put = async (fileName: string) => {
+    const form = new FormData();
+    form.append("attributes", JSON.stringify({ name: fileName, parent: { id: folderId } }));
+    form.append("file", new Blob([Buffer.from(bytes)], { type: contentType }), fileName);
+    return fetch(`${BOX_UPLOAD()}/api/2.0/files/content?fields=id,name`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+      body: form,
+      signal: AbortSignal.timeout(60_000),
+    });
+  };
+  let res = await put(name);
+  // Nombre ocupado (409 item_name_in_use): Box no renombra solo; se agrega un sufijo.
+  if (res.status === 409) res = await put(name.replace(/(\.[a-z0-9]+)$/i, ` (${Date.now().toString(36)})$1`));
+  const body: any = await (await check(res, "subir a Box")).json();
+  const file = body?.entries?.[0] ?? body;
+  return { ref: `box:${file?.id ?? name}`, creds: updated ?? undefined, config: Object.keys(newCfg).length ? newCfg : undefined };
 }
 
 interface S3Creds {
@@ -333,7 +459,7 @@ interface S3Creds {
   secretAccessKey: string;
 }
 
-async function uploadS3(creds: S3Creds, cfg: any, name: string, bytes: Uint8Array): Promise<UploadResult> {
+async function uploadS3(creds: S3Creds, cfg: any, name: string, bytes: Uint8Array, contentType: string): Promise<UploadResult> {
   await assertPublicDestination(cfg.endpoint);
   const m = await import("@aws-sdk/client-s3");
   const client = new m.S3Client({
@@ -350,19 +476,21 @@ async function uploadS3(creds: S3Creds, cfg: any, name: string, bytes: Uint8Arra
   });
   const key = `${String(cfg.prefix ?? "").replace(/^\/+/, "")}${name}`;
   try {
-    await client.send(new m.PutObjectCommand({ Bucket: cfg.bucket, Key: key, Body: bytes, ContentType: "application/pdf" }), { abortSignal: AbortSignal.timeout(120_000) });
+    await client.send(new m.PutObjectCommand({ Bucket: cfg.bucket, Key: key, Body: bytes, ContentType: contentType }), { abortSignal: AbortSignal.timeout(120_000) });
   } finally {
     client.destroy();
   }
   return { ref: `s3://${cfg.bucket}/${key}` };
 }
 
-async function uploadTo(provider: StorageProvider, credsEnc: string, cfg: any, name: string, bytes: Uint8Array): Promise<UploadResult> {
+async function uploadTo(provider: StorageProvider, credsEnc: string, cfg: any, name: string, bytes: Uint8Array, contentType = "application/pdf"): Promise<UploadResult> {
   const creds = JSON.parse(decrypt(credsEnc));
-  if (provider === "gdrive") return uploadGdrive(creds, cfg, name, bytes);
-  if (provider === "dropbox") return uploadDropbox(creds, cfg, name, bytes);
-  if (provider === "onedrive") return uploadOnedrive(creds, cfg, name, bytes);
-  return uploadS3(creds, cfg, name, bytes);
+  if (provider === "gdrive") return uploadGdrive(creds, cfg, name, bytes, contentType);
+  if (provider === "dropbox") return uploadDropbox(creds, cfg, name, bytes, contentType);
+  if (provider === "onedrive") return uploadOnedrive(creds, cfg, name, bytes, contentType);
+  if (provider === "sharepoint") return uploadSharepoint(creds, cfg, name, bytes, contentType);
+  if (provider === "box") return uploadBox(creds, cfg, name, bytes, contentType);
+  return uploadS3(creds, cfg, name, bytes, contentType);
 }
 
 async function persistUpload(db: Db, connId: string, r: UploadResult) {
@@ -370,10 +498,7 @@ async function persistUpload(db: Db, connId: string, r: UploadResult) {
   if (r.config) await db.query(`UPDATE storage_connections SET config = config || $2::jsonb, updated_at = now() WHERE id = $1`, [connId, JSON.stringify(r.config)]);
 }
 
-function fileName(subject: string, envelopeId: string) {
-  const safe = subject.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 100) || "documento";
-  return `${safe} - ${envelopeId.slice(0, 8)}.pdf`;
-}
+const fileName = (subject: string, envelopeId: string) => `${safeBaseName(subject, envelopeId)}.pdf`;
 
 // ───────────────────────────── Job de exportación ─────────────────────────────
 
@@ -392,11 +517,24 @@ export async function exportEnvelopeJob(db: Db, blobs: BlobStore, p: { connectio
   if (!e || e.status !== "completed") return;
   await db.query(`UPDATE storage_exports SET attempts = attempts + 1, updated_at = now() WHERE id = $1`, [ex.id]);
   try {
-    const bytes = await blobs.get(e.storage_key);
-    const cur = await withResolvedFolder(db, c);
-    const r = await uploadTo(cur.provider, cur.credentials_enc, cur.config ?? {}, fileName(e.subject, p.envelopeId), bytes);
-    await persistUpload(db, c.id, r);
-    await db.query(`UPDATE storage_exports SET status = 'succeeded', remote_ref = $2, error = NULL, updated_at = now() WHERE id = $1`, [ex.id, r.ref]);
+    let cur = await withResolvedFolder(db, c);
+    // El PDF ya subido en un intento anterior (falló solo el certificado de evidencia) no se vuelve a subir.
+    let ref: string = ex.pdf_ref;
+    if (!ref) {
+      const bytes = await blobs.get(e.storage_key);
+      const r = await uploadTo(cur.provider, cur.credentials_enc, cur.config ?? {}, fileName(e.subject, p.envelopeId), bytes);
+      await persistUpload(db, c.id, r);
+      ref = r.ref;
+      await db.query(`UPDATE storage_exports SET pdf_ref = $2, updated_at = now() WHERE id = $1`, [ex.id, ref]);
+    }
+    if (c.config?.includeEvidence) {
+      // Con la fila releída: la subida del PDF pudo renovar el token o fijar la carpeta.
+      cur = (await db.one<any>(`SELECT * FROM storage_connections WHERE id = $1`, [c.id])) ?? cur;
+      const ev = await evidenceCertificate(db, p.envelopeId);
+      const r2 = await uploadTo(cur.provider, cur.credentials_enc, cur.config ?? {}, `${safeBaseName(e.subject, p.envelopeId)} - evidencia.json`, ev, "application/json");
+      await persistUpload(db, c.id, r2);
+    }
+    await db.query(`UPDATE storage_exports SET status = 'succeeded', remote_ref = $2, error = NULL, updated_at = now() WHERE id = $1`, [ex.id, ref]);
     await db.query(`UPDATE storage_connections SET last_success_at = now(), last_error = NULL WHERE id = $1`, [c.id]);
   } catch (err) {
     const msg = String((err as Error).message ?? err).slice(0, 500);
@@ -423,6 +561,7 @@ export async function queueStorageExports(db: Db, tenantId: string, envelopeId: 
 function targetOf(r: any): string {
   const cfg = r.config ?? {};
   if (r.provider === "s3") return `${cfg.bucket}/${cfg.prefix ?? ""}`;
+  if (r.provider === "sharepoint") return `${cfg.siteUrl ?? ""} › ${cfg.driveName ?? cfg.library ?? ""}/${cfg.folder ?? ""}`;
   return cfg.folder ? String(cfg.folder) : "/";
 }
 
@@ -433,6 +572,7 @@ const toApi = (r: any): StorageConnection => ({
   target: targetOf(r),
   accountLabel: r.account_label,
   active: r.active,
+  includeEvidence: Boolean(r.config?.includeEvidence),
   createdAt: iso(r.created_at)!,
   lastSuccessAt: iso(r.last_success_at),
   lastError: r.last_error,
@@ -453,6 +593,11 @@ interface OAuthState {
   p: OAuthProvider;
   n: string;
   f: string;
+  /** SharePoint: sitio y biblioteca. */
+  s?: string;
+  l?: string;
+  /** Subir también el certificado de evidencia. */
+  ev?: boolean;
   exp: number;
 }
 
@@ -480,7 +625,7 @@ export async function storageRoutes(app: FastifyInstance, s: Services) {
     const input = CreateS3ConnectionInput.parse(req.body);
     const endpoint = validateS3Endpoint(input.endpoint);
     const prefix = input.prefix && !input.prefix.endsWith("/") ? `${input.prefix}/` : input.prefix ?? "";
-    const cfg = { endpoint, region: input.region, bucket: input.bucket, prefix, forcePathStyle: input.forcePathStyle };
+    const cfg = { endpoint, region: input.region, bucket: input.bucket, prefix, forcePathStyle: input.forcePathStyle, includeEvidence: Boolean(input.includeEvidence) };
     const credsEnc = encrypt(JSON.stringify({ accessKeyId: input.accessKeyId, secretAccessKey: input.secretAccessKey }));
     // Prueba de escritura antes de guardar: así un error de credenciales se ve ahora y no al completar un sobre.
     try {
@@ -502,11 +647,25 @@ export async function storageRoutes(app: FastifyInstance, s: Services) {
   app.post<{ Params: { provider: string } }>("/v1/storage/oauth/:provider/start", { preHandler: auth }, async (req) => {
     const a = req.auth!;
     const p = req.params.provider as OAuthProvider;
-    if (!["gdrive", "dropbox", "onedrive"].includes(p)) throw notFound("Proveedor");
+    if (!["gdrive", "dropbox", "onedrive", "sharepoint", "box"].includes(p)) throw notFound("Proveedor");
     if (!isConfigured(p)) throw new AppError(409, "provider_not_configured", "Este proveedor no está configurado en el servidor");
     if (!a.userId) throw new AppError(403, "session_required", "Conectar una cuenta requiere iniciar sesión en la web");
     const input = ConnectStorageOAuthInput.parse(req.body ?? {});
-    const state: OAuthState = { t: a.tenantId, u: a.userId, p, n: input.name, f: input.folder ?? "", exp: Date.now() + 10 * 60_000 };
+    if (p === "sharepoint") {
+      if (!input.siteUrl) throw badRequest("site_required", "Indicá la URL del sitio de SharePoint");
+      parseSharepointSite(input.siteUrl);
+    }
+    const state: OAuthState = {
+      t: a.tenantId,
+      u: a.userId,
+      p,
+      n: input.name,
+      f: input.folder ?? "",
+      s: p === "sharepoint" ? input.siteUrl : undefined,
+      l: p === "sharepoint" ? input.library : undefined,
+      ev: Boolean(input.includeEvidence),
+      exp: Date.now() + 10 * 60_000,
+    };
     const cfg = providerCfg(p);
     const url = new URL(cfg.authorizeUrl);
     for (const [k, v] of Object.entries({
@@ -541,10 +700,20 @@ export async function storageRoutes(app: FastifyInstance, s: Services) {
         const body = await tokenRequest(st.p, { grant_type: "authorization_code", code: req.query.code, redirect_uri: redirectUri(st.p) });
         const creds: OAuthCreds = { access_token: body.access_token, refresh_token: body.refresh_token, expires_at: Date.now() + Number(body.expires_in ?? 3600) * 1000 };
         const label = await accountLabel(st.p, body);
+        const cfg: Record<string, unknown> = { folder: st.f, includeEvidence: Boolean(st.ev) };
+        if (st.p === "sharepoint") {
+          try {
+            const d = await resolveSharepointDrive(body.access_token, String(st.s ?? ""), st.l || null);
+            Object.assign(cfg, { siteUrl: st.s, library: st.l ?? null, siteId: d.siteId, driveId: d.driveId, driveName: d.driveName });
+          } catch (err) {
+            req.log.warn({ err: String(err) }, "no se pudo resolver el sitio de SharePoint");
+            return back("error=sharepoint_site");
+          }
+        }
         const id = uuidv7();
         await s.db.query(
           `INSERT INTO storage_connections (id, tenant_id, provider, name, config, credentials_enc, account_label, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-          [id, a.tenantId, st.p, st.n, JSON.stringify({ folder: st.f }), encrypt(JSON.stringify(creds)), label, a.userId],
+          [id, a.tenantId, st.p, st.n, JSON.stringify(cfg), encrypt(JSON.stringify(creds)), label, a.userId],
         );
         await auditFromRequest(s.db, req, a, "storage.connected", { targetType: "storage_connection", targetId: id, data: { provider: st.p, name: st.n } });
         return back(`connected=${st.p}`);
@@ -562,8 +731,9 @@ export async function storageRoutes(app: FastifyInstance, s: Services) {
     const cfgPatch: Record<string, unknown> = {};
     if (input.folder !== undefined && r.provider !== "s3") {
       cfgPatch.folder = input.folder;
-      cfgPatch.folderId = null; // Drive: se vuelve a buscar/crear la carpeta
+      cfgPatch.folderId = null; // Drive y Box: se vuelve a buscar/crear la carpeta
     }
+    if (input.includeEvidence !== undefined) cfgPatch.includeEvidence = input.includeEvidence;
     if (input.prefix !== undefined && r.provider === "s3") cfgPatch.prefix = input.prefix && !input.prefix.endsWith("/") ? `${input.prefix}/` : input.prefix;
     await s.db.query(
       `UPDATE storage_connections SET name = COALESCE($2, name), active = COALESCE($3, active), config = config || $4::jsonb, updated_at = now() WHERE id = $1`,

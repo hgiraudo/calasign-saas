@@ -209,7 +209,8 @@ export interface NotificationIntegration {
 
 // ───────────────────────────── Almacenamiento en la nube ─────────────────────────────
 
-export const STORAGE_PROVIDERS = ["gdrive", "dropbox", "onedrive", "s3"] as const;
+/** box y sharepoint: gestores documentales (conectores HR/CLM/DMS, docs/CONECTORES-HR-CLM-DMS.md). */
+export const STORAGE_PROVIDERS = ["gdrive", "dropbox", "onedrive", "sharepoint", "box", "s3"] as const;
 export type StorageProvider = (typeof STORAGE_PROVIDERS)[number];
 
 export interface StorageProviderInfo {
@@ -222,6 +223,12 @@ export const ConnectStorageOAuthInput = z.object({
   name: z.string().trim().min(1).max(100),
   /** Carpeta de destino (ruta, o id de carpeta en Google Drive). Vacía: raíz / carpeta de la app. */
   folder: z.string().trim().max(300).optional().default(""),
+  /** SharePoint: URL del sitio (https://empresa.sharepoint.com/sites/Legal). Obligatoria para sharepoint. */
+  siteUrl: z.string().trim().url().max(400).optional(),
+  /** SharePoint: biblioteca de documentos (por defecto, la del sitio: "Documentos" / "Shared Documents"). */
+  library: z.string().trim().max(200).optional(),
+  /** Además del PDF sellado, subir el certificado de evidencia (JSON con la cadena de eventos). */
+  includeEvidence: z.boolean().optional().default(false),
 });
 export type ConnectStorageOAuthInput = z.input<typeof ConnectStorageOAuthInput>;
 
@@ -234,6 +241,7 @@ export const CreateS3ConnectionInput = z.object({
   accessKeyId: z.string().trim().min(1).max(200),
   secretAccessKey: z.string().min(1).max(200),
   forcePathStyle: z.boolean().default(true),
+  includeEvidence: z.boolean().optional().default(false),
 });
 export type CreateS3ConnectionInput = z.input<typeof CreateS3ConnectionInput>;
 
@@ -242,6 +250,7 @@ export const UpdateStorageConnectionInput = z.object({
   folder: z.string().trim().max(300).optional(),
   prefix: z.string().trim().max(200).optional(),
   active: z.boolean().optional(),
+  includeEvidence: z.boolean().optional(),
 });
 export type UpdateStorageConnectionInput = z.infer<typeof UpdateStorageConnectionInput>;
 
@@ -253,6 +262,8 @@ export interface StorageConnection {
   target: string;
   accountLabel: string | null;
   active: boolean;
+  /** También se sube el certificado de evidencia junto al PDF. */
+  includeEvidence: boolean;
   createdAt: string;
   lastSuccessAt: string | null;
   lastError: string | null;

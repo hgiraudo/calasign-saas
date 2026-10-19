@@ -487,7 +487,7 @@ const OPS: Op[] = [
     operationId: "createWebhook",
     tag: "Webhooks",
     summary: "Crear webhook (el secreto se devuelve una sola vez)",
-    description: "URL https (sin credenciales ni destinos locales). Máximo 20 por organización. Sin `events`, recibe todos.",
+    description: "URL https (sin credenciales ni destinos locales). Máximo 20 por organización. Sin `events`, recibe todos. Responde con el header `Location` (URL del webhook): DELETE a esa URL lo borra, como hacen los triggers REST hook de Power Automate y Logic Apps.",
     body: CreateWebhookInput,
     status: 201,
     response: z.object({ webhook: WebhookSchema, secret: z.string().describe("whsec_…: verifica la firma HMAC. Se muestra una sola vez.") }),

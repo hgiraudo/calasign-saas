@@ -88,6 +88,62 @@ _srv.shutdown()
 assert _paths == [("GET", "/v1/envelopes/..%2Fwebhooks"), ("DELETE", "/v1/webhooks/..%2Fenvelopes%2Fe1%3Fx%3D1")], _paths
 ok("ids en la ruta: se codifican como un segmento")
 
+# Respuestas en cola: idempotency_in_progress, request_id/idempotency_key en el error, str sueltos y adjuntos con tipo.
+_queue = []
+_seen = []
+
+
+class _Script(http.server.BaseHTTPRequestHandler):
+    def _any(self):
+        n = int(self.headers.get("content-length") or 0)
+        _seen.append((self.command, self.path, json.loads(self.rfile.read(n)) if n else None))
+        status, body, ctype = _queue.pop(0)
+        self.send_response(status)
+        self.send_header("content-type", ctype)
+        self.send_header("x-request-id", "req-1")
+        self.end_headers()
+        self.wfile.write(body)
+
+    do_GET = do_POST = _any
+
+    def log_message(self, *a):
+        pass
+
+
+_srv = http.server.HTTPServer(("127.0.0.1", 0), _Script)
+threading.Thread(target=_srv.serve_forever, daemon=True).start()
+_base = f"http://127.0.0.1:{_srv.server_address[1]}"
+_busy = (409, b'{"error":{"code":"idempotency_in_progress","message":"en curso"}}', "application/json")
+_queue[:] = [_busy, _busy, (201, b'{"envelope":{"id":"e1"}}', "application/json")]
+_cs = CalaSign(api_key="k", base_url=_base, max_retries=0, idempotency_wait=10)
+assert _cs.envelopes.create({"subject": "x"}, idempotency_key="idem-1")["envelope"]["id"] == "e1"
+assert len(_seen) == 3, _seen
+_queue[:] = [_busy]
+try:
+    CalaSign(api_key="k", base_url=_base, max_retries=3, idempotency_wait=0).envelopes.create({"subject": "x"}, idempotency_key="idem-2")
+    raise AssertionError("debió fallar")
+except CalaSignError as e:
+    assert (e.status, e.code, e.request_id, e.idempotency_key) == (409, "idempotency_in_progress", "req-1", "idem-2"), vars(e)
+ok("idempotency_in_progress: espera aparte de max_retries; el error trae request_id e idempotency_key")
+
+_seen.clear()
+_queue[:] = [
+    (200, b'{"items":[],"nextCursor":null,"hasMore":false}', "application/json"),
+    (200, b'{"results":[]}', "application/json"),
+    (200, b"\x89PNG", "image/png"),
+    (200, b'{"url":"u"}', "application/json"),
+]
+_cs.events.list(types="envelope.completed")
+_cs.envelopes.batch("get", "e1")
+att = _cs.envelopes.download_attachment_with_type("e1", "f1")
+_cs.envelopes.signing_url("e1", "r1", frame_ancestors=["https://app.example.com"])
+assert _seen[0][1] == "/v1/events?types=envelope.completed", _seen[0]
+assert _seen[1][2] == {"action": "get", "ids": ["e1"]}, _seen[1]
+assert att == {"bytes": b"\x89PNG", "content_type": "image/png"}, att
+assert _seen[3][2] == {"frameAncestors": ["https://app.example.com"]}, _seen[3]
+_srv.shutdown()
+ok("types/ids como str, adjunto con tipo y frame_ancestors")
+
 if len(sys.argv) < 2:
     print("\n(sin URL de API: se omiten las pruebas en línea)")
     sys.exit(0)

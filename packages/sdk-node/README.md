@@ -40,12 +40,20 @@ Paso a paso (sobre que se arma de a poco): `uploadDocument`, `setRecipients`, `s
   `reminded_recently`) no se reintenta: se lanza enseguida como `CalaSignError`.
 - **Idempotencia**: `envelopes.create`, `envelopes.createAndSend`, `envelopes.fromTemplate` y `envelopes.send` mandan `Idempotency-Key` automática
   (o la tuya), así que un reintento nunca duplica un sobre ni un envío. Un POST sin idempotencia no se reintenta ante
-  errores de red.
+  errores de red. Si el pedido original con la misma clave sigue en curso (409 `idempotency_in_progress`, típico del
+  reintento tras un timeout), el SDK espera y repite hasta recibir la respuesta guardada, con un tope propio
+  (`idempotencyWaitMs`, por defecto 60 s) que no gasta `maxRetries`. Todo `CalaSignError` de un pedido con clave trae
+  `err.idempotencyKey`: reintentá con `{ idempotencyKey: err.idempotencyKey }` sin riesgo de duplicar.
 - **Paginación**: `for await (const e of cs.envelopes.iterate({ status: "completed" })) { … }`.
-- **Errores** como `CalaSignError` con `status`, `code` y `details` (los mismos de la API).
+- **Errores** como `CalaSignError` con `status`, `code`, `details` (los mismos de la API) y `requestId` (header
+  `X-Request-Id`, para soporte). Errores de red y cortes a mitad del cuerpo (también en las descargas): `network_error`
+  (en los GET se reintentan); un 2xx que no es JSON: `invalid_response`.
 - **Firma embebida**: `cs.envelopes.signingUrl(envelopeId, recipientId, { returnUrl })` → URL de 5 minutos para un iframe.
 - **Descarga**: `cs.envelopes.downloadSigned(id)` → `Uint8Array` del PDF sellado.
-- **Cualquier otro endpoint**: `cs.request("GET", "/v1/…")` con la misma autenticación y reintentos.
+- **Eventos**: `for await (const ev of cs.events.poll({ after, signal }))`; al abortar `signal` se cancelan la espera
+  y el pedido en curso y el iterador termina sin lanzar.
+- **Cualquier otro endpoint**: `cs.request("GET", "/v1/…")` con la misma autenticación y reintentos (`{ raw: true }` devuelve
+  `{ bytes, headers }`; `{ signal }` lo cancela).
 
 ## Webhooks
 
@@ -76,8 +84,22 @@ La firma es `t=<unix>,v1=<hex HMAC-SHA256(secret, "<t>.<body>")>`; se rechazan f
 ```bash
 corepack pnpm --filter @calasign/sdk test                                   # unitarios
 CALASIGN_TEST_BASE=http://localhost:4000 corepack pnpm --filter @calasign/sdk test   # + integración contra la API local
-corepack pnpm --filter @calasign/sdk build                                  # dist/ (JS + .d.ts)
+corepack pnpm --filter @calasign/sdk build                                  # dist/ (JS ESM + .d.ts)
 ```
 
-Para publicarlo en npm hay que publicar también `@calasign/shared` (los tipos) o empaquetar los `.d.ts`
-(por ejemplo con `tsup --dts`).
+`build` compila con `tsc` y después `scripts/bundle-types.mjs` expande en `dist/shared-types.d.ts` los tipos que
+vienen de `@calasign/shared` (privado, no se publica): el paquete publicado no depende de él ni de zod. Dentro del
+monorepo el paquete apunta a `src/index.ts`; al empaquetar (`pnpm pack`/`pnpm publish`), `publishConfig` cambia
+`main`, `types` y `exports` a `dist/`. Solo ESM (`import`; desde CommonJS, `await import("@calasign/sdk")`).
+
+### Instalar desde el código fuente (mientras no esté en npm)
+
+```bash
+corepack pnpm install
+corepack pnpm -C packages/sdk-node pack --pack-destination /tmp   # corre el build (prepack) y arma el .tgz
+# y en tu proyecto:
+npm install /tmp/calasign-sdk-0.1.0.tgz
+```
+
+No instales la carpeta `packages/sdk-node` directo (`npm install ../packages/sdk-node`): sin empaquetar, apunta al
+código TypeScript de `src/` y a `@calasign/shared`.

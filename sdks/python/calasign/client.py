@@ -78,13 +78,26 @@ class EnvelopeSummary(TypedDict, total=False):
 
 
 class CalaSignError(Exception):
-    """Error de la API: status HTTP, código (`envelope_incomplete`, `insufficient_scope`, …) y detalles."""
+    """Error de la API: status HTTP, código (`envelope_incomplete`, `insufficient_scope`, …) y detalles.
 
-    def __init__(self, message: str, status: int, code: str, details: Any = None):
+    `request_id`: header X-Request-Id de la respuesta (para soporte). `idempotency_key`: la Idempotency-Key del pedido,
+    si tenía; reintentar con la misma clave es seguro (no duplica el sobre ni el envío)."""
+
+    def __init__(
+        self,
+        message: str,
+        status: int,
+        code: str,
+        details: Any = None,
+        request_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ):
         super().__init__(message)
         self.status = status
         self.code = code
         self.details = details
+        self.request_id = request_id
+        self.idempotency_key = idempotency_key
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"CalaSignError(status={self.status}, code={self.code!r}, message={str(self)!r})"
@@ -124,7 +137,10 @@ class CalaSign:
         max_retries: int = 3,
         timeout: float = 30.0,
         user_agent: Optional[str] = None,
+        idempotency_wait: float = 60.0,
     ):
+        """`timeout`: segundos por operación de socket (conectar, cada lectura), no del pedido entero.
+        `idempotency_wait`: espera total ante un 409 idempotency_in_progress, aparte de `max_retries`."""
         if not (api_key or access_token or oauth):
             raise ValueError("CalaSign: falta api_key, access_token u oauth")
         self.base_url = base_url.rstrip("/")
@@ -134,6 +150,7 @@ class CalaSign:
         self._token: Optional[_Token] = None
         self.max_retries = max_retries
         self.timeout = timeout
+        self.idempotency_wait = idempotency_wait
         self.user_agent = user_agent or f"calasign-python/{VERSION}"
         self.envelopes = _Envelopes(self)
         self.templates = _Templates(self)
@@ -202,8 +219,10 @@ class CalaSign:
         idempotency_key: Optional[str] = None,
         retryable: Optional[bool] = None,
         raw: bool = False,
+        with_headers: bool = False,
     ) -> Any:
-        """Pedido a la API v1 con autenticación, reintentos e idempotencia."""
+        """Pedido a la API v1 con autenticación, reintentos e idempotencia. `raw=True` devuelve los bytes del cuerpo;
+        con `with_headers=True` además, la tupla (bytes, headers)."""
         url = self.base_url + path
         if query:
             q = {k: v for k, v in query.items() if v not in (None, "")}
@@ -213,6 +232,9 @@ class CalaSign:
             retryable = method in ("GET", "PUT", "DELETE") or idempotency_key is not None
         refreshed = False
         attempt = 0
+        # Las esperas por un 409 idempotency_in_progress tienen su propio tope (en segundos), aparte de max_retries.
+        idem_waited = 0.0
+        idem_waits = 0
         while True:
             headers = {"Authorization": f"Bearer {self._bearer()}", "Accept": "application/json", "User-Agent": self.user_agent}
             if idempotency_key:
@@ -229,13 +251,14 @@ class CalaSign:
                 with urllib.request.urlopen(req, timeout=self.timeout) as res:
                     payload = res.read()
                     if raw:
-                        return payload
+                        return (payload, res.headers) if with_headers else payload
                     status = res.status
+                    request_id = res.headers.get("X-Request-Id")
                 try:
                     return json.loads(payload) if payload else None
                 except ValueError:
                     # Respuesta 2xx que no es JSON (un proxy, una página de error): CalaSignError, no un JSONDecodeError suelto.
-                    raise CalaSignError("La respuesta de la API no es JSON válido", status, "invalid_response") from None
+                    raise CalaSignError("La respuesta de la API no es JSON válido", status, "invalid_response", None, request_id, idempotency_key) from None
             except urllib.error.HTTPError as e:
                 status = e.code
                 body = _error_body(e)
@@ -254,17 +277,27 @@ class CalaSign:
                 err = body.get("error") if isinstance(body.get("error"), dict) else {}
                 # El pedido original con esta Idempotency-Key sigue ejecutándose (típico del reintento después de un
                 # timeout): se espera y se repite hasta recibir la respuesta guardada, en vez de fallar con el sobre creado.
-                if status == 409 and idempotency_key and err.get("code") == "idempotency_in_progress" and attempt < self.max_retries:
-                    time.sleep(_retry_delay(attempt + 2, None))
-                    attempt += 1
-                    continue
-                raise CalaSignError(err.get("message", f"HTTP {status}"), status, err.get("code", f"http_{status}"), err.get("details")) from None
+                if status == 409 and idempotency_key and err.get("code") == "idempotency_in_progress":
+                    idem_waits += 1
+                    wait = _retry_delay(idem_waits, None)
+                    if idem_waited + wait <= self.idempotency_wait:
+                        idem_waited += wait
+                        time.sleep(wait)
+                        continue
+                raise CalaSignError(
+                    err.get("message", f"HTTP {status}"),
+                    status,
+                    err.get("code", f"http_{status}"),
+                    err.get("details"),
+                    e.headers.get("X-Request-Id") if e.headers else None,
+                    idempotency_key,
+                ) from None
             except _NETWORK_ERRORS as e:
                 if retryable and attempt < self.max_retries:
                     time.sleep(_retry_delay(attempt, None))
                     attempt += 1
                     continue
-                raise CalaSignError(f"Error de red: {e}", 0, "network_error") from None
+                raise CalaSignError(f"Error de red: {e}", 0, "network_error", None, None, idempotency_key) from None
 
     def me(self) -> Dict[str, Any]:
         return self.request("GET", "/v1/me")
@@ -390,8 +423,14 @@ class _Envelopes:
     def download_signed(self, envelope_id: str) -> bytes:
         return self._c.request("GET", f"/v1/envelopes/{_seg(envelope_id)}/signed.pdf", raw=True)
 
-    def signing_url(self, envelope_id: str, recipient_id: str, *, return_url: Optional[str] = None) -> Dict[str, Any]:
-        body = {"returnUrl": return_url} if return_url else {}
+    def signing_url(
+        self, envelope_id: str, recipient_id: str, *, return_url: Optional[str] = None, frame_ancestors: Optional[Sequence[str]] = None
+    ) -> Dict[str, Any]:
+        """`frame_ancestors`: subconjunto de los orígenes autorizados de la organización que pueden embeber la firma
+        (por defecto, todos)."""
+        body: Dict[str, Any] = {"returnUrl": return_url} if return_url else {}
+        if frame_ancestors is not None:
+            body["frameAncestors"] = [frame_ancestors] if isinstance(frame_ancestors, str) else list(frame_ancestors)
         return self._c.request("POST", f"/v1/envelopes/{_seg(envelope_id)}/recipients/{_seg(recipient_id)}/signing-url", json_body=body)
 
     def form_data(self, envelope_id: str) -> Dict[str, Any]:
@@ -399,8 +438,16 @@ class _Envelopes:
         return self._c.request("GET", f"/v1/envelopes/{_seg(envelope_id)}/form-data")
 
     def download_attachment(self, envelope_id: str, field_id: str) -> bytes:
-        """Archivo que subió un firmante en un campo de adjunto."""
+        """Archivo que subió un firmante en un campo de adjunto (solo los bytes; con el tipo: download_attachment_with_type)."""
         return self._c.request("GET", f"/v1/envelopes/{_seg(envelope_id)}/attachments/{_seg(field_id)}", raw=True)
+
+    def download_attachment_with_type(self, envelope_id: str, field_id: str) -> Dict[str, Any]:
+        """Como download_attachment, con el tipo del archivo (un adjunto puede ser PDF o imagen):
+        {"bytes": …, "content_type": "image/png"}."""
+        payload, headers = self._c.request(
+            "GET", f"/v1/envelopes/{_seg(envelope_id)}/attachments/{_seg(field_id)}", raw=True, with_headers=True
+        )
+        return {"bytes": payload, "content_type": headers.get("Content-Type") or "application/octet-stream"}
 
     def clone(self, envelope_id: str, data: Optional[Dict[str, Any]] = None) -> EnvelopeDetail:
         """Clona el sobre como borrador nuevo (subject, metadata, includeRecipients, includeFields, includeValues…)."""
@@ -408,7 +455,8 @@ class _Envelopes:
 
     def batch(self, action: str, ids: Sequence[str], *, reason: Optional[str] = None) -> Dict[str, Any]:
         """get | void | remind | delete sobre hasta 100 sobres. Devuelve un resultado por id (`results`)."""
-        body: Dict[str, Any] = {"action": action, "ids": list(ids)}
+        # Un id suelto como str: list("uuid") lo partía en caracteres.
+        body: Dict[str, Any] = {"action": action, "ids": [ids] if isinstance(ids, str) else list(ids)}
         if reason:
             body["reason"] = reason
         return self._c.request("POST", "/v1/envelopes/batch", json_body=body, retryable=action == "get")
@@ -523,6 +571,9 @@ class _Events:
         limit: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Una página de eventos (del más viejo al más nuevo): {"items", "nextCursor", "hasMore"}."""
+        if isinstance(types, str):
+            # Un tipo suelto: ",".join("envelope.completed") lo partía en caracteres.
+            types = [types]
         query = {
             "after": after,
             "since": _iso(since),

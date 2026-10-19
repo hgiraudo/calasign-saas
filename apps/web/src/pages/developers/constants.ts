@@ -65,5 +65,6 @@ export function mcpToolIsNew(tool: string): boolean {
  */
 export const SDK_INSTALL = {
   python: "pip install ./sdks/python",
-  node: "corepack pnpm install && corepack pnpm --filter @calasign/sdk build",
+  // `pack` corre el build (prepack) y aplica publishConfig (dist/ y tipos propios); la carpeta sin empaquetar apunta a src/.
+  node: "corepack pnpm install && corepack pnpm -C packages/sdk-node pack --pack-destination /tmp\n# y en tu proyecto:\nnpm install /tmp/calasign-sdk-0.1.0.tgz",
 };

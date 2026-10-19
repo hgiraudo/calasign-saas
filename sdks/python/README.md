@@ -43,8 +43,19 @@ CalaSign(oauth=ClientCredentials("csapp_…", "cssec_…", scope="envelopes:read
   código propio y sin `Retry-After` (`reminded_recently`, `form_rate_limited`, `ai_signer_limit`, …), se lanzan enseguida
   como `CalaSignError`: reintentarlos en un loop no sirve.
 - `envelopes.create`, `envelopes.create_and_send`, `envelopes.from_template` y `envelopes.send` usan `Idempotency-Key` automática: un reintento
-  no duplica nada. Los POST sin idempotencia no se reintentan ante errores de red.
-- Errores como `CalaSignError` con `.status`, `.code` y `.details`.
+  no duplica nada. Los POST sin idempotencia no se reintentan ante errores de red. Si el pedido original con la misma
+  clave sigue en curso (409 `idempotency_in_progress`), el cliente espera y repite hasta recibir la respuesta guardada,
+  con un tope propio (`idempotency_wait=60.0` segundos) que no gasta `max_retries`.
+- Errores como `CalaSignError` con `.status`, `.code`, `.details`, `.request_id` (header `X-Request-Id`, para soporte)
+  e `.idempotency_key` (la del pedido, si tenía: reintentá con `idempotency_key=e.idempotency_key` sin riesgo de
+  duplicar).
+- `timeout=30.0` es por operación de socket (conectar y cada lectura), no un tope del pedido entero: una descarga
+  grande que avanza de a poco puede tardar más. Si necesitás un tope total, controlalo desde tu código.
+- `events.list(types=…)` y `envelopes.batch(action, ids)` aceptan una lista o un solo valor como `str`.
+- `envelopes.download_attachment(id, field_id)` devuelve los bytes; `download_attachment_with_type` devuelve
+  `{"bytes": …, "content_type": …}` (un adjunto puede ser PDF o imagen).
+- `envelopes.signing_url(id, recipient_id, return_url=…, frame_ancestors=["https://app.tuempresa.com"])`: los orígenes
+  (de los autorizados de la organización) que pueden embeber la firma.
 - `cs.request(method, path, json_body=…, query=…)` para cualquier otro endpoint.
 
 ## Webhooks

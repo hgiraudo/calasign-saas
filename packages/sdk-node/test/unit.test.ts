@@ -225,3 +225,53 @@ describe("ampliaciones de la API", () => {
   });
 });
 
+
+describe("idempotencia en curso, descargas y respuestas raras", () => {
+  it("las esperas por idempotency_in_progress no gastan maxRetries; el error lleva la Idempotency-Key", async () => {
+    const busy = () => json(409, { error: { code: "idempotency_in_progress", message: "en curso" } });
+    const f = fakeFetch([busy(), busy(), json(201, { envelope: { id: "e1" } })]);
+    const cs = new CalaSign({ apiKey: "k", baseUrl: "http://api", fetch: f.fn, maxRetries: 0, idempotencyWaitMs: 5_000 });
+    const r = await cs.envelopes.create({ subject: "x" } as never, { idempotencyKey: "idem-1" });
+    expect((r as any).envelope.id).toBe("e1");
+    expect(f.calls).toHaveLength(3);
+
+    const g = fakeFetch([busy()]);
+    const cs2 = new CalaSign({ apiKey: "k", baseUrl: "http://api", fetch: g.fn, maxRetries: 3, idempotencyWaitMs: 0 });
+    const err = await cs2.envelopes.create({ subject: "x" } as never, { idempotencyKey: "idem-2" }).catch((e) => e);
+    expect(err).toMatchObject({ status: 409, code: "idempotency_in_progress", idempotencyKey: "idem-2" });
+  });
+
+  it("un 2xx que no es JSON es invalid_response", async () => {
+    const f = fakeFetch([new Response("<html>proxy</html>", { status: 200, headers: { "content-type": "text/html", "x-request-id": "req-9" } })]);
+    const cs = new CalaSign({ apiKey: "k", baseUrl: "http://api", fetch: f.fn });
+    await expect(cs.envelopes.get("e1")).rejects.toMatchObject({ code: "invalid_response", status: 200, requestId: "req-9" });
+  });
+
+  it("un corte al leer una descarga se reintenta en el GET y si no, es network_error", async () => {
+    const broken = () =>
+      new Response(new ReadableStream({ start: (c) => c.error(new TypeError("terminated")) }), { status: 200, headers: { "content-type": "application/pdf" } });
+    const f = fakeFetch([broken(), new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { "content-type": "application/pdf" } })]);
+    const cs = new CalaSign({ apiKey: "k", baseUrl: "http://api", fetch: f.fn, maxRetries: 1 });
+    expect(Array.from(await cs.envelopes.downloadSigned("e1"))).toEqual([1, 2, 3]);
+    expect(f.calls).toHaveLength(2);
+
+    const g = fakeFetch([broken()]);
+    const cs2 = new CalaSign({ apiKey: "k", baseUrl: "http://api", fetch: g.fn, maxRetries: 0 });
+    await expect(cs2.envelopes.downloadAttachment("e1", "f1")).rejects.toMatchObject({ code: "network_error" });
+  });
+
+  it("events.poll termina enseguida al cancelar, también durante la espera", async () => {
+    const f = fakeFetch([json(200, { items: [{ id: "ev1", cursor: "c1" }], nextCursor: "c1", hasMore: false })]);
+    const cs = new CalaSign({ apiKey: "k", baseUrl: "http://api", fetch: f.fn });
+    const ac = new AbortController();
+    const seen: string[] = [];
+    const t0 = Date.now();
+    const run = (async () => {
+      for await (const ev of cs.events.poll({ intervalMs: 60_000, signal: ac.signal })) seen.push(ev.id);
+    })();
+    setTimeout(() => ac.abort(), 20);
+    await run;
+    expect(seen).toEqual(["ev1"]);
+    expect(Date.now() - t0).toBeLessThan(2_000);
+  });
+});

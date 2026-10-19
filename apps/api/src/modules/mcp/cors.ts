@@ -20,7 +20,7 @@ export function registerConnectorCors(app: FastifyInstance) {
     if (!PATHS.has(req.url.split("?")[0])) return;
     const h: Record<string, string> = {
       "access-control-allow-origin": "*",
-      "access-control-expose-headers": "WWW-Authenticate, Mcp-Session-Id, Mcp-Protocol-Version",
+      "access-control-expose-headers": "WWW-Authenticate, Mcp-Session-Id, Mcp-Protocol-Version, X-Request-Id",
       // helmet pone same-origin; estos recursos son para otros orígenes.
       "cross-origin-resource-policy": "cross-origin",
     };

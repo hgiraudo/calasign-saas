@@ -61,6 +61,8 @@ export class CalaSignError extends Error {
     readonly code: string,
     readonly details?: unknown,
     readonly requestId?: string | null,
+    /** Idempotency-Key del pedido (si tenía): reintentar con la misma clave es seguro, no duplica el sobre ni el envío. */
+    readonly idempotencyKey?: string | null,
   ) {
     super(message);
     this.name = "CalaSignError";
@@ -96,6 +98,11 @@ export interface CalaSignOptions {
   maxRetries?: number;
   /** Tiempo máximo por intento. Por defecto 30 s. */
   timeoutMs?: number;
+  /**
+   * Espera total ante un 409 `idempotency_in_progress` (el pedido original con la misma Idempotency-Key sigue
+   * ejecutándose). Es aparte de `maxRetries`. Por defecto 60 s.
+   */
+  idempotencyWaitMs?: number;
   /** Para tests o entornos sin fetch global. */
   fetch?: typeof fetch;
   userAgent?: string;
@@ -108,11 +115,51 @@ interface RequestOptions {
   idempotencyKey?: string;
   /** El método es seguro de reintentar aunque la respuesta sea 500 (GET/PUT/DELETE o POST con idempotencia). */
   retryable?: boolean;
+  /** Devuelve los bytes y los headers de la respuesta (descargas) en vez del JSON. */
   raw?: boolean;
+  /** Cancela el pedido (y las esperas entre reintentos); se combina con el timeout de cada intento. */
+  signal?: AbortSignal;
+}
+
+/** Respuesta de `request(…, { raw: true })`. */
+export interface RawResponse {
+  bytes: Uint8Array;
+  headers: Headers;
 }
 
 const RETRY_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Espera `ms`; con `signal`, termina apenas se cancela (sin lanzar). */
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) return resolve();
+    const done = () => {
+      clearTimeout(t);
+      signal?.removeEventListener("abort", done);
+      resolve();
+    };
+    const t = setTimeout(done, ms);
+    signal?.addEventListener("abort", done, { once: true });
+  });
+}
+
+/** Timeout del intento combinado con la señal de quien llama. A mano: AbortSignal.any recién está desde Node 20.3. */
+function attemptSignal(timeoutMs: number, outer?: AbortSignal): { signal: AbortSignal; release: () => void } {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  if (!outer) return { signal: timeout, release: () => {} };
+  const c = new AbortController();
+  const onAbort = (ev: Event) => c.abort((ev.target as AbortSignal).reason);
+  if (outer.aborted) c.abort(outer.reason);
+  outer.addEventListener("abort", onAbort);
+  timeout.addEventListener("abort", onAbort);
+  return {
+    signal: c.signal,
+    release: () => {
+      outer.removeEventListener("abort", onAbort);
+      timeout.removeEventListener("abort", onAbort);
+    },
+  };
+}
 
 // ───────────────────────────── Cliente ─────────────────────────────
 
@@ -121,6 +168,7 @@ export class CalaSign {
   private readonly fetchImpl: typeof fetch;
   private readonly maxRetries: number;
   private readonly timeoutMs: number;
+  private readonly idempotencyWaitMs: number;
   private readonly userAgent: string;
   private token: { value: string; expiresAt: number } | null = null;
 
@@ -137,6 +185,7 @@ export class CalaSign {
     this.fetchImpl = opts.fetch ?? globalThis.fetch.bind(globalThis);
     this.maxRetries = opts.maxRetries ?? 3;
     this.timeoutMs = opts.timeoutMs ?? 30_000;
+    this.idempotencyWaitMs = opts.idempotencyWaitMs ?? 60_000;
     this.userAgent = opts.userAgent ?? `calasign-node/${VERSION}`;
     this.envelopes = new EnvelopesApi(this);
     this.templates = new TemplatesApi(this);
@@ -190,8 +239,16 @@ export class CalaSign {
     for (const [k, v] of Object.entries(o.query ?? {})) if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, String(v));
     const idem = o.idempotencyKey;
     const retryable = o.retryable ?? (method === "GET" || method === "PUT" || method === "DELETE" || Boolean(idem));
+    // Todo error lleva la Idempotency-Key: quien lo atrapa puede reintentar con la misma sin duplicar.
+    const fail = (message: string, status: number, code: string, details?: unknown, requestId?: string | null) =>
+      new CalaSignError(message, status, code, details, requestId ?? null, idem ?? null);
+    const aborted = () => fail("Pedido cancelado", 0, "aborted");
     let refreshed = false;
+    // Las esperas por un 409 idempotency_in_progress tienen su propio tope (en tiempo), aparte de maxRetries.
+    let idemWaited = 0;
+    let idemWaits = 0;
     for (let attempt = 0; ; attempt++) {
+      if (o.signal?.aborted) throw aborted();
       const headers: Record<string, string> = {
         authorization: `Bearer ${await this.bearer()}`,
         accept: "application/json",
@@ -204,70 +261,92 @@ export class CalaSign {
         headers["content-type"] = "application/json";
         body = JSON.stringify(o.body);
       }
-      let res: Response;
+      const { signal, release } = attemptSignal(this.timeoutMs, o.signal);
       try {
-        res = await this.fetchImpl(url, { method, headers, body, signal: AbortSignal.timeout(this.timeoutMs) });
-      } catch (err) {
-        // Error de red: solo se reintenta si el pedido es idempotente (si no, podría duplicarse).
-        if (retryable && attempt < this.maxRetries) {
-          await sleep(backoff(attempt));
-          continue;
-        }
-        throw new CalaSignError(`Error de red: ${(err as Error).message}`, 0, "network_error");
-      }
-      if (res.status === 401 && this.opts.oauth && !refreshed) {
-        refreshed = true;
-        // Como en los reintentos: el cuerpo descartado libera la conexión.
-        await res.body?.cancel().catch(() => {});
-        await this.bearer(true);
-        attempt--;
-        continue;
-      }
-      let text: string | undefined;
-      if (RETRY_STATUS.has(res.status) && attempt < this.maxRetries && (retryable || res.status === 429 || res.status === 503)) {
-        const raHeader = res.headers.get("retry-after");
-        let retry = true;
-        // Un 429 sin Retry-After y con código propio (reminded_recently, form_rate_limited, ai_signer_limit…) es un tope
-        // de negocio que no se libera en segundos: no se reintenta. Solo el límite por IP (con Retry-After) sí.
-        if (res.status === 429 && !raHeader) {
-          text = await res.text().catch(() => "");
-          retry = !isBusiness429(text);
-        }
-        if (retry) {
-          // Se descarta el cuerpo: si no, undici deja la conexión tomada hasta que el GC lo junte.
-          if (text === undefined) await res.body?.cancel().catch(() => {});
-          const ra = Number(raHeader);
-          await sleep(Number.isFinite(ra) && ra > 0 ? Math.min(ra * 1000, 30_000) : backoff(attempt));
-          continue;
-        }
-      }
-      if (o.raw && res.ok) return res as unknown as T;
-      if (res.status === 204) return undefined as T;
-      if (text === undefined) {
+        let res: Response;
         try {
-          text = await res.text();
+          res = await this.fetchImpl(url, { method, headers, body, signal });
         } catch (err) {
-          // Corte o timeout a mitad del cuerpo: también es un error de red (no un TypeError/AbortError suelto).
-          throw new CalaSignError(`Error de red: ${(err as Error).message}`, 0, "network_error");
+          if (o.signal?.aborted) throw aborted();
+          // Error de red: solo se reintenta si el pedido es idempotente (si no, podría duplicarse).
+          if (retryable && attempt < this.maxRetries) {
+            await sleep(backoff(attempt), o.signal);
+            continue;
+          }
+          throw fail(`Error de red: ${(err as Error).message}`, 0, "network_error");
         }
+        const requestId = res.headers.get("x-request-id");
+        if (res.status === 401 && this.opts.oauth && !refreshed) {
+          refreshed = true;
+          // Como en los reintentos: el cuerpo descartado libera la conexión.
+          await res.body?.cancel().catch(() => {});
+          await this.bearer(true);
+          attempt--;
+          continue;
+        }
+        let text: string | undefined;
+        if (RETRY_STATUS.has(res.status) && attempt < this.maxRetries && (retryable || res.status === 429 || res.status === 503)) {
+          const raHeader = res.headers.get("retry-after");
+          let retry = true;
+          // Un 429 sin Retry-After y con código propio (reminded_recently, form_rate_limited, ai_signer_limit…) es un tope
+          // de negocio que no se libera en segundos: no se reintenta. Solo el límite por IP (con Retry-After) sí.
+          if (res.status === 429 && !raHeader) {
+            text = await res.text().catch(() => "");
+            retry = !isBusiness429(text);
+          }
+          if (retry) {
+            // Se descarta el cuerpo: si no, undici deja la conexión tomada hasta que el GC lo junte.
+            if (text === undefined) await res.body?.cancel().catch(() => {});
+            const ra = Number(raHeader);
+            await sleep(Number.isFinite(ra) && ra > 0 ? Math.min(ra * 1000, 30_000) : backoff(attempt), o.signal);
+            continue;
+          }
+        }
+        if (res.status === 204) return undefined as T;
+        let bytes: Uint8Array | undefined;
+        if (text === undefined) {
+          // El cuerpo se lee acá, bajo el mismo timeout y los mismos reintentos que el pedido: un corte a mitad de una
+          // descarga es un error de red (no un TypeError/AbortError suelto) y en un GET se reintenta.
+          try {
+            if (o.raw && res.ok) bytes = new Uint8Array(await res.arrayBuffer());
+            else text = await res.text();
+          } catch (err) {
+            if (o.signal?.aborted) throw aborted();
+            if (retryable && attempt < this.maxRetries) {
+              await sleep(backoff(attempt), o.signal);
+              continue;
+            }
+            throw fail(`Error de red: ${(err as Error).message}`, 0, "network_error", undefined, requestId);
+          }
+        }
+        if (bytes) return { bytes, headers: res.headers } satisfies RawResponse as T;
+        let data: any = undefined;
+        try {
+          data = text ? JSON.parse(text) : undefined;
+        } catch {
+          /* cuerpo no JSON */
+        }
+        // El pedido original con esta Idempotency-Key sigue ejecutándose (típico del reintento que el SDK hace después de
+        // un timeout): se espera y se repite hasta recibir la respuesta guardada, en vez de fallar con el sobre ya creado.
+        if (res.status === 409 && idem && data?.error?.code === "idempotency_in_progress") {
+          const wait = backoff(++idemWaits);
+          if (idemWaited + wait <= this.idempotencyWaitMs) {
+            idemWaited += wait;
+            await sleep(wait, o.signal);
+            attempt--;
+            continue;
+          }
+        }
+        if (!res.ok) {
+          const e = data?.error;
+          throw fail(e?.message ?? `HTTP ${res.status}`, res.status, e?.code ?? `http_${res.status}`, e?.details, requestId);
+        }
+        // 2xx que no es JSON (un proxy, una página de error): como el SDK de Python, no se devuelve undefined.
+        if (text && data === undefined) throw fail("La respuesta de la API no es JSON válido", res.status, "invalid_response", undefined, requestId);
+        return data as T;
+      } finally {
+        release();
       }
-      let data: any = undefined;
-      try {
-        data = text ? JSON.parse(text) : undefined;
-      } catch {
-        /* cuerpo no JSON */
-      }
-      // El pedido original con esta Idempotency-Key sigue ejecutándose (típico del reintento que el SDK hace después de
-      // un timeout): se espera y se repite hasta recibir la respuesta guardada, en vez de fallar con el sobre ya creado.
-      if (res.status === 409 && idem && data?.error?.code === "idempotency_in_progress" && attempt < this.maxRetries) {
-        await sleep(backoff(attempt + 2));
-        continue;
-      }
-      if (!res.ok) {
-        const e = data?.error;
-        throw new CalaSignError(e?.message ?? `HTTP ${res.status}`, res.status, e?.code ?? `http_${res.status}`, e?.details, res.headers.get("x-request-id"));
-      }
-      return data as T;
     }
   }
 }
@@ -454,8 +533,7 @@ class EnvelopesApi {
 
   /** PDF sellado (solo con el sobre completado). */
   async downloadSigned(id: string): Promise<Uint8Array> {
-    const res = await this.c.request<Response>("GET", `/v1/envelopes/${seg(id)}/signed.pdf`, { raw: true });
-    return new Uint8Array(await res.arrayBuffer());
+    return (await this.c.request<RawResponse>("GET", `/v1/envelopes/${seg(id)}/signed.pdf`, { raw: true })).bytes;
   }
 
   /** URL de firma embebida (5 min, un solo uso) para un destinatario con `embedded: true`. */
@@ -470,8 +548,8 @@ class EnvelopesApi {
 
   /** Archivo que subió un firmante en un campo de adjunto. */
   async downloadAttachment(id: string, fieldId: string): Promise<{ bytes: Uint8Array; contentType: string }> {
-    const res = await this.c.request<Response>("GET", `/v1/envelopes/${seg(id)}/attachments/${seg(fieldId)}`, { raw: true });
-    return { bytes: new Uint8Array(await res.arrayBuffer()), contentType: res.headers.get("content-type") ?? "application/octet-stream" };
+    const res = await this.c.request<RawResponse>("GET", `/v1/envelopes/${seg(id)}/attachments/${seg(fieldId)}`, { raw: true });
+    return { bytes: res.bytes, contentType: res.headers.get("content-type") ?? "application/octet-stream" };
   }
 
   /** Clona el sobre (en cualquier estado) como borrador nuevo. */
@@ -554,22 +632,38 @@ class EventsApi {
 
   /** Una página de eventos, del más viejo al más nuevo. Guardá `nextCursor` y pasalo como `after`. */
   list(p: ListEventsParams = {}): Promise<ListEventsResponse> {
+    return this.page(p);
+  }
+
+  private page(p: ListEventsParams, signal?: AbortSignal): Promise<ListEventsResponse> {
     return this.c.request("GET", "/v1/events", {
       query: { after: p.after ?? undefined, since: isoOf(p.since), types: p.types?.join(","), envelope_id: p.envelopeId, scope: p.scope, limit: p.limit },
+      signal,
     });
   }
 
   /**
    * Polling continuo: `for await (const ev of cs.events.poll({ after: savedCursor }))`. Espera `intervalMs` cuando no
-   * hay eventos nuevos. Corta con `signal`. Guardá `ev.cursor` después de procesar cada evento.
+   * hay eventos nuevos. Corta con `signal`: la espera y el pedido en curso se cancelan y el iterador termina enseguida
+   * (sin lanzar). Guardá `ev.cursor` después de procesar cada evento.
    */
   async *poll(p: ListEventsParams & { intervalMs?: number; signal?: AbortSignal } = {}): AsyncGenerator<ApiEvent> {
+    const { signal } = p;
     let after = p.after ?? undefined;
-    while (!p.signal?.aborted) {
-      const page = await this.list({ ...p, after });
-      for (const ev of page.items) yield ev;
+    while (!signal?.aborted) {
+      let page: ListEventsResponse;
+      try {
+        page = await this.page({ ...p, after }, signal);
+      } catch (err) {
+        if (signal?.aborted) return;
+        throw err;
+      }
+      for (const ev of page.items) {
+        yield ev;
+        if (signal?.aborted) return;
+      }
       after = page.nextCursor ?? after;
-      if (!page.hasMore) await sleep(p.intervalMs ?? 5000);
+      if (!page.hasMore) await sleep(p.intervalMs ?? 5000, signal);
     }
   }
 }

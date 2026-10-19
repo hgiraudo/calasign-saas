@@ -8,9 +8,15 @@
   "types": "src/index.ts",
   "exports": { ".": "./src/index.ts" },
   "files": ["dist", "README.md"],
+  "publishConfig": {
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } }
+  },
   "engines": { "node": ">=18" },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && node scripts/bundle-types.mjs",
+    "prepack": "tsc -p tsconfig.build.json && node scripts/bundle-types.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },

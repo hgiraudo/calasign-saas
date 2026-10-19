@@ -132,6 +132,12 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
     return reply.code(500).send({ error: { code: "internal_error", message: "Error interno" } });
   });
 
+  // X-Request-Id en toda respuesta (también errores y 404): es el id de los logs, el que los SDK muestran como requestId.
+  app.addHook("onSend", async (req, reply, payload) => {
+    reply.header("x-request-id", req.id);
+    return payload;
+  });
+
   // Solo peticiones de la misma web pueden usar la cookie para modificar (defensa CSRF adicional a SameSite=Lax).
   app.addHook("onRequest", async (req, reply) => {
     const path = requestPath(req);

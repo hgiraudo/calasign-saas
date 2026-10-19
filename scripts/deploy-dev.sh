@@ -32,7 +32,10 @@ fi
 unset AWS_PROFILE
 export AWS_REGION=$REGION
 
-echo "▶ compilando web"
+echo "▶ compilando integraciones y web"
+# Las integraciones (skill, plugin, .mcpb, Gemini, Office) se generan en apps/web/public/integrations/ (no se
+# versionan) y Vite las copia a dist, con la URL base del dominio que se despliega.
+CALASIGN_BASE_URL="https://$DOMAIN" COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm --filter @calasign/integrations build >/dev/null
 COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm --filter @calasign/web build >/dev/null
 
 echo "▶ empaquetando $REL"

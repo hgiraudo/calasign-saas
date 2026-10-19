@@ -1,0 +1,42 @@
+/* Páginas de /integrations/: mismos tokens que la web (apps/web/src/styles.css). */
+:root {
+  --navy: #0b1f3a;
+  --teal: #14b8a6;
+  --teal-dark: #0d9488;
+  --bg: #f4f6fa;
+  --surface: #ffffff;
+  --text: #0f172a;
+  --muted: #64748b;
+  --border: #e2e8f0;
+  --code-bg: #0f172a;
+  --code-text: #e2e8f0;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b1220;
+    --surface: #111a2e;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --border: #1f2a44;
+    --code-bg: #020617;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; font: 15px/1.55 "Inter", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; color: var(--text); background: var(--bg); }
+header { background: var(--navy); color: #fff; padding: 14px 16px; }
+header .in { max-width: 860px; margin: 0 auto; display: flex; align-items: center; gap: 10px; }
+header a { color: #fff; text-decoration: none; font-weight: 700; }
+main { max-width: 860px; margin: 0 auto; padding: 20px 16px 48px; }
+h1 { font-size: 1.6rem; margin: 8px 0 4px; }
+h2 { font-size: 1.15rem; margin: 28px 0 8px; }
+p.lead { color: var(--muted); margin-top: 0; }
+a { color: var(--teal-dark); }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin: 12px 0; }
+.card h2 { margin-top: 0; }
+.dl { display: inline-block; background: var(--teal-dark); color: #fff; padding: 7px 14px; border-radius: 6px; text-decoration: none; font-weight: 600; margin: 4px 8px 4px 0; }
+pre { background: var(--code-bg); color: var(--code-text); padding: 10px 12px; border-radius: 8px; overflow-x: auto; font-size: 0.85rem; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.88em; }
+.muted { color: var(--muted); }
+ol, ul { padding-left: 1.3rem; }

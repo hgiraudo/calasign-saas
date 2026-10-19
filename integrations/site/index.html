@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Integraciones de CalaSign</title>
+  <meta name="description" content="Conectá CalaSign con Claude, ChatGPT, Gemini, Word y Outlook." />
+  <link rel="icon" href="/favicon.svg" />
+  <link rel="stylesheet" href="/integrations/site.css?v={{VERSION}}" />
+</head>
+<body>
+  <header><div class="in"><a href="/">CalaSign</a><span class="muted">· Integraciones</span></div></header>
+  <main>
+    <h1>Integraciones</h1>
+    <p class="lead">Firmá documentos desde tu asistente de IA o desde Office. Servidor MCP: <code>{{BASE_URL}}/mcp</code> (OAuth o API key).</p>
+
+    <div class="card">
+      <h2>Claude (claude.ai y Claude Desktop) — conector</h2>
+      <ol>
+        <li>Ajustes → Conectores → <strong>Agregar conector personalizado</strong>.</li>
+        <li>URL: <code>{{BASE_URL}}/mcp</code> → Agregar → <strong>Conectar</strong> e iniciá sesión en CalaSign.</li>
+      </ol>
+      <p>Skill opcional (enseña a Claude a usar CalaSign con cuidado): <a class="dl" href="/integrations/calasign-skill.zip">calasign-skill.zip</a> → subila en <a href="https://claude.ai/customize/skills">claude.ai/customize/skills</a> (requiere ejecución de código habilitada).</p>
+    </div>
+
+    <div class="card">
+      <h2>Claude Desktop — extensión (.mcpb)</h2>
+      <p><a class="dl" href="/integrations/calasign.mcpb">Descargar calasign.mcpb</a></p>
+      <p>Abrila con doble clic (o Ajustes → Extensiones → Instalar extensión) y pegá tu API key de CalaSign (<a href="/app/settings/api-keys">Ajustes → API keys</a>).</p>
+    </div>
+
+    <div class="card">
+      <h2>Claude Code — plugin</h2>
+      <pre><code>claude plugin marketplace add {{BASE_URL}}/integrations/claude-code/marketplace.json
+claude plugin install calasign@calasign</code></pre>
+      <p>Después, en Claude Code: <code>/mcp</code> → <code>calasign</code> → autenticar. Comandos: <code>/calasign:send</code>, <code>/calasign:status</code>. <a href="/integrations/claude-code/">Más detalles</a>.</p>
+      <p class="muted">Solo el servidor MCP: <code>claude mcp add --transport http calasign {{BASE_URL}}/mcp</code></p>
+    </div>
+
+    <div class="card">
+      <h2>ChatGPT</h2>
+      <p>Agregá un servidor MCP personalizado (modo desarrollador) con la URL <code>{{BASE_URL}}/mcp</code> y autenticación OAuth. <a href="/integrations/chatgpt/README.md">Guía paso a paso y ejemplo de la API de OpenAI</a>.</p>
+    </div>
+
+    <div class="card">
+      <h2>Gemini CLI</h2>
+      <pre><code>gemini mcp add --transport http calasign {{BASE_URL}}/mcp</code></pre>
+      <p>O la extensión con contexto: <a class="dl" href="/integrations/calasign-gemini-extension.zip">calasign-gemini-extension.zip</a></p>
+      <pre><code>unzip calasign-gemini-extension.zip -d calasign &amp;&amp; gemini extensions install ./calasign</code></pre>
+      <p>En Gemini: <code>/mcp auth calasign</code>. API de Gemini (Python): <a href="/integrations/gemini-api/example.py">example.py</a>.</p>
+    </div>
+
+    <div class="card">
+      <h2>Word y Outlook</h2>
+      <p>Complemento para enviar a firmar el documento abierto (Word) o un PDF adjunto (Outlook). <a href="/integrations/office/">Instrucciones de instalación</a>.</p>
+      <p><a class="dl" href="/integrations/office/manifest.xml" download>manifest.xml (Word)</a><a class="dl" href="/integrations/office/manifest-outlook.xml" download>manifest-outlook.xml (Outlook)</a></p>
+    </div>
+  </main>
+</body>
+</html>

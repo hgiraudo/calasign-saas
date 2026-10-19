@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CalaSign para Word y Outlook</title>
+  <link rel="icon" href="/integrations/office/assets/icon-32.png" />
+  <link rel="stylesheet" href="/integrations/site.css?v={{VERSION}}" />
+</head>
+<body>
+  <header><div class="in"><a href="/integrations/">CalaSign</a><span class="muted">· Word y Outlook</span></div></header>
+  <main>
+    <h1>Complemento de CalaSign para Word y Outlook</h1>
+    <p class="lead">Word: enviá a firmar el documento abierto. Outlook: enviá a firmar un PDF adjunto del correo, con el remitente como firmante.</p>
+    <p><a class="dl" href="/integrations/office/manifest.xml" download>manifest.xml (Word)</a><a class="dl" href="/integrations/office/manifest-outlook.xml" download>manifest-outlook.xml (Outlook)</a></p>
+
+    <h2>Word en Windows o Mac</h2>
+    <ol>
+      <li>Descargá <code>manifest.xml</code>.</li>
+      <li>Windows: compartí una carpeta de red con el manifiesto y agregala en Archivo → Opciones → Centro de confianza → Catálogos de complementos de confianza; después Inicio → Complementos → Mis complementos → Carpeta compartida.<br />
+        Mac: copiá el archivo a <code>~/Library/Containers/com.microsoft.Word/Data/Documents/wef/</code> y reabrí Word.</li>
+      <li>En Inicio aparece <strong>Enviar a firmar</strong>.</li>
+    </ol>
+
+    <h2>Word en la web</h2>
+    <ol>
+      <li>Inicio → Complementos → Más configuraciones → <strong>Cargar mi complemento</strong> → elegí <code>manifest.xml</code>.</li>
+      <li>Word en la web no exporta a PDF desde un complemento: elegí el PDF desde tu equipo.</li>
+    </ol>
+
+    <h2>Outlook (nuevo, clásico y web)</h2>
+    <ol>
+      <li>Abrí <a href="https://aka.ms/olksideload">aka.ms/olksideload</a> → Mis complementos → Complementos personalizados → <strong>Agregar desde archivo</strong> → <code>manifest-outlook.xml</code>.</li>
+      <li>Abrí un correo con un PDF adjunto → <strong>Enviar adjunto a firmar</strong>.</li>
+    </ol>
+
+    <h2>Administradores de Microsoft 365</h2>
+    <p>Centro de administración → Configuración → Aplicaciones integradas → Cargar aplicaciones personalizadas → subí cada manifiesto para desplegarlo a la organización.</p>
+
+    <p class="muted">La primera vez, el complemento pide iniciar sesión en CalaSign (OAuth). Si la ventana no abre, se puede usar una API key.</p>
+  </main>
+</body>
+</html>

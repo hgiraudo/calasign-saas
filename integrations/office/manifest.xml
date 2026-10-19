@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Complemento de CalaSign para Word (manifiesto XML clásico, TaskPaneApp). Outlook usa manifest-outlook.xml:
+     un mismo manifiesto XML no puede ser TaskPaneApp (Word) y MailApp (Outlook) a la vez. -->
+<OfficeApp xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
+           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+           xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
+           xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides"
+           xsi:type="TaskPaneApp">
+  <Id>cd8d4047-bc88-4897-942c-9d8d528beb13</Id>
+  <Version>{{OFFICE_VERSION}}</Version>
+  <ProviderName>CalaSign</ProviderName>
+  <DefaultLocale>es-ES</DefaultLocale>
+  <DisplayName DefaultValue="CalaSign">
+    <Override Locale="pt-BR" Value="CalaSign"/>
+    <Override Locale="en-US" Value="CalaSign"/>
+  </DisplayName>
+  <Description DefaultValue="Enviá el documento a firmar con CalaSign sin salir de Word.">
+    <Override Locale="pt-BR" Value="Envie o documento para assinatura com a CalaSign sem sair do Word."/>
+    <Override Locale="en-US" Value="Send this document for e-signature with CalaSign without leaving Word."/>
+  </Description>
+  <IconUrl DefaultValue="{{BASE_URL}}/integrations/office/assets/icon-32.png"/>
+  <HighResolutionIconUrl DefaultValue="{{BASE_URL}}/integrations/office/assets/icon-64.png"/>
+  <SupportUrl DefaultValue="{{BASE_URL}}/developers"/>
+  <AppDomains>
+    <AppDomain>{{BASE_URL}}</AppDomain>
+  </AppDomains>
+  <Hosts>
+    <Host Name="Document"/>
+  </Hosts>
+  <Requirements>
+    <Sets DefaultMinVersion="1.1">
+      <Set Name="WordApi" MinVersion="1.1"/>
+    </Sets>
+  </Requirements>
+  <DefaultSettings>
+    <SourceLocation DefaultValue="{{BASE_URL}}/integrations/office/taskpane.html"/>
+  </DefaultSettings>
+  <Permissions>ReadWriteDocument</Permissions>
+  <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="VersionOverridesV1_0">
+    <Hosts>
+      <Host xsi:type="Document">
+        <DesktopFormFactor>
+          <GetStarted>
+            <Title resid="GetStarted.Title"/>
+            <Description resid="GetStarted.Description"/>
+            <LearnMoreUrl resid="Help.Url"/>
+          </GetStarted>
+          <ExtensionPoint xsi:type="PrimaryCommandSurface">
+            <OfficeTab id="TabHome">
+              <Group id="CalaSign.Group">
+                <Label resid="Group.Label"/>
+                <Icon>
+                  <bt:Image size="16" resid="Icon.16"/>
+                  <bt:Image size="32" resid="Icon.32"/>
+                  <bt:Image size="80" resid="Icon.80"/>
+                </Icon>
+                <Control xsi:type="Button" id="CalaSign.Open">
+                  <Label resid="Button.Label"/>
+                  <Supertip>
+                    <Title resid="Button.Label"/>
+                    <Description resid="Button.Tooltip"/>
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="Icon.16"/>
+                    <bt:Image size="32" resid="Icon.32"/>
+                    <bt:Image size="80" resid="Icon.80"/>
+                  </Icon>
+                  <Action xsi:type="ShowTaskpane">
+                    <TaskpaneId>CalaSign.Taskpane</TaskpaneId>
+                    <SourceLocation resid="Taskpane.Url"/>
+                  </Action>
+                </Control>
+              </Group>
+            </OfficeTab>
+          </ExtensionPoint>
+        </DesktopFormFactor>
+      </Host>
+    </Hosts>
+    <Resources>
+      <bt:Images>
+        <bt:Image id="Icon.16" DefaultValue="{{BASE_URL}}/integrations/office/assets/icon-16.png"/>
+        <bt:Image id="Icon.32" DefaultValue="{{BASE_URL}}/integrations/office/assets/icon-32.png"/>
+        <bt:Image id="Icon.80" DefaultValue="{{BASE_URL}}/integrations/office/assets/icon-80.png"/>
+      </bt:Images>
+      <bt:Urls>
+        <bt:Url id="Taskpane.Url" DefaultValue="{{BASE_URL}}/integrations/office/taskpane.html"/>
+        <bt:Url id="Help.Url" DefaultValue="{{BASE_URL}}/developers"/>
+      </bt:Urls>
+      <bt:ShortStrings>
+        <bt:String id="GetStarted.Title" DefaultValue="Firmá con CalaSign">
+          <bt:Override Locale="pt-BR" Value="Assine com a CalaSign"/>
+          <bt:Override Locale="en-US" Value="Sign with CalaSign"/>
+        </bt:String>
+        <bt:String id="Group.Label" DefaultValue="CalaSign"/>
+        <bt:String id="Button.Label" DefaultValue="Enviar a firmar">
+          <bt:Override Locale="pt-BR" Value="Enviar para assinatura"/>
+          <bt:Override Locale="en-US" Value="Send for signature"/>
+        </bt:String>
+      </bt:ShortStrings>
+      <bt:LongStrings>
+        <bt:String id="GetStarted.Description" DefaultValue="Abrí CalaSign desde Inicio → Enviar a firmar.">
+          <bt:Override Locale="pt-BR" Value="Abra a CalaSign em Página Inicial → Enviar para assinatura."/>
+          <bt:Override Locale="en-US" Value="Open CalaSign from Home → Send for signature."/>
+        </bt:String>
+        <bt:String id="Button.Tooltip" DefaultValue="Enviá este documento a firmar con CalaSign.">
+          <bt:Override Locale="pt-BR" Value="Envie este documento para assinatura com a CalaSign."/>
+          <bt:Override Locale="en-US" Value="Send this document for signature with CalaSign."/>
+        </bt:String>
+      </bt:LongStrings>
+    </Resources>
+  </VersionOverrides>
+</OfficeApp>

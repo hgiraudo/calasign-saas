@@ -1,0 +1,73 @@
+/* Panel de CalaSign para Word y Outlook. Mismos tokens de marca que la web (apps/web/src/styles.css). */
+:root {
+  --navy: #0b1f3a;
+  --teal: #14b8a6;
+  --teal-dark: #0d9488;
+  --bg: #f4f6fa;
+  --surface: #ffffff;
+  --text: #0f172a;
+  --muted: #64748b;
+  --border: #e2e8f0;
+  --danger: #dc2626;
+  --ok: #059669;
+  --radius: 8px;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font: 14px/1.45 "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif;
+  color: var(--text);
+  background: var(--bg);
+}
+.bar { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: var(--navy); color: #fff; }
+.bar .link { color: #cbd5e1; }
+.spacer { flex: 1; }
+main { padding: 12px 14px 24px; }
+h1 { font-size: 1.1rem; margin: 6px 0 10px; }
+h2 { font-size: 0.95rem; margin: 18px 0 6px; }
+.hidden { display: none !important; }
+.muted { color: var(--muted); }
+.small { font-size: 0.8rem; }
+label { display: block; margin: 10px 0 4px; font-weight: 600; font-size: 0.85rem; }
+label.radio { font-weight: 400; display: flex; align-items: center; gap: 6px; margin: 4px 0; }
+input, textarea, select {
+  width: 100%; padding: 7px 8px; border: 1px solid var(--border); border-radius: 6px;
+  font: inherit; background: var(--surface); color: var(--text);
+}
+input[type="radio"], input[type="checkbox"] { width: auto; }
+input:focus, textarea:focus, select:focus { outline: 2px solid var(--teal); outline-offset: 0; border-color: var(--teal); }
+fieldset { border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 10px 10px; margin: 12px 0; background: var(--surface); }
+legend { font-weight: 600; font-size: 0.85rem; padding: 0 4px; }
+button {
+  font: inherit; padding: 7px 12px; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text); cursor: pointer;
+}
+button.primary { background: var(--teal-dark); border-color: var(--teal-dark); color: #fff; font-weight: 600; width: 100%; margin-top: 12px; }
+button.primary:hover { background: #0f766e; }
+button.link { border: 0; background: none; color: var(--teal-dark); padding: 2px 0; }
+button:disabled { opacity: 0.6; cursor: default; }
+.row { display: flex; gap: 8px; }
+.row button { flex: 1; margin-top: 12px; }
+.signer { border-bottom: 1px dashed var(--border); padding: 6px 0 8px; display: grid; gap: 4px; }
+.signer:last-child { border-bottom: 0; }
+.signer-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.signer-meta label { display: flex; align-items: center; gap: 4px; margin: 0; font-weight: 400; font-size: 0.8rem; }
+.signer-meta .s-order { width: 56px; }
+.signer-meta .s-anchor { width: 120px; }
+.signer-meta .s-remove { margin-left: auto; color: var(--danger); font-size: 0.8rem; }
+.msg { padding: 8px 10px; border-radius: 6px; margin-bottom: 10px; background: #ecfeff; border: 1px solid #a5f3fc; }
+.msg.error { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px; }
+.card dl { margin: 0; }
+.card dt { font-weight: 600; font-size: 0.8rem; color: var(--muted); margin-top: 6px; }
+.card dd { margin: 0; }
+.list { list-style: none; margin: 0; padding: 0; }
+.list li { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; margin: 4px 0; }
+.list a { color: var(--text); font-weight: 600; text-decoration: none; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.badge { display: inline-block; font-size: 0.72rem; padding: 1px 6px; border-radius: 999px; background: #e2e8f0; color: #334155; }
+.badge.completed { background: #d1fae5; color: #065f46; }
+.badge.sent { background: #cffafe; color: #155e75; }
+.badge.declined, .badge.voided, .badge.expired { background: #fee2e2; color: #991b1b; }
+details { margin-top: 16px; }
+details input { margin: 6px 0; }

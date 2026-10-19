@@ -1,0 +1,10 @@
+{
+  "name": "calasign",
+  "displayName": "CalaSign",
+  "version": "{{VERSION}}",
+  "description": "E-signature for Latin America: send PDFs for signature, track signers and download signed documents with CalaSign (remote MCP server + skill + commands).",
+  "author": { "name": "CalaSign", "url": "{{BASE_URL}}" },
+  "homepage": "{{BASE_URL}}/developers",
+  "license": "UNLICENSED",
+  "keywords": ["e-signature", "firma-electronica", "assinatura-eletronica", "pdf", "contracts", "mcp"]
+}

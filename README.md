@@ -15,6 +15,7 @@ Entorno de desarrollo: **https://dev.calasign.com**.
 | [`docs/CRM.md`](docs/CRM.md) | Conectores HubSpot, Salesforce, Siigo y Alegra |
 | [`docs/DATOS.md`](docs/DATOS.md) | BYOK, celdas de residencia de datos y renovación de sellos de archivo |
 | [`docs/FIRMA-CON-CERTIFICADO.md`](docs/FIRMA-CON-CERTIFICADO.md) | Firma con el certificado del titular (token PKCS#11, almacén de Windows, .p12) y el Firmador CalaSign |
+| [`integrations/README.md`](integrations/README.md) | Skill de Claude, plugin de Claude Code, extensión MCPB, Gemini CLI, ChatGPT y complemento de Word/Outlook (`/integrations/`) |
 
 La API completa y vigente está en `GET /v1/openapi.json` y en la página `/developers`.
 

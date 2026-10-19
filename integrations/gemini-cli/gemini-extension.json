@@ -1,0 +1,12 @@
+{
+  "name": "calasign",
+  "version": "{{VERSION}}",
+  "description": "CalaSign e-signature: send PDFs for signature, track signers and download signed documents (remote MCP server with OAuth).",
+  "mcpServers": {
+    "calasign": {
+      "httpUrl": "{{BASE_URL}}/mcp",
+      "timeout": 60000
+    }
+  },
+  "contextFileName": "GEMINI.md"
+}

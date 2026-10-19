@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CalaSign para Claude Code</title>
+  <link rel="icon" href="/favicon.svg" />
+  <link rel="stylesheet" href="/integrations/site.css?v={{VERSION}}" />
+</head>
+<body>
+  <header><div class="in"><a href="/integrations/">CalaSign</a><span class="muted">· Claude Code</span></div></header>
+  <main>
+    <h1>Plugin de CalaSign para Claude Code</h1>
+    <p class="lead">Servidor MCP remoto, la skill <code>calasign</code> y los comandos <code>/calasign:send</code> y <code>/calasign:status</code>.</p>
+
+    <h2>Instalar</h2>
+    <pre><code>claude plugin marketplace add {{BASE_URL}}/integrations/claude-code/marketplace.json
+claude plugin install calasign@calasign</code></pre>
+    <p>O dentro de Claude Code: <code>/plugin marketplace add {{BASE_URL}}/integrations/claude-code/marketplace.json</code> y después <code>/plugin install calasign@calasign</code>.</p>
+    <p>Conectá tu cuenta: <code>/mcp</code> → <code>calasign</code> → <em>Authenticate</em> (se abre CalaSign para autorizar).</p>
+    <p class="muted">Requiere Claude Code 2.1.224 o posterior (plugins con fuente <code>archive</code>). Archivos: <a href="/integrations/claude-code/marketplace.json">marketplace.json</a> · <a href="/integrations/claude-code/calasign-plugin-{{VERSION}}.zip">calasign-plugin-{{VERSION}}.zip</a></p>
+
+    <h2>Usar</h2>
+    <pre><code>/calasign:send contratos/servicios.pdf Ana Pérez ana@cliente.com
+/calasign:status ACME</code></pre>
+    <p>Claude siempre muestra un resumen y pide confirmación antes de enviar o anular.</p>
+
+    <h2>Solo el servidor MCP (sin plugin)</h2>
+    <pre><code>claude mcp add --transport http calasign {{BASE_URL}}/mcp
+# con API key en lugar de OAuth:
+claude mcp add --transport http calasign {{BASE_URL}}/mcp --header "Authorization: Bearer $CALASIGN_API_KEY"</code></pre>
+  </main>
+</body>
+</html>

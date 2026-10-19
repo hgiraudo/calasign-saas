@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "pnpm -r --parallel --filter @calasign/api --filter @calasign/web dev",
     "build": "pnpm -r build",
+    "build:integrations": "pnpm --filter @calasign/integrations build",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck"
   },

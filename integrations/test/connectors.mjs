@@ -423,12 +423,16 @@ function n8nCtx(params, routes, extra = {}) {
     getNode: () => ({ name: "CalaSign" }),
     getInputData: () => [{ json: {}, binary: { data: { fileName: "doc.pdf" } } }],
     continueOnFail: () => false,
+    logs: [],
+    // En n8n real, this.logger existe en todos los contextos (los catch de los webhooks lo usan).
+    logger: { debug(msg, meta) { ctx.logs.push(["debug", msg, meta]); }, warn(msg, meta) { ctx.logs.push(["warn", msg, meta]); } },
     helpers: {
       httpRequestWithAuthentication: async (cred, opts) => {
         calls.push({ cred, ...opts });
         const key = `${opts.method} ${opts.url.replace(BASE, "")}`;
+        // `in`, no `!r`: una ruta que responde "" (DELETE) es válida.
+        if (!(key in routes)) throw new Error(`n8n: sin ruta ${key}`);
         const r = routes[key];
-        if (!r) throw new Error(`n8n: sin ruta ${key}`);
         return typeof r === "function" ? r(opts) : r;
       },
       assertBinaryData: () => ({ fileName: "doc.pdf" }),
@@ -472,6 +476,7 @@ await test("n8n: trigger crea y borra el webhook y verifica la firma HMAC", asyn
   await node.webhookMethods.default.delete.call(ctx);
   assert.equal(ctx.calls.at(-1).method, "DELETE");
   assert.equal(ctx.staticData.webhookId, undefined);
+  assert.deepEqual(ctx.logs.filter(([, m]) => /borrar/.test(m)), [], `el borrado no debe fallar: ${JSON.stringify(ctx.logs)}`);
 });
 
 await test("n8n: enviar desde plantilla, enviar PDF y descargar el firmado", async () => {

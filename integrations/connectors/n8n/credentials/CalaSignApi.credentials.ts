@@ -1,9 +1,11 @@
-import type { IAuthenticateGeneric, ICredentialTestRequest, ICredentialType, INodeProperties } from 'n8n-workflow';
+import type { IAuthenticateGeneric, ICredentialTestRequest, ICredentialType, Icon, INodeProperties } from 'n8n-workflow';
 
 export class CalaSignApi implements ICredentialType {
 	name = 'calaSignApi';
 
 	displayName = 'CalaSign API';
+
+	icon: Icon = { light: 'file:calasign.svg', dark: 'file:calasign.svg' };
 
 	documentationUrl = '{{BASE_URL}}/developers/connectors#n8n';
 

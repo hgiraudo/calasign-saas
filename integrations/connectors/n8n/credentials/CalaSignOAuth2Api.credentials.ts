@@ -1,4 +1,4 @@
-import type { ICredentialType, INodeProperties } from 'n8n-workflow';
+import type { ICredentialType, Icon, INodeProperties } from 'n8n-workflow';
 
 // OAuth 2.0 authorization code con PKCE S256 (CalaSign lo exige). Crear la app en CalaSign: Ajustes → Apps OAuth,
 // redirect URI = la "OAuth Redirect URL" que muestra n8n.
@@ -8,6 +8,8 @@ export class CalaSignOAuth2Api implements ICredentialType {
 	extends = ['oAuth2Api'];
 
 	displayName = 'CalaSign OAuth2 API';
+
+	icon: Icon = { light: 'file:calasign.svg', dark: 'file:calasign.svg' };
 
 	documentationUrl = '{{BASE_URL}}/developers/connectors#n8n';
 

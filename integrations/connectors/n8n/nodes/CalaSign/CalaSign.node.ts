@@ -24,7 +24,7 @@ export class CalaSign implements INodeType {
 	description: INodeTypeDescription = {
 		displayName: 'CalaSign',
 		name: 'calaSign',
-		icon: 'file:calasign.svg',
+		icon: { light: 'file:calasign.svg', dark: 'file:calasign.svg' },
 		group: ['output'],
 		version: 1,
 		subtitle: '={{$parameter["operation"] + ": " + $parameter["resource"]}}',
@@ -196,7 +196,7 @@ export class CalaSign implements INodeType {
 				type: 'options',
 				options: [
 					{ name: 'Last Page (Automatic)', value: 'auto' },
-					{ name: 'Anchor Texts \\firma1\\, \\firma2\\…', value: 'anchors' },
+					{ name: 'Anchor Texts', value: 'anchors', description: 'Signature boxes on the texts \\firma1\\, \\firma2\\… of the PDF (one per signer)' },
 				],
 				default: 'auto',
 				displayOptions: { show: { resource: ['envelope'], operation: ['sendDocument'] } },
@@ -211,12 +211,12 @@ export class CalaSign implements INodeType {
 				default: {},
 				displayOptions: { show: { resource: ['envelope'], operation: ['sendFromTemplate', 'sendDocument'] } },
 				options: [
-					{ displayName: 'Subject', name: 'subject', type: 'string', default: '', description: 'Overrides the template subject' },
-					{ displayName: 'Message', name: 'message', type: 'string', typeOptions: { rows: 3 }, default: '' },
-					{ displayName: 'External ID', name: 'externalId', type: 'string', default: '', description: 'Your own reference; comes back in every event as metadata.externalId' },
 					{ displayName: 'Expires At', name: 'expiresAt', type: 'dateTime', default: '' },
-					{ displayName: 'Sign In Order', name: 'sequential', type: 'boolean', default: false, description: 'Whether signers sign one after another (Send Document)' },
+					{ displayName: 'External ID', name: 'externalId', type: 'string', default: '', description: 'Your own reference; comes back in every event as metadata.externalId' },
+					{ displayName: 'Message', name: 'message', type: 'string', typeOptions: { rows: 3 }, default: '' },
 					{ displayName: 'Send Now', name: 'send', type: 'boolean', default: true, description: 'Whether to send now; otherwise a draft is created' },
+					{ displayName: 'Sign In Order', name: 'sequential', type: 'boolean', default: false, description: 'Whether signers sign one after another (Send Document)' },
+					{ displayName: 'Subject', name: 'subject', type: 'string', default: '', description: 'Overrides the template subject' },
 				],
 			},
 
@@ -267,19 +267,19 @@ export class CalaSign implements INodeType {
 	methods = {
 		loadOptions: {
 			async getTemplates(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
-				const res = await calaSignRequest(this, 'GET', '/v1/templates');
+				const res = await calaSignRequest<{ items?: IDataObject[] }>(this, 'GET', '/v1/templates');
 				return (res.items ?? []).map((t: IDataObject) => ({ name: String(t.name), value: String(t.id) }));
 			},
 			async getTemplateRoles(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
 				const id = this.getCurrentNodeParameter('templateId') as string;
 				if (!id) return [];
-				const s = await calaSignRequest(this, 'GET', `/v1/templates/${encodeURIComponent(id)}/input-schema`);
+				const s = await calaSignRequest<{ roles?: IDataObject[]; fields?: IDataObject[] }>(this, 'GET', `/v1/templates/${encodeURIComponent(id)}/input-schema`);
 				return (s.roles ?? []).map((r: IDataObject) => ({ name: String(r.name), value: String(r.id) }));
 			},
 			async getTemplateFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
 				const id = this.getCurrentNodeParameter('templateId') as string;
 				if (!id) return [];
-				const s = await calaSignRequest(this, 'GET', `/v1/templates/${encodeURIComponent(id)}/input-schema`);
+				const s = await calaSignRequest<{ roles?: IDataObject[]; fields?: IDataObject[] }>(this, 'GET', `/v1/templates/${encodeURIComponent(id)}/input-schema`);
 				return (s.fields ?? []).map((f: IDataObject) => ({ name: String(f.label ?? f.id), value: String(f.id), description: f.roleName ? `For ${f.roleName}` : undefined }));
 			},
 		},
@@ -293,7 +293,7 @@ export class CalaSign implements INodeType {
 				const resource = this.getNodeParameter('resource', i) as string;
 				const operation = this.getNodeParameter('operation', i) as string;
 				if (resource === 'template') {
-					const res = await calaSignRequest(this, 'GET', '/v1/templates', {}, i);
+					const res = await calaSignRequest<{ items?: IDataObject[] }>(this, 'GET', '/v1/templates', {}, i);
 					for (const t of res.items ?? []) out.push({ json: t, pairedItem: { item: i } });
 					continue;
 				}
@@ -331,20 +331,20 @@ export class CalaSign implements INodeType {
 						expiresAt: extra.expiresAt ? new Date(String(extra.expiresAt)).toISOString() : undefined,
 						metadata,
 					});
-					out.push({ json: res, pairedItem: { item: i } });
+					out.push({ json: res as IDataObject, pairedItem: { item: i } });
 				} else if (operation === 'get') {
 					const id = encodeURIComponent(this.getNodeParameter('envelopeId', i) as string);
 					out.push({ json: await calaSignRequest(this, 'GET', `/v1/envelopes/${id}`, {}, i), pairedItem: { item: i } });
 				} else if (operation === 'getAll') {
 					const status = this.getNodeParameter('status', i) as string;
 					const limit = this.getNodeParameter('limit', i) as number;
-					const res = await calaSignRequest(this, 'GET', '/v1/envelopes', { qs: { limit, ...(status ? { status } : {}) } }, i);
+					const res = await calaSignRequest<{ items?: IDataObject[] }>(this, 'GET', '/v1/envelopes', { qs: { limit, ...(status ? { status } : {}) } }, i);
 					for (const e of res.items ?? []) out.push({ json: e, pairedItem: { item: i } });
 				} else if (operation === 'downloadSigned') {
 					const raw = this.getNodeParameter('envelopeId', i) as string;
-					const data = await calaSignRequest(this, 'GET', `/v1/envelopes/${encodeURIComponent(raw)}/signed.pdf`, { binary: true }, i);
+					const data = await calaSignRequest<ArrayBuffer>(this, 'GET', `/v1/envelopes/${encodeURIComponent(raw)}/signed.pdf`, { binary: true }, i);
 					const prop = this.getNodeParameter('outputBinaryPropertyName', i) as string;
-					const binary = await this.helpers.prepareBinaryData(Buffer.from(data as ArrayBuffer), `calasign-${raw}.pdf`, 'application/pdf');
+					const binary = await this.helpers.prepareBinaryData(Buffer.from(data), `calasign-${raw}.pdf`, 'application/pdf');
 					out.push({ json: { envelopeId: raw }, binary: { [prop]: binary }, pairedItem: { item: i } });
 				} else if (operation === 'void') {
 					const id = encodeURIComponent(this.getNodeParameter('envelopeId', i) as string);
@@ -361,7 +361,7 @@ export class CalaSign implements INodeType {
 					out.push({ json: { error: (error as Error).message }, pairedItem: { item: i } });
 					continue;
 				}
-				throw error;
+				throw new NodeOperationError(this.getNode(), error as Error, { itemIndex: i });
 			}
 		}
 		return [out];

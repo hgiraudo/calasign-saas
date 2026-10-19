@@ -21,13 +21,14 @@ export async function baseUrl(ctx: Ctx, itemIndex = 0): Promise<string> {
 }
 
 /** Pedido autenticado a la API de CalaSign. `body` Buffer = cuerpo crudo (multipart). */
-export async function calaSignRequest(
+/** Pedido autenticado a la API de CalaSign. T: forma de la respuesta JSON (o ArrayBuffer con binary). */
+export async function calaSignRequest<T = IDataObject>(
 	ctx: Ctx,
 	method: IHttpRequestMethods,
 	path: string,
 	opts: { body?: IDataObject | Buffer; qs?: IDataObject; headers?: IDataObject; binary?: boolean } = {},
 	itemIndex = 0,
-): Promise<any> {
+): Promise<T> {
 	const options: IHttpRequestOptions = {
 		method,
 		url: `${await baseUrl(ctx, itemIndex)}${path}`,
@@ -37,13 +38,13 @@ export async function calaSignRequest(
 	};
 	if (opts.body !== undefined) options.body = opts.body;
 	if (opts.binary) options.encoding = 'arraybuffer';
-	return ctx.helpers.httpRequestWithAuthentication.call(ctx, credentialType(ctx, itemIndex), options);
+	return (await ctx.helpers.httpRequestWithAuthentication.call(ctx, credentialType(ctx, itemIndex), options)) as T;
 }
 
 /** Adaptador para quicksend: request(method, path, { json, body, headers }). */
 export function requester(ctx: IExecuteFunctions, itemIndex: number) {
-	return async (method: string, path: string, o: { json?: IDataObject; body?: Buffer; headers?: IDataObject } = {}) =>
-		calaSignRequest(ctx, method as IHttpRequestMethods, path, { body: o.json ?? o.body, headers: o.headers }, itemIndex);
+	return async (method: string, path: string, o: { json?: unknown; body?: unknown; headers?: Record<string, string> } = {}) =>
+		calaSignRequest<Record<string, unknown>>(ctx, method as IHttpRequestMethods, path, { body: (o.json ?? o.body) as IDataObject | Buffer | undefined, headers: o.headers }, itemIndex);
 }
 
 /** Verifica `CalaSign-Signature: t=<unix>,v1=<hex>` = HMAC-SHA256(secret, "<t>.<body>"), con 5 minutos de tolerancia. */

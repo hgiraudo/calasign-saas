@@ -19,7 +19,7 @@ export class CalaSignTrigger implements INodeType {
 	description: INodeTypeDescription = {
 		displayName: 'CalaSign Trigger',
 		name: 'calaSignTrigger',
-		icon: 'file:calasign.svg',
+		icon: { light: 'file:calasign.svg', dark: 'file:calasign.svg' },
 		group: ['trigger'],
 		version: 1,
 		subtitle: '={{$parameter["events"].join(", ")}}',
@@ -69,15 +69,16 @@ export class CalaSignTrigger implements INodeType {
 				try {
 					const ep = await calaSignRequest(this, 'GET', `/v1/webhooks/${encodeURIComponent(String(data.webhookId))}`);
 					if (ep.url === this.getNodeWebhookUrl('default') && ep.active) return true;
-				} catch {
-					// borrado del lado de CalaSign
+				} catch (error) {
+					// Borrado del lado de CalaSign (o sin acceso): se vuelve a crear al activar.
+					this.logger.debug('CalaSign: webhook no encontrado, se registra de nuevo', { error: (error as Error).message });
 				}
 				delete data.webhookId;
 				delete data.secret;
 				return false;
 			},
 			async create(this: IHookFunctions): Promise<boolean> {
-				const res = await calaSignRequest(this, 'POST', '/v1/webhooks', {
+				const res = await calaSignRequest<{ webhook: { id: string }; secret: string }>(this, 'POST', '/v1/webhooks', {
 					body: { url: this.getNodeWebhookUrl('default') as string, events: this.getNodeParameter('events') as string[], description: `n8n: ${this.getWorkflow().name ?? this.getWorkflow().id}` },
 				});
 				const data = this.getWorkflowStaticData('node');
@@ -90,8 +91,9 @@ export class CalaSignTrigger implements INodeType {
 				if (data.webhookId) {
 					try {
 						await calaSignRequest(this, 'DELETE', `/v1/webhooks/${encodeURIComponent(String(data.webhookId))}`);
-					} catch {
-						// ya no existe
+					} catch (error) {
+						// Ya no existe del lado de CalaSign: no hay nada que borrar.
+						this.logger.debug('CalaSign: no se pudo borrar el webhook (ya no existe)', { error: (error as Error).message });
 					}
 				}
 				delete data.webhookId;

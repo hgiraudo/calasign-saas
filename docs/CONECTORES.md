@@ -135,10 +135,18 @@ Scopes OAuth: `templates:read`, `envelopes:write` y `webhooks:manage`, por prefi
   - Verificar en el editor las expresiones IML del PKCE (`sha256(…, 'base64')` y los reemplazos para base64url).
   - Crear la app OAuth de CalaSign con la redirect `https://www.make.com/oauth/cb/app` y cargar client_id y secret en
     *Common data*.
-- **n8n**:
-  - Repo público en GitHub y publicación en npm **desde GitHub Actions con provenance**, obligatorio desde el
-    1-may-2026, usando `@n8n/node-cli`.
+- **n8n**: el repo para npm se genera con `node integrations/connectors/n8n/export-repo.mjs [--base-url …] [--repo
+  owner/nombre]` (por defecto en `../n8n-nodes-calasign`). Trae `@n8n/node-cli` (build y lint oficiales, que pasan sin
+  errores ni avisos), pnpm con lockfile, MIT, CHANGELOG y los workflows de la plantilla de n8n: CI (lint + build) y
+  `publish.yml` (al pushear un tag `x.y.z` publica en npm **con provenance**, requisito desde el 1-may-2026). Los pasos
+  están en su `RELEASING.md`:
+  - Crear el repo público (`gh repo create … --public --source . --push`).
+  - Primera versión con un token `NPM_TOKEN` (npm solo permite Trusted Publishing sobre un paquete que ya existe);
+    después configurar Trusted Publisher (`publish.yml`) y borrar el token.
+  - `pnpm run release` para cada versión.
   - Pasar `npx @n8n/scan-community-package n8n-nodes-calasign` y pedir la verificación en el Creator Portal.
+  - La URL base por defecto de las credenciales sale de `--base-url` (hoy `https://dev.calasign.com`): exportar con la
+    de producción antes de la primera versión pública.
 - **Dynamics 365**:
   - Probar en un entorno real.
   - Exportar la solución «CalaSign» (conector, columnas, web resource y los dos flujos) como **administrada** para

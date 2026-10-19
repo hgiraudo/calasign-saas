@@ -43,10 +43,11 @@ export const LOWCODE_OPS: Op[] = [
     summary: "Enviar desde plantilla con roles como objeto (conectores low-code)",
     description:
       "Igual que POST /v1/envelopes/from-template, con `roles: { <id o nombre del rol>: { name, email, phone } }` y `prefill: { <id o etiqueta>: valor }` " +
-      "(los vacíos se ignoran). Envía el sobre salvo `send: false`.",
+      "(los vacíos se ignoran). Envía el sobre salvo `send: false`. Admite `Idempotency-Key`.",
     body: LowcodeTemplateSendInput,
     status: 201,
     response: EnvelopeDetailSchema,
+    idempotent: true,
   },
   {
     method: "get",

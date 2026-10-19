@@ -195,7 +195,15 @@ export async function eventRoutes(app: FastifyInstance, s: Services) {
           lastAuthCheck = Date.now();
         }
         const page = await readEvents(s, a, filters, 100);
-        for (const ev of page.items) if (!closed && Date.now() < deadline) await write(`id: ${ev.cursor}\nevent: ${ev.type}\ndata: ${JSON.stringify(ev)}\n\n`);
+        // Un registro de evidencia puede dar dos eventos con el mismo cursor (recipient.declined + envelope.declined): el
+        // `id:` va solo en el último. Si no, un corte entre los dos (max_seconds) dejaba Last-Event-ID en ese cursor y al
+        // reconectar el segundo no llegaba nunca; así se repite el primero (mismo `id` de evento, deduplicable).
+        for (let i = 0; i < page.items.length; i++) {
+          const ev = page.items[i];
+          if (closed || Date.now() >= deadline) break;
+          const lastOfRow = page.items[i + 1]?.cursor !== ev.cursor;
+          await write(`${lastOfRow ? `id: ${ev.cursor}\n` : ""}event: ${ev.type}\ndata: ${JSON.stringify(ev)}\n\n`);
+        }
         if (page.nextCursor) filters.after = page.nextCursor;
         if (page.hasMore) continue;
         if (Date.now() - lastBeat > 15_000) {

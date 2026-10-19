@@ -224,23 +224,28 @@ export function BrandingPage() {
   // ───────── Vista previa en vivo ─────────
   const theme = (cfg.theme ?? {}) as Theme;
   const cssProblem = cfg.customCss ? customCssProblem(cfg.customCss) : null;
+  // Lo que una sub-marca no define lo hereda de la marca de la organización (como mergeConfig en el servidor).
+  const defaultBrand = brand && !brand.isDefault ? brands?.find((b) => b.isDefault) : undefined;
+  const inherited = defaultBrand?.config;
   const effectiveTheme = useMemo(() => {
-    // Lo heredado (sub-marca) + lo que se está editando.
-    const base = brand?.effective.theme ?? {};
+    // Lo heredado + lo que se está editando. En una sub-marca la base es el tema de la organización: su `effective`
+    // ya trae los colores propios guardados, y uno borrado (para heredar) seguía en la vista previa hasta guardar.
+    const base = (defaultBrand ?? brand)?.effective.theme ?? {};
     const own = Object.fromEntries(Object.entries(theme).filter(([, v]) => v !== null && v !== undefined && v !== ""));
     return { ...base, ...own } as Theme;
-  }, [brand, theme]);
-  // Lo que una sub-marca no define lo hereda de la marca de la organización (como mergeConfig en el servidor).
-  const inherited = brand && !brand.isDefault ? brands?.find((b) => b.isDefault)?.config : undefined;
+  }, [brand, defaultBrand, theme]);
   const hidePowered = cfg.hidePoweredBy ?? inherited?.hidePoweredBy ?? false;
   const product = cfg.productName || inherited?.productName || "CalaSign";
+  const inheritedCss = inherited?.customCss ?? "";
+  const inheritedName = inherited?.displayName ?? "";
   const mockHtml = useMemo(() => {
     if (!brand) return "";
     const fontFace =
       effectiveTheme.fontSource === "upload" && brand.effective.fontUrl && effectiveTheme.fontFamily
         ? `@font-face{font-family:"${effectiveTheme.fontFamily}";src:url("${brand.effective.fontUrl}")}`
         : null;
-    const css = [themeToCss(effectiveTheme as never, { fontFace }), cssProblem ? "" : cfg.customCss ?? ""].join("\n");
+    // Una sub-marca suma su CSS al de la organización (mergeConfig los concatena).
+    const css = [themeToCss(effectiveTheme as never, { fontFace }), inheritedCss, cssProblem ? "" : cfg.customCss ?? ""].join("\n");
     const google =
       effectiveTheme.fontFamily && (effectiveTheme.fontSource === "google" || (!effectiveTheme.fontSource && !brand.effective.fontUrl))
         ? `https://fonts.googleapis.com/css2?family=${encodeURIComponent(effectiveTheme.fontFamily).replace(/%20/g, "+")}:wght@400;600;700&display=swap`
@@ -248,13 +253,14 @@ export function BrandingPage() {
     return signerMockHtml({
       css,
       fontCssUrl: google,
-      name: cfg.displayName || brand.effective.name,
+      // Sin nombre visible propio: el heredado o el de la marca (brand.effective.name traía el guardado aunque se borrara).
+      name: cfg.displayName || inheritedName || brand.name,
       logo: brand.effective.logoUrl,
       powered: hidePowered ? null : `${w("mock.powered")} ${product}`,
       w,
       theme: effectiveTheme,
     });
-  }, [brand, effectiveTheme, cfg.customCss, cfg.displayName, hidePowered, cssProblem, product, w]);
+  }, [brand, effectiveTheme, cfg.customCss, cfg.displayName, inheritedCss, inheritedName, hidePowered, cssProblem, product, w]);
 
   if (!brands || !brand) return error ? <div className="page"><ErrorBox error={error} /></div> : <Spinner />;
 

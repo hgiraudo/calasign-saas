@@ -40,6 +40,11 @@ async function dohQuery(endpoint: string, name: string, type: "TXT" | "A"): Prom
   });
   if (!res.ok) throw new Error(`DNS ${res.status}`);
   const body: any = await res.json();
+  // Solo NOERROR (0) y NXDOMAIN (3) dicen algo del registro. SERVFAIL (2), REFUSED (5)… llegan con HTTP 200 y sin
+  // Answer: tratarlos como "no publicado" desverificaba un dominio de correo por una falla del DNS (y el rechequeo de
+  // dominios propios lo contaba como falta y no como error).
+  const status = Number(body.Status ?? 0);
+  if (status !== 0 && status !== 3) throw new Error(`DNS rcode ${status}`);
   return (body.Answer ?? []).map((a: any) => ({ type: Number(a.type), data: String(a.data) }));
 }
 

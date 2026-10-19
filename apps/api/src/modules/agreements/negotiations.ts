@@ -40,6 +40,15 @@ import { agreementMetaFromMapping, createEnvelopeFromPdf, insertFileRow, loadCla
 
 // ───────────────────────────── Render de una versión ─────────────────────────────
 
+/** Topes por negociación: los enlaces de participantes son públicos y cada propuesta manda un correo. */
+const MAX_COMMENTS = 500;
+const MAX_PENDING_PROPOSALS_PER_AUTHOR = 20;
+
+async function assertCommentCapacity(t: Db, negotiationId: string) {
+  const c = await t.one<any>(`SELECT count(*)::int AS n FROM negotiation_comments WHERE negotiation_id = $1`, [negotiationId]);
+  if ((c?.n ?? 0) >= MAX_COMMENTS) throw new AppError(429, "too_many_comments", `La negociación llegó al máximo de ${MAX_COMMENTS} comentarios`);
+}
+
 function clausesFor(n: any): Record<string, string> {
   return { ...(n.clause_snapshot ?? {}), ...(n.clause_overrides ?? {}) };
 }
@@ -100,7 +109,7 @@ async function summary(db: Db, n: any): Promise<NegotiationSummary> {
 
 async function fullView(db: Db, n: any, me?: any): Promise<NegotiationView> {
   const [versions, comments, proposals, cur] = await Promise.all([
-    db.query<any>(`SELECT * FROM negotiation_versions WHERE negotiation_id = $1 ORDER BY version`, [n.id]),
+    db.query<any>(`SELECT version, author_type, author_name, summary, created_at FROM negotiation_versions WHERE negotiation_id = $1 ORDER BY version`, [n.id]),
     db.query<any>(`SELECT * FROM negotiation_comments WHERE negotiation_id = $1 ORDER BY created_at`, [n.id]),
     db.query<any>(`SELECT * FROM negotiation_proposals WHERE negotiation_id = $1 ORDER BY created_at`, [n.id]),
     db.one<any>(`SELECT text_snapshot FROM negotiation_versions WHERE negotiation_id = $1 AND version = $2`, [n.id, n.current_version]),
@@ -404,6 +413,7 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
       const locked = await t.one<any>(`SELECT status, current_version FROM negotiations WHERE id = $1 FOR UPDATE`, [n.id]);
       if (locked?.status !== "open") throw conflict("closed", "La negociación ya está cerrada");
       if (locked.current_version !== n.current_version) throw conflict("version_changed", "Hay una versión nueva: revisala y volvé a comentar");
+      await assertCommentCapacity(t, n.id);
       await t.query(
         `INSERT INTO negotiation_comments (id, negotiation_id, version, author_type, author_id, author_name, quote, start_offset, end_offset, body)
          VALUES ($1,$2,$3,'user',$4,$5,$6,$7,$8,$9)`,
@@ -435,6 +445,12 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
       if (p.status !== "pending") throw conflict("decided", "La propuesta ya fue decidida");
       await t.query(`UPDATE negotiation_proposals SET status = $2, decided_at = now() WHERE id = $1`, [p.id, input.accept ? "accepted" : "rejected"]);
       if (!input.accept) return;
+      // Si el texto cambió desde que se hizo la propuesta (edición o otra propuesta aceptada), aceptarla pisaría ese
+      // cambio sin que se vea: el "valor actual" que muestra es el de entonces.
+      if (p.version !== n.current_version) {
+        const now = p.kind === "variable" ? valueText(getPath(n.data, p.key)) : Object.hasOwn(clausesFor(n), p.key) ? clausesFor(n)[p.key] : undefined;
+        if (now !== p.old_value) throw conflict("proposal_outdated", "El texto cambió desde que se hizo la propuesta: rechazala y pedí una nueva");
+      }
       const data = structuredClone(n.data ?? {});
       const overrides = { ...(n.clause_overrides ?? {}) };
       if (p.kind === "variable") setPath(data, p.key, p.new_value);
@@ -602,6 +618,7 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
       const locked = await t.one<any>(`SELECT status, current_version FROM negotiations WHERE id = $1 FOR UPDATE`, [n.id]);
       if (locked?.status !== "open") throw conflict("closed", "La negociación ya está cerrada");
       if (locked.current_version !== n.current_version) throw conflict("version_changed", "Hay una versión nueva: revisala y volvé a comentar");
+      await assertCommentCapacity(t, n.id);
       await t.query(
         `INSERT INTO negotiation_comments (id, negotiation_id, version, author_type, author_id, author_name, quote, start_offset, end_offset, body)
          VALUES ($1,$2,$3,'participant',$4,$5,$6,$7,$8,$9)`,
@@ -624,7 +641,7 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
       old = valueText(getPath(n.data, input.key));
     } else {
       const c = clausesFor(n);
-      if (c[input.key] == null) throw badRequest("unknown_clause", "La cláusula no está en el documento");
+      if (!Object.hasOwn(c, input.key) || c[input.key] == null) throw badRequest("unknown_clause", "La cláusula no está en el documento");
       try {
         renderTemplate(input.newValue, {});
       } catch (e) {
@@ -639,6 +656,13 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
       const locked = await t.one<any>(`SELECT status, current_version FROM negotiations WHERE id = $1 FOR UPDATE`, [n.id]);
       if (locked?.status !== "open") throw conflict("closed", "La negociación ya está cerrada");
       if (locked.current_version !== n.current_version) throw conflict("version_changed", "Hay una versión nueva: revisala y volvé a proponer");
+      const pend = await t.one<any>(
+        `SELECT count(*)::int AS n FROM negotiation_proposals WHERE negotiation_id = $1 AND author_type = 'participant' AND author_id = $2 AND status = 'pending'`,
+        [n.id, p.id],
+      );
+      if ((pend?.n ?? 0) >= MAX_PENDING_PROPOSALS_PER_AUTHOR) {
+        throw new AppError(429, "too_many_proposals", `Tenés ${MAX_PENDING_PROPOSALS_PER_AUTHOR} propuestas sin decidir: esperá a que las revisen`);
+      }
       await t.query(
         `INSERT INTO negotiation_proposals (id, negotiation_id, version, author_type, author_id, author_name, kind, key, old_value, new_value, comment)
          VALUES ($1,$2,$3,'participant',$4,$5,$6,$7,$8,$9,$10)`,

@@ -489,7 +489,8 @@ export function renderTemplate(source: string, data: unknown, opts: RenderOption
         }
         arr.forEach((item, idx) => emitNodes(n.body, [...scopes, new Map<string, unknown>([[n.as, item], ["@index", idx + 1]])], depth));
       } else if (n.k === "clause") {
-        const src = opts.clauses?.[n.slug];
+        // Propias del objeto: un slug como "constructor" no toma lo heredado de Object.prototype.
+        const src = opts.clauses && Object.hasOwn(opts.clauses, n.slug) ? opts.clauses[n.slug] : undefined;
         if (src == null) {
           missingClauses.add(n.slug);
           continue;
@@ -636,7 +637,7 @@ export function analyzeTemplate(source: string, clauses: Record<string, string> 
         }
       } else if (n.k === "clause") {
         usedClauses.add(n.slug);
-        if (!seenClauses.has(n.slug) && clauses[n.slug] != null) {
+        if (!seenClauses.has(n.slug) && Object.hasOwn(clauses, n.slug) && clauses[n.slug] != null) {
           seenClauses.add(n.slug);
           try {
             nodes(parseTemplate(clauses[n.slug]), loopVars);

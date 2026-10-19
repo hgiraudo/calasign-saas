@@ -30,7 +30,7 @@ const TERMINAL = new Set(["envelope.completed", "recipient.declined", "envelope.
 export async function queueAgreementEvents(db: Db, envelopeId: string, evidenceType: string) {
   if (!TERMINAL.has(evidenceType)) return;
   if (evidenceType === "envelope.completed") await enqueue(db, "agreements", { kind: "ingest", envelopeId }, { dedupeKey: `agr:ingest:${envelopeId}` });
-  const waiting = await db.one(`SELECT 1 FROM workflow_runs WHERE status = 'waiting' AND context->>'waitingEnvelope' = $1 LIMIT 1`, [envelopeId]);
+  const waiting = await db.one(`SELECT 1 FROM workflow_runs WHERE status = 'waiting' AND context->'waitingEnvelope' = to_jsonb($1::text) LIMIT 1`, [envelopeId]);
   if (waiting) await enqueue(db, "agreements", { kind: "envelope_event", envelopeId });
 }
 

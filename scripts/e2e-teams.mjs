@@ -444,6 +444,23 @@ await keyClient.api("GET", "/v1/envelopes", undefined, 401);
 await owner.api("DELETE", `/v1/members/${ownerMe.user.id}`, undefined, 409);
 step("quitar a un miembro cierra su acceso y revoca sus API keys (401); el último propietario no se puede quitar (409)");
 
+// Las invitaciones pendientes que mandó quien sale también: vio el enlace y con él podía volver a entrar.
+{
+  const finEmail = `fin+${stamp}@example.com`;
+  const invFin = await owner.api("POST", "/v1/invitations", { email: finEmail, role: "admin" });
+  const fin = new Client("fin");
+  const finMe = await fin.api("POST", `/v1/invite/${invFin.acceptUrl.split("/invite/")[1]}/accept`, { name: "Fin", password: "clave-de-fin-1234" });
+  const finSetup = await fin.api("POST", "/v1/me/2fa/setup"); // la organización exige 2FA
+  await fin.api("POST", "/v1/me/2fa/enable", { code: totp(finSetup.secret, nowStep()) });
+  const back = await fin.api("POST", "/v1/invitations", { email: `fin2+${stamp}@example.com`, role: "admin" });
+  const backToken = back.acceptUrl.split("/invite/")[1];
+  await owner.api("DELETE", `/v1/members/${finMe.user.id}`, undefined, 204);
+  const res = await new Client("anon").raw("GET", `/v1/invite/${backToken}`);
+  const prev = res.ok ? await res.json() : null;
+  if (prev?.status === "pending") throw new Error("la invitación que mandó un miembro quitado sigue pendiente");
+  step("quitar a un miembro revoca las invitaciones pendientes que mandó");
+}
+
 // ───────────────────────────── 9. Regresiones de la revisión (ronda 3) ─────────────────────────────
 
 // (a) Dos propietarios que se quitan el rol (o se eliminan) al mismo tiempo: la organización nunca queda sin propietario.

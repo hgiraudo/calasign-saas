@@ -45,6 +45,7 @@ import { auditFromRequest, recordAudit } from "./audit";
 import { SESSION_COOKIE, authenticate, clientInfo, type AuthContext, type Services } from "./context";
 import { assertSessionAllowed } from "./identity/sso";
 import { assertInvitationCapacity } from "./billing/plans";
+import { revokeMemberAccess } from "./member-access";
 
 const SESSION_DAYS = 14;
 const INVITE_DAYS = 7;
@@ -203,6 +204,15 @@ async function permsOf(db: Db, tenantId: string, role: string, roleId: string | 
   return (r?.permissions ?? []) as Permission[];
 }
 
+/** Dentro de la transacción (con el tenant bloqueado): el miembro sigue con el rol que vieron los chequeos de permisos. */
+async function assertSameRole(t: Db, tenantId: string, userId: string, cur: { role: string; role_id: string | null }) {
+  const now = await t.one<any>(`SELECT role, role_id FROM memberships WHERE tenant_id = $1 AND user_id = $2 FOR UPDATE`, [tenantId, userId]);
+  if (!now) throw notFound("Miembro");
+  if (now.role !== cur.role || (now.role_id ?? null) !== (cur.role_id ?? null)) {
+    throw conflict("member_changed", "El rol del miembro cambió mientras tanto: volvé a cargar y probá de nuevo");
+  }
+}
+
 async function ownerCount(db: Db, tenantId: string) {
   const r = await db.one<any>(`SELECT count(*)::int AS n FROM memberships WHERE tenant_id = $1 AND role = 'owner'`, [tenantId]);
   return r?.n ?? 0;
@@ -352,6 +362,9 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     await s.db.tx(async (t) => {
       // Serializa los cambios de propietarios de la organización: dos bajas simultáneas no la dejan sin ninguno.
       await t.query(`SELECT id FROM tenants WHERE id = $1 FOR UPDATE`, [a.tenantId]);
+      // Los chequeos de arriba vieron el rol antes del bloqueo: si cambió mientras tanto (p. ej. lo hicieron propietario),
+      // no se aplica sobre una foto vieja.
+      await assertSameRole(t, a.tenantId, req.params.userId!, cur);
       await t.query(`UPDATE memberships SET role = $3, role_id = $4 WHERE tenant_id = $1 AND user_id = $2`, [a.tenantId, req.params.userId, target.role, target.roleId]);
       if (cur.role === "owner" && target.role !== "owner" && (await ownerCount(t, a.tenantId)) === 0) {
         throw conflict("last_owner", "La organización tiene que tener al menos un propietario");
@@ -372,25 +385,29 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     if (!cur) throw notFound("Miembro");
     if (cur.role === "owner" && a.access?.role !== "owner") throw forbidden("Solo un propietario puede quitar a otro propietario");
     if (userId !== a.userId) assertCanManage(a, await permsOf(s.db, a.tenantId, cur.role, cur.role_id), "quitar a este miembro");
-    const revokedKeys = await s.db.tx(async (t) => {
+    const revoked = await s.db.tx(async (t) => {
       // Serializa los cambios de propietarios de la organización: dos bajas simultáneas no la dejan sin ninguno.
       await t.query(`SELECT id FROM tenants WHERE id = $1 FOR UPDATE`, [a.tenantId]);
+      await assertSameRole(t, a.tenantId, userId, cur);
       await t.query(`DELETE FROM group_members gm USING groups g WHERE gm.group_id = g.id AND g.tenant_id = $1 AND gm.user_id = $2`, [a.tenantId, userId]);
       await t.query(`DELETE FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [a.tenantId, userId]);
       if (cur.role === "owner" && (await ownerCount(t, a.tenantId)) === 0) throw conflict("last_owner", "La organización tiene que tener al menos un propietario");
       // Cierra sus sesiones en esta organización.
       await t.query(`DELETE FROM sessions WHERE user_id = $1 AND tenant_id = $2`, [userId, a.tenantId]);
-      // Y las API keys que creó: si no, quien sale conserva acceso con el rol de la key (p. ej. una de administrador
-      // creada antes de irse). Las identidades de servicio de apps OAuth (oauth_client_id) son de la app, no de la persona.
-      return t.query<{ id: string; name: string }>(
-        `UPDATE api_keys SET revoked_at = now() WHERE tenant_id = $1 AND created_by = $2 AND revoked_at IS NULL AND oauth_client_id IS NULL RETURNING id, name`,
-        [a.tenantId, userId],
-      );
+      // Y el acceso que conserva por otras vías: API keys, invitaciones que mandó, tokens OAuth, secretos de apps de servicio.
+      return revokeMemberAccess(t, a.tenantId, userId);
     });
     await auditFromRequest(s.db, req, a, "member.removed", {
       targetType: "user",
       targetId: userId,
-      data: revokedKeys.length ? { revokedApiKeys: revokedKeys.map((k) => ({ id: k.id, name: k.name })) } : undefined,
+      data:
+        revoked.keys.length || revoked.invitations || revoked.serviceApps.length
+          ? {
+              ...(revoked.keys.length ? { revokedApiKeys: revoked.keys.map((k) => ({ id: k.id, name: k.name })) } : {}),
+              ...(revoked.invitations ? { revokedInvitations: revoked.invitations } : {}),
+              ...(revoked.serviceApps.length ? { disabledServiceAppSecrets: revoked.serviceApps } : {}),
+            }
+          : undefined,
     });
     return reply.code(204).send();
   });
@@ -686,13 +703,21 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     const cur = await s.db.one<any>(`SELECT permissions FROM roles WHERE id = $1 AND tenant_id = $2`, [req.params.id, a.tenantId]);
     if (!cur) throw notFound("Rol");
     assertCanManage(a, cur.permissions ?? [], "borrar este rol");
-    const used = await s.db.one(
-      `SELECT 1 FROM memberships WHERE role_id = $1 UNION ALL SELECT 1 FROM api_keys WHERE role_id = $1 AND revoked_at IS NULL
-       UNION ALL SELECT 1 FROM invitations WHERE role_id = $1 AND accepted_at IS NULL AND revoked_at IS NULL LIMIT 1`,
-      [req.params.id],
-    );
-    if (used) throw conflict("role_in_use", "El rol está asignado: cambiá esos miembros, API keys o invitaciones primero");
-    const r = await s.db.query(`DELETE FROM roles WHERE id = $1 AND tenant_id = $2 RETURNING name`, [req.params.id, a.tenantId]);
+    const r = await s.db.tx(async (t) => {
+      if (!(await t.one(`SELECT id FROM roles WHERE id = $1 AND tenant_id = $2 FOR UPDATE`, [req.params.id, a.tenantId]))) return [];
+      // Invitaciones vencidas no cuentan: ya no se pueden aceptar.
+      const used = await t.one(
+        `SELECT 1 FROM memberships WHERE role_id = $1 UNION ALL SELECT 1 FROM api_keys WHERE role_id = $1 AND revoked_at IS NULL
+         UNION ALL SELECT 1 FROM invitations WHERE role_id = $1 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now() LIMIT 1`,
+        [req.params.id],
+      );
+      if (used) throw conflict("role_in_use", "El rol está asignado: cambiá esos miembros, API keys o invitaciones primero");
+      // Las filas históricas (invitaciones usadas, revocadas o vencidas; keys revocadas) también lo referencian y la FK
+      // no tiene ON DELETE: sin esto el borrado daba 500.
+      await t.query(`UPDATE invitations SET role_id = NULL WHERE role_id = $1`, [req.params.id]);
+      await t.query(`UPDATE api_keys SET role_id = NULL WHERE role_id = $1 AND revoked_at IS NOT NULL`, [req.params.id]);
+      return t.query(`DELETE FROM roles WHERE id = $1 AND tenant_id = $2 RETURNING name`, [req.params.id, a.tenantId]);
+    });
     if (!r.length) throw notFound("Rol");
     await auditFromRequest(s.db, req, a, "role.deleted", { targetType: "role", targetId: req.params.id, data: { name: (r[0] as any).name } });
     return reply.code(204).send();

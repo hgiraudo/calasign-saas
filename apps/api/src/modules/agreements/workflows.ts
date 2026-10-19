@@ -100,6 +100,10 @@ async function toWorkflow(db: Db, r: any, withSecret: boolean): Promise<Workflow
   };
 }
 
+function startedByMe(a: AuthContext, r: any) {
+  return (a.userId != null && r.started_by === a.userId) || (a.apiKeyId != null && r.started_by_api_key === a.apiKeyId);
+}
+
 async function toRun(db: Db, r: any, a?: AuthContext): Promise<WorkflowRun> {
   const wf = await db.one<any>(`SELECT name FROM workflows WHERE id = $1`, [r.workflow_id]);
   const steps = await db.query<any>(`SELECT * FROM workflow_run_steps WHERE run_id = $1 ORDER BY idx`, [r.id]);
@@ -130,7 +134,9 @@ async function toRun(db: Db, r: any, a?: AuthContext): Promise<WorkflowRun> {
       };
     }),
     startedBy: r.started_by_label,
-    collectUrl: hasCollect && r.public_token_enc && ["running", "waiting"].includes(r.status) ? `${base}/w/${decrypt(r.public_token_enc)}` : null,
+    // El enlace público lleva al formulario y, después, al link de firma de quien lo completa: solo para quien puede
+    // administrar el run (como cancelar o reintentar), no para el aprobador ni quien solo puede ver.
+    collectUrl: a && (startedByMe(a, r) || hasPerm(a, "templates:manage")) && hasCollect && r.public_token_enc && ["running", "waiting"].includes(r.status) ? `${base}/w/${decrypt(r.public_token_enc)}` : null,
     createdAt: iso(r.created_at)!,
     updatedAt: iso(r.updated_at)!,
   };
@@ -308,7 +314,7 @@ async function resolveEnvelopeWait(t: Db, runId: string, envelopeId: string, sta
 export async function onEnvelopeEventForWorkflows(d: Deps, envelopeId: string) {
   const env = await d.db.one<any>(`SELECT status FROM envelopes WHERE id = $1`, [envelopeId]);
   if (!env || !["completed", "declined", "voided", "expired"].includes(env.status)) return;
-  const runs = await d.db.query<any>(`SELECT id FROM workflow_runs WHERE status = 'waiting' AND context->>'waitingEnvelope' = $1`, [envelopeId]);
+  const runs = await d.db.query<any>(`SELECT id FROM workflow_runs WHERE status = 'waiting' AND context->'waitingEnvelope' = to_jsonb($1::text)`, [envelopeId]);
   for (const r of runs) {
     let resumed = false;
     await d.db.tx(async (t) => {
@@ -632,6 +638,8 @@ async function createRun(
   const runId = uuidv7();
   const token = steps.some((st) => st.type === "collect_data") ? randomToken() : null;
   await db.tx(async (t) => {
+    // Si lo borraron después de cargarlo, 404 (antes: violación de FK, 500).
+    if (!(await t.one(`SELECT 1 FROM workflows WHERE id = $1 FOR KEY SHARE`, [wf.id]))) throw notFound("Workflow");
     await t.query(
       `INSERT INTO workflow_runs (id, tenant_id, workflow_id, steps, context, started_by, started_by_label, public_token_hash, public_token_enc, started_by_api_key)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
@@ -683,9 +691,6 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
    * Se compara solo con un id presente: una API key no tiene usuario y un run público no tiene started_by, y
    * `null === null` hacía que cualquier API key viera, cancelara o reintentara esas ejecuciones.
    */
-  const startedByMe = (a: AuthContext, r: any) =>
-    (a.userId != null && r.started_by === a.userId) || (a.apiKeyId != null && r.started_by_api_key === a.apiKeyId);
-
   async function loadRun(a: AuthContext, id: string) {
     const r = await s.db.one<any>(`SELECT * FROM workflow_runs WHERE id = $1 AND tenant_id = $2`, [id, a.tenantId]);
     if (!r) throw notFound("Ejecución");
@@ -777,9 +782,14 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
     const a = A(req);
     requirePerm(a, "templates:manage");
     const cur = await loadWorkflow(a, req.params.id);
-    const active = await s.db.one(`SELECT 1 FROM workflow_runs WHERE workflow_id = $1 AND status IN ('running','waiting') LIMIT 1`, [cur.id]);
-    if (active) throw conflict("runs_in_progress", "Hay ejecuciones en curso: cancelalas o desactivá el workflow");
-    await s.db.query(`DELETE FROM workflows WHERE id = $1`, [cur.id]);
+    // Con el workflow bloqueado: un run que arranca a la vez (su INSERT toma un lock sobre esta fila) termina antes del
+    // chequeo y lo frena, en vez de que el borrado en cascada se lleve un run que quizá ya mandó un sobre.
+    await s.db.tx(async (t) => {
+      await t.query(`SELECT id FROM workflows WHERE id = $1 FOR UPDATE`, [cur.id]);
+      const active = await t.one(`SELECT 1 FROM workflow_runs WHERE workflow_id = $1 AND status IN ('running','waiting') LIMIT 1`, [cur.id]);
+      if (active) throw conflict("runs_in_progress", "Hay ejecuciones en curso: cancelalas o desactivá el workflow");
+      await t.query(`DELETE FROM workflows WHERE id = $1`, [cur.id]);
+    });
     await auditFromRequest(s.db, req, a, "workflow.deleted", { targetType: "workflow", targetId: cur.id, data: { name: cur.name } });
     return reply.code(204).send();
   });

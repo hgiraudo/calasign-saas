@@ -539,9 +539,10 @@ export interface NegotiationView {
 export const NegotiationCommentInput = z.object({
   body: z.string().trim().min(1).max(5000),
   quote: z.string().max(2000).nullable().optional(),
-  start: z.number().int().min(0).nullable().optional(),
-  end: z.number().int().min(0).nullable().optional(),
-});
+  // Tope: un offset fuera del rango de integer de Postgres daba 500.
+  start: z.number().int().min(0).max(10_000_000).nullable().optional(),
+  end: z.number().int().min(0).max(10_000_000).nullable().optional(),
+}).refine((c) => c.start == null || c.end == null || c.start <= c.end, { message: "start no puede ser mayor que end", path: ["end"] });
 export const NegotiationProposalInput = z.object({
   kind: z.enum(["variable", "clause"]),
   key: z.string().trim().min(1).max(200),

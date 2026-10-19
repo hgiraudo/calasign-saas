@@ -2,6 +2,7 @@
 // Autenticación con token Bearer por organización (guardado como hash). Desactivar un usuario le quita la
 // membresía, los grupos y las sesiones en la organización, pero sigue visible para el IdP (active: false).
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { revokeMemberAccess } from "../member-access";
 import { BUILTIN_ROLE_PERMISSIONS, CreateScimTokenInput, type ScimSettings, type ScimToken } from "@calasign/shared";
 import { z } from "zod";
 import { config } from "../../config";
@@ -157,6 +158,8 @@ async function setActive(db: Db, tenantId: string, userId: string, active: boole
     await db.query(`DELETE FROM group_members gm USING groups g WHERE gm.group_id = g.id AND g.tenant_id = $1 AND gm.user_id = $2`, [tenantId, userId]);
     await db.query(`DELETE FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [tenantId, userId]);
     await db.query(`DELETE FROM sessions WHERE tenant_id = $1 AND user_id = $2`, [tenantId, userId]);
+    // Como la baja desde la consola: API keys, invitaciones que mandó, tokens OAuth y secretos de sus apps de servicio.
+    await revokeMemberAccess(db, tenantId, userId);
   }
   await db.query(`UPDATE scim_users SET active = $3, updated_at = now() WHERE tenant_id = $1 AND user_id = $2`, [tenantId, userId, active]);
 }

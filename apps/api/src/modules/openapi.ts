@@ -60,6 +60,7 @@ import { OAUTH2_SECURITY_SCHEME, PLATFORM_OPS } from "./platform-openapi";
 import { AGREEMENTS_OPS } from "./agreements/openapi";
 import { CRM_OPS } from "./crm/openapi";
 import { LOWCODE_OPS } from "./lowcode-openapi";
+import { CONNECTOR_OPS } from "./connectors/openapi";
 import { requiredScope } from "./oauth-tokens";
 import { AI_OPS } from "./ai/openapi";
 import { DATA_OPS } from "./data/openapi";
@@ -1317,6 +1318,7 @@ export function buildOpenApi() {
     ...(AGREEMENTS_OPS as Op[]),
     ...(CRM_OPS as Op[]),
     ...LOWCODE_OPS,
+    ...(CONNECTOR_OPS as Op[]),
     ...(DATA_OPS as unknown as Op[]),
     ...(CERTSIGN_OPS as unknown as Op[]),
     ...WHITE_LABEL_OPS,

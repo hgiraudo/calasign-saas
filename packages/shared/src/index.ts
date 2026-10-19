@@ -18,3 +18,4 @@ export * from "./oneshot";
 export * from "./lowcode";
 export * from "./white-label";
 export * from "./devapi";
+export * from "./connectors";

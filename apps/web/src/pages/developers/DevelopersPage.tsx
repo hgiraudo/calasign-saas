@@ -27,6 +27,7 @@ import {
   TemplatesGuide,
   WebFormsGuide,
 } from "./content/Guides";
+import { HrContractsGuide } from "./content/HrContracts";
 import { WebhooksPage } from "./content/Webhooks";
 import { SyncGuide } from "./content/Sync";
 import { ErrorsPage } from "./content/Errors";
@@ -54,6 +55,7 @@ const PAGES: Record<string, () => JSX.Element> = {
   "guides/identity": IdentityGuide,
   "guides/payments": PaymentsGuide,
   "guides/crm": CrmGuide,
+  "guides/hr-contracts": HrContractsGuide,
   "guides/custom-domain": DomainGuide,
   "guides/branding": BrandingGuide,
   webhooks: WebhooksPage,

@@ -275,6 +275,14 @@ export async function enforceRoutePolicy(db: Db, req: FastifyRequest, a: AuthCon
     if (isRead && (url.startsWith("/v1/crm/runs") || url === "/v1/crm/providers")) return;
     return requirePerm(a, "settings:manage");
   }
+  // Conectores HRIS/CLM: enviar desde un registro y ver vínculos opera sobres; conexiones, búsqueda de registros
+  // (datos de RR. HH.) y flujos son ajustes.
+  if (url.startsWith("/v1/connectors/")) {
+    if (url.startsWith("/v1/connectors/oauth/") && url.endsWith("/callback")) return;
+    if (url === "/v1/connectors/flows/:id/send" || url.startsWith("/v1/connectors/links")) return requirePerm(a, "envelopes:create");
+    if (isRead && (url.startsWith("/v1/connectors/runs") || url === "/v1/connectors/providers")) return;
+    return requirePerm(a, "settings:manage");
+  }
   // Datos: la clave BYOK (y su política) solo la ven y administran quienes manejan los ajustes.
   if (url.startsWith("/v1/settings/byok") || url.startsWith("/v1/settings/sso/domains")) return requirePerm(a, "settings:manage");
   // Reportes: estadísticas de toda la organización.

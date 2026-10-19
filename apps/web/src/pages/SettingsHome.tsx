@@ -8,6 +8,7 @@ import { useTeamsText } from "../lib/i18n-teams";
 import { useScaleText } from "../lib/i18n-scale";
 import { usePlatformText } from "../lib/i18n-platform";
 import { useCrmText } from "../lib/i18n-crm";
+import { useConnText } from "../lib/i18n-connectors";
 import { useIdnText } from "../lib/i18n-identity";
 import { useEvidenceText } from "../lib/i18n-evidence";
 import { useBillingText } from "../lib/i18n-billing";
@@ -22,6 +23,7 @@ export function SettingsHomePage() {
   const sc = useScaleText();
   const pl = usePlatformText();
   const crm = useCrmText();
+  const cn = useConnText();
   const evt = useEvidenceText();
   const bl = useBillingText();
   const ai = useAiText();
@@ -45,6 +47,7 @@ export function SettingsHomePage() {
     { to: "/app/settings/storage", title: pl("card.storage"), desc: pl("card.storage.desc"), perm: "settings:manage" },
     { to: "/app/settings/domain", title: pl("card.domain"), desc: pl("card.domain.desc"), perm: "settings:manage" },
     { to: "/app/settings/crm", title: crm("card.crm"), desc: crm("card.crm.desc"), perm: "settings:manage" },
+    { to: "/app/settings/connectors", title: cn("card.title"), desc: cn("card.desc"), perm: "settings:manage" },
     { to: "/app/settings/identity", title: ti("settings.identity"), desc: ti("settings.identityDesc"), perm: "settings:manage" },
     // SSO solo lo configura el propietario (con SSO se puede entrar como cualquier miembro).
     ...(access && access.role !== "owner" ? [] : [{ to: "/app/settings/sso", title: ti("settings.sso"), desc: ti("settings.ssoDesc"), perm: "settings:manage" as Permission }]),

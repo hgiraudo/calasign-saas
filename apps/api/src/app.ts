@@ -41,6 +41,7 @@ import { aiRoutes } from "./modules/ai";
 import { agreementRoutes } from "./modules/agreements";
 import { crmRoutes } from "./modules/crm";
 import { lowcodeRoutes } from "./modules/lowcode";
+import { connectorRoutes } from "./modules/connectors";
 
 import { dataRoutes } from "./modules/data";
 import { certsignRoutes } from "./modules/certsign";
@@ -166,6 +167,7 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
   await agreementRoutes(app, services);
   await crmRoutes(app, services);
   await lowcodeRoutes(app, services);
+  await connectorRoutes(app, services);
   await dataRoutes(app, services);
   await certsignRoutes(app, services);
   await whiteLabelModule(app, services);

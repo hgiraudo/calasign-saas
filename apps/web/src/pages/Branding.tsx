@@ -10,10 +10,15 @@ const DEFAULT_COLOR = "#0b1f3a";
 
 export function BrandingPage() {
   const { t } = useI18n();
-  const { me } = useAuth();
+  const { me, refresh } = useAuth();
   const [b, setB] = useState<Branding | null>(null);
   const [color, setColor] = useState<string>("");
   const [footer, setFooter] = useState("");
+  const [orgName, setOrgName] = useState(me?.tenant.name ?? "");
+  const tenantName = me?.tenant.name;
+  useEffect(() => {
+    if (tenantName) setOrgName(tenantName);
+  }, [tenantName]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -36,7 +41,14 @@ export function BrandingPage() {
     setError(null);
     setSaved(false);
     try {
-      apply(await api<Branding>("/v1/settings/branding", { method: "PATCH", body: { primaryColor: color || null, emailFooter: footer.trim() || null } }));
+      const name = orgName.trim();
+      apply(
+        await api<Branding>("/v1/settings/branding", {
+          method: "PATCH",
+          body: { primaryColor: color || null, emailFooter: footer.trim() || null, ...(name && name !== me?.tenant.name ? { organizationName: name } : {}) },
+        }),
+      );
+      if (name && name !== me?.tenant.name) await refresh();
       setSaved(true);
     } catch (e) {
       setError(errorText(e));
@@ -74,7 +86,7 @@ export function BrandingPage() {
   };
 
   if (!b) return error ? <div className="page"><ErrorBox error={error} /></div> : <Spinner />;
-  const valid = color === "" || /^#[0-9a-fA-F]{6}$/.test(color);
+  const valid = (color === "" || /^#[0-9a-fA-F]{6}$/.test(color)) && orgName.trim().length !== 1;
   const preview = valid && color ? color : DEFAULT_COLOR;
 
   return (
@@ -88,6 +100,11 @@ export function BrandingPage() {
       <ErrorBox error={error} />
       <div className="brand-layout">
         <div className="card pad stack">
+          <label className="field">
+            <span>{t("brand.orgName")}</span>
+            <input value={orgName} maxLength={120} onChange={(e) => setOrgName(e.target.value)} />
+            <span className="muted small">{t("brand.orgNameHint")}</span>
+          </label>
           <label className="field">
             <span>{t("brand.color")}</span>
             <div className="row-wrap">

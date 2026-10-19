@@ -182,6 +182,8 @@ export const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
 export const UpdateBrandingInput = z.object({
   primaryColor: z.string().regex(HEX_COLOR, "color en formato #RRGGBB").optional().nullable(),
   emailFooter: z.string().max(500).optional().nullable(),
+  /** Nombre de la organización: lo ven los firmantes en la página de firma, los correos y el certificado. */
+  organizationName: z.string().trim().min(2, "mínimo 2 caracteres").max(120).optional(),
 });
 export type UpdateBrandingInput = z.infer<typeof UpdateBrandingInput>;
 

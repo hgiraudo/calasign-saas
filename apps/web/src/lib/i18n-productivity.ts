@@ -57,6 +57,8 @@ export const prodEs = {
 
   "brand.title": "Marca",
   "brand.intro": "Tu logo y tu color aparecen en la página de firma, en los correos y en el certificado de finalización.",
+  "brand.orgName": "Nombre de la organización",
+  "brand.orgNameHint": "Lo ven los firmantes en la página de firma, en los correos y en el certificado.",
   "brand.color": "Color principal",
   "brand.logo": "Logo",
   "brand.logoHint": "PNG, JPG o SVG, hasta 200 KB. En correos y certificado se usa PNG o JPG.",
@@ -128,6 +130,8 @@ export const prodPt: Record<ProdKey, string> = {
 
   "brand.title": "Marca",
   "brand.intro": "Seu logo e sua cor aparecem na página de assinatura, nos e-mails e no certificado de conclusão.",
+  "brand.orgName": "Nome da organização",
+  "brand.orgNameHint": "Aparece para os signatários na página de assinatura, nos e-mails e no certificado.",
   "brand.color": "Cor principal",
   "brand.logo": "Logo",
   "brand.logoHint": "PNG, JPG ou SVG, até 200 KB. Em e-mails e no certificado é usado PNG ou JPG.",
@@ -197,6 +201,8 @@ export const prodEn: Record<ProdKey, string> = {
 
   "brand.title": "Branding",
   "brand.intro": "Your logo and color appear on the signing page, in emails and on the certificate of completion.",
+  "brand.orgName": "Organization name",
+  "brand.orgNameHint": "Signers see it on the signing page, in emails and on the certificate.",
   "brand.color": "Primary color",
   "brand.logo": "Logo",
   "brand.logoHint": "PNG, JPG or SVG, up to 200 KB. Emails and the certificate use PNG or JPG.",

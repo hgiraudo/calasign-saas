@@ -144,6 +144,12 @@ const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
   fields_invalid: { "pt-BR": "Há campos com valores inválidos.", en: "Some fields have invalid values." },
   invalid_image: { "pt-BR": "A imagem da assinatura não é válida.", en: "The signature image isn't valid." },
   busy: { "pt-BR": "Estamos preparando outras cópias: tente de novo em alguns segundos.", en: "We're preparing other copies: try again in a few seconds." },
+  tsa_unavailable: {
+    "pt-BR": "A autoridade de carimbo do tempo não respondeu como esperado: tente novamente em alguns minutos.",
+    en: "The timestamping authority didn't respond as expected: try again in a few minutes.",
+  },
+  ai_signer_limit: { "pt-BR": "Você atingiu o máximo de consultas à IA para este documento.", en: "You've reached the maximum number of AI questions for this document." },
+  workflow_rate_limited: { "pt-BR": "Muitas execuções deste fluxo: tente mais tarde.", en: "Too many runs of this workflow: try again later." },
   reminded_recently: {
     "pt-BR": "Um lembrete foi enviado há poucos minutos: aguarde um pouco antes de enviar outro.",
     en: "A reminder was sent a few minutes ago: wait a bit before sending another one.",

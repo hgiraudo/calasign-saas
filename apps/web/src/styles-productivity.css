@@ -3,22 +3,21 @@
 /* Campos del firmante: número, desplegable, empresa, cargo, adjunto */
 .sfield-number, .sfield-dropdown, .sfield-company, .sfield-title, .sfield-attachment {
   background: rgba(219, 234, 254, 0.6);
-  border: 1px solid #93c5fd;
+  border: 1px solid #3b82f6;
 }
 .sfield-number.req:not(.filled), .sfield-dropdown.req:not(.filled), .sfield-company.req:not(.filled),
 .sfield-title.req:not(.filled), .sfield-attachment.req:not(.filled) {
-  border-color: #f59e0b;
+  border-color: #b45309;
   background: rgba(254, 243, 199, 0.7);
 }
 .sfield-number input, .sfield-company input, .sfield-title input, .sfield-dropdown select {
   border: 0; background: transparent; width: 100%; height: 100%; padding: 0 3px; border-radius: 0; font: inherit; min-width: 0;
 }
 .sfield-dropdown select { appearance: auto; cursor: pointer; }
-.sfield-number input:focus-visible, .sfield-company input:focus-visible, .sfield-title input:focus-visible,
-.sfield-dropdown select:focus-visible { outline: 2px solid var(--teal); outline-offset: 0; }
 .sfield-attach { justify-content: flex-start; }
 .attach-pick { display: flex; align-items: center; width: 100%; height: 100%; padding: 0 4px; cursor: pointer; font-weight: 600; color: #1e40af; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.attach-pick input { display: none; }
+/* Oculto a la vista pero enfocable con el teclado (con display:none no se podía adjuntar sin mouse). */
+.attach-pick input { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; opacity: 0; }
 .attach-chip { display: flex; align-items: center; gap: 4px; width: 100%; padding: 0 4px; min-width: 0; }
 .attach-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
 .attach-x { border: 0; background: transparent; cursor: pointer; font-size: 1.1em; line-height: 1; color: var(--muted); padding: 0 2px; }

@@ -14,6 +14,14 @@ a:focus-visible, [role="tab"]:focus-visible, .sfield:focus-visible {
 }
 .on-dark:focus-visible, .signer-bar :focus-visible, .topbar :focus-visible { outline-color: #5eead4; }
 h1[tabindex="-1"]:focus, h2[tabindex="-1"]:focus { outline: none; }
+/* Campos dentro del documento: el contorno va en la caja del campo (el del control quedaba recortado por overflow:hidden). */
+.sfield:focus-within { outline: 3px solid #0d9488; outline-offset: 2px; }
+.sfield input:focus-visible, .sfield select:focus-visible { outline: none; }
+.sfield ::placeholder { color: #475569; opacity: 1; }
+/* Inputs de archivo ocultos: el foco se ve en la zona que los contiene. */
+.dropzone:focus-within, .idv-upload:focus-within { outline: 3px solid #0d9488; outline-offset: 2px; }
+/* Barra de marca clara: el texto de botones y selector de idioma sigue al color de la barra (elegido por contraste). */
+.signer-bar .btn-ghost.on-dark, .signer-bar .locale-switch select { color: inherit; }
 .error-text { color: #b91c1c; margin: 0 0 6px; }
 
 /* ── Firma en persona ── */

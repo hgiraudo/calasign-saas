@@ -3,7 +3,7 @@ import { formatComputedLocal, useFieldLogic } from "../lib/logic";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useParams } from "react-router-dom";
 import type { CompleteSigningInput, Field, SignatureImageInput, SigningSession } from "@calasign/shared";
-import { AUTO_FIELD_TYPES, ATTACHMENT_MAX_BYTES, formatSigningDate, parseNumberLoose } from "@calasign/shared";
+import { AUTO_FIELD_TYPES, ATTACHMENT_MAX_BYTES, contrastText, formatSigningDate, parseNumberLoose } from "@calasign/shared";
 import { api, errorText, fetchResponse, HttpError, readBody } from "../lib/api";
 import { formatDate, formatDateTime, useI18n } from "../lib/i18n";
 import { DocumentView } from "../components/DocumentView";
@@ -19,7 +19,7 @@ import { PaymentGate, SignerPaymentAfterSign } from "../components/BillingExtras
 import { AiSignerAssist } from "../components/AiPanels";
 import { SignerCertificateStep } from "../components/CertSign";
 import { BrandFooter } from "../components/BrandFooter";
-import { setBrandTheme } from "../lib/white-label";
+import { brandTheme, setBrandTheme } from "../lib/white-label";
 
 type Adopted = SignatureImageInput & { dataUrl: string };
 
@@ -261,7 +261,9 @@ type SessionBranding = SigningSession["branding"];
 
 /** Estilo de la barra superior según el branding de la organización remitente. */
 function brandBarStyle(b: SessionBranding) {
-  return b?.primaryColor ? { background: b.primaryColor } : undefined;
+  if (!b?.primaryColor) return undefined;
+  // Texto legible sobre el color de la marca (el que fijó la marca, o blanco/oscuro según contraste).
+  return { background: b.primaryColor, color: brandTheme()?.theme.headerTextColor ?? contrastText(b.primaryColor) };
 }
 
 function BrandOrg({ org, branding }: { org?: string; branding?: SessionBranding }) {
@@ -300,13 +302,16 @@ function Final({ icon, title, text, ok, children }: { icon: string; title: strin
       <h1 ref={heading} tabIndex={-1}>
         {title}
       </h1>
-      <p className="muted">{text}</p>
+      {/* Anuncia los cambios de estado (p. ej. "sellando…" → "disponible") sin mover el foco. */}
+      <p className="muted" role="status" aria-live="polite">
+        {text}
+      </p>
       {children && <div className="final-actions">{children}</div>}
     </div>
   );
 }
 
-function EnvelopeIntro({ session }: { session: SigningSession }) {
+function EnvelopeIntro({ session, downloads }: { session: SigningSession; downloads?: ReactNode }) {
   const { t, locale } = useI18n();
   const e = session.envelope;
   return (
@@ -316,6 +321,7 @@ function EnvelopeIntro({ session }: { session: SigningSession }) {
       </p>
       <h1>{e.subject}</h1>
       {e.message && <p className="message-box">{e.message}</p>}
+      {downloads && <div className="row-wrap">{downloads}</div>}
       {session.recipient.telegramLink && (
         <p>
           <a className="btn btn-sm btn-telegram" href={session.recipient.telegramLink} target="_blank" rel="noopener noreferrer">
@@ -421,6 +427,8 @@ function SigningFlow({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
+  /** Campo señalado por el último error de "Finalizar" (aria-invalid + aria-describedby al texto del error). */
+  const [invalidId, setInvalidId] = useState<string | null>(null);
   const logic = useFieldLogic(session, values);
 
   const docOrder = useMemo(() => new Map(session.documents.map((d) => [d.id, d.position])), [session.documents]);
@@ -468,8 +476,8 @@ function SigningFlow({
     window.setTimeout(() => setFlash((x) => (x === f.id ? null : x)), 1600);
     if ((f.type === "signature" && !signature) || (f.type === "initials" && !initials)) {
       window.setTimeout(() => setPad(f.type as "signature" | "initials"), 450);
-    } else if (VALUE_TYPES.includes(f.type)) {
-      window.setTimeout(() => (el?.querySelector("input,select") as HTMLInputElement | null)?.focus({ preventScroll: true }), 450);
+    } else if (VALUE_TYPES.includes(f.type) || f.type === "checkbox" || f.type === "attachment") {
+      window.setTimeout(() => (el?.querySelector("input,select,button") as HTMLElement | null)?.focus({ preventScroll: true }), 450);
     }
   };
 
@@ -477,16 +485,20 @@ function SigningFlow({
     // Con un adjunto todavía subiendo, se completaba sin él y la subida fallaba después (el firmante lo creía adjuntado).
     if (uploading) return;
     if (pending.length) {
-      setError(t("sign.missing"));
-      goTo(pending[0]);
+      const f = pending[0];
+      setError(sx("missing.field", { label: f.label || t(`field.${f.type}`) }));
+      setInvalidId(f.id);
+      goTo(f);
       return;
     }
     if (badNumber) {
       const range = badNumber.min != null && badNumber.max != null ? sx("num.range", { min: badNumber.min, max: badNumber.max }) : "";
       setError(sx("num.invalid", { label: badNumber.label || "—", range }));
+      setInvalidId(badNumber.id);
       goTo(badNumber);
       return;
     }
+    setInvalidId(null);
     setBusy(true);
     setError(null);
     // También los propios que la lógica oculta: el servidor evalúa condiciones y fórmulas con los mismos valores que
@@ -590,6 +602,12 @@ function SigningFlow({
     }
   };
 
+  // Deja de marcarse apenas se completa (o se corrige el número), o si el error mostrado ya es otro.
+  const invalidNow =
+    error && invalidId && (pending.some((f) => f.id === invalidId) || badNumber?.id === invalidId) ? invalidId : null;
+  const errProps = (f: Field) =>
+    invalidNow === f.id ? { "aria-invalid": true as const, "aria-describedby": "sign-finish-error" } : {};
+
   const renderField = (f: Field, pageHeightPx: number) => {
     const hPx = f.height * pageHeightPx;
     const fontSize = Math.max(8, Math.min(hPx * 0.62, 28));
@@ -613,6 +631,7 @@ function SigningFlow({
           style={style}
           onClick={() => setPad(f.type as "signature" | "initials")}
           aria-label={`${f.label ?? t(`field.${f.type}`)}: ${adopted ? x("a11y.signed") : x("a11y.notSigned")}`}
+          {...errProps(f)}
         >
           {adopted ? (
             <img src={adopted.dataUrl} alt={t(`field.${f.type}`)} />
@@ -638,7 +657,9 @@ function SigningFlow({
             value={values[f.id] ?? ""}
             onChange={(e) => setValues((v) => ({ ...v, [f.id]: e.target.value }))}
             aria-label={f.label ?? t("field.dropdown")}
+            title={f.label ?? t("field.dropdown")}
             aria-required={f.required || undefined}
+            {...errProps(f)}
             style={{ fontSize }}
           >
             <option value="">{f.label ?? t("sign.choose")}</option>
@@ -668,6 +689,9 @@ function SigningFlow({
               <input
                 type="file"
                 accept="application/pdf,image/png,image/jpeg"
+                aria-label={f.label ?? t("sign.attachFile")}
+                aria-required={f.required || undefined}
+                {...errProps(f)}
                 disabled={uploading !== null}
                 onChange={(e) => {
                   const file = e.target.files?.[0];
@@ -689,7 +713,9 @@ function SigningFlow({
             onChange={(e) => setValues((v) => ({ ...v, [f.id]: e.target.value }))}
             placeholder={f.type === "number" && (f.min != null || f.max != null) ? `${placeholder} (${f.min ?? "…"}–${f.max ?? "…"})` : placeholder}
             aria-label={placeholder}
+            title={placeholder}
             aria-required={f.required || undefined}
+            {...errProps(f)}
             inputMode={f.type === "number" ? "decimal" : undefined}
             maxLength={2000}
             style={{ fontSize }}
@@ -706,6 +732,7 @@ function SigningFlow({
             onChange={(e) => setValues((v) => ({ ...v, [f.id]: e.target.checked ? "true" : "false" }))}
             aria-label={f.label ?? t("field.checkbox")}
             aria-required={f.required || undefined}
+            {...errProps(f)}
           />
         </label>
       );
@@ -754,11 +781,23 @@ function SigningFlow({
       </header>
 
       <main className="signer-main">
-        <EnvelopeIntro session={session} />
+        <EnvelopeIntro
+          session={session}
+          downloads={session.documents.map((d) => (
+            <SignerDownload
+              key={d.id}
+              path={`${base}/documents/${d.id}/file`}
+              name={d.name.replace(/\.pdf$/i, "")}
+              label={session.documents.length > 1 ? `${sx("doc.download")}: ${d.name}` : sx("doc.download")}
+              onAuth={() => api<SigningSession>(base).then(onDone, () => undefined)}
+            />
+          ))}
+        />
         <AiSignerAssist base={base} />
         <ErrorBox error={error} />
         {session.documents.map((d) => {
-          const docFields = session.fields.filter((f) => f.documentId === d.id);
+          // En el orden de lectura (página, arriba→abajo, izq→der): el orden de tabulación sigue al del documento.
+          const docFields = ordered.filter((f) => f.documentId === d.id);
           return (
             <DocumentView
               key={d.id}
@@ -779,7 +818,11 @@ function SigningFlow({
           ) : (
             <p className="small muted">{t("sign.progress", { done, total: required.length })}</p>
           )}
-          {error && <p className="small error-text">{error}</p>}
+          {error && (
+            <p id="sign-finish-error" className="small error-text">
+              {error}
+            </p>
+          )}
           <button id="finish-btn" type="button" className="btn btn-primary btn-block" disabled={busy || uploading !== null} onClick={finish}>
             {busy ? t("sign.finishing") : finishLabel}
           </button>

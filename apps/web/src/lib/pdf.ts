@@ -7,6 +7,7 @@ import { fetchArrayBuffer } from "./api";
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
 
 export type { PDFDocumentProxy };
+export { TextLayer } from "pdfjs-dist";
 
 const cache = new Map<string, Promise<PDFDocumentProxy>>();
 /** Vistas que usan cada PDF ahora: uno sin uso se conserva un rato (volver a abrirlo es instantáneo) pero no para siempre. */

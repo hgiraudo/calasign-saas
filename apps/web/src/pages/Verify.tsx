@@ -100,6 +100,13 @@ export function VerifyPage() {
           <ErrorBox error={error} />
         </div>
 
+        {/* Aviso del resultado para lectores de pantalla: región siempre presente (si se crea junto con el texto, no se
+            anuncia) y solo con el título, no la tabla. La cadena rota se anuncia aparte con role=alert. */}
+        <div role="status" aria-live="polite" className="sr-only">
+          {result && !(result.match && result.chain && !result.chain.ok)
+            ? `${result.match ? sx("verify.matchTitle") : sx("verify.noMatchTitle")}. ${result.match ? sx("verify.matchText") : sx("verify.noMatchText")}`
+            : ""}
+        </div>
         {result && (() => { const broken = Boolean(result.match && result.chain && !result.chain.ok); return (
           <div className="final card" data-testid={result.match ? "verify-match" : "verify-nomatch"} role={broken ? "alert" : undefined}>
             {/* Cadena de eventos rota: no se muestra "Documento válido ✓" aunque el PDF coincida. */}

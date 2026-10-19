@@ -2,7 +2,7 @@
 // La capa usa coordenadas en % (0..1 * 100) desde arriba a la izquierda.
 import { useEffect, useRef, useState, type PointerEvent as RPointerEvent, type ReactNode, type Ref } from "react";
 import type { PageSize } from "@calasign/shared";
-import type { PDFDocumentProxy } from "../lib/pdf";
+import { TextLayer, type PDFDocumentProxy } from "../lib/pdf";
 
 interface Props {
   pdf: PDFDocumentProxy | null;
@@ -19,6 +19,7 @@ interface Props {
 export function PdfPage({ pdf, pageIndex, size, overlay, onOverlayPointerDown, overlayRef, overlayClassName, label }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const textRef = useRef<HTMLDivElement>(null);
   const [widthPx, setWidthPx] = useState(0);
   const [visible, setVisible] = useState(false);
   const [rendered, setRendered] = useState(false);
@@ -61,12 +62,14 @@ export function PdfPage({ pdf, pageIndex, size, overlay, onOverlayPointerDown, o
     setRendered(false);
     const c = canvasRef.current;
     c?.getContext("2d")?.clearRect(0, 0, c.width, c.height);
+    textRef.current?.replaceChildren();
   }, [pdf]);
 
   useEffect(() => {
     if (!pdf || !visible || widthPx < 10) return;
     let cancelled = false;
     let task: { cancel: () => void; promise: Promise<unknown> } | null = null;
+    let text: TextLayer | null = null;
     const timer = window.setTimeout(async () => {
       try {
         const page = await pdf.getPage(pageIndex + 1);
@@ -82,15 +85,27 @@ export function PdfPage({ pdf, pageIndex, size, overlay, onOverlayPointerDown, o
         canvas.height = Math.floor(viewport.height);
         task = page.render({ canvasContext: ctx, viewport });
         await task.promise;
-        if (!cancelled) setRendered(true);
+        if (cancelled) return;
+        setRendered(true);
+        // Capa de texto de pdf.js (transparente, debajo de los campos): el texto se puede seleccionar y lo leen los
+        // lectores de pantalla (el canvas es solo una imagen).
+        const box = textRef.current;
+        if (!box) return;
+        const cssViewport = page.getViewport({ scale: widthPx / base.width });
+        box.replaceChildren();
+        box.style.setProperty("--scale-factor", String(cssViewport.scale));
+        text = new TextLayer({ textContentSource: page.streamTextContent(), container: box, viewport: cssViewport });
+        await text.render();
       } catch (e) {
-        if ((e as Error)?.name !== "RenderingCancelledException") console.warn("pdf render", e);
+        const name = (e as Error)?.name;
+        if (name !== "RenderingCancelledException" && name !== "AbortException") console.warn("pdf render", e);
       }
     }, 60);
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
       task?.cancel();
+      text?.cancel();
     };
   }, [pdf, pageIndex, widthPx, visible]);
 
@@ -99,12 +114,19 @@ export function PdfPage({ pdf, pageIndex, size, overlay, onOverlayPointerDown, o
       ref={wrapRef}
       className="pdf-page"
       style={{ aspectRatio: `${size.width} / ${size.height}` }}
+      role="group"
       aria-label={label}
       data-page={pageIndex}
     >
       <canvas ref={canvasRef} className="pdf-canvas" aria-hidden="true" />
+      <div ref={textRef} className="pdf-text" />
       {!rendered && <div className="pdf-placeholder">…</div>}
-      <div ref={overlayRef} className={`pdf-overlay ${overlayClassName ?? ""}`} onPointerDown={onOverlayPointerDown}>
+      {/* Sin manejador propio (firmante, vistas) la capa deja pasar el puntero al texto; los campos lo siguen recibiendo. */}
+      <div
+        ref={overlayRef}
+        className={`pdf-overlay ${onOverlayPointerDown ? "" : "passive"} ${overlayClassName ?? ""}`}
+        onPointerDown={onOverlayPointerDown}
+      >
         {widthPx > 0 && overlay?.({ widthPx })}
       </div>
     </div>

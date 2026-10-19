@@ -1,7 +1,7 @@
 // Página pública de un formulario web (/f/:slug): la persona deja nombre y correo y entra directo a firmar.
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import type { PublicWebForm, SubmitWebFormResponse } from "@calasign/shared";
+import { contrastText, type PublicWebForm, type SubmitWebFormResponse } from "@calasign/shared";
 import { api, errorText, HttpError } from "../lib/api";
 import { useI18n } from "../lib/i18n";
 import { useScaleText } from "../lib/i18n-scale";
@@ -77,7 +77,7 @@ export function PublicFormPage() {
     }
   };
 
-  const bar = form?.branding?.primaryColor ? { background: form.branding.primaryColor } : undefined;
+  const bar = form?.branding?.primaryColor ? { background: form.branding.primaryColor, color: contrastText(form.branding.primaryColor) } : undefined;
   return (
     <div className={`pubform ${embed ? "embed" : ""}`}>
       <header className="pubform-bar" style={bar}>
@@ -113,10 +113,14 @@ export function PublicFormPage() {
                   <input required type="email" maxLength={320} autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} />
                 </label>
                 {form.collectPhone && (
-                  <label className="field">
-                    <span>{st("pub.phone")}</span>
-                    <input required type="tel" pattern="\+[1-9][0-9]{6,14}" autoComplete="tel" placeholder="+57…" value={phone} onChange={(e) => setPhone(e.target.value.replace(/[\s()-]/g, ""))} />
-                  </label>
+                  <div className="field">
+                    <label className="field">
+                      <span>{st("pub.phone")}</span>
+                      <input required type="tel" pattern="\+[1-9][0-9]{6,14}" autoComplete="tel" placeholder="+57…" aria-describedby="pub-phone-hint" value={phone} onChange={(e) => setPhone(e.target.value.replace(/[\s()-]/g, ""))} />
+                    </label>
+                    {/* Fuera del label: si no, el formato se leía dos veces (en el nombre y en la descripción). */}
+                    <small id="pub-phone-hint" className="muted small">{st("pub.phoneHint")}</small>
+                  </div>
                 )}
                 {/* Trampa para bots: invisible para las personas. */}
                 <label className="hp" aria-hidden="true">

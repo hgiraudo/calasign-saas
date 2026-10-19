@@ -17,7 +17,9 @@ import { brandedOtpMessage } from "./white-label/otp-text";
 import { assertLinkCurrent, buildSession, recipientActor, resolveToken } from "./signing";
 
 export const SIGNER_COOKIE = "cs_signer";
+/** Sesión deslizante: cada uso la estira a 2 h desde ahora, pero nunca más de 8 h desde que se creó. */
 const SESSION_HOURS = 2;
+const SESSION_MAX_HOURS = 8;
 const CODE_TTL_MIN = 10;
 const RESEND_COOLDOWN_S = 30;
 const MAX_SENDS_PER_HOUR = 8;
@@ -30,7 +32,7 @@ const MAX_SENDS_PER_DAY = 20;
 const METHOD_CHANNEL = { otp_email: "email", otp_sms: "sms", otp_whatsapp: "whatsapp" } as const;
 /**
  * Estados del sobre en que el link admite pedir y validar el código. 'finalizing' y 'completed': quien ya firmó sigue
- * descargando la copia en curso (copy.pdf, también mientras se sella) o el PDF final, y su sesión dura 2 horas.
+ * descargando la copia en curso (copy.pdf, también mientras se sella) o el PDF final, y su sesión dura 2 horas desde el último uso.
  */
 const OTP_OPEN_STATUSES = ["sent", "awaiting_certificates", "finalizing", "completed"];
 const envelopeClosed = () => new AppError(410, "envelope_closed", "El sobre ya no está disponible");
@@ -72,10 +74,13 @@ export async function isSignerAuthenticated(db: Db, req: FastifyRequest, r: any)
   if (!r.auth_method || r.auth_method === "link") return true;
   const cookie = req.cookies?.[SIGNER_COOKIE];
   if (!cookie) return false;
-  const row = await db.one(`SELECT 1 FROM signer_sessions WHERE token_hash = $1 AND recipient_id = $2 AND expires_at > now()`, [
-    sha256Hex(cookie),
-    r.id,
-  ]);
+  // Valida y estira en un solo UPDATE; la presencial conserva el vencimiento que fijó el anfitrión.
+  const row = await db.one(
+    `UPDATE signer_sessions SET expires_at = CASE WHEN method = 'in_person' THEN expires_at
+       ELSE GREATEST(expires_at, LEAST(now() + interval '${SESSION_HOURS} hours', created_at + interval '${SESSION_MAX_HOURS} hours')) END
+     WHERE token_hash = $1 AND recipient_id = $2 AND expires_at > now() RETURNING 1`,
+    [sha256Hex(cookie), r.id],
+  );
   return Boolean(row);
 }
 
@@ -263,7 +268,8 @@ export async function otpRoutes(app: FastifyInstance, s: Services) {
       httpOnly: true,
       sameSite: "lax",
       secure: config.cookieSecure,
-      maxAge: SESSION_HOURS * 3600,
+      // La cookie dura el tope; el vencimiento real lo controla el servidor.
+      maxAge: SESSION_MAX_HOURS * 3600,
     });
     const fresh = await resolveToken(s.db, req.params.token);
     return buildSession(s.db, req.params.token, fresh.recipient, fresh.envelope, true);

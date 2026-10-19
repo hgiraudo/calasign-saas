@@ -7,6 +7,8 @@ import { useI18n } from "./i18n";
 const es = {
   "num.invalid": "{label}: escribí un número{range}",
   "num.range": " entre {min} y {max}",
+  "missing.field": "Completá los campos obligatorios. Falta: {label}",
+  "doc.download": "Descargar documento (PDF)",
   "otp.title": "Verificá tu identidad",
   "otp.text": "Para ver los documentos necesitamos confirmar que sos vos. Te enviamos un código de 6 dígitos a {dest}.",
   "otp.send": "Enviar código",
@@ -80,6 +82,8 @@ type Dict = Record<Key, string>;
 const ptBR: Dict = {
   "num.invalid": "{label}: digite um número{range}",
   "num.range": " entre {min} e {max}",
+  "missing.field": "Preencha os campos obrigatórios. Falta: {label}",
+  "doc.download": "Baixar documento (PDF)",
   "otp.title": "Confirme sua identidade",
   "otp.text": "Para ver os documentos precisamos confirmar que é você. Enviamos um código de 6 dígitos para {dest}.",
   "otp.send": "Enviar código",
@@ -150,6 +154,8 @@ const ptBR: Dict = {
 const en: Dict = {
   "num.invalid": "{label}: enter a number{range}",
   "num.range": " between {min} and {max}",
+  "missing.field": "Complete the required fields. Missing: {label}",
+  "doc.download": "Download document (PDF)",
   "otp.title": "Verify your identity",
   "otp.text": "To see the documents we need to confirm it's you. We'll send a 6-digit code to {dest}.",
   "otp.send": "Send code",

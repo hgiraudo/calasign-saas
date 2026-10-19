@@ -69,7 +69,9 @@ export function OtpGate({ session, base, onDone }: { session: SigningSession; ba
         <h1>{session.envelope.subject}</h1>
       </div>
       <h2>🔒 {sx("otp.title")}</h2>
-      <p className="muted">{sent ? sx("otp.sentTo", { dest }) : sx("otp.text", { dest })}</p>
+      <p className="muted" role="status" aria-live="polite">
+        {sent ? sx("otp.sentTo", { dest }) : sx("otp.text", { dest })}
+      </p>
       <ErrorBox error={error} />
       {sent ? (
         <form

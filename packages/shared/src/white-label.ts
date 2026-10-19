@@ -319,7 +319,10 @@ export function contrastText(hex: string): string {
     const s = c / 255;
     return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
   });
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.4 ? "#0f172a" : "#ffffff";
+  const l = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  // Se elige el de mayor contraste (con el umbral 0.4 de antes, colores medios quedaban con blanco por debajo de 4.5:1).
+  // 0.0089 = luminancia de #0f172a.
+  return (l + 0.05) / (0.0089 + 0.05) > 1.05 / (l + 0.05) ? "#0f172a" : "#ffffff";
 }
 
 export const FONT_STACK = 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';

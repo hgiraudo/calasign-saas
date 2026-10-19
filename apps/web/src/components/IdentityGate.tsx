@@ -203,6 +203,7 @@ function BuiltinCapture({
                   {done ? "✓" : "•"}
                 </span>
                 <span>{tx(`idv.step.${k}` as IdnKey)}</span>
+                {done && <span className="sr-only"> {tx("idv.stepDone")}</span>}
                 {done && previews[k] && <img src={previews[k]} alt="" className="idv-thumb" />}
               </button>
             </li>

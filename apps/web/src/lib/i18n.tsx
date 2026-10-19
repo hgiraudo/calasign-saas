@@ -691,6 +691,21 @@ export function formatDateTime(iso: string | null | undefined, locale: Locale): 
   }
 }
 
+/**
+ * Fecha sin hora (YYYY-MM-DD: vencimiento, vigencia…). Se arma en UTC y se muestra en UTC: con el mediodía UTC en la
+ * zona local, en UTC+13/+14 (Tonga, Kiribati, Nueva Zelanda en verano) se veía el día siguiente.
+ */
+export function formatDay(ymd: string | null | undefined, locale: Locale): string {
+  if (!ymd) return "—";
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd);
+  if (!m) return ymd;
+  try {
+    return new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeZone: "UTC" }).format(new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])));
+  } catch {
+    return ymd;
+  }
+}
+
 export function formatDate(iso: string | null | undefined, locale: Locale): string {
   if (!iso) return "—";
   try {

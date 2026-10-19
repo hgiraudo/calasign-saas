@@ -17,7 +17,7 @@ import type {
   SignerAiInfo,
 } from "@calasign/shared";
 import { api, errorText, uuid } from "../lib/api";
-import { formatDate, formatDateTime, useI18n } from "../lib/i18n";
+import { formatDateTime, formatDay, useI18n } from "../lib/i18n";
 import { parseAmountText } from "../lib/logic";
 import { useAiText } from "../lib/i18n-ai";
 import type { DraftField } from "./FieldEditor";
@@ -368,7 +368,7 @@ export function AiMetadataPanel({ envelopeId, completed }: { envelopeId: string;
   };
 
   const m = data?.metadata;
-  const fmt = (d: string | null) => (d ? formatDate(`${d}T12:00:00Z`, locale) : ai("meta.unknown"));
+  const fmt = (d: string | null) => (d ? formatDay(d, locale) : ai("meta.unknown"));
   const setM = (patch: Partial<ContractMetadata>) => edit && setEdit({ ...edit, m: { ...edit.m, ...patch } });
 
   return (

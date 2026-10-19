@@ -56,6 +56,13 @@ export function PdfPage({ pdf, pageIndex, size, overlay, onOverlayPointerDown, o
     return () => io.disconnect();
   }, []);
 
+  // Otro documento (cambió la URL): hasta que se dibuje, se muestra el marcador y no la página del anterior.
+  useEffect(() => {
+    setRendered(false);
+    const c = canvasRef.current;
+    c?.getContext("2d")?.clearRect(0, 0, c.width, c.height);
+  }, [pdf]);
+
   useEffect(() => {
     if (!pdf || !visible || widthPx < 10) return;
     let cancelled = false;

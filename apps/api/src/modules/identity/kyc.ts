@@ -214,10 +214,17 @@ async function finalizeVerification(db: Db, verificationId: string, result: IdvR
   return db.tx(async (t) => {
     const v0 = await t.one<any>(`SELECT * FROM identity_verifications WHERE id = $1`, [verificationId]);
     if (!v0) throw notFound("Verificación");
-    await lockEnvelope(t, v0.tenant_id, v0.envelope_id);
+    const e = await lockEnvelope(t, v0.tenant_id, v0.envelope_id);
     const v = await t.one<any>(`SELECT * FROM identity_verifications WHERE id = $1 FOR UPDATE`, [verificationId]);
     if (!["created", "pending"].includes(v.status)) return v.status as string;
     const r = await t.one<any>(`SELECT * FROM recipients WHERE id = $1`, [v.recipient_id]);
+    // El resultado llega tarde (webhook o consulta minutos después): si el sobre ya se anuló, rechazó o venció, o el
+    // destinatario fue reemplazado (delegó, lo reasignaron), la verificación se cancela sin sumar
+    // recipient.identity_verified / identity_failed a la evidencia de un sobre cerrado o de alguien que ya no firma.
+    if (e.status !== "sent" || !["sent", "viewed"].includes(r?.status)) {
+      await t.query(`UPDATE identity_verifications SET status = 'canceled', updated_at = now() WHERE id = $1`, [v.id]);
+      return "canceled";
+    }
     const settings = await getIdentitySettings(t, v.tenant_id);
 
     if (result.status === "pending" || result.status === "review") {

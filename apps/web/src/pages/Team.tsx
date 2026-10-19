@@ -90,7 +90,7 @@ export function TeamPage() {
 function MembersTab({ roles, manage }: { roles: RolesResponse | null; manage: boolean }) {
   const tt = useTeamsText();
   const { me } = useAuth();
-  const { access } = useAccess();
+  const { access, refresh: refreshAccess } = useAccess();
   const label = useRoleLabel();
   const [items, setItems] = useState<Member[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -110,6 +110,8 @@ function MembersTab({ roles, manage }: { roles: RolesResponse | null; manage: bo
     setError(null);
     try {
       await api(`/v1/members/${m.userId}`, { method: "PATCH", body: toAssignment(v) });
+      // El rol propio cambió: sin recargar los permisos, la pantalla seguía ofreciendo acciones que ya no tiene (403).
+      if (m.userId === me?.user.id) await refreshAccess();
       await load();
     } catch (e) {
       setError(errorText(e));

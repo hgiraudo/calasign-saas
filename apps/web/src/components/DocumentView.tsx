@@ -25,6 +25,8 @@ export function DocumentView({ doc, url, renderOverlay, onPagePointerDown, onPag
   useEffect(() => {
     let alive = true;
     setPdf(null);
+    // El error de la URL anterior no queda a la vista mientras carga (o después de cargar bien) la nueva.
+    setError(null);
     loadPdf(url)
       .then((p) => alive && setPdf(p))
       .catch((e) => alive && setError(errorText(e)));

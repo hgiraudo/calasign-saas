@@ -180,7 +180,17 @@ function StepConfig({ step, onChange, members, templates }: { step: WorkflowStep
               </div>
             ))}
             <div>
-              <button type="button" className="btn btn-sm" onClick={() => set({ fields: [...c.fields, { key: `campo${c.fields.length + 1}`, label: "Campo", type: "text", required: false }] })}>
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => {
+                  // Con `campo${cantidad + 1}`, quitar un campo y agregar otro repetía una clave existente: los dos campos
+                  // compartían el valor en el formulario público (escribir en uno llenaba el otro).
+                  let n = c.fields.length + 1;
+                  while (c.fields.some((f) => f.key === `campo${n}`)) n++;
+                  set({ fields: [...c.fields, { key: `campo${n}`, label: "Campo", type: "text", required: false }] });
+                }}
+              >
                 {ta("cfg.addField")}
               </button>
             </div>

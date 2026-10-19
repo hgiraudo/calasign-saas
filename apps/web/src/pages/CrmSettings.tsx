@@ -17,7 +17,7 @@ import {
 import { api, errorText } from "../lib/api";
 import { formatDateTime, useI18n, confirmAction } from "../lib/i18n";
 import { useCrmText } from "../lib/i18n-crm";
-import { ErrorBox, Spinner } from "../components/ui";
+import { ErrorBox, OrderInput, Spinner } from "../components/ui";
 
 type ProvidersResponse = { items: CrmProviderInfo[]; redirectUris: Record<string, string>; webhookUrl: string };
 
@@ -627,7 +627,7 @@ function MappingEditor({
                 {r.source === "contact" && (
                   <label className="field">
                     <span>{t("m.index")}</span>
-                    <input type="number" min={0} max={50} value={r.index ?? 0} onChange={(e) => setRole(i, { index: Number(e.target.value) })} />
+                    <OrderInput min={0} max={50} value={r.index ?? 0} onChange={(n) => setRole(i, { index: n })} />
                   </label>
                 )}
                 {r.source === "contact_role" && (

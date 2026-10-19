@@ -615,6 +615,14 @@ function RecipientsStep({ recipients, onChange }: { recipients: DraftRecipient[]
 
 // ───────────────────────────── Paso 4: revisar y enviar ─────────────────────────────
 
+/**
+ * Opciones fijas más el valor actual si no está entre ellas: un borrador creado por la API (1–60 días) con, p. ej.,
+ * recordatorios cada 14 días mostraba "Ninguno" pero al enviar se mandaba igual el 14.
+ */
+function withCurrent(options: number[], current: number | null): number[] {
+  return current == null || current === 1 || options.includes(current) ? options : [...options, current].sort((a, b) => a - b);
+}
+
 interface ReviewDraft {
   subject: string;
   message: string;
@@ -716,7 +724,7 @@ function ReviewStep({
             <select value={reminderEveryDays ?? ""} onChange={(e) => setReminderEveryDays(e.target.value ? Number(e.target.value) : null)}>
               <option value="">{sx("review.none")}</option>
               <option value="1">{sx("review.everyDay")}</option>
-              {[2, 3, 5, 7].map((n) => (
+              {withCurrent([2, 3, 5, 7], reminderEveryDays).map((n) => (
                 <option key={n} value={n}>
                   {sx("review.everyDays", { n })}
                 </option>
@@ -727,7 +735,7 @@ function ReviewStep({
             <span>{sx("review.expiryWarning")}</span>
             <select value={expiryWarningDays ?? ""} onChange={(e) => setExpiryWarningDays(e.target.value ? Number(e.target.value) : null)}>
               <option value="">{sx("review.none")}</option>
-              {[1, 2, 3, 5, 7].map((n) => (
+              {withCurrent([1, 2, 3, 5, 7], expiryWarningDays).map((n) => (
                 <option key={n} value={n}>
                   {sx("review.daysBefore", { n })}
                 </option>

@@ -631,7 +631,9 @@ export async function experienceRoutes(app: FastifyInstance, s: Services) {
     const del = await s.db.query(`DELETE FROM signer_sessions WHERE recipient_id = $1 AND method = 'in_person' RETURNING token_hash`, [r.id]);
     if (del.length) {
       await s.db.tx(async (t) => {
-        await lockEnvelope(t, e.tenant_id, e.id);
+        // La sesión se cierra igual; con el sobre anulado, rechazado o vencido no se suma el evento a su evidencia.
+        const cur = await lockEnvelope(t, e.tenant_id, e.id);
+        if (["voided", "declined", "expired"].includes(cur.status)) return;
         await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "recipient.in_person_ended", actor: recipientActor(req, r) });
       });
     }

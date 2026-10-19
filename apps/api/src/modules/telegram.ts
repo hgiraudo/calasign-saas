@@ -40,7 +40,9 @@ export async function telegramRoutes(app: FastifyInstance, s: Services) {
       return { ok: true };
     }
     const linked = await s.db.tx(async (t) => {
-      await t.query(`SELECT id FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
+      const cur = await t.one<any>(`SELECT status FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
+      // Sobre anulado, rechazado o vencido: ya no hay avisos que recibir y no se suman eventos a su evidencia.
+      if (["voided", "declined", "expired"].includes(cur?.status)) return false;
       // Con el sobre bloqueado, el link tiene que seguir vigente: una corrección del contacto (link nuevo, chat
       // desvinculado) o un reemplazo pudo confirmarse mientras tanto, y el chat de quien tenía el link anterior
       // recibiría los avisos (con el link nuevo) de la persona corregida.

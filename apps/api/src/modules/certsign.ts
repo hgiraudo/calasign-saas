@@ -416,6 +416,9 @@ export async function certsignRoutes(app: FastifyInstance, s: Services) {
     if (!check.ok) {
       await s.db.tx(async (t) => {
         await lockEnvelope(t, e.tenant_id, e.id);
+        // Con el sobre bloqueado se vuelve a mirar: entre el control de arriba y acá pasó la consulta de revocación (red);
+        // un sobre anulado o vencido mientras tanto no suma el rechazo a su evidencia.
+        await assertStillCurrent(t, sess);
         await appendEvent(t, {
           tenantId: e.tenant_id,
           envelopeId: e.id,

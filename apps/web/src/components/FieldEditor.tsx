@@ -336,14 +336,19 @@ export function FieldEditor({ envelopeId, documents, signers, fields, onChange, 
                     // Lo mismo con las condiciones de otros campos que comparan con una opción quitada o renombrada: el
                     // select de la condición mostraba "—" pero se guardaba el valor viejo, que nunca coincide (el campo
                     // quedaba oculto para siempre). Sin valor, el guardado avisa que la condición necesita uno.
-                    const known = new Set(options.map((o) => o.toLowerCase()));
-                    const staleCond = (c: FieldCondition) =>
-                      c.fieldId === sel.id && (c.operator === "equals" || c.operator === "not_equals") && !!c.value && !known.has(c.value.trim().toLowerCase());
+                    // Un cambio solo de mayúsculas ("si" → "Sí") sigue valiendo (la comparación no distingue), pero el valor
+                    // pasa a la opción tal como se escribe ahora: si no, el select de la condición mostraba "—".
+                    const known = new Map(options.map((o) => [o.toLowerCase(), o]));
+                    const fixCond = (c: FieldCondition): FieldCondition => {
+                      if (c.fieldId !== sel.id || (c.operator !== "equals" && c.operator !== "not_equals") || !c.value) return c;
+                      const v = known.get(c.value.trim().toLowerCase()) ?? null;
+                      return v === c.value ? c : { ...c, value: v };
+                    };
                     onChange(
                       fieldsRef.current.map((f) => {
                         if (f.id === sel.id) return { ...f, options, ...(stale ? { value: null, readOnly: false } : {}) };
-                        if (!f.conditions?.some(staleCond)) return f;
-                        return { ...f, conditions: f.conditions.map((c) => (staleCond(c) ? { ...c, value: null } : c)) };
+                        const conditions = f.conditions?.map(fixCond);
+                        return conditions?.some((c, i) => c !== f.conditions![i]) ? { ...f, conditions } : f;
                       }),
                     );
                   }}

@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import type { Agreement, AgreementFieldDef, AgreementStatus, AgreementView, Counterparty, ListAgreementsResponse } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
-import { formatDate, useI18n, confirmAction } from "../lib/i18n";
+import { formatDay, useI18n, confirmAction } from "../lib/i18n";
 import { useAccess } from "../lib/access";
 import { parseAmountText } from "../lib/logic";
 import { useAgrText } from "../lib/i18n-agreements";
@@ -298,7 +298,7 @@ export function AgreementsPage() {
                     <td>
                       <AgreementStatusBadge status={a.status} />
                     </td>
-                    <td className="small">{a.expiryDate ? formatDate(`${a.expiryDate}T12:00:00Z`, locale) : "—"}</td>
+                    <td className="small">{formatDay(a.expiryDate, locale)}</td>
                     <td className="small">{money(a.value, a.currency, locale)}</td>
                   </tr>
                 ))}

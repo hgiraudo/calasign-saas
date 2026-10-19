@@ -5,7 +5,7 @@ import { api, errorText } from "../lib/api";
 import { formatDateTime, useI18n } from "../lib/i18n";
 import { useAiText } from "../lib/i18n-ai";
 import { useAccess } from "../lib/access";
-import { ErrorBox, Spinner } from "../components/ui";
+import { ErrorBox, OrderInput, Spinner } from "../components/ui";
 
 export function AiSettingsPage() {
   const ai = useAiText();
@@ -102,11 +102,12 @@ export function AiSettingsPage() {
         <div className="ai-grid-3">
           <label>
             {ai("ai.budget")}
-            <input type="number" min={0} step={10000} value={budget} disabled={!canEdit} onChange={(e) => setBudget(Math.max(0, Math.round(Number(e.target.value))))} />
+            {/* Con Number(valor), borrar el campo lo dejaba en 0 (y guardar desactivaba el presupuesto sin querer). */}
+            <OrderInput min={0} max={1_000_000_000} step={10000} value={budget} disabled={!canEdit} onChange={setBudget} />
           </label>
           <label>
             {ai("ai.renewalDays")}
-            <input type="number" min={0} max={365} value={renewalDays} disabled={!canEdit} onChange={(e) => setRenewalDays(Math.max(0, Math.min(365, Math.round(Number(e.target.value)))))} />
+            <OrderInput min={0} max={365} value={renewalDays} disabled={!canEdit} onChange={setRenewalDays} />
           </label>
         </div>
         <div className="ai-usage" role="group" aria-label={ai("ai.usage", { month: s.usage.month, used, budget: s.monthlyTokenBudget })}>

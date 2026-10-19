@@ -147,7 +147,10 @@ export async function embedRoutes(app: FastifyInstance, s: Services) {
         );
     }
     await s.db.tx(async (t) => {
-      await t.query(`SELECT id FROM envelopes WHERE id = $1 FOR UPDATE`, [sess.envelope_id]);
+      const cur = await t.one<any>(`SELECT status FROM envelopes WHERE id = $1 FOR UPDATE`, [sess.envelope_id]);
+      // El código vale 5 minutos: si el sobre se anuló, rechazó o venció mientras tanto, el firmante ve el sobre cerrado
+      // pero no se suma el inicio de sesión a su evidencia.
+      if (["voided", "declined", "expired"].includes(cur?.status)) return;
       await appendEvent(t, {
         tenantId: sess.tenant_id,
         envelopeId: sess.envelope_id,

@@ -117,7 +117,7 @@ async function fullView(db: Db, n: any, me?: any): Promise<NegotiationView> {
   const rendered = renderNegotiation(n);
   const clauses = clausesFor(n);
   const usedClauses = n.source === "pdf" ? [] : analyzeTemplate(n.template_source, clauses).clauses;
-  return {
+  const view: NegotiationView = {
     negotiation: await summary(db, n),
     blocks: rendered.blocks,
     text: n.source === "pdf" ? cur?.text_snapshot ?? "" : rendered.text,
@@ -150,6 +150,18 @@ async function fullView(db: Db, n: any, me?: any): Promise<NegotiationView> {
     clauses: usedClauses.filter((slug) => clauses[slug] != null).map((slug) => ({ slug, title: slug, text: clauses[slug] })),
     ...(me ? { me: toParticipant(me) } : {}),
   };
+  // Vista de una contraparte (link público): de los demás participantes solo nombre y rol; ni su correo ni cuándo
+  // entraron ni el sobre (la página del firmante tampoco muestra a los otros destinatarios).
+  if (me) {
+    view.negotiation = {
+      ...view.negotiation,
+      envelopeId: null,
+      participants: view.negotiation.participants.map((x) =>
+        x.id === me.id ? x : { ...x, email: null, lastSeenAt: null, canPropose: false },
+      ),
+    } as typeof view.negotiation;
+  }
+  return view;
 }
 
 async function diffFor(db: Db, n: any, from: number, to: number) {

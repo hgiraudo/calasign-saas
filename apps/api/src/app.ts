@@ -117,6 +117,10 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
     if (pgCode === "23505") return reply.code(409).send({ error: { code: "conflict", message: "El recurso ya existe o cambió al mismo tiempo; reintentá" } });
     // Texto con el carácter NUL (\u0000): Postgres lo rechaza en columnas de texto (22021) y en jsonb (22P05). Lo manda
     // el cliente (p. ej. el motivo de un rechazo o un asunto): es un pedido inválido, no un error interno.
+    // La TSA externa falló (red, rechazo): no es un error interno de la plataforma.
+    if ((err as Error)?.name === "TsaError") {
+      return reply.code(502).send({ error: { code: "tsa_unavailable", message: "La autoridad de sellado de tiempo no respondió como se esperaba: reintentá en unos minutos" } });
+    }
     // Fechas que JS acepta y Postgres no (año 0, años de más de 4 dígitos): 400, no 500.
     if (pgCode === "22007" || pgCode === "22008" || pgCode === "22009") return reply.code(400).send({ error: { code: "invalid_date", message: "Fecha fuera de rango o inválida" } });
     if (pgCode === "22021" || pgCode === "22P05") return reply.code(400).send({ error: { code: "invalid_text", message: "El texto contiene caracteres no admitidos" } });

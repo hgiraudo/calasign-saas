@@ -315,7 +315,9 @@ const toItem = (r: any): BulkSendItem => ({
 export async function bulkRoutes(app: FastifyInstance, s: Services) {
   const auth = authenticate(s);
   const A = (req: FastifyRequest) => req.auth as AuthContext;
-  const big = { preHandler: auth, bodyLimit: 12 * 1024 * 1024 };
+  // onRequest: la credencial se comprueba antes de leer y parsear un cuerpo de hasta 12 MB (si no, sin credencial se
+  // podía hacer parsear muchos cuerpos grandes a la vez).
+  const big = { onRequest: auth, bodyLimit: 12 * 1024 * 1024 };
 
   app.get<{ Params: { id: string } }>("/v1/templates/:id/bulk-csv", { preHandler: auth }, async (req, reply) => {
     const tpl = await loadTemplateDetail(s.db, A(req).tenantId, req.params.id);

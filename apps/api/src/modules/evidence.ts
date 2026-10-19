@@ -53,7 +53,7 @@ export async function evidenceRoutes(app: FastifyInstance, s: Services) {
     return { items: rows.map(toTenantCertificate) };
   });
 
-  app.post("/v1/certificates", { preHandler: auth, bodyLimit: 3 * 1024 * 1024, config: { rateLimit: { max: 20, timeWindow: "1 minute" } } }, async (req, reply) => {
+  app.post("/v1/certificates", { onRequest: auth, bodyLimit: 3 * 1024 * 1024, config: { rateLimit: { max: 20, timeWindow: "1 minute" } } }, async (req, reply) => {
     const input = UploadCertificateInput.parse(req.body);
     const parsed = parseP12(Buffer.from(input.p12Base64, "base64"), input.password);
     if (new Date(parsed.leaf.validTo) < new Date()) throw badRequest("certificate_expired", "El certificado está vencido");
@@ -122,7 +122,7 @@ export async function evidenceRoutes(app: FastifyInstance, s: Services) {
 
   // ───────── Firma XML (facturación electrónica) ─────────
 
-  app.post("/v1/xml/sign", { preHandler: auth, bodyLimit: 6 * 1024 * 1024, config: { rateLimit: { max: 120, timeWindow: "1 minute" } } }, async (req) => {
+  app.post("/v1/xml/sign", { onRequest: auth, bodyLimit: 6 * 1024 * 1024, config: { rateLimit: { max: 120, timeWindow: "1 minute" } } }, async (req) => {
     const input = XmlSignInput.parse(req.body);
     const row = await loadTenantCertificate(s.db, req.auth!.tenantId, input.certificateId, "xml");
     const provider = await tenantCertificateProvider(s.db, row);
@@ -149,7 +149,7 @@ export async function evidenceRoutes(app: FastifyInstance, s: Services) {
     return res;
   });
 
-  app.post("/v1/xml/verify", { preHandler: auth, bodyLimit: 6 * 1024 * 1024 }, async (req) => {
+  app.post("/v1/xml/verify", { onRequest: auth, bodyLimit: 6 * 1024 * 1024 }, async (req) => {
     const input = XmlVerifyInput.parse(req.body);
     return verifyXml(input.xml);
   });

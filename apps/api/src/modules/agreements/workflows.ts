@@ -62,6 +62,7 @@ interface RunContext {
 }
 
 /** Correo de un destinatario que es exactamente una variable ({{cliente.email}}). */
+const MAX_PUBLIC_RUNS_PER_HOUR = 60;
 const SELF_SERVICE_EMAIL = /^\s*\{\{\s*([A-Za-z_@][\w.@]*)\s*\}\}\s*$/;
 
 type StepResult =
@@ -457,6 +458,22 @@ async function executeStep(d: Deps, run: any, step: WorkflowStep, index: number)
             if (e instanceof AppError) throw new StepFailure(e.message);
             throw e;
           });
+          // Ejecución iniciada desde el link público: un destinatario cuyo correo o teléfono sale de datos que escribió
+          // quien completó el formulario queda como autorregistrado (sin invitaciones ni recordatorios hasta validar su
+          // correo), como en los formularios web. Si no, el link servía para mandar invitaciones (correo o WhatsApp
+          // pago) con textos elegidos a cualquier dirección.
+          if (!run.started_by && !run.started_by_api_key) {
+            const typed = step.config.recipients.flatMap((r, i) =>
+              !r.cc && (/\{\{/.test(r.email ?? "") || /\{\{/.test(r.phone ?? "")) ? [recipients[i]] : [],
+            );
+            for (const r of typed) {
+              await t.query(
+                `UPDATE recipients SET self_registered = true
+                  WHERE envelope_id = $1 AND (($2::text IS NOT NULL AND lower(email) = $2) OR ($2::text IS NULL AND phone = $3))`,
+                [envelopeId, r.email, r.phone],
+              );
+            }
+          }
           c.envelopes = { ...(c.envelopes ?? {}), [step.config.envelopeKey]: { envelopeId } };
           c.selfServiceSigners = { ...(c.selfServiceSigners ?? {}), [envelopeId]: selfService };
           return { envelopeId };
@@ -639,7 +656,17 @@ async function createRun(
   const token = steps.some((st) => st.type === "collect_data") ? randomToken() : null;
   await db.tx(async (t) => {
     // Si lo borraron después de cargarlo, 404 (antes: violación de FK, 500).
-    if (!(await t.one(`SELECT 1 FROM workflows WHERE id = $1 FOR KEY SHARE`, [wf.id]))) throw notFound("Workflow");
+    const isPublic = !p.startedBy && !p.startedByApiKey;
+    if (!(await t.one(`SELECT 1 FROM workflows WHERE id = $1 ${isPublic ? "FOR UPDATE" : "FOR KEY SHARE"}`, [wf.id]))) throw notFound("Workflow");
+    // Link público: como los formularios web, un tope de ejecuciones por hora (cada una puede mandar sobres y consume
+    // la cuota del plan).
+    if (isPublic) {
+      const recent = await t.one<{ n: number }>(
+        `SELECT count(*)::int AS n FROM workflow_runs WHERE workflow_id = $1 AND started_by IS NULL AND started_by_api_key IS NULL AND created_at > now() - interval '1 hour'`,
+        [wf.id],
+      );
+      if ((recent?.n ?? 0) >= MAX_PUBLIC_RUNS_PER_HOUR) throw new AppError(429, "workflow_rate_limited", "Demasiadas ejecuciones de este workflow: probá más tarde");
+    }
     await t.query(
       `INSERT INTO workflow_runs (id, tenant_id, workflow_id, steps, context, started_by, started_by_label, public_token_hash, public_token_enc, started_by_api_key)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,

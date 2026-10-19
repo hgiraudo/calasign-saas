@@ -286,6 +286,21 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
 
   // ───────── Firmante: resumen y preguntas ─────────
 
+  /**
+   * Tope por firmante: un link (o uno reenviado) con muchas IP podía gastar todo el presupuesto mensual de IA de la
+   * organización y llenar la evidencia del sobre de eventos ai.*.
+   */
+  const assertSignerAiQuota = async (envelopeId: string, recipientId: string) => {
+    const q = await s.db.one<{ day: number; total: number }>(
+      `SELECT count(*) FILTER (WHERE created_at > now() - interval '1 day')::int AS day, count(*)::int AS total
+         FROM ai_usage WHERE envelope_id = $1 AND actor_type = 'recipient' AND actor_id = $2`,
+      [envelopeId, recipientId],
+    );
+    if ((q?.day ?? 0) >= 30 || (q?.total ?? 0) >= 100) {
+      throw new AppError(429, "ai_signer_limit", "Llegaste al máximo de consultas a la IA para este documento");
+    }
+  };
+
   const signerGate = async (req: FastifyRequest & { params: { token: string } }) => {
     const { recipient: r, envelope: e } = await resolveToken(s.db, req.params.token);
     const t = await s.db.one<any>(`SELECT ai_enabled FROM tenants WHERE id = $1`, [e.tenant_id]);
@@ -305,6 +320,7 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
     const { r, e, enabled, blocked, locale } = await signerGate(req);
     if (blocked) throw new AppError(403, "identity_required", "Hace falta verificar tu identidad para continuar");
     if (!enabled) throw new AppError(403, "ai_disabled", "La asistencia con IA no está disponible para este documento");
+    await assertSignerAiQuota(e.id, r.id);
     const docs = await loadEnvelopeDocs(s.db, s.blobs, e.id);
     const key = `${e.id}|${locale}|${docs.map((d) => d.id).join(",")}`;
     const hit = summaryCache.get(key);
@@ -344,6 +360,7 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
     const { r, e, enabled, blocked, locale } = await signerGate(req);
     if (blocked) throw new AppError(403, "identity_required", "Hace falta verificar tu identidad para continuar");
     if (!enabled) throw new AppError(403, "ai_disabled", "La asistencia con IA no está disponible para este documento");
+    await assertSignerAiQuota(e.id, r.id);
     await assertAiAvailable(s.db, e.tenant_id, { reserve: false });
     const docs = await loadEnvelopeDocs(s.db, s.blobs, e.id);
     const rid = await assertAiAvailable(s.db, e.tenant_id, { estimate: inputEstimate(docs) });

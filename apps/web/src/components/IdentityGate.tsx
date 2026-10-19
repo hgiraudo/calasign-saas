@@ -5,6 +5,7 @@ import type { IdentityStartResponse, IdvCaptureKind, SigningIdentity, SigningSes
 import { api, errorText } from "../lib/api";
 import { useIdnText, type IdnKey } from "../lib/i18n-identity";
 import { ErrorBox, Spinner } from "./ui";
+import { isEmbedded, tokenOfBase } from "../lib/embed";
 
 const PROVIDER_NAMES: Record<string, string> = { mock: "CalaSign", truora: "Truora", veriff: "Veriff" };
 const REASONS = ["name_mismatch", "document_number_mismatch", "document_unreadable", "face_mismatch", "liveness_failed", "document_front_back_identical"];
@@ -126,7 +127,9 @@ export function IdentityGate({ session, base, onDone }: { session: SigningSessio
           <h3>{tx("idv.redirectTitle", { provider })}</h3>
           <p className="muted">{tx("idv.redirectText", { provider })}</p>
           {idn.redirectUrl && (
-            <a className="btn btn-primary btn-block" href={idn.redirectUrl} rel="noopener">
+            // Embebido, el proveedor se abre en otra pestaña (muchos no cargan en un iframe y la vuelta perdía el modo
+            // embebido); esta página sigue consultando el resultado.
+            <a className="btn btn-primary btn-block" href={idn.redirectUrl} rel="noopener" target={isEmbedded(tokenOfBase(base)) ? "_blank" : undefined}>
               {tx("idv.redirectGo", { provider })}
             </a>
           )}

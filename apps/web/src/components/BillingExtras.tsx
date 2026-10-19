@@ -15,6 +15,7 @@ import { useI18n } from "../lib/i18n";
 import { formatMoney, useBillingText } from "../lib/i18n-billing";
 import { parseAmountText } from "../lib/logic";
 import { ErrorBox, Spinner } from "./ui";
+import { openProvider, tokenOfBase } from "../lib/embed";
 
 interface PaymentResponse {
   payment: EnvelopePayment | null;
@@ -289,7 +290,9 @@ function SignerPaymentPanel({ base, info, onPaid }: { base: string; info: Signer
   const { locale } = useI18n();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const returned = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("payment") : null;
+  // Embebido, el pago se abre en otra pestaña: se consulta igual que al volver del proveedor.
+  const [openedTab, setOpenedTab] = useState(false);
+  const returned = openedTab ? "success" : typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("payment") : null;
   // onPaid suele venir como función inline: con una ref, el sondeo no se reinicia (ni reinicia su tope) en cada render.
   const onPaidRef = useRef(onPaid);
   onPaidRef.current = onPaid;
@@ -326,7 +329,10 @@ function SignerPaymentPanel({ base, info, onPaid }: { base: string; info: Signer
     setError(null);
     try {
       const r = await api<{ url: string }>(`${base}/payment/checkout`, { method: "POST" });
-      window.location.assign(r.url);
+      if (openProvider(r.url, tokenOfBase(base)) === "tab") {
+        setOpenedTab(true);
+        setBusy(false);
+      }
     } catch (e) {
       setError(errorText(e));
       setBusy(false);

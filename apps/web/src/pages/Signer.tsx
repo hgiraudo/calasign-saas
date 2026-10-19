@@ -3,7 +3,7 @@ import { formatComputedLocal, useFieldLogic } from "../lib/logic";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useParams } from "react-router-dom";
 import type { CompleteSigningInput, Field, SignatureImageInput, SigningSession } from "@calasign/shared";
-import { AUTO_FIELD_TYPES, ATTACHMENT_MAX_BYTES } from "@calasign/shared";
+import { AUTO_FIELD_TYPES, ATTACHMENT_MAX_BYTES, formatSigningDate, parseNumberLoose } from "@calasign/shared";
 import { api, errorText, fetchResponse, HttpError, readBody } from "../lib/api";
 import { formatDate, formatDateTime, useI18n } from "../lib/i18n";
 import { DocumentView } from "../components/DocumentView";
@@ -439,6 +439,15 @@ function SigningFlow({
   const required = interactive.filter((f) => f.required || f.type === "signature" || f.type === "initials");
   const done = required.filter(filled).length;
   const pending = required.filter((f) => !filled(f));
+  // Números que la API rechazaría (no es número o fuera de rango): antes contaban como completos, el envío daba 422
+  // y no se sabía cuál era.
+  const badNumber = interactive.find((f) => {
+    if (f.type !== "number") return false;
+    const v = (values[f.id] ?? "").trim();
+    if (!v) return false;
+    const n = parseNumberLoose(v);
+    return n === null || (f.min != null && n < f.min) || (f.max != null && n > f.max);
+  });
 
   const goTo = (f: Field | undefined) => {
     if (!f) {
@@ -464,10 +473,20 @@ function SigningFlow({
       goTo(pending[0]);
       return;
     }
+    if (badNumber) {
+      const range = badNumber.min != null && badNumber.max != null ? sx("num.range", { min: badNumber.min, max: badNumber.max }) : "";
+      setError(sx("num.invalid", { label: badNumber.label || "—", range }));
+      goTo(badNumber);
+      return;
+    }
     setBusy(true);
     setError(null);
+    // También los propios que la lógica oculta: el servidor evalúa condiciones y fórmulas con los mismos valores que
+    // la página (si no, con un campo oculto que aportaba a una fórmula el servidor exigía un campo que acá no se veía).
+    // Los ocultos no se guardan (el servidor los deja vacíos).
+    const sendable = ordered.filter((f) => !isAuto(f) && !f.formula);
     const body: CompleteSigningInput = {
-      fields: interactive.map((f) => ({
+      fields: sendable.map((f) => ({
         id: f.id,
         value:
           f.type === "signature"
@@ -526,7 +545,7 @@ function SigningFlow({
         ? recipient.name
         : f.type === "email"
           ? (recipient.email ?? "")
-          : formatDate(new Date().toISOString(), locale);
+          : formatSigningDate(new Date(), recipient.locale);
 
   const uploadAttachment = async (f: Field, file: File) => {
     if (file.size > ATTACHMENT_MAX_BYTES) {

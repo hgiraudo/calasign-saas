@@ -4,10 +4,48 @@ import { useEffect, useRef } from "react";
 import type { EmbedMessage, SigningEmbedInfo, SigningSession } from "@calasign/shared";
 import "./embed.css";
 
-export function isEmbedded(): boolean {
+const embedKey = (token: string) => `cs-embed:${token}`;
+
+/**
+ * Modo embebido: ?embed=1, recordado por pestaña y por link. Al volver de un pago o de la verificación de identidad
+ * (el proveedor redirige a /s/:token?payment=… sin embed=1) la página seguía en el iframe pero con todo el marco y
+ * sin avisar al integrador.
+ */
+export function isEmbedded(token?: string): boolean {
   if (typeof window === "undefined") return false;
-  return new URLSearchParams(window.location.search).get("embed") === "1";
+  if (new URLSearchParams(window.location.search).get("embed") === "1") {
+    if (token)
+      try {
+        window.sessionStorage.setItem(embedKey(token), "1");
+      } catch {
+        /* sin almacenamiento */
+      }
+    return true;
+  }
+  if (token)
+    try {
+      if (window.sessionStorage.getItem(embedKey(token)) === "1") return true;
+    } catch {
+      /* sin almacenamiento */
+    }
+  return false;
 }
+
+/**
+ * Abre la página de un proveedor (pago, verificación de identidad). Embebido, en otra pestaña: muchos proveedores no
+ * cargan dentro de un iframe; la página del firmante sigue consultando hasta ver el resultado.
+ */
+export function openProvider(url: string, token: string): "tab" | "same" {
+  if (isEmbedded(token)) {
+    window.open(url, "_blank", "noopener");
+    return "tab";
+  }
+  window.location.assign(url);
+  return "same";
+}
+
+/** Token de la base de la API del firmante (/v1/signing/<token>). */
+export const tokenOfBase = (base: string) => decodeURIComponent(base.split("/")[3] ?? "");
 
 function post(type: EmbedMessage["type"], session: SigningSession | null) {
   const msg: EmbedMessage = {
@@ -25,7 +63,7 @@ function post(type: EmbedMessage["type"], session: SigningSession | null) {
 
 /** Puente con el integrador. Llamar siempre (antes de cualquier return) en la página del firmante. */
 export function useEmbedBridge(token: string, session: SigningSession | null, invalid: boolean) {
-  const embedded = isEmbedded();
+  const embedded = isEmbedded(token);
   const sent = useRef<Set<string>>(new Set());
   // Promesa (no el valor): si la sesión ya llega firmada (recarga del iframe), la redirección esperaba 1,2 s y leía
   // returnUrl antes de que respondiera /embed, y el firmante quedaba sin volver al integrador.
@@ -53,6 +91,7 @@ export function useEmbedBridge(token: string, session: SigningSession | null, in
       return;
     }
     if (!session) return;
+    const sess = session;
     once("viewed");
     const st = session.recipient.status;
     // Con firma con certificado, "signed" es solo la etapa electrónica: falta el paso del Firmador. Avisar el fin y
@@ -62,7 +101,25 @@ export function useEmbedBridge(token: string, session: SigningSession | null, in
     let done: "signing_complete" | "declined" | null = null;
     if ((st === "signed" || st === "completed") && !certPending) done = "signing_complete";
     if (st === "declined") done = "declined";
-    if (done && once(done)) {
+    if (done === "signing_complete" && !sent.current.has(done)) {
+      // Con un pago posterior a la firma todavía pendiente, el firmante tiene que pagar acá: el aviso (y la vuelta al
+      // returnUrl) espera. Al confirmarse el pago la sesión se recarga y esto se vuelve a evaluar.
+      let cancelled = false;
+      fetch(`/v1/signing/${encodeURIComponent(token)}/payment`, { headers: { Accept: "application/json" } })
+        .then((r) => (r.ok ? (r.json() as Promise<{ canPay?: boolean }>) : null))
+        .catch(() => null)
+        .then((p) => {
+          if (cancelled || p?.canPay) return;
+          finish("signing_complete");
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+    if (done) finish(done);
+
+    function finish(done: "signing_complete" | "declined") {
+      if (!once(done)) return;
       // Dar tiempo a que el contenedor reciba el mensaje antes de navegar.
       const pending = returnUrl.current;
       setTimeout(async () => {
@@ -77,11 +134,11 @@ export function useEmbedBridge(token: string, session: SigningSession | null, in
         // Solo http(s): un returnUrl "javascript:" ejecutaría código en el origen de CalaSign con el token del firmante.
         if (u.protocol !== "https:" && u.protocol !== "http:") return;
         u.searchParams.set("event", done!);
-        u.searchParams.set("envelopeId", session.envelope.id);
+        u.searchParams.set("envelopeId", sess.envelope.id);
         window.location.assign(u.toString());
       }, 1200);
     }
-  }, [embedded, session, invalid]);
+  }, [embedded, session, invalid, token]);
 
   return embedded;
 }

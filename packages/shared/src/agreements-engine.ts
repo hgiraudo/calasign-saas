@@ -86,7 +86,20 @@ const RE_HEADING = /^(#{1,3})\s+(.*)$/;
 const RE_UL = /^\s*[-•]\s+(.*)$/;
 const RE_OL = /^\s*\d+[.)]\s+(.*)$/;
 const RE_ROW = /^\s*\|(.*)\|\s*$/;
-const RE_SEP = /^\s*\|?(\s*:?-{3,}:?\s*\|)+\s*:?-{0,}:?\s*\|?\s*$/;
+/**
+ * Fila separadora de tabla (|---|:---:|). Sin regex: la anterior, con varios \s* seguidos, tardaba tiempo cúbico con
+ * "|---|" seguido de muchos espacios (minutos con una propuesta de la contraparte).
+ */
+function isSepRow(raw: string): boolean {
+  const s = raw.trim();
+  if (!s.includes("|") || !s.includes("-")) return false;
+  const cells = s.replace(/^\|/, "").replace(/\|$/, "").split("|");
+  // Cada celda recortada primero: con \s* a los dos lados de partes opcionales la regex volvía a ser cuadrática.
+  return cells.every((raw, i) => {
+    const c = raw.trim();
+    return /^:?-{3,}:?$/.test(c) || (i === cells.length - 1 && cells.length > 1 && /^:?-*:?$/.test(c));
+  });
+}
 
 // ───────────────────────────── Condiciones ─────────────────────────────
 
@@ -123,14 +136,17 @@ function tokenizeInline(src: string): Tok[] {
     if (buf) out.push({ k: "text", v: buf });
     buf = "";
   };
+  let noClose = false;
   for (let i = 0; i < src.length; i++) {
     const c = src[i];
     if (c === "\\" && i + 1 < src.length && "*{}\\|#".includes(src[i + 1])) {
       buf += src[++i];
       continue;
     }
-    if (c === "{" && src[i + 1] === "{") {
+    if (c === "{" && src[i + 1] === "{" && !noClose) {
       const end = src.indexOf("}}", i + 2);
+      // Sin "}}" de acá en adelante no hay más etiquetas: no se vuelve a buscar (era cuadrático con "{{a}" repetido).
+      if (end === -1) noClose = true;
       if (end !== -1) {
         flush();
         out.push({ k: "tag", v: src.slice(i + 2, end).trim() });
@@ -283,7 +299,7 @@ export function parseTemplate(source: string): Node[] {
         out.push({ k: "heading", level: m[1].length as 1 | 2 | 3, inl: parseInline(m[2], ln) });
         continue;
       }
-      if (RE_SEP.test(raw) && raw.includes("-")) {
+      if (isSepRow(raw)) {
         endPara();
         const prev = out[out.length - 1];
         if (prev?.k === "row") prev.header = true;
@@ -358,7 +374,9 @@ type Scope = Map<string, unknown>;
 
 /** Tope de nodos evaluados (incluye cada vuelta de {{#each}} y las cláusulas citadas) y de texto generado. */
 export const MAX_RENDER_WORK = 20_000;
-export const MAX_RENDER_CHARS = 2_000_000;
+// 300 000 caracteres son unas 100 páginas: el PDF se arma en el hilo principal y más texto lo bloqueaba.
+export const MAX_RENDER_CHARS = 300_000;
+export const MAX_MARKS = 500;
 
 export function renderTemplate(source: string, data: unknown, opts: RenderOptions = {}): RenderResult {
   const missing = new Set<string>();
@@ -467,6 +485,9 @@ export function renderTemplate(source: string, data: unknown, opts: RenderOption
         pushText(out, v, style);
       }
       else if (x.t === "mark") {
+        charge(1);
+        // Cada marca es un campo del sobre: el mismo tope que al cargar campos.
+        if (marks.length >= MAX_MARKS) throw new TemplateSyntaxError(`el documento tiene demasiadas marcas de firma o campos (máximo ${MAX_MARKS})`, 0);
         marks.push({ kind: x.kind, role: x.role });
         out.push({ mark: x.kind, role: x.role });
       } else if (x.t === "if") out.push(...evalInline(evalCond(x.cond, scopes) ? x.then : x.else, scopes, style));
@@ -516,6 +537,7 @@ export function renderTemplate(source: string, data: unknown, opts: RenderOption
         if (last?.type === "list" && last.ordered === n.ordered) last.items.push(runs);
         else blocks.push({ type: "list", ordered: n.ordered, items: [runs] });
       } else if (n.k === "row") {
+        charge(n.cells.length); // celdas vacías también ocupan memoria
         const cells = n.cells.map((c) => evalInline(c, scopes));
         const last = blocks[blocks.length - 1];
         if (n.header) {

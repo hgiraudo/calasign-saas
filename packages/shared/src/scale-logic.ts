@@ -174,6 +174,8 @@ export function evaluateFormula(src: string, lookup: (label: string) => number |
 export function formatComputed(n: number | null): string | null {
   if (n === null) return null;
   const r = Math.round(n * 100) / 100;
+  // Fuera de rango ("Infinity", "1e+21") no es un número que se pueda volver a leer ni estampar.
+  if (!Number.isFinite(r) || Math.abs(r) >= 1e15) return null;
   return String(Object.is(r, -0) ? 0 : r);
 }
 

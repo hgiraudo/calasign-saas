@@ -1,6 +1,6 @@
 // Experiencia del firmante: autenticado por el token del link, sin cuenta.
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { AUTO_FIELD_TYPES, CompleteSigningInput, DeclineInput, type SigningSession } from "@calasign/shared";
+import { AUTO_FIELD_TYPES, CompleteSigningInput, DeclineInput, formatSigningDate, type SigningSession } from "@calasign/shared";
 import { appendEvent, type Actor } from "../infra/evidence";
 import { enqueue } from "../infra/queue";
 import type { Db } from "../infra/db";
@@ -53,13 +53,7 @@ export function recipientActor(req: FastifyRequest, r: any): Actor {
   return { type: "recipient", id: r.id, label: r.email ? `${r.name} <${r.email}>` : `${r.name} (${r.phone ?? "sin contacto"})`, ip, userAgent };
 }
 
-export function formatSigningDate(d: Date, locale: string) {
-  // Fecha de firma en UTC; zona horaria del tenant en Fase 2.
-  const dd = String(d.getUTCDate()).padStart(2, "0");
-  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const yyyy = d.getUTCFullYear();
-  return locale === "en" ? `${yyyy}-${mm}-${dd}` : `${dd}/${mm}/${yyyy}`;
-}
+export { formatSigningDate };
 
 /** Copia en curso: el destinatario ya firmó (o es copia) y el sobre todavía no tiene su PDF final. */
 function copyAllowed(r: any, e: any): boolean {

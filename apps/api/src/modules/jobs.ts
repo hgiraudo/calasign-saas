@@ -178,7 +178,7 @@ async function notify(
     let res!: Awaited<ReturnType<typeof deliver>>;
     try {
       const extra = tgLink ? `\n\n${TELEGRAM_HINT[locale as keyof typeof TELEGRAM_HINT] ?? TELEGRAM_HINT.es} ${tgLink}` : "";
-      const res = await deliver({
+      res = await deliver({
         channel,
         to,
         subject: m.subject,

@@ -74,3 +74,14 @@ export interface VerifyResponse {
   /** Qué versión del PDF final coincidió (las renovaciones de archivo B-LTA generan versiones nuevas). */
   version?: { number: number; latest: number; isLatest: boolean; reason: "completed" | "archive_renewal"; createdAt: string | null };
 }
+
+/**
+ * Fecha de firma tal como se estampa en el PDF (UTC; dd/mm/aaaa, o aaaa-mm-dd en inglés). La usan la API al estampar
+ * y la página del firmante para la vista previa (antes mostraba otra fecha y otro formato).
+ */
+export function formatSigningDate(d: Date, locale: string) {
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const yyyy = d.getUTCFullYear();
+  return locale === "en" ? `${yyyy}-${mm}-${dd}` : `${dd}/${mm}/${yyyy}`;
+}

@@ -7,6 +7,17 @@ import { PDFDocument, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
 import { fontCharset } from "./layout";
 
+
+const widthCache = new WeakMap<object, Map<string, number>>();
+/** Ancho de un carácter con esa fuente y tamaño (memoizado). */
+function charWidth(font: { widthOfTextAtSize(t: string, size: number): number }, ch: string, size: number): number {
+  let m = widthCache.get(font);
+  if (!m) widthCache.set(font, (m = new Map()));
+  const k = `${size}|${ch}`;
+  let w = m.get(k);
+  if (w === undefined) m.set(k, (w = font.widthOfTextAtSize(ch, size)));
+  return w;
+}
 export type DocMarkKind = "signature" | "initials" | "date" | "name";
 export type DocRun = { text: string; b?: boolean; i?: boolean } | { mark: DocMarkKind; role: string } | { br: true };
 export type DocBlock =
@@ -174,14 +185,21 @@ export async function renderDocumentPdf(blocks: DocBlock[], opts: RenderDocOptio
       if (x + w > width && x > 0) push();
       if (it.k === "word" && w > width) {
         // Palabra más larga que la línea: se corta por caracteres.
+        // Ancho acumulado por carácter (con caché): medir el trozo entero en cada carácter era cuadrático y una
+        // palabra larga bloqueaba el proceso durante minutos.
         let chunk = "";
+        let chunkW = 0;
         for (const ch of it.text) {
-          const cw = it.font.widthOfTextAtSize(chunk + ch, it.size);
-          if (cw > width && chunk) {
-            cur.items.push({ item: { ...it, text: chunk, w: it.font.widthOfTextAtSize(chunk, it.size) }, x });
+          const chW = charWidth(it.font, ch, it.size);
+          if (chunkW + chW > width && chunk) {
+            cur.items.push({ item: { ...it, text: chunk, w: chunkW }, x });
             push();
             chunk = ch;
-          } else chunk += ch;
+            chunkW = chW;
+          } else {
+            chunk += ch;
+            chunkW += chW;
+          }
         }
         it.text = chunk;
         w = it.w = it.font.widthOfTextAtSize(chunk, it.size);

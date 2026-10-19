@@ -149,7 +149,10 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
     diff.message = { from: e.message ?? null, to: input.message ?? null };
   }
   if (input.expiresAt !== undefined) {
-    if (new Date(input.expiresAt) <= new Date()) throw badRequest("invalid_expiry", "La fecha de vencimiento tiene que ser futura");
+    const exp = input.expiresAt ? new Date(input.expiresAt) : null;
+    // Una fecha inválida (p. ej. un desfase horario fuera de rango) no pasa como "futura": NaN no se compara.
+    if (exp && Number.isNaN(exp.getTime())) throw badRequest("invalid_expiry", "Fecha de vencimiento inválida");
+    if (exp && exp <= new Date()) throw badRequest("invalid_expiry", "La fecha de vencimiento tiene que ser futura");
     await db.query(`UPDATE envelopes SET expires_at = $2, expiry_warning_sent_at = NULL WHERE id = $1`, [e.id, input.expiresAt]);
     diff.expiresAt = { from: e.expires_at ? new Date(e.expires_at).toISOString() : null, to: new Date(input.expiresAt).toISOString() };
   }

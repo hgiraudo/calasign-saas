@@ -31,6 +31,11 @@ export function OtpGate({ session, base, onDone }: { session: SigningSession; ba
     } catch (e) {
       const d = e instanceof HttpError ? (e.details as { resendInSeconds?: number } | undefined) : undefined;
       if (d?.resendInSeconds) setWait(d.resendInSeconds);
+      // Ya se mandó un código hace poco (p. ej. el celular recargó la página al volver de los mensajes): se muestra el
+      // campo para escribirlo. Si no, quedaba solo el botón deshabilitado y había que pedir otro (que anula el anterior).
+      if (e instanceof HttpError && (e.code === "otp_cooldown" || e.code === "otp_too_many") && !sent) {
+        setSent({ sent: true, destination: session.otpDestination ?? "", resendInSeconds: d?.resendInSeconds ?? 0, expiresAt: "" } as OtpSendResponse);
+      }
       setError(errorText(e));
     } finally {
       setBusy(false);
@@ -80,7 +85,6 @@ export function OtpGate({ session, base, onDone }: { session: SigningSession; ba
               inputMode="numeric"
               autoComplete="one-time-code"
               autoFocus
-              maxLength={6}
               value={code}
               onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
               style={{ fontSize: 24, letterSpacing: "0.4em", textAlign: "center" }}

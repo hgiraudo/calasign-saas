@@ -131,6 +131,8 @@ export async function createEnvelopeFromPdf(
     if (!r.email && !r.phone) throw new AppError(422, "recipient_contact", `${r.name}: falta correo o teléfono`);
   }
 
+  // El asunto puede salir de datos interpolados (sin tope, con saltos de línea o vacío): como en los demás caminos.
+  const subject = (spec.subject.replace(/\s+/g, " ").trim() || spec.fileName).slice(0, 300);
   await insertFileRow(t, ctx.tenantId, spec.file);
   const envId = uuidv7();
   await t.query(
@@ -142,14 +144,14 @@ export async function createEnvelopeFromPdf(
       ctx.userId,
       ctx.apiKeyId,
       ctx.apiKeyId ? "api" : "web",
-      spec.subject,
+      subject,
       spec.message ?? null,
       spec.locale,
       spec.expiresAt ?? new Date(Date.now() + 30 * 86400_000).toISOString(),
       JSON.stringify(spec.metadata ?? {}),
     ],
   );
-  await appendEvent(t, { tenantId: ctx.tenantId, envelopeId: envId, type: "envelope.created", actor: ctx.actor, data: { subject: spec.subject, generated: true } });
+  await appendEvent(t, { tenantId: ctx.tenantId, envelopeId: envId, type: "envelope.created", actor: ctx.actor, data: { subject, generated: true } });
   const docId = uuidv7();
   await t.query(`INSERT INTO documents (id, tenant_id, envelope_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,1,$4,$5,$6,$7)`, [
     docId,

@@ -103,7 +103,9 @@ function CreateNegotiationModal({ kind, onClose, onCreated }: { kind: "template"
         if (r.items[0]) {
           setTemplateId(r.items[0].id);
           setJson(JSON.stringify(r.items[0].sampleData ?? {}, null, 2));
-          setParticipants([{ name: "", email: "", role: r.items[0].analysis?.roles[0] ?? "" }]);
+          // Lo que ya se escribió mientras cargaba la lista no se pisa: solo se propone el primer rol a la primera fila.
+          const firstRole = r.items[0].analysis?.roles[0] ?? "";
+          setParticipants((ps) => ps.map((p, i) => (i === 0 && !p.role ? { ...p, role: firstRole } : p)));
         }
       })
       .catch((e) => setError(errorText(e)));

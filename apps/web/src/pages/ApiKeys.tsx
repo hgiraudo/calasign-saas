@@ -1,6 +1,7 @@
-import { useEffect, useState, type FormEvent } from "react";
-import type { ApiKey, CreateApiKeyResponse } from "@calasign/shared";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import type { ApiKey, CreateApiKeyResponse, Permission } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
+import { useAccess } from "../lib/access";
 import { formatDateTime, useI18n, confirmAction } from "../lib/i18n";
 import { ErrorBox, Spinner } from "../components/ui";
 import { useRoleLabel, useTeamsText } from "../lib/i18n-teams";
@@ -15,6 +16,7 @@ interface RoleOption {
   value: string;
   role: string;
   name: string | null;
+  permissions: Permission[];
 }
 
 export function ApiKeysPage() {
@@ -30,6 +32,7 @@ export function ApiKeysPage() {
   const [role, setRole] = useState("admin");
   const [roleOptions, setRoleOptions] = useState<RoleOption[]>([]);
   const [keyRoles, setKeyRoles] = useState<Record<string, KeyRole>>({});
+  const { access } = useAccess();
 
   const load = () =>
     Promise.all([api<{ items: ApiKey[] }>("/v1/api-keys"), api<{ items: KeyRole[] }>("/v1/api-keys/roles")])
@@ -40,15 +43,30 @@ export function ApiKeysPage() {
       .catch((e) => setError(errorText(e)));
 
   useEffect(() => {
-    api<{ items: { id: string; name: string }[]; builtin: { role: string; name: string }[] }>("/v1/roles")
+    api<{ items: { id: string; name: string; permissions: Permission[] }[]; builtin: { role: string; name: string; permissions: Permission[] }[] }>("/v1/roles")
       .then((r) =>
         setRoleOptions([
-          ...r.builtin.filter((b) => b.role !== "owner").map((b) => ({ value: b.role, role: b.role, name: null })),
-          ...r.items.map((x) => ({ value: `custom:${x.id}`, role: "custom", name: x.name })),
+          ...r.builtin.filter((b) => b.role !== "owner").map((b) => ({ value: b.role, role: b.role, name: null, permissions: b.permissions })),
+          ...r.items.map((x) => ({ value: `custom:${x.id}`, role: "custom", name: x.name, permissions: x.permissions })),
         ]),
       )
       .catch(() => undefined);
   }, []);
+
+  // Una key no puede tener permisos que quien la crea no tiene (403): con "admin" preelegido, alguien con un rol
+  // personalizado que incluye api_keys:manage no podía crear ninguna sin cambiar antes el rol. Se preelige el primero
+  // que puede otorgar.
+  const defaulted = useRef(false);
+  useEffect(() => {
+    if (defaulted.current || !access || roleOptions.length === 0) return;
+    defaulted.current = true;
+    if (access.role === "owner") return;
+    const grantable = (o: RoleOption) => o.permissions.every((p) => access.permissions.includes(p));
+    const admin = roleOptions.find((o) => o.value === "admin");
+    if (admin && grantable(admin)) return;
+    const first = roleOptions.find(grantable);
+    if (first) setRole((cur) => (cur === "admin" ? first.value : cur));
+  }, [access, roleOptions]);
 
   useEffect(() => {
     void load();

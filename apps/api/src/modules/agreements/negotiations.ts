@@ -491,9 +491,17 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
       email: p.email,
       cc: n.source === "pdf" ? false : !(p.role && roles.includes(p.role.toLowerCase())),
     }));
+    // El remitente es quien creó la negociación, aunque la acepte alguien que gestiona todos los sobres: el sobre es suyo
+    // (si no, no lo veía) y es él quien firma el rol sin contraparte. Si ya no es miembro, queda a nombre de quien acepta.
+    const creatorIsMember =
+      n.created_by && n.created_by !== a.userId
+        ? Boolean(await s.db.one(`SELECT 1 FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [n.tenant_id, n.created_by]))
+        : false;
+    const ownerId: string | null = creatorIsMember ? n.created_by : a.userId;
+    const owner = { tenantId: a.tenantId, userId: ownerId, apiKeyId: null, actor: a.actor };
     const missingRoles = roles.filter((r) => !recipients.some((x) => !x.cc && x.role.toLowerCase() === r));
     if (missingRoles.length) {
-      const me = await s.db.one<any>(`SELECT name, email FROM users WHERE id = $1`, [a.userId]);
+      const me = await s.db.one<any>(`SELECT name, email FROM users WHERE id = $1`, [ownerId]);
       if (missingRoles.length === 1 && me) recipients.push({ role: marks.find((m) => m.role.toLowerCase() === missingRoles[0]).role, name: me.name, email: me.email, cc: false });
     }
     // Si la negociación cambió o se cerró mientras tanto (o el sobre no se puede crear), el PDF final no lo referencia nada.
@@ -510,7 +518,7 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
       let envId: string;
       if (n.source === "pdf") {
         // Sin marcas de firma: queda un sobre en borrador para ubicar los campos en el editor.
-        envId = await createEnvelopeFromPdf(t, a, {
+        envId = await createEnvelopeFromPdf(t, owner, {
           file,
           fileName: `${n.title}.pdf`,
           subject: input.subject ?? n.title,
@@ -531,7 +539,7 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
           ]);
         }
       } else {
-        envId = await createEnvelopeFromPdf(t, a, {
+        envId = await createEnvelopeFromPdf(t, owner, {
           file,
           fileName: `${n.title}.pdf`,
           subject: input.subject ?? n.title,

@@ -35,6 +35,12 @@ describe("SSRF", () => {
     for (const ip of ["2606:4700:4700::1111", "2001:4860:4860::8888", "::ffff:8.8.8.8", "64:ff9b::808:808"]) expect(mod.isPrivateAddress(ip), ip).toBe(false);
   });
 
+  it("isPrivateAddress cubre los rangos IPv4 reservados y no bloquea direcciones públicas vecinas", () => {
+    for (const ip of ["10.1.2.3", "172.16.0.1", "192.168.1.1", "100.64.0.1", "169.254.169.254", "127.0.0.1", "0.0.0.0", "192.0.0.170", "192.0.2.1", "192.88.99.1", "198.18.0.1", "198.51.100.7", "203.0.113.9", "224.0.0.1", "255.255.255.255"])
+      expect(mod.isPrivateAddress(ip), ip).toBe(true);
+    for (const ip of ["8.8.8.8", "192.0.1.1", "192.88.98.1", "198.51.101.1", "203.0.114.1", "172.32.0.1", "100.128.0.1"]) expect(mod.isPrivateAddress(ip), ip).toBe(false);
+  });
+
   it("postToCustomerUrl no conecta a la metadata de la nube escrita como IPv6", async () => {
     await expect(mod.postToCustomerUrl("https://[::ffff:a9fe:a9fe]/latest", {}, "{}", 2000)).rejects.toThrow(/dirección interna/);
   });

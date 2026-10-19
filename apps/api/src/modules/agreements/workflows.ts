@@ -684,7 +684,8 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
     if (!r) throw notFound("Ejecución");
     const mine =
       startedByMe(a, r) || (a.userId != null && (r.steps as WorkflowStep[]).some((st) => st.type === "approval" && st.config.approverUserId === a.userId));
-    if (!mine && !hasPerm(a, "templates:manage") && !hasPerm(a, "envelopes:view_all")) throw notFound("Ejecución");
+    // envelopes:manage_all también: canDecide le permite decidir cualquier aprobación, y sin verla no podía.
+    if (!mine && !hasPerm(a, "templates:manage") && !hasPerm(a, "envelopes:view_all") && !hasPerm(a, "envelopes:manage_all")) throw notFound("Ejecución");
     return r;
   }
 
@@ -806,7 +807,7 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
       params.push(statuses);
       where += ` AND r.status = ANY($${params.length})`;
     }
-    if (!hasPerm(a, "templates:manage") && !hasPerm(a, "envelopes:view_all")) {
+    if (!hasPerm(a, "templates:manage") && !hasPerm(a, "envelopes:view_all") && !hasPerm(a, "envelopes:manage_all")) {
       if (a.userId) {
         params.push(a.userId);
         where += ` AND (r.started_by = $${params.length} OR EXISTS (SELECT 1 FROM jsonb_array_elements(r.steps) st WHERE st->'config'->>'approverUserId' = $${params.length}::text))`;

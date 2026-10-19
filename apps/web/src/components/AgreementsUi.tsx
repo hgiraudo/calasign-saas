@@ -61,12 +61,34 @@ export function DocPreview({
     const sel = window.getSelection();
     const quote = sel?.toString().replace(/\s+/g, " ").trim() ?? "";
     if (!sel || !quote || !ref.current?.contains(sel.anchorNode)) return onSelect(null);
-    const plain = (text ?? "").replace(/\s+/g, " ");
-    const start = plain.indexOf(quote);
+    // Posición en el texto original (no en el de espacios colapsados: después de cada salto de párrafo los índices
+    // quedaban corridos). Si la cita aparece varias veces, vale la más cercana a donde está la selección en pantalla.
+    const src = text ?? "";
+    const re = new RegExp(quote.split(" ").map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+"), "g");
+    let before = 0;
+    try {
+      const r = document.createRange();
+      r.setStart(ref.current, 0);
+      const s = sel.getRangeAt(0);
+      r.setEnd(s.startContainer, s.startOffset);
+      before = r.toString().replace(/\s+/g, " ").length;
+    } catch {
+      /* sin rango: la primera aparición */
+    }
+    let best: { start: number; end: number; d: number } | null = null;
+    // Largo colapsado hasta cada aparición, acumulado (las citas empiezan y terminan sin espacios: los tramos suman).
+    let pos = 0;
+    let collapsed = 0;
+    for (const m of src.matchAll(re)) {
+      collapsed += src.slice(pos, m.index).replace(/\s+/g, " ").length;
+      pos = m.index;
+      const d = Math.abs(collapsed - before);
+      if (!best || d < best.d) best = { start: m.index, end: m.index + m[0].length, d };
+    }
     // Si la selección no aparece tal cual en el texto plano (p. ej. cruza celdas de una tabla), se comenta la cita sin
     // posición: antes quedaba anclada en 0…largo, es decir, al principio del documento.
-    if (start < 0) return onSelect({ quote: quote.slice(0, 2000), start: null, end: null });
-    onSelect({ quote: quote.slice(0, 2000), start, end: start + quote.length });
+    if (!best) return onSelect({ quote: quote.slice(0, 2000), start: null, end: null });
+    onSelect({ quote: quote.slice(0, 2000), start: best.start, end: best.end });
   };
   return (
     <div className="agr-doc" ref={ref} onMouseUp={handleUp} onKeyUp={handleUp}>

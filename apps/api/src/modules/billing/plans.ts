@@ -99,11 +99,22 @@ export function requireFeature(plan: PlanDefinition, feature: PlanFeature, label
   });
 }
 
-/** PATCH /v1/settings/branding que pone un color o un pie de correo (lo demás: renombrar o quitarlos). */
-function addsBranding(body: unknown): boolean {
+/**
+ * PATCH /v1/settings/branding que pone un color o un pie de correo DISTINTOS de los guardados (lo demás: renombrar,
+ * quitarlos o volver a mandar los vigentes). La web manda siempre el color y el pie actuales junto con el nombre: si
+ * se comparaba solo con "viene un valor", una organización que bajó de plan con color o pie guardados no podía
+ * renombrarse sin borrarlos antes.
+ */
+async function addsBranding(db: Db, tenantId: string, body: unknown): Promise<boolean> {
   const b = (body ?? {}) as { primaryColor?: unknown; emailFooter?: unknown };
-  const set = (v: unknown) => v !== undefined && v !== null && !(typeof v === "string" && v.trim() === "");
-  return set(b.primaryColor) || set(b.emailFooter);
+  // Normalizados como los guarda branding.ts (color en minúsculas, pie sin espacios en los bordes).
+  const color = typeof b.primaryColor === "string" ? b.primaryColor.trim().toLowerCase() : b.primaryColor;
+  const footer = typeof b.emailFooter === "string" ? b.emailFooter.trim() : b.emailFooter;
+  const set = (v: unknown) => v !== undefined && v !== null && v !== "";
+  if (!set(color) && !set(footer)) return false;
+  const t = await db.one<{ branding: { primaryColor?: string | null; emailFooter?: string | null } | null }>(`SELECT branding FROM tenants WHERE id = $1`, [tenantId]);
+  const cur = t?.branding ?? {};
+  return (set(color) && color !== (cur.primaryColor ?? null)) || (set(footer) && footer !== (cur.emailFooter ?? null));
 }
 
 /** Funcionalidad que exige cada ruta de escritura (las lecturas siempre se permiten: se puede ver y desactivar lo existente). */
@@ -117,7 +128,8 @@ function featureForRoute(url: string, method: string, body: unknown): { feature:
   // Lo mismo con la marca: renombrar la organización (el nombre está en este PATCH) o quitar el color y el pie no es
   // marca propia. Sin esto, en Free no se podía corregir el nombre de la organización y, al bajar de plan, el color y el
   // pie seguían en la página del firmante y los correos sin poder quitarlos.
-  if (url === "/v1/settings/branding" && method === "PATCH" && !addsBranding(body)) return null;
+  // (Si pone color o pie nuevos lo decide enforcePlanForRequest con addsBranding, que mira lo guardado.)
+  if (url === "/v1/settings/branding" && method === "PATCH") return null;
   if (url === "/v1/bulk-sends" || url === "/v1/bulk-sends/validate") return { feature: "bulk_send", label: "El envío masivo" };
   if (url === "/v1/web-forms") return { feature: "web_forms", label: "Los formularios web" };
   if (url === "/v1/webhooks") return { feature: "webhooks", label: "Los webhooks" };
@@ -146,6 +158,9 @@ export async function enforcePlanForRequest(db: Db, req: FastifyRequest, a: Auth
   if (a.apiKeyId || a.oauth) requireFeature(plan, "api", "El acceso por API");
   const f = featureForRoute(url, req.method, req.body);
   if (f) requireFeature(plan, f.feature, f.label);
+  if (url === "/v1/settings/branding" && req.method === "PATCH" && (await addsBranding(db, a.tenantId, req.body))) {
+    requireFeature(plan, "branding", "La marca propia");
+  }
   if (url === "/v1/invitations" && req.method === "POST" && plan.users !== null) {
     // Reenviar la invitación pendiente de un correo la reemplaza: no suma un usuario (antes daba 402 con el cupo lleno).
     const email = typeof (req.body as any)?.email === "string" ? (req.body as any).email : "";

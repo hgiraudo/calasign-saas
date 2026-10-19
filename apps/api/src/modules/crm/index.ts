@@ -34,7 +34,7 @@ import { enqueue } from "../../infra/queue";
 import type { BlobStore } from "../../infra/storage";
 import { AppError, badRequest, notFound } from "../../lib/errors";
 import { decrypt, encrypt, iso, sha256Hex, uuidv7 } from "../../lib/util";
-import { assertEnvelopeAccess, assertTemplateAccess, hasPerm } from "../access";
+import { assertEnvelopeAccess, assertTemplateAccess, envelopeVisibilitySql, hasPerm } from "../access";
 import { auditFromRequest } from "../audit";
 import { authenticate, type AuthContext, type Services } from "../context";
 import { sendEnvelope } from "../envelopes";
@@ -763,6 +763,11 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
     if (req.query.status && ["pending", "succeeded", "failed"].includes(req.query.status)) {
       params.push(req.query.status);
       where += ` AND r.status = $${params.length}`;
+    }
+    // Leer las ejecuciones no exige settings:manage (access.ts): sin ese permiso, solo las de sobres que uno puede ver
+    // (como /v1/crm/links). Si no, cualquier miembro listaba las de toda la organización, con ids y errores del CRM.
+    if (!hasPerm(a, "settings:manage")) {
+      where += ` AND r.envelope_id IS NOT NULL AND EXISTS (SELECT 1 FROM envelopes e WHERE e.id = r.envelope_id AND e.tenant_id = r.tenant_id${envelopeVisibilitySql(a, params)})`;
     }
     params.push(Math.min(200, Math.max(1, Math.trunc(Number(req.query.limit ?? 50)) || 50)));
     const rows = await s.db.query(

@@ -146,7 +146,8 @@ function WebFormEditor({ form, initialTemplateId, onClose, onSaved }: { form: We
       prefill: Object.fromEntries(Object.entries(prefill).filter(([k, v]) => v.trim() && (!tpl || prefillable.some((f) => f.label === k)))),
       active,
       maxUses: maxUses ? Number(maxUses) : null,
-      expiresAt: expiresAt ? new Date(`${expiresAt}T23:59:59`).toISOString() : null,
+      // Fecha sin tocar: se conserva el vencimiento guardado (uno puesto por la API a otra hora se corría a las 23:59).
+      expiresAt: !expiresAt ? null : form?.expiresAt && localDateInput(form.expiresAt) === expiresAt ? form.expiresAt : new Date(`${expiresAt}T23:59:59`).toISOString(),
       requireOtp,
       collectPhone,
       embeddable,

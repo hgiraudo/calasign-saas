@@ -277,6 +277,9 @@ export function NegotiationPanel({
   const [busy, setBusy] = useState(false);
   const n = view.negotiation;
   const open = n.status === "open";
+  // La selección (cita y posición) es del texto de una versión: si cambia (p. ej. al aceptar una propuesta), el
+  // comentario se guardaba en la versión nueva con la posición del texto anterior y quedaba anclado en otro lugar.
+  useEffect(() => setSel(null), [n.currentVersion]);
 
   const call = async (path: string, body: unknown, method: "POST" | "PATCH" = "POST") => {
     setBusy(true);

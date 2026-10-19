@@ -718,7 +718,9 @@ function ReviewStep({
     setBusy(true);
     setError(null);
     try {
-      const expiresAt = expires ? new Date(`${expires}T23:59:59`).toISOString() : null;
+      // Con la fecha sin tocar se conserva el vencimiento guardado: uno puesto por la API a otra hora (p. ej. 10:00) se
+      // corría a las 23:59 de ese día en cada envío.
+      const expiresAt = !expires ? null : env.expiresAt && toDateInput(env.expiresAt) === expires ? env.expiresAt : new Date(`${expires}T23:59:59`).toISOString();
       const patched = await api<EnvelopeDetail>(`/v1/envelopes/${env.id}`, {
         method: "PATCH",
         body: { subject: subject.trim(), message: message.trim() || null, expiresAt, reminderEveryDays, expiryWarningDays, allowDelegation },

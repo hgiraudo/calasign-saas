@@ -180,8 +180,15 @@ export async function validatePdf(pdf: Uint8Array, opts: ValidateOptions = {}): 
   return withDecodeBudget(() => validatePdfUnbudgeted(pdf, opts));
 }
 
+/**
+ * Tope de firmas por PDF a validar. Cada firma copia y hashea el contenido firmado y, si hay cambios después, vuelve a
+ * parsear esa revisión: un PDF público con miles de campos de firma (cada uno con otro ByteRange) colgaba la API.
+ */
+export const MAX_VALIDATE_SIGNATURES = 50;
+
 async function validatePdfUnbudgeted(pdf: Uint8Array, opts: ValidateOptions): Promise<ValidationReport> {
   const { signatures, dss } = await readPdfSignatures(pdf);
+  if (signatures.length > MAX_VALIDATE_SIGNATURES) throw new Error(`el PDF tiene demasiadas firmas (${signatures.length}; máximo ${MAX_VALIDATE_SIGNATURES})`);
   const anchorsDer = opts.trustAnchors ?? [];
   const anchors = new Set(anchorsDer.map(fingerprint));
   const dssCerts = (dss?.certs ?? []).map((d) => {
@@ -286,10 +293,14 @@ async function validatePdfUnbudgeted(pdf: Uint8Array, opts: ValidateOptions): Pr
     reports.filter((r) => r.integrity.valid && (!r.timestamp || r.timestamp.valid)).map((r) => signatures[r.index].byteRange.join(",")),
   );
   const current = reports.some((r) => r.modifiedAfter) ? await PDFDocument.load(pdf, { updateMetadata: false, ignoreEncryption: true }) : undefined;
+  // Una vez por revisión: varias firmas que terminan en el mismo lugar comparten el resultado.
+  const byEnd = new Map<number, Promise<ChangesAfter>>();
   for (const r of reports) {
     if (r.modifiedAfter) {
       const [, , c, d] = signatures[r.index].byteRange;
-      r.changesAfter = await changesAfterRevision(pdf, c + d, verified, current);
+      let p = byEnd.get(c + d);
+      if (!p) byEnd.set(c + d, (p = changesAfterRevision(pdf, c + d, verified, current)));
+      r.changesAfter = await p;
     }
   }
   const modifiedAfterSigning = reports.some((r) => r.changesAfter === "content");

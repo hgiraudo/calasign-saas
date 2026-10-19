@@ -146,11 +146,13 @@ export function csvToRows(text: string, roles: { id: string; name: string }[]): 
 
 /** CSV de ejemplo para una plantilla: una columna por dato de cada rol y por campo prellenable con etiqueta. */
 export function csvSkeleton(tpl: Awaited<ReturnType<typeof loadTemplateDetail>>): string {
-  const header: string[] = ["subject"];
-  const example: string[] = [tpl.template.subject ?? tpl.template.name];
+  // Lo que sale de la plantilla (asunto, roles, etiquetas, opciones) va con csvCell: una etiqueta "=HYPERLINK(…)" se
+  // ejecutaba al abrir el modelo en Excel. El teléfono de ejemplo es fijo y empieza con "+" (csvCell le agregaría un ').
+  const header: string[] = [csvCell("subject")];
+  const example: string[] = [csvCell(tpl.template.subject ?? tpl.template.name)];
   for (const r of tpl.roles) {
-    header.push(`${r.name}.name`, `${r.name}.email`, `${r.name}.phone`, `${r.name}.channels`);
-    example.push(`Nombre ${r.name}`, `${r.name.toLowerCase().replace(/[^a-z0-9]+/g, ".")}@example.com`, "+5491100000000", "email");
+    header.push(...[`${r.name}.name`, `${r.name}.email`, `${r.name}.phone`, `${r.name}.channels`].map(csvCell));
+    example.push(csvCell(`Nombre ${r.name}`), csvCell(`${r.name.toLowerCase().replace(/[^a-z0-9]+/g, ".")}@example.com`), csvEscape("+5491100000000"), "email");
   }
   const labels = new Set<string>();
   for (const f of tpl.fields) {
@@ -158,10 +160,10 @@ export function csvSkeleton(tpl: Awaited<ReturnType<typeof loadTemplateDetail>>)
     if (!["text", "number", "dropdown", "company", "title"].includes(f.type)) continue;
     if (labels.has(f.label)) continue;
     labels.add(f.label);
-    header.push(`field.${f.label}`);
-    example.push(f.type === "dropdown" ? (f.options?.[0] ?? "") : f.type === "number" ? "100" : "");
+    header.push(csvCell(`field.${f.label}`));
+    example.push(csvCell(f.type === "dropdown" ? (f.options?.[0] ?? "") : f.type === "number" ? "100" : ""));
   }
-  return `${header.map(csvEscape).join(",")}\r\n${example.map(csvEscape).join(",")}\r\n`;
+  return `${header.join(",")}\r\n${example.join(",")}\r\n`;
 }
 
 // ───────────────────────────── Validación ─────────────────────────────

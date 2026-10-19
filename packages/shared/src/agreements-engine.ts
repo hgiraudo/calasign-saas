@@ -52,7 +52,7 @@ export class TemplateSyntaxError extends Error {
     message: string,
     readonly line: number,
   ) {
-    super(`Línea ${line}: ${message}`);
+    super(line > 0 ? `Línea ${line}: ${message}` : message);
   }
 }
 
@@ -354,12 +354,26 @@ export interface RenderResult {
 
 type Scope = Map<string, unknown>;
 
+/** Tope de nodos evaluados (incluye cada vuelta de {{#each}} y las cláusulas citadas) y de texto generado. */
+export const MAX_RENDER_WORK = 20_000;
+export const MAX_RENDER_CHARS = 2_000_000;
+
 export function renderTemplate(source: string, data: unknown, opts: RenderOptions = {}): RenderResult {
   const missing = new Set<string>();
   const missingClauses = new Set<string>();
   const marks: { kind: MarkKind; role: string }[] = [];
   const locale = opts.locale ?? "es";
   const clauseCache = new Map<string, Node[]>();
+  // Presupuesto de salida: {{#each}} anidados (o cláusulas que citan cientos de cláusulas) multiplican el trabajo, y una
+  // variable larga repetida en un each multiplica el texto. Sin tope, un pedido de cualquier cuenta colgaba la API.
+  let work = 0;
+  let chars = 0;
+  const tooBig = () => new TemplateSyntaxError(`el documento generado es demasiado grande (máximo ${MAX_RENDER_WORK} bloques o ${MAX_RENDER_CHARS} caracteres)`, 0);
+  const charge = (units: number, text = 0) => {
+    work += units;
+    chars += text;
+    if (work > MAX_RENDER_WORK || chars > MAX_RENDER_CHARS) throw tooBig();
+  };
 
   function lookup(path: string, scopes: Scope[]): unknown {
     const parts = path.split(".");
@@ -442,8 +456,14 @@ export function renderTemplate(source: string, data: unknown, opts: RenderOption
   function evalInline(inl: Inline[], scopes: Scope[], style: { b?: boolean; i?: boolean } = {}): Run[] {
     const out: Run[] = [];
     for (const x of inl) {
-      if (x.t === "text") pushText(out, x.v, style);
-      else if (x.t === "var") pushText(out, x.path === "@index" ? String(lookup("@index", scopes) ?? "") : format(lookup(x.path, scopes), x.filter, x.arg, x.path), style);
+      if (x.t === "text") {
+        charge(0, x.v.length);
+        pushText(out, x.v, style);
+      } else if (x.t === "var") {
+        const v = x.path === "@index" ? String(lookup("@index", scopes) ?? "") : format(lookup(x.path, scopes), x.filter, x.arg, x.path);
+        charge(0, v.length);
+        pushText(out, v, style);
+      }
       else if (x.t === "mark") {
         marks.push({ kind: x.kind, role: x.role });
         out.push({ mark: x.kind, role: x.role });
@@ -457,6 +477,7 @@ export function renderTemplate(source: string, data: unknown, opts: RenderOption
   const blocks: ResolvedBlock[] = [];
   function emitNodes(nodes: Node[], scopes: Scope[], depth: number) {
     for (const n of nodes) {
+      charge(1);
       if (n.k === "if") emitNodes(evalCond(n.cond, scopes) ? n.then : n.else, scopes, depth);
       else if (n.k === "each") {
         const arr = lookup(n.path, scopes);

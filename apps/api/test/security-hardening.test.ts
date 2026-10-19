@@ -58,3 +58,19 @@ describe("requestPath: ruta decodificada como la ve el router", () => {
     expect(requestPath({ url: "/v1/%E0%A4%A" })).toBe("/v1/%E0%A4%A");
   });
 });
+
+describe("plantillas de documentos: presupuesto de salida", async () => {
+  const { renderTemplate, TemplateSyntaxError } = await import("@calasign/shared");
+  it("each anidados que multiplican el trabajo se cortan con un error de plantilla", () => {
+    const depth = 8;
+    const source = `${"{{#each a}}\n".repeat(depth)}x\n${"{{/each}}\n".repeat(depth)}`;
+    const data = { a: Array.from({ length: 100 }, (_, i) => i) };
+    expect(() => renderTemplate(source, data)).toThrow(TemplateSyntaxError);
+  });
+  it("una variable larga repetida también", () => {
+    expect(() => renderTemplate("{{#each a}}\n{{big}}\n{{/each}}", { a: Array.from({ length: 50 }), big: "x".repeat(100_000) })).toThrow(/demasiado grande/);
+  });
+  it("un documento normal se genera", () => {
+    expect(renderTemplate("# Hola {{nombre}}\n\n{{#each items}}\n- {{item}}\n{{/each}}", { nombre: "Ana", items: [1, 2, 3] }).blocks.length).toBeGreaterThan(0);
+  });
+});

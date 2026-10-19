@@ -15,6 +15,7 @@
 //  · Juro      API v3 con x-api-key; GET /contracts/{id}, GET /contracts/{id}/pdf/binary, POST /contracts/upload.
 import type { ConnectorObjectType, ConnectorProvider, ConnectorRecordSummary, CrmRecord } from "@calasign/shared";
 import { config } from "../../config";
+import { BodyTooLargeError, MAX_API_RESPONSE_BYTES, readCapped, readCappedJson } from "../../lib/http-body";
 import type { Db } from "../../infra/db";
 import { decrypt, encrypt } from "../../lib/util";
 
@@ -94,7 +95,7 @@ export async function oauthTokenRequest(p: OAuthProvider, region: string | null 
     body: new URLSearchParams({ client_id: app.clientId!, client_secret: app.clientSecret!, ...params }),
     signal: AbortSignal.timeout(15_000),
   });
-  const body: any = await res.json().catch(() => ({}));
+  const body: any = await readCappedJson(res);
   if (!res.ok || !body.access_token) {
     const invalid = body.error === "invalid_grant" || res.status === 400 || res.status === 401;
     throw new ConnectorError(`token ${p}: HTTP ${res.status} ${body.error_description ?? body.error ?? ""}`.trim(), res.status, invalid);
@@ -256,8 +257,16 @@ export async function cFetch(c: Conn, r: Req, retried = false): Promise<FetchOut
     await refreshOAuth(c);
     return cFetch(c, r, true);
   }
-  if (r.binary && res.ok) return { data: new Uint8Array(await res.arrayBuffer()), headers: res.headers };
-  const text = await res.text();
+  let raw: Uint8Array;
+  try {
+    // Documentos con el tope de subida (lo que pase igual lo rechaza preparePdfUpload); JSON con el de APIs.
+    raw = await readCapped(res, r.binary && res.ok ? config.maxUploadBytes : MAX_API_RESPONSE_BYTES);
+  } catch (e) {
+    if (e instanceof BodyTooLargeError) throw new ConnectorError(`${c.provider} ${r.path}: ${e.message}`, 422);
+    throw e;
+  }
+  if (r.binary && res.ok) return { data: raw, headers: res.headers };
+  const text = new TextDecoder().decode(raw);
   let data: any = null;
   try {
     data = text ? JSON.parse(text) : null;

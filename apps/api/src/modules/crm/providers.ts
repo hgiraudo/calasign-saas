@@ -16,6 +16,7 @@ import type { CrmObjectType, CrmProvider, CrmRecord, ZohoProduct, ZohoRegion } f
 import { config } from "../../config";
 import type { Db } from "../../infra/db";
 import { decrypt, encrypt } from "../../lib/util";
+import { BodyTooLargeError, readCappedJson, readCappedText } from "../../lib/http-body";
 import { kommoAttach, kommoFetchRecord, kommoTest, kommoWriteStatus, validateKommoDomain } from "./kommo";
 import { pipedriveAttach, pipedriveFetchRecord, pipedriveTest, pipedriveWriteStatus, validatePipedriveDomain } from "./pipedrive";
 import { rdstationAttach, rdstationFetchRecord, rdstationTest, rdstationWriteStatus } from "./rdstation";
@@ -296,7 +297,7 @@ export async function oauthTokenRequest(p: CrmOAuthProvider, params: Record<stri
     body: asJson ? JSON.stringify(form) : new URLSearchParams(form),
     signal: AbortSignal.timeout(15_000),
   });
-  const body: any = await res.json().catch(() => ({}));
+  const body: any = await readCappedJson(res);
   if (!res.ok || !body.access_token) {
     // Zoho responde 200 con { error: "invalid_code" } cuando el código o el refresh token vencieron o fueron revocados.
     // Zoho limita los pedidos de token con HTTP 400 { error: "Access Denied", "too many requests" }: es transitorio (el
@@ -406,6 +407,9 @@ function baseFor(c: CrmConn): string {
   }
 }
 
+/** La ruta que va en mensajes de error (se guardan en last_error y se muestran): sin el token de HubSpot. */
+const redactPath = (path: string) => path.replace(/\/access-tokens\/[^/?]+/, "/access-tokens/***");
+
 export async function crmFetch(c: CrmConn, r: Req, retried = false): Promise<any> {
   const headers: Record<string, string> = { accept: "application/json", ...(await authHeader(c)), ...(r.headers ?? {}) };
   let body: BodyInit | undefined;
@@ -426,7 +430,13 @@ export async function crmFetch(c: CrmConn, r: Req, retried = false): Promise<any
       return crmFetch(c, r, true);
     }
   }
-  const text = await res.text();
+  let text: string;
+  try {
+    text = await readCappedText(res);
+  } catch (e) {
+    if (e instanceof BodyTooLargeError) throw new CrmError(`${c.provider} ${redactPath(r.path)}: ${e.message}`, 422);
+    throw e;
+  }
   let data: any = null;
   try {
     data = text ? JSON.parse(text) : null;
@@ -437,7 +447,7 @@ export async function crmFetch(c: CrmConn, r: Req, retried = false): Promise<any
     const zohoItem = data?.data?.[0]; // Zoho: { data: [{ code, message, details }] }
     // RD Station: { errors: [{ detail }] }; Kommo: { title, detail } (problem+json).
     const msg = typeof data === "object" && data ? data.message ?? data[0]?.message ?? data.errors?.[0]?.detail ?? data.detail ?? (zohoItem ? `${zohoItem.code ?? ""} ${zohoItem.message ?? ""} ${JSON.stringify(zohoItem.details ?? {})}`.trim() : null) ?? data.error_description ?? data.error ?? JSON.stringify(data).slice(0, 200) : String(data).slice(0, 200);
-    throw new CrmError(`${c.provider} ${r.method ?? "GET"} ${r.path}: HTTP ${res.status} ${msg}`, res.status, res.status === 401 || res.status === 403);
+    throw new CrmError(`${c.provider} ${r.method ?? "GET"} ${redactPath(r.path)}: HTTP ${res.status} ${msg}`, res.status, res.status === 401 || res.status === 403);
   }
   return data;
 }
@@ -450,7 +460,7 @@ async function siigoLogin(c: CrmConn) {
     body: JSON.stringify({ username: cr.username, access_key: cr.accessKey }),
     signal: AbortSignal.timeout(15_000),
   });
-  const b: any = await res.json().catch(() => ({}));
+  const b: any = await readCappedJson(res);
   // Solo credenciales rechazadas piden reconectar: un /auth caído (5xx, 429) es transitorio y el trabajo se reintenta.
   if (!res.ok || !b.access_token) {
     const rejected = res.ok || res.status === 400 || res.status === 401 || res.status === 403;
@@ -469,7 +479,18 @@ export async function testConnection(c: CrmConn): Promise<{ label: string | null
   switch (c.provider) {
     case "hubspot": {
       if (c.row.auth_type === "oauth") {
-        const info = await crmFetch(c, { path: `/oauth/v1/access-tokens/${encodeURIComponent(c.creds.access_token)}` });
+        // La ruta lleva el token: se renueva antes de armarla (si no, se consultaba el vencido) y, ante un 401, se
+        // renueva y se arma de nuevo (el reintento de crmFetch repetiría la ruta vieja).
+        await authHeader(c);
+        const tokenInfo = () => crmFetch(c, { path: `/oauth/v1/access-tokens/${encodeURIComponent(c.creds.access_token)}` }, true);
+        let info: any;
+        try {
+          info = await tokenInfo();
+        } catch (e) {
+          if (!(e instanceof CrmError && e.status === 401 && c.creds.refresh_token)) throw e;
+          await refreshOAuth(c);
+          info = await tokenInfo();
+        }
         return { label: info?.hub_domain ?? info?.user ?? null, config: { portalId: str(info?.hub_id) } };
       }
       const info = await crmFetch(c, { path: "/account-info/v3/details" }).catch(() => null);

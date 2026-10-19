@@ -117,18 +117,43 @@ export async function paymentsForCertificate(db: Db, envelopeId: string) {
 }
 
 /** Confirma un pago (webhook verificado o pago simulado). Idempotente. Si el sobre esperaba el pago, lo completa. */
+/** Reembolsa un segundo cobro de Mercado Pago sobre un pago ya acreditado y lo deja en la evidencia (una vez). */
+export async function refundDuplicatePayment(db: Db, paymentId: string, providerPaymentId: string) {
+  await mpRefundPayment(providerPaymentId, `dup:${providerPaymentId}`);
+  const p = await db.one<any>(`SELECT tenant_id, envelope_id, provider FROM envelope_payments WHERE id = $1`, [paymentId]);
+  if (!p) return;
+  await db.tx(async (t) => {
+    await lockEnvelope(t, p.tenant_id, p.envelope_id);
+    const seen = await t.one(
+      `SELECT 1 FROM envelope_events WHERE envelope_id = $1 AND type = 'payment.duplicate_refunded' AND data->>'providerPaymentId' = $2`,
+      [p.envelope_id, providerPaymentId],
+    );
+    if (seen) return;
+    await appendEvent(t, {
+      tenantId: p.tenant_id,
+      envelopeId: p.envelope_id,
+      type: "payment.duplicate_refunded",
+      actor: { ...SYSTEM, label: `Pago (${p.provider})` },
+      data: { paymentId, providerPaymentId },
+    });
+  });
+}
+
 export async function markPaymentPaid(
   db: Db,
   paymentId: string,
   r: { providerPaymentId: string | null; receipt: Record<string, unknown>; amount?: number; currency?: string },
-) {
-  await db.tx(async (t) => {
+): Promise<{ duplicate: string } | undefined> {
+  return db.tx(async (t): Promise<{ duplicate: string } | undefined> => {
     const p0 = await t.one<any>(`SELECT * FROM envelope_payments WHERE id = $1`, [paymentId]);
     if (!p0) throw notFound("Pago");
     const e = await lockEnvelope(t, p0.tenant_id, p0.envelope_id);
     const p = await t.one<any>(`SELECT * FROM envelope_payments WHERE id = $1 FOR UPDATE`, [paymentId]);
     // Ya reembolsado: otro evento del mismo pago (p. ej. async_payment_succeeded) no lo vuelve a "pagado".
-    if (p.status === "paid" || p.status === "refunded") return;
+    // Un cobro con OTRO id del proveedor es un segundo pago de la misma preferencia: lo reembolsa quien llama.
+    if (p.status === "paid" || p.status === "refunded") {
+      return r.providerPaymentId && p.provider_payment_id && r.providerPaymentId !== p.provider_payment_id ? { duplicate: r.providerPaymentId } : undefined;
+    }
     // Un monto no numérico (NaN) haría falsa cualquier comparación: se trata como diferencia.
     if (r.amount !== undefined && (!Number.isFinite(r.amount) || Math.abs(r.amount - Number(p.amount)) > 0.005)) {
       throw new AppError(400, "payment_mismatch", "El monto pagado no coincide con el cobro");

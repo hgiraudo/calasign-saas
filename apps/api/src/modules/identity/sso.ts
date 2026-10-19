@@ -443,8 +443,11 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
     const secretEnc = input.oidc?.clientSecret ? encrypt(input.oidc.clientSecret) : cur?.oidc_client_secret_enc ?? null;
     if (input.enabled && input.protocol === "oidc" && !secretEnc) throw badRequest("client_secret_required", "Falta el client secret de OIDC");
     if (input.enabled && input.protocol === "oidc") {
+      // Sin el bloque oidc (p. ej. al cambiar solo enforce o JIT) se conservan issuer y client id guardados.
+      const issuer = input.oidc?.issuer ?? cur?.oidc_issuer;
+      if (!issuer || !(input.oidc?.clientId ?? cur?.oidc_client_id)) throw badRequest("oidc_config_required", "Falta la configuración OIDC (issuer y client id)");
       try {
-        await oidcDiscovery(input.oidc!.issuer);
+        await oidcDiscovery(issuer);
       } catch (err) {
         throw badRequest("oidc_discovery_failed", `No se pudo leer la configuración del IdP: ${(err as Error).message}`);
       }

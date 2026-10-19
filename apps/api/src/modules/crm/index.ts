@@ -706,7 +706,13 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
         const creds = { access_token: body.access_token, refresh_token: body.refresh_token, expires_at: body.expires_in ? Date.now() + Number(body.expires_in) * 1000 : null };
         const row: any = { id: uuidv7(), provider: st.p, auth_type: "oauth", credentials_enc: encrypt(JSON.stringify(creds)), config: cfg };
         const conn = new CrmConn(row, null);
-        const test = await testConnection(conn).catch(() => ({ label: null, config: {} as Record<string, unknown> }));
+        // HubSpot: sin el portal (hub_id) el disparador por webhook de la conexión nunca se activaría; mejor fallar la
+        // conexión (se puede reintentar) que guardarla rota sin aviso.
+        const test = await testConnection(conn).catch((err) => {
+          if (st.p === "hubspot") throw err;
+          return { label: null, config: {} as Record<string, unknown> };
+        });
+        if (st.p === "hubspot" && !test.config?.portalId) throw new CrmError("HubSpot no informó el portal (hub_id)");
         await s.db.query(
           `INSERT INTO crm_connections (id, tenant_id, provider, name, auth_type, credentials_enc, config, account_label, created_by, last_success_at)
            VALUES ($1,$2,$3,$4,'oauth',$5,$6,$7,$8, now())`,

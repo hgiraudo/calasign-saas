@@ -559,10 +559,10 @@ await test("n8n: enviar desde plantilla, enviar PDF y descargar el firmado", asy
       additionalFields: { externalId: "X9" },
     },
     { "POST /v1/envelopes/from-template/tpl1": (o) => ((body = o.body), { envelope: { id: "env1" } }) },
-    { getExecutionId: () => "exec-7", getNode: () => ({ id: "node-abc", name: "CalaSign" }) },
+    { getExecutionId: () => "exec-7", getNode: () => ({ id: "node-abc", name: "CalaSign" }), getWorkflowDataProxy: () => ({ $thisRunIndex: 3 }) },
   );
   const [out] = await node.execute.call(ctx);
-  assert.equal(ctx.calls[0].headers["Idempotency-Key"], "n8n-exec-7-node-abc-sendFromTemplate-0", "clave de ejecución + nodo + item");
+  assert.equal(ctx.calls[0].headers["Idempotency-Key"], "n8n-exec-7-node-abc-3-sendFromTemplate-0", "clave de ejecución + nodo + corrida (vuelta de un bucle) + item");
   assert.equal(out[0].json.envelope.id, "env1");
   assert.equal(ctx.calls[0].cred, "calaSignOAuth2Api");
   assert.deepEqual(body, { roles: { r1: { name: "Ana", email: "ana@x.com", phone: null } }, prefill: { f1: "ACME" }, send: true, metadata: { externalId: "X9" } });
@@ -580,7 +580,7 @@ await test("n8n: enviar desde plantilla, enviar PDF y descargar el firmado", asy
     { getExecutionId: () => "exec-8", getNode: () => ({ id: "node-abc", name: "CalaSign" }) },
   );
   const [out2] = await node.execute.call(ctx2);
-  assert.equal(ctx2.calls.find((c) => c.url.endsWith("/v1/envelopes") && c.method === "POST").headers["Idempotency-Key"], "n8n-exec-8-node-abc-sendDocument-0:create");
+  assert.equal(ctx2.calls.find((c) => c.url.endsWith("/v1/envelopes") && c.method === "POST").headers["Idempotency-Key"], "n8n-exec-8-node-abc-0-sendDocument-0:create");
   assert.equal(out2[0].json.envelope.status, "sent");
 
   const ctx3 = n8nCtx(
@@ -641,6 +641,7 @@ await test("make: funciones IML (formulario de plantilla, destinatarios y campos
   assert.equal(sandbox.calasignIdempotencyKey({ templateId: "t1", roles: { r1: { name: "A" } } }, "sendFromTemplate"), k1);
   assert.notEqual(sandbox.calasignIdempotencyKey({ templateId: "t1", roles: { r1: { name: "B" } } }, "sendFromTemplate"), k1);
   assert.equal(sandbox.calasignIdempotencyKey({ subject: "S", data: "AAA" }, "sendDocument"), sandbox.calasignIdempotencyKey({ subject: "S", data: "BBB" }, "sendDocument"));
+  assert.notEqual(sandbox.calasignIdempotencyKey({ subject: "S", data: "AAA" }, "sendDocument"), sandbox.calasignIdempotencyKey({ subject: "S", data: "AAAA" }, "sendDocument"), "otro PDF (otro tamaño), otra clave");
   assert.equal(sandbox.calasignIdempotencyKey({ idempotencyKey: "deal-42" }, "x"), "make-deal-42");
   assert.equal(sandbox.calasignDocumentId([{ id: "d1", pageCount: 3 }]), "d1");
   assert.equal(sandbox.calasignDocumentPages([]), null);
@@ -895,6 +896,7 @@ await test("kommo: send.js lee los ids, filtra mapeos de leads y envía uno por 
   assert.equal(KM.parseParams("?ids=1&companyId=a/b").companyId, null);
   assert.equal(KM.parseParams(`?ids=${Array.from({ length: 25 }, (_, i) => i + 1).join(",")}`).ids.length, 20);
   assert.equal(KM.parseParams(`?ids=${Array.from({ length: 25 }, (_, i) => i + 1).join(",")}`).skipped, 5);
+  assert.equal(KM.parseParams(`?ids=${Array.from({ length: 200 }, (_, i) => i + 1).join(",")}&total=500`).skipped, 480, "total de los elegidos en Kommo");
   const mappings = [
     { id: "m1", name: "Leads", objectType: "deal", templateId: "t1", active: true, send: true },
     { id: "m2", name: "Inactivo", objectType: "deal", templateId: "t1", active: false, send: true },

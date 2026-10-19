@@ -368,7 +368,8 @@ async function queueRun(db: Db, r: RunSpec, dedupeKey: string) {
  *  (detail.claimPrevious de la ejecución), porque en un reintento el vínculo ya tiene el estado reclamado. */
 interface ClaimOut {
   runId: string;
-  prior?: { previous: string | null };
+  /** written: un intento anterior ya escribió el estado (detail.claimWritten). */
+  prior?: { previous: string | null; written: boolean };
   claim: { linkId: string; previous: string | null; claimed: string; written: boolean } | null;
 }
 
@@ -403,7 +404,7 @@ async function writeBack(d: { db: Db; blobs: BlobStore }, conn: Conn, link: any,
     let previous = claimed.previous;
     if (claimOut.prior) previous = claimOut.prior.previous;
     else await db.query(`UPDATE connector_runs SET detail = detail || $2::jsonb WHERE id = $1`, [claimOut.runId, JSON.stringify({ claimPrevious: previous })]);
-    claimOut.claim = { linkId: link.id, previous, claimed: status, written: false };
+    claimOut.claim = { linkId: link.id, previous, claimed: status, written: claimOut.prior?.written ?? false };
   }
   const objectType = link.object_type as ConnectorObjectType;
   if (status === "completed" && !link.delivered_at) {
@@ -432,7 +433,11 @@ async function writeBack(d: { db: Db; blobs: BlobStore }, conn: Conn, link: any,
   if (wb.statusProperty && supportsStatus(conn.provider, objectType)) {
     const value = statusValue(wb, status as any);
     await writeStatus(conn, objectType, link.object_id, wb.statusProperty, value);
-    if (claimOut?.claim) claimOut.claim.written = true;
+    if (claimOut?.claim && !claimOut.claim.written) {
+      // Se guarda en la ejecución: si un reintento falla después, el sistema ya tiene este estado.
+      await db.query(`UPDATE connector_runs SET detail = detail || '{"claimWritten":true}'::jsonb WHERE id = $1`, [claimOut.runId]);
+      claimOut.claim.written = true;
+    }
     detail.statusWritten = { property: wb.statusProperty, value };
     const after = (await db.one<{ last_status: string | null }>(`SELECT last_status FROM connector_links WHERE id = $1`, [link.id]))?.last_status ?? null;
     if (after && statusRank(after) > statusRank(status)) {
@@ -460,7 +465,10 @@ export async function handleConnectorJob(d: { db: Db; blobs: BlobStore }, p: { r
   const flow = run.flow_id ? await db.one<any>(`SELECT * FROM connector_flows WHERE id = $1`, [run.flow_id]) : null;
   const claimOut: ClaimOut = {
     runId: run.id,
-    prior: run.detail && Object.prototype.hasOwnProperty.call(run.detail, "claimPrevious") ? { previous: run.detail.claimPrevious ?? null } : undefined,
+    prior:
+      run.detail && Object.prototype.hasOwnProperty.call(run.detail, "claimPrevious")
+        ? { previous: run.detail.claimPrevious ?? null, written: run.detail.claimWritten === true }
+        : undefined,
     claim: null,
   };
   try {

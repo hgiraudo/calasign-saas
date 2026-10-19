@@ -84,7 +84,9 @@ var CalaSignKommo = (function () {
         return (seen[x] = true);
       });
     var company = q.get("companyId") || "";
-    return { ids: ids.slice(0, 20), truncated: ids.length > 20, total: ids.length, skipped: Math.max(0, ids.length - 20), companyId: /^\d{1,18}$/.test(company) ? company : null };
+    // total: los leads elegidos en Kommo cuando el widget pasó solo los primeros 200 (por el largo de la URL).
+    var total = Math.max(ids.length, /^\d{1,6}$/.test(q.get("total") || "") ? Number(q.get("total")) : 0);
+    return { ids: ids.slice(0, 20), truncated: total > 20, total: total, skipped: Math.max(0, total - 20), companyId: /^\d{1,18}$/.test(company) ? company : null };
   }
 
   /** Mapeos activos de leads (objectType deal) con plantilla. */
@@ -254,8 +256,13 @@ var CalaSignKommo = (function () {
         })[0];
         if (m) sendNow.checked = m.send;
       });
-      var label = params.ids.length > 1 ? T.submitMany.replace("{n}", String(params.ids.length)) : T.submit;
-      var btn = el(doc, "button", { type: "submit", class: "primary", text: label });
+      // Leads que todavía no tienen sobre: volver a tocar el botón (p. ej. tras un error en alguno) reintenta solo esos
+      // (como en Pipedrive). Antes reenviaba todos y, con otro mapeo elegido, los que ya habían salido recibían otro sobre.
+      var pending = params.ids.slice();
+      var labelFor = function (n) {
+        return n > 1 ? T.submitMany.replace("{n}", String(n)) : T.submit;
+      };
+      var btn = el(doc, "button", { type: "submit", class: "primary", text: labelFor(pending.length) });
       var results = el(doc, "ul", { class: "results" });
       var f = el(doc, "form", {}, [
         el(doc, "label", { for: "mapping", text: T.mapping }),
@@ -268,15 +275,24 @@ var CalaSignKommo = (function () {
       ]);
       f.addEventListener("submit", function (e) {
         e.preventDefault();
+        if (!pending.length) return;
         btn.disabled = true;
-        sendAll(api, select.value, params.ids, sendNow.checked, params.companyId, runId).then(function (out) {
+        sendAll(api, select.value, pending, sendNow.checked, params.companyId, runId).then(function (out) {
           out.forEach(function (o) {
             var li = el(doc, "li", { class: o.ok ? "ok" : "error" });
             li.appendChild(doc.createTextNode("#" + o.id + " — " + (o.ok ? T.ok + " (" + o.status + ") " : T.failed + ": " + o.error)));
             if (o.ok) li.appendChild(el(doc, "a", { href: base + "/app/envelopes/" + encodeURIComponent(o.envelopeId), target: "_blank", rel: "noopener", text: T.open }));
             results.appendChild(li);
           });
-          btn.disabled = false;
+          pending = out
+            .filter(function (o) {
+              return !o.ok;
+            })
+            .map(function (o) {
+              return o.id;
+            });
+          btn.textContent = labelFor(pending.length);
+          btn.disabled = pending.length === 0;
         });
       });
       render([head(), f, results]);

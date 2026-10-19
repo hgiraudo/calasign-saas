@@ -151,7 +151,9 @@ export async function pipedriveAttach(c: CrmConn, t: CrmObjectType, id: string, 
     `<p><b>CalaSign</b>: «${html(a.subject)}» firmado.</p>` +
     `<p>Sobre ${html(a.envelopeId)}<br>SHA-256 del PDF: <code>${html(a.sha256)}</code><br>` +
     `<a href="${html(a.url)}">${html(a.url)}</a></p>`;
-  const note = await crmFetch(c, { method: "POST", path: "/api/v1/notes", json: { content, [idField]: Number.isFinite(Number(id)) ? Number(id) : id } });
+  // La nota es un extra: si falla, el PDF ya quedó en el registro (relanzar reintentaría el trabajo y lo subiría dos
+  // veces), como en Zoho, RD Station y Kommo.
+  const note = await crmFetch(c, { method: "POST", path: "/api/v1/notes", json: { content, [idField]: Number.isFinite(Number(id)) ? Number(id) : id } }).catch(() => null);
   return `file:${file?.data?.id ?? "?"} note:${note?.data?.id ?? "?"}`;
 }
 

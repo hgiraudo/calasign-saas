@@ -116,6 +116,9 @@ function calasignIdempotencyKey(parameters, action) {
   if (p.idempotencyKey) return "make-" + String(p.idempotencyKey).slice(0, 150);
   var copy = {};
   for (var k in p) if (Object.prototype.hasOwnProperty.call(p, k) && k !== "data") copy[k] = p[k];
+  // Del PDF solo el tamaño (barato): sin él, dos PDF distintos con el mismo nombre, asunto y firmantes el mismo día (un
+  // iterador sobre documentos generados) compartían clave y el segundo recibía el sobre del primero sin enviarse.
+  if (p.data != null && p.data.length != null) copy.dataLength = p.data.length;
   var text = action + "\n" + JSON.stringify(copy);
   // FNV-1a de 32 bits con dos semillas (64 bits en hex): sin dependencias (el sandbox de Make no tiene crypto).
   var h1 = 0x811c9dc5;

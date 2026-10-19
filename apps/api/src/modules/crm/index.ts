@@ -348,7 +348,8 @@ interface StatusClaim {
  *  vínculo ya tiene el estado reclamado por el intento anterior. */
 interface ClaimOut {
   runId: string;
-  prior?: { previous: string | null };
+  /** written: un intento anterior ya escribió el estado en el CRM (detail.claimWritten). */
+  prior?: { previous: string | null; written: boolean };
   claim: StatusClaim | null;
 }
 
@@ -386,11 +387,14 @@ async function writeBackAndAttach(
   let previous = claimed.previous;
   if (claimOut?.prior) previous = claimOut.prior.previous;
   else if (claimOut) await db.query(`UPDATE crm_runs SET detail = detail || $2::jsonb WHERE id = $1`, [claimOut.runId, JSON.stringify({ claimPrevious: previous })]);
-  const claim: StatusClaim = { linkId: link.id, previous, claimed: status, written: false };
+  const claim: StatusClaim = { linkId: link.id, previous, claimed: status, written: claimOut?.prior?.written ?? false };
   if (claimOut) claimOut.claim = claim;
   if (CRM_KIND[conn.provider] === "crm" && wb.statusProperty) {
     const value = statusValue(wb, status as any);
     await writeStatus(conn, link.object_type, link.object_id, wb.statusProperty, value);
+    // Se guarda en la ejecución: si un reintento falla después (p. ej. al adjuntar), el CRM ya tiene este estado y
+    // last_status no se tiene que devolver al anterior.
+    if (claimOut && !claim.written) await db.query(`UPDATE crm_runs SET detail = detail || '{"claimWritten":true}'::jsonb WHERE id = $1`, [claimOut.runId]);
     claim.written = true;
     detail.statusWritten = { property: wb.statusProperty, value };
     const after = (await db.one<{ last_status: string | null }>(`SELECT last_status FROM crm_links WHERE id = $1`, [link.id]))?.last_status ?? null;
@@ -454,7 +458,10 @@ export async function handleCrmJob(d: { db: Db; blobs: BlobStore }, p: { runId: 
   const mapping = run.mapping_id ? await db.one<any>(`SELECT * FROM crm_mappings WHERE id = $1`, [run.mapping_id]) : null;
   const claimOut: ClaimOut = {
     runId: run.id,
-    prior: run.detail && Object.prototype.hasOwnProperty.call(run.detail, "claimPrevious") ? { previous: run.detail.claimPrevious ?? null } : undefined,
+    prior:
+      run.detail && Object.prototype.hasOwnProperty.call(run.detail, "claimPrevious")
+        ? { previous: run.detail.claimPrevious ?? null, written: run.detail.claimWritten === true }
+        : undefined,
     claim: null,
   };
   try {

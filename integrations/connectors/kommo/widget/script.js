@@ -12,16 +12,23 @@ define(["jquery"], function ($) {
 
     function open(ids) {
       var clean = [];
-      // Se pasan todos (hasta 200, por el largo de la URL): send.html envía 20 por vez y avisa cuántos quedan afuera.
-      for (var i = 0; i < ids.length && clean.length < 200; i++) {
+      var seen = {};
+      for (var i = 0; i < ids.length; i++) {
         var id = String(ids[i]);
-        if (/^\d{1,18}$/.test(id) && clean.indexOf(id) < 0) clean.push(id);
+        if (/^\d{1,18}$/.test(id) && !seen[id]) {
+          seen[id] = true;
+          clean.push(id);
+        }
       }
       if (!clean.length) return;
+      // Se pasan hasta 200 (por el largo de la URL) y el total elegido: send.html envía 20 por vez y avisa cuántos
+      // quedan afuera (sin el total, con 500 elegidos decía que quedaban 180).
+      var total = clean.length;
+      clean = clean.slice(0, 200);
       // La cuenta de Kommo desde la que se envía: CalaSign solo ofrece los mapeos de la conexión de esta cuenta y
       // rechaza un mapeo de otra (el mismo id de lead existe en las dos).
       var acc = accountId();
-      window.open(SEND + "?ids=" + clean.join(",") + (acc ? "&companyId=" + acc : ""), "_blank", "noopener");
+      window.open(SEND + "?ids=" + clean.join(",") + (total > clean.length ? "&total=" + total : "") + (acc ? "&companyId=" + acc : ""), "_blank", "noopener");
     }
 
     function accountId() {

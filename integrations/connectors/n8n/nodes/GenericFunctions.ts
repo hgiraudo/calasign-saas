@@ -42,12 +42,15 @@ export async function calaSignRequest<T = IDataObject>(
 }
 
 /**
- * Idempotency-Key de un envío: ejecución + nodo + item. Si n8n reintenta el nodo (Retry On Fail) para el mismo item, la
- * API devuelve el mismo sobre en lugar de crear otro. Sin id de ejecución (contextos de prueba) no se manda clave.
+ * Idempotency-Key de un envío: ejecución + nodo + corrida del nodo + item. Si n8n reintenta el nodo (Retry On Fail) para
+ * el mismo item, la API devuelve el mismo sobre en lugar de crear otro. La corrida (runIndex) distingue las vueltas de un
+ * bucle (Loop Over Items): sin ella, cada vuelta repetía la clave del item 0 y recibía el sobre de la primera (o un 409).
+ * Sin id de ejecución (contextos de prueba) no se manda clave.
  */
 export function idempotencyKey(ctx: IExecuteFunctions, itemIndex: number, operation: string): string | undefined {
 	let execution = '';
 	let node = '';
+	let run = 0;
 	try {
 		execution = String(ctx.getExecutionId() ?? '');
 		const n = ctx.getNode();
@@ -55,8 +58,13 @@ export function idempotencyKey(ctx: IExecuteFunctions, itemIndex: number, operat
 	} catch {
 		return undefined;
 	}
+	try {
+		run = Number(ctx.getWorkflowDataProxy(itemIndex).$thisRunIndex) || 0;
+	} catch {
+		run = 0;
+	}
 	if (!execution) return undefined;
-	return `n8n-${execution}-${node}-${operation}-${itemIndex}`.slice(0, 190);
+	return `n8n-${execution}-${node}-${run}-${operation}-${itemIndex}`.slice(0, 190);
 }
 
 /** Adaptador para quicksend: request(method, path, { json, body, headers }). */

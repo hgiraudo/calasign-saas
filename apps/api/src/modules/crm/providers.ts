@@ -254,6 +254,15 @@ export class CrmConn {
   get cfg() {
     return this.row.config ?? {};
   }
+  /** Vuelve a leer las credenciales guardadas (otro trabajo pudo renovarlas). */
+  async reload(): Promise<boolean> {
+    if (!this.db) return false;
+    const r = await this.db.one<{ credentials_enc: string }>(`SELECT credentials_enc FROM crm_connections WHERE id = $1`, [this.row.id]);
+    if (!r) return false;
+    this.row.credentials_enc = r.credentials_enc;
+    this.creds = JSON.parse(decrypt(r.credentials_enc));
+    return true;
+  }
   async persist(configPatch?: Record<string, unknown>) {
     if (!this.db) return;
     this.row.credentials_enc = encrypt(JSON.stringify(this.creds));
@@ -318,7 +327,17 @@ async function refreshOAuth(c: CrmConn) {
   const tokenUrl =
     p === "zoho" ? `${validateZohoAccounts(String(c.cfg.accountsServer ?? zohoAccountsBase()))}/oauth/v2/token` : p === "kommo" ? kommoTokenUrl(String(c.cfg.baseDomain ?? "")) : undefined;
   const extra: Record<string, string> = p === "kommo" ? { redirect_uri: crmRedirectUri("kommo") } : {};
-  const b = await oauthTokenRequest(p, { grant_type: "refresh_token", refresh_token: c.creds.refresh_token, ...extra }, tokenUrl);
+  const used = c.creds.refresh_token;
+  let b: any;
+  try {
+    b = await oauthTokenRequest(p, { grant_type: "refresh_token", refresh_token: used, ...extra }, tokenUrl);
+  } catch (err) {
+    // Kommo, RD Station y Pipedrive rotan el refresh token: si dos trabajos de la misma conexión renuevan a la vez, el
+    // segundo recibe invalid_grant, que es "permanente" (sin reintento y "hay que volver a conectarla") aunque la
+    // conexión esté bien. Si otro ya guardó credenciales nuevas, se usan esas (como en connectors/providers.ts).
+    if (err instanceof CrmError && err.authFailed && (await c.reload().catch(() => false)) && c.creds.refresh_token && c.creds.refresh_token !== used) return;
+    throw err;
+  }
   c.creds = {
     access_token: b.access_token,
     refresh_token: b.refresh_token ?? c.creds.refresh_token,

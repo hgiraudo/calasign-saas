@@ -1,0 +1,36 @@
+// Campos de un sobre listos para estampar en el PDF (con la imagen de firma/iniciales de cada destinatario).
+// Lo usan el sellado final y la copia en curso que puede bajar un firmante antes de que firmen todos.
+import type { StampField } from "@calasign/pdf";
+import type { Db } from "../infra/db";
+import type { BlobStore } from "../infra/storage";
+
+export async function loadSignatureImages(db: Db, blobs: BlobStore, envelopeId: string): Promise<Map<string, Uint8Array>> {
+  const sigs = await db.query<any>(
+    `SELECT a.recipient_id, a.purpose, f.storage_key FROM adopted_signatures a JOIN files f ON f.id = a.image_file_id
+     JOIN recipients r ON r.id = a.recipient_id WHERE r.envelope_id = $1`,
+    [envelopeId],
+  );
+  const out = new Map<string, Uint8Array>();
+  for (const s of sigs) out.set(`${s.recipient_id}:${s.purpose}`, await blobs.get(s.storage_key));
+  return out;
+}
+
+export function toStampFields(fields: any[], docs: any[], sigImages: Map<string, Uint8Array>): StampField[] {
+  const docIndex = new Map(docs.map((x, i) => [x.id, i]));
+  return fields.map((f) => ({
+    documentIndex: docIndex.get(f.document_id)!,
+    page: f.page,
+    x: f.x,
+    y: f.y,
+    width: f.width,
+    height: f.height,
+    type: f.type,
+    value: f.value,
+    imagePng:
+      f.type === "signature"
+        ? sigImages.get(`${f.recipient_id}:signature`) ?? null
+        : f.type === "initials"
+          ? sigImages.get(`${f.recipient_id}:initials`) ?? sigImages.get(`${f.recipient_id}:signature`) ?? null
+          : null,
+  }));
+}

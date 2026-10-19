@@ -60,6 +60,19 @@ export function SignerPage() {
       .catch((e) => setError(errorText(e)));
   }, [base, apply]);
 
+  // Después de la última firma el sobre queda en 'finalizing' mientras se sella el PDF (en segundo plano):
+  // se consulta cada pocos segundos para mostrar el botón de descarga apenas esté listo.
+  const sealing = session?.envelope.status === "finalizing";
+  useEffect(() => {
+    if (!sealing) return;
+    let tries = 0;
+    const id = window.setInterval(() => {
+      if (++tries > 60) window.clearInterval(id);
+      else reload();
+    }, 3000);
+    return () => window.clearInterval(id);
+  }, [sealing, reload]);
+
   if (invalid)
     return (
       <SignerShell>
@@ -95,6 +108,14 @@ export function SignerPage() {
       </a>
       <RequestCopyButton base={base} />
     </>
+  ) : session.copyAvailable ? (
+    <>
+      {sealing && <Spinner />}
+      <a className="btn" href={`${base}/copy.pdf`}>
+        ⬇ {t("sign.downloadCopy")}
+      </a>
+      <p className="small muted">{t("sign.copyNote")}</p>
+    </>
   ) : null;
 
   let content: ReactNode;
@@ -116,7 +137,15 @@ export function SignerPage() {
           icon="✓"
           ok
           title={recipient.role === "approver" ? sx("approve.doneTitle") : t("sign.doneTitle")}
-          text={session.signedAvailable ? t("sign.doneAvailable") : recipient.role === "approver" ? sx("approve.doneText") : t("sign.doneText")}
+          text={
+            session.signedAvailable
+              ? t("sign.doneAvailable")
+              : sealing
+                ? t("sign.sealing")
+                : recipient.role === "approver"
+                  ? sx("approve.doneText")
+                  : t("sign.doneText")
+          }
         >
           {download}
           {session.certificateSigning && <SignerCertificateStep step={session.certificateSigning} base={base} onChange={reload} />}

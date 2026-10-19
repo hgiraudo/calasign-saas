@@ -155,6 +155,18 @@ sess = await s1("POST", `/v1/signing/${t1}/complete`, { fields: [], signature: {
 assert(sess.recipient.status === "signed", "firmante 1 firmó");
 step("OTP por email: bloquea sin código, cooldown, intento fallido, sesión por cookie, firma");
 
+// Copia en curso: quien ya firmó puede bajar lo firmado hasta ahora (con su código), sin el PDF final.
+assert(sess.copyAvailable && !sess.signedAvailable, "copia disponible, PDF final todavía no");
+await expectStatus(other("GET", `/v1/signing/${t1}/copy.pdf`), 401, "copia sin código");
+const copyRes = await s1("GET", `/v1/signing/${t1}/copy.pdf`, null, { raw: true });
+const copy = Buffer.from(await copyRes.arrayBuffer());
+assert(copyRes.status === 200 && copyRes.headers.get("content-type") === "application/pdf", `copia ${copyRes.status}`);
+assert(copy.subarray(0, 5).toString() === "%PDF-", "la copia es un PDF");
+mkdirSync("var", { recursive: true });
+writeFileSync("var/e2e-signer-copy.pdf", copy);
+await expectStatus(s1("GET", `/v1/signing/${t1}/signed.pdf`), 404, "PDF final antes de completar");
+step("el firmante que ya firmó baja una copia en curso; sin código no");
+
 // Aprobador.
 const tap = await linkFor(em("ap"));
 const ap = client();
@@ -197,6 +209,12 @@ for (let i = 0; i < 60; i++) {
 assert(detail.envelope.status === "completed", `completado (${detail.envelope.status})`);
 const pdf = Buffer.from(await (await sender("GET", `/v1/envelopes/${envelope.id}/signed.pdf`, null, { raw: true })).arrayBuffer());
 mkdirSync("var", { recursive: true });
+sess = await s1("GET", `/v1/signing/${t1}`);
+assert(sess.signedAvailable && !sess.copyAvailable, "completo: PDF final en lugar de la copia");
+const finalRes = await s1("GET", `/v1/signing/${t1}/signed.pdf`, null, { raw: true });
+assert(finalRes.status === 200 && (await finalRes.arrayBuffer()).byteLength > 1000, `el firmante baja el PDF final (${finalRes.status})`);
+await expectStatus(other("GET", `/v1/signing/${t1}/signed.pdf`), 401, "PDF final sin código");
+step("completo: el firmante baja el PDF sellado; sin código no");
 writeFileSync("var/e2e-signer-signed.pdf", pdf);
 const txt = execFileSync("pdftotext", ["-layout", "var/e2e-signer-signed.pdf", "-"], { encoding: "utf8" });
 for (const needle of ["Aprobador", "Delegó en Dora Delegada", "Reasignado a Rita Reemplazo", "código de un solo uso por correo", "/verify"])

@@ -11,6 +11,7 @@ import { decrypt, maskDestination, sha256Hex, uuidv7 } from "../lib/util";
 import { deliver, telegramStartLink } from "../notifications/channels";
 import { render, type TemplateKind } from "../notifications/templates";
 import { loadDocuments } from "./mappers";
+import { loadSignatureImages, toStampFields } from "./stamp-fields";
 import { finalizeFieldLogic } from "./logic";
 import { handleBulkJob } from "./bulk";
 import { embeddedAuthLabel } from "./embed";
@@ -248,41 +249,18 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
   const e = await d.db.one<any>(`SELECT * FROM envelopes WHERE id = $1`, [p.envelopeId]);
   if (!e || e.status !== "finalizing") return;
   await finalizeFieldLogic(d.db, e.id);
-  const [docs, fields, recips, sigs, org, sender, events] = await Promise.all([
+  const [docs, fields, recips, sigImages, org, sender, events] = await Promise.all([
     loadDocuments(d.db, e.id),
     d.db.query<any>(`SELECT * FROM fields WHERE envelope_id = $1 AND NOT hidden`, [e.id]),
     d.db.query<any>(`SELECT * FROM recipients WHERE envelope_id = $1 ORDER BY routing_order, created_at`, [e.id]),
-    d.db.query<any>(
-      `SELECT a.recipient_id, a.purpose, f.storage_key FROM adopted_signatures a JOIN files f ON f.id = a.image_file_id
-       JOIN recipients r ON r.id = a.recipient_id WHERE r.envelope_id = $1`,
-      [e.id],
-    ),
+    loadSignatureImages(d.db, d.blobs, e.id),
     d.db.one<any>(`SELECT name FROM tenants WHERE id = $1`, [e.tenant_id]),
     e.created_by ? d.db.one<any>(`SELECT name, email FROM users WHERE id = $1`, [e.created_by]) : Promise.resolve(null),
     d.db.query<any>(`SELECT * FROM envelope_events WHERE envelope_id = $1 ORDER BY seq`, [e.id]),
   ]);
 
   const docBytes = await Promise.all(docs.map((x) => d.blobs.get(x.storage_key)));
-  const sigImages = new Map<string, Uint8Array>();
-  for (const s of sigs) sigImages.set(`${s.recipient_id}:${s.purpose}`, await d.blobs.get(s.storage_key));
-  const docIndex = new Map(docs.map((x, i) => [x.id, i]));
-
-  const stampFields: StampField[] = fields.map((f) => ({
-    documentIndex: docIndex.get(f.document_id)!,
-    page: f.page,
-    x: f.x,
-    y: f.y,
-    width: f.width,
-    height: f.height,
-    type: f.type,
-    value: f.value,
-    imagePng:
-      f.type === "signature"
-        ? sigImages.get(`${f.recipient_id}:signature`) ?? null
-        : f.type === "initials"
-          ? sigImages.get(`${f.recipient_id}:initials`) ?? sigImages.get(`${f.recipient_id}:signature`) ?? null
-          : null,
-  }));
+  const stampFields: StampField[] = toStampFields(fields, docs, sigImages);
 
   const ev = (r: any, type: string) => events.find((x) => x.type === type && x.actor_id === r.id);
   const inPersonLabels = await inPersonAuthLabels(d.db, recips, e.locale);

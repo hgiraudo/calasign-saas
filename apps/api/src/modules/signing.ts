@@ -10,6 +10,8 @@ import { telegramStartLink } from "../notifications/channels";
 import { clientInfo, type Services } from "./context";
 import { advanceRouting, currentSignerGroup, lockEnvelope, sendPdf } from "./envelopes";
 import { toDocument, toField, loadDocuments } from "./mappers";
+import { loadSignatureImages, toStampFields } from "./stamp-fields";
+import { renderProgressCopyPdf } from "@calasign/pdf";
 import { canDelegate, isSignerAuthenticated, otpDestinationFor } from "./otp";
 import { checkValue, VALUE_FIELD_TYPES } from "./fieldvalues";
 import { getTenantBranding } from "./branding";
@@ -45,6 +47,20 @@ export function formatSigningDate(d: Date, locale: string) {
   const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
   const yyyy = d.getUTCFullYear();
   return locale === "en" ? `${yyyy}-${mm}-${dd}` : `${dd}/${mm}/${yyyy}`;
+}
+
+/** Copia en curso: el destinatario ya firmó (o es copia) y el sobre todavía no tiene su PDF final. */
+function copyAllowed(r: any, e: any): boolean {
+  const open = ["sent", "awaiting_certificates", "finalizing"].includes(e.status);
+  return open && (r.role === "cc" || r.status === "signed" || r.status === "completed");
+}
+
+/**
+ * Los PDFs del firmante piden lo mismo que la sesión para mostrar documentos. El código OTP ya lo exige el hook de
+ * otp.ts para todo /v1/signing/:token/*; acá falta la identidad verificada (KYC).
+ */
+function assertCanReadDocuments(r: any) {
+  if (identityBlocking(r)) throw new AppError(403, "identity_required", "Hace falta verificar tu identidad para continuar");
 }
 
 export async function buildSession(db: Db, token: string, r: any, e: any, authed = true): Promise<SigningSession> {
@@ -85,6 +101,7 @@ export async function buildSession(db: Db, token: string, r: any, e: any, authed
     fields: blocked ? [] : fields.map(toField),
     canSign,
     signedAvailable: !blocked && e.status === "completed" && Boolean(e.signed_file_id),
+    copyAvailable: !blocked && copyAllowed(r, e),
     otpRequired,
     otpDestination: otpRequired ? otpDestinationFor(r) : null,
     canDelegate: canDelegate(r, e),
@@ -117,7 +134,8 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
   });
 
   app.get<P>("/v1/signing/:token/documents/:documentId/file", rl, async (req, reply) => {
-    const { envelope } = await resolveToken(s.db, req.params.token);
+    const { envelope, recipient } = await resolveToken(s.db, req.params.token);
+    assertCanReadDocuments(recipient);
     const d = await s.db.one<any>(
       `SELECT f.storage_key FROM documents d JOIN files f ON f.id = d.file_id WHERE d.id = $1 AND d.envelope_id = $2`,
       [req.params.documentId, envelope.id],
@@ -308,9 +326,30 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
   });
 
   app.get<P>("/v1/signing/:token/signed.pdf", rl, async (req, reply) => {
-    const { envelope } = await resolveToken(s.db, req.params.token);
+    const { envelope, recipient } = await resolveToken(s.db, req.params.token);
+    assertCanReadDocuments(recipient);
     if (envelope.status !== "completed" || !envelope.signed_file_id) throw notFound("Documento firmado");
     const f = await s.db.one<any>(`SELECT storage_key FROM files WHERE id = $1`, [envelope.signed_file_id]);
     return sendPdf(reply, await s.blobs.get(f.storage_key), envelope.subject);
+  });
+
+  // Copia con lo firmado hasta ahora, para quien ya firmó y espera al resto (sin certificado ni sello).
+  app.get<P>("/v1/signing/:token/copy.pdf", rl, async (req, reply) => {
+    const { envelope: e, recipient: r } = await resolveToken(s.db, req.params.token);
+    assertCanReadDocuments(r);
+    if (!copyAllowed(r, e)) throw notFound("Copia del documento");
+    const [docs, fields, sigImages] = await Promise.all([
+      loadDocuments(s.db, e.id),
+      s.db.query<any>(`SELECT * FROM fields WHERE envelope_id = $1 AND NOT hidden AND value IS NOT NULL AND type <> 'attachment'`, [e.id]),
+      loadSignatureImages(s.db, s.blobs, e.id),
+    ]);
+    const pdf = await renderProgressCopyPdf({
+      documents: await Promise.all(docs.map(async (d) => ({ name: d.name, bytes: await s.blobs.get(d.storage_key) }))),
+      fields: toStampFields(fields, docs, sigImages),
+      envelopeId: e.id,
+      subject: e.subject,
+      locale: r.locale ?? e.locale ?? "es",
+    });
+    return sendPdf(reply, pdf, `${e.subject} (copia)`);
   });
 }

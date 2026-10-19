@@ -391,6 +391,8 @@ export interface SigningSession {
   canSign: boolean;
   /** true cuando el PDF sellado está disponible para descargar. */
   signedAvailable: boolean;
+  /** Ya firmó (o es copia) y el sobre sigue en curso: puede bajar una copia con lo firmado hasta ahora. */
+  copyAvailable: boolean;
   /** true si falta validar el código (OTP): documentos y campos vienen vacíos hasta verificarlo. */
   otpRequired: boolean;
   /** Destino enmascarado del código (ej. jo***@mail.com). */

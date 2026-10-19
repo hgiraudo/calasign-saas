@@ -148,6 +148,48 @@ export async function renderEnvelopePdf(input: FinalizeInput): Promise<Uint8Arra
   return new Uint8Array(await doc.save({ useObjectStreams: false }));
 }
 
+/**
+ * Copia de un sobre que todavía no terminó (faltan firmas): los documentos con los campos ya completados,
+ * marcada en cada página como copia en curso. Sin certificado ni sello: no es el documento final.
+ */
+export async function renderProgressCopyPdf(input: {
+  documents: { name: string; bytes: Uint8Array }[];
+  fields: StampField[];
+  envelopeId: string;
+  subject: string;
+  locale: string;
+}): Promise<Uint8Array> {
+  const out = await PDFDocument.create();
+  const fonts = await embedFonts(out);
+  const L = labels(input.locale);
+  for (let di = 0; di < input.documents.length; di++) {
+    const src = await PDFDocument.load(input.documents[di].bytes, { updateMetadata: false });
+    try {
+      src.getForm().flatten();
+    } catch {
+      // Formularios rotos: se copian tal cual.
+    }
+    const copied = await out.copyPages(src, src.getPageIndices());
+    for (let pi = 0; pi < copied.length; pi++) {
+      const page = out.addPage(copied[pi]);
+      for (const f of input.fields.filter((x) => x.documentIndex === di && x.page === pi)) {
+        const img = (f.type === "signature" || f.type === "initials") && f.imagePng ? await out.embedPng(f.imagePng) : null;
+        drawField(page, fonts, f, img, L);
+      }
+      drawPageFooter(page, fonts, L, input.envelopeId);
+      withDisplayedSpace(page, (W) => {
+        const text = safeText(fonts.bold, L.progressCopy);
+        const size = fitFontSize(fonts.bold, text, W - 16, 8);
+        page.drawText(text, { x: 8, y: 6, size, font: fonts.bold, color: rgb(0.7, 0.1, 0.1) });
+      });
+    }
+  }
+  out.setTitle(input.subject);
+  out.setProducer("CalaSign");
+  out.setCreator("CalaSign");
+  return new Uint8Array(await out.save());
+}
+
 async function buildEnvelopeDocument(input: FinalizeInput): Promise<PDFDocument> {
   const out = await PDFDocument.create();
   const fonts = await embedFonts(out);

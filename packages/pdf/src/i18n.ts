@@ -74,6 +74,7 @@ const L = {
     idv_liveness: "prueba de vida",
     idv_reference: "Referencia del proveedor",
     pageFooter: "CalaSign · Sobre",
+    progressCopy: "COPIA EN CURSO — faltan firmas. No es el documento final sellado.",
     page: "Página",
   },
   "pt-BR": {
@@ -149,6 +150,7 @@ const L = {
     idv_liveness: "prova de vida",
     idv_reference: "Referência do provedor",
     pageFooter: "CalaSign · Envelope",
+    progressCopy: "CÓPIA EM ANDAMENTO — faltam assinaturas. Não é o documento final selado.",
     page: "Página",
   },
   en: {
@@ -224,6 +226,7 @@ const L = {
     idv_liveness: "liveness",
     idv_reference: "Provider reference",
     pageFooter: "CalaSign · Envelope",
+    progressCopy: "COPY IN PROGRESS — signatures pending. This is not the final sealed document.",
     page: "Page",
   },
 } as const;

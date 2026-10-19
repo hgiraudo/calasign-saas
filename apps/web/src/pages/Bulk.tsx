@@ -201,7 +201,10 @@ export function BulkNewPage() {
     setFileName(f.name);
     try {
       const text = await f.text();
-      if (mine === fileSeq.current) setCsv(text);
+      if (mine !== fileSeq.current) return;
+      setCsv(text);
+      // El error de un archivo anterior que no se pudo leer no queda a la vista con el nuevo ya cargado.
+      setError(null);
     } catch (e) {
       if (mine === fileSeq.current) setError(errorText(e));
     }

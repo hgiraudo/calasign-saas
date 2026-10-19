@@ -131,9 +131,14 @@ export function ByokSettingsPage() {
           <button
             type="button"
             className="btn btn-ghost btn-sm"
-            onClick={() => {
-              void navigator.clipboard?.writeText(policy);
-              setCopied(true);
+            onClick={async () => {
+              // "Copiado" solo si se copió: sin portapapeles (http://IP) o sin permiso, se copia a mano.
+              try {
+                await navigator.clipboard.writeText(policy);
+                setCopied(true);
+              } catch {
+                /* copia manual */
+              }
             }}
           >
             {copied ? dt("byok.copied") : dt("byok.copy")}

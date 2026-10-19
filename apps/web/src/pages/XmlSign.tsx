@@ -30,10 +30,20 @@ export function XmlSignPage() {
       .catch((e) => setError(errorText(e)));
   }, []);
 
+  // Como en el envío masivo: solo vale la lectura del último archivo elegido y un archivo que no se puede leer (movido,
+  // sin permiso) muestra el error en lugar de un rechazo sin manejar (antes no pasaba nada al elegirlo).
+  const fileSeq = useRef(0);
   const loadFile = async (f: File | undefined) => {
     if (!f) return;
-    setXml(await f.text());
-    setResult(null);
+    const mine = ++fileSeq.current;
+    try {
+      const text = await f.text();
+      if (mine !== fileSeq.current) return;
+      setXml(text);
+      setResult(null);
+    } catch (e) {
+      if (mine === fileSeq.current) setError(errorText(e));
+    }
   };
 
   const sign = async (e: FormEvent) => {
@@ -116,7 +126,13 @@ export function XmlSignPage() {
             <button type="button" className="btn" onClick={() => fileRef.current?.click()}>
               {ev("xml.loadFile")}
             </button>
-            <input ref={fileRef} type="file" accept=".xml,application/xml,text/xml" className="sr-only" onChange={(e) => void loadFile(e.target.files?.[0])} />
+            <input ref={fileRef} type="file" accept=".xml,application/xml,text/xml" className="sr-only" onChange={(e) => {
+                const f = e.target.files?.[0];
+                // Vaciado: volver a elegir el mismo archivo (después de editar el texto) no disparaba onChange.
+                e.target.value = "";
+                void loadFile(f);
+              }}
+            />
             <button className="btn btn-primary" disabled={busy || !xml.trim() || !certificateId}>
               {busy ? <Spinner /> : ev("xml.sign")}
             </button>

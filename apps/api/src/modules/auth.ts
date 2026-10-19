@@ -85,8 +85,11 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
   app.post("/v1/auth/login", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req, reply) => {
     const input = LoginInput.parse(req.body);
     const u = await s.db.one<any>(`SELECT id, password_hash FROM users WHERE lower(email) = lower($1)`, [input.email]);
-    // Se verifica igual con un hash ficticio para no revelar qué correos existen por tiempo de respuesta.
-    const ok = await verifyPassword(input.password, u?.password_hash ?? DUMMY_HASH);
+    // Se verifica igual con un hash ficticio para no revelar qué correos existen por tiempo de respuesta. También para
+    // las cuentas sin contraseña (altas por SSO o SCIM): su marca no es un hash scrypt y verifyPassword respondía al
+    // instante, lo que delataba esas cuentas.
+    const hasPassword = typeof u?.password_hash === "string" && u.password_hash.startsWith("scrypt$");
+    const ok = (await verifyPassword(input.password, hasPassword ? u.password_hash : DUMMY_HASH)) && hasPassword;
     // Límite por cuenta (además del de IP): muchos intentos fallidos recientes bloquean la cuenta 15 minutos,
     // aunque lleguen desde IPs distintas. Se responde igual con la contraseña correcta, para no confirmarla.
     if (u && (await recentFailedLogins(s.db, u.id)) >= MAX_FAILED_LOGINS) {

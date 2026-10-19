@@ -270,10 +270,14 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     let tenants: AccessResponse["tenants"] = [];
     let twoFactor = { enabled: false, requiredByTenant: false, setupRequired: false };
     if (a.userId) {
+      // Una sesión SSO o un token OAuth valen solo en su organización: no listan las demás de la cuenta. Si no, el IdP
+      // de una organización (que puede afirmar el correo de un miembro) o una app autorizada en ella veían en qué otras
+      // organizaciones está esa persona y con qué rol.
+      const onlyCurrent = Boolean(a.oauth) || (await sessionAuthMethod(req)) === "sso";
       const rows = await s.db.query<any>(
         `SELECT t.id, t.name, t.slug, m.role, r.name AS role_name FROM memberships m JOIN tenants t ON t.id = m.tenant_id
-         LEFT JOIN roles r ON r.id = m.role_id WHERE m.user_id = $1 ORDER BY t.name`,
-        [a.userId],
+         LEFT JOIN roles r ON r.id = m.role_id WHERE m.user_id = $1 AND (NOT $2 OR m.tenant_id = $3) ORDER BY t.name`,
+        [a.userId, onlyCurrent, a.tenantId],
       );
       tenants = rows.map((r) => ({
         id: r.id,
@@ -463,7 +467,10 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
 
   app.delete<P>("/v1/invitations/:id", { preHandler: auth }, async (req, reply) => {
     const a = A(req);
-    const cur =await s.db.one<any>(`SELECT role, role_id FROM invitations WHERE id = $1 AND tenant_id = $2`, [req.params.id, a.tenantId]);
+    const cur = await s.db.one<any>(
+      `SELECT role, role_id FROM invitations WHERE id = $1 AND tenant_id = $2 AND accepted_at IS NULL AND revoked_at IS NULL`,
+      [req.params.id, a.tenantId],
+    );
     if (cur) await assertCanManageInvitation(a, cur);
     const r = await s.db.query(
       `UPDATE invitations SET revoked_at = now() WHERE id = $1 AND tenant_id = $2 AND accepted_at IS NULL AND revoked_at IS NULL RETURNING email`,
@@ -867,8 +874,10 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
   app.patch("/v1/settings/security", { preHandler: auth }, async (req) => {
     const a = A(req);
     const input = UpdateSecuritySettingsInput.parse(req.body);
-    if (input.require2fa && a.userId) {
-      // Evita que quien lo activa quede bloqueado.
+    // Evita que quien lo activa quede bloqueado. Con una sesión SSO no aplica: esas sesiones no exigen el alta (el IdP
+    // gestiona el segundo factor) y desde ellas no se puede activar la 2FA de la cuenta, así que un administrador que
+    // entra por SSO no podía exigirla nunca.
+    if (input.require2fa && a.userId && (await sessionAuthMethod(req)) !== "sso") {
       const u = await s.db.one<any>(`SELECT totp_enabled_at FROM users WHERE id = $1`, [a.userId]);
       if (!u?.totp_enabled_at) throw conflict("enable_2fa_first", "Activá tu verificación en dos pasos antes de exigirla a la organización");
     }
@@ -888,11 +897,15 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
    * correo de cualquier miembro). Activarla desde ahí dejaba a un propietario ajeno con el segundo factor de la cuenta
    * de un miembro: sus ingresos con contraseña en las demás organizaciones quedaban bloqueados.
    */
-  async function assertAccountSession(req: FastifyRequest) {
+  async function sessionAuthMethod(req: FastifyRequest): Promise<string | null> {
     const cookie = req.cookies?.[SESSION_COOKIE];
     const sess = cookie ? await s.db.one<any>(`SELECT auth_method FROM sessions WHERE token_hash = $1`, [sha256Hex(cookie)]) : null;
-    if (sess?.auth_method === "sso") {
-      throw forbidden("Con inicio de sesión único (SSO) el segundo factor lo gestiona el proveedor de identidad: ingresá con tu contraseña para activarlo");
+    return sess?.auth_method ?? null;
+  }
+
+  async function assertAccountSession(req: FastifyRequest) {
+    if ((await sessionAuthMethod(req)) === "sso") {
+      throw new AppError(403, "sso_session_2fa", "Con inicio de sesión único (SSO) el segundo factor lo gestiona el proveedor de identidad: ingresá con tu contraseña para activarlo");
     }
   }
 

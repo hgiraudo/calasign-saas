@@ -81,10 +81,12 @@ export async function otpRoutes(app: FastifyInstance, s: Services) {
   type P = { Params: { token: string } };
   const rl = { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } };
 
-  // Los endpoints del link (salvo la sesión y el propio OTP) exigen el código validado si el destinatario lo requiere.
+  // Los endpoints del link (salvo la sesión, el propio OTP y los datos de la firma embebida) exigen el código validado si
+  // el destinatario lo requiere. /embed (solo el returnUrl del integrador) lo pide la página una vez, al abrirse y antes
+  // del código: con el 401 el firmante embebido con OTP no volvía nunca a la aplicación del integrador al terminar.
   app.addHook("preHandler", async (req: FastifyRequest, _reply: FastifyReply) => {
     const url = req.routeOptions?.url ?? "";
-    if (!url.startsWith("/v1/signing/:token/") || url.includes("/otp/")) return;
+    if (!url.startsWith("/v1/signing/:token/") || url.includes("/otp/") || url === "/v1/signing/:token/embed") return;
     const token = (req.params as { token?: string }).token ?? "";
     const { recipient } = await resolveToken(s.db, token);
     if (!(await isSignerAuthenticated(s.db, req, recipient))) {

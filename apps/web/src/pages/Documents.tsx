@@ -9,7 +9,7 @@ import {
   type GenerateDocumentResponse,
   type TemplateAnalysis,
 } from "@calasign/shared";
-import { api, errorText, fetchResponse } from "../lib/api";
+import { api, errorText, fetchResponse, readBody } from "../lib/api";
 import { formatDateTime, useI18n, confirmAction } from "../lib/i18n";
 import { useAccess } from "../lib/access";
 import { useAgrText } from "../lib/i18n-agreements";
@@ -266,7 +266,7 @@ export function DocumentTemplateEditPage() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ source, data: sampleObj ?? {}, locale: tpl?.locale, title: name }),
       });
-      const url = URL.createObjectURL(await res.blob());
+      const url = URL.createObjectURL(await readBody(res.blob()));
       if (win) {
         win.opener = null;
         win.location.href = url;

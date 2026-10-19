@@ -480,6 +480,26 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
           input.saml ? input.saml.emailAttribute ?? null : cur?.saml_email_attribute ?? null,
         ],
       );
+      // Al deshabilitar el SSO o cambiar de IdP se cierran las sesiones (y los tokens OAuth) que abrió el IdP anterior:
+      // si no, cambiar un IdP comprometido o mal configurado dejaba vigentes hasta 14 días las sesiones que había abierto.
+      const idp = (p: string, issuer: string | null, clientId: string | null, entryPoint: string | null, samlIssuer: string | null, samlCert: string | null) =>
+        p === "oidc" ? `oidc|${issuer}|${clientId}` : `saml|${entryPoint}|${samlIssuer}|${samlCert}`;
+      const idpChanged =
+        cur != null &&
+        idp(cur.protocol, cur.oidc_issuer, cur.oidc_client_id, cur.saml_entry_point, cur.saml_idp_issuer, cur.saml_idp_cert) !==
+          idp(
+            input.protocol,
+            input.oidc?.issuer ?? cur.oidc_issuer ?? null,
+            input.oidc?.clientId ?? cur.oidc_client_id ?? null,
+            input.saml?.entryPoint ?? cur.saml_entry_point ?? null,
+            input.saml?.idpIssuer ?? cur.saml_idp_issuer ?? null,
+            cert,
+          );
+      if (cur?.enabled && (!input.enabled || idpChanged)) {
+        await t.query(`DELETE FROM sessions WHERE auth_method = 'sso' AND sso_tenant_id = $1`, [a.tenantId]);
+        await t.query(`UPDATE oauth_tokens SET revoked_at = now() WHERE tenant_id = $1 AND auth_method = 'sso' AND revoked_at IS NULL`, [a.tenantId]);
+        await t.query(`UPDATE oauth_authorization_codes SET used_at = now() WHERE tenant_id = $1 AND auth_method = 'sso' AND used_at IS NULL`, [a.tenantId]);
+      }
       // Al exigir SSO se cierran las sesiones con contraseña de quienes no son propietarios.
       if (input.enabled && input.enforce) {
         await t.query(

@@ -57,7 +57,7 @@ function getWithHost(path, host, extraHeaders = {}) {
     const req = httpRequest({ hostname: u.hostname, port: u.port, path: u.pathname + u.search, method: "GET", headers: { host, ...extraHeaders } }, (res) => {
       let body = "";
       res.on("data", (c) => (body += c));
-      res.on("end", () => resolve({ status: res.statusCode, body }));
+      res.on("end", () => resolve({ status: res.statusCode, body, headers: res.headers }));
     });
     req.on("error", reject);
     req.end();
@@ -458,6 +458,19 @@ assert(link.startsWith(`https://${DOMAIN}/s/`), `link de firma con el dominio pr
 const tokenMine = link.split("/s/")[1];
 let sg = await getWithHost(`/v1/signing/${tokenMine}`, DOMAIN);
 assert(sg.status === 200, "link propio por el dominio propio → 200");
+
+// El dominio propio no sirve la cuenta: la organización controla su DNS y podría quedarse con la cookie de sesión.
+const loginPage = await getWithHost("/login", DOMAIN);
+assert(loginPage.status === 302 && loginPage.headers.location === `${BASE.replace(/\/$/, "")}/login`.replace(BASE, new URL(BASE).origin) || loginPage.headers.location?.endsWith("/login"), `/login en el dominio propio redirige a la plataforma (${loginPage.status} ${loginPage.headers.location})`);
+const appPage = await getWithHost("/app/envelopes/x", DOMAIN);
+assert(appPage.status === 302 && !appPage.headers.location?.includes(DOMAIN), "/app en el dominio propio redirige a la plataforma");
+const loginRes = await fetch(`${BASE}/v1/auth/login`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: `owner-plat+${stamp}@example.com`, password: "una-clave-segura-123" }) });
+const sessionCookie = (loginRes.headers.get("set-cookie") ?? "").split(";")[0];
+assert(loginRes.ok && sessionCookie.startsWith("cs_session="), "sesión en la plataforma");
+assert((await getWithHost("/v1/me", "localhost", { cookie: sessionCookie })).status === 200, "la sesión vale en la plataforma");
+assert((await getWithHost("/v1/me", DOMAIN, { cookie: sessionCookie })).status === 401, "la cookie de sesión se ignora en el dominio propio");
+{ const r = await getWithHost("/v1/envelopes", DOMAIN, { cookie: sessionCookie }); assert(r.status === 401, `ni para la API de la cuenta (${r.status} ${r.body.slice(0, 120)})`); }
+ok("dominio propio: sin login ni sesión de cuenta (redirige a la plataforma e ignora la cookie)");
 
 // Otra organización con su propio dominio: su dominio no abre links de la primera.
 const other = client();

@@ -11,12 +11,17 @@ import { AppError, badRequest, conflict, notFound } from "../lib/errors";
 import { iso, randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { auditFromRequest, recordAudit } from "./audit";
 import { getTenantBranding } from "./branding";
-import { authenticate, type Services } from "./context";
+import { SESSION_COOKIE, authenticate, type Services } from "./context";
 
 const appHost = () => new URL(config.appUrl).hostname.toLowerCase();
 const isLocalEnv = () => config.environment === "local";
 /** Dominio registrable de la plataforma (calasign.com): sus subdominios no se pueden reclamar. */
 const platformRoot = () => appHost().split(".").slice(-2).join(".");
+
+/** Páginas de la cuenta (web): en un dominio propio redirigen al dominio de la plataforma. */
+const ACCOUNT_PAGES = ["/", "/app", "/login", "/signup", "/forgot", "/reset", "/invite", "/oauth/authorize", "/developers"];
+/** Rutas que crean o usan una sesión de cuenta: en un dominio propio no se atienden. */
+const ACCOUNT_APIS = ["/v1/auth/", "/v1/invite/", "/v1/oauth/authorize/", "/v1/me", "/v1/integrations/sso/"];
 
 const txtName = (domain: string) => `_calasign-challenge.${domain}`;
 const txtValue = (token: string) => `calasign-verify=${token}`;
@@ -319,6 +324,31 @@ export async function customDomainRoutes(app: FastifyInstance, s: Services) {
     if (d && d === appHost()) return reply.code(200).send("ok");
     const r = d ? await s.db.one(`SELECT 1 FROM custom_domains WHERE domain = $1 AND status = 'verified'`, [d]) : null;
     return reply.code(r ? 200 : 404).send(r ? "ok" : "");
+  });
+
+  // Un dominio propio sirve lo que ven los firmantes (/s, /f, /wf, /n, /verify…), nunca la cuenta: la organización
+  // controla su DNS y podría quedarse con la cookie de sesión de quien entra ahí, que vale en el dominio de la
+  // plataforma y en sus otras organizaciones. Las páginas de la cuenta redirigen a la plataforma, las rutas que crean
+  // una sesión no existen acá, y la cookie de sesión de cuenta se ignora.
+  app.addHook("onRequest", async (req, reply) => {
+    const tenantId = await tenantForHost(s.db, req.headers.host);
+    if (!tenantId) return;
+    const path = req.url.split("?")[0];
+    if (req.method === "GET" && ACCOUNT_PAGES.some((p) => (p === "/" ? path === "/" : path === p || path.startsWith(`${p}/`)))) {
+      return reply.redirect(`${config.appUrl}${req.url}`, 302);
+    }
+    if (ACCOUNT_APIS.some((p) => path.startsWith(p))) {
+      return reply.code(401).send({ error: { code: "use_platform_host", message: `En un dominio propio no se inicia sesión: entrá por ${config.appUrl}` } });
+    }
+    // @fastify/cookie ya parseó las cookies (su hook corre antes): se quita la de sesión de las dos partes.
+    const cookie = req.headers.cookie;
+    if (cookie?.includes(`${SESSION_COOKIE}=`)) {
+      req.headers.cookie = cookie
+        .split(";")
+        .filter((c) => c.trim().split("=")[0] !== SESSION_COOKIE)
+        .join(";");
+    }
+    if (req.cookies && SESSION_COOKIE in req.cookies) delete req.cookies[SESSION_COOKIE];
   });
 
   // En un dominio propio, los links de firma de OTRAS organizaciones no funcionan.

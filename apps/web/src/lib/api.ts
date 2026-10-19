@@ -24,6 +24,20 @@ interface RequestOptions {
   signal?: AbortSignal;
 }
 
+/** Error de red (no el TypeError del navegador, "Failed to fetch", en inglés en cualquier idioma); un aborto se propaga. */
+function networkError(e: unknown): never {
+  if ((e as Error).name === "AbortError") throw e;
+  throw new HttpError(0, "network_error", "No se pudo conectar con el servidor.");
+}
+
+/**
+ * Lee el cuerpo de una respuesta: un corte de la conexión a mitad de la descarga (p. ej. un PDF grande en el celular)
+ * rechaza con el mismo TypeError del navegador que un fetch fallido, así que se traduce igual.
+ */
+export function readBody<T>(read: Promise<T>): Promise<T> {
+  return read.catch(networkError);
+}
+
 export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   const headers: Record<string, string> = { Accept: "application/json", ...(opts.headers ?? {}) };
   let body: BodyInit | undefined;
@@ -43,11 +57,10 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
       signal: opts.signal,
     });
   } catch (e) {
-    if ((e as Error).name === "AbortError") throw e;
-    throw new HttpError(0, "network_error", "No se pudo conectar con el servidor.");
+    networkError(e);
   }
   if (res.status === 204) return undefined as T;
-  const text = await res.text();
+  const text = await readBody(res.text());
   let data: unknown = undefined;
   if (text) {
     try {
@@ -71,6 +84,10 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
 // español queda el texto de la API, que puede traer detalle, p. ej. el máximo de páginas).
 const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
   network_error: { "pt-BR": "Não foi possível conectar ao servidor.", en: "Couldn't connect to the server." },
+  sso_session_2fa: {
+    "pt-BR": "Com login único (SSO), o segundo fator é gerenciado pelo provedor de identidade: entre com sua senha para ativá-lo.",
+    en: "With single sign-on (SSO), the second factor is managed by your identity provider: sign in with your password to enable it.",
+  },
   invalid_code: { "pt-BR": "Código incorreto.", en: "Incorrect code." },
   challenge_expired: { "pt-BR": "O acesso expirou: digite sua senha novamente.", en: "The sign-in expired: enter your password again." },
   too_many_attempts: {
@@ -143,8 +160,7 @@ export async function fetchResponse(path: string, init: RequestInit = {}): Promi
   try {
     res = await fetch(path, { credentials: "include", ...init });
   } catch (e) {
-    if ((e as Error).name === "AbortError") throw e;
-    throw new HttpError(0, "network_error", "No se pudo conectar con el servidor.");
+    networkError(e);
   }
   if (!res.ok) {
     if (res.status === 401 && path !== "/v1/me" && typeof window !== "undefined") window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
@@ -160,5 +176,5 @@ export async function fetchArrayBuffer(path: string): Promise<ArrayBuffer> {
     if (e instanceof HttpError && e.status > 0) throw new HttpError(e.status, "download_failed", "No se pudo descargar el documento.");
     throw e;
   });
-  return res.arrayBuffer();
+  return readBody(res.arrayBuffer());
 }

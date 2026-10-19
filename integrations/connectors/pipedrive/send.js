@@ -233,8 +233,13 @@ var CalaSignPipedrive = (function () {
         })[0];
         if (m) sendNow.checked = m.send;
       });
-      var label = params.ids.length > 1 ? T.submitMany.replace("{n}", String(params.ids.length)) : T.submit;
-      var btn = el(doc, "button", { type: "submit", class: "primary", text: label });
+      // Registros que todavía no tienen sobre: volver a tocar el botón (p. ej. tras un error en alguno) reintenta solo
+      // esos. Antes reenviaba todos y los que ya habían salido recibían un segundo sobre.
+      var pending = params.ids.slice();
+      var labelFor = function (n) {
+        return n > 1 ? T.submitMany.replace("{n}", String(n)) : T.submit;
+      };
+      var btn = el(doc, "button", { type: "submit", class: "primary", text: labelFor(pending.length) });
       var results = el(doc, "ul", { class: "results" });
       var f = el(doc, "form", {}, [
         el(doc, "label", { for: "mapping", text: T.mapping }),
@@ -245,15 +250,24 @@ var CalaSignPipedrive = (function () {
       ]);
       f.addEventListener("submit", function (e) {
         e.preventDefault();
+        if (!pending.length) return;
         btn.disabled = true;
-        sendAll(api, select.value, params.ids, sendNow.checked).then(function (out) {
+        sendAll(api, select.value, pending, sendNow.checked).then(function (out) {
           out.forEach(function (o) {
             var li = el(doc, "li", { class: o.ok ? "ok" : "error" });
             li.appendChild(doc.createTextNode("#" + o.id + " — " + (o.ok ? T.ok + " (" + o.status + ") " : T.failed + ": " + o.error)));
             if (o.ok) li.appendChild(el(doc, "a", { href: base + "/app/envelopes/" + encodeURIComponent(o.envelopeId), target: "_blank", rel: "noopener", text: T.open }));
             results.appendChild(li);
           });
-          btn.disabled = false;
+          pending = out
+            .filter(function (o) {
+              return !o.ok;
+            })
+            .map(function (o) {
+              return o.id;
+            });
+          btn.textContent = labelFor(pending.length);
+          btn.disabled = pending.length === 0;
         });
       });
       render([head(), f, results]);

@@ -449,6 +449,10 @@ export const docsEn: Record<DocsKey, string> = {
   "g.crm.salesforce": "Send from an Opportunity (contact roles + fields). Updates a status field and publishes the PDF as a ContentVersion on the opportunity.",
   "g.crm.siigo": "Colombia: finds the customer by a signer's ID number and adds the signed document reference to it.",
   "g.crm.alegra": "Finds the contact by ID number and attaches the PDF; an invoice can also be linked.",
+  "g.crm.pipedrive": "OAuth with the company's API domain. Send from a Deal (primary person and participants + fields, including custom fields by key or name) or from a Person. Writes the status to a deal field (text or single option) and, on completion, uploads the signed PDF to the deal and adds a note with the SHA-256 and the link.",
+  "g.crm.pipedrive.h": "Pipedrive",
+  "g.crm.pipedrive.p":
+    "1. **Settings → CRM and ERP → Pipedrive → Connect with OAuth**: authorize the Pipedrive company; CalaSign stores its API domain.\n2. In Pipedrive, create a custom deal field for the status (e.g. \"CalaSign status\", text or single option with the values you will write).\n3. Create a mapping: type `deal` (or `contact` for a Person), template, recipients (*primary contact* = the deal's person; *contact 1, 2…* = participants), prefill (`value`, `title`, `org_id.name`, or a custom field by its 40-character key or by name) and the status property.\n4. Send with `POST /v1/crm/mappings/{id}/send` (`objectId` = deal id) or from Pipedrive with the **Send for signature with CalaSign** action of the Marketplace app ([zip with the action and the guide](/integrations/connectors/pipedrive/calasign-pipedrive.zip)).",
   "g.crm.mappings.h": "Mappings and links",
   "g.crm.mappings.p":
     "A **mapping** connects a record type with a template: where each recipient comes from, which properties prefill which fields, what's written back at each status and when it triggers (`manual`, `webhook` or `on_completion`). Each envelope is **linked** to its record and every event (sent, completed, declined, voided, expired) is written back. Activity, with errors and retries, can be queried at `/v1/crm/runs`.",

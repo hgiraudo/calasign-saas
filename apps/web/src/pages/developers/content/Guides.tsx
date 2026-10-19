@@ -386,10 +386,13 @@ export function CrmGuide() {
           [<strong key="s">Salesforce</strong>, t("g.crm.salesforce")],
           [<strong key="i">Siigo</strong>, t("g.crm.siigo")],
           [<strong key="a">Alegra</strong>, t("g.crm.alegra")],
+          [<strong key="p">Pipedrive</strong>, t("g.crm.pipedrive")],
         ]}
       />
       <H2 id="mappings">{t("g.crm.mappings.h")}</H2>
       <Md text={t("g.crm.mappings.p")} />
+      <H2 id="pipedrive">{t("g.crm.pipedrive.h")}</H2>
+      <Md text={t("g.crm.pipedrive.p")} />
     </DocPage>
   );
 }

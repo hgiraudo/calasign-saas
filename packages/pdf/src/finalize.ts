@@ -8,6 +8,7 @@ import { buildPadesCms, type CmsOptions } from "./cms";
 import { embedFonts, fitFontSize, safeMultiline, safeText, withDisplayedSpace, wrapText, type Fonts } from "./layout";
 import { labels, type CertLabels } from "./i18n";
 import type { SignatureProvider } from "./provider";
+import { assertPngSize } from "./images";
 
 // @signpdf/signpdf exporta una instancia por defecto; según el bundler llega anidada.
 const signpdf = ((signpdfModule as unknown as { default?: typeof signpdfModule }).default ?? signpdfModule) as {
@@ -213,7 +214,8 @@ function imageEmbedder(out: PDFDocument) {
   return (png: Uint8Array) => {
     let img = cache.get(png);
     if (!img) {
-      img = out.embedPng(png);
+      // Las firmas se validan al recibirlas; esto evita que una que se haya colado reserve GB en el worker.
+      img = Promise.resolve().then(() => (assertPngSize(png), out.embedPng(png)));
       cache.set(png, img);
     }
     return img;
@@ -295,7 +297,7 @@ async function appendAttachment(out: PDFDocument, fonts: Fonts, L: CertLabels, a
     }
     return;
   }
-  const img = a.contentType === "image/png" ? await out.embedPng(a.bytes) : await out.embedJpg(a.bytes);
+  const img = a.contentType === "image/png" ? (assertPngSize(a.bytes), await out.embedPng(a.bytes)) : await out.embedJpg(a.bytes);
   const page = out.addPage([A4.w, A4.h]);
   const maxW = A4.w - 2 * M;
   const maxH = A4.h - 2 * M - 20;
@@ -409,7 +411,7 @@ async function drawCertificate(
   page.drawRectangle({ x: 0, y: A4.h - 6, width: A4.w, height: 6, color: accent });
   if (c.branding?.logo) {
     try {
-      const logo = c.branding.logo.type === "png" ? await doc.embedPng(c.branding.logo.bytes) : await doc.embedJpg(c.branding.logo.bytes);
+      const logo = c.branding.logo.type === "png" ? (assertPngSize(c.branding.logo.bytes), await doc.embedPng(c.branding.logo.bytes)) : await doc.embedJpg(c.branding.logo.bytes);
       const scale = Math.min(130 / logo.width, 38 / logo.height, 1);
       page.drawImage(logo, { x: A4.w - M - logo.width * scale, y: A4.h - M - logo.height * scale + 4, width: logo.width * scale, height: logo.height * scale });
     } catch {

@@ -23,7 +23,7 @@ import { checkSenderValue, insertEnvelopeField } from "./fieldvalues";
 import { pruneDanglingConditions, saveFieldLogic } from "./logic";
 import { csvCell } from "./agreements/common";
 import { loadDetail } from "./mappers";
-import { SIGNER_COOKIE } from "./otp";
+import { SIGNER_COOKIE, isUnverifiedSelfRegistered } from "./otp";
 import { assertLinkCurrent, recipientActor, resolveToken } from "./signing";
 import { applyIdentityFlags } from "./identity/kyc";
 import { applyCertificateFlags } from "./certsign";
@@ -694,6 +694,15 @@ export async function experienceRoutes(app: FastifyInstance, s: Services) {
       if (e.status !== "completed") throw conflict("not_completed", "El documento final todavía no está disponible");
       const r = await t.one<any>(`SELECT * FROM recipients WHERE id = $1`, [r0.id]);
       if (!r.email && !r.phone && !r.telegram_chat_id) throw conflict("no_destination", "No hay a dónde enviarte la copia");
+      // Autoregistrado en un formulario público sin correo validado: la copia final ya se le mandó y la descarga está
+      // en pantalla. Si no, el formulario más este pedido servían para mandar correos sin fin a una dirección ajena.
+      if (isUnverifiedSelfRegistered(r)) throw forbidden("Descargá la copia desde esta página");
+      // Tope total por destinatario (además de uno cada 10 minutos).
+      const total = await t.one<{ n: number }>(
+        `SELECT count(*)::int AS n FROM envelope_events WHERE envelope_id = $1 AND type = 'recipient.copy_requested' AND actor_id = $2`,
+        [e.id, r.id],
+      );
+      if ((total?.n ?? 0) >= 5) throw new AppError(429, "copy_limit_reached", "Ya pediste varias copias. Descargá el documento desde esta página.");
       const recent = await t.one(
         `SELECT 1 FROM envelope_events WHERE envelope_id = $1 AND type = 'recipient.copy_requested' AND actor_id = $2 AND occurred_at > now() - interval '10 minutes'`,
         [e.id, r.id],

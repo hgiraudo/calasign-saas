@@ -179,6 +179,19 @@ async function assertCanManageServiceApp(db: Db, a: AuthContext, app: { service_
   await assertCanGrantRole(db, a, k.role, k.role_id, what);
 }
 
+/**
+ * Cambiar las URI de redirección o rotar el secreto de una app ajena es quedarse con los códigos y tokens de quienes
+ * ya confían en ella: solo quien la creó, un propietario o quien tiene todos los permisos de su creador. Si no, un rol
+ * con api_keys:manage apuntaba la app "oficial" de un propietario a su servidor y mandaba el link de consentimiento.
+ */
+async function assertCanTakeOverApp(db: Db, a: AuthContext, app: { created_by?: string | null }, what: string) {
+  if (!app.created_by || app.created_by === a.userId || a.access?.role === "owner") return;
+  const m = await db.one<any>(`SELECT role, role_id FROM memberships WHERE user_id = $1 AND tenant_id = $2`, [app.created_by, a.tenantId]);
+  if (!m) return;
+  if (m.role === "owner") throw new AppError(403, "forbidden", `No podés ${what}: la creó un propietario`);
+  await assertCanGrantRole(db, a, m.role, m.role_id, what);
+}
+
 // ───────────────────────────── Autorización (consentimiento) ─────────────────────────────
 
 interface ValidatedAuthorize {
@@ -774,6 +787,7 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
     if (r.revoked_at) throw new AppError(409, "revoked", "La aplicación está revocada");
     const input = UpdateOAuthAppInput.parse(req.body);
     if (input.scopes) await assertCanManageServiceApp(s.db, a, r, "cambiar los scopes de una app");
+    if (input.redirectUris) await assertCanTakeOverApp(s.db, a, r, "cambiar las URI de redirección de esta app");
     if (input.redirectUris && r.grant_types.includes("authorization_code") && input.redirectUris.length === 0)
       throw badRequest("invalid_request", "authorization_code requiere al menos una URI de redirección");
     await s.db.query(
@@ -806,6 +820,7 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
     if (r.revoked_at) throw new AppError(409, "revoked", "La aplicación está revocada");
     if (!r.secret_hash) throw badRequest("public_client", "Un cliente público no tiene secreto");
     await assertCanManageServiceApp(s.db, a, r, "rotar el secreto de una app");
+    await assertCanTakeOverApp(s.db, a, r, "rotar el secreto de esta app");
     const secret = `cssec_${randomToken(32)}`;
     await s.db.query(`UPDATE oauth_clients SET secret_hash = $2, secret_prefix = $3, updated_at = now() WHERE id = $1`, [r.id, sha256Hex(secret), secret.slice(0, 12)]);
     await auditFromRequest(s.db, req, a, "oauth_app.secret_rotated", { targetType: "oauth_app", targetId: r.client_id });

@@ -11,7 +11,7 @@ import { clientInfo, type Services } from "./context";
 import { advanceRouting, currentSignerGroup, lockEnvelope, sendPdf } from "./envelopes";
 import { toDocument, toField, loadDocuments } from "./mappers";
 import { loadSignatureImages, toStampFields } from "./stamp-fields";
-import { renderProgressCopyPdf } from "@calasign/pdf";
+import { assertEmbeddableImage, renderProgressCopyPdf } from "@calasign/pdf";
 import { canDelegate, isSignerAuthenticated, otpDestinationFor } from "./otp";
 import { checkValue, VALUE_FIELD_TYPES } from "./fieldvalues";
 import { brandForEnvelope, productLabel, publicTheme, rebrands } from "./white-label/brand";
@@ -21,6 +21,8 @@ import { identityBlocking, signingIdentityFor } from "./identity/kyc";
 import { certificateStepFor } from "./certsign";
 import { deleteBlobsQuietly } from "./file-cleanup";
 
+/** Tope de píxeles de la imagen de firma o iniciales (el lienzo de la web es mucho menor). */
+const SIGNATURE_MAX_PIXELS = 3000 * 3000;
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 interface Resolved {
@@ -69,14 +71,23 @@ function copyAllowed(r: any, e: any): boolean {
  * Los PDFs del firmante piden lo mismo que la sesión para mostrar documentos. El código OTP ya lo exige el hook de
  * otp.ts para todo /v1/signing/:token/*; acá falta la identidad verificada (KYC).
  */
-function assertCanReadDocuments(r: any) {
+function assertCanReadDocuments(r: any, e: any) {
   if (identityBlocking(r)) throw new AppError(403, "identity_required", "Hace falta verificar tu identidad para continuar");
+  if (closedForSigner(e)) throw new AppError(410, "envelope_closed", "Este sobre se anuló o venció: sus documentos ya no están disponibles");
+}
+
+/**
+ * Sobre anulado o vencido: el link ya no muestra ni descarga los documentos. Si no, quien recibió el link por error
+ * (p. ej. un correo equivocado, el motivo típico para anular) seguía bajando el contrato para siempre.
+ */
+function closedForSigner(e: any): boolean {
+  return e.status === "voided" || e.status === "expired";
 }
 
 export async function buildSession(db: Db, token: string, r: any, e: any, authed = true): Promise<SigningSession> {
   const otpRequired = r.auth_method !== "link" && !authed;
   // KYC (Fase 5): sin identidad verificada tampoco se muestran documentos ni campos.
-  const blocked = otpRequired || identityBlocking(r);
+  const blocked = otpRequired || identityBlocking(r) || closedForSigner(e);
   const [docs, fields, org, sender, group] = await Promise.all([
     loadDocuments(db, e.id),
     db.query(`SELECT * FROM fields WHERE recipient_id = $1 ORDER BY page, y, x`, [r.id]),
@@ -154,7 +165,7 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
 
   app.get<P>("/v1/signing/:token/documents/:documentId/file", rl, async (req, reply) => {
     const { envelope, recipient } = await resolveToken(s.db, req.params.token);
-    assertCanReadDocuments(recipient);
+    assertCanReadDocuments(recipient, envelope);
     const d = await s.db.one<any>(
       `SELECT f.storage_key FROM documents d JOIN files f ON f.id = d.file_id WHERE d.id = $1 AND d.envelope_id = $2`,
       [req.params.documentId, envelope.id],
@@ -205,6 +216,16 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
     };
     const sigPng = decodePng(input.signature?.imagePng, "Firma");
     const iniPng = decodePng(input.initials?.imagePng, "Iniciales");
+    // Se decodifica ahora (con tope de píxeles): un PNG dañado o que declara dimensiones enormes haría fallar (o tumbar)
+    // el sellado del sobre después de que el firmante ya figura como firmado.
+    for (const [png, what] of [[sigPng, "Firma"], [iniPng, "Iniciales"]] as const) {
+      if (!png) continue;
+      try {
+        await assertEmbeddableImage(new Uint8Array(png), "image/png", SIGNATURE_MAX_PIXELS);
+      } catch {
+        throw badRequest("invalid_image", `${what}: la imagen está dañada o es demasiado grande`);
+      }
+    }
 
     // Subir imágenes antes de la transacción (no se bloquea el sobre durante I/O externa).
     const stored: { purpose: "signature" | "initials"; kind: string; text: string | null; fileId: string; key: string; png: Buffer }[] = [];
@@ -359,7 +380,7 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
 
   app.get<P>("/v1/signing/:token/signed.pdf", rl, async (req, reply) => {
     const { envelope, recipient } = await resolveToken(s.db, req.params.token);
-    assertCanReadDocuments(recipient);
+    assertCanReadDocuments(recipient, envelope);
     if (envelope.status !== "completed" || !envelope.signed_file_id) throw notFound("Documento firmado");
     const f = await s.db.one<any>(`SELECT storage_key FROM files WHERE id = $1`, [envelope.signed_file_id]);
     return sendPdf(reply, await s.blobs.get(f.storage_key), envelope.subject);
@@ -369,7 +390,7 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
   // Arma el PDF entero en este proceso (pdf-lib, CPU): tope propio más bajo que el resto de las rutas del firmante.
   app.get<P>("/v1/signing/:token/copy.pdf", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req, reply) => {
     const { envelope: e, recipient: r } = await resolveToken(s.db, req.params.token);
-    assertCanReadDocuments(r);
+    assertCanReadDocuments(r, e);
     if (!copyAllowed(r, e)) throw notFound("Copia del documento");
     const [docs, fields, sigImages] = await Promise.all([
       loadDocuments(s.db, e.id),

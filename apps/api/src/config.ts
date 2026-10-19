@@ -20,6 +20,8 @@ export const config = {
   environment: env.APP_ENV ?? (production ? "prod" : "local"),
   port: Number(env.PORT ?? 4000),
   host: env.HOST ?? "0.0.0.0",
+  /** Cantidad de proxies delante de la API cuyo X-Forwarded-For se cree (0 = ninguno). */
+  trustProxyHops: Number(env.TRUST_PROXY_HOPS ?? 1),
   /** URL pública de la web (links de firma, correos). */
   appUrl: (env.APP_URL ?? "http://localhost:5173").replace(/\/$/, ""),
   repoRoot,

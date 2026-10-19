@@ -121,6 +121,9 @@ Operación del host (lo aplica cada `deploy-dev.sh`, desde `infra/dev/host/`):
 - **Estado de Terraform:** es local (`infra/dev/terraform.tfstate`) y contiene `SECRET_KEY` en claro: no se versiona,
   `deploy-dev.sh` lo deja en `chmod 600`, y no hay que compartirlo. Para un entorno compartido, migrarlo a un backend S3
   cifrado.
+- **IP del cliente detrás de proxies:** `TRUST_PROXY_HOPS` (por defecto `1`, Caddy) es la cantidad de proxies delante de
+  la API cuyo `X-Forwarded-For` se cree. Detrás de CloudFront + ALB va `2`; si no coincide, la IP de los límites por IP,
+  la auditoría y la evidencia es la del proxy (de menos) o la que elige el cliente (de más).
 
 ## Estructura
 

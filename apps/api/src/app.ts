@@ -11,6 +11,7 @@ import { config } from "./config";
 import type { Db } from "./infra/db";
 import type { BlobStore } from "./infra/storage";
 import { AppError } from "./lib/errors";
+import { requestPath } from "./lib/util";
 import { LOG_REDACT_PATHS, safeRequestSerializer } from "./lib/redact";
 import { readMailbox } from "./notifications/channels";
 import { authRoutes } from "./modules/auth";
@@ -60,7 +61,10 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
         : deps.logger;
   const app = Fastify({
     logger,
-    trustProxy: true,
+    // Saltos de proxy de confianza (Caddy en dev = 1; un ALB detrás de CloudFront = 2). Con `true` se tomaba la IP de más
+    // a la izquierda de X-Forwarded-For, que la elige el cliente si el proxy la conserva (un ALB la conserva): saltaba
+    // los límites por IP y dejaba una IP falsa en la auditoría y en la evidencia del sobre.
+    trustProxy: (_addr: string, hop: number) => hop < config.trustProxyHops,
     bodyLimit: 2 * 1024 * 1024,
     genReqId: () => crypto.randomUUID(),
   });
@@ -124,8 +128,9 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
 
   // Solo peticiones de la misma web pueden usar la cookie para modificar (defensa CSRF adicional a SameSite=Lax).
   app.addHook("onRequest", async (req, reply) => {
-    if (["GET", "HEAD", "OPTIONS"].includes(req.method) || !req.url.startsWith("/v1/")) return;
-    if (req.url.startsWith("/v1/integrations/")) return;
+    const path = requestPath(req);
+    if (["GET", "HEAD", "OPTIONS"].includes(req.method) || !path.startsWith("/v1/")) return;
+    if (path.startsWith("/v1/integrations/")) return;
     const origin = req.headers.origin;
     if (!origin || req.headers.authorization) return;
     const allowed = new Set([new URL(config.appUrl).origin, `${req.protocol}://${req.headers.host}`]);

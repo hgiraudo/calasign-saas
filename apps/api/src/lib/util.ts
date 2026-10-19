@@ -145,3 +145,16 @@ export function maskDestination(d: string): string {
   }
   return d.length > 6 ? `${d.slice(0, 4)}***${d.slice(-2)}` : "***";
 }
+
+/**
+ * Ruta del pedido decodificada como la decodifica el router (find-my-way aplica decodeURI antes de buscar la ruta).
+ * Los controles por prefijo sobre req.url crudo se salteaban con percent-encoding: "/%761/me" llega a "/v1/me".
+ */
+export function requestPath(req: { url: string }): string {
+  const raw = req.url.split(/[?#]/)[0];
+  try {
+    return decodeURI(raw);
+  } catch {
+    return raw;
+  }
+}

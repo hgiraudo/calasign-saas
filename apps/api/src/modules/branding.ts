@@ -1,6 +1,7 @@
 // Branding básico de la organización: color principal, logo y pie de correo.
 // Se aplica en la página del firmante, los correos y el certificado de finalización.
 import type { FastifyInstance } from "fastify";
+import { assertPngSize } from "@calasign/pdf";
 import { LOGO_CONTENT_TYPES, LOGO_MAX_BYTES, UpdateBrandingInput, type Branding } from "@calasign/shared";
 import { config } from "../config";
 import type { Db } from "../infra/db";
@@ -105,6 +106,14 @@ export async function brandingRoutes(app: FastifyInstance, s: Services) {
     const type = sniffImage(buf);
     if (!type || !(LOGO_CONTENT_TYPES as readonly string[]).includes(type)) throw badRequest("invalid_logo", "El logo tiene que ser PNG, JPG o SVG");
     if (type === "image/svg+xml" && unsafeSvg(buf.toString("utf8"))) throw badRequest("invalid_logo", "El SVG contiene scripts o referencias externas");
+    // El logo se incrusta en el certificado de cada sobre: un PNG que declara dimensiones enormes reservaría GB al sellar.
+    if (type === "image/png") {
+      try {
+        assertPngSize(new Uint8Array(buf));
+      } catch {
+        throw badRequest("invalid_logo", "La imagen PNG está dañada o es demasiado grande (máximo 4096×4096)");
+      }
+    }
     const fileId = uuidv7();
     const ext = type === "image/png" ? "png" : type === "image/jpeg" ? "jpg" : "svg";
     const key = `tenants/${tenantId}/branding/${fileId}.${ext}`;

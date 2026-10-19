@@ -1,6 +1,7 @@
 // Marca blanca: API de marcas (la de la organización = "default" y sub-marcas), archivos, vista previa, dominios web de
 // sub-marcas, dominios de correo (SPF/DKIM) y tema público para la web. Ver docs/MARCA-BLANCA.md.
 import { generateKeyPairSync } from "node:crypto";
+import { assertPngSize } from "@calasign/pdf";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import {
   BRAND_ASSET_KINDS,
@@ -445,6 +446,14 @@ export async function whiteLabelRoutes(app: FastifyInstance, s: Services) {
     const type = sniff(buf);
     if (!type || !allowedType(kind, type)) throw badRequest("invalid_asset", kind === "font" ? "La fuente tiene que ser WOFF2, WOFF, TTF u OTF" : "Formato de imagen no admitido");
     if (type === "image/svg+xml" && unsafeSvg(buf.toString("utf8"))) throw badRequest("invalid_asset", "El SVG contiene scripts o referencias externas");
+    // El logo se incrusta en el certificado de cada sobre: un PNG que declara dimensiones enormes reservaría GB al sellar.
+    if (type === "image/png") {
+      try {
+        assertPngSize(new Uint8Array(buf));
+      } catch {
+        throw badRequest("invalid_asset", "La imagen PNG está dañada o es demasiado grande (máximo 4096×4096)");
+      }
+    }
     const fileId = uuidv7();
     const key = `tenants/${a.tenantId}/branding/${fileId}.${EXT[type]}`;
     await s.blobs.put(key, buf, type);

@@ -8,7 +8,7 @@ import { SetCustomDomainInput, type CustomDomain, type HostBranding } from "@cal
 import { config } from "../config";
 import type { Db } from "../infra/db";
 import { AppError, badRequest, conflict, notFound } from "../lib/errors";
-import { iso, randomToken, sha256Hex, uuidv7 } from "../lib/util";
+import { iso, randomToken, requestPath, sha256Hex, uuidv7 } from "../lib/util";
 import { auditFromRequest, recordAudit } from "./audit";
 import { getTenantBranding } from "./branding";
 import { SESSION_COOKIE, authenticate, type Services } from "./context";
@@ -372,7 +372,7 @@ export async function customDomainRoutes(app: FastifyInstance, s: Services) {
   app.addHook("onRequest", async (req, reply) => {
     const tenantId = await signerHostTenant(s.db, req.headers.host);
     if (!tenantId) return;
-    const path = req.url.split("?")[0];
+    const path = requestPath(req);
     if (req.method === "GET" && (path === "/" || ACCOUNT_PAGES.some((p) => under(path, p)))) {
       return reply.redirect(`${config.appUrl}${req.url}`, 302);
     }
@@ -392,10 +392,11 @@ export async function customDomainRoutes(app: FastifyInstance, s: Services) {
 
   // En un dominio propio, los links de firma de OTRAS organizaciones no funcionan.
   app.addHook("onRequest", async (req, reply) => {
-    if (!req.url.startsWith("/v1/signing/")) return;
+    const path = requestPath(req);
+    if (!path.startsWith("/v1/signing/")) return;
     const tenantId = await signerHostTenant(s.db, req.headers.host);
     if (!tenantId) return;
-    const token = req.url.split("/")[3]?.split("?")[0] ?? "";
+    const token = path.split("/")[3] ?? "";
     if (!/^[A-Za-z0-9_-]{20,100}$/.test(token)) return;
     const r = await s.db.one<any>(`SELECT tenant_id FROM recipients WHERE access_token_hash = $1`, [sha256Hex(token)]);
     if (r && r.tenant_id !== tenantId) return reply.code(404).send({ error: { code: "not_found", message: "Link no encontrado" } });

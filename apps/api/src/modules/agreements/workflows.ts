@@ -136,12 +136,31 @@ async function toRun(db: Db, r: any, a?: AuthContext): Promise<WorkflowRun> {
   };
 }
 
+const MASKED_HEADER = "••••••";
+
 function redactStepSecrets(steps: WorkflowStep[]): WorkflowStep[] {
   return steps.map((st) =>
     st.type === "http_request" && st.config.headers
-      ? { ...st, config: { ...st.config, headers: Object.fromEntries(Object.keys(st.config.headers).map((k) => [k, "••••••"])) } }
+      ? { ...st, config: { ...st.config, headers: Object.fromEntries(Object.keys(st.config.headers).map((k) => [k, MASKED_HEADER])) } }
       : st,
   );
+}
+
+/**
+ * Un encabezado que vuelve enmascarado (pasos leídos del listado, que siempre enmascara) conserva el valor guardado del
+ * mismo paso: si no, guardar esos pasos reemplazaba la credencial por "••••••" y las llamadas empezaban a fallar.
+ */
+function restoreMaskedHeaders(steps: WorkflowStep[], prev: WorkflowStep[]): WorkflowStep[] {
+  const prevById = new Map(prev.map((st) => [st.id, st]));
+  return steps.map((st) => {
+    if (st.type !== "http_request" || !st.config.headers) return st;
+    const old = prevById.get(st.id);
+    const oldHeaders = old?.type === "http_request" ? old.config.headers ?? {} : {};
+    const headers = Object.fromEntries(
+      Object.entries(st.config.headers).map(([k, v]) => [k, v === MASKED_HEADER && Object.prototype.hasOwnProperty.call(oldHeaders, k) ? oldHeaders[k] : v]),
+    );
+    return { ...st, config: { ...st.config, headers } };
+  });
 }
 
 function summarizeDocs(docs: Record<string, any>) {
@@ -234,9 +253,12 @@ export async function advanceRun(d: Deps, runId: string): Promise<void> {
         await t.query(`UPDATE workflow_run_steps SET status = 'waiting', output = $3 WHERE run_id = $1 AND idx = $2`, [runId, claim.index, JSON.stringify(output)]);
         await t.query(`UPDATE workflow_runs SET context = $2, status = 'waiting', updated_at = now() WHERE id = $1`, [runId, JSON.stringify(ctx)]);
         notify = result.notify;
-        // Esperando un sobre que ya terminó (el evento llegó antes): se resuelve en el acto.
+        // Esperando un sobre que ya terminó (el evento llegó antes): se resuelve en el acto. FOR SHARE: si el sobre
+        // termina en paralelo, su transacción (que lo bloquea antes de registrar el evento) y esta se ordenan; sin el
+        // lock, esta leía el estado anterior y el evento todavía no veía el run en 'waiting', y el run quedaba esperando
+        // para siempre.
         if (ctx.waitingEnvelope) {
-          const env = await t.one<any>(`SELECT status FROM envelopes WHERE id = $1`, [ctx.waitingEnvelope]);
+          const env = await t.one<any>(`SELECT status FROM envelopes WHERE id = $1 FOR SHARE`, [ctx.waitingEnvelope]);
           if (env && ["completed", "declined", "voided", "expired"].includes(env.status)) {
             await resolveEnvelopeWait(t, runId, ctx.waitingEnvelope, env.status);
             continueLoop = env.status === "completed";
@@ -723,7 +745,7 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
     requirePerm(a, "templates:manage");
     const cur = await loadWorkflow(a, req.params.id);
     const input = UpdateWorkflowInput.parse(req.body);
-    const steps = (input.steps ?? cur.steps) as WorkflowStep[];
+    const steps = input.steps ? restoreMaskedHeaders(input.steps as WorkflowStep[], cur.steps as WorkflowStep[]) : (cur.steps as WorkflowStep[]);
     validateSteps(steps);
     if (input.steps) await checkApprovers(a.tenantId, steps);
     const publicStart = input.publicStart ?? cur.public_start;

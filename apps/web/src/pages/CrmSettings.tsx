@@ -542,6 +542,9 @@ function MappingEditor({
     }
   };
 
+  // Mientras carga la plantilla recién elegida siguen en pantalla los roles de la anterior: guardar en ese momento los
+  // mandaba con la plantilla nueva (lo mismo que cuando la carga falla).
+  const tplPending = !isErp && Boolean(templateId) && !tplError && tpl?.template.id !== templateId;
   const roleNames = tpl?.roles.map((r) => r.name) ?? [];
   const fieldLabels = [...new Set((tpl?.fields ?? []).map((f) => f.label).filter(Boolean) as string[])];
 
@@ -784,7 +787,7 @@ function MappingEditor({
         <button type="button" className="btn" onClick={onCancel}>
           {t("cancel")}
         </button>
-        <button className="btn btn-primary" disabled={busy || (!isErp && Boolean(tplError))}>
+        <button className="btn btn-primary" disabled={busy || tplPending || (!isErp && Boolean(tplError))}>
           {t("save")}
         </button>
       </div>

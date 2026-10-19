@@ -22,7 +22,7 @@ import { auditFromRequest } from "../audit";
 import { authenticate, type AuthContext, type Services } from "../context";
 import { tenantBaseUrl } from "../custom-domains";
 import { sendPdf } from "../envelopes";
-import { discardBlobsOnFailure } from "../file-cleanup";
+import { deleteFileIfUnused, discardBlobsOnFailure } from "../file-cleanup";
 import {
   agreementVisibilitySql,
   canManageAgreement,
@@ -431,6 +431,8 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
     if (r.source !== "external") throw conflict("not_external", "Solo se pueden borrar acuerdos externos; los firmados en CalaSign se dan de baja (estado: terminado)");
     if (!canManageAgreement(a, r)) throw forbidden();
     await s.db.query(`DELETE FROM agreements WHERE id = $1`, [r.id]);
+    // El PDF subido solo lo usaba este acuerdo: sin borrarlo quedaba en `files` y en el almacenamiento para siempre.
+    await deleteFileIfUnused(s.db, s.blobs, r.file_id).catch((err) => req.log.warn({ agreementId: r.id, err: String(err) }, "no se pudo borrar el PDF del acuerdo"));
     await auditFromRequest(s.db, req, a, "agreement.deleted", { targetType: "agreement", targetId: r.id, data: { title: r.title } });
     return reply.code(204).send();
   });

@@ -301,9 +301,15 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
       throw new AppError(415, "unsupported_format", "Subí un PDF: la conversión de documentos de Word no está disponible");
     }
     const metaField = (file.fields as any).meta;
+    let metaRaw: unknown;
+    try {
+      metaRaw = JSON.parse(metaField && "value" in metaField ? String(metaField.value) : "{}");
+    } catch {
+      throw badRequest("invalid_meta", "El campo 'meta' no es JSON válido");
+    }
     const meta = z
       .object({ title: z.string().trim().min(1).max(300), participants: z.array(NegotiationParticipantInput).min(1).max(20), message: z.string().max(5000).nullable().optional() })
-      .parse(JSON.parse(metaField && "value" in metaField ? String(metaField.value) : "{}"));
+      .parse(metaRaw);
     // PDF normalizado: el texto que se negocia y el documento que se firma salen del mismo archivo.
     let bytes: Uint8Array;
     try {
@@ -314,7 +320,8 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
     }
     let text = "";
     try {
-      text = (await extractPdfPlainText(bytes)).text;
+      // Sin NUL: pdf.js lo devuelve para glifos sin mapeo a Unicode y Postgres lo rechaza en text_snapshot (como fold()).
+      text = (await extractPdfPlainText(bytes)).text.replace(/\u0000/g, "");
     } catch (e) {
       // Lectores ocupados: 503 para reintentar. Si no, la negociación quedaba para siempre sin texto que comparar.
       if (e instanceof PdfReaderBusyError) throw new AppError(503, "pdf_reader_busy", e.message);

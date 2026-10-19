@@ -572,13 +572,18 @@ export function WorkflowRunPage() {
   const [comment, setComment] = useState("");
   const [busy, setBusy] = useState(false);
 
+  // Solo se aplica la respuesta más reciente: un refresco pedido antes de aprobar o cancelar que respondía después
+  // volvía a mostrar el paso pendiente (con los botones habilitados) y un segundo clic fallaba.
+  const seq = useRef(0);
   const load = useCallback(() => {
+    const mine = ++seq.current;
     api<WorkflowRun>(`/v1/workflow-runs/${id}`)
       .then((r) => {
+        if (mine !== seq.current) return;
         setRun(r);
         setLoadError(null);
       })
-      .catch((e) => setLoadError(errorText(e)));
+      .catch((e) => mine === seq.current && setLoadError(errorText(e)));
   }, [id]);
   useEffect(load, [load]);
   // Mientras está en curso, se refresca.
@@ -592,7 +597,10 @@ export function WorkflowRunPage() {
     setBusy(true);
     setError(null);
     try {
-      setRun(await api<WorkflowRun>(path, { method: "POST", body }));
+      const r = await api<WorkflowRun>(path, { method: "POST", body });
+      // Descarta los refrescos que estaban en camino (traen el estado de antes de la acción).
+      seq.current++;
+      setRun(r);
       return true;
     } catch (e) {
       setError(errorText(e));

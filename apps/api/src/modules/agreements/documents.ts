@@ -74,8 +74,9 @@ export async function renderDocument(
 export async function storeGeneratedPdf(blobs: BlobStore, tenantId: string, pdf: Uint8Array) {
   const fileId = uuidv7();
   const key = `tenants/${tenantId}/generated/${fileId}.pdf`;
-  await blobs.put(key, pdf, "application/pdf");
+  // Primero se inspecciona: si falla, no queda un PDF subido que nada referencia.
   const info = await inspectPdf(pdf);
+  await blobs.put(key, pdf, "application/pdf");
   return { fileId, key, sha256: sha256Hex(pdf), size: pdf.length, info };
 }
 

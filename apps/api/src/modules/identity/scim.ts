@@ -490,8 +490,8 @@ export async function scimRoutes(app: FastifyInstance, s: Services) {
     sub.get<{ Querystring: { filter?: string; startIndex?: string; count?: string } }>(`${BASE}/Users`, async (req) => {
       const { tenantId } = T(req);
       const f = parseFilter(req.query.filter, ["userName", "externalId", "emails.value"]);
-      const startIndex = Math.max(1, Number(req.query.startIndex ?? 1) || 1);
-      const count = Math.min(200, Math.max(0, Number(req.query.count ?? 100) || 0));
+      const startIndex = Math.min(1_000_000_000, Math.max(1, Math.trunc(Number(req.query.startIndex ?? 1)) || 1));
+      const count = Math.min(200, Math.max(0, Math.trunc(Number(req.query.count ?? 100)) || 0));
       const params: unknown[] = [tenantId];
       let where = "";
       if (f) {
@@ -582,8 +582,8 @@ export async function scimRoutes(app: FastifyInstance, s: Services) {
     sub.get<{ Querystring: { filter?: string; startIndex?: string; count?: string; excludedAttributes?: string } }>(`${BASE}/Groups`, async (req) => {
       const { tenantId } = T(req);
       const f = parseFilter(req.query.filter, ["displayName", "externalId"]);
-      const startIndex = Math.max(1, Number(req.query.startIndex ?? 1) || 1);
-      const count = Math.min(200, Math.max(0, Number(req.query.count ?? 100) || 0));
+      const startIndex = Math.min(1_000_000_000, Math.max(1, Math.trunc(Number(req.query.startIndex ?? 1)) || 1));
+      const count = Math.min(200, Math.max(0, Math.trunc(Number(req.query.count ?? 100)) || 0));
       const params: unknown[] = [tenantId];
       let where = "";
       if (f) {

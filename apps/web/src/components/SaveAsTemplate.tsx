@@ -6,7 +6,18 @@ import { api, errorText } from "../lib/api";
 import { useI18n } from "../lib/i18n";
 import { ErrorBox, Modal } from "./ui";
 
-export function SaveAsTemplateButton({ envelopeId, defaultName, beforeSave }: { envelopeId: string; defaultName: string; beforeSave?: () => Promise<boolean> }) {
+export function SaveAsTemplateButton({
+  envelopeId,
+  defaultName,
+  beforeSave,
+  disabled,
+}: {
+  envelopeId: string;
+  defaultName: string;
+  beforeSave?: () => Promise<boolean>;
+  /** La página está ocupada (p. ej. subiendo un documento): la plantilla saldría sin lo que todavía no terminó. */
+  disabled?: boolean;
+}) {
   const { t } = useI18n();
   const nav = useNavigate();
   const [open, setOpen] = useState(false);
@@ -35,7 +46,7 @@ export function SaveAsTemplateButton({ envelopeId, defaultName, beforeSave }: { 
 
   return (
     <>
-      <button type="button" className="btn btn-sm" onClick={() => setOpen(true)}>
+      <button type="button" className="btn btn-sm" disabled={disabled} onClick={() => setOpen(true)}>
         ⧉ {t("edit.saveAsTemplate")}
       </button>
       {open && (
@@ -50,7 +61,7 @@ export function SaveAsTemplateButton({ envelopeId, defaultName, beforeSave }: { 
               <button type="button" className="btn btn-ghost" onClick={() => setOpen(false)}>
                 {t("common.cancel")}
               </button>
-              <button type="submit" className="btn btn-primary" disabled={busy || !name.trim()}>
+              <button type="submit" className="btn btn-primary" disabled={busy || disabled || !name.trim()}>
                 {busy ? t("common.saving") : t("common.save")}
               </button>
             </div>

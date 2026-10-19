@@ -190,6 +190,8 @@ function Deliveries({ webhookId }: { webhookId: string }) {
   const { locale } = useI18n();
   const [items, setItems] = useState<WebhookDelivery[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Error de "Reintentar", aparte del de la carga: el refresco (cada 4 s) lo borraba y además ocultaba la tabla.
+  const [retryError, setRetryError] = useState<string | null>(null);
 
   const load = () =>
     api<{ items: WebhookDelivery[] }>(`/v1/webhooks/${webhookId}/deliveries?limit=25`)
@@ -214,6 +216,7 @@ function Deliveries({ webhookId }: { webhookId: string }) {
   return (
     <div style={{ overflowX: "auto" }}>
       <h3 className="small">{tt("wh.deliveries")}</h3>
+      <ErrorBox error={retryError} />
       <table className="table">
         <thead>
           <tr>
@@ -246,11 +249,12 @@ function Deliveries({ webhookId }: { webhookId: string }) {
                   <button
                     type="button"
                     className="btn btn-sm"
-                    onClick={() =>
+                    onClick={() => {
+                      setRetryError(null);
                       api(`/v1/webhook-deliveries/${d.id}/retry`, { method: "POST" })
                         .then(load)
-                        .catch((e) => setError(errorText(e)))
-                    }
+                        .catch((e) => setRetryError(errorText(e)));
+                    }}
                   >
                     {tt("wh.retry")}
                   </button>

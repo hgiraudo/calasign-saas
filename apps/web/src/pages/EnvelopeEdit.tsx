@@ -236,6 +236,7 @@ export function EnvelopeEditPage() {
           envelopeId={id}
           defaultName={detail.envelope.subject}
           beforeSave={async () => (await saveRecipients()) && (await saveFields())}
+          disabled={busy}
         />
       </div>
 

@@ -723,7 +723,7 @@ export const TAGS: [string, string][] = [
   ["Negociación", "Redlining y propuestas entre las partes antes de firmar."],
   ["CRM y ERP", "HubSpot, Salesforce, Siigo y Alegra: enviar desde un registro y devolver el resultado."],
   ["RR. HH. y contratos", "BambooHR, HiBob, Factorial, Ironclad y Juro: enviar desde un empleado o contrato y devolver el documento firmado con su evidencia."],
-  ["Slack y Teams", "Avisos de eventos de sobres a canales de Slack o Microsoft Teams."],
+  ["Avisos a canales", "Avisos de eventos de sobres a canales de Slack, Microsoft Teams, Discord, Google Chat, Mattermost, Rocket.Chat o Webex (webhook entrante)."],
   ["Almacenamiento", "Copia automática de los PDF firmados a Google Drive, Dropbox, OneDrive o S3."],
   ["Reportes", "Estadísticas de actividad y exportación de sobres."],
   ["OAuth 2.0", "Apps OAuth y tokens (client_credentials, authorization_code con PKCE, refresh_token)."],

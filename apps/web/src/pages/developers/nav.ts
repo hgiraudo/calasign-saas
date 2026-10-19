@@ -151,7 +151,7 @@ export const NAV: NavGroup[] = [
         ],
         keywords: "power automate logic apps power apps copilot studio zapier make integromat n8n dynamics 365 dataverse business central low-code no-code ipaas webhook rest hook",
       },
-      { path: "guides/crm", title: "g.crm.title", headings: [h("providers", "g.crm.providers.h"), h("mappings", "g.crm.mappings.h")], keywords: "hubspot salesforce siigo alegra" },
+      { path: "guides/crm", title: "g.crm.title", headings: [h("providers", "g.crm.providers.h"), h("mappings", "g.crm.mappings.h")], keywords: "hubspot salesforce zoho bigin siigo alegra" },
       {
         path: "guides/hr-contracts",
         title: "g.hrclm.title",

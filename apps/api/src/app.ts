@@ -40,6 +40,7 @@ import { mcpRoutes } from "./modules/mcp";
 import { aiRoutes } from "./modules/ai";
 import { agreementRoutes } from "./modules/agreements";
 import { crmRoutes } from "./modules/crm";
+import { connectorRoutes } from "./modules/connectors";
 
 import { dataRoutes } from "./modules/data";
 import { certsignRoutes } from "./modules/certsign";
@@ -161,6 +162,7 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
   await aiRoutes(app, services);
   await agreementRoutes(app, services);
   await crmRoutes(app, services);
+  await connectorRoutes(app, services);
   await dataRoutes(app, services);
   await certsignRoutes(app, services);
 

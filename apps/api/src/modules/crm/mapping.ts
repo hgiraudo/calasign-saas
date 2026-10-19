@@ -45,7 +45,7 @@ export function normalizePhone(v: unknown): string | null {
   return E164.test(withPlus) ? withPlus : null;
 }
 
-export function mapRecipients(record: CrmRecord, roles: CrmRoleMapping[]): MappedRecipient[] {
+export function mapRecipients(record: Pick<CrmRecord, "id" | "properties" | "contacts">, roles: CrmRoleMapping[]): MappedRecipient[] {
   const out: MappedRecipient[] = [];
   for (const r of roles) {
     let name: string | null = null;
@@ -85,7 +85,7 @@ export function mapRecipients(record: CrmRecord, roles: CrmRoleMapping[]): Mappe
 }
 
 /** Valor de prellenado a partir de propiedades del registro. Se omiten las vacías. */
-export function mapPrefill(record: CrmRecord, prefill: CrmPrefillMapping[]): Record<string, string> {
+export function mapPrefill(record: Pick<CrmRecord, "properties">, prefill: CrmPrefillMapping[]): Record<string, string> {
   const out: Record<string, string> = {};
   for (const p of prefill) {
     const v = readProperty(record.properties, p.property);

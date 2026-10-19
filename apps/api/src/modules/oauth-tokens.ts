@@ -189,6 +189,8 @@ export function requiredScope(url: string, method: string): OAuthScope | null | 
   }
   if (url === "/v1/crm/mappings/:id/send" || url.startsWith("/v1/crm/links")) return write ? "envelopes:write" : "envelopes:read";
   if (url.startsWith("/v1/crm/")) return url.startsWith("/v1/crm/oauth/") ? "deny" : write ? "settings:write" : "settings:read";
+  if (url === "/v1/connectors/flows/:id/send" || url.startsWith("/v1/connectors/links")) return write ? "envelopes:write" : "envelopes:read";
+  if (url.startsWith("/v1/connectors/")) return url.startsWith("/v1/connectors/oauth/") ? "deny" : write ? "settings:write" : "settings:read";
   if (/^\/v1\/(webhooks|webhook-deliveries)(\/|$)/.test(url)) return "webhooks:manage";
   if (/^\/v1\/(settings|notification-integrations|storage|domains)(\/|$)/.test(url)) return write ? "settings:write" : "settings:read";
   if (/^\/v1\/(members|roles|groups|invitations)(\/|$)/.test(url)) return write ? "members:write" : "members:read";

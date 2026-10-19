@@ -279,7 +279,9 @@ export function peopleFromAttributes(attrs: Record<string, unknown>): CrmRecord[
 
 const matches = (q: string, ...vals: unknown[]) => !q || vals.some((v) => String(v ?? "").toLowerCase().includes(q.toLowerCase()));
 
-export interface SourceRecord extends CrmRecord {
+/** Registro normalizado: misma forma que CrmRecord (para reusar crm/mapping.ts) con sus tipos de registro. */
+export interface SourceRecord extends Omit<CrmRecord, "objectType"> {
+  objectType: ConnectorObjectType;
   title: string;
 }
 

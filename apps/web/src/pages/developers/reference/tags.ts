@@ -28,6 +28,7 @@ const PT: Record<string, string> = {
   Workflows: "Workflows",
   Negociación: "Negociação",
   "CRM y ERP": "CRM e ERP",
+  "RR. HH. y contratos": "RH e contratos",
   Datos: "Dados",
   "OAuth 2.0": "OAuth 2.0",
 };
@@ -61,6 +62,7 @@ const EN: Record<string, string> = {
   Workflows: "Workflows",
   Negociación: "Negotiation",
   "CRM y ERP": "CRM and ERP",
+  "RR. HH. y contratos": "HR and contracts",
   Datos: "Data",
   "OAuth 2.0": "OAuth 2.0",
 };

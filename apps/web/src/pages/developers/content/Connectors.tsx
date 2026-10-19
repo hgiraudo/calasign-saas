@@ -43,6 +43,9 @@ export function ConnectorsPage() {
         <Card icon="▦" title="Dynamics 365" to="/developers/connectors#dynamics365" action={<ActionLink to="/developers/connectors#dynamics365" label={t("conn.card.a")} />}>
           {t("conn.card.d365.d")}
         </Card>
+        <Card icon="✉" title="Google Workspace" to="/developers/connectors#google-workspace" action={<ActionLink to="/developers/connectors#google-workspace" label={t("conn.card.a")} />}>
+          {t("conn.card.gws.d")}
+        </Card>
       </CardGrid>
 
       <H2 id="native">{t("conn.native.h")}</H2>
@@ -112,6 +115,18 @@ export function ConnectorsPage() {
         title={t("conn.d365.cmd")}
         code={`DATAVERSE_URL=https://<org>.crm.dynamics.com \\\nDATAVERSE_TOKEN=$(az account get-access-token --resource https://<org>.crm.dynamics.com --query accessToken -o tsv) \\\nnode setup-dataverse.mjs --table opportunity`}
       />
+
+      <H2 id="google-workspace">{t("conn.gws.h")}</H2>
+      <p>
+        <DownloadButton href={A.googleWorkspace} label={file(A.googleWorkspace)} />
+      </p>
+      <Md text={t("conn.gws.p")} />
+      <Code
+        lang="bash"
+        title={t("conn.gws.cli")}
+        code={`npm install -g @google/clasp && clasp login\ncurl -LO ${BASE}${A.googleWorkspace}\nunzip ${file(A.googleWorkspace)} -d calasign-gws && cd calasign-gws\nclasp create --type standalone --title "CalaSign" --rootDir .\nclasp push --force && clasp open`}
+      />
+      <Md text={t("conn.gws.publish")} />
 
       <H2 id="api">{t("conn.api.h")}</H2>
       <Md text={t("conn.api.p")} />

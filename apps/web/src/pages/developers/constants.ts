@@ -35,6 +35,7 @@ export const CONNECTOR_ARTIFACTS = {
   n8n: "/integrations/connectors/n8n/n8n-nodes-calasign-1.0.0.tgz",
   n8nSource: "/integrations/connectors/n8n/n8n-nodes-calasign-source.zip",
   dynamics: "/integrations/connectors/dynamics365/calasign-dynamics365.zip",
+  googleWorkspace: "/integrations/connectors/google-workspace/calasign-google-workspace-addon.zip",
 } as const;
 
 /** Comandos para instalar el plugin de Claude Code (se escriben dentro de Claude Code). */

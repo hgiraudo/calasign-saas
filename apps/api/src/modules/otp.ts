@@ -148,7 +148,7 @@ export async function otpRoutes(app: FastifyInstance, s: Services) {
         channel,
         to: destination,
         // Marca blanca: plantilla, nombre del producto y remitente de la marca del sobre (white-label/otp-text.ts).
-        ...(await brandedOtpMessage(s.db, e, locale, code, m.subject, m.text(code, e.subject))),
+        ...(await brandedOtpMessage(s.db, e, locale, code, m.subject, m.text)),
         locale,
         templateParams: [code],
         // La plantilla del pedido de firma espera remitente, asunto y link: con solo el código, Meta la rechaza.

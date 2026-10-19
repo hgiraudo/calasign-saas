@@ -277,6 +277,26 @@ export function brandText(s: string, brand: Pick<MailBranding, "productName" | "
     .replace(/CalaSign/g, name);
 }
 
+/** Marca de un valor ajeno a la plantilla (caracteres de uso privado): brandText no la toca. */
+const SLOT_RE = /\uE000(\d+)\uE001/g;
+
+/**
+ * Cambia cada valor de texto por una marca para armar la plantilla, pasarle brandText y recién ahí volver a poner
+ * los valores: así la marca blanca reemplaza el nombre de la plataforma solo en los textos propios, nunca en el
+ * asunto del sobre, los nombres o el mensaje que escribió el usuario ("Migración desde CalaSign" queda igual).
+ */
+export function maskVars<V extends object>(v: V): { masked: V; unmask: (s: string) => string } {
+  const vals: string[] = [];
+  const masked: Record<string, unknown> = {};
+  for (const [k, x] of Object.entries(v)) {
+    if (typeof x === "string" && x !== "") {
+      masked[k] = `\uE000${vals.length}\uE001`;
+      vals.push(x);
+    } else masked[k] = x;
+  }
+  return { masked: masked as V, unmask: (s) => s.replace(SLOT_RE, (_m, i: string) => vals[Number(i)] ?? "") };
+}
+
 const okHex = (c: string | null | undefined): c is string => typeof c === "string" && /^#[0-9a-fA-F]{6}$/.test(c);
 const okFont = (f: string | null | undefined): f is string => typeof f === "string" && /^[A-Za-z0-9][A-Za-z0-9 ]{0,59}$/.test(f);
 
@@ -305,16 +325,19 @@ export function render(kind: TemplateKind, localeIn: string | null | undefined, 
     supportUrl: brand.supportUrl ?? "",
   };
   const tpl = brand.template ?? null;
-  const subject = B(tpl?.subject?.trim() ? fillTemplate(tpl.subject, vars).replace(/[\r\n]+/g, " ").trim() : t.subject(v));
+  // La marca blanca se aplica a la plantilla con los valores enmascarados; después se ponen los valores reales.
+  const mv = maskVars(v);
+  const mvars = maskVars(vars);
+  const subject = tpl?.subject?.trim()
+    ? mvars.unmask(B(fillTemplate(tpl.subject, mvars.masked))).replace(/[\r\n]+/g, " ").trim()
+    : mv.unmask(B(t.subject(mv.masked)));
   const lines = (
     tpl?.body?.trim()
-      ? fillTemplate(tpl.body, vars)
+      ? fillTemplate(tpl.body, mvars.masked)
           .split(/\n\s*\n/)
-          .map((p) => p.trim())
-      : t.lines(v)
-  )
-    .filter(Boolean)
-    .map(B);
+          .map((p) => mvars.unmask(B(p.trim())))
+      : t.lines(mv.masked).map((l) => mv.unmask(B(l)))
+  ).filter(Boolean);
   const cta = tpl?.cta?.trim() ? tpl.cta.trim() : t.cta ?? null;
   const footer = brand.hidePoweredBy ? null : B(FOOTER[locale]);
   const text = [

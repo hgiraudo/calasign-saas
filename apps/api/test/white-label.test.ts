@@ -53,6 +53,20 @@ describe("plantillas de correo", () => {
   it("brandText quita el correo de contacto de la plataforma", () => {
     expect(brandText("escribinos a contacto@calasign.com", { hidePoweredBy: true, brandName: "ACME", supportUrl: "https://ayuda.acme.com" })).toBe("escribinos a https://ayuda.acme.com");
   });
+  it("la marca blanca no reescribe los valores del usuario, solo los textos de la plantilla", () => {
+    const v = { ...vars, subject: "Migración desde CalaSign", senderName: "Equipo CalaSign", message: "Ver calasign.com" };
+    const m = render("certificate_request", "es", v, { productName: "Acme Firma" });
+    expect(m.subject).toBe('Firmá con tu certificado digital: "Migración desde CalaSign"');
+    expect(m.text).toContain('Todas las partes ya firmaron "Migración desde CalaSign"');
+    expect(m.text).toContain("Firmador Acme Firma");
+    expect(m.text).toContain("Mensaje"); // el mensaje del remitente llega intacto
+    expect(m.text).toContain("Ver calasign.com");
+    expect(m.html).toContain("Migración desde CalaSign");
+    // Plantilla propia de la organización: igual.
+    const t = render("invite", "es", v, { productName: "Acme Firma", template: { subject: "{{subject}} vía CalaSign", body: "De {{senderName}}" } });
+    expect(t.subject).toBe("Migración desde CalaSign vía Acme Firma");
+    expect(t.text).toContain("De Equipo CalaSign");
+  });
 });
 
 describe("certificado", () => {

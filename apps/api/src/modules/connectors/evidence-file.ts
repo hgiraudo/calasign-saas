@@ -1,11 +1,13 @@
 // Certificado de evidencia "portable" que acompaña al PDF sellado cuando se lo deja en un sistema externo (gestor
 // documental, legajo del HRIS, registro del CLM). El PDF sellado ya lleva el certificado de finalización en sus
 // últimas páginas; este JSON agrega la cadena de eventos con sus hashes para que el sistema de origen conserve la
-// evidencia sin depender de CalaSign. Se verifica subiendo el PDF a /verify (o con POST /v1/verify).
+// evidencia sin depender de CalaSign: cada evento trae todo lo que cubre su hash (y el cuerpo canónico exacto), así
+// que la cadena se puede recalcular afuera (receta en "howToVerify"). El PDF se verifica subiéndolo a /verify (o POST /v1/verify).
 import type { Db } from "../../infra/db";
 import type { BlobStore } from "../../infra/storage";
-import { iso } from "../../lib/util";
-import { tenantBaseUrl } from "../custom-domains";
+import { GENESIS_HASH } from "../../infra/evidence";
+import { canonicalJson, iso } from "../../lib/util";
+import { brandForEnvelope, rebrands } from "../white-label/brand";
 
 export interface SignedBundle {
   subject: string;
@@ -33,7 +35,7 @@ export async function loadSignedBundle(db: Db, blobs: BlobStore, envelopeId: str
 /** JSON del certificado de evidencia (bytes UTF-8). */
 export async function evidenceCertificate(db: Db, envelopeId: string): Promise<Uint8Array> {
   const e = await db.one<any>(
-    `SELECT e.id, e.tenant_id, e.subject, e.status, e.created_at, e.completed_at, f.sha256
+    `SELECT e.id, e.tenant_id, e.brand_id, e.subject, e.status, e.created_at, e.completed_at, f.sha256
        FROM envelopes e LEFT JOIN files f ON f.id = e.signed_file_id WHERE e.id = $1`,
     [envelopeId],
   );
@@ -44,10 +46,12 @@ export async function evidenceCertificate(db: Db, envelopeId: string): Promise<U
     [envelopeId],
   );
   const events = await db.query<any>(
-    `SELECT seq, type, actor_type, actor_label, ip, user_agent, occurred_at, hash FROM envelope_events WHERE envelope_id = $1 ORDER BY seq`,
+    `SELECT seq, type, actor_type, actor_id, actor_label, ip, user_agent, data, occurred_at, prev_hash, hash FROM envelope_events WHERE envelope_id = $1 ORDER BY seq`,
     [envelopeId],
   );
-  const base = await tenantBaseUrl(db, e.tenant_id);
+  // Mismo link que el certificado del PDF (jobs.ts): dominio de la marca del sobre y ?b= si aplica una submarca.
+  const wl = await brandForEnvelope(db, e);
+  const verifyUrl = rebrands(wl) || e.brand_id ? `${wl.baseUrl}/verify?b=${encodeURIComponent(wl.key)}` : `${wl.baseUrl}/verify`;
   const doc = {
     type: "calasign.evidence-certificate",
     version: 1,
@@ -69,17 +73,40 @@ export async function evidenceCertificate(db: Db, envelopeId: string): Promise<U
       declinedAt: iso(r.declined_at),
       ip: r.signed_ip,
     })),
-    events: events.map((v) => ({
-      seq: v.seq,
-      type: v.type,
-      actorType: v.actor_type,
-      actor: v.actor_label,
-      ip: v.ip,
-      userAgent: v.user_agent,
-      occurredAt: iso(v.occurred_at),
-      hash: v.hash,
-    })),
-    verify: { url: `${base}/verify`, howTo: "Subí el PDF sellado para validar firmas, sello de tiempo y la cadena de eventos." },
+    events: events.map((v) => {
+      // Exactamente lo que cubre el hash (infra/evidence.ts): actor_label no entra.
+      const body = {
+        seq: v.seq,
+        type: v.type,
+        actor_type: v.actor_type,
+        actor_id: v.actor_id ?? null,
+        ip: v.ip ?? null,
+        user_agent: v.user_agent ?? null,
+        data: v.data ?? {},
+        occurred_at: iso(v.occurred_at),
+      };
+      return {
+        seq: v.seq,
+        type: v.type,
+        actorType: v.actor_type,
+        actorId: body.actor_id,
+        actor: v.actor_label,
+        ip: v.ip,
+        userAgent: v.user_agent,
+        data: body.data,
+        occurredAt: iso(v.occurred_at),
+        prevHash: v.prev_hash,
+        hash: v.hash,
+        canonicalBody: canonicalJson(body),
+      };
+    }),
+    chain: { algorithm: "SHA-256", genesisHash: GENESIS_HASH, head: events.length ? events[events.length - 1].hash : GENESIS_HASH },
+    howToVerify:
+      "Para cada evento en orden de seq: hash = SHA-256 (hex en minúsculas) del texto UTF-8 `prevHash + \"\\n\" + canonicalBody`. " +
+      "prevHash del primer evento es genesisHash; el de cada uno de los siguientes es el hash del anterior. canonicalBody es el JSON " +
+      "canónico (claves ordenadas alfabéticamente, sin espacios) de { seq, type, actor_type, actor_id, ip, user_agent, data, occurred_at } " +
+      "con los valores de ese evento (actorType, actorId, ip, userAgent, data, occurredAt). Si algún hash no coincide, el registro fue alterado.",
+    verify: { url: verifyUrl, howTo: "Subí el PDF sellado para validar firmas, sello de tiempo y la cadena de eventos." },
   };
   return new TextEncoder().encode(JSON.stringify(doc, null, 2));
 }

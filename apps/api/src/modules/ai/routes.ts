@@ -292,8 +292,9 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
    */
   const assertSignerAiQuota = async (envelopeId: string, recipientId: string) => {
     const q = await s.db.one<{ day: number; total: number }>(
-      `SELECT count(*) FILTER (WHERE created_at > now() - interval '1 day')::int AS day, count(*)::int AS total
-         FROM ai_usage WHERE envelope_id = $1 AND actor_type = 'recipient' AND actor_id = $2`,
+      // Por eventos ai.* del firmante en la evidencia: cuentan también los resúmenes servidos desde la caché.
+      `SELECT count(*) FILTER (WHERE occurred_at > now() - interval '1 day')::int AS day, count(*)::int AS total
+         FROM envelope_events WHERE envelope_id = $1 AND actor_type = 'recipient' AND actor_id = $2::text AND type LIKE 'ai.%'`,
       [envelopeId, recipientId],
     );
     if ((q?.day ?? 0) >= 30 || (q?.total ?? 0) >= 100) {

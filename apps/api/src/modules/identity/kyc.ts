@@ -172,6 +172,11 @@ export async function signingIdentityFor(db: Db, r: any, e: any, opts: { revealS
 
 export type { CertificateIdentity };
 
+/** El proveedor no respondió a tiempo: se corta (la reserva se cancela y se puede reintentar). */
+function withTimeout<T>(ms: number, p: Promise<T>): Promise<T> {
+  return Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error("el proveedor de identidad no respondió a tiempo")), ms).unref?.())]);
+}
+
 export function maskDocNumber(n: string | null): string | null {
   return maskDoc(n);
 }
@@ -367,6 +372,15 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
       if (!["sent", "viewed"].includes(rNow?.status)) throw conflict("not_signable", "Ya no podés firmar este sobre");
       // Dos inicios simultáneos no crean dos verificaciones en curso ni consumen dos intentos (el índice único de 0019
       // lo garantiza también a nivel base).
+      // Una reserva de modo redirect que quedó sin sesión del proveedor (el proceso murió o el proveedor no respondió)
+      // se cancela: si no, bloqueaba todo nuevo inicio para siempre.
+      if (adapter.mode === "redirect") {
+        await t.query(
+          `UPDATE identity_verifications SET status = 'canceled', updated_at = now()
+            WHERE recipient_id = $1 AND status = 'created' AND provider_ref IS NULL AND updated_at < now() - interval '2 minutes'`,
+          [r.id],
+        );
+      }
       const active = await t.one<any>(
         `SELECT id FROM identity_verifications WHERE recipient_id = $1 AND status IN ('created','pending') LIMIT 1`,
         [r.id],
@@ -391,14 +405,14 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
     });
     if (won && adapter.mode === "redirect") {
       try {
-        const created = await adapter.createSession!({
+        const created = await withTimeout(30_000, adapter.createSession!({
           verificationId: id,
           level: r.id_verification_level,
           person: { fullName: r.name, documentNumber: r.id_document_number ?? null, email: r.email, phone: r.phone },
           returnUrl: `${await tenantBaseUrl(s.db, e.tenant_id)}/s/${req.params.token}?identity=return`,
           callbackUrl: `${config.appUrl}/v1/integrations/identity/${provider}/webhook`,
           locale: r.locale ?? e.locale,
-        });
+        }));
         await s.db.query(
           `UPDATE identity_verifications SET status = 'pending', provider_ref = $2, redirect_url = $3, updated_at = now() WHERE id = $1 AND status = 'created'`,
           [id, created.providerRef, created.redirectUrl],
@@ -406,6 +420,7 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
       } catch (err) {
         // El proveedor no respondió: la reserva se cancela (no consume un intento) y se puede volver a iniciar.
         await s.db.query(`UPDATE identity_verifications SET status = 'canceled', updated_at = now() WHERE id = $1 AND status = 'created'`, [id]).catch(() => {});
+        await s.db.query(`UPDATE recipients SET identity_status = 'pending' WHERE id = $1 AND identity_status = 'in_progress'`, [r.id]).catch(() => {});
         throw err;
       }
     }

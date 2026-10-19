@@ -95,7 +95,7 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
     if (u) await takeLoginAttempt(s.db, u.id);
     const ok = (await verifyPassword(input.password, hasPassword ? u.password_hash : DUMMY_HASH)) && hasPassword;
     if (!u || !ok) throw unauthorized();
-    await clearLoginAttempts(s.db, u.id);
+
     // SSO obligatorio (Fase 5): se entra a la primera organización que admite contraseña.
     const pick = await passwordLoginTenant(s.db, u.id);
     if (!pick) throw unauthorized();
@@ -110,7 +110,10 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
     }
     const m = { tenant_id: pick.tenantId };
     const challenge = await createTwoFactorChallenge(s.db, u.id, m.tenant_id);
+    // Con segundo factor, el contador se vacía recién cuando el código es correcto: si no, quien tiene la contraseña
+    // volvía a ingresarla para vaciarlo entre tandas de códigos.
     if (challenge) return challenge;
+    await clearLoginAttempts(s.db, u.id);
     await createSession(reply, req, u.id, m.tenant_id);
     return me(u.id, m.tenant_id);
   });
@@ -148,6 +151,11 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
     const input = ResetPasswordInput.parse(req.body);
     const pw = await hashPassword(input.password);
     const userId = await s.db.tx(async (t) => {
+      // Primero la cuenta (como "olvidé mi contraseña", que bloquea users y después password_resets): con el orden
+      // inverso, los dos a la vez para la misma persona se bloqueaban entre sí (deadlock, 500).
+      const owner = await t.one<any>(`SELECT user_id FROM password_resets WHERE token_hash = $1`, [sha256Hex(input.token)]);
+      if (!owner) return null;
+      await t.query(`SELECT id FROM users WHERE id = $1 FOR UPDATE`, [owner.user_id]);
       // Consumo atómico: el mismo link no sirve dos veces aunque lleguen dos pedidos a la vez.
       const row = await t.one<any>(
         `UPDATE password_resets SET used_at = now() WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now() RETURNING user_id`,

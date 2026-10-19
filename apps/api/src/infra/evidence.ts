@@ -64,6 +64,11 @@ export async function appendEvent(
 /** Recalcula la cadena completa. Devuelve el primer seq roto, o null si está íntegra. */
 export async function verifyChain(db: Db, envelopeId: string): Promise<{ ok: boolean; brokenAt: number | null; head: string }> {
   const rows = await db.query<any>(`SELECT * FROM envelope_events WHERE envelope_id = $1 ORDER BY seq`, [envelopeId]);
+  return verifyRows(rows);
+}
+
+/** Verifica la cadena sobre filas ya leídas (ordenadas por seq): el certificado usa la misma foto que imprime. */
+export function verifyRows(rows: any[]): { ok: boolean; brokenAt: number | null; head: string } {
   let prev = GENESIS_HASH;
   for (const r of rows) {
     const body = {

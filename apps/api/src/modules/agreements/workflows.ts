@@ -458,21 +458,19 @@ async function executeStep(d: Deps, run: any, step: WorkflowStep, index: number)
             if (e instanceof AppError) throw new StepFailure(e.message);
             throw e;
           });
-          // Ejecución iniciada desde el link público: un destinatario cuyo correo o teléfono sale de datos que escribió
-          // quien completó el formulario queda como autorregistrado (sin invitaciones ni recordatorios hasta validar su
-          // correo), como en los formularios web. Si no, el link servía para mandar invitaciones (correo o WhatsApp
-          // pago) con textos elegidos a cualquier dirección.
-          if (!run.started_by && !run.started_by_api_key) {
-            const typed = step.config.recipients.flatMap((r, i) =>
-              !r.cc && (/\{\{/.test(r.email ?? "") || /\{\{/.test(r.phone ?? "")) ? [recipients[i]] : [],
+          // Ejecución iniciada desde el link público: el firmante autoservicio (su correo es exactamente un campo de correo
+          // del formulario) queda como autorregistrado, como en los formularios web: no recibe invitaciones ni
+          // recordatorios hasta validar su correo y ve el link en pantalla. Solo si le toca firmar ya y su correo es único
+          // en el sobre (si no, la pantalla no le muestra el link y quedaría sin forma de firmar, o se silenciaría a un
+          // firmante fijo de la organización con el mismo correo). El resto se avisa normalmente: el tope de ejecuciones
+          // por hora limita el abuso.
+          if (!run.started_by && !run.started_by_api_key && selfService.length) {
+            await t.query(
+              `UPDATE recipients r SET self_registered = true
+                WHERE r.envelope_id = $1 AND lower(r.email) = ANY($2::text[]) AND r.status IN ('sent','viewed')
+                  AND (SELECT count(*) FROM recipients x WHERE x.envelope_id = r.envelope_id AND lower(x.email) = lower(r.email)) = 1`,
+              [envelopeId, selfService.map((x) => x.toLowerCase())],
             );
-            for (const r of typed) {
-              await t.query(
-                `UPDATE recipients SET self_registered = true
-                  WHERE envelope_id = $1 AND (($2::text IS NOT NULL AND lower(email) = $2) OR ($2::text IS NULL AND phone = $3))`,
-                [envelopeId, r.email, r.phone],
-              );
-            }
           }
           c.envelopes = { ...(c.envelopes ?? {}), [step.config.envelopeKey]: { envelopeId } };
           c.selfServiceSigners = { ...(c.selfServiceSigners ?? {}), [envelopeId]: selfService };

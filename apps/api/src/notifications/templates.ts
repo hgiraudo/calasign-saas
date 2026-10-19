@@ -374,5 +374,6 @@ ${
       : ""
   }
 </table></td></tr></table></body></html>`;
-  return { subject, text, html, cta };
+  // platformFooter: el pie exacto que se agregó al texto (los canales que no lo muestran lo sacan solo si está).
+  return { subject, text, html, cta, platformFooter: footer ? `\n— ${footer}` : null };
 }

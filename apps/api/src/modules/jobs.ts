@@ -2,7 +2,7 @@ import { addCadesSignatureIncremental, finalizeEnvelopePdf, type CertificateReci
 import { certsignStage } from "./certsign";
 import { config } from "../config";
 import type { Db } from "../infra/db";
-import { SYSTEM, appendEvent, verifyChain } from "../infra/evidence";
+import { SYSTEM, appendEvent, verifyRows } from "../infra/evidence";
 import { enqueue, requeueStuckJobs, type JobHandler, type JobQueueName } from "../infra/queue";
 import { getSealProvider } from "../infra/seal";
 import { applyEvidencePipeline, planEvidence } from "./evidence-seal";
@@ -41,12 +41,12 @@ const LINK_KINDS: TemplateKind[] = ["invite", "reminder", "completed", "expiry_w
 const waParam = (v: string) => (v ?? "").replace(/[\r\n\t]+/g, " ").replace(/ {4,}/g, "   ").trim() || "-";
 
 /**
- * Texto para Telegram: sin el pie de la plataforma (solo el último "— …", no el primero: un mensaje firmado
- * "Saludos,\n— Juan" perdía todo lo que seguía) y dentro del tope de 4096 caracteres de Telegram.
+ * Texto para Telegram: sin el pie de la plataforma y dentro del tope de 4096 caracteres de Telegram.
  */
-function telegramText(subject: string, text: string): string {
-  const i = text.lastIndexOf("\n— ");
-  const body = i >= 0 ? text.slice(0, i) : text;
+function telegramText(subject: string, text: string, platformFooter: string | null | undefined): string {
+  // Solo el pie que agregó la plataforma, y solo si está al final: con la marca sin pie, un "— Juan" del remitente
+  // no se toca.
+  const body = platformFooter && text.endsWith(platformFooter) ? text.slice(0, -platformFooter.length) : text;
   const full = `${subject}\n\n${body}`;
   const cps = [...full];
   return cps.length > 4000 ? cps.slice(0, 3999).join("") + "…" : full;
@@ -208,7 +208,7 @@ async function notify(
         channel,
         to,
         subject: m.subject,
-        text: channel === "telegram" ? telegramText(m.subject, m.text) : m.text + (channel === "email" ? extra : ""),
+        text: channel === "telegram" ? telegramText(m.subject, m.text, m.platformFooter) : m.text + (channel === "email" ? extra : ""),
         // El aviso para vincular Telegram también en la versión HTML (casi todos los clientes muestran esa).
         html: channel === "email" && tgLink ? withHtmlHint(m.html, TELEGRAM_HINT[locale as keyof typeof TELEGRAM_HINT] ?? TELEGRAM_HINT.es, tgLink) : m.html,
         link,
@@ -354,7 +354,7 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
   let completedAt = new Date().toISOString();
   // El certificado imprime el hash final y afirma que los eventos están encadenados: con la cadena rota (filas editadas)
   // no se sella (el job falla y se avisa) en lugar de darle apariencia de auténtica.
-  const chain = await verifyChain(d.db, e.id);
+  const chain = verifyRows(events);
   if (!chain.ok) throw new Error(`la cadena de evidencia está rota en el evento ${chain.brokenAt}: no se sella`);
   let chainHead = chain.head || (events[events.length - 1]?.hash ?? "");
 

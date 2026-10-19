@@ -622,7 +622,6 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
         throw unauthorized();
       }
       verifiedByPassword = true;
-      await clearLoginAttempts(s.db, user.id);
     }
     if (!user) {
       if (!input.name || !input.password) throw badRequest("account_required", "Para crear la cuenta hacen falta nombre y contraseña");
@@ -644,6 +643,8 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     if (verifiedByPassword && user.totp_enabled_at) {
       return createTwoFactorChallenge(s.db, user.id, inv.tenant_id, inv.id);
     }
+    // Sin segundo factor pendiente: el ingreso con contraseña terminó bien (con 2FA se vacía al verificar el código).
+    if (verifiedByPassword) await clearLoginAttempts(s.db, user.id);
     await joinByInvitation(req, inv.id, user.id, inv.email);
     if (sessionUserId) {
       await s.db.query(`UPDATE sessions SET tenant_id = $2 WHERE token_hash = $1`, [sha256Hex(cookie!), inv.tenant_id]);

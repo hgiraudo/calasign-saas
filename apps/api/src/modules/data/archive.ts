@@ -63,16 +63,20 @@ export async function renewEnvelopeArchive(d: Deps, envelopeId: string, actor: A
   if (!tsaUrl) throw new AppError(409, "tsa_not_configured", "No hay TSA configurada para renovar el sello de archivo");
   // Una renovación a la vez por sobre (reclamo con vencimiento, por si el proceso muere a mitad), antes de pagar el
   // sello de tiempo y de analizar el PDF.
-  const claim = await d.db.query(
-    `UPDATE envelopes SET archive_renewing_until = now() + interval '5 minutes'
-      WHERE id = $1 AND (archive_renewing_until IS NULL OR archive_renewing_until < now()) RETURNING id`,
+  // El valor del reclamo identifica a esta renovación: al terminar se suelta solo si sigue siendo el suyo (una que
+  // tardó más que el reclamo no borra el de la que tomó la posta).
+  const claim = await d.db.query<{ until: string }>(
+    `UPDATE envelopes SET archive_renewing_until = clock_timestamp() + interval '5 minutes'
+      WHERE id = $1 AND (archive_renewing_until IS NULL OR archive_renewing_until < now()) RETURNING archive_renewing_until AS until`,
     [envelopeId],
   );
   if (!claim.length) throw conflict("archive_renewal_in_progress", "Ya hay una renovación del sello de archivo en curso para este sobre");
   try {
     return await renewClaimed(d, envelopeId, tsaUrl, actor);
   } finally {
-    await d.db.query(`UPDATE envelopes SET archive_renewing_until = NULL WHERE id = $1`, [envelopeId]).catch(() => {});
+    await d.db
+      .query(`UPDATE envelopes SET archive_renewing_until = NULL WHERE id = $1 AND archive_renewing_until = $2`, [envelopeId, claim[0].until])
+      .catch(() => {});
   }
 }
 
@@ -181,6 +185,8 @@ export async function archiveSweep(d: Deps, opts: { days?: number; force?: boole
       await renewEnvelopeArchive(d, e.id);
       renewed++;
     } catch (err) {
+      // Otra renovación (p. ej. una manual) en curso: no es una falla de este sobre.
+      if (err instanceof AppError && err.code === "archive_renewal_in_progress") continue;
       failed++;
       d.log.error({ envelopeId: e.id, err: String(err) }, "falló la renovación del sello de archivo");
       await d.db.query(`UPDATE envelopes SET archive_checked_at = now(), archive_error = $2 WHERE id = $1`, [e.id, String(err).slice(0, 500)]);

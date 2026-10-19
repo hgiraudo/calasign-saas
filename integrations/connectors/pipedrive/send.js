@@ -27,6 +27,7 @@ var CalaSignPipedrive = (function () {
       open: "Ver en CalaSign",
       failed: "No se pudo",
       settings: "Ajustes de CRM",
+      truncated: "Pipedrive mandó {total} registros y se envían como máximo 20 por vez: {n} quedan SIN enviar. Después, volvé a abrir la acción con los restantes.",
     },
     en: {
       title: "Send for signature with CalaSign",
@@ -46,6 +47,7 @@ var CalaSignPipedrive = (function () {
       open: "Open in CalaSign",
       failed: "Failed",
       settings: "CRM settings",
+      truncated: "Pipedrive passed {total} records and at most 20 are sent at a time: {n} will NOT be sent. Afterwards, open the action again with the remaining ones.",
     },
     pt: {
       title: "Enviar para assinatura com CalaSign",
@@ -65,6 +67,7 @@ var CalaSignPipedrive = (function () {
       open: "Ver no CalaSign",
       failed: "Falhou",
       settings: "Configurações de CRM",
+      truncated: "O Pipedrive enviou {total} registros e no máximo 20 são enviados por vez: {n} NÃO serão enviados. Depois, abra a ação de novo com os restantes.",
     },
   };
 
@@ -90,7 +93,7 @@ var CalaSignPipedrive = (function () {
     ids = ids.filter(function (x) {
       return seen[x] ? false : (seen[x] = true);
     });
-    return { resource: resource, objectType: objectType, ids: ids.slice(0, 20), truncated: ids.length > 20, companyId: /^\d{1,18}$/.test(q.get("companyId") || "") ? q.get("companyId") : null };
+    return { resource: resource, objectType: objectType, ids: ids.slice(0, 20), truncated: ids.length > 20, total: ids.length, skipped: Math.max(0, ids.length - 20), companyId: /^\d{1,18}$/.test(q.get("companyId") || "") ? q.get("companyId") : null };
   }
 
   /** Mapeos activos con plantilla para ese tipo de registro (la API ya filtra por conexiones activas de Pipedrive). */
@@ -104,12 +107,39 @@ var CalaSignPipedrive = (function () {
       });
   }
 
+  /**
+   * Idempotency-Key de cada envío, estable por registro y por corrida de la página: si un envío vuelve con 504 (el
+   * sobre pudo crearse igual) y se reintenta, la API devuelve el mismo sobre en lugar de crear otro.
+   */
+  function idempotencyKey(companyId, mappingId, recordId, runId) {
+    return "pd-" + (companyId || "x") + "-" + mappingId + "-" + recordId + "-" + runId;
+  }
+
+  /** Id de la corrida: se genera al abrir la página y se guarda en sessionStorage (por URL), así recargar la pestaña
+   *  después de un error de red reutiliza las mismas claves. */
+  function runIdFor(win) {
+    var key = "calasign-pipedrive-run:" + win.location.search;
+    var fresh = function () {
+      return win.crypto && win.crypto.randomUUID ? win.crypto.randomUUID() : String(Date.now()) + Math.random().toString(36).slice(2);
+    };
+    try {
+      var v = win.sessionStorage.getItem(key);
+      if (!v) {
+        v = fresh();
+        win.sessionStorage.setItem(key, v);
+      }
+      return v;
+    } catch (e) {
+      return fresh();
+    }
+  }
+
   function apiFactory(fetchImpl, base) {
-    return function (method, path, body) {
+    return function (method, path, body, extraHeaders) {
       return fetchImpl(base + path, {
         method: method,
         credentials: "include",
-        headers: body ? { "content-type": "application/json", accept: "application/json" } : { accept: "application/json" },
+        headers: Object.assign(body ? { "content-type": "application/json", accept: "application/json" } : { accept: "application/json" }, extraHeaders || {}),
         body: body ? JSON.stringify(body) : undefined,
       }).then(function (res) {
         return res.text().then(function (text) {
@@ -133,12 +163,12 @@ var CalaSignPipedrive = (function () {
 
   /** Crea un sobre por registro, uno tras otro (el límite de la API es por minuto). companyId: la compañía de
    *  Pipedrive desde la que se abrió la acción; la API rechaza (409 company_mismatch) un mapeo de otra compañía. */
-  function sendAll(api, mappingId, ids, send, companyId) {
+  function sendAll(api, mappingId, ids, send, companyId, runId) {
     var out = [];
     var chain = Promise.resolve();
     ids.forEach(function (id) {
       chain = chain.then(function () {
-        return api("POST", "/v1/crm/mappings/" + encodeURIComponent(mappingId) + "/send", companyId ? { objectId: id, send: send, companyId: companyId } : { objectId: id, send: send }).then(
+        return api("POST", "/v1/crm/mappings/" + encodeURIComponent(mappingId) + "/send", companyId ? { objectId: id, send: send, companyId: companyId } : { objectId: id, send: send }, runId ? { "Idempotency-Key": idempotencyKey(companyId, mappingId, id, runId) } : null).then(
           function (r) {
             out.push({ id: id, ok: true, envelopeId: r.envelopeId, status: r.status });
           },
@@ -190,6 +220,7 @@ var CalaSignPipedrive = (function () {
     var base = win.location.origin;
     var api = apiFactory(win.fetch.bind(win), base);
     var params = parseParams(win.location.search);
+    var runId = runIdFor(win);
     var root = doc.getElementById("app");
     doc.title = T.title;
     doc.documentElement.lang = lang(win.navigator);
@@ -248,6 +279,8 @@ var CalaSignPipedrive = (function () {
         el(doc, "label", { for: "mapping", text: T.mapping }),
         select,
         el(doc, "label", { class: "check" }, [sendNow, doc.createTextNode(" " + T.sendNow)]),
+        // Tope de 20 por vez: se avisa cuántos quedan afuera (antes se cortaba sin decir nada).
+        params.skipped ? el(doc, "p", { class: "error", role: "alert", text: T.truncated.replace("{total}", String(params.total)).replace("{n}", String(params.skipped)) }) : null,
         el(doc, "p", { class: "muted", text: T.records + ": " + params.ids.join(", ") }),
         btn,
       ]);
@@ -255,7 +288,7 @@ var CalaSignPipedrive = (function () {
         e.preventDefault();
         if (!pending.length) return;
         btn.disabled = true;
-        sendAll(api, select.value, pending, sendNow.checked, params.companyId).then(function (out) {
+        sendAll(api, select.value, pending, sendNow.checked, params.companyId, runId).then(function (out) {
           out.forEach(function (o) {
             var li = el(doc, "li", { class: o.ok ? "ok" : "error" });
             li.appendChild(doc.createTextNode("#" + o.id + " — " + (o.ok ? T.ok + " (" + o.status + ") " : T.failed + ": " + o.error)));
@@ -281,6 +314,6 @@ var CalaSignPipedrive = (function () {
 
   if (typeof window !== "undefined" && window.document && window.document.getElementById("app")) mount(window);
 
-  return { parseParams: parseParams, eligibleMappings: eligibleMappings, apiFactory: apiFactory, sendAll: sendAll, load: load, lang: lang, TEXT: TEXT };
+  return { parseParams: parseParams, eligibleMappings: eligibleMappings, apiFactory: apiFactory, sendAll: sendAll, load: load, lang: lang, idempotencyKey: idempotencyKey, runIdFor: runIdFor, TEXT: TEXT };
 })();
 if (typeof module !== "undefined") module.exports = CalaSignPipedrive;

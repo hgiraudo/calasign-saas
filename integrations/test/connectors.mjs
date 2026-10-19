@@ -668,11 +668,16 @@ await test("pipedrive: la acción lee los ids, filtra mapeos y envía uno por re
     objectType: "deal",
     ids: ["42", "43"],
     truncated: false,
+    total: 2,
+    skipped: 0,
     companyId: "5150",
   });
   assert.equal(PD.parseParams("?resource=person&selectedIds=8").objectType, "contact");
   assert.equal(PD.parseParams("?resource=organization&selectedIds=8").objectType, null);
-  assert.equal(PD.parseParams(`?resource=deal&selectedIds=${Array.from({ length: 25 }, (_, i) => i + 1).join(",")}`).ids.length, 20);
+  const many = PD.parseParams(`?resource=deal&selectedIds=${Array.from({ length: 25 }, (_, i) => i + 1).join(",")}`);
+  assert.equal(many.ids.length, 20);
+  assert.equal(many.skipped, 5, "se informan los que quedan sin enviar");
+  for (const l of ["es", "en", "pt"]) assert.match(PD.TEXT[l].truncated, /\{total\}.*\{n\}/);
   assert.equal(PD.lang({ language: "pt-BR" }), "pt");
   assert.equal(PD.lang({ language: "en-US" }), "en");
 
@@ -685,7 +690,7 @@ await test("pipedrive: la acción lee los ids, filtra mapeos y envía uno por re
   ];
   let loggedIn = true;
   const fakeFetch = async (url, init) => {
-    calls.push({ url, method: init.method, credentials: init.credentials, body: init.body ? JSON.parse(init.body) : null });
+    calls.push({ url, method: init.method, credentials: init.credentials, headers: init.headers, body: init.body ? JSON.parse(init.body) : null });
     const res = (status, body) => ({ ok: status < 400, status, text: async () => JSON.stringify(body) });
     if (!loggedIn) return res(401, { error: { code: "unauthorized", message: "Sin sesión" } });
     if (url === `${BASE}/v1/crm/mappings?provider=pipedrive` || url === `${BASE}/v1/crm/mappings?provider=pipedrive&companyId=5150`) return res(200, { items: mappings });
@@ -717,8 +722,14 @@ await test("pipedrive: la acción lee los ids, filtra mapeos y envía uno por re
   const withCompany = PD.parseParams("?resource=deal&selectedIds=42&companyId=5150");
   assert.equal((await PD.load(api, withCompany)).state, "ready");
   assert.equal(calls[0].url, `${BASE}/v1/crm/mappings?provider=pipedrive&companyId=5150`);
-  await PD.sendAll(api, "m1", ["42"], true, withCompany.companyId);
+  await PD.sendAll(api, "m1", ["42"], true, withCompany.companyId, "run1");
   assert.deepEqual(calls[1].body, { objectId: "42", send: true, companyId: "5150" });
+  assert.equal(calls[1].headers["Idempotency-Key"], "pd-5150-m1-42-run1", "Idempotency-Key estable por registro y corrida");
+  // runId: se guarda en sessionStorage por URL (recargar la pestaña reutiliza las claves).
+  const store = new Map();
+  const win = { location: { search: "?resource=deal&selectedIds=42" }, crypto: { randomUUID: () => `u${store.size}` }, sessionStorage: { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v) } };
+  assert.equal(PD.runIdFor(win), PD.runIdFor(win));
+  assert.equal(PD.runIdFor({ ...win, sessionStorage: { getItem: () => { throw new Error("bloqueado"); } } }).length > 0, true);
   assert.equal((await PD.load(api, PD.parseParams("?resource=person&selectedIds=8"))).mappings[0].id, "m3");
   assert.equal((await PD.load(api, PD.parseParams("?resource=deal"))).key, "noRecords");
   assert.equal((await PD.load(api, PD.parseParams("?resource=lead&selectedIds=1"))).key, "badResource");
@@ -786,9 +797,10 @@ await test("kommo: el widget pinta el botón en la ficha del lead y abre CalaSig
 
 await test("kommo: send.js lee los ids, filtra mapeos de leads y envía uno por lead con la sesión", async () => {
   const KM = require(C("kommo/send.js"));
-  assert.deepEqual(KM.parseParams("?ids=42,43,42,x1&companyId=31337"), { ids: ["42", "43"], truncated: false, companyId: "31337" });
+  assert.deepEqual(KM.parseParams("?ids=42,43,42,x1&companyId=31337"), { ids: ["42", "43"], truncated: false, total: 2, skipped: 0, companyId: "31337" });
   assert.equal(KM.parseParams("?ids=1&companyId=a/b").companyId, null);
   assert.equal(KM.parseParams(`?ids=${Array.from({ length: 25 }, (_, i) => i + 1).join(",")}`).ids.length, 20);
+  assert.equal(KM.parseParams(`?ids=${Array.from({ length: 25 }, (_, i) => i + 1).join(",")}`).skipped, 5);
   const mappings = [
     { id: "m1", name: "Leads", objectType: "deal", templateId: "t1", active: true, send: true },
     { id: "m2", name: "Inactivo", objectType: "deal", templateId: "t1", active: false, send: true },
@@ -796,7 +808,7 @@ await test("kommo: send.js lee los ids, filtra mapeos de leads y envía uno por 
   const calls = [];
   let loggedIn = true;
   const fakeFetch = async (url, init) => {
-    calls.push({ url, method: init.method, credentials: init.credentials, body: init.body ? JSON.parse(init.body) : null });
+    calls.push({ url, method: init.method, credentials: init.credentials, headers: init.headers, body: init.body ? JSON.parse(init.body) : null });
     const res = (status, body) => ({ ok: status < 400, status, text: async () => JSON.stringify(body) });
     if (!loggedIn) return res(401, { error: { code: "unauthorized", message: "Sin sesión" } });
     if (url === `${BASE}/v1/crm/mappings?provider=kommo&companyId=31337`) return res(200, { items: mappings });
@@ -807,8 +819,9 @@ await test("kommo: send.js lee los ids, filtra mapeos de leads y envía uno por 
   const ready = await KM.load(api, KM.parseParams("?ids=42&companyId=31337"));
   assert.deepEqual(ready.mappings.map((x) => x.id), ["m1"]);
   assert.equal(calls[0].credentials, "include");
-  assert.deepEqual(await KM.sendAll(api, "m1", ["42"], true, "31337"), [{ id: "42", ok: true, envelopeId: "env-42", status: "sent" }]);
+  assert.deepEqual(await KM.sendAll(api, "m1", ["42"], true, "31337", "r9"), [{ id: "42", ok: true, envelopeId: "env-42", status: "sent" }]);
   assert.deepEqual(calls.at(-1).body, { objectId: "42", send: true, companyId: "31337" });
+  assert.equal(calls.at(-1).headers["Idempotency-Key"], "km-31337-m1-42-r9");
   assert.equal((await KM.load(api, KM.parseParams("?ids="))).key, "noRecords");
   loggedIn = false;
   assert.equal((await KM.load(api, KM.parseParams("?ids=42"))).state, "login");

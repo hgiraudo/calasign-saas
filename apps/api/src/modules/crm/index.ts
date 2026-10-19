@@ -38,7 +38,7 @@ import { decrypt, encrypt, iso, sha256Hex, uuidv7 } from "../../lib/util";
 import { assertEnvelopeAccess, assertTemplateAccess, envelopeVisibilitySql, hasPerm, templateVisibilitySql } from "../access";
 import { auditFromRequest } from "../audit";
 import { authenticate, type AuthContext, type Services } from "../context";
-import { sendEnvelope } from "../envelopes";
+import { idempotent, sendEnvelope } from "../envelopes";
 import { ownerCanStillCreate } from "../owner-check";
 import { tenantBaseUrl } from "../custom-domains";
 import { insertEnvelopeFromTemplate, loadTemplateForUse, planFromTemplate } from "../templates";
@@ -869,9 +869,12 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
       }
     }
     if (m.template_id) await assertTemplateAccess(s.db, a, m.template_id, "view");
-    const out = await sendFromRecord(s.db, { tenantId: a.tenantId, userId: a.userId, apiKeyId: a.apiKeyId, actor: a.actor }, m, input.objectId, input);
-    reply.code(201);
-    return out!;
+    // Idempotency-Key: la acción de Pipedrive, el widget de Kommo y los conectores low-code reintentan después de un
+    // 504; con la misma clave y el mismo cuerpo se devuelve el sobre ya creado en lugar de crear otro.
+    return idempotent(s, req, reply, async () => {
+      const out = await sendFromRecord(s.db, { tenantId: a.tenantId, userId: a.userId, apiKeyId: a.apiKeyId, actor: a.actor }, m, input.objectId, input);
+      return { status: 201, body: out! };
+    });
   });
 
   // ───────── Vínculos y ejecuciones ─────────

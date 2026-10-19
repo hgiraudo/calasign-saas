@@ -1,6 +1,6 @@
 // CalaSign para Kommo: widget con el botón «Enviar a firmar con CalaSign».
 // · Ficha del lead (lcard-1): un botón en el panel derecho abre CalaSign con el id del lead.
-// · Lista de leads (llist-1): la acción del widget sobre los leads seleccionados (máximo 20).
+// · Lista de leads (llist-1): la acción del widget sobre los leads seleccionados (send.html envía 20 por vez y avisa).
 // La página que se abre (send.html) es del dominio de CalaSign y usa la sesión del navegador: el widget no guarda API
 // keys ni tokens. El envío lo hace el conector nativo (POST /v1/crm/mappings/{id}/send) con la conexión OAuth.
 define(["jquery"], function ($) {
@@ -12,7 +12,8 @@ define(["jquery"], function ($) {
 
     function open(ids) {
       var clean = [];
-      for (var i = 0; i < ids.length && clean.length < 20; i++) {
+      // Se pasan todos (hasta 200, por el largo de la URL): send.html envía 20 por vez y avisa cuántos quedan afuera.
+      for (var i = 0; i < ids.length && clean.length < 200; i++) {
         var id = String(ids[i]);
         if (/^\d{1,18}$/.test(id) && clean.indexOf(id) < 0) clean.push(id);
       }

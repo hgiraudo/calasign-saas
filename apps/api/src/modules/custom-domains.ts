@@ -1,6 +1,6 @@
 // Dominio propio (white-label): la organización firma desde firmas.cliente.com.
-//   1. Registra el dominio → recibe un registro TXT de verificación y un CNAME recomendado.
-//   2. Verifica: se consulta el TXT por DNS-over-HTTPS.
+//   1. Registra el dominio → recibe un registro TXT de verificación y el CNAME hacia la plataforma.
+//   2. Verifica: se consultan por DNS-over-HTTPS el TXT y que el dominio lleve a la plataforma (CNAME o A).
 //   3. Verificado: los links de sus correos usan ese dominio, la web muestra su marca según el Host,
 //      y Caddy emite el certificado bajo demanda preguntando a GET /internal/tls-allowed (docs/CUSTOM-DOMAINS.md).
 import type { FastifyInstance, FastifyRequest } from "fastify";
@@ -252,6 +252,16 @@ export async function customDomainRoutes(app: FastifyInstance, s: Services) {
       if (!ok) error = values.length ? `El TXT existe pero no coincide (${values.length} valor/es)` : `No se encontró el registro TXT ${txtName(r.domain)}`;
     } catch (e) {
       error = `No se pudo consultar el DNS: ${String((e as Error).message ?? e)}`;
+    }
+    // También tiene que llevar a la plataforma (como exige el rechequeo periódico): con solo el TXT, un dominio que
+    // apunta a otro lado (p. ej. uno que cambió de dueño y conservó el TXT) volvía a quedar verificado y los correos
+    // mandaban links de firma, con su token, a un host ajeno.
+    if (ok && !isLocalEnv()) {
+      const routed = await routesToPlatform(r.domain).catch(() => false);
+      if (!routed) {
+        ok = false;
+        error = `El dominio todavía no apunta a CalaSign: creá el CNAME ${r.domain} → ${appHost()} y volvé a verificar`;
+      }
     }
     if (ok && r.status !== "verified") {
       const other = await s.db.one(`SELECT 1 FROM custom_domains WHERE domain = $1 AND status = 'verified' AND tenant_id <> $2`, [r.domain, a.tenantId]);

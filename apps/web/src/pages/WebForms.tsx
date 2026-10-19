@@ -4,7 +4,7 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import type { EnvelopeStatus, TemplateDetail, TemplateSummary, WebForm } from "@calasign/shared";
 import { PREFILLABLE_FIELD_TYPES } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
-import { formatDateTime, useI18n } from "../lib/i18n";
+import { expiryFromDateInput, formatDateTime, localDateInput, useI18n } from "../lib/i18n";
 import { useScaleText } from "../lib/i18n-scale";
 import { ErrorBox, Modal, Spinner, StatusBadge } from "../components/ui";
 
@@ -31,13 +31,6 @@ function CopyButton({ text }: { text: string }) {
 }
 
 // ───────────────────────────── Editor ─────────────────────────────
-
-function localDateInput(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-}
 
 interface FixedDraft {
   name: string;
@@ -147,7 +140,7 @@ function WebFormEditor({ form, initialTemplateId, onClose, onSaved }: { form: We
       active,
       maxUses: maxUses ? Number(maxUses) : null,
       // Fecha sin tocar: se conserva el vencimiento guardado (uno puesto por la API a otra hora se corría a las 23:59).
-      expiresAt: !expiresAt ? null : form?.expiresAt && localDateInput(form.expiresAt) === expiresAt ? form.expiresAt : new Date(`${expiresAt}T23:59:59`).toISOString(),
+      expiresAt: expiryFromDateInput(expiresAt, form?.expiresAt),
       requireOtp,
       collectPhone,
       embeddable,

@@ -15,8 +15,11 @@ export function agentHeaders(name: string): Record<string, string> {
 
 export function applyAgentActor(req: FastifyRequest, a: AuthContext) {
   const got = req.headers[AGENT_SECRET_HEADER];
-  if (typeof got !== "string" || got.length !== SECRET.length) return;
-  if (!timingSafeEqual(Buffer.from(got), Buffer.from(SECRET))) return;
+  if (typeof got !== "string") return;
+  // Largo en bytes (no en caracteres): con caracteres multibyte timingSafeEqual lanzaba y el pedido respondía 500.
+  const gotBuf = Buffer.from(got);
+  const secretBuf = Buffer.from(SECRET);
+  if (gotBuf.length !== secretBuf.length || !timingSafeEqual(gotBuf, secretBuf)) return;
   let name = "agente";
   try {
     name = decodeURIComponent(String(req.headers[AGENT_NAME_HEADER] ?? "agente")).slice(0, 80);

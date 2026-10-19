@@ -72,8 +72,12 @@ export function encrypt(plain: string): string {
 export function decrypt(payload: string): string {
   const [v, iv, enc, tag] = payload.split(".");
   if (v !== "v1") throw new Error("formato de cifrado desconocido");
-  const d = createDecipheriv("aes-256-gcm", getSecretKey(), Buffer.from(iv, "base64url"));
-  d.setAuthTag(Buffer.from(tag, "base64url"));
+  // Etiqueta completa (16 bytes): GCM acepta etiquetas truncadas (hasta 4 bytes) si no se fija el largo, y algunos
+  // valores cifrados llegan del público (token de formulario web, state de OAuth).
+  const authTag = Buffer.from(tag ?? "", "base64url");
+  if (authTag.length !== 16) throw new Error("etiqueta de cifrado inválida");
+  const d = createDecipheriv("aes-256-gcm", getSecretKey(), Buffer.from(iv, "base64url"), { authTagLength: 16 });
+  d.setAuthTag(authTag);
   return Buffer.concat([d.update(Buffer.from(enc, "base64url")), d.final()]).toString("utf8");
 }
 

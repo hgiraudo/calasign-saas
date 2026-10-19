@@ -22,8 +22,10 @@ const MSG = {
 export async function telegramRoutes(app: FastifyInstance, s: Services) {
   app.post("/v1/integrations/telegram/webhook", async (req, reply) => {
     const secret = config.telegram.webhookSecret;
-    const got = String(req.headers["x-telegram-bot-api-secret-token"] ?? "");
-    if (!config.telegram.botToken || !secret || got.length !== secret.length || !timingSafeEqual(Buffer.from(got), Buffer.from(secret))) {
+    // Largo en bytes (no en caracteres): con caracteres multibyte timingSafeEqual lanzaba y respondía 500.
+    const got = Buffer.from(String(req.headers["x-telegram-bot-api-secret-token"] ?? ""));
+    const want = Buffer.from(secret ?? "");
+    if (!config.telegram.botToken || !secret || got.length !== want.length || !timingSafeEqual(got, want)) {
       return reply.code(401).send();
     }
     const msg = (req.body as any)?.message;

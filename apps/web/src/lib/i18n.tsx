@@ -714,3 +714,24 @@ export function formatDate(iso: string | null | undefined, locale: Locale): stri
     return iso;
   }
 }
+
+/** Fecha local (YYYY-MM-DD) para un <input type="date">: con el ISO en UTC, en América la fecha corría un día. */
+export function localDateInput(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+/**
+ * Vencimiento a guardar desde un <input type="date">: el fin de ese día local (23:59:59). Con la fecha sin tocar se
+ * conserva el guardado (uno puesto por la API a otra hora se corría a las 23:59 en cada guardado); con `mustBeFuture`,
+ * solo si todavía no pasó: un borrador con vencimiento de hoy a las 10:00 enviado a las 15:00 fallaba con "la fecha
+ * de vencimiento ya pasó", aunque la pantalla mostraba la fecha de hoy.
+ */
+export function expiryFromDateInput(input: string, stored: string | null | undefined, opts: { mustBeFuture?: boolean } = {}): string | null {
+  if (!input) return null;
+  if (stored && localDateInput(stored) === input && (!opts.mustBeFuture || new Date(stored).getTime() > Date.now())) return stored;
+  return new Date(`${input}T23:59:59`).toISOString();
+}

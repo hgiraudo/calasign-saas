@@ -8,7 +8,7 @@ import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import type { Channel, Document, EnvelopeDetail, Locale, RecipientRole } from "@calasign/shared";
 import { CHANNELS, ID_DOCUMENT_TYPES, LOCALES } from "@calasign/shared";
 import { api, errorText, uuid } from "../lib/api";
-import { LOCALE_LABELS, useI18n } from "../lib/i18n";
+import { LOCALE_LABELS, expiryFromDateInput, localDateInput, useI18n } from "../lib/i18n";
 import { forgetPdf } from "../lib/pdf";
 import { FieldEditor, type DraftField } from "../components/FieldEditor";
 import { AUTH_METHODS, type AuthMethod } from "@calasign/shared";
@@ -90,14 +90,6 @@ function toDraftFields(d: EnvelopeDetail): DraftField[] {
     conditions: f.conditions,
     formula: f.formula,
   }));
-}
-
-function toDateInput(iso: string | null): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
 export function EnvelopeEditPage() {
@@ -689,7 +681,7 @@ function ReviewStep({
   const init = draft.current;
   const [subject, setSubject] = useState(init?.subject ?? env.subject);
   const [message, setMessage] = useState(init?.message ?? env.message ?? "");
-  const [expires, setExpires] = useState(init?.expires ?? toDateInput(env.expiresAt));
+  const [expires, setExpires] = useState(init?.expires ?? localDateInput(env.expiresAt));
   const [idemKey] = useState(uuid);
   const sx = useSignerText();
   const x = useExpText();
@@ -707,7 +699,7 @@ function ReviewStep({
   }, [draft, subject, message, expires, reminderEveryDays, expiryWarningDays, allowDelegation]);
 
   const signers = useMemo(() => detail.recipients.filter((r) => r.role === "signer"), [detail.recipients]);
-  const minDate = toDateInput(new Date(Date.now() + 86400000).toISOString());
+  const minDate = localDateInput(new Date(Date.now() + 86400000).toISOString());
 
   const send = async () => {
     // El cobro se guarda con su propio botón: enviar con cambios sin guardar mandaba el sobre sin cobro (o con el anterior).
@@ -718,9 +710,8 @@ function ReviewStep({
     setBusy(true);
     setError(null);
     try {
-      // Con la fecha sin tocar se conserva el vencimiento guardado: uno puesto por la API a otra hora (p. ej. 10:00) se
-      // corría a las 23:59 de ese día en cada envío.
-      const expiresAt = !expires ? null : env.expiresAt && toDateInput(env.expiresAt) === expires ? env.expiresAt : new Date(`${expires}T23:59:59`).toISOString();
+      // Con la fecha sin tocar se conserva el vencimiento guardado (si todavía no pasó: el envío lo rechazaría).
+      const expiresAt = expiryFromDateInput(expires, env.expiresAt, { mustBeFuture: true });
       const patched = await api<EnvelopeDetail>(`/v1/envelopes/${env.id}`, {
         method: "PATCH",
         body: { subject: subject.trim(), message: message.trim() || null, expiresAt, reminderEveryDays, expiryWarningDays, allowDelegation },

@@ -132,7 +132,8 @@ function featureForRoute(url: string, method: string, body: unknown): { feature:
   if (url === "/v1/settings/branding" && method === "PATCH") return null;
   if (url === "/v1/bulk-sends" || url === "/v1/bulk-sends/validate") return { feature: "bulk_send", label: "El envío masivo" };
   if (url === "/v1/web-forms") return { feature: "web_forms", label: "Los formularios web" };
-  if (url === "/v1/webhooks") return { feature: "webhooks", label: "Los webhooks" };
+  // Probar un endpoint o reenviar una entrega también envía: como los eventos (webhook-outbox.ts), solo con el plan.
+  if (url === "/v1/webhooks" || url === "/v1/webhooks/:id/test" || url === "/v1/webhook-deliveries/:id/retry") return { feature: "webhooks", label: "Los webhooks" };
   if (url.startsWith("/v1/settings/branding")) return { feature: "branding", label: "La marca propia" };
   if (url.startsWith("/v1/settings/sso")) return { feature: "sso", label: "El inicio de sesión único (SSO)" };
   if (url.startsWith("/v1/settings/scim")) return { feature: "scim", label: "El aprovisionamiento SCIM" };

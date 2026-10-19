@@ -11,7 +11,9 @@ links de otras organizaciones.
 2. Crea en su DNS:
    - **TXT** `_calasign-challenge.firmas.cliente.com` con el valor `calasign-verify=<token>` (verificación de propiedad).
    - **CNAME** `firmas.cliente.com` → el host de la plataforma (`dev.calasign.com` en dev).
-3. **Verificar** (`POST /v1/domains/verify`): el TXT se consulta por DNS-over-HTTPS (Cloudflare, y Google si falla).
+3. **Verificar** (`POST /v1/domains/verify`): por DNS-over-HTTPS (Cloudflare, y Google si falla) se consultan el TXT
+   **y** que el dominio apunte a la plataforma (la misma regla que la re-verificación). Hasta que el CNAME propague,
+   la verificación responde "el dominio todavía no apunta a CalaSign". En el entorno local solo se mira el TXT.
 4. Verificado: Caddy emite el certificado la primera vez que alguien entra (TLS bajo demanda), preguntándole a la API
    si el dominio está autorizado.
 5. Re-verificación cada 6 h: el TXT tiene que seguir publicado **y** el dominio tiene que seguir apuntando a la

@@ -164,9 +164,18 @@ export function TemplateEditPage() {
           <h1>{info.name || detail.template.name}</h1>
           <ShareControl kind="templates" id={id!} canEdit />
         </div>
-        <Link className="btn" to={`/app/templates/${id}/use`}>
+        {/* Se guarda el paso actual antes de usarla: con un Link, los cambios sin guardar se perdían y el sobre salía
+            con la versión anterior de la plantilla. */}
+        <button
+          type="button"
+          className="btn"
+          disabled={busy}
+          onClick={async () => {
+            if (await saveCurrent()) nav(`/app/templates/${id}/use`);
+          }}
+        >
           {t("tpl.use")}
-        </Link>
+        </button>
       </div>
 
       <ol className="stepper">
@@ -341,7 +350,9 @@ function TemplateDocuments({
     }
     setUploading(null);
     if (inputRef.current) inputRef.current.value = "";
-    await onChanged();
+    // Fuera del try de cada archivo: si la recarga fallaba, el rechazo quedaba sin manejar y la lista sin actualizar
+    // ni aviso.
+    await onChanged().catch((e) => setError(errorText(e)));
   };
 
   const remove = async (docId: string) => {

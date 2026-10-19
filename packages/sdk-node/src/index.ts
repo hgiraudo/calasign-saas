@@ -217,6 +217,12 @@ export class CalaSign {
       } catch {
         /* cuerpo no JSON */
       }
+      // El pedido original con esta Idempotency-Key sigue ejecutándose (típico del reintento que el SDK hace después de
+      // un timeout): se espera y se repite hasta recibir la respuesta guardada, en vez de fallar con el sobre ya creado.
+      if (res.status === 409 && idem && data?.error?.code === "idempotency_in_progress" && attempt < this.maxRetries) {
+        await sleep(backoff(attempt + 2));
+        continue;
+      }
       if (!res.ok) {
         const e = data?.error;
         throw new CalaSignError(e?.message ?? `HTTP ${res.status}`, res.status, e?.code ?? `http_${res.status}`, e?.details, res.headers.get("x-request-id"));

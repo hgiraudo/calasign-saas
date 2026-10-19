@@ -172,7 +172,12 @@ class CalaSign:
             raise CalaSignError("La respuesta del token OAuth no es JSON válido", 0, "oauth_error") from None
         if not isinstance(body, dict) or not body.get("access_token"):
             raise CalaSignError("La respuesta del token OAuth no trae access_token", 0, "oauth_error")
-        self._token = _Token(body["access_token"], time.time() + float(body.get("expires_in", 3600)))
+        try:
+            ttl = float(body.get("expires_in") or 3600)
+        except (TypeError, ValueError):
+            # Como el SDK de Node: un expires_in null o no numérico no escapa como TypeError/ValueError suelto.
+            ttl = 3600.0
+        self._token = _Token(body["access_token"], time.time() + ttl)
         return self._token.value
 
     # ── pedido genérico ──
@@ -235,6 +240,12 @@ class CalaSign:
                     attempt += 1
                     continue
                 err = body.get("error") if isinstance(body.get("error"), dict) else {}
+                # El pedido original con esta Idempotency-Key sigue ejecutándose (típico del reintento después de un
+                # timeout): se espera y se repite hasta recibir la respuesta guardada, en vez de fallar con el sobre creado.
+                if status == 409 and idempotency_key and err.get("code") == "idempotency_in_progress" and attempt < self.max_retries:
+                    time.sleep(_retry_delay(attempt + 2, None))
+                    attempt += 1
+                    continue
                 raise CalaSignError(err.get("message", f"HTTP {status}"), status, err.get("code", f"http_{status}"), err.get("details")) from None
             except _NETWORK_ERRORS as e:
                 if retryable and attempt < self.max_retries:

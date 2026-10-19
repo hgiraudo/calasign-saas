@@ -27,6 +27,7 @@ import { SIGNER_COOKIE } from "./otp";
 import { recipientActor, resolveToken } from "./signing";
 import { applyIdentityFlags } from "./identity/kyc";
 import { applyCertificateFlags } from "./certsign";
+import { deleteBlobsQuietly, discardRecipientAttachments } from "./file-cleanup";
 
 const IN_PERSON_SESSION_MIN = 60;
 const PENDING = ["created", "sent", "viewed"];
@@ -168,6 +169,7 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
 
   // Cambios de contacto: link nuevo y el anterior revocado.
   const updated: Record<string, unknown>[] = [];
+  const discardedKeys: string[] = [];
   for (const p of input.updateRecipients ?? []) {
     const r = recips.get(p.id);
     if (!r) throw notFound("Destinatario");
@@ -213,12 +215,30 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
     // El contacto lo cargó ahora el remitente: deja de ser el correo sin validar de un formulario web (si no, la
     // invitación al contacto corregido no saldría nunca).
     if (contactChanged && r.self_registered) await db.query(`UPDATE recipients SET self_registered = false WHERE id = $1`, [r.id]);
+    // En persona: la confirmación de identidad en el dispositivo del anfitrión era para el nombre anterior; con la
+    // sesión todavía abierta se completaba la firma con el nombre nuevo sin volver a confirmar.
+    if (changes.name && r.auth_method === "in_person" && r.identity_confirmed_at) {
+      await db.query(`UPDATE recipients SET identity_confirmed_at = NULL WHERE id = $1`, [r.id]);
+      changes.identityConfirmationReset = true;
+    }
     let tokenRotated = false;
     if (contactChanged && r.access_token_hash) {
       const t = newToken();
       await db.query(`UPDATE recipients SET access_token_hash = $2, access_token_enc = $3, telegram_chat_id = NULL WHERE id = $1`, [r.id, t.hash, t.enc]);
       await db.query(`DELETE FROM signer_sessions WHERE recipient_id = $1`, [r.id]);
       tokenRotated = true;
+      // El link nuevo va a otro contacto (quizá otra persona): el consentimiento y los adjuntos de quien tenía el
+      // anterior no pasan, como al reasignar. Si no, firmaba sin aceptar el uso de medios electrónicos y el PDF final
+      // anexaba, a su nombre, los archivos (p. ej. la foto de un documento) que subió el otro.
+      const keys = await discardRecipientAttachments(db, r.id);
+      if (keys.length) {
+        discardedKeys.push(...keys);
+        changes.attachmentsDiscarded = keys.length;
+      }
+      if (r.consented_at) {
+        await db.query(`UPDATE recipients SET consented_at = NULL WHERE id = $1`, [r.id]);
+        changes.consentReset = true;
+      }
       if (["sent", "viewed"].includes(r.status) && r.auth_method !== "in_person" && !r.embedded) {
         await enqueue(db, "notify", { kind: "invite", envelopeId: e.id, recipientId: r.id, tenantId: e.tenant_id });
       }
@@ -358,6 +378,8 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
       else await activateRecipient(db, e.tenant_id, e.id, r);
     }
   }
+  // Adjuntos descartados (ya marcados como purgados): el llamador los borra del almacenamiento después de confirmar.
+  return { discardedKeys };
 }
 
 // ───────────────────────────── Reportes ─────────────────────────────
@@ -598,7 +620,8 @@ export async function experienceRoutes(app: FastifyInstance, s: Services) {
 
   app.post<{ Params: { id: string } }>("/v1/envelopes/:id/corrections", { preHandler: auth }, async (req) => {
     const a = A(req);
-    await s.db.tx((t) => correctEnvelope(t, a, req.params.id, req.body));
+    const { discardedKeys } = await s.db.tx((t) => correctEnvelope(t, a, req.params.id, req.body));
+    await deleteBlobsQuietly(s.blobs, discardedKeys);
     return loadDetail(s.db, a.tenantId, req.params.id);
   });
 

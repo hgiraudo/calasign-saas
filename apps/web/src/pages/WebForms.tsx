@@ -72,7 +72,9 @@ function WebFormEditor({ form, initialTemplateId, onClose, onSaved }: { form: We
     api<{ items: TemplateSummary[] }>("/v1/templates")
       .then((r) => {
         setTemplates(r.items);
-        if (!templateId && r.items[0]) setTemplateId(r.items[0].id);
+        // Una plantilla de la URL que no está en la lista (borrada o sin acceso): el select mostraba la primera pero se
+        // seguía usando la de la URL (error al cargarla y "Guardar" deshabilitado).
+        setTemplateId((cur) => (r.items.some((x) => x.id === cur) ? cur : (r.items[0]?.id ?? "")));
       })
       .catch((e) => setError(errorText(e)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -83,6 +85,8 @@ function WebFormEditor({ form, initialTemplateId, onClose, onSaved }: { form: We
     api<TemplateDetail>(`/v1/templates/${templateId}`)
       .then((d) => {
         setTpl(d);
+        // El error de una plantilla anterior (p. ej. la de la URL, inexistente) no queda a la vista.
+        setError(null);
         const signers = d.roles.filter((r) => r.role === "signer");
         // Solo vale un rol firmante: si el rol guardado pasó a copia o aprobador, el select mostraba otro firmante pero
         // se guardaba el viejo.

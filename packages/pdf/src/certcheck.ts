@@ -2,7 +2,7 @@
 // vigencia, usos de clave, emisor permitido, confianza y coincidencia con el documento de identidad declarado.
 import * as asn1js from "asn1js";
 import * as pkijs from "pkijs";
-import { buildChain, commonName, fingerprint, isSelfSigned, issuedBy, nameToString, parseCert, serialHex, toAB } from "./pki";
+import { buildChain, canIssueCertificates, commonName, fingerprint, isSelfSigned, issuedBy, nameToString, parseCert, serialHex, toAB } from "./pki";
 
 const OID = {
   serialNumber: "2.5.4.5",
@@ -109,15 +109,6 @@ export function matchesIdDocument(declared: string, candidates: IdentityCandidat
 }
 
 const isCa = (c: pkijs.Certificate) => Boolean(c.extensions?.some((e) => e.extnID === "2.5.29.19" && (e.parsedValue as pkijs.BasicConstraints | undefined)?.cA));
-
-/** CA (basicConstraints cA) y, si declara key usage, con keyCertSign. */
-function canIssueCertificates(c: pkijs.Certificate): boolean {
-  if (!isCa(c)) return false;
-  const ku = c.extensions?.find((e) => e.extnID === OID.keyUsage);
-  if (!ku) return true;
-  const bits = new Uint8Array((ku.parsedValue as asn1js.BitString | undefined)?.valueBlock?.valueHexView ?? []);
-  return Boolean((bits[0] ?? 0) & 0x04); // bit 5: keyCertSign
-}
 
 export interface CertificateCheckOptions {
   now?: Date;

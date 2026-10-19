@@ -63,15 +63,18 @@ export function SignerPage() {
   // Después de la última firma el sobre queda en 'finalizing' mientras se sella el PDF (en segundo plano):
   // se consulta cada pocos segundos para mostrar el botón de descarga apenas esté listo.
   const sealing = session?.envelope.status === "finalizing";
+  // Firma en persona: la pantalla final cierra la sesión del firmante (/in-person/end) y no ofrece descarga. Si se
+  // siguiera consultando, la sesión volvía con otpRequired y la pantalla pasaba a "abierto fuera del dispositivo".
+  const pollSealing = sealing && !session?.inPerson;
   useEffect(() => {
-    if (!sealing) return;
+    if (!pollSealing) return;
     let tries = 0;
     const id = window.setInterval(() => {
       if (++tries > 60) window.clearInterval(id);
       else reload();
     }, 3000);
     return () => window.clearInterval(id);
-  }, [sealing, reload]);
+  }, [pollSealing, reload]);
 
   if (invalid)
     return (

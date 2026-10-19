@@ -170,6 +170,10 @@ function CreateNegotiationModal({ kind, onClose, onCreated }: { kind: "template"
                   setTemplateId(e.target.value);
                   const x = templates.find((y) => y.id === e.target.value);
                   setJson(JSON.stringify(x?.sampleData ?? {}, null, 2));
+                  // Un rol de la plantilla anterior que no existe en esta se mandaba igual (el select mostraba "—") y al
+                  // aceptar esa contraparte quedaba como copia en lugar de firmar.
+                  const roles = x?.analysis?.roles ?? [];
+                  setParticipants((ps) => ps.map((p) => (roles.includes(p.role) ? p : { ...p, role: "" })));
                 }}
               >
                 {templates.map((x) => (

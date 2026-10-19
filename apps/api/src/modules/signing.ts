@@ -19,6 +19,7 @@ import { inPersonSessionInfo } from "./experience";
 import { prepareCompletionLogic, signerLogicFields } from "./logic";
 import { identityBlocking, signingIdentityFor } from "./identity/kyc";
 import { certificateStepFor } from "./certsign";
+import { deleteBlobsQuietly } from "./file-cleanup";
 
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -188,7 +189,7 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
     // Si la firma no se completa (faltan campos, no es su turno, el sobre cerró…), las imágenes ya subidas no las
     // referencia nada: sin fila en `files` la retención nunca las borra y la firma del titular quedaba guardada para
     // siempre, una copia por cada intento fallido.
-    const discardStored = () => Promise.all(stored.map((x) => s.blobs.delete(x.key).catch(() => {})));
+    const discardStored = () => deleteBlobsQuietly(s.blobs, stored.map((x) => x.key));
     try {
       for (const [purpose, png, meta] of [
         ["signature", sigPng, input.signature],

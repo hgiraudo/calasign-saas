@@ -13,13 +13,22 @@ export function linuxDesktopEntry(exec: string): string {
     "Type=Application",
     "Name=Firmador CalaSign",
     "Comment=Firma documentos de CalaSign con tu certificado digital",
-    `Exec="${exec.replace(/"/g, '\\"')}" %u`,
+    `Exec="${desktopExecArg(exec)}" %u`,
     "Terminal=false",
     "NoDisplay=true",
     `MimeType=x-scheme-handler/${SCHEME};`,
     "Categories=Office;Security;",
     "",
   ].join("\n");
+}
+
+/**
+ * Argumento entre comillas de Exec (Desktop Entry Spec): dentro de las comillas van escapados " ` $ y \, después se
+ * aplica el escape de los valores string (\ → \\) y % se duplica (si no, es un código de campo). Escapar solo las
+ * comillas dejaba roto el registro con una ruta que tuviera $, \ o % (p. ej. ~/Descargas/100%/calasign-firmador).
+ */
+function desktopExecArg(path: string): string {
+  return path.replace(/(["`$\\])/g, "\\$1").replace(/\\/g, "\\\\").replace(/%/g, "%%");
 }
 
 /** Comandos `reg add` de Windows (HKCU, sin permisos de administrador). */

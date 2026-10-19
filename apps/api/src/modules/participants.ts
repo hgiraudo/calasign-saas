@@ -12,6 +12,7 @@ import { loadDetail } from "./mappers";
 import { isUnverifiedSelfRegistered } from "./otp";
 import { recipientActor, resolveToken } from "./signing";
 import { inheritIdentityRequirement } from "./identity/kyc";
+import { deleteBlobsQuietly, discardRecipientAttachments } from "./file-cleanup";
 
 /** Aplica los campos opcionales de recordatorios/delegación de Create/UpdateEnvelopeInput (solo los presentes). */
 export async function applyEnvelopeSettings(
@@ -92,15 +93,8 @@ export async function replaceRecipient(
       host,
     ],
   );
-  // Los adjuntos que subió el anterior no pasan al reemplazo: si no, completaba la firma con el archivo de otra persona
-  // (p. ej. la foto de su documento) y el PDF final lo anexaba a nombre del reemplazo. Se descartan como cuando el
-  // firmante quita un adjunto; el llamador borra los archivos del almacenamiento después de confirmar la transacción.
-  const discarded = await db.query<{ storage_key: string }>(
-    `UPDATE files SET purged_at = now() WHERE kind = 'attachment' AND purged_at IS NULL
-       AND id IN (SELECT attachment_file_id FROM fields WHERE recipient_id = $1 AND attachment_file_id IS NOT NULL) RETURNING storage_key`,
-    [old.id],
-  );
-  await db.query(`UPDATE fields SET attachment_file_id = NULL, value = NULL, filled_at = NULL WHERE recipient_id = $1 AND attachment_file_id IS NOT NULL`, [old.id]);
+  // Los adjuntos que subió el anterior no pasan al reemplazo; el llamador borra los archivos después de confirmar.
+  const discardedKeys = await discardRecipientAttachments(db, old.id);
   await db.query(`UPDATE fields SET recipient_id = $2 WHERE recipient_id = $1`, [old.id, id]);
   // El cobro pendiente pasa al reemplazo (si no, el sobre queda trabado o se firma sin pagar).
   await db.query(`UPDATE envelope_payments SET recipient_id = $2, updated_at = now() WHERE recipient_id = $1 AND status <> 'paid'`, [old.id, id]);
@@ -132,12 +126,7 @@ export async function replaceRecipient(
     const fresh = await db.one<any>(`SELECT * FROM recipients WHERE id = $1`, [id]);
     await activateRecipient(db, e.tenant_id, e.id, fresh);
   }
-  return { id, discardedKeys: discarded.map((f) => f.storage_key) };
-}
-
-/** Borra del almacenamiento los adjuntos descartados por un reemplazo (ya marcados como purgados). */
-async function deleteBlobs(s: Services, keys: string[]) {
-  await Promise.all(keys.map((k) => s.blobs.delete(k).catch(() => {})));
+  return { id, discardedKeys };
 }
 
 export async function participantRoutes(app: FastifyInstance, s: Services) {
@@ -156,7 +145,7 @@ export async function participantRoutes(app: FastifyInstance, s: Services) {
         if (!old) throw notFound("Destinatario");
         return replaceRecipient(t, e, old, input, "reassigned", a.actor);
       });
-      await deleteBlobs(s, discardedKeys);
+      await deleteBlobsQuietly(s.blobs, discardedKeys);
       return loadDetail(s.db, a.tenantId, req.params.id);
     },
   );
@@ -182,7 +171,7 @@ export async function participantRoutes(app: FastifyInstance, s: Services) {
         ({ discardedKeys } = await replaceRecipient(t, e, old, input, "delegated", recipientActor(req, old)));
         newName = input.name;
       });
-      await deleteBlobs(s, discardedKeys);
+      await deleteBlobsQuietly(s.blobs, discardedKeys);
       return { delegated: true, to: newName };
     },
   );

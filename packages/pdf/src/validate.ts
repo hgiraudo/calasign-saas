@@ -145,7 +145,7 @@ async function chainReport(
     else if (issuer) {
       for (const o of dss?.ocsps ?? []) {
         const r = await statusFromOcsp(o, c, issuer, at);
-        if (r) { revocation = { status: r.status, source: "dss-ocsp" }; break; }
+        if (r) { revocation = { status: r.status, source: "dss-ocsp", revokedAt: r.revokedAt ?? null }; break; }
       }
       if (revocation.status === "not_checked") {
         for (const crl of dss?.crls ?? []) {
@@ -156,7 +156,7 @@ async function chainReport(
       if (revocation.status === "not_checked" && opts.online) {
         const o = await fetchOcsp(c, issuer, opts.fetcher);
         const r = o ? await statusFromOcsp(o, c, issuer, at) : null;
-        if (r) revocation = { status: r.status, source: "online-ocsp" };
+        if (r) revocation = { status: r.status, source: "online-ocsp", revokedAt: r.revokedAt ?? null };
         else {
           const crl = await fetchCrl(c, opts.fetcher);
           const r2 = crl ? await statusFromCrl(crl, c, issuer, at) : null;
@@ -166,7 +166,8 @@ async function chainReport(
     }
     entries.push({ ...summary(c), revocation });
   }
-  // Revocado al momento de firmar: la revocación es anterior a esa fecha, o no se sabe cuándo ocurrió (OCSP).
+  // Revocado al momento de firmar: la revocación es anterior a esa fecha, o no se sabe cuándo ocurrió. El OCSP trae su
+  // revocationTime: sin pasarlo, un certificado revocado DESPUÉS de una firma con sello de confianza contaba como revocado.
   const revoked = entries.some(
     (e) => e.revocation.status === "revoked" && (!e.revocation.revokedAt || new Date(e.revocation.revokedAt) <= at),
   );

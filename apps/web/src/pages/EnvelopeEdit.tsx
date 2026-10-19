@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SealOptionsPanel } from "../components/EvidenceExtras";
 import { PaymentOptionsPanel } from "../components/BillingExtras";
+import { useBillingText } from "../lib/i18n-billing";
 import { AiFieldDetect, AiReviewPanel } from "../components/AiPanels";
 import { useExpText } from "../lib/i18n-experience";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
@@ -363,7 +364,9 @@ function DocumentsStep({
     }
     setUploading(null);
     if (inputRef.current) inputRef.current.value = "";
-    await onChanged();
+    // Fuera del try de cada archivo: si la recarga fallaba, el rechazo quedaba sin manejar y la lista sin actualizar
+    // ni aviso.
+    await onChanged().catch((e) => setError(errorText(e)));
   };
 
   const remove = async (docId: string) => {
@@ -644,6 +647,8 @@ function ReviewStep({
     init ? init.expiryWarningDays : env.expiryWarningDays !== undefined ? env.expiryWarningDays : 3,
   );
   const [allowDelegation, setAllowDelegation] = useState(init?.allowDelegation ?? env.allowDelegation ?? true);
+  const b = useBillingText();
+  const [paymentUnsaved, setPaymentUnsaved] = useState(false);
   useEffect(() => {
     draft.current = { subject, message, expires, reminderEveryDays, expiryWarningDays, allowDelegation };
   }, [draft, subject, message, expires, reminderEveryDays, expiryWarningDays, allowDelegation]);
@@ -652,6 +657,11 @@ function ReviewStep({
   const minDate = toDateInput(new Date(Date.now() + 86400000).toISOString());
 
   const send = async () => {
+    // El cobro se guarda con su propio botón: enviar con cambios sin guardar mandaba el sobre sin cobro (o con el anterior).
+    if (paymentUnsaved) {
+      setError(b("pay.unsavedBeforeSend"));
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -720,7 +730,7 @@ function ReviewStep({
           </label>
         </fieldset>
         <SealOptionsPanel envelopeId={env.id} />
-        <PaymentOptionsPanel envelopeId={env.id} recipients={detail.recipients} />
+        <PaymentOptionsPanel envelopeId={env.id} recipients={detail.recipients} onUnsavedChange={setPaymentUnsaved} />
         <AiReviewPanel envelopeId={env.id} />
         <button type="button" className="btn btn-primary btn-block" disabled={busy || !subject.trim()} onClick={send}>
           {busy ? t("edit.sending") : t("edit.send")}

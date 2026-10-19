@@ -111,7 +111,8 @@ async function mailbox() {
 async function linkFor(name, { not = null, count = 1 } = {}) {
   for (let i = 0; i < 60; i++) {
     const items = (await mailbox()).filter((x) => x.text.includes(name) && x.link?.includes("/s/"));
-    const tokens = [...new Set(items.map((x) => x.link.split("/s/")[1]))].filter((t) => t !== not);
+    const skip = [not].flat();
+    const tokens = [...new Set(items.map((x) => x.link.split("/s/")[1]))].filter((t) => !skip.includes(t));
     if (tokens.length && items.length >= count) return tokens[0];
     await sleep(400);
   }
@@ -241,6 +242,7 @@ assert(detail.recipients.some((r) => r.id === R5 && r.status === "sent"), "el nu
 await expectStatus(stranger("GET", `/v1/signing/${oldT3}`), 404, "el link anterior de Carlos quedó revocado");
 const newT3 = await linkFor(n("Carlos Tercero"), { not: oldT3 });
 assert(newT3 !== oldT3, "Carlos recibió un link nuevo");
+
 const t5 = await linkFor(n("Elena Quinta"));
 await expectStatus(
   sender("POST", `/v1/envelopes/${envelope.id}/corrections`, {
@@ -255,9 +257,22 @@ assert(corrected && corrected.data.message && corrected.data.expiresAt && correc
 assert(corrected.data.recipientsUpdated?.[0]?.tokenRotated === true, "el diff registra la rotación del link");
 step("correcciones: mensaje, vencimiento, contacto (link revocado y reenviado), firmante y campos nuevos; reglas de inmutabilidad");
 
+// Carlos acepta con su link y después se corrige otra vez su correo (puede ser otra persona): el nuevo titular
+// del link tiene que aceptar de nuevo.
+const carlos = client();
+await carlos("GET", `/v1/signing/${newT3}`);
+await carlos("POST", `/v1/signing/${newT3}/consent`);
+await sender("POST", `/v1/envelopes/${envelope.id}/corrections`, { updateRecipients: [{ id: R3, email: `carlos.otro+${stamp}@example.com` }] });
+const t3b = await linkFor(n("Carlos Tercero"), { not: [oldT3, newT3] });
+const carlosB = await client()("GET", `/v1/signing/${t3b}`);
+assert(carlosB.recipient.consented === false, "con el contacto corregido, el consentimiento anterior no se hereda");
+const reset = (await sender("GET", `/v1/envelopes/${envelope.id}/events`)).items.filter((e) => e.type === "envelope.corrected").at(-1);
+assert(reset.data.recipientsUpdated?.[0]?.changes?.consentReset === true, "el diff registra que se reinició el consentimiento");
+step("corrección de contacto después de aceptar: el nuevo titular del link vuelve a aceptar");
+
 // ───────────────────────────── Completar ─────────────────────────────
 
-for (const t of [t2, newT3, t5]) {
+for (const t of [t2, t3b, t5]) {
   const c = client();
   const s = await c("GET", `/v1/signing/${t}`);
   await c("POST", `/v1/signing/${t}/consent`);

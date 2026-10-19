@@ -51,7 +51,16 @@ function parsePaymentAmount(raw: string): number | null {
 }
 
 /** Configuración del cobro en el paso de revisión de un borrador. */
-export function PaymentOptionsPanel({ envelopeId, recipients }: { envelopeId: string; recipients: Recipient[] }) {
+export function PaymentOptionsPanel({
+  envelopeId,
+  recipients,
+  onUnsavedChange,
+}: {
+  envelopeId: string;
+  recipients: Recipient[];
+  /** Avisa si hay un cobro cargado sin guardar (el envío no lo toma: se guarda con su propio botón). */
+  onUnsavedChange?: (unsaved: boolean) => void;
+}) {
   const b = useBillingText();
   const signers = recipients.filter((r) => r.role === "signer");
   const [data, setData] = useState<PaymentResponse | null>(null);
@@ -92,6 +101,23 @@ export function PaymentOptionsPanel({ envelopeId, recipients }: { envelopeId: st
   }, [signers, payer]);
 
   const configured = data?.providers.filter((p) => p.configured) ?? [];
+
+  const stored = data?.payment ?? null;
+  const unsaved =
+    !!data &&
+    enabled &&
+    signers.length > 0 &&
+    configured.length > 0 &&
+    (!stored ||
+      parsePaymentAmount(amount) !== stored.amount ||
+      currency !== stored.currency ||
+      description.trim() !== stored.description ||
+      payer !== stored.payerRecipientId ||
+      timing !== stored.timing ||
+      provider !== stored.provider);
+  const onUnsavedRef = useRef(onUnsavedChange);
+  onUnsavedRef.current = onUnsavedChange;
+  useEffect(() => onUnsavedRef.current?.(unsaved), [unsaved]);
 
   const save = async () => {
     setError(null);
@@ -143,8 +169,10 @@ export function PaymentOptionsPanel({ envelopeId, recipients }: { envelopeId: st
           type="checkbox"
           checked={enabled}
           onChange={(e) => {
+            // Con un cobro guardado, se destilda solo si el borrado salió bien (remove lo hace): si fallaba, la casilla
+            // quedaba destildada pero el sobre seguía cobrando al enviarse.
             if (!e.target.checked && data.payment) void remove();
-            setEnabled(e.target.checked);
+            else setEnabled(e.target.checked);
           }}
           data-testid="payment-enable"
         />

@@ -660,6 +660,8 @@ export function StoragePage() {
                 className="btn btn-sm"
                 onClick={() =>
                   act(async () => {
+                    // Sin esto, el "prueba correcta" de otra conexión seguía a la vista junto al error de esta.
+                    setNote(null);
                     const r = await api<{ ok: boolean; ref: string | null; error: string | null }>(`/v1/storage/connections/${c.id}/test`, { method: "POST" });
                     if (r.ok) setNote(p("sto.testOk", { ref: r.ref ?? "" }));
                     else setError(r.error);

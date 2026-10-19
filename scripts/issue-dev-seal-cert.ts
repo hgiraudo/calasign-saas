@@ -4,6 +4,7 @@
 // Uso (con credenciales de la cuenta del entorno):
 //   tsx scripts/issue-dev-seal-cert.ts <kms-key-arn> <ssm-parameter-name> [commonName]
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { KMSClient, GetPublicKeyCommand } from "@aws-sdk/client-kms";
 import { SSMClient, PutParameterCommand } from "@aws-sdk/client-ssm";
 import { generateDevRootCa, issueSealCertificate, type DevCa } from "@calasign/pdf";
@@ -14,7 +15,9 @@ if (!keyArn || !paramName) {
   process.exit(1);
 }
 const region = keyArn.split(":")[3];
-const caDir = new URL("../var/dev-ca/", import.meta.url).pathname;
+// fileURLToPath y no .pathname: con espacios o tildes en la ruta del repo, .pathname queda con %20/%C3%A1 y la CA
+// se creaba (y se buscaba) en otra carpeta.
+const caDir = fileURLToPath(new URL("../var/dev-ca/", import.meta.url));
 mkdirSync(caDir, { recursive: true });
 
 let ca: DevCa;

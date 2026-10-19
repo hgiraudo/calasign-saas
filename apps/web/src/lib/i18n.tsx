@@ -22,6 +22,7 @@ const es = {
   "common.language": "Idioma",
   "common.none": "—",
   "common.confirmAction": "¿Seguro? Esta acción no se puede deshacer.",
+  "common.needsViewAll": "Solo lectura: cambiar estos ajustes requiere además el permiso de ver todos los sobres de la organización.",
 
   "nav.envelopes": "Sobres",
   "nav.apiKeys": "API keys",
@@ -227,6 +228,7 @@ const ptBR: Dict = {
   "common.language": "Idioma",
   "common.none": "—",
   "common.confirmAction": "Tem certeza? Esta ação não pode ser desfeita.",
+  "common.needsViewAll": "Somente leitura: alterar estas configurações requer também a permissão de ver todos os envelopes da organização.",
   "nav.envelopes": "Envelopes",
   "nav.apiKeys": "API keys",
   "nav.mailbox": "Caixa dev",
@@ -418,6 +420,7 @@ const en: Dict = {
   "common.language": "Language",
   "common.none": "—",
   "common.confirmAction": "Are you sure? This action cannot be undone.",
+  "common.needsViewAll": "Read-only: changing these settings also requires the permission to view all of the organization's envelopes.",
   "nav.envelopes": "Envelopes",
   "nav.apiKeys": "API keys",
   "nav.mailbox": "Dev mailbox",
@@ -750,4 +753,20 @@ const PLACEHOLDERS = {
 export function placeholderText(key: keyof typeof PLACEHOLDERS): string {
   const loc = currentLocale();
   return PLACEHOLDERS[key][loc as "es" | "pt-BR" | "en"] ?? PLACEHOLDERS[key].es;
+}
+
+/**
+ * Aviso del navegador al cerrar o recargar la pestaña con cambios sin guardar (los editores solo guardan con "Guardar"
+ * o al cambiar de paso: antes se perdían sin aviso).
+ */
+export function useUnsavedWarning(dirty: boolean) {
+  useEffect(() => {
+    if (!dirty) return;
+    const h = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", h);
+    return () => window.removeEventListener("beforeunload", h);
+  }, [dirty]);
 }

@@ -68,7 +68,7 @@ export function FieldLogicPanel({
                 ))}
               </select>
               <div className="logic-cond-row">
-                <select aria-label="operator" value={c.operator} onChange={(e) => patch({ operator: e.target.value as ConditionOperator })}>
+                <select aria-label={st("logic.operator")} value={c.operator} onChange={(e) => patch({ operator: e.target.value as ConditionOperator })}>
                   {ops.map((o) => (
                     <option key={o} value={o}>
                       {st(`logic.op.${o}` as "logic.op.equals")}
@@ -121,7 +121,11 @@ export function FieldLogicPanel({
             value={field.formula ?? ""}
             maxLength={500}
             placeholder="{Precio} * {Cantidad}"
-            onChange={(e) => onChange({ formula: e.target.value || null, ...(e.target.value ? { readOnly: false, value: null, required: false } : {}) })}
+            // Solo espacios cuenta como sin fórmula (la API rechaza una fórmula vacía).
+            onChange={(e) => {
+              const v = e.target.value;
+              onChange({ formula: v.trim() ? v : null, ...(v.trim() ? { readOnly: false, value: null, required: false } : {}) });
+            }}
           />
           <small className="muted">{numberLabels.length ? st("logic.formulaHint") : st("logic.formulaNeedsLabels")}</small>
           {numberLabels.length > 0 && (

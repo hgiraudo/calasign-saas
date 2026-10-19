@@ -22,6 +22,7 @@ import { api, errorText } from "../lib/api";
 import { formatDateTime, useI18n, confirmAction } from "../lib/i18n";
 import { useCrmText } from "../lib/i18n-crm";
 import { ErrorBox, OrderInput, Spinner } from "../components/ui";
+import { useAccess } from "../lib/access";
 
 type ProvidersResponse = { items: CrmProviderInfo[]; redirectUris: Record<string, string>; webhookUrl: string };
 
@@ -67,7 +68,9 @@ function statusPlaceholder(provider: CrmProvider | undefined, t: (k: string) => 
 
 export function CrmSettingsPage() {
   const t = useCrmText();
-  const { locale } = useI18n();
+  const { locale, t: tc } = useI18n();
+  // Conexiones, mapeos y reintentos piden además envelopes:view_all en la API (enviar desde un registro, no).
+  const canEdit = useAccess().can("envelopes:view_all");
   const [params] = useSearchParams();
   const [prov, setProv] = useState<ProvidersResponse | null>(null);
   const [conns, setConns] = useState<CrmConnection[] | null>(null);
@@ -160,6 +163,11 @@ export function CrmSettingsPage() {
         <Spinner />
       ) : (
         <>
+          {!canEdit ? (
+            <div className="hint" role="note">
+              {tc("common.needsViewAll")}
+            </div>
+          ) : (
           <div className="settings-grid">
             {prov.items.map((pv) => (
               <div key={pv.provider} className="card pad stack">
@@ -225,6 +233,7 @@ export function CrmSettingsPage() {
               </div>
             ))}
           </div>
+          )}
           <details className="card pad" style={{ marginTop: 12 }}>
             <summary className="small">{t("info.redirects")}</summary>
             <ul className="small break">
@@ -265,6 +274,7 @@ export function CrmSettingsPage() {
                   {t("lastError")}: {c.lastError}
                 </div>
               )}
+              {canEdit && (
               <div className="row-wrap">
                 <button
                   type="button"
@@ -285,6 +295,7 @@ export function CrmSettingsPage() {
                   {t("delete")}
                 </button>
               </div>
+              )}
             </div>
           ))
         )}
@@ -293,14 +304,14 @@ export function CrmSettingsPage() {
       <Section
         title={t("mappings")}
         aside={
-          conns && conns.length > 0 && editing === null ? (
+          canEdit && conns && conns.length > 0 && editing === null ? (
             <button type="button" className="btn btn-primary btn-sm" onClick={() => setEditing("new")}>
               {t("newMapping")}
             </button>
           ) : null
         }
       >
-        {editing !== null && conns && (
+        {canEdit && editing !== null && conns && (
           <MappingEditor
             // Con "Editar" en otro mapeo mientras el editor está abierto, el estado del formulario (inicializado con
             // useState) seguía siendo el del primero y se guardaba sobre el segundo: la key lo vuelve a montar.
@@ -331,12 +342,16 @@ export function CrmSettingsPage() {
               </div>
               <div className="row-wrap">
                 <span className={`badge ${m.active ? "badge-completed" : "badge-voided"}`}>{m.active ? t("active") : t("inactive")}</span>
-                <button type="button" className="btn btn-sm" onClick={() => setEditing(m)}>
-                  {t("edit")}
-                </button>
-                <button type="button" className="btn btn-sm btn-danger" onClick={() => confirmAction() && act(() => api(`/v1/crm/mappings/${m.id}`, { method: "DELETE" }))}>
-                  {t("delete")}
-                </button>
+                {canEdit && (
+                  <>
+                    <button type="button" className="btn btn-sm" onClick={() => setEditing(m)}>
+                      {t("edit")}
+                    </button>
+                    <button type="button" className="btn btn-sm btn-danger" onClick={() => confirmAction() && act(() => api(`/v1/crm/mappings/${m.id}`, { method: "DELETE" }))}>
+                      {t("delete")}
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           ))
@@ -377,7 +392,7 @@ export function CrmSettingsPage() {
                           {t("openEnvelope")}
                         </Link>
                       )}
-                      {r.status === "failed" && (r.kind !== "send" || Boolean(r.detail?.webhook)) && (
+                      {canEdit && r.status === "failed" && (r.kind !== "send" || Boolean(r.detail?.webhook)) && (
                         <button type="button" className="btn btn-sm" onClick={() => act(() => api(`/v1/crm/runs/${r.id}/retry`, { method: "POST" }))}>
                           {t("retry")}
                         </button>

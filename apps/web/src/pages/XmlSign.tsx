@@ -3,12 +3,15 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { TenantCertificate, XmlProfileName, XmlSignResponse } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
 import { useEvidenceText } from "../lib/i18n-evidence";
+import { useAccess } from "../lib/access";
 import { ErrorBox, Spinner } from "../components/ui";
 
 const PROFILES: XmlProfileName[] = ["dgii-ecf", "dian-fe", "sunat-cpe", "xades-bes", "xades-epes"];
 
 export function XmlSignPage() {
   const ev = useEvidenceText();
+  // La API exige settings:manage para firmar XML.
+  const canSign = useAccess().can("settings:manage");
   const [certs, setCerts] = useState<TenantCertificate[] | null>(null);
   const [certificateId, setCertificateId] = useState("");
   const [profile, setProfile] = useState<XmlProfileName>("dgii-ecf");
@@ -85,6 +88,7 @@ export function XmlSignPage() {
       <p className="muted">{ev("xml.intro")}</p>
       <ErrorBox error={error} />
       <ErrorBox error={fileError} />
+      {!canSign && <div className="alert alert-warn">{ev("xml.noPermission")}</div>}
       {certs && certs.length === 0 ? (
         <div className="empty">{ev("xml.noCerts")}</div>
       ) : (
@@ -138,7 +142,7 @@ export function XmlSignPage() {
                 void loadFile(f);
               }}
             />
-            <button className="btn btn-primary" disabled={busy || !xml.trim() || !certificateId}>
+            <button className="btn btn-primary" disabled={busy || !canSign || !xml.trim() || !certificateId}>
               {busy ? <Spinner /> : ev("xml.sign")}
             </button>
           </div>

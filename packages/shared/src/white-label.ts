@@ -357,20 +357,38 @@ export function themeToCss(t: Partial<ResolvedBrandTheme>, opts: { fontFace?: st
   return out;
 }
 
+export const CUSTOM_CSS_PROBLEMS = ["too_long", "backslash", "lt", "url", "import", "external_image", "expression"] as const;
+export type CustomCssProblem = (typeof CUSTOM_CSS_PROBLEMS)[number];
+
+/** Motivo en castellano de cada código (lo usa la API en sus mensajes; la web traduce el código). */
+const CUSTOM_CSS_PROBLEM_TEXT: Record<CustomCssProblem, string> = {
+  too_long: "el CSS supera los 20 000 caracteres",
+  backslash: "no se permiten barras invertidas (\\)",
+  lt: "no se permite el carácter <",
+  url: "no se permite url(): usá el logo, el favicon o la fuente subidos",
+  import: "no se permite @import",
+  external_image: "no se permiten imágenes externas",
+  expression: "contiene expresiones no permitidas",
+};
+
+export function customCssProblemText(code: CustomCssProblem): string {
+  return CUSTOM_CSS_PROBLEM_TEXT[code];
+}
+
 /**
  * CSS propio saneado. Se rechaza (no se corrige) lo que permite cargar recursos externos o escapar del <style>:
  * url(), @import, image-set(), barras invertidas (escapes que esconden lo anterior), "</" y expresiones viejas de IE.
- * Devuelve el motivo del rechazo o null.
+ * Devuelve el código del motivo del rechazo o null.
  */
-export function customCssProblem(css: string): string | null {
-  if (css.length > 20_000) return "el CSS supera los 20 000 caracteres";
-  const checks: [RegExp, string][] = [
-    [/\\/, "no se permiten barras invertidas (\\)"],
-    [/<\s*\/?/, "no se permite el carácter <"],
-    [/url\s*\(/i, "no se permite url(): usá el logo, el favicon o la fuente subidos"],
-    [/@import|@namespace|@document/i, "no se permite @import"],
-    [/image-set\s*\(|cross-fade\s*\(|element\s*\(/i, "no se permiten imágenes externas"],
-    [/expression\s*\(|javascript:|behavior\s*:|-moz-binding/i, "contiene expresiones no permitidas"],
+export function customCssProblem(css: string): CustomCssProblem | null {
+  if (css.length > 20_000) return "too_long";
+  const checks: [RegExp, CustomCssProblem][] = [
+    [/\\/, "backslash"],
+    [/<\s*\/?/, "lt"],
+    [/url\s*\(/i, "url"],
+    [/@import|@namespace|@document/i, "import"],
+    [/image-set\s*\(|cross-fade\s*\(|element\s*\(/i, "external_image"],
+    [/expression\s*\(|javascript:|behavior\s*:|-moz-binding/i, "expression"],
   ];
   for (const [re, why] of checks) if (re.test(css)) return why;
   return null;

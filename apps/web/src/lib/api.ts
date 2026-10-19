@@ -97,6 +97,7 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
 // español queda el texto de la API, que puede traer detalle, p. ej. el máximo de páginas).
 const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
   network_error: { "pt-BR": "Não foi possível conectar ao servidor.", en: "Couldn't connect to the server." },
+  use_portal: { "pt-BR": "As assinaturas do Stripe são canceladas pelo portal de faturamento.", en: "Stripe subscriptions are canceled from the billing portal." },
   sso_session_2fa: {
     "pt-BR": "Com login único (SSO), o segundo fator é gerenciado pelo provedor de identidade: entre com sua senha para ativá-lo.",
     en: "With single sign-on (SSO), the second factor is managed by your identity provider: sign in with your password to enable it.",

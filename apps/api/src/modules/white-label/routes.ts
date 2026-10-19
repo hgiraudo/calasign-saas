@@ -10,6 +10,7 @@ import {
   BrandPreviewInput,
   CreateBrandInput,
   customCssProblem,
+  customCssProblemText,
   SetDomainInput,
   UpdateBrandInput,
   type Brand,
@@ -82,7 +83,7 @@ async function requireBranding(db: Db, tenantId: string) {
 async function validateConfig(db: Db, tenantId: string, c: BrandConfigInput) {
   if (c.customCss) {
     const p = customCssProblem(c.customCss);
-    if (p) throw badRequest("invalid_css", `CSS propio: ${p}`);
+    if (p) throw badRequest("invalid_css", `CSS propio: ${customCssProblemText(p)}`);
   }
   if (c.email?.fromEmail) {
     const domain = c.email.fromEmail.split("@")[1];
@@ -408,7 +409,7 @@ export async function whiteLabelRoutes(app: FastifyInstance, s: Services) {
     const input = BrandPreviewInput.parse(req.body ?? {});
     if (input.config?.customCss) {
       const p = customCssProblem(input.config.customCss);
-      if (p) throw badRequest("invalid_css", `CSS propio: ${p}`);
+      if (p) throw badRequest("invalid_css", `CSS propio: ${customCssProblemText(p)}`);
     }
     const b = await loadBrand(s.db, a.tenantId, req.params.id, input.config);
     if (input.kind === "theme") return { theme: publicTheme(b) };

@@ -181,8 +181,28 @@ export function FieldEditor({ envelopeId, documents, signers, fields, onChange, 
       return;
     }
     const r = e.currentTarget.getBoundingClientRect();
-    place(doc, page, tool, (e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height);
-    setTool(null);
+    const at = (x: number, y: number) => {
+      place(doc, page, tool, (x - r.left) / r.width, (y - r.top) / r.height);
+      setTool(null);
+    };
+    if (e.pointerType !== "touch") {
+      at(e.clientX, e.clientY);
+      return;
+    }
+    // Con el dedo, un pointerdown también empieza un scroll: el campo se pone recién al soltar sin haberse movido (si
+    // no, deslizar para ir a otra página dejaba una firma donde empezó el gesto).
+    const x0 = e.clientX;
+    const y0 = e.clientY;
+    const up = (ev: PointerEvent) => {
+      cleanup();
+      if (Math.hypot(ev.clientX - x0, ev.clientY - y0) < 8) at(x0, y0);
+    };
+    const cleanup = () => {
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", cleanup);
+    };
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", cleanup);
   };
 
   const onPageDrop = (doc: Document) => (page: number, e: DragEvent<HTMLDivElement>) => {
@@ -324,12 +344,12 @@ export function FieldEditor({ envelopeId, documents, signers, fields, onChange, 
                     update(sel.id, {
                       options: e.target.value
                         .split("\n")
-                        .map((o) => o.trimStart())
+                        .map((o) => o.trimStart().slice(0, 100)) // la API acepta opciones de hasta 100 caracteres
                         .slice(0, 50),
                     })
                   }
                   onBlur={(e) => {
-                    const options = e.target.value.split("\n").map((o) => o.trim()).filter(Boolean);
+                    const options = e.target.value.split("\n").map((o) => o.trim().slice(0, 100)).filter(Boolean);
                     const known = new Map(options.map((o) => [o.toLowerCase(), o]));
                     // Un valor prellenado que ya no es una opción (se renombró o quitó) quedaba oculto: el select mostraba
                     // "—" pero se mandaba igual y el guardado fallaba con "opción inválida". Con un cambio solo de

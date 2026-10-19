@@ -11,6 +11,7 @@ import { api, errorText } from "../lib/api";
 import { formatDateTime, useI18n, confirmAction, placeholderText } from "../lib/i18n";
 import { useIntText } from "../lib/integrations-i18n";
 import { ErrorBox, Spinner } from "../components/ui";
+import { useAccess } from "../lib/access";
 
 export function IntegrationsPage() {
   const tt = useIntText();
@@ -28,6 +29,9 @@ export function IntegrationsPage() {
 
 function WebhooksSection() {
   const tt = useIntText();
+  const { t } = useI18n();
+  // La API pide además envelopes:view_all para crear, probar, pausar o borrar (reciben datos de todos los sobres).
+  const canEdit = useAccess().can("envelopes:view_all");
   const [items, setItems] = useState<WebhookEndpoint[] | null>(null);
   const [url, setUrl] = useState("");
   const [description, setDescription] = useState("");
@@ -84,6 +88,11 @@ function WebhooksSection() {
       <h2>{tt("wh.title")}</h2>
       <p className="muted small">{tt("wh.intro")}</p>
 
+      {!canEdit ? (
+        <div className="hint" role="note">
+          {t("common.needsViewAll")}
+        </div>
+      ) : (
       <form onSubmit={create} className="card pad stack">
         <div className="row-wrap">
           <label className="field grow">
@@ -119,6 +128,7 @@ function WebhooksSection() {
           </button>
         </div>
       </form>
+      )}
 
       {secret && (
         <div className="alert alert-success stack">
@@ -163,21 +173,27 @@ function WebhooksSection() {
               <span className={`badge ${w.active ? "badge-completed" : "badge-voided"}`}>{w.active ? tt("wh.active") : tt("wh.inactive")}</span>
             </div>
             <div className="row-wrap">
-              <button type="button" className="btn btn-sm" onClick={() => act(() => api(`/v1/webhooks/${w.id}/test`, { method: "POST" }).then(() => setOpen(w.id)))}>
-                {tt("wh.test")}
-              </button>
-              <button type="button" className="btn btn-sm" onClick={() => act(() => api(`/v1/webhooks/${w.id}`, { method: "PATCH", body: { active: !w.active } }))}>
-                {w.active ? tt("wh.pause") : tt("wh.resume")}
-              </button>
+              {canEdit && (
+                <>
+                  <button type="button" className="btn btn-sm" onClick={() => act(() => api(`/v1/webhooks/${w.id}/test`, { method: "POST" }).then(() => setOpen(w.id)))}>
+                    {tt("wh.test")}
+                  </button>
+                  <button type="button" className="btn btn-sm" onClick={() => act(() => api(`/v1/webhooks/${w.id}`, { method: "PATCH", body: { active: !w.active } }))}>
+                    {w.active ? tt("wh.pause") : tt("wh.resume")}
+                  </button>
+                </>
+              )}
               <button type="button" className="btn btn-sm btn-ghost" onClick={() => setOpen(open === w.id ? null : w.id)}>
                 {open === w.id ? tt("wh.hide") : tt("wh.show")}
               </button>
               <span className="grow" />
-              <button type="button" className="btn btn-sm btn-danger" onClick={() => confirmAction() && act(() => api(`/v1/webhooks/${w.id}`, { method: "DELETE" }))}>
-                {tt("wh.delete")}
-              </button>
+              {canEdit && (
+                <button type="button" className="btn btn-sm btn-danger" onClick={() => confirmAction() && act(() => api(`/v1/webhooks/${w.id}`, { method: "DELETE" }))}>
+                  {tt("wh.delete")}
+                </button>
+              )}
             </div>
-            {open === w.id && <Deliveries webhookId={w.id} />}
+            {open === w.id && <Deliveries webhookId={w.id} canRetry={canEdit} />}
           </div>
         ))
       )}
@@ -185,7 +201,7 @@ function WebhooksSection() {
   );
 }
 
-function Deliveries({ webhookId }: { webhookId: string }) {
+function Deliveries({ webhookId, canRetry }: { webhookId: string; canRetry: boolean }) {
   const tt = useIntText();
   const { locale } = useI18n();
   const [items, setItems] = useState<WebhookDelivery[] | null>(null);
@@ -245,7 +261,7 @@ function Deliveries({ webhookId }: { webhookId: string }) {
               </td>
               <td>{d.attempts}</td>
               <td className="right">
-                {d.status !== "succeeded" && (
+                {canRetry && d.status !== "succeeded" && (
                   <button
                     type="button"
                     className="btn btn-sm"
@@ -270,6 +286,8 @@ function Deliveries({ webhookId }: { webhookId: string }) {
 
 function EmbedSection() {
   const tt = useIntText();
+  // PATCH /v1/settings/embed pide settings:manage: sin ese permiso se muestra solo para leer.
+  const canEdit = useAccess().can("settings:manage");
   const [text, setText] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -283,6 +301,7 @@ function EmbedSection() {
 
   const save = async (e: FormEvent) => {
     e.preventDefault();
+    if (!canEdit) return;
     setBusy(true);
     setError(null);
     setSaved(false);
@@ -313,14 +332,18 @@ function EmbedSection() {
         <form onSubmit={save} className="card pad stack">
           <label className="field">
             <span>{tt("embed.origins")}</span>
-            <textarea rows={4} value={text ?? ""} onChange={(e) => setText(e.target.value)} placeholder={`https://app.${placeholderText("domain")}`} />
+            <textarea rows={4} value={text ?? ""} readOnly={!canEdit} onChange={(e) => setText(e.target.value)} placeholder={`https://app.${placeholderText("domain")}`} />
           </label>
-          <div className="row-end">
-            {saved && <span className="muted small">{tt("embed.saved")}</span>}
-            <button className="btn btn-primary" disabled={busy}>
-              {tt("embed.save")}
-            </button>
-          </div>
+          {canEdit ? (
+            <div className="row-end">
+              {saved && <span className="muted small">{tt("embed.saved")}</span>}
+              <button className="btn btn-primary" disabled={busy}>
+                {tt("embed.save")}
+              </button>
+            </div>
+          ) : (
+            <p className="muted small">{tt("embed.readOnly")}</p>
+          )}
         </form>
       )}
       <ErrorBox error={error} />

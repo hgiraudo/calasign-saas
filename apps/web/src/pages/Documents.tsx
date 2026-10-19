@@ -286,6 +286,8 @@ export function DocumentTemplateEditPage() {
 
   if (!tpl) return <div className="page">{error ? <ErrorBox error={error} /> : <Spinner />}</div>;
   const a = preview.analysis;
+  // La API exige al menos un firmante: sin {{firma:X}} no hay roles para generar.
+  const noRoles = !!a && a.roles.length === 0;
   return (
     <div className="page">
       <AgreementsTabs />
@@ -313,7 +315,8 @@ export function DocumentTemplateEditPage() {
                 if (editable && !(await save())) return;
                 setGenerating(true);
               }}
-              disabled={busy || !!preview.error}
+              disabled={busy || !!preview.error || noRoles}
+              title={noRoles ? ta("docs.noRoles") : undefined}
             >
               {ta("docs.generate")}
             </button>
@@ -434,6 +437,7 @@ export function DocumentTemplateEditPage() {
                 <div>
                   <strong>{ta("docs.roles")}:</strong> {a.roles.length ? a.roles.map((r) => <code key={r}>{r}</code>) : "—"}
                 </div>
+                {noRoles && <div className="agr-run-err">{ta("docs.noRoles")}</div>}
                 <div>
                   <strong>{ta("docs.variables")}:</strong>{" "}
                   {a.variables.map((v) => (
@@ -533,6 +537,7 @@ function GenerateModal({
     <Modal title={ta("gen.title")} onClose={onClose} wide>
       <form className="stack" onSubmit={submit}>
         <ErrorBox error={error} />
+        {recipients.length === 0 && <div className="alert alert-warn">{ta("docs.noRoles")}</div>}
         <fieldset className="field">
           <legend>{ta("gen.recipients")}</legend>
           {recipients.map((r, i) => (
@@ -570,7 +575,7 @@ function GenerateModal({
           <button type="button" className="btn btn-ghost" onClick={onClose}>
             {t("common.cancel")}
           </button>
-          <button type="submit" className="btn btn-primary" disabled={busy || !data}>
+          <button type="submit" className="btn btn-primary" disabled={busy || !data || recipients.length === 0}>
             {busy ? t("common.saving") : ta("gen.submit")}
           </button>
         </div>

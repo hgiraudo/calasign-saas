@@ -31,7 +31,7 @@ export function SettingsHomePage() {
   const { can, access } = useAccess();
   const sections: { to: string; title: string; desc: string; perm?: Permission }[] = [
     { to: "/app/bulk", title: sc("nav.bulk"), desc: sc("bulk.intro"), perm: "envelopes:create" },
-    { to: "/app/xml", title: evt("nav.xml"), desc: evt("settings.xml"), perm: "envelopes:create" },
+    { to: "/app/xml", title: evt("nav.xml"), desc: evt("settings.xml"), perm: "settings:manage" },
     { to: "/app/settings/ai", title: ai("nav.ai"), desc: ai("settings.ai"), perm: "settings:manage" },
     { to: "/app/settings/certificates", title: evt("nav.certificates"), desc: evt("settings.certificates"), perm: "settings:manage" },
     { to: "/app/forms", title: sc("nav.forms"), desc: sc("forms.intro"), perm: "envelopes:create" },

@@ -2,6 +2,7 @@
 // sub-marcas), con vista previa en vivo de la página de firma y de cada correo. API: /v1/settings/brands.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
+  BRAND_ASSET_MAX_BYTES,
   BRAND_MESSAGE_EVENTS,
   BRAND_TEMPLATE_VARIABLES,
   contrastText,
@@ -210,12 +211,19 @@ export function BrandingPage() {
     });
   };
 
-  const upload = (kind: BrandAssetKind, file: File) =>
-    run(async () => {
+  const upload = (kind: BrandAssetKind, file: File) => {
+    // Se controla el tamaño antes de subir (la API rechaza lo que supera el máximo de cada tipo).
+    const max = BRAND_ASSET_MAX_BYTES[kind];
+    if (file.size > max) {
+      setError(w("asset.tooBig", { max: Math.floor(max / 1024) }));
+      return;
+    }
+    return run(async () => {
       const form = new FormData();
       form.append("file", file, file.name);
       replaceBrand(await api<Brand>(`/v1/settings/brands/${sel}/assets/${kind}`, { method: "POST", form }));
     });
+  };
   const removeAsset = (kind: BrandAssetKind) =>
     run(async () => {
       replaceBrand(await api<Brand>(`/v1/settings/brands/${sel}/assets/${kind}`, { method: "DELETE" }));
@@ -408,7 +416,7 @@ export function BrandingPage() {
               <Field label={w("css")} hint={w("css.hint")}>
                 <textarea rows={12} className="mono" value={cfg.customCss ?? ""} maxLength={20000} onChange={(e) => set("customCss", e.target.value)} spellCheck={false} />
               </Field>
-              {cssProblem && <p className="small error-text">{cssProblem}</p>}
+              {cssProblem && <p className="small error-text">{w(`css.problem.${cssProblem}` as WlKey)}</p>}
               {!brand.isDefault && (
                 <button type="button" className="btn btn-danger btn-sm" disabled={busy} onClick={remove}>
                   {w("brand.delete")}
@@ -701,7 +709,11 @@ function DomainsEditor({ brand, onBrand }: { brand: Brand; onBrand: (b: Brand) =
         <>
           <div className="row-wrap">
             <input placeholder="firmas.cliente.com" value={web} onChange={(e) => setWeb(e.target.value.trim().toLowerCase())} />
-            <button type="button" className="btn btn-sm" disabled={busy || !web} onClick={() => run(async () => (await api(`/v1/settings/brands/${brand.id}/domain`, { method: "PUT", body: { domain: web } }), refreshBrand()))}>
+            <button type="button" className="btn btn-sm" disabled={busy || !web} onClick={() => {
+                // Reemplaza el dominio actual (quizás ya verificado): se confirma antes.
+                if (d && web !== d.domain && !confirmAction()) return;
+                void run(async () => (await api(`/v1/settings/brands/${brand.id}/domain`, { method: "PUT", body: { domain: web } }), refreshBrand()));
+              }}>
               {w("domains.add")}
             </button>
           </div>
@@ -718,7 +730,7 @@ function DomainsEditor({ brand, onBrand }: { brand: Brand; onBrand: (b: Brand) =
                 <button type="button" className="btn btn-sm" disabled={busy} onClick={() => run(async () => (await api(`/v1/settings/brands/${brand.id}/domain/verify`, { method: "POST" }), refreshBrand()))}>
                   {w("domains.verify")}
                 </button>
-                <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => run(async () => (await api(`/v1/settings/brands/${brand.id}/domain`, { method: "DELETE" }), refreshBrand()))}>
+                <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => confirmAction() && run(async () => (await api(`/v1/settings/brands/${brand.id}/domain`, { method: "DELETE" }), refreshBrand()))}>
                   {w("domains.remove")}
                 </button>
               </div>
@@ -760,7 +772,7 @@ function DomainsEditor({ brand, onBrand }: { brand: Brand; onBrand: (b: Brand) =
             <button type="button" className="btn btn-sm" disabled={busy} onClick={() => run(async () => (await api(`/v1/settings/email-domains/${m.domain}/verify`, { method: "POST" }), await reload(), refreshBrand()))}>
               {w("domains.verify")}
             </button>
-            <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => run(async () => (await api(`/v1/settings/email-domains/${m.domain}`, { method: "DELETE" }), await reload(), refreshBrand()))}>
+            <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => confirmAction() && run(async () => (await api(`/v1/settings/email-domains/${m.domain}`, { method: "DELETE" }), await reload(), refreshBrand()))}>
               {w("domains.remove")}
             </button>
           </div>

@@ -19,6 +19,7 @@ import { api, errorText } from "../lib/api";
 import { confirmAction, formatDateTime, useI18n } from "../lib/i18n";
 import { useConnText } from "../lib/i18n-connectors";
 import { ErrorBox, OrderInput, Spinner } from "../components/ui";
+import { useAccess } from "../lib/access";
 
 type ProvidersResponse = { items: ConnectorProviderInfo[]; redirectUris: Record<string, string> };
 
@@ -39,7 +40,9 @@ const STATUS_OK = (p: ConnectorProvider, objectType: string) => p === "bamboohr"
 
 export function ConnectorsSettingsPage() {
   const t = useConnText();
-  const { locale } = useI18n();
+  const { locale, t: tc } = useI18n();
+  // Conexiones, flujos y reintentos piden además envelopes:view_all en la API (enviar desde un registro, no).
+  const canEdit = useAccess().can("envelopes:view_all");
   const [params] = useSearchParams();
   const [prov, setProv] = useState<ProvidersResponse | null>(null);
   const [conns, setConns] = useState<ConnectorConnection[] | null>(null);
@@ -120,7 +123,11 @@ export function ConnectorsSettingsPage() {
         </div>
       )}
 
-      {!prov ? (
+      {!canEdit ? (
+        <div className="hint" role="note">
+          {tc("common.needsViewAll")}
+        </div>
+      ) : !prov ? (
         <Spinner />
       ) : (
         (["hris", "clm"] as const).map((cat) => (
@@ -219,11 +226,14 @@ export function ConnectorsSettingsPage() {
                   <button type="button" className="btn btn-sm" onClick={() => navigator.clipboard?.writeText(c.webhookUrl).then(() => setNote(t("copied")))}>
                     {t("copy")}
                   </button>
-                  <button type="button" className="btn btn-sm" onClick={() => confirmAction() && act(() => api(`/v1/connectors/connections/${c.id}/rotate-webhook`, { method: "POST" }))}>
-                    {t("rotate")}
-                  </button>
+                  {canEdit && (
+                    <button type="button" className="btn btn-sm" onClick={() => confirmAction() && act(() => api(`/v1/connectors/connections/${c.id}/rotate-webhook`, { method: "POST" }))}>
+                      {t("rotate")}
+                    </button>
+                  )}
                 </div>
               </details>
+              {canEdit && (
               <div className="row-wrap">
                 <button
                   type="button"
@@ -244,6 +254,7 @@ export function ConnectorsSettingsPage() {
                   {t("delete")}
                 </button>
               </div>
+              )}
             </div>
           ))
         )}
@@ -252,14 +263,14 @@ export function ConnectorsSettingsPage() {
       <Section
         title={t("flows")}
         aside={
-          conns && conns.length > 0 && editing === null ? (
+          canEdit && conns && conns.length > 0 && editing === null ? (
             <button type="button" className="btn btn-primary btn-sm" onClick={() => setEditing("new")}>
               {t("newFlow")}
             </button>
           ) : null
         }
       >
-        {editing !== null && conns && (
+        {canEdit && editing !== null && conns && (
           <FlowEditor
             key={editing === "new" ? "new" : editing.id}
             flow={editing === "new" ? null : editing}
@@ -288,12 +299,16 @@ export function ConnectorsSettingsPage() {
               </div>
               <div className="row-wrap">
                 <span className={`badge ${f.active ? "badge-completed" : "badge-voided"}`}>{f.active ? t("active") : t("inactive")}</span>
-                <button type="button" className="btn btn-sm" onClick={() => setEditing(f)}>
-                  {t("edit")}
-                </button>
-                <button type="button" className="btn btn-sm btn-danger" onClick={() => confirmAction() && act(() => api(`/v1/connectors/flows/${f.id}`, { method: "DELETE" }))}>
-                  {t("delete")}
-                </button>
+                {canEdit && (
+                  <>
+                    <button type="button" className="btn btn-sm" onClick={() => setEditing(f)}>
+                      {t("edit")}
+                    </button>
+                    <button type="button" className="btn btn-sm btn-danger" onClick={() => confirmAction() && act(() => api(`/v1/connectors/flows/${f.id}`, { method: "DELETE" }))}>
+                      {t("delete")}
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           ))
@@ -334,7 +349,7 @@ export function ConnectorsSettingsPage() {
                           {t("openEnvelope")}
                         </Link>
                       )}
-                      {r.status === "failed" && (r.kind !== "send" || Boolean(r.detail?.webhook)) && (
+                      {canEdit && r.status === "failed" && (r.kind !== "send" || Boolean(r.detail?.webhook)) && (
                         <button type="button" className="btn btn-sm" onClick={() => act(() => api(`/v1/connectors/runs/${r.id}/retry`, { method: "POST" }))}>
                           {t("retry")}
                         </button>

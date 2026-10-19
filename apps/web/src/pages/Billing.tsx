@@ -73,6 +73,11 @@ export function BillingPage() {
   const choose = (id: PlanId) =>
     run(`plan-${id}`, async () => {
       if (id === "free") {
+        // Stripe: la API rechaza la baja (use_portal); se cancela desde el portal, como en "Administrar".
+        if (data.subscription.provider === "stripe") {
+          window.location.assign((await api<{ url: string }>("/v1/billing/portal", { method: "POST" })).url);
+          return;
+        }
         if (!window.confirm(b("billing.downgradeConfirm"))) return;
         setData(await api<BillingOverview>("/v1/billing/cancel", { method: "POST" }));
         return;

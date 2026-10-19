@@ -139,6 +139,7 @@ const es = {
   "gen.send": "Enviar a firmar ahora",
   "gen.allowMissing": "Generar aunque falten datos",
   "gen.submit": "Generar",
+  "docs.noRoles": "Para generar, la plantilla necesita al menos un espacio de firma ({{firma:Rol}}).",
   "gen.done": "Sobre creado",
 
   // Cláusulas
@@ -433,6 +434,7 @@ const pt: Record<Key, string> = {
   "gen.send": "Enviar para assinatura agora",
   "gen.allowMissing": "Gerar mesmo com dados faltando",
   "gen.submit": "Gerar",
+  "docs.noRoles": "Para gerar, o modelo precisa de pelo menos um espaço de assinatura ({{firma:Papel}}).",
   "gen.done": "Envelope criado",
   "cl.title": "Biblioteca de cláusulas",
   "cl.intro": "Textos reutilizáveis inseridos nos modelos com {{clausula:codigo}}. Se você mudar uma cláusula, ela muda em todos os documentos novos.",
@@ -717,6 +719,7 @@ const en: Record<Key, string> = {
   "gen.send": "Send for signature now",
   "gen.allowMissing": "Generate even if data is missing",
   "gen.submit": "Generate",
+  "docs.noRoles": "To generate, the template needs at least one signature placeholder ({{firma:Role}}).",
   "gen.done": "Envelope created",
   "cl.title": "Clause library",
   "cl.intro": "Reusable text inserted into templates with {{clause:code}}. Changing a clause changes it in every new document.",

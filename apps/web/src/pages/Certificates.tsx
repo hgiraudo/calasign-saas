@@ -15,6 +15,9 @@ function fileToBase64(f: File): Promise<string> {
   });
 }
 
+// La API acepta hasta 2 000 000 caracteres en base64 (≈ 1,5 MB de archivo).
+const MAX_P12_BYTES = 1_500_000;
+
 export function CertificatesPage() {
   const ev = useEvidenceText();
   const { locale } = useI18n();
@@ -46,6 +49,11 @@ export function CertificatesPage() {
     e.preventDefault();
     const file = fileRef.current?.files?.[0];
     if (!file) return;
+    if (file.size > MAX_P12_BYTES) {
+      setNotice(null);
+      setError(ev("cert.tooBig"));
+      return;
+    }
     setBusy(true);
     setError(null);
     setNotice(null);

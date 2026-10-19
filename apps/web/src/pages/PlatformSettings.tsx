@@ -379,7 +379,9 @@ const CHANNELS: Record<NotificationKind, { label: string; url: string; name: str
 
 export function NotificationIntegrationsPage() {
   const p = usePlatformText();
-  const { locale } = useI18n();
+  const { locale, t } = useI18n();
+  // La API pide además envelopes:view_all para cambiar avisos (reciben datos de todos los sobres).
+  const canEdit = useAccess().can("envelopes:view_all");
   const [items, setItems] = useState<NotificationIntegration[] | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const load = () => api<{ items: NotificationIntegration[] }>("/v1/notification-integrations").then((r) => setItems(r.items));
@@ -413,6 +415,11 @@ export function NotificationIntegrationsPage() {
 
   return (
     <Page title={p("ntf.title")} intro={p("ntf.intro")}>
+      {!canEdit ? (
+        <div className="hint" role="note">
+          {t("common.needsViewAll")}
+        </div>
+      ) : (
       <form onSubmit={add} className="card pad stack">
         <fieldset className="field">
           <span>{p("ntf.kind")}</span>
@@ -454,6 +461,7 @@ export function NotificationIntegrationsPage() {
           </button>
         </div>
       </form>
+      )}
 
       <ErrorBox error={error} />
       {note && (
@@ -483,6 +491,7 @@ export function NotificationIntegrationsPage() {
               </div>
               <span className={`badge ${it.active ? "badge-completed" : "badge-voided"}`}>{it.active ? p("common.active") : p("common.inactive")}</span>
             </div>
+            {canEdit && (
             <div className="row-wrap">
               <button
                 type="button"
@@ -508,6 +517,7 @@ export function NotificationIntegrationsPage() {
                 {p("common.delete")}
               </button>
             </div>
+            )}
           </div>
         ))
       )}
@@ -552,7 +562,9 @@ export function AutomationPage() {
 
 export function StoragePage() {
   const p = usePlatformText();
-  const { locale } = useI18n();
+  const { locale, t } = useI18n();
+  // La API pide además envelopes:view_all para conectar o cambiar destinos (reciben los PDF de todos los sobres).
+  const canEdit = useAccess().can("envelopes:view_all");
   const [params] = useSearchParams();
   const [providers, setProviders] = useState<StorageProviderInfo[] | null>(null);
   const [conns, setConns] = useState<StorageConnection[] | null>(null);
@@ -621,6 +633,12 @@ export function StoragePage() {
         </div>
       )}
 
+      {!canEdit ? (
+        <div className="hint" role="note">
+          {t("common.needsViewAll")}
+        </div>
+      ) : (
+      <>
       {!providers ? (
         <Spinner />
       ) : (
@@ -711,6 +729,8 @@ export function StoragePage() {
           </button>
         </div>
       </form>
+      </>
+      )}
 
       <h2 style={{ marginTop: 24 }}>{p("sto.connections")}</h2>
       {!conns ? (
@@ -734,6 +754,7 @@ export function StoragePage() {
               </div>
               <span className={`badge ${c.active ? "badge-completed" : "badge-voided"}`}>{c.active ? p("common.active") : p("common.inactive")}</span>
             </div>
+            {canEdit && (
             <div className="row-wrap">
               <button
                 type="button"
@@ -766,6 +787,7 @@ export function StoragePage() {
                 {p("common.delete")}
               </button>
             </div>
+            )}
           </div>
         ))
       )}
@@ -791,7 +813,7 @@ export function StoragePage() {
                     <div className="muted break">{x.status === "succeeded" ? x.remoteRef : x.error}</div>
                   </td>
                   <td>
-                    {(x.status === "failed" || (x.status === "pending" && Date.now() - new Date(x.updatedAt).getTime() > 15 * 60_000)) && (
+                    {canEdit && (x.status === "failed" || (x.status === "pending" && Date.now() - new Date(x.updatedAt).getTime() > 15 * 60_000)) && (
                       <button type="button" className="btn btn-sm" onClick={() => act(() => api(`/v1/storage/exports/${x.id}/retry`, { method: "POST" }))}>
                         {p("common.retry")}
                       </button>
@@ -814,6 +836,7 @@ export function CustomDomainPage() {
   const { locale } = useI18n();
   const [dom, setDom] = useState<CustomDomain | null | undefined>(undefined);
   const [input, setInput] = useState("");
+  const [saving, setSaving] = useState(false);
   const load = () => api<{ domain: CustomDomain | null }>("/v1/domains").then((r) => setDom(r.domain));
   const { error, setError, act } = useAct(load);
 
@@ -860,7 +883,11 @@ export function CustomDomainPage() {
             className="card pad row-wrap"
             onSubmit={(e) => {
               e.preventDefault();
-              void act(() => api("/v1/domains", { method: "PUT", body: { domain: input } }).then(() => setInput("")));
+              if (saving) return;
+              // Reemplaza el dominio actual (quizás ya verificado): se confirma antes.
+              if (dom && input.trim().toLowerCase() !== dom.domain && !confirmAction()) return;
+              setSaving(true);
+              void act(() => api("/v1/domains", { method: "PUT", body: { domain: input } }).then(() => setInput(""))).finally(() => setSaving(false));
             }}
           >
             <label className="field grow">
@@ -868,7 +895,7 @@ export function CustomDomainPage() {
               <input required value={input} onChange={(e) => setInput(e.target.value)} placeholder={dom?.domain ?? "firmas.tuempresa.com"} />
             </label>
             <div style={{ alignSelf: "flex-end" }}>
-              <button className="btn btn-primary">{p("dom.set")}</button>
+              <button className="btn btn-primary" disabled={saving}>{p("dom.set")}</button>
             </div>
           </form>
 

@@ -4,7 +4,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import type { Document, RecipientRole, TemplateDetail } from "@calasign/shared";
 import { LOCALES } from "@calasign/shared";
 import { api, errorText, uuid } from "../lib/api";
-import { LOCALE_LABELS, useI18n } from "../lib/i18n";
+import { LOCALE_LABELS, useI18n, useUnsavedWarning, confirmAction } from "../lib/i18n";
 import { forgetPdf } from "../lib/pdf";
 import { FieldEditor, type DraftField } from "../components/FieldEditor";
 import { ErrorBox, OrderInput, Spinner, formatBytes, recipientColor } from "../components/ui";
@@ -55,6 +55,8 @@ export function TemplateEditPage() {
   const [roles, setRoles] = useState<DraftRole[]>([]);
   const [fields, setFields] = useState<DraftField[]>([]);
   const [dirty, setDirty] = useState({ info: false, roles: false, fields: false });
+  const fieldsRev = useRef(0);
+  useUnsavedWarning(dirty.info || dirty.roles || dirty.fields);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -107,6 +109,7 @@ export function TemplateEditPage() {
         setDirty((x) => ({ ...x, roles: false }));
       }
       if (step === "fields" && dirty.fields) {
+        const rev = fieldsRev.current;
         const d = await api<TemplateDetail>(`/v1/templates/${id}/fields`, {
           method: "PUT",
           body: {
@@ -118,8 +121,11 @@ export function TemplateEditPage() {
           },
         });
         setDetail(d);
-        setFields(toDraftFields(d));
-        setDirty((x) => ({ ...x, fields: false }));
+        // Si se editó algo mientras se guardaba, se conserva (queda pendiente de guardar).
+        if (fieldsRev.current === rev) {
+          setFields(toDraftFields(d));
+          setDirty((x) => ({ ...x, fields: false }));
+        }
       }
       return true;
     } catch (e) {
@@ -296,6 +302,7 @@ export function TemplateEditPage() {
           onChange={(f) => {
             setFields(f);
             setDirty((x) => ({ ...x, fields: true }));
+            fieldsRev.current++;
           }}
         />
       )}
@@ -367,7 +374,8 @@ function TemplateDocuments({
   };
 
   const remove = async (docId: string) => {
-    if (busy) return;
+    // Borra el documento con sus campos (y las condiciones que los citaban): no se deshace.
+    if (busy || !confirmAction()) return;
     setBusy(true);
     setError(null);
     try {
@@ -456,7 +464,7 @@ function RolesStep({ roles, onChange }: { roles: DraftRole[]; onChange: (r: Draf
                 </select>
               </label>
               {r.role === "signer" && <CertificateOption value={r.cert ?? EMPTY_CERT_DRAFT} hasIdDocument onChange={(v) => set(i, { cert: v })} />}
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => onChange(roles.filter((_, j) => j !== i))}>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => (!roles[i]?.id || confirmAction()) && onChange(roles.filter((_, j) => j !== i))}>
                 {t("common.delete")}
               </button>
             </div>

@@ -8,7 +8,7 @@ import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import type { Channel, Document, EnvelopeDetail, Locale, RecipientRole } from "@calasign/shared";
 import { CHANNELS, ID_DOCUMENT_TYPES, LOCALES } from "@calasign/shared";
 import { api, errorText, uuid } from "../lib/api";
-import { LOCALE_LABELS, expiryFromDateInput, localDateInput, useI18n } from "../lib/i18n";
+import { LOCALE_LABELS, expiryFromDateInput, localDateInput, useI18n, useUnsavedWarning, confirmAction } from "../lib/i18n";
 import { forgetPdf } from "../lib/pdf";
 import { FieldEditor, type DraftField } from "../components/FieldEditor";
 import { AUTH_METHODS, type AuthMethod } from "@calasign/shared";
@@ -102,6 +102,9 @@ export function EnvelopeEditPage() {
   const [fields, setFields] = useState<DraftField[]>([]);
   const [recDirty, setRecDirty] = useState(false);
   const [fieldsDirty, setFieldsDirty] = useState(false);
+  // Revisión de los campos: un guardado que termina después de otra edición no pisa esa edición con lo guardado.
+  const fieldsRev = useRef(0);
+  useUnsavedWarning(recDirty || fieldsDirty);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [notFound, setNotFound] = useState(false);
@@ -177,6 +180,7 @@ export function EnvelopeEditPage() {
 
   const saveFields = async (): Promise<boolean> => {
     if (!fieldsDirty) return true;
+    const rev = fieldsRev.current;
     setBusy(true);
     setError(null);
     try {
@@ -185,8 +189,10 @@ export function EnvelopeEditPage() {
         body: { fields: fields.map((f) => ({ ...f, options: f.options ? f.options.map((o) => o.trim()).filter(Boolean) : f.options })) },
       });
       setDetail(d);
-      setFields(toDraftFields(d));
-      setFieldsDirty(false);
+      if (fieldsRev.current === rev) {
+        setFields(toDraftFields(d));
+        setFieldsDirty(false);
+      }
       return true;
     } catch (e) {
       setError(errorText(e));
@@ -308,6 +314,7 @@ export function EnvelopeEditPage() {
           onAdd={(added) => {
             setFields([...fields, ...added]);
             setFieldsDirty(true);
+            fieldsRev.current++;
           }}
         />
       )}
@@ -320,6 +327,7 @@ export function EnvelopeEditPage() {
           onChange={(f) => {
             setFields(f);
             setFieldsDirty(true);
+            fieldsRev.current++;
           }}
         />
       )}
@@ -407,7 +415,8 @@ function DocumentsStep({
   };
 
   const remove = async (docId: string) => {
-    if (busy) return;
+    // Borra el documento con sus campos (y las condiciones que los citaban): no se deshace.
+    if (busy || !confirmAction()) return;
     setBusy(true);
     setError(null);
     try {
@@ -509,7 +518,11 @@ function RecipientsStep({ recipients, onChange }: { recipients: DraftRecipient[]
   };
 
   const set = (i: number, patch: Partial<DraftRecipient>) => onChange(recipients.map((r, j) => (j === i ? { ...r, ...patch } : r)));
-  const del = (i: number) => onChange(recipients.filter((_, j) => j !== i));
+  // Un destinatario ya guardado se borra con sus campos (y las condiciones que los citaban) al guardar: se confirma.
+  const del = (i: number) => {
+    if (recipients[i]?.id && !confirmAction()) return;
+    onChange(recipients.filter((_, j) => j !== i));
+  };
 
   let signerIdx = -1;
 

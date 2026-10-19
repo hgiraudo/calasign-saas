@@ -37,5 +37,5 @@ export async function handlePlatformJob(d: { db: Db; blobs: BlobStore }, p: Plat
   if (p.kind === "notify") return deliverNotificationJob(d.db, p);
   if (p.kind === "export") return exportEnvelopeJob(d.db, d.blobs, p);
   if (p.kind === "crm") return handleCrmJob(d, p, job);
-  if (p.kind === "connector") return handleConnectorJob(d, p);
+  if (p.kind === "connector") return handleConnectorJob(d, p, job);
 }

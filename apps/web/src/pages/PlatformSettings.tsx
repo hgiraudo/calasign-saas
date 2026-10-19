@@ -1,8 +1,9 @@
-// Ajustes de plataforma: apps OAuth, Slack/Teams, Zapier/Make, almacenamiento en la nube y dominio propio.
+// Ajustes de plataforma: apps OAuth, avisos a canales (Slack, Teams, Discord…), Zapier/Make, almacenamiento en la nube y dominio propio.
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   NOTIFICATION_EVENTS,
+  NOTIFICATION_KINDS,
   OAUTH_SCOPES,
   type ConnectedApp,
   type CreateOAuthAppResponse,
@@ -363,7 +364,18 @@ function ConnectedApps() {
   );
 }
 
-// ───────────────────────────── Slack / Teams ─────────────────────────────
+// ───────────────────────────── Avisos a canales ─────────────────────────────
+
+/** Nombre de cada plataforma y un ejemplo de su URL de webhook entrante. */
+const CHANNELS: Record<NotificationKind, { label: string; url: string; name: string }> = {
+  slack: { label: "Slack", url: "https://hooks.slack.com/services/…", name: "#firmas" },
+  teams: { label: "Microsoft Teams", url: "https://….powerplatform.com/powerautomate/automations/direct/workflows/…", name: "Legales" },
+  discord: { label: "Discord", url: "https://discord.com/api/webhooks/…", name: "#firmas" },
+  google_chat: { label: "Google Chat", url: "https://chat.googleapis.com/v1/spaces/…/messages?key=…", name: "Legales" },
+  mattermost: { label: "Mattermost", url: "https://mattermost.tuempresa.com/hooks/…", name: "~firmas" },
+  rocketchat: { label: "Rocket.Chat", url: "https://chat.tuempresa.com/hooks/…", name: "#firmas" },
+  webex: { label: "Webex", url: "https://webexapis.com/v1/webhooks/incoming/…", name: "Legales" },
+};
 
 export function NotificationIntegrationsPage() {
   const p = usePlatformText();
@@ -401,27 +413,29 @@ export function NotificationIntegrationsPage() {
 
   return (
     <Page title={p("ntf.title")} intro={p("ntf.intro")}>
-      <ul className="small muted">
-        <li>{p("ntf.howSlack")}</li>
-        <li>{p("ntf.howTeams")}</li>
-      </ul>
       <form onSubmit={add} className="card pad stack">
+        <fieldset className="field">
+          <span>{p("ntf.kind")}</span>
+          <div className="chips" role="radiogroup">
+            {NOTIFICATION_KINDS.map((k) => (
+              <label key={k} className="check">
+                <input type="radio" name="ntf-kind" value={k} checked={kind === k} onChange={() => setKind(k)} /> {CHANNELS[k].label}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+        <div className="hint" role="note">
+          <strong>{p("ntf.how")}</strong> — {p(`ntf.how.${kind}`)}
+        </div>
         <div className="row-wrap">
-          <label className="field">
-            <span>{p("ntf.kind")}</span>
-            <select value={kind} onChange={(e) => setKind(e.target.value as NotificationKind)}>
-              <option value="slack">Slack</option>
-              <option value="teams">Microsoft Teams</option>
-            </select>
-          </label>
           <label className="field grow">
             <span>{p("ntf.name")}</span>
-            <input required maxLength={100} value={name} onChange={(e) => setName(e.target.value)} placeholder={kind === "slack" ? "#firmas" : "Legales"} />
+            <input required maxLength={100} value={name} onChange={(e) => setName(e.target.value)} placeholder={CHANNELS[kind].name} />
           </label>
         </div>
         <label className="field">
           <span>{p("ntf.url")}</span>
-          <input type="url" required value={url} onChange={(e) => setUrl(e.target.value)} placeholder={kind === "slack" ? "https://hooks.slack.com/services/…" : "https://….webhook.office.com/…"} />
+          <input type="url" required value={url} onChange={(e) => setUrl(e.target.value)} placeholder={CHANNELS[kind].url} />
         </label>
         <fieldset className="field">
           <span>{p("ntf.events")}</span>
@@ -458,7 +472,7 @@ export function NotificationIntegrationsPage() {
             <div className="row-between">
               <div className="stack" style={{ gap: 2, minWidth: 0 }}>
                 <strong>
-                  {it.kind === "slack" ? "Slack" : "Teams"} · {it.name}
+                  {CHANNELS[it.kind]?.label ?? it.kind} · {it.name}
                 </strong>
                 <code className="small break">{it.urlHint}</code>
                 <span className="muted small">{it.events.map((ev) => p(`ntf.ev.${ev}`)).join(" · ")}</span>

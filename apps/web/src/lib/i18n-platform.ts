@@ -1,4 +1,4 @@
-// Textos de la plataforma: apps OAuth y consentimiento, Slack/Teams, Zapier/Make, almacenamiento, dominio propio, SDKs.
+// Textos de la plataforma: apps OAuth y consentimiento, avisos a canales (Slack, Teams, Discord…), Zapier/Make, almacenamiento, dominio propio, SDKs.
 import { brandText } from "./white-label";
 import { useI18n } from "./i18n";
 
@@ -6,8 +6,8 @@ const es = {
   // Tarjetas de Ajustes
   "card.oauth": "Apps OAuth",
   "card.oauth.desc": "Aplicaciones que usan la API con OAuth 2.0 y apps conectadas a tu usuario.",
-  "card.notifications": "Slack y Teams",
-  "card.notifications.desc": "Avisos en tus canales cuando se envía, firma o completa un sobre.",
+  "card.notifications": "Avisos a canales",
+  "card.notifications.desc": "Slack, Teams, Discord, Google Chat y más: avisos cuando se envía, firma o completa un sobre.",
   "card.automation": "Zapier y Make",
   "card.automation.desc": "Automatizaciones sin código con webhooks y una API key.",
   "card.storage": "Almacenamiento",
@@ -84,11 +84,18 @@ const es = {
   "scope.audit:read": "Ver el registro de auditoría",
   "scope.offline_access": "Seguir accediendo aunque no estés conectado",
 
-  // Slack / Teams
-  "ntf.title": "Slack y Microsoft Teams",
+  // Avisos a canales (webhooks entrantes)
+  "ntf.title": "Avisos a canales",
   "ntf.intro": "Mandá avisos a un canal cuando pasa algo con un sobre. Necesitás la URL de un webhook entrante del canal.",
-  "ntf.howSlack": "Slack: Apps → Incoming Webhooks → Add to Slack → elegir canal → copiar la URL.",
-  "ntf.howTeams": "Teams: en el canal, Workflows → “Publicar en un canal cuando se recibe una solicitud de webhook” → copiar la URL.",
+  "ntf.how": "Cómo obtener la URL",
+  "ntf.how.slack": "Slack: Apps → Incoming Webhooks → Add to Slack → elegir canal → copiar la URL.",
+  "ntf.how.teams":
+    "Teams: en el canal, ⋯ → Workflows → “Publicar en un canal cuando se recibe una solicitud de webhook” → elegir equipo y canal → copiar la URL. (Los conectores de Office 365 y su “Webhook entrante” fueron retirados por Microsoft: usá Workflows.)",
+  "ntf.how.discord": "Discord: Ajustes del servidor → Integraciones → Webhooks → Nuevo webhook → elegir canal → Copiar URL del webhook.",
+  "ntf.how.google_chat": "Google Chat (Google Workspace): en el espacio, nombre del espacio → Apps e integraciones → Webhooks → Agregar webhook → copiar la URL.",
+  "ntf.how.mattermost": "Mattermost: Menú → Integraciones → Webhooks entrantes → Agregar webhook entrante → elegir canal → copiar la URL. Un administrador tiene que habilitar los webhooks entrantes.",
+  "ntf.how.rocketchat": "Rocket.Chat: Administración → Integraciones → Nueva → Webhook entrante → activarlo, elegir canal y usuario que publica → guardar → copiar la URL del webhook.",
+  "ntf.how.webex": "Webex: en el App Hub, app “Incoming Webhooks” → Conectar → nombre y espacio → copiar la URL.",
   "ntf.kind": "Destino",
   "ntf.name": "Nombre",
   "ntf.url": "URL del webhook",
@@ -184,8 +191,8 @@ type Key = keyof typeof es;
 const pt: Record<Key, string> = {
   "card.oauth": "Apps OAuth",
   "card.oauth.desc": "Aplicações que usam a API com OAuth 2.0 e apps conectados ao seu usuário.",
-  "card.notifications": "Slack e Teams",
-  "card.notifications.desc": "Avisos nos seus canais quando um envelope é enviado, assinado ou concluído.",
+  "card.notifications": "Avisos em canais",
+  "card.notifications.desc": "Slack, Teams, Discord, Google Chat e mais: avisos quando um envelope é enviado, assinado ou concluído.",
   "card.automation": "Zapier e Make",
   "card.automation.desc": "Automações sem código com webhooks e uma API key.",
   "card.storage": "Armazenamento",
@@ -260,10 +267,17 @@ const pt: Record<Key, string> = {
   "scope.audit:read": "Ver o registro de auditoria",
   "scope.offline_access": "Continuar acessando mesmo sem você conectado",
 
-  "ntf.title": "Slack e Microsoft Teams",
+  "ntf.title": "Avisos em canais",
   "ntf.intro": "Envie avisos para um canal quando algo acontece com um envelope. Você precisa da URL de um webhook de entrada do canal.",
-  "ntf.howSlack": "Slack: Apps → Incoming Webhooks → Add to Slack → escolher canal → copiar a URL.",
-  "ntf.howTeams": "Teams: no canal, Workflows → “Postar em um canal quando uma solicitação de webhook for recebida” → copiar a URL.",
+  "ntf.how": "Como obter a URL",
+  "ntf.how.slack": "Slack: Apps → Incoming Webhooks → Add to Slack → escolher canal → copiar a URL.",
+  "ntf.how.teams":
+    "Teams: no canal, ⋯ → Workflows → “Postar em um canal quando uma solicitação de webhook for recebida” → escolher equipe e canal → copiar a URL. (Os conectores do Office 365 e o “Webhook de entrada” foram descontinuados pela Microsoft: use Workflows.)",
+  "ntf.how.discord": "Discord: Configurações do servidor → Integrações → Webhooks → Novo webhook → escolher canal → Copiar URL do webhook.",
+  "ntf.how.google_chat": "Google Chat (Google Workspace): no espaço, nome do espaço → Apps e integrações → Webhooks → Adicionar webhook → copiar a URL.",
+  "ntf.how.mattermost": "Mattermost: Menu → Integrações → Webhooks de entrada → Adicionar → escolher canal → copiar a URL. Um administrador precisa habilitar os webhooks de entrada.",
+  "ntf.how.rocketchat": "Rocket.Chat: Administração → Integrações → Nova → Webhook de entrada → ativar, escolher canal e usuário que publica → salvar → copiar a URL do webhook.",
+  "ntf.how.webex": "Webex: no App Hub, app “Incoming Webhooks” → Conectar → nome e espaço → copiar a URL.",
   "ntf.kind": "Destino",
   "ntf.name": "Nome",
   "ntf.url": "URL do webhook",
@@ -353,8 +367,8 @@ const pt: Record<Key, string> = {
 const en: Record<Key, string> = {
   "card.oauth": "OAuth apps",
   "card.oauth.desc": "Applications using the API with OAuth 2.0, and apps connected to your user.",
-  "card.notifications": "Slack and Teams",
-  "card.notifications.desc": "Channel notifications when an envelope is sent, signed or completed.",
+  "card.notifications": "Channel notifications",
+  "card.notifications.desc": "Slack, Teams, Discord, Google Chat and more: notifications when an envelope is sent, signed or completed.",
   "card.automation": "Zapier and Make",
   "card.automation.desc": "No-code automations with webhooks and an API key.",
   "card.storage": "Storage",
@@ -429,10 +443,17 @@ const en: Record<Key, string> = {
   "scope.audit:read": "View the audit log",
   "scope.offline_access": "Keep access while you're offline",
 
-  "ntf.title": "Slack and Microsoft Teams",
+  "ntf.title": "Channel notifications",
   "ntf.intro": "Post to a channel when something happens with an envelope. You need the channel's incoming webhook URL.",
-  "ntf.howSlack": "Slack: Apps → Incoming Webhooks → Add to Slack → pick a channel → copy the URL.",
-  "ntf.howTeams": "Teams: in the channel, Workflows → “Post to a channel when a webhook request is received” → copy the URL.",
+  "ntf.how": "How to get the URL",
+  "ntf.how.slack": "Slack: Apps → Incoming Webhooks → Add to Slack → pick a channel → copy the URL.",
+  "ntf.how.teams":
+    "Teams: in the channel, ⋯ → Workflows → “Post to a channel when a webhook request is received” → pick team and channel → copy the URL. (Microsoft retired Office 365 connectors and their “Incoming Webhook”: use Workflows.)",
+  "ntf.how.discord": "Discord: Server Settings → Integrations → Webhooks → New Webhook → pick a channel → Copy Webhook URL.",
+  "ntf.how.google_chat": "Google Chat (Google Workspace): in the space, space name → Apps & integrations → Webhooks → Add webhook → copy the URL.",
+  "ntf.how.mattermost": "Mattermost: Menu → Integrations → Incoming Webhooks → Add Incoming Webhook → pick a channel → copy the URL. An admin must enable incoming webhooks.",
+  "ntf.how.rocketchat": "Rocket.Chat: Administration → Integrations → New → Incoming webhook → enable it, pick channel and posting user → save → copy the webhook URL.",
+  "ntf.how.webex": "Webex: in the App Hub, “Incoming Webhooks” app → Connect → name and space → copy the URL.",
   "ntf.kind": "Destination",
   "ntf.name": "Name",
   "ntf.url": "Webhook URL",

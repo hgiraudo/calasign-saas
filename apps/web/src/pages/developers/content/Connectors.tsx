@@ -63,7 +63,7 @@ export function ConnectorsPage() {
         <Card icon="▤" title="DMS" to="/developers/guides/hr-contracts#dms" action={<ActionLink to="/developers/guides/hr-contracts#dms" label={t("conn.native.a")} />}>
           {t("conn.native.dms.d")}
         </Card>
-        <Card icon="✉" title="Slack · Teams · WhatsApp" to="/app/settings/notifications" action={<ActionLink to="/app/settings/notifications" label={t("conn.native.config")} />}>
+        <Card icon="✉" title={t("conn.native.notify.t")} to="/app/settings/notifications" action={<ActionLink to="/app/settings/notifications" label={t("conn.native.config")} />}>
           {t("conn.native.notify.d")}
         </Card>
         <Card icon="✦" title={t("conn.native.ai.t")} to="/developers/ai" action={<ActionLink to="/developers/ai" label={t("conn.native.a")} />}>

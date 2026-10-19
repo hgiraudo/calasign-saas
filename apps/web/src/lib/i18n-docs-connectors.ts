@@ -52,7 +52,9 @@ export const connectorsDocsEs = {
   "conn.native.hr.d": "BambooHR, HiBob y Factorial: contratos de empleados con datos prellenados y el firmado de vuelta al legajo.",
   "conn.native.clm.d": "Ironclad y Juro: firma desde el flujo del contrato y la copia firmada de vuelta.",
   "conn.native.dms.d": "SharePoint, OneDrive, Google Drive, Dropbox, Box y S3: archivado automático del firmado y su evidencia.",
-  "conn.native.notify.d": "Slack, Microsoft Teams, Telegram y WhatsApp: avisos de cada evento del sobre.",
+  "conn.native.notify.t": "Slack · Teams · Discord · WhatsApp",
+  "conn.native.notify.d":
+    "Avisos de cada evento del sobre en Slack, Microsoft Teams (Workflows), Discord, Google Chat, Mattermost, Rocket.Chat y Webex por webhook entrante, más Telegram y WhatsApp/SMS.",
   "conn.native.ai.d": "Claude, ChatGPT, Gemini, MCP y complementos de Word y Outlook.",
   "conn.native.a": "Ver guía",
   "conn.native.config": "Configurar",
@@ -111,7 +113,9 @@ export const connectorsDocsEn: Record<ConnectorsDocsKey, string> = {
   "conn.native.hr.d": "BambooHR, HiBob and Factorial: employee contracts with prefilled data and the signed copy back to the employee file.",
   "conn.native.clm.d": "Ironclad and Juro: signing from the contract workflow and the signed copy sent back.",
   "conn.native.dms.d": "SharePoint, OneDrive, Google Drive, Dropbox, Box and S3: automatic filing of the signed document and its evidence.",
-  "conn.native.notify.d": "Slack, Microsoft Teams, Telegram and WhatsApp: notifications for every envelope event.",
+  "conn.native.notify.t": "Slack · Teams · Discord · WhatsApp",
+  "conn.native.notify.d":
+    "Notifications for every envelope event in Slack, Microsoft Teams (Workflows), Discord, Google Chat, Mattermost, Rocket.Chat and Webex via incoming webhook, plus Telegram and WhatsApp/SMS.",
   "conn.native.ai.d": "Claude, ChatGPT, Gemini, MCP and Word and Outlook add-ins.",
   "conn.native.a": "See guide",
   "conn.native.config": "Configure",
@@ -168,7 +172,9 @@ export const connectorsDocsPt: Record<ConnectorsDocsKey, string> = {
   "conn.native.hr.d": "BambooHR, HiBob e Factorial: contratos de colaboradores com dados preenchidos e o assinado de volta à pasta do colaborador.",
   "conn.native.clm.d": "Ironclad e Juro: assinatura a partir do fluxo do contrato e a cópia assinada de volta.",
   "conn.native.dms.d": "SharePoint, OneDrive, Google Drive, Dropbox, Box e S3: arquivamento automático do assinado e das evidências.",
-  "conn.native.notify.d": "Slack, Microsoft Teams, Telegram e WhatsApp: avisos de cada evento do envelope.",
+  "conn.native.notify.t": "Slack · Teams · Discord · WhatsApp",
+  "conn.native.notify.d":
+    "Avisos de cada evento do envelope no Slack, Microsoft Teams (Workflows), Discord, Google Chat, Mattermost, Rocket.Chat e Webex por webhook de entrada, além de Telegram e WhatsApp/SMS.",
   "conn.native.ai.d": "Claude, ChatGPT, Gemini, MCP e suplementos do Word e do Outlook.",
   "conn.native.a": "Ver guia",
   "conn.native.config": "Configurar",

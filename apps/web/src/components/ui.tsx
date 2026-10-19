@@ -138,10 +138,17 @@ export function Spinner() {
 }
 
 /**
- * Orden de firma (1–100). El texto se guarda aparte del número: con `Number(valor) || 1` en cada tecla, borrar dejaba
- * un 1 que no se podía quitar y tipear "3" terminaba en 13. Al salir del campo se vuelve a mostrar el valor vigente.
+ * Entero acotado (por defecto 1–100, el orden de firma). El texto se guarda aparte del número: con `Number(valor) || 1`
+ * en cada tecla, borrar dejaba un 1 que no se podía quitar y tipear "3" terminaba en 13. Al salir del campo se vuelve
+ * a mostrar el valor vigente.
  */
-export function OrderInput({ value, onChange, ...rest }: { value: number; onChange: (n: number) => void } & Omit<InputHTMLAttributes<HTMLInputElement>, "value" | "onChange" | "type">) {
+export function OrderInput({
+  value,
+  onChange,
+  min = 1,
+  max = 100,
+  ...rest
+}: { value: number; onChange: (n: number) => void; min?: number; max?: number } & Omit<InputHTMLAttributes<HTMLInputElement>, "value" | "onChange" | "type" | "min" | "max">) {
   const [text, setText] = useState(String(value));
   useEffect(() => {
     if (Number(text) !== value) setText(String(value));
@@ -150,14 +157,14 @@ export function OrderInput({ value, onChange, ...rest }: { value: number; onChan
   return (
     <input
       type="number"
-      min={1}
-      max={100}
+      min={min}
+      max={max}
       {...rest}
       value={text}
       onChange={(e) => {
         setText(e.target.value);
         const n = Math.trunc(Number(e.target.value));
-        if (e.target.value.trim() !== "" && Number.isFinite(n)) onChange(Math.max(1, Math.min(100, n)));
+        if (e.target.value.trim() !== "" && Number.isFinite(n)) onChange(Math.max(min, Math.min(max, n)));
       }}
       onBlur={() => setText(String(value))}
     />

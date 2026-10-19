@@ -328,7 +328,13 @@ export function FieldEditor({ envelopeId, documents, signers, fields, onChange, 
                         .slice(0, 50),
                     })
                   }
-                  onBlur={(e) => update(sel.id, { options: e.target.value.split("\n").map((o) => o.trim()).filter(Boolean) })}
+                  onBlur={(e) => {
+                    const options = e.target.value.split("\n").map((o) => o.trim()).filter(Boolean);
+                    // Un valor prellenado que ya no es una opción (se renombró o quitó) quedaba oculto: el select mostraba
+                    // "—" pero se mandaba igual y el guardado fallaba con "opción inválida".
+                    const stale = !!sel.value && !options.includes(sel.value);
+                    update(sel.id, { options, ...(stale ? { value: null, readOnly: false } : {}) });
+                  }}
                 />
                 <small className="muted">{t("edit.optionsHint")}</small>
               </label>

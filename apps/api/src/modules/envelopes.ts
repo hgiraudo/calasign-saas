@@ -13,7 +13,7 @@ import type { Db } from "../infra/db";
 import { appendEvent, type Actor } from "../infra/evidence";
 import { enqueue } from "../infra/queue";
 import { AppError, badRequest, conflict, notFound } from "../lib/errors";
-import { encrypt, iso, randomToken, sha256Hex, uuidv7 } from "../lib/util";
+import { encrypt, iso, queryList, randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { config } from "../config";
 import { envelopeVisibilitySql } from "./access";
 import { authenticate, type AuthContext, type Services } from "./context";
@@ -172,8 +172,9 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
       const params: unknown[] = [tenantId];
       let where = `e.tenant_id = $1`;
       where += envelopeVisibilitySql(A(req), params);
-      if (req.query.status) {
-        params.push(req.query.status.split(","));
+      const statuses = queryList(req.query.status);
+      if (statuses.length) {
+        params.push(statuses);
         where += ` AND e.status = ANY($${params.length})`;
       }
       if (req.query.q) {

@@ -157,6 +157,9 @@ function qDate(v: string, name: string) {
 function buildWhere(tenantId: string, q: AuditQuery) {
   const params: unknown[] = [tenantId];
   let where = `tenant_id = $1`;
+  // Una clave repetida (?action=a&action=b) llega como array: `.endsWith` respondía 500.
+  if (q.action !== undefined && typeof q.action !== "string") throw badRequest("invalid_query", "'action' admite un solo valor");
+  if (q.actor !== undefined && typeof q.actor !== "string") throw badRequest("invalid_query", "'actor' admite un solo valor");
   if (q.action) {
     params.push(q.action.endsWith("*") ? q.action.slice(0, -1) + "%" : q.action);
     where += q.action.endsWith("*") ? ` AND action LIKE $${params.length}` : ` AND action = $${params.length}`;

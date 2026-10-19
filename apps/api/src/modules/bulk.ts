@@ -14,7 +14,7 @@ import type { Db } from "../infra/db";
 import type { Actor } from "../infra/evidence";
 import { enqueue } from "../infra/queue";
 import { AppError, badRequest, conflict, forbidden, notFound } from "../lib/errors";
-import { iso, uuidv7 } from "../lib/util";
+import { iso, queryList, uuidv7 } from "../lib/util";
 import { assertTemplateAccess, hasPerm } from "./access";
 import { csvCell } from "./agreements/common";
 import { ownerCanStillCreate } from "./owner-check";
@@ -408,8 +408,9 @@ export async function bulkRoutes(app: FastifyInstance, s: Services) {
       const offset = Math.min(1_000_000_000, Math.max(0, Math.trunc(Number(req.query.offset ?? 0)) || 0));
       const params: unknown[] = [req.params.id];
       let where = `bulk_send_id = $1`;
-      if (req.query.status) {
-        params.push(req.query.status.split(","));
+      const statuses = queryList(req.query.status);
+      if (statuses.length) {
+        params.push(statuses);
         where += ` AND status = ANY($2)`;
       }
       const total = (await s.db.one<any>(`SELECT count(*)::int AS n FROM bulk_send_items WHERE ${where}`, params))?.n ?? 0;

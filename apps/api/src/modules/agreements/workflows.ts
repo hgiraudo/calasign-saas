@@ -24,7 +24,7 @@ import type { Db } from "../../infra/db";
 import { appendEvent, type Actor } from "../../infra/evidence";
 import { enqueue } from "../../infra/queue";
 import { AppError, badRequest, conflict, forbidden, notFound } from "../../lib/errors";
-import { decrypt, encrypt, iso, randomToken, sha256Hex, uuidv7 } from "../../lib/util";
+import { decrypt, encrypt, iso, queryList, randomToken, sha256Hex, uuidv7 } from "../../lib/util";
 import { deliver } from "../../notifications/channels";
 import { hasPerm, requirePerm } from "../access";
 import { auditFromRequest } from "../audit";
@@ -749,8 +749,9 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
       params.push(req.query.workflowId);
       where += ` AND r.workflow_id = $${params.length}`;
     }
-    if (req.query.status) {
-      params.push(req.query.status.split(","));
+    const statuses = queryList(req.query.status);
+    if (statuses.length) {
+      params.push(statuses);
       where += ` AND r.status = ANY($${params.length})`;
     }
     if (!hasPerm(a, "templates:manage") && !hasPerm(a, "envelopes:view_all")) {

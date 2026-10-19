@@ -106,6 +106,17 @@ export function canonicalJson(value: unknown): string {
     .join(",")}}`;
 }
 
+/**
+ * Lista de un parámetro de la query separada por comas. Fastify convierte una clave repetida (?status=a&status=b) en un
+ * array: sin esto, `.split(",")` sobre ese array respondía 500. Se aceptan las dos formas (y mezcladas).
+ */
+export function queryList(v: unknown): string[] {
+  return (Array.isArray(v) ? v : [v])
+    .flatMap((x) => (typeof x === "string" ? x.split(",") : []))
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
+
 export function iso(d: Date | string | null | undefined): string | null {
   if (!d) return null;
   return (d instanceof Date ? d : new Date(d)).toISOString();

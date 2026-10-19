@@ -598,7 +598,10 @@ function MappingEditor({
                 <label className="field grow">
                   <span>{t("m.role")}</span>
                   {roleNames.length ? (
-                    <select value={r.role} onChange={(e) => setRole(i, { role: e.target.value })}>
+                    // Una fila agregada después de cubrir los roles de la plantilla queda sin rol: sin la opción vacía el
+                    // select mostraba el primer rol pero se guardaba sin ninguno (y la API rechazaba el mapeo).
+                    <select required value={r.role} onChange={(e) => setRole(i, { role: e.target.value })}>
+                      {!r.role && <option value="">—</option>}
                       {[...new Set([r.role, ...roleNames])].filter(Boolean).map((n) => (
                         <option key={n} value={n}>
                           {n}

@@ -71,6 +71,8 @@ export function ByokSettingsPage() {
   const disable = async () => {
     if (!window.confirm(dt("byok.disableConfirm"))) return;
     setBusy(true);
+    // El error de una prueba fallida anterior quedaba a la vista después de desactivar sin problemas.
+    setError(null);
     try {
       await api("/v1/settings/byok", { method: "DELETE" });
       await load();

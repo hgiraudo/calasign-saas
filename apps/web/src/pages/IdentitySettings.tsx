@@ -5,7 +5,7 @@ import { IDV_LEVELS, MOCK_DECISIONS } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
 import { formatDateTime, useI18n, confirmAction } from "../lib/i18n";
 import { useIdnText, type IdnKey } from "../lib/i18n-identity";
-import { ErrorBox, Spinner } from "../components/ui";
+import { ErrorBox, OrderInput, Spinner } from "../components/ui";
 import { SsoDomainVerification } from "../components/DataExtras";
 
 function useLoad<T>(path: string) {
@@ -135,7 +135,8 @@ export function IdentitySettingsPage() {
             </label>
             <label className="field">
               <span>{tx("idset.maxAttempts")}</span>
-              <input type="number" min={1} max={10} value={data.maxAttempts} onChange={(e) => setData({ ...data, maxAttempts: Number(e.target.value) || 1 })} />
+              {/* Con `Number(valor) || 1`, borrar dejaba un 1 fijo y tipear "5" daba 15 (fuera de 1–10: el guardado fallaba). */}
+              <OrderInput min={1} max={10} value={data.maxAttempts} onChange={(n) => setData({ ...data, maxAttempts: n })} />
             </label>
           </div>
         </div>

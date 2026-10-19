@@ -166,6 +166,9 @@ export async function otpRoutes(app: FastifyInstance, s: Services) {
   app.post<P>("/v1/signing/:token/otp/verify", rl, async (req, reply) => {
     const input = OtpVerifyInput.parse(req.body);
     const { recipient: r, envelope: e } = await resolveToken(s.db, req.params.token);
+    // Los mismos estados que /otp/send: un código pedido con el sobre en curso y canjeado después de anularlo, rechazarlo
+    // o vencerlo agregaba recipient.authenticated / otp_failed a la evidencia de un sobre cerrado (como el consentimiento).
+    if (!["sent", "awaiting_certificates", "completed"].includes(e.status)) throw new AppError(410, "envelope_closed", "El sobre ya no está disponible");
     const ch = await s.db.one<any>(
       `SELECT * FROM otp_challenges WHERE recipient_id = $1 AND verified_at IS NULL AND expires_at > now() ORDER BY created_at DESC LIMIT 1`,
       [r.id],

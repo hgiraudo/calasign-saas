@@ -1,7 +1,9 @@
 // Português (Brasil) do portal de desenvolvedores. Ver i18n-docs.ts.
 import type { DocsKey } from "./i18n-docs";
+import { docsApiPt } from "./i18n-docs-api";
 
 export const docsPt: Record<DocsKey, string> = {
+  ...docsApiPt,
   // ───────── Interface ─────────
   "ui.docs": "Docs",
   "ui.searchPlaceholder": "Pesquisar na documentação…",

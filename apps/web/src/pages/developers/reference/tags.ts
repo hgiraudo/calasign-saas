@@ -1,6 +1,7 @@
 // Nombres de los tags de la especificación (en español) en portugués e inglés. Un tag nuevo sin traducción se muestra tal cual.
 const PT: Record<string, string> = {
   Sobres: "Envelopes",
+  Eventos: "Eventos",
   Plantillas: "Modelos",
   "Firma embebida": "Assinatura incorporada",
   Webhooks: "Webhooks",
@@ -34,6 +35,7 @@ const PT: Record<string, string> = {
 
 const EN: Record<string, string> = {
   Sobres: "Envelopes",
+  Eventos: "Events",
   Plantillas: "Templates",
   "Firma embebida": "Embedded signing",
   Webhooks: "Webhooks",

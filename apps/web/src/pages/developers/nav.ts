@@ -94,6 +94,13 @@ export const NAV: NavGroup[] = [
       { path: "guides/bulk-send", title: "g.bulk.title", headings: [h("csv", "g.bulk.csv.h"), h("json", "g.bulk.json.h"), h("track", "g.bulk.track.h")], keywords: "bulk csv masivo" },
       { path: "guides/web-forms", title: "g.forms.title", headings: [h("create", "g.forms.create.h"), h("share", "g.forms.share.h")], keywords: "web form formulario público" },
       { path: "guides/reminders", title: "g.rem.title", headings: [h("automatic", "g.rem.auto.h"), h("manual", "g.rem.manual.h"), h("expiration", "g.rem.exp.h"), h("corrections", "g.rem.corr.h")], keywords: "remind recordatorio vencimiento expiresAt corrections reassign delegate" },
+      {
+        path: "guides/sync",
+        title: "g.sync.title",
+        navTitle: "g.sync.nav",
+        headings: [h("search", "g.sync.search.h"), h("events", "g.sync.events.h"), h("stream", "g.sync.stream.h"), h("form-data", "g.sync.form.h"), h("clone", "g.sync.clone.h"), h("batch", "g.sync.batch.h"), h("rotate-secret", "g.sync.rotate.h")],
+        keywords: "events eventos cursor polling sse stream updated_since metadata form-data clone batch lote rotate secret",
+      },
       { path: "guides/certificate-signing", title: "g.cert.title", headings: [h("setup", "g.cert.setup.h"), h("flow", "g.cert.flow.h"), h("requirements", "g.cert.req.h")], keywords: "certificado token pkcs11 p12 icp-brasil firmador awaiting_certificates" },
       { path: "guides/identity", title: "g.idv.title", headings: [h("auth", "g.idv.auth.h"), h("kyc", "g.idv.kyc.h")], keywords: "otp kyc identidad selfie truora veriff" },
       { path: "guides/payments", title: "g.pay.title", headings: [h("configure", "g.pay.conf.h"), h("timing", "g.pay.timing.h")], keywords: "pago stripe mercadopago pix pse" },

@@ -307,7 +307,7 @@ export const docsEn: Record<DocsKey, string> = {
   "g.tpl.send.p":
     "`POST /v1/envelopes/from-template` copies documents, fields and roles, assigns each recipient to their role (by `role`, the name, case-insensitive, or by `roleId`) and returns the new envelope's details. Every role must have a person: if any is missing, the response is `422 roles_missing`. With `send: true` the envelope is sent in the same request; without it, it stays as a draft so you can review it or add a payment.",
   "g.tpl.send.idem":
-    "This endpoint doesn't apply `Idempotency-Key`: a retry after a timeout can create a second envelope. If you need safe retries, create the envelope without `send`, save its `id` (or look it up by `metadata`) and send it with `POST /v1/envelopes/{id}/send`, which is idempotent.",
+    "This endpoint accepts `Idempotency-Key`: send a unique key per envelope and, if you retry after a timeout or a 5xx with the same key and the same body, you get the envelope already created instead of creating (and sending) another one.",
   "g.tpl.prefill.h": "Prefilling fields",
   "g.tpl.prefill.p":
     "`prefill` is an object `{ \"key\": \"value\" }` where the key is the `id` of a template field or its **label** (`label`, case-insensitive). If several fields share a label, they're all filled in. A key that doesn't match any field returns `400 unknown_prefill`. Fields marked `readOnly` in the template are locked for the signer.",
@@ -520,11 +520,12 @@ export const docsEn: Record<DocsKey, string> = {
   "wh.f.reason": "Reason for the decline or void, when applicable.",
   "wh.verify.h": "Verify the signature",
   "wh.verify.p":
-    "The `CalaSign-Signature` header has the form `t=<unix>,v1=<hex>`, where `v1` is `HMAC-SHA256(secret, \"<t>.<body>\")` in hex. To verify:\n\n1. Split out `t` and `v1`.\n2. Compute the HMAC with your secret over the text `t`, a dot and the **raw body**, byte for byte as it arrived (not re-serialized JSON).\n3. Compare it with `v1` in constant time.\n4. Reject deliveries whose `t` is more than 5 minutes old to prevent replays.",
+    "The `CalaSign-Signature` header has the form `t=<unix>,v1=<hex>`, where `v1` is `HMAC-SHA256(secret, \"<t>.<body>\")` in hex. While you rotate the secret, the header carries one `v1` per active secret (`t=<unix>,v1=<new>,v1=<old>`). To verify:\n\n1. Split the header on commas and read `t` and every `v1`.\n2. Compute the HMAC with your secret over the text `t`, a dot and the **raw body**, byte for byte as it arrived (not re-serialized JSON).\n3. Compare it in constant time with each `v1`: accept the delivery if any of them matches.\n4. Reject deliveries whose `t` is more than 5 minutes old to prevent replays.",
   "wh.verify.warn":
     "The most common mistake is verifying the already-parsed body: any difference in whitespace or key order breaks the signature. Configure your framework to give you the raw body on this route (`express.raw`, `request.get_data()`, unparsed `request.body`).",
   "wh.c.raw": "RAW body, exactly as it arrived",
   "wh.c.async": "process outside the request",
+  "wh.c.multi": "during a rotation several v1 values arrive: accept if any of them matches",
   "wh.retries.h": "Retries",
   "wh.retries.p":
     "A delivery counts as successful if your server responds **2xx within 10 seconds**. Any other status code, a redirect, a network error or a timeout is a failure and is retried with increasing backoff, up to **8 attempts** in total:",
@@ -535,7 +536,7 @@ export const docsEn: Record<DocsKey, string> = {
     "After the last attempt the delivery is marked `failed`. You can see each delivery (response code, first characters of the response, error, next attempt) and retry it manually from **Settings → Integrations** or with `POST /v1/webhook-deliveries/{id}/retry`. If you pause an endpoint, its pending deliveries are marked as failed.",
   "wh.receive.h": "Best practices for receiving",
   "wh.receive.p":
-    "- **Respond quickly.** Verify the signature, store the event and respond `200`; process it later in a queue. If you take more than 10 seconds, CalaSign counts it as a failure and retries.\n- **Idempotency.** The same event can arrive more than once (retries, flaky networks). Store the `id` (also sent in `CalaSign-Event-Id`) and discard duplicates.\n- **No guaranteed order.** Events are delivered independently: `recipient.signed` can arrive after `envelope.completed`. Use `createdAt` and, when in doubt, fetch the current state with `GET /v1/envelopes/{id}`.\n- **Unknown events.** Respond `2xx` to types you don't handle.\n- **Secret rotation.** To change it, create a new endpoint with the same URL, accept both secrets during the transition and delete the old one.",
+    "- **Respond quickly.** Verify the signature, store the event and respond `200`; process it later in a queue. If you take more than 10 seconds, CalaSign counts it as a failure and retries.\n- **Idempotency.** The same event can arrive more than once (retries, flaky networks). Store the `id` (also sent in `CalaSign-Event-Id`) and discard duplicates.\n- **No guaranteed order.** Events are delivered independently: `recipient.signed` can arrive after `envelope.completed`. Use `createdAt` and, when in doubt, fetch the current state with `GET /v1/envelopes/{id}`.\n- **Unknown events.** Respond `2xx` to types you don't handle.\n- **Secret rotation.** Use `POST /v1/webhooks/{id}/rotate-secret`: it returns the new secret and, for `graceHours` (24 by default), every delivery is signed with both, so you can switch the secret on your server without losing events.",
   "wh.test.h": "Testing",
   "wh.test.p":
     "Send a `webhook.test` event to an endpoint to check connectivity and signature verification. During development you can expose your local server with a tunnel (ngrok, Cloudflare Tunnel) or use a request inspection service.",
@@ -571,7 +572,7 @@ export const docsEn: Record<DocsKey, string> = {
   "err.idem.p":
     "If a create request is cut off (timeout, network), you don't know whether it went through. Send the `Idempotency-Key` header with a unique value per operation — for example, the request id in your system — and retry with the same value: CalaSign runs the operation only once and returns the stored response to retries, with the `idempotent-replay: true` header.",
   "err.idem.rules":
-    "- Applies to `POST /v1/envelopes` and `POST /v1/envelopes/{id}/send`. On all other endpoints the header is ignored.\n- The key is scoped per credential (API key, OAuth app or user) and is up to 200 characters.\n- Same key with a different body or path: `409 idempotency_mismatch`.\n- If the first request is still being processed: `409 idempotency_in_progress`; retry in a few seconds.\n- If the original request failed with an error, the key is released and you can retry.\n- The SDKs add a key automatically.",
+    "- Applies to `POST /v1/envelopes`, `POST /v1/envelopes/{id}/send`, `POST /v1/envelopes/from-template`, `POST /v1/envelopes/from-template/{templateId}`, `POST /v1/bulk-sends` and `POST /v1/crm/mappings/{id}/send`. On all other endpoints the header is ignored.\n- The key is scoped per credential (API key, OAuth app or user) and is up to 200 characters.\n- Same key with a different body or path: `409 idempotency_mismatch`.\n- If the first request is still being processed: `409 idempotency_in_progress`; retry in a few seconds.\n- If the original request failed with an error, the key is released and you can retry.\n- The SDKs add a key automatically.",
   "err.page.h": "Pagination",
   "err.page.p":
     "`GET /v1/envelopes` paginates by **cursor**, from newest to oldest. `limit` goes from 1 to 100 (25 by default). If there are more results, the response contains `nextCursor`: pass it as `cursor` to request the next page; when it's `null`, you're done. The cursor is opaque: don't build or modify it. Filters: `status` (one or more, comma-separated) and `q` (searches the subject and the recipients' names or emails).",

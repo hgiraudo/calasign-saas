@@ -14,7 +14,7 @@ Results are JSON text; API errors come back as `isError: true` with `Error <stat
 | `create_envelope_from_template` | creates a **draft** (or also sends it with `send` + `confirm`) | `templateId`, `recipients[{role, name, email?, phone?, channels?}]`, `subject?`, `message?`, `prefill?`, `send?`, `confirm?` |
 | `create_envelope` * | creates a **draft** (or also sends it with `send` + `confirm`), in one atomic call | PDF as base64 or https URL, subject, recipients, fields/anchors, `send?`, `confirm?` — read its schema |
 | `send_envelope` | **notifies people** | `envelopeId`, `confirm` |
-| `remind_recipients` * | notifies pending signers | `envelopeId` (+ `confirm` if the schema asks) |
+| `remind_recipients` * | **notifies people** (pending signers) | `envelopeId`, `confirm` |
 | `void_envelope` | **cancels, irreversible** | `envelopeId`, `reason`, `confirm` |
 | `download_signed_pdf` | read | `envelopeId` → temporary URL (completed envelopes only) |
 | `get_account` * | read | current user, organization and plan |
@@ -24,7 +24,7 @@ tell the user what is missing.
 
 ## Confirmation protocol
 
-`send_envelope`, `void_envelope`, and `create_envelope` / `create_envelope_from_template` with
+`send_envelope`, `void_envelope`, `remind_recipients`, and `create_envelope` / `create_envelope_from_template` with
 `send: true`, refuse to act without `confirm: true`. Calling them **without** `confirm` is safe and
 returns a summary you can show the user (nothing is created or sent). Flows:
 

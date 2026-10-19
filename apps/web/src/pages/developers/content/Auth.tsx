@@ -91,13 +91,15 @@ Content-Type: application/json
   const dcrResponse = `HTTP/1.1 201 Created
 
 {
-  "client_id": "csapp_…",
+  "client_id": "csdyn_…",
   "client_id_issued_at": 1792335600,
+  "client_secret_expires_at": 0,
   "client_name": "Mi agente",
   "redirect_uris": ["http://127.0.0.1:33418/callback"],
-  "token_endpoint_auth_method": "none",
   "grant_types": ["authorization_code", "refresh_token"],
-  "response_types": ["code"]
+  "response_types": ["code"],
+  "token_endpoint_auth_method": "none",
+  "scope": "envelopes:read envelopes:write offline_access"
 }`;
 
   return (

@@ -23,6 +23,7 @@ const LIMITS: [string, string][] = [
   ["*", "600 / min"],
   ["POST /mcp", "300 / min"],
   ["POST /oauth/token · /oauth/revoke · /oauth/introspect", "60 / min"],
+  ["POST /oauth/register", "20 / h"],
   ["POST /v1/verify · POST /v1/validate", "20 / min"],
   ["POST /v1/certificates", "20 / min"],
   ["POST /v1/xml/sign", "120 / min"],

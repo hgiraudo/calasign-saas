@@ -125,9 +125,9 @@ export const DEVAPI_OPS: Op[] = [
     tag: "Eventos",
     summary: "Eventos en vivo (Server-Sent Events)",
     description:
-      "`text/event-stream`: cada mensaje lleva `id:` (cursor), `event:` (tipo) y `data:` (ApiEvent en JSON). Retoma desde `after` o el header `Last-Event-ID`; sin ninguno, empieza ahora. " +
+      "`text/event-stream`: cada mensaje lleva `id:` (cursor), `event:` (tipo) y `data:` (ApiEvent en JSON). Retoma desde `after` o el header `Last-Event-ID`; sin ninguno, desde `since` si se indica y si no, ahora. " +
       "La conexión se cierra a los `max_seconds` (por defecto 300) con `event: end`; EventSource reconecta solo. Máximo 5 streams abiertos por organización (429 too_many_streams).",
-    query: [...EVENT_QUERY.filter((q) => q.name !== "since"), { name: "max_seconds", description: "Duración máxima de la conexión (5..3600, por defecto 300).", schema: { type: "integer", minimum: 5, maximum: 3600, default: 300 } }],
+    query: [...EVENT_QUERY.map((q) => (q.name === "since" ? date("since", "Sin `after` ni `Last-Event-ID`: empieza desde esta fecha en lugar de ahora.") : q)), { name: "max_seconds", description: "Duración máxima de la conexión (5..3600, por defecto 300).", schema: { type: "integer", minimum: 5, maximum: 3600, default: 300 } }],
     responseDescription: "Stream de eventos (text/event-stream).",
     errors: ["invalid_cursor"],
   },

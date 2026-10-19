@@ -185,7 +185,6 @@ const AUDIT_QUERY = [
 ];
 
 const IDEMPOTENT_NOTE = " Admite `Idempotency-Key`.";
-const NOT_IDEMPOTENT = " No admite `Idempotency-Key`: un reintento crea otro.";
 
 // ───────── Rutas ─────────
 
@@ -628,10 +627,11 @@ const OPS: Op[] = [
     summary: "Lanzar un envío masivo",
     description:
       "Valida todas las filas antes de crear nada; con `skipInvalid: true` las inválidas quedan como failed y se envían las demás. Los sobres se crean y envían en segundo plano (un sobre por fila, de a 20), a nombre de quien lo lanza; cada uno lleva `bulkSendId` y `bulkRow` en metadata. Seguir el progreso con GET /v1/bulk-sends/{id}." +
-      NOT_IDEMPOTENT,
+      IDEMPOTENT_NOTE,
     body: CreateBulkSendInput,
     status: 201,
     response: BulkSendSchema,
+    idempotent: true,
     errors: ["template_empty", "invalid_csv", "no_rows", "too_many_rows", "rows_invalid", "plan_limit_bulk_send"],
   },
   {

@@ -22,7 +22,7 @@ const TXT = {
     webhook:
       "Cada conexión tiene una **URL de webhook secreta** (`webhookUrl`). Pegala en el sistema de origen (webhooks de BambooHR, HiBob, Factorial, Ironclad o Juro, o una automatización de Power Automate/Zapier/Make/n8n con el cuerpo `{\"recordId\": \"…\", \"event\": \"…\"}`) y los flujos con `trigger: webhook` se disparan solos. Un registro con un sobre en curso no genera otro; las reentregas no duplican. `POST /v1/connectors/connections/{id}/rotate-webhook` la regenera.",
     dms:
-      "El archivado automático (Ajustes → Almacenamiento, `/v1/storage`) deja cada documento firmado en Google Drive, Dropbox, OneDrive, **SharePoint** (sitio + biblioteca + carpeta) o **Box** (carpetas anidadas), o en un bucket S3. Con `includeEvidence: true` sube además el certificado de evidencia (JSON con la cadena de eventos y sus hashes).",
+      "El archivado automático (Ajustes → Almacenamiento, `/v1/storage`) deja cada documento firmado en Google Drive, Dropbox, OneDrive, **SharePoint** (sitio + biblioteca + carpeta) o **Box** (carpetas anidadas), o en un bucket S3. Con `includeEvidence: true` sube además el certificado de evidencia (JSON con la cadena de eventos y sus hashes).\n\nDrive, Dropbox, OneDrive, SharePoint y Box se conectan desde la web: un usuario autoriza la cuenta en el navegador (`POST /v1/storage/oauth/{provider}/start` exige sesión web; con una API key responde `403 session_required`). Desde una integración podés conectar un bucket S3 (o compatible) con tu API key:",
   },
   "pt-BR": {
     lead: "Conectores prontos para usar, configuráveis em Configurações → RH e contratos sem escrever código: você escolhe um colaborador ou contrato, o CalaSign monta o envelope com os dados e, ao concluir, devolve o PDF selado e o certificado de evidência ao sistema de origem.",
@@ -39,7 +39,7 @@ const TXT = {
     webhook:
       "Cada conexão tem uma **URL de webhook secreta** (`webhookUrl`). Cole no sistema de origem (webhooks do BambooHR, HiBob, Factorial, Ironclad ou Juro, ou uma automação do Power Automate/Zapier/Make/n8n com o corpo `{\"recordId\": \"…\", \"event\": \"…\"}`) e os fluxos com `trigger: webhook` disparam sozinhos. Um registro com envelope em andamento não gera outro; reentregas não duplicam. `POST /v1/connectors/connections/{id}/rotate-webhook` a regenera.",
     dms:
-      "O arquivamento automático (Configurações → Armazenamento, `/v1/storage`) deixa cada documento assinado no Google Drive, Dropbox, OneDrive, **SharePoint** (site + biblioteca + pasta) ou **Box** (pastas aninhadas), ou num bucket S3. Com `includeEvidence: true` envia também o certificado de evidência (JSON com a cadeia de eventos e seus hashes).",
+      "O arquivamento automático (Configurações → Armazenamento, `/v1/storage`) deixa cada documento assinado no Google Drive, Dropbox, OneDrive, **SharePoint** (site + biblioteca + pasta) ou **Box** (pastas aninhadas), ou num bucket S3. Com `includeEvidence: true` envia também o certificado de evidência (JSON com a cadeia de eventos e seus hashes).\n\nDrive, Dropbox, OneDrive, SharePoint e Box são conectados pela web: um usuário autoriza a conta no navegador (`POST /v1/storage/oauth/{provider}/start` exige sessão web; com uma API key responde `403 session_required`). De uma integração você pode conectar um bucket S3 (ou compatível) com a sua API key:",
   },
   en: {
     lead: "Ready-to-use connectors, configured from Settings → HR and contracts without code: pick an employee or contract, CalaSign builds the envelope from its data and, on completion, returns the sealed PDF and the evidence certificate to the source system.",
@@ -56,7 +56,7 @@ const TXT = {
     webhook:
       "Each connection has a **secret webhook URL** (`webhookUrl`). Paste it in the source system (BambooHR, HiBob, Factorial, Ironclad or Juro webhooks, or a Power Automate/Zapier/Make/n8n automation with the body `{\"recordId\": \"…\", \"event\": \"…\"}`) and flows with `trigger: webhook` fire on their own. A record with an envelope in progress doesn't get another one; redeliveries don't duplicate. `POST /v1/connectors/connections/{id}/rotate-webhook` regenerates it.",
     dms:
-      "Automatic archiving (Settings → Storage, `/v1/storage`) drops every signed document in Google Drive, Dropbox, OneDrive, **SharePoint** (site + library + folder) or **Box** (nested folders), or an S3 bucket. With `includeEvidence: true` it also uploads the evidence certificate (JSON with the event chain and its hashes).",
+      "Automatic archiving (Settings → Storage, `/v1/storage`) drops every signed document in Google Drive, Dropbox, OneDrive, **SharePoint** (site + library + folder) or **Box** (nested folders), or an S3 bucket. With `includeEvidence: true` it also uploads the evidence certificate (JSON with the event chain and its hashes).\n\nDrive, Dropbox, OneDrive, SharePoint and Box are connected from the web app: a user authorizes the account in the browser (`POST /v1/storage/oauth/{provider}/start` requires a web session; with an API key it returns `403 session_required`). From an integration you can connect an S3 (or S3-compatible) bucket with your API key:",
   },
 };
 
@@ -109,8 +109,17 @@ export function HrContractsGuide() {
       <CodeTabs
         tabs={apiTabs({
           method: "POST",
-          path: "/v1/storage/oauth/sharepoint/start",
-          body: { name: "Legal", siteUrl: "https://empresa.sharepoint.com/sites/Legal", library: "Contratos", folder: "Firmados/2026", includeEvidence: true },
+          path: "/v1/storage/connections/s3",
+          body: {
+            name: "Legal",
+            endpoint: "https://s3.us-east-1.amazonaws.com",
+            region: "us-east-1",
+            bucket: "empresa-contratos",
+            prefix: "firmados/2026",
+            accessKeyId: "AKIA…",
+            secretAccessKey: "…",
+            includeEvidence: true,
+          },
         })}
       />
     </DocPage>

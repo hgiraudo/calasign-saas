@@ -314,7 +314,7 @@ export const docsEs = {
   "g.tpl.send.p":
     "`POST /v1/envelopes/from-template` copia documentos, campos y roles, asigna cada destinatario a su rol (por `role`, el nombre, sin distinguir mayúsculas, o por `roleId`) y devuelve el detalle del sobre nuevo. Todos los roles tienen que tener una persona: si falta alguno, la respuesta es `422 roles_missing`. Con `send: true` el sobre se envía en el mismo pedido; sin él queda en borrador para que lo revises o le agregues un cobro.",
   "g.tpl.send.idem":
-    "Este endpoint no aplica `Idempotency-Key`: un reintento después de un timeout puede crear un segundo sobre. Si necesitás reintentos seguros, creá el sobre sin `send`, guardá su `id` (o buscalo por `metadata`) y envialo con `POST /v1/envelopes/{id}/send`, que sí es idempotente.",
+    "Este endpoint acepta `Idempotency-Key`: mandá una clave única por sobre y, si reintentás después de un timeout o un 5xx con la misma clave y el mismo cuerpo, recibís el sobre ya creado en lugar de crear (y enviar) otro.",
   "g.tpl.prefill.h": "Prellenar campos",
   "g.tpl.prefill.p":
     "`prefill` es un objeto `{ \"clave\": \"valor\" }` donde la clave es el `id` de un campo de la plantilla o su **etiqueta** (`label`, sin distinguir mayúsculas). Si varios campos comparten etiqueta, se completan todos. Una clave que no coincide con ningún campo devuelve `400 unknown_prefill`. Los campos con `readOnly` en la plantilla quedan bloqueados para el firmante.",
@@ -527,11 +527,12 @@ export const docsEs = {
   "wh.f.reason": "Motivo del rechazo o de la anulación, si corresponde.",
   "wh.verify.h": "Verificar la firma",
   "wh.verify.p":
-    "El encabezado `CalaSign-Signature` tiene la forma `t=<unix>,v1=<hex>`, donde `v1` es `HMAC-SHA256(secret, \"<t>.<cuerpo>\")` en hexadecimal. Para verificar:\n\n1. Separá `t` y `v1`.\n2. Calculá el HMAC con tu secreto sobre el texto `t`, un punto y el **cuerpo crudo**, byte por byte como llegó (no el JSON vuelto a serializar).\n3. Comparalo con `v1` en tiempo constante.\n4. Rechazá entregas con `t` de más de 5 minutos para evitar repeticiones.",
+    "El encabezado `CalaSign-Signature` tiene la forma `t=<unix>,v1=<hex>`, donde `v1` es `HMAC-SHA256(secret, \"<t>.<cuerpo>\")` en hexadecimal. Mientras rotás el secreto, el encabezado lleva un `v1` por cada secreto vigente (`t=<unix>,v1=<nuevo>,v1=<anterior>`). Para verificar:\n\n1. Separá el encabezado por comas y leé `t` y todos los `v1`.\n2. Calculá el HMAC con tu secreto sobre el texto `t`, un punto y el **cuerpo crudo**, byte por byte como llegó (no el JSON vuelto a serializar).\n3. Comparalo en tiempo constante con cada `v1`: aceptá la entrega si alguno coincide.\n4. Rechazá entregas con `t` de más de 5 minutos para evitar repeticiones.",
   "wh.verify.warn":
     "El error más común es verificar el cuerpo ya parseado: cualquier diferencia de espacios u orden de claves rompe la firma. Configurá tu framework para darte el cuerpo crudo en esta ruta (`express.raw`, `request.get_data()`, `request.body` sin parsear).",
   "wh.c.raw": "cuerpo CRUDO, exactamente como llegó",
   "wh.c.async": "procesar fuera del pedido",
+  "wh.c.multi": "durante una rotación llegan varios v1: aceptá si alguno coincide",
   "wh.retries.h": "Reintentos",
   "wh.retries.p":
     "Una entrega cuenta como exitosa si tu servidor responde **2xx en menos de 10 segundos**. Cualquier otro código, una redirección, un error de red o un timeout es un fallo y se reintenta con espera creciente, hasta **8 intentos** en total:",
@@ -542,7 +543,7 @@ export const docsEs = {
     "Después del último intento la entrega queda `failed`. Podés ver cada entrega (código de respuesta, primeros caracteres de la respuesta, error, próximo intento) y reintentarla a mano desde **Ajustes → Integraciones** o con `POST /v1/webhook-deliveries/{id}/retry`. Si pausás un endpoint, las entregas pendientes se marcan como fallidas.",
   "wh.receive.h": "Buenas prácticas al recibir",
   "wh.receive.p":
-    "- **Respondé rápido.** Verificá la firma, guardá el evento y respondé `200`; procesá después en una cola. Si tardás más de 10 segundos, CalaSign lo cuenta como fallo y reintenta.\n- **Idempotencia.** Un mismo evento puede llegar más de una vez (reintentos, redes inestables). Guardá `id` (también viene en `CalaSign-Event-Id`) y descartá los repetidos.\n- **Sin orden garantizado.** Los eventos se entregan de forma independiente: `recipient.signed` puede llegar después de `envelope.completed`. Usá `createdAt` y, ante la duda, consultá el estado actual con `GET /v1/envelopes/{id}`.\n- **Eventos desconocidos.** Respondé `2xx` a los tipos que no manejes.\n- **Rotación del secreto.** Para cambiarlo, creá un endpoint nuevo con la misma URL, aceptá ambos secretos durante la transición y borrá el anterior.",
+    "- **Respondé rápido.** Verificá la firma, guardá el evento y respondé `200`; procesá después en una cola. Si tardás más de 10 segundos, CalaSign lo cuenta como fallo y reintenta.\n- **Idempotencia.** Un mismo evento puede llegar más de una vez (reintentos, redes inestables). Guardá `id` (también viene en `CalaSign-Event-Id`) y descartá los repetidos.\n- **Sin orden garantizado.** Los eventos se entregan de forma independiente: `recipient.signed` puede llegar después de `envelope.completed`. Usá `createdAt` y, ante la duda, consultá el estado actual con `GET /v1/envelopes/{id}`.\n- **Eventos desconocidos.** Respondé `2xx` a los tipos que no manejes.\n- **Rotación del secreto.** Usá `POST /v1/webhooks/{id}/rotate-secret`: devuelve el secreto nuevo y, durante `graceHours` (24 por defecto), cada entrega va firmada con los dos, así cambiás el secreto en tu servidor sin perder eventos.",
   "wh.test.h": "Probar",
   "wh.test.p":
     "Mandá un evento `webhook.test` a un endpoint para comprobar la conectividad y la verificación de la firma. En desarrollo podés exponer tu servidor local con un túnel (ngrok, Cloudflare Tunnel) o usar un servicio de inspección de pedidos.",
@@ -578,7 +579,7 @@ export const docsEs = {
   "err.idem.p":
     "Si un pedido de creación se corta (timeout, red), no sabés si llegó. Mandá el encabezado `Idempotency-Key` con un valor único por operación —por ejemplo, el id del pedido en tu sistema— y reintentá con el mismo valor: CalaSign ejecuta la operación una sola vez y a los reintentos les devuelve la respuesta guardada, con el encabezado `idempotent-replay: true`.",
   "err.idem.rules":
-    "- Se aplica en `POST /v1/envelopes` y `POST /v1/envelopes/{id}/send`. En el resto de los endpoints el encabezado se ignora.\n- La clave vale por credencial (API key, app OAuth o usuario) y tiene hasta 200 caracteres.\n- Misma clave con otro cuerpo u otra ruta: `409 idempotency_mismatch`.\n- Si el primer pedido todavía se está procesando: `409 idempotency_in_progress`; reintentá en unos segundos.\n- Si el pedido original falló con error, la clave se libera y podés reintentar.\n- Los SDKs agregan una clave automáticamente.",
+    "- Se aplica en `POST /v1/envelopes`, `POST /v1/envelopes/{id}/send`, `POST /v1/envelopes/from-template`, `POST /v1/envelopes/from-template/{templateId}`, `POST /v1/bulk-sends` y `POST /v1/crm/mappings/{id}/send`. En el resto de los endpoints el encabezado se ignora.\n- La clave vale por credencial (API key, app OAuth o usuario) y tiene hasta 200 caracteres.\n- Misma clave con otro cuerpo u otra ruta: `409 idempotency_mismatch`.\n- Si el primer pedido todavía se está procesando: `409 idempotency_in_progress`; reintentá en unos segundos.\n- Si el pedido original falló con error, la clave se libera y podés reintentar.\n- Los SDKs agregan una clave automáticamente.",
   "err.page.h": "Paginación",
   "err.page.p":
     "`GET /v1/envelopes` pagina por **cursor**, del más reciente al más antiguo. `limit` va de 1 a 100 (por defecto 25). Si hay más resultados, la respuesta trae `nextCursor`: pasalo como `cursor` para pedir la página siguiente; cuando es `null`, terminaste. El cursor es opaco: no lo construyas ni lo modifiques. Filtros: `status` (uno o varios separados por coma) y `q` (busca en el asunto y en el nombre o email de los destinatarios).",

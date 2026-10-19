@@ -12,6 +12,7 @@ type Op = {
   response?: z.ZodTypeAny | "pdf" | "none";
   status?: number;
   auth?: "key" | "none";
+  idempotent?: boolean;
 };
 
 const C = "CRM y ERP";
@@ -39,6 +40,7 @@ export const CRM_OPS: Op[] = [
     description: "Lee el registro (Deal de HubSpot, Zoho o Pipedrive, Opportunity de Salesforce, Contact de Zoho, Person de Pipedrive con objectType contact; en Bigin, Pipeline; Negociação de RD Station CRM —id de 24 caracteres—; Lead de Kommo con objectType deal) y sus contactos (en Pipedrive: persona principal y participantes del deal; en RD Station, los contatos de la negociação; en Kommo, el contacto principal y los demás del lead), arma el sobre con la plantilla del mapeo y lo vincula: el estado y el PDF firmado vuelven al registro. 409 crm_reauth_required si la conexión perdió acceso. `companyId` (Pipedrive/Kommo): la cuenta desde la que se envía; si la conexión del mapeo es de otra, 409 company_mismatch. Acepta Idempotency-Key.",
     body: SendFromCrmRecordInput,
     status: 201,
+    idempotent: true,
   },
   { method: "post", path: "/v1/crm/links", tag: C, summary: "Vincular un sobre a un registro", description: "Para ERP (cliente, contacto o factura) o CRM. Si el sobre ya está completo, se adjunta el PDF enseguida.", body: CreateCrmLinkInput, status: 201 },
   { method: "get", path: "/v1/crm/links", tag: C, summary: "Vínculos de un sobre", description: "Query: envelopeId (obligatorio)." },

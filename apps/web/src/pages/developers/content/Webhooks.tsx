@@ -42,12 +42,16 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 
 const app = express();
 
+// ${c("wh.c.multi")}
 function verifyCalaSign(rawBody, header, secret, toleranceSec = 300) {
-  const m = /^t=(\\d+),v1=([0-9a-f]{64})$/.exec(header ?? "");
-  if (!m) return false;
-  if (Math.abs(Date.now() / 1000 - Number(m[1])) > toleranceSec) return false;
-  const expected = createHmac("sha256", secret).update(\`\${m[1]}.\`).update(rawBody).digest();
-  return timingSafeEqual(expected, Buffer.from(m[2], "hex"));
+  const items = (header ?? "").split(",").map((kv) => kv.trim());
+  const t = Number(items.find((kv) => kv.startsWith("t="))?.slice(2));
+  if (!t || Math.abs(Date.now() / 1000 - t) > toleranceSec) return false;
+  const expected = Buffer.from(createHmac("sha256", secret).update(\`\${t}.\`).update(rawBody).digest("hex"));
+  return items
+    .filter((kv) => kv.startsWith("v1="))
+    .map((kv) => Buffer.from(kv.slice(3)))
+    .some((sig) => sig.length === expected.length && timingSafeEqual(sig, expected));
 }
 
 // ${c("wh.c.raw")}
@@ -61,17 +65,19 @@ app.post("/webhooks/calasign", express.raw({ type: "application/json" }), async 
   res.sendStatus(200);
 });`;
 
-const verifyPy = (c: (k: DocsKey) => string) => `import hashlib, hmac, json, os, re, time
+const verifyPy = (c: (k: DocsKey) => string) => `import hashlib, hmac, json, os, time
 from flask import Flask, request
 
 app = Flask(__name__)
 
+# ${c("wh.c.multi")}
 def verify_calasign(raw_body: bytes, header: str, secret: str, tolerance: int = 300) -> bool:
-    m = re.fullmatch(r"t=(\\d+),v1=([0-9a-f]{64})", header or "")
-    if not m or abs(time.time() - int(m.group(1))) > tolerance:
+    items = [kv.strip() for kv in (header or "").split(",")]
+    t = next((kv[2:] for kv in items if kv.startswith("t=")), "")
+    if not t.isdigit() or abs(time.time() - int(t)) > tolerance:
         return False
-    expected = hmac.new(secret.encode(), m.group(1).encode() + b"." + raw_body, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(expected, m.group(2))
+    expected = hmac.new(secret.encode(), t.encode() + b"." + raw_body, hashlib.sha256).hexdigest()
+    return any(hmac.compare_digest(expected, kv[3:]) for kv in items if kv.startswith("v1="))
 
 @app.post("/webhooks/calasign")
 def calasign_webhook():

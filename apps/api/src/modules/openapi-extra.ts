@@ -230,6 +230,9 @@ export const ERRORS: Record<string, Err> = {
     message: "La plantilla no queda completa con esta configuración: Faltan destinatarios para: Testigo",
     summary: "Configuración que no completa la plantilla (también invalid_role)",
   },
+  storage_provider_not_configured: { status: 409, code: "provider_not_configured", message: "Este proveedor no está configurado en el servidor", summary: "Proveedor de almacenamiento sin credenciales OAuth en el servidor" },
+  site_required: { status: 400, code: "site_required", message: "Indicá la URL del sitio de SharePoint", summary: "SharePoint sin siteUrl" },
+  too_many_connections: { status: 400, code: "too_many_connections", message: "Máximo 20 conexiones de almacenamiento por organización", summary: "Tope de 20 conexiones de almacenamiento" },
   provider_not_configured: { status: 400, code: "provider_not_configured", message: "El proveedor stripe no está configurado en este entorno", summary: "Proveedor de cobro no configurado" },
   invalid_payer: { status: 400, code: "invalid_payer", message: "El pagador tiene que ser un firmante", summary: "payerRecipientId no es un firmante del sobre" },
   invalid_logo: { status: 400, code: "invalid_logo", message: "El logo tiene que ser PNG, JPG o SVG", summary: "Formato no admitido o SVG con scripts/referencias externas" },
@@ -494,6 +497,10 @@ export function errorResponses(op: Op, oauthDenied: boolean): Record<string, unk
     // /oauth/*: errores RFC 6749, no el formato de la API.
     return { "400": { $ref: "#/components/responses/OAuthError" }, "401": { $ref: "#/components/responses/OAuthError" }, "429": { $ref: "#/components/responses/TooManyRequests" } };
   }
+  // Registro dinámico: errores RFC 7591 con el mismo formato { error, error_description }; no autentica cliente (sin 401).
+  if (op.path === "/oauth/register") {
+    return { "400": { $ref: "#/components/responses/OAuthError" }, "429": { $ref: "#/components/responses/TooManyRequests" } };
+  }
   if (auth === "key") {
     add("unauthorized");
     add("forbidden");
@@ -756,7 +763,7 @@ export function webhooksObject() {
   const params = [
     header(
       "CalaSign-Signature",
-      "t=<unix>,v1=<hex>. v1 = HMAC-SHA256(secreto whsec_…, \"<t>.<cuerpo crudo>\"). Verificar con el cuerpo tal cual llega y rechazar timestamps viejos. Se recalcula en cada intento.",
+      "t=<unix>,v1=<hex>. v1 = HMAC-SHA256(secreto whsec_…, \"<t>.<cuerpo crudo>\"). Durante el período de gracia de una rotación (POST /v1/webhooks/{id}/rotate-secret) lleva un v1 por secreto vigente (t=…,v1=<nuevo>,v1=<anterior>): aceptar si alguno coincide. Verificar con el cuerpo tal cual llega y rechazar timestamps viejos. Se recalcula en cada intento.",
     ),
     header("CalaSign-Event-Id", "Id del evento (= cuerpo.id). Igual en todos los reintentos y en todos los endpoints que lo reciben: usarlo para deduplicar."),
     header("CalaSign-Event-Type", "Tipo de evento (= cuerpo.type)."),
@@ -771,7 +778,8 @@ export function webhooksObject() {
         summary: type,
         description:
           `${text} POST JSON a la URL del endpoint, con timeout de 10 s y sin seguir redirecciones. ` +
-          "Cualquier respuesta fuera de 2xx (o un error de red) es un fallo: se reintenta hasta 8 intentos en total con espera exponencial (5 s, 10 s, 20 s… hasta 1 h). " +
+          "Cualquier respuesta fuera de 2xx (o un error de red) es un fallo: se reintenta hasta 8 intentos en total con espera exponencial (5 s, 10 s, 20 s… 320 s; unos 10 minutos en total). " +
+          "Agotados los intentos la entrega queda en status failed y se puede reenviar con POST /v1/webhook-deliveries/{id}/retry. " +
           "El orden de llegada no está garantizado.",
         parameters: params,
         requestBody: { required: true, content: { "application/json": { schema: ref("WebhookEvent") } } },

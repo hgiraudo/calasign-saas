@@ -159,8 +159,9 @@ function syncPendingSaves_(lang) {
   var unchecked = [];
   var keep = [];
   var checked = 0;
+  var authErr = null;
   list.forEach(function (p) {
-    if (checked >= 5) {
+    if (checked >= 5 || authErr) {
       unchecked.push(p);
       return;
     }
@@ -177,12 +178,19 @@ function syncPendingSaves_(lang) {
       if (status === 'declined' || status === 'voided' || status === 'expired') return; // ya no se va a firmar
       keep.push(p);
     } catch (err) {
-      if (err instanceof CsAuthRequired) throw err;
+      // Sin sesión a mitad de la vuelta: antes se cortaba sin actualizar la lista y los que ya se habían guardado en
+      // Drive se volvían a guardar (duplicados) al iniciar sesión de nuevo. Se guarda la lista y después se avisa.
+      if (err instanceof CsAuthRequired) {
+        authErr = err;
+        unchecked.push(p);
+        return;
+      }
       if (err instanceof CsApiError && err.status === 404) return; // sobre borrado o de otra organización
       keep.push(p);
     }
   });
   // Los que no se revisaron van primero: la próxima vez les toca a ellos.
   setPendingSaves_(unchecked.concat(keep));
+  if (authErr) throw authErr;
   return saved;
 }

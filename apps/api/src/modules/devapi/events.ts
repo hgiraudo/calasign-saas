@@ -274,7 +274,11 @@ export async function eventRoutes(app: FastifyInstance, s: Services) {
     // Sin cursor ni since: el stream empieza en "ahora" (no repite las últimas 24 h como el polling). Se usa el cursor
     // del último registro asentado, no una hora: una transacción abierta desde antes igual llega cuando se confirma.
     const filters: Filters = { ...f, after: startAfter };
-    res.write(`retry: 3000\n: calasign events\n\n`);
+    // Último cursor entregado entero al cliente. Va también como `id:` al abrir y en el evento `end`: si no llegaba
+    // ningún evento antes del corte (max_seconds o la red), EventSource reconectaba sin Last-Event-ID, el stream volvía
+    // a empezar en "ahora" y se perdía lo asentado entre la última lectura y la reconexión.
+    let delivered = startAfter;
+    res.write(`retry: 3000\n${delivered ? `id: ${delivered}\n` : ""}: calasign events\n\n`);
     let lastBeat = Date.now();
     let lastAuthCheck = Date.now();
     let endReason = "max_seconds";
@@ -291,13 +295,19 @@ export async function eventRoutes(app: FastifyInstance, s: Services) {
         // Un registro de evidencia puede dar dos eventos con el mismo cursor (recipient.declined + envelope.declined): el
         // `id:` va solo en el último. Si no, un corte entre los dos (max_seconds) dejaba Last-Event-ID en ese cursor y al
         // reconectar el segundo no llegaba nunca; así se repite el primero (mismo `id` de evento, deduplicable).
+        let complete = true;
         for (let i = 0; i < page.items.length; i++) {
           const ev = page.items[i];
-          if (closed || Date.now() >= deadline) break;
+          if (closed || Date.now() >= deadline) {
+            complete = false;
+            break;
+          }
           const lastOfRow = page.items[i + 1]?.cursor !== ev.cursor;
           await write(`${lastOfRow ? `id: ${ev.cursor}\n` : ""}event: ${ev.type}\ndata: ${JSON.stringify(ev)}\n\n`);
+          if (lastOfRow) delivered = ev.cursor;
         }
         if (page.nextCursor) filters.after = page.nextCursor;
+        if (complete && page.nextCursor) delivered = page.nextCursor;
         if (page.hasMore) continue;
         if (Date.now() - lastBeat > 15_000) {
           res.write(`: ping\n\n`);
@@ -305,7 +315,7 @@ export async function eventRoutes(app: FastifyInstance, s: Services) {
         }
         await new Promise((r) => setTimeout(r, 1000));
       }
-      if (!closed) res.write(`event: end\ndata: {"reason":"${endReason}"}\n\n`);
+      if (!closed) res.write(`${delivered ? `id: ${delivered}\n` : ""}event: end\ndata: {"reason":"${endReason}"}\n\n`);
     } catch (err) {
       req.log.warn({ err }, "stream de eventos cortado");
     } finally {

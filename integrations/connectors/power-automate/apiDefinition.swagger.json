@@ -118,6 +118,15 @@
             }
           },
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "type": "string",
+            "x-ms-summary": "Idempotency key",
+            "description": "Unique value for this send (for example the flow run name). If the action is retried with the same key and inputs, the envelope already created is returned instead of sending another one.",
+            "x-ms-visibility": "advanced"
+          },
+          {
             "name": "body",
             "in": "body",
             "required": true,

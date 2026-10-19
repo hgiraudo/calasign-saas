@@ -42,6 +42,7 @@
           "host": { "apiId": "/providers/Microsoft.PowerApps/apis/shared_calasign", "connectionName": "shared_calasign", "operationId": "SendFromTemplate" },
           "parameters": {
             "templateId": "@coalesce(triggerOutputs()?['body/calasign_templateid'], parameters('CalaSignTemplateId'))",
+            "Idempotency-Key": "@{workflow()?['run']?['name']}",
             "body/subject": "@{triggerOutputs()?['body/name']}",
             "body/roles": "@addProperty(json('{}'), parameters('CalaSignRole'), addProperty(addProperty(json('{}'), 'name', outputs('Get_the_primary_contact')?['body/fullname']), 'email', outputs('Get_the_primary_contact')?['body/emailaddress1']))",
             "body/metadata/recordId": "@triggerOutputs()?['body/opportunityid']",
@@ -68,7 +69,7 @@
       },
       "Mark_the_row_with_error": {
         "type": "OpenApiConnection",
-        "runAfter": { "Send_an_envelope_from_a_template": ["Failed", "TimedOut"], "Get_the_primary_contact": ["Failed"] },
+        "runAfter": { "Send_an_envelope_from_a_template": ["Failed", "Skipped", "TimedOut"] },
         "inputs": {
           "host": { "apiId": "/providers/Microsoft.PowerApps/apis/shared_commondataserviceforapps", "connectionName": "shared_commondataserviceforapps", "operationId": "UpdateRecord" },
           "parameters": {

@@ -1,8 +1,8 @@
 # CalaSign para Pipedrive
 
 El conector de Pipedrive es **nativo** de CalaSign: la organización lo conecta con OAuth en **Ajustes → CRM y ERP**,
-arma mapeos (Deal o Person → plantilla) y CalaSign devuelve al registro el estado del sobre (en un campo del Deal) y,
-al completarse, el **PDF firmado** (Files API) con una **nota** que lleva el SHA-256 y el link al sobre.
+arma mapeos (Deal o Person → plantilla) y CalaSign devuelve al registro el estado del sobre (en un campo del Deal o de la
+Person) y, al completarse, el **PDF firmado** (Files API) con una **nota** que lleva el SHA-256 y el link al sobre.
 
 Esta carpeta suma la pieza del **Pipedrive Marketplace**: una acción de app (*App Extensions → Link action*)
 «Enviar a firmar con CalaSign» en los Deals y las Persons.
@@ -35,8 +35,9 @@ Esta carpeta suma la pieza del **Pipedrive Marketplace**: una acción de app (*A
    *Persons list*.
 4. Instalala en la cuenta sandbox desde el Developer Hub y probala de punta a punta:
    - CalaSign → Ajustes → CRM y ERP → Pipedrive → **Conectar con OAuth**.
-   - Crear en Pipedrive un campo personalizado del Deal «Estado CalaSign» (texto, o opción única con las opciones que
-     vayas a escribir: p. ej. Enviado, Firmado, Rechazado, Anulado, Vencido).
+   - Crear en Pipedrive un campo personalizado del Deal «Estado CalaSign» (texto, o opción única con una opción por
+     cada valor que escribe CalaSign: `sent`, `declined`, `voided`, `expired` y, para el completado, `completed` o el
+     valor que se configure en el mapeo).
    - Crear un mapeo (Deal → plantilla; propiedad de estado «Estado CalaSign») y enviar desde un deal con la acción.
 
 Si alguien instala la app desde el Marketplace, Pipedrive vuelve al callback **sin** `state` (la instalación no la

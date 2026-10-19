@@ -194,6 +194,9 @@ export function requiredScope(url: string, method: string): OAuthScope | null | 
     return write ? "templates:write" : "templates:read";
   }
   if (url === "/v1/crm/mappings/:id/send" || url.startsWith("/v1/crm/links")) return write ? "envelopes:write" : "envelopes:read";
+  // Listar los mapeos es de quien puede enviar desde un registro (access.ts exige envelopes:create, como /send): con
+  // settings:read, un token que podía enviar con un mapeo no podía listarlos para elegirlo.
+  if (url === "/v1/crm/mappings" && !write) return "envelopes:write";
   if (url.startsWith("/v1/crm/")) return url.startsWith("/v1/crm/oauth/") ? "deny" : write ? "settings:write" : "settings:read";
   if (url === "/v1/connectors/flows/:id/send" || url.startsWith("/v1/connectors/links")) return write ? "envelopes:write" : "envelopes:read";
   if (url.startsWith("/v1/connectors/")) return url.startsWith("/v1/connectors/oauth/") ? "deny" : write ? "settings:write" : "settings:read";

@@ -336,6 +336,7 @@ await test("zapier: enviar desde plantilla con campos dinámicos y enviar PDF (s
         return [201, { envelope: { id: "env1", status: "sent" }, recipients: [] }];
       },
       "GET https://files.example.org/a.pdf": [200, null],
+      "GET https://files.example.org/gone.pdf": [401, null],
       "POST /v1/envelopes": [201, { envelope: { id: "env2" } }],
       "POST /v1/envelopes/env2/documents": [201, { id: "d1", pageCount: 1 }],
       "PUT /v1/envelopes/env2/recipients": (req) => [200, { recipients: req.body.recipients.map((r, i) => ({ ...r, id: `r${i}` })) }],
@@ -360,6 +361,11 @@ await test("zapier: enviar desde plantilla con campos dinámicos y enviar PDF (s
   assert.equal(doc.status, "sent");
   const fileReq = log.find((r) => r.url === "https://files.example.org/a.pdf");
   assert.equal(fileReq.headers.Authorization, undefined, "la API key no va a URLs de terceros");
+  // Un 401 del host del archivo no es "CalaSign rejected the API key".
+  await assert.rejects(
+    zapApp.creates.send_document.operation.perform(z, { ...bundle, inputData: { file: "https://files.example.org/gone.pdf", subject: "PDF", signers: [{ name: "Ana", email: "a@x.com" }] } }),
+    /Could not download the file \(HTTP 401\)/,
+  );
   await assert.rejects(zapApp.creates.void_envelope.operation.perform(z, { ...bundle, inputData: { envelope_id: "bad", reason: "x" } }), /no está enviado/);
 });
 
@@ -599,6 +605,13 @@ await test("dynamics 365: web resource (enviar a firmar / ver en CalaSign) con X
   assert.equal(CS.canSend(form), true);
   const noCols = { getAttribute: () => null, ui: form.ui, data: form.data };
   assert.equal(CS.canSend(noCols), false);
+  // Si no se pudo guardar, la fila vuelve a su estado y el botón se puede volver a usar.
+  values.calasign_sendforsignature = false;
+  const failing = { ...form, data: { save: () => Promise.reject(new Error("falta un campo obligatorio")) } };
+  assert.equal(await CS.sendForSignature(failing), false);
+  assert.equal(values.calasign_status, "declined");
+  assert.equal(values.calasign_sendforsignature, false);
+  assert.equal(CS.canSend(failing), true);
 });
 
 await test("dynamics 365: setup-dataverse crea publicador, solución, columnas y web resource (idempotente)", async () => {
@@ -641,6 +654,10 @@ await test("dynamics 365: flujos con JSON válido que usan las operaciones del c
     assert.ok(used.length > 0, f);
     for (const op of used) assert.ok(ops.has(op), `${f}: ${op}`);
   }
+  // runAfter con varias acciones exige TODAS las condiciones: con el contacto fallido el envío queda Skipped, así que
+  // la marca de error tiene que depender solo del envío (Failed, TimedOut o Skipped) o no corre nunca.
+  const send = JSON.parse(readFileSync(C("dynamics365/flows/calasign-send-on-request.json"), "utf8")).definition.actions;
+  assert.deepEqual(send.Mark_the_row_with_error.runAfter, { Send_an_envelope_from_a_template: ["Failed", "Skipped", "TimedOut"] });
 });
 
 // ───────── 8. Pipedrive (acción de app sobre el conector nativo) ─────────

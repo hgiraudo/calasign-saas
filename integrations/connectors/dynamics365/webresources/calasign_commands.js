@@ -41,13 +41,18 @@ var CalaSign = (function () {
 
   function sendForSignature(primaryControl) {
     var form = primaryControl;
+    var flag, status, prevFlag, prevStatus;
     try {
       if (!canSend(form)) {
         notify(form, "WARNING", "Este registro ya tiene un sobre de CalaSign en curso (" + statusOf(form) + ").");
         return Promise.resolve(false);
       }
-      attr(form, "calasign_sendforsignature").setValue(true);
-      attr(form, "calasign_status").setValue("requested");
+      flag = attr(form, "calasign_sendforsignature");
+      status = attr(form, "calasign_status");
+      prevFlag = flag.getValue();
+      prevStatus = status.getValue();
+      flag.setValue(true);
+      status.setValue("requested");
     } catch (e) {
       notify(form, "ERROR", e.message);
       return Promise.resolve(false);
@@ -58,6 +63,10 @@ var CalaSign = (function () {
         return true;
       },
       function (err) {
+        // Sin guardar, la fila quedaba en "requested" en el formulario: el botón se bloqueaba ("sobre en curso") y no
+        // se podía reintentar. Se vuelven los valores anteriores para poder corregir y tocar el botón de nuevo.
+        flag.setValue(prevFlag);
+        status.setValue(prevStatus);
         notify(form, "ERROR", "No se pudo guardar: " + (err && err.message ? err.message : err));
         return false;
       }

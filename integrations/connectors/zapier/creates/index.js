@@ -120,7 +120,7 @@ const sendDocument = {
     ],
     perform: async (z, bundle) => {
       const i = bundle.inputData;
-      const fileRes = await z.request({ url: i.file, raw: true });
+      const fileRes = await z.request({ url: i.file, raw: true, skipThrowForStatus: true });
       if (fileRes.status >= 400) throw new z.errors.Error(`Could not download the file (HTTP ${fileRes.status})`, "file_download", fileRes.status);
       const bytes = await fileRes.buffer();
       const detail = await quickSend(requester(z), {

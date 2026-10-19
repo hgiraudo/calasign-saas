@@ -22,6 +22,12 @@ const RESEND_COOLDOWN_S = 30;
 const MAX_SENDS_PER_HOUR = 8;
 
 const METHOD_CHANNEL = { otp_email: "email", otp_sms: "sms", otp_whatsapp: "whatsapp" } as const;
+/**
+ * Estados del sobre en que el link admite pedir y validar el código. 'finalizing' y 'completed': quien ya firmó sigue
+ * descargando la copia en curso (copy.pdf, también mientras se sella) o el PDF final, y su sesión dura 2 horas.
+ */
+const OTP_OPEN_STATUSES = ["sent", "awaiting_certificates", "finalizing", "completed"];
+const envelopeClosed = () => new AppError(410, "envelope_closed", "El sobre ya no está disponible");
 type OtpMethod = keyof typeof METHOD_CHANNEL;
 
 const MSG = {
@@ -90,7 +96,7 @@ export async function otpRoutes(app: FastifyInstance, s: Services) {
     const { recipient: r, envelope: e } = await resolveToken(s.db, req.params.token);
     const method = r.auth_method as OtpMethod;
     if (!(method in METHOD_CHANNEL)) throw conflict("otp_not_required", "Este link no requiere código");
-    if (!["sent", "awaiting_certificates", "completed"].includes(e.status)) throw new AppError(410, "envelope_closed", "El sobre ya no está disponible");
+    if (!OTP_OPEN_STATUSES.includes(e.status)) throw envelopeClosed();
     const destination = destinationOf(r);
     if (!destination) throw conflict("otp_no_destination", "No hay a dónde enviar el código");
 
@@ -103,7 +109,8 @@ export async function otpRoutes(app: FastifyInstance, s: Services) {
     // Se reserva el código con el sobre bloqueado ANTES de enviarlo: pedidos simultáneos no esquivan la espera
     // entre envíos ni el máximo por hora (cada SMS/WhatsApp cuesta).
     await s.db.tx(async (t) => {
-      await lockEnvelope(t, e.tenant_id, e.id);
+      // El estado se vuelve a mirar con el sobre bloqueado: el de arriba se leyó sin bloqueo.
+      if (!OTP_OPEN_STATUSES.includes((await lockEnvelope(t, e.tenant_id, e.id)).status)) throw envelopeClosed();
       const last = await t.one<any>(
         `SELECT created_at, (SELECT count(*) FROM otp_challenges WHERE recipient_id = $1 AND created_at > now() - interval '1 hour') AS n
          FROM otp_challenges WHERE recipient_id = $1 ORDER BY created_at DESC LIMIT 1`,
@@ -140,12 +147,15 @@ export async function otpRoutes(app: FastifyInstance, s: Services) {
       throw new AppError(502, "otp_delivery_failed", "No se pudo enviar el código. Probá de nuevo en unos segundos.");
     }
     await s.db.tx(async (t) => {
-      await lockEnvelope(t, e.tenant_id, e.id);
+      const cur = await lockEnvelope(t, e.tenant_id, e.id);
       await t.query(
         `INSERT INTO notifications (id, tenant_id, envelope_id, recipient_id, channel, template, destination, status, provider, provider_message_id, sent_at)
          VALUES ($1,$2,$3,$4,$5,'otp',$6,'sent',$7,$8,now())`,
         [uuidv7(), e.tenant_id, e.id, r.id, channel, destination, res.provider, res.messageId],
       );
+      // El sobre se anuló, rechazó o venció mientras salía el código (el envío por SMS/WhatsApp tarda): el mensaje
+      // queda registrado, pero no se agrega un evento a la evidencia de un sobre cerrado.
+      if (!OTP_OPEN_STATUSES.includes(cur.status)) return;
       await appendEvent(t, {
         tenantId: e.tenant_id,
         envelopeId: e.id,
@@ -168,7 +178,7 @@ export async function otpRoutes(app: FastifyInstance, s: Services) {
     const { recipient: r, envelope: e } = await resolveToken(s.db, req.params.token);
     // Los mismos estados que /otp/send: un código pedido con el sobre en curso y canjeado después de anularlo, rechazarlo
     // o vencerlo agregaba recipient.authenticated / otp_failed a la evidencia de un sobre cerrado (como el consentimiento).
-    if (!["sent", "awaiting_certificates", "completed"].includes(e.status)) throw new AppError(410, "envelope_closed", "El sobre ya no está disponible");
+    if (!OTP_OPEN_STATUSES.includes(e.status)) throw envelopeClosed();
     const ch = await s.db.one<any>(
       `SELECT * FROM otp_challenges WHERE recipient_id = $1 AND verified_at IS NULL AND expires_at > now() ORDER BY created_at DESC LIMIT 1`,
       [r.id],
@@ -184,7 +194,8 @@ export async function otpRoutes(app: FastifyInstance, s: Services) {
     const ok = timingSafeEqual(Buffer.from(codeHash(r.id, input.code)), Buffer.from(ch.code_hash));
     if (!ok) {
       await s.db.tx(async (t) => {
-        await lockEnvelope(t, e.tenant_id, e.id);
+        // Con el sobre bloqueado: el estado de arriba se leyó sin bloqueo (un sobre anulado justo antes no suma eventos).
+        if (!OTP_OPEN_STATUSES.includes((await lockEnvelope(t, e.tenant_id, e.id)).status)) throw envelopeClosed();
         await appendEvent(t, {
           tenantId: e.tenant_id,
           envelopeId: e.id,
@@ -202,7 +213,10 @@ export async function otpRoutes(app: FastifyInstance, s: Services) {
     const session = randomToken();
     const actor = recipientActor(req, r);
     await s.db.tx(async (t) => {
-      await lockEnvelope(t, e.tenant_id, e.id);
+      // El estado se vuelve a leer con el sobre bloqueado: el de arriba pudo cambiar (anulado, rechazado, vencido o
+      // completado) mientras tanto, y con el viejo se registraba la autenticación en un sobre cerrado.
+      const cur = await lockEnvelope(t, e.tenant_id, e.id);
+      if (!OTP_OPEN_STATUSES.includes(cur.status)) throw envelopeClosed();
       // Un código se canjea una sola vez (dos verificaciones concurrentes no generan dos sesiones).
       const used = await t.query(`UPDATE otp_challenges SET verified_at = now() WHERE id = $1 AND verified_at IS NULL RETURNING id`, [ch.id]);
       if (!used.length) throw new AppError(400, "otp_expired", "El código ya se usó. Pedí uno nuevo.");
@@ -219,10 +233,10 @@ export async function otpRoutes(app: FastifyInstance, s: Services) {
         data: { method: r.auth_method, destination: maskDestination(ch.destination) },
       });
       // Autoregistrado en un formulario web: con el correo ya verificado sale la invitación de respaldo (una sola vez).
-      if (r.self_registered && r.auth_method === "otp_email" && e.status === "sent") {
+      if (r.self_registered && r.auth_method === "otp_email" && cur.status === "sent") {
         await enqueue(t, "notify", { kind: "invite", envelopeId: e.id, recipientId: r.id, tenantId: e.tenant_id }, { dedupeKey: `invite-verified:${r.id}` });
       }
-      if (r.status === "sent" && e.status === "sent") {
+      if (r.status === "sent" && cur.status === "sent") {
         const v = await t.query(`UPDATE recipients SET status = 'viewed', viewed_at = now() WHERE id = $1 AND status = 'sent' RETURNING id`, [r.id]);
         if (v.length) await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "recipient.viewed", actor });
       }

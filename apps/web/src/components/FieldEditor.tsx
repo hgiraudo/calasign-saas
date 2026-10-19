@@ -333,7 +333,19 @@ export function FieldEditor({ envelopeId, documents, signers, fields, onChange, 
                     // Un valor prellenado que ya no es una opción (se renombró o quitó) quedaba oculto: el select mostraba
                     // "—" pero se mandaba igual y el guardado fallaba con "opción inválida".
                     const stale = !!sel.value && !options.includes(sel.value);
-                    update(sel.id, { options, ...(stale ? { value: null, readOnly: false } : {}) });
+                    // Lo mismo con las condiciones de otros campos que comparan con una opción quitada o renombrada: el
+                    // select de la condición mostraba "—" pero se guardaba el valor viejo, que nunca coincide (el campo
+                    // quedaba oculto para siempre). Sin valor, el guardado avisa que la condición necesita uno.
+                    const known = new Set(options.map((o) => o.toLowerCase()));
+                    const staleCond = (c: FieldCondition) =>
+                      c.fieldId === sel.id && (c.operator === "equals" || c.operator === "not_equals") && !!c.value && !known.has(c.value.trim().toLowerCase());
+                    onChange(
+                      fieldsRef.current.map((f) => {
+                        if (f.id === sel.id) return { ...f, options, ...(stale ? { value: null, readOnly: false } : {}) };
+                        if (!f.conditions?.some(staleCond)) return f;
+                        return { ...f, conditions: f.conditions.map((c) => (staleCond(c) ? { ...c, value: null } : c)) };
+                      }),
+                    );
                   }}
                 />
                 <small className="muted">{t("edit.optionsHint")}</small>

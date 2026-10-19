@@ -354,7 +354,13 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
     }
     const actor = recipientActor(req, r);
     await s.db.tx(async (t) => {
-      await lockEnvelope(t, e.tenant_id, e.id);
+      // El sobre y el destinatario se vuelven a mirar con el bloqueo: los de arriba se leyeron antes de crear la sesión en
+      // el proveedor (I/O externa), y un sobre anulado o un destinatario reasignado mientras tanto sumaba
+      // recipient.identity_started a la evidencia de un sobre cerrado o de alguien que ya no firma.
+      const cur = await lockEnvelope(t, e.tenant_id, e.id);
+      if (cur.status !== "sent") throw new AppError(410, "envelope_closed", "El sobre ya no está disponible");
+      const rNow = await t.one<any>(`SELECT status FROM recipients WHERE id = $1`, [r.id]);
+      if (!["sent", "viewed"].includes(rNow?.status)) throw conflict("not_signable", "Ya no podés firmar este sobre");
       // Con el sobre bloqueado se vuelve a mirar: dos inicios simultáneos no crean dos verificaciones en curso
       // ni consumen dos intentos (el índice único de 0019 lo garantiza también a nivel base).
       const active = await t.one<any>(

@@ -55,6 +55,11 @@ export function IdentitySettingsPage() {
   const [busy, setBusy] = useState(false);
   if (!data) return error ? <ErrorBox error={error} /> : <Spinner />;
   const mockAvailable = data.providers.find((p) => p.id === "mock")?.configured;
+  // El proveedor guardado puede no estar configurado (por defecto es "mock", que en producción no se ofrece): el select
+  // mostraba el primero configurado pero se mandaba el guardado, y la API rechazaba todo guardado
+  // (identity_provider_unavailable). Con un solo proveedor configurado no había forma de elegirlo.
+  const configured = data.providers.filter((p) => p.configured);
+  const defaultProvider = configured.some((p) => p.id === data.defaultProvider) ? data.defaultProvider : configured[0]?.id;
 
   const save = async (e: FormEvent) => {
     e.preventDefault();
@@ -66,7 +71,7 @@ export function IdentitySettingsPage() {
         await api<IdentitySettings>("/v1/settings/identity", {
           method: "PATCH",
           body: {
-            defaultProvider: data.defaultProvider,
+            ...(defaultProvider ? { defaultProvider } : {}),
             defaultLevel: data.defaultLevel,
             nameMatchThreshold: data.nameMatchThreshold,
             maxAttempts: data.maxAttempts,
@@ -99,14 +104,12 @@ export function IdentitySettingsPage() {
           <div className="idn-grid">
             <label className="field">
               <span>{tx("idset.defaultProvider")}</span>
-              <select value={data.defaultProvider} onChange={(e) => setData({ ...data, defaultProvider: e.target.value as IdvProvider })}>
-                {data.providers
-                  .filter((p) => p.configured)
-                  .map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
+              <select value={defaultProvider ?? ""} onChange={(e) => setData({ ...data, defaultProvider: e.target.value as IdvProvider })}>
+                {configured.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
               </select>
             </label>
             <label className="field">

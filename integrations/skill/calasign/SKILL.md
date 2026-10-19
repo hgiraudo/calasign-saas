@@ -58,14 +58,21 @@ The MCP server is `{{BASE_URL}}/mcp` (Streamable HTTP, OAuth 2.0 or API key as B
    [references/fields-and-anchors.md](references/fields-and-anchors.md)). Otherwise use coordinates
    (normalized 0–1, top-left origin) — e.g. bottom of the last page. Every signer needs at least one
    `signature` field or sending fails with `envelope_incomplete`.
-3. **Create the draft**
-   - MCP: `create_envelope` (draft from a PDF given as base64 or an https URL) if the server exposes it;
-     or `create_envelope_from_template` for templates (`list_templates` first to get role names).
-   - REST: `POST /v1/envelopes` → `POST /v1/envelopes/{id}/documents` (multipart `file`) →
-     `PUT /v1/envelopes/{id}/recipients` → `PUT /v1/envelopes/{id}/fields`.
-4. **Show the summary and ask for approval** (rule 1).
-5. **Send**: `send_envelope` with `confirm: true`, or `POST /v1/envelopes/{id}/send` with an
-   `Idempotency-Key` header.
+3. **Show the summary and ask for approval** (rule 1): subject, document(s), each recipient
+   (name, e-mail/phone, role, order) and where each signs.
+4. **Create and send in ONE call** (atomic: if anything is wrong — invalid PDF, missing anchor, a
+   signer without a signature field — nothing is created):
+   - MCP: `create_envelope` (PDF as base64 or https URL, recipients, anchor fields) or
+     `create_envelope_from_template` (`list_templates` first to get role names), with
+     `send: true, confirm: true` once the user approved. Without `send` they leave a **draft** (safe)
+     that you can send later with `send_envelope`.
+   - REST: a single `POST /v1/envelopes` with `documents`, `recipients`, `fields` and `"send": true`
+     plus an `Idempotency-Key` header (see [references/rest-api.md](references/rest-api.md)); or
+     `POST /v1/envelopes/from-template` with `"send": true`. Leave `send` out to create a draft only.
+     The step-by-step endpoints (`…/documents`, `…/recipients`, `…/fields`, `…/send`) remain for
+     editing an existing draft.
+5. If you created a draft first, send it after approval: `send_envelope` with `confirm: true`, or
+   `POST /v1/envelopes/{id}/send` with an `Idempotency-Key` header.
 6. **Report**: envelope id, status, and the link `{{BASE_URL}}/app/envelopes/<id>`.
 
 ## Workflow: track, remind, void, download

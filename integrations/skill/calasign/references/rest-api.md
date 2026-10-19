@@ -19,13 +19,15 @@ Authorization: Bearer <API key (cs_live_… / cs_test_…) or OAuth access token
 
 ## Conventions
 
-- JSON in/out (`Content-Type: application/json`), except document upload (multipart, field `file`).
+- JSON in/out (`Content-Type: application/json`). PDFs go inside the JSON (`base64` or `url`) or, to avoid
+  base64, as multipart/form-data (the JSON in a `payload` part + one part per PDF).
 - Errors: `{"error": {"code": "...", "message": "...", "details": ...}}` (see errors.md).
 - Idempotency: `POST /v1/envelopes`, `POST /v1/envelopes/{id}/send` and `POST /v1/envelopes/from-template`
   accept `Idempotency-Key: <uuid>`. Retrying with the same key and body returns the stored response
   instead of creating/sending twice. **Always send one on create and send.**
 - Pagination: `GET /v1/envelopes?limit=25&cursor=<nextCursor>` (limit 1–100). Stop when `nextCursor` is null.
-- Max PDF size: 25 MB per document (configurable per environment). JSON bodies: 2 MB.
+- Max PDF size: 25 MB per document (configurable per environment). JSON bodies: 2 MB, except
+  `POST /v1/envelopes` (room for one max-size PDF in base64; use multipart for more).
 - Rate limit: ~600 requests/minute per IP; 429 → wait and retry.
 
 ## Main endpoints
@@ -33,7 +35,7 @@ Authorization: Bearer <API key (cs_live_… / cs_test_…) or OAuth access token
 | Method & path | Purpose |
 |---|---|
 | `GET /v1/envelopes?status=sent,completed&q=text&limit=&cursor=` | List (newest first) |
-| `POST /v1/envelopes` | Create draft `{subject, message?, locale?, expiresAt?, metadata?, reminderEveryDays?, allowDelegation?}` |
+| `POST /v1/envelopes` | **Create the whole envelope in one call** `{subject, message?, …, documents?, recipients?, fields?, send?}` — or an empty draft with just `{subject, …}` |
 | `GET /v1/envelopes/{id}` | Detail `{envelope, documents[], recipients[], fields[]}` |
 | `PATCH /v1/envelopes/{id}` | Edit draft (subject, message, expiry…) |
 | `DELETE /v1/envelopes/{id}` | Delete draft |
@@ -64,38 +66,54 @@ Authorization: Bearer <API key (cs_live_… / cs_test_…) or OAuth access token
 }
 ```
 
-## curl: complete flow
+## One call: create (and send) the complete envelope
+
+`POST /v1/envelopes` accepts the documents, recipients and fields, and `"send": true` (or `"status": "sent"`).
+It is **atomic** (an invalid PDF, a missing anchor or an incomplete envelope create nothing) and honours
+`Idempotency-Key`. The response is the full envelope (`{envelope, documents, recipients, fields}` with ids) and,
+for `embedded: true` signers whose turn it is, `signingUrls[{recipientId, url, expiresAt}]`.
+
+- `documents[]`: `{name?, ref?, base64 | url | file}` — `url` must be public https (no redirects, no
+  internal hosts); `file` names a multipart part.
+- `recipients[]`: the recipient object above, plus an optional `ref` (no `id` needed).
+- `fields[]`: like `PUT …/fields` (coordinates or `anchor`), but the signer is `recipient` (index in
+  `recipients`, its `ref` or its e-mail) and the document is `document` (index or `ref`). Both can be
+  omitted when there is a single signer / a single document (an anchor without `document` searches all).
 
 ```bash
 B={{BASE_URL}}; H="Authorization: Bearer $CALASIGN_API_KEY"
-EID=$(curl -sf "$B/v1/envelopes" -H "$H" -H 'Content-Type: application/json' -H "Idempotency-Key: $(uuidgen)" \
-  -d '{"subject":"Contrato de servicios","message":"Hola Ana, te comparto el contrato.","locale":"es"}' | jq -r .envelope.id)
-DOC=$(curl -sf "$B/v1/envelopes/$EID/documents" -H "$H" -F "file=@contrato.pdf;type=application/pdf" | jq -r .id)
-SIGNER=$(uuidgen | tr 'A-Z' 'a-z')
-curl -sf -X PUT "$B/v1/envelopes/$EID/recipients" -H "$H" -H 'Content-Type: application/json' \
-  -d "{\"recipients\":[{\"id\":\"$SIGNER\",\"name\":\"Ana Pérez\",\"email\":\"ana@cliente.com\",\"routingOrder\":1}]}" >/dev/null
-curl -sf -X PUT "$B/v1/envelopes/$EID/fields" -H "$H" -H 'Content-Type: application/json' \
-  -d "{\"fields\":[{\"recipientId\":\"$SIGNER\",\"type\":\"signature\",\"anchor\":{\"text\":\"[[firma]]\",\"width\":150,\"height\":40,\"offsetY\":-30}}]}" >/dev/null
-# … show the summary to the user and get explicit approval, then:
-curl -sf -X POST "$B/v1/envelopes/$EID/send" -H "$H" -H "Idempotency-Key: send-$EID" | jq '.envelope.status'
-echo "$B/app/envelopes/$EID"
+# … show the summary to the user and get explicit approval first (this call SENDS):
+jq -n --arg pdf "$(base64 -w0 contrato.pdf)" '{
+  subject: "Contrato de servicios", message: "Hola Ana, te comparto el contrato.", locale: "es",
+  documents: [{name: "contrato.pdf", base64: $pdf}],
+  recipients: [{name: "Ana Pérez", email: "ana@cliente.com"}],
+  fields: [{recipient: 0, type: "signature", anchor: {text: "[[firma]]", width: 150, height: 40, offsetY: -30}},
+           {recipient: 0, type: "date_signed", anchor: {text: "[[fecha]]", width: 100, height: 16, ignoreIfNotPresent: true}}],
+  send: true }' |
+curl -sf "$B/v1/envelopes" -H "$H" -H 'Content-Type: application/json' -H "Idempotency-Key: $(uuidgen)" -d @- |
+  jq -r '"\(.envelope.status) {{BASE_URL}}/app/envelopes/\(.envelope.id)"'
+
+# Same without base64 (multipart): the JSON in "payload", the PDF in its own part.
+curl -sf "$B/v1/envelopes" -H "$H" -H "Idempotency-Key: $(uuidgen)" \
+  -F 'payload={"subject":"Contrato","documents":[{"file":"contrato"}],"recipients":[{"name":"Ana Pérez","email":"ana@cliente.com"}],"fields":[{"type":"signature","anchor":{"text":"[[firma]]","width":150,"height":40}}],"send":true};type=application/json' \
+  -F "contrato=@contrato.pdf;type=application/pdf"
 ```
 
-Use `curl -s` (not `-sf`) when debugging to see the error body.
+Leave `send` out to create a **draft** (safe, nobody is notified) and send it later with
+`POST /v1/envelopes/{id}/send` + `Idempotency-Key`. Use `curl -s` (not `-sf`) when debugging to see the
+error body.
 
 ## Python (standard library only)
 
 ```python
-import json, os, urllib.request, uuid
+import base64, json, os, urllib.request, uuid
 
 BASE = "{{BASE_URL}}"
 KEY = os.environ["CALASIGN_API_KEY"]
 
-def call(method, path, body=None, headers=None, raw=None, content_type="application/json"):
-    data = raw if raw is not None else (json.dumps(body).encode() if body is not None else None)
-    h = {"Authorization": f"Bearer {KEY}", **(headers or {})}
-    if data is not None:
-        h["Content-Type"] = content_type
+def call(method, path, body=None, headers=None):
+    h = {"Authorization": f"Bearer {KEY}", "Content-Type": "application/json", **(headers or {})}
+    data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(BASE + path, data=data, method=method, headers=h)
     try:
         with urllib.request.urlopen(req) as r:
@@ -104,31 +122,24 @@ def call(method, path, body=None, headers=None, raw=None, content_type="applicat
     except urllib.error.HTTPError as e:
         raise RuntimeError(f"{e.code}: {e.read().decode()}") from None
 
-def upload_pdf(envelope_id, path):
-    boundary = uuid.uuid4().hex
-    name = os.path.basename(path)
-    body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{name}\"\r\n"
-            f"Content-Type: application/pdf\r\n\r\n").encode() + open(path, "rb").read() + f"\r\n--{boundary}--\r\n".encode()
-    return call("POST", f"/v1/envelopes/{envelope_id}/documents", raw=body,
-                content_type=f"multipart/form-data; boundary={boundary}")
-
-env = call("POST", "/v1/envelopes", {"subject": "Contrato", "locale": "es"}, {"Idempotency-Key": str(uuid.uuid4())})
-eid = env["envelope"]["id"]
-doc = upload_pdf(eid, "contrato.pdf")
-ana = str(uuid.uuid4())
-call("PUT", f"/v1/envelopes/{eid}/recipients", {"recipients": [{"id": ana, "name": "Ana Pérez", "email": "ana@cliente.com"}]})
-call("PUT", f"/v1/envelopes/{eid}/fields", {"fields": [
-    {"recipientId": ana, "type": "signature", "anchor": {"text": "[[firma]]", "width": 150, "height": 40, "offsetY": -30}},
-    {"recipientId": ana, "type": "date_signed", "anchor": {"text": "[[fecha]]", "width": 100, "height": 16, "ignoreIfNotPresent": True}},
-]})
-# after explicit approval:
-call("POST", f"/v1/envelopes/{eid}/send", headers={"Idempotency-Key": f"send-{eid}"})
-print(f"{BASE}/app/envelopes/{eid}")
+# after explicit approval (this call creates AND sends; drop "send" for a draft):
+env = call("POST", "/v1/envelopes", {
+    "subject": "Contrato", "locale": "es",
+    "documents": [{"name": "contrato.pdf", "base64": base64.b64encode(open("contrato.pdf", "rb").read()).decode()}],
+    "recipients": [{"name": "Ana Pérez", "email": "ana@cliente.com"}],
+    "fields": [
+        {"recipient": 0, "type": "signature", "anchor": {"text": "[[firma]]", "width": 150, "height": 40, "offsetY": -30}},
+        {"recipient": 0, "type": "date_signed", "anchor": {"text": "[[fecha]]", "width": 100, "height": 16, "ignoreIfNotPresent": True}},
+    ],
+    "send": True,
+}, {"Idempotency-Key": str(uuid.uuid4())})
+print(env["envelope"]["status"], f"{BASE}/app/envelopes/{env['envelope']['id']}")
 ```
 
-The official Python SDK (`calasign`, stdlib only: `CalaSign(api_key).envelopes.create/upload_document/
-set_recipients/set_fields/send/…`, automatic idempotency keys and retries) and the Node SDK
-(`@calasign/sdk`) wrap the same calls.
+The official Python SDK (`calasign`: `CalaSign(api_key).envelopes.create_and_send({...})`, documents with
+`content` bytes, automatic idempotency keys and retries) and the Node SDK (`@calasign/sdk`:
+`cs.envelopes.createAndSend({...})`) wrap the same call. The step-by-step methods (`upload_document`,
+`set_recipients`, `set_fields`, `send`) remain for editing an existing draft.
 
 ## Templates
 
@@ -141,4 +152,5 @@ curl -s "$B/v1/envelopes/from-template" -H "$H" -H 'Content-Type: application/js
 }'
 ```
 
-`send: false` leaves a draft to review; send it after approval with `POST …/send`.
+`send: false` leaves a draft to review; send it after approval with `POST …/send` — or pass `"send": true`
+(after approval) to create and send in one call.

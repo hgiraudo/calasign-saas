@@ -319,45 +319,39 @@ async function onReview() {
 async function onSend() {
   if (busy || !pending) return;
   const p = pending;
-  let envelopeId = null;
-  setBusy(true, t("stepCreate"));
+  setBusy(true, t("stepSend"));
   try {
-    const created = await api("/v1/envelopes", {
-      json: { subject: p.subject, message: p.message || null, locale: envelopeLocale(), metadata: { source: `office-${host}` } },
-      idempotencyKey: p.createKey,
-    });
-    envelopeId = created.envelope.id;
-
-    message(t("stepUpload"));
-    const form = new FormData();
-    const name = /\.pdf$/i.test(p.docName) ? p.docName : `${p.docName}.pdf`;
-    form.append("file", new Blob([p.bytes], { type: "application/pdf" }), name.slice(0, 200));
-    const docInfo = await api(`/v1/envelopes/${envelopeId}/documents`, { form });
-
-    message(t("stepRecipients"));
-    const ids = p.signers.map(() => uuid());
-    await api(`/v1/envelopes/${envelopeId}/recipients`, {
-      method: "PUT",
-      json: {
-        recipients: p.signers.map((s, i) => ({ id: ids[i], role: "signer", routingOrder: s.order, name: s.name, email: s.email, channels: ["email"], locale: envelopeLocale() })),
-      },
-    });
-
-    message(t("stepFields"));
+    // UNA sola llamada (POST /v1/envelopes con el PDF, los firmantes, los campos y send): atómica, así que si algo
+    // falla no queda un borrador a medias. Va como multipart (el JSON en `payload` y el PDF en su parte) para no
+    // inflarlo en base64. La Idempotency-Key es de este envío: reintentar después de un corte de red no duplica nada.
+    const name = (/\.pdf$/i.test(p.docName) ? p.docName : `${p.docName}.pdf`).slice(0, 200);
     const fields =
       p.placement === "anchor"
-        ? p.signers.flatMap((s, i) => [
+        ? p.signers.map((s, i) => ({
             // La firma queda justo encima del texto ancla (que ocupa ~10–12 pt de alto).
-            { documentId: docInfo.id, recipientId: ids[i], type: "signature", anchor: { text: s.anchor, width: 150, height: 40, offsetY: -36 } },
-          ])
+            recipient: i,
+            type: "signature",
+            anchor: { text: s.anchor, width: 150, height: 40, offsetY: -36 },
+          }))
         : p.placements.flatMap((pl) => [
-            { documentId: docInfo.id, recipientId: ids[pl.signer], type: "signature", page: pl.page, ...pl.signature },
-            { documentId: docInfo.id, recipientId: ids[pl.signer], type: "date_signed", page: pl.page, ...pl.date },
+            { recipient: pl.signer, type: "signature", page: pl.page, ...pl.signature },
+            { recipient: pl.signer, type: "date_signed", page: pl.page, ...pl.date },
           ]);
-    await api(`/v1/envelopes/${envelopeId}/fields`, { method: "PUT", json: { fields } });
-
-    message(t("stepSend"));
-    await api(`/v1/envelopes/${envelopeId}/send`, { method: "POST", idempotencyKey: `send-${envelopeId}` });
+    const payload = {
+      subject: p.subject,
+      message: p.message || null,
+      locale: envelopeLocale(),
+      metadata: { source: `office-${host}` },
+      documents: [{ file: "document", name }],
+      recipients: p.signers.map((s) => ({ role: "signer", routingOrder: s.order, name: s.name, email: s.email, channels: ["email"], locale: envelopeLocale() })),
+      fields,
+      send: true,
+    };
+    const form = new FormData();
+    form.append("payload", JSON.stringify(payload));
+    form.append("document", new Blob([p.bytes], { type: "application/pdf" }), name);
+    const created = await api("/v1/envelopes", { form, idempotencyKey: p.createKey });
+    const envelopeId = created.envelope.id;
 
     pending = null;
     message("");
@@ -369,9 +363,6 @@ async function onSend() {
     if (e instanceof ApiError && e.status === 401) {
       show("view-login");
       message(t("errSession"), "error");
-    } else if (envelopeId) {
-      show("view-send", "view-recent");
-      message(`${errorText(e)} — ${t("errDraftLeft")}`, "error", { href: appUrl(envelopeId), text: t("openInApp") });
     } else {
       show("view-confirm");
       message(errorText(e), "error");

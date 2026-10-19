@@ -9,7 +9,7 @@ import {
   type GenerateDocumentResponse,
   type TemplateAnalysis,
 } from "@calasign/shared";
-import { api, errorText } from "../lib/api";
+import { api, errorText, HttpError } from "../lib/api";
 import { formatDateTime, useI18n, confirmAction } from "../lib/i18n";
 import { useAccess } from "../lib/access";
 import { useAgrText } from "../lib/i18n-agreements";
@@ -266,7 +266,11 @@ export function DocumentTemplateEditPage() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ source, data: sampleObj ?? {}, locale: tpl?.locale, title: name }),
       });
-      if (!res.ok) throw new Error((await res.json().catch(() => null))?.error?.message ?? res.statusText);
+      if (!res.ok) {
+        // HttpError (no Error con `?? statusText`): un 502 sin cuerpo en HTTP/2 dejaba el mensaje vacío y no se veía nada.
+        const err = (await res.json().catch(() => null))?.error;
+        throw new HttpError(res.status, err?.code ?? `http_${res.status}`, err?.message || res.statusText);
+      }
       const url = URL.createObjectURL(await res.blob());
       if (win) {
         win.opener = null;

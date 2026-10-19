@@ -406,4 +406,22 @@ assert(afterRevoke.status === 401, `token revocado → 401 (fue ${afterRevoke.st
 assert(!(await api("GET", "/v1/oauth/connected-apps")).items.some((x) => x.clientId === DCR), "ya no figura como conectada");
 ok("apps conectadas: la app dinámica figura (no verificada) y al desconectarla el token deja de valer");
 
+// Una app autorizada por el propietario con scopes de ajustes y miembros no actúa como propietaria: no configura el
+// SSO (equivale a entrar como cualquiera) ni invita propietarios.
+{
+  const r2 = await register({ client_name: `Ajustes ${stamp}`, redirect_uris: [LOOP], scope: "settings:read settings:write members:read members:write" });
+  assert(r2.status === 201, `registro con scopes de ajustes: ${JSON.stringify(r2.body)}`);
+  const pk2 = pkcePair();
+  const az = { response_type: "code", client_id: r2.body.client_id, redirect_uri: LOOP, state: "st-own", code_challenge: pk2.challenge, code_challenge_method: "S256", scope: "settings:read settings:write members:read members:write" };
+  const d2 = await api("POST", "/v1/oauth/authorize/decision", { ...az, approve: true });
+  const code2 = new URL(d2.redirectTo).searchParams.get("code");
+  const t2 = await form("/oauth/token", { grant_type: "authorization_code", code: code2, redirect_uri: LOOP, code_verifier: pk2.verifier, client_id: r2.body.client_id });
+  assert(t2.status === 200 && t2.body.access_token, `token con scopes de ajustes: ${JSON.stringify(t2.body)}`);
+  const sso = await api("PUT", "/v1/settings/sso", { enabled: false, protocol: "oidc", domains: [] }, { raw: true, bearer: t2.body.access_token });
+  assert(sso.status === 403, `token OAuth del propietario no configura el SSO (fue ${sso.status})`);
+  const inv = await api("POST", "/v1/invitations", { email: `dueno+${stamp}@example.com`, role: "owner" }, { raw: true, bearer: t2.body.access_token });
+  assert(inv.status === 403, `token OAuth del propietario no invita propietarios (fue ${inv.status})`);
+  ok("un token OAuth del propietario se limita a sus scopes: sin SSO ni invitaciones de propietario");
+}
+
 console.log("\nE2E MCP OK");

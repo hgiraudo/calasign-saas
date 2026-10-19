@@ -91,6 +91,7 @@ const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
     "pt-BR": "O PDF tem conteúdo ambíguo (mostra coisas diferentes em cada leitor). Gere-o novamente a partir do original.",
     en: "The PDF has ambiguous content (it shows different things in different readers). Export it again from the original.",
   },
+  download_failed: { "pt-BR": "Não foi possível baixar o documento.", en: "The document couldn't be downloaded." },
   file_too_large: { "pt-BR": "O arquivo excede o tamanho máximo.", en: "The file exceeds the maximum size." },
   invalid_attachment: {
     "pt-BR": "Só são aceitos PDF, JPG ou PNG que não estejam danificados nem protegidos.",
@@ -133,7 +134,18 @@ export function uuid(): string {
 }
 
 export async function fetchArrayBuffer(path: string): Promise<ArrayBuffer> {
-  const res = await fetch(path, { credentials: "include" });
-  if (!res.ok) throw new HttpError(res.status, `http_${res.status}`, "No se pudo descargar el documento.");
+  let res: Response;
+  try {
+    res = await fetch(path, { credentials: "include" });
+  } catch {
+    // Sin esto se mostraba el TypeError del navegador ("Failed to fetch") en inglés y en cualquier idioma.
+    throw new HttpError(0, "network_error", "No se pudo conectar con el servidor.");
+  }
+  if (!res.ok) {
+    // Igual que api(): la sesión vencida mientras se ve el editor lleva al login en lugar de dejar páginas en blanco.
+    if (res.status === 401 && typeof window !== "undefined") window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+    // Código propio (no http_N): así se traduce para firmantes en pt-BR o en (antes el texto quedaba en español).
+    throw new HttpError(res.status, "download_failed", "No se pudo descargar el documento.");
+  }
   return res.arrayBuffer();
 }

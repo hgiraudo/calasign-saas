@@ -383,8 +383,11 @@ export async function scimRoutes(app: FastifyInstance, s: Services) {
 
   app.post("/v1/settings/scim/tokens", { preHandler: auth }, async (req, reply) => {
     const input = CreateScimTokenInput.parse(req.body);
-    const t = await s.db.one<any>(`SELECT scim_default_role FROM tenants WHERE id = $1`, [req.auth!.tenantId]);
-    assertCanGrantScimRole(req.auth!, t?.scim_default_role ?? "member");
+    // El token no solo da altas con el rol por defecto: desactiva a cualquier miembro que no sea propietario (también
+    // administradores) y arma los grupos (sumarse a uno da acceso a lo compartido con él). Con el rol por defecto
+    // "member", un rol con members:manage + settings:manage y poco más creaba un token y hacía por SCIM lo que la consola
+    // le niega (assertCanManage, assertCanAddToGroup). Lo crea quien tiene todos los permisos, o un propietario.
+    assertCanGrantScimRole(req.auth!, "admin");
     const secret = `cs_scim_${randomToken(32)}`;
     const row = await s.db.one(
       `INSERT INTO scim_tokens (id, tenant_id, name, prefix, token_hash, created_by) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,

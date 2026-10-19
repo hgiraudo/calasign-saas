@@ -236,7 +236,16 @@ export function BulkNewPage() {
               </a>
               <label className="btn btn-sm file-btn">
                 ⬆ {st("bulk.uploadCsv")}
-                <input type="file" accept=".csv,text/csv,text/plain" onChange={(e) => void onFile(e.target.files?.[0])} />
+                <input
+                  type="file"
+                  accept=".csv,text/csv,text/plain"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    // Vaciado: volver a elegir el mismo archivo (después de editar el texto pegado) no disparaba onChange.
+                    e.target.value = "";
+                    void onFile(f);
+                  }}
+                />
               </label>
               {fileName && <span className="small muted">{fileName}</span>}
             </div>

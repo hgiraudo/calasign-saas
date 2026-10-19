@@ -197,9 +197,12 @@ await bob.api("PATCH", "/v1/settings/scim", { defaultRole: "admin" }, 403);
 await owner.api("PATCH", "/v1/settings/scim", { defaultRole: "admin" });
 await bob.api("POST", "/v1/settings/scim/tokens", { name: "escalada" }, 403);
 await owner.api("PATCH", "/v1/settings/scim", { defaultRole: "member" });
-const bobScim = await bob.api("POST", "/v1/settings/scim/tokens", { name: "miembros" }, 201);
-await owner.api("DELETE", `/v1/settings/scim/tokens/${bobScim.token.id}`, undefined, 204);
-step("SCIM: sin los permisos de admin no se elige admin como rol por defecto ni se crea un token que lo otorga");
+// Un token SCIM puede sumar a cualquiera a grupos y dar de baja administradores: aunque el rol por defecto sea
+// member, crearlo exige permisos de admin.
+await bob.api("POST", "/v1/settings/scim/tokens", { name: "miembros" }, 403);
+const ownerScim = await owner.api("POST", "/v1/settings/scim/tokens", { name: "miembros" }, 201);
+await owner.api("DELETE", `/v1/settings/scim/tokens/${ownerScim.token.id}`, undefined, 204);
+step("SCIM: sin los permisos de admin no se elige admin como rol por defecto ni se crea un token SCIM");
 
 // Con members:manage pero sin todos los permisos de otro miembro, no se le baja el rol, no se lo quita ni se recorta su
 // rol personalizado (Carol es "Revisor": envelopes:view_all y audit:view, que el rol "Gente" de Bob no tiene).

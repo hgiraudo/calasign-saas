@@ -159,7 +159,17 @@ export function permissionsForScopes(scopes: readonly string[]): Set<Permission>
 export function restrictAccessToScopes(a: AuthContext) {
   if (!a.oauth || !a.access) return;
   const allowed = permissionsForScopes(a.oauth.scopes);
-  a.access = { ...a.access, permissions: new Set([...a.access.permissions].filter((p) => allowed.has(p))) };
+  // Un token de un propietario no es un propietario: los atajos "solo/salvo propietarios" (invitar o nombrar
+  // propietarios, crear roles o tokens SCIM con cualquier permiso, configurar SSO) ignoraban los scopes, y una app con
+  // members:write o settings:write podía tomar la organización entera. Ningún conjunto de scopes cubre todos los
+  // permisos (api_keys:manage y billing:manage quedan siempre afuera), así que se lo trata como administrador recortado.
+  const role = a.access.role === "owner" ? "admin" : a.access.role;
+  a.access = {
+    ...a.access,
+    role,
+    roleName: role === a.access.role ? a.access.roleName : "Administrador",
+    permissions: new Set([...a.access.permissions].filter((p) => allowed.has(p))),
+  };
 }
 
 /**

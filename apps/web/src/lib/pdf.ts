@@ -12,10 +12,25 @@ const cache = new Map<string, Promise<PDFDocumentProxy>>();
 /** Vistas que usan cada PDF ahora: uno sin uso se conserva un rato (volver a abrirlo es instantáneo) pero no para siempre. */
 const users = new Map<string, number>();
 const MAX_IDLE = 6;
+/** Olvidados (documento borrado) mientras una vista todavía los mostraba: se liberan cuando esa vista los devuelve. */
+const doomed = new Set<string>();
+
+function evict(url: string) {
+  const p = cache.get(url);
+  cache.delete(url);
+  p?.then((d) => d.destroy()).catch(() => undefined);
+}
 
 /** Toma un PDF para mostrarlo; devolverlo con releasePdf al dejar de usarlo. */
 export function acquirePdf(url: string): Promise<PDFDocumentProxy> {
   users.set(url, (users.get(url) ?? 0) + 1);
+  // Al final del orden: se liberan primero los usados hace más tiempo, no los cargados primero (uno que se vuelve a
+  // abrir seguido se descartaba igual por ser de los primeros cargados).
+  const p = cache.get(url);
+  if (p) {
+    cache.delete(url);
+    cache.set(url, p);
+  }
   return loadPdf(url);
 }
 
@@ -26,13 +41,12 @@ export function acquirePdf(url: string): Promise<PDFDocumentProxy> {
 export function releasePdf(url: string) {
   const n = (users.get(url) ?? 0) - 1;
   if (n > 0) users.set(url, n);
-  else users.delete(url);
-  const idle = [...cache.keys()].filter((u) => !users.has(u));
-  for (const u of idle.slice(0, Math.max(0, idle.length - MAX_IDLE))) {
-    const p = cache.get(u);
-    cache.delete(u);
-    p?.then((d) => d.destroy()).catch(() => undefined);
+  else {
+    users.delete(url);
+    if (doomed.delete(url)) evict(url);
   }
+  const idle = [...cache.keys()].filter((u) => !users.has(u));
+  for (const u of idle.slice(0, Math.max(0, idle.length - MAX_IDLE))) evict(u);
 }
 
 function loadPdf(url: string): Promise<PDFDocumentProxy> {
@@ -54,6 +68,11 @@ function loadPdf(url: string): Promise<PDFDocumentProxy> {
   return p;
 }
 
+/**
+ * Documento borrado: se libera ya si nadie lo muestra, o cuando lo devuelva la vista que todavía lo muestra. Antes solo
+ * se sacaba del caché sin destroy(): quedaba cargado en el worker hasta recargar la página y releasePdf ya no lo veía.
+ */
 export function forgetPdf(url: string) {
-  cache.delete(url);
+  if (users.has(url)) doomed.add(url);
+  else evict(url);
 }

@@ -127,7 +127,20 @@ export async function assembleCms(
 }
 
 /** Pide un TimeStampToken (RFC 3161) sobre un digest SHA-256. Devuelve el ContentInfo DER. */
+/** Falla de la TSA (red, HTTP, rechazo o respuesta que no corresponde): quien sella puede caer a B-B solo por esto. */
+export class TsaError extends Error {
+  override name = "TsaError";
+}
+
 export async function requestTimestampToken(url: string, digest: Uint8Array, authHeader?: string | null) {
+  try {
+    return await requestTimestampTokenRaw(url, digest, authHeader);
+  } catch (e) {
+    throw e instanceof TsaError ? e : new TsaError(e instanceof Error ? e.message : String(e));
+  }
+}
+
+async function requestTimestampTokenRaw(url: string, digest: Uint8Array, authHeader?: string | null) {
   const nonce = randomBytes(8);
   nonce[0] &= 0x7f;
   const req = new pkijs.TimeStampReq({

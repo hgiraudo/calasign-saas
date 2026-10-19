@@ -53,7 +53,7 @@ import { AppError, badRequest, conflict, notFound } from "../lib/errors";
 import { iso, sha256Hex, uuidv7 } from "../lib/util";
 import { authenticate, clientInfo, type Services } from "./context";
 import { envelopeBaseUrl } from "./white-label/brand";
-import { lockEnvelope } from "./envelopes";
+import { lockEnvelope, pastExpiry } from "./envelopes";
 import { guardedFetch, trustAnchors } from "./evidence-seal";
 import { recipientActor, resolveToken } from "./signing";
 import { normalizeRequirements } from "./certsign-requirements";
@@ -215,7 +215,7 @@ async function sessionByCode(db: Db, code: string) {
 /** El firmante sigue siendo el de turno y el PDF no cambió desde que se generó el código. */
 async function assertStillCurrent(db: Db, s: any) {
   const e = await db.one<any>(`SELECT * FROM envelopes WHERE id = $1`, [s.envelope_id]);
-  if (!e || e.status !== "awaiting_certificates") throw new AppError(410, "envelope_closed", "El sobre ya no espera firmas con certificado");
+  if (!e || e.status !== "awaiting_certificates" || pastExpiry(e)) throw new AppError(410, "envelope_closed", "El sobre ya no espera firmas con certificado");
   const pending = await currentPending(db, e.id);
   if (pending?.recipient_id !== s.recipient_id) throw conflict("not_your_turn", "No es el turno de este firmante");
   const cs = await db.one<any>(`SELECT * FROM envelope_certsign WHERE envelope_id = $1`, [e.id]);

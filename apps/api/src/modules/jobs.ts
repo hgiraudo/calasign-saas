@@ -37,6 +37,26 @@ interface Deps {
 }
 
 const LINK_KINDS: TemplateKind[] = ["invite", "reminder", "completed", "expiry_warning", "certificate_request"];
+
+/** Plantilla de WhatsApp para cada aviso; un aviso sin plantilla propia no sale por WhatsApp. */
+function whatsappTemplate(kind: TemplateKind): string | null {
+  const w = config.whatsapp;
+  switch (kind) {
+    case "invite":
+    case "reminder":
+    case "expiry_warning":
+    case "certificate_request":
+      return w.template;
+    case "completed":
+      return w.completedTemplate;
+    case "voided":
+      return w.voidedTemplate;
+    case "declined":
+      return w.declinedTemplate;
+    default:
+      return null;
+  }
+}
 const TELEGRAM_HINT = {
   es: "¿Preferís recibir los avisos por Telegram?",
   "pt-BR": "Prefere receber os avisos pelo Telegram?",
@@ -150,7 +170,12 @@ async function notify(
     if (channel === "whatsapp") to = r.phone;
     if (channel === "telegram") to = r.telegram_chat_id;
     if (!to) continue; // Telegram sin vincular: va el link de vinculación por los otros canales.
+    const waTemplate = channel === "whatsapp" ? whatsappTemplate(p.kind) : null;
+    if (channel === "whatsapp" && !waTemplate) continue;
     const nid = uuidv7();
+    // Solo el envío decide si salió: un error al registrarlo después (insert, evento) no lo marca como fallido ni hace
+    // reintentar el job, que volvería a mandarlo por todos los canales.
+    let res!: Awaited<ReturnType<typeof deliver>>;
     try {
       const extra = tgLink ? `\n\n${TELEGRAM_HINT[locale as keyof typeof TELEGRAM_HINT] ?? TELEGRAM_HINT.es} ${tgLink}` : "";
       const res = await deliver({
@@ -163,9 +188,22 @@ async function notify(
         cta: m.cta,
         locale,
         templateParams: [base.senderName, e.subject, link ?? ""],
+        ...(waTemplate ? { template: waTemplate } : {}),
         tenantId: e.tenant_id,
         ...(channel === "email" ? from : {}),
       });
+    } catch (err) {
+      errors.push(`${channel}: ${String(err)}`);
+      await d.db
+        .query(
+          `INSERT INTO notifications (id, tenant_id, envelope_id, recipient_id, channel, template, destination, status, error) VALUES ($1,$2,$3,$4,$5,$6,$7,'failed',$8)`,
+          [nid, e.tenant_id, e.id, r.id, channel, p.kind, to, String(err).slice(0, 1000)],
+        )
+        .catch((e2) => d.log.error({ err: String(e2), channel }, "no se pudo registrar el aviso fallido"));
+      continue;
+    }
+    delivered++;
+    try {
       await d.db.query(
         `INSERT INTO notifications (id, tenant_id, envelope_id, recipient_id, channel, template, destination, status, provider, provider_message_id, sent_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7,'sent',$8,$9,now())`,
@@ -181,13 +219,8 @@ async function notify(
           data: { recipientId: r.id, channel, template: p.kind, destination: maskDestination(to!), provider: res.provider },
         });
       });
-      delivered++;
     } catch (err) {
-      errors.push(`${channel}: ${String(err)}`);
-      await d.db.query(
-        `INSERT INTO notifications (id, tenant_id, envelope_id, recipient_id, channel, template, destination, status, error) VALUES ($1,$2,$3,$4,$5,$6,$7,'failed',$8)`,
-        [nid, e.tenant_id, e.id, r.id, channel, p.kind, to, String(err).slice(0, 1000)],
-      );
+      d.log.error({ err: String(err), envelopeId: e.id, channel }, "aviso enviado pero no registrado");
     }
   }
   // Si no salió por ningún canal, reintentar el job.
@@ -368,7 +401,9 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
   try {
     pdf = await sealOnce(config.seal.tsaUrl);
   } catch (err) {
-    if (!config.seal.tsaUrl || config.seal.tsaRequired) throw err;
+    // Solo una falla de la TSA cae a B-B: otro error (proveedor del sello, KMS) se reintenta con el job (si no, el
+    // sobre quedaba completado sin sello de tiempo para siempre por un error ajeno a la TSA).
+    if (!config.seal.tsaUrl || config.seal.tsaRequired || (err as Error)?.name !== "TsaError") throw err;
     // La TSA falló: si no es obligatoria, se sella en B-B y queda constancia.
     tsaError = String(err);
     timestamped = false;
@@ -498,14 +533,25 @@ export async function sweep(d: Deps) {
       d.log.error({ err: String(err), step: name }, "tarea periódica falló");
     }
   }
-  const expired = await d.db.query<any>(`SELECT id, tenant_id FROM envelopes WHERE status IN ('sent','awaiting_certificates') AND expires_at < now() LIMIT 100`);
-  for (const e of expired) {
-    await d.db.tx(async (t) => {
-      const cur = await t.one<any>(`SELECT status FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
-      if (cur?.status !== "sent" && cur?.status !== "awaiting_certificates") return;
-      await t.query(`UPDATE envelopes SET status = 'expired', updated_at = now(), version = version + 1 WHERE id = $1`, [e.id]);
-      await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "envelope.expired", actor: SYSTEM });
+  const expired = await d.db
+    .query<any>(`SELECT id, tenant_id FROM envelopes WHERE status IN ('sent','awaiting_certificates') AND expires_at < now() ORDER BY expires_at LIMIT 100`)
+    .catch((err) => {
+      d.log.error({ err: String(err), step: "expire" }, "tarea periódica falló");
+      return [] as any[];
     });
+  // De a uno con su propio manejo de errores: un sobre que falla (p. ej. una integración rota de una organización)
+  // no frena el vencimiento de los demás ni los pasos de pagos de abajo.
+  for (const e of expired) {
+    try {
+      await d.db.tx(async (t) => {
+        const cur = await t.one<any>(`SELECT status FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
+        if (cur?.status !== "sent" && cur?.status !== "awaiting_certificates") return;
+        await t.query(`UPDATE envelopes SET status = 'expired', updated_at = now(), version = version + 1 WHERE id = $1`, [e.id]);
+        await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "envelope.expired", actor: SYSTEM });
+      });
+    } catch (err) {
+      d.log.error({ err: String(err), envelopeId: e.id, step: "expire" }, "no se pudo vencer el sobre");
+    }
   }
   // Después del vencimiento, así los sobres que vencieron recién también cierran su checkout.
   await closeStaleCheckouts(d).catch((err) => d.log.error({ err: String(err), step: "payments" }, "tarea periódica falló"));

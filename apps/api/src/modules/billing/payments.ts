@@ -18,7 +18,7 @@ import { AppError, badRequest, conflict, notFound } from "../../lib/errors";
 import { decrypt, iso, randomToken, sha256Hex, uuidv7 } from "../../lib/util";
 import { authenticate, type Services } from "../context";
 import { tenantBaseUrl } from "../custom-domains";
-import { advanceRouting, lockEnvelope } from "../envelopes";
+import { advanceRouting, lockEnvelope, pastExpiry } from "../envelopes";
 import { assertLinkCurrent, resolveToken } from "../signing";
 import {
   ProviderError,
@@ -164,7 +164,8 @@ export async function markPaymentPaid(
     // El pago llegó con el sobre ya cerrado (anulado, rechazado o vencido): p. ej. una sesión de Stripe pagada antes
     // de que el barrido la venciera, o un Boleto/efectivo de Mercado Pago iniciado antes y acreditado días después.
     // El dinero se cobró, así que se registra, pero queda marcado para reembolso (refundPaymentsOnClosedEnvelopes).
-    const closed = CLOSED_STATUSES.includes(e.status);
+    // Vencido aunque el barrido no lo haya marcado todavía: el pago no completa el sobre y queda para reembolso.
+    const closed = CLOSED_STATUSES.includes(e.status) || (e.status === "sent" && pastExpiry(e));
     await t.query(
       `UPDATE envelope_payments SET status = 'paid', paid_at = now(), provider_payment_id = $2, receipt = $3,
          refund_required_at = CASE WHEN $4::boolean THEN now() ELSE refund_required_at END, updated_at = now() WHERE id = $1`,
@@ -196,7 +197,7 @@ export async function markPaymentPaid(
       });
     }
     // after_sign: si ya firmaron todos, el sobre pasa a finalizar ahora.
-    if (e.status === "sent") await advanceRouting(t, p.tenant_id, p.envelope_id, SYSTEM);
+    if (e.status === "sent" && !closed) await advanceRouting(t, p.tenant_id, p.envelope_id, SYSTEM);
   });
 }
 

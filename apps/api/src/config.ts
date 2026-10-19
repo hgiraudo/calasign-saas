@@ -76,6 +76,14 @@ export const config = {
     template: env.WHATSAPP_TEMPLATE ?? "calasign_signature_request",
     /** Plantilla aprobada para el código de verificación del firmante: recibe {{1}} el código. */
     otpTemplate: env.WHATSAPP_OTP_TEMPLATE ?? "calasign_verification_code",
+    /**
+     * Plantillas aprobadas para los otros avisos ({{1}} remitente, {{2}} asunto, {{3}} link o vacío). Sin ellas esos
+     * avisos no salen por WhatsApp (van por los otros canales): con la de "te enviaron a firmar" un sobre anulado,
+     * rechazado o completado llegaba como un pedido de firma.
+     */
+    completedTemplate: env.WHATSAPP_COMPLETED_TEMPLATE ?? null,
+    voidedTemplate: env.WHATSAPP_VOIDED_TEMPLATE ?? null,
+    declinedTemplate: env.WHATSAPP_DECLINED_TEMPLATE ?? null,
   },
   telegram: {
     botToken: env.TELEGRAM_BOT_TOKEN ?? null,

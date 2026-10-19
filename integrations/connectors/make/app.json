@@ -1,0 +1,469 @@
+{
+  "name": "calasign",
+  "label": "CalaSign",
+  "description": "Electronic signature for Latin America: send documents and templates for signature, watch envelope events and download signed PDFs.",
+  "version": "{{VERSION}}",
+  "theme": "#1F4E79",
+  "language": "en",
+  "countries": ["do", "hn", "co", "br"],
+  "base": {
+    "baseUrl": "{{BASE_URL}}",
+    "headers": {
+      "authorization": "Bearer {{ifempty(connection.accessToken, connection.apiKey)}}",
+      "user-agent": "CalaSign-Make/{{VERSION}}"
+    },
+    "response": {
+      "error": {
+        "message": "[{{statusCode}}] {{ifempty(body.error.message, body.error_description)}}",
+        "type": "{{if(statusCode = 429, 'RateLimitError', if(statusCode = 401, 'InvalidAccessTokenError', 'RuntimeError'))}}"
+      }
+    },
+    "log": { "sanitize": ["request.headers.authorization"] }
+  },
+  "commonData": {
+    "clientId": "REPLACE_WITH_CALASIGN_OAUTH_CLIENT_ID",
+    "clientSecret": "REPLACE_WITH_CALASIGN_OAUTH_CLIENT_SECRET"
+  },
+  "connections": {
+    "calasign-apikey": {
+      "label": "CalaSign (API key)",
+      "type": "basic",
+      "parameters": [
+        { "name": "apiKey", "label": "API key", "type": "password", "required": true, "help": "CalaSign → Settings → API keys (starts with cs_live_ or cs_test_)." }
+      ],
+      "communication": {
+        "url": "{{BASE_URL}}/v1/me",
+        "headers": { "authorization": "Bearer {{parameters.apiKey}}" },
+        "response": {
+          "metadata": { "type": "text", "value": "{{body.tenant.name}}" },
+          "error": { "message": "[{{statusCode}}] {{body.error.message}}" }
+        },
+        "log": { "sanitize": ["request.headers.authorization"] }
+      }
+    },
+    "calasign-oauth": {
+      "label": "CalaSign (OAuth 2.0)",
+      "type": "oauth",
+      "parameters": [],
+      "scopes": ["envelopes:read", "envelopes:write", "templates:read", "webhooks:manage", "offline_access"],
+      "communication": {
+        "authorize": {
+          "url": "{{BASE_URL}}/oauth/authorize",
+          "temp": { "codeVerifier": "{{replace(uuid, '/-/g', '')}}{{replace(uuid, '/-/g', '')}}" },
+          "qs": {
+            "response_type": "code",
+            "client_id": "{{common.clientId}}",
+            "redirect_uri": "{{oauth.localRedirectUri}}",
+            "scope": "{{join(oauth.scope, ' ')}}",
+            "state": "{{oauth.state}}",
+            "code_challenge": "{{replace(replace(replace(sha256(temp.codeVerifier, 'base64'), '/\\+/g', '-'), '/\\//g', '_'), '/=+$/', '')}}",
+            "code_challenge_method": "S256"
+          },
+          "response": { "temp": { "code": "{{query.code}}" } }
+        },
+        "token": {
+          "url": "{{BASE_URL}}/oauth/token",
+          "method": "POST",
+          "type": "urlencoded",
+          "body": {
+            "grant_type": "authorization_code",
+            "code": "{{temp.code}}",
+            "code_verifier": "{{temp.codeVerifier}}",
+            "redirect_uri": "{{oauth.localRedirectUri}}",
+            "client_id": "{{common.clientId}}",
+            "client_secret": "{{common.clientSecret}}"
+          },
+          "response": {
+            "data": {
+              "accessToken": "{{body.access_token}}",
+              "refreshToken": "{{body.refresh_token}}",
+              "expires": "{{addSeconds(now, body.expires_in)}}"
+            }
+          },
+          "log": { "sanitize": ["request.body.client_secret", "request.body.code_verifier", "response.body.access_token", "response.body.refresh_token"] }
+        },
+        "refresh": {
+          "condition": "{{data.expires < addMinutes(now, 5)}}",
+          "url": "{{BASE_URL}}/oauth/token",
+          "method": "POST",
+          "type": "urlencoded",
+          "body": {
+            "grant_type": "refresh_token",
+            "refresh_token": "{{data.refreshToken}}",
+            "client_id": "{{common.clientId}}",
+            "client_secret": "{{common.clientSecret}}"
+          },
+          "response": {
+            "data": {
+              "accessToken": "{{body.access_token}}",
+              "refreshToken": "{{body.refresh_token}}",
+              "expires": "{{addSeconds(now, body.expires_in)}}"
+            }
+          },
+          "log": { "sanitize": ["request.body.client_secret", "request.body.refresh_token", "response.body.access_token", "response.body.refresh_token"] }
+        },
+        "info": {
+          "url": "{{BASE_URL}}/v1/me",
+          "headers": { "authorization": "Bearer {{connection.accessToken}}" },
+          "response": { "metadata": { "type": "text", "value": "{{body.tenant.name}}" } },
+          "log": { "sanitize": ["request.headers.authorization"] }
+        },
+        "invalidate": {
+          "url": "{{BASE_URL}}/oauth/revoke",
+          "method": "POST",
+          "type": "urlencoded",
+          "body": { "token": "{{connection.refreshToken}}", "client_id": "{{common.clientId}}", "client_secret": "{{common.clientSecret}}" }
+        }
+      }
+    }
+  },
+  "webhooks": {
+    "envelope-event": {
+      "label": "CalaSign envelope events",
+      "type": "dedicated-attached",
+      "connection": "calasign-apikey",
+      "altConnection": "calasign-oauth",
+      "parameters": [
+        {
+          "name": "events",
+          "label": "Events",
+          "type": "select",
+          "multiple": true,
+          "required": true,
+          "default": ["envelope.completed"],
+          "options": [
+            { "label": "Envelope sent", "value": "envelope.sent" },
+            { "label": "Envelope completed", "value": "envelope.completed" },
+            { "label": "Envelope declined", "value": "envelope.declined" },
+            { "label": "Envelope voided", "value": "envelope.voided" },
+            { "label": "Envelope expired", "value": "envelope.expired" },
+            { "label": "Recipient viewed", "value": "recipient.viewed" },
+            { "label": "Recipient signed", "value": "recipient.signed" },
+            { "label": "Recipient declined", "value": "recipient.declined" },
+            { "label": "Recipient approved", "value": "recipient.approved" }
+          ]
+        }
+      ],
+      "communication": {
+        "condition": "{{body.type != 'webhook.test'}}",
+        "output": "{{calasignFlattenEvent(body)}}"
+      },
+      "attach": {
+        "url": "/v1/webhooks",
+        "method": "POST",
+        "body": { "url": "{{webhook.url}}", "events": "{{parameters.events}}", "description": "Make" },
+        "response": { "data": { "externalHookId": "{{body.webhook.id}}" } }
+      },
+      "detach": {
+        "url": "/v1/webhooks/{{webhook.externalHookId}}",
+        "method": "DELETE"
+      }
+    }
+  },
+  "rpcs": {
+    "listTemplates": {
+      "label": "List templates",
+      "connection": "calasign-apikey",
+      "altConnection": "calasign-oauth",
+      "communication": {
+        "url": "/v1/templates",
+        "response": { "iterate": "{{body.items}}", "output": { "label": "{{item.name}}", "value": "{{item.id}}" } }
+      }
+    },
+    "templateForm": {
+      "label": "Template form",
+      "connection": "calasign-apikey",
+      "altConnection": "calasign-oauth",
+      "parameters": [{ "name": "templateId", "type": "text", "required": true }],
+      "communication": {
+        "url": "/v1/templates/{{parameters.templateId}}/input-schema",
+        "response": { "output": "{{calasignTemplateForm(body)}}" }
+      }
+    }
+  },
+  "functions": ["calasignTemplateForm", "calasignRecipients", "calasignFields", "calasignFlattenEvent"],
+  "modules": {
+    "watchEnvelopeEvents": {
+      "label": "Watch Envelope Events",
+      "description": "Triggers when an envelope is sent, completed, declined, voided or expires, or a recipient views, signs, approves or declines.",
+      "typeId": "instant_trigger",
+      "webhook": "envelope-event",
+      "connection": "calasign-apikey",
+      "altConnection": "calasign-oauth",
+      "parameters": [],
+      "expect": [],
+      "communication": null,
+      "interface": [
+        { "name": "id", "label": "Event ID", "type": "text" },
+        { "name": "event", "label": "Event type", "type": "text" },
+        { "name": "created_at", "label": "Created at", "type": "date" },
+        { "name": "envelope_id", "label": "Envelope ID", "type": "text" },
+        { "name": "envelope_subject", "label": "Subject", "type": "text" },
+        { "name": "envelope_status", "label": "Status", "type": "text" },
+        { "name": "envelope_completed_at", "label": "Completed at", "type": "date" },
+        { "name": "signed_sha256", "label": "Signed PDF SHA-256", "type": "text" },
+        { "name": "metadata", "label": "Metadata", "type": "any" },
+        { "name": "recipient_id", "label": "Recipient ID", "type": "text" },
+        { "name": "recipient_name", "label": "Recipient name", "type": "text" },
+        { "name": "recipient_email", "label": "Recipient email", "type": "email" },
+        { "name": "reason", "label": "Reason", "type": "text" },
+        {
+          "name": "recipients",
+          "label": "Recipients",
+          "type": "array",
+          "spec": {
+            "type": "collection",
+            "spec": [
+              { "name": "id", "label": "ID", "type": "text" },
+              { "name": "name", "label": "Name", "type": "text" },
+              { "name": "email", "label": "Email", "type": "email" },
+              { "name": "role", "label": "Role", "type": "text" },
+              { "name": "status", "label": "Status", "type": "text" }
+            ]
+          }
+        }
+      ],
+      "samples": {
+        "id": "0190a000-0000-7000-8000-000000000001",
+        "event": "envelope.completed",
+        "envelope_id": "0190a000-0000-7000-8000-0000000000e1",
+        "envelope_subject": "Contrato de servicios",
+        "envelope_status": "completed"
+      }
+    },
+    "sendFromTemplate": {
+      "label": "Send an Envelope from a Template",
+      "description": "Creates an envelope from a template, fills each role and the prefilled fields, and sends it.",
+      "typeId": "action",
+      "connection": "calasign-apikey",
+      "altConnection": "calasign-oauth",
+      "parameters": [],
+      "expect": [
+        { "name": "templateId", "label": "Template", "type": "select", "required": true, "options": { "store": "rpc://listTemplates", "nested": "rpc://templateForm" } },
+        { "name": "subject", "label": "Subject", "type": "text", "help": "Defaults to the template subject." },
+        { "name": "message", "label": "Message", "type": "text", "multiline": true },
+        { "name": "externalId", "label": "External ID", "type": "text", "help": "Your own reference; comes back in every event as metadata.externalId." },
+        { "name": "send", "label": "Send now", "type": "boolean", "default": true }
+      ],
+      "communication": {
+        "url": "/v1/envelopes/from-template/{{parameters.templateId}}",
+        "method": "POST",
+        "body": {
+          "subject": "{{ifempty(parameters.subject, omit)}}",
+          "message": "{{ifempty(parameters.message, omit)}}",
+          "roles": "{{parameters.roles}}",
+          "prefill": "{{ifempty(parameters.prefill, omit)}}",
+          "metadata": "{{if(parameters.externalId, object('externalId', parameters.externalId), omit)}}",
+          "send": "{{parameters.send != false}}"
+        },
+        "response": { "output": "{{body}}" }
+      },
+      "interface": "@envelopeDetail",
+      "samples": "@envelopeSample"
+    },
+    "sendDocument": {
+      "label": "Send a Document for Signature",
+      "description": "Sends a PDF to one or more signers. Signatures go on the last page or on the anchor texts \\firma1\\, \\firma2\\…",
+      "typeId": "action",
+      "connection": "calasign-apikey",
+      "altConnection": "calasign-oauth",
+      "parameters": [],
+      "expect": [
+        { "name": "fileName", "label": "File name", "type": "filename", "required": true, "semantic": "file:name" },
+        { "name": "data", "label": "Data", "type": "buffer", "required": true, "semantic": "file:data" },
+        { "name": "subject", "label": "Subject", "type": "text", "required": true },
+        { "name": "message", "label": "Message", "type": "text", "multiline": true },
+        {
+          "name": "signers",
+          "label": "Signers",
+          "type": "array",
+          "required": true,
+          "spec": [
+            { "name": "name", "label": "Name", "type": "text", "required": true },
+            { "name": "email", "label": "Email", "type": "email" },
+            { "name": "phone", "label": "Phone (WhatsApp, E.164)", "type": "text" }
+          ]
+        },
+        {
+          "name": "placement",
+          "label": "Signature placement",
+          "type": "select",
+          "default": "auto",
+          "options": [
+            { "label": "Last page (automatic)", "value": "auto" },
+            { "label": "Anchor texts \\firma1\\, \\firma2\\… in the PDF", "value": "anchors" }
+          ]
+        },
+        { "name": "sequential", "label": "Sign in order", "type": "boolean", "default": false },
+        { "name": "send", "label": "Send now", "type": "boolean", "default": true }
+      ],
+      "communication": [
+        {
+          "url": "/v1/envelopes",
+          "method": "POST",
+          "body": { "subject": "{{parameters.subject}}", "message": "{{ifempty(parameters.message, omit)}}" },
+          "response": { "temp": { "envelopeId": "{{body.envelope.id}}" } }
+        },
+        {
+          "url": "/v1/envelopes/{{temp.envelopeId}}/documents",
+          "method": "POST",
+          "type": "multipart/form-data",
+          "body": { "file": { "value": "{{parameters.data}}", "options": { "filename": "{{parameters.fileName}}", "contentType": "application/pdf" } } },
+          "response": { "temp": { "documentId": "{{body.id}}", "pageCount": "{{body.pageCount}}" } }
+        },
+        {
+          "url": "/v1/envelopes/{{temp.envelopeId}}/recipients",
+          "method": "PUT",
+          "body": { "recipients": "{{calasignRecipients(parameters.signers, parameters.sequential)}}" },
+          "response": { "temp": { "recipients": "{{body.recipients}}" } }
+        },
+        {
+          "url": "/v1/envelopes/{{temp.envelopeId}}/fields",
+          "method": "PUT",
+          "body": { "fields": "{{calasignFields(temp.recipients, temp.documentId, temp.pageCount, parameters.placement)}}" }
+        },
+        {
+          "condition": "{{parameters.send != false}}",
+          "url": "/v1/envelopes/{{temp.envelopeId}}/send",
+          "method": "POST"
+        },
+        {
+          "url": "/v1/envelopes/{{temp.envelopeId}}",
+          "response": { "output": "{{body}}" }
+        }
+      ],
+      "interface": "@envelopeDetail",
+      "samples": "@envelopeSample"
+    },
+    "getEnvelope": {
+      "label": "Get an Envelope",
+      "description": "Gets an envelope with its status, documents and recipients.",
+      "typeId": "action",
+      "connection": "calasign-apikey",
+      "altConnection": "calasign-oauth",
+      "parameters": [],
+      "expect": [{ "name": "envelopeId", "label": "Envelope ID", "type": "text", "required": true }],
+      "communication": { "url": "/v1/envelopes/{{parameters.envelopeId}}", "response": { "output": "{{body}}" } },
+      "interface": "@envelopeDetail",
+      "samples": "@envelopeSample"
+    },
+    "downloadSignedDocument": {
+      "label": "Download the Signed Document",
+      "description": "Downloads the signed PDF of a completed envelope.",
+      "typeId": "action",
+      "connection": "calasign-apikey",
+      "altConnection": "calasign-oauth",
+      "parameters": [],
+      "expect": [{ "name": "envelopeId", "label": "Envelope ID", "type": "text", "required": true }],
+      "communication": {
+        "url": "/v1/envelopes/{{parameters.envelopeId}}/signed.pdf",
+        "response": { "type": "binary", "output": { "fileName": "calasign-{{parameters.envelopeId}}.pdf", "data": "{{body}}" } }
+      },
+      "interface": [
+        { "name": "fileName", "label": "File name", "type": "filename", "semantic": "file:name" },
+        { "name": "data", "label": "Data", "type": "buffer", "semantic": "file:data" }
+      ],
+      "samples": { "fileName": "calasign-0190a000-0000-7000-8000-0000000000e1.pdf" }
+    },
+    "voidEnvelope": {
+      "label": "Void an Envelope",
+      "description": "Cancels a sent envelope so it can no longer be signed.",
+      "typeId": "action",
+      "connection": "calasign-apikey",
+      "altConnection": "calasign-oauth",
+      "parameters": [],
+      "expect": [
+        { "name": "envelopeId", "label": "Envelope ID", "type": "text", "required": true },
+        { "name": "reason", "label": "Reason", "type": "text", "required": true }
+      ],
+      "communication": { "url": "/v1/envelopes/{{parameters.envelopeId}}/void", "method": "POST", "body": { "reason": "{{parameters.reason}}" }, "response": { "output": "{{body}}" } },
+      "interface": "@envelopeDetail",
+      "samples": "@envelopeSample"
+    },
+    "searchEnvelopes": {
+      "label": "Search Envelopes",
+      "description": "Lists envelopes by status or text.",
+      "typeId": "search",
+      "connection": "calasign-apikey",
+      "altConnection": "calasign-oauth",
+      "parameters": [],
+      "expect": [
+        {
+          "name": "status",
+          "label": "Status",
+          "type": "select",
+          "options": [
+            { "label": "Draft", "value": "draft" },
+            { "label": "Sent", "value": "sent" },
+            { "label": "Completed", "value": "completed" },
+            { "label": "Declined", "value": "declined" },
+            { "label": "Voided", "value": "voided" },
+            { "label": "Expired", "value": "expired" }
+          ]
+        },
+        { "name": "q", "label": "Search text", "type": "text" },
+        { "name": "limit", "label": "Limit", "type": "uinteger", "default": 25 }
+      ],
+      "communication": {
+        "url": "/v1/envelopes",
+        "qs": { "status": "{{ifempty(parameters.status, omit)}}", "q": "{{ifempty(parameters.q, omit)}}", "limit": "{{ifempty(parameters.limit, 25)}}" },
+        "response": { "iterate": "{{body.items}}", "output": "{{item}}", "limit": "{{parameters.limit}}" }
+      },
+      "interface": [
+        { "name": "id", "label": "Envelope ID", "type": "text" },
+        { "name": "subject", "label": "Subject", "type": "text" },
+        { "name": "status", "label": "Status", "type": "text" },
+        { "name": "createdAt", "label": "Created at", "type": "date" },
+        { "name": "completedAt", "label": "Completed at", "type": "date" }
+      ],
+      "samples": { "id": "0190a000-0000-7000-8000-0000000000e1", "subject": "Contrato de servicios", "status": "completed" }
+    }
+  },
+  "shared": {
+    "envelopeDetail": [
+      {
+        "name": "envelope",
+        "label": "Envelope",
+        "type": "collection",
+        "spec": [
+          { "name": "id", "label": "Envelope ID", "type": "text" },
+          { "name": "subject", "label": "Subject", "type": "text" },
+          { "name": "status", "label": "Status", "type": "text" },
+          { "name": "createdAt", "label": "Created at", "type": "date" },
+          { "name": "sentAt", "label": "Sent at", "type": "date" },
+          { "name": "completedAt", "label": "Completed at", "type": "date" },
+          { "name": "expiresAt", "label": "Expires at", "type": "date" },
+          { "name": "signedSha256", "label": "Signed PDF SHA-256", "type": "text" },
+          { "name": "metadata", "label": "Metadata", "type": "any" }
+        ]
+      },
+      {
+        "name": "documents",
+        "label": "Documents",
+        "type": "array",
+        "spec": { "type": "collection", "spec": [{ "name": "id", "label": "ID", "type": "text" }, { "name": "name", "label": "Name", "type": "text" }, { "name": "pageCount", "label": "Pages", "type": "number" }] }
+      },
+      {
+        "name": "recipients",
+        "label": "Recipients",
+        "type": "array",
+        "spec": {
+          "type": "collection",
+          "spec": [
+            { "name": "id", "label": "ID", "type": "text" },
+            { "name": "name", "label": "Name", "type": "text" },
+            { "name": "email", "label": "Email", "type": "email" },
+            { "name": "role", "label": "Role", "type": "text" },
+            { "name": "status", "label": "Status", "type": "text" },
+            { "name": "signedAt", "label": "Signed at", "type": "date" }
+          ]
+        }
+      }
+    ],
+    "envelopeSample": {
+      "envelope": { "id": "0190a000-0000-7000-8000-0000000000e1", "subject": "Contrato de servicios", "status": "sent" },
+      "documents": [{ "id": "0190a000-0000-7000-8000-0000000000d1", "name": "contrato.pdf", "pageCount": 3 }],
+      "recipients": [{ "id": "0190a000-0000-7000-8000-0000000000a1", "name": "Ana Pérez", "email": "ana@example.com", "role": "signer", "status": "sent" }]
+    }
+  }
+}

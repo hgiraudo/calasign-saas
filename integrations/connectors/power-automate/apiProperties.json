@@ -1,0 +1,20 @@
+{
+  "properties": {
+    "connectionParameters": {
+      "api_key": {
+        "type": "securestring",
+        "uiDefinition": {
+          "displayName": "API key",
+          "description": "Your CalaSign API key with the Bearer prefix, for example: Bearer cs_live_xxx. Create it in CalaSign, Settings, API keys.",
+          "tooltip": "Bearer followed by your CalaSign API key",
+          "constraints": { "tabIndex": 2, "clearText": false, "required": "true" }
+        }
+      }
+    },
+    "iconBrandColor": "#1F4E79",
+    "capabilities": [],
+    "publisher": "CalaSign",
+    "stackOwner": "CalaSign",
+    "policyTemplateInstances": []
+  }
+}

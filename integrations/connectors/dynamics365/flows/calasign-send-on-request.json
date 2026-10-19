@@ -1,0 +1,86 @@
+{
+  "$comment": "Power Automate / Logic Apps (Workflow Definition Language). CalaSign: enviar a firmar. Se dispara cuando una oportunidad pasa a calasign_sendforsignature = Sí (botón 'Enviar a firmar'), envía la plantilla al contacto principal y guarda el id y el estado del sobre. Reemplazar shared_calasign por el nombre de API del conector personalizado importado (Conectores personalizados → ... → 'API name').",
+  "definition": {
+    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+      "$connections": { "type": "Object", "defaultValue": {} },
+      "$authentication": { "type": "SecureObject", "defaultValue": {} },
+      "CalaSignTemplateId": { "type": "String", "defaultValue": "REPLACE_WITH_TEMPLATE_ID", "metadata": { "description": "Plantilla por defecto (si la fila no tiene calasign_templateid)." } },
+      "CalaSignRole": { "type": "String", "defaultValue": "Cliente", "metadata": { "description": "Nombre del rol de la plantilla que firma el contacto principal." } }
+    },
+    "triggers": {
+      "When_a_row_is_marked_for_signature": {
+        "type": "OpenApiConnectionWebhook",
+        "inputs": {
+          "host": { "apiId": "/providers/Microsoft.PowerApps/apis/shared_commondataserviceforapps", "connectionName": "shared_commondataserviceforapps", "operationId": "SubscribeWebhookTrigger" },
+          "parameters": {
+            "subscriptionRequest/message": 3,
+            "subscriptionRequest/entityname": "opportunity",
+            "subscriptionRequest/scope": 4,
+            "subscriptionRequest/filteringattributes": "calasign_sendforsignature",
+            "subscriptionRequest/filterexpression": "calasign_sendforsignature eq true"
+          },
+          "authentication": "@parameters('$authentication')"
+        }
+      }
+    },
+    "actions": {
+      "Get_the_primary_contact": {
+        "type": "OpenApiConnection",
+        "runAfter": {},
+        "inputs": {
+          "host": { "apiId": "/providers/Microsoft.PowerApps/apis/shared_commondataserviceforapps", "connectionName": "shared_commondataserviceforapps", "operationId": "GetItem" },
+          "parameters": { "entityName": "contacts", "recordId": "@triggerOutputs()?['body/_parentcontactid_value']", "$select": "fullname,emailaddress1,mobilephone" },
+          "authentication": "@parameters('$authentication')"
+        }
+      },
+      "Send_an_envelope_from_a_template": {
+        "type": "OpenApiConnection",
+        "runAfter": { "Get_the_primary_contact": ["Succeeded"] },
+        "inputs": {
+          "host": { "apiId": "/providers/Microsoft.PowerApps/apis/shared_calasign", "connectionName": "shared_calasign", "operationId": "SendFromTemplate" },
+          "parameters": {
+            "templateId": "@coalesce(triggerOutputs()?['body/calasign_templateid'], parameters('CalaSignTemplateId'))",
+            "body/subject": "@{triggerOutputs()?['body/name']}",
+            "body/roles": "@addProperty(json('{}'), parameters('CalaSignRole'), addProperty(addProperty(json('{}'), 'name', outputs('Get_the_primary_contact')?['body/fullname']), 'email', outputs('Get_the_primary_contact')?['body/emailaddress1']))",
+            "body/metadata/recordId": "@triggerOutputs()?['body/opportunityid']",
+            "body/metadata/recordType": "opportunity",
+            "body/send": true
+          },
+          "authentication": "@parameters('$authentication')"
+        }
+      },
+      "Save_the_envelope_on_the_row": {
+        "type": "OpenApiConnection",
+        "runAfter": { "Send_an_envelope_from_a_template": ["Succeeded"] },
+        "inputs": {
+          "host": { "apiId": "/providers/Microsoft.PowerApps/apis/shared_commondataserviceforapps", "connectionName": "shared_commondataserviceforapps", "operationId": "UpdateRecord" },
+          "parameters": {
+            "entityName": "opportunities",
+            "recordId": "@triggerOutputs()?['body/opportunityid']",
+            "item/calasign_envelopeid": "@outputs('Send_an_envelope_from_a_template')?['body/envelope/id']",
+            "item/calasign_status": "@outputs('Send_an_envelope_from_a_template')?['body/envelope/status']",
+            "item/calasign_sendforsignature": false
+          },
+          "authentication": "@parameters('$authentication')"
+        }
+      },
+      "Mark_the_row_with_error": {
+        "type": "OpenApiConnection",
+        "runAfter": { "Send_an_envelope_from_a_template": ["Failed", "TimedOut"], "Get_the_primary_contact": ["Failed"] },
+        "inputs": {
+          "host": { "apiId": "/providers/Microsoft.PowerApps/apis/shared_commondataserviceforapps", "connectionName": "shared_commondataserviceforapps", "operationId": "UpdateRecord" },
+          "parameters": {
+            "entityName": "opportunities",
+            "recordId": "@triggerOutputs()?['body/opportunityid']",
+            "item/calasign_status": "error",
+            "item/calasign_sendforsignature": false
+          },
+          "authentication": "@parameters('$authentication')"
+        }
+      }
+    },
+    "outputs": {}
+  }
+}

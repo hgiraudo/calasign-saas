@@ -1,0 +1,701 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "CalaSign",
+    "description": "CalaSign is an electronic signature service for Latin America. Send documents and templates for signature, track signers and download the signed PDF with its evidence.",
+    "version": "{{VERSION}}",
+    "contact": {
+      "name": "CalaSign Support",
+      "url": "{{BASE_URL}}/developers",
+      "email": "soporte@calasign.com"
+    }
+  },
+  "host": "{{HOST}}",
+  "basePath": "/",
+  "schemes": ["https"],
+  "consumes": ["application/json"],
+  "produces": ["application/json"],
+  "securityDefinitions": {
+    "api_key": {
+      "type": "apiKey",
+      "in": "header",
+      "name": "Authorization"
+    }
+  },
+  "security": [{ "api_key": [] }],
+  "x-ms-connector-metadata": [
+    { "propertyName": "Website", "propertyValue": "{{BASE_URL}}" },
+    { "propertyName": "Privacy policy", "propertyValue": "{{PRIVACY_URL}}" },
+    { "propertyName": "Categories", "propertyValue": "Productivity;Content and Files" }
+  ],
+  "x-ms-capabilities": {
+    "testConnection": { "operationId": "GetMe", "parameters": {} }
+  },
+  "paths": {
+    "/v1/me": {
+      "get": {
+        "operationId": "GetMe",
+        "summary": "Get the connected account",
+        "description": "Returns the user and organization of the connection.",
+        "x-ms-visibility": "internal",
+        "responses": {
+          "200": { "description": "OK", "schema": { "$ref": "#/definitions/Me" } }
+        }
+      }
+    },
+    "/v1/templates": {
+      "get": {
+        "operationId": "ListTemplates",
+        "summary": "List templates",
+        "description": "Lists the templates of the organization.",
+        "x-ms-visibility": "advanced",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "x-ms-summary": "Search",
+            "description": "Text to search in the template name or description.",
+            "x-ms-visibility": "advanced"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "items": { "type": "array", "items": { "$ref": "#/definitions/Template" }, "x-ms-summary": "Templates", "description": "Templates." }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/templates/{id}/input-schema": {
+      "get": {
+        "operationId": "GetTemplateInputSchema",
+        "summary": "Get the input form of a template",
+        "description": "Returns the roles and prefillable fields of a template as JSON Schema.",
+        "x-ms-visibility": "internal",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "type": "string", "x-ms-summary": "Template ID", "description": "Template identifier." }
+        ],
+        "responses": {
+          "200": { "description": "OK", "schema": { "$ref": "#/definitions/TemplateInputSchema" } }
+        }
+      }
+    },
+    "/v1/envelopes/from-template/{templateId}": {
+      "post": {
+        "operationId": "SendFromTemplate",
+        "summary": "Send an envelope from a template",
+        "description": "Creates an envelope from a template, assigns a recipient to each role, prefills fields and sends it.",
+        "x-ms-visibility": "important",
+        "parameters": [
+          {
+            "name": "templateId",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "x-ms-summary": "Template",
+            "description": "Template to use.",
+            "x-ms-url-encoding": "single",
+            "x-ms-dynamic-values": {
+              "operationId": "ListTemplates",
+              "parameters": {},
+              "value-collection": "items",
+              "value-path": "id",
+              "value-title": "name"
+            },
+            "x-ms-dynamic-list": {
+              "operationId": "ListTemplates",
+              "parameters": {},
+              "itemsPath": "items",
+              "itemValuePath": "id",
+              "itemTitlePath": "name"
+            }
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "required": ["roles"],
+              "properties": {
+                "subject": { "type": "string", "x-ms-summary": "Subject", "description": "Envelope subject. Defaults to the template subject." },
+                "message": { "type": "string", "x-ms-summary": "Message", "description": "Message for the recipients.", "x-ms-visibility": "advanced" },
+                "roles": {
+                  "type": "object",
+                  "x-ms-summary": "Recipients",
+                  "description": "One recipient for each template role.",
+                  "x-ms-dynamic-schema": {
+                    "operationId": "GetTemplateInputSchema",
+                    "parameters": { "id": { "parameter": "templateId" } },
+                    "value-path": "rolesSchema"
+                  },
+                  "x-ms-dynamic-properties": {
+                    "operationId": "GetTemplateInputSchema",
+                    "parameters": { "id": { "parameterReference": "templateId" } },
+                    "itemValuePath": "rolesSchema"
+                  }
+                },
+                "prefill": {
+                  "type": "object",
+                  "x-ms-summary": "Prefilled fields",
+                  "description": "Values for the template fields.",
+                  "x-ms-dynamic-schema": {
+                    "operationId": "GetTemplateInputSchema",
+                    "parameters": { "id": { "parameter": "templateId" } },
+                    "value-path": "prefillSchema"
+                  },
+                  "x-ms-dynamic-properties": {
+                    "operationId": "GetTemplateInputSchema",
+                    "parameters": { "id": { "parameterReference": "templateId" } },
+                    "itemValuePath": "prefillSchema"
+                  }
+                },
+                "expiresAt": { "type": "string", "format": "date-time", "x-ms-summary": "Expires at", "description": "Expiration date and time (ISO 8601).", "x-ms-visibility": "advanced" },
+                "metadata": { "$ref": "#/definitions/MetadataInput" },
+                "send": { "type": "boolean", "default": true, "x-ms-summary": "Send now", "description": "Send the envelope now. If false, it is left as a draft.", "x-ms-visibility": "advanced" }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "201": { "description": "Created", "schema": { "$ref": "#/definitions/EnvelopeDetail" } }
+        }
+      }
+    },
+    "/v1/envelopes": {
+      "get": {
+        "operationId": "ListEnvelopes",
+        "summary": "List envelopes",
+        "description": "Lists envelopes, most recent first.",
+        "x-ms-visibility": "advanced",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "x-ms-summary": "Status",
+            "description": "Filter by status.",
+            "enum": ["draft", "sent", "completed", "declined", "voided", "expired"]
+          },
+          { "name": "q", "in": "query", "required": false, "type": "string", "x-ms-summary": "Search", "description": "Text in the subject or in a recipient name or email." },
+          { "name": "limit", "in": "query", "required": false, "type": "integer", "default": 25, "x-ms-summary": "Limit", "description": "Maximum number of envelopes (1 to 100).", "x-ms-visibility": "advanced" },
+          { "name": "cursor", "in": "query", "required": false, "type": "string", "x-ms-summary": "Cursor", "description": "Next page cursor from a previous call.", "x-ms-visibility": "advanced" }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "items": { "type": "array", "items": { "$ref": "#/definitions/EnvelopeSummary" }, "x-ms-summary": "Envelopes", "description": "Envelopes." },
+                "nextCursor": { "type": "string", "x-ms-summary": "Next cursor", "description": "Cursor for the next page, empty on the last page." }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "CreateDraftEnvelope",
+        "summary": "Create a draft envelope",
+        "description": "Creates an empty draft envelope. Then add documents, recipients and fields, and send it.",
+        "x-ms-visibility": "advanced",
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "required": ["subject"],
+              "properties": {
+                "subject": { "type": "string", "x-ms-summary": "Subject", "description": "Envelope subject." },
+                "message": { "type": "string", "x-ms-summary": "Message", "description": "Message for the recipients." },
+                "expiresAt": { "type": "string", "format": "date-time", "x-ms-summary": "Expires at", "description": "Expiration date and time (ISO 8601).", "x-ms-visibility": "advanced" },
+                "metadata": { "$ref": "#/definitions/MetadataInput" }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "201": { "description": "Created", "schema": { "$ref": "#/definitions/EnvelopeDetail" } }
+        }
+      }
+    },
+    "/v1/envelopes/{id}/documents": {
+      "post": {
+        "operationId": "AddDocument",
+        "summary": "Add a PDF document to a draft",
+        "description": "Uploads a PDF file to a draft envelope.",
+        "x-ms-visibility": "advanced",
+        "consumes": ["multipart/form-data"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "type": "string", "x-ms-summary": "Envelope ID", "description": "Draft envelope identifier." },
+          { "name": "file", "in": "formData", "required": true, "type": "file", "x-ms-summary": "File content", "description": "PDF file content." }
+        ],
+        "responses": {
+          "201": { "description": "Created", "schema": { "$ref": "#/definitions/Document" } }
+        }
+      }
+    },
+    "/v1/envelopes/{id}/recipients": {
+      "put": {
+        "operationId": "SetRecipients",
+        "summary": "Set the recipients of a draft",
+        "description": "Replaces the recipient list of a draft envelope.",
+        "x-ms-visibility": "advanced",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "type": "string", "x-ms-summary": "Envelope ID", "description": "Draft envelope identifier." },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "required": ["recipients"],
+              "properties": {
+                "recipients": {
+                  "type": "array",
+                  "x-ms-summary": "Recipients",
+                  "description": "Recipients of the envelope.",
+                  "items": { "$ref": "#/definitions/RecipientInput" }
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": { "description": "OK", "schema": { "$ref": "#/definitions/EnvelopeDetail" } }
+        }
+      }
+    },
+    "/v1/envelopes/{id}/fields": {
+      "put": {
+        "operationId": "SetFields",
+        "summary": "Set the fields of a draft",
+        "description": "Replaces the fields of a draft envelope. Place each field by an anchor text of the PDF or by normalized coordinates.",
+        "x-ms-visibility": "advanced",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "type": "string", "x-ms-summary": "Envelope ID", "description": "Draft envelope identifier." },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "required": ["fields"],
+              "properties": {
+                "fields": {
+                  "type": "array",
+                  "x-ms-summary": "Fields",
+                  "description": "Fields of the envelope.",
+                  "items": { "$ref": "#/definitions/FieldInput" }
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": { "description": "OK", "schema": { "$ref": "#/definitions/EnvelopeDetail" } }
+        }
+      }
+    },
+    "/v1/envelopes/{id}/send": {
+      "post": {
+        "operationId": "SendEnvelope",
+        "summary": "Send a draft envelope",
+        "description": "Sends a draft envelope that has documents, recipients and a signature field for each signer.",
+        "x-ms-visibility": "advanced",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "type": "string", "x-ms-summary": "Envelope ID", "description": "Draft envelope identifier." }
+        ],
+        "responses": {
+          "200": { "description": "OK", "schema": { "$ref": "#/definitions/EnvelopeDetail" } }
+        }
+      }
+    },
+    "/v1/envelopes/{id}": {
+      "get": {
+        "operationId": "GetEnvelope",
+        "summary": "Get envelope status",
+        "description": "Returns the envelope with its status, documents and recipients.",
+        "x-ms-visibility": "important",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "type": "string", "x-ms-summary": "Envelope ID", "description": "Envelope identifier." }
+        ],
+        "responses": {
+          "200": { "description": "OK", "schema": { "$ref": "#/definitions/EnvelopeDetail" } }
+        }
+      }
+    },
+    "/v1/envelopes/{id}/signed.pdf": {
+      "get": {
+        "operationId": "DownloadSignedDocument",
+        "summary": "Download the signed document",
+        "description": "Downloads the signed PDF of a completed envelope.",
+        "x-ms-visibility": "important",
+        "produces": ["application/pdf"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "type": "string", "x-ms-summary": "Envelope ID", "description": "Completed envelope identifier." }
+        ],
+        "responses": {
+          "200": { "description": "Signed PDF", "schema": { "type": "string", "format": "binary", "x-ms-summary": "File content", "description": "Signed PDF content." } }
+        }
+      }
+    },
+    "/v1/envelopes/{id}/void": {
+      "post": {
+        "operationId": "VoidEnvelope",
+        "summary": "Void an envelope",
+        "description": "Cancels a sent envelope so that it can no longer be signed.",
+        "x-ms-visibility": "advanced",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "type": "string", "x-ms-summary": "Envelope ID", "description": "Envelope identifier." },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "required": ["reason"],
+              "properties": {
+                "reason": { "type": "string", "x-ms-summary": "Reason", "description": "Reason shown to the recipients." }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": { "description": "OK", "schema": { "$ref": "#/definitions/EnvelopeDetail" } }
+        }
+      }
+    },
+    "/v1/envelopes/{id}/remind": {
+      "post": {
+        "operationId": "RemindRecipients",
+        "summary": "Remind pending recipients",
+        "description": "Sends a reminder to the recipients who still have to act.",
+        "x-ms-visibility": "advanced",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "type": "string", "x-ms-summary": "Envelope ID", "description": "Envelope identifier." }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "notified": { "type": "integer", "x-ms-summary": "Notified", "description": "Number of recipients notified." }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/webhooks": {
+      "x-ms-notification-content": {
+        "description": "Envelope event",
+        "schema": { "$ref": "#/definitions/EnvelopeEvent" }
+      },
+      "post": {
+        "operationId": "OnEnvelopeEvent",
+        "summary": "When an envelope event occurs",
+        "description": "Triggers when an envelope is sent, completed, declined, voided or expires, or when a recipient views, signs, approves or declines.",
+        "x-ms-trigger": "single",
+        "x-ms-trigger-hint": "To see it work, send or sign an envelope in CalaSign.",
+        "x-ms-visibility": "important",
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "required": ["url", "events"],
+              "properties": {
+                "url": {
+                  "type": "string",
+                  "x-ms-notification-url": true,
+                  "x-ms-visibility": "internal",
+                  "x-ms-summary": "Callback URL",
+                  "description": "URL that receives the events."
+                },
+                "events": {
+                  "type": "array",
+                  "x-ms-summary": "Events",
+                  "description": "Events that start the flow.",
+                  "default": ["envelope.completed"],
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "envelope.sent",
+                      "envelope.completed",
+                      "envelope.declined",
+                      "envelope.voided",
+                      "envelope.expired",
+                      "recipient.viewed",
+                      "recipient.signed",
+                      "recipient.declined",
+                      "recipient.approved"
+                    ]
+                  }
+                },
+                "description": {
+                  "type": "string",
+                  "default": "Power Automate",
+                  "x-ms-visibility": "internal",
+                  "x-ms-summary": "Description",
+                  "description": "Description of the subscription."
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "201": { "description": "Created", "schema": { "$ref": "#/definitions/WebhookCreated" } }
+        }
+      }
+    },
+    "/v1/webhooks/{id}": {
+      "delete": {
+        "operationId": "DeleteWebhook",
+        "summary": "Delete a webhook subscription",
+        "description": "Deletes a webhook subscription. Power Automate calls it when the flow is deleted.",
+        "x-ms-visibility": "internal",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "type": "string", "x-ms-summary": "Webhook ID", "description": "Webhook identifier." }
+        ],
+        "responses": {
+          "204": { "description": "Deleted" }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "Me": {
+      "type": "object",
+      "properties": {
+        "user": {
+          "type": "object",
+          "properties": {
+            "id": { "type": "string", "x-ms-summary": "User ID", "description": "User identifier." },
+            "email": { "type": "string", "x-ms-summary": "User email", "description": "User email." },
+            "name": { "type": "string", "x-ms-summary": "User name", "description": "User name." }
+          }
+        },
+        "tenant": {
+          "type": "object",
+          "properties": {
+            "id": { "type": "string", "x-ms-summary": "Organization ID", "description": "Organization identifier." },
+            "name": { "type": "string", "x-ms-summary": "Organization", "description": "Organization name." }
+          }
+        }
+      }
+    },
+    "Template": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "x-ms-summary": "Template ID", "description": "Template identifier." },
+        "name": { "type": "string", "x-ms-summary": "Template name", "description": "Template name." },
+        "description": { "type": "string", "x-ms-summary": "Template description", "description": "Template description." },
+        "documentCount": { "type": "integer", "x-ms-summary": "Documents", "description": "Number of documents." }
+      }
+    },
+    "TemplateInputSchema": {
+      "type": "object",
+      "properties": {
+        "templateId": { "type": "string", "x-ms-summary": "Template ID", "description": "Template identifier." },
+        "name": { "type": "string", "x-ms-summary": "Template name", "description": "Template name." },
+        "rolesSchema": { "type": "object", "x-ms-summary": "Roles schema", "description": "JSON Schema of the recipients object." },
+        "prefillSchema": { "type": "object", "x-ms-summary": "Prefill schema", "description": "JSON Schema of the prefill object." }
+      }
+    },
+    "MetadataInput": {
+      "type": "object",
+      "x-ms-summary": "Metadata",
+      "description": "Your own identifiers. They come back in every event of the envelope.",
+      "x-ms-visibility": "advanced",
+      "properties": {
+        "recordId": { "type": "string", "x-ms-summary": "Record ID", "description": "Identifier of the source record, for example a Dynamics 365 row." },
+        "recordType": { "type": "string", "x-ms-summary": "Record type", "description": "Type of the source record, for example opportunity." },
+        "externalId": { "type": "string", "x-ms-summary": "External ID", "description": "Any other reference." }
+      }
+    },
+    "RecipientInput": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "x-ms-summary": "Name", "description": "Full name." },
+        "email": { "type": "string", "format": "email", "x-ms-summary": "Email", "description": "Email address." },
+        "phone": { "type": "string", "x-ms-summary": "Phone", "description": "Mobile number in E.164 format, for example +18095551234.", "x-ms-visibility": "advanced" },
+        "role": { "type": "string", "enum": ["signer", "cc", "approver"], "default": "signer", "x-ms-summary": "Role", "description": "Signer, copy or approver." },
+        "routingOrder": { "type": "integer", "default": 1, "x-ms-summary": "Routing order", "description": "Signing order. Equal numbers sign in parallel.", "x-ms-visibility": "advanced" },
+        "channels": {
+          "type": "array",
+          "x-ms-summary": "Channels",
+          "description": "Invitation channels. Defaults to email.",
+          "x-ms-visibility": "advanced",
+          "items": { "type": "string", "enum": ["email", "whatsapp", "telegram"] }
+        }
+      }
+    },
+    "FieldInput": {
+      "type": "object",
+      "required": ["documentId", "recipientId", "type"],
+      "properties": {
+        "documentId": { "type": "string", "x-ms-summary": "Document ID", "description": "Document identifier." },
+        "recipientId": { "type": "string", "x-ms-summary": "Recipient ID", "description": "Recipient identifier (must be a signer)." },
+        "type": {
+          "type": "string",
+          "enum": ["signature", "initials", "date_signed", "name", "email", "text", "checkbox", "number", "company", "title"],
+          "default": "signature",
+          "x-ms-summary": "Field type",
+          "description": "Type of field."
+        },
+        "required": { "type": "boolean", "default": true, "x-ms-summary": "Required", "description": "Whether the field is required." },
+        "label": { "type": "string", "x-ms-summary": "Label", "description": "Field label.", "x-ms-visibility": "advanced" },
+        "anchor": {
+          "type": "object",
+          "x-ms-summary": "Anchor",
+          "description": "Place the field at each occurrence of a text of the PDF.",
+          "properties": {
+            "text": { "type": "string", "x-ms-summary": "Anchor text", "description": "Text to find in the PDF, for example \\firma1\\." },
+            "width": { "type": "number", "default": 150, "x-ms-summary": "Width", "description": "Width in PDF points." },
+            "height": { "type": "number", "default": 40, "x-ms-summary": "Height", "description": "Height in PDF points." },
+            "offsetX": { "type": "number", "default": 0, "x-ms-summary": "Offset X", "description": "Horizontal offset in PDF points.", "x-ms-visibility": "advanced" },
+            "offsetY": { "type": "number", "default": 0, "x-ms-summary": "Offset Y", "description": "Vertical offset in PDF points.", "x-ms-visibility": "advanced" }
+          }
+        },
+        "page": { "type": "integer", "x-ms-summary": "Page", "description": "Page number starting at 0 (only without anchor).", "x-ms-visibility": "advanced" },
+        "x": { "type": "number", "x-ms-summary": "X", "description": "Left position from 0 to 1 (only without anchor).", "x-ms-visibility": "advanced" },
+        "y": { "type": "number", "x-ms-summary": "Y", "description": "Top position from 0 to 1 (only without anchor).", "x-ms-visibility": "advanced" },
+        "width": { "type": "number", "x-ms-summary": "Field width", "description": "Width from 0 to 1 (only without anchor).", "x-ms-visibility": "advanced" },
+        "height": { "type": "number", "x-ms-summary": "Field height", "description": "Height from 0 to 1 (only without anchor).", "x-ms-visibility": "advanced" }
+      }
+    },
+    "Document": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "x-ms-summary": "Document ID", "description": "Document identifier." },
+        "name": { "type": "string", "x-ms-summary": "Document name", "description": "File name." },
+        "pageCount": { "type": "integer", "x-ms-summary": "Pages", "description": "Number of pages." },
+        "sha256": { "type": "string", "x-ms-summary": "Document SHA-256", "description": "SHA-256 hash of the document." }
+      }
+    },
+    "Recipient": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "x-ms-summary": "Recipient ID", "description": "Recipient identifier." },
+        "name": { "type": "string", "x-ms-summary": "Recipient name", "description": "Recipient name." },
+        "email": { "type": "string", "x-ms-summary": "Recipient email", "description": "Recipient email." },
+        "phone": { "type": "string", "x-ms-summary": "Recipient phone", "description": "Recipient phone." },
+        "role": { "type": "string", "x-ms-summary": "Recipient role", "description": "signer, cc or approver." },
+        "routingOrder": { "type": "integer", "x-ms-summary": "Routing order", "description": "Signing order." },
+        "status": { "type": "string", "x-ms-summary": "Recipient status", "description": "created, sent, viewed, signed, declined, completed, delegated or reassigned." },
+        "signedAt": { "type": "string", "format": "date-time", "x-ms-summary": "Signed at", "description": "When the recipient signed." }
+      }
+    },
+    "EnvelopeDetail": {
+      "type": "object",
+      "properties": {
+        "envelope": {
+          "type": "object",
+          "properties": {
+            "id": { "type": "string", "x-ms-summary": "Envelope ID", "description": "Envelope identifier." },
+            "subject": { "type": "string", "x-ms-summary": "Subject", "description": "Envelope subject." },
+            "status": { "type": "string", "x-ms-summary": "Status", "description": "draft, sent, finalizing, completed, declined, voided, expired or awaiting_certificates." },
+            "createdAt": { "type": "string", "format": "date-time", "x-ms-summary": "Created at", "description": "Creation date." },
+            "sentAt": { "type": "string", "format": "date-time", "x-ms-summary": "Sent at", "description": "Sending date." },
+            "completedAt": { "type": "string", "format": "date-time", "x-ms-summary": "Completed at", "description": "Completion date." },
+            "expiresAt": { "type": "string", "format": "date-time", "x-ms-summary": "Expires at", "description": "Expiration date." },
+            "signedSha256": { "type": "string", "x-ms-summary": "Signed PDF SHA-256", "description": "SHA-256 hash of the signed PDF." },
+            "metadata": { "type": "object", "x-ms-summary": "Metadata", "description": "Metadata of the envelope." }
+          }
+        },
+        "documents": { "type": "array", "items": { "$ref": "#/definitions/Document" }, "x-ms-summary": "Documents", "description": "Documents." },
+        "recipients": { "type": "array", "items": { "$ref": "#/definitions/Recipient" }, "x-ms-summary": "Recipients", "description": "Recipients." }
+      }
+    },
+    "EnvelopeSummary": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "x-ms-summary": "Envelope ID", "description": "Envelope identifier." },
+        "subject": { "type": "string", "x-ms-summary": "Subject", "description": "Envelope subject." },
+        "status": { "type": "string", "x-ms-summary": "Status", "description": "Envelope status." },
+        "createdAt": { "type": "string", "format": "date-time", "x-ms-summary": "Created at", "description": "Creation date." },
+        "completedAt": { "type": "string", "format": "date-time", "x-ms-summary": "Completed at", "description": "Completion date." }
+      }
+    },
+    "EnvelopeEvent": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "x-ms-summary": "Event ID", "description": "Event identifier." },
+        "type": { "type": "string", "x-ms-summary": "Event type", "description": "Event type, for example envelope.completed." },
+        "createdAt": { "type": "string", "format": "date-time", "x-ms-summary": "Event time", "description": "When the event happened." },
+        "data": {
+          "type": "object",
+          "properties": {
+            "envelope": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string", "x-ms-summary": "Envelope ID", "description": "Envelope identifier." },
+                "subject": { "type": "string", "x-ms-summary": "Subject", "description": "Envelope subject." },
+                "status": { "type": "string", "x-ms-summary": "Status", "description": "Envelope status." },
+                "sentAt": { "type": "string", "format": "date-time", "x-ms-summary": "Sent at", "description": "Sending date." },
+                "completedAt": { "type": "string", "format": "date-time", "x-ms-summary": "Completed at", "description": "Completion date." },
+                "signedSha256": { "type": "string", "x-ms-summary": "Signed PDF SHA-256", "description": "SHA-256 hash of the signed PDF." },
+                "metadata": {
+                  "type": "object",
+                  "x-ms-summary": "Metadata",
+                  "description": "Metadata of the envelope.",
+                  "properties": {
+                    "recordId": { "type": "string", "x-ms-summary": "Record ID", "description": "Identifier of the source record." },
+                    "recordType": { "type": "string", "x-ms-summary": "Record type", "description": "Type of the source record." },
+                    "externalId": { "type": "string", "x-ms-summary": "External ID", "description": "Other reference." }
+                  }
+                },
+                "recipients": {
+                  "type": "array",
+                  "x-ms-summary": "Recipients",
+                  "description": "Recipients.",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": { "type": "string", "x-ms-summary": "Recipient ID", "description": "Recipient identifier." },
+                      "name": { "type": "string", "x-ms-summary": "Recipient name", "description": "Recipient name." },
+                      "email": { "type": "string", "x-ms-summary": "Recipient email", "description": "Recipient email." },
+                      "role": { "type": "string", "x-ms-summary": "Recipient role", "description": "Recipient role." },
+                      "status": { "type": "string", "x-ms-summary": "Recipient status", "description": "Recipient status." },
+                      "routingOrder": { "type": "integer", "x-ms-summary": "Routing order", "description": "Signing order." }
+                    }
+                  }
+                }
+              }
+            },
+            "recipientId": { "type": "string", "x-ms-summary": "Event recipient ID", "description": "Recipient of a recipient event." },
+            "reason": { "type": "string", "x-ms-summary": "Reason", "description": "Decline or void reason." }
+          }
+        }
+      }
+    },
+    "WebhookCreated": {
+      "type": "object",
+      "properties": {
+        "webhook": {
+          "type": "object",
+          "properties": {
+            "id": { "type": "string", "x-ms-summary": "Webhook ID", "description": "Webhook identifier." },
+            "url": { "type": "string", "x-ms-summary": "Webhook URL", "description": "Callback URL." }
+          }
+        },
+        "secret": { "type": "string", "x-ms-summary": "Signing secret", "description": "Secret to verify the HMAC signature.", "x-ms-visibility": "internal" }
+      }
+    }
+  }
+}

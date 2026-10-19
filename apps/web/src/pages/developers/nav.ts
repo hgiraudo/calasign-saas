@@ -126,6 +126,27 @@ export const NAV: NavGroup[] = [
     ],
   },
   {
+    title: "nav.connectors",
+    pages: [
+      {
+        path: "connectors",
+        title: "conn.title",
+        navTitle: "conn.nav",
+        headings: [
+          h("connectors", "conn.cards.h"),
+          h("before", "conn.common.h"),
+          h("power-automate", "conn.pa.h"),
+          h("zapier", "conn.zap.h"),
+          h("make", "conn.make.h"),
+          h("n8n", "conn.n8n.h"),
+          h("dynamics365", "conn.d365.h"),
+          h("api", "conn.api.h"),
+        ],
+        keywords: "power automate logic apps power apps copilot studio zapier make integromat n8n dynamics 365 dataverse business central low-code no-code ipaas webhook rest hook",
+      },
+    ],
+  },
+  {
     title: "nav.ai",
     pages: [
       { path: "ai", title: "ai.title", headings: [h("integrations", "ai.cards.h"), h("how", "ai.how.h")], keywords: "ia agentes mcp claude chatgpt gemini" },

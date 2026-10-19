@@ -15,6 +15,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build as esbuild } from "esbuild";
 import { makeZip } from "./lib/zip.mjs";
+import { buildConnectors } from "./connectors/registry.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "..");
@@ -258,6 +259,9 @@ async function main() {
   write("chatgpt/README.md", load(join(HERE, "chatgpt/README.md")));
   write("index.html", load(join(HERE, "site/index.html")));
   write("site.css", load(join(HERE, "site/site.css")));
+  // ───────── Conectores out-of-the-box (connectors/<id>/connector.mjs, ver connectors/registry.mjs) ─────────
+  await buildConnectors({ here: HERE, root: ROOT, vars: VARS, render, makeZip, bundle, write, artifact });
+
   write("index.json", `${JSON.stringify({ version: VERSION, baseUrl: BASE_URL, artifacts }, null, 2)}\n`);
 
   console.log(`✔ integraciones ${VERSION} para ${BASE_URL} → ${relative(ROOT, OUT) || OUT}`);

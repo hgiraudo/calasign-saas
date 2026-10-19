@@ -1,0 +1,86 @@
+{
+  "$comment": "Power Automate / Logic Apps (Workflow Definition Language). CalaSign: sincronizar estado. Con cada evento del sobre actualiza calasign_status de la fila (metadata.recordId) y, al completarse, adjunta el PDF firmado como nota (annotation). Reemplazar shared_calasign por el nombre de API del conector personalizado importado.",
+  "definition": {
+    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+      "$connections": { "type": "Object", "defaultValue": {} },
+      "$authentication": { "type": "SecureObject", "defaultValue": {} }
+    },
+    "triggers": {
+      "When_an_envelope_event_occurs": {
+        "type": "OpenApiConnectionWebhook",
+        "inputs": {
+          "host": { "apiId": "/providers/Microsoft.PowerApps/apis/shared_calasign", "connectionName": "shared_calasign", "operationId": "OnEnvelopeEvent" },
+          "parameters": { "body/events": ["envelope.sent", "envelope.completed", "envelope.declined", "envelope.voided", "envelope.expired"] },
+          "authentication": "@parameters('$authentication')"
+        }
+      }
+    },
+    "actions": {
+      "Only_envelopes_sent_from_an_opportunity": {
+        "type": "If",
+        "runAfter": {},
+        "expression": {
+          "and": [
+            { "equals": ["@triggerBody()?['data']?['envelope']?['metadata']?['recordType']", "opportunity"] },
+            { "not": { "equals": ["@coalesce(triggerBody()?['data']?['envelope']?['metadata']?['recordId'], '')", ""] } }
+          ]
+        },
+        "actions": {
+          "Update_the_status": {
+            "type": "OpenApiConnection",
+            "runAfter": {},
+            "inputs": {
+              "host": { "apiId": "/providers/Microsoft.PowerApps/apis/shared_commondataserviceforapps", "connectionName": "shared_commondataserviceforapps", "operationId": "UpdateRecord" },
+              "parameters": {
+                "entityName": "opportunities",
+                "recordId": "@triggerBody()?['data']?['envelope']?['metadata']?['recordId']",
+                "item/calasign_envelopeid": "@triggerBody()?['data']?['envelope']?['id']",
+                "item/calasign_status": "@triggerBody()?['data']?['envelope']?['status']",
+                "item/calasign_completedon": "@triggerBody()?['data']?['envelope']?['completedAt']"
+              },
+              "authentication": "@parameters('$authentication')"
+            }
+          },
+          "If_completed_attach_the_signed_PDF": {
+            "type": "If",
+            "runAfter": { "Update_the_status": ["Succeeded"] },
+            "expression": { "and": [{ "equals": ["@triggerBody()?['type']", "envelope.completed"] }] },
+            "actions": {
+              "Download_the_signed_document": {
+                "type": "OpenApiConnection",
+                "runAfter": {},
+                "inputs": {
+                  "host": { "apiId": "/providers/Microsoft.PowerApps/apis/shared_calasign", "connectionName": "shared_calasign", "operationId": "DownloadSignedDocument" },
+                  "parameters": { "id": "@triggerBody()?['data']?['envelope']?['id']" },
+                  "authentication": "@parameters('$authentication')"
+                }
+              },
+              "Add_a_note_with_the_PDF": {
+                "type": "OpenApiConnection",
+                "runAfter": { "Download_the_signed_document": ["Succeeded"] },
+                "inputs": {
+                  "host": { "apiId": "/providers/Microsoft.PowerApps/apis/shared_commondataserviceforapps", "connectionName": "shared_commondataserviceforapps", "operationId": "CreateRecord" },
+                  "parameters": {
+                    "entityName": "annotations",
+                    "item/subject": "Documento firmado (CalaSign)",
+                    "item/notetext": "@{triggerBody()?['data']?['envelope']?['subject']} — SHA-256 @{triggerBody()?['data']?['envelope']?['signedSha256']}",
+                    "item/filename": "@{triggerBody()?['data']?['envelope']?['subject']}.pdf",
+                    "item/mimetype": "application/pdf",
+                    "item/documentbody": "@body('Download_the_signed_document')?['$content']",
+                    "item/objectid_opportunity@odata.bind": "/opportunities(@{triggerBody()?['data']?['envelope']?['metadata']?['recordId']})"
+                  },
+                  "authentication": "@parameters('$authentication')"
+                }
+              }
+            },
+            "else": { "actions": {} }
+          }
+        },
+        "else": { "actions": {} }
+      }
+    },
+    "outputs": {}
+  }
+}

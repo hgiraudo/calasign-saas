@@ -59,6 +59,7 @@ import { config } from "../config";
 import { OAUTH2_SECURITY_SCHEME, PLATFORM_OPS } from "./platform-openapi";
 import { AGREEMENTS_OPS } from "./agreements/openapi";
 import { CRM_OPS } from "./crm/openapi";
+import { LOWCODE_OPS } from "./lowcode-openapi";
 import { requiredScope } from "./oauth-tokens";
 import { AI_OPS } from "./ai/openapi";
 import { DATA_OPS } from "./data/openapi";
@@ -554,7 +555,7 @@ const OPS: Op[] = [
     operationId: "createWebhook",
     tag: "Webhooks",
     summary: "Crear webhook (el secreto se devuelve una sola vez)",
-    description: "URL https (sin credenciales ni destinos locales). Máximo 20 por organización. Sin `events`, recibe todos.",
+    description: "URL https (sin credenciales ni destinos locales). Máximo 20 por organización. Sin `events`, recibe todos. Responde con el header `Location` (URL del webhook): DELETE a esa URL lo borra, como hacen los triggers REST hook de Power Automate y Logic Apps.",
     body: CreateWebhookInput,
     status: 201,
     response: z.object({ webhook: WebhookSchema, secret: z.string().describe("whsec_…: verifica la firma HMAC. Se muestra una sola vez.") }),
@@ -1312,6 +1313,7 @@ export function buildOpenApi() {
     ...(AI_OPS as unknown as Op[]),
     ...(AGREEMENTS_OPS as Op[]),
     ...(CRM_OPS as Op[]),
+    ...LOWCODE_OPS,
     ...(DATA_OPS as unknown as Op[]),
     ...(CERTSIGN_OPS as unknown as Op[]),
   ];

@@ -7,6 +7,7 @@ import { useCallback } from "react";
 import { useI18n } from "./i18n";
 import { docsPt } from "./i18n-docs-pt";
 import { docsEn } from "./i18n-docs-en";
+import { connectorsDocsEs } from "./i18n-docs-connectors";
 
 export const docsEs = {
   // ───────── Interfaz ─────────
@@ -776,6 +777,7 @@ export const docsEs = {
   "ref.body": "Cuerpo del pedido",
   "ref.responses": "Respuestas",
   "ref.examples": "Ejemplos",
+  ...connectorsDocsEs,
   // @@END
 };
 

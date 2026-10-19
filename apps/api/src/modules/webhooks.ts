@@ -277,7 +277,7 @@ const toDelivery = (r: any): WebhookDelivery => ({
   deliveredAt: iso(r.delivered_at),
 });
 
-async function envelopeSnapshot(db: Db, envelopeId: string) {
+export async function envelopeSnapshot(db: Db, envelopeId: string) {
   const e = await db.one<any>(
     `SELECT e.*, f.sha256 AS signed_sha256 FROM envelopes e LEFT JOIN files f ON f.id = e.signed_file_id WHERE e.id = $1`,
     [envelopeId],
@@ -423,7 +423,8 @@ export async function webhookRoutes(app: FastifyInstance, s: Services) {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
       [uuidv7(), a.tenantId, url, input.description ?? null, input.events ?? [], encrypt(secret), secret.slice(0, 12), input.active ?? true, a.userId],
     );
-    reply.code(201);
+    // Location: los triggers por webhook de Power Automate / Logic Apps borran la suscripción con DELETE a esta URL.
+    reply.code(201).header("location", `${config.appUrl}/v1/webhooks/${(row as any).id}`);
     return { webhook: toEndpoint(row), secret };
   });
 

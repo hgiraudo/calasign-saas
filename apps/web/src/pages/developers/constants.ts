@@ -26,6 +26,17 @@ export const ARTIFACTS = {
   claudeCodeMarketplace: `${BASE}/integrations/claude-code/marketplace.json`,
 } as const;
 
+/** Conectores low-code (integrations/connectors, ver docs/CONECTORES.md). La versión del paquete de n8n sigue a integrations/package.json. */
+export const CONNECTOR_ARTIFACTS = {
+  powerAutomate: "/integrations/connectors/power-automate/calasign-power-automate-connector.zip",
+  zapier: "/integrations/connectors/zapier/calasign-zapier-app.zip",
+  make: "/integrations/connectors/make/calasign-make-app.zip",
+  makeJson: "/integrations/connectors/make/calasign-make-app.json",
+  n8n: "/integrations/connectors/n8n/n8n-nodes-calasign-1.0.0.tgz",
+  n8nSource: "/integrations/connectors/n8n/n8n-nodes-calasign-source.zip",
+  dynamics: "/integrations/connectors/dynamics365/calasign-dynamics365.zip",
+} as const;
+
 /** Comandos para instalar el plugin de Claude Code (se escriben dentro de Claude Code). */
 export const CLAUDE_CODE_PLUGIN_INSTALL = `/plugin marketplace add ${ARTIFACTS.claudeCodeMarketplace}
 /plugin install calasign@calasign`;

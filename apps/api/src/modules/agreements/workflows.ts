@@ -51,8 +51,6 @@ interface RunContext {
   envelopes: Record<string, any>;
   http: Record<string, unknown>;
   waitingEnvelope?: string | null;
-  /** Correos ingresados en los pasos de recolección (para ofrecer el link de firma a quien completó). */
-  collectEmails?: string[];
   /** Rutas de los datos que el formulario público completó con un correo. */
   collectEmailPaths?: string[];
 }
@@ -888,31 +886,47 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
     // podría escribir el correo de un firmante fijo, o de uno que vino en los datos con que se inició el run (por
     // ejemplo, alguien de la organización), en cualquier campo de correo y recibir su link de firma.
     const collected = new Set<string>(run.context?.collectEmailPaths ?? []);
-    const selfService = new Set<string>();
+    const runEnvelopes = (run.context?.envelopes ?? {}) as Record<string, { envelopeId: string }>;
+    // Por sobre: los correos de sus firmantes autoservicio. Solo firmantes (una copia con {{cliente.email}} no firma: si
+    // contara, quien escribe ahí el correo de un firmante fijo recibía el link de ese firmante), y solo en el sobre de
+    // ese paso (en otro sobre del run, el mismo correo puede ser el de un firmante fijo).
+    const selfByEnvelope = new Map<string, Set<string>>();
     for (const st of run.steps as WorkflowStep[]) {
       if (st.type !== "send_for_signature") continue;
+      const envId = runEnvelopes[st.config.envelopeKey]?.envelopeId;
+      if (!envId) continue;
       for (const r of st.config.recipients) {
+        if (r.cc) continue;
         const m = /^\s*\{\{\s*([A-Za-z_@][\w.@]*)\s*\}\}\s*$/.exec(r.email ?? "");
         if (!m || !collected.has(m[1])) continue;
         const v = getPath(run.context?.data ?? {}, m[1]);
-        if (typeof v === "string" && v.trim()) selfService.add(v.trim().toLowerCase());
+        if (typeof v !== "string" || !v.trim()) continue;
+        if (!selfByEnvelope.has(envId)) selfByEnvelope.set(envId, new Set());
+        selfByEnvelope.get(envId)!.add(v.trim().toLowerCase());
       }
     }
-    const emails: string[] = [...selfService];
-    const envIds = Object.values((run.context?.envelopes ?? {}) as Record<string, { envelopeId: string }>).map((e) => e.envelopeId);
+    const emails = [...new Set([...selfByEnvelope.values()].flatMap((x) => [...x]))];
+    const envIds = [...selfByEnvelope.keys()];
     if (emails.length && envIds.length) {
-      // Por correo, solo si ese correo es de UN firmante: si quien completa el formulario escribe el correo de un firmante
-      // fijo, el sobre queda con dos firmantes con el mismo correo (mismo orden de firma) y el primero podía ser el fijo.
+      // Por correo, solo si ese correo es de UN firmante del sobre: si quien completa el formulario escribe el correo de un
+      // firmante fijo, el sobre queda con dos firmantes con el mismo correo (mismo orden de firma) y el primero podía ser
+      // el fijo. Se cuenta por sobre: el mismo firmante autoservicio en dos sobres del run sigue recibiendo su link.
       const rows = await s.db.query<any>(
-        `SELECT lower(r.email) AS email, r.access_token_enc, r.status, e.status AS envelope_status FROM recipients r JOIN envelopes e ON e.id = r.envelope_id
+        `SELECT r.envelope_id, lower(r.email) AS email, r.access_token_enc, r.status, e.status AS envelope_status FROM recipients r JOIN envelopes e ON e.id = r.envelope_id
          WHERE r.envelope_id = ANY($1) AND lower(r.email) = ANY($2) AND r.role = 'signer' AND r.status NOT IN ('delegated','reassigned')
          ORDER BY r.routing_order`,
         [envIds, emails],
       );
+      const k = (x: any) => `${x.envelope_id}|${x.email}`;
       const count = new Map<string, number>();
-      for (const x of rows) count.set(x.email, (count.get(x.email) ?? 0) + 1);
+      for (const x of rows) count.set(k(x), (count.get(k(x)) ?? 0) + 1);
       const r = rows.find(
-        (x) => count.get(x.email) === 1 && ["sent", "viewed"].includes(x.status) && x.envelope_status === "sent" && x.access_token_enc,
+        (x) =>
+          selfByEnvelope.get(x.envelope_id)?.has(x.email) &&
+          count.get(k(x)) === 1 &&
+          ["sent", "viewed"].includes(x.status) &&
+          x.envelope_status === "sent" &&
+          x.access_token_enc,
       );
       if (r) signingUrl = `${await tenantBaseUrl(s.db, run.tenant_id)}/s/${decrypt(r.access_token_enc)}`;
     }
@@ -951,8 +965,6 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
       const ctx: RunContext = run.context;
       ctx.data ??= {};
       for (const [k, v] of Object.entries(values)) setPath(ctx.data, def.config.target ? `${def.config.target}.${k}` : k, v);
-      const emails = def.config.fields.filter((f) => f.type === "email").map((f) => values[f.key]).filter((x): x is string => typeof x === "string");
-      ctx.collectEmails = [...new Set([...(ctx.collectEmails ?? []), ...emails])];
       const emailPaths = def.config.fields
         .filter((f) => f.type === "email" && typeof values[f.key] === "string")
         .map((f) => (def.config.target ? `${def.config.target}.${f.key}` : f.key));

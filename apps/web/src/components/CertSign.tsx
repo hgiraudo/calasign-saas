@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import type { CertsignPairing, EnvelopeCertificateProgress, SignatureType, SigningCertificateStep } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
+import { formatDateTime, useI18n } from "../lib/i18n";
 import { useCertsignText } from "../lib/i18n-certsign";
 import { ErrorBox } from "./ui";
 
@@ -81,6 +82,7 @@ export function CertificateOption({ value, hasIdDocument, onChange }: { value: C
 /** `refreshKey` cambia cuando hay eventos nuevos del sobre (una firma con certificado no siempre cambia el estado). */
 export function CertificateProgressPanel({ envelopeId, status, refreshKey }: { envelopeId: string; status: string; refreshKey?: number }) {
   const c = useCertsignText();
+  const { locale } = useI18n();
   const [data, setData] = useState<EnvelopeCertificateProgress | null>(null);
   useEffect(() => {
     let alive = true;
@@ -104,7 +106,7 @@ export function CertificateProgressPanel({ envelopeId, status, refreshKey }: { e
               <div className="muted small">
                 {s.commonName} · {s.issuer}
                 {s.serialNumber ? ` · ${c("detail.certSerial")} ${s.serialNumber}` : ""}
-                {s.signedAt ? ` · ${new Date(s.signedAt).toLocaleString()}` : ""}
+                {s.signedAt ? ` · ${formatDateTime(s.signedAt, locale)}` : ""}
               </div>
             )}
           </li>
@@ -117,6 +119,7 @@ export function CertificateProgressPanel({ envelopeId, status, refreshKey }: { e
 /** Paso del firmante: espera, código de vinculación con el Firmador, o firma hecha. */
 export function SignerCertificateStep({ step, base, onChange }: { step: SigningCertificateStep; base: string; onChange: () => void }) {
   const c = useCertsignText();
+  const { locale } = useI18n();
   const [pairing, setPairing] = useState<CertsignPairing | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -188,7 +191,7 @@ export function SignerCertificateStep({ step, base, onChange }: { step: SigningC
           <div className="certsign-code-value" aria-live="polite">
             {pairing.code}
           </div>
-          <div className="muted small">{c("sign.certCodeExpires", { time: new Date(pairing.expiresAt).toLocaleTimeString() })}</div>
+          <div className="muted small">{c("sign.certCodeExpires", { time: new Date(pairing.expiresAt).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" }) })}</div>
           <div className="row gap">
             <a className="btn btn-primary" href={pairing.deepLink}>
               {c("sign.certOpen")}

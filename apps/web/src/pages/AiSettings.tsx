@@ -85,7 +85,16 @@ export function AiSettingsPage() {
             <p className="muted small">{ai("ai.notice.accepted", { date: formatDateTime(s.noticeAcceptedAt, locale) })}</p>
           ) : (
             <label className="check">
-              <input type="checkbox" checked={accept} disabled={!canEdit} onChange={(e) => setAccept(e.target.checked)} />
+              <input
+                type="checkbox"
+                checked={accept}
+                disabled={!canEdit}
+                onChange={(e) => {
+                  setAccept(e.target.checked);
+                  // Sin el aviso aceptado no se puede activar: si quedaba tildado, guardar fallaba con ai_notice_required.
+                  if (!e.target.checked) setEnabled(false);
+                }}
+              />
               {ai("ai.notice.accept")}
             </label>
           )}

@@ -194,6 +194,29 @@ export function EnvelopeEditPage() {
     }
   };
 
+  /**
+   * Asunto y mensaje escritos en "Revisar y enviar" (solo se guardan al enviar): la plantilla se crea con los del sobre,
+   * así que sin esto "Guardar como plantilla" salía con los anteriores.
+   */
+  const saveReviewText = async (): Promise<boolean> => {
+    const r = reviewDraft.current;
+    if (!r || !detail) return true;
+    const subject = r.subject.trim();
+    const message = r.message.trim() || null;
+    if (!subject || (subject === detail.envelope.subject && message === (detail.envelope.message ?? null))) return true;
+    setBusy(true);
+    setError(null);
+    try {
+      setDetail(await api<EnvelopeDetail>(`/v1/envelopes/${id}`, { method: "PATCH", body: { subject, message } }));
+      return true;
+    } catch (e) {
+      setError(errorText(e));
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const go = async (target: Step) => {
     const cur = STEPS.indexOf(step);
     const next = STEPS.indexOf(target);
@@ -235,7 +258,7 @@ export function EnvelopeEditPage() {
         <SaveAsTemplateButton
           envelopeId={id}
           defaultName={detail.envelope.subject}
-          beforeSave={async () => (await saveRecipients()) && (await saveFields())}
+          beforeSave={async () => (await saveRecipients()) && (await saveFields()) && (await saveReviewText())}
           disabled={busy}
         />
       </div>

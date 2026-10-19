@@ -20,6 +20,7 @@ import {
 import { api, errorText } from "../lib/api";
 import { formatDateTime, useI18n, confirmAction } from "../lib/i18n";
 import { usePlatformText } from "../lib/i18n-platform";
+import { useRoleLabel } from "../lib/i18n-teams";
 import { ErrorBox, Spinner } from "../components/ui";
 import { useAccess } from "../lib/access";
 
@@ -100,6 +101,7 @@ export function OAuthAppsPage() {
 
 function OAuthAppsAdmin() {
   const p = usePlatformText();
+  const roleLabel = useRoleLabel();
   const { locale } = useI18n();
   const [apps, setApps] = useState<OAuthApp[] | null>(null);
   const [shown, setShown] = useState<{ clientId: string; secret: string | null } | null>(null);
@@ -204,8 +206,8 @@ function OAuthAppsAdmin() {
           <label className="field" style={{ maxWidth: 320 }}>
             <span>{p("oauth.role")}</span>
             <select value={role} onChange={(e) => setRole(e.target.value as "member" | "admin")}>
-              <option value="member">member</option>
-              <option value="admin">admin</option>
+              <option value="member">{roleLabel("member")}</option>
+              <option value="admin">{roleLabel("admin")}</option>
             </select>
           </label>
         )}
@@ -249,7 +251,7 @@ function OAuthAppsAdmin() {
                 <code className="small break">{a.clientId}</code>
                 <span className="muted small">
                   {a.grantTypes.map((g) => p(`oauth.grant.${g}`)).join(" · ")}
-                  {a.role ? ` · ${a.role}` : ""} · {a.confidential ? <code>{a.secretPrefix}…</code> : p("oauth.public")}
+                  {a.role ? ` · ${roleLabel(a.role)}` : ""} · {a.confidential ? <code>{a.secretPrefix}…</code> : p("oauth.public")}
                 </span>
                 <span className="small">{a.scopes.map((s) => <code key={s} style={{ marginRight: 6 }}>{s}</code>)}</span>
                 {a.redirectUris.length > 0 && <span className="muted small break">{a.redirectUris.join(" · ")}</span>}

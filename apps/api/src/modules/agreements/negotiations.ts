@@ -467,7 +467,6 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
     if (pending?.c) throw conflict("pending_proposals", `Quedan ${pending.c} propuestas sin decidir`);
     const parts = await s.db.query<any>(`SELECT * FROM negotiation_participants WHERE negotiation_id = $1 ORDER BY created_at`, [n.id]);
     let marks: any[] = [];
-    let missing: string[] = [];
     let finalPdf: Uint8Array;
     if (n.source === "template") {
       const doc = await renderDocument(s.db, n.tenant_id, { source: n.template_source, data: n.data, locale: n.template_locale, title: n.title, clauses: clausesFor(n) });
@@ -478,7 +477,6 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
       if (doc.missing.length) throw new AppError(422, "missing_variables", `Faltan datos: ${doc.missing.join(", ")}`, { missing: doc.missing });
       finalPdf = doc.pdf;
       marks = doc.marks;
-      missing = doc.missing;
     } else {
       finalPdf = await negotiationPdf(n);
     }
@@ -551,7 +549,7 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
     }));
     await auditFromRequest(s.db, req, a, "negotiation.accepted", { targetType: "negotiation", targetId: n.id, data: { envelopeId, version: n.current_version } });
     const env = await s.db.one<any>(`SELECT status FROM envelopes WHERE id = $1`, [envelopeId]);
-    return { ...(await fullView(s.db, await loadForUser(a, n.id))), envelope: { id: envelopeId, status: env.status }, missing };
+    return { ...(await fullView(s.db, await loadForUser(a, n.id))), envelope: { id: envelopeId, status: env.status }, missing: [] as string[] };
   });
 
   // ───────── Contrapartes (link público por persona) ─────────

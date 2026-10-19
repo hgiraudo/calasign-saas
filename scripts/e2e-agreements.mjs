@@ -419,6 +419,16 @@ const wfAg = await waitFor(async () => (await api("GET", `/v1/agreements?q=${enc
 assert(wfAg.tags.includes("workflow") && wfAg.metadata.origen === "workflow 18m" && wfAg.title === `Alta ${wfClient}`, "repositorio actualizado por el workflow");
 step("workflow: link público → datos (validados) → aprobación → contrato → firma (link para quien completó) → espera → HTTP firmado con reintento → repositorio");
 
+// Un visitante que tipea el correo del firmante fijo de la empresa no recibe el link de la empresa.
+const st2 = await api("POST", `/v1/public/workflows/${slug}/start`, {}, { anon: true });
+let pv2 = await api("POST", `/v1/public/workflow-runs/${st2.token}/steps/0`, { values: { nombre: `Intruso ${stamp}`, email: me.user.email, plazo: "1" } }, { anon: true });
+let run2 = await api("POST", `/v1/workflow-runs/${pv2.runId}/steps/1/decision`, { approve: true });
+assert(run2.steps[3].status === "completed", `el sobre del segundo run se envió (${run2.steps[3].status})`);
+pv2 = await api("GET", `/v1/public/workflow-runs/${st2.token}`, null, { anon: true });
+assert(!pv2.signingUrl, "con el correo del firmante fijo no se entrega ningún link de firma");
+await api("POST", `/v1/workflow-runs/${pv2.runId}/cancel`, {}).catch(() => {});
+step("workflow público: el correo de un firmante fijo no da acceso a su link");
+
 const wf2 = await api("POST", "/v1/workflows", { name: `Solo aprobación ${stamp}`, steps: [{ id: randomUUID(), name: "Aprobar", type: "approval", config: { approverUserId: me.user.id } }] });
 let r2 = await api("POST", `/v1/workflows/${wf2.id}/runs`, { data: { x: 1 } });
 assert(r2.status === "waiting", "run por API esperando aprobación");

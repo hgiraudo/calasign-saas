@@ -5,6 +5,7 @@ import { IDV_LEVELS, MOCK_DECISIONS } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
 import { formatDateTime, useI18n, confirmAction } from "../lib/i18n";
 import { useIdnText, type IdnKey } from "../lib/i18n-identity";
+import { useRoleLabel } from "../lib/i18n-teams";
 import { ErrorBox, OrderInput, Spinner } from "../components/ui";
 import { SsoDomainVerification } from "../components/DataExtras";
 
@@ -182,6 +183,7 @@ export function IdentitySettingsPage() {
 
 export function SsoSettingsPage() {
   const tx = useIdnText();
+  const roleLabel = useRoleLabel();
   const { data, setData, error, setError } = useLoad<SsoSettings>("/v1/settings/sso");
   const [secret, setSecret] = useState("");
   const [cert, setCert] = useState("");
@@ -306,8 +308,8 @@ export function SsoSettingsPage() {
             <label className="field idn-narrow">
               <span>{tx("sso.jitRole")}</span>
               <select value={data.jitRole} onChange={(e) => setData({ ...data, jitRole: e.target.value as "admin" | "member" })}>
-                <option value="member">Member</option>
-                <option value="admin">Admin</option>
+                <option value="member">{roleLabel("member")}</option>
+                <option value="admin">{roleLabel("admin")}</option>
               </select>
             </label>
           )}
@@ -346,6 +348,7 @@ export function SsoSettingsPage() {
 
 export function ScimSettingsPage() {
   const tx = useIdnText();
+  const roleLabel = useRoleLabel();
   const { locale } = useI18n();
   const { data, setData, error, setError } = useLoad<ScimSettings>("/v1/settings/scim");
   const [name, setName] = useState("");
@@ -377,8 +380,8 @@ export function ScimSettingsPage() {
             disabled={busy}
             onChange={(e) => run(async () => setData(await api<ScimSettings>("/v1/settings/scim", { method: "PATCH", body: { defaultRole: e.target.value } })))}
           >
-            <option value="member">Member</option>
-            <option value="admin">Admin</option>
+            <option value="member">{roleLabel("member")}</option>
+            <option value="admin">{roleLabel("admin")}</option>
           </select>
         </label>
       </div>

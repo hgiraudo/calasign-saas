@@ -1,5 +1,5 @@
 // Ajustes → CRM y ERP: conexiones (OAuth o token), mapeos registro → plantilla, envío desde un registro y actividad.
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   CHANNELS,
@@ -464,6 +464,8 @@ function MappingEditor({
     else if (trigger === "on_completion" || (trigger === "webhook" && provider !== "hubspot")) setTrigger("manual");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [provider]);
+  // Plantilla de la que salieron los roles en pantalla (al editar, la del mapeo guardado).
+  const rolesFrom = useRef(mapping?.templateId ?? "");
   useEffect(() => {
     if (!templateId) return setTpl(null);
     // Solo vale la respuesta de la plantilla elegida ahora: una respuesta lenta de la anterior dejaba sus roles y
@@ -473,9 +475,16 @@ function MappingEditor({
       .then((d) => {
         if (stale) return;
         setTpl(d);
-        // Mapeo nuevo: los roles son los de la plantilla elegida. Antes solo se cargaban si no había ninguno, así que al
-        // cambiar de plantilla quedaban los de la anterior (que la nueva no tiene) y el envío desde el CRM fallaba.
-        if (!mapping) setRoles(d.roles.map((r, i) => ({ role: r.name, source: "contact", index: i, channels: ["email"] }) as RoleRow));
+        // Al cambiar de plantilla, los roles pasan a ser los de la elegida (al volver a la del mapeo guardado, los
+        // guardados). Antes solo se hacía en un mapeo nuevo: al editar uno y cambiarle la plantilla quedaban los roles
+        // de la anterior (que la nueva no tiene) y el envío desde el CRM fallaba.
+        if (rolesFrom.current === templateId) return;
+        rolesFrom.current = templateId;
+        setRoles(
+          mapping && templateId === mapping.templateId
+            ? mapping.roles
+            : d.roles.map((r, i) => ({ role: r.name, source: "contact", index: i, channels: ["email"] }) as RoleRow),
+        );
       })
       .catch(() => !stale && setTpl(null));
     return () => {

@@ -72,7 +72,7 @@ function templateBody(input) {
 const sendFromTemplate = {
   key: "send_from_template",
   noun: "Envelope",
-  display: { label: "Send Envelope From Template", description: "Creates an envelope from a template, fills each role and the prefilled fields, and sends it.", important: true },
+  display: { label: "Send Envelope From Template", description: "Creates an envelope from a template, fills each role and the prefilled fields, and sends it." },
   operation: {
     inputFields: [
       { key: "templateId", label: "Template", required: true, dynamic: "template_list.id.name", altersDynamicFields: true },
@@ -97,7 +97,7 @@ const sendFromTemplate = {
 const sendDocument = {
   key: "send_document",
   noun: "Envelope",
-  display: { label: "Send Document for Signature", description: "Sends a PDF to one or more signers. Signature fields go on the last page, or on the anchor texts \\firma1\\, \\firma2\\…", important: true },
+  display: { label: "Send Document for Signature", description: "Sends a PDF to one or more signers. Signature fields go on the last page, or on the anchor texts \\firma1\\, \\firma2\\…" },
   operation: {
     inputFields: [
       { key: "file", label: "PDF file", type: "file", required: true },

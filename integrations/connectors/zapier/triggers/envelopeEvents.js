@@ -43,12 +43,12 @@ function withPdf(z, row) {
   return row;
 }
 
-function hookTrigger({ key, noun, label, description, events, important }) {
+function hookTrigger({ key, noun, label, description, events }) {
   const chooseEvents = !events;
   return {
     key,
     noun,
-    display: { label, description, ...(important ? { important: true } : {}) },
+    display: { label, description },
     operation: {
       type: "hook",
       inputFields: chooseEvents
@@ -97,7 +97,7 @@ function hookTrigger({ key, noun, label, description, events, important }) {
 }
 
 module.exports = [
-  hookTrigger({ key: "envelope_completed", noun: "Envelope", label: "Envelope Completed", description: "Triggers when every recipient has signed and the signed PDF is ready.", events: ["envelope.completed"], important: true }),
+  hookTrigger({ key: "envelope_completed", noun: "Envelope", label: "Envelope Completed", description: "Triggers when every recipient has signed and the signed PDF is ready.", events: ["envelope.completed"] }),
   hookTrigger({ key: "envelope_sent", noun: "Envelope", label: "Envelope Sent", description: "Triggers when an envelope is sent for signature.", events: ["envelope.sent"] }),
   hookTrigger({ key: "envelope_declined", noun: "Envelope", label: "Envelope Declined", description: "Triggers when a recipient declines to sign an envelope.", events: ["envelope.declined"] }),
   hookTrigger({ key: "recipient_signed", noun: "Recipient", label: "Recipient Signed", description: "Triggers when a recipient signs an envelope.", events: ["recipient.signed"] }),

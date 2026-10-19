@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
-    "test": "node test/run.mjs"
+    "test": "node test/run.mjs && node test/connectors.mjs"
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "1.30.1",

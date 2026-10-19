@@ -8,6 +8,7 @@ import { useIdnText, type IdnKey } from "../lib/i18n-identity";
 import { useRoleLabel } from "../lib/i18n-teams";
 import { ErrorBox, OrderInput, Spinner } from "../components/ui";
 import { SsoDomainVerification } from "../components/DataExtras";
+import { forgetIdentitySettings } from "../components/IdentityControls";
 
 function useLoad<T>(path: string) {
   const [data, setData] = useState<T | null>(null);
@@ -80,6 +81,7 @@ export function IdentitySettingsPage() {
           },
         }),
       );
+      forgetIdentitySettings();
       setSaved(true);
     } catch (err) {
       setError(errorText(err));

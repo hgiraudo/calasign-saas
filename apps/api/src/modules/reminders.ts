@@ -16,8 +16,14 @@ export async function runAutomaticReminders(db: Db, now = new Date()) {
   );
   for (const e of due) {
     await db.tx(async (t) => {
-      const cur = await t.one<any>(`SELECT status FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
-      if (cur?.status !== "sent") return;
+      // Con el sobre bloqueado se vuelve a mirar que el recordatorio siga pendiente: otro barrido (otro worker, o la API
+      // con el worker integrado) pudo enviarlo mientras tanto, y se sumaba un segundo envelope.reminded a la evidencia.
+      const cur = await t.one<any>(
+        `SELECT status, (reminder_every_days IS NOT NULL AND COALESCE(last_reminder_at, sent_at) <= $2::timestamptz - make_interval(days => reminder_every_days)) AS due
+           FROM envelopes WHERE id = $1 FOR UPDATE`,
+        [e.id, now.toISOString()],
+      );
+      if (cur?.status !== "sent" || !cur.due) return;
       const group = await currentSignerGroup(t, e.id);
       const pending = group.recipients.filter((r) => (r.status === "sent" || r.status === "viewed") && receivesSignerNotices(r));
       for (const r of pending)

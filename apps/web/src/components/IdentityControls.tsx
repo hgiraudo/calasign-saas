@@ -3,25 +3,41 @@ import { useEffect, useState } from "react";
 import type { IdentitySettings, RecipientIdentity } from "@calasign/shared";
 import { IDV_LEVELS } from "@calasign/shared";
 import { api } from "../lib/api";
+import { useAuth } from "../lib/auth";
 import { useIdnText, type IdnKey } from "../lib/i18n-identity";
 
-let cache: Promise<IdentitySettings | null> | null = null;
-function loadSettings() {
-  // Un error no se cachea: si falló (red, sesión), el próximo uso vuelve a pedir.
-  cache ??= api<IdentitySettings>("/v1/settings/identity").catch(() => {
-    cache = null;
-    return null;
-  });
-  return cache;
+// Por organización: el caché vive fuera de React y sobrevivía al cambio de organización (se ofrecían los proveedores
+// de la otra y el guardado fallaba, o no se ofrecía ninguno) y a configurar un proveedor en Ajustes sin recargar.
+let cache: { tenant: string | null; settings: Promise<IdentitySettings | null> } | null = null;
+function loadSettings(tenant: string | null) {
+  if (!cache || cache.tenant !== tenant) {
+    const settings: Promise<IdentitySettings | null> = api<IdentitySettings>("/v1/settings/identity").catch(() => {
+      // Un error no se cachea: si falló (red, sesión), el próximo uso vuelve a pedir.
+      if (cache?.settings === settings) cache = null;
+      return null;
+    });
+    cache = { tenant, settings };
+  }
+  return cache.settings;
+}
+
+/** Ajustes de identidad cambiados (p. ej. otro proveedor por defecto): el próximo selector los vuelve a pedir. */
+export function forgetIdentitySettings() {
+  cache = null;
 }
 
 /** Valor "proveedor:nivel" o "" (sin verificación). */
 export function IdentitySelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const tx = useIdnText();
+  const tenant = useAuth().me?.tenant.id ?? null;
   const [settings, setSettings] = useState<IdentitySettings | null>(null);
   useEffect(() => {
-    loadSettings().then(setSettings);
-  }, []);
+    let alive = true;
+    loadSettings(tenant).then((s) => alive && setSettings(s));
+    return () => {
+      alive = false;
+    };
+  }, [tenant]);
   const providers = (settings?.providers ?? []).filter((p) => p.configured);
   // Con un valor ya guardado, el selector se muestra aunque no quede ningún proveedor configurado (o no se pudieran
   // leer los ajustes): oculto, se seguía mandando ese valor y el guardado de destinatarios fallaba sin forma de quitarlo.

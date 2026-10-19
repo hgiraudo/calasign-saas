@@ -580,6 +580,7 @@ function UploadModal({ fields, onClose, onDone }: { fields: AgreementFieldDef[];
   const { t } = useI18n();
   const [file, setFile] = useState<File | null>(null);
   const [d, setD] = useState<MetaDraft>(draftFrom(null));
+  const autoTitle = useRef<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const submit = async (e: FormEvent) => {
@@ -616,10 +617,13 @@ function UploadModal({ fields, onClose, onDone }: { fields: AgreementFieldDef[];
             required
             onChange={(e) => {
               const f = e.target.files?.[0] ?? null;
-              const auto = (x: File) => x.name.replace(/\.pdf$/i, "");
               // El título que se completó solo con el archivo anterior sigue al archivo nuevo (antes se subía el segundo
-              // PDF con el nombre del primero); uno escrito a mano se respeta.
-              if (f && (!d.title || (file && d.title === auto(file)))) setD({ ...d, title: auto(f) });
+              // PDF con el nombre del primero); uno escrito a mano se respeta. Se recuerda el título automático aparte del
+              // archivo: cancelar el diálogo deja el archivo en null y, al elegir otro, quedaba el nombre del primero.
+              if (f && (!d.title || d.title === autoTitle.current)) {
+                autoTitle.current = f.name.replace(/\.pdf$/i, "");
+                setD({ ...d, title: autoTitle.current });
+              }
               setFile(f);
             }}
           />

@@ -132,6 +132,8 @@ function MembersTab({ roles, manage }: { roles: RolesResponse | null; manage: bo
     } catch (e) {
       setRemoving(null);
       setError(errorText(e));
+      // Quitado en otra pestaña (404): como en las invitaciones, la lista se actualiza en lugar de dejar la fila.
+      void load();
     } finally {
       setRemoveBusy(false);
     }
@@ -412,6 +414,7 @@ function RolesTab({ roles, reload }: { roles: RolesResponse | null; reload: () =
       await refreshOwn();
     } catch (e) {
       setError(errorText(e));
+      void reload();
     }
   };
 
@@ -551,6 +554,7 @@ function GroupsTab({ manage }: { manage: boolean }) {
       await load();
     } catch (e) {
       setError(errorText(e));
+      void load();
     }
   };
 

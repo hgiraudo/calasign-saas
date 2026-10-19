@@ -194,7 +194,17 @@ export const PLATFORM_OPS: PlatformOp[] = [
     summary: "Exportaciones recientes",
     query: [{ name: "limit", description: "Cantidad máxima (1..200, por defecto 50).", schema: { type: "integer", minimum: 1, maximum: 200, default: 50 } }],
   },
-  { method: "post", path: "/v1/storage/exports/{id}/retry", operationId: "retryStorageExport", tag: "Almacenamiento", summary: "Reintentar una exportación fallida", status: 202 },
+  {
+    method: "post",
+    path: "/v1/storage/exports/{id}/retry",
+    operationId: "retryStorageExport",
+    tag: "Almacenamiento",
+    summary: "Reintentar una exportación fallida",
+    description:
+      "Solo una exportación fallida o una pendiente abandonada (sin avances en 15 minutos). Una que sigue en la cola o subiéndose responde 409 export_in_progress; una ya exportada, 409 already_exported.",
+    status: 202,
+    errors: ["export_in_progress"],
+  },
 
   { method: "get", path: "/v1/domains", operationId: "getCustomDomain", tag: "Dominio propio", summary: "Dominio de la organización", response: z.object({ domain: CustomDomain.nullable() }) },
   { method: "put", path: "/v1/domains", operationId: "setCustomDomain", tag: "Dominio propio", summary: "Registrar o cambiar el dominio", body: SetCustomDomainInput, response: z.object({ domain: CustomDomain }) },

@@ -158,7 +158,7 @@ export const docsEn: Record<DocsKey, string> = {
   "auth.cmp.code": "An app that acts on behalf of users in other organizations (marketplace, AI agents).",
   "auth.keys.h": "API keys",
   "auth.keys.p":
-    "Create them in **Settings → API keys** ([`/app/settings/api-keys`](/app/settings/api-keys)) or with `POST /v1/api-keys` from a session. The full secret is shown **only once**; after that you only see its prefix (the first 12 characters) and the last-used date.\n\n- Format: `cs_test_…` in the test environment and `cs_live_…` in production.\n- Each key belongs to the organization and has a **role** (`admin`, `member` or a custom role) that defines what it can do; nobody can create a key with more permissions than their own.\n- Envelopes created with a key are recorded as created via the API (`createdVia: \"api\"`) and the evidence names the key as the actor.",
+    "Create them in **Settings → API keys** ([`/app/settings/api-keys`](/app/settings/api-keys)) or with `POST /v1/api-keys` from a session. The full secret is shown **only once**; after that you only see its prefix (the first 12 characters) and the last-used date.\n\n- Format: `cs_test_…` in the test environment and `cs_live_…` in production.\n- Each key belongs to the organization and has a **role** (`admin`, `member` or a custom role) that defines what it can do; nobody can create a key with more permissions than their own. To create webhooks or integrations (triggers, storage, CRM) the key also needs `envelopes:view_all`, like the `admin` role.\n- Envelopes created with a key are recorded as created via the API (`createdVia: \"api\"`) and the evidence names the key as the actor.",
   "auth.keys.rotate.h": "Rotation and revocation",
   "auth.keys.rotate.p":
     "Keys don't expire. To rotate one: create a new key, deploy it to your system, check in the list that the old one is no longer used (*last used*) and revoke it with **Revoke** or `DELETE /v1/api-keys/{id}`. Revocation is immediate: the next request with that key gets `401 unauthorized`.",
@@ -383,7 +383,7 @@ export const docsEn: Record<DocsKey, string> = {
     "Choose the template and the **role taken by whoever fills in the form** (`signerRoleId`, must be a signer). The other roles are covered with `fixedRecipients` (for example, your company's representative). Options: `prefill`, `maxUses`, `expiresAt`, `requireOtp` (asks for an email code before showing the document), `collectPhone` and `embeddable` (can be shown in an iframe from your authorized origins).",
   "g.forms.share.h": "Share and track it",
   "g.forms.share.p":
-    "The response contains `url`, the public link to share. `GET /v1/web-forms/{id}/envelopes` lists the envelopes it generated and `uses` counts the uses. To pause it, `PATCH /v1/web-forms/{id}` with `active: false`. If its creator leaves the organization or loses access to the template, the form stops creating envelopes and `ownerInactiveReason` explains why.",
+    "The response contains `url`, the public link to share. `GET /v1/web-forms/{id}/envelopes` lists the envelopes it generated and `uses` counts the uses. To pause it, `PATCH /v1/web-forms/{id}` with `active: false`. If its creator leaves the organization or loses access to the template, the form stops creating envelopes and `ownerInactiveReason` explains why. Each form creates at most 60 envelopes per hour; after that it returns `429 form_rate_limited`.",
   // ───────── Guide: reminders ─────────
   "g.rem.title": "Reminders, expiration and corrections",
   "g.rem.lead": "How to follow up with people who haven't signed, when an envelope expires and what can be changed after sending it.",
@@ -392,15 +392,15 @@ export const docsEn: Record<DocsKey, string> = {
     "When creating or editing the draft: `reminderEveryDays` (1 to 60) resends the invitation every N days to those whose turn is pending; `expiryWarningDays` sends a warning N days before expiration; `allowDelegation` lets the signer delegate to someone else. `null` disables each option.",
   "g.rem.manual.h": "Manual reminder",
   "g.rem.manual.p":
-    "`POST /v1/envelopes/{id}/remind` immediately resends the invitation to pending recipients in the current routing step and returns how many were notified. If the envelope is in `awaiting_certificates`, it notifies the certificate signer whose turn it is. An envelope that isn't in progress returns `409 not_in_progress`.",
+    "`POST /v1/envelopes/{id}/remind` immediately resends the invitation to pending recipients in the current routing step and returns how many were notified. At most one manual reminder every 10 minutes per envelope: sooner returns `429 reminded_recently`. If the envelope is in `awaiting_certificates`, it notifies the certificate signer whose turn it is. An envelope that isn't in progress returns `409 not_in_progress`.",
   "g.rem.exp.h": "Expiration",
   "g.rem.exp.p":
     "`expiresAt` (ISO 8601 with time zone) sets the signing deadline. If you don't set it, the envelope expires **30 days** after creation. On expiration it moves to `expired` and `envelope.expired` fires. To extend an envelope in progress, use a correction.",
   "g.rem.corr.h": "Corrections and reassignment",
   "g.rem.corr.p":
-    "`POST /v1/envelopes/{id}/corrections` changes an in-progress envelope without voiding it: message, expiration, contact details (the previous link is revoked and a new one is sent), new recipients and fields for routing steps that haven't started, and removal of people who haven't opened the envelope yet. Anyone who has already signed can't be changed. `reason` is recorded in the evidence.",
+    "`POST /v1/envelopes/{id}/corrections` changes an in-progress envelope without voiding it: message, expiration, contact details (the previous link is revoked and a new one is sent), new recipients and fields for routing steps that haven't started, and removal of people who haven't opened the envelope yet. Anyone who has already signed can't be changed. `reason` is recorded in the evidence. The corrected envelope is still limited to 50 recipients and 500 fields (otherwise `422 envelope_incomplete`).",
   "g.rem.reassign":
-    "To replace a pending recipient with someone else, use reassignment: the original is marked `reassigned` and the new one gets the invitation.",
+    "To replace a pending recipient with someone else, use reassignment: the original is marked `reassigned` and the new one gets the invitation. An envelope allows at most 20 delegations or reassignments (after that, `409 too_many_replacements`).",
   // ───────── Guide: certificate ─────────
   "g.cert.title": "Digital certificate signing",
   "g.cert.lead":
@@ -490,7 +490,7 @@ export const docsEn: Record<DocsKey, string> = {
     "CalaSign notifies you with a signed `POST` to your URL every time something happens on an envelope: someone opens it, signs, declines, or the envelope is completed. It's the recommended way to stay informed, rather than polling the API. Available from the Starter plan up.",
   "wh.setup.h": "Set up an endpoint",
   "wh.setup.p":
-    "Register the URL in **Settings → Integrations** ([`/app/settings/integrations`](/app/settings/integrations)) or via the API. The URL must be `https`, public and without credentials; redirects aren't followed. Empty or missing `events` = all events. The response includes the `secret` (`whsec_…`) for verifying signatures: **it's shown only once**. You can have several endpoints, pause them (`active: false`) and change their events with `PATCH /v1/webhooks/{id}`.",
+    "Register the URL in **Settings → Integrations** ([`/app/settings/integrations`](/app/settings/integrations)) or via the API. The URL must be `https`, public and without credentials; redirects aren't followed. Empty or missing `events` = all events. The response includes the `secret` (`whsec_…`) for verifying signatures: **it's shown only once**. You can have several endpoints, pause them (`active: false`) and change their events with `PATCH /v1/webhooks/{id}`. Since a webhook receives data from every envelope in the organization, creating or changing one, or retrying a delivery, requires `webhooks:manage` plus `envelopes:view_all` (e.g. the `admin` role).",
   "wh.setup.once": "shown only once",
   "wh.events.h": "Events",
   "wh.events.p": "Subscribe only to the ones you use. New types may appear in the future: ignore the ones you don't recognize by responding `2xx`.",
@@ -564,10 +564,12 @@ export const docsEn: Record<DocsKey, string> = {
   "err.c.idem": "You reused an `Idempotency-Key` with a different body, or the original request is still being processed (retry in a few seconds).",
   "err.c.tooLarge": "The file exceeds the maximum size.",
   "err.c.unprocessable": "The request is valid but can't be processed with that data (missing template roles, invalid rows, PDF too heavy to search for anchors).",
-  "err.c.rate": "You exceeded the rate limit. Wait as long as the `retry-after` header says (in seconds).",
+  "err.c.rate": "You exceeded the per-IP rate limit (no specific code). Wait as long as the `retry-after` header says (in seconds) and retry.",
+  "err.c.rateBiz":
+    "Business cap with its own code (`reminded_recently`, `form_rate_limited`, `workflow_rate_limited`, `ai_signer_limit`, `ai_budget_exceeded`, `too_many_comments`, `too_many_proposals`, `archive_recently_renewed`, `too_many_attempts`). There's no `retry-after`: don't retry it in a loop; tell the user or try much later.",
   "err.c.internal": "Our error. It's safe to retry with increasing backoff; if you use `Idempotency-Key`, nothing gets duplicated.",
   "err.codes.retry":
-    "**What to retry:** network errors, `429` and `5xx`, with exponential backoff and some jitter. **What not to:** the rest of the `4xx` errors, which won't change if you repeat the same request.",
+    "**What to retry:** network errors, the per-IP rate-limit `429` (with `retry-after`) and `5xx`, with exponential backoff and some jitter. **What not to:** `429`s with their own code (business caps, no `retry-after`) and the rest of the `4xx` errors, which won't change if you repeat the same request.",
   "err.idem.h": "Idempotency",
   "err.idem.p":
     "If a create request is cut off (timeout, network), you don't know whether it went through. Send the `Idempotency-Key` header with a unique value per operation — for example, the request id in your system — and retry with the same value: CalaSign runs the operation only once and returns the stored response to retries, with the `idempotent-replay: true` header.",

@@ -36,7 +36,8 @@ Paso a paso (sobre que se arma de a poco): `uploadDocument`, `setRecipients`, `s
 ## Qué resuelve el SDK
 
 - **Reintentos** ante errores de red, 429 (respetando `Retry-After`) y 5xx, con backoff exponencial y jitter
-  (`maxRetries`, por defecto 3).
+  (`maxRetries`, por defecto 3). Un 429 de un tope de negocio (código propio y sin `Retry-After`, p. ej.
+  `reminded_recently`) no se reintenta: se lanza enseguida como `CalaSignError`.
 - **Idempotencia**: `envelopes.create`, `envelopes.createAndSend`, `envelopes.fromTemplate` y `envelopes.send` mandan `Idempotency-Key` automática
   (o la tuya), así que un reintento nunca duplica un sobre ni un envío. Un POST sin idempotencia no se reintenta ante
   errores de red.

@@ -22,8 +22,9 @@ Authorization: Bearer <API key (cs_live_… / cs_test_…) or OAuth access token
 - JSON in/out (`Content-Type: application/json`). PDFs go inside the JSON (`base64` or `url`) or, to avoid
   base64, as multipart/form-data (the JSON in a `payload` part + one part per PDF).
 - Errors: `{"error": {"code": "...", "message": "...", "details": ...}}` (see errors.md).
-- Idempotency: `POST /v1/envelopes`, `POST /v1/envelopes/{id}/send` and `POST /v1/envelopes/from-template`
-  accept `Idempotency-Key: <uuid>`. Retrying with the same key and body returns the stored response
+- Idempotency: six endpoints accept `Idempotency-Key: <uuid>`: `POST /v1/envelopes`,
+  `POST /v1/envelopes/{id}/send`, `POST /v1/envelopes/from-template`, `POST /v1/envelopes/from-template/{templateId}`,
+  `POST /v1/bulk-sends` and `POST /v1/crm/mappings/{id}/send`. Retrying with the same key and body returns the stored response
   instead of creating/sending twice. **Always send one on create and send.**
 - Pagination: `GET /v1/envelopes?limit=25&cursor=<nextCursor>` (limit 1–100). Stop when `nextCursor` is null.
 - Max PDF size: 25 MB per document (configurable per environment). JSON bodies: 2 MB, except
@@ -43,7 +44,7 @@ Authorization: Bearer <API key (cs_live_… / cs_test_…) or OAuth access token
 | `PUT /v1/envelopes/{id}/recipients` | Replace recipients `{recipients:[…]}` |
 | `PUT /v1/envelopes/{id}/fields` | Replace fields `{fields:[…]}` (coordinates or `anchor`) |
 | `POST /v1/envelopes/{id}/send` | Send (validates: ≥1 document, every signer has a signature field) |
-| `POST /v1/envelopes/{id}/remind` | Re-notify pending signers of the current step → `{notified}` |
+| `POST /v1/envelopes/{id}/remind` | Re-notify pending signers of the current step → `{notified}`. Once per 10 min per envelope (`429 reminded_recently`) |
 | `POST /v1/envelopes/{id}/void` | Void an in-progress envelope `{reason}` |
 | `GET /v1/envelopes/{id}/events` | Hash-chained audit trail |
 | `GET /v1/envelopes/{id}/signed.pdf` | Final sealed PDF (status `completed`) |

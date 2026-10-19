@@ -21,10 +21,16 @@ OAuth endpoints use the RFC 6749 shape `{"error": "...", "error_description": ".
 | 409 | `idempotency_mismatch` | Same `Idempotency-Key` reused with a different body → use a new key |
 | 409 | `idempotency_in_progress` | Same key still running → wait and retry |
 | 409 | `conflict` | Concurrent change → re-read and retry |
+| 409 | `member_changed` / `version_changed` | The member's role or the negotiation changed meanwhile → re-read, review and repeat |
+| 409 | `proposal_outdated` | The text changed since the proposal was made → reject it and ask for a new one |
+| 409 | `too_many_replacements` | Envelope already had 20 delegations/reassignments → void and resend if needed |
 | 413 | `file_too_large` | PDF over the size limit (25 MB by default) |
+| 413 | `ai_input_too_large` | Document too long for the AI assistant → no retry |
 | 422 | `envelope_incomplete` | Can't send: `details.problems[]` (no document, no signer, signer without signature field, expiry in the past) |
 | 422 | `pdf_too_heavy` | PDF too complex to search for anchors → use coordinates |
-| 429 | — | Rate limited → wait (`Retry-After`) |
+| 429 | `bad_request` (generic) | Per-IP rate limit → wait for `Retry-After` (seconds) and retry |
+| 429 | `reminded_recently`, `form_rate_limited`, `workflow_rate_limited`, `ai_signer_limit`, `ai_budget_exceeded`, `too_many_comments`, `too_many_proposals`, `archive_recently_renewed`, `too_many_attempts` | Business cap (specific code, **no** `Retry-After`) → don't retry in a loop; tell the user or try much later |
+| 502 | `tsa_unavailable` | Timestamp authority failed → retry in a few minutes |
 | 503 | `pdf_reader_busy` | Temporary → retry shortly |
 | 5xx | `internal_error` | Retry with the same `Idempotency-Key` |
 

@@ -15,7 +15,8 @@ const CODES: [string, string, string][] = [
   ["409", "idempotency_mismatch · idempotency_in_progress", "err.c.idem"],
   ["413", "file_too_large", "err.c.tooLarge"],
   ["422", "roles_missing · rows_invalid · pdf_too_heavy", "err.c.unprocessable"],
-  ["429", "—", "err.c.rate"],
+  ["429", "bad_request + retry-after", "err.c.rate"],
+  ["429", "reminded_recently · form_rate_limited · ai_signer_limit · …", "err.c.rateBiz"],
   ["500", "internal_error", "err.c.internal"],
 ];
 

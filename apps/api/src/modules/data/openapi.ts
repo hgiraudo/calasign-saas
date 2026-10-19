@@ -19,5 +19,13 @@ export const DATA_OPS = [
   { method: "get", path: "/v1/settings/sso/domains", tag: TAG, summary: "Dominios SSO y su verificación por DNS" },
   { method: "post", path: "/v1/settings/sso/domains/{domain}/verify", tag: TAG, summary: "Verificar un dominio SSO (TXT _calasign-sso.<dominio>)" },
   { method: "get", path: "/v1/envelopes/{id}/archive", tag: TAG, summary: "Vigencia del sello de archivo y versiones del PDF firmado" },
-  { method: "post", path: "/v1/envelopes/{id}/archive/renew", tag: TAG, summary: "Renovar ahora el sello de archivo (DSS + sello de documento)" },
+  {
+    method: "post",
+    path: "/v1/envelopes/{id}/archive/renew",
+    tag: TAG,
+    summary: "Renovar ahora el sello de archivo (DSS + sello de documento)",
+    description:
+      "Una renovación a la vez por sobre (409 archive_renewal_in_progress), hasta 3 por día (429 archive_recently_renewed, sin Retry-After) y 50 en total (409 archive_renewal_limit). Si la autoridad de sellado de tiempo falla, 502 tsa_unavailable: reintentar más tarde.",
+    errors: ["archive_renewal_in_progress", "archive_recently_renewed", "archive_renewal_limit", "tsa_unavailable"],
+  },
 ] as const;

@@ -32,6 +32,8 @@ type Op = {
   response?: z.ZodTypeAny | "pdf" | "none";
   status?: number;
   auth?: "key" | "none";
+  /** Códigos del catálogo ERRORS (openapi-extra.ts). */
+  errors?: string[];
 };
 
 const R = "Repositorio de acuerdos";
@@ -66,7 +68,8 @@ export const AGREEMENTS_OPS: Op[] = [
     path: "/v1/document-templates/{id}/generate",
     tag: D,
     summary: "Generar el documento y crear el sobre",
-    description: "Las marcas {{firma:Rol}} se convierten en campos del firmante de ese rol. 422 si faltan datos, cláusulas o firmantes.",
+    description:
+      "Las marcas {{firma:Rol}} se convierten en campos del firmante de ese rol. 422 si faltan datos, cláusulas o firmantes. El documento generado admite hasta 300 000 caracteres y 500 marcas de firma o campos (si no, 400 template_syntax).",
     body: GenerateDocumentInput,
     status: 201,
   },
@@ -87,7 +90,17 @@ export const AGREEMENTS_OPS: Op[] = [
   { method: "post", path: "/v1/workflow-runs/{id}/cancel", tag: W, summary: "Cancelar una ejecución (anula sus sobres en curso)" },
   { method: "post", path: "/v1/workflow-runs/{id}/retry", tag: W, summary: "Reintentar el paso fallido" },
   { method: "get", path: "/v1/public/workflows/{slug}", tag: W, summary: "Workflow con inicio público", auth: "none" },
-  { method: "post", path: "/v1/public/workflows/{slug}/start", tag: W, summary: "Iniciar desde el link público", auth: "none", status: 201 },
+  {
+    method: "post",
+    path: "/v1/public/workflows/{slug}/start",
+    tag: W,
+    summary: "Iniciar desde el link público",
+    description:
+      "Hasta 60 ejecuciones públicas por hora por workflow (después, 429 workflow_rate_limited, sin Retry-After). Los destinatarios cuyo correo o teléfono escribió quien completó el formulario quedan autorregistrados: no reciben invitaciones ni recordatorios hasta validar su correo.",
+    auth: "none",
+    status: 201,
+    errors: ["workflow_rate_limited"],
+  },
   { method: "get", path: "/v1/public/workflow-runs/{token}", tag: W, summary: "Estado público de una ejecución", auth: "none" },
   { method: "post", path: "/v1/public/workflow-runs/{token}/steps/{index}", tag: W, summary: "Completar un paso de datos", body: SubmitCollectInput, auth: "none" },
 
@@ -97,11 +110,56 @@ export const AGREEMENTS_OPS: Op[] = [
   { method: "get", path: "/v1/negotiations/{id}", tag: N, summary: "Ver una negociación" },
   { method: "get", path: "/v1/negotiations/{id}/diff", tag: N, summary: "Diff entre versiones", description: "Query: from, to." },
   { method: "get", path: "/v1/negotiations/{id}/pdf", tag: N, summary: "PDF de la versión actual", response: "pdf" },
-  { method: "post", path: "/v1/negotiations/{id}/comments", tag: N, summary: "Comentar", body: NegotiationCommentInput, status: 201 },
-  { method: "post", path: "/v1/negotiations/{id}/proposals/{proposalId}/decision", tag: N, summary: "Aceptar o rechazar una propuesta", body: ProposalDecisionInput },
-  { method: "post", path: "/v1/negotiations/{id}/accept", tag: N, summary: "Aceptar y crear el sobre", body: AcceptNegotiationInput },
+  {
+    method: "post",
+    path: "/v1/negotiations/{id}/comments",
+    tag: N,
+    summary: "Comentar",
+    description: "Hasta 500 comentarios por negociación (429 too_many_comments). Si mientras tanto hay una versión nueva, 409 version_changed.",
+    body: NegotiationCommentInput,
+    status: 201,
+    errors: ["too_many_comments", "version_changed"],
+  },
+  {
+    method: "post",
+    path: "/v1/negotiations/{id}/proposals/{proposalId}/decision",
+    tag: N,
+    summary: "Aceptar o rechazar una propuesta",
+    description: "Aceptar una propuesta cuyo texto cambió desde que se hizo responde 409 proposal_outdated: rechazarla y pedir otra.",
+    body: ProposalDecisionInput,
+    errors: ["proposal_outdated"],
+  },
+  {
+    method: "post",
+    path: "/v1/negotiations/{id}/accept",
+    tag: N,
+    summary: "Aceptar y crear el sobre",
+    description: "`expectedVersion` (opcional): la versión que se revisó; si ya hay otra, 409 version_changed en vez de aceptar algo que no se vio.",
+    body: AcceptNegotiationInput,
+    errors: ["version_changed"],
+  },
   { method: "post", path: "/v1/negotiations/{id}/cancel", tag: N, summary: "Cancelar la negociación" },
   { method: "get", path: "/v1/public/negotiations/{token}", tag: N, summary: "Vista de la contraparte", auth: "none" },
-  { method: "post", path: "/v1/public/negotiations/{token}/comments", tag: N, summary: "Comentario de la contraparte", body: NegotiationCommentInput, auth: "none", status: 201 },
-  { method: "post", path: "/v1/public/negotiations/{token}/proposals", tag: N, summary: "Propuesta de cambio de la contraparte", body: NegotiationProposalInput, auth: "none", status: 201 },
+  {
+    method: "post",
+    path: "/v1/public/negotiations/{token}/comments",
+    tag: N,
+    summary: "Comentario de la contraparte",
+    description: "Hasta 500 comentarios por negociación (429 too_many_comments); 409 version_changed si hay una versión nueva.",
+    body: NegotiationCommentInput,
+    auth: "none",
+    status: 201,
+    errors: ["too_many_comments", "version_changed"],
+  },
+  {
+    method: "post",
+    path: "/v1/public/negotiations/{token}/proposals",
+    tag: N,
+    summary: "Propuesta de cambio de la contraparte",
+    description: "Hasta 20 propuestas sin decidir por participante (429 too_many_proposals); 409 version_changed si hay una versión nueva.",
+    body: NegotiationProposalInput,
+    auth: "none",
+    status: 201,
+    errors: ["too_many_proposals", "version_changed"],
+  },
 ];

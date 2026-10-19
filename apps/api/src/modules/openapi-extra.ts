@@ -366,7 +366,8 @@ export const ERRORS: Record<string, Err> = {
     status: 429,
     code: "too_many_attempts",
     message: "Demasiados intentos fallidos. Probá de nuevo en unos minutos o restablecé tu contraseña.",
-    summary: "10 intentos fallidos en 15 minutos bloquean la cuenta (aunque vengan de IPs distintas)",
+    summary:
+      "10 intentos en 15 minutos bloquean la cuenta: se cuentan antes de verificar y desde cualquier IP, y un acierto los borra. Vale para el login, aceptar una invitación con contraseña y el segundo paso (2FA). Además, 5 códigos fallidos en un mismo desafío de 2FA cortan ese desafío con 401 too_many_attempts (volver a ingresar la contraseña). Sin Retry-After: no reintentar en un loop.",
   },
 
   file_too_large: { status: 413, code: "file_too_large", message: "El archivo supera el tamaño máximo", summary: "Archivo más grande que el máximo permitido" },
@@ -403,6 +404,95 @@ export const ERRORS: Record<string, Err> = {
   pdf_too_heavy: { status: 422, code: "pdf_too_heavy", message: "El PDF es demasiado pesado para leer su texto", summary: "No se pudo leer el texto del PDF para buscar las anclas" },
   pdf_reader_busy: { status: 503, code: "pdf_reader_busy", message: "Hay muchos documentos leyéndose en este momento; probá de nuevo en unos segundos", summary: "Lector de PDF saturado: reintentar" },
 
+  invalid_date: { status: 400, code: "invalid_date", message: "Fecha fuera de rango o inválida", summary: "Fecha que no existe o fuera del rango admitido (p. ej. año 0)" },
+  too_many_replacements: {
+    status: 409,
+    code: "too_many_replacements",
+    message: "Este sobre ya tuvo demasiadas delegaciones o reasignaciones",
+    summary: "Tope de 20 delegaciones o reasignaciones por sobre",
+  },
+  member_changed: {
+    status: 409,
+    code: "member_changed",
+    message: "El rol del miembro cambió mientras tanto: volvé a cargar y probá de nuevo",
+    summary: "El rol del miembro cambió durante el pedido: volver a leerlo y repetir",
+  },
+  export_in_progress: { status: 409, code: "export_in_progress", message: "La exportación ya está en curso", summary: "La exportación está pendiente o subiéndose (solo se reintenta una fallida o una pendiente abandonada)" },
+  archive_renewal_limit: {
+    status: 409,
+    code: "archive_renewal_limit",
+    message: "El sobre llegó al máximo de 50 renovaciones del sello de archivo",
+    summary: "Tope de 50 renovaciones del sello de archivo por sobre",
+  },
+  archive_renewal_in_progress: {
+    status: 409,
+    code: "archive_renewal_in_progress",
+    message: "Ya hay una renovación del sello de archivo en curso para este sobre",
+    summary: "Una renovación a la vez por sobre",
+  },
+  version_changed: { status: 409, code: "version_changed", message: "Hay una versión nueva: revisala y volvé a aceptar", summary: "La negociación tiene una versión nueva: revisarla y repetir" },
+  proposal_outdated: {
+    status: 409,
+    code: "proposal_outdated",
+    message: "El texto cambió desde que se hizo la propuesta: rechazala y pedí una nueva",
+    summary: "El texto cambió desde la propuesta: no se puede aceptar (rechazarla y pedir otra)",
+  },
+  ai_input_too_large: {
+    status: 413,
+    code: "ai_input_too_large",
+    message: "El documento es demasiado largo para la asistencia con IA",
+    details: { estimatedTokens: 250000, max: 150000 },
+    summary: "Documento demasiado largo para la IA",
+  },
+  reminded_recently: {
+    status: 429,
+    code: "reminded_recently",
+    message: "Ya se mandó un recordatorio hace unos minutos: esperá un poco antes de mandar otro",
+    summary: "Un recordatorio manual cada 10 minutos por sobre. Sin Retry-After: no reintentar en un loop.",
+  },
+  form_rate_limited: {
+    status: 429,
+    code: "form_rate_limited",
+    message: "Demasiados envíos de este formulario: probá más tarde",
+    summary: "Tope de 60 sobres por hora por formulario web. Sin Retry-After.",
+  },
+  workflow_rate_limited: {
+    status: 429,
+    code: "workflow_rate_limited",
+    message: "Demasiadas ejecuciones de este workflow: probá más tarde",
+    summary: "Tope de 60 ejecuciones públicas por hora por workflow. Sin Retry-After.",
+  },
+  too_many_comments: {
+    status: 429,
+    code: "too_many_comments",
+    message: "La negociación llegó al máximo de 500 comentarios",
+    summary: "Tope de 500 comentarios por negociación",
+  },
+  too_many_proposals: {
+    status: 429,
+    code: "too_many_proposals",
+    message: "Tenés 20 propuestas sin decidir: esperá a que las revisen",
+    summary: "Tope de 20 propuestas pendientes por participante",
+  },
+  archive_recently_renewed: {
+    status: 429,
+    code: "archive_recently_renewed",
+    message: "El sello de archivo de este sobre ya se renovó varias veces hoy",
+    summary: "Tope de 3 renovaciones del sello de archivo por día y sobre. Sin Retry-After.",
+  },
+  ai_signer_limit: {
+    status: 429,
+    code: "ai_signer_limit",
+    message: "Llegaste al máximo de consultas a la IA para este documento",
+    summary: "Tope por firmante: 30 consultas por día y 100 en total. Sin Retry-After.",
+  },
+  tsa_unavailable: {
+    status: 502,
+    code: "tsa_unavailable",
+    message: "La autoridad de sellado de tiempo no respondió como se esperaba: reintentá en unos minutos",
+    summary: "La TSA externa falló: reintentar más tarde",
+  },
+
   rate_limited: {
     status: 429,
     code: "bad_request",
@@ -419,9 +509,10 @@ const STATUS_TEXT: Record<number, string> = {
   404: "No encontrado",
   409: "Conflicto con el estado actual",
   410: "Ya no disponible",
-  413: "Archivo demasiado grande",
+  413: "Contenido demasiado grande",
   422: "No procesable",
   429: "Demasiados pedidos",
+  502: "Servicio externo no disponible",
   503: "Servicio ocupado",
 };
 
@@ -470,7 +561,7 @@ export function errorComponents() {
     examples,
     responses,
     headers: {
-      RetryAfter: int("Segundos hasta que se renueva la ventana."),
+      RetryAfter: int("Segundos hasta que se renueva la ventana. Solo en el 429 del límite por IP: los 429 con código propio (topes de negocio como reminded_recently) no lo traen y no se reintentan en un loop."),
       RateLimitLimit: int("Pedidos permitidos en la ventana (600/min por IP en general; algunas rutas tienen un límite menor)."),
       RateLimitRemaining: int("Pedidos que quedan en la ventana actual."),
       RateLimitReset: int("Segundos hasta que se renueva la ventana."),

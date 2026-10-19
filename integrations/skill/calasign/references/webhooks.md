@@ -1,6 +1,8 @@
 # Webhooks
 
-Create an endpoint (scope `webhooks:manage`); the secret is returned **once**:
+Create an endpoint (scope `webhooks:manage`); the secret is returned **once**. A webhook receives data from every
+envelope in the organization, so creating or changing one (or retrying a delivery) also needs the `envelopes:view_all`
+permission (e.g. an `admin` key; a `member` key gets `403 forbidden`):
 
 ```bash
 curl -s {{BASE_URL}}/v1/webhooks -H "Authorization: Bearer $CALASIGN_API_KEY" -H 'Content-Type: application/json' \

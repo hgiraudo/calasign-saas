@@ -30,7 +30,7 @@ draft ──send──► sent ──all signed──► finalizing ──sealed
 | `signed` | Signed (signers) / approved (approvers) |
 | `completed` | Finished (CC copies receive the final document) |
 | `declined` | Declined to sign |
-| `delegated` / `reassigned` | Handed over to someone else (allowed if the envelope permits delegation) |
+| `delegated` / `reassigned` | Handed over to someone else (allowed if the envelope permits delegation; at most 20 per envelope → `409 too_many_replacements`) |
 
 Roles: `signer` (must have ≥1 `signature` field), `approver` (approves without fields), `cc` (receives a copy).
 
@@ -43,6 +43,7 @@ the lawyer (2), CC the accountant (3).
 ## Reminders & expiry
 
 - Manual: `POST /v1/envelopes/{id}/remind` notifies pending recipients of the current step (only when `sent`).
+  At most once per 10 minutes per envelope; sooner → `429 reminded_recently` (no `Retry-After`: don't retry in a loop).
 - Automatic: `reminderEveryDays` and `expiryWarningDays` on create/patch.
 - `expiresAt`: ISO date-time; default 30 days.
 

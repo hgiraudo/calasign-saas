@@ -158,7 +158,7 @@ export const docsPt: Record<DocsKey, string> = {
   "auth.cmp.code": "Um app que age em nome de usuários de outras organizações (marketplace, agentes de IA).",
   "auth.keys.h": "API keys",
   "auth.keys.p":
-    "São criadas em **Configurações → API keys** ([`/app/settings/api-keys`](/app/settings/api-keys)) ou com `POST /v1/api-keys` a partir de uma sessão. O segredo completo é exibido **uma única vez**; depois só aparecem o prefixo (os primeiros 12 caracteres) e a data do último uso.\n\n- Formato: `cs_test_…` no ambiente de testes e `cs_live_…` em produção.\n- Cada key pertence à organização e tem um **papel** (`admin`, `member` ou um papel personalizado) que define o que ela pode fazer; ninguém pode criar uma key com mais permissões do que as próprias.\n- Os envelopes criados com uma key ficam registrados como criados pela API (`createdVia: \"api\"`) e a evidência nomeia a key como ator.",
+    "São criadas em **Configurações → API keys** ([`/app/settings/api-keys`](/app/settings/api-keys)) ou com `POST /v1/api-keys` a partir de uma sessão. O segredo completo é exibido **uma única vez**; depois só aparecem o prefixo (os primeiros 12 caracteres) e a data do último uso.\n\n- Formato: `cs_test_…` no ambiente de testes e `cs_live_…` em produção.\n- Cada key pertence à organização e tem um **papel** (`admin`, `member` ou um papel personalizado) que define o que ela pode fazer; ninguém pode criar uma key com mais permissões do que as próprias. Para criar webhooks ou integrações (gatilhos, armazenamento, CRM) a key também precisa de `envelopes:view_all`, como o papel `admin`.\n- Os envelopes criados com uma key ficam registrados como criados pela API (`createdVia: \"api\"`) e a evidência nomeia a key como ator.",
   "auth.keys.rotate.h": "Rotação e revogação",
   "auth.keys.rotate.p":
     "As keys não expiram. Para rotacionar uma: crie uma nova, implante-a no seu sistema, confira na lista que a antiga deixou de ser usada (*último uso*) e revogue-a com **Revogar** ou `DELETE /v1/api-keys/{id}`. A revogação é imediata: a próxima requisição com essa key recebe `401 unauthorized`.",
@@ -383,7 +383,7 @@ export const docsPt: Record<DocsKey, string> = {
     "Escolha o modelo e o **papel assumido por quem preenche o formulário** (`signerRoleId`, precisa ser signatário). Os demais papéis são cobertos com `fixedRecipients` (por exemplo, o representante da sua empresa). Opções: `prefill`, `maxUses`, `expiresAt`, `requireOtp` (pede um código por e-mail antes de mostrar o documento), `collectPhone` e `embeddable` (pode ser exibido em um iframe a partir das suas origens autorizadas).",
   "g.forms.share.h": "Compartilhar e acompanhar",
   "g.forms.share.p":
-    "A resposta traz `url`, o link público para compartilhar. `GET /v1/web-forms/{id}/envelopes` lista os envelopes gerados e `uses` conta os usos. Para pausá-lo, `PATCH /v1/web-forms/{id}` com `active: false`. Se quem o criou sair da organização ou perder acesso ao modelo, o formulário deixa de criar envelopes e `ownerInactiveReason` explica o motivo.",
+    "A resposta traz `url`, o link público para compartilhar. `GET /v1/web-forms/{id}/envelopes` lista os envelopes gerados e `uses` conta os usos. Para pausá-lo, `PATCH /v1/web-forms/{id}` com `active: false`. Se quem o criou sair da organização ou perder acesso ao modelo, o formulário deixa de criar envelopes e `ownerInactiveReason` explica o motivo. Cada formulário cria no máximo 60 envelopes por hora; depois responde `429 form_rate_limited`.",
   // ───────── Guia: lembretes ─────────
   "g.rem.title": "Lembretes, expiração e correções",
   "g.rem.lead": "Como insistir com quem não assinou, quando um envelope expira e o que pode ser alterado depois de enviá-lo.",
@@ -392,15 +392,15 @@ export const docsPt: Record<DocsKey, string> = {
     "Ao criar ou editar o rascunho: `reminderEveryDays` (1 a 60) reenvia o convite a cada N dias para quem está com o turno pendente; `expiryWarningDays` avisa N dias antes da expiração; `allowDelegation` permite que o signatário delegue a outra pessoa. `null` desativa cada opção.",
   "g.rem.manual.h": "Lembrete manual",
   "g.rem.manual.p":
-    "`POST /v1/envelopes/{id}/remind` reenvia imediatamente o convite aos pendentes do turno atual e retorna quantos foram notificados. Se o envelope estiver em `awaiting_certificates`, avisa o signatário com certificado da vez. Um envelope que não está em andamento responde `409 not_in_progress`.",
+    "`POST /v1/envelopes/{id}/remind` reenvia imediatamente o convite aos pendentes do turno atual e retorna quantos foram notificados. No máximo um lembrete manual a cada 10 minutos por envelope: antes disso responde `429 reminded_recently`. Se o envelope estiver em `awaiting_certificates`, avisa o signatário com certificado da vez. Um envelope que não está em andamento responde `409 not_in_progress`.",
   "g.rem.exp.h": "Expiração",
   "g.rem.exp.p":
     "`expiresAt` (ISO 8601 com fuso horário) define até quando é possível assinar. Se você não informar, o envelope expira **30 dias** após a criação. Ao expirar, passa para `expired` e dispara `envelope.expired`. Para estender o prazo de um envelope em andamento, use uma correção.",
   "g.rem.corr.h": "Correções e reatribuição",
   "g.rem.corr.p":
-    "`POST /v1/envelopes/{id}/corrections` altera um envelope em andamento sem anulá-lo: mensagem, expiração, dados de contato (o link anterior é revogado e um novo é enviado), destinatários e campos novos para turnos que não começaram, e remoção de quem ainda não abriu o envelope. Quem já assinou não pode ser alterado. `reason` fica na evidência.",
+    "`POST /v1/envelopes/{id}/corrections` altera um envelope em andamento sem anulá-lo: mensagem, expiração, dados de contato (o link anterior é revogado e um novo é enviado), destinatários e campos novos para turnos que não começaram, e remoção de quem ainda não abriu o envelope. Quem já assinou não pode ser alterado. `reason` fica na evidência. O envelope corrigido continua limitado a 50 destinatários e 500 campos (senão, `422 envelope_incomplete`).",
   "g.rem.reassign":
-    "Para substituir um destinatário pendente por outra pessoa, use a reatribuição: o original fica como `reassigned` e o novo recebe o convite.",
+    "Para substituir um destinatário pendente por outra pessoa, use a reatribuição: o original fica como `reassigned` e o novo recebe o convite. Um envelope admite no máximo 20 delegações ou reatribuições (depois, `409 too_many_replacements`).",
   // ───────── Guia: certificado ─────────
   "g.cert.title": "Assinatura com certificado digital",
   "g.cert.lead":
@@ -490,7 +490,7 @@ export const docsPt: Record<DocsKey, string> = {
     "A CalaSign avisa você com um `POST` assinado para a sua URL sempre que algo acontece em um envelope: alguém o abre, assina, recusa, ou o envelope é concluído. É a forma recomendada de ficar sabendo, em vez de consultar a API. Disponível a partir do plano Starter.",
   "wh.setup.h": "Configurar um endpoint",
   "wh.setup.p":
-    "Registre a URL em **Configurações → Integrações** ([`/app/settings/integrations`](/app/settings/integrations)) ou via API. A URL precisa ser `https`, pública e sem credenciais; redirecionamentos não são seguidos. `events` vazio ou ausente = todos os eventos. A resposta inclui o `secret` (`whsec_…`) para verificar as assinaturas: **é exibido uma única vez**. Você pode ter vários endpoints, pausá-los (`active: false`) e alterar seus eventos com `PATCH /v1/webhooks/{id}`.",
+    "Registre a URL em **Configurações → Integrações** ([`/app/settings/integrations`](/app/settings/integrations)) ou via API. A URL precisa ser `https`, pública e sem credenciais; redirecionamentos não são seguidos. `events` vazio ou ausente = todos os eventos. A resposta inclui o `secret` (`whsec_…`) para verificar as assinaturas: **é exibido uma única vez**. Você pode ter vários endpoints, pausá-los (`active: false`) e alterar seus eventos com `PATCH /v1/webhooks/{id}`. Como um webhook recebe os dados de todos os envelopes da organização, criá-lo, alterá-lo ou reenviar uma entrega exige `webhooks:manage` e também `envelopes:view_all` (p. ex. o papel `admin`).",
   "wh.setup.once": "é exibido uma única vez",
   "wh.events.h": "Eventos",
   "wh.events.p": "Assine apenas os que você usa. Tipos novos podem surgir no futuro: ignore os que você não conhece respondendo `2xx`.",
@@ -564,10 +564,12 @@ export const docsPt: Record<DocsKey, string> = {
   "err.c.idem": "Você reutilizou uma `Idempotency-Key` com outro corpo, ou a requisição original ainda está sendo processada (tente novamente em alguns segundos).",
   "err.c.tooLarge": "O arquivo excede o tamanho máximo.",
   "err.c.unprocessable": "A requisição é válida, mas não pode ser processada com esses dados (faltam papéis do modelo, linhas inválidas, PDF pesado demais para buscar âncoras).",
-  "err.c.rate": "Você excedeu o limite de requisições. Aguarde o tempo indicado no cabeçalho `retry-after` (segundos).",
+  "err.c.rate": "Você excedeu o limite de requisições por IP (sem código próprio). Aguarde o tempo indicado no cabeçalho `retry-after` (segundos) e tente novamente.",
+  "err.c.rateBiz":
+    "Limite de negócio com código próprio (`reminded_recently`, `form_rate_limited`, `workflow_rate_limited`, `ai_signer_limit`, `ai_budget_exceeded`, `too_many_comments`, `too_many_proposals`, `archive_recently_renewed`, `too_many_attempts`). Não traz `retry-after`: não tente novamente em loop; avise o usuário ou tente bem mais tarde.",
   "err.c.internal": "Erro nosso. É seguro tentar novamente com espera crescente; se você usa `Idempotency-Key`, nada é duplicado.",
   "err.codes.retry":
-    "**O que tentar novamente:** erros de rede, `429` e `5xx`, com espera exponencial e um pouco de aleatoriedade. **O que não:** os demais `4xx`, que não vão mudar se você repetir a mesma requisição.",
+    "**O que tentar novamente:** erros de rede, o `429` do limite por IP (com `retry-after`) e `5xx`, com espera exponencial e um pouco de aleatoriedade. **O que não:** os `429` com código próprio (limites de negócio, sem `retry-after`) e os demais `4xx`, que não vão mudar se você repetir a mesma requisição.",
   "err.idem.h": "Idempotência",
   "err.idem.p":
     "Se uma requisição de criação é interrompida (timeout, rede), você não sabe se ela chegou. Envie o cabeçalho `Idempotency-Key` com um valor único por operação —por exemplo, o id do pedido no seu sistema— e tente novamente com o mesmo valor: a CalaSign executa a operação uma única vez e devolve às novas tentativas a resposta guardada, com o cabeçalho `idempotent-replay: true`.",

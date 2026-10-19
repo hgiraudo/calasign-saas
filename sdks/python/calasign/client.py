@@ -64,6 +64,7 @@ class EnvelopeDetail(TypedDict, total=False):
     documents: List[Document]
     recipients: List[Recipient]
     fields: List[Dict[str, Any]]
+    canManage: bool
 
 
 class EnvelopeSummary(TypedDict, total=False):
@@ -242,8 +243,11 @@ class CalaSign:
                     refreshed = True
                     self._bearer(force=True)
                     continue
-                if status in _RETRY_STATUS and attempt < self.max_retries and (retryable or status in (429, 503)):
-                    retry_after = e.headers.get("Retry-After")
+                retry_after = e.headers.get("Retry-After")
+                # Un 429 sin Retry-After y con código propio (reminded_recently, form_rate_limited, ai_signer_limit…) es un
+                # tope de negocio que no se libera en segundos: no se reintenta. Solo el límite por IP (con Retry-After) sí.
+                business_429 = status == 429 and not retry_after and _is_business_429(body)
+                if status in _RETRY_STATUS and attempt < self.max_retries and (retryable or status in (429, 503)) and not business_429:
                     time.sleep(_retry_delay(attempt, retry_after))
                     attempt += 1
                     continue
@@ -574,6 +578,16 @@ def _error_body(e: urllib.error.HTTPError) -> Dict[str, Any]:
         return _json_or_empty(e.read())
     except _NETWORK_ERRORS:
         return {}
+
+
+# Códigos del 429 del límite por IP (genérico): cualquier otro código en un 429 es un tope de negocio.
+_GENERIC_429_CODES = {"bad_request", "rate_limited"}
+
+
+def _is_business_429(body: Dict[str, Any]) -> bool:
+    err = body.get("error") if isinstance(body.get("error"), dict) else {}
+    code = err.get("code")
+    return isinstance(code, str) and code not in _GENERIC_429_CODES
 
 
 def _retry_delay(attempt: int, retry_after: Optional[str]) -> float:

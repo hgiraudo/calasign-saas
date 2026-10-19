@@ -39,6 +39,9 @@ CalaSign(oauth=ClientCredentials("csapp_…", "cssec_…", scope="envelopes:read
 ## Comportamiento
 
 - Reintentos ante errores de red, 429 (respeta `Retry-After`) y 5xx, con backoff exponencial (`max_retries=3`).
+- Un 429 se reintenta solo si es el límite de pedidos por IP (trae `Retry-After`). Los 429 de topes de negocio, con
+  código propio y sin `Retry-After` (`reminded_recently`, `form_rate_limited`, `ai_signer_limit`, …), se lanzan enseguida
+  como `CalaSignError`: reintentarlos en un loop no sirve.
 - `envelopes.create`, `envelopes.create_and_send`, `envelopes.from_template` y `envelopes.send` usan `Idempotency-Key` automática: un reintento
   no duplica nada. Los POST sin idempotencia no se reintentan ante errores de red.
 - Errores como `CalaSignError` con `.status`, `.code` y `.details`.

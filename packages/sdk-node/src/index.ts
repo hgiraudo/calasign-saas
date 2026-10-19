@@ -223,21 +223,33 @@ export class CalaSign {
         attempt--;
         continue;
       }
+      let text: string | undefined;
       if (RETRY_STATUS.has(res.status) && attempt < this.maxRetries && (retryable || res.status === 429 || res.status === 503)) {
-        // Se descarta el cuerpo: si no, undici deja la conexión tomada hasta que el GC lo junte.
-        await res.body?.cancel().catch(() => {});
-        const ra = Number(res.headers.get("retry-after"));
-        await sleep(Number.isFinite(ra) && ra > 0 ? Math.min(ra * 1000, 30_000) : backoff(attempt));
-        continue;
+        const raHeader = res.headers.get("retry-after");
+        let retry = true;
+        // Un 429 sin Retry-After y con código propio (reminded_recently, form_rate_limited, ai_signer_limit…) es un tope
+        // de negocio que no se libera en segundos: no se reintenta. Solo el límite por IP (con Retry-After) sí.
+        if (res.status === 429 && !raHeader) {
+          text = await res.text().catch(() => "");
+          retry = !isBusiness429(text);
+        }
+        if (retry) {
+          // Se descarta el cuerpo: si no, undici deja la conexión tomada hasta que el GC lo junte.
+          if (text === undefined) await res.body?.cancel().catch(() => {});
+          const ra = Number(raHeader);
+          await sleep(Number.isFinite(ra) && ra > 0 ? Math.min(ra * 1000, 30_000) : backoff(attempt));
+          continue;
+        }
       }
       if (o.raw && res.ok) return res as unknown as T;
       if (res.status === 204) return undefined as T;
-      let text: string;
-      try {
-        text = await res.text();
-      } catch (err) {
-        // Corte o timeout a mitad del cuerpo: también es un error de red (no un TypeError/AbortError suelto).
-        throw new CalaSignError(`Error de red: ${(err as Error).message}`, 0, "network_error");
+      if (text === undefined) {
+        try {
+          text = await res.text();
+        } catch (err) {
+          // Corte o timeout a mitad del cuerpo: también es un error de red (no un TypeError/AbortError suelto).
+          throw new CalaSignError(`Error de red: ${(err as Error).message}`, 0, "network_error");
+        }
       }
       let data: any = undefined;
       try {
@@ -257,6 +269,18 @@ export class CalaSign {
       }
       return data as T;
     }
+  }
+}
+
+/** Códigos del 429 del límite por IP (genérico): cualquier otro código en un 429 es un tope de negocio. */
+const GENERIC_429_CODES = new Set(["bad_request", "rate_limited"]);
+
+function isBusiness429(text: string): boolean {
+  try {
+    const code = JSON.parse(text)?.error?.code;
+    return typeof code === "string" && !GENERIC_429_CODES.has(code);
+  } catch {
+    return false;
   }
 }
 

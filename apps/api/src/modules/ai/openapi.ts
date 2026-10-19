@@ -9,7 +9,11 @@ import {
 } from "@calasign/shared";
 
 const TAG = "IA";
-const NOTE = "Requiere IA habilitada para la organización (403 ai_disabled) y presupuesto mensual disponible (429 ai_budget_exceeded).";
+const NOTE =
+  "Requiere IA habilitada para la organización (403 ai_disabled) y presupuesto mensual disponible (429 ai_budget_exceeded). Un documento demasiado largo para el modelo responde 413 ai_input_too_large.";
+const SIGNER_NOTE = `${NOTE} Por firmante: hasta 30 consultas por día y 100 en total (resumen y preguntas juntos; después, 429 ai_signer_limit). Si el sobre exige verificar la identidad y todavía no se verificó, 403 identity_required.`;
+const AI_ERRORS = ["ai_input_too_large"];
+const SIGNER_ERRORS = ["ai_input_too_large", "ai_signer_limit", "identity_required"];
 
 export const AI_OPS = [
   { method: "get", path: "/v1/settings/ai", tag: TAG, summary: "Configuración de IA, proveedor y consumo del mes" },
@@ -33,16 +37,17 @@ export const AI_OPS = [
     path: "/v1/envelopes/{id}/ai/detect-fields",
     tag: TAG,
     summary: "Sugerir campos (firma, iniciales, fecha, nombre) con su rol",
-    description: "Sin IA habilitada devuelve solo sugerencias por análisis del texto (no se envía nada). Coordenadas normalizadas 0..1.",
+    description: "Sin IA habilitada devuelve solo sugerencias por análisis del texto (no se envía nada). Coordenadas normalizadas 0..1. Con IA, un documento demasiado largo para el modelo responde 413 ai_input_too_large.",
     body: DetectFieldsInput,
+    errors: AI_ERRORS,
   },
   { method: "patch", path: "/v1/envelopes/{id}/ai/settings", tag: TAG, summary: "Permitir al firmante pedir resumen y hacer preguntas", body: UpdateEnvelopeAiInput },
   { method: "get", path: "/v1/envelopes/{id}/ai/review", tag: TAG, summary: "Última revisión contra el playbook" },
-  { method: "post", path: "/v1/envelopes/{id}/ai/review", tag: TAG, summary: "Revisar el documento contra el playbook (o reglas ad hoc)", description: NOTE, body: PlaybookReviewInput },
+  { method: "post", path: "/v1/envelopes/{id}/ai/review", tag: TAG, summary: "Revisar el documento contra el playbook (o reglas ad hoc)", description: NOTE, body: PlaybookReviewInput, errors: AI_ERRORS },
   { method: "get", path: "/v1/envelopes/{id}/ai/metadata", tag: TAG, summary: "Datos del contrato y alerta de renovación programada" },
-  { method: "post", path: "/v1/envelopes/{id}/ai/extract-metadata", tag: TAG, summary: "Extraer partes, fechas, montos, ley aplicable y preaviso", description: NOTE },
+  { method: "post", path: "/v1/envelopes/{id}/ai/extract-metadata", tag: TAG, summary: "Extraer partes, fechas, montos, ley aplicable y preaviso", description: NOTE, errors: AI_ERRORS },
   { method: "put", path: "/v1/envelopes/{id}/ai/metadata", tag: TAG, summary: "Corregir los datos del contrato (reprograma la alerta)", body: PutContractMetadataInput },
   { method: "get", path: "/v1/signing/{token}/ai", tag: TAG, summary: "Firmante: disponibilidad del asistente, aviso y descargo", auth: "token" },
-  { method: "post", path: "/v1/signing/{token}/ai/summary", tag: TAG, summary: "Firmante: resumen en lenguaje simple con citas", description: NOTE, auth: "token" },
-  { method: "post", path: "/v1/signing/{token}/ai/ask", tag: TAG, summary: "Firmante: pregunta sobre el documento, respondida con citas y página", description: NOTE, body: AiAskInput, auth: "token" },
+  { method: "post", path: "/v1/signing/{token}/ai/summary", tag: TAG, summary: "Firmante: resumen en lenguaje simple con citas", description: SIGNER_NOTE, auth: "token", errors: SIGNER_ERRORS },
+  { method: "post", path: "/v1/signing/{token}/ai/ask", tag: TAG, summary: "Firmante: pregunta sobre el documento, respondida con citas y página", description: SIGNER_NOTE, body: AiAskInput, auth: "token", errors: SIGNER_ERRORS },
 ] as const;

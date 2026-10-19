@@ -165,7 +165,7 @@ export const docsEs = {
   "auth.cmp.code": "Una app que actúa en nombre de usuarios de otras organizaciones (marketplace, agentes de IA).",
   "auth.keys.h": "API keys",
   "auth.keys.p":
-    "Se crean en **Ajustes → API keys** ([`/app/settings/api-keys`](/app/settings/api-keys)) o con `POST /v1/api-keys` desde una sesión. El secreto completo se muestra **una sola vez**; después solo se ve su prefijo (los primeros 12 caracteres) y la fecha de último uso.\n\n- Formato: `cs_test_…` en el entorno de pruebas y `cs_live_…` en producción.\n- Cada key pertenece a la organización y tiene un **rol** (`admin`, `member` o un rol personalizado) que define qué puede hacer; nadie puede crear una key con más permisos que los propios.\n- Los sobres creados con una key quedan registrados como creados por la API (`createdVia: \"api\"`) y la evidencia nombra a la key como actor.",
+    "Se crean en **Ajustes → API keys** ([`/app/settings/api-keys`](/app/settings/api-keys)) o con `POST /v1/api-keys` desde una sesión. El secreto completo se muestra **una sola vez**; después solo se ve su prefijo (los primeros 12 caracteres) y la fecha de último uso.\n\n- Formato: `cs_test_…` en el entorno de pruebas y `cs_live_…` en producción.\n- Cada key pertenece a la organización y tiene un **rol** (`admin`, `member` o un rol personalizado) que define qué puede hacer; nadie puede crear una key con más permisos que los propios. Para crear webhooks o integraciones (disparadores, almacenamiento, CRM) la key necesita además `envelopes:view_all`, como el rol `admin`.\n- Los sobres creados con una key quedan registrados como creados por la API (`createdVia: \"api\"`) y la evidencia nombra a la key como actor.",
   "auth.keys.rotate.h": "Rotación y revocación",
   "auth.keys.rotate.p":
     "Las keys no vencen. Para rotar una: creá una nueva, desplegala en tu sistema, verificá en la lista que la vieja dejó de usarse (*último uso*) y revocala con **Revocar** o `DELETE /v1/api-keys/{id}`. La revocación es inmediata: el próximo pedido con esa key recibe `401 unauthorized`.",
@@ -390,7 +390,7 @@ export const docsEs = {
     "Elegí la plantilla y el **rol que toma quien completa el formulario** (`signerRoleId`, tiene que ser firmante). Los demás roles se cubren con `fixedRecipients` (por ejemplo, el representante de tu empresa). Opciones: `prefill`, `maxUses`, `expiresAt`, `requireOtp` (pide un código por correo antes de mostrar el documento), `collectPhone` y `embeddable` (se puede mostrar en un iframe desde tus orígenes autorizados).",
   "g.forms.share.h": "Compartirlo y seguirlo",
   "g.forms.share.p":
-    "La respuesta trae `url`, el link público para compartir. `GET /v1/web-forms/{id}/envelopes` lista los sobres que generó y `uses` cuenta los usos. Para pausarlo, `PATCH /v1/web-forms/{id}` con `active: false`. Si quien lo creó deja la organización o pierde acceso a la plantilla, el formulario deja de crear sobres y `ownerInactiveReason` explica por qué.",
+    "La respuesta trae `url`, el link público para compartir. `GET /v1/web-forms/{id}/envelopes` lista los sobres que generó y `uses` cuenta los usos. Para pausarlo, `PATCH /v1/web-forms/{id}` con `active: false`. Si quien lo creó deja la organización o pierde acceso a la plantilla, el formulario deja de crear sobres y `ownerInactiveReason` explica por qué. Cada formulario crea como mucho 60 sobres por hora; después responde `429 form_rate_limited`.",
   // ───────── Guía: recordatorios ─────────
   "g.rem.title": "Recordatorios, vencimiento y correcciones",
   "g.rem.lead": "Cómo insistir con quien no firmó, cuándo vence un sobre y qué se puede cambiar después de enviarlo.",
@@ -399,15 +399,15 @@ export const docsEs = {
     "Al crear o editar el borrador: `reminderEveryDays` (1 a 60) reenvía la invitación cada N días a quienes tienen su turno pendiente; `expiryWarningDays` avisa N días antes del vencimiento; `allowDelegation` permite que el firmante delegue en otra persona. `null` desactiva cada opción.",
   "g.rem.manual.h": "Recordatorio manual",
   "g.rem.manual.p":
-    "`POST /v1/envelopes/{id}/remind` reenvía ya mismo la invitación a los pendientes del turno actual y devuelve cuántos se notificaron. Si el sobre está en `awaiting_certificates`, le avisa al firmante con certificado al que le toca. Un sobre que no está en curso responde `409 not_in_progress`.",
+    "`POST /v1/envelopes/{id}/remind` reenvía ya mismo la invitación a los pendientes del turno actual y devuelve cuántos se notificaron. Como mucho un recordatorio manual cada 10 minutos por sobre: antes responde `429 reminded_recently`. Si el sobre está en `awaiting_certificates`, le avisa al firmante con certificado al que le toca. Un sobre que no está en curso responde `409 not_in_progress`.",
   "g.rem.exp.h": "Vencimiento",
   "g.rem.exp.p":
     "`expiresAt` (ISO 8601 con zona horaria) define hasta cuándo se puede firmar. Si no lo indicás, el sobre vence **30 días** después de creado. Al vencer pasa a `expired` y se dispara `envelope.expired`. Para extenderlo en un sobre en curso, usá una corrección.",
   "g.rem.corr.h": "Correcciones y reasignación",
   "g.rem.corr.p":
-    "`POST /v1/envelopes/{id}/corrections` cambia un sobre en curso sin anularlo: mensaje, vencimiento, datos de contacto (se revoca el link anterior y se manda uno nuevo), destinatarios y campos nuevos para turnos que no empezaron, y bajas de quienes todavía no abrieron el sobre. Quien ya firmó no se puede tocar. `reason` queda en la evidencia.",
+    "`POST /v1/envelopes/{id}/corrections` cambia un sobre en curso sin anularlo: mensaje, vencimiento, datos de contacto (se revoca el link anterior y se manda uno nuevo), destinatarios y campos nuevos para turnos que no empezaron, y bajas de quienes todavía no abrieron el sobre. Quien ya firmó no se puede tocar. `reason` queda en la evidencia. El sobre corregido sigue limitado a 50 destinatarios y 500 campos (si no, `422 envelope_incomplete`).",
   "g.rem.reassign":
-    "Para reemplazar a un destinatario pendiente por otra persona, usá la reasignación: el original queda como `reassigned` y el nuevo recibe la invitación.",
+    "Para reemplazar a un destinatario pendiente por otra persona, usá la reasignación: el original queda como `reassigned` y el nuevo recibe la invitación. Un sobre admite como mucho 20 delegaciones o reasignaciones (después, `409 too_many_replacements`).",
   // ───────── Guía: certificado ─────────
   "g.cert.title": "Firma con certificado digital",
   "g.cert.lead":
@@ -497,7 +497,7 @@ export const docsEs = {
     "CalaSign te avisa con un `POST` firmado a tu URL cada vez que pasa algo en un sobre: alguien lo abre, firma, rechaza, o el sobre se completa. Es la forma recomendada de enterarte, en lugar de consultar la API. Disponible desde el plan Starter.",
   "wh.setup.h": "Configurar un endpoint",
   "wh.setup.p":
-    "Registrá la URL en **Ajustes → Integraciones** ([`/app/settings/integrations`](/app/settings/integrations)) o por API. La URL tiene que ser `https`, pública y sin credenciales; no se siguen redirecciones. `events` vacío o ausente = todos los eventos. La respuesta incluye el `secret` (`whsec_…`) para verificar las firmas: **se muestra una sola vez**. Podés tener varios endpoints, pausarlos (`active: false`) y cambiar sus eventos con `PATCH /v1/webhooks/{id}`.",
+    "Registrá la URL en **Ajustes → Integraciones** ([`/app/settings/integrations`](/app/settings/integrations)) o por API. La URL tiene que ser `https`, pública y sin credenciales; no se siguen redirecciones. `events` vacío o ausente = todos los eventos. La respuesta incluye el `secret` (`whsec_…`) para verificar las firmas: **se muestra una sola vez**. Podés tener varios endpoints, pausarlos (`active: false`) y cambiar sus eventos con `PATCH /v1/webhooks/{id}`. Como un webhook recibe los datos de todos los sobres de la organización, crearlo, modificarlo o reintentar una entrega pide `webhooks:manage` y además `envelopes:view_all` (p. ej. el rol `admin`).",
   "wh.setup.once": "se muestra una sola vez",
   "wh.events.h": "Eventos",
   "wh.events.p": "Suscribite solo a los que uses. Pueden aparecer tipos nuevos en el futuro: ignorá los que no conozcas respondiendo `2xx`.",
@@ -571,10 +571,12 @@ export const docsEs = {
   "err.c.idem": "Reutilizaste una `Idempotency-Key` con otro cuerpo, o el pedido original todavía se está procesando (reintentá en unos segundos).",
   "err.c.tooLarge": "El archivo supera el tamaño máximo.",
   "err.c.unprocessable": "El pedido es válido pero no se puede procesar con esos datos (faltan roles de la plantilla, filas inválidas, PDF demasiado pesado para buscar anclas).",
-  "err.c.rate": "Superaste el límite de pedidos. Esperá lo que indica el encabezado `retry-after` (segundos).",
+  "err.c.rate": "Superaste el límite de pedidos por IP (sin código propio). Esperá lo que indica el encabezado `retry-after` (segundos) y reintentá.",
+  "err.c.rateBiz":
+    "Tope de negocio con código propio (`reminded_recently`, `form_rate_limited`, `workflow_rate_limited`, `ai_signer_limit`, `ai_budget_exceeded`, `too_many_comments`, `too_many_proposals`, `archive_recently_renewed`, `too_many_attempts`). No trae `retry-after`: no lo reintentes en un loop; avisale al usuario o probá mucho más tarde.",
   "err.c.internal": "Error nuestro. Es seguro reintentar con espera creciente; si usás `Idempotency-Key`, no se duplica nada.",
   "err.codes.retry":
-    "**Qué reintentar:** errores de red, `429` y `5xx`, con espera exponencial y algo de azar. **Qué no:** el resto de los `4xx`, que no van a cambiar si repetís el mismo pedido.",
+    "**Qué reintentar:** errores de red, el `429` del límite por IP (con `retry-after`) y `5xx`, con espera exponencial y algo de azar. **Qué no:** los `429` con código propio (topes de negocio, sin `retry-after`) y el resto de los `4xx`, que no van a cambiar si repetís el mismo pedido.",
   "err.idem.h": "Idempotencia",
   "err.idem.p":
     "Si un pedido de creación se corta (timeout, red), no sabés si llegó. Mandá el encabezado `Idempotency-Key` con un valor único por operación —por ejemplo, el id del pedido en tu sistema— y reintentá con el mismo valor: CalaSign ejecuta la operación una sola vez y a los reintentos les devuelve la respuesta guardada, con el encabezado `idempotent-replay: true`.",

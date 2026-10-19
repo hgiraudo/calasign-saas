@@ -73,7 +73,9 @@ const MARK_TAGS: Record<string, MarkKind> = {
 
 const PATH = String.raw`@?[A-Za-zÀ-ÿ_][\wÀ-ÿ]*(?:\.[\wÀ-ÿ@]+)*`;
 // La condición no puede contener "}}": así "{{#if x}}texto{{/if}}" solo en una línea queda como if en línea.
-const RE_IF_LINE = /^\s*\{\{#if\s+((?:(?!\}\}).)+)\}\}\s*$/;
+// La condición empieza con un carácter que no es espacio: si no, \s+ y el grupo se disputaban los espacios y una línea
+// "{{#if" + miles de espacios costaba O(n²) (la manda también la contraparte de una negociación).
+const RE_IF_LINE = /^\s*\{\{#if\s+(\S(?:(?!\}\}).)*)\}\}\s*$/;
 const RE_ELSE_LINE = /^\s*\{\{else\}\}\s*$/;
 const RE_ENDIF_LINE = /^\s*\{\{\/if\}\}\s*$/;
 const RE_EACH_LINE = new RegExp(String.raw`^\s*\{\{#each\s+(${PATH})(?:\s+as\s+([A-Za-z_]\w*))?\s*\}\}\s*$`);

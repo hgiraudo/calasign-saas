@@ -74,3 +74,20 @@ describe("plantillas de documentos: presupuesto de salida", async () => {
     expect(renderTemplate("# Hola {{nombre}}\n\n{{#each items}}\n- {{item}}\n{{/each}}", { nombre: "Ana", items: [1, 2, 3] }).blocks.length).toBeGreaterThan(0);
   });
 });
+
+describe("expresiones regulares sin retroceso catastrófico", async () => {
+  const { parseFilter } = await import("../src/modules/identity/scim");
+  const { renderTemplate } = await import("@calasign/shared");
+  it("filtro SCIM largo: se rechaza sin evaluar la regex", () => {
+    const t0 = Date.now();
+    expect(() => parseFilter(" ".repeat(20_000), ["userName"])).toThrow(/demasiado largo/);
+    expect(parseFilter('userName eq "ana@x.com"', ["userName"])).toEqual({ attr: "userName", value: "ana@x.com" });
+    expect(Date.now() - t0).toBeLessThan(200);
+  });
+  it("línea {{#if seguida de miles de espacios: lineal", () => {
+    const t0 = Date.now();
+    renderTemplate(`{{#if${" ".repeat(200_000)}`, {});
+    expect(Date.now() - t0).toBeLessThan(500);
+    expect(renderTemplate("{{#if  a}}\nsí\n{{/if}}", { a: true }).blocks.length).toBe(1);
+  });
+});

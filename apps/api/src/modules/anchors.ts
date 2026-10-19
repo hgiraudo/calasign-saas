@@ -56,7 +56,7 @@ export async function expandAnchors(docs: AnchorDocument[], body: unknown): Prom
     if (!matchCache.has(key)) {
       if (!bytesCache.has(docId)) bytesCache.set(docId, await doc.load());
       try {
-        matchCache.set(key, await findTextAnchors(bytesCache.get(docId)!, text, { caseSensitive }));
+        matchCache.set(key, await findTextAnchors(bytesCache.get(docId)!, text, { caseSensitive, maxMatches: MAX_FIELDS + 1 }));
       } catch (e) {
         // PDF demasiado pesado para leer su texto (tope de pdf.js): 422, no un error interno.
         if (e instanceof InvalidPdfError) throw new AppError(422, "pdf_too_heavy", e.message);

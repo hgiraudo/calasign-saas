@@ -19,7 +19,7 @@ import { AppError, badRequest, notFound } from "../lib/errors";
 import { iso, sha256Hex, uuidv7 } from "../lib/util";
 import { assertTemplateAccess, templateVisibilitySql } from "./access";
 import { authenticate, type AuthContext, type Services } from "./context";
-import { idempotent, sendEnvelope } from "./envelopes";
+import { assertDocumentLimits, idempotent, sendEnvelope } from "./envelopes";
 import { checkSenderValue, insertEnvelopeField } from "./fieldvalues";
 import { assignFieldIds, copyFieldLogic, pruneDanglingConditions, saveFieldLogic } from "./logic";
 import { loadDetail, loadDocuments, toDocument } from "./mappers";
@@ -250,6 +250,7 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
         `INSERT INTO template_documents (id, tenant_id, template_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
         [docId, a.tenantId, tpl.id, pos.p, name, fileId, info.pageCount, JSON.stringify(info.pages)],
       );
+      await assertDocumentLimits(t, "template", tpl.id);
       await touch(t, tpl.id);
     }));
     reply.code(201);

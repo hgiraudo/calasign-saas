@@ -160,7 +160,7 @@ function sniff(buf: Buffer): string | null {
   return null;
 }
 
-const unsafeSvg = (svg: string) => /<script|on[a-z]+\s*=|javascript:|<foreignObject|xlink:href\s*=\s*["'](?!#)|href\s*=\s*["'](?!#)|<!ENTITY/i.test(svg);
+const unsafeSvg = (svg: string) => /<script|\bon[a-z]{1,40}\s*=|javascript:|<foreignObject|xlink:href\s*=\s*["'](?!#)|href\s*=\s*["'](?!#)|<!ENTITY/i.test(svg);
 
 function allowedType(kind: BrandAssetKind, type: string): boolean {
   if (kind === "font") return type.startsWith("font/");

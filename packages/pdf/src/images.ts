@@ -24,11 +24,31 @@ export function assertPngSize(bytes: Uint8Array, maxPixels = MAX_PNG_PIXELS): vo
   if (d.width * d.height > maxPixels) throw new Error(`PNG demasiado grande (${d.width}×${d.height})`);
 }
 
+/**
+ * Decodificaciones de PNG a la vez en este proceso: cada una puede ocupar ~200 MB y bloquear ~1 s (4096×4096); sin tope,
+ * unos pocos firmantes subiendo imágenes a la vez juntaban GB en la API.
+ */
+const MAX_CONCURRENT_DECODES = 2;
+let decoding = 0;
+const waiting: (() => void)[] = [];
+async function withDecodeSlot<T>(fn: () => Promise<T>): Promise<T> {
+  // Al terminar, el lugar pasa directo al siguiente en espera (sin liberarlo): así nadie se cuela entre medio.
+  if (decoding >= MAX_CONCURRENT_DECODES) await new Promise<void>((r) => waiting.push(r));
+  else decoding++;
+  try {
+    return await fn();
+  } finally {
+    const next = waiting.shift();
+    if (next) next();
+    else decoding--;
+  }
+}
+
 /** Verifica que una imagen PNG/JPG se pueda incrustar en un PDF (lanza si está dañada o es demasiado grande). */
 export async function assertEmbeddableImage(bytes: Uint8Array, contentType: "image/png" | "image/jpeg", maxPixels = MAX_PNG_PIXELS): Promise<void> {
   const doc = await PDFDocument.create();
   if (contentType === "image/png") {
     assertPngSize(bytes, maxPixels);
-    await doc.embedPng(bytes);
+    await withDecodeSlot(() => doc.embedPng(bytes).then(() => undefined));
   } else await doc.embedJpg(bytes);
 }

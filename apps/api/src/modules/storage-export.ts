@@ -638,6 +638,15 @@ export async function storageRoutes(app: FastifyInstance, s: Services) {
     return r;
   };
 
+  // Tope por organización (como los webhooks): cada conexión vuelve a subir el PDF firmado de cada sobre completado, y miles
+  // de conexiones llenaban la cola compartida con trabajos de una sola organización.
+  const MAX_CONNECTIONS = 20;
+  const tooManyConnections = async (tenantId: string) =>
+    ((await s.db.one<{ n: number }>(`SELECT count(*)::int AS n FROM storage_connections WHERE tenant_id = $1`, [tenantId]))?.n ?? 0) >= MAX_CONNECTIONS;
+  const assertConnectionQuota = async (tenantId: string) => {
+    if (await tooManyConnections(tenantId)) throw badRequest("too_many_connections", `Máximo ${MAX_CONNECTIONS} conexiones de almacenamiento por organización`);
+  };
+
   app.get("/v1/storage/providers", { preHandler: auth }, async () => {
     const items: StorageProviderInfo[] = STORAGE_PROVIDERS.map((p) => ({ provider: p, configured: isConfigured(p) }));
     return { items };
@@ -651,6 +660,7 @@ export async function storageRoutes(app: FastifyInstance, s: Services) {
   app.post("/v1/storage/connections/s3", { preHandler: auth }, async (req, reply) => {
     const a = req.auth!;
     const input = CreateS3ConnectionInput.parse(req.body);
+    await assertConnectionQuota(a.tenantId);
     const endpoint = validateS3Endpoint(input.endpoint);
     const prefix = input.prefix && !input.prefix.endsWith("/") ? `${input.prefix}/` : input.prefix ?? "";
     const cfg = { endpoint, region: input.region, bucket: input.bucket, prefix, forcePathStyle: input.forcePathStyle, includeEvidence: Boolean(input.includeEvidence) };
@@ -678,6 +688,7 @@ export async function storageRoutes(app: FastifyInstance, s: Services) {
     if (!["gdrive", "dropbox", "onedrive", "sharepoint", "box"].includes(p)) throw notFound("Proveedor");
     if (!isConfigured(p)) throw new AppError(409, "provider_not_configured", "Este proveedor no está configurado en el servidor");
     if (!a.userId) throw new AppError(403, "session_required", "Conectar una cuenta requiere iniciar sesión en la web");
+    await assertConnectionQuota(a.tenantId);
     const input = ConnectStorageOAuthInput.parse(req.body ?? {});
     if (p === "sharepoint") {
       if (!input.siteUrl) throw badRequest("site_required", "Indicá la URL del sitio de SharePoint");
@@ -724,6 +735,7 @@ export async function storageRoutes(app: FastifyInstance, s: Services) {
       if (st.p !== req.params.provider || st.exp < Date.now() || st.u !== a.userId || st.t !== a.tenantId) return back("error=invalid_state");
       if (!hasPerm(a, "settings:manage")) return back("error=forbidden");
       if (req.query.error || !req.query.code) return back(`error=${encodeURIComponent(req.query.error ?? "no_code")}`);
+      if (await tooManyConnections(a.tenantId)) return back("error=too_many_connections");
       try {
         const body = await tokenRequest(st.p, { grant_type: "authorization_code", code: req.query.code, redirect_uri: redirectUri(st.p) });
         const creds: OAuthCreds = { access_token: body.access_token, refresh_token: body.refresh_token, expires_at: Date.now() + Number(body.expires_in ?? 3600) * 1000 };

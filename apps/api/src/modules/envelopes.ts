@@ -308,6 +308,7 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
       const e = await lockEnvelope(t, a.tenantId, req.params.id);
       requireDraft(e);
       await insertPreparedDocument(t, a.tenantId, a.actor, e.id, doc);
+      await assertDocumentLimits(t, "envelope", e.id);
       await touch(t, e.id);
     }));
     const d = (await loadDetail(s.db, a.tenantId, req.params.id)).documents.find((x) => x.id === doc.docId);
@@ -677,16 +678,42 @@ export async function insertPreparedDocument(t: Db, tenantId: string, actor: Act
   });
 }
 
+/**
+ * Tamaño máximo de un sobre (o plantilla). El PDF final (worker) y la copia en curso (API) cargan todos los documentos y
+ * adjuntos en memoria a la vez: sin tope, un sobre con 40 PDF de 25 MB tumbaba el proceso que atiende a todos.
+ */
+export const ENVELOPE_LIMITS = { documents: 30, pages: 1000, bytes: 100 * 1024 * 1024, attachmentFields: 20 };
+
+/** Lanza si los documentos de un sobre o plantilla superan ENVELOPE_LIMITS (con el registro ya bloqueado). */
+export async function assertDocumentLimits(t: Db, kind: "envelope" | "template", id: string) {
+  const r = await t.one<{ n: number; pages: number; bytes: string }>(
+    kind === "envelope"
+      ? `SELECT count(*)::int AS n, COALESCE(sum(d.page_count), 0)::int AS pages, COALESCE(sum(f.size_bytes), 0)::bigint AS bytes
+           FROM documents d JOIN files f ON f.id = d.file_id WHERE d.envelope_id = $1`
+      : `SELECT count(*)::int AS n, COALESCE(sum(d.page_count), 0)::int AS pages, COALESCE(sum(f.size_bytes), 0)::bigint AS bytes
+           FROM template_documents d JOIN files f ON f.id = d.file_id WHERE d.template_id = $1`,
+    [id],
+  );
+  const L = ENVELOPE_LIMITS;
+  if ((r?.n ?? 0) > L.documents) throw badRequest("too_many_documents", `Máximo ${L.documents} documentos`);
+  if ((r?.pages ?? 0) > L.pages) throw badRequest("too_many_pages", `Máximo ${L.pages} páginas en total`);
+  if (Number(r?.bytes ?? 0) > L.bytes) throw badRequest("documents_too_large", `Los documentos superan ${Math.round(L.bytes / 1024 / 1024)} MB en total`);
+}
+
 /** Valida y envía un borrador (dentro de la transacción del llamador). */
 export async function sendEnvelope(t: Db, tenantId: string, envelopeId: string, actor: Actor) {
   const e = await lockEnvelope(t, tenantId, envelopeId);
   requireDraft(e);
   await enforceEnvelopeQuota(t, tenantId);
+  await assertDocumentLimits(t, "envelope", e.id);
   const docs = await loadDocuments(t, e.id);
   const recips = await t.query<any>(`SELECT * FROM recipients WHERE envelope_id = $1`, [e.id]);
   const fields = await t.query<any>(`SELECT recipient_id, type, label, formula FROM fields WHERE envelope_id = $1`, [e.id]);
   const problems: string[] = [];
   if (docs.length === 0) problems.push("Agregá al menos un documento");
+  // Cada adjunto puede pesar 10 MB y todos se agregan al PDF final.
+  if (fields.filter((f) => f.type === "attachment").length > ENVELOPE_LIMITS.attachmentFields)
+    problems.push(`Máximo ${ENVELOPE_LIMITS.attachmentFields} campos de adjunto por sobre`);
   const signers = recips.filter((r) => r.role === "signer");
   if (signers.length === 0 && !recips.some((r) => r.role === "approver")) problems.push("Agregá al menos un firmante");
   for (const s1 of signers) {

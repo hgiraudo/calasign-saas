@@ -22,7 +22,7 @@ import { certificateStepFor } from "./certsign";
 import { deleteBlobsQuietly } from "./file-cleanup";
 
 /** Tope de píxeles de la imagen de firma o iniciales (el lienzo de la web es mucho menor). */
-const SIGNATURE_MAX_PIXELS = 3000 * 3000;
+const SIGNATURE_MAX_PIXELS = 2000 * 1000;
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 interface Resolved {
@@ -138,6 +138,9 @@ export async function buildSession(db: Db, token: string, r: any, e: any, authed
     certificateSigning: blocked ? null : await certificateStepFor(db, r, e),
   };
 }
+
+const MAX_COPIES_IN_FLIGHT = 2;
+let copiesInFlight = 0;
 
 export async function signingRoutes(app: FastifyInstance, s: Services) {
   type P = { Params: { token: string; documentId?: string } };
@@ -392,25 +395,35 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
     const { envelope: e, recipient: r } = await resolveToken(s.db, req.params.token);
     assertCanReadDocuments(r, e);
     if (!copyAllowed(r, e)) throw notFound("Copia del documento");
-    const [docs, fields, sigImages] = await Promise.all([
-      loadDocuments(s.db, e.id),
-      // Solo lo ya firmado (y los valores fijos del remitente): lo precargado para quien todavía no firmó no va.
-      s.db.query<any>(
-        `SELECT f.* FROM fields f JOIN recipients rr ON rr.id = f.recipient_id
-          WHERE f.envelope_id = $1 AND NOT f.hidden AND f.value IS NOT NULL AND f.type <> 'attachment'
-            AND (f.read_only OR rr.status IN ('signed', 'completed'))`,
-        [e.id],
-      ),
-      loadSignatureImages(s.db, s.blobs, e.id),
-    ]);
-    const pdf = await renderProgressCopyPdf({
-      documents: await Promise.all(docs.map(async (d) => ({ name: d.name, bytes: await s.blobs.get(d.storage_key) }))),
-      fields: toStampFields(fields, docs, sigImages),
-      envelopeId: e.id,
-      subject: e.subject,
-      locale: r.locale ?? e.locale ?? "es",
-      productName: await brandForEnvelope(s.db, e).then((b) => (rebrands(b) ? productLabel(b) : undefined)),
-    });
-    return sendPdf(reply, pdf, `${e.subject} (copia)`);
+    // Copias armándose a la vez en este proceso: cada una carga todos los documentos del sobre en memoria.
+    if (copiesInFlight >= MAX_COPIES_IN_FLIGHT) {
+      reply.header("retry-after", "5");
+      throw new AppError(503, "busy", "Estamos armando otras copias: probá de nuevo en unos segundos");
+    }
+    copiesInFlight++;
+    try {
+      const [docs, fields, sigImages] = await Promise.all([
+        loadDocuments(s.db, e.id),
+        // Solo lo ya firmado (y los valores fijos del remitente): lo precargado para quien todavía no firmó no va.
+        s.db.query<any>(
+          `SELECT f.* FROM fields f JOIN recipients rr ON rr.id = f.recipient_id
+            WHERE f.envelope_id = $1 AND NOT f.hidden AND f.value IS NOT NULL AND f.type <> 'attachment'
+              AND (f.read_only OR rr.status IN ('signed', 'completed'))`,
+          [e.id],
+        ),
+        loadSignatureImages(s.db, s.blobs, e.id),
+      ]);
+      const pdf = await renderProgressCopyPdf({
+        documents: await Promise.all(docs.map(async (d) => ({ name: d.name, bytes: await s.blobs.get(d.storage_key) }))),
+        fields: toStampFields(fields, docs, sigImages),
+        envelopeId: e.id,
+        subject: e.subject,
+        locale: r.locale ?? e.locale ?? "es",
+        productName: await brandForEnvelope(s.db, e).then((b) => (rebrands(b) ? productLabel(b) : undefined)),
+      });
+      return sendPdf(reply, pdf, `${e.subject} (copia)`);
+    } finally {
+      copiesInFlight--;
+    }
   });
 }

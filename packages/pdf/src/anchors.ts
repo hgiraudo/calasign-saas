@@ -22,24 +22,34 @@ interface TextItem {
   height: number;
 }
 
-export async function findTextAnchors(pdf: Uint8Array, text: string, opts: { caseSensitive?: boolean } = {}): Promise<AnchorMatch[]> {
+export async function findTextAnchors(
+  pdf: Uint8Array,
+  text: string,
+  opts: { caseSensitive?: boolean; maxMatches?: number } = {},
+): Promise<AnchorMatch[]> {
   const caseSensitive = opts.caseSensitive ?? true;
   const needle = caseSensitive ? text : text.toLowerCase();
+  if (!needle) return [];
+  // Se corta al llegar al tope: un ancla frecuente (una letra) sobre un PDF con millones de caracteres generaba millones
+  // de coincidencias en memoria antes de que quien llama aplicara su máximo de campos.
+  const max = opts.maxMatches ?? Number.MAX_SAFE_INTEGER;
   // pdf.js corre en un worker con tiempo y memoria acotados (ver pdfjs-run.ts).
   const { pages } = await readPdfTextPages(pdf, { maxPages: Number.MAX_SAFE_INTEGER });
   const out: AnchorMatch[] = [];
-  pages.forEach((pg, p) => {
+  for (let p = 0; p < pages.length && out.length < max; p++) {
+    const pg = pages[p];
     const vp = { convertToViewportPoint: (x: number, y: number) => toViewport(pg.transform, x, y) };
     for (const item of pg.items) {
+      if (out.length >= max) break;
       if (!item.str || item.width === 0) continue;
       const hay = caseSensitive ? item.str : item.str.toLowerCase();
       let idx = hay.indexOf(needle);
-      while (idx !== -1) {
+      while (idx !== -1 && out.length < max) {
         out.push({ page: p, ...boxFor(item, idx, needle.length, vp), pageWidth: pg.width, pageHeight: pg.height });
         idx = hay.indexOf(needle, idx + needle.length);
       }
     }
-  });
+  }
   return out;
 }
 

@@ -171,6 +171,9 @@ export async function notificationIntegrationRoutes(app: FastifyInstance, s: Ser
   app.post("/v1/notification-integrations", { preHandler: auth }, async (req, reply) => {
     const a = req.auth!;
     const input = CreateNotificationIntegrationInput.parse(req.body);
+    // Tope por organización (como los webhooks): cada evento genera un trabajo por integración en la cola compartida.
+    const count = await s.db.one<{ n: number }>(`SELECT count(*)::int AS n FROM notification_integrations WHERE tenant_id = $1`, [a.tenantId]);
+    if ((count?.n ?? 0) >= 20) throw badRequest("too_many_integrations", "Máximo 20 integraciones de avisos por organización");
     const url = validateIncomingWebhookUrl(input.url);
     const id = uuidv7();
     await s.db.query(

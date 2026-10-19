@@ -68,7 +68,7 @@ function sniffImage(buf: Buffer): string | null {
 
 /** Rechaza SVG con scripts, handlers o referencias externas (el logo se sirve públicamente). */
 function unsafeSvg(svg: string): boolean {
-  return /<script|on[a-z]+\s*=|javascript:|<foreignObject|xlink:href\s*=\s*["'](?!#)|href\s*=\s*["'](?!#)|<!ENTITY/i.test(svg);
+  return /<script|\bon[a-z]{1,40}\s*=|javascript:|<foreignObject|xlink:href\s*=\s*["'](?!#)|href\s*=\s*["'](?!#)|<!ENTITY/i.test(svg);
 }
 
 async function patchBranding(db: Db, tenantId: string, patch: StoredBranding) {

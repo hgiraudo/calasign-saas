@@ -38,6 +38,8 @@ const asBool = (v: unknown) => (typeof v === "string" ? v.toLowerCase() === "tru
 /** Admite `attr eq "valor"` (los IdP usan casi siempre userName, externalId, emails.value o displayName). */
 export function parseFilter(filter: string | undefined, allowed: string[]): { attr: string; value: string } | null {
   if (!filter) return null;
+  // Largo acotado: la regex retrocede en O(n³) sobre una cadena de espacios (2000 espacios = 2 s de CPU por pedido).
+  if (filter.length > 512) throw new ScimError(400, "Filtro demasiado largo", "invalidFilter");
   const m = /^\s*([A-Za-z.[\]" ]+?)\s+eq\s+"((?:[^"\\]|\\.)*)"\s*$/i.exec(filter);
   if (!m) throw new ScimError(400, `Filtro no admitido: ${filter}`, "invalidFilter");
   let attr = m[1].trim();

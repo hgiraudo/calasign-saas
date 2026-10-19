@@ -194,6 +194,7 @@ export const EnvelopeSchema = named(
     reminderEveryDays: z.number().int().nullable(),
     expiryWarningDays: z.number().int().nullable(),
     allowDelegation: z.boolean(),
+    brandId: z.string().uuid().nullable().optional().describe("Sub-marca (marca blanca); null: la de la organización."),
   }),
 );
 

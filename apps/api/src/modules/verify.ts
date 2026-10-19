@@ -7,6 +7,7 @@ import { verifyChain } from "../infra/evidence";
 import { AppError, badRequest } from "../lib/errors";
 import { iso, sha256Hex } from "../lib/util";
 import type { Services } from "./context";
+import { brandForEnvelope } from "./white-label/brand";
 
 export async function verifyRoutes(app: FastifyInstance, s: Services) {
   app.post("/v1/verify", { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } }, async (req) => {
@@ -19,7 +20,7 @@ export async function verifyRoutes(app: FastifyInstance, s: Services) {
     // Versión vigente o una anterior a una renovación de archivo (B-LTA): un PDF descargado antes de renovar sigue
     // siendo un documento auténtico de CalaSign.
     const hit = await s.db.one<any>(
-      `SELECT e.id, e.subject, e.completed_at, t.name AS org, (e.signed_file_id = f.id) AS is_latest,
+      `SELECT e.id, e.tenant_id, e.brand_id, e.subject, e.completed_at, t.name AS org, (e.signed_file_id = f.id) AS is_latest,
               v.version, v.reason, v.created_at AS version_created_at,
               (SELECT max(version) FROM envelope_signed_versions WHERE envelope_id = e.id) AS latest_version
        FROM files f
@@ -49,7 +50,8 @@ export async function verifyRoutes(app: FastifyInstance, s: Services) {
     const res: VerifyResponse = {
       match: true,
       sha256,
-      envelope: { id: hit.id, subject: hit.subject, organizationName: hit.org, completedAt: iso(hit.completed_at) },
+      // Marca blanca: el nombre de la marca del sobre (sub-marca o nombre visible de la organización).
+      envelope: { id: hit.id, subject: hit.subject, organizationName: await brandForEnvelope(s.db, hit).then((b) => b.name || hit.org), completedAt: iso(hit.completed_at) },
       participants: participants.map((p) => ({ name: p.name, role: p.role, signedAt: iso(p.signed_at) })),
       seal: { format: seal.format ?? null, provider: seal.provider ?? null, timestamped: /^PAdES-B-(T|LT|LTA)$/.test(seal.format ?? "") },
       chain: { ok: chain.ok, events: events?.n ?? 0, head: chain.head },

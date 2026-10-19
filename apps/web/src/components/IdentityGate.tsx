@@ -230,13 +230,15 @@ function CaptureCard({ kind, busy, onCapture }: { kind: IdvCaptureKind; busy: bo
     stream.current?.getTracks().forEach((t) => t.stop());
     stream.current = null;
   };
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    // En StrictMode (desarrollo) el efecto se monta, se limpia y se vuelve a montar: sin volver a marcarlo, quedaba
+    // en false y start() apagaba la cámara apenas el navegador daba permiso.
+    mounted.current = true;
+    return () => {
       mounted.current = false;
       stop();
-    },
-    [],
-  );
+    };
+  }, []);
 
   const start = async () => {
     setCamera("starting");

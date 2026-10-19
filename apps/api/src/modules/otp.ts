@@ -130,6 +130,8 @@ export async function otpRoutes(app: FastifyInstance, s: Services) {
         text: m.text(code, e.subject),
         locale,
         templateParams: [code],
+        // La plantilla del pedido de firma espera remitente, asunto y link: con solo el código, Meta la rechaza.
+        template: config.whatsapp.otpTemplate,
         tenantId: e.tenant_id,
       });
     } catch (err) {

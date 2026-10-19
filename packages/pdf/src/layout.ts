@@ -119,9 +119,18 @@ export function wrapText(font: PDFFont, text: string, size: number, maxWidth: nu
   return lines;
 }
 
+const charsets = new WeakMap<PDFFont, Set<number>>();
+
+/** Caracteres que la fuente puede dibujar. Se arma una vez por fuente: son miles y se consultaba por cada texto. */
+export function fontCharset(font: PDFFont): Set<number> {
+  let set = charsets.get(font);
+  if (!set) charsets.set(font, (set = new Set(font.getCharacterSet())));
+  return set;
+}
+
 /** Reemplaza caracteres que la fuente no puede dibujar. */
 export function safeText(font: PDFFont, text: string): string {
-  const supported = new Set(font.getCharacterSet());
+  const supported = fontCharset(font);
   let out = "";
   for (const ch of text) out += supported.has(ch.codePointAt(0)!) || ch === " " ? ch : "?";
   return out;

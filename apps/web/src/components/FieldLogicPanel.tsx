@@ -127,7 +127,7 @@ export function FieldLogicPanel({
           {numberLabels.length > 0 && (
             <div className="chips">
               {numberLabels.map((l) => (
-                <button key={l} type="button" className="chip chip-btn" onClick={() => onChange({ formula: `${field.formula ?? ""}{${l}}`, required: false })}>
+                <button key={l} type="button" className="chip chip-btn" onClick={() => onChange({ formula: `${field.formula ?? ""}{${l}}`, readOnly: false, value: null, required: false })}>
                   {st("logic.insert")} {`{${l}}`}
                 </button>
               ))}

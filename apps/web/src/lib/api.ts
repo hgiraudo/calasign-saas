@@ -98,30 +98,16 @@ const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
   },
 };
 
-/** Texto legible de un error, incluyendo detalles de validación si vienen. */
+/**
+ * Texto legible de un error. El mensaje de la API ya trae lo necesario (los errores de validación incluyen ruta y
+ * motivo de cada problema); `details` son datos para el código que llama (cupo del plan, espera del OTP, faltantes…):
+ * antes se agregaban como JSON crudo ("Esperá 30 s — {"resendInSeconds":30}") y la validación salía repetida.
+ */
 export function errorText(e: unknown): string {
   if (e instanceof HttpError) {
     const loc = currentLocale();
     const tr = loc !== "es" ? CODE_TEXT[e.code]?.[loc] : undefined;
-    if (tr) return tr;
-    const d = e.details;
-    if (Array.isArray(d) && d.length) {
-      const parts = d
-        .map((x) => {
-          if (x && typeof x === "object") {
-            const o = x as { message?: string; path?: unknown[] };
-            const p = Array.isArray(o.path) && o.path.length ? `${o.path.join(".")}: ` : "";
-            return o.message ? p + o.message : JSON.stringify(x);
-          }
-          return String(x);
-        })
-        .slice(0, 5);
-      return `${e.message} — ${parts.join("; ")}`;
-    }
-    if (d && typeof d === "object" && !Array.isArray(d)) {
-      return `${e.message} — ${JSON.stringify(d)}`;
-    }
-    return e.message;
+    return tr ?? e.message;
   }
   if (e instanceof Error) return e.message;
   return String(e);

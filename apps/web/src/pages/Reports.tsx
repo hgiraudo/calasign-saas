@@ -198,7 +198,8 @@ function MonthChart({ data }: { data: ReportsSummary }) {
   const pad = { l: 36, r: 8, t: 10, b: 28 };
   const bw = (W - pad.l - pad.r) / rows.length;
   const scale = (v: number) => (v / max) * (H - pad.t - pad.b);
-  const ticks = [0, Math.ceil(max / 2), max];
+  // Con max = 1, ceil(max / 2) = max: sin el Set, dos marcas "1" superpuestas y la misma key repetida.
+  const ticks = [...new Set([0, Math.ceil(max / 2), max])];
 
   return (
     <figure className="chart" ref={box}>

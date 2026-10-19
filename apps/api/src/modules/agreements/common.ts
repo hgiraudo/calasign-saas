@@ -159,7 +159,7 @@ export async function refreshSearchVector(db: Db, agreementId: string) {
 
 /** Celda CSV segura (sin inyección de fórmulas en planillas). */
 export function csvCell(v: unknown): string {
-  let s = v == null ? "" : String(v);
+  let s = v == null ? "" : v instanceof Date ? v.toISOString() : String(v);
   if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
   return /[",\n\r;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }

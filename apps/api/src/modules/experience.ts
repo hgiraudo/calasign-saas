@@ -20,7 +20,8 @@ import { decrypt, encrypt, maskDestination, randomToken, sha256Hex, uuidv7 } fro
 import { authenticate, clientInfo, type AuthContext, type Services } from "./context";
 import { activateRecipient, advanceRouting, currentSignerGroup, danglingFormulaProblems, lockEnvelope } from "./envelopes";
 import { checkSenderValue, insertEnvelopeField } from "./fieldvalues";
-import { pruneDanglingConditions } from "./logic";
+import { pruneDanglingConditions, saveFieldLogic } from "./logic";
+import { csvCell } from "./agreements/common";
 import { loadDetail } from "./mappers";
 import { SIGNER_COOKIE } from "./otp";
 import { recipientActor, resolveToken } from "./signing";
@@ -97,11 +98,17 @@ function newToken() {
   return { hash: sha256Hex(token), enc: encrypt(token) };
 }
 
-function checkContact(c: { email?: string | null; phone?: string | null; channels: string[]; auth_method?: string; in_person?: boolean }, who: string) {
+function checkContact(
+  c: { email?: string | null; phone?: string | null; channels: string[]; auth_method?: string; in_person?: boolean; embedded?: boolean },
+  who: string,
+) {
   if (c.in_person) return;
-  if (!c.email && !c.phone) throw badRequest("invalid_contact", `${who}: hace falta correo o teléfono`);
-  if (c.channels.includes("email") && !c.email) throw badRequest("invalid_contact", `${who}: el canal email requiere correo`);
-  if (c.channels.includes("whatsapp") && !c.phone) throw badRequest("invalid_contact", `${who}: el canal WhatsApp requiere teléfono`);
+  // Embebido: no recibe invitaciones, así que (como en RecipientInput) no necesita correo ni teléfono para sus canales.
+  if (!c.embedded) {
+    if (!c.email && !c.phone) throw badRequest("invalid_contact", `${who}: hace falta correo o teléfono`);
+    if (c.channels.includes("email") && !c.email) throw badRequest("invalid_contact", `${who}: el canal email requiere correo`);
+    if (c.channels.includes("whatsapp") && !c.phone) throw badRequest("invalid_contact", `${who}: el canal WhatsApp requiere teléfono`);
+  }
   if (c.auth_method === "otp_email" && !c.email) throw badRequest("invalid_contact", `${who}: el código por correo requiere correo`);
   if ((c.auth_method === "otp_sms" || c.auth_method === "otp_whatsapp") && !c.phone)
     throw badRequest("invalid_contact", `${who}: el código por SMS/WhatsApp requiere teléfono`);
@@ -172,7 +179,7 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
       channels: p.channels ?? r.channels,
       locale: p.locale !== undefined ? p.locale : r.locale,
     };
-    checkContact({ ...next, auth_method: r.auth_method, in_person: r.auth_method === "in_person" }, next.name);
+    checkContact({ ...next, auth_method: r.auth_method, in_person: r.auth_method === "in_person", embedded: Boolean(r.embedded) }, next.name);
     const changes: Record<string, unknown> = {};
     if (next.name !== r.name) changes.name = { from: r.name, to: next.name };
     if ((next.email ?? null) !== (r.email ?? null)) changes.email = { from: masked(r.email), to: masked(next.email) };
@@ -263,6 +270,7 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
 
   // Campos nuevos.
   const addedFields: string[] = [];
+  const addedLogic: Parameters<typeof saveFieldLogic>[2] = [];
   if (input.addFields?.length) {
     const docs = new Map((await db.query<any>(`SELECT id, page_count FROM documents WHERE envelope_id = $1`, [e.id])).map((d) => [d.id, d]));
     for (const [i, raw] of input.addFields.entries()) {
@@ -301,15 +309,27 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
         max: f.max ?? null,
       });
       addedFields.push(id);
+      addedLogic.push({ id, type: f.type, label: f.label ?? null, conditions: f.conditions ?? null, formula: f.formula ?? null });
     }
+    // Condiciones y fórmulas de los campos nuevos (se validan contra todos los campos del sobre). Sin esto se
+    // descartaban: un total calculado quedaba como número a completar a mano y un campo condicional, siempre visible.
+    const others = await db.query<any>(`SELECT id, type, label, conditions, formula FROM fields WHERE envelope_id = $1 AND NOT (id = ANY($2::uuid[]))`, [
+      e.id,
+      addedFields,
+    ]);
+    await saveFieldLogic(db, "fields", [
+      ...others.map((x) => ({ id: x.id, type: x.type, label: x.label, conditions: Array.isArray(x.conditions) && x.conditions.length ? x.conditions : null, formula: x.formula })),
+      ...addedLogic,
+    ]);
   }
 
   // Invariantes: cada firmante pendiente sigue teniendo un campo de firma; queda alguien que firme o apruebe.
   const now = await db.query<any>(`SELECT * FROM recipients WHERE envelope_id = $1`, [e.id]);
   const sigFields = await db.query<any>(`SELECT DISTINCT recipient_id FROM fields WHERE envelope_id = $1 AND type = 'signature'`, [e.id]);
   const withSig = new Set(sigFields.map((x) => x.recipient_id));
+  // Como al enviar: quien firma con certificado puede no tener firma visual (su firma va en el certificado).
   const problems = now
-    .filter((r) => r.role === "signer" && PENDING.includes(r.status) && !withSig.has(r.id))
+    .filter((r) => r.role === "signer" && r.signature_type !== "certificate" && PENDING.includes(r.status) && !withSig.has(r.id))
     .map((r) => `${r.name} no tiene ningún campo de firma`);
   if (!now.some((r) => (r.role === "signer" || r.role === "approver") && !["delegated", "reassigned"].includes(r.status)))
     problems.push("Tiene que quedar al menos un firmante o aprobador");
@@ -446,12 +466,8 @@ export async function reportsSummary(db: Db, tenantId: string, q: { from?: strin
   };
 }
 
-/** Celda CSV: comillas, y prefijo ' contra inyección de fórmulas en planillas. */
-export function csvCell(v: unknown): string {
-  let s = v == null ? "" : v instanceof Date ? v.toISOString() : String(v);
-  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
-  return /[",\n\r;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
+/** Celda CSV: comillas, y prefijo ' contra inyección de fórmulas en planillas (la misma que el repositorio y el envío masivo). */
+export { csvCell };
 
 async function envelopesCsv(db: Db, tenantId: string, q: { from?: string; to?: string }) {
   const { from, to } = parseRange(q);

@@ -105,12 +105,13 @@ export async function copyFieldLogic(
   source: { id: string; conditions?: unknown; formula?: string | null }[],
   idMap: Map<string, string>,
 ) {
+  const copied = new Set(idMap.values());
   for (const f of source) {
     const conds = (Array.isArray(f.conditions) ? f.conditions : null) as FieldCondition[] | null;
     if (!conds?.length && !f.formula) continue;
     const newId = idMap.get(f.id);
     if (!newId) continue;
-    const mapped = conds?.map((c) => ({ ...c, fieldId: idMap.get(c.fieldId) ?? c.fieldId })).filter((c) => [...idMap.values()].includes(c.fieldId)) ?? null;
+    const mapped = conds?.map((c) => ({ ...c, fieldId: idMap.get(c.fieldId) ?? c.fieldId })).filter((c) => copied.has(c.fieldId)) ?? null;
     await db.query(`UPDATE ${table} SET conditions = $2, formula = $3 WHERE id = $1`, [
       newId,
       mapped?.length ? JSON.stringify(mapped) : null,

@@ -65,6 +65,8 @@ export const config = {
     phoneNumberId: env.WHATSAPP_PHONE_NUMBER_ID ?? null,
     /** Nombre de la plantilla aprobada en Meta: recibe {{1}} remitente, {{2}} asunto, {{3}} link. */
     template: env.WHATSAPP_TEMPLATE ?? "calasign_signature_request",
+    /** Plantilla aprobada para el código de verificación del firmante: recibe {{1}} el código. */
+    otpTemplate: env.WHATSAPP_OTP_TEMPLATE ?? "calasign_verification_code",
   },
   telegram: {
     botToken: env.TELEGRAM_BOT_TOKEN ?? null,

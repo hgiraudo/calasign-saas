@@ -372,7 +372,8 @@ export function renderTemplate(source: string, data: unknown, opts: RenderOption
         break;
       }
     }
-    if (!found) cur = isObj(data) ? (data as Record<string, unknown>)[parts[0]] : undefined;
+    // Solo propiedades propias, como en los niveles de abajo: {{constructor}} o {{#if toString}} no leen el prototipo.
+    if (!found) cur = isObj(data) && Object.prototype.hasOwnProperty.call(data, parts[0]) ? (data as Record<string, unknown>)[parts[0]] : undefined;
     for (const p of parts.slice(1)) {
       if (cur == null) return undefined;
       if (Array.isArray(cur) && /^\d+$/.test(p)) cur = cur[Number(p)];
@@ -603,6 +604,13 @@ export function analyzeTemplate(source: string, clauses: Record<string, string> 
         const entry = loops.get(n.path) ?? { path: n.path, as: n.as, fields: new Set<string>() };
         if (!outer) loops.set(n.path, entry);
         nodes(n.body, new Map([...loopVars, [n.as, entry]]));
+        // Lista anidada ({{#each item.lineas as l}} dentro de otra): sus campos son de la lista de afuera. Antes se perdían
+        // (la de adentro no se registra) y la de afuera no mostraba "lineas".
+        if (outer) {
+          const rest = n.path.split(".").slice(1).join(".");
+          if (rest) outer.fields.add(rest);
+          for (const f of entry.fields) outer.fields.add(rest ? `${rest}.${f}` : f);
+        }
       } else if (n.k === "clause") {
         usedClauses.add(n.slug);
         if (!seenClauses.has(n.slug) && clauses[n.slug] != null) {

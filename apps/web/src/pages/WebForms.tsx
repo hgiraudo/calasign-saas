@@ -84,7 +84,9 @@ function WebFormEditor({ form, initialTemplateId, onClose, onSaved }: { form: We
       .then((d) => {
         setTpl(d);
         const signers = d.roles.filter((r) => r.role === "signer");
-        setSignerRoleId((cur) => (d.roles.some((r) => r.id === cur) ? cur : (signers[0]?.id ?? "")));
+        // Solo vale un rol firmante: si el rol guardado pasó a copia o aprobador, el select mostraba otro firmante pero
+        // se guardaba el viejo.
+        setSignerRoleId((cur) => (signers.some((r) => r.id === cur) ? cur : (signers[0]?.id ?? "")));
         if (!form) setName((n) => n || d.template.name);
       })
       .catch((e) => setError(errorText(e)));

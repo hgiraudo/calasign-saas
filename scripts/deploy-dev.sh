@@ -48,7 +48,9 @@ trap 'rm -rf "$TMP"' EXIT
 # Solo archivos regulares y tar sin recursión: un repo git anidado sin ignorar (p. ej. un clon de otro proyecto dentro
 # del working tree) aparece en `git ls-files -o` como una sola entrada "dir/", y tar la metía entera sin pasar por el
 # filtro de arriba (con su .git, su var/ y sus tfstate).
-{ git ls-files -co --exclude-standard; find apps/web/dist -type f; } | sort -u \
+# core.quotePath=false: con el valor por defecto, git escribe una ruta con tildes como "docs/gu\303\255a.md" (entre
+# comillas y con escapes), el [ -f ] de abajo no la encuentra y el archivo quedaba fuera del paquete sin aviso.
+{ git -c core.quotePath=false ls-files -co --exclude-standard; find apps/web/dist -type f; } | sort -u \
   | grep -vE '^var/|(^|/)tfplan$|\.tfplan$|\.tfstate|\.tfvars$' \
   | while IFS= read -r f; do if [ -f "$f" ]; then printf '%s\n' "$f"; fi; done > "$TMP/files"
 tar --no-recursion -czf "$TMP/rel.tgz" -T "$TMP/files"

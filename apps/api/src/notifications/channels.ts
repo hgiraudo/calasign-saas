@@ -15,6 +15,8 @@ export interface OutboundMessage {
   link?: string | null;
   /** Para WhatsApp: parámetros de la plantilla aprobada. */
   templateParams?: string[];
+  /** Para WhatsApp: plantilla a usar (por defecto, la del pedido de firma). */
+  template?: string;
   locale?: string;
   /** Para filtrar el buzón de desarrollo por organización. */
   tenantId?: string;
@@ -72,7 +74,7 @@ async function sendWhatsApp(m: OutboundMessage): Promise<SendResult> {
       to: m.to.replace(/^\+/, ""),
       type: "template",
       template: {
-        name: template,
+        name: m.template ?? template,
         language: { code: WA_LANG[m.locale ?? "es"] ?? "es" },
         components: [{ type: "body", parameters: (m.templateParams ?? []).map((text) => ({ type: "text", text })) }],
       },

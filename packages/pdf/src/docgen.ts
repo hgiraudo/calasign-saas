@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { PDFDocument, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
+import { fontCharset } from "./layout";
 
 export type DocMarkKind = "signature" | "initials" | "date" | "name";
 export type DocRun = { text: string; b?: boolean; i?: boolean } | { mark: DocMarkKind; role: string } | { br: true };
@@ -347,7 +348,7 @@ function itemW(it: Item): number {
 }
 
 function safe(font: PDFFont, text: string): string {
-  const set = new Set(font.getCharacterSet());
+  const set = fontCharset(font);
   let out = "";
   for (const ch of text) out += set.has(ch.codePointAt(0)!) ? ch : ch === "\t" ? " " : "?";
   return out;

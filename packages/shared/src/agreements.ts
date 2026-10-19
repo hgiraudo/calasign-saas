@@ -8,6 +8,11 @@ export * from "./agreements-engine";
 const isoDate = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, "fecha AAAA-MM-DD")
+  // La fecha tiene que existir: "2027-02-31" pasaba la expresión regular y el ::date de Postgres respondía 500.
+  .refine((s) => {
+    const d = new Date(`${s}T00:00:00Z`);
+    return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+  }, "fecha inexistente")
   .nullable()
   .optional();
 

@@ -14,9 +14,12 @@ export async function extractPdfPlainText(pdf: Uint8Array, maxChars = 300_000): 
   let text = "";
   let truncated = false;
   for (const page of pages) {
+    // Los espacios entre palabras ya vienen como fragmentos (" "): pdf.js los inserta donde hay un hueco. Agregar uno
+    // entre todos los fragmentos partía las palabras con un cambio de fuente en el medio ("Contra" + "tos" en negrita
+    // → "Contra tos") y el buscador de acuerdos no las encontraba.
     for (const item of page.items) {
       if (item.str) text += item.str;
-      text += item.hasEOL ? "\n" : item.str ? " " : "";
+      if (item.hasEOL) text += "\n";
     }
     text += "\n";
     if (text.length > maxChars) {

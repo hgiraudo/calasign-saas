@@ -30,12 +30,18 @@ export async function extractPdfText(pdf: Uint8Array, opts: { maxPages?: number 
     const boxes: { text: string; x: number; y: number; width: number; height: number }[] = [];
     for (const it of pg.items) {
       if (!it.str || !it.str.trim() || it.width === 0) continue;
-      const [a, b, , , e, f] = it.transform;
-      const fontH = Math.hypot(a, b) || it.height || 10;
+      const [a, b, c, d, e, f] = it.transform;
+      // Dirección de la línea base (a, b) y "hacia arriba" del texto (c, d), como en anchors.ts. El alto es el de (c, d):
+      // con (a, b) un texto con escala horizontal (Tz) daba otra altura, y uno girado una caja sin espesor.
+      const ab = Math.hypot(a, b);
+      const cd = Math.hypot(c, d);
+      const fontH = cd || it.height || 10;
+      const [ux, uy] = ab ? [a / ab, b / ab] : [1, 0];
+      const [vx, vy] = cd ? [c / cd, d / cd] : [0, 1];
       // Esquinas en espacio de usuario → viewport (aplica rotación y CropBox).
       const [x1, y1] = toViewport(pg.transform, e, f);
-      const [x2, y2] = toViewport(pg.transform, e + it.width * (a / (Math.hypot(a, b) || 1)), f + it.width * (b / (Math.hypot(a, b) || 1)));
-      const [x3, y3] = toViewport(pg.transform, e, f + fontH);
+      const [x2, y2] = toViewport(pg.transform, e + it.width * ux, f + it.width * uy);
+      const [x3, y3] = toViewport(pg.transform, e + vx * fontH, f + vy * fontH);
       const xs = [x1, x2, x3];
       const ys = [y1, y2, y3];
       const x = Math.min(...xs);

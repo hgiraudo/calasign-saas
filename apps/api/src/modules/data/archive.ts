@@ -61,6 +61,22 @@ async function inspectArchive(d: Deps, envelopeId: string) {
 export async function renewEnvelopeArchive(d: Deps, envelopeId: string, actor: Actor = SYSTEM) {
   const tsaUrl = config.seal.tsaUrl;
   if (!tsaUrl) throw new AppError(409, "tsa_not_configured", "No hay TSA configurada para renovar el sello de archivo");
+  // Una renovación a la vez por sobre (reclamo con vencimiento, por si el proceso muere a mitad), antes de pagar el
+  // sello de tiempo y de analizar el PDF.
+  const claim = await d.db.query(
+    `UPDATE envelopes SET archive_renewing_until = now() + interval '5 minutes'
+      WHERE id = $1 AND (archive_renewing_until IS NULL OR archive_renewing_until < now()) RETURNING id`,
+    [envelopeId],
+  );
+  if (!claim.length) throw conflict("archive_renewal_in_progress", "Ya hay una renovación del sello de archivo en curso para este sobre");
+  try {
+    return await renewClaimed(d, envelopeId, tsaUrl, actor);
+  } finally {
+    await d.db.query(`UPDATE envelopes SET archive_renewing_until = NULL WHERE id = $1`, [envelopeId]).catch(() => {});
+  }
+}
+
+async function renewClaimed(d: Deps, envelopeId: string, tsaUrl: string, actor: Actor) {
   const e = await signedFile(d.db, envelopeId);
   if (!e || e.status !== "completed") throw notFound("Sobre completado");
   const before = await d.blobs.get(e.storage_key);

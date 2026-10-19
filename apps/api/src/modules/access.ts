@@ -247,12 +247,21 @@ export async function enforceRoutePolicy(db: Db, req: FastifyRequest, a: AuthCon
     }
     return;
   }
-  if (url.startsWith("/v1/webhooks") || url.startsWith("/v1/webhook-deliveries")) return requirePerm(a, "webhooks:manage");
+  if (url.startsWith("/v1/webhooks") || url.startsWith("/v1/webhook-deliveries")) {
+    requirePerm(a, "webhooks:manage");
+    // Un webhook recibe los datos (asunto, destinatarios) de TODOS los sobres de la organización: crearlo, cambiar su
+    // URL o reenviar entregas pide además poder verlos todos.
+    if (!isRead) requirePerm(a, "envelopes:view_all");
+    return;
+  }
   if (url.startsWith("/v1/audit-log")) return requirePerm(a, "audit:view");
   // Evidencia: certificados de la organización (listarlos alcanza con poder crear sobres, para elegir el sello
   // de empresa), conectores de firma y firma XML.
   if (url === "/v1/certificates" && isRead) return requirePerm(a, "envelopes:create");
   if (url.startsWith("/v1/certificates") || url.startsWith("/v1/signature-providers")) return requirePerm(a, "settings:manage");
+  // Firmar XML con un certificado de la organización (p. ej. facturas electrónicas) es firmar en nombre de la empresa
+  // cualquier contenido: no alcanza con poder crear sobres.
+  if (url === "/v1/xml/sign") return requirePerm(a, "settings:manage");
   if (url.startsWith("/v1/xml/")) return requirePerm(a, "envelopes:create");
   // Envío masivo y formularios web: crean sobres en nombre de quien los configura.
   if (/^\/v1\/(bulk-sends|web-forms)(\/|$)/.test(url)) return requirePerm(a, "envelopes:create");
@@ -260,7 +269,10 @@ export async function enforceRoutePolicy(db: Db, req: FastifyRequest, a: AuthCon
   if (url.startsWith("/v1/oauth/apps")) return requirePerm(a, "api_keys:manage");
   if (/^\/v1\/(notification-integrations|storage|domains)(\/|$)/.test(url)) {
     if (url.startsWith("/v1/storage/oauth/") && url.endsWith("/callback")) return;
-    return requirePerm(a, "settings:manage");
+    requirePerm(a, "settings:manage");
+    // Archivo en un bucket propio o avisos a un canal: reciben los PDF firmados o los datos de todos los sobres.
+    if (!isRead && !url.startsWith("/v1/domains")) requirePerm(a, "envelopes:view_all");
+    return;
   }
   // Aprobaciones de workflows: quien fue asignado para aprobar es cualquier miembro (checkApprovers solo pide la
   // membresía), así que ver ejecuciones y decidir no exige envelopes:create. Cada ruta ya limita lo visible (quien la
@@ -279,7 +291,10 @@ export async function enforceRoutePolicy(db: Db, req: FastifyRequest, a: AuthCon
     if (isRead && (url.startsWith("/v1/crm/runs") || url === "/v1/crm/providers")) return;
     // Listar los mapeos (para elegir uno y enviar desde el CRM, p. ej. la acción de Pipedrive): quien puede enviar.
     if (isRead && url === "/v1/crm/mappings") return requirePerm(a, "envelopes:create");
-    return requirePerm(a, "settings:manage");
+    requirePerm(a, "settings:manage");
+    // Conexiones y mapeos escriben el estado (y adjuntan PDF) de los sobres en el CRM: pide ver todos los sobres.
+    if (!isRead) requirePerm(a, "envelopes:view_all");
+    return;
   }
   // Conectores HRIS/CLM: enviar desde un registro y ver vínculos opera sobres; conexiones, búsqueda de registros
   // (datos de RR. HH.) y flujos son ajustes.
@@ -287,7 +302,9 @@ export async function enforceRoutePolicy(db: Db, req: FastifyRequest, a: AuthCon
     if (url.startsWith("/v1/connectors/oauth/") && url.endsWith("/callback")) return;
     if (url === "/v1/connectors/flows/:id/send" || url.startsWith("/v1/connectors/links")) return requirePerm(a, "envelopes:create");
     if (isRead && (url.startsWith("/v1/connectors/runs") || url === "/v1/connectors/providers")) return;
-    return requirePerm(a, "settings:manage");
+    requirePerm(a, "settings:manage");
+    if (!isRead) requirePerm(a, "envelopes:view_all");
+    return;
   }
   // Datos: la clave BYOK (y su política) solo la ven y administran quienes manejan los ajustes.
   if (url.startsWith("/v1/settings/byok") || url.startsWith("/v1/settings/sso/domains")) return requirePerm(a, "settings:manage");

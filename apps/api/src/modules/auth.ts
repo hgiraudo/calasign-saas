@@ -5,7 +5,7 @@ import { hashPassword, iso, randomToken, sha256Hex, slugify, uuidv7, verifyPassw
 import { config } from "../config";
 import { cellForSignup, registerTenantCell } from "./data/cells";
 import { SESSION_COOKIE, authenticate, clientInfo, type Services } from "./context";
-import { MAX_FAILED_LOGINS, assertCanManageApiKey, createTwoFactorChallenge, recentFailedLogins } from "./teams";
+import { assertCanManageApiKey, clearLoginAttempts, createTwoFactorChallenge, takeLoginAttempt } from "./teams";
 import { passwordLoginTenant } from "./identity/sso";
 import { AppError } from "../lib/errors";
 import { encrypt } from "../lib/util";
@@ -89,13 +89,13 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
     // las cuentas sin contraseña (altas por SSO o SCIM): su marca no es un hash scrypt y verifyPassword respondía al
     // instante, lo que delataba esas cuentas.
     const hasPassword = typeof u?.password_hash === "string" && u.password_hash.startsWith("scrypt$");
-    const ok = (await verifyPassword(input.password, hasPassword ? u.password_hash : DUMMY_HASH)) && hasPassword;
     // Límite por cuenta (además del de IP): muchos intentos fallidos recientes bloquean la cuenta 15 minutos,
-    // aunque lleguen desde IPs distintas. Se responde igual con la contraseña correcta, para no confirmarla.
-    if (u && (await recentFailedLogins(s.db, u.id)) >= MAX_FAILED_LOGINS) {
-      throw new AppError(429, "too_many_attempts", "Demasiados intentos fallidos. Probá de nuevo en unos minutos o restablecé tu contraseña.");
-    }
+    // aunque lleguen desde IPs distintas; el intento se cuenta antes de verificar (ver takeLoginAttempt). Se responde
+    // igual con la contraseña correcta, para no confirmarla.
+    if (u) await takeLoginAttempt(s.db, u.id);
+    const ok = (await verifyPassword(input.password, hasPassword ? u.password_hash : DUMMY_HASH)) && hasPassword;
     if (!u || !ok) throw unauthorized();
+    await clearLoginAttempts(s.db, u.id);
     // SSO obligatorio (Fase 5): se entra a la primera organización que admite contraseña.
     const pick = await passwordLoginTenant(s.db, u.id);
     if (!pick) throw unauthorized();
@@ -122,10 +122,13 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
     const input = ForgotPasswordInput.parse(req.body);
     const u = await s.db.one<any>(`SELECT id FROM users WHERE lower(email) = lower($1)`, [input.email]);
     if (u) {
-      const recent = await s.db.one<any>(`SELECT count(*)::int AS n FROM password_resets WHERE user_id = $1 AND created_at > now() - interval '1 hour'`, [u.id]);
-      if ((recent?.n ?? 0) < 3) {
+      {
         const token = randomToken();
         await s.db.tx(async (t) => {
+          // Con la cuenta bloqueada: pedidos en paralelo (desde varias IP) pasaban todos el tope de 3 por hora.
+          await t.query(`SELECT id FROM users WHERE id = $1 FOR UPDATE`, [u.id]);
+          const recent = await t.one<any>(`SELECT count(*)::int AS n FROM password_resets WHERE user_id = $1 AND created_at > now() - interval '1 hour'`, [u.id]);
+          if ((recent?.n ?? 0) >= 3) return;
           // Un pedido nuevo invalida los links anteriores que no se usaron.
           await t.query(`UPDATE password_resets SET used_at = now() WHERE user_id = $1 AND used_at IS NULL`, [u.id]);
           await t.query(`INSERT INTO password_resets (token_hash, user_id, ip, expires_at) VALUES ($1,$2,$3, now() + interval '30 minutes')`, [
@@ -152,6 +155,7 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
       );
       if (!row) return null;
       await t.query(`UPDATE users SET password_hash = $2, password_reset_at = now() WHERE id = $1`, [row.user_id, pw]);
+      await t.query(`DELETE FROM login_attempts WHERE user_id = $1`, [row.user_id]);
       // Restablecerla prueba que controla el correo: la contraseña vale también en las organizaciones que lo sumaron
       // por SSO o SCIM (ver 0029_r11_identity).
       await t.query(`UPDATE memberships SET password_allowed = true WHERE user_id = $1 AND NOT password_allowed`, [row.user_id]);

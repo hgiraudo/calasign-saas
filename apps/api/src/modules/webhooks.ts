@@ -425,14 +425,18 @@ export async function webhookRoutes(app: FastifyInstance, s: Services) {
     const a = A(req);
     const input = CreateWebhookInput.parse(req.body);
     const url = validateUrl(input.url);
-    const count = await s.db.one<any>(`SELECT count(*)::int AS n FROM webhook_endpoints WHERE tenant_id = $1`, [a.tenantId]);
-    if (count.n >= 20) throw badRequest("too_many_webhooks", "Máximo 20 webhooks por organización");
     const secret = `whsec_${randomToken(24)}`;
-    const row = await s.db.one(
-      `INSERT INTO webhook_endpoints (id, tenant_id, url, description, events, secret_enc, secret_prefix, active, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-      [uuidv7(), a.tenantId, url, input.description ?? null, input.events ?? [], encrypt(secret), secret.slice(0, 12), input.active ?? true, a.userId],
-    );
+    // Conteo e inserción con la organización bloqueada: altas simultáneas no pasan el tope.
+    const row = await s.db.tx(async (t) => {
+      await t.query(`SELECT id FROM tenants WHERE id = $1 FOR UPDATE`, [a.tenantId]);
+      const count = await t.one<any>(`SELECT count(*)::int AS n FROM webhook_endpoints WHERE tenant_id = $1`, [a.tenantId]);
+      if (count.n >= 20) throw badRequest("too_many_webhooks", "Máximo 20 webhooks por organización");
+      return t.one(
+        `INSERT INTO webhook_endpoints (id, tenant_id, url, description, events, secret_enc, secret_prefix, active, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+        [uuidv7(), a.tenantId, url, input.description ?? null, input.events ?? [], encrypt(secret), secret.slice(0, 12), input.active ?? true, a.userId],
+      );
+    });
     // Location: los triggers por webhook de Power Automate / Logic Apps borran la suscripción con DELETE a esta URL.
     reply.code(201).header("location", `${config.appUrl}/v1/webhooks/${(row as any).id}`);
     return { webhook: toEndpoint(row), secret };

@@ -319,7 +319,9 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
     const adapter = getAdapter(r.id_verification_provider);
     if (v && v.status === "pending" && adapter.fetchResult && Date.now() - new Date(v.updated_at).getTime() > 5000) {
       try {
-        await s.db.query(`UPDATE identity_verifications SET updated_at = now() WHERE id = $1`, [v.id]);
+        // Solo un pedido consulta al proveedor cada 5 s (antes, consultas simultáneas llamaban todas).
+        const turn = await s.db.query(`UPDATE identity_verifications SET updated_at = now() WHERE id = $1 AND updated_at < now() - interval '5 seconds' RETURNING id`, [v.id]);
+        if (!turn.length) return sessionOut(req.params.token);
         const res = await adapter.fetchResult(v.provider_ref, v.provider_process_id);
         if (res.status !== "pending") await finalizeVerification(s.db, v.id, res, { type: "system", label: adapter.name });
       } catch (err) {
@@ -345,45 +347,33 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
 
     const id = uuidv7();
     const adapter = getAdapter(provider);
-    let providerRef: string | null = null;
-    let redirectUrl: string | null = null;
-    if (adapter.mode === "redirect") {
-      const created = await adapter.createSession!({
-        verificationId: id,
-        level: r.id_verification_level,
-        person: { fullName: r.name, documentNumber: r.id_document_number ?? null, email: r.email, phone: r.phone },
-        returnUrl: `${await tenantBaseUrl(s.db, e.tenant_id)}/s/${req.params.token}?identity=return`,
-        callbackUrl: `${config.appUrl}/v1/integrations/identity/${provider}/webhook`,
-        locale: r.locale ?? e.locale,
-      });
-      providerRef = created.providerRef;
-      redirectUrl = created.redirectUrl;
-    }
     const actor = recipientActor(req, r);
-    await s.db.tx(async (t) => {
-      // El sobre y el destinatario se vuelven a mirar con el bloqueo: los de arriba se leyeron antes de crear la sesión en
-      // el proveedor (I/O externa), y un sobre anulado o un destinatario reasignado mientras tanto sumaba
-      // recipient.identity_started a la evidencia de un sobre cerrado o de alguien que ya no firma.
+    // Primero se reserva la verificación (con el sobre bloqueado) y recién quien la ganó crea la sesión en el proveedor:
+    // antes se creaba antes de la transacción y, con dos inicios simultáneos, la del perdedor quedaba en el proveedor
+    // (algunos cobran por sesión) sin registrar.
+    const won = await s.db.tx(async (t) => {
+      // El sobre y el destinatario se vuelven a mirar con el bloqueo: un sobre anulado o un destinatario reasignado
+      // mientras tanto no suma recipient.identity_started a la evidencia de un sobre cerrado o de alguien que ya no firma.
       const cur = await lockEnvelope(t, e.tenant_id, e.id);
       if (cur.status !== "sent") throw new AppError(410, "envelope_closed", "El sobre ya no está disponible");
       const rNow = await t.one<any>(`SELECT status, access_token_hash FROM recipients WHERE id = $1`, [r.id]);
-      // Una corrección del contacto (link nuevo, verificaciones anuladas) confirmada durante la llamada al proveedor: la
-      // verificación de quien tenía el link anterior no queda en curso a nombre del contacto corregido.
+      // Una corrección del contacto (link nuevo, verificaciones anuladas) confirmada mientras tanto: la verificación de
+      // quien tenía el link anterior no queda en curso a nombre del contacto corregido.
       assertLinkCurrent(rNow, req.params.token);
       if (!["sent", "viewed"].includes(rNow?.status)) throw conflict("not_signable", "Ya no podés firmar este sobre");
-      // Con el sobre bloqueado se vuelve a mirar: dos inicios simultáneos no crean dos verificaciones en curso
-      // ni consumen dos intentos (el índice único de 0019 lo garantiza también a nivel base).
+      // Dos inicios simultáneos no crean dos verificaciones en curso ni consumen dos intentos (el índice único de 0019
+      // lo garantiza también a nivel base).
       const active = await t.one<any>(
         `SELECT id FROM identity_verifications WHERE recipient_id = $1 AND status IN ('created','pending') LIMIT 1`,
         [r.id],
       );
-      if (active) return;
+      if (active) return false;
       const usedNow = (await t.one<any>(`SELECT count(*)::int AS n FROM identity_verifications WHERE recipient_id = $1 AND status = 'failed'`, [r.id])).n;
       if (usedNow >= settings.maxAttempts) throw new AppError(429, "identity_attempts_exhausted", "Se agotaron los intentos de verificación");
       await t.query(
         `INSERT INTO identity_verifications (id, tenant_id, envelope_id, recipient_id, provider, level, status, attempt, provider_ref, redirect_url)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-        [id, e.tenant_id, e.id, r.id, provider, r.id_verification_level, adapter.mode === "redirect" ? "pending" : "created", usedNow + 1, providerRef, redirectUrl],
+         VALUES ($1,$2,$3,$4,$5,$6,'created',$7,NULL,NULL)`,
+        [id, e.tenant_id, e.id, r.id, provider, r.id_verification_level, usedNow + 1],
       );
       await t.query(`UPDATE recipients SET identity_status = 'in_progress' WHERE id = $1`, [r.id]);
       await appendEvent(t, {
@@ -391,9 +381,30 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
         envelopeId: e.id,
         type: "recipient.identity_started",
         actor,
-        data: { verificationId: id, provider, level: r.id_verification_level, attempt: usedNow + 1, reference: providerRef },
+        data: { verificationId: id, provider, level: r.id_verification_level, attempt: usedNow + 1 },
       });
+      return true;
     });
+    if (won && adapter.mode === "redirect") {
+      try {
+        const created = await adapter.createSession!({
+          verificationId: id,
+          level: r.id_verification_level,
+          person: { fullName: r.name, documentNumber: r.id_document_number ?? null, email: r.email, phone: r.phone },
+          returnUrl: `${await tenantBaseUrl(s.db, e.tenant_id)}/s/${req.params.token}?identity=return`,
+          callbackUrl: `${config.appUrl}/v1/integrations/identity/${provider}/webhook`,
+          locale: r.locale ?? e.locale,
+        });
+        await s.db.query(
+          `UPDATE identity_verifications SET status = 'pending', provider_ref = $2, redirect_url = $3, updated_at = now() WHERE id = $1 AND status = 'created'`,
+          [id, created.providerRef, created.redirectUrl],
+        );
+      } catch (err) {
+        // El proveedor no respondió: la reserva se cancela (no consume un intento) y se puede volver a iniciar.
+        await s.db.query(`UPDATE identity_verifications SET status = 'canceled', updated_at = now() WHERE id = $1 AND status = 'created'`, [id]).catch(() => {});
+        throw err;
+      }
+    }
     return sessionOut(req.params.token);
   });
 

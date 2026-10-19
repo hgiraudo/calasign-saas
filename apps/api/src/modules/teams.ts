@@ -118,6 +118,31 @@ async function checkSecondFactor(db: Db, userId: string, code: string): Promise<
 
 export const MAX_FAILED_LOGINS = 10;
 
+const tooManyAttempts = () =>
+  new AppError(429, "too_many_attempts", "Demasiados intentos fallidos. Probá de nuevo en unos minutos o restablecé tu contraseña.");
+
+/**
+ * Antes de verificar una contraseña o un código: bloqueo por cuenta. Además de los fallos auditados (que se escriben
+ * después de verificar), cuenta el intento en el momento con un contador atómico: si no, muchos pedidos en paralelo
+ * (desde IP distintas) veían todos menos de MAX_FAILED_LOGINS y probaban cientos de contraseñas. Un acierto lo vacía.
+ */
+export async function takeLoginAttempt(db: Db, userId: string) {
+  if ((await recentFailedLogins(db, userId)) >= MAX_FAILED_LOGINS) throw tooManyAttempts();
+  const r = await db.one<{ n: number }>(
+    `INSERT INTO login_attempts (user_id, window_start, n) VALUES ($1, now(), 1)
+     ON CONFLICT (user_id) DO UPDATE SET
+       n = CASE WHEN login_attempts.window_start < now() - interval '15 minutes' THEN 1 ELSE login_attempts.n + 1 END,
+       window_start = CASE WHEN login_attempts.window_start < now() - interval '15 minutes' THEN now() ELSE login_attempts.window_start END
+     RETURNING n`,
+    [userId],
+  );
+  if ((r?.n ?? 0) > MAX_FAILED_LOGINS) throw tooManyAttempts();
+}
+
+export async function clearLoginAttempts(db: Db, userId: string) {
+  await db.query(`DELETE FROM login_attempts WHERE user_id = $1`, [userId]);
+}
+
 /**
  * Intentos fallidos de los últimos 15 minutos. La auditoría registra una fila por organización del usuario: se cuentan
  * las de su primera organización. Sin organizaciones (p. ej. lo quitaron de la única que tenía), cada fallo queda en
@@ -586,9 +611,7 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
       // Es un ingreso con contraseña: mismo bloqueo por cuenta que /v1/auth/login, y los fallos cuentan para ese
       // bloqueo. Si no, alguien que invita el correo de otra persona a su propia organización prueba contraseñas acá
       // sin límite por cuenta (solo el de IP) y, si acierta, se queda con una sesión de esa persona.
-      if ((await recentFailedLogins(s.db, user.id)) >= MAX_FAILED_LOGINS) {
-        throw new AppError(429, "too_many_attempts", "Demasiados intentos fallidos. Probá de nuevo en unos minutos o restablecé tu contraseña.");
-      }
+      await takeLoginAttempt(s.db, user.id);
       if (!input.password || !(await verifyPassword(input.password, user.password_hash))) {
         if (input.password) {
           const tenants = await s.db.query<any>(`SELECT tenant_id FROM memberships WHERE user_id = $1`, [user.id]);
@@ -599,6 +622,7 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
         throw unauthorized();
       }
       verifiedByPassword = true;
+      await clearLoginAttempts(s.db, user.id);
     }
     if (!user) {
       if (!input.name || !input.password) throw badRequest("account_required", "Para crear la cuenta hacen falta nombre y contraseña");
@@ -1019,11 +1043,14 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     }
     // El bloqueo por cuenta también corta los desafíos ya abiertos: si no, alguien con la contraseña junta muchos
     // desafíos antes de fallar y prueba 5 códigos en cada uno.
-    if ((await recentFailedLogins(s.db, ch.user_id)) >= MAX_FAILED_LOGINS) {
+    try {
+      await takeLoginAttempt(s.db, ch.user_id);
+    } catch (e) {
       await s.db.query(`DELETE FROM login_challenges WHERE token_hash = $1`, [ch.token_hash]);
-      throw new AppError(429, "too_many_attempts", "Demasiados intentos fallidos. Probá de nuevo en unos minutos o restablecé tu contraseña.");
+      throw e;
     }
     const method = await checkSecondFactor(s.db, ch.user_id, input.code);
+    if (method) await clearLoginAttempts(s.db, ch.user_id);
     const u = await s.db.one<any>(`SELECT email FROM users WHERE id = $1`, [ch.user_id]);
     if (!method) {
       // Se registra en todas sus organizaciones (como la contraseña incorrecta): el bloqueo se cuenta en la primera,

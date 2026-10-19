@@ -666,6 +666,17 @@ export async function storageRoutes(app: FastifyInstance, s: Services) {
   const assertConnectionQuota = async (tenantId: string) => {
     if (await tooManyConnections(tenantId)) throw badRequest("too_many_connections", `Máximo ${MAX_CONNECTIONS} conexiones de almacenamiento por organización`);
   };
+  /**
+   * Inserta la conexión con la organización bloqueada y el tope contado de nuevo: el chequeo previo queda lejos del
+   * insert (prueba de escritura, intercambio de tokens) y conexiones en paralelo pasaban el tope.
+   */
+  const insertConnection = (tenantId: string, sql: string, params: unknown[]) =>
+    s.db.tx(async (t) => {
+      await t.query(`SELECT id FROM tenants WHERE id = $1 FOR UPDATE`, [tenantId]);
+      const n = (await t.one<{ n: number }>(`SELECT count(*)::int AS n FROM storage_connections WHERE tenant_id = $1`, [tenantId]))?.n ?? 0;
+      if (n >= MAX_CONNECTIONS) throw badRequest("too_many_connections", `Máximo ${MAX_CONNECTIONS} conexiones de almacenamiento por organización`);
+      await t.query(sql, params);
+    });
 
   app.get("/v1/storage/providers", { preHandler: auth }, async () => {
     const items: StorageProviderInfo[] = STORAGE_PROVIDERS.map((p) => ({ provider: p, configured: isConfigured(p) }));
@@ -692,7 +703,8 @@ export async function storageRoutes(app: FastifyInstance, s: Services) {
       throw badRequest("storage_test_failed", `No se pudo escribir en el bucket: ${String((err as Error).message ?? err).slice(0, 300)}`);
     }
     const id = uuidv7();
-    await s.db.query(
+    await insertConnection(
+      a.tenantId,
       `INSERT INTO storage_connections (id, tenant_id, provider, name, config, credentials_enc, account_label, created_by, last_success_at)
        VALUES ($1,$2,'s3',$3,$4,$5,$6,$7, now())`,
       [id, a.tenantId, input.name, JSON.stringify(cfg), credsEnc, `${input.accessKeyId.slice(0, 4)}… @ ${new URL(endpoint).host}`, a.userId],
@@ -771,13 +783,15 @@ export async function storageRoutes(app: FastifyInstance, s: Services) {
           }
         }
         const id = uuidv7();
-        await s.db.query(
+        await insertConnection(
+          a.tenantId,
           `INSERT INTO storage_connections (id, tenant_id, provider, name, config, credentials_enc, account_label, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
           [id, a.tenantId, st.p, st.n, JSON.stringify(cfg), encrypt(JSON.stringify(creds)), label, a.userId],
         );
         await auditFromRequest(s.db, req, a, "storage.connected", { targetType: "storage_connection", targetId: id, data: { provider: st.p, name: st.n } });
         return back(`connected=${st.p}`);
       } catch (err) {
+        if (err instanceof AppError && err.code === "too_many_connections") return back("error=too_many_connections");
         req.log.warn({ err: String(err) }, "no se pudo conectar el almacenamiento");
         return back("error=token_exchange_failed");
       }

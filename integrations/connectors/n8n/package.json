@@ -1,0 +1,30 @@
+{
+  "name": "n8n-nodes-calasign",
+  "version": "{{VERSION}}",
+  "description": "n8n nodes for CalaSign e-signature: send documents and templates for signature, trigger on envelope events, download signed PDFs.",
+  "keywords": ["n8n-community-node-package", "calasign", "e-signature", "esignature", "firma electronica"],
+  "license": "MIT",
+  "homepage": "{{BASE_URL}}/developers/connectors",
+  "author": { "name": "CalaSign", "email": "soporte@calasign.com" },
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "n8n-node build",
+    "lint": "n8n-node lint",
+    "release": "n8n-node release",
+    "prepublishOnly": "n8n-node prerelease"
+  },
+  "n8n": {
+    "n8nNodesApiVersion": 1,
+    "strict": true,
+    "credentials": ["dist/credentials/CalaSignApi.credentials.js", "dist/credentials/CalaSignOAuth2Api.credentials.js"],
+    "nodes": ["dist/nodes/CalaSign/CalaSign.node.js", "dist/nodes/CalaSignTrigger/CalaSignTrigger.node.js"]
+  },
+  "devDependencies": {
+    "@n8n/node-cli": "*",
+    "eslint": "9.32.0",
+    "typescript": "5.9.2"
+  },
+  "peerDependencies": {
+    "n8n-workflow": "*"
+  }
+}

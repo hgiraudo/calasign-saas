@@ -1,0 +1,118 @@
+import type { IDataObject, IHookFunctions, INodeType, INodeTypeDescription, IWebhookFunctions, IWebhookResponseData } from 'n8n-workflow';
+import { NodeConnectionTypes } from 'n8n-workflow';
+import { calaSignRequest, verifySignature } from '../GenericFunctions';
+import { flattenEvent } from '../quicksend';
+
+const EVENTS = [
+	'envelope.sent',
+	'envelope.completed',
+	'envelope.declined',
+	'envelope.voided',
+	'envelope.expired',
+	'recipient.viewed',
+	'recipient.signed',
+	'recipient.declined',
+	'recipient.approved',
+];
+
+export class CalaSignTrigger implements INodeType {
+	description: INodeTypeDescription = {
+		displayName: 'CalaSign Trigger',
+		name: 'calaSignTrigger',
+		icon: 'file:calasign.svg',
+		group: ['trigger'],
+		version: 1,
+		subtitle: '={{$parameter["events"].join(", ")}}',
+		description: 'Starts the workflow on CalaSign envelope and recipient events',
+		defaults: { name: 'CalaSign Trigger' },
+		inputs: [],
+		outputs: [NodeConnectionTypes.Main],
+		credentials: [
+			{ name: 'calaSignApi', required: true, displayOptions: { show: { authentication: ['apiKey'] } } },
+			{ name: 'calaSignOAuth2Api', required: true, displayOptions: { show: { authentication: ['oAuth2'] } } },
+		],
+		webhooks: [{ name: 'default', httpMethod: 'POST', responseMode: 'onReceived', path: 'webhook' }],
+		properties: [
+			{
+				displayName: 'Authentication',
+				name: 'authentication',
+				type: 'options',
+				options: [
+					{ name: 'API Key', value: 'apiKey' },
+					{ name: 'OAuth2', value: 'oAuth2' },
+				],
+				default: 'apiKey',
+			},
+			{
+				displayName: 'Events',
+				name: 'events',
+				type: 'multiOptions',
+				options: EVENTS.map((e) => ({ name: e, value: e })),
+				default: ['envelope.completed'],
+				required: true,
+			},
+			{
+				displayName: 'Simplify',
+				name: 'simplify',
+				type: 'boolean',
+				default: true,
+				description: 'Whether to return flat fields (envelope_id, envelope_status, recipient_email…) instead of the raw event',
+			},
+		],
+	};
+
+	webhookMethods = {
+		default: {
+			async checkExists(this: IHookFunctions): Promise<boolean> {
+				const data = this.getWorkflowStaticData('node');
+				if (!data.webhookId) return false;
+				try {
+					const ep = await calaSignRequest(this, 'GET', `/v1/webhooks/${encodeURIComponent(String(data.webhookId))}`);
+					if (ep.url === this.getNodeWebhookUrl('default') && ep.active) return true;
+				} catch {
+					// borrado del lado de CalaSign
+				}
+				delete data.webhookId;
+				delete data.secret;
+				return false;
+			},
+			async create(this: IHookFunctions): Promise<boolean> {
+				const res = await calaSignRequest(this, 'POST', '/v1/webhooks', {
+					body: { url: this.getNodeWebhookUrl('default') as string, events: this.getNodeParameter('events') as string[], description: `n8n: ${this.getWorkflow().name ?? this.getWorkflow().id}` },
+				});
+				const data = this.getWorkflowStaticData('node');
+				data.webhookId = res.webhook.id;
+				data.secret = res.secret;
+				return true;
+			},
+			async delete(this: IHookFunctions): Promise<boolean> {
+				const data = this.getWorkflowStaticData('node');
+				if (data.webhookId) {
+					try {
+						await calaSignRequest(this, 'DELETE', `/v1/webhooks/${encodeURIComponent(String(data.webhookId))}`);
+					} catch {
+						// ya no existe
+					}
+				}
+				delete data.webhookId;
+				delete data.secret;
+				return true;
+			},
+		},
+	};
+
+	async webhook(this: IWebhookFunctions): Promise<IWebhookResponseData> {
+		const req = this.getRequestObject() as unknown as { rawBody?: Buffer; headers: Record<string, string | undefined> };
+		const secret = this.getWorkflowStaticData('node').secret as string | undefined;
+		if (secret && req.rawBody && !verifySignature(secret, req.headers['calasign-signature'], req.rawBody)) {
+			const res = this.getResponseObject();
+			res.status(401).json({ error: 'invalid signature' });
+			return { noWebhookResponse: true };
+		}
+		const body = this.getBodyData() as IDataObject;
+		const events = this.getNodeParameter('events') as string[];
+		if (!body.type || body.type === 'webhook.test' || (events.length && !events.includes(String(body.type)))) return { workflowData: [] };
+		const json = this.getNodeParameter('simplify', true) ? (flattenEvent(body) as IDataObject) : body;
+		return { workflowData: [this.helpers.returnJsonArray(json)] };
+	}
+}

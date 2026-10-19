@@ -53,16 +53,25 @@ var CalaSign = (function () {
       prevStatus = status.getValue();
       flag.setValue(true);
       status.setValue("requested");
+      // Si la fila ya tenía la marca en Sí (p. ej. falló el guardado del flujo después de enviar y la sincronización la
+      // dejó en "declined"), setValue(true) no la ensucia, no viaja en el guardado y el flujo (filtra por esta
+      // columna) no se dispara: la fila quedaba en "requested" para siempre. Solo en este guardado.
+      if (flag.setSubmitMode) flag.setSubmitMode("always");
     } catch (e) {
       notify(form, "ERROR", e.message);
       return Promise.resolve(false);
     }
+    function dirtyOnly() {
+      if (flag.setSubmitMode) flag.setSubmitMode("dirty");
+    }
     return form.data.save().then(
       function () {
+        dirtyOnly();
         notify(form, "INFO", "Solicitud enviada a CalaSign. El estado se actualiza solo cuando el sobre se envía y se firma.");
         return true;
       },
       function (err) {
+        dirtyOnly();
         // Sin guardar, la fila quedaba en "requested" en el formulario: el botón se bloqueaba ("sobre en curso") y no
         // se podía reintentar. Se vuelven los valores anteriores para poder corregir y tocar el botón de nuevo.
         flag.setValue(prevFlag);

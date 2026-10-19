@@ -133,7 +133,9 @@ export async function envelopeBaseUrl(db: Db, tenantId: string, envelopeId: stri
 
 /** Marca dueña del Host (dominio de una sub-marca o dominio propio de la organización), o null. */
 export async function brandForHost(db: Db, host: string | undefined): Promise<{ tenantId: string; brandId: string | null } | null> {
-  const h = (host ?? "").split(":")[0].toLowerCase();
+  // Sin el punto final, como tenantForHost y signerHostTenant: "firmas.marca.com." es el mismo dominio (el aislamiento de
+  // sesión ya lo trataba así) y sin esto se servía la marca de la plataforma en el dominio de la sub-marca.
+  const h = (host ?? "").split(":")[0].toLowerCase().replace(/\.+$/, "");
   if (!h || h === "localhost" || h === "127.0.0.1") return null;
   const b = await db.one<{ tenant_id: string; brand_id: string }>(`SELECT tenant_id, brand_id FROM brand_domains WHERE domain = $1 AND status = 'verified'`, [h]);
   if (b) return { tenantId: b.tenant_id, brandId: b.brand_id };

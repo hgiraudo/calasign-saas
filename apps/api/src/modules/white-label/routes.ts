@@ -232,11 +232,17 @@ function emailDomainToApi(r: any, found?: Parameters<typeof emailDomainRecords>[
   };
 }
 
-async function checkEmailDomain(r: any) {
-  const txt = async (n: string) => (await resolveTxt(n).catch(() => [] as string[])).map((v) => v.replace(/\s+/g, " ").trim());
+/**
+ * Consulta los registros del dominio de correo. `strict`: un error de DNS en el TXT de propiedad o en el de DKIM se
+ * propaga en vez de contar como "no publicado" (la re-verificación periódica no desverifica por una falla de la consulta).
+ */
+async function checkEmailDomain(r: any, opts: { strict?: boolean } = {}) {
+  const clean = (vs: string[]) => vs.map((v) => v.replace(/\s+/g, " ").trim());
+  const txt = async (n: string) => clean(await resolveTxt(n).catch(() => [] as string[]));
+  const required = async (n: string) => (opts.strict ? clean(await resolveTxt(n)) : txt(n));
   const [own, dkim, root, dmarc] = await Promise.all([
-    txt(mailTxtName(r.domain)),
-    txt(`${r.dkim_selector}._domainkey.${r.domain}`),
+    required(mailTxtName(r.domain)),
+    required(`${r.dkim_selector}._domainkey.${r.domain}`),
     txt(r.domain),
     txt(`_dmarc.${r.domain}`),
   ]);
@@ -283,11 +289,18 @@ export async function recheckWhiteLabelDomains(d: { db: Db; log: { warn(o: objec
     `SELECT * FROM email_domains WHERE status = 'verified' AND (last_checked_at IS NULL OR last_checked_at < now() - interval '6 hours') ORDER BY last_checked_at NULLS FIRST LIMIT 20`,
   );
   for (const r of mails) {
-    const f = await checkEmailDomain(r).catch(() => null);
+    // Con strict: si el DNS no responde, f es null y el dominio sigue verificado (antes una sola consulta fallida lo
+    // pasaba a pendiente y los correos de la marca salían con la dirección de la plataforma).
+    const f = await checkEmailDomain(r, { strict: true }).catch((e) => {
+      d.log.warn({ domain: r.domain, err: String(e) }, "no se pudo re-verificar el dominio de correo");
+      return null;
+    });
     if (f && (!f.own || !f.dkim)) {
       await d.db.query(`UPDATE email_domains SET status = 'pending', last_checked_at = now(), last_error = $2 WHERE id = $1`, [r.id, "Re-verificación: falta el TXT de propiedad o la clave DKIM"]);
+    } else if (f) {
+      await d.db.query(`UPDATE email_domains SET last_checked_at = now(), spf_ok = $2, dmarc_ok = $3 WHERE id = $1`, [r.id, f.spf, f.dmarc]);
     } else {
-      await d.db.query(`UPDATE email_domains SET last_checked_at = now(), spf_ok = $2, dmarc_ok = $3 WHERE id = $1`, [r.id, f?.spf ?? null, f?.dmarc ?? null]);
+      await d.db.query(`UPDATE email_domains SET last_checked_at = now() WHERE id = $1`, [r.id]);
     }
   }
 }
@@ -559,7 +572,7 @@ export async function whiteLabelRoutes(app: FastifyInstance, s: Services) {
     const r = await s.db.one<any>(`SELECT * FROM email_domains WHERE tenant_id = $1 AND domain = $2`, [a.tenantId, String(req.params.domain).toLowerCase()]);
     if (!r) throw notFound("Dominio de correo");
     const f = await checkEmailDomain(r);
-    const ok = f.own && f.dkim;
+    let ok = f.own && f.dkim;
     const error = ok ? null : !f.own ? `Falta el TXT ${mailTxtName(r.domain)}` : `Falta la clave DKIM ${r.dkim_selector}._domainkey.${r.domain}`;
     try {
       await s.db.query(
@@ -569,6 +582,8 @@ export async function whiteLabelRoutes(app: FastifyInstance, s: Services) {
       );
     } catch (e) {
       if ((e as { code?: string }).code !== "23505") throw e;
+      // Lo verificó otra organización: no quedó verificado (ni se audita como tal).
+      ok = false;
       await s.db.query(`UPDATE email_domains SET last_checked_at = now(), last_error = $2 WHERE id = $1`, [r.id, "Ese dominio ya lo verificó otra organización"]);
     }
     if (ok) await auditFromRequest(s.db, req, a, "email_domain.verified", { targetType: "domain", targetId: r.domain });

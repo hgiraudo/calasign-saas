@@ -67,7 +67,9 @@ function clean(c: BrandConfigInput): BrandConfigInput {
   return {
     displayName: c.displayName || null,
     productName: c.productName || null,
-    hidePoweredBy: Boolean(c.hidePoweredBy),
+    // Sin definir: una sub-marca hereda "ocultar Powered by" de la marca de la organización (mandar false siempre la
+    // volvía a mostrar en cuanto se guardaba cualquier cambio de la sub-marca).
+    ...(c.hidePoweredBy === undefined ? {} : { hidePoweredBy: Boolean(c.hidePoweredBy) }),
     theme: nul(c.theme),
     customCss: c.customCss?.trim() ? c.customCss : null,
     links: nul(c.links),
@@ -178,7 +180,7 @@ export function BrandingPage() {
       // marca propia (PUT /v1/settings/brands sí), así que en Free renombrar no puede depender de guardar la marca.
       // Con menos de 2 caracteres el servidor responde el error (antes se ignoraba y se mostraba "Guardado").
       const n = orgName.trim();
-      if (sel === "default" && n && n !== me?.tenant.name) {
+      if (sel === "default" && n !== me?.tenant.name) {
         await api("/v1/settings/branding", { method: "PATCH", body: { organizationName: n } });
         await Promise.all([refresh(), refreshAccess()]);
         // El nombre de la marca por defecto es el de la organización (selector de marcas).
@@ -228,7 +230,10 @@ export function BrandingPage() {
     const own = Object.fromEntries(Object.entries(theme).filter(([, v]) => v !== null && v !== undefined && v !== ""));
     return { ...base, ...own } as Theme;
   }, [brand, theme]);
-  const product = cfg.productName || (cfg.hidePoweredBy ? cfg.displayName || brand?.effective.name : null) || brand?.effective.productName || "CalaSign";
+  // Lo que una sub-marca no define lo hereda de la marca de la organización (como mergeConfig en el servidor).
+  const inherited = brand && !brand.isDefault ? brands?.find((b) => b.isDefault)?.config : undefined;
+  const hidePowered = cfg.hidePoweredBy ?? inherited?.hidePoweredBy ?? false;
+  const product = cfg.productName || inherited?.productName || "CalaSign";
   const mockHtml = useMemo(() => {
     if (!brand) return "";
     const fontFace =
@@ -245,11 +250,11 @@ export function BrandingPage() {
       fontCssUrl: google,
       name: cfg.displayName || brand.effective.name,
       logo: brand.effective.logoUrl,
-      powered: cfg.hidePoweredBy ? null : `${w("mock.powered")} ${product}`,
+      powered: hidePowered ? null : `${w("mock.powered")} ${product}`,
       w,
       theme: effectiveTheme,
     });
-  }, [brand, effectiveTheme, cfg.customCss, cfg.displayName, cfg.hidePoweredBy, cssProblem, product, w]);
+  }, [brand, effectiveTheme, cfg.customCss, cfg.displayName, hidePowered, cssProblem, product, w]);
 
   if (!brands || !brand) return error ? <div className="page"><ErrorBox error={error} /></div> : <Spinner />;
 
@@ -332,7 +337,7 @@ export function BrandingPage() {
                 <input id="wl-product" value={cfg.productName ?? ""} maxLength={60} onChange={(e) => set("productName", e.target.value)} />
               </Field>
               <label className="row-wrap">
-                <input id="wl-hide" type="checkbox" checked={Boolean(cfg.hidePoweredBy)} onChange={(e) => set("hidePoweredBy", e.target.checked)} />
+                <input id="wl-hide" type="checkbox" checked={hidePowered} onChange={(e) => set("hidePoweredBy", e.target.checked)} />
                 <span>{w("hidePoweredBy")}</span>
               </label>
 
@@ -618,15 +623,21 @@ function EmailPreview({ brandId, cfg }: { brandId: string; cfg: BrandConfigInput
   const body = JSON.stringify(clean(cfg));
   useEffect(() => {
     // Con una pausa: no se pide una vista previa por cada tecla.
+    // Solo vale la respuesta del último pedido: una más lenta de un pedido anterior dejaba la vista previa vieja.
+    let stale = false;
     const id = window.setTimeout(() => {
       api<BrandEmailPreview>(`/v1/settings/brands/${brandId}/preview`, { method: "POST", body: { kind: "email", event: target.event, locale: target.locale, config: JSON.parse(body) } })
         .then((p) => {
+          if (stale) return;
           setPrev(p);
           setError(null);
         })
-        .catch((e) => setError(errorText(e)));
+        .catch((e) => !stale && setError(errorText(e)));
     }, 500);
-    return () => window.clearTimeout(id);
+    return () => {
+      stale = true;
+      window.clearTimeout(id);
+    };
   }, [brandId, body, target]);
   return (
     <div className="stack">
@@ -738,7 +749,7 @@ function DomainsEditor({ brand, onBrand }: { brand: Brand; onBrand: (b: Brand) =
           </table>
           {m.lastError && <p className="error-text">{m.lastError}</p>}
           <div className="row-wrap">
-            <button type="button" className="btn btn-sm" disabled={busy} onClick={() => run(async () => (await api(`/v1/settings/email-domains/${m.domain}/verify`, { method: "POST" }), reload(), refreshBrand()))}>
+            <button type="button" className="btn btn-sm" disabled={busy} onClick={() => run(async () => (await api(`/v1/settings/email-domains/${m.domain}/verify`, { method: "POST" }), await reload(), refreshBrand()))}>
               {w("domains.verify")}
             </button>
             <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => run(async () => (await api(`/v1/settings/email-domains/${m.domain}`, { method: "DELETE" }), reload()))}>

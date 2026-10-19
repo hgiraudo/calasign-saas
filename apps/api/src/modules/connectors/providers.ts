@@ -126,6 +126,15 @@ export class Conn {
   get cfg() {
     return this.row.config ?? {};
   }
+  /** Relee las credenciales guardadas (otro trabajo pudo renovarlas). false sin base. */
+  async reload(): Promise<boolean> {
+    if (!this.db) return false;
+    const r = await this.db.one<{ credentials_enc: string }>(`SELECT credentials_enc FROM connector_connections WHERE id = $1`, [this.row.id]);
+    if (!r) return false;
+    this.row.credentials_enc = r.credentials_enc;
+    this.creds = JSON.parse(decrypt(r.credentials_enc));
+    return true;
+  }
   async persist() {
     if (!this.db) return;
     this.row.credentials_enc = encrypt(JSON.stringify(this.creds));
@@ -191,7 +200,17 @@ function baseFor(c: Conn): string {
 
 async function refreshOAuth(c: Conn) {
   if (!c.creds.refresh_token) throw new ConnectorError("la conexión venció: hay que volver a conectarla", 401, true);
-  const b = await oauthTokenRequest(c.provider as OAuthProvider, c.cfg.region, { grant_type: "refresh_token", refresh_token: c.creds.refresh_token });
+  const used = c.creds.refresh_token;
+  let b: any;
+  try {
+    b = await oauthTokenRequest(c.provider as OAuthProvider, c.cfg.region, { grant_type: "refresh_token", refresh_token: used });
+  } catch (err) {
+    // Varios trabajos de la misma conexión (p. ej. un lote que se completa) renuevan a la vez: con refresh tokens que
+    // rotan, el segundo recibe invalid_grant, que es "permanente" (sin reintento y "hay que volver a conectarla") aunque
+    // la conexión esté bien. Si otro ya guardó credenciales nuevas, se usan esas.
+    if (err instanceof ConnectorError && err.authFailed && (await c.reload().catch(() => false)) && c.creds.refresh_token && c.creds.refresh_token !== used) return;
+    throw err;
+  }
   c.creds = { access_token: b.access_token, refresh_token: b.refresh_token ?? c.creds.refresh_token, expires_at: b.expires_in ? Date.now() + Number(b.expires_in) * 1000 : null };
   await c.persist();
 }

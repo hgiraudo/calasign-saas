@@ -16,6 +16,7 @@ import {
 import { badRequest } from "../lib/errors";
 import { assertTemplateAccess, envelopeVisibilitySql } from "./access";
 import { authenticate, type AuthContext, type Services } from "./context";
+import { idempotent } from "./envelopes";
 import { loadDetail } from "./mappers";
 import { insertEnvelopeFromTemplate, loadTemplateDetail, loadTemplateForUse, planFromTemplate } from "./templates";
 import { envelopeSnapshot } from "./webhooks";
@@ -165,17 +166,20 @@ export async function lowcodeRoutes(app: FastifyInstance, s: Services) {
     return templateInputSchema(await loadTemplateDetail(s.db, a.tenantId, req.params.id));
   });
 
-  app.post<{ Params: { templateId: string } }>("/v1/envelopes/from-template/:templateId", { preHandler: auth }, async (req, reply) => {
-    const a = A(req);
-    await assertTemplateAccess(s.db, a, req.params.templateId, "view");
-    const loaded = await loadTemplateForUse(s.db, a.tenantId, req.params.templateId);
-    // Mismas validaciones que /v1/envelopes/from-template (destinatarios, canales, prellenado).
-    const input = EnvelopeFromTemplateInput.parse(toFromTemplateInput(loaded.tpl.template.id, req.body ?? {}, loaded.tpl));
-    const plan = planFromTemplate(loaded, input);
-    const envId = await s.db.tx((t) => insertEnvelopeFromTemplate(t, { tenantId: a.tenantId, userId: a.userId, apiKeyId: a.apiKeyId, actor: a.actor }, loaded, input, plan));
-    reply.code(201);
-    return loadDetail(s.db, a.tenantId, envId);
-  });
+  // Con Idempotency-Key como /v1/envelopes/from-template: Power Automate, Logic Apps, Zapier y Make reintentan solos
+  // ante un timeout o un 5xx, y sin esto cada reintento creaba (y enviaba) otro sobre.
+  app.post<{ Params: { templateId: string } }>("/v1/envelopes/from-template/:templateId", { preHandler: auth }, async (req, reply) =>
+    idempotent(s, req, reply, async () => {
+      const a = A(req);
+      await assertTemplateAccess(s.db, a, req.params.templateId, "view");
+      const loaded = await loadTemplateForUse(s.db, a.tenantId, req.params.templateId);
+      // Mismas validaciones que /v1/envelopes/from-template (destinatarios, canales, prellenado).
+      const input = EnvelopeFromTemplateInput.parse(toFromTemplateInput(loaded.tpl.template.id, req.body ?? {}, loaded.tpl));
+      const plan = planFromTemplate(loaded, input);
+      const envId = await s.db.tx((t) => insertEnvelopeFromTemplate(t, { tenantId: a.tenantId, userId: a.userId, apiKeyId: a.apiKeyId, actor: a.actor }, loaded, input, plan));
+      return { status: 201, body: await loadDetail(s.db, a.tenantId, envId) };
+    }),
+  );
 
   app.get<{ Querystring: { event?: string; limit?: string } }>("/v1/webhooks/samples", { preHandler: auth }, async (req) => {
     const a = A(req);

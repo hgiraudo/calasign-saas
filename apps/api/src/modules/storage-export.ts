@@ -111,8 +111,16 @@ async function tokenRequest(p: OAuthProvider, params: Record<string, string>): P
   return body;
 }
 
-/** Devuelve un access token vigente; si hubo que refrescarlo, también las credenciales nuevas a guardar. */
-async function freshToken(p: OAuthProvider, creds: OAuthCreds): Promise<{ token: string; updated: OAuthCreds | null }> {
+/** Guarda credenciales renovadas en cuanto se obtienen (ver freshToken). */
+type OnRefresh = (creds: OAuthCreds) => Promise<void>;
+
+/**
+ * Devuelve un access token vigente; si hubo que refrescarlo, también las credenciales nuevas a guardar. `onRefresh` las
+ * guarda en el acto: Box (y otros) invalidan el refresh token al usarlo, así que si la subida fallaba después de renovar
+ * y las credenciales nuevas solo se guardaban al terminar bien, la conexión quedaba con un refresh token ya gastado
+ * (invalid_grant en cada intento) y había que volver a conectarla.
+ */
+async function freshToken(p: OAuthProvider, creds: OAuthCreds, onRefresh?: OnRefresh): Promise<{ token: string; updated: OAuthCreds | null }> {
   if (creds.expires_at - 60_000 > Date.now()) return { token: creds.access_token, updated: null };
   if (!creds.refresh_token) throw new Error("la conexión venció: hay que volver a conectarla");
   const b = await tokenRequest(p, { grant_type: "refresh_token", refresh_token: creds.refresh_token });
@@ -121,6 +129,7 @@ async function freshToken(p: OAuthProvider, creds: OAuthCreds): Promise<{ token:
     refresh_token: b.refresh_token ?? creds.refresh_token,
     expires_at: Date.now() + Number(b.expires_in ?? 3600) * 1000,
   };
+  if (onRefresh) await onRefresh(updated);
   return { token: updated.access_token, updated };
 }
 
@@ -253,8 +262,8 @@ async function withResolvedFolder(db: Db, c: any): Promise<any> {
   return (await ensureGdriveFolder(db, c.id, String(folderId))) ?? c;
 }
 
-async function uploadGdrive(creds: OAuthCreds, cfg: any, name: string, bytes: Uint8Array, contentType: string): Promise<UploadResult> {
-  const { token, updated } = await freshToken("gdrive", creds);
+async function uploadGdrive(creds: OAuthCreds, cfg: any, name: string, bytes: Uint8Array, contentType: string, onRefresh?: OnRefresh): Promise<UploadResult> {
+  const { token, updated } = await freshToken("gdrive", creds, onRefresh);
   const auth = { authorization: `Bearer ${token}` };
   let folderId: string | null = cfg.folderId ?? null;
   const newCfg: Record<string, unknown> = {};
@@ -283,8 +292,8 @@ async function uploadGdrive(creds: OAuthCreds, cfg: any, name: string, bytes: Ui
   return { ref: res.webViewLink ?? `gdrive:${res.id}`, creds: updated ?? undefined, config: Object.keys(newCfg).length ? newCfg : undefined };
 }
 
-async function uploadDropbox(creds: OAuthCreds, cfg: any, name: string, bytes: Uint8Array, _contentType: string): Promise<UploadResult> {
-  const { token, updated } = await freshToken("dropbox", creds);
+async function uploadDropbox(creds: OAuthCreds, cfg: any, name: string, bytes: Uint8Array, _contentType: string, onRefresh?: OnRefresh): Promise<UploadResult> {
+  const { token, updated } = await freshToken("dropbox", creds, onRefresh);
   const folder = String(cfg.folder ?? "").replace(/^\/+|\/+$/g, "");
   const path = `/${folder ? `${folder}/` : ""}${name}`;
   // Dropbox-API-Arg viaja en un header: los caracteres no ASCII van escapados.
@@ -303,14 +312,14 @@ async function uploadDropbox(creds: OAuthCreds, cfg: any, name: string, bytes: U
   return { ref: `dropbox:${res.path_display ?? path}`, creds: updated ?? undefined };
 }
 
-async function uploadOnedrive(creds: OAuthCreds, cfg: any, name: string, bytes: Uint8Array, contentType: string): Promise<UploadResult> {
-  const { token, updated } = await freshToken("onedrive", creds);
+async function uploadOnedrive(creds: OAuthCreds, cfg: any, name: string, bytes: Uint8Array, contentType: string, onRefresh?: OnRefresh): Promise<UploadResult> {
+  const { token, updated } = await freshToken("onedrive", creds, onRefresh);
   const item = await graphUpload(token, `${GRAPH()}/me/drive`, cfg, name, bytes, contentType, "OneDrive");
   return { ref: item?.webUrl ?? `onedrive:${item?.id ?? name}`, creds: updated ?? undefined };
 }
 
-async function uploadSharepoint(creds: OAuthCreds, cfg: any, name: string, bytes: Uint8Array, contentType: string): Promise<UploadResult> {
-  const { token, updated } = await freshToken("sharepoint", creds);
+async function uploadSharepoint(creds: OAuthCreds, cfg: any, name: string, bytes: Uint8Array, contentType: string, onRefresh?: OnRefresh): Promise<UploadResult> {
+  const { token, updated } = await freshToken("sharepoint", creds, onRefresh);
   if (!cfg.driveId) throw new Error("conexión de SharePoint sin biblioteca resuelta: volvé a conectarla");
   const item = await graphUpload(token, `${GRAPH()}/drives/${encodeURIComponent(String(cfg.driveId))}`, cfg, name, bytes, contentType, "SharePoint");
   return { ref: item?.webUrl ?? `sharepoint:${item?.id ?? name}`, creds: updated ?? undefined };
@@ -427,8 +436,8 @@ export async function ensureBoxFolder(token: string, folder: string): Promise<st
   return parent;
 }
 
-async function uploadBox(creds: OAuthCreds, cfg: any, name: string, bytes: Uint8Array, contentType: string): Promise<UploadResult> {
-  const { token, updated } = await freshToken("box", creds);
+async function uploadBox(creds: OAuthCreds, cfg: any, name: string, bytes: Uint8Array, contentType: string, onRefresh?: OnRefresh): Promise<UploadResult> {
+  const { token, updated } = await freshToken("box", creds, onRefresh);
   let folderId: string = cfg.folderId ?? "";
   const newCfg: Record<string, unknown> = {};
   if (!folderId) {
@@ -447,6 +456,13 @@ async function uploadBox(creds: OAuthCreds, cfg: any, name: string, bytes: Uint8
     });
   };
   let res = await put(name);
+  // La carpeta fijada ya no existe (se borró o se movió a la papelera en Box): se vuelve a buscar/crear una vez. Sin
+  // esto, todas las exportaciones de la conexión fallaban con 404 hasta cambiar la carpeta a mano.
+  if (res.status === 404 && cfg.folderId && cfg.folder) {
+    folderId = await ensureBoxFolder(token, String(cfg.folder));
+    newCfg.folderId = folderId;
+    res = await put(name);
+  }
   // Nombre ocupado (409 item_name_in_use): Box no renombra solo; se agrega un sufijo.
   if (res.status === 409) res = await put(name.replace(/(\.[a-z0-9]+)$/i, ` (${Date.now().toString(36)})$1`));
   const body: any = await (await check(res, "subir a Box")).json();
@@ -483,15 +499,27 @@ async function uploadS3(creds: S3Creds, cfg: any, name: string, bytes: Uint8Arra
   return { ref: `s3://${cfg.bucket}/${key}` };
 }
 
-async function uploadTo(provider: StorageProvider, credsEnc: string, cfg: any, name: string, bytes: Uint8Array, contentType = "application/pdf"): Promise<UploadResult> {
+async function uploadTo(
+  provider: StorageProvider,
+  credsEnc: string,
+  cfg: any,
+  name: string,
+  bytes: Uint8Array,
+  contentType = "application/pdf",
+  onRefresh?: OnRefresh,
+): Promise<UploadResult> {
   const creds = JSON.parse(decrypt(credsEnc));
-  if (provider === "gdrive") return uploadGdrive(creds, cfg, name, bytes, contentType);
-  if (provider === "dropbox") return uploadDropbox(creds, cfg, name, bytes, contentType);
-  if (provider === "onedrive") return uploadOnedrive(creds, cfg, name, bytes, contentType);
-  if (provider === "sharepoint") return uploadSharepoint(creds, cfg, name, bytes, contentType);
-  if (provider === "box") return uploadBox(creds, cfg, name, bytes, contentType);
+  if (provider === "gdrive") return uploadGdrive(creds, cfg, name, bytes, contentType, onRefresh);
+  if (provider === "dropbox") return uploadDropbox(creds, cfg, name, bytes, contentType, onRefresh);
+  if (provider === "onedrive") return uploadOnedrive(creds, cfg, name, bytes, contentType, onRefresh);
+  if (provider === "sharepoint") return uploadSharepoint(creds, cfg, name, bytes, contentType, onRefresh);
+  if (provider === "box") return uploadBox(creds, cfg, name, bytes, contentType, onRefresh);
   return uploadS3(creds, cfg, name, bytes, contentType);
 }
+
+const persistCreds = (db: Db, connId: string): OnRefresh => async (creds) => {
+  await db.query(`UPDATE storage_connections SET credentials_enc = $2, updated_at = now() WHERE id = $1`, [connId, encrypt(JSON.stringify(creds))]);
+};
 
 async function persistUpload(db: Db, connId: string, r: UploadResult) {
   if (r.creds) await db.query(`UPDATE storage_connections SET credentials_enc = $2, updated_at = now() WHERE id = $1`, [connId, encrypt(JSON.stringify(r.creds))]);
@@ -522,7 +550,7 @@ export async function exportEnvelopeJob(db: Db, blobs: BlobStore, p: { connectio
     let ref: string = ex.pdf_ref;
     if (!ref) {
       const bytes = await blobs.get(e.storage_key);
-      const r = await uploadTo(cur.provider, cur.credentials_enc, cur.config ?? {}, fileName(e.subject, p.envelopeId), bytes);
+      const r = await uploadTo(cur.provider, cur.credentials_enc, cur.config ?? {}, fileName(e.subject, p.envelopeId), bytes, "application/pdf", persistCreds(db, c.id));
       await persistUpload(db, c.id, r);
       ref = r.ref;
       await db.query(`UPDATE storage_exports SET pdf_ref = $2, updated_at = now() WHERE id = $1`, [ex.id, ref]);
@@ -531,7 +559,7 @@ export async function exportEnvelopeJob(db: Db, blobs: BlobStore, p: { connectio
       // Con la fila releída: la subida del PDF pudo renovar el token o fijar la carpeta.
       cur = (await db.one<any>(`SELECT * FROM storage_connections WHERE id = $1`, [c.id])) ?? cur;
       const ev = await evidenceCertificate(db, p.envelopeId);
-      const r2 = await uploadTo(cur.provider, cur.credentials_enc, cur.config ?? {}, `${safeBaseName(e.subject, p.envelopeId)} - evidencia.json`, ev, "application/json");
+      const r2 = await uploadTo(cur.provider, cur.credentials_enc, cur.config ?? {}, `${safeBaseName(e.subject, p.envelopeId)} - evidencia.json`, ev, "application/json", persistCreds(db, c.id));
       await persistUpload(db, c.id, r2);
     }
     await db.query(`UPDATE storage_exports SET status = 'succeeded', remote_ref = $2, error = NULL, updated_at = now() WHERE id = $1`, [ex.id, ref]);
@@ -755,7 +783,7 @@ export async function storageRoutes(app: FastifyInstance, s: Services) {
     let r = await load(a.tenantId, req.params.id);
     try {
       r = await withResolvedFolder(s.db, r);
-      const res = await uploadTo(r.provider, r.credentials_enc, r.config ?? {}, "calasign-connection-test.pdf", Buffer.from("%PDF-1.4\n% CalaSign: prueba de conexión\n"));
+      const res = await uploadTo(r.provider, r.credentials_enc, r.config ?? {}, "calasign-connection-test.pdf", Buffer.from("%PDF-1.4\n% CalaSign: prueba de conexión\n"), "application/pdf", persistCreds(s.db, r.id));
       await persistUpload(s.db, r.id, res);
       await s.db.query(`UPDATE storage_connections SET last_success_at = now(), last_error = NULL WHERE id = $1`, [r.id]);
       return { ok: true, ref: res.ref, error: null };

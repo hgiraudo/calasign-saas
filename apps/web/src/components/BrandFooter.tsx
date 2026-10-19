@@ -25,7 +25,7 @@ export function BrandFooter({ className = "signer-foot muted small" }: { classNa
         </>
       )}
       {links.map(([u, label], i) => (
-        <span key={u}>
+        <span key={label}>
           {(i > 0 || !brand?.whiteLabel) && " · "}
           <a href={u} target="_blank" rel="noopener noreferrer">
             {label}

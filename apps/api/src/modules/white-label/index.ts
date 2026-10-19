@@ -62,27 +62,30 @@ const escAttr = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<"
 export function injectBrand(html: string, b: ResolvedBrand): string {
   const theme = publicTheme(b);
   const title = escAttr(rebrands(b) ? productLabel(b) : b.name || productLabel(b));
+  // Reemplazos con función: con un texto como reemplazo, "$'", "$`", "$&" o "$$" en el nombre, el CSS o los textos de
+  // la marca se interpretaban como patrones (p. ej. "$'" copiaba el resto del documento dentro de <title>).
+  const put = (s: string) => () => s;
   let out = html
-    .replace(/<title>[^<]*<\/title>/, `<title>${title}</title>`)
-    .replace(/(<meta name="apple-mobile-web-app-title" content=")[^"]*(")/, `$1${title}$2`);
-  if (theme.theme.primaryColor) out = out.replace(/(<meta name="theme-color" content=")[^"]*(")/, `$1${theme.theme.primaryColor}$2`);
+    .replace(/<title>[^<]*<\/title>/, put(`<title>${title}</title>`))
+    .replace(/(<meta name="apple-mobile-web-app-title" content=")[^"]*(")/, (_m, a: string, z: string) => `${a}${title}${z}`);
+  if (theme.theme.primaryColor) out = out.replace(/(<meta name="theme-color" content=")[^"]*(")/, (_m, a: string, z: string) => `${a}${theme.theme.primaryColor}${z}`);
   if (theme.faviconUrl) {
     out = out
-      .replace(/<link rel="icon"[^>]*>/, `<link rel="icon" href="${escAttr(theme.faviconUrl)}">`)
-      .replace(/<link rel="apple-touch-icon"[^>]*>/, `<link rel="apple-touch-icon" href="${escAttr(theme.faviconUrl)}">`);
+      .replace(/<link rel="icon"[^>]*>/, put(`<link rel="icon" href="${escAttr(theme.faviconUrl)}">`))
+      .replace(/<link rel="apple-touch-icon"[^>]*>/, put(`<link rel="apple-touch-icon" href="${escAttr(theme.faviconUrl)}">`));
   } else if (rebrands(b)) {
     // Sin favicon propio no se muestra el de la plataforma.
     out = out.replace(/<link rel="icon"[^>]*>/, `<link rel="icon" href="data:,">`).replace(/<link rel="apple-touch-icon"[^>]*>/, "");
   }
   // El manifest de la plataforma (nombre e íconos) solo en su dominio; en el de la marca se sirve uno propio.
-  if (rebrands(b)) out = out.replace(/<link rel="manifest"[^>]*>/, `<link rel="manifest" href="/manifest.webmanifest?b=${encodeURIComponent(b.key)}">`);
+  if (rebrands(b)) out = out.replace(/<link rel="manifest"[^>]*>/, put(`<link rel="manifest" href="/manifest.webmanifest?b=${encodeURIComponent(b.key)}">`));
   const head = [
     theme.fontCssUrl ? `<link rel="stylesheet" href="${escAttr(theme.fontCssUrl)}">` : "",
     theme.css ? `<style id="brand-theme">${theme.css.replace(/<\//g, "<\\/")}</style>` : "",
     // Bloque de datos (no ejecutable, la CSP no lo bloquea): la web lo lee antes del primer render, sin parpadeo.
     `<script type="application/json" id="brand-data">${JSON.stringify(theme).replace(/</g, "\\u003c")}</script>`,
   ].join("");
-  return out.replace("</head>", `${head}</head>`);
+  return out.replace("</head>", put(`${head}</head>`));
 }
 
 /** Responde index.html con la marca si la página tiene una; false si hay que servir el de la plataforma. */

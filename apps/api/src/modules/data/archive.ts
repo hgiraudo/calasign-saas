@@ -66,8 +66,9 @@ export async function renewEnvelopeArchive(d: Deps, envelopeId: string, actor: A
   // El valor del reclamo identifica a esta renovación: al terminar se suelta solo si sigue siendo el suyo (una que
   // tardó más que el reclamo no borra el de la que tomó la posta).
   const claim = await d.db.query<{ until: string }>(
+    // Como texto: un Date de JS pierde los microsegundos y la comparación al soltar no coincidía nunca en Postgres.
     `UPDATE envelopes SET archive_renewing_until = clock_timestamp() + interval '5 minutes'
-      WHERE id = $1 AND (archive_renewing_until IS NULL OR archive_renewing_until < now()) RETURNING archive_renewing_until AS until`,
+      WHERE id = $1 AND (archive_renewing_until IS NULL OR archive_renewing_until < now()) RETURNING archive_renewing_until::text AS until`,
     [envelopeId],
   );
   if (!claim.length) throw conflict("archive_renewal_in_progress", "Ya hay una renovación del sello de archivo en curso para este sobre");
@@ -75,7 +76,7 @@ export async function renewEnvelopeArchive(d: Deps, envelopeId: string, actor: A
     return await renewClaimed(d, envelopeId, tsaUrl, actor);
   } finally {
     await d.db
-      .query(`UPDATE envelopes SET archive_renewing_until = NULL WHERE id = $1 AND archive_renewing_until = $2`, [envelopeId, claim[0].until])
+      .query(`UPDATE envelopes SET archive_renewing_until = NULL WHERE id = $1 AND archive_renewing_until = $2::timestamptz`, [envelopeId, claim[0].until])
       .catch(() => {});
   }
 }

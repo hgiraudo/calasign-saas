@@ -99,6 +99,9 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
     // SSO obligatorio (Fase 5): se entra a la primera organización que admite contraseña.
     const pick = await passwordLoginTenant(s.db, u.id);
     if (!pick) throw unauthorized();
+    // Contraseña correcta: si el acceso es por SSO o hay que restablecerla, no es un intento fallido (si no, se seguía
+    // contando y terminaba en too_many_attempts en vez de la indicación de SSO).
+    if ("passwordResetRequired" in pick || "ssoRequired" in pick) await clearLoginAttempts(s.db, u.id);
     if ("passwordResetRequired" in pick) {
       // Sus organizaciones la sumaron por SCIM o SSO (sin SSO habilitado ahora): la contraseña se habilita al restablecerla.
       throw new AppError(403, "password_reset_required", "Para ingresar con contraseña, restablecela desde \"Olvidé mi contraseña\"");

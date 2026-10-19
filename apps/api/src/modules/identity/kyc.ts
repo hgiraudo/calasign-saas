@@ -349,6 +349,16 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
     const provider = r.id_verification_provider as IdvProvider;
     if (!providerReady(provider)) throw new AppError(503, "identity_provider_unavailable", "El proveedor de verificación no está disponible");
 
+    // Una reserva de modo redirect que quedó sin sesión del proveedor (el proceso murió o el proveedor no respondió)
+    // se cancela antes de mirar la última verificación: si no, el inicio devolvía la reserva trabada para siempre.
+    if (getAdapter(provider).mode === "redirect") {
+      const stale = await s.db.query(
+        `UPDATE identity_verifications SET status = 'canceled', updated_at = now()
+          WHERE recipient_id = $1 AND status = 'created' AND provider_ref IS NULL AND updated_at < now() - interval '2 minutes' RETURNING id`,
+        [r.id],
+      );
+      if (stale.length) await s.db.query(`UPDATE recipients SET identity_status = 'pending' WHERE id = $1 AND identity_status = 'in_progress'`, [r.id]);
+    }
     const current = await latestVerification(s.db, r.id);
     if (current && ["created", "pending"].includes(current.status)) return sessionOut(req.params.token);
     const used = await attemptsUsed(s.db, r.id);
@@ -420,7 +430,10 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
       } catch (err) {
         // El proveedor no respondió: la reserva se cancela (no consume un intento) y se puede volver a iniciar.
         await s.db.query(`UPDATE identity_verifications SET status = 'canceled', updated_at = now() WHERE id = $1 AND status = 'created'`, [id]).catch(() => {});
-        await s.db.query(`UPDATE recipients SET identity_status = 'pending' WHERE id = $1 AND identity_status = 'in_progress'`, [r.id]).catch(() => {});
+        // Vuelve al estado que tenía antes de este intento (p. ej. "failed" de uno anterior), no siempre a "pending".
+        await s.db
+          .query(`UPDATE recipients SET identity_status = $2 WHERE id = $1 AND identity_status = 'in_progress'`, [r.id, r.identity_status && r.identity_status !== "in_progress" ? r.identity_status : "pending"])
+          .catch(() => {});
         throw err;
       }
     }

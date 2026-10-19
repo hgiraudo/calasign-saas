@@ -19,7 +19,7 @@ import { decrypt, iso, randomToken, sha256Hex, uuidv7 } from "../../lib/util";
 import { authenticate, type Services } from "../context";
 import { tenantBaseUrl } from "../custom-domains";
 import { advanceRouting, lockEnvelope } from "../envelopes";
-import { resolveToken } from "../signing";
+import { assertLinkCurrent, resolveToken } from "../signing";
 import {
   ProviderError,
   mpCreatePreference,
@@ -457,6 +457,12 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
     }
     const open = await s.db.tx(async (t) => {
       const cur = await lockEnvelope(t, e.tenant_id, e.id);
+      // El link tiene que seguir vigente y el cobro, a su cargo: una corrección del contacto o un reemplazo (el cobro
+      // pasa al nuevo destinatario) confirmados durante la llamada al proveedor no le entregan el checkout a quien tenía
+      // el link anterior ni le guardan al nuevo pagador un checkout armado con los datos del anterior.
+      assertLinkCurrent(await t.one<any>(`SELECT access_token_hash FROM recipients WHERE id = $1`, [r.id]), token);
+      const payer = await t.one<any>(`SELECT recipient_id FROM envelope_payments WHERE id = $1`, [p.id]);
+      if (payer?.recipient_id !== r.id) throw notFound("Cobro");
       const upd = await t.query(
         `UPDATE envelope_payments SET status = 'checkout_created', checkout_id = $2, checkout_url = $3, checkout_nonce_hash = $4, updated_at = now()
          WHERE id = $1 AND status NOT IN ('paid','refunded') RETURNING id`,

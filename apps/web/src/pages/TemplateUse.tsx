@@ -49,7 +49,10 @@ export function TemplateUsePage() {
     const seen = new Map<string, { field: (typeof tpl.fields)[number]; ids: string[] }>();
     for (const f of tpl.fields) {
       if (f.readOnly || f.formula || !PREFILLABLE_FIELD_TYPES.includes(f.type)) continue;
-      const key = f.label?.trim() || f.id;
+      // Misma etiqueta pero distinto tipo u opciones (p. ej. "Plan" texto en un rol y desplegable en otro): con un solo
+      // control, lo escrito para el primero se aplicaba al otro y el alta fallaba ("opción inválida", "no es un número").
+      const label = f.label?.trim();
+      const key = label ? `${label}\u0000${f.type}\u0000${(f.options ?? []).join("\u0001")}` : f.id;
       const g = seen.get(key);
       if (g) g.ids.push(f.id);
       else seen.set(key, { field: f, ids: [f.id] });

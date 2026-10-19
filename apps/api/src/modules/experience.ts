@@ -24,7 +24,7 @@ import { pruneDanglingConditions, saveFieldLogic } from "./logic";
 import { csvCell } from "./agreements/common";
 import { loadDetail } from "./mappers";
 import { SIGNER_COOKIE } from "./otp";
-import { recipientActor, resolveToken } from "./signing";
+import { assertLinkCurrent, recipientActor, resolveToken } from "./signing";
 import { applyIdentityFlags } from "./identity/kyc";
 import { applyCertificateFlags } from "./certsign";
 import { deleteBlobsQuietly, discardRecipientAttachments } from "./file-cleanup";
@@ -602,6 +602,10 @@ export async function experienceRoutes(app: FastifyInstance, s: Services) {
       const e = await lockEnvelope(t, e0.tenant_id, e0.id);
       if (e.status !== "sent") throw new AppError(410, "envelope_closed", "El sobre ya no está disponible");
       const r = await t.one<any>(`SELECT * FROM recipients WHERE id = $1`, [r0.id]);
+      assertLinkCurrent(r, req.params.token);
+      // Una corrección del nombre confirmada mientras tanto anuló la confirmación: la de ahora fue para el nombre que se
+      // mostraba antes y no vale para el corregido.
+      if (r.name !== r0.name) throw conflict("recipient_changed", "Los datos del firmante cambiaron: volvé a cargar la página");
       if (r.identity_confirmed_at) return;
       const host = await t.one<any>(`SELECT name, email FROM users WHERE id = $1`, [r.in_person_host_user_id]);
       await t.query(`UPDATE recipients SET identity_confirmed_at = now(), authenticated_at = now() WHERE id = $1`, [r.id]);

@@ -133,10 +133,14 @@ function OAuthAppsAdmin() {
           name,
           description: description || null,
           grantTypes: grants,
-          redirectUris: redirects
-            .split(/\s+/)
-            .map((x) => x.trim())
-            .filter(Boolean),
+          // Solo con "authorization_code" (el campo se oculta sin ese tipo): lo escrito antes de destildarlo se mandaba
+          // igual y una URI inválida que ya no se veía hacía fallar el alta.
+          redirectUris: grants.includes("authorization_code")
+            ? redirects
+                .split(/\s+/)
+                .map((x) => x.trim())
+                .filter(Boolean)
+            : [],
           scopes,
           confidential: grants.includes("client_credentials") ? true : confidential,
           ...(grants.includes("client_credentials") ? { role } : {}),

@@ -24,7 +24,7 @@ import { AppError, badRequest, conflict, notFound } from "../../lib/errors";
 import { encryptBytes, iso, sha256Hex, uuidv7 } from "../../lib/util";
 import { authenticate, type Services } from "../context";
 import { lockEnvelope } from "../envelopes";
-import { recipientActor, resolveToken } from "../signing";
+import { assertLinkCurrent, recipientActor, resolveToken } from "../signing";
 import { matchIdentity } from "./namematch";
 import { WebhookSignatureError, getAdapter, listProviders, mockDecide } from "./providers";
 import type { CertificateIdentity } from "@calasign/pdf";
@@ -366,7 +366,10 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
       // recipient.identity_started a la evidencia de un sobre cerrado o de alguien que ya no firma.
       const cur = await lockEnvelope(t, e.tenant_id, e.id);
       if (cur.status !== "sent") throw new AppError(410, "envelope_closed", "El sobre ya no está disponible");
-      const rNow = await t.one<any>(`SELECT status FROM recipients WHERE id = $1`, [r.id]);
+      const rNow = await t.one<any>(`SELECT status, access_token_hash FROM recipients WHERE id = $1`, [r.id]);
+      // Una corrección del contacto (link nuevo, verificaciones anuladas) confirmada durante la llamada al proveedor: la
+      // verificación de quien tenía el link anterior no queda en curso a nombre del contacto corregido.
+      assertLinkCurrent(rNow, req.params.token);
       if (!["sent", "viewed"].includes(rNow?.status)) throw conflict("not_signable", "Ya no podés firmar este sobre");
       // Con el sobre bloqueado se vuelve a mirar: dos inicios simultáneos no crean dos verificaciones en curso
       // ni consumen dos intentos (el índice único de 0019 lo garantiza también a nivel base).

@@ -27,17 +27,17 @@ function post(type: EmbedMessage["type"], session: SigningSession | null) {
 export function useEmbedBridge(token: string, session: SigningSession | null, invalid: boolean) {
   const embedded = isEmbedded();
   const sent = useRef<Set<string>>(new Set());
-  const returnUrl = useRef<string | null>(null);
+  // Promesa (no el valor): si la sesión ya llega firmada (recarga del iframe), la redirección esperaba 1,2 s y leía
+  // returnUrl antes de que respondiera /embed, y el firmante quedaba sin volver al integrador.
+  const returnUrl = useRef<Promise<string | null>>(Promise.resolve(null));
 
   useEffect(() => {
     if (!embedded || !token) return;
     document.documentElement.classList.add("cs-embedded");
-    fetch(`/v1/signing/${encodeURIComponent(token)}/embed`, { headers: { Accept: "application/json" } })
+    returnUrl.current = fetch(`/v1/signing/${encodeURIComponent(token)}/embed`, { headers: { Accept: "application/json" } })
       .then((r) => (r.ok ? (r.json() as Promise<SigningEmbedInfo>) : null))
-      .then((info) => {
-        returnUrl.current = info?.returnUrl ?? null;
-      })
-      .catch(() => undefined);
+      .then((info) => info?.returnUrl ?? null)
+      .catch(() => null);
   }, [embedded, token]);
 
   useEffect(() => {
@@ -60,8 +60,9 @@ export function useEmbedBridge(token: string, session: SigningSession | null, in
     if (st === "declined") done = "declined";
     if (done && once(done)) {
       // Dar tiempo a que el contenedor reciba el mensaje antes de navegar.
-      setTimeout(() => {
-        const url = returnUrl.current;
+      const pending = returnUrl.current;
+      setTimeout(async () => {
+        const url = await pending;
         if (!url) return;
         let u: URL;
         try {

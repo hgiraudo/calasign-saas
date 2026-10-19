@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CalaSign</title>
+  <link rel="icon" href="assets/icon-32.png" />
+  <link rel="stylesheet" href="taskpane.css?v={{VERSION}}" />
+  <!-- office.js tiene que cargarse desde el CDN de Microsoft (no se puede empaquetar). -->
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <script src="taskpane.js?v={{VERSION}}" defer></script>
+</head>
+<body>
+  <header class="bar">
+    <img src="assets/icon-32.png" alt="" width="22" height="22" />
+    <strong>CalaSign</strong>
+    <span class="spacer"></span>
+    <button type="button" id="signout" class="link hidden" data-i18n="signOut"></button>
+  </header>
+
+  <main>
+    <div id="msg" class="msg hidden" role="status" aria-live="polite"></div>
+
+    <!-- Inicio de sesión -->
+    <section id="view-login" class="hidden">
+      <h1 data-i18n="loginTitle"></h1>
+      <p class="muted" data-i18n="loginText"></p>
+      <button type="button" id="login" class="primary" data-i18n="loginButton"></button>
+      <details class="small">
+        <summary data-i18n="apiKeyToggle"></summary>
+        <p class="muted" data-i18n="apiKeyHelp"></p>
+        <input id="apikey" type="password" autocomplete="off" placeholder="cs_live_…" />
+        <button type="button" id="apikey-save" data-i18n="apiKeySave"></button>
+      </details>
+    </section>
+
+    <!-- Envío -->
+    <section id="view-send" class="hidden">
+      <p class="muted small" id="whoami"></p>
+      <h1 data-i18n="sendTitle"></h1>
+
+      <fieldset>
+        <legend data-i18n="docLegend"></legend>
+        <div id="src-word" class="hidden">
+          <label class="radio"><input type="radio" name="src" value="current" checked /> <span data-i18n="docCurrent"></span></label>
+          <label class="radio"><input type="radio" name="src" value="file" /> <span data-i18n="docFile"></span></label>
+        </div>
+        <div id="src-outlook" class="hidden">
+          <select id="attachment"></select>
+          <p id="no-attachments" class="muted small hidden" data-i18n="noAttachments"></p>
+          <label class="radio"><input type="checkbox" id="use-file" /> <span data-i18n="docFile"></span></label>
+        </div>
+        <input id="file" type="file" accept="application/pdf,.pdf" class="hidden" />
+      </fieldset>
+
+      <label for="subject" data-i18n="subject"></label>
+      <input id="subject" maxlength="300" />
+
+      <fieldset>
+        <legend data-i18n="signers"></legend>
+        <div id="signers"></div>
+        <button type="button" id="add-signer" class="link" data-i18n="addSigner"></button>
+        <p class="muted small" data-i18n="orderHelp"></p>
+      </fieldset>
+
+      <label for="message" data-i18n="message"></label>
+      <textarea id="message" rows="3" maxlength="5000"></textarea>
+
+      <fieldset>
+        <legend data-i18n="placement"></legend>
+        <label class="radio"><input type="radio" name="place" value="page" checked /> <span data-i18n="placePage"></span></label>
+        <label class="radio"><input type="radio" name="place" value="anchor" /> <span data-i18n="placeAnchor"></span></label>
+        <p id="anchor-help" class="muted small hidden" data-i18n="anchorHelp"></p>
+      </fieldset>
+
+      <button type="button" id="review" class="primary" data-i18n="review"></button>
+    </section>
+
+    <!-- Confirmación -->
+    <section id="view-confirm" class="hidden">
+      <h1 data-i18n="confirmTitle"></h1>
+      <div id="summary" class="card"></div>
+      <p class="muted small" data-i18n="confirmText"></p>
+      <div class="row">
+        <button type="button" id="back" data-i18n="back"></button>
+        <button type="button" id="send" class="primary" data-i18n="send"></button>
+      </div>
+    </section>
+
+    <!-- Resultado -->
+    <section id="view-done" class="hidden">
+      <h1 data-i18n="doneTitle"></h1>
+      <p id="done-text"></p>
+      <p><a id="done-link" target="_blank" rel="noopener" data-i18n="openInApp"></a></p>
+      <button type="button" id="again" data-i18n="sendAnother"></button>
+    </section>
+
+    <!-- Envíos recientes -->
+    <section id="view-recent" class="hidden">
+      <h2 data-i18n="recent"></h2>
+      <ul id="recent" class="list"></ul>
+      <button type="button" id="refresh" class="link" data-i18n="refresh"></button>
+    </section>
+  </main>
+
+  <template id="signer-row">
+    <div class="signer">
+      <input class="s-name" maxlength="200" />
+      <input class="s-email" type="email" maxlength="320" />
+      <div class="signer-meta">
+        <label><span data-i18n="order"></span> <input class="s-order" type="number" min="1" max="100" value="1" /></label>
+        <span class="anchor-wrap hidden">
+          <input class="s-anchor" maxlength="100" />
+          <button type="button" class="link s-insert hidden" data-i18n="insertAnchor"></button>
+        </span>
+        <button type="button" class="link s-remove" data-i18n="remove"></button>
+      </div>
+    </div>
+  </template>
+</body>
+</html>

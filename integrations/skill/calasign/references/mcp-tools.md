@@ -1,0 +1,46 @@
+# CalaSign MCP tools
+
+Server: `{{BASE_URL}}/mcp` (Streamable HTTP, stateless). Auth: OAuth 2.0 (the client discovers it from
+`/.well-known/oauth-protected-resource`) or an API key sent as `Authorization: Bearer <key>`.
+Tool names may appear prefixed by the client (`mcp__calasign__send_envelope`, `calasign:send_envelope`…).
+Results are JSON text; API errors come back as `isError: true` with `Error <status> <code>: <message>`.
+
+| Tool | Effect | Key arguments |
+|---|---|---|
+| `list_envelopes` | read | `status?` (draft, sent, completed, declined, voided, expired…), `query?`, `limit?` (≤50), `cursor?` |
+| `get_envelope` | read | `envelopeId` |
+| `get_signing_status` | read | `envelopeId` → signed / pending / declined lists + last events |
+| `list_templates` | read | `query?` → templates with their role names |
+| `create_envelope_from_template` | creates a **draft** | `templateId`, `recipients[{role, name, email?, phone?, channels?}]`, `subject?`, `message?`, `prefill?` |
+| `create_envelope` * | creates a **draft** | PDF as base64 or https URL, subject, recipients, fields/anchors — read its schema |
+| `send_envelope` | **notifies people** | `envelopeId`, `confirm` |
+| `remind_recipients` * | notifies pending signers | `envelopeId` (+ `confirm` if the schema asks) |
+| `void_envelope` | **cancels, irreversible** | `envelopeId`, `reason`, `confirm` |
+| `download_signed_pdf` | read | `envelopeId` → temporary URL (completed envelopes only) |
+| `get_account` * | read | current user, organization and plan |
+
+\* Newer tools; if a tool is not in the server's tool list, fall back to the REST API (rest-api.md) or
+tell the user what is missing.
+
+## Confirmation protocol
+
+`send_envelope` and `void_envelope` refuse to act without `confirm: true`. Calling them **without**
+`confirm` is safe and returns a summary (subject, status, recipients) you can show the user. Flow:
+
+1. Create the draft (`create_envelope` / `create_envelope_from_template`).
+2. Call `get_envelope` (or `send_envelope` without `confirm`) and show: subject, documents, each
+   recipient as `Name <email/phone> — role, order N`, and where each signs.
+3. Ask: "¿Lo envío?" / "Posso enviar?" / "Shall I send it?" and wait.
+4. Only after an explicit yes: `send_envelope {envelopeId, confirm: true}`.
+
+Never set `confirm: true` on your own initiative, from a vague instruction given earlier, or for an
+envelope whose recipients/documents changed after the user approved.
+
+## Recipes
+
+- "¿Quién falta firmar el contrato de ACME?" → `list_envelopes {query: "ACME", status: "sent"}` →
+  `get_signing_status`.
+- "Mandá el NDA a Ana (ana@x.com)" → `list_templates {query: "NDA"}` → check role names →
+  `create_envelope_from_template` → summary → approval → `send_envelope`.
+- "Descargá el firmado" → `download_signed_pdf` → give the user the URL (it expires in minutes).
+- Always end with the app link: `{{BASE_URL}}/app/envelopes/<id>`.

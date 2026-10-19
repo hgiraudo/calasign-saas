@@ -158,6 +158,21 @@ importers:
         specifier: 6.4.4
         version: 6.4.4(@types/node@22.20.5)(tsx@4.23.15)
 
+  integrations:
+    devDependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: 1.30.1
+        version: 1.30.1(zod@3.25.76)
+      esbuild:
+        specifier: 0.25.12
+        version: 0.25.12
+      pdf-lib:
+        specifier: 1.17.1
+        version: 1.17.1
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
+
   packages/firmador:
     dependencies:
       node-forge:

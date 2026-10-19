@@ -43,6 +43,7 @@ import { crmRoutes } from "./modules/crm";
 
 import { dataRoutes } from "./modules/data";
 import { certsignRoutes } from "./modules/certsign";
+import { INTEGRATIONS_PREFIX, integrationsStaticHeaders } from "./modules/integrations-static";
 
 export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolean | object }) {
   // Logs sin secretos: los tokens de firma, invitaciones, códigos y credenciales viajan en la URL o en headers.
@@ -170,6 +171,8 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
 
   // Web (SPA) servida desde el mismo origen.
   if (existsSync(resolve(config.webDist, "index.html"))) {
+    // /integrations/*: descargas y complemento de Office (encabezados propios, ver integrations-static.ts).
+    integrationsStaticHeaders(app);
     await app.register(fastifyStatic, {
       root: config.webDist,
       wildcard: true,
@@ -184,7 +187,9 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
     app.setNotFoundHandler((req, reply) => {
       const path = req.url.split("?")[0];
       const isAsset = /\.[a-z0-9]{2,5}$/i.test(path) || path.startsWith("/assets/") || path.startsWith("/pdfjs/");
-      if (req.method === "GET" && !isAsset && !path.startsWith("/v1/") && !path.startsWith("/dev/")) {
+      // /integrations/ no cae en la SPA: un archivo que falta es un 404 (no una página de la app con estado 200).
+      const isIntegration = path === "/integrations" || path.startsWith(INTEGRATIONS_PREFIX);
+      if (req.method === "GET" && !isAsset && !isIntegration && !path.startsWith("/v1/") && !path.startsWith("/dev/")) {
         reply.header("cache-control", "no-cache");
         return reply.sendFile("index.html");
       }

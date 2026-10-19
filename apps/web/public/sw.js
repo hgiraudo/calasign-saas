@@ -35,6 +35,9 @@ self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;
   const url = new URL(req.url);
+  // Descargas de integraciones y complemento de Office: siempre directo a la red, sin pasar por el service worker
+  // (una descarga que falla no debe terminar en la página offline).
+  if (url.origin === self.location.origin && url.pathname.startsWith("/integrations/")) return;
 
   // Navegación (páginas de la app): siempre de la red; sin conexión, la página offline.
   if (req.mode === "navigate") {

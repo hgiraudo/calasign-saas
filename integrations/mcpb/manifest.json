@@ -1,0 +1,59 @@
+{
+  "manifest_version": "0.3",
+  "name": "calasign",
+  "display_name": "CalaSign",
+  "version": "{{VERSION}}",
+  "description": "Send PDFs for e-signature, track who signed and download signed documents with CalaSign.",
+  "long_description": "CalaSign is a cloud e-signature service for Latin America. This extension connects Claude Desktop to your CalaSign account with an API key: list and inspect envelopes, check signing status, create envelopes from templates or PDFs, send them (always after your explicit confirmation), remind signers, void envelopes and download the sealed PDF. It is a thin local proxy to the CalaSign MCP server ({{BASE_URL}}/mcp), so tools stay in sync with the service.",
+  "author": { "name": "CalaSign", "url": "{{BASE_URL}}" },
+  "homepage": "{{BASE_URL}}",
+  "documentation": "{{BASE_URL}}/developers",
+  "support": "{{BASE_URL}}/developers",
+  "icon": "icon.png",
+  "server": {
+    "type": "node",
+    "entry_point": "server/index.mjs",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/server/index.mjs"],
+      "env": {
+        "CALASIGN_API_KEY": "${user_config.api_key}",
+        "CALASIGN_BASE_URL": "${user_config.base_url}"
+      }
+    }
+  },
+  "tools": [
+    { "name": "list_envelopes", "description": "List envelopes (filter by status or text)" },
+    { "name": "get_envelope", "description": "Envelope detail: documents, recipients and status" },
+    { "name": "get_signing_status", "description": "Who signed, who is pending, last events" },
+    { "name": "list_templates", "description": "Templates and their roles" },
+    { "name": "create_envelope_from_template", "description": "Create a draft envelope from a template" },
+    { "name": "send_envelope", "description": "Send a draft (requires confirm=true after user approval)" },
+    { "name": "void_envelope", "description": "Void an envelope in progress (requires confirm=true)" },
+    { "name": "download_signed_pdf", "description": "Temporary link to the signed PDF" }
+  ],
+  "tools_generated": true,
+  "keywords": ["e-signature", "firma electronica", "assinatura eletronica", "pdf", "contracts"],
+  "license": "UNLICENSED",
+  "privacy_policies": ["{{PRIVACY_URL}}"],
+  "user_config": {
+    "api_key": {
+      "type": "string",
+      "title": "CalaSign API key",
+      "description": "API key of your organization (Settings → API keys in CalaSign: {{BASE_URL}}/app/settings/api-keys).",
+      "sensitive": true,
+      "required": true
+    },
+    "base_url": {
+      "type": "string",
+      "title": "CalaSign URL",
+      "description": "Only change it for a custom domain or another environment.",
+      "default": "{{BASE_URL}}",
+      "required": false
+    }
+  },
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": { "node": ">=18.0.0" }
+  }
+}

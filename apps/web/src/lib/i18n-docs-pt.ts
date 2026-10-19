@@ -1,5 +1,6 @@
 // Português (Brasil) do portal de desenvolvedores. Ver i18n-docs.ts.
 import type { DocsKey } from "./i18n-docs";
+import { connectorsDocsPt } from "./i18n-docs-connectors";
 
 export const docsPt: Record<DocsKey, string> = {
   // ───────── Interface ─────────
@@ -748,4 +749,5 @@ export const docsPt: Record<DocsKey, string> = {
   "ref.body": "Corpo da requisição",
   "ref.responses": "Respostas",
   "ref.examples": "Exemplos",
+  ...connectorsDocsPt,
 };

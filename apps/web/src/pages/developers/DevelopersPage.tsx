@@ -30,6 +30,7 @@ import {
 import { WebhooksPage } from "./content/Webhooks";
 import { ErrorsPage } from "./content/Errors";
 import { SdksPage } from "./content/Sdks";
+import { ConnectorsPage } from "./content/Connectors";
 import { AiOverviewPage, ChatGptPage, ClaudePage, GeminiPage, McpPage, OfficePage } from "./content/Ai";
 import "./docs.css";
 
@@ -56,6 +57,7 @@ const PAGES: Record<string, () => JSX.Element> = {
   webhooks: WebhooksPage,
   errors: ErrorsPage,
   sdks: SdksPage,
+  connectors: ConnectorsPage,
   ai: AiOverviewPage,
   "ai/mcp": McpPage,
   "ai/claude": ClaudePage,

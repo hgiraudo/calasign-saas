@@ -1,5 +1,6 @@
 // English for the developer portal. See i18n-docs.ts.
 import type { DocsKey } from "./i18n-docs";
+import { connectorsDocsEn } from "./i18n-docs-connectors";
 
 export const docsEn: Record<DocsKey, string> = {
   // ───────── Interface ─────────
@@ -748,4 +749,5 @@ export const docsEn: Record<DocsKey, string> = {
   "ref.body": "Request body",
   "ref.responses": "Responses",
   "ref.examples": "Examples",
+  ...connectorsDocsEn,
 };

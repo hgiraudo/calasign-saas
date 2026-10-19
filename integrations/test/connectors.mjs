@@ -637,6 +637,16 @@ await test("dynamics 365: flujos con JSON válido que usan las operaciones del c
   }
 });
 
+await test("web: los enlaces de /developers/connectors y de /integrations/ apuntan a artefactos construidos", () => {
+  const constants = readFileSync(join(HERE, "../../apps/web/src/pages/developers/constants.ts"), "utf8");
+  const block = /CONNECTOR_ARTIFACTS = \{([\s\S]*?)\} as const/.exec(constants)[1];
+  const paths = [...block.matchAll(/"(\/integrations\/connectors\/[^"]+)"/g)].map((m) => m[1]);
+  assert.ok(paths.length >= 7);
+  const site = readFileSync(join(OUT, "index.html"), "utf8");
+  for (const [, p] of site.matchAll(/href="(\/integrations\/connectors\/[^"]+)"/g)) paths.push(p);
+  for (const p of paths) assert.ok(existsSync(join(OUT, p.replace("/integrations/", ""))), p);
+});
+
 rmSync(TMP, { recursive: true, force: true });
 if (failures) {
   console.error(`\n${failures} prueba(s) de conectores fallaron`);

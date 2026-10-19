@@ -15,6 +15,7 @@ Artefactos descargables para usar CalaSign desde asistentes de IA y desde Office
 | Guía ChatGPT / OpenAI / Anthropic API | `https://dev.calasign.com/integrations/chatgpt/README.md` | `chatgpt/README.md` |
 | Complemento de Word | `https://dev.calasign.com/integrations/office/manifest.xml` (página: `/integrations/office/`) | `office/` |
 | Complemento de Outlook | `https://dev.calasign.com/integrations/office/manifest-outlook.xml` | `office/` |
+| Conectores low-code (Power Automate / Logic Apps, Zapier, Make, n8n, Dynamics 365) | `https://dev.calasign.com/integrations/connectors/<id>/…` y `/integrations/connectors/index.json` (página: `/developers/connectors`) | `connectors/<id>/connector.mjs` (registro: `connectors/registry.mjs`; ver [docs/CONECTORES.md](../docs/CONECTORES.md)) |
 | Índice | `https://dev.calasign.com/integrations/` y `/integrations/index.json` (tamaños y sha256) | `site/` |
 
 ## Build

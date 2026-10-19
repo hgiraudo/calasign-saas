@@ -1,5 +1,5 @@
 // Service worker de CalaSign (PWA).
-// Reglas: solo se guardan archivos estáticos con hash (/assets, /pdfjs, /icons) y la página offline.
+// Reglas: solo se guardan archivos estáticos (/assets con hash; /pdfjs e /icons, que se refrescan en segundo plano) y la página offline.
 // Nunca se guardan respuestas de la API (/v1), documentos PDF, ni las páginas de la app (siempre de la red).
 const VERSION = "calasign-v1";
 const STATIC = `${VERSION}-static`;
@@ -45,20 +45,26 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Estáticos con hash: primero la caché (son inmutables).
   if (isCacheableStatic(url)) {
+    const network = () =>
+      fetch(req).then((res) => {
+        if (res.ok && res.type === "basic") {
+          const copy = res.clone();
+          caches.open(STATIC).then((c) => c.put(req, copy));
+        }
+        return res;
+      });
+    // /assets lleva hash en el nombre (inmutable): primero la caché. /pdfjs e /icons NO tienen hash y VERSION no cambia
+    // con cada deploy: se sirve la copia guardada pero se refresca en segundo plano (si no, quedarían viejos para siempre).
+    const hashed = url.pathname.startsWith("/assets/");
     event.respondWith(
-      caches.match(req).then(
-        (hit) =>
-          hit ||
-          fetch(req).then((res) => {
-            if (res.ok && res.type === "basic") {
-              const copy = res.clone();
-              caches.open(STATIC).then((c) => c.put(req, copy));
-            }
-            return res;
-          }),
-      ),
+      caches.match(req).then((hit) => {
+        if (hit && hashed) return hit;
+        const fresh = network();
+        if (!hit) return fresh;
+        event.waitUntil(fresh.catch(() => undefined));
+        return hit;
+      }),
     );
   }
   // Todo lo demás (API, PDF, etc.): el navegador va directo a la red.

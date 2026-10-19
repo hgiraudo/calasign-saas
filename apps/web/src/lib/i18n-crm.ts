@@ -322,7 +322,7 @@ export function useCrmText() {
   const d = DICTS[locale] ?? es;
   return (k: Key | string, vars?: Record<string, string | number>) => {
     let s: string = (d as Record<string, string>)[k] ?? (es as Record<string, string>)[k] ?? k;
-    if (vars) for (const [n, v] of Object.entries(vars)) s = s.replace(`{${n}}`, String(v));
+    if (vars) for (const [n, v] of Object.entries(vars)) s = s.replace(`{${n}}`, () => String(v));
     return s;
   };
 }

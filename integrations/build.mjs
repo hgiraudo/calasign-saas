@@ -31,7 +31,10 @@ const VARS = {
 };
 const OUT = resolve(process.env.CALASIGN_INTEGRATIONS_OUT || join(ROOT, "apps/web/public/integrations"));
 const args = process.argv.slice(2);
-const pluginRepoDir = args.includes("--plugin-repo") ? resolve(args[args.indexOf("--plugin-repo") + 1] || "") : null;
+const pluginRepoArg = args.includes("--plugin-repo") ? args[args.indexOf("--plugin-repo") + 1] : null;
+// Sin carpeta, resolve("") era el directorio actual: el build borraba y escribía plugins/calasign ahí.
+if (pluginRepoArg !== null && (!pluginRepoArg || pluginRepoArg.startsWith("--"))) throw new Error("--plugin-repo necesita una carpeta");
+const pluginRepoDir = pluginRepoArg ? resolve(pluginRepoArg) : null;
 
 // ───────── Utilidades ─────────
 

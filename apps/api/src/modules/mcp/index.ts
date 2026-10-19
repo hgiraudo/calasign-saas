@@ -9,11 +9,11 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { z } from "zod";
 import { ENVELOPE_STATUSES, MCP_DEFAULT_SCOPES, OAUTH_SCOPES, RECIPIENT_ROLES } from "@calasign/shared";
 import { config } from "../../config";
-import { notFound } from "../../lib/errors";
+import { AppError, notFound } from "../../lib/errors";
 import { randomToken, sha256Hex, uuidv7 } from "../../lib/util";
 import type { Services } from "../context";
 import { sendPdf } from "../envelopes";
-import { isOAuthAccessToken, resolveAccessToken } from "../oauth-tokens";
+import { assertUserTokenAllowed, isOAuthAccessToken, resolveAccessToken } from "../oauth-tokens";
 import { envelopesSentThisMonth, tenantPlan } from "../billing/plans";
 import { safeRequest } from "../webhooks";
 import { agentHeaders } from "./agent-actor";
@@ -41,13 +41,20 @@ const SERVER_INFO = { name: "calasign", title: "CalaSign", version: "1.1.0" };
 
 /** Tope del PDF de create_envelope (va en base64 dentro del JSON-RPC o se descarga de una URL). */
 const PDF_MAX_BYTES = Math.min(10 * 1024 * 1024, config.maxUploadBytes);
+/** Largo máximo del base64 de ese PDF: con el prefijo data: y saltos de línea cada 76 caracteres (MIME). */
+const PDF_MAX_BASE64 = Math.ceil((PDF_MAX_BYTES * 4) / 3) + Math.ceil((PDF_MAX_BYTES * 4) / 3 / 76) * 2 + 64;
+
+/** Como la subida de la API: el encabezado %PDF- puede estar en el primer KB (hay PDFs con bytes antes). */
+function looksLikePdf(buf: Buffer) {
+  return buf.subarray(0, 1024).indexOf("%PDF-") !== -1;
+}
 
 function decodePdfBase64(b64: string): Buffer {
   const clean = b64.replace(/^data:application\/pdf;base64,/, "").replace(/\s+/g, "");
   if (!/^[A-Za-z0-9+/_-]+={0,2}$/.test(clean)) throw new Error("base64 inválido");
   const buf = Buffer.from(clean, "base64");
   if (buf.length > PDF_MAX_BYTES) throw new Error(`el PDF supera ${Math.round(PDF_MAX_BYTES / 1048576)} MB`);
-  if (buf.subarray(0, 5).toString("latin1") !== "%PDF-") throw new Error("el contenido no es un PDF");
+  if (!looksLikePdf(buf)) throw new Error("el contenido no es un PDF");
   return buf;
 }
 
@@ -64,7 +71,7 @@ async function fetchPdf(url: string): Promise<Buffer> {
   }
   if (r.status >= 300 && r.status < 400) throw new Error("la URL redirige: pasá la URL final del PDF");
   if (r.status !== 200) throw new Error(`la URL respondió HTTP ${r.status}`);
-  if (r.body.subarray(0, 5).toString("latin1") !== "%PDF-") throw new Error("lo descargado no es un PDF");
+  if (!looksLikePdf(r.body)) throw new Error("lo descargado no es un PDF");
   return r.body;
 }
 
@@ -105,6 +112,16 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
     if (isOAuthAccessToken(token)) {
       const o = await resolveAccessToken(s.db, token);
       if (!o) return null;
+      // Igual que la API (oauthAuthContext): un token de un miembro quitado o autorizado con contraseña cuando la
+      // organización exige SSO ya no vale. Con 401 (y no un error en cada herramienta) el conector vuelve a autorizar.
+      if (o.userId) {
+        try {
+          await assertUserTokenAllowed(s.db, { tenantId: o.tenantId, userId: o.userId, authMethod: o.authMethod, ssoTenantId: o.ssoTenantId, issuedAt: o.createdAt });
+        } catch (e) {
+          if (e instanceof AppError) return null;
+          throw e;
+        }
+      }
       return { authorization: authz, tenantId: o.tenantId, name: o.clientName, ip: req.ip, scopes: o.scopes };
     }
     const k = await s.db.one<any>(`SELECT tenant_id, name FROM api_keys WHERE key_hash = $1 AND revoked_at IS NULL`, [sha256Hex(token)]);
@@ -430,7 +447,7 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
             .max(20),
           document: z
             .object({
-              base64: z.string().max(Math.ceil((PDF_MAX_BYTES * 4) / 3) + 8).optional().describe("Contenido del PDF en base64"),
+              base64: z.string().max(PDF_MAX_BASE64).optional().describe("Contenido del PDF en base64"),
               url: z.string().url().max(2000).optional().describe("URL https pública del PDF (sin redirecciones)"),
               name: z.string().trim().max(200).optional().describe("Nombre del archivo, ej. contrato.pdf"),
             })
@@ -595,7 +612,7 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
   // ───────── Transporte Streamable HTTP (sin sesión: cada POST es independiente) ─────────
 
   // bodyLimit: create_envelope puede traer el PDF en base64 (tope PDF_MAX_BYTES, ~4/3 en base64).
-  app.post("/mcp", { bodyLimit: Math.ceil((PDF_MAX_BYTES * 4) / 3) + 1024 * 1024, config: { rateLimit: { max: 300, timeWindow: "1 minute" } } }, async (req, reply) => {
+  app.post("/mcp", { bodyLimit: PDF_MAX_BASE64 + 1024 * 1024, config: { rateLimit: { max: 300, timeWindow: "1 minute" } } }, async (req, reply) => {
     const caller = await resolveCaller(req);
     if (!caller) return unauthorizedReply(reply, "Hace falta un access token OAuth o una API key válidos");
     const { plan } = await tenantPlan(s.db, caller.tenantId);

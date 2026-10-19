@@ -873,7 +873,7 @@ export function useAgrText() {
   const d = DICTS[locale] ?? es;
   return (k: Key, vars?: Record<string, string | number>) => {
     let s: string = d[k] ?? es[k] ?? k;
-    if (vars) for (const [n, v] of Object.entries(vars)) s = s.replace(`{${n}}`, String(v));
+    if (vars) for (const [n, v] of Object.entries(vars)) s = s.replace(`{${n}}`, () => String(v));
     return s;
   };
 }

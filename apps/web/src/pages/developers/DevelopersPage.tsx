@@ -281,12 +281,15 @@ function useHeadings(container: RefObject<HTMLElement>, key: string) {
     if (!el) return;
     const read = () => {
       const hs = [...el.querySelectorAll<HTMLElement>("h2[id], h3[id]")].filter((h) => !h.closest(".docs-card, .ref-index-tag"));
-      setItems(
-        hs.map((h) => ({
-          id: h.id,
-          text: (h.childNodes[0]?.textContent ?? h.textContent ?? "").replace(/#$/, "").trim(),
-          level: h.tagName === "H2" ? 2 : 3,
-        })),
+      const next = hs.map((h) => ({
+        id: h.id,
+        text: (h.childNodes[0]?.textContent ?? h.textContent ?? "").replace(/#$/, "").trim(),
+        level: h.tagName === "H2" ? 2 : 3,
+      }));
+      // Cualquier cambio del DOM (copiar, cambiar de pestaña) dispara el observer: solo se actualiza si cambiaron los
+      // títulos, así el índice no se vuelve a dibujar ni rearma su IntersectionObserver en cada mutación.
+      setItems((prev) =>
+        prev.length === next.length && prev.every((p, i) => p.id === next[i].id && p.text === next[i].text && p.level === next[i].level) ? prev : next,
       );
     };
     read();
@@ -478,6 +481,14 @@ export function DevelopersPage() {
   useEffect(() => {
     if (sub === "" && location.hash && LEGACY_HASH[location.hash.slice(1)]) navigate(LEGACY_HASH[location.hash.slice(1)], { replace: true });
   }, [sub, location.hash, navigate]);
+
+  // Al salir del portal (p. ej. "Obtener API key" → /app) se devuelve el título que tenía la app.
+  useEffect(() => {
+    const original = document.title;
+    return () => {
+      document.title = original;
+    };
+  }, []);
 
   useEffect(() => {
     const page = pageByPath(sub);

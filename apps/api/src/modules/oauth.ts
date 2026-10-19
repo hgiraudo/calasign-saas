@@ -317,13 +317,17 @@ export function parseDcrMetadata(body: unknown): DcrMetadata {
     throw new RegistrationError("invalid_client_metadata", `token_endpoint_auth_method admite ${DCR_AUTH_METHODS.join(", ")}`);
   }
   let scopes: OAuthScope[] = [...OAUTH_SCOPES];
-  if (b.scope !== undefined && b.scope !== null && b.scope !== "") {
+  if (b.scope !== undefined && b.scope !== null) {
     if (typeof b.scope !== "string" || b.scope.length > 1000) throw new RegistrationError("invalid_client_metadata", "scope inválido");
     const requested = parseScopes(b.scope);
     const unknown = requested.filter((s) => !(OAUTH_SCOPES as readonly string[]).includes(s));
     if (unknown.length) throw new RegistrationError("invalid_client_metadata", `Scopes desconocidos: ${unknown.join(", ").slice(0, 200)}`);
-    scopes = requested as OAuthScope[];
+    // Vacío o solo espacios: como si no lo mandara (si no, la app quedaba sin ningún scope y no se podía autorizar).
+    if (requested.length) scopes = requested as OAuthScope[];
   }
+  // Sin refresh_token en grant_types no hay refresh tokens: offline_access no se le habilita.
+  if (!grantTypes.includes("refresh_token")) scopes = scopes.filter((s) => s !== "offline_access");
+  if (!scopes.length) throw new RegistrationError("invalid_client_metadata", "scope no deja ningún permiso");
   return {
     clientName: name,
     redirectUris,

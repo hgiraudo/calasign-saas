@@ -42,7 +42,16 @@ function Constraints({ s }: { s: JsonSchema }) {
   if (s.default !== undefined) parts.push(<span key="d">{t("ref.default")} <code>{JSON.stringify(s.default)}</code></span>);
   const range = (lo?: number | boolean, hi?: number | boolean, unit = "") =>
     typeof lo === "number" && typeof hi === "number" ? `${lo}–${hi}${unit}` : typeof lo === "number" ? `≥ ${lo}${unit}` : typeof hi === "number" ? `≤ ${hi}${unit}` : null;
-  const num = range(s.minimum ?? (typeof s.exclusiveMinimum === "number" ? s.exclusiveMinimum : undefined), s.maximum);
+  // Cotas exclusivas (OpenAPI 3.1: número) se muestran con > / <, no como si fueran inclusivas.
+  const exMin = typeof s.exclusiveMinimum === "number" ? s.exclusiveMinimum : undefined;
+  const exMax = typeof s.exclusiveMaximum === "number" ? s.exclusiveMaximum : undefined;
+  const num = [
+    s.minimum !== undefined || s.maximum !== undefined ? range(s.minimum, s.maximum) : null,
+    exMin !== undefined ? `> ${exMin}` : null,
+    exMax !== undefined ? `< ${exMax}` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   if (num) parts.push(<span key="n">{num}</span>);
   const len = range(s.minLength, s.maxLength, ` ${t("ref.chars")}`);
   if (len) parts.push(<span key="l">{len}</span>);
@@ -197,10 +206,11 @@ function callFor(spec: Spec, e: OpEntry): ApiCall {
   } else if (content["multipart/form-data"]) {
     call.multipart = { field: "file", file: "documento.pdf" };
   }
-  const ok = Object.entries(e.op.responses ?? {}).find(([c]) => c.startsWith("2"))?.[1];
+  const [okCode, ok] = Object.entries(e.op.responses ?? {}).find(([c]) => c.startsWith("2")) ?? [];
   const okContent = deref(spec, ok as ResponseObj)?.content ?? {};
   if (okContent["application/pdf"]) call.saveAs = "documento.pdf";
   else if (okContent["text/csv"]) call.saveAs = "export.csv";
+  else if (okCode === "204") call.noContent = true;
   return call;
 }
 

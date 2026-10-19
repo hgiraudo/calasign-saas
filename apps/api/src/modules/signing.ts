@@ -334,13 +334,20 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
   });
 
   // Copia con lo firmado hasta ahora, para quien ya firmó y espera al resto (sin certificado ni sello).
-  app.get<P>("/v1/signing/:token/copy.pdf", rl, async (req, reply) => {
+  // Arma el PDF entero en este proceso (pdf-lib, CPU): tope propio más bajo que el resto de las rutas del firmante.
+  app.get<P>("/v1/signing/:token/copy.pdf", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req, reply) => {
     const { envelope: e, recipient: r } = await resolveToken(s.db, req.params.token);
     assertCanReadDocuments(r);
     if (!copyAllowed(r, e)) throw notFound("Copia del documento");
     const [docs, fields, sigImages] = await Promise.all([
       loadDocuments(s.db, e.id),
-      s.db.query<any>(`SELECT * FROM fields WHERE envelope_id = $1 AND NOT hidden AND value IS NOT NULL AND type <> 'attachment'`, [e.id]),
+      // Solo lo ya firmado (y los valores fijos del remitente): lo precargado para quien todavía no firmó no va.
+      s.db.query<any>(
+        `SELECT f.* FROM fields f JOIN recipients rr ON rr.id = f.recipient_id
+          WHERE f.envelope_id = $1 AND NOT f.hidden AND f.value IS NOT NULL AND f.type <> 'attachment'
+            AND (f.read_only OR rr.status IN ('signed', 'completed'))`,
+        [e.id],
+      ),
       loadSignatureImages(s.db, s.blobs, e.id),
     ]);
     const pdf = await renderProgressCopyPdf({

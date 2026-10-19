@@ -12,7 +12,8 @@ REGION=us-east-1
 BUCKET="calasign-saas-dev-$ACCOUNT"
 DOMAIN=dev.calasign.com
 INSTANCE="${INSTANCE_ID:-$(cd infra/dev && terraform output -raw instance_id)}"
-REL="$(date -u +%Y%m%d%H%M%S)-$(git rev-parse --short HEAD)$(git diff --quiet || echo -dirty)"
+# Se empaqueta el working tree (también lo staged y los archivos nuevos no ignorados): "dirty" si difiere de HEAD.
+REL="$(date -u +%Y%m%d%H%M%S)-$(git rev-parse --short HEAD)$([ -z "$(git status --porcelain)" ] || echo -dirty)"
 
 # El estado local de Terraform guarda SECRET_KEY en claro: que solo lo lea el usuario.
 chmod 600 infra/dev/terraform.tfstate* 2>/dev/null || true

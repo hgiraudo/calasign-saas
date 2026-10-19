@@ -162,28 +162,13 @@ export async function renderProgressCopyPdf(input: {
   const out = await PDFDocument.create();
   const fonts = await embedFonts(out);
   const L = labels(input.locale);
-  for (let di = 0; di < input.documents.length; di++) {
-    const src = await PDFDocument.load(input.documents[di].bytes, { updateMetadata: false });
-    try {
-      src.getForm().flatten();
-    } catch {
-      // Formularios rotos: se copian tal cual.
-    }
-    const copied = await out.copyPages(src, src.getPageIndices());
-    for (let pi = 0; pi < copied.length; pi++) {
-      const page = out.addPage(copied[pi]);
-      for (const f of input.fields.filter((x) => x.documentIndex === di && x.page === pi)) {
-        const img = (f.type === "signature" || f.type === "initials") && f.imagePng ? await out.embedPng(f.imagePng) : null;
-        drawField(page, fonts, f, img, L);
-      }
-      drawPageFooter(page, fonts, L, input.envelopeId);
-      withDisplayedSpace(page, (W) => {
-        const text = safeText(fonts.bold, L.progressCopy);
-        const size = fitFontSize(fonts.bold, text, W - 16, 8);
-        page.drawText(text, { x: 8, y: 6, size, font: fonts.bold, color: rgb(0.7, 0.1, 0.1) });
-      });
-    }
-  }
+  const text = safeText(fonts.bold, L.progressCopy);
+  await stampDocuments(out, fonts, L, input.documents, input.fields, input.envelopeId, imageEmbedder(out), (page) =>
+    withDisplayedSpace(page, (W) => {
+      const size = fitFontSize(fonts.bold, text, W - 16, 8);
+      page.drawText(text, { x: 8, y: 6, size, font: fonts.bold, color: rgb(0.7, 0.1, 0.1) });
+    }),
+  );
   out.setTitle(input.subject);
   out.setProducer("CalaSign");
   out.setCreator("CalaSign");
@@ -194,34 +179,9 @@ async function buildEnvelopeDocument(input: FinalizeInput): Promise<PDFDocument>
   const out = await PDFDocument.create();
   const fonts = await embedFonts(out);
   const L = labels(input.certificate.locale);
-  const imageCache = new Map<Uint8Array, PDFImage>();
-  const embedImage = async (png: Uint8Array) => {
-    let img = imageCache.get(png);
-    if (!img) {
-      img = await out.embedPng(png);
-      imageCache.set(png, img);
-    }
-    return img;
-  };
+  const embedImage = imageEmbedder(out);
 
-  for (let di = 0; di < input.documents.length; di++) {
-    const src = await PDFDocument.load(input.documents[di].bytes, { updateMetadata: false });
-    try {
-      src.getForm().flatten();
-    } catch {
-      // Formularios rotos: se copian tal cual.
-    }
-    const copied = await out.copyPages(src, src.getPageIndices());
-    for (let pi = 0; pi < copied.length; pi++) {
-      const page = out.addPage(copied[pi]);
-      const pageFields = input.fields.filter((f) => f.documentIndex === di && f.page === pi);
-      for (const f of pageFields) {
-        const img = (f.type === "signature" || f.type === "initials") && f.imagePng ? await embedImage(f.imagePng) : null;
-        drawField(page, fonts, f, img, L);
-      }
-      drawPageFooter(page, fonts, L, input.certificate.envelopeId);
-    }
-  }
+  await stampDocuments(out, fonts, L, input.documents, input.fields, input.certificate.envelopeId, embedImage);
 
   for (const a of input.attachments ?? []) await appendAttachment(out, fonts, L, a, input.certificate.envelopeId);
 
@@ -232,6 +192,51 @@ async function buildEnvelopeDocument(input: FinalizeInput): Promise<PDFDocument>
   out.setCreator("CalaSign");
   out.setModificationDate(new Date(input.certificate.completedAt));
   return out;
+}
+
+/** Incrusta cada PNG una sola vez: la misma firma (los mismos bytes) se repite en todos sus campos. */
+function imageEmbedder(out: PDFDocument) {
+  const cache = new Map<Uint8Array, Promise<PDFImage>>();
+  return (png: Uint8Array) => {
+    let img = cache.get(png);
+    if (!img) {
+      img = out.embedPng(png);
+      cache.set(png, img);
+    }
+    return img;
+  };
+}
+
+/** Copia las páginas de cada documento con sus campos completados estampados y el pie con el id del sobre. */
+async function stampDocuments(
+  out: PDFDocument,
+  fonts: Fonts,
+  L: CertLabels,
+  documents: { bytes: Uint8Array }[],
+  fields: StampField[],
+  envelopeId: string,
+  embedImage: (png: Uint8Array) => Promise<PDFImage>,
+  decorate?: (page: PDFPage) => void,
+) {
+  for (let di = 0; di < documents.length; di++) {
+    const src = await PDFDocument.load(documents[di].bytes, { updateMetadata: false });
+    try {
+      src.getForm().flatten();
+    } catch {
+      // Formularios rotos: se copian tal cual.
+    }
+    const copied = await out.copyPages(src, src.getPageIndices());
+    for (let pi = 0; pi < copied.length; pi++) {
+      const page = out.addPage(copied[pi]);
+      for (const f of fields) {
+        if (f.documentIndex !== di || f.page !== pi) continue;
+        const img = (f.type === "signature" || f.type === "initials") && f.imagePng ? await embedImage(f.imagePng) : null;
+        drawField(page, fonts, f, img, L);
+      }
+      drawPageFooter(page, fonts, L, envelopeId);
+      decorate?.(page);
+    }
+  }
 }
 
 /** Agrega el diccionario de firma y sella. El PDF se guarda sin object streams para poder ubicar el ByteRange. */

@@ -226,9 +226,15 @@ export function exampleFor(spec: Spec, raw: JsonSchema | undefined, name = "", d
   const alt = s.anyOf ?? s.oneOf;
   if (alt?.length) return exampleFor(spec, alt.find((a) => primaryType(deref(spec, a) ?? {}) !== "null") ?? alt[0], name, depth);
   if (s.allOf?.length) {
-    const merged: Record<string, unknown> = {};
-    for (const part of s.allOf) Object.assign(merged, exampleFor(spec, part, name, depth) as object);
-    return merged;
+    // Solo se fusionan partes que son objetos: un allOf que envuelve un $ref primitivo (string, enum…) devuelve ese valor.
+    let merged: Record<string, unknown> | undefined;
+    for (const part of s.allOf) {
+      const ex = exampleFor(spec, part, name, depth);
+      if (ex === undefined) continue;
+      if (ex === null || typeof ex !== "object" || Array.isArray(ex)) return ex;
+      merged = { ...merged, ...(ex as Record<string, unknown>) };
+    }
+    return merged ?? {};
   }
   const type = primaryType(s) ?? (s.properties ? "object" : undefined);
   switch (type) {

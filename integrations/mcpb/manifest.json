@@ -28,9 +28,12 @@
     { "name": "get_signing_status", "description": "Who signed, who is pending, last events" },
     { "name": "list_templates", "description": "Templates and their roles" },
     { "name": "create_envelope_from_template", "description": "Create a draft envelope from a template" },
+    { "name": "create_envelope", "description": "Create a draft envelope from a PDF with recipients and fields" },
     { "name": "send_envelope", "description": "Send a draft (requires confirm=true after user approval)" },
+    { "name": "remind_recipients", "description": "Remind pending signers of an envelope in progress" },
     { "name": "void_envelope", "description": "Void an envelope in progress (requires confirm=true)" },
-    { "name": "download_signed_pdf", "description": "Temporary link to the signed PDF" }
+    { "name": "download_signed_pdf", "description": "Temporary link to the signed PDF" },
+    { "name": "get_account", "description": "Current user, organization and plan" }
   ],
   "tools_generated": true,
   "keywords": ["e-signature", "firma electronica", "assinatura eletronica", "pdf", "contracts"],

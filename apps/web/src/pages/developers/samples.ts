@@ -20,6 +20,8 @@ export interface ApiCall {
   auth?: boolean | "basic";
   /** La respuesta es un archivo (PDF/CSV): se guarda en disco. */
   saveAs?: string;
+  /** La respuesta exitosa no tiene cuerpo (204): no se intenta leer JSON. */
+  noContent?: boolean;
   /** Pestañas extra (SDK). */
   extra?: CodeTab[];
 }
@@ -66,7 +68,7 @@ export function curlFor(c: ApiCall): string {
     lines.push(`-H "Content-Type: application/json"`);
     lines.push(`-d '${JSON.stringify(c.body, null, 2).replace(/'/g, "'\\''")}'`);
   }
-  if (c.form) for (const [k, v] of Object.entries(c.form)) lines.push(`-d ${k}=${/[\s&]/.test(v) ? `"${v}"` : v}`);
+  if (c.form) for (const [k, v] of Object.entries(c.form)) lines.push(`--data-urlencode "${k}=${v}"`);
   if (c.multipart) lines.push(`-F ${c.multipart.field}=@${c.multipart.file}`);
   if (c.saveAs) lines.push(`-o ${c.saveAs}`);
   return lines.join(" \\\n  ");
@@ -97,7 +99,9 @@ export function nodeFor(c: ApiCall): string {
   const call = `const res = await fetch(${url}${opts.length ? `, {\n  ${opts.join(",\n  ")},\n}` : ""});`;
   const tail = c.saveAs
     ? [`if (!res.ok) throw new Error(\`\${res.status}: \${await res.text()}\`);`, `await writeFile("${c.saveAs}", Buffer.from(await res.arrayBuffer()));`]
-    : [`const data = await res.json();`, `if (!res.ok) throw new Error(\`\${data.error?.code}: \${data.error?.message}\`);`];
+    : c.noContent
+      ? [`if (!res.ok) throw new Error(\`\${res.status}: \${await res.text()}\`);`]
+      : [`const data = await res.json();`, `if (!res.ok) throw new Error(\`\${data.error?.code}: \${data.error?.message}\`);`];
   return [...pre, call, ...tail].join("\n");
 }
 
@@ -105,9 +109,12 @@ export function pythonFor(c: ApiCall): string {
   const path = c.path.replace(/\{(\w+)\}/g, (_m, n) => `{${snake(n)}}`);
   const url = `f"${BASE}${path}"`;
   const args: string[] = [url];
+  const headers: string[] = [];
   if (c.auth === "basic") args.push("auth=(CLIENT_ID, CLIENT_SECRET)");
-  else if (c.auth !== false) args.push(`headers={"Authorization": f"Bearer {os.environ['CALASIGN_API_KEY']}"${c.idempotencyKey ? `, "Idempotency-Key": "${c.idempotencyKey}"` : ""}}`);
-  if (c.query) args.push(`params=${pyLiteral(c.query)}`);
+  else if (c.auth !== false) headers.push(`"Authorization": f"Bearer {os.environ['CALASIGN_API_KEY']}"`);
+  if (c.idempotencyKey) headers.push(`"Idempotency-Key": "${c.idempotencyKey}"`);
+  if (headers.length) args.push(`headers={${headers.join(", ")}}`);
+  if (c.query && Object.keys(c.query).length) args.push(`params=${pyLiteral(c.query)}`);
   if (c.body !== undefined) args.push(`json=${pyLiteral(c.body)}`);
   if (c.form) args.push(`data=${pyLiteral(c.form)}`);
   if (c.multipart) args.push(`files={"${c.multipart.field}": open("${c.multipart.file}", "rb")}`);

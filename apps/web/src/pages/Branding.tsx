@@ -88,6 +88,8 @@ export function BrandingPage() {
   if (!b) return error ? <div className="page"><ErrorBox error={error} /></div> : <Spinner />;
   const valid = (color === "" || /^#[0-9a-fA-F]{6}$/.test(color)) && orgName.trim().length !== 1;
   const preview = valid && color ? color : DEFAULT_COLOR;
+  // La vista previa muestra el nombre que se está editando (igual que el color y el pie), no el guardado.
+  const previewName = orgName.trim() || me?.tenant.name;
 
   return (
     <div className="page">
@@ -102,7 +104,14 @@ export function BrandingPage() {
         <div className="card pad stack">
           <label className="field">
             <span>{t("brand.orgName")}</span>
-            <input value={orgName} maxLength={120} onChange={(e) => setOrgName(e.target.value)} />
+            <input
+              value={orgName}
+              maxLength={120}
+              onChange={(e) => {
+                setOrgName(e.target.value);
+                setSaved(false);
+              }}
+            />
             <span className="muted small">{t("brand.orgNameHint")}</span>
           </label>
           <label className="field">
@@ -129,7 +138,14 @@ export function BrandingPage() {
                 }}
               />
               {color && (
-                <button type="button" className="btn btn-ghost btn-sm" onClick={() => setColor("")}>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => {
+                    setColor("");
+                    setSaved(false);
+                  }}
+                >
                   {t("brand.reset")}
                 </button>
               )}
@@ -191,11 +207,11 @@ export function BrandingPage() {
                   <img className="signer-logo" src={b.logoUrl} alt="" />
                 </span>
               ) : (
-                <strong>{me?.tenant.name}</strong>
+                <strong>{previewName}</strong>
               )}
             </div>
             <div className="pad stack">
-              <p className="muted small">{me?.tenant.name}</p>
+              <p className="muted small">{previewName}</p>
               <div className="brand-preview-doc" />
               <span className="btn btn-primary btn-sm brand-preview-btn" style={{ background: preview, borderColor: preview }}>
                 ✍

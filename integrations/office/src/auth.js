@@ -27,24 +27,27 @@ const store = {
     try {
       if (v === null) localStorage.removeItem(k);
       else localStorage.setItem(k, JSON.stringify(v));
+      return true;
     } catch {
       /* almacenamiento bloqueado: la sesión dura lo que el panel */
+      return false;
     }
   },
 };
+// Solo cuando localStorage no anda. Si anda, manda lo guardado: otro panel del mismo origen (otro documento, Word y
+// Outlook) puede haber rotado el refresh token, y reusar una copia vieja en memoria hace que el servidor detecte la
+// reutilización y revoque toda la familia (todos los paneles quedan sin sesión).
 let memoryTokens = null;
 
 export function currentTokens() {
-  return memoryTokens ?? store.get(K.tokens);
+  return store.get(K.tokens) ?? memoryTokens;
 }
 function saveTokens(t) {
-  memoryTokens = t;
-  store.set(K.tokens, t);
+  memoryTokens = store.set(K.tokens, t) ? null : t;
 }
 export function signOut() {
   const t = currentTokens();
   saveTokens(null);
-  memoryTokens = null;
   // Revoca el refresh token (y con él la familia) sin esperar la respuesta.
   const client = store.get(K.client);
   if (t?.refresh_token && client?.client_id) {
@@ -90,24 +93,38 @@ async function clientId() {
   if (!res.ok || !body.client_id) throw new Error(body.error_description || body.error?.message || body.error || `HTTP ${res.status}`);
   store.set(K.client, { client_id: body.client_id, redirect_uri: REDIRECT_URI });
   // Outlook: también en la configuración itinerante, para no registrar otro cliente en cada equipo.
-  try {
-    const rs = Office.context.roamingSettings;
-    if (rs) {
-      rs.set("calasignClientId", body.client_id);
-      rs.saveAsync();
-    }
-  } catch {
-    /* Word no tiene roamingSettings */
-  }
+  setRoamingClientId(body.client_id);
   return body.client_id;
 }
 
+// La clave lleva el origen: el Id del manifiesto es el mismo en todos los entornos (dev, app…), así que la
+// configuración itinerante es compartida y un client_id de otro entorno no existe en este.
+const ROAMING_KEY = `calasignClientId:${ORIGIN}`;
+
 function roamingClientId() {
   try {
-    return Office.context.roamingSettings?.get("calasignClientId") || null;
+    return globalThis.Office?.context?.roamingSettings?.get(ROAMING_KEY) || null;
   } catch {
     return null;
   }
+}
+
+function setRoamingClientId(id) {
+  try {
+    const rs = globalThis.Office?.context?.roamingSettings;
+    if (!rs) return;
+    if (id) rs.set(ROAMING_KEY, id);
+    else rs.remove(ROAMING_KEY);
+    rs.saveAsync();
+  } catch {
+    /* Word no tiene roamingSettings */
+  }
+}
+
+/** Cliente borrado o revocado del lado de CalaSign: se olvida (también el itinerante) y se registra otro. */
+function forgetClient() {
+  store.set(K.client, null);
+  setRoamingClientId(null);
 }
 
 // ───────── Diálogo ─────────
@@ -162,7 +179,7 @@ export async function signIn() {
   const result = await openDialog(`${ORIGIN}/integrations/office/auth-start.html?${params}`);
   if (result.error) {
     // Cliente borrado o revocado del lado de CalaSign: se registra otro la próxima vez.
-    if (result.error === "invalid_client" || result.error === "unauthorized_client") store.set(K.client, null);
+    if (result.error === "invalid_client" || result.error === "unauthorized_client") forgetClient();
     throw new Error(result.error_description || result.error);
   }
   if (result.state !== state) throw new Error("state no coincide");
@@ -179,8 +196,8 @@ async function tokenRequest(form) {
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok || !body.access_token) {
-    if (body.error === "invalid_client") store.set(K.client, null);
-    throw new Error(body.error_description || body.error || `HTTP ${res.status}`);
+    if (body.error === "invalid_client") forgetClient();
+    throw Object.assign(new Error(body.error_description || body.error || `HTTP ${res.status}`), { status: res.status, oauthError: body.error });
   }
   return { kind: "oauth", access_token: body.access_token, refresh_token: body.refresh_token ?? null, expires_at: Date.now() + (body.expires_in ?? 3600) * 1000 };
 }
@@ -196,8 +213,10 @@ export async function refresh() {
       saveTokens(n);
       return n;
     })
-    .catch(() => {
-      saveTokens(null);
+    .catch((e) => {
+      // Solo un rechazo del servidor (refresh token vencido, revocado o reusado) cierra la sesión. Un error de red o
+      // un 5xx es pasajero: se conserva el refresh token para reintentar después.
+      if (e?.oauthError === "invalid_grant" || e?.oauthError === "invalid_client") saveTokens(null);
       return null;
     })
     .finally(() => {

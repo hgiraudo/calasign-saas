@@ -7,8 +7,8 @@ import type { Db } from "../infra/db";
 import type { BlobStore } from "../infra/storage";
 import { AppError, badRequest, notFound } from "../lib/errors";
 import { sha256Hex, uuidv7 } from "../lib/util";
-import { authenticate, clientInfo, type Services } from "./context";
-import { recordAudit } from "./audit";
+import { authenticate, type Services } from "./context";
+import { auditFromRequest } from "./audit";
 
 interface StoredBranding {
   primaryColor?: string | null;
@@ -89,13 +89,7 @@ export async function brandingRoutes(app: FastifyInstance, s: Services) {
       const prev = await s.db.one<any>(`SELECT name FROM tenants WHERE id = $1`, [a.tenantId]);
       if (prev && prev.name !== input.organizationName) {
         await s.db.query(`UPDATE tenants SET name = $2 WHERE id = $1`, [a.tenantId, input.organizationName]);
-        await recordAudit(s.db, {
-          tenantId: a.tenantId,
-          action: "organization.renamed",
-          actor: { type: a.userId ? "user" : "api_key", id: a.userId ?? null, label: a.actor.label },
-          ...clientInfo(req),
-          data: { from: prev.name, to: input.organizationName },
-        });
+        await auditFromRequest(s.db, req, a, "organization.renamed", { data: { from: prev.name, to: input.organizationName } });
       }
     }
     return toApi(await getTenantBranding(s.db, req.auth!.tenantId));

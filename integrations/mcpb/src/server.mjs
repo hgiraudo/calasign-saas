@@ -63,12 +63,16 @@ function explain(err) {
   return msg;
 }
 
-/** Ejecuta contra el remoto; si la conexión quedó vieja (el servidor reinició), reconecta una vez. */
-async function withUpstream(fn) {
+/**
+ * Ejecuta contra el remoto; si la conexión quedó vieja (el servidor reinició), reconecta una vez.
+ * Un timeout solo se reintenta en pedidos idempotentes: en tools/call el servidor puede haber ejecutado la
+ * herramienta igual (create_envelope con un PDF grande, remind_recipients), y repetirla duplicaría el sobre o el aviso.
+ */
+async function withUpstream(fn, { retryTimeout = true } = {}) {
   try {
     return await fn(await connectUpstream());
   } catch (err) {
-    if (err instanceof McpError && err.code !== ErrorCode.ConnectionClosed && err.code !== ErrorCode.RequestTimeout) throw err;
+    if (err instanceof McpError && err.code !== ErrorCode.ConnectionClosed && (err.code !== ErrorCode.RequestTimeout || !retryTimeout)) throw err;
     upstream = null;
     return fn(await connectUpstream());
   }
@@ -88,7 +92,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (req) => {
 
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
   try {
-    return await withUpstream((c) => c.callTool(req.params));
+    return await withUpstream((c) => c.callTool(req.params), { retryTimeout: false });
   } catch (err) {
     log(`tools/call ${req.params.name} falló:`, err?.message ?? err);
     // Error de la herramienta (no de protocolo): el modelo lo ve y se lo puede explicar a la persona.

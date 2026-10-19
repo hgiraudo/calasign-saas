@@ -100,7 +100,12 @@ function addSigner(name = "", email = "") {
   row.querySelector(".s-email").placeholder = t("email");
   row.querySelector(".s-email").value = email;
   row.querySelector(".s-order").value = String(n === 1 ? 1 : Math.max(...[...$("signers").querySelectorAll(".s-order")].map((i) => Number(i.value) || 1)) + 1);
-  row.querySelector(".s-anchor").value = `[[firma_${n}]]`;
+  // Primer ancla libre: con la cantidad de filas, quitar una del medio y agregar otra repetía el ancla de la última
+  // (y los dos campos de firma caían en el mismo lugar).
+  const used = new Set([...$("signers").querySelectorAll(".s-anchor")].map((i) => i.value.trim()));
+  let k = 1;
+  while (used.has(`[[firma_${k}]]`)) k++;
+  row.querySelector(".s-anchor").value = `[[firma_${k}]]`;
   row.querySelector(".s-remove").addEventListener("click", () => {
     row.remove();
     if (!$("signers").children.length) addSigner();

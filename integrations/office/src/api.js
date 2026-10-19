@@ -1,5 +1,5 @@
 // Cliente mínimo de la API v1 de CalaSign (mismo origen que el panel: sin CORS).
-import { accessToken, refresh } from "./auth.js";
+import { accessToken, currentTokens, refresh } from "./auth.js";
 
 const ORIGIN = window.location.origin;
 
@@ -36,15 +36,17 @@ export async function api(path, o = {}) {
       body: o.form ?? (o.json !== undefined ? JSON.stringify(o.json) : undefined),
     });
   };
+  // Sin token pero con la sesión guardada: la renovación falló por red o un 5xx (no se cerró la sesión).
+  const noToken = () => (currentTokens()?.refresh_token ? new ApiError(0, "network", "No se pudo renovar la sesión") : new ApiError(401, "unauthorized", "Sesión vencida"));
   let token = await accessToken();
-  if (!token) throw new ApiError(401, "unauthorized", "Sesión vencida");
+  if (!token) throw noToken();
   let res;
   try {
     res = await run(token);
     if (res.status === 401) {
       // Token revocado o vencido antes de tiempo: una renovación y un reintento.
       token = (await refresh())?.access_token;
-      if (!token) throw new ApiError(401, "unauthorized", "Sesión vencida");
+      if (!token) throw noToken();
       res = await run(token);
     }
   } catch (e) {

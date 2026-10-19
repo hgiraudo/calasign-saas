@@ -10,9 +10,8 @@ export async function loadSignatureImages(db: Db, blobs: BlobStore, envelopeId: 
      JOIN recipients r ON r.id = a.recipient_id WHERE r.envelope_id = $1`,
     [envelopeId],
   );
-  const out = new Map<string, Uint8Array>();
-  for (const s of sigs) out.set(`${s.recipient_id}:${s.purpose}`, await blobs.get(s.storage_key));
-  return out;
+  const images = await Promise.all(sigs.map((s) => blobs.get(s.storage_key)));
+  return new Map(sigs.map((s, i) => [`${s.recipient_id}:${s.purpose}`, images[i]]));
 }
 
 export function toStampFields(fields: any[], docs: any[], sigImages: Map<string, Uint8Array>): StampField[] {

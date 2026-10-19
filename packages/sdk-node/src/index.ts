@@ -191,13 +191,21 @@ export class CalaSign {
         continue;
       }
       if (RETRY_STATUS.has(res.status) && attempt < this.maxRetries && (retryable || res.status === 429 || res.status === 503)) {
+        // Se descarta el cuerpo: si no, undici deja la conexión tomada hasta que el GC lo junte.
+        await res.body?.cancel().catch(() => {});
         const ra = Number(res.headers.get("retry-after"));
         await sleep(Number.isFinite(ra) && ra > 0 ? Math.min(ra * 1000, 30_000) : backoff(attempt));
         continue;
       }
       if (o.raw && res.ok) return res as unknown as T;
       if (res.status === 204) return undefined as T;
-      const text = await res.text();
+      let text: string;
+      try {
+        text = await res.text();
+      } catch (err) {
+        // Corte o timeout a mitad del cuerpo: también es un error de red (no un TypeError/AbortError suelto).
+        throw new CalaSignError(`Error de red: ${(err as Error).message}`, 0, "network_error");
+      }
       let data: any = undefined;
       try {
         data = text ? JSON.parse(text) : undefined;
@@ -411,7 +419,12 @@ export function constructWebhookEvent(i: VerifyWebhookInput): WebhookEventPayloa
   const a = Buffer.from(expected);
   const b = Buffer.from(String(parts.v1));
   if (a.length !== b.length || !timingSafeEqual(a, b)) throw new WebhookSignatureError("Firma inválida");
-  return JSON.parse(body) as WebhookEventPayload;
+  try {
+    return JSON.parse(body) as WebhookEventPayload;
+  } catch {
+    // Como el SDK de Python: quien atrapa WebhookSignatureError no recibe un SyntaxError suelto.
+    throw new WebhookSignatureError("El cuerpo del webhook no es JSON válido");
+  }
 }
 
 export default CalaSign;

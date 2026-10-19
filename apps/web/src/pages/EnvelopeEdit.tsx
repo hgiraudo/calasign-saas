@@ -639,7 +639,10 @@ function ReviewStep({
   const x = useExpText();
   const authLabel = (m: AuthMethod) => (m === "in_person" ? x("auth.in_person") : sx(`auth.${m}` as Parameters<typeof sx>[0]));
   const [reminderEveryDays, setReminderEveryDays] = useState<number | null>(init ? init.reminderEveryDays : (env.reminderEveryDays ?? null));
-  const [expiryWarningDays, setExpiryWarningDays] = useState<number | null>(init ? init.expiryWarningDays : (env.expiryWarningDays ?? 3));
+  const [expiryWarningDays, setExpiryWarningDays] = useState<number | null>(
+    // null es "sin aviso" elegido a propósito: no se convierte en 3 (el 3 por defecto ya viene de la base).
+    init ? init.expiryWarningDays : env.expiryWarningDays !== undefined ? env.expiryWarningDays : 3,
+  );
   const [allowDelegation, setAllowDelegation] = useState(init?.allowDelegation ?? env.allowDelegation ?? true);
   useEffect(() => {
     draft.current = { subject, message, expires, reminderEveryDays, expiryWarningDays, allowDelegation };

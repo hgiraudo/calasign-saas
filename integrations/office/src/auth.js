@@ -203,26 +203,46 @@ async function tokenRequest(form) {
 }
 
 let refreshing = null;
-/** Renueva el access token con el refresh token (una sola renovación en vuelo a la vez). */
-export async function refresh() {
-  const t = currentTokens();
-  const client = store.get(K.client);
-  if (t?.kind !== "oauth" || !t.refresh_token || !client?.client_id) return null;
-  refreshing ??= tokenRequest({ grant_type: "refresh_token", refresh_token: t.refresh_token, client_id: client.client_id })
-    .then((n) => {
-      saveTokens(n);
-      return n;
-    })
-    .catch((e) => {
-      // Solo un rechazo del servidor (refresh token vencido, revocado o reusado) cierra la sesión. Un error de red o
-      // un 5xx es pasajero: se conserva el refresh token para reintentar después.
-      if (e?.oauthError === "invalid_grant" || e?.oauthError === "invalid_client") saveTokens(null);
-      return null;
-    })
-    .finally(() => {
-      refreshing = null;
-    });
+/**
+ * Renueva el access token con el refresh token. Una sola renovación a la vez, también entre paneles del mismo origen
+ * (dos documentos de Word, Word y Outlook): el servidor revoca toda la familia si el mismo refresh token se canjea dos
+ * veces, así que la renovación corre bajo un Web Lock y relee lo guardado; si otro panel ya renovó, se usa eso.
+ * @param {string} [stale] access token que el servidor acaba de rechazar (401), si lo hay
+ */
+export async function refresh(stale) {
+  refreshing ??= withRefreshLock(() => doRefresh(stale)).finally(() => {
+    refreshing = null;
+  });
   return refreshing;
+}
+
+function withRefreshLock(fn) {
+  const locks = globalThis.navigator?.locks;
+  return locks?.request ? locks.request(`calasign.office.refresh:${ORIGIN}`, fn) : fn();
+}
+
+async function doRefresh(stale) {
+  const t = currentTokens();
+  if (t?.kind !== "oauth" || !t.refresh_token) return null;
+  // Otro panel renovó mientras se esperaba el lock (o antes del 401): lo guardado ya es un token nuevo y vigente.
+  if (t.access_token !== stale && t.expires_at && t.expires_at - Date.now() >= 60_000) return t;
+  const client = store.get(K.client);
+  if (!client?.client_id) {
+    // Sin el cliente registrado no hay renovación posible: se cierra la sesión para volver a iniciarla (si no, el panel
+    // quedaba para siempre en "no se pudo renovar la sesión").
+    saveTokens(null);
+    return null;
+  }
+  try {
+    const n = await tokenRequest({ grant_type: "refresh_token", refresh_token: t.refresh_token, client_id: client.client_id });
+    saveTokens(n);
+    return n;
+  } catch (e) {
+    // Solo un rechazo del servidor (refresh token vencido, revocado o reusado) cierra la sesión, y solo si nadie guardó
+    // otra mientras tanto. Un error de red o un 5xx es pasajero: se conserva el refresh token para reintentar después.
+    if ((e?.oauthError === "invalid_grant" || e?.oauthError === "invalid_client") && currentTokens()?.refresh_token === t.refresh_token) saveTokens(null);
+    return null;
+  }
 }
 
 /** Access token vigente (renovado si está por vencer), o null si hay que iniciar sesión. */

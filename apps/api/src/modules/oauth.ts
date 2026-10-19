@@ -103,6 +103,15 @@ async function userGrantAllowed(db: Db, t: Parameters<typeof assertUserTokenAllo
   }
 }
 
+/**
+ * Refresh tokens: una app del registro dinámico solo si se registró con refresh_token en grant_types. El alta ya no le
+ * habilita offline_access sin ese grant, pero las registradas antes lo tienen guardado y seguían recibiendo y canjeando
+ * refresh tokens. Las apps de una organización no declaran refresh_token (su grant es authorization_code + offline_access).
+ */
+function refreshAllowed(c: { registration?: string | null; grant_types: string[] }) {
+  return c.registration !== "dynamic" || c.grant_types.includes("refresh_token");
+}
+
 async function revokeFamily(db: Db, familyId: string) {
   await db.query(`UPDATE oauth_tokens SET revoked_at = now() WHERE family_id = $1 AND revoked_at IS NULL`, [familyId]);
 }
@@ -185,7 +194,7 @@ async function validateAuthorize(db: Db, raw: unknown): Promise<ValidatedAuthori
     // Conectores MCP: piden lo que dicen los metadatos (a veces también openid/profile/email, o todos los scopes del
     // servidor). Se concede lo pedido que la app tiene habilitado (RFC 6749 §3.3 permite conceder menos; la respuesta
     // del token dice qué se concedió); si no queda nada, lo que usan las herramientas MCP.
-    scopes = requested.filter((s) => client.scopes.includes(s)) as OAuthScope[];
+    scopes = requested.filter((s) => client.scopes.includes(s) && (s !== "offline_access" || refreshAllowed(client))) as OAuthScope[];
     if (!scopes.length) scopes = MCP_DEFAULT_SCOPES.filter((s) => client.scopes.includes(s));
     // Registrada con refresh_token: sin offline_access el conector pediría autorizar de nuevo cada hora.
     if (client.grant_types.includes("refresh_token") && client.scopes.includes("offline_access") && !scopes.includes("offline_access")) scopes.push("offline_access");
@@ -479,7 +488,7 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
               serviceApiKeyId: null,
               scopes: code.scopes,
               codeHash,
-              withRefresh: code.scopes.includes("offline_access"),
+              withRefresh: code.scopes.includes("offline_access") && refreshAllowed(c),
             });
           });
           if (result === "reused") throw new OAuthError(400, "invalid_grant", "El código ya fue usado: se revocaron los tokens emitidos con él");
@@ -488,6 +497,7 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
 
         if (grant === "refresh_token") {
           const c = await authenticateClient(s.db, req, body, { allowPublic: true });
+          if (!refreshAllowed(c)) throw new OAuthError(400, "unauthorized_client", "La aplicación no admite refresh_token");
           if (!body.refresh_token?.startsWith(REFRESH_PREFIX)) throw new OAuthError(400, "invalid_grant", "refresh_token inválido");
           const result = await s.db.tx(async (t) => {
             const old = await t.one<any>(`SELECT * FROM oauth_tokens WHERE token_hash = $1 AND kind = 'refresh' FOR UPDATE`, [sha256Hex(body.refresh_token)]);

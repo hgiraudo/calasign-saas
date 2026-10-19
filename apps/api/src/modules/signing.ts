@@ -215,6 +215,10 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
       const group = await currentSignerGroup(t, e.id);
       if (group.order !== r.routing_order) throw conflict("not_your_turn", "Todavía no es tu turno de firmar");
       if (!r.consented_at) throw conflict("consent_required", "Primero hay que aceptar el uso de medios electrónicos");
+      // En persona: el certificado dice "identidad confirmada en el dispositivo del anfitrión"; sin la confirmación
+      // (POST …/in-person/confirm) la firma no puede completarse aunque la sesión del anfitrión esté abierta.
+      if (r.auth_method === "in_person" && !r.identity_confirmed_at)
+        throw conflict("identity_confirmation_required", "Primero hay que confirmar la identidad en el dispositivo del anfitrión");
 
       const fields = await t.query<any>(`SELECT * FROM fields WHERE recipient_id = $1`, [r.id]);
       const values = new Map(input.fields.map((f) => [f.id, f.value]));

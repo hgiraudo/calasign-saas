@@ -214,7 +214,7 @@ export function useSignerText() {
   return useCallback(
     (key: Key, vars?: Record<string, string | number>) => {
       let s: string = (DICTS[locale] ?? es)[key] ?? es[key];
-      if (vars) for (const [k, v] of Object.entries(vars)) s = s.replaceAll(`{${k}}`, String(v));
+      if (vars) for (const [k, v] of Object.entries(vars)) s = s.replaceAll(`{${k}}`, () => String(v)); // función: un "$&" o "$'" en un nombre no se interpreta como patrón
       return s;
     },
     [locale],

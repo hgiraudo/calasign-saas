@@ -241,12 +241,23 @@ function CreateNegotiationModal({ kind, onClose, onCreated }: { kind: "template"
  * `base`: "/v1/negotiations/:id" (remitente) o "/v1/public/negotiations/:token" (contraparte).
  * El remitente decide propuestas y acepta; la contraparte comenta y propone.
  */
-export function NegotiationPanel({ base, mode, initial }: { base: string; mode: "sender" | "participant"; initial: NegotiationView }) {
+export function NegotiationPanel({
+  base,
+  mode,
+  initial,
+  onView,
+}: {
+  base: string;
+  mode: "sender" | "participant";
+  initial: NegotiationView;
+  /** Avisa cada vista nueva (p. ej. para que el encabezado de la página muestre el estado al día). */
+  onView?: (v: NegotiationView) => void;
+}) {
   const ta = useAgrText();
   const { locale } = useI18n();
   const nav = useNavigate();
   const [view, setView] = useState<NegotiationView>(initial);
-  const [sel, setSel] = useState<{ quote: string; start: number; end: number } | null>(null);
+  const [sel, setSel] = useState<{ quote: string; start: number | null; end: number | null } | null>(null);
   const [comment, setComment] = useState("");
   const [diff, setDiff] = useState<NegotiationDiff | null>(null);
   const [proposing, setProposing] = useState(false);
@@ -261,6 +272,7 @@ export function NegotiationPanel({ base, mode, initial }: { base: string; mode: 
     try {
       const v = await api<NegotiationView & { envelope?: { id: string } }>(`${base}${path}`, { method, body });
       setView(v);
+      onView?.(v);
       return v;
     } catch (e) {
       setError(errorText(e));
@@ -268,7 +280,10 @@ export function NegotiationPanel({ base, mode, initial }: { base: string; mode: 
       // remitente la vea antes de volver a aceptar, en vez de aceptar a ciegas un texto que no tiene en pantalla.
       if (e instanceof HttpError && e.status === 409) {
         await api<NegotiationView>(base)
-          .then(setView)
+          .then((fresh) => {
+            setView(fresh);
+            onView?.(fresh);
+          })
           .catch(() => {});
       }
       return null;
@@ -576,7 +591,9 @@ export function NegotiationDetailPage() {
           </div>
         </div>
       </div>
-      <NegotiationPanel key={view.negotiation.currentVersion + view.negotiation.status} base={`/v1/negotiations/${id}`} mode="sender" initial={view} />
+      {/* El panel es dueño de la vista; el encabezado (estado, participantes) se actualiza con onView. Sin key: si el panel
+          se volviera a montar al cambiar de versión, se perdería el aviso de un 409 (version_changed). */}
+      <NegotiationPanel base={`/v1/negotiations/${id}`} mode="sender" initial={view} onView={setView} />
     </div>
   );
 }

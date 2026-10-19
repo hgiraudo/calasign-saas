@@ -5,6 +5,16 @@ const VERSION = "calasign-v1";
 const STATIC = `${VERSION}-static`;
 const OFFLINE_URL = "/offline.html";
 const PRECACHE = [OFFLINE_URL, "/icons/icon-192.png", "/icons/icon.svg", "/manifest.webmanifest"];
+// VERSION no cambia en cada deploy: sin un tope, los /assets con hash de cada versión vieja (unos 3 MB por deploy) se
+// acumulaban para siempre en la caché. Se conservan los más recientes (keys() devuelve el orden de inserción).
+const MAX_ASSETS = 40;
+
+function trimAssets(cache) {
+  return cache.keys().then((keys) => {
+    const assets = keys.filter((k) => new URL(k.url).pathname.startsWith("/assets/"));
+    return Promise.all(assets.slice(0, Math.max(0, assets.length - MAX_ASSETS)).map((k) => cache.delete(k)));
+  });
+}
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -50,7 +60,15 @@ self.addEventListener("fetch", (event) => {
       fetch(req).then((res) => {
         if (res.ok && res.type === "basic") {
           const copy = res.clone();
-          caches.open(STATIC).then((c) => c.put(req, copy));
+          const saved = caches
+            .open(STATIC)
+            .then((c) => c.put(req, copy).then(() => (url.pathname.startsWith("/assets/") ? trimAssets(c) : undefined)))
+            .catch(() => undefined);
+          try {
+            event.waitUntil(saved);
+          } catch {
+            /* el evento ya terminó: el guardado sigue igual */
+          }
         }
         return res;
       });

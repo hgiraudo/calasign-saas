@@ -42,11 +42,14 @@ function Constraints({ s }: { s: JsonSchema }) {
   if (s.default !== undefined) parts.push(<span key="d">{t("ref.default")} <code>{JSON.stringify(s.default)}</code></span>);
   const range = (lo?: number | boolean, hi?: number | boolean, unit = "") =>
     typeof lo === "number" && typeof hi === "number" ? `${lo}–${hi}${unit}` : typeof lo === "number" ? `≥ ${lo}${unit}` : typeof hi === "number" ? `≤ ${hi}${unit}` : null;
-  // Cotas exclusivas (OpenAPI 3.1: número) se muestran con > / <, no como si fueran inclusivas.
-  const exMin = typeof s.exclusiveMinimum === "number" ? s.exclusiveMinimum : undefined;
-  const exMax = typeof s.exclusiveMaximum === "number" ? s.exclusiveMaximum : undefined;
+  // Cotas exclusivas se muestran con > / <, no como si fueran inclusivas. Dos formas: número (OpenAPI 3.1) o booleano
+  // junto a minimum/maximum (estilo 3.0, el que emite zod-to-json-schema para .positive(): minimum 0 + exclusiveMinimum true).
+  const exMin = typeof s.exclusiveMinimum === "number" ? s.exclusiveMinimum : s.exclusiveMinimum === true ? s.minimum : undefined;
+  const exMax = typeof s.exclusiveMaximum === "number" ? s.exclusiveMaximum : s.exclusiveMaximum === true ? s.maximum : undefined;
+  const incMin = s.exclusiveMinimum === true ? undefined : s.minimum;
+  const incMax = s.exclusiveMaximum === true ? undefined : s.maximum;
   const num = [
-    s.minimum !== undefined || s.maximum !== undefined ? range(s.minimum, s.maximum) : null,
+    incMin !== undefined || incMax !== undefined ? range(incMin, incMax) : null,
     exMin !== undefined ? `> ${exMin}` : null,
     exMax !== undefined ? `< ${exMax}` : null,
   ]

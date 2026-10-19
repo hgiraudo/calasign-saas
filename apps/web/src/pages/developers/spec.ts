@@ -264,10 +264,26 @@ export function exampleFor(spec: Spec, raw: JsonSchema | undefined, name = "", d
       if (s.format === "binary") return "<archivo>";
       return name ? `${name}` : "string";
     }
-    case "integer":
-      return typeof s.minimum === "number" ? Math.max(1, s.minimum) : 1;
-    case "number":
-      return name in NAME_EXAMPLES ? NAME_EXAMPLES[name] : typeof s.minimum === "number" ? s.minimum : 0.5;
+    case "integer": {
+      // Cota exclusiva (número en 3.1, o true junto a minimum): el ejemplo tiene que quedar estrictamente por encima.
+      const lo =
+        typeof s.exclusiveMinimum === "number"
+          ? Math.floor(s.exclusiveMinimum) + 1
+          : typeof s.minimum === "number"
+            ? s.minimum + (s.exclusiveMinimum === true ? 1 : 0)
+            : undefined;
+      return lo !== undefined ? Math.max(1, lo) : 1;
+    }
+    case "number": {
+      if (name in NAME_EXAMPLES) return NAME_EXAMPLES[name];
+      // Con minimum exclusivo (p. ej. width/height de un campo: > 0 y ≤ 1) devolver el mínimo daba un ejemplo que la API rechaza.
+      const exMin = typeof s.exclusiveMinimum === "number" ? s.exclusiveMinimum : s.exclusiveMinimum === true ? s.minimum : undefined;
+      if (exMin !== undefined) {
+        const hi = typeof s.maximum === "number" ? s.maximum : typeof s.exclusiveMaximum === "number" ? s.exclusiveMaximum : undefined;
+        return hi !== undefined ? (exMin + hi) / 2 : exMin + 1;
+      }
+      return typeof s.minimum === "number" ? s.minimum : 0.5;
+    }
     case "boolean":
       return true;
     case "null":

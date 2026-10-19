@@ -63,16 +63,26 @@ function explain(err) {
   return msg;
 }
 
+/** El pedido no llegó al servidor (conexión rechazada, DNS): reintentarlo no puede repetir nada. */
+function notDelivered(err) {
+  return /ECONNREFUSED|ENOTFOUND|EAI_AGAIN/.test(`${err?.cause?.code ?? ""} ${err?.code ?? ""} ${err?.message ?? ""}`);
+}
+
 /**
  * Ejecuta contra el remoto; si la conexión quedó vieja (el servidor reinició), reconecta una vez.
- * Un timeout solo se reintenta en pedidos idempotentes: en tools/call el servidor puede haber ejecutado la
- * herramienta igual (create_envelope con un PDF grande, remind_recipients), y repetirla duplicaría el sobre o el aviso.
+ * En pedidos no idempotentes (tools/call) solo se reintenta lo que seguro no llegó a ejecutarse: con un timeout, un
+ * corte a mitad de respuesta ("fetch failed", ECONNRESET durante un deploy) o un 502 del proxy, el servidor puede haber
+ * ejecutado la herramienta igual (create_envelope, remind_recipients), y repetirla duplicaría el sobre o el aviso.
  */
-async function withUpstream(fn, { retryTimeout = true } = {}) {
+async function withUpstream(fn, { idempotent = true } = {}) {
+  let sent = false;
   try {
-    return await fn(await connectUpstream());
+    const client = await connectUpstream();
+    sent = true;
+    return await fn(client);
   } catch (err) {
-    if (err instanceof McpError && err.code !== ErrorCode.ConnectionClosed && (err.code !== ErrorCode.RequestTimeout || !retryTimeout)) throw err;
+    if (err instanceof McpError && err.code !== ErrorCode.ConnectionClosed && err.code !== ErrorCode.RequestTimeout) throw err;
+    if (sent && !idempotent && !notDelivered(err)) throw err;
     upstream = null;
     return fn(await connectUpstream());
   }
@@ -92,7 +102,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (req) => {
 
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
   try {
-    return await withUpstream((c) => c.callTool(req.params), { retryTimeout: false });
+    return await withUpstream((c) => c.callTool(req.params), { idempotent: false });
   } catch (err) {
     log(`tools/call ${req.params.name} falló:`, err?.message ?? err);
     // Error de la herramienta (no de protocolo): el modelo lo ve y se lo puede explicar a la persona.

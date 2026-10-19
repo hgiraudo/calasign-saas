@@ -186,6 +186,10 @@ await expectStatus(stranger("POST", `/v1/signing/${t1}/consent`), 401, "sin la s
 let sess = await device("GET", `/v1/signing/${t1}`);
 assert(!sess.otpRequired && sess.documents.length === 1, "con la sesión del anfitrión se ven los documentos");
 assert(sess.inPerson?.active && !sess.inPerson.identityConfirmed && sess.inPerson.hostName === "Ana Anfitriona", "datos de la sesión en persona");
+// Sin la confirmación de identidad no se puede firmar aunque se llame a la API directamente.
+await device("POST", `/v1/signing/${t1}/consent`);
+const skip = await expectStatus(device("POST", `/v1/signing/${t1}/complete`, { fields: [], signature: sig }), 409, "firmar sin confirmar identidad");
+assert(skip.error.code === "identity_confirmation_required", `código ${skip.error.code}`);
 await device("POST", `/v1/signing/${t1}/in-person/confirm`, { confirmed: true, idDocumentNumber: "0017654321-0" });
 sess = await device("GET", `/v1/signing/${t1}`);
 assert(sess.inPerson.identityConfirmed, "identidad confirmada");

@@ -303,7 +303,9 @@ async function onReview() {
         throw e;
       }
     }
-    pending = { ...p, bytes, placements, docName: doc.name };
+    // La Idempotency-Key del sobre es de este envío, no de cada clic: si la creación se cortó por red después de que
+    // el servidor la hizo, "Enviar" de nuevo devuelve el mismo borrador en vez de crear otro.
+    pending = { ...p, bytes, placements, docName: doc.name, createKey: uuid() };
     renderSummary(pending);
     message("");
     show("view-confirm");
@@ -322,7 +324,7 @@ async function onSend() {
   try {
     const created = await api("/v1/envelopes", {
       json: { subject: p.subject, message: p.message || null, locale: envelopeLocale(), metadata: { source: `office-${host}` } },
-      idempotencyKey: uuid(),
+      idempotencyKey: p.createKey,
     });
     envelopeId = created.envelope.id;
 

@@ -86,8 +86,10 @@ export function BrandingPage() {
   };
 
   if (!b) return error ? <div className="page"><ErrorBox error={error} /></div> : <Spinner />;
-  const valid = (color === "" || /^#[0-9a-fA-F]{6}$/.test(color)) && orgName.trim().length !== 1;
-  const preview = valid && color ? color : DEFAULT_COLOR;
+  // El color se valida aparte del nombre: un nombre de 1 letra bloquea el guardado pero no debe resetear la vista previa del color.
+  const colorValid = color === "" || /^#[0-9a-fA-F]{6}$/.test(color);
+  const valid = colorValid && orgName.trim().length !== 1;
+  const preview = colorValid && color ? color : DEFAULT_COLOR;
   // La vista previa muestra el nombre que se está editando (igual que el color y el pie), no el guardado.
   const previewName = orgName.trim() || me?.tenant.name;
 
@@ -120,7 +122,7 @@ export function BrandingPage() {
               <input
                 type="color"
                 className="color-input"
-                value={valid && color ? color : DEFAULT_COLOR}
+                value={preview}
                 onChange={(e) => {
                   setColor(e.target.value);
                   setSaved(false);

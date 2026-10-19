@@ -1,5 +1,5 @@
 // i18n mínimo: diccionarios planos es / pt-BR / en.
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { Locale } from "@calasign/shared";
 import { prodEn, prodEs, prodPt, type ProdKey } from "./i18n-productivity";
 
@@ -648,8 +648,12 @@ export function I18nProvider({ children }: { children: ReactNode }) {
         /* sin almacenamiento */
       }
     }
-    document.documentElement.lang = l;
   }, []);
+  // <html lang> sigue al idioma activo, también el inicial (guardado o del navegador): index.html trae "es" fijo y,
+  // si solo se cambiaba en setLocale, un lector de pantalla leía la interfaz en inglés con pronunciación española.
+  useEffect(() => {
+    document.documentElement.lang = locale;
+  }, [locale]);
 
   const t = useCallback<TFunc>(
     (key, vars) => {

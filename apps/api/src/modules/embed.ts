@@ -133,7 +133,10 @@ export async function embedRoutes(app: FastifyInstance, s: Services) {
         )
       : null;
     reply.header("cache-control", "no-store").header("referrer-policy", "no-referrer");
-    if (!sess) {
+    // El destinatario pudo ser reemplazado (delegó, lo reasignaron) o quitado después de emitirse el código: su link ya
+    // no existe (access_token_enc NULL) y descifrarlo daba un error interno, con un evento de sesión ya registrado.
+    const r = sess ? await s.db.one<any>(`SELECT * FROM recipients WHERE id = $1`, [sess.recipient_id]) : null;
+    if (!sess || !r?.access_token_enc) {
       return reply
         .code(410)
         .type("text/html; charset=utf-8")
@@ -143,7 +146,6 @@ export async function embedRoutes(app: FastifyInstance, s: Services) {
             `<p>Link expirado · Link expired</p>`,
         );
     }
-    const r = await s.db.one<any>(`SELECT * FROM recipients WHERE id = $1`, [sess.recipient_id]);
     await s.db.tx(async (t) => {
       await t.query(`SELECT id FROM envelopes WHERE id = $1 FOR UPDATE`, [sess.envelope_id]);
       await appendEvent(t, {

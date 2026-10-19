@@ -53,7 +53,7 @@ export function DocPreview({
 }: {
   blocks: ResolvedBlock[];
   text?: string;
-  onSelect?: (sel: { quote: string; start: number; end: number } | null) => void;
+  onSelect?: (sel: { quote: string; start: number | null; end: number | null } | null) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const handleUp = () => {
@@ -63,7 +63,10 @@ export function DocPreview({
     if (!sel || !quote || !ref.current?.contains(sel.anchorNode)) return onSelect(null);
     const plain = (text ?? "").replace(/\s+/g, " ");
     const start = plain.indexOf(quote);
-    onSelect({ quote: quote.slice(0, 2000), start: Math.max(0, start), end: Math.max(0, start) + quote.length });
+    // Si la selección no aparece tal cual en el texto plano (p. ej. cruza celdas de una tabla), se comenta la cita sin
+    // posición: antes quedaba anclada en 0…largo, es decir, al principio del documento.
+    if (start < 0) return onSelect({ quote: quote.slice(0, 2000), start: null, end: null });
+    onSelect({ quote: quote.slice(0, 2000), start, end: start + quote.length });
   };
   return (
     <div className="agr-doc" ref={ref} onMouseUp={handleUp} onKeyUp={handleUp}>

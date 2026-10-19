@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 import base64
+import http.client
 import json
 import random
-import socket
 import time
 import urllib.error
 import urllib.parse
@@ -17,6 +17,10 @@ __all__ = ["CalaSign", "CalaSignError", "ClientCredentials"]
 
 VERSION = "0.1.0"
 _RETRY_STATUS = {408, 425, 429, 500, 502, 503, 504}
+# Errores de red: URLError, timeouts (socket.timeout en 3.8/3.9), ConnectionError y SSLError son OSError; un corte a mitad
+# del cuerpo (IncompleteRead) o una respuesta mal formada (BadStatusLine) son HTTPException. HTTPError (respuesta con
+# status) también es OSError, pero se atrapa antes.
+_NETWORK_ERRORS = (OSError, http.client.HTTPException)
 
 
 # ───────────────────────────── Tipos (subconjunto del contrato de la API) ─────────────────────────────
@@ -160,7 +164,7 @@ class CalaSign:
         except urllib.error.HTTPError as e:
             body = _json_or_empty(e.read())
             raise CalaSignError(body.get("error_description", "No se pudo obtener el token OAuth"), e.code, body.get("error", "oauth_error")) from None
-        except (urllib.error.URLError, TimeoutError, socket.timeout, ConnectionError) as e:
+        except _NETWORK_ERRORS as e:
             # Igual que en `request`: quien captura CalaSignError para los errores de red no recibe un URLError suelto
             # cuando el que falla es el pedido del token (el primero de cada cliente, o el refresh tras un 401).
             raise CalaSignError(f"Error de red al pedir el token OAuth: {e}", 0, "network_error") from None
@@ -223,7 +227,7 @@ class CalaSign:
                     continue
                 err = body.get("error") if isinstance(body.get("error"), dict) else {}
                 raise CalaSignError(err.get("message", f"HTTP {status}"), status, err.get("code", f"http_{status}"), err.get("details")) from None
-            except (urllib.error.URLError, TimeoutError, socket.timeout, ConnectionError) as e:
+            except _NETWORK_ERRORS as e:
                 if retryable and attempt < self.max_retries:
                     time.sleep(_retry_delay(attempt, None))
                     attempt += 1

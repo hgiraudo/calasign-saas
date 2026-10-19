@@ -45,7 +45,7 @@ export async function api(path, o = {}) {
     res = await run(token);
     if (res.status === 401) {
       // Token revocado o vencido antes de tiempo: una renovación y un reintento.
-      token = (await refresh())?.access_token;
+      token = (await refresh(token))?.access_token;
       if (!token) throw noToken();
       res = await run(token);
     }

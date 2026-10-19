@@ -43,7 +43,7 @@ export async function build(ctx) {
     });
     dist.push({ name: `dist/${entry.replace(/\.ts$/, ".js")}`, data: code });
   }
-  for (const n of ["CalaSign", "CalaSignTrigger"]) dist.push({ name: `dist/nodes/${n}/calasign.svg`, data: ctx.load("nodes/calasign.svg") });
+  for (const d of ["nodes/CalaSign", "nodes/CalaSignTrigger", "credentials"]) dist.push({ name: `dist/${d}/calasign.svg`, data: ctx.load("nodes/calasign.svg") });
   const npmFiles = [{ name: "package.json", data: pkg }, { name: "README.md", data: ctx.load("README.md") }, ...dist];
   const sources = SOURCES.map((f) => ({ name: f, data: ctx.load(f) }));
   sources.push({ name: "nodes/quicksend.js", data: ctx.shared("quicksend.cjs") });

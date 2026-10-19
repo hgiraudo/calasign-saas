@@ -189,6 +189,14 @@ export async function cloneEnvelope(t: Services["db"], a: AuthContext, sourceId:
       [nr, id, r.id],
     );
   }
+  // El anfitrión de una firma en persona del original pudo dejar la organización: sin él nadie abre la sesión y ese
+  // firmante no recibe invitación, así que el sobre quedaba trabado al enviarlo. Como en replaceRecipient, firma por link.
+  await t.query(
+    `UPDATE recipients r SET in_person_host_user_id = NULL, auth_method = 'link'
+      WHERE r.envelope_id = $1 AND r.in_person_host_user_id IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM memberships m WHERE m.tenant_id = r.tenant_id AND m.user_id = r.in_person_host_user_id)`,
+    [id],
+  );
   if (!includeFields) return id;
 
   const fields = await t.query<any>(`SELECT * FROM fields WHERE envelope_id = $1`, [src.id]);

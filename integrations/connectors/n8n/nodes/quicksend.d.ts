@@ -18,5 +18,6 @@ export interface QuickSendInput {
 	expiresAt?: string;
 	metadata?: Record<string, unknown>;
 }
-export function quickSend(request: (method: string, path: string, opts?: any) => Promise<any>, input: QuickSendInput): Promise<any>;
-export function flattenEvent(ev: any): Record<string, any>;
+export type QuickSendRequest = (method: string, path: string, opts?: { json?: unknown; body?: unknown; headers?: Record<string, string> }) => Promise<Record<string, unknown>>;
+export function quickSend(request: QuickSendRequest, input: QuickSendInput): Promise<Record<string, unknown>>;
+export function flattenEvent(ev: Record<string, unknown>): Record<string, unknown>;

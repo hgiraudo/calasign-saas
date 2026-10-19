@@ -6,6 +6,7 @@ import {
   CreateNotificationIntegrationInput,
   CreateOAuthAppInput,
   CreateS3ConnectionInput,
+  NOTIFICATION_KINDS,
   OAUTH_SCOPES,
   SetCustomDomainInput,
   UpdateNotificationIntegrationInput,
@@ -62,7 +63,7 @@ const TokenRequest = z.object({
 
 const NotificationIntegration = z.object({
   id: z.string().uuid(),
-  kind: z.enum(["slack", "teams"]),
+  kind: z.enum(NOTIFICATION_KINDS),
   name: z.string(),
   urlHint: z.string(),
   events: z.array(z.string()),
@@ -138,11 +139,11 @@ export const PLATFORM_OPS: PlatformOp[] = [
   { method: "post", path: "/v1/oauth/apps/{id}/rotate-secret", operationId: "rotateOAuthAppSecret", tag: "OAuth 2.0", summary: "Rotar el secreto (el anterior deja de valer)", response: z.object({ app: OAuthApp, clientSecret: z.string() }) },
   { method: "delete", path: "/v1/oauth/apps/{id}", operationId: "deleteOAuthApp", tag: "OAuth 2.0", summary: "Revocar una app y todos sus tokens", response: "none", status: 204 },
 
-  { method: "get", path: "/v1/notification-integrations", operationId: "listNotificationIntegrations", tag: "Slack y Teams", summary: "Integraciones de avisos", response: z.object({ items: z.array(NotificationIntegration) }) },
-  { method: "post", path: "/v1/notification-integrations", operationId: "createNotificationIntegration", tag: "Slack y Teams", summary: "Conectar un canal (webhook entrante de Slack o Teams)", body: CreateNotificationIntegrationInput, status: 201, response: NotificationIntegration },
-  { method: "patch", path: "/v1/notification-integrations/{id}", operationId: "updateNotificationIntegration", tag: "Slack y Teams", summary: "Modificar", body: UpdateNotificationIntegrationInput, response: NotificationIntegration },
-  { method: "delete", path: "/v1/notification-integrations/{id}", operationId: "deleteNotificationIntegration", tag: "Slack y Teams", summary: "Quitar", response: "none", status: 204 },
-  { method: "post", path: "/v1/notification-integrations/{id}/test", operationId: "testNotificationIntegration", tag: "Slack y Teams", summary: "Enviar un mensaje de prueba", response: z.object({ ok: z.boolean(), status: z.number().nullable(), error: z.string().nullable() }) },
+  { method: "get", path: "/v1/notification-integrations", operationId: "listNotificationIntegrations", tag: "Avisos a canales", summary: "Integraciones de avisos", response: z.object({ items: z.array(NotificationIntegration) }) },
+  { method: "post", path: "/v1/notification-integrations", operationId: "createNotificationIntegration", tag: "Avisos a canales", summary: "Conectar un canal (webhook entrante de Slack, Teams, Discord, Google Chat, Mattermost, Rocket.Chat o Webex)", body: CreateNotificationIntegrationInput, status: 201, response: NotificationIntegration },
+  { method: "patch", path: "/v1/notification-integrations/{id}", operationId: "updateNotificationIntegration", tag: "Avisos a canales", summary: "Modificar", body: UpdateNotificationIntegrationInput, response: NotificationIntegration },
+  { method: "delete", path: "/v1/notification-integrations/{id}", operationId: "deleteNotificationIntegration", tag: "Avisos a canales", summary: "Quitar", response: "none", status: 204 },
+  { method: "post", path: "/v1/notification-integrations/{id}/test", operationId: "testNotificationIntegration", tag: "Avisos a canales", summary: "Enviar un mensaje de prueba", response: z.object({ ok: z.boolean(), status: z.number().nullable(), error: z.string().nullable() }) },
 
   { method: "get", path: "/v1/storage/providers", operationId: "listStorageProviders", tag: "Almacenamiento", summary: "Proveedores disponibles", response: z.object({ items: z.array(z.object({ provider: z.string(), configured: z.boolean() })) }) },
   { method: "get", path: "/v1/storage/connections", operationId: "listStorageConnections", tag: "Almacenamiento", summary: "Conexiones", response: z.object({ items: z.array(StorageConnection) }) },

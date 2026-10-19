@@ -161,9 +161,10 @@ export interface ConnectedApp {
   unverified: boolean;
 }
 
-// ───────────────────────────── Slack / Microsoft Teams ─────────────────────────────
+// ───────────────── Avisos a canales: Slack, Teams, Discord, Google Chat, Mattermost, Rocket.Chat, Webex ─────────────────
 
-export const NOTIFICATION_KINDS = ["slack", "teams"] as const;
+/** Destinos con webhook entrante (la URL la genera la plataforma de chat y es un secreto). */
+export const NOTIFICATION_KINDS = ["slack", "teams", "discord", "google_chat", "mattermost", "rocketchat", "webex"] as const;
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
 
 /** Eventos que se pueden avisar a un canal. */

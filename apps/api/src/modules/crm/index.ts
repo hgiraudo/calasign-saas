@@ -35,7 +35,7 @@ import { enqueue } from "../../infra/queue";
 import type { BlobStore } from "../../infra/storage";
 import { AppError, badRequest, notFound } from "../../lib/errors";
 import { decrypt, encrypt, iso, sha256Hex, uuidv7 } from "../../lib/util";
-import { assertEnvelopeAccess, assertTemplateAccess, envelopeVisibilitySql, hasPerm } from "../access";
+import { assertEnvelopeAccess, assertTemplateAccess, envelopeVisibilitySql, hasPerm, templateVisibilitySql } from "../access";
 import { auditFromRequest } from "../audit";
 import { authenticate, type AuthContext, type Services } from "../context";
 import { sendEnvelope } from "../envelopes";
@@ -700,6 +700,12 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
     if (req.query.provider && (CRM_PROVIDERS as readonly string[]).includes(req.query.provider)) {
       params.push(req.query.provider);
       where += ` AND connection_id IN (SELECT id FROM crm_connections WHERE tenant_id = $1 AND active AND provider = $${params.length})`;
+    }
+    // Sin settings:manage (quien solo puede enviar, access.ts): solo los mapeos cuya plantilla puede usar. Los demás no
+    // los puede enviar (assertTemplateAccess) y exponían la configuración ajena (destinatarios fijos con correo y teléfono).
+    const a = A(req);
+    if (!hasPerm(a, "settings:manage")) {
+      where += ` AND template_id IN (SELECT t.id FROM templates t WHERE t.tenant_id = $1${templateVisibilitySql(a, params, "t")})`;
     }
     const rows = await s.db.query(`SELECT * FROM crm_mappings WHERE ${where} ORDER BY created_at DESC`, params);
     return { items: rows.map(toMapping) };

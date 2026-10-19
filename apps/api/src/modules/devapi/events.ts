@@ -25,6 +25,7 @@ const TX_CURSOR_RE = /^\d{1,20}\.(\d{1,18})$/;
 const LEGACY_CURSOR_RE = /^\d{1,18}$/;
 const SEQUENCER_LOCK = 72_010_048; // clave del lock de transacción del secuenciador
 const SEQUENCER_BATCH = 5000;
+const SEQUENCER_MAX_BATCHES = 40;
 const DEFAULT_LOOKBACK_MS = 24 * 3600_000;
 
 interface EventQuery {
@@ -52,7 +53,9 @@ function parseFilters(q: EventQuery, lastEventId?: string): Filters {
   }
   const all = q.scope === "all";
   if (q.scope && q.scope !== "all" && q.scope !== "webhook") throw badRequest("validation_error", "scope: webhook o all", [{ path: "scope", message: "webhook | all" }]);
-  const after = (q.after ?? lastEventId ?? "").trim() || null;
+  // Last-Event-ID primero: EventSource reconecta con la MISMA URL, así que con `?after=X` en ella cada reconexión (a los
+  // max_seconds) volvía a empezar en X y repetía todo lo ya entregado; el header trae el último id recibido.
+  const after = (lastEventId ?? q.after ?? "").trim() || null;
   if (after && !CURSOR_RE.test(after) && !TX_CURSOR_RE.test(after) && !LEGACY_CURSOR_RE.test(after)) throw badRequest("invalid_cursor", "Cursor inválido");
   let since: string | null = null;
   if (q.since) {
@@ -83,15 +86,27 @@ function evidenceTypesFor(types: string[]): string[] {
  * corriendo no espera: se lee lo que ya está confirmado y el próximo pedido toma el resto.
  */
 export async function assignEventPositions(s: Services): Promise<void> {
-  await s.db.tx(async (t) => {
+  // Solo se corre al leer la API, así que entre lecturas se acumulan registros sin posición de TODAS las organizaciones.
+  // Un solo bloque de SEQUENCER_BATCH dejaba el resto para después: un stream que arranca en "ahora" (currentCursor)
+  // repetía luego como nuevos los registros anteriores que seguían sin posición, y el polling con `since` no veía los
+  // recientes. Se asignan bloques hasta ponerse al día (con tope, por si se escribe más rápido de lo que se asigna).
+  for (let i = 0; i < SEQUENCER_MAX_BATCHES; i++) {
+    if (!(await s.db.one(`SELECT 1 FROM envelope_events WHERE pos IS NULL LIMIT 1`))) return;
+    if ((await assignPositionBlock(s)) < SEQUENCER_BATCH) return;
+  }
+}
+
+/** Un bloque del secuenciador. Devuelve cuántos registros posicionó (0 si otro tiene el lock). */
+async function assignPositionBlock(s: Services): Promise<number> {
+  return s.db.tx(async (t) => {
     const lock = await t.one<{ ok: boolean }>(`SELECT pg_try_advisory_xact_lock($1) AS ok`, [SEQUENCER_LOCK]);
-    if (!lock?.ok) return;
+    if (!lock?.ok) return 0;
     const pending = await t.query<{ id: string }>(
       // Orden por la columna numérica: con el alias de texto, ORDER BY id ordenaba "10" antes que "3".
       `SELECT ev.id::text AS id FROM envelope_events ev
         WHERE ev.pos IS NULL ORDER BY ev.id LIMIT ${SEQUENCER_BATCH}`,
     );
-    if (!pending.length) return;
+    if (!pending.length) return 0;
     // El bloque arranca después de lo guardado aunque la secuencia haya quedado atrás (restore, replicación lógica).
     const base = await t.one<{ b: string }>(
       `SELECT GREATEST(nextval('envelope_events_pos_seq'), (SELECT COALESCE(max(pos), 0) + 1 FROM envelope_events))::text AS b`,
@@ -104,6 +119,7 @@ export async function assignEventPositions(s: Services): Promise<void> {
          FROM unnest($1::bigint[]) WITH ORDINALITY AS n(id, ord) WHERE ev.id = n.id`,
       [pending.map((r) => r.id), first.toString()],
     );
+    return pending.length;
   });
 }
 

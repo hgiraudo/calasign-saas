@@ -31,7 +31,7 @@ const es = {
   "pipedrive.hint.deal":
     "Pipedrive · Deal: el contacto principal es la persona del deal; los participantes siguen en orden (contacto 1, 2…). Los campos personalizados se mapean por su key (hash de 40 caracteres) o por su nombre; los de opción única se leen como su etiqueta.",
   "pipedrive.hint.person": "Pipedrive · Person (tipo contact): la persona es el contacto principal (contacto 0). Campos personalizados por key o por nombre.",
-  "pipedrive.statusPlaceholder": "Key o nombre del campo del deal (ej. Estado CalaSign)",
+  "pipedrive.statusPlaceholder": "Key o nombre del campo del deal o la persona (ej. Estado CalaSign)",
   "kind.crm": "CRM",
   "kind.erp": "ERP",
   "zoho.product": "Producto",
@@ -160,7 +160,7 @@ const pt: Record<Key, string> = {
   "pipedrive.hint.deal":
     "Pipedrive · Deal: o contato principal é a pessoa do deal; os participantes vêm em seguida (contato 1, 2…). Campos personalizados são mapeados pela key (hash de 40 caracteres) ou pelo nome; os de opção única são lidos como o rótulo.",
   "pipedrive.hint.person": "Pipedrive · Person (tipo contact): a pessoa é o contato principal (contato 0). Campos personalizados pela key ou pelo nome.",
-  "pipedrive.statusPlaceholder": "Key ou nome do campo do deal (ex. Estado CalaSign)",
+  "pipedrive.statusPlaceholder": "Key ou nome do campo do deal ou da pessoa (ex. Estado CalaSign)",
   "kind.crm": "CRM",
   "kind.erp": "ERP",
   "zoho.product": "Produto",
@@ -287,7 +287,7 @@ const en: Record<Key, string> = {
   "pipedrive.hint.deal":
     "Pipedrive · Deal: the primary contact is the deal's person; participants follow in order (contact 1, 2…). Custom fields are mapped by key (40-character hash) or by name; single-option fields are read as their label.",
   "pipedrive.hint.person": "Pipedrive · Person (contact type): the person is the primary contact (contact 0). Custom fields by key or by name.",
-  "pipedrive.statusPlaceholder": "Deal field key or name (e.g. CalaSign status)",
+  "pipedrive.statusPlaceholder": "Deal or person field key or name (e.g. CalaSign status)",
   "kind.crm": "CRM",
   "kind.erp": "ERP",
   "zoho.product": "Product",

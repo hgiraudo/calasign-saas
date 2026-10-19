@@ -42,6 +42,7 @@ import { sendEnvelope } from "../envelopes";
 import { ownerCanStillCreate } from "../owner-check";
 import { insertEnvelopeFromTemplate, loadTemplateForUse, planFromTemplate } from "../templates";
 import { MappingError, mapPrefill, mapRecipients, neededProperties, statusForEvidence, statusValue } from "../crm/mapping";
+import { statusRank } from "../crm";
 import { evidenceCertificate, loadSignedBundle } from "./evidence-file";
 import {
   Conn,
@@ -366,7 +367,18 @@ async function writeBack(d: { db: Db; blobs: BlobStore }, conn: Conn, link: any,
   const { db } = d;
   const wb = { uploadSigned: true, uploadEvidence: false, ...(flow?.write_back ?? {}) };
   const detail: Record<string, unknown> = {};
-  if (status === "sent" && link.last_status && link.last_status !== "sent") return { skipped: `el registro ya tiene el estado final ${link.last_status}` };
+  // Los trabajos "sent" y "completed" del mismo vínculo pueden correr a la vez (la cola procesa en paralelo): leer
+  // last_status al arrancar no alcanzaba y un "sent" podía pisar el estado final (y quedar como last_status). Como en
+  // crm/index.ts: se reclama el vínculo por rango antes de escribir y, después, si otro reclamó uno mayor, se reescribe.
+  const claimed = await db.one(`UPDATE connector_links SET last_status = $2 WHERE id = $1 AND ${LINK_RANK_SQL} <= $3 RETURNING id`, [
+    link.id,
+    status,
+    statusRank(status),
+  ]);
+  if (!claimed) {
+    const cur = await db.one<{ last_status: string | null }>(`SELECT last_status FROM connector_links WHERE id = $1`, [link.id]);
+    return { skipped: `el registro ya tiene el estado ${cur?.last_status ?? "?"}` };
+  }
   const objectType = link.object_type as ConnectorObjectType;
   if (status === "completed" && !link.delivered_at) {
     const bundle = await loadSignedBundle(db, d.blobs, link.envelope_id);
@@ -395,10 +407,17 @@ async function writeBack(d: { db: Db; blobs: BlobStore }, conn: Conn, link: any,
     const value = statusValue(wb, status as any);
     await writeStatus(conn, objectType, link.object_id, wb.statusProperty, value);
     detail.statusWritten = { property: wb.statusProperty, value };
+    const after = (await db.one<{ last_status: string | null }>(`SELECT last_status FROM connector_links WHERE id = $1`, [link.id]))?.last_status ?? null;
+    if (after && statusRank(after) > statusRank(status)) {
+      const finalValue = statusValue(wb, after as any);
+      await writeStatus(conn, objectType, link.object_id, wb.statusProperty, finalValue);
+      detail.statusRewritten = { property: wb.statusProperty, value: finalValue, because: after };
+    }
   }
-  await db.query(`UPDATE connector_links SET last_status = $2 WHERE id = $1`, [link.id, status]);
   return detail;
 }
+
+const LINK_RANK_SQL = `(CASE WHEN last_status IS NULL THEN 0 WHEN last_status = 'sent' THEN 1 ELSE 2 END)`;
 
 export async function handleConnectorJob(d: { db: Db; blobs: BlobStore }, p: { runId: string }) {
   const { db } = d;

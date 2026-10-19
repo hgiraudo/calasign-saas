@@ -172,6 +172,10 @@ export async function signingIdentityFor(db: Db, r: any, e: any, opts: { revealS
 
 export type { CertificateIdentity };
 
+export function maskDocNumber(n: string | null): string | null {
+  return maskDoc(n);
+}
+
 function maskDoc(n: string | null): string | null {
   if (!n) return null;
   const s = n.replace(/\s+/g, "");

@@ -100,13 +100,14 @@ export function VerifyPage() {
           <ErrorBox error={error} />
         </div>
 
-        {result && (
-          <div className="final card" data-testid={result.match ? "verify-match" : "verify-nomatch"}>
-            <div className={`final-icon ${result.match ? "ok" : ""}`} aria-hidden="true">
-              {result.match ? "✓" : "✕"}
+        {result && (() => { const broken = Boolean(result.match && result.chain && !result.chain.ok); return (
+          <div className="final card" data-testid={result.match ? "verify-match" : "verify-nomatch"} role={broken ? "alert" : undefined}>
+            {/* Cadena de eventos rota: no se muestra "Documento válido ✓" aunque el PDF coincida. */}
+            <div className={`final-icon ${result.match && !broken ? "ok" : ""}`} aria-hidden="true">
+              {result.match ? (broken ? "!" : "✓") : "✕"}
             </div>
-            <h1>{result.match ? sx("verify.matchTitle") : sx("verify.noMatchTitle")}</h1>
-            <p className="muted">{result.match ? sx("verify.matchText") : sx("verify.noMatchText")}</p>
+            <h1>{result.match ? (broken ? sx("verify.brokenTitle") : sx("verify.matchTitle")) : sx("verify.noMatchTitle")}</h1>
+            <p className="muted">{result.match ? (broken ? sx("verify.brokenText") : sx("verify.matchText")) : sx("verify.noMatchText")}</p>
             {result.match && result.version && !result.version.isLatest && (
               <p className="notice" role="status" data-testid="verify-older-version">
                 {sx("verify.olderVersion")
@@ -158,7 +159,7 @@ export function VerifyPage() {
               {sx("verify.hash")}: {result.sha256}
             </p>
           </div>
-        )}
+        ); })()}
         {report && (
           <div className="card pad">
             <ValidationReportView report={report} />

@@ -49,6 +49,9 @@ const L = {
     statement:
       "Este documento fue firmado electrónicamente mediante CalaSign. Cada evento queda encadenado por hash y el PDF está sellado " +
       "digitalmente (PAdES) con sello de tiempo: cualquier modificación posterior invalida el sello.",
+    statementNoTimestamp:
+      "Este documento fue firmado electrónicamente mediante CalaSign. Cada evento queda encadenado por hash y el PDF está sellado " +
+      "digitalmente (PAdES), sin sello de tiempo de una autoridad externa: cualquier modificación posterior invalida el sello.",
     attachments: "Adjuntos",
     payments: "Pagos",
     paidBy: "Pagado por",
@@ -125,6 +128,9 @@ const L = {
     statement:
       "Este documento foi assinado eletronicamente por meio da CalaSign. Cada evento é encadeado por hash e o PDF é selado " +
       "digitalmente (PAdES) com carimbo do tempo: qualquer alteração posterior invalida o selo.",
+    statementNoTimestamp:
+      "Este documento foi assinado eletronicamente por meio da CalaSign. Cada evento é encadeado por hash e o PDF é selado " +
+      "digitalmente (PAdES), sem carimbo do tempo de uma autoridade externa: qualquer alteração posterior invalida o selo.",
     attachments: "Anexos",
     payments: "Pagamentos",
     paidBy: "Pago por",
@@ -201,6 +207,9 @@ const L = {
     statement:
       "This document was electronically signed with CalaSign. Every event is hash-chained and the PDF is digitally sealed " +
       "(PAdES) with a timestamp: any later modification invalidates the seal.",
+    statementNoTimestamp:
+      "This document was electronically signed with CalaSign. Every event is hash-chained and the PDF is digitally sealed " +
+      "(PAdES), without a timestamp from an external authority: any later modification invalidates the seal.",
     attachments: "Attachments",
     payments: "Payments",
     paidBy: "Paid by",
@@ -247,5 +256,5 @@ export function labels(locale: string, productName?: string | null): CertLabels 
       : s
           .replace(/ (mediante|por meio da|with) CalaSign/g, "")
           .replace(/^CalaSign · /, "");
-  return { ...base, statement: fix(base.statement), pageFooter: fix(base.pageFooter) };
+  return { ...base, statement: fix(base.statement), statementNoTimestamp: fix(base.statementNoTimestamp), pageFooter: fix(base.pageFooter) };
 }

@@ -93,6 +93,8 @@ export interface CertificateData {
   recipients: CertificateRecipient[];
   events: { seq: number; type: string; occurredAt: string; actor: string; ip: string | null }[];
   chainHead: string;
+  /** false si el sello va sin sello de tiempo (la TSA falló y no era obligatoria): el texto no lo afirma. */
+  timestamped?: boolean;
   /** URL pública de verificación (se imprime al pie del certificado). */
   verifyUrl?: string | null;
   /** Archivos que subieron los firmantes (se listan con su hash). */
@@ -530,7 +532,9 @@ async function drawCertificate(
     }
     page.drawText(String(e.seq), { x: cols[0], y: y - 8, size: 7.5, font: fonts.regular, color: INK });
     page.drawText(fmt(e.occurredAt) ?? "", { x: cols[1], y: y - 8, size: 7.5, font: fonts.regular, color: INK });
-    page.drawText(safeText(fonts.regular, e.type), { x: cols[2], y: y - 8, size: 7.5, font: fonts.regular, color: INK });
+    // Tipos largos (recipient.embedded_session_started) se achican para no pisar la columna de actor / IP.
+    const typeText = safeText(fonts.regular, e.type);
+    page.drawText(typeText, { x: cols[2], y: y - 8, size: fitFontSize(fonts.regular, typeText, cols[3] - cols[2] - 4, 7.5), font: fonts.regular, color: INK });
     actorLines.forEach((line, i) => page.drawText(line, { x: cols[3], y: y - 8 - i * 10.5, size: 7.5, font: fonts.regular, color: INK }));
     y -= rowH;
   }
@@ -538,7 +542,7 @@ async function drawCertificate(
   section(L.chainHead);
   text(c.chainHead, { size: 8.5 });
   y -= 6;
-  text(L.statement, { size: 8, color: MUTED });
+  text(c.timestamped === false ? L.statementNoTimestamp : L.statement, { size: 8, color: MUTED });
   if (c.verifyUrl) text(`${L.verifyAt} ${c.verifyUrl}`, { size: 8, color: MUTED });
 
   pagesAdded.forEach((p, i) => {

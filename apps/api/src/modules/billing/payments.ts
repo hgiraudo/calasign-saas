@@ -70,9 +70,9 @@ export function paymentProviders(): PaymentProviderInfo[] {
   }));
 }
 
-function formatAmount(amount: number, currency: string) {
+function formatAmount(amount: number, currency: string, locale = "es") {
   try {
-    return new Intl.NumberFormat("es", { style: "currency", currency }).format(amount);
+    return new Intl.NumberFormat(locale === "pt-BR" ? "pt-BR" : locale === "en" ? "en-US" : "es", { style: "currency", currency }).format(amount);
   } catch {
     return `${amount.toFixed(2)} ${currency}`;
   }
@@ -101,16 +101,17 @@ export async function paymentBlocksCompletion(db: Db, tenantId: string, envelope
 }
 
 /** Datos del pago para el certificado de finalización. */
-export async function paymentsForCertificate(db: Db, envelopeId: string) {
+export async function paymentsForCertificate(db: Db, envelopeId: string, locale = "es") {
   const rows = await db.query<any>(
     `SELECT p.*, r.name AS payer_name FROM envelope_payments p JOIN recipients r ON r.id = p.recipient_id WHERE p.envelope_id = $1 AND p.status = 'paid'`,
     [envelopeId],
   );
   return rows.map((p) => ({
     description: p.description,
-    amount: formatAmount(Number(p.amount), p.currency),
+    // En el idioma del certificado (antes siempre en español).
+    amount: formatAmount(Number(p.amount), p.currency, locale),
     payerName: p.payer_name,
-    provider: p.provider === "mercadopago" ? "Mercado Pago" : p.provider === "stripe" ? "Stripe" : "Simulado",
+    provider: p.provider === "mercadopago" ? "Mercado Pago" : p.provider === "stripe" ? "Stripe" : locale === "en" ? "Simulated" : "Simulado",
     reference: p.provider_payment_id ?? p.checkout_id ?? p.id,
     paidAt: p.paid_at ? new Date(p.paid_at).toISOString() : null,
   }));

@@ -2,7 +2,7 @@ import { addCadesSignatureIncremental, finalizeEnvelopePdf, type CertificateReci
 import { certsignStage } from "./certsign";
 import { config } from "../config";
 import type { Db } from "../infra/db";
-import { SYSTEM, appendEvent } from "../infra/evidence";
+import { SYSTEM, appendEvent, verifyChain } from "../infra/evidence";
 import { enqueue, requeueStuckJobs, type JobHandler, type JobQueueName } from "../infra/queue";
 import { getSealProvider } from "../infra/seal";
 import { applyEvidencePipeline, planEvidence } from "./evidence-seal";
@@ -25,7 +25,7 @@ import { brandLogoForPdf, recheckWhiteLabelDomains } from "./white-label";
 import { handlePlatformJob } from "./platform-fanout";
 import { recheckVerifiedDomains, tenantBaseUrl } from "./custom-domains";
 import { dataSweep } from "./data";
-import { identityForCertificate } from "./identity/kyc";
+import { identityForCertificate, maskDocNumber } from "./identity/kyc";
 import { closeStaleCheckouts, paymentsForCertificate, refundPaymentsOnClosedEnvelopes } from "./billing/payments";
 import { runAiSweep } from "./ai";
 import { agreementsSweep, handleAgreementsJob } from "./agreements";
@@ -37,6 +37,29 @@ interface Deps {
 }
 
 const LINK_KINDS: TemplateKind[] = ["invite", "reminder", "completed", "expiry_warning", "certificate_request"];
+
+const waParam = (v: string) => (v ?? "").replace(/[\r\n\t]+/g, " ").replace(/ {4,}/g, "   ").trim() || "-";
+
+/**
+ * Texto para Telegram: sin el pie de la plataforma (solo el último "— …", no el primero: un mensaje firmado
+ * "Saludos,\n— Juan" perdía todo lo que seguía) y dentro del tope de 4096 caracteres de Telegram.
+ */
+function telegramText(subject: string, text: string): string {
+  const i = text.lastIndexOf("\n— ");
+  const body = i >= 0 ? text.slice(0, i) : text;
+  const full = `${subject}\n\n${body}`;
+  const cps = [...full];
+  return cps.length > 4000 ? cps.slice(0, 3999).join("") + "…" : full;
+}
+
+const escHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+
+/** Agrega un párrafo al final del HTML del correo (antes de </body>). */
+function withHtmlHint(html: string, hint: string, url: string): string {
+  const p = `<p style="font-family:Arial,sans-serif;font-size:13px;color:#475569;text-align:center;margin:12px 0">${escHtml(hint)} <a href="${escHtml(url)}">${escHtml(url)}</a></p>`;
+  const i = html.lastIndexOf("</body>");
+  return i >= 0 ? html.slice(0, i) + p + html.slice(i) : html + p;
+}
 
 /** Plantilla de WhatsApp para cada aviso; un aviso sin plantilla propia no sale por WhatsApp. */
 function whatsappTemplate(kind: TemplateKind): string | null {
@@ -185,12 +208,14 @@ async function notify(
         channel,
         to,
         subject: m.subject,
-        text: channel === "telegram" ? `${m.subject}\n\n${m.text.replace(/\n— .*$/s, "")}` : m.text + (channel === "email" ? extra : ""),
-        html: m.html,
+        text: channel === "telegram" ? telegramText(m.subject, m.text) : m.text + (channel === "email" ? extra : ""),
+        // El aviso para vincular Telegram también en la versión HTML (casi todos los clientes muestran esa).
+        html: channel === "email" && tgLink ? withHtmlHint(m.html, TELEGRAM_HINT[locale as keyof typeof TELEGRAM_HINT] ?? TELEGRAM_HINT.es, tgLink) : m.html,
         link,
         cta: m.cta,
         locale,
-        templateParams: [base.senderName, e.subject, link ?? ""],
+        // WhatsApp rechaza parámetros vacíos o con saltos de línea/tabulaciones.
+        templateParams: [base.senderName, e.subject, link ?? "-"].map(waParam),
         ...(waTemplate ? { template: waTemplate } : {}),
         tenantId: e.tenant_id,
         ...(channel === "email" ? from : {}),
@@ -311,7 +336,8 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
     role: r.role,
     email: r.email,
     phone: r.phone,
-    idDocument: r.id_document_number ? `${(r.id_document_type ?? "").toUpperCase()} ${r.id_document_number}`.trim() : null,
+    // Enmascarado como el de la verificación de identidad: el certificado lo reciben todos los destinatarios.
+    idDocument: r.id_document_number ? `${(r.id_document_type ?? "").toUpperCase()} ${maskDocNumber(r.id_document_number)}`.trim() : null,
     channels: r.channels,
     authMethod: inPersonLabels.get(r.id) ?? (r.embedded ? embeddedAuthLabel(e.locale) : r.auth_method),
     sentAt: r.sent_at ? new Date(r.sent_at).toISOString() : null,
@@ -326,7 +352,11 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
     certificateSignature: r.role === "signer" && r.signature_type === "certificate",
   }));
   let completedAt = new Date().toISOString();
-  let chainHead = events[events.length - 1]?.hash ?? "";
+  // El certificado imprime el hash final y afirma que los eventos están encadenados: con la cadena rota (filas editadas)
+  // no se sella (el job falla y se avisa) en lugar de darle apariencia de auténtica.
+  const chain = await verifyChain(d.db, e.id);
+  if (!chain.ok) throw new Error(`la cadena de evidencia está rota en el evento ${chain.brokenAt}: no se sella`);
+  let chainHead = chain.head || (events[events.length - 1]?.hash ?? "");
 
   // Adjuntos de los firmantes y branding de la organización. Los de campos ocultos por la lógica no van: el
   // firmante subió el archivo y después eligió una opción que lo deja fuera (p. ej. "no aplica"), y el PDF final
@@ -379,7 +409,7 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
       // ?b=: la página de verificación muestra la marca aunque se abra desde el dominio de la plataforma.
       verifyUrl: rebrands(wl) || e.brand_id ? `${wl.baseUrl}/verify?b=${encodeURIComponent(wl.key)}` : `${wl.baseUrl}/verify`,
       attachments: attachments.map((x) => ({ name: x.name, recipientName: x.recipientName, sha256: x.sha256, appended: true })),
-      payments: await paymentsForCertificate(d.db, e.id),
+      payments: await paymentsForCertificate(d.db, e.id, e.locale),
       branding: { primaryColor: wl.theme.primaryColor, logo: brandLogo },
       productName: rebrands(wl) ? productLabel(wl) : undefined,
       ...evPlan.certificate,
@@ -399,6 +429,7 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
       : finalizeEnvelopePdf(input, { provider, tsaUrl, reason: `Sello de integridad ${productLabel(wl)}`, signerName: productLabel(wl), contactInfo: wl.links.supportUrl ?? wl.baseUrl });
 
   let timestamped = Boolean(config.seal.tsaUrl);
+  (input.certificate as { timestamped?: boolean }).timestamped = timestamped;
   let tsaError: string | null = null;
   let pdf: Uint8Array;
   try {
@@ -410,6 +441,7 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
     // La TSA falló: si no es obligatoria, se sella en B-B y queda constancia.
     tsaError = String(err);
     timestamped = false;
+    (input.certificate as { timestamped?: boolean }).timestamped = false; // el certificado no afirma un sello de tiempo
     d.log.warn({ envelopeId: e.id, err: tsaError }, "TSA no disponible: sellado sin sello de tiempo");
     pdf = await sealOnce(null);
   }

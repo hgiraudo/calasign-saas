@@ -274,10 +274,15 @@ const pd = {
   notes: [],
   puts: [],
 };
-function pdIssue() {
+// Dos compañías de Pipedrive: A (5150, acme) y B (6160, beta). Cada token vale para la suya; pd.valid.clear() vence todos.
+pd.valid = new Map();
+pd.nextCompany = "A";
+const PD_COMPANIES = { A: { company_id: 5150, company_name: "ACME", company_domain: "acme", rt: "pd-rt" }, B: { company_id: 6160, company_name: "Beta", company_domain: "beta", rt: "pd-rt-b" } };
+function pdIssue(company = "A") {
   pd.tokens++;
   pd.token = `pd-at-${pd.tokens}`;
-  return { access_token: pd.token, refresh_token: "pd-rt", expires_in: 3599, token_type: "Bearer", scope: "deals:full,contacts:read", api_domain: `http://127.0.0.1:${P.pd}` };
+  pd.valid.set(pd.token, company);
+  return { access_token: pd.token, refresh_token: PD_COMPANIES[company].rt, expires_in: 3599, token_type: "Bearer", scope: "deals:full,contacts:read", api_domain: `http://127.0.0.1:${P.pd}` };
 }
 const pdPersonRef = (id) => {
   const p = pd.persons[id];
@@ -288,7 +293,7 @@ await serve(P.pd, async ({ req, url, body, json, send }) => {
   if (path === "/oauth/authorize") {
     if (url.searchParams.get("client_id") !== "pd-client" || url.searchParams.get("client_secret")) return send(400, { error: "invalid_request" });
     const code = `pd-code-${randomUUID()}`;
-    pd.codes.set(code, url.searchParams.get("redirect_uri"));
+    pd.codes.set(code, { redirect: url.searchParams.get("redirect_uri"), company: pd.nextCompany });
     return send(302, undefined, { location: `${url.searchParams.get("redirect_uri")}?code=${code}&state=${encodeURIComponent(url.searchParams.get("state"))}` });
   }
   if (path === "/oauth/token") {
@@ -296,19 +301,25 @@ await serve(P.pd, async ({ req, url, body, json, send }) => {
     const f = new URLSearchParams(body.toString());
     if (f.get("client_secret")) return send(400, { error: "invalid_request", error_description: "secret en el cuerpo" });
     if (f.get("grant_type") === "authorization_code") {
-      if (!pd.codes.has(f.get("code")) || pd.codes.get(f.get("code")) !== f.get("redirect_uri")) return send(400, { error: "invalid_grant" });
+      const c = pd.codes.get(f.get("code"));
+      if (!c || c.redirect !== f.get("redirect_uri")) return send(400, { error: "invalid_grant" });
       pd.codes.delete(f.get("code"));
-      return send(200, pdIssue());
+      return send(200, pdIssue(c.company));
     }
-    if (f.get("grant_type") === "refresh_token" && f.get("refresh_token") === "pd-rt") {
+    const byRt = Object.keys(PD_COMPANIES).find((k) => PD_COMPANIES[k].rt === f.get("refresh_token"));
+    if (f.get("grant_type") === "refresh_token" && byRt) {
       pd.refreshes++;
-      return send(200, pdIssue());
+      return send(200, pdIssue(byRt));
     }
     return send(400, { error: "invalid_grant" });
   }
-  if ((req.headers.authorization ?? "") !== `Bearer ${pd.token}`) return send(401, { success: false, error: "unauthorized access", errorCode: 401 });
+  const pdCompany = pd.valid.get(String(req.headers.authorization ?? "").replace(/^Bearer /, ""));
+  if (!pdCompany) return send(401, { success: false, error: "unauthorized access", errorCode: 401 });
   let m;
-  if (path === "/api/v1/users/me") return send(200, { success: true, data: { id: 1, email: "admin@acme.test", company_id: 5150, company_name: "ACME", company_domain: "acme" } });
+  if (path === "/api/v1/users/me") {
+    const { rt: _rt, ...co } = PD_COMPANIES[pdCompany];
+    return send(200, { success: true, data: { id: 1, email: `admin@${co.company_domain}.test`, ...co } });
+  }
   if (path === "/api/v1/dealFields") return send(200, { success: true, data: pd.fields });
   if (path === "/api/v1/personFields") return send(200, { success: true, data: [{ key: "name", name: "Name", field_type: "varchar" }] });
   if ((m = path.match(/^\/api\/v1\/deals\/(\d+)\/participants$/))) {
@@ -1135,7 +1146,7 @@ step("Salesforce: OAuth con PKCE S256, contacto principal (OpportunityContactRol
   await waitFor(() => pd.deals[42][PD_STATUS] === 11, "write-back «Enviado» (opción 11) en Pipedrive");
   step("Pipedrive: envío desde el deal 42 (persona principal + participante, monto) y write-back en un campo de opción única");
 
-  pd.token = "expired"; // el access token deja de valer: 401 → refresh → reintento
+  pd.valid.clear(); // el access token deja de valer: 401 → refresh → reintento
   await signAll(pdSent.envelopeId, ["Paula Principal PD", "Pedro Participante PD"]);
   await waitFor(() => pd.deals[42][PD_STATUS] === 12 && pd.notes.length === 1, "write-back «Firmado» + nota");
   assert(pd.refreshes >= 1, "Pipedrive: se refrescó el token");
@@ -1165,6 +1176,31 @@ step("Salesforce: OAuth con PKCE S256, contacto principal (OpportunityContactRol
   const missing = await api("POST", `/v1/crm/mappings/${pdPersonMap.id}/send`, { objectId: "999" }, { expect: 404 });
   assert(missing.error.code === "crm_record_not_found", "persona inexistente → 404");
   step("Pipedrive: envío desde una Person (borrador) y registro inexistente → 404");
+
+  // Dos compañías conectadas: la acción abierta desde la compañía A (companyId 5150) no ofrece los mapeos de la
+  // conexión de B, y un envío con un mapeo de B se rechaza (leería el deal 42 de B y le mandaría el sobre a otros).
+  pd.nextCompany = "B";
+  const pdConnB = await oauthConnect("pipedrive", "Pipedrive Beta");
+  pd.nextCompany = "A";
+  assert(pdConnB?.accountLabel === "beta.pipedrive.com", `conexión de la compañía B (${pdConnB?.accountLabel})`);
+  const pdMapB = await api("POST", "/v1/crm/mappings", {
+    connectionId: pdConnB.id,
+    name: "Deals Beta",
+    objectType: "deal",
+    templateId: template.id,
+    roles: [{ role: "Cliente", source: "contact_role", primary: true }, { role: "Vendedor", source: "contact", index: 1 }],
+    send: false,
+  });
+  const forA = (await api("GET", "/v1/crm/mappings?provider=pipedrive&companyId=5150")).items.map((x) => x.id).sort();
+  assert(forA.join() === [pdMap.id, pdPersonMap.id].sort().join(), `con companyId de A no aparece el mapeo de B (${forA.length})`);
+  const forB = (await api("GET", "/v1/crm/mappings?provider=pipedrive&companyId=6160")).items.map((x) => x.id);
+  assert(forB.length === 1 && forB[0] === pdMapB.id, "con companyId de B solo el de B");
+  assert((await api("GET", "/v1/crm/mappings?provider=pipedrive")).items.length === 3, "sin companyId, todos los de Pipedrive");
+  const mismatch = await api("POST", `/v1/crm/mappings/${pdMapB.id}/send`, { objectId: "42", companyId: "5150" }, { expect: 409 });
+  assert(mismatch.error.code === "company_mismatch", "mapeo de B enviado desde A → 409 company_mismatch");
+  const okB = await api("POST", `/v1/crm/mappings/${pdMapB.id}/send`, { objectId: "42", companyId: "6160" });
+  assert(okB.status === "draft", "mapeo de B desde B → sobre creado");
+  step("Pipedrive con dos compañías: ?companyId filtra los mapeos por la compañía de la conexión; un mapeo de otra compañía → 409 company_mismatch");
 }
 
 // ── RD Station CRM: OAuth (App Store, refresh token que rota), negociação con contatos, campo de opción, Anexos + anotação ──

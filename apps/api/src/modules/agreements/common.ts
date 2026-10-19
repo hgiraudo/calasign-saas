@@ -14,7 +14,9 @@ export interface Deps {
 
 /** Quita acentos (el buscador no depende de la extensión unaccent: igual en Postgres y PGlite). */
 export function fold(s: string): string {
-  return s.normalize("NFD").replace(/[̀-ͯ]/g, "");
+  // Sin NUL: pdf.js lo devuelve para glifos sin mapeo a Unicode y Postgres rechaza \u0000 en columnas de texto (la
+  // subida o la ingesta del acuerdo fallaban siempre con ese PDF).
+  return s.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\u0000/g, "");
 }
 
 /** Texto de una línea con variables ({{cliente.nombre}}), para títulos, asuntos y destinatarios. */

@@ -266,6 +266,8 @@ export function TemplateEditPage() {
           templateId={id}
           documents={detail.documents}
           setError={setError}
+          busy={busy}
+          setBusy={setBusy}
           onChanged={async () => {
             const d = await api<TemplateDetail>(`/v1/templates/${id}`);
             setDetail(d);
@@ -325,17 +327,25 @@ function TemplateDocuments({
   documents,
   onChanged,
   setError,
+  busy,
+  setBusy,
 }: {
   templateId: string;
   documents: Document[];
   onChanged: () => Promise<void>;
   setError: (e: string | null) => void;
+  busy: boolean;
+  setBusy: (b: boolean) => void;
 }) {
   const { t } = useI18n();
   const [uploading, setUploading] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Mientras se sube o se borra, la página queda ocupada (no se puede pasar de paso): al terminar, la recarga
+  // reemplaza los campos y lo editado en el paso de campos se perdía sin aviso.
   const upload = async (files: FileList) => {
+    if (busy) return;
+    setBusy(true);
     setError(null);
     for (const file of Array.from(files)) {
       setUploading(file.name);
@@ -353,15 +363,21 @@ function TemplateDocuments({
     // Fuera del try de cada archivo: si la recarga fallaba, el rechazo quedaba sin manejar y la lista sin actualizar
     // ni aviso.
     await onChanged().catch((e) => setError(errorText(e)));
+    setBusy(false);
   };
 
   const remove = async (docId: string) => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
     try {
       await api(`/v1/templates/${templateId}/documents/${docId}`, { method: "DELETE" });
       forgetPdf(`/v1/templates/${templateId}/documents/${docId}/file`);
       await onChanged();
     } catch (e) {
       setError(errorText(e));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -377,7 +393,7 @@ function TemplateDocuments({
             accept="application/pdf,.pdf"
             multiple
             hidden
-            disabled={!!uploading}
+            disabled={busy}
             onChange={(e) => e.target.files && upload(e.target.files)}
           />
         </label>
@@ -395,7 +411,7 @@ function TemplateDocuments({
                   {d.pageCount} {t("edit.pages")} · {formatBytes(d.sizeBytes)}
                 </div>
               </div>
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => remove(d.id)}>
+              <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => remove(d.id)}>
                 {t("common.delete")}
               </button>
             </li>

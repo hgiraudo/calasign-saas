@@ -288,23 +288,31 @@ function SignerPaymentPanel({ base, info, onPaid }: { base: string; info: Signer
   const onPaidRef = useRef(onPaid);
   onPaidRef.current = onPaid;
 
-  // Al volver del proveedor, el webhook puede tardar unos segundos: se consulta hasta ver el pago confirmado.
+  // Al volver del proveedor, el webhook puede tardar: se consulta hasta ver el pago confirmado. Cada 3 s el primer minuto
+  // y medio y después cada 30 s (antes se dejaba de consultar a los 90 s y quedaba "confirmando" para siempre, con la
+  // firma bloqueada si el pago era previo, hasta recargar la página).
   useEffect(() => {
     if (returned !== "success" || info.status === "paid") return;
     let n = 0;
-    const id = window.setInterval(() => {
-      n++;
+    let id = 0;
+    let done = false;
+    const tick = () => {
       api<SignerPaymentInfo>(`${base}/payment`)
         .then((r) => {
-          if (r.status === "paid") {
-            window.clearInterval(id);
+          if (r.status === "paid" && !done) {
+            done = true;
+            window.clearTimeout(id);
             onPaidRef.current();
           }
         })
         .catch(() => {});
-      if (n > 30) window.clearInterval(id);
-    }, 3000);
-    return () => window.clearInterval(id);
+      if (!done) id = window.setTimeout(tick, ++n < 30 ? 3000 : 30000);
+    };
+    id = window.setTimeout(tick, 3000);
+    return () => {
+      done = true;
+      window.clearTimeout(id);
+    };
   }, [returned, info.status, base]);
 
   const pay = async () => {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
 import type { EnvelopeDetail, EnvelopeEvent } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
@@ -36,16 +36,22 @@ export function EnvelopeDetailPage() {
   const x = useExpText();
   const [correcting, setCorrecting] = useState(false);
 
+  // Solo se aplica la carga más reciente: un refresco automático pedido antes de anular o corregir que respondía
+  // después volvía a mostrar el sobre como estaba (en curso, con los botones de acción habilitados).
+  const seq = useRef(0);
   const load = useCallback(async () => {
+    const mine = ++seq.current;
     try {
       const [d, ev] = await Promise.all([
         api<EnvelopeDetail>(`/v1/envelopes/${id}`),
         api<{ items: EnvelopeEvent[] }>(`/v1/envelopes/${id}/events`),
       ]);
+      if (mine !== seq.current) return;
       setDetail(d);
       setEvents(ev.items);
       setLoadError(null);
     } catch (e) {
+      if (mine !== seq.current) return;
       if ((e as { status?: number }).status === 404) setNotFound(true);
       setLoadError(errorText(e));
     }

@@ -367,10 +367,11 @@ async function drawCertificate(
       y -= size * 1.4;
     }
   };
-  const kv = (k: string, v: string | null | undefined, x = M, keyW = 150) => {
+  /** `right`: borde derecho de los valores (por defecto el margen; en un destinatario con firma, antes del recuadro). */
+  const kv = (k: string, v: string | null | undefined, x = M, keyW = 150, right = A4.w - M) => {
     if (!v) return;
     const size = 8.5;
-    const lines = wrapText(fonts.regular, safeMultiline(fonts.regular, v), size, contentW - (x - M) - keyW);
+    const lines = wrapText(fonts.regular, safeMultiline(fonts.regular, v), size, right - x - keyW);
     // El bloque entero junto si entra en una página; si no (un motivo de 1000 caracteres con un salto por línea son
     // cientos de líneas), sigue en la página siguiente línea por línea en vez de dibujarse fuera de la hoja.
     ensure(Math.min(size * 1.4 * lines.length, A4.h - 2 * M - 20));
@@ -450,36 +451,39 @@ async function drawCertificate(
     // empezó el bloque): `top` es una coordenada de esa página, y en la nueva caía encima del destinatario siguiente.
     const topPage = page;
     const ix = M + 12;
-    kv(L.email, r.email, ix);
-    kv(L.phone, r.phone, ix);
-    kv(L.idDocument, r.idDocument, ix);
-    kv(L.channels, r.channels.join(", "), ix);
-    if (r.role !== "cc") kv(L.auth, authLabel(L, r.authMethod), ix);
-    kv(L.sent, fmt(r.sentAt), ix);
-    kv(L.viewed, fmt(r.viewedAt), ix);
-    kv(L.consented, fmt(r.consentedAt), ix);
-    kv(r.role === "approver" ? L.approved : L.signed, fmt(r.signedAt), ix);
-    kv(L.note, r.note ?? null, ix);
-    if (r.certificateSignature) kv(L.certSignature, L.certSignatureNote, ix);
+    // Recuadro de la firma, a la derecha del bloque: los valores cortan antes. Si no, un correo o un motivo largo
+    // seguía por debajo de la imagen de la firma y quedaba tapado en el certificado.
+    const boxW = 130;
+    const boxH = 48;
+    const valueRight = r.signaturePng ? A4.w - M - boxW - 12 : A4.w - M;
+    kv(L.email, r.email, ix, 150, valueRight);
+    kv(L.phone, r.phone, ix, 150, valueRight);
+    kv(L.idDocument, r.idDocument, ix, 150, valueRight);
+    kv(L.channels, r.channels.join(", "), ix, 150, valueRight);
+    if (r.role !== "cc") kv(L.auth, authLabel(L, r.authMethod), ix, 150, valueRight);
+    kv(L.sent, fmt(r.sentAt), ix, 150, valueRight);
+    kv(L.viewed, fmt(r.viewedAt), ix, 150, valueRight);
+    kv(L.consented, fmt(r.consentedAt), ix, 150, valueRight);
+    kv(r.role === "approver" ? L.approved : L.signed, fmt(r.signedAt), ix, 150, valueRight);
+    kv(L.note, r.note ?? null, ix, 150, valueRight);
+    if (r.certificateSignature) kv(L.certSignature, L.certSignatureNote, ix, 150, valueRight);
     if (r.identity) {
       const idv = r.identity;
       const levelLabel = (L as Record<string, string>)[`idv_level_${idv.level}`] ?? idv.level;
-      kv(L.idv, `${idv.provider} · ${levelLabel} · ${idv.result === "verified" ? L.idv_verified : L.idv_failed}${idv.verifiedAt ? ` · ${fmt(idv.verifiedAt)}` : ""}`, ix);
-      kv(L.idv_document, idv.document, ix);
+      kv(L.idv, `${idv.provider} · ${levelLabel} · ${idv.result === "verified" ? L.idv_verified : L.idv_failed}${idv.verifiedAt ? ` · ${fmt(idv.verifiedAt)}` : ""}`, ix, 150, valueRight);
+      kv(L.idv_document, idv.document, ix, 150, valueRight);
       const matches: string[] = [];
       if (idv.nameScore != null) matches.push(`${L.idv_name} ${Math.round(idv.nameScore * 100)} %`);
       if (idv.documentNumberMatched === true) matches.push(L.idv_docnum);
       if (idv.faceMatchScore != null) matches.push(`${L.idv_face} ${Math.round(idv.faceMatchScore * 100)} %`);
       if (idv.liveness === true) matches.push(L.idv_liveness);
-      kv(L.idv_matched, matches.length ? matches.join(", ") : null, ix);
-      kv(L.idv_reference, idv.reference, ix);
+      kv(L.idv_matched, matches.length ? matches.join(", ") : null, ix, 150, valueRight);
+      kv(L.idv_reference, idv.reference, ix, 150, valueRight);
     }
-    kv(L.ip, r.ip, ix);
-    kv(L.device, r.userAgent ? r.userAgent.slice(0, 160) : null, ix);
+    kv(L.ip, r.ip, ix, 150, valueRight);
+    kv(L.device, r.userAgent ? r.userAgent.slice(0, 160) : null, ix, 150, valueRight);
     if (r.signaturePng) {
       const img = await embedImage(r.signaturePng);
-      const boxW = 130;
-      const boxH = 48;
       const scale = Math.min(boxW / img.width, boxH / img.height);
       const bx = A4.w - M - boxW;
       const byTop = topPage === page ? Math.min(top, y + 200) : top;

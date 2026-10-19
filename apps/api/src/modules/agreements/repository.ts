@@ -22,6 +22,7 @@ import { auditFromRequest } from "../audit";
 import { authenticate, type AuthContext, type Services } from "../context";
 import { tenantBaseUrl } from "../custom-domains";
 import { sendPdf } from "../envelopes";
+import { discardBlobsOnFailure } from "../file-cleanup";
 import {
   agreementVisibilitySql,
   canManageAgreement,
@@ -481,7 +482,8 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
     const key = `tenants/${a.tenantId}/agreements/${fileId}.pdf`;
     await s.blobs.put(key, bytes, "application/pdf");
     const id = uuidv7();
-    await s.db.tx(async (t) => {
+    // Si la transacción falla, el PDF subido no lo referencia nada (sin fila en `files` la retención nunca lo vería).
+    await discardBlobsOnFailure(s.blobs, [key], () => s.db.tx(async (t) => {
       await t.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original',$3,'application/pdf',$4,$5)`, [
         fileId,
         a.tenantId,
@@ -515,7 +517,7 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
           fold(text),
         ],
       );
-    });
+    }));
     await refreshSearchVector(s.db, id);
     await auditFromRequest(s.db, req, a, "agreement.uploaded", { targetType: "agreement", targetId: id, data: { title: meta.title, sha256: sha } });
     reply.code(201);

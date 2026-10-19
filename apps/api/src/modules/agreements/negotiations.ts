@@ -437,7 +437,9 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
     const a = A(req);
     const n = await loadForManage(a, req.params.id);
     if (n.status !== "open") throw conflict("closed", "La negociación ya está cerrada");
-    await s.db.query(`UPDATE negotiations SET status = 'cancelled', updated_at = now() WHERE id = $1`, [n.id]);
+    // Solo si sigue abierta: una aceptación simultánea ya pudo crear (y enviar) el sobre; pisarla la dejaba "cancelada".
+    const upd = await s.db.query(`UPDATE negotiations SET status = 'cancelled', updated_at = now() WHERE id = $1 AND status = 'open' RETURNING id`, [n.id]);
+    if (!upd.length) throw conflict("closed", "La negociación ya está cerrada");
     return fullView(s.db, await loadForUser(a, n.id));
   });
 

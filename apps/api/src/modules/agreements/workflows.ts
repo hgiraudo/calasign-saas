@@ -29,6 +29,7 @@ import { deliver } from "../../notifications/channels";
 import { hasPerm, requirePerm } from "../access";
 import { auditFromRequest } from "../audit";
 import { authenticate, clientInfo, type AuthContext, type Services } from "../context";
+import { deleteBlobsQuietly } from "../file-cleanup";
 import { ownerCanStillCreate } from "../owner-check";
 import { tenantBaseUrl } from "../custom-domains";
 import { assertPublicDestination, safeRequest, signPayload } from "../webhooks";
@@ -57,7 +58,14 @@ interface RunContext {
 }
 
 type StepResult =
-  | { kind: "complete"; output: Record<string, unknown>; patch?: (c: RunContext) => void; tx?: (t: Db, c: RunContext) => Promise<Record<string, unknown> | void> }
+  | {
+      kind: "complete";
+      output: Record<string, unknown>;
+      patch?: (c: RunContext) => void;
+      tx?: (t: Db, c: RunContext) => Promise<Record<string, unknown> | void>;
+      /** Archivos ya subidos que registra `tx`: se borran si el resultado no se confirma. */
+      blobKeys?: string[];
+    }
   | { kind: "wait"; output?: Record<string, unknown>; patch?: (c: RunContext) => void; notify?: () => Promise<void> }
   | { kind: "fail"; error: string; runStatus: "failed" | "rejected" };
 
@@ -151,15 +159,14 @@ export async function advanceRun(d: Deps, runId: string): Promise<void> {
     });
     if (!claim || claim.done) return;
 
-    let result: StepResult;
-    try {
-      result = await executeStep(d, claim.run, claim.step, claim.index);
-    } catch (err) {
+    // Error del paso (al ejecutarlo o al confirmar su resultado): falla definitiva o reintento. Sin registrarlo, el paso
+    // quedaba 'running' y el run trabado para siempre (p. ej. un sobre que no se pudo crear por el límite del plan).
+    const stepFailed = async (err: unknown) => {
       const message = err instanceof Error ? err.message : String(err);
       const final = err instanceof StepFailure || claim.attempts >= MAX_STEP_ATTEMPTS;
       await d.db.tx(async (t) => {
-        const run = await t.one<any>(`SELECT status FROM workflow_runs WHERE id = $1 FOR UPDATE`, [runId]);
-        if (run?.status !== "running") return;
+        const run = await t.one<any>(`SELECT status, current_step FROM workflow_runs WHERE id = $1 FOR UPDATE`, [runId]);
+        if (run?.status !== "running" || run.current_step !== claim.index) return;
         if (final) {
           await t.query(`UPDATE workflow_run_steps SET status = 'failed', error = $3, finished_at = now() WHERE run_id = $1 AND idx = $2`, [runId, claim.index, message.slice(0, 2000)]);
           await t.query(`UPDATE workflow_runs SET status = 'failed', updated_at = now() WHERE id = $1`, [runId]);
@@ -168,47 +175,64 @@ export async function advanceRun(d: Deps, runId: string): Promise<void> {
         }
       });
       d.log.warn({ runId, step: claim.index, attempts: claim.attempts, final, err: message }, "paso de workflow con error");
-      if (final) return;
-      throw new RetryableStepError(message);
+      if (!final) throw new RetryableStepError(message);
+    };
+
+    let result: StepResult;
+    try {
+      result = await executeStep(d, claim.run, claim.step, claim.index);
+    } catch (err) {
+      await stepFailed(err);
+      return;
     }
 
     let continueLoop = false;
+    let committed = false;
     let notify: (() => Promise<void>) | undefined;
-    await d.db.tx(async (t) => {
-      const run = await t.one<any>(`SELECT * FROM workflow_runs WHERE id = $1 FOR UPDATE`, [runId]);
-      if (!run || run.status !== "running" || run.current_step !== claim.index) return; // cancelado mientras tanto
-      const ctx: RunContext = run.context;
-      if (result.kind === "fail") {
-        await t.query(`UPDATE workflow_run_steps SET status = 'failed', error = $3, finished_at = now() WHERE run_id = $1 AND idx = $2`, [runId, claim.index, result.error]);
-        await t.query(`UPDATE workflow_runs SET status = $2, updated_at = now() WHERE id = $1`, [runId, result.runStatus]);
-        return;
-      }
-      result.patch?.(ctx);
-      let output = result.output ?? {};
-      if (result.kind === "complete") {
-        if (result.tx) output = { ...output, ...((await result.tx(t, ctx)) ?? {}) };
-        await t.query(`UPDATE workflow_run_steps SET status = 'completed', output = $3, finished_at = now() WHERE run_id = $1 AND idx = $2`, [
-          runId,
-          claim.index,
-          JSON.stringify(output),
-        ]);
-        await t.query(`UPDATE workflow_runs SET context = $2, current_step = current_step + 1, updated_at = now() WHERE id = $1`, [runId, JSON.stringify(ctx)]);
-        continueLoop = true;
-        return;
-      }
-      // Espera
-      await t.query(`UPDATE workflow_run_steps SET status = 'waiting', output = $3 WHERE run_id = $1 AND idx = $2`, [runId, claim.index, JSON.stringify(output)]);
-      await t.query(`UPDATE workflow_runs SET context = $2, status = 'waiting', updated_at = now() WHERE id = $1`, [runId, JSON.stringify(ctx)]);
-      notify = result.notify;
-      // Esperando un sobre que ya terminó (el evento llegó antes): se resuelve en el acto.
-      if (ctx.waitingEnvelope) {
-        const env = await t.one<any>(`SELECT status FROM envelopes WHERE id = $1`, [ctx.waitingEnvelope]);
-        if (env && ["completed", "declined", "voided", "expired"].includes(env.status)) {
-          await resolveEnvelopeWait(t, runId, ctx.waitingEnvelope, env.status);
-          continueLoop = env.status === "completed";
+    try {
+      await d.db.tx(async (t) => {
+        const run = await t.one<any>(`SELECT * FROM workflow_runs WHERE id = $1 FOR UPDATE`, [runId]);
+        if (!run || run.status !== "running" || run.current_step !== claim.index) return; // cancelado mientras tanto
+        committed = true;
+        const ctx: RunContext = run.context;
+        if (result.kind === "fail") {
+          await t.query(`UPDATE workflow_run_steps SET status = 'failed', error = $3, finished_at = now() WHERE run_id = $1 AND idx = $2`, [runId, claim.index, result.error]);
+          await t.query(`UPDATE workflow_runs SET status = $2, updated_at = now() WHERE id = $1`, [runId, result.runStatus]);
+          return;
         }
-      }
-    });
+        result.patch?.(ctx);
+        let output = result.output ?? {};
+        if (result.kind === "complete") {
+          if (result.tx) output = { ...output, ...((await result.tx(t, ctx)) ?? {}) };
+          await t.query(`UPDATE workflow_run_steps SET status = 'completed', output = $3, finished_at = now() WHERE run_id = $1 AND idx = $2`, [
+            runId,
+            claim.index,
+            JSON.stringify(output),
+          ]);
+          await t.query(`UPDATE workflow_runs SET context = $2, current_step = current_step + 1, updated_at = now() WHERE id = $1`, [runId, JSON.stringify(ctx)]);
+          continueLoop = true;
+          return;
+        }
+        // Espera
+        await t.query(`UPDATE workflow_run_steps SET status = 'waiting', output = $3 WHERE run_id = $1 AND idx = $2`, [runId, claim.index, JSON.stringify(output)]);
+        await t.query(`UPDATE workflow_runs SET context = $2, status = 'waiting', updated_at = now() WHERE id = $1`, [runId, JSON.stringify(ctx)]);
+        notify = result.notify;
+        // Esperando un sobre que ya terminó (el evento llegó antes): se resuelve en el acto.
+        if (ctx.waitingEnvelope) {
+          const env = await t.one<any>(`SELECT status FROM envelopes WHERE id = $1`, [ctx.waitingEnvelope]);
+          if (env && ["completed", "declined", "voided", "expired"].includes(env.status)) {
+            await resolveEnvelopeWait(t, runId, ctx.waitingEnvelope, env.status);
+            continueLoop = env.status === "completed";
+          }
+        }
+      });
+    } catch (err) {
+      if (result.kind === "complete" && result.blobKeys?.length) await deleteBlobsQuietly(d.blobs, result.blobKeys);
+      await stepFailed(err);
+      return;
+    }
+    // Run cancelado (o el paso ya no era el actual) antes de confirmar: los archivos que subió el paso no los referencia nada.
+    if (!committed && result.kind === "complete" && result.blobKeys?.length) await deleteBlobsQuietly(d.blobs, result.blobKeys);
     if (notify) await notify().catch((err) => d.log.warn({ runId, err: String(err) }, "no se pudo notificar el paso"));
     if (!continueLoop) return;
   }
@@ -318,6 +342,7 @@ async function executeStep(d: Deps, run: any, step: WorkflowStep, index: number)
       return {
         kind: "complete",
         output: { fileId: file.fileId, sha256: file.sha256, pages: file.info.pageCount, missing: doc.missing },
+        blobKeys: [file.key],
         tx: async (t) => {
           await insertFileRow(t, run.tenant_id, file);
         },

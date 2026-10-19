@@ -103,9 +103,13 @@ export function AgreementsPage() {
     if (!params.has("q")) setQ(String(viewFilters.q ?? ""));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openView?.id]);
+  // El temporizador usa lo de su último render: con lo capturado al tipear, un filtro elegido en esos 350 ms se perdía
+  // (setParam partía de la URL anterior y la reemplazaba).
+  const latest = useRef({ appliedQ, setParam });
+  latest.current = { appliedQ, setParam };
   useEffect(() => {
     const h = window.setTimeout(() => {
-      if (appliedQ !== q.trim()) setParam("q", q.trim());
+      if (latest.current.appliedQ !== q.trim()) latest.current.setParam("q", q.trim());
     }, 350);
     return () => window.clearTimeout(h);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -634,8 +638,12 @@ function FieldsModal({ fields, onClose }: { fields: AgreementFieldDef[]; onClose
   const [type, setType] = useState<AgreementFieldDef["type"]>("text");
   const [options, setOptions] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // Doble clic en "Agregar": el segundo POST respondía "ya existe un campo con esa clave" aunque el campo se creó.
+  const [busy, setBusy] = useState(false);
   const add = async (e: FormEvent) => {
     e.preventDefault();
+    if (busy) return;
+    setBusy(true);
     setError(null);
     try {
       const f = await api<AgreementFieldDef>("/v1/agreement-fields", {
@@ -659,6 +667,8 @@ function FieldsModal({ fields, onClose }: { fields: AgreementFieldDef[]; onClose
       setOptions("");
     } catch (err) {
       setError(errorText(err));
+    } finally {
+      setBusy(false);
     }
   };
   return (
@@ -733,7 +743,7 @@ function FieldsModal({ fields, onClose }: { fields: AgreementFieldDef[]; onClose
               <input value={options} onChange={(e) => setOptions(e.target.value)} required />
             </label>
           )}
-          <button type="submit" className="btn btn-primary">
+          <button type="submit" className="btn btn-primary" disabled={busy}>
             {ta("fields.add")}
           </button>
         </form>

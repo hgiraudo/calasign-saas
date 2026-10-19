@@ -258,6 +258,8 @@ export function EnvelopeEditPage() {
           documents={detail.documents}
           onChanged={async () => apply(await api<EnvelopeDetail>(`/v1/envelopes/${id}`))}
           setError={setError}
+          busy={busy}
+          setBusy={setBusy}
         />
       )}
 
@@ -338,18 +340,26 @@ function DocumentsStep({
   documents,
   onChanged,
   setError,
+  busy,
+  setBusy,
 }: {
   envelopeId: string;
   documents: Document[];
   onChanged: () => Promise<void>;
   setError: (e: string | null) => void;
+  busy: boolean;
+  setBusy: (b: boolean) => void;
 }) {
   const { t } = useI18n();
   const [uploading, setUploading] = useState<string | null>(null);
   const [over, setOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Mientras se sube o se borra, la página queda ocupada (no se puede pasar de paso): al terminar, la recarga
+  // (apply) reemplaza destinatarios y campos, y lo que se hubiera cargado en el paso siguiente se perdía sin aviso.
   const upload = async (files: FileList | File[]) => {
+    if (busy) return;
+    setBusy(true);
     setError(null);
     for (const file of Array.from(files)) {
       setUploading(file.name);
@@ -367,9 +377,12 @@ function DocumentsStep({
     // Fuera del try de cada archivo: si la recarga fallaba, el rechazo quedaba sin manejar y la lista sin actualizar
     // ni aviso.
     await onChanged().catch((e) => setError(errorText(e)));
+    setBusy(false);
   };
 
   const remove = async (docId: string) => {
+    if (busy) return;
+    setBusy(true);
     setError(null);
     try {
       await api(`/v1/envelopes/${envelopeId}/documents/${docId}`, { method: "DELETE" });
@@ -377,6 +390,8 @@ function DocumentsStep({
       await onChanged();
     } catch (e) {
       setError(errorText(e));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -392,7 +407,7 @@ function DocumentsStep({
         onDrop={(e) => {
           e.preventDefault();
           setOver(false);
-          if (e.dataTransfer.files.length) void upload(e.dataTransfer.files);
+          if (e.dataTransfer.files.length && !busy) void upload(e.dataTransfer.files);
         }}
       >
         <p>{t("edit.dropHint")}</p>
@@ -404,7 +419,7 @@ function DocumentsStep({
             accept="application/pdf,.pdf"
             multiple
             hidden
-            disabled={!!uploading}
+            disabled={busy}
             onChange={(e) => e.target.files && upload(e.target.files)}
           />
         </label>
@@ -422,7 +437,7 @@ function DocumentsStep({
                   {d.pageCount} {t("edit.pages")} · {formatBytes(d.sizeBytes)}
                 </div>
               </div>
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => remove(d.id)}>
+              <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => remove(d.id)}>
                 {t("common.delete")}
               </button>
             </li>

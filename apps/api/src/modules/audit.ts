@@ -66,6 +66,7 @@ const ROUTE_ACTIONS: Record<string, { action: string; extract?: Extract }> = {
   "POST /v1/webhooks": { action: "webhook.created", extract: ({ body }) => ({ targetType: "webhook", targetId: body?.webhook?.id, data: { url: body?.webhook?.url } }) },
   "PATCH /v1/webhooks/:id": { action: "webhook.updated", extract: ({ params, req }) => ({ targetType: "webhook", targetId: params.id, data: { fields: Object.keys((req.body as object) ?? {}) } }) },
   "DELETE /v1/webhooks/:id": { action: "webhook.deleted", extract: ({ params }) => ({ targetType: "webhook", targetId: params.id }) },
+  "POST /v1/webhooks/:id/rotate-secret": { action: "webhook.secret_rotated", extract: ({ params, req }) => ({ targetType: "webhook", targetId: params.id, data: { graceHours: (req.body as { graceHours?: number } | null)?.graceHours ?? 24 } }) },
   // Un formulario web publica un link que crea sobres a nombre de su dueño: quién lo creó, cambió (p. ej. el firmante
   // fijo, que recibe cada envío) o borró tiene que quedar en la auditoría, como los webhooks.
   "POST /v1/web-forms": { action: "web_form.created", extract: ({ body }) => ({ targetType: "web_form", targetId: body?.id, data: { name: body?.name, templateId: body?.templateId } }) },

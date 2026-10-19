@@ -688,6 +688,7 @@ export const TAGS: [string, string][] = [
   ["Plantillas", "Documentos, roles y campos reutilizables; crear sobres desde una plantilla en un solo pedido."],
   ["Firma embebida", "Firma dentro de la app del integrador: URL de un solo uso para iframe o redirección."],
   ["Webhooks", "Endpoints que reciben los eventos de los sobres, firmados con HMAC-SHA256."],
+  ["Eventos", "Actividad de la organización para reconciliar sin depender de los webhooks: polling con cursor y Server-Sent Events."],
   ["Envío masivo", "Una plantilla + N filas (CSV o JSON) → N sobres, procesados en segundo plano."],
   ["Formularios web", "Links públicos desde una plantilla: quien entra se registra y firma su propio sobre."],
   ["Cobros", "Cobrar al firmante (antes o después de firmar) con Stripe o Mercado Pago."],

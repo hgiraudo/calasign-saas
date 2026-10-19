@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import datetime
 import http.client
 import json
 import math
@@ -138,6 +139,7 @@ class CalaSign:
         self.webhooks = _Webhooks(self)
         #: Marca blanca: marcas ("default" y sub-marcas), archivos, dominios y vista previa.
         self.brands = _Brands(self)
+        self.events = _Events(self)
 
     # ── autenticación ──
 
@@ -271,9 +273,48 @@ class _Envelopes:
     def __init__(self, c: CalaSign):
         self._c = c
 
-    def list(self, *, status: Union[str, Sequence[str], None] = None, q: Optional[str] = None, limit: Optional[int] = None, cursor: Optional[str] = None) -> Dict[str, Any]:
+    def list(
+        self,
+        *,
+        status: Union[str, Sequence[str], None] = None,
+        q: Optional[str] = None,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+        created_from: Any = None,
+        created_to: Any = None,
+        updated_from: Any = None,
+        updated_to: Any = None,
+        sent_from: Any = None,
+        sent_to: Any = None,
+        completed_from: Any = None,
+        completed_to: Any = None,
+        metadata: Optional[Mapping[str, str]] = None,
+        recipient: Optional[str] = None,
+        template_id: Optional[str] = None,
+        created_via: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Fechas como str ISO 8601 o datetime (*_from inclusive, *_to exclusivo). `metadata`: pares que tienen que coincidir."""
         st = ",".join(status) if isinstance(status, (list, tuple)) else status
-        return self._c.request("GET", "/v1/envelopes", query={"status": st, "q": q, "limit": limit, "cursor": cursor})
+        query: Dict[str, Any] = {
+            "status": st,
+            "q": q,
+            "limit": limit,
+            "cursor": cursor,
+            "created_from": _iso(created_from),
+            "created_to": _iso(created_to),
+            "updated_from": _iso(updated_from),
+            "updated_to": _iso(updated_to),
+            "sent_from": _iso(sent_from),
+            "sent_to": _iso(sent_to),
+            "completed_from": _iso(completed_from),
+            "completed_to": _iso(completed_to),
+            "recipient": recipient,
+            "template_id": template_id,
+            "created_via": created_via,
+        }
+        for k, v in (metadata or {}).items():
+            query[f"metadata[{k}]"] = v
+        return self._c.request("GET", "/v1/envelopes", query=query)
 
     def iterate(self, **params: Any) -> Iterator[EnvelopeSummary]:
         """Recorre todas las páginas: `for e in cs.envelopes.iterate(status="completed"): …`"""
@@ -348,6 +389,25 @@ class _Envelopes:
     def signing_url(self, envelope_id: str, recipient_id: str, *, return_url: Optional[str] = None) -> Dict[str, Any]:
         body = {"returnUrl": return_url} if return_url else {}
         return self._c.request("POST", f"/v1/envelopes/{_seg(envelope_id)}/recipients/{_seg(recipient_id)}/signing-url", json_body=body)
+
+    def form_data(self, envelope_id: str) -> Dict[str, Any]:
+        """Valores completados por destinatario y vista plana etiqueta → valor (`values`)."""
+        return self._c.request("GET", f"/v1/envelopes/{_seg(envelope_id)}/form-data")
+
+    def download_attachment(self, envelope_id: str, field_id: str) -> bytes:
+        """Archivo que subió un firmante en un campo de adjunto."""
+        return self._c.request("GET", f"/v1/envelopes/{_seg(envelope_id)}/attachments/{_seg(field_id)}", raw=True)
+
+    def clone(self, envelope_id: str, data: Optional[Dict[str, Any]] = None) -> EnvelopeDetail:
+        """Clona el sobre como borrador nuevo (subject, metadata, includeRecipients, includeFields, includeValues…)."""
+        return self._c.request("POST", f"/v1/envelopes/{_seg(envelope_id)}/clone", json_body=data or {})
+
+    def batch(self, action: str, ids: Sequence[str], *, reason: Optional[str] = None) -> Dict[str, Any]:
+        """get | void | remind | delete sobre hasta 100 sobres. Devuelve un resultado por id (`results`)."""
+        body: Dict[str, Any] = {"action": action, "ids": list(ids)}
+        if reason:
+            body["reason"] = reason
+        return self._c.request("POST", "/v1/envelopes/batch", json_body=body, retryable=action == "get")
 
     def from_template(self, data: Dict[str, Any], *, idempotency_key: Optional[str] = None) -> EnvelopeDetail:
         return self._c.request("POST", "/v1/envelopes/from-template", json_body=data, idempotency_key=idempotency_key or str(uuid.uuid4()))
@@ -438,8 +498,59 @@ class _Webhooks:
     def test(self, webhook_id: str) -> Dict[str, Any]:
         return self._c.request("POST", f"/v1/webhooks/{_seg(webhook_id)}/test")
 
+    def rotate_secret(self, webhook_id: str, *, grace_hours: Optional[int] = None) -> Dict[str, Any]:
+        """Devuelve {"webhook", "secret"}. Durante grace_hours (24 por defecto) se firma también con el secreto anterior."""
+        body = {} if grace_hours is None else {"graceHours": grace_hours}
+        return self._c.request("POST", f"/v1/webhooks/{_seg(webhook_id)}/rotate-secret", json_body=body)
+
+
+class _Events:
+    def __init__(self, c: CalaSign):
+        self._c = c
+
+    def list(
+        self,
+        *,
+        after: Optional[str] = None,
+        since: Any = None,
+        types: Optional[Sequence[str]] = None,
+        envelope_id: Optional[str] = None,
+        scope: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Una página de eventos (del más viejo al más nuevo): {"items", "nextCursor", "hasMore"}."""
+        query = {
+            "after": after,
+            "since": _iso(since),
+            "types": ",".join(types) if types else None,
+            "envelope_id": envelope_id,
+            "scope": scope,
+            "limit": limit,
+        }
+        return self._c.request("GET", "/v1/events", query=query)
+
+    def poll(self, *, after: Optional[str] = None, interval: float = 5.0, **params: Any) -> Iterator[Dict[str, Any]]:
+        """Polling continuo: `for ev in cs.events.poll(after=cursor_guardado): …` (guardar ev["cursor"] al procesar)."""
+        while True:
+            page = self.list(after=after, **params)
+            yield from page["items"]
+            after = page.get("nextCursor") or after
+            if not page.get("hasMore"):
+                time.sleep(interval)
+
 
 # ───────────────────────────── Utilidades ─────────────────────────────
+
+
+def _iso(value: Any) -> Optional[str]:
+    """datetime → ISO 8601 (sin zona se asume UTC); str se pasa tal cual."""
+    if value is None or isinstance(value, str):
+        return value
+    if isinstance(value, datetime.datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=datetime.timezone.utc)
+        return value.isoformat()
+    return str(value)
 
 
 def _seg(value: str) -> str:

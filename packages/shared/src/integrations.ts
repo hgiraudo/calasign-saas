@@ -37,6 +37,8 @@ export interface WebhookEndpoint {
   events: WebhookEventType[];
   active: boolean;
   secretPrefix: string;
+  /** Hasta cuándo se firma también con el secreto anterior (después de rotarlo). */
+  previousSecretExpiresAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }

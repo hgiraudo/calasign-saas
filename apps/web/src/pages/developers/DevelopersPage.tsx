@@ -28,6 +28,7 @@ import {
   WebFormsGuide,
 } from "./content/Guides";
 import { WebhooksPage } from "./content/Webhooks";
+import { SyncGuide } from "./content/Sync";
 import { ErrorsPage } from "./content/Errors";
 import { SdksPage } from "./content/Sdks";
 import { ConnectorsPage } from "./content/Connectors";
@@ -48,6 +49,7 @@ const PAGES: Record<string, () => JSX.Element> = {
   "guides/bulk-send": BulkGuide,
   "guides/web-forms": WebFormsGuide,
   "guides/reminders": RemindersGuide,
+  "guides/sync": SyncGuide,
   "guides/certificate-signing": CertificateGuide,
   "guides/identity": IdentityGuide,
   "guides/payments": PaymentsGuide,

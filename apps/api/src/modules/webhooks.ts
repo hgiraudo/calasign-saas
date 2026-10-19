@@ -9,6 +9,7 @@ import { isIP } from "node:net";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import {
   CreateWebhookInput,
+  RotateWebhookSecretInput,
   UpdateWebhookInput,
   WEBHOOK_EVENT_TYPES,
   type WebhookDelivery,
@@ -28,10 +29,15 @@ export const SIGNATURE_HEADER = "CalaSign-Signature";
 
 // ───────────────────────────── Firma ─────────────────────────────
 
-/** Encabezado `t=<unix>,v1=<hex>` con HMAC-SHA256(secret, "<t>.<body>"). */
-export function signPayload(secret: string, body: string, timestamp = Math.floor(Date.now() / 1000)) {
-  const v1 = createHmac("sha256", secret).update(`${timestamp}.${body}`).digest("hex");
-  return `t=${timestamp},v1=${v1}`;
+/**
+ * Encabezado `t=<unix>,v1=<hex>` con HMAC-SHA256(secret, "<t>.<body>"). Con varios secretos (rotación con período de
+ * gracia) lleva un `v1=` por secreto, el vigente primero: `t=…,v1=<nuevo>,v1=<anterior>`. El receptor acepta si
+ * alguno coincide.
+ */
+export function signPayload(secret: string | string[], body: string, timestamp = Math.floor(Date.now() / 1000)) {
+  const secrets = Array.isArray(secret) ? secret : [secret];
+  const sigs = secrets.map((k) => `v1=${createHmac("sha256", k).update(`${timestamp}.${body}`).digest("hex")}`);
+  return `t=${timestamp},${sigs.join(",")}`;
 }
 
 // ───────────────────────────── Validación de URL (SSRF) ─────────────────────────────
@@ -256,6 +262,7 @@ const toEndpoint = (r: any): WebhookEndpoint => ({
   events: r.events,
   active: r.active,
   secretPrefix: r.secret_prefix,
+  previousSecretExpiresAt: r.previous_secret_enc && r.previous_secret_expires_at && new Date(r.previous_secret_expires_at) > new Date() ? iso(r.previous_secret_expires_at) : null,
   createdAt: iso(r.created_at)!,
   updatedAt: iso(r.updated_at)!,
 });
@@ -342,7 +349,9 @@ async function fanout(d: Deps, p: Extract<WebhookJob, { kind: "fanout" }>) {
 /** Un intento de entrega. Lanza si falla, para que la cola reintente con backoff. */
 async function deliverOne(d: Deps, deliveryId: string, attempt: number, manual: boolean) {
   const row = await d.db.one<any>(
-    `SELECT dl.*, ep.url, ep.secret_enc, ep.active FROM webhook_deliveries dl JOIN webhook_endpoints ep ON ep.id = dl.endpoint_id WHERE dl.id = $1`,
+    `SELECT dl.*, ep.url, ep.secret_enc, ep.active,
+            CASE WHEN ep.previous_secret_expires_at > now() THEN ep.previous_secret_enc END AS previous_secret_enc
+       FROM webhook_deliveries dl JOIN webhook_endpoints ep ON ep.id = dl.endpoint_id WHERE dl.id = $1`,
     [deliveryId],
   );
   if (!row || row.status === "succeeded") return;
@@ -351,7 +360,8 @@ async function deliverOne(d: Deps, deliveryId: string, attempt: number, manual: 
     return;
   }
   const body = JSON.stringify(row.payload);
-  const signature = signPayload(decrypt(row.secret_enc), body);
+  // Durante el período de gracia de una rotación se firma también con el secreto anterior.
+  const signature = signPayload(row.previous_secret_enc ? [decrypt(row.secret_enc), decrypt(row.previous_secret_enc)] : decrypt(row.secret_enc), body);
   let statusCode: number | null = null;
   let responseText: string | null = null;
   let error: string | null = null;
@@ -456,6 +466,25 @@ export async function webhookRoutes(app: FastifyInstance, s: Services) {
     await load(a.tenantId, req.params.id);
     await s.db.query(`DELETE FROM webhook_endpoints WHERE id = $1 AND tenant_id = $2`, [req.params.id, a.tenantId]);
     return reply.code(204).send();
+  });
+
+  // Rotación del secreto: el nuevo se devuelve una sola vez; durante `graceHours` (por defecto 24) cada entrega va
+  // firmada con los dos, así el receptor puede cambiar el secreto sin perder eventos. graceHours = 0 lo corta ya.
+  app.post<P>("/v1/webhooks/:id/rotate-secret", { preHandler: auth }, async (req) => {
+    const a = A(req);
+    const input = RotateWebhookSecretInput.parse(req.body ?? {});
+    const ep = await load(a.tenantId, req.params.id);
+    const grace = input.graceHours ?? 24;
+    const secret = `whsec_${randomToken(24)}`;
+    const row = await s.db.one(
+      `UPDATE webhook_endpoints SET secret_enc = $3, secret_prefix = $4,
+         previous_secret_enc = CASE WHEN $5::int > 0 THEN $6 ELSE NULL END,
+         previous_secret_expires_at = CASE WHEN $5::int > 0 THEN now() + ($5::int * interval '1 hour') ELSE NULL END,
+         updated_at = now()
+       WHERE id = $1 AND tenant_id = $2 RETURNING *`,
+      [ep.id, a.tenantId, encrypt(secret), secret.slice(0, 12), grace, ep.secret_enc],
+    );
+    return { webhook: toEndpoint(row), secret };
   });
 
   app.get<P & { Querystring: { limit?: string } }>("/v1/webhooks/:id/deliveries", { preHandler: auth }, async (req) => {

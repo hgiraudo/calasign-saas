@@ -213,6 +213,8 @@ export const EnvelopeSummarySchema = named(
     sentAt: iso().nullable(),
     completedAt: iso().nullable(),
     expiresAt: iso().nullable(),
+    updatedAt: iso().describe("Última modificación del sobre (cambios de estado incluidos)."),
+    metadata: z.record(z.string(), z.unknown()),
     recipients: z.array(z.object({ name: z.string(), status: z.enum(RECIPIENT_STATUSES), role: z.enum(RECIPIENT_ROLES) })),
   }),
 );
@@ -253,6 +255,7 @@ export const WebhookSchema = named(
     events: z.array(z.enum(WEBHOOK_EVENT_TYPES)).describe("Vacío = todos los eventos."),
     active: z.boolean(),
     secretPrefix: z.string().describe("Primeros caracteres del secreto (whsec_…), para identificarlo."),
+    previousSecretExpiresAt: iso().nullable().optional().describe("Después de rotar el secreto: hasta cuándo las entregas van firmadas también con el anterior."),
     createdAt: iso(),
     updatedAt: iso(),
   }),

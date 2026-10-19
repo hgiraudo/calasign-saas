@@ -65,6 +65,7 @@ import { AI_OPS } from "./ai/openapi";
 import { DATA_OPS } from "./data/openapi";
 import { CERTSIGN_OPS } from "./certsign-openapi";
 import { WHITE_LABEL_OPS } from "./white-label/openapi";
+import { DEVAPI_OPS, ENVELOPE_SEARCH_QUERY } from "./devapi/openapi";
 import {
   AccessSchema,
   ApiKeySchema,
@@ -255,6 +256,7 @@ const OPS: Op[] = [
         schema: { type: "string", example: "sent,completed" },
       },
       { name: "q", description: "Texto en el asunto o en el nombre o correo de un destinatario." },
+      ...ENVELOPE_SEARCH_QUERY,
       Q.cursor,
       Q.limit(25, 100),
     ],
@@ -1318,6 +1320,7 @@ export function buildOpenApi() {
     ...(DATA_OPS as unknown as Op[]),
     ...(CERTSIGN_OPS as unknown as Op[]),
     ...WHITE_LABEL_OPS,
+    ...DEVAPI_OPS,
   ];
   const paths: Record<string, Record<string, unknown>> = {};
   const seenIds = new Set<string>();

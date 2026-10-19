@@ -296,6 +296,9 @@ export interface EnvelopeSummary {
   sentAt: string | null;
   completedAt: string | null;
   expiresAt: string | null;
+  /** Última modificación (sirve para sincronizar con `updated_from`). */
+  updatedAt?: string;
+  metadata?: Record<string, unknown>;
   recipients: { name: string; status: RecipientStatus; role: RecipientRole }[];
 }
 

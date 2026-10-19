@@ -1,8 +1,10 @@
 // English for the developer portal. See i18n-docs.ts.
 import type { DocsKey } from "./i18n-docs";
 import { connectorsDocsEn } from "./i18n-docs-connectors";
+import { docsApiEn } from "./i18n-docs-api";
 
 export const docsEn: Record<DocsKey, string> = {
+  ...docsApiEn,
   // ───────── Interface ─────────
   "ui.docs": "Docs",
   "ui.searchPlaceholder": "Search the docs…",

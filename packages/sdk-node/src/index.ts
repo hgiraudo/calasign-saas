@@ -8,7 +8,13 @@
 //   });
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import type {
+  ApiEvent,
+  CloneEnvelopeInput,
   CompleteSigningInput,
+  EnvelopeBatchInput,
+  EnvelopeBatchResponse,
+  EnvelopeFormData,
+  ListEventsResponse,
   CreateEnvelopeInput,
   CreateEnvelopeRequest,
   CreateEnvelopeResponse,
@@ -42,7 +48,7 @@ import type {
   PublicBrandTheme,
 } from "@calasign/shared";
 
-export type { CompleteSigningInput, CreateEnvelopeRequest, CreateEnvelopeResponse, EnvelopeDetail, EnvelopeSummary, WebhookEventPayload, Brand, BrandConfigInput, PublicBrandTheme };
+export type { ApiEvent, CompleteSigningInput, CreateEnvelopeRequest, CreateEnvelopeResponse, EnvelopeBatchResponse, EnvelopeDetail, EnvelopeFormData, EnvelopeSummary, WebhookEventPayload, Brand, BrandConfigInput, PublicBrandTheme };
 
 export const VERSION = "0.1.0";
 
@@ -123,6 +129,7 @@ export class CalaSign {
   readonly webhooks: WebhooksApi;
   /** Marca blanca: marcas (la de la organización = "default" y sub-marcas), archivos, dominios y vista previa. */
   readonly brands: BrandsApi;
+  readonly events: EventsApi;
 
   constructor(private readonly opts: CalaSignOptions) {
     if (!opts.apiKey && !opts.accessToken && !opts.oauth) throw new Error("CalaSign: falta apiKey, accessToken u oauth");
@@ -135,6 +142,7 @@ export class CalaSign {
     this.templates = new TemplatesApi(this);
     this.webhooks = new WebhooksApi(this);
     this.brands = new BrandsApi(this);
+    this.events = new EventsApi(this);
   }
 
   /** Usuario (o app) y organización del token. */
@@ -263,7 +271,25 @@ export interface ListEnvelopesParams {
   q?: string;
   limit?: number;
   cursor?: string;
+  /** Rangos de fechas (ISO 8601 o Date): *_from inclusive, *_to exclusivo. */
+  createdFrom?: string | Date;
+  createdTo?: string | Date;
+  /** Sincronización incremental: sobres modificados desde esta fecha. */
+  updatedFrom?: string | Date;
+  updatedTo?: string | Date;
+  sentFrom?: string | Date;
+  sentTo?: string | Date;
+  completedFrom?: string | Date;
+  completedTo?: string | Date;
+  /** Pares de metadata que tienen que coincidir (valores string). */
+  metadata?: Record<string, string>;
+  /** Correo o teléfono E.164 de un destinatario. */
+  recipient?: string;
+  templateId?: string;
+  createdVia?: "api" | "web";
 }
+
+const isoOf = (d: string | Date | undefined) => (d instanceof Date ? d.toISOString() : d);
 
 /**
  * Un id como segmento de la ruta. Sin codificar, un id que llega de afuera ("../webhooks", "x?y") cambiaba el pedido:
@@ -294,9 +320,26 @@ class EnvelopesApi {
   constructor(private readonly c: CalaSign) {}
 
   list(p: ListEnvelopesParams = {}): Promise<ListEnvelopesResponse> {
-    return this.c.request("GET", "/v1/envelopes", {
-      query: { status: Array.isArray(p.status) ? p.status.join(",") : p.status, q: p.q, limit: p.limit, cursor: p.cursor },
-    });
+    const query: Record<string, string | number | undefined> = {
+      status: Array.isArray(p.status) ? p.status.join(",") : p.status,
+      q: p.q,
+      limit: p.limit,
+      cursor: p.cursor,
+      created_from: isoOf(p.createdFrom),
+      created_to: isoOf(p.createdTo),
+      updated_from: isoOf(p.updatedFrom),
+      updated_to: isoOf(p.updatedTo),
+      sent_from: isoOf(p.sentFrom),
+      sent_to: isoOf(p.sentTo),
+      completed_from: isoOf(p.completedFrom),
+      completed_to: isoOf(p.completedTo),
+      recipient: p.recipient,
+      template_id: p.templateId,
+      created_via: p.createdVia,
+    };
+    // metadata[clave]=valor: una entrada por par (todas tienen que coincidir).
+    for (const [k, v] of Object.entries(p.metadata ?? {})) query[`metadata[${k}]`] = v;
+    return this.c.request("GET", "/v1/envelopes", { query });
   }
 
   /** Recorre todas las páginas: `for await (const e of cs.envelopes.iterate({ status: "completed" }))`. */
@@ -396,6 +439,28 @@ class EnvelopesApi {
     return this.c.request("POST", `/v1/envelopes/${seg(envelopeId)}/recipients/${seg(recipientId)}/signing-url`, { body: input });
   }
 
+  /** Valores completados por destinatario y vista plana etiqueta → valor. */
+  formData(id: string): Promise<EnvelopeFormData> {
+    return this.c.request("GET", `/v1/envelopes/${seg(id)}/form-data`);
+  }
+
+  /** Archivo que subió un firmante en un campo de adjunto. */
+  async downloadAttachment(id: string, fieldId: string): Promise<{ bytes: Uint8Array; contentType: string }> {
+    const res = await this.c.request<Response>("GET", `/v1/envelopes/${seg(id)}/attachments/${seg(fieldId)}`, { raw: true });
+    return { bytes: new Uint8Array(await res.arrayBuffer()), contentType: res.headers.get("content-type") ?? "application/octet-stream" };
+  }
+
+  /** Clona el sobre (en cualquier estado) como borrador nuevo. */
+  clone(id: string, input: CloneEnvelopeInput = {}): Promise<EnvelopeDetail> {
+    return this.c.request("POST", `/v1/envelopes/${seg(id)}/clone`, { body: input });
+  }
+
+  /** Operación en lote (get, void, remind, delete) sobre hasta 100 sobres; un resultado por id. */
+  batch(input: EnvelopeBatchInput): Promise<EnvelopeBatchResponse> {
+    // get es seguro de reintentar; void/remind/delete no (un reintento repetiría la operación en los que ya salieron).
+    return this.c.request("POST", "/v1/envelopes/batch", { body: input, retryable: input.action === "get" });
+  }
+
   /** Crea (y opcionalmente envía) un sobre desde una plantilla. */
   fromTemplate(input: EnvelopeFromTemplateInput, o: { idempotencyKey?: string } = {}): Promise<EnvelopeDetail> {
     return this.c.request("POST", "/v1/envelopes/from-template", { body: input, idempotencyKey: o.idempotencyKey ?? randomUUID() });
@@ -440,6 +505,48 @@ class WebhooksApi {
 
   test(id: string): Promise<WebhookDelivery> {
     return this.c.request("POST", `/v1/webhooks/${seg(id)}/test`);
+  }
+
+  /** Rota el secreto. Durante `graceHours` (por defecto 24) las entregas llevan firmas con el nuevo y el anterior. */
+  rotateSecret(id: string, o: { graceHours?: number } = {}): Promise<CreateWebhookResponse> {
+    return this.c.request("POST", `/v1/webhooks/${seg(id)}/rotate-secret`, { body: o });
+  }
+}
+
+export interface ListEventsParams {
+  /** Cursor (`nextCursor` del pedido anterior). */
+  after?: string | null;
+  /** Sin `after`: desde esta fecha (por defecto, últimas 24 h). */
+  since?: string | Date;
+  types?: string[];
+  envelopeId?: string;
+  /** "all": todos los tipos de evidencia, no solo los de webhooks. */
+  scope?: "webhook" | "all";
+  limit?: number;
+}
+
+class EventsApi {
+  constructor(private readonly c: CalaSign) {}
+
+  /** Una página de eventos, del más viejo al más nuevo. Guardá `nextCursor` y pasalo como `after`. */
+  list(p: ListEventsParams = {}): Promise<ListEventsResponse> {
+    return this.c.request("GET", "/v1/events", {
+      query: { after: p.after ?? undefined, since: isoOf(p.since), types: p.types?.join(","), envelope_id: p.envelopeId, scope: p.scope, limit: p.limit },
+    });
+  }
+
+  /**
+   * Polling continuo: `for await (const ev of cs.events.poll({ after: savedCursor }))`. Espera `intervalMs` cuando no
+   * hay eventos nuevos. Corta con `signal`. Guardá `ev.cursor` después de procesar cada evento.
+   */
+  async *poll(p: ListEventsParams & { intervalMs?: number; signal?: AbortSignal } = {}): AsyncGenerator<ApiEvent> {
+    let after = p.after ?? undefined;
+    while (!p.signal?.aborted) {
+      const page = await this.list({ ...p, after });
+      for (const ev of page.items) yield ev;
+      after = page.nextCursor ?? after;
+      if (!page.hasMore) await sleep(p.intervalMs ?? 5000);
+    }
   }
 }
 
@@ -535,21 +642,24 @@ export function verifyWebhookSignature(i: VerifyWebhookInput): boolean {
 /** Verifica la firma y devuelve el evento parseado; lanza WebhookSignatureError si no es válida. */
 export function constructWebhookEvent(i: VerifyWebhookInput): WebhookEventPayload {
   if (!i.header) throw new WebhookSignatureError("Falta el header CalaSign-Signature");
-  const parts = Object.fromEntries(
-    i.header.split(",").map((kv) => {
-      const k = kv.indexOf("=");
-      return [kv.slice(0, k).trim(), kv.slice(k + 1).trim()];
-    }),
-  );
-  const t = Number(parts.t);
-  if (!Number.isFinite(t) || !parts.v1) throw new WebhookSignatureError("Header de firma mal formado");
+  // `t=<unix>,v1=<hex>[,v1=<hex>]`: durante la rotación del secreto llegan dos v1 (nuevo y anterior).
+  const pairs = i.header.split(",").map((kv) => {
+    const k = kv.indexOf("=");
+    return [kv.slice(0, k).trim(), kv.slice(k + 1).trim()] as const;
+  });
+  const t = Number(pairs.find(([k]) => k === "t")?.[1]);
+  const v1s = pairs.filter(([k, v]) => k === "v1" && v).map(([, v]) => v);
+  if (!Number.isFinite(t) || !v1s.length) throw new WebhookSignatureError("Header de firma mal formado");
   const now = Math.floor((i.now ?? Date.now()) / 1000);
   if (Math.abs(now - t) > (i.toleranceSec ?? 300)) throw new WebhookSignatureError("Firma fuera de la tolerancia de tiempo");
   const body = typeof i.payload === "string" ? i.payload : Buffer.from(i.payload).toString("utf8");
   const expected = createHmac("sha256", i.secret).update(`${t}.${body}`).digest("hex");
   const a = Buffer.from(expected);
-  const b = Buffer.from(String(parts.v1));
-  if (a.length !== b.length || !timingSafeEqual(a, b)) throw new WebhookSignatureError("Firma inválida");
+  const ok = v1s.some((v) => {
+    const b = Buffer.from(v);
+    return a.length === b.length && timingSafeEqual(a, b);
+  });
+  if (!ok) throw new WebhookSignatureError("Firma inválida");
   try {
     return JSON.parse(body) as WebhookEventPayload;
   } catch {

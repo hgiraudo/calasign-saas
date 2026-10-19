@@ -30,6 +30,7 @@ import { paymentBlocksCompletion } from "./billing/payments";
 import { enforceEnvelopeQuota } from "./billing/plans";
 import { deleteFilesIfUnused, discardBlobsOnFailure } from "./file-cleanup";
 import { createEnvelopeRoute, ONE_SHOT_JSON_BODY_LIMIT } from "./envelope-oneshot";
+import { envelopeSearchSql } from "./devapi/search";
 
 /** Bloquea el sobre para serializar cambios y eventos. */
 export async function lockEnvelope(db: Db, tenantId: string, id: string) {
@@ -192,6 +193,8 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
         params.push(`%${req.query.q}%`);
         where += ` AND (e.subject ILIKE $${params.length} OR EXISTS (SELECT 1 FROM recipients r WHERE r.envelope_id = e.id AND (r.name ILIKE $${params.length} OR r.email ILIKE $${params.length})))`;
       }
+      // Filtros avanzados (fechas, metadata, destinatario, plantilla, origen): devapi/search.ts.
+      where += envelopeSearchSql(req.query as Record<string, unknown>, params);
       if (req.query.cursor) {
         // created_at va en microsegundos (Postgres guarda µs; un Date de JS solo ms): con ms, los sobres creados en el
         // mismo milisegundo que el último de la página (p. ej. varios en una misma transacción) se saltaban.
@@ -223,6 +226,8 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
         sentAt: iso(e.sent_at),
         completedAt: iso(e.completed_at),
         expiresAt: iso(e.expires_at),
+        updatedAt: iso(e.updated_at)!,
+        metadata: e.metadata ?? {},
         recipients: recips.filter((r) => r.envelope_id === e.id).map((r) => ({ name: r.name, status: r.status, role: r.role })),
       }));
       const last = page[page.length - 1];

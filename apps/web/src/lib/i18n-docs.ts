@@ -9,8 +9,10 @@ import { useI18n } from "./i18n";
 import { docsPt } from "./i18n-docs-pt";
 import { docsEn } from "./i18n-docs-en";
 import { connectorsDocsEs } from "./i18n-docs-connectors";
+import { docsApiEs } from "./i18n-docs-api";
 
 export const docsEs = {
+  ...docsApiEs,
   // ───────── Interfaz ─────────
   "ui.docs": "Docs",
   "ui.searchPlaceholder": "Buscar en la documentación…",

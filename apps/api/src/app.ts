@@ -45,6 +45,7 @@ import { lowcodeRoutes } from "./modules/lowcode";
 import { dataRoutes } from "./modules/data";
 import { certsignRoutes } from "./modules/certsign";
 import { sendBrandedIndex, whiteLabelModule } from "./modules/white-label";
+import { devApiRoutes } from "./modules/devapi";
 import { INTEGRATIONS_PREFIX, integrationsStaticHeaders } from "./modules/integrations-static";
 
 export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolean | object }) {
@@ -168,6 +169,7 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
   await dataRoutes(app, services);
   await certsignRoutes(app, services);
   await whiteLabelModule(app, services);
+  await devApiRoutes(app, services);
 
   if (config.devMailbox) {
     // Local: todo el buzón. Entornos compartidos (dev): solo los mensajes de la organización de la sesión.

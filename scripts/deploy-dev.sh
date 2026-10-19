@@ -82,7 +82,9 @@ PKG=\$(mktemp /var/tmp/calasign-rel.XXXXXX)
 # root: la carpeta de la versión pasa a ser del usuario calasign, y la app (o un postinstall de pnpm) podía cambiar
 # esos archivos antes de que root los ejecute o instale.
 HOSTCFG=\$(mktemp -d /var/tmp/calasign-host.XXXXXX)
-trap 'rm -rf "\$PKG" "\$HOSTCFG"' EXIT
+# También los temporales de secretos y cadena de abajo: si SSM falla (set -e corta en la asignación), no quedan
+# sueltos en /etc/calasign. Después del mv ya no existen y rm no hace nada.
+trap 'rm -rf "\$PKG" "\$HOSTCFG" \${CHAIN_TMP:+"\$CHAIN_TMP"} \${SECRETS_TMP:+"\$SECRETS_TMP"} \${SSM_ERR:+"\$SSM_ERR"}' EXIT
 aws s3 cp --only-show-errors s3://$BUCKET/releases/$REL.tgz \$PKG
 echo "$SHA  \$PKG" | sha256sum -c --quiet || { echo "El paquete descargado no coincide con el subido: deploy abortado" >&2; exit 1; }
 tar -xzf \$PKG -C \$HOSTCFG infra/dev/host

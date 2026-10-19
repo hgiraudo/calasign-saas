@@ -103,7 +103,13 @@ export class CertsignClient {
       signal: AbortSignal.timeout(60_000),
     });
     const text = await res.text();
-    const data = text ? JSON.parse(text) : null;
+    let data: any = null;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      // Un proxy o una página de error (502 en HTML): CertsignError con el status, no un SyntaxError suelto.
+      if (res.ok) throw new CertsignError(res.status, "invalid_response", "La respuesta de CalaSign no es JSON válido");
+    }
     if (!res.ok) throw new CertsignError(res.status, data?.error?.code ?? "error", data?.error?.message ?? `HTTP ${res.status}`, data?.error?.details);
     return data as T;
   }

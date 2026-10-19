@@ -355,7 +355,8 @@ function SendFromRecord({ mappings, onDone }: { mappings: CrmMapping[]; onDone: 
     try {
       setDone(await api<SendFromCrmRecordResponse>(`/v1/crm/mappings/${mappingId}/send`, { method: "POST", body: { objectId: objectId.trim() } }));
       setObjectId("");
-      await onDone();
+      // El sobre ya salió: una falla al recargar el historial no se muestra como error del envío (junto al aviso de éxito).
+      await onDone().catch(() => undefined);
     } catch (err) {
       setError(errorText(err));
     } finally {

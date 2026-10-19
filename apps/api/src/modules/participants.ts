@@ -92,6 +92,15 @@ export async function replaceRecipient(
       host,
     ],
   );
+  // Los adjuntos que subió el anterior no pasan al reemplazo: si no, completaba la firma con el archivo de otra persona
+  // (p. ej. la foto de su documento) y el PDF final lo anexaba a nombre del reemplazo. Se descartan como cuando el
+  // firmante quita un adjunto; el llamador borra los archivos del almacenamiento después de confirmar la transacción.
+  const discarded = await db.query<{ storage_key: string }>(
+    `UPDATE files SET purged_at = now() WHERE kind = 'attachment' AND purged_at IS NULL
+       AND id IN (SELECT attachment_file_id FROM fields WHERE recipient_id = $1 AND attachment_file_id IS NOT NULL) RETURNING storage_key`,
+    [old.id],
+  );
+  await db.query(`UPDATE fields SET attachment_file_id = NULL, value = NULL, filled_at = NULL WHERE recipient_id = $1 AND attachment_file_id IS NOT NULL`, [old.id]);
   await db.query(`UPDATE fields SET recipient_id = $2 WHERE recipient_id = $1`, [old.id, id]);
   // El cobro pendiente pasa al reemplazo (si no, el sobre queda trabado o se firma sin pagar).
   await db.query(`UPDATE envelope_payments SET recipient_id = $2, updated_at = now() WHERE recipient_id = $1 AND status <> 'paid'`, [old.id, id]);
@@ -123,7 +132,12 @@ export async function replaceRecipient(
     const fresh = await db.one<any>(`SELECT * FROM recipients WHERE id = $1`, [id]);
     await activateRecipient(db, e.tenant_id, e.id, fresh);
   }
-  return id;
+  return { id, discardedKeys: discarded.map((f) => f.storage_key) };
+}
+
+/** Borra del almacenamiento los adjuntos descartados por un reemplazo (ya marcados como purgados). */
+async function deleteBlobs(s: Services, keys: string[]) {
+  await Promise.all(keys.map((k) => s.blobs.delete(k).catch(() => {})));
 }
 
 export async function participantRoutes(app: FastifyInstance, s: Services) {
@@ -135,13 +149,14 @@ export async function participantRoutes(app: FastifyInstance, s: Services) {
     async (req) => {
       const a = req.auth!;
       const input = ReassignInput.parse(req.body);
-      await s.db.tx(async (t) => {
+      const { discardedKeys } = await s.db.tx(async (t) => {
         const e = await lockEnvelope(t, a.tenantId, req.params.id);
         if (e.status !== "sent") throw conflict("not_in_progress", "Solo se reasigna en un sobre en curso");
         const old = await t.one<any>(`SELECT * FROM recipients WHERE id = $1 AND envelope_id = $2`, [req.params.recipientId, e.id]);
         if (!old) throw notFound("Destinatario");
-        await replaceRecipient(t, e, old, input, "reassigned", a.actor);
+        return replaceRecipient(t, e, old, input, "reassigned", a.actor);
       });
+      await deleteBlobs(s, discardedKeys);
       return loadDetail(s.db, a.tenantId, req.params.id);
     },
   );
@@ -153,6 +168,7 @@ export async function participantRoutes(app: FastifyInstance, s: Services) {
       const input = DelegateInput.parse(req.body);
       const { recipient: r0, envelope: e0 } = await resolveToken(s.db, req.params.token);
       let newName = "";
+      let discardedKeys: string[] = [];
       await s.db.tx(async (t) => {
         const e = await lockEnvelope(t, e0.tenant_id, e0.id);
         if (e.status !== "sent") throw conflict("envelope_closed", "El sobre ya no está disponible");
@@ -163,9 +179,10 @@ export async function participantRoutes(app: FastifyInstance, s: Services) {
         if (isUnverifiedSelfRegistered(old)) throw forbidden("Para delegar, validá primero tu correo");
         if (old.email && input.email && old.email.toLowerCase() === input.email.toLowerCase())
           throw conflict("same_person", "No podés delegar en vos mismo");
-        await replaceRecipient(t, e, old, input, "delegated", recipientActor(req, old));
+        ({ discardedKeys } = await replaceRecipient(t, e, old, input, "delegated", recipientActor(req, old)));
         newName = input.name;
       });
+      await deleteBlobs(s, discardedKeys);
       return { delegated: true, to: newName };
     },
   );

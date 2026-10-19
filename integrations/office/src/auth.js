@@ -43,7 +43,14 @@ export function currentTokens() {
   return store.get(K.tokens) ?? memoryTokens;
 }
 function saveTokens(t) {
-  memoryTokens = store.set(K.tokens, t) ? null : t;
+  if (store.set(K.tokens, t)) {
+    memoryTokens = null;
+    return;
+  }
+  memoryTokens = t;
+  // La escritura falló (p. ej. cuota llena) pero la lectura anda: lo guardado antes taparía lo de memoria en
+  // currentTokens() y se volvería a canjear un refresh token ya rotado (el servidor revocaría toda la familia).
+  store.set(K.tokens, null);
 }
 export function signOut() {
   const t = currentTokens();

@@ -122,6 +122,12 @@ export function CorrectionModal({ detail, onClose, onDone }: { detail: EnvelopeD
       setError(x("correct.newIncomplete"));
       return;
     }
+    // La API no permite quitar el vencimiento (solo cambiarlo por una fecha futura): borrar la fecha se ignoraba sin aviso
+    // y la corrección se guardaba como si el sobre hubiera quedado sin vencimiento.
+    if (!expires && env.expiresAt) {
+      setError(x("correct.expiryRequired"));
+      return;
+    }
     setBusy(true);
     setError(null);
     const body: CorrectEnvelopeInput = { reason: reason.trim() || null };

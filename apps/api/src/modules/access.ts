@@ -96,7 +96,22 @@ export function envelopeVisibilitySql(a: AuthContext, params: unknown[], alias =
   const u = `$${params.length}`;
   params.push(a.access?.groupIds ?? []);
   const g = `$${params.length}::uuid[]`;
-  return ` AND (${alias}.created_by = ${u} OR EXISTS (SELECT 1 FROM envelope_shares es WHERE es.envelope_id = ${alias}.id AND es.group_id = ANY(${g})))`;
+  // También los sobres en los que es anfitrión de una firma en persona: tiene que encontrarlos para abrir la sesión.
+  return (
+    ` AND (${alias}.created_by = ${u} OR EXISTS (SELECT 1 FROM envelope_shares es WHERE es.envelope_id = ${alias}.id AND es.group_id = ANY(${g}))` +
+    ` OR EXISTS (SELECT 1 FROM recipients hr WHERE hr.envelope_id = ${alias}.id AND hr.in_person_host_user_id = ${u}))`
+  );
+}
+
+/** El usuario es anfitrión de una firma en persona del sobre (o de ese destinatario, si se indica). */
+async function isInPersonHost(db: Db, a: AuthContext, envelopeId: string, recipientId?: string): Promise<boolean> {
+  if (!a.userId || a.apiKeyId) return false;
+  if (recipientId !== undefined && !/^[0-9a-f-]{36}$/i.test(recipientId)) return false;
+  const row = await db.one(
+    `SELECT 1 FROM recipients WHERE envelope_id = $1 AND tenant_id = $2 AND in_person_host_user_id = $3 ${recipientId !== undefined ? "AND id = $4" : ""} LIMIT 1`,
+    recipientId !== undefined ? [envelopeId, a.tenantId, a.userId, recipientId] : [envelopeId, a.tenantId, a.userId],
+  );
+  return Boolean(row);
 }
 
 export async function assertEnvelopeAccess(db: Db, a: AuthContext, envelopeId: string, mode: "view" | "manage") {
@@ -113,6 +128,7 @@ export async function assertEnvelopeAccess(db: Db, a: AuthContext, envelopeId: s
       const shared = await db.one(`SELECT 1 FROM envelope_shares WHERE envelope_id = $1 AND group_id = ANY($2::uuid[])`, [envelopeId, groups]);
       if (shared) return;
     }
+    if (await isInPersonHost(db, a, envelopeId)) return;
     // Sin acceso de lectura: 404 para no revelar que existe.
     throw notFound("Sobre");
   }
@@ -120,7 +136,8 @@ export async function assertEnvelopeAccess(db: Db, a: AuthContext, envelopeId: s
   const canView =
     hasPerm(a, "envelopes:view_all") ||
     ((a.access?.groupIds.length ?? 0) > 0 &&
-      Boolean(await db.one(`SELECT 1 FROM envelope_shares WHERE envelope_id = $1 AND group_id = ANY($2::uuid[])`, [envelopeId, a.access!.groupIds])));
+      Boolean(await db.one(`SELECT 1 FROM envelope_shares WHERE envelope_id = $1 AND group_id = ANY($2::uuid[])`, [envelopeId, a.access!.groupIds]))) ||
+    (await isInPersonHost(db, a, envelopeId));
   if (!canView) throw notFound("Sobre");
   throw new AppError(403, "forbidden", "No podés modificar este sobre", { permission: "envelopes:manage_all" });
 }
@@ -173,6 +190,11 @@ export async function enforceRoutePolicy(db: Db, req: FastifyRequest, a: AuthCon
 
 
   // Sobres
+  // En persona: la sesión la abre el anfitrión asignado (el handler exige que sea él), aunque el sobre no sea suyo; p. ej.
+  // uno creado con una API key, que tiene que indicar el anfitrión, o por un colega que lo eligió como anfitrión.
+  if (url === "/v1/envelopes/:id/recipients/:recipientId/in-person" && /^[0-9a-f-]{36}$/i.test(params.id ?? "")) {
+    if (await isInPersonHost(db, a, params.id, params.recipientId)) return;
+  }
   if (url.startsWith("/v1/envelopes/:id")) {
     const readLike = isRead || url === "/v1/envelopes/:id/remind";
     return assertEnvelopeAccess(db, a, params.id, readLike ? "view" : "manage");

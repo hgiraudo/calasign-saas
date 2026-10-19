@@ -162,7 +162,7 @@ class CalaSign:
             with urllib.request.urlopen(req, timeout=self.timeout) as res:
                 body = json.loads(res.read() or b"{}")
         except urllib.error.HTTPError as e:
-            body = _json_or_empty(e.read())
+            body = _error_body(e)
             raise CalaSignError(body.get("error_description", "No se pudo obtener el token OAuth"), e.code, body.get("error", "oauth_error")) from None
         except _NETWORK_ERRORS as e:
             # Igual que en `request`: quien captura CalaSignError para los errores de red no recibe un URLError suelto
@@ -224,7 +224,7 @@ class CalaSign:
                     raise CalaSignError("La respuesta de la API no es JSON válido", status, "invalid_response") from None
             except urllib.error.HTTPError as e:
                 status = e.code
-                body = _json_or_empty(e.read())
+                body = _error_body(e)
                 if status == 401 and self._oauth and not refreshed:
                     refreshed = True
                     self._bearer(force=True)
@@ -363,10 +363,22 @@ def _json_or_empty(raw: bytes) -> Dict[str, Any]:
         return {}
 
 
+def _error_body(e: urllib.error.HTTPError) -> Dict[str, Any]:
+    """Cuerpo JSON de una respuesta de error. Un corte o timeout al leerlo no escapa como OSError/IncompleteRead suelto:
+    se lanza dentro del `except HTTPError`, así que los `except` hermanos de los errores de red no lo atrapaban."""
+    try:
+        return _json_or_empty(e.read())
+    except _NETWORK_ERRORS:
+        return {}
+
+
 def _retry_delay(attempt: int, retry_after: Optional[str]) -> float:
     if retry_after:
         try:
-            return min(float(retry_after), 30.0)
+            d = float(retry_after)
+            # Negativo o NaN: time.sleep lanzaba ValueError (como el SDK de Node, solo cuenta si es positivo).
+            if d > 0:
+                return min(d, 30.0)
         except ValueError:
             pass
     return min(8.0, 0.5 * 2**attempt) * (0.75 + random.random() * 0.5)

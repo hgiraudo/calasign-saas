@@ -18,7 +18,8 @@ function query(f: Filters, cursor?: string | null) {
   if (f.action.trim()) p.set("action", f.action.trim());
   if (f.actor.trim()) p.set("actor", f.actor.trim());
   if (f.from) p.set("from", new Date(`${f.from}T00:00:00`).toISOString());
-  if (f.to) p.set("to", new Date(`${f.to}T23:59:59`).toISOString());
+  // .999: la API compara con <=, y sin los milisegundos quedaba afuera lo ocurrido en el último segundo del día.
+  if (f.to) p.set("to", new Date(`${f.to}T23:59:59.999`).toISOString());
   if (cursor) p.set("cursor", cursor);
   return p.toString();
 }

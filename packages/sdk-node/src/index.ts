@@ -189,6 +189,8 @@ export class CalaSign {
       }
       if (res.status === 401 && this.opts.oauth && !refreshed) {
         refreshed = true;
+        // Como en los reintentos: el cuerpo descartado libera la conexión.
+        await res.body?.cancel().catch(() => {});
         await this.bearer(true);
         attempt--;
         continue;

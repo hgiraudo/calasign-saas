@@ -139,10 +139,11 @@ export function BulkNewPage() {
     api<{ items: TemplateSummary[] }>("/v1/templates")
       .then((r) => {
         setTemplates(r.items);
-        if (!templateId && r.items[0]) setTemplateId(r.items[0].id);
+        // Una plantilla de la URL que no está en la lista (borrada o sin acceso): el select mostraba la primera pero se
+        // validaba y enviaba con la de la URL (404).
+        setTemplateId((cur) => (r.items.some((x) => x.id === cur) ? cur : (r.items[0]?.id ?? "")));
       })
       .catch((e) => setError(errorText(e)));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => setResult(null), [csv, templateId]);

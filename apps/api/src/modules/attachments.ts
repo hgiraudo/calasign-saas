@@ -80,6 +80,8 @@ export async function attachmentRoutes(app: FastifyInstance, s: Services) {
     const sha = sha256Hex(buf);
     const { ip, userAgent } = clientInfo(req);
     let previous: string | null = null;
+    // Si la transacción falla (el firmante completó o se cerró el sobre entre la subida y acá), el archivo ya subido no
+    // lo referencia nada: sin fila en `files` la retención nunca lo borra (como las imágenes de firma en signing.ts).
     const field = await s.db.tx(async (t) => {
       const { e, r, f } = await guard(t, r0, e0, req.params.fieldId);
       previous = f.attachment_file_id ?? null;
@@ -100,6 +102,9 @@ export async function attachmentRoutes(app: FastifyInstance, s: Services) {
         data: { fieldId: f.id, name, contentType: type, sizeBytes: buf.length, sha256: sha },
       });
       return t.one(`SELECT * FROM fields WHERE id = $1`, [f.id]);
+    }).catch(async (err) => {
+      await s.blobs.delete(key).catch(() => {});
+      throw err;
     });
     await discard(previous);
     return toField(field);

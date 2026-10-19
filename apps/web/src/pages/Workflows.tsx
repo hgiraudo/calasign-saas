@@ -576,11 +576,17 @@ export function WorkflowRunPage() {
     setError(null);
     try {
       setRun(await api<WorkflowRun>(path, { method: "POST", body }));
+      return true;
     } catch (e) {
       setError(errorText(e));
+      return false;
     } finally {
       setBusy(false);
     }
+  };
+  // El comentario es de una decisión: una vez registrada se limpia (si no, aparecía ya escrito en la aprobación siguiente).
+  const decide = async (index: number, approve: boolean) => {
+    if (await act(`/v1/workflow-runs/${id}/steps/${index}/decision`, { approve, comment: comment.trim() || null })) setComment("");
   };
 
   if (!run) return <div className="page">{loadError ? <ErrorBox error={loadError} /> : <Spinner />}</div>;
@@ -643,10 +649,10 @@ export function WorkflowRunPage() {
                   <div className="stack" style={{ marginTop: "0.6rem" }}>
                     <input value={comment} onChange={(e) => setComment(e.target.value)} placeholder={ta("run.comment")} aria-label={ta("run.comment")} />
                     <div className="row-wrap">
-                      <button type="button" className="btn btn-primary btn-sm" disabled={busy} onClick={() => act(`/v1/workflow-runs/${run.id}/steps/${s.index}/decision`, { approve: true, comment: comment || null })}>
+                      <button type="button" className="btn btn-primary btn-sm" disabled={busy} onClick={() => decide(s.index, true)}>
                         {ta("run.approve")}
                       </button>
-                      <button type="button" className="btn btn-sm" disabled={busy} onClick={() => act(`/v1/workflow-runs/${run.id}/steps/${s.index}/decision`, { approve: false, comment: comment || null })}>
+                      <button type="button" className="btn btn-sm" disabled={busy} onClick={() => decide(s.index, false)}>
                         {ta("run.reject")}
                       </button>
                     </div>

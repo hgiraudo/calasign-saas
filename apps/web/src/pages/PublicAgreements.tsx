@@ -32,6 +32,8 @@ export function PublicWorkflowStartPage() {
   const [info, setInfo] = useState<PublicWorkflowStart | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // El workflow arrancó pero su primer paso no es un formulario público (p. ej. una aprobación interna): no es un error.
+  const [started, setStarted] = useState(false);
   const trap = useRef<HTMLInputElement>(null);
   useEffect(() => {
     api<PublicWorkflowStart>(`/v1/public/workflows/${slug}`)
@@ -40,10 +42,11 @@ export function PublicWorkflowStartPage() {
   }, [slug]); // eslint-disable-line react-hooks/exhaustive-deps
   const start = async () => {
     setBusy(true);
+    setError(null);
     try {
       const r = await api<{ token: string | null; runId: string }>(`/v1/public/workflows/${slug}/start`, { method: "POST", body: { website: trap.current?.value ?? "" } });
       if (r.token) nav(`/w/${r.token}`, { replace: true });
-      else setError(ta("pub.waiting"));
+      else setStarted(true);
     } catch (e) {
       setError(errorText(e));
       setBusy(false);
@@ -58,12 +61,18 @@ export function PublicWorkflowStartPage() {
           <>
             <h1>{info.workflowName}</h1>
             {info.description && <p className="muted">{info.description}</p>}
-            <input ref={trap} tabIndex={-1} autoComplete="off" aria-hidden="true" name="website" style={{ position: "absolute", left: "-5000px" }} />
-            <div>
-              <button type="button" className="btn btn-primary" onClick={start} disabled={busy}>
-                {ta("pub.start")}
-              </button>
-            </div>
+            {started ? (
+              <p role="status">{ta("pub.waiting")}</p>
+            ) : (
+              <>
+                <input ref={trap} tabIndex={-1} autoComplete="off" aria-hidden="true" name="website" style={{ position: "absolute", left: "-5000px" }} />
+                <div>
+                  <button type="button" className="btn btn-primary" onClick={start} disabled={busy}>
+                    {ta("pub.start")}
+                  </button>
+                </div>
+              </>
+            )}
           </>
         )}
       </div>

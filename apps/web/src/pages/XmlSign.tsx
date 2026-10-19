@@ -18,6 +18,8 @@ export function XmlSignPage() {
   const [result, setResult] = useState<XmlSignResponse | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Aparte del error general: un archivo leído bien limpia el de uno anterior sin borrar, p. ej., el de los certificados.
+  const [fileError, setFileError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -41,8 +43,9 @@ export function XmlSignPage() {
       if (mine !== fileSeq.current) return;
       setXml(text);
       setResult(null);
+      setFileError(null);
     } catch (e) {
-      if (mine === fileSeq.current) setError(errorText(e));
+      if (mine === fileSeq.current) setFileError(errorText(e));
     }
   };
 
@@ -50,6 +53,7 @@ export function XmlSignPage() {
     e.preventDefault();
     setBusy(true);
     setError(null);
+    setFileError(null);
     setResult(null);
     try {
       const body: Record<string, unknown> = { xml, profile, certificateId };
@@ -80,6 +84,7 @@ export function XmlSignPage() {
       </div>
       <p className="muted">{ev("xml.intro")}</p>
       <ErrorBox error={error} />
+      <ErrorBox error={fileError} />
       {certs && certs.length === 0 ? (
         <div className="empty">{ev("xml.noCerts")}</div>
       ) : (

@@ -43,7 +43,11 @@ export function SsoDomainVerification({ refreshKey }: { refreshKey?: unknown }) 
   const [busy, setBusy] = useState<string | null>(null);
   useEffect(() => {
     api<{ items: SsoDomainStatus[] }>("/v1/settings/sso/domains")
-      .then((r) => setItems(r.items))
+      .then((r) => {
+        setItems(r.items);
+        // El error de una carga anterior (o de un "Verificar") no queda a la vista con la lista ya al día.
+        setError(null);
+      })
       .catch((e) => setError(errorText(e)));
   }, [refreshKey]);
   if (!items || items.length === 0) return error ? <ErrorBox error={error} /> : null;

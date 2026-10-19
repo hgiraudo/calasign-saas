@@ -462,6 +462,8 @@ assert(sg.status === 200, "link propio por el dominio propio → 200");
 // El dominio propio no sirve la cuenta: la organización controla su DNS y podría quedarse con la cookie de sesión.
 const loginPage = await getWithHost("/login", DOMAIN);
 assert(loginPage.status === 302 && loginPage.headers.location === `${BASE.replace(/\/$/, "")}/login`.replace(BASE, new URL(BASE).origin) || loginPage.headers.location?.endsWith("/login"), `/login en el dominio propio redirige a la plataforma (${loginPage.status} ${loginPage.headers.location})`);
+const dotted = await getWithHost("/login", `${DOMAIN}.`);
+assert(dotted.status === 302, `con punto final el dominio propio también redirige (${dotted.status})`);
 const appPage = await getWithHost("/app/envelopes/x", DOMAIN);
 assert(appPage.status === 302 && !appPage.headers.location?.includes(DOMAIN), "/app en el dominio propio redirige a la plataforma");
 const loginRes = await fetch(`${BASE}/v1/auth/login`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: `owner-plat+${stamp}@example.com`, password: "una-clave-segura-123" }) });

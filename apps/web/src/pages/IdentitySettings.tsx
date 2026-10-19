@@ -40,7 +40,7 @@ function CopyRow({ label, value }: { label: string; value: string }) {
     <div className="idn-copy">
       <span className="muted small">{label}</span>
       <code className="secret">{value}</code>
-      <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigator.clipboard?.writeText(value)} aria-label={`${t("common.copy")} ${label}`}>
+      <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigator.clipboard?.writeText(value).catch(() => undefined /* sin permiso: se copia a mano */)} aria-label={`${t("common.copy")} ${label}`}>
         ⧉
       </button>
     </div>

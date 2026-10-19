@@ -616,8 +616,11 @@ function UploadModal({ fields, onClose, onDone }: { fields: AgreementFieldDef[];
             required
             onChange={(e) => {
               const f = e.target.files?.[0] ?? null;
+              const auto = (x: File) => x.name.replace(/\.pdf$/i, "");
+              // El título que se completó solo con el archivo anterior sigue al archivo nuevo (antes se subía el segundo
+              // PDF con el nombre del primero); uno escrito a mano se respeta.
+              if (f && (!d.title || (file && d.title === auto(file)))) setD({ ...d, title: auto(f) });
               setFile(f);
-              if (f && !d.title) setD({ ...d, title: f.name.replace(/\.pdf$/i, "") });
             }}
           />
         </label>

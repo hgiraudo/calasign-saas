@@ -260,8 +260,9 @@ function OAuthAppsAdmin() {
       {shown && (
         <div className="alert alert-success stack" role="status">
           {shown.secret && <strong>{p("oauth.secretOnce")}</strong>}
-          <CopyBox label={p("oauth.clientId")} value={shown.clientId} />
-          {shown.secret && <CopyBox label={p("oauth.clientSecret")} value={shown.secret} />}
+          {/* Clave por valor: al rotar el secreto (o crear otra app) el "Copiado" del anterior no queda sobre el nuevo. */}
+          <CopyBox key={shown.clientId} label={p("oauth.clientId")} value={shown.clientId} />
+          {shown.secret && <CopyBox key={shown.secret} label={p("oauth.clientSecret")} value={shown.secret} />}
         </div>
       )}
 

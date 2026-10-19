@@ -64,6 +64,9 @@ export function CertificatesPage() {
   };
 
   const remove = async (id: string) => {
+    // Doble clic en "Eliminar": el segundo DELETE respondía 404 y se mostraba un error aunque se hubiera borrado.
+    if (busy) return;
+    setBusy(true);
     setError(null);
     try {
       await api(`/v1/certificates/${id}`, { method: "DELETE" });
@@ -71,6 +74,8 @@ export function CertificatesPage() {
       await load();
     } catch (err) {
       setError(errorText(err));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -173,7 +178,7 @@ export function CertificatesPage() {
                     {confirming === c.id ? (
                       <span className="row-wrap">
                         <span className="small">{ev("cert.deleteConfirm")}</span>
-                        <button type="button" className="btn btn-danger btn-sm" onClick={() => remove(c.id)}>
+                        <button type="button" className="btn btn-danger btn-sm" disabled={busy} onClick={() => remove(c.id)}>
                           {ev("cert.delete")}
                         </button>
                         <button type="button" className="btn btn-sm" onClick={() => setConfirming(null)}>

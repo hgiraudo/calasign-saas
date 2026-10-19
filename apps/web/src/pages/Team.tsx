@@ -273,6 +273,9 @@ function InvitationsTab({ roles }: { roles: RolesResponse | null }) {
       await load();
     } catch (e) {
       setError(errorText(e));
+      // Aceptada o revocada en otra pestaña (404): la lista se actualiza en lugar de dejar la fila "pendiente" con un
+      // botón que vuelve a fallar.
+      void load();
     }
   };
 

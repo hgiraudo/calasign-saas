@@ -19,9 +19,11 @@ const isLocalEnv = () => config.environment === "local";
 const platformRoot = () => appHost().split(".").slice(-2).join(".");
 
 /** Páginas de la cuenta (web): en un dominio propio redirigen al dominio de la plataforma. */
-const ACCOUNT_PAGES = ["/", "/app", "/login", "/signup", "/forgot", "/reset", "/invite", "/oauth/authorize", "/developers"];
+const ACCOUNT_PAGES = ["/app", "/login", "/signup", "/forgot", "/reset", "/invite", "/oauth/authorize", "/developers"];
 /** Rutas que crean o usan una sesión de cuenta: en un dominio propio no se atienden. */
-const ACCOUNT_APIS = ["/v1/auth/", "/v1/invite/", "/v1/oauth/authorize/", "/v1/me", "/v1/integrations/sso/"];
+const ACCOUNT_APIS = ["/v1/auth", "/v1/invite", "/v1/oauth/authorize", "/v1/me", "/v1/integrations/sso"];
+/** La ruta es `prefix` o está debajo (por segmento: "/v1/me" no abarca "/v1/members"). */
+const under = (path: string, prefix: string) => path === prefix || path.startsWith(`${prefix}/`);
 
 const txtName = (domain: string) => `_calasign-challenge.${domain}`;
 const txtValue = (token: string) => `calasign-verify=${token}`;
@@ -74,11 +76,14 @@ export async function routesToPlatform(domain: string): Promise<boolean> {
 
 const cache = new Map<string, { value: string | null; at: number }>();
 const CACHE_MS = 60_000;
+/** Tope de entradas: la clave por host sale del encabezado Host (lo elige el cliente) y se consulta en cada pedido. */
+const CACHE_MAX = 10_000;
 
 function cached<T extends string | null>(key: string, load: () => Promise<T>): Promise<T> {
   const c = cache.get(key);
   if (c && Date.now() - c.at < CACHE_MS) return Promise.resolve(c.value as T);
   return load().then((v) => {
+    if (cache.size >= CACHE_MAX) cache.clear();
     cache.set(key, { value: v, at: Date.now() });
     return v;
   });
@@ -99,7 +104,9 @@ export async function tenantBaseUrl(db: Db, tenantId: string): Promise<string> {
 
 /** Tenant dueño de un dominio verificado (por Host), o null. */
 export async function tenantForHost(db: Db, host: string | undefined): Promise<string | null> {
-  const h = (host ?? "").split(":")[0].toLowerCase();
+  // Sin el punto final: "firmas.cliente.com." es el mismo dominio (el navegador lo abre con el mismo certificado), pero
+  // no coincidía y ahí se servía la cuenta con su cookie de sesión, como si fuera un host ajeno a la organización.
+  const h = (host ?? "").split(":")[0].toLowerCase().replace(/\.+$/, "");
   if (!h || h === appHost() || h === "localhost" || h === "127.0.0.1") return null;
   return cached(`h:${h}`, async () => {
     const r = await db.one<any>(`SELECT tenant_id FROM custom_domains WHERE domain = $1 AND status = 'verified'`, [h]);
@@ -334,10 +341,10 @@ export async function customDomainRoutes(app: FastifyInstance, s: Services) {
     const tenantId = await tenantForHost(s.db, req.headers.host);
     if (!tenantId) return;
     const path = req.url.split("?")[0];
-    if (req.method === "GET" && ACCOUNT_PAGES.some((p) => (p === "/" ? path === "/" : path === p || path.startsWith(`${p}/`)))) {
+    if (req.method === "GET" && (path === "/" || ACCOUNT_PAGES.some((p) => under(path, p)))) {
       return reply.redirect(`${config.appUrl}${req.url}`, 302);
     }
-    if (ACCOUNT_APIS.some((p) => path.startsWith(p))) {
+    if (ACCOUNT_APIS.some((p) => under(path, p))) {
       return reply.code(401).send({ error: { code: "use_platform_host", message: `En un dominio propio no se inicia sesión: entrá por ${config.appUrl}` } });
     }
     // @fastify/cookie ya parseó las cookies (su hook corre antes): se quita la de sesión de las dos partes.

@@ -18,7 +18,7 @@ import { enqueue } from "../infra/queue";
 import { AppError, badRequest, conflict, forbidden, notFound } from "../lib/errors";
 import { decrypt, encrypt, maskDestination, randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { authenticate, clientInfo, type AuthContext, type Services } from "./context";
-import { activateRecipient, advanceRouting, currentSignerGroup, danglingFormulaProblems, lockEnvelope } from "./envelopes";
+import { activateRecipient, advanceRouting, currentSignerGroup, danglingFormulaProblems, lockEnvelope, logicOrderProblems, pastExpiry } from "./envelopes";
 import { checkSenderValue, insertEnvelopeField } from "./fieldvalues";
 import { pruneDanglingConditions, saveFieldLogic } from "./logic";
 import { csvCell } from "./agreements/common";
@@ -133,6 +133,8 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
   const input = CorrectEnvelopeInput.parse(body);
   const e = await lockEnvelope(db, a.tenantId, envelopeId);
   if (e.status !== "sent") throw conflict("not_in_progress", "Solo se corrige un sobre enviado y en curso");
+  // Vencido aunque el barrido no lo haya marcado: corregirlo (p. ej. extender el vencimiento) no lo revive.
+  if (pastExpiry(e)) throw new AppError(410, "envelope_closed", "El sobre ya venció");
   const diff: Record<string, unknown> = {};
   const recips = new Map((await db.query<any>(`SELECT * FROM recipients WHERE envelope_id = $1`, [e.id])).map((r) => [r.id, r]));
   const groupBefore = await currentSignerGroup(db, e.id);
@@ -247,6 +249,8 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
     if (destinationChanged && r.access_token_hash) {
       const t = newToken();
       await db.query(`UPDATE recipients SET access_token_hash = $2, access_token_enc = $3, telegram_chat_id = NULL WHERE id = $1`, [r.id, t.hash, t.enc]);
+      // El checkout de un cobro pendiente se armó con el contacto y el link anteriores: se descarta.
+      await db.query(`UPDATE envelope_payments SET checkout_id = NULL, checkout_url = NULL, updated_at = now() WHERE recipient_id = $1 AND status <> 'paid'`, [r.id]);
       // Un código de embed sin usar emitido para el contacto anterior abriría el link nuevo: se vence.
       await db.query(`UPDATE embed_sessions SET expires_at = LEAST(expires_at, now()) WHERE recipient_id = $1 AND used_at IS NULL`, [r.id]);
       await db.query(`DELETE FROM signer_sessions WHERE recipient_id = $1`, [r.id]);
@@ -394,6 +398,12 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
   if (active > MAX_RECIPIENTS) problems.push(`El sobre admite hasta ${MAX_RECIPIENTS} destinatarios`);
   const nFields = await db.one<{ n: number }>(`SELECT count(*)::int AS n FROM fields WHERE envelope_id = $1`, [e.id]);
   if ((nFields?.n ?? 0) > MAX_FIELDS) problems.push(`El sobre admite hasta ${MAX_FIELDS} campos`);
+  problems.push(
+    ...logicOrderProblems(
+      await db.query<any>(`SELECT id, recipient_id, label, conditions, read_only FROM fields WHERE envelope_id = $1`, [e.id]),
+      now.filter((r) => !["delegated", "reassigned"].includes(r.status)),
+    ),
+  );
   if (problems.length) throw new AppError(422, "envelope_incomplete", problems.join(". "), { problems });
 
   if (removedFields.length) diff.fieldsRemoved = removedFields;

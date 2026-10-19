@@ -7,7 +7,7 @@ import { appendEvent, type Actor } from "../infra/evidence";
 import { conflict, forbidden, notFound } from "../lib/errors";
 import { encrypt, maskDestination, randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { authenticate, type Services } from "./context";
-import { activateRecipient, lockEnvelope } from "./envelopes";
+import { activateRecipient, lockEnvelope, pastExpiry } from "./envelopes";
 import { loadDetail } from "./mappers";
 import { isUnverifiedSelfRegistered } from "./otp";
 import { assertLinkCurrent, recipientActor, resolveToken } from "./signing";
@@ -100,7 +100,12 @@ export async function replaceRecipient(
   const discardedKeys = await discardRecipientAttachments(db, old.id);
   await db.query(`UPDATE fields SET recipient_id = $2 WHERE recipient_id = $1`, [old.id, id]);
   // El cobro pendiente pasa al reemplazo (si no, el sobre queda trabado o se firma sin pagar).
-  await db.query(`UPDATE envelope_payments SET recipient_id = $2, updated_at = now() WHERE recipient_id = $1 AND status <> 'paid'`, [old.id, id]);
+  // El checkout abierto se armó con el correo y el link (ya revocado) del anterior: se descarta y el reemplazo arma uno
+  // nuevo al pagar (si no, volvía a un link muerto y el pago figuraba a nombre de quien no pagó).
+  await db.query(
+    `UPDATE envelope_payments SET recipient_id = $2, checkout_id = NULL, checkout_url = NULL, updated_at = now() WHERE recipient_id = $1 AND status <> 'paid'`,
+    [old.id, id],
+  );
   await inheritIdentityRequirement(db, old, id);
   // El reemplazo también firma con certificado si el original debía hacerlo.
   await db.query(`UPDATE recipients SET signature_type = $2, certificate_requirements = $3 WHERE id = $1`, [
@@ -143,7 +148,7 @@ export async function participantRoutes(app: FastifyInstance, s: Services) {
       const input = ReassignInput.parse(req.body);
       const { discardedKeys } = await s.db.tx(async (t) => {
         const e = await lockEnvelope(t, a.tenantId, req.params.id);
-        if (e.status !== "sent") throw conflict("not_in_progress", "Solo se reasigna en un sobre en curso");
+        if (e.status !== "sent" || pastExpiry(e)) throw conflict("not_in_progress", "Solo se reasigna en un sobre en curso");
         const old = await t.one<any>(`SELECT * FROM recipients WHERE id = $1 AND envelope_id = $2`, [req.params.recipientId, e.id]);
         if (!old) throw notFound("Destinatario");
         return replaceRecipient(t, e, old, input, "reassigned", a.actor);
@@ -163,7 +168,7 @@ export async function participantRoutes(app: FastifyInstance, s: Services) {
       let discardedKeys: string[] = [];
       await s.db.tx(async (t) => {
         const e = await lockEnvelope(t, e0.tenant_id, e0.id);
-        if (e.status !== "sent") throw conflict("envelope_closed", "El sobre ya no está disponible");
+        if (e.status !== "sent" || pastExpiry(e)) throw conflict("envelope_closed", "El sobre ya no está disponible");
         if (!(e.allow_delegation ?? true)) throw forbidden("El remitente no permite delegar este sobre");
         const old = await t.one<any>(`SELECT * FROM recipients WHERE id = $1`, [r0.id]);
         assertLinkCurrent(old, req.params.token);

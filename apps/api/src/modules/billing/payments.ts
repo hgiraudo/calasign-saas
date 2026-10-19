@@ -251,9 +251,12 @@ export async function closeStaleCheckouts(d: { db: Db; log: { error: (o: object,
  */
 export async function refundPaymentsOnClosedEnvelopes(d: { db: Db; log: { error: (o: object, m: string) => void } }, limit = 20) {
   const rows = await d.db.query<any>(
-    `SELECT id, provider, provider_payment_id, envelope_id, tenant_id, amount, currency FROM envelope_payments
-      WHERE status = 'paid' AND refund_required_at IS NOT NULL AND refunded_at IS NULL
-      ORDER BY refund_required_at LIMIT $1`,
+    // Solo con el sobre efectivamente cerrado: uno marcado por vencer que después se extendió (y sigue en curso) no se
+    // reembolsa, o quedaría esperando un pago que ya no se puede hacer.
+    `SELECT p.id, p.provider, p.provider_payment_id, p.envelope_id, p.tenant_id, p.amount, p.currency FROM envelope_payments p
+       JOIN envelopes e ON e.id = p.envelope_id
+      WHERE p.status = 'paid' AND p.refund_required_at IS NOT NULL AND p.refunded_at IS NULL AND e.status IN ('voided','declined','expired')
+      ORDER BY p.refund_required_at LIMIT $1`,
     [limit],
   );
   for (const p of rows) {
@@ -460,7 +463,8 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
           metadata: { paymentId: p.id, envelopeId: e.id, tenantId: e.tenant_id },
           customerEmail: r.email,
           // Misma clave para pedidos simultáneos sobre el mismo estado; cambia cuando la sesión anterior vence o falla.
-          idempotencyKey: `pay:${p.id}:${p.checkout_id ?? "first"}`,
+          // Con el destinatario: tras una delegación (checkout descartado) Stripe no devuelve la sesión del anterior.
+          idempotencyKey: `pay:${p.id}:${p.recipient_id}:${p.checkout_id ?? "first"}`,
         });
         checkoutId = c.id;
         url = c.url;

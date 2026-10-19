@@ -725,6 +725,33 @@ export async function assertDocumentLimits(t: Db, kind: "envelope" | "template",
   if (Number(r?.bytes ?? 0) > L.bytes) throw badRequest("documents_too_large", `Los documentos superan ${Math.round(L.bytes / 1024 / 1024)} MB en total`);
 }
 
+/**
+ * Una condición que cita un campo de OTRO firmante se evalúa cuando completa el dueño del campo condicionado: si el otro
+ * firma después (o en el mismo turno), se decide con un valor que todavía no existe y no se vuelve a evaluar (un campo
+ * obligatorio quedaba oculto o uno que debía ocultarse se estampaba). Se exige que el campo citado sea fijo (solo
+ * lectura) o de alguien que firma antes.
+ */
+export function logicOrderProblems(
+  fields: { id: string; recipient_id: string; label: string | null; conditions: unknown; read_only?: boolean }[],
+  recips: { id: string; name: string; routing_order: number }[],
+): string[] {
+  const byId = new Map(fields.map((f) => [f.id, f]));
+  const order = new Map(recips.map((r) => [r.id, r.routing_order]));
+  const name = new Map(recips.map((r) => [r.id, r.name]));
+  const out: string[] = [];
+  for (const f of fields) {
+    const conds = Array.isArray(f.conditions) ? (f.conditions as { fieldId: string }[]) : [];
+    for (const c of conds) {
+      const src = byId.get(c.fieldId);
+      if (!src || src.recipient_id === f.recipient_id || src.read_only) continue;
+      if ((order.get(src.recipient_id) ?? 0) >= (order.get(f.recipient_id) ?? 0)) {
+        out.push(`El campo "${f.label ?? "?"}" de ${name.get(f.recipient_id) ?? "?"} depende de un campo de ${name.get(src.recipient_id) ?? "?"}, que firma después o al mismo tiempo`);
+      }
+    }
+  }
+  return [...new Set(out)];
+}
+
 /** Valida y envía un borrador (dentro de la transacción del llamador). */
 export async function sendEnvelope(t: Db, tenantId: string, envelopeId: string, actor: Actor) {
   const e = await lockEnvelope(t, tenantId, envelopeId);
@@ -733,8 +760,9 @@ export async function sendEnvelope(t: Db, tenantId: string, envelopeId: string, 
   await assertDocumentLimits(t, "envelope", e.id);
   const docs = await loadDocuments(t, e.id);
   const recips = await t.query<any>(`SELECT * FROM recipients WHERE envelope_id = $1`, [e.id]);
-  const fields = await t.query<any>(`SELECT recipient_id, type, label, formula FROM fields WHERE envelope_id = $1`, [e.id]);
+  const fields = await t.query<any>(`SELECT id, recipient_id, type, label, formula, conditions, read_only FROM fields WHERE envelope_id = $1`, [e.id]);
   const problems: string[] = [];
+  problems.push(...logicOrderProblems(fields, recips));
   if (docs.length === 0) problems.push("Agregá al menos un documento");
   // Cada adjunto puede pesar 10 MB y todos se agregan al PDF final.
   if (fields.filter((f) => f.type === "attachment").length > ENVELOPE_LIMITS.attachmentFields)

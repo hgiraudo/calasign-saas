@@ -122,10 +122,10 @@ export async function certsignStage(
   const key = `tenants/${e.tenant_id}/envelopes/${e.id}/certsign/${uuidv7()}-working.pdf`;
   await d.blobs.put(key, working, "application/pdf");
   const ordered = [...certSigners].sort((a, b) => a.routing_order - b.routing_order || String(a.created_at).localeCompare(String(b.created_at)) || a.id.localeCompare(b.id));
-  await d.db.tx(async (t) => {
+  const stored = await d.db.tx(async (t) => {
     const cur = await t.one<any>(`SELECT status FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
-    if (cur?.status !== "finalizing") return;
-    if (await t.one(`SELECT 1 FROM envelope_certsign WHERE envelope_id = $1`, [e.id])) return;
+    if (cur?.status !== "finalizing") return false;
+    if (await t.one(`SELECT 1 FROM envelope_certsign WHERE envelope_id = $1`, [e.id])) return false;
     await t.query(
       `INSERT INTO envelope_certsign (envelope_id, tenant_id, working_key, working_sha256, completed_at, chain_head) VALUES ($1,$2,$3,$4,$5,$6)`,
       [e.id, e.tenant_id, key, sha, input.certificate.completedAt, input.certificate.chainHead],
@@ -146,7 +146,13 @@ export async function certsignStage(
       data: { workingSha256: sha, signers: ordered.map((r, i) => ({ recipientId: r.id, name: r.name, position: i + 1 })) },
     });
     await enqueue(t, "notify", { kind: "certificate_request", envelopeId: e.id, recipientId: ordered[0].id, tenantId: e.tenant_id }, { dedupeKey: `certificate_request:${ordered[0].id}` });
+    return true;
+  }).catch(async (err) => {
+    await d.blobs.delete(key).catch(() => {});
+    throw err;
   });
+  // Otra corrida ya armó el PDF de trabajo (o el sobre cambió de estado): este no lo referencia nada.
+  if (!stored) await d.blobs.delete(key).catch(() => {});
   d.log.info({ envelopeId: e.id, signers: ordered.length }, "sobre esperando firmas con certificado");
   return { kind: "waiting" };
 }

@@ -36,3 +36,19 @@ export function formatComputedLocal(v: string | null | undefined, locale: string
   if (!Number.isFinite(n)) return v;
   return new Intl.NumberFormat(locale === "pt-BR" ? "pt-BR" : locale === "en" ? "en-US" : "es-AR", { maximumFractionDigits: 2 }).format(n);
 }
+
+/**
+ * Monto escrito por el usuario, con el mismo criterio que la API (toNumberOrNull) y el motor de plantillas: 1.234,56 ·
+ * 1,234.56 · 1.500.000 · 1,500,000. null si no es un número. Única copia en la web (antes había una por pantalla y
+ * cada corrección había que repetirla en todas).
+ */
+export function parseAmountText(raw: string): number | null {
+  let s = raw.trim().replace(/[^\d,.-]/g, "");
+  if (!/\d/.test(s)) return null;
+  if (s.includes(",") && s.includes(".")) s = s.lastIndexOf(",") > s.lastIndexOf(".") ? s.replace(/\./g, "").replace(",", ".") : s.replace(/,/g, "");
+  // 1.500.000 / 1,500,000: separador repetido entre grupos de 3 cifras = miles.
+  else if (/^-?\d{1,3}([.,])\d{3}(?:\1\d{3})+$/.test(s)) s = s.replace(/[.,]/g, "");
+  else if (s.includes(",")) s = s.replace(",", ".");
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}

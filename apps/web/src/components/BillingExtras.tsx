@@ -13,6 +13,7 @@ import {
 import { api, errorText } from "../lib/api";
 import { useI18n } from "../lib/i18n";
 import { formatMoney, useBillingText } from "../lib/i18n-billing";
+import { parseAmountText } from "../lib/logic";
 import { ErrorBox, Spinner } from "./ui";
 
 interface PaymentResponse {
@@ -33,21 +34,6 @@ function methodLabels(p: PaymentProviderInfo | undefined, b: ReturnType<typeof u
   return codes
     .map((c, i) => ((PAYMENT_METHOD_CODES as readonly string[]).includes(c) ? b(`pay.method.${c}` as "pay.method.card") : p.methods[i] ?? c))
     .join(", ");
-}
-
-/**
- * Monto escrito por el remitente, con el mismo criterio que la API: 1.234,56 · 1,234.56 · 1.500.000. Antes se hacía
- * Number(amount.replace(",", ".")): "1.500,00" (el formato habitual en Brasil, la moneda por defecto) daba NaN, que
- * viaja como null, y el cobro no se podía guardar ("Expected number, received null").
- */
-function parsePaymentAmount(raw: string): number | null {
-  let s = raw.trim().replace(/[^\d,.-]/g, "");
-  if (!/\d/.test(s)) return null;
-  if (s.includes(",") && s.includes(".")) s = s.lastIndexOf(",") > s.lastIndexOf(".") ? s.replace(/\./g, "").replace(",", ".") : s.replace(/,/g, "");
-  else if (/^-?\d{1,3}([.,])\d{3}(?:\1\d{3})+$/.test(s)) s = s.replace(/[.,]/g, "");
-  else if (s.includes(",")) s = s.replace(",", ".");
-  const n = Number(s);
-  return Number.isFinite(n) ? n : null;
 }
 
 /** Configuración del cobro en el paso de revisión de un borrador. */
@@ -109,7 +95,7 @@ export function PaymentOptionsPanel({
     signers.length > 0 &&
     configured.length > 0 &&
     (!stored ||
-      parsePaymentAmount(amount) !== stored.amount ||
+      parseAmountText(amount) !== stored.amount ||
       currency !== stored.currency ||
       description.trim() !== stored.description ||
       payer !== stored.payerRecipientId ||
@@ -122,7 +108,7 @@ export function PaymentOptionsPanel({
   const save = async () => {
     setError(null);
     setSaved(false);
-    const value = parsePaymentAmount(amount);
+    const value = parseAmountText(amount);
     if (value === null) {
       setError(b("pay.amountInvalid"));
       return;

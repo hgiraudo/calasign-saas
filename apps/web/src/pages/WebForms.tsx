@@ -85,6 +85,9 @@ function WebFormEditor({ form, initialTemplateId, onClose, onSaved }: { form: We
     // Solo se aplica la respuesta de la plantilla elegida ahora: una respuesta lenta de la anterior (p. ej. la de la
     // URL) dejaba sus roles en pantalla y el formulario se guardaba con un rol que no es de esta plantilla.
     let stale = false;
+    // Mientras carga la nueva (o si falla), no quedan los roles de la anterior: "Guardar" seguía habilitado y mandaba
+    // la plantilla nueva con el rol firmante y los destinatarios fijos de la otra.
+    setTpl(null);
     api<TemplateDetail>(`/v1/templates/${templateId}`)
       .then((d) => {
         if (stale) return;

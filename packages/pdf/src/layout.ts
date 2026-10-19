@@ -128,6 +128,17 @@ export function fontCharset(font: PDFFont): Set<number> {
   return set;
 }
 
+/**
+ * safeText para texto que pasa por wrapText: conserva los saltos de línea (la fuente no tiene glifo para "\n", así que
+ * safeText los volvía "?" antes de que wrapText partiera los párrafos) y los tabuladores pasan a espacios.
+ */
+export function safeMultiline(font: PDFFont, text: string): string {
+  return text
+    .split(/\r\n?|\n/)
+    .map((l) => safeText(font, l.replace(/\t/g, " ")))
+    .join("\n");
+}
+
 /** Reemplaza caracteres que la fuente no puede dibujar. */
 export function safeText(font: PDFFont, text: string): string {
   const supported = fontCharset(font);

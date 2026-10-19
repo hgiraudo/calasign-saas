@@ -413,7 +413,13 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
       await enqueue(t, "notify", { kind: "completed", envelopeId: e.id, recipientId: r.id, tenantId: e.tenant_id });
     await enqueue(t, "notify", { kind: "sender_completed", envelopeId: e.id, tenantId: e.tenant_id });
     return true;
+  }).catch(async (err) => {
+    // Sin fila en `files` el PDF sellado recién subido no lo referencia nada (la retención nunca lo vería).
+    await d.blobs.delete(key).catch(() => {});
+    throw err;
   });
+  // Otra corrida ya completó el sobre: este PDF sellado quedó sin usar.
+  if (!completed) await d.blobs.delete(key).catch(() => {});
   // El PDF de trabajo de las firmas con certificado ya está dentro del sellado: sin fila en `files`, la retención no lo
   // borraría nunca (y lleva los adjuntos de los firmantes).
   if (completed && certStage.kind === "seal") await d.blobs.delete(certStage.workingKey).catch(() => {});

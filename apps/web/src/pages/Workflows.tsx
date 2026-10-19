@@ -348,13 +348,17 @@ export function WorkflowEditPage() {
     setSteps(next);
   };
 
+  const draft = { name: name.trim(), description: description.trim() || null, active, publicStart, steps };
+  // Sin cambios no se guarda al iniciar: cada "Iniciar" dejaba un PATCH y un "workflow.updated" en la auditoría.
+  const dirty = !wf || JSON.stringify(draft) !== JSON.stringify({ name: wf.name, description: wf.description, active: wf.active, publicStart: wf.publicStart, steps: wf.steps });
+
   /** Guarda el flujo; devuelve false si no se pudo (para no iniciar una ejecución con la versión anterior). */
   const save = async (e?: FormEvent): Promise<boolean> => {
     e?.preventDefault();
     setBusy(true);
     setError(null);
     try {
-      const body = { name: name.trim(), description: description.trim() || null, active, publicStart, steps };
+      const body = draft;
       const w = isNew ? await api<WorkflowWithSecret>("/v1/workflows", { method: "POST", body }) : await api<WorkflowWithSecret>(`/v1/workflows/${id}`, { method: "PATCH", body });
       if (isNew) nav(`/app/workflows/${w.id}`, { replace: true });
       setWf(w);
@@ -385,10 +389,11 @@ export function WorkflowEditPage() {
               <button
                 type="button"
                 className="btn"
-                disabled={busy}
+                // Con "activo" destildado, guardar antes desactivaba el flujo y la ejecución fallaba ("desactivado").
+                disabled={busy || !active}
                 onClick={async () => {
                   // La ejecución usa lo guardado en el servidor: sin guardar antes, los pasos editados se ignoraban.
-                  if (editable && !(await save())) return;
+                  if (editable && dirty && !(await save())) return;
                   setStarting(true);
                 }}
               >

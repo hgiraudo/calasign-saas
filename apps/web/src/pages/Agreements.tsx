@@ -5,6 +5,7 @@ import type { Agreement, AgreementFieldDef, AgreementStatus, AgreementView, Coun
 import { api, errorText } from "../lib/api";
 import { formatDate, useI18n, confirmAction } from "../lib/i18n";
 import { useAccess } from "../lib/access";
+import { parseAmountText } from "../lib/logic";
 import { useAgrText } from "../lib/i18n-agreements";
 import { AgreementsTabs } from "../components/AgreementsUi";
 import { ErrorBox, Modal, Spinner } from "../components/ui";
@@ -429,13 +430,8 @@ function draftFrom(a: Agreement | null): MetaDraft {
 class InvalidNumber extends Error {}
 function parseAmount(raw: string, label: string): number | null {
   if (!raw.trim()) return null;
-  let s = raw.trim().replace(/[^\d,.-]/g, "");
-  if (s.includes(",") && s.includes(".")) s = s.lastIndexOf(",") > s.lastIndexOf(".") ? s.replace(/\./g, "").replace(",", ".") : s.replace(/,/g, "");
-  // 1.500.000 / 1,500,000: separador repetido entre grupos de 3 cifras = miles (igual que toNumberOrNull de la API).
-  else if (/^-?\d{1,3}([.,])\d{3}(?:\1\d{3})+$/.test(s)) s = s.replace(/[.,]/g, "");
-  else if (s.includes(",")) s = s.replace(",", ".");
-  const n = Number(s);
-  if (!/\d/.test(s) || !Number.isFinite(n)) throw new InvalidNumber(label);
+  const n = parseAmountText(raw);
+  if (n === null) throw new InvalidNumber(label);
   return n;
 }
 

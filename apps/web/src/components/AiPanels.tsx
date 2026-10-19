@@ -18,6 +18,7 @@ import type {
 } from "@calasign/shared";
 import { api, errorText, uuid } from "../lib/api";
 import { formatDate, formatDateTime, useI18n } from "../lib/i18n";
+import { parseAmountText } from "../lib/logic";
 import { useAiText } from "../lib/i18n-ai";
 import type { DraftField } from "./FieldEditor";
 import { ErrorBox, Modal, recipientColor } from "./ui";
@@ -288,18 +289,6 @@ function formatAmount(value: number, currency: string | null, locale: string) {
     }
   }
   return value.toLocaleString(locale);
-}
-
-/** Acepta 1.234,56 y 1,234.56 (igual que la API). Con un simple replace(",", "."), "1.500,00" daba NaN y se descartaba. */
-function parseAmountText(raw: string): number | null {
-  let s = raw.trim().replace(/[^\d,.-]/g, "");
-  if (!/\d/.test(s)) return null;
-  if (s.includes(",") && s.includes(".")) s = s.lastIndexOf(",") > s.lastIndexOf(".") ? s.replace(/\./g, "").replace(",", ".") : s.replace(/,/g, "");
-  // 1.500.000 / 1,500,000: separador repetido entre grupos de 3 cifras = miles (como la API); antes se rechazaba.
-  else if (/^-?\d{1,3}([.,])\d{3}(?:\1\d{3})+$/.test(s)) s = s.replace(/[.,]/g, "");
-  else if (s.includes(",")) s = s.replace(",", ".");
-  const n = Number(s);
-  return Number.isFinite(n) ? n : null;
 }
 
 const EMPTY_META: ContractMetadata = {

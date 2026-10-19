@@ -5,7 +5,7 @@ import { pdflibAddPlaceholder } from "@signpdf/placeholder-pdf-lib";
 import { SUBFILTER_ETSI_CADES_DETACHED, Signer } from "@signpdf/utils";
 import signpdfModule from "@signpdf/signpdf";
 import { buildPadesCms, type CmsOptions } from "./cms";
-import { embedFonts, fitFontSize, safeText, withDisplayedSpace, wrapText, type Fonts } from "./layout";
+import { embedFonts, fitFontSize, safeMultiline, safeText, withDisplayedSpace, wrapText, type Fonts } from "./layout";
 import { labels, type CertLabels } from "./i18n";
 import type { SignatureProvider } from "./provider";
 
@@ -360,7 +360,7 @@ async function drawCertificate(
   const text = (s: string, opts: { size?: number; bold?: boolean; color?: ReturnType<typeof rgb>; x?: number; maxW?: number } = {}) => {
     const size = opts.size ?? 8.5;
     const font = opts.bold ? fonts.bold : fonts.regular;
-    const lines = wrapText(font, safeText(font, s), size, opts.maxW ?? contentW);
+    const lines = wrapText(font, safeMultiline(font, s), size, opts.maxW ?? contentW);
     for (const line of lines) {
       ensure(size * 1.4);
       page.drawText(line, { x: opts.x ?? M, y: y - size, size, font, color: opts.color ?? INK });
@@ -370,7 +370,7 @@ async function drawCertificate(
   const kv = (k: string, v: string | null | undefined, x = M, keyW = 150) => {
     if (!v) return;
     const size = 8.5;
-    const lines = wrapText(fonts.regular, safeText(fonts.regular, v), size, contentW - (x - M) - keyW);
+    const lines = wrapText(fonts.regular, safeMultiline(fonts.regular, v), size, contentW - (x - M) - keyW);
     ensure(size * 1.4 * lines.length);
     page.drawText(safeText(fonts.bold, k), { x, y: y - size, size, font: fonts.bold, color: MUTED });
     for (const line of lines) {

@@ -407,6 +407,8 @@ function SigningFlow({
   };
 
   const finish = async () => {
+    // Con un adjunto todavía subiendo, se completaba sin él y la subida fallaba después (el firmante lo creía adjuntado).
+    if (uploading) return;
     if (pending.length) {
       setError(t("sign.missing"));
       goTo(pending[0]);
@@ -661,7 +663,7 @@ function SigningFlow({
               {t("sign.nextField")} ↓
             </button>
           ) : (
-            <button type="button" className="btn btn-accent btn-sm" disabled={busy} onClick={finish}>
+            <button type="button" className="btn btn-accent btn-sm" disabled={busy || uploading !== null} onClick={finish}>
               {busy ? t("sign.finishing") : finishLabel}
             </button>
           )}
@@ -695,7 +697,7 @@ function SigningFlow({
             <p className="small muted">{t("sign.progress", { done, total: required.length })}</p>
           )}
           {error && <p className="small error-text">{error}</p>}
-          <button id="finish-btn" type="button" className="btn btn-primary btn-block" disabled={busy} onClick={finish}>
+          <button id="finish-btn" type="button" className="btn btn-primary btn-block" disabled={busy || uploading !== null} onClick={finish}>
             {busy ? t("sign.finishing") : finishLabel}
           </button>
           <button type="button" className="btn btn-ghost btn-block" onClick={() => setDeclining(true)}>

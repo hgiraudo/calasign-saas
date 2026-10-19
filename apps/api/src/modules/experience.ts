@@ -233,29 +233,29 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
       changes.identityConfirmationReset = true;
     }
     let tokenRotated = false;
-    if (contactChanged && r.access_token_hash) {
+    // Con solo un cambio de canales es la misma persona en los mismos destinos: el link sigue siendo suyo (no se
+    // revoca, no se le cierra la sesión ni se desvincula su Telegram) y no pierde lo que ya hizo.
+    if (destinationChanged && r.access_token_hash) {
       const t = newToken();
       await db.query(`UPDATE recipients SET access_token_hash = $2, access_token_enc = $3, telegram_chat_id = NULL WHERE id = $1`, [r.id, t.hash, t.enc]);
       await db.query(`DELETE FROM signer_sessions WHERE recipient_id = $1`, [r.id]);
       tokenRotated = true;
       // El link nuevo va a otro contacto (quizá otra persona): el consentimiento y los adjuntos de quien tenía el
       // anterior no pasan, como al reasignar. Si no, firmaba sin aceptar el uso de medios electrónicos y el PDF final
-      // anexaba, a su nombre, los archivos (p. ej. la foto de un documento) que subió el otro. Con solo un cambio de
-      // canales es la misma persona: no pierde lo que ya hizo.
-      if (destinationChanged) {
-        const keys = await discardRecipientAttachments(db, r.id);
-        if (keys.length) {
-          discardedKeys.push(...keys);
-          changes.attachmentsDiscarded = keys.length;
-        }
-        if (r.consented_at) {
-          await db.query(`UPDATE recipients SET consented_at = NULL WHERE id = $1`, [r.id]);
-          changes.consentReset = true;
-        }
+      // anexaba, a su nombre, los archivos (p. ej. la foto de un documento) que subió el otro.
+      const keys = await discardRecipientAttachments(db, r.id);
+      if (keys.length) {
+        discardedKeys.push(...keys);
+        changes.attachmentsDiscarded = keys.length;
       }
-      if (["sent", "viewed"].includes(r.status) && r.auth_method !== "in_person" && !r.embedded) {
-        await enqueue(db, "notify", { kind: "invite", envelopeId: e.id, recipientId: r.id, tenantId: e.tenant_id });
+      if (r.consented_at) {
+        await db.query(`UPDATE recipients SET consented_at = NULL WHERE id = $1`, [r.id]);
+        changes.consentReset = true;
       }
+    }
+    // Contacto o canales nuevos: la invitación vuelve a salir (por los canales nuevos, con el link vigente).
+    if (contactChanged && r.access_token_hash && ["sent", "viewed"].includes(r.status) && r.auth_method !== "in_person" && !r.embedded) {
+      await enqueue(db, "notify", { kind: "invite", envelopeId: e.id, recipientId: r.id, tenantId: e.tenant_id });
     }
     updated.push({ id: r.id, changes, tokenRotated });
   }

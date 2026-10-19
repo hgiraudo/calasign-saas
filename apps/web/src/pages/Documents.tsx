@@ -311,7 +311,7 @@ export function DocumentTemplateEditPage() {
                 if (editable && !(await save())) return;
                 setGenerating(true);
               }}
-              disabled={!!preview.error}
+              disabled={busy || !!preview.error}
             >
               {ta("docs.generate")}
             </button>

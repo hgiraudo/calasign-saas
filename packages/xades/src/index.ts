@@ -160,6 +160,32 @@ export function canonicalize(node: Node, algorithm: string): string {
   return out;
 }
 
+/**
+ * URI="" (el documento entero, sin comentarios): C14N del nodo documento. Además de la raíz incluye las instrucciones de
+ * procesamiento que están fuera de ella (p. ej. <?xml-stylesheet?>), separadas por un salto de línea, como lo hacen
+ * xmlsec y los validadores de la DIAN / SUNAT. Canonicalizando solo la raíz, un XML con una de esas instrucciones salía
+ * con un digest que ningún validador externo reproducía. La declaración XML no es parte del documento canonicalizado
+ * (xmldom la expone como una instrucción "xml").
+ */
+function canonicalizeDocument(doc: Document, algorithm: string): string {
+  const root = doc.documentElement!;
+  let before = "";
+  let after = "";
+  let afterRoot = false;
+  for (let n = doc.firstChild; n; n = n.nextSibling) {
+    if (n === root) {
+      afterRoot = true;
+      continue;
+    }
+    if (n.nodeType !== 7 || n.nodeName.toLowerCase() === "xml") continue;
+    const data = (n as ProcessingInstruction).data;
+    const pi = `<?${n.nodeName}${data ? ` ${data}` : ""}?>`;
+    if (afterRoot) after += `\n${pi}`;
+    else before += `${pi}\n`;
+  }
+  return before + canonicalize(root, algorithm) + after;
+}
+
 function findById(doc: Document, id: string): Element | null {
   const found = findAllById(doc, id);
   return found[0] ?? null;
@@ -263,7 +289,7 @@ export async function signXml(xml: string, signer: XmlSigner, options: XmlSignOp
   };
 
   // 1) Digest del documento (transformación enveloped = el documento antes de insertar la firma).
-  const docDigest = b64(digest(dAlg, canonicalize(root, c14nAlg)));
+  const docDigest = b64(digest(dAlg, canonicalizeDocument(doc, c14nAlg)));
 
   // 2) Armado de ds:Signature (sin espacios entre elementos: lo que se firma es exactamente esto).
   const certs = (options.includeChain ? chain : [chain[0]]).map((c) => `<ds:X509Certificate>${b64(c)}</ds:X509Certificate>`).join("");
@@ -392,19 +418,22 @@ export function verifyXml(xml: string): XmlVerifyResult {
     const transforms = descendantsNS(ref, NS.ds, "Transform").map((t) => t.getAttribute("Algorithm"));
     const refC14n = transforms.find((t) => t === ALG.excC14n || t === ALG.c14n) ?? ALG.c14n;
     let target: Element | null;
+    let canonical: string | null = null;
     if (uri === "") {
       const clone = new DOMParser().parseFromString(xml, "text/xml");
       const s = descendantsNS(clone, NS.ds, "Signature")[0];
       if (transforms.includes(ALG.enveloped)) s?.parentNode?.removeChild(s);
       target = clone.documentElement;
+      if (target) canonical = canonicalizeDocument(clone, refC14n);
     } else {
       // Un Id repetido permite "envolver" la firma (signature wrapping): la referencia apuntaría a un elemento y el
       // lector del documento leería el otro. Se rechaza.
       const matches = findAllById(doc, uri.replace(/^#/, ""));
       if (matches.length > 1) errors.push(`Id repetido en el documento: "${uri}"`);
       target = matches.length === 1 ? matches[0] : null;
+      if (target) canonical = canonicalize(target, refC14n);
     }
-    const valid = !!target && b64(digest(alg, canonicalize(target, refC14n))) === expected;
+    const valid = canonical !== null && b64(digest(alg, canonical)) === expected;
     if (!valid) errors.push(`digest no coincide en referencia "${uri}"`);
     if (valid && type === ALG.signedProps && target?.namespaceURI === NS.xades && target.localName === "SignedProperties") signedPropsTarget ??= target;
     references.push({ uri, type, valid });

@@ -146,7 +146,13 @@ export function BulkNewPage() {
       .catch((e) => setError(errorText(e)));
   }, []);
 
-  useEffect(() => setResult(null), [csv, templateId]);
+  // Cada cambio del CSV o de la plantilla invalida la validación, también la que todavía está en camino: si no, una
+  // respuesta lenta mostraba el resultado (y la cantidad a enviar) del CSV anterior.
+  const inputRev = useRef(0);
+  useEffect(() => {
+    inputRev.current++;
+    setResult(null);
+  }, [csv, templateId]);
 
   const body = () => ({
     templateId,
@@ -160,8 +166,10 @@ export function BulkNewPage() {
   const validate = async () => {
     setBusy(true);
     setError(null);
+    const mine = inputRev.current;
     try {
-      setResult(await api<BulkValidationResult>("/v1/bulk-sends/validate", { method: "POST", body: body() }));
+      const r = await api<BulkValidationResult>("/v1/bulk-sends/validate", { method: "POST", body: body() });
+      if (mine === inputRev.current) setResult(r);
     } catch (e) {
       setError(errorText(e));
     } finally {

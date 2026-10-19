@@ -5,9 +5,10 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { WEBHOOK_EVENT_TYPES, type ApiEvent, type ListEventsResponse } from "@calasign/shared";
 import { EVIDENCE_TO_WEBHOOK } from "../../infra/webhook-outbox";
 import { badRequest } from "../../lib/errors";
-import { iso, queryList } from "../../lib/util";
+import { iso, queryList, sha256Hex } from "../../lib/util";
 import { envelopeVisibilitySql } from "../access";
-import { authenticate, type AuthContext, type Services } from "../context";
+import { SESSION_COOKIE, authenticate, type AuthContext, type Services } from "../context";
+import { isOAuthAccessToken, resolveAccessToken } from "../oauth-tokens";
 
 /**
  * Margen de asentamiento: los ids de envelope_events salen de una secuencia y una transacción que tomó un id menor
@@ -101,10 +102,13 @@ export async function readEvents(s: Services, a: AuthContext, f: Filters, limit:
     const data = (r.data ?? {}) as Record<string, unknown>;
     const recipientId =
       typeof data.recipientId === "string" ? data.recipientId : r.actor_type === "recipient" && typeof r.actor_id === "string" ? r.actor_id : null;
-    const pubTypes = f.all ? [r.type] : (EVIDENCE_TO_WEBHOOK[r.type] ?? []).filter((t) => !wanted || wanted.has(t));
-    pubTypes.forEach((type, i) =>
+    // El id sale de la posición entre TODOS los tipos públicos del registro, no entre los filtrados: si no, el mismo
+    // envelope.declined era evt_N_1 sin filtro y evt_N con types=envelope.declined (y no se podía deduplicar).
+    const allTypes = f.all ? [r.type] : (EVIDENCE_TO_WEBHOOK[r.type] ?? []);
+    allTypes.forEach((type, i) => {
+      if (!f.all && wanted && !wanted.has(type)) return;
       items.push({
-        id: `evt_${r.id}${pubTypes.length > 1 ? `_${i}` : ""}`,
+        id: `evt_${r.id}${allTypes.length > 1 ? `_${i}` : ""}`,
         type,
         occurredAt: iso(r.occurred_at)!,
         envelopeId: r.envelope_id,
@@ -113,8 +117,8 @@ export async function readEvents(s: Services, a: AuthContext, f: Filters, limit:
         // Solo lo que también va en los webhooks (el motivo de un rechazo o anulación); con scope=all, todo el dato de evidencia.
         data: f.all ? data : typeof data.reason === "string" ? { reason: data.reason } : {},
         cursor: r.id,
-      }),
-    );
+      });
+    });
   }
   const last = page[page.length - 1];
   return { items, nextCursor: last ? last.id : f.after, hasMore: rows.length > limit };
@@ -174,7 +178,15 @@ export async function eventRoutes(app: FastifyInstance, s: Services) {
       });
     };
     // La credencial se validó al abrir: una API key revocada o un miembro dado de baja no siguen recibiendo eventos.
+    // Tampoco un access token OAuth vencido (dura 1 h, como el stream más largo) o revocado (él o su app), ni una
+    // sesión cerrada: antes el stream seguía hasta `max_seconds` con esa credencial ya inválida.
+    const authz = req.headers.authorization;
+    const bearer = authz?.startsWith("Bearer ") ? authz.slice(7).trim() : null;
+    const oauthToken = bearer && isOAuthAccessToken(bearer) ? bearer : null;
+    const sessionToken = bearer ? null : (req.cookies?.[SESSION_COOKIE] ?? null);
     const stillAllowed = async () => {
+      if (oauthToken && !(await resolveAccessToken(s.db, oauthToken))) return false;
+      if (sessionToken && !(await s.db.one(`SELECT 1 FROM sessions WHERE token_hash = $1 AND expires_at > now()`, [sha256Hex(sessionToken)]))) return false;
       if (a.apiKeyId) return Boolean(await s.db.one(`SELECT 1 FROM api_keys WHERE id = $1 AND revoked_at IS NULL`, [a.apiKeyId]));
       if (a.userId) return Boolean(await s.db.one(`SELECT 1 FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [a.tenantId, a.userId]));
       return true;

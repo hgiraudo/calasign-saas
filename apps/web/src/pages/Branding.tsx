@@ -354,7 +354,7 @@ export function BrandingPage() {
                   return (
                     <Field key={k} label={w(`color.${k}` as WlKey)}>
                       <div className="row-wrap">
-                        <input type="color" className="color-input" value={HEX.test(v) ? v : (brand.effective.theme[k] as string | null) ?? "#ffffff"} onChange={(e) => setIn("theme", k, e.target.value)} aria-label={w(`color.${k}` as WlKey)} />
+                        <input type="color" className="color-input" value={HEX.test(v) ? v : ((defaultBrand ?? brand).effective.theme[k] as string | null) ?? "#ffffff"} onChange={(e) => setIn("theme", k, e.target.value)} aria-label={w(`color.${k}` as WlKey)} />
                         <input className="color-text" value={v} placeholder="#RRGGBB" maxLength={7} onChange={(e) => setIn("theme", k, e.target.value.trim())} />
                       </div>
                     </Field>
@@ -362,7 +362,7 @@ export function BrandingPage() {
                 })}
               </div>
               <Field label={`${w("radius")}: ${theme.borderRadius ?? "—"} px`}>
-                <input type="range" min={0} max={24} value={theme.borderRadius ?? 10} onChange={(e) => setIn("theme", "borderRadius", Number(e.target.value))} />
+                <input type="range" min={0} max={24} value={effectiveTheme.borderRadius ?? 10} onChange={(e) => setIn("theme", "borderRadius", Number(e.target.value))} />
               </Field>
 
               <h3>{w("font")}</h3>

@@ -259,7 +259,8 @@ async function checkEmailDomain(r: any, opts: { strict?: boolean } = {}) {
 
 /**
  * Dominios web de sub-marcas y dominios de correo verificados: se vuelven a consultar cada 6 h. Un dominio que dejó de
- * estar publicado (o de apuntar a la plataforma) vuelve a "pendiente" a la segunda falla seguida: los links pasan al
+ * estar publicado (o de apuntar a la plataforma) vuelve a "pendiente" a la segunda falta seguida (a la cuarta si son errores de
+ * DNS): los links pasan al
  * dominio de la organización y los correos a la dirección de la plataforma.
  */
 export async function recheckWhiteLabelDomains(d: { db: Db; log: { warn(o: object, m?: string): void } }) {
@@ -268,13 +269,17 @@ export async function recheckWhiteLabelDomains(d: { db: Db; log: { warn(o: objec
   );
   for (const r of brands) {
     let ok = false;
+    // Como en custom-domains.ts: una falta (TXT o CNAME) suma 2 y un error de DNS 1, y se baja con 4. Antes un error
+    // contaba como falta y una caída de los resolvers (SERVFAIL, timeout) de 12 h desverificaba todas las sub-marcas.
+    let points = 2;
     try {
       ok = (await resolveTxt(brandTxtName(r.domain))).includes(brandTxtValue(r.verification_token)) && (isLocalEnv() || (await routesToPlatform(r.domain)));
     } catch (e) {
+      points = 1;
       d.log.warn({ domain: r.domain, err: String(e) }, "no se pudo re-verificar el dominio de la marca");
     }
-    const failures = ok ? 0 : Number(r.recheck_failures ?? 0) + 1;
-    if (failures >= 2) {
+    const failures = ok ? 0 : Number(r.recheck_failures ?? 0) + points;
+    if (failures >= 4) {
       await d.db.query(`UPDATE brand_domains SET status = 'pending', recheck_failures = 0, last_checked_at = now(), last_error = $2 WHERE id = $1`, [
         r.id,
         "Re-verificación: el registro TXT o el CNAME ya no están publicados",
@@ -520,7 +525,9 @@ export async function whiteLabelRoutes(app: FastifyInstance, s: Services) {
     try {
       await s.db.query(
         `UPDATE brand_domains SET status = CASE WHEN $2 THEN 'verified' ELSE status END, verified_at = CASE WHEN $2 AND verified_at IS NULL THEN now() ELSE verified_at END,
-           last_checked_at = now(), last_error = $3, recheck_failures = 0 WHERE id = $1`,
+           last_checked_at = now(), last_error = $3, recheck_failures = CASE WHEN $2 THEN 0 ELSE recheck_failures END WHERE id = $1`,
+        // Un intento fallido no pone el contador en cero: si no, reintentar a mano mantenía verificado para siempre un
+        // dominio que la re-verificación ya estaba por bajar (como en custom-domains.ts).
         [r.id, ok, error],
       );
     } catch (e) {

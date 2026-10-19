@@ -100,8 +100,13 @@ export function requireFeature(plan: PlanDefinition, feature: PlanFeature, label
 }
 
 /** Funcionalidad que exige cada ruta de escritura (las lecturas siempre se permiten: se puede ver y desactivar lo existente). */
-function featureForRoute(url: string, method: string): { feature: PlanFeature; label: string } | null {
+function featureForRoute(url: string, method: string, body: unknown): { feature: PlanFeature; label: string } | null {
   if (method === "GET" || method === "HEAD") return null;
+  // Quitar o apagar lo existente tampoco exige el plan: al bajar de plan la configuración sigue en uso (SSO exigido,
+  // tokens SCIM vigentes, dominio propio en los links) y sin esto no se podía revocar un token SCIM, quitar el dominio
+  // ni dejar de exigir SSO sin volver a pagar.
+  if (method === "DELETE") return null;
+  if (url === "/v1/settings/sso" && (body as { enabled?: unknown } | null)?.enabled === false) return null;
   if (url === "/v1/bulk-sends" || url === "/v1/bulk-sends/validate") return { feature: "bulk_send", label: "El envío masivo" };
   if (url === "/v1/web-forms") return { feature: "web_forms", label: "Los formularios web" };
   if (url === "/v1/webhooks") return { feature: "webhooks", label: "Los webhooks" };
@@ -128,7 +133,7 @@ export async function enforcePlanForRequest(db: Db, req: FastifyRequest, a: Auth
   if (ALWAYS_ALLOWED.test(url)) return;
   const { plan } = await tenantPlan(db, a.tenantId);
   if (a.apiKeyId || a.oauth) requireFeature(plan, "api", "El acceso por API");
-  const f = featureForRoute(url, req.method);
+  const f = featureForRoute(url, req.method, req.body);
   if (f) requireFeature(plan, f.feature, f.label);
   if (url === "/v1/invitations" && req.method === "POST" && plan.users !== null) {
     // Reenviar la invitación pendiente de un correo la reemplaza: no suma un usuario (antes daba 402 con el cupo lleno).

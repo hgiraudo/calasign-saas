@@ -70,7 +70,10 @@ export async function runAiSweep(d: Deps, now = new Date()) {
      ORDER BY e.completed_at LIMIT 5`,
   );
   for (const e of pending) {
-    await d.db.query(`UPDATE envelopes SET ai_metadata_attempted_at = now() WHERE id = $1`, [e.id]);
+    // Se reclama el sobre: con varios workers (cada uno corre el barrido), dos tomaban el mismo y el modelo se llamaba
+    // (y se cobraba) dos veces.
+    const claimed = await d.db.query(`UPDATE envelopes SET ai_metadata_attempted_at = now() WHERE id = $1 AND ai_metadata_attempted_at IS NULL RETURNING id`, [e.id]);
+    if (!claimed.length) continue;
     try {
       const docs = await loadEnvelopeDocs(d.db, d.blobs, e.id);
       await assertAiAvailable(d.db, e.tenant_id);
@@ -97,12 +100,15 @@ export async function runAiSweep(d: Deps, now = new Date()) {
   for (const e of due) {
     const m = e.ai_metadata ?? {};
     const date = m.renewalDate ?? m.expiryDate;
-    await d.db.tx(async (t) => {
+    const claimed = await d.db.tx(async (t) => {
       const cur = await t.one<any>(`SELECT ai_renewal_alert_sent_at FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
-      if (cur?.ai_renewal_alert_sent_at) return;
+      if (cur?.ai_renewal_alert_sent_at) return false;
       await t.query(`UPDATE envelopes SET ai_renewal_alert_sent_at = now() WHERE id = $1`, [e.id]);
       await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "ai.renewal_alert", actor: SYSTEM, data: { date, notified: Boolean(e.sender_email) } });
+      return true;
     });
+    // Otro barrido (otro worker) ya la mandó: no se repite el correo.
+    if (!claimed) continue;
     if (e.sender_email && date) {
       const L = ALERT[(e.sender_locale ?? e.locale) as keyof typeof ALERT] ?? ALERT.es;
       const link = `${config.appUrl}/app/envelopes/${e.id}`;

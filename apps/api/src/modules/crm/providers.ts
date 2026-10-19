@@ -252,7 +252,11 @@ async function siigoLogin(c: CrmConn) {
     signal: AbortSignal.timeout(15_000),
   });
   const b: any = await res.json().catch(() => ({}));
-  if (!res.ok || !b.access_token) throw new CrmError(`siigo /auth: HTTP ${res.status} ${b.Errors?.[0]?.Message ?? b.message ?? ""}`.trim(), res.status, true);
+  // Solo credenciales rechazadas piden reconectar: un /auth caído (5xx, 429) es transitorio y el trabajo se reintenta.
+  if (!res.ok || !b.access_token) {
+    const rejected = res.ok || res.status === 400 || res.status === 401 || res.status === 403;
+    throw new CrmError(`siigo /auth: HTTP ${res.status} ${b.Errors?.[0]?.Message ?? b.message ?? ""}`.trim(), res.status, rejected);
+  }
   c.creds = { ...cr, access_token: b.access_token, expires_at: Date.now() + Number(b.expires_in ?? 86_400) * 1000 };
   await c.persist();
 }

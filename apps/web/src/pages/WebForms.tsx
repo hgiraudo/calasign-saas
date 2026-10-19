@@ -56,6 +56,14 @@ function WebFormEditor({ form, initialTemplateId, onClose, onSaved }: { form: We
   const [fixed, setFixed] = useState<Record<string, FixedDraft>>(
     Object.fromEntries((form?.fixedRecipients ?? []).map((r) => [r.roleId, { name: r.name, email: r.email ?? "" }])),
   );
+  // Lo que el editor no muestra de cada destinatario fijo (teléfono, canales, idioma: se cargan por API) se conserva al
+  // guardar: antes se mandaba solo nombre y correo con el canal email, y editar cualquier otra cosa del formulario dejaba
+  // a un destinatario por WhatsApp sin teléfono ni canal (y sin correo, el guardado ni siquiera era posible).
+  const savedFixed = useMemo(() => new Map((form?.fixedRecipients ?? []).map((r) => [r.roleId, r])), [form]);
+  const fixedChannels = (roleId: string) => {
+    const ch = savedFixed.get(roleId)?.channels;
+    return ch && ch.length ? ch : ["email"];
+  };
   const [prefill, setPrefill] = useState<Record<string, string>>(form?.prefill ?? {});
   const [active, setActive] = useState(form?.active ?? true);
   const [maxUses, setMaxUses] = useState<string>(form?.maxUses ? String(form.maxUses) : "");
@@ -125,7 +133,14 @@ function WebFormEditor({ form, initialTemplateId, onClose, onSaved }: { form: We
       name: name.trim(),
       description: description.trim() || null,
       signerRoleId,
-      fixedRecipients: otherRoles.map((r) => ({ roleId: r.id, name: fixed[r.id]?.name?.trim() ?? "", email: fixed[r.id]?.email?.trim() || null, channels: ["email"] })),
+      fixedRecipients: otherRoles.map((r) => ({
+        roleId: r.id,
+        name: fixed[r.id]?.name?.trim() ?? "",
+        email: fixed[r.id]?.email?.trim() || null,
+        phone: savedFixed.get(r.id)?.phone ?? null,
+        locale: savedFixed.get(r.id)?.locale ?? null,
+        channels: fixedChannels(r.id),
+      })),
       // Solo etiquetas de esta plantilla: lo cargado para otra plantilla elegida antes quedaba oculto pero se mandaba, y
       // el guardado fallaba con "no hay ningún campo …" sin forma de borrarlo.
       prefill: Object.fromEntries(Object.entries(prefill).filter(([k, v]) => v.trim() && (!tpl || prefillable.some((f) => f.label === k)))),
@@ -207,7 +222,7 @@ function WebFormEditor({ form, initialTemplateId, onClose, onSaved }: { form: We
                     </label>
                     <label className="field">
                       <span>Email</span>
-                      <input required type="email" value={fixed[r.id]?.email ?? ""} onChange={(e) => setFixed((x) => ({ ...x, [r.id]: { ...(x[r.id] ?? { name: "" }), email: e.target.value } }))} />
+                      <input required={fixedChannels(r.id).includes("email")} type="email" value={fixed[r.id]?.email ?? ""} onChange={(e) => setFixed((x) => ({ ...x, [r.id]: { ...(x[r.id] ?? { name: "" }), email: e.target.value } }))} />
                     </label>
                   </div>
                 ))}

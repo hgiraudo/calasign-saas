@@ -64,27 +64,25 @@ export function DocPreview({
     // Posición en el texto original (no en el de espacios colapsados: después de cada salto de párrafo los índices
     // quedaban corridos). Si la cita aparece varias veces, vale la más cercana a donde está la selección en pantalla.
     const src = text ?? "";
-    const re = new RegExp(quote.split(" ").map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+"), "g");
-    let before = 0;
+    const words = quote.split(" ").map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    const re = new RegExp(words.join("\\s+"), "g");
+    // Cuántas veces aparece la cita en pantalla antes de la selección: vale la aparición con ese mismo número en el texto.
+    // Comparar largos no servía: el texto plano tiene saltos entre bloques, viñetas ("• ", "1. "), " | " entre celdas y
+    // "[Firma: …]" que la vista no tiene, y en un contrato largo la diferencia acumulada (cientos de caracteres) hacía
+    // anclar el comentario en otra aparición de un término repetido. En pantalla, entre bloques no hay espacio: \s*.
+    let ordinal = 0;
     try {
       const r = document.createRange();
       r.setStart(ref.current, 0);
       const s = sel.getRangeAt(0);
       r.setEnd(s.startContainer, s.startOffset);
-      before = r.toString().replace(/\s+/g, " ").length;
+      ordinal = [...r.toString().matchAll(new RegExp(words.join("\\s*"), "g"))].length;
     } catch {
       /* sin rango: la primera aparición */
     }
-    let best: { start: number; end: number; d: number } | null = null;
-    // Largo colapsado hasta cada aparición, acumulado (las citas empiezan y terminan sin espacios: los tramos suman).
-    let pos = 0;
-    let collapsed = 0;
-    for (const m of src.matchAll(re)) {
-      collapsed += src.slice(pos, m.index).replace(/\s+/g, " ").length;
-      pos = m.index;
-      const d = Math.abs(collapsed - before);
-      if (!best || d < best.d) best = { start: m.index, end: m.index + m[0].length, d };
-    }
+    const all = [...src.matchAll(re)];
+    const m = all[Math.min(ordinal, all.length - 1)];
+    const best = m ? { start: m.index, end: m.index + m[0].length } : null;
     // Si la selección no aparece tal cual en el texto plano (p. ej. cruza celdas de una tabla), se comenta la cita sin
     // posición: antes quedaba anclada en 0…largo, es decir, al principio del documento.
     if (!best) return onSelect({ quote: quote.slice(0, 2000), start: null, end: null });

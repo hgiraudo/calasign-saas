@@ -498,7 +498,8 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
         ? Boolean(await s.db.one(`SELECT 1 FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [n.tenant_id, n.created_by]))
         : false;
     const ownerId: string | null = creatorIsMember ? n.created_by : a.userId;
-    const owner = { tenantId: a.tenantId, userId: ownerId, apiKeyId: null, actor: a.actor };
+    // Si queda a nombre de quien acepta y es una API key, el sobre sigue siendo de la key (si no, quedaba sin dueño).
+    const owner = { tenantId: a.tenantId, userId: ownerId, apiKeyId: creatorIsMember ? null : a.apiKeyId, actor: a.actor };
     const missingRoles = roles.filter((r) => !recipients.some((x) => !x.cc && x.role.toLowerCase() === r));
     if (missingRoles.length) {
       const me = await s.db.one<any>(`SELECT name, email FROM users WHERE id = $1`, [ownerId]);

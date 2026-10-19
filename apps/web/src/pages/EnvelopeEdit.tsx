@@ -36,6 +36,10 @@ interface DraftRecipient {
   /** "proveedor:nivel" o "" (sin verificación de identidad). */
   idVerification: string;
   cert: CertDraft;
+  /** Firma embebida (marcada por API): sin correo ni teléfono, la API la rechaza si no se manda la marca. */
+  embedded: boolean;
+  /** Anfitrión de la firma en persona ya elegido (por API u otra persona): se conserva al guardar. */
+  inPersonHostId: string | null;
 }
 
 const CHANNEL_LABELS: Record<Channel, string> = { email: "Email", whatsapp: "WhatsApp", telegram: "Telegram" };
@@ -60,6 +64,8 @@ function toDraftRecipients(d: EnvelopeDetail): DraftRecipient[] {
     authMethod: r.authMethod ?? "link",
     idVerification: identityToDraft(r.identity),
     cert: certToDraft(r),
+    embedded: r.embedded,
+    inPersonHostId: r.inPersonHost?.id ?? null,
   }));
 }
 
@@ -152,8 +158,12 @@ export function EnvelopeEditPage() {
           // Una copia no firma: el método (oculto en el formulario) se descarta. Si quedaba "en persona" de cuando era
           // firmante, la copia nunca recibía su invitación.
           authMethod: r.role === "cc" ? "link" : r.authMethod,
-          // Firma en persona: la anfitriona es quien carga el sobre.
-          inPerson: r.role !== "cc" && r.authMethod === "in_person" ? {} : null,
+          // Firma en persona: la anfitriona es quien carga el sobre, salvo que ya tenga una elegida (con {} pasaba a ser
+          // quien guardaba los destinatarios, aunque el anfitrión fuera otra persona).
+          inPerson: r.role !== "cc" && r.authMethod === "in_person" ? (r.inPersonHostId ? { hostUserId: r.inPersonHostId } : {}) : null,
+          // Ausente = sin cambios en la API, pero la validación lo necesita para un destinatario embebido sin contacto
+          // ("email o phone requerido"): sin esto, no se podía guardar ningún cambio de destinatarios del sobre.
+          ...(r.embedded ? { embedded: true } : {}),
           idVerification: r.role === "cc" ? null : draftToIdentity(r.idVerification),
           ...draftToCert(r.cert, r.role),
         })),
@@ -496,6 +506,8 @@ function RecipientsStep({ recipients, onChange }: { recipients: DraftRecipient[]
         authMethod: "link",
         idVerification: "",
         cert: EMPTY_CERT_DRAFT,
+        embedded: false,
+        inPersonHostId: null,
         telegramChatId: "",
         telegramLinked: false,
         idDocumentType: "",

@@ -1,5 +1,5 @@
 // Equipo: miembros, invitaciones, roles personalizados y grupos.
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   PERMISSIONS,
   type CreateInvitationResponse,
@@ -223,6 +223,23 @@ function InvitationsTab({ roles }: { roles: RolesResponse | null }) {
   const [sent, setSent] = useState<CreateInvitationResponse | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Como en las API keys: no se puede invitar con permisos que uno no tiene (403). Con "Miembro" preelegido, alguien con
+  // un rol personalizado que incluye members:manage pero no envelopes:create no podía invitar sin cambiar antes el rol.
+  const defaulted = useRef(false);
+  useEffect(() => {
+    if (defaulted.current || !access || !roles) return;
+    defaulted.current = true;
+    if (access.role === "owner") return;
+    const options = [
+      ...roles.builtin.filter((b) => b.role !== "owner").map((b) => ({ value: b.role as string, permissions: b.permissions })),
+      ...roles.items.map((r) => ({ value: `custom:${r.id}`, permissions: r.permissions })),
+    ];
+    const grantable = (o: { permissions: Permission[] }) => o.permissions.every((p) => access.permissions.includes(p));
+    if (options.some((o) => o.value === "member" && grantable(o))) return;
+    const first = options.find(grantable);
+    if (first) setRole((cur) => (cur === "member" ? first.value : cur));
+  }, [access, roles]);
 
   const load = () =>
     api<{ items: Invitation[] }>("/v1/invitations")

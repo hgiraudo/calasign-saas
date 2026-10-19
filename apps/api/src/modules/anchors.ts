@@ -21,12 +21,33 @@ export async function expandAnchorFields(s: Services, tenantId: string, envelope
 
   const docs = await loadDocuments(s.db, envelopeId);
   if (docs.length && docs[0].tenant_id !== tenantId) return body; // el handler devuelve 404 al bloquear el sobre
+  return expandAnchors(
+    docs.map((d) => ({ id: d.id, load: () => s.blobs.get(d.storage_key) })),
+    body,
+  );
+}
+
+/** Documento donde buscar anclas: su id y cómo obtener sus bytes (del almacenamiento o ya en memoria). */
+export interface AnchorDocument {
+  id: string;
+  load: () => Promise<Uint8Array>;
+}
+
+/**
+ * Expande los campos con `anchor` de `body.fields` buscando el texto en `docs` (en orden). La usan PUT fields (con los
+ * documentos guardados) y POST /v1/envelopes con el sobre completo (con los PDF todavía en memoria, antes de guardar
+ * nada: si un ancla no aparece, no queda un sobre a medias).
+ */
+export async function expandAnchors(docs: AnchorDocument[], body: unknown): Promise<unknown> {
+  const fields = (body as { fields?: unknown[] } | null)?.fields;
+  if (!Array.isArray(fields) || !fields.some((f) => f && typeof f === "object" && "anchor" in (f as object))) return body;
   const bytesCache = new Map<string, Uint8Array>();
   const matchCache = new Map<string, AnchorMatch[]>();
-  const find = async (docId: string, storageKey: string, text: string, caseSensitive: boolean) => {
+  const find = async (doc: AnchorDocument, text: string, caseSensitive: boolean) => {
+    const docId = doc.id;
     const key = `${docId}\u0000${caseSensitive}\u0000${text}`;
     if (!matchCache.has(key)) {
-      if (!bytesCache.has(docId)) bytesCache.set(docId, await s.blobs.get(storageKey));
+      if (!bytesCache.has(docId)) bytesCache.set(docId, await doc.load());
       try {
         matchCache.set(key, await findTextAnchors(bytesCache.get(docId)!, text, { caseSensitive }));
       } catch (e) {
@@ -50,7 +71,7 @@ export async function expandAnchorFields(s: Services, tenantId: string, envelope
     if (f.documentId && targets.length === 0) throw badRequest("invalid_field", `Campo ${i + 1}: documento inexistente`);
     let found = 0;
     for (const d of targets) {
-      for (const m of await find(d.id, d.storage_key, f.anchor.text, f.anchor.caseSensitive)) {
+      for (const m of await find(d, f.anchor.text, f.anchor.caseSensitive)) {
         const W = m.pageWidth;
         const H = m.pageHeight;
         const width = clamp(f.anchor.width / W, 0.001, 1);

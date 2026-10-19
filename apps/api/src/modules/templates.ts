@@ -19,7 +19,7 @@ import { AppError, badRequest, notFound } from "../lib/errors";
 import { iso, sha256Hex, uuidv7 } from "../lib/util";
 import { assertTemplateAccess, templateVisibilitySql } from "./access";
 import { authenticate, type AuthContext, type Services } from "./context";
-import { sendEnvelope } from "./envelopes";
+import { idempotent, sendEnvelope } from "./envelopes";
 import { checkSenderValue, insertEnvelopeField } from "./fieldvalues";
 import { assignFieldIds, copyFieldLogic, pruneDanglingConditions, saveFieldLogic } from "./logic";
 import { loadDetail, loadDocuments, toDocument } from "./mappers";
@@ -457,17 +457,20 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
 
   // ───────── Sobre desde plantilla ─────────
 
-  app.post("/v1/envelopes/from-template", { preHandler: auth }, async (req, reply) => {
-    const a = A(req);
-    const input = EnvelopeFromTemplateInput.parse(req.body);
-    // Una plantilla restringida (compartida solo con algunos grupos) no se puede usar sin poder verla.
-    await assertTemplateAccess(s.db, a, input.templateId, "view");
-    const loaded = await loadTemplateForUse(s.db, a.tenantId, input.templateId);
-    const plan = planFromTemplate(loaded, input);
-    const envId = await s.db.tx((t) => insertEnvelopeFromTemplate(t, { tenantId: a.tenantId, userId: a.userId, apiKeyId: a.apiKeyId, actor: a.actor }, loaded, input, plan));
-    reply.code(201);
-    return loadDetail(s.db, a.tenantId, envId);
-  });
+  // Crear desde una plantilla y (con send: true) enviarlo, en una sola llamada. Respeta Idempotency-Key, como POST
+  // /v1/envelopes: un reintento después de un timeout no crea (ni envía) un segundo sobre.
+  app.post("/v1/envelopes/from-template", { preHandler: auth }, async (req, reply) =>
+    idempotent(s, req, reply, async () => {
+      const a = A(req);
+      const input = EnvelopeFromTemplateInput.parse(req.body);
+      // Una plantilla restringida (compartida solo con algunos grupos) no se puede usar sin poder verla.
+      await assertTemplateAccess(s.db, a, input.templateId, "view");
+      const loaded = await loadTemplateForUse(s.db, a.tenantId, input.templateId);
+      const plan = planFromTemplate(loaded, input);
+      const envId = await s.db.tx((t) => insertEnvelopeFromTemplate(t, { tenantId: a.tenantId, userId: a.userId, apiKeyId: a.apiKeyId, actor: a.actor }, loaded, input, plan));
+      return { status: 201, body: await loadDetail(s.db, a.tenantId, envId) };
+    }),
+  );
 }
 
 // ───────────────────────────── Creación de sobres desde plantilla (reutilizable) ─────────────────────────────

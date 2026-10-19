@@ -2,7 +2,7 @@
 // Las respuestas se describen con esquemas propios (openapi-schemas.ts: las salidas son tipos TS, no Zod).
 // Errores, tags, parámetros y operationId: openapi-extra.ts.
 import type { FastifyInstance } from "fastify";
-import { z } from "zod";
+import { z, ZodEffects, type AnyZodObject, type ZodTypeAny } from "zod";
 import {
   AnchorFieldInput,
   CompleteSigningInput,
@@ -20,6 +20,9 @@ import {
   ENVELOPE_STATUSES,
   EnvelopeFromTemplateInput,
   EnvelopePaymentInput,
+  InlineDocumentInput,
+  InlineRecipientInput,
+  ONE_SHOT_MAX_DOCUMENTS,
   FieldInput,
   IdentitySettingsInput,
   InPersonConfirmInput,
@@ -79,6 +82,7 @@ import {
   InvitationSchema,
   MeSchema,
   MemberSchema,
+  named,
   PaymentProviderSchema,
   RecipientIdentityDetailSchema,
   ReportsSummarySchema,
@@ -116,6 +120,39 @@ const CreateApiKeyBody = CreateApiKeyInput.extend({
   role: z.enum(["admin", "member", "custom"]).optional().describe("Rol de la key (por defecto admin). No puede ser owner."),
   roleId: z.string().uuid().optional().describe("Rol personalizado (obligatorio con role=custom)."),
 });
+/**
+ * POST /v1/envelopes: los campos se validan después de resolver `recipient`/`document` (posición, ref o email), con
+ * FieldInput / AnchorFieldInput; acá se documentan así.
+ */
+const unwrapObject = (t: ZodTypeAny): AnyZodObject => (t instanceof ZodEffects ? unwrapObject(t.innerType()) : (t as AnyZodObject));
+const FieldObject = unwrapObject(FieldInput);
+const InlineFieldDoc = (base: AnyZodObject) =>
+  base
+    .omit({ recipientId: true, documentId: true })
+    .extend({
+      recipient: z.union([z.number().int().min(0), z.string()]).optional().describe("Destinatario: posición en `recipients` (0 = el primero), su `ref` o su email. Opcional con un solo firmante."),
+      document: z.union([z.number().int().min(0), z.string()]).optional().describe("Documento: posición en `documents` o su `ref`. Opcional con un solo documento (con `anchor`, sin él se busca en todos)."),
+      recipientId: z.string().uuid().optional().describe("Alternativa a `recipient`: el `id` propio que se le dio al destinatario."),
+    });
+const CreateEnvelopeRequestBody = CreateEnvelopeInput.extend({
+  documents: z.array(InlineDocumentInput).max(ONE_SHOT_MAX_DOCUMENTS).optional().describe("PDF del sobre, en orden. Cada uno con base64, url o file (parte del multipart)."),
+  recipients: z.array(InlineRecipientInput).max(50).optional().describe("Destinatarios (formato de PUT /recipients) con `ref` opcional."),
+  fields: z
+    .array(z.union([InlineFieldDoc(FieldObject), InlineFieldDoc(AnchorFieldInput)]))
+    .max(500)
+    .optional()
+    .describe("Campos con coordenadas o con `anchor` (como PUT /fields)."),
+  send: z.boolean().optional().describe("true: lo envía en la misma llamada (equivale a status \"sent\")."),
+  status: z.enum(["draft", "sent"]).optional().describe("Estado en que queda: draft (por defecto) o sent."),
+  embeddedSigning: CreateSigningUrlInput.optional().describe("Opciones (returnUrl, frameAncestors) de las URLs de firma embebida de la respuesta."),
+});
+const CreateEnvelopeResponseSchema = named("CreateEnvelopeResponse", EnvelopeDetailSchema.extend({
+  signingUrls: z
+    .array(SigningUrlSchema.extend({ recipientId: z.string().uuid() }))
+    .optional()
+    .describe("Con send y destinatarios embedded: la URL de firma embebida (un solo uso, 5 minutos) de cada uno al que ya le toca."),
+}));
+
 const PutFieldsWithAnchors = z.object({ fields: z.array(z.union([FieldInput, AnchorFieldInput])).max(500) });
 /** addRecipients y addFields se validan con RecipientInput y FieldInput (en el contrato son unknown[]). */
 const CorrectEnvelopeBody = CorrectEnvelopeInput.extend({
@@ -227,12 +264,42 @@ const OPS: Op[] = [
     path: "/v1/envelopes",
     operationId: "createEnvelope",
     tag: "Sobres",
-    summary: "Crear sobre (borrador)",
-    description: "Sin expiresAt, vence a los 30 días." + IDEMPOTENT_NOTE,
-    body: CreateEnvelopeInput,
+    summary: "Crear sobre (completo y enviado en una sola llamada, o borrador)",
+    description:
+      "Crea el sobre y, en la MISMA llamada, sus documentos (`documents`: PDF en `base64`, por `url` https pública o como " +
+      "parte `file` de un multipart), destinatarios (`recipients`, formato de PUT /recipients más un `ref` opcional) y " +
+      "campos (`fields`, con coordenadas o `anchor`; el destinatario y el documento se citan con `recipient` / `document`: " +
+      "posición en la lista, `ref` o, para el destinatario, su email; se pueden omitir si hay un solo firmante / documento). " +
+      "Con `send: true` (o `status: \"sent\"`) también lo envía y la respuesta trae `signingUrls` para los firmantes " +
+      "`embedded` a los que ya les toca. Es atómico: si algo falla (PDF inválido, ancla que no aparece, sobre incompleto " +
+      "para enviar) no se crea nada. Sin esos agregados, crea un borrador vacío para completarlo paso a paso. " +
+      "En multipart/form-data, el JSON va en la parte `payload` y cada PDF en su propia parte (sin `documents`, cada " +
+      "archivo es un documento, en orden). Hasta 10 documentos; cada PDF hasta el máximo de subida. Sin expiresAt, vence " +
+      "a los 30 días. Si envía, cuenta para el cupo mensual del plan." +
+      IDEMPOTENT_NOTE,
+    body: CreateEnvelopeRequestBody,
+    multipartPayload: "PDF del sobre (una parte por documento; el nombre de la parte es el que cita `documents[].file`).",
     status: 201,
-    response: EnvelopeDetailSchema,
+    response: CreateEnvelopeResponseSchema,
     idempotent: true,
+    errors: [
+      "invalid_pdf",
+      "invalid_field",
+      "anchor_not_found",
+      "pdf_too_heavy",
+      "pdf_reader_busy",
+      "document_fetch_failed",
+      "file_part_missing",
+      "unused_file_part",
+      "payload_required",
+      "duplicate_ref",
+      "duplicate_ids",
+      "id_in_use",
+      "file_too_large",
+      "envelope_incomplete",
+      "plan_limit_envelopes",
+      "frame_ancestor_not_allowed",
+    ],
   },
   { method: "get", path: "/v1/envelopes/{id}", operationId: "getEnvelope", tag: "Sobres", summary: "Detalle del sobre", response: EnvelopeDetailSchema },
   {
@@ -434,13 +501,14 @@ const OPS: Op[] = [
     path: "/v1/envelopes/from-template",
     operationId: "createEnvelopeFromTemplate",
     tag: "Plantillas",
-    summary: "Crear sobre desde una plantilla",
+    summary: "Crear sobre desde una plantilla (y enviarlo en la misma llamada)",
     description:
       "Un destinatario por rol (por `roleId` o por nombre en `role`). `prefill` completa campos por id o por etiqueta (sin distinguir mayúsculas). Con `send: true` se envía en el mismo pedido (y aplica el cupo mensual); si no, queda en borrador. Sin expiresAt, vence a los 30 días." +
-      NOT_IDEMPOTENT,
+      IDEMPOTENT_NOTE,
     body: EnvelopeFromTemplateInput,
     status: 201,
     response: EnvelopeDetailSchema,
+    idempotent: true,
     errors: ["template_empty", "unknown_role", "duplicate_role", "unknown_prefill", "readonly_field", "invalid_prefill", "roles_missing", "envelope_incomplete", "plan_limit_envelopes"],
   },
 
@@ -1201,6 +1269,27 @@ function successResponse(op: Op) {
   return { description, ...headers, content: { "application/json": { schema: op.response ? js(op.response) : { type: "object" } } } };
 }
 
+/** JSON en application/json o, con archivos, en la parte `payload` de un multipart/form-data. */
+function jsonOrMultipartBody(op: Op) {
+  return {
+    required: true,
+    content: {
+      "application/json": { schema: js(op.body!) },
+      "multipart/form-data": {
+        schema: {
+          type: "object",
+          properties: {
+            payload: { type: "string", description: "El mismo JSON que en application/json (los documentos citan sus archivos con `file`)." },
+          },
+          additionalProperties: { type: "string", format: "binary", description: op.multipartPayload },
+          required: ["payload"],
+        },
+        encoding: { payload: { contentType: "application/json" } },
+      },
+    },
+  };
+}
+
 function multipartBody(op: Op) {
   return {
     required: true,
@@ -1258,6 +1347,7 @@ export function buildOpenApi() {
     if (op.body) entry.requestBody = { required: !op.bodyOptional, content: { "application/json": { schema: js(op.body) } } };
     if (op.form) entry.requestBody = { required: true, content: { "application/x-www-form-urlencoded": { schema: js(op.form) } } };
     if (op.multipart) entry.requestBody = multipartBody(op);
+    if (op.multipartPayload && op.body) entry.requestBody = jsonOrMultipartBody(op);
     (paths[op.path] ??= {})[op.method] = entry;
   }
 

@@ -27,6 +27,11 @@ export interface Op {
   multipart?: boolean;
   /** Descripción del campo `file` del multipart. */
   fileDescription?: string;
+  /**
+   * Además del cuerpo JSON (`body`), acepta multipart/form-data con ese mismo JSON en la parte `payload` y archivos en
+   * otras partes (POST /v1/envelopes con el sobre completo). El texto describe las partes de archivo.
+   */
+  multipartPayload?: string;
   response?: ZodTypeAny | "pdf" | "csv" | "html" | "none";
   responseDescription?: string;
   status?: number;
@@ -173,6 +178,21 @@ export const ERRORS: Record<string, Err> = {
     message: "El archivo no es un PDF",
     summary: "PDF inválido. Otros códigos: encrypted, empty, too_many_pages, unreadable, ambiguous_pdf",
   },
+  document_fetch_failed: {
+    status: 400,
+    code: "document_fetch_failed",
+    message: "documents[0]: no se pudo descargar (destino no permitido: intranet.local resuelve a una dirección interna)",
+    summary: "No se pudo descargar el PDF de `url` (no https, redirige, responde con error o apunta a una red interna)",
+  },
+  file_part_missing: {
+    status: 400,
+    code: "file_part_missing",
+    message: "documents[0]: no llegó la parte de archivo \"contrato\" (multipart/form-data)",
+    summary: "Un documento cita con `file` una parte del multipart que no llegó",
+  },
+  unused_file_part: { status: 400, code: "unused_file_part", message: "Partes de archivo que no cita ningún documento: anexo", summary: "Con `documents`, cada archivo del multipart tiene que estar citado" },
+  payload_required: { status: 400, code: "payload_required", message: "Falta la parte \"payload\" con el JSON del sobre", summary: "multipart/form-data sin la parte JSON `payload`" },
+  duplicate_ref: { status: 400, code: "duplicate_ref", message: "Hay destinatarios con el mismo ref", summary: "Dos documentos o dos destinatarios con el mismo `ref`" },
   invalid_cursor: { status: 400, code: "invalid_cursor", message: "Cursor inválido", summary: "cursor que no salió de nextCursor" },
   invalid_range: { status: 400, code: "invalid_range", message: "Fechas inválidas (usar ISO 8601)", summary: "from/to inválidos, invertidos o rango mayor a 3 años" },
   invalid_query: { status: 400, code: "invalid_query", message: "'from' no es una fecha válida", summary: "Filtro de fecha inválido" },

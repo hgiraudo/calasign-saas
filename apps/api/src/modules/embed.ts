@@ -57,6 +57,42 @@ async function originsForRecipient(db: Db, recipientId: string, tenantId: string
   return requested.length ? requested.filter((o) => allowed.includes(o)) : allowed;
 }
 
+/**
+ * Crea una URL de firma embebida de un solo uso para un destinatario activo, dentro de la transacción del llamador.
+ * La usan POST …/signing-url y POST /v1/envelopes cuando envía un sobre con firmantes embebidos.
+ */
+export async function issueSigningUrl(t: Db, a: AuthContext, envelopeId: string, recipientId: string, input: CreateSigningUrlInput): Promise<SigningUrlResponse> {
+  const tenant = await t.one<any>(`SELECT embed_frame_ancestors FROM tenants WHERE id = $1`, [a.tenantId]);
+  const allowed: string[] = tenant?.embed_frame_ancestors ?? [];
+  const requested = (input.frameAncestors ?? []).map((o) => o.toLowerCase().replace(/\/$/, ""));
+  const notAllowed = requested.filter((o) => !allowed.includes(o));
+  if (notAllowed.length) {
+    throw badRequest("frame_ancestor_not_allowed", `Origen no autorizado en la configuración de la organización: ${notAllowed.join(", ")}`);
+  }
+  const code = randomToken(24);
+  const expiresAt = new Date(Date.now() + CODE_TTL_MS);
+  const e = await t.one<any>(`SELECT * FROM envelopes WHERE id = $1 AND tenant_id = $2 FOR UPDATE`, [envelopeId, a.tenantId]);
+  if (!e) throw notFound("Sobre");
+  // awaiting_certificates: un firmante embebido con certificado necesita su link para emparejar el Firmador.
+  if (!["sent", "awaiting_certificates", "completed"].includes(e.status)) throw conflict("not_available", "El sobre no está en curso");
+  const r = await t.one<any>(`SELECT * FROM recipients WHERE id = $1 AND envelope_id = $2`, [recipientId, e.id]);
+  if (!r) throw notFound("Destinatario");
+  if (!r.access_token_enc) throw conflict("not_available", "El destinatario todavía no está activo");
+  await t.query(
+    `INSERT INTO embed_sessions (id, tenant_id, envelope_id, recipient_id, code_hash, return_url, frame_ancestors, created_by_actor, expires_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+    [uuidv7(), a.tenantId, e.id, r.id, sha256Hex(code), input.returnUrl ?? null, requested, a.actor.label ?? a.actor.type, expiresAt.toISOString()],
+  );
+  await appendEvent(t, {
+    tenantId: a.tenantId,
+    envelopeId: e.id,
+    type: "recipient.embedded_url_created",
+    actor: a.actor,
+    data: { recipientId: r.id, returnHost: input.returnUrl ? new URL(input.returnUrl).host : null, frameAncestors: requested },
+  });
+  return { url: `${await tenantBaseUrl(t, a.tenantId)}/embed/${code}`, expiresAt: expiresAt.toISOString() };
+}
+
 export async function embedRoutes(app: FastifyInstance, s: Services) {
   const auth = authenticate(s);
   const A = (req: FastifyRequest) => req.auth as AuthContext;
@@ -86,38 +122,9 @@ export async function embedRoutes(app: FastifyInstance, s: Services) {
     async (req, reply): Promise<SigningUrlResponse> => {
       const a = A(req);
       const input = CreateSigningUrlInput.parse(req.body ?? {});
-      const tenant = await s.db.one<any>(`SELECT embed_frame_ancestors FROM tenants WHERE id = $1`, [a.tenantId]);
-      const allowed: string[] = tenant?.embed_frame_ancestors ?? [];
-      const requested = (input.frameAncestors ?? []).map((o) => o.toLowerCase().replace(/\/$/, ""));
-      const notAllowed = requested.filter((o) => !allowed.includes(o));
-      if (notAllowed.length) {
-        throw badRequest("frame_ancestor_not_allowed", `Origen no autorizado en la configuración de la organización: ${notAllowed.join(", ")}`);
-      }
-      const code = randomToken(24);
-      const expiresAt = new Date(Date.now() + CODE_TTL_MS);
-      await s.db.tx(async (t) => {
-        const e = await t.one<any>(`SELECT * FROM envelopes WHERE id = $1 AND tenant_id = $2 FOR UPDATE`, [req.params.id, a.tenantId]);
-        if (!e) throw notFound("Sobre");
-        // awaiting_certificates: un firmante embebido con certificado necesita su link para emparejar el Firmador.
-        if (!["sent", "awaiting_certificates", "completed"].includes(e.status)) throw conflict("not_available", "El sobre no está en curso");
-        const r = await t.one<any>(`SELECT * FROM recipients WHERE id = $1 AND envelope_id = $2`, [req.params.recipientId, e.id]);
-        if (!r) throw notFound("Destinatario");
-        if (!r.access_token_enc) throw conflict("not_available", "El destinatario todavía no está activo");
-        await t.query(
-          `INSERT INTO embed_sessions (id, tenant_id, envelope_id, recipient_id, code_hash, return_url, frame_ancestors, created_by_actor, expires_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-          [uuidv7(), a.tenantId, e.id, r.id, sha256Hex(code), input.returnUrl ?? null, requested, a.actor.label ?? a.actor.type, expiresAt.toISOString()],
-        );
-        await appendEvent(t, {
-          tenantId: a.tenantId,
-          envelopeId: e.id,
-          type: "recipient.embedded_url_created",
-          actor: a.actor,
-          data: { recipientId: r.id, returnHost: input.returnUrl ? new URL(input.returnUrl).host : null, frameAncestors: requested },
-        });
-      });
+      const r = await s.db.tx((t) => issueSigningUrl(t, a, req.params.id, req.params.recipientId, input));
       reply.code(201);
-      return { url: `${await tenantBaseUrl(s.db, a.tenantId)}/embed/${code}`, expiresAt: expiresAt.toISOString() };
+      return r;
     },
   );
 

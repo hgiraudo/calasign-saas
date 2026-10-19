@@ -1,4 +1,5 @@
 // Textos de planes y facturación, cobro al firmar y servidor MCP.
+import { brandText } from "./white-label";
 import { useI18n } from "./i18n";
 
 const es = {
@@ -354,7 +355,7 @@ export function useBillingText() {
   const { locale } = useI18n();
   const d = DICTS[locale] ?? es;
   return (k: Key, vars?: Record<string, string | number>) => {
-    let s: string = d[k] ?? es[k] ?? k;
+    let s: string = brandText(locale, k, d[k] ?? es[k] ?? k);
     if (vars) for (const [n, v] of Object.entries(vars)) s = s.split(`{${n}}`).join(String(v));
     return s;
   };

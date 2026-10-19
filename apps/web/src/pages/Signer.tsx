@@ -18,6 +18,8 @@ import { IdentityGate } from "../components/IdentityGate";
 import { PaymentGate, SignerPaymentAfterSign } from "../components/BillingExtras";
 import { AiSignerAssist } from "../components/AiPanels";
 import { SignerCertificateStep } from "../components/CertSign";
+import { BrandFooter } from "../components/BrandFooter";
+import { setBrandTheme } from "../lib/white-label";
 
 type Adopted = SignatureImageInput & { dataUrl: string };
 
@@ -33,6 +35,8 @@ export function SignerPage() {
 
   const apply = useCallback(
     (s: SigningSession) => {
+      // Marca blanca: tema, textos y nombre del producto de la marca del sobre.
+      if (s.theme) setBrandTheme(s.theme);
       setSession(s);
       if (!explicit && s.recipient.locale) setLocale(s.recipient.locale, false);
     },
@@ -229,9 +233,7 @@ function SignerShell({ children, org, branding }: { children: ReactNode; org?: s
         <LocaleSwitcher compact />
       </header>
       <main className="signer-main">{children}</main>
-      <footer className="signer-foot muted small">
-        <Logo /> · {t("sign.poweredBy")}
-      </footer>
+      <BrandFooter />
     </div>
   );
 }
@@ -721,9 +723,7 @@ function SigningFlow({
         </div>
       </main>
 
-      <footer className="signer-foot muted small">
-        <Logo /> · {t("sign.poweredBy")}
-      </footer>
+      <BrandFooter />
 
       {pad && (
         <SignaturePad

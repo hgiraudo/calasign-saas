@@ -1,11 +1,13 @@
 // Verificación pública de un PDF sellado (sin sesión).
-import { useRef, useState } from "react";
-import type { PdfValidationResponse, VerifyResponse } from "@calasign/shared";
+import { useEffect, useRef, useState } from "react";
+import type { PdfValidationResponse, PublicBrandTheme, VerifyResponse } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
 import { formatDateTime, useI18n } from "../lib/i18n";
 import { useSignerText } from "../lib/i18n-signer";
 import { ErrorBox, LocaleSwitcher, Logo, Spinner } from "../components/ui";
 import { ValidationReportView } from "../components/EvidenceExtras";
+import { BrandFooter } from "../components/BrandFooter";
+import { brandTheme, setBrandTheme } from "../lib/white-label";
 
 export function VerifyPage() {
   const { t, locale } = useI18n();
@@ -20,6 +22,15 @@ export function VerifyPage() {
   // Solo vale la respuesta del último archivo: si se elige otro mientras el anterior se verifica, el resultado viejo
   // (que puede llegar después) se mostraba junto al nombre del archivo nuevo.
   const seq = useRef(0);
+  // Marca blanca: el link del certificado trae ?b=<marca>. Normalmente el servidor ya la inyectó en la página; si se
+  // llegó navegando dentro de la web, se pide acá.
+  useEffect(() => {
+    const b = new URLSearchParams(window.location.search).get("b");
+    if (!b || brandTheme()) return;
+    api<PublicBrandTheme>(`/v1/public/brand-theme?b=${encodeURIComponent(b)}`)
+      .then(setBrandTheme)
+      .catch(() => {});
+  }, []);
 
   const check = async (file: File | undefined) => {
     if (!file) return;
@@ -154,9 +165,7 @@ export function VerifyPage() {
           </div>
         )}
       </main>
-      <footer className="signer-foot muted small">
-        <Logo /> · {t("sign.poweredBy")}
-      </footer>
+      <BrandFooter />
     </div>
   );
 }

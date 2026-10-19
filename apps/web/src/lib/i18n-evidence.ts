@@ -1,4 +1,5 @@
 // Textos de evidencia fuerte: certificados, firma XML, sello de empresa, nivel PAdES y validación técnica.
+import { brandText } from "./white-label";
 import { useI18n } from "./i18n";
 
 const es = {
@@ -303,7 +304,7 @@ export function useEvidenceText() {
   const { locale } = useI18n();
   const d = DICTS[locale] ?? es;
   return (k: Key, vars?: Record<string, string | number>) => {
-    let s: string = d[k] ?? es[k] ?? k;
+    let s: string = brandText(locale, k, d[k] ?? es[k] ?? k);
     if (vars) for (const [n, v] of Object.entries(vars)) s = s.replace(`{${n}}`, () => String(v));
     return s;
   };

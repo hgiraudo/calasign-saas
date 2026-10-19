@@ -1,5 +1,6 @@
 // Textos de Equipos (miembros, roles, grupos, auditoría, seguridad, 2FA, invitaciones).
 // Diccionario propio para no tocar lib/i18n.tsx.
+import { brandText } from "./white-label";
 import { useI18n } from "./i18n";
 
 const es = {
@@ -415,7 +416,7 @@ export function useTeamsText() {
   const { locale } = useI18n();
   const d = (DICTS as Record<string, Record<Key, string>>)[locale] ?? es;
   return (k: Key, vars?: Record<string, string>) => {
-    let s = d[k] ?? es[k];
+    let s = brandText(locale, k, d[k] ?? es[k]);
     if (vars) for (const [name, v] of Object.entries(vars)) s = s.split(`{${name}}`).join(v);
     return s;
   };

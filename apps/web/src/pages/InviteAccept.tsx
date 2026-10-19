@@ -22,7 +22,7 @@ export function InviteAcceptPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api<InvitationPreview>(`/v1/invite/${token}`)
+    api<InvitationPreview>(`/v1/invite/${encodeURIComponent(token ?? "")}`)
       .then(setInv)
       .catch((e) => setError(errorText(e)));
   }, [token]);
@@ -40,7 +40,7 @@ export function InviteAcceptPage() {
     setError(null);
     try {
       const body = loggedAsInvitee ? {} : inv?.existingAccount ? { password } : { name, password };
-      const r = await api<MeResponse | TwoFactorChallenge>(`/v1/invite/${token}/accept`, { method: "POST", body });
+      const r = await api<MeResponse | TwoFactorChallenge>(`/v1/invite/${encodeURIComponent(token ?? "")}/accept`, { method: "POST", body });
       if ("twoFactorRequired" in r) setChallenge(r.challengeToken);
       else done(r);
     } catch (err) {

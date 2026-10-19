@@ -433,7 +433,8 @@ const slackMsgs = channelHits.filter((h) => h.path === `/slack/${stamp}`).map((h
 assert(slackMsgs.some((m) => /enviado/i.test(m.text) && m.text.includes(`Plataforma canales ${stamp}`)), "Slack: sobre enviado");
 const slackDone = slackMsgs.find((m) => /completado/i.test(m.text));
 assert(slackDone?.blocks?.[1]?.elements?.[0]?.url?.endsWith(`/app/envelopes/${flow.envelopeId}`), "Slack: sobre completado con botón al sobre");
-await waitFor(() => channelHits.some((h) => h.path === `/teams/${stamp}`), "aviso de Teams");
+// Se espera el de "completado" (el de "enviado" puede llegar antes y la búsqueda de abajo fallaba a veces).
+await waitFor(() => channelHits.some((h) => h.path === `/teams/${stamp}` && /completado/i.test(JSON.stringify(h.body))), "aviso de Teams");
 const teamsMsg = channelHits.find((h) => h.path === `/teams/${stamp}` && /completado/i.test(JSON.stringify(h.body))).body;
 assert(teamsMsg.attachments?.[0]?.contentType === "application/vnd.microsoft.card.adaptive" && /completado/i.test(teamsMsg.attachments[0].content.body[0].text), "Teams: tarjeta adaptable");
 assert(slackMsgs.every((m) => !JSON.stringify(m).includes("<!channel>")) && slackMsgs.some((m) => m.text.includes("&lt;!channel&gt;")), "Slack: el asunto va escapado (sin @channel)");

@@ -38,7 +38,20 @@ export function readBody<T>(read: Promise<T>): Promise<T> {
   return read.catch(networkError);
 }
 
+/**
+ * Un parámetro de la URL de la página (id, token) que trae "../" (React Router decodifica %2F) haría que el pedido
+ * vaya a otra ruta de la API con la sesión de quien abrió el link: se corta acá, para todas las llamadas.
+ */
+function assertSafePath(path: string) {
+  const p = path.split(/[?#]/)[0];
+  // El parser de URL también trata %2e como punto en estos segmentos.
+  if (p.split("/").some((raw) => { const seg = raw.replace(/%2e/gi, "."); return seg === ".." || seg === "." || seg.includes("\\") || /%5c/i.test(seg); })) {
+    throw new HttpError(400, "invalid_path", "Enlace inválido");
+  }
+}
+
 export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T> {
+  assertSafePath(path);
   const headers: Record<string, string> = { Accept: "application/json", ...(opts.headers ?? {}) };
   let body: BodyInit | undefined;
   if (opts.form) {
@@ -110,6 +123,28 @@ const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
   },
   download_failed: { "pt-BR": "Não foi possível baixar o documento.", en: "The document couldn't be downloaded." },
   file_too_large: { "pt-BR": "O arquivo excede o tamanho máximo.", en: "The file exceeds the maximum size." },
+  // Firmante (OTP, firma, descarga)
+  otp_cooldown: { "pt-BR": "Aguarde alguns segundos para pedir outro código.", en: "Wait a few seconds before requesting another code." },
+  otp_too_many: { "pt-BR": "Foram pedidos códigos demais. Tente mais tarde.", en: "Too many codes requested. Try again later." },
+  otp_daily_limit: {
+    "pt-BR": "Foram pedidos códigos demais hoje. Tente amanhã ou peça um link novo ao remetente.",
+    en: "Too many codes were requested today. Try tomorrow or ask the sender for a new link.",
+  },
+  otp_expired: { "pt-BR": "O código expirou ou já foi usado. Peça um novo.", en: "The code expired or was already used. Request a new one." },
+  otp_locked: { "pt-BR": "Tentativas demais. Peça um código novo.", en: "Too many attempts. Request a new code." },
+  otp_delivery_failed: { "pt-BR": "Não foi possível enviar o código. Tente de novo em alguns segundos.", en: "The code couldn't be sent. Try again in a few seconds." },
+  otp_required: { "pt-BR": "É preciso validar o código de verificação.", en: "You need to enter the verification code." },
+  envelope_closed: { "pt-BR": "O envelope não está mais disponível.", en: "The envelope is no longer available." },
+  already_signed: { "pt-BR": "Você já assinou este envelope.", en: "You already signed this envelope." },
+  not_signable: { "pt-BR": "Você não pode assinar este envelope.", en: "You can't sign this envelope." },
+  not_your_turn: { "pt-BR": "Ainda não é a sua vez de assinar.", en: "It's not your turn to sign yet." },
+  consent_required: { "pt-BR": "Primeiro é preciso aceitar o uso de meios eletrônicos.", en: "You first need to accept the use of electronic means." },
+  identity_required: { "pt-BR": "É preciso verificar sua identidade para continuar.", en: "You need to verify your identity to continue." },
+  fields_invalid: { "pt-BR": "Há campos com valores inválidos.", en: "Some fields have invalid values." },
+  invalid_image: { "pt-BR": "A imagem da assinatura não é válida.", en: "The signature image isn't valid." },
+  busy: { "pt-BR": "Estamos preparando outras cópias: tente de novo em alguns segundos.", en: "We're preparing other copies: try again in a few seconds." },
+  invalid_path: { "pt-BR": "Link inválido.", en: "Invalid link." },
+  invalid_date: { "pt-BR": "Data inválida ou fora do intervalo.", en: "Invalid or out-of-range date." },
   invalid_attachment: {
     "pt-BR": "Só são aceitos PDF, JPG ou PNG que não estejam danificados nem protegidos.",
     en: "Only PDF, JPG or PNG files that aren't damaged or protected are accepted.",
@@ -132,6 +167,11 @@ const NO_MESSAGE: Record<"es" | "pt-BR" | "en", (status: number) => string> = {
 export function errorText(e: unknown): string {
   if (e instanceof HttpError) {
     const loc = currentLocale();
+    const missing = (e.details as { missing?: unknown } | undefined)?.missing;
+    if (loc !== "es" && e.code === "fields_incomplete") {
+      const list = Array.isArray(missing) ? [...new Set(missing.map(String))].join(", ") : "";
+      return (loc === "en" ? "Still to complete: " : "Ainda falta preencher: ") + list;
+    }
     const tr = loc !== "es" ? CODE_TEXT[e.code]?.[loc] : undefined;
     return tr ?? (e.message || (NO_MESSAGE[loc] ?? NO_MESSAGE.es)(e.status));
   }
@@ -156,6 +196,7 @@ export function uuid(): string {
  * login en lugar de dejar la pantalla a medias) y un error HTTP es un HttpError con el código y mensaje de la API.
  */
 export async function fetchResponse(path: string, init: RequestInit = {}): Promise<Response> {
+  assertSafePath(path);
   let res: Response;
   try {
     res = await fetch(path, { credentials: "include", ...init });

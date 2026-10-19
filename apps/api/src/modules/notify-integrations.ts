@@ -172,14 +172,18 @@ export async function notificationIntegrationRoutes(app: FastifyInstance, s: Ser
     const a = req.auth!;
     const input = CreateNotificationIntegrationInput.parse(req.body);
     // Tope por organización (como los webhooks): cada evento genera un trabajo por integración en la cola compartida.
-    const count = await s.db.one<{ n: number }>(`SELECT count(*)::int AS n FROM notification_integrations WHERE tenant_id = $1`, [a.tenantId]);
-    if ((count?.n ?? 0) >= 20) throw badRequest("too_many_integrations", "Máximo 20 integraciones de avisos por organización");
     const url = validateIncomingWebhookUrl(input.url);
     const id = uuidv7();
-    await s.db.query(
-      `INSERT INTO notification_integrations (id, tenant_id, kind, name, url_enc, url_hint, events, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-      [id, a.tenantId, input.kind, input.name, encrypt(url), hintOf(url), input.events, a.userId],
-    );
+    // Conteo e inserción con la organización bloqueada: altas simultáneas no pasan el tope.
+    await s.db.tx(async (t) => {
+      await t.query(`SELECT id FROM tenants WHERE id = $1 FOR UPDATE`, [a.tenantId]);
+      const count = await t.one<{ n: number }>(`SELECT count(*)::int AS n FROM notification_integrations WHERE tenant_id = $1`, [a.tenantId]);
+      if ((count?.n ?? 0) >= 20) throw badRequest("too_many_integrations", "Máximo 20 integraciones de avisos por organización");
+      await t.query(
+        `INSERT INTO notification_integrations (id, tenant_id, kind, name, url_enc, url_hint, events, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [id, a.tenantId, input.kind, input.name, encrypt(url), hintOf(url), input.events, a.userId],
+      );
+    });
     await auditFromRequest(s.db, req, a, "notification_integration.created", { targetType: "notification_integration", targetId: id, data: { kind: input.kind, name: input.name } });
     reply.code(201);
     return toApi(await load(a.tenantId, id));

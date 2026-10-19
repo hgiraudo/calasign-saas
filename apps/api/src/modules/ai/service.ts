@@ -16,7 +16,7 @@ import type { BlobStore } from "../../infra/storage";
 import { AppError } from "../../lib/errors";
 import { iso, uuidv7 } from "../../lib/util";
 import { getAiProvider, AiOutputError, AiRefusalError, type ProviderUsage } from "./provider";
-import { docsToText, type DocText } from "./heuristics";
+import { docsToText, estimateTokens, type DocText } from "./heuristics";
 
 export const DISCLAIMER: Record<string, string> = {
   es: "Generado con IA a partir del documento. Puede contener errores y no es asesoramiento legal: ante dudas, leé el documento completo o consultá a un profesional.",
@@ -80,29 +80,50 @@ const RESERVATION_TTL = "10 minutes";
  * Exige IA habilitada (403) y presupuesto disponible (429) antes de mandar nada al modelo, y reserva presupuesto
  * para la llamada que sigue (`reserve: false` solo chequea, para validar una configuración).
  */
-export async function assertAiAvailable(db: Db, tenantId: string, opts: { reserve?: boolean } = {}) {
+/** Tope de entrada por llamada: un sobre con cientos de páginas no se manda entero al modelo. */
+const MAX_INPUT_TOKENS = Math.max(1000, Number(process.env.AI_MAX_INPUT_TOKENS ?? 150_000));
+
+/** Tokens estimados de entrada para estos documentos (413 si superan el tope por llamada). */
+export function inputEstimate(docs: DocText[]): number {
+  const est = estimateTokens(docsToText(docs, { lineIds: true }));
+  if (est > MAX_INPUT_TOKENS) {
+    throw new AppError(413, "ai_input_too_large", "El documento es demasiado largo para la asistencia con IA", { estimatedTokens: est, max: MAX_INPUT_TOKENS });
+  }
+  return est;
+}
+
+/**
+ * opts.estimate: tokens de entrada estimados de la llamada. La reserva cuenta eso (más la salida) en vez de un
+ * número fijo: si no, decenas de llamadas simultáneas sobre un documento largo gastaban muchas veces el presupuesto.
+ */
+export async function assertAiAvailable(db: Db, tenantId: string, opts: { reserve?: boolean; estimate?: number } = {}) {
   const reserve = opts.reserve !== false;
+  const thisCall = Math.max(RESERVATION_TOKENS, Math.ceil(opts.estimate ?? 0) + RESERVATION_TOKENS);
   await db.tx(async (t) => {
     const tenant = await t.one<any>(`SELECT ai_enabled, ai_monthly_token_budget FROM tenants WHERE id = $1 FOR UPDATE`, [tenantId]);
     if (!tenant?.ai_enabled) throw new AppError(403, "ai_disabled", "La IA no está habilitada para esta organización");
     await t.query(`DELETE FROM ai_usage WHERE tenant_id = $1 AND feature = $2 AND created_at < now() - interval '${RESERVATION_TTL}'`, [tenantId, RESERVATION]);
     const row = await t.one<any>(
       `SELECT COALESCE(sum(input_tokens + output_tokens) FILTER (WHERE feature <> $2), 0)::bigint AS used,
-              (count(*) FILTER (WHERE feature = $2))::int AS inflight
+              (count(*) FILTER (WHERE feature = $2))::int AS inflight,
+              COALESCE(sum(GREATEST(input_tokens, $3)) FILTER (WHERE feature = $2), 0)::bigint AS inflight_tokens
        FROM ai_usage WHERE tenant_id = $1 AND created_at >= date_trunc('month', now())`,
-      [tenantId, RESERVATION],
+      [tenantId, RESERVATION, RESERVATION_TOKENS],
     );
     const used = Number(row?.used ?? 0);
-    const committed = used + Number(row?.inflight ?? 0) * RESERVATION_TOKENS;
+    const committed = used + Number(row?.inflight_tokens ?? 0);
     const budget = Number(tenant.ai_monthly_token_budget ?? 0);
-    if (used >= budget || (reserve && committed >= budget && Number(row?.inflight ?? 0) > 0)) {
+    // Con llamadas en curso, esta solo entra si cabe junto con ellas; sola, si su entrada cabe en lo que queda.
+    const inflight = Number(row?.inflight ?? 0);
+    const tooBig = reserve && (inflight > 0 ? committed + thisCall > budget : used + (opts.estimate ?? 0) > budget);
+    if (used >= budget || tooBig) {
       throw new AppError(429, "ai_budget_exceeded", "Se agotó el presupuesto mensual de IA de la organización", { used, budget });
     }
     if (reserve) {
       await t.query(
         `INSERT INTO ai_usage (id, tenant_id, envelope_id, feature, provider, model, input_tokens, output_tokens, prompt_sha256, actor_type)
-         VALUES ($1, $2, NULL, $3, 'reserva', '-', 0, 0, '', 'system')`,
-        [uuidv7(), tenantId, RESERVATION],
+         VALUES ($1, $2, NULL, $3, 'reserva', '-', $4, 0, '', 'system')`,
+        [uuidv7(), tenantId, RESERVATION, thisCall],
       );
     }
   });

@@ -8,7 +8,7 @@ import { config } from "../../config";
 import { uuidv7 } from "../../lib/util";
 import { deliver } from "../../notifications/channels";
 import { getAiProvider } from "./provider";
-import { assertAiAvailable, isAiError, loadEnvelopeDocs, recordAiUse, saveMetadata, withAiReservation } from "./service";
+import { assertAiAvailable, inputEstimate, isAiError, loadEnvelopeDocs, recordAiUse, saveMetadata, withAiReservation } from "./service";
 
 interface Deps {
   db: Db;
@@ -67,6 +67,9 @@ export async function runAiSweep(d: Deps, now = new Date()) {
     `SELECT e.id, e.tenant_id FROM envelopes e JOIN tenants t ON t.id = e.tenant_id
      WHERE e.status = 'completed' AND e.ai_metadata IS NULL AND e.ai_metadata_attempted_at IS NULL
        AND t.ai_enabled AND t.ai_auto_extract
+       -- Organizaciones sin presupuesto este mes quedan para después (sin esto, sus sobres ocupaban la tanda siempre).
+       AND COALESCE((SELECT sum(u.input_tokens + u.output_tokens) FROM ai_usage u
+                      WHERE u.tenant_id = t.id AND u.created_at >= date_trunc('month', now()) AND u.feature <> '_reserved'), 0) < t.ai_monthly_token_budget
      ORDER BY e.completed_at LIMIT 5`,
   );
   for (const e of pending) {
@@ -75,14 +78,18 @@ export async function runAiSweep(d: Deps, now = new Date()) {
     const claimed = await d.db.query(`UPDATE envelopes SET ai_metadata_attempted_at = now() WHERE id = $1 AND ai_metadata_attempted_at IS NULL RETURNING id`, [e.id]);
     if (!claimed.length) continue;
     try {
+      await assertAiAvailable(d.db, e.tenant_id, { reserve: false }); // antes de analizar el PDF
       const docs = await loadEnvelopeDocs(d.db, d.blobs, e.id);
-      await assertAiAvailable(d.db, e.tenant_id);
+      await assertAiAvailable(d.db, e.tenant_id, { estimate: inputEstimate(docs) });
       const r = await withAiReservation(d.db, e.tenant_id, () => getAiProvider().extractMetadata(docs));
       await saveMetadata(d.db, e.id, e.tenant_id, r.result.metadata, r.result.confidence, "ai");
       await recordAiUse(d.db, { tenantId: e.tenant_id, envelopeId: e.id, feature: "extract_metadata", usage: r.usage, actor: SYSTEM, data: { automatic: true } });
       extracted++;
     } catch (err) {
-      if (!isAiError(err)) d.log.warn({ envelopeId: e.id, err: String(err) }, "extracción automática de metadatos falló");
+      if (isAiError(err)) {
+        // Sin presupuesto (o IA apagada) no es un intento: queda para cuando vuelva a haber (p. ej. el mes siguiente).
+        await d.db.query(`UPDATE envelopes SET ai_metadata_attempted_at = NULL WHERE id = $1`, [e.id]);
+      } else if (!isAiError(err)) d.log.warn({ envelopeId: e.id, err: String(err) }, "extracción automática de metadatos falló");
     }
   }
 

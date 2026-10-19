@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import type { Channel, EnvelopeDetail, EnvelopeFromTemplateInput, Locale, TemplateDetail } from "@calasign/shared";
 import { LOCALES, PREFILLABLE_FIELD_TYPES } from "@calasign/shared";
-import { api, errorText } from "../lib/api";
+import { api, errorText, HttpError, uuid } from "../lib/api";
 import { LOCALE_LABELS, useI18n } from "../lib/i18n";
 import { ErrorBox, Spinner, recipientColor } from "../components/ui";
 
@@ -25,6 +25,9 @@ export function TemplateUsePage() {
   const { t } = useI18n();
   const nav = useNavigate();
   const [tpl, setTpl] = useState<TemplateDetail | null>(null);
+  // Idempotency-Key: si la respuesta se pierde (corte, 502) y se reintenta, la API devuelve el mismo sobre en vez de
+  // crear y enviar otro. Se renueva después de una respuesta de error (el usuario corrige y vuelve a enviar).
+  const [idemKey, setIdemKey] = useState(uuid);
   const [people, setPeople] = useState<Record<string, Person>>({});
   const [subject, setSubject] = useState("");
   const [message, setMessage] = useState("");
@@ -89,9 +92,10 @@ export function TemplateUsePage() {
       send,
     };
     try {
-      const d = await api<EnvelopeDetail>("/v1/envelopes/from-template", { method: "POST", body });
+      const d = await api<EnvelopeDetail>("/v1/envelopes/from-template", { method: "POST", body, headers: { "Idempotency-Key": `${idemKey}:${send ? "send" : "draft"}` } });
       nav(send ? `/app/envelopes/${d.envelope.id}` : `/app/envelopes/${d.envelope.id}/edit`);
     } catch (err) {
+      if (err instanceof HttpError && err.status > 0 && err.status < 500) setIdemKey(uuid());
       setError(errorText(err));
       setBusy(false);
     }

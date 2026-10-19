@@ -36,7 +36,7 @@ export function PublicWorkflowStartPage() {
   const [started, setStarted] = useState(false);
   const trap = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    api<PublicWorkflowStart>(`/v1/public/workflows/${slug}`)
+    api<PublicWorkflowStart>(`/v1/public/workflows/${encodeURIComponent(slug ?? "")}`)
       .then(setInfo)
       .catch((e) => setError(e instanceof HttpError && e.status === 404 ? ta("pub.notFound") : errorText(e)));
   }, [slug]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -44,7 +44,7 @@ export function PublicWorkflowStartPage() {
     setBusy(true);
     setError(null);
     try {
-      const r = await api<{ token: string | null; runId: string }>(`/v1/public/workflows/${slug}/start`, { method: "POST", body: { website: trap.current?.value ?? "" } });
+      const r = await api<{ token: string | null; runId: string }>(`/v1/public/workflows/${encodeURIComponent(slug ?? "")}/start`, { method: "POST", body: { website: trap.current?.value ?? "" } });
       if (r.token) nav(`/w/${r.token}`, { replace: true });
       else setStarted(true);
     } catch (e) {
@@ -90,7 +90,7 @@ export function PublicWorkflowRunPage() {
   const [sent, setSent] = useState(false);
   const trap = useRef<HTMLInputElement>(null);
   const load = useCallback(() => {
-    api<PublicWorkflowRun>(`/v1/public/workflow-runs/${token}`)
+    api<PublicWorkflowRun>(`/v1/public/workflow-runs/${encodeURIComponent(token ?? "")}`)
       .then((v) => {
         // Un refresco que falló (corte de red) no deja el error en pantalla cuando el siguiente responde bien.
         setView(v);
@@ -112,7 +112,7 @@ export function PublicWorkflowRunPage() {
     setBusy(true);
     setError(null);
     try {
-      const v = await api<PublicWorkflowRun>(`/v1/public/workflow-runs/${token}/steps/${view.step.index}`, { method: "POST", body: { values, website: trap.current?.value ?? "" } });
+      const v = await api<PublicWorkflowRun>(`/v1/public/workflow-runs/${encodeURIComponent(token ?? "")}/steps/${view.step.index}`, { method: "POST", body: { values, website: trap.current?.value ?? "" } });
       setView(v);
       setValues({});
       setSent(true);
@@ -197,7 +197,7 @@ export function PublicNegotiationPage() {
   const [view, setView] = useState<(NegotiationView & { organizationName?: string }) | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    api<NegotiationView & { organizationName?: string }>(`/v1/public/negotiations/${token}`)
+    api<NegotiationView & { organizationName?: string }>(`/v1/public/negotiations/${encodeURIComponent(token ?? "")}`)
       .then(setView)
       .catch((e) => setError(e instanceof HttpError && e.status === 404 ? ta("pub.notFound") : errorText(e)));
   }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -218,7 +218,7 @@ export function PublicNegotiationPage() {
           <p className="muted">
             {ta("neg.participant")} · {view.me ? ta("neg.youAre", { name: view.me.name }) : ""}
           </p>
-          <NegotiationPanel base={`/v1/public/negotiations/${token}`} mode="participant" initial={view} />
+          <NegotiationPanel base={`/v1/public/negotiations/${encodeURIComponent(token ?? "")}`} mode="participant" initial={view} />
         </>
       )}
       <p className="agr-powered">{ta("pub.poweredBy")}</p>

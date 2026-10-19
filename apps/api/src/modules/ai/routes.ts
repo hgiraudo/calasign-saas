@@ -23,6 +23,7 @@ import { config } from "../../config";
 import { appendEvent } from "../../infra/evidence";
 import { runAiSweep } from "./sweep";
 import { AppError, badRequest, notFound } from "../../lib/errors";
+import { identityBlocking } from "../identity/kyc";
 import { iso, uuidv7 } from "../../lib/util";
 import { authenticate, type AuthContext, type Services } from "../context";
 import { recipientActor, resolveToken } from "../signing";
@@ -31,6 +32,7 @@ import { getAiProvider, type RawCitation } from "./provider";
 import {
   SIGNER_NOTICE,
   assertAiAvailable,
+  inputEstimate,
   withAiReservation,
   callModel,
   disclaimerFor,
@@ -138,7 +140,7 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
     let usage: DetectFieldsResponse["usage"] = null;
     let sent: DetectFieldsResponse["sent"] = null;
     if (t?.ai_enabled) {
-      await assertAiAvailable(s.db, a.tenantId);
+      await assertAiAvailable(s.db, a.tenantId, { estimate: inputEstimate(docs) });
       const provider = getAiProvider();
       const r = await withAiReservation(s.db, a.tenantId, () => callModel(() => provider.detectFields(docs)));
       const lineDoc = new Map(docs.flatMap((d) => d.pages.flatMap((p) => p.lines.map((l) => [l.id, { doc: d.id, page: p.page }] as const))));
@@ -216,7 +218,7 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
     const { a, e } = await envelopeOf(s, req);
     await assertAiAvailable(s.db, a.tenantId, { reserve: false });
     const docs = await loadEnvelopeDocs(s.db, s.blobs, e.id);
-    await assertAiAvailable(s.db, a.tenantId);
+    await assertAiAvailable(s.db, a.tenantId, { estimate: inputEstimate(docs) });
     const provider = getAiProvider();
     const r = await withAiReservation(s.db, a.tenantId, () => callModel(() => provider.extractMetadata(docs)));
     await saveMetadata(s.db, e.id, a.tenantId, r.result.metadata, r.result.confidence, "ai");
@@ -253,7 +255,7 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
     const rules: string[] = input.rules ?? (Array.isArray(t?.ai_playbook) ? t.ai_playbook : []);
     if (rules.length === 0) throw badRequest("playbook_empty", "No hay reglas para revisar: cargá el playbook en Ajustes → IA");
     const docs = await loadEnvelopeDocs(s.db, s.blobs, e.id);
-    await assertAiAvailable(s.db, a.tenantId);
+    await assertAiAvailable(s.db, a.tenantId, { estimate: inputEstimate(docs) });
     const provider = getAiProvider();
     const r = await withAiReservation(s.db, a.tenantId, () => callModel(() => provider.reviewPlaybook(docs, rules, e.locale)));
     const text = previewText(docs, "playbook_review");
@@ -286,8 +288,10 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
   const signerGate = async (req: FastifyRequest & { params: { token: string } }) => {
     const { recipient: r, envelope: e } = await resolveToken(s.db, req.params.token);
     const t = await s.db.one<any>(`SELECT ai_enabled FROM tenants WHERE id = $1`, [e.tenant_id]);
-    const enabled = Boolean(t?.ai_enabled && e.ai_signer_assist && ["sent", "completed"].includes(e.status));
-    return { r, e, enabled, locale: (r.locale ?? e.locale ?? "es") as string };
+    // Sin la verificación de identidad que pide el remitente, el firmante tampoco ve el contenido por esta vía.
+    const blocked = identityBlocking(r);
+    const enabled = Boolean(t?.ai_enabled && e.ai_signer_assist && ["sent", "completed"].includes(e.status) && !blocked);
+    return { r, e, enabled, blocked, locale: (r.locale ?? e.locale ?? "es") as string };
   };
 
   app.get<TP>("/v1/signing/:token/ai", { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (req) => {
@@ -297,7 +301,8 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
   });
 
   app.post<TP>("/v1/signing/:token/ai/summary", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req) => {
-    const { r, e, enabled, locale } = await signerGate(req);
+    const { r, e, enabled, blocked, locale } = await signerGate(req);
+    if (blocked) throw new AppError(403, "identity_required", "Hace falta verificar tu identidad para continuar");
     if (!enabled) throw new AppError(403, "ai_disabled", "La asistencia con IA no está disponible para este documento");
     const docs = await loadEnvelopeDocs(s.db, s.blobs, e.id);
     const key = `${e.id}|${locale}|${docs.map((d) => d.id).join(",")}`;
@@ -313,7 +318,7 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
         await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "ai.summary", actor: recipientActor(req, r), data: { feature: "summary", cached: true, model: out.usage.model } });
       });
     } else {
-      await assertAiAvailable(s.db, e.tenant_id);
+      await assertAiAvailable(s.db, e.tenant_id, { estimate: inputEstimate(docs) });
       const provider = getAiProvider();
       const res = await withAiReservation(s.db, e.tenant_id, () => callModel(() => provider.summarize(docs, locale)));
       out = {
@@ -335,11 +340,12 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
 
   app.post<TP>("/v1/signing/:token/ai/ask", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req) => {
     const input = AiAskInput.parse(req.body);
-    const { r, e, enabled, locale } = await signerGate(req);
+    const { r, e, enabled, blocked, locale } = await signerGate(req);
+    if (blocked) throw new AppError(403, "identity_required", "Hace falta verificar tu identidad para continuar");
     if (!enabled) throw new AppError(403, "ai_disabled", "La asistencia con IA no está disponible para este documento");
     await assertAiAvailable(s.db, e.tenant_id, { reserve: false });
     const docs = await loadEnvelopeDocs(s.db, s.blobs, e.id);
-    await assertAiAvailable(s.db, e.tenant_id);
+    await assertAiAvailable(s.db, e.tenant_id, { estimate: inputEstimate(docs) });
     const provider = getAiProvider();
     const res = await withAiReservation(s.db, e.tenant_id, () => callModel(() => provider.answer(docs, input.question, locale)));
     const out: AiAnswerResponse = {

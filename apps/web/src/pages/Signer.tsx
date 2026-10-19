@@ -1,10 +1,10 @@
 // Experiencia del firmante: /s/:token. Sin cuenta, mobile-first.
 import { formatComputedLocal, useFieldLogic } from "../lib/logic";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useParams } from "react-router-dom";
 import type { CompleteSigningInput, Field, SignatureImageInput, SigningSession } from "@calasign/shared";
 import { AUTO_FIELD_TYPES, ATTACHMENT_MAX_BYTES } from "@calasign/shared";
-import { api, errorText, HttpError } from "../lib/api";
+import { api, errorText, fetchResponse, HttpError, readBody } from "../lib/api";
 import { formatDate, formatDateTime, useI18n } from "../lib/i18n";
 import { DocumentView } from "../components/DocumentView";
 import { SignaturePad } from "../components/SignaturePad";
@@ -22,6 +22,42 @@ import { BrandFooter } from "../components/BrandFooter";
 import { setBrandTheme } from "../lib/white-label";
 
 type Adopted = SignatureImageInput & { dataUrl: string };
+
+/**
+ * Descarga del PDF por fetch: con un <a href>, un error (sesión vencida, sobre anulado, copia ocupada) reemplazaba la
+ * página por el JSON de la API y el firmante quedaba fuera de la app. Con 401 se recarga la sesión (vuelve el OTP).
+ */
+function SignerDownload({ path, name, label, primary, onAuth }: { path: string; name: string; label: string; primary?: boolean; onAuth: () => unknown }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const go = async () => {
+    if (busy) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const blob = await readBody((await fetchResponse(path)).blob());
+      const url = URL.createObjectURL(blob);
+      const a = Object.assign(document.createElement("a"), { href: url, download: `${(name || "document").replace(/[\\/:*?"<>|]+/g, "_").slice(0, 120)}.pdf` });
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (e) {
+      if (e instanceof HttpError && e.status === 401) onAuth();
+      else setErr(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <button type="button" className={`btn${primary ? " btn-primary" : ""}`} disabled={busy} onClick={go}>
+        ⬇ {label}
+      </button>
+      <ErrorBox error={err} />
+    </>
+  );
+}
 
 export function SignerPage() {
   const { token = "" } = useParams();
@@ -55,13 +91,19 @@ export function SignerPage() {
   useEmbedBridge(token, session, invalid);
   // Recarga después de pagar, firmar con certificado o la entrega presencial. Con la sesión ya cargada, un error
   // de esta recarga se muestra arriba del contenido (antes solo se veía si todavía no había sesión).
+  // Solo cuenta la respuesta del último pedido: una más vieja ("finalizing") que llega tarde no pisa a una nueva.
+  const seq = useRef(0);
   const reload = useCallback(() => {
-    api<SigningSession>(base)
+    const mine = ++seq.current;
+    return api<SigningSession>(base)
       .then((s) => {
+        if (mine !== seq.current) return;
         setError(null);
         apply(s);
       })
-      .catch((e) => setError(errorText(e)));
+      .catch((e) => {
+        if (mine === seq.current) setError(errorText(e));
+      });
   }, [base, apply]);
 
   // Después de la última firma el sobre queda en 'finalizing' mientras se sella el PDF (en segundo plano):
@@ -74,14 +116,20 @@ export function SignerPage() {
     if (!pollSealing) return;
     // Cada 3 s los primeros 3 minutos y después cada 30 s: si el sellado tarda (reintentos del worker), el botón
     // igual aparece sin recargar. Mientras tanto se puede bajar la copia en curso.
+    // El siguiente pedido sale cuando terminó el anterior (con una API lenta no se acumulan).
     let tries = 0;
     let id = 0;
+    let stopped = false;
     const tick = () => {
-      reload();
-      id = window.setTimeout(tick, ++tries < 60 ? 3000 : 30000);
+      void reload().finally(() => {
+        if (!stopped) id = window.setTimeout(tick, ++tries < 60 ? 3000 : 30000);
+      });
     };
     id = window.setTimeout(tick, 3000);
-    return () => window.clearTimeout(id);
+    return () => {
+      stopped = true;
+      window.clearTimeout(id);
+    };
   }, [pollSealing, reload]);
 
   if (invalid)
@@ -114,17 +162,13 @@ export function SignerPage() {
   const { envelope, recipient } = session;
   const download = session.signedAvailable ? (
     <>
-      <a className="btn btn-primary" href={`${base}/signed.pdf`}>
-        ⬇ {t("sign.downloadSigned")}
-      </a>
+      <SignerDownload path={`${base}/signed.pdf`} name={session.envelope.subject} primary label={t("sign.downloadSigned")} onAuth={reload} />
       <RequestCopyButton base={base} />
     </>
   ) : session.copyAvailable ? (
     <>
       {sealing && <Spinner />}
-      <a className="btn" href={`${base}/copy.pdf`}>
-        ⬇ {t("sign.downloadCopy")}
-      </a>
+      <SignerDownload path={`${base}/copy.pdf`} name={session.envelope.subject} label={t("sign.downloadCopy")} onAuth={reload} />
       <p className="small muted">{t("sign.copyNote")}</p>
     </>
   ) : null;

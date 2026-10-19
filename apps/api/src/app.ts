@@ -43,6 +43,7 @@ import { crmRoutes } from "./modules/crm";
 
 import { dataRoutes } from "./modules/data";
 import { certsignRoutes } from "./modules/certsign";
+import { sendBrandedIndex, whiteLabelModule } from "./modules/white-label";
 import { INTEGRATIONS_PREFIX, integrationsStaticHeaders } from "./modules/integrations-static";
 
 export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolean | object }) {
@@ -66,9 +67,10 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
       directives: {
         defaultSrc: ["'self'"],
         scriptSrc: ["'self'"],
-        styleSrc: ["'self'", "'unsafe-inline'"],
+        // Google Fonts: tipografía de la marca blanca (white-label/brand.ts).
+        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
         imgSrc: ["'self'", "data:", "blob:"],
-        fontSrc: ["'self'", "data:"],
+        fontSrc: ["'self'", "data:", "https://fonts.gstatic.com"],
         workerSrc: ["'self'", "blob:"],
         connectSrc: ["'self'"],
         objectSrc: ["'none'"],
@@ -163,6 +165,7 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
   await crmRoutes(app, services);
   await dataRoutes(app, services);
   await certsignRoutes(app, services);
+  await whiteLabelModule(app, services);
 
   if (config.devMailbox) {
     // Local: todo el buzón. Entornos compartidos (dev): solo los mensajes de la organización de la sesión.
@@ -187,13 +190,15 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
         if (path.includes("/assets/")) res.header("cache-control", "public, max-age=31536000, immutable");
       },
     });
-    app.setNotFoundHandler((req, reply) => {
+    app.setNotFoundHandler(async (req, reply) => {
       const path = req.url.split("?")[0];
       const isAsset = /\.[a-z0-9]{2,5}$/i.test(path) || path.startsWith("/assets/") || path.startsWith("/pdfjs/");
       // /integrations/ no cae en la SPA: un archivo que falta es un 404 (no una página de la app con estado 200).
       const isIntegration = path === "/integrations" || path.startsWith(INTEGRATIONS_PREFIX);
       if (req.method === "GET" && !isAsset && !isIntegration && !path.startsWith("/v1/") && !path.startsWith("/dev/")) {
         reply.header("cache-control", "no-cache");
+        // Marca blanca: link de firma, formulario, verificación o dominio de una marca → index.html con su tema.
+        if (await sendBrandedIndex(deps.db, req, reply)) return reply;
         return reply.sendFile("index.html");
       }
       return reply.code(404).send({ error: { code: "not_found", message: "Ruta no encontrada" } });

@@ -125,6 +125,12 @@ export async function brandBaseUrl(db: Db, tenantId: string, brandId: string | n
   return tenantBaseUrl(db, tenantId);
 }
 
+/** URL base de los links de un sobre (según su marca). */
+export async function envelopeBaseUrl(db: Db, tenantId: string, envelopeId: string): Promise<string> {
+  const e = await db.one<{ brand_id: string | null }>(`SELECT brand_id FROM envelopes WHERE id = $1 AND tenant_id = $2`, [envelopeId, tenantId]);
+  return brandBaseUrl(db, tenantId, e?.brand_id ?? null);
+}
+
 /** Marca dueña del Host (dominio de una sub-marca o dominio propio de la organización), o null. */
 export async function brandForHost(db: Db, host: string | undefined): Promise<{ tenantId: string; brandId: string | null } | null> {
   const h = (host ?? "").split(":")[0].toLowerCase();

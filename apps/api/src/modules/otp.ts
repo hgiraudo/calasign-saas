@@ -13,6 +13,7 @@ import { deliver } from "../notifications/channels";
 import { normLocale } from "../notifications/templates";
 import type { Services } from "./context";
 import { lockEnvelope } from "./envelopes";
+import { brandedOtpMessage } from "./white-label/otp-text";
 import { assertLinkCurrent, buildSession, recipientActor, resolveToken } from "./signing";
 
 export const SIGNER_COOKIE = "cs_signer";
@@ -135,8 +136,8 @@ export async function otpRoutes(app: FastifyInstance, s: Services) {
       res = await deliver({
         channel,
         to: destination,
-        subject: m.subject,
-        text: m.text(code, e.subject),
+        // Marca blanca: plantilla, nombre del producto y remitente de la marca del sobre (white-label/otp-text.ts).
+        ...(await brandedOtpMessage(s.db, e, locale, code, m.subject, m.text(code, e.subject))),
         locale,
         templateParams: [code],
         // La plantilla del pedido de firma espera remitente, asunto y link: con solo el código, Meta la rechaza.

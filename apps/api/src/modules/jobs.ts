@@ -9,7 +9,7 @@ import { applyEvidencePipeline, planEvidence } from "./evidence-seal";
 import type { BlobStore } from "../infra/storage";
 import { decrypt, maskDestination, sha256Hex, uuidv7 } from "../lib/util";
 import { deliver, telegramStartLink } from "../notifications/channels";
-import { render, type TemplateKind } from "../notifications/templates";
+import { normLocale, render, type TemplateKind } from "../notifications/templates";
 import { loadDocuments } from "./mappers";
 import { loadSignatureImages, toStampFields } from "./stamp-fields";
 import { finalizeFieldLogic } from "./logic";
@@ -20,7 +20,8 @@ import { handleWebhookJob } from "./webhooks";
 import { runAutomaticReminders } from "./reminders";
 import { purgeExpiredEnvelopes } from "./retention";
 import { purgeUnusedDynamicClients } from "./oauth";
-import { getLogoForPdf, getTenantBranding } from "./branding";
+import { brandForEnvelope, brandize, mailBranding, productLabel, rebrands, senderFor } from "./white-label/brand";
+import { brandLogoForPdf, recheckWhiteLabelDomains } from "./white-label";
 import { handlePlatformJob } from "./platform-fanout";
 import { recheckVerifiedDomains, tenantBaseUrl } from "./custom-domains";
 import { dataSweep } from "./data";
@@ -73,16 +74,15 @@ async function notify(
   const org = await d.db.one<any>(`SELECT name FROM tenants WHERE id = $1`, [e.tenant_id]);
   const sender = e.created_by ? await d.db.one<any>(`SELECT name, email, locale FROM users WHERE id = $1`, [e.created_by]) : null;
   const decliner = p.declinedBy ? await d.db.one<any>(`SELECT name, decline_reason FROM recipients WHERE id = $1`, [p.declinedBy]) : null;
-  const brand = await getTenantBranding(d.db, e.tenant_id);
-  const mailBrand = {
-    primaryColor: brand.primaryColor,
-    // Los clientes de correo no muestran SVG: solo PNG/JPG.
-    logoUrl: brand.logoContentType === "image/svg+xml" ? null : brand.logoUrl,
-    footer: brand.emailFooter,
-  };
+  // Marca blanca: la marca del sobre (sub-marca o la de la organización) da colores, logo, plantillas, textos, dominio
+  // de los links y remitente (white-label/brand.ts).
+  const wl = await brandForEnvelope(d.db, e);
+  const mailBrand = (kind: TemplateKind, locale: string | null) => mailBranding(wl, kind, normLocale(locale));
+  const sendAs = await senderFor(d.db, wl);
+  const from = { from: sendAs.from, replyTo: sendAs.replyTo, dkim: sendAs.dkim };
   const base = {
-    senderName: sender?.name ?? org?.name ?? "CalaSign",
-    organizationName: org?.name ?? "",
+    senderName: sender?.name ?? (rebrands(wl) ? wl.name : org?.name) ?? productLabel(wl),
+    organizationName: rebrands(wl) || e.brand_id ? wl.name : org?.name ?? "",
     subject: e.subject,
     declinedBy: decliner?.name ?? null,
     reason: p.kind === "voided" ? e.void_reason : decliner?.decline_reason ?? null,
@@ -105,7 +105,7 @@ async function notify(
             )
           : [];
     const link = `${await tenantBaseUrl(d.db, e.tenant_id)}/app/envelopes/${e.id}`;
-    return notifyStaff(d, e, p.kind, to, (u) => render(p.kind, u.locale ?? e.locale, { ...base, recipientName: u.name, link }, mailBrand), link, () => e.locale);
+    return notifyStaff(d, e, p.kind, to, (u) => render(p.kind, u.locale ?? e.locale, { ...base, recipientName: u.name, link }, mailBrand(p.kind, u.locale ?? e.locale)), link, () => e.locale, from);
   }
 
   // Finalización fallida: a propietarios y administradores de la organización, y al remitente.
@@ -117,7 +117,7 @@ async function notify(
       [e.tenant_id, e.created_by],
     );
     const link = `${await tenantBaseUrl(d.db, e.tenant_id)}/app/envelopes/${e.id}`;
-    return notifyStaff(d, e, p.kind, to, (u) => render("finalize_failed", u.locale ?? e.locale, { ...base, recipientName: u.name, link }, mailBrand), link, (u) => u.locale ?? e.locale);
+    return notifyStaff(d, e, p.kind, to, (u) => render("finalize_failed", u.locale ?? e.locale, { ...base, recipientName: u.name, link }, mailBrand("finalize_failed", u.locale ?? e.locale)), link, (u) => u.locale ?? e.locale, from);
   }
 
   const r = await d.db.one<any>(`SELECT * FROM recipients WHERE id = $1`, [p.recipientId]);
@@ -134,8 +134,8 @@ async function notify(
 
   const locale = r.locale ?? e.locale;
   const token = r.access_token_enc ? decrypt(r.access_token_enc) : null;
-  const link = token && LINK_KINDS.includes(p.kind) ? `${await tenantBaseUrl(d.db, e.tenant_id)}/s/${token}` : null;
-  const m = render(p.kind, locale, { ...base, recipientName: r.name, message: p.kind === "invite" ? e.message : null, link }, mailBrand);
+  const link = token && LINK_KINDS.includes(p.kind) ? `${wl.baseUrl}/s/${token}` : null;
+  const m = render(p.kind, locale, { ...base, recipientName: r.name, message: p.kind === "invite" ? e.message : null, link }, mailBrand(p.kind, locale));
 
   const channels: ("email" | "whatsapp" | "telegram")[] = r.channels ?? ["email"];
   const tgLink = token && channels.includes("telegram") && !r.telegram_chat_id ? telegramStartLink(token) : null;
@@ -162,6 +162,7 @@ async function notify(
         locale,
         templateParams: [base.senderName, e.subject, link ?? ""],
         tenantId: e.tenant_id,
+        ...(channel === "email" ? from : {}),
       });
       await d.db.query(
         `INSERT INTO notifications (id, tenant_id, envelope_id, recipient_id, channel, template, destination, status, provider, provider_message_id, sent_at)
@@ -205,6 +206,7 @@ async function notifyStaff(
   message: (u: { name: string; locale: string | null }) => { subject: string; text: string; html: string },
   link: string,
   localeOf: (u: { locale: string | null }) => string,
+  from: { from?: string | null; replyTo?: string | null; dkim?: { domainName: string; keySelector: string; privateKey: string } | null } = {},
 ) {
   const errors: string[] = [];
   let delivered = 0;
@@ -212,7 +214,7 @@ async function notifyStaff(
     if (!u.email) continue;
     const m = message(u);
     try {
-      const res = await deliver({ channel: "email", to: u.email, subject: m.subject, text: m.text, html: m.html, link, locale: localeOf(u), tenantId: e.tenant_id });
+      const res = await deliver({ channel: "email", to: u.email, subject: m.subject, text: m.text, html: m.html, link, locale: localeOf(u), tenantId: e.tenant_id, ...from });
       await d.db.query(
         `INSERT INTO notifications (id, tenant_id, envelope_id, channel, template, destination, status, provider, provider_message_id, sent_at)
          VALUES ($1,$2,$3,'email',$4,$5,'sent',$6,$7,now())`,
@@ -306,8 +308,8 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
       sha256: x.sha256 as string,
     })),
   );
-  const brand = await getTenantBranding(d.db, e.tenant_id);
-  const brandLogo = await getLogoForPdf(d.db, d.blobs, brand);
+  const wl = await brandForEnvelope(d.db, e);
+  const brandLogo = await brandLogoForPdf(d.db, d.blobs, wl);
 
   const provider = await getSealProvider();
   const evPlan = await planEvidence(d.db, e);
@@ -318,7 +320,7 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
     certificate: {
       envelopeId: e.id,
       subject: e.subject,
-      organizationName: org?.name ?? "",
+      organizationName: e.brand_id || rebrands(wl) ? wl.name : org?.name ?? "",
       senderName: sender?.name ?? org?.name ?? "",
       senderEmail: sender?.email ?? null,
       createdAt: new Date(e.created_at).toISOString(),
@@ -331,14 +333,17 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
         seq: x.seq,
         type: x.type,
         occurredAt: new Date(x.occurred_at).toISOString(),
-        actor: x.actor_label ?? x.actor_type,
+        // Marca blanca: las acciones del sistema figuran con el nombre del producto de la marca.
+        actor: rebrands(wl) ? brandize(x.actor_label ?? x.actor_type, wl) : x.actor_label ?? x.actor_type,
         ip: x.ip,
       })),
       chainHead,
-      verifyUrl: `${await tenantBaseUrl(d.db, e.tenant_id)}/verify`,
+      // ?b=: la página de verificación muestra la marca aunque se abra desde el dominio de la plataforma.
+      verifyUrl: rebrands(wl) || e.brand_id ? `${wl.baseUrl}/verify?b=${encodeURIComponent(wl.key)}` : `${wl.baseUrl}/verify`,
       attachments: attachments.map((x) => ({ name: x.name, recipientName: x.recipientName, sha256: x.sha256, appended: true })),
       payments: await paymentsForCertificate(d.db, e.id),
-      branding: { primaryColor: brand.primaryColor, logo: brandLogo },
+      branding: { primaryColor: wl.theme.primaryColor, logo: brandLogo },
+      productName: rebrands(wl) ? productLabel(wl) : undefined,
       ...evPlan.certificate,
     },
   };
@@ -352,8 +357,8 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
   }
   const sealOnce = (tsaUrl: string | null) =>
     certStage.kind === "seal"
-      ? addCadesSignatureIncremental(certStage.workingPdf, provider, { fieldName: "SelloCalaSign", reason: "Sello de integridad CalaSign", name: "CalaSign", location: "Cloud", tsaUrl })
-      : finalizeEnvelopePdf(input, { provider, tsaUrl });
+      ? addCadesSignatureIncremental(certStage.workingPdf, provider, { fieldName: "SelloIntegridad", reason: `Sello de integridad ${productLabel(wl)}`, name: productLabel(wl), location: "Cloud", tsaUrl })
+      : finalizeEnvelopePdf(input, { provider, tsaUrl, reason: `Sello de integridad ${productLabel(wl)}`, signerName: productLabel(wl), contactInfo: wl.links.supportUrl ?? wl.baseUrl });
 
   let timestamped = Boolean(config.seal.tsaUrl);
   let tsaError: string | null = null;
@@ -463,6 +468,7 @@ export async function sweep(d: Deps) {
     ["agreements", () => agreementsSweep(d)],
     ["data", () => dataSweep(d)],
     ["domains", () => recheckVerifiedDomains(d)],
+    ["white-label-domains", () => recheckWhiteLabelDomains(d)],
     // Apps OAuth registradas dinámicamente (conectores MCP) que nadie autorizó en 30 días.
     ["oauth", () => purgeUnusedDynamicClients(d.db)],
   ];

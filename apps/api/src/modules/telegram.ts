@@ -7,7 +7,7 @@ import { decrypt, sha256Hex } from "../lib/util";
 import { sendTelegram } from "../notifications/channels";
 import { normLocale } from "../notifications/templates";
 import type { Services } from "./context";
-import { tenantBaseUrl } from "./custom-domains";
+import { envelopeBaseUrl } from "./white-label/brand";
 
 const MSG = {
   linked: {
@@ -16,7 +16,7 @@ const MSG = {
     en: (s: string) => `Done: you'll get notifications for "${s}" here.`,
   },
   cta: { es: "Revisar y firmar", "pt-BR": "Revisar e assinar", en: "Review and sign" },
-  unknown: "CalaSign: link inválido o vencido. / Link inválido ou expirado. / Invalid or expired link.",
+  unknown: "Link inválido o vencido. / Link inválido ou expirado. / Invalid or expired link.",
 };
 
 export async function telegramRoutes(app: FastifyInstance, s: Services) {
@@ -68,7 +68,7 @@ export async function telegramRoutes(app: FastifyInstance, s: Services) {
       return { ok: true };
     }
     const locale = normLocale(r.locale ?? e.locale);
-    const link = e.status === "sent" && ["sent", "viewed"].includes(r.status) ? `${await tenantBaseUrl(s.db, e.tenant_id)}/s/${decrypt(r.access_token_enc)}` : null;
+    const link = e.status === "sent" && ["sent", "viewed"].includes(r.status) ? `${await envelopeBaseUrl(s.db, e.tenant_id, e.id)}/s/${decrypt(r.access_token_enc)}` : null;
     await sendTelegram({ to: String(chatId), text: MSG.linked[locale](e.subject), link, cta: MSG.cta[locale] }).catch((err) =>
       req.log.warn({ err: String(err) }, "no se pudo responder en Telegram"),
     );

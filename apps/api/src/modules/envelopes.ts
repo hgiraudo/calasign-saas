@@ -1,3 +1,4 @@
+import { applyEnvelopeBrand } from "./white-label/routes";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import {
   CreateEnvelopeInput,
@@ -245,6 +246,7 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
           ],
         );
         await applyEnvelopeSettings(t, id, input);
+        await applyEnvelopeBrand(t, a.tenantId, id, input.brandId);
         await appendEvent(t, { tenantId: a.tenantId, envelopeId: id, type: "envelope.created", actor: a.actor, data: { subject: input.subject } });
       });
       return { status: 201, body: await loadDetail(s.db, a.tenantId, id) };
@@ -276,6 +278,7 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
         ],
       );
       await applyEnvelopeSettings(t, e.id, input);
+      await applyEnvelopeBrand(t, a.tenantId, e.id, input.brandId);
       await touch(t, e.id);
     });
     return loadDetail(s.db, a.tenantId, req.params.id);

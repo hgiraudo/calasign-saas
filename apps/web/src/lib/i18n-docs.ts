@@ -417,6 +417,11 @@ export const docsEs = {
   "g.pay.timing.p":
     "- `after_sign` (por defecto): la persona firma y después paga. El sobre **recién se completa y se sella cuando el pago se confirma**.\n- `before_sign`: no puede completar la firma hasta pagar; mientras tanto el intento de firma responde `402 payment_required`.\n\nLa confirmación llega solo por el webhook verificado del proveedor. Si un pago llega con el sobre ya cerrado, se marca para reembolso.",
   // ───────── Guía: CRM ─────────
+  "g.hrclm.title": "RR. HH., contratos y gestores documentales",
+  "g.hrclm.providers.h": "Conectores",
+  "g.hrclm.flows.h": "Flujos y envío desde un registro",
+  "g.hrclm.webhook.h": "Disparar desde el sistema de origen",
+  "g.hrclm.dms.h": "Archivado en gestores documentales",
   "g.crm.title": "CRM y ERP",
   "g.crm.lead":
     "Conectores nativos para enviar a firmar desde el CRM y devolver el resultado, y para dejar el PDF firmado en el ERP. Se configuran en **Ajustes → CRM y ERP** ([`/app/settings/crm`](/app/settings/crm)); toda la configuración también está en la API, sección [CRM y ERP](/developers/api/crm-y-erp).",

@@ -98,6 +98,12 @@ export const NAV: NavGroup[] = [
       { path: "guides/identity", title: "g.idv.title", headings: [h("auth", "g.idv.auth.h"), h("kyc", "g.idv.kyc.h")], keywords: "otp kyc identidad selfie truora veriff" },
       { path: "guides/payments", title: "g.pay.title", headings: [h("configure", "g.pay.conf.h"), h("timing", "g.pay.timing.h")], keywords: "pago stripe mercadopago pix pse" },
       { path: "guides/crm", title: "g.crm.title", headings: [h("providers", "g.crm.providers.h"), h("mappings", "g.crm.mappings.h")], keywords: "hubspot salesforce siigo alegra" },
+      {
+        path: "guides/hr-contracts",
+        title: "g.hrclm.title",
+        headings: [h("providers", "g.hrclm.providers.h"), h("flows", "g.hrclm.flows.h"), h("webhook", "g.hrclm.webhook.h"), h("dms", "g.hrclm.dms.h")],
+        keywords: "bamboohr hibob factorial ironclad juro sharepoint box drive onboarding legajo hris clm dms evidencia",
+      },
       { path: "guides/custom-domain", title: "g.domain.title", headings: [h("dns", "g.domain.dns.h"), h("verify", "g.domain.verify.h")], keywords: "dominio propio cname txt white-label" },
       { path: "guides/branding", title: "g.brand.title", headings: [h("api", "g.brand.api.h")], keywords: "logo color marca branding" },
     ],

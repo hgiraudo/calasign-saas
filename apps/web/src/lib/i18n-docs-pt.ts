@@ -410,6 +410,11 @@ export const docsPt: Record<DocsKey, string> = {
   "g.pay.timing.p":
     "- `after_sign` (padrão): a pessoa assina e depois paga. O envelope **só é concluído e selado quando o pagamento é confirmado**.\n- `before_sign`: não é possível concluir a assinatura antes de pagar; enquanto isso, a tentativa de assinatura responde `402 payment_required`.\n\nA confirmação chega apenas pelo webhook verificado do provedor. Se um pagamento chegar com o envelope já encerrado, ele é marcado para reembolso.",
   // ───────── Guia: CRM ─────────
+  "g.hrclm.title": "RH, contratos e gestão documental",
+  "g.hrclm.providers.h": "Conectores",
+  "g.hrclm.flows.h": "Fluxos e envio a partir de um registro",
+  "g.hrclm.webhook.h": "Disparar a partir do sistema de origem",
+  "g.hrclm.dms.h": "Arquivamento em gestores documentais",
   "g.crm.title": "CRM e ERP",
   "g.crm.lead":
     "Conectores nativos para enviar para assinatura a partir do CRM e devolver o resultado, e para deixar o PDF assinado no ERP. São configurados em **Configurações → CRM e ERP** ([`/app/settings/crm`](/app/settings/crm)); toda a configuração também está na API, seção [CRM e ERP](/developers/api/crm-y-erp).",

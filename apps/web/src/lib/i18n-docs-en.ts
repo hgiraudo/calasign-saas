@@ -410,6 +410,11 @@ export const docsEn: Record<DocsKey, string> = {
   "g.pay.timing.p":
     "- `after_sign` (default): the person signs and then pays. The envelope **is only completed and sealed once the payment is confirmed**.\n- `before_sign`: they can't complete signing until they pay; meanwhile the signing attempt returns `402 payment_required`.\n\nConfirmation only arrives through the provider's verified webhook. If a payment arrives after the envelope is already closed, it's flagged for refund.",
   // ───────── Guide: CRM ─────────
+  "g.hrclm.title": "HR, contracts and document management",
+  "g.hrclm.providers.h": "Connectors",
+  "g.hrclm.flows.h": "Flows and sending from a record",
+  "g.hrclm.webhook.h": "Triggering from the source system",
+  "g.hrclm.dms.h": "Archiving in document management systems",
   "g.crm.title": "CRM and ERP",
   "g.crm.lead":
     "Native connectors to send for signature from your CRM and write the result back, and to drop the signed PDF into your ERP. Configure them in **Settings → CRM and ERP** ([`/app/settings/crm`](/app/settings/crm)); the full configuration is also available in the API, in the [CRM and ERP](/developers/api/crm-y-erp) section.",

@@ -637,6 +637,82 @@ await test("dynamics 365: flujos con JSON válido que usan las operaciones del c
   }
 });
 
+// ───────── 8. Pipedrive (acción de app sobre el conector nativo) ─────────
+
+await test("pipedrive: registrado, zip con la acción y app-extensions.json con las URLs de esta base", () => {
+  const idx = JSON.parse(readFileSync(C("index.json"), "utf8"));
+  const pd = idx.connectors.find((c) => c.id === "pipedrive");
+  assert.ok(pd, "pipedrive en connectors/index.json");
+  assert.deepEqual(pd.artifacts, ["/integrations/connectors/pipedrive/calasign-pipedrive.zip"]);
+  const zip = readZip(readFileSync(C("pipedrive/calasign-pipedrive.zip")));
+  for (const f of ["README.md", "app-extensions.json", "send.html", "send.js", "send.css"]) assert.ok(zip.has(f), f);
+  const ext = JSON.parse(readFileSync(C("pipedrive/app-extensions.json"), "utf8"));
+  assert.equal(ext.app.callbackUrl, `${BASE}/v1/crm/oauth/pipedrive/callback`);
+  assert.equal(ext.appExtensions.linkActions[0].url, `${BASE}/integrations/connectors/pipedrive/send.html`);
+  const html = readFileSync(C("pipedrive/send.html"), "utf8");
+  assert.match(html, /<script src="send\.js\?v=[^"]+" defer><\/script>/);
+  assert.doesNotMatch(html, /<script>|<style>|style="/, "sin scripts ni estilos en línea (CSP de helmet)");
+});
+
+await test("pipedrive: la acción lee los ids, filtra mapeos y envía uno por registro con la sesión", async () => {
+  const PD = require(C("pipedrive/send.js"));
+  assert.deepEqual(PD.parseParams("?resource=deal&view=list&selectedIds=42,43,42,x1&companyId=5150&token=jwt"), {
+    resource: "deal",
+    objectType: "deal",
+    ids: ["42", "43"],
+    truncated: false,
+    companyId: "5150",
+  });
+  assert.equal(PD.parseParams("?resource=person&selectedIds=8").objectType, "contact");
+  assert.equal(PD.parseParams("?resource=organization&selectedIds=8").objectType, null);
+  assert.equal(PD.parseParams(`?resource=deal&selectedIds=${Array.from({ length: 25 }, (_, i) => i + 1).join(",")}`).ids.length, 20);
+  assert.equal(PD.lang({ language: "pt-BR" }), "pt");
+  assert.equal(PD.lang({ language: "en-US" }), "en");
+
+  const calls = [];
+  const mappings = [
+    { id: "m1", name: "Deals", objectType: "deal", templateId: "t1", active: true, send: true },
+    { id: "m2", name: "Inactivo", objectType: "deal", templateId: "t1", active: false, send: true },
+    { id: "m3", name: "Personas", objectType: "contact", templateId: "t1", active: true, send: false },
+    { id: "m4", name: "Sin plantilla", objectType: "deal", templateId: null, active: true, send: true },
+  ];
+  let loggedIn = true;
+  const fakeFetch = async (url, init) => {
+    calls.push({ url, method: init.method, credentials: init.credentials, body: init.body ? JSON.parse(init.body) : null });
+    const res = (status, body) => ({ ok: status < 400, status, text: async () => JSON.stringify(body) });
+    if (!loggedIn) return res(401, { error: { code: "unauthorized", message: "Sin sesión" } });
+    if (url === `${BASE}/v1/crm/mappings?provider=pipedrive`) return res(200, { items: mappings });
+    const m = url.match(/\/v1\/crm\/mappings\/(\w+)\/send$/);
+    if (m && init.body) {
+      const b = JSON.parse(init.body);
+      if (b.objectId === "43") return res(404, { error: { code: "crm_record_not_found", message: "Deal not found" } });
+      return res(201, { envelopeId: `env-${b.objectId}`, status: b.send ? "sent" : "draft" });
+    }
+    return res(404, { error: { message: "?" } });
+  };
+  const api = PD.apiFactory(fakeFetch, BASE);
+  const ready = await PD.load(api, PD.parseParams("?resource=deal&selectedIds=42,43"));
+  assert.equal(ready.state, "ready");
+  assert.deepEqual(ready.mappings.map((x) => x.id), ["m1"]);
+  assert.equal(calls[0].credentials, "include");
+  const out = await PD.sendAll(api, "m1", ["42", "43"], true);
+  assert.deepEqual(out, [
+    { id: "42", ok: true, envelopeId: "env-42", status: "sent" },
+    { id: "43", ok: false, error: "Deal not found", code: "crm_record_not_found" },
+  ]);
+  assert.deepEqual(calls.filter((c) => c.method === "POST").map((c) => [c.url, c.body]), [
+    [`${BASE}/v1/crm/mappings/m1/send`, { objectId: "42", send: true }],
+    [`${BASE}/v1/crm/mappings/m1/send`, { objectId: "43", send: true }],
+  ]);
+  assert.equal((await PD.load(api, PD.parseParams("?resource=person&selectedIds=8"))).mappings[0].id, "m3");
+  assert.equal((await PD.load(api, PD.parseParams("?resource=deal"))).key, "noRecords");
+  assert.equal((await PD.load(api, PD.parseParams("?resource=lead&selectedIds=1"))).key, "badResource");
+  mappings.length = 0;
+  assert.equal((await PD.load(api, PD.parseParams("?resource=deal&selectedIds=42"))).key, "noMappings");
+  loggedIn = false;
+  assert.equal((await PD.load(api, PD.parseParams("?resource=deal&selectedIds=42"))).state, "login");
+});
+
 await test("web: los enlaces de /developers/connectors y de /integrations/ apuntan a artefactos construidos", () => {
   const constants = readFileSync(join(HERE, "../../apps/web/src/pages/developers/constants.ts"), "utf8");
   const block = /CONNECTOR_ARTIFACTS = \{([\s\S]*?)\} as const/.exec(constants)[1];

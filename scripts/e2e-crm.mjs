@@ -760,6 +760,9 @@ step("Salesforce: OAuth con PKCE S256, contacto principal (OpportunityContactRol
     ],
     send: false,
   });
+  // La acción de Pipedrive lista solo los mapeos de conexiones de Pipedrive.
+  const pdOnly = (await api("GET", "/v1/crm/mappings?provider=pipedrive")).items.map((x) => x.id).sort();
+  assert(pdOnly.join() === [pdMap.id, pdPersonMap.id].sort().join(), `mapeos filtrados por proveedor (${pdOnly.length})`);
   const pdDraft = await api("POST", `/v1/crm/mappings/${pdPersonMap.id}/send`, { objectId: "8" });
   assert(pdDraft.status === "draft", "sobre en borrador desde la persona");
   const pdDraftDet = await api("GET", `/v1/envelopes/${pdDraft.envelopeId}`);

@@ -1,0 +1,18 @@
+{
+  "$comment": "Valores para cargar en el Developer Hub de Pipedrive (la app se configura en la web, no con un manifiesto). Ver README.md.",
+  "app": {
+    "name": "CalaSign",
+    "callbackUrl": "{{BASE_URL}}/v1/crm/oauth/pipedrive/callback",
+    "scopes": ["base", "deals:full", "contacts:full", "users:read"],
+    "installationNote": "Si la instalación empieza en el Marketplace, Pipedrive vuelve al callback sin state: CalaSign lleva al usuario a Ajustes → CRM y ERP para conectar con «Conectar con OAuth»."
+  },
+  "appExtensions": {
+    "linkActions": [
+      {
+        "name": "Enviar a firmar con CalaSign",
+        "url": "{{BASE_URL}}/integrations/connectors/pipedrive/send.html",
+        "locations": ["deal_details", "deals_list", "person_details", "persons_list"]
+      }
+    ]
+  }
+}

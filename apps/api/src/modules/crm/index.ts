@@ -632,12 +632,17 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
 
   // ───────── Mapeos ─────────
 
-  app.get<{ Querystring: { connectionId?: string } }>("/v1/crm/mappings", { preHandler: auth }, async (req) => {
+  app.get<{ Querystring: { connectionId?: string; provider?: string } }>("/v1/crm/mappings", { preHandler: auth }, async (req) => {
     const params: unknown[] = [A(req).tenantId];
     let where = `tenant_id = $1`;
     if (req.query.connectionId && UUID.test(req.query.connectionId)) {
       params.push(req.query.connectionId);
       where += ` AND connection_id = $2`;
+    }
+    // provider: solo mapeos de conexiones activas de ese proveedor (la acción de Pipedrive lista los suyos).
+    if (req.query.provider && (CRM_PROVIDERS as readonly string[]).includes(req.query.provider)) {
+      params.push(req.query.provider);
+      where += ` AND connection_id IN (SELECT id FROM crm_connections WHERE tenant_id = $1 AND active AND provider = $${params.length})`;
     }
     const rows = await s.db.query(`SELECT * FROM crm_mappings WHERE ${where} ORDER BY created_at DESC`, params);
     return { items: rows.map(toMapping) };

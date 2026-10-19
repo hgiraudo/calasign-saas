@@ -24,7 +24,7 @@ export const CRM_OPS: Op[] = [
   { method: "patch", path: "/v1/crm/connections/{id}", tag: C, summary: "Renombrar o desactivar una conexión", body: UpdateCrmConnectionInput },
   { method: "delete", path: "/v1/crm/connections/{id}", tag: C, summary: "Quitar una conexión", response: "none", status: 204 },
   { method: "post", path: "/v1/crm/connections/{id}/test", tag: C, summary: "Probar una conexión" },
-  { method: "get", path: "/v1/crm/mappings", tag: C, summary: "Mapeos", description: "Query: connectionId." },
+  { method: "get", path: "/v1/crm/mappings", tag: C, summary: "Mapeos", description: "Query: connectionId, provider (solo mapeos de conexiones activas de ese proveedor). Alcanza con el permiso de crear sobres." },
   { method: "post", path: "/v1/crm/mappings", tag: C, summary: "Crear un mapeo registro → plantilla", body: CreateCrmMappingInput, status: 201 },
   { method: "get", path: "/v1/crm/mappings/{id}", tag: C, summary: "Ver un mapeo" },
   { method: "patch", path: "/v1/crm/mappings/{id}", tag: C, summary: "Editar un mapeo", body: UpdateCrmMappingInput },

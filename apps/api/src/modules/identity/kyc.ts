@@ -30,6 +30,7 @@ import { WebhookSignatureError, getAdapter, listProviders, mockDecide } from "./
 import type { CertificateIdentity } from "@calasign/pdf";
 import { tenantBaseUrl } from "../custom-domains";
 import { requireFeature, tenantPlan } from "../billing/plans";
+import { discardBlobsOnFailure } from "../file-cleanup";
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MIN_IMAGE_BYTES = 1024;
@@ -402,7 +403,13 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
     const fileId = uuidv7();
     const key = `tenants/${e.tenant_id}/envelopes/${e.id}/identity/${fileId}.bin`;
     await s.blobs.put(key, enc, "application/octet-stream");
-    const replaced = await s.db.tx(async (t) => {
+    // Si la transacción falla (la verificación ya se envió, o dos subidas simultáneas de la misma foto), la imagen
+    // cifrada recién subida no la referencia nada y quedaría para siempre.
+    const replaced = await discardBlobsOnFailure(s.blobs, [key], () => s.db.tx(async (t) => {
+      // Con la verificación bloqueada: una captura que llega después del envío no reemplaza la foto ya evaluada, y dos
+      // subidas simultáneas del mismo tipo no chocan con UNIQUE (verification_id, kind).
+      const cur = await t.one<any>(`SELECT status FROM identity_verifications WHERE id = $1 FOR UPDATE`, [v.id]);
+      if (cur?.status !== "created") throw conflict("no_active_capture", "Primero iniciá la verificación");
       await t.query(
         `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'identity',$3,$4,$5,$6)`,
         [fileId, e.tenant_id, key, isJpeg ? "image/jpeg+aesgcm" : "image/png+aesgcm", enc.length, sha256Hex(enc)],
@@ -425,7 +432,7 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
       ]);
       await t.query(`UPDATE identity_verifications SET updated_at = now() WHERE id = $1`, [v.id]);
       return prev;
-    });
+    }));
     if (replaced) await s.blobs.delete(replaced.storage_key).catch(() => {});
     return sessionOut(req.params.token);
   });

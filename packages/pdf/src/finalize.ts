@@ -371,9 +371,12 @@ async function drawCertificate(
     if (!v) return;
     const size = 8.5;
     const lines = wrapText(fonts.regular, safeMultiline(fonts.regular, v), size, contentW - (x - M) - keyW);
-    ensure(size * 1.4 * lines.length);
+    // El bloque entero junto si entra en una página; si no (un motivo de 1000 caracteres con un salto por línea son
+    // cientos de líneas), sigue en la página siguiente línea por línea en vez de dibujarse fuera de la hoja.
+    ensure(Math.min(size * 1.4 * lines.length, A4.h - 2 * M - 20));
     page.drawText(safeText(fonts.bold, k), { x, y: y - size, size, font: fonts.bold, color: MUTED });
     for (const line of lines) {
+      ensure(size * 1.4);
       page.drawText(line, { x: x + keyW, y: y - size, size, font: fonts.regular, color: INK });
       y -= size * 1.4;
     }

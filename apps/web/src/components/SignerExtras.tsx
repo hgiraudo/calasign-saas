@@ -1,5 +1,5 @@
 // Componentes del bloque "firmante y evidencia": código OTP, delegación (firmante) y reasignación (remitente).
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { EnvelopeDetail, OtpSendResponse, Recipient, SigningSession } from "@calasign/shared";
 import { api, errorText, HttpError } from "../lib/api";
 import { useI18n } from "../lib/i18n";
@@ -37,12 +37,18 @@ export function OtpGate({ session, base, onDone }: { session: SigningSession; ba
     }
   };
 
+  // Enter repetido (o el autocompletado del código + Enter) mientras se verifica mandaba otro intento con el mismo
+  // código: gastaba intentos y, si el primero ya había pasado, mostraba "código incorrecto".
+  const verifying = useRef(false);
   const verify = async () => {
+    if (verifying.current) return;
+    verifying.current = true;
     setBusy(true);
     setError(null);
     try {
       onDone(await api<SigningSession>(`${base}/otp/verify`, { method: "POST", body: { code } }));
     } catch (e) {
+      verifying.current = false;
       setError(errorText(e));
       setBusy(false);
     }

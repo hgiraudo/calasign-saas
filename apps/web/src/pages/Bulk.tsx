@@ -171,7 +171,8 @@ export function BulkNewPage() {
       const r = await api<BulkValidationResult>("/v1/bulk-sends/validate", { method: "POST", body: body() });
       if (mine === inputRev.current) setResult(r);
     } catch (e) {
-      setError(errorText(e));
+      // El error de la validación de un CSV que ya cambió no es de lo que está en pantalla.
+      if (mine === inputRev.current) setError(errorText(e));
     } finally {
       setBusy(false);
     }

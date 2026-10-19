@@ -23,7 +23,7 @@ import { sendEnvelope } from "./envelopes";
 import { checkSenderValue, insertEnvelopeField } from "./fieldvalues";
 import { assignFieldIds, copyFieldLogic, pruneDanglingConditions, saveFieldLogic } from "./logic";
 import { loadDetail, loadDocuments, toDocument } from "./mappers";
-import { deleteFilesIfUnused } from "./file-cleanup";
+import { deleteFilesIfUnused, discardBlobsOnFailure } from "./file-cleanup";
 
 const toTemplate = (r: any) => ({
   id: r.id,
@@ -235,7 +235,8 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
     const key = `tenants/${a.tenantId}/templates/${req.params.id}/${fileId}.pdf`;
     await s.blobs.put(key, bytes, "application/pdf");
     const name = (file.filename || "documento.pdf").slice(0, 200);
-    await s.db.tx(async (t) => {
+    // Si la plantilla se borró entre el chequeo y acá, el PDF subido no lo referencia nada.
+    await discardBlobsOnFailure(s.blobs, [key], () => s.db.tx(async (t) => {
       const tpl = await lockTemplate(t, a.tenantId, req.params.id);
       const pos = await t.one<any>(`SELECT COALESCE(MAX(position), 0) + 1 AS p FROM template_documents WHERE template_id = $1`, [tpl.id]);
       await t.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'template',$3,'application/pdf',$4,$5)`, [
@@ -250,7 +251,7 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
         [docId, a.tenantId, tpl.id, pos.p, name, fileId, info.pageCount, JSON.stringify(info.pages)],
       );
       await touch(t, tpl.id);
-    });
+    }));
     reply.code(201);
     return (await loadTemplateDetail(s.db, a.tenantId, req.params.id)).documents.find((d) => d.id === docId);
   });

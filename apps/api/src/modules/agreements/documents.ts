@@ -31,6 +31,7 @@ import { getTenantBranding } from "../branding";
 import { authenticate, type AuthContext, type Services } from "../context";
 import { sendEnvelope } from "../envelopes";
 import { insertEnvelopeField } from "../fieldvalues";
+import { discardBlobsOnFailure } from "../file-cleanup";
 import { getPath, interpolate, toIsoDate, toNumberOrNull } from "./common";
 
 // ───────────────────────────── Render ─────────────────────────────
@@ -405,7 +406,8 @@ export async function documentRoutes(app: FastifyInstance, s: Services) {
     const subject = input.subject ?? (interpolate(tpl.agreement_mapping?.title, input.data, locale) || tpl.name);
     const file = await storeGeneratedPdf(s.blobs, a.tenantId, doc.pdf);
     const agreement = agreementMetaFromMapping(tpl.agreement_mapping, input.data, locale);
-    const envelopeId = await s.db.tx((t) =>
+    // Si no se crea el sobre (p. ej. límite del plan al enviarlo), el PDF generado no lo referencia nada.
+    const envelopeId = await discardBlobsOnFailure(s.blobs, [file.key], () => s.db.tx((t) =>
       createEnvelopeFromPdf(t, a, {
         file,
         fileName: `${tpl.name}.pdf`,
@@ -423,7 +425,7 @@ export async function documentRoutes(app: FastifyInstance, s: Services) {
         },
         send: input.send,
       }),
-    );
+    ));
     const env = await s.db.one<any>(`SELECT status FROM envelopes WHERE id = $1`, [envelopeId]);
     reply.code(201);
     return { envelopeId, status: env.status, missing: doc.missing, pages: doc.pageCount };

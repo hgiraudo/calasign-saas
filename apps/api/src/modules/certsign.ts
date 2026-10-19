@@ -320,14 +320,20 @@ export async function certsignRoutes(app: FastifyInstance, s: Services) {
     const code = newCode();
     const expiresAt = new Date(Date.now() + CODE_TTL_MS);
     const { ip, userAgent } = clientInfo(req);
-    await s.db.tx(async (t) => {
-      await t.query(`UPDATE certsign_sessions SET status = 'expired' WHERE recipient_id = $1 AND status IN ('created','prepared')`, [r.id]);
+    const stale = await s.db.tx(async (t) => {
+      // Los PDF preparados de los códigos anteriores ya no los usa nada (no tienen fila en `files`): se borran después.
+      const expired = await t.query<{ prepared_key: string | null }>(
+        `UPDATE certsign_sessions SET status = 'expired' WHERE recipient_id = $1 AND status IN ('created','prepared') RETURNING prepared_key`,
+        [r.id],
+      );
       await t.query(
         `INSERT INTO certsign_sessions (id, code_hash, tenant_id, envelope_id, recipient_id, working_sha256, expires_at, ip, user_agent)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
         [uuidv7(), codeHash(code), e.tenant_id, e.id, r.id, cs.working_sha256, expiresAt.toISOString(), ip, userAgent],
       );
+      return expired.map((x) => x.prepared_key).filter((k): k is string => Boolean(k));
     });
+    await deleteBlobsQuietly(s.blobs, stale);
     const apiBase = await tenantBaseUrl(s.db, e.tenant_id);
     const res: CertsignPairing = {
       code,
@@ -457,7 +463,11 @@ export async function certsignRoutes(app: FastifyInstance, s: Services) {
         JSON.stringify({ ...check, chainDer: undefined, revocation }),
       ],
     );
-    if (!upd.length) throw new AppError(410, "code_used", "Este código ya no es válido: generá uno nuevo desde el link de firma");
+    if (!upd.length) {
+      // La sesión ya se completó o venció: el PDF recién preparado no lo referencia nada.
+      await s.blobs.delete(key).catch(() => {});
+      throw new AppError(410, "code_used", "Este código ya no es válido: generá uno nuevo desde el link de firma");
+    }
     const res: CertsignPrepared = {
       digestToSign: Buffer.from(prep.digestToSign).toString("base64"),
       dataToSign: Buffer.from(prep.signedAttrsDer).toString("base64"),

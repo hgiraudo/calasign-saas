@@ -252,6 +252,15 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
         await db.query(`UPDATE recipients SET consented_at = NULL WHERE id = $1`, [r.id]);
         changes.consentReset = true;
       }
+      // Tampoco lo que vio o validó quien tenía el link anterior: si no, el certificado decía que el contacto nuevo vio
+      // el sobre antes de recibirlo (y la apertura real no quedaba registrada, porque solo se marca desde 'sent').
+      if (r.viewed_at || r.status === "viewed" || r.authenticated_at) {
+        await db.query(
+          `UPDATE recipients SET viewed_at = NULL, authenticated_at = NULL, status = CASE WHEN status = 'viewed' THEN 'sent' ELSE status END WHERE id = $1`,
+          [r.id],
+        );
+        changes.viewReset = true;
+      }
     }
     // Contacto o canales nuevos: la invitación vuelve a salir (por los canales nuevos, con el link vigente).
     if (contactChanged && r.access_token_hash && ["sent", "viewed"].includes(r.status) && r.auth_method !== "in_person" && !r.embedded) {

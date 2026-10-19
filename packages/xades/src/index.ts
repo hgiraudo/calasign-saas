@@ -223,17 +223,18 @@ function digest(alg: "sha256" | "sha512" | "sha1", data: string | Uint8Array) {
   return createHash(alg).update(data).digest();
 }
 
-/** Nombre RFC 2253 a partir del DN que da node:crypto (una línea por RDN, en orden del certificado). */
+/**
+ * Nombre RFC 2253 a partir del DN que da node:crypto: una línea por RDN en orden del certificado, con los valores YA
+ * escapados según RFC 2253 (OpenSSL con ASN1_STRFLGS_ESC_2253: `, + " \ < > ;`, # o espacio inicial y espacio final) y
+ * los RDN multivaluados unidos con " + " (un "+" dentro de un valor sale como "\+"). Volver a escapar duplicaba las
+ * barras ("O=Empresa\, S.A." → "O=Empresa\\\, S.A.") y X509IssuerName no coincidía con el emisor real del certificado.
+ */
 function rfc2253(dn: string): string {
   return dn
     .split("\n")
     .filter(Boolean)
     .reverse()
-    .map((rdn) => {
-      const i = rdn.indexOf("=");
-      const v = rdn.slice(i + 1).replace(/([,+"\\<>;])/g, "\\$1");
-      return `${rdn.slice(0, i)}=${v}`;
-    })
+    .map((rdn) => rdn.split(" + ").reverse().join("+"))
     .join(",");
 }
 
@@ -373,7 +374,11 @@ export async function signXml(xml: string, signer: XmlSigner, options: XmlSignOp
       : await signer.signDigest(new Uint8Array(digest("sha256", siC14n)));
   firstChildNS(sigEl, NS.ds, "SignatureValue")!.textContent = b64(sig);
 
-  return new XMLSerializer().serializeToString(doc);
+  // Un "\r" en el DOM solo puede venir de una referencia &#13; / &#xD; en el texto (el parser normaliza los saltos de
+  // línea literales, y en los atributos xmldom ya lo escribe como &#13;). xmldom lo serializa literal en el texto, y
+  // al volver a leer el XML firmado se normaliza a "\n": el digest calculado (C14N lo escribe &#xD;) no se reproducía
+  // y la firma no verificaba, ni con verifyXml ni con un validador externo. Se escribe como referencia.
+  return new XMLSerializer().serializeToString(doc).replace(/\r/g, "&#13;");
 }
 
 // ───────────────────────────── Verificación ─────────────────────────────

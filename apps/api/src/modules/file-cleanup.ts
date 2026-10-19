@@ -49,6 +49,19 @@ export async function deleteBlobsQuietly(blobs: BlobStore, keys: string[]) {
   await Promise.all(keys.map((k) => blobs.delete(k).catch(() => {})));
 }
 
+/**
+ * Corre `fn` (la transacción que registra archivos ya subidos con `keys`); si falla, los borra del almacenamiento y
+ * relanza el error. Sin fila en `files` nada los referencia y la retención nunca los vería.
+ */
+export async function discardBlobsOnFailure<T>(blobs: BlobStore, keys: string[], fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    await deleteBlobsQuietly(blobs, keys);
+    throw err;
+  }
+}
+
 /** Igual que deleteFileIfUnused para varios archivos; una falla no frena a los demás. */
 export async function deleteFilesIfUnused(db: Db, blobs: BlobStore, fileIds: (string | null | undefined)[]) {
   for (const id of new Set(fileIds)) await deleteFileIfUnused(db, blobs, id).catch(() => {});

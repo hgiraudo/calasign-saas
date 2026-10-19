@@ -68,12 +68,16 @@ export function SignerPage() {
   const pollSealing = sealing && !session?.inPerson;
   useEffect(() => {
     if (!pollSealing) return;
+    // Cada 3 s los primeros 3 minutos y después cada 30 s: si el sellado tarda (reintentos del worker), el botón
+    // igual aparece sin recargar. Mientras tanto se puede bajar la copia en curso.
     let tries = 0;
-    const id = window.setInterval(() => {
-      if (++tries > 60) window.clearInterval(id);
-      else reload();
-    }, 3000);
-    return () => window.clearInterval(id);
+    let id = 0;
+    const tick = () => {
+      reload();
+      id = window.setTimeout(tick, ++tries < 60 ? 3000 : 30000);
+    };
+    id = window.setTimeout(tick, 3000);
+    return () => window.clearTimeout(id);
   }, [pollSealing, reload]);
 
   if (invalid)
@@ -498,12 +502,18 @@ function SigningFlow({
   };
 
   const removeAttachment = async (f: Field) => {
+    if (uploading) return;
+    // Mientras se quita, "Finalizar" queda bloqueado como en la subida: si no, se completaba con el adjunto todavía
+    // cargado (o el DELETE llegaba después de completar y fallaba).
+    setUploading(f.id);
     setError(null);
     try {
       await api<Field>(`${base}/fields/${f.id}/attachment`, { method: "DELETE" });
       setValues((v) => ({ ...v, [f.id]: "" }));
     } catch (e) {
       setError(errorText(e));
+    } finally {
+      setUploading(null);
     }
   };
 
@@ -575,7 +585,7 @@ function SigningFlow({
           {name ? (
             <span className="attach-chip" style={{ fontSize: Math.max(9, Math.min(fontSize, 14)) }}>
               📎 <span className="attach-name">{name}</span>
-              <button type="button" className="attach-x" aria-label={t("common.delete")} onClick={() => removeAttachment(f)}>
+              <button type="button" className="attach-x" aria-label={t("common.delete")} disabled={uploading !== null} onClick={() => removeAttachment(f)}>
                 ×
               </button>
             </span>

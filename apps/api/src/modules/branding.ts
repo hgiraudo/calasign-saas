@@ -9,6 +9,7 @@ import { AppError, badRequest, notFound } from "../lib/errors";
 import { sha256Hex, uuidv7 } from "../lib/util";
 import { authenticate, type Services } from "./context";
 import { auditFromRequest } from "./audit";
+import { deleteFileIfUnused, discardBlobsOnFailure } from "./file-cleanup";
 
 interface StoredBranding {
   primaryColor?: string | null;
@@ -108,7 +109,8 @@ export async function brandingRoutes(app: FastifyInstance, s: Services) {
     const ext = type === "image/png" ? "png" : type === "image/jpeg" ? "jpg" : "svg";
     const key = `tenants/${tenantId}/branding/${fileId}.${ext}`;
     await s.blobs.put(key, buf, type);
-    await s.db.tx(async (t) => {
+    const previous = await discardBlobsOnFailure(s.blobs, [key], () => s.db.tx(async (t) => {
+      const cur = await t.one<any>(`SELECT branding->>'logoFileId' AS logo FROM tenants WHERE id = $1 FOR UPDATE`, [tenantId]);
       await t.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'logo',$3,$4,$5,$6)`, [
         fileId,
         tenantId,
@@ -118,13 +120,22 @@ export async function brandingRoutes(app: FastifyInstance, s: Services) {
         sha256Hex(buf),
       ]);
       await patchBranding(t, tenantId, { logoFileId: fileId, logoContentType: type });
-    });
+      return (cur?.logo as string | null) ?? null;
+    }));
+    // El logo anterior ya no lo usa nada (se sirve siempre el vigente): sin esto quedaba en el almacenamiento para siempre.
+    await deleteFileIfUnused(s.db, s.blobs, previous).catch(() => {});
     return toApi(await getTenantBranding(s.db, tenantId));
   });
 
   app.delete("/v1/settings/branding/logo", { preHandler: auth }, async (req) => {
-    await patchBranding(s.db, req.auth!.tenantId, { logoFileId: null, logoContentType: null });
-    return toApi(await getTenantBranding(s.db, req.auth!.tenantId));
+    const tenantId = req.auth!.tenantId;
+    const previous = await s.db.tx(async (t) => {
+      const cur = await t.one<any>(`SELECT branding->>'logoFileId' AS logo FROM tenants WHERE id = $1 FOR UPDATE`, [tenantId]);
+      await patchBranding(t, tenantId, { logoFileId: null, logoContentType: null });
+      return (cur?.logo as string | null) ?? null;
+    });
+    await deleteFileIfUnused(s.db, s.blobs, previous).catch(() => {});
+    return toApi(await getTenantBranding(s.db, tenantId));
   });
 
   // Público: lo usan la página del firmante y los correos.

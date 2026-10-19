@@ -95,6 +95,8 @@ function MembersTab({ roles, manage }: { roles: RolesResponse | null; manage: bo
   const [items, setItems] = useState<Member[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [removing, setRemoving] = useState<Member | null>(null);
+  // Doble clic en "Quitar": el segundo DELETE respondía 404 y se mostraba un error aunque el miembro sí se quitó.
+  const [removeBusy, setRemoveBusy] = useState(false);
 
   const load = () =>
     api<{ items: Member[] }>("/v1/members")
@@ -115,7 +117,8 @@ function MembersTab({ roles, manage }: { roles: RolesResponse | null; manage: bo
   };
 
   const remove = async () => {
-    if (!removing) return;
+    if (!removing || removeBusy) return;
+    setRemoveBusy(true);
     setError(null);
     try {
       await api(`/v1/members/${removing.userId}`, { method: "DELETE" });
@@ -124,6 +127,8 @@ function MembersTab({ roles, manage }: { roles: RolesResponse | null; manage: bo
     } catch (e) {
       setRemoving(null);
       setError(errorText(e));
+    } finally {
+      setRemoveBusy(false);
     }
   };
 
@@ -187,7 +192,7 @@ function MembersTab({ roles, manage }: { roles: RolesResponse | null; manage: bo
               <button type="button" className="btn" onClick={() => setRemoving(null)}>
                 {tt("common.cancel")}
               </button>
-              <button type="button" className="btn btn-danger" onClick={remove}>
+              <button type="button" className="btn btn-danger" disabled={removeBusy} onClick={remove}>
                 {tt("team.remove")}
               </button>
             </>

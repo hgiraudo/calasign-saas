@@ -13,6 +13,7 @@ import { AppError, conflict, notFound } from "../../lib/errors";
 import { iso, sha256Hex, uuidv7 } from "../../lib/util";
 import { authenticate, type Services } from "../context";
 import { guardedFetch, trustAnchors } from "../evidence-seal";
+import { discardBlobsOnFailure } from "../file-cleanup";
 
 const env = process.env;
 export const archiveConfig = () => ({
@@ -82,7 +83,8 @@ export async function renewEnvelopeArchive(d: Deps, envelopeId: string, actor: A
   const key = `tenants/${e.tenant_id}/envelopes/${e.id}/${fileId}-signed-v${versionNo}.pdf`;
   await d.blobs.put(key, r.pdf, "application/pdf");
   const notExtended = new Date(next.last.tsaNotAfter) <= new Date(prev.last.tsaNotAfter);
-  await d.db.tx(async (t) => {
+  // Si el PDF cambió mientras tanto (otra renovación ganó) o la transacción falla, la versión subida no la referencia nada.
+  await discardBlobsOnFailure(d.blobs, [key], () => d.db.tx(async (t) => {
     const cur = await t.one<any>(`SELECT signed_file_id FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
     if (cur?.signed_file_id !== e.signed_file_id) throw conflict("archive_changed", "El PDF cambió mientras se renovaba; se reintenta en el próximo barrido");
     await ensureFirstVersion(t, e, prev.last ? prev.last.tsaNotAfter : null);
@@ -117,7 +119,7 @@ export async function renewEnvelopeArchive(d: Deps, envelopeId: string, actor: A
         dss: { certs: r.report.certs, ocsps: r.report.ocsps, crls: r.report.crls, missingRevocation: r.report.missingRevocation.length },
       },
     });
-  });
+  }));
   d.log.info({ envelopeId: e.id, version: versionNo, sha256: sha }, "sello de archivo renovado");
   return { version: versionNo, sha256: sha, validUntil: next.last.tsaNotAfter };
 }

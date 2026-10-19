@@ -34,6 +34,7 @@ import { auditFromRequest } from "../audit";
 import { authenticate, type AuthContext, type Services } from "../context";
 import { tenantBaseUrl } from "../custom-domains";
 import { sendPdf } from "../envelopes";
+import { discardBlobsOnFailure } from "../file-cleanup";
 import { getPath, setPath } from "./common";
 import { agreementMetaFromMapping, createEnvelopeFromPdf, insertFileRow, loadClauseMap, loadDocTemplate, renderDocument, storeGeneratedPdf } from "./documents";
 
@@ -321,7 +322,7 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
     }
     const f = await storeGeneratedPdf(s.blobs, a.tenantId, bytes);
     const id = uuidv7();
-    await s.db.tx(async (t) => {
+    await discardBlobsOnFailure(s.blobs, [f.key], () => s.db.tx(async (t) => {
       await insertFileRow(t, a.tenantId, f);
       await t.query(`INSERT INTO negotiations (id, tenant_id, title, source, file_id, message, created_by) VALUES ($1,$2,$3,'pdf',$4,$5,$6)`, [
         id,
@@ -336,7 +337,7 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
         [id, text, userAuthor(a).name],
       );
       await insertParticipants(t, id, a.tenantId, meta.participants as any);
-    });
+    }));
     const row = await s.db.one<any>(`SELECT * FROM negotiations WHERE id = $1`, [id]);
     await notifyParticipants(s.db, row, "invite");
     reply.code(201);
@@ -476,7 +477,8 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
       const me = await s.db.one<any>(`SELECT name, email FROM users WHERE id = $1`, [a.userId]);
       if (missingRoles.length === 1 && me) recipients.push({ role: marks.find((m) => m.role.toLowerCase() === missingRoles[0]).role, name: me.name, email: me.email, cc: false });
     }
-    const envelopeId = await s.db.tx(async (t) => {
+    // Si la negociación cambió o se cerró mientras tanto (o el sobre no se puede crear), el PDF final no lo referencia nada.
+    const envelopeId = await discardBlobsOnFailure(s.blobs, [file.key], () => s.db.tx(async (t) => {
       const locked = await t.one<any>(`SELECT status, current_version FROM negotiations WHERE id = $1 FOR UPDATE`, [n.id]);
       if (locked.status !== "open") throw conflict("closed", "La negociación ya está cerrada");
       // El PDF se armó con la versión leída al principio: si mientras tanto se aceptó un cambio o se editó, el sobre
@@ -525,7 +527,7 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
       await t.query(`UPDATE negotiations SET status = 'accepted', envelope_id = $2, updated_at = now() WHERE id = $1`, [n.id, envId]);
       await appendEvent(t, { tenantId: n.tenant_id, envelopeId: envId, type: "envelope.negotiated", actor: a.actor, data: { negotiationId: n.id, version: n.current_version } });
       return envId;
-    });
+    }));
     await auditFromRequest(s.db, req, a, "negotiation.accepted", { targetType: "negotiation", targetId: n.id, data: { envelopeId, version: n.current_version } });
     const env = await s.db.one<any>(`SELECT status FROM envelopes WHERE id = $1`, [envelopeId]);
     return { ...(await fullView(s.db, await loadForUser(a, n.id))), envelope: { id: envelopeId, status: env.status }, missing };

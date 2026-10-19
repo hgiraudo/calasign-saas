@@ -657,8 +657,12 @@ function ClauseModal({ clause, onClose, onSaved }: { clause: Clause | null; onCl
   const [category, setCategory] = useState(clause?.category ?? "");
   const [body, setBody] = useState(clause?.body ?? "");
   const [error, setError] = useState<string | null>(null);
+  // Doble clic en "Guardar" mandaba dos POST: el segundo respondía "ya existe una cláusula con ese código".
+  const [busy, setBusy] = useState(false);
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+    if (busy) return;
+    setBusy(true);
     setError(null);
     try {
       const payload = { slug: slug.trim(), title: title.trim(), body, category: category.trim() || null };
@@ -667,6 +671,7 @@ function ClauseModal({ clause, onClose, onSaved }: { clause: Clause | null; onCl
       onSaved();
     } catch (err) {
       setError(errorText(err));
+      setBusy(false);
     }
   };
   return (
@@ -695,8 +700,8 @@ function ClauseModal({ clause, onClose, onSaved }: { clause: Clause | null; onCl
           <button type="button" className="btn btn-ghost" onClick={onClose}>
             {t("common.cancel")}
           </button>
-          <button type="submit" className="btn btn-primary">
-            {t("common.save")}
+          <button type="submit" className="btn btn-primary" disabled={busy}>
+            {busy ? t("common.saving") : t("common.save")}
           </button>
         </div>
       </form>

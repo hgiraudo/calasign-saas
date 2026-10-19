@@ -26,11 +26,16 @@ const assert = (c, m) => {
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** Espera un correo de restablecimiento con un link que todavía no se vio (el buzón guarda los anteriores). */
+const seenTokens = new Set();
 async function resetLinkFor(api, email) {
   for (let i = 0; i < 40; i++) {
     const { items } = await api("GET", "/dev/mailbox");
-    const m = items.find((x) => x.to === email && x.link?.includes("/reset/"));
-    if (m) return m;
+    const m = items.find((x) => x.to === email && x.link?.includes("/reset/") && !seenTokens.has(x.link.split("/reset/")[1]));
+    if (m) {
+      seenTokens.add(m.link.split("/reset/")[1]);
+      return m;
+    }
     await sleep(500);
   }
   throw new Error(`no llegó el correo de restablecimiento a ${email}`);
@@ -80,12 +85,7 @@ await anon("POST", "/v1/auth/password/forgot", { email }, { expect: 202 });
 const first = (await resetLinkFor(anon, email)).link.split("/reset/")[1];
 await sleep(50);
 await anon("POST", "/v1/auth/password/forgot", { email }, { expect: 202 });
-let second = first;
-for (let i = 0; i < 40 && second === first; i++) {
-  const { items } = await anon("GET", "/dev/mailbox");
-  second = items.find((x) => x.to === email && x.link?.includes("/reset/"))?.link.split("/reset/")[1] ?? first;
-  if (second === first) await sleep(500);
-}
+const second = (await resetLinkFor(anon, email)).link.split("/reset/")[1];
 assert(second !== first, "llegó un segundo link");
 await anon("POST", "/v1/auth/password/reset", { token: first, password: "clave-tercera-789012" }, { expect: 400 });
 await anon("POST", "/v1/auth/password/reset", { token: second, password: "clave-tercera-789012" }, { expect: 204 });

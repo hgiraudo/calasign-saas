@@ -28,7 +28,7 @@ import { applyCertificateFlags } from "./certsign";
 import { assignFieldIds, formulaRefs, pruneDanglingConditions, saveFieldLogic } from "./logic";
 import { paymentBlocksCompletion } from "./billing/payments";
 import { enforceEnvelopeQuota } from "./billing/plans";
-import { deleteFilesIfUnused } from "./file-cleanup";
+import { deleteFilesIfUnused, discardBlobsOnFailure } from "./file-cleanup";
 
 /** Bloquea el sobre para serializar cambios y eventos. */
 export async function lockEnvelope(db: Db, tenantId: string, id: string) {
@@ -323,7 +323,8 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
     requireDraft(pre);
     await s.blobs.put(key, bytes, "application/pdf");
     const name = (file.filename || "documento.pdf").slice(0, 200);
-    await s.db.tx(async (t) => {
+    // Si el sobre dejó de ser borrador (o se borró) entre el chequeo y acá, el PDF subido no lo referencia nada.
+    await discardBlobsOnFailure(s.blobs, [key], () => s.db.tx(async (t) => {
       const e = await lockEnvelope(t, a.tenantId, req.params.id);
       requireDraft(e);
       const pos = await t.one<any>(`SELECT COALESCE(MAX(position), 0) + 1 AS p FROM documents WHERE envelope_id = $1`, [e.id]);
@@ -340,7 +341,7 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
       );
       await appendEvent(t, { tenantId: a.tenantId, envelopeId: e.id, type: "document.added", actor: a.actor, data: { documentId: docId, name, sha256: sha, uploadedSha256: uploadedSha, pages: info.pageCount } });
       await touch(t, e.id);
-    });
+    }));
     const d = (await loadDetail(s.db, a.tenantId, req.params.id)).documents.find((x) => x.id === docId);
     reply.code(201);
     return d;

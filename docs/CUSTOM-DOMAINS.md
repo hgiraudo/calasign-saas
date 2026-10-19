@@ -31,7 +31,8 @@ agregar TLS bajo demanda con `ask`:
 {
 	on_demand_tls {
 		# La API responde 200 solo para dominios verificados (y el propio de la plataforma).
-		ask http://127.0.0.1:4000/internal/tls-allowed
+		# tls-allowed-brand: dominios de organizaciones Y de sub-marcas (docs/MARCA-BLANCA.md).
+		ask http://127.0.0.1:4000/internal/tls-allowed-brand
 	}
 }
 
@@ -71,7 +72,9 @@ Notas:
 | Correos, WhatsApp, Telegram | Links `https://<dominio>/s/<token>` y `https://<dominio>/app/envelopes/<id>` (`tenantBaseUrl`). |
 | `GET /v1/public/host-branding` | Nombre, color y logo de la organización dueña del `Host` (404 si no es un dominio propio). |
 | `/v1/signing/*` por un dominio propio | 404 si el link es de otra organización. |
-| Formularios web, URLs embebidas, Telegram | Todavía usan la URL de la plataforma (pendiente). |
+| URLs embebidas, Telegram, Firmador | Usan el dominio de la marca del sobre (sub-marca con dominio propio, o el de la organización). |
+| Formularios web | Usan el dominio propio de la organización (`tenantBaseUrl`); no tienen sub-marca. |
+| Toda la web en el dominio propio | `index.html` con el tema, título y favicon de la marca; manifest y página sin conexión propios (ver [MARCA-BLANCA.md](MARCA-BLANCA.md)). |
 
 ## Pruebas locales
 

@@ -262,6 +262,7 @@ export const ERRORS: Record<string, Err> = {
   },
   plan_limit_webhooks: planFeature("webhooks", "Los webhooks", "starter"),
   plan_limit_branding: planFeature("branding", "La marca propia", "starter"),
+  plan_limit_white_label: planFeature("white_label", "La marca blanca", "enterprise"),
   plan_limit_bulk_send: planFeature("bulk_send", "El envío masivo", "business"),
   plan_limit_web_forms: planFeature("web_forms", "Los formularios web", "business"),
   plan_limit_payments: planFeature("payments", "El cobro al firmar", "business"),

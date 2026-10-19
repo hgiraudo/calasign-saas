@@ -2,6 +2,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { Locale } from "@calasign/shared";
 import { prodEn, prodEs, prodPt, type ProdKey } from "./i18n-productivity";
+import { brandText, useBrandVersion } from "./white-label";
 
 const es = {
   "app.name": "CalaSign",
@@ -663,13 +664,16 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     document.documentElement.lang = locale;
   }, [locale]);
 
+  // Marca blanca: textos propios de la marca y nombre del producto (lib/white-label.ts). Cambia con la marca activa.
+  const brandV = useBrandVersion();
   const t = useCallback<TFunc>(
     (key, vars) => {
-      let s: string = DICTS[locale][key] ?? DICTS.es[key] ?? key;
+      let s: string = brandText(locale, key, DICTS[locale][key] ?? DICTS.es[key] ?? key);
       if (vars) for (const [k, v] of Object.entries(vars)) s = s.replace(`{${k}}`, () => String(v));
       return s;
     },
-    [locale],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [locale, brandV],
   );
 
   const value = useMemo(() => ({ locale, setLocale, t, explicit }), [locale, setLocale, t, explicit]);

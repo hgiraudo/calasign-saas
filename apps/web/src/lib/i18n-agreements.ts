@@ -1,4 +1,5 @@
 // Textos de Fase 6 (plataforma de acuerdos): repositorio, documentos, cláusulas, workflows y negociación.
+import { brandText } from "./white-label";
 import { useI18n } from "./i18n";
 
 const es = {
@@ -875,7 +876,7 @@ export function useAgrText() {
   const { locale } = useI18n();
   const d = DICTS[locale] ?? es;
   return (k: Key, vars?: Record<string, string | number>) => {
-    let s: string = d[k] ?? es[k] ?? k;
+    let s: string = brandText(locale, k, d[k] ?? es[k] ?? k);
     if (vars) for (const [n, v] of Object.entries(vars)) s = s.replace(`{${n}}`, () => String(v));
     return s;
   };

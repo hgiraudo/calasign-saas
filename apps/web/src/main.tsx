@@ -6,6 +6,8 @@ import "./styles.css";
 import "./styles-productivity.css";
 import "./styles-experience.css";
 import { registerServiceWorker } from "./lib/pwa";
+// Marca blanca: lee el tema que el servidor inyectó en index.html y lo aplica antes del primer render.
+import "./lib/white-label";
 import "./styles-scale.css";
 import "./styles-identity.css";
 import "./styles-evidence.css";

@@ -16,3 +16,4 @@ export * from "./data";
 export * from "./certsign";
 export * from "./oneshot";
 export * from "./lowcode";
+export * from "./white-label";

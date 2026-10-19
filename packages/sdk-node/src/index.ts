@@ -32,9 +32,17 @@ import type {
   WebhookDelivery,
   WebhookEndpoint,
   WebhookEventPayload,
+  Brand,
+  BrandAssetKind,
+  BrandConfigInput,
+  BrandEmailPreview,
+  BrandDomain,
+  BrandPreviewInput,
+  EmailDomain,
+  PublicBrandTheme,
 } from "@calasign/shared";
 
-export type { CompleteSigningInput, CreateEnvelopeRequest, CreateEnvelopeResponse, EnvelopeDetail, EnvelopeSummary, WebhookEventPayload };
+export type { CompleteSigningInput, CreateEnvelopeRequest, CreateEnvelopeResponse, EnvelopeDetail, EnvelopeSummary, WebhookEventPayload, Brand, BrandConfigInput, PublicBrandTheme };
 
 export const VERSION = "0.1.0";
 
@@ -113,6 +121,8 @@ export class CalaSign {
   readonly envelopes: EnvelopesApi;
   readonly templates: TemplatesApi;
   readonly webhooks: WebhooksApi;
+  /** Marca blanca: marcas (la de la organización = "default" y sub-marcas), archivos, dominios y vista previa. */
+  readonly brands: BrandsApi;
 
   constructor(private readonly opts: CalaSignOptions) {
     if (!opts.apiKey && !opts.accessToken && !opts.oauth) throw new Error("CalaSign: falta apiKey, accessToken u oauth");
@@ -124,6 +134,7 @@ export class CalaSign {
     this.envelopes = new EnvelopesApi(this);
     this.templates = new TemplatesApi(this);
     this.webhooks = new WebhooksApi(this);
+    this.brands = new BrandsApi(this);
   }
 
   /** Usuario (o app) y organización del token. */
@@ -429,6 +440,71 @@ class WebhooksApi {
 
   test(id: string): Promise<WebhookDelivery> {
     return this.c.request("POST", `/v1/webhooks/${seg(id)}/test`);
+  }
+}
+
+class BrandsApi {
+  constructor(private readonly c: CalaSign) {}
+
+  async list(): Promise<Brand[]> {
+    return (await this.c.request<{ items: Brand[] }>("GET", "/v1/settings/brands", { retryable: true })).items;
+  }
+
+  /** `id`: "default" (marca de la organización) o el id de una sub-marca. */
+  get(id = "default"): Promise<Brand> {
+    return this.c.request("GET", `/v1/settings/brands/${seg(id)}`, { retryable: true });
+  }
+
+  /** Sub-marca (cliente de una organización revendedora). Usala al crear sobres con `brandId`. */
+  create(input: { name: string; config?: BrandConfigInput }): Promise<Brand> {
+    return this.c.request("POST", "/v1/settings/brands", { body: input });
+  }
+
+  /** Reemplaza la configuración entera (hacé get, modificá y update). */
+  update(id: string, input: { name?: string; config: BrandConfigInput }): Promise<Brand> {
+    return this.c.request("PUT", `/v1/settings/brands/${seg(id)}`, { body: input, retryable: true });
+  }
+
+  delete(id: string): Promise<void> {
+    return this.c.request("DELETE", `/v1/settings/brands/${seg(id)}`);
+  }
+
+  /** Vista previa de un correo (asunto, HTML, texto, remitente) con configuración opcional sin guardar. */
+  preview(id: string, input: Partial<BrandPreviewInput> = {}): Promise<BrandEmailPreview & { theme?: PublicBrandTheme }> {
+    return this.c.request("POST", `/v1/settings/brands/${seg(id)}/preview`, { body: input });
+  }
+
+  /** Sube logo, logoDark, favicon o font. */
+  uploadAsset(id: string, kind: BrandAssetKind, file: Uint8Array | ArrayBuffer | Blob, filename = kind, contentType = "application/octet-stream"): Promise<Brand> {
+    const fd = new FormData();
+    const blob = file instanceof Blob ? file : new Blob([file instanceof ArrayBuffer ? new Uint8Array(file) : Uint8Array.prototype.slice.call(file)], { type: contentType });
+    fd.append("file", blob, filename);
+    return this.c.request("POST", `/v1/settings/brands/${seg(id)}/assets/${seg(kind)}`, { form: fd });
+  }
+
+  deleteAsset(id: string, kind: BrandAssetKind): Promise<Brand> {
+    return this.c.request("DELETE", `/v1/settings/brands/${seg(id)}/assets/${seg(kind)}`);
+  }
+
+  setDomain(id: string, domain: string): Promise<{ domain: BrandDomain }> {
+    return this.c.request("PUT", `/v1/settings/brands/${seg(id)}/domain`, { body: { domain } });
+  }
+
+  verifyDomain(id: string): Promise<{ domain: BrandDomain }> {
+    return this.c.request("POST", `/v1/settings/brands/${seg(id)}/domain/verify`);
+  }
+
+  async listEmailDomains(): Promise<EmailDomain[]> {
+    return (await this.c.request<{ items: EmailDomain[] }>("GET", "/v1/settings/email-domains", { retryable: true })).items;
+  }
+
+  /** Devuelve los registros DNS (TXT de propiedad, DKIM, SPF, DMARC) a publicar. */
+  addEmailDomain(domain: string): Promise<EmailDomain> {
+    return this.c.request("POST", "/v1/settings/email-domains", { body: { domain } });
+  }
+
+  verifyEmailDomain(domain: string): Promise<EmailDomain> {
+    return this.c.request("POST", `/v1/settings/email-domains/${seg(domain)}/verify`);
   }
 }
 

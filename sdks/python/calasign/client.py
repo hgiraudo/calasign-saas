@@ -136,6 +136,8 @@ class CalaSign:
         self.envelopes = _Envelopes(self)
         self.templates = _Templates(self)
         self.webhooks = _Webhooks(self)
+        #: Marca blanca: marcas ("default" y sub-marcas), archivos, dominios y vista previa.
+        self.brands = _Brands(self)
 
     # ── autenticación ──
 
@@ -360,6 +362,58 @@ class _Templates:
 
     def get(self, template_id: str) -> Dict[str, Any]:
         return self._c.request("GET", f"/v1/templates/{_seg(template_id)}")
+
+
+class _Brands:
+    """Marca blanca. `brand_id`: "default" (marca de la organización) o el id de una sub-marca."""
+
+    def __init__(self, c: CalaSign):
+        self._c = c
+
+    def list(self) -> List[Dict[str, Any]]:
+        return self._c.request("GET", "/v1/settings/brands")["items"]
+
+    def get(self, brand_id: str = "default") -> Dict[str, Any]:
+        return self._c.request("GET", f"/v1/settings/brands/{_seg(brand_id)}")
+
+    def create(self, name: str, config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        return self._c.request("POST", "/v1/settings/brands", json_body={"name": name, **({"config": config} if config else {})})
+
+    def update(self, brand_id: str, config: Dict[str, Any], name: Optional[str] = None) -> Dict[str, Any]:
+        """Reemplaza la configuración entera (get, modificar, update)."""
+        body: Dict[str, Any] = {"config": config}
+        if name:
+            body["name"] = name
+        return self._c.request("PUT", f"/v1/settings/brands/{_seg(brand_id)}", json_body=body, retryable=True)
+
+    def delete(self, brand_id: str) -> None:
+        self._c.request("DELETE", f"/v1/settings/brands/{_seg(brand_id)}")
+
+    def preview(self, brand_id: str = "default", **params: Any) -> Dict[str, Any]:
+        """kind="email"|"theme", event="invite"…, locale="es", config={…} (sin guardar)."""
+        return self._c.request("POST", f"/v1/settings/brands/{_seg(brand_id)}/preview", json_body=params)
+
+    def upload_asset(self, brand_id: str, kind: str, content: bytes, filename: str = "archivo", content_type: str = "application/octet-stream") -> Dict[str, Any]:
+        """kind: logo, logoDark, favicon o font."""
+        return self._c.request("POST", f"/v1/settings/brands/{_seg(brand_id)}/assets/{_seg(kind)}", multipart={"file": (filename, content, content_type)})
+
+    def delete_asset(self, brand_id: str, kind: str) -> Dict[str, Any]:
+        return self._c.request("DELETE", f"/v1/settings/brands/{_seg(brand_id)}/assets/{_seg(kind)}")
+
+    def set_domain(self, brand_id: str, domain: str) -> Dict[str, Any]:
+        return self._c.request("PUT", f"/v1/settings/brands/{_seg(brand_id)}/domain", json_body={"domain": domain})
+
+    def verify_domain(self, brand_id: str) -> Dict[str, Any]:
+        return self._c.request("POST", f"/v1/settings/brands/{_seg(brand_id)}/domain/verify")
+
+    def list_email_domains(self) -> List[Dict[str, Any]]:
+        return self._c.request("GET", "/v1/settings/email-domains")["items"]
+
+    def add_email_domain(self, domain: str) -> Dict[str, Any]:
+        return self._c.request("POST", "/v1/settings/email-domains", json_body={"domain": domain})
+
+    def verify_email_domain(self, domain: str) -> Dict[str, Any]:
+        return self._c.request("POST", f"/v1/settings/email-domains/{_seg(domain)}/verify")
 
 
 class _Webhooks:

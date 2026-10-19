@@ -37,6 +37,7 @@ import { assignFieldIds } from "./logic";
 import { loadDetail } from "./mappers";
 import { discardBlobsOnFailure } from "./file-cleanup";
 import { applyEnvelopeSettings } from "./participants";
+import { applyEnvelopeBrand } from "./white-label/routes";
 import { decodePdfBase64, fetchPdf, fileNameFromUrl, maxBase64Length, PdfSourceError } from "./pdf-source";
 
 /** Tope de todos los PDF de un sobre creado en una llamada (cada uno, además, hasta maxUploadBytes). */
@@ -235,6 +236,7 @@ async function createEnvelope(
         ],
       );
       await applyEnvelopeSettings(t, id, input);
+      await applyEnvelopeBrand(t, a.tenantId, id, input.brandId);
       await appendEvent(t, { tenantId: a.tenantId, envelopeId: id, type: "envelope.created", actor: a.actor, data: { subject: input.subject } });
       for (const d of docs) await insertPreparedDocument(t, a.tenantId, a.actor, id, d);
       if (recipients.length) await replaceRecipients(t, a, id, recipients);

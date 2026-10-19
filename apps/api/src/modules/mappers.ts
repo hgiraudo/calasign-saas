@@ -24,6 +24,7 @@ export const toEnvelope = (r: any, signedSha256: string | null = null): Envelope
   reminderEveryDays: r.reminder_every_days ?? null,
   expiryWarningDays: r.expiry_warning_days ?? null,
   allowDelegation: r.allow_delegation ?? true,
+  brandId: r.brand_id ?? null,
 });
 
 export const toDocument = (r: any): Document => ({

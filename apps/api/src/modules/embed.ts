@@ -9,7 +9,7 @@ import { appendEvent } from "../infra/evidence";
 import { badRequest, conflict, notFound } from "../lib/errors";
 import { decrypt, randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { authenticate, clientInfo, type AuthContext, type Services } from "./context";
-import { tenantBaseUrl } from "./custom-domains";
+import { envelopeBaseUrl } from "./white-label/brand";
 
 const CODE_TTL_MS = 5 * 60_000;
 
@@ -90,7 +90,7 @@ export async function issueSigningUrl(t: Db, a: AuthContext, envelopeId: string,
     actor: a.actor,
     data: { recipientId: r.id, returnHost: input.returnUrl ? new URL(input.returnUrl).host : null, frameAncestors: requested },
   });
-  return { url: `${await tenantBaseUrl(t, a.tenantId)}/embed/${code}`, expiresAt: expiresAt.toISOString() };
+  return { url: `${await envelopeBaseUrl(t, a.tenantId, e.id)}/embed/${code}`, expiresAt: expiresAt.toISOString() };
 }
 
 export async function embedRoutes(app: FastifyInstance, s: Services) {
@@ -148,7 +148,7 @@ export async function embedRoutes(app: FastifyInstance, s: Services) {
         .code(410)
         .type("text/html; charset=utf-8")
         .send(
-          `<!doctype html><meta charset="utf-8"><title>CalaSign</title><body style="font-family:sans-serif;padding:32px;color:#0b1f3a">` +
+          `<!doctype html><meta charset="utf-8"><title>Link vencido · Link expired</title><body style="font-family:sans-serif;padding:32px;color:#0b1f3a">` +
             `<h1>Link vencido</h1><p>Este link de firma ya se usó o venció. Volvé a la aplicación para obtener uno nuevo.</p>` +
             `<p>Link expirado · Link expired</p>`,
         );

@@ -1,4 +1,5 @@
 // Textos de planes y facturación, cobro al firmar y servidor MCP.
+import { brandText } from "./white-label";
 import { useI18n } from "./i18n";
 
 const es = {
@@ -58,6 +59,7 @@ const es = {
   "feature.sso": "Inicio de sesión único (SSO)",
   "feature.scim": "Aprovisionamiento SCIM",
   "feature.custom_domain": "Dominio propio",
+  "feature.white_label": "Marca blanca",
   "limit.title": "Límite de tu plan",
   "limit.upgrade": "Ver planes",
 
@@ -175,6 +177,7 @@ const pt: Record<Key, string> = {
   "feature.sso": "Login único (SSO)",
   "feature.scim": "Provisionamento SCIM",
   "feature.custom_domain": "Domínio próprio",
+  "feature.white_label": "Marca branca (white-label)",
   "limit.title": "Limite do seu plano",
   "limit.upgrade": "Ver planos",
   "pay.panelTitle": "Cobrar na assinatura",
@@ -287,6 +290,7 @@ const en: Record<Key, string> = {
   "feature.sso": "Single sign-on (SSO)",
   "feature.scim": "SCIM provisioning",
   "feature.custom_domain": "Custom domain",
+  "feature.white_label": "White label",
   "limit.title": "Plan limit",
   "limit.upgrade": "See plans",
   "pay.panelTitle": "Collect a payment",
@@ -351,7 +355,7 @@ export function useBillingText() {
   const { locale } = useI18n();
   const d = DICTS[locale] ?? es;
   return (k: Key, vars?: Record<string, string | number>) => {
-    let s: string = d[k] ?? es[k] ?? k;
+    let s: string = brandText(locale, k, d[k] ?? es[k] ?? k);
     if (vars) for (const [n, v] of Object.entries(vars)) s = s.split(`{${n}}`).join(String(v));
     return s;
   };

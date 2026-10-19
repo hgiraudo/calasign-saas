@@ -1,4 +1,5 @@
 // Componentes de UI chicos y compartidos.
+import { productName, rebrands, useBrandTheme } from "../lib/white-label";
 import { useEffect, useId, useRef, useState, type InputHTMLAttributes, type ReactNode } from "react";
 import type { EnvelopeStatus, Locale, RecipientStatus } from "@calasign/shared";
 import { LOCALES } from "@calasign/shared";
@@ -107,6 +108,16 @@ export function LocaleSwitcher({ compact }: { compact?: boolean }) {
 }
 
 export function Logo({ light }: { light?: boolean }) {
+  // Marca blanca: el logo (o el nombre) de la marca activa en lugar del de la plataforma.
+  const brand = useBrandTheme();
+  if (brand && (rebrands(brand) || brand.logoUrl)) {
+    const src = light ? brand.logoDarkUrl ?? brand.logoUrl : brand.logoUrl;
+    return (
+      <span className={`logo brand-logo ${light ? "logo-light" : ""}`}>
+        {src ? <img src={src} alt={productName(brand)} style={{ maxHeight: 28, maxWidth: 160 }} /> : <span>{productName(brand)}</span>}
+      </span>
+    );
+  }
   return (
     <span className={`logo ${light ? "logo-light" : ""}`}>
       <svg viewBox="0 0 32 32" width="26" height="26" aria-hidden="true">

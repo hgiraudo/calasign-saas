@@ -64,6 +64,7 @@ import { requiredScope } from "./oauth-tokens";
 import { AI_OPS } from "./ai/openapi";
 import { DATA_OPS } from "./data/openapi";
 import { CERTSIGN_OPS } from "./certsign-openapi";
+import { WHITE_LABEL_OPS } from "./white-label/openapi";
 import {
   AccessSchema,
   ApiKeySchema,
@@ -1316,6 +1317,7 @@ export function buildOpenApi() {
     ...LOWCODE_OPS,
     ...(DATA_OPS as unknown as Op[]),
     ...(CERTSIGN_OPS as unknown as Op[]),
+    ...WHITE_LABEL_OPS,
   ];
   const paths: Record<string, Record<string, unknown>> = {};
   const seenIds = new Set<string>();

@@ -18,6 +18,7 @@ export const PLAN_FEATURES = [
   "sso",
   "scim",
   "custom_domain",
+  "white_label", // marca blanca: sin la marca de la plataforma, textos/plantillas, remitente propio, sub-marcas
 ] as const;
 export type PlanFeature = (typeof PLAN_FEATURES)[number];
 

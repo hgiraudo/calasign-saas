@@ -59,6 +59,13 @@ export const config = {
   mail: {
     smtpUrl: env.SMTP_URL ?? null,
     from: env.MAIL_FROM ?? "CalaSign <no-reply@calasign.com>",
+    /**
+     * Marca blanca: dirección neutra (sin la marca de la plataforma) para las organizaciones con "Powered by" oculto y
+     * sin dominio de correo propio verificado. Sin configurar, se usa la de MAIL_FROM con el nombre de la marca.
+     */
+    whiteLabelFrom: env.MAIL_FROM_WHITE_LABEL ?? null,
+    /** SPF que tienen que incluir los dominios de correo propios (p. ej. "amazonses.com"). */
+    spfInclude: env.MAIL_SPF_INCLUDE ?? null,
   },
   whatsapp: {
     token: env.WHATSAPP_TOKEN ?? null,

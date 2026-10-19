@@ -96,6 +96,11 @@ export interface CertificateData {
   verifyUrl?: string | null;
   /** Archivos que subieron los firmantes (se listan con su hash). */
   attachments?: { name: string; recipientName: string; sha256: string; appended: boolean }[];
+  /**
+   * Marca blanca: nombre del producto que reemplaza al de la plataforma en la declaración, el pie de página y los
+   * metadatos del PDF (Producer/Creator). "" lo quita. Sin definir: el de la plataforma.
+   */
+  productName?: string | null;
   /** Logo y color de la organización. El logo solo se usa si es PNG o JPG. */
   branding?: { primaryColor?: string | null; logo?: { bytes: Uint8Array; type: "png" | "jpg" } | null } | null;
   /** Nivel de firma declarado para el sobre (simple / avanzada / cualificada). */
@@ -158,10 +163,12 @@ export async function renderProgressCopyPdf(input: {
   envelopeId: string;
   subject: string;
   locale: string;
+  /** Marca blanca (ver CertificateData.productName). */
+  productName?: string | null;
 }): Promise<Uint8Array> {
   const out = await PDFDocument.create();
   const fonts = await embedFonts(out);
-  const L = labels(input.locale);
+  const L = labels(input.locale, input.productName);
   const text = safeText(fonts.bold, L.progressCopy);
   await stampDocuments(out, fonts, L, input.documents, input.fields, input.envelopeId, imageEmbedder(out), (page) =>
     withDisplayedSpace(page, (W) => {
@@ -170,15 +177,15 @@ export async function renderProgressCopyPdf(input: {
     }),
   );
   out.setTitle(input.subject);
-  out.setProducer("CalaSign");
-  out.setCreator("CalaSign");
+  out.setProducer(producerOf(input.productName));
+  out.setCreator(producerOf(input.productName));
   return new Uint8Array(await out.save());
 }
 
 async function buildEnvelopeDocument(input: FinalizeInput): Promise<PDFDocument> {
   const out = await PDFDocument.create();
   const fonts = await embedFonts(out);
-  const L = labels(input.certificate.locale);
+  const L = labels(input.certificate.locale, input.certificate.productName);
   const embedImage = imageEmbedder(out);
 
   await stampDocuments(out, fonts, L, input.documents, input.fields, input.certificate.envelopeId, embedImage);
@@ -188,10 +195,16 @@ async function buildEnvelopeDocument(input: FinalizeInput): Promise<PDFDocument>
   await drawCertificate(out, fonts, L, input.certificate, embedImage);
 
   out.setTitle(input.certificate.subject);
-  out.setProducer("CalaSign");
-  out.setCreator("CalaSign");
+  out.setProducer(producerOf(input.certificate.productName));
+  out.setCreator(producerOf(input.certificate.productName));
   out.setModificationDate(new Date(input.certificate.completedAt));
   return out;
+}
+
+/** Producer/Creator del PDF: el producto de la marca (marca blanca) o el de la plataforma. */
+function producerOf(productName: string | null | undefined): string {
+  if (productName === undefined || productName === null) return "CalaSign";
+  return productName.trim() || "PDF";
 }
 
 /** Incrusta cada PNG una sola vez: la misma firma (los mismos bytes) se repite en todos sus campos. */

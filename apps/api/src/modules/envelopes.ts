@@ -1,3 +1,4 @@
+import { applyEnvelopeBrand } from "./white-label/routes";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import {
   PutFieldsInput,
@@ -260,6 +261,7 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
         ],
       );
       await applyEnvelopeSettings(t, e.id, input);
+      await applyEnvelopeBrand(t, a.tenantId, e.id, input.brandId);
       await touch(t, e.id);
     });
     return loadDetail(s.db, a.tenantId, req.params.id);

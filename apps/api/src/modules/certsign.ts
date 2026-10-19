@@ -52,7 +52,7 @@ import type { BlobStore } from "../infra/storage";
 import { AppError, badRequest, conflict, notFound } from "../lib/errors";
 import { iso, sha256Hex, uuidv7 } from "../lib/util";
 import { authenticate, clientInfo, type Services } from "./context";
-import { tenantBaseUrl } from "./custom-domains";
+import { envelopeBaseUrl } from "./white-label/brand";
 import { lockEnvelope } from "./envelopes";
 import { guardedFetch, trustAnchors } from "./evidence-seal";
 import { recipientActor, resolveToken } from "./signing";
@@ -334,7 +334,7 @@ export async function certsignRoutes(app: FastifyInstance, s: Services) {
       return expired.map((x) => x.prepared_key).filter((k): k is string => Boolean(k));
     });
     await deleteBlobsQuietly(s.blobs, stale);
-    const apiBase = await tenantBaseUrl(s.db, e.tenant_id);
+    const apiBase = await envelopeBaseUrl(s.db, e.tenant_id, e.id);
     const res: CertsignPairing = {
       code,
       apiBase,
@@ -444,7 +444,7 @@ export async function certsignRoutes(app: FastifyInstance, s: Services) {
         fieldName: pending.field_name,
         reason: "Firma con certificado digital",
         name: check.commonName ?? r.name,
-        location: "CalaSign",
+        location: "Cloud",
       });
     } catch (err) {
       throw badRequest("certificate_unsupported", (err as Error).message);

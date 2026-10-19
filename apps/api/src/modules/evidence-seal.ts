@@ -141,7 +141,7 @@ export async function applyEvidencePipeline(
       fieldName: "SelloEmpresa",
       reason: "Sello electrónico de la organización",
       name: opts.orgName,
-      location: "CalaSign",
+      location: opts.orgName || "Cloud",
       tsaUrl,
     });
     companySeal = { certificateId: plan.companySealRow.id, commonName: plan.companySealRow.common_name };

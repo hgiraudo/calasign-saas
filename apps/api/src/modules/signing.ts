@@ -14,7 +14,7 @@ import { loadSignatureImages, toStampFields } from "./stamp-fields";
 import { renderProgressCopyPdf } from "@calasign/pdf";
 import { canDelegate, isSignerAuthenticated, otpDestinationFor } from "./otp";
 import { checkValue, VALUE_FIELD_TYPES } from "./fieldvalues";
-import { getTenantBranding } from "./branding";
+import { brandForEnvelope, productLabel, publicTheme, rebrands } from "./white-label/brand";
 import { inPersonSessionInfo } from "./experience";
 import { prepareCompletionLogic, signerLogicFields } from "./logic";
 import { identityBlocking, signingIdentityFor } from "./identity/kyc";
@@ -84,6 +84,9 @@ export async function buildSession(db: Db, token: string, r: any, e: any, authed
     e.created_by ? db.one<any>(`SELECT name FROM users WHERE id = $1`, [e.created_by]) : Promise.resolve(null),
     currentSignerGroup(db, e.id),
   ]);
+  // Marca blanca: tema, textos y nombre del producto de la marca del sobre (white-label/brand.ts).
+  const wl = await brandForEnvelope(db, e);
+  const theme = publicTheme(wl);
   const canSign =
     e.status === "sent" && (r.role === "signer" || r.role === "approver") && ["sent", "viewed"].includes(r.status) && group.order === r.routing_order;
   return {
@@ -92,8 +95,8 @@ export async function buildSession(db: Db, token: string, r: any, e: any, authed
       subject: e.subject,
       message: e.message,
       status: e.status,
-      senderName: sender?.name ?? org?.name ?? "CalaSign",
-      organizationName: org?.name ?? "",
+      senderName: sender?.name ?? org?.name ?? productLabel(wl),
+      organizationName: rebrands(wl) || e.brand_id ? wl.name : org?.name ?? "",
       expiresAt: e.expires_at ? new Date(e.expires_at).toISOString() : null,
     },
     recipient: {
@@ -116,9 +119,8 @@ export async function buildSession(db: Db, token: string, r: any, e: any, authed
     otpDestination: otpRequired ? otpDestinationFor(r) : null,
     canDelegate: canDelegate(r, e),
     logicFields: blocked ? [] : await signerLogicFields(db, e.id, r.id),
-    branding: await getTenantBranding(db, e.tenant_id).then((b) =>
-      b.primaryColor || b.logoUrl ? { primaryColor: b.primaryColor, logoUrl: b.logoUrl ? new URL(b.logoUrl).pathname + new URL(b.logoUrl).search : null } : null,
-    ),
+    branding: theme.theme.primaryColor || theme.logoUrl ? { primaryColor: theme.theme.primaryColor, logoUrl: theme.logoUrl } : null,
+    theme,
     inPerson: await inPersonSessionInfo(db, r, !otpRequired),
     identity: await signingIdentityFor(db, r, e, { revealSession: !otpRequired }),
     certificateSigning: blocked ? null : await certificateStepFor(db, r, e),
@@ -325,7 +327,7 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
           signature: stored.map((x) => ({ purpose: x.purpose, kind: x.kind, sha256: sha256Hex(x.png) })),
         },
       });
-      await advanceRouting(t, e.tenant_id, e.id, { type: "system", label: "CalaSign" });
+      await advanceRouting(t, e.tenant_id, e.id, { type: "system", label: "Sistema" });
     }).catch(async (err) => {
       await discardStored();
       throw err;
@@ -385,6 +387,7 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
       envelopeId: e.id,
       subject: e.subject,
       locale: r.locale ?? e.locale ?? "es",
+      productName: await brandForEnvelope(s.db, e).then((b) => (rebrands(b) ? productLabel(b) : undefined)),
     });
     return sendPdf(reply, pdf, `${e.subject} (copia)`);
   });

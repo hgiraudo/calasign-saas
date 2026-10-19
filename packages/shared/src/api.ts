@@ -111,6 +111,8 @@ export const CreateEnvelopeInput = z.object({
   locale: z.enum(LOCALES).optional(),
   expiresAt: z.string().datetime({ offset: true }).optional().nullable(),
   metadata: z.record(z.string(), z.unknown()).optional(),
+  /** Sub-marca (marca blanca) con la que salen correos, página de firma y certificado. null: la de la organización. */
+  brandId: z.string().uuid().optional().nullable(),
   ...EnvelopeReminderSettings,
 });
 export type CreateEnvelopeInput = z.infer<typeof CreateEnvelopeInput>;
@@ -316,6 +318,8 @@ export interface Envelope {
   reminderEveryDays: number | null;
   expiryWarningDays: number | null;
   allowDelegation: boolean;
+  /** Sub-marca del sobre (null: la marca de la organización). */
+  brandId?: string | null;
 }
 
 export interface EnvelopeDetail {
@@ -401,6 +405,8 @@ export interface SigningSession {
   canDelegate: boolean;
   /** Logo y color de la organización remitente (null: estilo por defecto). */
   branding?: { primaryColor: string | null; logoUrl: string | null } | null;
+  /** Marca blanca completa (tema, textos, nombre del producto). */
+  theme?: import("./white-label").PublicBrandTheme | null;
   /** Firma en persona (modo anfitrión). */
   inPerson?: SigningInPerson | null;
   /** Campos de otros destinatarios citados por las condiciones o fórmulas de este firmante. */

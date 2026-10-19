@@ -233,6 +233,19 @@ const L = {
 
 export type CertLabels = { [K in keyof (typeof L)["es"]]: string };
 
-export function labels(locale: string): CertLabels {
-  return (L as Record<string, CertLabels>)[locale] ?? L.es;
+/**
+ * Textos del certificado. `productName` (marca blanca): reemplaza el nombre de la plataforma en la declaración y el
+ * pie de página; con "" se quita (la declaración queda sin nombrar ningún producto).
+ */
+export function labels(locale: string, productName?: string | null): CertLabels {
+  const base = (L as Record<string, CertLabels>)[locale] ?? L.es;
+  if (productName === undefined || productName === null) return base;
+  const name = productName.trim();
+  const fix = (s: string) =>
+    name
+      ? s.replace(/CalaSign/g, name)
+      : s
+          .replace(/ (mediante|por meio da|with) CalaSign/g, "")
+          .replace(/^CalaSign · /, "");
+  return { ...base, statement: fix(base.statement), pageFooter: fix(base.pageFooter) };
 }

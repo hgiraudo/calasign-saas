@@ -28,6 +28,8 @@ export interface DocMarkPosition {
 
 export interface RenderDocOptions {
   title?: string;
+  /** Producer/Creator del PDF (marca blanca); por defecto, el de la plataforma. */
+  producer?: string | null;
   locale?: string;
   /** Color de acento (títulos y encabezados de tabla), #RRGGBB. */
   accent?: string | null;
@@ -97,8 +99,8 @@ export async function renderDocumentPdf(blocks: DocBlock[], opts: RenderDocOptio
   const locale = opts.locale && CAPTIONS[opts.locale] ? opts.locale : "es";
   const accent = hex(opts.accent) ?? rgb(0.06, 0.29, 0.43);
   if (opts.title) doc.setTitle(opts.title);
-  doc.setProducer("CalaSign");
-  doc.setCreator("CalaSign");
+  doc.setProducer(opts.producer ?? "CalaSign");
+  doc.setCreator(opts.producer ?? "CalaSign");
 
   const pages: PDFPage[] = [];
   const marks: DocMarkPosition[] = [];

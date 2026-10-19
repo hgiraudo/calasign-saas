@@ -366,6 +366,14 @@ function SendFromRecord({ flows, onDone }: { flows: ConnectorFlow[]; onDone: () 
   // Solo vale la búsqueda del flujo elegido ahora: una respuesta que llegaba después de cambiar de flujo mostraba
   // registros de la otra conexión y "Enviar" los mandaba al flujo nuevo.
   const searchSeq = useRef(0);
+  // Si el flujo elegido se borra o desactiva, se pasa al primero disponible y se descartan los registros buscados con
+  // el anterior (eran de otra conexión y "Enviar" los mandaba al flujo nuevo).
+  useEffect(() => {
+    if (flows.some((f) => f.id === flowId)) return;
+    searchSeq.current++;
+    setFlowId(flows[0]?.id ?? "");
+    setResults(null);
+  }, [flows, flowId]);
 
   const search = async (e: FormEvent) => {
     e.preventDefault();
@@ -508,7 +516,10 @@ function FlowEditor({
 
   // Roles en pantalla = los de la plantilla elegida (al editar, los guardados mientras sea la misma plantilla).
   const rolesFrom = useRef(flow?.templateId ?? "");
+  // Error al leer la plantilla elegida: aparte del de guardar, para que se borre al elegir otra.
+  const [tplError, setTplError] = useState<string | null>(null);
   useEffect(() => {
+    setTplError(null);
     if (!templateId) return setTpl(null);
     let stale = false;
     api<TemplateDetail>(`/v1/templates/${templateId}`)
@@ -522,7 +533,7 @@ function FlowEditor({
       .catch((e) => {
         if (stale) return;
         setTpl(null);
-        setError(errorText(e));
+        setTplError(errorText(e));
       });
     return () => {
       stale = true;
@@ -558,7 +569,8 @@ function FlowEditor({
       objectType,
       templateId,
       documentSource,
-      roles,
+      // Sin "" ni null: un correo fijo vacío no pasa la validación de correo de la API (como en los mapeos de CRM).
+      roles: roles.map((r) => Object.fromEntries(Object.entries(r).filter(([, v]) => v !== "" && v !== null))),
       prefill: prefill.filter((p) => p.field && p.property),
       writeBack: { uploadSigned, uploadEvidence, folder: folder || null, statusProperty: statusProperty || null, statusValues },
       trigger,
@@ -585,7 +597,7 @@ function FlowEditor({
   return (
     <form className="card pad stack" onSubmit={save} style={{ marginBottom: 12 }}>
       <strong>{flow ? t("editFlow") : t("newFlow")}</strong>
-      <ErrorBox error={error} />
+      <ErrorBox error={error ?? tplError} />
       <div className="row-wrap">
         <label className="field grow">
           <span>{t("fl.connection")}</span>

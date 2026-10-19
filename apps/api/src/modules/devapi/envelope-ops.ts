@@ -71,7 +71,9 @@ export async function loadFormData(s: Services, tenantId: string, envelopeId: st
       [envelopeId],
     ),
   ]);
-  const values: Record<string, string> = {};
+  // Sin prototipo: con {} un campo con etiqueta "constructor" o "toString" nunca entraba (values[key] ya era la función
+  // heredada) y "__proto__" se descartaba al asignarlo.
+  const values: Record<string, string> = Object.create(null);
   const toField = (f: any): FormDataField => {
     const isImage = IMAGE_TYPES.has(f.type);
     const att = f.type === "attachment" && f.attachment_file_id && !f.att_purged;

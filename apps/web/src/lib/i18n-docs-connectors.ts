@@ -38,6 +38,8 @@ export const connectorsDocsEs = {
   "conn.api.p":
     "Si usás otra plataforma (Workato, Tray, Pipedream, Apps Script…), estos endpoints son los que usan los conectores:\n\n- `POST /v1/webhooks` con `{ url, events }`: suscripción; responde `201` con el header `Location`, y `DELETE` a esa URL la borra (REST hooks).\n- `GET /v1/webhooks/samples?event=envelope.completed`: eventos de ejemplo con la forma exacta de una entrega.\n- `GET /v1/templates/{id}/input-schema`: roles y campos prellenables de una plantilla, con JSON Schema para formularios dinámicos.\n- `POST /v1/envelopes/from-template/{templateId}` con `{ roles: { \"Cliente\": { name, email } }, prefill: { \"Monto\": \"1500\" } }`: crea y envía en un pedido.\n\nDetalle en la [referencia de la API](/developers/api).",
   "conn.native.h": "Conectores nativos (sin herramientas intermedias)",
+  "conn.native.crm.t": "CRM y ERP",
+  "conn.native.ai.t": "IA · Office",
   "conn.native.p": "Se configuran por organización desde **Ajustes**, sin código ni plataformas intermedias. CalaSign crea el sobre desde el registro del sistema origen y, al completarse, devuelve el PDF firmado y el certificado de evidencia.",
   "conn.native.crm.d": "HubSpot, Salesforce, Siigo y Alegra: enviar desde un negocio u oportunidad y sincronizar el estado.",
   "conn.native.hr.d": "BambooHR, HiBob y Factorial: contratos de empleados con datos prellenados y el firmado de vuelta al legajo.",
@@ -88,6 +90,8 @@ export const connectorsDocsEn: Record<ConnectorsDocsKey, string> = {
   "conn.api.p":
     "If you use another platform (Workato, Tray, Pipedream, Apps Script…), these are the endpoints the connectors use:\n\n- `POST /v1/webhooks` with `{ url, events }`: subscription; answers `201` with a `Location` header, and `DELETE` on that URL removes it (REST hooks).\n- `GET /v1/webhooks/samples?event=envelope.completed`: sample events with the exact shape of a delivery.\n- `GET /v1/templates/{id}/input-schema`: roles and prefillable fields of a template, with JSON Schema for dynamic forms.\n- `POST /v1/envelopes/from-template/{templateId}` with `{ roles: { \"Client\": { name, email } }, prefill: { \"Amount\": \"1500\" } }`: creates and sends in one request.\n\nDetails in the [API reference](/developers/api).",
   "conn.native.h": "Native connectors (no middleware)",
+  "conn.native.crm.t": "CRM and ERP",
+  "conn.native.ai.t": "AI · Office",
   "conn.native.p": "Configured per organization from **Settings**, with no code or intermediate platforms. CalaSign creates the envelope from the source system record and, once completed, sends back the signed PDF and the evidence certificate.",
   "conn.native.crm.d": "HubSpot, Salesforce, Siigo and Alegra: send from a deal or opportunity and sync the status.",
   "conn.native.hr.d": "BambooHR, HiBob and Factorial: employee contracts with prefilled data and the signed copy back to the employee file.",
@@ -136,6 +140,8 @@ export const connectorsDocsPt: Record<ConnectorsDocsKey, string> = {
   "conn.api.p":
     "Se você usa outra plataforma (Workato, Tray, Pipedream, Apps Script…), estes são os endpoints que os conectores usam:\n\n- `POST /v1/webhooks` com `{ url, events }`: assinatura; responde `201` com o cabeçalho `Location`, e `DELETE` nessa URL a remove (REST hooks).\n- `GET /v1/webhooks/samples?event=envelope.completed`: eventos de exemplo com o formato exato de uma entrega.\n- `GET /v1/templates/{id}/input-schema`: papéis e campos pré-preenchíveis de um modelo, com JSON Schema para formulários dinâmicos.\n- `POST /v1/envelopes/from-template/{templateId}` com `{ roles: { \"Cliente\": { name, email } }, prefill: { \"Valor\": \"1500\" } }`: cria e envia em uma requisição.\n\nDetalhes na [referência da API](/developers/api).",
   "conn.native.h": "Conectores nativos (sem intermediários)",
+  "conn.native.crm.t": "CRM e ERP",
+  "conn.native.ai.t": "IA · Office",
   "conn.native.p": "Configurados por organização em **Configurações**, sem código nem plataformas intermediárias. O CalaSign cria o envelope a partir do registro do sistema de origem e, ao concluir, devolve o PDF assinado e o certificado de evidências.",
   "conn.native.crm.d": "HubSpot, Salesforce, Siigo e Alegra: enviar a partir de um negócio ou oportunidade e sincronizar o status.",
   "conn.native.hr.d": "BambooHR, HiBob e Factorial: contratos de colaboradores com dados preenchidos e o assinado de volta à pasta do colaborador.",

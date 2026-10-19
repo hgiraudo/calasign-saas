@@ -80,9 +80,15 @@ export function mergeConfig(base: BrandConfigInput, over: BrandConfigInput): Bra
   for (const [k, v] of Object.entries(over.links ?? {})) if (v) links[k] = v;
   const email = { ...(base.email ?? {}) } as Record<string, unknown>;
   for (const [k, v] of Object.entries(over.email ?? {})) if (v) email[k] = v;
-  const templates: Record<string, Record<string, unknown>> = {};
+  // Por campo (asunto, cuerpo, botón): una sub-marca que solo cambia el asunto hereda el cuerpo y el botón de la
+  // organización (antes el objeto del idioma reemplazaba al de la organización entero y volvían los de la plataforma).
+  const templates: Record<string, Record<string, Record<string, unknown>>> = {};
   for (const src of [base.templates ?? {}, over.templates ?? {}])
-    for (const [ev, byLocale] of Object.entries(src)) templates[ev] = { ...(templates[ev] ?? {}), ...(byLocale ?? {}) };
+    for (const [ev, byLocale] of Object.entries(src))
+      for (const [l, tpl] of Object.entries(byLocale ?? {})) {
+        const cur = ((templates[ev] ??= {})[l] ??= {});
+        for (const [k, v] of Object.entries(tpl ?? {})) if (v !== null && v !== undefined && v !== "") cur[k] = v;
+      }
   const texts: Record<string, Record<string, string>> = {};
   for (const src of [base.texts ?? {}, over.texts ?? {}])
     for (const [l, map] of Object.entries(src)) texts[l] = { ...(texts[l] ?? {}), ...(map ?? {}) };

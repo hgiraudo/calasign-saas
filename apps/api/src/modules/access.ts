@@ -196,9 +196,13 @@ export async function enforceRoutePolicy(db: Db, req: FastifyRequest, a: AuthCon
     if (await isInPersonHost(db, a, params.id, params.recipientId)) return;
   }
   if (url.startsWith("/v1/envelopes/:id")) {
-    const readLike = isRead || url === "/v1/envelopes/:id/remind";
+    // Clonar no modifica el original (como /v1/templates/from-envelope, alcanza con verlo); el handler exige envelopes:create.
+    const readLike = isRead || url === "/v1/envelopes/:id/remind" || url === "/v1/envelopes/:id/clone";
     return assertEnvelopeAccess(db, a, params.id, readLike ? "view" : "manage");
   }
+  // Lote: cada elemento se ejecuta como su pedido individual (app.inject con la misma credencial) y ahí se aplica su
+  // política. Sin esto, el lote exigía envelopes:create también para action=get (un rol de solo lectura recibía 403).
+  if (url === "/v1/envelopes/batch") return;
   if (url.startsWith("/v1/envelopes") && method === "POST") return requirePerm(a, "envelopes:create");
 
   // Plantillas

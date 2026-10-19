@@ -48,7 +48,7 @@ export function ConnectorsPage() {
       <H2 id="native">{t("conn.native.h")}</H2>
       <Md text={t("conn.native.p")} />
       <CardGrid>
-        <Card icon="◎" title="CRM y ERP" to="/developers/guides/crm" action={<ActionLink to="/developers/guides/crm" label={t("conn.native.a")} />}>
+        <Card icon="◎" title={t("conn.native.crm.t")} to="/developers/guides/crm" action={<ActionLink to="/developers/guides/crm" label={t("conn.native.a")} />}>
           {t("conn.native.crm.d")}
         </Card>
         <Card icon="☺" title="HRIS" to="/developers/guides/hr-contracts#providers" action={<ActionLink to="/developers/guides/hr-contracts#providers" label={t("conn.native.a")} />}>
@@ -60,10 +60,10 @@ export function ConnectorsPage() {
         <Card icon="▤" title="DMS" to="/developers/guides/hr-contracts#dms" action={<ActionLink to="/developers/guides/hr-contracts#dms" label={t("conn.native.a")} />}>
           {t("conn.native.dms.d")}
         </Card>
-        <Card icon="✉" title="Slack · Teams · WhatsApp" to="/app/settings/integrations" action={<ActionLink to="/app/settings/integrations" label={t("conn.native.config")} />}>
+        <Card icon="✉" title="Slack · Teams · WhatsApp" to="/app/settings/notifications" action={<ActionLink to="/app/settings/notifications" label={t("conn.native.config")} />}>
           {t("conn.native.notify.d")}
         </Card>
-        <Card icon="✦" title="IA · Office" to="/developers/ai" action={<ActionLink to="/developers/ai" label={t("conn.native.a")} />}>
+        <Card icon="✦" title={t("conn.native.ai.t")} to="/developers/ai" action={<ActionLink to="/developers/ai" label={t("conn.native.a")} />}>
           {t("conn.native.ai.d")}
         </Card>
       </CardGrid>

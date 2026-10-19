@@ -587,6 +587,9 @@ export async function whiteLabelRoutes(app: FastifyInstance, s: Services) {
         return null;
       })) ?? (await checkEmailDomain(r));
     let ok = f.own && f.dkim;
+    // Sin respuesta del DNS (y sin poder confirmarlo con la segunda consulta) no se sabe nada de los registros: se
+    // conservan estado, SPF y DMARC guardados (si no, quedaban en "no publicados" hasta la próxima consulta buena).
+    const unknown = dnsError !== null && !ok;
     const error = ok
       ? null
       : dnsError
@@ -597,8 +600,8 @@ export async function whiteLabelRoutes(app: FastifyInstance, s: Services) {
     try {
       await s.db.query(
         `UPDATE email_domains SET status = CASE WHEN $2 THEN 'verified' WHEN $6 THEN status ELSE 'pending' END, verified_at = CASE WHEN $2 AND verified_at IS NULL THEN now() ELSE verified_at END,
-           spf_ok = $3, dmarc_ok = $4, last_checked_at = now(), last_error = $5 WHERE id = $1`,
-        [r.id, ok, f.spf, f.dmarc, error, dnsError !== null],
+           spf_ok = CASE WHEN $6 THEN spf_ok ELSE $3 END, dmarc_ok = CASE WHEN $6 THEN dmarc_ok ELSE $4 END, last_checked_at = now(), last_error = $5 WHERE id = $1`,
+        [r.id, ok, f.spf, f.dmarc, error, unknown],
       );
     } catch (e) {
       if ((e as { code?: string }).code !== "23505") throw e;
@@ -607,7 +610,7 @@ export async function whiteLabelRoutes(app: FastifyInstance, s: Services) {
       await s.db.query(`UPDATE email_domains SET last_checked_at = now(), last_error = $2 WHERE id = $1`, [r.id, "Ese dominio ya lo verificó otra organización"]);
     }
     if (ok) await auditFromRequest(s.db, req, a, "email_domain.verified", { targetType: "domain", targetId: r.domain });
-    return emailDomainToApi(await s.db.one<any>(`SELECT * FROM email_domains WHERE id = $1`, [r.id]), f);
+    return emailDomainToApi(await s.db.one<any>(`SELECT * FROM email_domains WHERE id = $1`, [r.id]), unknown ? undefined : f);
   });
 
   app.delete<P>("/v1/settings/email-domains/:domain", { preHandler: auth }, async (req, reply) => {

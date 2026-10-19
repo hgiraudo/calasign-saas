@@ -74,4 +74,10 @@ describe("sub-marcas", () => {
     expect(m.theme).toMatchObject({ primaryColor: "#333333", buttonColor: "#222222" });
     expect(m.texts?.es).toEqual({ a: "1", b: "3" });
   });
+
+  it("heredan el cuerpo y el botón de una plantilla de la que solo cambian el asunto", () => {
+    const base = BrandConfigInput.parse({ templates: { invite: { es: { subject: "Base", body: "Cuerpo", cta: "Firmar" } } } });
+    const sub = BrandConfigInput.parse({ templates: { invite: { es: { subject: "Propio", body: null } } } });
+    expect(mergeConfig(base, sub).templates?.invite?.es).toEqual({ subject: "Propio", body: "Cuerpo", cta: "Firmar" });
+  });
 });

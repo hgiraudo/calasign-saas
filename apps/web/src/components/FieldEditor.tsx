@@ -386,7 +386,9 @@ export function FieldEditor({ envelopeId, documents, signers, fields, onChange, 
                     {t("edit.prefill")} <span className="muted">({t("common.optional")})</span>
                   </span>
                   {sel.type === "dropdown" ? (
-                    <select value={sel.value ?? ""} onChange={(e) => update(sel.id, { value: e.target.value || null })}>
+                    // Como en el campo de texto: sin valor deja de ser de solo lectura. Si no, la casilla quedaba oculta pero
+                    // marcada y el guardado fallaba con "un campo de solo lectura necesita valor".
+                    <select value={sel.value ?? ""} onChange={(e) => update(sel.id, { value: e.target.value || null, readOnly: e.target.value ? sel.readOnly : false })}>
                       <option value="">—</option>
                       {(sel.options ?? []).filter(Boolean).map((o) => (
                         <option key={o} value={o}>

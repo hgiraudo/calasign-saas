@@ -577,11 +577,18 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
     const input = NegotiationCommentInput.parse(req.body);
     const { p, n } = await participantFor(req.params.token);
     if (n.status !== "open") throw conflict("closed", "La negociación ya está cerrada");
-    await s.db.query(
-      `INSERT INTO negotiation_comments (id, negotiation_id, version, author_type, author_id, author_name, quote, start_offset, end_offset, body)
-       VALUES ($1,$2,$3,'participant',$4,$5,$6,$7,$8,$9)`,
-      [uuidv7(), n.id, n.current_version, p.id, p.name, input.quote ?? null, input.start ?? null, input.end ?? null, input.body],
-    );
+    // Como las propuestas: con la negociación bloqueada, un comentario que llega mientras se acepta (o sale una versión
+    // nueva) no queda en una negociación cerrada ni citando el texto de una versión que ya no es la vigente.
+    await s.db.tx(async (t) => {
+      const locked = await t.one<any>(`SELECT status, current_version FROM negotiations WHERE id = $1 FOR UPDATE`, [n.id]);
+      if (locked?.status !== "open") throw conflict("closed", "La negociación ya está cerrada");
+      if (locked.current_version !== n.current_version) throw conflict("version_changed", "Hay una versión nueva: revisala y volvé a comentar");
+      await t.query(
+        `INSERT INTO negotiation_comments (id, negotiation_id, version, author_type, author_id, author_name, quote, start_offset, end_offset, body)
+         VALUES ($1,$2,$3,'participant',$4,$5,$6,$7,$8,$9)`,
+        [uuidv7(), n.id, n.current_version, p.id, p.name, input.quote ?? null, input.start ?? null, input.end ?? null, input.body],
+      );
+    });
     reply.code(201);
     return fullView(s.db, n, p);
   });

@@ -95,12 +95,20 @@ export function CrmSettingsPage() {
       const r = await api<{ authorizeUrl: string }>(`/v1/crm/oauth/${p}/start`, { method: "POST", body: { name: names[p] || t(`p.${p}`) } });
       window.location.href = r.authorizeUrl;
     });
-  const connectToken = (e: FormEvent, p: CrmProvider) => {
+  // Doble clic en "Conectar" mandaba dos POST y quedaban dos conexiones iguales (cada una con su sincronización).
+  const [connecting, setConnecting] = useState<CrmProvider | null>(null);
+  const connectToken = async (e: FormEvent, p: CrmProvider) => {
     e.preventDefault();
-    return act(async () => {
-      await api("/v1/crm/connections", { method: "POST", body: { provider: p, name: names[p] || t(`p.${p}`), ...(tokenForm[p] ?? {}) } });
-      setTokenForm((c) => ({ ...c, [p]: {} }));
-    }, t("connected"));
+    if (connecting) return;
+    setConnecting(p);
+    try {
+      await act(async () => {
+        await api("/v1/crm/connections", { method: "POST", body: { provider: p, name: names[p] || t(`p.${p}`), ...(tokenForm[p] ?? {}) } });
+        setTokenForm((c) => ({ ...c, [p]: {} }));
+      }, t("connected"));
+    } finally {
+      setConnecting(null);
+    }
   };
 
   const connName = (id: string | null) => conns?.find((c) => c.id === id)?.name ?? "—";
@@ -158,7 +166,9 @@ export function CrmSettingsPage() {
                         />
                       </label>
                     ))}
-                    <button className="btn">{t("connectToken")}</button>
+                    <button className="btn" disabled={connecting !== null}>
+                      {t("connectToken")}
+                    </button>
                   </form>
                 )}
               </div>

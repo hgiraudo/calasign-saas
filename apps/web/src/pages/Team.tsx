@@ -347,6 +347,12 @@ function PermissionChecklist({ value, onChange }: { value: Permission[]; onChang
 function RolesTab({ roles, reload }: { roles: RolesResponse | null; reload: () => Promise<unknown> }) {
   const tt = useTeamsText();
   const label = useRoleLabel();
+  const { access, refresh: refreshAccess } = useAccess();
+  // Con un rol personalizado propio, editarlo o borrarlo cambia los permisos de la sesión: sin recargarlos, la pantalla
+  // seguía ofreciendo acciones que ya no tiene (403), igual que al cambiar el rol propio en Miembros.
+  const refreshOwn = async () => {
+    if (access?.role === "custom") await refreshAccess();
+  };
   const [editing, setEditingRaw] = useState<Partial<CustomRole> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -366,6 +372,7 @@ function RolesTab({ roles, reload }: { roles: RolesResponse | null; reload: () =
       else await api("/v1/roles", { method: "POST", body });
       setEditing(null);
       await reload();
+      if (editing.id) await refreshOwn();
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -379,6 +386,7 @@ function RolesTab({ roles, reload }: { roles: RolesResponse | null; reload: () =
     try {
       await api(`/v1/roles/${id}`, { method: "DELETE" });
       await reload();
+      await refreshOwn();
     } catch (e) {
       setError(errorText(e));
     }

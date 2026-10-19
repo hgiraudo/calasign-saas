@@ -240,6 +240,9 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
       // (POST …/in-person/confirm) la firma no puede completarse aunque la sesión del anfitrión esté abierta.
       if (r.auth_method === "in_person" && !r.identity_confirmed_at)
         throw conflict("identity_confirmation_required", "Primero hay que confirmar la identidad en el dispositivo del anfitrión");
+      // KYC: el hook de identidad miró al destinatario antes de subir las imágenes, sin bloqueo. Una corrección del nombre
+      // confirmada mientras tanto (el link no rota) anula la verificación; sin esto se firmaba sin identidad verificada.
+      if (identityBlocking(r)) throw new AppError(403, "identity_required", "Hace falta verificar tu identidad para continuar");
 
       const fields = await t.query<any>(`SELECT * FROM fields WHERE recipient_id = $1`, [r.id]);
       const values = new Map(input.fields.map((f) => [f.id, f.value]));

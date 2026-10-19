@@ -37,6 +37,7 @@ import { assignFieldIds } from "./logic";
 import { loadDetail } from "./mappers";
 import { discardBlobsOnFailure } from "./file-cleanup";
 import { applyEnvelopeSettings } from "./participants";
+import { enforceEnvelopeQuota } from "./billing/plans";
 import { decodePdfBase64, fetchPdf, fileNameFromUrl, maxBase64Length, PdfSourceError } from "./pdf-source";
 
 /** Tope de todos los PDF de un sobre creado en una llamada (cada uno, además, hasta maxUploadBytes). */
@@ -45,6 +46,11 @@ const TOTAL_MAX_BYTES = 2 * config.maxUploadBytes;
 export const ONE_SHOT_JSON_BODY_LIMIT = maxBase64Length(config.maxUploadBytes) + 2 * 1024 * 1024;
 /** Nombre de la parte JSON en multipart/form-data. */
 const PAYLOAD_PART = "payload";
+/**
+ * Tope del JSON del sobre SIN el base64 de los documentos (el tope general de los cuerpos JSON): el bodyLimit de la
+ * ruta se agrandó para el PDF en base64, no para que `metadata` (sin tope propio) u otros atributos lleguen a decenas de MB.
+ */
+const PAYLOAD_MAX_BYTES = 2 * 1024 * 1024;
 
 interface UploadedPart {
   filename: string;
@@ -73,6 +79,7 @@ async function readMultipart(req: FastifyRequest): Promise<{ body: unknown; file
     // `payload` también puede llegar como archivo (curl -F 'payload=@sobre.json;type=application/json').
     if (part.fieldname === PAYLOAD_PART) {
       if (rawJson !== null) throw badRequest("duplicate_part", `La parte "${PAYLOAD_PART}" está repetida`);
+      if (buf.length > PAYLOAD_MAX_BYTES) throw new AppError(413, "payload_too_large", `La parte "${PAYLOAD_PART}" supera ${mb(PAYLOAD_MAX_BYTES)}`);
       rawJson = Buffer.from(buf).toString("utf8");
       continue;
     }
@@ -128,6 +135,10 @@ async function createEnvelope(
   files: Map<string, UploadedPart>,
 ): Promise<{ status: number; body: CreateEnvelopeResponse }> {
   const input = CreateEnvelopeRequest.parse(rawBody);
+  const withoutBase64 = JSON.stringify({ ...input, documents: input.documents?.map(({ base64: _b64, ...d }) => d) });
+  if (Buffer.byteLength(withoutBase64) > PAYLOAD_MAX_BYTES) {
+    throw new AppError(413, "payload_too_large", `El sobre (sin el base64 de los documentos) supera ${mb(PAYLOAD_MAX_BYTES)}`);
+  }
   const send = input.send ?? input.status === "sent";
   const id = uuidv7();
 
@@ -184,6 +195,7 @@ async function createEnvelope(
   const signers = recipients.filter((r) => r.role === "signer");
 
   // ── Campos: `recipient`/`document` → recipientId/documentId; después, anclas y la validación de siempre.
+  const docsById = docs.map((d) => ({ ...d, id: d.docId }));
   const rawFields = (input.fields ?? []).map((f, i) => {
     const { recipient, document, ...rest } = f as Record<string, unknown> & { recipient?: unknown; document?: unknown };
     const where = `Campo ${i + 1}`;
@@ -195,7 +207,7 @@ async function createEnvelope(
       out.recipientId = signers[0].id;
     }
     if (document !== undefined) {
-      out.documentId = resolveRef(docs.map((d) => ({ ...d, id: d.docId })), document, (d, k) => d.ref?.toLowerCase() === k, "documento", where);
+      out.documentId = resolveRef(docsById, document, (d, k) => d.ref?.toLowerCase() === k, "documento", where);
     } else if (out.documentId === undefined && !("anchor" in out)) {
       // Con ancla y sin documento, se busca en todos.
       if (docs.length !== 1) throw badRequest("invalid_field", `${where}: indicá document (posición o ref del documento)`);
@@ -212,11 +224,18 @@ async function createEnvelope(
   assignFieldIds(fields);
 
   // ── Escritura: los PDF al almacenamiento y todo lo demás en una transacción (con el envío).
+  // Cupo del plan antes de subir los PDF (se vuelve a mirar dentro de la transacción, en sendEnvelope): sin cupo no
+  // tiene sentido subir hasta 50 MB al almacenamiento para borrarlos enseguida.
+  if (send) await enforceEnvelopeQuota(s.db, a.tenantId);
   const tenant = await s.db.one<any>(`SELECT default_locale FROM tenants WHERE id = $1`, [a.tenantId]);
   const keys = docs.map((d) => d.key);
   const signingUrls: EnvelopeSigningUrl[] = [];
   const write = async () => {
-    await Promise.all(docs.map((d) => s.blobs.put(d.key, d.bytes, "application/pdf")));
+    // allSettled: si una subida falla, las demás terminan antes de borrar (con Promise.all, una que seguía en vuelo
+    // terminaba DESPUÉS del borrado y quedaba un PDF huérfano en el almacenamiento).
+    const puts = await Promise.allSettled(docs.map((d) => s.blobs.put(d.key, d.bytes, "application/pdf")));
+    const failed = puts.find((p): p is PromiseRejectedResult => p.status === "rejected");
+    if (failed) throw failed.reason;
     await s.db.tx(async (t) => {
       await t.query(
         `INSERT INTO envelopes (id, tenant_id, created_by, created_via, subject, message, locale, expires_at, metadata, created_by_api_key)

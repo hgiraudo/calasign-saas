@@ -233,7 +233,9 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
 
   // Alta de un sobre. Además del borrador vacío de siempre, acepta el sobre completo en una sola llamada (documentos,
   // destinatarios, campos y el envío), en JSON o multipart/form-data: ver envelope-oneshot.ts.
-  app.post("/v1/envelopes", { preHandler: auth, bodyLimit: ONE_SHOT_JSON_BODY_LIMIT }, async (req, reply) => createEnvelopeRoute(s, req, reply));
+  // Autenticación en onRequest (antes de leer el cuerpo): con el bodyLimit agrandado para el PDF en base64, cualquiera
+  // sin credenciales hacía que el servidor recibiera y parseara hasta ~35 MB de JSON antes de responder 401.
+  app.post("/v1/envelopes", { onRequest: auth, bodyLimit: ONE_SHOT_JSON_BODY_LIMIT }, async (req, reply) => createEnvelopeRoute(s, req, reply));
 
   app.get<P>("/v1/envelopes/:id", { preHandler: auth }, async (req) => loadDetail(s.db, A(req).tenantId, req.params.id));
 

@@ -55,6 +55,8 @@ function fakeKommo(): typeof fetch {
       if (p === "/v1.0/sessions") return json(200, { session_id: 1, upload_url: uploadNext ?? `${DRIVE}/upload/tok-1`, max_file_size: 1e9, max_part_size: 65536 });
       if (p.startsWith("/upload/")) {
         uploaded.push((body as Uint8Array).length);
+        // Hasta recibir el archivo entero responde con la URL de la parte siguiente; al final, el uuid.
+        if (uploaded.reduce((a, b) => a + b, 0) < 100_000) return json(200, { session_id: 1, next_url: `${DRIVE}/upload/tok-${uploaded.length + 1}` });
         return json(200, { uuid: "file-uuid-1", version_uuid: "ver-1", name: "x.pdf" });
       }
     }
@@ -184,7 +186,7 @@ describe("Kommo", () => {
     expect(await attachSigned(conn(), "deal", "42", attach)).toBe("file:file-uuid-1 note:777");
     const session = calls.find((c) => c.url === `${DRIVE}/v1.0/sessions`)!;
     expect(session.body).toEqual({ file_name: "Contrato.pdf", file_size: 100_000, content_type: "application/pdf" });
-    expect(uploaded).toEqual([65536]); // la primera parte ya devolvió el uuid en este simulador
+    expect(uploaded).toEqual([65536, 100_000 - 65536]); // dos partes: la primera devuelve next_url, la segunda el uuid
     expect(calls.find((c) => c.url.endsWith("/api/v4/leads/42/files"))!.body).toEqual([{ file_uuid: "file-uuid-1" }]);
     const note = calls.find((c) => c.url.endsWith("/api/v4/leads/notes"))!;
     expect(note.body[0]).toMatchObject({ entity_id: 42, note_type: "common" });

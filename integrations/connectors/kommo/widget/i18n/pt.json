@@ -1,0 +1,11 @@
+{
+  "widget": {
+    "name": "CalaSign",
+    "short_description": "Envie para assinatura a partir de um lead com o CalaSign",
+    "description": "Assinatura eletrônica com o CalaSign no Kommo: envie um contrato a partir do lead com os contatos e dados dele, e receba no lead o status do envelope, o PDF assinado e uma nota com o hash. Conecte o Kommo em CalaSign → Configurações → CRM e ERP.",
+    "button": "Enviar para assinatura com CalaSign"
+  },
+  "settings": {
+    "note": "Nota (opcional). A conexão é feita em CalaSign → Configurações → CRM e ERP → Kommo."
+  }
+}

@@ -38,7 +38,7 @@ import { decrypt, encrypt, iso, sha256Hex, uuidv7 } from "../../lib/util";
 import { assertEnvelopeAccess, assertTemplateAccess, envelopeVisibilitySql, hasPerm, templateVisibilitySql } from "../access";
 import { auditFromRequest } from "../audit";
 import { authenticate, type AuthContext, type Services } from "../context";
-import { sendEnvelope } from "../envelopes";
+import { idempotent, sendEnvelope } from "../envelopes";
 import { ownerCanStillCreate } from "../owner-check";
 import { tenantBaseUrl } from "../custom-domains";
 import { insertEnvelopeFromTemplate, loadTemplateForUse, planFromTemplate } from "../templates";
@@ -50,7 +50,9 @@ import {
   crmRedirectUri,
   fetchRecord,
   findByIdentification,
+  CRM_OAUTH_PROVIDERS,
   isOAuthProvider,
+  kommoTokenUrl,
   oauthApp,
   oauthConfigured,
   oauthTokenRequest,
@@ -64,6 +66,7 @@ import {
   type ConnRow,
   type CrmOAuthProvider,
 } from "./providers";
+import { validateKommoDomain } from "./kommo";
 import { validatePipedriveDomain } from "./pipedrive";
 
 const UUID = /^[0-9a-f-]{36}$/i;
@@ -155,6 +158,12 @@ async function loadConn(db: Db, tenantId: string, id: string) {
   if (!r) throw notFound("Conexión");
   return r;
 }
+
+/**
+ * Clave de config con la cuenta del CRM de cada conexión (Pipedrive: company_id de /users/me; Kommo: id de la cuenta de
+ * /api/v4/account). La acción de Pipedrive y el widget de Kommo mandan la cuenta desde la que se abrieron.
+ */
+const ACCOUNT_KEY: Partial<Record<CrmProvider, string>> = { pipedrive: "companyId", kommo: "accountId" };
 
 async function loadMapping(db: Db, tenantId: string, id: string) {
   if (!UUID.test(id)) throw notFound("Mapeo");
@@ -327,7 +336,31 @@ async function signedPdf(db: Db, blobs: BlobStore, envelopeId: string) {
 
 const pdfName = (subject: string, envelopeId: string) => `${subject.replace(/[\\/:*?"<>|\n\r]+/g, " ").trim().slice(0, 120) || "documento"} - ${envelopeId.slice(0, 8)}.pdf`;
 
-async function writeBackAndAttach(db: Db, blobs: BlobStore, conn: CrmConn, link: any, mapping: any | null, status: string): Promise<Record<string, unknown>> {
+/** Reclamo de last_status hecho por un write-back: si la escritura del estado falla de forma definitiva, se devuelve
+ *  el vínculo al estado anterior (ver handleCrmJob). */
+interface StatusClaim {
+  linkId: string;
+  previous: string | null;
+  claimed: string;
+  written: boolean;
+}
+/** runId: la ejecución guarda el valor anterior al primer reclamo (detail.claimPrevious), porque en un reintento el
+ *  vínculo ya tiene el estado reclamado por el intento anterior. */
+interface ClaimOut {
+  runId: string;
+  prior?: { previous: string | null };
+  claim: StatusClaim | null;
+}
+
+async function writeBackAndAttach(
+  db: Db,
+  blobs: BlobStore,
+  conn: CrmConn,
+  link: any,
+  mapping: any | null,
+  status: string,
+  claimOut?: ClaimOut,
+): Promise<Record<string, unknown>> {
   const wb = { attachPdf: true, ...(mapping?.write_back ?? {}) };
   const detail: Record<string, unknown> = {};
   // Los trabajos "sent" y "completed" (o "declined"…) del mismo vínculo pueden correr a la vez (la cola procesa en
@@ -337,17 +370,28 @@ async function writeBackAndAttach(db: Db, blobs: BlobStore, conn: CrmConn, link:
   //  1. antes de escribir, se reclama el vínculo solo si su estado no tiene un rango mayor (si no, se omite);
   //  2. después de escribir, se vuelve a leer: si mientras tanto otro trabajo reclamó un estado de rango mayor, su
   //     escritura pudo llegar al CRM antes que esta, así que se reescribe ese estado (el último en llegar gana).
-  const claimed = await db.one<{ id: string }>(
-    `UPDATE crm_links SET last_status = $2 WHERE id = $1 AND ${STATUS_RANK_SQL} <= $3 RETURNING id`,
-    [link.id, status, statusRank(status)],
-  );
+  //  3. si la escritura falla de forma definitiva, handleCrmJob devuelve last_status al valor anterior (solo si sigue
+  //     siendo el reclamado): si no, un "sent" que nunca llegó al CRM dejaba el vínculo como si estuviera escrito.
+  // El reclamo lee el valor anterior con el registro bloqueado (transacción corta, sin llamadas HTTP adentro).
+  const claimed = await db.tx(async (t) => {
+    const cur = await t.one<{ last_status: string | null }>(`SELECT last_status FROM crm_links WHERE id = $1 FOR UPDATE`, [link.id]);
+    if (!cur || statusRank(cur.last_status) > statusRank(status)) return null;
+    await t.query(`UPDATE crm_links SET last_status = $2 WHERE id = $1`, [link.id, status]);
+    return { previous: cur.last_status };
+  });
   if (!claimed) {
     const cur = await db.one<{ last_status: string | null }>(`SELECT last_status FROM crm_links WHERE id = $1`, [link.id]);
     return { skipped: `el registro ya tiene el estado ${cur?.last_status ?? "?"}` };
   }
+  let previous = claimed.previous;
+  if (claimOut?.prior) previous = claimOut.prior.previous;
+  else if (claimOut) await db.query(`UPDATE crm_runs SET detail = detail || $2::jsonb WHERE id = $1`, [claimOut.runId, JSON.stringify({ claimPrevious: previous })]);
+  const claim: StatusClaim = { linkId: link.id, previous, claimed: status, written: false };
+  if (claimOut) claimOut.claim = claim;
   if (CRM_KIND[conn.provider] === "crm" && wb.statusProperty) {
     const value = statusValue(wb, status as any);
     await writeStatus(conn, link.object_type, link.object_id, wb.statusProperty, value);
+    claim.written = true;
     detail.statusWritten = { property: wb.statusProperty, value };
     const after = (await db.one<{ last_status: string | null }>(`SELECT last_status FROM crm_links WHERE id = $1`, [link.id]))?.last_status ?? null;
     if (after && statusRank(after) > statusRank(status)) {
@@ -383,7 +427,20 @@ export function statusRank(s: string | null | undefined): number {
 }
 const STATUS_RANK_SQL = `(CASE WHEN last_status IS NULL THEN 0 WHEN last_status = 'sent' THEN 1 ELSE 2 END)`;
 
-export async function handleCrmJob(d: { db: Db; blobs: BlobStore }, p: { runId: string }) {
+/** Write-back que falló de forma definitiva sin llegar a escribir el estado: last_status vuelve al valor anterior
+ *  (solo si nadie lo cambió después del reclamo) y queda registrado en la actividad. */
+async function releaseClaim(db: Db, runId: string, claim: StatusClaim | null) {
+  if (!claim || claim.written || claim.previous === claim.claimed) return;
+  const back = await db.query(`UPDATE crm_links SET last_status = $2 WHERE id = $1 AND last_status = $3 RETURNING id`, [claim.linkId, claim.previous, claim.claimed]);
+  if (back.length) {
+    await db.query(`UPDATE crm_runs SET detail = detail || $2::jsonb WHERE id = $1`, [
+      runId,
+      JSON.stringify({ lastStatusRestored: { from: claim.claimed, to: claim.previous } }),
+    ]);
+  }
+}
+
+export async function handleCrmJob(d: { db: Db; blobs: BlobStore }, p: { runId: string }, job?: { attempts: number; maxAttempts: number }) {
   const { db } = d;
   const run = await db.one<any>(`SELECT * FROM crm_runs WHERE id = $1`, [p.runId]);
   if (!run || run.status === "succeeded") return;
@@ -395,12 +452,17 @@ export async function handleCrmJob(d: { db: Db; blobs: BlobStore }, p: { runId: 
   await db.query(`UPDATE crm_runs SET attempts = attempts + 1, updated_at = now() WHERE id = $1`, [run.id]);
   const conn = open(db, connRow);
   const mapping = run.mapping_id ? await db.one<any>(`SELECT * FROM crm_mappings WHERE id = $1`, [run.mapping_id]) : null;
+  const claimOut: ClaimOut = {
+    runId: run.id,
+    prior: run.detail && Object.prototype.hasOwnProperty.call(run.detail, "claimPrevious") ? { previous: run.detail.claimPrevious ?? null } : undefined,
+    claim: null,
+  };
   try {
     let detail: Record<string, unknown> = {};
     if (run.kind === "write_back") {
       const link = await db.one<any>(`SELECT * FROM crm_links WHERE id = $1`, [run.link_id]);
       if (!link) throw new Error("vínculo inexistente");
-      detail = await writeBackAndAttach(db, d.blobs, conn, link, mapping, run.event);
+      detail = await writeBackAndAttach(db, d.blobs, conn, link, mapping, run.event, claimOut);
     } else if (run.kind === "match") {
       const ids = await db.query<any>(
         `SELECT name, id_document_number FROM recipients WHERE envelope_id = $1 AND role = 'signer' AND id_document_number IS NOT NULL ORDER BY routing_order, created_at`,
@@ -425,7 +487,7 @@ export async function handleCrmJob(d: { db: Db; blobs: BlobStore }, p: { runId: 
       );
       const link = await db.one<any>(`SELECT * FROM crm_links WHERE connection_id = $1 AND envelope_id = $2`, [conn.row.id, run.envelope_id]);
       await db.query(`UPDATE crm_runs SET link_id = $2, object_id = $3 WHERE id = $1`, [run.id, link.id, found]);
-      detail = { matched: found, ...(await writeBackAndAttach(db, d.blobs, conn, link, mapping, "completed")) };
+      detail = { matched: found, ...(await writeBackAndAttach(db, d.blobs, conn, link, mapping, "completed", claimOut)) };
     } else if (run.kind === "send") {
       // Envío disparado por webhook (HubSpot).
       if (!mapping) throw new Error("mapeo inexistente");
@@ -469,7 +531,10 @@ export async function handleCrmJob(d: { db: Db; blobs: BlobStore }, p: { runId: 
     await db.query(`UPDATE crm_connections SET last_error = $2 WHERE id = $1`, [conn.row.id, msg.slice(0, 500)]);
     // Sin acceso (token revocado) o datos que no cierran: no tiene sentido reintentar solo. sendFromRecord devuelve todo
     // como AppError: un error del proveedor o interno (5xx, p. ej. HubSpot caído) sí se reintenta.
-    if ((err instanceof CrmError && err.authFailed) || err instanceof MappingError || (err instanceof AppError && err.status < 500)) return;
+    const permanent = (err instanceof CrmError && err.authFailed) || err instanceof MappingError || (err instanceof AppError && err.status < 500);
+    // Fallo definitivo (error permanente o último intento de la cola): se suelta el reclamo de last_status.
+    if (permanent || (job && job.attempts >= job.maxAttempts)) await releaseClaim(db, run.id, claimOut.claim);
+    if (permanent) return;
     throw err; // reintento con backoff de la cola
   }
 }
@@ -523,7 +588,7 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
     }));
     return {
       items,
-      redirectUris: { hubspot: crmRedirectUri("hubspot"), salesforce: crmRedirectUri("salesforce"), zoho: crmRedirectUri("zoho"), pipedrive: crmRedirectUri("pipedrive") },
+      redirectUris: Object.fromEntries(CRM_OAUTH_PROVIDERS.map((p) => [p, crmRedirectUri(p)])),
       webhookUrl: `${config.appUrl}/v1/integrations/crm/hubspot/webhook`,
     };
   });
@@ -584,7 +649,7 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
   });
 
   // Vuelta del proveedor: el navegador trae la sesión; el estado cifrado ata la conexión a quien la inició.
-  app.get<{ Params: { provider: string }; Querystring: { code?: string; state?: string; error?: string; "accounts-server"?: string } }>(
+  app.get<{ Params: { provider: string }; Querystring: { code?: string; state?: string; error?: string; "accounts-server"?: string; referer?: string } }>(
     "/v1/crm/oauth/:provider/callback",
     { preHandler: auth },
     async (req, reply) => {
@@ -593,6 +658,8 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
       // Instalación desde el Marketplace de Pipedrive: llega un code sin state (no la inició CalaSign). No se canjea
       // a ciegas (ataría a esta organización una cuenta que nadie eligió desde CalaSign): se pide conectar desde Ajustes.
       if (req.params.provider === "pipedrive" && !req.query.state && !req.query.error) return back("pipedrive_install=1");
+      // Kommo igual: instalar el widget o la integración desde Kommo vuelve con code + referer y sin state.
+      if (req.params.provider === "kommo" && !req.query.state && !req.query.error) return back("kommo_install=1");
       let st: OAuthState;
       try {
         st = JSON.parse(decrypt(String(req.query.state ?? "")));
@@ -606,6 +673,8 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
         // Zoho multi-DC: el código solo se canjea en el accounts-server de la cuenta del usuario (que puede no ser
         // donde se inició, p. ej. empezó en zoho.com y la cuenta está en zoho.eu). Se valida que sea de Zoho.
         const zohoAccounts = st.p === "zoho" ? validateZohoAccounts(String(req.query["accounts-server"] ?? st.a ?? zohoAccountsBase())) : null;
+        // Kommo: el código se canjea en el subdominio de la cuenta que vuelve en referer (validado: *.kommo.com).
+        const kommoDomain = st.p === "kommo" ? validateKommoDomain(String(req.query.referer ?? "")) : null;
         const body = await oauthTokenRequest(
           st.p,
           {
@@ -614,7 +683,7 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
             redirect_uri: crmRedirectUri(st.p),
             ...(st.v ? { code_verifier: st.v } : {}),
           },
-          zohoAccounts ? `${zohoAccounts}/oauth/v2/token` : undefined,
+          zohoAccounts ? `${zohoAccounts}/oauth/v2/token` : kommoDomain ? kommoTokenUrl(kommoDomain) : undefined,
         );
         const cfg: Record<string, unknown> = {};
         if (st.p === "salesforce") cfg.instanceUrl = validateSalesforceInstance(String(body.instance_url ?? ""));
@@ -626,6 +695,7 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
         }
         // Pipedrive: cada compañía tiene su dominio de API (https://<compañía>.pipedrive.com), validado.
         if (st.p === "pipedrive") cfg.apiDomain = validatePipedriveDomain(String(body.api_domain ?? ""));
+        if (st.p === "kommo") cfg.baseDomain = kommoDomain;
         const creds = { access_token: body.access_token, refresh_token: body.refresh_token, expires_at: body.expires_in ? Date.now() + Number(body.expires_in) * 1000 : null };
         const row: any = { id: uuidv7(), provider: st.p, auth_type: "oauth", credentials_enc: encrypt(JSON.stringify(creds)), config: cfg };
         const conn = new CrmConn(row, null);
@@ -681,7 +751,7 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
 
   // ───────── Mapeos ─────────
 
-  app.get<{ Querystring: { connectionId?: string; provider?: string } }>("/v1/crm/mappings", { preHandler: auth }, async (req) => {
+  app.get<{ Querystring: { connectionId?: string; provider?: string; companyId?: string } }>("/v1/crm/mappings", { preHandler: auth }, async (req) => {
     const params: unknown[] = [A(req).tenantId];
     let where = `tenant_id = $1`;
     if (req.query.connectionId && UUID.test(req.query.connectionId)) {
@@ -691,7 +761,14 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
     // provider: solo mapeos de conexiones activas de ese proveedor (la acción de Pipedrive lista los suyos).
     if (req.query.provider && (CRM_PROVIDERS as readonly string[]).includes(req.query.provider)) {
       params.push(req.query.provider);
-      where += ` AND connection_id IN (SELECT id FROM crm_connections WHERE tenant_id = $1 AND active AND provider = $${params.length})`;
+      let sub = `SELECT id FROM crm_connections WHERE tenant_id = $1 AND active AND provider = $${params.length}`;
+      // companyId: solo conexiones de esa cuenta del CRM (las que todavía no la tienen guardada se conservan).
+      const key = ACCOUNT_KEY[req.query.provider as CrmProvider];
+      if (key && req.query.companyId && /^[A-Za-z0-9_-]{1,64}$/.test(req.query.companyId)) {
+        params.push(req.query.companyId);
+        sub += ` AND (config->>'${key}' IS NULL OR config->>'${key}' = $${params.length})`;
+      }
+      where += ` AND connection_id IN (${sub})`;
     }
     // Sin settings:manage (quien solo puede enviar, access.ts): solo los mapeos cuya plantilla puede usar. Los demás no
     // los puede enviar (assertTemplateAccess) y exponían la configuración ajena (destinatarios fijos con correo y teléfono).
@@ -783,10 +860,21 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
     const a = A(req);
     const m = await loadMapping(s.db, a.tenantId, req.params.id);
     const input = SendFromCrmRecordInput.parse(req.body);
+    if (input.companyId) {
+      const conn = await loadConn(s.db, a.tenantId, m.connection_id);
+      const key = ACCOUNT_KEY[conn.provider as CrmProvider];
+      const stored = key ? conn.config?.[key] : null;
+      if (stored != null && String(stored) !== input.companyId) {
+        throw new AppError(409, "company_mismatch", `El mapeo es de otra cuenta de ${conn.provider} (${stored}), no de la cuenta ${input.companyId} desde la que se envía`);
+      }
+    }
     if (m.template_id) await assertTemplateAccess(s.db, a, m.template_id, "view");
-    const out = await sendFromRecord(s.db, { tenantId: a.tenantId, userId: a.userId, apiKeyId: a.apiKeyId, actor: a.actor }, m, input.objectId, input);
-    reply.code(201);
-    return out!;
+    // Idempotency-Key: la acción de Pipedrive, el widget de Kommo y los conectores low-code reintentan después de un
+    // 504; con la misma clave y el mismo cuerpo se devuelve el sobre ya creado en lugar de crear otro.
+    return idempotent(s, req, reply, async () => {
+      const out = await sendFromRecord(s.db, { tenantId: a.tenantId, userId: a.userId, apiKeyId: a.apiKeyId, actor: a.actor }, m, input.objectId, input);
+      return { status: 201, body: out! };
+    });
   });
 
   // ───────── Vínculos y ejecuciones ─────────

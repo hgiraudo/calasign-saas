@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Prueba de punta a punta de CRM/ERP (HubSpot, Salesforce, Zoho CRM / Bigin, Siigo, Alegra, Pipedrive) contra servidores simulados.
+// Prueba de punta a punta de CRM/ERP (HubSpot, Salesforce, Zoho CRM / Bigin, Siigo, Alegra, Pipedrive, RD Station CRM,
+// Kommo) contra servidores simulados.
 // Es autocontenida: levanta los simuladores y su propia API (puerto 4115) con las URLs de los proveedores
 // apuntando a ellos. Uso: node scripts/e2e-crm.mjs   (un argumento de URL se ignora)
 import { spawn } from "node:child_process";
@@ -18,6 +19,8 @@ const MB = Number(process.env.E2E_CRM_MOCK_BASE ?? 4291);
 // Zoho: zo = servidor de cuentas "US" donde se inicia OAuth; zoEu = centro de datos de la cuenta (cuentas + API).
 const P = { hs: MB, sf: MB + 1, sg: MB + 2, al: MB + 3, zo: MB + 4, zoEu: MB + 5 };
 P.pd = MB + 6; // Pipedrive (OAuth y API en el mismo simulador)
+P.rd = MB + 7; // RD Station CRM (authorize, token y API v2)
+P.km = MB + 8; // Kommo (authorize, cuenta: token + API v4, y drive de archivos)
 const HS_SECRET = "hs-client-secret-e2e";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const step = (m) => console.log(`✓ ${m}`);
@@ -271,10 +274,15 @@ const pd = {
   notes: [],
   puts: [],
 };
-function pdIssue() {
+// Dos compañías de Pipedrive: A (5150, acme) y B (6160, beta). Cada token vale para la suya; pd.valid.clear() vence todos.
+pd.valid = new Map();
+pd.nextCompany = "A";
+const PD_COMPANIES = { A: { company_id: 5150, company_name: "ACME", company_domain: "acme", rt: "pd-rt" }, B: { company_id: 6160, company_name: "Beta", company_domain: "beta", rt: "pd-rt-b" } };
+function pdIssue(company = "A") {
   pd.tokens++;
   pd.token = `pd-at-${pd.tokens}`;
-  return { access_token: pd.token, refresh_token: "pd-rt", expires_in: 3599, token_type: "Bearer", scope: "deals:full,contacts:read", api_domain: `http://127.0.0.1:${P.pd}` };
+  pd.valid.set(pd.token, company);
+  return { access_token: pd.token, refresh_token: PD_COMPANIES[company].rt, expires_in: 3599, token_type: "Bearer", scope: "deals:full,contacts:read", api_domain: `http://127.0.0.1:${P.pd}` };
 }
 const pdPersonRef = (id) => {
   const p = pd.persons[id];
@@ -285,7 +293,7 @@ await serve(P.pd, async ({ req, url, body, json, send }) => {
   if (path === "/oauth/authorize") {
     if (url.searchParams.get("client_id") !== "pd-client" || url.searchParams.get("client_secret")) return send(400, { error: "invalid_request" });
     const code = `pd-code-${randomUUID()}`;
-    pd.codes.set(code, url.searchParams.get("redirect_uri"));
+    pd.codes.set(code, { redirect: url.searchParams.get("redirect_uri"), company: pd.nextCompany });
     return send(302, undefined, { location: `${url.searchParams.get("redirect_uri")}?code=${code}&state=${encodeURIComponent(url.searchParams.get("state"))}` });
   }
   if (path === "/oauth/token") {
@@ -293,19 +301,25 @@ await serve(P.pd, async ({ req, url, body, json, send }) => {
     const f = new URLSearchParams(body.toString());
     if (f.get("client_secret")) return send(400, { error: "invalid_request", error_description: "secret en el cuerpo" });
     if (f.get("grant_type") === "authorization_code") {
-      if (!pd.codes.has(f.get("code")) || pd.codes.get(f.get("code")) !== f.get("redirect_uri")) return send(400, { error: "invalid_grant" });
+      const c = pd.codes.get(f.get("code"));
+      if (!c || c.redirect !== f.get("redirect_uri")) return send(400, { error: "invalid_grant" });
       pd.codes.delete(f.get("code"));
-      return send(200, pdIssue());
+      return send(200, pdIssue(c.company));
     }
-    if (f.get("grant_type") === "refresh_token" && f.get("refresh_token") === "pd-rt") {
+    const byRt = Object.keys(PD_COMPANIES).find((k) => PD_COMPANIES[k].rt === f.get("refresh_token"));
+    if (f.get("grant_type") === "refresh_token" && byRt) {
       pd.refreshes++;
-      return send(200, pdIssue());
+      return send(200, pdIssue(byRt));
     }
     return send(400, { error: "invalid_grant" });
   }
-  if ((req.headers.authorization ?? "") !== `Bearer ${pd.token}`) return send(401, { success: false, error: "unauthorized access", errorCode: 401 });
+  const pdCompany = pd.valid.get(String(req.headers.authorization ?? "").replace(/^Bearer /, ""));
+  if (!pdCompany) return send(401, { success: false, error: "unauthorized access", errorCode: 401 });
   let m;
-  if (path === "/api/v1/users/me") return send(200, { success: true, data: { id: 1, email: "admin@acme.test", company_id: 5150, company_name: "ACME", company_domain: "acme" } });
+  if (path === "/api/v1/users/me") {
+    const { rt: _rt, ...co } = PD_COMPANIES[pdCompany];
+    return send(200, { success: true, data: { id: 1, email: `admin@${co.company_domain}.test`, ...co } });
+  }
   if (path === "/api/v1/dealFields") return send(200, { success: true, data: pd.fields });
   if (path === "/api/v1/personFields") return send(200, { success: true, data: [{ key: "name", name: "Name", field_type: "varchar" }] });
   if ((m = path.match(/^\/api\/v1\/deals\/(\d+)\/participants$/))) {
@@ -339,6 +353,190 @@ await serve(P.pd, async ({ req, url, body, json, send }) => {
     return send(201, { success: true, data: { id: 800 + pd.notes.length } });
   }
   send(404, { success: false, error: `pipedrive mock: ${req.method} ${path}` });
+});
+
+// RD Station CRM: OAuth de la App Store (authorize en "accounts", token en la API, refresh token que rota) y API v2.
+const RD_DEAL = "65f0a1b2c3d4e5f6a7b8c9d0";
+const RD_C1 = "65f0a1b2c3d4e5f6a7b8c9d1";
+const RD_C2 = "65f0a1b2c3d4e5f6a7b8c9d2";
+const rd = {
+  token: null,
+  rt: null,
+  tokens: 0,
+  refreshes: 0,
+  staleRefresh: 0, // refresh con un refresh token ya rotado
+  codes: new Map(),
+  deals: { [RD_DEAL]: { id: RD_DEAL, name: "Licença RD Station", one_time_price: 4100, contact_ids: [RD_C1, RD_C2], custom_fields: { cnpj: "12.345.678/0001-90", estado_calasign: "" } } },
+  contacts: {
+    [RD_C1]: { id: RD_C1, name: "Rita Principal RD", emails: [{ email: "rita.rd@cliente.test" }], phones: [{ phone: "+5511999990000", type: "mobile" }] },
+    [RD_C2]: { id: RD_C2, name: "Rui Segundo RD", emails: [{ email: "rui.rd@cliente.test" }], phones: [] },
+  },
+  fields: [
+    { id: "f1", name: "Estado CalaSign", slug: "estado_calasign", type: "option", options: ["Enviado", "Assinado", "Recusado"] },
+    { id: "f2", name: "CNPJ", slug: "cnpj", type: "text" },
+  ],
+  puts: [],
+  files: [],
+  notes: [],
+};
+function rdIssue() {
+  rd.tokens++;
+  rd.token = `rd-at-${rd.tokens}`;
+  rd.rt = `rd-rt-${rd.tokens}`;
+  return { access_token: rd.token, refresh_token: rd.rt, expires_in: 7200 };
+}
+await serve(P.rd, async ({ req, url, body, json, send }) => {
+  const path = url.pathname;
+  if (path === "/oauth/authorize") {
+    const q = url.searchParams;
+    if (q.get("client_id") !== "rd-client" || q.get("response_type") !== "code" || q.get("code_challenge")) return send(400, { error: "invalid_request" });
+    const code = `rd-code-${randomUUID()}`;
+    rd.codes.set(code, q.get("redirect_uri"));
+    return send(302, undefined, { location: `${q.get("redirect_uri")}?code=${code}&state=${encodeURIComponent(q.get("state"))}` });
+  }
+  if (path === "/oauth2/token") {
+    const f = new URLSearchParams(body.toString());
+    if (f.get("client_id") !== "rd-client" || f.get("client_secret") !== "rd-secret") return send(401, { error: "invalid_client" });
+    if (f.get("grant_type") === "authorization_code") {
+      if (!rd.codes.has(f.get("code")) || rd.codes.get(f.get("code")) !== f.get("redirect_uri")) return send(400, { error: "invalid_grant" });
+      rd.codes.delete(f.get("code"));
+      return send(200, rdIssue());
+    }
+    if (f.get("grant_type") === "refresh_token") {
+      if (f.get("refresh_token") !== rd.rt) {
+        rd.staleRefresh++;
+        return send(400, { error: "invalid_grant" });
+      }
+      rd.refreshes++;
+      return send(200, rdIssue());
+    }
+    return send(400, { error: "unsupported_grant_type" });
+  }
+  if ((req.headers.authorization ?? "") !== `Bearer ${rd.token}`) return send(401, { errors: [{ detail: "Unauthorized" }] });
+  let m;
+  if (path === "/crm/v2/users") return send(200, { data: [{ id: "u1", name: "Admin", email: "admin@acme.com.br" }] });
+  if (path === "/crm/v2/custom_fields") return send(200, { data: rd.fields, links: {} });
+  if ((m = path.match(/^\/crm\/v2\/deals\/([0-9a-f]{24})$/))) {
+    const d = rd.deals[m[1]];
+    if (!d) return send(404, { errors: [{ detail: "Deal not found" }] });
+    if (req.method === "PUT") {
+      const b = json();
+      rd.puts.push(b);
+      Object.assign(d.custom_fields, b.data?.custom_fields ?? {});
+      return send(200, { data: d });
+    }
+    return send(200, { data: d });
+  }
+  if ((m = path.match(/^\/crm\/v2\/contacts\/([0-9a-f]{24})$/))) {
+    const c = rd.contacts[m[1]];
+    return c ? send(200, { data: c }) : send(404, { errors: [{ detail: "Contact not found" }] });
+  }
+  if ((m = path.match(/^\/crm\/v2\/deals\/([0-9a-f]{24})\/files$/)) && req.method === "POST") {
+    const raw = body.toString("latin1");
+    rd.files.push({ dealId: m[1], pdf: raw.includes("%PDF"), field: raw.includes('name="data[file]"') });
+    return send(201, { data: { id: `rdfile${rd.files.length}`, name: "x.pdf" } });
+  }
+  if ((m = path.match(/^\/crm\/v2\/deals\/([0-9a-f]{24})\/notes$/)) && req.method === "POST") {
+    rd.notes.push({ dealId: m[1], ...json() });
+    return send(201, { data: { id: `rdnote${rd.notes.length}` } });
+  }
+  send(404, { errors: [{ detail: `rdstation mock: ${req.method} ${path}` }] });
+});
+
+// Kommo: authorize global (KOMMO_AUTHORIZE_URL) que vuelve con referer = la cuenta; token, API v4 y drive de archivos
+// de la cuenta en el mismo simulador (en producción, <cuenta>.kommo.com y drive-<x>.kommo.com).
+const KM = `http://127.0.0.1:${P.km}`;
+const km = {
+  token: null,
+  rt: null,
+  tokens: 0,
+  refreshes: 0,
+  codes: new Map(),
+  leads: { 42: { id: 42, name: "Licencia Kommo", price: 5200, status_id: 1, custom: {}, contacts: [{ id: 8, is_main: false }, { id: 7, is_main: true }] } },
+  contacts: {
+    7: { id: 7, name: "Karla Principal KM", custom_fields_values: [{ field_code: "EMAIL", values: [{ value: "karla.km@cliente.test", enum_code: "WORK" }] }] },
+    8: { id: 8, name: "Kike Otro KM", custom_fields_values: [{ field_code: "EMAIL", values: [{ value: "kike.km@cliente.test", enum_code: "WORK" }] }] },
+  },
+  fields: [
+    { id: 501, name: "Estado CalaSign", code: null, type: "select", enums: [{ id: 9001, value: "Enviado" }, { id: 9002, value: "Firmado" }, { id: 9003, value: "Rechazado" }] },
+    { id: 502, name: "NIT", code: "NIT", type: "text" },
+  ],
+  sessions: new Map(),
+  files: [], // { uuid, size, pdf, parts }
+  linked: [], // PUT /leads/{id}/files
+  notes: [],
+};
+function kmIssue() {
+  km.tokens++;
+  km.token = `km-at-${km.tokens}`;
+  km.rt = `km-rt-${km.tokens}`;
+  return { token_type: "Bearer", expires_in: 86400, server_time: Math.floor(Date.now() / 1000), access_token: km.token, refresh_token: km.rt };
+}
+await serve(P.km, async ({ req, url, body, json, send }) => {
+  const path = url.pathname;
+  if (path === "/oauth") {
+    const q = url.searchParams;
+    if (q.get("client_id") !== "km-client" || q.get("mode") !== "post_message" || !q.get("state")) return send(400, { error: "invalid_request" });
+    const code = `km-code-${randomUUID()}`;
+    km.codes.set(code, true);
+    const back = `${BASE}/v1/crm/oauth/kommo/callback`;
+    return send(302, undefined, { location: `${back}?code=${code}&state=${encodeURIComponent(q.get("state"))}&referer=${encodeURIComponent(KM)}&client_id=km-client` });
+  }
+  if (path === "/oauth2/access_token") {
+    if (!String(req.headers["content-type"]).startsWith("application/json")) return send(400, { hint: "JSON" });
+    const b = json();
+    if (b.client_id !== "km-client" || b.client_secret !== "km-secret" || b.redirect_uri !== `${BASE}/v1/crm/oauth/kommo/callback`) return send(401, { hint: "invalid client" });
+    if (b.grant_type === "authorization_code" && km.codes.delete(b.code)) return send(200, kmIssue());
+    if (b.grant_type === "refresh_token" && b.refresh_token === km.rt) {
+      km.refreshes++;
+      return send(200, kmIssue());
+    }
+    return send(400, { hint: "Token has been revoked" });
+  }
+  if ((req.headers.authorization ?? "") !== `Bearer ${km.token}`) return send(401, { title: "Unauthorized", status: 401, detail: "Unauthorized" });
+  let m;
+  // Files API (drive)
+  if (path === "/v1.0/sessions" && req.method === "POST") {
+    const b = json();
+    const id = km.sessions.size + 1;
+    km.sessions.set(`tok${id}`, { name: b.file_name, size: b.file_size, chunks: [] });
+    return send(200, { session_id: id, upload_url: `${KM}/upload/tok${id}`, max_file_size: 314572800, max_part_size: 65536 });
+  }
+  if ((m = path.match(/^\/upload\/(tok\d+)(?:-\d+)?$/)) && req.method === "POST") {
+    const s = km.sessions.get(m[1]);
+    if (!s) return send(404, { detail: "session" });
+    s.chunks.push(body);
+    const got = Buffer.concat(s.chunks);
+    if (got.length < s.size) return send(200, { session_id: 1, next_url: `${KM}/upload/${m[1]}-${s.chunks.length}` });
+    const uuid = randomUUID();
+    km.files.push({ uuid, size: got.length, pdf: got.subarray(0, 5).toString("latin1") === "%PDF-", parts: s.chunks.length });
+    return send(200, { uuid, version_uuid: randomUUID(), name: s.name, size: got.length });
+  }
+  if (path === "/api/v4/account") return send(200, { id: 31337, name: "ACME", subdomain: "acme", ...(url.searchParams.get("with") === "drive_url" ? { drive_url: KM } : {}) });
+  if (path === "/api/v4/leads/custom_fields") return send(200, { _embedded: { custom_fields: km.fields }, _links: {} });
+  if ((m = path.match(/^\/api\/v4\/leads\/(\d+)$/))) {
+    const l = km.leads[m[1]];
+    if (!l) return send(204);
+    if (req.method === "PATCH") {
+      for (const cf of json().custom_fields_values ?? []) l.custom[cf.field_id] = cf.values[0];
+      return send(200, { id: l.id });
+    }
+    const { custom: _c, contacts, ...rest } = l;
+    return send(200, { ...rest, custom_fields_values: null, _embedded: { contacts: url.searchParams.get("with") === "contacts" ? contacts : [] } });
+  }
+  if (path === "/api/v4/contacts") {
+    const list = url.searchParams.getAll("filter[id][]").map((id) => km.contacts[id]).filter(Boolean);
+    return list.length ? send(200, { _embedded: { contacts: list } }) : send(204);
+  }
+  if ((m = path.match(/^\/api\/v4\/leads\/(\d+)\/files$/)) && req.method === "PUT") {
+    km.linked.push({ leadId: m[1], files: json() });
+    return send(200, {});
+  }
+  if (path === "/api/v4/leads/notes" && req.method === "POST") {
+    km.notes.push(...json());
+    return send(200, { _embedded: { notes: [{ id: 7000 + km.notes.length }] } });
+  }
+  send(404, { title: "Not found", detail: `kommo mock: ${req.method} ${path}` });
 });
 
 // Zoho CRM y Bigin. La cuenta vive en el centro de datos "EU" (P.zoEu): el authorize se inicia en el "US" (P.zo) y
@@ -472,6 +670,13 @@ const api_ = spawn(join(ROOT, "apps/api/node_modules/.bin/tsx"), [join(ROOT, "sc
     ZOHO_CLIENT_ID: "zo-client",
     ZOHO_CLIENT_SECRET: "zo-secret",
     ZOHO_ACCOUNTS_URL: `http://127.0.0.1:${P.zo}`,
+    RDSTATION_CLIENT_ID: "rd-client",
+    RDSTATION_CLIENT_SECRET: "rd-secret",
+    RDSTATION_API_BASE: `http://127.0.0.1:${P.rd}`,
+    RDSTATION_AUTHORIZE_URL: `http://127.0.0.1:${P.rd}/oauth/authorize`,
+    KOMMO_CLIENT_ID: "km-client",
+    KOMMO_CLIENT_SECRET: "km-secret",
+    KOMMO_AUTHORIZE_URL: `http://127.0.0.1:${P.km}/oauth`,
   },
   stdio: ["ignore", "inherit", "inherit"],
 });
@@ -592,6 +797,10 @@ assert(byP.zoho.oauthConfigured && !byP.zoho.tokenSupported && byP.zoho.kind ===
 step("proveedores: OAuth configurado para HubSpot, Salesforce y Zoho; Siigo y Alegra por token");
 assert(byP.pipedrive?.oauthConfigured && !byP.pipedrive.tokenSupported && byP.pipedrive.objectTypes.join() === "deal,contact", "proveedor Pipedrive");
 assert(prov.redirectUris.pipedrive === `${BASE}/v1/crm/oauth/pipedrive/callback`, "redirect URI de Pipedrive");
+for (const p of ["rdstation", "kommo"]) {
+  assert(byP[p]?.oauthConfigured && !byP[p].tokenSupported && byP[p].kind === "crm" && byP[p].objectTypes.join() === "deal", `proveedor ${p}`);
+  assert(prov.redirectUris[p] === `${BASE}/v1/crm/oauth/${p}/callback`, `redirect URI de ${p}`);
+}
 
 // Plantilla con dos roles y un monto a prellenar.
 const { template } = await api("POST", "/v1/templates", { name: `Contrato CRM ${stamp}`, subject: "Contrato" });
@@ -937,7 +1146,7 @@ step("Salesforce: OAuth con PKCE S256, contacto principal (OpportunityContactRol
   await waitFor(() => pd.deals[42][PD_STATUS] === 11, "write-back «Enviado» (opción 11) en Pipedrive");
   step("Pipedrive: envío desde el deal 42 (persona principal + participante, monto) y write-back en un campo de opción única");
 
-  pd.token = "expired"; // el access token deja de valer: 401 → refresh → reintento
+  pd.valid.clear(); // el access token deja de valer: 401 → refresh → reintento
   await signAll(pdSent.envelopeId, ["Paula Principal PD", "Pedro Participante PD"]);
   await waitFor(() => pd.deals[42][PD_STATUS] === 12 && pd.notes.length === 1, "write-back «Firmado» + nota");
   assert(pd.refreshes >= 1, "Pipedrive: se refrescó el token");
@@ -967,6 +1176,130 @@ step("Salesforce: OAuth con PKCE S256, contacto principal (OpportunityContactRol
   const missing = await api("POST", `/v1/crm/mappings/${pdPersonMap.id}/send`, { objectId: "999" }, { expect: 404 });
   assert(missing.error.code === "crm_record_not_found", "persona inexistente → 404");
   step("Pipedrive: envío desde una Person (borrador) y registro inexistente → 404");
+
+  // Dos compañías conectadas: la acción abierta desde la compañía A (companyId 5150) no ofrece los mapeos de la
+  // conexión de B, y un envío con un mapeo de B se rechaza (leería el deal 42 de B y le mandaría el sobre a otros).
+  pd.nextCompany = "B";
+  const pdConnB = await oauthConnect("pipedrive", "Pipedrive Beta");
+  pd.nextCompany = "A";
+  assert(pdConnB?.accountLabel === "beta.pipedrive.com", `conexión de la compañía B (${pdConnB?.accountLabel})`);
+  const pdMapB = await api("POST", "/v1/crm/mappings", {
+    connectionId: pdConnB.id,
+    name: "Deals Beta",
+    objectType: "deal",
+    templateId: template.id,
+    roles: [{ role: "Cliente", source: "contact_role", primary: true }, { role: "Vendedor", source: "contact", index: 1 }],
+    send: false,
+  });
+  const forA = (await api("GET", "/v1/crm/mappings?provider=pipedrive&companyId=5150")).items.map((x) => x.id).sort();
+  assert(forA.join() === [pdMap.id, pdPersonMap.id].sort().join(), `con companyId de A no aparece el mapeo de B (${forA.length})`);
+  const forB = (await api("GET", "/v1/crm/mappings?provider=pipedrive&companyId=6160")).items.map((x) => x.id);
+  assert(forB.length === 1 && forB[0] === pdMapB.id, "con companyId de B solo el de B");
+  assert((await api("GET", "/v1/crm/mappings?provider=pipedrive")).items.length === 3, "sin companyId, todos los de Pipedrive");
+  const mismatch = await api("POST", `/v1/crm/mappings/${pdMapB.id}/send`, { objectId: "42", companyId: "5150" }, { expect: 409 });
+  assert(mismatch.error.code === "company_mismatch", "mapeo de B enviado desde A → 409 company_mismatch");
+  const idem = { headers: { "idempotency-key": `pd-6160-${pdMapB.id}-42-run1` } };
+  const okB = await api("POST", `/v1/crm/mappings/${pdMapB.id}/send`, { objectId: "42", companyId: "6160" }, idem);
+  assert(okB.status === "draft", "mapeo de B desde B → sobre creado");
+  const okB2 = await api("POST", `/v1/crm/mappings/${pdMapB.id}/send`, { objectId: "42", companyId: "6160" }, idem);
+  assert(okB2.envelopeId === okB.envelopeId, "reintento con la misma Idempotency-Key → el mismo sobre");
+  step("Pipedrive con dos compañías: ?companyId filtra los mapeos por la compañía de la conexión; un mapeo de otra compañía → 409 company_mismatch");
+}
+
+// ── RD Station CRM: OAuth (App Store, refresh token que rota), negociação con contatos, campo de opción, Anexos + anotação ──
+{
+  const rdConn = await oauthConnect("rdstation", "RD Station ACME");
+  assert(rdConn?.accountLabel === "RD Station CRM · acme.com.br" && rdConn.authType === "oauth", `conexión RD Station con etiqueta (${rdConn?.accountLabel})`);
+  step("RD Station CRM: OAuth (authorize en accounts, token en la API, sin PKCE) y etiqueta");
+
+  await api("POST", "/v1/crm/mappings", { connectionId: rdConn.id, name: "x", objectType: "contact", templateId: template.id }, { expect: 400 });
+  const rdMap = await api("POST", "/v1/crm/mappings", {
+    connectionId: rdConn.id,
+    name: "Negociações RD",
+    objectType: "deal",
+    templateId: template.id,
+    roles: [
+      { role: "Cliente", source: "contact_role", primary: true },
+      { role: "Vendedor", source: "contact", index: 1 },
+    ],
+    prefill: [{ field: "Monto", property: "one_time_price" }],
+    writeBack: { statusProperty: "Estado CalaSign", statusValues: { sent: "Enviado", completed: "Assinado", declined: "Recusado" }, attachPdf: true },
+  });
+  const rdSent = await api("POST", `/v1/crm/mappings/${rdMap.id}/send`, { objectId: RD_DEAL });
+  const rdDet = await api("GET", `/v1/envelopes/${rdSent.envelopeId}`);
+  assert(rdDet.recipients.some((r) => r.name === "Rita Principal RD" && r.email === "rita.rd@cliente.test"), "contato principal como Cliente");
+  assert(rdDet.recipients.some((r) => r.name === "Rui Segundo RD"), "segundo contato como Vendedor");
+  assert(rdDet.fields.some((f) => f.label === "Monto" && f.value === "4100"), "monto prellenado desde one_time_price");
+  assert(rdDet.envelope.subject.includes("Licença RD Station"), `asunto con el nombre de la negociação (${rdDet.envelope.subject})`);
+  await waitFor(() => rd.deals[RD_DEAL].custom_fields.estado_calasign === "Enviado", "write-back «Enviado» en RD Station");
+  step("RD Station CRM: envío desde la negociação (contatos en orden, monto) y write-back en un campo de opción");
+
+  rd.token = "expired"; // 401 → refresh (rota el refresh token) → reintento
+  await signAll(rdSent.envelopeId, ["Rita Principal RD", "Rui Segundo RD"]);
+  await waitFor(() => rd.deals[RD_DEAL].custom_fields.estado_calasign === "Assinado" && rd.notes.length === 1, "write-back «Assinado» + anotação");
+  assert(rd.refreshes >= 1 && rd.staleRefresh === 0, `RD Station: refresh con el refresh token vigente (${rd.refreshes}/${rd.staleRefresh})`);
+  assert(rd.files.length === 1 && rd.files[0].pdf && rd.files[0].field && rd.files[0].dealId === RD_DEAL, "PDF sellado en Anexos de la negociação (data[file])");
+  const rdNote = rd.notes[0].data?.description ?? "";
+  assert(/SHA-256/.test(rdNote) && rdNote.includes(`/app/envelopes/${rdSent.envelopeId}`), "anotação con hash y link");
+  step("RD Station CRM: firmado → token refrescado, estado «Assinado», PDF en Anexos y anotação con hash y link");
+
+  // Segundo refresh: tiene que usar el refresh token nuevo (el viejo ya no sirve).
+  rd.token = "expired";
+  await api("POST", `/v1/crm/connections/${rdConn.id}/test`);
+  assert(rd.refreshes >= 2 && rd.staleRefresh === 0, "RD Station: el refresh token rotado quedó guardado");
+  const rdMissing = await api("POST", `/v1/crm/mappings/${rdMap.id}/send`, { objectId: "65f0a1b2c3d4e5f6a7b8ffff" }, { expect: 404 });
+  assert(rdMissing.error.code === "crm_record_not_found", "negociação inexistente → 404");
+  await api("POST", `/v1/crm/mappings/${rdMap.id}/send`, { objectId: "../users" }, { expect: 404 });
+  step("RD Station CRM: refresh token rotado persistido; negociação inexistente o id inválido → 404");
+}
+
+// ── Kommo: OAuth con referer (subdominio de la cuenta), Lead con contactos, campo de lista, Files API + nota ──
+{
+  const kmConn = await oauthConnect("kommo", "Kommo ACME");
+  assert(kmConn?.accountLabel === "acme.kommo.com" && kmConn.authType === "oauth", `conexión Kommo con etiqueta (${kmConn?.accountLabel})`);
+  // Instalación desde Kommo (code + referer, sin state): no se canjea; se pide conectar desde Ajustes.
+  const inst = await fetch(`${BASE}/v1/crm/oauth/kommo/callback?code=km-code-x&referer=acme.kommo.com`, { headers: { cookie }, redirect: "manual" });
+  assert((inst.headers.get("location") ?? "").includes("kommo_install=1"), "instalación desde Kommo → Ajustes");
+  // Un referer que no es de Kommo no recibe el client secret (SSRF / robo del código).
+  const { authorizeUrl: kmAuth } = await api("POST", "/v1/crm/oauth/kommo/start", { name: "Kommo malo" });
+  const kmState = new URL(kmAuth).searchParams.get("state");
+  const tokensBefore = km.tokens;
+  const evil = await fetch(`${BASE}/v1/crm/oauth/kommo/callback?code=km-code-y&state=${encodeURIComponent(kmState)}&referer=evil.test`, { headers: { cookie }, redirect: "manual" });
+  assert((evil.headers.get("location") ?? "").includes("error=token_exchange_failed") && km.tokens === tokensBefore, "referer ajeno a Kommo → rechazado sin pedir token");
+  step("Kommo: OAuth con referer (token en el subdominio, JSON) y etiqueta; instalación sin state no conecta; referer ajeno rechazado");
+
+  const kmMap = await api("POST", "/v1/crm/mappings", {
+    connectionId: kmConn.id,
+    name: "Leads Kommo",
+    objectType: "deal",
+    templateId: template.id,
+    roles: [
+      { role: "Cliente", source: "contact_role", primary: true },
+      { role: "Vendedor", source: "contact", index: 1 },
+    ],
+    prefill: [{ field: "Monto", property: "price" }],
+    writeBack: { statusProperty: "Estado CalaSign", statusValues: { sent: "Enviado", completed: "Firmado", declined: "Rechazado" }, attachPdf: true },
+  });
+  const kmSent = await api("POST", `/v1/crm/mappings/${kmMap.id}/send`, { objectId: "42" });
+  const kmDet = await api("GET", `/v1/envelopes/${kmSent.envelopeId}`);
+  assert(kmDet.recipients.some((r) => r.name === "Karla Principal KM" && r.email === "karla.km@cliente.test"), "contacto principal del lead como Cliente");
+  assert(kmDet.recipients.some((r) => r.name === "Kike Otro KM"), "otro contacto del lead como Vendedor");
+  assert(kmDet.fields.some((f) => f.label === "Monto" && f.value === "5200"), "monto prellenado desde price");
+  await waitFor(() => km.leads[42].custom[501]?.enum_id === 9001, "write-back «Enviado» (enum 9001) en Kommo");
+  step("Kommo: envío desde el lead 42 (contacto principal + otro, monto) y write-back en un campo de lista");
+
+  km.token = "expired";
+  await signAll(kmSent.envelopeId, ["Karla Principal KM", "Kike Otro KM"]);
+  await waitFor(() => km.leads[42].custom[501]?.enum_id === 9002 && km.notes.length === 1, "write-back «Firmado» + nota");
+  assert(km.refreshes >= 1, "Kommo: se refrescó el token");
+  assert(km.files.length === 1 && km.files[0].pdf, "PDF sellado subido al drive");
+  assert(km.linked.length === 1 && km.linked[0].leadId === "42" && km.linked[0].files[0].file_uuid === km.files[0].uuid, "archivo vinculado al lead");
+  assert(km.notes[0].entity_id === 42 && /SHA-256/.test(km.notes[0].params.text) && km.notes[0].params.text.includes(`/app/envelopes/${kmSent.envelopeId}`), "nota con hash y link en el lead");
+  step(`Kommo: firmado → token refrescado, estado «Firmado», PDF por la Files API (${km.files[0].parts} parte/s) vinculado al lead y nota con hash y link`);
+
+  const kmMissing = await api("POST", `/v1/crm/mappings/${kmMap.id}/send`, { objectId: "999" }, { expect: 404 });
+  assert(kmMissing.error.code === "crm_record_not_found", "lead inexistente (204) → 404");
+  step("Kommo: lead inexistente → 404");
 }
 
 // ── ERP: Siigo y Alegra por token ──

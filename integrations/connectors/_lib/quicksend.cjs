@@ -54,7 +54,11 @@ function cleanSigner(s, i) {
 /**
  * Crea, arma y (por defecto) envía un sobre con un PDF.
  * input: { subject, message?, fileName, fileBytes (Buffer/Uint8Array), signers: [{ name, email?, phone?, role?, routingOrder? }],
- *          placement?: "auto" | "anchors", sequential?: boolean, send?: boolean (default true), expiresAt?, metadata? }
+ *          placement?: "auto" | "anchors", sequential?: boolean, send?: boolean (default true), expiresAt?, metadata?,
+ *          idempotencyKey? }
+ * idempotencyKey: la plataforma reintenta la acción entera después de un timeout o un 5xx. Con la clave, el sobre se crea
+ * y se envía con Idempotency-Key (`<clave>:create`, `<clave>:send`): el reintento recibe el mismo sobre, no sube el
+ * PDF otra vez si ya está, y si el sobre ya salió lo devuelve tal cual.
  */
 async function quickSend(request, input) {
   if (!input || !input.fileBytes || !input.fileBytes.length) throw new Error("Falta el documento PDF");
@@ -62,7 +66,10 @@ async function quickSend(request, input) {
   if (!signers.some((s) => s.role === "signer")) throw new Error("Indicá al menos un firmante");
   const placement = input.placement === "anchors" ? "anchors" : "auto";
 
+  const key = input.idempotencyKey ? String(input.idempotencyKey).slice(0, 150) : null;
+  const idem = (step) => (key ? { "Idempotency-Key": `${key}:${step}` } : undefined);
   const env = await request("POST", "/v1/envelopes", {
+    headers: idem("create"),
     json: {
       subject: String(input.subject || input.fileName || "Documento para firmar").slice(0, 300),
       ...(input.message ? { message: String(input.message) } : {}),
@@ -71,8 +78,17 @@ async function quickSend(request, input) {
     },
   });
   const envId = env.envelope.id;
-  const mp = multipartFile(input.fileBytes, input.fileName, "application/pdf");
-  const doc = await request("POST", `/v1/envelopes/${envId}/documents`, { body: mp.body, headers: { "content-type": mp.contentType } });
+  let doc = null;
+  if (key) {
+    // Con clave, el sobre puede ser el de un intento anterior (la API devuelve la respuesta guardada del create).
+    const cur = await request("GET", `/v1/envelopes/${envId}`, {});
+    if (cur && cur.envelope && cur.envelope.status !== "draft") return cur; // ya se envió
+    if (cur && Array.isArray(cur.documents) && cur.documents.length) doc = cur.documents[0]; // el PDF ya está
+  }
+  if (!doc) {
+    const mp = multipartFile(input.fileBytes, input.fileName, "application/pdf");
+    doc = await request("POST", `/v1/envelopes/${envId}/documents`, { body: mp.body, headers: { "content-type": mp.contentType } });
+  }
   const withRecipients = await request("PUT", `/v1/envelopes/${envId}/recipients`, { json: { recipients: signers } });
   const recips = (withRecipients.recipients || []).filter((r) => r.role === "signer");
   const lastPage = Math.max(0, (doc.pageCount || 1) - 1);
@@ -83,7 +99,7 @@ async function quickSend(request, input) {
   );
   await request("PUT", `/v1/envelopes/${envId}/fields`, { json: { fields } });
   if (input.send === false) return request("GET", `/v1/envelopes/${envId}`, {});
-  await request("POST", `/v1/envelopes/${envId}/send`, {});
+  await request("POST", `/v1/envelopes/${envId}/send`, { headers: idem("send") });
   return request("GET", `/v1/envelopes/${envId}`, {});
 }
 

@@ -363,21 +363,47 @@ async function queueRun(db: Db, r: RunSpec, dedupeKey: string) {
 
 // ───────────────────────────── Trabajos ─────────────────────────────
 
-async function writeBack(d: { db: Db; blobs: BlobStore }, conn: Conn, link: any, flow: any | null, status: string): Promise<Record<string, unknown>> {
+/** Reclamo de last_status de un write-back (como en crm/index.ts): si el estado no llega a escribirse y el trabajo
+ *  falla de forma definitiva, el vínculo vuelve al valor anterior. prior: el valor de antes del primer intento
+ *  (detail.claimPrevious de la ejecución), porque en un reintento el vínculo ya tiene el estado reclamado. */
+interface ClaimOut {
+  runId: string;
+  prior?: { previous: string | null };
+  claim: { linkId: string; previous: string | null; claimed: string; written: boolean } | null;
+}
+
+async function releaseClaim(db: Db, out: ClaimOut) {
+  const c = out.claim;
+  if (!c || c.written || c.previous === c.claimed) return;
+  const back = await db.query(`UPDATE connector_links SET last_status = $2 WHERE id = $1 AND last_status = $3 RETURNING id`, [c.linkId, c.previous, c.claimed]);
+  if (back.length) {
+    await db.query(`UPDATE connector_runs SET detail = detail || $2::jsonb WHERE id = $1`, [out.runId, JSON.stringify({ lastStatusRestored: { from: c.claimed, to: c.previous } })]);
+  }
+}
+
+async function writeBack(d: { db: Db; blobs: BlobStore }, conn: Conn, link: any, flow: any | null, status: string, claimOut?: ClaimOut): Promise<Record<string, unknown>> {
   const { db } = d;
   const wb = { uploadSigned: true, uploadEvidence: false, ...(flow?.write_back ?? {}) };
   const detail: Record<string, unknown> = {};
   // Los trabajos "sent" y "completed" del mismo vínculo pueden correr a la vez (la cola procesa en paralelo): leer
   // last_status al arrancar no alcanzaba y un "sent" podía pisar el estado final (y quedar como last_status). Como en
   // crm/index.ts: se reclama el vínculo por rango antes de escribir y, después, si otro reclamó uno mayor, se reescribe.
-  const claimed = await db.one(`UPDATE connector_links SET last_status = $2 WHERE id = $1 AND ${LINK_RANK_SQL} <= $3 RETURNING id`, [
-    link.id,
-    status,
-    statusRank(status),
-  ]);
+  // El reclamo lee el valor anterior con el registro bloqueado (transacción corta, sin llamadas HTTP adentro).
+  const claimed = await db.tx(async (t) => {
+    const cur = await t.one<{ last_status: string | null }>(`SELECT last_status FROM connector_links WHERE id = $1 FOR UPDATE`, [link.id]);
+    if (!cur || statusRank(cur.last_status) > statusRank(status)) return null;
+    await t.query(`UPDATE connector_links SET last_status = $2 WHERE id = $1`, [link.id, status]);
+    return { previous: cur.last_status };
+  });
   if (!claimed) {
     const cur = await db.one<{ last_status: string | null }>(`SELECT last_status FROM connector_links WHERE id = $1`, [link.id]);
     return { skipped: `el registro ya tiene el estado ${cur?.last_status ?? "?"}` };
+  }
+  if (claimOut) {
+    let previous = claimed.previous;
+    if (claimOut.prior) previous = claimOut.prior.previous;
+    else await db.query(`UPDATE connector_runs SET detail = detail || $2::jsonb WHERE id = $1`, [claimOut.runId, JSON.stringify({ claimPrevious: previous })]);
+    claimOut.claim = { linkId: link.id, previous, claimed: status, written: false };
   }
   const objectType = link.object_type as ConnectorObjectType;
   if (status === "completed" && !link.delivered_at) {
@@ -406,6 +432,7 @@ async function writeBack(d: { db: Db; blobs: BlobStore }, conn: Conn, link: any,
   if (wb.statusProperty && supportsStatus(conn.provider, objectType)) {
     const value = statusValue(wb, status as any);
     await writeStatus(conn, objectType, link.object_id, wb.statusProperty, value);
+    if (claimOut?.claim) claimOut.claim.written = true;
     detail.statusWritten = { property: wb.statusProperty, value };
     const after = (await db.one<{ last_status: string | null }>(`SELECT last_status FROM connector_links WHERE id = $1`, [link.id]))?.last_status ?? null;
     if (after && statusRank(after) > statusRank(status)) {
@@ -419,7 +446,7 @@ async function writeBack(d: { db: Db; blobs: BlobStore }, conn: Conn, link: any,
 
 const LINK_RANK_SQL = `(CASE WHEN last_status IS NULL THEN 0 WHEN last_status = 'sent' THEN 1 ELSE 2 END)`;
 
-export async function handleConnectorJob(d: { db: Db; blobs: BlobStore }, p: { runId: string }) {
+export async function handleConnectorJob(d: { db: Db; blobs: BlobStore }, p: { runId: string }, job?: { attempts: number; maxAttempts: number }) {
   const { db } = d;
   const run = await db.one<any>(`SELECT * FROM connector_runs WHERE id = $1`, [p.runId]);
   if (!run || run.status === "succeeded") return;
@@ -431,11 +458,16 @@ export async function handleConnectorJob(d: { db: Db; blobs: BlobStore }, p: { r
   await db.query(`UPDATE connector_runs SET attempts = attempts + 1, updated_at = now() WHERE id = $1`, [run.id]);
   const conn = open(db, connRow);
   const flow = run.flow_id ? await db.one<any>(`SELECT * FROM connector_flows WHERE id = $1`, [run.flow_id]) : null;
+  const claimOut: ClaimOut = {
+    runId: run.id,
+    prior: run.detail && Object.prototype.hasOwnProperty.call(run.detail, "claimPrevious") ? { previous: run.detail.claimPrevious ?? null } : undefined,
+    claim: null,
+  };
   try {
     if (run.kind === "write_back") {
       const link = await db.one<any>(`SELECT * FROM connector_links WHERE id = $1`, [run.link_id]);
       if (!link) throw new AppError(409, "connector_link_missing", "vínculo inexistente");
-      const detail = await writeBack(d, conn, link, flow, run.event);
+      const detail = await writeBack(d, conn, link, flow, run.event, claimOut);
       await db.query(`UPDATE connector_runs SET status = 'succeeded', error = NULL, detail = detail || $2::jsonb, updated_at = now() WHERE id = $1`, [run.id, JSON.stringify(detail)]);
     } else {
       // Envío disparado por webhook del sistema de origen.
@@ -451,6 +483,8 @@ export async function handleConnectorJob(d: { db: Db; blobs: BlobStore }, p: { r
     const msg = asAppError(err).message.slice(0, 1000);
     await db.query(`UPDATE connector_runs SET status = 'failed', error = $2, updated_at = now() WHERE id = $1`, [run.id, msg]);
     await db.query(`UPDATE connector_connections SET last_error = $2 WHERE id = $1`, [conn.row.id, msg.slice(0, 500)]);
+    // Fallo definitivo (error permanente o último intento de la cola): se suelta el reclamo de last_status.
+    if (permanent(err) || (job && job.attempts >= job.maxAttempts)) await releaseClaim(db, claimOut);
     // Sin acceso o datos que no cierran: no se reintenta solo (queda el error visible y el reintento manual).
     if (permanent(err)) return;
     throw err;

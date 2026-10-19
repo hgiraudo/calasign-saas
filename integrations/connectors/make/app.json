@@ -181,7 +181,7 @@
       }
     }
   },
-  "functions": ["calasignTemplateForm", "calasignRecipients", "calasignFields", "calasignFlattenEvent"],
+  "functions": ["calasignTemplateForm", "calasignRecipients", "calasignFields", "calasignFlattenEvent", "calasignIdempotencyKey", "calasignDocumentId", "calasignDocumentPages", "calasignIsDraft", "calasignNeedsUpload", "calasignShouldSend"],
   "modules": {
     "watchEnvelopeEvents": {
       "label": "Watch Envelope Events",
@@ -243,11 +243,13 @@
         { "name": "subject", "label": "Subject", "type": "text", "help": "Defaults to the template subject." },
         { "name": "message", "label": "Message", "type": "text", "multiline": true },
         { "name": "externalId", "label": "External ID", "type": "text", "help": "Your own reference; comes back in every event as metadata.externalId." },
-        { "name": "send", "label": "Send now", "type": "boolean", "default": true }
+        { "name": "send", "label": "Send now", "type": "boolean", "default": true },
+        { "name": "idempotencyKey", "label": "Idempotency key", "type": "text", "help": "Optional. Retries with the same key never create a second envelope (e.g. map the ID of the source record). By default it is derived from the module data and the day." }
       ],
       "communication": {
         "url": "/v1/envelopes/from-template/{{parameters.templateId}}",
         "method": "POST",
+        "headers": { "Idempotency-Key": "{{calasignIdempotencyKey(parameters, 'sendFromTemplate')}}" },
         "body": {
           "subject": "{{ifempty(parameters.subject, omit)}}",
           "message": "{{ifempty(parameters.message, omit)}}",
@@ -295,16 +297,23 @@
           ]
         },
         { "name": "sequential", "label": "Sign in order", "type": "boolean", "default": false },
-        { "name": "send", "label": "Send now", "type": "boolean", "default": true }
+        { "name": "send", "label": "Send now", "type": "boolean", "default": true },
+        { "name": "idempotencyKey", "label": "Idempotency key", "type": "text", "help": "Optional. Retries with the same key never create a second envelope (e.g. map the ID of the source record). By default it is derived from the module data and the day." }
       ],
       "communication": [
         {
           "url": "/v1/envelopes",
           "method": "POST",
+          "headers": { "Idempotency-Key": "{{calasignIdempotencyKey(parameters, 'sendDocument')}}:create" },
           "body": { "subject": "{{parameters.subject}}", "message": "{{ifempty(parameters.message, omit)}}" },
           "response": { "temp": { "envelopeId": "{{body.envelope.id}}" } }
         },
         {
+          "url": "/v1/envelopes/{{temp.envelopeId}}",
+          "response": { "temp": { "status": "{{body.envelope.status}}", "documentId": "{{calasignDocumentId(body.documents)}}", "pageCount": "{{calasignDocumentPages(body.documents)}}" } }
+        },
+        {
+          "condition": "{{calasignNeedsUpload(temp.status, temp.documentId)}}",
           "url": "/v1/envelopes/{{temp.envelopeId}}/documents",
           "method": "POST",
           "type": "multipart/form-data",
@@ -312,20 +321,23 @@
           "response": { "temp": { "documentId": "{{body.id}}", "pageCount": "{{body.pageCount}}" } }
         },
         {
+          "condition": "{{calasignIsDraft(temp.status)}}",
           "url": "/v1/envelopes/{{temp.envelopeId}}/recipients",
           "method": "PUT",
           "body": { "recipients": "{{calasignRecipients(parameters.signers, parameters.sequential)}}" },
           "response": { "temp": { "recipients": "{{body.recipients}}" } }
         },
         {
+          "condition": "{{calasignIsDraft(temp.status)}}",
           "url": "/v1/envelopes/{{temp.envelopeId}}/fields",
           "method": "PUT",
           "body": { "fields": "{{calasignFields(temp.recipients, temp.documentId, temp.pageCount, parameters.placement)}}" }
         },
         {
-          "condition": "{{parameters.send != false}}",
+          "condition": "{{calasignShouldSend(temp.status, parameters.send)}}",
           "url": "/v1/envelopes/{{temp.envelopeId}}/send",
-          "method": "POST"
+          "method": "POST",
+          "headers": { "Idempotency-Key": "{{calasignIdempotencyKey(parameters, 'sendDocument')}}:send" }
         },
         {
           "url": "/v1/envelopes/{{temp.envelopeId}}",

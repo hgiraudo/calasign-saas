@@ -1,0 +1,27 @@
+{
+  "widget": {
+    "name": "widget.name",
+    "description": "widget.description",
+    "short_description": "widget.short_description",
+    "version": "{{VERSION}}",
+    "interface_version": 2,
+    "init_once": false,
+    "locale": ["es", "en", "pt"],
+    "installation": true,
+    "support": {
+      "link": "{{BASE_URL}}/developers/guides/crm",
+      "email": "soporte@calasign.com"
+    }
+  },
+  "locations": ["lcard-1", "llist-1", "settings"],
+  "tour": {
+    "is_tour": false
+  },
+  "settings": {
+    "note": {
+      "name": "settings.note",
+      "type": "text",
+      "required": false
+    }
+  }
+}

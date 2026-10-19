@@ -36,6 +36,7 @@ export const CONNECTOR_ARTIFACTS = {
   n8nSource: "/integrations/connectors/n8n/n8n-nodes-calasign-source.zip",
   dynamics: "/integrations/connectors/dynamics365/calasign-dynamics365.zip",
   pipedrive: "/integrations/connectors/pipedrive/calasign-pipedrive.zip",
+  kommo: "/integrations/connectors/kommo/calasign-kommo-widget.zip",
   googleWorkspace: "/integrations/connectors/google-workspace/calasign-google-workspace-addon.zip",
 } as const;
 

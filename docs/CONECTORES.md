@@ -10,9 +10,10 @@ agrupa las guías de cada conector.
 |---|---|---|---|---|
 | Low-code / iPaaS | Power Automate / Logic Apps, Zapier, Make, n8n | Artefacto descargable (se importa en la plataforma) | `integrations/connectors/<id>/` | `/developers/connectors` |
 | CRM / ERP | Dynamics 365 (sobre Power Automate) | Artefacto + script de Dataverse | `integrations/connectors/dynamics365/` | `/developers/connectors#dynamics365` |
-| CRM / ERP | HubSpot, Salesforce (Opportunity), Zoho CRM y Bigin (Deals, Contacts, Pipelines), Pipedrive (Deal y Person), Siigo, Alegra | Nativo, se configura en Ajustes | `apps/api/src/modules/crm/` ([CRM.md](CRM.md)) | `/developers/guides/crm` |
+| CRM / ERP | HubSpot, Salesforce (Opportunity), Zoho CRM y Bigin (Deals, Contacts, Pipelines), Pipedrive (Deal y Person), RD Station CRM (Negociação), Kommo (Lead), Siigo, Alegra | Nativo, se configura en Ajustes | `apps/api/src/modules/crm/` ([CRM.md](CRM.md)) | `/developers/guides/crm` |
 | CRM / ERP | Zoho CRM: botón «Enviar a firmar con CalaSign» en Deals (sobre el conector nativo) | Artefacto: función Deluge + guía de la extensión de Zoho Marketplace | `integrations/connectors/zoho-crm/` | `/developers/guides/crm` |
 | CRM / ERP | Pipedrive Marketplace: acción «Enviar a firmar con CalaSign» (sobre el conector nativo) | Artefacto (Link action) + guía del Developer Hub | `integrations/connectors/pipedrive/` | `/developers/guides/crm#pipedrive` |
+| CRM / ERP | Kommo Marketplace: widget «Enviar a firmar con CalaSign» en Leads (sobre el conector nativo) | Artefacto (zip del widget) + página `send.html` + guía de la integración | `integrations/connectors/kommo/` | `/developers/guides/crm#kommo` |
 | RR. HH. | BambooHR, HiBob, Factorial | Nativo | `apps/api/src/modules/connectors/` | `/developers/guides/hr-contracts` |
 | Contratos (CLM) | Ironclad, Juro | Nativo | `apps/api/src/modules/connectors/` | `/developers/guides/hr-contracts` |
 | Gestores documentales | SharePoint, OneDrive, Google Drive, Dropbox, Box, S3 | Nativo (archivado del firmado + evidencia) | `apps/api/src/modules/storage-export.ts` | `/developers/guides/hr-contracts#dms` |
@@ -44,7 +45,7 @@ marketplace, peso en los cuatro mercados (RD, HN, CO, BR) y costo de construir y
 | 6 | **n8n** | Más de 200 mil usuarios activos y más de 3.000 clientes enterprise ([TechCrunch](https://techcrunch.com/2025/03/24/fair-code-pioneer-n8n-raises-60m-for-ai-powered-workflow-automation)). Serie C con valuación de USD 2.500 M ([Pulse2](https://pulse2.com/n8n-180-million-series-c-at-2-5-billion-valuation-raised-for-expanding-ai-orchestration-platform)). | **Ninguno con nodo oficial**: solo nodos de la comunidad ([foro](https://community.n8n.io/t/docusign-node/8059)). | **Hecho**: `n8n` |
 | 7 | **Make** | 3,1 M de usuarios (+68 % en 2024) y más de 2.100 apps ([Make](https://www.make.com/en/blog/2024-automation-wrap-up)). Fuerte en LATAM y España. | DocuSign y Adobe Sign. | **Hecho**: `make` |
 | 8 | **Odoo** | Más de 170 mil clientes ([Glorium](https://gloriumtech.com/odoo-statistics/)). Peso en pymes de CO, RD y HN. | Solo módulos de terceros para DocuSign; Odoo Enterprise trae su propio Sign. | Pendiente (módulo para apps.odoo.com) |
-| 9 | **TOTVS + RD Station** (BR) | TOTVS tiene el 34 % del ERP brasileño, empatado con SAP ([FGV](https://convergenciadigital.com.br/mercado/sap-e-totvs-esto-empatadas-com-33-do-mercado-nacional-de-erp)). RD Station supera los 60 mil clientes. | Clicksign y D4Sign (locales). | Pendiente. RD Station se cubre por ahora vía Zapier/Make. |
+| 9 | **TOTVS + RD Station** (BR) | TOTVS tiene el 34 % del ERP brasileño, empatado con SAP ([FGV](https://convergenciadigital.com.br/mercado/sap-e-totvs-esto-empatadas-com-33-do-mercado-nacional-de-erp)). RD Station supera los 60 mil clientes. | Clicksign y D4Sign (locales). | RD Station CRM: **hecho** (conector nativo, `crm/rdstation.ts`). TOTVS: pendiente. |
 | 10 | **SAP** (Business One; S/4HANA vía BTP) | 34 % del ERP en Brasil y líder en grandes empresas de CO. | DocuSign solo a través de partners en SAP Store. | Pendiente |
 | — | Workato, Boomi (Leaders del Gartner MQ iPaaS 2025), MuleSoft, Tray, Pipedream, Apps Script | Enterprise o de nicho. | DocuSign y Adobe tienen conector en Workato. | Se pueden usar con la API REST y el OpenAPI. Construir conector cuando haya demanda. |
 | — | Siigo, Alegra (CO) | Siigo: más de 1,2 M de clientes. Alegra: unos 476 mil usuarios ([GuíaDeSoftware](https://www.guiadesoftware.com/software/siigo)). | — | Ya existía: write-back en `crm/` |
@@ -77,6 +78,17 @@ campos en un solo pedido, los conectores pueden pasar a usarlo. Los endpoints ac
 | `GET /v1/webhooks/samples?event=&limit=` | Eventos de ejemplo con la forma exacta de una entrega. Se arman con los últimos sobres de la organización y, si no hay, uno sintético. Lo usan `performList` de Zapier y los datos de prueba de Make y n8n. |
 | `GET /v1/templates/{id}/input-schema` | Roles y campos prellenables de una plantilla, más el JSON Schema (draft-04 con `x-ms-summary`) de `roles` y `prefill`. Alimenta los campos dinámicos de las cuatro plataformas. |
 | `POST /v1/envelopes/from-template/{templateId}` | Igual que `/v1/envelopes/from-template`, pero con `roles: { <id o nombre del rol>: { name, email, phone } }` y `prefill: { <id o etiqueta>: valor }`. Ignora los valores vacíos y pasa los números a texto. Envía el sobre salvo que venga `send: false`. |
+
+**Idempotency-Key en los envíos.** Zapier, Make y n8n reintentan la acción entera (timeout, 5xx, ejecuciones
+incompletas, *Retry On Fail*). Los tres mandan `Idempotency-Key`: en «Send from template», en una sola llamada; en «Send
+document» (`_lib/quicksend.cjs`), como `<clave>:create` y `<clave>:send`, y un reintento que recibe el mismo sobre no
+vuelve a subir el PDF ni a enviarlo. La clave es:
+- **n8n:** ejecución + nodo + item (`$execution.id`, id del nodo, `itemIndex`).
+- **Zapier y Make:** no exponen un id de ejecución, así que la clave es el Zap (en Zapier) + un hash de los datos de la
+  acción (sin el PDF) + el día UTC. Un reintento el mismo día no duplica. El mismo envío con datos idénticos otro día sí
+  crea un sobre nuevo. El campo opcional «Idempotency key» la reemplaza (por ejemplo, con el id del registro de origen).
+- **Acción de Pipedrive y widget de Kommo:** `pd-`/`km-<cuenta>-<mapeo>-<registro>-<corrida>`, con la corrida guardada en
+  `sessionStorage`. `POST /v1/crm/mappings/{id}/send` respeta la clave (helper `idempotent()`).
 
 Código en `apps/api/src/modules/lowcode.ts` (OpenAPI: `lowcode-openapi.ts`; contrato: `packages/shared/src/lowcode.ts`).
 Scopes OAuth: `templates:read`, `envelopes:write` y `webhooks:manage`, por prefijo de ruta. No hubo migraciones.
@@ -165,7 +177,20 @@ Scopes OAuth: `templates:read`, `envelopes:write` y `webhooks:manage`, por prefi
   - Link action «Enviar a firmar con CalaSign» → `{APP_URL}/integrations/connectors/pipedrive/send.html` (Deals y Persons).
   - Probar en una cuenta sandbox (archivos y notas con `deals:full`, campo de opción única) y pedir la revisión del
     Marketplace con el listing en es/en/pt.
-- **Siguientes conectores del ranking**: Odoo, TOTVS/RD Station y SAP Business One.
+- **RD Station CRM** (conector nativo, `apps/api/src/modules/crm/rdstation.ts`):
+  - App en la RD Station App Store (<https://appstore.rdstation.com/pt-BR/publisher>) con la URL de callback
+    `{APP_URL}/v1/crm/oauth/rdstation/callback`; cargar `RDSTATION_CLIENT_ID` y `RDSTATION_CLIENT_SECRET`.
+  - Probar con una cuenta real: que el authorize devuelva `state`, el header `Authorization: Bearer`, el upload
+    multipart `data[file]` y que `PUT /deals/{id}` con `custom_fields` parcial no borre los otros campos. Publicar la
+    app en la App Store (listing en pt-BR).
+- **Kommo** (conector nativo + widget, ver `integrations/connectors/kommo/README.md`):
+  - Integración en Kommo (Ajustes → Integraciones → Crear integración) con Redirect URL
+    `{APP_URL}/v1/crm/oauth/kommo/callback` y los permisos CRM + **Access to files**; cargar `KOMMO_CLIENT_ID` y
+    `KOMMO_CLIENT_SECRET`. Subir `calasign-kommo-widget.zip` a la misma integración (reemplazar las imágenes si el
+    validador pide otros tamaños).
+  - Probar con una cuenta real (subida en partes al drive, `PUT /leads/{id}/files`, nota) y pedir la revisión del
+    Kommo Marketplace (cuenta de socio) con los textos en es/en/pt.
+- **Siguientes conectores del ranking**: Odoo, TOTVS y SAP Business One.
 
 ## RR. HH. (HRIS), contratos (CLM) y gestores documentales (DMS)
 
@@ -537,7 +562,7 @@ y Validated ID no se revisaron en línea.
 
 **Conclusión:** CalaSign cubre bien almacenamiento, iPaaS e IA, y con MCP va por delante de la mayoría. Faltan tres
 cosas: apps dentro de las suites ofimáticas (Gmail/Docs, Teams, Slack con acciones), CRM de pymes y de LATAM
-(RD Station, Kommo, Bitrix24, monday; Zoho CRM y Pipedrive ya están hechos) y verificación de identidad local (Registraduría, gov.br/Serpro, RNP,
+(Bitrix24, monday; Zoho CRM, Pipedrive, RD Station CRM y Kommo ya están hechos) y verificación de identidad local (Registraduría, gov.br/Serpro, RNP,
 JCE).
 
 ### Brechas por categoría
@@ -545,7 +570,7 @@ JCE).
 | Categoría | Lo que tiene la mayoría de los competidores | CalaSign |
 |---|---|---|
 | CRM global | Salesforce (AppExchange), HubSpot, Dynamics 365 nativo, Zoho CRM, Pipedrive | Salesforce solo en Opportunity; HubSpot sí; Zoho CRM y Bigin sí (nativo + botón en Deals); Pipedrive sí (nativo + acción del Marketplace); Dynamics vía Power Automate |
-| CRM LATAM | RD Station y Kommo (Clicksign y ZapSign vía Pluga), Bitrix24 (Clicksign, D4Sign) | **No** |
+| CRM LATAM | RD Station y Kommo (Clicksign y ZapSign vía Pluga), Bitrix24 (Clicksign, D4Sign) | RD Station CRM y Kommo sí (nativos; Kommo con widget); **sin Bitrix24** |
 | Ofimática | Add-on de Gmail, Docs y Drive (DocuSign, Dropbox Sign, Zoho); app de Teams (Adobe, Zoho) | Word, Outlook y add-on de Google Workspace sí; **sin app de Teams** |
 | Mensajería con acciones | App de Slack (DocuSign); firma por WhatsApp (BoldSign, ZapSign, Truora) | Solo avisos (Slack, Teams, Discord, Google Chat, Mattermost, Rocket.Chat, Webex, Telegram, WhatsApp) |
 | Almacenamiento | Drive, Dropbox, OneDrive, Box, SharePoint | **Completo** |
@@ -568,8 +593,8 @@ JCE).
 | 4 | App de Microsoft Teams (enviar, aprobar, avisos con Adaptive Cards) | Completa Word y Outlook | M | AppSource, reutilizando el backend de Outlook |
 | 5 | Pipedrive | Muy popular en BR y CO | S–M | **Hecho**: conector nativo (`apps/api/src/modules/crm/pipedrive.ts`) + acción del Marketplace (`integrations/connectors/pipedrive/`); falta publicar la app ([CRM.md](CRM.md)) |
 | 6 | Verificación de identidad local (CO, BR, HN, RD) | Lo que más diferencia en LATAM | L | Nativo, con un agregador (Truora, unico, Metamap) |
-| 7 | RD Station CRM | CRM líder en Brasil; Clicksign ya está | S–M | RD Station App Store |
-| 8 | Kommo | Ventas por WhatsApp en LATAM | S–M | Kommo Marketplace |
+| 7 | ~~RD Station CRM~~ **Hecho** | CRM líder en Brasil; Clicksign ya está | S–M | Conector nativo (`apps/api/src/modules/crm/rdstation.ts`: API v2 con OAuth de la App Store, Negociação con sus contatos, estado en un campo personalizado, PDF en Anexos + anotação). Falta publicar la app en la RD Station App Store ([CRM.md](CRM.md)) |
+| 8 | ~~Kommo~~ **Hecho** | Ventas por WhatsApp en LATAM | S–M | Conector nativo (`apps/api/src/modules/crm/kommo.ts`: OAuth por subdominio, Lead con sus contactos, estado en un campo del lead, PDF por la Files API + nota) + widget (`integrations/connectors/kommo/`). Falta publicar en el Kommo Marketplace |
 | 9 | Dynamics 365 nativo | Power Automate solo no compite con DocuSign | M–L | Solución gestionada en AppSource |
 | 10 | App de Slack interactiva | Hoy solo hay webhook entrante | S | Slack Marketplace |
 | 11 | monday.com | DocuSign y PandaDoc la tienen | S–M | monday Marketplace |

@@ -33,9 +33,9 @@ type PlatformJob =
   | { kind: "crm"; runId: string }
   | { kind: "connector"; runId: string };
 
-export async function handlePlatformJob(d: { db: Db; blobs: BlobStore }, p: PlatformJob) {
+export async function handlePlatformJob(d: { db: Db; blobs: BlobStore }, p: PlatformJob, job?: { attempts: number; maxAttempts: number }) {
   if (p.kind === "notify") return deliverNotificationJob(d.db, p);
   if (p.kind === "export") return exportEnvelopeJob(d.db, d.blobs, p);
-  if (p.kind === "crm") return handleCrmJob(d, p);
-  if (p.kind === "connector") return handleConnectorJob(d, p);
+  if (p.kind === "crm") return handleCrmJob(d, p, job);
+  if (p.kind === "connector") return handleConnectorJob(d, p, job);
 }

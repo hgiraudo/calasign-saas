@@ -1,5 +1,5 @@
 "use strict";
-const { url, requester, flattenEnvelope } = require("../lib/api");
+const { url, requester, flattenEnvelope, idempotencyKey, IDEMPOTENCY_FIELD } = require("../lib/api");
 const { quickSend } = require("../lib/quicksend");
 
 const ENVELOPE_SAMPLE = {
@@ -80,12 +80,14 @@ const sendFromTemplate = {
       { key: "message", label: "Message", required: false, type: "text" },
       { key: "external_id", label: "External ID", required: false, helpText: "Your own reference (comes back in every event as metadata.externalId)." },
       { key: "send", label: "Send now", type: "boolean", default: "true", required: false },
+      IDEMPOTENCY_FIELD,
       templateFields,
     ],
     perform: async (z, bundle) => {
       const res = await z.request({
         url: url(`/v1/envelopes/from-template/${encodeURIComponent(bundle.inputData.templateId)}`),
         method: "POST",
+        headers: { "Idempotency-Key": idempotencyKey(bundle, "send_from_template") },
         body: templateBody(bundle.inputData),
       });
       return flattenEnvelope(res.data);
@@ -117,6 +119,7 @@ const sendDocument = {
       { key: "placement", label: "Signature placement", required: false, default: "auto", choices: { auto: "Last page (automatic)", anchors: "Anchor texts \\firma1\\, \\firma2\\… in the PDF" } },
       { key: "sequential", label: "Sign in order", type: "boolean", default: "false", required: false },
       { key: "external_id", label: "External ID", required: false },
+      IDEMPOTENCY_FIELD,
     ],
     perform: async (z, bundle) => {
       const i = bundle.inputData;
@@ -132,6 +135,7 @@ const sendDocument = {
         placement: i.placement,
         sequential: i.sequential === true || i.sequential === "true",
         metadata: i.external_id ? { externalId: String(i.external_id) } : undefined,
+        idempotencyKey: idempotencyKey(bundle, "send_document"),
       });
       return flattenEnvelope(detail);
     },

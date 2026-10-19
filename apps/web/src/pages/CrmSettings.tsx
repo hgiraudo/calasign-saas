@@ -50,7 +50,20 @@ const TOKEN_FIELDS: Record<CrmProvider, { key: string; label: string; secret?: b
     { key: "token", label: "alegra.token", secret: true },
   ],
   pipedrive: [],
+  rdstation: [],
+  kommo: [],
 };
+
+/** Proveedores que se conectan con OAuth (botón «Conectar con OAuth» o "OAuth no configurado"). */
+const OAUTH_PROVIDERS: readonly CrmProvider[] = ["hubspot", "salesforce", "zoho", "pipedrive", "rdstation", "kommo"];
+
+/** Ejemplo del campo de estado del registro según el proveedor. */
+function statusPlaceholder(provider: CrmProvider | undefined, t: (k: string) => string): string {
+  if (provider === "salesforce") return "CalaSign_Status__c";
+  if (provider === "zoho") return "CalaSign_Status";
+  if (provider === "pipedrive" || provider === "rdstation" || provider === "kommo") return t(`${provider}.statusPlaceholder`);
+  return "calasign_status";
+}
 
 export function CrmSettingsPage() {
   const t = useCrmText();
@@ -90,6 +103,8 @@ export function CrmSettingsPage() {
     if (params.get("connected")) setNote(t("connected"));
     // Instalación iniciada desde el Marketplace de Pipedrive: falta conectar desde acá (el OAuth lo inicia CalaSign).
     if (params.get("pipedrive_install")) setNote(t("pipedrive.install"));
+    // Igual desde Kommo (widget o integración instalada desde la cuenta de Kommo).
+    if (params.get("kommo_install")) setNote(t("kommo.install"));
     if (params.get("error")) setError(t("error", { code: params.get("error") ?? "" }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -180,7 +195,7 @@ export function CrmSettingsPage() {
                     </label>
                   </div>
                 )}
-                {(pv.provider === "hubspot" || pv.provider === "salesforce" || pv.provider === "zoho" || pv.provider === "pipedrive") &&
+                {OAUTH_PROVIDERS.includes(pv.provider) &&
                   (pv.oauthConfigured ? (
                     <button type="button" className="btn btn-primary" onClick={() => startOAuth(pv.provider)}>
                       {t("connectOAuth")}
@@ -652,6 +667,7 @@ function MappingEditor({
       )}
 
       {provider === "pipedrive" && <p className="muted small">{t(objectType === "contact" ? "pipedrive.hint.person" : "pipedrive.hint.deal")}</p>}
+      {(provider === "rdstation" || provider === "kommo") && <p className="muted small">{t(`${provider}.hint.deal`)}</p>}
 
       {!isErp && (
         <>
@@ -803,7 +819,7 @@ function MappingEditor({
           <div className="row-wrap">
             <label className="field grow">
               <span>{t("m.statusProperty")}</span>
-              <input value={statusProperty} placeholder={provider === "salesforce" ? "CalaSign_Status__c" : provider === "zoho" ? "CalaSign_Status" : provider === "pipedrive" ? t("pipedrive.statusPlaceholder") : "calasign_status"} onChange={(e) => setStatusProperty(e.target.value)} />
+              <input value={statusProperty} placeholder={statusPlaceholder(provider, t)} onChange={(e) => setStatusProperty(e.target.value)} />
             </label>
             <label className="field grow">
               <span>{t("m.completedValue")}</span>

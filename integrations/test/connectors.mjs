@@ -7,7 +7,8 @@
 //   5. n8n: paquete npm (.tgz), carga de nodos con n8n-workflow simulado, trigger y firma HMAC,
 //   6. Make: referencias rpc/webhook/funciones, IML balanceado, funciones IML,
 //   7. Dynamics 365: web resource con Xrm simulado y setup-dataverse idempotente,
-//   8. Zoho CRM: función Deluge del botón (endpoint del conector nativo y sintaxis básica).
+//   8. Zoho CRM: función Deluge del botón (endpoint del conector nativo y sintaxis básica),
+//   9. Kommo: widget (manifiesto, i18n, botón con APP/jQuery simulados) y la página send.html.
 //
 //   node integrations/test/connectors.mjs
 import assert from "node:assert/strict";
@@ -226,6 +227,51 @@ await test("quicksend: anclas \\firmaN\\, borrador sin enviar y validaciones", a
   await assert.rejects(qs.quickSend(request, { subject: "S", signers: [{ name: "A", email: "a@x.com" }] }), /PDF/);
 });
 
+await test("quicksend: con idempotencyKey un reintento no duplica el sobre, el PDF ni el envío", async () => {
+  // API simulada con estado: el create con la misma Idempotency-Key devuelve el mismo sobre (respuesta guardada).
+  const state = { status: "draft", documents: [], sendFails: true, uploads: 0, creates: new Map() };
+  const calls = [];
+  const request = async (method, path, opts = {}) => {
+    calls.push({ method, path, headers: opts.headers });
+    if (method === "POST" && path === "/v1/envelopes") {
+      const k = opts.headers?.["Idempotency-Key"];
+      if (!state.creates.has(k)) state.creates.set(k, { envelope: { id: `env${state.creates.size + 1}`, status: "draft" } });
+      return state.creates.get(k);
+    }
+    if (path.endsWith("/documents")) {
+      state.uploads++;
+      state.documents.push({ id: "doc1", pageCount: 2 });
+      return { id: "doc1", pageCount: 2 };
+    }
+    if (path.endsWith("/recipients")) return { recipients: opts.json.recipients.map((r, i) => ({ ...r, id: `r${i}` })) };
+    if (path.endsWith("/fields")) return {};
+    if (path.endsWith("/send")) {
+      if (state.sendFails) {
+        state.sendFails = false;
+        state.status = "sent"; // el envío salió pero la respuesta se perdió (504)
+        throw new Error("HTTP 504");
+      }
+      state.status = "sent";
+      return {};
+    }
+    if (method === "GET") return { envelope: { id: "env1", status: state.status }, documents: state.documents };
+    throw new Error(`inesperado ${method} ${path}`);
+  };
+  const input = { subject: "S", fileName: "a.pdf", fileBytes: Buffer.from("%PDF"), signers: [{ name: "A", email: "a@x.com" }], idempotencyKey: "zap-1-abc" };
+  await assert.rejects(qs.quickSend(request, input), /504/);
+  assert.equal(calls[0].headers["Idempotency-Key"], "zap-1-abc:create");
+  assert.equal(calls.find((c) => c.path.endsWith("/send")).headers["Idempotency-Key"], "zap-1-abc:send");
+  const res = await qs.quickSend(request, input); // reintento de la plataforma
+  assert.equal(res.envelope.status, "sent");
+  assert.equal(state.creates.size, 1, "un solo sobre");
+  assert.equal(state.uploads, 1, "el PDF no se sube dos veces");
+  assert.equal(calls.filter((c) => c.path.endsWith("/send")).length, 1, "no se vuelve a enviar");
+  // Sin la falla: reintento con el sobre en borrador y el PDF ya subido → no se sube otra vez.
+  Object.assign(state, { status: "draft", sendFails: false });
+  await qs.quickSend(request, input);
+  assert.equal(state.uploads, 1);
+});
+
 await test("quicksend: flattenEvent", () => {
   const f = qs.flattenEvent({ id: "e1", type: "recipient.signed", createdAt: "t", data: { envelope: { id: "env1", status: "sent", recipients: [{ id: "r1", name: "Ana", email: "a@x.com" }] }, recipientId: "r1" } });
   assert.equal(f.envelope_id, "env1");
@@ -328,6 +374,7 @@ await test("zapier: enviar desde plantilla con campos dinámicos y enviar PDF (s
   const R = "0190a000-0000-7000-8000-000000000001";
   const F = "0190a000-0000-7000-8000-0000000000f2";
   let sentBody;
+  let env2Sent = false;
   const { z, log } = fakeZ(
     {
       [`GET /v1/templates/${T}/input-schema`]: [200, { roles: [{ id: R, name: "Cliente" }], fields: [{ id: F, label: "Monto", type: "number" }] }],
@@ -341,8 +388,8 @@ await test("zapier: enviar desde plantilla con campos dinámicos y enviar PDF (s
       "POST /v1/envelopes/env2/documents": [201, { id: "d1", pageCount: 1 }],
       "PUT /v1/envelopes/env2/recipients": (req) => [200, { recipients: req.body.recipients.map((r, i) => ({ ...r, id: `r${i}` })) }],
       "PUT /v1/envelopes/env2/fields": [200, {}],
-      "POST /v1/envelopes/env2/send": [200, {}],
-      "GET /v1/envelopes/env2": [200, { envelope: { id: "env2", status: "sent" }, recipients: [] }],
+      "POST /v1/envelopes/env2/send": () => ((env2Sent = true), [200, {}]),
+      "GET /v1/envelopes/env2": () => [200, { envelope: { id: "env2", status: env2Sent ? "sent" : "draft" }, documents: [], recipients: [] }],
       "POST /v1/envelopes/bad/void": [422, { error: { code: "not_sent", message: "El sobre no está enviado" } }],
     },
     bundle,
@@ -356,9 +403,22 @@ await test("zapier: enviar desde plantilla con campos dinámicos y enviar PDF (s
   });
   assert.equal(out.envelope_id, "env1");
   assert.deepEqual(sentBody, { subject: "Hola", roles: { [R]: { name: "Ana", email: "ana@x.com", phone: null } }, prefill: { [F]: "150" }, metadata: { externalId: "CRM-1" }, send: true });
+  // Idempotency-Key: estable para los mismos datos (un reintento de Zapier no crea otro sobre) y reemplazable.
+  const tplReqs = log.filter((r) => r.url.endsWith(`/v1/envelopes/from-template/${T}`));
+  assert.match(tplReqs[0].headers["Idempotency-Key"], /^zap-x-send_from_template-[0-9a-f]{32}-\d{4}-\d{2}-\d{2}$/);
+  await zapApp.creates.send_from_template.operation.perform(z, {
+    ...bundle,
+    inputData: { templateId: T, subject: "Hola", [`role_${R}_name`]: "Ana", [`role_${R}_email`]: "ana@x.com", [`role_${R}_phone`]: "", [`prefill_${F}`]: 150, external_id: "CRM-1" },
+  });
+  const again = log.filter((r) => r.url.endsWith(`/v1/envelopes/from-template/${T}`));
+  assert.equal(again[1].headers["Idempotency-Key"], again[0].headers["Idempotency-Key"]);
+  await zapApp.creates.send_from_template.operation.perform(z, { ...bundle, inputData: { templateId: T, idempotency_key: "deal-42" } });
+  assert.equal(log.filter((r) => r.url.endsWith(`/v1/envelopes/from-template/${T}`))[2].headers["Idempotency-Key"], "zap-deal-42");
 
   const doc = await zapApp.creates.send_document.operation.perform(z, { ...bundle, inputData: { file: "https://files.example.org/a.pdf", subject: "PDF", signers: [{ name: "Ana", email: "a@x.com" }] } });
   assert.equal(doc.status, "sent");
+  assert.match(log.find((r) => r.url.endsWith("/v1/envelopes") && r.method === "POST").headers["Idempotency-Key"], /^zap-x-send_document-[0-9a-f]{32}-.*:create$/);
+  assert.match(log.find((r) => r.url.endsWith("/env2/send")).headers["Idempotency-Key"], /:send$/);
   const fileReq = log.find((r) => r.url === "https://files.example.org/a.pdf");
   assert.equal(fileReq.headers.Authorization, undefined, "la API key no va a URLs de terceros");
   // Un 401 del host del archivo no es "CalaSign rejected the API key".
@@ -499,8 +559,10 @@ await test("n8n: enviar desde plantilla, enviar PDF y descargar el firmado", asy
       additionalFields: { externalId: "X9" },
     },
     { "POST /v1/envelopes/from-template/tpl1": (o) => ((body = o.body), { envelope: { id: "env1" } }) },
+    { getExecutionId: () => "exec-7", getNode: () => ({ id: "node-abc", name: "CalaSign" }) },
   );
   const [out] = await node.execute.call(ctx);
+  assert.equal(ctx.calls[0].headers["Idempotency-Key"], "n8n-exec-7-node-abc-sendFromTemplate-0", "clave de ejecución + nodo + item");
   assert.equal(out[0].json.envelope.id, "env1");
   assert.equal(ctx.calls[0].cred, "calaSignOAuth2Api");
   assert.deepEqual(body, { roles: { r1: { name: "Ana", email: "ana@x.com", phone: null } }, prefill: { f1: "ACME" }, send: true, metadata: { externalId: "X9" } });
@@ -513,10 +575,12 @@ await test("n8n: enviar desde plantilla, enviar PDF y descargar el firmado", asy
       "PUT /v1/envelopes/e2/recipients": (o) => ({ recipients: o.body.recipients.map((r) => ({ ...r, id: "r1" })) }),
       "PUT /v1/envelopes/e2/fields": {},
       "POST /v1/envelopes/e2/send": {},
-      "GET /v1/envelopes/e2": { envelope: { id: "e2", status: "sent" } },
+      "GET /v1/envelopes/e2": () => ({ envelope: { id: "e2", status: ctx2.calls.some((c) => c.url.endsWith("/e2/send")) ? "sent" : "draft" }, documents: [] }),
     },
+    { getExecutionId: () => "exec-8", getNode: () => ({ id: "node-abc", name: "CalaSign" }) },
   );
   const [out2] = await node.execute.call(ctx2);
+  assert.equal(ctx2.calls.find((c) => c.url.endsWith("/v1/envelopes") && c.method === "POST").headers["Idempotency-Key"], "n8n-exec-8-node-abc-sendDocument-0:create");
   assert.equal(out2[0].json.envelope.status, "sent");
 
   const ctx3 = n8nCtx(
@@ -571,6 +635,20 @@ await test("make: funciones IML (formulario de plantilla, destinatarios y campos
   assert.ok(fields.every((f) => f.page === 3 && f.x + f.width <= 1 && f.y + f.height <= 1));
   assert.equal(sandbox.calasignFields([{ id: "r1", role: "signer" }], "d1", 1, "anchors")[0].anchor.text, "\\firma1\\");
   assert.equal(sandbox.calasignFlattenEvent({ id: "e", type: "envelope.completed", data: { envelope: { id: "x", recipients: [] } } }).envelope_id, "x");
+  // Idempotency-Key: estable para los mismos parámetros (sin el PDF), distinta con otros datos, reemplazable.
+  const k1 = sandbox.calasignIdempotencyKey({ templateId: "t1", roles: { r1: { name: "A" } } }, "sendFromTemplate");
+  assert.match(k1, /^make-sendFromTemplate-[0-9a-f]{16}-\d{4}-\d{2}-\d{2}$/);
+  assert.equal(sandbox.calasignIdempotencyKey({ templateId: "t1", roles: { r1: { name: "A" } } }, "sendFromTemplate"), k1);
+  assert.notEqual(sandbox.calasignIdempotencyKey({ templateId: "t1", roles: { r1: { name: "B" } } }, "sendFromTemplate"), k1);
+  assert.equal(sandbox.calasignIdempotencyKey({ subject: "S", data: "AAA" }, "sendDocument"), sandbox.calasignIdempotencyKey({ subject: "S", data: "BBB" }, "sendDocument"));
+  assert.equal(sandbox.calasignIdempotencyKey({ idempotencyKey: "deal-42" }, "x"), "make-deal-42");
+  assert.equal(sandbox.calasignDocumentId([{ id: "d1", pageCount: 3 }]), "d1");
+  assert.equal(sandbox.calasignDocumentPages([]), null);
+  assert.equal(sandbox.calasignNeedsUpload("draft", null), true);
+  assert.equal(sandbox.calasignNeedsUpload("draft", "d1"), false);
+  assert.equal(sandbox.calasignShouldSend("draft", false), false);
+  assert.equal(sandbox.calasignShouldSend("sent", true), false);
+  assert.equal(sandbox.calasignShouldSend("draft", undefined), true);
 });
 
 // ───────── 7. Dynamics 365 ─────────
@@ -684,11 +762,16 @@ await test("pipedrive: la acción lee los ids, filtra mapeos y envía uno por re
     objectType: "deal",
     ids: ["42", "43"],
     truncated: false,
+    total: 2,
+    skipped: 0,
     companyId: "5150",
   });
   assert.equal(PD.parseParams("?resource=person&selectedIds=8").objectType, "contact");
   assert.equal(PD.parseParams("?resource=organization&selectedIds=8").objectType, null);
-  assert.equal(PD.parseParams(`?resource=deal&selectedIds=${Array.from({ length: 25 }, (_, i) => i + 1).join(",")}`).ids.length, 20);
+  const many = PD.parseParams(`?resource=deal&selectedIds=${Array.from({ length: 25 }, (_, i) => i + 1).join(",")}`);
+  assert.equal(many.ids.length, 20);
+  assert.equal(many.skipped, 5, "se informan los que quedan sin enviar");
+  for (const l of ["es", "en", "pt"]) assert.match(PD.TEXT[l].truncated, /\{total\}.*\{n\}/);
   assert.equal(PD.lang({ language: "pt-BR" }), "pt");
   assert.equal(PD.lang({ language: "en-US" }), "en");
 
@@ -701,10 +784,10 @@ await test("pipedrive: la acción lee los ids, filtra mapeos y envía uno por re
   ];
   let loggedIn = true;
   const fakeFetch = async (url, init) => {
-    calls.push({ url, method: init.method, credentials: init.credentials, body: init.body ? JSON.parse(init.body) : null });
+    calls.push({ url, method: init.method, credentials: init.credentials, headers: init.headers, body: init.body ? JSON.parse(init.body) : null });
     const res = (status, body) => ({ ok: status < 400, status, text: async () => JSON.stringify(body) });
     if (!loggedIn) return res(401, { error: { code: "unauthorized", message: "Sin sesión" } });
-    if (url === `${BASE}/v1/crm/mappings?provider=pipedrive`) return res(200, { items: mappings });
+    if (url === `${BASE}/v1/crm/mappings?provider=pipedrive` || url === `${BASE}/v1/crm/mappings?provider=pipedrive&companyId=5150`) return res(200, { items: mappings });
     const m = url.match(/\/v1\/crm\/mappings\/(\w+)\/send$/);
     if (m && init.body) {
       const b = JSON.parse(init.body);
@@ -727,6 +810,20 @@ await test("pipedrive: la acción lee los ids, filtra mapeos y envía uno por re
     [`${BASE}/v1/crm/mappings/m1/send`, { objectId: "42", send: true }],
     [`${BASE}/v1/crm/mappings/m1/send`, { objectId: "43", send: true }],
   ]);
+  // Con companyId (la compañía desde la que se abrió la acción) se filtran los mapeos y se manda en cada envío.
+  assert.equal(PD.parseParams("?resource=deal&selectedIds=42&companyId=x;1").companyId, null);
+  calls.length = 0;
+  const withCompany = PD.parseParams("?resource=deal&selectedIds=42&companyId=5150");
+  assert.equal((await PD.load(api, withCompany)).state, "ready");
+  assert.equal(calls[0].url, `${BASE}/v1/crm/mappings?provider=pipedrive&companyId=5150`);
+  await PD.sendAll(api, "m1", ["42"], true, withCompany.companyId, "run1");
+  assert.deepEqual(calls[1].body, { objectId: "42", send: true, companyId: "5150" });
+  assert.equal(calls[1].headers["Idempotency-Key"], "pd-5150-m1-42-run1", "Idempotency-Key estable por registro y corrida");
+  // runId: se guarda en sessionStorage por URL (recargar la pestaña reutiliza las claves).
+  const store = new Map();
+  const win = { location: { search: "?resource=deal&selectedIds=42" }, crypto: { randomUUID: () => `u${store.size}` }, sessionStorage: { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v) } };
+  assert.equal(PD.runIdFor(win), PD.runIdFor(win));
+  assert.equal(PD.runIdFor({ ...win, sessionStorage: { getItem: () => { throw new Error("bloqueado"); } } }).length > 0, true);
   assert.equal((await PD.load(api, PD.parseParams("?resource=person&selectedIds=8"))).mappings[0].id, "m3");
   assert.equal((await PD.load(api, PD.parseParams("?resource=deal"))).key, "noRecords");
   assert.equal((await PD.load(api, PD.parseParams("?resource=lead&selectedIds=1"))).key, "badResource");
@@ -734,6 +831,94 @@ await test("pipedrive: la acción lee los ids, filtra mapeos y envía uno por re
   assert.equal((await PD.load(api, PD.parseParams("?resource=deal&selectedIds=42"))).key, "noMappings");
   loggedIn = false;
   assert.equal((await PD.load(api, PD.parseParams("?resource=deal&selectedIds=42"))).state, "login");
+});
+
+// ───────── Kommo (widget sobre el conector nativo) ─────────
+
+await test("kommo: registrado, zip del widget con manifest/i18n/images y página send.html", () => {
+  const idx = JSON.parse(readFileSync(C("index.json"), "utf8"));
+  const km = idx.connectors.find((c) => c.id === "kommo");
+  assert.ok(km, "kommo en connectors/index.json");
+  assert.deepEqual(km.artifacts, ["/integrations/connectors/kommo/calasign-kommo-widget.zip"]);
+  const zip = readZip(readFileSync(C("kommo/calasign-kommo-widget.zip")));
+  for (const f of ["manifest.json", "script.js", "i18n/es.json", "i18n/en.json", "i18n/pt.json", "images/logo_min.png", "images/logo_main.png"]) assert.ok(zip.has(f), f);
+  const manifest = JSON.parse(zip.get("manifest.json").toString("utf8"));
+  assert.equal(manifest.widget.interface_version, 2);
+  assert.deepEqual(manifest.locations.filter((l) => l.startsWith("l")), ["lcard-1", "llist-1"]);
+  for (const l of manifest.widget.locale) {
+    const tr = JSON.parse(zip.get(`i18n/${l}.json`).toString("utf8"));
+    for (const k of ["name", "description", "short_description", "button"]) assert.ok(tr.widget[k], `${l}: widget.${k}`);
+    for (const k of Object.keys(manifest.settings)) assert.ok(tr.settings[k], `${l}: settings.${k}`);
+  }
+  assert.ok(zip.get("script.js").toString("utf8").includes(`var BASE = "${BASE}";`), "el widget apunta a esta base");
+  const html = readFileSync(C("kommo/send.html"), "utf8");
+  assert.match(html, /<script src="send\.js\?v=[^"]+" defer><\/script>/);
+  assert.doesNotMatch(html, /<script>|<style>|style="/, "sin scripts ni estilos en línea (CSP de helmet)");
+  assert.ok(existsSync(C("kommo/send.css")), "send.css");
+});
+
+await test("kommo: el widget pinta el botón en la ficha del lead y abre CalaSign con los ids (ficha y lista)", () => {
+  const src = readFileSync(C("kommo/calasign-kommo-widget.zip"));
+  const script = readZip(src).get("script.js").toString("utf8");
+  let factory = null;
+  const handlers = {};
+  const docChain = { off: () => docChain, on: (_ev, sel, fn) => ((handlers[sel] = fn), docChain) };
+  const $ = (x) => (x === "<div>" ? { text: (t) => ({ html: () => String(t).replace(/</g, "&lt;") }) } : docChain);
+  const opened = [];
+  const APP = { data: { current_card: { id: 42 } }, constant: (k) => (k === "account" ? { id: 31337, subdomain: "acme" } : null) };
+  vm.runInNewContext(script, { define: (_deps, fn) => (factory = fn), window: { open: (...a) => opened.push(a) }, document: {}, APP });
+  const CustomWidget = factory($);
+  let tpl = null;
+  let area = "lcard";
+  CustomWidget.prototype.system = () => ({ area });
+  CustomWidget.prototype.i18n = (k) => (k === "widget" ? { button: "Enviar <ya>" } : {});
+  CustomWidget.prototype.render_template = (t) => (tpl = t);
+  CustomWidget.prototype.list_selected = () => ({ selected: [{ id: 7 }, { id: "8" }, { id: 7 }, { id: "x" }] });
+  const w = new CustomWidget();
+  assert.equal(w.callbacks.render(), true);
+  assert.ok(tpl && tpl.render.includes("calasign-send") && tpl.render.includes("Enviar &lt;ya>"), "botón con el texto escapado");
+  assert.equal(w.callbacks.bind_actions(), true);
+  handlers[".calasign-send"]();
+  assert.deepEqual(opened[0], [`${BASE}/integrations/connectors/kommo/send.html?ids=42&companyId=31337`, "_blank", "noopener"]);
+  w.callbacks.leads.selected();
+  assert.equal(opened[1][0], `${BASE}/integrations/connectors/kommo/send.html?ids=7,8&companyId=31337`);
+  // En la lista (u otra área) no pinta nada en el panel.
+  tpl = null;
+  area = "llist";
+  assert.equal(w.callbacks.render(), true);
+  assert.equal(tpl, null);
+});
+
+await test("kommo: send.js lee los ids, filtra mapeos de leads y envía uno por lead con la sesión", async () => {
+  const KM = require(C("kommo/send.js"));
+  assert.deepEqual(KM.parseParams("?ids=42,43,42,x1&companyId=31337"), { ids: ["42", "43"], truncated: false, total: 2, skipped: 0, companyId: "31337" });
+  assert.equal(KM.parseParams("?ids=1&companyId=a/b").companyId, null);
+  assert.equal(KM.parseParams(`?ids=${Array.from({ length: 25 }, (_, i) => i + 1).join(",")}`).ids.length, 20);
+  assert.equal(KM.parseParams(`?ids=${Array.from({ length: 25 }, (_, i) => i + 1).join(",")}`).skipped, 5);
+  const mappings = [
+    { id: "m1", name: "Leads", objectType: "deal", templateId: "t1", active: true, send: true },
+    { id: "m2", name: "Inactivo", objectType: "deal", templateId: "t1", active: false, send: true },
+  ];
+  const calls = [];
+  let loggedIn = true;
+  const fakeFetch = async (url, init) => {
+    calls.push({ url, method: init.method, credentials: init.credentials, headers: init.headers, body: init.body ? JSON.parse(init.body) : null });
+    const res = (status, body) => ({ ok: status < 400, status, text: async () => JSON.stringify(body) });
+    if (!loggedIn) return res(401, { error: { code: "unauthorized", message: "Sin sesión" } });
+    if (url === `${BASE}/v1/crm/mappings?provider=kommo&companyId=31337`) return res(200, { items: mappings });
+    if (/\/v1\/crm\/mappings\/m1\/send$/.test(url)) return res(201, { envelopeId: `env-${JSON.parse(init.body).objectId}`, status: "sent" });
+    return res(404, { error: { message: "?" } });
+  };
+  const api = KM.apiFactory(fakeFetch, BASE);
+  const ready = await KM.load(api, KM.parseParams("?ids=42&companyId=31337"));
+  assert.deepEqual(ready.mappings.map((x) => x.id), ["m1"]);
+  assert.equal(calls[0].credentials, "include");
+  assert.deepEqual(await KM.sendAll(api, "m1", ["42"], true, "31337", "r9"), [{ id: "42", ok: true, envelopeId: "env-42", status: "sent" }]);
+  assert.deepEqual(calls.at(-1).body, { objectId: "42", send: true, companyId: "31337" });
+  assert.equal(calls.at(-1).headers["Idempotency-Key"], "km-31337-m1-42-r9");
+  assert.equal((await KM.load(api, KM.parseParams("?ids="))).key, "noRecords");
+  loggedIn = false;
+  assert.equal((await KM.load(api, KM.parseParams("?ids=42"))).state, "login");
 });
 
 // ───────── Zoho CRM ─────────

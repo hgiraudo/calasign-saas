@@ -83,44 +83,65 @@ export const docsPt: Record<DocsKey, string> = {
   // ───────── Início rápido ─────────
   "qs.title": "Início rápido",
   "qs.lead":
-    "Em cinco minutos você vai criar um envelope, enviar um PDF, adicionar uma signatária, posicionar o campo de assinatura, enviá-lo e baixar o documento assinado. Você precisa de `curl` (e `jq` para o script completo), Node.js 18+ ou Python 3.8+ e um PDF de teste.",
+    "Com **uma única chamada** você cria o envelope com o PDF, a signatária e o campo de assinatura, e o envia. Depois espera a assinatura e baixa o documento assinado. Você precisa de `curl` (e `jq`), Node.js 18+ ou Python 3.8+ e um PDF de teste que contenha o texto `[[firma]]`.",
   "qs.key.h": "1. Obtenha uma API key",
   "qs.key.p":
     "Crie uma conta em [{{BASE}}/signup]({{BASE}}/signup) (ou entre com a sua), vá em **Configurações → API keys** ([`/app/settings/api-keys`](/app/settings/api-keys)) e clique em **Criar**. O segredo é exibido **uma única vez**: guarde-o em um gerenciador de segredos ou em uma variável de ambiente, nunca no código nem no frontend.",
-  "qs.create.h": "2. Crie o envelope",
-  "qs.create.p":
-    "Um **envelope** agrupa os documentos, os destinatários e os campos. Ele nasce como rascunho (`draft`). Use `metadata` para guardar seus próprios identificadores (eles voltam em cada webhook) e envie uma `Idempotency-Key` para que uma nova tentativa não crie um envelope duplicado.",
-  "qs.create.resp": "A resposta traz o detalhe completo do envelope. Guarde `envelope.id`: você vai usá-lo nos próximos passos. Se você não informar `expiresAt`, o envelope expira em 30 dias.",
-  "qs.upload.h": "3. Envie o PDF",
-  "qs.upload.p":
-    "Envie o arquivo como `multipart/form-data` no campo `file`. Você pode enviar vários PDFs para o mesmo envelope: eles são assinados na ordem em que foram enviados. A resposta traz o `id` do documento, seu número de páginas e seu SHA-256.",
-  "qs.recipients.h": "4. Adicione a signatária",
-  "qs.recipients.p":
-    "`PUT /recipients` substitui a lista completa. Por padrão cada destinatário é `signer`, recebe o convite por `email` e tem `routingOrder: 1`. Com `phone` no formato E.164 você também pode avisá-lo pelo WhatsApp. Você pode enviar seu próprio `id` (UUID) para referenciá-lo nos campos sem ler a resposta; caso contrário, pegue-o de `recipients[].id`.",
-  "qs.fields.h": "5. Posicione os campos",
-  "qs.fields.p":
-    "Cada signatário precisa de pelo menos um campo. A forma mais simples é um **texto âncora**: escreva `[[firma]]` no PDF (pode ser branco sobre branco) e a CalaSign coloca o campo onde ele aparecer. `offsetX`, `offsetY`, `width` e `height` são em pontos PDF, relativos ao canto superior esquerdo do texto. Substitua `RECIPIENT_ID` pelo id da signatária.",
+  "qs.one.h": "2. Crie e envie o envelope em uma única chamada",
+  "qs.one.p":
+    "`POST /v1/envelopes` recebe tudo junto: os **documentos** (`documents`: o PDF em `base64`, por `url` https pública ou como parte de um `multipart/form-data`), os **destinatários** (`recipients`, igual a `PUT /recipients`), os **campos** (`fields`, com texto âncora ou coordenadas) e `send: true` para enviá-lo na mesma requisição.\n\nÉ **atômico**: se algo falhar (um PDF inválido, um texto âncora que não aparece, um signatário sem campo de assinatura) a resposta é o erro e não fica nenhum envelope pela metade. Envie uma `Idempotency-Key` (p. ex. o id do seu pedido) para que uma nova tentativa não crie nem envie um segundo envelope. Sem `send`, o envelope fica como rascunho (`draft`) para revisar e enviar depois com `POST /v1/envelopes/{id}/send`.",
+  "qs.one.resp":
+    "A resposta é o envelope completo, com os `id` dos documentos, destinatários e campos (você vai vê-los nos webhooks). No ambiente de testes o convite fica na **Caixa dev** do app: abra-o e assine você mesmo. Se você não indicar `expiresAt`, o envelope vence em 30 dias.",
+  "qs.one.multipart.t": "PDFs grandes: multipart em vez de base64",
+  "qs.one.multipart.p":
+    "Em `multipart/form-data` o JSON vai na parte `payload` e cada PDF em sua própria parte; o documento a referencia com `file` (sem `documents`, cada arquivo é um documento, em ordem). Assim o PDF não cresce 33% pelo base64. Até 10 documentos por chamada.",
+  "qs.one.refs.t": "Vários signatários e documentos",
+  "qs.one.refs.p":
+    "Como os destinatários e documentos ainda não têm `id`, cada campo os referencia com `recipient` (a posição em `recipients` começando em 0, seu `ref` ou seu e-mail) e `document` (a posição em `documents` ou seu `ref`). Com um único signatário ou um único documento podem ser omitidos; um campo com `anchor` e sem `document` procura o texto em todos os documentos.",
   "qs.fields.coords.t": "Seu PDF não tem texto âncora?",
   "qs.fields.coords.p":
-    "Use coordenadas normalizadas: `page` começa em 0 e `x`, `y`, `width`, `height` vão de 0 a 1 com origem no canto superior esquerdo da página. Com coordenadas, `documentId` é obrigatório.",
-  "qs.send.h": "6. Envie",
-  "qs.send.p":
-    "Ao enviar, os documentos, os destinatários e os campos são validados; o envelope passa para `sent` e os signatários do primeiro turno recebem o convite. No ambiente de testes o convite fica na **Caixa dev** do app: abra-o e assine você mesmo.",
-  "qs.wait.h": "7. Aguarde a assinatura",
+    "Use coordenadas normalizadas: `page` começa em 0 e `x`, `y`, `width`, `height` vão de 0 a 1 com origem no canto superior esquerdo da página. Com vários documentos, indique `document`.",
+  "qs.one.embedded.t": "Assinatura incorporada no seu app",
+  "qs.one.embedded.p":
+    "Se um destinatário vai com `embedded: true` (assina dentro da sua aplicação, sem convite), a resposta de um envio traz `signingUrls`: a URL de assinatura de uso único (5 minutos) de cada signatário incorporado cuja vez já chegou, sem outra chamada. `embeddedSigning` aceita `returnUrl` e `frameAncestors`. Veja o [guia de assinatura incorporada](/developers/guides/embedded-signing).",
+  "qs.one.template.t": "A partir de um modelo, também em uma chamada",
+  "qs.one.template.p":
+    "Se o documento e os campos já estão em um [modelo](/developers/guides/templates), `POST /v1/envelopes/from-template` cria o envelope atribuindo uma pessoa a cada papel e, com `send: true`, o envia na mesma requisição. Também aceita `Idempotency-Key`.",
+  "qs.wait.h": "3. Aguarde a assinatura",
   "qs.wait.p":
     "A forma recomendada é um [webhook](/developers/webhooks): registre uma URL https em **Configurações → Integrações** e a CalaSign avisa você com um POST assinado a cada evento. Quando a última pessoa assina, o envelope passa por `finalizing` (o PDF é montado e selado) e depois chega `envelope.completed`.\n\nSe preferir consultar, chame `GET /v1/envelopes/{id}` de tempos em tempos (no máximo uma vez por minuto por envelope) até que `envelope.status` seja `completed`, `declined`, `voided` ou `expired`.",
-  "qs.download.h": "8. Baixe o PDF assinado",
+  "qs.download.h": "4. Baixe o PDF assinado",
   "qs.download.p":
     "Com o envelope em `completed`, `signed.pdf` retorna o PDF final: os documentos com as assinaturas aplicadas, o **certificado de conclusão** no final e o selo PAdES da plataforma. Antes da conclusão, responde 404. Guarde também `signedSha256` para verificá-lo no futuro.",
   "qs.full.h": "Script completo",
-  "qs.full.p": "Tudo junto, pronto para copiar. O PDF `contrato.pdf` precisa conter o texto `[[firma]]`.",
+  "qs.full.p":
+    "Tudo junto, pronto para copiar: uma chamada para criar e enviar, a espera e o download. O PDF `contrato.pdf` precisa conter o texto `[[firma]]`.",
   "qs.full.next":
     "E agora? Use [modelos](/developers/guides/templates) para não posicionar campos manualmente, [assinatura incorporada](/developers/guides/embedded-signing) para assinar dentro do seu app, ou revise os [conceitos](/developers/concepts).",
-  "qs.c.create": "1. Envelope em rascunho",
-  "qs.c.upload": "2. Documento PDF",
-  "qs.c.recipient": "3. Signatária",
-  "qs.c.fields": "4. Campo de assinatura sobre o texto [[firma]] do PDF",
-  "qs.c.send": "5. Enviar",
+  "qs.steps.h": "Passo a passo (várias chamadas)",
+  "qs.steps.p":
+    "Se você prefere montar o envelope aos poucos (por exemplo, para que alguém o revise no app antes de enviar), os mesmos dados podem ser enviados em chamadas separadas: criar o rascunho, enviar cada PDF, definir os destinatários, posicionar os campos e enviar. Cada passo valida a sua parte e o envelope fica em `draft` até o envio.",
+  "qs.create.h": "a. Crie o rascunho",
+  "qs.create.p":
+    "Um **envelope** agrupa documentos, destinatários e campos. Só com `subject` (e opcionalmente `message`, `metadata`, `expiresAt`…) ele nasce como rascunho (`draft`) vazio. Use `metadata` para guardar seus próprios identificadores (eles voltam em cada webhook) e envie uma `Idempotency-Key` para que uma nova tentativa não crie um envelope duplicado.",
+  "qs.create.resp": "Guarde `envelope.id`: você vai usá-lo nos passos seguintes.",
+  "qs.upload.h": "b. Envie o PDF",
+  "qs.upload.p":
+    "Envie o arquivo como `multipart/form-data` no campo `file`. Você pode enviar vários PDFs para o mesmo envelope: eles são assinados na ordem em que foram enviados. A resposta traz o `id` do documento, seu número de páginas e seu SHA-256.",
+  "qs.recipients.h": "c. Adicione a signatária",
+  "qs.recipients.p":
+    "`PUT /recipients` substitui a lista completa. Por padrão cada destinatário é `signer`, recebe o convite por `email` e tem `routingOrder: 1`. Com `phone` no formato E.164 você também pode avisá-lo pelo WhatsApp. Você pode enviar seu próprio `id` (UUID) para referenciá-lo nos campos sem ler a resposta; caso contrário, pegue-o de `recipients[].id`.",
+  "qs.fields.h": "d. Posicione os campos",
+  "qs.fields.p":
+    "Cada signatário precisa de pelo menos um campo. A forma mais simples é um **texto âncora**: escreva `[[firma]]` no PDF (pode ser branco sobre branco) e a CalaSign coloca o campo onde ele aparecer. `offsetX`, `offsetY`, `width` e `height` são em pontos PDF, relativos ao canto superior esquerdo do texto. Substitua `RECIPIENT_ID` pelo id da signatária.",
+  "qs.send.h": "e. Envie",
+  "qs.send.p":
+    "Ao enviar, os documentos, os destinatários e os campos são validados; o envelope passa para `sent` e os signatários do primeiro turno recebem o convite. No ambiente de testes o convite fica na **Caixa dev** do app: abra-o e assine você mesmo.",
+  "qs.c.one": "Envelope completo em uma chamada: PDF, signatária, campo de assinatura sobre [[firma]] e envio",
+  "qs.c.multipart": "O mesmo sem base64: o JSON na parte payload e o PDF em sua própria parte",
+  "qs.c.noBase64": "o PDF vai sem base64",
+  "qs.c.wait": "Aguardar a assinatura (melhor com um webhook)",
+  "qs.c.download": "Baixar o PDF assinado",
   "qs.c.sdkIdem": "o SDK adiciona a Idempotency-Key sozinho",
   // ───────── Autenticação ─────────
   "auth.title": "Autenticação",

@@ -101,7 +101,7 @@ await api("POST", "/v1/auth/signup", {
   organization: `Oneshot ${stamp}`,
   locale: "es",
 });
-await api("PATCH", "/v1/settings/embed", { frameAncestors: ["http://localhost:5199"] }, { session: true });
+await api("PATCH", "/v1/settings/embed", { frameAncestors: ["https://app.example.com"] }, { session: true });
 const created = await api("POST", "/v1/api-keys", { name: "e2e oneshot" }, { session: true });
 key = created.secret;
 ok("alta de cuenta, orígenes embebidos y API key");
@@ -132,7 +132,7 @@ const body1 = {
     { recipient: 1, type: "text", label: "Comentario", required: false, page: 0, x: 0.1, y: 0.05, width: 0.3, height: 0.03 },
   ],
   send: true,
-  embeddedSigning: { returnUrl: "http://localhost:5199/listo", frameAncestors: ["http://localhost:5199"] },
+  embeddedSigning: { returnUrl: "https://app.example.com/listo", frameAncestors: ["https://app.example.com"] },
 };
 const idem1 = `oneshot-${stamp}`;
 const r1 = await call("POST", "/v1/envelopes", body1, { headers: { "Idempotency-Key": idem1 } });

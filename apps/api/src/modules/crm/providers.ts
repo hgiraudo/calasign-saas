@@ -10,11 +10,15 @@
 //  · Zoho      CRM API v7 (Deals, Contacts, Contact_Roles, Attachments, Notes) o Bigin API v2 (Pipelines, Contacts).
 //              OAuth 2.0 multi-DC: el token se pide al accounts-server de la cuenta y la API va a su api_domain.
 //  · Pipedrive API v1 sobre el api_domain de la compañía (ver pipedrive.ts).
+//  · RD Station CRM API v2 en api.rd.services/crm/v2 con OAuth de la App Store (ver rdstation.ts).
+//  · Kommo     API v4 sobre el subdominio de la cuenta; OAuth contra ese subdominio (ver kommo.ts).
 import type { CrmObjectType, CrmProvider, CrmRecord, ZohoProduct, ZohoRegion } from "@calasign/shared";
 import { config } from "../../config";
 import type { Db } from "../../infra/db";
 import { decrypt, encrypt } from "../../lib/util";
+import { kommoAttach, kommoFetchRecord, kommoTest, kommoWriteStatus, validateKommoDomain } from "./kommo";
 import { pipedriveAttach, pipedriveFetchRecord, pipedriveTest, pipedriveWriteStatus, validatePipedriveDomain } from "./pipedrive";
+import { rdstationAttach, rdstationFetchRecord, rdstationTest, rdstationWriteStatus } from "./rdstation";
 
 const env = process.env;
 
@@ -27,6 +31,11 @@ export const BASES = {
   /** Solo para pruebas: fuerza el servidor de cuentas de Zoho (si no, sale de la región elegida). */
   zohoAccounts: () => env.ZOHO_ACCOUNTS_URL?.replace(/\/$/, "") || null,
   pipedriveOAuth: () => (env.PIPEDRIVE_OAUTH_BASE ?? "https://oauth.pipedrive.com").replace(/\/$/, ""),
+  /** RD Station: API (y token OAuth) en api.rd.services; el authorize en accounts.rdstation.com. */
+  rdstationApi: () => (env.RDSTATION_API_BASE ?? "https://api.rd.services").replace(/\/$/, ""),
+  rdstationAuthorize: () => env.RDSTATION_AUTHORIZE_URL ?? "https://accounts.rdstation.com/oauth/authorize",
+  /** Kommo: el authorize es global; el token y la API van al subdominio de cada cuenta. */
+  kommoAuthorize: () => env.KOMMO_AUTHORIZE_URL ?? "https://www.kommo.com/oauth",
 };
 
 // ───────────────────────────── Zoho: centros de datos ─────────────────────────────
@@ -108,8 +117,9 @@ export interface OAuthAppCfg {
   authorizeParams?: Record<string, string>;
 }
 
-export type CrmOAuthProvider = "hubspot" | "salesforce" | "zoho" | "pipedrive";
-export const isOAuthProvider = (p: string): p is CrmOAuthProvider => p === "hubspot" || p === "salesforce" || p === "zoho" || p === "pipedrive";
+export const CRM_OAUTH_PROVIDERS = ["hubspot", "salesforce", "zoho", "pipedrive", "rdstation", "kommo"] as const;
+export type CrmOAuthProvider = (typeof CRM_OAUTH_PROVIDERS)[number];
+export const isOAuthProvider = (p: string): p is CrmOAuthProvider => (CRM_OAUTH_PROVIDERS as readonly string[]).includes(p);
 
 /** Scopes de Zoho por producto (separados por coma, como pide Zoho). ZOHO_SCOPE / ZOHO_BIGIN_SCOPE los reemplazan. */
 export const zohoScope = (product: ZohoProduct | undefined) =>
@@ -141,6 +151,28 @@ export function oauthApp(p: CrmOAuthProvider, opts: { accounts?: string; product
       scope: "",
       pkce: false,
     };
+  // RD Station CRM v2 (App Store): sin scopes en la URL; PKCE no documentado (RDSTATION_OAUTH_PKCE=true lo enciende).
+  if (p === "rdstation")
+    return {
+      clientId: env.RDSTATION_CLIENT_ID,
+      clientSecret: env.RDSTATION_CLIENT_SECRET,
+      authorizeUrl: BASES.rdstationAuthorize(),
+      tokenUrl: `${BASES.rdstationApi()}/oauth2/token`,
+      scope: "",
+      pkce: env.RDSTATION_OAUTH_PKCE === "true",
+    };
+  // Kommo: el token se pide al subdominio de la cuenta (tokenUrl se arma con el referer del callback: kommoTokenUrl).
+  // mode=post_message: la vuelta ocurre en la misma ventana (no hay popup).
+  if (p === "kommo")
+    return {
+      clientId: env.KOMMO_CLIENT_ID,
+      clientSecret: env.KOMMO_CLIENT_SECRET,
+      authorizeUrl: BASES.kommoAuthorize(),
+      tokenUrl: "",
+      scope: "",
+      pkce: false,
+      authorizeParams: { mode: "post_message" },
+    };
   if (p === "hubspot")
     return {
       clientId: env.HUBSPOT_CLIENT_ID,
@@ -161,7 +193,9 @@ export function oauthApp(p: CrmOAuthProvider, opts: { accounts?: string; product
 }
 
 export const oauthConfigured = (p: CrmProvider) => isOAuthProvider(p) && Boolean(oauthApp(p).clientId && oauthApp(p).clientSecret);
-export const tokenSupported = (p: CrmProvider) => p !== "salesforce" && p !== "zoho" && p !== "pipedrive";
+export const tokenSupported = (p: CrmProvider) => p === "hubspot" || p === "siigo" || p === "alegra";
+/** Kommo: endpoint de token del subdominio de la cuenta (validado). */
+export const kommoTokenUrl = (baseDomain: string) => `${validateKommoDomain(baseDomain)}/oauth2/access_token`;
 export const crmRedirectUri = (p: CrmOAuthProvider) => `${config.appUrl}/v1/crm/oauth/${p}/callback`;
 
 export class CrmError extends Error {
@@ -242,10 +276,15 @@ export async function oauthTokenRequest(p: CrmOAuthProvider, params: Record<stri
     headers.authorization = `Basic ${Buffer.from(`${app.clientId}:${app.clientSecret}`).toString("base64")}`;
     form = { ...params };
   }
-  const res = await fetch(tokenUrl ?? app.tokenUrl, {
+  // Kommo pide el cuerpo en JSON (y redirect_uri también en el refresh).
+  const asJson = p === "kommo";
+  if (asJson) headers["content-type"] = "application/json";
+  const url = tokenUrl ?? app.tokenUrl;
+  if (!url) throw new CrmError(`token ${p}: falta el servidor de la cuenta`);
+  const res = await fetch(url, {
     method: "POST",
     headers,
-    body: new URLSearchParams(form),
+    body: asJson ? JSON.stringify(form) : new URLSearchParams(form),
     signal: AbortSignal.timeout(15_000),
   });
   const body: any = await res.json().catch(() => ({}));
@@ -255,7 +294,7 @@ export async function oauthTokenRequest(p: CrmOAuthProvider, params: Record<stri
     // trabajo se reintenta), no una conexión revocada que haya que volver a conectar.
     const throttled = res.status === 429 || /too many requests/i.test(String(body.error_description ?? ""));
     const invalid = !throttled && (["invalid_grant", "invalid_code", "invalid_client"].includes(body.error) || res.status === 400 || res.status === 401);
-    throw new CrmError(`token ${p}: HTTP ${res.status} ${body.error_description ?? body.error ?? body.message ?? ""}`.trim(), res.status, invalid);
+    throw new CrmError(`token ${p}: HTTP ${res.status} ${body.error_description ?? body.error ?? body.message ?? body.hint ?? body.detail ?? ""}`.trim(), res.status, invalid);
   }
   return body;
 }
@@ -275,8 +314,11 @@ async function refreshOAuth(c: CrmConn) {
   const p = c.provider as CrmOAuthProvider;
   if (!c.creds.refresh_token) throw new CrmError("la conexión venció: hay que volver a conectarla", 401, true);
   // Zoho: el refresh token solo vale en el centro de datos de la cuenta.
-  const tokenUrl = p === "zoho" ? `${validateZohoAccounts(String(c.cfg.accountsServer ?? zohoAccountsBase()))}/oauth/v2/token` : undefined;
-  const b = await oauthTokenRequest(p, { grant_type: "refresh_token", refresh_token: c.creds.refresh_token }, tokenUrl);
+  // Kommo: el refresh va al subdominio de la cuenta y también lleva redirect_uri.
+  const tokenUrl =
+    p === "zoho" ? `${validateZohoAccounts(String(c.cfg.accountsServer ?? zohoAccountsBase()))}/oauth/v2/token` : p === "kommo" ? kommoTokenUrl(String(c.cfg.baseDomain ?? "")) : undefined;
+  const extra: Record<string, string> = p === "kommo" ? { redirect_uri: crmRedirectUri("kommo") } : {};
+  const b = await oauthTokenRequest(p, { grant_type: "refresh_token", refresh_token: c.creds.refresh_token, ...extra }, tokenUrl);
   c.creds = {
     access_token: b.access_token,
     refresh_token: b.refresh_token ?? c.creds.refresh_token,
@@ -298,6 +340,8 @@ interface Req {
   base?: string;
   json?: unknown;
   form?: FormData;
+  /** Cuerpo binario tal cual (partes de la subida de archivos de Kommo); el content-type va en headers. */
+  raw?: Uint8Array;
   headers?: Record<string, string>;
 }
 
@@ -335,6 +379,11 @@ function baseFor(c: CrmConn): string {
     case "pipedrive":
       if (!c.cfg.apiDomain) throw new CrmError("conexión de Pipedrive sin api_domain");
       return validatePipedriveDomain(c.cfg.apiDomain);
+    case "rdstation":
+      return `${BASES.rdstationApi()}/crm/v2`;
+    case "kommo":
+      if (!c.cfg.baseDomain) throw new CrmError("conexión de Kommo sin el dominio de la cuenta");
+      return validateKommoDomain(c.cfg.baseDomain);
   }
 }
 
@@ -345,6 +394,7 @@ export async function crmFetch(c: CrmConn, r: Req, retried = false): Promise<any
     headers["content-type"] = "application/json";
     body = JSON.stringify(r.json);
   } else if (r.form) body = r.form;
+  else if (r.raw) body = new Blob([Buffer.from(r.raw)]);
   const res = await fetch(`${r.base ?? baseFor(c)}${r.path}`, { method: r.method ?? (body ? "POST" : "GET"), headers, body, signal: AbortSignal.timeout(20_000) });
   if (res.status === 401 && !retried) {
     // Token vencido o revocado: se intenta renovar una vez (OAuth con refresh, o login de Siigo).
@@ -366,7 +416,8 @@ export async function crmFetch(c: CrmConn, r: Req, retried = false): Promise<any
   }
   if (!res.ok) {
     const zohoItem = data?.data?.[0]; // Zoho: { data: [{ code, message, details }] }
-    const msg = typeof data === "object" && data ? data.message ?? data[0]?.message ?? (zohoItem ? `${zohoItem.code ?? ""} ${zohoItem.message ?? ""} ${JSON.stringify(zohoItem.details ?? {})}`.trim() : null) ?? data.error_description ?? data.error ?? JSON.stringify(data).slice(0, 200) : String(data).slice(0, 200);
+    // RD Station: { errors: [{ detail }] }; Kommo: { title, detail } (problem+json).
+    const msg = typeof data === "object" && data ? data.message ?? data[0]?.message ?? data.errors?.[0]?.detail ?? data.detail ?? (zohoItem ? `${zohoItem.code ?? ""} ${zohoItem.message ?? ""} ${JSON.stringify(zohoItem.details ?? {})}`.trim() : null) ?? data.error_description ?? data.error ?? JSON.stringify(data).slice(0, 200) : String(data).slice(0, 200);
     throw new CrmError(`${c.provider} ${r.method ?? "GET"} ${r.path}: HTTP ${res.status} ${msg}`, res.status, res.status === 401 || res.status === 403);
   }
   return data;
@@ -426,6 +477,10 @@ export async function testConnection(c: CrmConn): Promise<{ label: string | null
     }
     case "pipedrive":
       return pipedriveTest(c);
+    case "rdstation":
+      return rdstationTest(c);
+    case "kommo":
+      return kommoTest(c);
   }
 }
 
@@ -506,6 +561,8 @@ async function zohoAttach(c: CrmConn, objectType: CrmObjectType, id: string, a: 
 /** Lee un registro y sus contactos, normalizado para los mapeos. */
 export async function fetchRecord(c: CrmConn, objectType: CrmObjectType, id: string, properties: string[]): Promise<CrmRecord> {
   if (c.provider === "pipedrive") return pipedriveFetchRecord(c, objectType, id, properties);
+  if (c.provider === "rdstation") return rdstationFetchRecord(c, objectType, id, properties);
+  if (c.provider === "kommo") return kommoFetchRecord(c, objectType, id, properties);
   const enc = encodeURIComponent(id);
   if (c.provider === "hubspot" && objectType === "deal") {
     const props = [...new Set(["dealname", "amount", "closedate", "dealstage", ...properties])].join(",");
@@ -557,6 +614,8 @@ export async function writeStatus(c: CrmConn, objectType: CrmObjectType, id: str
     return zohoWriteResult(await crmFetch(c, { method: "PUT", path: `/${mod}/${enc}`, json: { data: [{ [property]: value }], trigger: [] } }), "estado");
   }
   if (c.provider === "pipedrive") return pipedriveWriteStatus(c, objectType, id, property, value);
+  if (c.provider === "rdstation") return rdstationWriteStatus(c, objectType, id, property, value);
+  if (c.provider === "kommo") return kommoWriteStatus(c, objectType, id, property, value);
   throw new CrmError(`${c.provider} no admite escribir estados (${objectType})`);
 }
 
@@ -573,6 +632,8 @@ export interface AttachInput {
 export async function attachSigned(c: CrmConn, objectType: CrmObjectType, id: string, a: AttachInput): Promise<string> {
   const enc = encodeURIComponent(id);
   if (c.provider === "pipedrive") return pipedriveAttach(c, objectType, id, a);
+  if (c.provider === "rdstation") return rdstationAttach(c, objectType, id, a);
+  if (c.provider === "kommo") return kommoAttach(c, objectType, id, a);
   const note = `CalaSign: "${a.subject}" firmado. Sobre ${a.envelopeId} · SHA-256 ${a.sha256} · ${a.url}`;
   if (c.provider === "hubspot") {
     const form = new FormData();

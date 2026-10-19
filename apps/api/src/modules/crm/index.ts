@@ -50,7 +50,9 @@ import {
   crmRedirectUri,
   fetchRecord,
   findByIdentification,
+  CRM_OAUTH_PROVIDERS,
   isOAuthProvider,
+  kommoTokenUrl,
   oauthApp,
   oauthConfigured,
   oauthTokenRequest,
@@ -64,6 +66,7 @@ import {
   type ConnRow,
   type CrmOAuthProvider,
 } from "./providers";
+import { validateKommoDomain } from "./kommo";
 import { validatePipedriveDomain } from "./pipedrive";
 
 const UUID = /^[0-9a-f-]{36}$/i;
@@ -523,7 +526,7 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
     }));
     return {
       items,
-      redirectUris: { hubspot: crmRedirectUri("hubspot"), salesforce: crmRedirectUri("salesforce"), zoho: crmRedirectUri("zoho"), pipedrive: crmRedirectUri("pipedrive") },
+      redirectUris: Object.fromEntries(CRM_OAUTH_PROVIDERS.map((p) => [p, crmRedirectUri(p)])),
       webhookUrl: `${config.appUrl}/v1/integrations/crm/hubspot/webhook`,
     };
   });
@@ -584,7 +587,7 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
   });
 
   // Vuelta del proveedor: el navegador trae la sesión; el estado cifrado ata la conexión a quien la inició.
-  app.get<{ Params: { provider: string }; Querystring: { code?: string; state?: string; error?: string; "accounts-server"?: string } }>(
+  app.get<{ Params: { provider: string }; Querystring: { code?: string; state?: string; error?: string; "accounts-server"?: string; referer?: string } }>(
     "/v1/crm/oauth/:provider/callback",
     { preHandler: auth },
     async (req, reply) => {
@@ -593,6 +596,8 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
       // Instalación desde el Marketplace de Pipedrive: llega un code sin state (no la inició CalaSign). No se canjea
       // a ciegas (ataría a esta organización una cuenta que nadie eligió desde CalaSign): se pide conectar desde Ajustes.
       if (req.params.provider === "pipedrive" && !req.query.state && !req.query.error) return back("pipedrive_install=1");
+      // Kommo igual: instalar el widget o la integración desde Kommo vuelve con code + referer y sin state.
+      if (req.params.provider === "kommo" && !req.query.state && !req.query.error) return back("kommo_install=1");
       let st: OAuthState;
       try {
         st = JSON.parse(decrypt(String(req.query.state ?? "")));
@@ -606,6 +611,8 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
         // Zoho multi-DC: el código solo se canjea en el accounts-server de la cuenta del usuario (que puede no ser
         // donde se inició, p. ej. empezó en zoho.com y la cuenta está en zoho.eu). Se valida que sea de Zoho.
         const zohoAccounts = st.p === "zoho" ? validateZohoAccounts(String(req.query["accounts-server"] ?? st.a ?? zohoAccountsBase())) : null;
+        // Kommo: el código se canjea en el subdominio de la cuenta que vuelve en referer (validado: *.kommo.com).
+        const kommoDomain = st.p === "kommo" ? validateKommoDomain(String(req.query.referer ?? "")) : null;
         const body = await oauthTokenRequest(
           st.p,
           {
@@ -614,7 +621,7 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
             redirect_uri: crmRedirectUri(st.p),
             ...(st.v ? { code_verifier: st.v } : {}),
           },
-          zohoAccounts ? `${zohoAccounts}/oauth/v2/token` : undefined,
+          zohoAccounts ? `${zohoAccounts}/oauth/v2/token` : kommoDomain ? kommoTokenUrl(kommoDomain) : undefined,
         );
         const cfg: Record<string, unknown> = {};
         if (st.p === "salesforce") cfg.instanceUrl = validateSalesforceInstance(String(body.instance_url ?? ""));
@@ -626,6 +633,7 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
         }
         // Pipedrive: cada compañía tiene su dominio de API (https://<compañía>.pipedrive.com), validado.
         if (st.p === "pipedrive") cfg.apiDomain = validatePipedriveDomain(String(body.api_domain ?? ""));
+        if (st.p === "kommo") cfg.baseDomain = kommoDomain;
         const creds = { access_token: body.access_token, refresh_token: body.refresh_token, expires_at: body.expires_in ? Date.now() + Number(body.expires_in) * 1000 : null };
         const row: any = { id: uuidv7(), provider: st.p, auth_type: "oauth", credentials_enc: encrypt(JSON.stringify(creds)), config: cfg };
         const conn = new CrmConn(row, null);

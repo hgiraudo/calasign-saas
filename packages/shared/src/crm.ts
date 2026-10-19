@@ -10,6 +10,10 @@ export const CRM_PROVIDERS = [
   "alegra",
   // Pipedrive: Deal (persona principal + participantes) y Person (objectType "contact").
   "pipedrive",
+  // RD Station CRM (API v2, OAuth de la RD Station App Store): Negociação (deal) con sus contatos.
+  "rdstation",
+  // Kommo (ex amoCRM; API v4, OAuth por cuenta/subdominio): Lead (objectType "deal") con sus contactos.
+  "kommo",
 ] as const;
 export type CrmProvider = (typeof CRM_PROVIDERS)[number];
 
@@ -24,6 +28,8 @@ export const CRM_PROVIDER_OBJECTS: Record<CrmProvider, readonly CrmObjectType[]>
   siigo: ["customer"],
   alegra: ["contact", "invoice"],
   pipedrive: ["deal", "contact"],
+  rdstation: ["deal"],
+  kommo: ["deal"],
 };
 
 /** CRM (envían desde un registro) vs ERP (reciben el documento firmado al completarse). */
@@ -34,6 +40,8 @@ export const CRM_KIND: Record<CrmProvider, "crm" | "erp"> = {
   siigo: "erp",
   alegra: "erp",
   pipedrive: "crm",
+  rdstation: "crm",
+  kommo: "crm",
 };
 
 /**

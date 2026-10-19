@@ -1,10 +1,10 @@
-// Textos de CRM y ERP (HubSpot, Salesforce, Zoho CRM / Bigin, Siigo, Alegra).
+// Textos de CRM y ERP (HubSpot, Salesforce, Zoho CRM / Bigin, Pipedrive, Siigo, Alegra).
 import { brandText } from "./white-label";
 import { useI18n } from "./i18n";
 
 const es = {
   "card.crm": "CRM y ERP",
-  "card.crm.desc": "Enviar a firmar desde HubSpot, Salesforce o Zoho CRM y devolver el documento firmado al CRM, Siigo o Alegra.",
+  "card.crm.desc": "Enviar a firmar desde HubSpot, Salesforce, Zoho CRM o Pipedrive y devolver el documento firmado al CRM, Siigo o Alegra.",
   "back": "← Ajustes",
   "title": "CRM y ERP",
   "intro":
@@ -14,6 +14,13 @@ const es = {
   "p.zoho": "Zoho CRM / Bigin",
   "p.siigo": "Siigo",
   "p.alegra": "Alegra",
+  // Pipedrive
+  "p.pipedrive": "Pipedrive",
+  "pipedrive.install": "La app de Pipedrive quedó instalada. Para terminar, conectá Pipedrive con OAuth desde su tarjeta.",
+  "pipedrive.hint.deal":
+    "Pipedrive · Deal: el contacto principal es la persona del deal; los participantes siguen en orden (contacto 1, 2…). Los campos personalizados se mapean por su key (hash de 40 caracteres) o por su nombre; los de opción única se leen como su etiqueta.",
+  "pipedrive.hint.person": "Pipedrive · Person (tipo contact): la persona es el contacto principal (contacto 0). Campos personalizados por key o por nombre.",
+  "pipedrive.statusPlaceholder": "Key o nombre del campo del deal (ej. Estado CalaSign)",
   "kind.crm": "CRM",
   "kind.erp": "ERP",
   "zoho.product": "Producto",
@@ -115,7 +122,7 @@ type Key = keyof typeof es;
 
 const pt: Record<Key, string> = {
   "card.crm": "CRM e ERP",
-  "card.crm.desc": "Enviar para assinatura a partir do HubSpot, Salesforce ou Zoho CRM e devolver o documento assinado ao CRM, Siigo ou Alegra.",
+  "card.crm.desc": "Enviar para assinatura a partir do HubSpot, Salesforce, Zoho CRM ou Pipedrive e devolver o documento assinado ao CRM, Siigo ou Alegra.",
   back: "← Configurações",
   title: "CRM e ERP",
   intro:
@@ -125,6 +132,13 @@ const pt: Record<Key, string> = {
   "p.zoho": "Zoho CRM / Bigin",
   "p.siigo": "Siigo",
   "p.alegra": "Alegra",
+  // Pipedrive
+  "p.pipedrive": "Pipedrive",
+  "pipedrive.install": "O app do Pipedrive foi instalado. Para concluir, conecte o Pipedrive com OAuth no cartão dele.",
+  "pipedrive.hint.deal":
+    "Pipedrive · Deal: o contato principal é a pessoa do deal; os participantes vêm em seguida (contato 1, 2…). Campos personalizados são mapeados pela key (hash de 40 caracteres) ou pelo nome; os de opção única são lidos como o rótulo.",
+  "pipedrive.hint.person": "Pipedrive · Person (tipo contact): a pessoa é o contato principal (contato 0). Campos personalizados pela key ou pelo nome.",
+  "pipedrive.statusPlaceholder": "Key ou nome do campo do deal (ex. Estado CalaSign)",
   "kind.crm": "CRM",
   "kind.erp": "ERP",
   "zoho.product": "Produto",
@@ -224,7 +238,7 @@ const pt: Record<Key, string> = {
 
 const en: Record<Key, string> = {
   "card.crm": "CRM & ERP",
-  "card.crm.desc": "Send for signature from HubSpot, Salesforce or Zoho CRM and push the signed document back to the CRM, Siigo or Alegra.",
+  "card.crm.desc": "Send for signature from HubSpot, Salesforce, Zoho CRM or Pipedrive and push the signed document back to the CRM, Siigo or Alegra.",
   back: "← Settings",
   title: "CRM & ERP",
   intro:
@@ -234,6 +248,13 @@ const en: Record<Key, string> = {
   "p.zoho": "Zoho CRM / Bigin",
   "p.siigo": "Siigo",
   "p.alegra": "Alegra",
+  // Pipedrive
+  "p.pipedrive": "Pipedrive",
+  "pipedrive.install": "The Pipedrive app is installed. To finish, connect Pipedrive with OAuth from its card.",
+  "pipedrive.hint.deal":
+    "Pipedrive · Deal: the primary contact is the deal's person; participants follow in order (contact 1, 2…). Custom fields are mapped by key (40-character hash) or by name; single-option fields are read as their label.",
+  "pipedrive.hint.person": "Pipedrive · Person (contact type): the person is the primary contact (contact 0). Custom fields by key or by name.",
+  "pipedrive.statusPlaceholder": "Deal field key or name (e.g. CalaSign status)",
   "kind.crm": "CRM",
   "kind.erp": "ERP",
   "zoho.product": "Product",

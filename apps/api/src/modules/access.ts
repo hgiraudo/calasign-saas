@@ -277,6 +277,8 @@ export async function enforceRoutePolicy(db: Db, req: FastifyRequest, a: AuthCon
     if (url.startsWith("/v1/crm/oauth/") && url.endsWith("/callback")) return;
     if (url === "/v1/crm/mappings/:id/send" || url.startsWith("/v1/crm/links")) return requirePerm(a, "envelopes:create");
     if (isRead && (url.startsWith("/v1/crm/runs") || url === "/v1/crm/providers")) return;
+    // Listar los mapeos (para elegir uno y enviar desde el CRM, p. ej. la acción de Pipedrive): quien puede enviar.
+    if (isRead && url === "/v1/crm/mappings") return requirePerm(a, "envelopes:create");
     return requirePerm(a, "settings:manage");
   }
   // Conectores HRIS/CLM: enviar desde un registro y ver vínculos opera sobres; conexiones, búsqueda de registros

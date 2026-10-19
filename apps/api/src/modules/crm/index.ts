@@ -50,12 +50,12 @@ import {
   crmRedirectUri,
   fetchRecord,
   findByIdentification,
+  isOAuthProvider,
   oauthApp,
   oauthConfigured,
   oauthTokenRequest,
   testConnection,
   tokenSupported,
-  isOAuthProvider,
   validateSalesforceInstance,
   validateZohoAccounts,
   validateZohoApiDomain,
@@ -64,6 +64,7 @@ import {
   type ConnRow,
   type CrmOAuthProvider,
 } from "./providers";
+import { validatePipedriveDomain } from "./pipedrive";
 
 const UUID = /^[0-9a-f-]{36}$/i;
 
@@ -204,7 +205,7 @@ export async function sendFromRecord(
     const l = await loadTemplateForUse(db, ctx.tenantId, mapping.template_id);
     const send = opts.send ?? mapping.send;
     const p = record.properties;
-    const subjectDefault = String(p.dealname ?? p.Name ?? p.Deal_Name ?? p.Full_Name ?? "").trim();
+    const subjectDefault = String(record.title ?? p.dealname ?? p.Name ?? p.Deal_Name ?? p.Full_Name ?? "").trim();
     const input = EnvelopeFromTemplateInput.parse({
       templateId: mapping.template_id,
       subject: opts.subject ?? (subjectDefault ? `${l.row.subject ?? l.row.name} — ${subjectDefault}`.slice(0, 300) : undefined),
@@ -329,12 +330,31 @@ const pdfName = (subject: string, envelopeId: string) => `${subject.replace(/[\\
 async function writeBackAndAttach(db: Db, blobs: BlobStore, conn: CrmConn, link: any, mapping: any | null, status: string): Promise<Record<string, unknown>> {
   const wb = { attachPdf: true, ...(mapping?.write_back ?? {}) };
   const detail: Record<string, unknown> = {};
-  // Un "sent" que se reintenta después de que ya se escribió un estado final no lo pisa.
-  if (status === "sent" && link.last_status && link.last_status !== "sent") return { skipped: `el registro ya tiene el estado final ${link.last_status}` };
+  // Los trabajos "sent" y "completed" (o "declined"…) del mismo vínculo pueden correr a la vez (la cola procesa en
+  // paralelo y reintenta): leer last_status al arrancar no alcanzaba y un "sent" podía pisar en el CRM el estado
+  // final. Compare-and-set del rango sobre last_status, sin dejar una transacción abierta durante las llamadas HTTP
+  // (en PGlite una transacción bloquea toda la base, y las credenciales renovadas se guardan por fuera):
+  //  1. antes de escribir, se reclama el vínculo solo si su estado no tiene un rango mayor (si no, se omite);
+  //  2. después de escribir, se vuelve a leer: si mientras tanto otro trabajo reclamó un estado de rango mayor, su
+  //     escritura pudo llegar al CRM antes que esta, así que se reescribe ese estado (el último en llegar gana).
+  const claimed = await db.one<{ id: string }>(
+    `UPDATE crm_links SET last_status = $2 WHERE id = $1 AND ${STATUS_RANK_SQL} <= $3 RETURNING id`,
+    [link.id, status, statusRank(status)],
+  );
+  if (!claimed) {
+    const cur = await db.one<{ last_status: string | null }>(`SELECT last_status FROM crm_links WHERE id = $1`, [link.id]);
+    return { skipped: `el registro ya tiene el estado ${cur?.last_status ?? "?"}` };
+  }
   if (CRM_KIND[conn.provider] === "crm" && wb.statusProperty) {
     const value = statusValue(wb, status as any);
     await writeStatus(conn, link.object_type, link.object_id, wb.statusProperty, value);
     detail.statusWritten = { property: wb.statusProperty, value };
+    const after = (await db.one<{ last_status: string | null }>(`SELECT last_status FROM crm_links WHERE id = $1`, [link.id]))?.last_status ?? null;
+    if (after && statusRank(after) > statusRank(status)) {
+      const finalValue = statusValue(wb, after as any);
+      await writeStatus(conn, link.object_type, link.object_id, wb.statusProperty, finalValue);
+      detail.statusRewritten = { property: wb.statusProperty, value: finalValue, because: after };
+    }
   }
   if (status === "completed" && wb.attachPdf !== false && !link.pdf_attached_at) {
     const pdf = await signedPdf(db, blobs, link.envelope_id);
@@ -352,9 +372,16 @@ async function writeBackAndAttach(db: Db, blobs: BlobStore, conn: CrmConn, link:
       detail.attached = ref;
     }
   }
-  await db.query(`UPDATE crm_links SET last_status = $2 WHERE id = $1`, [link.id, status]);
   return detail;
 }
+
+/** Rango de los estados que se escriben en el CRM: uno final (completado, rechazado, anulado, vencido) nunca se
+ *  reemplaza por "sent". Entre finales gana el último evento. */
+export function statusRank(s: string | null | undefined): number {
+  if (!s) return 0;
+  return s === "sent" ? 1 : 2;
+}
+const STATUS_RANK_SQL = `(CASE WHEN last_status IS NULL THEN 0 WHEN last_status = 'sent' THEN 1 ELSE 2 END)`;
 
 export async function handleCrmJob(d: { db: Db; blobs: BlobStore }, p: { runId: string }) {
   const { db } = d;
@@ -494,7 +521,11 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
       tokenSupported: tokenSupported(p),
       objectTypes: CRM_PROVIDER_OBJECTS[p],
     }));
-    return { items, redirectUris: { hubspot: crmRedirectUri("hubspot"), salesforce: crmRedirectUri("salesforce"), zoho: crmRedirectUri("zoho") }, webhookUrl: `${config.appUrl}/v1/integrations/crm/hubspot/webhook` };
+    return {
+      items,
+      redirectUris: { hubspot: crmRedirectUri("hubspot"), salesforce: crmRedirectUri("salesforce"), zoho: crmRedirectUri("zoho"), pipedrive: crmRedirectUri("pipedrive") },
+      webhookUrl: `${config.appUrl}/v1/integrations/crm/hubspot/webhook`,
+    };
   });
 
   // ───────── Conexiones ─────────
@@ -542,7 +573,7 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
     url.searchParams.set("client_id", app_.clientId!);
     url.searchParams.set("redirect_uri", crmRedirectUri(p));
     url.searchParams.set("response_type", "code");
-    url.searchParams.set("scope", app_.scope);
+    if (app_.scope) url.searchParams.set("scope", app_.scope);
     for (const [k, v] of Object.entries(app_.authorizeParams ?? {})) url.searchParams.set(k, v);
     url.searchParams.set("state", encrypt(JSON.stringify(state)));
     if (verifier) {
@@ -559,6 +590,9 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
     async (req, reply) => {
       const a = A(req);
       const back = (q: string) => reply.redirect(`/app/settings/crm?${q}`);
+      // Instalación desde el Marketplace de Pipedrive: llega un code sin state (no la inició CalaSign). No se canjea
+      // a ciegas (ataría a esta organización una cuenta que nadie eligió desde CalaSign): se pide conectar desde Ajustes.
+      if (req.params.provider === "pipedrive" && !req.query.state && !req.query.error) return back("pipedrive_install=1");
       let st: OAuthState;
       try {
         st = JSON.parse(decrypt(String(req.query.state ?? "")));
@@ -590,6 +624,8 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
           cfg.apiDomain = validateZohoApiDomain(String(body.api_domain ?? zohoAccounts!.replace("://accounts.zohocloud.", "://www.zohoapis.").replace("://accounts.zoho.", "://www.zohoapis.")));
           cfg.product = st.g ?? "crm";
         }
+        // Pipedrive: cada compañía tiene su dominio de API (https://<compañía>.pipedrive.com), validado.
+        if (st.p === "pipedrive") cfg.apiDomain = validatePipedriveDomain(String(body.api_domain ?? ""));
         const creds = { access_token: body.access_token, refresh_token: body.refresh_token, expires_at: body.expires_in ? Date.now() + Number(body.expires_in) * 1000 : null };
         const row: any = { id: uuidv7(), provider: st.p, auth_type: "oauth", credentials_enc: encrypt(JSON.stringify(creds)), config: cfg };
         const conn = new CrmConn(row, null);
@@ -645,12 +681,17 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
 
   // ───────── Mapeos ─────────
 
-  app.get<{ Querystring: { connectionId?: string } }>("/v1/crm/mappings", { preHandler: auth }, async (req) => {
+  app.get<{ Querystring: { connectionId?: string; provider?: string } }>("/v1/crm/mappings", { preHandler: auth }, async (req) => {
     const params: unknown[] = [A(req).tenantId];
     let where = `tenant_id = $1`;
     if (req.query.connectionId && UUID.test(req.query.connectionId)) {
       params.push(req.query.connectionId);
       where += ` AND connection_id = $2`;
+    }
+    // provider: solo mapeos de conexiones activas de ese proveedor (la acción de Pipedrive lista los suyos).
+    if (req.query.provider && (CRM_PROVIDERS as readonly string[]).includes(req.query.provider)) {
+      params.push(req.query.provider);
+      where += ` AND connection_id IN (SELECT id FROM crm_connections WHERE tenant_id = $1 AND active AND provider = $${params.length})`;
     }
     const rows = await s.db.query(`SELECT * FROM crm_mappings WHERE ${where} ORDER BY created_at DESC`, params);
     return { items: rows.map(toMapping) };

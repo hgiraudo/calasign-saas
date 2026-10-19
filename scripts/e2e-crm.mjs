@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Prueba de punta a punta de CRM/ERP (HubSpot, Salesforce, Zoho CRM / Bigin, Siigo, Alegra) contra servidores simulados.
+// Prueba de punta a punta de CRM/ERP (HubSpot, Salesforce, Zoho CRM / Bigin, Siigo, Alegra, Pipedrive) contra servidores simulados.
 // Es autocontenida: levanta los simuladores y su propia API (puerto 4115) con las URLs de los proveedores
 // apuntando a ellos. Uso: node scripts/e2e-crm.mjs   (un argumento de URL se ignora)
 import { spawn } from "node:child_process";
@@ -17,6 +17,7 @@ const BASE = `http://localhost:${PORT}`;
 const MB = Number(process.env.E2E_CRM_MOCK_BASE ?? 4291);
 // Zoho: zo = servidor de cuentas "US" donde se inicia OAuth; zoEu = centro de datos de la cuenta (cuentas + API).
 const P = { hs: MB, sf: MB + 1, sg: MB + 2, al: MB + 3, zo: MB + 4, zoEu: MB + 5 };
+P.pd = MB + 6; // Pipedrive (OAuth y API en el mismo simulador)
 const HS_SECRET = "hs-client-secret-e2e";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const step = (m) => console.log(`✓ ${m}`);
@@ -248,6 +249,98 @@ await serve(P.al, async ({ req, url, body, send }) => {
   send(404, { message: `alegra mock: ${req.method} ${path}` });
 });
 
+// Pipedrive: OAuth (Basic client_id:client_secret, api_domain en el token) y API v1 sobre ese dominio.
+const PD_STATUS = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"; // campo personalizado "Estado CalaSign" (opción única)
+const PD_NIT = "0123456789abcdef0123456789abcdef01234567"; // campo personalizado "NIT" (texto)
+const pd = {
+  token: null,
+  tokens: 0,
+  refreshes: 0,
+  codes: new Map(),
+  deals: { 42: { id: 42, title: "Licencia Pipedrive", value: 2300, currency: "COP", person_id: 7, participants: [7, 8], [PD_NIT]: "900555111", [PD_STATUS]: null } },
+  persons: {
+    7: { id: 7, name: "Paula Principal PD", email: [{ label: "work", value: "paula.pd@cliente.test", primary: true }], phone: [] },
+    8: { id: 8, name: "Pedro Participante PD", email: [{ label: "work", value: "pedro.pd@cliente.test", primary: true }], phone: [] },
+  },
+  fields: [
+    { key: "title", name: "Title", field_type: "varchar" },
+    { key: PD_STATUS, name: "Estado CalaSign", field_type: "enum", options: [{ id: 11, label: "Enviado" }, { id: 12, label: "Firmado" }, { id: 13, label: "Rechazado" }] },
+    { key: PD_NIT, name: "NIT", field_type: "varchar" },
+  ],
+  files: [],
+  notes: [],
+  puts: [],
+};
+function pdIssue() {
+  pd.tokens++;
+  pd.token = `pd-at-${pd.tokens}`;
+  return { access_token: pd.token, refresh_token: "pd-rt", expires_in: 3599, token_type: "Bearer", scope: "deals:full,contacts:read", api_domain: `http://127.0.0.1:${P.pd}` };
+}
+const pdPersonRef = (id) => {
+  const p = pd.persons[id];
+  return p ? { name: p.name, email: p.email, phone: p.phone, value: p.id } : null;
+};
+await serve(P.pd, async ({ req, url, body, json, send }) => {
+  const path = url.pathname;
+  if (path === "/oauth/authorize") {
+    if (url.searchParams.get("client_id") !== "pd-client" || url.searchParams.get("client_secret")) return send(400, { error: "invalid_request" });
+    const code = `pd-code-${randomUUID()}`;
+    pd.codes.set(code, url.searchParams.get("redirect_uri"));
+    return send(302, undefined, { location: `${url.searchParams.get("redirect_uri")}?code=${code}&state=${encodeURIComponent(url.searchParams.get("state"))}` });
+  }
+  if (path === "/oauth/token") {
+    if (req.headers.authorization !== `Basic ${Buffer.from("pd-client:pd-secret").toString("base64")}`) return send(401, { error: "invalid_client" });
+    const f = new URLSearchParams(body.toString());
+    if (f.get("client_secret")) return send(400, { error: "invalid_request", error_description: "secret en el cuerpo" });
+    if (f.get("grant_type") === "authorization_code") {
+      if (!pd.codes.has(f.get("code")) || pd.codes.get(f.get("code")) !== f.get("redirect_uri")) return send(400, { error: "invalid_grant" });
+      pd.codes.delete(f.get("code"));
+      return send(200, pdIssue());
+    }
+    if (f.get("grant_type") === "refresh_token" && f.get("refresh_token") === "pd-rt") {
+      pd.refreshes++;
+      return send(200, pdIssue());
+    }
+    return send(400, { error: "invalid_grant" });
+  }
+  if ((req.headers.authorization ?? "") !== `Bearer ${pd.token}`) return send(401, { success: false, error: "unauthorized access", errorCode: 401 });
+  let m;
+  if (path === "/api/v1/users/me") return send(200, { success: true, data: { id: 1, email: "admin@acme.test", company_id: 5150, company_name: "ACME", company_domain: "acme" } });
+  if (path === "/api/v1/dealFields") return send(200, { success: true, data: pd.fields });
+  if (path === "/api/v1/personFields") return send(200, { success: true, data: [{ key: "name", name: "Name", field_type: "varchar" }] });
+  if ((m = path.match(/^\/api\/v1\/deals\/(\d+)\/participants$/))) {
+    const d = pd.deals[m[1]];
+    if (!d) return send(404, { success: false, error: "Deal not found" });
+    return send(200, { success: true, data: d.participants.map((pid, i) => ({ id: i + 1, person_id: pdPersonRef(pid) })) });
+  }
+  if ((m = path.match(/^\/api\/v1\/deals\/(\d+)$/))) {
+    const d = pd.deals[m[1]];
+    if (!d) return send(404, { success: false, error: "Deal not found" });
+    if (req.method === "PUT") {
+      const b = json();
+      pd.puts.push(b);
+      Object.assign(d, b);
+      return send(200, { success: true, data: { id: d.id } });
+    }
+    const { participants: _p, ...data } = d;
+    return send(200, { success: true, data: { ...data, person_id: pdPersonRef(d.person_id), person_name: pd.persons[d.person_id]?.name } });
+  }
+  if ((m = path.match(/^\/api\/v1\/persons\/(\d+)$/))) {
+    const p = pd.persons[m[1]];
+    return p ? send(200, { success: true, data: p }) : send(404, { success: false, error: "Person not found" });
+  }
+  if (path === "/api/v1/files" && req.method === "POST") {
+    const raw = body.toString("latin1");
+    pd.files.push({ pdf: raw.includes("%PDF"), dealId: raw.match(/name="deal_id"\r\n\r\n(\d+)/)?.[1] ?? null, personId: raw.match(/name="person_id"\r\n\r\n(\d+)/)?.[1] ?? null });
+    return send(201, { success: true, data: { id: 700 + pd.files.length } });
+  }
+  if (path === "/api/v1/notes" && req.method === "POST") {
+    pd.notes.push(json());
+    return send(201, { success: true, data: { id: 800 + pd.notes.length } });
+  }
+  send(404, { success: false, error: `pipedrive mock: ${req.method} ${path}` });
+});
+
 // Zoho CRM y Bigin. La cuenta vive en el centro de datos "EU" (P.zoEu): el authorize se inicia en el "US" (P.zo) y
 // Zoho vuelve con accounts-server apuntando al EU, donde hay que canjear el código y refrescar.
 const zo = {
@@ -373,6 +466,9 @@ const api_ = spawn(join(ROOT, "apps/api/node_modules/.bin/tsx"), [join(ROOT, "sc
     SIIGO_API_BASE: `http://127.0.0.1:${P.sg}`,
     SIIGO_PARTNER_ID: "CalaSignE2E",
     ALEGRA_API_BASE: `http://127.0.0.1:${P.al}/api/v1`,
+    PIPEDRIVE_CLIENT_ID: "pd-client",
+    PIPEDRIVE_CLIENT_SECRET: "pd-secret",
+    PIPEDRIVE_OAUTH_BASE: `http://127.0.0.1:${P.pd}`,
     ZOHO_CLIENT_ID: "zo-client",
     ZOHO_CLIENT_SECRET: "zo-secret",
     ZOHO_ACCOUNTS_URL: `http://127.0.0.1:${P.zo}`,
@@ -494,6 +590,8 @@ assert(byP.hubspot.oauthConfigured && byP.salesforce.oauthConfigured && !byP.sii
 assert(prov.redirectUris.salesforce === `${BASE}/v1/crm/oauth/salesforce/callback`, "redirect URI");
 assert(byP.zoho.oauthConfigured && !byP.zoho.tokenSupported && byP.zoho.kind === "crm" && prov.redirectUris.zoho === `${BASE}/v1/crm/oauth/zoho/callback`, "Zoho por OAuth");
 step("proveedores: OAuth configurado para HubSpot, Salesforce y Zoho; Siigo y Alegra por token");
+assert(byP.pipedrive?.oauthConfigured && !byP.pipedrive.tokenSupported && byP.pipedrive.objectTypes.join() === "deal,contact", "proveedor Pipedrive");
+assert(prov.redirectUris.pipedrive === `${BASE}/v1/crm/oauth/pipedrive/callback`, "redirect URI de Pipedrive");
 
 // Plantilla con dos roles y un monto a prellenar.
 const { template } = await api("POST", "/v1/templates", { name: `Contrato CRM ${stamp}`, subject: "Contrato" });
@@ -573,7 +671,7 @@ const hookUrl = `${BASE}/v1/integrations/crm/hubspot/webhook`;
 const events = JSON.stringify([{ eventId: 50001, subscriptionType: "deal.propertyChange", portalId: 777, objectId: 9002, propertyName: "dealstage", propertyValue: "contractsent" }]);
 const ts = String(Date.now());
 const sig = createHmac("sha256", HS_SECRET).update(`POST${hookUrl}${events}${ts}`).digest("base64");
-const bad = await fetch(hookUrl, { method: "POST", headers: { "content-type": "application/json", "x-hubspot-request-timestamp": ts, "x-hubspot-signature-v3": "x" + sig.slice(1) }, body: events });
+const bad = await fetch(hookUrl, { method: "POST", headers: { "content-type": "application/json", "x-hubspot-request-timestamp": ts, "x-hubspot-signature-v3": (sig[0] === "x" ? "y" : "x") + sig.slice(1) }, body: events });
 assert(bad.status === 401, "webhook con firma inválida → 401");
 for (let i = 0; i < 2; i++) {
   const r = await fetch(hookUrl, { method: "POST", headers: { "content-type": "application/json", "x-hubspot-request-timestamp": ts, "x-hubspot-signature-v3": sig }, body: events });
@@ -806,6 +904,69 @@ step("Salesforce: OAuth con PKCE S256, contacto principal (OpportunityContactRol
   assert(zo409.error.code === "crm_reauth_required", "Zoho revocado → crm_reauth_required");
   zo.revoked = false;
   step("Zoho revocado: el envío responde 409 crm_reauth_required");
+}
+
+// ── Pipedrive: OAuth con api_domain, Deal (persona principal + participante), campo de opción única, Files + nota ──
+{
+  const pdConn = await oauthConnect("pipedrive", "Pipedrive ACME");
+  assert(pdConn?.accountLabel === "acme.pipedrive.com" && pdConn.authType === "oauth", `conexión Pipedrive con etiqueta (${pdConn?.accountLabel})`);
+  // Instalación iniciada desde el Marketplace (code sin state): no se canjea; se pide conectar desde Ajustes.
+  const inst = await fetch(`${BASE}/v1/crm/oauth/pipedrive/callback?code=pd-code-marketplace`, { headers: { cookie }, redirect: "manual" });
+  assert((inst.headers.get("location") ?? "").includes("pipedrive_install=1"), "instalación desde el Marketplace → Ajustes");
+  step("Pipedrive: OAuth (Basic, api_domain de la compañía) y etiqueta; instalación desde el Marketplace sin state no conecta");
+
+  await api("POST", "/v1/crm/mappings", { connectionId: pdConn.id, name: "x", objectType: "opportunity", templateId: template.id }, { expect: 400 });
+  const pdMap = await api("POST", "/v1/crm/mappings", {
+    connectionId: pdConn.id,
+    name: "Deals Pipedrive",
+    objectType: "deal",
+    templateId: template.id,
+    roles: [
+      { role: "Cliente", source: "contact_role", primary: true },
+      { role: "Vendedor", source: "contact", index: 1 },
+    ],
+    prefill: [{ field: "Monto", property: "value" }],
+    writeBack: { statusProperty: "Estado CalaSign", statusValues: { sent: "Enviado", completed: "Firmado", declined: "Rechazado" }, attachPdf: true },
+  });
+  const pdSent = await api("POST", `/v1/crm/mappings/${pdMap.id}/send`, { objectId: "42" });
+  const pdDet = await api("GET", `/v1/envelopes/${pdSent.envelopeId}`);
+  assert(pdDet.recipients.some((r) => r.name === "Paula Principal PD" && r.email === "paula.pd@cliente.test"), "persona principal del deal como Cliente");
+  assert(pdDet.recipients.some((r) => r.name === "Pedro Participante PD"), "participante del deal como Vendedor");
+  assert(pdDet.fields.some((f) => f.label === "Monto" && f.value === "2300"), "monto prellenado desde value");
+  assert(pdDet.envelope.subject.includes("Licencia Pipedrive"), `asunto con el título del deal (${pdDet.envelope.subject})`);
+  await waitFor(() => pd.deals[42][PD_STATUS] === 11, "write-back «Enviado» (opción 11) en Pipedrive");
+  step("Pipedrive: envío desde el deal 42 (persona principal + participante, monto) y write-back en un campo de opción única");
+
+  pd.token = "expired"; // el access token deja de valer: 401 → refresh → reintento
+  await signAll(pdSent.envelopeId, ["Paula Principal PD", "Pedro Participante PD"]);
+  await waitFor(() => pd.deals[42][PD_STATUS] === 12 && pd.notes.length === 1, "write-back «Firmado» + nota");
+  assert(pd.refreshes >= 1, "Pipedrive: se refrescó el token");
+  assert(pd.files.length === 1 && pd.files[0].pdf && pd.files[0].dealId === "42", "PDF sellado subido al deal con la Files API");
+  assert(pd.notes[0].deal_id === 42 && /SHA-256/.test(pd.notes[0].content) && pd.notes[0].content.includes(`/app/envelopes/${pdSent.envelopeId}`), "nota con hash y link en el deal");
+  step("Pipedrive: firmado → token refrescado, estado «Firmado», PDF en Files y nota con hash y link");
+
+  // Desde una Person (objectType contact): ella misma es el destinatario principal; queda en borrador.
+  const pdPersonMap = await api("POST", "/v1/crm/mappings", {
+    connectionId: pdConn.id,
+    name: "Personas Pipedrive",
+    objectType: "contact",
+    templateId: template.id,
+    roles: [
+      { role: "Cliente", source: "contact", index: 0 },
+      { role: "Vendedor", source: "fixed", name: `VendPD ${stamp}`, email: `ventas5+${stamp}@acme.test` },
+    ],
+    send: false,
+  });
+  // La acción de Pipedrive lista solo los mapeos de conexiones de Pipedrive.
+  const pdOnly = (await api("GET", "/v1/crm/mappings?provider=pipedrive")).items.map((x) => x.id).sort();
+  assert(pdOnly.join() === [pdMap.id, pdPersonMap.id].sort().join(), `mapeos filtrados por proveedor (${pdOnly.length})`);
+  const pdDraft = await api("POST", `/v1/crm/mappings/${pdPersonMap.id}/send`, { objectId: "8" });
+  assert(pdDraft.status === "draft", "sobre en borrador desde la persona");
+  const pdDraftDet = await api("GET", `/v1/envelopes/${pdDraft.envelopeId}`);
+  assert(pdDraftDet.recipients.some((r) => r.name === "Pedro Participante PD" && r.email === "pedro.pd@cliente.test"), "la persona como Cliente");
+  const missing = await api("POST", `/v1/crm/mappings/${pdPersonMap.id}/send`, { objectId: "999" }, { expect: 404 });
+  assert(missing.error.code === "crm_record_not_found", "persona inexistente → 404");
+  step("Pipedrive: envío desde una Person (borrador) y registro inexistente → 404");
 }
 
 // ── ERP: Siigo y Alegra por token ──

@@ -49,6 +49,7 @@ const TOKEN_FIELDS: Record<CrmProvider, { key: string; label: string; secret?: b
     { key: "email", label: "alegra.email", type: "email" },
     { key: "token", label: "alegra.token", secret: true },
   ],
+  pipedrive: [],
 };
 
 export function CrmSettingsPage() {
@@ -87,6 +88,8 @@ export function CrmSettingsPage() {
   useEffect(() => {
     load().catch((e) => setError(errorText(e)));
     if (params.get("connected")) setNote(t("connected"));
+    // Instalación iniciada desde el Marketplace de Pipedrive: falta conectar desde acá (el OAuth lo inicia CalaSign).
+    if (params.get("pipedrive_install")) setNote(t("pipedrive.install"));
     if (params.get("error")) setError(t("error", { code: params.get("error") ?? "" }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -177,7 +180,7 @@ export function CrmSettingsPage() {
                     </label>
                   </div>
                 )}
-                {(pv.provider === "hubspot" || pv.provider === "salesforce" || pv.provider === "zoho") &&
+                {(pv.provider === "hubspot" || pv.provider === "salesforce" || pv.provider === "zoho" || pv.provider === "pipedrive") &&
                   (pv.oauthConfigured ? (
                     <button type="button" className="btn btn-primary" onClick={() => startOAuth(pv.provider)}>
                       {t("connectOAuth")}
@@ -648,6 +651,8 @@ function MappingEditor({
         </label>
       )}
 
+      {provider === "pipedrive" && <p className="muted small">{t(objectType === "contact" ? "pipedrive.hint.person" : "pipedrive.hint.deal")}</p>}
+
       {!isErp && (
         <>
           <label className="field">
@@ -798,7 +803,7 @@ function MappingEditor({
           <div className="row-wrap">
             <label className="field grow">
               <span>{t("m.statusProperty")}</span>
-              <input value={statusProperty} placeholder={provider === "salesforce" ? "CalaSign_Status__c" : provider === "zoho" ? "CalaSign_Status" : "calasign_status"} onChange={(e) => setStatusProperty(e.target.value)} />
+              <input value={statusProperty} placeholder={provider === "salesforce" ? "CalaSign_Status__c" : provider === "zoho" ? "CalaSign_Status" : provider === "pipedrive" ? t("pipedrive.statusPlaceholder") : "calasign_status"} onChange={(e) => setStatusProperty(e.target.value)} />
             </label>
             <label className="field grow">
               <span>{t("m.completedValue")}</span>

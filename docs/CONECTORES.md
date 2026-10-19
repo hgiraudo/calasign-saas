@@ -10,8 +10,9 @@ agrupa las guías de cada conector.
 |---|---|---|---|---|
 | Low-code / iPaaS | Power Automate / Logic Apps, Zapier, Make, n8n | Artefacto descargable (se importa en la plataforma) | `integrations/connectors/<id>/` | `/developers/connectors` |
 | CRM / ERP | Dynamics 365 (sobre Power Automate) | Artefacto + script de Dataverse | `integrations/connectors/dynamics365/` | `/developers/connectors#dynamics365` |
-| CRM / ERP | HubSpot, Salesforce (Opportunity), Zoho CRM y Bigin (Deals, Contacts, Pipelines), Siigo, Alegra | Nativo, se configura en Ajustes | `apps/api/src/modules/crm/` ([CRM.md](CRM.md)) | `/developers/guides/crm` |
+| CRM / ERP | HubSpot, Salesforce (Opportunity), Zoho CRM y Bigin (Deals, Contacts, Pipelines), Pipedrive (Deal y Person), Siigo, Alegra | Nativo, se configura en Ajustes | `apps/api/src/modules/crm/` ([CRM.md](CRM.md)) | `/developers/guides/crm` |
 | CRM / ERP | Zoho CRM: botón «Enviar a firmar con CalaSign» en Deals (sobre el conector nativo) | Artefacto: función Deluge + guía de la extensión de Zoho Marketplace | `integrations/connectors/zoho-crm/` | `/developers/guides/crm` |
+| CRM / ERP | Pipedrive Marketplace: acción «Enviar a firmar con CalaSign» (sobre el conector nativo) | Artefacto (Link action) + guía del Developer Hub | `integrations/connectors/pipedrive/` | `/developers/guides/crm#pipedrive` |
 | RR. HH. | BambooHR, HiBob, Factorial | Nativo | `apps/api/src/modules/connectors/` | `/developers/guides/hr-contracts` |
 | Contratos (CLM) | Ironclad, Juro | Nativo | `apps/api/src/modules/connectors/` | `/developers/guides/hr-contracts` |
 | Gestores documentales | SharePoint, OneDrive, Google Drive, Dropbox, Box, S3 | Nativo (archivado del firmado + evidencia) | `apps/api/src/modules/storage-export.ts` | `/developers/guides/hr-contracts#dms` |
@@ -150,6 +151,12 @@ Scopes OAuth: `templates:read`, `envelopes:write` y `webhooks:manage`, por prefi
     adjunto, nota (`Parent_Id` en Bigin) y que el authorize acepte PKCE en todos los DC (si no, `ZOHO_OAUTH_PKCE=false`).
   - Extensión en Zoho Developer Console (conexión con API key, campo `CalaSign_Status`, variables y botón con la
     función Deluge), *Test your Extension* y publicación en Zoho Marketplace (revisión de Zoho).
+- **Pipedrive** (conector nativo + acción del Marketplace, ver `integrations/connectors/pipedrive/README.md`):
+  - App pública en el Developer Hub con la callback `{APP_URL}/v1/crm/oauth/pipedrive/callback` y los scopes `base`,
+    `deals:full`, `contacts:full`, `users:read`; cargar `PIPEDRIVE_CLIENT_ID` y `PIPEDRIVE_CLIENT_SECRET` en el servidor.
+  - Link action «Enviar a firmar con CalaSign» → `{APP_URL}/integrations/connectors/pipedrive/send.html` (Deals y Persons).
+  - Probar en una cuenta sandbox (archivos y notas con `deals:full`, campo de opción única) y pedir la revisión del
+    Marketplace con el listing en es/en/pt.
 - **Siguientes conectores del ranking**: Odoo, TOTVS/RD Station y SAP Business One.
 
 ## RR. HH. (HRIS), contratos (CLM) y gestores documentales (DMS)
@@ -487,14 +494,14 @@ y Validated ID no se revisaron en línea.
 
 **Conclusión:** CalaSign cubre bien almacenamiento, iPaaS e IA, y con MCP va por delante de la mayoría. Faltan tres
 cosas: apps dentro de las suites ofimáticas (Gmail/Docs, Teams, Slack con acciones), CRM de pymes y de LATAM
-(Pipedrive, RD Station, Kommo, Bitrix24, monday; Zoho CRM ya está hecho) y verificación de identidad local (Registraduría, gov.br/Serpro, RNP,
+(RD Station, Kommo, Bitrix24, monday; Zoho CRM y Pipedrive ya están hechos) y verificación de identidad local (Registraduría, gov.br/Serpro, RNP,
 JCE).
 
 ### Brechas por categoría
 
 | Categoría | Lo que tiene la mayoría de los competidores | CalaSign |
 |---|---|---|
-| CRM global | Salesforce (AppExchange), HubSpot, Dynamics 365 nativo, Zoho CRM, Pipedrive | Salesforce solo en Opportunity; HubSpot sí; Zoho CRM y Bigin sí (nativo + botón en Deals); Dynamics vía Power Automate; **sin Pipedrive** |
+| CRM global | Salesforce (AppExchange), HubSpot, Dynamics 365 nativo, Zoho CRM, Pipedrive | Salesforce solo en Opportunity; HubSpot sí; Zoho CRM y Bigin sí (nativo + botón en Deals); Pipedrive sí (nativo + acción del Marketplace); Dynamics vía Power Automate |
 | CRM LATAM | RD Station y Kommo (Clicksign y ZapSign vía Pluga), Bitrix24 (Clicksign, D4Sign) | **No** |
 | Ofimática | Add-on de Gmail, Docs y Drive (DocuSign, Dropbox Sign, Zoho); app de Teams (Adobe, Zoho) | Word, Outlook y add-on de Google Workspace sí; **sin app de Teams** |
 | Mensajería con acciones | App de Slack (DocuSign); firma por WhatsApp (BoldSign, ZapSign, Truora) | Solo avisos |
@@ -516,7 +523,7 @@ JCE).
 | 2 | ~~Zoho CRM (después Bigin y Zoho Books)~~ **Hecho** (Zoho CRM y Bigin; falta Zoho Books) | Muy usado por pymes de CO, RD y HN; DocuSign no lo tiene | M | Conector nativo en `crm/` (OAuth multi-DC, Deals/Contacts/Pipelines, estado y PDF) + botón en Deals (`integrations/connectors/zoho-crm/`). Falta publicar la extensión en Zoho Marketplace |
 | 3 | ~~Add-on de Google Workspace (Gmail, Docs, Drive)~~ **Hecho**: `google-workspace` (ver la sección de abajo) | Google domina en pymes de LATAM | M | Google Workspace Marketplace (Apps Script) |
 | 4 | App de Microsoft Teams (enviar, aprobar, avisos con Adaptive Cards) | Completa Word y Outlook | M | AppSource, reutilizando el backend de Outlook |
-| 5 | Pipedrive | Muy popular en BR y CO | S–M | Pipedrive Marketplace |
+| 5 | Pipedrive | Muy popular en BR y CO | S–M | **Hecho**: conector nativo (`apps/api/src/modules/crm/pipedrive.ts`) + acción del Marketplace (`integrations/connectors/pipedrive/`); falta publicar la app ([CRM.md](CRM.md)) |
 | 6 | Verificación de identidad local (CO, BR, HN, RD) | Lo que más diferencia en LATAM | L | Nativo, con un agregador (Truora, unico, Metamap) |
 | 7 | RD Station CRM | CRM líder en Brasil; Clicksign ya está | S–M | RD Station App Store |
 | 8 | Kommo | Ventas por WhatsApp en LATAM | S–M | Kommo Marketplace |

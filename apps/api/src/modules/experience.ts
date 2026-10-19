@@ -70,6 +70,13 @@ const IN_PERSON_LABEL: Record<string, (host: string) => string> = {
   en: (h) => `In person, presented by ${h} (identity confirmed on the host's device)`,
 };
 
+/** Sin la confirmación de identidad (p. ej. delegó o lo reasignaron antes de confirmarla): el certificado no la afirma. */
+const IN_PERSON_UNCONFIRMED_LABEL: Record<string, (host: string) => string> = {
+  es: (h) => `En persona, presentado por ${h}`,
+  "pt-BR": (h) => `Presencial, apresentado por ${h}`,
+  en: (h) => `In person, presented by ${h}`,
+};
+
 /** Etiquetas de autenticación "en persona" para el certificado, por id de destinatario. */
 export async function inPersonAuthLabels(db: Db, recips: any[], locale: string): Promise<Map<string, string>> {
   const out = new Map<string, string>();
@@ -77,10 +84,12 @@ export async function inPersonAuthLabels(db: Db, recips: any[], locale: string):
   if (!ids.length) return out;
   const users = new Map((await db.query<any>(`SELECT id, name, email FROM users WHERE id = ANY($1)`, [ids])).map((u) => [u.id, u]));
   const fmt = IN_PERSON_LABEL[locale] ?? IN_PERSON_LABEL.es;
+  const fmtUnconfirmed = IN_PERSON_UNCONFIRMED_LABEL[locale] ?? IN_PERSON_UNCONFIRMED_LABEL.es;
   for (const r of recips) {
     if (r.auth_method !== "in_person" || !r.in_person_host_user_id) continue;
     const u = users.get(r.in_person_host_user_id);
-    out.set(r.id, fmt(u ? `${u.name} <${u.email}>` : "—"));
+    const host = u ? `${u.name} <${u.email}>` : "—";
+    out.set(r.id, r.identity_confirmed_at ? fmt(host) : fmtUnconfirmed(host));
   }
   return out;
 }
@@ -190,6 +199,8 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
     if ((next.locale ?? null) !== (r.locale ?? null)) changes.locale = { from: r.locale, to: next.locale };
     if (!Object.keys(changes).length) continue;
     const contactChanged = Boolean(changes.email || changes.phone || changes.channels);
+    // Otro correo o teléfono puede ser otra persona; cambiar solo los canales (p. ej. sumar WhatsApp) no.
+    const destinationChanged = Boolean(changes.email || changes.phone);
     await db.query(`UPDATE recipients SET name = $2, email = $3, phone = $4, channels = $5, locale = $6 WHERE id = $1`, [
       r.id,
       next.name,
@@ -202,7 +213,7 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
     // aprobada ni las fallidas. Se anulan y la verificación empieza de nuevo, con todos los intentos. Si no, el caso
     // típico (el nombre estaba mal tipeado, la verificación falló por name_mismatch hasta agotar los intentos y el
     // remitente lo corrige) dejaba al firmante sin intentos y el sobre trabado.
-    if ((changes.name || contactChanged) && r.id_verification_provider) {
+    if ((changes.name || destinationChanged) && r.id_verification_provider) {
       const canceled = await db.query(
         `UPDATE identity_verifications SET status = 'canceled', updated_at = now() WHERE recipient_id = $1 AND status IN ('created','pending','verified','failed') RETURNING id`,
         [r.id],
@@ -229,15 +240,18 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
       tokenRotated = true;
       // El link nuevo va a otro contacto (quizá otra persona): el consentimiento y los adjuntos de quien tenía el
       // anterior no pasan, como al reasignar. Si no, firmaba sin aceptar el uso de medios electrónicos y el PDF final
-      // anexaba, a su nombre, los archivos (p. ej. la foto de un documento) que subió el otro.
-      const keys = await discardRecipientAttachments(db, r.id);
-      if (keys.length) {
-        discardedKeys.push(...keys);
-        changes.attachmentsDiscarded = keys.length;
-      }
-      if (r.consented_at) {
-        await db.query(`UPDATE recipients SET consented_at = NULL WHERE id = $1`, [r.id]);
-        changes.consentReset = true;
+      // anexaba, a su nombre, los archivos (p. ej. la foto de un documento) que subió el otro. Con solo un cambio de
+      // canales es la misma persona: no pierde lo que ya hizo.
+      if (destinationChanged) {
+        const keys = await discardRecipientAttachments(db, r.id);
+        if (keys.length) {
+          discardedKeys.push(...keys);
+          changes.attachmentsDiscarded = keys.length;
+        }
+        if (r.consented_at) {
+          await db.query(`UPDATE recipients SET consented_at = NULL WHERE id = $1`, [r.id]);
+          changes.consentReset = true;
+        }
       }
       if (["sent", "viewed"].includes(r.status) && r.auth_method !== "in_person" && !r.embedded) {
         await enqueue(db, "notify", { kind: "invite", envelopeId: e.id, recipientId: r.id, tenantId: e.tenant_id });

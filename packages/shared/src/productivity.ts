@@ -62,6 +62,9 @@ export const TemplateFieldInput = z
   })
   .refine((f) => f.x + f.width <= 1.0001 && f.y + f.height <= 1.0001, { message: "el campo se sale de la página" })
   .refine((f) => f.type !== "dropdown" || (f.options && f.options.length > 0), { message: "el desplegable necesita opciones" })
+  // Como FieldInput: sin esto la plantilla guardaba un rango vacío y cada sobre creado desde ella heredaba un campo
+  // número que ningún valor cumple (si es obligatorio, el firmante no puede terminar).
+  .refine((f) => f.min == null || f.max == null || f.min <= f.max, { message: "min no puede ser mayor que max" })
   .refine((f) => !f.formula || f.type === "number", { message: "solo un campo número puede tener fórmula" });
 export type TemplateFieldInput = z.input<typeof TemplateFieldInput>;
 

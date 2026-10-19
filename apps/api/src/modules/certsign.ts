@@ -57,6 +57,7 @@ import { lockEnvelope } from "./envelopes";
 import { guardedFetch, trustAnchors } from "./evidence-seal";
 import { recipientActor, resolveToken } from "./signing";
 import { normalizeRequirements } from "./certsign-requirements";
+import { deleteBlobsQuietly } from "./file-cleanup";
 export { normalizeRequirements };
 
 const CODE_TTL_MS = 10 * 60_000;
@@ -89,7 +90,7 @@ export async function applyCertificateFlags(
 export type CertsignStage =
   | { kind: "none" }
   | { kind: "waiting" }
-  | { kind: "seal"; workingPdf: Uint8Array; completedAt: string; chainHead: string };
+  | { kind: "seal"; workingPdf: Uint8Array; workingKey: string; completedAt: string; chainHead: string };
 
 /**
  * Se llama en el worker de finalización, con el PDF todavía sin armar.
@@ -107,7 +108,13 @@ export async function certsignStage(
   if (!certSigners.length) return { kind: "none" };
   const row = await d.db.one<any>(`SELECT * FROM envelope_certsign WHERE envelope_id = $1`, [e.id]);
   if (row?.ready)
-    return { kind: "seal", workingPdf: await d.blobs.get(row.working_key), completedAt: new Date(row.completed_at).toISOString(), chainHead: row.chain_head };
+    return {
+      kind: "seal",
+      workingPdf: await d.blobs.get(row.working_key),
+      workingKey: row.working_key,
+      completedAt: new Date(row.completed_at).toISOString(),
+      chainHead: row.chain_head,
+    };
   if (row) return { kind: "waiting" };
 
   const working = await renderEnvelopePdf(input);
@@ -513,11 +520,15 @@ export async function certsignRoutes(app: FastifyInstance, s: Services) {
     await s.blobs.put(key, pdf, "application/pdf");
     const actor = recipientActorFromSession(req, r);
     let envelopeStatus = "awaiting_certificates";
+    let superseded: string[] = [];
     await s.db.tx(async (t) => {
       const e = await lockEnvelope(t, sess.tenant_id, sess.envelope_id);
       const cur = await t.one<any>(`SELECT status FROM certsign_sessions WHERE id = $1 FOR UPDATE`, [sess.id]);
       if (cur?.status !== "prepared") throw new AppError(410, "code_used", "Este código ya se usó");
-      const { pending } = await assertStillCurrent(t, sess);
+      const { pending, cs: prev } = await assertStillCurrent(t, sess);
+      // El PDF de trabajo anterior y el preparado de esta sesión ya no los usa nada (ninguno tiene fila en `files`,
+      // así que la retención no los ve): se borran después de confirmar.
+      superseded = [prev.working_key, sess.prepared_key].filter(Boolean);
       await t.query(`UPDATE envelope_certsign SET working_key = $2, working_sha256 = $3, updated_at = now() WHERE envelope_id = $1`, [e.id, key, sha]);
       await t.query(
         `UPDATE certificate_signatures SET status = 'signed', subject = $2, issuer = $3, common_name = $4, serial_number = $5, not_before = $6,
@@ -573,7 +584,12 @@ export async function certsignRoutes(app: FastifyInstance, s: Services) {
         await enqueue(t, "finalize", { envelopeId: e.id, tenantId: e.tenant_id }, { dedupeKey: `finalize-certsign:${e.id}` });
         envelopeStatus = "finalizing";
       }
+    }).catch(async (err) => {
+      // El PDF firmado ya subido no lo referencia nada si la transacción no se confirmó.
+      await s.blobs.delete(key).catch(() => {});
+      throw err;
     });
+    await deleteBlobsQuietly(s.blobs, superseded);
     const res: CertsignResult = { status: "completed", signedPdfSha256: sha, envelopeStatus };
     return res;
   });

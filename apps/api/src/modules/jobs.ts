@@ -377,9 +377,9 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
   const sha = sha256Hex(pdf);
   await d.blobs.put(key, pdf, "application/pdf");
 
-  await d.db.tx(async (t) => {
+  const completed = await d.db.tx(async (t) => {
     const cur = await t.one<any>(`SELECT status FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
-    if (cur?.status !== "finalizing") return;
+    if (cur?.status !== "finalizing") return false;
     await t.query(
       `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'signed',$3,'application/pdf',$4,$5)`,
       [fileId, e.tenant_id, key, pdf.length, sha],
@@ -412,7 +412,11 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
     for (const r of recips.filter((x) => x.status !== "delegated" && x.status !== "reassigned"))
       await enqueue(t, "notify", { kind: "completed", envelopeId: e.id, recipientId: r.id, tenantId: e.tenant_id });
     await enqueue(t, "notify", { kind: "sender_completed", envelopeId: e.id, tenantId: e.tenant_id });
+    return true;
   });
+  // El PDF de trabajo de las firmas con certificado ya está dentro del sellado: sin fila en `files`, la retención no lo
+  // borraría nunca (y lleva los adjuntos de los firmantes).
+  if (completed && certStage.kind === "seal") await d.blobs.delete(certStage.workingKey).catch(() => {});
   d.log.info({ envelopeId: e.id, sha256: sha, bytes: pdf.length }, "sobre completado y sellado");
 }
 

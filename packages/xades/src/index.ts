@@ -295,7 +295,13 @@ export async function signXml(xml: string, signer: XmlSigner, options: XmlSignOp
     `<ds:Reference Id="${ids.ref0}" URI=""><ds:Transforms><ds:Transform Algorithm="${ALG.enveloped}"/>` +
     (c14nAlg === ALG.excC14n ? `<ds:Transform Algorithm="${ALG.excC14n}"/>` : "") +
     `</ds:Transforms><ds:DigestMethod Algorithm="${dUri}"/><ds:DigestValue>${docDigest}</ds:DigestValue></ds:Reference>` +
-    (p.keyInfoReference ? `<ds:Reference URI="#${ids.keyInfo}"><ds:DigestMethod Algorithm="${dUri}"/><ds:DigestValue>KEYINFO</ds:DigestValue></ds:Reference>` : "") +
+    // Sin Transforms, un verificador canonicaliza con C14N inclusiva: con exc-c14n el digest se declara igual que en la
+    // referencia a SignedProperties (si no, ni verifyXml ni un validador externo lo reproducían).
+    (p.keyInfoReference
+      ? `<ds:Reference URI="#${ids.keyInfo}">${
+          c14nAlg === ALG.excC14n ? `<ds:Transforms><ds:Transform Algorithm="${ALG.excC14n}"/></ds:Transforms>` : ""
+        }<ds:DigestMethod Algorithm="${dUri}"/><ds:DigestValue>KEYINFO</ds:DigestValue></ds:Reference>`
+      : "") +
     (p.xades
       ? `<ds:Reference Type="${ALG.signedProps}" URI="#${ids.signedProps}">${
           c14nAlg === ALG.excC14n ? `<ds:Transforms><ds:Transform Algorithm="${ALG.excC14n}"/></ds:Transforms>` : ""

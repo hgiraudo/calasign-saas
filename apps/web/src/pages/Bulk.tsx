@@ -190,7 +190,8 @@ export function BulkNewPage() {
 
   const sendCount = result ? (skipInvalid ? result.valid : result.invalid === 0 ? result.total : 0) : 0;
 
-  if (templates === null) return <Spinner />;
+  // Si la lista de plantillas no carga, se muestra el error (antes quedaba el spinner para siempre).
+  if (templates === null) return error ? <div className="page narrow"><ErrorBox error={error} /></div> : <Spinner />;
   return (
     <div className="page narrow">
       <div className="page-head">

@@ -348,8 +348,9 @@ export function WorkflowEditPage() {
     setSteps(next);
   };
 
-  const save = async (e: FormEvent) => {
-    e.preventDefault();
+  /** Guarda el flujo; devuelve false si no se pudo (para no iniciar una ejecución con la versión anterior). */
+  const save = async (e?: FormEvent): Promise<boolean> => {
+    e?.preventDefault();
     setBusy(true);
     setError(null);
     try {
@@ -360,8 +361,10 @@ export function WorkflowEditPage() {
       setSteps(w.steps);
       setSaved(true);
       window.setTimeout(() => setSaved(false), 2000);
+      return true;
     } catch (err) {
       setError(errorText(err));
+      return false;
     } finally {
       setBusy(false);
     }
@@ -379,7 +382,16 @@ export function WorkflowEditPage() {
           <div className="row-wrap">
             {saved && <span className="muted small">✓ {ta("wf.saved")}</span>}
             {wf && wf.active && (
-              <button type="button" className="btn" onClick={() => setStarting(true)}>
+              <button
+                type="button"
+                className="btn"
+                disabled={busy}
+                onClick={async () => {
+                  // La ejecución usa lo guardado en el servidor: sin guardar antes, los pasos editados se ignoraban.
+                  if (editable && !(await save())) return;
+                  setStarting(true);
+                }}
+              >
                 {ta("wf.start")}
               </button>
             )}

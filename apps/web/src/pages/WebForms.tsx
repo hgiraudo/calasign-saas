@@ -82,8 +82,12 @@ function WebFormEditor({ form, initialTemplateId, onClose, onSaved }: { form: We
 
   useEffect(() => {
     if (!templateId) return;
+    // Solo se aplica la respuesta de la plantilla elegida ahora: una respuesta lenta de la anterior (p. ej. la de la
+    // URL) dejaba sus roles en pantalla y el formulario se guardaba con un rol que no es de esta plantilla.
+    let stale = false;
     api<TemplateDetail>(`/v1/templates/${templateId}`)
       .then((d) => {
+        if (stale) return;
         setTpl(d);
         // El error de una plantilla anterior (p. ej. la de la URL, inexistente) no queda a la vista.
         setError(null);
@@ -93,7 +97,10 @@ function WebFormEditor({ form, initialTemplateId, onClose, onSaved }: { form: We
         setSignerRoleId((cur) => (signers.some((r) => r.id === cur) ? cur : (signers[0]?.id ?? "")));
         if (!form) setName((n) => n || d.template.name);
       })
-      .catch((e) => setError(errorText(e)));
+      .catch((e) => !stale && setError(errorText(e)));
+    return () => {
+      stale = true;
+    };
   }, [templateId, form]);
 
   const otherRoles = (tpl?.roles ?? []).filter((r) => r.id !== signerRoleId);
@@ -116,7 +123,9 @@ function WebFormEditor({ form, initialTemplateId, onClose, onSaved }: { form: We
       description: description.trim() || null,
       signerRoleId,
       fixedRecipients: otherRoles.map((r) => ({ roleId: r.id, name: fixed[r.id]?.name?.trim() ?? "", email: fixed[r.id]?.email?.trim() || null, channels: ["email"] })),
-      prefill: Object.fromEntries(Object.entries(prefill).filter(([, v]) => v.trim())),
+      // Solo etiquetas de esta plantilla: lo cargado para otra plantilla elegida antes quedaba oculto pero se mandaba, y
+      // el guardado fallaba con "no hay ningún campo …" sin forma de borrarlo.
+      prefill: Object.fromEntries(Object.entries(prefill).filter(([k, v]) => v.trim() && (!tpl || prefillable.some((f) => f.label === k)))),
       active,
       maxUses: maxUses ? Number(maxUses) : null,
       expiresAt: expiresAt ? new Date(`${expiresAt}T23:59:59`).toISOString() : null,

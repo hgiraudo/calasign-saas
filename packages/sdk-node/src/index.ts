@@ -152,7 +152,10 @@ export class CalaSign {
     if (!res.ok || typeof data?.access_token !== "string" || !data.access_token) {
       throw new CalaSignError(data?.error_description ?? "No se pudo obtener el token OAuth", res.status, data?.error ?? "oauth_error");
     }
-    this.token = { value: data.access_token, expiresAt: Date.now() + Number(data.expires_in ?? 3600) * 1000 };
+    // Un expires_in ausente, no numérico, cero o negativo vale 3600 s: con NaN o 0 el token no se reutilizaba y cada
+    // pedido a la API pedía antes otro token.
+    const ttl = Number(data.expires_in);
+    this.token = { value: data.access_token, expiresAt: Date.now() + (Number.isFinite(ttl) && ttl > 0 ? ttl : 3600) * 1000 };
     return this.token.value;
   }
 

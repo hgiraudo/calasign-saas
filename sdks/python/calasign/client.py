@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import http.client
 import json
+import math
 import random
 import time
 import urllib.error
@@ -176,6 +177,9 @@ class CalaSign:
             ttl = float(body.get("expires_in") or 3600)
         except (TypeError, ValueError):
             # Como el SDK de Node: un expires_in null o no numérico no escapa como TypeError/ValueError suelto.
+            ttl = 3600.0
+        # "nan", "inf" o un valor negativo: el token no se reutilizaba (nan/negativo) o no vencía nunca (inf).
+        if not math.isfinite(ttl) or ttl <= 0:
             ttl = 3600.0
         self._token = _Token(body["access_token"], time.time() + ttl)
         return self._token.value

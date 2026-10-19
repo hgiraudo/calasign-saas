@@ -39,9 +39,17 @@ export async function telegramRoutes(app: FastifyInstance, s: Services) {
       await sendTelegram({ to: String(chatId), text: MSG.unknown, link: null }).catch(() => {});
       return { ok: true };
     }
-    await s.db.tx(async (t) => {
+    const linked = await s.db.tx(async (t) => {
       await t.query(`SELECT id FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
-      await t.query(`UPDATE recipients SET telegram_chat_id = $2 WHERE id = $1`, [r.id, String(chatId)]);
+      // Con el sobre bloqueado, el link tiene que seguir vigente: una corrección del contacto (link nuevo, chat
+      // desvinculado) o un reemplazo pudo confirmarse mientras tanto, y el chat de quien tenía el link anterior
+      // recibiría los avisos (con el link nuevo) de la persona corregida.
+      const upd = await t.query(`UPDATE recipients SET telegram_chat_id = $2 WHERE id = $1 AND access_token_hash = $3 RETURNING id`, [
+        r.id,
+        String(chatId),
+        sha256Hex(token),
+      ]);
+      if (!upd.length) return false;
       await appendEvent(t, {
         tenantId: e.tenant_id,
         envelopeId: e.id,
@@ -49,7 +57,12 @@ export async function telegramRoutes(app: FastifyInstance, s: Services) {
         actor: { ...SYSTEM, label: "Telegram" },
         data: { recipientId: r.id, chatIdHash: sha256Hex(String(chatId)).slice(0, 16) },
       });
+      return true;
     });
+    if (!linked) {
+      await sendTelegram({ to: String(chatId), text: MSG.unknown, link: null }).catch(() => {});
+      return { ok: true };
+    }
     const locale = normLocale(r.locale ?? e.locale);
     const link = e.status === "sent" && ["sent", "viewed"].includes(r.status) ? `${await tenantBaseUrl(s.db, e.tenant_id)}/s/${decrypt(r.access_token_enc)}` : null;
     await sendTelegram({ to: String(chatId), text: MSG.linked[locale](e.subject), link, cta: MSG.cta[locale] }).catch((err) =>

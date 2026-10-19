@@ -1,5 +1,5 @@
 // Componentes de UI chicos y compartidos.
-import { useEffect, useId, useRef, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type InputHTMLAttributes, type ReactNode } from "react";
 import type { EnvelopeStatus, Locale, RecipientStatus } from "@calasign/shared";
 import { LOCALES } from "@calasign/shared";
 import { LOCALE_LABELS, useI18n } from "../lib/i18n";
@@ -134,6 +134,33 @@ export function Spinner() {
       <span className="spinner" aria-hidden="true" />
       <span className="sr-only">{t("common.loading")}</span>
     </div>
+  );
+}
+
+/**
+ * Orden de firma (1–100). El texto se guarda aparte del número: con `Number(valor) || 1` en cada tecla, borrar dejaba
+ * un 1 que no se podía quitar y tipear "3" terminaba en 13. Al salir del campo se vuelve a mostrar el valor vigente.
+ */
+export function OrderInput({ value, onChange, ...rest }: { value: number; onChange: (n: number) => void } & Omit<InputHTMLAttributes<HTMLInputElement>, "value" | "onChange" | "type">) {
+  const [text, setText] = useState(String(value));
+  useEffect(() => {
+    if (Number(text) !== value) setText(String(value));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+  return (
+    <input
+      type="number"
+      min={1}
+      max={100}
+      {...rest}
+      value={text}
+      onChange={(e) => {
+        setText(e.target.value);
+        const n = Math.trunc(Number(e.target.value));
+        if (e.target.value.trim() !== "" && Number.isFinite(n)) onChange(Math.max(1, Math.min(100, n)));
+      }}
+      onBlur={() => setText(String(value))}
+    />
   );
 }
 

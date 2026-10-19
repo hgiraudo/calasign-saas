@@ -438,8 +438,12 @@ export function NotificationIntegrationsPage() {
                 className="btn btn-sm"
                 onClick={() =>
                   act(async () => {
+                    // Como en almacenamiento: el aviso de una prueba anterior no queda a la vista, y una prueba fallida
+                    // se muestra como error (antes salía en el recuadro verde de éxito).
+                    setNote(null);
                     const r = await api<{ ok: boolean; error: string | null }>(`/v1/notification-integrations/${it.id}/test`, { method: "POST" });
-                    setNote(r.ok ? p("ntf.testOk") : p("ntf.testFail", { error: r.error ?? "?" }));
+                    if (r.ok) setNote(p("ntf.testOk"));
+                    else setError(p("ntf.testFail", { error: r.error ?? "?" }));
                   })
                 }
               >

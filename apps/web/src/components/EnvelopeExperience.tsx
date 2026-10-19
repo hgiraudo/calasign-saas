@@ -4,7 +4,7 @@ import type { CorrectEnvelopeInput, EnvelopeDetail, InPersonSessionResponse, Rec
 import { api, errorText, uuid } from "../lib/api";
 import { useI18n } from "../lib/i18n";
 import { useExpText } from "../lib/i18n-experience";
-import { ErrorBox, Modal } from "./ui";
+import { ErrorBox, Modal, OrderInput } from "./ui";
 
 /** Abre la ceremonia de firma en persona en este mismo navegador (el dispositivo del anfitrión). */
 export function InPersonButton({ envelopeId, recipient, onError }: { envelopeId: string; recipient: Recipient; onError: (e: string) => void }) {
@@ -262,14 +262,7 @@ export function CorrectionModal({ detail, onClose, onDone }: { detail: EnvelopeD
               <option value="signer">{t("edit.role.signer")}</option>
               <option value="cc">{t("edit.role.cc")}</option>
             </select>
-            <input
-              aria-label={x("correct.newOrder")}
-              type="number"
-              min={1}
-              max={100}
-              value={a.routingOrder}
-              onChange={(e) => setNew(i, { routingOrder: Math.max(1, Math.min(100, Number(e.target.value) || 1)) })}
-            />
+            <OrderInput aria-label={x("correct.newOrder")} value={a.routingOrder} onChange={(n) => setNew(i, { routingOrder: n })} />
             <button type="button" className="btn btn-ghost btn-sm" onClick={() => setAdded((as) => as.filter((_, j) => j !== i))}>
               {t("common.delete")}
             </button>

@@ -106,6 +106,9 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
     const pgCode = (err as { code?: unknown }).code;
     if (pgCode === "22P02") return reply.code(400).send({ error: { code: "invalid_id", message: "Identificador inválido" } });
     if (pgCode === "23505") return reply.code(409).send({ error: { code: "conflict", message: "El recurso ya existe o cambió al mismo tiempo; reintentá" } });
+    // Texto con el carácter NUL (\u0000): Postgres lo rechaza en columnas de texto (22021) y en jsonb (22P05). Lo manda
+    // el cliente (p. ej. el motivo de un rechazo o un asunto): es un pedido inválido, no un error interno.
+    if (pgCode === "22021" || pgCode === "22P05") return reply.code(400).send({ error: { code: "invalid_text", message: "El texto contiene caracteres no admitidos" } });
     const fe = err as FastifyError;
     if (fe.statusCode && fe.statusCode < 500) {
       return reply.code(fe.statusCode).send({ error: { code: fe.code ?? "bad_request", message: fe.message } });

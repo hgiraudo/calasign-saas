@@ -42,11 +42,14 @@ export function ReportsPage() {
     return q.toString();
   }, [from, to]);
 
+  // Rango de lo que está en pantalla: el CSV exporta eso, no las fechas editadas sin apretar "Ver".
+  const [shownRange, setShownRange] = useState(range);
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       setData(await api<ReportsSummary>(`/v1/reports/summary?${range}`));
+      setShownRange(range);
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -90,7 +93,7 @@ export function ReportsPage() {
           <button type="submit" className="btn btn-primary" disabled={loading}>
             {x("reports.apply")}
           </button>
-          <a className="btn" href={`/v1/reports/envelopes.csv?${range}`}>
+          <a className="btn" href={`/v1/reports/envelopes.csv?${shownRange}`}>
             ⬇ {x("reports.csv")}
           </a>
         </form>

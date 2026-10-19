@@ -404,7 +404,8 @@ export async function bulkRoutes(app: FastifyInstance, s: Services) {
       const a = A(req);
       await loadBulk(s.db, a, req.params.id);
       const limit = Math.min(500, Math.max(1, Math.trunc(Number(req.query.limit ?? 100)) || 100));
-      const offset = Math.max(0, Math.trunc(Number(req.query.offset ?? 0)) || 0);
+      // Acotado: un offset enorme (1e21) se escribía en el SQL como "1e+21" y respondía 500.
+      const offset = Math.min(1_000_000_000, Math.max(0, Math.trunc(Number(req.query.offset ?? 0)) || 0));
       const params: unknown[] = [req.params.id];
       let where = `bulk_send_id = $1`;
       if (req.query.status) {

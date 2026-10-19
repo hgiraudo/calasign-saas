@@ -7,7 +7,7 @@ import { api, errorText, uuid } from "../lib/api";
 import { LOCALE_LABELS, useI18n } from "../lib/i18n";
 import { forgetPdf } from "../lib/pdf";
 import { FieldEditor, type DraftField } from "../components/FieldEditor";
-import { ErrorBox, Spinner, formatBytes, recipientColor } from "../components/ui";
+import { ErrorBox, OrderInput, Spinner, formatBytes, recipientColor } from "../components/ui";
 import { ShareControl } from "../components/ShareControl";
 import { CertificateOption, EMPTY_CERT_DRAFT, certToDraft, draftToCert, type CertDraft } from "../components/CertSign";
 
@@ -440,13 +440,7 @@ function RolesStep({ roles, onChange }: { roles: DraftRole[]; onChange: (r: Draf
             <div className="role-grid">
               <label className="field rr-order">
                 <span>{t("edit.order")}</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={100}
-                  value={r.routingOrder}
-                  onChange={(e) => set(i, { routingOrder: Math.max(1, Math.min(100, Number(e.target.value) || 1)) })}
-                />
+                <OrderInput value={r.routingOrder} onChange={(n) => set(i, { routingOrder: n })} />
               </label>
               <label className="field">
                 <span>{t("tpl.roleName")}</span>

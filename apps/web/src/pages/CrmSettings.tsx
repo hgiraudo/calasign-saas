@@ -449,7 +449,9 @@ function MappingEditor({
   useEffect(() => {
     if (!CRM_PROVIDER_OBJECTS[provider].includes(objectType as never)) setObjectType(CRM_PROVIDER_OBJECTS[provider][0]);
     if (isErp) setTrigger("on_completion");
-    else if (trigger === "on_completion") setTrigger("manual");
+    // El webhook es solo de HubSpot: al pasar a otra conexión quedaba "webhook" (el select mostraba "Manual") y el
+    // guardado fallaba con crm_trigger.
+    else if (trigger === "on_completion" || (trigger === "webhook" && provider !== "hubspot")) setTrigger("manual");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [provider]);
   useEffect(() => {

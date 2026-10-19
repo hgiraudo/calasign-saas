@@ -162,8 +162,10 @@ function buildWhere(tenantId: string, q: AuditQuery) {
     where += q.action.endsWith("*") ? ` AND action LIKE $${params.length}` : ` AND action = $${params.length}`;
   }
   if (q.actor) {
-    params.push(`%${q.actor}%`);
-    where += ` AND (actor_label ILIKE $${params.length} OR actor_id = $${params.length})`;
+    // Texto en la etiqueta o id EXACTO del actor (como dice la documentación): con el mismo parámetro "%…%" el id
+    // nunca coincidía y filtrar por el id de un usuario o una API key no devolvía nada.
+    params.push(`%${q.actor}%`, q.actor);
+    where += ` AND (actor_label ILIKE $${params.length - 1} OR actor_id = $${params.length})`;
   }
   if (q.targetType) {
     params.push(q.targetType);

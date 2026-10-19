@@ -54,10 +54,13 @@ export function ByokSettingsPage() {
   const test = async () => {
     setBusy(true);
     setError(null);
+    setTestMsg(null);
     try {
       const r = await api<ByokTestResult>("/v1/settings/byok/test", { method: "POST" });
       setChecks(r.checks);
-      setTestMsg(r.ok ? dt("byok.testOk") : dt("byok.testFail"));
+      // Una prueba fallida va como error: antes salía en el recuadro verde de éxito.
+      if (r.ok) setTestMsg(dt("byok.testOk"));
+      else setError(dt("byok.testFail"));
       await load();
     } catch (err) {
       setError(errorText(err));

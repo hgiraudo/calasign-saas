@@ -1,5 +1,5 @@
 // Workflows sin código (Fase 6): listado, editor de pasos (lista vertical), ejecuciones y detalle con aprobación.
-import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type InputHTMLAttributes, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import type { CollectField, DocumentTemplate, Member, Workflow, WorkflowRun, WorkflowStep, WorkflowStepType } from "@calasign/shared";
 import { WORKFLOW_STEP_TYPES } from "@calasign/shared";
@@ -102,6 +102,35 @@ function newStep(type: WorkflowStepType, ta: (k: AgreementsTextKey) => string, m
   }
 }
 
+const parseList = (s: string) =>
+  s
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+
+/**
+ * Lista separada por comas. El texto escrito se guarda tal cual mientras se tipea: si el input mostraba la lista ya
+ * normalizada (join), la coma y el espacio recién tipeados desaparecían y no se podía cargar más de un valor.
+ */
+function ListInput({ value, onChange, ...rest }: { value: string[]; onChange: (v: string[]) => void } & Omit<InputHTMLAttributes<HTMLInputElement>, "value" | "onChange">) {
+  const [text, setText] = useState(value.join(", "));
+  // Cambio desde afuera (p. ej. se borró una fila y esta pasó a mostrar otra): se vuelve a mostrar la lista.
+  useEffect(() => {
+    if (parseList(text).join("\u0000") !== value.join("\u0000")) setText(value.join(", "));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value.join("\u0000")]);
+  return (
+    <input
+      {...rest}
+      value={text}
+      onChange={(e) => {
+        setText(e.target.value);
+        onChange(parseList(e.target.value));
+      }}
+    />
+  );
+}
+
 function F({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="field">
@@ -140,7 +169,7 @@ function StepConfig({ step, onChange, members, templates }: { step: WorkflowStep
                   ))}
                 </select>
                 {f.type === "select" && (
-                  <input aria-label="options" value={(f.options ?? []).join(", ")} onChange={(e) => setField(i, { options: e.target.value.split(",").map((x) => x.trim()).filter(Boolean) })} placeholder="A, B" />
+                  <ListInput aria-label="options" value={f.options ?? []} onChange={(options) => setField(i, { options })} placeholder="A, B" />
                 )}
                 <label className="check">
                   <input type="checkbox" checked={f.required} onChange={(e) => setField(i, { required: e.target.checked })} /> {ta("cfg.required")}
@@ -275,7 +304,7 @@ function StepConfig({ step, onChange, members, templates }: { step: WorkflowStep
             <input value={step.config.envelopeKey} onChange={(e) => set({ envelopeKey: e.target.value })} />
           </F>
           <F label={ta("cfg.tags")}>
-            <input value={(step.config.tags ?? []).join(", ")} onChange={(e) => set({ tags: e.target.value.split(",").map((x) => x.trim()).filter(Boolean) })} />
+            <ListInput value={step.config.tags ?? []} onChange={(tags) => set({ tags })} />
           </F>
           <F label={ta("cfg.expiry")}>
             <input value={step.config.expiryDate ?? ""} onChange={(e) => set({ expiryDate: e.target.value || null })} placeholder="{{contrato.vencimiento}}" />

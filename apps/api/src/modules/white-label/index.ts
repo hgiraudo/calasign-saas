@@ -103,7 +103,7 @@ export async function whiteLabelModule(app: FastifyInstance, s: Services) {
   // En el dominio de una marca: favicon, ícono y manifest propios (no los de la plataforma).
   app.addHook("onRequest", async (req, reply) => {
     const path = req.url.split("?")[0];
-    if (req.method !== "GET" || !["/favicon.svg", "/favicon.ico", "/manifest.webmanifest", "/icons/apple-touch-icon.png"].includes(path)) return;
+    if (req.method !== "GET" || !["/favicon.svg", "/favicon.ico", "/manifest.webmanifest", "/icons/apple-touch-icon.png", "/offline.html"].includes(path)) return;
     const key = new URLSearchParams(req.url.split("?")[1] ?? "").get("b") ?? undefined;
     const found = await brandFromKeyOrHost(s.db, path === "/manifest.webmanifest" ? key : undefined, req.headers.host).catch(() => null);
     if (!found) return;
@@ -123,6 +123,20 @@ export async function whiteLabelModule(app: FastifyInstance, s: Services) {
           theme_color: b.theme.primaryColor ?? "#0b1f3a",
           icons: icon ? [{ src: icon, sizes: "any", type: (b.assets.favicon ?? b.assets.logo)?.contentType }] : [],
         });
+    }
+    if (path === "/offline.html") {
+      if (!rebrands(b)) return;
+      // Página sin conexión del service worker: con el nombre y el color de la marca (la de la plataforma la nombra).
+      const name = escAttr(productLabel(b));
+      return reply
+        .header("cache-control", "no-cache")
+        .type("text/html; charset=utf-8")
+        .send(
+          `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${name}</title></head>` +
+            `<body style="font-family:system-ui,sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0;background:${b.theme.backgroundColor ?? "#f4f6fa"}">` +
+            `<main style="text-align:center;padding:24px"><h1 style="color:${b.theme.primaryColor ?? "#0b1f3a"}">${name}</h1>` +
+            `<p>Sin conexión · Sem conexão · You're offline</p></main></body></html>`,
+        );
     }
     const p = assetPath(b, "favicon");
     if (p) return reply.redirect(p, 302);

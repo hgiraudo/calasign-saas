@@ -7,7 +7,8 @@
 //   5. n8n: paquete npm (.tgz), carga de nodos con n8n-workflow simulado, trigger y firma HMAC,
 //   6. Make: referencias rpc/webhook/funciones, IML balanceado, funciones IML,
 //   7. Dynamics 365: web resource con Xrm simulado y setup-dataverse idempotente,
-//   8. Zoho CRM: función Deluge del botón (endpoint del conector nativo y sintaxis básica).
+//   8. Zoho CRM: función Deluge del botón (endpoint del conector nativo y sintaxis básica),
+//   9. Kommo: widget (manifiesto, i18n, botón con APP/jQuery simulados) y la página send.html.
 //
 //   node integrations/test/connectors.mjs
 import assert from "node:assert/strict";
@@ -712,6 +713,90 @@ await test("pipedrive: la acción lee los ids, filtra mapeos y envía uno por re
   assert.equal((await PD.load(api, PD.parseParams("?resource=deal&selectedIds=42"))).key, "noMappings");
   loggedIn = false;
   assert.equal((await PD.load(api, PD.parseParams("?resource=deal&selectedIds=42"))).state, "login");
+});
+
+// ───────── Kommo (widget sobre el conector nativo) ─────────
+
+await test("kommo: registrado, zip del widget con manifest/i18n/images y página send.html", () => {
+  const idx = JSON.parse(readFileSync(C("index.json"), "utf8"));
+  const km = idx.connectors.find((c) => c.id === "kommo");
+  assert.ok(km, "kommo en connectors/index.json");
+  assert.deepEqual(km.artifacts, ["/integrations/connectors/kommo/calasign-kommo-widget.zip"]);
+  const zip = readZip(readFileSync(C("kommo/calasign-kommo-widget.zip")));
+  for (const f of ["manifest.json", "script.js", "i18n/es.json", "i18n/en.json", "i18n/pt.json", "images/logo_min.png", "images/logo_main.png"]) assert.ok(zip.has(f), f);
+  const manifest = JSON.parse(zip.get("manifest.json").toString("utf8"));
+  assert.equal(manifest.widget.interface_version, 2);
+  assert.deepEqual(manifest.locations.filter((l) => l.startsWith("l")), ["lcard-1", "llist-1"]);
+  for (const l of manifest.widget.locale) {
+    const tr = JSON.parse(zip.get(`i18n/${l}.json`).toString("utf8"));
+    for (const k of ["name", "description", "short_description", "button"]) assert.ok(tr.widget[k], `${l}: widget.${k}`);
+    for (const k of Object.keys(manifest.settings)) assert.ok(tr.settings[k], `${l}: settings.${k}`);
+  }
+  assert.ok(zip.get("script.js").toString("utf8").includes(`var BASE = "${BASE}";`), "el widget apunta a esta base");
+  const html = readFileSync(C("kommo/send.html"), "utf8");
+  assert.match(html, /<script src="send\.js\?v=[^"]+" defer><\/script>/);
+  assert.doesNotMatch(html, /<script>|<style>|style="/, "sin scripts ni estilos en línea (CSP de helmet)");
+  assert.ok(existsSync(C("kommo/send.css")), "send.css");
+});
+
+await test("kommo: el widget pinta el botón en la ficha del lead y abre CalaSign con los ids (ficha y lista)", () => {
+  const src = readFileSync(C("kommo/calasign-kommo-widget.zip"));
+  const script = readZip(src).get("script.js").toString("utf8");
+  let factory = null;
+  const handlers = {};
+  const docChain = { off: () => docChain, on: (_ev, sel, fn) => ((handlers[sel] = fn), docChain) };
+  const $ = (x) => (x === "<div>" ? { text: (t) => ({ html: () => String(t).replace(/</g, "&lt;") }) } : docChain);
+  const opened = [];
+  const APP = { data: { current_card: { id: 42 } } };
+  vm.runInNewContext(script, { define: (_deps, fn) => (factory = fn), window: { open: (...a) => opened.push(a) }, document: {}, APP });
+  const CustomWidget = factory($);
+  let tpl = null;
+  let area = "lcard";
+  CustomWidget.prototype.system = () => ({ area });
+  CustomWidget.prototype.i18n = (k) => (k === "widget" ? { button: "Enviar <ya>" } : {});
+  CustomWidget.prototype.render_template = (t) => (tpl = t);
+  CustomWidget.prototype.list_selected = () => ({ selected: [{ id: 7 }, { id: "8" }, { id: 7 }, { id: "x" }] });
+  const w = new CustomWidget();
+  assert.equal(w.callbacks.render(), true);
+  assert.ok(tpl && tpl.render.includes("calasign-send") && tpl.render.includes("Enviar &lt;ya>"), "botón con el texto escapado");
+  assert.equal(w.callbacks.bind_actions(), true);
+  handlers[".calasign-send"]();
+  assert.deepEqual(opened[0], [`${BASE}/integrations/connectors/kommo/send.html?ids=42`, "_blank", "noopener"]);
+  w.callbacks.leads.selected();
+  assert.equal(opened[1][0], `${BASE}/integrations/connectors/kommo/send.html?ids=7,8`);
+  // En la lista (u otra área) no pinta nada en el panel.
+  tpl = null;
+  area = "llist";
+  assert.equal(w.callbacks.render(), true);
+  assert.equal(tpl, null);
+});
+
+await test("kommo: send.js lee los ids, filtra mapeos de leads y envía uno por lead con la sesión", async () => {
+  const KM = require(C("kommo/send.js"));
+  assert.deepEqual(KM.parseParams("?ids=42,43,42,x1"), { ids: ["42", "43"], truncated: false });
+  assert.equal(KM.parseParams(`?ids=${Array.from({ length: 25 }, (_, i) => i + 1).join(",")}`).ids.length, 20);
+  const mappings = [
+    { id: "m1", name: "Leads", objectType: "deal", templateId: "t1", active: true, send: true },
+    { id: "m2", name: "Inactivo", objectType: "deal", templateId: "t1", active: false, send: true },
+  ];
+  const calls = [];
+  let loggedIn = true;
+  const fakeFetch = async (url, init) => {
+    calls.push({ url, method: init.method, credentials: init.credentials, body: init.body ? JSON.parse(init.body) : null });
+    const res = (status, body) => ({ ok: status < 400, status, text: async () => JSON.stringify(body) });
+    if (!loggedIn) return res(401, { error: { code: "unauthorized", message: "Sin sesión" } });
+    if (url === `${BASE}/v1/crm/mappings?provider=kommo`) return res(200, { items: mappings });
+    if (/\/v1\/crm\/mappings\/m1\/send$/.test(url)) return res(201, { envelopeId: `env-${JSON.parse(init.body).objectId}`, status: "sent" });
+    return res(404, { error: { message: "?" } });
+  };
+  const api = KM.apiFactory(fakeFetch, BASE);
+  const ready = await KM.load(api, KM.parseParams("?ids=42"));
+  assert.deepEqual(ready.mappings.map((x) => x.id), ["m1"]);
+  assert.equal(calls[0].credentials, "include");
+  assert.deepEqual(await KM.sendAll(api, "m1", ["42"], true), [{ id: "42", ok: true, envelopeId: "env-42", status: "sent" }]);
+  assert.equal((await KM.load(api, KM.parseParams("?ids="))).key, "noRecords");
+  loggedIn = false;
+  assert.equal((await KM.load(api, KM.parseParams("?ids=42"))).state, "login");
 });
 
 // ───────── Zoho CRM ─────────

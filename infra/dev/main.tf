@@ -104,8 +104,9 @@ resource "aws_s3_bucket_lifecycle_configuration" "blobs" {
     expiration {
       days = 35
     }
+    # Igual que las versiones vigentes: si algo pisara un dump, el original sigue disponible el mismo tiempo.
     noncurrent_version_expiration {
-      noncurrent_days = 7
+      noncurrent_days = 35
     }
   }
 
@@ -207,6 +208,16 @@ resource "aws_iam_role_policy" "app" {
         Resource = ["${aws_s3_bucket.blobs.arn}/releases/*", "${aws_s3_bucket.blobs.arn}/backups/*"]
       },
       { Sid = "PaquetesSoloLectura", Effect = "Deny", Action = ["s3:PutObject"], Resource = "${aws_s3_bucket.blobs.arn}/releases/*" },
+      {
+        # Los backups solo se crean, no se pisan: con la app comprometida, un PUT sobre un dump existente lo volvía
+        # versión anterior (y la reemplazaba por un dump armado que el operador podía restaurar). El script de backup
+        # sube con If-None-Match: *; sin ese encabezado el PUT se rechaza.
+        Sid       = "BackupsSinPisar"
+        Effect    = "Deny"
+        Action    = ["s3:PutObject"]
+        Resource  = "${aws_s3_bucket.blobs.arn}/backups/*"
+        Condition = { Null = { "s3:if-none-match" = "true" } }
+      },
       { Sid = "Sello", Effect = "Allow", Action = ["kms:Sign", "kms:GetPublicKey", "kms:DescribeKey"], Resource = aws_kms_key.seal.arn },
       { Sid = "Parametros", Effect = "Allow", Action = ["ssm:GetParameter"], Resource = "arn:aws:ssm:us-east-1:${var.account_id}:parameter/calasign-saas/dev/*" },
       {

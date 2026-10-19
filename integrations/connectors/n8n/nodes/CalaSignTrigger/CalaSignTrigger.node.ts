@@ -106,7 +106,8 @@ export class CalaSignTrigger implements INodeType {
 	async webhook(this: IWebhookFunctions): Promise<IWebhookResponseData> {
 		const req = this.getRequestObject() as unknown as { rawBody?: Buffer; headers: Record<string, string | undefined> };
 		const secret = this.getWorkflowStaticData('node').secret as string | undefined;
-		if (secret && req.rawBody && !verifySignature(secret, req.headers['calasign-signature'], req.rawBody)) {
+		// Sin el cuerpo crudo no se puede verificar: se rechaza (antes se aceptaba sin verificar).
+		if (secret && (!req.rawBody || !verifySignature(secret, req.headers['calasign-signature'], req.rawBody))) {
 			const res = this.getResponseObject();
 			res.status(401).json({ error: 'invalid signature' });
 			return { noWebhookResponse: true };

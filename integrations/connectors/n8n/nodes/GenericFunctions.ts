@@ -73,14 +73,27 @@ export function requester(ctx: IExecuteFunctions, itemIndex: number) {
 		calaSignRequest<Record<string, unknown>>(ctx, method as IHttpRequestMethods, path, { body: (o.json ?? o.body) as IDataObject | Buffer | undefined, headers: o.headers }, itemIndex);
 }
 
-/** Verifica `CalaSign-Signature: t=<unix>,v1=<hex>` = HMAC-SHA256(secret, "<t>.<body>"), con 5 minutos de tolerancia. */
+/**
+ * Verifica `CalaSign-Signature: t=<unix>,v1=<hex>[,v1=<hex>…]` = HMAC-SHA256(secret, "<t>.<body>"), con 5 minutos de
+ * tolerancia. Durante una rotación del secreto la API manda varios v1: vale si coincide cualquiera.
+ */
 export function verifySignature(secret: string, header: string | undefined, rawBody: Buffer, now = Date.now()): boolean {
 	if (!header) return false;
-	const parts = Object.fromEntries(header.split(',').map((p) => p.trim().split('=') as [string, string]));
-	const t = Number(parts.t);
-	if (!parts.v1 || !Number.isFinite(t) || Math.abs(now / 1000 - t) > 300) return false;
-	const expected = createHmac('sha256', secret).update(`${parts.t}.${rawBody.toString('utf8')}`).digest('hex');
-	const a = Buffer.from(expected);
-	const b = Buffer.from(parts.v1);
-	return a.length === b.length && timingSafeEqual(a, b);
+	let t = '';
+	const v1: string[] = [];
+	for (const part of header.split(',')) {
+		const i = part.indexOf('=');
+		if (i < 0) continue;
+		const k = part.slice(0, i).trim();
+		const v = part.slice(i + 1).trim();
+		if (k === 't') t = v;
+		else if (k === 'v1') v1.push(v);
+	}
+	const ts = Number(t);
+	if (!t || !v1.length || !Number.isFinite(ts) || Math.abs(now / 1000 - ts) > 300) return false;
+	const expected = Buffer.from(createHmac('sha256', secret).update(`${t}.${rawBody.toString('utf8')}`).digest('hex'));
+	return v1.some((sig) => {
+		const b = Buffer.from(sig);
+		return b.length === expected.length && timingSafeEqual(expected, b);
+	});
 }

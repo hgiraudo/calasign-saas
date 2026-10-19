@@ -77,11 +77,19 @@ export function startWorker(db: Db, opts: WorkerOptions) {
       );
     }, opts.heartbeatMs ?? 60_000);
     beat.unref?.();
+    let ok = false;
     try {
       if (!handler) throw new Error(`sin handler para ${job.queue}`);
       await handler(job.payload, { id: job.id, attempts: job.attempts, maxAttempts: job.max_attempts });
+      ok = true;
       await db.query(`UPDATE jobs SET status = 'done', finished_at = now(), locked_at = NULL WHERE id = $1 AND attempts = $2`, [job.id, job.attempts]);
     } catch (e) {
+      // El handler terminó bien y falló solo el registro: no se reintenta (repetiría el correo, el webhook…). El job
+      // queda 'running' sin latido y el sweep lo resuelve como un worker caído.
+      if (ok) {
+        opts.log.error({ jobId: job.id, queue: job.queue, err: String(e) }, "job terminado pero no se pudo registrar");
+        return;
+      }
       const err = e instanceof Error ? e.stack ?? e.message : String(e);
       const final = job.attempts >= job.max_attempts;
       const backoffSec = Math.min(3600, 5 * 2 ** (job.attempts - 1));
@@ -120,10 +128,13 @@ export function startWorker(db: Db, opts: WorkerOptions) {
     }
   }
 
-  loop();
+  const loopDone = loop();
   return {
     async stop() {
       stopped = true;
+      // Que no quede una toma en curso: si se cerraba la base con un claim recién confirmado, esos jobs quedaban
+      // 'running' sin correr (10 minutos, o 'failed' si era su último intento). Con tope, por si un barrido tarda.
+      await Promise.race([loopDone, sleep(30_000)]);
       while (running > 0) await sleep(100);
     },
   };

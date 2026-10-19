@@ -1,9 +1,37 @@
 "use strict";
 // Triggers REST hook: Zapier se suscribe con POST /v1/webhooks (url = bundle.targetUrl) y se desuscribe con DELETE.
 // performList usa GET /v1/webhooks/samples (eventos reales recientes con la misma forma, o uno sintético).
+const crypto = require("crypto");
 const { url } = require("../lib/api");
 const { flattenEvent } = require("../lib/quicksend");
 const hydrators = require("../hydrators");
+
+/**
+ * CalaSign-Signature: t=<unix>,v1=<hex>[,v1=…] = HMAC-SHA256(secret, "<t>.<cuerpo>"), 5 minutos de tolerancia. Sin esto,
+ * cualquiera que conociera la URL de hooks.zapier.com disparaba el Zap con un evento inventado.
+ */
+function signatureOk(secret, raw) {
+  if (!raw || typeof raw.content !== "string") return false;
+  const h = raw.headers || {};
+  const header = h["Http-Calasign-Signature"] || h["http-calasign-signature"] || h["CalaSign-Signature"] || h["calasign-signature"];
+  if (!header) return false;
+  let t = "";
+  const v1 = [];
+  for (const part of String(header).split(",")) {
+    const i = part.indexOf("=");
+    if (i < 0) continue;
+    const k = part.slice(0, i).trim();
+    if (k === "t") t = part.slice(i + 1).trim();
+    else if (k === "v1") v1.push(part.slice(i + 1).trim());
+  }
+  const ts = Number(t);
+  if (!t || !v1.length || !Number.isFinite(ts) || Math.abs(Date.now() / 1000 - ts) > 300) return false;
+  const expected = Buffer.from(crypto.createHmac("sha256", secret).update(`${t}.${raw.content}`).digest("hex"));
+  return v1.some((sig) => {
+    const b = Buffer.from(sig);
+    return b.length === expected.length && crypto.timingSafeEqual(expected, b);
+  });
+}
 
 const ALL_EVENTS = [
   "envelope.sent",
@@ -69,6 +97,11 @@ function hookTrigger({ key, noun, label, description, events }) {
         return {};
       },
       perform: (z, bundle) => {
+        const secret = bundle.subscribeData && bundle.subscribeData.secret;
+        if (secret && !signatureOk(secret, bundle.rawRequest)) {
+          z.console.log("CalaSign: firma del webhook inválida, evento descartado");
+          return [];
+        }
         const ev = bundle.cleanedRequest || {};
         if (!ev.type || ev.type === "webhook.test") return [];
         if (events && !events.includes(ev.type)) return [];

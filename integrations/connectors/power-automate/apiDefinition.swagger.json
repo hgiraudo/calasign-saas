@@ -218,6 +218,15 @@
         "x-ms-visibility": "advanced",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "type": "string",
+            "x-ms-summary": "Idempotency key",
+            "description": "Unique value for this call (for example the flow run name). If the action is retried with the same key and inputs, the draft already created is returned instead of creating another one.",
+            "x-ms-visibility": "advanced"
+          },
+          {
             "name": "body",
             "in": "body",
             "required": true,
@@ -323,7 +332,16 @@
         "description": "Sends a draft envelope that has documents, recipients and a signature field for each signer.",
         "x-ms-visibility": "advanced",
         "parameters": [
-          { "name": "id", "in": "path", "required": true, "type": "string", "x-ms-summary": "Envelope ID", "description": "Draft envelope identifier." }
+          { "name": "id", "in": "path", "required": true, "type": "string", "x-ms-summary": "Envelope ID", "description": "Draft envelope identifier." },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "type": "string",
+            "x-ms-summary": "Idempotency key",
+            "description": "Unique value for this send (for example the flow run name). If the action is retried with the same key, the first result is returned instead of sending again.",
+            "x-ms-visibility": "advanced"
+          }
         ],
         "responses": {
           "200": { "description": "OK", "schema": { "$ref": "#/definitions/EnvelopeDetail" } }

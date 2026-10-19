@@ -112,7 +112,8 @@
           "url": "{{BASE_URL}}/oauth/revoke",
           "method": "POST",
           "type": "urlencoded",
-          "body": { "token": "{{connection.refreshToken}}", "client_id": "{{common.clientId}}", "client_secret": "{{common.clientSecret}}" }
+          "body": { "token": "{{connection.refreshToken}}", "client_id": "{{common.clientId}}", "client_secret": "{{common.clientSecret}}" },
+          "log": { "sanitize": ["request.body.token", "request.body.client_secret"] }
         }
       }
     }
@@ -176,7 +177,7 @@
       "altConnection": "calasign-oauth",
       "parameters": [{ "name": "templateId", "type": "text", "required": true }],
       "communication": {
-        "url": "/v1/templates/{{parameters.templateId}}/input-schema",
+        "url": "/v1/templates/{{encodeURL(parameters.templateId)}}/input-schema",
         "response": { "output": "{{calasignTemplateForm(body)}}" }
       }
     }
@@ -247,7 +248,7 @@
         { "name": "idempotencyKey", "label": "Idempotency key", "type": "text", "help": "Optional. Retries with the same key never create a second envelope (e.g. map the ID of the source record). By default it is derived from the module data and the day." }
       ],
       "communication": {
-        "url": "/v1/envelopes/from-template/{{parameters.templateId}}",
+        "url": "/v1/envelopes/from-template/{{encodeURL(parameters.templateId)}}",
         "method": "POST",
         "headers": { "Idempotency-Key": "{{calasignIdempotencyKey(parameters, 'sendFromTemplate')}}" },
         "body": {
@@ -355,7 +356,7 @@
       "altConnection": "calasign-oauth",
       "parameters": [],
       "expect": [{ "name": "envelopeId", "label": "Envelope ID", "type": "text", "required": true }],
-      "communication": { "url": "/v1/envelopes/{{parameters.envelopeId}}", "response": { "output": "{{body}}" } },
+      "communication": { "url": "/v1/envelopes/{{encodeURL(parameters.envelopeId)}}", "response": { "output": "{{body}}" } },
       "interface": "@envelopeDetail",
       "samples": "@envelopeSample"
     },
@@ -368,7 +369,7 @@
       "parameters": [],
       "expect": [{ "name": "envelopeId", "label": "Envelope ID", "type": "text", "required": true }],
       "communication": {
-        "url": "/v1/envelopes/{{parameters.envelopeId}}/signed.pdf",
+        "url": "/v1/envelopes/{{encodeURL(parameters.envelopeId)}}/signed.pdf",
         "response": { "type": "binary", "output": { "fileName": "calasign-{{parameters.envelopeId}}.pdf", "data": "{{body}}" } }
       },
       "interface": [
@@ -388,7 +389,7 @@
         { "name": "envelopeId", "label": "Envelope ID", "type": "text", "required": true },
         { "name": "reason", "label": "Reason", "type": "text", "required": true }
       ],
-      "communication": { "url": "/v1/envelopes/{{parameters.envelopeId}}/void", "method": "POST", "body": { "reason": "{{parameters.reason}}" }, "response": { "output": "{{body}}" } },
+      "communication": { "url": "/v1/envelopes/{{encodeURL(parameters.envelopeId)}}/void", "method": "POST", "body": { "reason": "{{parameters.reason}}" }, "response": { "output": "{{body}}" } },
       "interface": "@envelopeDetail",
       "samples": "@envelopeSample"
     },

@@ -62,7 +62,7 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
     // obligatorio): AuthProvider revisa /v1/me y, si la sesión ya no existe, manda al login. Un 401 de firmante
     // (OTP) no cierra nada porque /v1/me sigue respondiendo.
     if (res.status === 401 && path !== "/v1/me" && typeof window !== "undefined") window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
-    throw new HttpError(res.status, err?.code ?? `http_${res.status}`, err?.message ?? res.statusText, err?.details);
+    throw new HttpError(res.status, err?.code ?? `http_${res.status}`, err?.message || res.statusText, err?.details);
   }
   return data as T;
 }
@@ -103,11 +103,19 @@ const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
  * motivo de cada problema); `details` son datos para el código que llama (cupo del plan, espera del OTP, faltantes…):
  * antes se agregaban como JSON crudo ("Esperá 30 s — {"resendInSeconds":30}") y la validación salía repetida.
  */
+// Respuesta de error sin cuerpo JSON (p. ej. el 502 del proxy mientras la API se reinicia): con HTTP/2 statusText viene
+// vacío, el mensaje quedaba "" y ErrorBox no mostraba nada (la página del firmante quedaba en el spinner para siempre).
+const NO_MESSAGE: Record<"es" | "pt-BR" | "en", (status: number) => string> = {
+  es: (n) => `El servidor no respondió como se esperaba (HTTP ${n}). Reintentá en unos segundos.`,
+  "pt-BR": (n) => `O servidor não respondeu como esperado (HTTP ${n}). Tente novamente em alguns segundos.`,
+  en: (n) => `The server didn't respond as expected (HTTP ${n}). Try again in a few seconds.`,
+};
+
 export function errorText(e: unknown): string {
   if (e instanceof HttpError) {
     const loc = currentLocale();
     const tr = loc !== "es" ? CODE_TEXT[e.code]?.[loc] : undefined;
-    return tr ?? e.message;
+    return tr ?? (e.message || (NO_MESSAGE[loc] ?? NO_MESSAGE.es)(e.status));
   }
   if (e instanceof Error) return e.message;
   return String(e);

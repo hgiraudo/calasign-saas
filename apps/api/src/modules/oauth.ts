@@ -150,7 +150,7 @@ async function toApp(db: Db, r: any): Promise<OAuthApp> {
 }
 
 /** Quien crea la identidad de servicio tiene que tener todos los permisos de su rol (igual que con API keys). */
-async function assertCanGrantRole(db: Db, a: AuthContext, role: string, roleId: string | null) {
+async function assertCanGrantRole(db: Db, a: AuthContext, role: string, roleId: string | null, what = "crear una app") {
   let perms: readonly Permission[];
   if (role === "custom") {
     const r = await db.one<any>(`SELECT permissions FROM roles WHERE id = $1 AND tenant_id = $2`, [roleId, a.tenantId]);
@@ -163,7 +163,20 @@ async function assertCanGrantRole(db: Db, a: AuthContext, role: string, roleId: 
   }
   if (a.access?.role === "owner") return;
   const missing = perms.filter((p) => !hasPerm(a, p));
-  if (missing.length) throw new AppError(403, "forbidden", `No podés crear una app con permisos que no tenés: ${missing.join(", ")}`, { missing });
+  if (missing.length) throw new AppError(403, "forbidden", `No podés ${what} con permisos que no tenés: ${missing.join(", ")}`, { missing });
+}
+
+/**
+ * Una app con client_credentials actúa con el rol de su identidad de servicio. Rotar su secreto (la respuesta lo
+ * entrega), cambiarle los scopes o revocarla lo hace solo quien tiene todos esos permisos, como al crearla y como con
+ * las API keys (assertCanManageApiKey). Si no, alguien con api_keys:manage y menos permisos rotaba el secreto de una
+ * app de administrador creada por un propietario y pedía tokens con ese rol.
+ */
+async function assertCanManageServiceApp(db: Db, a: AuthContext, app: { service_api_key_id?: string | null }, what: string) {
+  if (!app.service_api_key_id) return;
+  const k = await db.one<any>(`SELECT role, role_id, revoked_at FROM api_keys WHERE id = $1`, [app.service_api_key_id]);
+  if (!k || k.revoked_at) return;
+  await assertCanGrantRole(db, a, k.role, k.role_id, what);
 }
 
 // ───────────────────────────── Autorización (consentimiento) ─────────────────────────────
@@ -760,6 +773,7 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
     const r = await loadOwn(a, req.params.id);
     if (r.revoked_at) throw new AppError(409, "revoked", "La aplicación está revocada");
     const input = UpdateOAuthAppInput.parse(req.body);
+    if (input.scopes) await assertCanManageServiceApp(s.db, a, r, "cambiar los scopes de una app");
     if (input.redirectUris && r.grant_types.includes("authorization_code") && input.redirectUris.length === 0)
       throw badRequest("invalid_request", "authorization_code requiere al menos una URI de redirección");
     await s.db.query(
@@ -791,6 +805,7 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
     const r = await loadOwn(a, req.params.id);
     if (r.revoked_at) throw new AppError(409, "revoked", "La aplicación está revocada");
     if (!r.secret_hash) throw badRequest("public_client", "Un cliente público no tiene secreto");
+    await assertCanManageServiceApp(s.db, a, r, "rotar el secreto de una app");
     const secret = `cssec_${randomToken(32)}`;
     await s.db.query(`UPDATE oauth_clients SET secret_hash = $2, secret_prefix = $3, updated_at = now() WHERE id = $1`, [r.id, sha256Hex(secret), secret.slice(0, 12)]);
     await auditFromRequest(s.db, req, a, "oauth_app.secret_rotated", { targetType: "oauth_app", targetId: r.client_id });
@@ -800,6 +815,7 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
   app.delete<{ Params: { id: string } }>("/v1/oauth/apps/:id", { preHandler: auth }, async (req, reply) => {
     const a = req.auth!;
     const r = await loadOwn(a, req.params.id);
+    await assertCanManageServiceApp(s.db, a, r, "revocar una app");
     await s.db.tx(async (t) => {
       await t.query(`UPDATE oauth_clients SET revoked_at = COALESCE(revoked_at, now()), updated_at = now() WHERE id = $1`, [r.id]);
       await t.query(`UPDATE oauth_tokens SET revoked_at = now() WHERE client_id = $1 AND revoked_at IS NULL`, [r.id]);

@@ -1,7 +1,7 @@
 // Todas las páginas de un documento, con capa superpuesta por página.
 import { useEffect, useState, type PointerEvent as RPointerEvent, type ReactNode, type DragEvent } from "react";
 import type { Document } from "@calasign/shared";
-import { loadPdf, type PDFDocumentProxy } from "../lib/pdf";
+import { acquirePdf, releasePdf, type PDFDocumentProxy } from "../lib/pdf";
 import { errorText } from "../lib/api";
 import { useI18n } from "../lib/i18n";
 import { PdfPage } from "./PdfPage";
@@ -27,11 +27,12 @@ export function DocumentView({ doc, url, renderOverlay, onPagePointerDown, onPag
     setPdf(null);
     // El error de la URL anterior no queda a la vista mientras carga (o después de cargar bien) la nueva.
     setError(null);
-    loadPdf(url)
+    acquirePdf(url)
       .then((p) => alive && setPdf(p))
       .catch((e) => alive && setError(errorText(e)));
     return () => {
       alive = false;
+      releasePdf(url);
     };
   }, [url]);
 

@@ -142,7 +142,7 @@ export function DocumentTemplateEditPage() {
   const [name, setName] = useState("");
   const [source, setSource] = useState("");
   const [sample, setSample] = useState("{}");
-  const [mapping, setMapping] = useState({ title: "", value: "", currency: "", expiryDate: "", tags: "" });
+  const [mapping, setMapping] = useState({ title: "", value: "", currency: "", effectiveDate: "", expiryDate: "", tags: "" });
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -163,6 +163,7 @@ export function DocumentTemplateEditPage() {
           title: d.agreementMapping?.title ?? "",
           value: d.agreementMapping?.value ?? "",
           currency: d.agreementMapping?.currency ?? "",
+          effectiveDate: d.agreementMapping?.effectiveDate ?? "",
           expiryDate: d.agreementMapping?.expiryDate ?? "",
           tags: (d.agreementMapping?.tags ?? []).join(", "),
         });
@@ -232,6 +233,8 @@ export function DocumentTemplateEditPage() {
             title: mapping.title || null,
             value: mapping.value || null,
             currency: mapping.currency || null,
+            // El mapeo se guarda entero (la API lo reemplaza): sin este campo, cada guardado borraba la vigencia puesta por API.
+            effectiveDate: mapping.effectiveDate || null,
             expiryDate: mapping.expiryDate || null,
             tags: mapping.tags
               .split(",")
@@ -408,6 +411,10 @@ export function DocumentTemplateEditPage() {
                 <label className="field">
                   <span>{ta("docs.mapping.currency")}</span>
                   <input value={mapping.currency} onChange={(e) => setMapping({ ...mapping, currency: e.target.value.toUpperCase() })} placeholder="USD" maxLength={3} disabled={!editable} />
+                </label>
+                <label className="field">
+                  <span>{ta("docs.mapping.effective")}</span>
+                  <input value={mapping.effectiveDate} onChange={(e) => setMapping({ ...mapping, effectiveDate: e.target.value })} placeholder="inicio" disabled={!editable} />
                 </label>
                 <label className="field">
                   <span>{ta("docs.mapping.expiry")}</span>

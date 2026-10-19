@@ -1198,8 +1198,11 @@ step("Salesforce: OAuth con PKCE S256, contacto principal (OpportunityContactRol
   assert((await api("GET", "/v1/crm/mappings?provider=pipedrive")).items.length === 3, "sin companyId, todos los de Pipedrive");
   const mismatch = await api("POST", `/v1/crm/mappings/${pdMapB.id}/send`, { objectId: "42", companyId: "5150" }, { expect: 409 });
   assert(mismatch.error.code === "company_mismatch", "mapeo de B enviado desde A → 409 company_mismatch");
-  const okB = await api("POST", `/v1/crm/mappings/${pdMapB.id}/send`, { objectId: "42", companyId: "6160" });
+  const idem = { headers: { "idempotency-key": `pd-6160-${pdMapB.id}-42-run1` } };
+  const okB = await api("POST", `/v1/crm/mappings/${pdMapB.id}/send`, { objectId: "42", companyId: "6160" }, idem);
   assert(okB.status === "draft", "mapeo de B desde B → sobre creado");
+  const okB2 = await api("POST", `/v1/crm/mappings/${pdMapB.id}/send`, { objectId: "42", companyId: "6160" }, idem);
+  assert(okB2.envelopeId === okB.envelopeId, "reintento con la misma Idempotency-Key → el mismo sobre");
   step("Pipedrive con dos compañías: ?companyId filtra los mapeos por la compañía de la conexión; un mapeo de otra compañía → 409 company_mismatch");
 }
 

@@ -31,6 +31,14 @@ Piezas comunes:
   Los write-backs de un vínculo pueden correr en paralelo: un compare-and-set del rango sobre `crm_links.last_status`
   (`sent` < estados finales) hace que un `sent` nunca pise un estado final, y si otro trabajo reclamó un estado final
   mientras se escribía `sent`, se reescribe el final (`apps/api/test/crm-writeback-race.test.ts`).
+- **Write-back que falla para siempre:** si la escritura del estado falla de forma definitiva (error permanente o
+  último intento de la cola), `last_status` vuelve al valor de antes del primer reclamo, solo si nadie lo cambió.
+  La ejecución lo registra en `detail.lastStatusRestored`. Lo mismo vale para los conectores de RR. HH./CLM.
+- **Varias cuentas del mismo CRM** (Pipedrive, Kommo): la acción y el widget mandan la cuenta desde la que se abrieron
+  (`companyId`). `GET /v1/crm/mappings?provider=…&companyId=` lista solo los mapeos de las conexiones de esa cuenta
+  (`config.companyId` de Pipedrive, sacado de `/users/me`; `config.accountId` de Kommo, sacado de `/api/v4/account`).
+  `POST /v1/crm/mappings/{id}/send` con otra cuenta responde 409 `company_mismatch`; si no, se leería el registro con el
+  mismo id en la cuenta equivocada. El envío acepta `Idempotency-Key`.
 - **Actividad** (`/v1/crm/runs`): cada envío, write-back y búsqueda queda registrado con intentos y error. Los errores
   transitorios se reintentan con el backoff de la cola; un **token revocado** o datos que no cierran no se reintentan
   solos (quedan como fallidos con el error visible, también en la conexión) y se reintentan a mano

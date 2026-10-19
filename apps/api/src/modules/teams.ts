@@ -372,7 +372,7 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     if (!cur) throw notFound("Miembro");
     if (cur.role === "owner" && a.access?.role !== "owner") throw forbidden("Solo un propietario puede quitar a otro propietario");
     if (userId !== a.userId) assertCanManage(a, await permsOf(s.db, a.tenantId, cur.role, cur.role_id), "quitar a este miembro");
-    await s.db.tx(async (t) => {
+    const revokedKeys = await s.db.tx(async (t) => {
       // Serializa los cambios de propietarios de la organización: dos bajas simultáneas no la dejan sin ninguno.
       await t.query(`SELECT id FROM tenants WHERE id = $1 FOR UPDATE`, [a.tenantId]);
       await t.query(`DELETE FROM group_members gm USING groups g WHERE gm.group_id = g.id AND g.tenant_id = $1 AND gm.user_id = $2`, [a.tenantId, userId]);
@@ -380,8 +380,18 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
       if (cur.role === "owner" && (await ownerCount(t, a.tenantId)) === 0) throw conflict("last_owner", "La organización tiene que tener al menos un propietario");
       // Cierra sus sesiones en esta organización.
       await t.query(`DELETE FROM sessions WHERE user_id = $1 AND tenant_id = $2`, [userId, a.tenantId]);
+      // Y las API keys que creó: si no, quien sale conserva acceso con el rol de la key (p. ej. una de administrador
+      // creada antes de irse). Las identidades de servicio de apps OAuth (oauth_client_id) son de la app, no de la persona.
+      return t.query<{ id: string; name: string }>(
+        `UPDATE api_keys SET revoked_at = now() WHERE tenant_id = $1 AND created_by = $2 AND revoked_at IS NULL AND oauth_client_id IS NULL RETURNING id, name`,
+        [a.tenantId, userId],
+      );
     });
-    await auditFromRequest(s.db, req, a, "member.removed", { targetType: "user", targetId: userId });
+    await auditFromRequest(s.db, req, a, "member.removed", {
+      targetType: "user",
+      targetId: userId,
+      data: revokedKeys.length ? { revokedApiKeys: revokedKeys.map((k) => ({ id: k.id, name: k.name })) } : undefined,
+    });
     return reply.code(204).send();
   });
 

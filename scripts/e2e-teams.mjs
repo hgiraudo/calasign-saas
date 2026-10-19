@@ -439,8 +439,10 @@ step(`auditoría: ${audit.length} entradas (${expected.length} tipos verificados
 
 await owner.api("DELETE", `/v1/members/${bobMe.user.id}`);
 await bob3.api("GET", "/v1/envelopes", undefined, 401);
+// Sus API keys también: si no, conservaba acceso con el rol de la key.
+await keyClient.api("GET", "/v1/envelopes", undefined, 401);
 await owner.api("DELETE", `/v1/members/${ownerMe.user.id}`, undefined, 409);
-step("quitar a un miembro cierra su acceso (401); el último propietario no se puede quitar (409)");
+step("quitar a un miembro cierra su acceso y revoca sus API keys (401); el último propietario no se puede quitar (409)");
 
 // ───────────────────────────── 9. Regresiones de la revisión (ronda 3) ─────────────────────────────
 

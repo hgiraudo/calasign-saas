@@ -21,6 +21,11 @@ const SESSION_HOURS = 2;
 const CODE_TTL_MIN = 10;
 const RESEND_COOLDOWN_S = 30;
 const MAX_SENDS_PER_HOUR = 8;
+/**
+ * Tope por día: con 8 por hora y 5 intentos por código eran ~960 intentos diarios sin fin contra 10⁶ códigos (~3 % de
+ * acertar en un mes con el link en la mano). 20 por día alcanza de sobra para quien firma de verdad.
+ */
+const MAX_SENDS_PER_DAY = 20;
 
 const METHOD_CHANNEL = { otp_email: "email", otp_sms: "sms", otp_whatsapp: "whatsapp" } as const;
 /**
@@ -117,7 +122,8 @@ export async function otpRoutes(app: FastifyInstance, s: Services) {
       // Y el link: una corrección del contacto confirmada mientras tanto no le manda un código al destino anterior.
       assertLinkCurrent(await t.one<any>(`SELECT access_token_hash FROM recipients WHERE id = $1`, [r.id]), req.params.token);
       const last = await t.one<any>(
-        `SELECT created_at, (SELECT count(*) FROM otp_challenges WHERE recipient_id = $1 AND created_at > now() - interval '1 hour') AS n
+        `SELECT created_at, (SELECT count(*) FROM otp_challenges WHERE recipient_id = $1 AND created_at > now() - interval '1 hour') AS n,
+                (SELECT count(*) FROM otp_challenges WHERE recipient_id = $1 AND created_at > now() - interval '1 day') AS day
          FROM otp_challenges WHERE recipient_id = $1 ORDER BY created_at DESC LIMIT 1`,
         [r.id],
       );
@@ -125,6 +131,9 @@ export async function otpRoutes(app: FastifyInstance, s: Services) {
         const wait = RESEND_COOLDOWN_S - Math.floor((Date.now() - new Date(last.created_at).getTime()) / 1000);
         if (wait > 0) throw new AppError(429, "otp_cooldown", `Esperá ${wait} s para pedir otro código`, { resendInSeconds: wait });
         if (Number(last.n) >= MAX_SENDS_PER_HOUR) throw new AppError(429, "otp_too_many", "Demasiados códigos pedidos. Probá más tarde.");
+        if (Number(last.day) >= MAX_SENDS_PER_DAY) {
+          throw new AppError(429, "otp_daily_limit", "Se pidieron demasiados códigos hoy. Probá mañana o pedile al remitente un link nuevo.");
+        }
       }
       // Un código nuevo invalida los anteriores.
       await t.query(`UPDATE otp_challenges SET expires_at = LEAST(expires_at, now()) WHERE recipient_id = $1 AND verified_at IS NULL`, [r.id]);

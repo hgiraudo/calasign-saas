@@ -21,6 +21,7 @@ import {
 import { api, errorText } from "../lib/api";
 import { formatDateTime, useI18n, confirmAction } from "../lib/i18n";
 import { usePlatformText } from "../lib/i18n-platform";
+import { useConnText } from "../lib/i18n-connectors";
 import { useRoleLabel } from "../lib/i18n-teams";
 import { ErrorBox, Spinner } from "../components/ui";
 import { useAccess } from "../lib/access";
@@ -559,11 +560,20 @@ export function StoragePage() {
 
   const [oauthName, setOauthName] = useState<Record<string, string>>({});
   const [oauthFolder, setOauthFolder] = useState<Record<string, string>>({});
+  const cn = useConnText();
+  const [siteUrl, setSiteUrl] = useState("");
+  const [library, setLibrary] = useState("");
+  const [withEvidence, setWithEvidence] = useState<Record<string, boolean>>({});
   const startOAuth = (prov: StorageProvider) =>
     act(async () => {
       const r = await api<{ authorizeUrl: string }>(`/v1/storage/oauth/${prov}/start`, {
         method: "POST",
-        body: { name: oauthName[prov] || p(`sto.p.${prov}`), folder: oauthFolder[prov] ?? "" },
+        body: {
+          name: oauthName[prov] || p(`sto.p.${prov}`),
+          folder: oauthFolder[prov] ?? "",
+          includeEvidence: Boolean(withEvidence[prov]),
+          ...(prov === "sharepoint" ? { siteUrl, library: library || undefined } : {}),
+        },
       });
       window.location.href = r.authorizeUrl;
     });
@@ -616,7 +626,23 @@ export function StoragePage() {
                       <input value={oauthFolder[pv.provider] ?? ""} placeholder="CalaSign" onChange={(e) => setOauthFolder((c) => ({ ...c, [pv.provider]: e.target.value }))} />
                       <span className="small muted">{p("sto.folder.hint")}</span>
                     </label>
-                    <button type="button" className="btn btn-primary" onClick={() => startOAuth(pv.provider)}>
+                    {pv.provider === "sharepoint" && (
+                      <>
+                        <label className="field">
+                          <span>{cn("sto.siteUrl")}</span>
+                          <input type="url" required value={siteUrl} placeholder="https://empresa.sharepoint.com/sites/Legal" onChange={(e) => setSiteUrl(e.target.value)} />
+                        </label>
+                        <label className="field">
+                          <span>{cn("sto.library")}</span>
+                          <input value={library} onChange={(e) => setLibrary(e.target.value)} />
+                        </label>
+                      </>
+                    )}
+                    <label className="row-wrap small">
+                      <input type="checkbox" checked={Boolean(withEvidence[pv.provider])} onChange={(e) => setWithEvidence((c) => ({ ...c, [pv.provider]: e.target.checked }))} />
+                      {cn("sto.evidence")}
+                    </label>
+                    <button type="button" className="btn btn-primary" disabled={pv.provider === "sharepoint" && !siteUrl} onClick={() => startOAuth(pv.provider)}>
                       {p("sto.connect")}
                     </button>
                   </>
@@ -712,6 +738,14 @@ export function StoragePage() {
               <button type="button" className="btn btn-sm" onClick={() => act(() => api(`/v1/storage/connections/${c.id}`, { method: "PATCH", body: { active: !c.active } }))}>
                 {c.active ? p("common.inactive") : p("common.active")}
               </button>
+              <label className="row-wrap small">
+                <input
+                  type="checkbox"
+                  checked={c.includeEvidence}
+                  onChange={(e) => act(() => api(`/v1/storage/connections/${c.id}`, { method: "PATCH", body: { includeEvidence: e.target.checked } }))}
+                />
+                {cn("sto.evidence")}
+              </label>
               <span className="grow" />
               <button type="button" className="btn btn-sm btn-danger" onClick={() => confirmAction() && act(() => api(`/v1/storage/connections/${c.id}`, { method: "DELETE" }))}>
                 {p("common.delete")}

@@ -32,6 +32,7 @@ import { WebFormDetailPage, WebFormsPage } from "./pages/WebForms";
 import { PublicFormPage } from "./pages/PublicForm";
 import { AutomationPage, CustomDomainPage, NotificationIntegrationsPage, OAuthAppsPage, StoragePage } from "./pages/PlatformSettings";
 import { CrmSettingsPage } from "./pages/CrmSettings";
+import { ConnectorsSettingsPage } from "./pages/ConnectorsSettings";
 import { OAuthConsentPage } from "./pages/OAuthConsent";
 import { IdentitySettingsPage, ScimSettingsPage, SsoSettingsPage } from "./pages/IdentitySettings";
 import { AgreementDetailPage, AgreementsPage } from "./pages/Agreements";
@@ -120,6 +121,7 @@ export function App() {
         <Route path="/app/settings/automation" element={<AutomationPage />} />
         <Route path="/app/settings/storage" element={<StoragePage />} />
         <Route path="/app/settings/crm" element={<CrmSettingsPage />} />
+        <Route path="/app/settings/connectors" element={<ConnectorsSettingsPage />} />
         <Route path="/app/settings/domain" element={<CustomDomainPage />} />
         <Route path="/app/agreements" element={<AgreementsPage />} />
         <Route path="/app/agreements/:id" element={<AgreementDetailPage />} />

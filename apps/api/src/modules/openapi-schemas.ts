@@ -1,0 +1,706 @@
+// Esquemas de salida del OpenAPI (espejo de los tipos TS de packages/shared y de los mappers de la API).
+// Los que se registran con named() van a components.schemas y se referencian con $ref.
+import { z, type ZodTypeAny, type ZodTypeDef } from "zod";
+import {
+  AUTH_METHODS,
+  AnchorFieldInput,
+  BULK_ITEM_STATUSES,
+  BULK_SEND_STATUSES,
+  BulkRowInput,
+  CHANNELS,
+  ENVELOPE_STATUSES,
+  FIELD_TYPES,
+  FieldCondition,
+  FieldInput,
+  IDV_LEVELS,
+  IDV_PROVIDERS,
+  IDV_STATUSES,
+  LOCALES,
+  MOCK_DECISIONS,
+  PAYMENT_CURRENCIES,
+  PAYMENT_METHOD_CODES,
+  PAYMENT_PROVIDERS,
+  PAYMENT_TIMINGS,
+  PERMISSIONS,
+  PLAN_FEATURES,
+  PLAN_IDS,
+  RECIPIENT_ROLES,
+  RECIPIENT_STATUSES,
+  RecipientInput,
+  SIGNATURE_TYPES,
+  TemplateFieldInput,
+  TemplateRecipientInput,
+  WEBHOOK_EVENT_TYPES,
+} from "@calasign/shared";
+
+/** def de Zod → nombre en components.schemas. */
+export const NAMED = new Map<ZodTypeDef, string>();
+/** nombre → esquema, en el orden en que se registran. */
+export const REGISTRY = new Map<string, ZodTypeAny>();
+
+export function named<T extends ZodTypeAny>(name: string, schema: T): T {
+  if (REGISTRY.has(name)) throw new Error(`esquema OpenAPI duplicado: ${name}`);
+  NAMED.set(schema._def, name);
+  REGISTRY.set(name, schema);
+  return schema;
+}
+
+const iso = () => z.string().datetime();
+const uuid = () => z.string().uuid();
+const MEMBER_ROLES = ["owner", "admin", "member", "custom"] as const;
+
+// ───────────────────────────── Errores ─────────────────────────────
+
+export const ErrorSchema = named(
+  "Error",
+  z
+    .object({
+      error: z.object({
+        code: z.string().describe("Código estable, en snake_case (p. ej. validation_error, not_found, plan_limit)."),
+        message: z.string().describe("Mensaje legible, en español. No conviene parsearlo: usar `code`."),
+        details: z.unknown().optional().describe("Datos adicionales según el código (p. ej. la lista de problemas de validación)."),
+      }),
+    })
+    .describe("Error de la API. Todas las respuestas 4xx/5xx de /v1 usan este formato."),
+);
+
+// ───────────────────────────── Entradas reutilizadas ─────────────────────────────
+
+named("RecipientInput", RecipientInput);
+named("FieldInput", FieldInput);
+named("AnchorFieldInput", AnchorFieldInput);
+named("FieldCondition", FieldCondition);
+named("TemplateRecipientInput", TemplateRecipientInput);
+named("TemplateFieldInput", TemplateFieldInput);
+named("BulkRowInput", BulkRowInput);
+
+// ───────────────────────────── Sobres ─────────────────────────────
+
+export const DocumentSchema = named(
+  "Document",
+  z.object({
+    id: uuid(),
+    name: z.string(),
+    position: z.number().int().describe("Orden dentro del sobre (desde 1)."),
+    pageCount: z.number().int(),
+    pages: z.array(z.object({ width: z.number(), height: z.number() })).describe("Tamaño de cada página en puntos PDF (caja visible)."),
+    sha256: z.string().describe("SHA-256 del PDF guardado (normalizado al subirlo)."),
+    sizeBytes: z.number().int(),
+  }),
+);
+
+export const CertificateRequirementsSchema = named(
+  "CertificateRequirements",
+  z.object({
+    matchIdDocument: z.boolean().describe("El certificado tiene que corresponder al documento declarado del firmante."),
+    allowedIssuers: z.array(z.string()).describe("Partes del DN del emisor permitidas. Vacío = cualquiera."),
+    requireQualified: z.boolean().describe("Exige una CA del almacén de confianza de la plataforma."),
+  }),
+);
+
+export const RecipientIdentitySchema = named(
+  "RecipientIdentity",
+  z.object({
+    provider: z.enum(IDV_PROVIDERS),
+    level: z.enum(IDV_LEVELS),
+    status: z.enum(IDV_STATUSES),
+    verifiedAt: iso().nullable(),
+    failureReason: z.string().nullable(),
+  }),
+);
+
+export const RecipientSchema = named(
+  "Recipient",
+  z.object({
+    id: uuid(),
+    role: z.enum(RECIPIENT_ROLES).describe("signer firma; approver aprueba sin firmar; cc recibe copia del documento final."),
+    routingOrder: z.number().int().describe("Grupo de ruteo: se invita a cada grupo cuando termina el anterior."),
+    name: z.string(),
+    email: z.string().nullable(),
+    phone: z.string().nullable().describe("E.164"),
+    locale: z.enum(LOCALES).nullable(),
+    channels: z.array(z.enum(CHANNELS)),
+    telegramLinked: z.boolean().describe("true si ya vinculó su chat de Telegram."),
+    embedded: z.boolean().describe("Firma embebida: no recibe invitaciones."),
+    idDocumentType: z.string().nullable(),
+    idDocumentNumber: z.string().nullable(),
+    status: z.enum(RECIPIENT_STATUSES),
+    sentAt: iso().nullable(),
+    viewedAt: iso().nullable(),
+    signedAt: iso().nullable(),
+    declinedAt: iso().nullable(),
+    declineReason: z.string().nullable(),
+    authMethod: z.enum(AUTH_METHODS),
+    replacedBy: uuid().nullable().describe("Si delegó o fue reasignado: id del destinatario que lo reemplaza."),
+    inPersonHost: z.object({ id: uuid(), name: z.string() }).nullable().describe("Firma en persona: usuario anfitrión."),
+    identity: RecipientIdentitySchema.nullable().describe("Verificación de identidad exigida y su estado (null si no se exige)."),
+    signatureType: z.enum(SIGNATURE_TYPES),
+    certificateRequirements: CertificateRequirementsSchema.nullable().describe("Solo con signatureType certificate."),
+    certificateSignature: z
+      .object({
+        status: z.enum(["pending", "signed"]),
+        position: z.number().int(),
+        signedAt: iso().nullable(),
+        commonName: z.string().nullable(),
+        issuer: z.string().nullable(),
+      })
+      .nullable()
+      .describe("Estado de su firma con certificado (cuando el sobre llegó a esa etapa)."),
+  }),
+);
+
+export const FieldSchema = named(
+  "Field",
+  z.object({
+    id: uuid(),
+    documentId: uuid(),
+    recipientId: uuid(),
+    type: z.enum(FIELD_TYPES),
+    page: z.number().int().describe("Página, desde 0."),
+    x: z.number().describe("Coordenadas normalizadas 0..1, origen arriba a la izquierda."),
+    y: z.number(),
+    width: z.number(),
+    height: z.number(),
+    required: z.boolean(),
+    label: z.string().nullable(),
+    value: z.string().nullable().describe("Valor prellenado por el remitente o completado por el firmante."),
+    readOnly: z.boolean(),
+    options: z.array(z.string()).nullable(),
+    min: z.number().nullable(),
+    max: z.number().nullable(),
+    conditions: z.array(FieldCondition).nullable(),
+    formula: z.string().nullable(),
+  }),
+);
+
+export const EnvelopeSchema = named(
+  "Envelope",
+  z.object({
+    id: uuid(),
+    subject: z.string(),
+    message: z.string().nullable(),
+    locale: z.enum(LOCALES),
+    status: z.enum(ENVELOPE_STATUSES),
+    createdVia: z.enum(["web", "api"]),
+    createdAt: iso(),
+    updatedAt: iso(),
+    sentAt: iso().nullable(),
+    completedAt: iso().nullable(),
+    voidedAt: iso().nullable(),
+    voidReason: z.string().nullable(),
+    expiresAt: iso().nullable(),
+    metadata: z.record(z.string(), z.unknown()).describe("Datos libres del integrador (los sobres creados desde plantilla agregan templateId)."),
+    signedSha256: z.string().nullable().describe("SHA-256 del PDF final sellado (cuando está completo)."),
+    reminderEveryDays: z.number().int().nullable(),
+    expiryWarningDays: z.number().int().nullable(),
+    allowDelegation: z.boolean(),
+  }),
+);
+
+export const EnvelopeDetailSchema = named(
+  "EnvelopeDetail",
+  z.object({ envelope: EnvelopeSchema, documents: z.array(DocumentSchema), recipients: z.array(RecipientSchema), fields: z.array(FieldSchema) }),
+);
+
+export const EnvelopeSummarySchema = named(
+  "EnvelopeSummary",
+  z.object({
+    id: uuid(),
+    subject: z.string(),
+    status: z.enum(ENVELOPE_STATUSES),
+    createdAt: iso(),
+    sentAt: iso().nullable(),
+    completedAt: iso().nullable(),
+    expiresAt: iso().nullable(),
+    recipients: z.array(z.object({ name: z.string(), status: z.enum(RECIPIENT_STATUSES), role: z.enum(RECIPIENT_ROLES) })),
+  }),
+);
+
+export const EnvelopeListSchema = z.object({
+  items: z.array(EnvelopeSummarySchema),
+  nextCursor: z.string().nullable().describe("Pasarlo como `cursor` para la página siguiente; null si no hay más."),
+});
+
+export const EnvelopeEventSchema = named(
+  "EnvelopeEvent",
+  z.object({
+    seq: z.number().int(),
+    type: z.string().describe("p. ej. envelope.created, document.added, envelope.sent, recipient.viewed, recipient.signed, envelope.completed"),
+    actorType: z.enum(["user", "api_key", "recipient", "system"]),
+    actorLabel: z.string().nullable(),
+    ip: z.string().nullable(),
+    userAgent: z.string().nullable(),
+    data: z.record(z.string(), z.unknown()),
+    occurredAt: iso(),
+    hash: z.string().describe("Hash encadenado con el evento anterior (cadena de evidencia)."),
+  }),
+);
+
+export const SigningUrlSchema = named(
+  "SigningUrl",
+  z.object({ url: z.string().url().describe("URL de un solo uso para el iframe o la redirección."), expiresAt: iso() }),
+);
+
+// ───────────────────────────── Webhooks ─────────────────────────────
+
+export const WebhookSchema = named(
+  "Webhook",
+  z.object({
+    id: uuid(),
+    url: z.string().url(),
+    description: z.string().nullable(),
+    events: z.array(z.enum(WEBHOOK_EVENT_TYPES)).describe("Vacío = todos los eventos."),
+    active: z.boolean(),
+    secretPrefix: z.string().describe("Primeros caracteres del secreto (whsec_…), para identificarlo."),
+    createdAt: iso(),
+    updatedAt: iso(),
+  }),
+);
+
+export const WebhookDeliverySchema = named(
+  "WebhookDelivery",
+  z.object({
+    id: uuid(),
+    endpointId: uuid(),
+    eventId: uuid(),
+    eventType: z.string(),
+    envelopeId: uuid().nullable(),
+    status: z.enum(["pending", "succeeded", "failed"]),
+    attempts: z.number().int(),
+    lastStatusCode: z.number().int().nullable(),
+    lastResponse: z.string().nullable().describe("Primeros 1000 caracteres de la respuesta del endpoint."),
+    lastError: z.string().nullable(),
+    lastAttemptAt: iso().nullable(),
+    nextRetryAt: iso().nullable(),
+    createdAt: iso(),
+    deliveredAt: iso().nullable(),
+  }),
+);
+
+export const WebhookEventSchema = named(
+  "WebhookEvent",
+  z
+    .object({
+      id: uuid().describe("Id del evento (igual al header CalaSign-Event-Id). Usarlo para deduplicar: los reintentos repiten el mismo id."),
+      type: z.enum([...WEBHOOK_EVENT_TYPES, "webhook.test"]),
+      createdAt: iso(),
+      tenantId: uuid(),
+      data: z.object({
+        envelope: z
+          .object({
+            id: uuid(),
+            subject: z.string(),
+            status: z.enum(ENVELOPE_STATUSES),
+            metadata: z.record(z.string(), z.unknown()),
+            sentAt: iso().nullable(),
+            completedAt: iso().nullable(),
+            signedSha256: z.string().nullable(),
+            recipients: z.array(
+              z.object({
+                id: uuid(),
+                name: z.string(),
+                email: z.string().nullable(),
+                role: z.enum(RECIPIENT_ROLES),
+                status: z.enum(RECIPIENT_STATUSES),
+                routingOrder: z.number().int(),
+              }),
+            ),
+          })
+          .nullable()
+          .describe("Estado del sobre al momento de armar el evento. null en webhook.test."),
+        recipientId: uuid().nullable().optional().describe("Destinatario que originó el evento (recipient.*). No viene en webhook.test."),
+        reason: z.string().nullable().optional().describe("Motivo (rechazo o anulación), si lo hay. No viene en webhook.test."),
+      }),
+    })
+    .describe("Cuerpo de cada entrega de webhook (POST JSON)."),
+);
+
+// ───────────────────────────── Identidad y API keys ─────────────────────────────
+
+export const ApiKeySchema = named(
+  "ApiKey",
+  z.object({ id: uuid(), name: z.string(), prefix: z.string(), createdAt: iso(), lastUsedAt: iso().nullable(), revokedAt: iso().nullable() }),
+);
+
+export const MeSchema = named(
+  "Me",
+  z.object({
+    user: z
+      .object({ id: uuid(), email: z.string(), name: z.string(), locale: z.enum(LOCALES) })
+      .describe("Con una API key: id = id de la key, email vacío y name = \"API key: <nombre>\"."),
+    tenant: z.object({ id: uuid(), slug: z.string(), name: z.string(), plan: z.string(), defaultLocale: z.enum(LOCALES) }),
+  }),
+);
+
+// ───────────────────────────── Plantillas ─────────────────────────────
+
+export const TemplateSchema = named(
+  "Template",
+  z.object({
+    id: uuid(),
+    name: z.string(),
+    description: z.string().nullable(),
+    subject: z.string().nullable(),
+    message: z.string().nullable(),
+    locale: z.enum(LOCALES),
+    createdAt: iso(),
+    updatedAt: iso(),
+  }),
+);
+
+export const TemplateSummarySchema = named(
+  "TemplateSummary",
+  TemplateSchema.extend({
+    documentCount: z.number().int(),
+    roles: z.array(z.object({ name: z.string(), role: z.enum(RECIPIENT_ROLES) })),
+  }),
+);
+
+export const TemplateRoleSchema = named(
+  "TemplateRole",
+  z.object({
+    id: uuid(),
+    name: z.string().describe("Nombre del rol (p. ej. Cliente): se usa en `recipients[].role` al crear un sobre y en las columnas del CSV masivo."),
+    role: z.enum(RECIPIENT_ROLES),
+    routingOrder: z.number().int(),
+    signatureType: z.enum(SIGNATURE_TYPES),
+    certificateRequirements: CertificateRequirementsSchema.nullable(),
+  }),
+);
+
+export const TemplateFieldSchema = named(
+  "TemplateField",
+  FieldSchema.omit({ recipientId: true }).extend({ roleId: uuid() }),
+);
+
+export const TemplateDetailSchema = named(
+  "TemplateDetail",
+  z.object({ template: TemplateSchema, documents: z.array(DocumentSchema), roles: z.array(TemplateRoleSchema), fields: z.array(TemplateFieldSchema) }),
+);
+
+// ───────────────────────────── Envío masivo ─────────────────────────────
+
+export const BulkValidationResultSchema = named(
+  "BulkValidationResult",
+  z.object({
+    total: z.number().int(),
+    valid: z.number().int(),
+    invalid: z.number().int(),
+    errors: z.array(z.object({ row: z.number().int().describe("Número de fila de datos (desde 1, sin contar el encabezado)."), errors: z.array(z.string()) })),
+    columns: z.array(z.string()).describe("Encabezados del CSV (vacío si las filas vinieron en JSON)."),
+  }),
+);
+
+export const BulkSendSchema = named(
+  "BulkSend",
+  z.object({
+    id: uuid(),
+    name: z.string().nullable(),
+    templateId: uuid().nullable().describe("null si la plantilla se borró después."),
+    templateName: z.string(),
+    status: z.enum(BULK_SEND_STATUSES),
+    total: z.number().int(),
+    sent: z.number().int(),
+    failed: z.number().int(),
+    cancelled: z.number().int(),
+    pending: z.number().int().describe("Pendientes + en proceso."),
+    createdAt: iso(),
+    completedAt: iso().nullable(),
+    cancelledAt: iso().nullable(),
+  }),
+);
+
+export const BulkSendItemSchema = named(
+  "BulkSendItem",
+  z.object({
+    id: uuid(),
+    row: z.number().int(),
+    status: z.enum(BULK_ITEM_STATUSES),
+    envelopeId: uuid().nullable(),
+    recipients: z.array(z.string()).describe("Nombres de los destinatarios de la fila."),
+    error: z.string().nullable(),
+    processedAt: iso().nullable(),
+  }),
+);
+
+// ───────────────────────────── Formularios web ─────────────────────────────
+
+export const WebFormSchema = named(
+  "WebForm",
+  z.object({
+    id: uuid(),
+    slug: z.string(),
+    url: z.string().describe("Link público del formulario (/f/<slug>, con el dominio propio si hay)."),
+    name: z.string(),
+    description: z.string().nullable(),
+    templateId: uuid(),
+    templateName: z.string(),
+    signerRoleId: uuid(),
+    fixedRecipients: z.array(
+      z.object({
+        roleId: uuid(),
+        name: z.string(),
+        email: z.string().nullable(),
+        phone: z.string().nullable(),
+        channels: z.array(z.enum(CHANNELS)),
+        locale: z.enum(LOCALES).nullable(),
+      }),
+    ),
+    prefill: z.record(z.string(), z.string()),
+    active: z.boolean(),
+    maxUses: z.number().int().nullable(),
+    uses: z.number().int(),
+    expiresAt: iso().nullable(),
+    requireOtp: z.boolean(),
+    embeddable: z.boolean(),
+    collectPhone: z.boolean(),
+    ownerInactiveReason: z.string().nullable().describe("Por qué no crea sobres aunque esté activo (en español); null si está habilitado."),
+    ownerInactiveCode: z.enum(["not_member", "missing_permission", "template_access", "key_revoked", "plan_feature"]).nullable(),
+    createdAt: iso(),
+    updatedAt: iso(),
+  }),
+);
+
+// ───────────────────────────── Cobros ─────────────────────────────
+
+export const EnvelopePaymentSchema = named(
+  "EnvelopePayment",
+  z.object({
+    id: uuid(),
+    amount: z.number(),
+    currency: z.enum(PAYMENT_CURRENCIES),
+    description: z.string(),
+    payerRecipientId: uuid(),
+    timing: z.enum(PAYMENT_TIMINGS),
+    provider: z.enum(PAYMENT_PROVIDERS),
+    status: z.enum(["pending", "checkout_created", "paid", "failed", "refunded"]),
+    paidAt: iso().nullable(),
+    providerPaymentId: z.string().nullable(),
+    refundRequiredAt: iso().nullable().describe("El pago llegó con el sobre ya cerrado y se tiene que devolver."),
+    refundedAt: iso().nullable(),
+    refundError: z.string().nullable(),
+  }),
+);
+
+export const PaymentProviderSchema = named(
+  "PaymentProvider",
+  z.object({
+    id: z.enum(PAYMENT_PROVIDERS),
+    configured: z.boolean(),
+    methods: z.array(z.string()).describe("Medios de pago (texto en español)."),
+    methodCodes: z.array(z.enum(PAYMENT_METHOD_CODES)),
+  }),
+);
+
+// ───────────────────────────── Marca ─────────────────────────────
+
+export const BrandingSchema = named(
+  "Branding",
+  z.object({
+    primaryColor: z.string().nullable().describe("#rrggbb"),
+    emailFooter: z.string().nullable(),
+    logoUrl: z.string().nullable().describe("Ruta relativa al servidor (/v1/branding/logo/<slug>?v=…), pública."),
+    logoContentType: z.enum(["image/png", "image/svg+xml", "image/jpeg"]).nullable(),
+  }),
+);
+
+// ───────────────────────────── Verificación de identidad ─────────────────────────────
+
+export const IdentitySettingsSchema = named(
+  "IdentitySettings",
+  z.object({
+    defaultProvider: z.enum(IDV_PROVIDERS),
+    defaultLevel: z.enum(IDV_LEVELS),
+    nameMatchThreshold: z.number(),
+    maxAttempts: z.number().int(),
+    mock: z.object({ decision: z.enum(MOCK_DECISIONS), extractedName: z.string().nullable(), extractedDocumentNumber: z.string().nullable() }),
+    providers: z.array(z.object({ id: z.enum(IDV_PROVIDERS), name: z.string(), configured: z.boolean(), mode: z.enum(["builtin", "redirect"]) })),
+  }),
+);
+
+export const RecipientIdentityDetailSchema = z.object({
+  identity: RecipientIdentitySchema.nullable(),
+  attempts: z.array(
+    z.object({
+      id: uuid(),
+      attempt: z.number().int(),
+      provider: z.enum(IDV_PROVIDERS),
+      level: z.enum(IDV_LEVELS),
+      status: z.enum(["created", "pending", "verified", "failed"]),
+      reference: z.string().nullable().describe("Id del proceso en el proveedor."),
+      failureReason: z.string().nullable(),
+      createdAt: iso(),
+      completedAt: iso().nullable(),
+      result: z
+        .object({
+          status: z.enum(["approved", "declined", "review", "pending"]),
+          documentType: z.string().nullable(),
+          documentCountry: z.string().nullable(),
+          documentNumber: z.string().nullable().describe("Enmascarado (últimos 4 dígitos)."),
+          fullName: z.string().nullable(),
+          faceMatchScore: z.number().nullable(),
+          liveness: z.boolean().nullable(),
+          riskFlags: z.array(z.string()),
+        })
+        .nullable()
+        .describe("Resumen sin imágenes ni datos completos del documento."),
+      nameMatch: z
+        .object({ score: z.number(), matched: z.boolean(), threshold: z.number(), documentNumberMatched: z.boolean().nullable() })
+        .nullable(),
+    }),
+  ),
+});
+
+// ───────────────────────────── Equipo ─────────────────────────────
+
+const RoleRef = { role: z.enum(MEMBER_ROLES), roleId: uuid().nullable(), roleName: z.string() };
+
+export const MemberSchema = named(
+  "Member",
+  z.object({
+    userId: uuid(),
+    name: z.string(),
+    email: z.string(),
+    ...RoleRef,
+    groups: z.array(z.object({ id: uuid(), name: z.string() })),
+    twoFactorEnabled: z.boolean(),
+    joinedAt: iso(),
+  }),
+);
+
+export const InvitationSchema = named(
+  "Invitation",
+  z.object({
+    id: uuid(),
+    email: z.string(),
+    ...RoleRef,
+    invitedBy: z.string().nullable(),
+    createdAt: iso(),
+    expiresAt: iso(),
+    status: z.enum(["pending", "accepted", "revoked", "expired"]),
+  }),
+);
+
+export const CustomRoleSchema = named(
+  "CustomRole",
+  z.object({
+    id: uuid(),
+    name: z.string(),
+    description: z.string().nullable(),
+    permissions: z.array(z.enum(PERMISSIONS)),
+    memberCount: z.number().int().describe("Miembros y API keys activas con este rol (0 en las respuestas de alta y edición)."),
+    createdAt: iso(),
+  }),
+);
+
+export const GroupSchema = named(
+  "Group",
+  z.object({
+    id: uuid(),
+    name: z.string(),
+    description: z.string().nullable(),
+    members: z.array(z.object({ userId: uuid(), name: z.string(), email: z.string() })),
+    createdAt: iso(),
+  }),
+);
+
+export const AccessSchema = named(
+  "Access",
+  z.object({
+    role: z.enum(MEMBER_ROLES),
+    roleName: z.string(),
+    permissions: z.array(z.enum(PERMISSIONS)).describe("Con un token OAuth, recortados a lo que permiten sus scopes."),
+    groups: z.array(z.object({ id: uuid(), name: z.string() })),
+    tenants: z
+      .array(z.object({ id: uuid(), name: z.string(), slug: z.string(), role: z.enum(MEMBER_ROLES), roleName: z.string(), current: z.boolean() }))
+      .describe("Organizaciones del usuario (vacío con una API key)."),
+    twoFactor: z.object({ enabled: z.boolean(), requiredByTenant: z.boolean(), setupRequired: z.boolean() }),
+  }),
+);
+
+export const SharesSchema = z.object({ groups: z.array(z.object({ id: uuid(), name: z.string() })) });
+
+// ───────────────────────────── Auditoría ─────────────────────────────
+
+export const AuditLogEntrySchema = named(
+  "AuditLogEntry",
+  z.object({
+    id: z.number().int(),
+    occurredAt: iso(),
+    actorType: z.enum(["user", "api_key", "system", "anonymous"]),
+    actorId: z.string().nullable(),
+    actorLabel: z.string().nullable(),
+    action: z.string().describe("p. ej. api_key.created, webhook.updated, member.invited, settings.changed, auth.login"),
+    targetType: z.string().nullable(),
+    targetId: z.string().nullable(),
+    data: z.record(z.string(), z.unknown()),
+    ip: z.string().nullable(),
+    userAgent: z.string().nullable(),
+  }),
+);
+
+// ───────────────────────────── Verificación pública ─────────────────────────────
+
+export const VerifyResponseSchema = named(
+  "VerifyResponse",
+  z.object({
+    match: z.boolean().describe("true si el archivo es, byte a byte, un PDF final sellado por CalaSign (versión vigente o anterior a una renovación de archivo)."),
+    sha256: z.string(),
+    envelope: z.object({ id: uuid(), subject: z.string(), organizationName: z.string(), completedAt: iso().nullable() }).optional(),
+    participants: z.array(z.object({ name: z.string(), role: z.enum(RECIPIENT_ROLES), signedAt: iso().nullable() })).optional(),
+    seal: z.object({ format: z.string().nullable(), provider: z.string().nullable(), timestamped: z.boolean() }).optional(),
+    chain: z.object({ ok: z.boolean(), events: z.number().int(), head: z.string() }).optional().describe("Integridad de la cadena de eventos del sobre."),
+    version: z
+      .object({ number: z.number().int(), latest: z.number().int(), isLatest: z.boolean(), reason: z.enum(["completed", "archive_renewal"]), createdAt: iso().nullable() })
+      .optional(),
+  }),
+);
+
+// ───────────────────────────── Reportes ─────────────────────────────
+
+export const ReportsSummarySchema = z.object({
+  from: iso(),
+  to: iso(),
+  totals: z.object({
+    created: z.number().int(),
+    sent: z.number().int(),
+    completed: z.number().int(),
+    declined: z.number().int(),
+    voided: z.number().int(),
+    expired: z.number().int(),
+    inProgress: z.number().int().describe("En curso ahora (sent + finalizing), sin importar el rango."),
+    completionRate: z.number().nullable().describe("Completados / enviados en el rango (0..1)."),
+    avgHoursToComplete: z.number().nullable(),
+  }),
+  byMonth: z.array(
+    z.object({
+      month: z.string().describe("YYYY-MM"),
+      created: z.number().int(),
+      draft: z.number().int(),
+      inProgress: z.number().int(),
+      completed: z.number().int(),
+      declined: z.number().int(),
+      voided: z.number().int(),
+      expired: z.number().int(),
+    }),
+  ),
+  topSenders: z.array(z.object({ userId: uuid().nullable(), name: z.string(), email: z.string().nullable(), sent: z.number().int(), completed: z.number().int() })),
+  notifications: z.array(z.object({ channel: z.string(), sent: z.number().int(), failed: z.number().int() })),
+});
+
+// ───────────────────────────── Planes (402) ─────────────────────────────
+
+export const PlanLimitDetailsSchema = named(
+  "PlanLimitDetails",
+  z
+    .object({
+      plan: z.enum(PLAN_IDS),
+      limit: z.enum(["envelopes_per_month", "users"]).optional(),
+      feature: z.enum(PLAN_FEATURES).optional(),
+      used: z.number().int().optional(),
+      max: z.number().int().nullable().optional(),
+      suggestedPlan: z.enum(PLAN_IDS).nullable(),
+      upgradeUrl: z.string(),
+    })
+    .describe("`error.details` de un 402 plan_limit."),
+);

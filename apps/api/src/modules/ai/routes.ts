@@ -307,8 +307,10 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
       out = hit.value;
       // Igual queda constancia de que este firmante pidió el resumen (sin consumo nuevo).
       await s.db.tx(async (t) => {
-        await t.query(`SELECT id FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
-          await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "ai.summary", actor: recipientActor(req, r), data: { feature: "summary", cached: true, model: out.usage.model } });
+        const cur = await t.one<any>(`SELECT status FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
+        // Sobre anulado, rechazado o vencido mientras tanto: no se suma el evento a su evidencia.
+        if (["voided", "declined", "expired"].includes(cur?.status)) return;
+        await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "ai.summary", actor: recipientActor(req, r), data: { feature: "summary", cached: true, model: out.usage.model } });
       });
     } else {
       await assertAiAvailable(s.db, e.tenant_id);
@@ -326,7 +328,7 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
       for (const [k, v] of summaryCache) if (now - v.at >= 3600_000) summaryCache.delete(k);
       while (summaryCache.size >= 500) summaryCache.delete(summaryCache.keys().next().value!);
       summaryCache.set(key, { at: now, value: out });
-      await recordAiUse(s.db, { tenantId: e.tenant_id, envelopeId: e.id, feature: "summary", usage: res.usage, actor: recipientActor(req, r), data: { locale } });
+      await recordAiUse(s.db, { tenantId: e.tenant_id, envelopeId: e.id, feature: "summary", usage: res.usage, actor: recipientActor(req, r), data: { locale }, skipEventIfClosed: true });
     }
     return out;
   });
@@ -354,6 +356,7 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
       usage: res.usage,
       actor: recipientActor(req, r),
       data: { locale, answered: out.answered, questionChars: input.question.length },
+      skipEventIfClosed: true,
     });
     return out;
   });

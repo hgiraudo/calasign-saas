@@ -184,13 +184,24 @@ export function usageInfo(u: ProviderUsage): AiUsageInfo {
   return { provider: u.provider, model: u.model, inputTokens: u.inputTokens, outputTokens: u.outputTokens };
 }
 
+const CLOSED_ENVELOPE_STATUSES = ["voided", "declined", "expired"];
+
 /** Registra el consumo y deja constancia en la evidencia del sobre (hash del prompt, modelo y tokens; nunca el texto). */
 export async function recordAiUse(
   db: Db,
-  args: { tenantId: string; envelopeId: string | null; feature: AiFeature; usage: ProviderUsage; actor: Actor; data?: Record<string, unknown> },
+  args: {
+    tenantId: string;
+    envelopeId: string | null;
+    feature: AiFeature;
+    usage: ProviderUsage;
+    actor: Actor;
+    data?: Record<string, unknown>;
+    /** Firmante: si el sobre se anuló, rechazó o venció durante la llamada al modelo, el consumo se registra sin evento. */
+    skipEventIfClosed?: boolean;
+  },
 ) {
   await db.tx(async (t) => {
-    if (args.envelopeId) await t.query(`SELECT id FROM envelopes WHERE id = $1 FOR UPDATE`, [args.envelopeId]);
+    const cur = args.envelopeId ? await t.one<any>(`SELECT status FROM envelopes WHERE id = $1 FOR UPDATE`, [args.envelopeId]) : null;
     // Libera la reserva de presupuesto tomada por assertAiAvailable para esta llamada.
     await releaseAiReservation(t, args.tenantId);
     await t.query(
@@ -210,7 +221,7 @@ export async function recordAiUse(
         args.actor.id ?? null,
       ],
     );
-    if (args.envelopeId) {
+    if (args.envelopeId && !(args.skipEventIfClosed && CLOSED_ENVELOPE_STATUSES.includes(cur?.status))) {
       await appendEvent(t, {
         tenantId: args.tenantId,
         envelopeId: args.envelopeId,

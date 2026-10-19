@@ -330,15 +330,18 @@ export function FieldEditor({ envelopeId, documents, signers, fields, onChange, 
                   }
                   onBlur={(e) => {
                     const options = e.target.value.split("\n").map((o) => o.trim()).filter(Boolean);
+                    const known = new Map(options.map((o) => [o.toLowerCase(), o]));
                     // Un valor prellenado que ya no es una opción (se renombró o quitó) quedaba oculto: el select mostraba
-                    // "—" pero se mandaba igual y el guardado fallaba con "opción inválida".
-                    const stale = !!sel.value && !options.includes(sel.value);
+                    // "—" pero se mandaba igual y el guardado fallaba con "opción inválida". Con un cambio solo de
+                    // mayúsculas se conserva (con la opción como se escribe ahora), igual que las condiciones: si no, el
+                    // valor fijado se borraba y el campo dejaba de ser de solo lectura.
+                    const prefilled = sel.value ? (known.get(sel.value.trim().toLowerCase()) ?? null) : null;
+                    const stale = !!sel.value && prefilled !== sel.value;
                     // Lo mismo con las condiciones de otros campos que comparan con una opción quitada o renombrada: el
                     // select de la condición mostraba "—" pero se guardaba el valor viejo, que nunca coincide (el campo
                     // quedaba oculto para siempre). Sin valor, el guardado avisa que la condición necesita uno.
                     // Un cambio solo de mayúsculas ("si" → "Sí") sigue valiendo (la comparación no distingue), pero el valor
                     // pasa a la opción tal como se escribe ahora: si no, el select de la condición mostraba "—".
-                    const known = new Map(options.map((o) => [o.toLowerCase(), o]));
                     const fixCond = (c: FieldCondition): FieldCondition => {
                       if (c.fieldId !== sel.id || (c.operator !== "equals" && c.operator !== "not_equals") || !c.value) return c;
                       const v = known.get(c.value.trim().toLowerCase()) ?? null;
@@ -346,7 +349,7 @@ export function FieldEditor({ envelopeId, documents, signers, fields, onChange, 
                     };
                     onChange(
                       fieldsRef.current.map((f) => {
-                        if (f.id === sel.id) return { ...f, options, ...(stale ? { value: null, readOnly: false } : {}) };
+                        if (f.id === sel.id) return { ...f, options, ...(stale ? { value: prefilled, ...(prefilled ? {} : { readOnly: false }) } : {}) };
                         const conditions = f.conditions?.map(fixCond);
                         return conditions?.some((c, i) => c !== f.conditions![i]) ? { ...f, conditions } : f;
                       }),

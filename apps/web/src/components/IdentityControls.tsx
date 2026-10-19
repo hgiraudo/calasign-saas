@@ -23,7 +23,9 @@ export function IdentitySelect({ value, onChange }: { value: string; onChange: (
     loadSettings().then(setSettings);
   }, []);
   const providers = (settings?.providers ?? []).filter((p) => p.configured);
-  if (!settings || providers.length === 0) return null;
+  // Con un valor ya guardado, el selector se muestra aunque no quede ningún proveedor configurado (o no se pudieran
+  // leer los ajustes): oculto, se seguía mandando ese valor y el guardado de destinatarios fallaba sin forma de quitarlo.
+  if (!value && (!settings || providers.length === 0)) return null;
   const options: { v: string; label: string }[] = [];
   for (const p of providers) {
     for (const l of IDV_LEVELS) options.push({ v: `${p.id}:${l}`, label: `${p.name} · ${tx(`idv.level.${l}` as IdnKey)}` });

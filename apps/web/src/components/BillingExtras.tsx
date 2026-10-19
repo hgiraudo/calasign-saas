@@ -82,11 +82,17 @@ export function PaymentOptionsPanel({
       .catch((e) => setError(errorText(e)));
   }, [envelopeId]);
 
+  // Un pagador que ya no es firmante (pasó a copia o aprobador) o un proveedor que dejó de estar configurado: el select
+  // mostraba otra opción pero se conservaba el valor guardado, sin aviso de cambios sin guardar. Pasan a la primera
+  // opción válida (y el cobro queda marcado como pendiente de guardar).
   useEffect(() => {
-    if (!payer && signers[0]) setPayer(signers[0].id);
+    if (signers[0] && !signers.some((s) => s.id === payer)) setPayer(signers[0].id);
   }, [signers, payer]);
 
   const configured = data?.providers.filter((p) => p.configured) ?? [];
+  useEffect(() => {
+    if (configured[0] && provider && !configured.some((p) => p.id === provider)) setProvider(configured[0].id);
+  }, [configured, provider]);
 
   const stored = data?.payment ?? null;
   const unsaved =

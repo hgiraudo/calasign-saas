@@ -455,13 +455,17 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
       if (err instanceof ProviderError) throw new AppError(502, "payment_provider_error", `No se pudo iniciar el pago: ${err.message}`);
       throw err;
     }
-    await s.db.tx(async (t) => {
-      await lockEnvelope(t, e.tenant_id, e.id);
-      await t.query(
+    const open = await s.db.tx(async (t) => {
+      const cur = await lockEnvelope(t, e.tenant_id, e.id);
+      const upd = await t.query(
         `UPDATE envelope_payments SET status = 'checkout_created', checkout_id = $2, checkout_url = $3, checkout_nonce_hash = $4, updated_at = now()
-         WHERE id = $1 AND status <> 'paid'`,
+         WHERE id = $1 AND status NOT IN ('paid','refunded') RETURNING id`,
         [p.id, checkoutId, url, nonceHash],
       );
+      // El sobre se anuló, rechazó o venció mientras se creaba el checkout en el proveedor (red): el checkout queda
+      // guardado para que closeStaleCheckouts lo cierre, pero no se entrega ni se suma el evento a la evidencia de un
+      // sobre cerrado. Tampoco si el pago se confirmó mientras tanto.
+      if (cur.status !== "sent" || !upd.length) return false;
       await appendEvent(t, {
         tenantId: e.tenant_id,
         envelopeId: e.id,
@@ -469,7 +473,9 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
         actor: { type: "recipient", id: r.id, label: r.name, ip: req.ip, userAgent: (req.headers["user-agent"] as string | undefined)?.slice(0, 500) ?? null },
         data: { paymentId: p.id, provider: p.provider, checkoutId },
       });
+      return true;
     });
+    if (!open) throw conflict("payment_not_available", "El sobre no admite pagos ahora");
     return { url };
   });
 

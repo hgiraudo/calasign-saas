@@ -37,6 +37,15 @@ export async function resolveToken(db: Db, token: string): Promise<Resolved> {
   return { recipient, envelope };
 }
 
+/**
+ * Con el sobre bloqueado: el link del pedido sigue siendo el vigente del destinatario. Una corrección del contacto
+ * (link nuevo, consentimiento y apertura reiniciados) o un reemplazo pudo confirmarse entre resolveToken y el bloqueo;
+ * sin esto, quien tenía el link anterior rechazaba, delegaba, consentía o "abría" en nombre del contacto corregido.
+ */
+export function assertLinkCurrent(r: any, token: string) {
+  if (!r || r.access_token_hash !== sha256Hex(token)) throw notFound("Link");
+}
+
 export function recipientActor(req: FastifyRequest, r: any): Actor {
   const { ip, userAgent } = clientInfo(req);
   return { type: "recipient", id: r.id, label: r.email ? `${r.name} <${r.email}>` : `${r.name} (${r.phone ?? "sin contacto"})`, ip, userAgent };
@@ -125,8 +134,14 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
     const authed = await isSignerAuthenticated(s.db, req, r0);
     if (authed && r0.status === "sent" && e0.status === "sent") {
       await s.db.tx(async (t) => {
-        await lockEnvelope(t, e0.tenant_id, e0.id);
-        const upd = await t.query(`UPDATE recipients SET status = 'viewed', viewed_at = now() WHERE id = $1 AND status = 'sent' RETURNING id`, [r0.id]);
+        // El estado y el link se vuelven a mirar con el sobre bloqueado: un sobre anulado, rechazado o vencido mientras
+        // tanto no suma la apertura, y el link revocado por una corrección no marca como "visto" al contacto nuevo.
+        const cur = await lockEnvelope(t, e0.tenant_id, e0.id);
+        if (cur.status !== "sent") return;
+        const upd = await t.query(
+          `UPDATE recipients SET status = 'viewed', viewed_at = now() WHERE id = $1 AND status = 'sent' AND access_token_hash = $2 RETURNING id`,
+          [r0.id, sha256Hex(req.params.token)],
+        );
         if (upd.length) await appendEvent(t, { tenantId: e0.tenant_id, envelopeId: e0.id, type: "recipient.viewed", actor: recipientActor(req, r0) });
       });
     }
@@ -154,7 +169,11 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
       await s.db.tx(async (t) => {
         const e = await lockEnvelope(t, e0.tenant_id, e0.id);
         if (e.status !== "sent") return;
-        const upd = await t.query(`UPDATE recipients SET consented_at = now() WHERE id = $1 AND consented_at IS NULL RETURNING id`, [r0.id]);
+        // Solo con el link vigente: el consentimiento de quien tenía el link anterior no pasa al contacto corregido.
+        const upd = await t.query(`UPDATE recipients SET consented_at = now() WHERE id = $1 AND consented_at IS NULL AND access_token_hash = $2 RETURNING id`, [
+          r0.id,
+          sha256Hex(req.params.token),
+        ]);
         if (upd.length)
           await appendEvent(t, {
             tenantId: e0.tenant_id,
@@ -209,6 +228,7 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
     await s.db.tx(async (t) => {
       const e = await lockEnvelope(t, e0.tenant_id, e0.id);
       const r = await t.one<any>(`SELECT * FROM recipients WHERE id = $1`, [r0.id]);
+      assertLinkCurrent(r, req.params.token);
       if (e.status !== "sent") throw new AppError(410, "envelope_closed", "El sobre ya no está disponible para firmar");
       if (r.role !== "signer" && r.role !== "approver") throw conflict("not_signer", "Este destinatario no firma");
       if (r.status === "signed") throw conflict("already_signed", "Ya firmaste este sobre");
@@ -317,6 +337,7 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
     await s.db.tx(async (t) => {
       const e = await lockEnvelope(t, e0.tenant_id, e0.id);
       const r = await t.one<any>(`SELECT * FROM recipients WHERE id = $1`, [r0.id]);
+      assertLinkCurrent(r, req.params.token);
       if (e.status !== "sent") throw new AppError(410, "envelope_closed", "El sobre ya no está disponible");
       if ((r.role !== "signer" && r.role !== "approver") || !["sent", "viewed"].includes(r.status)) throw conflict("not_signable", "No podés rechazar este sobre");
       await t.query(`UPDATE recipients SET status = 'declined', declined_at = now(), decline_reason = $2 WHERE id = $1`, [r.id, input.reason]);

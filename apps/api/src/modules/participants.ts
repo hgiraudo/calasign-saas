@@ -10,7 +10,7 @@ import { authenticate, type Services } from "./context";
 import { activateRecipient, lockEnvelope } from "./envelopes";
 import { loadDetail } from "./mappers";
 import { isUnverifiedSelfRegistered } from "./otp";
-import { recipientActor, resolveToken } from "./signing";
+import { assertLinkCurrent, recipientActor, resolveToken } from "./signing";
 import { inheritIdentityRequirement } from "./identity/kyc";
 import { deleteBlobsQuietly, discardRecipientAttachments } from "./file-cleanup";
 
@@ -163,6 +163,7 @@ export async function participantRoutes(app: FastifyInstance, s: Services) {
         if (e.status !== "sent") throw conflict("envelope_closed", "El sobre ya no está disponible");
         if (!(e.allow_delegation ?? true)) throw forbidden("El remitente no permite delegar este sobre");
         const old = await t.one<any>(`SELECT * FROM recipients WHERE id = $1`, [r0.id]);
+        assertLinkCurrent(old, req.params.token);
         // Quien se registró solo en un formulario web (correo sin validar) no recibe correos: tampoco puede usar la
         // delegación para que la plataforma le escriba a un tercero.
         if (isUnverifiedSelfRegistered(old)) throw forbidden("Para delegar, validá primero tu correo");

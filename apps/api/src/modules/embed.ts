@@ -151,6 +151,9 @@ export async function embedRoutes(app: FastifyInstance, s: Services) {
       // El código vale 5 minutos: si el sobre se anuló, rechazó o venció mientras tanto, el firmante ve el sobre cerrado
       // pero no se suma el inicio de sesión a su evidencia.
       if (["voided", "declined", "expired"].includes(cur?.status)) return;
+      // Ni para un destinatario reemplazado (delegó, lo reasignaron) o con el link rotado después de leerlo arriba.
+      const rNow = await t.one<any>(`SELECT access_token_hash FROM recipients WHERE id = $1`, [r.id]);
+      if (!rNow?.access_token_hash || rNow.access_token_hash !== r.access_token_hash) return;
       await appendEvent(t, {
         tenantId: sess.tenant_id,
         envelopeId: sess.envelope_id,

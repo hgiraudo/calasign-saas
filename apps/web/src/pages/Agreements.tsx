@@ -439,10 +439,16 @@ function parseAmount(raw: string, label: string): number | null {
   return n;
 }
 
-function draftToBody(d: MetaDraft, fields: AgreementFieldDef[], valueLabel: string) {
+/**
+ * `base`: lo guardado (detalle). Solo se mandan los campos propios que cambiaron (la API los combina con los que ya
+ * tiene): un valor puesto por la API o un workflow fuera de la lista (o que no es número/fecha) se reenviaba en cada
+ * guardado y lo hacía fallar con "valor fuera de la lista", aunque se editara otra cosa (el select mostraba "—").
+ */
+function draftToBody(d: MetaDraft, fields: AgreementFieldDef[], valueLabel: string, base?: MetaDraft) {
   const metadata: Record<string, string | number | null> = {};
   for (const f of fields) {
     const v = d.metadata[f.key] ?? "";
+    if (base && (base.metadata[f.key] ?? "") === v) continue;
     metadata[f.key] = v === "" ? null : f.type === "number" ? parseAmount(v, f.label) : v;
   }
   return {
@@ -795,7 +801,7 @@ export function AgreementDetailPage() {
     setError(null);
     let body: ReturnType<typeof draftToBody>;
     try {
-      body = draftToBody(d, fields, ta("ag.value"));
+      body = draftToBody(d, fields, ta("ag.value"), draftFrom(a));
     } catch (err) {
       if (err instanceof InvalidNumber) return setError(ta("ag.invalidNumber", { field: err.message }));
       throw err;

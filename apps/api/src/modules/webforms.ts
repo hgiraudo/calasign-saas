@@ -15,7 +15,7 @@ import { config } from "../config";
 import type { Db } from "../infra/db";
 import { appendEvent, type Actor } from "../infra/evidence";
 import { AppError, badRequest, conflict, forbidden, notFound } from "../lib/errors";
-import { decrypt, encrypt, iso, slugify, uuidv7 } from "../lib/util";
+import { decrypt, encrypt, iso, sha256Hex, slugify, uuidv7 } from "../lib/util";
 import { getTenantBranding } from "./branding";
 import { assertTemplateAccess, envelopeVisibilitySql, hasPerm, templateVisibilitySql } from "./access";
 import { ownerProblem } from "./owner-check";
@@ -27,6 +27,7 @@ import { insertEnvelopeFromTemplate, loadTemplateForUse, planFromTemplate, type 
 import { tenantBaseUrl } from "./custom-domains";
 
 /** Tiempo mínimo entre abrir el formulario y enviarlo (un humano tarda más; un bot, menos). */
+const MAX_SUBMISSIONS_PER_HOUR = 60;
 const MIN_FILL_MS = 2500;
 const MAX_FILL_MS = 2 * 3600_000;
 
@@ -387,6 +388,15 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
       const envId = await s.db.tx(async (t) => {
         const locked = await t.one<any>(`SELECT * FROM web_forms WHERE id = $1 FOR UPDATE`, [form.id]);
         if (availability(locked)) throw new AppError(410, "form_unavailable", "Este formulario ya no está disponible");
+        // Un envío por token (si la transacción falla, el token vuelve a servir).
+        const fresh = await t.query(`INSERT INTO web_form_token_uses (token_hash) VALUES ($1) ON CONFLICT DO NOTHING RETURNING 1`, [sha256Hex(input.formToken)]);
+        if (!fresh.length) throw expiredToken();
+        // Tope por formulario: cada envío crea y manda un sobre (y consume la cuota del plan de la organización).
+        const recent = await t.one<{ n: number }>(
+          `SELECT count(*)::int AS n FROM envelopes WHERE tenant_id = $1 AND metadata->>'webFormId' = $2 AND created_at > now() - interval '1 hour'`,
+          [form.tenant_id, form.id],
+        );
+        if ((recent?.n ?? 0) >= MAX_SUBMISSIONS_PER_HOUR) throw new AppError(429, "form_rate_limited", "Demasiados envíos de este formulario: probá más tarde");
         const id = await insertEnvelopeFromTemplate(
           t,
           { ...formOwner(form), actor },

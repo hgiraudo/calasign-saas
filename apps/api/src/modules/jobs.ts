@@ -473,6 +473,13 @@ export async function sweep(d: Deps) {
     ["white-label-domains", () => recheckWhiteLabelDomains(d)],
     // Apps OAuth registradas dinámicamente (conectores MCP) que nadie autorizó en 30 días.
     ["oauth", () => purgeUnusedDynamicClients(d.db)],
+    // Links de descarga temporales (MCP): nada más los borraba.
+    // Tokens de formularios web usados: vencen a las 2 h, después no hace falta recordarlos.
+    ["web-form-tokens", () => d.db.query(`DELETE FROM web_form_token_uses WHERE used_at < now() - interval '1 day'`)],
+    [
+      "download-links",
+      () => d.db.query(`DELETE FROM download_links WHERE ctid IN (SELECT ctid FROM download_links WHERE expires_at < now() - interval '1 day' LIMIT 5000)`),
+    ],
     // Claves de idempotencia de más de 7 días: un reintento real llega en minutos u horas (Stripe las guarda 24 h) y
     // los conectores sin clave propia (Zapier, Make) usan una por día. Sin esto la tabla crecía sin límite.
     // De a 5000 por pasada para no bloquear la tabla.

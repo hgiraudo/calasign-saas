@@ -120,7 +120,8 @@ export async function loadFormData(s: Services, tenantId: string, envelopeId: st
 
 /** Clona un sobre como borrador nuevo. Devuelve el id. Corre dentro de la transacción del llamador. */
 export async function cloneEnvelope(t: Services["db"], a: AuthContext, sourceId: string, input: CloneEnvelopeInput): Promise<string> {
-  const src = await t.one<any>(`SELECT * FROM envelopes WHERE id = $1 AND tenant_id = $2`, [sourceId, a.tenantId]);
+  // FOR SHARE: espera a una purga por retención en curso (que bloquea el sobre) y ve su purged_at.
+  const src = await t.one<any>(`SELECT * FROM envelopes WHERE id = $1 AND tenant_id = $2 FOR SHARE`, [sourceId, a.tenantId]);
   if (!src) throw notFound("Sobre");
   // Los originales de un sobre purgado por la política de retención ya no existen: el clon quedaría con documentos vacíos.
   if (src.purged_at) throw new AppError(409, "purged", "Los originales de este sobre se eliminaron por la política de retención: no se puede clonar");

@@ -543,11 +543,25 @@ export async function exportEnvelopeJob(db: Db, blobs: BlobStore, p: { connectio
     [p.envelopeId],
   );
   if (!e || e.status !== "completed") return;
-  await db.query(`UPDATE storage_exports SET attempts = attempts + 1, updated_at = now() WHERE id = $1`, [ex.id]);
+  // Reclamo con vencimiento (por si el proceso muere a mitad): si otro trabajo ya la está subiendo, este no hace nada.
+  const claimed = await db.query(
+    `UPDATE storage_exports SET claimed_until = now() + interval '15 minutes', attempts = attempts + 1, updated_at = now()
+      WHERE id = $1 AND status <> 'succeeded' AND (claimed_until IS NULL OR claimed_until < now()) RETURNING id`,
+    [ex.id],
+  );
+  if (!claimed.length) return;
+  try {
+    await runExport(db, blobs, p, c, ex, e);
+  } finally {
+    await db.query(`UPDATE storage_exports SET claimed_until = NULL WHERE id = $1`, [ex.id]);
+  }
+}
+
+async function runExport(db: Db, blobs: BlobStore, p: { connectionId: string; envelopeId: string }, c: any, ex: any, e: any) {
   try {
     let cur = await withResolvedFolder(db, c);
     // El PDF ya subido en un intento anterior (falló solo el certificado de evidencia) no se vuelve a subir.
-    let ref: string = ex.pdf_ref;
+    let ref: string = (await db.one<any>(`SELECT pdf_ref FROM storage_exports WHERE id = $1`, [ex.id]))?.pdf_ref ?? null;
     if (!ref) {
       const bytes = await blobs.get(e.storage_key);
       const r = await uploadTo(cur.provider, cur.credentials_enc, cur.config ?? {}, fileName(e.subject, p.envelopeId), bytes, "application/pdf", persistCreds(db, c.id));
@@ -836,7 +850,12 @@ export async function storageRoutes(app: FastifyInstance, s: Services) {
     const x = await s.db.one<any>(`SELECT * FROM storage_exports WHERE id = $1 AND tenant_id = $2`, [req.params.id, a.tenantId]);
     if (!x) throw notFound("Exportación");
     if (x.status === "succeeded") throw new AppError(409, "already_exported", "Ya se exportó");
-    await s.db.query(`UPDATE storage_exports SET status = 'pending', error = NULL, updated_at = now() WHERE id = $1`, [x.id]);
+    // Solo una fallida: una pendiente ya está en la cola (o subiéndose), y un segundo trabajo subía el PDF dos veces.
+    const upd = await s.db.query(
+      `UPDATE storage_exports SET status = 'pending', error = NULL, updated_at = now() WHERE id = $1 AND status = 'failed' RETURNING id`,
+      [x.id],
+    );
+    if (!upd.length) throw new AppError(409, "export_in_progress", "La exportación ya está en curso");
     await enqueue(s.db, "platform", { kind: "export", connectionId: x.connection_id, envelopeId: x.envelope_id }, { dedupeKey: `exp:${x.connection_id}:${x.envelope_id}:${Date.now()}` });
     reply.code(202);
     return { queued: true };

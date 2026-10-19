@@ -669,7 +669,7 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
   app.get<{ Params: { token: string } }>("/v1/downloads/:token", { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (req, reply) => {
     if (!/^[A-Za-z0-9_-]{30,100}$/.test(req.params.token)) throw notFound("Link");
     const l = await s.db.one<any>(
-      `SELECT l.id, l.expires_at, f.storage_key, e.subject FROM download_links l JOIN files f ON f.id = l.file_id JOIN envelopes e ON e.id = l.envelope_id
+      `SELECT l.id, l.expires_at, f.storage_key, e.subject FROM download_links l JOIN files f ON f.id = l.file_id AND f.purged_at IS NULL JOIN envelopes e ON e.id = l.envelope_id
        WHERE l.token_hash = $1`,
       [sha256Hex(req.params.token)],
     );

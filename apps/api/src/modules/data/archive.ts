@@ -189,6 +189,9 @@ export async function archiveInfo(db: Db, envelopeId: string): Promise<ArchiveIn
   };
 }
 
+const MAX_RENEWALS = 50;
+const MAX_RENEWALS_PER_DAY = 3;
+
 export async function archiveRoutes(app: FastifyInstance, s: Services, log: Deps["log"]) {
   const auth = authenticate(s);
   const deps = (): Deps => ({ db: s.db, blobs: s.blobs, log });
@@ -198,14 +201,30 @@ export async function archiveRoutes(app: FastifyInstance, s: Services, log: Deps
     if (!e) throw notFound("Sobre");
     if (e.status === "completed") {
       const row = await s.db.one<any>(`SELECT archive_checked_at FROM envelopes WHERE id = $1`, [e.id]);
-      if (!row.archive_checked_at) await inspectArchive(deps(), e.id).catch(() => {});
+      // Si falla, queda registrado (como en el barrido): si no, cada consulta volvía a bajar y analizar el PDF.
+      if (!row.archive_checked_at) {
+        await inspectArchive(deps(), e.id).catch((err) =>
+          s.db.query(`UPDATE envelopes SET archive_checked_at = now(), archive_error = $2 WHERE id = $1`, [e.id, String(err).slice(0, 500)]),
+        );
+      }
     }
     return archiveInfo(s.db, e.id);
   });
 
   app.post<{ Params: { id: string } }>("/v1/envelopes/:id/archive/renew", { preHandler: auth, config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req) => {
-    const e = await s.db.one<any>(`SELECT id FROM envelopes WHERE id = $1 AND tenant_id = $2`, [req.params.id, req.auth!.tenantId]);
+    const e = await s.db.one<any>(`SELECT id, archive_renewals FROM envelopes WHERE id = $1 AND tenant_id = $2`, [req.params.id, req.auth!.tenantId]);
     if (!e) throw notFound("Sobre");
+    // Cada renovación pide un sello de tiempo (con costo) y guarda otro PDF, más grande, que no se borra: con tope.
+    if (Number(e.archive_renewals ?? 0) >= MAX_RENEWALS) {
+      throw new AppError(409, "archive_renewal_limit", `El sobre llegó al máximo de ${MAX_RENEWALS} renovaciones del sello de archivo`);
+    }
+    const recent = await s.db.one<any>(
+      `SELECT count(*)::int AS n FROM envelope_signed_versions WHERE envelope_id = $1 AND reason = 'archive_renewal' AND created_at > now() - interval '1 day'`,
+      [e.id],
+    );
+    if ((recent?.n ?? 0) >= MAX_RENEWALS_PER_DAY) {
+      throw new AppError(429, "archive_recently_renewed", "El sello de archivo de este sobre ya se renovó varias veces hoy");
+    }
     await renewEnvelopeArchive(deps(), e.id, req.auth!.actor);
     return archiveInfo(s.db, e.id);
   });

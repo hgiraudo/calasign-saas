@@ -31,6 +31,8 @@ async function purgeableFiles(db: Db, envelopeId: string) {
      -- Los PDF de un sobre creado desde plantilla (o de una plantilla creada desde un sobre) son el MISMO archivo:
      -- no se borra lo que todavía usa una plantilla u otro sobre sin purgar.
      AND NOT EXISTS (SELECT 1 FROM template_documents td WHERE td.file_id = f.id)
+     AND NOT EXISTS (SELECT 1 FROM agreements ag WHERE ag.file_id = f.id)
+     AND NOT EXISTS (SELECT 1 FROM negotiations ng WHERE ng.file_id = f.id)
      AND NOT EXISTS (
        SELECT 1 FROM documents d2 JOIN envelopes e2 ON e2.id = d2.envelope_id
        WHERE d2.file_id = f.id AND d2.envelope_id <> $1 AND e2.purged_at IS NULL)`,
@@ -57,23 +59,25 @@ export async function purgeExpiredEnvelopes(d: Deps, opts: { tenantId?: string; 
   );
   let purged = 0;
   for (const e of due) {
-    const files = await purgeableFiles(d.db, e.id);
-    const done: any[] = [];
-    let failed = 0;
-    for (const f of files) {
-      try {
-        await d.blobs.delete(f.storage_key);
-        done.push(f);
-      } catch (err) {
-        failed++;
-        d.log.error({ envelopeId: e.id, fileId: f.id, err: String(err) }, "retención: no se pudo borrar el archivo");
-      }
-    }
-    await d.db.tx(async (t) => {
+    // Todo con el sobre bloqueado: un clon o una plantilla "desde sobre" que lee el sobre a la vez (FOR SHARE) espera,
+    // y no queda apuntando a un original que se está borrando.
+    const ok = await d.db.tx(async (t) => {
       const cur = await t.one<any>(`SELECT status, purged_at FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
-      if (cur?.status !== "completed" || cur.purged_at) return;
+      if (cur?.status !== "completed" || cur.purged_at) return false;
+      const files = await purgeableFiles(t, e.id);
+      const done: any[] = [];
+      let failed = 0;
+      for (const f of files) {
+        try {
+          await d.blobs.delete(f.storage_key);
+          done.push(f);
+        } catch (err) {
+          failed++;
+          d.log.error({ envelopeId: e.id, fileId: f.id, err: String(err) }, "retención: no se pudo borrar el archivo");
+        }
+      }
       if (done.length) await t.query(`UPDATE files SET purged_at = now() WHERE id = ANY($1::uuid[])`, [done.map((f) => f.id)]);
-      if (failed) return; // Se reintenta en la próxima pasada.
+      if (failed) return false; // Se reintenta en la próxima pasada.
       await t.query(`UPDATE envelopes SET purged_at = now(), updated_at = now() WHERE id = $1`, [e.id]);
       const kinds: Record<string, number> = {};
       for (const f of done) kinds[f.kind] = (kinds[f.kind] ?? 0) + 1;
@@ -84,8 +88,31 @@ export async function purgeExpiredEnvelopes(d: Deps, opts: { tenantId?: string; 
         actor: SYSTEM,
         data: { retentionDays: e.retention_days, files: done.length, kinds, kept: ["signed_pdf", "events"] },
       });
+      return true;
     });
-    if (!failed) purged++;
+    if (ok) purged++;
+  }
+  // Originales que al purgar su sobre todavía usaba una plantilla, otro sobre o un acuerdo: cuando ya solo los
+  // referencian sobres purgados, se borran (si no, quedaban para siempre y se seguían sirviendo).
+  const orphans = await d.db.query<any>(
+    `SELECT f.id, f.storage_key FROM files f
+      WHERE f.purged_at IS NULL AND f.kind = 'original'
+        AND EXISTS (SELECT 1 FROM documents dd JOIN envelopes ee ON ee.id = dd.envelope_id WHERE dd.file_id = f.id AND ee.purged_at IS NOT NULL)
+        AND NOT EXISTS (SELECT 1 FROM documents dd JOIN envelopes ee ON ee.id = dd.envelope_id WHERE dd.file_id = f.id AND ee.purged_at IS NULL)
+        AND NOT EXISTS (SELECT 1 FROM template_documents td WHERE td.file_id = f.id)
+        AND NOT EXISTS (SELECT 1 FROM agreements ag WHERE ag.file_id = f.id)
+        AND NOT EXISTS (SELECT 1 FROM negotiations ng WHERE ng.file_id = f.id)
+        ${opts.tenantId ? "AND f.tenant_id = $1" : ""}
+      LIMIT 100`,
+    opts.tenantId ? [opts.tenantId] : [],
+  );
+  for (const f of orphans) {
+    try {
+      await d.blobs.delete(f.storage_key);
+      await d.db.query(`UPDATE files SET purged_at = now() WHERE id = $1 AND purged_at IS NULL`, [f.id]);
+    } catch (err) {
+      d.log.error({ fileId: f.id, err: String(err) }, "retención: no se pudo borrar el archivo");
+    }
   }
   if (purged) d.log.info({ purged }, "retención aplicada");
   return { purged, candidates: due.length };

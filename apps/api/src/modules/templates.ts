@@ -379,6 +379,10 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
     if (!env) throw notFound("Sobre");
     const id = uuidv7();
     await s.db.tx(async (t) => {
+      // Con el sobre en FOR SHARE: una purga por retención en curso termina antes y acá se ve (si no, la plantilla
+      // quedaba apuntando a originales borrados).
+      const locked = await t.one<any>(`SELECT purged_at FROM envelopes WHERE id = $1 FOR SHARE`, [env.id]);
+      if (locked?.purged_at) throw new AppError(410, "purged", "Los originales de este sobre se eliminaron por la política de retención");
       await t.query(
         `INSERT INTO templates (id, tenant_id, name, description, subject, message, locale, created_by, created_by_api_key) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
         [id, a.tenantId, input.name, input.description ?? null, env.subject, env.message, env.locale, a.userId, a.apiKeyId],

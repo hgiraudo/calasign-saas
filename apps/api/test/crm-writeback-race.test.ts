@@ -23,7 +23,10 @@ const PROVIDERS = [
   { provider: "salesforce", auth: "oauth", creds: { access_token: "sf", expires_at: null }, config: { instanceUrl: "https://acme.my.salesforce.com" }, objectType: "opportunity" },
   { provider: "zoho", auth: "oauth", creds: { access_token: "zo", expires_at: Date.now() + 3_600_000 }, config: { apiDomain: "https://www.zohoapis.com", product: "crm" }, objectType: "deal" },
   { provider: "pipedrive", auth: "oauth", creds: { access_token: "pd", expires_at: Date.now() + 3_600_000 }, config: { apiDomain: "https://acme.pipedrive.com" }, objectType: "deal" },
+  { provider: "rdstation", auth: "oauth", creds: { access_token: "rd", expires_at: Date.now() + 3_600_000 }, config: {}, objectType: "deal", objectId: "65f0a1b2c3d4e5f6a7b8c9d0" },
+  { provider: "kommo", auth: "oauth", creds: { access_token: "km", expires_at: Date.now() + 3_600_000 }, config: { baseDomain: "https://acme.kommo.com" }, objectType: "deal" },
 ] as const;
+const objectIdOf = (p: (typeof PROVIDERS)[number]) => ("objectId" in p ? p.objectId : "42");
 
 /** CRM falso: guarda el último valor de estado aplicado. La escritura de "sent" se aplica 150 ms después. */
 function fakeCrm() {
@@ -34,6 +37,8 @@ function fakeCrm() {
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.includes("/dealFields")) return json({ success: true, data: [{ key: "calasign_status", name: "Estado", field_type: "varchar" }] });
+    if (url.includes("/crm/v2/custom_fields")) return json({ data: [{ id: "f1", slug: "calasign_status", name: "Estado", type: "text" }] });
+    if (url.includes("/api/v4/leads/custom_fields")) return json({ _embedded: { custom_fields: [{ id: 1, name: "Estado", code: "calasign_status", type: "text" }] } });
     const body = typeof init?.body === "string" ? init.body : "";
     const method = init?.method ?? "GET";
     if (method === "PUT" || method === "PATCH") {
@@ -81,19 +86,20 @@ async function setup(p: (typeof PROVIDERS)[number]) {
     p.objectType,
     JSON.stringify({ statusProperty: "calasign_status", statusValues: { sent: SENT, completed: DONE }, attachPdf: false }),
   ]);
-  await db.query(`INSERT INTO crm_links (id, tenant_id, connection_id, mapping_id, envelope_id, object_type, object_id) VALUES ($1,$2,$3,$4,$5,$6,'42')`, [
+  await db.query(`INSERT INTO crm_links (id, tenant_id, connection_id, mapping_id, envelope_id, object_type, object_id) VALUES ($1,$2,$3,$4,$5,$6,$7)`, [
     link,
     tenant,
     conn,
     mapping,
     envelope,
     p.objectType,
+    objectIdOf(p),
   ]);
   const run = async (event: string) => {
     const id = uuidv7();
     await db.query(
-      `INSERT INTO crm_runs (id, tenant_id, connection_id, mapping_id, link_id, envelope_id, kind, event, object_type, object_id) VALUES ($1,$2,$3,$4,$5,$6,'write_back',$7,$8,'42')`,
-      [id, tenant, conn, mapping, link, envelope, event, p.objectType],
+      `INSERT INTO crm_runs (id, tenant_id, connection_id, mapping_id, link_id, envelope_id, kind, event, object_type, object_id) VALUES ($1,$2,$3,$4,$5,$6,'write_back',$7,$8,$9)`,
+      [id, tenant, conn, mapping, link, envelope, event, p.objectType, objectIdOf(p)],
     );
     return id;
   };

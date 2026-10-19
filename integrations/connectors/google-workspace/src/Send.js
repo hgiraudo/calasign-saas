@@ -137,7 +137,18 @@ function saveSignedToDrive_(p, bytes, lang) {
   if (p.pdf) {
     try {
       var copy = driveCopy_(p.fileId, name);
-      return { file: driveReplaceContent_(copy.id, bytes), fallback: !(copy.parents && p.parentId && copy.parents.indexOf(p.parentId) >= 0) };
+      try {
+        return { file: driveReplaceContent_(copy.id, bytes), fallback: !(copy.parents && p.parentId && copy.parents.indexOf(p.parentId) >= 0) };
+      } catch (err) {
+        // Sin reemplazar, la copia es el original SIN firmar con el nombre "(firmado)": se borra (y cada reintento de
+        // un error pasajero dejaba otra).
+        try {
+          driveFetch_('delete', CS_DRIVE_API + '/' + encodeURIComponent(copy.id) + '?supportsAllDrives=true');
+        } catch (ignored) {
+          /* se informa el error del reemplazo */
+        }
+        throw err;
+      }
     } catch (err) {
       if (!(err.status === 403 || err.status === 404)) throw err;
     }

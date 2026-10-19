@@ -10,6 +10,9 @@ import { loadDocuments } from "./mappers";
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
+/** Tope de campos por sobre (el de PutFieldsInput y del sobre completo de POST /v1/envelopes). */
+const MAX_FIELDS = 500;
+
 // Atributos de un campo que no dependen de la posición: pasan tal cual a cada campo que genera el ancla (los valida
 // después FieldInput). Sin esto, un desplegable por ancla perdía sus opciones (400) y un valor de solo lectura, el
 // rango o las condiciones se descartaban sin aviso.
@@ -41,6 +44,10 @@ export interface AnchorDocument {
 export async function expandAnchors(docs: AnchorDocument[], body: unknown): Promise<unknown> {
   const fields = (body as { fields?: unknown[] } | null)?.fields;
   if (!Array.isArray(fields) || !fields.some((f) => f && typeof f === "object" && "anchor" in (f as object))) return body;
+  // Mismo tope que PutFieldsInput, antes de leer los PDF: la validación corre después de expandir, y PUT fields no
+  // acota la lista antes. Sin esto, miles de anclas distintas (cada una lee el texto del PDF con pdf.js) retenían el
+  // pedido y los lectores de PDF compartidos durante horas.
+  if (fields.length > MAX_FIELDS) throw badRequest("too_many_fields", `Máximo ${MAX_FIELDS} campos por sobre`);
   const bytesCache = new Map<string, Uint8Array>();
   const matchCache = new Map<string, AnchorMatch[]>();
   const find = async (doc: AnchorDocument, text: string, caseSensitive: boolean) => {
@@ -92,6 +99,8 @@ export async function expandAnchors(docs: AnchorDocument[], body: unknown): Prom
         });
         found++;
       }
+      // Un ancla frecuente (p. ej. una letra) genera un campo por aparición: se corta apenas supera el tope.
+      if (out.length > MAX_FIELDS) throw badRequest("too_many_fields", `Las anclas generan más de ${MAX_FIELDS} campos`);
     }
     if (found === 0 && !f.anchor.ignoreIfNotPresent) {
       throw badRequest("anchor_not_found", `Campo ${i + 1}: no se encontró el texto ancla "${f.anchor.text}"`, { anchor: f.anchor.text });

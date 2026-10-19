@@ -137,7 +137,9 @@ async function notify(
   const link = token && LINK_KINDS.includes(p.kind) ? `${wl.baseUrl}/s/${token}` : null;
   const m = render(p.kind, locale, { ...base, recipientName: r.name, message: p.kind === "invite" ? e.message : null, link }, mailBrand(p.kind, locale));
 
-  const channels: ("email" | "whatsapp" | "telegram")[] = r.channels ?? ["email"];
+  // Sin repetidos: los esquemas aceptan ["email","email",…] (también al delegar, desde el link público) y cada repetición
+  // era un envío más del mismo aviso al mismo destino.
+  const channels: ("email" | "whatsapp" | "telegram")[] = [...new Set<"email" | "whatsapp" | "telegram">(r.channels ?? ["email"])];
   const tgLink = token && channels.includes("telegram") && !r.telegram_chat_id ? telegramStartLink(token) : null;
   const errors: string[] = [];
   let delivered = 0;
@@ -471,6 +473,16 @@ export async function sweep(d: Deps) {
     ["white-label-domains", () => recheckWhiteLabelDomains(d)],
     // Apps OAuth registradas dinámicamente (conectores MCP) que nadie autorizó en 30 días.
     ["oauth", () => purgeUnusedDynamicClients(d.db)],
+    // Claves de idempotencia de más de 7 días: un reintento real llega en minutos u horas (Stripe las guarda 24 h) y
+    // los conectores sin clave propia (Zapier, Make) usan una por día. Sin esto la tabla crecía sin límite.
+    // De a 5000 por pasada para no bloquear la tabla.
+    [
+      "idempotency",
+      () =>
+        d.db.query(
+          `DELETE FROM idempotency_keys WHERE ctid IN (SELECT ctid FROM idempotency_keys WHERE created_at < now() - interval '7 days' LIMIT 5000)`,
+        ),
+    ],
   ];
   for (const [name, step] of steps) {
     try {

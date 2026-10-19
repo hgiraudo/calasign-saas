@@ -526,6 +526,13 @@ export async function replaceRecipients(t: Db, a: AuthContext, envelopeId: strin
   if (new Set(ids).size !== ids.length) throw badRequest("duplicate_ids", "Ids de destinatarios repetidos");
   const foreign = await t.query(`SELECT id FROM recipients WHERE id = ANY($1) AND envelope_id <> $2`, [ids, envelopeId]);
   if (foreign.length) throw conflict("id_in_use", "Id de destinatario en uso");
+  // Borrar al pagador elimina en cascada el cobro configurado y el sobre salía sin cobrar, sin aviso (sendEnvelope solo
+  // ve un cobro que ya no existe). Como en las correcciones: primero se quita o se reasigna el cobro.
+  const payer = await t.one<any>(`SELECT r.name FROM envelope_payments p JOIN recipients r ON r.id = p.recipient_id WHERE p.envelope_id = $1 AND NOT (p.recipient_id = ANY($2))`, [
+    envelopeId,
+    ids,
+  ]);
+  if (payer) throw conflict("recipient_is_payer", `${payer.name} tiene el cobro del sobre a su cargo: quitá o cambiá el cobro antes de quitarlo`);
   await t.query(`DELETE FROM recipients WHERE envelope_id = $1 AND NOT (id = ANY($2))`, [envelopeId, ids]);
   for (const r of list) {
     await t.query(

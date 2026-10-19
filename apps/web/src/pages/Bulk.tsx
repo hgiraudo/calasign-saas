@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import type { BulkSend, BulkSendItem, BulkValidationResult, TemplateSummary } from "@calasign/shared";
-import { api, errorText, HttpError } from "../lib/api";
+import { api, errorText, HttpError, uuid } from "../lib/api";
 import { formatDateTime, useI18n } from "../lib/i18n";
 import { useScaleText } from "../lib/i18n-scale";
 import { ErrorBox, Modal, Spinner } from "../components/ui";
@@ -178,13 +178,16 @@ export function BulkNewPage() {
     }
   };
 
+  const [idemKey, setIdemKey] = useState(uuid);
   const send = async () => {
     setBusy(true);
     setError(null);
     try {
-      const b = await api<BulkSend>("/v1/bulk-sends", { method: "POST", body: body() });
+      const b = await api<BulkSend>("/v1/bulk-sends", { method: "POST", body: body(), headers: { "Idempotency-Key": idemKey } });
       nav(`/app/bulk/${b.id}`);
     } catch (e) {
+      // Respuesta de error: se puede corregir y volver a enviar con otra clave (un corte o un 5xx reintenta con la misma).
+      if (e instanceof HttpError && e.status > 0 && e.status < 500) setIdemKey(uuid());
       if (e instanceof HttpError && e.code === "rows_invalid") setResult(e.details as BulkValidationResult);
       setError(errorText(e));
       setBusy(false);

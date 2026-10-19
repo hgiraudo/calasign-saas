@@ -10,6 +10,8 @@ export async function runAutomaticReminders(db: Db, now = new Date()) {
   const due = await db.query<any>(
     `SELECT id, tenant_id FROM envelopes
      WHERE status = 'sent' AND reminder_every_days IS NOT NULL
+       -- Ya vencido (el barrido todavía no lo pasó a 'expired'): sin recordatorio a un link que no sirve.
+       AND (expires_at IS NULL OR expires_at > $1::timestamptz)
        AND COALESCE(last_reminder_at, sent_at) <= $1::timestamptz - make_interval(days => reminder_every_days)
      LIMIT 200`,
     [now.toISOString()],
@@ -19,7 +21,8 @@ export async function runAutomaticReminders(db: Db, now = new Date()) {
       // Con el sobre bloqueado se vuelve a mirar que el recordatorio siga pendiente: otro barrido (otro worker, o la API
       // con el worker integrado) pudo enviarlo mientras tanto, y se sumaba un segundo envelope.reminded a la evidencia.
       const cur = await t.one<any>(
-        `SELECT status, (reminder_every_days IS NOT NULL AND COALESCE(last_reminder_at, sent_at) <= $2::timestamptz - make_interval(days => reminder_every_days)) AS due
+        `SELECT status, (reminder_every_days IS NOT NULL AND COALESCE(last_reminder_at, sent_at) <= $2::timestamptz - make_interval(days => reminder_every_days)
+                 AND (expires_at IS NULL OR expires_at > $2::timestamptz)) AS due
            FROM envelopes WHERE id = $1 FOR UPDATE`,
         [e.id, now.toISOString()],
       );
@@ -43,8 +46,16 @@ export async function runAutomaticReminders(db: Db, now = new Date()) {
   );
   for (const e of expiring) {
     await db.tx(async (t) => {
-      const cur = await t.one<any>(`SELECT status, expiry_warning_sent_at, expires_at FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
-      if (cur?.status !== "sent" || cur.expiry_warning_sent_at) return;
+      // La ventana se vuelve a mirar con el sobre bloqueado: una corrección que extendió el vencimiento mientras tanto
+      // no recibe el aviso ahora (y el del nuevo vencimiento no se pierde).
+      const cur = await t.one<any>(
+        `SELECT status, expiry_warning_sent_at, expires_at,
+                (expires_at IS NOT NULL AND expiry_warning_days IS NOT NULL AND expires_at > $2::timestamptz
+                 AND expires_at <= $2::timestamptz + make_interval(days => expiry_warning_days)) AS in_window
+           FROM envelopes WHERE id = $1 FOR UPDATE`,
+        [e.id, now.toISOString()],
+      );
+      if (cur?.status !== "sent" || cur.expiry_warning_sent_at || !cur.in_window) return;
       const group = await currentSignerGroup(t, e.id);
       const pending = group.recipients.filter((r) => (r.status === "sent" || r.status === "viewed") && receivesSignerNotices(r));
       for (const r of pending)

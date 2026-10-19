@@ -17,6 +17,7 @@ import { AppError, badRequest, conflict, forbidden, notFound } from "../lib/erro
 import { iso, queryList, uuidv7 } from "../lib/util";
 import { assertTemplateAccess, hasPerm } from "./access";
 import { csvCell } from "./agreements/common";
+import { idempotent } from "./envelopes";
 import { ownerCanStillCreate } from "./owner-check";
 import { tenantPlan } from "./billing/plans";
 import { authenticate, type AuthContext, type Services } from "./context";
@@ -330,7 +331,9 @@ export async function bulkRoutes(app: FastifyInstance, s: Services) {
     return validationResult(prepared, columns);
   });
 
-  app.post("/v1/bulk-sends", big, async (req, reply) => {
+  // Con Idempotency-Key: si la respuesta se pierde y se reintenta, no se arma (ni se manda) un segundo envío masivo.
+  app.post("/v1/bulk-sends", big, async (req, reply) =>
+    idempotent(s, req, reply, async () => {
     const a = A(req);
     const { input, loaded, prepared, columns } = await resolveRows(s, a, req.body);
     const result = validationResult(prepared, columns);
@@ -380,9 +383,9 @@ export async function bulkRoutes(app: FastifyInstance, s: Services) {
         await enqueue(t, "bulk", { bulkSendId: id, tenantId: a.tenantId, itemIds: pendingIds.slice(i, i + CHUNK) }, { dedupeKey: `bulk:${id}:${i / CHUNK}` });
       }
     });
-    reply.code(201);
-    return loadBulk(s.db, a, id);
-  });
+    return { status: 201, body: await loadBulk(s.db, a, id) };
+    }),
+  );
 
   app.get("/v1/bulk-sends", { preHandler: auth }, async (req) => {
     const a = A(req);

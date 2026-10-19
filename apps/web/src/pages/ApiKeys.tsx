@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { ApiKey, CreateApiKeyResponse, Permission } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
 import { useAccess } from "../lib/access";
-import { formatDateTime, useI18n, confirmAction } from "../lib/i18n";
+import { formatDateTime, useI18n, confirmAction, placeholderText } from "../lib/i18n";
 import { ErrorBox, Spinner } from "../components/ui";
 import { useRoleLabel, useTeamsText } from "../lib/i18n-teams";
 
@@ -121,7 +121,7 @@ export function ApiKeysPage() {
       <form onSubmit={create} className="card pad row-wrap">
         <label className="field grow">
           <span>{t("keys.name")}</span>
-          <input required maxLength={100} value={name} onChange={(e) => setName(e.target.value)} placeholder="ERP producción" />
+          <input required maxLength={100} value={name} onChange={(e) => setName(e.target.value)} placeholder={placeholderText("integration")} />
         </label>
         {roleOptions.length > 0 && (
           <label className="field">

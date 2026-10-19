@@ -229,7 +229,7 @@ function readXrefSection(pdf: Uint8Array, offset: number, ctx: PDFContext, shift
 }
 
 function readXrefTable(pdf: Uint8Array, offset: number, ctx: PDFContext, shift: number): XrefSection {
-  const text = Buffer.from(pdf).toString("latin1");
+  const text = latin1(pdf);
   let pos = offset;
   const at = (src: string) => {
     const r = new RegExp(src, "y");
@@ -299,6 +299,20 @@ function readXrefStream(stream: PDFRawStream, shift: number): XrefSection {
 }
 
 class RootChangedError extends Error {}
+
+/**
+ * El texto latin1 del PDF, una vez por archivo: antes se copiaba el archivo entero por cada sección de xref y miles de
+ * secciones (/Prev) en un PDF de decenas de MB bloqueaban la API varios minutos.
+ */
+const latin1Cache = new WeakMap<Uint8Array, string>();
+function latin1(pdf: Uint8Array): string {
+  let s = latin1Cache.get(pdf);
+  if (s === undefined) latin1Cache.set(pdf, (s = Buffer.from(pdf.buffer, pdf.byteOffset, pdf.byteLength).toString("latin1")));
+  return s;
+}
+
+/** Tope de secciones de xref en la cadena de una revisión (un documento real tiene pocas). */
+const MAX_XREF_SECTIONS = 2000;
 
 // ───────────────────── Dónde empieza a leer el lector ─────────────────────
 // pdf.js (el visor de la web) no lee el xref como pdf-lib ni como un parser estricto:
@@ -416,6 +430,8 @@ async function asViewerSees(pdf: Uint8Array, end: number, loaded: PDFDocument, s
   while (off !== null && off >= end) {
     if (seen.has(off) || off >= pdf.length) throw new Error("cadena de xref inválida");
     seen.add(off);
+    // Como un cambio de /Root: se trata como ambiguo (un error genérico se tomaría como "sin diferencias").
+    if (seen.size > MAX_XREF_SECTIONS) throw new RootChangedError("demasiadas secciones de xref");
     const s = readXrefSection(pdf, off, ctx, start.shift);
     sections.push(s);
     // Archivo híbrido: las entradas del xref stream (/XRefStm) valen menos que las de la tabla.

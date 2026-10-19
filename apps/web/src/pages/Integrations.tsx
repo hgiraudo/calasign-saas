@@ -8,7 +8,7 @@ import {
   type WebhookEndpoint,
 } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
-import { formatDateTime, useI18n, confirmAction } from "../lib/i18n";
+import { formatDateTime, useI18n, confirmAction, placeholderText } from "../lib/i18n";
 import { useIntText } from "../lib/integrations-i18n";
 import { ErrorBox, Spinner } from "../components/ui";
 
@@ -88,11 +88,11 @@ function WebhooksSection() {
         <div className="row-wrap">
           <label className="field grow">
             <span>{tt("wh.url")}</span>
-            <input type="url" required value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://api.tuempresa.com/calasign/webhook" />
+            <input type="url" required value={url} onChange={(e) => setUrl(e.target.value)} placeholder={`https://api.${placeholderText("domain")}/calasign/webhook`} />
           </label>
           <label className="field grow">
             <span>{tt("wh.description")}</span>
-            <input maxLength={200} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="ERP producción" />
+            <input maxLength={200} value={description} onChange={(e) => setDescription(e.target.value)} placeholder={placeholderText("integration")} />
           </label>
         </div>
         <fieldset className="field">
@@ -313,7 +313,7 @@ function EmbedSection() {
         <form onSubmit={save} className="card pad stack">
           <label className="field">
             <span>{tt("embed.origins")}</span>
-            <textarea rows={4} value={text ?? ""} onChange={(e) => setText(e.target.value)} placeholder="https://app.tuempresa.com" />
+            <textarea rows={4} value={text ?? ""} onChange={(e) => setText(e.target.value)} placeholder={`https://app.${placeholderText("domain")}`} />
           </label>
           <div className="row-end">
             {saved && <span className="muted small">{tt("embed.saved")}</span>}

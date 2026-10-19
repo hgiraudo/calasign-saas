@@ -20,7 +20,7 @@ import {
   type StorageProviderInfo,
 } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
-import { formatDateTime, useI18n, confirmAction } from "../lib/i18n";
+import { formatDateTime, useI18n, confirmAction, placeholderText } from "../lib/i18n";
 import { usePlatformText } from "../lib/i18n-platform";
 import { useConnText } from "../lib/i18n-connectors";
 import { useRoleLabel } from "../lib/i18n-teams";
@@ -200,7 +200,7 @@ function OAuthAppsAdmin() {
         <div className="row-wrap">
           <label className="field grow">
             <span>{p("oauth.name")}</span>
-            <input required maxLength={100} value={name} onChange={(e) => setName(e.target.value)} placeholder="ERP producción" />
+            <input required maxLength={100} value={name} onChange={(e) => setName(e.target.value)} placeholder={placeholderText("integration")} />
           </label>
           <label className="field grow">
             <span>{p("oauth.description")}</span>
@@ -221,7 +221,7 @@ function OAuthAppsAdmin() {
           <>
             <label className="field">
               <span>{p("oauth.redirects")}</span>
-              <textarea rows={2} required value={redirects} onChange={(e) => setRedirects(e.target.value)} placeholder="https://app.tuempresa.com/oauth/callback" />
+              <textarea rows={2} required value={redirects} onChange={(e) => setRedirects(e.target.value)} placeholder={`https://app.${placeholderText("domain")}/oauth/callback`} />
             </label>
             {!grants.includes("client_credentials") && (
               <label className="check">

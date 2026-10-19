@@ -55,6 +55,9 @@ export async function replaceRecipient(
 ) {
   if (!["signer", "approver"].includes(old.role)) throw conflict("not_replaceable", "Solo se reemplazan firmantes o aprobadores");
   if (!["created", "sent", "viewed"].includes(old.status)) throw conflict("not_replaceable", "Este destinatario ya no está pendiente");
+  // Cada delegación suma un destinatario, una invitación y una línea en el certificado: con tope por sobre.
+  const reps = await db.one<{ n: number }>(`SELECT count(*)::int AS n FROM recipients WHERE envelope_id = $1 AND replaces IS NOT NULL`, [e.id]);
+  if ((reps?.n ?? 0) >= 20) throw conflict("too_many_replacements", "Este sobre ya tuvo demasiadas delegaciones o reasignaciones");
   const channels = c.channels?.length ? c.channels : [...(c.email ? (["email"] as const) : []), ...(!c.email && c.phone ? (["whatsapp"] as const) : [])];
   if (channels.includes("email") && !c.email) throw conflict("invalid_channels", "El canal email requiere email");
   if (channels.includes("whatsapp") && !c.phone) throw conflict("invalid_channels", "El canal WhatsApp requiere teléfono");

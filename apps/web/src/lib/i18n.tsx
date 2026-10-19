@@ -739,3 +739,15 @@ export function expiryFromDateInput(input: string, stored: string | null | undef
   if (stored && localDateInput(stored) === input && (!opts.mustBeFuture || new Date(stored).getTime() > Date.now())) return stored;
   return new Date(`${input}T23:59:59`).toISOString();
 }
+
+/** Ejemplos de los placeholders (nombres de integraciones y sellos) en el idioma de la interfaz. */
+const PLACEHOLDERS = {
+  integration: { es: "ERP producción", "pt-BR": "ERP produção", en: "Production ERP" },
+  seal: { es: "Sello ACME S.A.S.", "pt-BR": "Selo ACME Ltda.", en: "ACME Inc. seal" },
+  domain: { es: "tuempresa.com", "pt-BR": "suaempresa.com", en: "yourcompany.com" },
+  document: { es: "documento", "pt-BR": "documento", en: "document" },
+} as const;
+export function placeholderText(key: keyof typeof PLACEHOLDERS): string {
+  const loc = currentLocale();
+  return PLACEHOLDERS[key][loc as "es" | "pt-BR" | "en"] ?? PLACEHOLDERS[key].es;
+}

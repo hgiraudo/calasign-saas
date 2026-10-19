@@ -211,81 +211,114 @@ async function validatePdfUnbudgeted(pdf: Uint8Array, opts: ValidateOptions): Pr
       modifiedAfter: end < pdf.length,
       changesAfter: "none" as ChangesAfter,
     };
-    const brIssue = byteRangeIssue(pdf, s.byteRange, s.contents);
-    const content = signedContent(pdf, s.byteRange);
-    let sd: pkijs.SignedData;
     try {
-      sd = parseSignedData(s.contents);
+      const brIssue = byteRangeIssue(pdf, s.byteRange, s.contents);
+      const content = signedContent(pdf, s.byteRange);
+      let sd: pkijs.SignedData;
+      try {
+        sd = parseSignedData(s.contents);
+      } catch (e) {
+        reports.push({
+          ...base,
+          kind: s.type === "DocTimeStamp" ? "document_timestamp" : "signature",
+          signer: null,
+          signingTime: s.signingTimeM,
+          timestamp: null,
+          integrity: { valid: false, reason: `CMS ilegible: ${(e as Error).message}` },
+          chain: { trusted: false, anchor: null, entries: [] },
+          level: null,
+        });
+        continue;
+      }
+      const signer = signerCertOf(sd);
+      const pool = [...cmsCertificates(sd), ...dssCerts, ...anchorsDer.map(parseCert)];
+
+      if (s.type === "DocTimeStamp") {
+        const ts = await verifyToken(sd, content, pool, anchors);
+        reports.push({
+          ...base,
+          kind: "document_timestamp",
+          signer: signer ? summary(signer) : null,
+          signingTime: ts.time,
+          timestamp: ts,
+          integrity: brIssue ? { valid: false, reason: brIssue } : ts.valid ? { valid: true } : { valid: false, reason: "El sello de documento no corresponde al contenido" },
+          chain: signer ? await chainReport(signer, pool, anchors, dss, opts, new Date(ts.time)) : { trusted: false, anchor: null, entries: [] },
+          level: null,
+        });
+        continue;
+      }
+
+      let integrity: SignatureReport["integrity"];
+      try {
+        const r = await sd.verify({ signer: 0, data: toAB(content), checkChain: false, extendedMode: true });
+        integrity = r.signatureVerified ? { valid: true } : { valid: false, reason: r.message || "La firma no verifica" };
+      } catch (e) {
+        integrity = { valid: false, reason: (e as Error).message ?? "La firma no verifica" };
+      }
+      // Con contenido incrustado (eContent), pkijs verifica la firma sobre ese contenido e ignora `data`: una firma
+      // hecha sobre otra cosa validaba en cualquier PDF. Solo se acepta adbe.pkcs7.sha1, cuyo eContent es el SHA-1 de
+      // lo firmado, y si coincide con el ByteRange.
+      const ec = sd.encapContentInfo?.eContent;
+      if (ec) {
+        const inner = Buffer.from(ec.getValue());
+        const ok = s.subFilter === "adbe.pkcs7.sha1" && inner.equals(Buffer.from(hash("sha1", content)));
+        if (!ok) integrity = { valid: false, reason: "El CMS trae contenido incrustado que no es este documento" };
+      }
+      if (brIssue) integrity = { valid: false, reason: brIssue };
+      const tsToken = signatureTimestamp(sd);
+      let timestamp: SignatureReport["timestamp"] = null;
+      if (tsToken) {
+        const sigValue = new Uint8Array(sd.signerInfos[0].signature.valueBlock.valueHexView);
+        pool.push(...cmsCertificates(tsToken));
+        timestamp = await verifyToken(tsToken, sigValue, pool, anchors);
+      }
+      const signingTimeAttr = sd.signerInfos[0].signedAttrs?.attributes.find((a) => a.type === OIDS.signingTime);
+      const signingTime = s.signingTimeM ?? (signingTimeAttr ? (signingTimeAttr.values[0] as any).toDate?.()?.toISOString?.() ?? null : null);
+      const hasV2 = !!sd.signerInfos[0].signedAttrs?.attributes.some((a) => a.type === OIDS.signingCertificateV2 || a.type === OIDS.signingCertificate);
+      const padesBase = s.subFilter === "ETSI.CAdES.detached" && hasV2;
+      let level: PadesLevel | null = null;
+      if (padesBase) {
+        level = timestamp ? "B-T" : "B-B";
+        const hasRevData = (dss?.ocsps.length ?? 0) + (dss?.crls.length ?? 0) > 0 || (dss?.certs.length ?? 0) > 0;
+        if (level === "B-T" && dss && hasRevData) level = docTsEnds.some((e) => e > end) ? "B-LTA" : "B-LT";
+      }
+      reports.push({
+        ...base,
+        kind: "signature",
+        signer: signer ? summary(signer) : null,
+        signingTime,
+        timestamp,
+        integrity,
+        // Validez de la cadena al momento de firmar: la fecha del sello de tiempo solo si es de una TSA de confianza (prueba de
+        // existencia). Sin eso, la fecha declarada la elige quien firma: se evalúa al día de hoy (sin prueba de existencia).
+        chain: signer
+          ? await chainReport(signer, pool, anchors, dss, opts, timestamp?.valid && timestamp.trusted ? new Date(timestamp.time) : new Date())
+          : { trusted: false, anchor: null, entries: [] },
+        level,
+      });
     } catch (e) {
+      // Una firma o sello mal formado (sin signerInfos, sello sin TSTInfo…) se informa como inválido: antes hacía
+      // fallar la validación del PDF entero y un sello basura agregado al final ocultaba el informe.
       reports.push({
         ...base,
         kind: s.type === "DocTimeStamp" ? "document_timestamp" : "signature",
         signer: null,
         signingTime: s.signingTimeM,
         timestamp: null,
-        integrity: { valid: false, reason: `CMS ilegible: ${(e as Error).message}` },
+        integrity: { valid: false, reason: `Firma ilegible: ${(e as Error)?.message ?? String(e)}` },
         chain: { trusted: false, anchor: null, entries: [] },
         level: null,
       });
-      continue;
     }
-    const signer = signerCertOf(sd);
-    const pool = [...cmsCertificates(sd), ...dssCerts, ...anchorsDer.map(parseCert)];
+  }
 
-    if (s.type === "DocTimeStamp") {
-      const ts = await verifyToken(sd, content, pool, anchors);
-      reports.push({
-        ...base,
-        kind: "document_timestamp",
-        signer: signer ? summary(signer) : null,
-        signingTime: ts.time,
-        timestamp: ts,
-        integrity: brIssue ? { valid: false, reason: brIssue } : ts.valid ? { valid: true } : { valid: false, reason: "El sello de documento no corresponde al contenido" },
-        chain: signer ? await chainReport(signer, pool, anchors, dss, opts, new Date(ts.time)) : { trusted: false, anchor: null, entries: [] },
-        level: null,
-      });
-      continue;
-    }
-
-    let integrity: SignatureReport["integrity"];
-    try {
-      const r = await sd.verify({ signer: 0, data: toAB(content), checkChain: false, extendedMode: true });
-      integrity = r.signatureVerified ? { valid: true } : { valid: false, reason: r.message || "La firma no verifica" };
-    } catch (e) {
-      integrity = { valid: false, reason: (e as Error).message ?? "La firma no verifica" };
-    }
-    if (brIssue) integrity = { valid: false, reason: brIssue };
-    const tsToken = signatureTimestamp(sd);
-    let timestamp: SignatureReport["timestamp"] = null;
-    if (tsToken) {
-      const sigValue = new Uint8Array(sd.signerInfos[0].signature.valueBlock.valueHexView);
-      pool.push(...cmsCertificates(tsToken));
-      timestamp = await verifyToken(tsToken, sigValue, pool, anchors);
-    }
-    const signingTimeAttr = sd.signerInfos[0].signedAttrs?.attributes.find((a) => a.type === OIDS.signingTime);
-    const signingTime = s.signingTimeM ?? (signingTimeAttr ? (signingTimeAttr.values[0] as any).toDate?.()?.toISOString?.() ?? null : null);
-    const hasV2 = !!sd.signerInfos[0].signedAttrs?.attributes.some((a) => a.type === OIDS.signingCertificateV2 || a.type === OIDS.signingCertificate);
-    const padesBase = s.subFilter === "ETSI.CAdES.detached" && hasV2;
-    let level: PadesLevel | null = null;
-    if (padesBase) {
-      level = timestamp ? "B-T" : "B-B";
-      const hasRevData = (dss?.ocsps.length ?? 0) + (dss?.crls.length ?? 0) > 0 || (dss?.certs.length ?? 0) > 0;
-      if (level === "B-T" && dss && hasRevData) level = docTsEnds.some((e) => e > end) ? "B-LTA" : "B-LT";
-    }
-    reports.push({
-      ...base,
-      kind: "signature",
-      signer: signer ? summary(signer) : null,
-      signingTime,
-      timestamp,
-      integrity,
-      // Validez de la cadena al momento de firmar: la fecha del sello de tiempo solo si es de una TSA de confianza (prueba de
-      // existencia). Sin eso, la fecha declarada la elige quien firma: se evalúa al día de hoy (sin prueba de existencia).
-      chain: signer
-        ? await chainReport(signer, pool, anchors, dss, opts, timestamp?.valid && timestamp.trusted ? new Date(timestamp.time) : new Date())
-        : { trusted: false, anchor: null, entries: [] },
-      level,
-    });
+  // B-LTA solo con un sello de documento posterior que verifica (antes contaba cualquiera).
+  const validDocTsEnds = reports
+    .filter((r) => r.kind === "document_timestamp" && r.integrity.valid && r.timestamp?.valid)
+    .map((r) => signatures[r.index].byteRange[2] + signatures[r.index].byteRange[3]);
+  for (const r of reports) {
+    const end = signatures[r.index].byteRange[2] + signatures[r.index].byteRange[3];
+    if (r.level === "B-LTA" && !validDocTsEnds.some((e) => e > end)) r.level = "B-LT";
   }
 
   // Lo agregado después de cada firma: solo cuentan como evidencia los widgets de firmas y sellos posteriores que verifican.

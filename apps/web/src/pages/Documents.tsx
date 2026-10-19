@@ -10,7 +10,7 @@ import {
   type TemplateAnalysis,
 } from "@calasign/shared";
 import { api, errorText, fetchResponse, readBody } from "../lib/api";
-import { formatDateTime, useI18n, confirmAction } from "../lib/i18n";
+import { formatDateTime, useI18n, confirmAction, placeholderText } from "../lib/i18n";
 import { useAccess } from "../lib/access";
 import { useAgrText } from "../lib/i18n-agreements";
 import { AgreementsTabs, DocPreview, parseJsonObject } from "../components/AgreementsUi";
@@ -274,7 +274,7 @@ export function DocumentTemplateEditPage() {
         // Ventanas emergentes bloqueadas: se descarga en lugar de salir del editor (se perderían cambios).
         const a = document.createElement("a");
         a.href = url;
-        a.download = `${name || "documento"}.pdf`;
+        a.download = `${name || placeholderText("document")}.pdf`;
         a.click();
       }
       window.setTimeout(() => URL.revokeObjectURL(url), 60_000);

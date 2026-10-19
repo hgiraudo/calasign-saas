@@ -103,6 +103,9 @@ export async function inPersonSessionInfo(db: Db, r: any, authed: boolean): Prom
 
 // ───────────────────────────── Correcciones ─────────────────────────────
 
+const MAX_RECIPIENTS = 50;
+const MAX_FIELDS = 500;
+
 function newToken() {
   const token = randomToken();
   return { hash: sha256Hex(token), enc: encrypt(token) };
@@ -179,6 +182,9 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
   // Cambios de contacto: link nuevo y el anterior revocado.
   const updated: Record<string, unknown>[] = [];
   const discardedKeys: string[] = [];
+  // Un mismo destinatario dos veces rotaba el link dos veces y mandaba dos invitaciones.
+  const updIds = (input.updateRecipients ?? []).map((p) => p.id);
+  if (new Set(updIds).size !== updIds.length) throw badRequest("duplicate_recipient", "Un destinatario aparece más de una vez en updateRecipients");
   for (const p of input.updateRecipients ?? []) {
     const r = recips.get(p.id);
     if (!r) throw notFound("Destinatario");
@@ -238,6 +244,8 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
     if (destinationChanged && r.access_token_hash) {
       const t = newToken();
       await db.query(`UPDATE recipients SET access_token_hash = $2, access_token_enc = $3, telegram_chat_id = NULL WHERE id = $1`, [r.id, t.hash, t.enc]);
+      // Un código de embed sin usar emitido para el contacto anterior abriría el link nuevo: se vence.
+      await db.query(`UPDATE embed_sessions SET expires_at = LEAST(expires_at, now()) WHERE recipient_id = $1 AND used_at IS NULL`, [r.id]);
       await db.query(`DELETE FROM signer_sessions WHERE recipient_id = $1`, [r.id]);
       tokenRotated = true;
       // El link nuevo va a otro contacto (quizá otra persona): el consentimiento y los adjuntos de quien tenía el
@@ -378,6 +386,11 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
     problems.push("Tiene que quedar al menos un firmante o aprobador");
   // Quitar un campo número que cita una fórmula dejaría el total en 0 en el PDF firmado.
   problems.push(...danglingFormulaProblems(await db.query<any>(`SELECT type, label, formula FROM fields WHERE envelope_id = $1`, [e.id])));
+  // Los mismos topes que al armar el sobre (las correcciones suman de a tandas y no tenían total).
+  const active = now.filter((r) => !["delegated", "reassigned"].includes(r.status)).length;
+  if (active > MAX_RECIPIENTS) problems.push(`El sobre admite hasta ${MAX_RECIPIENTS} destinatarios`);
+  const nFields = await db.one<{ n: number }>(`SELECT count(*)::int AS n FROM fields WHERE envelope_id = $1`, [e.id]);
+  if ((nFields?.n ?? 0) > MAX_FIELDS) problems.push(`El sobre admite hasta ${MAX_FIELDS} campos`);
   if (problems.length) throw new AppError(422, "envelope_incomplete", problems.join(". "), { problems });
 
   if (removedFields.length) diff.fieldsRemoved = removedFields;

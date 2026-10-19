@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { EvidenceSettings, SealLevelSetting, SignatureProviderInfo, SignatureProviderTestResult, TenantCertificate } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
-import { formatDateTime, useI18n } from "../lib/i18n";
+import { formatDateTime, useI18n, placeholderText } from "../lib/i18n";
 import { useEvidenceText } from "../lib/i18n-evidence";
 import { ErrorBox, Spinner } from "../components/ui";
 
@@ -120,7 +120,7 @@ export function CertificatesPage() {
         <div className="row-wrap">
           <label className="field grow">
             <span>{ev("cert.name")}</span>
-            <input required maxLength={120} value={name} onChange={(e) => setName(e.target.value)} placeholder="Sello ACME S.A.S." />
+            <input required maxLength={120} value={name} onChange={(e) => setName(e.target.value)} placeholder={placeholderText("seal")} />
           </label>
           <label className="field grow">
             <span>{ev("cert.file")}</span>

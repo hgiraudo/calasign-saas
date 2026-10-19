@@ -26,6 +26,7 @@ import {
   type CrmProviderInfo,
   type CrmRun,
   type SendFromCrmRecordResponse,
+  type ZohoProduct,
 } from "@calasign/shared";
 import { config } from "../../config";
 import type { Db } from "../../infra/db";
@@ -54,9 +55,14 @@ import {
   oauthTokenRequest,
   testConnection,
   tokenSupported,
+  isOAuthProvider,
   validateSalesforceInstance,
+  validateZohoAccounts,
+  validateZohoApiDomain,
   writeStatus,
+  zohoAccountsBase,
   type ConnRow,
+  type CrmOAuthProvider,
 } from "./providers";
 
 const UUID = /^[0-9a-f-]{36}$/i;
@@ -197,7 +203,8 @@ export async function sendFromRecord(
     const prefill = mapPrefill(record, prefillMap);
     const l = await loadTemplateForUse(db, ctx.tenantId, mapping.template_id);
     const send = opts.send ?? mapping.send;
-    const subjectDefault = String(record.properties.dealname ?? record.properties.Name ?? "").trim();
+    const p = record.properties;
+    const subjectDefault = String(p.dealname ?? p.Name ?? p.Deal_Name ?? p.Full_Name ?? "").trim();
     const input = EnvelopeFromTemplateInput.parse({
       templateId: mapping.template_id,
       subject: opts.subject ?? (subjectDefault ? `${l.row.subject ?? l.row.name} — ${subjectDefault}`.slice(0, 300) : undefined),
@@ -452,10 +459,13 @@ export function hubspotSignatureV3(secret: string, method: string, uri: string, 
 interface OAuthState {
   t: string;
   u: string;
-  p: "hubspot" | "salesforce";
+  p: CrmOAuthProvider;
   n: string;
   v: string | null;
   exp: number;
+  /** Zoho: servidor de cuentas donde se inició y producto (crm o bigin). */
+  a?: string;
+  g?: ZohoProduct;
 }
 
 function checkMappingInput(provider: CrmProvider, objectType: CrmObjectType, trigger: string, templateId: string | null | undefined, triggerConfig: any) {
@@ -484,7 +494,7 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
       tokenSupported: tokenSupported(p),
       objectTypes: CRM_PROVIDER_OBJECTS[p],
     }));
-    return { items, redirectUris: { hubspot: crmRedirectUri("hubspot"), salesforce: crmRedirectUri("salesforce") }, webhookUrl: `${config.appUrl}/v1/integrations/crm/hubspot/webhook` };
+    return { items, redirectUris: { hubspot: crmRedirectUri("hubspot"), salesforce: crmRedirectUri("salesforce"), zoho: crmRedirectUri("zoho") }, webhookUrl: `${config.appUrl}/v1/integrations/crm/hubspot/webhook` };
   });
 
   // ───────── Conexiones ─────────
@@ -520,18 +530,20 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
   app.post<{ Params: { provider: string } }>("/v1/crm/oauth/:provider/start", { preHandler: auth }, async (req) => {
     const a = A(req);
     const p = req.params.provider;
-    if (p !== "hubspot" && p !== "salesforce") throw notFound("Proveedor");
+    if (!isOAuthProvider(p)) throw notFound("Proveedor");
     if (!oauthConfigured(p)) throw new AppError(409, "provider_not_configured", "Este proveedor no está configurado en el servidor");
     if (!a.userId) throw new AppError(403, "session_required", "Conectar una cuenta requiere iniciar sesión en la web");
     const input = StartCrmOAuthInput.parse(req.body ?? {});
-    const app_ = oauthApp(p);
+    const zoho = p === "zoho" ? { accounts: zohoAccountsBase(input.region), product: input.product ?? "crm" } : null;
+    const app_ = oauthApp(p, zoho ?? {});
     const verifier = app_.pkce ? randomBytes(32).toString("base64url") : null;
-    const state: OAuthState = { t: a.tenantId, u: a.userId, p, n: input.name, v: verifier, exp: Date.now() + 10 * 60_000 };
+    const state: OAuthState = { t: a.tenantId, u: a.userId, p, n: input.name, v: verifier, exp: Date.now() + 10 * 60_000, ...(zoho ? { a: zoho.accounts, g: zoho.product } : {}) };
     const url = new URL(app_.authorizeUrl);
     url.searchParams.set("client_id", app_.clientId!);
     url.searchParams.set("redirect_uri", crmRedirectUri(p));
     url.searchParams.set("response_type", "code");
     url.searchParams.set("scope", app_.scope);
+    for (const [k, v] of Object.entries(app_.authorizeParams ?? {})) url.searchParams.set(k, v);
     url.searchParams.set("state", encrypt(JSON.stringify(state)));
     if (verifier) {
       url.searchParams.set("code_challenge", createHash("sha256").update(verifier).digest("base64url"));
@@ -541,7 +553,7 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
   });
 
   // Vuelta del proveedor: el navegador trae la sesión; el estado cifrado ata la conexión a quien la inició.
-  app.get<{ Params: { provider: string }; Querystring: { code?: string; state?: string; error?: string } }>(
+  app.get<{ Params: { provider: string }; Querystring: { code?: string; state?: string; error?: string; "accounts-server"?: string } }>(
     "/v1/crm/oauth/:provider/callback",
     { preHandler: auth },
     async (req, reply) => {
@@ -557,14 +569,27 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
       if (!hasPerm(a, "settings:manage")) return back("error=forbidden");
       if (req.query.error || !req.query.code) return back(`error=${encodeURIComponent(req.query.error ?? "no_code")}`);
       try {
-        const body = await oauthTokenRequest(st.p, {
-          grant_type: "authorization_code",
-          code: req.query.code,
-          redirect_uri: crmRedirectUri(st.p),
-          ...(st.v ? { code_verifier: st.v } : {}),
-        });
+        // Zoho multi-DC: el código solo se canjea en el accounts-server de la cuenta del usuario (que puede no ser
+        // donde se inició, p. ej. empezó en zoho.com y la cuenta está en zoho.eu). Se valida que sea de Zoho.
+        const zohoAccounts = st.p === "zoho" ? validateZohoAccounts(String(req.query["accounts-server"] ?? st.a ?? zohoAccountsBase())) : null;
+        const body = await oauthTokenRequest(
+          st.p,
+          {
+            grant_type: "authorization_code",
+            code: req.query.code,
+            redirect_uri: crmRedirectUri(st.p),
+            ...(st.v ? { code_verifier: st.v } : {}),
+          },
+          zohoAccounts ? `${zohoAccounts}/oauth/v2/token` : undefined,
+        );
         const cfg: Record<string, unknown> = {};
         if (st.p === "salesforce") cfg.instanceUrl = validateSalesforceInstance(String(body.instance_url ?? ""));
+        if (st.p === "zoho") {
+          cfg.accountsServer = zohoAccounts;
+          // Zoho no siempre devuelve api_domain (cuentas viejas de .com): www.zohoapis.<tld del accounts-server>.
+          cfg.apiDomain = validateZohoApiDomain(String(body.api_domain ?? zohoAccounts!.replace("://accounts.zohocloud.", "://www.zohoapis.").replace("://accounts.zoho.", "://www.zohoapis.")));
+          cfg.product = st.g ?? "crm";
+        }
         const creds = { access_token: body.access_token, refresh_token: body.refresh_token, expires_at: body.expires_in ? Date.now() + Number(body.expires_in) * 1000 : null };
         const row: any = { id: uuidv7(), provider: st.p, auth_type: "oauth", credentials_enc: encrypt(JSON.stringify(creds)), config: cfg };
         const conn = new CrmConn(row, null);

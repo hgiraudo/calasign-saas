@@ -105,3 +105,51 @@ function calasignFlattenEvent(ev) {
     recipients: env.recipients || []
   };
 }
+
+/**
+ * Idempotency-Key de un envío. Make reintenta el módulo (ejecuciones incompletas, errores de red) con los mismos datos
+ * y no expone un id de ejecución a las apps: la clave es un hash de los parámetros (sin el PDF) + el día (UTC). El
+ * parámetro "Idempotency key" la reemplaza (p. ej. con el id del registro de origen).
+ */
+function calasignIdempotencyKey(parameters, action) {
+  var p = parameters || {};
+  if (p.idempotencyKey) return "make-" + String(p.idempotencyKey).slice(0, 150);
+  var copy = {};
+  for (var k in p) if (Object.prototype.hasOwnProperty.call(p, k) && k !== "data") copy[k] = p[k];
+  var text = action + "\n" + JSON.stringify(copy);
+  // FNV-1a de 32 bits con dos semillas (64 bits en hex): sin dependencias (el sandbox de Make no tiene crypto).
+  var h1 = 0x811c9dc5;
+  var h2 = 0x01000193 ^ 0x5bd1e995;
+  for (var i = 0; i < text.length; i++) {
+    var c = text.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 0x01000193) >>> 0;
+    h2 = Math.imul(h2 ^ c, 0x5bd1e995) >>> 0;
+  }
+  var hex = ("00000000" + h1.toString(16)).slice(-8) + ("00000000" + h2.toString(16)).slice(-8);
+  return "make-" + action + "-" + hex + "-" + new Date().toISOString().slice(0, 10);
+}
+
+/** Primer documento del sobre (detalle de GET /v1/envelopes/{id}): en un reintento el PDF ya puede estar subido. */
+function calasignDocumentId(documents) {
+  return documents && documents.length ? documents[0].id : null;
+}
+
+function calasignDocumentPages(documents) {
+  return documents && documents.length ? documents[0].pageCount : null;
+}
+
+/** ¿Hay que seguir armando el sobre? Solo si sigue en borrador (un reintento puede encontrarlo ya enviado). */
+function calasignIsDraft(status) {
+  return status === "draft";
+}
+
+/** ¿Hay que subir el PDF? En borrador y sin documento (un reintento lo encuentra ya subido). */
+function calasignNeedsUpload(status, documentId) {
+  return status === "draft" && !documentId;
+}
+
+/** ¿Se envía? Si sigue en borrador y el usuario no pidió dejarlo como borrador. */
+function calasignShouldSend(status, send) {
+  return status === "draft" && send !== false;
+}
+

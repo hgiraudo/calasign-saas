@@ -8,7 +8,7 @@ import type {
 	INodeTypeDescription,
 } from 'n8n-workflow';
 import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
-import { calaSignRequest, requester } from '../GenericFunctions';
+import { calaSignRequest, idempotencyKey, requester } from '../GenericFunctions';
 import { quickSend } from '../quicksend';
 
 const envelopeId = (op: string[]) => ({
@@ -312,7 +312,8 @@ export class CalaSign implements INodeType {
 					if (extra.message) body.message = extra.message;
 					if (extra.expiresAt) body.expiresAt = new Date(String(extra.expiresAt)).toISOString();
 					if (metadata) body.metadata = metadata;
-					const res = await calaSignRequest(this, 'POST', `/v1/envelopes/from-template/${encodeURIComponent(templateId)}`, { body }, i);
+					const key = idempotencyKey(this, i, 'sendFromTemplate');
+					const res = await calaSignRequest(this, 'POST', `/v1/envelopes/from-template/${encodeURIComponent(templateId)}`, { body, headers: key ? { 'Idempotency-Key': key } : undefined }, i);
 					out.push({ json: res, pairedItem: { item: i } });
 				} else if (operation === 'sendDocument') {
 					const prop = this.getNodeParameter('binaryPropertyName', i) as string;
@@ -330,6 +331,7 @@ export class CalaSign implements INodeType {
 						send: extra.send !== false,
 						expiresAt: extra.expiresAt ? new Date(String(extra.expiresAt)).toISOString() : undefined,
 						metadata,
+						idempotencyKey: idempotencyKey(this, i, 'sendDocument'),
 					});
 					out.push({ json: res as IDataObject, pairedItem: { item: i } });
 				} else if (operation === 'get') {

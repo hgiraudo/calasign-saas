@@ -79,6 +79,17 @@ campos en un solo pedido, los conectores pueden pasar a usarlo. Los endpoints ac
 | `GET /v1/templates/{id}/input-schema` | Roles y campos prellenables de una plantilla, más el JSON Schema (draft-04 con `x-ms-summary`) de `roles` y `prefill`. Alimenta los campos dinámicos de las cuatro plataformas. |
 | `POST /v1/envelopes/from-template/{templateId}` | Igual que `/v1/envelopes/from-template`, pero con `roles: { <id o nombre del rol>: { name, email, phone } }` y `prefill: { <id o etiqueta>: valor }`. Ignora los valores vacíos y pasa los números a texto. Envía el sobre salvo que venga `send: false`. |
 
+**Idempotency-Key en los envíos.** Zapier, Make y n8n reintentan la acción entera (timeout, 5xx, ejecuciones
+incompletas, *Retry On Fail*). Los tres mandan `Idempotency-Key`: en «Send from template», en una sola llamada; en «Send
+document» (`_lib/quicksend.cjs`), como `<clave>:create` y `<clave>:send`, y un reintento que recibe el mismo sobre no
+vuelve a subir el PDF ni a enviarlo. La clave es:
+- **n8n:** ejecución + nodo + item (`$execution.id`, id del nodo, `itemIndex`).
+- **Zapier y Make:** no exponen un id de ejecución, así que la clave es el Zap (en Zapier) + un hash de los datos de la
+  acción (sin el PDF) + el día UTC. Un reintento el mismo día no duplica. El mismo envío con datos idénticos otro día sí
+  crea un sobre nuevo. El campo opcional «Idempotency key» la reemplaza (por ejemplo, con el id del registro de origen).
+- **Acción de Pipedrive y widget de Kommo:** `pd-`/`km-<cuenta>-<mapeo>-<registro>-<corrida>`, con la corrida guardada en
+  `sessionStorage`. `POST /v1/crm/mappings/{id}/send` respeta la clave (helper `idempotent()`).
+
 Código en `apps/api/src/modules/lowcode.ts` (OpenAPI: `lowcode-openapi.ts`; contrato: `packages/shared/src/lowcode.ts`).
 Scopes OAuth: `templates:read`, `envelopes:write` y `webhooks:manage`, por prefijo de ruta. No hubo migraciones.
 

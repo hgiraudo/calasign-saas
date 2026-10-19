@@ -17,6 +17,8 @@ export interface QuickSendInput {
 	send?: boolean;
 	expiresAt?: string;
 	metadata?: Record<string, unknown>;
+	/** Idempotency-Key base (`<clave>:create`, `<clave>:send`): un reintento no duplica el sobre. */
+	idempotencyKey?: string;
 }
 export type QuickSendRequest = (method: string, path: string, opts?: { json?: unknown; body?: unknown; headers?: Record<string, string> }) => Promise<Record<string, unknown>>;
 export function quickSend(request: QuickSendRequest, input: QuickSendInput): Promise<Record<string, unknown>>;

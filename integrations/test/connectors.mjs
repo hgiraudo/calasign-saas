@@ -227,6 +227,51 @@ await test("quicksend: anclas \\firmaN\\, borrador sin enviar y validaciones", a
   await assert.rejects(qs.quickSend(request, { subject: "S", signers: [{ name: "A", email: "a@x.com" }] }), /PDF/);
 });
 
+await test("quicksend: con idempotencyKey un reintento no duplica el sobre, el PDF ni el envío", async () => {
+  // API simulada con estado: el create con la misma Idempotency-Key devuelve el mismo sobre (respuesta guardada).
+  const state = { status: "draft", documents: [], sendFails: true, uploads: 0, creates: new Map() };
+  const calls = [];
+  const request = async (method, path, opts = {}) => {
+    calls.push({ method, path, headers: opts.headers });
+    if (method === "POST" && path === "/v1/envelopes") {
+      const k = opts.headers?.["Idempotency-Key"];
+      if (!state.creates.has(k)) state.creates.set(k, { envelope: { id: `env${state.creates.size + 1}`, status: "draft" } });
+      return state.creates.get(k);
+    }
+    if (path.endsWith("/documents")) {
+      state.uploads++;
+      state.documents.push({ id: "doc1", pageCount: 2 });
+      return { id: "doc1", pageCount: 2 };
+    }
+    if (path.endsWith("/recipients")) return { recipients: opts.json.recipients.map((r, i) => ({ ...r, id: `r${i}` })) };
+    if (path.endsWith("/fields")) return {};
+    if (path.endsWith("/send")) {
+      if (state.sendFails) {
+        state.sendFails = false;
+        state.status = "sent"; // el envío salió pero la respuesta se perdió (504)
+        throw new Error("HTTP 504");
+      }
+      state.status = "sent";
+      return {};
+    }
+    if (method === "GET") return { envelope: { id: "env1", status: state.status }, documents: state.documents };
+    throw new Error(`inesperado ${method} ${path}`);
+  };
+  const input = { subject: "S", fileName: "a.pdf", fileBytes: Buffer.from("%PDF"), signers: [{ name: "A", email: "a@x.com" }], idempotencyKey: "zap-1-abc" };
+  await assert.rejects(qs.quickSend(request, input), /504/);
+  assert.equal(calls[0].headers["Idempotency-Key"], "zap-1-abc:create");
+  assert.equal(calls.find((c) => c.path.endsWith("/send")).headers["Idempotency-Key"], "zap-1-abc:send");
+  const res = await qs.quickSend(request, input); // reintento de la plataforma
+  assert.equal(res.envelope.status, "sent");
+  assert.equal(state.creates.size, 1, "un solo sobre");
+  assert.equal(state.uploads, 1, "el PDF no se sube dos veces");
+  assert.equal(calls.filter((c) => c.path.endsWith("/send")).length, 1, "no se vuelve a enviar");
+  // Sin la falla: reintento con el sobre en borrador y el PDF ya subido → no se sube otra vez.
+  Object.assign(state, { status: "draft", sendFails: false });
+  await qs.quickSend(request, input);
+  assert.equal(state.uploads, 1);
+});
+
 await test("quicksend: flattenEvent", () => {
   const f = qs.flattenEvent({ id: "e1", type: "recipient.signed", createdAt: "t", data: { envelope: { id: "env1", status: "sent", recipients: [{ id: "r1", name: "Ana", email: "a@x.com" }] }, recipientId: "r1" } });
   assert.equal(f.envelope_id, "env1");
@@ -329,6 +374,7 @@ await test("zapier: enviar desde plantilla con campos dinámicos y enviar PDF (s
   const R = "0190a000-0000-7000-8000-000000000001";
   const F = "0190a000-0000-7000-8000-0000000000f2";
   let sentBody;
+  let env2Sent = false;
   const { z, log } = fakeZ(
     {
       [`GET /v1/templates/${T}/input-schema`]: [200, { roles: [{ id: R, name: "Cliente" }], fields: [{ id: F, label: "Monto", type: "number" }] }],
@@ -341,8 +387,8 @@ await test("zapier: enviar desde plantilla con campos dinámicos y enviar PDF (s
       "POST /v1/envelopes/env2/documents": [201, { id: "d1", pageCount: 1 }],
       "PUT /v1/envelopes/env2/recipients": (req) => [200, { recipients: req.body.recipients.map((r, i) => ({ ...r, id: `r${i}` })) }],
       "PUT /v1/envelopes/env2/fields": [200, {}],
-      "POST /v1/envelopes/env2/send": [200, {}],
-      "GET /v1/envelopes/env2": [200, { envelope: { id: "env2", status: "sent" }, recipients: [] }],
+      "POST /v1/envelopes/env2/send": () => ((env2Sent = true), [200, {}]),
+      "GET /v1/envelopes/env2": () => [200, { envelope: { id: "env2", status: env2Sent ? "sent" : "draft" }, documents: [], recipients: [] }],
       "POST /v1/envelopes/bad/void": [422, { error: { code: "not_sent", message: "El sobre no está enviado" } }],
     },
     bundle,
@@ -356,9 +402,22 @@ await test("zapier: enviar desde plantilla con campos dinámicos y enviar PDF (s
   });
   assert.equal(out.envelope_id, "env1");
   assert.deepEqual(sentBody, { subject: "Hola", roles: { [R]: { name: "Ana", email: "ana@x.com", phone: null } }, prefill: { [F]: "150" }, metadata: { externalId: "CRM-1" }, send: true });
+  // Idempotency-Key: estable para los mismos datos (un reintento de Zapier no crea otro sobre) y reemplazable.
+  const tplReqs = log.filter((r) => r.url.endsWith(`/v1/envelopes/from-template/${T}`));
+  assert.match(tplReqs[0].headers["Idempotency-Key"], /^zap-x-send_from_template-[0-9a-f]{32}-\d{4}-\d{2}-\d{2}$/);
+  await zapApp.creates.send_from_template.operation.perform(z, {
+    ...bundle,
+    inputData: { templateId: T, subject: "Hola", [`role_${R}_name`]: "Ana", [`role_${R}_email`]: "ana@x.com", [`role_${R}_phone`]: "", [`prefill_${F}`]: 150, external_id: "CRM-1" },
+  });
+  const again = log.filter((r) => r.url.endsWith(`/v1/envelopes/from-template/${T}`));
+  assert.equal(again[1].headers["Idempotency-Key"], again[0].headers["Idempotency-Key"]);
+  await zapApp.creates.send_from_template.operation.perform(z, { ...bundle, inputData: { templateId: T, idempotency_key: "deal-42" } });
+  assert.equal(log.filter((r) => r.url.endsWith(`/v1/envelopes/from-template/${T}`))[2].headers["Idempotency-Key"], "zap-deal-42");
 
   const doc = await zapApp.creates.send_document.operation.perform(z, { ...bundle, inputData: { file: "https://files.example.org/a.pdf", subject: "PDF", signers: [{ name: "Ana", email: "a@x.com" }] } });
   assert.equal(doc.status, "sent");
+  assert.match(log.find((r) => r.url.endsWith("/v1/envelopes") && r.method === "POST").headers["Idempotency-Key"], /^zap-x-send_document-[0-9a-f]{32}-.*:create$/);
+  assert.match(log.find((r) => r.url.endsWith("/env2/send")).headers["Idempotency-Key"], /:send$/);
   const fileReq = log.find((r) => r.url === "https://files.example.org/a.pdf");
   assert.equal(fileReq.headers.Authorization, undefined, "la API key no va a URLs de terceros");
   await assert.rejects(zapApp.creates.void_envelope.operation.perform(z, { ...bundle, inputData: { envelope_id: "bad", reason: "x" } }), /no está enviado/);
@@ -494,8 +553,10 @@ await test("n8n: enviar desde plantilla, enviar PDF y descargar el firmado", asy
       additionalFields: { externalId: "X9" },
     },
     { "POST /v1/envelopes/from-template/tpl1": (o) => ((body = o.body), { envelope: { id: "env1" } }) },
+    { getExecutionId: () => "exec-7", getNode: () => ({ id: "node-abc", name: "CalaSign" }) },
   );
   const [out] = await node.execute.call(ctx);
+  assert.equal(ctx.calls[0].headers["Idempotency-Key"], "n8n-exec-7-node-abc-sendFromTemplate-0", "clave de ejecución + nodo + item");
   assert.equal(out[0].json.envelope.id, "env1");
   assert.equal(ctx.calls[0].cred, "calaSignOAuth2Api");
   assert.deepEqual(body, { roles: { r1: { name: "Ana", email: "ana@x.com", phone: null } }, prefill: { f1: "ACME" }, send: true, metadata: { externalId: "X9" } });
@@ -508,10 +569,12 @@ await test("n8n: enviar desde plantilla, enviar PDF y descargar el firmado", asy
       "PUT /v1/envelopes/e2/recipients": (o) => ({ recipients: o.body.recipients.map((r) => ({ ...r, id: "r1" })) }),
       "PUT /v1/envelopes/e2/fields": {},
       "POST /v1/envelopes/e2/send": {},
-      "GET /v1/envelopes/e2": { envelope: { id: "e2", status: "sent" } },
+      "GET /v1/envelopes/e2": () => ({ envelope: { id: "e2", status: ctx2.calls.some((c) => c.url.endsWith("/e2/send")) ? "sent" : "draft" }, documents: [] }),
     },
+    { getExecutionId: () => "exec-8", getNode: () => ({ id: "node-abc", name: "CalaSign" }) },
   );
   const [out2] = await node.execute.call(ctx2);
+  assert.equal(ctx2.calls.find((c) => c.url.endsWith("/v1/envelopes") && c.method === "POST").headers["Idempotency-Key"], "n8n-exec-8-node-abc-sendDocument-0:create");
   assert.equal(out2[0].json.envelope.status, "sent");
 
   const ctx3 = n8nCtx(
@@ -566,6 +629,20 @@ await test("make: funciones IML (formulario de plantilla, destinatarios y campos
   assert.ok(fields.every((f) => f.page === 3 && f.x + f.width <= 1 && f.y + f.height <= 1));
   assert.equal(sandbox.calasignFields([{ id: "r1", role: "signer" }], "d1", 1, "anchors")[0].anchor.text, "\\firma1\\");
   assert.equal(sandbox.calasignFlattenEvent({ id: "e", type: "envelope.completed", data: { envelope: { id: "x", recipients: [] } } }).envelope_id, "x");
+  // Idempotency-Key: estable para los mismos parámetros (sin el PDF), distinta con otros datos, reemplazable.
+  const k1 = sandbox.calasignIdempotencyKey({ templateId: "t1", roles: { r1: { name: "A" } } }, "sendFromTemplate");
+  assert.match(k1, /^make-sendFromTemplate-[0-9a-f]{16}-\d{4}-\d{2}-\d{2}$/);
+  assert.equal(sandbox.calasignIdempotencyKey({ templateId: "t1", roles: { r1: { name: "A" } } }, "sendFromTemplate"), k1);
+  assert.notEqual(sandbox.calasignIdempotencyKey({ templateId: "t1", roles: { r1: { name: "B" } } }, "sendFromTemplate"), k1);
+  assert.equal(sandbox.calasignIdempotencyKey({ subject: "S", data: "AAA" }, "sendDocument"), sandbox.calasignIdempotencyKey({ subject: "S", data: "BBB" }, "sendDocument"));
+  assert.equal(sandbox.calasignIdempotencyKey({ idempotencyKey: "deal-42" }, "x"), "make-deal-42");
+  assert.equal(sandbox.calasignDocumentId([{ id: "d1", pageCount: 3 }]), "d1");
+  assert.equal(sandbox.calasignDocumentPages([]), null);
+  assert.equal(sandbox.calasignNeedsUpload("draft", null), true);
+  assert.equal(sandbox.calasignNeedsUpload("draft", "d1"), false);
+  assert.equal(sandbox.calasignShouldSend("draft", false), false);
+  assert.equal(sandbox.calasignShouldSend("sent", true), false);
+  assert.equal(sandbox.calasignShouldSend("draft", undefined), true);
 });
 
 // ───────── 7. Dynamics 365 ─────────

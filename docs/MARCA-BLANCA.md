@@ -152,7 +152,13 @@ página propia reduce lo que se ve, pero el iframe de OneSpan sigue mostrando su
 - Sub-marca: `PUT /v1/settings/brands/{id}/domain`, TXT `_brand-verify.<dominio>` + CNAME al host de la plataforma.
 - **Caddy**: cambiar el `ask` de TLS bajo demanda a `http://127.0.0.1:4000/internal/tls-allowed-brand`, que autoriza los
   dominios de organizaciones **y** de sub-marcas (el `/internal/tls-allowed` original solo conoce los de organizaciones).
-- La re-verificación de dominios de sub-marca y de correo corre cada 6 h (tarea periódica `white-label-domains`).
+- La re-verificación de dominios de sub-marca y de correo corre cada 6 h (tarea periódica `white-label-domains`). Un
+  registro que falta suma 2 puntos y un error de DNS (SERVFAIL, timeout) suma 1; con 4 el dominio vuelve a pendiente.
+  Un error de DNS nunca despublica un dominio de correo.
+- Igual que los dominios propios, un dominio de sub-marca **no sirve la cuenta**: login y `/app` redirigen a la
+  plataforma y la cookie de sesión se ignora (ver [CUSTOM-DOMAINS.md](CUSTOM-DOMAINS.md)). Lo ve el firmante
+  (`/s`, formularios, verificación) con la marca; quien administra entra por el dominio de la plataforma.
+- Un mismo dominio no puede estar verificado a la vez como dominio propio de una organización y como dominio de sub-marca.
 
 ### CSP
 

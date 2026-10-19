@@ -163,7 +163,7 @@ draft ──send──► sent ──(todos los firmantes firman)──► final
 | Archivos | **S3** con SSE-KMS, versionado, Object Lock para finales, replicación entre AZ (y entre regiones de la misma jurisdicción si aplica) | Durabilidad e inmutabilidad. |
 | Claves | **KMS** (MVP de producción) → **CloudHSM** cuando un regulador o un certificado cualificado lo exija | Costo: KMS cuesta centavos; CloudHSM ~USD 1.500/mes por HSM. |
 | Correo | **SES** con dominio propio, DKIM, configuración por tenant (Fase 4) | Costo y entregabilidad. |
-| WhatsApp | **WhatsApp Business Cloud API** (Meta) con plantillas aprobadas por idioma | Canal principal en los cuatro países. |
+| WhatsApp | **WhatsApp Business Cloud API** (Meta) con plantillas aprobadas por idioma: `WHATSAPP_TEMPLATE` (invitación, default `calasign_signature_request`) y `WHATSAPP_OTP_TEMPLATE` (código de verificación, un solo parámetro `{{1}}`, default `calasign_verification_code`; **hay que aprobarla en Meta** para que funcione el OTP por WhatsApp) | Canal principal en los cuatro países. |
 | Borde | CloudFront + WAF + Shield Standard | TLS, cache de la SPA, protección. |
 | Observabilidad | OpenTelemetry → CloudWatch (o Grafana Cloud); logs JSON con `request_id`, `tenant_id`, `envelope_id` | Trazabilidad de punta a punta. |
 | IaC / CI | Terraform; GitHub Actions con OIDC (sin claves de larga vida) | Reproducible y auditable. |
@@ -239,3 +239,26 @@ Todas las respuestas son JSON. Errores: `{ "error": { "code": "string", "message
 |---|---|---|
 
 Los tipos exactos (`EnvelopeDetail`, `RecipientInput`, `FieldInput`, `SigningSession`, …) están en `packages/shared/src/api.ts` y son la fuente de verdad para la API y la web.
+
+## Seguridad de la cuenta (reglas que no son obvias)
+
+Resultado de las rondas de revisión de código de octubre de 2026; cada una tiene su prueba e2e o unitaria.
+
+- **Sesiones solo en el dominio de la plataforma.** Los dominios propios y de sub-marca sirven al firmante, no la cuenta
+  (ver [CUSTOM-DOMAINS.md](CUSTOM-DOMAINS.md)).
+- **Tokens OAuth**: nunca cuentan como propietario (un propietario autoriza → admin limitado a scopes); refresh tokens
+  solo con el grant correspondiente; ver [MCP-CONECTORES.md](MCP-CONECTORES.md).
+- **Apps OAuth de servicio** (`client_credentials`): rotar el secreto, ampliar scopes o borrarlas exige tener todos los
+  permisos de su rol.
+- **SCIM**: crear un token SCIM exige permisos de admin (o ser propietario), sea cual sea el rol por defecto: un token
+  SCIM puede sumar gente a grupos y dar de baja administradores.
+- **SSO**: una sesión abierta por SSO queda atada a esa organización (`/v1/me/access` solo la muestra a ella), no puede
+  activar 2FA de la cuenta (`sso_session_2fa`) y se cierra si se apaga el SSO o cambia el proveedor de identidad.
+  La redirección después del login acepta solo rutas propias.
+- **Invitaciones**: revocar o reemplazar una invitación pendiente exige poder otorgar su rol.
+- **Links de firma**: ver, aceptar, firmar, rechazar, delegar, adjuntar, OTP, identidad y pago exigen bajo el lock que el
+  link siga vigente (una corrección de contacto en vuelo no deja actuar al titular anterior), y la evidencia no registra
+  eventos de sobres anulados, rechazados o vencidos.
+- **Destinos salientes** (webhooks, pasos HTTP de workflows, documentos por URL): solo https y nunca direcciones internas
+  ni rangos reservados (`isPrivateAddress`).
+

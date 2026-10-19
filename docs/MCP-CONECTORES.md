@@ -52,6 +52,13 @@ los 30 días (barrido periódico del worker).
   `envelopes:read envelopes:write templates:read offline_access` (lo que usan las herramientas). Si pide scopes válidos,
   se concede la intersección con los de la app. Una app registrada con `refresh_token` recibe siempre `offline_access`
   (se muestra en la pantalla de consentimiento).
+- **Refresh tokens solo con el grant `refresh_token`**: un cliente registrado sin ese grant no recibe `offline_access`
+  ni refresh tokens (también los registrados antes de esta regla).
+- **Un token OAuth nunca es "propietario"**: si lo autorizó un propietario, cuenta como admin recortado a sus scopes.
+  Así ningún conector puede configurar el SSO, invitar propietarios, crear tokens SCIM ni cambiar roles de propietario,
+  aunque tenga `settings:write` o `members:write` (prueba en `scripts/e2e-mcp.mjs`).
+- **Desconectar y revocar**: desconectar una app revoca sus tokens y también sus códigos de autorización sin canjear;
+  quitar una URI de redirección de una app revoca los tokens emitidos con códigos entregados a esa URI.
 - **Nunca `client_credentials`**: daría acceso a una organización sin ningún usuario detrás. Un cliente dinámico público
   recibe `invalid_client`; uno confidencial, `unauthorized_client`.
 - **Dónde se ven**: no aparecen en *Apps OAuth* de la organización (no son suyas). Aparecen en *Apps conectadas* del usuario

@@ -74,6 +74,7 @@ Notas:
 | `/v1/signing/*` por un dominio propio | 404 si el link es de otra organización. |
 | URLs embebidas, Telegram, Firmador | Usan el dominio de la marca del sobre (sub-marca con dominio propio, o el de la organización). |
 | Formularios web | Usan el dominio propio de la organización (`tenantBaseUrl`); no tienen sub-marca. |
+| La cuenta en un dominio propio o de sub-marca | **No se sirve.** `/`, `/app`, `/login`, `/signup`, `/forgot`, `/reset`, `/invite`, `/oauth/authorize` y `/developers` redirigen (302) al dominio de la plataforma; `/v1/auth`, `/v1/invite`, `/v1/oauth/authorize`, `/v1/me` y `/v1/integrations/sso` responden 401 `use_platform_host`, y la cookie de sesión `cs_session` se ignora. La organización controla el DNS de su dominio: si se sirviera el login ahí podría quedarse con sesiones que valen en la plataforma y en otras organizaciones. API keys y tokens OAuth (`Authorization: Bearer`) funcionan igual. El Host se normaliza (sin puerto ni punto final). |
 | Toda la web en el dominio propio | `index.html` con el tema, título y favicon de la marca; manifest y página sin conexión propios (ver [MARCA-BLANCA.md](MARCA-BLANCA.md)). |
 
 ## Pruebas locales

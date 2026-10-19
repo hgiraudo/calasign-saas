@@ -52,6 +52,12 @@ const TEXT_TYPES: Record<string, string> = {
 export function integrationsStaticHeaders(app: FastifyInstance) {
   app.addHook("onSend", async (req, reply, payload) => {
     const path = req.url.split("?")[0];
+    // El diálogo de inicio de sesión del complemento (Office en la web) navega a la pantalla de consentimiento
+    // (y al login si no hay sesión): con COOP same-origin Office pierde la referencia al diálogo (error 12006).
+    if (path === "/oauth/authorize" || path === "/login") {
+      reply.header("cross-origin-opener-policy", "unsafe-none");
+      return payload;
+    }
     if (!path.startsWith(INTEGRATIONS_PREFIX) && path !== "/integrations") return payload;
     if (reply.statusCode >= 400) return payload;
     reply.header("cache-control", "no-cache");

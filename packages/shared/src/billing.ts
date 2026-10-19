@@ -182,8 +182,11 @@ export const MCP_TOOLS = [
   "send_envelope",
   "void_envelope",
   "download_signed_pdf",
+  "create_envelope",
+  "remind_recipients",
+  "get_account",
 ] as const;
 export type McpToolName = (typeof MCP_TOOLS)[number];
 
 /** Herramientas que requieren `confirm: true` (acciones con efecto hacia afuera). */
-export const MCP_CONFIRM_TOOLS: readonly McpToolName[] = ["send_envelope", "void_envelope"];
+export const MCP_CONFIRM_TOOLS: readonly McpToolName[] = ["send_envelope", "void_envelope", "remind_recipients"];

@@ -9,7 +9,7 @@ async function app() {
   const a = Fastify();
   await a.register(helmet, { contentSecurityPolicy: { directives: { defaultSrc: ["'self'"], frameAncestors: ["'none'"] } } });
   integrationsStaticHeaders(a);
-  for (const p of ["/integrations/office/taskpane.html", "/integrations/calasign.mcpb", "/integrations/gemini-api/example.py", "/app"]) a.get(p, async () => "x");
+  for (const p of ["/integrations/office/taskpane.html", "/integrations/calasign.mcpb", "/integrations/gemini-api/example.py", "/app", "/oauth/authorize"]) a.get(p, async () => "x");
   a.get("/integrations/office/missing.html", async (_req, reply) => reply.code(404).send({ error: "nf" }));
   return a;
 }
@@ -24,6 +24,14 @@ describe("integrationsStaticHeaders", () => {
     expect(r.headers["x-frame-options"]).toBeUndefined();
     expect(r.headers["cross-origin-opener-policy"]).toBe("unsafe-none");
     expect(r.headers["cache-control"]).toBe("no-cache");
+  });
+
+  it("el consentimiento OAuth se puede abrir desde el diálogo de Office (COOP unsafe-none, CSP sin cambios)", async () => {
+    const a = await app();
+    const r = await a.inject("/oauth/authorize?client_id=x");
+    expect(r.headers["cross-origin-opener-policy"]).toBe("unsafe-none");
+    expect(String(r.headers["content-security-policy"])).toContain("frame-ancestors 'none'");
+    expect((await a.inject("/app")).headers["cross-origin-opener-policy"]).toBe("same-origin");
   });
 
   it("no cambia el CSP fuera del complemento", async () => {

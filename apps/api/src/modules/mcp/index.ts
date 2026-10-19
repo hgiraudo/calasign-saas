@@ -636,7 +636,7 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
     scopes_supported: MCP_DEFAULT_SCOPES,
     bearer_methods_supported: ["header"],
     resource_name: "CalaSign MCP",
-    resource_documentation: `${config.appUrl}/developers#mcp`,
+    resource_documentation: `${config.appUrl}/developers/ai/mcp`,
   });
   app.get("/.well-known/oauth-protected-resource", protectedResource);
   app.get("/.well-known/oauth-protected-resource/mcp", protectedResource);
@@ -658,7 +658,7 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
     token_endpoint_auth_methods_supported: ["none", "client_secret_post", "client_secret_basic"],
     revocation_endpoint_auth_methods_supported: ["none", "client_secret_post", "client_secret_basic"],
     scopes_supported: OAUTH_SCOPES,
-    service_documentation: `${config.appUrl}/developers#mcp`,
+    service_documentation: `${config.appUrl}/developers/ai/mcp`,
   });
   app.get("/.well-known/oauth-authorization-server", authorizationServer);
   // Algunos clientes prueban la variante con el path del recurso (RFC 8414 §3.1 con issuer + /mcp).

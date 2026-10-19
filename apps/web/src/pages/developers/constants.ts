@@ -18,8 +18,10 @@ export const ARTIFACTS = {
   skillZip: "/integrations/calasign-skill.zip",
   /** Extensión de Gemini CLI. */
   geminiExtensionZip: "/integrations/calasign-gemini-extension.zip",
-  /** Manifiesto del complemento de Word y Outlook. */
+  /** Manifiesto del complemento de Word. */
   officeManifest: "/integrations/office/manifest.xml",
+  /** Manifiesto del complemento de Outlook (un manifiesto XML no puede cubrir Word y Outlook a la vez). */
+  outlookManifest: "/integrations/office/manifest-outlook.xml",
   /** Marketplace de plugins de Claude Code. */
   claudeCodeMarketplace: `${BASE}/integrations/claude-code/marketplace.json`,
 } as const;
@@ -28,26 +30,19 @@ export const ARTIFACTS = {
 export const CLAUDE_CODE_PLUGIN_INSTALL = `/plugin marketplace add ${ARTIFACTS.claudeCodeMarketplace}
 /plugin install calasign@calasign`;
 
-/**
- * Herramientas MCP que se están agregando en paralelo (todavía no figuran en MCP_TOOLS de @calasign/shared).
- * Cuando se publiquen, MCP_TOOLS las incluye y esta lista se puede vaciar: el portal muestra la unión sin duplicar.
- */
-export const MCP_TOOLS_PENDING = ["create_envelope", "remind_recipients", "get_account"] as const;
+export type McpTool = (typeof MCP_TOOLS)[number];
 
-/** Herramientas nuevas que exigen confirm: true (ajustar si la implementación final decide otra cosa). */
-export const MCP_CONFIRM_TOOLS_PENDING: readonly string[] = ["remind_recipients"];
+export const ALL_MCP_TOOLS: McpTool[] = [...MCP_TOOLS];
 
-export type McpTool = (typeof MCP_TOOLS)[number] | (typeof MCP_TOOLS_PENDING)[number];
-
-export const ALL_MCP_TOOLS: McpTool[] = [...new Set<McpTool>([...MCP_TOOLS, ...MCP_TOOLS_PENDING])];
+/** Herramientas agregadas en la versión 1.1 del servidor MCP (se muestran como "nueva"). */
+const NEW_MCP_TOOLS: readonly string[] = ["create_envelope", "remind_recipients", "get_account"];
 
 export function mcpToolNeedsConfirm(tool: string): boolean {
-  return (MCP_CONFIRM_TOOLS as readonly string[]).includes(tool) || MCP_CONFIRM_TOOLS_PENDING.includes(tool);
+  return (MCP_CONFIRM_TOOLS as readonly string[]).includes(tool);
 }
 
-/** true si la herramienta todavía no está en el contrato compartido (se muestra como "nueva"). */
 export function mcpToolIsNew(tool: string): boolean {
-  return !(MCP_TOOLS as readonly string[]).includes(tool);
+  return NEW_MCP_TOOLS.includes(tool);
 }
 
 /**

@@ -380,7 +380,8 @@ export function OfficePage() {
   return (
     <DocPage title={t("office.title")} lead={t("office.lead")}>
       <p>
-        <DownloadButton href={ARTIFACTS.officeManifest} label={`${t("ui.download")} manifest.xml`} />
+        <DownloadButton href={ARTIFACTS.officeManifest} label={`${t("ui.download")} manifest.xml (Word)`} />{" "}
+        <DownloadButton href={ARTIFACTS.outlookManifest} label={`${t("ui.download")} manifest-outlook.xml (Outlook)`} />
       </p>
       <H2 id="what">{t("office.what.h")}</H2>
       <Md text={t("office.what.p")} />
@@ -393,7 +394,7 @@ export function OfficePage() {
 
       <H2 id="admin">{t("office.admin.h")}</H2>
       <Md text={t("office.admin.p")} />
-      <Code lang="text" code={`${BASE}${ARTIFACTS.officeManifest}`} title={t("office.admin.url")} />
+      <Code lang="text" code={`${BASE}${ARTIFACTS.officeManifest}\n${BASE}${ARTIFACTS.outlookManifest}`} title={t("office.admin.url")} />
     </DocPage>
   );
 }

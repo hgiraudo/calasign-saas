@@ -15,19 +15,20 @@ Entorno de desarrollo: **https://dev.calasign.com**.
 | [`docs/CRM.md`](docs/CRM.md) | Conectores HubSpot, Salesforce, Siigo y Alegra |
 | [`docs/DATOS.md`](docs/DATOS.md) | BYOK, celdas de residencia de datos y renovación de sellos de archivo |
 | [`docs/FIRMA-CON-CERTIFICADO.md`](docs/FIRMA-CON-CERTIFICADO.md) | Firma con el certificado del titular (token PKCS#11, almacén de Windows, .p12) y el Firmador CalaSign |
+| [`docs/MCP-CONECTORES.md`](docs/MCP-CONECTORES.md) | Conectores MCP para Claude, ChatGPT, Claude Code y Gemini: registro dinámico de clientes OAuth (RFC 7591), `resource` (RFC 8707), herramientas |
 | [`integrations/README.md`](integrations/README.md) | Skill de Claude, plugin de Claude Code, extensión MCPB, Gemini CLI, ChatGPT y complemento de Word/Outlook (`/integrations/`) |
 
-La API completa y vigente está en `GET /v1/openapi.json` y en la página `/developers`.
+La API completa y vigente está en `GET /v1/openapi.json` y en el portal de desarrolladores `/developers` (guías, referencia generada del OpenAPI, webhooks, SDKs e IA y agentes, en ES/PT-BR/EN).
 
 ## Qué hace
 
 | Área | Funcionalidades |
 |---|---|
 | Firma | Sobres con varios PDF, firmantes en secuencia/paralelo/mixto, copias y aprobadores, editor de campos (firma, iniciales, fecha, nombre, correo, texto, número, desplegable, empresa, cargo, casilla, adjunto), campos condicionales y calculados, plantillas con roles, envío masivo por CSV, formularios web públicos (el correo autorregistrado recibe la invitación de respaldo solo si se valida con código), firma en persona, corrección en vuelo, delegación y reasignación, recordatorios automáticos |
-| Firmante | Sin cuenta, por email, WhatsApp o Telegram, en ES/PT-BR/EN; OTP por email/SMS/WhatsApp; verificación de identidad (documento + selfie, mock/Truora/Veriff); firma dibujada o tipeada; resumen y preguntas con IA; pago dentro de la firma; PWA accesible |
+| Firmante | Sin cuenta, por email, WhatsApp o Telegram, en ES/PT-BR/EN; OTP por email/SMS/WhatsApp; verificación de identidad (documento + selfie, mock/Truora/Veriff); firma dibujada o tipeada; descarga del PDF sellado apenas termina el sellado y, mientras faltan firmas, de una copia en curso con lo firmado; resumen y preguntas con IA; pago dentro de la firma; PWA accesible |
 | Evidencia | Registro de eventos encadenado por hash, certificado de finalización, sello PAdES B-T/B-LT/B-LTA con clave en KMS, verificación pública (`/verify`) y validador de firmas, sello de empresa, nivel de firma, firma con el certificado del titular (token, Windows o .p12) con el Firmador CalaSign |
 | Facturación electrónica | Firma XML por API: DGII e-CF (RD), DIAN (CO, XAdES-EPES), SUNAT CPE (PE), XAdES-BES/EPES genéricos, con certificados de la organización en custodia cifrada |
-| API e integraciones | API REST v1 + OpenAPI, API keys y OAuth 2.0 (client credentials, authorization code + PKCE), firma embebida en iframe, webhooks HMAC con reintentos, anclas de texto, idempotencia, SDKs Node y Python, servidor MCP para agentes de IA, Slack/Teams, exportación a Google Drive/Dropbox/OneDrive/S3, dominio propio |
+| API e integraciones | API REST v1 + OpenAPI, API keys y OAuth 2.0 (client credentials, authorization code + PKCE), firma embebida en iframe, webhooks HMAC con reintentos, anclas de texto, idempotencia, SDKs Node y Python, servidor MCP para agentes de IA (conectores de Claude, ChatGPT y Gemini con registro dinámico OAuth, skill, plugin de Claude Code, extensión MCPB, complemento de Word/Outlook), Slack/Teams, exportación a Google Drive/Dropbox/OneDrive/S3, dominio propio |
 | Equipos y empresa | Miembros e invitaciones, roles y permisos personalizados, grupos, auditoría de cuenta, retención, 2FA, SSO OIDC/SAML, SCIM, branding, reportes |
 | Acuerdos e IA | Repositorio con búsqueda, generación de documentos desde plantillas, workflows sin código, negociación con versiones, detección de campos, metadatos y alertas de renovación, revisión contra playbook |
 | CRM y ERP | Enviar a firmar desde HubSpot y Salesforce con write-back y PDF adjunto; Siigo y Alegra |
@@ -131,6 +132,7 @@ packages/xades   Firma XML: XMLDSig, XAdES-BES/EPES, perfiles DGII, DIAN y SUNAT
 packages/shared  Contrato de la API (Zod + tipos) y lógica compartida (condiciones, fórmulas, plantillas)
 packages/sdk-node SDK de Node (@calasign/sdk)
 sdks/python      SDK de Python
+integrations/    Skill, plugin de Claude Code, MCPB, extensión de Gemini CLI y complemento de Office (se compilan a /integrations/)
 infra/dev        Terraform del entorno dev
 scripts/         Pruebas e2e, deploy, PKI de desarrollo, sello, Telegram
 ```

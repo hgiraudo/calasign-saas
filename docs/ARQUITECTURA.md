@@ -232,6 +232,7 @@ Todas las respuestas son JSON. Errores: `{ "error": { "code": "string", "message
 | POST | `/v1/signing/:token/complete` | `{fields: [{id, value}], signature: {kind: "drawn"\|"typed", imagePng: base64, text?}, initials?: {…}}` → `SigningSession` |
 | POST | `/v1/signing/:token/decline` | `{reason}` → `SigningSession` |
 | GET | `/v1/signing/:token/signed.pdf` | → PDF sellado (si el sobre está `completed`) |
+| GET | `/v1/signing/:token/copy.pdf` | → copia en curso (ya firmó o es copia y el sobre no terminó): campos completados hasta ahora, marcada en cada página, sin certificado ni sello |
 
 ### Desarrollo
 | GET | `/dev/mailbox` | → `{items: [{id, channel, to, subject, text, link, createdAt}]}` (solo fuera de producción) |

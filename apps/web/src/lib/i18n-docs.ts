@@ -456,7 +456,7 @@ export const docsEs = {
   "g.crm.hubspot": "Enviar a firmar desde un Deal (contactos asociados + propiedades → plantilla), manualmente o por webhook al cambiar una propiedad. Al completarse actualiza una propiedad de estado y adjunta el PDF al deal.",
   "g.crm.salesforce": "Enviar desde una Opportunity (roles de contacto + campos). Actualiza un campo de estado y publica el PDF como ContentVersion en la oportunidad.",
   "g.crm.zoho":
-    "OAuth en cualquier centro de datos de Zoho (com, eu, in, com.au, jp, ca…). Enviar a firmar desde un **Deal** (contacto principal y roles de contacto) o un **Contact**; en Bigin, desde un Pipeline. Actualiza un campo de estado (ej. `CalaSign_Status`) y adjunta el PDF firmado al registro, con una nota que trae el hash y el enlace al sobre. Botón «Enviar a firmar con CalaSign» en Deals con la extensión de [conectores](/developers/connectors).",
+    "OAuth en cualquier centro de datos de Zoho (com, eu, in, com.au, jp, ca…). Enviar a firmar desde un **Deal** (contacto principal y roles de contacto) o un **Contact**; en Bigin, desde un Pipeline. Actualiza un campo de estado (ej. `CalaSign_Status`) y adjunta el PDF firmado al registro, con una nota que trae el hash y el enlace al sobre. Botón «Enviar a firmar con CalaSign» en Deals con la [función Deluge y la guía de la extensión](/integrations/connectors/zoho-crm/calasign-zoho-crm.zip).",
   "g.crm.siigo": "Colombia: busca el cliente por la identificación de un firmante y le agrega la referencia del documento firmado.",
   "g.crm.alegra": "Busca el contacto por identificación y le adjunta el PDF; también se puede vincular una factura.",
   "g.crm.mappings.h": "Mapeos y vínculos",

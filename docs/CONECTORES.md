@@ -10,7 +10,8 @@ agrupa las guías de cada conector.
 |---|---|---|---|---|
 | Low-code / iPaaS | Power Automate / Logic Apps, Zapier, Make, n8n | Artefacto descargable (se importa en la plataforma) | `integrations/connectors/<id>/` | `/developers/connectors` |
 | CRM / ERP | Dynamics 365 (sobre Power Automate) | Artefacto + script de Dataverse | `integrations/connectors/dynamics365/` | `/developers/connectors#dynamics365` |
-| CRM / ERP | HubSpot, Salesforce (Opportunity), Siigo, Alegra | Nativo, se configura en Ajustes | `apps/api/src/modules/crm/` ([CRM.md](CRM.md)) | `/developers/guides/crm` |
+| CRM / ERP | HubSpot, Salesforce (Opportunity), Zoho CRM y Bigin (Deals, Contacts, Pipelines), Siigo, Alegra | Nativo, se configura en Ajustes | `apps/api/src/modules/crm/` ([CRM.md](CRM.md)) | `/developers/guides/crm` |
+| CRM / ERP | Zoho CRM: botón «Enviar a firmar con CalaSign» en Deals (sobre el conector nativo) | Artefacto: función Deluge + guía de la extensión de Zoho Marketplace | `integrations/connectors/zoho-crm/` | `/developers/guides/crm` |
 | RR. HH. | BambooHR, HiBob, Factorial | Nativo | `apps/api/src/modules/connectors/` | `/developers/guides/hr-contracts` |
 | Contratos (CLM) | Ironclad, Juro | Nativo | `apps/api/src/modules/connectors/` | `/developers/guides/hr-contracts` |
 | Gestores documentales | SharePoint, OneDrive, Google Drive, Dropbox, Box, S3 | Nativo (archivado del firmado + evidencia) | `apps/api/src/modules/storage-export.ts` | `/developers/guides/hr-contracts#dms` |
@@ -141,6 +142,13 @@ Scopes OAuth: `templates:read`, `envelopes:write` y `webhooks:manage`, por prefi
   - Exportar la solución «CalaSign» (conector, columnas, web resource y los dos flujos) como **administrada** para
     clientes y AppSource.
   - Para AppSource: oferta en Partner Center y validación de Microsoft.
+- **Zoho CRM / Bigin** (detalle en [CRM.md](CRM.md) y `integrations/connectors/zoho-crm/README.md`):
+  - Registrar en api-console.zoho.com un cliente *Server-based Application* con la redirect
+    `{APP_URL}/v1/crm/oauth/zoho/callback` y **Multi-DC** activado; cargar `ZOHO_CLIENT_ID` / `ZOHO_CLIENT_SECRET`.
+  - Probar con cuentas reales de Zoho CRM y Bigin (idealmente una en zoho.com y otra en zoho.eu): roles de contacto,
+    adjunto, nota (`Parent_Id` en Bigin) y que el authorize acepte PKCE en todos los DC (si no, `ZOHO_OAUTH_PKCE=false`).
+  - Extensión en Zoho Developer Console (conexión con API key, campo `CalaSign_Status`, variables y botón con la
+    función Deluge), *Test your Extension* y publicación en Zoho Marketplace (revisión de Zoho).
 - **Siguientes conectores del ranking**: Odoo, TOTVS/RD Station y SAP Business One.
 
 ## RR. HH. (HRIS), contratos (CLM) y gestores documentales (DMS)
@@ -425,15 +433,15 @@ Sign, y de los firmadores de LATAM Clicksign, ZapSign y D4Sign. Los catálogos d
 y Validated ID no se revisaron en línea.
 
 **Conclusión:** CalaSign cubre bien almacenamiento, iPaaS e IA, y con MCP va por delante de la mayoría. Faltan tres
-cosas: apps dentro de las suites ofimáticas (Gmail/Docs, Teams, Slack con acciones), CRM de pymes y de LATAM (Zoho,
-Pipedrive, RD Station, Kommo, Bitrix24, monday) y verificación de identidad local (Registraduría, gov.br/Serpro, RNP,
+cosas: apps dentro de las suites ofimáticas (Gmail/Docs, Teams, Slack con acciones), CRM de pymes y de LATAM
+(Pipedrive, RD Station, Kommo, Bitrix24, monday; Zoho CRM ya está hecho) y verificación de identidad local (Registraduría, gov.br/Serpro, RNP,
 JCE).
 
 ### Brechas por categoría
 
 | Categoría | Lo que tiene la mayoría de los competidores | CalaSign |
 |---|---|---|
-| CRM global | Salesforce (AppExchange), HubSpot, Dynamics 365 nativo, Zoho CRM, Pipedrive | Salesforce solo en Opportunity; HubSpot sí; Dynamics vía Power Automate; **sin Zoho ni Pipedrive** |
+| CRM global | Salesforce (AppExchange), HubSpot, Dynamics 365 nativo, Zoho CRM, Pipedrive | Salesforce solo en Opportunity; HubSpot sí; Zoho CRM y Bigin sí (nativo + botón en Deals); Dynamics vía Power Automate; **sin Pipedrive** |
 | CRM LATAM | RD Station y Kommo (Clicksign y ZapSign vía Pluga), Bitrix24 (Clicksign, D4Sign) | **No** |
 | Ofimática | Add-on de Gmail, Docs y Drive (DocuSign, Dropbox Sign, Zoho); app de Teams (Adobe, Zoho) | Word y Outlook sí; **sin add-on de Google Workspace ni app de Teams** |
 | Mensajería con acciones | App de Slack (DocuSign); firma por WhatsApp (BoldSign, ZapSign, Truora) | Solo avisos |
@@ -452,7 +460,7 @@ JCE).
 | # | Conector | Por qué | Esfuerzo | Cómo |
 |---|---|---|---|---|
 | 1 | Salesforce: paquete gestionado en AppExchange (cualquier objeto, plantillas, LWC, acciones de Flow, CPQ/Contract/Case) | Canal enterprise; DocuSign y BoldSign firman desde cualquier objeto | L | AppExchange (revisión de seguridad) |
-| 2 | Zoho CRM (después Bigin y Zoho Books) | Muy usado por pymes de CO, RD y HN; DocuSign no lo tiene | M | Extensión en Zoho Marketplace |
+| 2 | ~~Zoho CRM (después Bigin y Zoho Books)~~ **Hecho** (Zoho CRM y Bigin; falta Zoho Books) | Muy usado por pymes de CO, RD y HN; DocuSign no lo tiene | M | Conector nativo en `crm/` (OAuth multi-DC, Deals/Contacts/Pipelines, estado y PDF) + botón en Deals (`integrations/connectors/zoho-crm/`). Falta publicar la extensión en Zoho Marketplace |
 | 3 | Add-on de Google Workspace (Gmail, Docs, Drive) | Google domina en pymes de LATAM | M | Google Workspace Marketplace (Apps Script) |
 | 4 | App de Microsoft Teams (enviar, aprobar, avisos con Adaptive Cards) | Completa Word y Outlook | M | AppSource, reutilizando el backend de Outlook |
 | 5 | Pipedrive | Muy popular en BR y CO | S–M | Pipedrive Marketplace |

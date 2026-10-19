@@ -1,7 +1,8 @@
 // Ajustes del bloque Identidad: verificación de identidad (KYC), inicio de sesión único (SSO) y SCIM.
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import type { IdentitySettings, IdvLevel, IdvProvider, ScimSettings, SsoSettings, SsoSettingsInput } from "@calasign/shared";
-import { IDV_LEVELS, MOCK_DECISIONS } from "@calasign/shared";
+import { IDV_LEVELS, MOCK_DECISIONS, PERMISSIONS } from "@calasign/shared";
+import { useAccess } from "../lib/access";
 import { api, errorText } from "../lib/api";
 import { formatDateTime, useI18n, confirmAction } from "../lib/i18n";
 import { useIdnText, type IdnKey } from "../lib/i18n-identity";
@@ -356,6 +357,11 @@ export function ScimSettingsPage() {
   const [name, setName] = useState("");
   const [secret, setSecret] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Como la API: cambiar algo pide settings:manage, y crear un token (o elegir administrador como rol por defecto)
+  // pide además todos los permisos de administrador o ser propietario. Sin esto se veían controles que daban 403.
+  const { access, can } = useAccess();
+  const canEdit = can("settings:manage");
+  const canAdmin = !access || access.role === "owner" || PERMISSIONS.every((p) => access.permissions.includes(p));
   if (!data) return error ? <ErrorBox error={error} /> : <Spinner />;
 
   const run = async (fn: () => Promise<void>) => {
@@ -379,11 +385,13 @@ export function ScimSettingsPage() {
           <span>{tx("scim.defaultRole")}</span>
           <select
             value={data.defaultRole}
-            disabled={busy}
+            disabled={busy || !canEdit}
             onChange={(e) => run(async () => setData(await api<ScimSettings>("/v1/settings/scim", { method: "PATCH", body: { defaultRole: e.target.value } })))}
           >
             <option value="member">{roleLabel("member")}</option>
-            <option value="admin">{roleLabel("admin")}</option>
+            <option value="admin" disabled={!canAdmin}>
+              {roleLabel("admin")}
+            </option>
           </select>
         </label>
       </div>
@@ -395,6 +403,7 @@ export function ScimSettingsPage() {
             <code className="secret">{secret}</code>
           </div>
         )}
+        {canEdit && canAdmin && (
         <form
           className="row-wrap"
           onSubmit={(e) => {
@@ -412,6 +421,7 @@ export function ScimSettingsPage() {
             {tx("scim.create")}
           </button>
         </form>
+        )}
         <ErrorBox error={error} />
         {data.tokens.length === 0 ? (
           <p className="muted">{tx("scim.none")}</p>
@@ -427,7 +437,7 @@ export function ScimSettingsPage() {
                 </div>
                 {t.revokedAt ? (
                   <span className="badge">{tx("scim.revoked")}</span>
-                ) : (
+                ) : !canEdit ? null : (
                   <button type="button" className="btn btn-danger btn-sm" disabled={busy} onClick={() => confirmAction() && run(async () => {
                     await api(`/v1/settings/scim/tokens/${t.id}`, { method: "DELETE" });
                     await reload();

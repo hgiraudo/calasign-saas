@@ -15,7 +15,7 @@ import { enqueue } from "../infra/queue";
 import { AppError, badRequest, conflict, notFound } from "../lib/errors";
 import { encrypt, iso, queryList, randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { config } from "../config";
-import { envelopeVisibilitySql } from "./access";
+import { assertEnvelopeAccess, envelopeVisibilitySql } from "./access";
 import { authenticate, type AuthContext, type Services } from "./context";
 import { loadDetail, loadDocuments } from "./mappers";
 import { expandAnchorFields } from "./anchors";
@@ -251,7 +251,17 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
   // sin credenciales hacía que el servidor recibiera y parseara hasta ~35 MB de JSON antes de responder 401.
   app.post("/v1/envelopes", { onRequest: auth, bodyLimit: ONE_SHOT_JSON_BODY_LIMIT }, async (req, reply) => createEnvelopeRoute(s, req, reply));
 
-  app.get<P>("/v1/envelopes/:id", { preHandler: auth }, async (req) => loadDetail(s.db, A(req).tenantId, req.params.id));
+  // canManage: si quien consulta puede modificarlo (anular, corregir, reasignar, compartir); quien lo ve por un grupo,
+  // como anfitrión o con envelopes:view_all solo lo ve. La web oculta esas acciones en vez de mostrar un 403.
+  app.get<P>("/v1/envelopes/:id", { preHandler: auth }, async (req) => {
+    const a = A(req);
+    const d = await loadDetail(s.db, a.tenantId, req.params.id);
+    const canManage = await assertEnvelopeAccess(s.db, a, req.params.id, "manage").then(
+      () => true,
+      () => false,
+    );
+    return { ...d, canManage };
+  });
 
   app.patch<P>("/v1/envelopes/:id", { preHandler: auth }, async (req) => {
     const a = A(req);

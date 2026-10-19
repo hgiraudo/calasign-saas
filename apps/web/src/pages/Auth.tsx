@@ -75,6 +75,8 @@ export function LoginPage() {
     } catch (err) {
       if (redirectIfSsoRequired(err, from)) return;
       if (err instanceof HttpError && err.code === "password_reset_required") setResetRequired(true);
+      // Contraseña incorrecta: "Autenticación requerida" (en español en todos los idiomas) no decía qué pasó.
+      else if (err instanceof HttpError && err.status === 401 && err.code === "unauthorized") setError(pw("badCredentials"));
       else setError(errorText(err));
     } finally {
       setBusy(false);

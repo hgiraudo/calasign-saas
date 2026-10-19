@@ -33,7 +33,7 @@ export function Layout() {
   const mailbox = useDevMailboxAvailable();
   const tt = useIntText();
   const tm = useTeamsText();
-  const { access } = useAccess();
+  const { access, can } = useAccess();
   const loc = useLocation();
   const xt = useExpText();
   const install = useInstallPrompt();
@@ -60,7 +60,8 @@ export function Layout() {
           </NavLink>
           <NavLink to="/app/templates">{t("nav.templates")}</NavLink>
           <NavLink to="/app/agreements">{ag("nav.agreements")}</NavLink>
-          <NavLink to="/app/reports">{xt("nav.reports")}</NavLink>
+          {/* Los reportes son de toda la organización: la API pide envelopes:view_all. */}
+          {can("envelopes:view_all") && <NavLink to="/app/reports">{xt("nav.reports")}</NavLink>}
           {/* Equipo, marca, API keys, integraciones, auditoría y seguridad viven bajo Ajustes (índice según permisos). */}
           <NavLink to="/app/settings">{tm("nav.settings")}</NavLink>
           <NavLink to="/developers">{tt("nav.developers")}</NavLink>

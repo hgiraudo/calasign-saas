@@ -164,7 +164,7 @@ export function ApiKeysPage() {
             <thead>
               <tr>
                 <th>{t("keys.name")}</th>
-                <th>Prefix</th>
+                <th>{tm("keys.prefix")}</th>
                 <th className="hide-sm">{tm("keys.role")}</th>
                 <th className="hide-sm">{t("keys.lastUsed")}</th>
                 <th />

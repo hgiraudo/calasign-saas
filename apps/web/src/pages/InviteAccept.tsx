@@ -2,7 +2,8 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import type { InvitationPreview, MeResponse, TwoFactorChallenge } from "@calasign/shared";
-import { api, errorText } from "../lib/api";
+import { api, errorText, HttpError } from "../lib/api";
+import { usePasswordText } from "../lib/i18n-password";
 import { useAuth } from "../lib/auth";
 import { useRoleLabel, useTeamsText } from "../lib/i18n-teams";
 import { ErrorBox, LocaleSwitcher, Logo, Spinner } from "../components/ui";
@@ -27,7 +28,11 @@ export function InviteAcceptPage() {
       .catch((e) => setError(errorText(e)));
   }, [token]);
 
-  const loggedAsInvitee = Boolean(me && inv && me.user.email.toLowerCase() === inv.email.toLowerCase());
+  // Con la sesión de la persona invitada no se pide contraseña; pero si el servidor no la acepta (p. ej. una sesión SSO
+  // de otra organización), se pide la contraseña en vez de quedar sin salida.
+  const [needPassword, setNeedPassword] = useState(false);
+  const pw = usePasswordText();
+  const loggedAsInvitee = Boolean(me && inv && me.user.email.toLowerCase() === inv.email.toLowerCase()) && !needPassword;
 
   const done = (m: MeResponse) => {
     setMe(m);
@@ -44,7 +49,9 @@ export function InviteAcceptPage() {
       if ("twoFactorRequired" in r) setChallenge(r.challengeToken);
       else done(r);
     } catch (err) {
-      setError(errorText(err));
+      const unauth = err instanceof HttpError && err.status === 401 && err.code === "unauthorized";
+      if (unauth && loggedAsInvitee) setNeedPassword(true);
+      else setError(unauth ? pw("badCredentials") : errorText(err));
     } finally {
       setBusy(false);
     }
@@ -52,7 +59,7 @@ export function InviteAcceptPage() {
 
   const body = () => {
     if (!inv) return error ? <ErrorBox error={error} /> : <Spinner />;
-    if (inv.status !== "pending") return <div className="alert alert-warn">{tt("inv.invalid", { status: inv.status })}</div>;
+    if (inv.status !== "pending") return <div className="alert alert-warn">{tt("inv.invalid", { status: tt(`team.status.${inv.status}` as const) })}</div>;
     if (challenge) return <TwoFactorStep challengeToken={challenge} onDone={done} onBack={() => setChallenge(null)} />;
     const vars = { org: inv.organizationName, role: roleLabel(inv.role, inv.roleName), inviter: inv.invitedByName ?? "", email: inv.email };
     return (

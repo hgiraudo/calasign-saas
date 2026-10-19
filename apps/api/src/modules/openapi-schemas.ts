@@ -200,7 +200,13 @@ export const EnvelopeSchema = named(
 
 export const EnvelopeDetailSchema = named(
   "EnvelopeDetail",
-  z.object({ envelope: EnvelopeSchema, documents: z.array(DocumentSchema), recipients: z.array(RecipientSchema), fields: z.array(FieldSchema) }),
+  z.object({
+    envelope: EnvelopeSchema,
+    documents: z.array(DocumentSchema),
+    recipients: z.array(RecipientSchema),
+    fields: z.array(FieldSchema),
+    canManage: z.boolean().optional().describe("Solo en GET /v1/envelopes/{id}: si quien consulta puede modificar el sobre (anular, corregir, reasignar, compartir)"),
+  }),
 );
 
 export const EnvelopeSummarySchema = named(

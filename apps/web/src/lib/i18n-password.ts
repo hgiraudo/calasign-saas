@@ -20,6 +20,7 @@ const es = {
   resetRequiredAction: "Restablecer contraseña",
   notAllowed: "En esa organización tu acceso se creó con inicio de sesión único (SSO) o SCIM: ingresá con SSO o restablecé tu contraseña para usarla ahí.",
   sessionExpired: "Tu sesión terminó (venció o se cerró). Volvé a ingresar para seguir donde estabas.",
+  badCredentials: "Correo o contraseña incorrectos.",
 };
 type Key = keyof typeof es;
 
@@ -42,6 +43,7 @@ const pt: Record<Key, string> = {
   resetRequiredAction: "Redefinir senha",
   notAllowed: "Nessa organização seu acesso foi criado com login único (SSO) ou SCIM: entre com SSO ou redefina sua senha para usá-la lá.",
   sessionExpired: "Sua sessão terminou (expirou ou foi encerrada). Entre novamente para continuar de onde parou.",
+  badCredentials: "E-mail ou senha incorretos.",
 };
 
 const en: Record<Key, string> = {
@@ -63,6 +65,7 @@ const en: Record<Key, string> = {
   resetRequiredAction: "Reset password",
   notAllowed: "In that organization your access was created through single sign-on (SSO) or SCIM: sign in with SSO or reset your password to use it there.",
   sessionExpired: "Your session ended (it expired or was closed). Sign in again to pick up where you left off.",
+  badCredentials: "Incorrect email or password.",
 };
 
 const DICTS: Record<string, Record<Key, string>> = { es, "pt-BR": pt, en };

@@ -12,7 +12,7 @@ import {
 import { api, errorText } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useAccess } from "../lib/access";
-import { formatDateTime, useI18n, confirmAction } from "../lib/i18n";
+import { formatDateTime, useI18n, confirmAction, placeholderText } from "../lib/i18n";
 import { useRoleLabel, useTeamsText } from "../lib/i18n-teams";
 import { ErrorBox, Modal, Spinner } from "../components/ui";
 
@@ -20,6 +20,21 @@ type Tab = "members" | "invitations" | "roles" | "groups";
 interface RolesResponse {
   items: CustomRole[];
   builtin: { role: "owner" | "admin" | "member"; name: string; permissions: Permission[] }[];
+}
+
+/**
+ * ¿Puede quien está en la sesión administrar a alguien (o un rol) con estos permisos? Como la API (assertCanManage):
+ * un propietario sí; si no, solo si tiene todos esos permisos. Sin datos todavía, no se oculta (la API decide).
+ */
+function canManagePerms(access: { role?: string | null; permissions: readonly string[] } | null | undefined, perms: readonly string[] | null) {
+  if (!access || !perms) return true;
+  return access.role === "owner" || perms.every((p) => access.permissions.includes(p));
+}
+
+function permsOfMember(roles: RolesResponse | null, m: { role: string; roleId?: string | null }): readonly string[] | null {
+  if (!roles) return null;
+  if (m.role === "custom") return roles.items.find((r) => r.id === m.roleId)?.permissions ?? null;
+  return roles.builtin.find((b) => b.role === m.role)?.permissions ?? null;
 }
 
 /** Opciones de rol para los selects: integrados + personalizados ("custom:<id>"). */
@@ -160,6 +175,8 @@ function MembersTab({ roles, manage }: { roles: RolesResponse | null; manage: bo
             {items.map((m) => {
               const value = m.role === "custom" ? `custom:${m.roleId}` : m.role;
               const self = m.userId === me?.user.id;
+              // Lo mismo que exige la API: si no, se mostraban controles que siempre respondían 403.
+              const canTouch = (isOwner || m.role !== "owner") && canManagePerms(access, permsOfMember(roles, m));
               return (
                 <tr key={m.userId}>
                   <td>
@@ -167,7 +184,7 @@ function MembersTab({ roles, manage }: { roles: RolesResponse | null; manage: bo
                     <div className="muted small">{m.email}</div>
                   </td>
                   <td>
-                    {manage && (isOwner || m.role !== "owner") ? (
+                    {manage && canTouch ? (
                       <RoleSelect value={value} roles={roles} allowOwner={isOwner} onChange={(v) => changeRole(m, v)} />
                     ) : (
                       label(m.role, m.roleName)
@@ -177,7 +194,7 @@ function MembersTab({ roles, manage }: { roles: RolesResponse | null; manage: bo
                   <td className="hide-sm">{m.twoFactorEnabled ? "✓" : "—"}</td>
                   {manage && (
                     <td className="right">
-                      {(isOwner || m.role !== "owner") && (
+                      {(canTouch || (self && m.role !== "owner")) && (
                         <button type="button" className="btn btn-danger btn-sm" onClick={() => setRemoving(m)}>
                           {tt("team.remove")}
                         </button>
@@ -286,7 +303,7 @@ function InvitationsTab({ roles }: { roles: RolesResponse | null }) {
       <form onSubmit={invite} className="card pad row-wrap">
         <label className="field grow">
           <span>{tt("team.email")}</span>
-          <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="persona@empresa.com" />
+          <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder={`ana@${placeholderText("domain")}`} />
         </label>
         <label className="field">
           <span>{tt("team.role")}</span>
@@ -453,6 +470,7 @@ function RolesTab({ roles, reload }: { roles: RolesResponse | null; reload: () =
                     {tt("roles.members")}: {r.memberCount}
                   </td>
                   <td className="right">
+                    {canManagePerms(access, r.permissions) && (
                     <div className="row-end">
                       <button type="button" className="btn btn-sm" onClick={() => setEditing(r)}>
                         {tt("roles.edit")}
@@ -461,6 +479,7 @@ function RolesTab({ roles, reload }: { roles: RolesResponse | null; reload: () =
                         {tt("roles.delete")}
                       </button>
                     </div>
+                    )}
                   </td>
                 </tr>
               ))}

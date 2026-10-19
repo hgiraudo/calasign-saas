@@ -72,6 +72,9 @@ export function EnvelopeDetailPage() {
   if (notFound) return <Navigate to="/app" replace />;
   if (!detail) return loadError ? <div className="page"><ErrorBox error={loadError} /></div> : <Spinner />;
   if (detail.envelope.status === "draft") return <Navigate to={`/app/envelopes/${id}/edit`} replace />;
+  // Quien lo ve por un grupo, como anfitrión o con view_all no puede modificarlo: sin estas acciones (la API daba 403).
+  // Sin el dato (respuestas de acciones, que no lo traen) no se oculta nada: la API decide.
+  const canManage = detail.canManage !== false;
 
   const env = detail.envelope;
   const isOpen = env.status === "sent";
@@ -144,7 +147,7 @@ export function EnvelopeDetailPage() {
               </span>
             )}
           </div>
-          <ShareControl kind="envelopes" id={id!} canEdit />
+          <ShareControl kind="envelopes" id={id!} canEdit={canManage} />
         </div>
         <div className="row-wrap">
           {env.status === "completed" && (
@@ -157,9 +160,11 @@ export function EnvelopeDetailPage() {
               <button type="button" className="btn" disabled={busy} onClick={remind}>
                 {t("detail.remind")}
               </button>
-              <button type="button" className="btn btn-danger" disabled={busy} onClick={() => setVoiding(true)}>
-                {t("detail.void")}
-              </button>
+              {canManage && (
+                <button type="button" className="btn btn-danger" disabled={busy} onClick={() => setVoiding(true)}>
+                  {t("detail.void")}
+                </button>
+              )}
             </>
           )}
           {isOpen && (
@@ -167,12 +172,16 @@ export function EnvelopeDetailPage() {
               <button type="button" className="btn" disabled={busy} onClick={remind}>
                 {t("detail.remind")}
               </button>
-              <button type="button" className="btn" disabled={busy} onClick={() => setCorrecting(true)}>
-                ✎ {x("correct.button")}
-              </button>
-              <button type="button" className="btn btn-danger" disabled={busy} onClick={() => setVoiding(true)}>
-                {t("detail.void")}
-              </button>
+              {canManage && (
+                <>
+                  <button type="button" className="btn" disabled={busy} onClick={() => setCorrecting(true)}>
+                    ✎ {x("correct.button")}
+                  </button>
+                  <button type="button" className="btn btn-danger" disabled={busy} onClick={() => setVoiding(true)}>
+                    {t("detail.void")}
+                  </button>
+                </>
+              )}
             </>
           )}
           <SaveAsTemplateButton envelopeId={id} defaultName={env.subject} />
@@ -200,7 +209,7 @@ export function EnvelopeDetailPage() {
       <EnvelopePaymentSummary envelopeId={env.id} recipients={detail.recipients} envelopeStatus={env.status} />
 
       <AiMetadataPanel envelopeId={env.id} completed={env.status === "completed"} />
-      {env.status === "completed" && <ArchivePanel envelopeId={env.id} canManage />}
+      {env.status === "completed" && <ArchivePanel envelopeId={env.id} canManage={canManage} />}
       {detail.recipients.some((r) => r.signatureType === "certificate") && <CertificateProgressPanel envelopeId={env.id} status={env.status} refreshKey={events.length} />}
 
       <div className="grid-2">
@@ -231,7 +240,7 @@ export function EnvelopeDetailPage() {
                       {env.status === "completed" && !["delegated", "reassigned"].includes(r.status) && (r.email || r.phone) && (
                         <ResendCopyButton envelopeId={id} recipient={r} onDone={setNotice} onError={setError} />
                       )}
-                      {isOpen && r.role !== "cc" && ["created", "sent", "viewed"].includes(r.status) && (
+                      {canManage && isOpen && r.role !== "cc" && ["created", "sent", "viewed"].includes(r.status) && (
                         <button type="button" className="btn btn-ghost btn-sm" onClick={() => setReassigning(r)}>
                           {sx("reassign.button")}
                         </button>

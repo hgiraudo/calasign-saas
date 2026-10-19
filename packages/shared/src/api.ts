@@ -330,6 +330,8 @@ export interface EnvelopeDetail {
   documents: Document[];
   recipients: Recipient[];
   fields: Field[];
+  /** Si quien consulta puede modificar el sobre (anular, corregir, reasignar, compartir). Solo en GET /v1/envelopes/{id}. */
+  canManage?: boolean;
 }
 
 export interface ListEnvelopesResponse {

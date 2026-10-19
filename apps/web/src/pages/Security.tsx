@@ -170,7 +170,10 @@ function OrgPolicies() {
         className="stack"
         onSubmit={(e) => {
           e.preventDefault();
-          void save({ retentionDays: days.trim() ? Number(days) : null });
+          const n = days.trim() ? Number(days) : null;
+          // Acortar (o activar) la retención borra archivos para siempre en la próxima pasada: se confirma.
+          if (n !== null && (s.retentionDays == null || n < s.retentionDays) && !window.confirm(tt("sec.retentionConfirm", { n: String(n) }))) return;
+          void save({ retentionDays: n });
         }}
       >
         <strong>{tt("sec.retention")}</strong>

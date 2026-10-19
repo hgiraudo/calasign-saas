@@ -16,7 +16,7 @@ agrupa las guías de cada conector.
 | RR. HH. | BambooHR, HiBob, Factorial | Nativo | `apps/api/src/modules/connectors/` | `/developers/guides/hr-contracts` |
 | Contratos (CLM) | Ironclad, Juro | Nativo | `apps/api/src/modules/connectors/` | `/developers/guides/hr-contracts` |
 | Gestores documentales | SharePoint, OneDrive, Google Drive, Dropbox, Box, S3 | Nativo (archivado del firmado + evidencia) | `apps/api/src/modules/storage-export.ts` | `/developers/guides/hr-contracts#dms` |
-| Avisos | Slack, Microsoft Teams (webhooks entrantes), Telegram, WhatsApp/SMS | Nativo | `notify-integrations.ts`, `telegram.ts` | Ajustes → Integraciones |
+| Avisos | Slack, Microsoft Teams (Workflows), Discord, Google Chat, Mattermost, Rocket.Chat y Webex (webhooks entrantes); Telegram, WhatsApp/SMS | Nativo | `notify-integrations.ts`, `notify-format.ts`, `telegram.ts` ([sección](#avisos-a-canales-webhooks-entrantes)) | Ajustes → Avisos a canales (`/app/settings/notifications`) |
 | IA | MCP, skill de Claude, plugin de Claude Code, MCPB, Gemini CLI, ChatGPT | Artefacto descargable | `integrations/`, `apps/api/src/modules/mcp/` ([MCP-CONECTORES.md](MCP-CONECTORES.md)) | `/developers/ai` |
 | Office | Complementos de Word y Outlook | Artefacto descargable | `integrations/office/` | `/integrations/office/` |
 | Ofimática (Google) | Add-on de Google Workspace: Gmail, Docs y Drive | Artefacto descargable (proyecto de Apps Script para `clasp push`) | `integrations/connectors/google-workspace/` | `/developers/connectors#google-workspace` |
@@ -494,6 +494,41 @@ para `clasp push` con `{{BASE_URL}}` ya reemplazado.
    - si la página de consentimiento con COOP `same-origin` deja que el add-on se recargue al cerrar la ventana;
    - si `drive.file` deja crear el firmado en la carpeta del original.
 
+## Avisos a canales (webhooks entrantes)
+
+Ajustes → **Avisos a canales** (`/app/settings/notifications`, API `/v1/notification-integrations`). Cada integración
+guarda la URL del webhook entrante **cifrada** (quien la tiene puede publicar en el canal; la API solo devuelve
+`urlHint`), los eventos elegidos (`NOTIFICATION_EVENTS`) y el resultado del último envío. La URL pasa por
+`validateIncomingWebhookUrl` (https, sin credenciales, sin destinos locales) y el envío por `postToCustomerUrl` (bloqueo
+de IP privadas/metadata, plazo total de 10 s). No se restringe el host por plataforma: Mattermost y Rocket.Chat son
+autoalojados y Teams/Workflows cambia de dominio según la región. Un 429 o 5xx hace reintentar el job.
+
+El formato está en `apps/api/src/modules/notify-format.ts` (sin E/S, con tests en `apps/api/test/notify-format.test.ts`).
+El asunto y los nombres vienen de afuera (p. ej. formularios web), así que en cada plataforma se neutralizan menciones
+masivas y links con texto falso, y se cortan a 500 (asunto) y 300 (detalle) caracteres:
+
+| Destino (`kind`) | Formato | Escape | Cómo se obtiene la URL |
+|---|---|---|---|
+| `slack` | Block Kit (sección + botón) | `&`, `<`, `>` como entidades | Apps → Incoming Webhooks → Add to Slack |
+| `teams` | `{type:"message", attachments:[Adaptive Card 1.4]}` | se corta `[texto](url)`; las menciones exigen `entities` | Canal → ⋯ → Workflows → «Publicar en un canal cuando se recibe una solicitud de webhook» |
+| `discord` | Embed con color por evento, título linkeado, `allowed_mentions: {parse: []}` | `\` ante la puntuación de markdown, `<`, `@`, `:` | Ajustes del servidor → Integraciones → Webhooks → Nuevo webhook |
+| `google_chat` | `cardsV2` (encabezado, `textParagraph`, botón `openLink`) | HTML (`&`, `<`, `>`, `"`) | Espacio → Apps e integraciones → Webhooks |
+| `mattermost`, `rocketchat` | `attachments` del formato de Slack (color, `title_link`, texto markdown); los dos los aceptan, no así los blocks | `\` ante la puntuación de markdown y `@` + espacio de ancho cero (no tienen `allowed_mentions`) | Integraciones → Webhooks entrantes (Mattermost: lo habilita un admin) / Administración → Integraciones → Webhook entrante |
+| `webex` | `{markdown}` (app «Incoming Webhooks», `webexapis.com/v1/webhooks/incoming/…`) | `<`, `>`, `&` como entidades, `\` ante markdown, `@` + espacio de ancho cero; tope de Webex 7439 bytes | App Hub → Incoming Webhooks → Conectar |
+
+**Microsoft Teams:** Microsoft retiró los conectores de Office 365 (el «Webhook entrante» clásico, URLs
+`….webhook.office.com`, y su formato `MessageCard`). El reemplazo son los **Workflows** de Power Automate
+(`….logic.azure.com/workflows/…` o `….powerplatform.com/powerautomate/automations/direct/workflows/…`), que solo
+publican **Adaptive Cards** dentro de un mensaje (`type: "message"`, `contentType:
+"application/vnd.microsoft.card.adaptive"`). CalaSign manda siempre ese formato, que también aceptaban los conectores
+viejos, así que funcionan las URLs de los dos tipos sin migrar datos. El flujo del Workflow responde `202 Accepted`.
+
+La migración `0050_notify_channels.sql` amplía el `CHECK` de `notification_integrations.kind`. El e2e es
+`scripts/e2e-platform.mjs` (un receptor local por plataforma, sin red real).
+
+**Pendiente:** apps interactivas (botones de aprobar/firmar dentro del chat) de Slack y Teams (prioridades #4 y #10 de
+abajo); Zulip y Lark/Feishu tienen webhooks entrantes y se agregarían con el mismo patrón si hay demanda.
+
 ## Próximos conectores: qué ofrece el mercado (octubre de 2026)
 
 Relevamiento de los catálogos de integraciones de DocuSign, Adobe Acrobat Sign, Dropbox Sign, PandaDoc, BoldSign y Zoho
@@ -512,7 +547,7 @@ JCE).
 | CRM global | Salesforce (AppExchange), HubSpot, Dynamics 365 nativo, Zoho CRM, Pipedrive | Salesforce solo en Opportunity; HubSpot sí; Zoho CRM y Bigin sí (nativo + botón en Deals); Pipedrive sí (nativo + acción del Marketplace); Dynamics vía Power Automate |
 | CRM LATAM | RD Station y Kommo (Clicksign y ZapSign vía Pluga), Bitrix24 (Clicksign, D4Sign) | **No** |
 | Ofimática | Add-on de Gmail, Docs y Drive (DocuSign, Dropbox Sign, Zoho); app de Teams (Adobe, Zoho) | Word, Outlook y add-on de Google Workspace sí; **sin app de Teams** |
-| Mensajería con acciones | App de Slack (DocuSign); firma por WhatsApp (BoldSign, ZapSign, Truora) | Solo avisos |
+| Mensajería con acciones | App de Slack (DocuSign); firma por WhatsApp (BoldSign, ZapSign, Truora) | Solo avisos (Slack, Teams, Discord, Google Chat, Mattermost, Rocket.Chat, Webex, Telegram, WhatsApp) |
 | Almacenamiento | Drive, Dropbox, OneDrive, Box, SharePoint | **Completo** |
 | iPaaS | Zapier, Make, Power Automate, Pluga (BR) | Completo **salvo Pluga** |
 | Gestión de trabajo | monday.com, Asana, Jira | **No** |

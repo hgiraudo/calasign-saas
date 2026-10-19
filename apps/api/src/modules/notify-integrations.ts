@@ -1,4 +1,5 @@
-// Avisos a canales de Slack y Microsoft Teams (webhooks entrantes) cuando pasa algo con un sobre.
+// Avisos a canales (webhooks entrantes de Slack, Microsoft Teams, Discord, Google Chat, Mattermost, Rocket.Chat y Webex)
+// cuando pasa algo con un sobre. El formato de cada plataforma está en notify-format.ts.
 import type { FastifyInstance } from "fastify";
 import {
   CreateNotificationIntegrationInput,
@@ -15,6 +16,7 @@ import { decrypt, encrypt, iso, uuidv7 } from "../lib/util";
 import { auditFromRequest } from "./audit";
 import { authenticate, type Services } from "./context";
 import { tenantBaseUrl } from "./custom-domains";
+import { payloadFor, type Message } from "./notify-format";
 import { postToCustomerUrl } from "./webhooks";
 
 const isLocalEnv = () => config.environment === "local";
@@ -104,60 +106,11 @@ const TXT = {
   },
 } as const;
 
-interface Message {
-  title: string;
-  subject?: string;
-  detail?: string;
-  link?: string;
-  linkLabel?: string;
-}
-
-// El asunto y los nombres pueden venir de afuera (p. ej. quien completa un formulario web): sin escapar, un nombre
-// "<!channel>" avisaría a todo el canal y "<https://…|Ver sobre>" sería un link falso en el mensaje.
-// Slack: &, < y > se escapan (https://api.slack.com/reference/surfaces/formatting#escaping).
-const slackEscape = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-// Teams (Adaptive Cards) no tiene escape: se corta la sintaxis de link markdown [texto](url).
-const teamsEscape = (t: string) => t.replace(/\]\s*\(/g, "] (");
-
-function slackPayload(m: Message) {
-  const parts = [m.title, m.subject, m.detail].map((x) => (x ? slackEscape(x) : x));
-  return {
-    text: parts.filter(Boolean).join(" — "),
-    blocks: [
-      { type: "section", text: { type: "mrkdwn", text: [`*${parts[0]}*`, parts[1], parts[2]].filter(Boolean).join("\n") } },
-      ...(m.link ? [{ type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: m.linkLabel ?? "Abrir" }, url: m.link }] }] : []),
-    ],
-  };
-}
-
-/** Tarjeta adaptable: formato de los webhooks de Workflows de Teams (y aceptado por los conectores). */
-function teamsPayload(m: Message) {
-  return {
-    type: "message",
-    attachments: [
-      {
-        contentType: "application/vnd.microsoft.card.adaptive",
-        content: {
-          $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
-          type: "AdaptiveCard",
-          version: "1.4",
-          body: [
-            { type: "TextBlock", text: teamsEscape(m.title), weight: "Bolder", size: "Medium", wrap: true },
-            ...(m.subject ? [{ type: "TextBlock", text: teamsEscape(m.subject), wrap: true }] : []),
-            ...(m.detail ? [{ type: "TextBlock", text: teamsEscape(m.detail), isSubtle: true, wrap: true }] : []),
-          ],
-          actions: m.link ? [{ type: "Action.OpenUrl", title: m.linkLabel ?? "Abrir", url: m.link }] : [],
-        },
-      },
-    ],
-  };
-}
-
 export async function postToChannel(kind: NotificationKind, url: string, m: Message) {
   const res = await postToCustomerUrl(
     url,
     { "content-type": "application/json", "user-agent": "CalaSign-Notifications/1.0" },
-    JSON.stringify(kind === "slack" ? slackPayload(m) : teamsPayload(m)),
+    JSON.stringify(payloadFor(kind, m)),
     10_000,
   );
   return { status: res.status, ok: res.status >= 200 && res.status < 300, text: res.text.slice(0, 300) };
@@ -186,6 +139,7 @@ export async function deliverNotificationJob(db: Db, p: { integrationId: string;
     detail: [r?.name ? `${L.by} ${r.name}` : null, e.org].filter(Boolean).join(" · "),
     link: `${base}/app/envelopes/${e.id}`,
     linkLabel: L.open,
+    event: p.event,
   };
   let result;
   try {
@@ -256,7 +210,7 @@ export async function notificationIntegrationRoutes(app: FastifyInstance, s: Ser
     const t = await s.db.one<any>(`SELECT default_locale FROM tenants WHERE id = $1`, [a.tenantId]);
     const L = TXT[(t?.default_locale as keyof typeof TXT) ?? "es"] ?? TXT.es;
     try {
-      const res = await postToChannel(r.kind, decrypt(r.url_enc), { title: L.test });
+      const res = await postToChannel(r.kind, decrypt(r.url_enc), { title: L.test, event: "test" });
       await recordResult(s.db, r.id, { status: res.status, ok: res.ok, error: res.ok ? null : `HTTP ${res.status}: ${res.text}` });
       return { ok: res.ok, status: res.status, error: res.ok ? null : res.text || `HTTP ${res.status}` };
     } catch (err) {

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Prueba de punta a punta de la plataforma: OAuth 2.0 (client credentials, authorization code + PKCE,
-// rotación de refresh tokens, revocación, introspección, scopes), avisos a Slack/Teams con receptor local,
+// rotación de refresh tokens, revocación, introspección, scopes), avisos a Slack, Teams, Discord, Google Chat, Mattermost,
+// Rocket.Chat y Webex con receptores locales,
 // exportación a un bucket S3 simulado y dominio propio con DNS de prueba.
 // Uso: node scripts/e2e-platform.mjs [baseUrl]   (solo entorno local: usa /dev/dns-stub y destinos 127.0.0.1)
 import { createHash, randomBytes, randomUUID } from "node:crypto";
@@ -80,13 +81,27 @@ async function startServer(handler) {
   return { server, url: `http://127.0.0.1:${server.address().port}` };
 }
 
+// Receptores de webhooks entrantes: uno por plataforma (primer segmento del path), que responde como la real
+// (Discord 204, Workflows de Teams 202…) y rechaza con 400 lo que la real rechazaría por forma.
+const CHANNEL_RECEIVERS = {
+  slack: { status: 200, valid: (b) => typeof b.text === "string" },
+  teams: { status: 202, valid: (b) => b.type === "message" && b.attachments?.[0]?.contentType === "application/vnd.microsoft.card.adaptive" },
+  discord: { status: 204, valid: (b) => Array.isArray(b.embeds) && b.embeds.length <= 10 && b.embeds.every((e) => (e.title ?? "").length <= 256 && (e.description ?? "").length <= 4096) },
+  google_chat: { status: 200, valid: (b) => Array.isArray(b.cardsV2) && !!b.cardsV2[0]?.card?.header },
+  mattermost: { status: 200, valid: (b) => !!(b.text || b.attachments?.length) },
+  rocketchat: { status: 200, valid: (b) => !!(b.text || b.attachments?.length) },
+  webex: { status: 204, valid: (b) => typeof b.markdown === "string" && Buffer.byteLength(b.markdown) <= 7439 },
+};
 const channelHits = [];
 const channels = await startServer((req, res) => {
   let body = "";
   req.on("data", (c) => (body += c));
   req.on("end", () => {
-    channelHits.push({ path: req.url, body: JSON.parse(body || "{}") });
-    res.writeHead(200, { "content-type": "text/plain" }).end("ok");
+    const parsed = JSON.parse(body || "{}");
+    channelHits.push({ path: req.url, body: parsed });
+    const rcv = CHANNEL_RECEIVERS[req.url.split("/")[1]];
+    if (rcv && !rcv.valid(parsed)) return res.writeHead(400, { "content-type": "text/plain" }).end("invalid payload");
+    res.writeHead(rcv?.status ?? 200, { "content-type": "text/plain" }).end(rcv?.status === 204 ? undefined : "ok");
   });
 });
 
@@ -366,7 +381,7 @@ assert(r.status === 400 && r.body.error === "invalid_grant", `código con una UR
 ok("un código emitido antes de quitarle a la app un scope o una URI de redirección ya no se canjea");
 ok("cliente público con PKCE, rotación de secreto y desconexión de apps");
 
-// ═════════════════════════ 2. Slack / Teams ═════════════════════════
+// ═════════════════════════ 2. Avisos a canales ═════════════════════════
 
 const slack = await owner("POST", "/v1/notification-integrations", { kind: "slack", name: "#firmas", url: `${channels.url}/slack/${stamp}`, events: ["envelope.sent", "envelope.completed"] });
 const teams = await owner("POST", "/v1/notification-integrations", { kind: "teams", name: "Legales", url: `${channels.url}/teams/${stamp}`, events: ["envelope.completed"] });
@@ -375,6 +390,21 @@ const test = await owner("POST", `/v1/notification-integrations/${slack.id}/test
 assert(test.ok && channelHits.some((h) => h.path === `/slack/${stamp}` && /prueba/i.test(h.body.text)), "mensaje de prueba a Slack");
 res = await owner("POST", "/v1/notification-integrations", { kind: "slack", name: "x", url: "ftp://x.example.com/hook", events: ["envelope.sent"] }, { raw: true });
 assert(res.status === 400, "URL no https → 400");
+res = await owner("POST", "/v1/notification-integrations", { kind: "irc", name: "x", url: `${channels.url}/irc/${stamp}`, events: ["envelope.sent"] }, { raw: true });
+assert(res.status === 400, "tipo de canal desconocido → 400");
+// El resto de las plataformas: cada una con su receptor, avisando "completado".
+const OTHER_KINDS = ["discord", "google_chat", "mattermost", "rocketchat", "webex"];
+const others = {};
+for (const kind of OTHER_KINDS) {
+  others[kind] = await owner("POST", "/v1/notification-integrations", { kind, name: `Canal ${kind}`, url: `${channels.url}/${kind}/${stamp}`, events: ["envelope.completed"] });
+  assert(others[kind].kind === kind, `alta de ${kind}`);
+  const t = await owner("POST", `/v1/notification-integrations/${others[kind].id}/test`);
+  assert(t.ok, `mensaje de prueba a ${kind} (${JSON.stringify(t)})`);
+}
+const discordTest = channelHits.find((h) => h.path === `/discord/${stamp}`).body;
+assert(discordTest.embeds[0].title.includes("prueba") && discordTest.allowed_mentions?.parse?.length === 0, "Discord: prueba como embed y sin menciones");
+const teamsTest = await owner("POST", `/v1/notification-integrations/${teams.id}/test`);
+assert(teamsTest.ok && teamsTest.status === 202, "Teams (Workflows responde 202) cuenta como entregado");
 
 // ═════════════════════════ 3. Exportación a S3 (simulado) ═════════════════════════
 
@@ -392,7 +422,7 @@ assert(!JSON.stringify(conn).includes("secreto"), "el secreto del bucket no se d
 
 // Sobre completo → aviso a Slack (enviado + completado), Teams (completado) y PDF sellado en el bucket.
 // El asunto trae marcado de Slack/Teams: tiene que llegar como texto (sin @channel ni links falsos).
-const flow = await sendEnvelope(owner, "canales", { subjectSuffix: " <!channel> [Ver](https://evil.example)" });
+const flow = await sendEnvelope(owner, "canales", { subjectSuffix: " <!channel> [Ver](https://evil.example) @everyone <users/all> <@all>" });
 await signAll(owner, flow.signerName);
 const done = await waitFor(async () => {
   const d = await owner("GET", `/v1/envelopes/${flow.envelopeId}`);
@@ -404,13 +434,37 @@ assert(slackMsgs.some((m) => /enviado/i.test(m.text) && m.text.includes(`Platafo
 const slackDone = slackMsgs.find((m) => /completado/i.test(m.text));
 assert(slackDone?.blocks?.[1]?.elements?.[0]?.url?.endsWith(`/app/envelopes/${flow.envelopeId}`), "Slack: sobre completado con botón al sobre");
 await waitFor(() => channelHits.some((h) => h.path === `/teams/${stamp}`), "aviso de Teams");
-const teamsMsg = channelHits.find((h) => h.path === `/teams/${stamp}`).body;
+const teamsMsg = channelHits.find((h) => h.path === `/teams/${stamp}` && /completado/i.test(JSON.stringify(h.body))).body;
 assert(teamsMsg.attachments?.[0]?.contentType === "application/vnd.microsoft.card.adaptive" && /completado/i.test(teamsMsg.attachments[0].content.body[0].text), "Teams: tarjeta adaptable");
 assert(slackMsgs.every((m) => !JSON.stringify(m).includes("<!channel>")) && slackMsgs.some((m) => m.text.includes("&lt;!channel&gt;")), "Slack: el asunto va escapado (sin @channel)");
 assert(teamsMsg.attachments[0].content.body[1].text.includes("[Ver] (https://evil.example)"), "Teams: el asunto no arma links markdown");
 const integrations = await owner("GET", "/v1/notification-integrations");
 assert(integrations.items.find((i) => i.id === slack.id).lastStatus === 200, "última entrega registrada");
-ok("Slack y Teams: prueba, eventos elegidos, enlaces al sobre y estado de la última entrega");
+const lastOf = async (kind) => {
+  await waitFor(() => channelHits.some((h) => h.path === `/${kind}/${stamp}` && /completado/i.test(JSON.stringify(h.body))), `aviso de ${kind}`);
+  return channelHits.filter((h) => h.path === `/${kind}/${stamp}`).at(-1).body;
+};
+const envLink = `/app/envelopes/${flow.envelopeId}`;
+const discordMsg = await lastOf("discord");
+const embed = discordMsg.embeds[0];
+assert(/completado/i.test(embed.title) && embed.url.endsWith(envLink) && embed.color === 0x16a34a, "Discord: embed verde con el título linkeado al sobre");
+assert(discordMsg.allowed_mentions?.parse?.length === 0 && embed.description.includes("\\@everyone") && !embed.description.includes("[Ver](https://evil.example)"), "Discord: el asunto no menciona ni arma links");
+const chatMsg = await lastOf("google_chat");
+const chatJson = JSON.stringify(chatMsg);
+assert(chatJson.includes(envLink) && !chatJson.includes("<users/all>") && chatJson.includes("&lt;users/all&gt;"), "Google Chat: tarjeta con botón al sobre y HTML escapado");
+for (const kind of ["mattermost", "rocketchat"]) {
+  const m = await lastOf(kind);
+  const a = m.attachments[0];
+  assert(a.title_link.endsWith(envLink) && a.color === "#16a34a" && !/@(channel|all|everyone)\b/.test(a.text), `${kind}: attachment al sobre y sin menciones`);
+}
+const webexMsg = await lastOf("webex");
+assert(webexMsg.markdown.includes(envLink) && !webexMsg.markdown.includes("<@all>"), "Webex: markdown con link al sobre y sin menciones");
+const integrations2 = await owner("GET", "/v1/notification-integrations");
+for (const kind of OTHER_KINDS) {
+  const it = integrations2.items.find((i) => i.id === others[kind].id);
+  assert(it.lastStatus >= 200 && it.lastStatus < 300 && !it.lastError, `${kind}: última entrega registrada (${it.lastStatus})`);
+}
+ok("avisos a canales (Slack, Teams, Discord, Google Chat, Mattermost, Rocket.Chat, Webex): prueba, eventos elegidos, enlaces al sobre, escape y estado de la última entrega");
 
 const exported = await waitFor(async () => {
   const { items } = await owner("GET", "/v1/storage/exports");

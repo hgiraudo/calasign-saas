@@ -466,7 +466,10 @@ function MappingEditor({
   }, [provider]);
   // Plantilla de la que salieron los roles en pantalla (al editar, la del mapeo guardado).
   const rolesFrom = useRef(mapping?.templateId ?? "");
+  // Error al leer la plantilla elegida: sin aviso, quedaban en pantalla los roles de la anterior y se guardaban con esta.
+  const [tplError, setTplError] = useState<string | null>(null);
   useEffect(() => {
+    setTplError(null);
     if (!templateId) return setTpl(null);
     // Solo vale la respuesta de la plantilla elegida ahora: una respuesta lenta de la anterior dejaba sus roles y
     // etiquetas en pantalla con la nueva seleccionada.
@@ -486,7 +489,11 @@ function MappingEditor({
             : d.roles.map((r, i) => ({ role: r.name, source: "contact", index: i, channels: ["email"] }) as RoleRow),
         );
       })
-      .catch(() => !stale && setTpl(null));
+      .catch((e) => {
+        if (stale) return;
+        setTpl(null);
+        setTplError(errorText(e));
+      });
     return () => {
       stale = true;
     };
@@ -618,6 +625,7 @@ function MappingEditor({
               ))}
             </select>
           </label>
+          <ErrorBox error={tplError} />
 
           <strong className="small">{t("m.roles")}</strong>
           {roles.map((r, i) => (
@@ -776,7 +784,7 @@ function MappingEditor({
         <button type="button" className="btn" onClick={onCancel}>
           {t("cancel")}
         </button>
-        <button className="btn btn-primary" disabled={busy}>
+        <button className="btn btn-primary" disabled={busy || (!isErp && Boolean(tplError))}>
           {t("save")}
         </button>
       </div>

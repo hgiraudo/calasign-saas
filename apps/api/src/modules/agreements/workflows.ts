@@ -53,7 +53,16 @@ interface RunContext {
   waitingEnvelope?: string | null;
   /** Rutas de los datos que el formulario público completó con un correo. */
   collectEmailPaths?: string[];
+  /**
+   * Por id de sobre: los correos de sus firmantes autoservicio, fijados al enviarlo (con los datos de ese momento).
+   * La página pública ofrece el link solo a esos: no depende de la clave del sobre (dos pasos con la misma clave) ni
+   * de un formulario completado después del envío.
+   */
+  selfServiceSigners?: Record<string, string[]>;
 }
+
+/** Correo de un destinatario que es exactamente una variable ({{cliente.email}}). */
+const SELF_SERVICE_EMAIL = /^\s*\{\{\s*([A-Za-z_@][\w.@]*)\s*\}\}\s*$/;
 
 type StepResult =
   | {
@@ -81,7 +90,9 @@ async function toWorkflow(db: Db, r: any, withSecret: boolean): Promise<Workflow
     active: r.active,
     publicStart: r.public_start,
     publicUrl: r.public_start && r.public_slug ? `${await tenantBaseUrl(db, r.tenant_id)}/wf/${r.public_slug}` : null,
-    steps: r.steps,
+    // Los encabezados de las llamadas a servicios suelen llevar credenciales (Authorization, API keys): como el secreto
+    // de firma, solo los ve quien administra los workflows.
+    steps: withSecret ? r.steps : redactStepSecrets(r.steps),
     runs: { total: counts?.total ?? 0, running: counts?.running ?? 0 },
     createdAt: iso(r.created_at)!,
     updatedAt: iso(r.updated_at)!,
@@ -123,6 +134,14 @@ async function toRun(db: Db, r: any, a?: AuthContext): Promise<WorkflowRun> {
     createdAt: iso(r.created_at)!,
     updatedAt: iso(r.updated_at)!,
   };
+}
+
+function redactStepSecrets(steps: WorkflowStep[]): WorkflowStep[] {
+  return steps.map((st) =>
+    st.type === "http_request" && st.config.headers
+      ? { ...st, config: { ...st.config, headers: Object.fromEntries(Object.keys(st.config.headers).map((k) => [k, "••••••"])) } }
+      : st,
+  );
 }
 
 function summarizeDocs(docs: Record<string, any>) {
@@ -366,6 +385,18 @@ async function executeStep(d: Deps, run: any, step: WorkflowStep, index: number)
           cc: r.cc ?? false,
         };
       });
+      // Firmantes autoservicio de este sobre: su correo es exactamente una variable que ya completó el formulario público
+      // (no una copia, que no firma). Se fija ahora, con los datos con que sale el sobre.
+      const collected = new Set(ctx.collectEmailPaths ?? []);
+      const selfService = [
+        ...new Set(
+          step.config.recipients.flatMap((r, i) => {
+            const m = SELF_SERVICE_EMAIL.exec(r.email ?? "");
+            const email = recipients[i].email;
+            return !r.cc && m && collected.has(m[1]) && email ? [email] : [];
+          }),
+        ),
+      ];
       const { userId, apiKeyId } = runOwner(run, wf);
       // El sobre sale a nombre de ese dueño: tiene que seguir pudiendo crear sobres (miembro, o key sin revocar, con
       // envelopes:create). Si no, un workflow público seguiría enviando en nombre de alguien que ya dejó la organización.
@@ -399,6 +430,7 @@ async function executeStep(d: Deps, run: any, step: WorkflowStep, index: number)
             throw e;
           });
           c.envelopes = { ...(c.envelopes ?? {}), [step.config.envelopeKey]: { envelopeId } };
+          c.selfServiceSigners = { ...(c.selfServiceSigners ?? {}), [envelopeId]: selfService };
           return { envelopeId };
         },
       };
@@ -806,9 +838,12 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
       if (!["running", "waiting"].includes(run.status)) throw conflict("not_active", "La ejecución ya terminó");
       await t.query(`UPDATE workflow_runs SET status = 'cancelled', updated_at = now() WHERE id = $1`, [run.id]);
       await t.query(`UPDATE workflow_run_steps SET status = 'cancelled', finished_at = now() WHERE run_id = $1 AND status IN ('pending','running','waiting')`, [run.id]);
-      // Los sobres enviados por el run que siguen en curso se anulan.
-      for (const e of Object.values((run.context?.envelopes ?? {}) as Record<string, { envelopeId: string }>)) {
-        const env = await t.one<any>(`SELECT id, tenant_id, status FROM envelopes WHERE id = $1 FOR UPDATE`, [e.envelopeId]);
+      // Los sobres enviados por el run que siguen en curso se anulan. También los que ya no figuran en el contexto: dos
+      // pasos con la misma clave de sobre dejan solo el último, y el primero seguía en curso con el run cancelado.
+      const envIds = new Set(Object.values((run.context?.envelopes ?? {}) as Record<string, { envelopeId: string }>).map((e) => e.envelopeId));
+      for (const x of await t.query<any>(`SELECT id FROM envelopes WHERE tenant_id = $1 AND metadata->>'workflowRunId' = $2`, [run.tenant_id, run.id])) envIds.add(x.id);
+      for (const envelopeId of envIds) {
+        const env = await t.one<any>(`SELECT id, tenant_id, status FROM envelopes WHERE id = $1 FOR UPDATE`, [envelopeId]);
         if (env?.status !== "sent" && env?.status !== "awaiting_certificates") continue;
         const reason = "Workflow cancelado";
         await t.query(`UPDATE envelopes SET status = 'voided', voided_at = now(), void_reason = $2, updated_at = now(), version = version + 1 WHERE id = $1`, [env.id, reason]);
@@ -891,13 +926,21 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
     // contara, quien escribe ahí el correo de un firmante fijo recibía el link de ese firmante), y solo en el sobre de
     // ese paso (en otro sobre del run, el mismo correo puede ser el de un firmante fijo).
     const selfByEnvelope = new Map<string, Set<string>>();
-    for (const st of run.steps as WorkflowStep[]) {
-      if (st.type !== "send_for_signature") continue;
+    // Los sobres enviados registran sus firmantes autoservicio al salir (selfServiceSigners).
+    const recorded = (run.context?.selfServiceSigners ?? {}) as Record<string, string[]>;
+    for (const [envId, list] of Object.entries(recorded)) if (list.length) selfByEnvelope.set(envId, new Set(list));
+    // Runs anteriores a ese registro: se reconstruye con los pasos. Una clave de sobre usada por dos pasos queda afuera:
+    // el contexto solo guarda el último sobre, y los firmantes autoservicio del primer paso se atribuían al segundo
+    // (donde ese correo podía ser el de un firmante fijo).
+    const sendSteps = (run.steps as WorkflowStep[]).filter((st): st is Extract<WorkflowStep, { type: "send_for_signature" }> => st.type === "send_for_signature");
+    const keyUses = new Map<string, number>();
+    for (const st of sendSteps) keyUses.set(st.config.envelopeKey, (keyUses.get(st.config.envelopeKey) ?? 0) + 1);
+    for (const st of sendSteps) {
       const envId = runEnvelopes[st.config.envelopeKey]?.envelopeId;
-      if (!envId) continue;
+      if (!envId || Object.prototype.hasOwnProperty.call(recorded, envId) || keyUses.get(st.config.envelopeKey) !== 1) continue;
       for (const r of st.config.recipients) {
         if (r.cc) continue;
-        const m = /^\s*\{\{\s*([A-Za-z_@][\w.@]*)\s*\}\}\s*$/.exec(r.email ?? "");
+        const m = SELF_SERVICE_EMAIL.exec(r.email ?? "");
         if (!m || !collected.has(m[1])) continue;
         const v = getPath(run.context?.data ?? {}, m[1]);
         if (typeof v !== "string" || !v.trim()) continue;

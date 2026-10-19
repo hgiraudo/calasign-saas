@@ -11,12 +11,14 @@ export function QuickstartPage() {
 
   // ───────── Una sola llamada: el camino principal ─────────
 
+  // El base64 entra a jq por stdin (-Rs): como argumento (--arg pdf "$(base64 …)") superaba el límite de 128 KB por
+  // argumento de Linux con cualquier PDF de más de ~96 KB ("Argument list too long"), y `base64 -w0` no existe en macOS.
   const oneCurl = `# ${c("qs.c.one")}
-jq -n --arg pdf "$(base64 -w0 contrato.pdf)" '{
+base64 < contrato.pdf | tr -d '\\n' | jq -Rs '{
   subject: "Contrato de servicios",
   message: "Hola Ana, te comparto el contrato para firmar.",
   metadata: { externalId: "PED-1234" },
-  documents: [ { name: "contrato.pdf", base64: $pdf } ],
+  documents: [ { name: "contrato.pdf", base64: . } ],
   recipients: [ { name: "Ana Pérez", email: "ana@example.com" } ],
   fields: [ { recipient: 0, type: "signature",
               anchor: { text: "[[firma]]", offsetY: -40, width: 150, height: 40 } } ],
@@ -163,9 +165,17 @@ ENVELOPE_ID=$(curl -s -X POST "$BASE/v1/envelopes" -H "$AUTH" -H "Idempotency-Ke
       "fields":[{"type":"signature","anchor":{"text":"[[firma]]","offsetY":-40,"width":150,"height":40}}],
       "send":true};type=application/json' \\
   -F "contrato=@contrato.pdf;type=application/pdf" | jq -r .envelope.id)
+[ "$ENVELOPE_ID" != "null" ] || exit 1
 
 # ${c("qs.c.wait")}
-until [ "$(curl -s "$BASE/v1/envelopes/$ENVELOPE_ID" -H "$AUTH" | jq -r .envelope.status)" = "completed" ]; do sleep 60; done
+while :; do
+  STATUS=$(curl -s "$BASE/v1/envelopes/$ENVELOPE_ID" -H "$AUTH" | jq -r .envelope.status)
+  case "$STATUS" in
+    completed) break ;;
+    declined|voided|expired) echo "$STATUS" >&2; exit 1 ;;
+  esac
+  sleep 60
+done
 
 # ${c("qs.c.download")}
 curl -s "$BASE/v1/envelopes/$ENVELOPE_ID/signed.pdf" -H "$AUTH" -o contrato-firmado.pdf`;
@@ -185,7 +195,12 @@ const { envelope } = await cs.envelopes.createAndSend({
 });
 
 // ${c("qs.c.wait")}
-while ((await cs.envelopes.get(envelope.id)).envelope.status !== "completed") await new Promise((r) => setTimeout(r, 60_000));
+let status = envelope.status;
+while (status !== "completed") {
+  if (["declined", "voided", "expired"].includes(status)) throw new Error(\`envelope \${status}\`);
+  await new Promise((r) => setTimeout(r, 60_000));
+  status = (await cs.envelopes.get(envelope.id)).envelope.status;
+}
 
 // ${c("qs.c.download")}
 await writeFile("contrato-firmado.pdf", await cs.envelopes.downloadSigned(envelope.id));`;
@@ -207,8 +222,12 @@ with open("contrato.pdf", "rb") as f:
     })["envelope"]
 
 # ${c("qs.c.wait")}
-while cs.envelopes.get(env["id"])["envelope"]["status"] != "completed":
+status = env["status"]
+while status != "completed":
+    if status in ("declined", "voided", "expired"):
+        raise RuntimeError(f"envelope {status}")
     time.sleep(60)
+    status = cs.envelopes.get(env["id"])["envelope"]["status"]
 
 # ${c("qs.c.download")}
 with open("contrato-firmado.pdf", "wb") as out:

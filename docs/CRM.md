@@ -24,6 +24,9 @@ Piezas comunes:
   devolver (propiedad de estado, valores por estado, adjuntar PDF), disparo (`manual`, `webhook`, `on_completion`).
 - **Vínculo** sobre ↔ registro (`crm_links`): lo crea el envío desde un registro, la búsqueda en el ERP o
   `POST /v1/crm/links`. Cada evento del sobre (enviado, completado, rechazado, anulado, vencido) encola un write-back.
+  Los write-backs de un vínculo pueden correr en paralelo: un compare-and-set del rango sobre `crm_links.last_status`
+  (`sent` < estados finales) hace que un `sent` nunca pise un estado final, y si otro trabajo reclamó un estado final
+  mientras se escribía `sent`, se reescribe el final (`apps/api/test/crm-writeback-race.test.ts`).
 - **Actividad** (`/v1/crm/runs`): cada envío, write-back y búsqueda queda registrado con intentos y error. Los errores
   transitorios se reintentan con el backoff de la cola; un **token revocado** o datos que no cierran no se reintentan
   solos (quedan como fallidos con el error visible, también en la conexión) y se reintentan a mano

@@ -330,12 +330,31 @@ const pdfName = (subject: string, envelopeId: string) => `${subject.replace(/[\\
 async function writeBackAndAttach(db: Db, blobs: BlobStore, conn: CrmConn, link: any, mapping: any | null, status: string): Promise<Record<string, unknown>> {
   const wb = { attachPdf: true, ...(mapping?.write_back ?? {}) };
   const detail: Record<string, unknown> = {};
-  // Un "sent" que se reintenta después de que ya se escribió un estado final no lo pisa.
-  if (status === "sent" && link.last_status && link.last_status !== "sent") return { skipped: `el registro ya tiene el estado final ${link.last_status}` };
+  // Los trabajos "sent" y "completed" (o "declined"…) del mismo vínculo pueden correr a la vez (la cola procesa en
+  // paralelo y reintenta): leer last_status al arrancar no alcanzaba y un "sent" podía pisar en el CRM el estado
+  // final. Compare-and-set del rango sobre last_status, sin dejar una transacción abierta durante las llamadas HTTP
+  // (en PGlite una transacción bloquea toda la base, y las credenciales renovadas se guardan por fuera):
+  //  1. antes de escribir, se reclama el vínculo solo si su estado no tiene un rango mayor (si no, se omite);
+  //  2. después de escribir, se vuelve a leer: si mientras tanto otro trabajo reclamó un estado de rango mayor, su
+  //     escritura pudo llegar al CRM antes que esta, así que se reescribe ese estado (el último en llegar gana).
+  const claimed = await db.one<{ id: string }>(
+    `UPDATE crm_links SET last_status = $2 WHERE id = $1 AND ${STATUS_RANK_SQL} <= $3 RETURNING id`,
+    [link.id, status, statusRank(status)],
+  );
+  if (!claimed) {
+    const cur = await db.one<{ last_status: string | null }>(`SELECT last_status FROM crm_links WHERE id = $1`, [link.id]);
+    return { skipped: `el registro ya tiene el estado ${cur?.last_status ?? "?"}` };
+  }
   if (CRM_KIND[conn.provider] === "crm" && wb.statusProperty) {
     const value = statusValue(wb, status as any);
     await writeStatus(conn, link.object_type, link.object_id, wb.statusProperty, value);
     detail.statusWritten = { property: wb.statusProperty, value };
+    const after = (await db.one<{ last_status: string | null }>(`SELECT last_status FROM crm_links WHERE id = $1`, [link.id]))?.last_status ?? null;
+    if (after && statusRank(after) > statusRank(status)) {
+      const finalValue = statusValue(wb, after as any);
+      await writeStatus(conn, link.object_type, link.object_id, wb.statusProperty, finalValue);
+      detail.statusRewritten = { property: wb.statusProperty, value: finalValue, because: after };
+    }
   }
   if (status === "completed" && wb.attachPdf !== false && !link.pdf_attached_at) {
     const pdf = await signedPdf(db, blobs, link.envelope_id);
@@ -353,9 +372,16 @@ async function writeBackAndAttach(db: Db, blobs: BlobStore, conn: CrmConn, link:
       detail.attached = ref;
     }
   }
-  await db.query(`UPDATE crm_links SET last_status = $2 WHERE id = $1`, [link.id, status]);
   return detail;
 }
+
+/** Rango de los estados que se escriben en el CRM: uno final (completado, rechazado, anulado, vencido) nunca se
+ *  reemplaza por "sent". Entre finales gana el último evento. */
+export function statusRank(s: string | null | undefined): number {
+  if (!s) return 0;
+  return s === "sent" ? 1 : 2;
+}
+const STATUS_RANK_SQL = `(CASE WHEN last_status IS NULL THEN 0 WHEN last_status = 'sent' THEN 1 ELSE 2 END)`;
 
 export async function handleCrmJob(d: { db: Db; blobs: BlobStore }, p: { runId: string }) {
   const { db } = d;

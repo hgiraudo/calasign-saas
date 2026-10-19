@@ -9,6 +9,7 @@ import { parseAmountText } from "../lib/logic";
 import { useAgrText } from "../lib/i18n-agreements";
 import { AgreementsTabs } from "../components/AgreementsUi";
 import { ErrorBox, Modal, Spinner } from "../components/ui";
+import { useAuth } from "../lib/auth";
 
 export function AgreementStatusBadge({ status }: { status: AgreementStatus }) {
   const ta = useAgrText();
@@ -182,7 +183,7 @@ export function AgreementsPage() {
       </div>
 
       <div className="agr-filters" role="search">
-        <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder={ta("repo.search")} aria-label={ta("repo.search")} />
+        <input type="search" maxLength={200} value={q} onChange={(e) => setQ(e.target.value)} placeholder={ta("repo.search")} aria-label={ta("repo.search")} />
         <select value={params.get("status") ?? String(viewFilters.status ?? "")} onChange={(e) => setParam("status", e.target.value)} aria-label={ta("col.status")}>
           <option value="">{ta("repo.allStatus")}</option>
           {(["active", "expired", "terminated"] as const).map((s) => (
@@ -781,6 +782,8 @@ function slug(s: string) {
 export function AgreementDetailPage() {
   const { id } = useParams();
   const ta = useAgrText();
+  const { can } = useAccess();
+  const { me } = useAuth();
   const { t } = useI18n();
   const nav = useNavigate();
   const [a, setA] = useState<Agreement | null>(null);
@@ -828,6 +831,8 @@ export function AgreementDetailPage() {
   };
 
   if (!a) return <div className="page">{error ? <ErrorBox error={error} /> : <Spinner />}</div>;
+  // Editar o borrar: quien lo creó o con envelopes:manage_all (como la API); con view_all solo se ve.
+  const canEdit = can("envelopes:manage_all") || (a.ownerUserId != null && a.ownerUserId === me?.user.id);
   return (
     <div className="page">
       <AgreementsTabs />
@@ -851,7 +856,7 @@ export function AgreementDetailPage() {
               {ta("ag.envelope")}
             </Link>
           )}
-          {a.source === "external" && (
+          {a.source === "external" && canEdit && (
             <button type="button" className="btn btn-ghost" onClick={() => setConfirmDelete(true)}>
               {ta("ag.delete")}
             </button>
@@ -862,13 +867,15 @@ export function AgreementDetailPage() {
         <form className="card pad stack" onSubmit={save}>
           <h2>{ta("ag.details")}</h2>
           <ErrorBox error={error} />
-          <MetaForm d={d} setD={setD} fields={fields} />
-          <div className="row-end">
-            {saved && <span className="muted small">✓ {ta("ag.saved")}</span>}
-            <button type="submit" className="btn btn-primary" disabled={busy || !dirty}>
-              {busy ? t("common.saving") : ta("ag.save")}
-            </button>
-          </div>
+          <MetaForm d={d} setD={setD} fields={fields} readOnly={!canEdit} />
+          {canEdit && (
+            <div className="row-end">
+              {saved && <span className="muted small">✓ {ta("ag.saved")}</span>}
+              <button type="submit" className="btn btn-primary" disabled={busy || !dirty}>
+                {busy ? t("common.saving") : ta("ag.save")}
+              </button>
+            </div>
+          )}
         </form>
         <div className="card pad stack small">
           <div>

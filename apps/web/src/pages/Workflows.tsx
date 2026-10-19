@@ -86,13 +86,13 @@ function newStep(type: WorkflowStepType, ta: (k: AgreementsTextKey) => string, m
   const name = ta(`step.${type}` as AgreementsTextKey);
   switch (type) {
     case "collect_data":
-      return { id: uid(), name, type, config: { title: name, target: "cliente", fields: [{ key: "nombre", label: "Nombre", type: "text", required: true }, { key: "email", label: "Correo", type: "email", required: true }] } };
+      return { id: uid(), name, type, config: { title: name, target: "cliente", fields: [{ key: "nombre", label: ta("wf.def.name"), type: "text", required: true }, { key: "email", label: ta("wf.def.email"), type: "email", required: true }] } };
     case "approval":
       return { id: uid(), name, type, config: { approverUserId: me ?? "", message: null } };
     case "generate_document":
       return { id: uid(), name, type, config: { documentTemplateId: "", output: "documento", allowMissing: false } };
     case "send_for_signature":
-      return { id: uid(), name, type, config: { document: "documento", envelopeKey: "firma", subject: "Documento para {{cliente.nombre}}", recipients: [{ role: "Cliente", name: "{{cliente.nombre}}", email: "{{cliente.email}}" }] } };
+      return { id: uid(), name, type, config: { document: "documento", envelopeKey: "firma", subject: `${ta("wf.def.subject")} {{cliente.nombre}}`, recipients: [{ role: ta("wf.def.role"), name: "{{cliente.nombre}}", email: "{{cliente.email}}" }] } };
     case "wait_for_completion":
       return { id: uid(), name, type, config: { envelopeKey: "firma" } };
     case "http_request":
@@ -161,15 +161,15 @@ function StepConfig({ step, onChange, members, templates }: { step: WorkflowStep
             <legend>{ta("cfg.fields")}</legend>
             {c.fields.map((f, i) => (
               <div key={i} className="agr-subrow">
-                <input aria-label="label" value={f.label} onChange={(e) => setField(i, { label: e.target.value })} placeholder={ta("fields.label")} />
-                <input aria-label="key" value={f.key} onChange={(e) => setField(i, { key: e.target.value })} placeholder={ta("fields.key")} />
-                <select aria-label="type" value={f.type} onChange={(e) => setField(i, { type: e.target.value as CollectField["type"] })}>
+                <input aria-label={ta("fields.label")} value={f.label} onChange={(e) => setField(i, { label: e.target.value })} placeholder={ta("fields.label")} />
+                <input aria-label={ta("fields.key")} value={f.key} onChange={(e) => setField(i, { key: e.target.value })} placeholder={ta("fields.key")} />
+                <select aria-label={ta("fields.type")} value={f.type} onChange={(e) => setField(i, { type: e.target.value as CollectField["type"] })}>
                   {(["text", "textarea", "email", "number", "date", "select"] as const).map((x) => (
                     <option key={x}>{x}</option>
                   ))}
                 </select>
                 {f.type === "select" && (
-                  <ListInput aria-label="options" value={f.options ?? []} onChange={(options) => setField(i, { options })} placeholder="A, B" />
+                  <ListInput aria-label={ta("fields.options")} value={f.options ?? []} onChange={(options) => setField(i, { options })} placeholder="A, B" />
                 )}
                 <label className="check">
                   <input type="checkbox" checked={f.required} onChange={(e) => setField(i, { required: e.target.checked })} /> {ta("cfg.required")}
@@ -188,7 +188,7 @@ function StepConfig({ step, onChange, members, templates }: { step: WorkflowStep
                   // compartían el valor en el formulario público (escribir en uno llenaba el otro).
                   let n = c.fields.length + 1;
                   while (c.fields.some((f) => f.key === `campo${n}`)) n++;
-                  set({ fields: [...c.fields, { key: `campo${n}`, label: "Campo", type: "text", required: false }] });
+                  set({ fields: [...c.fields, { key: `campo${n}`, label: ta("wf.def.field"), type: "text", required: false }] });
                 }}
               >
                 {ta("cfg.addField")}

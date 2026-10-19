@@ -95,7 +95,9 @@ export function TemplateUsePage() {
       const d = await api<EnvelopeDetail>("/v1/envelopes/from-template", { method: "POST", body, headers: { "Idempotency-Key": `${idemKey}:${send ? "send" : "draft"}` } });
       nav(send ? `/app/envelopes/${d.envelope.id}` : `/app/envelopes/${d.envelope.id}/edit`);
     } catch (err) {
-      if (err instanceof HttpError && err.status > 0 && err.status < 500) setIdemKey(uuid());
+      // Clave nueva solo ante un rechazo de los datos: con idempotency_in_progress/mismatch el primer pedido ya llegó al
+      // servidor, y una clave nueva podía crear (y enviar) un segundo envío.
+      if (err instanceof HttpError && err.status > 0 && err.status < 500 && !["idempotency_in_progress", "idempotency_mismatch"].includes(err.code)) setIdemKey(uuid());
       setError(errorText(err));
       setBusy(false);
     }

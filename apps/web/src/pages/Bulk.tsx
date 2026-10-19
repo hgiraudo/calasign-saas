@@ -187,7 +187,9 @@ export function BulkNewPage() {
       nav(`/app/bulk/${b.id}`);
     } catch (e) {
       // Respuesta de error: se puede corregir y volver a enviar con otra clave (un corte o un 5xx reintenta con la misma).
-      if (e instanceof HttpError && e.status > 0 && e.status < 500) setIdemKey(uuid());
+      // Clave nueva solo ante un rechazo de los datos: con idempotency_in_progress/mismatch el primer pedido ya llegó al
+      // servidor, y una clave nueva podía crear (y enviar) un segundo envío.
+      if (e instanceof HttpError && e.status > 0 && e.status < 500 && !["idempotency_in_progress", "idempotency_mismatch"].includes(e.code)) setIdemKey(uuid());
       if (e instanceof HttpError && e.code === "rows_invalid") setResult(e.details as BulkValidationResult);
       setError(errorText(e));
       setBusy(false);
@@ -470,6 +472,8 @@ export function BulkDetailPage() {
         </div>
       </div>
       <div className="card table-wrap">
+        {/* La API devuelve hasta 500 filas: con más, se avisa (el CSV tiene todas). */}
+        {total > items.length && <p className="muted small">{st("bulk.partial", { n: String(items.length), total: String(total) })}</p>}
         <table className="table">
           <thead>
             <tr>

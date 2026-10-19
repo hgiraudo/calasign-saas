@@ -59,7 +59,8 @@ export function Layout() {
             {t("nav.envelopes")}
           </NavLink>
           <NavLink to="/app/templates">{t("nav.templates")}</NavLink>
-          <NavLink to="/app/agreements">{ag("nav.agreements")}</NavLink>
+          {/* El repositorio y los acuerdos piden envelopes:create (también para leer). */}
+          {can("envelopes:create") && <NavLink to="/app/agreements">{ag("nav.agreements")}</NavLink>}
           {/* Los reportes son de toda la organización: la API pide envelopes:view_all. */}
           {can("envelopes:view_all") && <NavLink to="/app/reports">{xt("nav.reports")}</NavLink>}
           {/* Equipo, marca, API keys, integraciones, auditoría y seguridad viven bajo Ajustes (índice según permisos). */}

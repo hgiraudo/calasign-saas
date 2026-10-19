@@ -17,11 +17,13 @@ import { EnvelopePaymentSummary } from "../components/BillingExtras";
 import { ArchivePanel } from "../components/DataExtras";
 import { CertificateProgressPanel } from "../components/CertSign";
 import { SealOptionsPanel } from "../components/EvidenceExtras";
+import { useAccess } from "../lib/access";
 
 export function EnvelopeDetailPage() {
   const { id = "" } = useParams();
   const { t, locale } = useI18n();
   const [detail, setDetail] = useState<EnvelopeDetail | null>(null);
+  const { can } = useAccess();
   const [events, setEvents] = useState<EnvelopeEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
   // Error del refresco automático, aparte del de las acciones: el refresco limpia el suyo sin borrar el de una acción.
@@ -184,7 +186,7 @@ export function EnvelopeDetailPage() {
               )}
             </>
           )}
-          <SaveAsTemplateButton envelopeId={id} defaultName={env.subject} />
+          {can("envelopes:create") && <SaveAsTemplateButton envelopeId={id} defaultName={env.subject} />}
         </div>
       </div>
 
@@ -199,7 +201,7 @@ export function EnvelopeDetailPage() {
         </div>
       )}
       {/* Si falló por el sello de empresa (vencido o borrado), se puede cambiar o quitar antes de reintentar. */}
-      {finalizeFailed && <SealOptionsPanel envelopeId={env.id} sealOnly />}
+      {finalizeFailed && <SealOptionsPanel envelopeId={env.id} sealOnly disabled={!canManage} />}
       {env.voidReason && (
         <div className="alert alert-warn">
           {t("detail.voidedReason")} {env.voidReason}
@@ -208,7 +210,7 @@ export function EnvelopeDetailPage() {
       {env.message && <p className="message-box">{env.message}</p>}
       <EnvelopePaymentSummary envelopeId={env.id} recipients={detail.recipients} envelopeStatus={env.status} />
 
-      <AiMetadataPanel envelopeId={env.id} completed={env.status === "completed"} />
+      <AiMetadataPanel envelopeId={env.id} completed={env.status === "completed"} canManage={canManage} />
       {env.status === "completed" && <ArchivePanel envelopeId={env.id} canManage={canManage} />}
       {detail.recipients.some((r) => r.signatureType === "certificate") && <CertificateProgressPanel envelopeId={env.id} status={env.status} refreshKey={events.length} />}
 

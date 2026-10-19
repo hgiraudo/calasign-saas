@@ -302,7 +302,8 @@ const EMPTY_META: ContractMetadata = {
   noticePeriodDays: null,
 };
 
-export function AiMetadataPanel({ envelopeId, completed }: { envelopeId: string; completed: boolean }) {
+/** canManage: quien solo puede ver el sobre no ve "Extraer" ni "Editar" (la API pide poder modificarlo). */
+export function AiMetadataPanel({ envelopeId, completed, canManage = true }: { envelopeId: string; completed: boolean; canManage?: boolean }) {
   const ai = useAiText();
   const { locale } = useI18n();
   const [enabled, setEnabled] = useState(false);
@@ -375,12 +376,12 @@ export function AiMetadataPanel({ envelopeId, completed }: { envelopeId: string;
     <section className="card pad ai-panel">
       <div className="row-wrap">
         <h2 className="grow">✨ {ai("meta.title")}</h2>
-        {enabled && !edit && (
+        {enabled && !edit && canManage && (
           <button type="button" className="btn btn-sm" disabled={busy} onClick={extract}>
             {busy ? ai("meta.extracting") : ai("meta.extract")}
           </button>
         )}
-        {!edit && (
+        {!edit && canManage && (
           <button type="button" className="btn btn-sm btn-ghost" onClick={startEdit}>
             {ai("meta.edit")}
           </button>

@@ -1,6 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import {
-  CreateEnvelopeInput,
   PutFieldsInput,
   PutRecipientsInput,
   UpdateEnvelopeInput,
@@ -29,6 +28,7 @@ import { assignFieldIds, formulaRefs, pruneDanglingConditions, saveFieldLogic } 
 import { paymentBlocksCompletion } from "./billing/payments";
 import { enforceEnvelopeQuota } from "./billing/plans";
 import { deleteFilesIfUnused, discardBlobsOnFailure } from "./file-cleanup";
+import { createEnvelopeRoute, ONE_SHOT_JSON_BODY_LIMIT } from "./envelope-oneshot";
 
 /** Bloquea el sobre para serializar cambios y eventos. */
 export async function lockEnvelope(db: Db, tenantId: string, id: string) {
@@ -101,7 +101,17 @@ export async function advanceRouting(db: Db, tenantId: string, envelopeId: strin
 
 // ───────────────────────────── Idempotencia ─────────────────────────────
 
-async function idempotent<T>(s: Services, req: FastifyRequest, reply: FastifyReply, fn: () => Promise<{ status: number; body: T }>) {
+/**
+ * Ejecuta `fn` respetando el encabezado Idempotency-Key. `hashMaterial` reemplaza al cuerpo JSON en la huella del
+ * pedido cuando el cuerpo no es JSON (multipart/form-data: la parte JSON y el sha256 de cada archivo).
+ */
+export async function idempotent<T>(
+  s: Services,
+  req: FastifyRequest,
+  reply: FastifyReply,
+  fn: () => Promise<{ status: number; body: T }>,
+  hashMaterial?: string,
+) {
   let key = req.headers["idempotency-key"] as string | undefined;
   if (!key) {
     const r = await fn();
@@ -116,7 +126,7 @@ async function idempotent<T>(s: Services, req: FastifyRequest, reply: FastifyRep
   // creaba y veía uno que quizá no puede ver. Se guarda con el prefijo de quien llama (key, app OAuth o persona).
   const principal = a.oauth ? `o:${a.oauth.clientId}:${a.userId ?? a.apiKeyId ?? ""}` : a.apiKeyId ? `k:${a.apiKeyId}` : `u:${a.userId ?? ""}`;
   key = `${principal}|${key}`;
-  const reqHash = sha256Hex(`${req.method} ${req.url} ${JSON.stringify(req.body ?? null)}`);
+  const reqHash = sha256Hex(`${req.method} ${req.url} ${hashMaterial ?? JSON.stringify(req.body ?? null)}`);
   // Se reserva la clave ANTES de ejecutar (status_code 0 = en curso): dos pedidos simultáneos con la misma
   // clave no pueden ejecutarse los dos. Una reserva vieja que quedó en curso (el proceso murió a mitad del
   // pedido) se descarta: si no, esa clave respondería idempotency_in_progress para siempre.
@@ -221,35 +231,9 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
     },
   );
 
-  app.post("/v1/envelopes", { preHandler: auth }, async (req, reply) =>
-    idempotent(s, req, reply, async () => {
-      const a = A(req);
-      const input = CreateEnvelopeInput.parse(req.body);
-      const id = uuidv7();
-      const tenant = await s.db.one<any>(`SELECT default_locale FROM tenants WHERE id = $1`, [a.tenantId]);
-      await s.db.tx(async (t) => {
-        await t.query(
-          `INSERT INTO envelopes (id, tenant_id, created_by, created_via, subject, message, locale, expires_at, metadata, created_by_api_key)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-          [
-            id,
-            a.tenantId,
-            a.userId,
-            a.apiKeyId ? "api" : "web",
-            input.subject,
-            input.message ?? null,
-            input.locale ?? tenant?.default_locale ?? "es",
-            input.expiresAt ?? new Date(Date.now() + 30 * 86400_000).toISOString(),
-            JSON.stringify(input.metadata ?? {}),
-            a.apiKeyId,
-          ],
-        );
-        await applyEnvelopeSettings(t, id, input);
-        await appendEvent(t, { tenantId: a.tenantId, envelopeId: id, type: "envelope.created", actor: a.actor, data: { subject: input.subject } });
-      });
-      return { status: 201, body: await loadDetail(s.db, a.tenantId, id) };
-    }),
-  );
+  // Alta de un sobre. Además del borrador vacío de siempre, acepta el sobre completo en una sola llamada (documentos,
+  // destinatarios, campos y el envío), en JSON o multipart/form-data: ver envelope-oneshot.ts.
+  app.post("/v1/envelopes", { preHandler: auth, bodyLimit: ONE_SHOT_JSON_BODY_LIMIT }, async (req, reply) => createEnvelopeRoute(s, req, reply));
 
   app.get<P>("/v1/envelopes/:id", { preHandler: auth }, async (req) => loadDetail(s.db, A(req).tenantId, req.params.id));
 
@@ -304,46 +288,20 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
     if (!file) throw badRequest("file_required", "Falta el archivo (campo 'file')");
     const uploaded = new Uint8Array(await file.toBuffer());
     if (file.file.truncated) throw new AppError(413, "file_too_large", "El archivo supera el tamaño máximo");
-    // Se guarda el PDF normalizado (reescrito por pdf-lib): el visor y el PDF final salen del mismo archivo, así que
-    // un PDF "ambiguo" no puede mostrar un contenido y firmar otro. El hash de lo subido queda en la evidencia.
-    let info, bytes: Uint8Array;
-    try {
-      ({ info, bytes } = await preparePdfUpload(uploaded));
-    } catch (e) {
-      if (e instanceof InvalidPdfError) throw badRequest(e.code, e.message);
-      throw e;
-    }
-    const sha = sha256Hex(bytes);
-    const uploadedSha = sha256Hex(uploaded);
-    const docId = uuidv7();
-    const fileId = uuidv7();
-    const key = `tenants/${a.tenantId}/envelopes/${req.params.id}/${fileId}.pdf`;
+    const doc = await preparePdfDocument(a.tenantId, req.params.id, uploaded, file.filename || "documento.pdf");
     // Verificar el sobre antes de subir el archivo.
     const pre = await s.db.one<any>(`SELECT status FROM envelopes WHERE id = $1 AND tenant_id = $2`, [req.params.id, a.tenantId]);
     if (!pre) throw notFound("Sobre");
     requireDraft(pre);
-    await s.blobs.put(key, bytes, "application/pdf");
-    const name = (file.filename || "documento.pdf").slice(0, 200);
+    await s.blobs.put(doc.key, doc.bytes, "application/pdf");
     // Si el sobre dejó de ser borrador (o se borró) entre el chequeo y acá, el PDF subido no lo referencia nada.
-    await discardBlobsOnFailure(s.blobs, [key], () => s.db.tx(async (t) => {
+    await discardBlobsOnFailure(s.blobs, [doc.key], () => s.db.tx(async (t) => {
       const e = await lockEnvelope(t, a.tenantId, req.params.id);
       requireDraft(e);
-      const pos = await t.one<any>(`SELECT COALESCE(MAX(position), 0) + 1 AS p FROM documents WHERE envelope_id = $1`, [e.id]);
-      await t.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original',$3,'application/pdf',$4,$5)`, [
-        fileId,
-        a.tenantId,
-        key,
-        bytes.length,
-        sha,
-      ]);
-      await t.query(
-        `INSERT INTO documents (id, tenant_id, envelope_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-        [docId, a.tenantId, e.id, pos.p, name, fileId, info.pageCount, JSON.stringify(info.pages)],
-      );
-      await appendEvent(t, { tenantId: a.tenantId, envelopeId: e.id, type: "document.added", actor: a.actor, data: { documentId: docId, name, sha256: sha, uploadedSha256: uploadedSha, pages: info.pageCount } });
+      await insertPreparedDocument(t, a.tenantId, a.actor, e.id, doc);
       await touch(t, e.id);
     }));
-    const d = (await loadDetail(s.db, a.tenantId, req.params.id)).documents.find((x) => x.id === docId);
+    const d = (await loadDetail(s.db, a.tenantId, req.params.id)).documents.find((x) => x.id === doc.docId);
     reply.code(201);
     return d;
   });
@@ -384,46 +342,7 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
     await s.db.tx(async (t) => {
       const e = await lockEnvelope(t, a.tenantId, req.params.id);
       requireDraft(e);
-      const list = input.recipients.map((r) => ({ ...r, id: r.id ?? uuidv7() }));
-      const ids = list.map((r) => r.id);
-      if (new Set(ids).size !== ids.length) throw badRequest("duplicate_ids", "Ids de destinatarios repetidos");
-      const foreign = await t.query(`SELECT id FROM recipients WHERE id = ANY($1) AND envelope_id <> $2`, [ids, e.id]);
-      if (foreign.length) throw conflict("id_in_use", "Id de destinatario en uso");
-      await t.query(`DELETE FROM recipients WHERE envelope_id = $1 AND NOT (id = ANY($2))`, [e.id, ids]);
-      for (const r of list) {
-        await t.query(
-          `INSERT INTO recipients (id, tenant_id, envelope_id, role, routing_order, name, email, phone, locale, channels, telegram_chat_id, id_document_type, id_document_number)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-           ON CONFLICT (id) DO UPDATE SET role = EXCLUDED.role, routing_order = EXCLUDED.routing_order, name = EXCLUDED.name,
-             email = EXCLUDED.email, phone = EXCLUDED.phone, locale = EXCLUDED.locale, channels = EXCLUDED.channels,
-             telegram_chat_id = COALESCE(EXCLUDED.telegram_chat_id, recipients.telegram_chat_id),
-             id_document_type = EXCLUDED.id_document_type, id_document_number = EXCLUDED.id_document_number`,
-          [
-            r.id,
-            a.tenantId,
-            e.id,
-            r.role,
-            r.routingOrder,
-            r.name,
-            r.email ?? null,
-            r.phone ?? null,
-            r.locale ?? null,
-            r.channels,
-            r.telegramChatId ?? null,
-            r.idDocumentType ?? null,
-            r.idDocumentNumber ?? null,
-          ],
-        );
-        await t.query(`UPDATE recipients SET auth_method = $2 WHERE id = $1`, [r.id, r.authMethod ?? "link"]);
-      }
-      await setEmbeddedFlags(t, e.id, list);
-      await applyInPersonFlags(t, e.id, list, a);
-      await applyIdentityFlags(t, e.id, list);
-      await applyCertificateFlags(t, e.id, list);
-      // Los campos de un destinatario que pasó a 'cc' ya no aplican.
-      await t.query(`DELETE FROM fields f USING recipients r WHERE f.recipient_id = r.id AND r.envelope_id = $1 AND r.role IN ('cc','approver')`, [e.id]);
-      // Campos borrados (con su destinatario o por el cambio de rol): las condiciones que los citaban se quitan.
-      await pruneDanglingConditions(t, "fields", e.id);
+      await replaceRecipients(t, a, e.id, input.recipients);
       await touch(t, e.id);
     });
     return loadDetail(s.db, a.tenantId, req.params.id);
@@ -436,44 +355,7 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
     await s.db.tx(async (t) => {
       const e = await lockEnvelope(t, a.tenantId, req.params.id);
       requireDraft(e);
-      const docs = new Map((await t.query<any>(`SELECT id, page_count FROM documents WHERE envelope_id = $1`, [e.id])).map((d) => [d.id, d]));
-      const signers = new Set(
-        (await t.query<any>(`SELECT id FROM recipients WHERE envelope_id = $1 AND role = 'signer'`, [e.id])).map((r) => r.id),
-      );
-      await t.query(`DELETE FROM fields WHERE envelope_id = $1`, [e.id]);
-      for (const [i, f] of input.fields.entries()) {
-        const d = docs.get(f.documentId);
-        if (!d) throw badRequest("invalid_field", `Campo ${i + 1}: documento inexistente`);
-        if (f.page >= d.page_count) throw badRequest("invalid_field", `Campo ${i + 1}: página fuera de rango`);
-        if (!signers.has(f.recipientId)) throw badRequest("invalid_field", `Campo ${i + 1}: el destinatario no es firmante de este sobre`);
-        let value: string | null;
-        try {
-          value = checkSenderValue({ ...f, label: f.label ?? null }, `Campo ${i + 1}`);
-        } catch (err) {
-          throw badRequest("invalid_field", (err as Error).message);
-        }
-        await insertEnvelopeField(t, {
-          id: f.id ?? uuidv7(),
-          tenantId: a.tenantId,
-          envelopeId: e.id,
-          documentId: f.documentId,
-          recipientId: f.recipientId,
-          type: f.type,
-          page: f.page,
-          x: f.x,
-          y: f.y,
-          width: f.width,
-          height: f.height,
-          required: f.required,
-          label: f.label ?? null,
-          value,
-          readOnly: Boolean(f.readOnly && value),
-          options: f.options ?? null,
-          min: f.min ?? null,
-          max: f.max ?? null,
-        });
-      }
-      await saveFieldLogic(t, "fields", input.fields);
+      await replaceFields(t, a.tenantId, e.id, input.fields);
       await touch(t, e.id);
     });
     return loadDetail(s.db, a.tenantId, req.params.id);
@@ -620,6 +502,163 @@ export function danglingFormulaProblems(fields: { type: string; label: string | 
     if (missing.length) problems.push(`La fórmula de "${f.label ?? "un campo"}" cita ${missing.map((m) => `{${m}}`).join(", ")}, que ya no está en el sobre`);
   }
   return problems;
+}
+
+type ParsedRecipients = ReturnType<typeof PutRecipientsInput.parse>["recipients"];
+type ParsedFields = ReturnType<typeof PutFieldsInput.parse>["fields"];
+
+/**
+ * Reemplaza los destinatarios de un borrador (ya bloqueado por el llamador) por `recipients`. La usan PUT recipients y
+ * POST /v1/envelopes con el sobre completo.
+ */
+export async function replaceRecipients(t: Db, a: AuthContext, envelopeId: string, recipients: ParsedRecipients) {
+  const list = recipients.map((r) => ({ ...r, id: r.id ?? uuidv7() }));
+  const ids = list.map((r) => r.id);
+  if (new Set(ids).size !== ids.length) throw badRequest("duplicate_ids", "Ids de destinatarios repetidos");
+  const foreign = await t.query(`SELECT id FROM recipients WHERE id = ANY($1) AND envelope_id <> $2`, [ids, envelopeId]);
+  if (foreign.length) throw conflict("id_in_use", "Id de destinatario en uso");
+  await t.query(`DELETE FROM recipients WHERE envelope_id = $1 AND NOT (id = ANY($2))`, [envelopeId, ids]);
+  for (const r of list) {
+    await t.query(
+      `INSERT INTO recipients (id, tenant_id, envelope_id, role, routing_order, name, email, phone, locale, channels, telegram_chat_id, id_document_type, id_document_number)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+       ON CONFLICT (id) DO UPDATE SET role = EXCLUDED.role, routing_order = EXCLUDED.routing_order, name = EXCLUDED.name,
+         email = EXCLUDED.email, phone = EXCLUDED.phone, locale = EXCLUDED.locale, channels = EXCLUDED.channels,
+         telegram_chat_id = COALESCE(EXCLUDED.telegram_chat_id, recipients.telegram_chat_id),
+         id_document_type = EXCLUDED.id_document_type, id_document_number = EXCLUDED.id_document_number`,
+      [
+        r.id,
+        a.tenantId,
+        envelopeId,
+        r.role,
+        r.routingOrder,
+        r.name,
+        r.email ?? null,
+        r.phone ?? null,
+        r.locale ?? null,
+        r.channels,
+        r.telegramChatId ?? null,
+        r.idDocumentType ?? null,
+        r.idDocumentNumber ?? null,
+      ],
+    );
+    await t.query(`UPDATE recipients SET auth_method = $2 WHERE id = $1`, [r.id, r.authMethod ?? "link"]);
+  }
+  await setEmbeddedFlags(t, envelopeId, list);
+  await applyInPersonFlags(t, envelopeId, list, a);
+  await applyIdentityFlags(t, envelopeId, list);
+  await applyCertificateFlags(t, envelopeId, list);
+  // Los campos de un destinatario que pasó a 'cc' ya no aplican.
+  await t.query(`DELETE FROM fields f USING recipients r WHERE f.recipient_id = r.id AND r.envelope_id = $1 AND r.role IN ('cc','approver')`, [envelopeId]);
+  // Campos borrados (con su destinatario o por el cambio de rol): las condiciones que los citaban se quitan.
+  await pruneDanglingConditions(t, "fields", envelopeId);
+}
+
+/**
+ * Reemplaza los campos de un borrador (ya bloqueado por el llamador) por `fields` (ya validados, con las anclas
+ * expandidas y con id). La usan PUT fields y POST /v1/envelopes con el sobre completo.
+ */
+export async function replaceFields(t: Db, tenantId: string, envelopeId: string, fields: ParsedFields) {
+  const docs = new Map((await t.query<any>(`SELECT id, page_count FROM documents WHERE envelope_id = $1`, [envelopeId])).map((d) => [d.id, d]));
+  const signers = new Set(
+    (await t.query<any>(`SELECT id FROM recipients WHERE envelope_id = $1 AND role = 'signer'`, [envelopeId])).map((r) => r.id),
+  );
+  await t.query(`DELETE FROM fields WHERE envelope_id = $1`, [envelopeId]);
+  for (const [i, f] of fields.entries()) {
+    const d = docs.get(f.documentId);
+    if (!d) throw badRequest("invalid_field", `Campo ${i + 1}: documento inexistente`);
+    if (f.page >= d.page_count) throw badRequest("invalid_field", `Campo ${i + 1}: página fuera de rango`);
+    if (!signers.has(f.recipientId)) throw badRequest("invalid_field", `Campo ${i + 1}: el destinatario no es firmante de este sobre`);
+    let value: string | null;
+    try {
+      value = checkSenderValue({ ...f, label: f.label ?? null }, `Campo ${i + 1}`);
+    } catch (err) {
+      throw badRequest("invalid_field", (err as Error).message);
+    }
+    await insertEnvelopeField(t, {
+      id: f.id ?? uuidv7(),
+      tenantId: tenantId,
+      envelopeId: envelopeId,
+      documentId: f.documentId,
+      recipientId: f.recipientId,
+      type: f.type,
+      page: f.page,
+      x: f.x,
+      y: f.y,
+      width: f.width,
+      height: f.height,
+      required: f.required,
+      label: f.label ?? null,
+      value,
+      readOnly: Boolean(f.readOnly && value),
+      options: f.options ?? null,
+      min: f.min ?? null,
+      max: f.max ?? null,
+    });
+  }
+  await saveFieldLogic(t, "fields", fields);
+}
+
+/** PDF ya normalizado y listo para guardar como documento de un sobre. */
+export interface PreparedPdfDocument {
+  docId: string;
+  fileId: string;
+  key: string;
+  name: string;
+  bytes: Uint8Array;
+  pageCount: number;
+  pages: unknown;
+  sha256: string;
+  uploadedSha256: string;
+}
+
+/**
+ * Normaliza un PDF subido (reescrito por pdf-lib): el visor y el PDF final salen del mismo archivo, así que un PDF
+ * "ambiguo" no puede mostrar un contenido y firmar otro. El hash de lo subido queda en la evidencia. No guarda nada.
+ */
+export async function preparePdfDocument(tenantId: string, envelopeId: string, uploaded: Uint8Array, filename: string): Promise<PreparedPdfDocument> {
+  let info, bytes: Uint8Array;
+  try {
+    ({ info, bytes } = await preparePdfUpload(uploaded));
+  } catch (e) {
+    if (e instanceof InvalidPdfError) throw badRequest(e.code, e.message);
+    throw e;
+  }
+  const fileId = uuidv7();
+  return {
+    docId: uuidv7(),
+    fileId,
+    key: `tenants/${tenantId}/envelopes/${envelopeId}/${fileId}.pdf`,
+    name: (filename || "documento.pdf").slice(0, 200),
+    bytes,
+    pageCount: info.pageCount,
+    pages: info.pages,
+    sha256: sha256Hex(bytes),
+    uploadedSha256: sha256Hex(uploaded),
+  };
+}
+
+/** Registra un PDF ya subido al almacenamiento como el último documento del borrador (bloqueado por el llamador). */
+export async function insertPreparedDocument(t: Db, tenantId: string, actor: Actor, envelopeId: string, d: PreparedPdfDocument) {
+  const pos = await t.one<any>(`SELECT COALESCE(MAX(position), 0) + 1 AS p FROM documents WHERE envelope_id = $1`, [envelopeId]);
+  await t.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original',$3,'application/pdf',$4,$5)`, [
+    d.fileId,
+    tenantId,
+    d.key,
+    d.bytes.length,
+    d.sha256,
+  ]);
+  await t.query(
+    `INSERT INTO documents (id, tenant_id, envelope_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+    [d.docId, tenantId, envelopeId, pos.p, d.name, d.fileId, d.pageCount, JSON.stringify(d.pages)],
+  );
+  await appendEvent(t, {
+    tenantId,
+    envelopeId,
+    type: "document.added",
+    actor,
+    data: { documentId: d.docId, name: d.name, sha256: d.sha256, uploadedSha256: d.uploadedSha256, pages: d.pageCount },
+  });
 }
 
 /** Valida y envía un borrador (dentro de la transacción del llamador). */

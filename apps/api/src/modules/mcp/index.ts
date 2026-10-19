@@ -7,6 +7,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
+import { inspectPdf } from "@calasign/pdf";
 import { ENVELOPE_STATUSES, MCP_DEFAULT_SCOPES, OAUTH_SCOPES, RECIPIENT_ROLES } from "@calasign/shared";
 import { config } from "../../config";
 import { AppError, notFound } from "../../lib/errors";
@@ -15,7 +16,7 @@ import type { Services } from "../context";
 import { sendPdf } from "../envelopes";
 import { assertUserTokenAllowed, isOAuthAccessToken, resolveAccessToken } from "../oauth-tokens";
 import { envelopesSentThisMonth, tenantPlan } from "../billing/plans";
-import { safeRequest } from "../webhooks";
+import { decodePdfBase64, fetchPdf, fileNameFromUrl, maxBase64Length } from "../pdf-source";
 import { agentHeaders } from "./agent-actor";
 
 interface Caller {
@@ -42,40 +43,9 @@ const SERVER_INFO = { name: "calasign", title: "CalaSign", version: "1.1.0" };
 /** Tope del PDF de create_envelope (va en base64 dentro del JSON-RPC o se descarga de una URL). */
 const PDF_MAX_BYTES = Math.min(10 * 1024 * 1024, config.maxUploadBytes);
 /** Largo máximo del base64 de ese PDF: con el prefijo data: y saltos de línea cada 76 caracteres (MIME). */
-const PDF_MAX_BASE64 = Math.ceil((PDF_MAX_BYTES * 4) / 3) + Math.ceil((PDF_MAX_BYTES * 4) / 3 / 76) * 2 + 64;
+const PDF_MAX_BASE64 = maxBase64Length(PDF_MAX_BYTES);
 
-/** Como la subida de la API: el encabezado %PDF- puede estar en el primer KB (hay PDFs con bytes antes). */
-function looksLikePdf(buf: Buffer) {
-  return buf.subarray(0, 1024).indexOf("%PDF-") !== -1;
-}
-
-function decodePdfBase64(b64: string): Buffer {
-  const clean = b64.replace(/^data:application\/pdf;base64,/, "").replace(/\s+/g, "");
-  if (!/^[A-Za-z0-9+/_-]+={0,2}$/.test(clean)) throw new Error("base64 inválido");
-  const buf = Buffer.from(clean, "base64");
-  if (buf.length > PDF_MAX_BYTES) throw new Error(`el PDF supera ${Math.round(PDF_MAX_BYTES / 1048576)} MB`);
-  if (!looksLikePdf(buf)) throw new Error("el contenido no es un PDF");
-  return buf;
-}
-
-/** Descarga un PDF de una URL pública: solo https, sin redirecciones, con tope de tamaño y sin destinos internos (SSRF). */
-async function fetchPdf(url: string): Promise<Buffer> {
-  const u = new URL(url);
-  if (u.protocol !== "https:" && !(config.environment === "local" && u.protocol === "http:")) throw new Error("la URL tiene que ser https");
-  if (u.username || u.password) throw new Error("la URL no puede llevar credenciales");
-  let r;
-  try {
-    r = await safeRequest(url, { method: "GET", headers: { accept: "application/pdf" }, timeoutMs: 20_000, maxBytes: PDF_MAX_BYTES });
-  } catch (e) {
-    throw new Error(/demasiado grande/.test(String((e as Error).message)) ? `el PDF supera ${Math.round(PDF_MAX_BYTES / 1048576)} MB` : `no se pudo descargar (${(e as Error).message})`);
-  }
-  if (r.status >= 300 && r.status < 400) throw new Error("la URL redirige: pasá la URL final del PDF");
-  if (r.status !== 200) throw new Error(`la URL respondió HTTP ${r.status}`);
-  if (!looksLikePdf(r.body)) throw new Error("lo descargado no es un PDF");
-  return r.body;
-}
-
-/** Nombre de archivo seguro para el encabezado multipart. */
+/** Nombre de archivo seguro para el documento. */
 function pdfFileName(raw: string | null | undefined): string {
   let n = (raw ?? "").normalize("NFKD").replace(/[^\w .()-]/g, "_").trim().slice(0, 150);
   if (!n) n = "documento";
@@ -87,9 +57,9 @@ const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: 
 
 const INSTRUCTIONS =
   "CalaSign: firma electrónica. Con estas herramientas podés listar y consultar sobres, crear un sobre a partir de una " +
-  "plantilla o de un PDF, enviarlo, recordar a los firmantes y descargar el PDF firmado. Enviar, anular o recordar tiene " +
+  "plantilla o de un PDF (y, con send=true, enviarlo en la misma llamada), enviarlo, recordar a los firmantes y descargar el PDF firmado. Enviar, anular o recordar tiene " +
   "efecto real (llegan correos/WhatsApp a personas): antes de llamar a send_envelope, void_envelope o remind_recipients " +
-  "con confirm=true, mostrale al usuario el resumen y pedile que lo apruebe explícitamente.";
+  "con confirm=true (o a create_envelope / create_envelope_from_template con send=true y confirm=true), mostrale al usuario el resumen y pedile que lo apruebe explícitamente.";
 
 export async function mcpRoutes(app: FastifyInstance, s: Services) {
   const resourceUrl = `${config.appUrl}/mcp`;
@@ -301,8 +271,8 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
       {
         title: "Crear sobre desde plantilla",
         description:
-          "Crea un sobre en BORRADOR a partir de una plantilla, asignando una persona a cada rol. No envía nada: " +
-          "para enviarlo usá send_envelope (con confirmación del usuario).",
+          "Crea un sobre a partir de una plantilla, asignando una persona a cada rol. Por defecto queda en BORRADOR; con " +
+          "send=true y confirm=true (después de que el usuario lo apruebe) lo crea y lo envía en una sola llamada.",
         inputSchema: {
           templateId: z.string().uuid(),
           subject: z.string().min(1).max(300).optional(),
@@ -320,11 +290,20 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
             .min(1)
             .max(50),
           prefill: z.record(z.string(), z.string().max(2000)).optional().describe("Valores de campos por etiqueta o id"),
+          send: z.boolean().optional().describe("true: además lo envía (requiere confirm=true)"),
+          confirm: z.boolean().optional().describe("Con send=true: true solo si el usuario aprobó el envío"),
         },
-        // Crea un borrador nuevo en cada llamada (no idempotente), sin avisar a nadie.
-        annotations: { title: "Crear sobre desde plantilla", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+        // Crea un sobre nuevo en cada llamada (no idempotente); con send=true avisa a personas reales.
+        annotations: { title: "Crear sobre desde plantilla", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
       },
       guard(async (a: any) => {
+        if (a.send && a.confirm !== true) {
+          return fail("Confirmación requerida: con send=true se envía y les llega a personas reales. Mostrale este resumen al usuario y, si lo aprueba, volvé a llamar con confirm: true.", {
+            templateId: a.templateId,
+            subject: a.subject ?? null,
+            recipients: a.recipients.map((r: any) => `${r.name} <${r.email ?? r.phone ?? "—"}> (${r.role})`),
+          });
+        }
         const d = await api(c, "POST", "/v1/envelopes/from-template", {
           templateId: a.templateId,
           subject: a.subject,
@@ -337,8 +316,9 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
             phone: r.phone ?? null,
             channels: r.channels ?? (r.email ? ["email"] : ["whatsapp"]),
           })),
-          send: false,
+          send: Boolean(a.send),
         });
+        if (a.send) return summarizeDetail(d);
         return { ...summarizeDetail(d), next: "Borrador creado. Mostrale el resumen al usuario y, si lo aprueba, llamá a send_envelope con confirm: true." };
       }),
     );
@@ -426,8 +406,9 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
       {
         title: "Crear sobre desde un PDF",
         description:
-          "Crea un sobre en BORRADOR con un PDF (en base64 o desde una URL https pública) y sus destinatarios. No envía " +
-          `nada: para enviarlo usá send_envelope (con confirmación del usuario). PDF de hasta ${Math.round(PDF_MAX_BYTES / 1048576)} MB. ` +
+          "Crea un sobre con un PDF (en base64 o desde una URL https pública), sus destinatarios y sus campos, en una sola " +
+          "llamada. Por defecto queda en BORRADOR; con send=true y confirm=true (después de que el usuario lo apruebe) " +
+          `también lo envía. PDF de hasta ${Math.round(PDF_MAX_BYTES / 1048576)} MB. ` +
           "Campos opcionales por texto ancla (p. ej. un texto \"Firma:\" del documento); a cada firmante sin campo de firma " +
           "se le agrega uno al pie de la última página.",
         inputSchema: {
@@ -467,8 +448,10 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
             )
             .max(100)
             .optional(),
+          send: z.boolean().optional().describe("true: además lo envía (requiere confirm=true)"),
+          confirm: z.boolean().optional().describe("Con send=true: true solo si el usuario aprobó el envío"),
         },
-        annotations: { title: "Crear sobre desde un PDF", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+        annotations: { title: "Crear sobre desde un PDF", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
       },
       guard(async (a: any) => {
         for (const [i, r] of a.recipients.entries()) {
@@ -477,7 +460,7 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
         if (Boolean(a.document.base64) === Boolean(a.document.url)) return fail("Pasá el PDF en document.base64 o en document.url (uno de los dos)");
         let pdf: Buffer;
         try {
-          pdf = a.document.base64 ? decodePdfBase64(a.document.base64) : await fetchPdf(a.document.url);
+          pdf = a.document.base64 ? decodePdfBase64(a.document.base64, PDF_MAX_BYTES) : await fetchPdf(a.document.url, PDF_MAX_BYTES);
         } catch (e) {
           return fail(`No se pudo obtener el PDF: ${(e as Error).message}`);
         }
@@ -485,73 +468,73 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
           const r = a.recipients[f.recipientIndex];
           if (!r || (r.role ?? "signer") !== "signer") return fail(`fields: recipientIndex ${f.recipientIndex} no es un firmante de recipients`);
         }
-        const fileName = pdfFileName(a.document.name ?? (a.document.url ? new URL(a.document.url).pathname.split("/").pop() : null));
-
-        const created = await api(c, "POST", "/v1/envelopes", { subject: a.subject, message: a.message ?? null });
-        const envelopeId = created.envelope.id;
-        try {
-          const boundary = `----calasign${randomToken(12)}`;
-          const multipart = Buffer.concat([
-            Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${fileName}"\r\nContent-Type: application/pdf\r\n\r\n`),
-            pdf,
-            Buffer.from(`\r\n--${boundary}--\r\n`),
-          ]);
-          const doc = await api(c, "POST", `/v1/envelopes/${envelopeId}/documents`, undefined, { payload: multipart, contentType: `multipart/form-data; boundary=${boundary}` });
-          const ids = a.recipients.map(() => uuidv7());
-          await api(c, "PUT", `/v1/envelopes/${envelopeId}/recipients`, {
-            recipients: a.recipients.map((r: any, i: number) => ({
-              id: ids[i],
-              name: r.name,
-              email: r.email ?? null,
-              phone: r.phone ?? null,
-              role: r.role ?? "signer",
-              routingOrder: r.routingOrder ?? 1,
-              channels: r.email ? ["email"] : ["whatsapp"],
-            })),
+        const fileName = pdfFileName(a.document.name ?? (a.document.url ? fileNameFromUrl(a.document.url) : null));
+        if (a.send && a.confirm !== true) {
+          return fail("Confirmación requerida: con send=true se envía y les llega a personas reales. Mostrale este resumen al usuario y, si lo aprueba, volvé a llamar con confirm: true.", {
+            subject: a.subject,
+            document: fileName,
+            recipients: a.recipients.map((r: any) => `${r.name} <${r.email ?? r.phone ?? "—"}> (${r.role ?? "signer"})`),
           });
-          const SIZE: Record<string, [number, number]> = { signature: [160, 45], initials: [60, 35], date_signed: [110, 20] };
-          const fields: any[] = (a.fields ?? []).map((f: any) => ({
-            recipientId: ids[f.recipientIndex],
-            type: f.type ?? "signature",
-            required: f.required ?? true,
-            anchor: {
-              text: f.anchorText,
-              offsetX: f.offsetX ?? 0,
-              offsetY: f.offsetY ?? 0,
-              width: f.width ?? SIZE[f.type ?? "signature"]?.[0] ?? 150,
-              height: f.height ?? SIZE[f.type ?? "signature"]?.[1] ?? 20,
-            },
-          }));
-          // Firmantes sin campo de firma: uno al pie de la última página (dos columnas), así el sobre se puede enviar.
-          const lastPage = Math.max(0, (doc.pageCount ?? 1) - 1);
-          let slot = 0;
-          a.recipients.forEach((r: any, i: number) => {
-            if ((r.role ?? "signer") !== "signer" || fields.some((f) => f.recipientId === ids[i] && f.type === "signature")) return;
-            const row = Math.floor(slot / 2);
-            fields.push({
-              documentId: doc.id,
-              recipientId: ids[i],
-              type: "signature",
-              required: true,
-              page: lastPage,
-              x: slot % 2 === 0 ? 0.08 : 0.55,
-              y: Math.max(0.05, 0.86 - row * 0.09),
-              width: 0.32,
-              height: 0.07,
-            });
-            slot++;
-          });
-          const d = fields.length ? await api(c, "PUT", `/v1/envelopes/${envelopeId}/fields`, { fields }) : await api(c, "GET", `/v1/envelopes/${envelopeId}`);
-          return {
-            ...summarizeDetail(d),
-            ...(slot ? { note: `Se agregó un campo de firma al pie de la última página para ${slot} firmante(s) sin campo.` } : {}),
-            next: "Borrador creado. Mostrale el resumen al usuario y, si lo aprueba, llamá a send_envelope con confirm: true.",
-          };
-        } catch (err) {
-          // Que no quede un borrador a medias.
-          await api(c, "DELETE", `/v1/envelopes/${envelopeId}`).catch(() => {});
-          throw err;
         }
+        let pageCount: number;
+        try {
+          pageCount = (await inspectPdf(pdf)).pageCount;
+        } catch (e) {
+          return fail(`El PDF no es válido: ${(e as Error).message}`);
+        }
+        const SIZE: Record<string, [number, number]> = { signature: [160, 45], initials: [60, 35], date_signed: [110, 20] };
+        const fields: any[] = (a.fields ?? []).map((f: any) => ({
+          recipient: f.recipientIndex,
+          type: f.type ?? "signature",
+          required: f.required ?? true,
+          anchor: {
+            text: f.anchorText,
+            offsetX: f.offsetX ?? 0,
+            offsetY: f.offsetY ?? 0,
+            width: f.width ?? SIZE[f.type ?? "signature"]?.[0] ?? 150,
+            height: f.height ?? SIZE[f.type ?? "signature"]?.[1] ?? 20,
+          },
+        }));
+        // Firmantes sin campo de firma: uno al pie de la última página (dos columnas), así el sobre se puede enviar.
+        const lastPage = Math.max(0, pageCount - 1);
+        let slot = 0;
+        a.recipients.forEach((r: any, i: number) => {
+          if ((r.role ?? "signer") !== "signer" || fields.some((f) => f.recipient === i && f.type === "signature")) return;
+          const row = Math.floor(slot / 2);
+          fields.push({
+            recipient: i,
+            document: 0,
+            type: "signature",
+            required: true,
+            page: lastPage,
+            x: slot % 2 === 0 ? 0.08 : 0.55,
+            y: Math.max(0.05, 0.86 - row * 0.09),
+            width: 0.32,
+            height: 0.07,
+          });
+          slot++;
+        });
+        // Una sola llamada a la API (atómica): si algo falla, no queda un borrador a medias.
+        const d = await api(c, "POST", "/v1/envelopes", {
+          subject: a.subject,
+          message: a.message ?? null,
+          documents: [{ name: fileName, base64: pdf.toString("base64") }],
+          recipients: a.recipients.map((r: any) => ({
+            name: r.name,
+            email: r.email ?? null,
+            phone: r.phone ?? null,
+            role: r.role ?? "signer",
+            routingOrder: r.routingOrder ?? 1,
+            channels: r.email ? ["email"] : ["whatsapp"],
+          })),
+          fields,
+          send: Boolean(a.send),
+        });
+        return {
+          ...summarizeDetail(d),
+          ...(slot ? { note: `Se agregó un campo de firma al pie de la última página para ${slot} firmante(s) sin campo.` } : {}),
+          ...(a.send ? {} : { next: "Borrador creado. Mostrale el resumen al usuario y, si lo aprueba, llamá a send_envelope con confirm: true." }),
+        };
       }),
     );
 

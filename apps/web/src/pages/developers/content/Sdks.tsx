@@ -12,11 +12,19 @@ cs = CalaSign(os.environ["CALASIGN_API_KEY"], base_url="${BASE}")
 # CalaSign(oauth=ClientCredentials("csapp_…", "cssec_…", scope="envelopes:read envelopes:write"))
 
 try:
-    detail = cs.envelopes.from_template({
-        "templateId": template_id,
+    # Sobre completo y enviado en UNA llamada (atómica, con Idempotency-Key automática).
+    with open("contrato.pdf", "rb") as f:
+        detail = cs.envelopes.create_and_send({
+            "subject": "Contrato de servicios",
+            "documents": [{"content": f.read(), "name": "contrato.pdf"}],
+            "recipients": [{"name": "Ana Pérez", "email": "ana@example.com"}],
+            "fields": [{"type": "signature", "anchor": {"text": "[[firma]]", "width": 150, "height": 40}}],
+        })
+    # Desde una plantilla, también en una llamada:
+    cs.envelopes.from_template({
+        "templateId": template_id, "send": True,
         "recipients": [{"role": "Cliente", "name": "Ana Pérez", "email": "ana@example.com"}],
     })
-    cs.envelopes.send(detail["envelope"]["id"])
 except CalaSignError as e:
     print(e.status, e.code, e.details)
 
@@ -25,18 +33,27 @@ for e in cs.envelopes.iterate(status="completed"):
 
 me = cs.request("GET", "/v1/me")  # ${t("sdk.c.any")}`;
 
-  const node = `import { CalaSign, CalaSignError } from "@calasign/sdk";
+  const node = `import { readFile } from "node:fs/promises";
+import { CalaSign, CalaSignError } from "@calasign/sdk";
 
 const cs = new CalaSign({ apiKey: process.env.CALASIGN_API_KEY, baseUrl: "${BASE}" });
 // new CalaSign({ oauth: { clientId, clientSecret, scope }, baseUrl })   // client credentials
 // new CalaSign({ accessToken, baseUrl })                                // authorization code
 
 try {
-  const { envelope } = await cs.envelopes.fromTemplate({
+  // Sobre completo y enviado en UNA llamada (atómica, con Idempotency-Key automática).
+  const { envelope } = await cs.envelopes.createAndSend({
+    subject: "Contrato de servicios",
+    documents: [{ content: await readFile("contrato.pdf"), name: "contrato.pdf" }],
+    recipients: [{ name: "Ana Pérez", email: "ana@example.com" }],
+    fields: [{ type: "signature", anchor: { text: "[[firma]]", width: 150, height: 40 } }],
+  });
+  // Desde una plantilla, también en una llamada:
+  await cs.envelopes.fromTemplate({
     templateId,
+    send: true,
     recipients: [{ role: "Cliente", name: "Ana Pérez", email: "ana@example.com" }],
   });
-  await cs.envelopes.send(envelope.id);
 } catch (e) {
   if (e instanceof CalaSignError) console.error(e.status, e.code, e.details);
   else throw e;
@@ -49,6 +66,7 @@ for await (const e of cs.envelopes.iterate({ status: "completed" })) {
 const me = await cs.request("GET", "/v1/me"); // ${t("sdk.c.any")}`;
 
   const methods: [string, string, string][] = [
+    ["envelopes.create_and_send(data)", "envelopes.createAndSend(input)", "POST /v1/envelopes (send: true)"],
     ["envelopes.create(data)", "envelopes.create(input)", "POST /v1/envelopes"],
     ["envelopes.from_template(data)", "envelopes.fromTemplate(input)", "POST /v1/envelopes/from-template"],
     ["envelopes.upload_document(id, bytes, name)", "envelopes.uploadDocument(id, bytes, name)", "POST /v1/envelopes/{id}/documents"],

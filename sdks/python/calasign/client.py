@@ -287,7 +287,31 @@ class _Envelopes:
         return self._c.request("GET", f"/v1/envelopes/{_seg(envelope_id)}")
 
     def create(self, data: Dict[str, Any], *, idempotency_key: Optional[str] = None) -> EnvelopeDetail:
-        return self._c.request("POST", "/v1/envelopes", json_body=data, idempotency_key=idempotency_key or str(uuid.uuid4()))
+        """Crea un sobre en UNA llamada: solo el borrador ({"subject": …}) o completo, con "documents", "recipients",
+        "fields" y, con "send": True, también enviado. Cada documento va con "content" (bytes del PDF: se sube como
+        multipart, sin base64), "base64" o "url". Atómico e idempotente (Idempotency-Key automática). Con firmantes
+        "embedded", la respuesta trae "signingUrls"."""
+        key = idempotency_key or str(uuid.uuid4())
+        docs = data.get("documents") or []
+        if not any(isinstance(d, dict) and d.get("content") is not None for d in docs):
+            return self._c.request("POST", "/v1/envelopes", json_body=data, idempotency_key=key)
+        # Con bytes: multipart/form-data, el JSON en la parte "payload" y cada PDF en su parte ("file").
+        parts: Dict[str, Any] = {}
+        documents = []
+        for i, d in enumerate(docs):
+            if d.get("content") is None:
+                documents.append(d)
+                continue
+            part = f"document{i}"
+            rest = {k: v for k, v in d.items() if k != "content"}
+            parts[part] = (d.get("name") or f"documento-{i + 1}.pdf", bytes(d["content"]), "application/pdf")
+            documents.append({**rest, "file": part})
+        payload = json.dumps({**data, "documents": documents})
+        return self._c.request("POST", "/v1/envelopes", multipart={"payload": payload, **parts}, idempotency_key=key)
+
+    def create_and_send(self, data: Dict[str, Any], *, idempotency_key: Optional[str] = None) -> EnvelopeDetail:
+        """Como create con "send": True: crea el sobre completo y lo envía en una sola llamada."""
+        return self.create({**data, "send": True}, idempotency_key=idempotency_key)
 
     def update(self, envelope_id: str, data: Dict[str, Any]) -> EnvelopeDetail:
         return self._c.request("PATCH", f"/v1/envelopes/{_seg(envelope_id)}", json_body=data, retryable=True)

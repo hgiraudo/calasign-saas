@@ -89,7 +89,15 @@ async function loadChecked(bytes: Uint8Array, maxPages: number): Promise<PDFDocu
     throw new InvalidPdfError("unreadable", "No se pudo leer el PDF");
   }
   if (doc.isEncrypted) throw new InvalidPdfError("encrypted", "El PDF está protegido con contraseña");
-  const pages = doc.getPages();
+  // Un PDF sin catálogo ni árbol de páginas (p. ej. solo el encabezado "%PDF-" y basura) carga sin error, pero
+  // getPages() tira un TypeError: era un 500 en vez de un 400.
+  let pages: ReturnType<PDFDocument["getPages"]>;
+  try {
+    pages = doc.getPages();
+  } catch (e) {
+    if (e instanceof DecodeBudgetError) throw e;
+    throw new InvalidPdfError("unreadable", "No se pudo leer el PDF");
+  }
   if (pages.length === 0) throw new InvalidPdfError("empty", "El PDF no tiene páginas");
   if (pages.length > maxPages) throw new InvalidPdfError("too_many_pages", `Máximo ${maxPages} páginas`);
   return doc;

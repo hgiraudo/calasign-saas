@@ -90,44 +90,65 @@ export const docsEs = {
   // ───────── Inicio rápido ─────────
   "qs.title": "Inicio rápido",
   "qs.lead":
-    "En cinco minutos vas a crear un sobre, subir un PDF, agregar una firmante, ubicar el campo de firma, enviarlo y descargar el documento firmado. Necesitás `curl` (y `jq` para el script completo), Node.js 18+ o Python 3.8+, y un PDF de prueba.",
+    "Con **una sola llamada** creás el sobre con el PDF, la firmante y el campo de firma, y lo enviás. Después esperás la firma y descargás el documento firmado. Necesitás `curl` (y `jq`), Node.js 18+ o Python 3.8+, y un PDF de prueba que contenga el texto `[[firma]]`.",
   "qs.key.h": "1. Conseguí una API key",
   "qs.key.p":
     "Creá una cuenta en [{{BASE}}/signup]({{BASE}}/signup) (o entrá con la tuya), andá a **Ajustes → API keys** ([`/app/settings/api-keys`](/app/settings/api-keys)) y tocá **Crear**. El secreto se muestra **una sola vez**: guardalo en un gestor de secretos o en una variable de entorno, nunca en el código ni en el frontend.",
-  "qs.create.h": "2. Creá el sobre",
-  "qs.create.p":
-    "Un **sobre** agrupa los documentos, los destinatarios y los campos. Nace como borrador (`draft`). Usá `metadata` para guardar tus propios identificadores (te vuelven en cada webhook) y mandá una `Idempotency-Key` para que un reintento no cree un sobre duplicado.",
-  "qs.create.resp": "La respuesta trae el detalle completo del sobre. Guardá `envelope.id`: lo vas a usar en los pasos siguientes. Si no indicás `expiresAt`, el sobre vence a los 30 días.",
-  "qs.upload.h": "3. Subí el PDF",
-  "qs.upload.p":
-    "Enviá el archivo como `multipart/form-data` en el campo `file`. Podés subir varios PDF al mismo sobre: se firman en el orden en que los subiste. La respuesta trae el `id` del documento, su cantidad de páginas y su SHA-256.",
-  "qs.recipients.h": "4. Agregá la firmante",
-  "qs.recipients.p":
-    "`PUT /recipients` reemplaza la lista completa. Por defecto cada destinatario es `signer`, recibe la invitación por `email` y tiene `routingOrder: 1`. Con `phone` en formato E.164 también le podés avisar por WhatsApp. Podés mandar tu propio `id` (UUID) para referenciarlo desde los campos sin leer la respuesta; si no, tomalo de `recipients[].id`.",
-  "qs.fields.h": "5. Ubicá los campos",
-  "qs.fields.p":
-    "Cada firmante necesita al menos un campo. La forma más simple es un **texto ancla**: escribí `[[firma]]` en el PDF (puede ir en blanco sobre blanco) y CalaSign pone el campo donde aparezca. `offsetX`, `offsetY`, `width` y `height` van en puntos PDF, relativos a la esquina superior izquierda del texto. Reemplazá `RECIPIENT_ID` por el id de la firmante.",
+  "qs.one.h": "2. Creá y enviá el sobre en una sola llamada",
+  "qs.one.p":
+    "`POST /v1/envelopes` recibe todo junto: los **documentos** (`documents`: el PDF en `base64`, por `url` https pública o como parte de un `multipart/form-data`), los **destinatarios** (`recipients`, igual que en `PUT /recipients`), los **campos** (`fields`, con texto ancla o coordenadas) y `send: true` para enviarlo en el mismo pedido.\n\nEs **atómico**: si algo falla (un PDF inválido, un texto ancla que no aparece, un firmante sin campo de firma) responde el error y no queda ningún sobre a medias. Mandá una `Idempotency-Key` (p. ej. el id de tu pedido) para que un reintento no cree ni envíe un segundo sobre. Sin `send`, el sobre queda en borrador (`draft`) para revisarlo y enviarlo después con `POST /v1/envelopes/{id}/send`.",
+  "qs.one.resp":
+    "La respuesta es el sobre completo, con los `id` de los documentos, los destinatarios y los campos (los vas a ver en los webhooks). En el entorno de pruebas la invitación queda en el **Buzón dev** de la app: abrila y firmá vos mismo. Si no indicás `expiresAt`, el sobre vence a los 30 días.",
+  "qs.one.multipart.t": "PDF grandes: multipart en vez de base64",
+  "qs.one.multipart.p":
+    "En `multipart/form-data` el JSON va en la parte `payload` y cada PDF en su propia parte; el documento la cita con `file` (sin `documents`, cada archivo es un documento, en orden). Así el PDF no crece un 33 % por el base64. Hasta 10 documentos por llamada.",
+  "qs.one.refs.t": "Varios firmantes y documentos",
+  "qs.one.refs.p":
+    "Como los destinatarios y documentos todavía no tienen `id`, cada campo los cita con `recipient` (su posición en `recipients` empezando en 0, su `ref` o su email) y `document` (su posición en `documents` o su `ref`). Con un solo firmante o un solo documento se pueden omitir; un campo con `anchor` y sin `document` busca el texto en todos los documentos.",
   "qs.fields.coords.t": "¿Tu PDF no tiene texto ancla?",
   "qs.fields.coords.p":
-    "Usá coordenadas normalizadas: `page` empieza en 0 y `x`, `y`, `width`, `height` van de 0 a 1 con origen arriba a la izquierda de la página. Con coordenadas, `documentId` es obligatorio.",
-  "qs.send.h": "6. Envialo",
-  "qs.send.p":
-    "Al enviar se validan los documentos, los destinatarios y los campos; el sobre pasa a `sent` y les llega la invitación a los firmantes del primer turno. En el entorno de pruebas la invitación queda en el **Buzón dev** de la app: abrila y firmá vos mismo.",
-  "qs.wait.h": "7. Esperá la firma",
+    "Usá coordenadas normalizadas: `page` empieza en 0 y `x`, `y`, `width`, `height` van de 0 a 1 con origen arriba a la izquierda de la página. Con varios documentos, indicá `document`.",
+  "qs.one.embedded.t": "Firma embebida en tu app",
+  "qs.one.embedded.p":
+    "Si un destinatario va con `embedded: true` (firma dentro de tu aplicación, sin invitación), la respuesta de un envío trae `signingUrls`: la URL de firma de un solo uso (5 minutos) de cada firmante embebido al que ya le toca, sin otra llamada. `embeddedSigning` acepta `returnUrl` y `frameAncestors`. Ver la [guía de firma embebida](/developers/guides/embedded-signing).",
+  "qs.one.template.t": "Desde una plantilla, también en una llamada",
+  "qs.one.template.p":
+    "Si el documento y los campos ya están en una [plantilla](/developers/guides/templates), `POST /v1/envelopes/from-template` crea el sobre asignando una persona a cada rol y, con `send: true`, lo envía en el mismo pedido. También admite `Idempotency-Key`.",
+  "qs.wait.h": "3. Esperá la firma",
   "qs.wait.p":
     "La forma recomendada es un [webhook](/developers/webhooks): registrá una URL https en **Ajustes → Integraciones** y CalaSign te avisa con un POST firmado en cada evento. Cuando firma la última persona el sobre pasa por `finalizing` (se arma y sella el PDF) y después llega `envelope.completed`.\n\nSi preferís consultar, pedí `GET /v1/envelopes/{id}` cada tanto (no más de una vez por minuto por sobre) hasta que `envelope.status` sea `completed`, `declined`, `voided` o `expired`.",
-  "qs.download.h": "8. Descargá el PDF firmado",
+  "qs.download.h": "4. Descargá el PDF firmado",
   "qs.download.p":
     "Con el sobre en `completed`, `signed.pdf` devuelve el PDF final: los documentos con las firmas estampadas, el **certificado de finalización** al final y el sello PAdES de la plataforma. Antes de completarse responde 404. Guardá también `signedSha256` para verificarlo en el futuro.",
   "qs.full.h": "Script completo",
-  "qs.full.p": "Todo junto, listo para copiar. El PDF `contrato.pdf` tiene que contener el texto `[[firma]]`.",
+  "qs.full.p":
+    "Todo junto, listo para copiar: una llamada para crear y enviar, la espera y la descarga. El PDF `contrato.pdf` tiene que contener el texto `[[firma]]`.",
   "qs.full.next":
     "¿Y ahora? Usá [plantillas](/developers/guides/templates) para no ubicar campos a mano, [firma embebida](/developers/guides/embedded-signing) para firmar dentro de tu app, o revisá los [conceptos](/developers/concepts).",
-  "qs.c.create": "1. Sobre en borrador",
-  "qs.c.upload": "2. Documento PDF",
-  "qs.c.recipient": "3. Firmante",
-  "qs.c.fields": "4. Campo de firma sobre el texto [[firma]] del PDF",
-  "qs.c.send": "5. Enviar",
+  "qs.steps.h": "Paso a paso (varias llamadas)",
+  "qs.steps.p":
+    "Si preferís armar el sobre de a poco (por ejemplo, para que una persona lo revise en la app antes de enviarlo), los mismos datos se pueden mandar en llamadas separadas: crear el borrador, subir cada PDF, definir los destinatarios, ubicar los campos y enviar. Cada paso valida lo suyo y el sobre queda en `draft` hasta el envío.",
+  "qs.create.h": "a. Creá el borrador",
+  "qs.create.p":
+    "Un **sobre** agrupa los documentos, los destinatarios y los campos. Con solo `subject` (y opcionalmente `message`, `metadata`, `expiresAt`…) nace como borrador (`draft`) vacío. Usá `metadata` para guardar tus propios identificadores (te vuelven en cada webhook) y mandá una `Idempotency-Key` para que un reintento no cree un sobre duplicado.",
+  "qs.create.resp": "Guardá `envelope.id`: lo vas a usar en los pasos siguientes.",
+  "qs.upload.h": "b. Subí el PDF",
+  "qs.upload.p":
+    "Enviá el archivo como `multipart/form-data` en el campo `file`. Podés subir varios PDF al mismo sobre: se firman en el orden en que los subiste. La respuesta trae el `id` del documento, su cantidad de páginas y su SHA-256.",
+  "qs.recipients.h": "c. Agregá la firmante",
+  "qs.recipients.p":
+    "`PUT /recipients` reemplaza la lista completa. Por defecto cada destinatario es `signer`, recibe la invitación por `email` y tiene `routingOrder: 1`. Con `phone` en formato E.164 también le podés avisar por WhatsApp. Podés mandar tu propio `id` (UUID) para referenciarlo desde los campos sin leer la respuesta; si no, tomalo de `recipients[].id`.",
+  "qs.fields.h": "d. Ubicá los campos",
+  "qs.fields.p":
+    "Cada firmante necesita al menos un campo. La forma más simple es un **texto ancla**: escribí `[[firma]]` en el PDF (puede ir en blanco sobre blanco) y CalaSign pone el campo donde aparezca. `offsetX`, `offsetY`, `width` y `height` van en puntos PDF, relativos a la esquina superior izquierda del texto. Reemplazá `RECIPIENT_ID` por el id de la firmante.",
+  "qs.send.h": "e. Envialo",
+  "qs.send.p":
+    "Al enviar se validan los documentos, los destinatarios y los campos; el sobre pasa a `sent` y les llega la invitación a los firmantes del primer turno. En el entorno de pruebas la invitación queda en el **Buzón dev** de la app: abrila y firmá vos mismo.",
+  "qs.c.one": "Sobre completo en una llamada: PDF, firmante, campo de firma sobre [[firma]] y envío",
+  "qs.c.multipart": "Lo mismo sin base64: el JSON en la parte payload y el PDF en su propia parte",
+  "qs.c.noBase64": "el PDF va sin base64",
+  "qs.c.wait": "Esperar la firma (mejor con un webhook)",
+  "qs.c.download": "Descargar el PDF firmado",
   "qs.c.sdkIdem": "el SDK agrega la Idempotency-Key solo",
   // ───────── Autenticación ─────────
   "auth.title": "Autenticación",

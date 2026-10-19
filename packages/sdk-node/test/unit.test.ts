@@ -152,3 +152,28 @@ describe("ids en la ruta", () => {
   });
 });
 
+describe("sobre completo en una llamada", () => {
+  it("con content arma multipart: payload JSON con file y una parte por PDF; con send", async () => {
+    const f = fakeFetch([json(201, { envelope: { id: "e1", status: "sent" } })]);
+    const cs = new CalaSign({ apiKey: "k", baseUrl: "http://api", fetch: f.fn });
+    await cs.envelopes.createAndSend({
+      subject: "Contrato",
+      documents: [{ content: new Uint8Array([37, 80, 68, 70]), name: "c.pdf" }, { url: "https://x/y.pdf" }],
+      recipients: [{ name: "Ana", email: "ana@example.com" }],
+    });
+    const body = f.calls[0].body as FormData;
+    expect(body).toBeInstanceOf(FormData);
+    const payload = JSON.parse(String(body.get("payload")));
+    expect(payload.send).toBe(true);
+    expect(payload.documents).toEqual([{ name: "c.pdf", file: "document0" }, { url: "https://x/y.pdf" }]);
+    expect((body.get("document0") as File).name).toBe("c.pdf");
+    expect(f.calls[0].headers["idempotency-key"]).toBeTruthy();
+  });
+
+  it("sin content manda JSON", async () => {
+    const f = fakeFetch([json(201, { envelope: { id: "e1" } })]);
+    const cs = new CalaSign({ apiKey: "k", baseUrl: "http://api", fetch: f.fn });
+    await cs.envelopes.create({ subject: "Contrato", documents: [{ base64: "JVBERi0=" }] });
+    expect(JSON.parse(String(f.calls[0].body)).documents[0].base64).toBe("JVBERi0=");
+  });
+});

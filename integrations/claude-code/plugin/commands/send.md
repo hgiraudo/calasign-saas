@@ -19,13 +19,14 @@ Arguments: $ARGUMENTS
    `[[firma_2]]` (for example `pdftotext file.pdf - | grep -o '\[\[[^]]*\]\]'` when available). If found,
    place one signature field per signer on its anchor; otherwise propose a signature block at the bottom
    of the last page (coordinates) and say so in the summary.
-4. **Create the draft.**
-   - If the CalaSign MCP tools are connected and `create_envelope` exists, use it (PDF as base64; for
-     files over ~5 MB prefer the REST API).
-   - Otherwise, if `CALASIGN_API_KEY` is set, use the REST flow from the skill with `curl` (never print the key).
+4. **Confirm.** Show a summary (file, subject, each signer `Name <email> — order N`, field placement) and
+   ask for explicit approval. Do not send without a clear "yes".
+5. **Create and send in ONE call** (atomic: if something fails, nothing is left behind).
+   - If the CalaSign MCP tools are connected and `create_envelope` exists, call it with `send: true` and
+     `confirm: true` (PDF as base64; for files over ~5 MB prefer the REST API).
+   - Otherwise, if `CALASIGN_API_KEY` is set, use the skill's one-call REST request with `curl`: a single
+     `POST /v1/envelopes` with `documents`, `recipients`, `fields`, `"send": true` and an `Idempotency-Key`
+     (multipart with a `payload` part for large PDFs). Never print the key.
    - Otherwise, explain how to connect: run `/mcp`, select `calasign` and authenticate (OAuth), or export
      `CALASIGN_API_KEY` (created at {{BASE_URL}}/app/settings/api-keys).
-5. **Confirm.** Show a summary (file, subject, each signer `Name <email> — order N`, field placement) and
-   ask for explicit approval. Do not send without a clear "yes".
-6. **Send** (`send_envelope` with `confirm: true`, or `POST /v1/envelopes/{id}/send` with an
-   `Idempotency-Key`) and finish with the link `{{BASE_URL}}/app/envelopes/<id>`.
+6. Finish with the link `{{BASE_URL}}/app/envelopes/<id>`.

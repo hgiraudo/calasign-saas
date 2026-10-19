@@ -127,6 +127,24 @@ except CalaSignError as e:
     assert e.status == 404
 ok("sobre: crear (idempotente), subir, destinatarios, campos, enviar, iterar, eventos y 404 tipado")
 
+# Sobre completo en una llamada: PDF en bytes (multipart), firmante y campo, y envío; idempotente.
+idem2 = str(uuid.uuid4())
+one = {
+    "subject": f"Python oneshot {stamp}",
+    "documents": [{"content": PDF, "name": "contrato.pdf"}],
+    "recipients": [{"name": "Ana Oneshot", "email": f"ana-oneshot+{stamp}@example.com"}],
+    "fields": [{"type": "signature", "page": 0, "x": 0.1, "y": 0.7, "width": 0.3, "height": 0.08}],
+}
+o1 = cs.envelopes.create_and_send(one, idempotency_key=idem2)
+o2 = cs.envelopes.create_and_send(one, idempotency_key=idem2)
+assert o1["envelope"]["status"] == "sent" and o1["envelope"]["id"] == o2["envelope"]["id"], o1["envelope"]
+assert o1["documents"][0]["name"] == "contrato.pdf" and o1["fields"][0]["recipientId"] == o1["recipients"][0]["id"]
+import base64 as _b64  # noqa: E402
+
+o3 = cs.envelopes.create({**one, "subject": f"Python oneshot b64 {stamp}", "documents": [{"base64": _b64.b64encode(PDF).decode()}]})
+assert o3["envelope"]["status"] == "draft" and len(o3["fields"]) == 1
+ok("sobre completo en una llamada: create_and_send (multipart, idempotente) y create con base64")
+
 # Fecha con zona horaria (lo que da datetime.isoformat() con tzinfo) y nombre de archivo con comillas.
 import datetime as _dt  # noqa: E402
 

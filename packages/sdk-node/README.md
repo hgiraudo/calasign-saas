@@ -3,21 +3,27 @@
 Firma electrónica desde tu backend. Sin dependencias (usa `fetch` y `node:crypto`), Node ≥ 18, tipos completos.
 
 ```ts
+import { readFile } from "node:fs/promises";
 import { CalaSign } from "@calasign/sdk";
 
 const cs = new CalaSign({ apiKey: process.env.CALASIGN_KEY!, baseUrl: "https://dev.calasign.com" });
 
-const { envelope } = await cs.envelopes.create({ subject: "Contrato de servicios", metadata: { externalId: "PED-1234" } });
-const doc = await cs.envelopes.uploadDocument(envelope.id, await readFile("contrato.pdf"), "contrato.pdf");
-const signerId = crypto.randomUUID();
-await cs.envelopes.setRecipients(envelope.id, [
-  { id: signerId, name: "Ana Pérez", email: "ana@cliente.com", phone: "+5511999990000", channels: ["email", "whatsapp"] },
-]);
-await cs.envelopes.setFields(envelope.id, [
-  { recipientId: signerId, type: "signature", anchor: { text: "[[firma]]", offsetY: -40, width: 150, height: 40 } },
-]);
-await cs.envelopes.send(envelope.id);
+// Una sola llamada: crea el sobre con el PDF, el firmante y su campo, y lo envía (atómico e idempotente).
+const { envelope, recipients } = await cs.envelopes.createAndSend({
+  subject: "Contrato de servicios",
+  metadata: { externalId: "PED-1234" },
+  documents: [{ content: await readFile("contrato.pdf"), name: "contrato.pdf" }],
+  recipients: [{ name: "Ana Pérez", email: "ana@cliente.com", phone: "+5511999990000", channels: ["email", "whatsapp"] }],
+  fields: [{ recipient: 0, type: "signature", anchor: { text: "[[firma]]", offsetY: -40, width: 150, height: 40 } }],
+});
 ```
+
+`envelopes.create(input)` hace lo mismo sin enviar (queda en borrador) o, con solo `{ subject }`, crea un borrador vacío.
+Los documentos van con `content` (bytes: el SDK los sube como multipart, sin base64), `base64` o `url`. Los campos
+citan al destinatario con `recipient` (posición, `ref` o email) y al documento con `document` (posición o `ref`); con un
+solo firmante o un solo documento se pueden omitir. Con firmantes `embedded: true`, la respuesta trae `signingUrls`.
+
+Paso a paso (sobre que se arma de a poco): `uploadDocument`, `setRecipients`, `setFields` y `send`.
 
 ## Autenticación
 
@@ -31,7 +37,7 @@ await cs.envelopes.send(envelope.id);
 
 - **Reintentos** ante errores de red, 429 (respetando `Retry-After`) y 5xx, con backoff exponencial y jitter
   (`maxRetries`, por defecto 3).
-- **Idempotencia**: `envelopes.create`, `envelopes.fromTemplate` y `envelopes.send` mandan `Idempotency-Key` automática
+- **Idempotencia**: `envelopes.create`, `envelopes.createAndSend`, `envelopes.fromTemplate` y `envelopes.send` mandan `Idempotency-Key` automática
   (o la tuya), así que un reintento nunca duplica un sobre ni un envío. Un POST sin idempotencia no se reintenta ante
   errores de red.
 - **Paginación**: `for await (const e of cs.envelopes.iterate({ status: "completed" })) { … }`.

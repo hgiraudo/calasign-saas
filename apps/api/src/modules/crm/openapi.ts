@@ -17,10 +17,10 @@ type Op = {
 const C = "CRM y ERP";
 
 export const CRM_OPS: Op[] = [
-  { method: "get", path: "/v1/crm/providers", tag: C, summary: "Proveedores disponibles", description: "HubSpot, Salesforce (CRM) y Siigo, Alegra (ERP); si OAuth está configurado en el servidor; URIs de redirección y URL del webhook de HubSpot." },
+  { method: "get", path: "/v1/crm/providers", tag: C, summary: "Proveedores disponibles", description: "HubSpot, Salesforce, Pipedrive (CRM) y Siigo, Alegra (ERP); si OAuth está configurado en el servidor; URIs de redirección y URL del webhook de HubSpot." },
   { method: "get", path: "/v1/crm/connections", tag: C, summary: "Conexiones" },
   { method: "post", path: "/v1/crm/connections", tag: C, summary: "Conectar con token", description: "HubSpot (token de app privada), Siigo (usuario + access key) o Alegra (correo + token). Se prueba antes de guardar.", body: CreateCrmTokenConnectionInput, status: 201 },
-  { method: "post", path: "/v1/crm/oauth/{provider}/start", tag: C, summary: "Iniciar OAuth (HubSpot, Salesforce)", description: "Devuelve authorizeUrl. Salesforce usa PKCE S256. Requiere sesión web.", body: StartCrmOAuthInput },
+  { method: "post", path: "/v1/crm/oauth/{provider}/start", tag: C, summary: "Iniciar OAuth (HubSpot, Salesforce, Pipedrive)", description: "Devuelve authorizeUrl. Salesforce usa PKCE S256; Pipedrive guarda el api_domain de la compañía que devuelve el token. Requiere sesión web.", body: StartCrmOAuthInput },
   { method: "patch", path: "/v1/crm/connections/{id}", tag: C, summary: "Renombrar o desactivar una conexión", body: UpdateCrmConnectionInput },
   { method: "delete", path: "/v1/crm/connections/{id}", tag: C, summary: "Quitar una conexión", response: "none", status: 204 },
   { method: "post", path: "/v1/crm/connections/{id}/test", tag: C, summary: "Probar una conexión" },
@@ -34,7 +34,7 @@ export const CRM_OPS: Op[] = [
     path: "/v1/crm/mappings/{id}/send",
     tag: C,
     summary: "Crear (y enviar) un sobre desde un registro",
-    description: "Lee el registro (Deal u Opportunity) y sus contactos, arma el sobre con la plantilla del mapeo y lo vincula: el estado y el PDF firmado vuelven al registro. 409 crm_reauth_required si la conexión perdió acceso.",
+    description: "Lee el registro (Deal de HubSpot o Pipedrive, Opportunity de Salesforce o Person de Pipedrive con objectType contact) y sus contactos (en Pipedrive: persona principal y participantes del deal), arma el sobre con la plantilla del mapeo y lo vincula: el estado y el PDF firmado vuelven al registro. 409 crm_reauth_required si la conexión perdió acceso.",
     body: SendFromCrmRecordInput,
     status: 201,
   },

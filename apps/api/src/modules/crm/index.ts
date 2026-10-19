@@ -49,6 +49,7 @@ import {
   crmRedirectUri,
   fetchRecord,
   findByIdentification,
+  isOAuthProvider,
   oauthApp,
   oauthConfigured,
   oauthTokenRequest,
@@ -57,7 +58,9 @@ import {
   validateSalesforceInstance,
   writeStatus,
   type ConnRow,
+  type OAuthProvider,
 } from "./providers";
+import { validatePipedriveDomain } from "./pipedrive";
 
 const UUID = /^[0-9a-f-]{36}$/i;
 
@@ -197,7 +200,7 @@ export async function sendFromRecord(
     const prefill = mapPrefill(record, prefillMap);
     const l = await loadTemplateForUse(db, ctx.tenantId, mapping.template_id);
     const send = opts.send ?? mapping.send;
-    const subjectDefault = String(record.properties.dealname ?? record.properties.Name ?? "").trim();
+    const subjectDefault = String(record.title ?? record.properties.dealname ?? record.properties.Name ?? "").trim();
     const input = EnvelopeFromTemplateInput.parse({
       templateId: mapping.template_id,
       subject: opts.subject ?? (subjectDefault ? `${l.row.subject ?? l.row.name} — ${subjectDefault}`.slice(0, 300) : undefined),
@@ -452,7 +455,7 @@ export function hubspotSignatureV3(secret: string, method: string, uri: string, 
 interface OAuthState {
   t: string;
   u: string;
-  p: "hubspot" | "salesforce";
+  p: OAuthProvider;
   n: string;
   v: string | null;
   exp: number;
@@ -484,7 +487,11 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
       tokenSupported: tokenSupported(p),
       objectTypes: CRM_PROVIDER_OBJECTS[p],
     }));
-    return { items, redirectUris: { hubspot: crmRedirectUri("hubspot"), salesforce: crmRedirectUri("salesforce") }, webhookUrl: `${config.appUrl}/v1/integrations/crm/hubspot/webhook` };
+    return {
+      items,
+      redirectUris: { hubspot: crmRedirectUri("hubspot"), salesforce: crmRedirectUri("salesforce"), pipedrive: crmRedirectUri("pipedrive") },
+      webhookUrl: `${config.appUrl}/v1/integrations/crm/hubspot/webhook`,
+    };
   });
 
   // ───────── Conexiones ─────────
@@ -520,7 +527,7 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
   app.post<{ Params: { provider: string } }>("/v1/crm/oauth/:provider/start", { preHandler: auth }, async (req) => {
     const a = A(req);
     const p = req.params.provider;
-    if (p !== "hubspot" && p !== "salesforce") throw notFound("Proveedor");
+    if (!isOAuthProvider(p)) throw notFound("Proveedor");
     if (!oauthConfigured(p)) throw new AppError(409, "provider_not_configured", "Este proveedor no está configurado en el servidor");
     if (!a.userId) throw new AppError(403, "session_required", "Conectar una cuenta requiere iniciar sesión en la web");
     const input = StartCrmOAuthInput.parse(req.body ?? {});
@@ -531,7 +538,7 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
     url.searchParams.set("client_id", app_.clientId!);
     url.searchParams.set("redirect_uri", crmRedirectUri(p));
     url.searchParams.set("response_type", "code");
-    url.searchParams.set("scope", app_.scope);
+    if (app_.scope) url.searchParams.set("scope", app_.scope);
     url.searchParams.set("state", encrypt(JSON.stringify(state)));
     if (verifier) {
       url.searchParams.set("code_challenge", createHash("sha256").update(verifier).digest("base64url"));
@@ -547,6 +554,9 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
     async (req, reply) => {
       const a = A(req);
       const back = (q: string) => reply.redirect(`/app/settings/crm?${q}`);
+      // Instalación desde el Marketplace de Pipedrive: llega un code sin state (no la inició CalaSign). No se canjea
+      // a ciegas (ataría a esta organización una cuenta que nadie eligió desde CalaSign): se pide conectar desde Ajustes.
+      if (req.params.provider === "pipedrive" && !req.query.state && !req.query.error) return back("pipedrive_install=1");
       let st: OAuthState;
       try {
         st = JSON.parse(decrypt(String(req.query.state ?? "")));
@@ -565,6 +575,8 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
         });
         const cfg: Record<string, unknown> = {};
         if (st.p === "salesforce") cfg.instanceUrl = validateSalesforceInstance(String(body.instance_url ?? ""));
+        // Pipedrive: cada compañía tiene su dominio de API (https://<compañía>.pipedrive.com), validado.
+        if (st.p === "pipedrive") cfg.apiDomain = validatePipedriveDomain(String(body.api_domain ?? ""));
         const creds = { access_token: body.access_token, refresh_token: body.refresh_token, expires_at: body.expires_in ? Date.now() + Number(body.expires_in) * 1000 : null };
         const row: any = { id: uuidv7(), provider: st.p, auth_type: "oauth", credentials_enc: encrypt(JSON.stringify(creds)), config: cfg };
         const conn = new CrmConn(row, null);

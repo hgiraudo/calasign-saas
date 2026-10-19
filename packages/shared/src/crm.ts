@@ -2,7 +2,14 @@
 import { z } from "zod";
 import { CHANNELS } from "./api";
 
-export const CRM_PROVIDERS = ["hubspot", "salesforce", "siigo", "alegra"] as const;
+export const CRM_PROVIDERS = [
+  "hubspot",
+  "salesforce",
+  "siigo",
+  "alegra",
+  // Pipedrive: Deal (persona principal + participantes) y Person (objectType "contact").
+  "pipedrive",
+] as const;
 export type CrmProvider = (typeof CRM_PROVIDERS)[number];
 
 export const CRM_OBJECT_TYPES = ["deal", "opportunity", "customer", "contact", "invoice"] as const;
@@ -14,10 +21,17 @@ export const CRM_PROVIDER_OBJECTS: Record<CrmProvider, readonly CrmObjectType[]>
   salesforce: ["opportunity"],
   siigo: ["customer"],
   alegra: ["contact", "invoice"],
+  pipedrive: ["deal", "contact"],
 };
 
 /** CRM (envían desde un registro) vs ERP (reciben el documento firmado al completarse). */
-export const CRM_KIND: Record<CrmProvider, "crm" | "erp"> = { hubspot: "crm", salesforce: "crm", siigo: "erp", alegra: "erp" };
+export const CRM_KIND: Record<CrmProvider, "crm" | "erp"> = {
+  hubspot: "crm",
+  salesforce: "crm",
+  siigo: "erp",
+  alegra: "erp",
+  pipedrive: "crm",
+};
 
 export const CRM_STATUSES = ["sent", "completed", "declined", "voided", "expired"] as const;
 export type CrmEnvelopeStatus = (typeof CRM_STATUSES)[number];
@@ -241,6 +255,8 @@ export interface CrmRun {
 export interface CrmRecord {
   id: string;
   objectType: CrmObjectType;
+  /** Título del registro para el asunto por defecto (si el proveedor no usa dealname / Name). */
+  title?: string | null;
   properties: Record<string, unknown>;
   contacts: { id: string; name: string; email: string | null; phone: string | null; role: string | null; primary: boolean }[];
 }

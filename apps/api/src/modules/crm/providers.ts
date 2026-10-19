@@ -7,10 +7,12 @@
 //  · Siigo     API v1 (POST /auth con username + access_key y Partner-Id; /v1/customers). Siigo no publica un
 //              endpoint de adjuntos: la referencia al documento se agrega al campo comments del cliente.
 //  · Alegra    API v1 (Basic email:token; /contacts y /invoices con POST …/{id}/attachment).
+//  · Pipedrive API v1 sobre el api_domain de la compañía (ver pipedrive.ts).
 import type { CrmObjectType, CrmProvider, CrmRecord } from "@calasign/shared";
 import { config } from "../../config";
 import type { Db } from "../../infra/db";
 import { decrypt, encrypt } from "../../lib/util";
+import { pipedriveAttach, pipedriveFetchRecord, pipedriveTest, pipedriveWriteStatus, validatePipedriveDomain } from "./pipedrive";
 
 const env = process.env;
 
@@ -20,6 +22,7 @@ export const BASES = {
   salesforceLogin: () => (env.SALESFORCE_LOGIN_URL ?? "https://login.salesforce.com").replace(/\/$/, ""),
   siigoApi: () => (env.SIIGO_API_BASE ?? "https://api.siigo.com").replace(/\/$/, ""),
   alegraApi: () => (env.ALEGRA_API_BASE ?? "https://api.alegra.com/api/v1").replace(/\/$/, ""),
+  pipedriveOAuth: () => (env.PIPEDRIVE_OAUTH_BASE ?? "https://oauth.pipedrive.com").replace(/\/$/, ""),
 };
 
 const SF_API_VERSION = "v60.0";
@@ -33,7 +36,21 @@ export interface OAuthAppCfg {
   pkce: boolean;
 }
 
-export function oauthApp(p: "hubspot" | "salesforce"): OAuthAppCfg {
+/** Proveedores que se conectan con OAuth. */
+export type OAuthProvider = "hubspot" | "salesforce" | "pipedrive";
+export const isOAuthProvider = (p: string): p is OAuthProvider => p === "hubspot" || p === "salesforce" || p === "pipedrive";
+
+export function oauthApp(p: OAuthProvider): OAuthAppCfg {
+  // Pipedrive: los scopes (deals:full, contacts:read, users:read…) se eligen en el Developer Hub, no en la URL.
+  if (p === "pipedrive")
+    return {
+      clientId: env.PIPEDRIVE_CLIENT_ID,
+      clientSecret: env.PIPEDRIVE_CLIENT_SECRET,
+      authorizeUrl: `${BASES.pipedriveOAuth()}/oauth/authorize`,
+      tokenUrl: `${BASES.pipedriveOAuth()}/oauth/token`,
+      scope: "",
+      pkce: false,
+    };
   if (p === "hubspot")
     return {
       clientId: env.HUBSPOT_CLIENT_ID,
@@ -53,10 +70,9 @@ export function oauthApp(p: "hubspot" | "salesforce"): OAuthAppCfg {
   };
 }
 
-export const oauthConfigured = (p: CrmProvider) =>
-  (p === "hubspot" || p === "salesforce") && Boolean(oauthApp(p).clientId && oauthApp(p).clientSecret);
-export const tokenSupported = (p: CrmProvider) => p !== "salesforce";
-export const crmRedirectUri = (p: "hubspot" | "salesforce") => `${config.appUrl}/v1/crm/oauth/${p}/callback`;
+export const oauthConfigured = (p: CrmProvider) => isOAuthProvider(p) && Boolean(oauthApp(p).clientId && oauthApp(p).clientSecret);
+export const tokenSupported = (p: CrmProvider) => p !== "salesforce" && p !== "pipedrive";
+export const crmRedirectUri = (p: OAuthProvider) => `${config.appUrl}/v1/crm/oauth/${p}/callback`;
 
 export class CrmError extends Error {
   constructor(
@@ -127,12 +143,19 @@ export class CrmConn {
 
 // ───────────────────────────── OAuth ─────────────────────────────
 
-export async function oauthTokenRequest(p: "hubspot" | "salesforce", params: Record<string, string>): Promise<any> {
+export async function oauthTokenRequest(p: OAuthProvider, params: Record<string, string>): Promise<any> {
   const app = oauthApp(p);
+  const headers: Record<string, string> = { "content-type": "application/x-www-form-urlencoded", accept: "application/json" };
+  let form: Record<string, string> = { client_id: app.clientId!, client_secret: app.clientSecret!, ...params };
+  // Pipedrive autentica la app con Basic client_id:client_secret (no en el cuerpo).
+  if (p === "pipedrive") {
+    headers.authorization = `Basic ${Buffer.from(`${app.clientId}:${app.clientSecret}`).toString("base64")}`;
+    form = { ...params };
+  }
   const res = await fetch(app.tokenUrl, {
     method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
-    body: new URLSearchParams({ client_id: app.clientId!, client_secret: app.clientSecret!, ...params }),
+    headers,
+    body: new URLSearchParams(form),
     signal: AbortSignal.timeout(15_000),
   });
   const body: any = await res.json().catch(() => ({}));
@@ -155,7 +178,7 @@ export function validateSalesforceInstance(raw: string): string {
 }
 
 async function refreshOAuth(c: CrmConn) {
-  const p = c.provider as "hubspot" | "salesforce";
+  const p = c.provider as OAuthProvider;
   if (!c.creds.refresh_token) throw new CrmError("la conexión venció: hay que volver a conectarla", 401, true);
   const b = await oauthTokenRequest(p, { grant_type: "refresh_token", refresh_token: c.creds.refresh_token });
   c.creds = {
@@ -165,6 +188,7 @@ async function refreshOAuth(c: CrmConn) {
   };
   const patch: Record<string, unknown> = {};
   if (p === "salesforce" && b.instance_url) patch.instanceUrl = validateSalesforceInstance(b.instance_url);
+  if (p === "pipedrive" && b.api_domain) patch.apiDomain = validatePipedriveDomain(b.api_domain);
   await c.persist(patch);
 }
 
@@ -207,6 +231,9 @@ function baseFor(c: CrmConn): string {
       return BASES.siigoApi();
     case "alegra":
       return BASES.alegraApi();
+    case "pipedrive":
+      if (!c.cfg.apiDomain) throw new CrmError("conexión de Pipedrive sin api_domain");
+      return validatePipedriveDomain(c.cfg.apiDomain);
   }
 }
 
@@ -289,11 +316,14 @@ export async function testConnection(c: CrmConn): Promise<{ label: string | null
       await crmFetch(c, { path: "/contacts?limit=1" });
       return { label: (c.creds as AlegraCreds).email };
     }
+    case "pipedrive":
+      return pipedriveTest(c);
   }
 }
 
 /** Lee un registro y sus contactos, normalizado para los mapeos. */
 export async function fetchRecord(c: CrmConn, objectType: CrmObjectType, id: string, properties: string[]): Promise<CrmRecord> {
+  if (c.provider === "pipedrive") return pipedriveFetchRecord(c, objectType, id, properties);
   const enc = encodeURIComponent(id);
   if (c.provider === "hubspot" && objectType === "deal") {
     const props = [...new Set(["dealname", "amount", "closedate", "dealstage", ...properties])].join(",");
@@ -338,6 +368,7 @@ export async function writeStatus(c: CrmConn, objectType: CrmObjectType, id: str
   const enc = encodeURIComponent(id);
   if (c.provider === "hubspot") return crmFetch(c, { method: "PATCH", path: `/crm/v3/objects/deals/${enc}`, json: { properties: { [property]: value } } });
   if (c.provider === "salesforce") return crmFetch(c, { method: "PATCH", path: `/services/data/${SF_API_VERSION}/sobjects/Opportunity/${enc}`, json: { [property]: value } });
+  if (c.provider === "pipedrive") return pipedriveWriteStatus(c, objectType, id, property, value);
   throw new CrmError(`${c.provider} no admite escribir estados (${objectType})`);
 }
 
@@ -353,6 +384,7 @@ export interface AttachInput {
 /** Adjunta el PDF sellado (o su referencia) al registro. Devuelve una referencia remota. */
 export async function attachSigned(c: CrmConn, objectType: CrmObjectType, id: string, a: AttachInput): Promise<string> {
   const enc = encodeURIComponent(id);
+  if (c.provider === "pipedrive") return pipedriveAttach(c, objectType, id, a);
   const note = `CalaSign: "${a.subject}" firmado. Sobre ${a.envelopeId} · SHA-256 ${a.sha256} · ${a.url}`;
   if (c.provider === "hubspot") {
     const form = new FormData();

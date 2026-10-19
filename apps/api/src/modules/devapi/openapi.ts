@@ -113,7 +113,7 @@ export const DEVAPI_OPS: Op[] = [
     summary: "Eventos de la organización (polling con cursor)",
     description:
       "Del más viejo al más nuevo. Para reconciliar: guardar `nextCursor` y pedir `?after=<cursor>` periódicamente; con `hasMore: true`, pedir de nuevo enseguida. " +
-      "Un evento aparece cuando su transacción se confirmó y ya no hay otra anterior abierta, así que ningún evento queda detrás del cursor. El cursor es opaco (`<tx>.<id>`); los cursores viejos (solo números) se siguen aceptando. Una API key sin envelopes:view_all ve solo los de sus sobres.",
+      "Cada evento recibe su posición cuando ya está confirmado, así que ningún evento queda detrás del cursor aunque una operación tarde. El cursor es opaco (`p<n>`); los formatos anteriores se siguen aceptando. Una API key sin envelopes:view_all ve solo los de sus sobres.",
     query: [...EVENT_QUERY, { name: "limit", description: "Registros de evidencia por página (1..500, por defecto 100).", schema: { type: "integer", minimum: 1, maximum: 500, default: 100 } }],
     response: z.object({ items: z.array(ApiEventSchema), nextCursor: z.string().nullable(), hasMore: z.boolean() }),
     errors: ["invalid_cursor"],

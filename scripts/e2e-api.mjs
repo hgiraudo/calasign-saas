@@ -212,7 +212,7 @@ try {
     }
     const types = all.map((e) => e.type);
     for (const t of ["envelope.sent", "recipient.viewed", "recipient.signed", "envelope.completed"]) assert(types.includes(t), `evento ${t} (vinieron ${types.join(", ")})`);
-    assert(types.indexOf("envelope.sent") < types.indexOf("envelope.completed"), "orden cronológico");
+    assert(types.indexOf("envelope.sent") < types.indexOf("envelope.completed"), `orden cronológico: ${JSON.stringify(all.map((e) => [e.type, e.id, e.cursor, e.occurredAt]))}`);
     assert(all.every((e) => e.envelope.metadata.orderId === orderId && e.envelope.status === "completed"), "cada evento trae el sobre con su estado actual");
     const signed = all.find((e) => e.type === "recipient.signed");
     assert(signed.recipientId === rid, "recipientId en recipient.signed");
@@ -232,14 +232,18 @@ try {
     assert(raw.items.some((e) => e.type === "envelope.finalizing"), "scope=all trae los tipos de evidencia");
     const noNew = await api("GET", `/v1/events?after=${raw.nextCursor}&envelope_id=${A.id}`);
     assert(noNew.items.length === 0 && noNew.nextCursor === raw.nextCursor, "sin eventos nuevos el cursor no cambia");
-    // Cursor viejo (solo el id, de antes de la marca de agua): se traduce al mismo punto que el cursor nuevo.
+    // Cursores anteriores (el id solo, y "<tx>.<id>" de 0048): se traducen al mismo punto que el cursor nuevo.
     const mid = all[0].cursor;
-    assert(/^\d+\.\d+$/.test(mid), `formato del cursor: ${mid}`);
+    assert(/^p\d+$/.test(mid), `formato del cursor: ${mid}`);
+    const rowId = all[0].id.replace(/^evt_/, "").split("_")[0];
+    const ids = (p) => JSON.stringify(p.items.map((e) => e.id));
     const fromNew = await api("GET", `/v1/events?envelope_id=${A.id}&after=${mid}`);
-    const fromLegacy = await api("GET", `/v1/events?envelope_id=${A.id}&after=${mid.split(".")[1]}`);
-    assert(JSON.stringify(fromNew.items.map((e) => e.id)) === JSON.stringify(fromLegacy.items.map((e) => e.id)), "cursor viejo equivalente al nuevo");
+    const fromLegacy = await api("GET", `/v1/events?envelope_id=${A.id}&after=${rowId}`);
+    const fromTx = await api("GET", `/v1/events?envelope_id=${A.id}&after=12345.${rowId}`);
+    assert(ids(fromNew) === ids(fromLegacy) && ids(fromNew) === ids(fromTx), "cursores viejos equivalentes al nuevo");
     await api("GET", "/v1/events?after=abc", null, { expect: 400 });
     await api("GET", "/v1/events?after=1.2.3", null, { expect: 400 });
+    await api("GET", "/v1/events?after=p1x", null, { expect: 400 });
     await api("GET", "/v1/events?types=envelope.inventado", null, { expect: 400 });
     step(`eventos: ${all.length} en orden, cursor, filtro por tipo y sobre, scope=all, validaciones`);
   }
@@ -283,7 +287,7 @@ try {
       }
     }
     ctrl.abort();
-    assert(got && got.envelopeId === B.envelope.id && /^\d+\.\d+$/.test(got.cursor), "envelope.sent del clon por SSE");
+    assert(got && got.envelopeId === B.envelope.id && /^p\d+$/.test(got.cursor), "envelope.sent del clon por SSE");
     step("SSE: el envío del clon llegó por /v1/events/stream (retomando desde Last-Event-ID)");
     // Limpieza de los otros clones (borradores) por lote, más abajo.
     B.extra = [withValues.envelope.id, docsOnly.envelope.id];
@@ -310,7 +314,7 @@ try {
     const sigs2 = sigsOf(d2.headers["calasign-signature"]);
     assert(sigs2.length === 1 && sigs2[0] === hmac(rot2.secret, t2, d2.body), "sin gracia: una sola firma con el secreto nuevo");
     const audit = await api("GET", "/v1/audit-log?action=webhook.secret_rotated", null, { session: true });
-    assert(audit.items.length === 2, "rotaciones en la auditoría");
+    assert(audit.items.length === 2, `rotaciones en la auditoría: ${JSON.stringify(audit.items.map((x) => [x.action, x.targetId, x.createdAt]))}`);
     step("webhook: rotación con período de gracia (dos firmas) y sin gracia; auditada");
   }
 

@@ -11,16 +11,20 @@ import { SESSION_COOKIE, authenticate, type AuthContext, type Services } from ".
 import { isOAuthAccessToken, resolveAccessToken } from "../oauth-tokens";
 
 /**
- * Orden y marca de agua: los ids de envelope_events salen de una secuencia y una transacción que tomó un id menor puede
- * confirmarse después de otra con uno mayor, así que un cursor por id podía dejar eventos atrás. Por eso el orden es
- * (tx_id, id), con tx_id = la transacción que escribió el registro, y solo se devuelven los registros cuya transacción
- * es anterior a todas las abiertas (tx_id < pg_snapshot_xmin): las que siguen abiertas, y las que empiecen después,
- * tienen ids de transacción mayores, así que sus eventos siempre quedan delante del cursor.
- * Cursor: "<tx_id>.<id>". Un cursor viejo (solo el id) se traduce al registro que nombra.
+ * Orden del cursor. Los ids de envelope_events salen de una secuencia y una transacción que tomó un id menor puede
+ * confirmarse después de otra con uno mayor: un cursor por id podía dejar eventos atrás. Por eso cada registro recibe
+ * una posición (`pos`) recién cuando ya es visible (su transacción se confirmó). La asigna un solo secuenciador a la vez
+ * (lock de transacción), en bloques que se confirman en orden: lo que se confirma después siempre recibe una posición
+ * mayor y queda delante del cursor, por mucho que tarde una transacción y sin depender de relojes.
+ * `pos` es un dato de la tabla, así que sobrevive a un dump/restore o a un cambio de cluster (Blue/Green). Tampoco se
+ * confía solo en la secuencia (la replicación lógica no la copia): cada bloque arranca después del máximo guardado.
+ * Cursor: "p<pos>". Se aceptan los anteriores ("<tx>.<id>" de 0048 y el id solo), que se traducen al registro que nombran.
  */
-const WATERMARK = `ev.tx_id < pg_snapshot_xmin(pg_current_snapshot())`;
-const CURSOR_RE = /^(\d{1,20})\.(\d{1,18})$/;
+const CURSOR_RE = /^p(\d{1,18})$/;
+const TX_CURSOR_RE = /^\d{1,20}\.(\d{1,18})$/;
 const LEGACY_CURSOR_RE = /^\d{1,18}$/;
+const SEQUENCER_LOCK = 72_010_048; // clave del lock de transacción del secuenciador
+const SEQUENCER_BATCH = 5000;
 const DEFAULT_LOOKBACK_MS = 24 * 3600_000;
 
 interface EventQuery {
@@ -33,7 +37,7 @@ interface EventQuery {
 }
 
 interface Filters {
-  /** Cursor tal como llegó (validado); se resuelve a (tx_id, id) en resolveCursor. */
+  /** Cursor tal como llegó (validado); se resuelve a una posición en resolveCursor. */
   after: string | null;
   since: string | null;
   types: string[];
@@ -49,9 +53,7 @@ function parseFilters(q: EventQuery, lastEventId?: string): Filters {
   const all = q.scope === "all";
   if (q.scope && q.scope !== "all" && q.scope !== "webhook") throw badRequest("validation_error", "scope: webhook o all", [{ path: "scope", message: "webhook | all" }]);
   const after = (q.after ?? lastEventId ?? "").trim() || null;
-  if (after && !CURSOR_RE.test(after) && !LEGACY_CURSOR_RE.test(after)) throw badRequest("invalid_cursor", "Cursor inválido");
-  // 20 cifras admiten más que un xid8 (2^64 - 1): el cast fallaba en Postgres (22003) y respondía 500.
-  if (after && CURSOR_RE.test(after) && BigInt(CURSOR_RE.exec(after)![1]) > 0xffffffffffffffffn) throw badRequest("invalid_cursor", "Cursor inválido");
+  if (after && !CURSOR_RE.test(after) && !TX_CURSOR_RE.test(after) && !LEGACY_CURSOR_RE.test(after)) throw badRequest("invalid_cursor", "Cursor inválido");
   let since: string | null = null;
   if (q.since) {
     const t = Date.parse(q.since);
@@ -76,37 +78,63 @@ function evidenceTypesFor(types: string[]): string[] {
     .map(([ev]) => ev);
 }
 
-/** (tx_id, id) de un cursor. El viejo (solo id, de antes de 0048) se traduce al registro que nombra. */
-async function resolveCursor(s: Services, tenantId: string, cursor: string): Promise<[string, string]> {
-  const m = CURSOR_RE.exec(cursor);
-  if (m) return [m[1], m[2]];
-  // Todos los registros anteriores a 0048 tienen el mismo tx_id, así que el orden entre ellos sigue siendo el id.
-  const r = await s.db.one<{ tx: string }>(
-    `SELECT tx_id::text AS tx FROM envelope_events WHERE tenant_id = $1 AND id <= $2::bigint ORDER BY id DESC LIMIT 1`,
-    [tenantId, cursor],
-  );
-  return [r?.tx ?? "0", cursor];
+/**
+ * Secuenciador: da posición, en orden de id, a los registros ya confirmados que no la tienen. Si otro lo está
+ * corriendo no espera: se lee lo que ya está confirmado y el próximo pedido toma el resto.
+ */
+export async function assignEventPositions(s: Services): Promise<void> {
+  await s.db.tx(async (t) => {
+    const lock = await t.one<{ ok: boolean }>(`SELECT pg_try_advisory_xact_lock($1) AS ok`, [SEQUENCER_LOCK]);
+    if (!lock?.ok) return;
+    const pending = await t.query<{ id: string }>(
+      // Orden por la columna numérica: con el alias de texto, ORDER BY id ordenaba "10" antes que "3".
+      `SELECT ev.id::text AS id FROM envelope_events ev
+        WHERE ev.pos IS NULL ORDER BY ev.id LIMIT ${SEQUENCER_BATCH}`,
+    );
+    if (!pending.length) return;
+    // El bloque arranca después de lo guardado aunque la secuencia haya quedado atrás (restore, replicación lógica).
+    const base = await t.one<{ b: string }>(
+      `SELECT GREATEST(nextval('envelope_events_pos_seq'), (SELECT COALESCE(max(pos), 0) + 1 FROM envelope_events))::text AS b`,
+    );
+    const first = BigInt(base!.b);
+    const last = first + BigInt(pending.length) - 1n;
+    await t.query(`SELECT setval('envelope_events_pos_seq', $1::bigint)`, [last.toString()]);
+    await t.query(
+      `UPDATE envelope_events ev SET pos = $2::bigint + n.ord - 1
+         FROM unnest($1::bigint[]) WITH ORDINALITY AS n(id, ord) WHERE ev.id = n.id`,
+      [pending.map((r) => r.id), first.toString()],
+    );
+  });
 }
 
-/** Cursor de "ahora": el último registro ya asentado de la organización (lo que se confirme después va delante). */
-export async function currentCursor(s: Services, tenantId: string): Promise<string> {
-  const r = await s.db.one<{ tx: string; id: string }>(
-    `SELECT ev.tx_id::text AS tx, ev.id::text AS id FROM envelope_events ev
-      WHERE ev.tenant_id = $1 AND ${WATERMARK} ORDER BY ev.tx_id DESC, ev.id DESC LIMIT 1`,
-    [tenantId],
+/** Posición de un cursor. Los anteriores a "p<pos>" se traducen al registro (id) que nombran. */
+async function resolveCursor(s: Services, tenantId: string, cursor: string): Promise<string> {
+  const m = CURSOR_RE.exec(cursor);
+  if (m) return m[1];
+  const id = TX_CURSOR_RE.exec(cursor)?.[1] ?? cursor;
+  const r = await s.db.one<{ pos: string | null }>(
+    `SELECT pos::text AS pos FROM envelope_events WHERE tenant_id = $1 AND id <= $2::bigint AND pos IS NOT NULL ORDER BY id DESC LIMIT 1`,
+    [tenantId, id],
   );
-  return r ? `${r.tx}.${r.id}` : "0.0";
+  return r?.pos ?? "0";
+}
+
+/** Cursor de "ahora": la última posición asignada de la organización (lo que se asiente después va delante). */
+export async function currentCursor(s: Services, tenantId: string): Promise<string> {
+  await assignEventPositions(s);
+  const r = await s.db.one<{ pos: string | null }>(`SELECT max(pos)::text AS pos FROM envelope_events WHERE tenant_id = $1`, [tenantId]);
+  return `p${r?.pos ?? "0"}`;
 }
 
 /** Lee hasta `limit` registros de evidencia y los expande a eventos públicos. */
 export async function readEvents(s: Services, a: AuthContext, f: Filters, limit: number): Promise<ListEventsResponse> {
+  await assignEventPositions(s);
   const params: unknown[] = [a.tenantId];
-  let where = `ev.tenant_id = $1 AND ${WATERMARK}`;
+  let where = `ev.tenant_id = $1 AND ev.pos IS NOT NULL`;
   where += envelopeVisibilitySql(a, params, "e");
   if (f.after) {
-    const [tx, id] = await resolveCursor(s, a.tenantId, f.after);
-    params.push(tx, id);
-    where += ` AND (ev.tx_id, ev.id) > ($${params.length - 1}::xid8, $${params.length}::bigint)`;
+    params.push(await resolveCursor(s, a.tenantId, f.after));
+    where += ` AND ev.pos > $${params.length}::bigint`;
   } else {
     params.push(f.since ?? new Date(Date.now() - DEFAULT_LOOKBACK_MS).toISOString());
     where += ` AND ev.occurred_at >= $${params.length}::timestamptz`;
@@ -124,10 +152,10 @@ export async function readEvents(s: Services, a: AuthContext, f: Filters, limit:
   }
   params.push(limit + 1);
   const rows = await s.db.query<any>(
-    `SELECT ev.id::text AS id, ev.tx_id::text AS tx, ev.type, ev.occurred_at, ev.envelope_id, ev.actor_type, ev.actor_id, ev.data,
+    `SELECT ev.id::text AS id, ev.pos::text AS pos, ev.type, ev.occurred_at, ev.envelope_id, ev.actor_type, ev.actor_id, ev.data,
             e.subject, e.status, e.metadata
        FROM envelope_events ev JOIN envelopes e ON e.id = ev.envelope_id
-      WHERE ${where} ORDER BY ev.tx_id, ev.id LIMIT $${params.length}`,
+      WHERE ${where} ORDER BY ev.pos LIMIT $${params.length}`,
     params,
   );
   const page = rows.slice(0, limit);
@@ -151,12 +179,12 @@ export async function readEvents(s: Services, a: AuthContext, f: Filters, limit:
         envelope: { id: r.envelope_id, subject: r.subject, status: r.status, metadata: r.metadata ?? {} },
         // Solo lo que también va en los webhooks (el motivo de un rechazo o anulación); con scope=all, todo el dato de evidencia.
         data: f.all ? data : typeof data.reason === "string" ? { reason: data.reason } : {},
-        cursor: `${r.tx}.${r.id}`,
+        cursor: `p${r.pos}`,
       });
     });
   }
   const last = page[page.length - 1];
-  return { items, nextCursor: last ? `${last.tx}.${last.id}` : f.after, hasMore: rows.length > limit };
+  return { items, nextCursor: last ? `p${last.pos}` : f.after, hasMore: rows.length > limit };
 }
 
 const MAX_STREAMS_PER_TENANT = 5;

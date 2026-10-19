@@ -447,6 +447,8 @@ export const docsPt: Record<DocsKey, string> = {
   "g.crm.col.does": "O que faz",
   "g.crm.hubspot": "Enviar para assinatura a partir de um Deal (contatos associados + propriedades → modelo), manualmente ou por webhook ao mudar uma propriedade. Ao concluir, atualiza uma propriedade de estado e anexa o PDF ao deal.",
   "g.crm.salesforce": "Enviar a partir de uma Opportunity (papéis de contato + campos). Atualiza um campo de estado e publica o PDF como ContentVersion na oportunidade.",
+  "g.crm.zoho":
+    "OAuth em qualquer data center do Zoho (com, eu, in, com.au, jp, ca…). Enviar para assinatura a partir de um **Deal** (contato principal e papéis de contato) ou de um **Contact**; no Bigin, de um Pipeline. Atualiza um campo de status (ex. `CalaSign_Status`) e anexa o PDF assinado ao registro, com uma nota que traz o hash e o link do envelope. O botão «Enviar para assinatura com CalaSign» nos Deals vem com a [função Deluge e o guia da extensão](/integrations/connectors/zoho-crm/calasign-zoho-crm.zip).",
   "g.crm.siigo": "Colômbia: busca o cliente pela identificação de um signatário e adiciona a referência do documento assinado.",
   "g.crm.alegra": "Busca o contato pela identificação e anexa o PDF; também é possível vincular uma fatura.",
   "g.crm.mappings.h": "Mapeamentos e vínculos",

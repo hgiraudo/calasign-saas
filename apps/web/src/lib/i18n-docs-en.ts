@@ -447,6 +447,8 @@ export const docsEn: Record<DocsKey, string> = {
   "g.crm.col.does": "What it does",
   "g.crm.hubspot": "Send for signature from a Deal (associated contacts + properties → template), manually or via webhook when a property changes. On completion it updates a status property and attaches the PDF to the deal.",
   "g.crm.salesforce": "Send from an Opportunity (contact roles + fields). Updates a status field and publishes the PDF as a ContentVersion on the opportunity.",
+  "g.crm.zoho":
+    "OAuth in any Zoho data center (com, eu, in, com.au, jp, ca…). Send for signature from a **Deal** (primary contact and contact roles) or a **Contact**; in Bigin, from a Pipeline. Updates a status field (e.g. `CalaSign_Status`) and attaches the signed PDF to the record, with a note carrying the hash and the envelope link. A “Send for signature with CalaSign” button on Deals comes with the [Deluge function and extension guide](/integrations/connectors/zoho-crm/calasign-zoho-crm.zip).",
   "g.crm.siigo": "Colombia: finds the customer by a signer's ID number and adds the signed document reference to it.",
   "g.crm.alegra": "Finds the contact by ID number and attaches the PDF; an invoice can also be linked.",
   "g.crm.mappings.h": "Mappings and links",

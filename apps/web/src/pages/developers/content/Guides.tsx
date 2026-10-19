@@ -384,6 +384,7 @@ export function CrmGuide() {
         rows={[
           [<strong key="h">HubSpot</strong>, t("g.crm.hubspot")],
           [<strong key="s">Salesforce</strong>, t("g.crm.salesforce")],
+          [<strong key="z">Zoho CRM / Bigin</strong>, t("g.crm.zoho")],
           [<strong key="i">Siigo</strong>, t("g.crm.siigo")],
           [<strong key="a">Alegra</strong>, t("g.crm.alegra")],
         ]}

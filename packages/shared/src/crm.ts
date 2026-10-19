@@ -2,7 +2,7 @@
 import { z } from "zod";
 import { CHANNELS } from "./api";
 
-export const CRM_PROVIDERS = ["hubspot", "salesforce", "siigo", "alegra"] as const;
+export const CRM_PROVIDERS = ["hubspot", "salesforce", "zoho", "siigo", "alegra"] as const;
 export type CrmProvider = (typeof CRM_PROVIDERS)[number];
 
 export const CRM_OBJECT_TYPES = ["deal", "opportunity", "customer", "contact", "invoice"] as const;
@@ -12,12 +12,24 @@ export type CrmObjectType = (typeof CRM_OBJECT_TYPES)[number];
 export const CRM_PROVIDER_OBJECTS: Record<CrmProvider, readonly CrmObjectType[]> = {
   hubspot: ["deal"],
   salesforce: ["opportunity"],
+  zoho: ["deal", "contact"],
   siigo: ["customer"],
   alegra: ["contact", "invoice"],
 };
 
 /** CRM (envían desde un registro) vs ERP (reciben el documento firmado al completarse). */
-export const CRM_KIND: Record<CrmProvider, "crm" | "erp"> = { hubspot: "crm", salesforce: "crm", siigo: "erp", alegra: "erp" };
+export const CRM_KIND: Record<CrmProvider, "crm" | "erp"> = { hubspot: "crm", salesforce: "crm", zoho: "crm", siigo: "erp", alegra: "erp" };
+
+/**
+ * Centros de datos de Zoho (cada cuenta vive en uno: accounts.zoho.com, .eu, .in, .com.au, .jp, .ca, .sa, .uk,
+ * .com.cn). El usuario puede iniciar en cualquiera: Zoho lo redirige al suyo y el callback trae `accounts-server`.
+ */
+export const ZOHO_REGIONS = ["com", "eu", "in", "com.au", "jp", "ca", "sa", "uk", "com.cn"] as const;
+export type ZohoRegion = (typeof ZOHO_REGIONS)[number];
+
+/** Producto de Zoho: Zoho CRM (Deals y Contacts) o Bigin (Pipelines y Contacts). */
+export const ZOHO_PRODUCTS = ["crm", "bigin"] as const;
+export type ZohoProduct = (typeof ZOHO_PRODUCTS)[number];
 
 export const CRM_STATUSES = ["sent", "completed", "declined", "voided", "expired"] as const;
 export type CrmEnvelopeStatus = (typeof CRM_STATUSES)[number];
@@ -41,7 +53,13 @@ export const CreateCrmTokenConnectionInput = z.discriminatedUnion("provider", [
 ]);
 export type CreateCrmTokenConnectionInput = z.infer<typeof CreateCrmTokenConnectionInput>;
 
-export const StartCrmOAuthInput = z.object({ name: z.string().trim().min(1).max(120) });
+export const StartCrmOAuthInput = z.object({
+  name: z.string().trim().min(1).max(120),
+  /** Solo Zoho: centro de datos donde iniciar sesión (por defecto, el de zoho.com, que redirige al de la cuenta). */
+  region: z.enum(ZOHO_REGIONS).optional(),
+  /** Solo Zoho: Zoho CRM (por defecto) o Bigin. */
+  product: z.enum(ZOHO_PRODUCTS).optional(),
+});
 export type StartCrmOAuthInput = z.infer<typeof StartCrmOAuthInput>;
 
 export const UpdateCrmConnectionInput = z.object({

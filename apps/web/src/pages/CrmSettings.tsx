@@ -13,6 +13,10 @@ import {
   type SendFromCrmRecordResponse,
   type TemplateDetail,
   type TemplateSummary,
+  ZOHO_PRODUCTS,
+  ZOHO_REGIONS,
+  type ZohoProduct,
+  type ZohoRegion,
 } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
 import { formatDateTime, useI18n, confirmAction } from "../lib/i18n";
@@ -36,6 +40,7 @@ function Section({ title, children, aside }: { title: string; children: ReactNod
 const TOKEN_FIELDS: Record<CrmProvider, { key: string; label: string; secret?: boolean; type?: string }[]> = {
   hubspot: [{ key: "accessToken", label: "hubspot.token", secret: true }],
   salesforce: [],
+  zoho: [],
   siigo: [
     { key: "username", label: "siigo.username" },
     { key: "accessKey", label: "siigo.accessKey", secret: true },
@@ -90,9 +95,13 @@ export function CrmSettingsPage() {
   const [tokenForm, setTokenForm] = useState<Record<string, Record<string, string>>>({});
   const setTok = (p: string, k: string, v: string) => setTokenForm((c) => ({ ...c, [p]: { ...(c[p] ?? {}), [k]: v } }));
 
+  // Zoho: centro de datos donde iniciar sesión (zoho.com redirige al de la cuenta) y producto (Zoho CRM o Bigin).
+  const [zohoRegion, setZohoRegion] = useState<ZohoRegion>("com");
+  const [zohoProduct, setZohoProduct] = useState<ZohoProduct>("crm");
   const startOAuth = (p: CrmProvider) =>
     act(async () => {
-      const r = await api<{ authorizeUrl: string }>(`/v1/crm/oauth/${p}/start`, { method: "POST", body: { name: names[p] || t(`p.${p}`) } });
+      const extra = p === "zoho" ? { region: zohoRegion, product: zohoProduct } : {};
+      const r = await api<{ authorizeUrl: string }>(`/v1/crm/oauth/${p}/start`, { method: "POST", body: { name: names[p] || t(`p.${p}`), ...extra } });
       window.location.href = r.authorizeUrl;
     });
   // Doble clic en "Conectar" mandaba dos POST y quedaban dos conexiones iguales (cada una con su sincronización).
@@ -144,7 +153,31 @@ export function CrmSettingsPage() {
                   <span>{t("name")}</span>
                   <input value={names[pv.provider] ?? ""} placeholder={t(`p.${pv.provider}`)} onChange={(e) => setNames((c) => ({ ...c, [pv.provider]: e.target.value }))} />
                 </label>
-                {(pv.provider === "hubspot" || pv.provider === "salesforce") &&
+                {pv.provider === "zoho" && pv.oauthConfigured && (
+                  <div className="row-wrap">
+                    <label className="field grow">
+                      <span>{t("zoho.product")}</span>
+                      <select value={zohoProduct} onChange={(e) => setZohoProduct(e.target.value as ZohoProduct)}>
+                        {ZOHO_PRODUCTS.map((x) => (
+                          <option key={x} value={x}>
+                            {t(`zoho.product.${x}`)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="field grow">
+                      <span>{t("zoho.region")}</span>
+                      <select value={zohoRegion} onChange={(e) => setZohoRegion(e.target.value as ZohoRegion)}>
+                        {ZOHO_REGIONS.map((x) => (
+                          <option key={x} value={x}>
+                            {x === "ca" ? "zohocloud.ca" : `zoho.${x}`}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                )}
+                {(pv.provider === "hubspot" || pv.provider === "salesforce" || pv.provider === "zoho") &&
                   (pv.oauthConfigured ? (
                     <button type="button" className="btn btn-primary" onClick={() => startOAuth(pv.provider)}>
                       {t("connectOAuth")}
@@ -765,7 +798,7 @@ function MappingEditor({
           <div className="row-wrap">
             <label className="field grow">
               <span>{t("m.statusProperty")}</span>
-              <input value={statusProperty} placeholder={provider === "salesforce" ? "CalaSign_Status__c" : "calasign_status"} onChange={(e) => setStatusProperty(e.target.value)} />
+              <input value={statusProperty} placeholder={provider === "salesforce" ? "CalaSign_Status__c" : provider === "zoho" ? "CalaSign_Status" : "calasign_status"} onChange={(e) => setStatusProperty(e.target.value)} />
             </label>
             <label className="field grow">
               <span>{t("m.completedValue")}</span>

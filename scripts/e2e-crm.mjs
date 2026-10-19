@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Prueba de punta a punta de CRM/ERP (HubSpot, Salesforce, Siigo, Alegra) contra servidores simulados.
+// Prueba de punta a punta de CRM/ERP (HubSpot, Salesforce, Zoho CRM / Bigin, Siigo, Alegra) contra servidores simulados.
 // Es autocontenida: levanta los simuladores y su propia API (puerto 4115) con las URLs de los proveedores
 // apuntando a ellos. Uso: node scripts/e2e-crm.mjs   (un argumento de URL se ignora)
 import { spawn } from "node:child_process";
@@ -15,7 +15,8 @@ const PORT = Number(process.env.E2E_CRM_PORT ?? 4115);
 const BASE = `http://localhost:${PORT}`;
 // Puertos de los simuladores (E2E_CRM_MOCK_BASE para evitar choques con otras pruebas en paralelo).
 const MB = Number(process.env.E2E_CRM_MOCK_BASE ?? 4291);
-const P = { hs: MB, sf: MB + 1, sg: MB + 2, al: MB + 3 };
+// Zoho: zo = servidor de cuentas "US" donde se inicia OAuth; zoEu = centro de datos de la cuenta (cuentas + API).
+const P = { hs: MB, sf: MB + 1, sg: MB + 2, al: MB + 3, zo: MB + 4, zoEu: MB + 5 };
 const HS_SECRET = "hs-client-secret-e2e";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const step = (m) => console.log(`✓ ${m}`);
@@ -247,6 +248,105 @@ await serve(P.al, async ({ req, url, body, send }) => {
   send(404, { message: `alegra mock: ${req.method} ${path}` });
 });
 
+// Zoho CRM y Bigin. La cuenta vive en el centro de datos "EU" (P.zoEu): el authorize se inicia en el "US" (P.zo) y
+// Zoho vuelve con accounts-server apuntando al EU, donde hay que canjear el código y refrescar.
+const zo = {
+  valid: new Set(),
+  tokens: 0,
+  refreshes: 0,
+  revoked: false,
+  codes: new Map(),
+  deals: { z1: { Deal_Name: "Renovación Zoho", Amount: 3200, Stage: "Negotiation", Contact_Name: { id: "zc1", name: "Zoe Zoho" } } },
+  pipelines: { b1: { Deal_Name: "Bigin Beta", Amount: 410, Contact_Name: { id: "zc3", name: "Bea Bigin" } } },
+  contacts: {
+    zc1: { First_Name: "Zoe", Last_Name: "Zoho", Full_Name: "Zoe Zoho", Email: "zoe.zoho@cliente.test", Mobile: "+573004445566" },
+    zc2: { First_Name: "Raúl", Last_Name: "Roles", Full_Name: "Raúl Roles", Email: "raul.legal@cliente.test" },
+    zc3: { First_Name: "Bea", Last_Name: "Bigin", Full_Name: "Bea Bigin", Email: "bea.bigin@cliente.test" },
+  },
+  roles: { z1: [{ id: "zc2", Full_Name: "Raúl Roles", Email: "raul.legal@cliente.test", Contact_Role: { id: "r1", name: "Legal" } }, { id: "zc1", Full_Name: "Zoe Zoho", Email: "zoe.zoho@cliente.test", Contact_Role: { id: "r2", name: "Decision Maker" } }] },
+  puts: [],
+  attachments: [],
+  notes: [],
+  expire() {
+    this.valid.clear();
+  },
+};
+function zoIssue(withRefresh) {
+  zo.tokens++;
+  const t = `zo-at-${zo.tokens}`;
+  zo.valid.add(t);
+  return { access_token: t, ...(withRefresh ? { refresh_token: "zo-rt" } : {}), api_domain: `http://127.0.0.1:${P.zoEu}`, token_type: "Bearer", expires_in: 3600 };
+}
+await serve(P.zo, async ({ url, send }) => {
+  if (url.pathname === "/oauth/v2/auth") {
+    const q = url.searchParams;
+    if (q.get("code_challenge_method") !== "S256" || q.get("access_type") !== "offline" || q.get("response_type") !== "code") return send(400, { error: "bad_request" });
+    const code = `zo-code-${randomUUID()}`;
+    zo.codes.set(code, { challenge: q.get("code_challenge"), redirect: q.get("redirect_uri"), scope: q.get("scope") });
+    const cb = new URL(q.get("redirect_uri"));
+    cb.searchParams.set("code", code);
+    cb.searchParams.set("state", q.get("state"));
+    cb.searchParams.set("location", "eu");
+    cb.searchParams.set("accounts-server", `http://127.0.0.1:${P.zoEu}`);
+    return send(302, undefined, { location: cb.toString() });
+  }
+  // El DC donde se inició no conoce el código (la cuenta está en el EU): Zoho responde 200 con error.
+  if (url.pathname === "/oauth/v2/token") return send(200, { error: "invalid_code" });
+  send(404, { code: "INVALID_URL_PATTERN" });
+});
+await serve(P.zoEu, async ({ req, url, body, json, send }) => {
+  const path = url.pathname;
+  if (path === "/oauth/v2/token") {
+    const f = new URLSearchParams(body.toString());
+    if (f.get("client_id") !== "zo-client" || f.get("client_secret") !== "zo-secret") return send(200, { error: "invalid_client" });
+    if (f.get("grant_type") === "authorization_code") {
+      const c = zo.codes.get(f.get("code"));
+      if (!c || c.redirect !== f.get("redirect_uri") || s256(f.get("code_verifier") ?? "") !== c.challenge) return send(200, { error: "invalid_code" });
+      zo.codes.delete(f.get("code"));
+      return send(200, zoIssue(true));
+    }
+    if (f.get("grant_type") === "refresh_token") {
+      if (zo.revoked || f.get("refresh_token") !== "zo-rt") return send(200, { error: "invalid_code" });
+      zo.refreshes++;
+      return send(200, zoIssue(false)); // Zoho no devuelve un refresh token nuevo
+    }
+    return send(200, { error: "unsupported_grant_type" });
+  }
+  const tok = (req.headers.authorization ?? "").replace(/^Zoho-oauthtoken /, "");
+  if (zo.revoked || !zo.valid.has(tok)) return send(401, { code: "INVALID_TOKEN", details: {}, message: "invalid oauth token", status: "error" });
+  const m = path.match(/^\/(crm\/v7|bigin\/v2)\/(\w+)(?:\/(\w+))?(?:\/(\w+))?$/);
+  if (!m) return send(404, { code: "INVALID_URL_PATTERN", message: path, status: "error" });
+  const [, api, mod, id, sub] = m;
+  if (mod === "org") return send(200, { org: [{ id: "org-zo-1", company_name: api === "bigin/v2" ? "ACME Bigin" : "ACME Zoho" }] });
+  const store = api === "bigin/v2" ? { Pipelines: zo.pipelines, Contacts: zo.contacts }[mod] : { Deals: zo.deals, Contacts: zo.contacts }[mod];
+  if (mod === "Notes" && req.method === "POST") {
+    const n = json().data[0];
+    zo.notes.push({ api, ...n });
+    return send(201, { data: [{ code: "SUCCESS", details: { id: `note-${zo.notes.length}` }, message: "record added", status: "success" }] });
+  }
+  if (!store) return send(400, { code: "INVALID_MODULE", message: `módulo ${mod} no existe en ${api}`, status: "error" });
+  const rec = store[id];
+  if (!rec) return send(204);
+  if (!sub && req.method === "GET") return send(200, { data: [{ id, ...rec }] });
+  if (!sub && req.method === "PUT") {
+    const b = json();
+    if (!Array.isArray(b.trigger)) return send(400, { code: "MISSING_TRIGGER" });
+    if ("Campo_Inexistente" in b.data[0]) return send(400, { data: [{ code: "INVALID_DATA", details: { api_name: "Campo_Inexistente" }, message: "invalid data", status: "error" }] });
+    Object.assign(rec, b.data[0]);
+    zo.puts.push({ api, mod, id, ...b.data[0] });
+    return send(200, { data: [{ code: "SUCCESS", details: { id }, message: "record updated", status: "success" }] });
+  }
+  if (sub === "Contact_Roles" && api === "crm/v7") {
+    const list = zo.roles[id] ?? [];
+    return list.length ? send(200, { data: list, info: { count: list.length } }) : send(204);
+  }
+  if (sub === "Attachments" && req.method === "POST") {
+    zo.attachments.push({ api, mod, id, pdf: body.toString("latin1").includes("%PDF"), multipart: String(req.headers["content-type"]).startsWith("multipart/form-data") });
+    return send(200, { data: [{ code: "SUCCESS", details: { id: `att-${zo.attachments.length}` }, message: "attachment uploaded", status: "success" }] });
+  }
+  send(400, { code: "INVALID_URL_PATTERN", message: `${req.method} ${path}`, status: "error" });
+});
+
 // ───────────────────────────── API propia ─────────────────────────────
 
 const dataDir = mkdtempSync(join(tmpdir(), "calasign-crm-e2e-"));
@@ -273,6 +373,9 @@ const api_ = spawn(join(ROOT, "apps/api/node_modules/.bin/tsx"), [join(ROOT, "sc
     SIIGO_API_BASE: `http://127.0.0.1:${P.sg}`,
     SIIGO_PARTNER_ID: "CalaSignE2E",
     ALEGRA_API_BASE: `http://127.0.0.1:${P.al}/api/v1`,
+    ZOHO_CLIENT_ID: "zo-client",
+    ZOHO_CLIENT_SECRET: "zo-secret",
+    ZOHO_ACCOUNTS_URL: `http://127.0.0.1:${P.zo}`,
   },
   stdio: ["ignore", "inherit", "inherit"],
 });
@@ -368,8 +471,8 @@ async function signAll(envelopeId, names) {
   await waitFor(async () => (await api("GET", `/v1/envelopes/${envelopeId}`)).envelope.status === "completed", "sobre completado");
 }
 
-async function oauthConnect(provider, name) {
-  const { authorizeUrl } = await api("POST", `/v1/crm/oauth/${provider}/start`, { name });
+async function oauthConnect(provider, name, extra = {}) {
+  const { authorizeUrl } = await api("POST", `/v1/crm/oauth/${provider}/start`, { name, ...extra });
   const r1 = await fetch(authorizeUrl, { redirect: "manual" });
   const cb = r1.headers.get("location");
   assert(cb?.startsWith(`${BASE}/v1/crm/oauth/${provider}/callback`), `${provider}: el proveedor vuelve al callback`);
@@ -389,7 +492,8 @@ const prov = await api("GET", "/v1/crm/providers");
 const byP = Object.fromEntries(prov.items.map((p) => [p.provider, p]));
 assert(byP.hubspot.oauthConfigured && byP.salesforce.oauthConfigured && !byP.siigo.oauthConfigured && byP.siigo.tokenSupported && !byP.salesforce.tokenSupported, "proveedores");
 assert(prov.redirectUris.salesforce === `${BASE}/v1/crm/oauth/salesforce/callback`, "redirect URI");
-step("proveedores: OAuth configurado para HubSpot y Salesforce; Siigo y Alegra por token");
+assert(byP.zoho.oauthConfigured && !byP.zoho.tokenSupported && byP.zoho.kind === "crm" && prov.redirectUris.zoho === `${BASE}/v1/crm/oauth/zoho/callback`, "Zoho por OAuth");
+step("proveedores: OAuth configurado para HubSpot, Salesforce y Zoho; Siigo y Alegra por token");
 
 // Plantilla con dos roles y un monto a prellenar.
 const { template } = await api("POST", "/v1/templates", { name: `Contrato CRM ${stamp}`, subject: "Contrato" });
@@ -610,6 +714,99 @@ await signAll(sfSent.envelopeId, ["Carla Gamma SF", vendedorSf]);
 await waitFor(() => sf.opps["006A1"].CalaSign_Status__c === "completed" && sf.versions.length === 1, "write-back y ContentVersion");
 assert(sf.versions[0].link === "006A1" && sf.versions[0].pdf, "ContentVersion vinculado a la oportunidad");
 step("Salesforce: OAuth con PKCE S256, contacto principal (OpportunityContactRole), refresh de sesión, estado y ContentVersion");
+
+// ── Zoho CRM: OAuth multi-DC con PKCE, Deal con roles de contacto, write-back y adjunto ──
+{
+  const zoConn = await oauthConnect("zoho", "Zoho ACME", { region: "com", product: "crm" });
+  assert(zoConn?.accountLabel === "ACME Zoho" && zoConn.authType === "oauth", `conexión Zoho con etiqueta (${zoConn?.accountLabel})`);
+  assert([...zo.codes.keys()].length === 0, "el código se canjeó en el accounts-server de la cuenta (EU), no donde se inició");
+  step("Zoho: OAuth con PKCE iniciado en zoho.com; el código se canjea en el accounts-server del callback (EU) y la API va a su api_domain");
+
+  await api("POST", "/v1/crm/mappings", { connectionId: zoConn.id, name: "x", objectType: "opportunity", templateId: template.id }, { expect: 400 });
+  const vendZo = `VendZO ${stamp}`;
+  const zoMap = await api("POST", "/v1/crm/mappings", {
+    connectionId: zoConn.id,
+    name: "Deals Zoho",
+    objectType: "deal",
+    templateId: template.id,
+    roles: [
+      { role: "Cliente", source: "contact_role", contactRole: "Legal" },
+      { role: "Vendedor", source: "fixed", name: vendZo, email: `ventas+zo${stamp}@acme.test` },
+    ],
+    prefill: [{ field: "Monto", property: "Amount" }],
+    writeBack: { statusProperty: "CalaSign_Status", statusValues: { completed: "Firmado" } },
+  });
+  const zoSent = await api("POST", `/v1/crm/mappings/${zoMap.id}/send`, { objectId: "z1" });
+  const zoDet = await api("GET", `/v1/envelopes/${zoSent.envelopeId}`);
+  assert(zoDet.recipients.some((r) => r.name === "Raúl Roles" && r.email === "raul.legal@cliente.test"), "contacto con rol Legal como Cliente");
+  assert(zoDet.fields.some((f) => f.label === "Monto" && f.value === "3200"), "monto prellenado desde Amount");
+  assert(zoDet.envelope.subject.includes("Renovación Zoho"), `asunto con el Deal_Name (${zoDet.envelope.subject})`);
+  await waitFor(() => zo.deals.z1.CalaSign_Status === "sent", "write-back sent en Zoho");
+  const missing = await api("POST", `/v1/crm/mappings/${zoMap.id}/send`, { objectId: "no-existe" }, { raw: true });
+  assert(missing.status === 404 && (await missing.json()).error?.code === "crm_record_not_found", `Deal inexistente (204 de Zoho) → 404 (HTTP ${missing.status})`);
+  step("Zoho: envío desde el Deal z1 (rol de contacto Legal + Amount), write-back «sent»; Deal inexistente → 404");
+
+  zo.expire(); // el access token vence: el refresh tiene que ir al accounts-server del EU
+  const refreshesBefore = zo.refreshes;
+  await signAll(zoSent.envelopeId, ["Raúl Roles", vendZo]);
+  await waitFor(() => zo.deals.z1.CalaSign_Status === "Firmado" && zo.attachments.length === 1 && zo.notes.length === 1, "write-back Firmado + adjunto + nota en Zoho");
+  assert(zo.refreshes > refreshesBefore, "se refrescó el token en el centro de datos de la cuenta");
+  assert(zo.attachments[0].mod === "Deals" && zo.attachments[0].id === "z1" && zo.attachments[0].pdf && zo.attachments[0].multipart, "PDF sellado adjunto al Deal (multipart)");
+  assert(zo.notes[0].Parent_Id?.id === "z1" && zo.notes[0].Parent_Id?.module?.api_name === "Deals" && /SHA-256/.test(zo.notes[0].Note_Content), "nota en el Deal con hash y enlace");
+  const zoLinks = (await api("GET", `/v1/crm/links?envelopeId=${zoSent.envelopeId}`)).items;
+  assert(/attachment:att-1/.test(zoLinks[0]?.remoteRef ?? ""), `referencia remota del adjunto (${zoLinks[0]?.remoteRef})`);
+  step("Zoho: firmado → token refrescado en el EU, estado «Firmado», PDF adjunto al Deal y nota con hash");
+
+  // Envío desde un Contact (el propio contacto firma) y un campo de estado inexistente: error visible del registro.
+  const zoContactMap = await api("POST", "/v1/crm/mappings", {
+    connectionId: zoConn.id,
+    name: "Contacts Zoho",
+    objectType: "contact",
+    templateId: template.id,
+    roles: [
+      { role: "Cliente", source: "contact", index: 0 },
+      { role: "Vendedor", source: "fixed", name: `VendZC ${stamp}`, email: `ventas+zc${stamp}@acme.test` },
+    ],
+    writeBack: { statusProperty: "Campo_Inexistente", attachPdf: false },
+  });
+  const zcSent = await api("POST", `/v1/crm/mappings/${zoContactMap.id}/send`, { objectId: "zc1" });
+  assert((await api("GET", `/v1/envelopes/${zcSent.envelopeId}`)).recipients.some((r) => r.name === "Zoe Zoho" && r.phone === "+573004445566"), "el contacto con su móvil");
+  const zcFail = await waitFor(async () => (await api("GET", `/v1/crm/runs?envelopeId=${zcSent.envelopeId}`)).items.find((r) => r.kind === "write_back" && r.status === "failed"), "write-back rechazado por Zoho");
+  assert(/INVALID_DATA/.test(zcFail.error ?? ""), `error de Zoho visible (${zcFail.error})`);
+  await api("POST", `/v1/envelopes/${zcSent.envelopeId}/void`, { reason: "prueba e2e" });
+  step("Zoho: envío desde un Contact; un campo de estado inexistente deja el error INVALID_DATA en la actividad");
+
+  // ── Bigin: mismo conector, producto bigin (Pipelines) ──
+  const biConn = await oauthConnect("zoho", "Bigin ACME", { product: "bigin" });
+  assert(biConn?.accountLabel === "ACME Bigin (Bigin)", `conexión Bigin (${biConn?.accountLabel})`);
+  assert([...zo.codes.values()].length === 0, "código canjeado");
+  const biMap = await api("POST", "/v1/crm/mappings", {
+    connectionId: biConn.id,
+    name: "Pipelines Bigin",
+    objectType: "deal",
+    templateId: template.id,
+    roles: [
+      { role: "Cliente", source: "contact", index: 0 },
+      { role: "Vendedor", source: "fixed", name: `VendBI ${stamp}`, email: `ventas+bi${stamp}@acme.test` },
+    ],
+    prefill: [{ field: "Monto", property: "Amount" }],
+    writeBack: { statusProperty: "CalaSign_Status" },
+  });
+  const biSent = await api("POST", `/v1/crm/mappings/${biMap.id}/send`, { objectId: "b1" });
+  assert((await api("GET", `/v1/envelopes/${biSent.envelopeId}`)).recipients.some((r) => r.name === "Bea Bigin"), "contacto del pipeline");
+  await waitFor(() => zo.pipelines.b1.CalaSign_Status === "sent" && zo.puts.some((p) => p.api === "bigin/v2" && p.mod === "Pipelines"), "write-back en Bigin");
+  await signAll(biSent.envelopeId, ["Bea Bigin", `VendBI ${stamp}`]);
+  await waitFor(() => zo.attachments.some((a) => a.api === "bigin/v2" && a.mod === "Pipelines" && a.id === "b1" && a.pdf), "PDF adjunto al pipeline de Bigin");
+  step("Bigin: OAuth con producto bigin, envío desde un Pipeline, estado y PDF adjunto por la API /bigin/v2");
+
+  // Refresh token revocado: el envío pide reconectar.
+  zo.revoked = true;
+  zo.expire();
+  const zo409 = await api("POST", `/v1/crm/mappings/${zoMap.id}/send`, { objectId: "z1" }, { expect: 409 });
+  assert(zo409.error.code === "crm_reauth_required", "Zoho revocado → crm_reauth_required");
+  zo.revoked = false;
+  step("Zoho revocado: el envío responde 409 crm_reauth_required");
+}
 
 // ── ERP: Siigo y Alegra por token ──
 await api("POST", "/v1/crm/connections", { provider: "siigo", name: "Siigo", username: "api@acme.test", accessKey: "mala-clave-123" }, { expect: 400 });

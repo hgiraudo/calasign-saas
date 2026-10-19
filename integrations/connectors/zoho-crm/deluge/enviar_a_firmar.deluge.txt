@@ -1,0 +1,48 @@
+// CalaSign · botón «Enviar a firmar con CalaSign» en Deals (Zoho CRM).
+// Función de tipo Botón (Setup → Developer Hub → Functions → New Function → Category: Button).
+// Argumento: dealId (String) = Deals → Deal Id. Conexión: "calasign" (servicio propio con la API key de CalaSign).
+// Arma el sobre con la plantilla del mapeo de CalaSign (Ajustes → CRM y ERP → Mapeos): destinatarios desde el
+// contacto del Deal y sus roles, campos prellenados con sus datos. El estado y el PDF firmado vuelven solos al Deal.
+//
+// Variables de la organización (Setup → Developer Hub → Variables; en la extensión, con el prefijo del namespace):
+//   calasign_mapping_id  id del mapeo (obligatorio)
+//   calasign_base_url    URL de CalaSign (opcional; por defecto {{BASE_URL}})
+baseUrl = ifnull(zoho.crm.getOrgVariable("calasign_base_url"),"");
+if(baseUrl == "")
+{
+	baseUrl = "{{BASE_URL}}";
+}
+mappingId = ifnull(zoho.crm.getOrgVariable("calasign_mapping_id"),"");
+if(mappingId == "")
+{
+	return "Falta configurar CalaSign: cargá el id del mapeo en la variable calasign_mapping_id (CalaSign → Ajustes → CRM y ERP).";
+}
+deal = zoho.crm.getRecordById("Deals",dealId.toLong());
+currentStatus = ifnull(deal.get("CalaSign_Status"),"");
+if(currentStatus == "sent")
+{
+	return "Este negocio ya tiene un sobre en curso en CalaSign.";
+}
+body = Map();
+body.put("objectId",dealId.toString());
+response = invokeurl
+[
+	url :baseUrl + "/v1/crm/mappings/" + mappingId + "/send"
+	type :POST
+	parameters:body.toString()
+	headers:{"Content-Type":"application/json"}
+	connection:"calasign"
+	detailed:true
+];
+code = response.get("responseCode");
+result = response.get("responseText").toString().toMap();
+if(code == 201)
+{
+	return "Enviado a firmar con CalaSign. Sobre: " + baseUrl + "/app/envelopes/" + result.get("envelopeId");
+}
+message = response.get("responseText").toString();
+if(result != null && result.get("error") != null)
+{
+	message = result.get("error").get("message");
+}
+return "CalaSign no pudo enviar (HTTP " + code + "): " + message;

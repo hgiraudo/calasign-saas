@@ -69,6 +69,23 @@ describe.skipIf(!up)("SDK contra la API local", () => {
     expect(err.status).toBe(404);
   });
 
+  it("sobre completo en una llamada: createAndSend con los bytes del PDF (multipart) e idempotente", async () => {
+    const cs = new CalaSign({ apiKey, baseUrl: BASE });
+    const key = randomUUID();
+    const input = {
+      subject: `SDK oneshot ${stamp}`,
+      documents: [{ content: tinyPdf(), name: "contrato.pdf" }],
+      recipients: [{ name: "Ana SDK", email: `ana-oneshot+${stamp}@example.com` }],
+      fields: [{ type: "signature" as const, page: 0, x: 0.1, y: 0.7, width: 0.3, height: 0.08 }],
+    };
+    const a = await cs.envelopes.createAndSend(input, { idempotencyKey: key });
+    expect(a.envelope.status).toBe("sent");
+    expect(a.documents[0].name).toBe("contrato.pdf");
+    expect(a.fields[0].recipientId).toBe(a.recipients[0].id);
+    const b = await cs.envelopes.createAndSend(input, { idempotencyKey: key });
+    expect(b.envelope.id).toBe(a.envelope.id);
+  });
+
   it("webhook real verificado con constructWebhookEvent", async () => {
     const received: { body: string; sig: string }[] = [];
     const server = createServer((req, res) => {

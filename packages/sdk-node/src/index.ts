@@ -2,12 +2,18 @@
 //
 //   import { CalaSign } from "@calasign/sdk";
 //   const cs = new CalaSign({ apiKey: process.env.CALASIGN_KEY, baseUrl: "https://dev.calasign.com" });
-//   const { envelope } = await cs.envelopes.create({ subject: "Contrato" });
+//   const { envelope } = await cs.envelopes.createAndSend({
+//     subject: "Contrato", documents: [{ content: pdfBytes }], recipients: [{ name: "Ana", email: "ana@x.com" }],
+//     fields: [{ type: "signature", anchor: { text: "[[firma]]", width: 150, height: 40 } }],
+//   });
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import type {
   CompleteSigningInput,
   CreateEnvelopeInput,
+  CreateEnvelopeRequest,
+  CreateEnvelopeResponse,
   CreateSigningUrlInput,
+  InlineDocumentInput,
   CreateWebhookInput,
   CreateWebhookResponse,
   EnvelopeDetail,
@@ -28,7 +34,7 @@ import type {
   WebhookEventPayload,
 } from "@calasign/shared";
 
-export type { CompleteSigningInput, EnvelopeDetail, EnvelopeSummary, WebhookEventPayload };
+export type { CompleteSigningInput, CreateEnvelopeRequest, CreateEnvelopeResponse, EnvelopeDetail, EnvelopeSummary, WebhookEventPayload };
 
 export const VERSION = "0.1.0";
 
@@ -253,6 +259,22 @@ export interface ListEnvelopesParams {
  * `fetch` resuelve los "..", así que `envelopes.get("../webhooks")` pedía GET /v1/webhooks con la credencial del
  * integrador, y `webhooks.delete("../envelopes/<id>")` borraba un sobre.
  */
+/**
+ * Bytes de un PDF como Blob. Copia exacta de los bytes de la vista: un Buffer chico de Node es una ventana sobre un
+ * pool compartido de 8 KB y su `.buffer` (también el de `buf.slice()`, que no copia) traería todo el pool, con datos
+ * de otras partes del proceso.
+ */
+function toPdfBlob(file: Uint8Array | ArrayBuffer | Blob): Blob {
+  if (file instanceof Blob) return file;
+  return new Blob([file instanceof ArrayBuffer ? new Uint8Array(file) : Uint8Array.prototype.slice.call(file)], { type: "application/pdf" });
+}
+
+/** Documento para `envelopes.create`: además de base64/url/file de la API, `content` con los bytes del PDF. */
+export type SdkEnvelopeDocument = InlineDocumentInput | { content: Uint8Array | ArrayBuffer | Blob; name?: string; ref?: string };
+
+/** Cuerpo de POST /v1/envelopes con el sobre completo; los documentos aceptan `content` (bytes). */
+export type SdkCreateEnvelopeInput = Omit<CreateEnvelopeRequest, "documents"> & { documents?: SdkEnvelopeDocument[] };
+
 function seg(v: string): string {
   return encodeURIComponent(String(v));
 }
@@ -280,9 +302,34 @@ class EnvelopesApi {
     return this.c.request("GET", `/v1/envelopes/${seg(id)}`);
   }
 
-  /** Crea un borrador. Con idempotencia automática: un reintento no crea un segundo sobre. */
-  create(input: CreateEnvelopeInput, o: { idempotencyKey?: string } = {}): Promise<EnvelopeDetail> {
-    return this.c.request("POST", "/v1/envelopes", { body: input, idempotencyKey: o.idempotencyKey ?? randomUUID() });
+  /**
+   * Crea un sobre en UNA llamada: solo el borrador (`{ subject }`) o completo, con `documents`, `recipients`, `fields`
+   * y, con `send: true`, también enviado. Los documentos pueden ir con `content` (bytes del PDF: se suben como
+   * multipart, sin base64), `base64` o `url`. Atómico e idempotente (Idempotency-Key automática): un reintento no
+   * crea un segundo sobre. Con firmantes `embedded`, la respuesta trae `signingUrls`.
+   */
+  create(input: CreateEnvelopeInput | SdkCreateEnvelopeInput, o: { idempotencyKey?: string } = {}): Promise<CreateEnvelopeResponse> {
+    const idempotencyKey = o.idempotencyKey ?? randomUUID();
+    const docs = (input as SdkCreateEnvelopeInput).documents;
+    if (!docs?.some((d) => "content" in d && d.content !== undefined)) {
+      return this.c.request("POST", "/v1/envelopes", { body: input, idempotencyKey });
+    }
+    // Con bytes: multipart/form-data, el JSON en la parte `payload` y cada PDF en su parte (`file`).
+    const fd = new FormData();
+    const documents = docs.map((d, i) => {
+      if (!("content" in d) || d.content === undefined) return d;
+      const { content, ...rest } = d;
+      const part = `document${i}`;
+      fd.append(part, toPdfBlob(content), d.name ?? `documento-${i + 1}.pdf`);
+      return { ...rest, file: part };
+    });
+    fd.set("payload", JSON.stringify({ ...input, documents }));
+    return this.c.request("POST", "/v1/envelopes", { form: fd, idempotencyKey });
+  }
+
+  /** Como `create` con `send: true`: crea el sobre completo y lo envía en una sola llamada. */
+  createAndSend(input: SdkCreateEnvelopeInput, o: { idempotencyKey?: string } = {}): Promise<CreateEnvelopeResponse> {
+    return this.create({ ...input, send: true }, o);
   }
 
   update(id: string, input: UpdateEnvelopeInput): Promise<EnvelopeDetail> {
@@ -295,13 +342,7 @@ class EnvelopesApi {
 
   uploadDocument(id: string, file: Uint8Array | ArrayBuffer | Blob, filename = "documento.pdf") {
     const fd = new FormData();
-    // Copia exacta de los bytes de la vista: un Buffer chico de Node es una ventana sobre un pool compartido de 8 KB y
-    // su `.buffer` (también el de `buf.slice()`, que no copia) traería todo el pool, con datos de otras partes del proceso.
-    const blob =
-      file instanceof Blob
-        ? file
-        : new Blob([file instanceof ArrayBuffer ? new Uint8Array(file) : Uint8Array.prototype.slice.call(file)], { type: "application/pdf" });
-    fd.append("file", blob, filename);
+    fd.append("file", toPdfBlob(file), filename);
     return this.c.request<EnvelopeDetail["documents"][number]>("POST", `/v1/envelopes/${seg(id)}/documents`, { form: fd });
   }
 

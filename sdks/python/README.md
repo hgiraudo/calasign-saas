@@ -3,23 +3,30 @@
 Python ≥ 3.8, sin dependencias (solo la biblioteca estándar).
 
 ```python
-import os, uuid
+import os
 from calasign import CalaSign
 
 cs = CalaSign(os.environ["CALASIGN_KEY"], base_url="https://dev.calasign.com")
 
-detail = cs.envelopes.create({"subject": "Contrato de servicios", "metadata": {"externalId": "PED-1234"}})
-eid = detail["envelope"]["id"]
-doc = cs.envelopes.upload_document(eid, open("contrato.pdf", "rb").read(), "contrato.pdf")
-signer = str(uuid.uuid4())
-cs.envelopes.set_recipients(eid, [{"id": signer, "name": "Ana Pérez", "email": "ana@cliente.com", "channels": ["email"]}])
-cs.envelopes.set_fields(eid, [{"recipientId": signer, "type": "signature",
-                               "anchor": {"text": "[[firma]]", "offsetY": -40, "width": 150, "height": 40}}])
-cs.envelopes.send(eid)
+# Una sola llamada: crea el sobre con el PDF, el firmante y su campo, y lo envía (atómico e idempotente).
+with open("contrato.pdf", "rb") as f:
+    detail = cs.envelopes.create_and_send({
+        "subject": "Contrato de servicios",
+        "metadata": {"externalId": "PED-1234"},
+        "documents": [{"content": f.read(), "name": "contrato.pdf"}],
+        "recipients": [{"name": "Ana Pérez", "email": "ana@cliente.com"}],
+        "fields": [{"recipient": 0, "type": "signature",
+                    "anchor": {"text": "[[firma]]", "offsetY": -40, "width": 150, "height": 40}}],
+    })
 
 for e in cs.envelopes.iterate(status="completed"):
     pdf = cs.envelopes.download_signed(e["id"])
 ```
+
+`envelopes.create(data)` hace lo mismo sin enviar (queda en borrador) o, con solo `{"subject": …}`, crea un borrador
+vacío. Los documentos van con `content` (bytes: se suben como multipart, sin base64), `base64` o `url`; los campos citan
+al destinatario con `recipient` (posición, `ref` o email) y al documento con `document` (posición o `ref`). Paso a
+paso: `upload_document`, `set_recipients`, `set_fields` y `send`.
 
 ## Autenticación
 
@@ -32,7 +39,7 @@ CalaSign(oauth=ClientCredentials("csapp_…", "cssec_…", scope="envelopes:read
 ## Comportamiento
 
 - Reintentos ante errores de red, 429 (respeta `Retry-After`) y 5xx, con backoff exponencial (`max_retries=3`).
-- `envelopes.create`, `envelopes.from_template` y `envelopes.send` usan `Idempotency-Key` automática: un reintento
+- `envelopes.create`, `envelopes.create_and_send`, `envelopes.from_template` y `envelopes.send` usan `Idempotency-Key` automática: un reintento
   no duplica nada. Los POST sin idempotencia no se reintentan ante errores de red.
 - Errores como `CalaSignError` con `.status`, `.code` y `.details`.
 - `cs.request(method, path, json_body=…, query=…)` para cualquier otro endpoint.

@@ -152,3 +152,50 @@ describe("ids en la ruta", () => {
   });
 });
 
+describe("ampliaciones de la API", () => {
+  it("acepta un header con dos v1 (rotación del secreto) si alguno coincide", () => {
+    const body = "{}";
+    const now = 1_800_000_000_000;
+    const t = Math.floor(now / 1000);
+    const mac = (k: string) => createHmac("sha256", k).update(`${t}.${body}`).digest("hex");
+    const header = `t=${t},v1=${mac("nuevo")},v1=${mac("viejo")}`;
+    expect(verifyWebhookSignature({ payload: body, header, secret: "viejo", now })).toBe(true);
+    expect(verifyWebhookSignature({ payload: body, header, secret: "nuevo", now })).toBe(true);
+    expect(verifyWebhookSignature({ payload: body, header, secret: "otro", now })).toBe(false);
+  });
+
+  it("envía los filtros de búsqueda y los de eventos", async () => {
+    const f = fakeFetch([json(200, { items: [], nextCursor: null }), json(200, { items: [], nextCursor: "9", hasMore: false })]);
+    const cs = new CalaSign({ apiKey: "k", baseUrl: "http://api", fetch: f.fn });
+    await cs.envelopes.list({ updatedFrom: new Date("2026-10-01T00:00:00Z"), metadata: { orderId: "A1" }, recipient: "ana@x.com" });
+    const u = new URL(f.calls[0].url);
+    expect(u.searchParams.get("updated_from")).toBe("2026-10-01T00:00:00.000Z");
+    expect(u.searchParams.get("metadata[orderId]")).toBe("A1");
+    expect(u.searchParams.get("recipient")).toBe("ana@x.com");
+    const page = await cs.events.list({ after: "5", types: ["envelope.completed", "recipient.signed"] });
+    const e = new URL(f.calls[1].url);
+    expect(e.pathname).toBe("/v1/events");
+    expect(e.searchParams.get("after")).toBe("5");
+    expect(e.searchParams.get("types")).toBe("envelope.completed,recipient.signed");
+    expect(page.nextCursor).toBe("9");
+  });
+
+  it("clone, batch y rotateSecret llaman a sus endpoints", async () => {
+    const f = fakeFetch([
+      json(201, { envelope: { id: "e2" } }),
+      json(200, { action: "void", succeeded: 1, failed: 0, results: [] }),
+      json(200, { webhook: {}, secret: "whsec_x" }),
+    ]);
+    const cs = new CalaSign({ apiKey: "k", baseUrl: "http://api", fetch: f.fn });
+    await cs.envelopes.clone("e1", { includeValues: true });
+    await cs.envelopes.batch({ action: "void", ids: ["e1"], reason: "x" });
+    await cs.webhooks.rotateSecret("w1", { graceHours: 2 });
+    expect(f.calls.map((c) => `${c.method} ${new URL(c.url).pathname}`)).toEqual([
+      "POST /v1/envelopes/e1/clone",
+      "POST /v1/envelopes/batch",
+      "POST /v1/webhooks/w1/rotate-secret",
+    ]);
+    expect(JSON.parse(String(f.calls[2].body))).toEqual({ graceHours: 2 });
+  });
+});
+

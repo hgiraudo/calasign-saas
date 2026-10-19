@@ -4,6 +4,7 @@
     python3 -I sdks/python/smoke_test.py                         # solo pruebas sin red
     python3 -I sdks/python/smoke_test.py http://localhost:4000   # + contra una API local
 """
+import datetime
 import hashlib
 import hmac
 import http.server
@@ -40,6 +41,13 @@ try:
 except WebhookSignatureError:
     pass
 ok("verificación de webhooks: válida, alterada, secreto incorrecto, vieja y sin header")
+
+# Rotación del secreto: el header trae dos v1 (nuevo y anterior); vale con cualquiera de los dos.
+_mac = lambda k: hmac.new(k.encode(), f"{t}.{body}".encode(), hashlib.sha256).hexdigest()  # noqa: E731
+dual = f"t={t},v1={_mac('nuevo')},v1={_mac('viejo')}"
+assert verify_signature(body, dual, "nuevo", now=t) and verify_signature(body, dual, "viejo", now=t)
+assert not verify_signature(body, dual, "otro", now=t)
+ok("verificación con dos firmas v1 (rotación del secreto)")
 
 # Un error de red al pedir el token OAuth también llega como CalaSignError (no como URLError suelto).
 try:
@@ -127,6 +135,25 @@ except CalaSignError as e:
     assert e.status == 404
 ok("sobre: crear (idempotente), subir, destinatarios, campos, enviar, iterar, eventos y 404 tipado")
 
+# Ampliaciones: búsqueda por metadata y fechas, form-data, clonado, lote y API de eventos.
+_ago = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=5)
+m = cs.envelopes.create({"subject": f"Python meta {stamp}", "metadata": {"pedido": f"P-{stamp}"}})
+found = cs.envelopes.list(metadata={"pedido": f"P-{stamp}"}, created_from=_ago)
+assert [e["id"] for e in found["items"]] == [m["envelope"]["id"]], found
+fd = cs.envelopes.form_data(eid)
+assert fd["envelopeId"] == eid and fd["recipients"][0]["fields"][0]["type"] == "signature"
+cl = cs.envelopes.clone(eid, {"subject": f"Python clon {stamp}"})
+assert cl["envelope"]["status"] == "draft" and cl["envelope"]["metadata"]["clonedFrom"] == eid and len(cl["fields"]) == 1
+res = cs.envelopes.batch("delete", [cl["envelope"]["id"], m["envelope"]["id"], eid])
+assert res["succeeded"] == 2 and res["results"][2]["error"]["code"] == "not_draft", res
+for _ in range(20):
+    evs = cs.events.list(envelope_id=eid, since=_ago)
+    if evs["items"]:
+        break
+    time.sleep(0.5)
+assert evs["items"][0]["type"] == "envelope.sent" and evs["nextCursor"], evs
+ok("búsqueda por metadata y fecha, form_data, clone, batch y events.list")
+
 # Fecha con zona horaria (lo que da datetime.isoformat() con tzinfo) y nombre de archivo con comillas.
 import datetime as _dt  # noqa: E402
 
@@ -158,11 +185,22 @@ for _ in range(50):
     if received:
         break
     time.sleep(0.2)
-srv.shutdown()
 payload, header = received[0]
 assert construct_event(payload, header, created["secret"])["type"] == "webhook.test"
-cs.webhooks.delete(created["webhook"]["id"])
 ok("webhook real recibido y verificado")
+rot = cs.webhooks.rotate_secret(created["webhook"]["id"], grace_hours=1)
+received.clear()
+cs.webhooks.test(created["webhook"]["id"])
+for _ in range(50):
+    if received:
+        break
+    time.sleep(0.2)
+srv.shutdown()
+payload, header = received[0]
+assert header.count("v1=") == 2, header
+assert verify_signature(payload, header, rot["secret"]) and verify_signature(payload, header, created["secret"])
+cs.webhooks.delete(created["webhook"]["id"])
+ok("rotación del secreto: el webhook verifica con el secreto nuevo y con el anterior")
 
 _, app = raw("POST", "/v1/oauth/apps", {"name": "Py app", "grantTypes": ["client_credentials"], "scopes": ["envelopes:read"], "role": "member"}, cookie)
 oc = CalaSign(oauth=ClientCredentials(app["app"]["clientId"], app["clientSecret"]), base_url=BASE)

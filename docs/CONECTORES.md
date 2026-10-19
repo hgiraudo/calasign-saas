@@ -10,14 +10,16 @@ agrupa las guías de cada conector.
 |---|---|---|---|---|
 | Low-code / iPaaS | Power Automate / Logic Apps, Zapier, Make, n8n | Artefacto descargable (se importa en la plataforma) | `integrations/connectors/<id>/` | `/developers/connectors` |
 | CRM / ERP | Dynamics 365 (sobre Power Automate) | Artefacto + script de Dataverse | `integrations/connectors/dynamics365/` | `/developers/connectors#dynamics365` |
+| CRM / ERP | HubSpot, Salesforce (Opportunity), Zoho CRM y Bigin (Deals, Contacts, Pipelines), Pipedrive (Deal y Person), Siigo, Alegra | Nativo, se configura en Ajustes | `apps/api/src/modules/crm/` ([CRM.md](CRM.md)) | `/developers/guides/crm` |
+| CRM / ERP | Zoho CRM: botón «Enviar a firmar con CalaSign» en Deals (sobre el conector nativo) | Artefacto: función Deluge + guía de la extensión de Zoho Marketplace | `integrations/connectors/zoho-crm/` | `/developers/guides/crm` |
 | CRM / ERP | Pipedrive Marketplace: acción «Enviar a firmar con CalaSign» (sobre el conector nativo) | Artefacto (Link action) + guía del Developer Hub | `integrations/connectors/pipedrive/` | `/developers/guides/crm#pipedrive` |
-| CRM / ERP | HubSpot, Salesforce (Opportunity), Pipedrive (Deal y Person), Siigo, Alegra | Nativo, se configura en Ajustes | `apps/api/src/modules/crm/` ([CRM.md](CRM.md)) | `/developers/guides/crm` |
 | RR. HH. | BambooHR, HiBob, Factorial | Nativo | `apps/api/src/modules/connectors/` | `/developers/guides/hr-contracts` |
 | Contratos (CLM) | Ironclad, Juro | Nativo | `apps/api/src/modules/connectors/` | `/developers/guides/hr-contracts` |
 | Gestores documentales | SharePoint, OneDrive, Google Drive, Dropbox, Box, S3 | Nativo (archivado del firmado + evidencia) | `apps/api/src/modules/storage-export.ts` | `/developers/guides/hr-contracts#dms` |
 | Avisos | Slack, Microsoft Teams (webhooks entrantes), Telegram, WhatsApp/SMS | Nativo | `notify-integrations.ts`, `telegram.ts` | Ajustes → Integraciones |
 | IA | MCP, skill de Claude, plugin de Claude Code, MCPB, Gemini CLI, ChatGPT | Artefacto descargable | `integrations/`, `apps/api/src/modules/mcp/` ([MCP-CONECTORES.md](MCP-CONECTORES.md)) | `/developers/ai` |
 | Office | Complementos de Word y Outlook | Artefacto descargable | `integrations/office/` | `/integrations/office/` |
+| Ofimática (Google) | Add-on de Google Workspace: Gmail, Docs y Drive | Artefacto descargable (proyecto de Apps Script para `clasp push`) | `integrations/connectors/google-workspace/` | `/developers/connectors#google-workspace` |
 
 Los artefactos descargables los arma `integrations/build.mjs` (los conectores low-code, vía
 `integrations/connectors/registry.mjs`) y se publican en **`<base>/integrations/...`**; el índice de conectores está en
@@ -142,6 +144,13 @@ Scopes OAuth: `templates:read`, `envelopes:write` y `webhooks:manage`, por prefi
   - Exportar la solución «CalaSign» (conector, columnas, web resource y los dos flujos) como **administrada** para
     clientes y AppSource.
   - Para AppSource: oferta en Partner Center y validación de Microsoft.
+- **Zoho CRM / Bigin** (detalle en [CRM.md](CRM.md) y `integrations/connectors/zoho-crm/README.md`):
+  - Registrar en api-console.zoho.com un cliente *Server-based Application* con la redirect
+    `{APP_URL}/v1/crm/oauth/zoho/callback` y **Multi-DC** activado; cargar `ZOHO_CLIENT_ID` / `ZOHO_CLIENT_SECRET`.
+  - Probar con cuentas reales de Zoho CRM y Bigin (idealmente una en zoho.com y otra en zoho.eu): roles de contacto,
+    adjunto, nota (`Parent_Id` en Bigin) y que el authorize acepte PKCE en todos los DC (si no, `ZOHO_OAUTH_PKCE=false`).
+  - Extensión en Zoho Developer Console (conexión con API key, campo `CalaSign_Status`, variables y botón con la
+    función Deluge), *Test your Extension* y publicación en Zoho Marketplace (revisión de Zoho).
 - **Pipedrive** (conector nativo + acción del Marketplace, ver `integrations/connectors/pipedrive/README.md`):
   - App pública en el Developer Hub con la callback `{APP_URL}/v1/crm/oauth/pipedrive/callback` y los scopes `base`,
     `deals:full`, `contacts:full`, `users:read`; cargar `PIPEDRIVE_CLIENT_ID` y `PIPEDRIVE_CLIENT_SECRET` en el servidor.
@@ -425,6 +434,58 @@ Usan un fetch falso, sin red. Cubren:
 - Sitio de SharePoint.
 - Carpetas de Box ante un 409.
 
+## Google Workspace (Gmail, Docs y Drive)
+
+Add-on de Apps Script (Card Service), como los de DocuSign, Dropbox Sign y Zoho Sign en el Workspace Marketplace.
+Código y guía completa: `integrations/connectors/google-workspace/` ([README](../integrations/connectors/google-workspace/README.md)).
+Artefacto: `<base>/integrations/connectors/google-workspace/calasign-google-workspace-addon.zip`, un proyecto listo
+para `clasp push` con `{{BASE_URL}}` ya reemplazado.
+
+- **Gmail**: en un correo con PDF adjunto, *Enviar a firmar con CalaSign*. Los firmantes vienen precargados con el
+  remitente, Para y CC (sin el propio usuario ni las direcciones no-reply). La página de inicio muestra los sobres
+  recientes.
+- **Docs**: exporta el documento abierto a PDF, con la Drive API y `drive.file`. Si el texto tiene anclas
+  `[[firma]]`/`[[firma_N]]`, cada firma va encima de la suya; si no, en la última página.
+- **Drive**: envía un PDF o un documento de Docs seleccionado. Si se marca la opción, guarda el firmado en la misma
+  carpeta cuando el sobre se completa.
+- **API**: el envío con anclas es una sola llamada a `POST /v1/envelopes` (atómica, con `Idempotency-Key`). Para la
+  última página hacen falta tres llamadas (borrador → `PUT fields` → `send`): la API no tiene «última página» y Apps
+  Script no puede contar las páginas del PDF.
+- **Autenticación**: OAuth 2.0 con PKCE S256, con la librería OAuth2 de Apps Script (v43). Es un cliente público
+  registrado solo vía `POST /oauth/register`, con la redirect `https://script.google.com/macros/d/<SCRIPT_ID>/usercallback`.
+  La alternativa es una API key. **No se cambió `oauth.ts`**.
+- **Scopes de Google**: `gmail.addons.execute`, `gmail.addons.current.message.readonly` (el único sensible),
+  `drive.addons.metadata.readonly`, `drive.file`, `script.external_request`, `script.locale` y `userinfo.email`.
+  Ninguno es restringido, así que no hace falta la evaluación CASA.
+- **Guardar el firmado**: se hace al abrir el add-on, consultando los sobres pendientes. Primero intenta la carpeta
+  original; si `drive.file` no deja escribir ahí, hace una copia del PDF original (queda en la misma carpeta) con el
+  contenido reemplazado; si tampoco se puede, usa la carpeta «CalaSign» de Mi unidad. La exportación a Google Drive de
+  la organización (`storage-export.ts`) es automática y archiva todo, pero en una carpeta fija de una cuenta de la
+  organización. Conviene usar las dos (ver la comparación en el README).
+- **Pruebas**: `integrations/test/google-workspace.mjs`, sin red, con GmailApp, UrlFetchApp, CardService,
+  PropertiesService y la librería OAuth2 simulados. Cubre:
+  - el manifiesto (scopes exactos, allowlists y triggers existentes);
+  - que no queden placeholders y que no se use `DriveApp`/`DocumentApp`;
+  - los textos es/en/pt;
+  - el parseo de destinatarios y anclas, y el pedido de una llamada;
+  - los flujos de Gmail, Docs y Drive;
+  - el guardado del firmado, el registro dinámico con PKCE, la API key y la sesión vencida.
+
+### Pendiente para publicar
+
+1. Proyecto de Google Cloud estándar asociado al script, con Marketplace SDK, Gmail API y Drive API habilitadas.
+2. Pantalla de consentimiento de OAuth externa: dominio verificado en Search Console, política de privacidad
+   (`<base>/privacy` todavía no existe), términos y los 7 scopes justificados.
+3. Verificación de scopes sensibles por `gmail.addons.current.message.readonly`: video de demostración y
+   justificación. Hasta que se apruebe, funciona con hasta 100 usuarios de prueba.
+4. Implementación versionada y configuración de la app en el Marketplace SDK (ID de implementación, scopes y URLs).
+5. Ficha de la tienda en es/en/pt: íconos de 32/48/96/128 (faltan 48, 96 y el banner de 220×140) y capturas de 1280×800.
+6. Revisión del Marketplace.
+7. Antes de todo esto, probarlo en Google real con una implementación de prueba. Hay que verificar:
+   - la vuelta del consentimiento a `usercallback`;
+   - si la página de consentimiento con COOP `same-origin` deja que el add-on se recargue al cerrar la ventana;
+   - si `drive.file` deja crear el firmado en la carpeta del original.
+
 ## Próximos conectores: qué ofrece el mercado (octubre de 2026)
 
 Relevamiento de los catálogos de integraciones de DocuSign, Adobe Acrobat Sign, Dropbox Sign, PandaDoc, BoldSign y Zoho
@@ -432,17 +493,17 @@ Sign, y de los firmadores de LATAM Clicksign, ZapSign y D4Sign. Los catálogos d
 y Validated ID no se revisaron en línea.
 
 **Conclusión:** CalaSign cubre bien almacenamiento, iPaaS e IA, y con MCP va por delante de la mayoría. Faltan tres
-cosas: apps dentro de las suites ofimáticas (Gmail/Docs, Teams, Slack con acciones), CRM de pymes y de LATAM (Zoho,
-RD Station, Kommo, Bitrix24, monday; Pipedrive ya está) y verificación de identidad local (Registraduría, gov.br/Serpro, RNP,
+cosas: apps dentro de las suites ofimáticas (Gmail/Docs, Teams, Slack con acciones), CRM de pymes y de LATAM
+(RD Station, Kommo, Bitrix24, monday; Zoho CRM y Pipedrive ya están hechos) y verificación de identidad local (Registraduría, gov.br/Serpro, RNP,
 JCE).
 
 ### Brechas por categoría
 
 | Categoría | Lo que tiene la mayoría de los competidores | CalaSign |
 |---|---|---|
-| CRM global | Salesforce (AppExchange), HubSpot, Dynamics 365 nativo, Zoho CRM, Pipedrive | Salesforce solo en Opportunity; HubSpot sí; Pipedrive sí (nativo + acción del Marketplace); Dynamics vía Power Automate; **sin Zoho** |
+| CRM global | Salesforce (AppExchange), HubSpot, Dynamics 365 nativo, Zoho CRM, Pipedrive | Salesforce solo en Opportunity; HubSpot sí; Zoho CRM y Bigin sí (nativo + botón en Deals); Pipedrive sí (nativo + acción del Marketplace); Dynamics vía Power Automate |
 | CRM LATAM | RD Station y Kommo (Clicksign y ZapSign vía Pluga), Bitrix24 (Clicksign, D4Sign) | **No** |
-| Ofimática | Add-on de Gmail, Docs y Drive (DocuSign, Dropbox Sign, Zoho); app de Teams (Adobe, Zoho) | Word y Outlook sí; **sin add-on de Google Workspace ni app de Teams** |
+| Ofimática | Add-on de Gmail, Docs y Drive (DocuSign, Dropbox Sign, Zoho); app de Teams (Adobe, Zoho) | Word, Outlook y add-on de Google Workspace sí; **sin app de Teams** |
 | Mensajería con acciones | App de Slack (DocuSign); firma por WhatsApp (BoldSign, ZapSign, Truora) | Solo avisos |
 | Almacenamiento | Drive, Dropbox, OneDrive, Box, SharePoint | **Completo** |
 | iPaaS | Zapier, Make, Power Automate, Pluga (BR) | Completo **salvo Pluga** |
@@ -459,8 +520,8 @@ JCE).
 | # | Conector | Por qué | Esfuerzo | Cómo |
 |---|---|---|---|---|
 | 1 | Salesforce: paquete gestionado en AppExchange (cualquier objeto, plantillas, LWC, acciones de Flow, CPQ/Contract/Case) | Canal enterprise; DocuSign y BoldSign firman desde cualquier objeto | L | AppExchange (revisión de seguridad) |
-| 2 | Zoho CRM (después Bigin y Zoho Books) | Muy usado por pymes de CO, RD y HN; DocuSign no lo tiene | M | Extensión en Zoho Marketplace |
-| 3 | Add-on de Google Workspace (Gmail, Docs, Drive) | Google domina en pymes de LATAM | M | Google Workspace Marketplace (Apps Script) |
+| 2 | ~~Zoho CRM (después Bigin y Zoho Books)~~ **Hecho** (Zoho CRM y Bigin; falta Zoho Books) | Muy usado por pymes de CO, RD y HN; DocuSign no lo tiene | M | Conector nativo en `crm/` (OAuth multi-DC, Deals/Contacts/Pipelines, estado y PDF) + botón en Deals (`integrations/connectors/zoho-crm/`). Falta publicar la extensión en Zoho Marketplace |
+| 3 | ~~Add-on de Google Workspace (Gmail, Docs, Drive)~~ **Hecho**: `google-workspace` (ver la sección de abajo) | Google domina en pymes de LATAM | M | Google Workspace Marketplace (Apps Script) |
 | 4 | App de Microsoft Teams (enviar, aprobar, avisos con Adaptive Cards) | Completa Word y Outlook | M | AppSource, reutilizando el backend de Outlook |
 | 5 | Pipedrive | Muy popular en BR y CO | S–M | **Hecho**: conector nativo (`apps/api/src/modules/crm/pipedrive.ts`) + acción del Marketplace (`integrations/connectors/pipedrive/`); falta publicar la app ([CRM.md](CRM.md)) |
 | 6 | Verificación de identidad local (CO, BR, HN, RD) | Lo que más diferencia en LATAM | L | Nativo, con un agregador (Truora, unico, Metamap) |
@@ -480,7 +541,7 @@ Jotform y Typeform (se cubren con Zapier); Coupa y Ariba.
 **Dropbox y OneDrive:** hoy CalaSign archiva ahí el firmado, pero no se puede *enviar a firmar* desde ellos. En
 SharePoint/OneDrive conviene un SharePoint Framework Command Set («Enviar a firmar con CalaSign» en la biblioteca) más el
 guardado en la carpeta de origen (M). En Dropbox rinde poco, porque Dropbox tiene su propia firma (Dropbox Sign). Para
-Google Drive, la acción entra en el add-on de Workspace (#3).
+Google Drive, la acción está en el add-on de Workspace (#3, hecho).
 
 Fuentes: [DocuSign](https://www.docusign.com/en-us/integrations),
 [Adobe Acrobat Sign](https://business.adobe.com/uk/products/acrobat-business/sign-solutions.html),

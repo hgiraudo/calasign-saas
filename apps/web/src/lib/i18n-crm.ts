@@ -1,16 +1,17 @@
-// Textos de CRM y ERP (HubSpot, Salesforce, Pipedrive, Siigo, Alegra).
+// Textos de CRM y ERP (HubSpot, Salesforce, Zoho CRM / Bigin, Pipedrive, Siigo, Alegra).
 import { brandText } from "./white-label";
 import { useI18n } from "./i18n";
 
 const es = {
   "card.crm": "CRM y ERP",
-  "card.crm.desc": "Enviar a firmar desde HubSpot, Salesforce o Pipedrive y devolver el documento firmado al CRM, Siigo o Alegra.",
+  "card.crm.desc": "Enviar a firmar desde HubSpot, Salesforce, Zoho CRM o Pipedrive y devolver el documento firmado al CRM, Siigo o Alegra.",
   "back": "← Ajustes",
   "title": "CRM y ERP",
   "intro":
     "Conectá tu CRM para enviar a firmar desde un negocio u oportunidad, con los contactos y datos del registro, y que el estado y el PDF firmado vuelvan solos al CRM. En un ERP, el documento firmado se agrega al cliente o la factura.",
   "p.hubspot": "HubSpot",
   "p.salesforce": "Salesforce",
+  "p.zoho": "Zoho CRM / Bigin",
   "p.siigo": "Siigo",
   "p.alegra": "Alegra",
   // Pipedrive
@@ -22,6 +23,10 @@ const es = {
   "pipedrive.statusPlaceholder": "Key o nombre del campo del deal (ej. Estado CalaSign)",
   "kind.crm": "CRM",
   "kind.erp": "ERP",
+  "zoho.product": "Producto",
+  "zoho.product.crm": "Zoho CRM",
+  "zoho.product.bigin": "Bigin",
+  "zoho.region": "Centro de datos",
   "notConfigured": "OAuth no configurado en el servidor",
   "connectOAuth": "Conectar con OAuth",
   "connectToken": "Conectar con token",
@@ -117,13 +122,14 @@ type Key = keyof typeof es;
 
 const pt: Record<Key, string> = {
   "card.crm": "CRM e ERP",
-  "card.crm.desc": "Enviar para assinatura a partir do HubSpot, Salesforce ou Pipedrive e devolver o documento assinado ao CRM, Siigo ou Alegra.",
+  "card.crm.desc": "Enviar para assinatura a partir do HubSpot, Salesforce, Zoho CRM ou Pipedrive e devolver o documento assinado ao CRM, Siigo ou Alegra.",
   back: "← Configurações",
   title: "CRM e ERP",
   intro:
     "Conecte seu CRM para enviar para assinatura a partir de um negócio ou oportunidade, com os contatos e dados do registro, e receber de volta o status e o PDF assinado. Em um ERP, o documento assinado é anexado ao cliente ou à fatura.",
   "p.hubspot": "HubSpot",
   "p.salesforce": "Salesforce",
+  "p.zoho": "Zoho CRM / Bigin",
   "p.siigo": "Siigo",
   "p.alegra": "Alegra",
   // Pipedrive
@@ -135,6 +141,10 @@ const pt: Record<Key, string> = {
   "pipedrive.statusPlaceholder": "Key ou nome do campo do deal (ex. Estado CalaSign)",
   "kind.crm": "CRM",
   "kind.erp": "ERP",
+  "zoho.product": "Produto",
+  "zoho.product.crm": "Zoho CRM",
+  "zoho.product.bigin": "Bigin",
+  "zoho.region": "Data center",
   notConfigured: "OAuth não configurado no servidor",
   connectOAuth: "Conectar com OAuth",
   connectToken: "Conectar com token",
@@ -228,13 +238,14 @@ const pt: Record<Key, string> = {
 
 const en: Record<Key, string> = {
   "card.crm": "CRM & ERP",
-  "card.crm.desc": "Send for signature from HubSpot, Salesforce or Pipedrive and push the signed document back to the CRM, Siigo or Alegra.",
+  "card.crm.desc": "Send for signature from HubSpot, Salesforce, Zoho CRM or Pipedrive and push the signed document back to the CRM, Siigo or Alegra.",
   back: "← Settings",
   title: "CRM & ERP",
   intro:
     "Connect your CRM to send for signature from a deal or opportunity, using the record's contacts and data, and get the status and signed PDF back automatically. In an ERP, the signed document is attached to the customer or invoice.",
   "p.hubspot": "HubSpot",
   "p.salesforce": "Salesforce",
+  "p.zoho": "Zoho CRM / Bigin",
   "p.siigo": "Siigo",
   "p.alegra": "Alegra",
   // Pipedrive
@@ -246,6 +257,10 @@ const en: Record<Key, string> = {
   "pipedrive.statusPlaceholder": "Deal field key or name (e.g. CalaSign status)",
   "kind.crm": "CRM",
   "kind.erp": "ERP",
+  "zoho.product": "Product",
+  "zoho.product.crm": "Zoho CRM",
+  "zoho.product.bigin": "Bigin",
+  "zoho.region": "Data center",
   notConfigured: "OAuth not configured on the server",
   connectOAuth: "Connect with OAuth",
   connectToken: "Connect with a token",

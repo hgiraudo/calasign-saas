@@ -1,0 +1,49 @@
+{
+  "timeZone": "America/Santo_Domingo",
+  "runtimeVersion": "V8",
+  "exceptionLogging": "STACKDRIVER",
+  "dependencies": {
+    "libraries": [
+      {
+        "userSymbol": "OAuth2",
+        "libraryId": "1B7FSrk5Zi6L1rSxxTDgDEUsPzlukDsi4KGuTMorsTQHhGBzBkMun4iDF",
+        "version": "43"
+      }
+    ]
+  },
+  "oauthScopes": [
+    "https://www.googleapis.com/auth/gmail.addons.execute",
+    "https://www.googleapis.com/auth/gmail.addons.current.message.readonly",
+    "https://www.googleapis.com/auth/drive.addons.metadata.readonly",
+    "https://www.googleapis.com/auth/drive.file",
+    "https://www.googleapis.com/auth/script.external_request",
+    "https://www.googleapis.com/auth/script.locale",
+    "https://www.googleapis.com/auth/userinfo.email"
+  ],
+  "urlFetchWhitelist": ["{{BASE_URL}}/", "https://www.googleapis.com/"],
+  "addOns": {
+    "common": {
+      "name": "CalaSign",
+      "logoUrl": "{{BASE_URL}}/integrations/connectors/google-workspace/icon-128.png",
+      "layoutProperties": { "primaryColor": "#1F4E79", "secondaryColor": "#2E75B6" },
+      "useLocaleFromApp": true,
+      "homepageTrigger": { "runFunction": "onHomepage", "enabled": true },
+      "universalActions": [
+        { "label": "Abrir CalaSign / Open CalaSign", "openLink": "{{BASE_URL}}/app" },
+        { "label": "Cerrar sesión / Sign out", "runFunction": "onSignOutUniversal" }
+      ],
+      "openLinkUrlPrefixes": ["{{BASE_URL}}/", "https://drive.google.com/", "https://docs.google.com/"]
+    },
+    "gmail": {
+      "contextualTriggers": [{ "unconditional": {}, "onTriggerFunction": "onGmailMessage" }]
+    },
+    "docs": {
+      "homepageTrigger": { "runFunction": "onDocsHomepage", "enabled": true },
+      "onFileScopeGrantedTrigger": { "runFunction": "onDocsFileScopeGranted" }
+    },
+    "drive": {
+      "homepageTrigger": { "runFunction": "onDriveHomepage", "enabled": true },
+      "onItemsSelectedTrigger": { "runFunction": "onDriveItemsSelected" }
+    }
+  }
+}

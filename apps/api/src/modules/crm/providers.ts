@@ -7,8 +7,10 @@
 //  · Siigo     API v1 (POST /auth con username + access_key y Partner-Id; /v1/customers). Siigo no publica un
 //              endpoint de adjuntos: la referencia al documento se agrega al campo comments del cliente.
 //  · Alegra    API v1 (Basic email:token; /contacts y /invoices con POST …/{id}/attachment).
+//  · Zoho      CRM API v7 (Deals, Contacts, Contact_Roles, Attachments, Notes) o Bigin API v2 (Pipelines, Contacts).
+//              OAuth 2.0 multi-DC: el token se pide al accounts-server de la cuenta y la API va a su api_domain.
 //  · Pipedrive API v1 sobre el api_domain de la compañía (ver pipedrive.ts).
-import type { CrmObjectType, CrmProvider, CrmRecord } from "@calasign/shared";
+import type { CrmObjectType, CrmProvider, CrmRecord, ZohoProduct, ZohoRegion } from "@calasign/shared";
 import { config } from "../../config";
 import type { Db } from "../../infra/db";
 import { decrypt, encrypt } from "../../lib/util";
@@ -22,8 +24,76 @@ export const BASES = {
   salesforceLogin: () => (env.SALESFORCE_LOGIN_URL ?? "https://login.salesforce.com").replace(/\/$/, ""),
   siigoApi: () => (env.SIIGO_API_BASE ?? "https://api.siigo.com").replace(/\/$/, ""),
   alegraApi: () => (env.ALEGRA_API_BASE ?? "https://api.alegra.com/api/v1").replace(/\/$/, ""),
+  /** Solo para pruebas: fuerza el servidor de cuentas de Zoho (si no, sale de la región elegida). */
+  zohoAccounts: () => env.ZOHO_ACCOUNTS_URL?.replace(/\/$/, "") || null,
   pipedriveOAuth: () => (env.PIPEDRIVE_OAUTH_BASE ?? "https://oauth.pipedrive.com").replace(/\/$/, ""),
 };
+
+// ───────────────────────────── Zoho: centros de datos ─────────────────────────────
+
+/** Host del servidor de cuentas de cada centro de datos (Canadá usa zohocloud.ca). */
+const ZOHO_ACCOUNTS_HOST: Record<ZohoRegion, string> = {
+  com: "accounts.zoho.com",
+  eu: "accounts.zoho.eu",
+  in: "accounts.zoho.in",
+  "com.au": "accounts.zoho.com.au",
+  jp: "accounts.zoho.jp",
+  ca: "accounts.zohocloud.ca",
+  sa: "accounts.zoho.sa",
+  uk: "accounts.zoho.uk",
+  "com.cn": "accounts.zoho.com.cn",
+};
+const ZOHO_TLD = String.raw`(com|eu|in|com\.au|jp|ca|sa|uk|com\.cn)`;
+const ZOHO_ACCOUNTS_RE = new RegExp(String.raw`^(accounts\.zoho\.${ZOHO_TLD}|accounts\.zohocloud\.ca)$`, "i");
+const ZOHO_API_RE = new RegExp(String.raw`^((www\.)?zohoapis\.${ZOHO_TLD}|(www\.)?zohoapis\.zohocloud\.ca)$`, "i");
+
+const isLocalDev = (u: URL) => ["localhost", "127.0.0.1"].includes(u.hostname) && config.environment === "local";
+
+/** Servidor de cuentas donde se inicia OAuth para una región (o el forzado por ZOHO_ACCOUNTS_URL). */
+export function zohoAccountsBase(region?: ZohoRegion | null): string {
+  return BASES.zohoAccounts() ?? `https://${ZOHO_ACCOUNTS_HOST[region ?? "com"] ?? ZOHO_ACCOUNTS_HOST.com}`;
+}
+
+/**
+ * Valida el accounts-server que Zoho manda en el callback (o el guardado en la conexión): el código y el refresh token
+ * solo sirven en el centro de datos de la cuenta y ahí se manda el client secret, así que tiene que ser de Zoho.
+ */
+export function validateZohoAccounts(raw: string): string {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    throw new CrmError("accounts-server de Zoho inválido");
+  }
+  const forced = BASES.zohoAccounts();
+  if (forced && u.origin === new URL(forced).origin) return u.origin;
+  if (isLocalDev(u)) return u.origin;
+  if (u.protocol !== "https:" || u.port || !ZOHO_ACCOUNTS_RE.test(u.hostname)) throw new CrmError(`accounts-server inesperado: ${u.hostname}`);
+  return u.origin;
+}
+
+/** Valida el api_domain del token de Zoho (https://www.zohoapis.<tld>): es la base de todas las llamadas con el token. */
+export function validateZohoApiDomain(raw: string): string {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    throw new CrmError("api_domain de Zoho inválido");
+  }
+  if (isLocalDev(u)) return u.origin;
+  if (u.protocol !== "https:" || u.port || !ZOHO_API_RE.test(u.hostname)) throw new CrmError(`api_domain inesperado: ${u.hostname}`);
+  return u.origin;
+}
+
+/** Ruta base de la API según el producto. */
+export const zohoApiPrefix = (product: ZohoProduct | undefined) => (product === "bigin" ? "/bigin/v2" : "/crm/v7");
+
+/** Módulo de Zoho para cada tipo de registro (en Bigin los negocios están en Pipelines). */
+export function zohoModule(product: ZohoProduct | undefined, objectType: CrmObjectType): string {
+  if (objectType === "contact") return "Contacts";
+  if (objectType === "deal") return product === "bigin" ? "Pipelines" : "Deals";
+  throw new CrmError(`zoho no admite registros de tipo ${objectType}`);
+}
 
 const SF_API_VERSION = "v60.0";
 
@@ -34,14 +104,34 @@ export interface OAuthAppCfg {
   tokenUrl: string;
   scope: string;
   pkce: boolean;
+  /** Parámetros extra del authorize (Zoho: access_type=offline para recibir refresh token). */
+  authorizeParams?: Record<string, string>;
 }
 
-/** Proveedores que se conectan con OAuth. */
-export type OAuthProvider = "hubspot" | "salesforce" | "pipedrive";
-export const isOAuthProvider = (p: string): p is OAuthProvider => p === "hubspot" || p === "salesforce" || p === "pipedrive";
+export type CrmOAuthProvider = "hubspot" | "salesforce" | "zoho" | "pipedrive";
+export const isOAuthProvider = (p: string): p is CrmOAuthProvider => p === "hubspot" || p === "salesforce" || p === "zoho" || p === "pipedrive";
 
-export function oauthApp(p: OAuthProvider): OAuthAppCfg {
-  // Pipedrive: los scopes (deals:full, contacts:read, users:read…) se eligen en el Developer Hub, no en la URL.
+/** Scopes de Zoho por producto (separados por coma, como pide Zoho). ZOHO_SCOPE / ZOHO_BIGIN_SCOPE los reemplazan. */
+export const zohoScope = (product: ZohoProduct | undefined) =>
+  product === "bigin"
+    ? env.ZOHO_BIGIN_SCOPE || "ZohoBigin.modules.ALL,ZohoBigin.org.READ,ZohoBigin.users.READ"
+    : env.ZOHO_SCOPE || "ZohoCRM.modules.ALL,ZohoCRM.org.READ,ZohoCRM.users.READ";
+
+export function oauthApp(p: CrmOAuthProvider, opts: { accounts?: string; product?: ZohoProduct } = {}): OAuthAppCfg {
+  if (p === "zoho") {
+    const acc = opts.accounts ?? zohoAccountsBase();
+    return {
+      clientId: env.ZOHO_CLIENT_ID,
+      clientSecret: env.ZOHO_CLIENT_SECRET,
+      authorizeUrl: `${acc}/oauth/v2/auth`,
+      tokenUrl: `${acc}/oauth/v2/token`,
+      scope: zohoScope(opts.product),
+      // Zoho Accounts acepta PKCE (code_challenge S256); ZOHO_OAUTH_PKCE=false lo apaga si hiciera falta.
+      pkce: env.ZOHO_OAUTH_PKCE !== "false",
+      authorizeParams: { access_type: "offline", prompt: "consent" },
+    };
+  }
+  // Pipedrive: los scopes (deals:full, contacts:full, users:read…) se eligen en el Developer Hub, no en la URL.
   if (p === "pipedrive")
     return {
       clientId: env.PIPEDRIVE_CLIENT_ID,
@@ -71,8 +161,8 @@ export function oauthApp(p: OAuthProvider): OAuthAppCfg {
 }
 
 export const oauthConfigured = (p: CrmProvider) => isOAuthProvider(p) && Boolean(oauthApp(p).clientId && oauthApp(p).clientSecret);
-export const tokenSupported = (p: CrmProvider) => p !== "salesforce" && p !== "pipedrive";
-export const crmRedirectUri = (p: OAuthProvider) => `${config.appUrl}/v1/crm/oauth/${p}/callback`;
+export const tokenSupported = (p: CrmProvider) => p !== "salesforce" && p !== "zoho" && p !== "pipedrive";
+export const crmRedirectUri = (p: CrmOAuthProvider) => `${config.appUrl}/v1/crm/oauth/${p}/callback`;
 
 export class CrmError extends Error {
   constructor(
@@ -143,7 +233,7 @@ export class CrmConn {
 
 // ───────────────────────────── OAuth ─────────────────────────────
 
-export async function oauthTokenRequest(p: OAuthProvider, params: Record<string, string>): Promise<any> {
+export async function oauthTokenRequest(p: CrmOAuthProvider, params: Record<string, string>, tokenUrl?: string): Promise<any> {
   const app = oauthApp(p);
   const headers: Record<string, string> = { "content-type": "application/x-www-form-urlencoded", accept: "application/json" };
   let form: Record<string, string> = { client_id: app.clientId!, client_secret: app.clientSecret!, ...params };
@@ -152,7 +242,7 @@ export async function oauthTokenRequest(p: OAuthProvider, params: Record<string,
     headers.authorization = `Basic ${Buffer.from(`${app.clientId}:${app.clientSecret}`).toString("base64")}`;
     form = { ...params };
   }
-  const res = await fetch(app.tokenUrl, {
+  const res = await fetch(tokenUrl ?? app.tokenUrl, {
     method: "POST",
     headers,
     body: new URLSearchParams(form),
@@ -160,7 +250,8 @@ export async function oauthTokenRequest(p: OAuthProvider, params: Record<string,
   });
   const body: any = await res.json().catch(() => ({}));
   if (!res.ok || !body.access_token) {
-    const invalid = body.error === "invalid_grant" || res.status === 400 || res.status === 401;
+    // Zoho responde 200 con { error: "invalid_code" } cuando el código o el refresh token vencieron o fueron revocados.
+    const invalid = ["invalid_grant", "invalid_code", "invalid_client"].includes(body.error) || res.status === 400 || res.status === 401;
     throw new CrmError(`token ${p}: HTTP ${res.status} ${body.error_description ?? body.error ?? body.message ?? ""}`.trim(), res.status, invalid);
   }
   return body;
@@ -178,9 +269,11 @@ export function validateSalesforceInstance(raw: string): string {
 }
 
 async function refreshOAuth(c: CrmConn) {
-  const p = c.provider as OAuthProvider;
+  const p = c.provider as CrmOAuthProvider;
   if (!c.creds.refresh_token) throw new CrmError("la conexión venció: hay que volver a conectarla", 401, true);
-  const b = await oauthTokenRequest(p, { grant_type: "refresh_token", refresh_token: c.creds.refresh_token });
+  // Zoho: el refresh token solo vale en el centro de datos de la cuenta.
+  const tokenUrl = p === "zoho" ? `${validateZohoAccounts(String(c.cfg.accountsServer ?? zohoAccountsBase()))}/oauth/v2/token` : undefined;
+  const b = await oauthTokenRequest(p, { grant_type: "refresh_token", refresh_token: c.creds.refresh_token }, tokenUrl);
   c.creds = {
     access_token: b.access_token,
     refresh_token: b.refresh_token ?? c.creds.refresh_token,
@@ -188,6 +281,7 @@ async function refreshOAuth(c: CrmConn) {
   };
   const patch: Record<string, unknown> = {};
   if (p === "salesforce" && b.instance_url) patch.instanceUrl = validateSalesforceInstance(b.instance_url);
+  if (p === "zoho" && b.api_domain) patch.apiDomain = validateZohoApiDomain(b.api_domain);
   if (p === "pipedrive" && b.api_domain) patch.apiDomain = validatePipedriveDomain(b.api_domain);
   await c.persist(patch);
 }
@@ -217,6 +311,7 @@ async function authHeader(c: CrmConn): Promise<Record<string, string>> {
   if (c.row.auth_type === "token") return { authorization: `Bearer ${(c.creds as HubspotTokenCreds).token}` };
   const cr = c.creds as OAuthCreds;
   if (cr.expires_at && cr.expires_at - 60_000 < Date.now()) await refreshOAuth(c);
+  if (c.provider === "zoho") return { authorization: `Zoho-oauthtoken ${c.creds.access_token}` };
   return { authorization: `Bearer ${c.creds.access_token}` };
 }
 
@@ -231,6 +326,9 @@ function baseFor(c: CrmConn): string {
       return BASES.siigoApi();
     case "alegra":
       return BASES.alegraApi();
+    case "zoho":
+      if (!c.cfg.apiDomain) throw new CrmError("conexión de Zoho sin api_domain");
+      return `${validateZohoApiDomain(c.cfg.apiDomain)}${zohoApiPrefix(c.cfg.product)}`;
     case "pipedrive":
       if (!c.cfg.apiDomain) throw new CrmError("conexión de Pipedrive sin api_domain");
       return validatePipedriveDomain(c.cfg.apiDomain);
@@ -264,7 +362,8 @@ export async function crmFetch(c: CrmConn, r: Req, retried = false): Promise<any
     data = text;
   }
   if (!res.ok) {
-    const msg = typeof data === "object" && data ? data.message ?? data[0]?.message ?? data.error_description ?? data.error ?? JSON.stringify(data).slice(0, 200) : String(data).slice(0, 200);
+    const zohoItem = data?.data?.[0]; // Zoho: { data: [{ code, message, details }] }
+    const msg = typeof data === "object" && data ? data.message ?? data[0]?.message ?? (zohoItem ? `${zohoItem.code ?? ""} ${zohoItem.message ?? ""} ${JSON.stringify(zohoItem.details ?? {})}`.trim() : null) ?? data.error_description ?? data.error ?? JSON.stringify(data).slice(0, 200) : String(data).slice(0, 200);
     throw new CrmError(`${c.provider} ${r.method ?? "GET"} ${r.path}: HTTP ${res.status} ${msg}`, res.status, res.status === 401 || res.status === 403);
   }
   return data;
@@ -316,9 +415,89 @@ export async function testConnection(c: CrmConn): Promise<{ label: string | null
       await crmFetch(c, { path: "/contacts?limit=1" });
       return { label: (c.creds as AlegraCreds).email };
     }
+    case "zoho": {
+      const r = await crmFetch(c, { path: "/org" });
+      const org = r?.org?.[0] ?? {};
+      const name = str(org.company_name) ?? str(org.domain_name) ?? new URL(baseFor(c)).host;
+      return { label: c.cfg.product === "bigin" ? `${name} (Bigin)` : name, config: { orgId: str(org.id) ?? str(org.zgid) } };
+    }
     case "pipedrive":
       return pipedriveTest(c);
   }
+}
+
+// ───────────────────────────── Zoho: registros ─────────────────────────────
+
+/** Respuesta de escritura de Zoho: HTTP 200/201/202 con { data: [{ status: "success" | "error", code, details }] }. */
+function zohoWriteResult(r: any, what: string): any {
+  const item = r?.data?.[0];
+  if (item && String(item.status).toLowerCase() === "error") {
+    throw new CrmError(`zoho ${what}: ${item.code ?? "error"} ${item.message ?? ""} ${JSON.stringify(item.details ?? {})}`.trim(), 400);
+  }
+  return item ?? {};
+}
+
+const zohoContact = (x: any, role: string | null, primary: boolean): CrmRecord["contacts"][number] => {
+  const name = str(x.Full_Name) ?? ([x.First_Name, x.Last_Name].filter(Boolean).join(" ").trim() || str(x.Email) || str(x.name) || `Contacto ${x.id}`);
+  return { id: String(x.id), name, email: str(x.Email), phone: str(x.Mobile ?? x.Phone), role, primary };
+};
+
+async function zohoRecord(c: CrmConn, objectType: CrmObjectType, id: string): Promise<CrmRecord> {
+  const product = c.cfg.product as ZohoProduct | undefined;
+  const mod = zohoModule(product, objectType);
+  const r = await crmFetch(c, { path: `/${mod}/${encodeURIComponent(id)}` });
+  const rec = r?.data?.[0];
+  // Zoho responde 204 (sin cuerpo) si el registro no existe o no es visible para el usuario.
+  if (!rec) throw new CrmError(`zoho: ${mod} ${id} no existe o no es visible`, 404);
+  if (objectType === "contact") return { id: String(rec.id ?? id), objectType, properties: rec, contacts: [zohoContact(rec, null, true)] };
+  const contacts: CrmRecord["contacts"] = [];
+  // Contacto principal: el lookup Contact_Name del negocio.
+  const primaryId = rec.Contact_Name?.id ? String(rec.Contact_Name.id) : null;
+  if (primaryId) {
+    const cr = await crmFetch(c, { path: `/Contacts/${encodeURIComponent(primaryId)}` });
+    if (cr?.data?.[0]) contacts.push(zohoContact(cr.data[0], null, true));
+  }
+  // Zoho CRM: roles de contacto del negocio (Contact_Roles). Bigin no los tiene.
+  if (product !== "bigin") {
+    try {
+      const roles = await crmFetch(c, { path: `/Deals/${encodeURIComponent(id)}/Contact_Roles?fields=Full_Name,First_Name,Last_Name,Email,Phone,Mobile` });
+      for (const x of roles?.data ?? []) {
+        const role = str(x.Contact_Role?.name ?? x.Contact_Role);
+        const existing = contacts.find((k) => k.id === String(x.id));
+        if (existing) existing.role ??= role;
+        else contacts.push(zohoContact(x, role, false));
+      }
+    } catch (err) {
+      // Lista relacionada inexistente o sin permiso (400/403/404): alcanza con el contacto principal. Un token inválido
+      // o un Zoho caído sí cortan (si no, el mapeo fallaría por "falta el contacto" sin reintentarse).
+      if (!(err instanceof CrmError) || ![400, 403, 404].includes(err.status ?? 0)) throw err;
+    }
+  }
+  return { id: String(rec.id ?? id), objectType, properties: rec, contacts };
+}
+
+async function zohoAttach(c: CrmConn, objectType: CrmObjectType, id: string, a: AttachInput, note: string): Promise<string> {
+  const mod = zohoModule(c.cfg.product, objectType);
+  const enc = encodeURIComponent(id);
+  const form = new FormData();
+  form.append("file", new Blob([Buffer.from(a.pdf)], { type: "application/pdf" }), a.fileName);
+  const up = zohoWriteResult(await crmFetch(c, { method: "POST", path: `/${mod}/${enc}/Attachments`, form }), "adjunto");
+  const refs = [`attachment:${up.details?.id ?? a.fileName}`];
+  // La nota (con hash y enlace al sobre) es un extra: si falla, el PDF ya quedó adjunto.
+  try {
+    const n = zohoWriteResult(
+      await crmFetch(c, {
+        method: "POST",
+        path: "/Notes",
+        json: { data: [{ Note_Title: `CalaSign: ${a.subject}`.slice(0, 120), Note_Content: note, Parent_Id: { module: { api_name: mod }, id: String(id) } }] },
+      }),
+      "nota",
+    );
+    if (n.details?.id) refs.push(`note:${n.details.id}`);
+  } catch {
+    // No se relanza: el reintento del trabajo volvería a subir el PDF y quedaría duplicado.
+  }
+  return refs.join(" ");
 }
 
 /** Lee un registro y sus contactos, normalizado para los mapeos. */
@@ -360,6 +539,7 @@ export async function fetchRecord(c: CrmConn, objectType: CrmObjectType, id: str
     const { attributes: _a, ...properties } = opp ?? {};
     return { id: String(opp.Id ?? id), objectType, properties, contacts };
   }
+  if (c.provider === "zoho") return zohoRecord(c, objectType, id);
   throw new CrmError(`${c.provider} no admite enviar desde registros de tipo ${objectType}`);
 }
 
@@ -368,6 +548,11 @@ export async function writeStatus(c: CrmConn, objectType: CrmObjectType, id: str
   const enc = encodeURIComponent(id);
   if (c.provider === "hubspot") return crmFetch(c, { method: "PATCH", path: `/crm/v3/objects/deals/${enc}`, json: { properties: { [property]: value } } });
   if (c.provider === "salesforce") return crmFetch(c, { method: "PATCH", path: `/services/data/${SF_API_VERSION}/sobjects/Opportunity/${enc}`, json: { [property]: value } });
+  if (c.provider === "zoho") {
+    const mod = zohoModule(c.cfg.product, objectType);
+    // trigger: [] evita que la actualización dispare reglas de flujo y blueprints del CRM por un cambio de CalaSign.
+    return zohoWriteResult(await crmFetch(c, { method: "PUT", path: `/${mod}/${enc}`, json: { data: [{ [property]: value }], trigger: [] } }), "estado");
+  }
   if (c.provider === "pipedrive") return pipedriveWriteStatus(c, objectType, id, property, value);
   throw new CrmError(`${c.provider} no admite escribir estados (${objectType})`);
 }
@@ -411,6 +596,7 @@ export async function attachSigned(c: CrmConn, objectType: CrmObjectType, id: st
     });
     return `ContentVersion:${created.id}`;
   }
+  if (c.provider === "zoho") return zohoAttach(c, objectType, id, a, note);
   if (c.provider === "alegra") {
     const form = new FormData();
     form.append("file", new Blob([Buffer.from(a.pdf)], { type: "application/pdf" }), a.fileName);

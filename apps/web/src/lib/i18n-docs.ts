@@ -3,7 +3,6 @@
 // (TypeScript avisa si falta una traducción) y los textos admiten un marcado mínimo que renderiza <Md>/<Inline>:
 // `código`, **negrita**, [enlace](url), párrafos separados por línea en blanco y listas con "- " o "1. ".
 // Variables: {{BASE}} (origen de la API) y {{MCP_URL}}.
-import { brandText } from "./white-label";
 import { useCallback } from "react";
 import { useI18n } from "./i18n";
 import { docsPt } from "./i18n-docs-pt";
@@ -455,6 +454,8 @@ export const docsEs = {
   "g.crm.col.does": "Qué hace",
   "g.crm.hubspot": "Enviar a firmar desde un Deal (contactos asociados + propiedades → plantilla), manualmente o por webhook al cambiar una propiedad. Al completarse actualiza una propiedad de estado y adjunta el PDF al deal.",
   "g.crm.salesforce": "Enviar desde una Opportunity (roles de contacto + campos). Actualiza un campo de estado y publica el PDF como ContentVersion en la oportunidad.",
+  "g.crm.zoho":
+    "OAuth en cualquier centro de datos de Zoho (com, eu, in, com.au, jp, ca…). Enviar a firmar desde un **Deal** (contacto principal y roles de contacto) o un **Contact**; en Bigin, desde un Pipeline. Actualiza un campo de estado (ej. `CalaSign_Status`) y adjunta el PDF firmado al registro, con una nota que trae el hash y el enlace al sobre. Botón «Enviar a firmar con CalaSign» en Deals con la [función Deluge y la guía de la extensión](/integrations/connectors/zoho-crm/calasign-zoho-crm.zip).",
   "g.crm.siigo": "Colombia: busca el cliente por la identificación de un firmante y le agrega la referencia del documento firmado.",
   "g.crm.alegra": "Busca el contacto por identificación y le adjunta el PDF; también se puede vincular una factura.",
   "g.crm.pipedrive": "OAuth con el dominio de la compañía. Enviar desde un Deal (persona principal y participantes + campos, también personalizados por su key o nombre) o desde una Person. Escribe el estado en un campo del deal (texto u opción única) y, al completarse, sube el PDF firmado al deal y deja una nota con el SHA-256 y el link.",
@@ -810,7 +811,10 @@ export function useDocsText() {
   const d = DICTS[locale] ?? docsEs;
   return useCallback(
     (k: DocsKey, params?: Record<string, string | number>) => {
-      let s = fillVars(brandText(locale, k, d[k] ?? docsEs[k] ?? k), VARS);
+      // Sin brandText (docs/MARCA-BLANCA.md): en el dominio de una marca cambiaba "CalaSign" por el producto también en
+      // los nombres técnicos (header `CalaSign-Signature`, `CalaSign.openEnvelope`, nodos de n8n) y la verificación de
+      // webhooks escrita con esa documentación buscaba un header que no existe.
+      let s = fillVars(d[k] ?? docsEs[k] ?? k, VARS);
       if (params) for (const [p, v] of Object.entries(params)) s = s.split(`{${p}}`).join(String(v));
       return s;
     },

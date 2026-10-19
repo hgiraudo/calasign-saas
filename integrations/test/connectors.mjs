@@ -6,7 +6,8 @@
 //   4. Zapier: estructura de la app, REST hooks y acciones con un `z` simulado (sin zapier-platform-core),
 //   5. n8n: paquete npm (.tgz), carga de nodos con n8n-workflow simulado, trigger y firma HMAC,
 //   6. Make: referencias rpc/webhook/funciones, IML balanceado, funciones IML,
-//   7. Dynamics 365: web resource con Xrm simulado y setup-dataverse idempotente.
+//   7. Dynamics 365: web resource con Xrm simulado y setup-dataverse idempotente,
+//   8. Zoho CRM: función Deluge del botón (endpoint del conector nativo y sintaxis básica).
 //
 //   node integrations/test/connectors.mjs
 import assert from "node:assert/strict";
@@ -711,6 +712,27 @@ await test("pipedrive: la acción lee los ids, filtra mapeos y envía uno por re
   assert.equal((await PD.load(api, PD.parseParams("?resource=deal&selectedIds=42"))).key, "noMappings");
   loggedIn = false;
   assert.equal((await PD.load(api, PD.parseParams("?resource=deal&selectedIds=42"))).state, "login");
+});
+
+// ───────── Zoho CRM ─────────
+
+await test("zoho crm: zip con la función Deluge del botón (endpoint del conector nativo, bloques balanceados)", () => {
+  const zip = readZip(readFileSync(C("zoho-crm/calasign-zoho-crm.zip")));
+  const names = [...zip.keys()];
+  for (const f of ["README.md", "deluge/enviar_a_firmar.deluge.txt"]) assert.ok(names.includes(f), f);
+  const dg = readFileSync(C("zoho-crm/deluge/enviar_a_firmar.deluge.txt"), "utf8");
+  assert.ok(!dg.includes("{{"), "sin variables sin reemplazar");
+  assert.ok(dg.includes(`baseUrl = "${BASE}";`), "URL de CalaSign por defecto");
+  assert.match(dg, /url :baseUrl \+ "\/v1\/crm\/mappings\/" \+ mappingId \+ "\/send"/);
+  assert.match(dg, /connection:"calasign"/);
+  assert.match(dg, /body\.put\("objectId",dealId\.toString\(\)\)/);
+  // Primero los textos (pueden traer "//", como las URLs) y después los comentarios.
+  const code = dg.replace(/"(?:[^"\\\n]|\\.)*"/g, '""').replace(/\/\/.*$/gm, "");
+  for (const [o, c] of [["{", "}"], ["(", ")"], ["[", "]"]]) assert.equal(code.split(o).length, code.split(c).length, `${o}${c} balanceados`);
+  for (const line of code.split("\n").map((l) => l.trim()).filter(Boolean)) {
+    if (/^(if|else|url|type|parameters|headers|connection|detailed)\b|^[{}[\]];?$|[{[]$|= invokeurl$/.test(line)) continue;
+    assert.ok(line.endsWith(";"), `sentencia sin ";": ${line}`);
+  }
 });
 
 await test("web: los enlaces de /developers/connectors y de /integrations/ apuntan a artefactos construidos", () => {

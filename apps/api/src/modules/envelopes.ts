@@ -444,6 +444,13 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
     let notified = 0;
     await s.db.tx(async (t) => {
       const e = await lockEnvelope(t, a.tenantId, req.params.id);
+      // Un recordatorio manual cada 10 minutos por sobre: cada uno puede ser un SMS o WhatsApp (con costo) por firmante,
+      // y sin esto solo limitaba el rate limit de la ruta.
+      const recent = await t.one(
+        `SELECT 1 FROM envelope_events WHERE envelope_id = $1 AND type = 'envelope.reminded' AND actor_type <> 'system' AND occurred_at > now() - interval '10 minutes' LIMIT 1`,
+        [e.id],
+      );
+      if (recent) throw new AppError(429, "reminded_recently", "Ya se mandó un recordatorio hace unos minutos: esperá un poco antes de mandar otro");
       if (e.status === "awaiting_certificates") {
         // Firma con certificado pendiente: se le vuelve a avisar al firmante al que le toca (sin dedupe: es un recordatorio).
         const pending = await t.one<any>(

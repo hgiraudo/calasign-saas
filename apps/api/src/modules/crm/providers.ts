@@ -231,7 +231,10 @@ export async function oauthTokenRequest(p: CrmOAuthProvider, params: Record<stri
   const body: any = await res.json().catch(() => ({}));
   if (!res.ok || !body.access_token) {
     // Zoho responde 200 con { error: "invalid_code" } cuando el código o el refresh token vencieron o fueron revocados.
-    const invalid = ["invalid_grant", "invalid_code", "invalid_client"].includes(body.error) || res.status === 400 || res.status === 401;
+    // Zoho limita los pedidos de token con HTTP 400 { error: "Access Denied", "too many requests" }: es transitorio (el
+    // trabajo se reintenta), no una conexión revocada que haya que volver a conectar.
+    const throttled = res.status === 429 || /too many requests/i.test(String(body.error_description ?? ""));
+    const invalid = !throttled && (["invalid_grant", "invalid_code", "invalid_client"].includes(body.error) || res.status === 400 || res.status === 401);
     throw new CrmError(`token ${p}: HTTP ${res.status} ${body.error_description ?? body.error ?? body.message ?? ""}`.trim(), res.status, invalid);
   }
   return body;

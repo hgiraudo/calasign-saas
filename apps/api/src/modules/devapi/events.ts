@@ -50,6 +50,8 @@ function parseFilters(q: EventQuery, lastEventId?: string): Filters {
   if (q.scope && q.scope !== "all" && q.scope !== "webhook") throw badRequest("validation_error", "scope: webhook o all", [{ path: "scope", message: "webhook | all" }]);
   const after = (q.after ?? lastEventId ?? "").trim() || null;
   if (after && !CURSOR_RE.test(after) && !LEGACY_CURSOR_RE.test(after)) throw badRequest("invalid_cursor", "Cursor inválido");
+  // 20 cifras admiten más que un xid8 (2^64 - 1): el cast fallaba en Postgres (22003) y respondía 500.
+  if (after && CURSOR_RE.test(after) && BigInt(CURSOR_RE.exec(after)![1]) > 0xffffffffffffffffn) throw badRequest("invalid_cursor", "Cursor inválido");
   let since: string | null = null;
   if (q.since) {
     const t = Date.parse(q.since);

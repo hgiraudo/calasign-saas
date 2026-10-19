@@ -57,7 +57,7 @@ export function createJobHandlers(d: Deps): Record<JobQueueName, JobHandler> {
     },
     webhook: (p, job) => handleWebhookJob(d, p, job),
     bulk: (p) => handleBulkJob(d, p),
-    platform: (p) => handlePlatformJob(d, p),
+    platform: (p, job) => handlePlatformJob(d, p, job),
     agreements: (p) => handleAgreementsJob(d, p),
   };
 }

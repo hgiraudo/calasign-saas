@@ -64,7 +64,9 @@ beforeAll(async () => {
   envelope = uuidv7();
   await db.query(`INSERT INTO tenants (id, slug, name) VALUES ($1, $2, 'T')`, [tenant, `t-${tenant.slice(-8)}`]);
   await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status) VALUES ($1, $2, 'Contrato', 'completed')`, [envelope, tenant]);
-});
+  // PGlite + todas las migraciones: en la corrida completa de vitest (un solo fork) pasaba el timeout por defecto y el
+  // archivo salía como skipped.
+}, 120_000);
 afterAll(async () => {
   globalThis.fetch = real;
   await db?.close();
@@ -137,4 +139,49 @@ describe("write-back de CRM con trabajos en paralelo", () => {
       expect((await db.one<any>(`SELECT detail FROM crm_runs WHERE id = $1`, [late]))!.detail.skipped).toMatch(/completed/);
     });
   }
+});
+
+describe("write-back de CRM que falla de forma definitiva", () => {
+  const hubspot = PROVIDERS[0];
+  const failing = (status: number) => {
+    globalThis.fetch = (async () => new Response(JSON.stringify({ message: "boom" }), { status, headers: { "content-type": "application/json" } })) as typeof fetch;
+  };
+  const lastStatus = async (link: string) => (await db.one<any>(`SELECT last_status FROM crm_links WHERE id = $1`, [link]))!.last_status;
+  const detail = async (run: string) => (await db.one<any>(`SELECT detail FROM crm_runs WHERE id = $1`, [run]))!.detail;
+
+  it("error permanente (sin acceso): last_status vuelve al valor anterior y queda en la actividad", async () => {
+    const { handleCrmJob } = await import("../src/modules/crm");
+    const { link, run } = await setup(hubspot);
+    failing(401);
+    const r = await run("sent");
+    await handleCrmJob({ db, blobs: {} as any }, { runId: r }, { attempts: 1, maxAttempts: 8 });
+    expect(await lastStatus(link)).toBeNull();
+    expect((await detail(r)).lastStatusRestored).toEqual({ from: "sent", to: null });
+  });
+
+  it("error transitorio: se conserva el reclamo hasta el último intento de la cola, y ahí vuelve al valor anterior", async () => {
+    const { handleCrmJob } = await import("../src/modules/crm");
+    const { link, run } = await setup(hubspot);
+    failing(500);
+    const r = await run("sent");
+    await expect(handleCrmJob({ db, blobs: {} as any }, { runId: r }, { attempts: 1, maxAttempts: 2 })).rejects.toThrow();
+    expect(await lastStatus(link)).toBe("sent");
+    // El reintento reclama de nuevo (el vínculo ya dice "sent"): el valor a restaurar es el de antes del primer intento.
+    await expect(handleCrmJob({ db, blobs: {} as any }, { runId: r }, { attempts: 2, maxAttempts: 2 })).rejects.toThrow();
+    expect(await lastStatus(link)).toBeNull();
+    expect((await detail(r)).lastStatusRestored).toEqual({ from: "sent", to: null });
+  });
+
+  it("no restaura si otro trabajo cambió last_status después del reclamo", async () => {
+    const { handleCrmJob } = await import("../src/modules/crm");
+    const { link, run } = await setup(hubspot);
+    const r = await run("sent");
+    globalThis.fetch = (async () => {
+      await db.query(`UPDATE crm_links SET last_status = 'completed' WHERE id = $1`, [link]); // otro trabajo reclamó el final
+      return new Response(JSON.stringify({ message: "boom" }), { status: 401 });
+    }) as typeof fetch;
+    await handleCrmJob({ db, blobs: {} as any }, { runId: r }, { attempts: 1, maxAttempts: 8 });
+    expect(await lastStatus(link)).toBe("completed");
+    expect((await detail(r)).lastStatusRestored).toBeUndefined();
+  });
 });

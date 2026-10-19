@@ -336,7 +336,31 @@ async function signedPdf(db: Db, blobs: BlobStore, envelopeId: string) {
 
 const pdfName = (subject: string, envelopeId: string) => `${subject.replace(/[\\/:*?"<>|\n\r]+/g, " ").trim().slice(0, 120) || "documento"} - ${envelopeId.slice(0, 8)}.pdf`;
 
-async function writeBackAndAttach(db: Db, blobs: BlobStore, conn: CrmConn, link: any, mapping: any | null, status: string): Promise<Record<string, unknown>> {
+/** Reclamo de last_status hecho por un write-back: si la escritura del estado falla de forma definitiva, se devuelve
+ *  el vínculo al estado anterior (ver handleCrmJob). */
+interface StatusClaim {
+  linkId: string;
+  previous: string | null;
+  claimed: string;
+  written: boolean;
+}
+/** runId: la ejecución guarda el valor anterior al primer reclamo (detail.claimPrevious), porque en un reintento el
+ *  vínculo ya tiene el estado reclamado por el intento anterior. */
+interface ClaimOut {
+  runId: string;
+  prior?: { previous: string | null };
+  claim: StatusClaim | null;
+}
+
+async function writeBackAndAttach(
+  db: Db,
+  blobs: BlobStore,
+  conn: CrmConn,
+  link: any,
+  mapping: any | null,
+  status: string,
+  claimOut?: ClaimOut,
+): Promise<Record<string, unknown>> {
   const wb = { attachPdf: true, ...(mapping?.write_back ?? {}) };
   const detail: Record<string, unknown> = {};
   // Los trabajos "sent" y "completed" (o "declined"…) del mismo vínculo pueden correr a la vez (la cola procesa en
@@ -346,17 +370,28 @@ async function writeBackAndAttach(db: Db, blobs: BlobStore, conn: CrmConn, link:
   //  1. antes de escribir, se reclama el vínculo solo si su estado no tiene un rango mayor (si no, se omite);
   //  2. después de escribir, se vuelve a leer: si mientras tanto otro trabajo reclamó un estado de rango mayor, su
   //     escritura pudo llegar al CRM antes que esta, así que se reescribe ese estado (el último en llegar gana).
-  const claimed = await db.one<{ id: string }>(
-    `UPDATE crm_links SET last_status = $2 WHERE id = $1 AND ${STATUS_RANK_SQL} <= $3 RETURNING id`,
-    [link.id, status, statusRank(status)],
-  );
+  //  3. si la escritura falla de forma definitiva, handleCrmJob devuelve last_status al valor anterior (solo si sigue
+  //     siendo el reclamado): si no, un "sent" que nunca llegó al CRM dejaba el vínculo como si estuviera escrito.
+  // El reclamo lee el valor anterior con el registro bloqueado (transacción corta, sin llamadas HTTP adentro).
+  const claimed = await db.tx(async (t) => {
+    const cur = await t.one<{ last_status: string | null }>(`SELECT last_status FROM crm_links WHERE id = $1 FOR UPDATE`, [link.id]);
+    if (!cur || statusRank(cur.last_status) > statusRank(status)) return null;
+    await t.query(`UPDATE crm_links SET last_status = $2 WHERE id = $1`, [link.id, status]);
+    return { previous: cur.last_status };
+  });
   if (!claimed) {
     const cur = await db.one<{ last_status: string | null }>(`SELECT last_status FROM crm_links WHERE id = $1`, [link.id]);
     return { skipped: `el registro ya tiene el estado ${cur?.last_status ?? "?"}` };
   }
+  let previous = claimed.previous;
+  if (claimOut?.prior) previous = claimOut.prior.previous;
+  else if (claimOut) await db.query(`UPDATE crm_runs SET detail = detail || $2::jsonb WHERE id = $1`, [claimOut.runId, JSON.stringify({ claimPrevious: previous })]);
+  const claim: StatusClaim = { linkId: link.id, previous, claimed: status, written: false };
+  if (claimOut) claimOut.claim = claim;
   if (CRM_KIND[conn.provider] === "crm" && wb.statusProperty) {
     const value = statusValue(wb, status as any);
     await writeStatus(conn, link.object_type, link.object_id, wb.statusProperty, value);
+    claim.written = true;
     detail.statusWritten = { property: wb.statusProperty, value };
     const after = (await db.one<{ last_status: string | null }>(`SELECT last_status FROM crm_links WHERE id = $1`, [link.id]))?.last_status ?? null;
     if (after && statusRank(after) > statusRank(status)) {
@@ -392,7 +427,20 @@ export function statusRank(s: string | null | undefined): number {
 }
 const STATUS_RANK_SQL = `(CASE WHEN last_status IS NULL THEN 0 WHEN last_status = 'sent' THEN 1 ELSE 2 END)`;
 
-export async function handleCrmJob(d: { db: Db; blobs: BlobStore }, p: { runId: string }) {
+/** Write-back que falló de forma definitiva sin llegar a escribir el estado: last_status vuelve al valor anterior
+ *  (solo si nadie lo cambió después del reclamo) y queda registrado en la actividad. */
+async function releaseClaim(db: Db, runId: string, claim: StatusClaim | null) {
+  if (!claim || claim.written || claim.previous === claim.claimed) return;
+  const back = await db.query(`UPDATE crm_links SET last_status = $2 WHERE id = $1 AND last_status = $3 RETURNING id`, [claim.linkId, claim.previous, claim.claimed]);
+  if (back.length) {
+    await db.query(`UPDATE crm_runs SET detail = detail || $2::jsonb WHERE id = $1`, [
+      runId,
+      JSON.stringify({ lastStatusRestored: { from: claim.claimed, to: claim.previous } }),
+    ]);
+  }
+}
+
+export async function handleCrmJob(d: { db: Db; blobs: BlobStore }, p: { runId: string }, job?: { attempts: number; maxAttempts: number }) {
   const { db } = d;
   const run = await db.one<any>(`SELECT * FROM crm_runs WHERE id = $1`, [p.runId]);
   if (!run || run.status === "succeeded") return;
@@ -404,12 +452,17 @@ export async function handleCrmJob(d: { db: Db; blobs: BlobStore }, p: { runId: 
   await db.query(`UPDATE crm_runs SET attempts = attempts + 1, updated_at = now() WHERE id = $1`, [run.id]);
   const conn = open(db, connRow);
   const mapping = run.mapping_id ? await db.one<any>(`SELECT * FROM crm_mappings WHERE id = $1`, [run.mapping_id]) : null;
+  const claimOut: ClaimOut = {
+    runId: run.id,
+    prior: run.detail && Object.prototype.hasOwnProperty.call(run.detail, "claimPrevious") ? { previous: run.detail.claimPrevious ?? null } : undefined,
+    claim: null,
+  };
   try {
     let detail: Record<string, unknown> = {};
     if (run.kind === "write_back") {
       const link = await db.one<any>(`SELECT * FROM crm_links WHERE id = $1`, [run.link_id]);
       if (!link) throw new Error("vínculo inexistente");
-      detail = await writeBackAndAttach(db, d.blobs, conn, link, mapping, run.event);
+      detail = await writeBackAndAttach(db, d.blobs, conn, link, mapping, run.event, claimOut);
     } else if (run.kind === "match") {
       const ids = await db.query<any>(
         `SELECT name, id_document_number FROM recipients WHERE envelope_id = $1 AND role = 'signer' AND id_document_number IS NOT NULL ORDER BY routing_order, created_at`,
@@ -434,7 +487,7 @@ export async function handleCrmJob(d: { db: Db; blobs: BlobStore }, p: { runId: 
       );
       const link = await db.one<any>(`SELECT * FROM crm_links WHERE connection_id = $1 AND envelope_id = $2`, [conn.row.id, run.envelope_id]);
       await db.query(`UPDATE crm_runs SET link_id = $2, object_id = $3 WHERE id = $1`, [run.id, link.id, found]);
-      detail = { matched: found, ...(await writeBackAndAttach(db, d.blobs, conn, link, mapping, "completed")) };
+      detail = { matched: found, ...(await writeBackAndAttach(db, d.blobs, conn, link, mapping, "completed", claimOut)) };
     } else if (run.kind === "send") {
       // Envío disparado por webhook (HubSpot).
       if (!mapping) throw new Error("mapeo inexistente");
@@ -478,7 +531,10 @@ export async function handleCrmJob(d: { db: Db; blobs: BlobStore }, p: { runId: 
     await db.query(`UPDATE crm_connections SET last_error = $2 WHERE id = $1`, [conn.row.id, msg.slice(0, 500)]);
     // Sin acceso (token revocado) o datos que no cierran: no tiene sentido reintentar solo. sendFromRecord devuelve todo
     // como AppError: un error del proveedor o interno (5xx, p. ej. HubSpot caído) sí se reintenta.
-    if ((err instanceof CrmError && err.authFailed) || err instanceof MappingError || (err instanceof AppError && err.status < 500)) return;
+    const permanent = (err instanceof CrmError && err.authFailed) || err instanceof MappingError || (err instanceof AppError && err.status < 500);
+    // Fallo definitivo (error permanente o último intento de la cola): se suelta el reclamo de last_status.
+    if (permanent || (job && job.attempts >= job.maxAttempts)) await releaseClaim(db, run.id, claimOut.claim);
+    if (permanent) return;
     throw err; // reintento con backoff de la cola
   }
 }

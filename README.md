@@ -52,7 +52,7 @@ Configuración: `apps/api/src/config.ts` y las variables de cada documento de `d
 
 ```bash
 for t in e2e e2e-integrations e2e-signer e2e-productivity e2e-teams e2e-experience e2e-scale \
-         e2e-platform e2e-identity e2e-evidence e2e-mcp e2e-billing e2e-ai e2e-agreements e2e-data; do
+         e2e-platform e2e-identity e2e-evidence e2e-mcp e2e-billing e2e-ai e2e-agreements e2e-data e2e-oneshot; do
   node scripts/$t.mjs http://localhost:4000
 done
 node scripts/e2e-crm.mjs                 # levanta su propia API y simuladores de los proveedores

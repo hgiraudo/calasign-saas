@@ -52,7 +52,9 @@ function parseFilters(q: EventQuery, lastEventId?: string): Filters {
   }
   const all = q.scope === "all";
   if (q.scope && q.scope !== "all" && q.scope !== "webhook") throw badRequest("validation_error", "scope: webhook o all", [{ path: "scope", message: "webhook | all" }]);
-  const after = (q.after ?? lastEventId ?? "").trim() || null;
+  // Last-Event-ID primero: EventSource reconecta con la MISMA URL, así que con `?after=X` en ella cada reconexión (a los
+  // max_seconds) volvía a empezar en X y repetía todo lo ya entregado; el header trae el último id recibido.
+  const after = (lastEventId ?? q.after ?? "").trim() || null;
   if (after && !CURSOR_RE.test(after) && !TX_CURSOR_RE.test(after) && !LEGACY_CURSOR_RE.test(after)) throw badRequest("invalid_cursor", "Cursor inválido");
   let since: string | null = null;
   if (q.since) {

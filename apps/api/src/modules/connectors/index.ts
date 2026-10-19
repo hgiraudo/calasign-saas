@@ -1,7 +1,7 @@
 // Conectores HRIS y CLM: conexiones por organización (clave de API u OAuth), flujos registro → plantilla, envío
 // desde un registro (a mano, por API o por webhook del sistema de origen) y, con cada evento del sobre, la vuelta:
 // PDF sellado + certificado de evidencia al legajo/registro y estado en un campo. Mismo diseño que crm/ (vínculos,
-// ejecuciones con reintentos por la cola "platform", kind "connector"). Ver docs/CONECTORES-HR-CLM-DMS.md.
+// ejecuciones con reintentos por la cola "platform", kind "connector"). Ver docs/CONECTORES.md.
 import { createHash, randomBytes } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { ZodError } from "zod";

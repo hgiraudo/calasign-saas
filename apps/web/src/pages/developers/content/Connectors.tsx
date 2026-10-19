@@ -1,7 +1,7 @@
-// Sección "Conectores": low-code / iPaaS y Dynamics 365 (artefactos de integrations/connectors, servidos en /integrations/connectors/).
+// Sección "Conectores": low-code / iPaaS, Dynamics 365 y el índice de los conectores nativos (CRM, HRIS, CLM, DMS, avisos, IA) (artefactos de integrations/connectors, servidos en /integrations/connectors/).
 import { useDocsText } from "../../../lib/i18n-docs";
 import { BASE, CONNECTOR_ARTIFACTS } from "../constants";
-import { Callout, Card, CardGrid, Code, DocPage, H2, Md, SmartLink } from "../ui";
+import { Card, CardGrid, Code, DocPage, H2, Md, SmartLink } from "../ui";
 
 function DownloadButton({ href, label }: { href: string; label: string }) {
   return (
@@ -44,9 +44,29 @@ export function ConnectorsPage() {
           {t("conn.card.d365.d")}
         </Card>
       </CardGrid>
-      <Callout kind="tip">
-        <Md text={t("conn.crm.tip")} />
-      </Callout>
+
+      <H2 id="native">{t("conn.native.h")}</H2>
+      <Md text={t("conn.native.p")} />
+      <CardGrid>
+        <Card icon="◎" title="CRM y ERP" to="/developers/guides/crm" action={<ActionLink to="/developers/guides/crm" label={t("conn.native.a")} />}>
+          {t("conn.native.crm.d")}
+        </Card>
+        <Card icon="☺" title="HRIS" to="/developers/guides/hr-contracts#providers" action={<ActionLink to="/developers/guides/hr-contracts#providers" label={t("conn.native.a")} />}>
+          {t("conn.native.hr.d")}
+        </Card>
+        <Card icon="§" title="CLM" to="/developers/guides/hr-contracts#flows" action={<ActionLink to="/developers/guides/hr-contracts#flows" label={t("conn.native.a")} />}>
+          {t("conn.native.clm.d")}
+        </Card>
+        <Card icon="▤" title="DMS" to="/developers/guides/hr-contracts#dms" action={<ActionLink to="/developers/guides/hr-contracts#dms" label={t("conn.native.a")} />}>
+          {t("conn.native.dms.d")}
+        </Card>
+        <Card icon="✉" title="Slack · Teams · WhatsApp" to="/app/settings/integrations" action={<ActionLink to="/app/settings/integrations" label={t("conn.native.config")} />}>
+          {t("conn.native.notify.d")}
+        </Card>
+        <Card icon="✦" title="IA · Office" to="/developers/ai" action={<ActionLink to="/developers/ai" label={t("conn.native.a")} />}>
+          {t("conn.native.ai.d")}
+        </Card>
+      </CardGrid>
 
       <H2 id="before">{t("conn.common.h")}</H2>
       <Md text={t("conn.common.p")} />

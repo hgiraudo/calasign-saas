@@ -209,7 +209,7 @@ export interface NotificationIntegration {
 
 // ───────────────────────────── Almacenamiento en la nube ─────────────────────────────
 
-/** box y sharepoint: gestores documentales (conectores HR/CLM/DMS, docs/CONECTORES-HR-CLM-DMS.md). */
+/** box y sharepoint: gestores documentales (conectores HR/CLM/DMS, docs/CONECTORES.md). */
 export const STORAGE_PROVIDERS = ["gdrive", "dropbox", "onedrive", "sharepoint", "box", "s3"] as const;
 export type StorageProvider = (typeof STORAGE_PROVIDERS)[number];
 

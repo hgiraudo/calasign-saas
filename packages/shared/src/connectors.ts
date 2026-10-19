@@ -1,6 +1,6 @@
 // Conectores out-of-the-box con sistemas de RR. HH. (HRIS) y gestión de contratos (CLM).
 // Los gestores documentales (DMS: SharePoint, Box, Drive, Dropbox, OneDrive, S3) van por el archivado automático de
-// platform.ts (STORAGE_PROVIDERS). Ver docs/CONECTORES-HR-CLM-DMS.md.
+// platform.ts (STORAGE_PROVIDERS). Ver docs/CONECTORES.md.
 import { z } from "zod";
 import { CRM_STATUSES, CrmPrefillMapping, CrmRoleMapping } from "./crm";
 

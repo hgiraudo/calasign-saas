@@ -1,6 +1,6 @@
 -- Conectores out-of-the-box con RR. HH. (BambooHR, HiBob, Factorial) y gestión de contratos (Ironclad, Juro):
 -- conexiones por organización, flujos registro → plantilla, vínculo sobre ↔ registro y ejecuciones.
--- Ver docs/CONECTORES-HR-CLM-DMS.md.
+-- Ver docs/CONECTORES.md.
 
 CREATE TABLE connector_connections (
   id                  uuid PRIMARY KEY,

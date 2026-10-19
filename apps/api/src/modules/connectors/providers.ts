@@ -3,7 +3,7 @@
 // escribir el estado. Las URLs base salen de variables de entorno (las pruebas apuntan a simuladores), nunca del
 // usuario: el dominio de BambooHR y la región de Ironclad se validan contra una lista cerrada.
 //
-// Supuestos tomados de la documentación pública de cada API (detalle y fuentes en docs/CONECTORES-HR-CLM-DMS.md):
+// Supuestos tomados de la documentación pública de cada API (detalle y fuentes en docs/CONECTORES.md):
 //  · BambooHR  API v1 con Basic (API key : x); GET /employees/{id}?fields=…, GET /employees/directory,
 //              POST /employees/{id}/files (multipart file, fileName, category, share), POST /employees/{id} (campos).
 //  · HiBob     API v1 con Basic (service user id : token); GET /people/{id}, POST /people/search,

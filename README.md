@@ -56,7 +56,7 @@ for t in e2e e2e-integrations e2e-signer e2e-productivity e2e-teams e2e-experien
   node scripts/$t.mjs http://localhost:4000
 done
 node scripts/e2e-crm.mjs                 # levanta su propia API y simuladores de los proveedores
-node scripts/e2e-connectors.mjs          # ídem: BambooHR, Ironclad, Juro, Box y SharePoint (docs/CONECTORES-HR-CLM-DMS.md)
+node scripts/e2e-connectors.mjs          # ídem: BambooHR, Ironclad, Juro, Box y SharePoint (docs/CONECTORES.md)
 (cd apps/api && ./node_modules/.bin/vitest run)
 (cd packages/pdf && ./node_modules/.bin/vitest run)
 (cd packages/xades && ../../apps/api/node_modules/.bin/vitest run)

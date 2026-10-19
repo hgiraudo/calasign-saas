@@ -42,6 +42,35 @@ function runs(rs: Run[]): ReactNode {
   });
 }
 
+const BLOCK_SELECTOR = "p,li,h2,h3,h4,th,td";
+
+/**
+ * Texto en pantalla desde el principio de `root` hasta (node, offset), con un espacio entre bloques y en cada <br>:
+ * Range.toString() los pega ("fin.Inicio"), mientras que el texto plano los separa con saltos.
+ */
+function textBefore(root: HTMLElement, node: Node, offset: number): string {
+  const end = document.createRange();
+  end.setStart(node, offset);
+  let out = "";
+  let lastBlock: Element | null = null;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    if (end.comparePoint(n, 0) > 0) break;
+    if (n.nodeType === Node.ELEMENT_NODE) {
+      if ((n as Element).tagName === "BR") out += " ";
+      continue;
+    }
+    const block = n.parentElement?.closest(BLOCK_SELECTOR) ?? null;
+    if (block !== lastBlock) {
+      out += " ";
+      lastBlock = block;
+    }
+    const text = n.textContent ?? "";
+    out += n === node ? text.slice(0, offset) : text;
+  }
+  return out;
+}
+
 /**
  * Documento renderizado como HTML (los valores siempre como texto: React escapa).
  * Con `onSelect`, informa el texto seleccionado y su posición en el texto plano del documento.
@@ -69,14 +98,14 @@ export function DocPreview({
     // Cuántas veces aparece la cita en pantalla antes de la selección: vale la aparición con ese mismo número en el texto.
     // Comparar largos no servía: el texto plano tiene saltos entre bloques, viñetas ("• ", "1. "), " | " entre celdas y
     // "[Firma: …]" que la vista no tiene, y en un contrato largo la diferencia acumulada (cientos de caracteres) hacía
-    // anclar el comentario en otra aparición de un término repetido. En pantalla, entre bloques no hay espacio: \s*.
+    // anclar el comentario en otra aparición de un término repetido.
     let ordinal = 0;
     try {
-      const r = document.createRange();
-      r.setStart(ref.current, 0);
       const s = sel.getRangeAt(0);
-      r.setEnd(s.startContainer, s.startOffset);
-      ordinal = [...r.toString().matchAll(new RegExp(words.join("\\s*"), "g"))].length;
+      // Con separadores entre bloques (como el texto plano) se puede exigir espacio entre palabras igual que en `re`:
+      // con \s* sobre el texto pegado, "por que" contaba también cada "porque" anterior y el comentario quedaba en otra
+      // aparición.
+      ordinal = [...textBefore(ref.current, s.startContainer, s.startOffset).matchAll(re)].length;
     } catch {
       /* sin rango: la primera aparición */
     }

@@ -55,8 +55,12 @@ export function useEmbedBridge(token: string, session: SigningSession | null, in
     if (!session) return;
     once("viewed");
     const st = session.recipient.status;
+    // Con firma con certificado, "signed" es solo la etapa electrónica: falta el paso del Firmador. Avisar el fin y
+    // volver al returnUrl en ese momento sacaba al firmante antes de firmar con su certificado (el sobre quedaba
+    // esperando). La recarga de la sesión cuando el Firmador termina dispara el aviso.
+    const certPending = session.certificateSigning != null && session.certificateSigning.status !== "signed";
     let done: "signing_complete" | "declined" | null = null;
-    if (st === "signed" || st === "completed") done = "signing_complete";
+    if ((st === "signed" || st === "completed") && !certPending) done = "signing_complete";
     if (st === "declined") done = "declined";
     if (done && once(done)) {
       // Dar tiempo a que el contenedor reciba el mensaje antes de navegar.

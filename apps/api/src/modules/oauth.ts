@@ -695,6 +695,13 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
     await s.db.tx(async (t) => {
       await t.query(`DELETE FROM oauth_consents WHERE client_id = $1 AND user_id = $2 AND tenant_id = $3`, [c.id, a.userId, a.tenantId]);
       await t.query(`UPDATE oauth_tokens SET revoked_at = now() WHERE client_id = $1 AND user_id = $2 AND tenant_id = $3 AND revoked_at IS NULL`, [c.id, a.userId, a.tenantId]);
+      // Y los códigos todavía sin canjear (valen 10 minutos): canjeados después de desconectar, la app recibía tokens
+      // nuevos (con refresh token) que esta revocación ya no alcanzaba. Como al restablecer la contraseña.
+      await t.query(`UPDATE oauth_authorization_codes SET used_at = now() WHERE client_id = $1 AND user_id = $2 AND tenant_id = $3 AND used_at IS NULL`, [
+        c.id,
+        a.userId,
+        a.tenantId,
+      ]);
     });
     await auditFromRequest(s.db, req, a, "oauth.disconnected", { targetType: "oauth_app", targetId: req.params.clientId, data: { app: c.name } });
     return reply.code(204).send();
@@ -763,6 +770,17 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
     if (input.scopes) {
       // Si se quitan scopes, los tokens vigentes con scopes que ya no corresponden se revocan.
       await s.db.query(`UPDATE oauth_tokens SET revoked_at = now() WHERE client_id = $1 AND revoked_at IS NULL AND NOT (scopes <@ $2::text[])`, [r.id, input.scopes]);
+    }
+    if (input.redirectUris) {
+      // Una URI quitada (p. ej. una comprometida): los tokens emitidos con códigos que se entregaron ahí se revocan.
+      // Antes solo se frenaban los códigos sin canjear; los tokens (y sus refresh tokens) ya emitidos seguían valiendo.
+      const issued = await s.db.query<any>(
+        `SELECT DISTINCT c.code_hash, c.redirect_uri FROM oauth_tokens t JOIN oauth_authorization_codes c ON c.code_hash = t.code_hash
+          WHERE t.client_id = $1 AND t.revoked_at IS NULL`,
+        [r.id],
+      );
+      const gone = issued.filter((x) => !redirectUriAllowed(input.redirectUris!, x.redirect_uri)).map((x) => x.code_hash as string);
+      if (gone.length) await s.db.query(`UPDATE oauth_tokens SET revoked_at = now() WHERE client_id = $1 AND code_hash = ANY($2) AND revoked_at IS NULL`, [r.id, gone]);
     }
     await auditFromRequest(s.db, req, a, "oauth_app.updated", { targetType: "oauth_app", targetId: r.client_id, data: { fields: Object.keys(input) } });
     return toApp(s.db, await s.db.one<any>(`SELECT * FROM oauth_clients WHERE id = $1`, [r.id]));

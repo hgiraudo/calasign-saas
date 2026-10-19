@@ -139,7 +139,8 @@ export function TemplateUsePage() {
                   placeholder="+18095551234"
                   value={p.phone}
                   required={p.channels.includes("whatsapp")}
-                  onChange={(e) => set({ phone: e.target.value })}
+                  // Como en el resto de los teléfonos: "+1 809 555-1234" no pasaba la validación de la API (solo +dígitos).
+                  onChange={(e) => set({ phone: e.target.value.replace(/[^\d+]/g, "") })}
                 />
               </label>
               <label className="field">

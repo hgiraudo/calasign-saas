@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Branding } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
 import { useAuth } from "../lib/auth";
+import { useAccess } from "../lib/access";
 import { useI18n } from "../lib/i18n";
 import { ErrorBox, Logo, Spinner } from "../components/ui";
 
@@ -11,6 +12,7 @@ const DEFAULT_COLOR = "#0b1f3a";
 export function BrandingPage() {
   const { t } = useI18n();
   const { me, refresh } = useAuth();
+  const { refresh: refreshAccess } = useAccess();
   const [b, setB] = useState<Branding | null>(null);
   const [color, setColor] = useState<string>("");
   const [footer, setFooter] = useState("");
@@ -48,7 +50,9 @@ export function BrandingPage() {
           body: { primaryColor: color || null, emailFooter: footer.trim() || null, ...(name && name !== me?.tenant.name ? { organizationName: name } : {}) },
         }),
       );
-      if (name && name !== me?.tenant.name) await refresh();
+      // También los permisos/organizaciones: el selector de organización lista los nombres de /v1/me/access, que solo
+      // se recarga al cambiar de organización o usuario (seguía mostrando el nombre anterior).
+      if (name && name !== me?.tenant.name) await Promise.all([refresh(), refreshAccess()]);
       setSaved(true);
     } catch (e) {
       setError(errorText(e));

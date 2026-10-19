@@ -649,6 +649,10 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
 
   app.delete<P>("/v1/roles/:id", { preHandler: auth }, async (req, reply) => {
     const a = A(req);
+    // Como al editar sus permisos: borrar un rol que tiene permisos que uno no tiene no lo hace cualquiera con members:manage.
+    const cur = await s.db.one<any>(`SELECT permissions FROM roles WHERE id = $1 AND tenant_id = $2`, [req.params.id, a.tenantId]);
+    if (!cur) throw notFound("Rol");
+    assertCanManage(a, cur.permissions ?? [], "borrar este rol");
     const used = await s.db.one(
       `SELECT 1 FROM memberships WHERE role_id = $1 UNION ALL SELECT 1 FROM api_keys WHERE role_id = $1 AND revoked_at IS NULL
        UNION ALL SELECT 1 FROM invitations WHERE role_id = $1 AND accepted_at IS NULL AND revoked_at IS NULL LIMIT 1`,

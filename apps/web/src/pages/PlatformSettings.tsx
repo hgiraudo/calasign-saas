@@ -1,5 +1,5 @@
 // Ajustes de plataforma: apps OAuth, Slack/Teams, Zapier/Make, almacenamiento en la nube y dominio propio.
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   NOTIFICATION_EVENTS,
@@ -12,6 +12,7 @@ import {
   type OAuthApp,
   type OAuthGrantType,
   type OAuthScope,
+  type Permission,
   type StorageConnection,
   type StorageExport,
   type StorageProvider,
@@ -114,7 +115,32 @@ function OAuthAppsAdmin() {
   const [redirects, setRedirects] = useState("");
   const [scopes, setScopes] = useState<OAuthScope[]>(["envelopes:read", "envelopes:write"]);
   const [confidential, setConfidential] = useState(true);
-  const [role, setRole] = useState<"member" | "admin">("member");
+  // "member", "admin" o "custom:<id>". Como en las API keys: la API rechaza (403) un rol con permisos que quien crea la
+  // app no tiene, y con solo Miembro/Administrador alguien con un rol personalizado con api_keys:manage no podía crear
+  // ninguna app de servicio.
+  const [role, setRole] = useState("member");
+  const { access } = useAccess();
+  const [roleOptions, setRoleOptions] = useState<{ value: string; role: string; name: string | null; permissions: Permission[] }[]>([]);
+  useEffect(() => {
+    api<{ items: { id: string; name: string; permissions: Permission[] }[]; builtin: { role: string; permissions: Permission[] }[] }>("/v1/roles")
+      .then((r) =>
+        setRoleOptions([
+          ...r.builtin.filter((b) => b.role !== "owner").map((b) => ({ value: b.role, role: b.role, name: null, permissions: b.permissions })),
+          ...r.items.map((x) => ({ value: `custom:${x.id}`, role: "custom", name: x.name, permissions: x.permissions })),
+        ]),
+      )
+      .catch(() => undefined);
+  }, []);
+  const defaulted = useRef(false);
+  useEffect(() => {
+    if (defaulted.current || !access || roleOptions.length === 0) return;
+    defaulted.current = true;
+    if (access.role === "owner") return;
+    const grantable = (o: { permissions: Permission[] }) => o.permissions.every((x) => access.permissions.includes(x));
+    if (roleOptions.some((o) => o.value === "member" && grantable(o))) return;
+    const first = roleOptions.find(grantable);
+    if (first) setRole((cur) => (cur === "member" ? first.value : cur));
+  }, [access, roleOptions]);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -145,7 +171,7 @@ function OAuthAppsAdmin() {
             : [],
           scopes,
           confidential: grants.includes("client_credentials") ? true : confidential,
-          ...(grants.includes("client_credentials") ? { role } : {}),
+          ...(grants.includes("client_credentials") ? (role.startsWith("custom:") ? { role: "custom", roleId: role.slice(7) } : { role }) : {}),
         },
       });
       setShown({ clientId: r.app.clientId, secret: r.clientSecret });
@@ -205,9 +231,12 @@ function OAuthAppsAdmin() {
         {grants.includes("client_credentials") && (
           <label className="field" style={{ maxWidth: 320 }}>
             <span>{p("oauth.role")}</span>
-            <select value={role} onChange={(e) => setRole(e.target.value as "member" | "admin")}>
-              <option value="member">{roleLabel("member")}</option>
-              <option value="admin">{roleLabel("admin")}</option>
+            <select value={role} onChange={(e) => setRole(e.target.value)}>
+              {(roleOptions.length ? roleOptions : [{ value: "member", role: "member", name: null }, { value: "admin", role: "admin", name: null }]).map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.name ?? roleLabel(o.role)}
+                </option>
+              ))}
             </select>
           </label>
         )}
@@ -251,7 +280,7 @@ function OAuthAppsAdmin() {
                 <code className="small break">{a.clientId}</code>
                 <span className="muted small">
                   {a.grantTypes.map((g) => p(`oauth.grant.${g}`)).join(" · ")}
-                  {a.role ? ` · ${roleLabel(a.role)}` : ""} · {a.confidential ? <code>{a.secretPrefix}…</code> : p("oauth.public")}
+                  {a.role ? ` · ${roleLabel(a.role, roleOptions.find((o) => o.value === `custom:${a.roleId}`)?.name)}` : ""} · {a.confidential ? <code>{a.secretPrefix}…</code> : p("oauth.public")}
                 </span>
                 <span className="small">{a.scopes.map((s) => <code key={s} style={{ marginRight: 6 }}>{s}</code>)}</span>
                 {a.redirectUris.length > 0 && <span className="muted small break">{a.redirectUris.join(" · ")}</span>}

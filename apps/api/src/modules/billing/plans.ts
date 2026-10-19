@@ -99,6 +99,13 @@ export function requireFeature(plan: PlanDefinition, feature: PlanFeature, label
   });
 }
 
+/** PATCH /v1/settings/branding que pone un color o un pie de correo (lo demás: renombrar o quitarlos). */
+function addsBranding(body: unknown): boolean {
+  const b = (body ?? {}) as { primaryColor?: unknown; emailFooter?: unknown };
+  const set = (v: unknown) => v !== undefined && v !== null && !(typeof v === "string" && v.trim() === "");
+  return set(b.primaryColor) || set(b.emailFooter);
+}
+
 /** Funcionalidad que exige cada ruta de escritura (las lecturas siempre se permiten: se puede ver y desactivar lo existente). */
 function featureForRoute(url: string, method: string, body: unknown): { feature: PlanFeature; label: string } | null {
   if (method === "GET" || method === "HEAD") return null;
@@ -107,6 +114,10 @@ function featureForRoute(url: string, method: string, body: unknown): { feature:
   // ni dejar de exigir SSO sin volver a pagar.
   if (method === "DELETE") return null;
   if (url === "/v1/settings/sso" && (body as { enabled?: unknown } | null)?.enabled === false) return null;
+  // Lo mismo con la marca: renombrar la organización (el nombre está en este PATCH) o quitar el color y el pie no es
+  // marca propia. Sin esto, en Free no se podía corregir el nombre de la organización y, al bajar de plan, el color y el
+  // pie seguían en la página del firmante y los correos sin poder quitarlos.
+  if (url === "/v1/settings/branding" && method === "PATCH" && !addsBranding(body)) return null;
   if (url === "/v1/bulk-sends" || url === "/v1/bulk-sends/validate") return { feature: "bulk_send", label: "El envío masivo" };
   if (url === "/v1/web-forms") return { feature: "web_forms", label: "Los formularios web" };
   if (url === "/v1/webhooks") return { feature: "webhooks", label: "Los webhooks" };

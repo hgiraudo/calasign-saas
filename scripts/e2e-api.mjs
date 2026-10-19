@@ -232,7 +232,14 @@ try {
     assert(raw.items.some((e) => e.type === "envelope.finalizing"), "scope=all trae los tipos de evidencia");
     const noNew = await api("GET", `/v1/events?after=${raw.nextCursor}&envelope_id=${A.id}`);
     assert(noNew.items.length === 0 && noNew.nextCursor === raw.nextCursor, "sin eventos nuevos el cursor no cambia");
+    // Cursor viejo (solo el id, de antes de la marca de agua): se traduce al mismo punto que el cursor nuevo.
+    const mid = all[0].cursor;
+    assert(/^\d+\.\d+$/.test(mid), `formato del cursor: ${mid}`);
+    const fromNew = await api("GET", `/v1/events?envelope_id=${A.id}&after=${mid}`);
+    const fromLegacy = await api("GET", `/v1/events?envelope_id=${A.id}&after=${mid.split(".")[1]}`);
+    assert(JSON.stringify(fromNew.items.map((e) => e.id)) === JSON.stringify(fromLegacy.items.map((e) => e.id)), "cursor viejo equivalente al nuevo");
     await api("GET", "/v1/events?after=abc", null, { expect: 400 });
+    await api("GET", "/v1/events?after=1.2.3", null, { expect: 400 });
     await api("GET", "/v1/events?types=envelope.inventado", null, { expect: 400 });
     step(`eventos: ${all.length} en orden, cursor, filtro por tipo y sobre, scope=all, validaciones`);
   }
@@ -276,7 +283,7 @@ try {
       }
     }
     ctrl.abort();
-    assert(got && got.envelopeId === B.envelope.id && /^\d+$/.test(got.cursor), "envelope.sent del clon por SSE");
+    assert(got && got.envelopeId === B.envelope.id && /^\d+\.\d+$/.test(got.cursor), "envelope.sent del clon por SSE");
     step("SSE: el envío del clon llegó por /v1/events/stream (retomando desde Last-Event-ID)");
     // Limpieza de los otros clones (borradores) por lote, más abajo.
     B.extra = [withValues.envelope.id, docsOnly.envelope.id];

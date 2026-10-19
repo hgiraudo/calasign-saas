@@ -11,11 +11,16 @@ import { SESSION_COOKIE, authenticate, type AuthContext, type Services } from ".
 import { isOAuthAccessToken, resolveAccessToken } from "../oauth-tokens";
 
 /**
- * Margen de asentamiento: los ids de envelope_events salen de una secuencia y una transacción que tomó un id menor
- * puede confirmarse después de otra con uno mayor. Para que un cliente que avanza el cursor no se saltee un evento,
- * no se devuelven los de los últimos segundos (las transacciones que registran evidencia son cortas).
+ * Orden y marca de agua: los ids de envelope_events salen de una secuencia y una transacción que tomó un id menor puede
+ * confirmarse después de otra con uno mayor, así que un cursor por id podía dejar eventos atrás. Por eso el orden es
+ * (tx_id, id), con tx_id = la transacción que escribió el registro, y solo se devuelven los registros cuya transacción
+ * es anterior a todas las abiertas (tx_id < pg_snapshot_xmin): las que siguen abiertas, y las que empiecen después,
+ * tienen ids de transacción mayores, así que sus eventos siempre quedan delante del cursor.
+ * Cursor: "<tx_id>.<id>". Un cursor viejo (solo el id) se traduce al registro que nombra.
  */
-export const SETTLE_MS = 2000;
+const WATERMARK = `ev.tx_id < pg_snapshot_xmin(pg_current_snapshot())`;
+const CURSOR_RE = /^(\d{1,20})\.(\d{1,18})$/;
+const LEGACY_CURSOR_RE = /^\d{1,18}$/;
 const DEFAULT_LOOKBACK_MS = 24 * 3600_000;
 
 interface EventQuery {
@@ -28,6 +33,7 @@ interface EventQuery {
 }
 
 interface Filters {
+  /** Cursor tal como llegó (validado); se resuelve a (tx_id, id) en resolveCursor. */
   after: string | null;
   since: string | null;
   types: string[];
@@ -39,7 +45,7 @@ function parseFilters(q: EventQuery, lastEventId?: string): Filters {
   const all = q.scope === "all";
   if (q.scope && q.scope !== "all" && q.scope !== "webhook") throw badRequest("validation_error", "scope: webhook o all", [{ path: "scope", message: "webhook | all" }]);
   const after = (q.after ?? lastEventId ?? "").trim() || null;
-  if (after && !/^\d{1,18}$/.test(after)) throw badRequest("invalid_cursor", "Cursor inválido");
+  if (after && !CURSOR_RE.test(after) && !LEGACY_CURSOR_RE.test(after)) throw badRequest("invalid_cursor", "Cursor inválido");
   let since: string | null = null;
   if (q.since) {
     const t = Date.parse(q.since);
@@ -64,14 +70,37 @@ function evidenceTypesFor(types: string[]): string[] {
     .map(([ev]) => ev);
 }
 
+/** (tx_id, id) de un cursor. El viejo (solo id, de antes de 0048) se traduce al registro que nombra. */
+async function resolveCursor(s: Services, tenantId: string, cursor: string): Promise<[string, string]> {
+  const m = CURSOR_RE.exec(cursor);
+  if (m) return [m[1], m[2]];
+  // Todos los registros anteriores a 0048 tienen el mismo tx_id, así que el orden entre ellos sigue siendo el id.
+  const r = await s.db.one<{ tx: string }>(
+    `SELECT tx_id::text AS tx FROM envelope_events WHERE tenant_id = $1 AND id <= $2::bigint ORDER BY id DESC LIMIT 1`,
+    [tenantId, cursor],
+  );
+  return [r?.tx ?? "0", cursor];
+}
+
+/** Cursor de "ahora": el último registro ya asentado de la organización (lo que se confirme después va delante). */
+export async function currentCursor(s: Services, tenantId: string): Promise<string> {
+  const r = await s.db.one<{ tx: string; id: string }>(
+    `SELECT ev.tx_id::text AS tx, ev.id::text AS id FROM envelope_events ev
+      WHERE ev.tenant_id = $1 AND ${WATERMARK} ORDER BY ev.tx_id DESC, ev.id DESC LIMIT 1`,
+    [tenantId],
+  );
+  return r ? `${r.tx}.${r.id}` : "0.0";
+}
+
 /** Lee hasta `limit` registros de evidencia y los expande a eventos públicos. */
 export async function readEvents(s: Services, a: AuthContext, f: Filters, limit: number): Promise<ListEventsResponse> {
   const params: unknown[] = [a.tenantId];
-  let where = `ev.tenant_id = $1 AND ev.occurred_at <= now() - interval '${SETTLE_MS} milliseconds'`;
+  let where = `ev.tenant_id = $1 AND ${WATERMARK}`;
   where += envelopeVisibilitySql(a, params, "e");
   if (f.after) {
-    params.push(f.after);
-    where += ` AND ev.id > $${params.length}::bigint`;
+    const [tx, id] = await resolveCursor(s, a.tenantId, f.after);
+    params.push(tx, id);
+    where += ` AND (ev.tx_id, ev.id) > ($${params.length - 1}::xid8, $${params.length}::bigint)`;
   } else {
     params.push(f.since ?? new Date(Date.now() - DEFAULT_LOOKBACK_MS).toISOString());
     where += ` AND ev.occurred_at >= $${params.length}::timestamptz`;
@@ -89,10 +118,10 @@ export async function readEvents(s: Services, a: AuthContext, f: Filters, limit:
   }
   params.push(limit + 1);
   const rows = await s.db.query<any>(
-    `SELECT ev.id::text AS id, ev.type, ev.occurred_at, ev.envelope_id, ev.actor_type, ev.actor_id, ev.data,
+    `SELECT ev.id::text AS id, ev.tx_id::text AS tx, ev.type, ev.occurred_at, ev.envelope_id, ev.actor_type, ev.actor_id, ev.data,
             e.subject, e.status, e.metadata
        FROM envelope_events ev JOIN envelopes e ON e.id = ev.envelope_id
-      WHERE ${where} ORDER BY ev.id LIMIT $${params.length}`,
+      WHERE ${where} ORDER BY ev.tx_id, ev.id LIMIT $${params.length}`,
     params,
   );
   const page = rows.slice(0, limit);
@@ -116,12 +145,12 @@ export async function readEvents(s: Services, a: AuthContext, f: Filters, limit:
         envelope: { id: r.envelope_id, subject: r.subject, status: r.status, metadata: r.metadata ?? {} },
         // Solo lo que también va en los webhooks (el motivo de un rechazo o anulación); con scope=all, todo el dato de evidencia.
         data: f.all ? data : typeof data.reason === "string" ? { reason: data.reason } : {},
-        cursor: r.id,
+        cursor: `${r.tx}.${r.id}`,
       });
     });
   }
   const last = page[page.length - 1];
-  return { items, nextCursor: last ? last.id : f.after, hasMore: rows.length > limit };
+  return { items, nextCursor: last ? `${last.tx}.${last.id}` : f.after, hasMore: rows.length > limit };
 }
 
 const MAX_STREAMS_PER_TENANT = 5;
@@ -143,6 +172,7 @@ export async function eventRoutes(app: FastifyInstance, s: Services) {
     const a = A(req);
     // El `id:` de cada mensaje es el cursor; EventSource lo devuelve en Last-Event-ID al reconectar.
     const f = parseFilters(req.query, (req.headers["last-event-id"] as string | undefined)?.trim() || undefined);
+    const startAfter = f.after || f.since ? f.after : await currentCursor(s, a.tenantId);
     const maxSec = Math.min(3600, Math.max(5, Math.trunc(Number(req.query.max_seconds ?? 300)) || 300));
     const n = openStreams.get(a.tenantId) ?? 0;
     if (n >= MAX_STREAMS_PER_TENANT) {
@@ -191,8 +221,9 @@ export async function eventRoutes(app: FastifyInstance, s: Services) {
       if (a.userId) return Boolean(await s.db.one(`SELECT 1 FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [a.tenantId, a.userId]));
       return true;
     };
-    // Sin cursor ni since: el stream empieza en "ahora" (no repite las últimas 24 h como el polling).
-    const filters: Filters = { ...f, since: f.after || f.since ? f.since : new Date(Date.now() - SETTLE_MS).toISOString() };
+    // Sin cursor ni since: el stream empieza en "ahora" (no repite las últimas 24 h como el polling). Se usa el cursor
+    // del último registro asentado, no una hora: una transacción abierta desde antes igual llega cuando se confirma.
+    const filters: Filters = { ...f, after: startAfter };
     res.write(`retry: 3000\n: calasign events\n\n`);
     let lastBeat = Date.now();
     let lastAuthCheck = Date.now();

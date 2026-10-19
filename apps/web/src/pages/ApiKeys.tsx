@@ -10,9 +10,11 @@ interface KeyRole {
   role: string;
   roleName: string;
 }
+/** Rol de una opción, sin traducir: la etiqueta se arma al dibujar (si no, quedaba en el idioma del momento de la carga). */
 interface RoleOption {
   value: string;
-  label: string;
+  role: string;
+  name: string | null;
 }
 
 export function ApiKeysPage() {
@@ -27,13 +29,13 @@ export function ApiKeysPage() {
   const roleLabel = useRoleLabel();
   const [role, setRole] = useState("admin");
   const [roleOptions, setRoleOptions] = useState<RoleOption[]>([]);
-  const [keyRoles, setKeyRoles] = useState<Record<string, string>>({});
+  const [keyRoles, setKeyRoles] = useState<Record<string, KeyRole>>({});
 
   const load = () =>
     Promise.all([api<{ items: ApiKey[] }>("/v1/api-keys"), api<{ items: KeyRole[] }>("/v1/api-keys/roles")])
       .then(([r, kr]) => {
         setItems(r.items);
-        setKeyRoles(Object.fromEntries(kr.items.map((k) => [k.id, roleLabel(k.role, k.roleName)])));
+        setKeyRoles(Object.fromEntries(kr.items.map((k) => [k.id, k])));
       })
       .catch((e) => setError(errorText(e)));
 
@@ -41,8 +43,8 @@ export function ApiKeysPage() {
     api<{ items: { id: string; name: string }[]; builtin: { role: string; name: string }[] }>("/v1/roles")
       .then((r) =>
         setRoleOptions([
-          ...r.builtin.filter((b) => b.role !== "owner").map((b) => ({ value: b.role, label: roleLabel(b.role) })),
-          ...r.items.map((x) => ({ value: `custom:${x.id}`, label: x.name })),
+          ...r.builtin.filter((b) => b.role !== "owner").map((b) => ({ value: b.role, role: b.role, name: null })),
+          ...r.items.map((x) => ({ value: `custom:${x.id}`, role: "custom", name: x.name })),
         ]),
       )
       .catch(() => undefined);
@@ -109,7 +111,7 @@ export function ApiKeysPage() {
             <select value={role} onChange={(e) => setRole(e.target.value)}>
               {roleOptions.map((o) => (
                 <option key={o.value} value={o.value}>
-                  {o.label}
+                  {o.name ?? roleLabel(o.role)}
                 </option>
               ))}
             </select>
@@ -157,7 +159,7 @@ export function ApiKeysPage() {
                   <td>
                     <code>{k.prefix}…</code>
                   </td>
-                  <td className="hide-sm">{keyRoles[k.id] ?? "—"}</td>
+                  <td className="hide-sm">{keyRoles[k.id] ? roleLabel(keyRoles[k.id].role, keyRoles[k.id].roleName) : "—"}</td>
                   <td className="hide-sm">{formatDateTime(k.lastUsedAt, locale)}</td>
                   <td className="right">
                     {k.revokedAt ? (

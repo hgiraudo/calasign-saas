@@ -61,6 +61,9 @@ export function TeamPage() {
   }, []);
 
   const tabs: Tab[] = manage ? ["members", "invitations", "roles", "groups"] : ["members", "groups"];
+  // Si la pestaña abierta deja de estar permitida (p. ej. al editar el propio rol personalizado y quitarle
+  // members:manage), se vuelve a Miembros: si no, la página quedaba en blanco y sin ninguna pestaña marcada.
+  const current: Tab = tabs.includes(tab) ? tab : "members";
   return (
     <div className="page">
       <div className="page-head">
@@ -71,16 +74,16 @@ export function TeamPage() {
       </div>
       <div className="tabs scroll" role="tablist" style={{ marginBottom: "1rem", display: "inline-flex" }}>
         {tabs.map((k) => (
-          <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? "active" : ""} onClick={() => setTab(k)}>
+          <button key={k} type="button" role="tab" aria-selected={current === k} className={current === k ? "active" : ""} onClick={() => setTab(k)}>
             {tt(`team.tab.${k}` as const)}
           </button>
         ))}
       </div>
       <ErrorBox error={error} />
-      {tab === "members" && <MembersTab roles={roles} manage={manage} />}
-      {tab === "invitations" && manage && <InvitationsTab roles={roles} />}
-      {tab === "roles" && manage && <RolesTab roles={roles} reload={loadRoles} />}
-      {tab === "groups" && <GroupsTab manage={manage} />}
+      {current === "members" && <MembersTab roles={roles} manage={manage} />}
+      {current === "invitations" && <InvitationsTab roles={roles} />}
+      {current === "roles" && <RolesTab roles={roles} reload={loadRoles} />}
+      {current === "groups" && <GroupsTab manage={manage} />}
     </div>
   );
 }

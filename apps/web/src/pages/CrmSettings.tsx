@@ -466,12 +466,21 @@ function MappingEditor({
   }, [provider]);
   useEffect(() => {
     if (!templateId) return setTpl(null);
+    // Solo vale la respuesta de la plantilla elegida ahora: una respuesta lenta de la anterior dejaba sus roles y
+    // etiquetas en pantalla con la nueva seleccionada.
+    let stale = false;
     api<TemplateDetail>(`/v1/templates/${templateId}`)
       .then((d) => {
+        if (stale) return;
         setTpl(d);
-        if (!mapping && roles.length === 0) setRoles(d.roles.map((r, i) => ({ role: r.name, source: "contact", index: i, channels: ["email"] }) as RoleRow));
+        // Mapeo nuevo: los roles son los de la plantilla elegida. Antes solo se cargaban si no había ninguno, así que al
+        // cambiar de plantilla quedaban los de la anterior (que la nueva no tiene) y el envío desde el CRM fallaba.
+        if (!mapping) setRoles(d.roles.map((r, i) => ({ role: r.name, source: "contact", index: i, channels: ["email"] }) as RoleRow));
       })
-      .catch(() => setTpl(null));
+      .catch(() => !stale && setTpl(null));
+    return () => {
+      stale = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [templateId]);
 

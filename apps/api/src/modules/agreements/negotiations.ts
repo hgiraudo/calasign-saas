@@ -398,11 +398,18 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
     const input = NegotiationCommentInput.parse(req.body);
     const n = await loadForUser(a, req.params.id);
     if (n.status !== "open") throw conflict("closed", "La negociación ya está cerrada");
-    await s.db.query(
-      `INSERT INTO negotiation_comments (id, negotiation_id, version, author_type, author_id, author_name, quote, start_offset, end_offset, body)
-       VALUES ($1,$2,$3,'user',$4,$5,$6,$7,$8,$9)`,
-      [uuidv7(), n.id, n.current_version, a.userId, userAuthor(a).name, input.quote ?? null, input.start ?? null, input.end ?? null, input.body],
-    );
+    // Como los comentarios de las contrapartes: con la negociación bloqueada, no queda un comentario en una negociación
+    // ya aceptada o cancelada, ni citando el texto de una versión que dejó de ser la vigente.
+    await s.db.tx(async (t) => {
+      const locked = await t.one<any>(`SELECT status, current_version FROM negotiations WHERE id = $1 FOR UPDATE`, [n.id]);
+      if (locked?.status !== "open") throw conflict("closed", "La negociación ya está cerrada");
+      if (locked.current_version !== n.current_version) throw conflict("version_changed", "Hay una versión nueva: revisala y volvé a comentar");
+      await t.query(
+        `INSERT INTO negotiation_comments (id, negotiation_id, version, author_type, author_id, author_name, quote, start_offset, end_offset, body)
+         VALUES ($1,$2,$3,'user',$4,$5,$6,$7,$8,$9)`,
+        [uuidv7(), n.id, n.current_version, a.userId, userAuthor(a).name, input.quote ?? null, input.start ?? null, input.end ?? null, input.body],
+      );
+    });
     reply.code(201);
     return fullView(s.db, n);
   });
@@ -459,16 +466,21 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
     const pending = await s.db.one<any>(`SELECT count(*)::int AS c FROM negotiation_proposals WHERE negotiation_id = $1 AND status = 'pending'`, [n.id]);
     if (pending?.c) throw conflict("pending_proposals", `Quedan ${pending.c} propuestas sin decidir`);
     const parts = await s.db.query<any>(`SELECT * FROM negotiation_participants WHERE negotiation_id = $1 ORDER BY created_at`, [n.id]);
-    const pdf = await negotiationPdf(n);
     let marks: any[] = [];
     let missing: string[] = [];
-    let finalPdf = pdf;
+    let finalPdf: Uint8Array;
     if (n.source === "template") {
       const doc = await renderDocument(s.db, n.tenant_id, { source: n.template_source, data: n.data, locale: n.template_locale, title: n.title, clauses: clausesFor(n) });
+      // Como al generar un documento: una cláusula que cita la plantilla y no existe se omitía en silencio y el sobre
+      // salía a firmar sin ese texto.
+      if (doc.missingClauses.length)
+        throw new AppError(422, "missing_clauses", `Cláusulas inexistentes: ${doc.missingClauses.join(", ")}`, { missingClauses: doc.missingClauses });
       if (doc.missing.length) throw new AppError(422, "missing_variables", `Faltan datos: ${doc.missing.join(", ")}`, { missing: doc.missing });
       finalPdf = doc.pdf;
       marks = doc.marks;
       missing = doc.missing;
+    } else {
+      finalPdf = await negotiationPdf(n);
     }
     const file = await storeGeneratedPdf(s.blobs, n.tenant_id, finalPdf);
     const tpl = n.document_template_id ? await s.db.one<any>(`SELECT * FROM document_templates WHERE id = $1`, [n.document_template_id]) : null;

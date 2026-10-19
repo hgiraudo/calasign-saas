@@ -901,11 +901,18 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
     const emails: string[] = [...selfService];
     const envIds = Object.values((run.context?.envelopes ?? {}) as Record<string, { envelopeId: string }>).map((e) => e.envelopeId);
     if (emails.length && envIds.length) {
-      const r = await s.db.one<any>(
-        `SELECT r.access_token_enc FROM recipients r JOIN envelopes e ON e.id = r.envelope_id
-         WHERE r.envelope_id = ANY($1) AND lower(r.email) = ANY($2) AND r.role = 'signer' AND r.status IN ('sent','viewed') AND e.status = 'sent'
-           AND r.access_token_enc IS NOT NULL ORDER BY r.routing_order LIMIT 1`,
+      // Por correo, solo si ese correo es de UN firmante: si quien completa el formulario escribe el correo de un firmante
+      // fijo, el sobre queda con dos firmantes con el mismo correo (mismo orden de firma) y el primero podía ser el fijo.
+      const rows = await s.db.query<any>(
+        `SELECT lower(r.email) AS email, r.access_token_enc, r.status, e.status AS envelope_status FROM recipients r JOIN envelopes e ON e.id = r.envelope_id
+         WHERE r.envelope_id = ANY($1) AND lower(r.email) = ANY($2) AND r.role = 'signer' AND r.status NOT IN ('delegated','reassigned')
+         ORDER BY r.routing_order`,
         [envIds, emails],
+      );
+      const count = new Map<string, number>();
+      for (const x of rows) count.set(x.email, (count.get(x.email) ?? 0) + 1);
+      const r = rows.find(
+        (x) => count.get(x.email) === 1 && ["sent", "viewed"].includes(x.status) && x.envelope_status === "sent" && x.access_token_enc,
       );
       if (r) signingUrl = `${await tenantBaseUrl(s.db, run.tenant_id)}/s/${decrypt(r.access_token_enc)}`;
     }

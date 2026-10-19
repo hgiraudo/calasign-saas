@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { AiSettingsPage } from "./pages/AiSettings";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { Layout } from "./components/Layout";
@@ -12,7 +13,6 @@ import { ApiKeysPage } from "./pages/ApiKeys";
 import { SignerPage } from "./pages/Signer";
 import { DevMailboxPage } from "./pages/DevMailbox";
 import { IntegrationsPage } from "./pages/Integrations";
-import { DevelopersPage } from "./pages/Developers";
 import { VerifyPage } from "./pages/Verify";
 import { TemplatesPage } from "./pages/Templates";
 import { TemplateEditPage } from "./pages/TemplateEdit";
@@ -41,6 +41,10 @@ import { NegotiationDetailPage, NegotiationsPage } from "./pages/Negotiations";
 import { PublicNegotiationPage, PublicWorkflowRunPage, PublicWorkflowStartPage } from "./pages/PublicAgreements";
 import { ByokSettingsPage } from "./pages/ByokSettings";
 import { FirmadorPage } from "./pages/Firmador";
+import { Spinner } from "./components/ui";
+
+// El portal de desarrolladores es grande (textos en tres idiomas, ejemplos, referencia): se carga aparte.
+const DevelopersPage = lazy(() => import("./pages/developers/DevelopersPage"));
 
 export function App() {
   return (
@@ -51,7 +55,14 @@ export function App() {
       <Route path="/forgot" element={<ForgotPasswordPage />} />
       <Route path="/reset/:token" element={<ResetPasswordPage />} />
       <Route path="/s/:token" element={<SignerPage />} />
-      <Route path="/developers" element={<DevelopersPage />} />
+      <Route
+        path="/developers/*"
+        element={
+          <Suspense fallback={<Spinner />}>
+            <DevelopersPage />
+          </Suspense>
+        }
+      />
       <Route path="/verify" element={<VerifyPage />} />
       <Route path="/firmador" element={<FirmadorPage />} />
       <Route path="/invite/:token" element={<InviteAcceptPage />} />

@@ -12,10 +12,14 @@ import {
   UpdateOAuthAppInput,
   UpdateStorageConnectionInput,
 } from "@calasign/shared";
+import type { Op } from "./openapi-extra";
+import { named } from "./openapi-schemas";
 
 const iso = z.string().datetime();
 
-const OAuthApp = z.object({
+const OAuthApp = named(
+  "OAuthApp",
+  z.object({
   id: z.string().uuid(),
   clientId: z.string(),
   name: z.string(),
@@ -31,15 +35,19 @@ const OAuthApp = z.object({
   updatedAt: iso,
   revokedAt: iso.nullable(),
   activeTokens: z.number().int(),
-});
+  }),
+);
 
-const TokenResponse = z.object({
+const TokenResponse = named(
+  "TokenResponse",
+  z.object({
   access_token: z.string().describe("Opaco, prefijo csat_. Vence en 1 h."),
   token_type: z.literal("Bearer"),
   expires_in: z.number().int(),
   refresh_token: z.string().optional().describe("Solo con offline_access (authorization_code). Rota en cada uso."),
-  scope: z.string(),
-});
+  scope: z.string().describe("Scopes concedidos, separados por espacios."),
+  }),
+);
 
 const TokenRequest = z.object({
   grant_type: z.enum(["client_credentials", "authorization_code", "refresh_token"]),
@@ -88,23 +96,12 @@ const CustomDomain = z.object({
   lastError: z.string().nullable(),
 });
 
-type PlatformOp = {
-  method: "get" | "post" | "put" | "patch" | "delete";
-  path: string;
-  tag: string;
-  summary: string;
-  description?: string;
-  body?: z.ZodTypeAny;
-  form?: z.ZodTypeAny;
-  response?: z.ZodTypeAny | "none";
-  status?: number;
-  auth?: "key" | "none" | "client";
-};
+type PlatformOp = Op;
 
 export const PLATFORM_OPS: PlatformOp[] = [
   {
     method: "post",
-    path: "/oauth/token",
+    path: "/oauth/token", operationId: "oauthToken",
     tag: "OAuth 2.0",
     summary: "Obtener tokens",
     description:
@@ -113,10 +110,10 @@ export const PLATFORM_OPS: PlatformOp[] = [
     response: TokenResponse,
     auth: "client",
   },
-  { method: "post", path: "/oauth/revoke", tag: "OAuth 2.0", summary: "Revocar un token (RFC 7009)", description: "Revocar un refresh token revoca toda la familia. Siempre 200.", form: z.object({ token: z.string(), token_type_hint: z.string().optional() }), auth: "client" },
+  { method: "post", path: "/oauth/revoke", operationId: "oauthRevoke", tag: "OAuth 2.0", summary: "Revocar un token (RFC 7009)", description: "Revocar un refresh token revoca toda la familia. Responde 200 `{}` también si el token no existe o es de otra app (no revela nada); 400/401 solo por un pedido o cliente inválido.", form: z.object({ token: z.string(), token_type_hint: z.string().optional() }), response: z.object({}).strict(), auth: "client" },
   {
     method: "post",
-    path: "/oauth/introspect",
+    path: "/oauth/introspect", operationId: "oauthIntrospect",
     tag: "OAuth 2.0",
     summary: "Introspección (RFC 7662)",
     description: "Solo tokens emitidos para la misma app. Requiere cliente confidencial.",
@@ -126,41 +123,49 @@ export const PLATFORM_OPS: PlatformOp[] = [
   },
   {
     method: "get",
-    path: "/oauth/authorize",
+    path: "/oauth/authorize", operationId: "oauthAuthorize",
     tag: "OAuth 2.0",
     summary: "Pantalla de consentimiento (navegador)",
     description:
       "Redirigir al usuario con response_type=code, client_id, redirect_uri (exacta, registrada), scope, state, code_challenge y code_challenge_method=S256. Vuelve a redirect_uri con code y state (o error=access_denied).",
+    response: "html",
     auth: "none",
   },
-  { method: "post", path: "/v1/oauth/authorize/decision", tag: "OAuth 2.0", summary: "Aprobar o rechazar (lo usa la pantalla de consentimiento; solo sesión web)", body: AuthorizeDecision, response: z.object({ redirectTo: z.string() }) },
-  { method: "get", path: "/v1/oauth/apps", tag: "OAuth 2.0", summary: "Apps OAuth de la organización", response: z.object({ items: z.array(OAuthApp) }) },
-  { method: "post", path: "/v1/oauth/apps", tag: "OAuth 2.0", summary: "Registrar una app (el secreto se devuelve una sola vez)", body: CreateOAuthAppInput, status: 201, response: z.object({ app: OAuthApp, clientSecret: z.string().nullable() }) },
-  { method: "patch", path: "/v1/oauth/apps/{id}", tag: "OAuth 2.0", summary: "Modificar una app", body: UpdateOAuthAppInput, response: OAuthApp },
-  { method: "post", path: "/v1/oauth/apps/{id}/rotate-secret", tag: "OAuth 2.0", summary: "Rotar el secreto (el anterior deja de valer)", response: z.object({ app: OAuthApp, clientSecret: z.string() }) },
-  { method: "delete", path: "/v1/oauth/apps/{id}", tag: "OAuth 2.0", summary: "Revocar una app y todos sus tokens", response: "none", status: 204 },
+  { method: "post", path: "/v1/oauth/authorize/decision", operationId: "oauthAuthorizeDecision", tag: "OAuth 2.0", summary: "Aprobar o rechazar (lo usa la pantalla de consentimiento; solo sesión web)", body: AuthorizeDecision, response: z.object({ redirectTo: z.string() }), errors: ["session_required"] },
+  { method: "get", path: "/v1/oauth/apps", operationId: "listOAuthApps", tag: "OAuth 2.0", summary: "Apps OAuth de la organización", response: z.object({ items: z.array(OAuthApp) }) },
+  { method: "post", path: "/v1/oauth/apps", operationId: "createOAuthApp", tag: "OAuth 2.0", summary: "Registrar una app (el secreto se devuelve una sola vez)", body: CreateOAuthAppInput, status: 201, response: z.object({ app: OAuthApp, clientSecret: z.string().nullable() }) },
+  { method: "patch", path: "/v1/oauth/apps/{id}", operationId: "updateOAuthApp", tag: "OAuth 2.0", summary: "Modificar una app", body: UpdateOAuthAppInput, response: OAuthApp },
+  { method: "post", path: "/v1/oauth/apps/{id}/rotate-secret", operationId: "rotateOAuthAppSecret", tag: "OAuth 2.0", summary: "Rotar el secreto (el anterior deja de valer)", response: z.object({ app: OAuthApp, clientSecret: z.string() }) },
+  { method: "delete", path: "/v1/oauth/apps/{id}", operationId: "deleteOAuthApp", tag: "OAuth 2.0", summary: "Revocar una app y todos sus tokens", response: "none", status: 204 },
 
-  { method: "get", path: "/v1/notification-integrations", tag: "Slack y Teams", summary: "Integraciones de avisos", response: z.object({ items: z.array(NotificationIntegration) }) },
-  { method: "post", path: "/v1/notification-integrations", tag: "Slack y Teams", summary: "Conectar un canal (webhook entrante de Slack o Teams)", body: CreateNotificationIntegrationInput, status: 201, response: NotificationIntegration },
-  { method: "patch", path: "/v1/notification-integrations/{id}", tag: "Slack y Teams", summary: "Modificar", body: UpdateNotificationIntegrationInput, response: NotificationIntegration },
-  { method: "delete", path: "/v1/notification-integrations/{id}", tag: "Slack y Teams", summary: "Quitar", response: "none", status: 204 },
-  { method: "post", path: "/v1/notification-integrations/{id}/test", tag: "Slack y Teams", summary: "Enviar un mensaje de prueba", response: z.object({ ok: z.boolean(), status: z.number().nullable(), error: z.string().nullable() }) },
+  { method: "get", path: "/v1/notification-integrations", operationId: "listNotificationIntegrations", tag: "Slack y Teams", summary: "Integraciones de avisos", response: z.object({ items: z.array(NotificationIntegration) }) },
+  { method: "post", path: "/v1/notification-integrations", operationId: "createNotificationIntegration", tag: "Slack y Teams", summary: "Conectar un canal (webhook entrante de Slack o Teams)", body: CreateNotificationIntegrationInput, status: 201, response: NotificationIntegration },
+  { method: "patch", path: "/v1/notification-integrations/{id}", operationId: "updateNotificationIntegration", tag: "Slack y Teams", summary: "Modificar", body: UpdateNotificationIntegrationInput, response: NotificationIntegration },
+  { method: "delete", path: "/v1/notification-integrations/{id}", operationId: "deleteNotificationIntegration", tag: "Slack y Teams", summary: "Quitar", response: "none", status: 204 },
+  { method: "post", path: "/v1/notification-integrations/{id}/test", operationId: "testNotificationIntegration", tag: "Slack y Teams", summary: "Enviar un mensaje de prueba", response: z.object({ ok: z.boolean(), status: z.number().nullable(), error: z.string().nullable() }) },
 
-  { method: "get", path: "/v1/storage/providers", tag: "Almacenamiento", summary: "Proveedores disponibles", response: z.object({ items: z.array(z.object({ provider: z.string(), configured: z.boolean() })) }) },
-  { method: "get", path: "/v1/storage/connections", tag: "Almacenamiento", summary: "Conexiones", response: z.object({ items: z.array(StorageConnection) }) },
-  { method: "post", path: "/v1/storage/connections/s3", tag: "Almacenamiento", summary: "Conectar un bucket compatible con S3 (se prueba al crear)", body: CreateS3ConnectionInput, status: 201, response: StorageConnection },
-  { method: "post", path: "/v1/storage/oauth/{provider}/start", tag: "Almacenamiento", summary: "Conectar Google Drive, Dropbox u OneDrive: devuelve la URL de autorización", body: ConnectStorageOAuthInput, response: z.object({ authorizeUrl: z.string() }) },
-  { method: "patch", path: "/v1/storage/connections/{id}", tag: "Almacenamiento", summary: "Modificar (nombre, carpeta, activa)", body: UpdateStorageConnectionInput, response: StorageConnection },
-  { method: "delete", path: "/v1/storage/connections/{id}", tag: "Almacenamiento", summary: "Desconectar", response: "none", status: 204 },
-  { method: "post", path: "/v1/storage/connections/{id}/test", tag: "Almacenamiento", summary: "Probar escritura", response: z.object({ ok: z.boolean(), ref: z.string().nullable(), error: z.string().nullable() }) },
-  { method: "get", path: "/v1/storage/exports", tag: "Almacenamiento", summary: "Exportaciones recientes" },
-  { method: "post", path: "/v1/storage/exports/{id}/retry", tag: "Almacenamiento", summary: "Reintentar una exportación fallida", status: 202 },
+  { method: "get", path: "/v1/storage/providers", operationId: "listStorageProviders", tag: "Almacenamiento", summary: "Proveedores disponibles", response: z.object({ items: z.array(z.object({ provider: z.string(), configured: z.boolean() })) }) },
+  { method: "get", path: "/v1/storage/connections", operationId: "listStorageConnections", tag: "Almacenamiento", summary: "Conexiones", response: z.object({ items: z.array(StorageConnection) }) },
+  { method: "post", path: "/v1/storage/connections/s3", operationId: "createS3Connection", tag: "Almacenamiento", summary: "Conectar un bucket compatible con S3 (se prueba al crear)", body: CreateS3ConnectionInput, status: 201, response: StorageConnection },
+  { method: "post", path: "/v1/storage/oauth/{provider}/start", operationId: "startStorageOAuth", tag: "Almacenamiento", summary: "Conectar Google Drive, Dropbox u OneDrive: devuelve la URL de autorización", body: ConnectStorageOAuthInput, response: z.object({ authorizeUrl: z.string() }) },
+  { method: "patch", path: "/v1/storage/connections/{id}", operationId: "updateStorageConnection", tag: "Almacenamiento", summary: "Modificar (nombre, carpeta, activa)", body: UpdateStorageConnectionInput, response: StorageConnection },
+  { method: "delete", path: "/v1/storage/connections/{id}", operationId: "deleteStorageConnection", tag: "Almacenamiento", summary: "Desconectar", response: "none", status: 204 },
+  { method: "post", path: "/v1/storage/connections/{id}/test", operationId: "testStorageConnection", tag: "Almacenamiento", summary: "Probar escritura", response: z.object({ ok: z.boolean(), ref: z.string().nullable(), error: z.string().nullable() }) },
+  {
+    method: "get",
+    path: "/v1/storage/exports",
+    operationId: "listStorageExports",
+    tag: "Almacenamiento",
+    summary: "Exportaciones recientes",
+    query: [{ name: "limit", description: "Cantidad máxima (1..200, por defecto 50).", schema: { type: "integer", minimum: 1, maximum: 200, default: 50 } }],
+  },
+  { method: "post", path: "/v1/storage/exports/{id}/retry", operationId: "retryStorageExport", tag: "Almacenamiento", summary: "Reintentar una exportación fallida", status: 202 },
 
-  { method: "get", path: "/v1/domains", tag: "Dominio propio", summary: "Dominio de la organización", response: z.object({ domain: CustomDomain.nullable() }) },
-  { method: "put", path: "/v1/domains", tag: "Dominio propio", summary: "Registrar o cambiar el dominio", body: SetCustomDomainInput, response: z.object({ domain: CustomDomain }) },
-  { method: "post", path: "/v1/domains/verify", tag: "Dominio propio", summary: "Verificar el registro TXT", response: z.object({ domain: CustomDomain }) },
-  { method: "delete", path: "/v1/domains", tag: "Dominio propio", summary: "Quitar el dominio", response: "none", status: 204 },
-  { method: "get", path: "/v1/public/host-branding", tag: "Dominio propio", summary: "Marca de la organización según el Host", auth: "none" },
+  { method: "get", path: "/v1/domains", operationId: "getCustomDomain", tag: "Dominio propio", summary: "Dominio de la organización", response: z.object({ domain: CustomDomain.nullable() }) },
+  { method: "put", path: "/v1/domains", operationId: "setCustomDomain", tag: "Dominio propio", summary: "Registrar o cambiar el dominio", body: SetCustomDomainInput, response: z.object({ domain: CustomDomain }) },
+  { method: "post", path: "/v1/domains/verify", operationId: "verifyCustomDomain", tag: "Dominio propio", summary: "Verificar el registro TXT", response: z.object({ domain: CustomDomain }) },
+  { method: "delete", path: "/v1/domains", operationId: "deleteCustomDomain", tag: "Dominio propio", summary: "Quitar el dominio", response: "none", status: 204 },
+  { method: "get", path: "/v1/public/host-branding", operationId: "getHostBranding", tag: "Dominio propio", summary: "Marca de la organización según el Host", auth: "none" },
 ];
 
 export const OAUTH2_SECURITY_SCHEME = {

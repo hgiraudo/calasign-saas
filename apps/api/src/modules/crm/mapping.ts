@@ -20,10 +20,13 @@ export interface MappedRecipient {
 
 /** Lee una propiedad con soporte de rutas con punto (Account.Name en Salesforce). */
 export function readProperty(props: Record<string, unknown>, path: string): unknown {
-  if (path in props) return props[path];
+  // Solo propiedades propias: con `in` o `cur[part]`, un nombre como "constructor" o "toString" devolvía la función
+  // heredada de Object.prototype y se mapeaba su texto como nombre o valor.
+  const own = (o: object, k: string) => Object.prototype.hasOwnProperty.call(o, k);
+  if (own(props, path)) return props[path];
   let cur: any = props;
   for (const part of path.split(".")) {
-    if (cur === null || cur === undefined || typeof cur !== "object") return undefined;
+    if (cur === null || cur === undefined || typeof cur !== "object" || !own(cur, part)) return undefined;
     cur = cur[part];
   }
   return cur;

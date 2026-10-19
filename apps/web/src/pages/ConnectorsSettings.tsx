@@ -18,7 +18,7 @@ import {
 import { api, errorText } from "../lib/api";
 import { confirmAction, formatDateTime, useI18n } from "../lib/i18n";
 import { useConnText } from "../lib/i18n-connectors";
-import { ErrorBox, Spinner } from "../components/ui";
+import { ErrorBox, OrderInput, Spinner } from "../components/ui";
 
 type ProvidersResponse = { items: ConnectorProviderInfo[]; redirectUris: Record<string, string> };
 
@@ -363,16 +363,20 @@ function SendFromRecord({ flows, onDone }: { flows: ConnectorFlow[]; onDone: () 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<SendFromConnectorResponse | null>(null);
+  // Solo vale la búsqueda del flujo elegido ahora: una respuesta que llegaba después de cambiar de flujo mostraba
+  // registros de la otra conexión y "Enviar" los mandaba al flujo nuevo.
+  const searchSeq = useRef(0);
 
   const search = async (e: FormEvent) => {
     e.preventDefault();
     if (!flow) return;
+    const mine = ++searchSeq.current;
     setError(null);
     try {
       const r = await api<{ items: ConnectorRecordSummary[] }>(`/v1/connectors/connections/${flow.connectionId}/records?objectType=${flow.objectType}&q=${encodeURIComponent(q)}`);
-      setResults(r.items);
+      if (mine === searchSeq.current) setResults(r.items);
     } catch (err) {
-      setError(errorText(err));
+      if (mine === searchSeq.current) setError(errorText(err));
     }
   };
   const send = async (id: string) => {
@@ -404,6 +408,7 @@ function SendFromRecord({ flows, onDone }: { flows: ConnectorFlow[]; onDone: () 
           <select
             value={flowId}
             onChange={(e) => {
+              searchSeq.current++;
               setFlowId(e.target.value);
               setResults(null);
             }}
@@ -514,7 +519,11 @@ function FlowEditor({
         rolesFrom.current = templateId;
         setRoles(flow && templateId === flow.templateId ? flow.roles : d.roles.map((r, i) => ({ role: r.name, source: "contact", index: i, channels: ["email"] }) as RoleRow));
       })
-      .catch((e) => !stale && setError(errorText(e)));
+      .catch((e) => {
+        if (stale) return;
+        setTpl(null);
+        setError(errorText(e));
+      });
     return () => {
       stale = true;
     };
@@ -538,7 +547,12 @@ function FlowEditor({
     e.preventDefault();
     setBusy(true);
     setError(null);
-    const statusValues = completedValue ? { completed: completedValue } : undefined;
+    // Se conservan los valores de los otros estados (enviado, rechazado, …), que solo se configuran por API: antes
+    // cualquier guardado desde acá los borraba.
+    const sv: Record<string, string> = { ...(flow?.writeBack.statusValues ?? {}) };
+    if (completedValue) sv.completed = completedValue;
+    else delete sv.completed;
+    const statusValues = Object.keys(sv).length ? (sv as ConnectorFlow["writeBack"]["statusValues"]) : undefined;
     const body = {
       name,
       objectType,
@@ -564,6 +578,9 @@ function FlowEditor({
   };
 
   const fieldLabels = [...new Set((tpl?.fields ?? []).map((f) => f.label).filter(Boolean) as string[])];
+  // Mientras carga la plantilla recién elegida (o si no se pudo leer) siguen en pantalla los roles de la anterior:
+  // guardar en ese momento los mandaba con la plantilla nueva y el envío fallaba.
+  const tplPending = Boolean(templateId) && tpl?.template.id !== templateId;
 
   return (
     <form className="card pad stack" onSubmit={save} style={{ marginBottom: 12 }}>
@@ -632,7 +649,7 @@ function FlowEditor({
                 ))}
               </select>
               {r.source === "contact" && (
-                <input type="number" min={1} max={50} style={{ width: 80 }} aria-label={t("fl.index")} value={(r.index ?? 0) + 1} onChange={(e) => setRole(i, { index: Math.max(0, Number(e.target.value) - 1) })} />
+                <OrderInput min={1} max={50} style={{ width: 80 }} aria-label={t("fl.index")} value={(r.index ?? 0) + 1} onChange={(n) => setRole(i, { index: n - 1 })} />
               )}
               {r.source === "contact_role" && (
                 <>
@@ -734,7 +751,7 @@ function FlowEditor({
         <button type="button" className="btn" onClick={onCancel}>
           {t("cancel")}
         </button>
-        <button className="btn btn-primary" disabled={busy || !templateId}>
+        <button className="btn btn-primary" disabled={busy || !templateId || tplPending}>
           {t("save")}
         </button>
       </div>

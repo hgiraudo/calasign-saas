@@ -158,7 +158,7 @@ export const DEVAPI_OPS: Op[] = [
     summary: "Clonar un sobre como borrador nuevo",
     description:
       "Copia documentos, destinatarios (configuración, no estado) y campos con su lógica, en cualquier estado del original. No copia lo que escribieron los firmantes (salvo `includeValues`), ni adjuntos, firmas ni el cobro. " +
-      "La metadata lleva `clonedFrom`. El clon vence a los 30 días si no se indica `expiresAt`.",
+      "Sin `metadata` en el pedido, la del original se copia con `clonedFrom`; con `metadata` propia, esa reemplaza a la copiada tal cual. El clon vence a los 30 días si no se indica `expiresAt`.",
     body: CloneEnvelopeInput,
     bodyOptional: true,
     status: 201,

@@ -578,14 +578,27 @@ export async function whiteLabelRoutes(app: FastifyInstance, s: Services) {
     const a = A(req);
     const r = await s.db.one<any>(`SELECT * FROM email_domains WHERE tenant_id = $1 AND domain = $2`, [a.tenantId, String(req.params.domain).toLowerCase()]);
     if (!r) throw notFound("Dominio de correo");
-    const f = await checkEmailDomain(r);
+    // Primero estricto: si el DNS no responde, un dominio ya verificado no pasa a pendiente por apretar "verificar"
+    // (como la re-verificación periódica y los dominios web); antes un SERVFAIL contaba como "falta el TXT".
+    let dnsError: string | null = null;
+    const f =
+      (await checkEmailDomain(r, { strict: true }).catch((e) => {
+        dnsError = String((e as Error).message ?? e).slice(0, 200);
+        return null;
+      })) ?? (await checkEmailDomain(r));
     let ok = f.own && f.dkim;
-    const error = ok ? null : !f.own ? `Falta el TXT ${mailTxtName(r.domain)}` : `Falta la clave DKIM ${r.dkim_selector}._domainkey.${r.domain}`;
+    const error = ok
+      ? null
+      : dnsError
+        ? `No se pudo consultar el DNS: ${dnsError}`
+        : !f.own
+          ? `Falta el TXT ${mailTxtName(r.domain)}`
+          : `Falta la clave DKIM ${r.dkim_selector}._domainkey.${r.domain}`;
     try {
       await s.db.query(
-        `UPDATE email_domains SET status = CASE WHEN $2 THEN 'verified' ELSE 'pending' END, verified_at = CASE WHEN $2 AND verified_at IS NULL THEN now() ELSE verified_at END,
+        `UPDATE email_domains SET status = CASE WHEN $2 THEN 'verified' WHEN $6 THEN status ELSE 'pending' END, verified_at = CASE WHEN $2 AND verified_at IS NULL THEN now() ELSE verified_at END,
            spf_ok = $3, dmarc_ok = $4, last_checked_at = now(), last_error = $5 WHERE id = $1`,
-        [r.id, ok, f.spf, f.dmarc, error],
+        [r.id, ok, f.spf, f.dmarc, error, dnsError !== null],
       );
     } catch (e) {
       if ((e as { code?: string }).code !== "23505") throw e;

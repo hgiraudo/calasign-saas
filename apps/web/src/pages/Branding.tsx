@@ -230,7 +230,9 @@ export function BrandingPage() {
   const effectiveTheme = useMemo(() => {
     // Lo heredado + lo que se está editando. En una sub-marca la base es el tema de la organización: su `effective`
     // ya trae los colores propios guardados, y uno borrado (para heredar) seguía en la vista previa hasta guardar.
-    const base = (defaultBrand ?? brand)?.effective.theme ?? {};
+    // La marca de la organización no hereda nada: su `effective` es lo guardado (un color borrado seguía a la vista);
+    // solo se toma la fuente que el servidor deduce cuando no se eligió.
+    const base = defaultBrand ? defaultBrand.effective.theme : { fontSource: brand?.effective.theme.fontSource ?? null };
     const own = Object.fromEntries(Object.entries(theme).filter(([, v]) => v !== null && v !== undefined && v !== ""));
     return { ...base, ...own } as Theme;
   }, [brand, defaultBrand, theme]);
@@ -354,7 +356,7 @@ export function BrandingPage() {
                   return (
                     <Field key={k} label={w(`color.${k}` as WlKey)}>
                       <div className="row-wrap">
-                        <input type="color" className="color-input" value={HEX.test(v) ? v : ((defaultBrand ?? brand).effective.theme[k] as string | null) ?? "#ffffff"} onChange={(e) => setIn("theme", k, e.target.value)} aria-label={w(`color.${k}` as WlKey)} />
+                        <input type="color" className="color-input" value={HEX.test(v) ? v : ((defaultBrand?.effective.theme[k] as string | null | undefined) ?? "#ffffff")} onChange={(e) => setIn("theme", k, e.target.value)} aria-label={w(`color.${k}` as WlKey)} />
                         <input className="color-text" value={v} placeholder="#RRGGBB" maxLength={7} onChange={(e) => setIn("theme", k, e.target.value.trim())} />
                       </div>
                     </Field>
@@ -758,7 +760,7 @@ function DomainsEditor({ brand, onBrand }: { brand: Brand; onBrand: (b: Brand) =
             <button type="button" className="btn btn-sm" disabled={busy} onClick={() => run(async () => (await api(`/v1/settings/email-domains/${m.domain}/verify`, { method: "POST" }), await reload(), refreshBrand()))}>
               {w("domains.verify")}
             </button>
-            <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => run(async () => (await api(`/v1/settings/email-domains/${m.domain}`, { method: "DELETE" }), reload()))}>
+            <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => run(async () => (await api(`/v1/settings/email-domains/${m.domain}`, { method: "DELETE" }), await reload(), refreshBrand()))}>
               {w("domains.remove")}
             </button>
           </div>

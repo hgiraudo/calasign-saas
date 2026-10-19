@@ -42,6 +42,10 @@ interface Filters {
 }
 
 function parseFilters(q: EventQuery, lastEventId?: string): Filters {
+  // Una clave repetida (?after=1&after=2) llega como array: `.trim()` respondía 500 (como en audit.ts).
+  for (const k of ["after", "since", "envelope_id", "scope"] as const) {
+    if (q[k] !== undefined && typeof q[k] !== "string") throw badRequest("validation_error", `${k} admite un solo valor`, [{ path: k, message: "un solo valor" }]);
+  }
   const all = q.scope === "all";
   if (q.scope && q.scope !== "all" && q.scope !== "webhook") throw badRequest("validation_error", "scope: webhook o all", [{ path: "scope", message: "webhook | all" }]);
   const after = (q.after ?? lastEventId ?? "").trim() || null;

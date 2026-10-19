@@ -17,7 +17,8 @@ function date(q: Query, name: string): string | null {
 
 /** Pares de metadata pedidos: `metadata=clave:valor` (repetible) y `metadata[clave]=valor`. */
 export function metadataFilters(q: Query): Record<string, string> {
-  const out: Record<string, string> = {};
+  // Sin prototipo: con {} un filtro metadata=__proto__:x se descartaba al asignarlo y la búsqueda no filtraba nada.
+  const out: Record<string, string> = Object.create(null);
   for (const raw of many(q.metadata)) {
     const i = raw.indexOf(":");
     if (i <= 0) throw badRequest("validation_error", "metadata: usar clave:valor", [{ path: "metadata", message: "formato clave:valor" }]);

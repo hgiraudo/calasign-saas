@@ -109,7 +109,9 @@ export function csvToRows(text: string, roles: { id: string; name: string }[]): 
     const dot = h.lastIndexOf(".");
     if (dot > 0) {
       const roleName = h.slice(0, dot).trim().toLowerCase();
-      const attr = ATTR_ALIASES[h.slice(dot + 1).trim().toLowerCase()];
+      const attrKey = h.slice(dot + 1).trim().toLowerCase();
+      // Solo claves propias: "Firmante.constructor" leía la función heredada y no daba el error de dato desconocido.
+      const attr = Object.hasOwn(ATTR_ALIASES, attrKey) ? ATTR_ALIASES[attrKey] : undefined;
       const role = roles.find((r) => r.name.toLowerCase() === roleName);
       if (role && attr) return { kind: "attr", roleId: role.id, attr };
       if (!role) fileErrors.push(`Columna "${h}": no hay ningún rol "${h.slice(0, dot)}" en la plantilla`);

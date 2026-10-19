@@ -180,8 +180,10 @@ export function requiredScope(url: string, method: string): OAuthScope | null | 
   const write = !(method === "GET" || method === "HEAD");
   if (url === "/v1/me" || url === "/v1/me/access") return write ? "deny" : null;
   if (url === "/v1/templates/from-envelope/:envelopeId") return "templates:write";
-  // Lote: cada elemento (pedido individual con el mismo token) exige su propio scope; envelopes:write solo si modifica.
-  if (url === "/v1/envelopes/batch") return "envelopes:read";
+  // Lote: cada elemento (pedido individual con el mismo token) exige su propio scope (get: envelopes:read; void, remind y
+  // delete: envelopes:write). El lote en sí no exige ninguno: con envelopes:read, un token solo envelopes:write podía
+  // anular de a uno pero no en lote.
+  if (url === "/v1/envelopes/batch") return null;
   if (url.startsWith("/v1/envelopes") || /^\/v1\/(bulk-sends|web-forms|reports)(\/|$)/.test(url)) return write ? "envelopes:write" : "envelopes:read";
   // API de eventos (polling y SSE): solo lectura de la actividad de los sobres.
   if (/^\/v1\/events(\/|$)/.test(url)) return "envelopes:read";

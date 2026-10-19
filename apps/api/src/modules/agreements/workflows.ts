@@ -598,6 +598,8 @@ export function renderJsonTemplate(tpl: string, data: unknown): string {
 
 // ───────────────────────────── Altas ─────────────────────────────
 
+const RESERVED_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
 function validateSteps(steps: WorkflowStep[]) {
   const ids = new Set<string>();
   const outputs = new Set<string>();
@@ -605,6 +607,11 @@ function validateSteps(steps: WorkflowStep[]) {
   steps.forEach((st, i) => {
     if (ids.has(st.id)) throw badRequest("duplicate_step", `Paso ${i + 1}: id repetido`);
     ids.add(st.id);
+    // setPath rechaza estas claves (contaminación de prototipos): un formulario con una de ellas daba 500 en cada envío.
+    if (st.type === "collect_data") {
+      const bad = [st.config.target, ...st.config.fields.map((f) => f.key)].find((k) => k && RESERVED_KEYS.has(k));
+      if (bad) throw badRequest("invalid_step", `Paso ${i + 1}: "${bad}" no se puede usar como clave`);
+    }
     if (st.type === "generate_document") outputs.add(st.config.output);
     if (st.type === "send_for_signature") {
       if (!outputs.has(st.config.document)) throw badRequest("invalid_step", `Paso ${i + 1}: no hay un documento "${st.config.document}" generado antes`);
@@ -1012,7 +1019,8 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
     const values: Record<string, unknown> = {};
     const errors: { path: string; message: string }[] = [];
     for (const f of def.config.fields) {
-      const raw = (input.values[f.key] ?? "").trim();
+      // Solo claves propias: un campo "toString" o "valueOf" sin valor leía la función heredada y `.trim()` daba 500.
+      const raw = (Object.hasOwn(input.values, f.key) ? input.values[f.key] : "").trim();
       if (!raw) {
         if (f.required) errors.push({ path: f.key, message: `${f.label}: obligatorio` });
         continue;

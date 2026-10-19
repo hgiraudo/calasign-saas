@@ -3,7 +3,6 @@
 // (TypeScript avisa si falta una traducción) y los textos admiten un marcado mínimo que renderiza <Md>/<Inline>:
 // `código`, **negrita**, [enlace](url), párrafos separados por línea en blanco y listas con "- " o "1. ".
 // Variables: {{BASE}} (origen de la API) y {{MCP_URL}}.
-import { brandText } from "./white-label";
 import { useCallback } from "react";
 import { useI18n } from "./i18n";
 import { docsPt } from "./i18n-docs-pt";
@@ -808,7 +807,10 @@ export function useDocsText() {
   const d = DICTS[locale] ?? docsEs;
   return useCallback(
     (k: DocsKey, params?: Record<string, string | number>) => {
-      let s = fillVars(brandText(locale, k, d[k] ?? docsEs[k] ?? k), VARS);
+      // Sin brandText (docs/MARCA-BLANCA.md): en el dominio de una marca cambiaba "CalaSign" por el producto también en
+      // los nombres técnicos (header `CalaSign-Signature`, `CalaSign.openEnvelope`, nodos de n8n) y la verificación de
+      // webhooks escrita con esa documentación buscaba un header que no existe.
+      let s = fillVars(d[k] ?? docsEs[k] ?? k, VARS);
       if (params) for (const [p, v] of Object.entries(params)) s = s.split(`{${p}}`).join(String(v));
       return s;
     },

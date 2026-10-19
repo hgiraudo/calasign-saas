@@ -173,6 +173,17 @@ export async function assertTemplateAccess(db: Db, a: AuthContext, templateId: s
 
 const ALWAYS_ALLOWED_DURING_2FA_SETUP = [/^\/v1\/me(\/|$)/, /^\/v1\/auth\//];
 
+/** Rutas autenticadas que cambian datos sin pedir permisos: solo tocan datos de quien llama (el handler exige sesión). */
+const SELF_SCOPED_MUTATIONS = new Set([
+  "POST /v1/me/2fa/setup",
+  "POST /v1/me/2fa/enable",
+  "POST /v1/me/2fa/disable",
+  "POST /v1/me/2fa/recovery-codes",
+  "POST /v1/auth/switch-tenant",
+  "POST /v1/oauth/authorize/decision",
+  "DELETE /v1/oauth/connected-apps/:clientId",
+]);
+
 /** Aplica la política de la ruta. Se llama desde authenticate(), después de cargar el acceso. */
 export async function enforceRoutePolicy(db: Db, req: FastifyRequest, a: AuthContext) {
   const url = req.routeOptions?.url ?? req.url.split("?")[0];
@@ -312,6 +323,12 @@ export async function enforceRoutePolicy(db: Db, req: FastifyRequest, a: AuthCon
   if (url.startsWith("/v1/reports")) return requirePerm(a, "envelopes:view_all");
   if (/^\/v1\/(members|roles|groups|invitations)(\/|$)/.test(url) && !isRead) return requirePerm(a, "members:manage");
   if (url.startsWith("/v1/invitations") && isRead) return requirePerm(a, "members:manage");
+  // Rechazo por defecto: una ruta autenticada que cambia datos y no coincidió con ninguna regla de arriba tiene que
+  // sumarse a SELF_SCOPED_MUTATIONS (si solo toca datos propios de quien llama) o tener su propia regla de permisos.
+  // Así una ruta nueva no queda abierta a cualquier miembro por olvido. Esta comprobación va siempre al final.
+  if (!isRead && !SELF_SCOPED_MUTATIONS.has(`${method} ${url}`) && !url.startsWith("/dev/")) {
+    throw new AppError(403, "forbidden", "Ruta sin política de acceso", { route: `${method} ${url}` });
+  }
 }
 
 export function assertNotForbiddenRole(a: AuthContext, target: { role: string }) {

@@ -258,6 +258,11 @@ export async function enforceRoutePolicy(db: Db, req: FastifyRequest, a: AuthCon
     if (url.startsWith("/v1/storage/oauth/") && url.endsWith("/callback")) return;
     return requirePerm(a, "settings:manage");
   }
+  // Aprobaciones de workflows: quien fue asignado para aprobar es cualquier miembro (checkApprovers solo pide la
+  // membresía), así que ver ejecuciones y decidir no exige envelopes:create. Cada ruta ya limita lo visible (quien la
+  // inició, quien aprueba o quien ve todo) y quién decide (canDecide). Sin esto, un aprobador con un rol sin ese
+  // permiso recibía el aviso pero no podía aprobar y la ejecución quedaba esperando.
+  if (/^\/v1\/workflow-runs(\/|$)/.test(url) && (isRead || url === "/v1/workflow-runs/:id/steps/:index/decision")) return;
   // Acuerdos (Fase 6): repositorio, documentos generados, cláusulas, workflows y negociación. Los permisos
   // finos (plantillas y workflows: templates:manage; campos: settings:manage) se validan en cada ruta.
   if (/^\/v1\/(agreements|agreement-views|agreement-fields|document-templates|clauses|workflows|workflow-runs|negotiations)(\/|$)/.test(url)) {

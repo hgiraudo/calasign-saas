@@ -960,7 +960,7 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     return meResponse(s.db, ch.user_id, ch.tenant_id);
   });
 
-  // ───────── Hooks: dueño de sobres creados por API key; rol al crear una API key ─────────
+  // ───────── Hook: dueño de sobres creados por API key ─────────
 
   app.addHook("onSend", async (req, reply, payload) => {
     if (reply.statusCode >= 300 || req.method !== "POST" || !req.auth || typeof payload !== "string") return payload;
@@ -970,18 +970,7 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
         const id = JSON.parse(payload)?.envelope?.id;
         if (id) await s.db.query(`UPDATE envelopes SET created_by_api_key = $2 WHERE id = $1 AND tenant_id = $3 AND created_by_api_key IS NULL`, [id, req.auth.apiKeyId, req.auth.tenantId]);
       }
-      if (url === "/v1/api-keys") {
-        const body = req.body as any;
-        const keyId = JSON.parse(payload)?.apiKey?.id;
-        if (keyId && body?.role && body.role !== "admin") {
-          const parsed = RoleAssignment.safeParse({ role: body.role, roleId: body.roleId ?? null });
-          if (parsed.success && parsed.data.role !== "owner") {
-            const target = await resolveRole(s.db, req.auth.tenantId, parsed.data);
-            assertCanGrant(req.auth, target, await permsOf(s.db, req.auth.tenantId, target.role, target.roleId));
-            await s.db.query(`UPDATE api_keys SET role = $2, role_id = $3 WHERE id = $1`, [keyId, target.role, target.roleId]);
-          }
-        }
-      }
+      // El rol de una API key nueva lo guarda POST /v1/api-keys en el mismo INSERT (validado por access.ts).
     } catch (err) {
       req.log.error({ err }, "post-proceso de equipos falló");
     }

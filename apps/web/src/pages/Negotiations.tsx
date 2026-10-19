@@ -214,6 +214,12 @@ function CreateNegotiationModal({ kind, onClose, onCreated }: { kind: "template"
                   ))}
                 </select>
               )}
+              {/* Nombre y correo son obligatorios: una fila agregada de más bloqueaba el alta y no había forma de quitarla. */}
+              {participants.length > 1 && (
+                <button type="button" className="btn btn-sm btn-ghost" aria-label="×" onClick={() => setParticipants(participants.filter((_, j) => j !== i))}>
+                  ×
+                </button>
+              )}
             </div>
           ))}
           <div>

@@ -1,10 +1,10 @@
-// Textos de CRM y ERP (HubSpot, Salesforce, Zoho CRM / Bigin, Pipedrive, Siigo, Alegra).
+// Textos de CRM y ERP (HubSpot, Salesforce, Zoho CRM / Bigin, Pipedrive, RD Station CRM, Kommo, Siigo, Alegra).
 import { brandText } from "./white-label";
 import { useI18n } from "./i18n";
 
 const es = {
   "card.crm": "CRM y ERP",
-  "card.crm.desc": "Enviar a firmar desde HubSpot, Salesforce, Zoho CRM o Pipedrive y devolver el documento firmado al CRM, Siigo o Alegra.",
+  "card.crm.desc": "Enviar a firmar desde HubSpot, Salesforce, Zoho CRM, Pipedrive, RD Station CRM o Kommo y devolver el documento firmado al CRM, Siigo o Alegra.",
   "back": "← Ajustes",
   "title": "CRM y ERP",
   "intro":
@@ -14,6 +14,17 @@ const es = {
   "p.zoho": "Zoho CRM / Bigin",
   "p.siigo": "Siigo",
   "p.alegra": "Alegra",
+  // RD Station CRM
+  "p.rdstation": "RD Station CRM",
+  "rdstation.hint.deal":
+    "RD Station CRM · Negociação: los contatos de la negociação en su orden (el primero es el principal, contacto 0). Los campos personalizados se mapean por su slug o por su nombre. El PDF firmado va a Anexos y se agrega una anotação con el hash y el link.",
+  "rdstation.statusPlaceholder": "Slug o nombre del campo personalizado (ej. Estado CalaSign)",
+  // Kommo
+  "p.kommo": "Kommo",
+  "kommo.install": "La integración de Kommo quedó instalada. Para terminar, conectá Kommo con OAuth desde su tarjeta.",
+  "kommo.hint.deal":
+    "Kommo · Lead (tipo deal): el contacto principal del lead primero (contacto 0) y los demás contactos en orden. Los campos personalizados se mapean por nombre, código o id; los de lista se leen como su texto. El PDF firmado se adjunta al lead (si la integración tiene acceso a archivos) con una nota con el hash y el link.",
+  "kommo.statusPlaceholder": "Nombre, código o id del campo del lead (ej. Estado CalaSign)",
   // Pipedrive
   "p.pipedrive": "Pipedrive",
   "pipedrive.install": "La app de Pipedrive quedó instalada. Para terminar, conectá Pipedrive con OAuth desde su tarjeta.",
@@ -122,7 +133,7 @@ type Key = keyof typeof es;
 
 const pt: Record<Key, string> = {
   "card.crm": "CRM e ERP",
-  "card.crm.desc": "Enviar para assinatura a partir do HubSpot, Salesforce, Zoho CRM ou Pipedrive e devolver o documento assinado ao CRM, Siigo ou Alegra.",
+  "card.crm.desc": "Enviar para assinatura a partir do HubSpot, Salesforce, Zoho CRM, Pipedrive, RD Station CRM ou Kommo e devolver o documento assinado ao CRM, Siigo ou Alegra.",
   back: "← Configurações",
   title: "CRM e ERP",
   intro:
@@ -132,6 +143,17 @@ const pt: Record<Key, string> = {
   "p.zoho": "Zoho CRM / Bigin",
   "p.siigo": "Siigo",
   "p.alegra": "Alegra",
+  // RD Station CRM
+  "p.rdstation": "RD Station CRM",
+  "rdstation.hint.deal":
+    "RD Station CRM · Negociação: os contatos da negociação na ordem (o primeiro é o principal, contato 0). Campos personalizados são mapeados pelo slug ou pelo nome. O PDF assinado vai para Anexos e é criada uma anotação com o hash e o link.",
+  "rdstation.statusPlaceholder": "Slug ou nome do campo personalizado (ex. Estado CalaSign)",
+  // Kommo
+  "p.kommo": "Kommo",
+  "kommo.install": "A integração do Kommo foi instalada. Para concluir, conecte o Kommo com OAuth no cartão dele.",
+  "kommo.hint.deal":
+    "Kommo · Lead (tipo deal): o contato principal do lead primeiro (contato 0) e os demais contatos na ordem. Campos personalizados pelo nome, código ou id; os de lista são lidos como texto. O PDF assinado é anexado ao lead (se a integração tiver acesso a arquivos) com uma nota com o hash e o link.",
+  "kommo.statusPlaceholder": "Nome, código ou id do campo do lead (ex. Estado CalaSign)",
   // Pipedrive
   "p.pipedrive": "Pipedrive",
   "pipedrive.install": "O app do Pipedrive foi instalado. Para concluir, conecte o Pipedrive com OAuth no cartão dele.",
@@ -238,7 +260,7 @@ const pt: Record<Key, string> = {
 
 const en: Record<Key, string> = {
   "card.crm": "CRM & ERP",
-  "card.crm.desc": "Send for signature from HubSpot, Salesforce, Zoho CRM or Pipedrive and push the signed document back to the CRM, Siigo or Alegra.",
+  "card.crm.desc": "Send for signature from HubSpot, Salesforce, Zoho CRM, Pipedrive, RD Station CRM or Kommo and push the signed document back to the CRM, Siigo or Alegra.",
   back: "← Settings",
   title: "CRM & ERP",
   intro:
@@ -248,6 +270,17 @@ const en: Record<Key, string> = {
   "p.zoho": "Zoho CRM / Bigin",
   "p.siigo": "Siigo",
   "p.alegra": "Alegra",
+  // RD Station CRM
+  "p.rdstation": "RD Station CRM",
+  "rdstation.hint.deal":
+    "RD Station CRM · Deal (negociação): the deal's contacts in order (the first is the primary, contact 0). Custom fields are mapped by slug or by name. The signed PDF goes to the deal's files and a note with the hash and link is added.",
+  "rdstation.statusPlaceholder": "Custom field slug or name (e.g. CalaSign status)",
+  // Kommo
+  "p.kommo": "Kommo",
+  "kommo.install": "The Kommo integration is installed. To finish, connect Kommo with OAuth from its card.",
+  "kommo.hint.deal":
+    "Kommo · Lead (deal type): the lead's main contact first (contact 0), then the other contacts in order. Custom fields by name, code or id; list fields are read as their text. The signed PDF is attached to the lead (if the integration has file access) with a note containing the hash and link.",
+  "kommo.statusPlaceholder": "Lead field name, code or id (e.g. CalaSign status)",
   // Pipedrive
   "p.pipedrive": "Pipedrive",
   "pipedrive.install": "The Pipedrive app is installed. To finish, connect Pipedrive with OAuth from its card.",

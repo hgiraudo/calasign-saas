@@ -1,0 +1,28 @@
+{
+  "properties": {
+    "connectionParameters": {
+      "token": {
+        "type": "oAuthSetting",
+        "oAuthSettings": {
+          "identityProvider": "oauth2",
+          "clientId": "REPLACE_WITH_CALASIGN_CLIENT_ID",
+          "scopes": ["envelopes:read envelopes:write templates:read webhooks:manage offline_access"],
+          "redirectMode": "GlobalPerConnector",
+          "redirectUrl": "https://global.consent.azure-apim.net/redirect",
+          "properties": { "IsFirstParty": "False" },
+          "customParameters": {
+            "authorizationUrl": { "value": "{{BASE_URL}}/oauth/authorize" },
+            "tokenUrl": { "value": "{{BASE_URL}}/oauth/token" },
+            "refreshUrl": { "value": "{{BASE_URL}}/oauth/token" }
+          }
+        },
+        "uiDefinition": null
+      }
+    },
+    "iconBrandColor": "#1F4E79",
+    "capabilities": [],
+    "publisher": "CalaSign",
+    "stackOwner": "CalaSign",
+    "policyTemplateInstances": []
+  }
+}

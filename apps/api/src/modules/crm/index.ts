@@ -433,8 +433,9 @@ export async function handleCrmJob(d: { db: Db; blobs: BlobStore }, p: { runId: 
     const msg = asAppError(err).message.slice(0, 1000);
     await db.query(`UPDATE crm_runs SET status = 'failed', error = $2, updated_at = now() WHERE id = $1`, [run.id, msg]);
     await db.query(`UPDATE crm_connections SET last_error = $2 WHERE id = $1`, [conn.row.id, msg.slice(0, 500)]);
-    // Sin acceso (token revocado) o datos que no cierran: no tiene sentido reintentar solo.
-    if ((err instanceof CrmError && err.authFailed) || err instanceof MappingError || err instanceof AppError) return;
+    // Sin acceso (token revocado) o datos que no cierran: no tiene sentido reintentar solo. sendFromRecord devuelve todo
+    // como AppError: un error del proveedor o interno (5xx, p. ej. HubSpot caído) sí se reintenta.
+    if ((err instanceof CrmError && err.authFailed) || err instanceof MappingError || (err instanceof AppError && err.status < 500)) return;
     throw err; // reintento con backoff de la cola
   }
 }
@@ -800,7 +801,10 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
       const sig = String(req.headers["x-hubspot-signature-v3"] ?? "");
       const age = Math.abs(Date.now() - Number(ts));
       const expected = hubspotSignatureV3(secret, "POST", `${config.appUrl}${req.url}`, raw, ts);
-      const ok = sig.length === expected.length && timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
+      // Largo en bytes (no en caracteres): con caracteres multibyte timingSafeEqual lanzaba y respondía 500.
+      const sigBuf = Buffer.from(sig);
+      const expBuf = Buffer.from(expected);
+      const ok = sigBuf.length === expBuf.length && timingSafeEqual(sigBuf, expBuf);
       if (!ts || !Number.isFinite(age) || age > 5 * 60_000 || !ok) return reply.code(401).send({ error: { code: "invalid_signature", message: "Firma inválida" } });
       let events: any[];
       try {

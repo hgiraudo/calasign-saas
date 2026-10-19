@@ -57,6 +57,9 @@ export async function handleStripeEvent(db: Db, event: any) {
         const tenantId = obj.metadata?.tenantId;
         const plan = obj.metadata?.plan;
         if (!tenantId || !isPlan(plan)) return;
+        // Medios asíncronos (Boleto, débito): el checkout se completa sin cobrar y el plan se activa recién con
+        // async_payment_succeeded (que vuelve por acá con payment_status=paid), igual que los cobros al firmar.
+        if (obj.payment_status === "unpaid") return;
         const subscriptionId = typeof obj.subscription === "string" ? obj.subscription : null;
         // Otra suscripción vigente (otro checkout de Stripe pagado en paralelo, o una de Mercado Pago autorizada mientras
         // este seguía abierto): queda la que se acaba de pagar y la anterior se cancela. Si no, la anterior seguiría
@@ -87,7 +90,10 @@ export async function handleStripeEvent(db: Db, event: any) {
       const tenantId = obj.metadata?.tenantId;
       if (!tenantId) return;
       const t = await db.one<any>(`SELECT subscription_id FROM tenants WHERE id = $1`, [tenantId]);
-      if (!t || (t.subscription_id && t.subscription_id !== obj.id)) return; // de otra suscripción anterior
+      // Solo la suscripción vigente. Sin suscripción registrada no se acepta ninguna: Stripe no garantiza el orden de
+      // los eventos, y un "updated" (status active) atrasado de una suscripción ya borrada volvía a dar el plan pago
+      // sin cobro. El alta la hace checkout.session.completed.
+      if (!t?.subscription_id || t.subscription_id !== obj.id) return;
       const ended = event.type === "customer.subscription.deleted" || ["canceled", "unpaid", "incomplete_expired"].includes(obj.status);
       const plan: PlanId = ended ? "free" : isPlan(obj.metadata?.plan) ? obj.metadata.plan : "free";
       await applySubscription(db, tenantId, {
@@ -208,14 +214,15 @@ export async function billingWebhookRoutes(app: FastifyInstance, s: Services) {
       }
       const q = req.query ?? {};
       const type = String(body.type ?? body.topic ?? q.type ?? q.topic ?? "");
-      const dataId = String(body?.data?.id ?? q["data.id"] ?? q.id ?? "");
+      // El id firmado (x-signature) es el de la query: es el que se procesa, no uno distinto del cuerpo.
+      const dataId = String(q["data.id"] ?? body?.data?.id ?? q.id ?? "");
       if (!type || !dataId) return reply.code(400).send({ error: { code: "invalid_notification", message: "Falta type o data.id" } });
       const secret = config.billing.mercadopago.webhookSecret;
       if (secret) {
         const ok = verifyMercadoPagoSignature({
           xSignature: req.headers["x-signature"] as string | undefined,
           xRequestId: req.headers["x-request-id"] as string | undefined,
-          dataId: q["data.id"] ?? dataId,
+          dataId,
           secret,
         });
         if (!ok) return reply.code(400).send({ error: { code: "invalid_signature", message: "Firma inválida" } });

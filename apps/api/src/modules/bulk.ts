@@ -16,6 +16,7 @@ import { enqueue } from "../infra/queue";
 import { AppError, badRequest, conflict, forbidden, notFound } from "../lib/errors";
 import { iso, uuidv7 } from "../lib/util";
 import { assertTemplateAccess, hasPerm } from "./access";
+import { csvCell } from "./agreements/common";
 import { ownerCanStillCreate } from "./owner-check";
 import { tenantPlan } from "./billing/plans";
 import { authenticate, type AuthContext, type Services } from "./context";
@@ -421,7 +422,8 @@ export async function bulkRoutes(app: FastifyInstance, s: Services) {
     await loadBulk(s.db, a, req.params.id);
     const rows = await s.db.query<any>(`SELECT * FROM bulk_send_items WHERE bulk_send_id = $1 ORDER BY row_number`, [req.params.id]);
     const lines = [["row", "status", "envelopeId", "recipients", "error"].join(",")];
-    for (const r of rows.map(toItem)) lines.push([r.row, r.status, r.envelopeId ?? "", r.recipients.join(" | "), r.error ?? ""].map(csvEscape).join(","));
+    // csvCell: los nombres vienen de datos externos; sin neutralizar, "=…" se ejecuta como fórmula en la planilla.
+    for (const r of rows.map(toItem)) lines.push([r.row, r.status, r.envelopeId ?? "", r.recipients.join(" | "), r.error ?? ""].map(csvCell).join(","));
     reply.header("content-type", "text/csv; charset=utf-8").header("content-disposition", `attachment; filename="resultados-${req.params.id}.csv"`);
     return "﻿" + lines.join("\r\n") + "\r\n";
   });

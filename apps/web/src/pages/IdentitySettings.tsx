@@ -3,7 +3,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import type { IdentitySettings, IdvLevel, IdvProvider, ScimSettings, SsoSettings, SsoSettingsInput } from "@calasign/shared";
 import { IDV_LEVELS, MOCK_DECISIONS } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
-import { formatDateTime, useI18n } from "../lib/i18n";
+import { formatDateTime, useI18n, confirmAction } from "../lib/i18n";
 import { useIdnText, type IdnKey } from "../lib/i18n-identity";
 import { ErrorBox, Spinner } from "../components/ui";
 import { SsoDomainVerification } from "../components/DataExtras";
@@ -419,7 +419,7 @@ export function ScimSettingsPage() {
                 {t.revokedAt ? (
                   <span className="badge">{tx("scim.revoked")}</span>
                 ) : (
-                  <button type="button" className="btn btn-danger btn-sm" disabled={busy} onClick={() => run(async () => {
+                  <button type="button" className="btn btn-danger btn-sm" disabled={busy} onClick={() => confirmAction() && run(async () => {
                     await api(`/v1/settings/scim/tokens/${t.id}`, { method: "DELETE" });
                     await reload();
                   })}>

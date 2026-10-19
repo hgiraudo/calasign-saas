@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import type { Agreement, AgreementFieldDef, AgreementStatus, AgreementView, Counterparty, ListAgreementsResponse } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
-import { formatDate, useI18n } from "../lib/i18n";
+import { formatDate, useI18n, confirmAction } from "../lib/i18n";
 import { useAccess } from "../lib/access";
 import { useAgrText } from "../lib/i18n-agreements";
 import { AgreementsTabs } from "../components/AgreementsUi";
@@ -687,6 +687,7 @@ function FieldsModal({ fields, onClose }: { fields: AgreementFieldDef[]; onClose
                       type="button"
                       className="btn btn-sm btn-ghost"
                       onClick={async () => {
+                        if (!confirmAction()) return;
                         setError(null);
                         try {
                           await api(`/v1/agreement-fields/${f.id}`, { method: "DELETE" });

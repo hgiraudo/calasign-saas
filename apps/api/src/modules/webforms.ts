@@ -121,9 +121,13 @@ const formOwner = (form: FormRow) => ({ tenantId: form.tenant_id as string, user
  * sin esto, los formularios existentes seguían creando sobres desde la página pública), o quien lo configuró ya no
  * puede crearlos. null si está habilitado. Lo usan la página pública, el envío y la consola (mismo criterio).
  */
-async function formProblem(db: Db, r: FormRow, planHasForms?: boolean): Promise<FormProblem | null> {
-  const has = planHasForms ?? (await tenantPlan(db, r.tenant_id)).plan.features.includes("web_forms");
-  if (!has) return { code: "plan_feature", message: "El plan actual de la organización no incluye formularios web" };
+async function formProblem(db: Db, r: FormRow, planFeatures?: readonly string[]): Promise<FormProblem | null> {
+  const features = planFeatures ?? (await tenantPlan(db, r.tenant_id)).plan.features;
+  if (!features.includes("web_forms")) return { code: "plan_feature", message: "El plan actual de la organización no incluye formularios web" };
+  // Creado con una API key: los sobres salen a nombre de la key, así que (como el envío masivo) exige acceso por API.
+  if (r.created_by_api_key && !features.includes("api")) {
+    return { code: "plan_feature", message: "El plan actual de la organización no incluye el acceso por API (el formulario lo creó una API key)" };
+  }
   return ownerProblem(db, formOwner(r), r.template_id);
 }
 
@@ -133,13 +137,13 @@ async function formProblem(db: Db, r: FormRow, planHasForms?: boolean): Promise<
  * plantilla (en un listado, varios formularios suelen compartirlos).
  */
 async function formStates(db: Db, tenantId: string, rows: FormRow[]): Promise<Map<string, FormProblem | null>> {
-  const planHasForms = (await tenantPlan(db, tenantId)).plan.features.includes("web_forms");
+  const planFeatures = (await tenantPlan(db, tenantId)).plan.features;
   const memo = new Map<string, Promise<FormProblem | null>>();
   const out = new Map<string, FormProblem | null>();
   for (const r of rows) {
     const o = formOwner(r);
     const k = `${o.userId ?? ""}|${o.apiKeyId ?? ""}|${r.template_id}`;
-    if (!memo.has(k)) memo.set(k, formProblem(db, r, planHasForms));
+    if (!memo.has(k)) memo.set(k, formProblem(db, r, planFeatures));
     out.set(r.id, await memo.get(k)!);
   }
   return out;

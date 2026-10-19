@@ -148,7 +148,10 @@ export class CalaSign {
       throw new CalaSignError(`Error de red al pedir el token OAuth: ${(err as Error).message}`, 0, "network_error");
     }
     const data: any = await res.json().catch(() => ({}));
-    if (!res.ok) throw new CalaSignError(data.error_description ?? "No se pudo obtener el token OAuth", res.status, data.error ?? "oauth_error");
+    // Sin access_token (cuerpo cortado o no JSON) no se guarda "Bearer undefined" por una hora.
+    if (!res.ok || typeof data?.access_token !== "string" || !data.access_token) {
+      throw new CalaSignError(data?.error_description ?? "No se pudo obtener el token OAuth", res.status, data?.error ?? "oauth_error");
+    }
     this.token = { value: data.access_token, expiresAt: Date.now() + Number(data.expires_in ?? 3600) * 1000 };
     return this.token.value;
   }

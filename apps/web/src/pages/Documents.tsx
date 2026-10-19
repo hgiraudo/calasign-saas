@@ -10,7 +10,7 @@ import {
   type TemplateAnalysis,
 } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
-import { formatDateTime, useI18n } from "../lib/i18n";
+import { formatDateTime, useI18n, confirmAction } from "../lib/i18n";
 import { useAccess } from "../lib/access";
 import { useAgrText } from "../lib/i18n-agreements";
 import { AgreementsTabs, DocPreview, parseJsonObject } from "../components/AgreementsUi";
@@ -462,6 +462,7 @@ export function DocumentTemplateEditPage() {
               type="button"
               className="btn btn-ghost"
               onClick={async () => {
+                if (!confirmAction()) return;
                 setError(null);
                 try {
                   await api(`/v1/document-templates/${id}`, { method: "DELETE" });

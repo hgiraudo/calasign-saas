@@ -32,25 +32,28 @@ export function AuditLogPage() {
   const [cursor, setCursor] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
-  // Solo vale la respuesta del último pedido: con filtros nuevos, una página extra vieja no se mezcla en la lista.
-  const seq = useRef(0);
+  // Cada búsqueda con filtros abre una "generación": una página extra pedida antes (o durante) la carga nueva no se
+  // mezcla en la lista, y "cargar más" no descarta la carga de los filtros recién aplicados.
+  const gen = useRef(0);
   const moreInFlight = useRef(false);
 
   const load = async (f: Filters, more = false) => {
-    if (more && moreInFlight.current) return;
-    const n = ++seq.current;
+    if (more && (moreInFlight.current || !cursor)) return;
+    const n = more ? gen.current : ++gen.current;
     moreInFlight.current = more;
     setError(null);
     setLoadingMore(more);
+    // Con filtros nuevos, el cursor viejo no sirve: se oculta "cargar más" hasta que llegue la primera página.
+    if (!more) setCursor(null);
     try {
       const r = await api<AuditLogResponse>(`/v1/audit-log?${query(f, more ? cursor : null)}`);
-      if (n !== seq.current) return;
+      if (n !== gen.current) return;
       setItems((prev) => (more && prev ? [...prev, ...r.items] : r.items));
       setCursor(r.nextCursor);
     } catch (e) {
-      if (n === seq.current) setError(errorText(e));
+      if (n === gen.current) setError(errorText(e));
     } finally {
-      if (n === seq.current) {
+      if (n === gen.current && more) {
         moreInFlight.current = false;
         setLoadingMore(false);
       }

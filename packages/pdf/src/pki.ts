@@ -257,15 +257,64 @@ export async function statusFromOcsp(ocspDer: Uint8Array, cert: pkijs.Certificat
       sigOk = false;
     }
     if (!sigOk) sigOk = await verifyWithIssuerKey(basic, issuer);
+    // pkijs valida el certificado del respondedor delegado a la fecha de HOY: esos certificados duran días, así que el
+    // OCSP guardado en el DSS (B-LT) dejaba de contar enseguida. Se lo valida a la fecha de la respuesta.
+    if (!sigOk) sigOk = await verifyDelegatedResponder(basic, single.certID, issuer);
     if (!sigOk) return null;
     const st = single.certStatus as any;
     const tag = st?.idBlock?.tagNumber;
     if (at && tag !== 1 && !goodCovers(single.thisUpdate, single.nextUpdate, at)) return null;
     if (tag === 0) return { status: "good", source: "ocsp" };
-    if (tag === 1) return { status: "revoked", source: "ocsp", revokedAt: null };
+    if (tag === 1) return { status: "revoked", source: "ocsp", revokedAt: ocspRevocationTime(st) };
     return { status: "unknown", source: "ocsp" };
   } catch {
     return null;
+  }
+}
+
+/** revocationTime de un RevokedInfo ([1] { GeneralizedTime, [0] reason OPTIONAL }), o null si no se puede leer. */
+function ocspRevocationTime(st: any): string | null {
+  try {
+    const t = st?.valueBlock?.value?.[0];
+    const d: Date | undefined = typeof t?.toDate === "function" ? t.toDate() : undefined;
+    return d && !isNaN(d.getTime()) ? d.toISOString() : null;
+  } catch {
+    return null;
+  }
+}
+
+const EKU_OCSP_SIGNING = "1.3.6.1.5.5.7.3.9";
+
+/**
+ * Respondedor delegado (RFC 6960 §4.2.2.2): un certificado incluido en la respuesta, emitido por `issuer`, con EKU
+ * OCSPSigning, vigente cuando se produjo la respuesta, que firma la respuesta; y el CertID tiene que ser de `issuer`.
+ */
+async function verifyDelegatedResponder(basic: pkijs.BasicOCSPResponse, certID: pkijs.CertID, issuer: pkijs.Certificate): Promise<boolean> {
+  try {
+    const alg = HASH_BY_OID[certID.hashAlgorithm.algorithmId];
+    if (!alg) return false;
+    const nameHash = hash(alg, new Uint8Array(issuer.subject.toSchema().toBER(false)));
+    const keyHash = hash(alg, new Uint8Array(issuer.subjectPublicKeyInfo.subjectPublicKey.valueBlock.valueHexView));
+    if (
+      !Buffer.from(certID.issuerNameHash.valueBlock.valueHexView).equals(Buffer.from(nameHash)) ||
+      !Buffer.from(certID.issuerKeyHash.valueBlock.valueHexView).equals(Buffer.from(keyHash))
+    ) {
+      return false;
+    }
+    const producedAt = basic.tbsResponseData.producedAt;
+    const tbs: Uint8Array = (basic.tbsResponseData as any).tbsView ?? new Uint8Array(basic.tbsResponseData.toSchema(true).toBER(false));
+    const engine = pkijs.getCrypto(true);
+    for (const rc of basic.certs ?? []) {
+      const eku = rc.extensions?.find((e) => e.extnID === "2.5.29.37");
+      const purposes: string[] = ((eku?.parsedValue as pkijs.ExtKeyUsage | undefined)?.keyPurposes ?? []).map(String);
+      if (!purposes.includes(EKU_OCSP_SIGNING)) continue;
+      if (producedAt < rc.notBefore.value || producedAt > rc.notAfter.value) continue;
+      if (!(await issuedBy(rc, issuer))) continue;
+      if (await engine.verifyWithPublicKey(toAB(tbs), basic.signature, rc.subjectPublicKeyInfo, basic.signatureAlgorithm)) return true;
+    }
+    return false;
+  } catch {
+    return false;
   }
 }
 

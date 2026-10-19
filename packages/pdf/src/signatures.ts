@@ -26,13 +26,16 @@ function str(o: unknown): string | null {
   return null;
 }
 
-function collectFields(doc: PDFDocument, arr: PDFArray | undefined, out: PDFDict[]) {
+// Cada campo una sola vez: un /Kids que vuelve a un ancestro (ciclo) o que repite el mismo hijo en varios niveles
+// (2^n caminos) colgaba la validación pública con un PDF chico.
+function collectFields(doc: PDFDocument, arr: PDFArray | undefined, out: PDFDict[], seen = new Set<PDFDict>()) {
   if (!arr) return;
   for (const r of arr.asArray()) {
     const f = doc.context.lookup(r);
-    if (!(f instanceof PDFDict)) continue;
+    if (!(f instanceof PDFDict) || seen.has(f)) continue;
+    seen.add(f);
     out.push(f);
-    collectFields(doc, f.lookupMaybe(PDFName.of("Kids"), PDFArray), out);
+    collectFields(doc, f.lookupMaybe(PDFName.of("Kids"), PDFArray), out, seen);
   }
 }
 

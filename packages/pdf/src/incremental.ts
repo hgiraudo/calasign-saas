@@ -2,7 +2,7 @@
 // final del archivo, con su propia tabla xref y /Prev al trailer anterior. Los bytes ya firmados no se
 // tocan, así que las firmas anteriores siguen siendo válidas. Es la base de B-LT (DSS), B-LTA (sello de
 // documento) y de una segunda firma (sello de empresa).
-import { PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFObject, PDFRef, PDFString } from "pdf-lib";
+import { PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFObject, PDFRawStream, PDFRef, PDFString, decodePDFRawStream } from "pdf-lib";
 import { DEFAULT_BYTE_RANGE_PLACEHOLDER, SUBFILTER_ETSI_CADES_DETACHED, Signer } from "@signpdf/utils";
 import signpdfModule from "@signpdf/signpdf";
 
@@ -231,13 +231,35 @@ export async function addDssIncremental(pdf: Uint8Array, data: DssData): Promise
     const arr = prev?.lookupMaybe(PDFName.of(key), PDFArray);
     return arr ? arr.asArray() : [];
   };
-  const streams = (list: Uint8Array[]) => list.map((b) => u.add(ctx.flateStream(b)));
+  // Lo que ya está en el DSS no se vuelve a agregar: cada renovación de archivo (B-LTA) sumaba otra copia de toda la
+  // cadena.
+  const already = (refs: PDFObject[]) => {
+    const keys = new Set<string>();
+    for (const r of refs) {
+      try {
+        const s = ctx.lookup(r);
+        if (s instanceof PDFRawStream) keys.add(Buffer.from(decodePDFRawStream(s).decode()).toString("base64"));
+      } catch {
+        // stream ilegible: no cuenta como presente
+      }
+    }
+    return keys;
+  };
+  const section = (key: string, list: Uint8Array[]) => {
+    const prevRefs = existing(key);
+    const have = already(prevRefs);
+    const fresh = dedupe(list).filter((b) => !have.has(Buffer.from(b).toString("base64")));
+    return [...prevRefs, ...fresh.map((b) => u.add(ctx.flateStream(b)))];
+  };
   const dss = ctx.obj({
     Type: "DSS",
-    Certs: [...existing("Certs"), ...streams(dedupe(data.certs))],
-    OCSPs: [...existing("OCSPs"), ...streams(dedupe(data.ocsps))],
-    CRLs: [...existing("CRLs"), ...streams(dedupe(data.crls))],
-  });
+    Certs: section("Certs", data.certs),
+    OCSPs: section("OCSPs", data.ocsps),
+    CRLs: section("CRLs", data.crls),
+  }) as PDFDict;
+  // Los datos por firma (/VRI) de un DSS anterior se conservan.
+  const vri = prev?.get(PDFName.of("VRI"));
+  if (vri) dss.set(PDFName.of("VRI"), vri);
   catalog.set(PDFName.of("DSS"), u.add(dss));
   u.touch(u.catalogRef);
   return u.serialize();

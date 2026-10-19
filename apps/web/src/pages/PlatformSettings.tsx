@@ -18,7 +18,7 @@ import {
   type StorageProviderInfo,
 } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
-import { formatDateTime, useI18n } from "../lib/i18n";
+import { formatDateTime, useI18n, confirmAction } from "../lib/i18n";
 import { usePlatformText } from "../lib/i18n-platform";
 import { ErrorBox, Spinner } from "../components/ui";
 import { useAccess } from "../lib/access";
@@ -262,6 +262,7 @@ function OAuthAppsAdmin() {
                     type="button"
                     className="btn btn-sm"
                     onClick={() =>
+                      confirmAction() &&
                       act(async () => {
                         const r = await api<CreateOAuthAppResponse>(`/v1/oauth/apps/${a.id}/rotate-secret`, { method: "POST" });
                         setShown({ clientId: r.app.clientId, secret: r.clientSecret });
@@ -272,7 +273,7 @@ function OAuthAppsAdmin() {
                   </button>
                 )}
                 <span className="grow" />
-                <button type="button" className="btn btn-sm btn-danger" onClick={() => act(() => api(`/v1/oauth/apps/${a.id}`, { method: "DELETE" }))}>
+                <button type="button" className="btn btn-sm btn-danger" onClick={() => confirmAction() && act(() => api(`/v1/oauth/apps/${a.id}`, { method: "DELETE" }))}>
                   {p("oauth.revoke")}
                 </button>
               </div>
@@ -315,7 +316,7 @@ function ConnectedApps() {
               </span>
               <span className="small">{c.scopes.map((s) => p(`scope.${s}`)).join(" · ")}</span>
             </div>
-            <button type="button" className="btn btn-sm btn-danger" onClick={() => act(() => api(`/v1/oauth/connected-apps/${c.clientId}`, { method: "DELETE" }))}>
+            <button type="button" className="btn btn-sm btn-danger" onClick={() => confirmAction() && act(() => api(`/v1/oauth/connected-apps/${c.clientId}`, { method: "DELETE" }))}>
               {p("oauth.disconnect")}
             </button>
           </div>
@@ -448,7 +449,7 @@ export function NotificationIntegrationsPage() {
                 {it.active ? p("common.inactive") : p("common.active")}
               </button>
               <span className="grow" />
-              <button type="button" className="btn btn-sm btn-danger" onClick={() => act(() => api(`/v1/notification-integrations/${it.id}`, { method: "DELETE" }))}>
+              <button type="button" className="btn btn-sm btn-danger" onClick={() => confirmAction() && act(() => api(`/v1/notification-integrations/${it.id}`, { method: "DELETE" }))}>
                 {p("common.delete")}
               </button>
             </div>
@@ -671,7 +672,7 @@ export function StoragePage() {
                 {c.active ? p("common.inactive") : p("common.active")}
               </button>
               <span className="grow" />
-              <button type="button" className="btn btn-sm btn-danger" onClick={() => act(() => api(`/v1/storage/connections/${c.id}`, { method: "DELETE" }))}>
+              <button type="button" className="btn btn-sm btn-danger" onClick={() => confirmAction() && act(() => api(`/v1/storage/connections/${c.id}`, { method: "DELETE" }))}>
                 {p("common.delete")}
               </button>
             </div>
@@ -807,7 +808,7 @@ export function CustomDomainPage() {
                   </button>
                 )}
                 <span className="grow" />
-                <button type="button" className="btn btn-sm btn-danger" onClick={() => act(() => api("/v1/domains", { method: "DELETE" }))}>
+                <button type="button" className="btn btn-sm btn-danger" onClick={() => confirmAction() && act(() => api("/v1/domains", { method: "DELETE" }))}>
                   {p("dom.remove")}
                 </button>
               </div>

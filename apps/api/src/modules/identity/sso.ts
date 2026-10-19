@@ -306,9 +306,11 @@ function samlFor(db: Db, slug: string, c: SsoRow): SAML {
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-function safeRedirectPath(p: unknown): string {
+export function safeRedirectPath(p: unknown): string {
   const s = typeof p === "string" ? p : "";
-  return s.startsWith("/") && !s.startsWith("//") && !s.startsWith("/\\") ? s.slice(0, 500) : "/app";
+  // Sin espacios, controles ni barras invertidas: el navegador quita tabs/saltos y trata "\" como "/", así que
+  // "/\t/evil.com" o "/\\evil.com" terminaban en "//evil.com" (redirección abierta después del ingreso).
+  return s.startsWith("/") && !s.startsWith("//") && !/[\s\\\x00-\x1f\x7f]/.test(s) ? s.slice(0, 500) : "/app";
 }
 
 export async function ssoRoutes(app: FastifyInstance, s: Services) {

@@ -111,10 +111,11 @@ export async function collectValidationData(pdf: Uint8Array, opts: Pick<LtvOptio
 
 /** Lleva un PDF ya firmado (B-T) a B-LT o B-LTA. */
 export async function applyLtv(pdf: Uint8Array, opts: LtvOptions): Promise<{ pdf: Uint8Array; report: LtvReport }> {
+  // Antes de las consultas OCSP/CRL: sin TSA no hay B-LTA posible.
+  if (opts.level === "B-LTA" && !opts.tsaUrl) throw new Error("B-LTA requiere una TSA");
   const { data, missing } = await collectValidationData(pdf, opts);
   let out = await addDssIncremental(pdf, data);
   if (opts.level === "B-LTA") {
-    if (!opts.tsaUrl) throw new Error("B-LTA requiere una TSA");
     out = await addSignatureIncremental(out, {
       type: "DocTimeStamp",
       fieldName: `DocTimeStamp${Date.now()}`,

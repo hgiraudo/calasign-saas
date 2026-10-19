@@ -20,6 +20,7 @@ const es = {
   "common.error": "Ocurrió un error",
   "common.language": "Idioma",
   "common.none": "—",
+  "common.confirmAction": "¿Seguro? Esta acción no se puede deshacer.",
 
   "nav.envelopes": "Sobres",
   "nav.apiKeys": "API keys",
@@ -224,6 +225,7 @@ const ptBR: Dict = {
   "common.error": "Ocorreu um erro",
   "common.language": "Idioma",
   "common.none": "—",
+  "common.confirmAction": "Tem certeza? Esta ação não pode ser desfeita.",
   "nav.envelopes": "Envelopes",
   "nav.apiKeys": "API keys",
   "nav.mailbox": "Caixa dev",
@@ -414,6 +416,7 @@ const en: Dict = {
   "common.error": "Something went wrong",
   "common.language": "Language",
   "common.none": "—",
+  "common.confirmAction": "Are you sure? This action cannot be undone.",
   "nav.envelopes": "Envelopes",
   "nav.apiKeys": "API keys",
   "nav.mailbox": "Dev mailbox",
@@ -631,6 +634,11 @@ const Ctx = createContext<I18nCtx | null>(null);
 let activeLocale: Locale = "es";
 export function currentLocale(): Locale {
   return activeLocale;
+}
+
+/** Confirmación para acciones destructivas que no tienen modal propio (revocar, rotar, borrar). */
+export function confirmAction(): boolean {
+  return typeof window === "undefined" || window.confirm(DICTS[activeLocale]["common.confirmAction"]);
 }
 
 export function I18nProvider({ children }: { children: ReactNode }) {

@@ -47,6 +47,8 @@ export function EnvelopeListPage() {
     setLoadingMore(false);
     setLoading(true);
     setError(null);
+    // El cursor es del filtro anterior: sin esto, "cargar más" podía pedir la página siguiente de la lista vieja.
+    setCursor(null);
     load(null, ac.signal)
       .then((r) => {
         setItems(r.items);
@@ -55,7 +57,8 @@ export function EnvelopeListPage() {
       .catch((e) => {
         if ((e as Error).name !== "AbortError") setError(errorText(e));
       })
-      .finally(() => setLoading(false));
+      // Una carga abortada (cambio de filtro) no apaga el spinner de la carga nueva, que sigue en curso.
+      .finally(() => !ac.signal.aborted && setLoading(false));
     return () => ac.abort();
   }, [load]);
 

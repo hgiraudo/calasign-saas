@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import type { ApiKey, CreateApiKeyResponse } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
-import { formatDateTime, useI18n } from "../lib/i18n";
+import { formatDateTime, useI18n, confirmAction } from "../lib/i18n";
 import { ErrorBox, Spinner } from "../components/ui";
 import { useRoleLabel, useTeamsText } from "../lib/i18n-teams";
 
@@ -71,6 +71,7 @@ export function ApiKeysPage() {
   };
 
   const revoke = async (id: string) => {
+    if (!confirmAction()) return;
     setError(null);
     try {
       await api(`/v1/api-keys/${id}`, { method: "DELETE" });

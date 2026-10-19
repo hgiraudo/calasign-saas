@@ -168,6 +168,10 @@ class CalaSign:
             # Igual que en `request`: quien captura CalaSignError para los errores de red no recibe un URLError suelto
             # cuando el que falla es el pedido del token (el primero de cada cliente, o el refresh tras un 401).
             raise CalaSignError(f"Error de red al pedir el token OAuth: {e}", 0, "network_error") from None
+        except ValueError:
+            raise CalaSignError("La respuesta del token OAuth no es JSON válido", 0, "oauth_error") from None
+        if not isinstance(body, dict) or not body.get("access_token"):
+            raise CalaSignError("La respuesta del token OAuth no trae access_token", 0, "oauth_error")
         self._token = _Token(body["access_token"], time.time() + float(body.get("expires_in", 3600)))
         return self._token.value
 
@@ -212,7 +216,12 @@ class CalaSign:
                     payload = res.read()
                     if raw:
                         return payload
+                    status = res.status
+                try:
                     return json.loads(payload) if payload else None
+                except ValueError:
+                    # Respuesta 2xx que no es JSON (un proxy, una página de error): CalaSignError, no un JSONDecodeError suelto.
+                    raise CalaSignError("La respuesta de la API no es JSON válido", status, "invalid_response") from None
             except urllib.error.HTTPError as e:
                 status = e.code
                 body = _json_or_empty(e.read())

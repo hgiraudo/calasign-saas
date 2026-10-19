@@ -53,7 +53,13 @@ export async function api(path, o = {}) {
     if (e instanceof ApiError) throw e;
     throw new ApiError(0, "network", String(e?.message ?? e));
   }
-  const text = await res.text();
+  let text;
+  try {
+    text = await res.text();
+  } catch (e) {
+    // Corte a mitad del cuerpo: error de red como los demás (no un TypeError suelto).
+    throw new ApiError(0, "network", String(e?.message ?? e));
+  }
   let body = null;
   try {
     body = text ? JSON.parse(text) : null;

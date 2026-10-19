@@ -272,7 +272,8 @@ export async function markPaymentFailed(db: Db, paymentId: string, reason: strin
     if (!p0) return;
     await lockEnvelope(t, p0.tenant_id, p0.envelope_id);
     const p = await t.one<any>(`SELECT * FROM envelope_payments WHERE id = $1 FOR UPDATE`, [paymentId]);
-    if (p.status === "paid" || p.status === "failed") return;
+    // Ya reembolsado: un rechazo tardío de otro intento no lo devuelve a "pending" (como en markPaymentPaid).
+    if (p.status === "paid" || p.status === "refunded") return;
     // Vuelve a "pending": el firmante puede intentar de nuevo.
     await t.query(`UPDATE envelope_payments SET status = 'pending', updated_at = now() WHERE id = $1`, [p.id]);
     await appendEvent(t, {

@@ -59,7 +59,8 @@ export function XmlSignPage() {
     a.href = url;
     a.download = `firmado-${profile}.xml`;
     a.click();
-    URL.revokeObjectURL(url);
+    // Revocar en el mismo tick puede cancelar la descarga (Safari/Firefox): se libera después, como en Documents.
+    window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
   };
 
   return (

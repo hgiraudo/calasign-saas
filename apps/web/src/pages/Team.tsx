@@ -12,7 +12,7 @@ import {
 import { api, errorText } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useAccess } from "../lib/access";
-import { formatDateTime, useI18n } from "../lib/i18n";
+import { formatDateTime, useI18n, confirmAction } from "../lib/i18n";
 import { useRoleLabel, useTeamsText } from "../lib/i18n-teams";
 import { ErrorBox, Modal, Spinner } from "../components/ui";
 
@@ -127,7 +127,8 @@ function MembersTab({ roles, manage }: { roles: RolesResponse | null; manage: bo
     }
   };
 
-  if (!items) return <Spinner />;
+  // Si la carga falla, se muestra el error (antes quedaba el spinner para siempre y el error nunca se veía).
+  if (!items) return error ? <ErrorBox error={error} /> : <Spinner />;
   const isOwner = access?.role === "owner";
   return (
     <>
@@ -238,6 +239,7 @@ function InvitationsTab({ roles }: { roles: RolesResponse | null }) {
   };
 
   const revoke = async (id: string) => {
+    if (!confirmAction()) return;
     setError(null);
     try {
       await api(`/v1/invitations/${id}`, { method: "DELETE" });
@@ -365,6 +367,7 @@ function RolesTab({ roles, reload }: { roles: RolesResponse | null; reload: () =
   };
 
   const remove = async (id: string) => {
+    if (!confirmAction()) return;
     setError(null);
     try {
       await api(`/v1/roles/${id}`, { method: "DELETE" });
@@ -503,6 +506,7 @@ function GroupsTab({ manage }: { manage: boolean }) {
   };
 
   const remove = async (id: string) => {
+    if (!confirmAction()) return;
     setError(null);
     try {
       await api(`/v1/groups/${id}`, { method: "DELETE" });
@@ -512,7 +516,7 @@ function GroupsTab({ manage }: { manage: boolean }) {
     }
   };
 
-  if (!groups) return <Spinner />;
+  if (!groups) return error ? <ErrorBox error={error} /> : <Spinner />;
   return (
     <div className="stack">
       {manage && (

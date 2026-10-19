@@ -32,23 +32,33 @@ export function BulkListPage() {
   const [items, setItems] = useState<BulkSend[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let alive = true;
-    const load = () =>
+  const alive = useRef(true);
+  const load = useCallback(
+    () =>
       api<{ items: BulkSend[] }>("/v1/bulk-sends")
         .then((r) => {
-          if (!alive) return;
+          if (!alive.current) return;
           setItems(r.items);
           setError(null); // un corte de red pasajero no deja el error a la vista mientras el refresco ya responde
         })
-        .catch((e) => alive && setError(errorText(e)));
+        .catch((e) => alive.current && setError(errorText(e))),
+    [],
+  );
+  useEffect(() => {
+    alive.current = true;
     void load();
-    const timer = window.setInterval(load, 4000);
     return () => {
-      alive = false;
-      window.clearInterval(timer);
+      alive.current = false;
     };
-  }, []);
+  }, [load]);
+  // Solo se refresca mientras haya envíos en cola o en curso (antes pedía la lista cada 4 s para siempre). Si la carga
+  // inicial falló, también se reintenta.
+  const active = items === null || items.some((b) => b.status === "queued" || b.status === "running");
+  useEffect(() => {
+    if (!active) return;
+    const timer = window.setInterval(load, 4000);
+    return () => window.clearInterval(timer);
+  }, [active, load]);
 
   return (
     <div className="page">

@@ -15,7 +15,7 @@ import {
   type TemplateSummary,
 } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
-import { formatDateTime, useI18n } from "../lib/i18n";
+import { formatDateTime, useI18n, confirmAction } from "../lib/i18n";
 import { useCrmText } from "../lib/i18n-crm";
 import { ErrorBox, Spinner } from "../components/ui";
 
@@ -220,7 +220,7 @@ export function CrmSettingsPage() {
                 <button type="button" className="btn btn-sm" onClick={() => act(() => api(`/v1/crm/connections/${c.id}`, { method: "PATCH", body: { active: !c.active } }))}>
                   {c.active ? t("inactive") : t("active")}
                 </button>
-                <button type="button" className="btn btn-sm btn-danger" onClick={() => act(() => api(`/v1/crm/connections/${c.id}`, { method: "DELETE" }))}>
+                <button type="button" className="btn btn-sm btn-danger" onClick={() => confirmAction() && act(() => api(`/v1/crm/connections/${c.id}`, { method: "DELETE" }))}>
                   {t("delete")}
                 </button>
               </div>
@@ -273,7 +273,7 @@ export function CrmSettingsPage() {
                 <button type="button" className="btn btn-sm" onClick={() => setEditing(m)}>
                   {t("edit")}
                 </button>
-                <button type="button" className="btn btn-sm btn-danger" onClick={() => act(() => api(`/v1/crm/mappings/${m.id}`, { method: "DELETE" }))}>
+                <button type="button" className="btn btn-sm btn-danger" onClick={() => confirmAction() && act(() => api(`/v1/crm/mappings/${m.id}`, { method: "DELETE" }))}>
                   {t("delete")}
                 </button>
               </div>

@@ -8,7 +8,7 @@ import {
   type WebhookEndpoint,
 } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
-import { formatDateTime, useI18n } from "../lib/i18n";
+import { formatDateTime, useI18n, confirmAction } from "../lib/i18n";
 import { useIntText } from "../lib/integrations-i18n";
 import { ErrorBox, Spinner } from "../components/ui";
 
@@ -173,7 +173,7 @@ function WebhooksSection() {
                 {open === w.id ? tt("wh.hide") : tt("wh.show")}
               </button>
               <span className="grow" />
-              <button type="button" className="btn btn-sm btn-danger" onClick={() => act(() => api(`/v1/webhooks/${w.id}`, { method: "DELETE" }))}>
+              <button type="button" className="btn btn-sm btn-danger" onClick={() => confirmAction() && act(() => api(`/v1/webhooks/${w.id}`, { method: "DELETE" }))}>
                 {tt("wh.delete")}
               </button>
             </div>

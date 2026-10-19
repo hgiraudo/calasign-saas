@@ -7,7 +7,7 @@ import { api, errorText } from "../lib/api";
 import { usePlatformText } from "../lib/i18n-platform";
 import { ErrorBox, LocaleSwitcher, Logo, Spinner } from "../components/ui";
 
-const PARAMS = ["response_type", "client_id", "redirect_uri", "scope", "state", "code_challenge", "code_challenge_method"] as const;
+const PARAMS = ["response_type", "client_id", "redirect_uri", "scope", "state", "code_challenge", "code_challenge_method", "resource"] as const;
 
 export function OAuthConsentPage() {
   const p = usePlatformText();
@@ -73,7 +73,13 @@ export function OAuthConsentPage() {
                 <p style={{ fontSize: "1.05rem", margin: 0 }}>
                   <strong>{p("consent.wants", { app: info.client.name })}</strong>
                 </p>
-                <span className="muted small">{p("consent.by", { org: info.client.organizationName })}</span>
+                {info.client.unverified ? (
+                  <p className="alert alert-warn small" role="note" style={{ margin: 0 }}>
+                    ⚠ {p("consent.unverified")}
+                  </p>
+                ) : (
+                  <span className="muted small">{p("consent.by", { org: info.client.organizationName })}</span>
+                )}
                 {info.client.description && <p className="small">{info.client.description}</p>}
                 <p className="small">{p("consent.as", { user: `${info.user.name} (${info.user.email})`, org: info.organization.name })}</p>
                 <div className="stack" style={{ gap: 6 }}>

@@ -5,6 +5,10 @@
 //   GET  /oauth/authorize   pantalla de consentimiento (página de la web, ver apps/web/src/pages/OAuthConsent.tsx)
 //   /v1/oauth/authorize/*   lo que usa esa página (sesión web)
 //   /v1/oauth/apps*         alta y administración de apps (permiso api_keys:manage)
+//   POST /oauth/register    registro dinámico de clientes (RFC 7591) para conectores MCP (Claude, ChatGPT, Claude Code,
+//                           Gemini CLI): la app no es de ninguna organización; la autoriza un usuario y los tokens quedan
+//                           en la organización de ese usuario. Solo authorization_code + PKCE (+ refresh), nunca
+//                           client_credentials (sería acceso a una organización sin ningún usuario detrás).
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import {
@@ -12,6 +16,7 @@ import {
   AuthorizeRequest,
   BUILTIN_ROLE_PERMISSIONS,
   CreateOAuthAppInput,
+  MCP_DEFAULT_SCOPES,
   OAUTH_SCOPES,
   UpdateOAuthAppInput,
   type AuthorizeInfo,
@@ -20,6 +25,7 @@ import {
   type OAuthScope,
   type Permission,
 } from "@calasign/shared";
+import { config } from "../config";
 import type { Db } from "../infra/db";
 import { AppError, badRequest, notFound } from "../lib/errors";
 import { iso, randomToken, sha256Hex, uuidv7 } from "../lib/util";
@@ -167,16 +173,180 @@ async function validateAuthorize(db: Db, raw: unknown): Promise<ValidatedAuthori
   const client = await db.one<any>(`SELECT * FROM oauth_clients WHERE client_id = $1 AND revoked_at IS NULL`, [q.client_id]);
   if (!client) throw badRequest("invalid_client", "Aplicación desconocida");
   if (!client.grant_types.includes("authorization_code")) throw badRequest("unauthorized_client", "La aplicación no admite autorización de usuarios");
-  // La URI de redirección tiene que coincidir exactamente con una registrada (sin comodines).
-  if (!client.redirect_uris.includes(q.redirect_uri)) throw badRequest("invalid_redirect_uri", "URI de redirección no registrada para esta aplicación");
+  // La URI de redirección tiene que coincidir exactamente con una registrada (sin comodines; en loopback, cualquier puerto).
+  if (!redirectUriAllowed(client.redirect_uris, q.redirect_uri)) throw badRequest("invalid_redirect_uri", "URI de redirección no registrada para esta aplicación");
   // Apps registradas antes de que el alta rechazara estos esquemas: la pantalla de consentimiento navegaría a la URI
   // (también al rechazar) y `javascript:` ejecutaría código en el origen de CalaSign.
   if (!isSafeRedirectUri(q.redirect_uri)) throw badRequest("invalid_redirect_uri", "Esquema de URI de redirección no permitido");
+  if (q.resource !== undefined && !isValidResource(q.resource)) throw badRequest("invalid_target", `Recurso desconocido: usá ${config.appUrl}/mcp`);
   const requested = parseScopes(q.scope);
-  const scopes = (requested.length ? requested : client.scopes) as OAuthScope[];
-  const unknown = scopes.filter((s) => !(OAUTH_SCOPES as readonly string[]).includes(s) || !client.scopes.includes(s));
-  if (unknown.length) throw badRequest("invalid_scope", `Scopes no permitidos para esta aplicación: ${unknown.join(", ")}`);
+  let scopes: OAuthScope[];
+  if (client.registration === "dynamic") {
+    // Conectores MCP: piden lo que dicen los metadatos (a veces también openid/profile/email, o todos los scopes del
+    // servidor). Se concede lo pedido que la app tiene habilitado (RFC 6749 §3.3 permite conceder menos; la respuesta
+    // del token dice qué se concedió); si no queda nada, lo que usan las herramientas MCP.
+    scopes = requested.filter((s) => client.scopes.includes(s)) as OAuthScope[];
+    if (!scopes.length) scopes = MCP_DEFAULT_SCOPES.filter((s) => client.scopes.includes(s));
+    // Registrada con refresh_token: sin offline_access el conector pediría autorizar de nuevo cada hora.
+    if (client.grant_types.includes("refresh_token") && client.scopes.includes("offline_access") && !scopes.includes("offline_access")) scopes.push("offline_access");
+    if (!scopes.length) throw badRequest("invalid_scope", "La aplicación no tiene scopes habilitados");
+  } else {
+    scopes = (requested.length ? requested : client.scopes) as OAuthScope[];
+    const unknown = scopes.filter((s) => !(OAUTH_SCOPES as readonly string[]).includes(s) || !client.scopes.includes(s));
+    if (unknown.length) throw badRequest("invalid_scope", `Scopes no permitidos para esta aplicación: ${unknown.join(", ")}`);
+  }
   return { client, scopes, redirectUri: q.redirect_uri, req: q };
+}
+
+/** RFC 8707: el único recurso protegido es la API/servidor MCP de esta instalación. */
+export function isValidResource(resource: string) {
+  const base = config.appUrl.replace(/\/$/, "");
+  return [base, `${base}/`, `${base}/mcp`, `${base}/mcp/`].includes(resource);
+}
+
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "[::1]", "localhost"]);
+
+function isLoopbackHttp(u: URL) {
+  return u.protocol === "http:" && LOOPBACK_HOSTS.has(u.hostname);
+}
+
+/**
+ * La URI pedida coincide exactamente con una registrada. Excepción de RFC 8252 §7.3: para http en loopback
+ * (127.0.0.1, [::1], localhost) el puerto puede ser cualquiera, porque las apps de escritorio y las CLI (Claude Code,
+ * Gemini CLI) escuchan en un puerto libre que eligen en el momento. Host, ruta y query tienen que coincidir igual.
+ */
+export function redirectUriAllowed(registered: readonly string[], uri: string): boolean {
+  if (registered.includes(uri)) return true;
+  let u: URL;
+  try {
+    u = new URL(uri);
+  } catch {
+    return false;
+  }
+  if (!isLoopbackHttp(u) || u.username || u.password || u.hash) return false;
+  return registered.some((r) => {
+    try {
+      const x = new URL(r);
+      return isLoopbackHttp(x) && x.hostname === u.hostname && x.pathname === u.pathname && x.search === u.search;
+    } catch {
+      return false;
+    }
+  });
+}
+
+// ───────────────────────────── Registro dinámico (RFC 7591) ─────────────────────────────
+
+const DCR_GRANT_TYPES = ["authorization_code", "refresh_token"];
+const DCR_AUTH_METHODS = ["none", "client_secret_post", "client_secret_basic"] as const;
+
+class RegistrationError extends Error {
+  constructor(
+    readonly error: "invalid_redirect_uri" | "invalid_client_metadata",
+    readonly description: string,
+  ) {
+    super(description);
+  }
+}
+
+/** Solo https, o http en loopback (apps de escritorio y CLI). Sin esquemas propios, credenciales ni fragmento. */
+function checkDcrRedirectUri(raw: unknown): string {
+  if (typeof raw !== "string" || !raw.trim() || raw.length > 500) throw new RegistrationError("invalid_redirect_uri", "Cada redirect_uri tiene que ser una URL de hasta 500 caracteres");
+  const uri = raw.trim();
+  let u: URL;
+  try {
+    u = new URL(uri);
+  } catch {
+    throw new RegistrationError("invalid_redirect_uri", `redirect_uri inválida: ${uri.slice(0, 100)}`);
+  }
+  if (uri.includes("#")) throw new RegistrationError("invalid_redirect_uri", "La redirect_uri no puede tener fragmento (#)");
+  if (u.username || u.password) throw new RegistrationError("invalid_redirect_uri", "La redirect_uri no puede llevar credenciales");
+  if (u.protocol !== "https:" && !isLoopbackHttp(u)) {
+    throw new RegistrationError("invalid_redirect_uri", "La redirect_uri tiene que ser https, o http en loopback (127.0.0.1, [::1] o localhost)");
+  }
+  return uri;
+}
+
+function optionalHttpsUrl(raw: unknown, name: string): string | null {
+  if (raw === undefined || raw === null || raw === "") return null;
+  if (typeof raw !== "string" || raw.length > 500) throw new RegistrationError("invalid_client_metadata", `${name} inválida`);
+  try {
+    if (new URL(raw).protocol === "https:") return raw;
+  } catch {
+    /* cae al error */
+  }
+  throw new RegistrationError("invalid_client_metadata", `${name} tiene que ser una URL https`);
+}
+
+interface DcrMetadata {
+  clientName: string;
+  redirectUris: string[];
+  grantTypes: string[];
+  responseTypes: string[];
+  authMethod: (typeof DCR_AUTH_METHODS)[number];
+  scopes: OAuthScope[];
+  clientUri: string | null;
+  logoUri: string | null;
+}
+
+export function parseDcrMetadata(body: unknown): DcrMetadata {
+  if (!body || typeof body !== "object" || Array.isArray(body)) throw new RegistrationError("invalid_client_metadata", "El cuerpo tiene que ser un objeto JSON");
+  const b = body as Record<string, unknown>;
+  // Sin caracteres de control (el nombre se muestra en la pantalla de consentimiento y en Apps conectadas).
+  const name = typeof b.client_name === "string" ? b.client_name.replace(/[\u0000-\u001f\u007f]/g, " ").trim() : "";
+  if (!name) throw new RegistrationError("invalid_client_metadata", "Falta client_name");
+  if (name.length > 100) throw new RegistrationError("invalid_client_metadata", "client_name admite hasta 100 caracteres");
+  if (!Array.isArray(b.redirect_uris) || b.redirect_uris.length < 1 || b.redirect_uris.length > 10) {
+    throw new RegistrationError("invalid_redirect_uri", "redirect_uris tiene que ser una lista de 1 a 10 URIs");
+  }
+  const redirectUris = [...new Set(b.redirect_uris.map(checkDcrRedirectUri))];
+  const strList = (v: unknown, field: string, def: string[]) => {
+    if (v === undefined || v === null) return def;
+    if (!Array.isArray(v) || v.length === 0 || v.some((x) => typeof x !== "string")) throw new RegistrationError("invalid_client_metadata", `${field} tiene que ser una lista de textos`);
+    return [...new Set(v as string[])];
+  };
+  const grantTypes = strList(b.grant_types, "grant_types", DCR_GRANT_TYPES);
+  const badGrant = grantTypes.filter((g) => !DCR_GRANT_TYPES.includes(g));
+  if (badGrant.length) {
+    throw new RegistrationError("invalid_client_metadata", `grant_types no admitidos en el registro dinámico: ${badGrant.join(", ")} (solo authorization_code y refresh_token)`);
+  }
+  if (!grantTypes.includes("authorization_code")) throw new RegistrationError("invalid_client_metadata", "grant_types tiene que incluir authorization_code");
+  const responseTypes = strList(b.response_types, "response_types", ["code"]);
+  if (responseTypes.some((r) => r !== "code")) throw new RegistrationError("invalid_client_metadata", 'response_types admite solo "code"');
+  const authMethod = (b.token_endpoint_auth_method ?? "none") as DcrMetadata["authMethod"];
+  if (!DCR_AUTH_METHODS.includes(authMethod)) {
+    throw new RegistrationError("invalid_client_metadata", `token_endpoint_auth_method admite ${DCR_AUTH_METHODS.join(", ")}`);
+  }
+  let scopes: OAuthScope[] = [...OAUTH_SCOPES];
+  if (b.scope !== undefined && b.scope !== null && b.scope !== "") {
+    if (typeof b.scope !== "string" || b.scope.length > 1000) throw new RegistrationError("invalid_client_metadata", "scope inválido");
+    const requested = parseScopes(b.scope);
+    const unknown = requested.filter((s) => !(OAUTH_SCOPES as readonly string[]).includes(s));
+    if (unknown.length) throw new RegistrationError("invalid_client_metadata", `Scopes desconocidos: ${unknown.join(", ").slice(0, 200)}`);
+    scopes = requested as OAuthScope[];
+  }
+  return {
+    clientName: name,
+    redirectUris,
+    grantTypes,
+    responseTypes,
+    authMethod,
+    scopes,
+    clientUri: optionalHttpsUrl(b.client_uri, "client_uri"),
+    logoUri: optionalHttpsUrl(b.logo_uri, "logo_uri"),
+  };
+}
+
+/** Barrido: apps registradas dinámicamente que en 30 días nadie autorizó (ni tienen tokens) se borran. */
+export async function purgeUnusedDynamicClients(db: Db): Promise<number> {
+  const rows = await db.query<any>(
+    `DELETE FROM oauth_clients c WHERE c.id IN (
+       SELECT id FROM oauth_clients x WHERE x.registration = 'dynamic' AND x.created_at < now() - interval '30 days'
+          AND NOT EXISTS (SELECT 1 FROM oauth_consents oc WHERE oc.client_id = x.id)
+          AND NOT EXISTS (SELECT 1 FROM oauth_tokens t WHERE t.client_id = x.id)
+        LIMIT 500)
+     RETURNING c.id`,
+  );
+  return rows.length;
 }
 
 /** Esquemas que no son un destino de redirección (ejecutan código o leen archivos locales). Igual que en el alta. */
@@ -209,13 +379,55 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
     const rl = { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } };
     const bodyOf = (req: FastifyRequest) => Object.fromEntries(Object.entries((req.body ?? {}) as Record<string, unknown>).map(([k, v]) => [k, String(v)]));
 
+    // Registro dinámico (RFC 7591). Público por diseño (así se conectan Claude, ChatGPT y las CLI): la app registrada
+    // no puede nada hasta que un usuario la autorice en la pantalla de consentimiento, que la marca "no verificada".
+    o.post("/oauth/register", { config: { rateLimit: { max: 20, timeWindow: "1 hour" } } }, async (req, reply) => {
+      reply.header("cache-control", "no-store").header("pragma", "no-cache");
+      let m: DcrMetadata;
+      try {
+        m = parseDcrMetadata(req.body);
+      } catch (e) {
+        if (e instanceof RegistrationError) return reply.code(400).send({ error: e.error, error_description: e.description });
+        throw e;
+      }
+      const id = uuidv7();
+      const clientId = `csdyn_${randomToken(16)}`;
+      const secret = m.authMethod === "none" ? null : `cssec_${randomToken(32)}`;
+      const row = await s.db.one<any>(
+        `INSERT INTO oauth_clients (id, tenant_id, client_id, secret_hash, secret_prefix, name, redirect_uris, grant_types, scopes,
+                                    registration, client_uri, logo_uri, token_endpoint_auth_method)
+         VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8, 'dynamic', $9, $10, $11) RETURNING created_at`,
+        [id, clientId, secret ? sha256Hex(secret) : null, secret ? secret.slice(0, 12) : null, m.clientName, m.redirectUris, m.grantTypes, m.scopes, m.clientUri, m.logoUri, m.authMethod],
+      );
+      req.log.info({ clientId, name: m.clientName, redirectUris: m.redirectUris }, "app OAuth registrada dinámicamente");
+      return reply.code(201).send({
+        client_id: clientId,
+        ...(secret ? { client_secret: secret } : {}),
+        client_id_issued_at: Math.floor(new Date(row.created_at).getTime() / 1000),
+        client_secret_expires_at: 0,
+        client_name: m.clientName,
+        redirect_uris: m.redirectUris,
+        grant_types: m.grantTypes,
+        response_types: m.responseTypes,
+        token_endpoint_auth_method: m.authMethod,
+        scope: m.scopes.join(" "),
+        ...(m.clientUri ? { client_uri: m.clientUri } : {}),
+        ...(m.logoUri ? { logo_uri: m.logoUri } : {}),
+      });
+    });
+
     o.post("/oauth/token", rl, async (req, reply) => {
       const body = bodyOf(req);
       try {
         const grant = body.grant_type;
+        // RFC 8707: si el cliente dice para qué recurso quiere el token, tiene que ser este servidor.
+        if (body.resource !== undefined && !isValidResource(body.resource)) {
+          throw new OAuthError(400, "invalid_target", `Recurso desconocido: usá ${config.appUrl}/mcp`);
+        }
         if (grant === "client_credentials") {
           const c = await authenticateClient(s.db, req, body, { allowPublic: false });
-          if (!c.grant_types.includes("client_credentials") || !c.service_api_key_id)
+          // Una app registrada dinámicamente nunca: no es de ninguna organización (y el CHECK de la tabla lo asegura).
+          if (c.registration === "dynamic" || !c.tenant_id || !c.grant_types.includes("client_credentials") || !c.service_api_key_id)
             throw new OAuthError(400, "unauthorized_client", "La aplicación no admite client_credentials");
           const requested = parseScopes(body.scope).filter((x) => x !== "offline_access");
           const allowed = (c.scopes as string[]).filter((x) => x !== "offline_access");
@@ -246,7 +458,7 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
             // La app puede haber cambiado desde que se emitió el código (vale 10 minutos): si un administrador le quitó
             // scopes o una URI de redirección (p. ej. una comprometida), el PATCH revoca los tokens vigentes, pero un
             // código sin canjear seguía dando tokens con lo quitado.
-            if (!(c.redirect_uris as string[]).includes(code.redirect_uri)) {
+            if (!redirectUriAllowed(c.redirect_uris as string[], code.redirect_uri)) {
               throw new OAuthError(400, "invalid_grant", "La URI de redirección del código ya no está registrada para la aplicación");
             }
             if ((code.scopes as string[]).some((x) => !(c.scopes as string[]).includes(x))) {
@@ -386,12 +598,18 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
     const [user, org, owner, consent] = await Promise.all([
       s.db.one<any>(`SELECT name, email FROM users WHERE id = $1`, [a.userId]),
       s.db.one<any>(`SELECT name FROM tenants WHERE id = $1`, [a.tenantId]),
-      s.db.one<any>(`SELECT name FROM tenants WHERE id = $1`, [v.client.tenant_id]),
+      v.client.tenant_id ? s.db.one<any>(`SELECT name FROM tenants WHERE id = $1`, [v.client.tenant_id]) : null,
       s.db.one<any>(`SELECT scopes FROM oauth_consents WHERE client_id = $1 AND user_id = $2 AND tenant_id = $3`, [v.client.id, a.userId, a.tenantId]),
     ]);
     const granted = new Set<string>(consent?.scopes ?? []);
     const info: AuthorizeInfo = {
-      client: { name: v.client.name, description: v.client.description, organizationName: owner?.name ?? "", clientId: v.client.client_id },
+      client: {
+        name: v.client.name,
+        description: v.client.description,
+        organizationName: owner?.name ?? "",
+        clientId: v.client.client_id,
+        unverified: v.client.registration === "dynamic",
+      },
       scopes: v.scopes.map((sc) => ({ scope: sc, granted: granted.has(sc) })),
       user: { name: user.name, email: user.email },
       organization: { name: org?.name ?? "" },
@@ -407,7 +625,7 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
     const body = AuthorizeDecision.parse(req.body);
     const v = await validateAuthorize(s.db, body);
     if (!body.approve) {
-      return { redirectTo: withParams(v.redirectUri, { error: "access_denied", error_description: "El usuario no autorizó la aplicación", state: v.req.state }) };
+      return { redirectTo: withParams(v.redirectUri, { error: "access_denied", error_description: "El usuario no autorizó la aplicación", state: v.req.state, iss: config.appUrl }) };
     }
     // Cómo se autenticó la sesión que autoriza: los tokens lo heredan y valen solo mientras esa sesión valdría
     // (p. ej. con "SSO obligatorio", un token autorizado con contraseña deja de valer).
@@ -425,8 +643,13 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
         [v.client.id, a.userId, a.tenantId, v.scopes],
       );
     });
-    await auditFromRequest(s.db, req, a, "oauth.authorized", { targetType: "oauth_app", targetId: v.client.client_id, data: { app: v.client.name, scopes: v.scopes } });
-    return { redirectTo: withParams(v.redirectUri, { code, state: v.req.state }) };
+    await auditFromRequest(s.db, req, a, "oauth.authorized", {
+      targetType: "oauth_app",
+      targetId: v.client.client_id,
+      data: { app: v.client.name, scopes: v.scopes, ...(v.client.registration === "dynamic" ? { unverified: true, redirectUri: v.redirectUri } : {}) },
+    });
+    // `iss` (RFC 9207): protege a los clientes con varios servidores de autorización contra la confusión de emisor.
+    return { redirectTo: withParams(v.redirectUri, { code, state: v.req.state, iss: config.appUrl }) };
   });
 
   // Apps que el usuario autorizó (para revocarlas desde Seguridad / Apps conectadas).
@@ -434,12 +657,19 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
     const a = req.auth;
     requireUserSession(a);
     const rows = await s.db.query<any>(
-      `SELECT c.client_id, c.name, t.name AS org, oc.scopes, oc.updated_at
-         FROM oauth_consents oc JOIN oauth_clients c ON c.id = oc.client_id JOIN tenants t ON t.id = c.tenant_id
+      `SELECT c.client_id, c.name, c.registration, t.name AS org, oc.scopes, oc.updated_at
+         FROM oauth_consents oc JOIN oauth_clients c ON c.id = oc.client_id LEFT JOIN tenants t ON t.id = c.tenant_id
         WHERE oc.user_id = $1 AND oc.tenant_id = $2 AND c.revoked_at IS NULL ORDER BY oc.updated_at DESC`,
       [a.userId, a.tenantId],
     );
-    const items: ConnectedApp[] = rows.map((r) => ({ clientId: r.client_id, name: r.name, organizationName: r.org, scopes: r.scopes, authorizedAt: iso(r.updated_at)! }));
+    const items: ConnectedApp[] = rows.map((r) => ({
+      clientId: r.client_id,
+      name: r.name,
+      organizationName: r.org ?? "",
+      scopes: r.scopes,
+      authorizedAt: iso(r.updated_at)!,
+      unverified: r.registration === "dynamic",
+    }));
     return { items };
   });
 

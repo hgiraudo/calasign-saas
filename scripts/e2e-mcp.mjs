@@ -2,8 +2,11 @@
 // Prueba de punta a punta del servidor MCP (agentes de IA) con el cliente oficial del SDK:
 // token OAuth (client credentials), listar herramientas, crear desde plantilla, enviar con confirmación,
 // estado, URL de descarga; rechazo sin confirm, sin scope y sin credencial; API key; anulación.
+// Conectores (Claude, ChatGPT, Claude Code, Gemini CLI): registro dinámico (RFC 7591), consentimiento + PKCE con la app
+// registrada, loopback con cualquier puerto, resource (RFC 8707), anotaciones de las herramientas, create_envelope desde
+// un PDF, remind_recipients, get_account, client_credentials rechazado, apps conectadas y revocación; CORS.
 // Uso: node scripts/e2e-mcp.mjs [baseUrl]   (requiere el buzón de desarrollo)
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
@@ -34,12 +37,12 @@ async function api(method, path, body, { raw = false, bearer = null } = {}) {
   return text ? JSON.parse(text) : null;
 }
 
-function tinyPdf(label) {
+function tinyPdf(label, extra = "") {
   const objs = [];
   const add = (s) => objs.push(s);
   add("<< /Type /Catalog /Pages 2 0 R >>");
   add("<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
-  const content = `BT /F1 18 Tf 72 760 Td (${label}) Tj ET`;
+  const content = `BT /F1 18 Tf 72 760 Td (${label}) Tj ET` + (extra ? `\nBT /F1 12 Tf 72 200 Td (${extra}) Tj ET` : "");
   add("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>");
   add(`<< /Length ${content.length} >>\nstream\n${content}\nendstream`);
   add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
@@ -218,5 +221,189 @@ await kClient.close();
 const revoked = await fetch(`${BASE}/mcp`, { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer cs_test_inexistente" }, body: "{}" });
 assert(revoked.status === 401, "API key inválida → 401");
 ok("API key como credencial MCP; credencial inválida → 401");
+
+
+// ═════════════════════════ Conectores: registro dinámico (RFC 7591) + authorization_code ═════════════════════════
+const b64url = (b) => b.toString("base64url");
+function pkcePair() {
+  const verifier = b64url(randomBytes(48));
+  return { verifier, challenge: b64url(createHash("sha256").update(verifier).digest()) };
+}
+async function form(path, params, basic) {
+  const h = { "content-type": "application/x-www-form-urlencoded" };
+  if (basic) h.authorization = `Basic ${Buffer.from(`${basic[0]}:${basic[1]}`).toString("base64")}`;
+  const res = await fetch(BASE + path, { method: "POST", headers: h, body: new URLSearchParams(params) });
+  return { status: res.status, body: await res.json().catch(() => null) };
+}
+async function register(meta) {
+  const res = await fetch(`${BASE}/oauth/register`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(meta) });
+  return { status: res.status, body: await res.json(), headers: res.headers };
+}
+
+const asm2 = await api("GET", "/.well-known/oauth-authorization-server");
+assert(asm2.registration_endpoint === `${BASE}/oauth/register`, "registration_endpoint en los metadatos");
+assert(asm2.token_endpoint_auth_methods_supported.includes("none") && asm2.grant_types_supported.includes("refresh_token") && asm2.revocation_endpoint, "métodos y grants");
+const asmMcp = await api("GET", "/.well-known/oauth-authorization-server/mcp");
+assert(asm2.authorization_response_iss_parameter_supported === true, "RFC 9207 anunciado");
+assert(asmMcp.issuer === BASE && asmMcp.registration_endpoint === asm2.registration_endpoint, "metadatos con sufijo /mcp");
+const prmMcp = await api("GET", "/.well-known/oauth-protected-resource/mcp");
+assert(prmMcp.resource === `${BASE}/mcp` && prmMcp.scopes_supported.includes("envelopes:read"), "metadatos del recurso /mcp");
+const noAuth2 = await fetch(`${BASE}/mcp`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+const wwwAuth = noAuth2.headers.get("www-authenticate") ?? "";
+assert(noAuth2.status === 401 && wwwAuth.includes(`resource_metadata="${BASE}/.well-known/oauth-protected-resource/mcp"`) && /scope="/.test(wwwAuth), `WWW-Authenticate: ${wwwAuth}`);
+const pre = await fetch(`${BASE}/oauth/register`, { method: "OPTIONS", headers: { origin: "http://localhost:6274", "access-control-request-method": "POST", "access-control-request-headers": "content-type" } });
+assert(pre.status === 204 && pre.headers.get("access-control-allow-origin") === "*" && /content-type/i.test(pre.headers.get("access-control-allow-headers") ?? ""), "preflight CORS de /oauth/register");
+const preMcp = await fetch(`${BASE}/mcp`, { method: "OPTIONS", headers: { origin: "http://localhost:6274", "access-control-request-method": "POST" } });
+assert(preMcp.status === 204 && /authorization/i.test(preMcp.headers.get("access-control-allow-headers") ?? ""), "preflight CORS de /mcp");
+assert(noAuth2.headers.get("access-control-allow-origin") === "*" && /WWW-Authenticate/i.test(noAuth2.headers.get("access-control-expose-headers") ?? ""), "CORS en el 401 de /mcp");
+ok("metadatos con registration_endpoint (también con sufijo /mcp), WWW-Authenticate con scope y CORS abierto");
+
+// Errores del registro.
+let reg = await register({ client_name: "Malo", redirect_uris: ["http://example.com/cb"] });
+assert(reg.status === 400 && reg.body.error === "invalid_redirect_uri", "http no loopback → invalid_redirect_uri");
+reg = await register({ client_name: "Malo", redirect_uris: ["https://a.example/cb"], grant_types: ["client_credentials"] });
+assert(reg.status === 400 && reg.body.error === "invalid_client_metadata", "client_credentials → invalid_client_metadata");
+reg = await register({ redirect_uris: ["https://a.example/cb"] });
+assert(reg.status === 400 && reg.body.error === "invalid_client_metadata", "sin client_name → invalid_client_metadata");
+
+// Cliente público (como Claude Code / Gemini CLI: loopback) y uno confidencial.
+const connectorName = `Conector IA ${stamp}`;
+reg = await register({ client_name: connectorName, redirect_uris: ["https://claude.ai/api/mcp/auth_callback", "http://127.0.0.1/callback"] });
+assert(reg.status === 201 && reg.body.client_id && !reg.body.client_secret && reg.body.client_secret_expires_at === 0, `registro público: ${JSON.stringify(reg.body)}`);
+assert(reg.body.token_endpoint_auth_method === "none" && reg.body.grant_types.join() === "authorization_code,refresh_token" && reg.body.response_types.join() === "code", "metadatos por defecto");
+assert(typeof reg.body.client_id_issued_at === "number" && typeof reg.body.scope === "string", "client_id_issued_at y scope");
+assert(reg.headers.get("access-control-allow-origin") === "*", "CORS en /oauth/register");
+const DCR = reg.body.client_id;
+const conf = await register({ client_name: `Confidencial ${stamp}`, redirect_uris: ["https://chatgpt.com/connector_platform_oauth_redirect"], token_endpoint_auth_method: "client_secret_post" });
+assert(conf.status === 201 && conf.body.client_secret?.startsWith("cssec_"), "registro confidencial con secreto");
+ok("POST /oauth/register: errores RFC 7591, cliente público y confidencial");
+
+// La app registrada no es de la organización: no aparece en sus apps.
+const tenantApps = await api("GET", "/v1/oauth/apps");
+assert(!tenantApps.items.some((x) => x.clientId === DCR), "la app dinámica no figura entre las apps de la organización");
+
+// client_credentials nunca, ni con secreto.
+let tr = await form("/oauth/token", { grant_type: "client_credentials", client_id: DCR });
+assert(tr.status === 401 && tr.body.error === "invalid_client", `client_credentials con cliente público → invalid_client (${tr.status})`);
+tr = await form("/oauth/token", { grant_type: "client_credentials", client_id: conf.body.client_id, client_secret: conf.body.client_secret });
+assert(tr.status === 400 && tr.body.error === "unauthorized_client", `client_credentials con cliente dinámico confidencial → unauthorized_client (${tr.status})`);
+ok("client_credentials rechazado para apps registradas dinámicamente");
+
+// Autorización: loopback con un puerto cualquiera, resource bueno/malo, sin scope (defaults MCP).
+const LOOP = "http://127.0.0.1:54321/callback";
+const pk = pkcePair();
+const authz = (extra = {}) => ({ response_type: "code", client_id: DCR, redirect_uri: LOOP, state: "st-dcr", code_challenge: pk.challenge, code_challenge_method: "S256", resource: `${BASE}/mcp`, ...extra });
+let res = await api("GET", `/v1/oauth/authorize/info?${new URLSearchParams(authz({ resource: "https://otro.example/mcp" }))}`, undefined, { raw: true });
+assert(res.status === 400 && (await res.json()).error.code === "invalid_target", "resource ajeno → invalid_target");
+res = await api("GET", `/v1/oauth/authorize/info?${new URLSearchParams(authz({ redirect_uri: "http://127.0.0.1:54321/otra" }))}`, undefined, { raw: true });
+assert(res.status === 400, "loopback con otra ruta → rechazada");
+res = await api("GET", `/v1/oauth/authorize/info?${new URLSearchParams(authz({ redirect_uri: "https://claude.ai:8443/api/mcp/auth_callback" }))}`, undefined, { raw: true });
+assert(res.status === 400, "https con otro puerto → rechazada (solo loopback admite cualquier puerto)");
+const dinfo = await api("GET", `/v1/oauth/authorize/info?${new URLSearchParams(authz())}`);
+assert(dinfo.client.unverified === true && dinfo.client.name === connectorName && dinfo.client.organizationName === "", "consentimiento: app no verificada");
+const granted = dinfo.scopes.map((x) => x.scope).sort().join(" ");
+assert(granted === "envelopes:read envelopes:write offline_access templates:read", `scopes por defecto: ${granted}`);
+// Pedir scopes de más (openid, profile) no rompe: se concede lo habilitado.
+const extraInfo = await api("GET", `/v1/oauth/authorize/info?${new URLSearchParams(authz({ scope: "openid profile envelopes:read" }))}`);
+assert(extraInfo.scopes.map((x) => x.scope).sort().join(" ") === "envelopes:read offline_access", `scopes con openid: ${extraInfo.scopes.map((x) => x.scope)}`);
+const dec = await api("POST", "/v1/oauth/authorize/decision", { ...authz(), approve: true });
+const back = new URL(dec.redirectTo);
+assert(back.origin === "http://127.0.0.1:54321" && back.pathname === "/callback" && back.searchParams.get("state") === "st-dcr" && back.searchParams.get("iss") === BASE, `redirección: ${dec.redirectTo}`);
+const dcode = back.searchParams.get("code");
+
+tr = await form("/oauth/token", { grant_type: "authorization_code", code: dcode, redirect_uri: LOOP, code_verifier: pk.verifier, client_id: DCR, resource: "https://otro.example/mcp" });
+assert(tr.status === 400 && tr.body.error === "invalid_target", "token con resource ajeno → invalid_target");
+tr = await form("/oauth/token", { grant_type: "authorization_code", code: dcode, redirect_uri: LOOP, code_verifier: pkcePair().verifier, client_id: DCR, resource: `${BASE}/mcp` });
+assert(tr.status === 400 && tr.body.error === "invalid_grant", "PKCE incorrecto → invalid_grant");
+// El intento anterior no consumió el código (falló antes de marcarlo): vale el canje correcto.
+tr = await form("/oauth/token", { grant_type: "authorization_code", code: dcode, redirect_uri: LOOP, code_verifier: pk.verifier, client_id: DCR, resource: `${BASE}/mcp` });
+assert(tr.status === 200 && tr.body.access_token?.startsWith("csat_") && tr.body.refresh_token?.startsWith("csrt_"), `token: ${JSON.stringify(tr.body)}`);
+let dcrToken = tr.body.access_token;
+tr = await form("/oauth/token", { grant_type: "refresh_token", refresh_token: tr.body.refresh_token, client_id: DCR, resource: `${BASE}/mcp` });
+assert(tr.status === 200 && tr.body.access_token, "refresh_token rota");
+dcrToken = tr.body.access_token;
+ok("consentimiento (no verificada) + PKCE con loopback en otro puerto, resource RFC 8707 y refresh");
+
+// MCP con el token del conector.
+const dc = await mcp(dcrToken, connectorName);
+const { tools: dtools } = await dc.listTools();
+for (const n of ["create_envelope", "remind_recipients", "get_account"]) assert(dtools.some((t) => t.name === n), `herramienta ${n}`);
+for (const t of dtools) {
+  const an = t.annotations ?? {};
+  assert(
+    an.title && typeof an.readOnlyHint === "boolean" && typeof an.destructiveHint === "boolean" && typeof an.idempotentHint === "boolean" && typeof an.openWorldHint === "boolean",
+    `anotaciones de ${t.name}: ${JSON.stringify(an)}`,
+  );
+}
+const byName = Object.fromEntries(dtools.map((t) => [t.name, t.annotations]));
+assert(byName.list_envelopes.readOnlyHint && !byName.send_envelope.readOnlyHint && byName.send_envelope.openWorldHint && byName.void_envelope.destructiveHint, "anotaciones coherentes");
+const acct = parse(await dc.callTool({ name: "get_account", arguments: {} }));
+assert(acct.organization.name === `MCP ${stamp}` && acct.user?.email === `owner-mcp+${stamp}@example.com` && acct.scopes.includes("envelopes:write"), `get_account: ${JSON.stringify(acct)}`);
+assert(typeof acct.usage.envelopesSent === "number" && acct.plan.name, "plan y uso");
+const dl2 = parse(await dc.callTool({ name: "list_envelopes", arguments: { limit: 5 } }));
+assert(Array.isArray(dl2.items) && dl2.items.length > 0, "list_envelopes con el token del conector (sobres de la organización del usuario)");
+ok(`MCP con el token del conector: ${dtools.length} herramientas con anotaciones, get_account y list_envelopes`);
+
+// create_envelope desde un PDF (base64), con ancla y sin campos.
+const pdfB64 = tinyPdf("Contrato desde PDF", "Firma del cliente: ____").toString("base64");
+const ce = parse(
+  await dc.callTool({
+    name: "create_envelope",
+    arguments: {
+      subject: `PDF MCP ${stamp}`,
+      recipients: [
+        { name: `Ana PDF ${stamp}`, email: `ana-pdf+${stamp}@example.com` },
+        { name: "Copia", email: `copia+${stamp}@example.com`, role: "cc" },
+      ],
+      document: { base64: pdfB64, name: "contrato.pdf" },
+      fields: [{ recipientIndex: 0, type: "signature", anchorText: "Firma del cliente:", offsetY: -10 }],
+    },
+  }),
+);
+assert(ce.status === "draft" && ce.documents.length === 1 && ce.recipients.length === 2 && ce.fields === 1 && !ce.note, `create_envelope con ancla: ${JSON.stringify(ce)}`);
+const ce2 = parse(
+  await dc.callTool({
+    name: "create_envelope",
+    arguments: { subject: `PDF MCP 2 ${stamp}`, recipients: [{ name: `Beto PDF ${stamp}`, email: `beto-pdf+${stamp}@example.com` }], document: { base64: pdfB64 } },
+  }),
+);
+assert(ce2.status === "draft" && ce2.fields === 1 && /campo de firma/.test(ce2.note), `create_envelope sin campos: ${JSON.stringify(ce2)}`);
+r = await dc.callTool({ name: "create_envelope", arguments: { subject: "x", recipients: [{ name: "X", email: `x2+${stamp}@example.com` }], document: { base64: Buffer.from("hola").toString("base64") } } });
+assert(r.isError && /no es un PDF/.test(r.content[0].text), `base64 que no es PDF → error: ${r.content[0].text}`);
+r = await dc.callTool({ name: "create_envelope", arguments: { subject: "x", recipients: [{ name: "X", email: `x3+${stamp}@example.com` }], document: { url: "https://127.0.0.1:1/x.pdf" } } });
+assert(r.isError && /No se pudo obtener el PDF/.test(r.content[0].text), `URL interna/inaccesible → error: ${r.content[0].text}`);
+if (!BASE.startsWith("http://")) {
+  r = await dc.callTool({ name: "create_envelope", arguments: { subject: "x", recipients: [{ name: "X", email: `x4+${stamp}@example.com` }], document: { url: "http://example.com/x.pdf" } } });
+  assert(r.isError && /https/.test(r.content[0].text), "URL http (fuera de local) → error");
+}
+const leftovers = await api("GET", `/v1/envelopes?q=${encodeURIComponent("x")}&status=draft&limit=50`);
+assert(!leftovers.items.some((e) => e.subject === "x"), "un create_envelope fallido no deja borradores");
+ok("create_envelope desde PDF: ancla, firma automática al pie, PDF inválido y URL bloqueada");
+
+// remind_recipients: sin confirm no avisa; enviado, con confirm sí.
+await dc.callTool({ name: "send_envelope", arguments: { envelopeId: ce2.id, confirm: true } });
+r = await dc.callTool({ name: "remind_recipients", arguments: { envelopeId: ce2.id } });
+assert(r.isError && /Confirmación requerida/.test(r.content[0].text) && r.content[0].text.includes(`Beto PDF ${stamp}`), "remind sin confirm");
+const rem = parse(await dc.callTool({ name: "remind_recipients", arguments: { envelopeId: ce2.id, confirm: true } }));
+assert(rem.notified === 1, `remind con confirm: ${JSON.stringify(rem)}`);
+const ev3 = await api("GET", `/v1/envelopes/${ce2.id}/events`);
+assert(ev3.items.some((x) => x.type === "envelope.reminded" && x.actorLabel.includes(connectorName)), "evidencia del recordatorio con el conector");
+await dc.close();
+ok("remind_recipients con confirmación y evidencia");
+
+// Apps conectadas: aparece para el usuario que la autorizó y se puede revocar.
+const conn = await api("GET", "/v1/oauth/connected-apps");
+const mine = conn.items.find((x) => x.clientId === DCR);
+assert(mine && mine.unverified === true && mine.name === connectorName && mine.organizationName === "", `apps conectadas: ${JSON.stringify(conn.items)}`);
+const del = await api("DELETE", `/v1/oauth/connected-apps/${DCR}`, undefined, { raw: true });
+assert(del.status === 204, "desconectar");
+const afterRevoke = await fetch(`${BASE}/mcp`, {
+  method: "POST",
+  headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${dcrToken}` },
+  body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+});
+assert(afterRevoke.status === 401, `token revocado → 401 (fue ${afterRevoke.status})`);
+assert(!(await api("GET", "/v1/oauth/connected-apps")).items.some((x) => x.clientId === DCR), "ya no figura como conectada");
+ok("apps conectadas: la app dinámica figura (no verificada) y al desconectarla el token deja de valer");
 
 console.log("\nE2E MCP OK");

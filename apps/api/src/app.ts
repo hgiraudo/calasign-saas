@@ -29,6 +29,7 @@ import { retentionRoutes } from "./modules/retention";
 import { experienceRoutes } from "./modules/experience";
 import { scaleRoutes } from "./modules/scale";
 import { oauthRoutes } from "./modules/oauth";
+import { registerConnectorCors } from "./modules/mcp/cors";
 import { notificationIntegrationRoutes } from "./modules/notify-integrations";
 import { storageRoutes } from "./modules/storage-export";
 import { customDomainRoutes } from "./modules/custom-domains";
@@ -121,6 +122,9 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
     const allowed = new Set([new URL(config.appUrl).origin, `${req.protocol}://${req.headers.host}`]);
     if (!allowed.has(origin)) return reply.code(403).send({ error: { code: "bad_origin", message: "Origen no permitido" } });
   });
+
+  // Conectores MCP desde el navegador: CORS abierto (sin cookies) en los endpoints OAuth/MCP (ver mcp/cors.ts).
+  registerConnectorCors(app);
 
   const services = { db: deps.db, blobs: deps.blobs };
   app.get("/healthz", async () => {

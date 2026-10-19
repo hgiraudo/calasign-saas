@@ -64,9 +64,14 @@ Precios mensuales por moneda en `packages/shared/src/billing.ts` (`PLAN_PRICES`;
 `POST /mcp` — Streamable HTTP, sin sesión, respuestas JSON. Credencial: `Authorization: Bearer <access token OAuth | API key>`.
 Descubrimiento OAuth: `/.well-known/oauth-protected-resource` (RFC 9728) y `/.well-known/oauth-authorization-server` (RFC 8414).
 
-Herramientas: `list_envelopes`, `get_envelope`, `get_signing_status`, `list_templates`, `create_envelope_from_template`
-(crea en borrador), `send_envelope` y `void_envelope` (**exigen `confirm: true`**: sin eso devuelven el resumen para que el
-usuario apruebe), `download_signed_pdf` (URL temporal, `MCP_DOWNLOAD_TTL_SEC`, por defecto 15 min).
+Herramientas: `list_envelopes`, `get_envelope`, `get_signing_status`, `list_templates`, `get_account`,
+`create_envelope_from_template` y `create_envelope` (desde un PDF en base64 o URL https; crean en borrador), `send_envelope`,
+`void_envelope` y `remind_recipients` (**exigen `confirm: true`**: sin eso devuelven el resumen para que el usuario apruebe),
+`download_signed_pdf` (URL temporal, `MCP_DOWNLOAD_TTL_SEC`, por defecto 15 min). Todas llevan anotaciones MCP
+(`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`, `title`).
+
+Conectarlo desde Claude, ChatGPT, Claude Code o Gemini CLI con solo la URL (registro dinámico de clientes OAuth):
+ver [MCP-CONECTORES.md](MCP-CONECTORES.md).
 
 Cada herramienta llama a la API v1 por dentro con la misma credencial: valen los scopes del token, el rol, los límites del
 plan y la misma evidencia; las acciones quedan con actor **«agente IA (&lt;app o key&gt;)»**.

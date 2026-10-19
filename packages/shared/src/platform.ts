@@ -36,6 +36,13 @@ export const OAUTH_SCOPE_PERMISSIONS: Record<OAuthScope, readonly string[]> = {
   offline_access: [],
 };
 
+/**
+ * Scopes que se conceden por defecto a una app registrada dinámicamente (conectores MCP de Claude, ChatGPT, etc.)
+ * cuando no pide ninguno: lo que usan las herramientas del servidor MCP (leer y crear sobres, enviarlos, anularlos,
+ * recordar a los firmantes, leer plantillas) y offline_access para que el conector no pida autorizar cada hora.
+ */
+export const MCP_DEFAULT_SCOPES = ["envelopes:read", "envelopes:write", "templates:read", "offline_access"] as const satisfies readonly OAuthScope[];
+
 export const OAUTH_GRANT_TYPES = ["client_credentials", "authorization_code"] as const;
 export type OAuthGrantType = (typeof OAUTH_GRANT_TYPES)[number];
 
@@ -118,6 +125,8 @@ export const AuthorizeRequest = z.object({
   state: z.string().max(500).optional(),
   code_challenge: z.string().regex(/^[A-Za-z0-9_-]{43,128}$/, "code_challenge inválido"),
   code_challenge_method: z.literal("S256"),
+  /** RFC 8707: el recurso para el que se pide el token (los conectores MCP mandan la URL de /mcp). */
+  resource: z.string().max(500).optional(),
 });
 export type AuthorizeRequest = z.input<typeof AuthorizeRequest>;
 
@@ -125,7 +134,11 @@ export const AuthorizeDecision = AuthorizeRequest.and(z.object({ approve: z.bool
 export type AuthorizeDecision = z.input<typeof AuthorizeDecision>;
 
 export interface AuthorizeInfo {
-  client: { name: string; description: string | null; organizationName: string; clientId: string };
+  /**
+   * `unverified`: la app se registró sola (registro dinámico, RFC 7591; p. ej. un conector de Claude o ChatGPT): no la
+   * publica ninguna organización y CalaSign no verificó quién es (organizationName viene vacío).
+   */
+  client: { name: string; description: string | null; organizationName: string; clientId: string; unverified: boolean };
   scopes: { scope: OAuthScope; granted: boolean }[];
   user: { name: string; email: string };
   organization: { name: string };
@@ -144,6 +157,8 @@ export interface ConnectedApp {
   organizationName: string;
   scopes: OAuthScope[];
   authorizedAt: string;
+  /** Registrada dinámicamente (conector MCP): sin organización que la publique. */
+  unverified: boolean;
 }
 
 // ───────────────────────────── Slack / Microsoft Teams ─────────────────────────────

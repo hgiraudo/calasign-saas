@@ -311,7 +311,7 @@ function ConnectedApps() {
             <div className="stack" style={{ gap: 2 }}>
               <strong>{c.name}</strong>
               <span className="muted small">
-                {c.organizationName} · {formatDateTime(c.authorizedAt, locale)}
+                {c.unverified ? p("consent.unverifiedTag") : c.organizationName} · {formatDateTime(c.authorizedAt, locale)}
               </span>
               <span className="small">{c.scopes.map((s) => p(`scope.${s}`)).join(" · ")}</span>
             </div>

@@ -7,14 +7,15 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
-import { ENVELOPE_STATUSES, OAUTH_SCOPES } from "@calasign/shared";
+import { ENVELOPE_STATUSES, MCP_DEFAULT_SCOPES, OAUTH_SCOPES, RECIPIENT_ROLES } from "@calasign/shared";
 import { config } from "../../config";
 import { notFound } from "../../lib/errors";
 import { randomToken, sha256Hex, uuidv7 } from "../../lib/util";
 import type { Services } from "../context";
 import { sendPdf } from "../envelopes";
 import { isOAuthAccessToken, resolveAccessToken } from "../oauth-tokens";
-import { tenantPlan } from "../billing/plans";
+import { envelopesSentThisMonth, tenantPlan } from "../billing/plans";
+import { safeRequest } from "../webhooks";
 import { agentHeaders } from "./agent-actor";
 
 interface Caller {
@@ -22,6 +23,8 @@ interface Caller {
   tenantId: string;
   name: string;
   ip: string;
+  /** Scopes del token OAuth; null con una API key (vale el rol de la key). */
+  scopes: string[] | null;
 }
 
 class ToolError extends Error {
@@ -34,13 +37,52 @@ class ToolError extends Error {
   }
 }
 
-const SERVER_INFO = { name: "calasign", version: "1.0.0" };
+const SERVER_INFO = { name: "calasign", title: "CalaSign", version: "1.1.0" };
+
+/** Tope del PDF de create_envelope (va en base64 dentro del JSON-RPC o se descarga de una URL). */
+const PDF_MAX_BYTES = Math.min(10 * 1024 * 1024, config.maxUploadBytes);
+
+function decodePdfBase64(b64: string): Buffer {
+  const clean = b64.replace(/^data:application\/pdf;base64,/, "").replace(/\s+/g, "");
+  if (!/^[A-Za-z0-9+/_-]+={0,2}$/.test(clean)) throw new Error("base64 inválido");
+  const buf = Buffer.from(clean, "base64");
+  if (buf.length > PDF_MAX_BYTES) throw new Error(`el PDF supera ${Math.round(PDF_MAX_BYTES / 1048576)} MB`);
+  if (buf.subarray(0, 5).toString("latin1") !== "%PDF-") throw new Error("el contenido no es un PDF");
+  return buf;
+}
+
+/** Descarga un PDF de una URL pública: solo https, sin redirecciones, con tope de tamaño y sin destinos internos (SSRF). */
+async function fetchPdf(url: string): Promise<Buffer> {
+  const u = new URL(url);
+  if (u.protocol !== "https:" && !(config.environment === "local" && u.protocol === "http:")) throw new Error("la URL tiene que ser https");
+  if (u.username || u.password) throw new Error("la URL no puede llevar credenciales");
+  let r;
+  try {
+    r = await safeRequest(url, { method: "GET", headers: { accept: "application/pdf" }, timeoutMs: 20_000, maxBytes: PDF_MAX_BYTES });
+  } catch (e) {
+    throw new Error(/demasiado grande/.test(String((e as Error).message)) ? `el PDF supera ${Math.round(PDF_MAX_BYTES / 1048576)} MB` : `no se pudo descargar (${(e as Error).message})`);
+  }
+  if (r.status >= 300 && r.status < 400) throw new Error("la URL redirige: pasá la URL final del PDF");
+  if (r.status !== 200) throw new Error(`la URL respondió HTTP ${r.status}`);
+  if (r.body.subarray(0, 5).toString("latin1") !== "%PDF-") throw new Error("lo descargado no es un PDF");
+  return r.body;
+}
+
+/** Nombre de archivo seguro para el encabezado multipart. */
+function pdfFileName(raw: string | null | undefined): string {
+  let n = (raw ?? "").normalize("NFKD").replace(/[^\w .()-]/g, "_").trim().slice(0, 150);
+  if (!n) n = "documento";
+  return /\.pdf$/i.test(n) ? n : `${n}.pdf`;
+}
+
+/** Anotaciones de herramienta (MCP): ChatGPT y Claude las usan para decidir cuándo pedir confirmación. */
+const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
 
 const INSTRUCTIONS =
   "CalaSign: firma electrónica. Con estas herramientas podés listar y consultar sobres, crear un sobre a partir de una " +
-  "plantilla, enviarlo y descargar el PDF firmado. Enviar o anular un sobre tiene efecto real (llegan correos/WhatsApp a " +
-  "personas): antes de llamar a send_envelope o void_envelope con confirm=true, mostrale al usuario el resumen y pedile " +
-  "que lo apruebe explícitamente.";
+  "plantilla o de un PDF, enviarlo, recordar a los firmantes y descargar el PDF firmado. Enviar, anular o recordar tiene " +
+  "efecto real (llegan correos/WhatsApp a personas): antes de llamar a send_envelope, void_envelope o remind_recipients " +
+  "con confirm=true, mostrale al usuario el resumen y pedile que lo apruebe explícitamente.";
 
 export async function mcpRoutes(app: FastifyInstance, s: Services) {
   const resourceUrl = `${config.appUrl}/mcp`;
@@ -48,7 +90,11 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
   function unauthorizedReply(reply: FastifyReply, message: string) {
     return reply
       .code(401)
-      .header("www-authenticate", `Bearer resource_metadata="${config.appUrl}/.well-known/oauth-protected-resource"`)
+      // RFC 9728 §5.1: la URL de metadatos del recurso /mcp; `scope`, lo que necesitan las herramientas (MCP 2025-11-25).
+      .header(
+        "www-authenticate",
+        `Bearer resource_metadata="${config.appUrl}/.well-known/oauth-protected-resource/mcp", scope="${MCP_DEFAULT_SCOPES.join(" ")}"`,
+      )
       .send({ error: { code: "unauthorized", message } });
   }
 
@@ -59,22 +105,28 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
     if (isOAuthAccessToken(token)) {
       const o = await resolveAccessToken(s.db, token);
       if (!o) return null;
-      return { authorization: authz, tenantId: o.tenantId, name: o.clientName, ip: req.ip };
+      return { authorization: authz, tenantId: o.tenantId, name: o.clientName, ip: req.ip, scopes: o.scopes };
     }
     const k = await s.db.one<any>(`SELECT tenant_id, name FROM api_keys WHERE key_hash = $1 AND revoked_at IS NULL`, [sha256Hex(token)]);
     if (!k) return null;
-    return { authorization: authz, tenantId: k.tenant_id, name: `MCP · ${k.name}`, ip: req.ip };
+    return { authorization: authz, tenantId: k.tenant_id, name: `MCP · ${k.name}`, ip: req.ip, scopes: null };
   }
 
   /** Llama a la API v1 con la credencial del agente. */
-  async function api(c: Caller, method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE", url: string, body?: unknown): Promise<any> {
+  async function api(
+    c: Caller,
+    method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
+    url: string,
+    body?: unknown,
+    raw?: { payload: Buffer; contentType: string },
+  ): Promise<any> {
     const res = await app.inject({
       method,
       url,
-      payload: body === undefined ? undefined : JSON.stringify(body),
+      payload: raw ? raw.payload : body === undefined ? undefined : JSON.stringify(body),
       headers: {
         authorization: c.authorization,
-        ...(body === undefined ? {} : { "content-type": "application/json" }),
+        ...(raw ? { "content-type": raw.contentType } : body === undefined ? {} : { "content-type": "application/json" }),
         "user-agent": `MCP (${c.name})`,
         ...agentHeaders(c.name),
       },
@@ -152,7 +204,7 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
           limit: z.number().int().min(1).max(50).optional(),
           cursor: z.string().max(500).optional().describe("nextCursor de una página anterior"),
         },
-        annotations: { readOnlyHint: true },
+        annotations: { title: "Listar sobres", ...READ_ONLY },
       },
       guard(async (a: { status?: string; query?: string; limit?: number; cursor?: string }) => {
         const q = new URLSearchParams();
@@ -181,7 +233,7 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
         title: "Ver un sobre",
         description: "Detalle de un sobre: documentos, destinatarios y su estado.",
         inputSchema: { envelopeId: z.string().uuid() },
-        annotations: { readOnlyHint: true },
+        annotations: { title: "Ver un sobre", ...READ_ONLY },
       },
       guard(async (a: { envelopeId: string }) => summarizeDetail(await api(c, "GET", `/v1/envelopes/${a.envelopeId}`))),
     );
@@ -192,7 +244,7 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
         title: "Estado de firma",
         description: "En qué está un sobre: quién firmó, quién falta y los últimos eventos del registro de evidencia.",
         inputSchema: { envelopeId: z.string().uuid() },
-        annotations: { readOnlyHint: true },
+        annotations: { title: "Estado de firma", ...READ_ONLY },
       },
       guard(async (a: { envelopeId: string }) => {
         const [d, ev] = await Promise.all([api(c, "GET", `/v1/envelopes/${a.envelopeId}`), api(c, "GET", `/v1/envelopes/${a.envelopeId}/events`)]);
@@ -217,7 +269,7 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
         title: "Listar plantillas",
         description: "Plantillas disponibles, con sus roles (para create_envelope_from_template).",
         inputSchema: { query: z.string().max(200).optional() },
-        annotations: { readOnlyHint: true },
+        annotations: { title: "Listar plantillas", ...READ_ONLY },
       },
       guard(async (a: { query?: string }) => {
         const r = await api(c, "GET", `/v1/templates${a.query ? `?q=${encodeURIComponent(a.query)}` : ""}`);
@@ -252,6 +304,8 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
             .max(50),
           prefill: z.record(z.string(), z.string().max(2000)).optional().describe("Valores de campos por etiqueta o id"),
         },
+        // Crea un borrador nuevo en cada llamada (no idempotente), sin avisar a nadie.
+        annotations: { title: "Crear sobre desde plantilla", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       },
       guard(async (a: any) => {
         const d = await api(c, "POST", "/v1/envelopes/from-template", {
@@ -283,7 +337,8 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
           envelopeId: z.string().uuid(),
           confirm: z.boolean().optional().describe("true solo si el usuario aprobó el envío"),
         },
-        annotations: { destructiveHint: false, openWorldHint: true },
+        // Les llegan correos/WhatsApp a personas reales: openWorld. No borra nada.
+        annotations: { title: "Enviar sobre", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
       },
       guard(async (a: { envelopeId: string; confirm?: boolean }) => {
         if (a.confirm !== true) {
@@ -309,7 +364,8 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
           reason: z.string().min(1).max(1000),
           confirm: z.boolean().optional().describe("true solo si el usuario aprobó la anulación"),
         },
-        annotations: { destructiveHint: true, openWorldHint: true },
+        // Irreversible y avisa a los firmantes. Anular dos veces da error, no repite el efecto.
+        annotations: { title: "Anular sobre", readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
       },
       guard(async (a: { envelopeId: string; reason: string; confirm?: boolean }) => {
         if (a.confirm !== true) {
@@ -330,7 +386,8 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
         title: "Descargar PDF firmado",
         description: `Devuelve una URL temporal (${Math.round(config.mcp.downloadLinkTtlSec / 60)} min) para descargar el PDF sellado con su certificado de finalización. Solo para sobres completados.`,
         inputSchema: { envelopeId: z.string().uuid() },
-        annotations: { readOnlyHint: true },
+        // Crea un link de descarga (registro interno), pero no cambia nada del sobre.
+        annotations: { title: "Descargar PDF firmado", ...READ_ONLY },
       },
       guard(async (a: { envelopeId: string }) => {
         const d = await api(c, "GET", `/v1/envelopes/${a.envelopeId}`); // control de acceso de la API
@@ -347,12 +404,198 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
       }),
     );
 
+    server.registerTool(
+      "create_envelope",
+      {
+        title: "Crear sobre desde un PDF",
+        description:
+          "Crea un sobre en BORRADOR con un PDF (en base64 o desde una URL https pública) y sus destinatarios. No envía " +
+          `nada: para enviarlo usá send_envelope (con confirmación del usuario). PDF de hasta ${Math.round(PDF_MAX_BYTES / 1048576)} MB. ` +
+          "Campos opcionales por texto ancla (p. ej. un texto \"Firma:\" del documento); a cada firmante sin campo de firma " +
+          "se le agrega uno al pie de la última página.",
+        inputSchema: {
+          subject: z.string().trim().min(1).max(300),
+          message: z.string().max(5000).optional().describe("Mensaje para los destinatarios"),
+          recipients: z
+            .array(
+              z.object({
+                name: z.string().trim().min(1).max(200),
+                email: z.string().email().max(320).optional(),
+                phone: z.string().regex(/^\+[1-9]\d{6,14}$/).optional().describe("E.164, ej. +5511999990000 (recibe por WhatsApp)"),
+                role: z.enum(RECIPIENT_ROLES).optional().describe("signer (por defecto), approver o cc (recibe copia)"),
+                routingOrder: z.number().int().min(1).max(100).optional().describe("Orden de firma (1 = primero); igual orden = en paralelo"),
+              }),
+            )
+            .min(1)
+            .max(20),
+          document: z
+            .object({
+              base64: z.string().max(Math.ceil((PDF_MAX_BYTES * 4) / 3) + 8).optional().describe("Contenido del PDF en base64"),
+              url: z.string().url().max(2000).optional().describe("URL https pública del PDF (sin redirecciones)"),
+              name: z.string().trim().max(200).optional().describe("Nombre del archivo, ej. contrato.pdf"),
+            })
+            .describe("El PDF: base64 o url (uno de los dos)"),
+          fields: z
+            .array(
+              z.object({
+                recipientIndex: z.number().int().min(0).max(19).describe("Posición del firmante en recipients (0 = el primero)"),
+                type: z.enum(["signature", "initials", "date_signed", "name", "email", "text", "company", "title"]).default("signature"),
+                anchorText: z.string().min(1).max(100).describe("Texto del PDF donde va el campo (aparece en todas sus apariciones)"),
+                offsetX: z.number().min(-500).max(500).optional().describe("Desplazamiento en puntos desde el texto"),
+                offsetY: z.number().min(-500).max(500).optional(),
+                width: z.number().positive().max(600).optional(),
+                height: z.number().positive().max(300).optional(),
+                required: z.boolean().optional(),
+              }),
+            )
+            .max(100)
+            .optional(),
+        },
+        annotations: { title: "Crear sobre desde un PDF", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      },
+      guard(async (a: any) => {
+        for (const [i, r] of a.recipients.entries()) {
+          if (!r.email && !r.phone) return fail(`El destinatario ${i + 1} (${r.name}) necesita email o phone`);
+        }
+        if (Boolean(a.document.base64) === Boolean(a.document.url)) return fail("Pasá el PDF en document.base64 o en document.url (uno de los dos)");
+        let pdf: Buffer;
+        try {
+          pdf = a.document.base64 ? decodePdfBase64(a.document.base64) : await fetchPdf(a.document.url);
+        } catch (e) {
+          return fail(`No se pudo obtener el PDF: ${(e as Error).message}`);
+        }
+        for (const f of a.fields ?? []) {
+          const r = a.recipients[f.recipientIndex];
+          if (!r || (r.role ?? "signer") !== "signer") return fail(`fields: recipientIndex ${f.recipientIndex} no es un firmante de recipients`);
+        }
+        const fileName = pdfFileName(a.document.name ?? (a.document.url ? new URL(a.document.url).pathname.split("/").pop() : null));
+
+        const created = await api(c, "POST", "/v1/envelopes", { subject: a.subject, message: a.message ?? null });
+        const envelopeId = created.envelope.id;
+        try {
+          const boundary = `----calasign${randomToken(12)}`;
+          const multipart = Buffer.concat([
+            Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${fileName}"\r\nContent-Type: application/pdf\r\n\r\n`),
+            pdf,
+            Buffer.from(`\r\n--${boundary}--\r\n`),
+          ]);
+          const doc = await api(c, "POST", `/v1/envelopes/${envelopeId}/documents`, undefined, { payload: multipart, contentType: `multipart/form-data; boundary=${boundary}` });
+          const ids = a.recipients.map(() => uuidv7());
+          await api(c, "PUT", `/v1/envelopes/${envelopeId}/recipients`, {
+            recipients: a.recipients.map((r: any, i: number) => ({
+              id: ids[i],
+              name: r.name,
+              email: r.email ?? null,
+              phone: r.phone ?? null,
+              role: r.role ?? "signer",
+              routingOrder: r.routingOrder ?? 1,
+              channels: r.email ? ["email"] : ["whatsapp"],
+            })),
+          });
+          const SIZE: Record<string, [number, number]> = { signature: [160, 45], initials: [60, 35], date_signed: [110, 20] };
+          const fields: any[] = (a.fields ?? []).map((f: any) => ({
+            recipientId: ids[f.recipientIndex],
+            type: f.type ?? "signature",
+            required: f.required ?? true,
+            anchor: {
+              text: f.anchorText,
+              offsetX: f.offsetX ?? 0,
+              offsetY: f.offsetY ?? 0,
+              width: f.width ?? SIZE[f.type ?? "signature"]?.[0] ?? 150,
+              height: f.height ?? SIZE[f.type ?? "signature"]?.[1] ?? 20,
+            },
+          }));
+          // Firmantes sin campo de firma: uno al pie de la última página (dos columnas), así el sobre se puede enviar.
+          const lastPage = Math.max(0, (doc.pageCount ?? 1) - 1);
+          let slot = 0;
+          a.recipients.forEach((r: any, i: number) => {
+            if ((r.role ?? "signer") !== "signer" || fields.some((f) => f.recipientId === ids[i] && f.type === "signature")) return;
+            const row = Math.floor(slot / 2);
+            fields.push({
+              documentId: doc.id,
+              recipientId: ids[i],
+              type: "signature",
+              required: true,
+              page: lastPage,
+              x: slot % 2 === 0 ? 0.08 : 0.55,
+              y: Math.max(0.05, 0.86 - row * 0.09),
+              width: 0.32,
+              height: 0.07,
+            });
+            slot++;
+          });
+          const d = fields.length ? await api(c, "PUT", `/v1/envelopes/${envelopeId}/fields`, { fields }) : await api(c, "GET", `/v1/envelopes/${envelopeId}`);
+          return {
+            ...summarizeDetail(d),
+            ...(slot ? { note: `Se agregó un campo de firma al pie de la última página para ${slot} firmante(s) sin campo.` } : {}),
+            next: "Borrador creado. Mostrale el resumen al usuario y, si lo aprueba, llamá a send_envelope con confirm: true.",
+          };
+        } catch (err) {
+          // Que no quede un borrador a medias.
+          await api(c, "DELETE", `/v1/envelopes/${envelopeId}`).catch(() => {});
+          throw err;
+        }
+      }),
+    );
+
+    server.registerTool(
+      "remind_recipients",
+      {
+        title: "Recordar a los firmantes",
+        description:
+          "Vuelve a avisar a los firmantes a los que les toca firmar un sobre en curso. ACCIÓN CON EFECTO REAL (les llega " +
+          "un correo/WhatsApp): requiere confirm=true y solo debe usarse después de que el usuario lo apruebe.",
+        inputSchema: {
+          envelopeId: z.string().uuid(),
+          confirm: z.boolean().optional().describe("true solo si el usuario aprobó el recordatorio"),
+        },
+        annotations: { title: "Recordar a los firmantes", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+      },
+      guard(async (a: { envelopeId: string; confirm?: boolean }) => {
+        if (a.confirm !== true) {
+          const d = await api(c, "GET", `/v1/envelopes/${a.envelopeId}`);
+          return fail("Confirmación requerida: el recordatorio les llega a personas reales. Mostrale este resumen al usuario y, si lo aprueba, volvé a llamar con confirm: true.", {
+            subject: d.envelope.subject,
+            status: d.envelope.status,
+            pending: d.recipients
+              .filter((r: any) => r.role !== "cc" && (r.status === "sent" || r.status === "viewed"))
+              .map((r: any) => `${r.name} <${r.email ?? r.phone ?? "—"}>`),
+          });
+        }
+        const r = await api(c, "POST", `/v1/envelopes/${a.envelopeId}/remind`);
+        return { notified: r.notified, ...(r.notified ? {} : { note: "No había nadie a quien avisar en este momento." }) };
+      }),
+    );
+
+    server.registerTool(
+      "get_account",
+      {
+        title: "Cuenta",
+        description: "Organización, usuario y plan de la cuenta conectada, con el uso del mes (sobres enviados) y los permisos (scopes) del conector.",
+        inputSchema: {},
+        annotations: { title: "Cuenta", ...READ_ONLY },
+      },
+      guard(async () => {
+        const me = await api(c, "GET", "/v1/me");
+        const [{ plan }, sent] = await Promise.all([tenantPlan(s.db, c.tenantId), envelopesSentThisMonth(s.db, c.tenantId)]);
+        return {
+          organization: { id: me.tenant.id, name: me.tenant.name },
+          user: me.user?.email ? { name: me.user.name, email: me.user.email } : null,
+          connectedAs: c.name,
+          scopes: c.scopes,
+          plan: { id: plan.id, name: plan.name, envelopesPerMonth: plan.envelopesPerMonth },
+          usage: { period: new Date().toISOString().slice(0, 7), envelopesSent: sent },
+        };
+      }),
+    );
+
     return server;
   }
 
   // ───────── Transporte Streamable HTTP (sin sesión: cada POST es independiente) ─────────
 
-  app.post("/mcp", { config: { rateLimit: { max: 300, timeWindow: "1 minute" } } }, async (req, reply) => {
+  // bodyLimit: create_envelope puede traer el PDF en base64 (tope PDF_MAX_BYTES, ~4/3 en base64).
+  app.post("/mcp", { bodyLimit: Math.ceil((PDF_MAX_BYTES * 4) / 3) + 1024 * 1024, config: { rateLimit: { max: 300, timeWindow: "1 minute" } } }, async (req, reply) => {
     const caller = await resolveCaller(req);
     if (!caller) return unauthorizedReply(reply, "Hace falta un access token OAuth o una API key válidos");
     const { plan } = await tenantPlan(s.db, caller.tenantId);
@@ -385,32 +628,41 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
 
   // ───────── Descubrimiento OAuth (RFC 9728 / RFC 8414) para clientes MCP ─────────
 
-  app.get("/.well-known/oauth-protected-resource", async () => ({
+  // Recurso protegido: el servidor MCP. scopes_supported son los que usan las herramientas (los clientes MCP piden
+  // esos si el 401 no trae `scope`); la API tiene más (ver los metadatos del servidor de autorización).
+  const protectedResource = async () => ({
     resource: resourceUrl,
     authorization_servers: [config.appUrl],
-    scopes_supported: OAUTH_SCOPES,
+    scopes_supported: MCP_DEFAULT_SCOPES,
     bearer_methods_supported: ["header"],
     resource_name: "CalaSign MCP",
     resource_documentation: `${config.appUrl}/developers#mcp`,
-  }));
-  app.get("/.well-known/oauth-protected-resource/mcp", async () => ({
-    resource: resourceUrl,
-    authorization_servers: [config.appUrl],
-    scopes_supported: OAUTH_SCOPES,
-    bearer_methods_supported: ["header"],
-  }));
-  app.get("/.well-known/oauth-authorization-server", async () => ({
+  });
+  app.get("/.well-known/oauth-protected-resource", protectedResource);
+  app.get("/.well-known/oauth-protected-resource/mcp", protectedResource);
+
+  const authorizationServer = async () => ({
     issuer: config.appUrl,
     authorization_endpoint: `${config.appUrl}/oauth/authorize`,
     token_endpoint: `${config.appUrl}/oauth/token`,
+    registration_endpoint: `${config.appUrl}/oauth/register`,
     revocation_endpoint: `${config.appUrl}/oauth/revoke`,
     introspection_endpoint: `${config.appUrl}/oauth/introspect`,
     response_types_supported: ["code"],
+    response_modes_supported: ["query"],
+    // RFC 9207: toda respuesta de autorización (código o error) lleva `iss`. Con esto ChatGPT usa su redirect estable.
+    authorization_response_iss_parameter_supported: true,
+    // client_credentials solo para apps creadas por una organización (nunca para las del registro dinámico).
     grant_types_supported: ["authorization_code", "refresh_token", "client_credentials"],
     code_challenge_methods_supported: ["S256"],
-    token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post", "none"],
+    token_endpoint_auth_methods_supported: ["none", "client_secret_post", "client_secret_basic"],
+    revocation_endpoint_auth_methods_supported: ["none", "client_secret_post", "client_secret_basic"],
     scopes_supported: OAUTH_SCOPES,
-  }));
+    service_documentation: `${config.appUrl}/developers#mcp`,
+  });
+  app.get("/.well-known/oauth-authorization-server", authorizationServer);
+  // Algunos clientes prueban la variante con el path del recurso (RFC 8414 §3.1 con issuer + /mcp).
+  app.get("/.well-known/oauth-authorization-server/mcp", authorizationServer);
 
   // ───────── Descarga con link temporal ─────────
 

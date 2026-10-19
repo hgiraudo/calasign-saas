@@ -68,6 +68,8 @@ const es = {
   "consent.deny": "Cancelar",
   "consent.invalid": "Pedido de autorización inválido",
   "consent.redirecting": "Volviendo a la aplicación…",
+  "consent.unverified": "Aplicación no verificada: se registró sola (por ejemplo, un conector de Claude o ChatGPT) y CalaSign no confirmó quién la publica. Autorizala solo si la acabás de agregar vos.",
+  "consent.unverifiedTag": "aplicación no verificada",
 
   "scope.envelopes:read": "Ver tus sobres y documentos",
   "scope.envelopes:write": "Crear, enviar, corregir y anular sobres",
@@ -240,6 +242,8 @@ const pt: Record<Key, string> = {
   "consent.deny": "Cancelar",
   "consent.invalid": "Pedido de autorização inválido",
   "consent.redirecting": "Voltando para a aplicação…",
+  "consent.unverified": "Aplicação não verificada: ela se registrou sozinha (por exemplo, um conector do Claude ou do ChatGPT) e a CalaSign não confirmou quem a publica. Autorize somente se você acabou de adicioná-la.",
+  "consent.unverifiedTag": "aplicação não verificada",
 
   "scope.envelopes:read": "Ver seus envelopes e documentos",
   "scope.envelopes:write": "Criar, enviar, corrigir e anular envelopes",
@@ -405,6 +409,8 @@ const en: Record<Key, string> = {
   "consent.deny": "Cancel",
   "consent.invalid": "Invalid authorization request",
   "consent.redirecting": "Returning to the application…",
+  "consent.unverified": "Unverified application: it registered itself (for example, a Claude or ChatGPT connector) and CalaSign hasn't confirmed who publishes it. Only authorize it if you just added it yourself.",
+  "consent.unverifiedTag": "unverified application",
 
   "scope.envelopes:read": "View your envelopes and documents",
   "scope.envelopes:write": "Create, send, correct and void envelopes",

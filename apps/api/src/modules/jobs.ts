@@ -19,6 +19,7 @@ import { inPersonAuthLabels } from "./experience";
 import { handleWebhookJob } from "./webhooks";
 import { runAutomaticReminders } from "./reminders";
 import { purgeExpiredEnvelopes } from "./retention";
+import { purgeUnusedDynamicClients } from "./oauth";
 import { getLogoForPdf, getTenantBranding } from "./branding";
 import { handlePlatformJob } from "./platform-fanout";
 import { recheckVerifiedDomains, tenantBaseUrl } from "./custom-domains";
@@ -452,6 +453,8 @@ export async function sweep(d: Deps) {
     ["agreements", () => agreementsSweep(d)],
     ["data", () => dataSweep(d)],
     ["domains", () => recheckVerifiedDomains(d)],
+    // Apps OAuth registradas dinámicamente (conectores MCP) que nadie autorizó en 30 días.
+    ["oauth", () => purgeUnusedDynamicClients(d.db)],
   ];
   for (const [name, step] of steps) {
     try {

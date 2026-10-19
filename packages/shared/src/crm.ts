@@ -230,6 +230,12 @@ export const SendFromCrmRecordInput = z.object({
   send: z.boolean().optional(),
   subject: z.string().trim().min(1).max(300).optional(),
   message: z.string().max(5000).optional().nullable(),
+  /**
+   * Cuenta del CRM desde la que se envía (Pipedrive: company_id; Kommo: id de la cuenta). Lo mandan la acción de
+   * Pipedrive y el widget de Kommo: si la conexión del mapeo es de otra cuenta, 409 company_mismatch (con dos cuentas
+   * conectadas, el mismo id de registro existe en las dos y se leería el de la otra).
+   */
+  companyId: z.string().trim().regex(/^[A-Za-z0-9_-]{1,64}$/).optional(),
 });
 export type SendFromCrmRecordInput = z.infer<typeof SendFromCrmRecordInput>;
 

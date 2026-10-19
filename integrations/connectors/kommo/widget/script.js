@@ -17,7 +17,20 @@ define(["jquery"], function ($) {
         if (/^\d{1,18}$/.test(id) && clean.indexOf(id) < 0) clean.push(id);
       }
       if (!clean.length) return;
-      window.open(SEND + "?ids=" + clean.join(","), "_blank", "noopener");
+      // La cuenta de Kommo desde la que se envía: CalaSign solo ofrece los mapeos de la conexión de esta cuenta y
+      // rechaza un mapeo de otra (el mismo id de lead existe en las dos).
+      var acc = accountId();
+      window.open(SEND + "?ids=" + clean.join(",") + (acc ? "&companyId=" + acc : ""), "_blank", "noopener");
+    }
+
+    function accountId() {
+      try {
+        var acc = typeof APP !== "undefined" && APP.constant ? APP.constant("account") : null;
+        var id = acc && acc.id != null ? String(acc.id) : "";
+        return /^\d{1,18}$/.test(id) ? id : null;
+      } catch (e) {
+        return null;
+      }
     }
 
     function currentLead() {

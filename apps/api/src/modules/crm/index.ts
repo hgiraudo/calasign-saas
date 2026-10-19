@@ -159,6 +159,12 @@ async function loadConn(db: Db, tenantId: string, id: string) {
   return r;
 }
 
+/**
+ * Clave de config con la cuenta del CRM de cada conexión (Pipedrive: company_id de /users/me; Kommo: id de la cuenta de
+ * /api/v4/account). La acción de Pipedrive y el widget de Kommo mandan la cuenta desde la que se abrieron.
+ */
+const ACCOUNT_KEY: Partial<Record<CrmProvider, string>> = { pipedrive: "companyId", kommo: "accountId" };
+
 async function loadMapping(db: Db, tenantId: string, id: string) {
   if (!UUID.test(id)) throw notFound("Mapeo");
   const r = await db.one<any>(`SELECT * FROM crm_mappings WHERE id = $1 AND tenant_id = $2`, [id, tenantId]);
@@ -689,7 +695,7 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
 
   // ───────── Mapeos ─────────
 
-  app.get<{ Querystring: { connectionId?: string; provider?: string } }>("/v1/crm/mappings", { preHandler: auth }, async (req) => {
+  app.get<{ Querystring: { connectionId?: string; provider?: string; companyId?: string } }>("/v1/crm/mappings", { preHandler: auth }, async (req) => {
     const params: unknown[] = [A(req).tenantId];
     let where = `tenant_id = $1`;
     if (req.query.connectionId && UUID.test(req.query.connectionId)) {
@@ -699,7 +705,14 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
     // provider: solo mapeos de conexiones activas de ese proveedor (la acción de Pipedrive lista los suyos).
     if (req.query.provider && (CRM_PROVIDERS as readonly string[]).includes(req.query.provider)) {
       params.push(req.query.provider);
-      where += ` AND connection_id IN (SELECT id FROM crm_connections WHERE tenant_id = $1 AND active AND provider = $${params.length})`;
+      let sub = `SELECT id FROM crm_connections WHERE tenant_id = $1 AND active AND provider = $${params.length}`;
+      // companyId: solo conexiones de esa cuenta del CRM (las que todavía no la tienen guardada se conservan).
+      const key = ACCOUNT_KEY[req.query.provider as CrmProvider];
+      if (key && req.query.companyId && /^[A-Za-z0-9_-]{1,64}$/.test(req.query.companyId)) {
+        params.push(req.query.companyId);
+        sub += ` AND (config->>'${key}' IS NULL OR config->>'${key}' = $${params.length})`;
+      }
+      where += ` AND connection_id IN (${sub})`;
     }
     // Sin settings:manage (quien solo puede enviar, access.ts): solo los mapeos cuya plantilla puede usar. Los demás no
     // los puede enviar (assertTemplateAccess) y exponían la configuración ajena (destinatarios fijos con correo y teléfono).
@@ -791,6 +804,14 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
     const a = A(req);
     const m = await loadMapping(s.db, a.tenantId, req.params.id);
     const input = SendFromCrmRecordInput.parse(req.body);
+    if (input.companyId) {
+      const conn = await loadConn(s.db, a.tenantId, m.connection_id);
+      const key = ACCOUNT_KEY[conn.provider as CrmProvider];
+      const stored = key ? conn.config?.[key] : null;
+      if (stored != null && String(stored) !== input.companyId) {
+        throw new AppError(409, "company_mismatch", `El mapeo es de otra cuenta de ${conn.provider} (${stored}), no de la cuenta ${input.companyId} desde la que se envía`);
+      }
+    }
     if (m.template_id) await assertTemplateAccess(s.db, a, m.template_id, "view");
     const out = await sendFromRecord(s.db, { tenantId: a.tenantId, userId: a.userId, apiKeyId: a.apiKeyId, actor: a.actor }, m, input.objectId, input);
     reply.code(201);

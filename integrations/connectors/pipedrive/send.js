@@ -90,7 +90,7 @@ var CalaSignPipedrive = (function () {
     ids = ids.filter(function (x) {
       return seen[x] ? false : (seen[x] = true);
     });
-    return { resource: resource, objectType: objectType, ids: ids.slice(0, 20), truncated: ids.length > 20, companyId: q.get("companyId") || null };
+    return { resource: resource, objectType: objectType, ids: ids.slice(0, 20), truncated: ids.length > 20, companyId: /^\d{1,18}$/.test(q.get("companyId") || "") ? q.get("companyId") : null };
   }
 
   /** Mapeos activos con plantilla para ese tipo de registro (la API ya filtra por conexiones activas de Pipedrive). */
@@ -131,13 +131,14 @@ var CalaSignPipedrive = (function () {
     };
   }
 
-  /** Crea un sobre por registro, uno tras otro (el límite de la API es por minuto). */
-  function sendAll(api, mappingId, ids, send) {
+  /** Crea un sobre por registro, uno tras otro (el límite de la API es por minuto). companyId: la compañía de
+   *  Pipedrive desde la que se abrió la acción; la API rechaza (409 company_mismatch) un mapeo de otra compañía. */
+  function sendAll(api, mappingId, ids, send, companyId) {
     var out = [];
     var chain = Promise.resolve();
     ids.forEach(function (id) {
       chain = chain.then(function () {
-        return api("POST", "/v1/crm/mappings/" + encodeURIComponent(mappingId) + "/send", { objectId: id, send: send }).then(
+        return api("POST", "/v1/crm/mappings/" + encodeURIComponent(mappingId) + "/send", companyId ? { objectId: id, send: send, companyId: companyId } : { objectId: id, send: send }).then(
           function (r) {
             out.push({ id: id, ok: true, envelopeId: r.envelopeId, status: r.status });
           },
@@ -156,7 +157,9 @@ var CalaSignPipedrive = (function () {
   function load(api, params) {
     if (!params.objectType) return Promise.resolve({ state: "error", key: "badResource" });
     if (!params.ids.length) return Promise.resolve({ state: "error", key: "noRecords" });
-    return api("GET", "/v1/crm/mappings?provider=pipedrive")
+    // Con companyId solo vienen los mapeos de la conexión de ESA compañía (con dos compañías conectadas, un mapeo de la
+    // otra leería un deal ajeno con el mismo id).
+    return api("GET", "/v1/crm/mappings?provider=pipedrive" + (params.companyId ? "&companyId=" + encodeURIComponent(params.companyId) : ""))
       .then(function (r) {
         var maps = eligibleMappings(r.items, params.objectType);
         return maps.length ? { state: "ready", mappings: maps } : { state: "error", key: "noMappings" };
@@ -252,7 +255,7 @@ var CalaSignPipedrive = (function () {
         e.preventDefault();
         if (!pending.length) return;
         btn.disabled = true;
-        sendAll(api, select.value, pending, sendNow.checked).then(function (out) {
+        sendAll(api, select.value, pending, sendNow.checked, params.companyId).then(function (out) {
           out.forEach(function (o) {
             var li = el(doc, "li", { class: o.ok ? "ok" : "error" });
             li.appendChild(doc.createTextNode("#" + o.id + " — " + (o.ok ? T.ok + " (" + o.status + ") " : T.failed + ": " + o.error)));

@@ -67,7 +67,7 @@ var CalaSignKommo = (function () {
     return l.indexOf("pt") === 0 ? "pt" : l.indexOf("en") === 0 ? "en" : "es";
   }
 
-  /** ?ids=1,2 → ids numéricos sin repetir, máximo 20. */
+  /** ?ids=1,2&companyId=<cuenta> → ids numéricos sin repetir (máximo 20) y la cuenta de Kommo del widget. */
   function parseParams(search) {
     var q = new URLSearchParams(search || "");
     var seen = {};
@@ -80,7 +80,8 @@ var CalaSignKommo = (function () {
         if (!/^\d{1,18}$/.test(x) || seen[x]) return false;
         return (seen[x] = true);
       });
-    return { ids: ids.slice(0, 20), truncated: ids.length > 20 };
+    var company = q.get("companyId") || "";
+    return { ids: ids.slice(0, 20), truncated: ids.length > 20, companyId: /^\d{1,18}$/.test(company) ? company : null };
   }
 
   /** Mapeos activos de leads (objectType deal) con plantilla. */
@@ -121,13 +122,14 @@ var CalaSignKommo = (function () {
     };
   }
 
-  /** Un sobre por lead, uno tras otro (el límite de la API es por minuto). */
-  function sendAll(api, mappingId, ids, send) {
+  /** Un sobre por lead, uno tras otro (el límite de la API es por minuto). Con companyId, la API rechaza (409
+   *  company_mismatch) un mapeo de la conexión de otra cuenta. */
+  function sendAll(api, mappingId, ids, send, companyId) {
     var out = [];
     var chain = Promise.resolve();
     ids.forEach(function (id) {
       chain = chain.then(function () {
-        return api("POST", "/v1/crm/mappings/" + encodeURIComponent(mappingId) + "/send", { objectId: id, send: send }).then(
+        return api("POST", "/v1/crm/mappings/" + encodeURIComponent(mappingId) + "/send", companyId ? { objectId: id, send: send, companyId: companyId } : { objectId: id, send: send }).then(
           function (r) {
             out.push({ id: id, ok: true, envelopeId: r.envelopeId, status: r.status });
           },
@@ -144,7 +146,7 @@ var CalaSignKommo = (function () {
 
   function load(api, params) {
     if (!params.ids.length) return Promise.resolve({ state: "error", key: "noRecords" });
-    return api("GET", "/v1/crm/mappings?provider=kommo")
+    return api("GET", "/v1/crm/mappings?provider=kommo" + (params.companyId ? "&companyId=" + encodeURIComponent(params.companyId) : ""))
       .then(function (r) {
         var maps = eligibleMappings(r.items);
         return maps.length ? { state: "ready", mappings: maps } : { state: "error", key: "noMappings" };
@@ -234,7 +236,7 @@ var CalaSignKommo = (function () {
       f.addEventListener("submit", function (e) {
         e.preventDefault();
         btn.disabled = true;
-        sendAll(api, select.value, params.ids, sendNow.checked).then(function (out) {
+        sendAll(api, select.value, params.ids, sendNow.checked, params.companyId).then(function (out) {
           out.forEach(function (o) {
             var li = el(doc, "li", { class: o.ok ? "ok" : "error" });
             li.appendChild(doc.createTextNode("#" + o.id + " — " + (o.ok ? T.ok + " (" + o.status + ") " : T.failed + ": " + o.error)));

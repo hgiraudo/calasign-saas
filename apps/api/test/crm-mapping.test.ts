@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { CrmRecord } from "@calasign/shared";
 import { CreateCrmMappingInput } from "@calasign/shared";
-import { MappingError, mapPrefill, mapRecipients, neededProperties, normalizePhone, readProperty, statusForEvidence, statusValue, webhookMatches } from "../src/modules/crm/mapping";
+import { MappingError, mapPrefill, mapRecipients, neededProperties, normalizePhone, readProperty, scalarValue, statusForEvidence, statusValue, webhookMatches } from "../src/modules/crm/mapping";
 
 const deal: CrmRecord = {
   id: "9001",
@@ -62,5 +62,38 @@ describe("mapeo CRM → plantilla", () => {
     expect(webhookMatches({ property: "dealstage", value: "contractsent" }, "dealstage", "contractsent")).toBe(true);
     expect(webhookMatches({ property: "dealstage", value: "contractsent" }, "dealstage", "closedwon")).toBe(false);
     expect(webhookMatches({ property: null }, "dealstage", "x")).toBe(false);
+  });
+
+  it("email y teléfono en listas (Pipedrive [{ value, primary }], RD Station [{ email }] / [{ phone }]): el principal o el primero", () => {
+    const person: CrmRecord = {
+      id: "7",
+      objectType: "contact",
+      properties: {
+        name: "Ana",
+        email: [{ label: "home", value: "ana@casa.co", primary: false }, { label: "work", value: "ana@acme.co", primary: true }],
+        phone: [{ label: "work", value: "+57 300 111 2233" }, { label: "mobile", value: "+57 310 999 0000" }],
+        person_id: { name: "Ana", value: 7, email: [{ value: "", primary: true }, { value: "otra@acme.co" }] },
+        emails: [{ email: "rd@acme.com.br" }],
+        phones: [{ phone: "+55 11 99999-0000", type: "mobile" }],
+        tags: ["vip", "pro"],
+        empty: [],
+      },
+      contacts: [],
+    };
+    const [r] = mapRecipients(person, [{ role: "Cliente", source: "property", nameProperty: "name", emailProperty: "email", phoneProperty: "phone", channels: ["email"] }] as any);
+    expect(r).toMatchObject({ name: "Ana", email: "ana@acme.co", phone: "+573001112233" });
+    expect(
+      mapPrefill(person, [
+        { field: "Correo", property: "email" },
+        { field: "Tel", property: "phone" },
+        { field: "Correo persona", property: "person_id.email" },
+        { field: "RD", property: "emails" },
+        { field: "RDTel", property: "phones" },
+        { field: "Tags", property: "tags" },
+        { field: "Vacío", property: "empty" },
+      ]),
+    ).toEqual({ Correo: "ana@acme.co", Tel: "+57 300 111 2233", "Correo persona": "otra@acme.co", RD: "rd@acme.com.br", RDTel: "+55 11 99999-0000", Tags: "vip, pro" });
+    expect(scalarValue("x")).toBe("x");
+    expect(scalarValue([null, ""])).toBeNull();
   });
 });

@@ -32,7 +32,24 @@ export function readProperty(props: Record<string, unknown>, path: string): unkn
   return cur;
 }
 
-const text = (v: unknown): string | null => {
+/**
+ * Listas de valores de los CRM → un valor: Pipedrive guarda email y phone como [{ value, primary }] (también dentro de
+ * person_id), RD Station como emails [{ email }] / phones [{ phone }]. Se toma el principal o, si no hay, el primero
+ * (antes salía "[object Object]"). Una lista de textos (opciones múltiples) se une con ", ".
+ */
+export function scalarValue(v: unknown): unknown {
+  if (!Array.isArray(v)) return v;
+  const items = v.filter((x) => x !== null && x !== undefined && x !== "");
+  if (items.length === 0) return null;
+  if (items.every((x) => typeof x !== "object")) return items.join(", ");
+  const val = (x: any) => (x && typeof x === "object" ? x.value ?? x.email ?? x.phone ?? null : x);
+  const has = (x: unknown) => val(x) !== null && val(x) !== undefined && val(x) !== "";
+  const pick = items.find((x: any) => x && typeof x === "object" && x.primary === true && has(x)) ?? items.find(has);
+  return pick === undefined ? null : val(pick);
+}
+
+const text = (v0: unknown): string | null => {
+  const v = scalarValue(v0);
   if (v === undefined || v === null) return null;
   const s = String(v).trim();
   return s ? s : null;
@@ -91,7 +108,7 @@ export function mapRecipients(record: Pick<CrmRecord, "id" | "properties" | "con
 export function mapPrefill(record: Pick<CrmRecord, "properties">, prefill: CrmPrefillMapping[]): Record<string, string> {
   const out: Record<string, string> = {};
   for (const p of prefill) {
-    const v = readProperty(record.properties, p.property);
+    const v = scalarValue(readProperty(record.properties, p.property));
     if (v === undefined || v === null || v === "") continue;
     out[p.field] = typeof v === "object" ? JSON.stringify(v) : String(v);
   }

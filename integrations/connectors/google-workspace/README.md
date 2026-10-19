@@ -93,12 +93,16 @@ habilitada en <https://script.google.com/home/usersettings>.
 
 ```bash
 npm install -g @google/clasp && clasp login
+mkdir calasign-gws && cd calasign-gws
+clasp create --type standalone --title "CalaSign"      # crea el proyecto y .clasp.json (trae un manifiesto por defecto)
 curl -LO {{BASE_URL}}/integrations/connectors/google-workspace/calasign-google-workspace-addon.zip
-unzip calasign-google-workspace-addon.zip -d calasign-gws && cd calasign-gws
-clasp create --type standalone --title "CalaSign" --rootDir .
+unzip -o calasign-google-workspace-addon.zip            # reemplaza el manifiesto por el del add-on
 clasp push --force          # sube appsscript.json y src/*.js (ver .claspignore)
 clasp open                  # abre el editor
 ```
+
+El zip se descomprime **después** de `clasp create` porque `create` baja el manifiesto por defecto del proyecto nuevo
+y pisaría el del add-on.
 
 En el editor de Apps Script, ir a **Implementar → Probar implementaciones → Google Workspace add-on → Instalar**. Después,
 abrir Gmail, Docs o Drive: el ícono de CalaSign aparece en el panel lateral. El primer uso pide los permisos de Google y

@@ -124,7 +124,7 @@ export function ConnectorsPage() {
       <Code
         lang="bash"
         title={t("conn.gws.cli")}
-        code={`npm install -g @google/clasp && clasp login\ncurl -LO ${BASE}${A.googleWorkspace}\nunzip ${file(A.googleWorkspace)} -d calasign-gws && cd calasign-gws\nclasp create --type standalone --title "CalaSign" --rootDir .\nclasp push --force && clasp open`}
+        code={`npm install -g @google/clasp && clasp login\nmkdir calasign-gws && cd calasign-gws\nclasp create --type standalone --title "CalaSign"\ncurl -LO ${BASE}${A.googleWorkspace}\nunzip -o ${file(A.googleWorkspace)}\nclasp push --force && clasp open`}
       />
       <Md text={t("conn.gws.publish")} />
 

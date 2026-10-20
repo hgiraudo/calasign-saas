@@ -17,6 +17,7 @@ import {
   type XmlSignResponse,
 } from "@calasign/shared";
 import { config } from "../config";
+import type { Db } from "../infra/db";
 import { appendEvent } from "../infra/evidence";
 import { AppError, assertNotStale, badRequest, conflict, notFound } from "../lib/errors";
 import { sha256Hex, uuidv7 } from "../lib/util";
@@ -156,8 +157,9 @@ export async function evidenceRoutes(app: FastifyInstance, s: Services) {
 
   // ───────── Sello de empresa y nivel de firma del sobre ─────────
 
-  const sealOptions = async (tenantId: string, envelopeId: string): Promise<SealOptions> => {
-    const e = await s.db.one<any>(
+  // Con `db` = la transacción del guardado, el envelopeUpdatedAt es el que dejó ese guardado (no el de otro posterior).
+  const sealOptions = async (tenantId: string, envelopeId: string, db: Db = s.db): Promise<SealOptions> => {
+    const e = await db.one<any>(
       `SELECT e.company_seal_certificate_id, e.signature_level, e.updated_at, c.name, c.common_name
        FROM envelopes e LEFT JOIN tenant_certificates c ON c.id = e.company_seal_certificate_id
        WHERE e.id = $1 AND e.tenant_id = $2`,
@@ -178,7 +180,7 @@ export async function evidenceRoutes(app: FastifyInstance, s: Services) {
     const a = req.auth!;
     const input = SealOptionsInput.parse(req.body);
     if (input.companySealCertificateId) await loadTenantCertificate(s.db, a.tenantId, input.companySealCertificateId, "pdf_seal");
-    await s.db.tx(async (t) => {
+    return s.db.tx(async (t) => {
       const e = await lockEnvelope(t, a.tenantId, req.params.id);
       // Un sobre trabado en la finalización porque su sello de empresa venció (o lo va a reemplazar otro) solo puede
       // cambiar el sello, y solo mientras no haya una finalización en curso; después se reintenta con retry-finalize.
@@ -212,8 +214,9 @@ export async function evidenceRoutes(app: FastifyInstance, s: Services) {
         actor: a.actor,
         data: { companySealCertificateId: input.companySealCertificateId ?? null, signatureLevel: input.signatureLevel ?? null },
       });
+      // Se lee dentro de la transacción: si otro guarda después del COMMIT, el editor no adopta su versión sin sus datos.
+      return sealOptions(a.tenantId, e.id, t);
     });
-    return sealOptions(a.tenantId, req.params.id);
   });
 
   // ───────── Validación pública de PDF ─────────

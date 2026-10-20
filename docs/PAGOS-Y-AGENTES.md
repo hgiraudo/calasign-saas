@@ -14,18 +14,31 @@ Un sobre puede cobrarle a uno de sus firmantes (`PUT /v1/envelopes/:id/payment`,
 Flujo del firmante: `GET /v1/signing/:token/payment` (si le toca pagar, monto y estado) → `POST /v1/signing/:token/payment/checkout`
 → redirección al proveedor → vuelve a `/s/:token?payment=success`. La confirmación **solo** llega por webhook verificado
 (o por la página del proveedor simulado). Eventos: `payment.configured`, `payment.checkout_created`, `envelope.awaiting_payment`,
-`payment.failed`, `payment.completed`. El comprobante (monto, pagador, medio, referencia, fecha) va en el certificado de finalización.
+`payment.failed`, `payment.completed`, `payment.refunded`, `payment.partially_refunded`, `payment.disputed`. El comprobante (monto, pagador, medio, referencia, fecha) va en el certificado de finalización.
 
 **Cambios del pagador y cierres** (barrido periódico del worker):
 
 - Si el pagador cambia (delegación, reasignación o corrección de su correo o teléfono), el cobro pasa al nuevo
-  destinatario y el checkout armado para el anterior se guarda como descartado (`stale_checkout_id`) y se cierra
-  en el proveedor. Si el proveedor ya no lo conoce (404), se suelta; si falla por otra cosa, se reintenta al final
-  de la cola. La clave de idempotencia de Stripe incluye el link vigente del pagador.
+  destinatario y el checkout armado para el anterior se descarta: va a la cola de cierre (`stale_checkout_ids`, se
+  acumulan si se descartan varios antes del barrido) y a la lista permanente `discarded_checkout_refs`. El barrido los
+  cierra en el proveedor; si el proveedor ya no lo conoce (404), se suelta; si falla por otra cosa, se reintenta al
+  final de la cola. Un pago que igual llegue por un checkout descartado se reembolsa y el cobro sigue pendiente, también
+  cuando el pagador es el mismo destinatario con el contacto corregido (`checkout_ref`: id de la sesión en Stripe,
+  referencia propia en el `external_reference` de Mercado Pago). La clave de idempotencia de Stripe incluye el link
+  vigente del pagador.
+- Dos pedidos de checkout simultáneos no dejan dos checkouts cobrables: si otro se guardó mientras tanto, se entrega
+  ese y el nuevo se cierra. El checkout no se ofrece con el sobre vencido aunque el barrido no lo haya marcado.
 - Un sobre anulado, rechazado o vencido cierra su checkout abierto (`payment.checkout_closed`).
 - Un pago que se acredita con el sobre ya cerrado se reembolsa en el proveedor (`refund_required_at`). Un segundo
   cobro del mismo sobre (dos checkouts pagados) también se reembolsa, en Stripe y en Mercado Pago.
 - Un sobre que superó su vencimiento no se corrige, reasigna ni delega.
+- **Reembolsos y contracargos hechos en el proveedor** (Stripe `charge.refunded` y `charge.dispute.created`; Mercado
+  Pago, pagos en `refunded` o `charged_back`): sobre el pago acreditado del cobro. Reembolso total → el cobro pasa a
+  `refunded` (`payment.refunded`, `reason: "provider"`); parcial → solo `payment.partially_refunded`; disputa →
+  `disputedAt` y `payment.disputed`. **El estado del sobre no cambia**: un cobro reembolsado cuenta como ya pagado (no
+  traba la firma ni la finalización). No hay eventos de webhook de salida para cobros (no existe un tipo adecuado).
+- **Plan**: enviar un borrador con cobro exige que el plan incluya `payments` (402 `plan_limit`) y que el proveedor
+  esté configurado (400 `provider_not_configured`), en todos los caminos de envío.
 
 ### Medios de pago por país
 
@@ -45,7 +58,12 @@ Para RD y Honduras: Stripe (tarjeta) o un procesador local que se agregue como a
 | Stripe | `POST /v1/integrations/payments/stripe/webhook` | `Stripe-Signature` (`t=…,v1=HMAC-SHA256(secret, "t.body")`), tolerancia 5 min, cuerpo crudo |
 | Mercado Pago | `POST /v1/integrations/payments/mercadopago/webhook` | `x-signature` (`ts=…,v1=HMAC-SHA256(secret, "id:<data.id>;request-id:<x-request-id>;ts:<ts>;")`); el estado se lee de la API, nunca del cuerpo |
 
-Cada evento se procesa una vez (`payment_webhook_events`); si el procesamiento falla se borra la marca para que el proveedor reintente.
+Cada evento se procesa hasta terminar una vez (`payment_webhook_events`, `processed_at` al terminar): uno ya procesado
+responde 200 `duplicate`; uno recibido y en curso hace menos de 2 minutos responde **409 `event_in_progress`** (el
+proveedor reintenta); uno sin terminar más viejo (el proceso murió) se reprocesa (los manejadores son idempotentes).
+Si el procesamiento falla se borra la marca para que el proveedor reintente. El cambio de suscripción (cancelar la
+anterior en el proveedor) se decide con la organización bloqueada, pero la llamada al proveedor va fuera del bloqueo y
+después se revalida la suscripción vigente.
 El monto y la moneda pagados se comparan con el cobro antes de acreditarlo.
 
 ## 2. Planes
@@ -64,6 +82,8 @@ Precios mensuales por moneda en `packages/shared/src/billing.ts` (`PLAN_PRICES`;
   con `details: { plan, limit|feature, used, max, suggestedPlan, upgradeUrl }`. Las lecturas nunca se bloquean.
 - **Plan por defecto** (organizaciones sin suscripción): `BILLING_DEFAULT_PLAN`; si no se define, `free` en producción y
   `enterprise` fuera de producción (las pruebas no chocan con límites). Las organizaciones existentes al migrar quedaron en Business.
+- **Mes de cupo**: del día 1 a las 00:00 **UTC** (no en la zona de la organización): en UTC-3 el cupo se renueva el
+  último día del mes a las 21:00 hora local.
 - **Uso del mes**: se calcula de las tablas de negocio (sobres enviados, usuarios + invitaciones, mensajes por canal,
   verificaciones de identidad y tokens de IA si existe la tabla `ai_usage`).
 - **Suscripción**: `POST /v1/billing/checkout` → Stripe Billing (Checkout `mode=subscription` + portal) o Mercado Pago

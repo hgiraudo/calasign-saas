@@ -7,6 +7,7 @@ import {
   UpdateAiSettingsInput,
   UpdateEnvelopeAiInput,
 } from "@calasign/shared";
+import { EnvelopeAiMetadataSchema } from "../openapi-schemas";
 
 const TAG = "IA";
 const NOTE =
@@ -42,12 +43,22 @@ export const AI_OPS = [
     body: DetectFieldsInput,
     errors: AI_ERRORS,
   },
-  { method: "patch", path: "/v1/envelopes/{id}/ai/settings", tag: TAG, summary: "Permitir al firmante pedir resumen y hacer preguntas", body: UpdateEnvelopeAiInput },
+  {
+    method: "patch",
+    path: "/v1/envelopes/{id}/ai/settings",
+    tag: TAG,
+    summary: "Permitir al firmante pedir resumen y hacer preguntas",
+    description: "Cambia el `updatedAt` del sobre (devuelto en `envelopeUpdatedAt`).",
+    body: UpdateEnvelopeAiInput,
+    response: EnvelopeAiMetadataSchema,
+    expectedUpdatedAt: true,
+    errors: ["version_changed"],
+  },
   { method: "get", path: "/v1/envelopes/{id}/ai/review", tag: TAG, summary: "Última revisión contra el playbook" },
   { method: "post", path: "/v1/envelopes/{id}/ai/review", tag: TAG, summary: "Revisar el documento contra el playbook (o reglas ad hoc)", description: NOTE, body: PlaybookReviewInput, errors: AI_ERRORS },
-  { method: "get", path: "/v1/envelopes/{id}/ai/metadata", tag: TAG, summary: "Datos del contrato y alerta de renovación programada" },
-  { method: "post", path: "/v1/envelopes/{id}/ai/extract-metadata", tag: TAG, summary: "Extraer partes, fechas, montos, ley aplicable y preaviso", description: NOTE, errors: AI_ERRORS },
-  { method: "put", path: "/v1/envelopes/{id}/ai/metadata", tag: TAG, summary: "Corregir los datos del contrato (reprograma la alerta)", body: PutContractMetadataInput },
+  { method: "get", path: "/v1/envelopes/{id}/ai/metadata", tag: TAG, summary: "Datos del contrato y alerta de renovación programada", response: EnvelopeAiMetadataSchema },
+  { method: "post", path: "/v1/envelopes/{id}/ai/extract-metadata", tag: TAG, summary: "Extraer partes, fechas, montos, ley aplicable y preaviso", description: NOTE, response: EnvelopeAiMetadataSchema, errors: AI_ERRORS },
+  { method: "put", path: "/v1/envelopes/{id}/ai/metadata", tag: TAG, summary: "Corregir los datos del contrato (reprograma la alerta)", body: PutContractMetadataInput, response: EnvelopeAiMetadataSchema },
   { method: "get", path: "/v1/signing/{token}/ai", tag: TAG, summary: "Firmante: disponibilidad del asistente, aviso y descargo", auth: "token" },
   { method: "post", path: "/v1/signing/{token}/ai/summary", tag: TAG, summary: "Firmante: resumen en lenguaje simple con citas", description: SIGNER_NOTE, auth: "token", errors: SIGNER_ERRORS },
   { method: "post", path: "/v1/signing/{token}/ai/ask", tag: TAG, summary: "Firmante: pregunta sobre el documento, respondida con citas y página", description: SIGNER_NOTE, body: AiAskInput, auth: "token", errors: SIGNER_ERRORS },

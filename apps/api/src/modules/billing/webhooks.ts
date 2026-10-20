@@ -1,14 +1,14 @@
 // Webhooks de Stripe y Mercado Pago: un endpoint por proveedor para cobros al firmar y suscripciones.
-// Se verifica la firma antes de tocar nada, cada evento se procesa una sola vez, y en Mercado Pago el estado
+// Se verifica la firma antes de tocar nada, cada evento se procesa hasta terminar una vez (processed_at), y en Mercado Pago el estado
 // se consulta a la API (la notificación solo trae el id).
-import type { FastifyInstance, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { PlanId } from "@calasign/shared";
 import { PLAN_IDS } from "@calasign/shared";
 import { config } from "../../config";
 import type { Db } from "../../infra/db";
 import { AppError } from "../../lib/errors";
 import type { Services } from "../context";
-import { markPaymentFailed, markPaymentPaid, refundDuplicatePayment } from "./payments";
+import { markPaymentDisputed, markPaymentFailed, markPaymentPaid, markPaymentRefundedByProvider, refundDuplicatePayment } from "./payments";
 import {
   mpCancelPreapproval,
   mpExpirePreference,
@@ -22,14 +22,89 @@ import {
 } from "./providers";
 import { applySubscription } from "./subscriptions";
 
-/** true si el evento es nuevo (y queda registrado). */
-async function firstTime(db: Db, provider: string, eventId: string): Promise<boolean> {
-  const r = await db.query(`INSERT INTO payment_webhook_events (provider, event_id) VALUES ($1,$2) ON CONFLICT DO NOTHING RETURNING event_id`, [provider, eventId]);
-  return r.length > 0;
+/** Un evento recibido y sin terminar se considera en curso durante este tiempo; después se reprocesa. */
+export const WEBHOOK_IN_PROGRESS_SECONDS = 120;
+
+/**
+ * Toma un evento para procesarlo. "new": nuevo, o recibido antes y nunca terminado (el proceso murió) hace más de
+ * WEBHOOK_IN_PROGRESS_SECONDS: se procesa (los manejadores son idempotentes). "duplicate": ya procesado.
+ * "in_progress": otro pedido lo está procesando: el proveedor recibe 409 y reintenta (antes recibía 200 "duplicate" y,
+ * si el primero fallaba, el evento se perdía).
+ */
+export async function claimWebhookEvent(db: Db, provider: string, eventId: string): Promise<"new" | "duplicate" | "in_progress"> {
+  const ins = await db.query(`INSERT INTO payment_webhook_events (provider, event_id) VALUES ($1,$2) ON CONFLICT DO NOTHING RETURNING event_id`, [provider, eventId]);
+  if (ins.length) return "new";
+  // Abandonado: se vuelve a tomar (con received_at nuevo, así un pedido simultáneo lo ve en curso).
+  const retaken = await db.query(
+    `UPDATE payment_webhook_events SET received_at = now()
+      WHERE provider = $1 AND event_id = $2 AND processed_at IS NULL AND received_at <= now() - make_interval(secs => $3) RETURNING event_id`,
+    [provider, eventId, WEBHOOK_IN_PROGRESS_SECONDS],
+  );
+  if (retaken.length) return "new";
+  const row = await db.one<{ processed_at: string | null }>(`SELECT processed_at FROM payment_webhook_events WHERE provider = $1 AND event_id = $2`, [provider, eventId]);
+  // Borrado entre las dos consultas (falló el que lo procesaba): que el proveedor reintente.
+  return row?.processed_at ? "duplicate" : "in_progress";
+}
+
+async function finishEvent(db: Db, provider: string, eventId: string) {
+  await db.query(`UPDATE payment_webhook_events SET processed_at = now() WHERE provider = $1 AND event_id = $2`, [provider, eventId]);
 }
 
 async function forgetEvent(db: Db, provider: string, eventId: string) {
-  await db.query(`DELETE FROM payment_webhook_events WHERE provider = $1 AND event_id = $2`, [provider, eventId]);
+  await db.query(`DELETE FROM payment_webhook_events WHERE provider = $1 AND event_id = $2 AND processed_at IS NULL`, [provider, eventId]);
+}
+
+/** Procesa un evento tomado con claimWebhookEvent: lo marca procesado al terminar o lo suelta si falla. */
+export async function processWebhookEvent(db: Db, provider: string, eventId: string, run: () => Promise<void>) {
+  const claim = await claimWebhookEvent(db, provider, eventId);
+  if (claim !== "new") return claim;
+  try {
+    await run();
+  } catch (err) {
+    await forgetEvent(db, provider, eventId).catch(() => {}); // que el proveedor reintente
+    throw err;
+  }
+  await finishEvent(db, provider, eventId);
+  return claim;
+}
+
+type Cancel = { provider: string; id: string };
+
+async function cancelProviderSubscription(c: Cancel) {
+  if (c.provider === "stripe") await stripeCancelSubscription(c.id);
+  else if (c.provider === "mercadopago") await mpCancelPreapproval(c.id);
+}
+
+/**
+ * Cambio de suscripción de una organización sin tener la organización bloqueada durante las llamadas al proveedor
+ * (hasta 20 s, frenando cuotas e invitaciones). `decide` corre con la organización bloqueada y dice qué hacer:
+ * aplicar (`apply`, en la misma transacción), no hacer nada, o cancelar antes una suscripción en el proveedor
+ * (`cancel`). La cancelación se hace fuera de la transacción y después se vuelve a decidir con un bloqueo nuevo: si
+ * la suscripción vigente cambió mientras tanto (otra confirmación simultánea), se decide sobre la nueva; las ya
+ * canceladas en esta pasada no se vuelven a cancelar.
+ */
+export async function changeSubscription(
+  db: Db,
+  tenantId: string,
+  decide: (t: { billing_provider: string | null; subscription_id: string | null }, tx: Db) => Promise<{ cancel?: Cancel; apply: boolean }>,
+  apply: (tx: Db) => Promise<void>,
+) {
+  const canceled = new Set<string>();
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const todo = await db.tx(async (tx): Promise<Cancel | null> => {
+      const t = await tx.one<any>(`SELECT billing_provider, subscription_id FROM tenants WHERE id = $1 FOR UPDATE`, [tenantId]);
+      if (!t) return null;
+      const d = await decide(t, tx);
+      if (d.cancel && !canceled.has(`${d.cancel.provider}:${d.cancel.id}`)) return d.cancel;
+      if (d.apply) await apply(tx);
+      return null;
+    });
+    if (!todo) return;
+    await cancelProviderSubscription(todo);
+    canceled.add(`${todo.provider}:${todo.id}`);
+  }
+  // La suscripción vigente siguió cambiando: error, y el proveedor reintenta el evento.
+  throw new AppError(409, "subscription_changing", "La suscripción de la organización cambió mientras se procesaba el evento");
 }
 
 const isPlan = (p: unknown): p is PlanId => typeof p === "string" && (PLAN_IDS as readonly string[]).includes(p);
@@ -54,6 +129,7 @@ export async function handleStripeEvent(db: Db, event: any) {
         const res = await markPaymentPaid(db, paymentId, {
           providerPaymentId: typeof obj.payment_intent === "string" ? obj.payment_intent : obj.id,
           payerRecipientId: obj.metadata?.recipientId ?? null,
+          checkoutRef: obj.id ?? null,
           receipt: { provider: "stripe", sessionId: obj.id, paymentIntent: obj.payment_intent ?? null, amountTotal: obj.amount_total, currency: obj.currency },
         });
         // Segundo cobro de la misma deuda (p. ej. el checkout del pagador anterior): se reembolsa, como en Mercado Pago.
@@ -69,33 +145,53 @@ export async function handleStripeEvent(db: Db, event: any) {
         // Otra suscripción vigente (otro checkout de Stripe pagado en paralelo, o una de Mercado Pago autorizada mientras
         // este seguía abierto): queda la que se acaba de pagar y la anterior se cancela. Si no, la anterior seguiría
         // cobrando y, al pisarse subscription_id, ya no se podría ver ni cancelar desde la app.
-        // Con la organización bloqueada: dos confirmaciones simultáneas leían la misma suscripción anterior, cancelaban
-        // esa y la última pisaba a la otra, que seguía cobrando sin que la app la viera.
+        // Decidido con la organización bloqueada (changeSubscription): dos confirmaciones simultáneas leían la misma
+        // suscripción anterior, cancelaban esa y la última pisaba a la otra, que seguía cobrando sin que la app la viera.
+        // La cancelación en el proveedor va fuera del bloqueo y se revalida después.
         // Fecha de renovación desde el alta (si no, quedaba vacía, o la de la suscripción anterior, hasta el primer
         // "updated"). Mejor esfuerzo: sin ella igual se activa el plan.
         const renewsAt = subscriptionId ? await stripeGetSubscriptionPeriodEnd(subscriptionId).catch(() => null) : null;
-        await db.tx(async (tx) => {
-          const t = await tx.one<any>(`SELECT billing_provider, subscription_id FROM tenants WHERE id = $1 FOR UPDATE`, [tenantId]);
-          if (t?.subscription_id && t.subscription_id !== subscriptionId) {
-            if (t.billing_provider === "stripe") await stripeCancelSubscription(t.subscription_id);
-            else if (t.billing_provider === "mercadopago") await mpCancelPreapproval(t.subscription_id);
-          }
-          await applySubscription(tx, tenantId, {
-            plan,
-            provider: "stripe",
-            customerId: typeof obj.customer === "string" ? obj.customer : null,
-            subscriptionId,
-            status: "active",
-            renewsAt,
-            source: "Stripe",
-          });
-        });
+        await changeSubscription(
+          db,
+          tenantId,
+          async (t) => ({
+            cancel: t.subscription_id && t.subscription_id !== subscriptionId && t.billing_provider ? { provider: t.billing_provider, id: t.subscription_id } : undefined,
+            apply: true,
+          }),
+          (tx) =>
+            applySubscription(tx, tenantId, {
+              plan,
+              provider: "stripe",
+              customerId: typeof obj.customer === "string" ? obj.customer : null,
+              subscriptionId,
+              status: "active",
+              renewsAt,
+              source: "Stripe",
+            }),
+        );
         if (obj.metadata?.checkoutId) await db.query(`UPDATE billing_checkouts SET status = 'completed', completed_at = now() WHERE id = $1`, [obj.metadata.checkoutId]);
       }
       return;
     }
     case "checkout.session.async_payment_failed": {
-      if (obj.mode === "payment" && obj.metadata?.paymentId) await markPaymentFailed(db, obj.metadata.paymentId, "pago rechazado por Stripe", obj.metadata.recipientId ?? null);
+      if (obj.mode === "payment" && obj.metadata?.paymentId) {
+        await markPaymentFailed(db, obj.metadata.paymentId, "pago rechazado por Stripe", obj.metadata.recipientId ?? null, { checkoutRef: obj.id ?? null, ref: obj.id ?? null });
+      }
+      return;
+    }
+    // Reembolsos y disputas hechos en Stripe (o la confirmación de un reembolso propio). El objeto es el cargo o la
+    // disputa; el cobro se busca por su PaymentIntent. El estado del sobre no cambia.
+    case "charge.refunded": {
+      const pi = typeof obj.payment_intent === "string" ? obj.payment_intent : null;
+      if (!pi) return;
+      const full = obj.refunded === true || (Number.isFinite(obj.amount) && obj.amount_refunded >= obj.amount);
+      await markPaymentRefundedByProvider(db, "stripe", pi, { full, amountRefunded: Number.isFinite(obj.amount_refunded) ? obj.amount_refunded / 100 : null });
+      return;
+    }
+    case "charge.dispute.created": {
+      const pi = typeof obj.payment_intent === "string" ? obj.payment_intent : null;
+      if (!pi || !obj.id) return;
+      await markPaymentDisputed(db, "stripe", pi, { disputeId: obj.id, reason: obj.reason ?? null, amount: Number.isFinite(obj.amount) ? obj.amount / 100 : null });
       return;
     }
     case "customer.subscription.updated":
@@ -137,8 +233,9 @@ export async function handleMercadoPagoNotification(db: Db, type: string, dataId
     const pay = await mpGetPayment(dataId);
     const ref = pay.externalReference ?? "";
     if (!ref.startsWith("pay:")) return;
-    // pay:<cobro>[:<pagador para el que se armó el checkout>] (las preferencias viejas no traen el pagador).
-    const [paymentId, payerRecipientId] = ref.slice(4).split(":");
+    // pay:<cobro>[:<pagador para el que se armó el checkout>[:<referencia del checkout>]] (las preferencias viejas no
+    // traen el pagador ni la referencia).
+    const [paymentId, payerRecipientId, checkoutRef] = ref.slice(4).split(":");
     if (pay.status === "approved") {
       // Monto y moneda son obligatorios: sin ellos no se puede comprobar que se pagó lo que se cobra.
       if (!Number.isFinite(pay.amount) || !pay.currency) {
@@ -147,6 +244,7 @@ export async function handleMercadoPagoNotification(db: Db, type: string, dataId
       const res = await markPaymentPaid(db, paymentId, {
         providerPaymentId: pay.id,
         payerRecipientId: payerRecipientId || null,
+        checkoutRef: checkoutRef || null,
         amount: pay.amount,
         currency: pay.currency,
         receipt: { provider: "mercadopago", paymentId: pay.id, method: pay.method, approvedAt: pay.approvedAt },
@@ -160,7 +258,12 @@ export async function handleMercadoPagoNotification(db: Db, type: string, dataId
         if (row?.checkout_id) await mpExpirePreference(row.checkout_id).catch(() => undefined);
       }
     } else if (["rejected", "cancelled"].includes(pay.status)) {
-      await markPaymentFailed(db, paymentId, `pago ${pay.status} en Mercado Pago`, payerRecipientId || null);
+      await markPaymentFailed(db, paymentId, `pago ${pay.status} en Mercado Pago`, payerRecipientId || null, { checkoutRef: checkoutRef || null, ref: pay.id });
+    } else if (pay.status === "refunded") {
+      // Reembolso total hecho en Mercado Pago (o la confirmación de uno propio). Solo cuenta si es el pago acreditado.
+      await markPaymentRefundedByProvider(db, "mercadopago", pay.id, { full: true });
+    } else if (pay.status === "charged_back") {
+      await markPaymentDisputed(db, "mercadopago", pay.id, { disputeId: `mp:${pay.id}`, reason: "charged_back" });
     }
     return;
   }
@@ -172,41 +275,50 @@ export async function handleMercadoPagoNotification(db: Db, type: string, dataId
     const active = pre.status === "authorized";
     const ended = ["cancelled", "paused"].includes(pre.status);
     if (!active && !ended) return; // pending: todavía no autorizó
-    // Con la organización bloqueada (como el alta por Stripe): dos altas simultáneas no dejan una cobrando sin registrar.
-    await db.tx(async (tx) => {
-      const t = await tx.one<any>(`SELECT billing_provider, subscription_id FROM tenants WHERE id = $1 FOR UPDATE`, [tenantId]);
-      if (!t) return;
-      if (ended) {
-        // Solo baja el plan si la que se cancela es la suscripción vigente (no una anterior reemplazada por otra).
-        if (t.billing_provider !== "mercadopago" || t.subscription_id !== pre.id) return;
-      } else if (t.billing_provider === "mercadopago" && t.subscription_id && t.subscription_id !== pre.id) {
-        // Dos suscripciones autorizadas: queda la del checkout más reciente y la otra se cancela para no cobrar dos veces
-        // (la notificación de una anterior puede llegar tarde y no tiene que pisar a la nueva).
-        const started = async (ref: string) =>
-          (await tx.one<any>(`SELECT max(created_at) AS at FROM billing_checkouts WHERE tenant_id = $1 AND provider = 'mercadopago' AND provider_ref = $2`, [tenantId, ref]))?.at;
-        const [mine, theirs] = [await started(pre.id), await started(t.subscription_id)];
-        if (mine && theirs && new Date(mine) < new Date(theirs)) {
-          await mpCancelPreapproval(pre.id);
-          return;
+    // Decidido con la organización bloqueada (como el alta por Stripe): dos altas simultáneas no dejan una cobrando sin
+    // registrar. Las cancelaciones en el proveedor van fuera del bloqueo (changeSubscription).
+    await changeSubscription(
+      db,
+      tenantId,
+      async (t, tx) => {
+        if (ended) {
+          // Solo baja el plan si la que se cancela es la suscripción vigente (no una anterior reemplazada por otra).
+          return { apply: t.billing_provider === "mercadopago" && t.subscription_id === pre.id };
         }
-        await mpCancelPreapproval(t.subscription_id);
-      } else if (t.billing_provider === "stripe" && t.subscription_id) {
+        if (t.billing_provider === "mercadopago" && t.subscription_id && t.subscription_id !== pre.id) {
+          // Dos suscripciones autorizadas: queda la del checkout más reciente y la otra se cancela para no cobrar dos
+          // veces (la notificación de una anterior puede llegar tarde y no tiene que pisar a la nueva).
+          const started = async (ref: string) =>
+            (await tx.one<any>(`SELECT max(created_at) AS at FROM billing_checkouts WHERE tenant_id = $1 AND provider = 'mercadopago' AND provider_ref = $2`, [tenantId, ref]))?.at;
+          const [mine, theirs] = [await started(pre.id), await started(t.subscription_id)];
+          if (mine && theirs && new Date(mine) < new Date(theirs)) return { cancel: { provider: "mercadopago", id: pre.id }, apply: false };
+          return { cancel: { provider: "mercadopago", id: t.subscription_id }, apply: true };
+        }
         // Una de Stripe pagada antes: queda la recién autorizada y la de Stripe se cancela (si no, cobrarían las dos).
-        await stripeCancelSubscription(t.subscription_id);
-      }
-      await applySubscription(tx, tenantId, {
-        plan: active ? (plan as PlanId) : "free",
-        provider: active ? "mercadopago" : null,
-        subscriptionId: active ? pre.id : null,
-        status: pre.status,
-        renewsAt: pre.nextPaymentDate,
-        source: "Mercado Pago",
-      });
-    });
+        if (t.billing_provider === "stripe" && t.subscription_id) return { cancel: { provider: "stripe", id: t.subscription_id }, apply: true };
+        return { apply: true };
+      },
+      (tx) =>
+        applySubscription(tx, tenantId, {
+          plan: active ? (plan as PlanId) : "free",
+          provider: active ? "mercadopago" : null,
+          subscriptionId: active ? pre.id : null,
+          status: pre.status,
+          renewsAt: pre.nextPaymentDate,
+          source: "Mercado Pago",
+        }),
+    );
   }
 }
 
 // ───────────────────────────── Rutas ─────────────────────────────
+
+function claimReply(reply: FastifyReply, claim: "new" | "duplicate" | "in_progress") {
+  if (claim === "duplicate") return { received: true, duplicate: true };
+  // Otro pedido lo está procesando: 409 para que el proveedor reintente más tarde (si ese falla, el reintento lo procesa).
+  if (claim === "in_progress") return reply.code(409).send({ error: { code: "event_in_progress", message: "El evento se está procesando; reintentar más tarde" } });
+  return { received: true };
+}
 
 export async function billingWebhookRoutes(app: FastifyInstance, s: Services) {
   await app.register(async (o) => {
@@ -226,14 +338,9 @@ export async function billingWebhookRoutes(app: FastifyInstance, s: Services) {
       } catch {
         return reply.code(400).send({ error: { code: "invalid_json", message: "JSON inválido" } });
       }
-      if (!event?.id || !(await firstTime(s.db, "stripe", event.id))) return { received: true, duplicate: true };
-      try {
-        await handleStripeEvent(s.db, event);
-      } catch (err) {
-        await forgetEvent(s.db, "stripe", event.id); // que Stripe reintente
-        throw err;
-      }
-      return { received: true };
+      if (!event?.id) return { received: true, duplicate: true };
+      const claim = await processWebhookEvent(s.db, "stripe", event.id, () => handleStripeEvent(s.db, event));
+      return claimReply(reply, claim);
     });
 
     o.post<{ Querystring: Record<string, string> }>("/v1/integrations/payments/mercadopago/webhook", rl, async (req, reply) => {
@@ -262,14 +369,8 @@ export async function billingWebhookRoutes(app: FastifyInstance, s: Services) {
       }
       // Solo partes firmadas (data.id y x-request-id): con type/action del cuerpo, cambiarlos reprocesaba la misma notificación.
       const eventId = `${dataId}:${String(req.headers["x-request-id"] ?? "")}`;
-      if (!(await firstTime(s.db, "mercadopago", eventId))) return { received: true, duplicate: true };
-      try {
-        await handleMercadoPagoNotification(s.db, type, dataId);
-      } catch (err) {
-        await forgetEvent(s.db, "mercadopago", eventId);
-        throw err;
-      }
-      return { received: true };
+      const claim = await processWebhookEvent(s.db, "mercadopago", eventId, () => handleMercadoPagoNotification(s.db, type, dataId));
+      return claimReply(reply, claim);
     });
   });
 }

@@ -224,13 +224,18 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
     const { a, e } = await envelopeOf(s, req);
     const input = UpdateEnvelopeAiInput.parse(req.body);
     if (input.signerAssist) await assertAiAvailable(s.db, a.tenantId, { reserve: false });
-    await s.db.tx(async (t) => {
+    return s.db.tx(async (t) => {
       const cur = await lockEnvelope(t, a.tenantId, e.id);
       // Cambia el updatedAt del sobre: con X-Expected-Updated-At (el editor lo manda) no tapa una edición ajena.
       assertNotStale(req.headers, cur.updated_at);
-      await t.query(`UPDATE envelopes SET ai_signer_assist = $2, updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 millisecond') WHERE id = $1`, [e.id, input.signerAssist]);
+      // La vista sale de la fila que dejó este guardado (RETURNING): si otro guarda después del COMMIT, el editor no
+      // adopta su updatedAt sin sus datos.
+      const row = await t.one<any>(
+        `UPDATE envelopes SET ai_signer_assist = $2, updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 millisecond') WHERE id = $1 RETURNING *`,
+        [e.id, input.signerAssist],
+      );
+      return metadataViewOf(row);
     });
-    return metadataView(s, e.id);
   });
 
   // ───────── Metadatos del contrato ─────────
@@ -417,7 +422,10 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
 }
 
 async function metadataView(s: Services, envelopeId: string): Promise<EnvelopeAiMetadata> {
-  const e = await s.db.one<any>(`SELECT * FROM envelopes WHERE id = $1`, [envelopeId]);
+  return metadataViewOf(await s.db.one<any>(`SELECT * FROM envelopes WHERE id = $1`, [envelopeId]));
+}
+
+function metadataViewOf(e: any): EnvelopeAiMetadata {
   return {
     metadata: e?.ai_metadata ?? null,
     confidence: e?.ai_metadata_confidence ?? {},

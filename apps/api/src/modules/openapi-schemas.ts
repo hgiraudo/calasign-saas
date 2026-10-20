@@ -27,7 +27,9 @@ import {
   RECIPIENT_ROLES,
   RECIPIENT_STATUSES,
   RecipientInput,
+  SIGNATURE_LEVELS,
   SIGNATURE_TYPES,
+  ContractMetadataSchema,
   TemplateFieldInput,
   TemplateRecipientInput,
   WEBHOOK_EVENT_TYPES,
@@ -503,8 +505,9 @@ export const EnvelopePaymentSchema = named(
     paidAt: iso().nullable(),
     providerPaymentId: z.string().nullable(),
     refundRequiredAt: iso().nullable().describe("El pago llegó con el sobre ya cerrado y se tiene que devolver."),
-    refundedAt: iso().nullable(),
+    refundedAt: iso().nullable().describe("Reembolsado: por CalaSign (sobre cerrado) o en el proveedor (estado refunded)."),
     refundError: z.string().nullable(),
+    disputedAt: iso().nullable().optional().describe("Contracargo o disputa abierta en el proveedor; no cambia el estado del cobro ni del sobre."),
   }),
 );
 
@@ -647,6 +650,37 @@ export const AccessSchema = named(
 );
 
 export const SharesSchema = z.object({ groups: z.array(z.object({ id: uuid(), name: z.string() })) });
+
+// ───────────────────────────── Sello y nivel de firma ─────────────────────────────
+
+export const SealOptionsSchema = named(
+  "SealOptions",
+  z.object({
+    companySealCertificateId: uuid().nullable(),
+    companySeal: z.object({ name: z.string(), commonName: z.string().nullable() }).nullable(),
+    signatureLevel: z.enum(SIGNATURE_LEVELS),
+    envelopeUpdatedAt: iso().describe("updatedAt del sobre tras leer o guardar (para X-Expected-Updated-At del siguiente guardado)."),
+  }),
+);
+
+// ───────────────────────────── IA: datos del contrato ─────────────────────────────
+
+export const EnvelopeAiMetadataSchema = named(
+  "EnvelopeAiMetadata",
+  z.object({
+    metadata: ContractMetadataSchema.nullable(),
+    confidence: z.record(z.number().min(0).max(1)).describe("Confianza 0..1 por campo (solo para lo extraído por IA)."),
+    source: z.enum(["ai", "manual"]).nullable(),
+    updatedAt: iso().nullable(),
+    renewalAlertAt: z.string().nullable().describe("Fecha (YYYY-MM-DD) en que se avisará la renovación o el vencimiento."),
+    renewalAlertSentAt: iso().nullable(),
+    signerAssist: z.boolean(),
+    usage: z
+      .object({ provider: z.enum(["anthropic", "mock"]), model: z.string(), inputTokens: z.number().int(), outputTokens: z.number().int() })
+      .nullable(),
+    envelopeUpdatedAt: iso().nullable().describe("updatedAt del sobre (para X-Expected-Updated-At del siguiente guardado)."),
+  }),
+);
 
 // ───────────────────────────── Auditoría ─────────────────────────────
 

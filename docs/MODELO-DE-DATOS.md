@@ -121,13 +121,14 @@ El diagrama de arriba es el núcleo (0001). Cada bloque funcional agrega su prop
 | `0053_web_form_token_uses` | Cada token de formulario web sirve para un solo envío |
 | `0054_login_attempts` | Intentos de contraseña por cuenta contados antes de verificar (bloqueo que resiste pedidos en paralelo) |
 | `0055_archive_renewal_claim` | `envelopes.archive_renewing_until`: una renovación del sello de archivo a la vez por sobre |
-| `0056_stale_checkout` | `envelope_payments.stale_checkout_id`: el checkout descartado al cambiar el pagador se cierra en el proveedor |
+| `0056_stale_checkout` | `envelope_payments.stale_checkout_id`: el checkout descartado al cambiar el pagador se cierra en el proveedor (reemplazada en 0063) |
 | `0057_export_pdf_sha` | Hash del PDF subido en exportaciones (`storage_exports.pdf_sha256`) y conectores (`connector_links.signed_sha256`): el JSON de evidencia describe ese PDF aunque después se renueve el sello |
 | `0058_ai_extract_retry` | `envelopes.ai_metadata_retry_at`: una extracción automática con IA que falló se reintenta después de esa fecha (1 h si fue algo transitorio, 6 h si el proveedor rechazó el pedido), durante 30 días desde el primer intento |
 | `0059_webhook_origin` | `webhook_endpoints.created_by_api_key` y `oauth_client_id`: si se revoca la credencial que creó el webhook, se desactiva |
 | `0060_ai_extract_idx` | Índice parcial para el barrido de extracción automática con IA |
 | `0061_ai_extract_idx2` | Reemplaza los índices de 0011 y 0060 por uno por organización y más selectivo para ese barrido |
 | `0062_ai_first_attempt` | `envelopes.ai_metadata_first_attempt_at`: primer intento de la extracción automática, para contar los 30 días de reintentos desde ahí (no desde que se completó el sobre) |
+| `0063_payment_webhooks_checkouts` | `payment_webhook_events.processed_at` (el evento se marca procesado al terminar); `envelope_payments.stale_checkout_ids` (cola de checkouts descartados a cerrar, reemplaza `stale_checkout_id`), `discarded_checkout_refs` y `checkout_ref` (un pago por un checkout descartado se reembolsa), `disputed_at` (contracargo o disputa en el proveedor) e índice por `provider_payment_id` |
 
 Reglas: una migración por bloque, solo aditiva salvo cuando se recrea un `CHECK` para sumar un valor; nunca se edita una
 migración ya aplicada en un entorno.

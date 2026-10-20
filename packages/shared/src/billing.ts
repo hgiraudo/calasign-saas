@@ -146,6 +146,11 @@ export interface EnvelopePayment {
   refundRequiredAt: string | null;
   refundedAt: string | null;
   refundError: string | null;
+  /**
+   * Contracargo o disputa abierta en el proveedor (Stripe `charge.dispute.created`, Mercado Pago `charged_back`). No
+   * cambia el estado del cobro ni el del sobre; el detalle queda en la evidencia (`payment.disputed`).
+   */
+  disputedAt?: string | null;
 }
 
 /** Lo que ve el firmante. `required` = este destinatario es quien paga. */

@@ -27,7 +27,8 @@ import { applyIdentityFlags } from "./identity/kyc";
 import { applyCertificateFlags } from "./certsign";
 import { assignFieldIds, formulaRefs, pruneDanglingConditions, saveFieldLogic } from "./logic";
 import { paymentBlocksCompletion } from "./billing/payments";
-import { enforceEnvelopeQuota } from "./billing/plans";
+import { enforceEnvelopeQuota, requireFeature, tenantPlan } from "./billing/plans";
+import { providerConfigured } from "./billing/providers";
 import { deleteFilesIfUnused, discardBlobsOnFailure } from "./file-cleanup";
 import { createEnvelopeRoute, ONE_SHOT_JSON_BODY_LIMIT } from "./envelope-oneshot";
 import { envelopeSearchSql } from "./devapi/search";
@@ -912,7 +913,16 @@ export async function sendEnvelope(t: Db, tenantId: string, envelopeId: string, 
   if (e.expires_at && new Date(e.expires_at) <= new Date()) problems.push("La fecha de vencimiento ya pasó");
   problems.push(...danglingFormulaProblems(fields));
   // El cobro tiene que quedar a cargo de un firmante: si se le cambió el rol, el sobre no podría completarse.
-  const pay = await t.one<any>(`SELECT recipient_id FROM envelope_payments WHERE envelope_id = $1`, [e.id]);
+  const pay = await t.one<any>(`SELECT recipient_id, provider FROM envelope_payments WHERE envelope_id = $1`, [e.id]);
+  if (pay) {
+    // El cobro se configuró con el plan y el proveedor de ese momento: si la organización bajó a un plan sin cobros, o
+    // el proveedor ya no está configurado, el sobre no se envía (si no, se cobraba sin el plan o el firmante quedaba
+    // trabado con un pago imposible). Cubre todos los caminos de envío, que pasan por acá.
+    requireFeature((await tenantPlan(t, tenantId)).plan, "payments", "El cobro al firmar");
+    if (!providerConfigured(pay.provider)) {
+      throw badRequest("provider_not_configured", `El proveedor de cobro ${pay.provider} no está configurado en este entorno`);
+    }
+  }
   if (pay && !signers.some((r) => r.id === pay.recipient_id)) problems.push("Quien paga el cobro tiene que ser un firmante");
   if (problems.length) throw new AppError(422, "envelope_incomplete", problems.join(". "), { problems });
 

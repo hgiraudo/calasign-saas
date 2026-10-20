@@ -903,6 +903,8 @@ function ReviewStep({
   const [allowDelegation, setAllowDelegation] = useState(init?.allowDelegation ?? env.allowDelegation ?? true);
   const b = useBillingText();
   const [paymentUnsaved, setPaymentUnsaved] = useState(false);
+  // busy es compartido con los paneles de sello e IA: «Enviando…» solo mientras se envía de verdad.
+  const [sending, setSending] = useState(false);
   useEffect(() => {
     onDraft({ subject, message, expires, reminderEveryDays, expiryWarningDays, allowDelegation });
   }, [onDraft, subject, message, expires, reminderEveryDays, expiryWarningDays, allowDelegation]);
@@ -917,6 +919,7 @@ function ReviewStep({
       return;
     }
     setBusy(true);
+    setSending(true);
     setError(null);
     try {
       // Sin cambios no se manda el PATCH: si se perdió la respuesta de un envío que sí llegó, reintentar fallaba en el
@@ -941,6 +944,7 @@ function ReviewStep({
       fail(e);
     } finally {
       setBusy(false);
+      setSending(false);
     }
   };
 
@@ -997,7 +1001,7 @@ function ReviewStep({
         <PaymentOptionsPanel envelopeId={env.id} recipients={detail.recipients} onUnsavedChange={setPaymentUnsaved} />
         <AiReviewPanel envelopeId={env.id} versioned={versioned} disabled={busy} />
         <button type="button" className="btn btn-primary btn-block" disabled={busy || !subject.trim()} onClick={send}>
-          {busy ? t("edit.sending") : t("edit.send")}
+          {sending ? t("edit.sending") : t("edit.send")}
         </button>
       </section>
       <section className="card pad">

@@ -107,7 +107,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             setExpired(true);
             setMe(null);
           }}
-          onClose={() => setSessionLost(false)}
         />
       )}
     </Ctx.Provider>
@@ -122,17 +121,16 @@ function SessionLostModal({
   me,
   onRestored,
   onDiscard,
-  onClose,
 }: {
   me: MeResponse;
   onRestored: (m: MeResponse) => void;
   onDiscard: () => void;
-  onClose: () => void;
 }) {
   const pw = usePasswordText();
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const retry = async () => {
+    if (busy) return;
     setBusy(true);
     setMsg(null);
     try {
@@ -148,7 +146,10 @@ function SessionLostModal({
   return (
     <Modal
       title={pw("lostTitle")}
-      onClose={onClose}
+      // Cerrar (Esc/X) es lo mismo que «Reintentar»: solo se cierra si /v1/me vuelve con la misma persona y organización.
+      // Cerrarlo sin más dejaba seguir guardando con la sesión que hubiera en la cookie (otro usuario de la org, o
+      // ninguna, con el aviso de nuevo en el siguiente 401).
+      onClose={() => void retry()}
       footer={
         <>
           <button type="button" className="btn btn-ghost" disabled={busy} onClick={onDiscard}>

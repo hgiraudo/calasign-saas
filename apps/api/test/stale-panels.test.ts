@@ -90,6 +90,38 @@ describe("visibilidad de la plantilla con X-Expected-Updated-At", () => {
   });
 });
 
+describe("grupos de la plantilla: 404/409 antes que invalid_group", () => {
+  it("plantilla inexistente → 404; versión vieja → 409 (aunque el grupo no exista)", async () => {
+    const ghostGroup = "00000000-0000-4000-8000-000000000001";
+    const missing = await app.inject({ method: "PUT", url: `/v1/templates/00000000-0000-4000-8000-000000000002/shares`, headers: auth, payload: { groupIds: [ghostGroup] } });
+    expect(missing.statusCode).toBe(404);
+    const c = await app.inject({ method: "POST", url: "/v1/templates", headers: auth, payload: { name: "Plantilla grupos" } });
+    const tpl = c.json().template;
+    const url = `/v1/templates/${tpl.id}/shares`;
+    const bad = await app.inject({ method: "PUT", url, headers: { ...auth, "x-expected-updated-at": stale }, payload: { groupIds: [ghostGroup] } });
+    expect(bad.json().error.code).toBe("version_changed");
+    const inv = await app.inject({ method: "PUT", url, headers: { ...auth, "x-expected-updated-at": tpl.updatedAt }, payload: { groupIds: [ghostGroup] } });
+    expect(inv.statusCode).toBe(400);
+    expect(inv.json().error.code).toBe("invalid_group");
+    // Sin cambio de visibilidad devuelve la versión leída con FOR UPDATE (la misma).
+    const ok = await app.inject({ method: "PUT", url, headers: { ...auth, "x-expected-updated-at": tpl.updatedAt }, payload: { groupIds: [] } });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json().templateUpdatedAt).toBe(tpl.updatedAt);
+  });
+});
+
+describe("OpenAPI de los guardados laterales", () => {
+  it("putSealOptions y PATCH ai/settings declaran X-Expected-Updated-At, version_changed y envelopeUpdatedAt", async () => {
+    const doc = (await app.inject({ method: "GET", url: "/v1/openapi.json" })).json();
+    for (const op of [doc.paths["/v1/envelopes/{id}/seal-options"].put, doc.paths["/v1/envelopes/{id}/ai/settings"].patch]) {
+      expect(JSON.stringify(op.parameters)).toContain("ExpectedUpdatedAt");
+      expect(JSON.stringify(op.responses["409"])).toContain("version_changed");
+    }
+    expect(doc.components.schemas.SealOptions.properties.envelopeUpdatedAt).toBeTruthy();
+    expect(doc.components.schemas.EnvelopeAiMetadata.properties.envelopeUpdatedAt).toBeTruthy();
+  });
+});
+
 describe("enviar con X-Expected-Updated-At", () => {
   it("409 version_changed si el borrador cambió; sin encabezado no se controla", async () => {
     const e = await newEnvelope();

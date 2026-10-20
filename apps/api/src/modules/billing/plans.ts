@@ -27,6 +27,11 @@ export function planLimitError(message: string, details: Omit<PlanLimitDetails, 
   return new AppError(402, "plan_limit", message, { ...details, upgradeUrl: UPGRADE_URL });
 }
 
+/**
+ * Inicio del mes de cupo: el día 1 a las 00:00 **UTC**, no en la zona de la organización. Para una organización en
+ * UTC-3, el cupo se renueva el último día del mes a las 21:00 hora local (y los envíos de esas últimas horas cuentan
+ * para el mes siguiente). Es intencional (un solo corte para todos, sin depender de la zona configurada).
+ */
 export function monthStart(d = new Date()): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
 }

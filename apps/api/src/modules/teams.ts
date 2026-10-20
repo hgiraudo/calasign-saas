@@ -921,10 +921,10 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
 
   // ───────── Compartir sobres y plantillas con grupos ─────────
 
-  async function validGroups(tenantId: string, ids: string[]) {
+  async function validGroups(tenantId: string, ids: string[], db: Db = s.db) {
     const unique = [...new Set(ids)];
     if (!unique.length) return [];
-    const rows = await s.db.query<any>(`SELECT id, name FROM groups WHERE tenant_id = $1 AND id = ANY($2::uuid[])`, [tenantId, unique]);
+    const rows = await db.query<any>(`SELECT id, name FROM groups WHERE tenant_id = $1 AND id = ANY($2::uuid[])`, [tenantId, unique]);
     if (rows.length !== unique.length) throw badRequest("invalid_group", "Algún grupo no existe");
     return rows;
   }
@@ -961,29 +961,34 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
   app.put<P>("/v1/templates/:id/shares", { preHandler: auth }, async (req) => {
     const a = A(req);
     const input = PutTemplateSharesInput.parse(req.body);
-    const groups = await validGroups(a.tenantId, input.groupIds);
-    await s.db.tx(async (t) => {
-      const cur = await t.one<any>(`SELECT updated_at FROM templates WHERE id = $1 AND tenant_id = $2 FOR UPDATE`, [req.params.id, a.tenantId]);
+    const saved = await s.db.tx(async (t) => {
+      const cur = await t.one<any>(`SELECT visibility, updated_at FROM templates WHERE id = $1 AND tenant_id = $2 FOR UPDATE`, [req.params.id, a.tenantId]);
       if (!cur) throw notFound("Plantilla");
       // La visibilidad cambia el updatedAt de la plantilla: con X-Expected-Updated-At (el editor lo manda) no tapa una
       // edición ajena. Sin cambio de visibilidad no se toca (estrictamente creciente, como el resto de la plantilla).
       assertNotStale(req.headers, cur.updated_at);
-      if (input.visibility)
-        await t.query(
-          `UPDATE templates SET visibility = $2, updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 millisecond')
-           WHERE id = $1 AND visibility IS DISTINCT FROM $2`,
-          [req.params.id, input.visibility],
-        );
+      // Los grupos se validan después del 404/409: una plantilla inexistente o desactualizada no responde invalid_group.
+      const groups = await validGroups(a.tenantId, input.groupIds, t);
+      // La versión que se devuelve es la que deja este guardado (RETURNING, o la leída con FOR UPDATE si no cambió):
+      // leerla después del COMMIT podría adoptar el updatedAt de otro guardado posterior sin sus datos.
+      const upd = input.visibility
+        ? await t.one<any>(
+            `UPDATE templates SET visibility = $2, updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 millisecond')
+             WHERE id = $1 AND visibility IS DISTINCT FROM $2 RETURNING visibility, updated_at`,
+            [req.params.id, input.visibility],
+          )
+        : null;
       await t.query(`DELETE FROM template_shares WHERE template_id = $1`, [req.params.id]);
       for (const g of groups) await t.query(`INSERT INTO template_shares (template_id, group_id) VALUES ($1,$2)`, [req.params.id, g.id]);
+      return { groups, row: upd ?? cur };
     });
-    const t = await s.db.one<any>(`SELECT visibility, updated_at FROM templates WHERE id = $1`, [req.params.id]);
+    const { groups, row: t } = saved;
     await auditFromRequest(s.db, req, a, "template.shared", {
       targetType: "template",
       targetId: req.params.id,
-      data: { visibility: t.visibility, groups: groups.map((g) => g.name) },
+      data: { visibility: t.visibility, groups: groups.map((g: any) => g.name) },
     });
-    return { groups: groups.map((g) => ({ id: g.id, name: g.name })), visibility: t.visibility, templateUpdatedAt: new Date(t.updated_at).toISOString() };
+    return { groups: groups.map((g: any) => ({ id: g.id, name: g.name })), visibility: t.visibility, templateUpdatedAt: new Date(t.updated_at).toISOString() };
   });
 
   // ───────── Seguridad y retención ─────────

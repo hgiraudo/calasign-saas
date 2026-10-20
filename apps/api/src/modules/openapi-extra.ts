@@ -324,6 +324,7 @@ export const ERRORS: Record<string, Err> = {
     summary: "Se pidieron frameAncestors para un firmante con código OTP (sin frameAncestors la URL sale para pestaña)",
   },
   not_draft: { status: 409, code: "not_draft", message: "Solo se puede modificar un sobre en borrador", summary: "El sobre ya no es un borrador" },
+  not_editable: { status: 409, code: "not_editable", message: "El sobre ya está finalizado", summary: "El sobre ya no admite cambios de sello o nivel de firma (solo borrador o enviado; trabado en la finalización, solo el sello)" },
   idempotency_mismatch: {
     status: 409,
     code: "idempotency_mismatch",

@@ -19,6 +19,7 @@ import { AppError, badRequest, conflict, forbidden, notFound } from "../lib/erro
 import { decrypt, encrypt, maskDestination, randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { authenticate, clientInfo, type AuthContext, type Services } from "./context";
 import { activateRecipient, advanceRouting, currentSignerGroup, danglingFormulaProblems, envelopeLogicOrderProblems, lockEnvelope, newLogicOrderProblems, pastExpiry } from "./envelopes";
+import { DISCARD_CHECKOUT_SET } from "./billing/payments";
 import { checkSenderValue, insertEnvelopeField } from "./fieldvalues";
 import { pruneDanglingConditions, saveFieldLogic } from "./logic";
 import { csvCell } from "./agreements/common";
@@ -181,7 +182,7 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
     if (!r) throw notFound("Destinatario");
     requireUntouched(r, "quitarlo");
     // Borrarlo eliminaría en cascada el cobro pendiente: el sobre seguiría sin cobrar.
-    if (await db.one(`SELECT 1 FROM envelope_payments WHERE recipient_id = $1 AND status <> 'paid'`, [id]))
+    if (await db.one(`SELECT 1 FROM envelope_payments WHERE recipient_id = $1 AND status NOT IN ('paid','refunded')`, [id]))
       throw conflict("recipient_is_payer", `${r.name} tiene un cobro pendiente: no se puede quitar`);
     await db.query(`DELETE FROM recipients WHERE id = $1`, [id]);
     recips.delete(id);
@@ -272,7 +273,7 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
         [r.id, t.hash, t.enc],
       );
       // El checkout de un cobro pendiente se armó con el contacto y el link anteriores: se descarta.
-      await db.query(`UPDATE envelope_payments SET stale_checkout_id = COALESCE(checkout_id, stale_checkout_id), checkout_id = NULL, checkout_url = NULL, updated_at = now() WHERE recipient_id = $1 AND status <> 'paid'`, [r.id]);
+      await db.query(`UPDATE envelope_payments SET ${DISCARD_CHECKOUT_SET}, updated_at = now() WHERE recipient_id = $1 AND status NOT IN ('paid','refunded')`, [r.id]);
       // Un código de embed sin usar emitido para el contacto anterior abriría el link nuevo: se vence.
       await db.query(`UPDATE embed_sessions SET expires_at = LEAST(expires_at, now()) WHERE recipient_id = $1 AND used_at IS NULL`, [r.id]);
       await db.query(`DELETE FROM signer_sessions WHERE recipient_id = $1`, [r.id]);

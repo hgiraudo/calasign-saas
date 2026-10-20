@@ -64,7 +64,9 @@ async function ingestBackfill(d: Deps) {
   const rows = await d.db.query<{ id: number }>(
     `UPDATE jobs SET status = 'pending', attempts = 0, run_at = now(), finished_at = NULL, locked_at = NULL
       WHERE id IN (SELECT id FROM jobs WHERE queue = 'agreements' AND status = 'failed' AND dedupe_key LIKE 'agr:ingest:%'
-                     AND finished_at < now() - interval '6 hours' AND created_at > now() - interval '30 days' LIMIT 20)
+                     AND finished_at < now() - interval '6 hours' AND created_at > now() - interval '30 days'
+                     -- Uno que tumbó el proceso (un PDF que lo hace caer) no se reintenta: se llevaba los jobs en curso.
+                     AND COALESCE(last_error, '') NOT LIKE '%el worker se detuvo%' LIMIT 20)
       RETURNING id`,
   );
   if (rows.length) d.log.info({ jobs: rows.length }, "ingestas al repositorio re-encoladas");

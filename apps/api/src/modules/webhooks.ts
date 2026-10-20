@@ -21,6 +21,7 @@ import type { Db } from "../infra/db";
 import { enqueue } from "../infra/queue";
 import { badRequest, notFound } from "../lib/errors";
 import { decrypt, encrypt, iso, randomToken, uuidv7 } from "../lib/util";
+import { recordAudit } from "./audit";
 import { authenticate, type AuthContext, type Services } from "./context";
 
 const MAX_ATTEMPTS = 8;
@@ -322,7 +323,38 @@ export async function handleWebhookJob(d: Deps, p: WebhookJob, job?: { attempts:
   return deliverOne(d, p.deliveryId, job?.attempts ?? 1, Boolean(p.manual));
 }
 
+/**
+ * Suscripciones creadas por una integración (API key o app OAuth de un usuario) cuya credencial ya no vale: key revocada,
+ * app revocada, el usuario la desconectó (tokens revocados) o dejó la organización. Se desactivan (quedan a la vista en
+ * la consola): si no, el tercero seguía recibiendo los datos de todos los sobres después de cortarle el acceso.
+ */
+async function deactivateOrphanedEndpoints(db: Db, tenantId: string) {
+  const off = await db.query<{ id: string }>(
+    `UPDATE webhook_endpoints ep SET active = false, updated_at = now()
+      WHERE ep.tenant_id = $1 AND ep.active AND (
+        (ep.created_by_api_key IS NOT NULL AND NOT EXISTS (SELECT 1 FROM api_keys k WHERE k.id = ep.created_by_api_key AND k.revoked_at IS NULL))
+        OR (ep.oauth_client_id IS NOT NULL AND (
+          NOT EXISTS (SELECT 1 FROM oauth_clients c WHERE c.id = ep.oauth_client_id AND c.revoked_at IS NULL)
+          OR NOT EXISTS (SELECT 1 FROM memberships m WHERE m.tenant_id = ep.tenant_id AND m.user_id = ep.created_by)
+          OR NOT EXISTS (SELECT 1 FROM oauth_tokens ot WHERE ot.client_id = ep.oauth_client_id AND ot.user_id = ep.created_by
+                           AND ot.tenant_id = ep.tenant_id AND ot.revoked_at IS NULL))))
+      RETURNING ep.id`,
+    [tenantId],
+  );
+  for (const e of off) {
+    await recordAudit(db, {
+      tenantId,
+      action: "webhook.deactivated",
+      actor: { type: "system", label: "CalaSign" },
+      targetType: "webhook",
+      targetId: e.id,
+      data: { reason: "credencial de origen revocada" },
+    });
+  }
+}
+
 async function fanout(d: Deps, p: Extract<WebhookJob, { kind: "fanout" }>) {
+  await deactivateOrphanedEndpoints(d.db, p.tenantId);
   const endpoints = await d.db.query<any>(`SELECT * FROM webhook_endpoints WHERE tenant_id = $1 AND active`, [p.tenantId]);
   const targets = endpoints.filter((ep) => ep.events.length === 0 || ep.events.includes(p.type));
   if (targets.length === 0) return;
@@ -432,9 +464,22 @@ export async function webhookRoutes(app: FastifyInstance, s: Services) {
       const count = await t.one<any>(`SELECT count(*)::int AS n FROM webhook_endpoints WHERE tenant_id = $1`, [a.tenantId]);
       if (count.n >= 20) throw badRequest("too_many_webhooks", "Máximo 20 webhooks por organización");
       return t.one(
-        `INSERT INTO webhook_endpoints (id, tenant_id, url, description, events, secret_enc, secret_prefix, active, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-        [uuidv7(), a.tenantId, url, input.description ?? null, input.events ?? [], encrypt(secret), secret.slice(0, 12), input.active ?? true, a.userId],
+        `INSERT INTO webhook_endpoints (id, tenant_id, url, description, events, secret_enc, secret_prefix, active, created_by, created_by_api_key, oauth_client_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+        [
+          uuidv7(),
+          a.tenantId,
+          url,
+          input.description ?? null,
+          input.events ?? [],
+          encrypt(secret),
+          secret.slice(0, 12),
+          input.active ?? true,
+          a.userId,
+          a.apiKeyId,
+          // Token OAuth de un usuario: la suscripción vive mientras la app siga conectada a su nombre.
+          a.oauth && a.userId ? a.oauth.clientId : null,
+        ],
       );
     });
     // Location: los triggers por webhook de Power Automate / Logic Apps borran la suscripción con DELETE a esta URL.

@@ -62,12 +62,13 @@ export async function purgeExpiredEnvelopes(d: Deps, opts: { tenantId?: string; 
     // Todo con el sobre bloqueado: un clon o una plantilla "desde sobre" que lee el sobre a la vez (FOR SHARE) espera,
     // y no queda apuntando a un original que se está borrando.
     const ok = await d.db.tx(async (t) => {
-      // La política se vuelve a mirar acá (con la organización compartida: un cambio de retención espera a este sobre):
-      // si un administrador la extendió o la quitó mientras corría la pasada, el resto del lote no se borra.
+      // La política se vuelve a mirar acá: si un administrador la extendió o la quitó mientras corría la pasada, el resto
+      // del lote no se borra. Sin bloquear la organización (los borrados en el almacenamiento pueden tardar y todo lo
+      // que la bloquea, de IA a miembros, quedaba esperando).
       const cur = await t.one<any>(
         `SELECT e.status, e.purged_at, t.retention_days,
                 (e.completed_at < now() - make_interval(secs => t.retention_days * $2::double precision)) AS due
-           FROM envelopes e JOIN tenants t ON t.id = e.tenant_id WHERE e.id = $1 FOR UPDATE OF e FOR SHARE OF t`,
+           FROM envelopes e JOIN tenants t ON t.id = e.tenant_id WHERE e.id = $1 FOR UPDATE OF e`,
         [e.id, daySeconds()],
       );
       if (cur?.status !== "completed" || cur.purged_at || cur.retention_days == null) return false;
@@ -94,7 +95,7 @@ export async function purgeExpiredEnvelopes(d: Deps, opts: { tenantId?: string; 
         envelopeId: e.id,
         type: "envelope.purged",
         actor: SYSTEM,
-        data: { retentionDays: e.retention_days, files: done.length, kinds, kept: ["signed_pdf", "events"] },
+        data: { retentionDays: cur.retention_days, files: done.length, kinds, kept: ["signed_pdf", "events"] },
       });
       return true;
     });

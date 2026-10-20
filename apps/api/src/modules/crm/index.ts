@@ -472,7 +472,10 @@ export async function handleCrmJob(d: { db: Db; blobs: BlobStore }, p: { runId: 
       detail = await writeBackAndAttach(db, d.blobs, conn, link, mapping, run.event, claimOut);
     } else if (run.kind === "match") {
       const ids = await db.query<any>(
-        `SELECT name, id_document_number FROM recipients WHERE envelope_id = $1 AND role = 'signer' AND id_document_number IS NOT NULL ORDER BY routing_order, created_at`,
+        // Solo quienes firmaron: un firmante que delegó o fue reemplazado conserva su documento, y el contrato terminaba en
+        // el registro de alguien que no lo firmó.
+        `SELECT name, id_document_number FROM recipients
+          WHERE envelope_id = $1 AND role = 'signer' AND status IN ('signed','completed') AND id_document_number IS NOT NULL ORDER BY routing_order, created_at`,
         [run.envelope_id],
       );
       let found: string | null = null;

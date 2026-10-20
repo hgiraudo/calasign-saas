@@ -91,6 +91,20 @@ export function startWorker(db: Db, opts: WorkerOptions) {
         return;
       }
       const err = e instanceof Error ? e.stack ?? e.message : String(e);
+      // Clave BYOK de la organización caída: no es un intento (el job no puede hacer nada hasta que vuelva). Se pospone
+      // 10 minutos, hasta 7 días desde que se encoló; si no, una caída de más de ~11 minutos dejaba exportaciones,
+      // conectores y CRM fallados para siempre.
+      if ((e as { code?: string })?.code === "byok_key_unavailable" || /La clave de cifrado de tu organización \(BYOK\)/.test(String(e))) {
+        const postponed = await db.query(
+          `UPDATE jobs SET status = 'pending', attempts = attempts - 1, last_error = $2, locked_at = NULL, run_at = now() + interval '10 minutes'
+            WHERE id = $1 AND attempts = $3 AND created_at > now() - interval '7 days' RETURNING id`,
+          [job.id, err.slice(0, 4000), job.attempts],
+        );
+        if (postponed.length) {
+          opts.log.info({ jobId: job.id, queue: job.queue }, "job pospuesto: clave BYOK no disponible");
+          return;
+        }
+      }
       const final = job.attempts >= job.max_attempts;
       const backoffSec = Math.min(3600, 5 * 2 ** (job.attempts - 1));
       await db.query(

@@ -738,38 +738,43 @@ export async function assertDocumentLimits(t: Db, kind: "envelope" | "template",
  * obligatorio quedaba oculto o uno que debía ocultarse se estampaba). Se exige que el campo citado sea fijo (solo
  * lectura) o de alguien que firma antes.
  */
-export function logicOrderProblems(
-  fields: { id: string; recipient_id: string; label: string | null; conditions: unknown; read_only?: boolean }[],
-  recips: { id: string; name: string; routing_order: number }[],
-): string[] {
+type LogicFields = { id: string; recipient_id: string; label: string | null; conditions: unknown; read_only?: boolean }[];
+type LogicRecips = { id: string; name: string; routing_order: number }[];
+
+/** Cada condición fuera de orden, con una clave estable (ids del campo y del campo citado) y el mensaje legible. */
+function logicOrderIssues(fields: LogicFields, recips: LogicRecips): { key: string; message: string }[] {
   const byId = new Map(fields.map((f) => [f.id, f]));
   const order = new Map(recips.map((r) => [r.id, r.routing_order]));
   const name = new Map(recips.map((r) => [r.id, r.name]));
-  const out: string[] = [];
+  const out: { key: string; message: string }[] = [];
   for (const f of fields) {
     const conds = Array.isArray(f.conditions) ? (f.conditions as { fieldId: string }[]) : [];
     for (const c of conds) {
       const src = byId.get(c.fieldId);
       if (!src || src.recipient_id === f.recipient_id || src.read_only) continue;
       if ((order.get(src.recipient_id) ?? 0) >= (order.get(f.recipient_id) ?? 0)) {
-        out.push(`El campo "${f.label ?? "?"}" de ${name.get(f.recipient_id) ?? "?"} depende de un campo de ${name.get(src.recipient_id) ?? "?"}, que firma después o al mismo tiempo`);
+        out.push({
+          key: `${f.id}|${src.id}`,
+          message: `El campo "${f.label ?? "?"}" de ${name.get(f.recipient_id) ?? "?"} depende de un campo de ${name.get(src.recipient_id) ?? "?"}, que firma después o al mismo tiempo`,
+        });
       }
     }
   }
-  return [...new Set(out)];
+  return out;
+}
+
+export function logicOrderProblems(fields: LogicFields, recips: LogicRecips): string[] {
+  return [...new Set(logicOrderIssues(fields, recips).map((i) => i.message))];
 }
 
 /**
- * before: los problemas que ya había antes del cambio. Solo se rechazan los nuevos: un sobre o plantilla armados antes
- * de esta regla (o un cambio que no toca la lógica, como el correo de un destinatario) no quedan bloqueados.
+ * before: las claves (campo|campo citado) de los problemas que ya había antes del cambio. Solo se rechazan los nuevos:
+ * un sobre o plantilla armados antes de esta regla (o un cambio que no toca la lógica, como el correo o el nombre de
+ * un destinatario) no quedan bloqueados.
  */
-export async function assertLogicOrder(
-  fields: Parameters<typeof logicOrderProblems>[0],
-  recips: Parameters<typeof logicOrderProblems>[1],
-  before: readonly string[] = [],
-) {
+export async function assertLogicOrder(fields: LogicFields, recips: LogicRecips, before: readonly string[] = []) {
   const prev = new Set(before);
-  const problems = logicOrderProblems(fields, recips).filter((p) => !prev.has(p));
+  const problems = [...new Set(logicOrderIssues(fields, recips).filter((i) => !prev.has(i.key)).map((i) => i.message))];
   if (problems.length) throw new AppError(422, "logic_order", problems.join(". "), { problems });
 }
 
@@ -791,13 +796,13 @@ const templateLogicRows = async (t: Db, templateId: string) =>
     await t.query<any>(`SELECT id, name, routing_order FROM template_roles WHERE template_id = $1`, [templateId]),
   ] as const;
 
-/** Los problemas de orden que ya tiene un sobre (antes de un cambio: ver assertLogicOrder). */
+/** Las claves de los problemas de orden que ya tiene un sobre (antes de un cambio: ver assertLogicOrder). */
 export async function envelopeLogicOrderProblems(t: Db, envelopeId: string) {
-  return logicOrderProblems(...(await envelopeLogicRows(t, envelopeId)));
+  return logicOrderIssues(...(await envelopeLogicRows(t, envelopeId))).map((i) => i.key);
 }
 
 export async function templateLogicOrderProblems(t: Db, templateId: string) {
-  return logicOrderProblems(...(await templateLogicRows(t, templateId)));
+  return logicOrderIssues(...(await templateLogicRows(t, templateId))).map((i) => i.key);
 }
 
 /** El orden de la lógica de un sobre (después de guardar campos o destinatarios, o de crearlo en un paso). */

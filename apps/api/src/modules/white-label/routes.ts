@@ -139,6 +139,9 @@ async function loadBrand(db: Db, tenantId: string, id: string, override?: BrandC
 export async function applyEnvelopeBrand(db: Db, tenantId: string, envelopeId: string, brandId: string | null | undefined) {
   if (brandId === undefined) return;
   if (brandId !== null) {
+    // Elegir una sub-marca para un sobre nuevo exige la marca blanca en el plan (después de bajar de plan, los sobres
+    // salían con remitente y dominio propios de la sub-marca).
+    await requireWhiteLabel(db, tenantId);
     const ok = await db.one(`SELECT 1 FROM brands WHERE id = $1 AND tenant_id = $2`, [brandId, tenantId]);
     if (!ok) throw badRequest("invalid_brand", "La marca no existe en esta organización");
   }

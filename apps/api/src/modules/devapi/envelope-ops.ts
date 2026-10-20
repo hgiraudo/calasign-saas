@@ -1,5 +1,6 @@
 // Operaciones sobre sobres para integradores: datos de formulario (valores completados), descarga de adjuntos del
 // firmante, clonado de un sobre como borrador nuevo y operaciones en lote (get/void/remind/delete).
+import { tenantPlan } from "../billing/plans";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import {
   CloneEnvelopeInput,
@@ -152,6 +153,10 @@ export async function cloneEnvelope(t: Services["db"], a: AuthContext, sourceId:
     `UPDATE envelopes d SET ${ENVELOPE_CONFIG_COLUMNS.map((c) => `${c} = s.${c}`).join(", ")} FROM envelopes s WHERE d.id = $1 AND s.id = $2`,
     [id, src.id],
   );
+  // Sin marca blanca en el plan actual, el clon no hereda la sub-marca (sale con la marca de la organización).
+  if (src.brand_id && !(await tenantPlan(t, a.tenantId)).plan.features.includes("white_label")) {
+    await t.query(`UPDATE envelopes SET brand_id = NULL WHERE id = $1`, [id]);
+  }
   // El sello de empresa del original pudo borrarse después (el borrado solo lo quita de borradores y enviados): un
   // borrador que apunta a un certificado sin clave no podría finalizar nunca. Se relee con FOR SHARE, como evidence.ts.
   if (src.company_seal_certificate_id) {

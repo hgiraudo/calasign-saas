@@ -6,9 +6,10 @@ import { WEBHOOK_EVENT_TYPES, type ApiEvent, type ListEventsResponse } from "@ca
 import { EVIDENCE_TO_WEBHOOK } from "../../infra/webhook-outbox";
 import { badRequest } from "../../lib/errors";
 import { iso, queryList, sha256Hex } from "../../lib/util";
-import { envelopeVisibilitySql } from "../access";
+import { envelopeVisibilitySql, loadAccess, type AccessInfo } from "../access";
+import { tenantPlan } from "../billing/plans";
 import { SESSION_COOKIE, authenticate, type AuthContext, type Services } from "../context";
-import { isOAuthAccessToken, resolveAccessToken } from "../oauth-tokens";
+import { isOAuthAccessToken, resolveAccessToken, restrictAccessToScopes } from "../oauth-tokens";
 
 /**
  * Orden del cursor. Los ids de envelope_events salen de una secuencia y una transacción que tomó un id menor puede
@@ -267,8 +268,16 @@ export async function eventRoutes(app: FastifyInstance, s: Services) {
     const stillAllowed = async () => {
       if (oauthToken && !(await resolveAccessToken(s.db, oauthToken))) return false;
       if (sessionToken && !(await s.db.one(`SELECT 1 FROM sessions WHERE token_hash = $1 AND expires_at > now()`, [sha256Hex(sessionToken)]))) return false;
-      if (a.apiKeyId) return Boolean(await s.db.one(`SELECT 1 FROM api_keys WHERE id = $1 AND revoked_at IS NULL`, [a.apiKeyId]));
-      if (a.userId) return Boolean(await s.db.one(`SELECT 1 FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [a.tenantId, a.userId]));
+      if (a.apiKeyId && !(await s.db.one(`SELECT 1 FROM api_keys WHERE id = $1 AND revoked_at IS NULL`, [a.apiKeyId]))) return false;
+      if (!a.apiKeyId && a.userId && !(await s.db.one(`SELECT 1 FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [a.tenantId, a.userId]))) return false;
+      // Plan: el acceso por API (key u OAuth) pudo salir del plan; el polling ya respondía 402 y el stream seguía.
+      if ((a.apiKeyId || a.oauth) && !(await tenantPlan(s.db, a.tenantId)).plan.features.includes("api")) return false;
+      // Permisos: un cambio de rol (o de su rol personalizado o grupos) corta el stream; al reconectar rige el acceso nuevo.
+      if (a.access) {
+        const fresh: AuthContext = { ...a, access: await loadAccess(s.db, a) };
+        restrictAccessToScopes(fresh);
+        if (accessKey(fresh.access!) !== accessKey(a.access)) return false;
+      }
       return true;
     };
     // Sin cursor ni since: el stream empieza en "ahora" (no repite las últimas 24 h como el polling). Se usa el cursor
@@ -323,4 +332,9 @@ export async function eventRoutes(app: FastifyInstance, s: Services) {
       res.end();
     }
   });
+}
+
+/** Lo que decide qué eventos ve una credencial (para notar un cambio de rol con el stream abierto). */
+function accessKey(x: AccessInfo) {
+  return JSON.stringify([x.role, x.roleId, [...x.permissions].sort(), [...x.groupIds].sort()]);
 }

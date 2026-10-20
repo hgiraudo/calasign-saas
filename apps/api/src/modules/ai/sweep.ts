@@ -66,17 +66,21 @@ export async function runAiSweep(d: Deps, now = new Date()) {
   // 1) Extracción automática (pocas por pasada: es costosa).
   const pending = await d.db.query<any>(
     `SELECT e.id, e.tenant_id FROM envelopes e JOIN tenants t ON t.id = e.tenant_id
-     WHERE e.status = 'completed' AND e.ai_metadata IS NULL AND e.ai_metadata_attempted_at IS NULL
+     WHERE e.status = 'completed' AND e.ai_metadata IS NULL
+       AND (e.ai_metadata_attempted_at IS NULL OR e.ai_metadata_retry_at < now())
+       -- Con la clave BYOK fallando no se puede leer el PDF: esos sobres esperan a que se recupere.
+       AND t.byok_status <> 'failing'
        AND t.ai_enabled AND t.ai_auto_extract
        -- Organizaciones sin presupuesto este mes quedan para después (sin esto, sus sobres ocupaban la tanda siempre).
        AND COALESCE((SELECT sum(u.input_tokens + u.output_tokens) FROM ai_usage u
                       WHERE u.tenant_id = t.id AND u.created_at >= date_trunc('month', now()) AND u.feature <> '_reserved'), 0) < t.ai_monthly_token_budget
-     ORDER BY e.completed_at LIMIT 5`,
+     ORDER BY e.ai_metadata_retry_at NULLS FIRST, e.completed_at LIMIT 5`,
   );
   for (const e of pending) {
     // Se reclama el sobre: con varios workers (cada uno corre el barrido), dos tomaban el mismo y el modelo se llamaba
     // (y se cobraba) dos veces.
-    const claimed = await d.db.query(`UPDATE envelopes SET ai_metadata_attempted_at = now() WHERE id = $1 AND ai_metadata_attempted_at IS NULL RETURNING id`, [e.id]);
+    const claimed = await d.db.query(`UPDATE envelopes SET ai_metadata_attempted_at = now(), ai_metadata_retry_at = NULL
+        WHERE id = $1 AND (ai_metadata_attempted_at IS NULL OR ai_metadata_retry_at < now()) RETURNING id`, [e.id]);
     if (!claimed.length) continue;
     try {
       await assertAiAvailable(d.db, e.tenant_id, { reserve: false }); // antes de analizar el PDF
@@ -92,9 +96,11 @@ export async function runAiSweep(d: Deps, now = new Date()) {
       // tomar en cada pasada y ocupaba la tanda de todas las organizaciones.
       const det = (err as AppError)?.details as { used?: number; budget?: number } | undefined;
       const monthSpent = isAiError(err) && ((err as AppError).code === "ai_disabled" || (det?.used != null && det.budget != null && det.used >= det.budget));
-      // Falla transitoria (BYOK o almacenamiento caídos, lector de PDF ocupado): tampoco es un intento, se reintenta.
+      // Falla transitoria (BYOK o almacenamiento caídos, lector de PDF ocupado): no cuenta como intento, se reintenta más tarde.
       const transient = (err as AppError)?.status === 503;
-      if (monthSpent || transient) await d.db.query(`UPDATE envelopes SET ai_metadata_attempted_at = NULL WHERE id = $1`, [e.id]);
+      if (monthSpent) await d.db.query(`UPDATE envelopes SET ai_metadata_attempted_at = NULL WHERE id = $1`, [e.id]);
+      // Transitoria: se reintenta en una hora (no en la próxima pasada).
+      else if (transient) await d.db.query(`UPDATE envelopes SET ai_metadata_retry_at = now() + interval '1 hour' WHERE id = $1`, [e.id]);
       if (transient) d.log.warn({ envelopeId: e.id, err: String(err) }, "extracción automática postergada (falla transitoria)");
       else if (!isAiError(err)) d.log.warn({ envelopeId: e.id, err: String(err) }, "extracción automática de metadatos falló");
     }

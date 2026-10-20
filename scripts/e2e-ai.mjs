@@ -222,7 +222,7 @@ step("habilitar exige aceptar el aviso de tratamiento de datos (422 sin él)");
 det = await sender("POST", `/v1/envelopes/${envelope.id}/ai/detect-fields`, {});
 assert(det.usage && det.usage.provider === "mock" && det.sent && det.sent.characters > 100, "con IA se informa uso y qué se envió");
 const preview = await sender("GET", `/v1/envelopes/${envelope.id}/ai/preview?feature=detect_fields`);
-assert(preview.text.includes("[Página 1]") && preview.text.includes("[p2-l1] Firma del cliente") && preview.sent.characters === det.sent.characters, "la vista previa muestra exactamente lo que se envía");
+assert(preview.text.includes("[Página 1]") && preview.text.includes("[d1-p2-l1] Firma del cliente") && preview.sent.characters === det.sent.characters, "la vista previa muestra exactamente lo que se envía");
 step(`detección con IA: ${det.suggestions.length} sugerencias; vista previa = ${preview.sent.characters} caracteres enviados`);
 
 // ───────────────────────────── Revisión del playbook ─────────────────────────────

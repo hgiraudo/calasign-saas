@@ -9,7 +9,56 @@ import type { AuthContext } from "../context";
 export const UPGRADE_URL = "/app/settings/billing";
 
 export function planById(id: string | null | undefined): PlanDefinition {
-  return PLANS[(PLAN_IDS as readonly string[]).includes(id ?? "") ? (id as PlanId) : config.billing.defaultPlan];
+  const plan = PLANS[(PLAN_IDS as readonly string[]).includes(id ?? "") ? (id as PlanId) : config.billing.defaultPlan];
+  // Enterprise: el tope de IA se puede ajustar por entorno (contratos a medida).
+  if (plan.id === "enterprise" && config.billing.enterpriseAiTokens !== undefined) return { ...plan, aiTokensPerMonth: config.billing.enterpriseAiTokens };
+  return plan;
+}
+
+/**
+ * Expresión SQL con el tope de tokens de IA del plan de la organización (`col` = columna billing_plan), con la misma
+ * resolución que planById (plan desconocido o sin plan → el plan por defecto). NULL = sin tope (LEAST ignora NULL).
+ */
+export function planAiCapSql(col: string): string {
+  const cases = PLAN_IDS.map((id) => {
+    const cap = planById(id).aiTokensPerMonth;
+    return `WHEN '${id}' THEN ${cap === null ? "NULL" : String(Math.trunc(cap))}::bigint`;
+  }).join(" ");
+  const def = planById(null).aiTokensPerMonth;
+  return `(CASE ${col} ${cases} ELSE ${def === null ? "NULL" : String(Math.trunc(def))}::bigint END)`;
+}
+
+/** Presupuesto de IA efectivo: el de la organización, sin pasar el tope del plan vigente. */
+export function effectiveAiBudget(plan: PlanDefinition, orgBudget: number): number {
+  return plan.aiTokensPerMonth === null ? orgBudget : Math.min(orgBudget, plan.aiTokensPerMonth);
+}
+
+/** 402: el plan no incluye IA (tope 0). */
+export function aiNotIncludedError(plan: PlanDefinition): AppError {
+  return planLimitError(`La IA no está incluida en el plan ${plan.name}`, {
+    plan: plan.id,
+    limit: "ai_tokens_per_month",
+    max: 0,
+    suggestedPlan: suggest((p) => p.aiTokensPerMonth === null || p.aiTokensPerMonth > 0),
+  });
+}
+
+/** 402 si el presupuesto que pide la organización supera el tope de tokens de IA de su plan. */
+export function assertAiBudgetWithinPlan(plan: PlanDefinition, budget: number) {
+  if (plan.aiTokensPerMonth === null || budget <= plan.aiTokensPerMonth) return;
+  const cap = plan.aiTokensPerMonth;
+  throw planLimitError(
+    cap === 0
+      ? `La IA no está incluida en el plan ${plan.name}`
+      : `El plan ${plan.name} permite hasta ${cap.toLocaleString("es")} tokens de IA por mes: el presupuesto no puede superarlo`,
+    {
+      plan: plan.id,
+      limit: "ai_tokens_per_month",
+      used: budget,
+      max: cap,
+      suggestedPlan: suggest((p) => p.aiTokensPerMonth === null || p.aiTokensPerMonth >= budget),
+    },
+  );
 }
 
 export async function tenantPlan(db: Db, tenantId: string): Promise<{ plan: PlanDefinition; isDefault: boolean }> {
@@ -19,7 +68,7 @@ export async function tenantPlan(db: Db, tenantId: string): Promise<{ plan: Plan
 
 /** Primer plan (en orden) que incluye la funcionalidad o el cupo pedido. */
 function suggest(pred: (p: PlanDefinition) => boolean): PlanId | null {
-  for (const id of PLAN_IDS) if (pred(PLANS[id])) return id;
+  for (const id of PLAN_IDS) if (pred(planById(id))) return id;
   return null;
 }
 
@@ -188,6 +237,13 @@ async function tableExists(db: Db, name: string): Promise<boolean> {
   return Boolean(r?.t);
 }
 
+/**
+ * Avisos que no cuentan como mensajes de la organización en el uso: los de sistema (invitaciones al equipo, alertas de
+ * la clave BYOK, recordatorios internos de renovación). Además solo cuentan los avisos de un sobre (envelope_id): los
+ * correos de sistema sin sobre no son mensajería de la organización.
+ */
+export const SYSTEM_NOTIFICATION_TEMPLATES = ["invitation", "byok_key_failing", "ai_renewal_alert"] as const;
+
 /** Uso del mes en curso. Se calcula de las tablas de negocio (no hay contadores que se puedan desincronizar). */
 export async function usageThisMonth(db: Db, tenantId: string): Promise<BillingUsage> {
   const start = monthStart();
@@ -196,8 +252,9 @@ export async function usageThisMonth(db: Db, tenantId: string): Promise<BillingU
     envelopesSentThisMonth(db, tenantId),
     usersCount(db, tenantId),
     db.query<{ channel: string; n: number }>(
-      `SELECT channel, count(*)::int AS n FROM notifications WHERE tenant_id = $1 AND status IN ('sent','bounced','complained') AND created_at >= $2 GROUP BY channel`,
-      [tenantId, start.toISOString()],
+      `SELECT channel, count(*)::int AS n FROM notifications WHERE tenant_id = $1 AND status IN ('sent','bounced','complained') AND created_at >= $2
+          AND envelope_id IS NOT NULL AND NOT (template = ANY($3::text[])) GROUP BY channel`,
+      [tenantId, start.toISOString(), [...SYSTEM_NOTIFICATION_TEMPLATES]],
     ),
   ]);
   const by = (c: string) => Number(msgs.find((m) => m.channel === c)?.n ?? 0);

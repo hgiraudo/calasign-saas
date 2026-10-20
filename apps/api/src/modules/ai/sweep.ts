@@ -10,6 +10,8 @@ import { tenantBaseUrl } from "../custom-domains";
 import { getAiProvider } from "./provider";
 import { assertAiAvailable, inputEstimate, isAiError, loadEnvelopeDocs, recordAiUse, saveMetadata, withAiReservation, callModel } from "./service";
 import type { AppError } from "../../lib/errors";
+import { planAiCapSql } from "../billing/plans";
+import { AI_NOTICE_VERSION } from "@calasign/shared";
 
 interface Deps {
   db: Db;
@@ -59,6 +61,11 @@ const ALERT = {
   },
 } as const;
 
+/** Primer día del mes siguiente (UTC, como el corte del presupuesto mensual). */
+export function nextMonthStart(now = new Date()): Date {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+}
+
 export async function runAiSweep(d: Deps, now = new Date()) {
   let extracted = 0;
   let alerted = 0;
@@ -68,49 +75,74 @@ export async function runAiSweep(d: Deps, now = new Date()) {
     `SELECT e.id, e.tenant_id FROM envelopes e JOIN tenants t ON t.id = e.tenant_id
      WHERE e.status = 'completed' AND e.ai_metadata IS NULL AND e.purged_at IS NULL
        -- Los reintentos, solo durante 30 días desde el primer intento (un error que no se arregla no se intenta para siempre).
-       AND (e.ai_metadata_attempted_at IS NULL
+       -- Sin intento: salvo que espere al mes siguiente por presupuesto agotado (retry_at futuro).
+       AND ((e.ai_metadata_attempted_at IS NULL AND (e.ai_metadata_retry_at IS NULL OR e.ai_metadata_retry_at <= now()))
             OR (e.ai_metadata_retry_at < now() AND COALESCE(e.ai_metadata_first_attempt_at, e.ai_metadata_attempted_at) > now() - interval '30 days'))
        -- Con la clave BYOK fallando no se puede leer el PDF: esos sobres esperan a que se recupere.
        AND t.byok_status <> 'failing'
        AND t.ai_enabled AND t.ai_auto_extract
+       -- Con el aviso de tratamiento de datos vigente aceptado (si cambió, la IA queda suspendida hasta aceptarlo).
+       AND t.ai_notice_version = $1 AND t.ai_notice_accepted_at IS NOT NULL
        -- Organizaciones sin presupuesto este mes quedan para después (sin esto, sus sobres ocupaban la tanda siempre).
+       -- El presupuesto efectivo es el de la organización sin pasar el tope del plan (0: el plan no incluye IA).
        AND COALESCE((SELECT sum(u.input_tokens + u.output_tokens) FROM ai_usage u
-                      WHERE u.tenant_id = t.id AND u.created_at >= date_trunc('month', now()) AND u.feature <> '_reserved'), 0) < t.ai_monthly_token_budget
+                      WHERE u.tenant_id = t.id AND u.created_at >= date_trunc('month', now()) AND u.feature <> '_reserved'), 0)
+           < LEAST(t.ai_monthly_token_budget::bigint, ${planAiCapSql("t.billing_plan")})
      ORDER BY e.ai_metadata_retry_at NULLS FIRST, e.completed_at LIMIT 5`,
+    [AI_NOTICE_VERSION],
   );
   for (const e of pending) {
     // Se reclama el sobre: con varios workers (cada uno corre el barrido), dos tomaban el mismo y el modelo se llamaba
     // (y se cobraba) dos veces.
     const claimed = await d.db.query(`UPDATE envelopes SET ai_metadata_attempted_at = now(), ai_metadata_retry_at = NULL,
           ai_metadata_first_attempt_at = COALESCE(ai_metadata_first_attempt_at, now())
-        WHERE id = $1 AND (ai_metadata_attempted_at IS NULL OR ai_metadata_retry_at < now()) RETURNING id`, [e.id]);
+        WHERE id = $1 AND ((ai_metadata_attempted_at IS NULL AND (ai_metadata_retry_at IS NULL OR ai_metadata_retry_at <= now())) OR ai_metadata_retry_at < now())
+        RETURNING id`, [e.id]);
     if (!claimed.length) continue;
     try {
       await assertAiAvailable(d.db, e.tenant_id, { reserve: false }); // antes de analizar el PDF
       const docs = await loadEnvelopeDocs(d.db, d.blobs, e.id);
-      const rid = await assertAiAvailable(d.db, e.tenant_id, { estimate: inputEstimate(docs) });
-      const r = await withAiReservation(d.db, e.tenant_id, () => callModel(() => getAiProvider().extractMetadata(docs)), rid);
+      const rid = await assertAiAvailable(d.db, e.tenant_id, { estimate: inputEstimate(docs), envelopeId: e.id });
+      const r = await withAiReservation(
+        d.db,
+        { tenantId: e.tenant_id, reservationId: rid, envelopeId: e.id, feature: "extract_metadata", actor: SYSTEM },
+        () => callModel(() => getAiProvider().extractMetadata(docs)),
+      );
       await saveMetadata(d.db, e.id, e.tenant_id, r.result.metadata, r.result.confidence, "ai");
       await recordAiUse(d.db, { reservationId: rid, tenantId: e.tenant_id, envelopeId: e.id, feature: "extract_metadata", usage: r.usage, actor: SYSTEM, data: { automatic: true } });
       extracted++;
     } catch (err) {
       // Presupuesto del mes agotado (o IA apagada): no es un intento, queda para cuando vuelva a haber. Un sobre que
-      // solo no entra en lo que queda (o choca con otras llamadas en curso) sí cuenta como intento: si no, se volvía a
-      // tomar en cada pasada y ocupaba la tanda de todas las organizaciones.
+      // solo no entra en lo que queda (o choca con otras llamadas en curso) espera 6 h: si se volvía a tomar en cada
+      // pasada ocupaba la tanda de todas las organizaciones.
       const det = (err as AppError)?.details as { used?: number; budget?: number } | undefined;
-      const monthSpent = isAiError(err) && ((err as AppError).code === "ai_disabled" || (det?.used != null && det.budget != null && det.used >= det.budget));
+      const code = (err as AppError)?.code;
+      // IA apagada, aviso sin aceptar o plan sin IA: no es un intento; el sobre vuelve a la cola sin fecha (la consulta
+      // de arriba no lo toma mientras siga así).
+      const off = isAiError(err) && code !== "ai_budget_exceeded";
+      const monthSpent = code === "ai_budget_exceeded" && det?.used != null && det.budget != null && det.used >= det.budget;
+      // No entra en lo que queda del presupuesto (o choca con llamadas en curso): reintento en 6 h. Antes quedaba con
+      // ai_metadata_retry_at NULL y no se volvía a tomar nunca.
+      const budgetBusy = code === "ai_budget_exceeded" && !monthSpent;
       // Falla transitoria (BYOK o almacenamiento caídos, lector de PDF ocupado): no cuenta como intento, se reintenta más tarde.
       // También el proveedor de IA saturado o caído (429, 5xx, sin conexión: callModel lo traduce a 503 ai_rate_limited o
       // 502 ai_unavailable); antes contaba como intento y ese sobre no se volvía a tomar nunca.
       const transient = (err as AppError)?.status === 503 || (err as AppError)?.code === "ai_unavailable";
       // El proveedor rechazó el pedido (clave revocada, modelo mal configurado, saldo agotado): suele ser de la
       // configuración, no del sobre; se reintenta en 6 h (antes de esta pasada se perdía para siempre).
-      const rejected = (err as AppError)?.code === "ai_request_rejected";
-      if (monthSpent) await d.db.query(`UPDATE envelopes SET ai_metadata_attempted_at = NULL,
-           -- Solo si este era el primer intento (el reclamo pone las dos con el mismo now()): si no, cada mes sin
-           -- presupuesto reiniciaba la ventana de 30 días.
+      // Un timeout (504 ai_timeout) también espera 6 h: el documento es pesado y cada intento se cobra.
+      const rejected = code === "ai_request_rejected" || code === "ai_timeout";
+      if (off) await d.db.query(`UPDATE envelopes SET ai_metadata_attempted_at = NULL,
+           -- Solo si este era el primer intento (el reclamo pone las dos con el mismo now()): si no, cada vez reiniciaba
+           -- la ventana de 30 días.
            ai_metadata_first_attempt_at = CASE WHEN ai_metadata_first_attempt_at = ai_metadata_attempted_at THEN NULL ELSE ai_metadata_first_attempt_at END
          WHERE id = $1`, [e.id]);
+      // Presupuesto del mes agotado: se reintenta el primer día del mes siguiente. Sin intento (attempted_at NULL): no
+      // abre ni consume la ventana de 30 días (si no, un sobre del día 1 quedaba afuera al mes siguiente).
+      else if (monthSpent) await d.db.query(`UPDATE envelopes SET ai_metadata_attempted_at = NULL, ai_metadata_retry_at = $2,
+           ai_metadata_first_attempt_at = CASE WHEN ai_metadata_first_attempt_at = ai_metadata_attempted_at THEN NULL ELSE ai_metadata_first_attempt_at END
+         WHERE id = $1`, [e.id, nextMonthStart(now).toISOString()]);
+      else if (budgetBusy) await d.db.query(`UPDATE envelopes SET ai_metadata_retry_at = now() + interval '6 hours' WHERE id = $1`, [e.id]);
       // Transitoria: se reintenta en una hora (no en la próxima pasada).
       else if (transient) await d.db.query(`UPDATE envelopes SET ai_metadata_retry_at = now() + interval '1 hour' WHERE id = $1`, [e.id]);
       else if (rejected) await d.db.query(`UPDATE envelopes SET ai_metadata_retry_at = now() + interval '6 hours' WHERE id = $1`, [e.id]);

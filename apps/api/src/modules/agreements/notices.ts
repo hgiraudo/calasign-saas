@@ -99,12 +99,16 @@ async function sendAll(
   if (transient.length) throw new Error(`no se pudo avisar (${transient.length}): ${transient.join("; ")}`);
 }
 
-/** Si un job anterior del mismo aviso ya se lo mandó (o lo dejó en curso) a ese destino. */
+/**
+ * Si un job anterior del mismo aviso ya se lo mandó (o lo dejó en curso) a ese destino. Acotado a los últimos 60 días
+ * (los reintentos de un aviso caen mucho antes) y con el índice parcial notifications_job_dest_idx (0076).
+ */
 async function alreadyNotified(db: Db, tenantId: string, kind: string, email: string, sameNotice: Record<string, unknown>, jobId?: number) {
   return Boolean(
     await db.one(
       `SELECT 1 FROM notifications n JOIN jobs j ON j.id = n.job_id
         WHERE n.tenant_id = $1 AND n.template = $2 AND n.channel = 'email' AND n.destination = $3
+          AND n.job_id IS NOT NULL AND n.created_at > now() - interval '60 days'
           AND n.status IN ('queued','sent','bounced','complained') AND j.queue = 'agreements' AND j.payload @> $4::jsonb
           AND j.id IS DISTINCT FROM $5::bigint
         LIMIT 1`,

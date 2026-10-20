@@ -20,7 +20,7 @@ import { iso, randomToken, sha256Hex, uuidv7 } from "../../lib/util";
 import { recordAudit } from "../audit";
 import { authenticate, clientInfo, type Services } from "../context";
 import { mockPage, mockPageCsp } from "./mock-page";
-import { tenantPlan, usageThisMonth } from "./plans";
+import { planById, tenantPlan, usageThisMonth } from "./plans";
 import {
   ProviderError,
   mpCancelPreapproval,
@@ -111,7 +111,7 @@ export async function billingOverview(db: Db, tenantId: string): Promise<Billing
       portalAvailable: String(t.billing_customer_id ?? "").startsWith("cus_"),
     },
     usage: await usageThisMonth(db, tenantId),
-    plans: PLAN_IDS.map((id) => ({ ...PLANS[id], price: priceOf(id, currency) })),
+    plans: PLAN_IDS.map((id) => ({ ...planById(id), price: priceOf(id, currency) })),
     providers: (["stripe", "mercadopago", "mock"] as const)
       .filter((p) => p !== "mock" || subscriptionMockEnabled())
       .map((id) => ({ id, configured: subscriptionProviderConfigured(id) })),

@@ -7,11 +7,13 @@ import { getSealProvider } from "./infra/seal";
 import { createBlobStore } from "./infra/storage";
 import { createJobHandlers, sweep } from "./modules/jobs";
 import { createTenantStorageResolver } from "./modules/data";
+import { checkAiProviderConfig } from "./modules/ai/provider";
 
 const log = pino({ level: config.logLevel });
 const db = await createDb();
 const blobs = createBlobStore(createTenantStorageResolver(db));
 await getSealProvider();
+checkAiProviderConfig(log);
 const deps = { db, blobs, log };
 const worker = startWorker(db, {
   handlers: createJobHandlers(deps),

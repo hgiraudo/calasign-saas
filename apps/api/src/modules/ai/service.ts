@@ -15,7 +15,8 @@ import { appendEvent, type Actor } from "../../infra/evidence";
 import type { BlobStore } from "../../infra/storage";
 import { AppError } from "../../lib/errors";
 import { iso, uuidv7 } from "../../lib/util";
-import { getAiProvider, AiOutputError, AiRefusalError, type ProviderUsage } from "./provider";
+import { aiProviderStatus, getAiProvider, AiCallError, AiOutputError, AiRefusalError, AiTimeoutError, type ProviderUsage } from "./provider";
+import { aiNotIncludedError, effectiveAiBudget, planById } from "../billing/plans";
 import { docsToText, estimateTokens, type DocText } from "./heuristics";
 
 export const DISCLAIMER: Record<string, string> = {
@@ -24,10 +25,12 @@ export const DISCLAIMER: Record<string, string> = {
   en: "AI-generated from the document. It may contain errors and is not legal advice: if in doubt, read the full document or consult a professional.",
 };
 
+// El texto del documento se envía tal cual (puede incluir datos personales que figuren en él) y, al preguntar, también
+// la pregunta: el aviso no puede decir que "no se envían tus datos personales".
 export const SIGNER_NOTICE: Record<string, string> = {
-  es: "Al usar esta función, el texto del documento se envía a un proveedor de IA para generar la respuesta. No se envían tus datos personales ni tu firma.",
-  "pt-BR": "Ao usar esta função, o texto do documento é enviado a um provedor de IA para gerar a resposta. Seus dados pessoais e sua assinatura não são enviados.",
-  en: "When you use this feature, the document text is sent to an AI provider to generate the answer. Your personal data and signature are not sent.",
+  es: "Al usar esta función, el texto del documento (y tu pregunta, si preguntás) se envía a un proveedor de IA para generar la respuesta. No se envían otros datos del sobre: ni tu firma, ni tus datos de contacto, ni los demás destinatarios.",
+  "pt-BR": "Ao usar esta função, o texto do documento (e a sua pergunta, se perguntar) é enviado a um provedor de IA para gerar a resposta. Nenhum outro dado do envelope é enviado: nem a sua assinatura, nem os seus dados de contato, nem os demais destinatários.",
+  en: "When you use this feature, the document text (and your question, if you ask one) is sent to an AI provider to generate the answer. No other envelope data is sent: not your signature, your contact details or the other recipients.",
 };
 
 export const disclaimerFor = (l: string | null | undefined) => DISCLAIMER[l ?? "es"] ?? DISCLAIMER.es;
@@ -53,18 +56,23 @@ export async function monthUsage(db: Db, tenantId: string): Promise<AiUsageSumma
 
 export async function getAiSettings(db: Db, tenantId: string): Promise<AiSettings> {
   const t = await db.one<any>(`SELECT * FROM tenants WHERE id = $1`, [tenantId]);
-  const p = getAiProvider();
+  const p = aiProviderStatus();
+  const plan = planById(t?.billing_plan ?? null);
+  const budget = Number(t?.ai_monthly_token_budget ?? 0);
   return {
     enabled: Boolean(t?.ai_enabled),
     provider: p.name,
     model: p.model,
-    monthlyTokenBudget: Number(t?.ai_monthly_token_budget ?? 0),
+    monthlyTokenBudget: budget,
+    planTokenCap: plan.aiTokensPerMonth,
+    effectiveTokenBudget: effectiveAiBudget(plan, budget),
     autoExtractMetadata: Boolean(t?.ai_auto_extract),
     renewalAlertDays: Number(t?.ai_renewal_alert_days ?? 30),
     playbook: Array.isArray(t?.ai_playbook) ? t.ai_playbook : [],
     noticeVersion: AI_NOTICE_VERSION,
     noticeAcceptedAt: iso(t?.ai_notice_accepted_at),
     noticeAcceptedBy: t?.ai_notice_accepted_by ?? null,
+    noticeAcceptedVersion: t?.ai_notice_version ?? null,
     usage: await monthUsage(db, tenantId),
   };
 }
@@ -92,16 +100,71 @@ export function inputEstimate(docs: DocText[]): number {
   return est;
 }
 
+/** Topes de consultas a la IA por firmante y sobre (por día y en total). */
+export const SIGNER_AI_DAILY = 30;
+export const SIGNER_AI_TOTAL = 100;
+
+/**
+ * Consultas del firmante a la IA en este sobre: las llamadas al modelo (ai_usage con recipient_id: en curso, hechas o
+ * fallidas con consumo) más los resúmenes servidos desde la caché (eventos ai.* con cached).
+ */
+export async function signerAiCount(db: Db, envelopeId: string, recipientId: string): Promise<{ day: number; total: number }> {
+  const q = await db.one<{ day: number; total: number }>(
+    `SELECT count(*) FILTER (WHERE at > now() - interval '1 day')::int AS day, count(*)::int AS total FROM (
+       SELECT created_at AS at FROM ai_usage WHERE envelope_id = $1 AND recipient_id = $2::uuid
+       UNION ALL
+       SELECT occurred_at FROM envelope_events WHERE envelope_id = $1 AND actor_type = 'recipient' AND actor_id = $2::text
+         AND type LIKE 'ai.%' AND data->>'cached' = 'true'
+     ) x`,
+    [envelopeId, recipientId],
+  );
+  return { day: Number(q?.day ?? 0), total: Number(q?.total ?? 0) };
+}
+
+export async function assertSignerAiQuota(db: Db, envelopeId: string, recipientId: string) {
+  const q = await signerAiCount(db, envelopeId, recipientId);
+  if (q.day >= SIGNER_AI_DAILY || q.total >= SIGNER_AI_TOTAL) {
+    throw new AppError(429, "ai_signer_limit", "Llegaste al máximo de consultas a la IA para este documento");
+  }
+}
+
 /**
  * opts.estimate: tokens de entrada estimados de la llamada. La reserva cuenta eso (más la salida) en vez de un
  * número fijo: si no, decenas de llamadas simultáneas sobre un documento largo gastaban muchas veces el presupuesto.
+ * opts.signer: consulta de un firmante. Su cupo se controla y se consume acá, con la organización bloqueada y antes de
+ * llamar al modelo (la reserva lleva su recipient_id): dos consultas simultáneas no pasan juntas el tope.
+ * El presupuesto efectivo es min(presupuesto de la organización, tope de tokens de IA del plan vigente).
  */
-export async function assertAiAvailable(db: Db, tenantId: string, opts: { reserve?: boolean; estimate?: number } = {}): Promise<string | null> {
+export async function assertAiAvailable(
+  db: Db,
+  tenantId: string,
+  opts: { reserve?: boolean; estimate?: number; envelopeId?: string | null; signer?: { envelopeId: string; recipientId: string } } = {},
+): Promise<string | null> {
   const reserve = opts.reserve !== false;
   const thisCall = Math.max(RESERVATION_TOKENS, Math.ceil(opts.estimate ?? 0) + RESERVATION_TOKENS);
   return db.tx(async (t) => {
-    const tenant = await t.one<any>(`SELECT ai_enabled, ai_monthly_token_budget FROM tenants WHERE id = $1 FOR UPDATE`, [tenantId]);
+    const tenant = await t.one<any>(
+      `SELECT ai_enabled, ai_monthly_token_budget, ai_notice_version, ai_notice_accepted_at, billing_plan FROM tenants WHERE id = $1 FOR UPDATE`,
+      [tenantId],
+    );
     if (!tenant?.ai_enabled) throw new AppError(403, "ai_disabled", "La IA no está habilitada para esta organización");
+    // Cambió el aviso de tratamiento de datos: hasta que la organización acepte la versión vigente no sale nada.
+    if (!tenant.ai_notice_accepted_at || tenant.ai_notice_version !== AI_NOTICE_VERSION) {
+      throw new AppError(403, "ai_notice_required", "La organización tiene que aceptar el aviso de tratamiento de datos vigente (Ajustes → IA)", {
+        noticeVersion: AI_NOTICE_VERSION,
+      });
+    }
+    getAiProvider(); // 503 ai_unavailable si el servidor no tiene proveedor
+    const plan = planById(tenant.billing_plan ?? null);
+    if (plan.aiTokensPerMonth === 0) {
+      throw aiNotIncludedError(plan);
+    }
+    if (opts.signer) {
+      const q = await signerAiCount(t, opts.signer.envelopeId, opts.signer.recipientId);
+      if (q.day >= SIGNER_AI_DAILY || q.total >= SIGNER_AI_TOTAL) {
+        throw new AppError(429, "ai_signer_limit", "Llegaste al máximo de consultas a la IA para este documento");
+      }
+    }
     await t.query(`DELETE FROM ai_usage WHERE tenant_id = $1 AND feature = $2 AND created_at < now() - interval '${RESERVATION_TTL}'`, [tenantId, RESERVATION]);
     const row = await t.one<any>(
       `SELECT COALESCE(sum(input_tokens + output_tokens) FILTER (WHERE feature <> $2), 0)::bigint AS used,
@@ -112,19 +175,24 @@ export async function assertAiAvailable(db: Db, tenantId: string, opts: { reserv
     );
     const used = Number(row?.used ?? 0);
     const committed = used + Number(row?.inflight_tokens ?? 0);
-    const budget = Number(tenant.ai_monthly_token_budget ?? 0);
+    const orgBudget = Number(tenant.ai_monthly_token_budget ?? 0);
+    const budget = effectiveAiBudget(plan, orgBudget);
     // Con llamadas en curso, esta solo entra si cabe junto con ellas; sola, si su entrada cabe en lo que queda.
     const inflight = Number(row?.inflight ?? 0);
     const tooBig = reserve && (inflight > 0 ? committed + thisCall > budget : used + (opts.estimate ?? 0) > budget);
     if (used >= budget || tooBig) {
-      throw new AppError(429, "ai_budget_exceeded", "Se agotó el presupuesto mensual de IA de la organización", { used, budget });
+      throw new AppError(429, "ai_budget_exceeded", "Se agotó el presupuesto mensual de IA de la organización", {
+        used,
+        budget,
+        ...(budget < orgBudget ? { planCap: plan.aiTokensPerMonth, plan: plan.id } : {}),
+      });
     }
     if (!reserve) return null;
     const id = uuidv7();
     await t.query(
-      `INSERT INTO ai_usage (id, tenant_id, envelope_id, feature, provider, model, input_tokens, output_tokens, prompt_sha256, actor_type)
-       VALUES ($1, $2, NULL, $3, 'reserva', '-', $4, 0, '', 'system')`,
-      [id, tenantId, RESERVATION, thisCall],
+      `INSERT INTO ai_usage (id, tenant_id, envelope_id, recipient_id, feature, provider, model, input_tokens, output_tokens, prompt_sha256, actor_type)
+       VALUES ($1, $2, $3, $4, $5, 'reserva', '-', $6, 0, '', 'system')`,
+      [id, tenantId, opts.signer?.envelopeId ?? opts.envelopeId ?? null, opts.signer?.recipientId ?? null, RESERVATION, thisCall],
     );
     return id;
   });
@@ -143,16 +211,47 @@ export async function releaseAiReservation(db: Db, tenantId: string, reservation
   ]);
 }
 
+/** Datos de la llamada al modelo, para registrar su consumo también si falla. */
+export interface AiCallContext {
+  tenantId: string;
+  /** La reserva que tomó assertAiAvailable para esta llamada. */
+  reservationId: string | null;
+  envelopeId: string | null;
+  feature: AiFeature;
+  actor: Actor;
+  /** Consulta de un firmante: el consumo queda con su recipient_id (cuenta en su cupo). */
+  recipientId?: string | null;
+  skipEventIfClosed?: boolean;
+}
+
+/** Consumo que lleva un error de la llamada al modelo (AiCallError, o el AppError al que lo tradujo callModel). */
+export function aiUsageOf(err: unknown): (ProviderUsage & { estimated?: boolean }) | null {
+  if (err instanceof AiCallError && err.usage) return err.usage;
+  const u = (err as { aiUsage?: ProviderUsage } | null)?.aiUsage;
+  return u ?? null;
+}
+
 /**
- * Corre la llamada al modelo con la reserva ya tomada: si falla (rechazo, respuesta cortada, proveedor caído), libera
- * la reserva en el momento. Si no, una organización con presupuesto chico quedaba bloqueada (429) durante 10 minutos
- * después de unas pocas fallas, aunque le sobrara presupuesto.
+ * Corre la llamada al modelo con la reserva ya tomada. Si falla:
+ * - con consumo (rechazo, respuesta cortada o inválida, timeout con consumo estimado): se registra como cualquier
+ *   llamada (presupuesto, cupo del firmante y evidencia con failed: true), porque el proveedor la cobra;
+ * - sin consumo (proveedor caído, pedido rechazado): libera la reserva en el momento. Si no, una organización con
+ *   presupuesto chico quedaba bloqueada (429) durante 10 minutos después de unas pocas fallas.
  */
-export async function withAiReservation<T>(db: Db, tenantId: string, fn: () => Promise<T>, reservationId?: string | null): Promise<T> {
+export async function withAiReservation<T>(db: Db, ctx: AiCallContext, fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
   } catch (err) {
-    await releaseAiReservation(db, tenantId, reservationId).catch(() => {});
+    const usage = aiUsageOf(err);
+    if (usage) {
+      await recordAiUse(db, {
+        ...ctx,
+        usage,
+        data: { failed: true, error: (err as AppError).code ?? (err as Error).name ?? "error", ...(usage.estimated ? { estimated: true } : {}) },
+      }).catch(() => releaseAiReservation(db, ctx.tenantId, ctx.reservationId).catch(() => {}));
+    } else {
+      await releaseAiReservation(db, ctx.tenantId, ctx.reservationId).catch(() => {});
+    }
     throw err;
   }
 }
@@ -225,6 +324,8 @@ export async function recordAiUse(
     skipEventIfClosed?: boolean;
     /** La reserva que tomó assertAiAvailable para esta llamada. */
     reservationId?: string | null;
+    /** Firmante que hizo la consulta (cuenta en su cupo). */
+    recipientId?: string | null;
   },
 ) {
   await db.tx(async (t) => {
@@ -232,8 +333,8 @@ export async function recordAiUse(
     // Libera la reserva de presupuesto tomada por assertAiAvailable para esta llamada.
     await releaseAiReservation(t, args.tenantId, args.reservationId);
     await t.query(
-      `INSERT INTO ai_usage (id, tenant_id, envelope_id, feature, provider, model, input_tokens, output_tokens, prompt_sha256, actor_type, actor_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      `INSERT INTO ai_usage (id, tenant_id, envelope_id, feature, provider, model, input_tokens, output_tokens, prompt_sha256, actor_type, actor_id, recipient_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
       [
         uuidv7(),
         args.tenantId,
@@ -246,6 +347,7 @@ export async function recordAiUse(
         args.usage.promptSha256,
         args.actor.type,
         args.actor.id ?? null,
+        args.recipientId ?? null,
       ],
     );
     if (args.envelopeId && !(args.skipEventIfClosed && CLOSED_ENVELOPE_STATUSES.includes(cur?.status))) {
@@ -268,22 +370,30 @@ export async function recordAiUse(
   });
 }
 
-/** Traduce errores del modelo a respuestas HTTP claras. */
+/** Traduce errores del modelo a respuestas HTTP claras. El consumo de la llamada fallida viaja en `aiUsage`. */
 export async function callModel<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
   } catch (e) {
-    if (e instanceof AiRefusalError) throw new AppError(422, "ai_refused", e.message);
-    if (e instanceof AiOutputError) throw new AppError(502, "ai_bad_output", e.message);
-    if (e instanceof AppError) throw e;
-    const status = (e as { status?: number }).status;
-    if (status === 429) throw new AppError(503, "ai_rate_limited", "El proveedor de IA está saturado; probá de nuevo en un momento");
-    // Un 4xx del proveedor (pedido inválido, clave o modelo mal configurados) no es transitorio: no se reintenta solo.
-    if (typeof status === "number" && status >= 400 && status < 500) {
-      throw new AppError(502, "ai_request_rejected", "El proveedor de IA rechazó el pedido");
-    }
-    throw new AppError(502, "ai_unavailable", "No se pudo contactar al proveedor de IA");
+    const out = translateModelError(e);
+    const usage = e instanceof AiCallError ? e.usage : undefined;
+    if (usage && out !== e) Object.defineProperty(out, "aiUsage", { value: usage, enumerable: false });
+    throw out;
   }
+}
+
+function translateModelError(e: unknown): unknown {
+  if (e instanceof AiRefusalError) return new AppError(422, "ai_refused", e.message);
+  if (e instanceof AiOutputError) return new AppError(502, "ai_bad_output", e.message);
+  if (e instanceof AiTimeoutError) return new AppError(504, "ai_timeout", "El proveedor de IA no respondió a tiempo; probá de nuevo más tarde");
+  if (e instanceof AppError) return e;
+  const status = (e as { status?: number }).status;
+  if (status === 429) return new AppError(503, "ai_rate_limited", "El proveedor de IA está saturado; probá de nuevo en un momento");
+  // Un 4xx del proveedor (pedido inválido, clave o modelo mal configurados) no es transitorio: no se reintenta solo.
+  if (typeof status === "number" && status >= 400 && status < 500) {
+    return new AppError(502, "ai_request_rejected", "El proveedor de IA rechazó el pedido");
+  }
+  return new AppError(502, "ai_unavailable", "No se pudo contactar al proveedor de IA");
 }
 
 // ───────────────────────────── Metadatos y renovaciones ─────────────────────────────
@@ -398,6 +508,13 @@ export async function recomputeRenewalAlerts(db: Db, tenantId: string, alertDays
   }
 }
 
+/** La IA no se puede usar ahora para esta organización (apagada, aviso sin aceptar, plan sin IA o sin presupuesto). */
 export function isAiError(e: unknown) {
-  return e instanceof AppError && (e.code === "ai_disabled" || e.code === "ai_budget_exceeded");
+  return (
+    e instanceof AppError &&
+    (e.code === "ai_disabled" ||
+      e.code === "ai_budget_exceeded" ||
+      e.code === "ai_notice_required" ||
+      (e.code === "plan_limit" && (e.details as { limit?: string } | undefined)?.limit === "ai_tokens_per_month"))
+  );
 }

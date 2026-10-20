@@ -130,14 +130,14 @@ describe("evidencia append-only (0072)", () => {
 });
 
 describe("verificación pública atada al certificado del PDF", () => {
-  async function sealedEnvelope() {
+  async function sealedEnvelope(opts: { legacy?: boolean } = {}) {
     const { uuidv7, sha256Hex } = await import("../src/lib/util");
     const { appendEvent, SYSTEM } = await import("../src/infra/evidence");
     const { getSealProvider } = await import("../src/infra/seal");
     const { finalizeEnvelopePdf } = await import("@calasign/pdf");
     const env = await envelopeWithEvents("finalizing", 3);
     const head = (await db.one<any>(`SELECT hash FROM envelope_events WHERE envelope_id = $1 ORDER BY seq DESC LIMIT 1`, [env])).hash as string;
-    const pdf = await finalizeEnvelopePdf(
+    let pdf = await finalizeEnvelopePdf(
       {
         documents: [{ name: "c.pdf", bytes: samplePdf() }],
         fields: [],
@@ -159,6 +159,16 @@ describe("verificación pública atada al certificado del PDF", () => {
       },
       { provider: await getSealProvider(), tsaUrl: null },
     );
+    if (opts.legacy) {
+      // PDF sellado antes de que finalize.ts escribiera la Keyword: el hash solo está impreso en el certificado.
+      // (Se rompe el prefijo dentro del string hex UTF-16BE de /Keywords, mismo largo: "c" → "x".)
+      const buf = Buffer.from(pdf);
+      const hex = (t: string) => Buffer.from(t, "utf16le").swap16().toString("hex").toUpperCase();
+      const at = buf.indexOf(hex("calasign-chain-head:"), 0, "latin1");
+      expect(at).toBeGreaterThan(0);
+      buf.write(hex("x"), at, "latin1");
+      pdf = new Uint8Array(buf);
+    }
     const file = uuidv7();
     const key = `tenants/${tenant}/envelopes/${env}/${file}-signed.pdf`;
     await blobs.put(key, pdf, "application/pdf");
@@ -186,20 +196,15 @@ describe("verificación pública atada al certificado del PDF", () => {
     return app.inject({ method: "POST", url: "/v1/verify", headers: { "content-type": `multipart/form-data; boundary=${boundary}` }, payload: body });
   }
 
-  it("ok con la cadena original; con la cadena reescrita y recalculada en la base, ok:false (certificate_head_mismatch)", async () => {
-    const { env, pdf } = await sealedEnvelope();
-    const good = (await upload(pdf)).json();
-    expect(good.match).toBe(true);
-    expect(good.chain).toMatchObject({ ok: true, events: 4 });
-
-    // Alguien con escritura reescribe el primer evento y recalcula toda la cadena (que queda "íntegra").
+  /** Quien tiene escritura en la base reescribe el primer evento y recalcula toda la cadena (que queda "íntegra"). */
+  async function rewriteChain(env: string): Promise<string> {
     const { canonicalJson, sha256Hex } = await import("../src/lib/util");
-    const { GENESIS_HASH, verifyChain } = await import("../src/infra/evidence");
+    const { GENESIS_HASH } = await import("../src/infra/evidence");
+    let prev = GENESIS_HASH;
     await db.tx(async (t) => {
       await t.query(`SET LOCAL calasign.allow_evidence_write = 'on'`);
       await t.query(`UPDATE envelope_events SET data = '{"i":99}' WHERE envelope_id = $1 AND seq = 1`, [env]);
       const rows = await t.query<any>(`SELECT * FROM envelope_events WHERE envelope_id = $1 ORDER BY seq`, [env]);
-      let prev = GENESIS_HASH;
       for (const r of rows) {
         const body = { seq: r.seq, type: r.type, actor_type: r.actor_type, actor_id: r.actor_id, ip: r.ip, user_agent: r.user_agent, data: r.data, occurred_at: new Date(r.occurred_at).toISOString() };
         const h = sha256Hex(`${prev}\n${canonicalJson(body)}`);
@@ -207,26 +212,75 @@ describe("verificación pública atada al certificado del PDF", () => {
         prev = h;
       }
     });
+    return prev;
+  }
+
+  it("ok con la cadena original; con la cadena reescrita y recalculada en la base, ok:false (certificate_head_mismatch)", async () => {
+    const { env, pdf } = await sealedEnvelope();
+    const good = (await upload(pdf)).json();
+    expect(good.match).toBe(true);
+    expect(good.chain).toMatchObject({ ok: true, events: 4 });
+
+    // Alguien con escritura reescribe el primer evento y recalcula toda la cadena (que queda "íntegra").
+    const { verifyChain } = await import("../src/infra/evidence");
+    await rewriteChain(env);
     expect((await verifyChain(db, env)).ok).toBe(true);
     const bad = (await upload(pdf)).json();
     expect(bad.match).toBe(true);
     expect(bad.chain).toMatchObject({ ok: false, reason: "certificate_head_mismatch" });
   }, 60_000);
 
-  it("files.chain_head: un PDF sellado sin la columna se lee una vez y se guarda; después se usa sin parsear", async () => {
+  it("el ancla sale de los bytes del PDF: reescribir eventos, envelope.completed y files.chain_head en la base no alcanza", async () => {
     const { sha256Hex } = await import("../src/lib/util");
+    const { verifyChain } = await import("../src/infra/evidence");
     const { env, pdf } = await sealedEnvelope();
+    const head = await rewriteChain(env);
+    expect((await verifyChain(db, env)).ok).toBe(true);
+    // También el hash guardado en envelope.completed (el último evento: se recalcula después) y la cache del archivo.
+    await db.tx(async (t) => {
+      await t.query(`SET LOCAL calasign.allow_evidence_write = 'on'`);
+      await t.query(`UPDATE envelope_events SET data = jsonb_set(data, '{certificateChainHead}', to_jsonb($2::text)) WHERE envelope_id = $1 AND type = 'envelope.completed'`, [env, head]);
+    });
+    const newHead = await rewriteChain(env);
+    await db.query(`UPDATE files SET chain_head = $2 WHERE sha256 = $1`, [sha256Hex(pdf), newHead]);
+    const res = (await upload(pdf)).json();
+    expect(res.match).toBe(true);
+    expect(res.chain).toMatchObject({ ok: false, reason: "certificate_head_mismatch" });
+  }, 60_000);
+
+  it("files.chain_head: con Keyword en el PDF no se usa ni se escribe; solo NULL → valor (trigger)", async () => {
+    const { sha256Hex } = await import("../src/lib/util");
+    const { pdf } = await sealedEnvelope();
+    const file = () => db.one<any>(`SELECT id, chain_head FROM files WHERE sha256 = $1`, [sha256Hex(pdf)]);
+    expect((await upload(pdf)).json().chain).toMatchObject({ ok: true });
+    expect((await file()).chain_head).toBeNull();
+    // Una cache que contradice a la Keyword del PDF: mismatch.
+    await db.query(`UPDATE files SET chain_head = $2 WHERE id = $1`, [(await file()).id, "f".repeat(64)]);
+    expect((await upload(pdf)).json().chain).toMatchObject({ ok: false, reason: "certificate_head_mismatch" });
+    // Una vez fijada no cambia.
+    await expect(db.query(`UPDATE files SET chain_head = $2 WHERE id = $1`, [(await file()).id, "e".repeat(64)])).rejects.toThrow(/evidence_append_only/);
+    await expect(db.query(`UPDATE files SET chain_head = NULL WHERE id = $1`, [(await file()).id])).rejects.toThrow(/evidence_append_only/);
+  }, 60_000);
+
+  it("PDF sin Keyword (anterior): se lee una vez con pdf.js y se guarda; después se usa la cache", async () => {
+    const { sha256Hex } = await import("../src/lib/util");
+    const { env, pdf } = await sealedEnvelope({ legacy: true });
+    const { findChainHeadKeyword } = await import("@calasign/pdf");
+    expect(findChainHeadKeyword(pdf)).toBeNull();
     const head = (await db.one<any>(`SELECT data->>'certificateChainHead' AS h FROM envelope_events WHERE envelope_id = $1 AND type = 'envelope.completed'`, [env])).h;
     const file = () => db.one<any>(`SELECT id, chain_head FROM files WHERE sha256 = $1`, [sha256Hex(pdf)]);
     expect((await file()).chain_head).toBeNull();
     expect((await upload(pdf)).json().chain).toMatchObject({ ok: true });
     expect((await file()).chain_head).toBe(head);
-    // Con la columna, la verificación usa ese valor (no el PDF): uno distinto del guardado en la evidencia no ancla.
-    await db.query(`UPDATE files SET chain_head = $2 WHERE id = $1`, [(await file()).id, "f".repeat(64)]);
-    expect((await upload(pdf)).json().chain).toMatchObject({ ok: false, reason: "certificate_head_mismatch" });
-    // '' = ya se leyó y el PDF no lo trae: se ancla con el guardado en envelope.completed.
-    await db.query(`UPDATE files SET chain_head = '' WHERE id = $1`, [(await file()).id]);
     expect((await upload(pdf)).json().chain).toMatchObject({ ok: true });
+  }, 60_000);
+
+  it("printedChainHead: un error al leer el PDF no se guarda como '' (no es 'no lo trae')", async () => {
+    const { printedChainHead } = await import("../src/modules/verify");
+    const calls: unknown[] = [];
+    const fake = { db: { query: async (...args: unknown[]) => (calls.push(args), []) } } as any;
+    expect(await printedChainHead(fake, "f1", null, Buffer.from("no es un pdf"))).toEqual({ head: null, cached: null });
+    expect(calls).toEqual([]);
   }, 60_000);
 
   it("certificado: IP de la última apertura anterior a la firma (si no hay, la última)", async () => {
@@ -252,6 +306,9 @@ describe("verificación pública atada al certificado del PDF", () => {
     expect(anchorChain({ ok: true, brokenAt: null, head: "b" }, rows, "a", "b").reason).toBe("certificate_head_mismatch");
     expect(anchorChain({ ok: true, brokenAt: null, head: "b" }, rows, null, "a")).toEqual({ ok: true, head: "b" });
     expect(anchorChain({ ok: true, brokenAt: null, head: "b" }, rows, "c", null).reason).toBe("certificate_head_mismatch");
+    // La cache del archivo (files.chain_head) tampoco puede contradecir al PDF.
+    expect(anchorChain({ ok: true, brokenAt: null, head: "b" }, rows, "a", "a", "b").reason).toBe("certificate_head_mismatch");
+    expect(anchorChain({ ok: true, brokenAt: null, head: "b" }, rows, "a", "a", "a")).toEqual({ ok: true, head: "b" });
   });
 
   it("descargas: el firmante deja document.downloaded (una vez por lapso); el remitente, auditoría", async () => {

@@ -3,7 +3,7 @@
 import type { FastifyInstance } from "fastify";
 import type { VerifyResponse } from "@calasign/shared";
 import { config } from "../config";
-import { PdfReaderBusyError, readCertificateChainHead } from "@calasign/pdf";
+import { PdfReaderBusyError, findChainHeadKeyword, readCertificateChainHead } from "@calasign/pdf";
 import { verifyRows } from "../infra/evidence";
 import { AppError, badRequest } from "../lib/errors";
 import { iso, sha256Hex } from "../lib/util";
@@ -49,7 +49,7 @@ export async function verifyRoutes(app: FastifyInstance, s: Services) {
       // El hash final impreso en el certificado de ESTE PDF: es lo que ata la cadena al documento.
       printedChainHead(s, hit.file_id, hit.chain_head, bytes),
     ]);
-    const chain = anchorChain(verifyRows(rows), rows, printed, completed?.data?.certificateChainHead ?? null);
+    const chain = anchorChain(verifyRows(rows), rows, printed.head, completed?.data?.certificateChainHead ?? null, printed.cached);
     const seal = completed?.data?.seal ?? {};
     const res: VerifyResponse = {
       match: true,
@@ -72,18 +72,30 @@ export async function verifyRoutes(app: FastifyInstance, s: Services) {
 }
 
 /**
- * Hash final impreso en el certificado del PDF sellado. El sha256 ya coincidió con un archivo sellado: si al sellarlo se
- * guardó files.chain_head, es ese (sin parsear el PDF en el hilo principal). Archivos sellados antes de la columna: se
- * lee del PDF (metadatos o texto) una vez y se guarda ('' = el PDF no lo trae).
+ * Hash final impreso en el certificado del PDF sellado, leído de los BYTES del PDF subido (el ancla tiene que salir del
+ * documento, no de la base: quien puede escribir en la base puede reescribir los eventos y también files.chain_head).
+ * 1) La Keyword `calasign-chain-head:<hash>` del diccionario Info, con una búsqueda en el buffer (sin parsear; los PDFs
+ *    sellados desde que finalize.ts la escribe).
+ * 2) Si no está (PDF sellado antes): files.chain_head como cache de una lectura anterior con pdf.js ('' = el PDF no lo
+ *    trae); si es NULL, se lee con pdf.js una vez y se guarda (el trigger de 0076 solo deja pasar NULL → valor). Un
+ *    error de lectura no se guarda como ''.
+ * `cached` devuelve files.chain_head para compararlo con lo leído del PDF (no puede contradecirlo).
  */
-async function printedChainHead(s: Services, fileId: string, stored: string | null, bytes: Uint8Array): Promise<string | null> {
-  if (stored !== null && stored !== undefined) return stored || null;
-  const found = await readCertificateChainHead(bytes).catch((err) => {
+export async function printedChainHead(s: Services, fileId: string, stored: string | null, bytes: Uint8Array): Promise<{ head: string | null; cached: string | null }> {
+  const cached = stored || null;
+  const fromBytes = findChainHeadKeyword(bytes);
+  if (fromBytes) return { head: fromBytes, cached };
+  if (stored !== null && stored !== undefined) return { head: cached, cached: null };
+  let found: { head: string } | null;
+  try {
+    found = await readCertificateChainHead(bytes);
+  } catch (err) {
     if (err instanceof PdfReaderBusyError) throw new AppError(503, "pdf_reader_busy", err.message);
-    throw err;
-  });
+    // No se pudo leer (no es lo mismo que "no lo trae"): sin ancla del PDF y sin recordar nada.
+    return { head: null, cached: null };
+  }
   await s.db.query(`UPDATE files SET chain_head = $2 WHERE id = $1 AND chain_head IS NULL`, [fileId, found?.head ?? ""]).catch(() => undefined);
-  return found?.head ?? null;
+  return { head: found?.head ?? null, cached: null };
 }
 
 /**
@@ -98,12 +110,14 @@ export function anchorChain(
   rows: { hash: string }[],
   printedHead: string | null,
   storedHead: string | null,
+  cachedHead: string | null = null,
 ): { ok: boolean; head: string; reason?: "chain_broken" | "certificate_head_mismatch" | "certificate_head_missing" } {
   if (!chain.ok) return { ok: false, head: chain.head, reason: "chain_broken" };
   const anchor = printedHead ?? storedHead;
   if (!anchor) return { ok: false, head: chain.head, reason: "certificate_head_missing" };
-  // El valor guardado en la base no puede contradecir al impreso en el PDF.
+  // Los valores guardados en la base (envelope.completed, files.chain_head) no pueden contradecir al impreso en el PDF.
   if (printedHead && storedHead && printedHead !== storedHead) return { ok: false, head: chain.head, reason: "certificate_head_mismatch" };
+  if (printedHead && cachedHead && printedHead !== cachedHead) return { ok: false, head: chain.head, reason: "certificate_head_mismatch" };
   if (!rows.some((r) => r.hash === anchor)) return { ok: false, head: chain.head, reason: "certificate_head_mismatch" };
   return { ok: true, head: chain.head };
 }

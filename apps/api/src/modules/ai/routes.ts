@@ -28,11 +28,13 @@ import { identityBlocking } from "../identity/kyc";
 import { iso, uuidv7 } from "../../lib/util";
 import { authenticate, type AuthContext, type Services } from "../context";
 import { recipientActor, resolveToken } from "../signing";
-import { heuristicFieldSuggestions, locateQuote, placeSuggestion, type DocText, type RawSuggestion } from "./heuristics";
-import { getAiProvider, type RawCitation } from "./provider";
+import { heuristicFieldSuggestions, locateQuote, pairPlaybookFindings, placeSuggestion, resolveDocLineId, type DocText, type RawSuggestion } from "./heuristics";
+import { aiProviderStatus, getAiProvider, type RawCitation } from "./provider";
+import { assertAiBudgetWithinPlan, planById } from "../billing/plans";
 import {
   SIGNER_NOTICE,
   assertAiAvailable,
+  assertSignerAiQuota,
   inputEstimate,
   withAiReservation,
   callModel,
@@ -51,6 +53,13 @@ import {
 
 type P = { Params: { id: string } };
 type TP = { Params: { token: string } };
+
+/** Recorta un texto libre del modelo (rol, rótulo) a `max` caracteres; vacío → null. */
+const clipText = (v: unknown, max = 100): string | null => {
+  if (typeof v !== "string") return null;
+  const t = v.trim();
+  return t ? t.slice(0, max) : null;
+};
 
 /** Resúmenes ya generados (por sobre + idioma) para no repetir llamadas idénticas durante una hora. */
 const summaryCache = new Map<string, { at: number; value: Omit<AiSummaryResponse, "usage"> & { usage: AiSummaryResponse["usage"] } }>();
@@ -87,7 +96,7 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
   app.patch("/v1/settings/ai", { preHandler: auth }, async (req) => {
     const a = req.auth!;
     const input = UpdateAiSettingsInput.parse(req.body);
-    const t = await s.db.one<any>(`SELECT ai_notice_accepted_at, ai_notice_version, ai_renewal_alert_days FROM tenants WHERE id = $1`, [a.tenantId]);
+    const t = await s.db.one<any>(`SELECT ai_notice_accepted_at, ai_notice_version, ai_renewal_alert_days, billing_plan FROM tenants WHERE id = $1`, [a.tenantId]);
     const prevDays = Number(t?.ai_renewal_alert_days ?? 30);
     const before = await s.db.one<any>(`SELECT ai_enabled, ai_auto_extract, ai_monthly_token_budget FROM tenants WHERE id = $1`, [a.tenantId]);
     // Valores anteriores para la auditoría (settings.changed registra también los nuevos).
@@ -98,9 +107,19 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
       monthlyTokenBudget: before?.ai_monthly_token_budget ?? null,
     };
     const noticeOk = t?.ai_notice_accepted_at && t?.ai_notice_version === AI_NOTICE_VERSION;
-    if (input.enabled === true && !noticeOk && !input.acceptNotice) {
+    // Al habilitar hace falta el aviso vigente. Ya habilitada con un aviso anterior se pueden guardar los demás ajustes:
+    // la IA queda en pausa (assertAiAvailable: 403 ai_notice_required) hasta que se acepte la versión vigente.
+    if (input.enabled === true && !before?.ai_enabled && !noticeOk && !input.acceptNotice) {
       throw new AppError(422, "ai_notice_required", "Para habilitar la IA hay que aceptar el aviso de tratamiento de datos");
     }
+    // Tope de tokens de IA del plan: el presupuesto de la organización no puede superarlo (lo paga la plataforma), y un
+    // plan sin IA no la habilita.
+    const plan = planById(t?.billing_plan ?? null);
+    // (Reenviar el valor guardado no falla: tras bajar de plan se puede seguir guardando lo demás; rige el mínimo.)
+    if (input.monthlyTokenBudget != null && input.monthlyTokenBudget !== Number(before?.ai_monthly_token_budget ?? 0)) {
+      assertAiBudgetWithinPlan(plan, input.monthlyTokenBudget);
+    }
+    if (input.enabled === true && !before?.ai_enabled && plan.aiTokensPerMonth === 0) assertAiBudgetWithinPlan(plan, 1);
     await s.db.query(
       `UPDATE tenants SET
          ai_enabled = COALESCE($2, ai_enabled),
@@ -156,28 +175,35 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
     // Sin presupuesto o con un documento demasiado largo para el modelo, siguen las heurísticas (como con la IA apagada)
     // en vez de fallar toda la detección.
     const rid = t?.ai_enabled
-      ? await (async () => assertAiAvailable(s.db, a.tenantId, { estimate: inputEstimate(docs) }))().catch((err) => {
-          if (isAiError(err) || (err as AppError)?.status === 413) return null;
+      ? await (async () => assertAiAvailable(s.db, a.tenantId, { estimate: inputEstimate(docs), envelopeId: e.id }))().catch((err) => {
+          if (isAiError(err) || (err as AppError)?.status === 413 || (err as AppError)?.code === "ai_unavailable") return null;
           throw err;
         })
       : null;
     if (rid) {
       const provider = getAiProvider();
-      const r = await withAiReservation(s.db, a.tenantId, () => callModel(() => provider.detectFields(docs)), rid);
-      const lineDoc = new Map(docs.flatMap((d) => d.pages.flatMap((p) => p.lines.map((l) => [l.id, { doc: d.id, page: p.page }] as const))));
-      // Los ids de línea se repiten entre documentos: con varios documentos se usa el primero que coincide.
-      ai = r.result
-        .filter((x) => lineDoc.has(x.lineId))
-        .map((x) => ({
-          documentId: lineDoc.get(x.lineId)!.doc,
-          page: lineDoc.get(x.lineId)!.page,
-          lineId: x.lineId,
-          type: x.type,
-          roleHint: x.roleHint,
-          label: x.label,
-          confidence: Math.max(0, Math.min(1, x.confidence)),
-          source: "ai" as const,
-        }));
+      const r = await withAiReservation(
+        s.db,
+        { tenantId: a.tenantId, reservationId: rid, envelopeId: e.id, feature: "detect_fields", actor: a.actor },
+        () => callModel(() => provider.detectFields(docs)),
+      );
+      // Ids con el documento (d{n}-p{n}-l{n}, ver docsToText): los ids de línea se repiten entre documentos.
+      ai = r.result.flatMap((x) => {
+        const at = resolveDocLineId(docs, x.lineId);
+        if (!at) return [];
+        return [
+          {
+            documentId: at.documentId,
+            page: at.page,
+            lineId: at.lineId,
+            type: x.type,
+            roleHint: clipText(x.roleHint),
+            label: clipText(x.label),
+            confidence: Math.max(0, Math.min(1, Number(x.confidence) || 0)),
+            source: "ai" as const,
+          },
+        ];
+      });
       const text = previewText(docs, "detect_fields");
       sent = sentSummary(docs, text);
       usage = usageInfo(r.usage);
@@ -197,7 +223,7 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
       const page = doc.pages[x.page];
       const line = page?.lines.find((l) => l.id === x.lineId);
       if (!page || !line) continue;
-      const role = x.roleHint?.toLowerCase().trim() || null;
+      const role = x.roleHint?.toLowerCase().trim().slice(0, 100) || null;
       if (role && !roles.includes(role)) roles.push(role);
       suggestions.push({
         id: uuidv7(),
@@ -207,7 +233,7 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
         type: x.type,
         roleHint: role,
         signerIndex: role ? roles.indexOf(role) : 0,
-        label: x.label,
+        label: x.label ? x.label.slice(0, 100) : null,
         confidence: Math.round(x.confidence * 100) / 100,
         source: x.source,
         context: line.text.slice(0, 200),
@@ -253,9 +279,13 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
     const { a, e } = await envelopeOf(s, req);
     await assertAiAvailable(s.db, a.tenantId, { reserve: false });
     const docs = await loadEnvelopeDocs(s.db, s.blobs, e.id);
-    const rid = await assertAiAvailable(s.db, a.tenantId, { estimate: inputEstimate(docs) });
+    const rid = await assertAiAvailable(s.db, a.tenantId, { estimate: inputEstimate(docs), envelopeId: e.id });
     const provider = getAiProvider();
-    const r = await withAiReservation(s.db, a.tenantId, () => callModel(() => provider.extractMetadata(docs)), rid);
+    const r = await withAiReservation(
+      s.db,
+      { tenantId: a.tenantId, reservationId: rid, envelopeId: e.id, feature: "extract_metadata", actor: a.actor },
+      () => callModel(() => provider.extractMetadata(docs)),
+    );
     await saveMetadata(s.db, e.id, a.tenantId, r.result.metadata, r.result.confidence, "ai");
     await recordAiUse(s.db, { reservationId: rid, tenantId: a.tenantId, envelopeId: e.id, feature: "extract_metadata", usage: r.usage, actor: a.actor });
     return { ...(await metadataView(s, e.id)), usage: usageInfo(r.usage) };
@@ -290,12 +320,17 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
     const rules: string[] = input.rules ?? (Array.isArray(t?.ai_playbook) ? t.ai_playbook : []);
     if (rules.length === 0) throw badRequest("playbook_empty", "No hay reglas para revisar: cargá el playbook en Ajustes → IA");
     const docs = await loadEnvelopeDocs(s.db, s.blobs, e.id);
-    const rid = await assertAiAvailable(s.db, a.tenantId, { estimate: inputEstimate(docs) });
+    const rid = await assertAiAvailable(s.db, a.tenantId, { estimate: inputEstimate(docs), envelopeId: e.id });
     const provider = getAiProvider();
-    const r = await withAiReservation(s.db, a.tenantId, () => callModel(() => provider.reviewPlaybook(docs, rules, e.locale)), rid);
+    const r = await withAiReservation(
+      s.db,
+      { tenantId: a.tenantId, reservationId: rid, envelopeId: e.id, feature: "playbook_review", actor: a.actor },
+      () => callModel(() => provider.reviewPlaybook(docs, rules, e.locale)),
+    );
     const text = previewText(docs, "playbook_review");
     const out: PlaybookReviewResponse = {
-      findings: r.result.map((f) => ({
+      // Uno por regla enviada, en su orden (las que el modelo no devolvió, not_found; las inventadas, afuera).
+      findings: pairPlaybookFindings(rules, r.result).map((f) => ({
         rule: f.rule,
         status: f.status,
         severity: f.severity,
@@ -321,30 +356,23 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
 
   // ───────── Firmante: resumen y preguntas ─────────
 
-  /**
-   * Tope por firmante: un link (o uno reenviado) con muchas IP podía gastar todo el presupuesto mensual de IA de la
-   * organización y llenar la evidencia del sobre de eventos ai.*.
-   */
-  const assertSignerAiQuota = async (envelopeId: string, recipientId: string) => {
-    const q = await s.db.one<{ day: number; total: number }>(
-      // Por eventos ai.* del firmante en la evidencia: cuentan también los resúmenes servidos desde la caché.
-      `SELECT count(*) FILTER (WHERE occurred_at > now() - interval '1 day')::int AS day, count(*)::int AS total
-         FROM envelope_events WHERE envelope_id = $1 AND actor_type = 'recipient' AND actor_id = $2::text AND type LIKE 'ai.%'`,
-      [envelopeId, recipientId],
-    );
-    if ((q?.day ?? 0) >= 30 || (q?.total ?? 0) >= 100) {
-      throw new AppError(429, "ai_signer_limit", "Llegaste al máximo de consultas a la IA para este documento");
-    }
-  };
+  // Tope por firmante (service.ts assertSignerAiQuota / assertAiAvailable con signer): un link (o uno reenviado) con
+  // muchas IP podía gastar todo el presupuesto mensual de IA de la organización y llenar la evidencia de eventos ai.*.
+  // Las llamadas al modelo cuentan al reservar (antes de llamar), con la organización bloqueada.
 
   const signerGate = async (req: FastifyRequest & { params: { token: string } }) => {
     const { recipient: r, envelope: e } = await resolveToken(s.db, req.params.token);
-    const t = await s.db.one<any>(`SELECT ai_enabled FROM tenants WHERE id = $1`, [e.tenant_id]);
+    const t = await s.db.one<any>(`SELECT ai_enabled, ai_notice_version, ai_notice_accepted_at, billing_plan FROM tenants WHERE id = $1`, [e.tenant_id]);
+    // Aviso vigente aceptado, proveedor configurado y un plan que incluya IA: si no, la asistencia no se ofrece.
+    const aiUsable =
+      Boolean(t?.ai_enabled && t?.ai_notice_accepted_at && t?.ai_notice_version === AI_NOTICE_VERSION) &&
+      aiProviderStatus().name !== "none" &&
+      planById(t?.billing_plan ?? null).aiTokensPerMonth !== 0;
     // Sin la verificación de identidad que pide el remitente, el firmante tampoco ve el contenido por esta vía.
     const blocked = identityBlocking(r);
     // Un sobre en curso vencido (aunque el barrido todavía no lo marcó) no consume cuota de IA.
     const expired = (e.status === "sent" && pastExpiry(e)) || Boolean(e.purged_at); // sin originales no hay qué resumir
-    const enabled = Boolean(t?.ai_enabled && e.ai_signer_assist && ["sent", "completed"].includes(e.status) && !blocked && !expired);
+    const enabled = Boolean(aiUsable && e.ai_signer_assist && ["sent", "completed"].includes(e.status) && !blocked && !expired);
     return { r, e, enabled, blocked, locale: (r.locale ?? e.locale ?? "es") as string };
   };
 
@@ -358,7 +386,7 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
     const { r, e, enabled, blocked, locale } = await signerGate(req);
     if (blocked) throw new AppError(403, "identity_required", "Hace falta verificar tu identidad para continuar");
     if (!enabled) throw new AppError(403, "ai_disabled", "La asistencia con IA no está disponible para este documento");
-    await assertSignerAiQuota(e.id, r.id);
+    await assertSignerAiQuota(s.db, e.id, r.id);
     const docs = await loadEnvelopeDocs(s.db, s.blobs, e.id);
     const key = `${e.id}|${locale}|${docs.map((d) => d.id).join(",")}`;
     const hit = summaryCache.get(key);
@@ -373,9 +401,14 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
         await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "ai.summary", actor: recipientActor(req, r), data: { feature: "summary", cached: true, model: out.usage.model } });
       });
     } else {
-      const rid = await assertAiAvailable(s.db, e.tenant_id, { estimate: inputEstimate(docs) });
+      const rid = await assertAiAvailable(s.db, e.tenant_id, { estimate: inputEstimate(docs), signer: { envelopeId: e.id, recipientId: r.id } });
       const provider = getAiProvider();
-      const res = await withAiReservation(s.db, e.tenant_id, () => callModel(() => provider.summarize(docs, locale)), rid);
+      const actor = recipientActor(req, r);
+      const res = await withAiReservation(
+        s.db,
+        { tenantId: e.tenant_id, reservationId: rid, envelopeId: e.id, feature: "summary", actor, recipientId: r.id, skipEventIfClosed: true },
+        () => callModel(() => provider.summarize(docs, locale)),
+      );
       out = {
         summary: res.result.summary,
         keyPoints: res.result.keyPoints.slice(0, 8),
@@ -388,7 +421,7 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
       for (const [k, v] of summaryCache) if (now - v.at >= 3600_000) summaryCache.delete(k);
       while (summaryCache.size >= 500) summaryCache.delete(summaryCache.keys().next().value!);
       summaryCache.set(key, { at: now, value: out });
-      await recordAiUse(s.db, { reservationId: rid, tenantId: e.tenant_id, envelopeId: e.id, feature: "summary", usage: res.usage, actor: recipientActor(req, r), data: { locale }, skipEventIfClosed: true });
+      await recordAiUse(s.db, { reservationId: rid, tenantId: e.tenant_id, envelopeId: e.id, feature: "summary", usage: res.usage, actor, recipientId: r.id, data: { locale }, skipEventIfClosed: true });
     }
     return out;
   });
@@ -398,12 +431,17 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
     const { r, e, enabled, blocked, locale } = await signerGate(req);
     if (blocked) throw new AppError(403, "identity_required", "Hace falta verificar tu identidad para continuar");
     if (!enabled) throw new AppError(403, "ai_disabled", "La asistencia con IA no está disponible para este documento");
-    await assertSignerAiQuota(e.id, r.id);
+    await assertSignerAiQuota(s.db, e.id, r.id);
     await assertAiAvailable(s.db, e.tenant_id, { reserve: false });
     const docs = await loadEnvelopeDocs(s.db, s.blobs, e.id);
-    const rid = await assertAiAvailable(s.db, e.tenant_id, { estimate: inputEstimate(docs) });
+    const rid = await assertAiAvailable(s.db, e.tenant_id, { estimate: inputEstimate(docs), signer: { envelopeId: e.id, recipientId: r.id } });
     const provider = getAiProvider();
-    const res = await withAiReservation(s.db, e.tenant_id, () => callModel(() => provider.answer(docs, input.question, locale)), rid);
+    const actor = recipientActor(req, r);
+    const res = await withAiReservation(
+      s.db,
+      { tenantId: e.tenant_id, reservationId: rid, envelopeId: e.id, feature: "ask", actor, recipientId: r.id, skipEventIfClosed: true },
+      () => callModel(() => provider.answer(docs, input.question, locale)),
+    );
     const out: AiAnswerResponse = {
       answer: res.result.answer,
       answered: res.result.answered,
@@ -417,7 +455,8 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
       envelopeId: e.id,
       feature: "ask",
       usage: res.usage,
-      actor: recipientActor(req, r),
+      actor,
+      recipientId: r.id,
       data: { locale, answered: out.answered, questionChars: input.question.length },
       skipEventIfClosed: true,
     });

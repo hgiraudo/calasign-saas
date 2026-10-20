@@ -151,6 +151,8 @@ export const config = {
     maxPerFormHour: Number(env.WEBFORM_MAX_PER_FORM_HOUR ?? 60),
     maxPerTenantHour: Number(env.WEBFORM_MAX_PER_TENANT_HOUR ?? 100),
     maxPerTenantDay: Number(env.WEBFORM_MAX_PER_TENANT_DAY ?? 500),
+    /** Inicios por el link público de workflows por organización y hora, completen o no el formulario (más alto). */
+    maxPublicStartsPerTenantHour: Number(env.WORKFLOW_PUBLIC_STARTS_PER_TENANT_HOUR ?? 1000),
     dedupeMinutes: Number(env.WEBFORM_DEDUPE_MINUTES ?? 10),
     /** Cloudflare Turnstile (opcional): con las dos claves, el envío exige el token del desafío. */
     turnstileSiteKey: env.TURNSTILE_SITE_KEY || null,
@@ -175,6 +177,17 @@ export const config = {
       | "starter"
       | "business"
       | "enterprise",
+    /**
+     * Tope de tokens de IA por mes del plan Enterprise (los demás planes tienen el suyo fijo en PLANS). Vacío: el valor
+     * de PLANS (50 M); "unlimited": sin tope del plan (rige solo el presupuesto de la organización).
+     */
+    enterpriseAiTokens: ((): number | null | undefined => {
+      const v = env.BILLING_ENTERPRISE_AI_TOKENS?.trim();
+      if (!v) return undefined;
+      if (v === "unlimited") return null;
+      const n = Number(v);
+      return Number.isInteger(n) && n >= 0 ? n : undefined;
+    })(),
     /** El proveedor de prueba ("mock") solo existe fuera de producción. */
     mockEnabled: (env.APP_ENV ?? (production ? "prod" : "local")) !== "prod" || bool(env.PAYMENTS_MOCK_ENABLED, false),
     stripe: { secretKey: env.STRIPE_SECRET_KEY ?? null, webhookSecret: env.STRIPE_WEBHOOK_SECRET ?? null, apiBase: env.STRIPE_API_BASE ?? "https://api.stripe.com" },

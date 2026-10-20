@@ -192,7 +192,12 @@ export function BillingPage() {
           {usage.aiTokens !== null && (
             <div className="usage-item">
               <span className="small strong">{b("usage.ai")}</span>
-              <span className="small">{usage.aiTokens.toLocaleString(locale)}</span>
+              <span className="small">
+                {plan.aiTokensPerMonth === null || plan.aiTokensPerMonth === 0
+                  ? usage.aiTokens.toLocaleString(locale)
+                  : b("usage.of", { used: usage.aiTokens.toLocaleString(locale), max: plan.aiTokensPerMonth.toLocaleString(locale) })}
+              </span>
+              {plan.aiTokensPerMonth ? <UsageBar used={usage.aiTokens} max={plan.aiTokensPerMonth} /> : null}
             </div>
           )}
         </div>
@@ -231,6 +236,13 @@ export function BillingPage() {
                 <ul>
                   <li>{p.envelopesPerMonth === null ? b("billing.unlimitedEnvelopes") : b("billing.envelopesPerMonth", { n: p.envelopesPerMonth })}</li>
                   <li>{p.users === null ? b("billing.unlimitedUsers") : b("billing.users", { n: p.users })}</li>
+                  <li>
+                    {p.aiTokensPerMonth === null
+                      ? b("billing.unlimitedAi")
+                      : p.aiTokensPerMonth === 0
+                        ? b("billing.noAi")
+                        : b("billing.aiTokens", { n: p.aiTokensPerMonth.toLocaleString(locale) })}
+                  </li>
                   {i > 1 && feats.length > 0 && <li className="muted">{b("billing.everything")}</li>}
                   {feats.map((f) => (
                     <li key={f}>{b(`feature.${f}`)}</li>

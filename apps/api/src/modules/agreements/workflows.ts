@@ -32,7 +32,7 @@ import { auditFromRequest } from "../audit";
 import { authenticate, clientInfo, type AuthContext, type Services } from "../context";
 import { deleteBlobsQuietly, deleteFilesIfUnused } from "../file-cleanup";
 import { requireFeature, tenantPlan } from "../billing/plans";
-import { MIN_FILL_MS, publicTenantCapReached } from "../public-intake";
+import { MIN_FILL_MS, publicStartsCapReached, publicTenantCapReached } from "../public-intake";
 import { captchaSiteKey, verifyTurnstile } from "../webforms";
 import { isPlatformHost, tenantForHost } from "../custom-domains";
 import { enqueueWorkflowApprovalNotice } from "./notices";
@@ -407,22 +407,25 @@ async function cancelRunsTx(t: Db, runIds: string[], actor: Actor, reason: strin
 
 /** SQL: el run espera un paso de recolección de datos (formulario). */
 const WAITING_COLLECT_SQL = `r.status = 'waiting' AND r.steps -> r.current_step ->> 'type' = 'collect_data'`;
+/** SQL: run iniciado por el link público (como isPublicRun). */
+const PUBLIC_RUN_SQL = `r.started_by IS NULL AND r.started_by_api_key IS NULL`;
 
 /**
- * Barrido: runs esperando un formulario sin actividad hace COLLECT_IDLE_DAYS días se cancelan (antes quedaban
- * esperando para siempre y bloqueaban borrar el workflow), y los PDFs de runs fallados sin actividad hace
- * FAILED_DOCS_RETENTION_DAYS días se borran.
+ * Barrido: runs del link PÚBLICO esperando un formulario sin actividad hace COLLECT_IDLE_DAYS días se cancelan (antes
+ * quedaban esperando para siempre y bloqueaban borrar el workflow), y los PDFs de runs fallados sin actividad hace
+ * FAILED_DOCS_RETENTION_DAYS días se borran. Los runs iniciados por una persona o una API key no vencen solos (ni se
+ * anulan sus sobres): los cancela quien los inició.
  */
 export async function workflowRunsSweep(d: Deps) {
   const idle = await d.db.query<{ id: string }>(
-    `SELECT r.id FROM workflow_runs r WHERE ${WAITING_COLLECT_SQL} AND r.updated_at < now() - make_interval(days => $1) ORDER BY r.updated_at LIMIT 100`,
+    `SELECT r.id FROM workflow_runs r WHERE ${WAITING_COLLECT_SQL} AND ${PUBLIC_RUN_SQL} AND r.updated_at < now() - make_interval(days => $1) ORDER BY r.updated_at LIMIT 100`,
     [COLLECT_IDLE_DAYS],
   );
   const actor: Actor = { type: "system", label: "Workflow: vencido sin completar" };
   for (const r of idle) {
     try {
       const cancelled = await d.db.tx(async (t) => {
-        const cur = await t.one<any>(`SELECT r.id FROM workflow_runs r WHERE r.id = $1 AND ${WAITING_COLLECT_SQL} AND r.updated_at < now() - make_interval(days => $2) FOR UPDATE`, [
+        const cur = await t.one<any>(`SELECT r.id FROM workflow_runs r WHERE r.id = $1 AND ${WAITING_COLLECT_SQL} AND ${PUBLIC_RUN_SQL} AND r.updated_at < now() - make_interval(days => $2) FOR UPDATE`, [
           r.id,
           COLLECT_IDLE_DAYS,
         ]);
@@ -758,6 +761,19 @@ async function publicPlanAllows(db: Db, tenantId: string): Promise<boolean> {
 /** Run iniciado por el link público (no por una persona ni una API key). */
 const isPublicRun = (run: any) => !run.started_by && !run.started_by_api_key;
 
+/**
+ * Si desde el paso `from` algún envío a firmar usa un PDF generado ANTES de `from` (no vuelto a generar en el medio):
+ * con los documentos del run ya borrados, ese envío no puede salir.
+ */
+export function needsGeneratedDocuments(steps: WorkflowStep[], from: number): boolean {
+  const regenerated = new Set<string>();
+  for (const st of steps.slice(from)) {
+    if (st.type === "generate_document") regenerated.add(st.config.output);
+    if (st.type === "send_for_signature" && !regenerated.has(st.config.document)) return true;
+  }
+  return false;
+}
+
 /** Un workflow público que envía a firmar no se ofrece si su creador ya no puede crear sobres. */
 async function publicOwnerProblem(db: Db, wf: any): Promise<string | null> {
   if (!(wf.steps as WorkflowStep[]).some((st) => st.type === "send_for_signature")) return null;
@@ -836,13 +852,16 @@ async function createRun(
         [wf.id],
       );
       if ((recent?.n ?? 0) >= MAX_PUBLIC_RUNS_PER_HOUR) throw new AppError(429, "workflow_rate_limited", "Demasiadas ejecuciones de este workflow: probá más tarde");
-      // Y por organización, sumando sus formularios web y sus otros workflows públicos (por hora y por día), con el lock
-      // de la organización (último lock: workflow → organización, como los formularios).
-      if (await publicTenantCapReached(t, wf.tenant_id)) throw new AppError(429, "workflow_rate_limited", "Demasiadas ejecuciones de este workflow: probá más tarde");
+      // Por organización (con su lock; último lock: workflow → organización, como los formularios): inicios por hora,
+      // completen o no el formulario (tope alto), y el cupo compartido con los formularios web, que cuenta solo los
+      // runs que hacen trabajo. Un run con formulario lo gasta al completarlo (envío del paso); uno sin formulario
+      // arranca solo y lo gasta ahora.
+      if (await publicStartsCapReached(t, wf.tenant_id)) throw new AppError(429, "workflow_rate_limited", "Demasiadas ejecuciones de este workflow: probá más tarde");
+      if (!token && (await publicTenantCapReached(t, wf.tenant_id))) throw new AppError(429, "workflow_rate_limited", "Demasiadas ejecuciones de este workflow: probá más tarde");
     }
     await t.query(
-      `INSERT INTO workflow_runs (id, tenant_id, workflow_id, steps, context, started_by, started_by_label, public_token_hash, public_token_enc, started_by_api_key)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      `INSERT INTO workflow_runs (id, tenant_id, workflow_id, steps, context, started_by, started_by_label, public_token_hash, public_token_enc, started_by_api_key, public_collected_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
       [
         runId,
         wf.tenant_id,
@@ -854,6 +873,7 @@ async function createRun(
         token ? sha256Hex(token) : null,
         token ? encrypt(token) : null,
         p.startedByApiKey ?? null,
+        isPublic && !token ? new Date() : null,
       ],
     );
     for (const [idx, st] of steps.entries()) {
@@ -964,8 +984,10 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
     if (input.steps) await checkApprovers(a.tenantId, steps);
     const publicStart = input.publicStart ?? cur.public_start;
     const active = input.active ?? cur.active;
-    // Un link público activo exige el plan (como los formularios web); despublicarlo o desactivarlo, no.
-    if (publicStart && active) requireFeature((await tenantPlan(s.db, a.tenantId)).plan, "web_forms", "El inicio público de workflows");
+    // Publicar o activar un link público exige el plan (como los formularios web). Solo al pasar de false a true: tras
+    // una baja de plan, editar el nombre o los pasos de un workflow que ya estaba publicado no se bloquea (el link
+    // igual no se ofrece sin el plan), y despublicarlo o desactivarlo tampoco.
+    if (publicStart && active && (!cur.public_start || !cur.active)) requireFeature((await tenantPlan(s.db, a.tenantId)).plan, "web_forms", "El inicio público de workflows");
     const actor = a.actor;
     const { row, cancelled } = await s.db.tx(async (t) => {
       const row = await t.one<any>(
@@ -985,7 +1007,7 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
       let cancelled: string[] = [];
       if (!active || !publicStart) {
         const waiting = await t.query<{ id: string }>(
-          `SELECT r.id FROM workflow_runs r WHERE r.workflow_id = $1 AND r.started_by IS NULL AND r.started_by_api_key IS NULL AND ${WAITING_COLLECT_SQL}`,
+          `SELECT r.id FROM workflow_runs r WHERE r.workflow_id = $1 AND ${PUBLIC_RUN_SQL} AND ${WAITING_COLLECT_SQL}`,
           [cur.id],
         );
         cancelled = await cancelRunsTx(t, waiting.map((x) => x.id), actor, !active ? "Workflow desactivado" : "Workflow despublicado");
@@ -1010,7 +1032,9 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
     const fileIds = await s.db.tx(async (t) => {
       await t.query(`SELECT id FROM workflows WHERE id = $1 FOR UPDATE`, [cur.id]);
       const active = await t.one(`SELECT 1 FROM workflow_runs WHERE workflow_id = $1 AND status IN ('running','waiting') LIMIT 1`, [cur.id]);
-      if (active) throw conflict("runs_in_progress", "Hay ejecuciones en curso: cancelalas o desactivá el workflow");
+      // Desactivar el workflow solo cancela las del link público que esperan su formulario; las iniciadas por una persona
+      // o una API key siguen hasta terminar o cancelarlas.
+      if (active) throw conflict("runs_in_progress", "Hay ejecuciones en curso: cancelalas (desactivar el workflow solo cancela las del link público que esperan su formulario)");
       // Los PDFs generados de sus runs (el borrado en cascada se lleva los runs, que eran lo único que los citaba).
       const runs = await t.query<{ context: RunContext }>(`SELECT context FROM workflow_runs WHERE workflow_id = $1`, [cur.id]);
       await t.query(`DELETE FROM workflows WHERE id = $1`, [cur.id]);
@@ -1128,7 +1152,14 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
       const st = await t.one<any>(`SELECT * FROM workflow_run_steps WHERE run_id = $1 AND idx = $2`, [run.id, run.current_step]);
       if (run.status !== "failed" || st?.status !== "failed") throw conflict("not_failed", "Solo se reintenta una ejecución con un paso fallido");
       if (st.type === "approval" || st.type === "wait_for_completion") throw conflict("not_retryable", "Este paso no se puede reintentar: iniciá una nueva ejecución");
-      if (run.context?.documentsCleaned) throw conflict("not_retryable", "Los documentos generados de esta ejecución ya se eliminaron: iniciá una nueva ejecución");
+      if (run.context?.documentsCleaned) {
+        // Solo si algún paso pendiente envía un PDF generado antes (ya borrado). Si no, el reintento sigue: los
+        // documentos borrados salen del contexto (los que usó un sobre siguen en el sobre).
+        if (needsGeneratedDocuments(run.steps as WorkflowStep[], run.current_step)) {
+          throw conflict("not_retryable", "Los documentos generados de esta ejecución ya se eliminaron: iniciá una nueva ejecución");
+        }
+        await t.query(`UPDATE workflow_runs SET context = (context - 'documentsCleaned') || '{"documents": {}}'::jsonb WHERE id = $1`, [run.id]);
+      }
       await t.query(`UPDATE workflow_run_steps SET status = 'pending', attempts = 0, error = NULL, finished_at = NULL WHERE run_id = $1 AND idx = $2`, [run.id, run.current_step]);
       await t.query(`UPDATE workflow_runs SET status = 'running', updated_at = now() WHERE id = $1`, [run.id]);
     });
@@ -1253,13 +1284,14 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
   app.get<{ Params: { token: string } }>("/v1/public/workflow-runs/:token", rl, async (req) => publicView(await loadPublicRun(req.params.token)));
 
   /**
-   * Si el link de un run todavía acepta datos: workflow activo y, para un run iniciado por el link público, que siga
-   * publicado y el plan lo incluya (se revalida en cada envío, no solo al iniciar).
+   * Si el link de un run todavía acepta datos. Run iniciado por el link público: workflow activo, publicado y con el
+   * plan (se revalida en cada envío, no solo al iniciar). Run iniciado por una persona o una API key: sigue aunque el
+   * workflow se desactive después (desactivar frena nuevos inicios y cancela solo los runs públicos en espera).
    */
   async function assertRunAcceptsInput(db: Db, run: any, lock = false) {
     const wf = await db.one<any>(`SELECT active, public_start, tenant_id FROM workflows WHERE id = $1${lock ? " FOR SHARE" : ""}`, [run.workflow_id]);
-    if (!wf || !wf.active) throw new AppError(410, "workflow_inactive", "Este formulario ya no está disponible");
-    if (isPublicRun(run) && (!wf.public_start || !(await publicPlanAllows(db, wf.tenant_id)))) {
+    if (!wf) throw new AppError(410, "workflow_inactive", "Este formulario ya no está disponible");
+    if (isPublicRun(run) && (!wf.active || !wf.public_start || !(await publicPlanAllows(db, wf.tenant_id)))) {
       throw new AppError(410, "workflow_inactive", "Este formulario ya no está disponible");
     }
   }
@@ -1300,12 +1332,17 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
       const run = await t.one<any>(`SELECT * FROM workflow_runs WHERE id = $1 FOR UPDATE`, [run0.id]);
       const st = await t.one<any>(`SELECT status, started_at FROM workflow_run_steps WHERE run_id = $1 AND idx = $2`, [run.id, index]);
       if (run.status !== "waiting" || run.current_step !== index || st.status !== "waiting") throw conflict("not_waiting", "Este formulario ya fue completado");
-      // Tiempo mínimo de llenado desde que el formulario quedó esperando (un humano tarda más; un bot, menos). El paso
-      // es de un solo uso (queda completado), así que no hace falta otro token de formulario.
-      if (st.started_at && Date.now() - new Date(st.started_at).getTime() < MIN_FILL_MS) throw new AppError(422, "too_fast", "Esperá unos segundos y volvé a enviar");
+      // Tiempo mínimo de llenado desde que el formulario quedó esperando (un humano tarda más; un bot, menos), solo en
+      // runs del link público: el link de un run interno lo recibe alguien elegido por quien lo inició. El paso es de un
+      // solo uso (queda completado), así que no hace falta otro token de formulario.
+      if (isPublicRun(run) && st.started_at && Date.now() - new Date(st.started_at).getTime() < MIN_FILL_MS) {
+        throw new AppError(422, "too_fast", "Esperá unos segundos y volvé a enviar");
+      }
       if (submitter) {
         // El mismo correo desde la misma IP en el mismo workflow hace poco (otra ejecución): no se acepta otro (cada uno
-        // puede crear y mandar sobres). Una ejecución cancelada o rechazada no cuenta.
+        // puede crear y mandar sobres). Una ejecución cancelada o rechazada no cuenta. Con un lock por huella: dos envíos
+        // simultáneos de dos runs distintos no pasan los dos el chequeo (orden: workflow → run → huella → organización).
+        await t.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`wf-submitter:${submitter}`]);
         const W = config.webForms;
         const dup = await t.one(
           `SELECT 1 FROM workflow_runs WHERE workflow_id = $1 AND public_submitter = $2 AND id <> $3 AND status NOT IN ('cancelled','rejected')
@@ -1318,6 +1355,12 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
           });
         }
         await t.query(`UPDATE workflow_runs SET public_submitter = $2 WHERE id = $1`, [run.id, submitter]);
+      }
+      // Run público que completa su primer formulario: recién ahora gasta el cupo de la organización (compartido con los
+      // formularios web); los inicios sin completar no lo gastan.
+      if (isPublicRun(run) && !run.public_collected_at) {
+        if (await publicTenantCapReached(t, run.tenant_id)) throw new AppError(429, "workflow_rate_limited", "Demasiados envíos en esta organización: probá más tarde");
+        await t.query(`UPDATE workflow_runs SET public_collected_at = now() WHERE id = $1`, [run.id]);
       }
       const ctx: RunContext = run.context;
       ctx.data ??= {};

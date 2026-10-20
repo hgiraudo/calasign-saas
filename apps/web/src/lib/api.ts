@@ -185,6 +185,13 @@ const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
     en: "The timestamping authority didn't respond as expected: try again in a few minutes.",
   },
   ai_signer_limit: { "pt-BR": "Você atingiu o máximo de consultas à IA para este documento.", en: "You've reached the maximum number of AI questions for this document." },
+  ai_notice_required: {
+    "pt-BR": "A organização precisa aceitar o aviso de tratamento de dados vigente da IA (Configurações → Inteligência artificial).",
+    en: "The organization must accept the current AI data processing notice (Settings → Artificial intelligence).",
+  },
+  ai_unavailable: { "pt-BR": "A IA não está disponível no momento.", en: "AI isn't available right now." },
+  ai_timeout: { "pt-BR": "O provedor de IA não respondeu a tempo: tente mais tarde.", en: "The AI provider didn't respond in time: try again later." },
+  ai_budget_exceeded: { "pt-BR": "O orçamento mensal de IA da organização acabou.", en: "The organization's monthly AI budget has been used up." },
   workflow_rate_limited: { "pt-BR": "Muitas execuções deste fluxo: tente mais tarde.", en: "Too many runs of this workflow: try again later." },
   reminded_recently: {
     "pt-BR": "Um lembrete foi enviado há poucos minutos: aguarde um pouco antes de enviar outro.",
@@ -330,6 +337,14 @@ function detailText(code: string, details: unknown, loc: "pt-BR" | "en"): string
     if (feature) return en ? `${feature} is not included in your plan. Upgrade it in Billing.` : `${feature}: não incluído no seu plano. Altere-o em Faturamento.`;
     if (d.limit === "envelopes_per_month")
       return en ? "You've reached your plan's monthly envelope limit. Upgrade it in Billing." : "Você atingiu o limite mensal de envelopes do seu plano. Altere-o em Faturamento.";
+    if (d.limit === "ai_tokens_per_month")
+      return d.max === 0
+        ? en
+          ? "AI isn't included in your plan. Upgrade it in Billing."
+          : "A IA não está incluída no seu plano. Altere-o em Faturamento."
+        : en
+          ? `The AI budget can't exceed your plan's limit (${Number(d.max).toLocaleString("en")} tokens per month). Upgrade it in Billing.`
+          : `O orçamento de IA não pode superar o limite do seu plano (${Number(d.max).toLocaleString("pt-BR")} tokens por mês). Altere-o em Faturamento.`;
     if (d.limit === "users") return en ? "You've reached your plan's user limit. Upgrade it in Billing." : "Você atingiu o limite de usuários do seu plano. Altere-o em Faturamento.";
     return en ? "Your plan doesn't include this. Upgrade it in Billing." : "O seu plano não inclui isso. Altere-o em Faturamento.";
   }

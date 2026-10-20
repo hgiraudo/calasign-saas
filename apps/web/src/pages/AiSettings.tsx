@@ -37,7 +37,11 @@ export function AiSettingsPage() {
 
   if (!s) return error ? <ErrorBox error={error} /> : <Spinner />;
 
-  const noticeAccepted = Boolean(s.noticeAcceptedAt);
+  // Aceptado, y en la versión vigente: si el aviso cambió hay que volver a aceptarlo (la IA queda en pausa hasta entonces).
+  const noticeAccepted = Boolean(s.noticeAcceptedAt) && s.noticeAcceptedVersion === s.noticeVersion;
+  const noticeChanged = Boolean(s.noticeAcceptedAt) && !noticeAccepted;
+  const cap = s.planTokenCap;
+  const overCap = cap !== null && budget > cap;
   const save = async () => {
     setError(null);
     setSaved(false);
@@ -52,7 +56,9 @@ export function AiSettingsPage() {
           body: {
             enabled,
             acceptNotice: !noticeAccepted && enabled ? accept : undefined,
-            monthlyTokenBudget: budget,
+            // Solo si cambió: reenviar uno guardado por encima del tope del plan (tras bajar de plan) no falla, pero
+            // así tampoco se pisa sin querer.
+            monthlyTokenBudget: budget !== s.monthlyTokenBudget ? budget : undefined,
             autoExtractMetadata: autoExtract,
             renewalAlertDays: renewalDays,
             playbook: rules,
@@ -66,7 +72,7 @@ export function AiSettingsPage() {
   };
 
   const used = s.usage.totalTokens;
-  const pct = s.monthlyTokenBudget > 0 ? Math.min(100, Math.round((used / s.monthlyTokenBudget) * 100)) : 100;
+  const pct = s.effectiveTokenBudget > 0 ? Math.min(100, Math.round((used / s.effectiveTokenBudget) * 100)) : 100;
 
   return (
     <div className="page">
@@ -76,11 +82,12 @@ export function AiSettingsPage() {
       <p className="muted">{ai("ai.intro")}</p>
       <section className="card pad ai-form">
         <p className="small">
-          <strong>{ai("ai.provider")}:</strong> {s.provider === "mock" ? ai("ai.provider.mock") : ai("ai.provider.anthropic", { model: s.model })}
+          <strong>{ai("ai.provider")}:</strong> {s.provider === "mock" ? ai("ai.provider.mock") : s.provider === "none" ? ai("ai.provider.none") : ai("ai.provider.anthropic", { model: s.model })}
         </p>
         <div className="ai-notice">
           <strong>{ai("ai.notice.title")}</strong>
           <p className="small">{ai("ai.notice.body")}</p>
+          {noticeChanged && <p className="small warn-text" role="status">{ai("ai.notice.changed")}</p>}
           {noticeAccepted ? (
             <p className="muted small">{ai("ai.notice.accepted", { date: formatDateTime(s.noticeAcceptedAt, locale) })}</p>
           ) : (
@@ -112,15 +119,21 @@ export function AiSettingsPage() {
           <label>
             {ai("ai.budget")}
             {/* Con Number(valor), borrar el campo lo dejaba en 0 (y guardar desactivaba el presupuesto sin querer). */}
-            <OrderInput min={0} max={1_000_000_000} step={10000} value={budget} disabled={!canEdit} onChange={setBudget} />
+            <OrderInput min={0} max={cap ?? 1_000_000_000} step={10000} value={budget} disabled={!canEdit || cap === 0} onChange={setBudget} />
+            {overCap && cap !== 0 && <span className="small warn-text">{ai("ai.budgetOverCap", { cap: cap!.toLocaleString(locale) })}</span>}
           </label>
           <label>
             {ai("ai.renewalDays")}
             <OrderInput min={0} max={365} value={renewalDays} disabled={!canEdit} onChange={setRenewalDays} />
           </label>
         </div>
-        <div className="ai-usage" role="group" aria-label={ai("ai.usage", { month: s.usage.month, used, budget: s.monthlyTokenBudget })}>
-          <div className="small">{ai("ai.usage", { month: s.usage.month, used: used.toLocaleString(locale), budget: s.monthlyTokenBudget.toLocaleString(locale) })}</div>
+        {cap === 0 ? (
+          <p className="small warn-text">{ai("ai.planNoAi")}</p>
+        ) : cap !== null ? (
+          <p className="muted small">{ai("ai.planCap", { cap: cap.toLocaleString(locale), effective: s.effectiveTokenBudget.toLocaleString(locale) })}</p>
+        ) : null}
+        <div className="ai-usage" role="group" aria-label={ai("ai.usage", { month: s.usage.month, used, budget: s.effectiveTokenBudget })}>
+          <div className="small">{ai("ai.usage", { month: s.usage.month, used: used.toLocaleString(locale), budget: s.effectiveTokenBudget.toLocaleString(locale) })}</div>
           <div className="ai-bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}>
             <span style={{ width: `${pct}%` }} className={pct >= 90 ? "ai-bar-hot" : ""} />
           </div>

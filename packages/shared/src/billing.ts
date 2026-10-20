@@ -28,20 +28,27 @@ export interface PlanDefinition {
   /** null = ilimitado */
   envelopesPerMonth: number | null;
   users: number | null;
+  /**
+   * Tope de tokens de IA por mes (entrada + salida) que incluye el plan; null = sin tope del plan. La organización fija
+   * su propio presupuesto (Ajustes → IA) pero nunca por encima de esto: el consumo lo paga la plataforma. 0 = el plan no
+   * incluye IA. En Enterprise lo puede cambiar el entorno (BILLING_ENTERPRISE_AI_TOKENS). Ver docs/IA.md.
+   */
+  aiTokensPerMonth: number | null;
   features: readonly PlanFeature[];
 }
 
 export const PLANS: Record<PlanId, PlanDefinition> = {
-  free: { id: "free", name: "Free", envelopesPerMonth: 5, users: 1, features: [] },
-  starter: { id: "starter", name: "Starter", envelopesPerMonth: 50, users: 3, features: ["api", "webhooks", "branding"] },
+  free: { id: "free", name: "Free", envelopesPerMonth: 5, users: 1, aiTokensPerMonth: 0, features: [] },
+  starter: { id: "starter", name: "Starter", envelopesPerMonth: 50, users: 3, aiTokensPerMonth: 2_000_000, features: ["api", "webhooks", "branding"] },
   business: {
     id: "business",
     name: "Business",
     envelopesPerMonth: 1000,
     users: 50,
+    aiTokensPerMonth: 10_000_000,
     features: ["api", "webhooks", "branding", "payments", "bulk_send", "web_forms", "kyc"],
   },
-  enterprise: { id: "enterprise", name: "Enterprise", envelopesPerMonth: null, users: null, features: PLAN_FEATURES },
+  enterprise: { id: "enterprise", name: "Enterprise", envelopesPerMonth: null, users: null, aiTokensPerMonth: 50_000_000, features: PLAN_FEATURES },
 };
 
 export const BILLING_CURRENCIES = ["USD", "BRL", "COP", "DOP", "HNL", "PEN"] as const;
@@ -98,7 +105,7 @@ export type BillingCurrencyInput = z.infer<typeof BillingCurrencyInput>;
 /** Detalle del error 402 plan_limit. */
 export interface PlanLimitDetails {
   plan: PlanId;
-  limit?: "envelopes_per_month" | "users";
+  limit?: "envelopes_per_month" | "users" | "ai_tokens_per_month";
   feature?: PlanFeature;
   used?: number;
   max?: number | null;

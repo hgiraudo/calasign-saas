@@ -213,8 +213,91 @@ async function buildEnvelopeDocument(input: FinalizeInput): Promise<PDFDocument>
 const CHAIN_HEAD_KEYWORD = "calasign-chain-head:";
 
 /**
+ * Hash final del certificado leído de los BYTES del PDF sin parsearlo (barato, apto para el hilo principal): busca el
+ * diccionario Info al que apunta el último trailer (o diccionario de xref stream) y, dentro de su última versión, la
+ * entrada /Keywords con `calasign-chain-head:<hash>`. buildEnvelopeDocument la escribe con pdf-lib (setKeywords: string
+ * hex UTF-16BE con BOM, `<FEFF0063...>`) y el PDF se guarda sin object streams, así que el diccionario queda legible en
+ * los bytes; también se acepta string literal `(...)` o hex sin BOM (PDFDocEncoding). Las actualizaciones
+ * incrementales posteriores (firmas con certificado propio, sello, LTV) agregan bytes al final: se toma la última
+ * versión del objeto. Ir por el Info del trailer (y no por la última aparición del texto en todo el archivo) evita
+ * tomar un texto igual que venga sin comprimir dentro de un documento subido por el remitente.
+ * null si no se encuentra (PDF sellado antes de escribir la Keyword, o reescrito por otra herramienta): el que llama
+ * puede recurrir a readCertificateChainHead.
+ */
+export function findChainHeadKeyword(pdf: Uint8Array): string | null {
+  const buf = Buffer.from(pdf.buffer, pdf.byteOffset, pdf.byteLength);
+  const info = lastInfoRef(buf);
+  if (!info) return null;
+  const obj = lastObject(buf, info.num, info.gen);
+  if (!obj) return null;
+  const m = /\/Keywords\s*(\(|<)/.exec(obj);
+  if (!m) return null;
+  const start = m.index + m[0].length;
+  let text: string;
+  if (m[1] === "<") {
+    const end = obj.indexOf(">", start);
+    if (end < 0) return null;
+    const hex = obj.slice(start, end).replace(/\s+/g, "");
+    if (!/^[0-9a-fA-F]*$/.test(hex)) return null;
+    const bytes = Buffer.from(hex.length % 2 ? `${hex}0` : hex, "hex");
+    if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
+      const body = bytes.subarray(2);
+      const swapped = Buffer.alloc(body.length - (body.length % 2));
+      for (let i = 0; i + 1 < body.length; i += 2) {
+        swapped[i] = body[i + 1];
+        swapped[i + 1] = body[i];
+      }
+      text = swapped.toString("utf16le");
+    } else {
+      text = bytes.toString("latin1");
+    }
+  } else {
+    // String literal: el hash y el prefijo no llevan paréntesis ni escapes; alcanza con cortar en el primer ')'.
+    const end = obj.indexOf(")", start);
+    if (end < 0) return null;
+    text = obj.slice(start, end);
+  }
+  const k = new RegExp(`${CHAIN_HEAD_KEYWORD}([0-9a-f]{64})(?![0-9a-f])`).exec(text);
+  return k ? k[1] : null;
+}
+
+/** Referencia /Info del último trailer: la última aparición de `/Info N G R` en el archivo. */
+function lastInfoRef(buf: Buffer): { num: number; gen: number } | null {
+  let pos = buf.length;
+  // Unas pocas apariciones alcanzan: el trailer vigente está al final del archivo.
+  for (let tries = 0; tries < 8 && pos > 0; tries++) {
+    const at = buf.lastIndexOf("/Info", pos - 1, "latin1");
+    if (at < 0) return null;
+    const m = /^\/Info\s+(\d{1,10})\s+(\d{1,5})\s+R/.exec(buf.toString("latin1", at, Math.min(buf.length, at + 40)));
+    if (m) return { num: Number(m[1]), gen: Number(m[2]) };
+    pos = at;
+  }
+  return null;
+}
+
+/** Texto (latin1) de la última versión del objeto `num gen obj ... endobj`; acotado a 64 KB. */
+function lastObject(buf: Buffer, num: number, gen: number): string | null {
+  const needle = `${num} ${gen} obj`;
+  let pos = buf.length;
+  while (pos > 0) {
+    const at = buf.lastIndexOf(needle, pos - 1, "latin1");
+    if (at < 0) return null;
+    const before = at === 0 ? 0x0a : buf[at - 1];
+    // Que no sea el final de otro número (p. ej. "15 0 obj" dentro de "115 0 obj").
+    if (before < 0x30 || before > 0x39) {
+      const end = buf.indexOf("endobj", at, "latin1");
+      const stop = end < 0 ? Math.min(buf.length, at + 65_536) : Math.min(end, at + 65_536);
+      return buf.toString("latin1", at + needle.length, stop);
+    }
+    pos = at;
+  }
+  return null;
+}
+
+/**
  * Hash final del registro de eventos que figura en el certificado de un PDF sellado: de los metadatos (Keywords) o, en
- * PDFs sellados antes de que se guardara ahí, del texto impreso en la página del certificado. null si no se encuentra.
+ * PDFs sellados antes de que se guardara ahí, del texto impreso en la página del certificado. null si no se encuentra;
+ * lanza si no se pudo leer el texto (PdfReaderBusyError u otro error de pdf.js).
  */
 export async function readCertificateChainHead(pdf: Uint8Array): Promise<{ head: string; source: "metadata" | "text" } | null> {
   try {
@@ -225,19 +308,15 @@ export async function readCertificateChainHead(pdf: Uint8Array): Promise<{ head:
   } catch {
     // Sigue con el texto.
   }
-  try {
-    const { extractPdfPlainText } = await import("./plain-text");
-    const { text } = await extractPdfPlainText(pdf, 5_000_000);
-    const names = ["es", "pt-BR", "en"].map((l) => labels(l).chainHead.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-    const re = new RegExp(`(?:${names.join("|")})\\s*([0-9a-f]{64})`, "g");
-    let last: string | null = null;
-    for (const x of text.matchAll(re)) last = x[1];
-    return last ? { head: last, source: "text" } : null;
-  } catch (err) {
-    // Sin lugar para leer ahora: que reintente (no es lo mismo que un certificado sin el hash).
-    if ((err as { code?: string })?.code === "pdf_reader_busy") throw err;
-    return null;
-  }
+  // Sin try: un error al extraer el texto (lector ocupado, PDF ilegible) se propaga. No es lo mismo que un certificado
+  // sin el hash: quien llama no debe recordar "el PDF no lo trae" por un error.
+  const { extractPdfPlainText } = await import("./plain-text");
+  const { text } = await extractPdfPlainText(pdf, 5_000_000);
+  const names = ["es", "pt-BR", "en"].map((l) => labels(l).chainHead.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const re = new RegExp(`(?:${names.join("|")})\\s*([0-9a-f]{64})`, "g");
+  let last: string | null = null;
+  for (const x of text.matchAll(re)) last = x[1];
+  return last ? { head: last, source: "text" } : null;
 }
 
 /** Producer/Creator del PDF: el producto de la marca (marca blanca) o el de la plataforma. */

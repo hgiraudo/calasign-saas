@@ -115,7 +115,16 @@ export const AGREEMENTS_OPS: Op[] = [
   },
 
   { method: "get", path: "/v1/negotiations", tag: N, summary: "Negociaciones" },
-  { method: "post", path: "/v1/negotiations", tag: N, summary: "Compartir un borrador para negociar", body: CreateNegotiationInput, status: 201 },
+  {
+    method: "post",
+    path: "/v1/negotiations",
+    tag: N,
+    summary: "Compartir un borrador para negociar",
+    body: CreateNegotiationInput,
+    status: 201,
+    description:
+      "participants[].role es un rol de firma del documento ({{firma:Rol}}): 400 unknown_role si no existe, duplicate_role si se repite, missing_roles si falta más de uno. Para contrapartes que no firman (copia), observer: true: su role es una etiqueta libre (400 observer_signing_role si coincide con un rol de firma).",
+  },
   { method: "post", path: "/v1/negotiations/upload", tag: N, summary: "Negociar un PDF (solo comentarios)", multipart: true, status: 201, description: "415 si se sube un documento de Word." },
   { method: "get", path: "/v1/negotiations/{id}", tag: N, summary: "Ver una negociación" },
   { method: "get", path: "/v1/negotiations/{id}/diff", tag: N, summary: "Diff entre versiones", description: "Query: from, to." },

@@ -11,8 +11,8 @@ import { EnvelopeAiMetadataSchema } from "../openapi-schemas";
 
 const TAG = "IA";
 const NOTE =
-  "Requiere IA habilitada para la organización (403 ai_disabled) y presupuesto mensual disponible (429 ai_budget_exceeded). Un documento demasiado largo para el modelo responde 413 ai_input_too_large. Si los originales del sobre se borraron por la política de retención, 410 purged.";
-const SIGNER_NOTE = `Requiere IA habilitada para la organización (403 ai_disabled) y presupuesto mensual disponible (429 ai_budget_exceeded). Un documento demasiado largo para el modelo responde 413 ai_input_too_large. Por firmante: hasta 30 consultas por día y 100 en total (resumen y preguntas juntos; después, 429 ai_signer_limit). Si el sobre exige verificar la identidad y todavía no se verificó, 403 identity_required.`;
+  "Requiere IA habilitada para la organización (403 ai_disabled), el aviso de tratamiento de datos vigente aceptado (403 ai_notice_required), un plan que incluya IA (402 plan_limit, limit ai_tokens_per_month), proveedor configurado en el servidor (503 ai_unavailable) y presupuesto mensual disponible (429 ai_budget_exceeded; el efectivo es min(presupuesto de la organización, tope del plan)). Si el proveedor no responde a tiempo, 504 ai_timeout (el consumo estimado se descuenta igual). Un documento demasiado largo para el modelo responde 413 ai_input_too_large. Si los originales del sobre se borraron por la política de retención, 410 purged.";
+const SIGNER_NOTE = `Requiere IA habilitada para la organización (403 ai_disabled), con el aviso vigente aceptado, y presupuesto mensual disponible (429 ai_budget_exceeded). Un documento demasiado largo para el modelo responde 413 ai_input_too_large. Por firmante: hasta 30 consultas por día y 100 en total (resumen y preguntas juntos; después, 429 ai_signer_limit). Si el sobre exige verificar la identidad y todavía no se verificó, 403 identity_required.`;
 const AI_ERRORS = ["ai_input_too_large", "purged"];
 const SIGNER_ERRORS = ["ai_input_too_large", "ai_signer_limit", "identity_required"];
 
@@ -23,7 +23,7 @@ export const AI_OPS = [
     path: "/v1/settings/ai",
     tag: TAG,
     summary: "Habilitar IA, presupuesto, extracción automática, alertas de renovación y playbook",
-    description: "Habilitar por primera vez exige acceptNotice: true (aviso de tratamiento de datos); si no, 422 ai_notice_required.",
+    description: "Habilitar exige acceptNotice: true si el aviso de tratamiento de datos vigente no está aceptado; si no, 422 ai_notice_required. monthlyTokenBudget no puede superar el tope de tokens de IA del plan (402 plan_limit, limit ai_tokens_per_month); en un plan sin IA tampoco se puede habilitar.",
     body: UpdateAiSettingsInput,
   },
   {

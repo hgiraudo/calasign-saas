@@ -67,8 +67,16 @@ async function assertCommentCapacity(t: Db, negotiationId: string, by: { type: "
  * Participantes contra los roles de firma del documento: un rol repetido (dos contrapartes firmarían el mismo lugar),
  * un rol que el documento no tiene (no firmaría nada), o más de un rol sin contraparte (al aceptar, el remitente puede
  * firmar uno solo y los demás lugares quedaban sin firmante).
+ * Observadores (`observer: true`, p. ej. clientes de la API que mandan roles libres como "Abogado"): su rol es una
+ * etiqueta, no se valida contra el documento y reciben copia del sobre. Un observador con un rol de firma del documento
+ * es ambiguo (¿firma o no?): 400 observer_signing_role. Sin `observer`, un rol que el documento no tiene sigue siendo
+ * 400 unknown_role (un error de tipeo en un rol de firma no puede convertir al firmante en copia en silencio).
  */
-export function checkNegotiationRoles(participants: { role?: string | null; email: string }[], markRoles: string[], templateRoles: string[]) {
+export function checkNegotiationRoles(
+  participants: { role?: string | null; email: string; observer?: boolean }[],
+  markRoles: string[],
+  templateRoles: string[],
+) {
   const known = new Map<string, string>();
   for (const r of [...templateRoles, ...markRoles]) known.set(r.toLowerCase(), r);
   const seen = new Set<string>();
@@ -76,9 +84,15 @@ export function checkNegotiationRoles(participants: { role?: string | null; emai
     const role = p.role?.trim();
     if (!role) continue;
     const k = role.toLowerCase();
+    if (p.observer) {
+      if (known.has(k)) throw badRequest("observer_signing_role", `«${role}» es un rol de firma del documento: un observador no firma (usá otra etiqueta o quitá observer)`);
+      continue;
+    }
     if (seen.has(k)) throw badRequest("duplicate_role", `El rol «${role}» está asignado a más de una contraparte`);
     seen.add(k);
-    if (!known.has(k)) throw badRequest("unknown_role", `El documento no tiene el rol de firma «${role}»`);
+    if (!known.has(k)) {
+      throw badRequest("unknown_role", `El documento no tiene el rol de firma «${role}» (si esta contraparte no firma, mandala con observer: true)`);
+    }
   }
   const missing = [...new Set(markRoles.map((r) => r.toLowerCase()))].filter((r) => !seen.has(r));
   if (missing.length > 1) {
@@ -118,6 +132,7 @@ const toParticipant = (r: any): NegotiationParticipant => ({
   email: r.email,
   role: r.role,
   canPropose: r.can_propose,
+  observer: Boolean(r.observer),
   lastSeenAt: iso(r.last_seen_at),
 });
 const author = (r: any): NegotiationAuthor => ({ type: r.author_type, name: r.author_name });
@@ -261,9 +276,9 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
     for (const p of participants) {
       const token = randomToken();
       await t.query(
-        `INSERT INTO negotiation_participants (id, negotiation_id, tenant_id, name, email, role, can_propose, token_hash, token_enc)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-        [uuidv7(), negotiationId, tenantId, p.name, p.email, p.role ?? null, p.canPropose ?? true, sha256Hex(token), encrypt(token)],
+        `INSERT INTO negotiation_participants (id, negotiation_id, tenant_id, name, email, role, can_propose, token_hash, token_enc, observer)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        [uuidv7(), negotiationId, tenantId, p.name, p.email, p.role ?? null, p.canPropose ?? true, sha256Hex(token), encrypt(token), p.observer ?? false],
       );
     }
   }
@@ -566,12 +581,13 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
     const tpl = n.document_template_id ? await s.db.one<any>(`SELECT * FROM document_templates WHERE id = $1`, [n.document_template_id]) : null;
     const agreement = tpl ? agreementMetaFromMapping(tpl.agreement_mapping, n.data, n.template_locale) : null;
     const roles = [...new Set(marks.map((m) => m.role.toLowerCase()))];
-    // Firmantes: contrapartes con un rol del documento; el resto, copia. Si el remitente firma, su rol es el que no tiene contraparte.
+    // Firmantes: contrapartes con un rol del documento; el resto, copia (los observadores siempre). Si el remitente firma,
+    // su rol es el que no tiene contraparte.
     const recipients = parts.map((p) => ({
       role: p.role ?? `copia-${p.id.slice(-4)}`,
       name: p.name,
       email: p.email,
-      cc: n.source === "pdf" ? false : !(p.role && roles.includes(p.role.toLowerCase())),
+      cc: p.observer ? true : n.source === "pdf" ? false : !(p.role && roles.includes(p.role.toLowerCase())),
     }));
     // El remitente es quien creó la negociación, aunque la acepte alguien que gestiona todos los sobres: el sobre es suyo
     // (si no, no lo veía) y es él quien firma el rol sin contraparte. Si ya no es miembro, queda a nombre de quien acepta.

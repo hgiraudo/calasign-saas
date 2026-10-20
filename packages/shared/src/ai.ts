@@ -5,13 +5,19 @@ import { z } from "zod";
 export const AI_FEATURES = ["detect_fields", "summary", "ask", "extract_metadata", "playbook_review"] as const;
 export type AiFeature = (typeof AI_FEATURES)[number];
 
-/** Versión del aviso de tratamiento de datos que la organización acepta al habilitar la IA. */
-export const AI_NOTICE_VERSION = "ai-notice-v1";
+/**
+ * Versión del aviso de tratamiento de datos que la organización acepta al habilitar la IA. Al cambiarla, la IA queda
+ * suspendida (403 ai_notice_required) hasta que la organización acepte la versión vigente.
+ * v2: aclara que el texto del documento se envía tal cual (puede contener datos personales) y que no se envía nada más
+ * del sobre.
+ */
+export const AI_NOTICE_VERSION = "ai-notice-v2";
 
 export const UpdateAiSettingsInput = z.object({
   enabled: z.boolean().optional(),
   /** Obligatorio (true) la primera vez que se habilita: acepta el aviso de tratamiento de datos. */
   acceptNotice: z.boolean().optional(),
+  /** Presupuesto propio de la organización; no puede superar el tope de tokens de IA del plan (402 plan_limit). */
   monthlyTokenBudget: z.number().int().min(0).max(1_000_000_000).optional(),
   /** Extraer metadatos automáticamente al completarse un sobre. */
   autoExtractMetadata: z.boolean().optional(),
@@ -32,16 +38,26 @@ export interface AiUsageSummary {
 
 export interface AiSettings {
   enabled: boolean;
-  /** "anthropic" si hay clave configurada en el servidor; "mock" si no (respuestas deterministas sin red). */
-  provider: "anthropic" | "mock";
+  /**
+   * "anthropic" si hay clave configurada en el servidor; "mock" si no (respuestas deterministas sin red, solo fuera de
+   * producción); "none" en producción sin clave: la IA no está disponible (503 ai_unavailable).
+   */
+  provider: "anthropic" | "mock" | "none";
   model: string;
+  /** Presupuesto que fijó la organización. */
   monthlyTokenBudget: number;
+  /** Tope de tokens de IA por mes del plan vigente (null = sin tope del plan; 0 = el plan no incluye IA). */
+  planTokenCap: number | null;
+  /** Lo que efectivamente se aplica: min(presupuesto de la organización, tope del plan). */
+  effectiveTokenBudget: number;
   autoExtractMetadata: boolean;
   renewalAlertDays: number;
   playbook: string[];
   noticeVersion: string;
   noticeAcceptedAt: string | null;
   noticeAcceptedBy: string | null;
+  /** Versión aceptada; si no coincide con noticeVersion hay que volver a aceptar el aviso. */
+  noticeAcceptedVersion: string | null;
   usage: AiUsageSummary;
 }
 

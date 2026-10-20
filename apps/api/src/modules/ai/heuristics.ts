@@ -138,14 +138,45 @@ const clamp01 = (v: number) => Math.min(Math.max(v, 0), 0.999);
 
 // ───────────────────────────── Texto que se envía ─────────────────────────────
 
+/**
+ * Id de línea que ve el modelo: el de la línea (p{página}-l{n}) prefijado con el documento (d{n}, 1-based, en el orden
+ * de `docs`). Los ids de línea se repiten entre documentos: sin el prefijo, con varios documentos una sugerencia de la
+ * IA caía en el primero que tuviera esa línea.
+ */
+export function docLineId(docIndex: number, lineId: string): string {
+  return `d${docIndex + 1}-${lineId}`;
+}
+
+/** Resuelve un id de docLineId contra los documentos (null si no existe). */
+export function resolveDocLineId(docs: DocText[], id: string): { documentId: string; page: number; lineId: string } | null {
+  const m = /^d(\d+)-(p\d+-l\d+)$/.exec(String(id ?? "").trim());
+  if (!m) return null;
+  const d = docs[Number(m[1]) - 1];
+  if (!d) return null;
+  for (const p of d.pages) {
+    const l = p.lines.find((x) => x.id === m[2]);
+    if (l) return { documentId: d.id, page: p.page, lineId: l.id };
+  }
+  return null;
+}
+
+/**
+ * El texto de los documentos va entre etiquetas <documento>: un "<" o ">" en el texto o en el nombre podía cerrarlas
+ * (o abrir otras) y hacer pasar texto del documento por instrucciones. Se reemplazan por comillas angulares.
+ */
+const escapeTags = (s: string) => s.replace(/</g, "‹").replace(/>/g, "›");
+
 /** Texto del documento con marcas de página (y opcionalmente el id de cada línea, para detectar campos). */
 export function docsToText(docs: DocText[], opts: { lineIds?: boolean } = {}): string {
   return docs
     .map(
-      (d) =>
-        `<documento id="${d.id}" nombre="${d.name.replace(/"/g, "'")}">\n` +
+      (d, di) =>
+        `<documento id="${d.id}" nombre="${escapeTags(d.name).replace(/"/g, "'")}">\n` +
         d.pages
-          .map((p) => `[Página ${p.page + 1}]\n` + p.lines.map((l) => (opts.lineIds ? `[${l.id}] ${l.text}` : l.text)).join("\n"))
+          .map(
+            (p) =>
+              `[Página ${p.page + 1}]\n` + p.lines.map((l) => (opts.lineIds ? `[${docLineId(di, l.id)}] ${escapeTags(l.text)}` : escapeTags(l.text))).join("\n"),
+          )
           .join("\n\n") +
         `\n</documento>`,
     )
@@ -407,4 +438,27 @@ export function mockPlaybookReview(docs: DocText[], rules: string[]) {
 
 function stem(w: string) {
   return w.length > 6 ? w.slice(0, w.length - 2) : w;
+}
+
+/**
+ * Empareja los resultados del modelo con las reglas enviadas: uno por regla, en el orden de entrada. Se busca por
+ * número de regla (ruleIndex) y, si falta, por el texto exacto; una regla sin resultado queda not_found y los
+ * resultados de reglas que no se enviaron (inventadas o repetidas) se ignoran.
+ */
+export function pairPlaybookFindings<F extends { ruleIndex?: number | null; rule: string; status: "ok" | "violation" | "not_found"; severity: "low" | "medium" | "high"; explanation: string; page: number | null; quote: string | null }>(
+  rules: string[],
+  raw: F[],
+): { rule: string; status: "ok" | "violation" | "not_found"; severity: "low" | "medium" | "high"; explanation: string; page: number | null; quote: string | null }[] {
+  const used = new Set<number>();
+  const take = (pred: (f: F) => boolean) => {
+    const i = raw.findIndex((f, k) => !used.has(k) && pred(f));
+    if (i < 0) return null;
+    used.add(i);
+    return raw[i];
+  };
+  return rules.map((rule, i) => {
+    const f = take((x) => x.ruleIndex === i + 1) ?? take((x) => (x.ruleIndex == null || x.ruleIndex < 1 || x.ruleIndex > rules.length) && norm(x.rule) === norm(rule));
+    if (!f) return { rule, status: "not_found" as const, severity: "medium" as const, explanation: "El modelo no devolvió un resultado para esta regla.", page: null, quote: null };
+    return { rule, status: f.status, severity: f.severity, explanation: f.explanation, page: f.page, quote: f.quote };
+  });
 }

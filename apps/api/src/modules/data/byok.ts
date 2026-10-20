@@ -55,18 +55,33 @@ const ALERT_EVERY_MS = 6 * 3600_000;
 
 /** Marca la clave como fallida y avisa a propietarios y administradores (como mucho cada 6 h). */
 export async function markKeyFailing(db: Db, tenantId: string, keyArn: string, error: string) {
-  const prev = await db.one<any>(`SELECT byok_status, byok_alerted_at, name FROM tenants WHERE id = $1`, [tenantId]);
   // Una clave desactivada (status 'none') no vuelve a usarse por un chequeo fallido: lo nuevo sigue con la de la plataforma.
-  const upd = await db.query(`UPDATE tenants SET byok_status = 'failing', byok_error = $2, byok_checked_at = now() WHERE id = $1 AND byok_key_arn = $3 AND byok_status <> 'none' RETURNING id`, [
-    tenantId,
-    error.slice(0, 500),
-    keyArn,
-  ]);
+  // El paso a 'failing' es un UPDATE condicional: entre varios pedidos concurrentes que detectan la falla, solo el que
+  // cambia el estado alerta (antes todos leían el estado anterior y cada uno mandaba su alerta).
+  const turned = await db.query<{ name: string }>(
+    `UPDATE tenants SET byok_status = 'failing', byok_error = $2, byok_checked_at = now(), byok_alerted_at = now()
+      WHERE id = $1 AND byok_key_arn = $3 AND byok_status NOT IN ('none','failing') RETURNING name`,
+    [tenantId, error.slice(0, 500), keyArn],
+  );
   invalidateTenantStorage(tenantId);
-  if (!upd.length) return;
-  const recent = prev?.byok_alerted_at && Date.now() - new Date(prev.byok_alerted_at).getTime() < ALERT_EVERY_MS;
-  if (prev?.byok_status === "failing" && recent) return;
-  await db.query(`UPDATE tenants SET byok_alerted_at = now() WHERE id = $1`, [tenantId]);
+  let name = turned[0]?.name;
+  if (!turned.length) {
+    // Ya estaba fallando: se actualiza el error y, si pasaron 6 h desde la última alerta, se reclama la siguiente (también
+    // con un UPDATE condicional, así dos pedidos simultáneos no la duplican).
+    const again = await db.query<{ name: string }>(
+      `UPDATE tenants SET byok_error = $2, byok_checked_at = now() WHERE id = $1 AND byok_key_arn = $3 AND byok_status = 'failing' RETURNING name`,
+      [tenantId, error.slice(0, 500), keyArn],
+    );
+    if (!again.length) return;
+    const claim = await db.query(
+      `UPDATE tenants SET byok_alerted_at = now()
+        WHERE id = $1 AND byok_status = 'failing' AND (byok_alerted_at IS NULL OR byok_alerted_at < now() - make_interval(secs => $2)) RETURNING id`,
+      [tenantId, ALERT_EVERY_MS / 1000],
+    );
+    if (!claim.length) return;
+    name = again[0].name;
+  }
+  const prev = { name };
   await recordAudit(db, { tenantId, action: "byok.key_failing", actor: { type: "system", label: "CalaSign" }, data: { keyArn, error: error.slice(0, 300) } });
   const admins = await db.query<any>(
     `SELECT u.email, u.name FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.tenant_id = $1 AND m.role IN ('owner','admin')`,
@@ -258,8 +273,15 @@ export async function byokRoutes(app: FastifyInstance, s: Services) {
     const res = await testKey(t.byok_key_arn, a.tenantId, ts.cell);
     if (res.ok) {
       // Probar no reactiva una clave desactivada: para eso está PUT /v1/settings/byok.
+      // De 'failing' a 'active' con un UPDATE condicional: la recuperación queda en la auditoría (como markKeyHealthy),
+      // una sola vez aunque haya pruebas concurrentes, y con quién la probó.
+      const recovered = await s.db.query(
+        `UPDATE tenants SET byok_status = 'active', byok_error = NULL, byok_checked_at = now() WHERE id = $1 AND byok_status = 'failing' RETURNING id`,
+        [a.tenantId],
+      );
       await s.db.query(`UPDATE tenants SET byok_status = 'active', byok_error = NULL, byok_checked_at = now() WHERE id = $1 AND byok_status <> 'none'`, [a.tenantId]);
       invalidateTenantStorage(a.tenantId);
+      if (recovered.length) await auditFromRequest(s.db, req, a, "byok.key_recovered", { targetType: "kms_key", targetId: t.byok_key_arn, data: { via: "test" } });
     } else {
       await markKeyFailing(s.db, a.tenantId, t.byok_key_arn, res.error ?? "error");
     }

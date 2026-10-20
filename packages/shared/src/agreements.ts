@@ -445,9 +445,14 @@ export interface PublicWorkflowStart {
 export const NegotiationParticipantInput = z.object({
   name: z.string().trim().min(1).max(200),
   email: z.string().trim().toLowerCase().email().max(320),
-  /** Rol de firma en el documento ({{firma:Rol}}). */
+  /**
+   * Rol de firma en el documento ({{firma:Rol}}). Con `observer: true` es una etiqueta libre (p. ej. "Abogado") y no
+   * puede ser un rol de firma del documento.
+   */
   role: z.string().trim().max(80).nullable().optional(),
   canPropose: z.boolean().default(true),
+  /** Observador: participa de la negociación y recibe copia del sobre, pero no firma. */
+  observer: z.boolean().optional(),
 });
 
 export const CreateNegotiationInput = z.object({
@@ -470,6 +475,8 @@ export interface NegotiationParticipant {
   email: string;
   role: string | null;
   canPropose: boolean;
+  /** Observador: recibe copia del sobre, no firma. */
+  observer: boolean;
   lastSeenAt: string | null;
 }
 

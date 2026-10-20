@@ -159,15 +159,22 @@ describe("workflows con inicio público", () => {
     expect(other.statusCode).toBe(200);
   });
 
-  it("tope por organización compartido con los formularios web", async () => {
+  it("tope por organización compartido con los formularios web: cuentan los runs que completaron el formulario", async () => {
     const { config } = await import("../src/config");
     const wf = await publicWorkflow();
     const prev = config.webForms.maxPerTenantHour;
-    const n = (await db.one<any>(`SELECT count(*)::int AS n FROM workflow_runs WHERE tenant_id = $1 AND started_by IS NULL AND started_by_api_key IS NULL`, [tenant])).n;
+    const n = (await db.one<any>(`SELECT count(*)::int AS n FROM workflow_runs WHERE tenant_id = $1 AND public_collected_at > now() - interval '1 hour'`, [tenant])).n;
     config.webForms.maxPerTenantHour = n + 1;
     try {
-      expect((await startPublic(wf.slug, "192.0.2.1")).statusCode).toBe(201);
-      const over = await startPublic(wf.slug, "192.0.2.2");
+      // Los inicios sin completar no gastan el cupo.
+      const t1 = (await startPublic(wf.slug, "192.0.2.1")).json().token as string;
+      const t2 = (await startPublic(wf.slug, "192.0.2.2")).json().token as string;
+      expect(t2).toBeTruthy();
+      await age(t1);
+      await age(t2);
+      const ok = await app.inject({ method: "POST", url: `/v1/public/workflow-runs/${t1}/steps/0`, payload: { values: { email: "c1@y.com", nombre: "C" } }, remoteAddress: "192.0.2.1" });
+      expect(ok.statusCode).toBe(200);
+      const over = await app.inject({ method: "POST", url: `/v1/public/workflow-runs/${t2}/steps/0`, payload: { values: { email: "c2@y.com", nombre: "C" } }, remoteAddress: "192.0.2.2" });
       expect(over.statusCode).toBe(429);
       expect(over.json().error.code).toBe("workflow_rate_limited");
     } finally {
@@ -175,10 +182,43 @@ describe("workflows con inicio público", () => {
     }
   });
 
+  it("tope aparte (más alto) de inicios por organización y hora", async () => {
+    const { config } = await import("../src/config");
+    const wf = await publicWorkflow();
+    const prev = config.webForms.maxPublicStartsPerTenantHour;
+    const n = (await db.one<any>(
+      `SELECT count(*)::int AS n FROM workflow_runs WHERE tenant_id = $1 AND started_by IS NULL AND started_by_api_key IS NULL AND created_at > now() - interval '1 hour'`,
+      [tenant],
+    )).n;
+    config.webForms.maxPublicStartsPerTenantHour = n + 1;
+    try {
+      expect((await startPublic(wf.slug, "192.0.2.3")).statusCode).toBe(201);
+      const over = await startPublic(wf.slug, "192.0.2.4");
+      expect(over.statusCode).toBe(429);
+      expect(over.json().error.code).toBe("workflow_rate_limited");
+    } finally {
+      config.webForms.maxPublicStartsPerTenantHour = prev;
+    }
+  });
+
+  it("PATCH tras bajar de plan: editar un workflow publicado sí; activarlo o publicarlo, no", async () => {
+    const wf = await publicWorkflow();
+    const internal = await createWorkflow({ name: "Interno pub", steps: collectThenApprove() });
+    await db.query(`UPDATE tenants SET billing_plan = 'starter' WHERE id = $1`, [tenant]);
+    try {
+      expect((await app.inject({ method: "PATCH", url: `/v1/workflows/${wf.id}`, headers: H(), payload: { name: "Renombrado" } })).statusCode).toBe(200);
+      expect((await app.inject({ method: "PATCH", url: `/v1/workflows/${wf.id}`, headers: H(), payload: { active: false } })).statusCode).toBe(200);
+      expect((await app.inject({ method: "PATCH", url: `/v1/workflows/${wf.id}`, headers: H(), payload: { active: true } })).statusCode).toBe(402);
+      expect((await app.inject({ method: "PATCH", url: `/v1/workflows/${internal.json().id}`, headers: H(), payload: { publicStart: true } })).statusCode).toBe(402);
+    } finally {
+      await db.query(`UPDATE tenants SET billing_plan = NULL WHERE id = $1`, [tenant]);
+    }
+  });
+
   it("desactivar cancela las ejecuciones públicas que esperan su formulario; un link de un workflow inactivo no acepta datos", async () => {
     const wf = await publicWorkflow();
     const token = (await startPublic(wf.slug, "192.0.2.50")).json().token as string;
-    // Una ejecución interna (iniciada por la dueña) que espera su formulario no se cancela, pero tampoco acepta datos.
+    // Una ejecución interna (iniciada por la dueña) que espera su formulario no se cancela y sigue aceptando datos.
     const internal = await app.inject({ method: "POST", url: `/v1/workflows/${wf.id}/runs`, headers: H(), payload: { data: {} } });
     expect(internal.statusCode).toBe(201);
     const res = await app.inject({ method: "PATCH", url: `/v1/workflows/${wf.id}`, headers: H(), payload: { active: false } });
@@ -189,9 +229,15 @@ describe("workflows con inicio público", () => {
     await age(token);
     const sub = await app.inject({ method: "POST", url: `/v1/public/workflow-runs/${token}/steps/0`, payload: { values: { email: "z@y.com", nombre: "Z" } } });
     expect(sub.statusCode).toBe(410);
+    // Sin tiempo mínimo de llenado (solo en runs públicos).
     const internalToken = internal.json().collectUrl.split("/w/")[1];
-    await age(internalToken);
-    expect((await app.inject({ method: "POST", url: `/v1/public/workflow-runs/${internalToken}/steps/0`, payload: { values: { email: "z@y.com", nombre: "Z" } } })).statusCode).toBe(410);
+    const accepted = await app.inject({ method: "POST", url: `/v1/public/workflow-runs/${internalToken}/steps/0`, payload: { values: { email: "z@y.com", nombre: "Z" } } });
+    expect(accepted.statusCode).toBe(200);
+    expect(accepted.json().status).toBe("waiting"); // espera la aprobación
+    // El DELETE explica que desactivar no cancela las internas.
+    const del = await app.inject({ method: "DELETE", url: `/v1/workflows/${wf.id}`, headers: H() });
+    expect(del.statusCode).toBe(409);
+    expect(del.json().error.message).toMatch(/link público/);
   });
 
   it("vence (cancela) las ejecuciones que esperan un formulario sin actividad", async () => {
@@ -200,11 +246,17 @@ describe("workflows con inicio público", () => {
     const token = (await startPublic(wf.slug, "192.0.2.60")).json().token as string;
     const { sha256Hex } = await import("../src/lib/util");
     const run = await db.one<any>(`SELECT id FROM workflow_runs WHERE public_token_hash = $1`, [sha256Hex(token)]);
+    // Una ejecución interna esperando su formulario no vence sola.
+    const internal = await app.inject({ method: "POST", url: `/v1/workflows/${wf.id}/runs`, headers: H(), payload: { data: {} } });
+    expect(internal.statusCode).toBe(201);
+    await db.query(`UPDATE workflow_runs SET updated_at = now() - make_interval(days => $2) WHERE id = $1`, [internal.json().id, COLLECT_IDLE_DAYS + 1]);
     await workflowRunsSweep({ db, blobs: await blobs(), log: deps().log });
     expect((await db.one<any>(`SELECT status FROM workflow_runs WHERE id = $1`, [run.id])).status).toBe("waiting");
     await db.query(`UPDATE workflow_runs SET updated_at = now() - make_interval(days => $2) WHERE id = $1`, [run.id, COLLECT_IDLE_DAYS + 1]);
     await workflowRunsSweep({ db, blobs: await blobs(), log: deps().log });
     expect((await db.one<any>(`SELECT status FROM workflow_runs WHERE id = $1`, [run.id])).status).toBe("cancelled");
+    expect((await db.one<any>(`SELECT status FROM workflow_runs WHERE id = $1`, [internal.json().id])).status).toBe("waiting");
+    await app.inject({ method: "POST", url: `/v1/workflow-runs/${internal.json().id}/cancel`, headers: H() });
     // Ya no bloquea el borrado del workflow.
     await app.inject({ method: "PATCH", url: `/v1/workflows/${wf.id}`, headers: H(), payload: { publicStart: false } });
     expect((await app.inject({ method: "DELETE", url: `/v1/workflows/${wf.id}`, headers: H() })).statusCode).toBe(204);
@@ -212,6 +264,57 @@ describe("workflows con inicio público", () => {
 });
 
 describe("workflows: documentos generados y repositorio", () => {
+  it("needsGeneratedDocuments: solo un envío pendiente que usa un PDF generado antes", async () => {
+    const { needsGeneratedDocuments } = await import("../src/modules/agreements/workflows");
+    const gen = { id: randomUUID(), type: "generate_document", name: "G", config: { documentTemplateId: randomUUID(), output: "doc", allowMissing: false } } as any;
+    const send = { id: randomUUID(), type: "send_for_signature", name: "S", config: { document: "doc", envelopeKey: "e", subject: "x", recipients: [] } } as any;
+    const http = { id: randomUUID(), type: "http_request", name: "H", config: { url: "https://x.test", method: "POST" } } as any;
+    expect(needsGeneratedDocuments([gen, http, send], 1)).toBe(true);
+    expect(needsGeneratedDocuments([gen, send, http], 2)).toBe(false);
+    expect(needsGeneratedDocuments([gen, http, gen, send], 1)).toBe(false); // se vuelve a generar antes de enviarlo
+  });
+
+  it("reintento con los documentos ya borrados: se permite si no queda un envío que los use", async () => {
+    const tpl = await app.inject({ method: "POST", url: "/v1/document-templates", headers: H(), payload: { name: "Carta R", source: "# Hola {{nombre}}" } });
+    const mk = async (withSend: boolean) => {
+      const steps: any[] = [
+        { id: randomUUID(), type: "generate_document", name: "Generar", config: { documentTemplateId: tpl.json().id, output: "carta" } },
+        { id: randomUUID(), type: "http_request", name: "Avisar", config: { url: "ftp://example.com/x" } },
+      ];
+      if (withSend) {
+        steps.push({ id: randomUUID(), type: "send_for_signature", name: "Enviar", config: { document: "carta", envelopeKey: "e", subject: "Carta", recipients: [{ role: "Cliente", name: "Ana", email: "ana@x.test" }] } });
+      }
+      const wf = await createWorkflow({ name: `Reintento ${randomUUID().slice(0, 6)}`, steps });
+      expect(wf.statusCode).toBe(201);
+      const run = await app.inject({ method: "POST", url: `/v1/workflows/${wf.json().id}/runs`, headers: H(), payload: { data: { nombre: "Ana" } } });
+      expect(run.json().status).toBe("failed");
+      // Como el barrido de runs fallados viejos.
+      await db.query(`UPDATE workflow_runs SET context = context || '{"documentsCleaned": true}'::jsonb WHERE id = $1`, [run.json().id]);
+      return run.json().id as string;
+    };
+    const blocked = await app.inject({ method: "POST", url: `/v1/workflow-runs/${await mk(true)}/retry`, headers: H() });
+    expect(blocked.statusCode).toBe(409);
+    expect(blocked.json().error.code).toBe("not_retryable");
+    const id = await mk(false);
+    const ok = await app.inject({ method: "POST", url: `/v1/workflow-runs/${id}/retry`, headers: H() });
+    expect(ok.statusCode).toBe(200);
+    const ctx = (await db.one<any>(`SELECT context FROM workflow_runs WHERE id = $1`, [id])).context;
+    expect(ctx.documentsCleaned).toBeUndefined();
+    expect(ctx.documents).toEqual({});
+  }, 60_000);
+
+  it("deduplicación por correo + IP sin carrera: dos envíos simultáneos de dos runs, uno solo pasa", async () => {
+    const wf = await publicWorkflow();
+    const ip = "198.51.100.200";
+    const t1 = (await startPublic(wf.slug, ip)).json().token as string;
+    const t2 = (await startPublic(wf.slug, ip)).json().token as string;
+    await age(t1);
+    await age(t2);
+    const send = (t: string) => app.inject({ method: "POST", url: `/v1/public/workflow-runs/${t}/steps/0`, payload: { values: { email: "par@y.com", nombre: "P" } }, remoteAddress: ip });
+    const codes = (await Promise.all([send(t1), send(t2)])).map((r) => r.statusCode).sort();
+    expect(codes).toEqual([200, 429]);
+  }, 60_000);
+
   it("al rechazar el run se borran los PDFs generados que no salieron en un sobre", async () => {
     const tpl = await app.inject({ method: "POST", url: "/v1/document-templates", headers: H(), payload: { name: "Carta", source: "# Hola {{nombre}}\n\nTexto." } });
     expect(tpl.statusCode).toBe(201);
@@ -285,6 +388,31 @@ describe("negociaciones", () => {
     // Un rol sin contraparte (lo firma el remitente) se permite.
     expect((await create([{ name: "A", email: "a@x.com", role: "Cliente" }])).statusCode).toBe(201);
   });
+
+  it("observadores: rol libre permitido (copia del sobre); con un rol de firma, 400", async () => {
+    const createObs = (participants: Record<string, unknown>[]) =>
+      app.inject({ method: "POST", url: "/v1/negotiations", headers: H(), payload: { title: "Obs", documentTemplateId: templateId, data: { cliente: "ACME", precio: "100" }, participants } });
+    const ok = await createObs([
+      { name: "A", email: "a@x.com", role: "Cliente" },
+      { name: "L", email: "l@x.com", role: "Abogado", observer: true },
+    ]);
+    expect(ok.statusCode).toBe(201);
+    const obs = ok.json().negotiation.participants.find((p: any) => p.email === "l@x.com");
+    expect(obs).toMatchObject({ role: "Abogado", observer: true });
+    const bad = await createObs([
+      { name: "A", email: "a@x.com", role: "Cliente" },
+      { name: "L", email: "l@x.com", role: "Proveedor", observer: true },
+    ]);
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json().error.code).toBe("observer_signing_role");
+    // Al aceptar, el observador va como copia y el remitente firma el rol sin contraparte.
+    const id = ok.json().negotiation.id as string;
+    const acc = await app.inject({ method: "POST", url: `/v1/negotiations/${id}/accept`, headers: H(), payload: {} });
+    expect(acc.statusCode).toBe(200);
+    const envelopeId = acc.json().envelope.id;
+    const recips = await db.query<any>(`SELECT email, role FROM recipients WHERE envelope_id = $1 ORDER BY email`, [envelopeId]);
+    expect(recips.find((r: any) => r.email === "l@x.com").role).toBe("cc");
+  }, 60_000);
 
   it("topes de comentarios por contraparte, cancelación con propuestas pendientes y auditoría", async () => {
     const res = await create([

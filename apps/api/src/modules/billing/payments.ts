@@ -144,7 +144,7 @@ export async function refundDuplicatePayment(db: Db, paymentId: string, provider
 export async function markPaymentPaid(
   db: Db,
   paymentId: string,
-  r: { providerPaymentId: string | null; receipt: Record<string, unknown>; amount?: number; currency?: string },
+  r: { providerPaymentId: string | null; receipt: Record<string, unknown>; amount?: number; currency?: string; payerRecipientId?: string | null },
 ): Promise<{ duplicate: string } | undefined> {
   return db.tx(async (t): Promise<{ duplicate: string } | undefined> => {
     const p0 = await t.one<any>(`SELECT * FROM envelope_payments WHERE id = $1`, [paymentId]);
@@ -157,6 +157,12 @@ export async function markPaymentPaid(
       return r.providerPaymentId && p.provider_payment_id && r.providerPaymentId !== p.provider_payment_id ? { duplicate: r.providerPaymentId } : undefined;
     }
     // Un monto no numérico (NaN) haría falsa cualquier comparación: se trata como diferencia.
+    // Checkout armado para otro pagador (el anterior, antes de una delegación, reasignación o corrección) y pagado
+    // igual (un Boleto o efectivo ya emitido no se anula al cerrar la preferencia): no salda la deuda del pagador
+    // actual ni queda a su nombre en la evidencia; quien llama lo reembolsa y el cobro sigue pendiente.
+    if (r.payerRecipientId && r.payerRecipientId !== p.recipient_id) {
+      return r.providerPaymentId ? { duplicate: r.providerPaymentId } : undefined;
+    }
     if (r.amount !== undefined && (!Number.isFinite(r.amount) || Math.abs(r.amount - Number(p.amount)) > 0.005)) {
       throw new AppError(400, "payment_mismatch", "El monto pagado no coincide con el cobro");
     }
@@ -483,7 +489,8 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
           description: p.description,
           successUrl: `${back}?payment=success`,
           cancelUrl: `${back}?payment=cancel`,
-          metadata: { paymentId: p.id, envelopeId: e.id, tenantId: e.tenant_id },
+          // recipientId: a quién se le armó el checkout (si el pagador cambia y igual se paga este, se reembolsa).
+          metadata: { paymentId: p.id, envelopeId: e.id, tenantId: e.tenant_id, recipientId: r.id },
           customerEmail: r.email,
           // Misma clave para pedidos simultáneos sobre el mismo estado; cambia cuando la sesión anterior vence o falla.
           // Con el link vigente del pagador: cambia al delegar, reasignar o corregir su contacto (checkout descartado), así
@@ -497,7 +504,7 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
           title: p.description,
           amount: Number(p.amount),
           currency: p.currency,
-          externalReference: `pay:${p.id}`,
+          externalReference: `pay:${p.id}:${r.id}`, // pagador para el que se armó (ver markPaymentPaid)
           notificationUrl: `${config.appUrl}/v1/integrations/payments/mercadopago/webhook`,
           successUrl: `${back}?payment=success`,
           failureUrl: `${back}?payment=cancel`,

@@ -1,3 +1,4 @@
+import { pastExpiry } from "../envelopes";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import {
   AI_FEATURES,
@@ -307,7 +308,9 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
     const t = await s.db.one<any>(`SELECT ai_enabled FROM tenants WHERE id = $1`, [e.tenant_id]);
     // Sin la verificación de identidad que pide el remitente, el firmante tampoco ve el contenido por esta vía.
     const blocked = identityBlocking(r);
-    const enabled = Boolean(t?.ai_enabled && e.ai_signer_assist && ["sent", "completed"].includes(e.status) && !blocked);
+    // Un sobre en curso vencido (aunque el barrido todavía no lo marcó) no consume cuota de IA.
+    const expired = e.status === "sent" && pastExpiry(e);
+    const enabled = Boolean(t?.ai_enabled && e.ai_signer_assist && ["sent", "completed"].includes(e.status) && !blocked && !expired);
     return { r, e, enabled, blocked, locale: (r.locale ?? e.locale ?? "es") as string };
   };
 

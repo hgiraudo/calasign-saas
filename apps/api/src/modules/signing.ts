@@ -144,12 +144,12 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
   app.get<P>("/v1/signing/:token", rl, async (req) => {
     const { recipient: r0, envelope: e0 } = await resolveToken(s.db, req.params.token);
     const authed = await isSignerAuthenticated(s.db, req, r0);
-    if (authed && r0.status === "sent" && e0.status === "sent") {
+    if (authed && r0.status === "sent" && e0.status === "sent" && !pastExpiry(e0)) {
       await s.db.tx(async (t) => {
         // El estado y el link se vuelven a mirar con el sobre bloqueado: un sobre anulado, rechazado o vencido mientras
         // tanto no suma la apertura, y el link revocado por una corrección no marca como "visto" al contacto nuevo.
         const cur = await lockEnvelope(t, e0.tenant_id, e0.id);
-        if (cur.status !== "sent") return;
+        if (cur.status !== "sent" || pastExpiry(cur)) return;
         const upd = await t.query(
           `UPDATE recipients SET status = 'viewed', viewed_at = now() WHERE id = $1 AND status = 'sent' AND access_token_hash = $2 RETURNING id`,
           [r0.id, sha256Hex(req.params.token)],

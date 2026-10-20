@@ -404,7 +404,7 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
   // ya venía así.
   if (input.addFields?.length || input.addRecipients?.length) {
     const pendingIds = new Set(now.filter((r) => PENDING.includes(r.status)).map((r) => r.id));
-    const all = await db.query<any>(`SELECT id, recipient_id, label, conditions, read_only FROM fields WHERE envelope_id = $1`, [e.id]);
+    const all = await db.query<any>(`SELECT id, recipient_id, label, conditions, read_only, type, formula FROM fields WHERE envelope_id = $1`, [e.id]);
     const live = now.filter((r) => !["delegated", "reassigned"].includes(r.status));
     problems.push(...logicOrderProblems(all.map((f) => (pendingIds.has(f.recipient_id) ? f : { ...f, conditions: null })), live));
   }

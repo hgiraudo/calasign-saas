@@ -52,6 +52,7 @@ export async function handleStripeEvent(db: Db, event: any) {
         }
         const res = await markPaymentPaid(db, paymentId, {
           providerPaymentId: typeof obj.payment_intent === "string" ? obj.payment_intent : obj.id,
+          payerRecipientId: obj.metadata?.recipientId ?? null,
           receipt: { provider: "stripe", sessionId: obj.id, paymentIntent: obj.payment_intent ?? null, amountTotal: obj.amount_total, currency: obj.currency },
         });
         // Segundo cobro de la misma deuda (p. ej. el checkout del pagador anterior): se reembolsa, como en Mercado Pago.
@@ -128,7 +129,8 @@ export async function handleMercadoPagoNotification(db: Db, type: string, dataId
     const pay = await mpGetPayment(dataId);
     const ref = pay.externalReference ?? "";
     if (!ref.startsWith("pay:")) return;
-    const paymentId = ref.slice(4);
+    // pay:<cobro>[:<pagador para el que se armó el checkout>] (las preferencias viejas no traen el pagador).
+    const [paymentId, payerRecipientId] = ref.slice(4).split(":");
     if (pay.status === "approved") {
       // Monto y moneda son obligatorios: sin ellos no se puede comprobar que se pagó lo que se cobra.
       if (!Number.isFinite(pay.amount) || !pay.currency) {
@@ -136,6 +138,7 @@ export async function handleMercadoPagoNotification(db: Db, type: string, dataId
       }
       const res = await markPaymentPaid(db, paymentId, {
         providerPaymentId: pay.id,
+        payerRecipientId: payerRecipientId || null,
         amount: pay.amount,
         currency: pay.currency,
         receipt: { provider: "mercadopago", paymentId: pay.id, method: pay.method, approvedAt: pay.approvedAt },

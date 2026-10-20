@@ -27,4 +27,18 @@ describe("orden de la lógica entre firmantes", () => {
     ];
     expect(logicOrderProblems(fields, recips)).toHaveLength(2);
   });
+  it("sigue las fórmulas: un total propio que suma el monto de quien firma después tampoco vale", () => {
+    const fields = [
+      { id: "b1", recipient_id: "b", label: "Monto", type: "number", conditions: null },
+      { id: "a1", recipient_id: "a", label: "Base", type: "number", conditions: null },
+      { id: "t1", recipient_id: "a", label: "Total", type: "number", formula: "{Base} + {Monto}", conditions: null },
+      { id: "t2", recipient_id: "a", label: "Solo base", type: "number", formula: "{Base} * 2", conditions: null },
+      { id: "a2", recipient_id: "a", label: "Garantía", conditions: [{ fieldId: "t1" }] },
+      { id: "a3", recipient_id: "a", label: "Ok", conditions: [{ fieldId: "t2" }] },
+    ];
+    const problems = logicOrderProblems(fields, recips);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain("Garantía");
+    expect(problems[0]).toContain("Total");
+  });
 });

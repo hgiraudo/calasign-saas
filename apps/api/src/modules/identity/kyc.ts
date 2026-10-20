@@ -23,7 +23,7 @@ import { appendEvent, type Actor } from "../../infra/evidence";
 import { AppError, badRequest, conflict, notFound } from "../../lib/errors";
 import { encryptBytes, iso, sha256Hex, uuidv7 } from "../../lib/util";
 import { authenticate, type Services } from "../context";
-import { lockEnvelope } from "../envelopes";
+import { lockEnvelope, pastExpiry } from "../envelopes";
 import { assertLinkCurrent, recipientActor, resolveToken } from "../signing";
 import { matchIdentity } from "./namematch";
 import { WebhookSignatureError, getAdapter, listProviders, mockDecide } from "./providers";
@@ -342,7 +342,8 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
 
   app.post<P>("/v1/signing/:token/identity/start", rl, async (req) => {
     const { r, e } = await context(req);
-    if (e.status !== "sent") throw new AppError(410, "envelope_closed", "El sobre ya no está disponible");
+    // Vencido (aunque el barrido todavía no lo marcó): no se abre una sesión paga en el proveedor.
+    if (e.status !== "sent" || pastExpiry(e)) throw new AppError(410, "envelope_closed", "El sobre ya no está disponible");
     if (!["sent", "viewed"].includes(r.status)) throw conflict("not_signable", "Ya no podés firmar este sobre");
     if (r.identity_status === "verified") return sessionOut(req.params.token);
     const settings = await getIdentitySettings(s.db, e.tenant_id);
@@ -374,7 +375,7 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
       // El sobre y el destinatario se vuelven a mirar con el bloqueo: un sobre anulado o un destinatario reasignado
       // mientras tanto no suma recipient.identity_started a la evidencia de un sobre cerrado o de alguien que ya no firma.
       const cur = await lockEnvelope(t, e.tenant_id, e.id);
-      if (cur.status !== "sent") throw new AppError(410, "envelope_closed", "El sobre ya no está disponible");
+      if (cur.status !== "sent" || pastExpiry(cur)) throw new AppError(410, "envelope_closed", "El sobre ya no está disponible");
       const rNow = await t.one<any>(`SELECT status, access_token_hash FROM recipients WHERE id = $1`, [r.id]);
       // Una corrección del contacto (link nuevo, verificaciones anuladas) confirmada mientras tanto: la verificación de
       // quien tenía el link anterior no queda en curso a nombre del contacto corregido.

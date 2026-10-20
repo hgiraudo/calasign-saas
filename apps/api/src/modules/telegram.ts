@@ -48,11 +48,22 @@ export async function telegramRoutes(app: FastifyInstance, s: Services) {
       // Con el sobre bloqueado, el link tiene que seguir vigente: una corrección del contacto (link nuevo, chat
       // desvinculado) o un reemplazo pudo confirmarse mientras tanto, y el chat de quien tenía el link anterior
       // recibiría los avisos (con el link nuevo) de la persona corregida.
-      const upd = await t.query(`UPDATE recipients SET telegram_chat_id = $2 WHERE id = $1 AND access_token_hash = $3 RETURNING id`, [
-        r.id,
-        String(chatId),
-        sha256Hex(token),
-      ]);
+      // Con solo el link no se toma el canal de otra persona: no se reemplaza un chat ya vinculado, y si el link pide
+      // código (OTP), el titular tiene que haberse autenticado antes (el link reenviado no alcanza para ver el sobre,
+      // pero sí servía para recibir los avisos con el asunto y dejar al titular sin ellos).
+      if (String(r.auth_method ?? "").startsWith("otp")) {
+        const authed = await t.one(`SELECT 1 FROM otp_challenges WHERE recipient_id = $1 AND verified_at IS NOT NULL LIMIT 1`, [r.id]);
+        if (!authed) return false;
+      }
+      const upd = await t.query(
+        `UPDATE recipients SET telegram_chat_id = $2
+          WHERE id = $1 AND access_token_hash = $3 AND (telegram_chat_id IS NULL OR telegram_chat_id = $2) RETURNING id`,
+        [
+          r.id,
+          String(chatId),
+          sha256Hex(token),
+        ],
+      );
       if (!upd.length) return false;
       await appendEvent(t, {
         tenantId: e.tenant_id,

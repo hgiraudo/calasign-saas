@@ -738,27 +738,60 @@ export async function assertDocumentLimits(t: Db, kind: "envelope" | "template",
  * obligatorio quedaba oculto o uno que debía ocultarse se estampaba). Se exige que el campo citado sea fijo (solo
  * lectura) o de alguien que firma antes.
  */
-type LogicFields = { id: string; recipient_id: string; label: string | null; conditions: unknown; read_only?: boolean }[];
+type LogicFields = {
+  id: string;
+  recipient_id: string;
+  label: string | null;
+  conditions: unknown;
+  read_only?: boolean;
+  type?: string;
+  formula?: string | null;
+}[];
 type LogicRecips = { id: string; name: string; routing_order: number }[];
 
-/** Cada condición fuera de orden, con una clave estable (ids del campo y del campo citado) y el mensaje legible. */
+/**
+ * Cada condición fuera de orden, con una clave estable (campo citado + destinatario cuyo campo depende de él) y el
+ * mensaje legible. Si el campo citado es una fórmula, cuentan los campos que la fórmula cita (también de forma
+ * transitiva): un total que depende del monto de alguien que firma después también se decidiría sin ese valor.
+ */
 function logicOrderIssues(fields: LogicFields, recips: LogicRecips): { key: string; message: string }[] {
   const byId = new Map(fields.map((f) => [f.id, f]));
+  const numberByLabel = new Map(fields.filter((f) => f.type === "number" && f.label).map((f) => [f.label!.trim().toLowerCase(), f]));
   const order = new Map(recips.map((r) => [r.id, r.routing_order]));
   const name = new Map(recips.map((r) => [r.id, r.name]));
+  /** Los campos con valor propio de los que sale el valor de `src` (él mismo, o las hojas de su fórmula). */
+  const leaves = (src: LogicFields[number], seen = new Set<string>()): LogicFields[number][] => {
+    if (seen.has(src.id)) return [];
+    seen.add(src.id);
+    if (!src.formula) return [src];
+    let refs: string[] = [];
+    try {
+      refs = formulaRefs(src.formula);
+    } catch {
+      return [];
+    }
+    return refs.flatMap((r) => {
+      const ref = numberByLabel.get(r.trim().toLowerCase());
+      return ref ? leaves(ref, seen) : [];
+    });
+  };
   const out: { key: string; message: string }[] = [];
   for (const f of fields) {
     const conds = Array.isArray(f.conditions) ? (f.conditions as { fieldId: string }[]) : [];
     for (const c of conds) {
-      const src = byId.get(c.fieldId);
-      if (!src || src.recipient_id === f.recipient_id || src.read_only) continue;
-      if ((order.get(src.recipient_id) ?? 0) >= (order.get(f.recipient_id) ?? 0)) {
-        out.push({
-          // Campo citado y destinatario cuyo campo depende de él (no el id del campo dependiente: un PUT sin ids o por anclas lo
-          // regenera en cada guardado y el problema previo parecía nuevo).
-          key: `${src.id}|${f.recipient_id}`,
-          message: `El campo "${f.label ?? "?"}" de ${name.get(f.recipient_id) ?? "?"} depende de un campo de ${name.get(src.recipient_id) ?? "?"}, que firma después o al mismo tiempo`,
-        });
+      const cited = byId.get(c.fieldId);
+      if (!cited) continue;
+      for (const src of leaves(cited)) {
+        if (src.recipient_id === f.recipient_id || src.read_only) continue;
+        if ((order.get(src.recipient_id) ?? 0) >= (order.get(f.recipient_id) ?? 0)) {
+          const via = src.id === cited.id ? "" : ` (a través de la fórmula de "${cited.label ?? "?"}")`;
+          out.push({
+            // No el id del campo dependiente: un PUT sin ids o por anclas lo regenera en cada guardado y el problema
+            // previo parecía nuevo.
+            key: `${src.id}|${f.recipient_id}`,
+            message: `El campo "${f.label ?? "?"}" de ${name.get(f.recipient_id) ?? "?"} depende de un campo de ${name.get(src.recipient_id) ?? "?"}${via}, que firma después o al mismo tiempo`,
+          });
+        }
       }
     }
   }
@@ -788,13 +821,13 @@ function pickReservedMetadata(m: Record<string, unknown> | null | undefined): Re
 
 const envelopeLogicRows = async (t: Db, envelopeId: string) =>
   [
-    await t.query<any>(`SELECT id, recipient_id, label, conditions, read_only FROM fields WHERE envelope_id = $1`, [envelopeId]),
+    await t.query<any>(`SELECT id, recipient_id, label, conditions, read_only, type, formula FROM fields WHERE envelope_id = $1`, [envelopeId]),
     await t.query<any>(`SELECT id, name, routing_order FROM recipients WHERE envelope_id = $1`, [envelopeId]),
   ] as const;
 
 const templateLogicRows = async (t: Db, templateId: string) =>
   [
-    await t.query<any>(`SELECT id, role_id AS recipient_id, label, conditions, read_only FROM template_fields WHERE template_id = $1`, [templateId]),
+    await t.query<any>(`SELECT id, role_id AS recipient_id, label, conditions, read_only, type, formula FROM template_fields WHERE template_id = $1`, [templateId]),
     await t.query<any>(`SELECT id, name, routing_order FROM template_roles WHERE template_id = $1`, [templateId]),
   ] as const;
 

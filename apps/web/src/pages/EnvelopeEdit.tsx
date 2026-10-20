@@ -19,6 +19,7 @@ import { SaveAsTemplateButton } from "../components/SaveAsTemplate";
 import { ShareControl } from "../components/ShareControl";
 import { IdentitySelect, draftToIdentity, identityToDraft } from "../components/IdentityControls";
 import { CertificateOption, EMPTY_CERT_DRAFT, certToDraft, draftToCert, type CertDraft } from "../components/CertSign";
+import { useTitle } from "../lib/white-label";
 
 interface DraftRecipient {
   id: string;
@@ -98,6 +99,7 @@ export function EnvelopeEditPage() {
   const { t } = useI18n();
   const nav = useNavigate();
   const [detail, setDetail] = useState<EnvelopeDetail | null>(null);
+  useTitle(detail?.envelope.subject);
   const [step, setStep] = useState<Step>("documents");
   const [recipients, setRecipients] = useState<DraftRecipient[]>([]);
   const [fields, setFields] = useState<DraftField[]>([]);
@@ -372,7 +374,7 @@ export function EnvelopeEditPage() {
       <ol className="stepper">
         {STEPS.map((s, i) => (
           <li key={s} className={`${i === stepIdx ? "current" : ""} ${i < stepIdx ? "done" : ""}`}>
-            <button type="button" onClick={() => go(s)} disabled={busy}>
+            <button type="button" onClick={() => go(s)} disabled={busy} aria-current={i === stepIdx ? "step" : undefined}>
               <span className="step-n">{i + 1}</span>
               <span className="step-l">{t(`edit.step.${s}`)}</span>
             </button>
@@ -560,18 +562,20 @@ function DocumentsStep({
         }}
       >
         <p>{t("edit.dropHint")}</p>
-        <label className="btn btn-primary">
+        <button type="button" className="btn btn-primary" disabled={busy} onClick={() => inputRef.current?.click()}>
           {uploading ? `${t("edit.uploading")} ${uploading}` : t("edit.upload")}
-          <input
-            ref={inputRef}
-            type="file"
-            accept="application/pdf,.pdf"
-            multiple
-            hidden
-            disabled={busy}
-            onChange={(e) => e.target.files && upload(e.target.files)}
-          />
-        </label>
+        </button>
+        <input
+          ref={inputRef}
+          type="file"
+          accept="application/pdf,.pdf"
+          multiple
+          className="sr-only"
+          tabIndex={-1}
+          aria-hidden="true"
+          disabled={busy}
+          onChange={(e) => e.target.files && upload(e.target.files)}
+        />
       </div>
       {documents.length === 0 ? (
         <div className="empty">{t("edit.noDocuments")}</div>
@@ -885,7 +889,7 @@ function ReviewStep({
   draft: ReviewDraft | null;
   onDraft: (d: ReviewDraft) => void;
 }) {
-  const { t } = useI18n();
+  const { t, tn } = useI18n();
   const env = detail.envelope;
   const [init] = useState(draft);
   const [subject, setSubject] = useState(init?.subject ?? env.subject);
@@ -1031,9 +1035,7 @@ function ReviewStep({
                   </span>
                   <div className="muted small">{[r.email, r.phone].filter(Boolean).join(" · ")}</div>
                   {r.role === "signer" && (
-                    <div className="small">
-                      {count} {t("edit.fieldsCount")}
-                    </div>
+                    <div className="small">{tn("edit.fieldsCount", count)}</div>
                   )}
                 </div>
               </li>

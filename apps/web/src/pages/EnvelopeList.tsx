@@ -4,11 +4,13 @@ import type { EnvelopeDetail, EnvelopeStatus, ListEnvelopesResponse, EnvelopeSum
 import { api, errorText, uuid } from "../lib/api";
 import { formatDateTime, useI18n } from "../lib/i18n";
 import { ErrorBox, Modal, RecipientStatusBadge, Spinner, StatusBadge } from "../components/ui";
+import { useTitle } from "../lib/white-label";
 
 const TABS: (EnvelopeStatus | "all")[] = ["all", "draft", "sent", "completed", "declined", "voided", "expired"];
 
 export function EnvelopeListPage() {
   const { t, locale } = useI18n();
+  useTitle(t("list.title"));
   const nav = useNavigate();
   const [status, setStatus] = useState<EnvelopeStatus | "all">("all");
   const [q, setQ] = useState("");

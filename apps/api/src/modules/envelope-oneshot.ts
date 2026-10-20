@@ -77,7 +77,7 @@ async function readMultipart(req: FastifyRequest): Promise<{ body: unknown; file
       continue;
     }
     const buf = new Uint8Array(await part.toBuffer());
-    if (part.file.truncated) throw new AppError(413, "file_too_large", `El archivo "${part.filename}" supera ${mb(config.maxUploadBytes)}`);
+    if (part.file.truncated) throw new AppError(413, "file_too_large", `El archivo "${part.filename}" supera ${mb(config.maxUploadBytes)}`, { limit: "file" });
     // `payload` también puede llegar como archivo (curl -F 'payload=@sobre.json;type=application/json').
     if (part.fieldname === PAYLOAD_PART) {
       if (rawJson !== null) throw badRequest("duplicate_part", `La parte "${PAYLOAD_PART}" está repetida`);
@@ -87,7 +87,7 @@ async function readMultipart(req: FastifyRequest): Promise<{ body: unknown; file
     }
     if (files.has(part.fieldname)) throw badRequest("duplicate_part", `La parte "${part.fieldname}" está repetida`);
     total += buf.length;
-    if (total > TOTAL_MAX_BYTES) throw new AppError(413, "file_too_large", `Los documentos suman más de ${mb(TOTAL_MAX_BYTES)}`);
+    if (total > TOTAL_MAX_BYTES) throw new AppError(413, "file_too_large", `Los documentos suman más de ${mb(TOTAL_MAX_BYTES)}`, { limit: "total" });
     files.set(part.fieldname, { filename: part.filename || `${part.fieldname}.pdf`, bytes: buf });
   }
   if (rawJson === null) throw badRequest("payload_required", `Falta la parte "${PAYLOAD_PART}" con el JSON del sobre`);
@@ -169,14 +169,14 @@ async function createEnvelope(
       }
     } catch (e) {
       if (e instanceof PdfSourceError) {
-        if (e.code === "file_too_large") throw new AppError(413, "file_too_large", `${where}: ${e.message}`);
+        if (e.code === "file_too_large") throw new AppError(413, "file_too_large", `${where}: ${e.message}`, { limit: "file" });
         // base64 inválido o contenido que no es PDF: not_pdf, el mismo código que la subida multipart (preparePdfUpload).
         throw badRequest(e.code === "download_failed" || e.code === "invalid_url" ? "document_fetch_failed" : "not_pdf", `${where}: ${e.message}`);
       }
       throw e;
     }
     total += bytes.length;
-    if (total > TOTAL_MAX_BYTES) throw new AppError(413, "file_too_large", `Los documentos suman más de ${mb(TOTAL_MAX_BYTES)}`);
+    if (total > TOTAL_MAX_BYTES) throw new AppError(413, "file_too_large", `Los documentos suman más de ${mb(TOTAL_MAX_BYTES)}`, { limit: "total" });
     let prepared: PreparedPdfDocument;
     try {
       prepared = await preparePdfDocument(a.tenantId, id, bytes, d.name ?? fallbackName ?? `documento-${i + 1}.pdf`);

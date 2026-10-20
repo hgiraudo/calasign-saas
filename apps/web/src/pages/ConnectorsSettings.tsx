@@ -501,6 +501,7 @@ function FlowEditor({
   onSaved: () => void;
 }) {
   const t = useConnText();
+  const { t: tc } = useI18n();
   const [connectionId, setConnectionId] = useState(flow?.connectionId ?? connections[0]?.id ?? "");
   const provider = (connections.find((c) => c.id === connectionId)?.provider ?? "bamboohr") as ConnectorProvider;
   const [name, setName] = useState(flow?.name ?? "");
@@ -712,7 +713,7 @@ function FlowEditor({
             <input list="conn-fields" placeholder={t("fl.field")} aria-label={t("fl.field")} value={p.field} onChange={(e) => setPrefill((ps) => ps.map((x, j) => (j === i ? { ...x, field: e.target.value } : x)))} />
             <span>←</span>
             <input placeholder={t("fl.property")} aria-label={t("fl.property")} value={p.property} onChange={(e) => setPrefill((ps) => ps.map((x, j) => (j === i ? { ...x, property: e.target.value } : x)))} />
-            <button type="button" className="btn btn-sm" onClick={() => setPrefill((ps) => ps.filter((_, j) => j !== i))}>
+            <button type="button" className="btn btn-sm" aria-label={tc("common.delete")} onClick={() => setPrefill((ps) => ps.filter((_, j) => j !== i))}>
               ×
             </button>
           </div>

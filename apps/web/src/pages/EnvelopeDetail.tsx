@@ -18,11 +18,13 @@ import { ArchivePanel } from "../components/DataExtras";
 import { CertificateProgressPanel } from "../components/CertSign";
 import { SealOptionsPanel } from "../components/EvidenceExtras";
 import { useAccess } from "../lib/access";
+import { useTitle } from "../lib/white-label";
 
 export function EnvelopeDetailPage() {
   const { id = "" } = useParams();
   const { t, locale } = useI18n();
   const [detail, setDetail] = useState<EnvelopeDetail | null>(null);
+  useTitle(detail?.envelope.subject);
   const { can } = useAccess();
   const [events, setEvents] = useState<EnvelopeEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -191,7 +193,7 @@ export function EnvelopeDetailPage() {
       </div>
 
       <ErrorBox error={error ?? loadError} />
-      {notice && <div className="alert alert-success">{notice}</div>}
+      {notice && <div className="alert alert-success" role="status">{notice}</div>}
       {finalizeFailed && (
         <div className="alert alert-warn row-wrap" role="alert">
           <span>{t("detail.finalizeFailed")}</span>

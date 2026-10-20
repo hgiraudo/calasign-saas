@@ -5,6 +5,7 @@ import { api, errorText } from "../lib/api";
 import { useAccess } from "../lib/access";
 import { useTeamsText } from "../lib/i18n-teams";
 import { ErrorBox, Spinner } from "../components/ui";
+import { useTitle } from "../lib/white-label";
 
 function RecoveryCodes({ codes }: { codes: string[] }) {
   const tt = useTeamsText();
@@ -186,7 +187,7 @@ function OrgPolicies() {
           <button className="btn btn-primary">{tt("sec.save")}</button>
         </div>
       </form>
-      {msg && <div className="alert alert-success">{msg}</div>}
+      {msg && <div className="alert alert-success" role="status">{msg}</div>}
       <ErrorBox error={error} />
     </section>
   );
@@ -194,6 +195,7 @@ function OrgPolicies() {
 
 export function SecurityPage() {
   const tt = useTeamsText();
+  useTitle(tt("sec.title"));
   const { access, can } = useAccess();
   return (
     <div className="page narrow stack">

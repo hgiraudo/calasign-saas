@@ -316,39 +316,116 @@ describe("celdas (421 wrong_cell) y 503 no reintentables", () => {
     json(421, { error: { code: "wrong_cell", message: "otra región", details: { cell: "eu", baseUrl } } }, baseUrl ? { location: `${baseUrl}/v1/x` } : {});
 
   it("reintenta una vez contra details.baseUrl (también un POST sin idempotencia) y la recuerda", async () => {
-    const f = fakeFetch([wrongCell("https://eu.api/"), json(200, { notified: 1 }), json(200, { items: [], nextCursor: null })]);
-    const cs = new CalaSign({ apiKey: "k", baseUrl: "https://api", fetch: f.fn, maxRetries: 0 });
+    const f = fakeFetch([wrongCell("https://eu.calasign.com/"), json(200, { notified: 1 }), json(200, { items: [], nextCursor: null })]);
+    const cs = new CalaSign({ apiKey: "k", baseUrl: "https://api.calasign.com", fetch: f.fn, maxRetries: 0 });
     expect(await cs.envelopes.remind("e1")).toEqual({ notified: 1 });
-    expect(f.calls.map((c) => c.url)).toEqual(["https://api/v1/envelopes/e1/remind", "https://eu.api/v1/envelopes/e1/remind"]);
-    expect(cs.baseUrl).toBe("https://eu.api");
+    expect(f.calls.map((c) => c.url)).toEqual(["https://api.calasign.com/v1/envelopes/e1/remind", "https://eu.calasign.com/v1/envelopes/e1/remind"]);
+    expect(cs.baseUrl).toBe("https://eu.calasign.com");
     await cs.envelopes.list({ limit: 5 });
-    expect(f.calls[2].url).toBe("https://eu.api/v1/envelopes?limit=5");
+    expect(f.calls[2].url).toBe("https://eu.calasign.com/v1/envelopes?limit=5");
   });
 
   it("si la otra celda también responde 421, o no hay baseUrl, lanza wrong_cell con cellBaseUrl", async () => {
-    const f = fakeFetch([wrongCell("https://eu.api"), wrongCell("https://us.api")]);
-    const cs = new CalaSign({ apiKey: "k", baseUrl: "https://api", fetch: f.fn });
+    const f = fakeFetch([wrongCell("https://eu.calasign.com"), wrongCell("https://us.calasign.com")]);
+    const cs = new CalaSign({ apiKey: "k", baseUrl: "https://api.calasign.com", fetch: f.fn });
     const err = await cs.envelopes.get("e1").catch((e) => e);
     expect(err).toBeInstanceOf(CalaSignError);
     expect(err.status).toBe(421);
     expect(err.code).toBe("wrong_cell");
-    expect(err.cellBaseUrl).toBe("https://us.api");
+    expect(err.cellBaseUrl).toBe("https://us.calasign.com");
     expect(f.calls).toHaveLength(2);
     const g = fakeFetch([wrongCell(null)]);
-    const cs2 = new CalaSign({ apiKey: "k", baseUrl: "https://api", fetch: g.fn });
+    const cs2 = new CalaSign({ apiKey: "k", baseUrl: "https://api.calasign.com", fetch: g.fn });
     const err2 = await cs2.envelopes.get("e1").catch((e) => e);
     expect(err2.code).toBe("wrong_cell");
     expect(err2.cellBaseUrl).toBeNull();
     expect(g.calls).toHaveLength(1);
-    expect(cs2.baseUrl).toBe("https://api");
+    expect(cs2.baseUrl).toBe("https://api.calasign.com");
   });
 
   it("no pasa de https a http por un 421", async () => {
-    const f = fakeFetch([wrongCell("http://eu.api")]);
-    const cs = new CalaSign({ apiKey: "k", baseUrl: "https://api", fetch: f.fn });
+    const f = fakeFetch([wrongCell("http://eu.calasign.com")]);
+    const cs = new CalaSign({ apiKey: "k", baseUrl: "https://api.calasign.com", fetch: f.fn });
     await expect(cs.envelopes.get("e1")).rejects.toMatchObject({ code: "wrong_cell" });
     expect(f.calls).toHaveLength(1);
-    expect(cs.baseUrl).toBe("https://api");
+    expect(cs.baseUrl).toBe("https://api.calasign.com");
+  });
+
+  it("pedidos concurrentes que reciben 421: el segundo reintenta contra la celda aunque el primero ya la cambió", async () => {
+    // Los dos pedidos salen contra la celda original antes de que llegue el primer 421.
+    const responses = [wrongCell("https://eu.calasign.com"), wrongCell("https://eu.calasign.com"), json(200, { envelope: { id: "e1" } }), json(200, { envelope: { id: "e2" } })];
+    const calls: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let pending = 0;
+    const fn = (async (input: RequestInfo | URL) => {
+      calls.push(String(input));
+      const r = responses.shift()!;
+      if (calls.length <= 2) {
+        if (++pending === 2) release();
+        await gate;
+      }
+      return r;
+    }) as typeof fetch;
+    const cs = new CalaSign({ apiKey: "k", baseUrl: "https://api.calasign.com", fetch: fn, maxRetries: 0 });
+    const [a, b] = await Promise.all([cs.envelopes.get("e1"), cs.envelopes.get("e2")]);
+    expect([a, b]).toEqual([{ envelope: { id: "e1" } }, { envelope: { id: "e2" } }]);
+    expect(calls.slice(0, 2).every((u) => u.startsWith("https://api.calasign.com/"))).toBe(true);
+    expect(calls.slice(2).every((u) => u.startsWith("https://eu.calasign.com/"))).toBe(true);
+    expect(cs.baseUrl).toBe("https://eu.calasign.com");
+  });
+
+  it("solo sigue el 421 hacia el mismo dominio registrable o allowedCellHosts; followCellRedirects: false no lo sigue", async () => {
+    // Otro dominio: no se sigue (la credencial no viaja ahí); el error trae cellBaseUrl.
+    const f = fakeFetch([wrongCell("https://calasign.evil.com")]);
+    const cs = new CalaSign({ apiKey: "k", baseUrl: "https://api.calasign.com", fetch: f.fn });
+    const err = await cs.envelopes.get("e1").catch((e) => e);
+    expect(err).toMatchObject({ status: 421, code: "wrong_cell" });
+    expect(err.cellBaseUrl).toBe("https://calasign.evil.com");
+    expect(f.calls).toHaveLength(1);
+    expect(cs.baseUrl).toBe("https://api.calasign.com");
+    // com.ar: el dominio registrable es calasign.com.ar (no com.ar).
+    const g = fakeFetch([wrongCell("https://eu.calasign.com.ar"), json(200, { envelope: { id: "e1" } })]);
+    const cs2 = new CalaSign({ apiKey: "k", baseUrl: "https://api.calasign.com.ar", fetch: g.fn });
+    await cs2.envelopes.get("e1");
+    expect(cs2.baseUrl).toBe("https://eu.calasign.com.ar");
+    const g2 = fakeFetch([wrongCell("https://otro.com.ar")]);
+    const cs3 = new CalaSign({ apiKey: "k", baseUrl: "https://api.calasign.com.ar", fetch: g2.fn });
+    await expect(cs3.envelopes.get("e1")).rejects.toMatchObject({ code: "wrong_cell" });
+    expect(g2.calls).toHaveLength(1);
+    // allowedCellHosts habilita otro dominio, también para el pedido de token OAuth.
+    const h = fakeFetch([
+      json(200, { access_token: "t1", expires_in: 3600 }),
+      wrongCell("https://eu.calasign-cloud.net"),
+      json(200, { envelope: { id: "e1" } }),
+      json(401, { error: { code: "unauthorized", message: "x" } }),
+      json(200, { access_token: "t2", expires_in: 3600 }),
+      json(200, { envelope: { id: "e1" } }),
+    ]);
+    const cs4 = new CalaSign({ oauth: { clientId: "c", clientSecret: "s" }, baseUrl: "https://api.calasign.com", fetch: h.fn, allowedCellHosts: ["eu.calasign-cloud.net"] });
+    await cs4.envelopes.get("e1");
+    await cs4.envelopes.get("e1");
+    expect(h.calls.map((c) => c.url)).toEqual([
+      "https://api.calasign.com/oauth/token",
+      "https://api.calasign.com/v1/envelopes/e1",
+      "https://eu.calasign-cloud.net/v1/envelopes/e1",
+      "https://eu.calasign-cloud.net/v1/envelopes/e1",
+      "https://eu.calasign-cloud.net/oauth/token",
+      "https://eu.calasign-cloud.net/v1/envelopes/e1",
+    ]);
+    // followCellRedirects: false, ni siquiera dentro del mismo dominio.
+    const k = fakeFetch([wrongCell("https://eu.calasign.com")]);
+    const cs5 = new CalaSign({ apiKey: "k", baseUrl: "https://api.calasign.com", fetch: k.fn, followCellRedirects: false });
+    const err5 = await cs5.envelopes.get("e1").catch((e) => e);
+    expect(err5.cellBaseUrl).toBe("https://eu.calasign.com");
+    expect(k.calls).toHaveLength(1);
+  });
+
+  it("503 ai_unavailable no se reintenta (el servidor no tiene IA configurada)", async () => {
+    const f = fakeFetch([json(503, { error: { code: "ai_unavailable", message: "sin IA" } })]);
+    const cs = new CalaSign({ apiKey: "k", baseUrl: "http://api", fetch: f.fn, maxRetries: 3 });
+    await expect(cs.envelopes.get("e1")).rejects.toMatchObject({ status: 503, code: "ai_unavailable" });
+    expect(f.calls).toHaveLength(1);
   });
 
   it("503 byok_key_unavailable no se reintenta; storage_unavailable y 503 sin código sí", async () => {

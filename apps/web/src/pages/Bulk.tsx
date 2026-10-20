@@ -6,6 +6,7 @@ import { api, errorText, HttpError, uuid } from "../lib/api";
 import { formatDateTime, useI18n } from "../lib/i18n";
 import { useScaleText } from "../lib/i18n-scale";
 import { ErrorBox, Modal, Spinner } from "../components/ui";
+import { useTitle } from "../lib/white-label";
 
 function BulkStatus({ status }: { status: BulkSend["status"] }) {
   const st = useScaleText();
@@ -29,6 +30,7 @@ function BulkBar({ b }: { b: BulkSend }) {
 export function BulkListPage() {
   const { locale } = useI18n();
   const st = useScaleText();
+  useTitle(st("bulk.title"));
   const [items, setItems] = useState<BulkSend[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 

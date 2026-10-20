@@ -12,9 +12,11 @@ import { formatDateTime, useI18n, confirmAction, placeholderText } from "../lib/
 import { useIntText } from "../lib/integrations-i18n";
 import { ErrorBox, Spinner } from "../components/ui";
 import { PlanNotice, useAccess } from "../lib/access";
+import { useTitle } from "../lib/white-label";
 
 export function IntegrationsPage() {
   const tt = useIntText();
+  useTitle(tt("int.title"));
   return (
     <div className="page narrow">
       <div className="page-head">

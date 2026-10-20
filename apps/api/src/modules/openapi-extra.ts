@@ -358,7 +358,7 @@ export const ERRORS: Record<string, Err> = {
     status: 403,
     code: "two_factor_setup_required",
     message: "Tu organización exige verificación en dos pasos: activala para continuar",
-    summary: "Solo con sesión web: la organización exige 2FA y el usuario todavía no lo activó (todo responde esto salvo /v1/me, /v1/me/* —incluido /v1/me/2fa/*— y /v1/auth/*). Las API keys y los tokens OAuth no lo reciben",
+    summary: "La organización exige 2FA y el usuario todavía no lo activó (todo responde esto salvo /v1/me, /v1/me/* —incluido /v1/me/2fa/*— y /v1/auth/*). Aplica a la sesión web y a los tokens OAuth de usuario (authorization_code); no aplica a API keys, a tokens client_credentials ni a sesiones o tokens OAuth obtenidos con SSO (el segundo factor lo gestiona el proveedor de identidad)",
   },
   bad_origin: {
     status: 403,
@@ -525,7 +525,9 @@ export const ERRORS: Record<string, Err> = {
     status: 413,
     code: "file_too_large",
     message: "El archivo supera el tamaño máximo",
-    summary: "Un archivo supera el máximo de subida, o los documentos del pedido o del sobre/plantilla superan el total admitido (100 MB por sobre o plantilla)",
+    details: { limit: "file" },
+    summary:
+      'Un archivo supera el máximo de subida (details.limit "file"), o los documentos del pedido o del sobre/plantilla superan el total admitido, 100 MB por sobre o plantilla (details.limit "total")',
   },
   payload_too_large: {
     status: 413,
@@ -538,16 +540,32 @@ export const ERRORS: Record<string, Err> = {
     status: 422,
     code: "logic_order",
     message: 'El campo "Monto" de Ana Pérez depende de un campo de Juan Gómez, que firma después o al mismo tiempo',
-    details: { problems: ['El campo "Monto" de Ana Pérez depende de un campo de Juan Gómez, que firma después o al mismo tiempo'] },
+    details: {
+      problems: ['El campo "Monto" de Ana Pérez depende de un campo de Juan Gómez, que firma después o al mismo tiempo'],
+      issues: [
+        {
+          code: "logic_order",
+          params: { field: "Monto", recipient: "Ana Pérez", source: "Juan Gómez" },
+          message: 'El campo "Monto" de Ana Pérez depende de un campo de Juan Gómez, que firma después o al mismo tiempo',
+        },
+      ],
+    },
     summary:
-      "Una condición cita un campo de alguien que firma después o en el mismo turno (o de un rol así en la plantilla): se decidiría con un valor que todavía no existe. Solo se rechazan problemas nuevos: los que ya tenía el borrador o la plantilla no bloquean otras ediciones",
+      "Una condición cita un campo de alguien que firma después o en el mismo turno (o de un rol así en la plantilla): se decidiría con un valor que todavía no existe. Solo se rechazan problemas nuevos: los que ya tenía el borrador o la plantilla no bloquean otras ediciones. details.problems es la lista de textos (en español) y details.issues trae cada uno con code (logic_order, o logic_order_formula si la dependencia pasa por una fórmula: params.formula), params y message",
   },
   envelope_incomplete: {
     status: 422,
     code: "envelope_incomplete",
     message: "Agregá al menos un documento. Ana Pérez no tiene ningún campo de firma",
-    details: { problems: ["Agregá al menos un documento", "Ana Pérez no tiene ningún campo de firma"] },
-    summary: "El borrador no se puede enviar: details.problems lista lo que falta",
+    details: {
+      problems: ["Agregá al menos un documento", "Ana Pérez no tiene ningún campo de firma"],
+      issues: [
+        { code: "no_documents", params: {}, message: "Agregá al menos un documento" },
+        { code: "signer_without_signature", params: { name: "Ana Pérez" }, message: "Ana Pérez no tiene ningún campo de firma" },
+      ],
+    },
+    summary:
+      "El borrador no se puede enviar (o la corrección de un sobre en curso lo dejaría inválido): details.problems lista lo que falta como textos (en español; `message` del error los une) y details.issues trae cada uno con code, params y message. Códigos: no_documents, no_signers, no_active_signer, signer_without_signature {name}, expiry_past, too_many_attachment_fields {max}, too_many_recipients {max}, too_many_fields {max}, formula_missing_ref {field, refs}, payer_not_signer, logic_order {field, recipient, source}, logic_order_formula {field, recipient, source, formula}",
   },
   roles_missing: {
     status: 422,

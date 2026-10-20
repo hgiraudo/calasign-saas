@@ -312,6 +312,7 @@ export function mailBranding(b: ResolvedBrand, kind: TemplateKind | "otp_code" |
     secondaryColor: b.theme.secondaryColor,
     buttonColor: b.theme.buttonColor,
     buttonTextColor: b.theme.buttonTextColor,
+    headerTextColor: b.theme.headerTextColor,
     backgroundColor: b.theme.backgroundColor,
     textColor: b.theme.textColor,
     borderRadius: b.theme.borderRadius,

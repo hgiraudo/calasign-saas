@@ -4,7 +4,7 @@
 .scroll-y { max-height: 320px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; }
 .ok-text { color: var(--ok); }
 .err-text { color: var(--danger); }
-.warn-text { color: var(--warn); }
+.warn-text { color: #b45309; } /* --warn (#d97706) daba 3.2:1 sobre blanco; #b45309 da 5:1 */
 
 .file-btn { position: relative; overflow: hidden; cursor: pointer; }
 .file-btn input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }

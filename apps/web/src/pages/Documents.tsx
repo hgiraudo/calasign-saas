@@ -15,6 +15,7 @@ import { useAccess } from "../lib/access";
 import { useAgrText } from "../lib/i18n-agreements";
 import { AgreementsTabs, DocPreview, parseJsonObject } from "../components/AgreementsUi";
 import { ErrorBox, Modal, Spinner } from "../components/ui";
+import { useTitle } from "../lib/white-label";
 
 const STARTER = `# Contrato de prestación de servicios
 
@@ -52,6 +53,7 @@ const STARTER_DATA = {
 
 export function DocumentTemplatesPage() {
   const ta = useAgrText();
+  useTitle(ta("docs.title"));
   const { locale } = useI18n();
   const { can } = useAccess();
   const nav = useNavigate();
@@ -404,7 +406,7 @@ export function DocumentTemplateEditPage() {
               <div className="grid-2">
                 <label className="field">
                   <span>{ta("docs.mapping.title")}</span>
-                  <input value={mapping.title} onChange={(e) => setMapping({ ...mapping, title: e.target.value })} placeholder="Contrato con {{cliente.nombre}}" disabled={!editable} />
+                  <input value={mapping.title} onChange={(e) => setMapping({ ...mapping, title: e.target.value })} placeholder={placeholderText("docTitle")} disabled={!editable} />
                 </label>
                 <label className="field">
                   <span>{ta("docs.mapping.value")}</span>
@@ -416,11 +418,11 @@ export function DocumentTemplateEditPage() {
                 </label>
                 <label className="field">
                   <span>{ta("docs.mapping.effective")}</span>
-                  <input value={mapping.effectiveDate} onChange={(e) => setMapping({ ...mapping, effectiveDate: e.target.value })} placeholder="inicio" disabled={!editable} />
+                  <input value={mapping.effectiveDate} onChange={(e) => setMapping({ ...mapping, effectiveDate: e.target.value })} placeholder={placeholderText("effectiveVar")} disabled={!editable} />
                 </label>
                 <label className="field">
                   <span>{ta("docs.mapping.expiry")}</span>
-                  <input value={mapping.expiryDate} onChange={(e) => setMapping({ ...mapping, expiryDate: e.target.value })} placeholder="vencimiento" disabled={!editable} />
+                  <input value={mapping.expiryDate} onChange={(e) => setMapping({ ...mapping, expiryDate: e.target.value })} placeholder={placeholderText("expiryVar")} disabled={!editable} />
                 </label>
               </div>
               <label className="field">

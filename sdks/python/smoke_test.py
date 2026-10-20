@@ -155,7 +155,8 @@ def _cell_handler(name, queue):
             if n:
                 self.rfile.read(n)
             _cell_log.append((name, self.command, self.path, self.headers.get("X-Expected-Updated-At")))
-            status, payload = queue.pop(0)
+            item = queue.pop(0)
+            status, payload = item() if callable(item) else item
             self.send_response(status)
             self.send_header("content-type", "application/json")
             if status == 421 and isinstance(payload, dict) and payload.get("error", {}).get("details", {}).get("baseUrl"):
@@ -210,6 +211,66 @@ except CalaSignError as e:
     assert (e.code, e.cell_base_url) == ("wrong_cell", None)
 ok("421 wrong_cell: un reintento contra details.baseUrl, que queda para los siguientes; si no, cell_base_url en el error")
 
+# Carrera: mientras un pedido espera su 421, otro (otro hilo) ya cambió la base a la celda nueva. El 421 se compara contra
+# la base con la que salió el pedido, así que igual reintenta contra la nueva (antes fallaba con wrong_cell).
+_cell_log.clear()
+_cs = CalaSign(api_key="k", base_url=_base_a, max_retries=0)
+
+
+def _switched_meanwhile():
+    _cs.base_url = _base_b
+    return _wrong(_base_b)
+
+
+_qa[:] = [_switched_meanwhile]
+_qb[:] = [(200, {"envelope": {"id": "e1"}})]
+assert _cs.envelopes.get("e1")["envelope"]["id"] == "e1"
+assert [x[0] for x in _cell_log] == ["a", "b"] and _cs.base_url == _base_b, (_cell_log, _cs.base_url)
+# Lo mismo con dos hilos de verdad que reciben 421.
+_cell_log.clear()
+_cs = CalaSign(api_key="k", base_url=_base_a, max_retries=0)
+_qa[:] = [_wrong(_base_b), _wrong(_base_b)]
+_qb[:] = [(200, {"envelope": {"id": "e1"}}), (200, {"envelope": {"id": "e1"}})]
+_res = []
+_ths = [threading.Thread(target=lambda: _res.append(_cs.envelopes.get("e1"))) for _ in range(2)]
+for _t in _ths:
+    _t.start()
+for _t in _ths:
+    _t.join(10)
+assert len(_res) == 2 and _cs.base_url == _base_b, (_res, _cell_log)
+ok("421 concurrentes: se comparan contra la base del intento; el cambio de base va con lock")
+
+# Solo se sigue el 421 hacia el mismo dominio registrable (o allowed_cell_hosts); follow_cell_redirects=False no lo sigue.
+_base_b_lh = _base_b.replace("127.0.0.1", "localhost")
+_cell_log.clear()
+_qa[:] = [_wrong(_base_b_lh)]
+try:
+    CalaSign(api_key="k", base_url=_base_a, max_retries=0).envelopes.get("e1")
+    raise AssertionError("debió fallar")
+except CalaSignError as e:
+    assert (e.status, e.code, e.cell_base_url) == (421, "wrong_cell", _base_b_lh), vars(e)
+assert len(_cell_log) == 1, _cell_log
+_cell_log.clear()
+_qa[:] = [_wrong(_base_b_lh)]
+_qb[:] = [(200, {"envelope": {"id": "e1"}})]
+_cs = CalaSign(api_key="k", base_url=_base_a, max_retries=0, allowed_cell_hosts=["localhost"])
+assert _cs.envelopes.get("e1")["envelope"]["id"] == "e1"
+assert _cs.base_url == _base_b_lh and [x[0] for x in _cell_log] == ["a", "b"], _cell_log
+_cell_log.clear()
+_qa[:] = [_wrong(_base_b)]
+try:
+    CalaSign(api_key="k", base_url=_base_a, max_retries=0, follow_cell_redirects=False).envelopes.get("e1")
+    raise AssertionError("debió fallar")
+except CalaSignError as e:
+    assert e.cell_base_url == _base_b
+assert len(_cell_log) == 1, _cell_log
+from calasign.client import _registrable_domain
+
+assert _registrable_domain("eu.calasign.com") == _registrable_domain("dev.calasign.com") == "calasign.com"
+assert _registrable_domain("api.calasign.com.ar") == "calasign.com.ar" != _registrable_domain("otro.com.ar")
+assert _registrable_domain("x.calasign.co.uk") == "calasign.co.uk"
+ok("421 solo hacia el mismo dominio registrable o allowed_cell_hosts; follow_cell_redirects=False")
+
 # 503 byok_key_unavailable no se reintenta (requiere acción de un admin); storage_unavailable sí.
 _cell_log.clear()
 _qa[:] = [(503, {"error": {"code": "byok_key_unavailable", "message": "clave", "details": {"keyArn": "arn"}}})]
@@ -222,7 +283,15 @@ assert len(_cell_log) == 1, _cell_log
 _qa[:] = [(503, {"error": {"code": "storage_unavailable", "message": "x"}}), (200, {"envelope": {"id": "e1"}})]
 assert CalaSign(api_key="k", base_url=_base_a, max_retries=3).envelopes.get("e1")["envelope"]["id"] == "e1"
 assert len(_cell_log) == 3, _cell_log
-ok("503 byok_key_unavailable no se reintenta; storage_unavailable sí")
+_cell_log.clear()
+_qa[:] = [(503, {"error": {"code": "ai_unavailable", "message": "sin IA"}})]
+try:
+    CalaSign(api_key="k", base_url=_base_a, max_retries=3).envelopes.get("e1")
+    raise AssertionError("debió fallar")
+except CalaSignError as e:
+    assert (e.status, e.code) == (503, "ai_unavailable")
+assert len(_cell_log) == 1, _cell_log
+ok("503 byok_key_unavailable y ai_unavailable no se reintentan; storage_unavailable sí")
 
 # expected_updated_at en void (sin reintento ante 5xx), remind y send; remove_document y webhooks.deliveries.
 _cell_log.clear()

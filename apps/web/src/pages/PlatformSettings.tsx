@@ -375,15 +375,18 @@ function ConnectedApps() {
 // ───────────────────────────── Avisos a canales ─────────────────────────────
 
 /** Nombre de cada plataforma y un ejemplo de su URL de webhook entrante. */
+/** `name`: prefijo del canal ("#", "~") o "" para un equipo; el nombre de ejemplo va en el idioma de la interfaz. */
 const CHANNELS: Record<NotificationKind, { label: string; url: string; name: string }> = {
-  slack: { label: "Slack", url: "https://hooks.slack.com/services/…", name: "#firmas" },
-  teams: { label: "Microsoft Teams", url: "https://….powerplatform.com/powerautomate/automations/direct/workflows/…", name: "Legales" },
-  discord: { label: "Discord", url: "https://discord.com/api/webhooks/…", name: "#firmas" },
-  google_chat: { label: "Google Chat", url: "https://chat.googleapis.com/v1/spaces/…/messages?key=…", name: "Legales" },
-  mattermost: { label: "Mattermost", url: "https://mattermost.tuempresa.com/hooks/…", name: "~firmas" },
-  rocketchat: { label: "Rocket.Chat", url: "https://chat.tuempresa.com/hooks/…", name: "#firmas" },
-  webex: { label: "Webex", url: "https://webexapis.com/v1/webhooks/incoming/…", name: "Legales" },
+  slack: { label: "Slack", url: "https://hooks.slack.com/services/…", name: "#" },
+  teams: { label: "Microsoft Teams", url: "https://….powerplatform.com/powerautomate/automations/direct/workflows/…", name: "" },
+  discord: { label: "Discord", url: "https://discord.com/api/webhooks/…", name: "#" },
+  google_chat: { label: "Google Chat", url: "https://chat.googleapis.com/v1/spaces/…/messages?key=…", name: "" },
+  mattermost: { label: "Mattermost", url: "https://mattermost.{domain}/hooks/…", name: "~" },
+  rocketchat: { label: "Rocket.Chat", url: "https://chat.{domain}/hooks/…", name: "#" },
+  webex: { label: "Webex", url: "https://webexapis.com/v1/webhooks/incoming/…", name: "" },
 };
+const channelNamePlaceholder = (k: NotificationKind) => (CHANNELS[k].name ? `${CHANNELS[k].name}${placeholderText("chatChannel")}` : placeholderText("chatTeam"));
+const channelUrlPlaceholder = (k: NotificationKind) => CHANNELS[k].url.replace("{domain}", placeholderText("domain"));
 
 export function NotificationIntegrationsPage() {
   const p = usePlatformText();
@@ -445,12 +448,12 @@ export function NotificationIntegrationsPage() {
         <div className="row-wrap">
           <label className="field grow">
             <span>{p("ntf.name")}</span>
-            <input required maxLength={100} value={name} onChange={(e) => setName(e.target.value)} placeholder={CHANNELS[kind].name} />
+            <input required maxLength={100} value={name} onChange={(e) => setName(e.target.value)} placeholder={channelNamePlaceholder(kind)} />
           </label>
         </div>
         <label className="field">
           <span>{p("ntf.url")}</span>
-          <input type="url" required value={url} onChange={(e) => setUrl(e.target.value)} placeholder={CHANNELS[kind].url} />
+          <input type="url" required value={url} onChange={(e) => setUrl(e.target.value)} placeholder={channelUrlPlaceholder(kind)} />
         </label>
         <fieldset className="field">
           <span>{p("ntf.events")}</span>

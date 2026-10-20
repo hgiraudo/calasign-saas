@@ -323,7 +323,7 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
     const file = await req.file({ limits: { fileSize: config.maxUploadBytes } });
     if (!file) throw badRequest("file_required", "Falta el archivo (campo 'file')");
     const uploaded = new Uint8Array(await file.toBuffer());
-    if (file.file.truncated) throw new AppError(413, "file_too_large", "El archivo supera el tamaño máximo");
+    if (file.file.truncated) throw new AppError(413, "file_too_large", "El archivo supera el tamaño máximo", { limit: "file" });
     const doc = await preparePdfDocument(a.tenantId, req.params.id, uploaded, file.filename || "documento.pdf");
     // Verificar el sobre antes de subir el archivo.
     const pre = await s.db.one<any>(`SELECT status FROM envelopes WHERE id = $1 AND tenant_id = $2`, [req.params.id, a.tenantId]);
@@ -564,9 +564,27 @@ export function sendPdf(reply: FastifyReply, bytes: Uint8Array, name: string) {
  * plantilla no firma, o una corrección en vuelo lo quitó): se calcularían con 0 y el PDF firmado diría, p. ej.,
  * "Total: 0". PUT fields lo valida; los demás caminos que borran campos, no.
  */
-export function danglingFormulaProblems(fields: { type: string; label: string | null; formula: string | null }[]): string[] {
+/**
+ * Un problema que impide enviar o guardar (envelope_incomplete, logic_order): código estable y parámetros para que el
+ * cliente lo traduzca, y el texto en español de siempre (el `message` del error es la unión de estos textos).
+ */
+export interface Problem {
+  code: string;
+  params: Record<string, string | number>;
+  message: string;
+}
+
+/**
+ * El error 422 con la lista de problemas: `message` une los textos, `details.problems` es la lista de textos (como siempre:
+ * hay clientes que la leen así) y `details.issues` trae cada uno con código y parámetros, para traducirlos.
+ */
+export function problemsError(code: "envelope_incomplete" | "logic_order", problems: Problem[]): AppError {
+  return new AppError(422, code, problems.map((p) => p.message).join(". "), { problems: problems.map((p) => p.message), issues: problems });
+}
+
+export function danglingFormulaProblems(fields: { type: string; label: string | null; formula: string | null }[]): Problem[] {
   const numberLabels = new Set(fields.filter((f) => f.type === "number" && f.label).map((f) => String(f.label).trim().toLowerCase()));
-  const problems: string[] = [];
+  const problems: Problem[] = [];
   for (const f of fields) {
     if (!f.formula) continue;
     let refs: string[] = [];
@@ -576,7 +594,14 @@ export function danglingFormulaProblems(fields: { type: string; label: string | 
       /* se valida al guardar */
     }
     const missing = refs.filter((r) => !numberLabels.has(r.trim().toLowerCase()));
-    if (missing.length) problems.push(`La fórmula de "${f.label ?? "un campo"}" cita ${missing.map((m) => `{${m}}`).join(", ")}, que ya no está en el sobre`);
+    if (missing.length) {
+      const refs = missing.map((m) => `{${m}}`).join(", ");
+      problems.push({
+        code: "formula_missing_ref",
+        params: { field: f.label ?? "", refs },
+        message: `La fórmula de "${f.label ?? "un campo"}" cita ${refs}, que ya no está en el sobre`,
+      });
+    }
   }
   return problems;
 }
@@ -768,10 +793,12 @@ export async function assertDocumentLimits(t: Db, kind: "envelope" | "template",
     [id],
   );
   const L = ENVELOPE_LIMITS;
-  if ((r?.n ?? 0) > L.documents) throw badRequest("too_many_documents", `Máximo ${L.documents} documentos`);
+  if ((r?.n ?? 0) > L.documents) throw badRequest("too_many_documents", `Máximo ${L.documents} documentos`, { max: L.documents });
   if ((r?.pages ?? 0) > L.pages) throw badRequest("too_many_pages", `Máximo ${L.pages} páginas en total`);
   // 413 file_too_large, como un archivo que supera el máximo de subida o el total de POST /v1/envelopes.
-  if (Number(r?.bytes ?? 0) > L.bytes) throw new AppError(413, "file_too_large", `Los documentos superan ${Math.round(L.bytes / 1024 / 1024)} MB en total`);
+  // details.limit "total": la suma de los documentos (un archivo solo que supera el máximo de subida lleva "file").
+  if (Number(r?.bytes ?? 0) > L.bytes)
+    throw new AppError(413, "file_too_large", `Los documentos superan ${Math.round(L.bytes / 1024 / 1024)} MB en total`, { limit: "total", maxBytes: L.bytes });
 }
 
 /**
@@ -796,7 +823,7 @@ type LogicRecips = { id: string; name: string; routing_order: number }[];
  * mensaje legible. Si el campo citado es una fórmula, cuentan los campos que la fórmula cita (también de forma
  * transitiva): un total que depende del monto de alguien que firma después también se decidiría sin ese valor.
  */
-function logicOrderIssues(fields: LogicFields, recips: LogicRecips): { key: string; message: string }[] {
+function logicOrderIssues(fields: LogicFields, recips: LogicRecips): ({ key: string } & Problem)[] {
   const byId = new Map(fields.map((f) => [f.id, f]));
   const numberByLabel = new Map(fields.filter((f) => f.type === "number" && f.label).map((f) => [f.label!.trim().toLowerCase(), f]));
   const order = new Map(recips.map((r) => [r.id, r.routing_order]));
@@ -817,7 +844,7 @@ function logicOrderIssues(fields: LogicFields, recips: LogicRecips): { key: stri
       return ref ? leaves(ref, seen) : [];
     });
   };
-  const out: { key: string; message: string }[] = [];
+  const out: ({ key: string } & Problem)[] = [];
   for (const f of fields) {
     const conds = Array.isArray(f.conditions) ? (f.conditions as { fieldId: string }[]) : [];
     for (const c of conds) {
@@ -832,6 +859,13 @@ function logicOrderIssues(fields: LogicFields, recips: LogicRecips): { key: stri
             // y los destinatarios. No el del campo dependiente ni el de la hoja de una fórmula (se buscan por etiqueta):
             // un PUT sin ids o por anclas los regenera en cada guardado y el problema previo parecía nuevo.
             key: `${cited.id}|${src.recipient_id}|${f.recipient_id}`,
+            code: src.id === cited.id ? "logic_order" : "logic_order_formula",
+            params: {
+              field: f.label ?? "?",
+              recipient: name.get(f.recipient_id) ?? "?",
+              source: name.get(src.recipient_id) ?? "?",
+              ...(src.id === cited.id ? {} : { formula: cited.label ?? "?" }),
+            },
             message: `El campo "${f.label ?? "?"}" de ${name.get(f.recipient_id) ?? "?"} depende de un campo de ${name.get(src.recipient_id) ?? "?"}${via}, que firma después o al mismo tiempo`,
           });
         }
@@ -839,6 +873,10 @@ function logicOrderIssues(fields: LogicFields, recips: LogicRecips): { key: stri
     }
   }
   return out;
+}
+
+export function signerWithoutSignature(name: string): Problem {
+  return { code: "signer_without_signature", params: { name }, message: `${name} no tiene ningún campo de firma` };
 }
 
 export function logicOrderProblems(fields: LogicFields, recips: LogicRecips): string[] {
@@ -850,10 +888,17 @@ export function logicOrderProblems(fields: LogicFields, recips: LogicRecips): st
  * un sobre o plantilla armados antes de esta regla (o un cambio que no toca la lógica, como el correo o el nombre de
  * un destinatario) no quedan bloqueados.
  */
-/** Los mensajes de los problemas que no estaban antes (claves de logicOrderKeys). */
-export function newLogicOrderProblems(fields: LogicFields, recips: LogicRecips, before: readonly string[] = []): string[] {
+/** Los problemas que no estaban antes (claves de logicOrderKeys), sin repetir el mismo texto. */
+export function newLogicOrderProblems(fields: LogicFields, recips: LogicRecips, before: readonly string[] = []): Problem[] {
   const prev = new Set(before);
-  return [...new Set(logicOrderIssues(fields, recips).filter((i) => !prev.has(i.key)).map((i) => i.message))];
+  const seen = new Set<string>();
+  const out: Problem[] = [];
+  for (const i of logicOrderIssues(fields, recips)) {
+    if (prev.has(i.key) || seen.has(i.message)) continue;
+    seen.add(i.message);
+    out.push({ code: i.code, params: i.params, message: i.message });
+  }
+  return out;
 }
 
 /** Las claves de los problemas de orden (para comparar antes y después de un cambio). */
@@ -863,7 +908,7 @@ export function logicOrderKeys(fields: LogicFields, recips: LogicRecips): string
 
 export async function assertLogicOrder(fields: LogicFields, recips: LogicRecips, before: readonly string[] = []) {
   const problems = newLogicOrderProblems(fields, recips, before);
-  if (problems.length) throw new AppError(422, "logic_order", problems.join(". "), { problems });
+  if (problems.length) throw problemsError("logic_order", problems);
 }
 
 function pickReservedMetadata(m: Record<string, unknown> | null | undefined): Record<string, unknown> {
@@ -920,19 +965,25 @@ export async function sendEnvelope(t: Db, tenantId: string, envelopeId: string, 
   const docs = await loadDocuments(t, e.id);
   const recips = await t.query<any>(`SELECT * FROM recipients WHERE envelope_id = $1`, [e.id]);
   const fields = await t.query<any>(`SELECT recipient_id, type, label, formula FROM fields WHERE envelope_id = $1`, [e.id]);
-  const problems: string[] = [];
-  if (docs.length === 0) problems.push("Agregá al menos un documento");
+  const problems: Problem[] = [];
+  if (docs.length === 0) problems.push({ code: "no_documents", params: {}, message: "Agregá al menos un documento" });
   // Cada adjunto puede pesar 10 MB y todos se agregan al PDF final.
   if (fields.filter((f) => f.type === "attachment").length > ENVELOPE_LIMITS.attachmentFields)
-    problems.push(`Máximo ${ENVELOPE_LIMITS.attachmentFields} campos de adjunto por sobre`);
+    problems.push({
+      code: "too_many_attachment_fields",
+      params: { max: ENVELOPE_LIMITS.attachmentFields },
+      message: `Máximo ${ENVELOPE_LIMITS.attachmentFields} campos de adjunto por sobre`,
+    });
   const signers = recips.filter((r) => r.role === "signer");
-  if (signers.length === 0 && !recips.some((r) => r.role === "approver")) problems.push("Agregá al menos un firmante");
+  if (signers.length === 0 && !recips.some((r) => r.role === "approver"))
+    problems.push({ code: "no_signers", params: {}, message: "Agregá al menos un firmante" });
   for (const s1 of signers) {
     // Quien firma con certificado puede no tener firma visual: su firma va en el certificado.
     if (s1.signature_type !== "certificate" && !fields.some((f) => f.recipient_id === s1.id && f.type === "signature"))
-      problems.push(`${s1.name} no tiene ningún campo de firma`);
+      problems.push(signerWithoutSignature(s1.name));
   }
-  if (e.expires_at && new Date(e.expires_at) <= new Date()) problems.push("La fecha de vencimiento ya pasó");
+  if (e.expires_at && new Date(e.expires_at) <= new Date())
+    problems.push({ code: "expiry_past", params: {}, message: "La fecha de vencimiento ya pasó" });
   problems.push(...danglingFormulaProblems(fields));
   // El cobro tiene que quedar a cargo de un firmante: si se le cambió el rol, el sobre no podría completarse.
   const pay = await t.one<any>(`SELECT recipient_id, provider FROM envelope_payments WHERE envelope_id = $1`, [e.id]);
@@ -945,8 +996,9 @@ export async function sendEnvelope(t: Db, tenantId: string, envelopeId: string, 
       throw badRequest("provider_not_configured", `El proveedor de cobro ${pay.provider} no está configurado en este entorno`);
     }
   }
-  if (pay && !signers.some((r) => r.id === pay.recipient_id)) problems.push("Quien paga el cobro tiene que ser un firmante");
-  if (problems.length) throw new AppError(422, "envelope_incomplete", problems.join(". "), { problems });
+  if (pay && !signers.some((r) => r.id === pay.recipient_id))
+    problems.push({ code: "payer_not_signer", params: {}, message: "Quien paga el cobro tiene que ser un firmante" });
+  if (problems.length) throw problemsError("envelope_incomplete", problems);
 
   await t.query(`UPDATE envelopes SET status = 'sent', sent_at = now(), updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 millisecond'), version = version + 1 WHERE id = $1`, [e.id]);
   await appendEvent(t, {

@@ -52,7 +52,7 @@ export async function attachmentRoutes(app: FastifyInstance, s: Services) {
     const file = await req.file({ limits: { fileSize: ATTACHMENT_MAX_BYTES } });
     if (!file) throw badRequest("file_required", "Falta el archivo (campo 'file')");
     let buf = await file.toBuffer();
-    if (file.file.truncated) throw new AppError(413, "file_too_large", "El archivo supera los 10 MB");
+    if (file.file.truncated) throw new AppError(413, "file_too_large", "El archivo supera los 10 MB", { limit: "file" });
     const type = sniff(buf);
     if (!type) throw badRequest("invalid_attachment", "Solo se aceptan PDF, JPG o PNG");
     if (type === "application/pdf") {

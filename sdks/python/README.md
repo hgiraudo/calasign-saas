@@ -44,12 +44,16 @@ CalaSign(oauth=ClientCredentials("csapp_…", "cssec_…", scope="envelopes:read
   como `CalaSignError`: reintentarlos en un loop no sirve. Lo mismo `reminder_daily_limit` (tope diario de recordatorios
   por sobre).
 - Los 503 (`storage_unavailable`, `pdf_reader_busy`, `ai_rate_limited`, sin código…) se reintentan, salvo
-  `byok_key_unavailable`: la clave de cifrado propia de la organización (BYOK) no está disponible y hace falta que un
-  administrador restablezca el acceso, así que se lanza enseguida.
+  `byok_key_unavailable` (la clave de cifrado propia de la organización —BYOK— no está disponible y hace falta que un
+  administrador restablezca el acceso) y `ai_unavailable` (el servidor no tiene IA configurada), que se lanzan enseguida.
 - Celdas (regiones): si la organización vive en otra celda, la API responde 421 `wrong_cell` con `details["baseUrl"]`
   (y header `Location`). El cliente repite el pedido una sola vez contra esa URL (es seguro: la API no lo procesó) y la
-  guarda en `cs.base_url` para los siguientes. Si no puede (sin `baseUrl`, de https a http o la otra celda también
-  responde 421), lanza el `CalaSignError` con `e.cell_base_url`.
+  guarda en `cs.base_url` para los siguientes, también para pedir el token OAuth. Como la credencial viaja a esa URL,
+  solo la sigue si su host comparte el dominio registrable con la `base_url` inicial (`eu.calasign.com` desde
+  `dev.calasign.com`; con sufijos de dos niveles como `com.ar` o `co.uk` se comparan tres etiquetas) o está en
+  `allowed_cell_hosts=["host", "host:puerto"]`; con `follow_cell_redirects=False` no la sigue nunca. Si no puede (no
+  permitida, sin `baseUrl`, de https a http o la otra celda también responde 421), lanza el `CalaSignError` con
+  `e.cell_base_url`. El cambio de celda es seguro con pedidos concurrentes desde varios hilos (lock).
 - `envelopes.create`, `envelopes.create_and_send`, `envelopes.from_template` y `envelopes.send` usan `Idempotency-Key` automática: un reintento
   no duplica nada. Los POST sin idempotencia no se reintentan ante errores de red. Si el pedido original con la misma
   clave sigue en curso (409 `idempotency_in_progress`), el cliente espera y repite hasta recibir la respuesta guardada,

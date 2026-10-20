@@ -5,6 +5,7 @@ import { api, errorText } from "../lib/api";
 import { formatDateTime, useI18n } from "../lib/i18n";
 import { useTeamsText } from "../lib/i18n-teams";
 import { ErrorBox, Spinner } from "../components/ui";
+import { useTitle } from "../lib/white-label";
 
 interface Filters {
   action: string;
@@ -26,6 +27,7 @@ function query(f: Filters, cursor?: string | null) {
 
 export function AuditLogPage() {
   const tt = useTeamsText();
+  useTitle(tt("audit.title"));
   const { locale } = useI18n();
   const [filters, setFilters] = useState<Filters>({ action: "", actor: "", from: "", to: "" });
   const [applied, setApplied] = useState<Filters>(filters);

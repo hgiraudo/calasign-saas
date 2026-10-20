@@ -135,10 +135,12 @@ type Drag =
   | { kind: "resize"; id: string; startX: number; startY: number; fw: number; fh: number; rect: DOMRect };
 
 export function FieldEditor({ envelopeId, documents, signers, fields, onChange, fileUrl, focus }: Props) {
-  const { t } = useI18n();
+  const { t, tn } = useI18n();
   const [tool, setTool] = useState<FieldType | null>(null);
   const [activeRecipient, setActiveRecipient] = useState<string>(signers[0]?.id ?? "");
   const [selected, setSelected] = useState<string | null>(null);
+  /** Página donde "Agregar a la página" pone el campo con el teclado (`documentId:índice`). */
+  const [placeAt, setPlaceAt] = useState<string>("");
   const drag = useRef<Drag | null>(null);
   const fieldsRef = useRef(fields);
   fieldsRef.current = fields;
@@ -187,18 +189,7 @@ export function FieldEditor({ envelopeId, documents, signers, fields, onChange, 
     if (!f) return;
     setSelected(f.id);
     setActiveRecipient(f.recipientId);
-    // La página puede no estar dibujada todavía (recién se abrió el paso o el PDF carga): se reintenta un rato.
-    let tries = 0;
-    let timer = 0;
-    const show = () => {
-      const el = document.querySelector<HTMLElement>(`.fbox[data-field-id="${CSS.escape(f.id)}"]`);
-      if (el) {
-        el.scrollIntoView({ block: "center", behavior: "smooth" });
-        el.focus({ preventScroll: true });
-      } else if (++tries < 20) timer = window.setTimeout(show, 150);
-    };
-    timer = window.setTimeout(show, 0);
-    return () => window.clearTimeout(timer);
+    return focusBox(f.id, true);
   }, [focus]);
 
   useEffect(() => {
@@ -223,8 +214,8 @@ export function FieldEditor({ envelopeId, documents, signers, fields, onChange, 
     return () => document.removeEventListener("keydown", onKey);
   }, [selected, remove]);
 
-  const place = (doc: Document, page: number, type: FieldType, relX: number, relY: number) => {
-    if (!activeRecipient) return;
+  const place = (doc: Document, page: number, type: FieldType, relX: number, relY: number): string | null => {
+    if (!activeRecipient) return null;
     const size = doc.pages[page];
     const [wp, hp] = DEFAULT_SIZE[type];
     const width = Math.min(wp / size.width, 1);
@@ -247,6 +238,52 @@ export function FieldEditor({ envelopeId, documents, signers, fields, onChange, 
     };
     onChange([...fieldsRef.current, f]);
     setSelected(f.id);
+    return f.id;
+  };
+
+  /** La página con más superficie a la vista (para proponerla al agregar un campo con el teclado). */
+  const mostVisiblePage = (): string => {
+    let best = "";
+    let bestArea = -1;
+    for (const el of Array.from(document.querySelectorAll<HTMLElement>(".editor-docs .pdf-page"))) {
+      const docId = el.closest<HTMLElement>(".doc-view")?.dataset.document;
+      if (!docId) continue;
+      const r = el.getBoundingClientRect();
+      const h = Math.max(0, Math.min(r.bottom, window.innerHeight) - Math.max(r.top, 0));
+      const w = Math.max(0, Math.min(r.right, window.innerWidth) - Math.max(r.left, 0));
+      if (h * w > bestArea) {
+        bestArea = h * w;
+        best = `${docId}:${el.dataset.page ?? "0"}`;
+      }
+    }
+    return best || (documents[0] ? `${documents[0].id}:0` : "");
+  };
+
+  /** Teclado: pone el campo de la herramienta activa en el centro de la parte visible de la página elegida. */
+  const placeByKeyboard = () => {
+    if (!tool) return;
+    const target = placeAt || mostVisiblePage();
+    const i = target.lastIndexOf(":");
+    const doc = documents.find((d) => d.id === target.slice(0, i));
+    const page = Number(target.slice(i + 1));
+    if (!doc || !doc.pages[page]) return;
+    let relX = 0.5;
+    let relY = 0.5;
+    const el = document.querySelector<HTMLElement>(`.editor-docs .doc-view[data-document="${CSS.escape(doc.id)}"] .pdf-page[data-page="${page}"]`);
+    if (el) {
+      const r = el.getBoundingClientRect();
+      const top = Math.max(r.top, 0);
+      const bottom = Math.min(r.bottom, window.innerHeight);
+      const left = Math.max(r.left, 0);
+      const right = Math.min(r.right, window.innerWidth);
+      if (bottom > top && right > left && r.height > 0 && r.width > 0) {
+        relY = ((top + bottom) / 2 - r.top) / r.height;
+        relX = ((left + right) / 2 - r.left) / r.width;
+      }
+    }
+    const id = place(doc, page, tool, relX, relY);
+    setTool(null);
+    if (id) focusBox(id, true);
   };
 
   const onPagePointerDown = (doc: Document) => (page: number, e: RPointerEvent<HTMLDivElement>) => {
@@ -354,14 +391,15 @@ export function FieldEditor({ envelopeId, documents, signers, fields, onChange, 
   return (
     <div className="editor">
       <aside className="editor-side card pad">
-        <label className="field">
-          <span>{t("edit.activeRecipient")}</span>
+        <div className="field" role="group" aria-labelledby="fe-active-recipient">
+          <span id="fe-active-recipient">{t("edit.activeRecipient")}</span>
           <div className="recipient-picker">
             {signers.map((s, i) => (
               <button
                 key={s.id}
                 type="button"
                 className={`rp ${activeRecipient === s.id ? "active" : ""}`}
+                aria-pressed={activeRecipient === s.id}
                 style={{ borderColor: recipientColor(i) }}
                 onClick={() => {
                   setActiveRecipient(s.id);
@@ -373,7 +411,7 @@ export function FieldEditor({ envelopeId, documents, signers, fields, onChange, 
               </button>
             ))}
           </div>
-        </label>
+        </div>
 
         <p className="muted small">{t("edit.palette")}</p>
         <div className="palette">
@@ -387,7 +425,10 @@ export function FieldEditor({ envelopeId, documents, signers, fields, onChange, 
                 e.dataTransfer.effectAllowed = "copy";
               }}
               className={`palette-item ${tool === ft ? "active" : ""}`}
-              onClick={() => setTool(tool === ft ? null : ft)}
+              onClick={() => {
+                if (tool !== ft) setPlaceAt(mostVisiblePage());
+                setTool(tool === ft ? null : ft);
+              }}
               aria-pressed={tool === ft}
             >
               <span className="pi-icon">{ICON[ft]}</span>
@@ -396,6 +437,26 @@ export function FieldEditor({ envelopeId, documents, signers, fields, onChange, 
           ))}
         </div>
         {tool && <p className="hint">{t("edit.selectFieldHint")}</p>}
+        {tool && (
+          <div className="stack-sm">
+            <label className="field">
+              <span>{t("edit.placePage")}</span>
+              <select value={placeAt} onChange={(e) => setPlaceAt(e.target.value)}>
+                {documents.flatMap((d) =>
+                  d.pages.map((_, i) => (
+                    <option key={`${d.id}:${i}`} value={`${d.id}:${i}`}>
+                      {documents.length > 1 ? `${d.name} — ` : ""}
+                      {t("edit.pageN", { page: i + 1 })}
+                    </option>
+                  )),
+                )}
+              </select>
+            </label>
+            <button type="button" className="btn btn-sm" onClick={placeByKeyboard} disabled={!activeRecipient}>
+              {t("edit.addToPage", { page: Number(placeAt.slice(placeAt.lastIndexOf(":") + 1) || 0) + 1 })}
+            </button>
+          </div>
+        )}
 
         {sel && (
           <div className="field-props">
@@ -531,9 +592,7 @@ export function FieldEditor({ envelopeId, documents, signers, fields, onChange, 
             <FieldLogicPanel field={sel} fields={fields} signers={signers} onChange={(patch) => update(sel.id, patch)} />
           </div>
         )}
-        <p className="muted small">
-          {fields.length} {t("edit.fieldsCount")}
-        </p>
+        <p className="muted small">{tn("edit.fieldsCount", fields.length)}</p>
         <p className="muted small">{t("edit.fieldKeysHint")}</p>
       </aside>
 
@@ -555,6 +614,7 @@ export function FieldEditor({ envelopeId, documents, signers, fields, onChange, 
                     tabIndex={0}
                     role="button"
                     aria-pressed={selected === f.id}
+                    aria-keyshortcuts="Delete Backspace"
                     aria-label={`${t(`field.${f.type}`)}${f.label ? `: ${f.label}` : ""} — ${signers.find((s) => s.id === f.recipientId)?.name ?? ""}`}
                     onKeyDown={onBoxKey(f)}
                     className={`fbox ${selected === f.id ? "selected" : ""} ftype-${f.type}`}
@@ -583,7 +643,8 @@ export function FieldEditor({ envelopeId, documents, signers, fields, onChange, 
                         <button
                           type="button"
                           className="fbox-del"
-                          aria-label={t("common.delete")}
+                          tabIndex={-1}
+                          aria-hidden="true"
                           onPointerDown={(e) => e.stopPropagation()}
                           onClick={() => remove(f.id)}
                         >
@@ -600,6 +661,24 @@ export function FieldEditor({ envelopeId, documents, signers, fields, onChange, 
       </div>
     </div>
   );
+}
+
+/**
+ * Lleva a la vista y enfoca el recuadro de un campo. La página puede no estar dibujada todavía (recién se abrió el
+ * paso, el PDF carga o el campo se acaba de crear): se reintenta un rato. Devuelve la función que cancela.
+ */
+function focusBox(id: string, scroll: boolean): () => void {
+  let tries = 0;
+  let timer = 0;
+  const show = () => {
+    const el = document.querySelector<HTMLElement>(`.fbox[data-field-id="${CSS.escape(id)}"]`);
+    if (el) {
+      if (scroll) el.scrollIntoView({ block: "center", behavior: "smooth" });
+      el.focus({ preventScroll: true });
+    } else if (++tries < 20) timer = window.setTimeout(show, 150);
+  };
+  timer = window.setTimeout(show, 0);
+  return () => window.clearTimeout(timer);
 }
 
 function clamp(v: number, min: number, max: number): number {

@@ -3,7 +3,7 @@ import { productName, rebrands, useBrandTheme } from "../lib/white-label";
 import { useEffect, useId, useRef, useState, type InputHTMLAttributes, type ReactNode } from "react";
 import type { EnvelopeStatus, Locale, RecipientStatus } from "@calasign/shared";
 import { LOCALES } from "@calasign/shared";
-import { LOCALE_LABELS, useI18n } from "../lib/i18n";
+import { formatNumber, LOCALE_LABELS, useI18n } from "../lib/i18n";
 import { useExpText } from "../lib/i18n-experience";
 
 export function StatusBadge({ status }: { status: EnvelopeStatus }) {
@@ -188,8 +188,9 @@ export function recipientColor(index: number): string {
   return RECIPIENT_COLORS[((index % RECIPIENT_COLORS.length) + RECIPIENT_COLORS.length) % RECIPIENT_COLORS.length];
 }
 
+/** Tamaño legible con el separador decimal y de miles del idioma de la app. */
 export function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
-  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  if (n < 1024) return `${formatNumber(n)} B`;
+  if (n < 1024 * 1024) return `${formatNumber(Math.round(n / 1024))} KB`;
+  return `${formatNumber(n / 1024 / 1024, undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} MB`;
 }

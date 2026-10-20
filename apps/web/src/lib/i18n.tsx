@@ -116,7 +116,7 @@ const es = {
   "edit.err.formulaDupLabel": "hay dos campos número con la etiqueta {label} y la fórmula la usa.",
   "edit.err.condition": "una condición cita un campo que no existe o al mismo campo.",
   "edit.err.conditionValue": "a una condición le falta el valor a comparar.",
-  "edit.fieldKeysHint": "Con el teclado: Tab llega a cada campo, Enter lo selecciona, las flechas lo mueven, Shift + flechas cambian el tamaño y Supr lo elimina.",
+  "edit.fieldKeysHint": "Con el teclado: elegí un tipo de campo y la página y tocá \"Agregar a la página\" (queda en el centro de la parte visible); Tab llega a cada campo, Enter lo selecciona, las flechas lo mueven, Shift + flechas cambian el tamaño y Supr lo elimina.",
   "detail.telegramLinked": "Telegram vinculado",
   "detail.telegramPending": "Telegram sin vincular",
   "sign.telegram": "Recibir avisos por Telegram",
@@ -134,7 +134,10 @@ const es = {
   "edit.send": "Enviar",
   "edit.sending": "Enviando…",
   "edit.summary": "Resumen",
-  "edit.fieldsCount": "campos",
+  "edit.fieldsCount": "{n} campo|{n} campos",
+  "edit.placePage": "Página donde agregarlo",
+  "edit.pageN": "Página {page}",
+  "edit.addToPage": "Agregar a la página {page}",
   "edit.saved": "Guardado",
 
   "field.signature": "Firma",
@@ -337,7 +340,7 @@ const ptBR: Dict = {
   "edit.err.formulaDupLabel": "há dois campos número com a etiqueta {label} e a fórmula a usa.",
   "edit.err.condition": "uma condição cita um campo que não existe ou o próprio campo.",
   "edit.err.conditionValue": "falta o valor a comparar em uma condição.",
-  "edit.fieldKeysHint": "Pelo teclado: Tab chega a cada campo, Enter o seleciona, as setas o movem, Shift + setas mudam o tamanho e Delete o exclui.",
+  "edit.fieldKeysHint": "Pelo teclado: escolha um tipo de campo e a página e use \"Adicionar à página\" (fica no centro da parte visível); Tab chega a cada campo, Enter o seleciona, as setas o movem, Shift + setas mudam o tamanho e Delete o exclui.",
   "detail.telegramLinked": "Telegram vinculado",
   "detail.telegramPending": "Telegram não vinculado",
   "sign.telegram": "Receber avisos pelo Telegram",
@@ -355,7 +358,10 @@ const ptBR: Dict = {
   "edit.send": "Enviar",
   "edit.sending": "Enviando…",
   "edit.summary": "Resumo",
-  "edit.fieldsCount": "campos",
+  "edit.fieldsCount": "{n} campo|{n} campos",
+  "edit.placePage": "Página onde adicioná-lo",
+  "edit.pageN": "Página {page}",
+  "edit.addToPage": "Adicionar à página {page}",
   "edit.saved": "Salvo",
   "field.signature": "Assinatura",
   "field.initials": "Rubrica",
@@ -550,7 +556,7 @@ const en: Dict = {
   "edit.err.formulaDupLabel": "there are two number fields labeled {label} and the formula uses it.",
   "edit.err.condition": "a condition references a field that doesn't exist or the field itself.",
   "edit.err.conditionValue": "a condition is missing the value to compare.",
-  "edit.fieldKeysHint": "With the keyboard: Tab reaches each field, Enter selects it, arrow keys move it, Shift + arrows resize it and Delete removes it.",
+  "edit.fieldKeysHint": "With the keyboard: pick a field type and the page and press \"Add to page\" (it lands in the center of the visible part); Tab reaches each field, Enter selects it, arrow keys move it, Shift + arrows resize it and Delete removes it.",
   "detail.telegramLinked": "Telegram linked",
   "detail.telegramPending": "Telegram not linked",
   "sign.telegram": "Get notifications on Telegram",
@@ -568,7 +574,10 @@ const en: Dict = {
   "edit.send": "Send",
   "edit.sending": "Sending…",
   "edit.summary": "Summary",
-  "edit.fieldsCount": "fields",
+  "edit.fieldsCount": "{n} field|{n} fields",
+  "edit.placePage": "Page to add it to",
+  "edit.pageN": "Page {page}",
+  "edit.addToPage": "Add to page {page}",
   "edit.saved": "Saved",
   "field.signature": "Signature",
   "field.initials": "Initials",
@@ -686,11 +695,39 @@ function detect(): Locale {
 }
 
 export type TFunc = (key: MessageKey, vars?: Record<string, string | number>) => string;
+/** Texto con plural: el diccionario trae "singular|plural" y se elige con Intl.PluralRules; {n} va con el formato del idioma. */
+export type TNFunc = (key: MessageKey, n: number, vars?: Record<string, string | number>) => string;
+
+/**
+ * Elige la forma de un texto "uno|otros" (ya con las variables puestas) según Intl.PluralRules del idioma. Un texto
+ * sin "|" se devuelve tal cual.
+ */
+export function pluralize(locale: Locale, text: string, n: number): string {
+  const parts = text.split("|");
+  if (parts.length < 2) return text;
+  let cat: string;
+  try {
+    cat = new Intl.PluralRules(locale).select(n);
+  } catch {
+    cat = n === 1 ? "one" : "other";
+  }
+  return cat === "one" ? parts[0] : parts[parts.length - 1];
+}
+
+/** Número con el formato del idioma de la app (separador de miles y decimales). */
+export function formatNumber(n: number, locale: Locale = activeLocale, opts?: Intl.NumberFormatOptions): string {
+  try {
+    return new Intl.NumberFormat(locale, opts).format(n);
+  } catch {
+    return String(n);
+  }
+}
 
 interface I18nCtx {
   locale: Locale;
   setLocale: (l: Locale, persist?: boolean) => void;
   t: TFunc;
+  tn: TNFunc;
   /** true si el usuario eligió idioma explícitamente (no se pisa con el del destinatario). */
   explicit: boolean;
 }
@@ -742,7 +779,9 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     [locale, brandV],
   );
 
-  const value = useMemo(() => ({ locale, setLocale, t, explicit }), [locale, setLocale, t, explicit]);
+  const tn = useCallback<TNFunc>((key, n, vars) => pluralize(locale, t(key, { ...vars, n: formatNumber(n, locale) }), n), [locale, t]);
+
+  const value = useMemo(() => ({ locale, setLocale, t, tn, explicit }), [locale, setLocale, t, tn, explicit]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
@@ -812,6 +851,12 @@ const PLACEHOLDERS = {
   seal: { es: "Sello ACME S.A.S.", "pt-BR": "Selo ACME Ltda.", en: "ACME Inc. seal" },
   domain: { es: "tuempresa.com", "pt-BR": "suaempresa.com", en: "yourcompany.com" },
   document: { es: "documento", "pt-BR": "documento", en: "document" },
+  docTitle: { es: "Contrato con {{cliente.nombre}}", "pt-BR": "Contrato com {{cliente.nome}}", en: "Agreement with {{client.name}}" },
+  effectiveVar: { es: "inicio", "pt-BR": "inicio", en: "start" },
+  expiryVar: { es: "vencimiento", "pt-BR": "vencimento", en: "expiry" },
+  collectTarget: { es: "cliente", "pt-BR": "cliente", en: "client" },
+  chatChannel: { es: "firmas", "pt-BR": "assinaturas", en: "signatures" },
+  chatTeam: { es: "Legales", "pt-BR": "Jurídico", en: "Legal" },
 } as const;
 export function placeholderText(key: keyof typeof PLACEHOLDERS): string {
   const loc = currentLocale();

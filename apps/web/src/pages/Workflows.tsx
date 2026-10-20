@@ -4,12 +4,13 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import type { CollectField, DocumentTemplate, Member, Workflow, WorkflowRun, WorkflowStep, WorkflowStepType } from "@calasign/shared";
 import { WORKFLOW_STEP_TYPES } from "@calasign/shared";
 import { api, errorText, uuid } from "../lib/api";
-import { confirmAction, formatDateTime, useI18n } from "../lib/i18n";
+import { confirmAction, formatDateTime, placeholderText, useI18n } from "../lib/i18n";
 import { useAccess } from "../lib/access";
 import { useAuth } from "../lib/auth";
 import { useAgrText, type AgreementsTextKey } from "../lib/i18n-agreements";
 import { AgreementsTabs, parseJsonObject } from "../components/AgreementsUi";
 import { ErrorBox, Modal, Spinner } from "../components/ui";
+import { useTitle } from "../lib/white-label";
 
 type WorkflowWithSecret = Workflow & { signingSecret?: string };
 
@@ -23,6 +24,7 @@ function RunStatus({ status }: { status: WorkflowRun["status"] }) {
 
 export function WorkflowsPage() {
   const ta = useAgrText();
+  useTitle(ta("wf.title"));
   const { can } = useAccess();
   const nav = useNavigate();
   const [items, setItems] = useState<Workflow[] | null>(null);
@@ -142,6 +144,7 @@ function F({ label, children }: { label: string; children: ReactNode }) {
 
 function StepConfig({ step, onChange, members, templates }: { step: WorkflowStep; onChange: (s: WorkflowStep) => void; members: Member[]; templates: DocumentTemplate[] }) {
   const ta = useAgrText();
+  const { t: tc } = useI18n();
   const set = (patch: Record<string, unknown>) => onChange({ ...step, config: { ...step.config, ...patch } } as WorkflowStep);
   switch (step.type) {
     case "collect_data": {
@@ -154,7 +157,7 @@ function StepConfig({ step, onChange, members, templates }: { step: WorkflowStep
               <input value={c.title} onChange={(e) => set({ title: e.target.value })} />
             </F>
             <F label={ta("cfg.target")}>
-              <input value={c.target ?? ""} onChange={(e) => set({ target: e.target.value || null })} placeholder="cliente" />
+              <input value={c.target ?? ""} onChange={(e) => set({ target: e.target.value || null })} placeholder={placeholderText("collectTarget")} />
             </F>
           </div>
           <fieldset className="field">
@@ -174,7 +177,7 @@ function StepConfig({ step, onChange, members, templates }: { step: WorkflowStep
                 <label className="check">
                   <input type="checkbox" checked={f.required} onChange={(e) => setField(i, { required: e.target.checked })} /> {ta("cfg.required")}
                 </label>
-                <button type="button" className="btn btn-sm btn-ghost" onClick={() => set({ fields: c.fields.filter((_, j) => j !== i) })} aria-label="×">
+                <button type="button" className="btn btn-sm btn-ghost" onClick={() => set({ fields: c.fields.filter((_, j) => j !== i) })} aria-label={tc("common.delete")}>
                   ×
                 </button>
               </div>
@@ -263,7 +266,7 @@ function StepConfig({ step, onChange, members, templates }: { step: WorkflowStep
                 <label className="check">
                   <input type="checkbox" checked={!!r.cc} onChange={(e) => setR(i, { cc: e.target.checked })} /> {ta("cfg.cc")}
                 </label>
-                <button type="button" className="btn btn-sm btn-ghost" onClick={() => set({ recipients: c.recipients.filter((_, j) => j !== i) })} aria-label="×">
+                <button type="button" className="btn btn-sm btn-ghost" onClick={() => set({ recipients: c.recipients.filter((_, j) => j !== i) })} aria-label={tc("common.delete")}>
                   ×
                 </button>
               </div>

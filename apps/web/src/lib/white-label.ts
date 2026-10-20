@@ -1,6 +1,6 @@
 // Marca blanca en la web: tema de la marca activa (inyectado por el servidor en index.html, o el de la sesión de firma),
 // aplicado a toda la página (CSS, título, favicon) y a los textos (nombre del producto y textos propios por idioma).
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { isProtectedTextKey, themeToCss, verifyPageTheme, type Locale, type PublicBrandTheme } from "@calasign/shared";
 
 const PLATFORM = "CalaSign";
@@ -132,3 +132,19 @@ export function brandText(locale: Locale, key: string, original: string): string
 }
 
 apply(current);
+
+/**
+ * Título de la pestaña de la página ("Sobres · CalaSign", con el nombre del producto de la marca activa). Al salir
+ * vuelve al nombre del producto solo. null: solo el nombre del producto.
+ */
+export function useTitle(title: string | null | undefined) {
+  const v = useBrandVersion();
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const name = productName();
+    document.title = title ? `${title} · ${name}` : name;
+    return () => {
+      document.title = productName();
+    };
+  }, [title, v]);
+}

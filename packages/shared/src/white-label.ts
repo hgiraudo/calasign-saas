@@ -354,17 +354,36 @@ const shade = (hex: string, amount: number) => {
 };
 const okColor = (c: string | null | undefined): c is string => typeof c === "string" && HEX_COLOR.test(c);
 
-/** Blanco o negro, lo que contraste más con el fondo. */
-export function contrastText(hex: string): string {
-  const n = parseInt(hex.slice(1), 16);
+/** Luminancia relativa WCAG 2.x de un color #rrggbb (0 = negro, 1 = blanco). */
+export function relativeLuminance(hex: string): number {
+  const n = parseInt(hex.slice(1, 7), 16);
   const [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((c) => {
     const s = c / 255;
     return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
   });
-  const l = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+/** Relación de contraste WCAG entre dos colores #rrggbb (de 1 a 21; texto normal AA pide 4.5). */
+export function contrastRatio(a: string, b: string): number {
+  const [l1, l2] = [relativeLuminance(a), relativeLuminance(b)].sort((x, y) => y - x);
+  return (l1 + 0.05) / (l2 + 0.05);
+}
+
+/** Blanco o casi negro (#0f172a), lo que contraste más con el fondo. */
+export function contrastText(hex: string): string {
   // Se elige el de mayor contraste (con el umbral 0.4 de antes, colores medios quedaban con blanco por debajo de 4.5:1).
-  // 0.0089 = luminancia de #0f172a.
-  return (l + 0.05) / (0.0089 + 0.05) > 1.05 / (l + 0.05) ? "#0f172a" : "#ffffff";
+  return contrastRatio(hex, "#0f172a") > contrastRatio(hex, "#ffffff") ? "#0f172a" : "#ffffff";
+}
+
+/**
+ * El color oscurecido de a poco hasta llegar a `min`:1 contra `against` (por defecto, blanco). Si ya cumple, el mismo
+ * color. Sirve para usar un color de marca claro como texto (enlaces, avisos) sobre fondo blanco.
+ */
+export function darkenToContrast(hex: string, min = 4.5, against = "#ffffff"): string {
+  let c = hex.toLowerCase();
+  for (let i = 0; i < 40 && contrastRatio(c, against) < min; i++) c = shade(c, -0.06);
+  return c;
 }
 
 export const FONT_STACK = 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
@@ -386,10 +405,17 @@ export function themeToCss(t: Partial<ResolvedBrandTheme>, opts: { fontFace?: st
     vars.push(`--navy:${t.primaryColor}`, `--navy-2:${shade(t.primaryColor, -0.15)}`, `--brand-primary:${t.primaryColor}`);
     const head = okColor(t.headerTextColor) ? t.headerTextColor : contrastText(t.primaryColor);
     rules.push(`.signer-bar,.topbar,.brand-preview-bar{background:${t.primaryColor};color:${head}}`, `.logo{color:${t.primaryColor}}`);
+    // El número del paso actual va sobre el color principal (--navy): texto blanco o oscuro según contraste.
+    rules.push(`.stepper li.current .step-n{color:${contrastText(t.primaryColor)}}`);
   } else if (okColor(t.headerTextColor)) {
     rules.push(`.signer-bar,.topbar{color:${t.headerTextColor}}`);
   }
-  if (okColor(t.secondaryColor)) vars.push(`--teal:${t.secondaryColor}`, `--teal-dark:${shade(t.secondaryColor, -0.15)}`, `--brand-secondary:${t.secondaryColor}`);
+  if (okColor(t.secondaryColor)) vars.push(
+      `--teal:${t.secondaryColor}`,
+      // --teal-dark es texto (enlaces, .hint) y fondo de texto blanco: al menos 4.5:1 contra blanco.
+      `--teal-dark:${darkenToContrast(shade(t.secondaryColor, -0.15))}`,
+      `--brand-secondary:${t.secondaryColor}`,
+    );
   if (okColor(t.backgroundColor)) {
     vars.push(`--bg:${t.backgroundColor}`);
     rules.push(`.signer,body{background:${t.backgroundColor}}`);
@@ -401,6 +427,9 @@ export function themeToCss(t: Partial<ResolvedBrandTheme>, opts: { fontFace?: st
     rules.push(`.btn-primary{background:${btn};border-color:${btn};color:${fg}}`, `.btn-primary:hover{background:${shade(btn, -0.12)};border-color:${shade(btn, -0.12)}}`);
   } else if (okColor(t.buttonTextColor)) {
     rules.push(`.btn-primary{color:${t.buttonTextColor}}`);
+  } else if (okColor(t.primaryColor)) {
+    // Sin color de botón, .btn-primary usa el principal (--navy): el texto blanco fijo no se leía sobre uno claro.
+    rules.push(`.btn-primary{color:${contrastText(t.primaryColor)}}`);
   }
   if (typeof t.borderRadius === "number" && t.borderRadius >= 0 && t.borderRadius <= 24) {
     vars.push(`--radius:${t.borderRadius}px`);

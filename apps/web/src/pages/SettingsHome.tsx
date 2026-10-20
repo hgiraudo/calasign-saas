@@ -14,11 +14,13 @@ import { useEvidenceText } from "../lib/i18n-evidence";
 import { useBillingText } from "../lib/i18n-billing";
 import { useAiText } from "../lib/i18n-ai";
 import { useDataText } from "../lib/i18n-data";
+import { useTitle } from "../lib/white-label";
 
 export function SettingsHomePage() {
   const { t } = useI18n();
   const tt = useIntText();
   const tm = useTeamsText();
+  useTitle(tm("settings.title"));
   const ti = useIdnText();
   const sc = useScaleText();
   const pl = usePlatformText();

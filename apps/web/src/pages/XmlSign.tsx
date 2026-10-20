@@ -5,11 +5,13 @@ import { api, errorText } from "../lib/api";
 import { useEvidenceText } from "../lib/i18n-evidence";
 import { useAccess } from "../lib/access";
 import { ErrorBox, Spinner } from "../components/ui";
+import { useTitle } from "../lib/white-label";
 
 const PROFILES: XmlProfileName[] = ["dgii-ecf", "dian-fe", "sunat-cpe", "xades-bes", "xades-epes"];
 
 export function XmlSignPage() {
   const ev = useEvidenceText();
+  useTitle(ev("xml.title"));
   // La API exige settings:manage para firmar XML.
   const canSign = useAccess().can("settings:manage");
   const [certs, setCerts] = useState<TenantCertificate[] | null>(null);

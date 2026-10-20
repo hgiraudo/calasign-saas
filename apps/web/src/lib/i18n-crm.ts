@@ -1,6 +1,6 @@
 // Textos de CRM y ERP (HubSpot, Salesforce, Zoho CRM / Bigin, Pipedrive, RD Station CRM, Kommo, Siigo, Alegra).
 import { brandText } from "./white-label";
-import { useI18n } from "./i18n";
+import { formatNumber, pluralize, useI18n } from "./i18n";
 
 const es = {
   "card.crm": "CRM y ERP",
@@ -128,7 +128,7 @@ const es = {
   "run.status.pending": "Pendiente",
   "run.status.succeeded": "OK",
   "run.status.failed": "Falló",
-  "run.attempts": "intentos",
+  "run.attempts": "{n} intento|{n} intentos",
   "retry": "Reintentar",
 };
 
@@ -260,7 +260,7 @@ const pt: Record<Key, string> = {
   "run.status.pending": "Pendente",
   "run.status.succeeded": "OK",
   "run.status.failed": "Falhou",
-  "run.attempts": "tentativas",
+  "run.attempts": "{n} tentativa|{n} tentativas",
   retry: "Tentar de novo",
 };
 
@@ -390,7 +390,7 @@ const en: Record<Key, string> = {
   "run.status.pending": "Pending",
   "run.status.succeeded": "OK",
   "run.status.failed": "Failed",
-  "run.attempts": "attempts",
+  "run.attempts": "{n} attempt|{n} attempts",
   retry: "Retry",
 };
 
@@ -401,7 +401,7 @@ export function useCrmText() {
   const d = DICTS[locale] ?? es;
   return (k: Key | string, vars?: Record<string, string | number>) => {
     let s: string = brandText(locale, k, (d as Record<string, string>)[k] ?? (es as Record<string, string>)[k] ?? k);
-    if (vars) for (const [n, v] of Object.entries(vars)) s = s.replace(`{${n}}`, () => String(v));
-    return s;
+    if (vars) for (const [n, v] of Object.entries(vars)) s = s.replace(`{${n}}`, () => (typeof v === "number" ? formatNumber(v, locale) : String(v)));
+    return typeof vars?.n === "number" ? pluralize(locale, s, vars.n) : s;
   };
 }

@@ -564,7 +564,7 @@ export const docsEs = {
   "err.c.validation": "El cuerpo no cumple el esquema. `details[]` trae `path` y `message` de cada problema. No reintentes sin corregir.",
   "err.c.invalidId": "Un id de la ruta no es un UUID válido.",
   "err.c.bad":
-    "Otros errores del pedido, con un `code` específico: cursor inválido, texto ancla no encontrado, campo fuera de la página, un archivo que no es un PDF (`not_pdf`, el mismo código en todas las subidas), texto con caracteres no admitidos como el carácter nulo (`invalid_text`)…",
+    "Otros errores del pedido, con un `code` específico: cursor inválido, texto ancla no encontrado, campo fuera de la página, un archivo que no es un PDF (`not_pdf`, el mismo código en todas las subidas), texto con caracteres no admitidos como el carácter nulo (`invalid_text`), más de 30 documentos o 1000 páginas en un borrador o plantilla al agregar uno (`too_many_documents`, `too_many_pages`)…",
   "err.c.oneshot":
     "Errores del `multipart/form-data` de `POST /v1/envelopes`: un campo de texto que no es `payload` (`unknown_part`), una parte repetida (`duplicate_part`), `payload` que no es JSON válido (`invalid_json`), más de 10 documentos (`too_many_documents`) o dos documentos que citan la misma parte de archivo (`duplicate_document`).",
   "err.c.unauthorized": "Falta la credencial, es inválida, venció o fue revocada.",
@@ -583,7 +583,7 @@ export const docsEs = {
   "err.c.purged":
     "Los originales del sobre se borraron por la política de retención de la organización (cuenta desde que el sobre terminó: completado, anulado, rechazado o vencido). `410` al descargar el original, crear una plantilla desde el sobre o usar la IA; `409` al clonarlo. El PDF firmado y la evidencia se conservan. En el repositorio de acuerdos, `GET /v1/agreements/{id}/file` responde `410 purged` si el archivo ya se borró.",
   "err.c.tooLarge":
-    "El archivo supera el tamaño máximo (`file_too_large`, el mismo código en todas las subidas, también cuando varios documentos juntos superan el total por pedido) o el JSON del sobre en `POST /v1/envelopes`, sin el base64 de los documentos, es demasiado grande (`payload_too_large`).",
+    "El archivo supera el tamaño máximo (`file_too_large`, el mismo código en todas las subidas, también cuando varios documentos juntos superan el total por pedido o los 100 MB del sobre o plantilla: `details.limit` es `\"file\"` o `\"total\"`) o el JSON del sobre en `POST /v1/envelopes`, sin el base64 de los documentos, es demasiado grande (`payload_too_large`).",
   "err.c.wrongCell":
     "Los datos de la organización están en otra celda (región) de CalaSign. `details.cell` es la celda y `details.baseUrl` la URL de la API que la atiende (también en el encabezado `Location`, con la misma ruta). El pedido no se procesó: repetilo contra `details.baseUrl` y usá esa URL de ahí en más. Los SDKs lo hacen solos (una vez).",
   "err.c.unprocessable": "El pedido es válido pero no se puede procesar con esos datos (faltan roles de la plantilla, filas inválidas, PDF demasiado pesado para buscar anclas).",

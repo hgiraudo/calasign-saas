@@ -17,7 +17,7 @@ import type {
   SignerAiInfo,
 } from "@calasign/shared";
 import { api, errorText, isVersionChanged, runVersioned, uuid, type VersionedSave } from "../lib/api";
-import { formatDateTime, formatDay, useI18n } from "../lib/i18n";
+import { formatDateTime, formatDay, formatNumber, useI18n } from "../lib/i18n";
 import { parseAmountText } from "../lib/logic";
 import { useAiText } from "../lib/i18n-ai";
 import type { DraftField } from "./FieldEditor";
@@ -45,7 +45,7 @@ function PreviewButton({ envelopeId, feature }: { envelopeId: string; feature: s
       <ErrorBox error={error} />
       {data && (
         <Modal title={ai("detect.preview")} onClose={() => setData(null)} wide>
-          <p className="muted small">{ai("detect.sent", { chars: data.sent.characters.toLocaleString() })}</p>
+          <p className="muted small">{ai("detect.sent", { chars: formatNumber(data.sent.characters) })}</p>
           <pre className="ai-preview">{data.text}</pre>
         </Modal>
       )}
@@ -123,7 +123,7 @@ export function AiFieldDetect({
       {res && (
         <div className="ai-suggestions">
           <p className="muted small">
-            {res.usage ? ai("detect.sent", { chars: (res.sent?.characters ?? 0).toLocaleString() }) : ai("detect.heuristicOnly")}
+            {res.usage ? ai("detect.sent", { chars: formatNumber(res.sent?.characters ?? 0) }) : ai("detect.heuristicOnly")}
           </p>
           {res.suggestions.length === 0 && <p className="muted">{ai("detect.none")}</p>}
           {pending.length > 0 && (

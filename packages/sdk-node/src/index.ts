@@ -71,7 +71,8 @@ export class CalaSignError extends Error {
   /**
    * En un 421 `wrong_cell` (los datos de la organización están en otra región/celda): la URL base del despliegue que
    * sí la atiende (`details.baseUrl`, o `null` si la API no la conoce). El cliente ya reintenta solo una vez contra
-   * ella; si igual te llega este error, configurá `baseUrl` con este valor.
+   * ella (si su host está permitido: mismo dominio que `baseUrl` o `allowedCellHosts`, y `followCellRedirects` no es
+   * false); si igual te llega este error, verificá que la URL sea legítima y configurá `baseUrl` con este valor.
    */
   get cellBaseUrl(): string | null | undefined {
     if (this.code !== "wrong_cell") return undefined;
@@ -106,13 +107,25 @@ export interface CalaSignOptions {
   /**
    * Por defecto https://dev.calasign.com. Si la organización vive en otra celda (región), la API responde 421
    * `wrong_cell` con `details.baseUrl`: el cliente reintenta una vez contra esa URL y la usa en los pedidos siguientes
-   * (`cs.baseUrl` refleja la actual).
+   * (`cs.baseUrl` refleja la actual), solo si su host comparte el dominio registrable con esta `baseUrl` (p. ej.
+   * `eu.calasign.com` desde `dev.calasign.com`) o está en `allowedCellHosts`.
    */
   baseUrl?: string;
   /**
-   * Reintentos ante errores de red, 429 (límite por IP) y 5xx. Por defecto 3. No se reintentan los 429 de negocio ni el
+   * Seguir las redirecciones de celda (421 `wrong_cell`). Por defecto true. Con false, el 421 se lanza como
+   * `CalaSignError` (con `cellBaseUrl`) y la URL base no cambia nunca.
+   */
+  followCellRedirects?: boolean;
+  /**
+   * Hosts extra (nombre de host, o `host:puerto`) a los que se acepta cambiar de celda aunque no compartan el dominio
+   * registrable con `baseUrl` (la credencial viaja a ese host, incluido el pedido de token OAuth).
+   */
+  allowedCellHosts?: string[];
+  /**
+   * Reintentos ante errores de red, 429 (límite por IP) y 5xx. Por defecto 3. No se reintentan los 429 de negocio ni los
    * 503 `byok_key_unavailable` (la clave de cifrado propia de la organización no está disponible: requiere que un
-   * administrador restablezca el acceso, no se arregla esperando unos segundos).
+   * administrador restablezca el acceso) y `ai_unavailable` (el servidor no tiene IA configurada): no se arreglan
+   * esperando unos segundos.
    */
   maxRetries?: number;
   /** Tiempo máximo por intento. Por defecto 30 s. */
@@ -183,10 +196,11 @@ export interface RawResponse {
 const RETRY_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
 /**
  * 503 que no se arreglan reintentando en segundos: `byok_key_unavailable` (la clave KMS propia de la organización no
- * responde o se revocó; requiere acción de un administrador). El resto de los 503 (`storage_unavailable`,
+ * responde o se revocó; requiere acción de un administrador) y `ai_unavailable` (el servidor no tiene proveedor de IA
+ * configurado; el 502 `ai_unavailable` del proveedor caído sí se reintenta). El resto de los 503 (`storage_unavailable`,
  * `pdf_reader_busy`, `ai_rate_limited`, sin código…) sí se reintentan.
  */
-const NON_RETRYABLE_503_CODES = new Set(["byok_key_unavailable"]);
+const NON_RETRYABLE_503_CODES = new Set(["byok_key_unavailable", "ai_unavailable"]);
 /** Estados reintentables tras los que el pedido pudo haberse procesado igual (el resto se rechaza antes de procesarlo). */
 const MAYBE_PROCESSED_STATUS = new Set([500, 502, 504]);
 
@@ -226,6 +240,9 @@ function attemptSignal(timeoutMs: number, outer?: AbortSignal): { signal: AbortS
 
 export class CalaSign {
   private currentBaseUrl: string;
+  /** Dominio registrable de la `baseUrl` inicial: solo se sigue un 421 hacia hosts de ese dominio (o de allowedCellHosts). */
+  private readonly cellDomain: string;
+  private readonly allowedCellHosts: Set<string>;
   private readonly fetchImpl: typeof fetch;
   private readonly maxRetries: number;
   private readonly timeoutMs: number;
@@ -243,6 +260,8 @@ export class CalaSign {
   constructor(private readonly opts: CalaSignOptions) {
     if (!opts.apiKey && !opts.accessToken && !opts.oauth) throw new Error("CalaSign: falta apiKey, accessToken u oauth");
     this.currentBaseUrl = (opts.baseUrl ?? "https://dev.calasign.com").replace(/\/$/, "");
+    this.cellDomain = registrableDomain(new URL(this.currentBaseUrl).hostname);
+    this.allowedCellHosts = new Set((opts.allowedCellHosts ?? []).map((h) => h.trim().toLowerCase()).filter(Boolean));
     this.fetchImpl = opts.fetch ?? globalThis.fetch.bind(globalThis);
     this.maxRetries = opts.maxRetries ?? 3;
     this.timeoutMs = opts.timeoutMs ?? 30_000;
@@ -299,10 +318,22 @@ export class CalaSign {
     return this.token.value;
   }
 
+  /** ¿Se puede seguir un 421 hacia esta URL? (la credencial viaja en cada pedido, incluido el de token OAuth). */
+  private cellHostAllowed(next: string): boolean {
+    if (this.opts.followCellRedirects === false) return false;
+    const u = new URL(next);
+    const host = u.hostname.toLowerCase();
+    if (this.allowedCellHosts.has(host) || this.allowedCellHosts.has(u.host.toLowerCase())) return true;
+    return registrableDomain(host) === this.cellDomain;
+  }
+
   /** Pedido genérico a la API v1 (para endpoints que el SDK todavía no envuelve). */
   async request<T = any>(method: string, path: string, o: RequestOptions = {}): Promise<T> {
+    // Base de este pedido: la actual al empezar y, tras un 421, la de la celda. Se compara contra ella (no contra
+    // `currentBaseUrl`, que otro pedido concurrente pudo haber cambiado ya).
+    let base = this.currentBaseUrl;
     const buildUrl = () => {
-      const u = new URL(this.currentBaseUrl + path);
+      const u = new URL(base + path);
       for (const [k, v] of Object.entries(o.query ?? {})) if (v !== undefined && v !== null && v !== "") u.searchParams.set(k, String(v));
       return u;
     };
@@ -363,9 +394,11 @@ export class CalaSign {
         // repetirlo contra `details.baseUrl` es seguro (también un POST sin idempotencia); esa URL queda para los siguientes.
         if (res.status === 421 && !cellSwitched) {
           text = await res.text().catch(() => "");
-          const next = cellRedirect(text, this.currentBaseUrl);
-          if (next) {
+          const next = cellRedirect(text, base);
+          if (next && this.cellHostAllowed(next)) {
             cellSwitched = true;
+            // Si otro pedido ya la cambió a `next`, no hay nada que actualizar: se reintenta igual contra ella.
+            base = next;
             this.currentBaseUrl = next;
             url = buildUrl();
             attempt--;
@@ -381,7 +414,7 @@ export class CalaSign {
             text = await res.text().catch(() => "");
             retry = !isBusiness429(text);
           }
-          // 503 byok_key_unavailable: requiere que un administrador restablezca la clave; reintentar no sirve.
+          // 503 byok_key_unavailable / ai_unavailable: requieren acción de un administrador; reintentar no sirve.
           if (res.status === 503) {
             text ??= await res.text().catch(() => "");
             if (NON_RETRYABLE_503_CODES.has(errorCode(text) ?? "")) retry = false;
@@ -480,6 +513,19 @@ function cellRedirect(text: string, current: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Dominio registrable aproximado (sin lista de sufijos públicos): las dos últimas etiquetas, o tres si la penúltima
+ * tiene 2-3 letras (com.ar, co.uk). Una IP o un nombre sin puntos se comparan enteros.
+ */
+function registrableDomain(hostname: string): string {
+  const h = hostname.toLowerCase().replace(/\.$/, "");
+  if (h.includes(":") || h.startsWith("[") || /^\d+(\.\d+){3}$/.test(h)) return h;
+  const labels = h.split(".");
+  if (labels.length <= 2) return h;
+  const n = /^[a-z]{2,3}$/.test(labels[labels.length - 2]) ? 3 : 2;
+  return labels.slice(-n).join(".");
 }
 
 function backoff(attempt: number) {

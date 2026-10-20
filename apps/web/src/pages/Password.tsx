@@ -2,7 +2,7 @@
 import { useState, type FormEvent } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { api, errorText, HttpError } from "../lib/api";
-import { useI18n } from "../lib/i18n";
+import { currentLocale, formatNumber, pluralize, useI18n } from "../lib/i18n";
 import { usePasswordText } from "../lib/i18n-password";
 import { ErrorBox } from "../components/ui";
 import { AuthShell } from "./Auth";
@@ -67,7 +67,7 @@ interface ResetResult {
 
 type PwText = ReturnType<typeof usePasswordText>;
 const countList = (pw: PwText, items: readonly (readonly [Parameters<PwText>[0], number])[]) =>
-  items.filter(([, n]) => n > 0).map(([k, n]) => pw(k).replace("{n}", String(n)));
+  items.filter(([, n]) => n > 0).map(([k, n]) => pluralize(currentLocale(), pw(k).replace("{n}", formatNumber(n)), n));
 
 /** Avisos después de restablecer: lo revocado (si se pidió) y las credenciales creadas que siguen activas, por organización. */
 function resetNotice(r: ResetResult | undefined, pw: PwText): { revoked: string | null; active: string[] } {

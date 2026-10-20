@@ -425,7 +425,7 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
     }
     assertRealDates(meta);
     const bytes = new Uint8Array(await file.toBuffer());
-    if (file.file.truncated) throw new AppError(413, "file_too_large", "El archivo supera el tamaño máximo");
+    if (file.file.truncated) throw new AppError(413, "file_too_large", "El archivo supera el tamaño máximo", { limit: "file" });
     try {
       await inspectPdf(bytes);
     } catch (e) {

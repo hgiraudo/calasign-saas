@@ -1,6 +1,6 @@
 // Textos de planes y facturación, cobro al firmar y servidor MCP.
 import { brandText } from "./white-label";
-import { useI18n } from "./i18n";
+import { formatNumber, pluralize, useI18n } from "./i18n";
 
 const es = {
   "nav.billing": "Plan y facturación",
@@ -46,7 +46,7 @@ const es = {
   "billing.canceledCheckout": "El pago no se completó.",
   "billing.envelopesPerMonth": "{n} sobres por mes",
   "billing.unlimitedEnvelopes": "Sobres ilimitados",
-  "billing.users": "{n} usuario(s)",
+  "billing.users": "{n} usuario|{n} usuarios",
   "billing.aiTokens": "IA: hasta {n} tokens por mes",
   "billing.noAi": "Sin IA",
   "billing.unlimitedAi": "IA sin tope del plan",
@@ -169,7 +169,7 @@ const pt: Record<Key, string> = {
   "billing.canceledCheckout": "O pagamento não foi concluído.",
   "billing.envelopesPerMonth": "{n} envelopes por mês",
   "billing.unlimitedEnvelopes": "Envelopes ilimitados",
-  "billing.users": "{n} usuário(s)",
+  "billing.users": "{n} usuário|{n} usuários",
   "billing.aiTokens": "IA: até {n} tokens por mês",
   "billing.noAi": "Sem IA",
   "billing.unlimitedAi": "IA sem limite do plano",
@@ -287,7 +287,7 @@ const en: Record<Key, string> = {
   "billing.canceledCheckout": "The payment wasn't completed.",
   "billing.envelopesPerMonth": "{n} envelopes per month",
   "billing.unlimitedEnvelopes": "Unlimited envelopes",
-  "billing.users": "{n} user(s)",
+  "billing.users": "{n} user|{n} users",
   "billing.aiTokens": "AI: up to {n} tokens per month",
   "billing.noAi": "No AI",
   "billing.unlimitedAi": "AI with no plan limit",
@@ -371,8 +371,8 @@ export function useBillingText() {
   const d = DICTS[locale] ?? es;
   return (k: Key, vars?: Record<string, string | number>) => {
     let s: string = brandText(locale, k, d[k] ?? es[k] ?? k);
-    if (vars) for (const [n, v] of Object.entries(vars)) s = s.split(`{${n}}`).join(String(v));
-    return s;
+    if (vars) for (const [n, v] of Object.entries(vars)) s = s.split(`{${n}}`).join(typeof v === "number" ? formatNumber(v, locale) : String(v));
+    return typeof vars?.n === "number" ? pluralize(locale, s, vars.n) : s;
   };
 }
 

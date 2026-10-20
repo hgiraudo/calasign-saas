@@ -260,7 +260,7 @@ export function TemplateEditPage() {
       <ol className="stepper">
         {STEPS.map((s, i) => (
           <li key={s} className={`${i === stepIdx ? "current" : ""} ${i < stepIdx ? "done" : ""}`}>
-            <button type="button" onClick={() => go(s)} disabled={busy}>
+            <button type="button" onClick={() => go(s)} disabled={busy} aria-current={i === stepIdx ? "step" : undefined}>
               <span className="step-n">{i + 1}</span>
               <span className="step-l">{stepLabel(s)}</span>
             </button>
@@ -488,18 +488,20 @@ function TemplateDocuments({
       {!readOnly && (
       <div className="dropzone">
         <p>{t("edit.dropHint")}</p>
-        <label className="btn btn-primary">
+        <button type="button" className="btn btn-primary" disabled={busy} onClick={() => inputRef.current?.click()}>
           {uploading ? `${t("edit.uploading")} ${uploading}` : t("edit.upload")}
-          <input
-            ref={inputRef}
-            type="file"
-            accept="application/pdf,.pdf"
-            multiple
-            hidden
-            disabled={busy}
-            onChange={(e) => e.target.files && upload(e.target.files)}
-          />
-        </label>
+        </button>
+        <input
+          ref={inputRef}
+          type="file"
+          accept="application/pdf,.pdf"
+          multiple
+          className="sr-only"
+          tabIndex={-1}
+          aria-hidden="true"
+          disabled={busy}
+          onChange={(e) => e.target.files && upload(e.target.files)}
+        />
       </div>
       )}
       {documents.length === 0 ? (

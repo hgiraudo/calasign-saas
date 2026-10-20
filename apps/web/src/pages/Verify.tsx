@@ -7,11 +7,12 @@ import { useSignerText } from "../lib/i18n-signer";
 import { ErrorBox, LocaleSwitcher, Logo, Spinner } from "../components/ui";
 import { ValidationReportView } from "../components/EvidenceExtras";
 import { BrandFooter } from "../components/BrandFooter";
-import { brandTheme, setBrandTheme, setVerifyPageMode } from "../lib/white-label";
+import { brandTheme, setBrandTheme, setVerifyPageMode, useTitle } from "../lib/white-label";
 
 export function VerifyPage() {
   const { t, locale } = useI18n();
   const sx = useSignerText();
+  useTitle(sx("verify.title"));
   const input = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

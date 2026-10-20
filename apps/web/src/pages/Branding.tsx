@@ -5,6 +5,7 @@ import {
   BRAND_ASSET_MAX_BYTES,
   BRAND_MESSAGE_EVENTS,
   BRAND_TEMPLATE_VARIABLES,
+  contrastRatio,
   contrastText,
   customCssProblem,
   LOCALES,
@@ -22,15 +23,35 @@ import {
 import { api, errorText } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { PlanNotice, useAccess } from "../lib/access";
-import { confirmAction, LOCALE_LABELS, useI18n } from "../lib/i18n";
+import { confirmAction, formatNumber, LOCALE_LABELS, useI18n } from "../lib/i18n";
 import { useWlText, type WlKey } from "../lib/i18n-white-label";
 import { ErrorBox, Spinner } from "../components/ui";
+import { useTitle } from "../lib/white-label";
 
 type Tab = "theme" | "texts" | "email" | "domains" | "advanced";
 type Theme = NonNullable<BrandConfigInput["theme"]>;
 const COLOR_KEYS = ["primaryColor", "secondaryColor", "backgroundColor", "textColor", "buttonColor", "buttonTextColor", "headerTextColor"] as const;
 const LINK_KEYS = ["websiteUrl", "supportUrl", "privacyUrl", "termsUrl"] as const;
 const HEX = /^#[0-9a-fA-F]{6}$/;
+
+/**
+ * Pares de colores del tema por debajo de 4.5:1 (WCAG AA para texto normal): texto de la barra sobre el principal,
+ * texto del botón sobre el botón y texto sobre el fondo. Solo los que la marca fija explícitamente (los automáticos
+ * ya eligen blanco u oscuro según contraste). Se avisa al guardar, sin bloquear.
+ */
+function lowContrastPairs(t: Theme): { key: "header" | "button" | "text"; ratio: number }[] {
+  const hex = (c: unknown): string | null => (typeof c === "string" && HEX.test(c) ? c : null);
+  const out: { key: "header" | "button" | "text"; ratio: number }[] = [];
+  const check = (key: "header" | "button" | "text", fg: string | null, bg: string | null) => {
+    if (!fg || !bg) return;
+    const ratio = contrastRatio(fg, bg);
+    if (ratio < 4.5) out.push({ key, ratio });
+  };
+  check("header", hex(t.headerTextColor), hex(t.primaryColor) ?? "#0b1f3a");
+  check("button", hex(t.buttonTextColor), hex(t.buttonColor) ?? hex(t.primaryColor) ?? "#0b1f3a");
+  if (hex(t.textColor) || hex(t.backgroundColor)) check("text", hex(t.textColor) ?? "#0f172a", hex(t.backgroundColor) ?? "#f4f6fa");
+  return out;
+}
 /** Claves de texto frecuentes de la página de firma (para el autocompletado). */
 const COMMON_TEXT_KEYS = [
   "sign.poweredBy",
@@ -134,8 +155,9 @@ function addsConfig(next: unknown, prev: unknown, literal = false): boolean {
 }
 
 export function BrandingPage() {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const w = useWlText();
+  useTitle(w("title"));
   const { me, refresh } = useAuth();
   const { access, refresh: refreshAccess, hasFeature } = useAccess();
   const hasBranding = hasFeature("branding");
@@ -149,6 +171,8 @@ export function BrandingPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
+  // Aviso (no bloquea) de pares de colores con poco contraste en lo que se acaba de guardar.
+  const [contrastWarn, setContrastWarn] = useState<string | null>(null);
   // Cambios sin guardar en la configuración o el nombre de la marca (si no hay, Guardar no hace el PUT).
   const [dirty, setDirty] = useState(false);
   const [newName, setNewName] = useState("");
@@ -223,6 +247,12 @@ export function BrandingPage() {
         setCfg(b.config);
         setDirty(false);
       }
+      const low = lowContrastPairs(effectiveTheme);
+      setContrastWarn(
+        low.length
+          ? w("contrast.warn", { pairs: low.map((p) => w(`contrast.${p.key}`, { ratio: formatNumber(Math.floor(p.ratio * 10) / 10, locale, { maximumFractionDigits: 1 }) })).join("; ") })
+          : null,
+      );
       setSaved(true);
     });
 
@@ -404,7 +434,7 @@ export function BrandingPage() {
                     <Field key={k} label={w(`color.${k}` as WlKey)}>
                       <div className="row-wrap">
                         <input type="color" className="color-input" value={HEX.test(v) ? v : ((defaultBrand?.effective.theme[k] as string | null | undefined) ?? "#ffffff")} onChange={(e) => setIn("theme", k, e.target.value)} aria-label={w(`color.${k}` as WlKey)} />
-                        <input className="color-text" value={v} placeholder="#RRGGBB" maxLength={7} onChange={(e) => setIn("theme", k, e.target.value.trim())} />
+                        <input className="color-text" value={v} placeholder="#RRGGBB" maxLength={7} aria-label={w("color.hex", { color: w(`color.${k}` as WlKey) })} onChange={(e) => setIn("theme", k, e.target.value.trim())} />
                       </div>
                     </Field>
                   );
@@ -416,13 +446,13 @@ export function BrandingPage() {
 
               <h3>{w("font")}</h3>
               <div className="row-wrap">
-                <select value={theme.fontSource ?? "system"} onChange={(e) => setIn("theme", "fontSource", e.target.value)}>
+                <select aria-label={w("font.source")} value={theme.fontSource ?? "system"} onChange={(e) => setIn("theme", "fontSource", e.target.value)}>
                   <option value="system">{w("font.system")}</option>
                   <option value="google">{w("font.google")}</option>
                   <option value="upload">{w("font.upload")}</option>
                 </select>
                 {theme.fontSource && theme.fontSource !== "system" && (
-                  <input placeholder={w("font.family")} value={theme.fontFamily ?? ""} maxLength={60} onChange={(e) => setIn("theme", "fontFamily", e.target.value)} />
+                  <input aria-label={w("font.family")} placeholder={w("font.family")} value={theme.fontFamily ?? ""} maxLength={60} onChange={(e) => setIn("theme", "fontFamily", e.target.value)} />
                 )}
               </div>
               {theme.fontSource === "google" && <small className="muted">{w("font.googleNote")}</small>}
@@ -469,7 +499,14 @@ export function BrandingPage() {
               <button id="wl-save" type="button" className="btn btn-primary" disabled={busy || Boolean(cssProblem) || blockedByPlan} onClick={save}>
                 {busy ? t("common.saving") : t("common.save")}
               </button>
-              {saved && <span className="muted small">✓ {w("saved")}</span>}
+              <span role="status" className="muted small">
+                {saved && !contrastWarn ? `✓ ${w("saved")}` : ""}
+              </span>
+              {saved && contrastWarn && (
+                <p role="status" className="small warn-text">
+                  ⚠ {contrastWarn}
+                </p>
+              )}
               {blockedByPlan && <span className="muted small">{w("plan.unsaved")}</span>}
             </div>
           )}
@@ -514,21 +551,23 @@ function Asset(p: {
       <span>{p.label}</span>
       <div className="row-wrap">
         {p.url && p.kind !== "font" ? <img className="logo-thumb" src={p.url} alt="" style={p.dark ? { background: "#0b1f3a" } : undefined} /> : p.url ? <span className="small">✓</span> : <span className="muted small">—</span>}
-        <label className="btn btn-sm" aria-disabled={!p.canUpload(p.kind) || undefined} style={p.canUpload(p.kind) ? undefined : { opacity: 0.5, pointerEvents: "none" }}>
+        <button type="button" className="btn btn-sm" aria-label={`${w("asset.upload")}: ${p.label}`} disabled={p.busy || !p.canUpload(p.kind)} onClick={() => ref.current?.click()}>
           {w("asset.upload")}
-          <input
-            ref={ref}
-            type="file"
-            hidden
-            accept={p.accept}
-            disabled={p.busy || !p.canUpload(p.kind)}
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) p.onUpload(p.kind, f);
-              if (ref.current) ref.current.value = "";
-            }}
-          />
-        </label>
+        </button>
+        <input
+          ref={ref}
+          type="file"
+          className="sr-only"
+          tabIndex={-1}
+          aria-hidden="true"
+          accept={p.accept}
+          disabled={p.busy || !p.canUpload(p.kind)}
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) p.onUpload(p.kind, f);
+            if (ref.current) ref.current.value = "";
+          }}
+        />
         {p.url && (
           <button type="button" className="btn btn-ghost btn-sm" disabled={p.busy} onClick={() => p.onRemove(p.kind)}>
             {w("asset.remove")}
@@ -541,7 +580,7 @@ function Asset(p: {
 
 function TextsEditor({ cfg, onChange }: { cfg: BrandConfigInput; onChange: (v: BrandConfigInput["texts"]) => void }) {
   const w = useWlText();
-  const { locale: uiLocale } = useI18n();
+  const { locale: uiLocale, t: tc } = useI18n();
   const [locale, setLocale] = useState<Locale>(uiLocale);
   const rows = Object.entries(cfg.texts?.[locale] ?? {});
   const update = (next: [string, string][]) => onChange({ ...(cfg.texts ?? {}), [locale]: Object.fromEntries(next) });
@@ -573,7 +612,7 @@ function TextsEditor({ cfg, onChange }: { cfg: BrandConfigInput; onChange: (v: B
         <div key={i} className="row-wrap">
           <input list="wl-text-keys" aria-label={w("texts.key")} placeholder={w("texts.key")} value={k} maxLength={80} onChange={(e) => setKey(i, e.target.value)} />
           <input className="grow" aria-label={w("texts.value")} placeholder={w("texts.value")} value={v} maxLength={1000} onChange={(e) => update(rows.map((r, j) => (j === i ? [r[0], e.target.value] : r)))} />
-          <button type="button" className="btn btn-ghost btn-sm" aria-label="✕" onClick={() => update(rows.filter((_, j) => j !== i))}>
+          <button type="button" className="btn btn-ghost btn-sm" aria-label={tc("common.delete")} onClick={() => update(rows.filter((_, j) => j !== i))}>
             ✕
           </button>
         </div>
@@ -759,7 +798,7 @@ function DomainsEditor({ brand, onBrand, canAdd }: { brand: Brand; onBrand: (b: 
       ) : (
         <>
           <div className="row-wrap">
-            <input placeholder="firmas.cliente.com" value={web} onChange={(e) => setWeb(e.target.value.trim().toLowerCase())} />
+            <input aria-label={w("domains.webLabel")} placeholder={w("domains.webPlaceholder")} value={web} onChange={(e) => setWeb(e.target.value.trim().toLowerCase())} />
             <button type="button" className="btn btn-sm" disabled={busy || !web || !canAdd} onClick={() => {
                 // Reemplaza el dominio actual (quizás ya verificado): se confirma antes.
                 if (d && web !== d.domain && !confirmAction()) return;
@@ -793,7 +832,7 @@ function DomainsEditor({ brand, onBrand, canAdd }: { brand: Brand; onBrand: (b: 
       <h3>{w("domains.mail")}</h3>
       <p className="muted small">{w("domains.mailHint")}</p>
       <div className="row-wrap">
-        <input placeholder="cliente.com" value={newMail} onChange={(e) => setNewMail(e.target.value.trim().toLowerCase())} />
+        <input aria-label={w("domains.mailLabel")} placeholder={w("domains.mailPlaceholder")} value={newMail} onChange={(e) => setNewMail(e.target.value.trim().toLowerCase())} />
         <button type="button" className="btn btn-sm" disabled={busy || !newMail || !canAdd} onClick={() => run(async () => (await api("/v1/settings/email-domains", { method: "POST", body: { domain: newMail } }), setNewMail(""), reload()))}>
           {w("domains.add")}
         </button>
@@ -807,7 +846,10 @@ function DomainsEditor({ brand, onBrand, canAdd }: { brand: Brand; onBrand: (b: 
             <tbody>
               {m.records.map((r) => (
                 <tr key={r.purpose}>
-                  <td>{r.ok === true ? "✓" : r.ok === false ? "✕" : "·"}</td>
+                  <td>
+                    <span aria-hidden="true">{r.ok === true ? "✓" : r.ok === false ? "✕" : "·"}</span>
+                    <span className="sr-only">{w(r.ok === true ? "domains.recordOk" : r.ok === false ? "domains.recordFail" : "domains.recordUnchecked")}</span>
+                  </td>
                   <td>
                     {r.type} <code className="break">{r.name}</code>
                     <br />

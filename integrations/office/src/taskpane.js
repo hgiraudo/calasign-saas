@@ -48,7 +48,7 @@ function errorText(e) {
     if (e.status === 0) return t("errNetwork");
     if (e.code === "anchor_not_found") return t("errAnchorNotFound", { anchor: e.details?.anchor ?? "" });
     if (e.status === 401) return t("errSession");
-    if (e.code === "envelope_incomplete" && Array.isArray(e.details?.problems)) return e.details.problems.join(". ");
+    if (e.code === "envelope_incomplete" && Array.isArray(e.details?.problems)) return e.details.problems.map((p) => (p && typeof p === "object" ? p.message : String(p))).join(". ");
     return e.message;
   }
   return String(e?.message ?? e);

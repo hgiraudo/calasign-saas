@@ -482,7 +482,7 @@ export async function whiteLabelRoutes(app: FastifyInstance, s: Services) {
     const file = await req.file({ limits: { fileSize: max } });
     if (!file) throw badRequest("file_required", "Falta el archivo (campo 'file')");
     const buf = await file.toBuffer();
-    if (file.file.truncated) throw new AppError(413, "file_too_large", `El archivo supera los ${Math.round(max / 1024)} KB`);
+    if (file.file.truncated) throw new AppError(413, "file_too_large", `El archivo supera los ${Math.round(max / 1024)} KB`, { limit: "file" });
     const type = sniff(buf);
     if (!type || !allowedType(kind, type)) throw badRequest("invalid_asset", kind === "font" ? "La fuente tiene que ser WOFF2, WOFF, TTF u OTF" : "Formato de imagen no admitido");
     if (type === "image/svg+xml" && unsafeSvg(buf.toString("utf8"))) throw badRequest("invalid_asset", "El SVG contiene scripts o referencias externas");

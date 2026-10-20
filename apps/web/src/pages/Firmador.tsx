@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import type { FirmadorDownload } from "@calasign/shared";
 import { api } from "../lib/api";
 import { useCertsignText } from "../lib/i18n-certsign";
+import { formatNumber } from "../lib/i18n";
 import { LocaleSwitcher, Logo, Spinner } from "../components/ui";
 
 type Os = "windows" | "linux" | "macos";
@@ -56,7 +57,7 @@ export function FirmadorPage() {
                         <a className="btn btn-primary" href={f.url} download>
                           ⬇ {f.file}
                         </a>
-                        <div className="muted small mono">{c("firmador.size", { mb: (f.sizeBytes / 1048576).toFixed(1), sha: f.sha256 })}</div>
+                        <div className="muted small mono">{c("firmador.size", { mb: formatNumber(f.sizeBytes / 1048576, undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }), sha: f.sha256 })}</div>
                       </div>
                     ))}
                     {g.steps && <p className="small">{g.steps}</p>}

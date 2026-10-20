@@ -557,7 +557,7 @@ export const docsPt: Record<DocsKey, string> = {
   "err.c.validation": "O corpo não respeita o esquema. `details[]` traz `path` e `message` de cada problema. Não tente novamente sem corrigir.",
   "err.c.invalidId": "Um id da rota não é um UUID válido.",
   "err.c.bad":
-    "Outros erros da requisição, com um `code` específico: cursor inválido, texto âncora não encontrado, campo fora da página, um arquivo que não é PDF (`not_pdf`, o mesmo código em todos os envios de arquivo), texto com caracteres não permitidos como o caractere nulo (`invalid_text`)…",
+    "Outros erros da requisição, com um `code` específico: cursor inválido, texto âncora não encontrado, campo fora da página, um arquivo que não é PDF (`not_pdf`, o mesmo código em todos os envios de arquivo), texto com caracteres não permitidos como o caractere nulo (`invalid_text`), mais de 30 documentos ou 1000 páginas em um rascunho ou modelo ao adicionar um (`too_many_documents`, `too_many_pages`)…",
   "err.c.oneshot":
     "Erros do `multipart/form-data` de `POST /v1/envelopes`: um campo de texto que não é `payload` (`unknown_part`), uma parte repetida (`duplicate_part`), `payload` que não é JSON válido (`invalid_json`), mais de 10 documentos (`too_many_documents`) ou dois documentos que citam a mesma parte de arquivo (`duplicate_document`).",
   "err.c.unauthorized": "A credencial está ausente, é inválida, expirou ou foi revogada.",
@@ -576,7 +576,7 @@ export const docsPt: Record<DocsKey, string> = {
   "err.c.purged":
     "Os originais do envelope foram apagados pela política de retenção da organização (conta a partir do encerramento do envelope: concluído, anulado, recusado ou vencido). `410` ao baixar o original, criar um modelo a partir do envelope ou usar a IA; `409` ao cloná-lo. O PDF assinado e a evidência são mantidos. No repositório de acordos, `GET /v1/agreements/{id}/file` responde `410 purged` se o arquivo já foi apagado.",
   "err.c.tooLarge":
-    "O arquivo excede o tamanho máximo (`file_too_large`, o mesmo código em todos os envios de arquivo, também quando vários documentos juntos excedem o total por requisição) ou o JSON do envelope em `POST /v1/envelopes`, sem o base64 dos documentos, é grande demais (`payload_too_large`).",
+    "O arquivo excede o tamanho máximo (`file_too_large`, o mesmo código em todos os envios de arquivo, também quando vários documentos juntos excedem o total por requisição ou os 100 MB do envelope ou modelo: `details.limit` é `\"file\"` ou `\"total\"`) ou o JSON do envelope em `POST /v1/envelopes`, sem o base64 dos documentos, é grande demais (`payload_too_large`).",
   "err.c.wrongCell":
     "Os dados da organização estão em outra célula (região) do CalaSign. `details.cell` é a célula e `details.baseUrl` a URL da API que a atende (também no cabeçalho `Location`, com o mesmo caminho). A requisição não foi processada: repita contra `details.baseUrl` e use essa URL daí em diante. Os SDKs fazem isso sozinhos (uma vez).",
   "err.c.unprocessable": "A requisição é válida, mas não pode ser processada com esses dados (faltam papéis do modelo, linhas inválidas, PDF pesado demais para buscar âncoras).",

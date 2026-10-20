@@ -210,8 +210,9 @@ input[type="checkbox"] { width: 1.05rem; height: 1.05rem; accent-color: var(--te
 .stepper .step-l { font-weight: 600; font-size: 0.88rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .stepper li.current button { border-color: var(--navy); color: var(--navy); box-shadow: 0 0 0 1px var(--navy) inset; }
 .stepper li.current .step-n { background: var(--navy); color: #fff; }
-.stepper li.done .step-n { background: var(--teal); color: #fff; }
-@media (max-width: 640px) { .stepper .step-l { display: none; } .stepper li.current .step-l { display: inline; } }
+.stepper li.done .step-n { background: var(--teal-dark); color: #fff; } /* #fff sobre --teal daba 2.5:1 */
+/* En pantallas chicas solo se ve el nombre del paso actual; los demás quedan para lectores de pantalla (sr-only). */
+@media (max-width: 640px) { .stepper li:not(.current) .step-l { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; } }
 .wizard-nav { display: flex; justify-content: space-between; gap: 0.5rem; margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border); position: sticky; bottom: 0; background: linear-gradient(to top, var(--bg) 70%, rgba(244, 246, 250, 0)); padding-bottom: 0.75rem; z-index: 10; }
 .dropzone { border: 2px dashed #cbd5e1; border-radius: var(--radius); padding: 2rem 1rem; text-align: center; background: #fff; transition: border-color 0.15s, background 0.15s; }
 .dropzone.over { border-color: var(--teal); background: #f0fdfa; }

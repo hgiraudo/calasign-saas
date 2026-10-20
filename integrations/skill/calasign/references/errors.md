@@ -26,7 +26,7 @@ OAuth endpoints use the RFC 6749 shape `{"error": "...", "error_description": ".
 | 403 | `bad_origin` | Cookie-session request from an origin other than the CalaSign web app (doesn't apply with `Authorization`) |
 | 404 | `not_found` | Wrong id or belongs to another organization |
 | 409 | `not_draft` | Editing/sending something that is not a draft |
-| 409 | `not_in_progress` / `not_voidable` / `envelope_closed` | Action not valid in the current status |
+| 409 | `not_in_progress` / `not_voidable` | Action not valid in the current status |
 | 409 | `idempotency_mismatch` | Same `Idempotency-Key` reused with a different body → use a new key |
 | 409 | `idempotency_in_progress` | Same key still running → wait and retry |
 | 409 | `conflict` | Concurrent change → re-read and retry |
@@ -38,6 +38,7 @@ OAuth endpoints use the RFC 6749 shape `{"error": "...", "error_description": ".
 | 409 | `otp_not_embeddable` | Signing URL requested with `frameAncestors` for a signer with an OTP code → open it in a tab/redirect (`tabOnly: true`) or remove the OTP |
 | 409 | `template_has_forms` | Deleting a template with web forms that still accept submissions (active, not expired or used up); `details.names` lists them → deactivate or delete them first |
 | 409 | `delivery_pending` | Webhook delivery retry while an attempt is running or a manual retry is already queued → wait |
+| 410 | `envelope_closed` | Signer / embedded signing / delegate / certificate-signing surface: the envelope was voided, completed, declined or expired, so it no longer accepts that action → no retry; check the envelope status |
 | 410 | `purged` | The envelope's originals were deleted by the retention policy (counted from completion, void, decline or expiry): original download, template from envelope, AI. The signed PDF and evidence remain → no retry. Also `GET /v1/agreements/{id}/file` when the repository file was purged |
 | 409 | `purged` | Cloning an envelope whose originals were purged by retention → can't clone it |
 | 409 | `proposal_outdated` | The text changed since the proposal was made → reject it and ask for a new one |
@@ -46,8 +47,8 @@ OAuth endpoints use the RFC 6749 shape `{"error": "...", "error_description": ".
 | 413 | `payload_too_large` | `POST /v1/envelopes`: the envelope JSON (without the documents' base64) is too large |
 | 413 | `ai_input_too_large` | Document too long for the AI assistant → no retry |
 | 421 | `wrong_cell` | The organization's data lives in another CalaSign cell (region). `details.cell`, `details.baseUrl` (also the `Location` header). The request was NOT processed → repeat it once against `details.baseUrl` and use that base URL from then on (the SDKs do it automatically) |
-| 422 | `envelope_incomplete` | Can't send: `details.problems[]` (no document, no signer, signer without signature field, expiry in the past) |
-| 422 | `logic_order` | A field condition cites a field of someone who signs later (or at the same time) → reorder recipients/roles or cite a read-only field / an earlier signer's field; `details.problems[]` lists them. Problems the draft already had don't block other edits |
+| 422 | `envelope_incomplete` | Can't send: `details.problems[]` (no document, no signer, signer without signature field, expiry in the past), as Spanish texts; `details.issues[]` has each one as `{code, params, message}` |
+| 422 | `logic_order` | A field condition cites a field of someone who signs later (or at the same time) → reorder recipients/roles or cite a read-only field / an earlier signer's field; `details.problems[]` lists them as texts and `details.issues[]` as `{code, params, message}`. Problems the draft already had don't block other edits |
 | 422 | `pdf_too_heavy` | PDF too complex to search for anchors → use coordinates |
 | 429 | `rate_limited` (generic; older deployments sent `bad_request`) | Per-IP rate limit → wait for `Retry-After` (seconds) and retry |
 | 429 | `reminded_recently`, `reminder_daily_limit`, `form_rate_limited`, `workflow_rate_limited`, `ai_signer_limit`, `ai_budget_exceeded`, `too_many_comments`, `too_many_proposals`, `archive_recently_renewed`, `too_many_attempts` | Business cap (specific code, **no** `Retry-After`) → don't retry in a loop; tell the user or try much later |

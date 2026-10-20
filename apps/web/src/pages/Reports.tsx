@@ -5,6 +5,7 @@ import { api, errorText } from "../lib/api";
 import { useI18n } from "../lib/i18n";
 import { useExpText } from "../lib/i18n-experience";
 import { ErrorBox, Spinner } from "../components/ui";
+import { useTitle } from "../lib/white-label";
 
 const SERIES = [
   { key: "completed", color: "#0f766e" },
@@ -26,6 +27,7 @@ const toInput = (d: Date) => {
 
 export function ReportsPage() {
   const x = useExpText();
+  useTitle(x("reports.title"));
   const { locale } = useI18n();
   const [from, setFrom] = useState(toInput(monthStart(-5)));
   const [to, setTo] = useState(toInput(new Date()));

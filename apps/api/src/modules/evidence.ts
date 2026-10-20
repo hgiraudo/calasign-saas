@@ -225,7 +225,7 @@ export async function evidenceRoutes(app: FastifyInstance, s: Services) {
     const file = await req.file({ limits: { fileSize: Math.max(config.maxUploadBytes, 40 * 1024 * 1024) } });
     if (!file) throw badRequest("file_required", "Falta el archivo (campo 'file')");
     const bytes = new Uint8Array(await file.toBuffer());
-    if (file.file.truncated) throw new AppError(413, "file_too_large", "El archivo supera el tamaño máximo");
+    if (file.file.truncated) throw new AppError(413, "file_too_large", "El archivo supera el tamaño máximo", { limit: "file" });
     if (Buffer.from(bytes.subarray(0, 1024)).indexOf("%PDF-") === -1) throw badRequest("not_pdf", "El archivo no es un PDF");
     const online = config.evidence.validateOnlineRevocation;
     let report;

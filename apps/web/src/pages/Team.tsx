@@ -15,6 +15,7 @@ import { canManagePerms, useAccess } from "../lib/access";
 import { formatDateTime, useI18n, confirmAction, placeholderText } from "../lib/i18n";
 import { useRoleLabel, useTeamsText } from "../lib/i18n-teams";
 import { ErrorBox, Modal, Spinner } from "../components/ui";
+import { useTitle } from "../lib/white-label";
 
 type Tab = "members" | "invitations" | "roles" | "groups";
 interface RolesResponse {
@@ -69,6 +70,7 @@ function toAssignment(v: string) {
 
 export function TeamPage() {
   const tt = useTeamsText();
+  useTitle(tt("team.title"));
   const { can } = useAccess();
   const manage = can("members:manage");
   const [tab, setTab] = useState<Tab>("members");

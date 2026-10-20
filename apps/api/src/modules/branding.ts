@@ -105,7 +105,7 @@ export async function brandingRoutes(app: FastifyInstance, s: Services) {
     const file = await req.file({ limits: { fileSize: LOGO_MAX_BYTES } });
     if (!file) throw badRequest("file_required", "Falta el archivo (campo 'file')");
     const buf = await file.toBuffer();
-    if (file.file.truncated) throw new AppError(413, "file_too_large", "El logo supera los 200 KB");
+    if (file.file.truncated) throw new AppError(413, "file_too_large", "El logo supera los 200 KB", { limit: "file" });
     const type = sniffImage(buf);
     if (!type || !(LOGO_CONTENT_TYPES as readonly string[]).includes(type)) throw badRequest("invalid_logo", "El logo tiene que ser PNG, JPG o SVG");
     if (type === "image/svg+xml" && unsafeSvg(buf.toString("utf8"))) throw badRequest("invalid_logo", "El SVG contiene scripts o referencias externas");

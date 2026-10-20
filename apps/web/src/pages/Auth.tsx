@@ -9,9 +9,11 @@ import { ErrorBox, LocaleSwitcher, Logo, Spinner } from "../components/ui";
 import { SsoErrorNotice, SsoLoginBox, redirectIfSsoRequired } from "../components/SsoLogin";
 import { CellPicker } from "../components/DataExtras";
 import { usePasswordText } from "../lib/i18n-password";
+import { useTitle } from "../lib/white-label";
 
 export function AuthShell({ title, children }: { title: string; children: ReactNode }) {
   const { t } = useI18n();
+  useTitle(title);
   return (
     <div className="auth-page">
       <div className="auth-card">

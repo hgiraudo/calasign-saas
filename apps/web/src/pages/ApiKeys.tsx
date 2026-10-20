@@ -5,6 +5,7 @@ import { canManagePerms, PlanNotice, useAccess } from "../lib/access";
 import { formatDateTime, useI18n, confirmAction, placeholderText } from "../lib/i18n";
 import { ErrorBox, Spinner } from "../components/ui";
 import { useRoleLabel, useTeamsText } from "../lib/i18n-teams";
+import { useTitle } from "../lib/white-label";
 
 interface KeyRole {
   id: string;
@@ -22,6 +23,7 @@ interface RoleOption {
 
 export function ApiKeysPage() {
   const { t, locale } = useI18n();
+  useTitle(t("keys.title"));
   const [items, setItems] = useState<ApiKey[] | null>(null);
   const [name, setName] = useState("");
   const [secret, setSecret] = useState<string | null>(null);

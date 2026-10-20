@@ -15,7 +15,7 @@ export async function verifyRoutes(app: FastifyInstance, s: Services) {
     const file = await req.file({ limits: { fileSize: Math.max(config.maxUploadBytes, 40 * 1024 * 1024) } });
     if (!file) throw badRequest("file_required", "Falta el archivo (campo 'file')");
     const bytes = await file.toBuffer();
-    if (file.file.truncated) throw new AppError(413, "file_too_large", "El archivo supera el tamaño máximo");
+    if (file.file.truncated) throw new AppError(413, "file_too_large", "El archivo supera el tamaño máximo", { limit: "file" });
     const sha256 = sha256Hex(bytes);
 
     // Versión vigente o una anterior a una renovación de archivo (B-LTA): un PDF descargado antes de renovar sigue

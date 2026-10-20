@@ -1,6 +1,6 @@
 // Textos de Fase 6 (plataforma de acuerdos): repositorio, documentos, cláusulas, workflows y negociación.
 import { brandText } from "./white-label";
-import { useI18n } from "./i18n";
+import { formatNumber, pluralize, useI18n } from "./i18n";
 
 const es = {
   "nav.agreements": "Acuerdos",
@@ -29,7 +29,7 @@ const es = {
   "repo.viewName": "Nombre de la vista",
   "repo.shareView": "Compartir con toda la organización",
   "repo.deleteView": "Borrar vista",
-  "repo.total": "{n} acuerdos",
+  "repo.total": "{n} acuerdo|{n} acuerdos",
   "repo.loadMore": "Ver más",
   "col.title": "Acuerdo",
   "col.counterparties": "Contrapartes",
@@ -237,7 +237,7 @@ const es = {
   "run.collectLink": "Link para completar los datos",
   "run.data": "Datos",
   "run.redacted": "Los datos de esta ejecución (lo cargado, las respuestas de los pasos y sus sobres) los ven quien la inició, quien aprueba un paso y quien ve todos los sobres.",
-  "run.attempts": "{n} intentos",
+  "run.attempts": "{n} intento|{n} intentos",
   "run.startedBy": "Iniciado por",
 
   // Negociación
@@ -337,7 +337,7 @@ const pt: Record<Key, string> = {
   "repo.viewName": "Nome da visão",
   "repo.shareView": "Compartilhar com toda a organização",
   "repo.deleteView": "Excluir visão",
-  "repo.total": "{n} acordos",
+  "repo.total": "{n} acordo|{n} acordos",
   "repo.loadMore": "Ver mais",
   "col.title": "Acordo",
   "col.counterparties": "Contrapartes",
@@ -539,7 +539,7 @@ const pt: Record<Key, string> = {
   "run.collectLink": "Link para preencher os dados",
   "run.data": "Dados",
   "run.redacted": "Os dados desta execução (o que foi preenchido, as respostas das etapas e seus envelopes) são vistos por quem a iniciou, por quem aprova uma etapa e por quem vê todos os envelopes.",
-  "run.attempts": "{n} tentativas",
+  "run.attempts": "{n} tentativa|{n} tentativas",
   "run.startedBy": "Iniciado por",
   "neg.title": "Negociações",
   "neg.intro": "Compartilhe um rascunho com a outra parte: ela comenta, propõe mudanças e, quando estiverem de acordo, ele é enviado para assinatura.",
@@ -633,7 +633,7 @@ const en: Record<Key, string> = {
   "repo.viewName": "View name",
   "repo.shareView": "Share with the whole organization",
   "repo.deleteView": "Delete view",
-  "repo.total": "{n} agreements",
+  "repo.total": "{n} agreement|{n} agreements",
   "repo.loadMore": "Load more",
   "col.title": "Agreement",
   "col.counterparties": "Counterparties",
@@ -835,7 +835,7 @@ const en: Record<Key, string> = {
   "run.collectLink": "Link to fill in the data",
   "run.data": "Data",
   "run.redacted": "This run's data (what was entered, step responses and its envelopes) is visible to whoever started it, step approvers and anyone who can view all envelopes.",
-  "run.attempts": "{n} attempts",
+  "run.attempts": "{n} attempt|{n} attempts",
   "run.startedBy": "Started by",
   "neg.title": "Negotiations",
   "neg.intro": "Share a draft with the other party: they comment, propose changes and, once you agree, it goes out for signature.",
@@ -913,7 +913,7 @@ export function useAgrText() {
   const d = DICTS[locale] ?? es;
   return (k: Key, vars?: Record<string, string | number>) => {
     let s: string = brandText(locale, k, d[k] ?? es[k] ?? k);
-    if (vars) for (const [n, v] of Object.entries(vars)) s = s.replace(`{${n}}`, () => String(v));
-    return s;
+    if (vars) for (const [n, v] of Object.entries(vars)) s = s.replace(`{${n}}`, () => (typeof v === "number" ? formatNumber(v, locale) : String(v)));
+    return typeof vars?.n === "number" ? pluralize(locale, s, vars.n) : s;
   };
 }

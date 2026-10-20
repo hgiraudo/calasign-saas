@@ -7,6 +7,7 @@ import http.client
 import json
 import math
 import random
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -26,9 +27,10 @@ _MAYBE_PROCESSED_STATUS = {500, 502, 504}
 # status) también es OSError, pero se atrapa antes.
 _NETWORK_ERRORS = (OSError, http.client.HTTPException)
 # 503 que no se arreglan reintentando en segundos: la clave KMS propia de la organización (BYOK) no responde o se revocó;
-# requiere que un administrador restablezca el acceso. El resto de los 503 (storage_unavailable, pdf_reader_busy,
-# ai_rate_limited, sin código…) sí se reintentan.
-_NON_RETRYABLE_503_CODES = {"byok_key_unavailable"}
+# requiere que un administrador restablezca el acceso. Tampoco ai_unavailable (503: el servidor no tiene proveedor de IA
+# configurado; el 502 ai_unavailable del proveedor caído sí se reintenta). El resto de los 503 (storage_unavailable,
+# pdf_reader_busy, ai_rate_limited, sin código…) sí se reintentan.
+_NON_RETRYABLE_503_CODES = {"byok_key_unavailable", "ai_unavailable"}
 
 
 # ───────────────────────────── Tipos (subconjunto del contrato de la API) ─────────────────────────────
@@ -123,7 +125,9 @@ class CalaSignError(Exception):
     def cell_base_url(self) -> Optional[str]:
         """En un 421 `wrong_cell` (los datos de la organización están en otra celda/región): la URL base del despliegue
         que sí la atiende (`details["baseUrl"]`; None si la API no la conoce o el error es otro). El cliente ya reintenta
-        solo una vez contra ella; si igual te llega este error, creá el cliente con `base_url` igual a este valor."""
+        solo una vez contra ella si el host está permitido (mismo dominio que `base_url` o `allowed_cell_hosts`, y
+        `follow_cell_redirects`); si igual te llega este error, verificá que la URL sea legítima y creá el cliente con
+        `base_url` igual a este valor."""
         if self.code != "wrong_cell" or not isinstance(self.details, dict):
             return None
         b = self.details.get("baseUrl")
@@ -168,15 +172,25 @@ class CalaSign:
         timeout: float = 30.0,
         user_agent: Optional[str] = None,
         idempotency_wait: float = 60.0,
+        follow_cell_redirects: bool = True,
+        allowed_cell_hosts: Optional[Sequence[str]] = None,
     ):
         """`timeout`: segundos por operación de socket (conectar, cada lectura), no del pedido entero.
         `idempotency_wait`: espera total ante un 409 idempotency_in_progress, aparte de `max_retries`.
         `base_url`: si la organización vive en otra celda (región), la API responde 421 `wrong_cell` con
         `details["baseUrl"]`; el cliente reintenta una vez contra esa URL y la guarda en `self.base_url` para los
-        pedidos siguientes."""
+        pedidos siguientes (también el de token OAuth), solo si su host comparte el dominio registrable con esta
+        `base_url` o está en `allowed_cell_hosts` (nombres de host o "host:puerto").
+        `follow_cell_redirects=False`: el 421 se lanza como CalaSignError (con `cell_base_url`) y no se cambia de celda."""
         if not (api_key or access_token or oauth):
             raise ValueError("CalaSign: falta api_key, access_token u oauth")
         self.base_url = base_url.rstrip("/")
+        # Solo se sigue un 421 hacia hosts del dominio registrable de la base_url inicial (o de allowed_cell_hosts): la
+        # credencial viaja en cada pedido. El lock protege el cambio de base entre hilos.
+        self._cell_domain = _registrable_domain(urllib.parse.urlsplit(self.base_url).hostname or "")
+        self._allowed_cell_hosts = {h.strip().lower() for h in (allowed_cell_hosts or ()) if h and h.strip()}
+        self._follow_cell_redirects = follow_cell_redirects
+        self._cell_lock = threading.Lock()
         self._api_key = api_key
         self._access_token = access_token
         self._oauth = oauth
@@ -239,6 +253,16 @@ class CalaSign:
         self._token = _Token(body["access_token"], time.time() + ttl)
         return self._token.value
 
+    def _cell_host_allowed(self, nxt: str) -> bool:
+        """¿Se puede seguir un 421 hacia esta URL? (la credencial viaja en cada pedido, incluido el de token OAuth)."""
+        if not self._follow_cell_redirects:
+            return False
+        u = urllib.parse.urlsplit(nxt)
+        host = (u.hostname or "").lower()
+        if host in self._allowed_cell_hosts or u.netloc.lower() in self._allowed_cell_hosts:
+            return True
+        return bool(host) and _registrable_domain(host) == self._cell_domain
+
     # ── pedido genérico ──
 
     def request(
@@ -269,6 +293,9 @@ class CalaSign:
         refreshed = False
         # 421 wrong_cell: un solo cambio de celda por pedido (si la nueva también responde 421, se lanza el error).
         cell_switched = False
+        # Base de este pedido: la actual al empezar y, tras un 421, la de la celda. El 421 se compara contra ella (no
+        # contra self.base_url, que otro hilo pudo haber cambiado ya).
+        base = self.base_url
         attempt = 0
         # Las esperas por un 409 idempotency_in_progress tienen su propio tope (en segundos), aparte de max_retries.
         idem_waited = 0.0
@@ -286,7 +313,7 @@ class CalaSign:
             elif json_body is not None:
                 data = json.dumps(json_body).encode()
                 req_headers["Content-Type"] = "application/json"
-            req = urllib.request.Request(self.base_url + path + qs, data=data, method=method, headers=req_headers)
+            req = urllib.request.Request(base + path + qs, data=data, method=method, headers=req_headers)
             try:
                 with urllib.request.urlopen(req, timeout=self.timeout) as res:
                     payload = res.read()
@@ -309,16 +336,20 @@ class CalaSign:
                 # 421 wrong_cell: la organización vive en otra celda. La API lo responde antes de procesar el pedido, así
                 # que repetirlo contra details.baseUrl es seguro (también un POST sin idempotencia); queda para los siguientes.
                 if status == 421 and not cell_switched:
-                    nxt = _cell_redirect(body, self.base_url)
-                    if nxt:
+                    nxt = _cell_redirect(body, base)
+                    if nxt and self._cell_host_allowed(nxt):
                         cell_switched = True
-                        self.base_url = nxt
+                        base = nxt
+                        # Si otro hilo ya la cambió a nxt, no hay nada que actualizar: se reintenta igual contra ella.
+                        with self._cell_lock:
+                            if self.base_url != nxt:
+                                self.base_url = nxt
                         continue
                 retry_after = e.headers.get("Retry-After")
                 # Un 429 sin Retry-After y con código propio (reminded_recently, form_rate_limited, ai_signer_limit…) es un
                 # tope de negocio que no se libera en segundos: no se reintenta. Solo el límite por IP (con Retry-After) sí.
                 business_429 = status == 429 and not retry_after and _is_business_429(body)
-                # 503 byok_key_unavailable: requiere que un administrador restablezca la clave; reintentar no sirve.
+                # 503 byok_key_unavailable / ai_unavailable: requieren acción de un administrador; reintentar no sirve.
                 final_503 = status == 503 and _error_code(body) in _NON_RETRYABLE_503_CODES
                 if status in _RETRY_STATUS and attempt < self.max_retries and (retryable or status in (429, 503)) and not business_429 and not final_503:
                     time.sleep(_retry_delay(attempt, retry_after))
@@ -801,6 +832,20 @@ def _cell_redirect(body: Dict[str, Any], current: str) -> Optional[str]:
         return None
     nxt = b.rstrip("/")
     return None if nxt == current else nxt
+
+
+def _registrable_domain(hostname: str) -> str:
+    """Dominio registrable aproximado (sin lista de sufijos públicos): las dos últimas etiquetas, o tres si la penúltima
+    tiene 2-3 letras (com.ar, co.uk). Una IP o un nombre sin puntos se comparan enteros."""
+    h = hostname.lower().rstrip(".")
+    if ":" in h or all(p.isdigit() for p in h.split(".")):
+        return h
+    labels = h.split(".")
+    if len(labels) <= 2:
+        return h
+    pen = labels[-2]
+    n = 3 if 2 <= len(pen) <= 3 and pen.isalpha() else 2
+    return ".".join(labels[-n:])
 
 
 def _retry_delay(attempt: int, retry_after: Optional[str]) -> float:

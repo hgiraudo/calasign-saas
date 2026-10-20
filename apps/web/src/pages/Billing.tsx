@@ -6,6 +6,7 @@ import { api, errorText } from "../lib/api";
 import { formatDateTime, useI18n } from "../lib/i18n";
 import { formatMoney, useBillingText, type BillingKey } from "../lib/i18n-billing";
 import { ErrorBox, Spinner } from "../components/ui";
+import { useTitle } from "../lib/white-label";
 
 const PROVIDER_LABEL: Record<Exclude<BillingProvider, "mock">, string> = { stripe: "Stripe", mercadopago: "Mercado Pago" };
 
@@ -36,6 +37,7 @@ function UsageBar({ used, max }: { used: number; max: number | null }) {
 
 export function BillingPage() {
   const b = useBillingText();
+  useTitle(b("billing.title"));
   const { locale } = useI18n();
   const [data, setData] = useState<BillingOverview | null>(null);
   const [error, setError] = useState<string | null>(null);

@@ -10,6 +10,7 @@ import { useAgrText } from "../lib/i18n-agreements";
 import { AgreementsTabs } from "../components/AgreementsUi";
 import { ErrorBox, Modal, Spinner } from "../components/ui";
 import { useAuth } from "../lib/auth";
+import { useTitle } from "../lib/white-label";
 
 export function AgreementStatusBadge({ status }: { status: AgreementStatus }) {
   const ta = useAgrText();
@@ -39,6 +40,7 @@ function Excerpt({ text }: { text: string }) {
 
 export function AgreementsPage() {
   const ta = useAgrText();
+  useTitle(ta("repo.title"));
   const { t, locale } = useI18n();
   const { can } = useAccess();
   const nav = useNavigate();
@@ -472,6 +474,7 @@ function draftToBody(d: MetaDraft, fields: AgreementFieldDef[], valueLabel: stri
 
 function MetaForm({ d, setD, fields, readOnly }: { d: MetaDraft; setD: (d: MetaDraft) => void; fields: AgreementFieldDef[]; readOnly?: boolean }) {
   const ta = useAgrText();
+  const { t: tc } = useI18n();
   const up = (patch: Partial<MetaDraft>) => setD({ ...d, ...patch });
   return (
     <fieldset className="stack" disabled={readOnly} style={{ border: 0, padding: 0, margin: 0 }}>
@@ -561,7 +564,7 @@ function MetaForm({ d, setD, fields, readOnly }: { d: MetaDraft; setD: (d: MetaD
               onChange={(e) => up({ counterparties: d.counterparties.map((x, j) => (j === i ? { ...x, email: e.target.value } : x)) })}
             />
             <input aria-label={ta("ag.role")} placeholder={ta("ag.role")} value={c.role ?? ""} onChange={(e) => up({ counterparties: d.counterparties.map((x, j) => (j === i ? { ...x, role: e.target.value } : x)) })} />
-            <button type="button" className="btn btn-sm btn-ghost" aria-label="×" onClick={() => up({ counterparties: d.counterparties.filter((_, j) => j !== i) })}>
+            <button type="button" className="btn btn-sm btn-ghost" aria-label={tc("common.delete")} onClick={() => up({ counterparties: d.counterparties.filter((_, j) => j !== i) })}>
               ×
             </button>
           </div>

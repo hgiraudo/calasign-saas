@@ -6,6 +6,7 @@ import { LOCALES, PREFILLABLE_FIELD_TYPES } from "@calasign/shared";
 import { api, errorText, HttpError, uuid } from "../lib/api";
 import { LOCALE_LABELS, useI18n } from "../lib/i18n";
 import { ErrorBox, Spinner, recipientColor } from "../components/ui";
+import { useTitle } from "../lib/white-label";
 
 interface Person {
   name: string;
@@ -23,6 +24,7 @@ const CHANNELS_UI: { id: Channel; label: string }[] = [
 export function TemplateUsePage() {
   const { id = "" } = useParams();
   const { t } = useI18n();
+  useTitle(t("tpl.useTitle"));
   const nav = useNavigate();
   const [tpl, setTpl] = useState<TemplateDetail | null>(null);
   // Idempotency-Key: si la respuesta se pierde (corte, 502) y se reintenta, la API devuelve el mismo sobre en vez de

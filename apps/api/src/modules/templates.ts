@@ -248,7 +248,7 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
     const file = await req.file({ limits: { fileSize: config.maxUploadBytes } });
     if (!file) throw badRequest("file_required", "Falta el archivo (campo 'file')");
     const uploaded = new Uint8Array(await file.toBuffer());
-    if (file.file.truncated) throw new AppError(413, "file_too_large", "El archivo supera el tamaño máximo");
+    if (file.file.truncated) throw new AppError(413, "file_too_large", "El archivo supera el tamaño máximo", { limit: "file" });
     // PDF normalizado: lo que muestra el visor es lo que termina en cada sobre creado desde la plantilla.
     let info, bytes: Uint8Array;
     try {

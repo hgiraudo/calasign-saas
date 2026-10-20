@@ -393,9 +393,7 @@ export function CrmSettingsPage() {
                     </td>
                     <td>
                       <span className={`badge ${r.status === "succeeded" ? "badge-completed" : r.status === "failed" ? "badge-declined" : "badge-sent"}`}>{t(`run.status.${r.status}`)}</span>
-                      <div className="small muted">
-                        {r.attempts} {t("run.attempts")}
-                      </div>
+                      <div className="small muted">{t("run.attempts", { n: r.attempts })}</div>
                     </td>
                     <td className="row-wrap">
                       {r.envelopeId && (

@@ -19,7 +19,19 @@ import { AppError, badRequest, conflict, forbidden, notFound } from "../lib/erro
 import { decrypt, encrypt, maskDestination, randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { authenticate, clientInfo, type AuthContext, type Services } from "./context";
 import { hasPerm } from "./access";
-import { activateRecipient, advanceRouting, currentSignerGroup, danglingFormulaProblems, envelopeLogicOrderProblems, lockEnvelope, newLogicOrderProblems, pastExpiry } from "./envelopes";
+import {
+  activateRecipient,
+  advanceRouting,
+  currentSignerGroup,
+  danglingFormulaProblems,
+  envelopeLogicOrderProblems,
+  lockEnvelope,
+  newLogicOrderProblems,
+  pastExpiry,
+  problemsError,
+  signerWithoutSignature,
+  type Problem,
+} from "./envelopes";
 import { DISCARD_CHECKOUT_SET } from "./billing/payments";
 import { checkSenderValue, insertEnvelopeField } from "./fieldvalues";
 import { pruneDanglingConditions, saveFieldLogic } from "./logic";
@@ -410,18 +422,20 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
   const sigFields = await db.query<any>(`SELECT DISTINCT recipient_id FROM fields WHERE envelope_id = $1 AND type = 'signature'`, [e.id]);
   const withSig = new Set(sigFields.map((x) => x.recipient_id));
   // Como al enviar: quien firma con certificado puede no tener firma visual (su firma va en el certificado).
-  const problems = now
+  const problems: Problem[] = now
     .filter((r) => r.role === "signer" && r.signature_type !== "certificate" && PENDING.includes(r.status) && !withSig.has(r.id))
-    .map((r) => `${r.name} no tiene ningún campo de firma`);
+    .map((r) => signerWithoutSignature(r.name));
   if (!now.some((r) => (r.role === "signer" || r.role === "approver") && !["delegated", "reassigned"].includes(r.status)))
-    problems.push("Tiene que quedar al menos un firmante o aprobador");
+    problems.push({ code: "no_active_signer", params: {}, message: "Tiene que quedar al menos un firmante o aprobador" });
   // Quitar un campo número que cita una fórmula dejaría el total en 0 en el PDF firmado.
   problems.push(...danglingFormulaProblems(await db.query<any>(`SELECT type, label, formula FROM fields WHERE envelope_id = $1`, [e.id])));
   // Los mismos topes que al armar el sobre (las correcciones suman de a tandas y no tenían total).
   const active = now.filter((r) => !["delegated", "reassigned"].includes(r.status)).length;
-  if (active > MAX_RECIPIENTS) problems.push(`El sobre admite hasta ${MAX_RECIPIENTS} destinatarios`);
+  if (active > MAX_RECIPIENTS)
+    problems.push({ code: "too_many_recipients", params: { max: MAX_RECIPIENTS }, message: `El sobre admite hasta ${MAX_RECIPIENTS} destinatarios` });
   const nFields = await db.one<{ n: number }>(`SELECT count(*)::int AS n FROM fields WHERE envelope_id = $1`, [e.id]);
-  if ((nFields?.n ?? 0) > MAX_FIELDS) problems.push(`El sobre admite hasta ${MAX_FIELDS} campos`);
+  if ((nFields?.n ?? 0) > MAX_FIELDS)
+    problems.push({ code: "too_many_fields", params: { max: MAX_FIELDS }, message: `El sobre admite hasta ${MAX_FIELDS} campos` });
   // Solo para campos de quien todavía no completó: los de quien ya firmó ya se evaluaron y no se pueden corregir (si no,
   // un sobre en curso con esa lógica no admitía ninguna corrección).
   // Y solo si la corrección agrega campos o destinatarios: cambiar un correo o el vencimiento no se frena por lógica que
@@ -432,7 +446,7 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
     const live = now.filter((r) => !["delegated", "reassigned"].includes(r.status));
     problems.push(...newLogicOrderProblems(all.map((f) => (pendingIds.has(f.recipient_id) ? f : { ...f, conditions: null })), live, logicBefore));
   }
-  if (problems.length) throw new AppError(422, "envelope_incomplete", problems.join(". "), { problems });
+  if (problems.length) throw problemsError("envelope_incomplete", problems);
 
   if (removedFields.length) diff.fieldsRemoved = removedFields;
   if (addedFields.length) diff.fieldsAdded = addedFields;

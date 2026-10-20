@@ -5,6 +5,7 @@ import { api, errorText } from "../lib/api";
 import { formatDateTime, useI18n, placeholderText } from "../lib/i18n";
 import { useEvidenceText } from "../lib/i18n-evidence";
 import { ErrorBox, Spinner } from "../components/ui";
+import { useTitle } from "../lib/white-label";
 
 function fileToBase64(f: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -20,7 +21,8 @@ const MAX_P12_BYTES = 1_500_000;
 
 export function CertificatesPage() {
   const ev = useEvidenceText();
-  const { locale } = useI18n();
+  useTitle(ev("cert.title"));
+  const { locale, t: tc } = useI18n();
   const [items, setItems] = useState<TenantCertificate[] | null>(null);
   const [settings, setSettings] = useState<EvidenceSettings | null>(null);
   const [providers, setProviders] = useState<SignatureProviderInfo[]>([]);
@@ -189,7 +191,7 @@ export function CertificatesPage() {
                         <button type="button" className="btn btn-danger btn-sm" disabled={busy} onClick={() => remove(c.id)}>
                           {ev("cert.delete")}
                         </button>
-                        <button type="button" className="btn btn-sm" onClick={() => setConfirming(null)}>
+                        <button type="button" className="btn btn-sm" aria-label={tc("common.cancel")} onClick={() => setConfirming(null)}>
                           ✕
                         </button>
                       </span>

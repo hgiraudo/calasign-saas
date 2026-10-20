@@ -8,6 +8,7 @@ import { confirmAction, formatDateTime, useI18n } from "../lib/i18n";
 import { useAgrText, type AgreementsTextKey } from "../lib/i18n-agreements";
 import { AgreementsTabs, DiffView, DocPreview, parseJsonObject } from "../components/AgreementsUi";
 import { ErrorBox, Modal, Spinner } from "../components/ui";
+import { useTitle } from "../lib/white-label";
 
 function NegStatus({ status }: { status: NegotiationSummary["status"] }) {
   const ta = useAgrText();
@@ -19,6 +20,7 @@ function NegStatus({ status }: { status: NegotiationSummary["status"] }) {
 
 export function NegotiationsPage() {
   const ta = useAgrText();
+  useTitle(ta("neg.title"));
   const { locale } = useI18n();
   const nav = useNavigate();
   const [items, setItems] = useState<NegotiationSummary[] | null>(null);
@@ -218,7 +220,7 @@ function CreateNegotiationModal({ kind, onClose, onCreated }: { kind: "template"
               )}
               {/* Nombre y correo son obligatorios: una fila agregada de más bloqueaba el alta y no había forma de quitarla. */}
               {participants.length > 1 && (
-                <button type="button" className="btn btn-sm btn-ghost" aria-label="×" onClick={() => setParticipants(participants.filter((_, j) => j !== i))}>
+                <button type="button" className="btn btn-sm btn-ghost" aria-label={t("common.delete")} onClick={() => setParticipants(participants.filter((_, j) => j !== i))}>
                   ×
                 </button>
               )}

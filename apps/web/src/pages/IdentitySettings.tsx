@@ -171,7 +171,7 @@ export function IdentitySettingsPage() {
           </div>
         )}
         <ErrorBox error={error} />
-        {saved && <p className="alert alert-success">{tx("sso.saved")}</p>}
+        {saved && <p className="alert alert-success" role="status">{tx("sso.saved")}</p>}
         <div className="row-end">
           <button className="btn btn-primary" disabled={busy}>
             {tx("common.save")}
@@ -387,7 +387,7 @@ export function SsoSettingsPage() {
           </label>
         </fieldset>
         <ErrorBox error={error} />
-        {saved && <p className="alert alert-success">{tx("sso.saved")}</p>}
+        {saved && <p className="alert alert-success" role="status">{tx("sso.saved")}</p>}
         {!readOnly && (
           <div className="row-end">
             <button className="btn btn-primary" disabled={busy || (!inPlan && data.enabled)}>

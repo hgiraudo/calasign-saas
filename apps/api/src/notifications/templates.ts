@@ -1,4 +1,4 @@
-import { fillTemplate } from "@calasign/shared";
+import { contrastText, fillTemplate } from "@calasign/shared";
 export type TemplateKind =
   | "invite"
   | "reminder"
@@ -345,6 +345,8 @@ export interface MailBranding {
   secondaryColor?: string | null;
   buttonColor?: string | null;
   buttonTextColor?: string | null;
+  /** Texto del encabezado sin logo (sobre el color principal); sin él, blanco u oscuro según contraste. */
+  headerTextColor?: string | null;
   backgroundColor?: string | null;
   textColor?: string | null;
   fontFamily?: string | null;
@@ -396,7 +398,10 @@ export function render(kind: TemplateKind | AgreementTemplateKind, localeIn: str
   const color = okHex(brand.primaryColor) ? brand.primaryColor : null;
   const accent = okHex(brand.secondaryColor) ? brand.secondaryColor : "#2ec4b6";
   const btn = okHex(brand.buttonColor) ? brand.buttonColor : color ?? "#0f7c7c";
-  const btnText = okHex(brand.buttonTextColor) ? brand.buttonTextColor : "#ffffff";
+  // Sin color de texto propio, blanco u oscuro según el fondo del botón (blanco fijo no se leía sobre uno claro).
+  const btnText = okHex(brand.buttonTextColor) ? brand.buttonTextColor : contrastText(btn);
+  const headBg = color ?? "#0b1f3a";
+  const headText = okHex(brand.headerTextColor) ? brand.headerTextColor : contrastText(headBg);
   const bg = okHex(brand.backgroundColor) ? brand.backgroundColor : "#f3f5f8";
   const ink = okHex(brand.textColor) ? brand.textColor : "#0b1f3a";
   const radius = typeof brand.borderRadius === "number" && brand.borderRadius >= 0 && brand.borderRadius <= 24 ? brand.borderRadius : 6;
@@ -450,7 +455,7 @@ ${
     brand.logoUrl
       ? `<tr><td style="background:#ffffff;padding:18px 28px;border-top:5px solid ${color ?? "#0b1f3a"};border-bottom:1px solid #e5e9f0"><img src="${esc(brand.logoUrl)}" alt="${esc(headerName)}" style="max-height:44px;max-width:220px;display:block"></td></tr>`
       : color || brand.productName || brand.hidePoweredBy || brand.brandName
-        ? `<tr><td style="background:${color ?? "#0b1f3a"};padding:18px 28px;color:#ffffff;font-size:18px;font-weight:bold">${esc(headerName || brand.productName || "")}</td></tr>`
+        ? `<tr><td style="background:${headBg};padding:18px 28px;color:${headText};font-size:18px;font-weight:bold">${esc(headerName || brand.productName || "")}</td></tr>`
         : `<tr><td style="background:#0b1f3a;padding:18px 28px;color:#ffffff;font-size:18px;font-weight:bold">Cala<span style="color:#2ec4b6">Sign</span></td></tr>`
   }
 <tr><td style="padding:28px">

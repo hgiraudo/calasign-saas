@@ -557,7 +557,7 @@ export const docsEn: Record<DocsKey, string> = {
   "err.c.validation": "The body doesn't match the schema. `details[]` contains the `path` and `message` of each problem. Don't retry without fixing it.",
   "err.c.invalidId": "An id in the path isn't a valid UUID.",
   "err.c.bad":
-    "Other request errors, with a specific `code`: invalid cursor, anchor text not found, field outside the page, a file that isn't a PDF (`not_pdf`, the same code on every upload path), text with disallowed characters such as the null character (`invalid_text`)…",
+    "Other request errors, with a specific `code`: invalid cursor, anchor text not found, field outside the page, a file that isn't a PDF (`not_pdf`, the same code on every upload path), text with disallowed characters such as the null character (`invalid_text`), more than 30 documents or 1000 pages in a draft or template when adding one (`too_many_documents`, `too_many_pages`)…",
   "err.c.oneshot":
     "Errors in the `multipart/form-data` of `POST /v1/envelopes`: a text field other than `payload` (`unknown_part`), a repeated part (`duplicate_part`), a `payload` that isn't valid JSON (`invalid_json`), more than 10 documents (`too_many_documents`) or two documents citing the same file part (`duplicate_document`).",
   "err.c.unauthorized": "The credential is missing, invalid, expired or revoked.",
@@ -576,7 +576,7 @@ export const docsEn: Record<DocsKey, string> = {
   "err.c.purged":
     "The envelope's originals were deleted by the organization's retention policy (counted from when the envelope ended: completed, voided, declined or expired). `410` when downloading the original, creating a template from the envelope or using AI; `409` when cloning it. The signed PDF and the evidence are kept. In the agreements repository, `GET /v1/agreements/{id}/file` returns `410 purged` if the file was already deleted.",
   "err.c.tooLarge":
-    "The file exceeds the maximum size (`file_too_large`, the same code on every upload path, also when several documents together exceed the per-request total) or the envelope JSON in `POST /v1/envelopes`, without the documents' base64, is too large (`payload_too_large`).",
+    "The file exceeds the maximum size (`file_too_large`, the same code on every upload path, also when several documents together exceed the per-request total or the envelope's or template's 100 MB: `details.limit` is `\"file\"` or `\"total\"`) or the envelope JSON in `POST /v1/envelopes`, without the documents' base64, is too large (`payload_too_large`).",
   "err.c.wrongCell":
     "The organization's data lives in another CalaSign cell (region). `details.cell` is the cell and `details.baseUrl` the URL of the API that serves it (also in the `Location` header, with the same path). The request wasn't processed: repeat it against `details.baseUrl` and use that URL from then on. The SDKs do it for you (once).",
   "err.c.unprocessable": "The request is valid but can't be processed with that data (missing template roles, invalid rows, PDF too heavy to search for anchors).",

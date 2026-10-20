@@ -6,9 +6,11 @@ import { api, errorText } from "../lib/api";
 import { formatDateTime, useI18n } from "../lib/i18n";
 import { ErrorBox, Modal, Spinner } from "../components/ui";
 import { useScaleText } from "../lib/i18n-scale";
+import { useTitle } from "../lib/white-label";
 
 export function TemplatesPage() {
   const { t, locale } = useI18n();
+  useTitle(t("tpl.title"));
   const sc = useScaleText();
   const nav = useNavigate();
   const [items, setItems] = useState<TemplateSummary[] | null>(null);

@@ -39,12 +39,16 @@ Paso a paso (sobre que se arma de a poco): `uploadDocument`, `setRecipients`, `s
   (`maxRetries`, por defecto 3). Un 429 de un tope de negocio (código propio y sin `Retry-After`, p. ej.
   `reminded_recently`, `reminder_daily_limit`) no se reintenta: se lanza enseguida como `CalaSignError`. Los 503
   (`storage_unavailable`, `pdf_reader_busy`, `ai_rate_limited`, sin código…) se reintentan, salvo
-  `byok_key_unavailable`: la clave de cifrado propia de la organización (BYOK) no está disponible y hace falta que un
-  administrador restablezca el acceso, así que se lanza enseguida.
+  `byok_key_unavailable` (la clave de cifrado propia de la organización —BYOK— no está disponible y hace falta que un
+  administrador restablezca el acceso) y `ai_unavailable` (el servidor no tiene IA configurada), que se lanzan enseguida.
 - **Celdas (regiones)**: si la organización vive en otra celda, la API responde 421 `wrong_cell` con
   `details.baseUrl` (y header `Location`). El SDK repite el pedido una sola vez contra esa URL (es seguro: la API no lo
-  procesó) y la usa en los pedidos siguientes (`cs.baseUrl` refleja la actual). Si no puede (sin `baseUrl`, de https a
-  http o la otra celda también responde 421), lanza el `CalaSignError` con `err.cellBaseUrl`.
+  procesó) y la usa en los pedidos siguientes, también para pedir el token OAuth (`cs.baseUrl` refleja la actual). Como
+  la credencial viaja a esa URL, solo la sigue si su host comparte el dominio registrable con la `baseUrl` inicial
+  (`eu.calasign.com` desde `dev.calasign.com`; con sufijos de dos niveles como `com.ar` o `co.uk` se comparan tres
+  etiquetas) o está en `allowedCellHosts: ["host", "host:puerto"]`; con `followCellRedirects: false` no la sigue nunca.
+  Si no puede (no permitida, sin `baseUrl`, de https a http o la otra celda también responde 421), lanza el
+  `CalaSignError` con `err.cellBaseUrl`.
 - **Idempotencia**: `envelopes.create`, `envelopes.createAndSend`, `envelopes.fromTemplate` y `envelopes.send` mandan `Idempotency-Key` automática
   (o la tuya), así que un reintento nunca duplica un sobre ni un envío. Un POST sin idempotencia no se reintenta ante
   errores de red. Si el pedido original con la misma clave sigue en curso (409 `idempotency_in_progress`, típico del

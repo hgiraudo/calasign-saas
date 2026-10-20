@@ -286,7 +286,7 @@ const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
     en: "The template has active web forms: whoever created them or an admin must deactivate or delete them first.",
   },
   validation_error: { "pt-BR": "Há dados inválidos no pedido.", en: "The request has invalid data." },
-  // Editor de sobres y plantillas (envelope_incomplete y logic_order con details.problems se arman en errorText).
+  // Editor de sobres y plantillas (envelope_incomplete y logic_order con details.issues se arman en errorText).
   envelope_incomplete: { "pt-BR": "O envelope ainda não pode ser enviado: falta completar dados.", en: "The envelope can't be sent yet: some data is missing." },
   logic_order: {
     "pt-BR": "Um campo depende de outro de quem assina depois ou ao mesmo tempo: mude a ordem ou a lógica.",
@@ -306,7 +306,116 @@ const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
     en: "The identity verification provider isn't configured or available.",
   },
   host_required: { "pt-BR": "A assinatura presencial precisa de um anfitrião.", en: "In-person signing needs a host." },
+  // Flujos del remitente (sobres, plantillas, envío masivo, CRM y conectores).
+  not_found: { "pt-BR": "Não encontrado: pode ter sido excluído ou você não tem acesso.", en: "Not found: it may have been deleted or you don't have access." },
+  not_voidable: { "pt-BR": "Só é possível anular um envelope enviado e em andamento.", en: "Only a sent, in-progress envelope can be voided." },
+  not_in_progress: { "pt-BR": "O envelope não está em andamento.", en: "The envelope isn't in progress." },
+  template_empty: { "pt-BR": "O modelo não tem documentos.", en: "The template has no documents." },
+  reminder_daily_limit: {
+    "pt-BR": "Já foram enviados todos os lembretes permitidos nas últimas 24 horas: tente amanhã.",
+    en: "All the reminders allowed in the last 24 hours were already sent: try tomorrow.",
+  },
+  finalize_in_progress: { "pt-BR": "A finalização já está em andamento.", en: "Finalization is already in progress." },
+  duplicate_recipient: { "pt-BR": "Um destinatário aparece mais de uma vez.", en: "A recipient appears more than once." },
+  too_many_fields: { "pt-BR": "O envelope tem campos demais.", en: "The envelope has too many fields." },
+  too_many_documents: { "pt-BR": "Há documentos demais (máximo 30 por envelope ou modelo).", en: "Too many documents (at most 30 per envelope or template)." },
+  weak_password: { "pt-BR": "A senha precisa ter pelo menos 10 caracteres.", en: "The password must be at least 10 characters long." },
+  invalid_csv: { "pt-BR": "O CSV tem erros: revise as colunas e o formato.", en: "The CSV has errors: check the columns and the format." },
+  duplicate_ids: { "pt-BR": "Há IDs de destinatários repetidos.", en: "Some recipient IDs are repeated." },
+  id_in_use: { "pt-BR": "O ID do destinatário já está em uso.", en: "The recipient ID is already in use." },
+  crm_account_unknown: {
+    "pt-BR": "A conexão do CRM não tem a conta salva: teste-a ou conecte-a de novo.",
+    en: "The CRM connection doesn't have its account saved: test it or connect it again.",
+  },
+  company_mismatch: {
+    "pt-BR": "O mapeamento é de outra conta do CRM, não daquela de onde se envia.",
+    en: "The mapping belongs to another CRM account, not the one you're sending from.",
+  },
+  crm_trigger_loop: {
+    "pt-BR": "A propriedade que dispara o envio não pode ser a mesma em que se escreve o status.",
+    en: "The property that triggers sending can't be the same one the status is written to.",
+  },
+  connector_connection_inactive: { "pt-BR": "A conexão está desativada.", en: "The connection is deactivated." },
+  connector_flow_inactive: { "pt-BR": "O fluxo está desativado.", en: "The flow is deactivated." },
+  connector_template_required: { "pt-BR": "O fluxo não tem modelo (foi excluído?).", en: "The flow has no template (was it deleted?)." },
+  connector_reauth_required: { "pt-BR": "A conexão perdeu o acesso: conecte-a de novo.", en: "The connection lost access: connect it again." },
+  connector_record_not_found: { "pt-BR": "O registro não existe no sistema de origem.", en: "The record doesn't exist in the source system." },
+  connector_invalid: { "pt-BR": "O sistema de origem rejeitou o pedido.", en: "The source system rejected the request." },
+  connector_invalid_record: { "pt-BR": "O registro tem dados que não servem para o envelope.", en: "The record has data that can't be used for the envelope." },
+  connector_invalid_document: { "pt-BR": "O documento do sistema de origem não é um PDF válido.", en: "The source system's document isn't a valid PDF." },
+  connector_provider_error: { "pt-BR": "O sistema de origem respondeu com um erro: tente mais tarde.", en: "The source system returned an error: try again later." },
+  connector_test_failed: { "pt-BR": "Não foi possível conectar: revise as credenciais.", en: "Couldn't connect: check the credentials." },
+  connector_credentials: { "pt-BR": "As credenciais estão incompletas ou são inválidas.", en: "The credentials are incomplete or invalid." },
+  connector_object_type: { "pt-BR": "Esse tipo de registro não é suportado por este conector.", en: "That record type isn't supported by this connector." },
+  connector_document_source: {
+    "pt-BR": "O documento de origem só existe em workflows do Ironclad e contratos do Juro.",
+    en: "The source document only exists for Ironclad workflows and Juro contracts.",
+  },
+  connector_status_unsupported: { "pt-BR": "Este conector não permite escrever o status em um campo.", en: "This connector can't write the status to a field." },
+  connector_link_missing: { "pt-BR": "O vínculo com o registro de origem não existe mais.", en: "The link to the source record no longer exists." },
+  connector_flow_missing: { "pt-BR": "O fluxo não existe mais.", en: "The flow no longer exists." },
+  connector_flow_owner_gone: { "pt-BR": "Quem criou o fluxo não tem mais acesso: crie o fluxo de novo.", en: "The flow's creator no longer has access: create the flow again." },
 };
+
+/** file_too_large por la suma de los documentos (details.limit "total"), no por un archivo. */
+const FILE_TOO_LARGE_TOTAL: Record<"es" | "pt-BR" | "en", string> = {
+  es: "Los documentos del sobre superan el tamaño total permitido.",
+  "pt-BR": "Os documentos do envelope excedem o tamanho total permitido.",
+  en: "The envelope's documents exceed the total size allowed.",
+};
+
+/**
+ * Cada problema de envelope_incomplete / logic_order (details.issues: {code, params, message}; details.problems es solo el texto). Los textos llevan
+ * {param}; un código desconocido usa el `message` de la API (en español).
+ */
+const PROBLEM_TEXT: Record<string, Record<"es" | "pt-BR" | "en", string>> = {
+  no_documents: { es: "Agregá al menos un documento", "pt-BR": "Adicione pelo menos um documento", en: "Add at least one document" },
+  no_signers: { es: "Agregá al menos un firmante", "pt-BR": "Adicione pelo menos um signatário", en: "Add at least one signer" },
+  no_active_signer: {
+    es: "Tiene que quedar al menos un firmante o aprobador",
+    "pt-BR": "Precisa restar pelo menos um signatário ou aprovador",
+    en: "At least one signer or approver must remain",
+  },
+  signer_without_signature: { es: "{name} no tiene ningún campo de firma", "pt-BR": "{name} não tem nenhum campo de assinatura", en: "{name} has no signature field" },
+  expiry_past: { es: "La fecha de vencimiento ya pasó", "pt-BR": "A data de vencimento já passou", en: "The expiration date has already passed" },
+  too_many_attachment_fields: {
+    es: "Máximo {max} campos de adjunto por sobre",
+    "pt-BR": "Máximo de {max} campos de anexo por envelope",
+    en: "At most {max} attachment fields per envelope",
+  },
+  too_many_recipients: { es: "El sobre admite hasta {max} destinatarios", "pt-BR": "O envelope admite até {max} destinatários", en: "The envelope allows up to {max} recipients" },
+  too_many_fields: { es: "El sobre admite hasta {max} campos", "pt-BR": "O envelope admite até {max} campos", en: "The envelope allows up to {max} fields" },
+  formula_missing_ref: {
+    es: 'La fórmula de "{field}" cita {refs}, que ya no está en el sobre',
+    "pt-BR": 'A fórmula de "{field}" cita {refs}, que não está mais no envelope',
+    en: 'The formula of "{field}" refers to {refs}, which is no longer in the envelope',
+  },
+  payer_not_signer: {
+    es: "Quien paga el cobro tiene que ser un firmante",
+    "pt-BR": "Quem paga a cobrança precisa ser um signatário",
+    en: "Whoever pays must be a signer",
+  },
+  logic_order: {
+    es: 'El campo "{field}" de {recipient} depende de un campo de {source}, que firma después o al mismo tiempo',
+    "pt-BR": 'O campo "{field}" de {recipient} depende de um campo de {source}, que assina depois ou ao mesmo tempo',
+    en: 'The field "{field}" of {recipient} depends on a field of {source}, who signs later or at the same time',
+  },
+  logic_order_formula: {
+    es: 'El campo "{field}" de {recipient} depende de un campo de {source} (a través de la fórmula de "{formula}"), que firma después o al mismo tiempo',
+    "pt-BR": 'O campo "{field}" de {recipient} depende de um campo de {source} (pela fórmula de "{formula}"), que assina depois ou ao mesmo tempo',
+    en: 'The field "{field}" of {recipient} depends on a field of {source} (through the formula of "{formula}"), who signs later or at the same time',
+  },
+};
+
+/** Texto de un ítem de details.issues (o de details.problems, solo texto, en APIs viejas) en el idioma de la app. */
+export function problemText(p: unknown, loc: "es" | "pt-BR" | "en"): string {
+  if (!p || typeof p !== "object") return String(p);
+  const { code, params, message } = p as { code?: unknown; params?: unknown; message?: unknown };
+  const tpl = typeof code === "string" ? PROBLEM_TEXT[code]?.[loc] : undefined;
+  if (!tpl) return typeof message === "string" ? message : String(code ?? "");
+  const vars = (params && typeof params === "object" ? params : {}) as Record<string, unknown>;
+  return tpl.replace(/\{(\w+)\}/g, (m, k: string) => (vars[k] == null ? m : String(vars[k])));
+}
 
 // Encabezado traducido de los errores que traen la lista de problemas (en el texto de la API, en español).
 const PROBLEMS_HEADER: Record<string, Record<"es" | "pt-BR" | "en", string>> = {
@@ -405,10 +514,12 @@ export function errorText(e: unknown): string {
       const list = Array.isArray(missing) ? [...new Set(missing.map(String))].join(", ") : "";
       return (loc === "en" ? "Still to complete: " : "Ainda falta preencher: ") + list;
     }
-    const problems = (e.details as { problems?: unknown } | undefined)?.problems;
+    const det = e.details as { problems?: unknown; issues?: unknown } | undefined;
+    const problems = Array.isArray(det?.issues) ? det.issues : det?.problems;
     if (PROBLEMS_HEADER[e.code] && Array.isArray(problems) && problems.length) {
-      return `${PROBLEMS_HEADER[e.code][loc] ?? PROBLEMS_HEADER[e.code].es} ${problems.map(String).join(". ")}`;
+      return `${PROBLEMS_HEADER[e.code][loc] ?? PROBLEMS_HEADER[e.code].es} ${problems.map((p) => problemText(p, loc)).join(". ")}`;
     }
+    if (e.code === "file_too_large" && (e.details as { limit?: unknown } | undefined)?.limit === "total") return FILE_TOO_LARGE_TOTAL[loc] ?? FILE_TOO_LARGE_TOTAL.es;
     const tr = loc !== "es" ? detailText(e.code, e.details, loc) ?? CODE_TEXT[e.code]?.[loc] : undefined;
     return tr ?? (e.message || (NO_MESSAGE[loc] ?? NO_MESSAGE.es)(e.status));
   }

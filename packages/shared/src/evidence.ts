@@ -100,6 +100,8 @@ export interface SealOptions {
   companySealCertificateId: string | null;
   companySeal: { name: string; commonName: string | null } | null;
   signatureLevel: SignatureLevel;
+  /** updatedAt del sobre tras leer o guardar (el editor lo usa para su control de edición concurrente). */
+  envelopeUpdatedAt: string;
 }
 
 // ───────────── Validación de PDF ─────────────

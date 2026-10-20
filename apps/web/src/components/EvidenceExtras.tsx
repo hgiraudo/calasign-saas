@@ -1,7 +1,7 @@
 // Piezas de evidencia reutilizables: opciones de sello del sobre y reporte técnico de validación.
 import { useEffect, useState } from "react";
 import type { PdfValidationResponse, SealOptions, SignatureLevel, TenantCertificate } from "@calasign/shared";
-import { api, errorText } from "../lib/api";
+import { api, errorText, isVersionChanged, runVersioned, type VersionedSave } from "../lib/api";
 import { formatDateTime, useI18n } from "../lib/i18n";
 import { useEvidenceText } from "../lib/i18n-evidence";
 import { ErrorBox } from "./ui";
@@ -14,19 +14,21 @@ export function SealOptionsPanel({
   envelopeId,
   disabled,
   sealOnly,
-  onSaved,
+  versioned,
 }: {
   envelopeId: string;
   disabled?: boolean;
   sealOnly?: boolean;
-  /** Tras guardar (cambia el updatedAt del sobre: el editor lo vuelve a leer para su control de versión). */
-  onSaved?: () => void;
+  /** Control de versión del editor (guardar cambia el updatedAt del sobre). */
+  versioned?: VersionedSave;
 }) {
   const ev = useEvidenceText();
   const [opts, setOpts] = useState<SealOptions | null>(null);
   const [certs, setCerts] = useState<TenantCertificate[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  // Mientras se guarda no se puede volver a cambiar (dos cambios seguidos podían llegar en otro orden).
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     api<SealOptions>(`/v1/envelopes/${envelopeId}/seal-options`).then(setOpts).catch((e) => setError(errorText(e)));
@@ -38,12 +40,21 @@ export function SealOptionsPanel({
   const save = async (patch: { companySealCertificateId?: string | null; signatureLevel?: SignatureLevel }) => {
     setError(null);
     setSaved(false);
+    setSaving(true);
     try {
-      setOpts(await api<SealOptions>(`/v1/envelopes/${envelopeId}/seal-options`, { method: "PUT", body: patch }));
+      setOpts(
+        await runVersioned(
+          versioned,
+          (headers) => api<SealOptions>(`/v1/envelopes/${envelopeId}/seal-options`, { method: "PUT", body: patch, headers }),
+          (r) => r.envelopeUpdatedAt,
+        ),
+      );
       setSaved(true);
-      onSaved?.();
     } catch (e) {
-      setError(errorText(e));
+      // El editor ya avisa que el borrador cambió (con el botón para recargar).
+      if (!(versioned && isVersionChanged(e))) setError(errorText(e));
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -63,7 +74,7 @@ export function SealOptionsPanel({
             <span>{ev("seal.level")}</span>
           <select
             value={opts.signatureLevel}
-            disabled={disabled}
+            disabled={disabled || saving}
             onChange={(e) => void save({ signatureLevel: e.target.value as SignatureLevel })}
             data-testid="seal-level"
           >
@@ -79,7 +90,7 @@ export function SealOptionsPanel({
           <span>{ev("seal.company")}</span>
           <select
             value={opts.companySealCertificateId ?? ""}
-            disabled={disabled || (certs.length === 0 && !opts.companySealCertificateId)}
+            disabled={disabled || saving || (certs.length === 0 && !opts.companySealCertificateId)}
             onChange={(e) => void save({ companySealCertificateId: e.target.value || null })}
             data-testid="company-seal"
           >

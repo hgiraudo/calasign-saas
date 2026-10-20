@@ -1,12 +1,27 @@
 // Compartir un sobre o una plantilla con grupos de la organización.
 import { useEffect, useState } from "react";
 import type { Group, SharesResponse } from "@calasign/shared";
-import { api, errorText } from "../lib/api";
+import { api, errorText, isVersionChanged, runVersioned, type VersionedSave } from "../lib/api";
 import { useTeamsText } from "../lib/i18n-teams";
 import { ErrorBox, Modal } from "./ui";
 
-/** `onSaved`: tras guardar (la visibilidad de una plantilla cambia su updatedAt; el editor lo vuelve a leer). */
-export function ShareControl({ kind, id, canEdit, onSaved }: { kind: "envelopes" | "templates"; id: string; canEdit: boolean; onSaved?: () => void }) {
+/**
+ * `versioned`: control de versión del editor de plantillas (la visibilidad cambia el updatedAt de la plantilla; los
+ * grupos de un sobre no cambian el del sobre). `disabled`: el editor está guardando.
+ */
+export function ShareControl({
+  kind,
+  id,
+  canEdit,
+  versioned,
+  disabled,
+}: {
+  kind: "envelopes" | "templates";
+  id: string;
+  canEdit: boolean;
+  versioned?: VersionedSave;
+  disabled?: boolean;
+}) {
   const tt = useTeamsText();
   const [shares, setShares] = useState<SharesResponse | null>(null);
   const [groups, setGroups] = useState<Group[] | null>(null);
@@ -39,11 +54,18 @@ export function ShareControl({ kind, id, canEdit, onSaved }: { kind: "envelopes"
     setError(null);
     try {
       const body = kind === "templates" ? { groupIds: selected, visibility } : { groupIds: selected };
-      setShares(await api<SharesResponse>(`/v1/${kind}/${id}/shares`, { method: "PUT", body }));
+      setShares(
+        await runVersioned(
+          versioned,
+          (headers) => api<SharesResponse>(`/v1/${kind}/${id}/shares`, { method: "PUT", body, headers }),
+          (r) => r.templateUpdatedAt,
+        ),
+      );
       setOpen(false);
-      onSaved?.();
     } catch (e) {
-      setError(errorText(e));
+      // El editor avisa que la plantilla cambió (con el botón para recargar): el modal se cierra para verlo.
+      if (versioned && isVersionChanged(e)) setOpen(false);
+      else setError(errorText(e));
     } finally {
       setBusy(false);
     }
@@ -72,7 +94,7 @@ export function ShareControl({ kind, id, canEdit, onSaved }: { kind: "envelopes"
               <button type="button" className="btn" onClick={() => setOpen(false)}>
                 {tt("common.cancel")}
               </button>
-              <button type="button" className="btn btn-primary" disabled={busy} onClick={save}>
+              <button type="button" className="btn btn-primary" disabled={busy || disabled} onClick={save}>
                 {tt("common.save")}
               </button>
             </>

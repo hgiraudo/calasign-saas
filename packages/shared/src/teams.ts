@@ -173,6 +173,8 @@ export interface SharesResponse {
   groups: { id: string; name: string }[];
   /** Solo plantillas. */
   visibility?: "organization" | "restricted";
+  /** Solo al guardar los de una plantilla: su updatedAt (el editor lo usa para su control de edición concurrente). */
+  templateUpdatedAt?: string;
 }
 
 // ───────────────────────────── Auditoría de cuenta ─────────────────────────────

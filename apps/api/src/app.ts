@@ -10,7 +10,7 @@ import { ZodError } from "zod";
 import { config } from "./config";
 import type { Db } from "./infra/db";
 import type { BlobStore } from "./infra/storage";
-import { AppError } from "./lib/errors";
+import { AppError, rateLimitError } from "./lib/errors";
 import { requestPath } from "./lib/util";
 import { LOG_REDACT_PATHS, safeRequestSerializer } from "./lib/redact";
 import { readMailbox } from "./notifications/channels";
@@ -95,6 +95,8 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
     max: 600,
     timeWindow: "1 minute",
     allowList: config.environment === "local" ? ["127.0.0.1", "::1", "::ffff:127.0.0.1"] : [],
+    // Código rate_limited y texto en español (los conectores y SDK tratan rate_limited igual que el bad_request de antes).
+    errorResponseBuilder: rateLimitError,
   });
 
   app.setErrorHandler((err: FastifyError | Error, req, reply) => {

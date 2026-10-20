@@ -548,9 +548,9 @@ export const ERRORS: Record<string, Err> = {
 
   rate_limited: {
     status: 429,
-    code: "bad_request",
-    message: "Rate limit exceeded, retry in 1 minute",
-    summary: "Límite de pedidos por IP superado. Ojo: el código es bad_request (no rate_limited); usar el status 429 y Retry-After.",
+    code: "rate_limited",
+    message: "Demasiados pedidos seguidos: esperá 42 s y reintentá",
+    summary: "Límite de pedidos por IP superado: esperar lo que indica Retry-After (segundos) y reintentar. Versiones anteriores de la API respondían este 429 con el código bad_request.",
   },
 };
 

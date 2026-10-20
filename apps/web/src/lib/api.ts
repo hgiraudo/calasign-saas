@@ -16,6 +16,27 @@ export class HttpError extends Error {
 
 export const UNAUTHORIZED_EVENT = "calasign:unauthorized";
 
+/** El recurso cambió desde que se cargó (otra pestaña u otra persona): 409 version_changed de X-Expected-Updated-At. */
+export function isVersionChanged(e: unknown): boolean {
+  return e instanceof HttpError && e.code === "version_changed";
+}
+
+/**
+ * Guardado de un panel que también cambia el updatedAt del sobre o la plantilla abiertos en un editor (sello, asistencia
+ * de IA, visibilidad): el editor le pasa su X-Expected-Updated-At, queda ocupado hasta que termina y adopta el updatedAt
+ * que devuelve la API (si otro lo cambió antes, la API responde 409 version_changed y el editor lo avisa). Antes se
+ * volvía a leer el sobre sin esperar: se adoptaba la versión de otro sin sus datos y un guardado inmediato daba 409.
+ */
+export type VersionedSave = <T>(
+  save: (headers: Record<string, string> | undefined) => Promise<T>,
+  updatedAtOf: (r: T) => string | null | undefined,
+) => Promise<T>;
+
+/** Corre `save` con el control de versión del editor si lo hay (fuera de un editor, sin encabezado). */
+export function runVersioned<T>(versioned: VersionedSave | undefined, save: (headers: Record<string, string> | undefined) => Promise<T>, updatedAtOf: (r: T) => string | null | undefined): Promise<T> {
+  return versioned ? versioned(save, updatedAtOf) : save(undefined);
+}
+
 interface RequestOptions {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;
@@ -318,9 +339,21 @@ const NO_MESSAGE: Record<"es" | "pt-BR" | "en", (status: number) => string> = {
   en: (n) => `The server didn't respond as expected (HTTP ${n}). Try again in a few seconds.`,
 };
 
+// 429 del límite de pedidos por IP: código rate_limited (antes bad_request, con el texto del plugin en inglés; un proxy
+// puede responderlo sin cuerpo). Los topes de negocio (reminded_recently, form_rate_limited…) traen su propio texto.
+const RATE_LIMITED: Record<"es" | "pt-BR" | "en", string> = {
+  es: "Demasiados pedidos seguidos: esperá un minuto y reintentá.",
+  "pt-BR": "Muitas requisições seguidas: aguarde um minuto e tente novamente.",
+  en: "Too many requests in a row: wait a minute and try again.",
+};
+
 export function errorText(e: unknown): string {
   if (e instanceof HttpError) {
     const loc = currentLocale();
+    if (e.status === 429 && (e.code === "rate_limited" || e.code === "bad_request" || e.code === "http_429")) {
+      // En español, el texto de la API (dice cuántos segundos esperar) si es el nuevo; si no, el propio.
+      return loc === "es" && e.code === "rate_limited" && e.message ? e.message : RATE_LIMITED[loc] ?? RATE_LIMITED.es;
+    }
     const missing = (e.details as { missing?: unknown } | undefined)?.missing;
     if (loc !== "es" && e.code === "fields_incomplete") {
       const list = Array.isArray(missing) ? [...new Set(missing.map(String))].join(", ") : "";

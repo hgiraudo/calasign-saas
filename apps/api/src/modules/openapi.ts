@@ -383,7 +383,8 @@ const OPS: Op[] = [
       "Valida el borrador (documentos, firmantes con campo de firma, vencimiento, fórmulas, cobro) y envía las invitaciones al primer grupo de ruteo. Cuenta para el cupo mensual del plan." + IDEMPOTENT_NOTE,
     response: EnvelopeDetailSchema,
     idempotent: true,
-    errors: ["not_draft", "envelope_incomplete", "plan_limit_envelopes"],
+    expectedUpdatedAt: true,
+    errors: ["not_draft", "envelope_incomplete", "plan_limit_envelopes", "version_changed"],
   },
   { method: "post", path: "/v1/envelopes/{id}/void", operationId: "voidEnvelope", tag: "Sobres", summary: "Anular un sobre en curso", body: VoidEnvelopeInput, response: EnvelopeDetailSchema, errors: ["not_voidable"] },
   {
@@ -1109,10 +1110,12 @@ const OPS: Op[] = [
     operationId: "putTemplateShares",
     tag: "Equipo",
     summary: "Visibilidad de la plantilla y grupos",
-    description: "restricted: la ven su creador, quien tiene templates:manage y los grupos de la lista.",
+    description:
+      "restricted: la ven su creador, quien tiene templates:manage y los grupos de la lista. Cambiar la visibilidad cambia el `updatedAt` de la plantilla (devuelto en `templateUpdatedAt`).",
     body: PutTemplateSharesInput,
-    response: SharesSchema.extend({ visibility: z.enum(["organization", "restricted"]) }),
-    errors: ["invalid_group"],
+    response: SharesSchema.extend({ visibility: z.enum(["organization", "restricted"]), templateUpdatedAt: z.string().datetime() }),
+    expectedUpdatedAt: true,
+    errors: ["invalid_group", "version_changed"],
   },
   {
     method: "get",

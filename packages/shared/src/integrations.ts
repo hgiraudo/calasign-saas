@@ -39,6 +39,11 @@ export interface WebhookEndpoint {
   secretPrefix: string;
   /** Hasta cuándo se firma también con el secreto anterior (después de rotarlo). */
   previousSecretExpiresAt?: string | null;
+  /**
+   * Solo lectura: `credential_revoked` si está inactivo porque se revocó la credencial que lo creó (reactivarlo lo ata a
+   * la credencial actual); `null` si está activo o se pausó a mano.
+   */
+  deactivatedReason?: "credential_revoked" | null;
   createdAt: string;
   updatedAt: string;
 }

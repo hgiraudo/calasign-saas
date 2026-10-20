@@ -16,7 +16,7 @@ import type {
   Recipient,
   SignerAiInfo,
 } from "@calasign/shared";
-import { api, errorText, uuid } from "../lib/api";
+import { api, errorText, isVersionChanged, runVersioned, uuid, type VersionedSave } from "../lib/api";
 import { formatDateTime, formatDay, useI18n } from "../lib/i18n";
 import { parseAmountText } from "../lib/logic";
 import { useAiText } from "../lib/i18n-ai";
@@ -191,19 +191,29 @@ function CitationLine({ c }: { c: AiCitation }) {
   );
 }
 
-/** `onSaved`: tras cambiar la asistencia al firmante (cambia el updatedAt del sobre; el editor lo vuelve a leer). */
-export function AiReviewPanel({ envelopeId, onSaved }: { envelopeId: string; onSaved?: () => void }) {
+/**
+ * `versioned`: control de versión del editor (cambiar la asistencia al firmante cambia el updatedAt del sobre).
+ * `disabled`: el editor está guardando.
+ */
+export function AiReviewPanel({ envelopeId, versioned, disabled }: { envelopeId: string; versioned?: VersionedSave; disabled?: boolean }) {
   const ai = useAiText();
   const { locale } = useI18n();
   const [settings, setSettings] = useState<AiSettings | null>(null);
-  const [assist, setAssist] = useState(false);
+  // null mientras carga o si no se pudo leer: no se muestra "desmarcado" (y guardarlo así la apagaba sin querer).
+  const [assist, setAssist] = useState<boolean | null>(null);
+  const [assistError, setAssistError] = useState<string | null>(null);
+  const [toggling, setToggling] = useState(false);
   const [review, setReview] = useState<PlaybookReviewResponse | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     api<AiSettings>("/v1/settings/ai").then(setSettings).catch(() => setSettings(null));
-    api<EnvelopeAiMetadata>(`/v1/envelopes/${envelopeId}/ai/metadata`).then((m) => setAssist(m.signerAssist)).catch(() => {});
+    setAssist(null);
+    setAssistError(null);
+    api<EnvelopeAiMetadata>(`/v1/envelopes/${envelopeId}/ai/metadata`)
+      .then((m) => setAssist(m.signerAssist))
+      .catch((e) => setAssistError(errorText(e)));
     api<PlaybookReviewResponse | null>(`/v1/envelopes/${envelopeId}/ai/review`).then(setReview).catch(() => {});
   }, [envelopeId]);
 
@@ -217,14 +227,23 @@ export function AiReviewPanel({ envelopeId, onSaved }: { envelopeId: string; onS
     );
   }
 
+  // Uno a la vez: con clics seguidos, las respuestas podían llegar en otro orden y dejar el valor equivocado.
   const toggle = async (v: boolean) => {
+    if (toggling) return;
+    setToggling(true);
     setError(null);
     try {
-      const m = await api<EnvelopeAiMetadata>(`/v1/envelopes/${envelopeId}/ai/settings`, { method: "PATCH", body: { signerAssist: v } });
+      const m = await runVersioned(
+        versioned,
+        (headers) => api<EnvelopeAiMetadata>(`/v1/envelopes/${envelopeId}/ai/settings`, { method: "PATCH", body: { signerAssist: v }, headers }),
+        (r) => r.envelopeUpdatedAt,
+      );
       setAssist(m.signerAssist);
-      onSaved?.();
     } catch (e) {
-      setError(errorText(e));
+      // El editor ya avisa que el borrador cambió (con el botón para recargar).
+      if (!(versioned && isVersionChanged(e))) setError(errorText(e));
+    } finally {
+      setToggling(false);
     }
   };
 
@@ -244,9 +263,16 @@ export function AiReviewPanel({ envelopeId, onSaved }: { envelopeId: string; onS
     <fieldset className="field ai-panel">
       <legend>✨ {ai("review.title")}</legend>
       <label className="check">
-        <input type="checkbox" checked={assist} onChange={(e) => void toggle(e.target.checked)} />
+        <input
+          type="checkbox"
+          checked={assist ?? false}
+          disabled={assist === null || toggling || disabled}
+          aria-busy={toggling || undefined}
+          onChange={(e) => void toggle(e.target.checked)}
+        />
         {ai("review.signerAssist")}
       </label>
+      {assistError && <ErrorBox error={`${ai("review.signerAssistLoadError")} ${assistError}`} />}
       {settings.playbook.length === 0 ? (
         <p className="muted small">{ai("review.empty")}</p>
       ) : (

@@ -40,6 +40,9 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monosp
 .right { text-align: right; }
 .grow { flex: 1; min-width: 0; }
 .break { word-break: break-all; }
+/* Formulario bloqueado mientras se guarda (<fieldset disabled>) sin el borde ni el margen del fieldset (antes de .pad y
+   .card, que lo pisan). */
+.form-lock { border: 0; padding: 0; margin: 0; min-width: 0; }
 .pad { padding: 1rem; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .stack { display: flex; flex-direction: column; gap: 0.85rem; }

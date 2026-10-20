@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import type { Document, RecipientRole, TemplateDetail } from "@calasign/shared";
 import { LOCALES } from "@calasign/shared";
-import { HttpError, api, errorText, fieldErrorIndex, uuid } from "../lib/api";
+import { HttpError, api, errorText, fieldErrorIndex, isVersionChanged, uuid, type VersionedSave } from "../lib/api";
 import { LOCALE_LABELS, useI18n, useUnsavedWarning, confirmAction } from "../lib/i18n";
 import { forgetPdf } from "../lib/pdf";
 import { FieldEditor, validateFields, type DraftField } from "../components/FieldEditor";
@@ -77,15 +77,23 @@ export function TemplateEditPage() {
     setDetail(d);
   }, []);
   const expected = () => (version.current ? { "X-Expected-Updated-At": version.current } : undefined);
-  // Compartir con otra visibilidad también cambia el updatedAt: se vuelve a leer para no chocar con un cambio propio.
-  const refreshVersion = useCallback(() => {
-    api<TemplateDetail>(`/v1/templates/${id}`)
-      .then((d) => {
-        // Solo hacia adelante: dos lecturas que vuelven en otro orden no dejan la versión más vieja.
-        if (!version.current || d.template.updatedAt > version.current) version.current = d.template.updatedAt;
-      })
-      .catch(() => {});
-  }, [id]);
+  // Compartir con otra visibilidad también cambia el updatedAt: se guarda con la versión del editor (si otro cambió la
+  // plantilla, 409 y el aviso de recargar), el editor queda ocupado hasta que termina y adopta el updatedAt devuelto.
+  // Antes se volvía a leer sin esperar: se adoptaba la versión de otro sin sus datos y un guardado inmediato daba 409.
+  const versioned: VersionedSave = useCallback(async (save, updatedAtOf) => {
+    setBusy(true);
+    try {
+      const r = await save(version.current ? { "X-Expected-Updated-At": version.current } : undefined);
+      const u = updatedAtOf(r);
+      if (u) version.current = u;
+      return r;
+    } catch (e) {
+      if (isVersionChanged(e)) setStale(true);
+      throw e;
+    } finally {
+      setBusy(false);
+    }
+  }, []);
 
   const apply = useCallback((d: TemplateDetail) => {
     track(d);
@@ -230,7 +238,7 @@ export function TemplateEditPage() {
             ← {t("tpl.title")}
           </Link>
           <h1>{info.name || detail.template.name}</h1>
-          <ShareControl kind="templates" id={id!} canEdit onSaved={refreshVersion} />
+          <ShareControl kind="templates" id={id!} canEdit versioned={versioned} disabled={busy} />
         </div>
         {/* Se guarda el paso actual antes de usarla: con un Link, los cambios sin guardar se perdían y el sobre salía
             con la versión anterior de la plantilla. */}
@@ -267,8 +275,9 @@ export function TemplateEditPage() {
         </div>
       )}
 
+      {/* Bloqueado mientras se guarda: la respuesta marca el paso como guardado y lo tipeado entretanto se perdía. */}
       {step === "details" && (
-        <div className="card pad stack">
+        <fieldset className="form-lock card pad stack" disabled={busy} aria-busy={busy || undefined}>
           <label className="field">
             <span>{t("tpl.name")}</span>
             <input
@@ -334,7 +343,7 @@ export function TemplateEditPage() {
               ))}
             </select>
           </label>
-        </div>
+        </fieldset>
       )}
 
       {step === "documents" && (
@@ -344,17 +353,17 @@ export function TemplateEditPage() {
           setError={setError}
           busy={busy}
           setBusy={setBusy}
-          onChanged={async () => {
-            const d = await api<TemplateDetail>(`/v1/templates/${id}`);
-            track(d);
-            setFields(toDraftFields(d));
-          }}
+          // Todo lo de la plantilla, no solo los campos: con track + campos se adoptaba la versión del servidor sin sus
+          // datos (nombre, roles de otra pestaña) y el próximo guardado los pisaba sin 409. Acá no hay cambios sin
+          // guardar: go() guarda el paso anterior antes de llegar a documentos.
+          onChanged={async () => apply(await api<TemplateDetail>(`/v1/templates/${id}`))}
         />
       )}
 
       {step === "roles" && (
         <RolesStep
           roles={roles}
+          busy={busy}
           fieldCount={(rid) => fields.filter((f) => f.recipientId === rid).length}
           onChange={(r) => {
             setRoles(r);
@@ -504,10 +513,13 @@ function TemplateDocuments({
 
 function RolesStep({
   roles,
+  busy,
   fieldCount,
   onChange,
 }: {
   roles: DraftRole[];
+  /** Guardando: bloqueado (al volver, la respuesta reemplaza los roles y lo tipeado entretanto se perdía). */
+  busy: boolean;
   /** Campos ubicados para el rol (se borran al guardar si deja de ser firmante). */
   fieldCount: (roleId: string) => number;
   onChange: (r: DraftRole[]) => void;
@@ -516,7 +528,7 @@ function RolesStep({
   const set = (i: number, patch: Partial<DraftRole>) => onChange(roles.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   let signerIdx = -1;
   return (
-    <div className="stack">
+    <fieldset className="form-lock stack" disabled={busy} aria-busy={busy || undefined}>
       <p className="muted small">
         {t("tpl.rolesHint")} {t("edit.orderHint")}
       </p>
@@ -578,6 +590,6 @@ function RolesStep({
       >
         + {t("tpl.addRole")}
       </button>
-    </div>
+    </fieldset>
   );
 }

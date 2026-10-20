@@ -565,12 +565,12 @@ export const docsEn: Record<DocsKey, string> = {
   "err.c.conflict": "The resource's state doesn't allow the operation: for example, modifying an envelope that's no longer a draft or voiding a finished one.",
   "err.c.idem": "You reused an `Idempotency-Key` with a different body, or the original request is still being processed (retry in a few seconds).",
   "err.c.versionChanged":
-    "Concurrent editing control: you sent `X-Expected-Updated-At` with the `updatedAt` you read when modifying a draft (`PATCH /v1/envelopes/{id}`, `PUT …/recipients`, `PUT …/fields`) or a template (`PATCH /v1/templates/{id}`, `PUT …/roles`, `PUT …/fields`) and someone changed it in the meantime. `details.updatedAt` has the current value: reload, review and retry. Without the header nothing is checked. In a negotiation it means there's a new version.",
+    "Concurrent editing control: you sent `X-Expected-Updated-At` with the `updatedAt` you read when modifying a draft (`PATCH /v1/envelopes/{id}`, `PUT …/recipients`, `PUT …/fields`, `PUT …/seal-options`, `PATCH …/ai/settings`) or a template (`PATCH /v1/templates/{id}`, `PUT …/roles`, `PUT …/fields`, `PUT …/shares`), or when sending it (`POST …/send`), and someone changed it in the meantime. `details.updatedAt` has the current value: reload, review and retry. Without the header nothing is checked. In a negotiation it means there's a new version.",
   "err.c.purged":
     "The envelope's originals were deleted by the organization's retention policy (counted from when the envelope ended: completed, voided, declined or expired). `410` when downloading the original, creating a template from the envelope or using AI; `409` when cloning it. The signed PDF and the evidence are kept.",
   "err.c.tooLarge": "The file exceeds the maximum size.",
   "err.c.unprocessable": "The request is valid but can't be processed with that data (missing template roles, invalid rows, PDF too heavy to search for anchors).",
-  "err.c.rate": "You exceeded the per-IP rate limit (no specific code). Wait as long as the `retry-after` header says (in seconds) and retry.",
+  "err.c.rate": "You exceeded the per-IP rate limit (code `rate_limited`; earlier API versions sent `bad_request`). Wait as long as the `retry-after` header says (in seconds) and retry.",
   "err.c.rateBiz":
     "Business cap with its own code (`reminded_recently`, `form_rate_limited`, `workflow_rate_limited`, `ai_signer_limit`, `ai_budget_exceeded`, `too_many_comments`, `too_many_proposals`, `archive_recently_renewed`, `too_many_attempts`). There's no `retry-after`: don't retry it in a loop; tell the user or try much later.",
   "err.c.internal": "Our error. It's safe to retry with increasing backoff; if you use `Idempotency-Key`, nothing gets duplicated.",

@@ -55,6 +55,7 @@ const es = {
 
   "review.title": "Revisión con IA",
   "review.signerAssist": "Permitir al firmante pedir un resumen y hacer preguntas sobre el documento (con IA)",
+  "review.signerAssistLoadError": "No se pudo leer si la asistencia al firmante está activada:",
   "review.run": "Revisar contra el playbook",
   "review.running": "Revisando…",
   "review.empty": "Cargá reglas en Ajustes → Inteligencia artificial para revisar contratos.",
@@ -154,6 +155,7 @@ const ptBR: Record<Key, string> = {
   "type.name": "Nome",
   "review.title": "Revisão com IA",
   "review.signerAssist": "Permitir que o signatário peça um resumo e faça perguntas sobre o documento (com IA)",
+  "review.signerAssistLoadError": "Não foi possível verificar se a assistência ao signatário está ativada:",
   "review.run": "Revisar com o playbook",
   "review.running": "Revisando…",
   "review.empty": "Cadastre regras em Configurações → Inteligência artificial para revisar contratos.",
@@ -249,6 +251,7 @@ const en: Record<Key, string> = {
   "type.name": "Name",
   "review.title": "AI review",
   "review.signerAssist": "Let the signer request a summary and ask questions about the document (with AI)",
+  "review.signerAssistLoadError": "Couldn't check whether signer assistance is on:",
   "review.run": "Review against the playbook",
   "review.running": "Reviewing…",
   "review.empty": "Add rules in Settings → Artificial intelligence to review contracts.",

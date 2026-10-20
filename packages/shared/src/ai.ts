@@ -172,6 +172,8 @@ export interface EnvelopeAiMetadata {
   renewalAlertSentAt: string | null;
   signerAssist: boolean;
   usage: AiUsageInfo | null;
+  /** updatedAt del sobre (el editor lo usa para su control de edición concurrente tras cambiar signerAssist). */
+  envelopeUpdatedAt: string | null;
 }
 
 // ───────── Revisión contra el playbook ─────────

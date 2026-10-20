@@ -17,7 +17,7 @@ const CODES: [string, string, string][] = [
   ["410 · 409", "purged", "err.c.purged"],
   ["413", "file_too_large", "err.c.tooLarge"],
   ["422", "roles_missing · rows_invalid · pdf_too_heavy", "err.c.unprocessable"],
-  ["429", "bad_request + retry-after", "err.c.rate"],
+  ["429", "rate_limited + retry-after", "err.c.rate"],
   ["429", "reminded_recently · form_rate_limited · ai_signer_limit · …", "err.c.rateBiz"],
   ["500", "internal_error", "err.c.internal"],
 ];

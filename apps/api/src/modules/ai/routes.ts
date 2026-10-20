@@ -1,4 +1,4 @@
-import { pastExpiry } from "../envelopes";
+import { lockEnvelope, pastExpiry } from "../envelopes";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import {
   AI_FEATURES,
@@ -23,7 +23,7 @@ import {
 import { config } from "../../config";
 import { appendEvent } from "../../infra/evidence";
 import { runAiSweep } from "./sweep";
-import { AppError, badRequest, notFound } from "../../lib/errors";
+import { AppError, assertNotStale, badRequest, notFound } from "../../lib/errors";
 import { identityBlocking } from "../identity/kyc";
 import { iso, uuidv7 } from "../../lib/util";
 import { authenticate, type AuthContext, type Services } from "../context";
@@ -224,7 +224,12 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
     const { a, e } = await envelopeOf(s, req);
     const input = UpdateEnvelopeAiInput.parse(req.body);
     if (input.signerAssist) await assertAiAvailable(s.db, a.tenantId, { reserve: false });
-    await s.db.query(`UPDATE envelopes SET ai_signer_assist = $2, updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 millisecond') WHERE id = $1`, [e.id, input.signerAssist]);
+    await s.db.tx(async (t) => {
+      const cur = await lockEnvelope(t, a.tenantId, e.id);
+      // Cambia el updatedAt del sobre: con X-Expected-Updated-At (el editor lo manda) no tapa una edición ajena.
+      assertNotStale(req.headers, cur.updated_at);
+      await t.query(`UPDATE envelopes SET ai_signer_assist = $2, updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 millisecond') WHERE id = $1`, [e.id, input.signerAssist]);
+    });
     return metadataView(s, e.id);
   });
 
@@ -422,5 +427,6 @@ async function metadataView(s: Services, envelopeId: string): Promise<EnvelopeAi
     renewalAlertSentAt: iso(e?.ai_renewal_alert_sent_at),
     signerAssist: Boolean(e?.ai_signer_assist),
     usage: null,
+    envelopeUpdatedAt: e?.updated_at ? new Date(e.updated_at).toISOString() : null,
   };
 }

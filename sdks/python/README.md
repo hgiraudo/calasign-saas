@@ -51,8 +51,11 @@ CalaSign(oauth=ClientCredentials("csapp_…", "cssec_…", scope="envelopes:read
 - Edición concurrente de borradores: `envelopes.update`, `set_recipients` y `set_fields` aceptan
   `expected_updated_at=detail["envelope"]["updatedAt"]` (header `X-Expected-Updated-At`). Si el borrador cambió desde
   que lo cargaste, 409 `version_changed` con `e.details["updatedAt"]` (el actual): recargá, reaplicá y reintentá.
+  Con `expected_updated_at` el cliente no reintenta solo ante errores de red ni 5xx (sí ante 429 y 503, que la API
+  responde sin procesar): si el primer intento se guardó y se perdió la respuesta, el reintento daría un
+  `version_changed` falso. Ante un `network_error` o un 5xx, recargá el sobre y comprobá si el cambio quedó aplicado.
 - `envelopes.void` se reintenta ante errores de red/5xx; si un reintento recibe 409 `not_voidable` porque el primer
-  intento ya lo anuló, el cliente lo confirma con un GET y devuelve el sobre anulado. Anular dos veces a propósito sigue
+  intento ya lo anuló (solo tras un reintento por red o 500/502/504, no por 429/503), el cliente lo confirma con un GET y devuelve el sobre anulado. Anular dos veces a propósito sigue
   dando 409 `not_voidable`.
 - Errores como `CalaSignError` con `.status`, `.code`, `.details`, `.request_id` (header `X-Request-Id`, para soporte)
   e `.idempotency_key` (la del pedido, si tenía: reintentá con `idempotency_key=e.idempotency_key` sin riesgo de

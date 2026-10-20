@@ -121,14 +121,19 @@ export interface RequestOptions {
   raw?: boolean;
   /** Cancela el pedido (y las esperas entre reintentos); se combina con el timeout de cada intento. */
   signal?: AbortSignal;
-  /** Se llama antes de cada reintento (error de red, 429/5xx o corte al leer la respuesta). */
+  /**
+   * Se llama antes de cada reintento en el que el intento anterior PUDO haberse procesado en el servidor (error de red,
+   * corte al leer la respuesta o 500/502/504). No se llama ante 408/425/429/503, que la API responde sin procesar.
+   */
   onRetry?: () => void;
 }
 
 /**
  * Control de concurrencia de los borradores: el `updatedAt` del sobre (o plantilla) que cargaste. Si cambió desde
  * entonces (otra persona o proceso lo editó), la API responde 409 `version_changed` con `details.updatedAt` (el valor
- * actual): volvé a cargar, reaplicá el cambio y reintentá con el nuevo `updatedAt`.
+ * actual): volvé a cargar, reaplicá el cambio y reintentá con el nuevo `updatedAt`. Con esta opción el SDK no reintenta
+ * solo ante errores de red ni 5xx (sí ante 429 y 503): un reintento de un intento que se guardó daría un
+ * `version_changed` falso. Ante un `network_error` o 5xx, recargá el sobre y comprobá si el cambio quedó aplicado.
  */
 export interface DraftEditOptions {
   expectedUpdatedAt?: string | Date;
@@ -137,6 +142,14 @@ export interface DraftEditOptions {
 const draftHeaders = (o: DraftEditOptions): Record<string, string> | undefined =>
   o.expectedUpdatedAt ? { "x-expected-updated-at": isoOf(o.expectedUpdatedAt)! } : undefined;
 
+/**
+ * Con `expectedUpdatedAt` el pedido NO es reintentable ante errores de red/5xx: si el primer intento se guardó y se perdió
+ * la respuesta, el reintento compararía contra el `updatedAt` que ese mismo intento cambió y daría un 409
+ * `version_changed` falso. Solo se reintentan 429 (límite por IP) y 503, que la API responde sin procesar el pedido.
+ */
+const draftRequest = (o: DraftEditOptions, body: unknown, retryableWithout: boolean): RequestOptions =>
+  o.expectedUpdatedAt ? { body, headers: draftHeaders(o), retryable: false } : { body, retryable: retryableWithout };
+
 /** Respuesta de `request(…, { raw: true })`. */
 export interface RawResponse {
   bytes: Uint8Array;
@@ -144,6 +157,8 @@ export interface RawResponse {
 }
 
 const RETRY_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
+/** Estados reintentables tras los que el pedido pudo haberse procesado igual (el resto se rechaza antes de procesarlo). */
+const MAYBE_PROCESSED_STATUS = new Set([500, 502, 504]);
 
 /** Espera `ms`; con `signal`, termina apenas se cancela (sin lanzar). */
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -317,7 +332,8 @@ export class CalaSign {
             if (text === undefined) await res.body?.cancel().catch(() => {});
             const ra = Number(raHeader);
             await sleep(Number.isFinite(ra) && ra > 0 ? Math.min(ra * 1000, 30_000) : backoff(attempt), o.signal);
-            o.onRetry?.();
+            // 408/425/429/503 llegan sin que la API procese el pedido: solo un 500/502/504 pudo haberlo procesado.
+            if (MAYBE_PROCESSED_STATUS.has(res.status)) o.onRetry?.();
             continue;
           }
         }
@@ -509,9 +525,12 @@ class EnvelopesApi {
     return this.create({ ...input, send: true }, o);
   }
 
-  /** Edita el borrador. Con `expectedUpdatedAt`, 409 `version_changed` si alguien lo modificó mientras tanto. */
+  /**
+   * Edita el borrador. Con `expectedUpdatedAt`, 409 `version_changed` si alguien lo modificó mientras tanto (y, en ese
+   * caso, no se reintenta ante errores de red/5xx: ver `DraftEditOptions`).
+   */
   update(id: string, input: UpdateEnvelopeInput, o: DraftEditOptions = {}): Promise<EnvelopeDetail> {
-    return this.c.request("PATCH", `/v1/envelopes/${seg(id)}`, { body: input, retryable: true, headers: draftHeaders(o) });
+    return this.c.request("PATCH", `/v1/envelopes/${seg(id)}`, draftRequest(o, input, true));
   }
 
   delete(id: string): Promise<void> {
@@ -530,12 +549,12 @@ class EnvelopesApi {
 
   /** Reemplaza los destinatarios del borrador. Con `expectedUpdatedAt`, 409 `version_changed` si cambió. */
   setRecipients(id: string, recipients: RecipientInput[], o: DraftEditOptions = {}): Promise<EnvelopeDetail> {
-    return this.c.request("PUT", `/v1/envelopes/${seg(id)}/recipients`, { body: { recipients }, headers: draftHeaders(o) });
+    return this.c.request("PUT", `/v1/envelopes/${seg(id)}/recipients`, draftRequest(o, { recipients }, true));
   }
 
   /** Reemplaza los campos del borrador. Con `expectedUpdatedAt`, 409 `version_changed` si cambió. */
   setFields(id: string, fields: (FieldInput | Record<string, unknown>)[], o: DraftEditOptions = {}): Promise<EnvelopeDetail> {
-    return this.c.request("PUT", `/v1/envelopes/${seg(id)}/fields`, { body: { fields }, headers: draftHeaders(o) });
+    return this.c.request("PUT", `/v1/envelopes/${seg(id)}/fields`, draftRequest(o, { fields }, true));
   }
 
   send(id: string, o: { idempotencyKey?: string } = {}): Promise<EnvelopeDetail> {
@@ -544,7 +563,8 @@ class EnvelopesApi {
 
   /**
    * Anula el sobre. Se reintenta ante errores de red/5xx; si el primer intento sí llegó a anularlo, el reintento recibe
-   * 409 `not_voidable`: en ese caso (solo tras un reintento) se confirma con un GET y, si quedó `voided`, se devuelve el
+   * 409 `not_voidable`: en ese caso (solo tras un reintento cuyo intento previo pudo haberse procesado: red o
+   * 500/502/504, no 429/503) se confirma con un GET y, si quedó `voided`, se devuelve el
    * detalle. Anular un sobre ya anulado sin reintentos sigue lanzando 409 `not_voidable`.
    */
   async void(id: string, reason: string): Promise<EnvelopeDetail> {

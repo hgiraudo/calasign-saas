@@ -22,10 +22,19 @@ Envelope**, **Search Envelopes**.
 API key de Make (scopes `sdk-apps:read`, `sdk-apps:write`) en `.secrets/apikey` y hacer *Deploy*.
 
 **Webhook firmado.** El *attach* guarda el `secret` que devuelve `POST /v1/webhooks` y la condición del webhook
-(`calasignAcceptEvent`) verifica `CalaSign-Signature` (HMAC-SHA256 sobre `"<t>.<cuerpo>"`, se acepta cualquier `v1`,
-tolerancia de 300 s). Make no expone el cuerpo crudo: se re-serializa con `JSON.stringify` (la API firma el
-`JSON.stringify` compacto del mismo objeto). Los webhooks adjuntados antes de esta versión no tienen secreto guardado y no
-se verifican hasta apagar y prender el escenario.
+(`calasignAcceptEvent`) verifica `CalaSign-Signature` (HMAC-SHA256 sobre `"<t>.<cuerpo>"`, se acepta cualquier `v1`).
+No se controla la antigüedad de `t` (a diferencia de Zapier y n8n): Make puede evaluar la condición al procesar la cola
+del webhook, mucho después de recibir la entrega, y descartaría eventos en silencio que la API ya contó como entregados.
+Make no expone el cuerpo crudo: se re-serializa con `JSON.stringify` (la API firma el `JSON.stringify` compacto del
+mismo objeto).
+
+- **Rotar el secreto rompe la verificación.** El escenario guarda el secreto del *attach*; si se rota
+  (`POST /v1/webhooks/{id}/rotate-secret` o desde el panel), después de la ventana en que la API firma con los dos
+  secretos las entregas dejan de verificar y se descartan. Para tomar el secreto nuevo, apagar y prender el escenario
+  (Make hace *detach* y *attach*, que crea un webhook nuevo con su secreto).
+- **Webhooks sin secreto guardado se aceptan sin verificar.** Los adjuntados antes de que el *attach* guardara el
+  secreto no lo tienen: por compatibilidad la condición los acepta sin verificar la firma (no los rechaza). Apagar y
+  prender el escenario los pasa a verificados.
 
 **Revocar o reconectar la conexión.** Al revocar la API key (o el token OAuth) con la que se creó el webhook, CalaSign lo
 desactiva (`active: false`) y el escenario deja de recibir eventos. La solución es apagar y volver a prender el escenario

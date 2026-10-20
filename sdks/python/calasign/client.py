@@ -19,6 +19,8 @@ __all__ = ["CalaSign", "CalaSignError", "ClientCredentials"]
 
 VERSION = "0.1.0"
 _RETRY_STATUS = {408, 425, 429, 500, 502, 503, 504}
+# Estados reintentables tras los que el pedido pudo haberse procesado igual (408/425/429/503 se rechazan sin procesar).
+_MAYBE_PROCESSED_STATUS = {500, 502, 504}
 # Errores de red: URLError, timeouts (socket.timeout en 3.8/3.9), ConnectionError y SSLError son OSError; un corte a mitad
 # del cuerpo (IncompleteRead) o una respuesta mal formada (BadStatusLine) son HTTPException. HTTPError (respuesta con
 # status) también es OSError, pero se atrapa antes.
@@ -279,7 +281,8 @@ class CalaSign:
                 if status in _RETRY_STATUS and attempt < self.max_retries and (retryable or status in (429, 503)) and not business_429:
                     time.sleep(_retry_delay(attempt, retry_after))
                     attempt += 1
-                    if _on_retry:
+                    # _on_retry avisa solo de reintentos cuyo intento previo pudo haberse procesado (red o 500/502/504).
+                    if _on_retry and status in _MAYBE_PROCESSED_STATUS:
                         _on_retry()
                     continue
                 err = body.get("error") if isinstance(body.get("error"), dict) else {}
@@ -405,8 +408,11 @@ class _Envelopes:
 
     def update(self, envelope_id: str, data: Dict[str, Any], *, expected_updated_at: Any = None) -> EnvelopeDetail:
         """Edita el borrador. Con `expected_updated_at` (el `updatedAt` del sobre que cargaste), 409 `version_changed`
-        (con `details["updatedAt"]`, el actual) si alguien lo modificó mientras tanto: recargá, reaplicá y reintentá."""
-        return self._c.request("PATCH", f"/v1/envelopes/{_seg(envelope_id)}", json_body=data, retryable=True, headers=_expected(expected_updated_at))
+        (con `details["updatedAt"]`, el actual) si alguien lo modificó mientras tanto: recargá, reaplicá y reintentá.
+        Con `expected_updated_at` no se reintenta ante errores de red/5xx (sí ante 429/503): ver `_draft_retryable`."""
+        return self._c.request(
+            "PATCH", f"/v1/envelopes/{_seg(envelope_id)}", json_body=data, retryable=_draft_retryable(expected_updated_at, True), headers=_expected(expected_updated_at)
+        )
 
     def delete(self, envelope_id: str) -> None:
         self._c.request("DELETE", f"/v1/envelopes/{_seg(envelope_id)}")
@@ -417,19 +423,26 @@ class _Envelopes:
     def set_recipients(self, envelope_id: str, recipients: List[Dict[str, Any]], *, expected_updated_at: Any = None) -> EnvelopeDetail:
         """Reemplaza los destinatarios del borrador. Con `expected_updated_at`, 409 `version_changed` si cambió."""
         return self._c.request(
-            "PUT", f"/v1/envelopes/{_seg(envelope_id)}/recipients", json_body={"recipients": recipients}, headers=_expected(expected_updated_at)
+            "PUT",
+            f"/v1/envelopes/{_seg(envelope_id)}/recipients",
+            json_body={"recipients": recipients},
+            retryable=_draft_retryable(expected_updated_at, None),
+            headers=_expected(expected_updated_at),
         )
 
     def set_fields(self, envelope_id: str, fields: List[Dict[str, Any]], *, expected_updated_at: Any = None) -> EnvelopeDetail:
         """Reemplaza los campos del borrador. Con `expected_updated_at`, 409 `version_changed` si cambió."""
-        return self._c.request("PUT", f"/v1/envelopes/{_seg(envelope_id)}/fields", json_body={"fields": fields}, headers=_expected(expected_updated_at))
+        return self._c.request(
+            "PUT", f"/v1/envelopes/{_seg(envelope_id)}/fields", json_body={"fields": fields}, retryable=_draft_retryable(expected_updated_at, None), headers=_expected(expected_updated_at)
+        )
 
     def send(self, envelope_id: str, *, idempotency_key: Optional[str] = None) -> EnvelopeDetail:
         return self._c.request("POST", f"/v1/envelopes/{_seg(envelope_id)}/send", idempotency_key=idempotency_key or f"send-{_seg(envelope_id)}")
 
     def void(self, envelope_id: str, reason: str) -> EnvelopeDetail:
         """Anula el sobre. Se reintenta ante errores de red/5xx; si el primer intento sí llegó a anularlo, el reintento
-        recibe 409 `not_voidable`: en ese caso (solo tras un reintento) se confirma con un GET y, si quedó `voided`, se
+        recibe 409 `not_voidable`: en ese caso (solo tras un reintento cuyo intento previo pudo haberse procesado: red o
+        500/502/504, no 429/503) se confirma con un GET y, si quedó `voided`, se
         devuelve el detalle. Anular un sobre ya anulado sin reintentos sigue lanzando 409 `not_voidable`."""
         retried = []
         try:
@@ -654,6 +667,14 @@ def _expected(value: Any) -> Optional[Dict[str, str]]:
     """Header X-Expected-Updated-At (control de edición concurrente de borradores) o None."""
     iso = _iso(value)
     return {"X-Expected-Updated-At": iso} if iso else None
+
+
+def _draft_retryable(expected_updated_at: Any, default: Optional[bool]) -> Optional[bool]:
+    """Con `expected_updated_at` el pedido NO se reintenta ante errores de red/5xx: si el primer intento se guardó y se
+    perdió la respuesta, el reintento compararía contra el `updatedAt` que ese mismo intento cambió y daría un 409
+    `version_changed` falso. Solo se reintentan 429 (límite por IP) y 503, que la API responde sin procesar el pedido.
+    Ante un `network_error` o un 5xx, recargá el sobre y comprobá si el cambio quedó aplicado."""
+    return False if _expected(expected_updated_at) else default
 
 
 def _seg(value: str) -> str:

@@ -49,9 +49,11 @@ Paso a paso (sobre que se arma de a poco): `uploadDocument`, `setRecipients`, `s
 - **Edición concurrente de borradores**: `envelopes.update`, `setRecipients` y `setFields` aceptan
   `{ expectedUpdatedAt: envelope.updatedAt }` (header `X-Expected-Updated-At`). Si el borrador cambió desde que lo
   cargaste, la API responde 409 `version_changed` con `err.details.updatedAt` (el valor actual): recargá, reaplicá el
-  cambio y reintentá.
+  cambio y reintentá. Con `expectedUpdatedAt` el SDK no reintenta solo ante errores de red ni 5xx (sí ante 429 y 503,
+  que la API responde sin procesar): si el primer intento se guardó y se perdió la respuesta, el reintento daría un
+  `version_changed` falso. Ante un `network_error` o un 5xx, recargá el sobre y comprobá si el cambio quedó aplicado.
 - **Anular**: `envelopes.void` se reintenta ante errores de red/5xx; si un reintento recibe 409 `not_voidable` porque el
-  primer intento ya lo anuló, el SDK lo confirma con un GET y devuelve el sobre anulado. Anular dos veces a propósito
+  primer intento ya lo anuló (solo tras un reintento por red o 500/502/504, no por 429/503), el SDK lo confirma con un GET y devuelve el sobre anulado. Anular dos veces a propósito
   sigue dando 409 `not_voidable`.
 - **Paginación**: `for await (const e of cs.envelopes.iterate({ status: "completed" })) { … }`.
 - **Errores** como `CalaSignError` con `status`, `code`, `details` (los mismos de la API) y `requestId` (header

@@ -256,12 +256,14 @@ export async function safeRequest(
 
 // ───────────────────────────── Mapeo ─────────────────────────────
 
-const toEndpoint = (r: any): WebhookEndpoint => ({
+export const toEndpoint = (r: any): WebhookEndpoint => ({
   id: r.id,
   url: r.url,
   description: r.description,
   events: r.events,
   active: r.active,
+  // Solo en las filas leídas con DEACTIVATED_REASON (columna calculada, no guardada); si no, null.
+  deactivatedReason: !r.active && r.deactivated_reason === "credential_revoked" ? "credential_revoked" : null,
   secretPrefix: r.secret_prefix,
   previousSecretExpiresAt: r.previous_secret_enc && r.previous_secret_expires_at && new Date(r.previous_secret_expires_at) > new Date() ? iso(r.previous_secret_expires_at) : null,
   createdAt: iso(r.created_at)!,
@@ -336,6 +338,14 @@ const ORPHANED_ORIGIN = `(
     OR NOT EXISTS (SELECT 1 FROM memberships m WHERE m.tenant_id = ep.tenant_id AND m.user_id = ep.created_by)
     OR NOT EXISTS (SELECT 1 FROM oauth_tokens ot WHERE ot.client_id = ep.oauth_client_id AND ot.user_id = ep.created_by
                      AND ot.tenant_id = ep.tenant_id AND ot.revoked_at IS NULL))))`;
+
+/**
+ * Columna calculada `deactivated_reason` (alias de la tabla: `ep`): "credential_revoked" si la suscripción está inactiva
+ * y la credencial que la creó ya no vale (la desactivó deactivateOrphanedEndpoints, o se pausó y después se revocó la
+ * credencial); NULL si está activa o se pausó a mano con la credencial vigente. Los conectores (n8n) reactivan solo en
+ * el primer caso: reactivarla con PATCH { active: true } la ata a la credencial actual.
+ */
+export const DEACTIVATED_REASON = `CASE WHEN NOT ep.active AND ${ORPHANED_ORIGIN} THEN 'credential_revoked' END AS deactivated_reason`;
 
 async function deactivateOrphanedEndpoints(db: Db, tenantId: string) {
   const off = await db.query<{ id: string }>(
@@ -460,7 +470,7 @@ export async function webhookRoutes(app: FastifyInstance, s: Services) {
   type P = { Params: { id: string } };
 
   const load = async (tenantId: string, id: string) => {
-    const r = await s.db.one<any>(`SELECT * FROM webhook_endpoints WHERE id = $1 AND tenant_id = $2`, [id, tenantId]);
+    const r = await s.db.one<any>(`SELECT ep.*, ${DEACTIVATED_REASON} FROM webhook_endpoints ep WHERE ep.id = $1 AND ep.tenant_id = $2`, [id, tenantId]);
     if (!r) throw notFound("Webhook");
     return r;
   };
@@ -468,7 +478,7 @@ export async function webhookRoutes(app: FastifyInstance, s: Services) {
   app.get("/v1/webhooks", { preHandler: auth }, async (req) => {
     // Que la consola muestre ya desactivadas las de una credencial revocada (no recién en el próximo evento).
     await deactivateOrphanedEndpoints(s.db, A(req).tenantId);
-    const rows = await s.db.query(`SELECT * FROM webhook_endpoints WHERE tenant_id = $1 ORDER BY created_at DESC`, [A(req).tenantId]);
+    const rows = await s.db.query(`SELECT ep.*, ${DEACTIVATED_REASON} FROM webhook_endpoints ep WHERE ep.tenant_id = $1 ORDER BY ep.created_at DESC`, [A(req).tenantId]);
     return { items: rows.map(toEndpoint), eventTypes: WEBHOOK_EVENT_TYPES };
   });
 
@@ -528,7 +538,7 @@ export async function webhookRoutes(app: FastifyInstance, s: Services) {
          created_by = CASE WHEN ${retie} THEN $8 ELSE created_by END,
          created_by_api_key = CASE WHEN ${retie} THEN $9 ELSE created_by_api_key END,
          oauth_client_id = CASE WHEN ${retie} THEN $10 ELSE oauth_client_id END
-       WHERE id = $1 AND tenant_id = $2 RETURNING *`,
+       WHERE id = $1 AND tenant_id = $2 RETURNING ep.*, ${DEACTIVATED_REASON}`,
       [
         req.params.id,
         a.tenantId,
@@ -561,11 +571,11 @@ export async function webhookRoutes(app: FastifyInstance, s: Services) {
     const grace = input.graceHours ?? 24;
     const secret = `whsec_${randomToken(24)}`;
     const row = await s.db.one(
-      `UPDATE webhook_endpoints SET secret_enc = $3, secret_prefix = $4,
-         previous_secret_enc = CASE WHEN $5::int > 0 THEN secret_enc ELSE NULL END,
+      `UPDATE webhook_endpoints ep SET secret_enc = $3, secret_prefix = $4,
+         previous_secret_enc = CASE WHEN $5::int > 0 THEN ep.secret_enc ELSE NULL END,
          previous_secret_expires_at = CASE WHEN $5::int > 0 THEN now() + ($5::int * interval '1 hour') ELSE NULL END,
          updated_at = now()
-       WHERE id = $1 AND tenant_id = $2 RETURNING *`,
+       WHERE ep.id = $1 AND ep.tenant_id = $2 RETURNING ep.*, ${DEACTIVATED_REASON}`,
       // El anterior es el de la fila al actualizar (no el leído antes): con dos rotaciones simultáneas, la segunda
       // guardaba como "anterior" el secreto original y el que devolvió la primera dejaba de valer en el acto.
       [ep.id, a.tenantId, encrypt(secret), secret.slice(0, 12), grace],

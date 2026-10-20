@@ -29,7 +29,7 @@ import {
 } from "@calasign/shared";
 import { config } from "../config";
 import type { Db } from "../infra/db";
-import { AppError, badRequest, conflict, forbidden, notFound, unauthorized } from "../lib/errors";
+import { AppError, assertNotStale, badRequest, conflict, forbidden, notFound, unauthorized } from "../lib/errors";
 import {
   generateRecoveryCodes,
   generateTotpSecret,
@@ -963,17 +963,27 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     const input = PutTemplateSharesInput.parse(req.body);
     const groups = await validGroups(a.tenantId, input.groupIds);
     await s.db.tx(async (t) => {
-      if (input.visibility) await t.query(`UPDATE templates SET visibility = $2, updated_at = now() WHERE id = $1`, [req.params.id, input.visibility]);
+      const cur = await t.one<any>(`SELECT updated_at FROM templates WHERE id = $1 AND tenant_id = $2 FOR UPDATE`, [req.params.id, a.tenantId]);
+      if (!cur) throw notFound("Plantilla");
+      // La visibilidad cambia el updatedAt de la plantilla: con X-Expected-Updated-At (el editor lo manda) no tapa una
+      // edición ajena. Sin cambio de visibilidad no se toca (estrictamente creciente, como el resto de la plantilla).
+      assertNotStale(req.headers, cur.updated_at);
+      if (input.visibility)
+        await t.query(
+          `UPDATE templates SET visibility = $2, updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 millisecond')
+           WHERE id = $1 AND visibility IS DISTINCT FROM $2`,
+          [req.params.id, input.visibility],
+        );
       await t.query(`DELETE FROM template_shares WHERE template_id = $1`, [req.params.id]);
       for (const g of groups) await t.query(`INSERT INTO template_shares (template_id, group_id) VALUES ($1,$2)`, [req.params.id, g.id]);
     });
-    const t = await s.db.one<any>(`SELECT visibility FROM templates WHERE id = $1`, [req.params.id]);
+    const t = await s.db.one<any>(`SELECT visibility, updated_at FROM templates WHERE id = $1`, [req.params.id]);
     await auditFromRequest(s.db, req, a, "template.shared", {
       targetType: "template",
       targetId: req.params.id,
       data: { visibility: t.visibility, groups: groups.map((g) => g.name) },
     });
-    return { groups: groups.map((g) => ({ id: g.id, name: g.name })), visibility: t.visibility };
+    return { groups: groups.map((g) => ({ id: g.id, name: g.name })), visibility: t.visibility, templateUpdatedAt: new Date(t.updated_at).toISOString() };
   });
 
   // ───────── Seguridad y retención ─────────

@@ -1,5 +1,5 @@
 import type { IDataObject, IHookFunctions, INodeType, INodeTypeDescription, IWebhookFunctions, IWebhookResponseData } from 'n8n-workflow';
-import { NodeConnectionTypes } from 'n8n-workflow';
+import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
 import { calaSignRequest, verifySignature } from '../GenericFunctions';
 import { flattenEvent } from '../quicksend';
 
@@ -14,6 +14,16 @@ const EVENTS = [
 	'recipient.declined',
 	'recipient.approved',
 ];
+
+/** Status HTTP de un error de httpRequestWithAuthentication (NodeApiError, error de axios o similar), si lo hay. */
+function httpStatus(error: unknown): number | undefined {
+	const e = error as { httpCode?: unknown; statusCode?: unknown; status?: unknown; response?: { status?: unknown }; cause?: { status?: unknown; response?: { status?: unknown } } };
+	for (const v of [e?.httpCode, e?.response?.status, e?.statusCode, e?.status, e?.cause?.response?.status, e?.cause?.status]) {
+		const n = Number(v);
+		if (Number.isInteger(n) && n >= 100) return n;
+	}
+	return undefined;
+}
 
 export class CalaSignTrigger implements INodeType {
 	description: INodeTypeDescription = {
@@ -71,7 +81,10 @@ export class CalaSignTrigger implements INodeType {
 				try {
 					ep = await calaSignRequest(this, 'GET', path);
 				} catch (error) {
-					// Borrado del lado de CalaSign (o sin acceso): se vuelve a crear al activar.
+					// Solo si el webhook ya no existe o no es accesible con esta credencial (404/401/403) se descarta el id y se
+					// registra otro. Ante otro error (5xx, red) se propaga: crear otro dejaba el anterior vivo, duplicando eventos.
+					const status = httpStatus(error);
+					if (status !== 404 && status !== 401 && status !== 403) throw error;
 					this.logger.debug('CalaSign: webhook no encontrado, se registra de nuevo', { error: (error as Error).message });
 					delete data.webhookId;
 					delete data.secret;
@@ -79,19 +92,28 @@ export class CalaSignTrigger implements INodeType {
 				}
 				if (ep.url === this.getNodeWebhookUrl('default')) {
 					if (ep.active) return true;
-					// Inactivo: la API lo desactiva cuando se revoca la credencial que lo creó (p. ej. al reconectar la
-					// cuenta). Reactivarlo lo ata a la credencial actual y conserva id y secreto.
-					try {
-						const re = await calaSignRequest(this, 'PATCH', path, { body: { active: true, events: this.getNodeParameter('events') as string[] } });
-						if (re.active) return true;
-					} catch (error) {
-						this.logger.debug('CalaSign: no se pudo reactivar el webhook, se registra de nuevo', { error: (error as Error).message });
-					}
-					// No se pudo reactivar: se borra antes de crear otro, para no acumular webhooks inactivos (máximo 20).
-					try {
-						await calaSignRequest(this, 'DELETE', path);
-					} catch (error) {
-						this.logger.debug('CalaSign: no se pudo borrar el webhook inactivo', { error: (error as Error).message });
+					// Inactivo porque se revocó la credencial que lo creó (p. ej. al reconectar la cuenta): reactivarlo lo ata a
+					// la credencial actual y conserva id y secreto.
+					if (ep.deactivatedReason === 'credential_revoked') {
+						try {
+							const re = await calaSignRequest(this, 'PATCH', path, { body: { active: true, events: this.getNodeParameter('events') as string[] } });
+							if (re.active) return true;
+						} catch (error) {
+							this.logger.debug('CalaSign: no se pudo reactivar el webhook, se registra de nuevo', { error: (error as Error).message });
+						}
+						// No se pudo reactivar: se borra antes de crear otro, para no acumular webhooks inactivos (máximo 20).
+						try {
+							await calaSignRequest(this, 'DELETE', path);
+						} catch (error) {
+							this.logger.debug('CalaSign: no se pudo borrar el webhook inactivo', { error: (error as Error).message });
+						}
+					} else {
+						// Pausado a mano en CalaSign (o una API sin deactivatedReason): no se reactiva ni se crea otro a sus
+						// espaldas. Se avisa para que el usuario decida.
+						throw new NodeOperationError(
+							this.getNode(),
+							`The CalaSign webhook for this workflow (${String(data.webhookId)}) is paused in CalaSign. Reactivate it (Developers → Webhooks) or delete it there, then activate the workflow again.`,
+						);
 					}
 				}
 				delete data.webhookId;

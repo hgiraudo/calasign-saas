@@ -59,6 +59,41 @@ describe("reintentos e idempotencia", () => {
   });
 });
 
+describe("expectedUpdatedAt y void", () => {
+  it("con expectedUpdatedAt no reintenta un PUT ante red/5xx, pero sí ante 503", async () => {
+    const f = fakeFetch([new TypeError("fetch failed")]);
+    const cs = new CalaSign({ apiKey: "k", baseUrl: "http://api", fetch: f.fn, maxRetries: 2 });
+    await expect(cs.envelopes.setFields("e1", [], { expectedUpdatedAt: "2026-01-01T00:00:00.000Z" })).rejects.toMatchObject({ code: "network_error" });
+    expect(f.calls).toHaveLength(1);
+    const g = fakeFetch([json(500, { error: { code: "internal", message: "x" } })]);
+    const cs2 = new CalaSign({ apiKey: "k", baseUrl: "http://api", fetch: g.fn, maxRetries: 2 });
+    await expect(cs2.envelopes.update("e1", {} as never, { expectedUpdatedAt: "2026-01-01T00:00:00.000Z" })).rejects.toMatchObject({ status: 500 });
+    expect(g.calls).toHaveLength(1);
+    const h = fakeFetch([json(503, {}, { "retry-after": "0.01" }), json(200, { envelope: { id: "e1" } })]);
+    const cs3 = new CalaSign({ apiKey: "k", baseUrl: "http://api", fetch: h.fn, maxRetries: 2 });
+    await cs3.envelopes.setRecipients("e1", [], { expectedUpdatedAt: "2026-01-01T00:00:00.000Z" });
+    expect(h.calls).toHaveLength(2);
+    expect(h.calls[0].headers["x-expected-updated-at"]).toBe("2026-01-01T00:00:00.000Z");
+    // Sin expectedUpdatedAt el PUT sigue siendo reintentable ante red.
+    const k = fakeFetch([new TypeError("fetch failed"), json(200, { envelope: { id: "e1" } })]);
+    const cs4 = new CalaSign({ apiKey: "k", baseUrl: "http://api", fetch: k.fn, maxRetries: 2 });
+    await cs4.envelopes.setFields("e1", []);
+    expect(k.calls).toHaveLength(2);
+  });
+
+  it("void: un 409 not_voidable tras reintentar por 503 no se toma como anulado por el primer intento", async () => {
+    const f = fakeFetch([json(503, {}, { "retry-after": "0.01" }), json(409, { error: { code: "not_voidable", message: "x" } })]);
+    const cs = new CalaSign({ apiKey: "k", baseUrl: "http://api", fetch: f.fn, maxRetries: 2 });
+    await expect(cs.envelopes.void("e1", "r")).rejects.toMatchObject({ code: "not_voidable" });
+    expect(f.calls).toHaveLength(2);
+    const g = fakeFetch([json(502, {}, { "retry-after": "0.01" }), json(409, { error: { code: "not_voidable", message: "x" } }), json(200, { envelope: { id: "e1", status: "voided" } })]);
+    const cs2 = new CalaSign({ apiKey: "k", baseUrl: "http://api", fetch: g.fn, maxRetries: 2 });
+    const d = await cs2.envelopes.void("e1", "r");
+    expect(d.envelope.status).toBe("voided");
+    expect(g.calls[2].method).toBe("GET");
+  });
+});
+
 describe("paginación", () => {
   it("iterate recorre todas las páginas con el cursor", async () => {
     const f = fakeFetch([

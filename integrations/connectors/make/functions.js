@@ -159,13 +159,17 @@ function calasignShouldSend(status, send) {
 
 /**
  * ¿Se acepta la entrega del webhook? Descarta webhook.test y verifica `CalaSign-Signature: t=<unix>,v1=<hex>[,v1=…]`
- * (HMAC-SHA256 del secreto sobre "<t>.<cuerpo>", tolerancia de 300 s; durante una rotación llegan dos v1), igual que
- * Zapier y n8n. Make no expone el cuerpo crudo: se re-serializa con JSON.stringify, que reproduce el cuerpo que firma
- * la API (JSON.stringify compacto del mismo objeto, mismo orden de claves). Sin secreto guardado (webhooks adjuntados
- * antes de esta versión) no se verifica: apagar y prender el escenario crea el webhook nuevo con su secreto.
+ * (HMAC-SHA256 del secreto sobre "<t>.<cuerpo>"; durante una rotación llegan dos v1). A diferencia de Zapier y n8n NO
+ * se controla la antigüedad de `t`: Make puede evaluar esta condición al procesar la cola del webhook, minutos u horas
+ * después de recibir la entrega, y descartaría eventos en silencio mientras la API ya los contó como entregados.
+ * Make no expone el cuerpo crudo: se re-serializa con JSON.stringify, que reproduce el cuerpo que firma la API
+ * (JSON.stringify compacto del mismo objeto, mismo orden de claves). El secreto es el que se guardó en el attach: si
+ * se rota (POST /v1/webhooks/{id}/rotate-secret), las entregas dejan de verificar hasta apagar y prender el escenario.
  */
 function calasignAcceptEvent(body, headers, secret) {
   if (!body || body.type === "webhook.test") return false;
+  // Sin secreto guardado (webhooks adjuntados antes de que el attach lo guardara) se acepta SIN verificar, a propósito,
+  // por compatibilidad: rechazar cortaría esos escenarios. Apagar y prender el escenario crea el webhook con su secreto.
   if (!secret) return true;
   var h = headers || {};
   var header = h["calasign-signature"] || h["CalaSign-Signature"];
@@ -180,8 +184,7 @@ function calasignAcceptEvent(body, headers, secret) {
     if (name === "t") t = parts[i].slice(k + 1).trim();
     else if (name === "v1") v1.push(parts[i].slice(k + 1).trim().toLowerCase());
   }
-  var ts = Number(t);
-  if (!t || !v1.length || !isFinite(ts) || Math.abs(Date.now() / 1000 - ts) > 300) return false;
+  if (!t || !v1.length || !isFinite(Number(t))) return false;
   // HMAC-SHA256 en ES5 (el sandbox de Make no tiene crypto).
   function utf8(s) {
     var out = [];

@@ -7,7 +7,7 @@ import { useExpText } from "../lib/i18n-experience";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import type { Channel, Document, Envelope, EnvelopeDetail, Locale, RecipientRole } from "@calasign/shared";
 import { CHANNELS, ID_DOCUMENT_TYPES, LOCALES } from "@calasign/shared";
-import { HttpError, api, errorText, fieldErrorIndex, uuid } from "../lib/api";
+import { HttpError, api, errorText, fieldErrorIndex, isVersionChanged, uuid, type VersionedSave } from "../lib/api";
 import { LOCALE_LABELS, expiryFromDateInput, localDateInput, useI18n, useUnsavedWarning, confirmAction } from "../lib/i18n";
 import { forgetPdf } from "../lib/pdf";
 import { FieldEditor, validateFields, type DraftField } from "../components/FieldEditor";
@@ -139,16 +139,24 @@ export function EnvelopeEditPage() {
       setError(null);
     } else setError(errorText(e));
   }, []);
-  // Otros paneles (sello, asistencia de IA) también cambian el updatedAt del sobre: se vuelve a leer para que el
-  // próximo guardado no choque con un cambio propio.
-  const refreshVersion = useCallback(() => {
-    api<EnvelopeDetail>(`/v1/envelopes/${id}`)
-      .then((d) => {
-        // Solo hacia adelante: dos lecturas que vuelven en otro orden no dejan la versión más vieja.
-        if (!version.current || d.envelope.updatedAt > version.current) version.current = d.envelope.updatedAt;
-      })
-      .catch(() => {});
-  }, [id]);
+  // Otros paneles (sello, asistencia de IA) también cambian el updatedAt del sobre: guardan con la versión del editor
+  // (si otro cambió el borrador, 409 y el aviso de recargar), el editor queda ocupado hasta que terminan y adopta el
+  // updatedAt que devuelve la API. Antes se volvía a leer el sobre sin esperar: se adoptaba la versión de otro sin sus
+  // datos (y después se los pisaba sin 409) y un guardado inmediato chocaba con el cambio propio.
+  const versioned: VersionedSave = useCallback(async (save, updatedAtOf) => {
+    setBusy(true);
+    try {
+      const r = await save(version.current ? { "X-Expected-Updated-At": version.current } : undefined);
+      const u = updatedAtOf(r);
+      if (u) version.current = u;
+      return r;
+    } catch (e) {
+      if (isVersionChanged(e)) setStale(true);
+      throw e;
+    } finally {
+      setBusy(false);
+    }
+  }, []);
 
   const apply = useCallback((d: EnvelopeDetail) => {
     track(d);
@@ -396,6 +404,7 @@ export function EnvelopeEditPage() {
       {step === "recipients" && (
         <RecipientsStep
           recipients={recipients}
+          busy={busy}
           fieldCount={(rid) => fields.filter((f) => f.recipientId === rid).length}
           onChange={(r) => {
             setRecipients(r);
@@ -443,7 +452,7 @@ export function EnvelopeEditPage() {
           expected={expected}
           onSent={() => nav(`/app/envelopes/${id}`)}
           onUpdated={track}
-          onOtherSaved={refreshVersion}
+          versioned={versioned}
           draft={reviewDraft}
           onDraft={setReviewDraft}
         />
@@ -592,10 +601,16 @@ function DocumentsStep({
 
 function RecipientsStep({
   recipients,
+  busy,
   fieldCount,
   onChange,
 }: {
   recipients: DraftRecipient[];
+  /**
+   * Guardando: el formulario queda bloqueado. Al volver, la respuesta reemplaza la lista y la marca guardada: lo que se
+   * tipeaba mientras tanto se perdía (o quedaba sin guardar al pasar de paso).
+   */
+  busy: boolean;
   /** Campos ubicados para el destinatario (se borran al guardar si deja de ser firmante). */
   fieldCount: (recipientId: string) => number;
   onChange: (r: DraftRecipient[]) => void;
@@ -649,7 +664,7 @@ function RecipientsStep({
   const phoneInvalid = (phone: string) => !!phone.trim() && !PHONE_RE.test(phone.trim());
 
   return (
-    <div className="stack">
+    <fieldset className="form-lock stack" disabled={busy} aria-busy={busy || undefined}>
       <p className="muted small">{t("edit.orderHint")}</p>
       {recipients.length === 0 && <div className="empty">{t("edit.noRecipients")}</div>}
       {recipients.map((r, i) => {
@@ -792,7 +807,7 @@ function RecipientsStep({
       <button type="button" className="btn" onClick={add}>
         + {t("edit.addRecipient")}
       </button>
-    </div>
+    </fieldset>
   );
 }
 
@@ -851,7 +866,7 @@ function ReviewStep({
   expected,
   onSent,
   onUpdated,
-  onOtherSaved,
+  versioned,
   draft,
   onDraft,
 }: {
@@ -865,8 +880,8 @@ function ReviewStep({
   expected: () => Record<string, string> | undefined;
   onSent: () => void;
   onUpdated: (d: EnvelopeDetail) => void;
-  /** Un panel (sello, IA) guardó algo que cambia el updatedAt del sobre. */
-  onOtherSaved: () => void;
+  /** Control de versión del editor para los paneles (sello, IA) que cambian el updatedAt del sobre. */
+  versioned: VersionedSave;
   draft: ReviewDraft | null;
   onDraft: (d: ReviewDraft) => void;
 }) {
@@ -910,7 +925,9 @@ function ReviewStep({
       if (reviewChanged(cur, env, true)) {
         onUpdated(await api<EnvelopeDetail>(`/v1/envelopes/${env.id}`, { method: "PATCH", body: reviewPatch(cur, env, true), headers: expected() }));
       }
-      await api<EnvelopeDetail>(`/v1/envelopes/${env.id}/send`, { method: "POST", headers: { "Idempotency-Key": idemKey } });
+      // Con la versión revisada: si otra pestaña u otra persona cambió el borrador, 409 version_changed (no se envía lo
+      // que no se vio). El encabezado no cuenta para la Idempotency-Key.
+      await api<EnvelopeDetail>(`/v1/envelopes/${env.id}/send`, { method: "POST", headers: { "Idempotency-Key": idemKey, ...expected() } });
       onSent();
     } catch (e) {
       // Ya no es borrador: el envío anterior llegó (o lo envió otra pestaña). Se recarga y se va al detalle.
@@ -976,9 +993,9 @@ function ReviewStep({
             {sx("review.allowDelegation")}
           </label>
         </fieldset>
-        <SealOptionsPanel envelopeId={env.id} onSaved={onOtherSaved} />
+        <SealOptionsPanel envelopeId={env.id} versioned={versioned} disabled={busy} />
         <PaymentOptionsPanel envelopeId={env.id} recipients={detail.recipients} onUnsavedChange={setPaymentUnsaved} />
-        <AiReviewPanel envelopeId={env.id} onSaved={onOtherSaved} />
+        <AiReviewPanel envelopeId={env.id} versioned={versioned} disabled={busy} />
         <button type="button" className="btn btn-primary btn-block" disabled={busy || !subject.trim()} onClick={send}>
           {busy ? t("edit.sending") : t("edit.send")}
         </button>

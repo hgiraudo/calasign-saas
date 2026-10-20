@@ -38,7 +38,7 @@ OAuth endpoints use the RFC 6749 shape `{"error": "...", "error_description": ".
 | 422 | `envelope_incomplete` | Can't send: `details.problems[]` (no document, no signer, signer without signature field, expiry in the past) |
 | 422 | `logic_order` | A field condition cites a field of someone who signs later (or at the same time) → reorder recipients/roles or cite a read-only field / an earlier signer's field; `details.problems[]` lists them. Problems the draft already had don't block other edits |
 | 422 | `pdf_too_heavy` | PDF too complex to search for anchors → use coordinates |
-| 429 | `bad_request` (generic) | Per-IP rate limit → wait for `Retry-After` (seconds) and retry |
+| 429 | `rate_limited` (generic; older deployments sent `bad_request`) | Per-IP rate limit → wait for `Retry-After` (seconds) and retry |
 | 429 | `reminded_recently`, `form_rate_limited`, `workflow_rate_limited`, `ai_signer_limit`, `ai_budget_exceeded`, `too_many_comments`, `too_many_proposals`, `archive_recently_renewed`, `too_many_attempts` | Business cap (specific code, **no** `Retry-After`) → don't retry in a loop; tell the user or try much later |
 | 502 | `tsa_unavailable` | Timestamp authority failed → retry in a few minutes |
 | 503 | `pdf_reader_busy` | Temporary → retry shortly |

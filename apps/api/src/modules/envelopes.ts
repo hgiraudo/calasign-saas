@@ -414,7 +414,7 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
   app.post<P>("/v1/envelopes/:id/send", { preHandler: auth }, async (req, reply) =>
     idempotent(s, req, reply, async () => {
       const a = A(req);
-      await s.db.tx((t) => sendEnvelope(t, a.tenantId, req.params.id, a.actor));
+      await s.db.tx((t) => sendEnvelope(t, a.tenantId, req.params.id, a.actor, req.headers));
       return { status: 200, body: await loadDetail(s.db, a.tenantId, req.params.id) };
     }),
   );
@@ -883,9 +883,15 @@ export async function assertTemplateLogicOrder(t: Db, templateId: string, before
 }
 
 /** Valida y envía un borrador (dentro de la transacción del llamador). */
-export async function sendEnvelope(t: Db, tenantId: string, envelopeId: string, actor: Actor) {
+/** `headers`: los del pedido de envío (X-Expected-Updated-At opcional: si el borrador cambió desde que se revisó, 409). */
+export async function sendEnvelope(t: Db, tenantId: string, envelopeId: string, actor: Actor, headers?: Record<string, unknown>) {
   const e = await lockEnvelope(t, tenantId, envelopeId);
+  // Primero not_draft: si otra pestaña ya lo envió, la consola va al detalle (no a "recargá el borrador").
   requireDraft(e);
+  // Se envía lo que se revisó: si otra pestaña u otra persona cambió el borrador mientras tanto, 409 version_changed.
+  // El encabezado no entra en el hash de la Idempotency-Key (método, URL y cuerpo): reintentar el mismo envío sigue
+  // devolviendo la respuesta guardada.
+  if (headers) assertNotStale(headers, e.updated_at);
   await enforceEnvelopeQuota(t, tenantId);
   await assertDocumentLimits(t, "envelope", e.id);
   const docs = await loadDocuments(t, e.id);

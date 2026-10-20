@@ -565,12 +565,12 @@ export const docsPt: Record<DocsKey, string> = {
   "err.c.conflict": "O estado do recurso não permite a operação: por exemplo, modificar um envelope que não é mais rascunho ou anular um já encerrado.",
   "err.c.idem": "Você reutilizou uma `Idempotency-Key` com outro corpo, ou a requisição original ainda está sendo processada (tente novamente em alguns segundos).",
   "err.c.versionChanged":
-    "Controle de edição concorrente: você enviou `X-Expected-Updated-At` com o `updatedAt` que leu ao modificar um rascunho (`PATCH /v1/envelopes/{id}`, `PUT …/recipients`, `PUT …/fields`) ou um modelo (`PATCH /v1/templates/{id}`, `PUT …/roles`, `PUT …/fields`) e alguém o alterou nesse meio-tempo. `details.updatedAt` traz o valor atual: recarregue, revise e repita. Sem o cabeçalho não há controle. Em uma negociação, significa que há uma versão nova.",
+    "Controle de edição concorrente: você enviou `X-Expected-Updated-At` com o `updatedAt` que leu ao modificar um rascunho (`PATCH /v1/envelopes/{id}`, `PUT …/recipients`, `PUT …/fields`, `PUT …/seal-options`, `PATCH …/ai/settings`) ou um modelo (`PATCH /v1/templates/{id}`, `PUT …/roles`, `PUT …/fields`, `PUT …/shares`), ou ao enviá-lo (`POST …/send`), e alguém o alterou nesse meio-tempo. `details.updatedAt` traz o valor atual: recarregue, revise e repita. Sem o cabeçalho não há controle. Em uma negociação, significa que há uma versão nova.",
   "err.c.purged":
     "Os originais do envelope foram apagados pela política de retenção da organização (conta a partir do encerramento do envelope: concluído, anulado, recusado ou vencido). `410` ao baixar o original, criar um modelo a partir do envelope ou usar a IA; `409` ao cloná-lo. O PDF assinado e a evidência são mantidos.",
   "err.c.tooLarge": "O arquivo excede o tamanho máximo.",
   "err.c.unprocessable": "A requisição é válida, mas não pode ser processada com esses dados (faltam papéis do modelo, linhas inválidas, PDF pesado demais para buscar âncoras).",
-  "err.c.rate": "Você excedeu o limite de requisições por IP (sem código próprio). Aguarde o tempo indicado no cabeçalho `retry-after` (segundos) e tente novamente.",
+  "err.c.rate": "Você excedeu o limite de requisições por IP (código `rate_limited`; versões anteriores da API enviavam `bad_request`). Aguarde o tempo indicado no cabeçalho `retry-after` (segundos) e tente novamente.",
   "err.c.rateBiz":
     "Limite de negócio com código próprio (`reminded_recently`, `form_rate_limited`, `workflow_rate_limited`, `ai_signer_limit`, `ai_budget_exceeded`, `too_many_comments`, `too_many_proposals`, `archive_recently_renewed`, `too_many_attempts`). Não traz `retry-after`: não tente novamente em loop; avise o usuário ou tente bem mais tarde.",
   "err.c.internal": "Erro nosso. É seguro tentar novamente com espera crescente; se você usa `Idempotency-Key`, nada é duplicado.",

@@ -572,12 +572,12 @@ export const docsEs = {
   "err.c.conflict": "El estado del recurso no permite la operación: por ejemplo, modificar un sobre que ya no es borrador o anular uno terminado.",
   "err.c.idem": "Reutilizaste una `Idempotency-Key` con otro cuerpo, o el pedido original todavía se está procesando (reintentá en unos segundos).",
   "err.c.versionChanged":
-    "Control de edición concurrente: mandaste `X-Expected-Updated-At` con el `updatedAt` que leíste al modificar un borrador (`PATCH /v1/envelopes/{id}`, `PUT …/recipients`, `PUT …/fields`) o una plantilla (`PATCH /v1/templates/{id}`, `PUT …/roles`, `PUT …/fields`) y alguien lo cambió mientras tanto. `details.updatedAt` trae el valor actual: recargá, revisá y repetí. Sin el encabezado no se controla. En una negociación significa que hay una versión nueva.",
+    "Control de edición concurrente: mandaste `X-Expected-Updated-At` con el `updatedAt` que leíste al modificar un borrador (`PATCH /v1/envelopes/{id}`, `PUT …/recipients`, `PUT …/fields`, `PUT …/seal-options`, `PATCH …/ai/settings`) o una plantilla (`PATCH /v1/templates/{id}`, `PUT …/roles`, `PUT …/fields`, `PUT …/shares`), o al enviarlo (`POST …/send`), y alguien lo cambió mientras tanto. `details.updatedAt` trae el valor actual: recargá, revisá y repetí. Sin el encabezado no se controla. En una negociación significa que hay una versión nueva.",
   "err.c.purged":
     "Los originales del sobre se borraron por la política de retención de la organización (cuenta desde que el sobre terminó: completado, anulado, rechazado o vencido). `410` al descargar el original, crear una plantilla desde el sobre o usar la IA; `409` al clonarlo. El PDF firmado y la evidencia se conservan.",
   "err.c.tooLarge": "El archivo supera el tamaño máximo.",
   "err.c.unprocessable": "El pedido es válido pero no se puede procesar con esos datos (faltan roles de la plantilla, filas inválidas, PDF demasiado pesado para buscar anclas).",
-  "err.c.rate": "Superaste el límite de pedidos por IP (sin código propio). Esperá lo que indica el encabezado `retry-after` (segundos) y reintentá.",
+  "err.c.rate": "Superaste el límite de pedidos por IP (código `rate_limited`; versiones anteriores de la API mandaban `bad_request`). Esperá lo que indica el encabezado `retry-after` (segundos) y reintentá.",
   "err.c.rateBiz":
     "Tope de negocio con código propio (`reminded_recently`, `form_rate_limited`, `workflow_rate_limited`, `ai_signer_limit`, `ai_budget_exceeded`, `too_many_comments`, `too_many_proposals`, `archive_recently_renewed`, `too_many_attempts`). No trae `retry-after`: no lo reintentes en un loop; avisale al usuario o probá mucho más tarde.",
   "err.c.internal": "Error nuestro. Es seguro reintentar con espera creciente; si usás `Idempotency-Key`, no se duplica nada.",

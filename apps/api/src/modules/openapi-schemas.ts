@@ -266,6 +266,13 @@ export const WebhookSchema = named(
     active: z.boolean(),
     secretPrefix: z.string().describe("Primeros caracteres del secreto (whsec_…), para identificarlo."),
     previousSecretExpiresAt: iso().nullable().optional().describe("Después de rotar el secreto: hasta cuándo las entregas van firmadas también con el anterior."),
+    deactivatedReason: z
+      .enum(["credential_revoked"])
+      .nullable()
+      .optional()
+      .describe(
+        "Solo lectura. `credential_revoked`: inactivo porque se revocó la API key o la app OAuth que lo creó (o el usuario dejó la organización); reactivarlo con `active: true` lo ata a la credencial actual. `null`: activo o pausado a mano.",
+      ),
     createdAt: iso(),
     updatedAt: iso(),
   }),

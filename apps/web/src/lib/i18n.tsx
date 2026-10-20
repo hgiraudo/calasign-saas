@@ -818,6 +818,11 @@ export function placeholderText(key: keyof typeof PLACEHOLDERS): string {
 // Editores con cambios sin guardar montados ahora (lo usan los botones que navegan por código: organización, salir).
 let unsavedEditors = 0;
 
+/** true si hay algún editor montado con cambios sin guardar (p. ej. para no mandar al login si vence la sesión). */
+export function hasUnsavedChanges(): boolean {
+  return unsavedEditors > 0;
+}
+
 /** true si no hay cambios sin guardar o si la persona confirma descartarlos. */
 export function confirmDiscardUnsaved(): boolean {
   return unsavedEditors === 0 || typeof window === "undefined" || window.confirm(DICTS[activeLocale]["common.unsavedLeave"]);

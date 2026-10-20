@@ -126,7 +126,7 @@ export const DEVAPI_OPS: Op[] = [
     summary: "Eventos en vivo (Server-Sent Events)",
     description:
       "`text/event-stream`: cada mensaje lleva `id:` (cursor), `event:` (tipo) y `data:` (ApiEvent en JSON). Retoma desde `after` o el header `Last-Event-ID`; sin ninguno, desde `since` si se indica y si no, ahora. " +
-      "La conexión se cierra a los `max_seconds` (por defecto 300) con `event: end`; EventSource reconecta solo. Máximo 5 streams abiertos por organización (429 too_many_streams).",
+      "La conexión se cierra a los `max_seconds` (por defecto 300) con `event: end`; EventSource reconecta solo. Máximo 5 streams abiertos por organización (429 too_many_streams). Cada minuto se revisa la credencial: si se revoca (key, token, sesión), la persona deja la organización, cambian sus permisos o el plan deja de incluir el acceso por API, el stream termina con `event: end` y `{\"reason\":\"unauthorized\"}`; al reconectar rige el acceso nuevo.",
     query: [...EVENT_QUERY.map((q) => (q.name === "since" ? date("since", "Sin `after` ni `Last-Event-ID`: empieza desde esta fecha en lugar de ahora.") : q)), { name: "max_seconds", description: "Duración máxima de la conexión (5..3600, por defecto 300).", schema: { type: "integer", minimum: 5, maximum: 3600, default: 300 } }],
     responseDescription: "Stream de eventos (text/event-stream).",
     errors: ["invalid_cursor"],
@@ -158,7 +158,7 @@ export const DEVAPI_OPS: Op[] = [
     summary: "Clonar un sobre como borrador nuevo",
     description:
       "Copia documentos, destinatarios (configuración, no estado) y campos con su lógica, en cualquier estado del original. No copia lo que escribieron los firmantes (salvo `includeValues`), ni adjuntos, firmas ni el cobro. " +
-      "Sin `metadata` en el pedido, la del original se copia con `clonedFrom`; con `metadata` propia, esa reemplaza a la copiada tal cual. El clon vence a los 30 días si no se indica `expiresAt`.",
+      "Sin `metadata` en el pedido, la del original se copia con `clonedFrom` (sin las claves que lo atan a un proceso: workflow, formulario, envío masivo, CRM, conector, negociación; se conservan templateId, documentTemplateId y agreement); con `metadata` propia, esa reemplaza a la copiada (sin claves del sistema). Si el plan ya no incluye la marca blanca, el clon sale con la marca de la organización. El clon vence a los 30 días si no se indica `expiresAt`.",
     body: CloneEnvelopeInput,
     bodyOptional: true,
     status: 201,

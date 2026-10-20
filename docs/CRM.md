@@ -27,7 +27,8 @@ Piezas comunes:
   rol / principal, propiedades del registro o datos fijos; canales email/WhatsApp), prellenado campo ← propiedad, qué
   devolver (propiedad de estado, valores por estado, adjuntar PDF), disparo (`manual`, `webhook`, `on_completion`).
 - **Vínculo** sobre ↔ registro (`crm_links`): lo crea el envío desde un registro, la búsqueda en el ERP o
-  `POST /v1/crm/links`. Cada evento del sobre (enviado, completado, rechazado, anulado, vencido) encola un write-back.
+  `POST /v1/crm/links`. La búsqueda por identificación usa el documento de los firmantes que **firmaron** (no el de
+  quien delegó o fue reemplazado: el contrato terminaba en el registro de alguien que no lo firmó). Cada evento del sobre (enviado, completado, rechazado, anulado, vencido) encola un write-back.
   Los write-backs de un vínculo pueden correr en paralelo: un compare-and-set del rango sobre `crm_links.last_status`
   (`sent` < estados finales) hace que un `sent` nunca pise un estado final, y si otro trabajo reclamó un estado final
   mientras se escribía `sent`, se reescribe el final (`apps/api/test/crm-writeback-race.test.ts`).

@@ -754,7 +754,9 @@ function logicOrderIssues(fields: LogicFields, recips: LogicRecips): { key: stri
       if (!src || src.recipient_id === f.recipient_id || src.read_only) continue;
       if ((order.get(src.recipient_id) ?? 0) >= (order.get(f.recipient_id) ?? 0)) {
         out.push({
-          key: `${f.id}|${src.id}`,
+          // Campo citado y destinatario cuyo campo depende de él (no el id del campo dependiente: un PUT sin ids o por anclas lo
+          // regenera en cada guardado y el problema previo parecía nuevo).
+          key: `${src.id}|${f.recipient_id}`,
           message: `El campo "${f.label ?? "?"}" de ${name.get(f.recipient_id) ?? "?"} depende de un campo de ${name.get(src.recipient_id) ?? "?"}, que firma después o al mismo tiempo`,
         });
       }
@@ -768,7 +770,7 @@ export function logicOrderProblems(fields: LogicFields, recips: LogicRecips): st
 }
 
 /**
- * before: las claves (campo|campo citado) de los problemas que ya había antes del cambio. Solo se rechazan los nuevos:
+ * before: las claves (campo citado|destinatario que depende de él) de los problemas que ya había antes del cambio. Solo se rechazan los nuevos:
  * un sobre o plantilla armados antes de esta regla (o un cambio que no toca la lógica, como el correo o el nombre de
  * un destinatario) no quedan bloqueados.
  */

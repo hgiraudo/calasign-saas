@@ -141,7 +141,9 @@ export async function applyEnvelopeBrand(db: Db, tenantId: string, envelopeId: s
   if (brandId !== null) {
     // Elegir una sub-marca para un sobre nuevo exige la marca blanca en el plan (después de bajar de plan, los sobres
     // salían con remitente y dominio propios de la sub-marca).
-    await requireWhiteLabel(db, tenantId);
+    // La que ya tiene el sobre se acepta igual (un PATCH que reenvía el sobre leído no falla por un plan que bajó).
+    const cur = await db.one<{ brand_id: string | null }>(`SELECT brand_id FROM envelopes WHERE id = $1 AND tenant_id = $2`, [envelopeId, tenantId]);
+    if (cur?.brand_id !== brandId) await requireWhiteLabel(db, tenantId);
     const ok = await db.one(`SELECT 1 FROM brands WHERE id = $1 AND tenant_id = $2`, [brandId, tenantId]);
     if (!ok) throw badRequest("invalid_brand", "La marca no existe en esta organización");
   }

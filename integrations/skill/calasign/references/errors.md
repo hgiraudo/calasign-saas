@@ -11,6 +11,7 @@ OAuth endpoints use the RFC 6749 shape `{"error": "...", "error_description": ".
 | 400 | `anchor_not_found` | Anchor text not in the PDF → check spelling/case, or `ignoreIfNotPresent` |
 | 400 | `file_required`, `not_pdf`, `encrypted`, `empty`, `unreadable`, `too_many_pages` | Upload missing or PDF not usable (password-protected PDFs are rejected) → export a clean PDF |
 | 400 | `invalid_id` | An id is not a UUID |
+| 400 | `invalid_brand` | `brandId` isn't a sub-brand of the organization (choosing a different sub-brand also needs the white-label plan → 402) |
 | 401 | `unauthorized` | Missing/invalid/expired key or token → check `CALASIGN_API_KEY`, refresh OAuth token |
 | 402 | `plan_limit` / `payment_required` | Plan doesn't include this (API/MCP, monthly envelopes…) → upgrade in Settings → Plan |
 | 403 | `forbidden` | User/key lacks the permission |
@@ -27,11 +28,13 @@ OAuth endpoints use the RFC 6749 shape `{"error": "...", "error_description": ".
 | 413 | `file_too_large` | PDF over the size limit (25 MB by default) |
 | 413 | `ai_input_too_large` | Document too long for the AI assistant → no retry |
 | 422 | `envelope_incomplete` | Can't send: `details.problems[]` (no document, no signer, signer without signature field, expiry in the past) |
+| 422 | `logic_order` | A field condition cites a field of someone who signs later (or at the same time) → reorder recipients/roles or cite a read-only field / an earlier signer's field; `details.problems[]` lists them. Problems the draft already had don't block other edits |
 | 422 | `pdf_too_heavy` | PDF too complex to search for anchors → use coordinates |
 | 429 | `bad_request` (generic) | Per-IP rate limit → wait for `Retry-After` (seconds) and retry |
 | 429 | `reminded_recently`, `form_rate_limited`, `workflow_rate_limited`, `ai_signer_limit`, `ai_budget_exceeded`, `too_many_comments`, `too_many_proposals`, `archive_recently_renewed`, `too_many_attempts` | Business cap (specific code, **no** `Retry-After`) → don't retry in a loop; tell the user or try much later |
 | 502 | `tsa_unavailable` | Timestamp authority failed → retry in a few minutes |
 | 503 | `pdf_reader_busy` | Temporary → retry shortly |
+| 503 | `byok_key_unavailable` | The organization's own encryption key (BYOK) is unavailable → an admin must restore access to the key; retry later |
 | 5xx | `internal_error` | Retry with the same `Idempotency-Key` |
 
 MCP tools return these as tool results with `isError: true` and text like

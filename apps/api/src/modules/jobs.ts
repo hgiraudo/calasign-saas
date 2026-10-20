@@ -3,7 +3,7 @@ import { certsignStage } from "./certsign";
 import { config } from "../config";
 import type { Db } from "../infra/db";
 import { SYSTEM, appendEvent, verifyRows } from "../infra/evidence";
-import { enqueue, requeueStuckJobs, type JobHandler, type JobQueueName } from "../infra/queue";
+import { enqueue, isLastAttempt, requeueStuckJobs, type JobHandler, type JobQueueName } from "../infra/queue";
 import { getSealProvider } from "../infra/seal";
 import { applyEvidencePipeline, planEvidence } from "./evidence-seal";
 import type { BlobStore } from "../infra/storage";
@@ -94,7 +94,7 @@ export function createJobHandlers(d: Deps): Record<JobQueueName, JobHandler> {
         await finalize(d, p);
       } catch (err) {
         // Último intento: el sobre no puede quedar en 'finalizing' sin que nadie se entere.
-        if (job.attempts >= job.maxAttempts) await finalizeGaveUp(d, p, err).catch((e) => d.log.error({ err: String(e), envelopeId: p.envelopeId }, "no se pudo registrar el fallo de finalización"));
+        if (isLastAttempt(job, err)) await finalizeGaveUp(d, p, err).catch((e) => d.log.error({ err: String(e), envelopeId: p.envelopeId }, "no se pudo registrar el fallo de finalización"));
         throw err;
       }
     },

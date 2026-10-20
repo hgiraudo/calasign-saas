@@ -158,7 +158,7 @@ export interface WebForm {
   collectPhone: boolean;
   /**
    * Motivo por el que el formulario no crea sobres aunque esté activo: quien lo creó dejó la organización, perdió el
-   * permiso o el acceso a la plantilla, o se revocó su API key. null si su dueño sigue habilitado. Mientras tenga
+   * permiso o el acceso a la plantilla, se revocó su API key, el plan ya no lo permite o la plantilla cambió. null si su dueño sigue habilitado. Mientras tenga
    * motivo, la página pública lo muestra como no disponible.
    */
   ownerInactiveReason: string | null;
@@ -169,6 +169,8 @@ export interface WebForm {
    * - `template_access`: ya no tiene acceso a la plantilla.
    * - `key_revoked`: la API key que lo configuró fue revocada.
    * - `plan_feature`: el plan actual de la organización no incluye formularios web.
+   * - `plan_api`: lo configuró una API key y el plan ya no incluye el acceso por API.
+   * - `misconfigured`: la plantilla cambió después de publicarlo y el formulario ya no cierra con ella.
    */
   ownerInactiveCode: WebFormInactiveCode | null;
   createdAt: string;

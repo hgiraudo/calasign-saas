@@ -30,6 +30,13 @@ cifrar con su clave. La clave pasa a `failing`, se registra `byok.key_failing` e
 correo a propietarios y administradores (como mucho cada 6 h). El barrido vuelve a probar las claves activas
 cada 6 h y las fallidas cada hora; cuando vuelve a funcionar queda `active` (`byok.key_recovered`).
 
+**Trabajos en segundo plano durante la caída:** un job que falla con `byok_key_unavailable` (sellado, avisos,
+exportación a almacenamiento, conectores, CRM, ingesta al repositorio) no gasta un intento: la cola lo pospone
+10 minutos, hasta 7 días desde que se encoló, y su lógica de «último intento» (aviso de sellado fallido, soltar
+reclamos) no corre mientras se pospone. La extracción automática con IA saltea las organizaciones con la clave en
+`failing` y reintenta en una hora un sobre que falló por algo transitorio. Así, una caída larga no deja
+exportaciones ni write-backs fallados para siempre: retoman solos cuando la clave vuelve.
+
 **Desactivar** (`DELETE`): lo nuevo vuelve a la clave de la plataforma; lo ya cifrado con la clave del
 cliente la sigue necesitando (no hay re-cifrado masivo: queda como trabajo futuro).
 
@@ -65,7 +72,8 @@ SERVED_CELLS=us   # celdas que atiende este proceso (por defecto: todas las conf
 
 Ver también `EVIDENCIA.md` §2. El barrido (`archiveSweep`, en el worker, como mucho una vez por hora):
 
-1. A cada sobre completado sin revisar le calcula `archive_valid_until` = vencimiento del certificado de la TSA
+1. A cada sobre completado sin revisar (o cuya revisión falló hace más de un día: BYOK o almacenamiento caídos)
+   le calcula `archive_valid_until` = vencimiento del certificado de la TSA
    del **último** sello de tiempo (sello de documento o, si no hay, el de la firma). Solo los PDF con DSS
    (B-LT/B-LTA) tienen vigencia de archivo; los B-B/B-T no se renuevan.
 2. Si vence dentro de `ARCHIVE_RENEWAL_DAYS` (180), agrega DSS (OCSP/CRL de hoy, incluida la cadena de esa
@@ -73,6 +81,10 @@ Ver también `EVIDENCIA.md` §2. El barrido (`archiveSweep`, en el worker, como 
    íntegras y un sello de documento más), guarda la nueva versión y actualiza `signed_file_id`.
 3. Historial en `envelope_signed_versions` (v1 = original, v2… = renovaciones); la versión anterior se
    conserva y `/v1/verify` encuentra cualquiera por hash. Evento `envelope.archive_renewed` con ambos hashes.
+   En la misma transacción, el acuerdo del repositorio y los enlaces de descarga vigentes pasan a la versión
+   nueva (el chequeo de duplicados del repositorio compara contra todas las versiones). Lo ya exportado a
+   almacenamiento o conectores no se vuelve a subir; el JSON de evidencia que acompaña a cada exportación lleva
+   el hash del PDF que efectivamente se subió.
 4. No se vuelve a renovar el mismo sobre antes de `ARCHIVE_RENEWAL_MIN_INTERVAL_DAYS` (30). Si la TSA vigente
    vence igual o antes que la anterior, se deja `archive_error` (conviene configurar otra TSA).
 

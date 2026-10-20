@@ -8,7 +8,7 @@ Funciones opcionales, **deshabilitadas por defecto** en cada organización. Para
 | Detección de campos | Editor → paso Campos → «Detectar campos» | Texto de los documentos con el id de cada línea. **Sin IA habilitada** corre igual con heurísticas y no sale nada del servidor. |
 | Revisión contra el playbook | Editor → paso Revisar y enviar | Texto de los documentos y las reglas de la organización |
 | Resumen y preguntas del firmante | Página de firma (si el remitente lo habilita en el sobre) | Texto de los documentos y la pregunta. Nunca firmas, imágenes ni datos de contacto. |
-| Datos del contrato | Detalle del sobre completado (y automático al completarse) | Texto de los documentos |
+| Datos del contrato | Detalle del sobre completado (y automático al completarse; si falla por algo transitorio —BYOK o almacenamiento caídos— se reintenta en una hora, y las organizaciones con la clave BYOK fallando se saltean) | Texto de los documentos |
 | Alertas de renovación | Sweeper: correo al remitente N días antes del vencimiento/renovación (o del preaviso, si es mayor) | Nada (usa los datos ya extraídos) |
 
 - **Transparencia:** `GET /v1/envelopes/:id/ai/preview?feature=…` y el botón «Ver qué se envía» muestran el texto exacto.

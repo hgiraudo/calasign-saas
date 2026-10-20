@@ -301,6 +301,7 @@ export const ERRORS: Record<string, Err> = {
     summary: "Cobro before_sign pendiente",
   },
   identity_required: { status: 403, code: "identity_required", message: "Hace falta verificar tu identidad para continuar", summary: "Falta la verificación de identidad del firmante" },
+  invalid_brand: { status: 400, code: "invalid_brand", message: "La marca no existe en esta organización", summary: "brandId no es una sub-marca de la organización" },
   not_found: { status: 404, code: "not_found", message: "Sobre no encontrado", summary: "No existe o la credencial no puede verlo (el mensaje nombra el recurso)" },
 
   not_draft: { status: 409, code: "not_draft", message: "Solo se puede modificar un sobre en borrador", summary: "El sobre ya no es un borrador" },
@@ -372,6 +373,14 @@ export const ERRORS: Record<string, Err> = {
 
   file_too_large: { status: 413, code: "file_too_large", message: "El archivo supera el tamaño máximo", summary: "Archivo más grande que el máximo permitido" },
 
+  logic_order: {
+    status: 422,
+    code: "logic_order",
+    message: 'El campo "Monto" de Ana Pérez depende de un campo de Juan Gómez, que firma después o al mismo tiempo',
+    details: { problems: ['El campo "Monto" de Ana Pérez depende de un campo de Juan Gómez, que firma después o al mismo tiempo'] },
+    summary:
+      "Una condición cita un campo de alguien que firma después o en el mismo turno (o de un rol así en la plantilla): se decidiría con un valor que todavía no existe. Solo se rechazan problemas nuevos: los que ya tenía el borrador o la plantilla no bloquean otras ediciones",
+  },
   envelope_incomplete: {
     status: 422,
     code: "envelope_incomplete",

@@ -4,7 +4,7 @@
 // Y el handler de la cola "platform" que procesa esos trabajos.
 import type { NotificationEvent } from "@calasign/shared";
 import type { Db } from "../infra/db";
-import { enqueue } from "../infra/queue";
+import { enqueue, type JobContext } from "../infra/queue";
 import type { BlobStore } from "../infra/storage";
 import { EVIDENCE_TO_NOTIFICATION, deliverNotificationJob } from "./notify-integrations";
 import { exportEnvelopeJob, queueStorageExports } from "./storage-export";
@@ -33,7 +33,7 @@ type PlatformJob =
   | { kind: "crm"; runId: string }
   | { kind: "connector"; runId: string };
 
-export async function handlePlatformJob(d: { db: Db; blobs: BlobStore }, p: PlatformJob, job?: { attempts: number; maxAttempts: number }) {
+export async function handlePlatformJob(d: { db: Db; blobs: BlobStore }, p: PlatformJob, job?: JobContext) {
   if (p.kind === "notify") return deliverNotificationJob(d.db, p);
   if (p.kind === "export") return exportEnvelopeJob(d.db, d.blobs, p);
   if (p.kind === "crm") return handleCrmJob(d, p, job);

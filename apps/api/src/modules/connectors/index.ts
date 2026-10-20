@@ -31,7 +31,7 @@ import { InvalidPdfError, preparePdfUpload } from "@calasign/pdf";
 import { config } from "../../config";
 import type { Db } from "../../infra/db";
 import { appendEvent, type Actor } from "../../infra/evidence";
-import { enqueue } from "../../infra/queue";
+import { enqueue, isLastAttempt, type JobContext } from "../../infra/queue";
 import type { BlobStore } from "../../infra/storage";
 import { AppError, badRequest, notFound } from "../../lib/errors";
 import { decrypt, encrypt, iso, sha256Hex, uuidv7 } from "../../lib/util";
@@ -454,7 +454,7 @@ async function writeBack(d: { db: Db; blobs: BlobStore }, conn: Conn, link: any,
 
 const LINK_RANK_SQL = `(CASE WHEN last_status IS NULL THEN 0 WHEN last_status = 'sent' THEN 1 ELSE 2 END)`;
 
-export async function handleConnectorJob(d: { db: Db; blobs: BlobStore }, p: { runId: string }, job?: { attempts: number; maxAttempts: number }) {
+export async function handleConnectorJob(d: { db: Db; blobs: BlobStore }, p: { runId: string }, job?: JobContext) {
   const { db } = d;
   const run = await db.one<any>(`SELECT * FROM connector_runs WHERE id = $1`, [p.runId]);
   if (!run || run.status === "succeeded") return;
@@ -495,7 +495,7 @@ export async function handleConnectorJob(d: { db: Db; blobs: BlobStore }, p: { r
     await db.query(`UPDATE connector_runs SET status = 'failed', error = $2, updated_at = now() WHERE id = $1`, [run.id, msg]);
     await db.query(`UPDATE connector_connections SET last_error = $2 WHERE id = $1`, [conn.row.id, msg.slice(0, 500)]);
     // Fallo definitivo (error permanente o último intento de la cola): se suelta el reclamo de last_status.
-    if (permanent(err) || (job && job.attempts >= job.maxAttempts)) await releaseClaim(db, claimOut);
+    if (permanent(err) || isLastAttempt(job, err)) await releaseClaim(db, claimOut);
     // Sin acceso o datos que no cierran: no se reintenta solo (queda el error visible y el reintento manual).
     if (permanent(err)) return;
     throw err;

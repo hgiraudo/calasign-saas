@@ -52,7 +52,12 @@ Cada evento: actor (`user`, `api_key`, `recipient`, `system`), IP, user agent, d
 
 ## Retención
 
-- Originales e imágenes de firma: se pueden borrar al vencer la retención del plan.
+- Originales, adjuntos e imágenes de firma: se borran al vencer la retención configurada por la organización
+  (`tenants.retention_days`, días desde que se completó el sobre). La política se vuelve a leer al purgar cada sobre:
+  si se extiende o se quita durante una pasada, el resto del lote no se borra. Un original compartido con una
+  plantilla, otro sobre sin purgar, un acuerdo o una negociación se conserva; cuando ya solo lo usan sobres purgados
+  (por ejemplo, el PDF de una plantilla borrada), un barrido de huérfanos lo borra. Un original purgado responde
+  `410 purged`.
 - PDF final sellado y `envelope_events`: se conservan durante todo el plazo legal (Object Lock).
 - Datos personales de destinatarios: anonimizables a pedido (LGPD / Ley 1581 / Ley 172-13 / Ley 29733) salvo lo que la evidencia legal exige conservar.
 
@@ -98,6 +103,24 @@ El diagrama de arriba es el núcleo (0001). Cada bloque funcional agrega su prop
 | `0034_r16_identity` | `login_challenges.invitation_id`: aceptar una invitación con contraseña y 2FA crea la membresía recién después de verificar el segundo factor |
 | `0035_r17_integrations` | `custom_domains.recheck_failures`: puntos de la re-verificación periódica (TXT ausente o el dominio ya no apunta a la plataforma: 2; error de DNS: 1); con 4 el dominio vuelve a pendiente |
 | `0036_mcp_connectors` | Registro dinámico de clientes OAuth (RFC 7591) para conectores MCP: `oauth_clients.tenant_id` admite null solo con `registration = 'dynamic'` (CHECK: sin organización, sin identidad de servicio y sin `client_credentials`); `client_uri`, `logo_uri`, `token_endpoint_auth_method` |
+| `0038_api_events` | Índices para la API de eventos (`/v1/events`, stream), búsqueda de sobres por fecha y metadatos, rotación del secreto de webhooks con período de gracia |
+| `0042_connectors_hr_clm` | Conectores de RR. HH. y gestión de contratos (BambooHR, HiBob, Factorial, Ironclad, Juro): conexiones, flujos, vínculos sobre ↔ registro y ejecuciones (ver `CONECTORES.md`) |
+| `0043_storage_dms` | Almacenamiento también en SharePoint y Box; `storage_exports.pdf_ref`: el PDF ya subido no se duplica en un reintento |
+| `0044_white_label_brands` | Sub-marcas (`brands`) y `envelopes.brand_id` (ver `MARCA-BLANCA.md`) |
+| `0045_white_label_domains` | Dominios de correo propios (SPF/DKIM) y dominios web de las sub-marcas |
+| `0046_crm_zoho` / `0047_crm_pipedrive` / `0051_crm_rdstation_kommo` | Proveedores de CRM nuevos (el CHECK se redefine completo en cada una) |
+| `0048_events_watermark` / `0049_events_position` | Cursor de la API de eventos por orden de confirmación: `envelope_events.pos` de un secuenciador único (0048 usaba el id de transacción, que no sobrevive a un dump/restore) |
+| `0050_notify_channels` | Avisos también a Discord, Google Chat, Mattermost, Rocket.Chat y Webex |
+| `0052_idempotency_keys_created_at` | Índice para la purga de claves de idempotencia de más de 7 días |
+| `0052_storage_export_claim` | `storage_exports.claimed_until`: un solo trabajo a la vez por exportación (sin doble subida) |
+| `0053_web_form_token_uses` | Cada token de formulario web sirve para un solo envío |
+| `0054_login_attempts` | Intentos de contraseña por cuenta contados antes de verificar (bloqueo que resiste pedidos en paralelo) |
+| `0055_archive_renewal_claim` | `envelopes.archive_renewing_until`: una renovación del sello de archivo a la vez por sobre |
+| `0056_stale_checkout` | `envelope_payments.stale_checkout_id`: el checkout descartado al cambiar el pagador se cierra en el proveedor |
+| `0057_export_pdf_sha` | Hash del PDF subido en exportaciones (`storage_exports.pdf_sha256`) y conectores (`connector_links.signed_sha256`): el JSON de evidencia describe ese PDF aunque después se renueve el sello |
+| `0058_ai_extract_retry` | `envelopes.ai_metadata_retry_at`: una extracción automática con IA que falló por algo transitorio se reintenta en una hora |
+| `0059_webhook_origin` | `webhook_endpoints.created_by_api_key` y `oauth_client_id`: si se revoca la credencial que creó el webhook, se desactiva |
+| `0060_ai_extract_idx` | Índice parcial para el barrido de extracción automática con IA |
 
 Reglas: una migración por bloque, solo aditiva salvo cuando se recrea un `CHECK` para sumar un valor; nunca se edita una
 migración ya aplicada en un entorno.

@@ -334,11 +334,11 @@ Un flujo define:
 - Cada evento del sobre (enviado, completado, rechazado, anulado, vencido) encola un trabajo `connector` en la cola `platform`, desde el mismo outbox que CRM.
 - El PDF ya entregado no se vuelve a subir si un reintento falla después (por ejemplo, en la evidencia o en el estado).
 - Las credenciales rechazadas, los datos inválidos y los 422 no se reintentan solos: el error queda visible en la conexión y en la actividad, y se reintenta a mano (`POST /v1/connectors/runs/{id}/retry`).
-- Un 5xx se reintenta con backoff.
+- Un 5xx se reintenta con backoff. Con la clave BYOK de la organización caída, el trabajo se pospone sin gastar intentos (ver `DATOS.md` §1).
 
 **Certificado de evidencia** (`evidence-file.ts`)
 
-- Es un JSON `calasign.evidence-certificate` con: el SHA-256 del PDF sellado, los destinatarios (estado, método de autenticación, documento, IP y fechas) y la cadena de eventos con sus hashes.
+- Es un JSON `calasign.evidence-certificate` con: el SHA-256 del PDF sellado que se entregó (el hash se guarda con la referencia del PDF: si el sello de archivo se renueva entre la subida del PDF y la del JSON, el JSON sigue describiendo el PDF entregado), los destinatarios (estado, método de autenticación, documento, IP y fechas) y la cadena de eventos con sus hashes.
 - Va además del certificado de finalización que el PDF sellado ya lleva.
 - Se sube con el mismo nombre del PDF más el sufijo ` - evidencia.json`.
 

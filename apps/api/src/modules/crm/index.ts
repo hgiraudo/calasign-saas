@@ -31,7 +31,7 @@ import {
 import { config } from "../../config";
 import type { Db } from "../../infra/db";
 import type { Actor } from "../../infra/evidence";
-import { enqueue } from "../../infra/queue";
+import { enqueue, isLastAttempt, type JobContext } from "../../infra/queue";
 import type { BlobStore } from "../../infra/storage";
 import { AppError, badRequest, notFound } from "../../lib/errors";
 import { decrypt, encrypt, iso, sha256Hex, uuidv7 } from "../../lib/util";
@@ -444,7 +444,7 @@ async function releaseClaim(db: Db, runId: string, claim: StatusClaim | null) {
   }
 }
 
-export async function handleCrmJob(d: { db: Db; blobs: BlobStore }, p: { runId: string }, job?: { attempts: number; maxAttempts: number }) {
+export async function handleCrmJob(d: { db: Db; blobs: BlobStore }, p: { runId: string }, job?: JobContext) {
   const { db } = d;
   const run = await db.one<any>(`SELECT * FROM crm_runs WHERE id = $1`, [p.runId]);
   if (!run || run.status === "succeeded") return;
@@ -543,7 +543,7 @@ export async function handleCrmJob(d: { db: Db; blobs: BlobStore }, p: { runId: 
     // como AppError: un error del proveedor o interno (5xx, p. ej. HubSpot caído) sí se reintenta.
     const permanent = (err instanceof CrmError && err.authFailed) || err instanceof MappingError || (err instanceof AppError && err.status < 500);
     // Fallo definitivo (error permanente o último intento de la cola): se suelta el reclamo de last_status.
-    if (permanent || (job && job.attempts >= job.maxAttempts)) await releaseClaim(db, run.id, claimOut.claim);
+    if (permanent || isLastAttempt(job, err)) await releaseClaim(db, run.id, claimOut.claim);
     if (permanent) return;
     throw err; // reintento con backoff de la cola
   }

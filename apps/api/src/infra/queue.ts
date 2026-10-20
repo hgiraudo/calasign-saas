@@ -26,10 +26,34 @@ interface JobRow {
   payload: any;
   attempts: number;
   max_attempts: number;
+  postponable: boolean;
 }
 
 /** `attempts` incluye el intento en curso; si es >= `maxAttempts`, un error deja el job en 'failed'. */
-export type JobHandler = (payload: any, job: { id: number; attempts: number; maxAttempts: number }) => Promise<void>;
+export type JobHandler = (payload: any, job: JobContext & { id: number }) => Promise<void>;
+
+/** postponable: el job tiene menos de 7 días (un error de BYOK lo pospone en vez de contar como intento). */
+export interface JobContext {
+  id?: number;
+  attempts: number;
+  maxAttempts: number;
+  postponable?: boolean;
+}
+
+/** La clave BYOK de la organización no está disponible (el error puede llegar envuelto: se mira también el texto). */
+export function isByokUnavailable(e: unknown): boolean {
+  return (e as { code?: string })?.code === "byok_key_unavailable" || /La clave de cifrado de tu organización \(BYOK\)/.test(String(e));
+}
+
+/**
+ * Si este error deja el job fallado para siempre: último intento y no es una caída de BYOK que la cola va a posponer.
+ * Los handlers lo usan para su lógica de "último intento" (avisos, soltar reclamos): con BYOK caído no corresponde,
+ * el job vuelve a correr cuando la clave se recupere (si no, se repetía cada 10 minutos).
+ */
+export function isLastAttempt(job: JobContext | undefined, err: unknown): boolean {
+  if (!job || job.attempts < job.maxAttempts) return false;
+  return !(job.postponable && isByokUnavailable(err));
+}
 
 export interface WorkerOptions {
   handlers: Record<JobQueueName, JobHandler>;
@@ -56,7 +80,7 @@ export function startWorker(db: Db, opts: WorkerOptions) {
          WHERE id IN (
            SELECT id FROM jobs WHERE status = 'pending' AND run_at <= now()
            ORDER BY run_at, id LIMIT $1 FOR UPDATE SKIP LOCKED)
-         RETURNING id, queue, payload, attempts, max_attempts`,
+         RETURNING id, queue, payload, attempts, max_attempts, (created_at > now() - interval '7 days') AS postponable`,
         [limit, workerId],
       ),
     );
@@ -80,7 +104,7 @@ export function startWorker(db: Db, opts: WorkerOptions) {
     let ok = false;
     try {
       if (!handler) throw new Error(`sin handler para ${job.queue}`);
-      await handler(job.payload, { id: job.id, attempts: job.attempts, maxAttempts: job.max_attempts });
+      await handler(job.payload, { id: job.id, attempts: job.attempts, maxAttempts: job.max_attempts, postponable: job.postponable });
       ok = true;
       await db.query(`UPDATE jobs SET status = 'done', finished_at = now(), locked_at = NULL WHERE id = $1 AND attempts = $2`, [job.id, job.attempts]);
     } catch (e) {
@@ -94,7 +118,7 @@ export function startWorker(db: Db, opts: WorkerOptions) {
       // Clave BYOK de la organización caída: no es un intento (el job no puede hacer nada hasta que vuelva). Se pospone
       // 10 minutos, hasta 7 días desde que se encoló; si no, una caída de más de ~11 minutos dejaba exportaciones,
       // conectores y CRM fallados para siempre.
-      if ((e as { code?: string })?.code === "byok_key_unavailable" || /La clave de cifrado de tu organización \(BYOK\)/.test(String(e))) {
+      if (job.postponable && isByokUnavailable(e)) {
         const postponed = await db.query(
           `UPDATE jobs SET status = 'pending', attempts = attempts - 1, last_error = $2, locked_at = NULL, run_at = now() + interval '10 minutes'
             WHERE id = $1 AND attempts = $3 AND created_at > now() - interval '7 days' RETURNING id`,

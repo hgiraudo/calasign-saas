@@ -16,6 +16,17 @@ Flujo del firmante: `GET /v1/signing/:token/payment` (si le toca pagar, monto y 
 (o por la página del proveedor simulado). Eventos: `payment.configured`, `payment.checkout_created`, `envelope.awaiting_payment`,
 `payment.failed`, `payment.completed`. El comprobante (monto, pagador, medio, referencia, fecha) va en el certificado de finalización.
 
+**Cambios del pagador y cierres** (barrido periódico del worker):
+
+- Si el pagador cambia (delegación, reasignación o corrección de su correo o teléfono), el cobro pasa al nuevo
+  destinatario y el checkout armado para el anterior se guarda como descartado (`stale_checkout_id`) y se cierra
+  en el proveedor. Si el proveedor ya no lo conoce (404), se suelta; si falla por otra cosa, se reintenta al final
+  de la cola. La clave de idempotencia de Stripe incluye el link vigente del pagador.
+- Un sobre anulado, rechazado o vencido cierra su checkout abierto (`payment.checkout_closed`).
+- Un pago que se acredita con el sobre ya cerrado se reembolsa en el proveedor (`refund_required_at`). Un segundo
+  cobro del mismo sobre (dos checkouts pagados) también se reembolsa, en Stripe y en Mercado Pago.
+- Un sobre que superó su vencimiento no se corrige, reasigna ni delega.
+
 ### Medios de pago por país
 
 | Proveedor | Cómo se cobra | Medios locales |

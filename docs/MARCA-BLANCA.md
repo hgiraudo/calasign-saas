@@ -77,6 +77,9 @@ página propia reduce lo que se ve, pero el iframe de OneSpan sigue mostrando su
 - **Sub-marcas** (tabla `brands`, migración 0044): una organización revendedora crea una por cliente. **Heredan** de la
   marca de la organización todo lo que no definen (colores, textos, plantillas, remitente, archivos).
 - **Sobre**: `envelopes.brand_id` (`brandId` en `POST/PATCH /v1/envelopes`). Sin `brandId`, la marca de la organización.
+  Elegir una sub-marca distinta de la que ya tiene el sobre exige `white_label` en el plan (402 si bajó de plan; la
+  que ya tenía un borrador se acepta igual) y un `brandId` ajeno responde 400 `invalid_brand`. Al clonar sin ese
+  plan, el clon sale con la marca de la organización.
   Todo lo del sobre usa su marca: correos, links, página de firma, embebido, OTP, certificado, verificación.
 - **Dominios** (migración 0045): `email_domains` (remitente con DKIM) y `brand_domains` (dominio web de una sub-marca; la
   marca de la organización usa `custom_domains`, ver [CUSTOM-DOMAINS.md](CUSTOM-DOMAINS.md)).

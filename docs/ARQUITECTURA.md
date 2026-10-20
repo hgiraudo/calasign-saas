@@ -87,6 +87,10 @@ Mismo código que la API, otro *entrypoint*. Consumen trabajos de la cola:
 
 **Cola**: en el MVP, tabla `jobs` en Postgres con `FOR UPDATE SKIP LOCKED` (transaccional con el dato, cero infraestructura extra, aguanta miles de trabajos por segundo). Detrás de una interfaz `JobQueue`: al crecer se cambia por **SQS** sin tocar los módulos.
 
+Reintentos: hasta 8 intentos con backoff exponencial (tope 1 h); un job sin latido por 10 minutos vuelve a la cola. Un
+error `byok_key_unavailable` (la clave KMS del cliente caída) no gasta intentos: el job se pospone 10 minutos, hasta 7
+días desde que se encoló (`isLastAttempt` evita que los handlers corran su lógica de «último intento» mientras tanto).
+
 **Outbox transaccional**: todo cambio de estado escribe en la misma transacción el evento de evidencia y los trabajos que dispara. No hay "se guardó pero no se notificó".
 
 ### 3.3 Signing service (`packages/pdf` + `SignatureProvider`)

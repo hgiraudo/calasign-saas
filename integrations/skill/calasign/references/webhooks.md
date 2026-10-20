@@ -10,6 +10,11 @@ curl -s {{BASE_URL}}/v1/webhooks -H "Authorization: Bearer $CALASIGN_API_KEY" -H
 # → {"webhook": {...}, "secret": "…"}   (empty/absent events = all events)
 ```
 
+A webhook created with an API key or a user's OAuth token is tied to that credential: if the key or the OAuth app is
+revoked, the user disconnects the app or leaves the organization, the webhook switches to `active: false` (audited as
+`webhook.deactivated`). `PATCH /v1/webhooks/{id}` with `"active": true` reactivates it and ties it to the caller's
+credential.
+
 Events: `envelope.sent`, `envelope.completed`, `envelope.declined`, `envelope.voided`, `envelope.expired`,
 `recipient.viewed`, `recipient.signed`, `recipient.declined`, `recipient.approved` (+ `webhook.test` from
 `POST /v1/webhooks/{id}/test`).

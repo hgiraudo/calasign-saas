@@ -465,7 +465,12 @@ export const WebFormSchema = named(
     embeddable: z.boolean(),
     collectPhone: z.boolean(),
     ownerInactiveReason: z.string().nullable().describe("Por qué no crea sobres aunque esté activo (en español); null si está habilitado."),
-    ownerInactiveCode: z.enum(["not_member", "missing_permission", "template_access", "key_revoked", "plan_feature"]).nullable(),
+    ownerInactiveCode: z
+      .enum(["not_member", "missing_permission", "template_access", "key_revoked", "plan_feature", "plan_api", "misconfigured"])
+      .nullable()
+      .describe(
+        "not_member · missing_permission · template_access · key_revoked (quien lo configuró perdió el acceso); plan_feature (el plan no incluye formularios web); plan_api (lo configuró una API key y el plan ya no incluye la API); misconfigured (la plantilla cambió y el formulario ya no cierra con ella: rol que pasó a aprobador o copia, campos o roles del prellenado).",
+      ),
     createdAt: iso(),
     updatedAt: iso(),
   }),

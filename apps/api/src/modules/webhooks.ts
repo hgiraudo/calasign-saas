@@ -495,7 +495,12 @@ export async function webhookRoutes(app: FastifyInstance, s: Services) {
     await load(a.tenantId, req.params.id);
     const row = await s.db.one(
       `UPDATE webhook_endpoints SET url = COALESCE($3, url), description = CASE WHEN $4::boolean THEN $5 ELSE description END,
-         events = COALESCE($6, events), active = COALESCE($7, active), updated_at = now()
+         events = COALESCE($6, events), active = COALESCE($7, active), updated_at = now(),
+         -- Quien la (re)activa pasa a ser su origen: si no, una suscripción desactivada porque se revocó la credencial
+         -- que la creó se volvía a desactivar sola en el próximo evento.
+         created_by = CASE WHEN $7 THEN $8 ELSE created_by END,
+         created_by_api_key = CASE WHEN $7 THEN $9 ELSE created_by_api_key END,
+         oauth_client_id = CASE WHEN $7 THEN $10 ELSE oauth_client_id END
        WHERE id = $1 AND tenant_id = $2 RETURNING *`,
       [
         req.params.id,
@@ -505,6 +510,9 @@ export async function webhookRoutes(app: FastifyInstance, s: Services) {
         input.description ?? null,
         input.events ?? null,
         input.active ?? null,
+        a.userId,
+        a.apiKeyId,
+        a.oauth && a.userId ? a.oauth.clientId : null,
       ],
     );
     return toEndpoint(row);

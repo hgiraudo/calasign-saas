@@ -22,6 +22,20 @@ import { AuthProvider } from "./lib/auth";
 
 registerServiceWorker();
 
+// Una pestaña abierta antes de un deploy pide un trozo de la app (lazy) que ya no existe: sin esto quedaba en blanco.
+// Se recarga una sola vez por minuto (si el error persiste no entra en un bucle).
+window.addEventListener("vite:preloadError", (ev) => {
+  try {
+    const last = Number(window.sessionStorage.getItem("cs-reload-after-deploy") ?? 0);
+    if (Date.now() - last < 60_000) return;
+    window.sessionStorage.setItem("cs-reload-after-deploy", String(Date.now()));
+  } catch {
+    /* sin almacenamiento: se recarga igual */
+  }
+  ev.preventDefault();
+  window.location.reload();
+});
+
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <BrowserRouter>

@@ -1,4 +1,5 @@
 // Aceptar una invitación (pública): cuenta nueva, cuenta existente con contraseña, o sesión ya iniciada.
+import { redirectIfSsoRequired } from "../components/SsoLogin";
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import type { InvitationPreview, MeResponse, TwoFactorChallenge } from "@calasign/shared";
@@ -49,6 +50,8 @@ export function InviteAcceptPage() {
       if ("twoFactorRequired" in r) setChallenge(r.challengeToken);
       else done(r);
     } catch (err) {
+      // Organización con SSO obligatorio: ya quedó como miembro; se ingresa por el IdP.
+      if (redirectIfSsoRequired(err)) return;
       const unauth = err instanceof HttpError && err.status === 401 && err.code === "unauthorized";
       if (unauth && loggedAsInvitee) setNeedPassword(true);
       else setError(unauth ? pw("badCredentials") : errorText(err));

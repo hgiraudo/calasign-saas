@@ -49,18 +49,27 @@ async function ensureFirstVersion(db: Db, e: { id: string; tenant_id: string; si
   );
 }
 
+/** Marca de un sobre B-T que tiene que completarse a B-LTA (el barrido lo toma enseguida, sin esperar el día). */
+const LTV_PENDING = "LTV pendiente";
+
 /** Calcula hasta cuándo vale el archivo (solo PDF con DSS: los B-B/B-T no se renuevan). */
 async function inspectArchive(d: Deps, envelopeId: string) {
   const e = await signedFile(d.db, envelopeId);
   if (!e) return;
   const info = await archiveTimestampInfo(await d.blobs.get(e.storage_key));
   const validUntil = info.hasDss && info.last ? info.last.tsaNotAfter : null;
-  await d.db.query(`UPDATE envelopes SET archive_valid_until = $2, archive_checked_at = now(), archive_error = NULL WHERE id = $1`, [e.id, validUntil]);
-  await ensureFirstVersion(d.db, e, validUntil);
   // Con sello de tiempo pero sin DSS, en una organización con nivel B-LT/B-LTA: el LTV falló al finalizar (TSA u
-  // OCSP caídos) y el sobre quedaba en B-T para siempre, sin renovarse ni error visible. El barrido lo completa.
+  // OCSP caídos) y el sobre quedaba en B-T para siempre, sin renovarse ni error visible. Queda marcado "LTV pendiente"
+  // (lo toma el barrido aunque la inspección la haya hecho el panel del sobre) y el barrido lo completa.
   const level = info.last && !info.hasDss ? await resolveSealLevel(d.db, e.tenant_id) : null;
-  return { needsLtv: level === "B-LT" || level === "B-LTA" };
+  const needsLtv = level === "B-LT" || level === "B-LTA";
+  await d.db.query(`UPDATE envelopes SET archive_valid_until = $2, archive_checked_at = now(), archive_error = $3 WHERE id = $1`, [
+    e.id,
+    validUntil,
+    needsLtv ? LTV_PENDING : null,
+  ]);
+  await ensureFirstVersion(d.db, e, validUntil);
+  return { needsLtv };
 }
 
 /** Agrega DSS + sello de documento nuevo y guarda la nueva versión. */
@@ -109,7 +118,9 @@ async function renewClaimed(d: Deps, envelopeId: string, tsaUrl: string, actor: 
   const versionNo = Number((await d.db.one<any>(`SELECT COALESCE(max(version), 1) AS v FROM envelope_signed_versions WHERE envelope_id = $1`, [e.id]))?.v ?? 1) + 1;
   const key = `tenants/${e.tenant_id}/envelopes/${e.id}/${fileId}-signed-v${versionNo}.pdf`;
   await d.blobs.put(key, r.pdf, "application/pdf");
-  const notExtended = new Date(next.last.tsaNotAfter) <= new Date(prev.last.tsaNotAfter);
+  // Solo es una renovación de verdad si ya tenía DSS: completar un B-T (upgrade) usa la misma TSA y no es un problema.
+  const upgrade = !prev.hasDss;
+  const notExtended = !upgrade && new Date(next.last.tsaNotAfter) <= new Date(prev.last.tsaNotAfter);
   // Si el PDF cambió mientras tanto (otra renovación ganó) o la transacción falla, la versión subida no la referencia nada.
   await discardBlobsOnFailure(d.blobs, [key], () => d.db.tx(async (t) => {
     const cur = await t.one<any>(`SELECT signed_file_id FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
@@ -146,7 +157,8 @@ async function renewClaimed(d: Deps, envelopeId: string, tsaUrl: string, actor: 
         signedSha256: sha,
         tsa: next.last!.tsa,
         validUntil: next.last!.tsaNotAfter,
-        previousValidUntil: prev.last!.tsaNotAfter,
+        previousValidUntil: upgrade ? null : prev.last!.tsaNotAfter,
+        ...(upgrade ? { upgrade: true } : {}),
         dss: { certs: r.report.certs, ocsps: r.report.ocsps, crls: r.report.crls, missingRevocation: r.report.missingRevocation.length },
       },
     });
@@ -171,23 +183,32 @@ export async function archiveSweep(d: Deps, opts: { days?: number; force?: boole
     // Una inspección que falló (BYOK o almacenamiento caídos) se reintenta una vez por día: si no, ese sobre no se
     // renovaba nunca más y su validez a largo plazo vencía sin aviso.
     `SELECT id FROM envelopes WHERE status = 'completed' AND signed_file_id IS NOT NULL AND archive_valid_until IS NULL
-       AND (archive_checked_at IS NULL OR (archive_error IS NOT NULL AND archive_checked_at < now() - interval '1 day'))
+       AND (archive_checked_at IS NULL OR archive_error = 'LTV pendiente'
+            OR (archive_error IS NOT NULL AND archive_checked_at < now() - interval '1 day'))
        AND ($2::uuid IS NULL OR id = $2)
      ORDER BY completed_at LIMIT $1`,
     [cfg.batch * 5, opts.envelopeId ?? null],
   );
+  // Upgrades B-T → B-LTA por pasada: con tope, y se cortan ante la primera falla (con la TSA caída, cada uno hacía todas
+  // las consultas OCSP/CRL antes de fallar).
+  let upgrades = 0;
+  let upgradeFailed = false;
   for (const p of pending) {
     try {
       const r = await inspectArchive(d, p.id);
       inspected++;
-      if (r?.needsLtv) {
+      if (r?.needsLtv && !upgradeFailed && upgrades < cfg.batch) {
+        upgrades++;
         try {
           await renewEnvelopeArchive(d, p.id);
           renewed++;
         } catch (err) {
+          // Otra renovación (manual u otro worker) la está haciendo: no es una falla.
+          if (err instanceof AppError && err.code === "archive_renewal_in_progress") continue;
           // Queda a la vista y se reintenta una vez por día (la consulta de pendientes toma los que tienen error).
           failed++;
-          await d.db.query(`UPDATE envelopes SET archive_checked_at = now(), archive_error = $2 WHERE id = $1`, [p.id, `LTV pendiente: ${String(err)}`.slice(0, 500)]);
+          upgradeFailed = true;
+          await d.db.query(`UPDATE envelopes SET archive_checked_at = now(), archive_error = $2 WHERE id = $1`, [p.id, `${LTV_PENDING}: ${String(err)}`.slice(0, 500)]);
         }
       }
     } catch (err) {

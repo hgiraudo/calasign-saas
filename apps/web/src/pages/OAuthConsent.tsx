@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import type { AuthorizeInfo, AuthorizeResult } from "@calasign/shared";
-import { api, errorText } from "../lib/api";
+import { api, errorText, HttpError } from "../lib/api";
 import { usePlatformText } from "../lib/i18n-platform";
 import { ErrorBox, LocaleSwitcher, Logo, Spinner } from "../components/ui";
 
@@ -22,13 +22,18 @@ export function OAuthConsentPage() {
   }, [search]);
   const [info, setInfo] = useState<AuthorizeInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // La organización exige 2FA y la persona no la activó: la pantalla no tiene otro camino (está fuera del Layout).
+  const [needs2fa, setNeeds2fa] = useState(false);
   const [busy, setBusy] = useState(false);
   const [leaving, setLeaving] = useState(false);
 
   useEffect(() => {
     api<AuthorizeInfo>(`/v1/oauth/authorize/info?${new URLSearchParams(query)}`)
       .then(setInfo)
-      .catch((e) => setError(errorText(e)));
+      .catch((e) => {
+        setNeeds2fa(e instanceof HttpError && e.code === "two_factor_setup_required");
+        setError(errorText(e));
+      });
   }, [query]);
 
   const decide = async (approve: boolean) => {
@@ -65,6 +70,11 @@ export function OAuthConsentPage() {
               <>
                 <p className="muted">{p("consent.invalid")}</p>
                 <ErrorBox error={error} />
+                {needs2fa && (
+                  <a className="btn btn-primary" href="/app/settings/security">
+                    {p("oauth.enable2fa")}
+                  </a>
+                )}
               </>
             ) : !info ? (
               <Spinner />

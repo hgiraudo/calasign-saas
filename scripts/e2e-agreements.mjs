@@ -100,13 +100,16 @@ async function mail(pred, what, secs = 30) {
  * invitación del anterior.
  */
 async function signLink(to, subject = "", envelopeId = null) {
+  const rejected = new Set(); // tokens de otros sobres: no se vuelven a consultar (el límite por IP)
   for (let i = 0; i < 60; i++) {
     const { items } = await api("GET", "/dev/mailbox");
     for (const x of items.filter((x) => x.to === to && x.subject.includes(subject) && x.subject.includes("para firmar") && x.link?.includes("/s/"))) {
       const token = x.link.split("/s/")[1];
       if (!envelopeId) return token;
+      if (rejected.has(token)) continue;
       const s = await api("GET", `/v1/signing/${token}`, null, { anon: true }).catch(() => null);
       if (s?.envelope?.id === envelopeId) return token;
+      if (s) rejected.add(token);
     }
     await sleep(500);
   }

@@ -32,6 +32,7 @@ const es = {
 
   // Apps OAuth
   "oauth.title": "Apps OAuth",
+  "oauth.enable2fa": "Activar la verificación en dos pasos",
   "oauth.intro":
     "Registrá aplicaciones que acceden a la API con OAuth 2.0: client credentials para integraciones de servidor a servidor, o authorization code + PKCE para apps que actúan en nombre de cada usuario.",
   "oauth.new": "Nueva app",
@@ -218,6 +219,7 @@ const pt: Record<Key, string> = {
   "common.retry": "Tentar de novo",
 
   "oauth.title": "Apps OAuth",
+  "oauth.enable2fa": "Ativar a verificação em duas etapas",
   "oauth.intro":
     "Registre aplicações que acessam a API com OAuth 2.0: client credentials para integrações servidor a servidor, ou authorization code + PKCE para apps que agem em nome de cada usuário.",
   "oauth.new": "Novo app",
@@ -396,6 +398,7 @@ const en: Record<Key, string> = {
   "common.retry": "Retry",
 
   "oauth.title": "OAuth apps",
+  "oauth.enable2fa": "Turn on two-step verification",
   "oauth.intro":
     "Register applications that access the API with OAuth 2.0: client credentials for server-to-server integrations, or authorization code + PKCE for apps acting on behalf of each user.",
   "oauth.new": "New app",

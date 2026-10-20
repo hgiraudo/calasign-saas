@@ -680,6 +680,17 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     // Sin segundo factor pendiente: el ingreso con contraseña terminó bien (con 2FA se vacía al verificar el código).
     if (verifiedByPassword) await clearLoginAttempts(s.db, user.id);
     await joinByInvitation(req, inv.id, user.id, inv.email);
+    // SSO obligatorio (y no es propietario): ya es miembro, pero una sesión con contraseña no le serviría (el primer
+    // pedido daba sso_required y la web mostraba "tu sesión terminó"). Se lo manda a ingresar por SSO.
+    if (inv.role !== "owner") {
+      const sso = await s.db.one<any>(`SELECT c.enabled, c.enforce, t.slug FROM sso_configs c JOIN tenants t ON t.id = c.tenant_id WHERE c.tenant_id = $1`, [inv.tenant_id]);
+      if (sso?.enabled && sso.enforce) {
+        throw new AppError(403, "sso_required", "Te sumaste a la organización: ingresá con su inicio de sesión único (SSO)", {
+          joined: true,
+          startUrl: `/v1/auth/sso/start?org=${encodeURIComponent(sso.slug)}&login_hint=${encodeURIComponent(inv.email)}`,
+        });
+      }
+    }
     if (sessionUserId) {
       await s.db.query(`UPDATE sessions SET tenant_id = $2 WHERE token_hash = $1`, [sha256Hex(cookie!), inv.tenant_id]);
     } else {

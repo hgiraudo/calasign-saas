@@ -91,6 +91,18 @@ export const DocumentSchema = named(
   }),
 );
 
+/** Documento recién subido: lo de siempre más el aviso de firmas previas perdidas al sanear el PDF. */
+export const UploadedDocumentSchema = named(
+  "UploadedDocument",
+  DocumentSchema.extend({
+    hadSignatures: z
+      .boolean()
+      .describe(
+        "El archivo subido traía firmas digitales. Al subirlo, el PDF se sanea (formularios aplanados, contenido activo y adjuntos eliminados) y esas firmas se pierden: ni la copia guardada ni el PDF final las conservan. Conviene avisarle a quien lo subió.",
+      ),
+  }),
+);
+
 export const CertificateRequirementsSchema = named(
   "CertificateRequirements",
   z.object({

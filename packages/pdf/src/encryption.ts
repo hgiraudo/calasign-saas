@@ -72,7 +72,7 @@ export function opensWithoutPassword(doc: PDFDocument): boolean {
     const idRaw = ctx.trailerInfo.ID as PDFObject | undefined;
     const idArr = idRaw instanceof PDFRef ? ctx.lookup(idRaw) : idRaw;
     const id0 = idArr instanceof PDFArray ? bytesOf(idArr.get(0)) ?? Buffer.alloc(0) : Buffer.alloc(0);
-    const n = r === 2 ? 5 : Math.min(16, Math.max(5, ((enc.get(PDFName.of("Length")) as PDFNumber | undefined)?.asNumber?.() ?? 40) / 8));
+    const n = r === 2 ? 5 : Math.min(16, Math.max(5, keyLengthBits(ctx, enc, r) / 8));
     const encryptMetadata = enc.get(PDFName.of("EncryptMetadata"));
     const noMeta = r >= 4 && encryptMetadata instanceof PDFBool && !encryptMetadata.asBoolean();
     let key = md5(PAD, o.subarray(0, 32), pBuf, id0, noMeta ? Buffer.from([255, 255, 255, 255]) : Buffer.alloc(0));
@@ -85,4 +85,26 @@ export function opensWithoutPassword(doc: PDFDocument): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Largo de la clave en bits. /Length del /Encrypt; en R4 sin él, el /Length del filtro de /StmF (/StdCF) en /CF (como
+ * pdf.js: en bytes si es menor que 40, en bits si no) o 128 (AESV2, 16 bytes; también el valor por defecto de pdf.js).
+ */
+function keyLengthBits(ctx: PDFDocument["context"], enc: PDFDict, r: number): number {
+  const num = (o: PDFObject | undefined) => {
+    const v = o instanceof PDFRef ? ctx.lookup(o) : o;
+    return v instanceof PDFNumber ? v.asNumber() : undefined;
+  };
+  const dict = (o: PDFObject | undefined) => {
+    const v = o instanceof PDFRef ? ctx.lookup(o) : o;
+    return v instanceof PDFDict ? v : undefined;
+  };
+  const len = num(enc.get(PDFName.of("Length")));
+  if (len !== undefined || r !== 4) return len ?? 40;
+  const stmF = enc.get(PDFName.of("StmF"));
+  const filter = dict(dict(enc.get(PDFName.of("CF")))?.get(stmF instanceof PDFName ? stmF : PDFName.of("StdCF")));
+  const cf = num(filter?.get(PDFName.of("Length")));
+  if (!cf) return 128;
+  return cf < 40 ? cf * 8 : cf;
 }

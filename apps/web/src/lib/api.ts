@@ -144,6 +144,18 @@ const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
   invitation_used: { "pt-BR": "O convite não é mais válido.", en: "The invitation is no longer valid." },
   not_pdf: { "pt-BR": "O arquivo não é um PDF.", en: "The file isn't a PDF." },
   encrypted: { "pt-BR": "O PDF está protegido por senha.", en: "The PDF is password-protected." },
+  pdf_restricted: {
+    "pt-BR": "O PDF tem restrições de uso (permissões): exporte-o novamente ou imprima-o como PDF e envie de novo.",
+    en: "The PDF has usage restrictions (permissions): export it again or print it to PDF and upload it again.",
+  },
+  pdf_hidden_layers: {
+    "pt-BR": "O PDF tem camadas ocultas (conteúdo opcional desativado): exporte-o novamente sem camadas ou imprima-o como PDF e envie de novo.",
+    en: "The PDF has hidden layers (optional content turned off): export it again without layers or print it to PDF and upload it again.",
+  },
+  pdf_form_unsupported: {
+    "pt-BR": "O PDF tem um formulário cujos campos não podem ser fixados como aparecem: imprima-o como PDF e envie de novo.",
+    en: "The PDF has a form whose fields can't be fixed as they appear: print it to PDF and upload it again.",
+  },
   empty: { "pt-BR": "O PDF não tem páginas.", en: "The PDF has no pages." },
   too_many_pages: { "pt-BR": "O PDF tem páginas demais.", en: "The PDF has too many pages." },
   unreadable: {

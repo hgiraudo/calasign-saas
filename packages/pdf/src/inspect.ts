@@ -69,7 +69,7 @@ export async function preparePdfUpload(bytes: Uint8Array, maxPages = 500): Promi
 async function preparePdfUploadUnbudgeted(bytes: Uint8Array, maxPages: number): Promise<PreparedPdf> {
   const doc = await loadChecked(bytes, maxPages);
   const hadSignatures = hasSignedSignatureFields(doc);
-  resolveOptionalContent(doc, "upload");
+  resolveOptionalContent(doc);
   await flattenForm(doc, true);
   stripActiveContent(doc, true);
   compressPlainStreams(doc);

@@ -283,7 +283,9 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
       await touch(t, tpl.id);
     }));
     reply.code(201);
-    return (await loadTemplateDetail(s.db, a.tenantId, req.params.id)).documents.find((d) => d.id === docId);
+    const d = (await loadTemplateDetail(s.db, a.tenantId, req.params.id)).documents.find((x) => x.id === docId);
+    // hadSignatures: solo en la respuesta de la subida (las firmas previas del archivo se pierden al sanearlo).
+    return d && { ...d, hadSignatures: info.hadSignatures };
   });
 
   app.delete<P>("/v1/templates/:id/documents/:documentId", { preHandler: auth }, async (req, reply) => {

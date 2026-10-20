@@ -70,6 +70,11 @@ export interface SignatureReport {
    */
   weakAlgorithm: boolean;
   weakAlgorithmReasons: string[];
+  /**
+   * Lo que no se pudo comprobar sin que eso invalide la firma (p. ej. un signingCertificateV2 con un resumen que no se
+   * soporta, como SHA-224 o SHA-3). Solo si hay alguna.
+   */
+  warnings?: string[];
 }
 
 export interface ValidationReport {
@@ -149,7 +154,7 @@ function weakCertificate(c: pkijs.Certificate, out: Set<string>) {
  * al certificado con el que se verifica la firma: hash del certificado y, si está, IssuerSerial (emisor y número de
  * serie). Si no coincide, alguien pudo reemplazar el certificado del CMS por otro con la misma clave.
  */
-function signingCertificateIssue(sd: pkijs.SignedData, signer: pkijs.Certificate): string | null {
+function signingCertificateIssue(sd: pkijs.SignedData, signer: pkijs.Certificate, warnings: string[]): string | null {
   const attrs = sd.signerInfos[0].signedAttrs?.attributes ?? [];
   const v2 = attrs.find((a) => a.type === OIDS.signingCertificateV2);
   const attr = v2 ?? attrs.find((a) => a.type === OIDS.signingCertificate);
@@ -160,19 +165,19 @@ function signingCertificateIssue(sd: pkijs.SignedData, signer: pkijs.Certificate
     const first = (outer.valueBlock.value[0] as asn1js.Sequence).valueBlock.value[0] as asn1js.Sequence;
     const els = first.valueBlock.value;
     let i = 0;
-    let alg = v2 ? "sha256" : "sha1";
+    let alg: string | undefined = v2 ? "sha256" : "sha1";
     if (v2 && els[0] instanceof asn1js.Sequence) {
       const oid = (els[0].valueBlock.value[0] as asn1js.ObjectIdentifier).valueBlock.toString();
-      const a = HASH_BY_OID[oid];
-      if (!a) return bad;
-      alg = a;
+      alg = HASH_BY_OID[oid];
+      // Resumen que no se soporta (SHA-224, SHA-3…): no se puede comprobar, pero eso no prueba que no coincida.
+      if (!alg) warnings.push(`El atributo signingCertificateV2 usa un resumen no soportado (${oid}): no se pudo comprobar que identifica al certificado firmante`);
       i = 1;
     }
     const certHash = els[i];
     if (!(certHash instanceof asn1js.OctetString)) return bad;
     const want = Buffer.from(certHash.valueBlock.valueHexView);
     const encodings = [certDer(signer), new Uint8Array(signer.toSchema(false).toBER(false))];
-    if (!encodings.some((d) => Buffer.from(hash(alg, d)).equals(want))) return bad;
+    if (alg && !encodings.some((d) => Buffer.from(hash(alg, d)).equals(want))) return bad;
     const issuerSerial = els[i + 1];
     if (issuerSerial instanceof asn1js.Sequence) {
       const [names, serial] = issuerSerial.valueBlock.value;
@@ -356,7 +361,8 @@ async function validatePdfUnbudgeted(pdf: Uint8Array, opts: ValidateOptions): Pr
   for (const [index, s] of signatures.entries()) {
     const end = s.byteRange[2] + s.byteRange[3];
     const weak = new Set<string>();
-    const weakOf = () => ({ weakAlgorithm: weak.size > 0, weakAlgorithmReasons: [...weak] });
+    const warnings: string[] = [];
+    const weakOf = () => ({ weakAlgorithm: weak.size > 0, weakAlgorithmReasons: [...weak], ...(warnings.length ? { warnings: [...warnings] } : {}) });
     const base = {
       index,
       fieldName: s.fieldName,
@@ -421,7 +427,7 @@ async function validatePdfUnbudgeted(pdf: Uint8Array, opts: ValidateOptions): Pr
         if (!ok) integrity = { valid: false, reason: "El CMS trae contenido incrustado que no es este documento" };
       }
       if (integrity.valid && signer) {
-        const certIssue = signingCertificateIssue(sd, signer);
+        const certIssue = signingCertificateIssue(sd, signer, warnings);
         if (certIssue) integrity = { valid: false, reason: certIssue };
       }
       if (brIssue) integrity = { valid: false, reason: brIssue };

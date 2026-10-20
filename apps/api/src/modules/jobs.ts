@@ -1,4 +1,4 @@
-import { addCadesSignatureIncremental, finalizeEnvelopePdf, type CertificateRecipient, type StampField } from "@calasign/pdf";
+import { addCadesSignatureIncremental, finalizeEnvelopePdf, InvalidPdfError, type CertificateRecipient, type StampField } from "@calasign/pdf";
 import { certsignStage } from "./certsign";
 import { config } from "../config";
 import type { Db } from "../infra/db";
@@ -120,6 +120,14 @@ export function createJobHandlers(d: Deps): Record<JobQueueName, JobHandler> {
       try {
         await finalize(d, p);
       } catch (err) {
+        // Un documento que no se puede sellar (InvalidPdfError al sanear un original viejo) falla igual en cada intento:
+        // se registra el fallo y se avisa ya, sin reintentar. (Las capas ocultas de un original viejo ya no fallan: el PDF
+        // final lleva /OCProperties con el mismo estado.)
+        // Si registrarlo falla, el error sale y el job se reintenta (y vuelve a llegar acá).
+        if (err instanceof InvalidPdfError) {
+          await finalizeGaveUp(d, p, err);
+          return;
+        }
         // Último intento: el sobre no puede quedar en 'finalizing' sin que nadie se entere.
         if (isLastAttempt(job, err)) await finalizeGaveUp(d, p, err).catch((e) => d.log.error({ err: String(e), envelopeId: p.envelopeId }, "no se pudo registrar el fallo de finalización"));
         throw err;
@@ -136,7 +144,7 @@ export function createJobHandlers(d: Deps): Record<JobQueueName, JobHandler> {
 
 async function notify(
   d: Deps,
-  p: { kind: TemplateKind; envelopeId: string; tenantId: string; recipientId?: string; declinedBy?: string; userId?: string; tokenEnc?: string },
+  p: { kind: TemplateKind; envelopeId: string; tenantId: string; recipientId?: string; declinedBy?: string; userId?: string; tokenEnc?: string; reason?: string },
   jobId?: number,
 ) {
   if (p.kind === "password_reset") return notifyPasswordReset(d, p);
@@ -164,6 +172,8 @@ async function notify(
     subject: e.subject,
     declinedBy: decliner?.name ?? null,
     reason: p.kind === "voided" ? e.void_reason : decliner?.decline_reason ?? null,
+    // finalize_failed por un documento con capas ocultas (p. ej. un original viejo): reintentar no lo resuelve.
+    hiddenLayers: p.kind === "finalize_failed" && p.reason === "pdf_hidden_layers",
   };
 
   // Avisos al remitente.
@@ -591,13 +601,15 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
  */
 export async function finalizeGaveUp(d: Deps, p: { envelopeId: string; tenantId: string }, err: unknown) {
   const message = (err instanceof Error ? err.message : String(err)).slice(0, 500);
+  // Documento que no se puede sellar (determinista: reintentar no lo arregla): el código va en el evento y en el aviso.
+  const code = err instanceof InvalidPdfError ? err.code : null;
   await d.db.tx(async (t) => {
     const e = await t.one<any>(`SELECT id, tenant_id, status FROM envelopes WHERE id = $1 FOR UPDATE`, [p.envelopeId]);
     if (!e || e.status !== "finalizing") return;
-    await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "envelope.finalize_failed", actor: SYSTEM, data: { error: message } });
-    await enqueue(t, "notify", { kind: "finalize_failed", envelopeId: e.id, tenantId: e.tenant_id });
+    await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "envelope.finalize_failed", actor: SYSTEM, data: { error: message, ...(code ? { code } : {}) } });
+    await enqueue(t, "notify", { kind: "finalize_failed", envelopeId: e.id, tenantId: e.tenant_id, ...(code ? { reason: code } : {}) });
   });
-  d.log.error({ envelopeId: p.envelopeId, err: message }, "la finalización del sobre falló definitivamente");
+  d.log.error({ envelopeId: p.envelopeId, err: message, code }, "la finalización del sobre falló definitivamente");
 }
 
 // ───────────────────────────── Tareas periódicas ─────────────────────────────

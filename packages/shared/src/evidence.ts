@@ -142,13 +142,31 @@ export interface PdfValidationSignature {
     revocationUnknown?: boolean;
   };
   level: "B-B" | "B-T" | "B-LT" | "B-LTA" | null;
+  /**
+   * Algoritmos débiles: resumen SHA-1 o MD5 (de la firma, del sello de tiempo o de un certificado de la cadena que no es
+   * la raíz) o clave RSA de menos de 2048 bits. La firma puede verificar, pero ya no prueba nada: no cuenta para
+   * summary.allValid ni summary.allTrusted. `weakAlgorithmReasons` dice cuáles (texto en español).
+   */
+  weakAlgorithm?: boolean;
+  weakAlgorithmReasons?: string[];
+  /** Lo que no se pudo comprobar sin invalidar la firma (p. ej. signingCertificateV2 con SHA-224 o SHA-3). Texto en español. */
+  warnings?: string[];
 }
 
 export interface PdfValidationResponse {
   sha256: string;
   signatures: PdfValidationSignature[];
   dss: { certs: number; ocsps: number; crls: number } | null;
-  summary: { count: number; allValid: boolean; allTrusted: boolean; anyRevoked: boolean; modifiedAfterSigning?: boolean; revocationUnknown?: boolean };
+  summary: {
+    count: number;
+    allValid: boolean;
+    allTrusted: boolean;
+    anyRevoked: boolean;
+    modifiedAfterSigning?: boolean;
+    revocationUnknown?: boolean;
+    /** Alguna firma o sello usa algoritmos débiles (ver PdfValidationSignature.weakAlgorithm). */
+    anyWeakAlgorithm?: boolean;
+  };
   /** true si se consultó OCSP/CRL online además del DSS. */
   onlineRevocation: boolean;
 }

@@ -81,6 +81,7 @@ import {
   BulkValidationResultSchema,
   CustomRoleSchema,
   DocumentSchema,
+  UploadedDocumentSchema,
   EnvelopeDetailSchema,
   EnvelopeEventSchema,
   EnvelopeListSchema,
@@ -156,6 +157,7 @@ const CreateEnvelopeRequestBody = CreateEnvelopeInput.extend({
   embeddedSigning: CreateSigningUrlInput.optional().describe("Opciones (returnUrl, frameAncestors) de las URLs de firma embebida de la respuesta."),
 });
 const CreateEnvelopeResponseSchema = named("CreateEnvelopeResponse", EnvelopeDetailSchema.extend({
+  documents: z.array(UploadedDocumentSchema).describe("Los documentos creados, con `hadSignatures` (firmas previas del archivo que se perdieron al sanearlo)."),
   signingUrls: z
     .array(SigningUrlSchema.extend({ recipientId: z.string().uuid() }))
     .optional()
@@ -349,11 +351,11 @@ const OPS: Op[] = [
     tag: "Sobres",
     summary: "Agregar documento PDF",
     description:
-      "multipart/form-data con el campo `file`. El PDF se normaliza al subirlo (lo que se ve es lo que se firma); el hash del archivo subido queda en la evidencia. Topes por sobre: 30 documentos y 1000 páginas en total (400 too_many_documents / too_many_pages) y 100 MB en total (413 file_too_large).",
+      "multipart/form-data con el campo `file`. El PDF se normaliza al subirlo (lo que se ve es lo que se firma); el hash del archivo subido queda en la evidencia. El PDF se sanea: formularios aplanados tal como se ven, contenido activo (JavaScript, acciones, multimedia) y adjuntos eliminados; las capas ocultas se rechazan (pdf_hidden_layers) y las firmas digitales previas se pierden (`hadSignatures` en la respuesta). Topes por sobre: 30 documentos y 1000 páginas en total (400 too_many_documents / too_many_pages) y 100 MB en total (413 file_too_large).",
     multipart: true,
     fileDescription: "PDF (sin contraseña). El nombre del archivo es el nombre del documento.",
     status: 201,
-    response: DocumentSchema,
+    response: UploadedDocumentSchema,
     errors: ["not_draft", "not_pdf", "too_many_documents"],
   },
   { method: "delete", path: "/v1/envelopes/{id}/documents/{documentId}", operationId: "deleteEnvelopeDocument", tag: "Sobres", summary: "Quitar documento", response: "none", status: 204, errors: ["not_draft"] },
@@ -519,11 +521,11 @@ const OPS: Op[] = [
     tag: "Plantillas",
     summary: "Agregar documento PDF",
     description:
-      "multipart/form-data con el campo `file`. El PDF se normaliza al subirlo. Topes por plantilla: 30 documentos y 1000 páginas en total (400 too_many_documents / too_many_pages) y 100 MB en total (413 file_too_large).",
+      "multipart/form-data con el campo `file`. El PDF se normaliza al subirlo. El PDF se sanea: formularios aplanados tal como se ven, contenido activo (JavaScript, acciones, multimedia) y adjuntos eliminados; las capas ocultas se rechazan (pdf_hidden_layers) y las firmas digitales previas se pierden (`hadSignatures` en la respuesta). Topes por plantilla: 30 documentos y 1000 páginas en total (400 too_many_documents / too_many_pages) y 100 MB en total (413 file_too_large).",
     multipart: true,
     fileDescription: "PDF (sin contraseña). El nombre del archivo es el nombre del documento.",
     status: 201,
-    response: DocumentSchema,
+    response: UploadedDocumentSchema,
     errors: ["not_pdf", "too_many_documents"],
   },
   { method: "delete", path: "/v1/templates/{id}/documents/{documentId}", operationId: "deleteTemplateDocument", tag: "Plantillas", summary: "Quitar documento", response: "none", status: 204 },
@@ -1143,7 +1145,7 @@ const OPS: Op[] = [
     operationId: "validatePdfSignatures",
     tag: "Evidencia",
     summary: "Validar las firmas de un PDF (público)",
-    description: "Por firma: integridad, cobertura, sello de tiempo, cadena hasta raíces de confianza, revocación (DSS u online) y nivel PAdES. Sirve para cualquier PDF firmado. `chain.revocationUnknown` (y `summary.revocationUnknown`) indica que de algún certificado que no es la raíz no se pudo saber si estaba revocado (sin OCSP/CRL en el PDF ni consulta online, o un OCSP que respondió \"unknown\").",
+    description: "Por firma: integridad, cobertura, sello de tiempo, cadena hasta raíces de confianza, revocación (DSS u online) y nivel PAdES. Sirve para cualquier PDF firmado. `chain.revocationUnknown` (y `summary.revocationUnknown`) indica que de algún certificado que no es la raíz no se pudo saber si estaba revocado (sin OCSP/CRL en el PDF ni consulta online, o un OCSP que respondió \"unknown\"). `weakAlgorithm` (con `weakAlgorithmReasons`) marca una firma o sello con algoritmos débiles (resumen SHA-1/MD5 en la firma, el sello de tiempo o un certificado que no es la raíz, o clave RSA de menos de 2048 bits): puede verificar, pero no cuenta para `summary.allValid` ni `summary.allTrusted`; `summary.anyWeakAlgorithm` indica si alguna lo tiene. `warnings` (solo si hay) lista lo que no se pudo comprobar sin invalidar la firma (p. ej. un signingCertificateV2 con un resumen no soportado, como SHA-224 o SHA-3).",
     multipart: true,
     fileDescription: "PDF firmado.",
     auth: "none",

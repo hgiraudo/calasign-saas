@@ -10,6 +10,8 @@ import {
   PDFDropdown,
   PDFName,
   PDFNumber,
+  PDFOperator,
+  PDFOperatorNames,
   PDFOptionList,
   PDFPage,
   PDFRawStream,
@@ -68,14 +70,26 @@ function* allDicts(ctx: PDFContext): Generator<PDFDict> {
 
 // ───────────────────── Contenido opcional (capas, OCG) ─────────────────────
 
+/** Configuración de capas de un documento, tal como la aplica un lector al abrirlo. */
+export interface OptionalContentState {
+  /** Capas listadas en /OCProperties /OCGs, con su estado al abrir. */
+  groups: { ref: PDFObject; on: boolean }[];
+  /** /D /Order (orden del panel de capas) y /D /RBGroups, para copiarlos al PDF final. */
+  order: PDFObject | undefined;
+  rbGroups: PDFObject | undefined;
+  /** Por qué hay contenido oculto al abrir, o null si todo se ve. */
+  hidden: string | null;
+}
+
 /**
- * Por qué el documento tiene contenido opcional oculto al abrirlo, o null si todo se ve. Conservador: cuenta cualquier
- * OCG apagado (configuración por defecto /D: BaseState, ON, OFF), con uso de vista o impresión apagado (/Usage, que
- * /AS aplica automáticamente), grupos excluyentes (/RBGroups) con más de una capa encendida (el lector deja una sola) y
- * diccionarios de pertenencia (OCMD) que ocultan contenido aun con todas las capas encendidas (/P AnyOff o AllOff, /VE
- * con /Not). Sin /OCProperties los lectores ignoran el marcado /OC y muestran todo.
+ * Las capas del documento y si algo queda oculto al abrirlo, o null sin /OCProperties (sin él los lectores ignoran el
+ * marcado /OC y muestran todo). Sigue a pdf.js (el visor de la web): estado inicial por /D (BaseState, ON, OFF) y uso de
+ * vista (/Usage /View /ViewState OFF oculta aunque no haya /AS). /Print no cuenta (el visor muestra la capa en
+ * pantalla) y /RBGroups tampoco (un lector no lo aplica al abrir). Una capa que no está en /OCGs se ve, igual que un
+ * OCMD con /VE inválido (menos de 2 elementos u operador desconocido). Los diccionarios de pertenencia (OCMD) pueden
+ * ocultar contenido aun con todas las capas encendidas (/P AnyOff o AllOff, /VE con /Not).
  */
-export function hiddenOptionalContent(doc: PDFDocument): string | null {
+export function readOptionalContent(doc: PDFDocument): OptionalContentState | null {
   const ctx = doc.context;
   const ocp = dictOf(ctx, doc.catalog.get(N("OCProperties")));
   if (!ocp) return null;
@@ -83,66 +97,90 @@ export function hiddenOptionalContent(doc: PDFDocument): string | null {
   const base = nameOf(ctx, d?.get(N("BaseState"))) ?? "ON";
   const on = new Set(arrayOf(ctx, d?.get(N("ON"))).map(keyOf));
   const off = new Set(arrayOf(ctx, d?.get(N("OFF"))).map(keyOf));
-  const isOn = (o: PDFObject) => (off.has(keyOf(o)) ? false : on.has(keyOf(o)) ? true : base !== "OFF");
-
-  // Las capas listadas y cualquier otra que aparezca en el documento (un /OC puede apuntar a una que no está en /OCGs).
-  const groups: PDFObject[] = [...arrayOf(ctx, ocp.get(N("OCGs")))];
-  for (const [ref, obj] of ctx.enumerateIndirectObjects()) {
-    if (obj instanceof PDFDict && nameOf(ctx, obj.get(N("Type"))) === "OCG") groups.push(ref);
-  }
-  for (const g of groups) {
-    if (!isOn(g)) return "capa apagada";
+  const listed = new Map<unknown, boolean>();
+  const groups: OptionalContentState["groups"] = [];
+  let hidden: string | null = null;
+  for (const g of arrayOf(ctx, ocp.get(N("OCGs")))) {
+    if (listed.has(keyOf(g))) continue;
+    let visible = off.has(keyOf(g)) ? false : on.has(keyOf(g)) ? true : base !== "OFF";
+    if (!visible) hidden ??= "capa apagada";
     const usage = dictOf(ctx, dictOf(ctx, g)?.get(N("Usage")));
-    if (nameOf(ctx, dictOf(ctx, usage?.get(N("View")))?.get(N("ViewState"))) === "OFF") return "capa con vista apagada";
-    if (nameOf(ctx, dictOf(ctx, usage?.get(N("Print")))?.get(N("PrintState"))) === "OFF") return "capa que no se imprime";
+    if (visible && nameOf(ctx, dictOf(ctx, usage?.get(N("View")))?.get(N("ViewState"))) === "OFF") {
+      visible = false;
+      hidden ??= "capa con vista apagada";
+    }
+    listed.set(keyOf(g), visible);
+    groups.push({ ref: g, on: visible });
   }
-  for (const rb of arrayOf(ctx, d?.get(N("RBGroups")))) {
-    if (arrayOf(ctx, rb).filter(isOn).length > 1) return "grupo de capas excluyentes";
+  const state = (o: PDFObject) => listed.get(keyOf(o));
+  if (!hidden && listed.size) {
+    for (const dict of allDicts(ctx)) {
+      if (nameOf(ctx, dict.get(N("Type"))) !== "OCMD") continue;
+      if (!ocmdVisible(ctx, dict, state)) {
+        hidden = "contenido oculto por una condición de capas";
+        break;
+      }
+    }
   }
-  for (const dict of allDicts(ctx)) {
-    if (nameOf(ctx, dict.get(N("Type"))) !== "OCMD") continue;
-    if (!ocmdVisible(ctx, dict, isOn)) return "contenido oculto por una condición de capas";
-  }
-  return null;
+  return { groups, order: d?.get(N("Order")), rbGroups: d?.get(N("RBGroups")), hidden };
 }
 
-function ocmdVisible(ctx: PDFContext, d: PDFDict, isOn: (o: PDFObject) => boolean): boolean {
+/** Por qué el documento tiene contenido opcional oculto al abrirlo, o null si todo se ve (readOptionalContent). */
+export function hiddenOptionalContent(doc: PDFDocument): string | null {
+  return readOptionalContent(doc)?.hidden ?? null;
+}
+
+type GroupState = (o: PDFObject) => boolean | undefined;
+
+/** Visibilidad de un OCMD como pdf.js: una capa que no está en /OCGs hace visible el contenido. */
+function ocmdVisible(ctx: PDFContext, d: PDFDict, state: GroupState): boolean {
   const ve = resolve(ctx, d.get(N("VE")));
-  if (ve instanceof PDFArray) return evalVisibility(ctx, ve, isOn, 0);
+  if (ve instanceof PDFArray) {
+    const expr = parseVisibility(ctx, ve, 0);
+    if (expr) return evalVisibility(expr, state);
+  }
   const raw = d.get(N("OCGs"));
   const list = resolve(ctx, raw) instanceof PDFArray ? arrayOf(ctx, raw) : raw ? [raw] : [];
   if (!list.length) return true;
-  const states = list.map(isOn);
-  switch (nameOf(ctx, d.get(N("P"))) ?? "AnyOn") {
-    case "AllOn":
-      return states.every(Boolean);
-    case "AnyOff":
-      return states.some((s) => !s);
-    case "AllOff":
-      return states.every((s) => !s);
-    default:
-      return states.some(Boolean);
+  const policy = nameOf(ctx, d.get(N("P"))) ?? "AnyOn";
+  for (const g of list) {
+    const s = state(g);
+    if (s === undefined) return true;
+    if (policy === "AnyOn" && s) return true;
+    if (policy === "AllOn" && !s) return false;
+    if (policy === "AnyOff" && !s) return true;
+    if (policy === "AllOff" && s) return false;
   }
+  return policy === "AllOn" || policy === "AllOff" || !["AnyOn", "AnyOff"].includes(policy);
 }
 
-function evalVisibility(ctx: PDFContext, o: PDFObject | undefined, isOn: (o: PDFObject) => boolean, depth: number): boolean {
-  if (depth > 16 || o === undefined) return false;
-  const v = resolve(ctx, o);
-  if (v instanceof PDFArray) {
-    const [op, ...args] = v.asArray();
-    const vals = args.map((a) => evalVisibility(ctx, a, isOn, depth + 1));
-    switch (nameOf(ctx, op)) {
-      case "And":
-        return vals.every(Boolean);
-      case "Or":
-        return vals.some(Boolean);
-      case "Not":
-        return !vals[0];
-      default:
-        return false;
-    }
+type Visibility = { op: string; args: (Visibility | PDFRef | null)[] };
+
+/** Expresión /VE como la lee pdf.js: null si es inválida (menos de 2 elementos, operador desconocido, más de 10 niveles). */
+function parseVisibility(ctx: PDFContext, arr: PDFArray, depth: number): Visibility | null {
+  if (depth >= 10) return null;
+  const items = arr.asArray();
+  const op = nameOf(ctx, items[0]);
+  if (items.length < 2 || !op || !["And", "Or", "Not"].includes(op)) return null;
+  const args: Visibility["args"] = [];
+  for (const raw of items.slice(1)) {
+    const v = resolve(ctx, raw);
+    if (v instanceof PDFArray) args.push(parseVisibility(ctx, v, depth + 1));
+    else if (raw instanceof PDFRef) args.push(raw);
   }
-  return isOn(o);
+  return { op, args };
+}
+
+function evalVisibility(e: Visibility | null, state: GroupState): boolean {
+  if (!e || !e.args.length) return true;
+  for (const a of e.args) {
+    const s = a instanceof PDFRef ? state(a) : evalVisibility(a, state);
+    if (s === undefined) return true;
+    if (e.op === "And" && !s) return false;
+    if (e.op === "Or" && s) return true;
+    if (e.op === "Not") return !s;
+  }
+  return e.op === "And";
 }
 
 /**
@@ -150,8 +188,8 @@ function evalVisibility(ctx: PDFContext, o: PDFObject | undefined, isOn: (o: PDF
  * lectores muestran todo (el marcado /OC del contenido y de las anotaciones deja de tener efecto, y no hace falta
  * reescribir los content streams), que es lo mismo que muestra la copia de páginas del sellado (no copia el catálogo).
  */
-export function resolveOptionalContent(doc: PDFDocument, context: "upload" | "seal"): void {
-  if (hiddenOptionalContent(doc)) throw hiddenLayersError(context);
+export function resolveOptionalContent(doc: PDFDocument): void {
+  if (hiddenOptionalContent(doc)) throw hiddenLayersError("upload");
   doc.catalog.delete(N("OCProperties"));
 }
 
@@ -192,8 +230,9 @@ export function hasSignedSignatureFields(doc: PDFDocument): boolean {
  * - Widgets con /F Hidden (2) o NoView (32): no se dibujan.
  * - Apariencia: /AP /N; si es un diccionario de estados, el de /AS (sin /AS o sin ese estado, nada, como un lector).
  * - Con /NeedAppearances el lector regenera la apariencia de texto y listas a partir del valor: se regenera igual (pdf-lib,
- *   Helvetica). También si un campo con valor no tiene apariencia. Si no se puede: al subir se rechaza
- *   (`pdf_form_unsupported`); al sellar (`strict` false) se sigue con la apariencia que haya.
+ *   Helvetica). También si un campo con valor no tiene apariencia. Si no se puede (texto fuera de WinAnsi, /RV), se
+ *   conserva la apariencia guardada; si el campo no tiene ninguna, al subir se rechaza (`pdf_form_unsupported`) y al
+ *   sellar (`strict` false) se sigue sin ella.
  * - Ubicación según ISO 32000-1 §12.5.5: la BBox transformada por /Matrix se lleva a /Rect.
  */
 export async function flattenForm(doc: PDFDocument, strict: boolean): Promise<void> {
@@ -251,7 +290,16 @@ async function regenerateAppearances(doc: PDFDocument, acro: PDFDict, strict: bo
       font ??= await doc.embedFont(StandardFonts.Helvetica);
       field.defaultUpdateAppearances(font);
     } catch {
-      if (strict) throw formUnsupportedError();
+      // Texto fuera de WinAnsi, texto enriquecido (/RV)…: se conserva la apariencia guardada si todos los widgets la
+      // tienen; sin ninguna, al subir se rechaza.
+      if (!strict) continue;
+      let hasAppearance = false;
+      try {
+        hasAppearance = field.acroField.getWidgets().every((w) => w.getAppearances()?.normal !== undefined);
+      } catch {
+        // sin widgets legibles
+      }
+      if (!hasAppearance) throw formUnsupportedError();
     }
   }
 }
@@ -295,12 +343,35 @@ function drawWidget(page: PDFPage, widget: PDFDict) {
   if (!(stream.dict.get(N("Subtype")) instanceof PDFName)) stream.dict.set(N("Subtype"), N("Form"));
   const ref = n instanceof PDFRef ? n : ctx.register(stream);
   const key = page.node.newXObject("FlatWidget", ref);
+  // Un widget en una capa (/OC) sigue en esa capa: si está apagada (original viejo sellado con sus capas), no se ve.
+  const oc = widget.get(N("OC"));
+  const ocKey = oc ? optionalContentKey(page, oc) : undefined;
   page.pushOperators(
+    ...(ocKey ? [PDFOperator.of(PDFOperatorNames.BeginMarkedContentSequence, [N("OC"), ocKey])] : []),
     pushGraphicsState(),
     concatTransformationMatrix(sx, 0, 0, sy, rx1 - tx1 * sx, ry1 - ty1 * sy),
     drawObject(key),
     popGraphicsState(),
+    ...(ocKey ? [PDFOperator.of(PDFOperatorNames.EndMarkedContent)] : []),
   );
+}
+
+/** Nombre de /Properties de la página que apunta a `oc` (lo agrega si hace falta). */
+function optionalContentKey(page: PDFPage, oc: PDFObject): PDFName {
+  const ctx = page.doc.context;
+  page.node.normalize();
+  const res = page.node.Resources()!;
+  let props = dictOf(ctx, res.get(N("Properties")));
+  if (!props) res.set(N("Properties"), (props = ctx.obj({})));
+  for (let i = 0; ; i++) {
+    const name = N(`FlatOC${i}`);
+    const cur = props.get(name);
+    if (cur === undefined) {
+      props.set(name, oc);
+      return name;
+    }
+    if (cur === oc) return name;
+  }
 }
 
 // ───────────────────── Contenido activo ─────────────────────
@@ -320,15 +391,17 @@ function keepAction(ctx: PDFContext, a: PDFObject | undefined): boolean {
 }
 
 /**
- * Quita el contenido activo: /AA de páginas y anotaciones; en /A solo quedan URI, GoTo y Named estándar; se eliminan las
- * anotaciones FileAttachment, Sound, Movie, RichMedia, Screen y 3D. Con `catalog`, también /AA, /OpenAction que no sea
- * un destino o un GoTo, /Names /JavaScript y /EmbeddedFiles, /Collection (portafolio) y las acciones de los marcadores.
+ * Quita el contenido activo: /AA y /AF (archivos asociados) de páginas, /AA de anotaciones; en /A solo quedan URI, GoTo
+ * y Named estándar; se eliminan las anotaciones FileAttachment, Sound, Movie, RichMedia, Screen y 3D. Con `catalog`,
+ * también /AA, /AF, /OpenAction que no sea un destino o un GoTo, /Names /JavaScript y /EmbeddedFiles, /Collection
+ * (portafolio) y las acciones de los marcadores.
  * (XFA va con el /AcroForm, que flattenForm elimina.)
  */
 export function stripActiveContent(doc: PDFDocument, catalog: boolean): void {
   const ctx = doc.context;
   for (const page of doc.getPages()) {
     page.node.delete(N("AA"));
+    page.node.delete(N("AF"));
     const raw = page.node.get(N("Annots"));
     const annots = resolve(ctx, raw);
     if (!(annots instanceof PDFArray)) continue;
@@ -351,6 +424,8 @@ export function stripActiveContent(doc: PDFDocument, catalog: boolean): void {
   const cat = doc.catalog;
   cat.delete(N("AA"));
   cat.delete(N("Collection"));
+  // Archivos asociados (PDF/A-3, Factur-X): sus /EF quedarían alcanzables y se guardarían.
+  cat.delete(N("AF"));
   const open = cat.get(N("OpenAction"));
   if (open !== undefined && !(resolve(ctx, open) instanceof PDFArray)) {
     const d = dictOf(ctx, open);
@@ -376,15 +451,21 @@ export function stripActiveContent(doc: PDFDocument, catalog: boolean): void {
 
 // ───────────────────── Streams y objetos huérfanos ─────────────────────
 
+/** Streams más grandes que esto no se comprimen al subir (deflate de decenas de MB bloquea el worker). */
+const MAX_COMPRESSED_STREAM = 2 * 1024 * 1024;
+
 /**
- * Comprime con Flate los streams sin filtro (salvo los metadatos XMP, que se dejan legibles). Así ningún texto literal
- * de un documento subido (p. ej. un `/ByteRange [0 /********** ...]` en un content stream) queda tal cual en el PDF.
+ * Comprime con Flate los streams sin filtro, para achicar el archivo y que el texto de un documento subido no quede
+ * literal. Se dejan como están los metadatos XMP (legibles), las imágenes (deflate de píxeles sin filtro es lento y
+ * rinde poco) y los streams de más de 2 MB. Un `/ByteRange [0 /********** ...]` literal ya no confunde al sellado: el
+ * placeholder del ByteRange lleva un nombre aleatorio (newByteRangePlaceholder).
  */
 export function compressPlainStreams(doc: PDFDocument): void {
   const ctx = doc.context;
   for (const [ref, obj] of ctx.enumerateIndirectObjects()) {
     if (!(obj instanceof PDFRawStream) || obj.dict.has(N("Filter"))) continue;
     if (nameOf(ctx, obj.dict.get(N("Type"))) === "Metadata") continue;
+    if (nameOf(ctx, obj.dict.get(N("Subtype"))) === "Image" || obj.contents.length > MAX_COMPRESSED_STREAM) continue;
     const s = ctx.flateStream(obj.contents);
     for (const [k, v] of obj.dict.entries()) {
       const key = k.decodeText();
@@ -419,11 +500,13 @@ export function dropUnreachable(doc: PDFDocument): void {
 
 /**
  * Lo que se hace al sellar con cada documento (y adjunto PDF) antes de copiar sus páginas: defensa para originales
- * guardados antes del saneamiento en la subida. Capas apagadas: se rechaza el sellado (no se sella algo distinto de lo
- * que vio el firmante).
+ * guardados antes del saneamiento en la subida. Devuelve sus capas (readOptionalContent): la copia de páginas no lleva el
+ * catálogo, así que si alguna está apagada el PDF final tiene que llevar /OCProperties con el mismo estado
+ * (finalize.ts), para mostrar lo mismo que vio el firmante.
  */
-export async function sanitizeForSealing(doc: PDFDocument): Promise<void> {
-  resolveOptionalContent(doc, "seal");
+export async function sanitizeForSealing(doc: PDFDocument): Promise<OptionalContentState | null> {
+  const layers = readOptionalContent(doc);
   await flattenForm(doc, false);
   stripActiveContent(doc, false);
+  return layers;
 }

@@ -135,11 +135,39 @@ draft ──send──► sent ──(todos los firmantes firman)──► final
   └─ delete (solo borrador)
 ```
 
-1. **Borrador**: se suben PDF (se validan, se calcula SHA-256, se guardan), se cargan destinatarios con `routingOrder` (mismo número = en paralelo; distinto = secuencial) y se ubican campos.
+1. **Borrador**: se suben PDF (se validan, se sanean, se calcula SHA-256, se guardan; ver «Saneamiento de los PDF subidos» abajo), se cargan destinatarios con `routingOrder` (mismo número = en paralelo; distinto = secuencial) y se ubican campos.
 2. **Envío**: valida (≥1 documento, ≥1 firmante, cada firmante con ≥1 campo de firma), genera tokens, notifica al primer grupo. Evento `envelope.sent`.
 3. **Firma**: el firmante abre el link (`recipient.viewed`), acepta el uso de medios electrónicos (`recipient.consented`), completa campos y adopta su firma (`recipient.signed`, con IP, user agent, hash de los documentos que vio). Si su grupo terminó, se notifica al siguiente.
 4. **Finalización** (worker `finalize`): estampa valores y firmas en los PDF, une los documentos, agrega el **certificado de finalización** (datos del sobre, hash de cada original, cada firmante con evidencia, línea de tiempo completa, cabeza de la cadena de hashes) y **sella con PAdES B-T**. Guarda el resultado y su hash. Evento `envelope.completed`.
 5. **Copias**: se envía el documento final a todos los participantes y al remitente.
+
+### Saneamiento de los PDF subidos
+
+Todo PDF que se sube como documento (sobres, plantillas, `POST /v1/envelopes` con documentos, conectores, adjuntos
+PDF de los firmantes) pasa por `preparePdfUpload` (`packages/pdf/src/inspect.ts` + `sanitize.ts`), que lo reescribe
+para que lo guardado sea exactamente lo que ve el firmante y lo que se sella:
+
+- **Formularios aplanados**: los campos se fijan en la página tal como se ven (sin widgets ocultos, apariencia según
+  `/AS`, regenerada si el PDF pide `NeedAppearances`) y se elimina el `/AcroForm` (con XFA). Si un formulario no se
+  puede fijar tal como se ve, se rechaza con `400 pdf_form_unsupported`.
+- **Contenido activo y adjuntos eliminados**: JavaScript de documento, acciones que no sean URI/GoTo/Named (lanzar
+  programas, enviar formularios…), acciones automáticas (`/AA`), archivos adjuntos embebidos (también los asociados
+  `/AF` de PDF/A-3 o Factur-X) y multimedia.
+- **Capas ocultas rechazadas**: si alguna capa (contenido opcional) está apagada al abrir, como lo evalúa pdf.js
+  (`/D` BaseState/ON/OFF, `/Usage /View` apagado, OCMD que oculta), `400 pdf_hidden_layers`; con todas encendidas se
+  quita `/OCProperties`. No cuentan `/Print` apagado ni `/RBGroups`, ni capas que no están en `/OCGs`.
+- **Firmas previas perdidas**: al reescribirlo, las firmas digitales que traía el archivo dejan de existir (ni la
+  copia guardada ni el PDF final las conservan). La respuesta de la subida lo avisa con `hadSignatures: true`, la
+  consola se lo muestra al remitente y el evento `document.added` lo registra.
+- Otros rechazos: con contraseña (`encrypted`), cifrado solo con restricciones de permisos (`pdf_restricted`),
+  ambiguo (`ambiguous_pdf`), sin páginas, ilegible o con demasiadas páginas.
+- El hash del archivo subido (`uploadedSha256`) y el del guardado (`sha256`) quedan en el evento `document.added`.
+
+Los originales guardados antes de este saneamiento se sanean también al sellar. Si uno tiene capas ocultas, el PDF
+final lleva `/OCProperties` con el mismo estado (capas de todos los documentos, las apagadas en `/D /OFF`), así se ve
+lo mismo que vio el firmante. Si otro saneamiento falla con `InvalidPdfError`, el job `finalize` no lo reintenta,
+registra `envelope.finalize_failed` con el `code` y avisa al remitente y a los administradores (el sobre queda en
+`finalizing`).
 
 ## 6. Evidencia (lo que hace que la firma valga)
 

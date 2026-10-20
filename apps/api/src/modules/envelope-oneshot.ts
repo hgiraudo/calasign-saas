@@ -277,6 +277,9 @@ async function createEnvelope(
   };
   // Si algo falla (también a mitad de la subida), los PDF ya subidos se borran: no los referencia nada.
   await discardBlobsOnFailure(s.blobs, keys, write);
-  const detail = await loadDetail(s.db, a.tenantId, id);
+  const loaded = await loadDetail(s.db, a.tenantId, id);
+  // hadSignatures por documento (solo en esta respuesta): las firmas previas del archivo se pierden al sanearlo.
+  const had = new Map(docs.map((d) => [d.docId, d.hadSignatures]));
+  const detail = { ...loaded, documents: loaded.documents.map((d) => ({ ...d, hadSignatures: had.get(d.id) ?? false })) };
   return { status: 201, body: signingUrls.length ? { ...detail, signingUrls } : detail };
 }

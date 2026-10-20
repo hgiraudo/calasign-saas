@@ -342,7 +342,8 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
     }));
     const d = (await loadDetail(s.db, a.tenantId, req.params.id)).documents.find((x) => x.id === doc.docId);
     reply.code(201);
-    return d;
+    // hadSignatures: solo en la respuesta de la subida (las firmas previas del archivo se pierden al sanearlo).
+    return d && { ...d, hadSignatures: doc.hadSignatures };
   });
 
   app.delete<P>("/v1/envelopes/:id/documents/:documentId", { preHandler: auth }, async (req, reply) => {
@@ -726,6 +727,8 @@ export interface PreparedPdfDocument {
   pages: unknown;
   sha256: string;
   uploadedSha256: string;
+  /** El archivo subido traía firmas digitales: el saneamiento las elimina (ni la copia guardada ni el PDF final las conservan). */
+  hadSignatures: boolean;
 }
 
 /**
@@ -751,6 +754,7 @@ export async function preparePdfDocument(tenantId: string, envelopeId: string, u
     pages: info.pages,
     sha256: sha256Hex(bytes),
     uploadedSha256: sha256Hex(uploaded),
+    hadSignatures: info.hadSignatures,
   };
 }
 
@@ -773,7 +777,7 @@ export async function insertPreparedDocument(t: Db, tenantId: string, actor: Act
     envelopeId,
     type: "document.added",
     actor,
-    data: { documentId: d.docId, name: d.name, sha256: d.sha256, uploadedSha256: d.uploadedSha256, pages: d.pageCount },
+    data: { documentId: d.docId, name: d.name, sha256: d.sha256, uploadedSha256: d.uploadedSha256, pages: d.pageCount, ...(d.hadSignatures ? { hadSignatures: true } : {}) },
   });
 }
 

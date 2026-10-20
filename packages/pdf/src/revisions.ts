@@ -4,6 +4,7 @@
 import { createHash } from "node:crypto";
 import {
   PDFArray,
+  PDFBool,
   PDFContext,
   PDFDict,
   PDFDocument,
@@ -81,17 +82,38 @@ function isInvisibleWidget(ctx: PDFContext, annot: PDFDict): boolean {
 }
 
 /**
- * Huella del catálogo (lo que, a nivel de documento, decide qué y cómo se muestra sin tocar las páginas), por lista
- * blanca: se compara el catálogo canónico completo salvo lo que una firma o una renovación legítima agrega —/DSS (LTV),
- * /Perms y, del /AcroForm, /Fields y /SigFlags (cada firma y sello de documento suma su campo)—. Las páginas (/Pages) se
- * comparan aparte (pageFingerprints). Cualquier otra diferencia cuenta como cambio de contenido: capas (/OCProperties),
- * acciones (/OpenAction, /AA), /Names (adjuntos /EmbeddedFiles, /JavaScript, destinos), portafolio (/Collection),
- * /PageMode, metadatos, y del /AcroForm XFA, NeedAppearances, /DR, /DA…
+ * Huella del catálogo: lo que, a nivel de documento, decide qué se muestra o qué se ejecuta sin tocar las páginas (que se
+ * comparan aparte, pageFingerprints). Se compara el catálogo canónico salvo lo que revisiones legítimas de terceros
+ * agregan o reescriben sin cambiar lo que se ve:
+ * - lo de cada firma o renovación: /DSS (LTV), /Perms y, del /AcroForm, /Fields y /SigFlags;
+ * - lo que reescriben firmadores y editores (iText, pyHanko, Acrobat): /Extensions (ESIC), /Version, /Metadata (XMP),
+ *   /Lang, /MarkInfo, /StructTreeRoot, /PageLabels, /ViewerPreferences, /Outlines (marcadores) y /Dests; del /AcroForm,
+ *   /DR, /DA, /Q y NeedAppearances cuando queda false o se quita (true hace que el lector regenere las apariencias).
+ * Sí cuentan como cambio de contenido: capas (/OCProperties), acciones (/OpenAction, /AA, /URI), /Names /JavaScript y
+ * /EmbeddedFiles (los demás árboles de /Names, como /Dests, no), portafolio (/Collection), /PageMode, XFA,
+ * NeedAppearances true y cualquier otra clave del catálogo que no esté en la lista de arriba.
  * Lo que agrega la plataforma (sello PAdES, sello de empresa, firma con certificado propio, DSS de B-LT y sello de
  * documento de B-LTA) solo toca /DSS y /AcroForm /Fields y /SigFlags (incremental.ts).
  */
-const CATALOG_EVIDENCE_KEYS = new Set(["Pages", "DSS", "Perms", "AcroForm"]);
-const ACROFORM_EVIDENCE_KEYS = new Set(["Fields", "SigFlags"]);
+const CATALOG_IGNORED_KEYS = new Set([
+  "Pages",
+  "DSS",
+  "Perms",
+  "AcroForm",
+  "Names",
+  "Extensions",
+  "Version",
+  "Metadata",
+  "Lang",
+  "MarkInfo",
+  "StructTreeRoot",
+  "PageLabels",
+  "ViewerPreferences",
+  "Outlines",
+  "Dests",
+]);
+const ACROFORM_IGNORED_KEYS = new Set(["Fields", "SigFlags", "DR", "DA", "Q", "NeedAppearances"]);
+const NAMES_COMPARED_KEYS = ["JavaScript", "EmbeddedFiles"];
 
 function documentFingerprint(doc: PDFDocument): string {
   const ctx = doc.context;
@@ -100,12 +122,20 @@ function documentFingerprint(doc: PDFDocument): string {
   const parts: string[] = [];
   for (const [k, v] of cat.entries()) {
     const key = k.decodeText();
-    if (!CATALOG_EVIDENCE_KEYS.has(key)) parts.push(`${key}=${canon.of(v)}`);
+    if (!CATALOG_IGNORED_KEYS.has(key)) parts.push(`${key}=${canon.of(v)}`);
   }
   const acro = lookupDict(ctx, cat.get(PDFName.of("AcroForm")));
   for (const [k, v] of acro?.entries() ?? []) {
     const key = k.decodeText();
-    if (!ACROFORM_EVIDENCE_KEYS.has(key)) parts.push(`AcroForm.${key}=${canon.of(v)}`);
+    if (!ACROFORM_IGNORED_KEYS.has(key)) parts.push(`AcroForm.${key}=${canon.of(v)}`);
+  }
+  const rawNeed = acro?.get(PDFName.of("NeedAppearances"));
+  const need = rawNeed instanceof PDFRef ? ctx.lookup(rawNeed) : rawNeed;
+  if (need instanceof PDFBool && need.asBoolean()) parts.push("AcroForm.NeedAppearances=true");
+  const names = lookupDict(ctx, cat.get(PDFName.of("Names")));
+  for (const key of NAMES_COMPARED_KEYS) {
+    const v = names?.get(PDFName.of(key));
+    if (v !== undefined) parts.push(`Names.${key}=${canon.of(v)}`);
   }
   return h(parts.sort().join("|"));
 }

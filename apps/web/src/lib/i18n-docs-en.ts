@@ -558,6 +558,8 @@ export const docsEn: Record<DocsKey, string> = {
   "err.c.invalidId": "An id in the path isn't a valid UUID.",
   "err.c.bad":
     "Other request errors, with a specific `code`: invalid cursor, anchor text not found, field outside the page, a file that isn't a PDF (`not_pdf`, the same code on every upload path), text with disallowed characters such as the null character (`invalid_text`), more than 30 documents or 1000 pages in a draft or template when adding one (`too_many_documents`, `too_many_pages`)…",
+  "err.c.pdf":
+    "The uploaded PDF can't be used: password-protected (`encrypted`), restricted by permissions even though it opens without a password (`pdf_restricted`), with no pages (`empty`), damaged or too heavy (`unreadable`), showing different things in different readers (`ambiguous_pdf`), with hidden layers (`pdf_hidden_layers`) or with a form that can't be fixed as it appears (`pdf_form_unsupported`). Export it again or print it to PDF and upload it again. Accepted PDFs are sanitized: forms flattened, active content and attachments removed, and prior digital signatures are lost (`info.hadSignatures`).",
   "err.c.oneshot":
     "Errors in the `multipart/form-data` of `POST /v1/envelopes`: a text field other than `payload` (`unknown_part`), a repeated part (`duplicate_part`), a `payload` that isn't valid JSON (`invalid_json`), more than 10 documents (`too_many_documents`) or two documents citing the same file part (`duplicate_document`).",
   "err.c.unauthorized": "The credential is missing, invalid, expired or revoked.",

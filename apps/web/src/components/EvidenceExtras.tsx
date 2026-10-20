@@ -129,10 +129,16 @@ export function ValidationReportView({ report }: { report: PdfValidationResponse
     <div className="stack" data-testid="validation-report">
       <h2 className="h3">{ev("val.title")}</h2>
       {report.dss && <p className="muted small">{ev("val.dss", report.dss)}</p>}
+      {(report.summary.anyWeakAlgorithm || report.signatures.some((s) => s.weakAlgorithm)) && (
+        <div className="alert alert-warn" role="status" data-testid="validation-weak">
+          {ev("val.weakSummary")}
+        </div>
+      )}
       {report.signatures.map((s) => {
         const title = s.kind === "document_timestamp" ? ev("val.docTimestamp") : ev("val.signature", { n: ++n });
         const ok = s.integrity.valid && (!s.timestamp || s.timestamp.valid) && s.changesAfter !== "content";
-        // "De confianza" solo si además ningún certificado estaba revocado ni vencido al firmar (mismo criterio que summary.allTrusted).
+        // "De confianza" solo si además ningún certificado estaba revocado ni vencido al firmar (summary.allTrusted además excluye
+        // los algoritmos débiles, que van en su propia insignia).
         const chainLabel = s.chain.revoked
           ? ev("val.rev.revoked")
           : s.chain.timeValid === false
@@ -150,6 +156,7 @@ export function ValidationReportView({ report }: { report: PdfValidationResponse
                 <span className={`badge ${chainOk ? "badge-completed" : s.chain.revoked || s.chain.timeValid === false ? "badge-declined" : "badge-sent"}`}>{chainLabel}</span>
               )}
               {chainOk && s.chain.revocationUnknown && <span className="badge badge-sent">{ev("val.revUnknown")}</span>}
+              {s.weakAlgorithm && <span className="badge badge-declined">{ev("val.weak")}</span>}
               {s.level && <span className="badge badge-draft">{s.level}</span>}
             </div>
             <table className="table small">
@@ -172,6 +179,12 @@ export function ValidationReportView({ report }: { report: PdfValidationResponse
                     <td>
                       {formatDateTime(s.timestamp.time, locale)} · {s.timestamp.tsa ?? "TSA"} {s.timestamp.valid ? (s.timestamp.trusted === false ? `⚠ ${ev("val.tsaUntrusted")}` : "✓") : "✕"}
                     </td>
+                  </tr>
+                )}
+                {s.weakAlgorithm && (s.weakAlgorithmReasons?.length ?? 0) > 0 && (
+                  <tr>
+                    <th>{ev("val.weakReasons")}</th>
+                    <td className="break">{s.weakAlgorithmReasons!.join(" · ")}</td>
                   </tr>
                 )}
                 {!s.integrity.valid && s.integrity.reason && (

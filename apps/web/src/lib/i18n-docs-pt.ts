@@ -558,6 +558,8 @@ export const docsPt: Record<DocsKey, string> = {
   "err.c.invalidId": "Um id da rota não é um UUID válido.",
   "err.c.bad":
     "Outros erros da requisição, com um `code` específico: cursor inválido, texto âncora não encontrado, campo fora da página, um arquivo que não é PDF (`not_pdf`, o mesmo código em todos os envios de arquivo), texto com caracteres não permitidos como o caractere nulo (`invalid_text`), mais de 30 documentos ou 1000 páginas em um rascunho ou modelo ao adicionar um (`too_many_documents`, `too_many_pages`)…",
+  "err.c.pdf":
+    "O PDF enviado não pode ser usado: protegido por senha (`encrypted`), com restrições de permissões mesmo abrindo sem senha (`pdf_restricted`), sem páginas (`empty`), danificado ou pesado demais (`unreadable`), mostrando coisas diferentes em cada leitor (`ambiguous_pdf`), com camadas ocultas (`pdf_hidden_layers`) ou com um formulário que não pode ser fixado como aparece (`pdf_form_unsupported`). Exporte-o novamente ou imprima-o como PDF e envie de novo. Os PDFs aceitos são saneados: formulários achatados, conteúdo ativo e anexos removidos, e as assinaturas digitais anteriores se perdem (`info.hadSignatures`).",
   "err.c.oneshot":
     "Erros do `multipart/form-data` de `POST /v1/envelopes`: um campo de texto que não é `payload` (`unknown_part`), uma parte repetida (`duplicate_part`), `payload` que não é JSON válido (`invalid_json`), mais de 10 documentos (`too_many_documents`) ou dois documentos que citam a mesma parte de arquivo (`duplicate_document`).",
   "err.c.unauthorized": "A credencial está ausente, é inválida, expirou ou foi revogada.",

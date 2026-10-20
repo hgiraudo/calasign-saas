@@ -288,6 +288,11 @@ export interface Document {
   pages: PageSize[];
   sha256: string;
   sizeBytes: number;
+  /**
+   * Solo en la respuesta de una subida (POST …/documents, POST /v1/envelopes con documentos): el archivo subido traía
+   * firmas digitales, que se pierden al sanear el PDF (ni la copia guardada ni el PDF final las conservan).
+   */
+  hadSignatures?: boolean;
 }
 
 export interface Recipient {

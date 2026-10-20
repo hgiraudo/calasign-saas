@@ -440,6 +440,8 @@ function TemplateDocuments({
 }) {
   const { t } = useI18n();
   const [uploading, setUploading] = useState<string | null>(null);
+  // Archivos subidos que traían firmas digitales (se pierden al sanear el PDF): aviso que no bloquea.
+  const [hadSignatures, setHadSignatures] = useState<string[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Mientras se sube o se borra, la página queda ocupada (no se puede pasar de paso): al terminar, la recarga
@@ -448,18 +450,21 @@ function TemplateDocuments({
     if (busy) return;
     setBusy(true);
     setError(null);
+    const signed: string[] = [];
     for (const file of Array.from(files)) {
       setUploading(file.name);
       try {
         const form = new FormData();
         form.append("file", file, file.name);
-        await api(`/v1/templates/${templateId}/documents`, { method: "POST", form });
+        const res = await api<Document>(`/v1/templates/${templateId}/documents`, { method: "POST", form });
+        if (res?.hadSignatures) signed.push(file.name);
       } catch (e) {
         setError(`${file.name}: ${errorText(e)}`);
         break;
       }
     }
     setUploading(null);
+    setHadSignatures(signed);
     if (inputRef.current) inputRef.current.value = "";
     // Fuera del try de cada archivo: si la recarga fallaba, el rechazo quedaba sin manejar y la lista sin actualizar
     // ni aviso.
@@ -512,6 +517,11 @@ function TemplateDocuments({
           onChange={(e) => e.target.files && upload(e.target.files)}
         />
       </div>
+      )}
+      {hadSignatures.length > 0 && (
+        <div className="alert alert-warn" role="status">
+          {t("edit.hadSignatures", { names: hadSignatures.join(", ") })}
+        </div>
       )}
       {documents.length === 0 ? (
         <div className="empty">{t("edit.noDocuments")}</div>

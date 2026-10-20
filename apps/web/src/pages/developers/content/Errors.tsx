@@ -7,6 +7,7 @@ const CODES: [string, string, string][] = [
   ["400", "validation_error", "err.c.validation"],
   ["400", "invalid_id", "err.c.invalidId"],
   ["400", "invalid_cursor · anchor_not_found · invalid_field · not_pdf · invalid_text · …", "err.c.bad"],
+  ["400", "encrypted · pdf_restricted · empty · unreadable · ambiguous_pdf · pdf_hidden_layers · pdf_form_unsupported", "err.c.pdf"],
   ["400", "unknown_part · duplicate_part · invalid_json · too_many_documents · duplicate_document", "err.c.oneshot"],
   ["401", "unauthorized", "err.c.unauthorized"],
   ["402", "plan_limit", "err.c.plan"],

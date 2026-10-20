@@ -1,6 +1,6 @@
 // Arma el PDF final de un sobre: estampa los campos completados en cada documento, une todo,
 // agrega el certificado de finalización y sella con PAdES.
-import { PDFDocument, PDFPage, rgb, type PDFImage } from "pdf-lib";
+import { PDFArray, PDFDocument, PDFName, PDFObjectCopier, PDFPage, rgb, type PDFImage, type PDFObject } from "pdf-lib";
 import { pdflibAddPlaceholder } from "@signpdf/placeholder-pdf-lib";
 import { SUBFILTER_ETSI_CADES_DETACHED } from "@signpdf/utils";
 import { buildPadesCms, type CmsOptions } from "./cms";
@@ -10,7 +10,7 @@ import type { SignatureProvider } from "./provider";
 import { assertPngSize } from "./images";
 import { findLastStartXref } from "./incremental";
 import { newByteRangePlaceholder, signPlaceholder } from "./placeholder";
-import { sanitizeForSealing } from "./sanitize";
+import { sanitizeForSealing, type OptionalContentState } from "./sanitize";
 
 
 export type StampFieldType =
@@ -174,12 +174,14 @@ export async function renderProgressCopyPdf(input: {
   const fonts = await embedFonts(out);
   const L = labels(input.locale, input.productName);
   const text = safeText(fonts.bold, L.progressCopy);
-  await stampDocuments(out, fonts, L, input.documents, input.fields, input.envelopeId, imageEmbedder(out), (page) =>
+  const layers = new LayerMerger();
+  await stampDocuments(out, fonts, L, input.documents, input.fields, input.envelopeId, imageEmbedder(out), layers, (page) =>
     withDisplayedSpace(page, (W) => {
       const size = fitFontSize(fonts.bold, text, W - 16, 8);
       page.drawText(text, { x: 8, y: 6, size, font: fonts.bold, color: rgb(0.7, 0.1, 0.1) });
     }),
   );
+  layers.apply(out);
   out.setTitle(input.subject);
   out.setProducer(producerOf(input.productName));
   out.setCreator(producerOf(input.productName));
@@ -192,9 +194,11 @@ async function buildEnvelopeDocument(input: FinalizeInput): Promise<PDFDocument>
   const L = labels(input.certificate.locale, input.certificate.productName);
   const embedImage = imageEmbedder(out);
 
-  await stampDocuments(out, fonts, L, input.documents, input.fields, input.certificate.envelopeId, embedImage);
+  const layers = new LayerMerger();
+  await stampDocuments(out, fonts, L, input.documents, input.fields, input.certificate.envelopeId, embedImage, layers);
 
-  for (const a of input.attachments ?? []) await appendAttachment(out, fonts, L, a, input.certificate.envelopeId);
+  for (const a of input.attachments ?? []) await appendAttachment(out, fonts, L, a, input.certificate.envelopeId, layers);
+  layers.apply(out);
 
   await drawCertificate(out, fonts, L, input.certificate, embedImage);
 
@@ -383,11 +387,11 @@ async function stampDocuments(
   fields: StampField[],
   envelopeId: string,
   embedImage: (png: Uint8Array) => Promise<PDFImage>,
+  layers: LayerMerger,
   decorate?: (page: PDFPage) => void,
 ) {
   for (let di = 0; di < documents.length; di++) {
-    const src = await loadForSealing(documents[di].bytes);
-    const copied = await out.copyPages(src, src.getPageIndices());
+    const copied = await copyForSealing(out, documents[di].bytes, layers);
     for (let pi = 0; pi < copied.length; pi++) {
       const page = out.addPage(copied[pi]);
       for (const f of fields) {
@@ -402,14 +406,62 @@ async function stampDocuments(
 }
 
 /**
- * Un documento (o adjunto PDF) a copiar en el PDF final, saneado como en la subida (preparePdfUpload): los originales
- * guardados antes de ese saneamiento pueden traer formularios, capas o contenido activo. Con capas apagadas el sellado
- * falla (InvalidPdfError pdf_hidden_layers): el PDF final las mostraría y el firmante no las vio.
+ * Copia al PDF final las páginas de un documento (o adjunto PDF), saneado como en la subida (preparePdfUpload): los
+ * originales guardados antes de ese saneamiento pueden traer formularios, capas o contenido activo. Las capas se
+ * registran en `layers` con las referencias de la copia (el mismo copiador que las páginas).
  */
-async function loadForSealing(bytes: Uint8Array): Promise<PDFDocument> {
+async function copyForSealing(out: PDFDocument, bytes: Uint8Array, layers: LayerMerger): Promise<PDFPage[]> {
   const src = await PDFDocument.load(bytes, { updateMetadata: false });
-  await sanitizeForSealing(src);
-  return src;
+  const oc = await sanitizeForSealing(src);
+  // Como PDFDocument.copyPages, pero con el copiador a mano para remapear también las capas del catálogo.
+  await src.flush();
+  const copier = PDFObjectCopier.for(src.context, out.context);
+  const pages = src.getPages().map((p) => {
+    const node = copier.copy(p.node);
+    return PDFPage.of(node, out.context.register(node), out);
+  });
+  if (oc) layers.add(oc, copier);
+  return pages;
+}
+
+/**
+ * Capas (contenido opcional) de los documentos copiados. Un original guardado antes del saneamiento de la subida puede
+ * tener capas apagadas: el firmante no las vio, así que el PDF final lleva /OCProperties con el mismo estado (sin él,
+ * un lector mostraría todo). Varios documentos: unión de las capas, con BaseState ON y las apagadas en /OFF (cada
+ * documento aporta las suyas, ya remapeadas por la copia); /Order y /RBGroups se concatenan. Si ninguna capa está
+ * apagada no se agrega nada (como en la subida: sin /OCProperties todo se ve).
+ */
+class LayerMerger {
+  private ocgs: PDFObject[] = [];
+  private off: PDFObject[] = [];
+  private order: PDFObject[] = [];
+  private rbGroups: PDFObject[] = [];
+  private hidden = false;
+
+  add(oc: OptionalContentState, copier: PDFObjectCopier) {
+    if (oc.hidden) this.hidden = true;
+    for (const g of oc.groups) {
+      const ref = copier.copy(g.ref);
+      this.ocgs.push(ref);
+      if (!g.on) this.off.push(ref);
+    }
+    const items = (o: PDFObject | undefined) => {
+      const v = o === undefined ? undefined : copier.copy(o);
+      const arr = v instanceof PDFArray ? v : undefined;
+      return arr?.asArray() ?? [];
+    };
+    this.order.push(...items(oc.order));
+    this.rbGroups.push(...items(oc.rbGroups));
+  }
+
+  apply(out: PDFDocument) {
+    if (!this.hidden) return;
+    const ctx = out.context;
+    const d = ctx.obj({ BaseState: "ON", OFF: this.off });
+    if (this.order.length) d.set(PDFName.of("Order"), ctx.obj(this.order));
+    if (this.rbGroups.length) d.set(PDFName.of("RBGroups"), ctx.obj(this.rbGroups));
+    out.catalog.set(PDFName.of("OCProperties"), ctx.obj({ OCGs: this.ocgs, D: d }));
+  }
 }
 
 /**
@@ -436,11 +488,10 @@ export async function sealPdfDocument(doc: PDFDocument, seal: SealOptions): Prom
 }
 
 /** Agrega un adjunto: páginas del PDF o la imagen en una página A4, con un rótulo arriba. */
-async function appendAttachment(out: PDFDocument, fonts: Fonts, L: CertLabels, a: FinalizeAttachment, envelopeId: string) {
+async function appendAttachment(out: PDFDocument, fonts: Fonts, L: CertLabels, a: FinalizeAttachment, envelopeId: string, layers: LayerMerger) {
   const caption = safeText(fonts.regular, `${L.attachment}: ${a.name} — ${L.uploadedBy} ${a.recipientName}`);
   if (a.contentType === "application/pdf") {
-    const src = await loadForSealing(a.bytes);
-    const copied = await out.copyPages(src, src.getPageIndices());
+    const copied = await copyForSealing(out, a.bytes, layers);
     for (const p of copied) {
       const page = out.addPage(p);
       withDisplayedSpace(page, (_W, H) => {

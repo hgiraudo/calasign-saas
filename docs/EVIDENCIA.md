@@ -66,6 +66,15 @@ es un error), 300 certificados, 300 OCSP y 300 CRL del DSS (las CRL de más de 5
 en el conjunto con el que se arman las cadenas (sin contar las raíces de confianza). Lo que pasa de esos topes se
 recorta, no se rechaza: un tope de recursos no es una firma rota.
 
+`weakAlgorithm` (por firma, con `weakAlgorithmReasons`) y `summary.anyWeakAlgorithm` marcan algoritmos débiles:
+resumen SHA-1 o MD5 en la firma, en el sello de tiempo o en un certificado de la cadena que no es la raíz, SubFilter
+`adbe.pkcs7.sha1`/`adbe.x509.rsa_sha1`, o clave RSA de menos de 2048 bits. La firma puede verificar, pero no cuenta
+para `summary.allValid` ni `summary.allTrusted`; la página `/verify` lo muestra como aviso.
+
+Los PDF que se suben para firmar se sanean (ver «Saneamiento de los PDF subidos» en ARQUITECTURA.md): las firmas
+digitales que traían se pierden en la copia guardada y en el PDF final (`hadSignatures` en la respuesta de la subida).
+Para validar esas firmas hay que usar el archivo original con `/v1/validate`.
+
 ## 4. Firma XML (facturación electrónica)
 
 `packages/xades`, `POST /v1/xml/sign` y `POST /v1/xml/verify`. Firma enveloped, RSA-SHA256, digests SHA-256

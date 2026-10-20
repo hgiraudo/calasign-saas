@@ -329,7 +329,7 @@ export async function sendFromConnector(
             envelopeId,
             type: "document.added",
             actor: ctx.actor,
-            data: { documentId: docId, name: source.name, sha256: source.sha, uploadedSha256: source.uploadedSha, pages: source.info.pageCount, source: connRow.provider },
+            data: { documentId: docId, name: source.name, sha256: source.sha, uploadedSha256: source.uploadedSha, pages: source.info.pageCount, source: connRow.provider, ...(source.info.hadSignatures ? { hadSignatures: true } : {}) },
           });
         }
         const linkId = uuidv7();
@@ -347,7 +347,7 @@ export async function sendFromConnector(
         await t.query(`UPDATE connector_runs SET status = 'succeeded', envelope_id = $2, error = NULL, detail = detail || $3::jsonb, updated_at = now() WHERE id = $1`, [
           runId,
           envelopeId,
-          JSON.stringify({ envelopeId, linkId, recipients: recipients.length, sent: send, sourceDocument: Boolean(source) }),
+          JSON.stringify({ envelopeId, linkId, recipients: recipients.length, sent: send, sourceDocument: Boolean(source), ...(source?.info.hadSignatures ? { sourceHadSignatures: true } : {}) }),
         ]);
         return { envelopeId, linkId: linkId as string | null, skipped: false };
       });

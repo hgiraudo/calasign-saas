@@ -241,6 +241,7 @@ function goodCovers(thisUpdate: Date | undefined, nextUpdate: Date | undefined, 
  */
 /** Respuestas OCSP parseadas por objeto (como las CRL: el validador público las recorre para cada certificado de cada firma). */
 const ocspParsed = new WeakMap<Uint8Array, pkijs.BasicOCSPResponse | null>();
+const ocspVerified = new WeakMap<pkijs.BasicOCSPResponse, Map<string, boolean>>();
 
 function parseOcspCached(der: Uint8Array): pkijs.BasicOCSPResponse | null {
   if (ocspParsed.has(der)) return ocspParsed.get(der)!;
@@ -266,17 +267,26 @@ export async function statusFromOcsp(ocspDer: Uint8Array, cert: pkijs.Certificat
       (r) => Buffer.from(r.certID.serialNumber.valueBlock.valueHexView).toString("hex") === serial,
     );
     if (!single) return null;
-    // Firma de la respuesta: por la CA emisora o por un respondedor delegado incluido en la respuesta.
-    let sigOk = false;
-    try {
-      sigOk = await basic.verify({ trustedCerts: [issuer] });
-    } catch {
-      sigOk = false;
+    // Firma de la respuesta: por la CA emisora o por un respondedor delegado incluido en la respuesta. El resultado se
+    // guarda por (respuesta, huella del emisor, serial): el validador público la consultaba para cada certificado de cada
+    // firma y cada verificación es criptografía.
+    let byIssuer = ocspVerified.get(basic);
+    if (!byIssuer) ocspVerified.set(basic, (byIssuer = new Map()));
+    const vkey = `${fingerprint(certDer(issuer))}|${serial}`;
+    let sigOk = byIssuer.get(vkey);
+    if (sigOk === undefined) {
+      try {
+        sigOk = await basic.verify({ trustedCerts: [issuer] });
+      } catch {
+        sigOk = false;
+      }
+      if (!sigOk) sigOk = await verifyWithIssuerKey(basic, issuer);
+      // pkijs valida el certificado del respondedor delegado a la fecha de HOY: esos certificados duran días, así que el
+      // OCSP guardado en el DSS (B-LT) dejaba de contar enseguida. Se lo valida a la fecha de la respuesta. Con un tope
+      // de certificados incluidos (cada uno es una verificación de firma).
+      if (!sigOk && (basic.certs?.length ?? 0) <= 20) sigOk = await verifyDelegatedResponder(basic, single.certID, issuer);
+      byIssuer.set(vkey, Boolean(sigOk));
     }
-    if (!sigOk) sigOk = await verifyWithIssuerKey(basic, issuer);
-    // pkijs valida el certificado del respondedor delegado a la fecha de HOY: esos certificados duran días, así que el
-    // OCSP guardado en el DSS (B-LT) dejaba de contar enseguida. Se lo valida a la fecha de la respuesta.
-    if (!sigOk) sigOk = await verifyDelegatedResponder(basic, single.certID, issuer);
     if (!sigOk) return null;
     const st = single.certStatus as any;
     const tag = st?.idBlock?.tagNumber;
@@ -379,7 +389,9 @@ export async function statusFromCrl(crlDer: Uint8Array, cert: pkijs.Certificate,
     if (!crl.issuer.isEqual(issuer.subject)) return null;
     let byIssuer = crlVerified.get(crl);
     if (!byIssuer) crlVerified.set(crl, (byIssuer = new Map()));
-    const key = serialHex(issuer);
+    // Por la huella del emisor (certificado completo, con su clave): con solo el serial, una intermedia falsa con el mismo
+    // nombre y serial dejaba "verificada" una CRL falsa para el emisor real y ocultaba una revocación.
+    const key = fingerprint(certDer(issuer));
     if (!byIssuer.has(key)) byIssuer.set(key, await crl.verify({ issuerCertificate: issuer }).catch(() => false));
     if (!byIssuer.get(key)) return null;
     const serial = serialHex(cert);

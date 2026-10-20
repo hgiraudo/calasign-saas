@@ -124,16 +124,19 @@ async function verifyToken(token: pkijs.SignedData, imprintOf: Uint8Array, pool:
   return { time: tst.genTime.toISOString(), tsa: tsa ? commonName(tsa.subject) ?? nameToString(tsa.subject) : null, valid, trusted };
 }
 
-/** Sin repetidos (por huella) y con tope: buildChain prueba con firma cada candidato con el mismo emisor. */
+/**
+ * Certificados que trae el PDF (CMS y DSS) sin repetidos (por huella) y con tope: buildChain prueba con firma cada
+ * candidato con el mismo emisor. Se recorta (no se rechaza: un tope de recursos no es una firma rota).
+ */
 function dedupePool(certs: pkijs.Certificate[]): pkijs.Certificate[] {
   const seen = new Set<string>();
   const out: pkijs.Certificate[] = [];
   for (const c of certs) {
+    if (out.length >= MAX_CERT_POOL) break;
     const fp = fingerprint(certDer(c));
     if (seen.has(fp)) continue;
     seen.add(fp);
     out.push(c);
-    if (out.length > MAX_CERT_POOL) throw new Error(`el PDF trae demasiados certificados (máximo ${MAX_CERT_POOL})`);
   }
   return out;
 }
@@ -186,7 +189,7 @@ async function chainReport(
     (e) => e.revocation.status === "revoked" && (!e.revocation.revokedAt || new Date(e.revocation.revokedAt) <= at),
   );
   // "De confianza" no dice nada de la revocación si no hubo datos (sin DSS ni consulta online): se informa aparte.
-  const revocationUnknown = entries.some((e) => e.revocation.status === "not_checked");
+  const revocationUnknown = entries.some((e) => e.revocation.status === "not_checked" || e.revocation.status === "unknown");
   return { trusted, anchor: trusted ? nameToString(last.subject) : null, entries, timeValid, revoked, revocationUnknown };
 }
 
@@ -211,14 +214,21 @@ export const MAX_CRL_BYTES = 5 * 1024 * 1024;
 export const MAX_CERT_POOL = 300;
 
 async function validatePdfUnbudgeted(pdf: Uint8Array, opts: ValidateOptions): Promise<ValidationReport> {
-  const { signatures, dss } = await readPdfSignatures(pdf);
+  const { signatures, dss: rawDss } = await readPdfSignatures(pdf);
   if (signatures.length > MAX_VALIDATE_SIGNATURES) throw new Error(`el PDF tiene demasiadas firmas (${signatures.length}; máximo ${MAX_VALIDATE_SIGNATURES})`);
-  if (dss && (dss.certs.length > MAX_DSS_ITEMS || dss.ocsps.length > MAX_DSS_ITEMS || dss.crls.length > MAX_DSS_ITEMS)) {
-    throw new Error(`el DSS del PDF es demasiado grande (máximo ${MAX_DSS_ITEMS} certificados, OCSP o CRL)`);
-  }
-  if (dss?.crls.some((c) => c.length > MAX_CRL_BYTES)) throw new Error(`el DSS del PDF trae una CRL demasiado grande (máximo ${MAX_CRL_BYTES / 1048576} MB)`);
+  // Se recorta en vez de rechazar: cada renovación del archivo agrega OCSP nuevos al final, y rechazar dejaba a ese
+  // sobre sin poder renovarse nunca más. Se usan los más recientes (los últimos) y se ignoran las CRL demasiado grandes.
+  const dss: PdfDss | null = rawDss
+    ? {
+        certs: rawDss.certs.slice(-MAX_DSS_ITEMS),
+        ocsps: rawDss.ocsps.slice(-MAX_DSS_ITEMS),
+        crls: rawDss.crls.filter((c) => c.length <= MAX_CRL_BYTES).slice(-MAX_DSS_ITEMS),
+      }
+    : null;
   const anchorsDer = opts.trustAnchors ?? [];
   const anchors = new Set(anchorsDer.map(fingerprint));
+  // Las raíces de confianza se parsean una vez y no cuentan para el tope (un almacén grande no puede romper validaciones).
+  const anchorCerts = anchorsDer.map(parseCert);
   const dssCerts = (dss?.certs ?? []).map((d) => {
     try {
       return parseCert(d);
@@ -259,7 +269,7 @@ async function validatePdfUnbudgeted(pdf: Uint8Array, opts: ValidateOptions): Pr
         continue;
       }
       const signer = signerCertOf(sd);
-      const pool = dedupePool([...cmsCertificates(sd), ...dssCerts, ...anchorsDer.map(parseCert)]);
+      const pool = [...dedupePool([...cmsCertificates(sd), ...dssCerts]), ...anchorCerts];
 
       if (s.type === "DocTimeStamp") {
         const ts = await verifyToken(sd, content, pool, anchors);

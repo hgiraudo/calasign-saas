@@ -18,6 +18,18 @@ h1[tabindex="-1"]:focus, h2[tabindex="-1"]:focus { outline: none; }
 .sfield:focus-within { outline: 3px solid #0d9488; outline-offset: 2px; }
 .sfield input:focus-visible, .sfield select:focus-visible { outline: none; }
 .sfield ::placeholder { color: #475569; opacity: 1; }
+/* iOS amplía la página al enfocar un control con letra < 16px (y no la vuelve a achicar). En pantallas táctiles, el
+   control enfocado pasa a 16px (!important: el tamaño a escala de la página va inline); la caja del campo no cambia de
+   tamaño: el control crece sobre ella (fondo blanco, por encima de lo demás) solo mientras se edita. */
+@media (pointer: coarse), (max-width: 640px) {
+  .sfield:has(input:not([type="checkbox"]):not([type="file"]):focus, select:focus, textarea:focus) { overflow: visible; z-index: 5; }
+  .sfield input:not([type="checkbox"]):not([type="file"]):focus, .sfield select:focus, .sfield textarea:focus {
+    font-size: 16px !important;
+    min-height: 26px;
+    background: #fff;
+    box-shadow: 0 1px 4px rgba(15, 23, 42, 0.25);
+  }
+}
 /* Inputs de archivo ocultos: el foco se ve en la zona que los contiene. */
 .dropzone:focus-within, .idv-upload:focus-within { outline: 3px solid #0d9488; outline-offset: 2px; }
 /* Barra de marca clara: el texto de botones y selector de idioma sigue al color de la barra (elegido por contraste). */

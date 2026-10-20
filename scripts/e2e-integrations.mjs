@@ -241,7 +241,10 @@ try {
   const csp = page.headers.get("content-security-policy") ?? "";
   if (!csp.includes("frame-ancestors 'self' http://localhost:5199") || page.headers.get("x-frame-options")) fail(`CSP embebido: ${csp}`);
   const plain = await fetch(BASE + loc.replace("?embed=1", ""));
-  if (!(plain.headers.get("content-security-policy") ?? "").includes("frame-ancestors 'none'")) fail("sin embed=1 debe seguir sin poder enmarcarse");
+  // Sin embed=1 (vuelta de un proveedor de pago o identidad dentro del iframe): con una sesión embebida usada, solo el
+  // origen autorizado de esa sesión puede enmarcarla.
+  const plainCsp = plain.headers.get("content-security-policy") ?? "";
+  if (!plainCsp.includes("frame-ancestors 'self' http://localhost:5199") || plainCsp.includes("evil.example")) fail(`sin embed=1, tras la sesión embebida: ${plainCsp}`);
   ok("URL embebida: 302 a la firma, un solo uso, frame-ancestors solo para el origen autorizado");
 
   const token = loc.split("/s/")[1].split("?")[0];

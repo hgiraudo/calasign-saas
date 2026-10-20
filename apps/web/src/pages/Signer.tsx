@@ -9,7 +9,7 @@ import { formatDate, formatDateTime, useI18n } from "../lib/i18n";
 import { DocumentView } from "../components/DocumentView";
 import { SignaturePad } from "../components/SignaturePad";
 import { ErrorBox, LocaleSwitcher, Logo, Modal, Spinner } from "../components/ui";
-import { useEmbedBridge } from "../lib/embed";
+import { isEmbedded, isTabReturn, tokenOfBase, useEmbedBridge } from "../lib/embed";
 import { DelegateModal, OtpGate } from "../components/SignerExtras";
 import { useSignerText } from "../lib/i18n-signer";
 import { InPersonBlocked, InPersonDone, InPersonHandover, RequestCopyButton, useFocusOnMount } from "../components/ExperienceExtras";
@@ -899,7 +899,9 @@ function SigningFlow({
           <button type="button" className="btn btn-ghost btn-block" onClick={() => setDeclining(true)}>
             {t("sign.decline")}
           </button>
-          {session.canDelegate && (
+          {/* Dentro del iframe o de la pestaña del integrador no se delega: el integrador no recibe evento y queda colgado
+              (el servidor también lo rechaza). */}
+          {session.canDelegate && !isEmbedded(tokenOfBase(base)) && !isTabReturn(tokenOfBase(base)) && (
             <button type="button" className="btn btn-ghost btn-block" onClick={() => setDelegating(true)}>
               ↪ {sx("delegate.button")}
             </button>

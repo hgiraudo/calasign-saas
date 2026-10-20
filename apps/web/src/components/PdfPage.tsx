@@ -36,7 +36,10 @@ export function PdfPage({ pdf, pageIndex, size, overlay, onOverlayPointerDown, o
     return () => ro.disconnect();
   }, []);
 
-  // Render perezoso: solo cuando la página está cerca de la pantalla.
+  // Render perezoso: se dibuja cuando la página se acerca a la pantalla y se libera el canvas cuando queda lejos (más
+  // de ~3 pantallas): un PDF largo en un móvil agotaba la memoria con todos los canvas vivos. Dos márgenes (histéresis)
+  // para no dibujar y liberar en cada pequeño scroll. El contenedor conserva su tamaño (aspect-ratio) y los campos no
+  // dependen del canvas: liberar no mueve el scroll.
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
@@ -44,17 +47,25 @@ export function PdfPage({ pdf, pageIndex, size, overlay, onOverlayPointerDown, o
       setVisible(true);
       return;
     }
-    const io = new IntersectionObserver(
+    const near = new IntersectionObserver(
       (entries) => {
-        if (entries.some((e) => e.isIntersecting)) {
-          setVisible(true);
-          io.disconnect();
-        }
+        if (entries.some((e) => e.isIntersecting)) setVisible(true);
       },
-      { rootMargin: "800px 0px" },
+      { rootMargin: "100% 0px" },
     );
-    io.observe(el);
-    return () => io.disconnect();
+    const far = new IntersectionObserver(
+      (entries) => {
+        const last = entries[entries.length - 1];
+        if (last && !last.isIntersecting) setVisible(false);
+      },
+      { rootMargin: "300% 0px" },
+    );
+    near.observe(el);
+    far.observe(el);
+    return () => {
+      near.disconnect();
+      far.disconnect();
+    };
   }, []);
 
   // Otro documento (cambió la URL): hasta que se dibuje, se muestra el marcador y no la página del anterior.
@@ -66,7 +77,18 @@ export function PdfPage({ pdf, pageIndex, size, overlay, onOverlayPointerDown, o
   }, [pdf]);
 
   useEffect(() => {
-    if (!pdf || !visible || widthPx < 10) return;
+    if (!visible) {
+      // Lejos de la pantalla: libera la memoria del canvas (un canvas de 0×0 no reserva el bitmap) y la capa de texto.
+      const c = canvasRef.current;
+      if (c && (c.width || c.height)) {
+        c.width = 0;
+        c.height = 0;
+      }
+      textRef.current?.replaceChildren();
+      setRendered(false);
+      return;
+    }
+    if (!pdf || widthPx < 10) return;
     let cancelled = false;
     let task: { cancel: () => void; promise: Promise<unknown> } | null = null;
     let text: TextLayer | null = null;

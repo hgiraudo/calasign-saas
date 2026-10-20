@@ -1,6 +1,7 @@
 // Webhooks de Stripe y Mercado Pago: un endpoint por proveedor para cobros al firmar y suscripciones.
 // Se verifica la firma antes de tocar nada, cada evento se procesa hasta terminar una vez (processed_at), y en Mercado Pago el estado
 // se consulta a la API (la notificación solo trae el id).
+import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { PlanId } from "@calasign/shared";
 import { PLAN_IDS } from "@calasign/shared";
@@ -14,6 +15,7 @@ import {
   mpExpirePreference,
   mpGetPayment,
   mpGetPreapproval,
+  ProviderError,
   stripeCancelSubscription,
   stripeGetSubscriptionPeriodEnd,
   toMinorUnits,
@@ -22,50 +24,75 @@ import {
 } from "./providers";
 import { applySubscription } from "./subscriptions";
 
-/** Un evento recibido y sin terminar se considera en curso durante este tiempo; después se reprocesa. */
-export const WEBHOOK_IN_PROGRESS_SECONDS = 120;
+/**
+ * Un evento recibido y sin terminar se considera en curso durante este tiempo; después se reprocesa. Tiene que superar
+ * con margen lo que puede tardar un manejador: cada llamada al proveedor tiene un timeout de 20 s (providers.ts) y un
+ * evento hace varias (consultar el pago, reembolsar un duplicado, cerrar la preferencia; leer la suscripción y cancelar
+ * la anterior), más las esperas por el bloqueo de la organización o del sobre. Con 120 s un evento lento podía
+ * retomarse mientras el primero seguía procesándolo.
+ */
+export const WEBHOOK_IN_PROGRESS_SECONDS = 10 * 60;
+
+export type WebhookClaim = { status: "new"; claimId: string } | { status: "duplicate" | "in_progress"; claimId?: undefined };
 
 /**
  * Toma un evento para procesarlo. "new": nuevo, o recibido antes y nunca terminado (el proceso murió) hace más de
- * WEBHOOK_IN_PROGRESS_SECONDS: se procesa (los manejadores son idempotentes). "duplicate": ya procesado.
- * "in_progress": otro pedido lo está procesando: el proveedor recibe 409 y reintenta (antes recibía 200 "duplicate" y,
- * si el primero fallaba, el evento se perdía).
+ * WEBHOOK_IN_PROGRESS_SECONDS: se procesa (los manejadores son idempotentes); trae `claimId`, la marca de quién lo
+ * tomó, para soltarlo solo si sigue siendo suyo. "duplicate": ya procesado. "in_progress": otro pedido lo está
+ * procesando: el proveedor recibe 409 y reintenta (antes recibía 200 "duplicate" y, si el primero fallaba, el evento
+ * se perdía).
  */
-export async function claimWebhookEvent(db: Db, provider: string, eventId: string): Promise<"new" | "duplicate" | "in_progress"> {
-  const ins = await db.query(`INSERT INTO payment_webhook_events (provider, event_id) VALUES ($1,$2) ON CONFLICT DO NOTHING RETURNING event_id`, [provider, eventId]);
-  if (ins.length) return "new";
-  // Abandonado: se vuelve a tomar (con received_at nuevo, así un pedido simultáneo lo ve en curso).
+export async function claimWebhookEvent(db: Db, provider: string, eventId: string): Promise<WebhookClaim> {
+  const claimId = randomUUID();
+  const ins = await db.query(`INSERT INTO payment_webhook_events (provider, event_id, claim_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING RETURNING event_id`, [
+    provider,
+    eventId,
+    claimId,
+  ]);
+  if (ins.length) return { status: "new", claimId };
+  // Abandonado: se vuelve a tomar (con received_at nuevo, así un pedido simultáneo lo ve en curso, y con marca propia,
+  // así el pedido anterior, si seguía vivo y falla, no borra esta).
   const retaken = await db.query(
-    `UPDATE payment_webhook_events SET received_at = now()
+    `UPDATE payment_webhook_events SET received_at = now(), claim_id = $4
       WHERE provider = $1 AND event_id = $2 AND processed_at IS NULL AND received_at <= now() - make_interval(secs => $3) RETURNING event_id`,
-    [provider, eventId, WEBHOOK_IN_PROGRESS_SECONDS],
+    [provider, eventId, WEBHOOK_IN_PROGRESS_SECONDS, claimId],
   );
-  if (retaken.length) return "new";
+  if (retaken.length) return { status: "new", claimId };
   const row = await db.one<{ processed_at: string | null }>(`SELECT processed_at FROM payment_webhook_events WHERE provider = $1 AND event_id = $2`, [provider, eventId]);
   // Borrado entre las dos consultas (falló el que lo procesaba): que el proveedor reintente.
-  return row?.processed_at ? "duplicate" : "in_progress";
+  return { status: row?.processed_at ? "duplicate" : "in_progress" };
 }
 
+/**
+ * Marca el evento procesado. No depende de quién tenga la marca: este pedido lo terminó bien, y eso vale aunque otro lo
+ * haya retomado entretanto (el otro, si falla, ya no lo suelta). Si la fila no está (la borró otro pedido que lo había
+ * retomado y falló), se vuelve a crear: si no, el reintento del proveedor lo procesaría otra vez.
+ */
 async function finishEvent(db: Db, provider: string, eventId: string) {
-  await db.query(`UPDATE payment_webhook_events SET processed_at = now() WHERE provider = $1 AND event_id = $2`, [provider, eventId]);
+  await db.query(
+    `INSERT INTO payment_webhook_events (provider, event_id, processed_at) VALUES ($1,$2,now())
+     ON CONFLICT (provider, event_id) DO UPDATE SET processed_at = COALESCE(payment_webhook_events.processed_at, now())`,
+    [provider, eventId],
+  );
 }
 
-async function forgetEvent(db: Db, provider: string, eventId: string) {
-  await db.query(`DELETE FROM payment_webhook_events WHERE provider = $1 AND event_id = $2 AND processed_at IS NULL`, [provider, eventId]);
+/** Suelta la marca para que el proveedor reintente, solo si sigue siendo la propia (nadie la retomó). */
+async function forgetEvent(db: Db, provider: string, eventId: string, claimId: string) {
+  await db.query(`DELETE FROM payment_webhook_events WHERE provider = $1 AND event_id = $2 AND processed_at IS NULL AND claim_id = $3`, [provider, eventId, claimId]);
 }
 
 /** Procesa un evento tomado con claimWebhookEvent: lo marca procesado al terminar o lo suelta si falla. */
-export async function processWebhookEvent(db: Db, provider: string, eventId: string, run: () => Promise<void>) {
+export async function processWebhookEvent(db: Db, provider: string, eventId: string, run: () => Promise<void>): Promise<"new" | "duplicate" | "in_progress"> {
   const claim = await claimWebhookEvent(db, provider, eventId);
-  if (claim !== "new") return claim;
+  if (claim.status !== "new") return claim.status;
   try {
     await run();
   } catch (err) {
-    await forgetEvent(db, provider, eventId).catch(() => {}); // que el proveedor reintente
+    await forgetEvent(db, provider, eventId, claim.claimId).catch(() => {}); // que el proveedor reintente
     throw err;
   }
   await finishEvent(db, provider, eventId);
-  return claim;
+  return "new";
 }
 
 type Cancel = { provider: string; id: string };
@@ -76,12 +103,57 @@ async function cancelProviderSubscription(c: Cancel) {
 }
 
 /**
+ * Cancela en el proveedor una suscripción reemplazada (registrada en subscription_cancellations) y borra la fila. Si
+ * entretanto volvió a ser la vigente de la organización, no se cancela. Si el proveedor falla, la fila queda (con el
+ * error) para el barrido y se relanza el error.
+ */
+async function cancelReplacedSubscription(db: Db, c: Cancel) {
+  const current = await db.one(`SELECT 1 FROM tenants WHERE billing_provider = $1 AND subscription_id = $2`, [c.provider, c.id]);
+  if (!current) {
+    try {
+      await cancelProviderSubscription(c);
+    } catch (err) {
+      // Mercado Pago no la conoce: no hay nada que cancelar (como con los checkouts descartados). Stripe ya trata 404.
+      if (!(err instanceof ProviderError && err.status === 404)) {
+        await db
+          .query(`UPDATE subscription_cancellations SET attempted_at = now(), attempts = attempts + 1, last_error = $3 WHERE provider = $1 AND subscription_id = $2`, [
+            c.provider,
+            c.id,
+            String(err).slice(0, 500),
+          ])
+          .catch(() => {});
+        throw err;
+      }
+    }
+  }
+  await db.query(`DELETE FROM subscription_cancellations WHERE provider = $1 AND subscription_id = $2`, [c.provider, c.id]);
+}
+
+/**
+ * Barrido periódico (jobs.ts): reintenta las suscripciones reemplazadas que no se pudieron cancelar en el proveedor.
+ * Solo las que llevan más de un minuto sin intento, para no pisarse con la cancelación inmediata de changeSubscription.
+ */
+export async function cancelPendingSubscriptions(d: { db: Db; log: { error: (o: object, m: string) => void } }, limit = 50) {
+  const rows = await d.db.query<{ provider: string; subscription_id: string; tenant_id: string }>(
+    `SELECT provider, subscription_id, tenant_id FROM subscription_cancellations WHERE attempted_at < now() - interval '1 minute' ORDER BY attempted_at LIMIT $1`,
+    [limit],
+  );
+  for (const r of rows) {
+    await cancelReplacedSubscription(d.db, { provider: r.provider, id: r.subscription_id }).catch((err) =>
+      d.log.error({ err: String(err), tenantId: r.tenant_id, provider: r.provider, subscriptionId: r.subscription_id }, "no se pudo cancelar una suscripción reemplazada"),
+    );
+  }
+}
+
+/**
  * Cambio de suscripción de una organización sin tener la organización bloqueada durante las llamadas al proveedor
- * (hasta 20 s, frenando cuotas e invitaciones). `decide` corre con la organización bloqueada y dice qué hacer:
- * aplicar (`apply`, en la misma transacción), no hacer nada, o cancelar antes una suscripción en el proveedor
- * (`cancel`). La cancelación se hace fuera de la transacción y después se vuelve a decidir con un bloqueo nuevo: si
- * la suscripción vigente cambió mientras tanto (otra confirmación simultánea), se decide sobre la nueva; las ya
- * canceladas en esta pasada no se vuelven a cancelar.
+ * (hasta 20 s, frenando cuotas e invitaciones). `decide` corre con la organización bloqueada y dice qué hacer: aplicar
+ * (`apply`, en la misma transacción) y/o cancelar una suscripción en el proveedor (`cancel`).
+ * Primero se aplica la nueva y la que hay que cancelar queda registrada (subscription_cancellations), en la misma
+ * transacción; después, fuera del bloqueo, se cancela en el proveedor. Así, cuando llega el aviso de baja de la
+ * anterior (Stripe customer.subscription.deleted, Mercado Pago cancelled), ya no es la vigente y se ignora; al revés,
+ * podía llegar entre la cancelación y el alta, verla todavía vigente y bajar la organización a Free. Si la cancelación
+ * falla, el evento igual se da por procesado (el plan ya quedó bien) y el barrido periódico la reintenta.
  */
 export async function changeSubscription(
   db: Db,
@@ -89,22 +161,21 @@ export async function changeSubscription(
   decide: (t: { billing_provider: string | null; subscription_id: string | null }, tx: Db) => Promise<{ cancel?: Cancel; apply: boolean }>,
   apply: (tx: Db) => Promise<void>,
 ) {
-  const canceled = new Set<string>();
-  for (let attempt = 0; attempt < 4; attempt++) {
-    const todo = await db.tx(async (tx): Promise<Cancel | null> => {
-      const t = await tx.one<any>(`SELECT billing_provider, subscription_id FROM tenants WHERE id = $1 FOR UPDATE`, [tenantId]);
-      if (!t) return null;
-      const d = await decide(t, tx);
-      if (d.cancel && !canceled.has(`${d.cancel.provider}:${d.cancel.id}`)) return d.cancel;
-      if (d.apply) await apply(tx);
-      return null;
-    });
-    if (!todo) return;
-    await cancelProviderSubscription(todo);
-    canceled.add(`${todo.provider}:${todo.id}`);
-  }
-  // La suscripción vigente siguió cambiando: error, y el proveedor reintenta el evento.
-  throw new AppError(409, "subscription_changing", "La suscripción de la organización cambió mientras se procesaba el evento");
+  const cancel = await db.tx(async (tx): Promise<Cancel | null> => {
+    const t = await tx.one<any>(`SELECT billing_provider, subscription_id FROM tenants WHERE id = $1 FOR UPDATE`, [tenantId]);
+    if (!t) return null;
+    const d = await decide(t, tx);
+    if (d.apply) await apply(tx);
+    if (!d.cancel) return null;
+    await tx.query(
+      `INSERT INTO subscription_cancellations (provider, subscription_id, tenant_id) VALUES ($1,$2,$3)
+       ON CONFLICT (provider, subscription_id) DO UPDATE SET attempted_at = now()`,
+      [d.cancel.provider, d.cancel.id, tenantId],
+    );
+    return d.cancel;
+  });
+  // Mejor esfuerzo: si falla queda registrada para el barrido.
+  if (cancel) await cancelReplacedSubscription(db, cancel).catch(() => undefined);
 }
 
 const isPlan = (p: unknown): p is PlanId => typeof p === "string" && (PLAN_IDS as readonly string[]).includes(p);
@@ -147,7 +218,7 @@ export async function handleStripeEvent(db: Db, event: any) {
         // cobrando y, al pisarse subscription_id, ya no se podría ver ni cancelar desde la app.
         // Decidido con la organización bloqueada (changeSubscription): dos confirmaciones simultáneas leían la misma
         // suscripción anterior, cancelaban esa y la última pisaba a la otra, que seguía cobrando sin que la app la viera.
-        // La cancelación en el proveedor va fuera del bloqueo y se revalida después.
+        // La nueva se aplica primero y la anterior se cancela en el proveedor después, fuera del bloqueo.
         // Fecha de renovación desde el alta (si no, quedaba vacía, o la de la suscripción anterior, hasta el primer
         // "updated"). Mejor esfuerzo: sin ella igual se activa el plan.
         const renewsAt = subscriptionId ? await stripeGetSubscriptionPeriodEnd(subscriptionId).catch(() => null) : null;
@@ -276,7 +347,7 @@ export async function handleMercadoPagoNotification(db: Db, type: string, dataId
     const ended = ["cancelled", "paused"].includes(pre.status);
     if (!active && !ended) return; // pending: todavía no autorizó
     // Decidido con la organización bloqueada (como el alta por Stripe): dos altas simultáneas no dejan una cobrando sin
-    // registrar. Las cancelaciones en el proveedor van fuera del bloqueo (changeSubscription).
+    // registrar. Las cancelaciones en el proveedor van después de aplicar, fuera del bloqueo (changeSubscription).
     await changeSubscription(
       db,
       tenantId,

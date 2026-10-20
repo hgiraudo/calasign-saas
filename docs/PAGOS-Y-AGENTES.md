@@ -37,6 +37,15 @@ Flujo del firmante: `GET /v1/signing/:token/payment` (si le toca pagar, monto y 
   `refunded` (`payment.refunded`, `reason: "provider"`); parcial → solo `payment.partially_refunded`; disputa →
   `disputedAt` y `payment.disputed`. **El estado del sobre no cambia**: un cobro reembolsado cuenta como ya pagado (no
   traba la firma ni la finalización). No hay eventos de webhook de salida para cobros (no existe un tipo adecuado).
+  Límites conocidos:
+  - Un reembolso o contracargo hecho por el vendedor desde el panel del proveedor **antes de que se firme** tampoco
+    traba la firma: el firmante sigue pudiendo firmar sin haber pagado efectivamente. Queda registrado en el cobro y la
+    evidencia; si eso debe volver a exigir el pago es una **decisión pendiente del producto**.
+  - En Mercado Pago solo se registran los reembolsos **totales** (el pago pasa a `refunded`); los parciales no cambian
+    el estado del pago en la notificación y no se registran.
+  - Las preferencias de Mercado Pago creadas antes de la migración 0063 no llevan la referencia del checkout
+    (`checkoutRef`) en el `external_reference`: un pago tardío por una preferencia vieja descartada por una corrección
+    de contacto del mismo pagador no se puede distinguir de la vigente y se acredita como antes (sin reembolso).
 - **Plan**: enviar un borrador con cobro exige que el plan incluya `payments` (402 `plan_limit`) y que el proveedor
   esté configurado (400 `provider_not_configured`), en todos los caminos de envío.
 
@@ -59,11 +68,21 @@ Para RD y Honduras: Stripe (tarjeta) o un procesador local que se agregue como a
 | Mercado Pago | `POST /v1/integrations/payments/mercadopago/webhook` | `x-signature` (`ts=…,v1=HMAC-SHA256(secret, "id:<data.id>;request-id:<x-request-id>;ts:<ts>;")`); el estado se lee de la API, nunca del cuerpo |
 
 Cada evento se procesa hasta terminar una vez (`payment_webhook_events`, `processed_at` al terminar): uno ya procesado
-responde 200 `duplicate`; uno recibido y en curso hace menos de 2 minutos responde **409 `event_in_progress`** (el
-proveedor reintenta); uno sin terminar más viejo (el proceso murió) se reprocesa (los manejadores son idempotentes).
-Si el procesamiento falla se borra la marca para que el proveedor reintente. El cambio de suscripción (cancelar la
-anterior en el proveedor) se decide con la organización bloqueada, pero la llamada al proveedor va fuera del bloqueo y
-después se revalida la suscripción vigente.
+responde 200 `duplicate`; uno recibido y en curso hace menos de 10 minutos (`WEBHOOK_IN_PROGRESS_SECONDS`, holgado
+frente a los timeouts de 20 s de cada llamada al proveedor) responde **409 `event_in_progress`** (el proveedor
+reintenta); uno sin terminar más viejo (el proceso murió) se reprocesa (los manejadores son idempotentes). Cada toma
+lleva su marca (`claim_id`): si el procesamiento falla se borra la marca para que el proveedor reintente, pero solo si
+sigue siendo la propia (si otro pedido lo retomó, no se le borra); al terminar bien se marca procesado aunque otro lo
+haya retomado (o se vuelve a crear la fila si ya no está).
+
+Cambio de suscripción (una nueva confirmada con otra vigente): con la organización bloqueada se aplica la nueva y la
+anterior queda registrada como pendiente de cancelar (`subscription_cancellations`); después, fuera del bloqueo, se
+cancela en el proveedor y se borra la marca. Así el aviso de baja de la anterior (Stripe
+`customer.subscription.deleted`, Mercado Pago `cancelled`) llega cuando ya no es la vigente y se ignora (antes podía
+llegar entre la cancelación y el alta y bajar la organización a Free). Si la cancelación falla, el evento igual se da
+por procesado y el barrido periódico la reintenta (las que llevan más de un minuto sin intento); una que volvió a ser
+la vigente no se cancela. En Mercado Pago, si la autorizada es de un checkout más viejo que la vigente, se cancela esa
+y la vigente queda.
 El monto y la moneda pagados se comparan con el cobro antes de acreditarlo.
 
 ## 2. Planes

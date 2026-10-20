@@ -129,6 +129,7 @@ El diagrama de arriba es el núcleo (0001). Cada bloque funcional agrega su prop
 | `0061_ai_extract_idx2` | Reemplaza los índices de 0011 y 0060 por uno por organización y más selectivo para ese barrido |
 | `0062_ai_first_attempt` | `envelopes.ai_metadata_first_attempt_at`: primer intento de la extracción automática, para contar los 30 días de reintentos desde ahí (no desde que se completó el sobre) |
 | `0063_payment_webhooks_checkouts` | `payment_webhook_events.processed_at` (el evento se marca procesado al terminar); `envelope_payments.stale_checkout_ids` (cola de checkouts descartados a cerrar, reemplaza `stale_checkout_id`), `discarded_checkout_refs` y `checkout_ref` (un pago por un checkout descartado se reembolsa), `disputed_at` (contracargo o disputa en el proveedor) e índice por `provider_payment_id` |
+| `0064_subscription_cancellations_webhook_claims` | `subscription_cancellations` (suscripciones reemplazadas pendientes de cancelar en el proveedor; las reintenta el barrido) y `payment_webhook_events.claim_id` (quién tomó un evento en curso: solo esa toma suelta la marca). 0063 pasa a ser re-ejecutable |
 
 Reglas: una migración por bloque, solo aditiva salvo cuando se recrea un `CHECK` para sumar un valor; nunca se edita una
 migración ya aplicada en un entorno.

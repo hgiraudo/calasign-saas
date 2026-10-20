@@ -62,13 +62,23 @@ export function isUnverifiedSelfRegistered(r: any): boolean {
   return Boolean(r.self_registered) && !(r.auth_method === "otp_email" && r.authenticated_at);
 }
 
-export function canDelegate(r: any, e: any): boolean {
+/**
+ * Firma dentro de la app del integrador: marcado como embebido o abierto alguna vez con una URL de firma embebida (una
+ * embed_session usada). Mismo criterio que GET /v1/signing/:token/embed, que es el que pone la página en modo embebido.
+ */
+export async function isEmbeddedSigner(db: Db, r: any): Promise<boolean> {
+  if (r.embedded) return true;
+  return Boolean(await db.one(`SELECT 1 FROM embed_sessions WHERE recipient_id = $1 AND used_at IS NOT NULL LIMIT 1`, [r.id]));
+}
+
+/** `embedded`: resultado de isEmbeddedSigner (sin él solo cuenta el flag del destinatario). */
+export function canDelegate(r: any, e: any, embedded = Boolean(r.embedded)): boolean {
   return (
     e.status === "sent" &&
     !isUnverifiedSelfRegistered(r) &&
-    // Embebido: firma dentro de la app del integrador, que es quien decide quién firma (delegar desde el iframe lo
-    // dejaba colgado, sin evento ni vuelta al returnUrl).
-    !r.embedded &&
+    // Embebido: firma dentro de la app del integrador, que es quien decide quién firma (delegar desde el iframe o la
+    // pestaña del integrador lo dejaba colgado, sin evento ni vuelta al returnUrl).
+    !embedded &&
     (e.allow_delegation ?? true) &&
     (r.role === "signer" || r.role === "approver") &&
     ["sent", "viewed"].includes(r.status)

@@ -10,7 +10,7 @@ import { authenticate, type Services } from "./context";
 import { activateRecipient, lockEnvelope, pastExpiry } from "./envelopes";
 import { DISCARD_CHECKOUT_SET } from "./billing/payments";
 import { loadDetail } from "./mappers";
-import { isUnverifiedSelfRegistered } from "./otp";
+import { isEmbeddedSigner, isUnverifiedSelfRegistered } from "./otp";
 import { assertLinkCurrent, recipientActor, resolveToken } from "./signing";
 import { inheritIdentityRequirement } from "./identity/kyc";
 import { deleteBlobsQuietly, discardRecipientAttachments } from "./file-cleanup";
@@ -176,7 +176,7 @@ export async function participantRoutes(app: FastifyInstance, s: Services) {
         // Quien se registró solo en un formulario web (correo sin validar) no recibe correos: tampoco puede usar la
         // delegación para que la plataforma le escriba a un tercero.
         if (isUnverifiedSelfRegistered(old)) throw forbidden("Para delegar, validá primero tu correo");
-        if (old.embedded) throw forbidden("Un firmante embebido no puede delegar: lo decide la aplicación que lo integra");
+        if (await isEmbeddedSigner(t, old)) throw forbidden("Un firmante embebido no puede delegar: lo decide la aplicación que lo integra");
         if (old.email && input.email && old.email.toLowerCase() === input.email.toLowerCase())
           throw conflict("same_person", "No podés delegar en vos mismo");
         ({ discardedKeys } = await replaceRecipient(t, e, old, input, "delegated", recipientActor(req, old)));

@@ -47,14 +47,19 @@ export function setFrameAncestors(reply: FastifyReply, origins: string[]) {
   if (origins.length) reply.removeHeader("x-frame-options");
 }
 
-async function originsForRecipient(db: Db, recipientId: string, tenantId: string): Promise<string[]> {
-  const t = await db.one<any>(`SELECT embed_frame_ancestors FROM tenants WHERE id = $1`, [tenantId]);
-  const allowed: string[] = t?.embed_frame_ancestors ?? [];
-  const last = await db.one<any>(
+/** Sesión embebida usada en las últimas 24 h (la que fija los orígenes del iframe), o null. */
+async function lastEmbedSession(db: Db, recipientId: string): Promise<{ frame_ancestors: string[] | null } | null> {
+  return db.one<any>(
     `SELECT frame_ancestors FROM embed_sessions WHERE recipient_id = $1 AND used_at IS NOT NULL AND created_at > now() - interval '24 hours'
      ORDER BY created_at DESC LIMIT 1`,
     [recipientId],
   );
+}
+
+async function originsForRecipient(db: Db, recipientId: string, tenantId: string, last?: { frame_ancestors: string[] | null } | null): Promise<string[]> {
+  const t = await db.one<any>(`SELECT embed_frame_ancestors FROM tenants WHERE id = $1`, [tenantId]);
+  const allowed: string[] = t?.embed_frame_ancestors ?? [];
+  if (last === undefined) last = await lastEmbedSession(db, recipientId);
   const requested: string[] = last?.frame_ancestors ?? [];
   // Lo pedido para esa sesión, siempre dentro de lo autorizado por la organización.
   return requested.length ? requested.filter((o) => allowed.includes(o)) : allowed;
@@ -196,12 +201,26 @@ export async function embedRoutes(app: FastifyInstance, s: Services) {
 
   // ───────── Página del firmante en modo embebido: frame-ancestors dinámico ─────────
 
+  // Con embed=1 (la página abierta desde /embed/:code). Sin él, la misma página vuelve al iframe desde un proveedor de
+  // pago o identidad (?payment=success, ?identity=return): si no, el CSP 'none' de helmet la dejaba en blanco. Sin
+  // embed=1 solo se relaja para un destinatario con una sesión embebida usada (no para cualquiera marcado embebido ni
+  // con los orígenes de la organización por defecto si no la abrió nunca un integrador).
   app.addHook("onSend", async (req, reply, payload) => {
     if (req.method !== "GET") return payload;
-    const m = /^\/s\/([A-Za-z0-9_-]{20,100})\?(?:.*&)?embed=1(?:&|$)/.exec(req.url);
+    const m = /^\/s\/([A-Za-z0-9_-]{20,100})(?:\?(.*))?$/.exec(req.url);
     if (!m) return payload;
+    const embedParam = /(?:^|&)embed=1(?:&|$)/.test(m[2] ?? "");
     const r = await s.db.one<any>(`SELECT id, tenant_id FROM recipients WHERE access_token_hash = $1`, [sha256Hex(m[1])]);
-    if (r) setFrameAncestors(reply, await originsForRecipient(s.db, r.id, r.tenant_id));
+    if (!r) return payload;
+    if (embedParam) {
+      setFrameAncestors(reply, await originsForRecipient(s.db, r.id, r.tenant_id));
+      return payload;
+    }
+    const last = await lastEmbedSession(s.db, r.id);
+    if (!last) return payload;
+    const origins = await originsForRecipient(s.db, r.id, r.tenant_id, last);
+    // Sin orígenes (p. ej. sesión "para pestaña") queda el 'none' de helmet.
+    if (origins.length) setFrameAncestors(reply, origins);
     return payload;
   });
 

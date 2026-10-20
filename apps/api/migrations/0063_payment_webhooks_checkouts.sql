@@ -11,8 +11,11 @@ UPDATE payment_webhook_events SET processed_at = received_at WHERE processed_at 
 ALTER TABLE envelope_payments ADD COLUMN IF NOT EXISTS checkout_ref text;
 ALTER TABLE envelope_payments ADD COLUMN IF NOT EXISTS stale_checkout_ids text[] NOT NULL DEFAULT '{}';
 ALTER TABLE envelope_payments ADD COLUMN IF NOT EXISTS discarded_checkout_refs text[] NOT NULL DEFAULT '{}';
-UPDATE envelope_payments SET stale_checkout_ids = ARRAY[stale_checkout_id], discarded_checkout_refs = ARRAY[stale_checkout_id] WHERE stale_checkout_id IS NOT NULL;
-ALTER TABLE envelope_payments DROP COLUMN IF EXISTS stale_checkout_id;
+-- Re-ejecutable: solo si la columna vieja sigue. (Las sentencias de adentro van en la misma línea que lo que sigue:
+-- el runner, db.ts splitSql, corta en un punto y coma al final de la línea.)
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'envelope_payments' AND column_name = 'stale_checkout_id') THEN
+    UPDATE envelope_payments SET stale_checkout_ids = ARRAY[stale_checkout_id], discarded_checkout_refs = ARRAY[stale_checkout_id] WHERE stale_checkout_id IS NOT NULL; ALTER TABLE envelope_payments DROP COLUMN stale_checkout_id; END IF; END $$;
 
 -- Contracargo o disputa abierta en el proveedor (Stripe charge.dispute.created, Mercado Pago charged_back). El estado
 -- del cobro no cambia: queda la marca y el evento en la evidencia.

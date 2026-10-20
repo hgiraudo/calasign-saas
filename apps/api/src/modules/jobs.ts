@@ -27,6 +27,7 @@ import { recheckVerifiedDomains, tenantBaseUrl } from "./custom-domains";
 import { dataSweep } from "./data";
 import { identityForCertificate, maskDocNumber } from "./identity/kyc";
 import { closeStaleCheckouts, paymentsForCertificate, refundPaymentsOnClosedEnvelopes } from "./billing/payments";
+import { cancelPendingSubscriptions } from "./billing/webhooks";
 import { runAiSweep } from "./ai";
 import { agreementsSweep, handleAgreementsJob } from "./agreements";
 
@@ -606,6 +607,8 @@ export async function sweep(d: Deps) {
   // Después del vencimiento, así los sobres que vencieron recién también cierran su checkout.
   await closeStaleCheckouts(d).catch((err) => d.log.error({ err: String(err), step: "payments" }, "tarea periódica falló"));
   await refundPaymentsOnClosedEnvelopes(d).catch((err) => d.log.error({ err: String(err), step: "refunds" }, "tarea periódica falló"));
+  // Suscripciones reemplazadas que no se pudieron cancelar en el proveedor al cambiar de suscripción.
+  await cancelPendingSubscriptions(d).catch((err) => d.log.error({ err: String(err), step: "subscriptions" }, "tarea periódica falló"));
 }
 
 const REPLACED = {

@@ -1,6 +1,7 @@
 // Contrato de las ampliaciones de la API para integradores (docs/API-ROADMAP.md): API de eventos (polling y SSE),
 // datos de formulario, clonado de sobres, operaciones en lote y rotación del secreto de un webhook.
 import { z } from "zod";
+import { UserMetadata } from "./api";
 
 // ───────────── Eventos ─────────────
 
@@ -68,7 +69,7 @@ export const CloneEnvelopeInput = z.object({
   subject: z.string().trim().min(1).max(300).optional(),
   message: z.string().max(5000).optional().nullable(),
   /** Reemplaza la metadata copiada (por defecto se copia la del original, con `clonedFrom`). */
-  metadata: z.record(z.unknown()).optional(),
+  metadata: UserMetadata.optional(),
   expiresAt: z.string().datetime({ offset: true }).optional(),
   /** false = solo documentos (sin destinatarios ni campos). Por defecto true. */
   includeRecipients: z.boolean().optional(),

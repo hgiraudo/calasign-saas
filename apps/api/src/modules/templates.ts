@@ -19,7 +19,7 @@ import { AppError, badRequest, notFound } from "../lib/errors";
 import { iso, sha256Hex, uuidv7 } from "../lib/util";
 import { assertTemplateAccess, templateVisibilitySql } from "./access";
 import { authenticate, type AuthContext, type Services } from "./context";
-import { assertDocumentLimits, idempotent, sendEnvelope } from "./envelopes";
+import { assertDocumentLimits, idempotent, sendEnvelope, assertLogicOrder } from "./envelopes";
 import { checkSenderValue, insertEnvelopeField } from "./fieldvalues";
 import { assignFieldIds, copyFieldLogic, pruneDanglingConditions, saveFieldLogic } from "./logic";
 import { loadDetail, loadDocuments, toDocument } from "./mappers";
@@ -365,6 +365,11 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
         });
       }
       await saveFieldLogic(t, "template_fields", input.fields);
+      // Condiciones que citan un campo de un rol que firma después (o en el mismo turno): ver logicOrderProblems.
+      await assertLogicOrder(
+        await t.query<any>(`SELECT id, role_id AS recipient_id, label, conditions, read_only FROM template_fields WHERE template_id = $1`, [tpl.id]),
+        await t.query<any>(`SELECT id, name, routing_order FROM template_roles WHERE template_id = $1`, [tpl.id]),
+      );
       await touch(t, tpl.id);
     });
     return loadTemplateDetail(s.db, a.tenantId, req.params.id);

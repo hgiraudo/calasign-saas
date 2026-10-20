@@ -50,10 +50,12 @@ export async function handleStripeEvent(db: Db, event: any) {
         if (obj.amount_total !== toMinorUnits(Number(p.amount)) || String(obj.currency).toUpperCase() !== String(p.currency).toUpperCase()) {
           throw new AppError(400, "payment_mismatch", "El monto o la moneda del pago no coinciden con el cobro");
         }
-        await markPaymentPaid(db, paymentId, {
+        const res = await markPaymentPaid(db, paymentId, {
           providerPaymentId: typeof obj.payment_intent === "string" ? obj.payment_intent : obj.id,
           receipt: { provider: "stripe", sessionId: obj.id, paymentIntent: obj.payment_intent ?? null, amountTotal: obj.amount_total, currency: obj.currency },
         });
+        // Segundo cobro de la misma deuda (p. ej. el checkout del pagador anterior): se reembolsa, como en Mercado Pago.
+        if (res?.duplicate) await refundDuplicatePayment(db, paymentId, res.duplicate, "stripe");
       } else if (obj.mode === "subscription") {
         const tenantId = obj.metadata?.tenantId;
         const plan = obj.metadata?.plan;

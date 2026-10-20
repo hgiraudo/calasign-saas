@@ -375,6 +375,14 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
       if (form.collect_phone && !input.phone) throw badRequest("phone_required", "El teléfono es obligatorio");
 
       const loaded = await loadTemplateForUse(s.db, form.tenant_id, form.template_id);
+      // La plantilla pudo cambiar después de publicar el formulario (p. ej. el rol pasó a aprobador o copia): sin esto,
+      // quien completa el formulario sin verificar quedaba como aprobador o recibía la copia final sin firmar.
+      try {
+        checkConfig(loaded, form);
+      } catch (e) {
+        req.log.warn({ webFormId: form.id, err: String(e) }, "formulario web mal configurado");
+        throw conflict("form_misconfigured", "Este formulario no está disponible");
+      }
       const fromTpl = buildInput(form, { name: input.name, email: input.email, phone: input.phone, locale: input.locale });
       let plan;
       try {
@@ -418,7 +426,14 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
           actor: { type: "recipient", id: signerRecipientId, label: `${input.name} <${input.email}>`, ip, userAgent },
           data: { webFormId: form.id, webFormName: form.name, slug: form.slug, otp: form.require_otp },
         });
-        await sendEnvelope(t, form.tenant_id, id, actor);
+        // Sin cuota del plan: a quien completa el formulario (anónimo) no se le muestran el plan ni el uso de la organización.
+        await sendEnvelope(t, form.tenant_id, id, actor).catch((e) => {
+          if (e instanceof AppError && e.code === "plan_limit") {
+            req.log.warn({ webFormId: form.id }, "formulario web: la organización llegó al límite de su plan");
+            throw new AppError(410, "form_inactive", "Este formulario ya no está disponible");
+          }
+          throw e;
+        });
         await t.query(`UPDATE web_forms SET uses = uses + 1, updated_at = now() WHERE id = $1`, [form.id]);
         return id;
       });

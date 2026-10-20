@@ -250,7 +250,7 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
       const t = newToken();
       await db.query(`UPDATE recipients SET access_token_hash = $2, access_token_enc = $3, telegram_chat_id = NULL WHERE id = $1`, [r.id, t.hash, t.enc]);
       // El checkout de un cobro pendiente se armó con el contacto y el link anteriores: se descarta.
-      await db.query(`UPDATE envelope_payments SET checkout_id = NULL, checkout_url = NULL, updated_at = now() WHERE recipient_id = $1 AND status <> 'paid'`, [r.id]);
+      await db.query(`UPDATE envelope_payments SET stale_checkout_id = COALESCE(checkout_id, stale_checkout_id), checkout_id = NULL, checkout_url = NULL, updated_at = now() WHERE recipient_id = $1 AND status <> 'paid'`, [r.id]);
       // Un código de embed sin usar emitido para el contacto anterior abriría el link nuevo: se vence.
       await db.query(`UPDATE embed_sessions SET expires_at = LEAST(expires_at, now()) WHERE recipient_id = $1 AND used_at IS NULL`, [r.id]);
       await db.query(`DELETE FROM signer_sessions WHERE recipient_id = $1`, [r.id]);
@@ -398,12 +398,16 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
   if (active > MAX_RECIPIENTS) problems.push(`El sobre admite hasta ${MAX_RECIPIENTS} destinatarios`);
   const nFields = await db.one<{ n: number }>(`SELECT count(*)::int AS n FROM fields WHERE envelope_id = $1`, [e.id]);
   if ((nFields?.n ?? 0) > MAX_FIELDS) problems.push(`El sobre admite hasta ${MAX_FIELDS} campos`);
-  problems.push(
-    ...logicOrderProblems(
-      await db.query<any>(`SELECT id, recipient_id, label, conditions, read_only FROM fields WHERE envelope_id = $1`, [e.id]),
-      now.filter((r) => !["delegated", "reassigned"].includes(r.status)),
-    ),
-  );
+  // Solo para campos de quien todavía no completó: los de quien ya firmó ya se evaluaron y no se pueden corregir (si no,
+  // un sobre en curso con esa lógica no admitía ninguna corrección).
+  // Y solo si la corrección agrega campos o destinatarios: cambiar un correo o el vencimiento no se frena por lógica que
+  // ya venía así.
+  if (input.addFields?.length || input.addRecipients?.length) {
+    const pendingIds = new Set(now.filter((r) => PENDING.includes(r.status)).map((r) => r.id));
+    const all = await db.query<any>(`SELECT id, recipient_id, label, conditions, read_only FROM fields WHERE envelope_id = $1`, [e.id]);
+    const live = now.filter((r) => !["delegated", "reassigned"].includes(r.status));
+    problems.push(...logicOrderProblems(all.map((f) => (pendingIds.has(f.recipient_id) ? f : { ...f, conditions: null })), live));
+  }
   if (problems.length) throw new AppError(422, "envelope_incomplete", problems.join(". "), { problems });
 
   if (removedFields.length) diff.fieldsRemoved = removedFields;

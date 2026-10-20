@@ -37,6 +37,7 @@ import { sendPdf } from "../envelopes";
 import { discardBlobsOnFailure } from "../file-cleanup";
 import { getPath, setPath } from "./common";
 import { agreementMetaFromMapping, createEnvelopeFromPdf, insertFileRow, loadClauseMap, loadDocTemplate, renderDocument, storeGeneratedPdf } from "./documents";
+import { ownerProblem } from "../owner-check";
 
 // ───────────────────────────── Render de una versión ─────────────────────────────
 
@@ -526,7 +527,8 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
     // (si no, no lo veía) y es él quien firma el rol sin contraparte. Si ya no es miembro, queda a nombre de quien acepta.
     const creatorIsMember =
       n.created_by && n.created_by !== a.userId
-        ? Boolean(await s.db.one(`SELECT 1 FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [n.tenant_id, n.created_by]))
+        ? // Que siga pudiendo crear sobres (no solo que sea miembro): si perdió el permiso, queda a nombre de quien acepta.
+          (await ownerProblem(s.db, { tenantId: n.tenant_id, userId: n.created_by, apiKeyId: null }, null)) === null
         : false;
     const ownerId: string | null = creatorIsMember ? n.created_by : a.userId;
     // Si queda a nombre de quien acepta y es una API key, el sobre sigue siendo de la key (si no, quedaba sin dueño).

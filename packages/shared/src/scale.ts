@@ -1,6 +1,6 @@
 // Fase 4 — escala: envío masivo, formularios web públicos, lógica condicional y campos calculados.
 import { z } from "zod";
-import { CHANNELS, ID_DOCUMENT_TYPES, LOCALES, type Locale } from "./api";
+import { CHANNELS, ID_DOCUMENT_TYPES, LOCALES, type Locale, UserMetadata } from "./api";
 
 export * from "./scale-logic";
 
@@ -34,7 +34,7 @@ export const BulkRowInput = z.object({
   prefill: z.record(z.string(), z.string().max(2000)).optional(),
   subject: z.string().trim().max(300).optional().nullable(),
   /** Datos libres del integrador para esta fila (se guardan en metadata del sobre). */
-  metadata: z.record(z.string(), z.unknown()).optional(),
+  metadata: UserMetadata.optional(),
 });
 export type BulkRowInput = z.input<typeof BulkRowInput>;
 
@@ -175,7 +175,7 @@ export interface WebForm {
   updatedAt: string;
 }
 
-export type WebFormInactiveCode = "not_member" | "missing_permission" | "template_access" | "key_revoked" | "plan_feature";
+export type WebFormInactiveCode = "not_member" | "missing_permission" | "template_access" | "key_revoked" | "plan_feature" | "plan_api";
 
 /** Lo que ve el público al abrir /f/:slug. */
 export interface PublicWebForm {

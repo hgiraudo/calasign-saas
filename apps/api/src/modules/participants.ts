@@ -103,7 +103,7 @@ export async function replaceRecipient(
   // El checkout abierto se armó con el correo y el link (ya revocado) del anterior: se descarta y el reemplazo arma uno
   // nuevo al pagar (si no, volvía a un link muerto y el pago figuraba a nombre de quien no pagó).
   await db.query(
-    `UPDATE envelope_payments SET recipient_id = $2, checkout_id = NULL, checkout_url = NULL, updated_at = now() WHERE recipient_id = $1 AND status <> 'paid'`,
+    `UPDATE envelope_payments SET recipient_id = $2, stale_checkout_id = COALESCE(checkout_id, stale_checkout_id), checkout_id = NULL, checkout_url = NULL, updated_at = now() WHERE recipient_id = $1 AND status <> 'paid'`,
     [old.id, id],
   );
   await inheritIdentityRequirement(db, old, id);

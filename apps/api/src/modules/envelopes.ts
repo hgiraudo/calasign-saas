@@ -384,6 +384,11 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
       const e = await lockEnvelope(t, a.tenantId, req.params.id);
       requireDraft(e);
       await replaceFields(t, a.tenantId, e.id, input.fields);
+      // Al diseñar la lógica (no al enviar: sobres y plantillas ya armadas no dejan de poder enviarse).
+      await assertLogicOrder(
+        await t.query<any>(`SELECT id, recipient_id, label, conditions, read_only FROM fields WHERE envelope_id = $1`, [e.id]),
+        await t.query<any>(`SELECT id, name, routing_order FROM recipients WHERE envelope_id = $1`, [e.id]),
+      );
       await touch(t, e.id);
     });
     return loadDetail(s.db, a.tenantId, req.params.id);
@@ -752,6 +757,11 @@ export function logicOrderProblems(
   return [...new Set(out)];
 }
 
+export async function assertLogicOrder(fields: Parameters<typeof logicOrderProblems>[0], recips: Parameters<typeof logicOrderProblems>[1]) {
+  const problems = logicOrderProblems(fields, recips);
+  if (problems.length) throw new AppError(422, "logic_order", problems.join(". "), { problems });
+}
+
 /** Valida y envía un borrador (dentro de la transacción del llamador). */
 export async function sendEnvelope(t: Db, tenantId: string, envelopeId: string, actor: Actor) {
   const e = await lockEnvelope(t, tenantId, envelopeId);
@@ -760,9 +770,8 @@ export async function sendEnvelope(t: Db, tenantId: string, envelopeId: string, 
   await assertDocumentLimits(t, "envelope", e.id);
   const docs = await loadDocuments(t, e.id);
   const recips = await t.query<any>(`SELECT * FROM recipients WHERE envelope_id = $1`, [e.id]);
-  const fields = await t.query<any>(`SELECT id, recipient_id, type, label, formula, conditions, read_only FROM fields WHERE envelope_id = $1`, [e.id]);
+  const fields = await t.query<any>(`SELECT recipient_id, type, label, formula FROM fields WHERE envelope_id = $1`, [e.id]);
   const problems: string[] = [];
-  problems.push(...logicOrderProblems(fields, recips));
   if (docs.length === 0) problems.push("Agregá al menos un documento");
   // Cada adjunto puede pesar 10 MB y todos se agregan al PDF final.
   if (fields.filter((f) => f.type === "attachment").length > ENVELOPE_LIMITS.attachmentFields)

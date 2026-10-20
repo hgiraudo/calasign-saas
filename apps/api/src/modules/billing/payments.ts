@@ -119,8 +119,9 @@ export async function paymentsForCertificate(db: Db, envelopeId: string, locale 
 
 /** Confirma un pago (webhook verificado o pago simulado). Idempotente. Si el sobre esperaba el pago, lo completa. */
 /** Reembolsa un segundo cobro de Mercado Pago sobre un pago ya acreditado y lo deja en la evidencia (una vez). */
-export async function refundDuplicatePayment(db: Db, paymentId: string, providerPaymentId: string) {
-  await mpRefundPayment(providerPaymentId, `dup:${providerPaymentId}`);
+export async function refundDuplicatePayment(db: Db, paymentId: string, providerPaymentId: string, provider: "mercadopago" | "stripe" = "mercadopago") {
+  if (provider === "stripe") await stripeRefundPayment(providerPaymentId, `dup:${providerPaymentId}`);
+  else await mpRefundPayment(providerPaymentId, `dup:${providerPaymentId}`);
   const p = await db.one<any>(`SELECT tenant_id, envelope_id, provider FROM envelope_payments WHERE id = $1`, [paymentId]);
   if (!p) return;
   await db.tx(async (t) => {
@@ -209,6 +210,17 @@ export async function markPaymentPaid(
  * Corre en el barrido periódico, así cubre todos los caminos que cierran un sobre y reintenta si el proveedor falla.
  */
 export async function closeStaleCheckouts(d: { db: Db; log: { error: (o: object, m: string) => void } }, limit = 50) {
+  // Checkouts descartados al cambiar el pagador: se cierran en el proveedor (siguen cobrables hasta que se cierren).
+  const stale = await d.db.query<any>(`SELECT id, provider, stale_checkout_id FROM envelope_payments WHERE stale_checkout_id IS NOT NULL LIMIT $1`, [limit]);
+  for (const p of stale) {
+    try {
+      if (p.provider === "stripe") await stripeExpireCheckoutSession(p.stale_checkout_id);
+      else if (p.provider === "mercadopago") await mpExpirePreference(p.stale_checkout_id);
+      await d.db.query(`UPDATE envelope_payments SET stale_checkout_id = NULL WHERE id = $1 AND stale_checkout_id = $2`, [p.id, p.stale_checkout_id]);
+    } catch (err) {
+      d.log.error({ err: String(err), paymentId: p.id }, "no se pudo cerrar un checkout descartado");
+    }
+  }
   const rows = await d.db.query<any>(
     `SELECT p.id, p.provider, p.checkout_id, p.envelope_id, p.tenant_id FROM envelope_payments p JOIN envelopes e ON e.id = p.envelope_id
       WHERE p.status IN ('pending','checkout_created') AND p.checkout_id IS NOT NULL AND p.checkout_closed_at IS NULL
@@ -463,8 +475,9 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
           metadata: { paymentId: p.id, envelopeId: e.id, tenantId: e.tenant_id },
           customerEmail: r.email,
           // Misma clave para pedidos simultáneos sobre el mismo estado; cambia cuando la sesión anterior vence o falla.
-          // Con el destinatario: tras una delegación (checkout descartado) Stripe no devuelve la sesión del anterior.
-          idempotencyKey: `pay:${p.id}:${p.recipient_id}:${p.checkout_id ?? "first"}`,
+          // Con el link vigente del pagador: cambia al delegar, reasignar o corregir su contacto (checkout descartado), así
+          // Stripe no devuelve la sesión anterior ni rechaza la clave por parámetros distintos.
+          idempotencyKey: `pay:${p.id}:${String(r.access_token_hash ?? "").slice(0, 16)}:${p.checkout_id ?? "first"}`,
         });
         checkoutId = c.id;
         url = c.url;

@@ -1,6 +1,6 @@
 // Fase 6 — Plataforma de acuerdos: repositorio, generación de documentos, workflows y negociación.
 import { z } from "zod";
-import { CHANNELS, LOCALES } from "./api";
+import { CHANNELS, LOCALES, UserMetadata } from "./api";
 import type { DiffPart, ResolvedBlock, TemplateAnalysis } from "./agreements-engine";
 
 export * from "./agreements-engine";
@@ -219,7 +219,7 @@ export const GenerateDocumentInput = z.object({
   send: z.boolean().default(true),
   /** Permite generar aunque falten variables (quedan vacías). */
   allowMissing: z.boolean().default(false),
-  metadata: z.record(z.string(), z.unknown()).optional(),
+  metadata: UserMetadata.optional(),
 });
 export type GenerateDocumentInput = z.input<typeof GenerateDocumentInput>;
 export interface GenerateDocumentResponse {

@@ -318,7 +318,9 @@ const [rCtrl, rFirma] = [randomUUID(), randomUUID()];
 const cName = `Firma condicional ${stamp}`;
 const cRecips = [
   { id: rCtrl, role: "signer", routingOrder: 1, name: `Controla ${stamp}`, email: `controla+${stamp}@example.com` },
-  { id: rFirma, role: "signer", routingOrder: 1, name: cName, email: `condicional+${stamp}@example.com` },
+  // Firma después de quien controla la condición (una condición sobre un campo de alguien que firma al mismo tiempo se
+  // rechaza al guardar los campos: se decidiría con un valor que todavía no existe).
+  { id: rFirma, role: "signer", routingOrder: 2, name: cName, email: `condicional+${stamp}@example.com` },
 ];
 await api("PUT", `/v1/envelopes/${cEnv.id}/recipients`, { recipients: cRecips });
 await api("PUT", `/v1/envelopes/${cEnv.id}/fields`, {

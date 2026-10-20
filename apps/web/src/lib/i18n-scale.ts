@@ -123,6 +123,7 @@ const es = {
   "forms.why.template_access": "Quien lo configuró ya no tiene acceso a la plantilla",
   "forms.why.key_revoked": "La API key que lo configuró fue revocada",
   "forms.why.plan_feature": "El plan actual de la organización no incluye formularios web",
+  "forms.why.plan_api": "El plan de la organización ya no incluye la API con la que se configuró",
   "forms.planHint": "El formulario no acepta envíos con el plan actual. Para reactivarlo, pasá a un plan que incluya formularios web.",
   "forms.useFromTemplate": "Formulario web",
 
@@ -263,6 +264,7 @@ const pt: Record<Key, string> = {
   "forms.why.template_access": "Quem o configurou não tem mais acesso ao modelo",
   "forms.why.key_revoked": "A chave de API que o configurou foi revogada",
   "forms.why.plan_feature": "O plano atual da organização não inclui formulários web",
+  "forms.why.plan_api": "O plano da organização não inclui mais a API com que foi configurado",
   "forms.planHint": "O formulário não aceita envios com o plano atual. Para reativá-lo, mude para um plano que inclua formulários web.",
   "forms.useFromTemplate": "Formulário web",
   "pub.yourData": "Seus dados",
@@ -399,6 +401,7 @@ const en: Record<Key, string> = {
   "forms.why.template_access": "The person who set it up no longer has access to the template",
   "forms.why.key_revoked": "The API key that set it up was revoked",
   "forms.why.plan_feature": "The organization's current plan does not include web forms",
+  "forms.why.plan_api": "The organization's plan no longer includes the API it was set up with",
   "forms.planHint": "The form accepts no submissions on the current plan. To reactivate it, switch to a plan that includes web forms.",
   "forms.useFromTemplate": "Web form",
   "pub.yourData": "Your details",

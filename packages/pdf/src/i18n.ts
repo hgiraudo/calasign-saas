@@ -49,6 +49,9 @@ const L = {
     statement:
       "Este documento fue firmado electrónicamente mediante CalaSign. Cada evento queda encadenado por hash y el PDF está sellado " +
       "digitalmente (PAdES) con sello de tiempo: cualquier modificación posterior invalida el sello.",
+    statementNeutral:
+      "Este documento fue firmado electrónicamente mediante CalaSign. Cada evento queda encadenado por hash y el PDF está sellado " +
+      "digitalmente (PAdES): cualquier modificación posterior invalida el sello. El sello de tiempo, si lo tiene, figura en las firmas del PDF.",
     statementNoTimestamp:
       "Este documento fue firmado electrónicamente mediante CalaSign. Cada evento queda encadenado por hash y el PDF está sellado " +
       "digitalmente (PAdES), sin sello de tiempo de una autoridad externa: cualquier modificación posterior invalida el sello.",
@@ -128,6 +131,9 @@ const L = {
     statement:
       "Este documento foi assinado eletronicamente por meio da CalaSign. Cada evento é encadeado por hash e o PDF é selado " +
       "digitalmente (PAdES) com carimbo do tempo: qualquer alteração posterior invalida o selo.",
+    statementNeutral:
+      "Este documento foi assinado eletronicamente por meio da CalaSign. Cada evento é encadeado por hash e o PDF é selado " +
+      "digitalmente (PAdES): qualquer alteração posterior invalida o selo. O carimbo do tempo, se houver, consta nas assinaturas do PDF.",
     statementNoTimestamp:
       "Este documento foi assinado eletronicamente por meio da CalaSign. Cada evento é encadeado por hash e o PDF é selado " +
       "digitalmente (PAdES), sem carimbo do tempo de uma autoridade externa: qualquer alteração posterior invalida o selo.",
@@ -207,6 +213,9 @@ const L = {
     statement:
       "This document was electronically signed with CalaSign. Every event is hash-chained and the PDF is digitally sealed " +
       "(PAdES) with a timestamp: any later modification invalidates the seal.",
+    statementNeutral:
+      "This document was electronically signed with CalaSign. Every event is hash-chained and the PDF is digitally sealed " +
+      "(PAdES): any later modification invalidates the seal. The timestamp, if any, is shown in the PDF signatures.",
     statementNoTimestamp:
       "This document was electronically signed with CalaSign. Every event is hash-chained and the PDF is digitally sealed " +
       "(PAdES), without a timestamp from an external authority: any later modification invalidates the seal.",
@@ -256,5 +265,5 @@ export function labels(locale: string, productName?: string | null): CertLabels 
       : s
           .replace(/ (mediante|por meio da|with) CalaSign/g, "")
           .replace(/^CalaSign · /, "");
-  return { ...base, statement: fix(base.statement), statementNoTimestamp: fix(base.statementNoTimestamp), pageFooter: fix(base.pageFooter) };
+  return { ...base, statement: fix(base.statement), statementNoTimestamp: fix(base.statementNoTimestamp), statementNeutral: fix(base.statementNeutral), pageFooter: fix(base.pageFooter) };
 }

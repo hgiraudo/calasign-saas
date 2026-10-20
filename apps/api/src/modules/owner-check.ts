@@ -2,11 +2,12 @@
 // crearlos: miembro de la organización (o API key sin revocar), con envelopes:create y acceso a la plantilla.
 import type { Db } from "../infra/db";
 import { assertTemplateAccess, hasPerm, loadAccess } from "./access";
+import { tenantPlan } from "./billing/plans";
 import type { AuthContext } from "./context";
 
 /** Motivo con código estable (para traducirlo) y texto en español (para logs, evidencia y mensajes). */
 export interface OwnerProblem {
-  code: "not_member" | "missing_permission" | "template_access" | "key_revoked";
+  code: "not_member" | "missing_permission" | "template_access" | "key_revoked" | "plan_api";
   message: string;
 }
 
@@ -19,6 +20,10 @@ export async function ownerProblem(
   if (owner.apiKeyId) {
     const k = await db.one<any>(`SELECT revoked_at FROM api_keys WHERE id = $1 AND tenant_id = $2`, [owner.apiKeyId, owner.tenantId]);
     if (!k || k.revoked_at) return { code: "key_revoked", message: "La API key que lo configuró fue revocada" };
+    // Configurado con una API key y el plan ya no incluye la API: como el envío masivo y los formularios, deja de
+    // crear sobres en nombre de esa key (webhooks de CRM y conectores, links públicos de workflows).
+    const { plan } = await tenantPlan(db, owner.tenantId);
+    if (!plan.features.includes("api")) return { code: "plan_api", message: "El plan de la organización ya no incluye la API con la que se configuró" };
   }
   const a = { tenantId: owner.tenantId, userId: owner.apiKeyId ? null : owner.userId, apiKeyId: owner.apiKeyId, actor: { type: "system", label: "dueño" } } as AuthContext;
   try {

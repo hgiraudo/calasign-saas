@@ -2,7 +2,7 @@
 import { z } from "zod";
 import { FieldConditions, FieldFormula, type FieldCondition } from "./scale-logic";
 import { CertificateRequirementsInput, SIGNATURE_TYPES, type CertificateRequirements, type SignatureType } from "./certsign";
-import { CHANNELS, FIELD_TYPES, ID_DOCUMENT_TYPES, LOCALES, RECIPIENT_ROLES, type Document, type FieldType, type Locale, type RecipientRole } from "./api";
+import { CHANNELS, FIELD_TYPES, ID_DOCUMENT_TYPES, LOCALES, RECIPIENT_ROLES, type Document, type FieldType, type Locale, type RecipientRole, UserMetadata } from "./api";
 
 /** Tipos que el firmante completa escribiendo y que el remitente puede prellenar. */
 export const PREFILLABLE_FIELD_TYPES: readonly FieldType[] = ["text", "number", "dropdown", "company", "title"];
@@ -116,7 +116,7 @@ export const EnvelopeFromTemplateInput = z.object({
   message: z.string().max(5000).optional().nullable(),
   locale: z.enum(LOCALES).optional(),
   expiresAt: z.string().datetime({ offset: true }).optional().nullable(),
-  metadata: z.record(z.string(), z.unknown()).optional(),
+  metadata: UserMetadata.optional(),
   recipients: z.array(TemplateRecipientInput).min(1).max(50),
   /** Valores para campos de la plantilla, por id de campo o por etiqueta. */
   prefill: z.record(z.string(), z.string().max(2000)).optional(),

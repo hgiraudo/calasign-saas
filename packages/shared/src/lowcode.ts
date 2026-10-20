@@ -2,7 +2,7 @@
 // pensados para herramientas que arman formularios a partir de metadatos (campos dinámicos) y que no saben armar
 // arreglos de destinatarios por rol.
 import { z } from "zod";
-import { CHANNELS, LOCALES } from "./api";
+import { CHANNELS, LOCALES, UserMetadata } from "./api";
 
 /** Destinatario de un rol de plantilla en el envío "por formulario" (las claves del objeto son el rol). */
 export const LowcodeRoleRecipient = z.object({
@@ -30,7 +30,7 @@ export const LowcodeTemplateSendInput = z.object({
   message: z.string().max(5000).optional().nullable(),
   locale: z.enum(LOCALES).optional(),
   expiresAt: z.string().datetime({ offset: true }).optional().nullable(),
-  metadata: z.record(z.string(), z.unknown()).optional(),
+  metadata: UserMetadata.optional(),
   roles: z.record(z.string(), LowcodeRoleRecipient),
   /** Valores vacíos ("" o null) se ignoran: las herramientas low-code mandan todos los campos del formulario. */
   prefill: z.record(z.string(), z.union([z.string().max(2000), z.number(), z.boolean(), z.null()])).optional(),

@@ -93,8 +93,11 @@ export interface CertificateData {
   recipients: CertificateRecipient[];
   events: { seq: number; type: string; occurredAt: string; actor: string; ip: string | null }[];
   chainHead: string;
-  /** false si el sello va sin sello de tiempo (la TSA falló y no era obligatoria): el texto no lo afirma. */
-  timestamped?: boolean;
+  /**
+   * false si el sello va sin sello de tiempo (la TSA falló y no era obligatoria): el texto no lo afirma. null: todavía
+   * no se sabe (firma con certificado: la página se arma antes del sellado final) y el texto no afirma ni niega.
+   */
+  timestamped?: boolean | null;
   /** URL pública de verificación (se imprime al pie del certificado). */
   verifyUrl?: string | null;
   /** Archivos que subieron los firmantes (se listan con su hash). */
@@ -542,7 +545,7 @@ async function drawCertificate(
   section(L.chainHead);
   text(c.chainHead, { size: 8.5 });
   y -= 6;
-  text(c.timestamped === false ? L.statementNoTimestamp : L.statement, { size: 8, color: MUTED });
+  text(c.timestamped === false ? L.statementNoTimestamp : c.timestamped === null ? L.statementNeutral : L.statement, { size: 8, color: MUTED });
   if (c.verifyUrl) text(`${L.verifyAt} ${c.verifyUrl}`, { size: 8, color: MUTED });
 
   pagesAdded.forEach((p, i) => {

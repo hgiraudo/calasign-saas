@@ -16,6 +16,38 @@ import {
 
 // ───────────────────────────── Enumeraciones ─────────────────────────────
 
+
+/**
+ * Claves de metadatos que pone el sistema (workflows, formularios, envío masivo, CRM, conectores, negociaciones,
+ * repositorio): no las puede fijar quien crea o clona un sobre. Si no, un sobre propio con workflowRunId ajeno se
+ * anulaba al cancelar esa ejecución, o uno con webFormId consumía el tope por hora de un formulario.
+ */
+export const RESERVED_METADATA_KEYS = [
+  "workflowId",
+  "workflowRunId",
+  "webFormId",
+  "webFormName",
+  "bulkSendId",
+  "bulkRow",
+  "crm",
+  "connector",
+  "negotiationId",
+  "negotiationVersion",
+  "documentTemplateId",
+  "agreement",
+  "templateId",
+  "clonedFrom",
+] as const;
+
+export function stripReservedMetadata(m: Record<string, unknown> | null | undefined): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...(m ?? {}) };
+  for (const k of RESERVED_METADATA_KEYS) delete out[k];
+  return out;
+}
+
+/** Metadatos que manda el cliente: sin las claves reservadas del sistema. */
+export const UserMetadata = z.record(z.string(), z.unknown()).transform((m) => stripReservedMetadata(m));
+
 export const LOCALES = ["es", "pt-BR", "en"] as const;
 export type Locale = (typeof LOCALES)[number];
 
@@ -110,7 +142,7 @@ export const CreateEnvelopeInput = z.object({
   message: z.string().max(5000).optional().nullable(),
   locale: z.enum(LOCALES).optional(),
   expiresAt: z.string().datetime({ offset: true }).optional().nullable(),
-  metadata: z.record(z.string(), z.unknown()).optional(),
+  metadata: UserMetadata.optional(),
   /** Sub-marca (marca blanca) con la que salen correos, página de firma y certificado. null: la de la organización. */
   brandId: z.string().uuid().optional().nullable(),
   ...EnvelopeReminderSettings,

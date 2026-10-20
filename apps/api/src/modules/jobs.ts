@@ -418,9 +418,12 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
 
   // El certificado dice si lleva sello de tiempo: se fija antes de armar el PDF de la etapa de firma con certificado,
   // que ya incluye la página del certificado (antes quedaba sin definir y afirmaba un sello de tiempo).
-  (input.certificate as { timestamped?: boolean }).timestamped = Boolean(config.seal.tsaUrl);
+  // Con firma con certificado, la página del certificado va dentro del PDF que firman los titulares, antes de saber si el
+  // sellado final tendrá sello de tiempo: texto neutro (ni lo afirma ni lo niega).
+  (input.certificate as { timestamped?: boolean | null }).timestamped = null;
   // Firma con certificado propio: primero firman los titulares sobre el PDF sin sello; después se sella encima.
   const certStage = await certsignStage(d, e, recips, input);
+  if (certStage.kind !== "seal") (input.certificate as { timestamped?: boolean | null }).timestamped = Boolean(config.seal.tsaUrl);
   if (certStage.kind === "waiting") return;
   if (certStage.kind === "seal") {
     completedAt = certStage.completedAt;
@@ -440,9 +443,6 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
     // Solo una falla de la TSA cae a B-B: otro error (proveedor del sello, KMS) se reintenta con el job (si no, el
     // sobre quedaba completado sin sello de tiempo para siempre por un error ajeno a la TSA).
     if (!config.seal.tsaUrl || config.seal.tsaRequired || (err as Error)?.name !== "TsaError") throw err;
-    // Con firma con certificado, la página del certificado ya está dentro del PDF firmado por los titulares y dice que
-    // lleva sello de tiempo: no se puede caer a B-B (quedaría falsa); se reintenta con el job.
-    if (certStage.kind === "seal") throw err;
     // La TSA falló: si no es obligatoria, se sella en B-B y queda constancia.
     tsaError = String(err);
     timestamped = false;

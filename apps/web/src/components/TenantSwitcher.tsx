@@ -6,6 +6,7 @@ import { useAccess } from "../lib/access";
 import { useAuth } from "../lib/auth";
 import { useRoleLabel, useTeamsText } from "../lib/i18n-teams";
 import { usePasswordText } from "../lib/i18n-password";
+import { confirmDiscardUnsaved } from "../lib/i18n";
 
 export function TenantSwitcher() {
   const { access } = useAccess();
@@ -24,6 +25,8 @@ export function TenantSwitcher() {
       value={current?.id ?? ""}
       onClick={(e) => e.stopPropagation()}
       onChange={async (e) => {
+        // Cambiar de organización lleva al inicio: con un editor con cambios sin guardar, se confirma antes.
+        if (!confirmDiscardUnsaved()) return;
         const select = e.currentTarget;
         try {
           const m = await api<MeResponse>("/v1/auth/switch-tenant", { method: "POST", body: { tenantId: e.target.value } });

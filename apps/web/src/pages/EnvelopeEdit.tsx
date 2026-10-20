@@ -5,12 +5,13 @@ import { useBillingText } from "../lib/i18n-billing";
 import { AiFieldDetect, AiReviewPanel } from "../components/AiPanels";
 import { useExpText } from "../lib/i18n-experience";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
-import type { Channel, Document, EnvelopeDetail, Locale, RecipientRole } from "@calasign/shared";
+import type { Channel, Document, Envelope, EnvelopeDetail, Locale, RecipientRole } from "@calasign/shared";
 import { CHANNELS, ID_DOCUMENT_TYPES, LOCALES } from "@calasign/shared";
-import { api, errorText, uuid } from "../lib/api";
+import { HttpError, api, errorText, fieldErrorIndex, uuid } from "../lib/api";
 import { LOCALE_LABELS, expiryFromDateInput, localDateInput, useI18n, useUnsavedWarning, confirmAction } from "../lib/i18n";
 import { forgetPdf } from "../lib/pdf";
-import { FieldEditor, type DraftField } from "../components/FieldEditor";
+import { FieldEditor, validateFields, type DraftField } from "../components/FieldEditor";
+import { PHONE_RE, normalizePhone } from "../components/SignerExtras";
 import { AUTH_METHODS, type AuthMethod } from "@calasign/shared";
 import { useSignerText } from "../lib/i18n-signer";
 import { ErrorBox, OrderInput, Spinner, StatusBadge, formatBytes, recipientColor } from "../components/ui";
@@ -104,20 +105,70 @@ export function EnvelopeEditPage() {
   const [fieldsDirty, setFieldsDirty] = useState(false);
   // Revisión de los campos: un guardado que termina después de otra edición no pisa esa edición con lo guardado.
   const fieldsRev = useRef(0);
-  useUnsavedWarning(recDirty || fieldsDirty);
+  const sx = useSignerText();
+  // Lo cargado en "Revisar y enviar" sobrevive a volver a un paso anterior (antes se perdía al desmontar el paso).
+  const [reviewDraft, setReviewDraft] = useState<ReviewDraft | null>(null);
+  // Remonta "Revisar y enviar" tras recargar el borrador (su estado inicial sale del sobre recargado).
+  const [reviewKey, setReviewKey] = useState(0);
+  const reviewDirty = !!detail && !!reviewDraft && reviewChanged(reviewDraft, detail.envelope);
+  const dirty = recDirty || fieldsDirty || reviewDirty;
+  useUnsavedWarning(dirty);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [notFound, setNotFound] = useState(false);
-  // Lo cargado en "Revisar y enviar" sobrevive a volver a un paso anterior (antes se perdía al desmontar el paso).
-  const reviewDraft = useRef<ReviewDraft | null>(null);
+  // Control de edición concurrente: updatedAt del borrador cargado o devuelto por el último guardado. Se manda en cada
+  // PATCH/PUT (X-Expected-Updated-At): si otra pestaña u otra persona lo cambió, la API responde 409 version_changed
+  // en vez de pisar esos cambios.
+  const version = useRef<string | null>(null);
+  const [stale, setStale] = useState(false);
+  // Campo con error al guardar: el editor lo selecciona y lo muestra.
+  const [focusField, setFocusField] = useState<{ id: string; seq: number } | null>(null);
+
+  const track = useCallback((d: EnvelopeDetail) => {
+    version.current = d.envelope.updatedAt;
+    setDetail(d);
+  }, []);
+  const expected = () => (version.current ? { "X-Expected-Updated-At": version.current } : undefined);
+  const fail = useCallback((e: unknown) => {
+    if (e instanceof HttpError && e.code === "version_changed") {
+      setStale(true);
+      setError(null);
+    } else setError(errorText(e));
+  }, []);
+  // Otros paneles (sello, asistencia de IA) también cambian el updatedAt del sobre: se vuelve a leer para que el
+  // próximo guardado no choque con un cambio propio.
+  const refreshVersion = useCallback(() => {
+    api<EnvelopeDetail>(`/v1/envelopes/${id}`)
+      .then((d) => {
+        version.current = d.envelope.updatedAt;
+      })
+      .catch(() => {});
+  }, [id]);
 
   const apply = useCallback((d: EnvelopeDetail) => {
-    setDetail(d);
+    track(d);
     setRecipients(toDraftRecipients(d));
     setFields(toDraftFields(d));
     setRecDirty(false);
     setFieldsDirty(false);
-  }, []);
+  }, [track]);
+
+  /** Recarga el borrador tras un 409 version_changed (descarta lo no guardado, con confirmación). */
+  const reload = async () => {
+    if (dirty && !window.confirm(t("edit.reloadConfirm"))) return;
+    setBusy(true);
+    setError(null);
+    try {
+      apply(await api<EnvelopeDetail>(`/v1/envelopes/${id}`));
+      setReviewDraft(null);
+      setReviewKey((k) => k + 1);
+      setStale(false);
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   useEffect(() => {
     api<EnvelopeDetail>(`/v1/envelopes/${id}`)
@@ -133,6 +184,13 @@ export function EnvelopeEditPage() {
 
   const saveRecipients = async (): Promise<boolean> => {
     if (!recDirty) return true;
+    // Teléfono como lo exige la API (E.164): con un aviso propio, no el "phone inválido" de la validación.
+    const badPhone = recipients.find((r) => r.phone.trim() && !PHONE_RE.test(r.phone.trim()));
+    if (badPhone) {
+      setStep("recipients");
+      setError(`${badPhone.name.trim() || t("edit.phone")}: ${sx("delegate.phoneInvalid")}`);
+      return false;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -163,15 +221,15 @@ export function EnvelopeEditPage() {
           ...draftToCert(r.cert, r.role),
         })),
       };
-      const d = await api<EnvelopeDetail>(`/v1/envelopes/${id}/recipients`, { method: "PUT", body });
-      setDetail(d);
+      const d = await api<EnvelopeDetail>(`/v1/envelopes/${id}/recipients`, { method: "PUT", body, headers: expected() });
+      track(d);
       setRecipients(toDraftRecipients(d));
       setFields(toDraftFields(d));
       setRecDirty(false);
       setFieldsDirty(false);
       return true;
     } catch (e) {
-      setError(errorText(e));
+      fail(e);
       return false;
     } finally {
       setBusy(false);
@@ -181,21 +239,37 @@ export function EnvelopeEditPage() {
   const saveFields = async (): Promise<boolean> => {
     if (!fieldsDirty) return true;
     const rev = fieldsRev.current;
+    const sent = fields;
+    // Lo que la API rechazaría de un campo se avisa antes, señalando el campo (la API solo dice "Campo N").
+    const bad = validateFields(sent, t);
+    if (bad) {
+      setError(bad.message);
+      setStep("fields");
+      setFocusField({ id: bad.id, seq: Date.now() });
+      return false;
+    }
     setBusy(true);
     setError(null);
     try {
       const d = await api<EnvelopeDetail>(`/v1/envelopes/${id}/fields`, {
         method: "PUT",
-        body: { fields: fields.map((f) => ({ ...f, options: f.options ? f.options.map((o) => o.trim()).filter(Boolean) : f.options })) },
+        body: { fields: sent.map((f) => ({ ...f, options: f.options ? f.options.map((o) => o.trim()).filter(Boolean) : f.options })) },
+        headers: expected(),
       });
-      setDetail(d);
+      track(d);
       if (fieldsRev.current === rev) {
         setFields(toDraftFields(d));
         setFieldsDirty(false);
       }
       return true;
     } catch (e) {
-      setError(errorText(e));
+      fail(e);
+      const i = fieldErrorIndex(e);
+      const f = i != null ? sent[i] : undefined;
+      if (f) {
+        setStep("fields");
+        setFocusField({ id: f.id, seq: Date.now() });
+      }
       return false;
     } finally {
       setBusy(false);
@@ -207,7 +281,7 @@ export function EnvelopeEditPage() {
    * así que sin esto "Guardar como plantilla" salía con los anteriores.
    */
   const saveReviewText = async (): Promise<boolean> => {
-    const r = reviewDraft.current;
+    const r = reviewDraft;
     if (!r || !detail) return true;
     const subject = r.subject.trim();
     const message = r.message.trim() || null;
@@ -215,10 +289,10 @@ export function EnvelopeEditPage() {
     setBusy(true);
     setError(null);
     try {
-      setDetail(await api<EnvelopeDetail>(`/v1/envelopes/${id}`, { method: "PATCH", body: { subject, message } }));
+      track(await api<EnvelopeDetail>(`/v1/envelopes/${id}`, { method: "PATCH", body: { subject, message }, headers: expected() }));
       return true;
     } catch (e) {
-      setError(errorText(e));
+      fail(e);
       return false;
     } finally {
       setBusy(false);
@@ -283,6 +357,14 @@ export function EnvelopeEditPage() {
       </ol>
 
       <ErrorBox error={error} />
+      {stale && (
+        <div className="alert alert-error row-between" role="alert">
+          <span>{t("edit.versionChanged")}</span>
+          <button type="button" className="btn btn-sm" disabled={busy} onClick={reload}>
+            {t("edit.reload")}
+          </button>
+        </div>
+      )}
 
       {step === "documents" && (
         <DocumentsStep
@@ -298,6 +380,7 @@ export function EnvelopeEditPage() {
       {step === "recipients" && (
         <RecipientsStep
           recipients={recipients}
+          fieldCount={(rid) => fields.filter((f) => f.recipientId === rid).length}
           onChange={(r) => {
             setRecipients(r);
             setRecDirty(true);
@@ -324,6 +407,7 @@ export function EnvelopeEditPage() {
           documents={detail.documents}
           signers={detail.recipients.filter((r) => r.role === "signer")}
           fields={fields}
+          focus={focusField}
           onChange={(f) => {
             setFields(f);
             setFieldsDirty(true);
@@ -334,13 +418,18 @@ export function EnvelopeEditPage() {
 
       {step === "review" && (
         <ReviewStep
+          key={reviewKey}
           detail={detail}
           busy={busy}
           setBusy={setBusy}
           setError={setError}
+          fail={fail}
+          expected={expected}
           onSent={() => nav(`/app/envelopes/${id}`)}
-          onUpdated={(d) => setDetail(d)}
+          onUpdated={track}
+          onOtherSaved={refreshVersion}
           draft={reviewDraft}
+          onDraft={setReviewDraft}
         />
       )}
 
@@ -485,7 +574,16 @@ function DocumentsStep({
 
 // ───────────────────────────── Paso 2: destinatarios ─────────────────────────────
 
-function RecipientsStep({ recipients, onChange }: { recipients: DraftRecipient[]; onChange: (r: DraftRecipient[]) => void }) {
+function RecipientsStep({
+  recipients,
+  fieldCount,
+  onChange,
+}: {
+  recipients: DraftRecipient[];
+  /** Campos ubicados para el destinatario (se borran al guardar si deja de ser firmante). */
+  fieldCount: (recipientId: string) => number;
+  onChange: (r: DraftRecipient[]) => void;
+}) {
   const { t } = useI18n();
   const sx = useSignerText();
   const x = useExpText();
@@ -517,7 +615,18 @@ function RecipientsStep({ recipients, onChange }: { recipients: DraftRecipient[]
     ]);
   };
 
-  const set = (i: number, patch: Partial<DraftRecipient>) => onChange(recipients.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  const set = (i: number, patch: Partial<DraftRecipient>) =>
+    onChange(
+      recipients.map((r, j) => {
+        if (j !== i) return r;
+        const n = { ...r, ...patch };
+        // Un código OTP sin su contacto (se borró el correo o el teléfono) vuelve a link: la API lo rechazaría.
+        if ((n.authMethod === "otp_email" && !n.email.trim()) || ((n.authMethod === "otp_sms" || n.authMethod === "otp_whatsapp") && !n.phone.trim())) {
+          n.authMethod = "link";
+        }
+        return n;
+      }),
+    );
   // Un destinatario ya guardado se borra con sus campos (y las condiciones que los citaban) al guardar: se confirma.
   const del = (i: number) => {
     if (recipients[i]?.id && !confirmAction()) return;
@@ -525,6 +634,7 @@ function RecipientsStep({ recipients, onChange }: { recipients: DraftRecipient[]
   };
 
   let signerIdx = -1;
+  const phoneInvalid = (phone: string) => !!phone.trim() && !PHONE_RE.test(phone.trim());
 
   return (
     <div className="stack">
@@ -554,12 +664,24 @@ function RecipientsStep({ recipients, onChange }: { recipients: DraftRecipient[]
                   type="tel"
                   value={r.phone}
                   placeholder="+5730012345678"
-                  onChange={(e) => set(i, { phone: e.target.value.replace(/[^\d+]/g, "") })}
+                  aria-invalid={phoneInvalid(r.phone) || undefined}
+                  // Como en "Delegar": solo dígitos y un "+" inicial (E.164, lo que exige la API).
+                  onChange={(e) => set(i, { phone: normalizePhone(e.target.value) })}
                 />
+                {phoneInvalid(r.phone) && <small className="error-text">{sx("delegate.phoneInvalid")}</small>}
               </label>
               <label className="field">
                 <span>{t("edit.role")}</span>
-                <select value={r.role} onChange={(e) => set(i, { role: e.target.value as RecipientRole })}>
+                <select
+                  value={r.role}
+                  onChange={(e) => {
+                    const role = e.target.value as RecipientRole;
+                    // Dejar de ser firmante borra sus campos al guardar: se confirma si tiene alguno.
+                    const n = r.role === "signer" && role !== "signer" ? fieldCount(r.id) : 0;
+                    if (n > 0 && !window.confirm(t("edit.roleDropsFields", { name: r.name.trim() || t(`edit.role.${r.role}`), n }))) return;
+                    set(i, { role });
+                  }}
+                >
                   <option value="signer">{t("edit.role.signer")}</option>
                   <option value="cc">{t("edit.role.cc")}</option>
                   <option value="approver">{t("edit.role.approver")}</option>
@@ -577,7 +699,7 @@ function RecipientsStep({ recipients, onChange }: { recipients: DraftRecipient[]
                         disabled={
                           (r.embedded && m.startsWith("otp_")) ||
                           (m === "otp_email" && !r.email.trim()) ||
-                          ((m === "otp_sms" || m === "otp_whatsapp") && !r.phone.trim())
+                          ((m === "otp_sms" || m === "otp_whatsapp") && !PHONE_RE.test(r.phone.trim()))
                         }
                       >
                         {authLabel(m)}
@@ -681,26 +803,63 @@ interface ReviewDraft {
   allowDelegation: boolean;
 }
 
+/** Cuerpo del PATCH con lo cargado en "Revisar y enviar". */
+function reviewPatch(r: ReviewDraft, env: Envelope, mustBeFuture: boolean) {
+  return {
+    subject: r.subject.trim(),
+    message: r.message.trim() || null,
+    // Con la fecha sin tocar se conserva el vencimiento guardado (con mustBeFuture, si todavía no pasó: el envío lo rechazaría).
+    expiresAt: expiryFromDateInput(r.expires, env.expiresAt, { mustBeFuture }),
+    reminderEveryDays: r.reminderEveryDays,
+    expiryWarningDays: r.expiryWarningDays,
+    allowDelegation: r.allowDelegation,
+  };
+}
+
+/** true si lo cargado en "Revisar y enviar" difiere de lo guardado en el sobre (cuenta como cambio sin guardar). */
+function reviewChanged(r: ReviewDraft, env: Envelope, mustBeFuture = false): boolean {
+  const p = reviewPatch(r, env, mustBeFuture);
+  return (
+    p.subject !== env.subject ||
+    p.message !== (env.message ?? null) ||
+    p.expiresAt !== (env.expiresAt ?? null) ||
+    p.reminderEveryDays !== (env.reminderEveryDays ?? null) ||
+    p.expiryWarningDays !== (env.expiryWarningDays !== undefined ? env.expiryWarningDays : 3) ||
+    p.allowDelegation !== (env.allowDelegation ?? true)
+  );
+}
+
 function ReviewStep({
   detail,
   busy,
   setBusy,
   setError,
+  fail,
+  expected,
   onSent,
   onUpdated,
+  onOtherSaved,
   draft,
+  onDraft,
 }: {
   detail: EnvelopeDetail;
   busy: boolean;
   setBusy: (b: boolean) => void;
   setError: (e: string | null) => void;
+  /** Muestra un error (o el aviso de versión cambiada). */
+  fail: (e: unknown) => void;
+  /** Encabezado X-Expected-Updated-At con la versión cargada. */
+  expected: () => Record<string, string> | undefined;
   onSent: () => void;
   onUpdated: (d: EnvelopeDetail) => void;
-  draft: { current: ReviewDraft | null };
+  /** Un panel (sello, IA) guardó algo que cambia el updatedAt del sobre. */
+  onOtherSaved: () => void;
+  draft: ReviewDraft | null;
+  onDraft: (d: ReviewDraft) => void;
 }) {
   const { t } = useI18n();
   const env = detail.envelope;
-  const init = draft.current;
+  const [init] = useState(draft);
   const [subject, setSubject] = useState(init?.subject ?? env.subject);
   const [message, setMessage] = useState(init?.message ?? env.message ?? "");
   const [expires, setExpires] = useState(init?.expires ?? localDateInput(env.expiresAt));
@@ -717,8 +876,8 @@ function ReviewStep({
   const b = useBillingText();
   const [paymentUnsaved, setPaymentUnsaved] = useState(false);
   useEffect(() => {
-    draft.current = { subject, message, expires, reminderEveryDays, expiryWarningDays, allowDelegation };
-  }, [draft, subject, message, expires, reminderEveryDays, expiryWarningDays, allowDelegation]);
+    onDraft({ subject, message, expires, reminderEveryDays, expiryWarningDays, allowDelegation });
+  }, [onDraft, subject, message, expires, reminderEveryDays, expiryWarningDays, allowDelegation]);
 
   const signers = useMemo(() => detail.recipients.filter((r) => r.role === "signer"), [detail.recipients]);
   const minDate = localDateInput(new Date(Date.now() + 86400000).toISOString());
@@ -732,17 +891,24 @@ function ReviewStep({
     setBusy(true);
     setError(null);
     try {
-      // Con la fecha sin tocar se conserva el vencimiento guardado (si todavía no pasó: el envío lo rechazaría).
-      const expiresAt = expiryFromDateInput(expires, env.expiresAt, { mustBeFuture: true });
-      const patched = await api<EnvelopeDetail>(`/v1/envelopes/${env.id}`, {
-        method: "PATCH",
-        body: { subject: subject.trim(), message: message.trim() || null, expiresAt, reminderEveryDays, expiryWarningDays, allowDelegation },
-      });
-      onUpdated(patched);
+      // Sin cambios no se manda el PATCH: si se perdió la respuesta de un envío que sí llegó, reintentar fallaba en el
+      // PATCH (409 not_draft) antes de llegar al envío idempotente.
+      const cur: ReviewDraft = { subject, message, expires, reminderEveryDays, expiryWarningDays, allowDelegation };
+      if (reviewChanged(cur, env, true)) {
+        onUpdated(await api<EnvelopeDetail>(`/v1/envelopes/${env.id}`, { method: "PATCH", body: reviewPatch(cur, env, true), headers: expected() }));
+      }
       await api<EnvelopeDetail>(`/v1/envelopes/${env.id}/send`, { method: "POST", headers: { "Idempotency-Key": idemKey } });
       onSent();
     } catch (e) {
-      setError(errorText(e));
+      // Ya no es borrador: el envío anterior llegó (o lo envió otra pestaña). Se recarga y se va al detalle.
+      if (e instanceof HttpError && e.code === "not_draft") {
+        const d = await api<EnvelopeDetail>(`/v1/envelopes/${env.id}`).catch(() => null);
+        if (d && d.envelope.status !== "draft") {
+          onSent();
+          return;
+        }
+      }
+      fail(e);
     } finally {
       setBusy(false);
     }
@@ -797,9 +963,9 @@ function ReviewStep({
             {sx("review.allowDelegation")}
           </label>
         </fieldset>
-        <SealOptionsPanel envelopeId={env.id} />
+        <SealOptionsPanel envelopeId={env.id} onSaved={onOtherSaved} />
         <PaymentOptionsPanel envelopeId={env.id} recipients={detail.recipients} onUnsavedChange={setPaymentUnsaved} />
-        <AiReviewPanel envelopeId={env.id} />
+        <AiReviewPanel envelopeId={env.id} onSaved={onOtherSaved} />
         <button type="button" className="btn btn-primary btn-block" disabled={busy || !subject.trim()} onClick={send}>
           {busy ? t("edit.sending") : t("edit.send")}
         </button>

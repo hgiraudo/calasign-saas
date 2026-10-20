@@ -14,10 +14,13 @@ export function SealOptionsPanel({
   envelopeId,
   disabled,
   sealOnly,
+  onSaved,
 }: {
   envelopeId: string;
   disabled?: boolean;
   sealOnly?: boolean;
+  /** Tras guardar (cambia el updatedAt del sobre: el editor lo vuelve a leer para su control de versión). */
+  onSaved?: () => void;
 }) {
   const ev = useEvidenceText();
   const [opts, setOpts] = useState<SealOptions | null>(null);
@@ -38,6 +41,7 @@ export function SealOptionsPanel({
     try {
       setOpts(await api<SealOptions>(`/v1/envelopes/${envelopeId}/seal-options`, { method: "PUT", body: patch }));
       setSaved(true);
+      onSaved?.();
     } catch (e) {
       setError(errorText(e));
     }

@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { Navigate, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../lib/auth";
-import { useI18n } from "../lib/i18n";
+import { confirmDiscardUnsaved, useI18n } from "../lib/i18n";
 import { LocaleSwitcher, Logo } from "./ui";
 import { useIntText } from "../lib/integrations-i18n";
 import { useAccess } from "../lib/access";
@@ -91,6 +91,7 @@ export function Layout() {
             type="button"
             className="btn btn-ghost btn-sm on-dark"
             onClick={async () => {
+              if (!confirmDiscardUnsaved()) return;
               await logout();
               nav("/login");
             }}

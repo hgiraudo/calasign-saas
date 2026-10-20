@@ -28,6 +28,7 @@ const es = {
   "logic.computed": "Calculado",
   "logic.noOtherFields": "No hay otros campos para usar en una condición.",
   "logic.unnamed": "Campo sin etiqueta",
+  "logic.formulaPlaceholder": "{Precio} * {Cantidad}",
 
   // Envío masivo
   "bulk.title": "Envíos masivos",
@@ -175,6 +176,7 @@ const pt: Record<Key, string> = {
   "logic.computed": "Calculado",
   "logic.noOtherFields": "Não há outros campos para usar em uma condição.",
   "logic.unnamed": "Campo sem etiqueta",
+  "logic.formulaPlaceholder": "{Preço} * {Quantidade}",
   "bulk.title": "Envios em massa",
   "bulk.intro": "O mesmo documento para muitas pessoas: cada linha de um CSV é um envelope diferente, com seus dados.",
   "bulk.new": "Novo envio em massa",
@@ -314,6 +316,7 @@ const en: Record<Key, string> = {
   "logic.computed": "Calculated",
   "logic.noOtherFields": "There are no other fields to use in a condition.",
   "logic.unnamed": "Unlabeled field",
+  "logic.formulaPlaceholder": "{Price} * {Quantity}",
   "bulk.title": "Bulk sends",
   "bulk.intro": "The same document to many people: each CSV row becomes its own envelope, with its own data.",
   "bulk.new": "New bulk send",

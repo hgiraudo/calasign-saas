@@ -120,7 +120,7 @@ export function FieldLogicPanel({
           <input
             value={field.formula ?? ""}
             maxLength={500}
-            placeholder="{Precio} * {Cantidad}"
+            placeholder={st("logic.formulaPlaceholder")}
             // Solo espacios cuenta como sin fórmula (la API rechaza una fórmula vacía).
             onChange={(e) => {
               const v = e.target.value;

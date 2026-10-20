@@ -12,7 +12,7 @@ import { InvalidPdfError, preparePdfUpload } from "@calasign/pdf";
 import type { Db } from "../infra/db";
 import { appendEvent, type Actor } from "../infra/evidence";
 import { enqueue } from "../infra/queue";
-import { AppError, badRequest, conflict, notFound } from "../lib/errors";
+import { AppError, assertNotStale, badRequest, conflict, notFound } from "../lib/errors";
 import { encrypt, iso, queryList, randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { config } from "../config";
 import { assertEnvelopeAccess, envelopeVisibilitySql } from "./access";
@@ -269,6 +269,7 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
     await s.db.tx(async (t) => {
       const e = await lockEnvelope(t, a.tenantId, req.params.id);
       requireDraft(e);
+      assertNotStale(req.headers, e.updated_at);
       await t.query(
         `UPDATE envelopes SET subject = COALESCE($2, subject), message = CASE WHEN $3::boolean THEN $4 ELSE message END,
            locale = COALESCE($5, locale), expires_at = CASE WHEN $6::boolean THEN $7::timestamptz ELSE expires_at END,
@@ -379,6 +380,7 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
     await s.db.tx(async (t) => {
       const e = await lockEnvelope(t, a.tenantId, req.params.id);
       requireDraft(e);
+      assertNotStale(req.headers, e.updated_at);
       const before = await envelopeLogicOrderProblems(t, e.id);
       await replaceRecipients(t, a, e.id, input.recipients);
       // Reordenar destinatarios también puede dejar una condición citando a alguien que firma después.
@@ -395,6 +397,7 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
     await s.db.tx(async (t) => {
       const e = await lockEnvelope(t, a.tenantId, req.params.id);
       requireDraft(e);
+      assertNotStale(req.headers, e.updated_at);
       const before = await envelopeLogicOrderProblems(t, e.id);
       await replaceFields(t, a.tenantId, e.id, input.fields);
       // Al diseñar la lógica (no al enviar: sobres y plantillas ya armadas no dejan de poder enviarse).

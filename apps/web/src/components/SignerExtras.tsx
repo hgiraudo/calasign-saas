@@ -109,10 +109,10 @@ export function OtpGate({ session, base, onDone }: { session: SigningSession; ba
 }
 
 /** Teléfono como lo exige la API (E.164, regex de Contact en @calasign/shared): "+" código de país y 7 a 15 dígitos. */
-const PHONE_RE = /^\+[1-9]\d{6,14}$/;
+export const PHONE_RE = /^\+[1-9]\d{6,14}$/;
 
 /** Deja solo dígitos y un "+" inicial (quita espacios, guiones, puntos y paréntesis que se pegan con el número). */
-const normalizePhone = (v: string) => {
+export const normalizePhone = (v: string) => {
   const digits = v.replace(/\D/g, "");
   return v.trim().startsWith("+") ? `+${digits}` : digits;
 };

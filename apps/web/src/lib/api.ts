@@ -210,6 +210,36 @@ const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
     en: "The template has active web forms: whoever created them or an admin must deactivate or delete them first.",
   },
   validation_error: { "pt-BR": "Há dados inválidos no pedido.", en: "The request has invalid data." },
+  // Editor de sobres y plantillas (envelope_incomplete y logic_order con details.problems se arman en errorText).
+  envelope_incomplete: { "pt-BR": "O envelope ainda não pode ser enviado: falta completar dados.", en: "The envelope can't be sent yet: some data is missing." },
+  logic_order: {
+    "pt-BR": "Um campo depende de outro de quem assina depois ou ao mesmo tempo: mude a ordem ou a lógica.",
+    en: "A field depends on a field of someone who signs later or at the same time: change the order or the logic.",
+  },
+  invalid_field: { "pt-BR": "Há um campo inválido.", en: "A field is invalid." },
+  invalid_formula: { "pt-BR": "Há uma fórmula inválida.", en: "A formula is invalid." },
+  invalid_condition: { "pt-BR": "Há uma condição inválida.", en: "A condition is invalid." },
+  not_draft: { "pt-BR": "O envelope não é mais um rascunho (já foi enviado).", en: "The envelope is no longer a draft (it was already sent)." },
+  recipient_is_payer: {
+    "pt-BR": "Esse destinatário é responsável pela cobrança: remova ou altere a cobrança antes.",
+    en: "That recipient is responsible for the payment: remove or change the payment first.",
+  },
+  duplicate_roles: { "pt-BR": "Há dois papéis com o mesmo nome.", en: "Two roles have the same name." },
+  identity_provider_unavailable: {
+    "pt-BR": "O provedor de verificação de identidade não está configurado ou disponível.",
+    en: "The identity verification provider isn't configured or available.",
+  },
+  host_required: { "pt-BR": "A assinatura presencial precisa de um anfitrião.", en: "In-person signing needs a host." },
+};
+
+// Encabezado traducido de los errores que traen la lista de problemas (en el texto de la API, en español).
+const PROBLEMS_HEADER: Record<string, Record<"es" | "pt-BR" | "en", string>> = {
+  envelope_incomplete: { es: "Antes de enviar falta resolver:", "pt-BR": "Antes de enviar, falta resolver:", en: "Before sending, fix the following:" },
+  logic_order: {
+    es: "La lógica de los campos no respeta el orden de firma:",
+    "pt-BR": "A lógica dos campos não respeita a ordem de assinatura:",
+    en: "The field logic doesn't follow the signing order:",
+  },
 };
 
 // Nombres de las funciones de plan (plan_limit) para pt-BR y en.
@@ -279,6 +309,10 @@ export function errorText(e: unknown): string {
       const list = Array.isArray(missing) ? [...new Set(missing.map(String))].join(", ") : "";
       return (loc === "en" ? "Still to complete: " : "Ainda falta preencher: ") + list;
     }
+    const problems = (e.details as { problems?: unknown } | undefined)?.problems;
+    if (PROBLEMS_HEADER[e.code] && Array.isArray(problems) && problems.length) {
+      return `${PROBLEMS_HEADER[e.code][loc] ?? PROBLEMS_HEADER[e.code].es} ${problems.map(String).join(". ")}`;
+    }
     const tr = loc !== "es" ? detailText(e.code, e.details, loc) ?? CODE_TEXT[e.code]?.[loc] : undefined;
     return tr ?? (e.message || (NO_MESSAGE[loc] ?? NO_MESSAGE.es)(e.status));
   }
@@ -325,4 +359,21 @@ export async function fetchArrayBuffer(path: string): Promise<ArrayBuffer> {
     throw e;
   });
   return readBody(res.arrayBuffer());
+}
+
+/**
+ * Índice (base 0) del campo al que se refiere un error de la API al guardar los campos: el texto "Campo N" (base 1,
+ * invalid_field / invalid_formula / invalid_condition) o la ruta de validación "fields.N" (base 0). null si no cita uno.
+ */
+export function fieldErrorIndex(e: unknown): number | null {
+  if (!(e instanceof HttpError)) return null;
+  if (Array.isArray(e.details)) {
+    for (const d of e.details) {
+      const m = /^fields\.(\d+)(\.|$)/.exec(String((d as { path?: unknown } | null)?.path ?? ""));
+      if (m) return Number(m[1]);
+    }
+  }
+  const m = /\bCampo (\d+)\b/.exec(e.message) ?? /\bfields\.(\d+)\b/.exec(e.message);
+  if (!m) return null;
+  return m[0].startsWith("Campo") ? Number(m[1]) - 1 : Number(m[1]);
 }

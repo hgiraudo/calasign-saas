@@ -191,7 +191,8 @@ function CitationLine({ c }: { c: AiCitation }) {
   );
 }
 
-export function AiReviewPanel({ envelopeId }: { envelopeId: string }) {
+/** `onSaved`: tras cambiar la asistencia al firmante (cambia el updatedAt del sobre; el editor lo vuelve a leer). */
+export function AiReviewPanel({ envelopeId, onSaved }: { envelopeId: string; onSaved?: () => void }) {
   const ai = useAiText();
   const { locale } = useI18n();
   const [settings, setSettings] = useState<AiSettings | null>(null);
@@ -221,6 +222,7 @@ export function AiReviewPanel({ envelopeId }: { envelopeId: string }) {
     try {
       const m = await api<EnvelopeAiMetadata>(`/v1/envelopes/${envelopeId}/ai/settings`, { method: "PATCH", body: { signerAssist: v } });
       setAssist(m.signerAssist);
+      onSaved?.();
     } catch (e) {
       setError(errorText(e));
     }

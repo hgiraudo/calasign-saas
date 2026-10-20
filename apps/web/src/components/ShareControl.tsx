@@ -5,7 +5,8 @@ import { api, errorText } from "../lib/api";
 import { useTeamsText } from "../lib/i18n-teams";
 import { ErrorBox, Modal } from "./ui";
 
-export function ShareControl({ kind, id, canEdit }: { kind: "envelopes" | "templates"; id: string; canEdit: boolean }) {
+/** `onSaved`: tras guardar (la visibilidad de una plantilla cambia su updatedAt; el editor lo vuelve a leer). */
+export function ShareControl({ kind, id, canEdit, onSaved }: { kind: "envelopes" | "templates"; id: string; canEdit: boolean; onSaved?: () => void }) {
   const tt = useTeamsText();
   const [shares, setShares] = useState<SharesResponse | null>(null);
   const [groups, setGroups] = useState<Group[] | null>(null);
@@ -40,6 +41,7 @@ export function ShareControl({ kind, id, canEdit }: { kind: "envelopes" | "templ
       const body = kind === "templates" ? { groupIds: selected, visibility } : { groupIds: selected };
       setShares(await api<SharesResponse>(`/v1/${kind}/${id}/shares`, { method: "PUT", body }));
       setOpen(false);
+      onSaved?.();
     } catch (e) {
       setError(errorText(e));
     } finally {

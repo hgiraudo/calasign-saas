@@ -1,11 +1,11 @@
 // Editor de campos: ubicar, mover, redimensionar y borrar campos sobre las páginas.
 import { FieldLogicPanel } from "./FieldLogicPanel";
 import type { FieldCondition } from "@calasign/shared";
-import { useCallback, useEffect, useRef, useState, type DragEvent, type PointerEvent as RPointerEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type DragEvent, type KeyboardEvent as RKeyboardEvent, type PointerEvent as RPointerEvent } from "react";
 import type { Document, FieldType } from "@calasign/shared";
-import { FIELD_TYPES } from "@calasign/shared";
+import { FIELD_TYPES, formulaRefs, parseFormula } from "@calasign/shared";
 import { uuid } from "../lib/api";
-import { useI18n } from "../lib/i18n";
+import { useI18n, type TFunc } from "../lib/i18n";
 import { DocumentView } from "./DocumentView";
 import { recipientColor } from "./ui";
 
@@ -69,6 +69,53 @@ const ICON: Record<FieldType, string> = {
 };
 
 const MIN = 0.008;
+/** Paso de las flechas del teclado (mover o, con Shift, redimensionar), en fracción de la página. */
+const KEY_STEP = 0.005;
+const ARROWS: Record<string, [number, number] | undefined> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+
+/**
+ * Lo que la API rechazaría de un campo, chequeado antes de guardar para señalar cuál es (la API solo dice "Campo N"
+ * o "fields.N" y en el editor no hay números): desplegable sin opciones, mínimo mayor que máximo, solo lectura sin
+ * valor, prellenado que no es una opción, fórmulas y condiciones inválidas. null si no hay problemas.
+ */
+export function validateFields(fields: DraftField[], t: TFunc): { id: string; message: string } | null {
+  const numberLabels = new Map<string, number>();
+  for (const f of fields) {
+    const k = f.type === "number" ? f.label?.trim().toLowerCase() : "";
+    if (k) numberLabels.set(k, (numberLabels.get(k) ?? 0) + 1);
+  }
+  const ids = new Set(fields.map((f) => f.id));
+  for (const f of fields) {
+    const err = (msg: string) => ({ id: f.id, message: t("edit.err.field", { field: f.label || t(`field.${f.type}`), page: f.page + 1, msg }) });
+    const options = (f.options ?? []).map((o) => o.trim()).filter(Boolean);
+    if (f.type === "dropdown" && options.length === 0) return err(t("edit.err.dropdownOptions"));
+    if (f.min != null && f.max != null && f.min > f.max) return err(t("edit.err.minMax"));
+    if (f.readOnly && !f.value) return err(t("edit.err.readOnlyValue"));
+    const v = f.value?.trim().toLowerCase();
+    if (f.type === "dropdown" && v && !options.some((o) => o.toLowerCase() === v)) return err(t("edit.err.prefillOption"));
+    for (const c of f.conditions ?? []) {
+      if (c.fieldId === f.id || !ids.has(c.fieldId)) return err(t("edit.err.condition"));
+      if ((c.operator === "equals" || c.operator === "not_equals") && c.value == null) return err(t("edit.err.conditionValue"));
+    }
+    if (f.formula?.trim()) {
+      let refs: string[];
+      try {
+        refs = formulaRefs(f.formula);
+        parseFormula(f.formula);
+      } catch {
+        return err(t("edit.err.formula"));
+      }
+      const own = f.label?.trim().toLowerCase();
+      for (const r of refs) {
+        const k = r.trim().toLowerCase();
+        const n = numberLabels.get(k) ?? 0;
+        if (n > 1) return err(t("edit.err.formulaDupLabel", { label: r }));
+        if (n === 0 || own === k) return err(t("edit.err.formulaRef", { ref: `{${r}}` }));
+      }
+    }
+  }
+  return null;
+}
 
 interface Props {
   envelopeId: string;
@@ -79,13 +126,15 @@ interface Props {
   onChange: (fields: DraftField[]) => void;
   /** URL del PDF de cada documento (por defecto, la del sobre). */
   fileUrl?: (documentId: string) => string;
+  /** Campo a seleccionar y mostrar (p. ej. el que tiene un error al guardar); `seq` repite el pedido con el mismo id. */
+  focus?: { id: string; seq: number } | null;
 }
 
 type Drag =
   | { kind: "move"; id: string; startX: number; startY: number; fx: number; fy: number; rect: DOMRect }
   | { kind: "resize"; id: string; startX: number; startY: number; fw: number; fh: number; rect: DOMRect };
 
-export function FieldEditor({ envelopeId, documents, signers, fields, onChange, fileUrl }: Props) {
+export function FieldEditor({ envelopeId, documents, signers, fields, onChange, fileUrl, focus }: Props) {
   const { t } = useI18n();
   const [tool, setTool] = useState<FieldType | null>(null);
   const [activeRecipient, setActiveRecipient] = useState<string>(signers[0]?.id ?? "");
@@ -131,11 +180,37 @@ export function FieldEditor({ envelopeId, documents, signers, fields, onChange, 
     [onChange],
   );
 
+  // Selecciona el campo pedido por la página (error al guardar) y lo lleva a la vista con el foco.
+  useEffect(() => {
+    if (!focus) return;
+    const f = fieldsRef.current.find((x) => x.id === focus.id);
+    if (!f) return;
+    setSelected(f.id);
+    setActiveRecipient(f.recipientId);
+    // La página puede no estar dibujada todavía (recién se abrió el paso o el PDF carga): se reintenta un rato.
+    let tries = 0;
+    let timer = 0;
+    const show = () => {
+      const el = document.querySelector<HTMLElement>(`.fbox[data-field-id="${CSS.escape(f.id)}"]`);
+      if (el) {
+        el.scrollIntoView({ block: "center", behavior: "smooth" });
+        el.focus({ preventScroll: true });
+      } else if (++tries < 20) timer = window.setTimeout(show, 150);
+    };
+    timer = window.setTimeout(show, 0);
+    return () => window.clearTimeout(timer);
+  }, [focus]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName;
+      const el = e.target as HTMLElement | null;
+      const tag = el?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-      if ((e.key === "Delete" || e.key === "Backspace") && selected) {
+      // Borrar solo con el foco en el campo o en la página (no en un botón, enlace u otro control del panel: Supr o
+      // Retroceso sobre un botón del panel borraban el campo seleccionado).
+      const onCanvas =
+        !el || el === document.body || el === document.documentElement || (!!el.closest(".editor-docs") && !el.closest("button, a, [contenteditable='true']"));
+      if ((e.key === "Delete" || e.key === "Backspace") && selected && onCanvas) {
         e.preventDefault();
         remove(selected);
       }
@@ -250,6 +325,26 @@ export function FieldEditor({ envelopeId, documents, signers, fields, onChange, 
 
   const endDrag = () => {
     drag.current = null;
+  };
+
+  // Teclado sobre un campo: Enter/Espacio lo selecciona, flechas lo mueven y Shift + flechas lo redimensionan, sin salir de la página.
+  const onBoxKey = (box: DraftField) => (e: RKeyboardEvent<HTMLDivElement>) => {
+    const f = fieldsRef.current.find((x) => x.id === box.id) ?? box;
+    if (e.target !== e.currentTarget) return;
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      setSelected(f.id);
+      setActiveRecipient(f.recipientId);
+      return;
+    }
+    const d = ARROWS[e.key];
+    if (!d) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setSelected(f.id);
+    const [dx, dy] = [d[0] * KEY_STEP, d[1] * KEY_STEP];
+    if (e.shiftKey) update(f.id, { width: clamp(f.width + dx, MIN, 1 - f.x), height: clamp(f.height + dy, MIN, 1 - f.y) });
+    else update(f.id, { x: clamp(f.x + dx, 0, 1 - f.width), y: clamp(f.y + dy, 0, 1 - f.height) });
   };
 
   const sel = fields.find((f) => f.id === selected) ?? null;
@@ -439,6 +534,7 @@ export function FieldEditor({ envelopeId, documents, signers, fields, onChange, 
         <p className="muted small">
           {fields.length} {t("edit.fieldsCount")}
         </p>
+        <p className="muted small">{t("edit.fieldKeysHint")}</p>
       </aside>
 
       <div className={`editor-docs ${tool ? "placing" : ""}`}>
@@ -455,6 +551,12 @@ export function FieldEditor({ envelopeId, documents, signers, fields, onChange, 
                 .map((f) => (
                   <div
                     key={f.id}
+                    data-field-id={f.id}
+                    tabIndex={0}
+                    role="button"
+                    aria-pressed={selected === f.id}
+                    aria-label={`${t(`field.${f.type}`)}${f.label ? `: ${f.label}` : ""} — ${signers.find((s) => s.id === f.recipientId)?.name ?? ""}`}
+                    onKeyDown={onBoxKey(f)}
                     className={`fbox ${selected === f.id ? "selected" : ""} ftype-${f.type}`}
                     style={{
                       left: `${f.x * 100}%`,

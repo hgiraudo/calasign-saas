@@ -3,10 +3,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import type { Document, RecipientRole, TemplateDetail } from "@calasign/shared";
 import { LOCALES } from "@calasign/shared";
-import { api, errorText, uuid } from "../lib/api";
+import { HttpError, api, errorText, fieldErrorIndex, uuid } from "../lib/api";
 import { LOCALE_LABELS, useI18n, useUnsavedWarning, confirmAction } from "../lib/i18n";
 import { forgetPdf } from "../lib/pdf";
-import { FieldEditor, type DraftField } from "../components/FieldEditor";
+import { FieldEditor, validateFields, type DraftField } from "../components/FieldEditor";
 import { ErrorBox, OrderInput, Spinner, formatBytes, recipientColor } from "../components/ui";
 import { ShareControl } from "../components/ShareControl";
 import { CertificateOption, EMPTY_CERT_DRAFT, certToDraft, draftToCert, type CertDraft } from "../components/CertSign";
@@ -56,12 +56,34 @@ export function TemplateEditPage() {
   const [fields, setFields] = useState<DraftField[]>([]);
   const [dirty, setDirty] = useState({ info: false, roles: false, fields: false });
   const fieldsRev = useRef(0);
-  useUnsavedWarning(dirty.info || dirty.roles || dirty.fields);
+  const anyDirty = dirty.info || dirty.roles || dirty.fields;
+  useUnsavedWarning(anyDirty);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Control de edición concurrente: updatedAt de la plantilla cargada o devuelta por el último guardado. Se manda en
+  // cada PATCH/PUT (X-Expected-Updated-At): si otra pestaña u otra persona la cambió, la API responde 409
+  // version_changed en vez de pisar esos cambios.
+  const version = useRef<string | null>(null);
+  const [stale, setStale] = useState(false);
+  // Campo con error al guardar: el editor lo selecciona y lo muestra.
+  const [focusField, setFocusField] = useState<{ id: string; seq: number } | null>(null);
+
+  const track = useCallback((d: TemplateDetail) => {
+    version.current = d.template.updatedAt;
+    setDetail(d);
+  }, []);
+  const expected = () => (version.current ? { "X-Expected-Updated-At": version.current } : undefined);
+  // Compartir con otra visibilidad también cambia el updatedAt: se vuelve a leer para no chocar con un cambio propio.
+  const refreshVersion = useCallback(() => {
+    api<TemplateDetail>(`/v1/templates/${id}`)
+      .then((d) => {
+        version.current = d.template.updatedAt;
+      })
+      .catch(() => {});
+  }, [id]);
 
   const apply = useCallback((d: TemplateDetail) => {
-    setDetail(d);
+    track(d);
     setInfo({
       name: d.template.name,
       description: d.template.description ?? "",
@@ -72,7 +94,22 @@ export function TemplateEditPage() {
     setRoles(d.roles.map((r) => ({ id: r.id, name: r.name, role: r.role, routingOrder: r.routingOrder, cert: certToDraft(r) })));
     setFields(toDraftFields(d));
     setDirty({ info: false, roles: false, fields: false });
-  }, []);
+  }, [track]);
+
+  /** Recarga la plantilla tras un 409 version_changed (descarta lo no guardado, con confirmación). */
+  const reload = async () => {
+    if (anyDirty && !window.confirm(t("edit.reloadConfirm"))) return;
+    setBusy(true);
+    setError(null);
+    try {
+      apply(await api<TemplateDetail>(`/v1/templates/${id}`));
+      setStale(false);
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   useEffect(() => {
     api<TemplateDetail>(`/v1/templates/${id}`)
@@ -81,6 +118,16 @@ export function TemplateEditPage() {
   }, [id, apply]);
 
   const saveCurrent = async (): Promise<boolean> => {
+    // Lo que la API rechazaría de un campo se avisa antes, señalando el campo (la API solo dice "Campo N").
+    const sentFields = fields;
+    if (step === "fields" && dirty.fields) {
+      const bad = validateFields(sentFields, t);
+      if (bad) {
+        setError(bad.message);
+        setFocusField({ id: bad.id, seq: Date.now() });
+        return false;
+      }
+    }
     setBusy(true);
     setError(null);
     try {
@@ -94,16 +141,18 @@ export function TemplateEditPage() {
             message: info.message.trim() || null,
             locale: info.locale,
           },
+          headers: expected(),
         });
-        setDetail(d);
+        track(d);
         setDirty((x) => ({ ...x, info: false }));
       }
       if (step === "roles" && dirty.roles) {
         const d = await api<TemplateDetail>(`/v1/templates/${id}/roles`, {
           method: "PUT",
           body: { roles: roles.map(({ cert, ...r }) => ({ ...r, name: r.name.trim(), ...draftToCert(cert ?? EMPTY_CERT_DRAFT, r.role) })) },
+          headers: expected(),
         });
-        setDetail(d);
+        track(d);
         setRoles(d.roles.map((r) => ({ id: r.id, name: r.name, role: r.role, routingOrder: r.routingOrder, cert: certToDraft(r) })));
         setFields(toDraftFields(d));
         setDirty((x) => ({ ...x, roles: false }));
@@ -113,14 +162,15 @@ export function TemplateEditPage() {
         const d = await api<TemplateDetail>(`/v1/templates/${id}/fields`, {
           method: "PUT",
           body: {
-            fields: fields.map(({ recipientId, ...f }) => ({
+            fields: sentFields.map(({ recipientId, ...f }) => ({
               ...f,
               roleId: recipientId,
               options: f.options ? f.options.map((o) => o.trim()).filter(Boolean) : f.options,
             })),
           },
+          headers: expected(),
         });
-        setDetail(d);
+        track(d);
         // Si se editó algo mientras se guardaba, se conserva (queda pendiente de guardar).
         if (fieldsRev.current === rev) {
           setFields(toDraftFields(d));
@@ -129,7 +179,14 @@ export function TemplateEditPage() {
       }
       return true;
     } catch (e) {
+      if (e instanceof HttpError && e.code === "version_changed") {
+        setStale(true);
+        return false;
+      }
       setError(errorText(e));
+      const i = step === "fields" ? fieldErrorIndex(e) : null;
+      const f = i != null ? sentFields[i] : undefined;
+      if (f) setFocusField({ id: f.id, seq: Date.now() });
       return false;
     } finally {
       setBusy(false);
@@ -168,7 +225,7 @@ export function TemplateEditPage() {
             ← {t("tpl.title")}
           </Link>
           <h1>{info.name || detail.template.name}</h1>
-          <ShareControl kind="templates" id={id!} canEdit />
+          <ShareControl kind="templates" id={id!} canEdit onSaved={refreshVersion} />
         </div>
         {/* Se guarda el paso actual antes de usarla: con un Link, los cambios sin guardar se perdían y el sobre salía
             con la versión anterior de la plantilla. */}
@@ -196,6 +253,14 @@ export function TemplateEditPage() {
       </ol>
 
       <ErrorBox error={error} />
+      {stale && (
+        <div className="alert alert-error row-between" role="alert">
+          <span>{t("edit.versionChanged")}</span>
+          <button type="button" className="btn btn-sm" disabled={busy} onClick={reload}>
+            {t("edit.reload")}
+          </button>
+        </div>
+      )}
 
       {step === "details" && (
         <div className="card pad stack">
@@ -276,7 +341,7 @@ export function TemplateEditPage() {
           setBusy={setBusy}
           onChanged={async () => {
             const d = await api<TemplateDetail>(`/v1/templates/${id}`);
-            setDetail(d);
+            track(d);
             setFields(toDraftFields(d));
           }}
         />
@@ -285,6 +350,7 @@ export function TemplateEditPage() {
       {step === "roles" && (
         <RolesStep
           roles={roles}
+          fieldCount={(rid) => fields.filter((f) => f.recipientId === rid).length}
           onChange={(r) => {
             setRoles(r);
             setDirty((x) => ({ ...x, roles: true }));
@@ -299,6 +365,7 @@ export function TemplateEditPage() {
           signers={detail.roles.filter((r) => r.role === "signer")}
           fields={fields}
           fileUrl={(docId) => `/v1/templates/${id}/documents/${docId}/file`}
+          focus={focusField}
           onChange={(f) => {
             setFields(f);
             setDirty((x) => ({ ...x, fields: true }));
@@ -430,7 +497,16 @@ function TemplateDocuments({
   );
 }
 
-function RolesStep({ roles, onChange }: { roles: DraftRole[]; onChange: (r: DraftRole[]) => void }) {
+function RolesStep({
+  roles,
+  fieldCount,
+  onChange,
+}: {
+  roles: DraftRole[];
+  /** Campos ubicados para el rol (se borran al guardar si deja de ser firmante). */
+  fieldCount: (roleId: string) => number;
+  onChange: (r: DraftRole[]) => void;
+}) {
   const { t } = useI18n();
   const set = (i: number, patch: Partial<DraftRole>) => onChange(roles.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   let signerIdx = -1;
@@ -456,7 +532,16 @@ function RolesStep({ roles, onChange }: { roles: DraftRole[]; onChange: (r: Draf
               </label>
               <label className="field">
                 <span>{t("edit.role")}</span>
-                <select value={r.role} onChange={(e) => set(i, { role: e.target.value as RecipientRole })}>
+                <select
+                  value={r.role}
+                  onChange={(e) => {
+                    const role = e.target.value as RecipientRole;
+                    // Dejar de ser firmante borra sus campos al guardar: se confirma si tiene alguno.
+                    const n = r.role === "signer" && role !== "signer" ? fieldCount(r.id) : 0;
+                    if (n > 0 && !window.confirm(t("edit.roleDropsFields", { name: r.name.trim() || t(`edit.role.${r.role}`), n }))) return;
+                    set(i, { role });
+                  }}
+                >
                   <option value="signer">{t("edit.role.signer")}</option>
                   <option value="cc">{t("edit.role.cc")}</option>
                   {/* Las plantillas admiten aprobadores (p. ej. las creadas desde un sobre): sin esta opción se veían como firmante. */}

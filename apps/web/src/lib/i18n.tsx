@@ -100,6 +100,23 @@ const es = {
   "edit.idNumber": "Número",
   "edit.telegramChatId": "Telegram chat ID",
   "edit.telegramHint": "Opcional: si queda vacío, el firmante vincula Telegram desde la invitación.",
+  // Edición concurrente, salida con cambios sin guardar y validación de campos en los editores
+  "common.unsavedLeave": "Hay cambios sin guardar. ¿Salir igual y descartarlos?",
+  "edit.versionChanged": "Este borrador cambió en otra pestaña o lo editó otra persona. Recargá para ver la versión actual.",
+  "edit.reload": "Recargar",
+  "edit.reloadConfirm": "Al recargar se descartan los cambios sin guardar de esta pestaña. ¿Continuar?",
+  "edit.roleDropsFields": "{name} tiene {n} campo(s) en el documento. Si deja de ser firmante, esos campos se eliminan al guardar. ¿Continuar?",
+  "edit.err.field": "{field} (página {page}): {msg}",
+  "edit.err.dropdownOptions": "el desplegable necesita al menos una opción.",
+  "edit.err.minMax": "el mínimo no puede ser mayor que el máximo.",
+  "edit.err.readOnlyValue": "un campo de solo lectura necesita un valor prellenado.",
+  "edit.err.prefillOption": "el valor prellenado no es una de las opciones.",
+  "edit.err.formula": "la fórmula no es válida.",
+  "edit.err.formulaRef": "la fórmula cita {ref}, que no es la etiqueta de otro campo número.",
+  "edit.err.formulaDupLabel": "hay dos campos número con la etiqueta {label} y la fórmula la usa.",
+  "edit.err.condition": "una condición cita un campo que no existe o al mismo campo.",
+  "edit.err.conditionValue": "a una condición le falta el valor a comparar.",
+  "edit.fieldKeysHint": "Con el teclado: Tab llega a cada campo, Enter lo selecciona, las flechas lo mueven, Shift + flechas cambian el tamaño y Supr lo elimina.",
   "detail.telegramLinked": "Telegram vinculado",
   "detail.telegramPending": "Telegram sin vincular",
   "sign.telegram": "Recibir avisos por Telegram",
@@ -303,6 +320,23 @@ const ptBR: Dict = {
   "edit.idNumber": "Número",
   "edit.telegramChatId": "Telegram chat ID",
   "edit.telegramHint": "Opcional: se ficar vazio, o signatário vincula o Telegram a partir do convite.",
+  // Edición concurrente, salida con cambios sin guardar y validación de campos en los editores
+  "common.unsavedLeave": "Há alterações não salvas. Sair mesmo assim e descartá-las?",
+  "edit.versionChanged": "Este rascunho mudou em outra aba ou foi editado por outra pessoa. Recarregue para ver a versão atual.",
+  "edit.reload": "Recarregar",
+  "edit.reloadConfirm": "Ao recarregar, as alterações não salvas desta aba são descartadas. Continuar?",
+  "edit.roleDropsFields": "{name} tem {n} campo(s) no documento. Se deixar de ser signatário, esses campos são excluídos ao salvar. Continuar?",
+  "edit.err.field": "{field} (página {page}): {msg}",
+  "edit.err.dropdownOptions": "a lista suspensa precisa de pelo menos uma opção.",
+  "edit.err.minMax": "o mínimo não pode ser maior que o máximo.",
+  "edit.err.readOnlyValue": "um campo somente leitura precisa de um valor preenchido.",
+  "edit.err.prefillOption": "o valor preenchido não é uma das opções.",
+  "edit.err.formula": "a fórmula não é válida.",
+  "edit.err.formulaRef": "a fórmula cita {ref}, que não é a etiqueta de outro campo número.",
+  "edit.err.formulaDupLabel": "há dois campos número com a etiqueta {label} e a fórmula a usa.",
+  "edit.err.condition": "uma condição cita um campo que não existe ou o próprio campo.",
+  "edit.err.conditionValue": "falta o valor a comparar em uma condição.",
+  "edit.fieldKeysHint": "Pelo teclado: Tab chega a cada campo, Enter o seleciona, as setas o movem, Shift + setas mudam o tamanho e Delete o exclui.",
   "detail.telegramLinked": "Telegram vinculado",
   "detail.telegramPending": "Telegram não vinculado",
   "sign.telegram": "Receber avisos pelo Telegram",
@@ -498,6 +532,23 @@ const en: Dict = {
   "edit.idNumber": "Number",
   "edit.telegramChatId": "Telegram chat ID",
   "edit.telegramHint": "Optional: if empty, the signer links Telegram from the invitation.",
+  // Edición concurrente, salida con cambios sin guardar y validación de campos en los editores
+  "common.unsavedLeave": "You have unsaved changes. Leave anyway and discard them?",
+  "edit.versionChanged": "This draft was changed in another tab or by someone else. Reload to see the current version.",
+  "edit.reload": "Reload",
+  "edit.reloadConfirm": "Reloading discards the unsaved changes in this tab. Continue?",
+  "edit.roleDropsFields": "{name} has {n} field(s) on the document. If they stop being a signer, those fields are deleted on save. Continue?",
+  "edit.err.field": "{field} (page {page}): {msg}",
+  "edit.err.dropdownOptions": "the dropdown needs at least one option.",
+  "edit.err.minMax": "the minimum can't be greater than the maximum.",
+  "edit.err.readOnlyValue": "a read-only field needs a prefilled value.",
+  "edit.err.prefillOption": "the prefilled value isn't one of the options.",
+  "edit.err.formula": "the formula isn't valid.",
+  "edit.err.formulaRef": "the formula references {ref}, which isn't the label of another number field.",
+  "edit.err.formulaDupLabel": "there are two number fields labeled {label} and the formula uses it.",
+  "edit.err.condition": "a condition references a field that doesn't exist or the field itself.",
+  "edit.err.conditionValue": "a condition is missing the value to compare.",
+  "edit.fieldKeysHint": "With the keyboard: Tab reaches each field, Enter selects it, arrow keys move it, Shift + arrows resize it and Delete removes it.",
   "detail.telegramLinked": "Telegram linked",
   "detail.telegramPending": "Telegram not linked",
   "sign.telegram": "Get notifications on Telegram",
@@ -764,18 +815,52 @@ export function placeholderText(key: keyof typeof PLACEHOLDERS): string {
   return PLACEHOLDERS[key][loc as "es" | "pt-BR" | "en"] ?? PLACEHOLDERS[key].es;
 }
 
+// Editores con cambios sin guardar montados ahora (lo usan los botones que navegan por código: organización, salir).
+let unsavedEditors = 0;
+
+/** true si no hay cambios sin guardar o si la persona confirma descartarlos. */
+export function confirmDiscardUnsaved(): boolean {
+  return unsavedEditors === 0 || typeof window === "undefined" || window.confirm(DICTS[activeLocale]["common.unsavedLeave"]);
+}
+
 /**
- * Aviso del navegador al cerrar o recargar la pestaña con cambios sin guardar (los editores solo guardan con "Guardar"
- * o al cambiar de paso: antes se perdían sin aviso).
+ * Aviso al salir con cambios sin guardar (los editores solo guardan con "Guardar" o al cambiar de paso: antes se
+ * perdían sin aviso). El navegador avisa al cerrar o recargar la pestaña; dentro de la app (BrowserRouter no tiene
+ * bloqueo de navegación) se intercepta el clic en los enlaces internos (Link/NavLink del menú, "← Sobres"…) antes de
+ * que React Router navegue, y se pide confirmación.
  */
 export function useUnsavedWarning(dirty: boolean) {
   useEffect(() => {
     if (!dirty) return;
+    unsavedEditors++;
     const h = (e: BeforeUnloadEvent) => {
       e.preventDefault();
       e.returnValue = "";
     };
+    // En captura sobre document: corre antes del onClick de React (que escucha en la raíz de la app).
+    const onClick = (e: MouseEvent) => {
+      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      const a = (e.target as Element | null)?.closest?.("a[href]") as HTMLAnchorElement | null;
+      if (!a || a.hasAttribute("download") || (a.target && a.target !== "_self")) return;
+      let url: URL;
+      try {
+        url = new URL(a.href, window.location.href);
+      } catch {
+        return;
+      }
+      // Externos (abren otra página: los cubre beforeunload) o el mismo lugar (anclas #): no se pregunta.
+      if (url.origin !== window.location.origin) return;
+      if (url.pathname === window.location.pathname && url.search === window.location.search) return;
+      if (window.confirm(DICTS[activeLocale]["common.unsavedLeave"])) return;
+      e.preventDefault();
+      e.stopPropagation();
+    };
     window.addEventListener("beforeunload", h);
-    return () => window.removeEventListener("beforeunload", h);
+    document.addEventListener("click", onClick, true);
+    return () => {
+      unsavedEditors--;
+      window.removeEventListener("beforeunload", h);
+      document.removeEventListener("click", onClick, true);
+    };
   }, [dirty]);
 }

@@ -15,7 +15,7 @@ import { InvalidPdfError, preparePdfUpload } from "@calasign/pdf";
 import { config } from "../config";
 import type { Db } from "../infra/db";
 import { appendEvent, type Actor } from "../infra/evidence";
-import { AppError, badRequest, conflict, notFound } from "../lib/errors";
+import { AppError, assertNotStale, badRequest, conflict, notFound } from "../lib/errors";
 import { iso, sha256Hex, uuidv7 } from "../lib/util";
 import { assertTemplateAccess, templateVisibilitySql } from "./access";
 import { authenticate, type AuthContext, type Services } from "./context";
@@ -176,6 +176,7 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
     const input = UpdateTemplateInput.parse(req.body);
     await s.db.tx(async (t) => {
       const tpl = await lockTemplate(t, a.tenantId, req.params.id);
+      assertNotStale(req.headers, tpl.updated_at);
       await t.query(
         `UPDATE templates SET name = COALESCE($2, name),
            description = CASE WHEN $3::boolean THEN $4 ELSE description END,
@@ -305,6 +306,7 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
     const input = PutTemplateRolesInput.parse(req.body);
     await s.db.tx(async (t) => {
       const tpl = await lockTemplate(t, a.tenantId, req.params.id);
+      assertNotStale(req.headers, tpl.updated_at);
       const before = await templateLogicOrderProblems(t, tpl.id);
       const list = input.roles.map((r) => ({ ...r, id: r.id ?? uuidv7() }));
       const ids = list.map((r) => r.id);
@@ -347,6 +349,7 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
     assignFieldIds(input.fields);
     await s.db.tx(async (t) => {
       const tpl = await lockTemplate(t, a.tenantId, req.params.id);
+      assertNotStale(req.headers, tpl.updated_at);
       const before = await templateLogicOrderProblems(t, tpl.id);
       const docs = new Map((await t.query<any>(`SELECT id, page_count FROM template_documents WHERE template_id = $1`, [tpl.id])).map((d) => [d.id, d]));
       const signerRoles = new Set(

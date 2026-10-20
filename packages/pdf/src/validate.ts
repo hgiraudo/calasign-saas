@@ -160,9 +160,18 @@ async function chainReport(
     let revocation: ChainEntry["revocation"] = { status: "not_checked", source: null };
     if (isSelfSigned(c)) revocation = { status: "trust_anchor", source: null };
     else if (issuer) {
+      // "unknown" es provisional: se sigue buscando (un OCSP posterior "good" o "revoked", o una CRL) y solo queda si
+      // no aparece nada concluyente. Antes el primero (el más viejo, a menudo "unknown" recién emitido) cortaba la búsqueda.
+      let provisional: ChainEntry["revocation"] | null = null;
       for (const o of dss?.ocsps ?? []) {
         const r = await statusFromOcsp(o, c, issuer, at);
-        if (r) { revocation = { status: r.status, source: "dss-ocsp", revokedAt: r.revokedAt ?? null }; break; }
+        if (!r) continue;
+        if (r.status === "unknown") {
+          provisional ??= { status: r.status, source: "dss-ocsp", revokedAt: null };
+          continue;
+        }
+        revocation = { status: r.status, source: "dss-ocsp", revokedAt: r.revokedAt ?? null };
+        if (r.status === "revoked") break;
       }
       if (revocation.status === "not_checked") {
         for (const crl of dss?.crls ?? []) {
@@ -180,6 +189,7 @@ async function chainReport(
           if (r2) revocation = { status: r2.status, source: "online-crl", revokedAt: r2.revokedAt ?? null };
         }
       }
+      if (revocation.status === "not_checked" && provisional) revocation = provisional;
     }
     entries.push({ ...summary(c), revocation });
   }

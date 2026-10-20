@@ -25,8 +25,10 @@ export function assertNotStale(headers: Record<string, unknown>, current: Date |
   const expected = typeof raw === "string" ? Date.parse(raw) : NaN;
   if (!Number.isFinite(expected) || current == null) return;
   const now = new Date(current).getTime();
-  // Milisegundos: la API devuelve las fechas con esa precisión y la base guarda microsegundos.
-  if (Math.floor(now) - expected >= 1) {
+  // Milisegundos: la API devuelve las fechas con esa precisión (y pg/PGlite devuelven Date truncado a ms). Cualquier
+  // diferencia es un cambio: updated_at = now() es la hora de inicio de la transacción y otra que tomó el lock después
+  // puede dejarlo más viejo que el que tiene el cliente.
+  if (Math.floor(now) !== expected) {
     throw new AppError(409, "version_changed", "Este borrador cambió en otra pestaña o lo editó otra persona: recargá para ver la versión actual", {
       updatedAt: new Date(current).toISOString(),
     });

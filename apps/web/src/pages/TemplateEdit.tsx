@@ -67,6 +67,10 @@ export function TemplateEditPage() {
   const [stale, setStale] = useState(false);
   // Campo con error al guardar: el editor lo selecciona y lo muestra.
   const [focusField, setFocusField] = useState<{ id: string; seq: number } | null>(null);
+  // El campo con error se señala una vez: al salir del paso de campos se olvida (si no, al volver se volvía a saltar a él).
+  useEffect(() => {
+    if (step !== "fields") setFocusField(null);
+  }, [step]);
 
   const track = useCallback((d: TemplateDetail) => {
     version.current = d.template.updatedAt;
@@ -77,7 +81,8 @@ export function TemplateEditPage() {
   const refreshVersion = useCallback(() => {
     api<TemplateDetail>(`/v1/templates/${id}`)
       .then((d) => {
-        version.current = d.template.updatedAt;
+        // Solo hacia adelante: dos lecturas que vuelven en otro orden no dejan la versión más vieja.
+        if (!version.current || d.template.updatedAt > version.current) version.current = d.template.updatedAt;
       })
       .catch(() => {});
   }, [id]);

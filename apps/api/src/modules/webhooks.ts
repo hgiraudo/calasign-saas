@@ -382,6 +382,14 @@ async function fanout(d: Deps, p: Extract<WebhookJob, { kind: "fanout" }>) {
 }
 
 /** Un intento de entrega. Lanza si falla, para que la cola reintente con backoff. */
+function hostOf(url: string): string | null {
+  try {
+    return new URL(url).host;
+  } catch {
+    return null;
+  }
+}
+
 async function deliverOne(d: Deps, deliveryId: string, attempt: number, manual: boolean) {
   const row = await d.db.one<any>(
     `SELECT dl.*, ep.url, ep.secret_enc, ep.active,
@@ -438,7 +446,8 @@ async function deliverOne(d: Deps, deliveryId: string, attempt: number, manual: 
     [deliveryId, statusCode, responseText, error, ok ? "succeeded" : willRetry ? "pending" : "failed", willRetry, String(backoffSec)],
   );
   if (!ok) {
-    d.log.warn({ deliveryId, url: row.url, attempt, error }, "entrega de webhook fallida");
+    // Solo el host: los integradores suelen poner un secreto en la URL (?token=…) y quedaba en los logs.
+    d.log.warn({ deliveryId, host: hostOf(row.url), attempt, error }, "entrega de webhook fallida");
     if (willRetry) throw new Error(`webhook ${deliveryId}: ${error}`);
   }
 }

@@ -123,6 +123,10 @@ export function EnvelopeEditPage() {
   const [stale, setStale] = useState(false);
   // Campo con error al guardar: el editor lo selecciona y lo muestra.
   const [focusField, setFocusField] = useState<{ id: string; seq: number } | null>(null);
+  // El campo con error se señala una vez: al salir del paso de campos se olvida (si no, al volver se volvía a saltar a él).
+  useEffect(() => {
+    if (step !== "fields") setFocusField(null);
+  }, [step]);
 
   const track = useCallback((d: EnvelopeDetail) => {
     version.current = d.envelope.updatedAt;
@@ -140,7 +144,8 @@ export function EnvelopeEditPage() {
   const refreshVersion = useCallback(() => {
     api<EnvelopeDetail>(`/v1/envelopes/${id}`)
       .then((d) => {
-        version.current = d.envelope.updatedAt;
+        // Solo hacia adelante: dos lecturas que vuelven en otro orden no dejan la versión más vieja.
+        if (!version.current || d.envelope.updatedAt > version.current) version.current = d.envelope.updatedAt;
       })
       .catch(() => {});
   }, [id]);
@@ -185,6 +190,16 @@ export function EnvelopeEditPage() {
   const saveRecipients = async (): Promise<boolean> => {
     if (!recDirty) return true;
     // Teléfono como lo exige la API (E.164): con un aviso propio, no el "phone inválido" de la validación.
+    // Un código OTP sin su contacto: se avisa (antes se bajaba a "link" en silencio y el sobre salía con una
+    // autenticación más débil).
+    const noContact = recipients.find(
+      (r) => (r.authMethod === "otp_email" && !r.email.trim()) || ((r.authMethod === "otp_sms" || r.authMethod === "otp_whatsapp") && !r.phone.trim()),
+    );
+    if (noContact) {
+      setStep("recipients");
+      setError(`${noContact.name.trim() || sx("edit.authMethod")}: ${sx("edit.otpNeedsContact")}`);
+      return false;
+    }
     const badPhone = recipients.find((r) => r.phone.trim() && !PHONE_RE.test(r.phone.trim()));
     if (badPhone) {
       setStep("recipients");
@@ -619,12 +634,8 @@ function RecipientsStep({
     onChange(
       recipients.map((r, j) => {
         if (j !== i) return r;
-        const n = { ...r, ...patch };
-        // Un código OTP sin su contacto (se borró el correo o el teléfono) vuelve a link: la API lo rechazaría.
-        if ((n.authMethod === "otp_email" && !n.email.trim()) || ((n.authMethod === "otp_sms" || n.authMethod === "otp_whatsapp") && !n.phone.trim())) {
-          n.authMethod = "link";
-        }
-        return n;
+        // No se baja el método a "link" al vaciar el contacto (p. ej. para corregirlo): se avisa al guardar.
+        return { ...r, ...patch };
       }),
     );
   // Un destinatario ya guardado se borra con sus campos (y las condiciones que los citaban) al guardar: se confirma.
@@ -820,8 +831,9 @@ function reviewPatch(r: ReviewDraft, env: Envelope, mustBeFuture: boolean) {
 function reviewChanged(r: ReviewDraft, env: Envelope, mustBeFuture = false): boolean {
   const p = reviewPatch(r, env, mustBeFuture);
   return (
-    p.subject !== env.subject ||
-    p.message !== (env.message ?? null) ||
+    // Normalizados igual que el borrador (la API no recorta: un mensaje "" o con un salto final contaba como cambio).
+    p.subject !== env.subject.trim() ||
+    p.message !== ((env.message ?? "").trim() || null) ||
     p.expiresAt !== (env.expiresAt ?? null) ||
     p.reminderEveryDays !== (env.reminderEveryDays ?? null) ||
     p.expiryWarningDays !== (env.expiryWarningDays !== undefined ? env.expiryWarningDays : 3) ||

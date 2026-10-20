@@ -112,6 +112,8 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
       url,
       payload: raw ? raw.payload : body === undefined ? undefined : JSON.stringify(body),
       headers: {
+        // Host de la plataforma (app.inject usa localhost): el pedido interno no cae en el trato de un dominio ajeno.
+        host: new URL(config.appUrl).host,
         authorization: c.authorization,
         ...(raw ? { "content-type": raw.contentType } : body === undefined ? {} : { "content-type": "application/json" }),
         "user-agent": `MCP (${c.name})`,

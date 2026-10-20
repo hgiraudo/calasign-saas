@@ -295,6 +295,10 @@ export async function envelopeOpsRoutes(app: FastifyInstance, s: Services) {
     const headers: Record<string, string> = { "x-forwarded-for": req.ip, "user-agent": String(req.headers["user-agent"] ?? "calasign-batch") };
     if (req.headers.authorization) headers.authorization = req.headers.authorization;
     if (req.headers.cookie) headers.cookie = req.headers.cookie;
+    // El mismo host (y origen) del pedido: sin él, app.inject usa localhost y, fuera de local, la cuenta solo existe
+    // en el host de la plataforma (custom-domains.ts): la cookie de sesión se descartaba y cada elemento daba 401.
+    if (req.headers.host) headers.host = req.headers.host;
+    if (req.headers.origin) headers.origin = req.headers.origin;
     const results: EnvelopeBatchResult[] = [];
     for (const id of input.ids) {
       const r = BATCH_ROUTE[input.action](id, input);

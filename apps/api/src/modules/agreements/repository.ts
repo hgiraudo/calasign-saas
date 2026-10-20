@@ -120,12 +120,23 @@ export async function agreementExpirySweep(d: Deps) {
      WHERE ag.status = 'active' AND ag.expiry_date IS NOT NULL
        AND ag.expiry_date - COALESCE(ag.notice_days, 30) <= current_date
        AND (ag.expiry_notified_for IS NULL OR ag.expiry_notified_for <> ag.expiry_date)
-       -- Ya encolado para este vencimiento (pendiente, en curso o fallado): no ocupa el lugar de los demás.
-       AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.dedupe_key = 'agr:expiry:' || ag.id::text || ':' || ag.expiry_date::text)
+       -- Ya encolado para este vencimiento y pendiente o en curso, o terminado (hecho o fallado) hace menos de un día: no
+       -- ocupa el lugar de los demás. Un job terminado sin que el acuerdo quedara avisado (expiry_notified_for, que es
+       -- lo que evita el aviso doble) se vuelve a encolar al día siguiente: antes quedaba sin aviso para siempre.
+       AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.dedupe_key = 'agr:expiry:' || ag.id::text || ':' || ag.expiry_date::text
+                         AND (j.status IN ('pending','running') OR j.finished_at IS NULL OR j.finished_at > now() - interval '1 day'))
      LIMIT 50`,
   );
-  // La clave de dedupe evita el aviso doble con varios workers (cada uno corre el barrido).
-  for (const a of due) await enqueue(d.db, "agreements", { kind: "expiry_notice", agreementId: a.id, expiryDate: a.expiry }, { dedupeKey: expiryNoticeKey(a.id, a.expiry) });
+  // La clave de dedupe evita el aviso doble con varios workers (cada uno corre el barrido). La de un job anterior ya
+  // terminado se libera (jobs.dedupe_key es única) para poder encolar el nuevo; solo la de uno terminado, así dos
+  // barridos simultáneos no encolan dos.
+  for (const a of due) {
+    const key = expiryNoticeKey(a.id, a.expiry);
+    await d.db.tx(async (t) => {
+      await t.query(`UPDATE jobs SET dedupe_key = NULL WHERE dedupe_key = $1 AND status IN ('done','failed')`, [key]);
+      await enqueue(t, "agreements", { kind: "expiry_notice", agreementId: a.id, expiryDate: a.expiry }, { dedupeKey: key });
+    });
+  }
   return due.length;
 }
 

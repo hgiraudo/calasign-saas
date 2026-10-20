@@ -90,6 +90,30 @@ describe("SNS: verificación", () => {
     expect((await verifySnsMessage({ ...signed, SignatureVersion: "3" }, deps())).ok).toBe(false);
   });
 
+  it("rechaza mensajes de más de 1 hora (o del futuro) y revalida el certificado vencido del caché", async () => {
+    const { verifySnsMessage, clearSnsCertCache } = await import("../src/notifications/ses-feedback");
+    clearSnsCertCache();
+    const old = { ...notification({ notificationType: "Delivery" }), Timestamp: new Date(Date.now() - 2 * 3600_000).toISOString() };
+    expect(await verifySnsMessage(await sign(old), deps())).toEqual({ ok: false, reason: "stale" });
+    const future = { ...notification({ notificationType: "Delivery" }), Timestamp: new Date(Date.now() + 3600_000).toISOString() };
+    expect(await verifySnsMessage(await sign(future), deps())).toEqual({ ok: false, reason: "stale" });
+    // Con el certificado en caché, pasado su validTo se vuelve a descargar (y uno vencido se rechaza).
+    fetchCert.mockClear();
+    const ok = await sign(notification({ notificationType: "Delivery" }));
+    expect((await verifySnsMessage(ok, deps())).ok).toBe(true);
+    expect((await verifySnsMessage(ok, deps())).ok).toBe(true);
+    expect(fetchCert).toHaveBeenCalledTimes(1);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(Date.now() + 2 * 86400_000);
+      const later = await sign(notification({ notificationType: "Delivery" }));
+      expect(await verifySnsMessage(later, deps())).toEqual({ ok: false, reason: "cert_expired" });
+      expect(fetchCert).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("confirma la suscripción solo si el mensaje pasa la verificación", async () => {
     const { handleSnsMessage } = await import("../src/notifications/ses-feedback");
     const sub: Msg = {
@@ -110,7 +134,7 @@ describe("SNS: verificación", () => {
 });
 
 describe("SES: rebotes y quejas", () => {
-  it("rebote permanente y queja: supresión global, aviso marcado y registrado en la actividad del sobre", async () => {
+  it("rebote permanente (global, con vencimiento) y queja (de la organización): aviso marcado y registrado en la actividad del sobre", async () => {
     const { handleSnsMessage } = await import("../src/notifications/ses-feedback");
     const { sendTracked } = await import("../src/notifications/outbound");
     const { uuidv7 } = await import("../src/lib/util");
@@ -137,10 +161,12 @@ describe("SES: rebotes y quejas", () => {
     const transient = { notificationType: "Bounce", mail: { messageId: "ses-3" }, bounce: { bounceType: "Transient", bouncedRecipients: [{ emailAddress: "lleno@x.com" }] } };
     expect((await handleSnsMessage(db, await sign(notification(transient)), deps())).result).toBe("bounce_transient");
 
-    const sup = await db.query<any>(`SELECT address, reason FROM email_suppressions WHERE address IN ('rebote@x.com','queja@x.com','lleno@x.com') ORDER BY address`);
+    const sup = await db.query<any>(
+      `SELECT address, reason, tenant_id, expires_at > now() + interval '59 days' AS long FROM email_suppressions WHERE address IN ('rebote@x.com','queja@x.com','lleno@x.com') ORDER BY address`,
+    );
     expect(sup).toEqual([
-      { address: "queja@x.com", reason: "complaint" },
-      { address: "rebote@x.com", reason: "bounce" },
+      { address: "queja@x.com", reason: "complaint", tenant_id: tenant, long: null },
+      { address: "rebote@x.com", reason: "bounce", tenant_id: null, long: true },
     ]);
     const rows = await db.query<any>(`SELECT id, status FROM notifications WHERE envelope_id = $1 ORDER BY destination`, [env]);
     expect(Object.fromEntries(rows.map((r) => [r.id, r.status]))).toEqual({ [n1]: "bounced", [n2]: "complained" });
@@ -151,5 +177,24 @@ describe("SES: rebotes y quejas", () => {
     // El próximo envío a esa dirección no sale.
     const out = await sendTracked(db, { tenantId: tenant, template: "invite" }, { channel: "email", to: "REBOTE@x.com", subject: "s", text: "t" });
     expect(out.status).toBe("suppressed");
+
+    // La queja es solo de esta organización: otra le sigue pudiendo escribir.
+    const { isSuppressed, clearBounceSuppression } = await import("../src/notifications/outbound");
+    const other = uuidv7();
+    await db.query(`INSERT INTO tenants (id, slug, name) VALUES ($1, $2, 'Otra')`, [other, `t-${other.slice(-8)}`]);
+    expect(await isSuppressed(db, "queja@x.com", tenant)).toBe(true);
+    expect(await isSuppressed(db, "queja@x.com", other)).toBe(false);
+    // El rebote es de todas, pero vence.
+    expect(await isSuppressed(db, "rebote@x.com", other)).toBe(true);
+    expect(await isSuppressed(db, "rebote@x.com", other, { ignoreBounce: true })).toBe(false);
+    await db.query(`UPDATE email_suppressions SET expires_at = now() - interval '1 minute' WHERE address = 'rebote@x.com'`);
+    expect(await isSuppressed(db, "rebote@x.com", other)).toBe(false);
+    // Un código validado por correo borra el rebote; no la queja.
+    expect(await clearBounceSuppression(db, "Rebote@X.com")).toBe(true);
+    expect(await clearBounceSuppression(db, "queja@x.com")).toBe(false);
+    // Queja sin aviso asociado (no se sabe de qué organización): no suprime.
+    const orphan = { eventType: "Complaint", mail: { messageId: "ses-nadie" }, complaint: { complainedRecipients: [{ emailAddress: "huerfana@x.com" }] } };
+    await handleSnsMessage(db, await sign(notification(orphan)), deps());
+    expect(await db.one(`SELECT 1 FROM email_suppressions WHERE address = 'huerfana@x.com'`)).toBeFalsy();
   });
 });

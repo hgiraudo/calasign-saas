@@ -153,6 +153,10 @@ const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
     en: "Too many codes were requested today. Try tomorrow or ask the sender for a new link.",
   },
   otp_destination_limit: { "pt-BR": "Foram enviados códigos demais para este destino. Tente mais tarde.", en: "Too many codes were sent to this destination. Try again later." },
+  otp_destination_suppressed: {
+    "pt-BR": "Não podemos enviar e-mails para esse endereço: ele marcou como indesejado um e-mail desta organização. Peça ao remetente que o habilite de novo ou que mude o contato.",
+    en: "We can't send emails to that address: it marked an email from this organization as spam. Ask the sender to re-enable it or change the contact.",
+  },
   otp_tenant_limit: { "pt-BR": "Foram enviados códigos demais por esta organização. Tente mais tarde.", en: "Too many codes were sent by this organization. Try again later." },
   unverified_recipient: {
     "pt-BR": "Esse destinatário se registrou em um formulário web sem validar o e-mail: não recebe cópias (pode baixá-la pelo link dele).",

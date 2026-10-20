@@ -233,6 +233,8 @@ export async function enforceRoutePolicy(db: Db, req: FastifyRequest, a: AuthCon
     return;
   }
 
+  // Supresiones de correo (quejas de la organización): ver la lista expone direcciones de firmantes de todos los sobres.
+  if (url.startsWith("/v1/settings/email-suppressions")) return requirePerm(a, "settings:manage");
   // Administración
   if (url.startsWith("/v1/settings/") && !isRead) return requirePerm(a, "settings:manage");
   if (url.startsWith("/v1/api-keys")) {

@@ -90,6 +90,11 @@ export const config = {
     sesSnsTopicArns: list(env.SES_SNS_TOPIC_ARNS),
     /** Configuration set de SES que publica rebotes y quejas (encabezado X-SES-CONFIGURATION-SET). Opcional. */
     sesConfigurationSet: env.SES_CONFIGURATION_SET || null,
+    /**
+     * Días que una dirección con rebote permanente queda suprimida para toda la plataforma (60 por defecto). Las quejas
+     * suprimen solo para la organización que envió y no vencen (se quitan desde Ajustes).
+     */
+    bounceSuppressionDays: Math.max(1, Number(env.EMAIL_BOUNCE_SUPPRESSION_DAYS ?? 60) || 60),
   },
   sms: {
     /**

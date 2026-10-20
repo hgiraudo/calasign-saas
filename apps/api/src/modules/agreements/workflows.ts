@@ -54,6 +54,8 @@ interface RunContext {
   waitingEnvelope?: string | null;
   /** Rutas de los datos que el formulario público completó con un correo. */
   collectEmailPaths?: string[];
+  /** Por ruta de correo del formulario público: desde dónde se completó (va a la evidencia de recipient.self_registered). */
+  collectEmailSources?: Record<string, { ip: string | null; userAgent: string | null }>;
   /**
    * Por id de sobre: los correos de sus firmantes autoservicio, fijados al enviarlo (con los datos de ese momento).
    * La página pública ofrece el link solo a esos: no depende de la clave del sobre (dos pasos con la misma clave) ni
@@ -443,12 +445,19 @@ async function executeStep(d: Deps, run: any, step: WorkflowStep, index: number)
       // Firmantes autoservicio de este sobre: su correo es exactamente una variable que ya completó el formulario público
       // (no una copia, que no firma). Se fija ahora, con los datos con que sale el sobre.
       const collected = new Set(ctx.collectEmailPaths ?? []);
+      // Correo → desde dónde lo escribió quien usó el link público (IP y navegador del formulario).
+      const selfSource = new Map<string, { ip: string | null; userAgent: string | null }>();
       const selfService = [
         ...new Set(
           step.config.recipients.flatMap((r, i) => {
             const m = SELF_SERVICE_EMAIL.exec(r.email ?? "");
             const email = recipients[i].email;
-            return !r.cc && m && collected.has(m[1]) && email ? [email] : [];
+            if (!r.cc && m && collected.has(m[1]) && email) {
+              const src = ctx.collectEmailSources?.[m[1]];
+              if (src && !selfSource.has(email.toLowerCase())) selfSource.set(email.toLowerCase(), src);
+              return [email];
+            }
+            return [];
           }),
         ),
       ];
@@ -505,7 +514,13 @@ async function executeStep(d: Deps, run: any, step: WorkflowStep, index: number)
                 tenantId: run.tenant_id,
                 envelopeId,
                 type: "recipient.self_registered",
-                actor: { type: "recipient", id: m.id, label: `${m.name} <${m.email}>` },
+                actor: {
+                  type: "recipient",
+                  id: m.id,
+                  label: `${m.name} <${m.email}>`,
+                  ip: selfSource.get(m.email.toLowerCase())?.ip ?? null,
+                  userAgent: selfSource.get(m.email.toLowerCase())?.userAgent ?? null,
+                },
                 data: { workflowRunId: run.id, workflowId: run.workflow_id ?? null },
               });
             }
@@ -1106,6 +1121,8 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
         .filter((f) => f.type === "email" && typeof values[f.key] === "string")
         .map((f) => (def.config.target ? `${def.config.target}.${f.key}` : f.key));
       ctx.collectEmailPaths = [...new Set([...(ctx.collectEmailPaths ?? []), ...emailPaths])];
+      const source = clientInfo(req);
+      ctx.collectEmailSources = { ...(ctx.collectEmailSources ?? {}), ...Object.fromEntries(emailPaths.map((p) => [p, source])) };
       await t.query(`UPDATE workflow_run_steps SET status = 'completed', output = $3, finished_at = now() WHERE run_id = $1 AND idx = $2`, [
         run.id,
         index,

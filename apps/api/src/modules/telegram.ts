@@ -1,12 +1,12 @@
 // Webhook del bot de Telegram: vincula el chat del firmante cuando abre t.me/<bot>?start=<token de vinculación>.
 // El token de vinculación es propio (no el de firma, que no tiene que pasar por Telegram), de un solo uso, vence en
-// TELEGRAM_LINK_TTL_MINUTES (30 por defecto) y se guarda como hash (telegram_link_tokens).
+// TELEGRAM_LINK_TTL_MINUTES (30 por defecto) y se guarda como hash (telegram_link_tokens; también cifrado, para reusarlo mientras siga vigente).
 import { timingSafeEqual } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { config } from "../config";
 import { SYSTEM, appendEvent } from "../infra/evidence";
 import type { Db } from "../infra/db";
-import { decrypt, randomToken, sha256Hex } from "../lib/util";
+import { decrypt, encrypt, randomToken, sha256Hex } from "../lib/util";
 import { sendTelegram, telegramStartLink } from "../notifications/channels";
 import { normLocale } from "../notifications/templates";
 import type { Services } from "./context";
@@ -27,15 +27,30 @@ const MSG = {
 };
 
 /**
- * Link t.me con un token de vinculación nuevo para el destinatario (null sin bot configurado o sin link de firma).
- * Queda atado al link de firma vigente: si se corrige el contacto (link nuevo), deja de servir.
+ * Link t.me con un token de vinculación para el destinatario (null sin bot configurado o sin link de firma). Queda atado
+ * al link de firma vigente: si se corrige el contacto (link nuevo), deja de servir. Se reusa uno vigente y sin usar del
+ * mismo destinatario y link (guardado también cifrado para poder devolverlo): la página de firma lo pide en cada carga
+ * y antes se creaba una fila por cada una. Uno a punto de vencer (menos de 5 minutos) no se reusa.
  */
 export async function telegramLinkFor(db: Db, r: { id: string; access_token_hash?: string | null }): Promise<string | null> {
   if (!config.telegram.botUsername || !r.access_token_hash) return null;
+  const cur = await db.one<{ token_enc: string }>(
+    `SELECT token_enc FROM telegram_link_tokens
+      WHERE recipient_id = $1 AND access_token_hash = $2 AND used_at IS NULL AND token_enc IS NOT NULL AND expires_at > now() + interval '5 minutes'
+      ORDER BY expires_at DESC LIMIT 1`,
+    [r.id, r.access_token_hash],
+  );
+  if (cur) {
+    try {
+      return telegramStartLink(decrypt(cur.token_enc));
+    } catch {
+      // Clave de cifrado rotada: se genera uno nuevo.
+    }
+  }
   const token = randomToken(24);
   await db.query(
-    `INSERT INTO telegram_link_tokens (token_hash, recipient_id, access_token_hash, expires_at) VALUES ($1,$2,$3, now() + make_interval(mins => $4))`,
-    [sha256Hex(token), r.id, r.access_token_hash, Math.max(1, Math.floor(config.telegram.linkTtlMinutes))],
+    `INSERT INTO telegram_link_tokens (token_hash, recipient_id, access_token_hash, expires_at, token_enc) VALUES ($1,$2,$3, now() + make_interval(mins => $4), $5)`,
+    [sha256Hex(token), r.id, r.access_token_hash, Math.max(1, Math.floor(config.telegram.linkTtlMinutes)), encrypt(token)],
   );
   return telegramStartLink(token);
 }

@@ -9,6 +9,7 @@ import { sha256Hex, uuidv7 } from "../lib/util";
 import { telegramLinkFor } from "./telegram";
 import { clientInfo, type Services } from "./context";
 import { advanceRouting, currentSignerGroup, lockEnvelope, pastExpiry, receivesSignerNotices, sendPdf } from "./envelopes";
+import { recordSignerDownload } from "./download-evidence";
 import { toDocument, toField, loadDocuments } from "./mappers";
 import { loadSignatureImages, toStampFields } from "./stamp-fields";
 import { assertEmbeddableImage, renderProgressCopyPdf } from "@calasign/pdf";
@@ -125,7 +126,7 @@ export async function buildSession(db: Db, token: string, r: any, e: any, authed
     signedAvailable: !blocked && e.status === "completed" && Boolean(e.signed_file_id),
     copyAvailable: !blocked && copyAllowed(r, e),
     // Autorregistrado sin correo validado: la copia se descarga desde esta página (no puede pedir reenvíos); al
-    // completarse recibe solo un aviso por correo con el link a esta página (jobs.ts).
+    // completarse recibe solo un aviso por correo, sin link, que le dice que la descargue desde esta página (jobs.ts).
     finalCopyByMessage: !isUnverifiedSelfRegistered(r),
     otpRequired,
     otpDestination: otpRequired ? otpDestinationFor(r) : null,
@@ -174,8 +175,10 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
       [req.params.documentId, envelope.id],
     );
     if (!d) throw notFound("Documento");
+    const bytes = await s.blobs.get(d.storage_key);
+    await recordSignerDownload(s.db, req.log, envelope, recipientActor(req, recipient), "document", req.params.documentId);
     reply.header("content-type", "application/pdf").header("cache-control", "private, no-store");
-    return reply.send(Buffer.from(await s.blobs.get(d.storage_key)));
+    return reply.send(Buffer.from(bytes));
   });
 
   app.post<P>("/v1/signing/:token/consent", rl, async (req) => {
@@ -389,7 +392,9 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
     assertCanReadDocuments(recipient, envelope);
     if (envelope.status !== "completed" || !envelope.signed_file_id) throw notFound("Documento firmado");
     const f = await s.db.one<any>(`SELECT storage_key FROM files WHERE id = $1`, [envelope.signed_file_id]);
-    return sendPdf(reply, await s.blobs.get(f.storage_key), envelope.subject);
+    const bytes = await s.blobs.get(f.storage_key);
+    await recordSignerDownload(s.db, req.log, envelope, recipientActor(req, recipient), "signed");
+    return sendPdf(reply, bytes, envelope.subject);
   });
 
   // Copia con lo firmado hasta ahora, para quien ya firmó y espera al resto (sin certificado ni sello).
@@ -424,6 +429,7 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
         locale: r.locale ?? e.locale ?? "es",
         productName: await brandForEnvelope(s.db, e).then((b) => (rebrands(b) ? productLabel(b) : undefined)),
       });
+      await recordSignerDownload(s.db, req.log, e, recipientActor(req, r), "copy");
       return sendPdf(reply, pdf, `${e.subject} (copia)`);
     } finally {
       copiesInFlight--;

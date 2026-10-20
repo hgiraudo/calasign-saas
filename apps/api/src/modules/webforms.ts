@@ -505,14 +505,14 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
         // El mismo correo desde la misma IP (en IPv6, el mismo /64) en el mismo formulario hace poco: no se crea otro
         // sobre (cada uno consume la cuota del plan y, con código por correo, le manda otro código a esa dirección).
         // Por correo + IP: un tercero que escribe el correo de otro desde su conexión no le bloquea el formulario a esa
-        // persona. Un sobre anulado o rechazado no cuenta (se puede volver a completar). La huella va con HMAC (no se
-        // guarda la IP en los metadatos del sobre). No se devuelve el link del sobre anterior: el correo no está
+        // persona. Un sobre anulado o rechazado no cuenta (se puede volver a completar). La huella va con HMAC en una
+        // columna interna (envelopes.web_form_submitter): no viaja en los metadatos (API, eventos, webhooks). No se devuelve el link del sobre anterior: el correo no está
         // verificado; y el mensaje no confirma nada sobre ese correo.
         const W = config.webForms;
         const dup = await t.one(
           `SELECT 1 FROM envelopes e
            WHERE e.tenant_id = $1 AND e.metadata->>'webFormId' = $2 AND e.created_at > now() - make_interval(mins => $3)
-             AND e.metadata->>'webFormSubmitter' = $4 AND e.status NOT IN ('voided', 'declined') LIMIT 1`,
+             AND e.web_form_submitter = $4 AND e.status NOT IN ('voided', 'declined') LIMIT 1`,
           [form.tenant_id, form.id, W.dedupeMinutes, submitter],
         );
         if (dup) {
@@ -545,7 +545,7 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
           loaded,
           fromTpl as any,
           plan,
-          { webFormId: form.id, webFormName: form.name, webFormSubmitter: submitter },
+          { webFormId: form.id, webFormName: form.name },
           (byRole) => (signerRecipientId = byRole.get(form.signer_role_id) ?? ""),
           // Con lock_prefill (opcional por formulario), lo que prellenó quien lo configuró queda de solo lectura para
           // quien lo completa (signing.ts conserva el valor de un campo de solo lectura aunque el pedido traiga otro).
@@ -556,6 +556,7 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
         // recordatorios (evita usar el formulario para mandar correos a terceros). Con OTP por correo, la invitación
         // de respaldo sale recién cuando valida el código. Sin validarlo tampoco recibe la copia final: la descarga desde su link.
         await t.query(`UPDATE recipients SET self_registered = true WHERE id = $1`, [signerRecipientId]);
+        await t.query(`UPDATE envelopes SET web_form_submitter = $2 WHERE id = $1`, [id, submitter]);
         if (form.require_otp) await t.query(`UPDATE recipients SET auth_method = 'otp_email' WHERE id = $1`, [signerRecipientId]);
         await appendEvent(t, {
           tenantId: form.tenant_id,

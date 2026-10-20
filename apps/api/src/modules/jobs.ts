@@ -90,7 +90,16 @@ const TELEGRAM_HINT = {
   en: "Prefer to get notifications on Telegram? Turn it on from the signing page:",
 } as const;
 
-/** Copia final a quien se registró en un formulario web sin validar su correo (sin adjunto: solo el link). */
+/**
+ * Aviso de completado a quien se registró en un formulario web sin validar su correo: sin adjunto ni link (el link de
+ * firma permite bajar el PDF firmado y la dirección no está verificada: podría ser de otra persona). Quien firmó lo
+ * descarga desde la página donde firmó.
+ */
+const UNVERIFIED_COMPLETED_TEXT = {
+  es: "El documento quedó firmado. Por seguridad, este correo no trae un link: descargalo desde la página donde firmaste.",
+  "pt-BR": "O documento foi assinado. Por segurança, este e-mail não traz um link: baixe-o pela página onde você assinou.",
+  en: "The document has been signed. For security, this email has no link: download it from the page where you signed.",
+} as const;
 const UNVERIFIED_COPY_NOTE = {
   es: "Recibís este correo porque se completó un formulario con esta dirección. Si no fuiste vos, podés ignorarlo.",
   "pt-BR": "Você recebeu este e-mail porque um formulário foi preenchido com este endereço. Se não foi você, pode ignorá-lo.",
@@ -195,19 +204,19 @@ async function notify(
   // (receivesSignerNotices, la misma regla que usan los recordatorios y la anulación).
   if (["invite", "reminder", "expiry_warning", "voided", "declined"].includes(p.kind) && !receivesSignerNotices(r)) return;
   // Autoregistrado en un formulario web público sin correo verificado: tampoco pedidos de firma con certificado (si no,
-  // el formulario serviría para hacer llegar correos a una dirección ajena). La copia final sí, pero solo por correo y
-  // como un aviso con el link a su página de firmante (desde ahí descarga el documento), con una nota para quien no
-  // completó el formulario.
+  // el formulario serviría para hacer llegar correos a una dirección ajena). El completado sí, pero solo por correo, sin
+  // adjunto ni link (el link de firma baja el PDF firmado y la dirección no está verificada): dice que lo descargue desde
+  // la página donde firmó, con una nota para quien no completó el formulario.
   const unverified = isUnverifiedSelfRegistered(r);
   if (unverified && p.kind !== "completed") return;
 
   const locale = r.locale ?? e.locale;
-  const token = r.access_token_enc ? decrypt(r.access_token_enc) : null;
+  const token = r.access_token_enc && !unverified ? decrypt(r.access_token_enc) : null;
   const link = token && LINK_KINDS.includes(p.kind) ? `${wl.baseUrl}/s/${token}` : null;
   const m0 = render(p.kind, locale, { ...base, recipientName: r.name, message: p.kind === "invite" ? e.message : null, link }, mailBrand(p.kind, locale));
-  const unverifiedNote = UNVERIFIED_COPY_NOTE[normLocale(locale)];
+  const unverifiedNote = `${UNVERIFIED_COMPLETED_TEXT[normLocale(locale)]}\n\n${UNVERIFIED_COPY_NOTE[normLocale(locale)]}`;
   const m = unverified
-    ? { ...m0, text: `${m0.text}\n\n${unverifiedNote}`, html: withHtmlNote(m0.html, unverifiedNote) }
+    ? { ...m0, text: `${m0.text}\n\n${unverifiedNote}`, html: withHtmlNote(withHtmlNote(m0.html, UNVERIFIED_COMPLETED_TEXT[normLocale(locale)]), UNVERIFIED_COPY_NOTE[normLocale(locale)]) }
     : m0;
 
   // Sin repetidos: los esquemas aceptan ["email","email",…] (también al delegar, desde el link público) y cada repetición
@@ -216,7 +225,7 @@ async function notify(
   // Telegram sin vincular: el correo invita a activarlo desde la página de firma (que genera un link t.me de un solo
   // uso). El token de firma no viaja a Telegram.
   const tgHint = link && channels.includes("telegram") && !r.telegram_chat_id && config.telegram.botUsername ? TELEGRAM_HINT[normLocale(locale)] : null;
-  const errors: string[] = [];
+  const errors: { text: string; transient: boolean }[] = [];
   let delivered = 0;
 
   for (const channel of channels) {
@@ -254,7 +263,7 @@ async function notify(
     );
     if (out.status === "failed") {
       // Sin el destino: el error termina en los logs y en jobs.last_error.
-      errors.push(`${channel}: ${out.error}`);
+      errors.push({ text: `${channel}: ${out.error}`, transient: out.transient });
       continue;
     }
     if (out.status === "already") continue; // ya enviado por este job
@@ -281,8 +290,15 @@ async function notify(
       d.log.error({ err: scrubPii(String(err)), envelopeId: e.id, channel }, "aviso enviado pero no registrado");
     }
   }
-  // Algún canal falló: se reintenta el job (solo esos canales: los que salieron quedan registrados con el job).
-  if (errors.length) throw new Error(`no se pudo notificar: ${errors.join("; ")}`);
+  // Algún canal falló por un error del momento (red, timeout, 5xx o 429 del proveedor): se reintenta el job (solo los
+  // canales que no salieron: los que salieron quedan registrados con el job). Si todos los fallos son permanentes
+  // (número inválido, plantilla rechazada, chat bloqueado, SMTP 5xx), reintentar no los arregla: quedan registrados
+  // (notifications.status = 'failed') y en el log, y el job termina.
+  if (errors.some((x) => x.transient)) throw new Error(`no se pudo notificar: ${errors.map((x) => x.text).join("; ")}`);
+  if (errors.length) {
+    d.log.warn({ envelopeId: e.id, recipientId: r.id, kind: p.kind, errors: errors.map((x) => x.text) }, "aviso con canales fallidos por errores permanentes: no se reintenta");
+    return;
+  }
   // Ningún canal posible (p. ej. solo Telegram sin vincular y sin otro canal para el link): que quede a la vista.
   if (delivered === 0) d.log.warn({ envelopeId: e.id, recipientId: r.id, kind: p.kind, channels }, "aviso sin ningún canal nuevo: no salió");
 }
@@ -304,7 +320,7 @@ async function notifyStaff(
   from: { from?: string | null; replyTo?: string | null; dkim?: { domainName: string; keySelector: string; privateKey: string } | null } = {},
   jobId?: number,
 ) {
-  const errors: string[] = [];
+  const errors: { error: string; transient: boolean }[] = [];
   let delivered = 0;
   for (const u of to) {
     if (!u.email) continue;
@@ -317,10 +333,12 @@ async function notifyStaff(
       { channel: "email", to: u.email, subject: m.subject, text: m.text, html: m.html, link, locale: localeOf(u), tenantId: e.tenant_id, ...from },
     );
     // Sin la dirección en el error: termina en los logs y en jobs.last_error.
-    if (out.status === "failed") errors.push(out.error);
+    if (out.status === "failed") errors.push(out);
     else delivered++;
   }
-  if (delivered === 0 && errors.length) throw new Error(`no se pudo notificar (${errors.length}): ${errors.join("; ")}`);
+  // Como notify(): solo se reintenta por errores del momento (con todos permanentes, reintentar no los arregla).
+  if (delivered === 0 && errors.some((x) => x.transient)) throw new Error(`no se pudo notificar (${errors.length}): ${errors.map((x) => x.error).join("; ")}`);
+  if (errors.length) d.log.warn({ envelopeId: e.id, kind, errors: errors.map((x) => x.error) }, "avisos al equipo con fallos");
 }
 
 /** Correo de restablecimiento de contraseña. El token viaja cifrado en el job y se descarta si ya no sirve. */
@@ -356,7 +374,12 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
   const docBytes = await Promise.all(docs.map((x) => d.blobs.get(x.storage_key)));
   const stampFields: StampField[] = toStampFields(fields, docs, sigImages);
 
-  const ev = (r: any, type: string) => events.find((x) => x.type === type && x.actor_id === r.id);
+  // El ÚLTIMO evento de ese tipo del destinatario: la IP del certificado (sin signed_ip) es la de su última apertura, no
+  // la de la primera (p. ej. desde otro dispositivo, días antes).
+  const ev = (r: any, type: string) => {
+    for (let i = events.length - 1; i >= 0; i--) if (events[i].type === type && events[i].actor_id === r.id) return events[i];
+    return undefined;
+  };
   const inPersonLabels = await inPersonAuthLabels(d.db, recips, e.locale);
   const identities = await identityForCertificate(d.db, recips);
   const certRecipients: CertificateRecipient[] = recips.map((r) => ({

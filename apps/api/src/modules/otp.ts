@@ -11,7 +11,7 @@ import { enqueue } from "../infra/queue";
 import { AppError, conflict } from "../lib/errors";
 import { maskDestination, randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { deliver } from "../notifications/channels";
-import { isSuppressed } from "../notifications/outbound";
+import { clearBounceSuppression, isSuppressed } from "../notifications/outbound";
 import { normLocale } from "../notifications/templates";
 import type { Services } from "./context";
 import { lastEmbedSession } from "./embed";
@@ -177,9 +177,11 @@ export async function otpRoutes(app: FastifyInstance, s: Services) {
     const locale = normLocale(r.locale ?? e.locale);
     const m = MSG[locale];
     const channel = METHOD_CHANNEL[method];
-    // Dirección suprimida por rebote permanente o queja (notifications/ses-feedback.ts): el código no llegaría.
-    if (channel === "email" && (await isSuppressed(s.db, destination))) {
-      throw conflict("otp_destination_suppressed", "No podemos enviar correos a esa dirección. Pedile al remitente que la corrija.");
+    // Dirección con una queja contra esta organización (notifications/ses-feedback.ts): no se le escribe. Un rebote
+    // permanente no frena el código: lo pide la persona en este momento (con los topes de abajo) y, si lo valida, la
+    // dirección recibe correo y el rebote se borra (verify). El mensaje lo ve solo quien tiene el link.
+    if (channel === "email" && (await isSuppressed(s.db, destination, e.tenant_id, { ignoreBounce: true }))) {
+      throw conflict("otp_destination_suppressed", "No podemos enviar correos a esa dirección: marcó como no deseado un correo de esta organización. Pedile al remitente que la vuelva a habilitar o que cambie el contacto.");
     }
     const challengeId = uuidv7();
     // Se reserva el código con el sobre bloqueado ANTES de enviarlo: pedidos simultáneos no esquivan la espera
@@ -330,6 +332,10 @@ export async function otpRoutes(app: FastifyInstance, s: Services) {
         if (v.length) await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "recipient.viewed", actor });
       }
     });
+    // El código llegó por correo y se validó: la dirección recibe correo, se borra su rebote (si había uno).
+    if (ch.method === "otp_email") {
+      await clearBounceSuppression(s.db, ch.destination).catch((err) => req.log.warn({ err: String(err) }, "no se pudo borrar el rebote de la dirección"));
+    }
     reply.setCookie(SIGNER_COOKIE, session, {
       path: `/v1/signing/${req.params.token}`,
       httpOnly: true,

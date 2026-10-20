@@ -50,7 +50,9 @@ export async function runAutomaticReminders(db: Db, now = new Date()) {
         );
         for (const r of pending) {
           await enqueue(t, "notify", { kind: "reminder", envelopeId: e.id, recipientId: r.id, tenantId: e.tenant_id }, { dedupeKey: `auto-reminder:${r.id}:${day}` });
-          await t.query(`UPDATE recipients SET auto_reminders_sent = auto_reminders_sent + 1 WHERE id = $1`, [r.id]);
+          // Solo cuenta para el tope (sobre sin vencimiento). Se pone en 0 al corregir el contacto (link nuevo) o con un
+          // recordatorio manual (el remitente sigue esperando la firma).
+          if (capped) await t.query(`UPDATE recipients SET auto_reminders_sent = auto_reminders_sent + 1 WHERE id = $1`, [r.id]);
         }
         await t.query(`UPDATE envelopes SET last_reminder_at = $2 WHERE id = $1`, [e.id, now.toISOString()]);
         if (pending.length) {

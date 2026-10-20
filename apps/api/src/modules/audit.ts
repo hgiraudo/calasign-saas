@@ -38,9 +38,13 @@ export async function recordAudit(db: Db, r: AuditRecord) {
   );
 }
 
+/** Marca de que el handler ya registró la acción: el hook de ajustes (settings.changed) no la duplica. */
+type AuditedRequest = FastifyRequest & { audited?: boolean; auditBefore?: Record<string, unknown> };
+
 /** Registro a partir de un request autenticado. */
 export function auditFromRequest(db: Db, req: FastifyRequest, a: AuthContext, action: string, extra: Partial<AuditRecord> = {}) {
   const { ip, userAgent } = clientInfo(req);
+  (req as AuditedRequest).audited = true;
   return recordAudit(db, {
     tenantId: a.tenantId,
     action,
@@ -53,8 +57,25 @@ export function auditFromRequest(db: Db, req: FastifyRequest, a: AuthContext, ac
 
 type Extract = (ctx: { req: FastifyRequest; body: any; params: Record<string, string> }) => Partial<AuditRecord> | null;
 
-/** Acciones de otros módulos, por "MÉTODO ruta". */
-const ROUTE_ACTIONS: Record<string, { action: string; extract?: Extract }> = {
+/** Acciones de otros módulos, por "MÉTODO ruta". dedupeMinutes: no repetir la misma acción del mismo actor sobre el
+ * mismo objetivo dentro de ese lapso (descargas: el editor vuelve a pedir el PDF en cada apertura). */
+const ROUTE_ACTIONS: Record<string, { action: string; extract?: Extract; dedupeMinutes?: number }> = {
+  // Descargas del remitente: quién se llevó el PDF firmado o un original queda en la auditoría de la organización.
+  "GET /v1/envelopes/:id/signed.pdf": {
+    action: "envelope.signed_pdf_downloaded",
+    dedupeMinutes: 10,
+    extract: ({ params }) => ({ targetType: "envelope", targetId: params.id }),
+  },
+  "GET /v1/envelopes/:id/documents/:documentId/file": {
+    action: "envelope.document_downloaded",
+    dedupeMinutes: 10,
+    extract: ({ params }) => ({ targetType: "document", targetId: params.documentId, data: { envelopeId: params.id } }),
+  },
+  // Borrar un borrador borra también su registro de eventos: la constancia queda acá.
+  "DELETE /v1/envelopes/:id": {
+    action: "envelope.deleted",
+    extract: ({ params, req }) => ({ targetType: "envelope", targetId: params.id, data: { subject: (req as AuditedRequest).auditBefore?.subject ?? null } }),
+  },
   "POST /v1/api-keys": {
     action: "api_key.created",
     // El rol sale del pedido (la respuesta no lo trae); la política de rutas ya lo validó. Sin rol, la key es admin.
@@ -94,7 +115,7 @@ const AUDITED_VALUES = ["retentionDays", "require2fa", "enabled", "autoExtractMe
 function auditValues(req: FastifyRequest): Record<string, unknown> {
   const body = (req.body && typeof req.body === "object" ? req.body : {}) as Record<string, unknown>;
   const to = Object.fromEntries(AUDITED_VALUES.filter((k) => k in body).map((k) => [k, body[k]]));
-  const from = (req as FastifyRequest & { auditBefore?: Record<string, unknown> }).auditBefore;
+  const from = (req as AuditedRequest).auditBefore;
   return { ...(Object.keys(to).length ? { to } : {}), ...(from ? { from } : {}) };
 }
 
@@ -129,6 +150,8 @@ export function registerAuditHooks(app: FastifyInstance, s: Services) {
 
       if (status >= 300 || !req.auth) return payload;
       if (url.startsWith("/v1/settings/") && req.method !== "GET") {
+        // El handler ya dejó su propio registro (p. ej. settings.evidence_updated, byok.enabled): no se duplica.
+        if ((req as AuditedRequest).audited) return payload;
         await auditFromRequest(s.db, req, req.auth, "settings.changed", {
           targetType: "settings",
           targetId: url.replace("/v1/settings/", ""),
@@ -145,6 +168,16 @@ export function registerAuditHooks(app: FastifyInstance, s: Services) {
       const def = ROUTE_ACTIONS[key];
       if (def) {
         const extra = def.extract?.({ req, body: parse(payload), params }) ?? {};
+        if (def.dedupeMinutes) {
+          const a = req.auth;
+          const recent = await s.db.one(
+            `SELECT 1 FROM account_audit_log
+              WHERE tenant_id = $1 AND action = $2 AND actor_id IS NOT DISTINCT FROM $3 AND target_id IS NOT DISTINCT FROM $4
+                AND occurred_at > now() - make_interval(mins => $5) LIMIT 1`,
+            [a.tenantId, def.action, a.actor.id ?? null, extra.targetId ?? null, def.dedupeMinutes],
+          );
+          if (recent) return payload;
+        }
         await auditFromRequest(s.db, req, req.auth, def.action, extra ?? {});
       }
     } catch (err) {
@@ -234,6 +267,8 @@ function csvCell(v: unknown) {
   return `"${safe.replace(/"/g, '""')}"`;
 }
 
+const CSV_MAX_ROWS = 50_000;
+
 export async function auditRoutes(app: FastifyInstance, s: Services) {
   const auth = authenticate(s);
 
@@ -258,7 +293,10 @@ export async function auditRoutes(app: FastifyInstance, s: Services) {
 
   app.get<{ Querystring: AuditQuery }>("/v1/audit-log.csv", { preHandler: auth }, async (req, reply) => {
     const { params, where } = buildWhere(req.auth!.tenantId, req.query);
-    const rows = await s.db.query<any>(`SELECT * FROM account_audit_log WHERE ${where} ORDER BY id DESC LIMIT 50000`, params);
+    // Una fila de más para saber si se cortó: el corte se avisa (header X-Truncated y fila final), no es silencioso.
+    const all = await s.db.query<any>(`SELECT * FROM account_audit_log WHERE ${where} ORDER BY id DESC LIMIT ${CSV_MAX_ROWS + 1}`, params);
+    const truncated = all.length > CSV_MAX_ROWS;
+    const rows = truncated ? all.slice(0, CSV_MAX_ROWS) : all;
     const header = ["id", "occurred_at", "action", "actor_type", "actor_id", "actor_label", "target_type", "target_id", "ip", "user_agent", "data"];
     const lines = [header.join(",")];
     for (const r of rows.map(toEntry)) {
@@ -266,7 +304,16 @@ export async function auditRoutes(app: FastifyInstance, s: Services) {
         [r.id, r.occurredAt, r.action, r.actorType, r.actorId, r.actorLabel, r.targetType, r.targetId, r.ip, r.userAgent, r.data].map(csvCell).join(","),
       );
     }
-    await auditFromRequest(s.db, req, req.auth!, "audit.exported", { data: { rows: rows.length, filters: req.query } });
+    if (truncated) {
+      const last = rows[rows.length - 1];
+      lines.push(
+        ["", "", `TRUNCADO: se exportaron las ${CSV_MAX_ROWS} filas más recientes; hay más. Acotá el rango con from/to (to=${iso(last.occurred_at)}) para el resto.`]
+          .map(csvCell)
+          .join(","),
+      );
+      reply.header("x-truncated", "true");
+    }
+    await auditFromRequest(s.db, req, req.auth!, "audit.exported", { data: { rows: rows.length, truncated, filters: req.query } });
     reply
       .header("content-type", "text/csv; charset=utf-8")
       .header("content-disposition", `attachment; filename="auditoria-${new Date().toISOString().slice(0, 10)}.csv"`)

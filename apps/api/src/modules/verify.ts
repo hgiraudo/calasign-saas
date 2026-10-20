@@ -3,7 +3,8 @@
 import type { FastifyInstance } from "fastify";
 import type { VerifyResponse } from "@calasign/shared";
 import { config } from "../config";
-import { verifyChain } from "../infra/evidence";
+import { PdfReaderBusyError, readCertificateChainHead } from "@calasign/pdf";
+import { verifyRows } from "../infra/evidence";
 import { AppError, badRequest } from "../lib/errors";
 import { iso, sha256Hex } from "../lib/util";
 import type { Services } from "./context";
@@ -36,16 +37,21 @@ export async function verifyRoutes(app: FastifyInstance, s: Services) {
     const latest = Number(hit.latest_version ?? hit.version ?? 1);
     const number = hit.version != null ? Number(hit.version) : latest;
 
-    const [participants, completed, chain] = await Promise.all([
+    const [participants, completed, rows, printed] = await Promise.all([
       s.db.query<any>(
         `SELECT name, role, signed_at FROM recipients
          WHERE envelope_id = $1 AND role IN ('signer','approver') AND status = 'signed' ORDER BY routing_order, signed_at`,
         [hit.id],
       ),
       s.db.one<any>(`SELECT data FROM envelope_events WHERE envelope_id = $1 AND type = 'envelope.completed' ORDER BY seq DESC LIMIT 1`, [hit.id]),
-      verifyChain(s.db, hit.id),
+      s.db.query<any>(`SELECT * FROM envelope_events WHERE envelope_id = $1 ORDER BY seq`, [hit.id]),
+      // El hash final impreso en el certificado de ESTE PDF (metadatos o texto): es lo que ata la cadena al documento.
+      readCertificateChainHead(bytes).catch((err) => {
+        if (err instanceof PdfReaderBusyError) throw new AppError(503, "pdf_reader_busy", err.message);
+        throw err;
+      }),
     ]);
-    const events = await s.db.one<any>(`SELECT count(*)::int AS n FROM envelope_events WHERE envelope_id = $1`, [hit.id]);
+    const chain = anchorChain(verifyRows(rows), rows, printed?.head ?? null, completed?.data?.certificateChainHead ?? null);
     const seal = completed?.data?.seal ?? {};
     const res: VerifyResponse = {
       match: true,
@@ -54,7 +60,7 @@ export async function verifyRoutes(app: FastifyInstance, s: Services) {
       envelope: { id: hit.id, subject: hit.subject, organizationName: await brandForEnvelope(s.db, hit).then((b) => b.name || hit.org), completedAt: iso(hit.completed_at) },
       participants: participants.map((p) => ({ name: p.name, role: p.role, signedAt: iso(p.signed_at) })),
       seal: { format: seal.format ?? null, provider: seal.provider ?? null, timestamped: /^PAdES-B-(T|LT|LTA)$/.test(seal.format ?? "") },
-      chain: { ok: chain.ok, events: events?.n ?? 0, head: chain.head },
+      chain: { ok: chain.ok, events: rows.length, head: chain.head, ...(chain.reason ? { reason: chain.reason } : {}) },
       version: {
         number,
         latest,
@@ -65,4 +71,26 @@ export async function verifyRoutes(app: FastifyInstance, s: Services) {
     };
     return res;
   });
+}
+
+/**
+ * La cadena recalculada solo prueba que es coherente consigo misma: quien puede escribir en la base puede reescribir
+ * eventos y recalcular todos los hashes. Se ata al PDF sellado: el hash final impreso en su certificado (o, si el PDF
+ * no lo trae legible, el que se guardó en envelope.completed) tiene que ser el hash de algún evento de la cadena.
+ * Después del certificado puede haber más eventos (descargas, renovaciones de archivo), por eso no se exige que sea
+ * el último.
+ */
+export function anchorChain(
+  chain: { ok: boolean; brokenAt: number | null; head: string },
+  rows: { hash: string }[],
+  printedHead: string | null,
+  storedHead: string | null,
+): { ok: boolean; head: string; reason?: "chain_broken" | "certificate_head_mismatch" | "certificate_head_missing" } {
+  if (!chain.ok) return { ok: false, head: chain.head, reason: "chain_broken" };
+  const anchor = printedHead ?? storedHead;
+  if (!anchor) return { ok: false, head: chain.head, reason: "certificate_head_missing" };
+  // El valor guardado en la base no puede contradecir al impreso en el PDF.
+  if (printedHead && storedHead && printedHead !== storedHead) return { ok: false, head: chain.head, reason: "certificate_head_mismatch" };
+  if (!rows.some((r) => r.hash === anchor)) return { ok: false, head: chain.head, reason: "certificate_head_mismatch" };
+  return { ok: true, head: chain.head };
 }

@@ -74,18 +74,24 @@ export interface VerifyResponse {
   };
   participants?: { name: string; role: string; signedAt: string | null }[];
   seal?: { format: string | null; provider: string | null; timestamped: boolean };
-  chain?: { ok: boolean; events: number; head: string };
+  /**
+   * ok: la cadena recalculada está íntegra y contiene el hash final impreso en el certificado del PDF. reason: por qué
+   * no (cadena rota, el hash del certificado no está en la cadena, o no se pudo leer del PDF ni de la evidencia).
+   */
+  chain?: { ok: boolean; events: number; head: string; reason?: "chain_broken" | "certificate_head_mismatch" | "certificate_head_missing" };
   /** Qué versión del PDF final coincidió (las renovaciones de archivo B-LTA generan versiones nuevas). */
   version?: { number: number; latest: number; isLatest: boolean; reason: "completed" | "archive_renewal"; createdAt: string | null };
 }
 
 /**
- * Fecha de firma tal como se estampa en el PDF (UTC; dd/mm/aaaa, o aaaa-mm-dd en inglés). La usan la API al estampar
- * y la página del firmante para la vista previa (antes mostraba otra fecha y otro formato).
+ * Fecha de firma tal como se estampa en el PDF (dd/mm/aaaa, o aaaa-mm-dd en inglés), en UTC y diciéndolo: cerca de la
+ * medianoche la fecha UTC no es la local del firmante, y sin el sufijo parecía la local. No hay zona horaria por
+ * organización ni por firmante, y la del navegador no sirve como evidencia (la elige el cliente). La usan la API al
+ * estampar y la página del firmante para la vista previa (antes mostraba otra fecha y otro formato).
  */
 export function formatSigningDate(d: Date, locale: string) {
   const dd = String(d.getUTCDate()).padStart(2, "0");
   const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
   const yyyy = d.getUTCFullYear();
-  return locale === "en" ? `${yyyy}-${mm}-${dd}` : `${dd}/${mm}/${yyyy}`;
+  return locale === "en" ? `${yyyy}-${mm}-${dd} UTC` : `${dd}/${mm}/${yyyy} UTC`;
 }

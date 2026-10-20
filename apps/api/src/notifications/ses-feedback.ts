@@ -5,15 +5,23 @@
 //   que tiene que ser https://sns.<región>.amazonaws.com/… (la región del TopicArn).
 // - TopicArn en la lista blanca SES_SNS_TOPIC_ARNS.
 // - SubscriptionConfirmation: se visita SubscribeURL solo si el mensaje pasó la verificación.
-// - Rebote permanente y queja: supresión global de la dirección; el aviso (por provider_message_id) queda
-//   'bounced'/'complained' y, si es de un sobre, se registra en su actividad.
+// - Timestamp del mensaje de hace más de 1 hora (o del futuro): rechazado (un mensaje firmado capturado no se reproduce).
+// - Rebote permanente: supresión global de la dirección con vencimiento (EMAIL_BOUNCE_SUPPRESSION_DAYS). Queja:
+//   supresión solo para la organización del envío (por provider_message_id). El aviso queda 'bounced'/'complained' y,
+//   si es de un sobre, se registra en su actividad.
+// - Quitar una supresión: la organización, sus quejas (GET/DELETE /v1/settings/email-suppressions, settings:manage).
+//   Las globales (rebotes) no tienen pantalla (no hay administración de plataforma): vencen solas, se borran cuando la
+//   persona valida un código por correo, o por SQL (docs/CORREO-REBOTES.md).
 import { createVerify, X509Certificate } from "node:crypto";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import { config } from "../config";
 import type { Db } from "../infra/db";
 import { SYSTEM, appendEvent } from "../infra/evidence";
 import { readCappedText } from "../lib/http-body";
+import { forbidden, notFound } from "../lib/errors";
 import { maskDestination } from "../lib/util";
+import { auditFromRequest } from "../modules/audit";
+import { authenticate, type AuthContext, type Services } from "../modules/context";
 import { normAddress, scrubPii } from "./outbound";
 
 export interface SnsDeps {
@@ -65,7 +73,10 @@ export function snsStringToSign(m: Record<string, unknown>): string | null {
   return out;
 }
 
-const certCache = new Map<string, string>();
+/** Certificados ya validados, con su vencimiento: pasado validTo se vuelven a descargar y validar. */
+const certCache = new Map<string, { pem: string; validTo: number }>();
+/** Antigüedad máxima del Timestamp de un mensaje SNS (SNS reintenta durante bastante menos con la política por defecto). */
+const MAX_MESSAGE_AGE_MS = 60 * 60_000;
 
 async function defaultFetchCert(url: string): Promise<string> {
   const res = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(10_000) });
@@ -95,7 +106,11 @@ export async function verifySnsMessage(m: Record<string, unknown>, deps: SnsDeps
   if (!certUrl || !certUrl.pathname.endsWith(".pem")) return { ok: false, reason: "cert_url" };
   const toSign = snsStringToSign(m);
   if (!toSign || typeof m.Signature !== "string") return { ok: false, reason: "malformed" };
-  let pem = certCache.get(certUrl.href);
+  // Mensaje viejo (o del futuro, con un margen por relojes desfasados): una firma válida capturada no se reproduce.
+  const ts = Date.parse(String(m.Timestamp));
+  if (!Number.isFinite(ts) || Date.now() - ts > MAX_MESSAGE_AGE_MS || ts - Date.now() > 5 * 60_000) return { ok: false, reason: "stale" };
+  const cached = certCache.get(certUrl.href);
+  let pem = cached && cached.validTo > Date.now() ? cached.pem : undefined;
   if (!pem) {
     try {
       pem = await (deps.fetchCert ?? defaultFetchCert)(certUrl.href);
@@ -109,9 +124,13 @@ export async function verifySnsMessage(m: Record<string, unknown>, deps: SnsDeps
       return { ok: false, reason: "cert_invalid" };
     }
     const now = Date.now();
-    if (new Date(cert.validFrom).getTime() > now || new Date(cert.validTo).getTime() < now) return { ok: false, reason: "cert_expired" };
+    const validTo = new Date(cert.validTo).getTime();
+    if (new Date(cert.validFrom).getTime() > now || !(validTo >= now)) {
+      certCache.delete(certUrl.href);
+      return { ok: false, reason: "cert_expired" };
+    }
     if (certCache.size > 50) certCache.clear();
-    certCache.set(certUrl.href, pem);
+    certCache.set(certUrl.href, { pem, validTo });
   }
   try {
     const ok = createVerify(version === "1" ? "RSA-SHA1" : "RSA-SHA256")
@@ -168,7 +187,7 @@ export async function applySesEvent(db: Db, ev: any): Promise<string> {
       const address = typeof r?.emailAddress === "string" ? normAddress(r.emailAddress) : "";
       if (!address) continue;
       const detail = scrubPii(`${ev.bounce?.bounceType ?? ""}/${ev.bounce?.bounceSubType ?? ""}${r.diagnosticCode ? `: ${r.diagnosticCode}` : ""}`).slice(0, 500);
-      if (permanent) await suppress(db, address, "bounce", detail, messageId);
+      if (permanent) await suppressBounce(db, address, detail, messageId);
       await markNotifications(db, messageId, address, permanent ? "bounced" : null, detail);
     }
     return permanent ? "bounce_permanent" : "bounce_transient";
@@ -179,7 +198,7 @@ export async function applySesEvent(db: Db, ev: any): Promise<string> {
       const address = typeof r?.emailAddress === "string" ? normAddress(r.emailAddress) : "";
       if (!address) continue;
       const detail = `complaint${ev.complaint?.complaintFeedbackType ? `/${ev.complaint.complaintFeedbackType}` : ""}`.slice(0, 200);
-      await suppress(db, address, "complaint", detail, messageId);
+      await suppressComplaint(db, address, detail, messageId);
       await markNotifications(db, messageId, address, "complained", detail);
     }
     return "complaint";
@@ -187,14 +206,31 @@ export async function applySesEvent(db: Db, ev: any): Promise<string> {
   return "ignored";
 }
 
-async function suppress(db: Db, address: string, reason: "bounce" | "complaint", detail: string, messageId: string | null) {
-  // Una queja pisa un rebote (es más fuerte); un rebote no pisa una queja.
+/** Rebote permanente: global (cualquier organización), con vencimiento; un rebote nuevo lo renueva. */
+async function suppressBounce(db: Db, address: string, detail: string, messageId: string | null) {
   await db.query(
-    `INSERT INTO email_suppressions (address, reason, detail, provider_message_id) VALUES ($1,$2,$3,$4)
-     ON CONFLICT (address) DO UPDATE SET
-       reason = CASE WHEN email_suppressions.reason = 'complaint' THEN 'complaint' ELSE EXCLUDED.reason END,
+    `INSERT INTO email_suppressions (address, reason, detail, provider_message_id, expires_at)
+     VALUES ($1,'bounce',$2,$3, now() + make_interval(days => $4))
+     ON CONFLICT (address) WHERE tenant_id IS NULL DO UPDATE SET
+       detail = EXCLUDED.detail, provider_message_id = EXCLUDED.provider_message_id, expires_at = EXCLUDED.expires_at, updated_at = now()`,
+    [address, detail, messageId, config.mail.bounceSuppressionDays],
+  );
+}
+
+/**
+ * Queja: solo para la organización que mandó el correo (la del aviso con ese provider_message_id). La persona se quejó
+ * de esa organización; las demás le pueden seguir escribiendo. Sin aviso asociado no se sabe de quién es: no se suprime.
+ */
+async function suppressComplaint(db: Db, address: string, detail: string, messageId: string | null) {
+  if (!messageId) return;
+  const n = await db.one<{ tenant_id: string }>(`SELECT tenant_id FROM notifications WHERE provider_message_id = $1 AND channel = 'email' LIMIT 1`, [messageId]);
+  if (!n) return;
+  await db.query(
+    `INSERT INTO email_suppressions (address, reason, detail, provider_message_id, tenant_id)
+     VALUES ($1,'complaint',$2,$3,$4)
+     ON CONFLICT (tenant_id, address) WHERE tenant_id IS NOT NULL DO UPDATE SET
        detail = EXCLUDED.detail, provider_message_id = EXCLUDED.provider_message_id, updated_at = now()`,
-    [address, reason, detail, messageId],
+    [address, detail, messageId, n.tenant_id],
   );
 }
 
@@ -233,7 +269,44 @@ async function markNotifications(db: Db, messageId: string | null, address: stri
   }
 }
 
-export async function sesFeedbackRoutes(app: FastifyInstance, s: { db: Db }) {
+export async function sesFeedbackRoutes(app: FastifyInstance, s: Services) {
+  const auth = authenticate(s);
+  const A = (req: FastifyRequest) => req.auth as AuthContext;
+
+  // Quejas de la organización (settings:manage, access.ts): quién se quejó de sus correos y desde cuándo no le escribe.
+  app.get("/v1/settings/email-suppressions", { preHandler: auth }, async (req) => {
+    const a = A(req);
+    const rows = await s.db.query<any>(
+      `SELECT address, reason, detail, created_at, updated_at FROM email_suppressions WHERE tenant_id = $1 ORDER BY updated_at DESC LIMIT 500`,
+      [a.tenantId],
+    );
+    return {
+      items: rows.map((r) => ({
+        address: r.address,
+        reason: r.reason,
+        detail: r.detail,
+        createdAt: new Date(r.created_at).toISOString(),
+        updatedAt: new Date(r.updated_at).toISOString(),
+      })),
+    };
+  });
+
+  // Volver a escribirle a una dirección que se quejó (p. ej. la persona pidió seguir recibiendo los avisos). Solo las
+  // quejas de la propia organización: los rebotes son globales y no los quita una organización (vencen solos).
+  app.delete<{ Params: { address: string } }>("/v1/settings/email-suppressions/:address", { preHandler: auth }, async (req, reply) => {
+    const a = A(req);
+    const address = normAddress(req.params.address ?? "");
+    const r = await s.db.query<any>(`DELETE FROM email_suppressions WHERE tenant_id = $1 AND address = $2 RETURNING reason`, [a.tenantId, address]);
+    if (!r.length) {
+      const global = await s.db.one(`SELECT 1 FROM email_suppressions WHERE tenant_id IS NULL AND address = $1 AND (expires_at IS NULL OR expires_at > now())`, [address]);
+      if (global) throw forbidden("Esa dirección rebota (supresión de toda la plataforma): vence sola o se libera cuando la persona valida un código por correo");
+      throw notFound("Supresión");
+    }
+    await auditFromRequest(s.db, req, a, "email_suppression.removed", { targetType: "email_suppression", data: { address, reason: r[0].reason } });
+    reply.code(204);
+    return null;
+  });
+
   // SNS manda el JSON con Content-Type text/plain.
   app.post("/v1/integrations/ses/sns", { config: { rateLimit: { max: 600, timeWindow: "1 minute" } } }, async (req, reply) => {
     let m: Record<string, unknown>;

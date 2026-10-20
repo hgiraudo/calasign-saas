@@ -107,6 +107,10 @@ describe("formularios web: envíos del público", () => {
     expect(again.json().error.message).not.toMatch(/correo/);
     const n = await db.one<any>(`SELECT count(*)::int AS n FROM envelopes WHERE metadata->>'webFormId' = $1`, [formId]);
     expect(n.n).toBe(1);
+    // La huella de quien completó va en una columna interna, no en los metadatos (API, eventos, webhooks).
+    const meta = await db.one<any>(`SELECT metadata, web_form_submitter FROM envelopes WHERE metadata->>'webFormId' = $1`, [formId]);
+    expect(meta.metadata.webFormSubmitter).toBeUndefined();
+    expect(meta.web_form_submitter).toMatch(/\S{20,}/);
     // Desde otra IP (otro /64), el mismo correo sí crea otro: un tercero no le bloquea el formulario a esa persona.
     const other = await submit("ana@x.test", {}, { ip: "2001:db8:aa:bb::7" });
     expect(other.statusCode).toBe(201);

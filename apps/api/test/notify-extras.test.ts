@@ -111,6 +111,10 @@ describe("vinculación de Telegram", () => {
     expect(link).toMatch(/^https:\/\/t\.me\/calasign_test_bot\?start=/);
     expect(link).not.toContain(token);
     const linkToken = link.split("start=")[1]!;
+    // Otra carga de la página: el mismo link (no se crea un token por cada GET).
+    const again = (await app.inject({ method: "GET", url: `/v1/signing/${token}` })).json();
+    expect(again.recipient.telegramLink).toBe(link);
+    expect((await db.one<any>(`SELECT count(*)::int AS n FROM telegram_link_tokens WHERE recipient_id = $1`, [rec])).n).toBe(1);
 
     const hook = (t: string, chat: number) =>
       app.inject({
@@ -140,6 +144,29 @@ describe("vinculación de Telegram", () => {
   });
 });
 
+describe("supresiones de correo de la organización", () => {
+  it("lista y quita las quejas propias; no las de otra organización ni los rebotes globales", async () => {
+    const { uuidv7 } = await import("../src/lib/util");
+    const other = uuidv7();
+    await db.query(`INSERT INTO tenants (id, slug, name) VALUES ($1, $2, 'Otra')`, [other, `t-${other.slice(-8)}`]);
+    await db.query(
+      `INSERT INTO email_suppressions (address, reason, tenant_id) VALUES ('queja@x.com','complaint',$1), ('ajena@x.com','complaint',$2)`,
+      [tenant, other],
+    );
+    await db.query(`INSERT INTO email_suppressions (address, reason, expires_at) VALUES ('rebota2@x.com','bounce', now() + interval '1 day')`);
+    const list = await app.inject({ method: "GET", url: "/v1/settings/email-suppressions", headers: auth });
+    expect(list.statusCode).toBe(200);
+    expect(list.json().items.map((i: any) => i.address)).toEqual(["queja@x.com"]);
+    expect((await app.inject({ method: "DELETE", url: "/v1/settings/email-suppressions/ajena%40x.com", headers: auth })).statusCode).toBe(404);
+    expect((await app.inject({ method: "DELETE", url: "/v1/settings/email-suppressions/rebota2%40x.com", headers: auth })).statusCode).toBe(403);
+    expect((await app.inject({ method: "DELETE", url: "/v1/settings/email-suppressions/Queja%40X.com", headers: auth })).statusCode).toBe(204);
+    expect(await db.one(`SELECT 1 FROM email_suppressions WHERE address = 'queja@x.com'`)).toBeFalsy();
+    expect(await db.one(`SELECT 1 FROM email_suppressions WHERE address = 'ajena@x.com'`)).toBeTruthy();
+    const audit = await db.one<any>(`SELECT data FROM account_audit_log WHERE tenant_id = $1 AND action = 'email_suppression.removed'`, [tenant]);
+    expect(audit.data.address).toBe("queja@x.com");
+  });
+});
+
 describe("recordatorios", () => {
   it("manuales: además de uno cada 10 minutos, un tope por día", async () => {
     const { config } = await import("../src/config");
@@ -149,7 +176,11 @@ describe("recordatorios", () => {
       await db.tx((t) => appendEvent(t, { tenantId: tenant, envelopeId: env, type: "envelope.reminded", actor: { type: "api_key", id: "k", label: "k" }, data: { recipients: 1 } }));
     }
     // Fuera de la ventana de 10 minutos, dentro de las 24 h.
-    await db.query(`UPDATE envelope_events SET occurred_at = now() - interval '2 hours' WHERE envelope_id = $1`, [env]);
+    // La evidencia es append-only en la base (0072): editarla en una prueba requiere el permiso explícito de mantenimiento.
+    await db.tx(async (t) => {
+      await t.query(`SELECT set_config('calasign.allow_evidence_write', 'on', true)`);
+      await t.query(`UPDATE envelope_events SET occurred_at = now() - interval '2 hours' WHERE envelope_id = $1`, [env]);
+    });
     const res = await app.inject({ method: "POST", url: `/v1/envelopes/${env}/remind`, headers: auth });
     expect(res.statusCode).toBe(429);
     expect(res.json().error.code).toBe("reminder_daily_limit");
@@ -167,6 +198,20 @@ describe("recordatorios", () => {
     }
     expect(total).toBe(config.reminders.automaticMaxWithoutExpiry);
     expect(env).toBeTruthy();
+  }, 60_000);
+
+  it("con vencimiento no se cuenta para el tope; un recordatorio manual lo pone en 0", async () => {
+    const { runAutomaticReminders } = await import("../src/modules/reminders");
+    const start = new Date(Date.now() - 3 * 86400_000);
+    const { rec } = await envelopeWithSigner({ reminderDays: 1, sentAt: start.toISOString(), expiresAt: new Date(Date.now() + 30 * 86400_000).toISOString() });
+    await runAutomaticReminders(db, new Date());
+    expect((await db.one<any>(`SELECT count(*)::int AS n FROM jobs WHERE dedupe_key LIKE $1`, [`auto-reminder:${rec}:%`])).n).toBe(1);
+    expect((await db.one<any>(`SELECT auto_reminders_sent FROM recipients WHERE id = $1`, [rec])).auto_reminders_sent).toBe(0);
+    const { env: env2, rec: rec2 } = await envelopeWithSigner();
+    await db.query(`UPDATE recipients SET auto_reminders_sent = 7 WHERE id = $1`, [rec2]);
+    const res = await app.inject({ method: "POST", url: `/v1/envelopes/${env2}/remind`, headers: auth });
+    expect(res.statusCode).toBe(200);
+    expect((await db.one<any>(`SELECT auto_reminders_sent FROM recipients WHERE id = $1`, [rec2])).auto_reminders_sent).toBe(0);
   }, 60_000);
 });
 
@@ -197,6 +242,13 @@ describe("vencimiento de acuerdos", () => {
     expect(await agreementExpirySweep(d)).toBe(1);
     expect(await agreementExpirySweep(d)).toBe(0); // ya encolado
     const job = await db.one<any>(`SELECT id, payload FROM jobs WHERE dedupe_key LIKE $1`, [`agr:expiry:${ag}:%`]);
+    // Un job terminado (fallado) hace más de un día sin que el acuerdo quedara avisado: se vuelve a encolar (uno solo).
+    await db.query(`UPDATE jobs SET status = 'failed', finished_at = now() - interval '2 days' WHERE id = $1`, [job.id]);
+    expect(await agreementExpirySweep(d)).toBe(1);
+    expect(await agreementExpirySweep(d)).toBe(0);
+    expect((await db.one<any>(`SELECT count(*)::int AS n FROM jobs WHERE payload->>'agreementId' = $1 AND status = 'pending'`, [ag])).n).toBe(1);
+    expect((await db.one<any>(`SELECT dedupe_key FROM jobs WHERE id = $1`, [job.id])).dedupe_key).toBeNull();
+    await db.query(`DELETE FROM jobs WHERE payload->>'agreementId' = $1 AND id <> $2`, [ag, job.id]);
 
     mails.length = 0;
     failMail = "socia@x.com";

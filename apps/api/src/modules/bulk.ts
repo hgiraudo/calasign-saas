@@ -382,9 +382,14 @@ async function quotaLeft(db: Db, tenantId: string) {
   return { plan, remaining: Math.max(0, plan.envelopesPerMonth - used - (pending?.n ?? 0)), used };
 }
 
-/** 402 plan_limit si `needed` sobres no entran en el cupo del mes. */
-async function assertQuotaFor(db: Db, tenantId: string, needed: number) {
-  const q = await quotaLeft(db, tenantId);
+/**
+ * 402 plan_limit si `needed` sobres no entran en el cupo del mes. Se llama dentro de la transacción que da de alta las
+ * filas, con un lock por organización (pg_advisory_xact_lock): dos altas o reintentos simultáneos no ven el mismo cupo
+ * libre (cada uno descuenta las filas pendientes que el otro ya confirmó).
+ */
+async function assertQuotaFor(t: Db, tenantId: string, needed: number) {
+  await t.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`bulk-quota:${tenantId}`]);
+  const q = await quotaLeft(t, tenantId);
   if (q.remaining === null || needed <= q.remaining) return;
   const max = q.plan.envelopesPerMonth!;
   throw planLimitError(`El envío necesita ${needed} sobres y en el cupo del mes del plan ${q.plan.name} quedan ${q.remaining} (de ${max})`, {
@@ -503,12 +508,13 @@ export async function bulkRoutes(app: FastifyInstance, s: Services) {
       throw new AppError(422, "rows_invalid", `${result.invalid} de ${result.total} filas tienen errores`, result);
     }
     if (result.valid === 0) throw new AppError(422, "rows_invalid", "Ninguna fila es válida", result);
-    // Todo o nada con el cupo del mes: si no entran todas las filas válidas, no se lanza (antes se enviaban hasta
-    // agotarlo y el resto fallaba fila por fila). El cupo se vuelve a controlar en cada envío (sendEnvelope).
-    await assertQuotaFor(s.db, a.tenantId, result.valid);
     const id = uuidv7();
     const actor: Actor = { type: a.actor.type, id: a.actor.id, label: a.actor.label, ip: a.actor.ip, userAgent: a.actor.userAgent };
     await s.db.tx(async (t) => {
+      // Todo o nada con el cupo del mes: si no entran todas las filas válidas, no se lanza (antes se enviaban hasta
+      // agotarlo y el resto fallaba fila por fila). Dentro de la transacción del alta y con lock por organización:
+      // dos POST simultáneos no pasan con el mismo cupo. El cupo se vuelve a controlar en cada envío (sendEnvelope).
+      await assertQuotaFor(t, a.tenantId, result.valid);
       await t.query(
         `INSERT INTO bulk_sends (id, tenant_id, template_id, template_name, name, status, total, options, actor, created_by)
          VALUES ($1,$2,$3,$4,$5,'queued',$6,$7,$8,$9)`,

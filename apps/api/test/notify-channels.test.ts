@@ -11,10 +11,12 @@ delete process.env.DATABASE_URL;
 
 const sent: { channel: string; to: string; text: string }[] = [];
 let failWhatsapp = true;
+/** Error de WhatsApp: 503 (del momento, se reintenta) o 400 (número inválido, permanente). */
+let waStatus = 503;
 vi.mock("../src/notifications/channels", async (orig) => ({
   ...(await orig<typeof import("../src/notifications/channels")>()),
   deliver: vi.fn(async (m: { channel: string; to: string; text: string }) => {
-    if (m.channel === "whatsapp" && failWhatsapp) throw new Error(`WhatsApp API 400: invalid recipient ${m.to}`);
+    if (m.channel === "whatsapp" && failWhatsapp) throw new Error(`WhatsApp API ${waStatus}: invalid recipient ${m.to}`);
     sent.push({ channel: m.channel, to: m.to, text: m.text });
     return { provider: m.channel, messageId: `id-${sent.length}` };
   }),
@@ -72,6 +74,7 @@ describe("avisos a firmantes por varios canales", () => {
   it("si un canal falla se reintenta solo ese, sin repetir el que salió; el error no lleva el destino", async () => {
     sent.length = 0;
     failWhatsapp = true;
+    waStatus = 503;
     const env = await envelope();
     const rec = await recipient(env, { email: "ana@x.com", phone: "+5491155550000", channels: ["email", "whatsapp"] });
     const p = { kind: "invite", envelopeId: env, recipientId: rec, tenantId: tenant };
@@ -99,6 +102,45 @@ describe("avisos a firmantes por varios canales", () => {
     await handlers.notify(p, job(101, 3));
     expect(sent).toHaveLength(2);
   }, 60_000);
+
+  it("un error permanente (4xx del proveedor) no reintenta el job: queda registrado como fallido", async () => {
+    sent.length = 0;
+    failWhatsapp = true;
+    waStatus = 400;
+    const env = await envelope();
+    const rec = await recipient(env, { email: "perm@x.com", phone: "+5491155551111", channels: ["email", "whatsapp"] });
+    // Un canal entregado y otro con error permanente: termina sin throw.
+    await handlers.notify({ kind: "invite", envelopeId: env, recipientId: rec, tenantId: tenant }, job(151));
+    expect(sent.map((x) => x.channel)).toEqual(["email"]);
+    const rows = await db.query<any>(`SELECT channel, status FROM notifications WHERE recipient_id = $1 ORDER BY channel`, [rec]);
+    expect(rows).toEqual([
+      { channel: "email", status: "sent" },
+      { channel: "whatsapp", status: "failed" },
+    ]);
+    // Solo WhatsApp y permanente: tampoco.
+    const rec2 = await recipient(env, { phone: "+5491155552222", channels: ["whatsapp"] });
+    await handlers.notify({ kind: "invite", envelopeId: env, recipientId: rec2, tenantId: tenant }, job(152));
+    // Uno transitorio (429) sí se reintenta.
+    waStatus = 429;
+    const rec3 = await recipient(env, { phone: "+5491155553333", channels: ["whatsapp"] });
+    await expect(handlers.notify({ kind: "invite", envelopeId: env, recipientId: rec3, tenantId: tenant }, job(153))).rejects.toThrow(/whatsapp/);
+    failWhatsapp = false;
+  }, 60_000);
+
+  it("clasificación de errores de envío", async () => {
+    const { isTransientSendError } = await import("../src/notifications/outbound");
+    expect(isTransientSendError(new Error("WhatsApp API 503: x"))).toBe(true);
+    expect(isTransientSendError(new Error("Twilio 429: too many"))).toBe(true);
+    expect(isTransientSendError(new Error('WhatsApp API 400: {"message":"rate","code":130429}'))).toBe(true);
+    expect(isTransientSendError(new Error('WhatsApp API 400: {"message":"template","code":132001}'))).toBe(false);
+    expect(isTransientSendError(new Error("Telegram API 403: bot was blocked"))).toBe(false);
+    expect(isTransientSendError(Object.assign(new Error("Message failed"), { responseCode: 550 }))).toBe(false);
+    expect(isTransientSendError(Object.assign(new Error("Try later"), { responseCode: 451 }))).toBe(true);
+    expect(isTransientSendError(Object.assign(new Error("conn"), { code: "ECONNRESET" }))).toBe(true);
+    expect(isTransientSendError(new TypeError("fetch failed", { cause: Object.assign(new Error("x"), { code: "UND_ERR_CONNECT_TIMEOUT" }) }))).toBe(true);
+    expect(isTransientSendError(new Error("WhatsApp no configurado"))).toBe(false);
+    expect(isTransientSendError(new Error("algo raro"))).toBe(true);
+  });
 
   it("una dirección suprimida no recibe correo y queda registrada como 'suppressed'", async () => {
     sent.length = 0;
@@ -128,13 +170,17 @@ describe("avisos a firmantes por varios canales", () => {
     expect(sent).toHaveLength(0);
   }, 60_000);
 
-  it("autorregistrado sin correo validado: la copia final llega solo por correo, con el link y una nota; nada más", async () => {
+  it("autorregistrado sin correo validado: el completado llega solo por correo, sin link ni token y con una nota; nada más", async () => {
     sent.length = 0;
     const env = await envelope({ status: "completed" });
     const rec = await recipient(env, { email: "form@x.com", phone: "+5491100000000", channels: ["email", "whatsapp"], selfRegistered: true, status: "signed" });
     await handlers.notify({ kind: "completed", envelopeId: env, recipientId: rec, tenantId: tenant }, job(401));
     expect(sent.map((x) => x.channel)).toEqual(["email"]);
-    expect(sent[0]!.text).toContain("/s/");
+    expect(sent[0]!.text).not.toContain("/s/");
+    const tok = await db.one<any>(`SELECT access_token_enc FROM recipients WHERE id = $1`, [rec]);
+    const { decrypt } = await import("../src/lib/util");
+    expect(sent[0]!.text).not.toContain(decrypt(tok.access_token_enc));
+    expect(sent[0]!.text).toContain("descargalo desde la página donde firmaste");
     expect(sent[0]!.text).toContain("Si no fuiste vos");
     await handlers.notify({ kind: "voided", envelopeId: env, recipientId: rec, tenantId: tenant }, job(402));
     expect(sent).toHaveLength(1);

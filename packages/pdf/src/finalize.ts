@@ -204,7 +204,40 @@ async function buildEnvelopeDocument(input: FinalizeInput): Promise<PDFDocument>
   out.setProducer(producerOf(input.certificate.productName));
   out.setCreator(producerOf(input.certificate.productName));
   out.setModificationDate(new Date(input.certificate.completedAt));
+  // El hash final impreso en el certificado, también legible por máquina: la verificación pública lo compara con la
+  // cadena de eventos guardada (una cadena reescrita y recalculada en la base ya no lo contiene).
+  if (/^[0-9a-f]{64}$/.test(input.certificate.chainHead)) out.setKeywords([`${CHAIN_HEAD_KEYWORD}${input.certificate.chainHead}`]);
   return out;
+}
+
+const CHAIN_HEAD_KEYWORD = "calasign-chain-head:";
+
+/**
+ * Hash final del registro de eventos que figura en el certificado de un PDF sellado: de los metadatos (Keywords) o, en
+ * PDFs sellados antes de que se guardara ahí, del texto impreso en la página del certificado. null si no se encuentra.
+ */
+export async function readCertificateChainHead(pdf: Uint8Array): Promise<{ head: string; source: "metadata" | "text" } | null> {
+  try {
+    const doc = await PDFDocument.load(pdf, { updateMetadata: false, ignoreEncryption: true });
+    const kw = doc.getKeywords() ?? "";
+    const m = new RegExp(`${CHAIN_HEAD_KEYWORD}([0-9a-f]{64})`).exec(kw);
+    if (m) return { head: m[1], source: "metadata" };
+  } catch {
+    // Sigue con el texto.
+  }
+  try {
+    const { extractPdfPlainText } = await import("./plain-text");
+    const { text } = await extractPdfPlainText(pdf, 5_000_000);
+    const names = ["es", "pt", "en"].map((l) => labels(l).chainHead.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    const re = new RegExp(`(?:${names.join("|")})\\s*([0-9a-f]{64})`, "g");
+    let last: string | null = null;
+    for (const x of text.matchAll(re)) last = x[1];
+    return last ? { head: last, source: "text" } : null;
+  } catch (err) {
+    // Sin lugar para leer ahora: que reintente (no es lo mismo que un certificado sin el hash).
+    if ((err as { code?: string })?.code === "pdf_reader_busy") throw err;
+    return null;
+  }
 }
 
 /** Producer/Creator del PDF: el producto de la marca (marca blanca) o el de la plataforma. */

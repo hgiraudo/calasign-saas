@@ -305,8 +305,11 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
       const e = await lockEnvelope(t, a.tenantId, req.params.id);
       requireDraft(e);
       fileIds = (await t.query<any>(`SELECT file_id FROM documents WHERE envelope_id = $1`, [e.id])).map((d) => d.file_id);
-      await t.query(`DELETE FROM envelopes WHERE id = $1`, [e.id]);
+      // Los eventos primero, con el sobre todavía en borrador: la base solo deja borrar evidencia de un borrador
+      // (migración 0072). Queda constancia en la auditoría de la organización (envelope.deleted, audit.ts).
+      (req as FastifyRequest & { auditBefore?: Record<string, unknown> }).auditBefore = { subject: e.subject };
       await t.query(`DELETE FROM envelope_events WHERE envelope_id = $1`, [e.id]);
+      await t.query(`DELETE FROM envelopes WHERE id = $1`, [e.id]);
     });
     // Los PDF del borrador que no usa nadie más (una plantilla, otro sobre) se borran del almacenamiento.
     await deleteFilesIfUnused(s.db, s.blobs, fileIds);
@@ -508,6 +511,8 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
       const group = await currentSignerGroup(t, e.id);
       for (const r of group.recipients.filter((r) => (r.status === "sent" || r.status === "viewed") && receivesSignerNotices(r))) {
         await enqueue(t, "notify", { kind: "reminder", envelopeId: e.id, recipientId: r.id, tenantId: a.tenantId });
+        // El remitente volvió a pedir la firma: el tope de recordatorios automáticos (sin vencimiento) vuelve a contar.
+        await t.query(`UPDATE recipients SET auto_reminders_sent = 0 WHERE id = $1`, [r.id]);
         notified++;
       }
       if (notified) await appendEvent(t, { tenantId: a.tenantId, envelopeId: e.id, type: "envelope.reminded", actor: a.actor, data: { recipients: notified } });

@@ -234,6 +234,10 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
         `UPDATE envelopes SET ai_signer_assist = $2, updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 millisecond') WHERE id = $1 RETURNING *`,
         [e.id, input.signerAssist],
       );
+      // Con el sobre ya enviado, el firmante ve (o deja de ver) la asistencia de IA a mitad de camino: queda en la
+      // evidencia, como los demás cambios del remitente. En borrador no hace falta (el envío fija lo vigente).
+      if (cur.status !== "draft" && Boolean(cur.ai_signer_assist) !== Boolean(input.signerAssist))
+        await appendEvent(t, { tenantId: a.tenantId, envelopeId: e.id, type: "envelope.ai_settings_updated", actor: a.actor, data: { signerAssist: input.signerAssist } });
       return metadataViewOf(row);
     });
   });

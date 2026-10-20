@@ -292,7 +292,12 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
   async function createEnvelope(c: Caller, url: string, body: unknown, keys: string[]): Promise<{ d: any; replayed: boolean }> {
     // Con varias candidatas (bloque actual y anterior): si el pedido ya se hizo con la del bloque anterior, se usa esa
     // (la API devuelve el sobre ya creado); si no, la del bloque actual. La clave se guarda con el prefijo de la
-    // credencial (envelopes.ts idempotent), que es c.principal.
+    // credencial (envelopes.ts idempotent), que es c.principal. La búsqueda ve también las reservas en curso
+    // (idempotent() guarda la fila con status_code = 0 antes de ejecutar): un pedido del bloque anterior todavía en curso
+    // se detecta y este recibe idempotency_in_progress en vez de crear otro sobre.
+    // Caso residual (aceptado): un pedido del bloque anterior que todavía no llegó a reservar su clave (está en la
+    // autenticación o el parseo, milisegundos antes de idempotent()) justo cuando cambia el bloque; o uno que falló y
+    // liberó la clave. En el primero se pueden crear dos sobres; en el segundo no se había creado ninguno.
     let idempotencyKey = keys[0];
     for (const k of keys.slice(1)) {
       if (await s.db.one(`SELECT 1 FROM idempotency_keys WHERE tenant_id = $1 AND key = $2`, [c.tenantId, `${c.principal}|${k}`])) {

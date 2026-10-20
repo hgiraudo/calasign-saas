@@ -425,7 +425,7 @@ export async function whiteLabelRoutes(app: FastifyInstance, s: Services) {
         throw e;
       }
     }
-    await auditFromRequest(s.db, req, a, "brand.updated", { targetType: "brand", targetId: cur.brandId ?? DEFAULT_BRAND });
+    await auditFromRequest(s.db, req, a, "brand.updated", { targetType: "brand", targetId: cur.brandId ?? DEFAULT_BRAND, data: { fields: Object.keys((req.body as object) ?? {}) } });
     return toApi(s.db, await loadBrand(s.db, a.tenantId, req.params.id));
   });
 

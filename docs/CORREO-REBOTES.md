@@ -12,9 +12,13 @@ que crear (Terraform o consola) y la configuración de la API.
   - Acepta solo los temas de `SES_SNS_TOPIC_ARNS` (lista blanca; vacía = rechaza todo con 403).
   - `SubscriptionConfirmation`: visita `SubscribeURL` (también en `sns.<región>.amazonaws.com`) solo si el mensaje pasó
     la verificación. La suscripción queda confirmada sola al crearla.
-  - `Bounce` con `bounceType = Permanent` → supresión (`email_suppressions`, motivo `bounce`); transitorio → solo queda el
-    detalle en el aviso (`notifications.feedback_detail`).
-  - `Complaint` → supresión (motivo `complaint`).
+  - Mensajes con `Timestamp` de más de 1 hora (o más de 5 minutos en el futuro) se rechazan (403 `stale`). El
+    certificado queda en caché hasta su `validTo`; después se descarga y valida de nuevo.
+  - `Bounce` con `bounceType = Permanent` → supresión **global** (`email_suppressions`, motivo `bounce`, `tenant_id`
+    NULL) que **vence** a los `EMAIL_BOUNCE_SUPPRESSION_DAYS` días (60 por defecto; un rebote nuevo la renueva);
+    transitorio → solo queda el detalle en el aviso (`notifications.feedback_detail`).
+  - `Complaint` → supresión **solo para la organización** del envío (la del aviso con ese `provider_message_id`;
+    motivo `complaint`, sin vencimiento). Una queja sin aviso asociado no suprime.
   - El aviso enviado se encuentra por `notifications.provider_message_id` (el id de SES, que la API toma de la respuesta
     SMTP `250 Ok <id>`) y pasa a `status = 'bounced'` / `'complained'`. Si es de un sobre, se agrega
     `notification.bounced` / `notification.complained` a su actividad (destino enmascarado).
@@ -23,9 +27,20 @@ que crear (Terraform o consola) y la configuración de la API.
   `notification.suppressed` en la actividad del sobre).
 - Acepta tanto las notificaciones de identidad (`notificationType`) como las de un configuration set (`eventType`).
 
-Pendiente (no incluido): los códigos de verificación (otp.ts), el envío masivo y los formularios web todavía no consultan
-la supresión (usar `isSuppressed()` de `src/notifications/outbound.ts`); no hay pantalla para quitar una dirección de la
-supresión (hoy: `DELETE FROM email_suppressions WHERE address = '…'`).
+- Código de verificación por correo (otp.ts): lo frena solo una queja contra esa organización (el mensaje lo ve solo
+  quien tiene el link). Un rebote no lo frena (la persona lo pide en ese momento, con los topes de envío); si valida
+  el código, el rebote de esa dirección se borra.
+- Invitaciones al equipo: con la dirección suprimida no sale el correo (el link de aceptación vuelve igual); la
+  respuesta no lo dice (sería información de otra organización), queda en el log del servidor.
+
+### Quitar una supresión
+
+- **Quejas de la organización**: `GET /v1/settings/email-suppressions` (lista) y
+  `DELETE /v1/settings/email-suppressions/:address` (con `settings:manage`; queda en la auditoría como
+  `email_suppression.removed`). Una organización no puede quitar un rebote global (403).
+- **Rebotes globales**: no hay administración de plataforma. Vencen solos, se borran cuando la persona valida un
+  código por correo, o a mano:
+  `DELETE FROM email_suppressions WHERE tenant_id IS NULL AND address = lower('…');`
 
 ## Infraestructura a crear (por entorno)
 
@@ -93,5 +108,6 @@ resource "aws_sesv2_configuration_set_event_destination" "feedback" {
 |---|---|
 | `SES_SNS_TOPIC_ARNS` | ARN del tema (o varios, separados por coma). Sin valor el endpoint rechaza todo. |
 | `SES_CONFIGURATION_SET` | Opcional: nombre del configuration set; la API lo manda en `X-SES-CONFIGURATION-SET` (no hace falta si es el de por defecto de la identidad). |
+| `EMAIL_BOUNCE_SUPPRESSION_DAYS` | Días que un rebote permanente suprime la dirección para toda la plataforma (60 por defecto). |
 
 El endpoint queda fuera del control de `Origin` (`/v1/integrations/*`) y tiene su propio rate limit (600/min).

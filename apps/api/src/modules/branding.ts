@@ -91,7 +91,10 @@ export async function brandingRoutes(app: FastifyInstance, s: Services) {
       const prev = await s.db.one<any>(`SELECT name FROM tenants WHERE id = $1`, [a.tenantId]);
       if (prev && prev.name !== input.organizationName) {
         await s.db.query(`UPDATE tenants SET name = $2 WHERE id = $1`, [a.tenantId, input.organizationName]);
-        await auditFromRequest(s.db, req, a, "organization.renamed", { data: { from: prev.name, to: input.organizationName } });
+        await auditFromRequest(s.db, req, a, "organization.renamed", {
+          // Con este registro el hook no agrega settings.changed: van también los demás campos del mismo cambio.
+          data: { from: prev.name, to: input.organizationName, fields: Object.keys((req.body as object) ?? {}) },
+        });
       }
     }
     return toApi(await getTenantBranding(s.db, req.auth!.tenantId));

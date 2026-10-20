@@ -19,7 +19,8 @@ import { decrypt, encrypt, iso, sha256Hex, slugify, uuidv7 } from "../lib/util";
 import { getTenantBranding } from "./branding";
 import { assertTemplateAccess, envelopeVisibilitySql, hasPerm, templateVisibilitySql } from "./access";
 import { ownerProblem } from "./owner-check";
-import { tenantPlan } from "./billing/plans";
+import { requireFeature, tenantPlan } from "./billing/plans";
+import { rateLimitIpKey } from "../lib/ip";
 import { authenticate, clientInfo, type AuthContext, type Services } from "./context";
 import { setFrameAncestors } from "./embed";
 import { sendEnvelope } from "./envelopes";
@@ -27,7 +28,6 @@ import { insertEnvelopeFromTemplate, loadTemplateForUse, planFromTemplate, type 
 import { tenantBaseUrl } from "./custom-domains";
 
 /** Tiempo mínimo entre abrir el formulario y enviarlo (un humano tarda más; un bot, menos). */
-const MAX_SUBMISSIONS_PER_HOUR = 60;
 const MIN_FILL_MS = 2500;
 const MAX_FILL_MS = 2 * 3600_000;
 
@@ -66,6 +66,26 @@ function toWebForm(r: FormRow, templateName: string, base: string, problem: Form
     createdAt: iso(r.created_at)!,
     updatedAt: iso(r.updated_at)!,
   };
+}
+
+/** Cloudflare Turnstile: solo con las dos claves configuradas (si falta una, el formulario sigue como antes). */
+function captchaSiteKey(): string | null {
+  return config.webForms.turnstileSiteKey && config.webForms.turnstileSecretKey ? config.webForms.turnstileSiteKey : null;
+}
+
+/** Valida el token de Turnstile con Cloudflare. Ante un error de red se rechaza (el desafío es obligatorio si está configurado). */
+export async function verifyTurnstile(token: string | null | undefined, ip: string | undefined): Promise<boolean> {
+  if (!token) return false;
+  const body = new URLSearchParams({ secret: config.webForms.turnstileSecretKey ?? "", response: token });
+  if (ip) body.set("remoteip", ip);
+  try {
+    const res = await fetch(config.webForms.turnstileVerifyUrl, { method: "POST", body, signal: AbortSignal.timeout(5000) });
+    if (!res.ok) return false;
+    const j = (await res.json()) as { success?: unknown };
+    return j?.success === true;
+  } catch {
+    return false;
+  }
 }
 
 function availability(r: FormRow): PublicWebForm["unavailableReason"] {
@@ -280,6 +300,10 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
   app.patch<P>("/v1/web-forms/:id", { preHandler: auth }, async (req) => {
     const a = A(req);
     const input = UpdateWebFormInput.parse(req.body);
+    // Como al crearlo (billing/plans.ts exige el plan en POST): editar o activar un formulario exige formularios web en
+    // el plan. Desactivarlo no (active: false, con o sin el resto de los datos, como lo manda la consola): tras bajar
+    // de plan se tiene que poder apagar; y uno inactivo no crea sobres hasta que se lo vuelva a activar, con el plan.
+    if (input.active !== false) requireFeature((await tenantPlan(s.db, a.tenantId)).plan, "web_forms", "Los formularios web");
     const cur = await load(a.tenantId, req.params.id);
     assertCanManageForm(a, cur);
     // Igual que al crearlo: no se modifica un formulario de una plantilla restringida que no se puede ver.
@@ -356,7 +380,9 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
 
   // ───────── Público ─────────
 
-  const publicRl = { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } };
+  // Por IP, y en IPv6 por /64 (un cliente tiene el bloque entero: por dirección exacta no se frenaba a nadie).
+  const ipKey = (req: FastifyRequest) => rateLimitIpKey(req.ip);
+  const publicRl = { config: { rateLimit: { max: 60, timeWindow: "1 minute", keyGenerator: ipKey } } };
 
   app.get<{ Params: { slug: string } }>("/v1/public/forms/:slug", publicRl, async (req): Promise<PublicWebForm> => {
     const r = await s.db.one<any>(`SELECT * FROM web_forms WHERE slug = $1`, [req.params.slug]);
@@ -382,12 +408,13 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
       collectPhone: r.collect_phone,
       locale: tpl?.locale ?? org?.default_locale ?? "es",
       formToken: encrypt(JSON.stringify({ s: r.slug, t: Date.now() })),
+      captchaSiteKey: captchaSiteKey(),
     };
   });
 
   app.post<{ Params: { slug: string } }>(
     "/v1/public/forms/:slug/submit",
-    { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } },
+    { config: { rateLimit: { max: 10, timeWindow: "1 minute", keyGenerator: ipKey } } },
     async (req, reply): Promise<SubmitWebFormResponse> => {
       const input = SubmitWebFormInput.parse(req.body);
       // Protección básica contra bots: trampa invisible + tiempo de llenado + token firmado del formulario.
@@ -418,6 +445,10 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
         throw new AppError(410, "form_inactive", "Este formulario ya no está disponible");
       }
       if (form.collect_phone && !input.phone) throw badRequest("phone_required", "El teléfono es obligatorio");
+      // Desafío anti-bots (opcional, por configuración de la plataforma): el token es de un solo uso.
+      if (captchaSiteKey() && !(await verifyTurnstile(input.captchaToken, req.ip))) {
+        throw new AppError(400, "captcha_failed", "No se pudo verificar que no sos un robot: completá la verificación y volvé a enviar");
+      }
 
       const loaded = await loadTemplateForUse(s.db, form.tenant_id, form.template_id);
       // La plantilla pudo cambiar después de publicar el formulario (p. ej. el rol pasó a aprobador o copia): sin esto,
@@ -444,12 +475,40 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
         // Un envío por token (si la transacción falla, el token vuelve a servir).
         const fresh = await t.query(`INSERT INTO web_form_token_uses (token_hash) VALUES ($1) ON CONFLICT DO NOTHING RETURNING 1`, [sha256Hex(input.formToken)]);
         if (!fresh.length) throw expiredToken();
+        // El mismo correo en el mismo formulario hace poco: no se crea otro sobre (cada uno consume la cuota del plan y,
+        // con código por correo, le manda otro código a esa dirección). No se devuelve el link del sobre anterior: el
+        // correo lo escribió quien completa el formulario y no está verificado.
+        const W = config.webForms;
+        const dup = await t.one(
+          `SELECT 1 FROM envelopes e JOIN recipients r ON r.envelope_id = e.id
+           WHERE e.tenant_id = $1 AND e.metadata->>'webFormId' = $2 AND e.created_at > now() - make_interval(mins => $3)
+             AND r.self_registered AND lower(r.email) = $4 LIMIT 1`,
+          [form.tenant_id, form.id, W.dedupeMinutes, input.email.toLowerCase()],
+        );
+        if (dup) {
+          throw new AppError(429, "form_recent_submission", "Ya se completó este formulario con ese correo hace unos minutos: seguí en la pestaña donde lo completaste o probá más tarde", {
+            retryAfterSeconds: W.dedupeMinutes * 60,
+          });
+        }
         // Tope por formulario: cada envío crea y manda un sobre (y consume la cuota del plan de la organización).
         const recent = await t.one<{ n: number }>(
           `SELECT count(*)::int AS n FROM envelopes WHERE tenant_id = $1 AND metadata->>'webFormId' = $2 AND created_at > now() - interval '1 hour'`,
           [form.tenant_id, form.id],
         );
-        if ((recent?.n ?? 0) >= MAX_SUBMISSIONS_PER_HOUR) throw new AppError(429, "form_rate_limited", "Demasiados envíos de este formulario: probá más tarde");
+        if ((recent?.n ?? 0) >= W.maxPerFormHour) throw new AppError(429, "form_rate_limited", "Demasiados envíos de este formulario: probá más tarde");
+        // Y por organización, sumando todos sus formularios (por hora y por día): con muchos formularios, el tope de cada
+        // uno no impedía agotar la cuota del mes en un rato. Con un lock por organización, dos formularios a la vez no
+        // lo superan (el orden de bloqueo es siempre formulario → organización).
+        await t.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`webform-tenant:${form.tenant_id}`]);
+        const org = await t.one<{ h: number; d: number }>(
+          `SELECT count(*) FILTER (WHERE created_at > now() - interval '1 hour')::int AS h, count(*)::int AS d
+           FROM envelopes WHERE tenant_id = $1 AND (metadata->>'webFormId') IS NOT NULL AND created_at > now() - interval '1 day'`,
+          [form.tenant_id],
+        );
+        if ((org?.h ?? 0) >= W.maxPerTenantHour || (org?.d ?? 0) >= W.maxPerTenantDay) {
+          req.log.warn({ webFormId: form.id, tenantId: form.tenant_id }, "formularios web: la organización llegó a su tope de envíos");
+          throw new AppError(429, "form_rate_limited", "Demasiados envíos de este formulario: probá más tarde");
+        }
         const id = await insertEnvelopeFromTemplate(
           t,
           { ...formOwner(form), actor },
@@ -458,10 +517,13 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
           plan,
           { webFormId: form.id, webFormName: form.name },
           (byRole) => (signerRecipientId = byRole.get(form.signer_role_id) ?? ""),
+          // Lo que prellenó quien configuró el formulario queda de solo lectura para quien lo completa (signing.ts
+          // conserva el valor de un campo de solo lectura aunque el pedido traiga otro).
+          { lockPrefillRoles: [form.signer_role_id] },
         );
         // El correo lo escribió quien completa el formulario y no está verificado: no recibe invitaciones ni
         // recordatorios (evita usar el formulario para mandar correos a terceros). Con OTP por correo, la invitación
-        // de respaldo sale recién cuando valida el código; la copia final después de firmar sale igual.
+        // de respaldo sale recién cuando valida el código. Sin validarlo tampoco recibe la copia final: la descarga desde su link.
         await t.query(`UPDATE recipients SET self_registered = true WHERE id = $1`, [signerRecipientId]);
         if (form.require_otp) await t.query(`UPDATE recipients SET auth_method = 'otp_email' WHERE id = $1`, [signerRecipientId]);
         await appendEvent(t, {

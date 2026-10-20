@@ -135,7 +135,7 @@ for (const n of ["list_envelopes", "get_envelope", "get_signing_status", "list_t
 ok(`${tools.length} herramientas: ${names.join(", ")}`);
 
 const tl = parse(await client.callTool({ name: "list_templates", arguments: {} }));
-assert(tl.items.some((t) => t.id === template.id && t.roles.some((r) => r.name === "Cliente")), "list_templates");
+assert(tl.items.some((t) => t.id === template.id && t.roles.some((r) => r.name?.untrusted === "Cliente")), "list_templates");
 
 const signer = `Firmante MCP ${stamp}`;
 const created = parse(
@@ -153,7 +153,7 @@ const again = parse(
     arguments: { templateId: template.id, subject: `Contrato MCP ${stamp}`, recipients: [{ role: "Cliente", name: signer, email: `firmante-mcp+${stamp}@example.com` }] },
   }),
 );
-assert(again.id === envId, "el reintento idéntico devuelve el mismo sobre");
+assert(again.id === envId && again.replayed === true && again.status === "draft", "el reintento idéntico devuelve el mismo sobre (replayed, con su estado actual)");
 ok("list_templates + create_envelope_from_template (queda en borrador)");
 
 let r = await client.callTool({ name: "send_envelope", arguments: { envelopeId: envId } });

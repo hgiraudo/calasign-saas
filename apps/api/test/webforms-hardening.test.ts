@@ -1,0 +1,202 @@
+// Formularios web públicos sobre PGlite: tope por organización, deduplicación por correo, captcha opcional (Turnstile),
+// prellenado de solo lectura, plan exigido al modificar (salvo desactivar), copia final solo con correo validado, y
+// topes de códigos OTP por destino.
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "calasign-webforms-"));
+delete process.env.DATABASE_URL;
+
+type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
+type App = Awaited<ReturnType<typeof import("../src/app")["buildApp"]>>;
+let db: Db;
+let app: App;
+let tenant: string;
+let formId: string;
+let slug: string;
+const KEY = "cs_test_webforms_hardening_key";
+const auth = { authorization: `Bearer ${KEY}` };
+const real = globalThis.fetch;
+
+beforeAll(async () => {
+  const { createDb, migrate } = await import("../src/infra/db");
+  const { createBlobStore } = await import("../src/infra/storage");
+  const { buildApp } = await import("../src/app");
+  const { uuidv7, sha256Hex } = await import("../src/lib/util");
+  db = await createDb();
+  await migrate(db);
+  tenant = uuidv7();
+  await db.query(`INSERT INTO tenants (id, slug, name) VALUES ($1, $2, 'Org')`, [tenant, `t-${tenant.slice(-8)}`]);
+  await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash) VALUES ($1, $2, 'k', 'cs_test', $3)`, [uuidv7(), tenant, sha256Hex(KEY)]);
+  // Plantilla: un documento, un rol firmante con firma y un texto "Plan" que prellena el formulario.
+  const tpl = uuidv7();
+  const file = uuidv7();
+  const doc = uuidv7();
+  const role = uuidv7();
+  await db.query(`INSERT INTO templates (id, tenant_id, name) VALUES ($1, $2, 'Alta')`, [tpl, tenant]);
+  await db.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1, $2, 'original', 'x', 'application/pdf', 10, 'abc')`, [
+    file,
+    tenant,
+  ]);
+  await db.query(`INSERT INTO template_documents (id, tenant_id, template_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,0,'doc',$4,1,$5)`, [
+    doc,
+    tenant,
+    tpl,
+    file,
+    JSON.stringify([{ width: 595, height: 842 }]),
+  ]);
+  await db.query(`INSERT INTO template_roles (id, tenant_id, template_id, name, role, routing_order) VALUES ($1,$2,$3,'Cliente','signer',1)`, [role, tenant, tpl]);
+  for (const [type, label] of [
+    ["signature", null],
+    ["text", "Plan"],
+    ["text", "Notas"],
+  ]) {
+    await db.query(
+      `INSERT INTO template_fields (id, tenant_id, template_id, document_id, role_id, type, page, x, y, width, height, required, label) VALUES ($1,$2,$3,$4,$5,$6,1,0.1,0.1,0.2,0.05,false,$7)`,
+      [uuidv7(), tenant, tpl, doc, role, type, label],
+    );
+  }
+  app = await buildApp({ db, blobs: createBlobStore(), logger: false });
+  await app.ready();
+  const res = await app.inject({ method: "POST", url: "/v1/web-forms", headers: auth, payload: { templateId: tpl, name: "Alta de clientes", signerRoleId: role, prefill: { Plan: "Oro" } } });
+  expect(res.statusCode).toBe(201);
+  formId = res.json().id;
+  slug = res.json().slug;
+}, 120_000);
+
+afterAll(async () => {
+  globalThis.fetch = real;
+  await app?.close();
+  await db?.close();
+});
+
+/** Envío del formulario con un token ya "viejo" (pasó el tiempo mínimo de llenado). */
+async function submit(email: string, extra: Record<string, unknown> = {}) {
+  const { encrypt } = await import("../src/lib/util");
+  const formToken = encrypt(JSON.stringify({ s: slug, t: Date.now() - 5000, n: Math.random() }));
+  return app.inject({ method: "POST", url: `/v1/public/forms/${slug}/submit`, payload: { name: "Ana Pérez", email, formToken, ...extra } });
+}
+
+describe("formularios web: envíos del público", () => {
+  it("prellenado de solo lectura, sin copia final por correo y el mismo correo no crea otro sobre", async () => {
+    const r = await submit("ana@x.test");
+    expect(r.statusCode).toBe(201);
+    const env = r.json().envelopeId;
+    const fields = await db.query<any>(`SELECT label, value, read_only FROM fields WHERE envelope_id = $1 AND type = 'text' ORDER BY label`, [env]);
+    expect(fields).toEqual([
+      { label: "Notas", value: null, read_only: false },
+      { label: "Plan", value: "Oro", read_only: true },
+    ]);
+    // La página de firma avisa que el documento final se descarga desde ahí (no se manda: el correo no está validado).
+    const session = await app.inject({ method: "GET", url: `/v1/signing/${r.json().signingPath.slice(3)}` });
+    expect(session.json().finalCopyByMessage).toBe(false);
+    // Mismo correo (otra capitalización) en la ventana: 429 y ningún sobre nuevo.
+    const again = await submit("ANA@x.test");
+    expect(again.statusCode).toBe(429);
+    expect(again.json().error.code).toBe("form_recent_submission");
+    const n = await db.one<any>(`SELECT count(*)::int AS n FROM envelopes WHERE metadata->>'webFormId' = $1`, [formId]);
+    expect(n.n).toBe(1);
+  });
+
+  it("tope por organización sumando todos sus formularios", async () => {
+    const { config } = await import("../src/config");
+    const prev = config.webForms.maxPerTenantHour;
+    config.webForms.maxPerTenantHour = 1;
+    try {
+      const r = await submit("bea@x.test");
+      expect(r.statusCode).toBe(429);
+      expect(r.json().error.code).toBe("form_rate_limited");
+    } finally {
+      config.webForms.maxPerTenantHour = prev;
+    }
+  });
+
+  it("captcha opcional: con Turnstile configurado se exige y se valida el token", async () => {
+    const { config } = await import("../src/config");
+    config.webForms.turnstileSiteKey = "site-key";
+    config.webForms.turnstileSecretKey = "secret";
+    const seen: string[] = [];
+    globalThis.fetch = (async (_url: unknown, init?: { body?: URLSearchParams }) => {
+      const tok = init?.body?.get("response") ?? "";
+      seen.push(tok);
+      return new Response(JSON.stringify({ success: tok === "good" }), { status: 200 });
+    }) as typeof fetch;
+    try {
+      const pub = await app.inject({ method: "GET", url: `/v1/public/forms/${slug}` });
+      expect(pub.json().captchaSiteKey).toBe("site-key");
+      expect((await submit("caro@x.test")).json().error.code).toBe("captcha_failed");
+      expect((await submit("caro@x.test", { captchaToken: "bad" })).json().error.code).toBe("captcha_failed");
+      expect((await submit("caro@x.test", { captchaToken: "good" })).statusCode).toBe(201);
+      expect(seen).toEqual(["bad", "good"]);
+    } finally {
+      config.webForms.turnstileSiteKey = null;
+      config.webForms.turnstileSecretKey = null;
+      globalThis.fetch = real;
+    }
+    const pub = await app.inject({ method: "GET", url: `/v1/public/forms/${slug}` });
+    expect(pub.json().captchaSiteKey).toBeNull();
+  });
+
+  it("modificarlo exige formularios web en el plan, salvo desactivarlo", async () => {
+    // Starter: tiene API pero no formularios web.
+    await db.query(`UPDATE tenants SET billing_plan = 'starter' WHERE id = $1`, [tenant]);
+    try {
+      const edit = await app.inject({ method: "PATCH", url: `/v1/web-forms/${formId}`, headers: auth, payload: { name: "Otro nombre" } });
+      expect(edit.statusCode).toBe(402);
+      const on = await app.inject({ method: "PATCH", url: `/v1/web-forms/${formId}`, headers: auth, payload: { active: true } });
+      expect(on.statusCode).toBe(402);
+      const off = await app.inject({ method: "PATCH", url: `/v1/web-forms/${formId}`, headers: auth, payload: { active: false } });
+      expect(off.statusCode).toBe(200);
+      expect(off.json().active).toBe(false);
+    } finally {
+      await db.query(`UPDATE tenants SET billing_plan = NULL WHERE id = $1`, [tenant]);
+    }
+  });
+});
+
+describe("códigos de verificación: tope por destino", () => {
+  it("cuenta los códigos al mismo destino de todos los sobres (sin mayúsculas) y por organización", async () => {
+    const { assertOtpDestinationCapacity } = await import("../src/modules/otp");
+    const { config } = await import("../src/config");
+    const { uuidv7 } = await import("../src/lib/util");
+    const env = uuidv7();
+    await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status) VALUES ($1, $2, 'x', 'sent')`, [env, tenant]);
+    const add = async (dest: string, n: number, tenantId = tenant) => {
+      for (let i = 0; i < n; i++) {
+        const r = uuidv7();
+        await db.query(`INSERT INTO recipients (id, tenant_id, envelope_id, role, name, email, status) VALUES ($1,$2,$3,'signer','V',$4,'sent')`, [r, tenant, env, dest]);
+        await db.query(
+          `INSERT INTO otp_challenges (id, tenant_id, recipient_id, method, destination, code_hash, expires_at) VALUES ($1,$2,$3,'otp_email',$4,'h', now())`,
+          [uuidv7(), tenantId, r, dest],
+        );
+      }
+    };
+    await add("Victima@x.test", config.otp.maxPerDestinationHour - 1);
+    await expect(assertOtpDestinationCapacity(db, tenant, "victima@x.test")).resolves.toBeUndefined();
+    await add("victima@X.test", 1, uuidv7());
+    await expect(assertOtpDestinationCapacity(db, tenant, " VICTIMA@x.test ")).rejects.toMatchObject({ code: "otp_destination_limit", status: 429 });
+    await expect(assertOtpDestinationCapacity(db, tenant, "otra@x.test")).resolves.toBeUndefined();
+    const prev = config.otp.maxPerTenantHour;
+    config.otp.maxPerTenantHour = 5;
+    try {
+      await expect(assertOtpDestinationCapacity(db, tenant, "otra@x.test")).rejects.toMatchObject({ code: "otp_tenant_limit" });
+    } finally {
+      config.otp.maxPerTenantHour = prev;
+    }
+  });
+});
+
+describe("clave de límite por IP", () => {
+  it("IPv6 por /64; IPv4, mapeadas y loopback tal cual", async () => {
+    const { rateLimitIpKey } = await import("../src/lib/ip");
+    expect(rateLimitIpKey("2001:db8:1:2:aaaa::1")).toBe("2001:db8:1:2::/64");
+    expect(rateLimitIpKey("2001:0db8:0001:0002:ffff:ffff:ffff:ffff")).toBe("2001:db8:1:2::/64");
+    expect(rateLimitIpKey("2001:db8::1")).toBe("2001:db8:0:0::/64");
+    expect(rateLimitIpKey("fe80::1%eth0")).toBe("fe80:0:0:0::/64");
+    expect(rateLimitIpKey("::ffff:10.0.0.1")).toBe("10.0.0.1");
+    expect(rateLimitIpKey("203.0.113.9")).toBe("203.0.113.9");
+    expect(rateLimitIpKey("::1")).toBe("::1");
+  });
+});

@@ -350,6 +350,12 @@ export const ERRORS: Record<string, Err> = {
     summary: "No es firmante/aprobador pendiente (también invalid_channels, otp_destination_required)",
   },
   not_cancellable: { status: 409, code: "not_cancellable", message: "El envío ya terminó", summary: "El envío masivo ya terminó o se canceló" },
+  nothing_to_retry: {
+    status: 409,
+    code: "nothing_to_retry",
+    message: "No hay filas para reintentar",
+    summary: "No hay filas fallidas reintentables (las de datos inválidos se corrigen en un envío nuevo; también not_retryable si se canceló)",
+  },
   conflict: { status: 409, code: "conflict", message: "El recurso ya existe o cambió al mismo tiempo; reintentá", summary: "Carrera contra una restricción única" },
   role_conflict: { status: 409, code: "role_exists", message: "Ya existe un rol con ese nombre", summary: "Nombre repetido (role_exists / group_exists) o rol en uso (role_in_use)" },
   last_owner: { status: 409, code: "last_owner", message: "La organización tiene que tener al menos un propietario", summary: "Dejaría a la organización sin propietario" },
@@ -471,7 +477,7 @@ export const ERRORS: Record<string, Err> = {
     message: "Este borrador cambió en otra pestaña o lo editó otra persona: recargá para ver la versión actual",
     details: { updatedAt: "2026-05-04T13:00:00.000Z" },
     summary:
-      "El borrador del sobre o la plantilla cambió desde que se leyó: X-Expected-Updated-At no coincide con su updatedAt (details.updatedAt trae el actual; recargar y repetir)",
+      "El borrador del sobre, la plantilla o el sobre en curso (al anular o recordar) cambió desde que se leyó: X-Expected-Updated-At no coincide con su updatedAt (details.updatedAt trae el actual; recargar y repetir)",
   },
   purged: {
     status: 410,

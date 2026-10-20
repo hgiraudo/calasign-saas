@@ -27,9 +27,12 @@ export const forbidden = (message = "No autorizado") => new AppError(403, "forbi
 /**
  * Control de edición concurrente: si el cliente manda X-Expected-Updated-At (el updatedAt que cargó) y el recurso
  * cambió desde entonces (otra pestaña u otra persona), 409 version_changed en vez de pisar esos cambios. Sin el
- * encabezado no se controla (compatibilidad con integraciones).
+ * encabezado no se controla (compatibilidad con integraciones). `message` reemplaza al texto de borradores y plantillas
+ * donde no aplica (anular o recordar un sobre ya enviado).
  */
-export function assertNotStale(headers: Record<string, unknown>, current: Date | string | null | undefined) {
+export const STALE_DRAFT_MESSAGE = "Este borrador cambió en otra pestaña o lo editó otra persona: recargá para ver la versión actual";
+export const STALE_GENERIC_MESSAGE = "El sobre cambió desde que lo viste (otra pestaña, otra persona o un firmante): revisalo y repetí la acción";
+export function assertNotStale(headers: Record<string, unknown>, current: Date | string | null | undefined, message = STALE_DRAFT_MESSAGE) {
   const raw = headers["x-expected-updated-at"];
   const expected = typeof raw === "string" ? Date.parse(raw) : NaN;
   if (!Number.isFinite(expected) || current == null) return;
@@ -38,7 +41,7 @@ export function assertNotStale(headers: Record<string, unknown>, current: Date |
   // diferencia es un cambio: updated_at = now() es la hora de inicio de la transacción y otra que tomó el lock después
   // puede dejarlo más viejo que el que tiene el cliente.
   if (Math.floor(now) !== expected) {
-    throw new AppError(409, "version_changed", "Este borrador cambió en otra pestaña o lo editó otra persona: recargá para ver la versión actual", {
+    throw new AppError(409, "version_changed", message, {
       updatedAt: new Date(current).toISOString(),
     });
   }

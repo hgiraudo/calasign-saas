@@ -152,6 +152,17 @@ const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
     "pt-BR": "Foram pedidos códigos demais hoje. Tente amanhã ou peça um link novo ao remetente.",
     en: "Too many codes were requested today. Try tomorrow or ask the sender for a new link.",
   },
+  otp_destination_limit: { "pt-BR": "Foram enviados códigos demais para este destino. Tente mais tarde.", en: "Too many codes were sent to this destination. Try again later." },
+  otp_tenant_limit: { "pt-BR": "Foram enviados códigos demais por esta organização. Tente mais tarde.", en: "Too many codes were sent by this organization. Try again later." },
+  unverified_recipient: {
+    "pt-BR": "Esse destinatário se registrou em um formulário web sem validar o e-mail: não recebe cópias (pode baixá-la pelo link dele).",
+    en: "That recipient signed up through a web form without verifying their email: copies aren't sent to them (they can download it from their link).",
+  },
+  nothing_to_retry: {
+    "pt-BR": "Não há linhas para tentar novamente (as que têm erros nos dados são corrigidas em um envio novo).",
+    en: "There are no rows to retry (rows with data errors must be fixed in a new send).",
+  },
+  not_retryable: { "pt-BR": "O envio em massa foi cancelado.", en: "The bulk send was canceled." },
   otp_expired: { "pt-BR": "O código expirou ou já foi usado. Peça um novo.", en: "The code expired or was already used. Request a new one." },
   otp_locked: { "pt-BR": "Tentativas demais. Peça um código novo.", en: "Too many attempts. Request a new code." },
   otp_delivery_failed: { "pt-BR": "Não foi possível enviar o código. Tente de novo em alguns segundos.", en: "The code couldn't be sent. Try again in a few seconds." },

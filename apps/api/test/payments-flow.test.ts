@@ -564,4 +564,42 @@ describe("cambio de suscripción", () => {
     expect(errors).toEqual([]);
     expect((await db.one<any>(`SELECT done_at IS NOT NULL AS done FROM subscription_cancellations WHERE subscription_id = 'pre_400'`))?.done).toBe(true);
   });
+
+  it("barrido: 429 o 408 cuentan como proveedor caído (no se siguen tomando sus filas)", async () => {
+    const { cancelPendingSubscriptions } = await import("../src/modules/billing/webhooks");
+    for (const status of [429, 408]) {
+      const t2 = await org("stripe", `sub_cur_rl${status}`);
+      await db.query(
+        `INSERT INTO subscription_cancellations (provider, subscription_id, tenant_id, attempted_at) VALUES ('stripe', $1, $3, now() - interval '1 day'), ('stripe', $2, $3, now() - interval '1 day')`,
+        [`sub_rl${status}_a`, `sub_rl${status}_b`, t2],
+      );
+      let calls = 0;
+      globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method === "DELETE") calls++;
+        return json({ error: { message: "slow down" } }, status);
+      }) as typeof fetch;
+      try {
+        await cancelPendingSubscriptions({ db, log: { error: () => {} } }, 50);
+      } finally {
+        globalThis.fetch = real;
+      }
+      expect(calls).toBe(1);
+      await db.query(`DELETE FROM subscription_cancellations WHERE tenant_id = $1`, [t2]);
+    }
+  });
+
+  it("checkout pagado con la suscripción no activa (past_due): no se aplica y queda una alerta", async () => {
+    const { handleStripeEvent } = await import("../src/modules/billing/webhooks");
+    const t2 = await org("stripe", "sub_pd_cur");
+    globalThis.fetch = (async () => json({ id: "sub_pd", status: "past_due", current_period_end: 1_900_000_000 })) as typeof fetch;
+    const warns: any[] = [];
+    try {
+      await handleStripeEvent(db, completed(t2, "sub_pd"), { warn: (o: object) => void warns.push(o) });
+    } finally {
+      globalThis.fetch = real;
+    }
+    expect(warns).toHaveLength(1);
+    expect(warns[0]).toMatchObject({ alert: true, status: "past_due", subscriptionId: "sub_pd", tenantId: t2 });
+    expect(await tenantRow(t2)).toMatchObject({ subscription_id: "sub_pd_cur" });
+  });
 });

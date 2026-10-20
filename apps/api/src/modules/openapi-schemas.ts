@@ -411,6 +411,12 @@ export const BulkValidationResultSchema = named(
     invalid: z.number().int(),
     errors: z.array(z.object({ row: z.number().int().describe("Número de fila de datos (desde 1, sin contar el encabezado)."), errors: z.array(z.string()) })),
     columns: z.array(z.string()).describe("Encabezados del CSV (vacío si las filas vinieron en JSON)."),
+    duplicates: z
+      .array(z.object({ row: z.number().int(), sameAs: z.number().int() }))
+      .optional()
+      .describe("Solo en /validate: filas válidas iguales a una anterior (mismos destinatarios y prellenado)."),
+    quotaRemaining: z.number().int().nullable().optional().describe("Solo en /validate: sobres que quedan en el cupo del mes (null: sin tope)."),
+    warnings: z.array(z.string()).optional().describe("Solo en /validate: avisos que no impiden enviar (en español)."),
   }),
 );
 

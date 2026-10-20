@@ -734,6 +734,10 @@ export async function experienceRoutes(app: FastifyInstance, s: Services) {
       if (!r) throw notFound("Destinatario");
       if (["delegated", "reassigned"].includes(r.status)) throw conflict("replaced", "Ese destinatario fue reemplazado");
       if (!r.email && !r.phone && !r.telegram_chat_id) throw conflict("no_destination", "El destinatario no tiene a dónde enviarle la copia");
+      // Se registró solo en un formulario web y no validó su correo: el aviso no saldría (jobs.ts no le escribe).
+      if (isUnverifiedSelfRegistered(r)) {
+        throw conflict("unverified_recipient", "Ese destinatario se registró en un formulario web sin validar su correo: no se le envían copias (puede descargarla desde su link)");
+      }
       await enqueue(t, "notify", { kind: "completed", envelopeId: e.id, recipientId: r.id, tenantId: e.tenant_id });
       await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "envelope.copy_resent", actor: a.actor, data: { recipientId: r.id, recipientName: r.name } });
     });
@@ -747,8 +751,9 @@ export async function experienceRoutes(app: FastifyInstance, s: Services) {
       if (e.status !== "completed") throw conflict("not_completed", "El documento final todavía no está disponible");
       const r = await t.one<any>(`SELECT * FROM recipients WHERE id = $1`, [r0.id]);
       if (!r.email && !r.phone && !r.telegram_chat_id) throw conflict("no_destination", "No hay a dónde enviarte la copia");
-      // Autoregistrado en un formulario público sin correo validado: la copia final ya se le mandó y la descarga está
-      // en pantalla. Si no, el formulario más este pedido servían para mandar correos sin fin a una dirección ajena.
+      // Autoregistrado en un formulario público sin correo validado: no se le manda la copia final (su correo no está
+      // verificado); la descarga está en pantalla. Si no, el formulario más este pedido servían para mandar correos a
+      // una dirección ajena.
       if (isUnverifiedSelfRegistered(r)) throw forbidden("Descargá la copia desde esta página");
       // Tope total por destinatario (además de uno cada 10 minutos).
       const total = await t.one<{ n: number }>(

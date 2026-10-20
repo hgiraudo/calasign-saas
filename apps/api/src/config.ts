@@ -107,6 +107,27 @@ export const config = {
   maxUploadBytes: Number(env.MAX_UPLOAD_MB ?? 25) * 1024 * 1024,
   webDist: resolve(env.WEB_DIST ?? resolve(repoRoot, "apps/web/dist")),
   logLevel: env.LOG_LEVEL ?? "info",
+  /**
+   * Formularios web públicos: cada envío crea y envía un sobre que cuenta para la cuota del plan. Además del tope por
+   * formulario, uno por organización (todos sus formularios juntos) y una ventana en la que el mismo correo no crea otro
+   * sobre del mismo formulario.
+   */
+  webForms: {
+    maxPerFormHour: Number(env.WEBFORM_MAX_PER_FORM_HOUR ?? 60),
+    maxPerTenantHour: Number(env.WEBFORM_MAX_PER_TENANT_HOUR ?? 100),
+    maxPerTenantDay: Number(env.WEBFORM_MAX_PER_TENANT_DAY ?? 500),
+    dedupeMinutes: Number(env.WEBFORM_DEDUPE_MINUTES ?? 10),
+    /** Cloudflare Turnstile (opcional): con las dos claves, el envío exige el token del desafío. */
+    turnstileSiteKey: env.TURNSTILE_SITE_KEY || null,
+    turnstileSecretKey: env.TURNSTILE_SECRET_KEY || null,
+    turnstileVerifyUrl: env.TURNSTILE_VERIFY_URL ?? "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+  },
+  /** Códigos de verificación: topes por destino (correo o teléfono, sin importar el sobre) y por organización. */
+  otp: {
+    maxPerDestinationHour: Number(env.OTP_MAX_PER_DESTINATION_HOUR ?? 10),
+    maxPerDestinationDay: Number(env.OTP_MAX_PER_DESTINATION_DAY ?? 30),
+    maxPerTenantHour: Number(env.OTP_MAX_PER_TENANT_HOUR ?? 1000),
+  },
   /** Planes, cobros y servidor MCP (Fase 6). */
   billing: {
     /** Plan de las organizaciones sin suscripción. En producción "free"; fuera de producción "enterprise" (pruebas sin límites). */

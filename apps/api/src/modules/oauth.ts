@@ -186,12 +186,15 @@ async function assertCanManageServiceApp(db: Db, a: AuthContext, app: { service_
 
 /**
  * Cambiar las URI de redirección o rotar el secreto de una app ajena es quedarse con los códigos y tokens de quienes
- * ya confían en ella: solo quien la creó, un propietario o quien tiene todos los permisos de su creador. Si no, un rol
- * con api_keys:manage apuntaba la app "oficial" de un propietario a su servidor y mandaba el link de consentimiento.
+ * ya confían en ella: solo quien la creó (persona o API key vigente), un propietario o quien tiene todos los permisos de
+ * su creador. Si no, un rol con api_keys:manage apuntaba la app "oficial" de un propietario a su servidor y mandaba el
+ * link de consentimiento.
  */
-async function assertCanTakeOverApp(db: Db, a: AuthContext, app: { created_by?: string | null }, what: string) {
+async function assertCanTakeOverApp(db: Db, a: AuthContext, app: { created_by?: string | null; created_by_api_key_id?: string | null }, what: string) {
   if (a.access?.role === "owner") return;
   if (app.created_by && app.created_by === a.userId) return;
+  // La API key que la creó (directa, no la identidad de servicio de una app OAuth): si llegó acá está vigente.
+  if (app.created_by_api_key_id && !a.oauth && a.apiKeyId === app.created_by_api_key_id) return;
   const m = app.created_by
     ? await db.one<any>(`SELECT role, role_id FROM memberships WHERE user_id = $1 AND tenant_id = $2`, [app.created_by, a.tenantId])
     : null;
@@ -768,9 +771,9 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
     const creator = await actingPerson(s.db, a);
     await s.db.tx(async (t) => {
       await t.query(
-        `INSERT INTO oauth_clients (id, tenant_id, client_id, secret_hash, secret_prefix, name, description, redirect_uris, grant_types, scopes, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-        [id, a.tenantId, clientId, secret ? sha256Hex(secret) : null, secret ? secret.slice(0, 12) : null, input.name, input.description ?? null, input.redirectUris ?? [], input.grantTypes, input.scopes, creator],
+        `INSERT INTO oauth_clients (id, tenant_id, client_id, secret_hash, secret_prefix, name, description, redirect_uris, grant_types, scopes, created_by, created_by_api_key_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        [id, a.tenantId, clientId, secret ? sha256Hex(secret) : null, secret ? secret.slice(0, 12) : null, input.name, input.description ?? null, input.redirectUris ?? [], input.grantTypes, input.scopes, creator, a.oauth ? null : a.apiKeyId],
       );
       if (usesCc) {
         // Identidad de servicio: una API key interna sin secreto utilizable; da el rol y la propiedad de los sobres.

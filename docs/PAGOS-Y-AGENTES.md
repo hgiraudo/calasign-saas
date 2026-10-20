@@ -99,6 +99,23 @@ Precios mensuales por moneda en `packages/shared/src/billing.ts` (`PLAN_PRICES`;
 - **Control central**: `enforcePlanForRequest` (desde `access.ts`) para acceso por API y rutas de escritura de cada funcionalidad;
   `enforceEnvelopeQuota` dentro de `sendEnvelope` (cubre web, API, envío masivo y formularios). Respuesta: **402 `plan_limit`**
   con `details: { plan, limit|feature, used, max, suggestedPlan, upgradeUrl }`. Las lecturas nunca se bloquean.
+- **Formularios web y cupo**: cada envío del público en un formulario web (`/f/<slug>`) crea **y envía** un sobre que
+  cuenta para el cupo del mes de la organización (como cualquier otro). Para que un formulario público no agote el cupo:
+  60 sobres por hora por formulario (`WEBFORM_MAX_PER_FORM_HOUR`), 100 por hora y 500 por día sumando todos los
+  formularios de la organización (`WEBFORM_MAX_PER_TENANT_HOUR`, `WEBFORM_MAX_PER_TENANT_DAY`) → `429 form_rate_limited`;
+  el mismo correo en el mismo formulario dentro de 10 minutos (`WEBFORM_DEDUPE_MINUTES`) no crea otro sobre →
+  `429 form_recent_submission`; límite por IP (10 envíos por minuto, en IPv6 por /64). Desafío anti-bots opcional con
+  Cloudflare Turnstile: con `TURNSTILE_SITE_KEY` y `TURNSTILE_SECRET_KEY` la página pública muestra el desafío y el
+  envío exige su token (`400 captcha_failed`); sin las dos claves no cambia nada. Quien completa un formulario sin código
+  por correo no recibe la copia final por correo (no validó la dirección): la descarga desde su página de firma.
+  Modificar un formulario exige el plan con formularios web; desactivarlo (`active: false`) no.
+- **Envío masivo y cupo**: si las filas válidas superan los sobres que quedan en el cupo del mes, `POST /v1/bulk-sends`
+  responde `402 plan_limit` sin crear nada (`/validate` lo avisa en `quotaRemaining`); si el cupo se agota durante el
+  envío, las filas que faltan quedan fallidas sin intentarse y se pueden reintentar con
+  `POST /v1/bulk-sends/{id}/retry-failed`.
+- **Códigos de verificación (OTP)**: además de los topes por destinatario, como mucho 10 por hora y 30 por día al mismo
+  destino (correo o teléfono, sumando todos los sobres: `OTP_MAX_PER_DESTINATION_HOUR`, `OTP_MAX_PER_DESTINATION_DAY`) y
+  1000 por hora por organización (`OTP_MAX_PER_TENANT_HOUR`) → `429 otp_destination_limit` / `otp_tenant_limit`.
 - **Plan por defecto** (organizaciones sin suscripción): `BILLING_DEFAULT_PLAN`; si no se define, `free` en producción y
   `enterprise` fuera de producción (las pruebas no chocan con límites). Las organizaciones existentes al migrar quedaron en Business.
 - **Mes de cupo**: del día 1 a las 00:00 **UTC** (no en la zona de la organización): en UTC-3 el cupo se renueva el
@@ -119,8 +136,9 @@ Descubrimiento OAuth: `/.well-known/oauth-protected-resource` (RFC 9728) y `/.we
 
 Herramientas: `list_envelopes`, `get_envelope`, `get_signing_status`, `list_templates`, `get_account`,
 `create_envelope_from_template` y `create_envelope` (desde un PDF en base64 o URL https; por defecto crean en borrador; con
-`send: true` lo crean y lo envían en una sola llamada; aceptan `locale`: es, pt-BR, en; son idempotentes: los mismos
-argumentos, o el mismo `requestId`, devuelven el mismo sobre), `send_envelope`, `void_envelope` y `remind_recipients`.
+`send: true` lo crean y lo envían en una sola llamada; aceptan `locale`: es, pt-BR, en; son idempotentes: el mismo
+`requestId` (7 días; con `send: true` va dentro del `confirmToken`), el mismo `confirmToken`, o sin ellos los mismos
+argumentos dentro de ~10 minutos, devuelven el sobre ya creado recargado con su estado actual y `replayed: true`), `send_envelope`, `void_envelope` y `remind_recipients`.
 Las acciones con efecto (y la creación con `send: true`) van en **dos pasos**: sin `confirmToken` devuelven una vista
 previa con un `confirmToken` (HMAC con clave derivada de `SECRET_KEY` de acción + sobre o argumentos + `updatedAt` +
 credencial, 5 min); con él ejecutan, y enviar/anular/recordar mandan `X-Expected-Updated-At` con la versión aprobada

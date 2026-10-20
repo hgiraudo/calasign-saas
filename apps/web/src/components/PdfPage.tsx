@@ -4,6 +4,14 @@ import { useEffect, useRef, useState, type PointerEvent as RPointerEvent, type R
 import type { PageSize } from "@calasign/shared";
 import { TextLayer, type PDFDocumentProxy } from "../lib/pdf";
 
+/**
+ * Solo se liberan canvas en documentos de más páginas que esto. La impresión del navegador saca una foto de la página
+ * apenas termina `beforeprint` (síncrono) y pdf.js dibuja de forma asíncrona: una página liberada sale en blanco y no
+ * hay forma confiable de redibujarla a tiempo. En documentos cortos (la gran mayoría) la memoria no es un problema, así
+ * que no se libera nada y se imprimen completos; en los largos se prioriza no agotar la memoria del móvil.
+ */
+const RELEASE_MIN_PAGES = 20;
+
 interface Props {
   pdf: PDFDocumentProxy | null;
   pageIndex: number;
@@ -25,6 +33,9 @@ export function PdfPage({ pdf, pageIndex, size, overlay, onOverlayPointerDown, o
   const [rendered, setRendered] = useState(false);
   /** Se dibujó con pdf.js desde la última liberación (para no pedir la página solo para liberarla). */
   const drawnRef = useRef(false);
+  /** El documento es largo: hay presión de memoria y vale la pena liberar los canvas lejanos (ver RELEASE_MIN_PAGES). */
+  const releasableRef = useRef(false);
+  releasableRef.current = (pdf?.numPages ?? 0) > RELEASE_MIN_PAGES;
 
   // Ancho real del contenedor.
   useEffect(() => {
@@ -46,7 +57,10 @@ export function PdfPage({ pdf, pageIndex, size, overlay, onOverlayPointerDown, o
   // embebida) el root implícito es el viewport de la ventana de arriba y el navegador ignora rootMargin, así que las
   // páginas se liberaban apenas salían de pantalla y se redibujaban al volver. Si el navegador no acepta un Document
   // como root, se usa el implícito y, enmarcado, no se libera nada.
-  // Mientras se imprime no se libera (el cambio de layout de la impresión dispara los observadores).
+  // Solo en documentos largos (RELEASE_MIN_PAGES): así los cortos se imprimen completos.
+  // Mientras se imprime no se libera (el cambio de layout de la impresión dispara los observadores); al empezar a
+  // imprimir se piden todas las páginas (llegan a tiempo para la vista previa de impresión de los navegadores que la
+  // regeneran, no siempre para la primera foto) y al terminar se vuelve a evaluar cuáles están lejos.
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
@@ -55,14 +69,6 @@ export function PdfPage({ pdf, pageIndex, size, overlay, onOverlayPointerDown, o
       return;
     }
     let printing = false;
-    const onBeforePrint = () => {
-      printing = true;
-    };
-    const onAfterPrint = () => {
-      printing = false;
-    };
-    window.addEventListener("beforeprint", onBeforePrint);
-    window.addEventListener("afterprint", onAfterPrint);
     let canRelease = true;
     const observer = (cb: IntersectionObserverCallback, rootMargin: string) => {
       try {
@@ -78,10 +84,22 @@ export function PdfPage({ pdf, pageIndex, size, overlay, onOverlayPointerDown, o
     }, "100% 0px");
     const far = observer((entries) => {
       const last = entries[entries.length - 1];
-      if (canRelease && !printing && last && !last.isIntersecting) setVisible(false);
+      if (canRelease && !printing && releasableRef.current && last && !last.isIntersecting) setVisible(false);
     }, "300% 0px");
     near.observe(el);
     far.observe(el);
+    const onBeforePrint = () => {
+      printing = true;
+      setVisible(true);
+    };
+    const onAfterPrint = () => {
+      printing = false;
+      // Volver a observar entrega el estado actual: las páginas lejanas que se dibujaron para imprimir se liberan.
+      far.unobserve(el);
+      far.observe(el);
+    };
+    window.addEventListener("beforeprint", onBeforePrint);
+    window.addEventListener("afterprint", onAfterPrint);
     return () => {
       near.disconnect();
       far.disconnect();

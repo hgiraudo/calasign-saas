@@ -12,7 +12,7 @@ import { advanceRouting, currentSignerGroup, lockEnvelope, pastExpiry, sendPdf }
 import { toDocument, toField, loadDocuments } from "./mappers";
 import { loadSignatureImages, toStampFields } from "./stamp-fields";
 import { assertEmbeddableImage, renderProgressCopyPdf } from "@calasign/pdf";
-import { canDelegate, isEmbeddedSigner, isSignerAuthenticated, otpDestinationFor } from "./otp";
+import { canDelegate, isEmbeddedSigner, isSignerAuthenticated, isUnverifiedSelfRegistered, otpDestinationFor } from "./otp";
 import { checkValue, VALUE_FIELD_TYPES } from "./fieldvalues";
 import { brandForEnvelope, productLabel, publicTheme, rebrands } from "./white-label/brand";
 import { inPersonSessionInfo } from "./experience";
@@ -122,6 +122,7 @@ export async function buildSession(db: Db, token: string, r: any, e: any, authed
     canSign,
     signedAvailable: !blocked && e.status === "completed" && Boolean(e.signed_file_id),
     copyAvailable: !blocked && copyAllowed(r, e),
+    finalCopyByMessage: !isUnverifiedSelfRegistered(r),
     otpRequired,
     otpDestination: otpRequired ? otpDestinationFor(r) : null,
     canDelegate: canDelegate(r, e, await isEmbeddedSigner(db, r)),

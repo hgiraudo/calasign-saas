@@ -102,6 +102,33 @@ export async function isSignerAuthenticated(db: Db, req: FastifyRequest, r: any)
   return Boolean(row);
 }
 
+/** Destino normalizado para contar envíos (correo sin mayúsculas ni espacios; teléfono sin separadores). */
+export function normalizeOtpDestination(d: string): string {
+  const s = d.trim().toLowerCase();
+  return s.includes("@") ? s : s.replace(/[\s().-]/g, "");
+}
+
+/**
+ * Topes de códigos por destino (config.otp: por hora y por día, sumando todos los sobres y organizaciones) y por
+ * organización (por hora). Se llama dentro de la transacción del envío, antes de reservar el código.
+ */
+export async function assertOtpDestinationCapacity(db: Db, tenantId: string, destination: string) {
+  const dest = normalizeOtpDestination(destination);
+  // Los teléfonos ya se guardan en E.164 (sin separadores) y el correo se compara sin mayúsculas (índice lower(destination)).
+  const c = await db.one<{ h: number; d: number; t: number }>(
+    `SELECT (SELECT count(*) FROM otp_challenges WHERE lower(destination) = $1 AND created_at > now() - interval '1 hour')::int AS h,
+            (SELECT count(*) FROM otp_challenges WHERE lower(destination) = $1 AND created_at > now() - interval '1 day')::int AS d,
+            (SELECT count(*) FROM otp_challenges WHERE tenant_id = $2 AND created_at > now() - interval '1 hour')::int AS t`,
+    [dest, tenantId],
+  );
+  if (Number(c?.h ?? 0) >= config.otp.maxPerDestinationHour || Number(c?.d ?? 0) >= config.otp.maxPerDestinationDay) {
+    throw new AppError(429, "otp_destination_limit", "Se enviaron demasiados códigos a este destino. Probá más tarde.");
+  }
+  if (Number(c?.t ?? 0) >= config.otp.maxPerTenantHour) {
+    throw new AppError(429, "otp_tenant_limit", "Se enviaron demasiados códigos desde esta organización. Probá más tarde.");
+  }
+}
+
 function codeHash(recipientId: string, code: string) {
   return sha256Hex(`${recipientId}:${code}`);
 }
@@ -158,6 +185,10 @@ export async function otpRoutes(app: FastifyInstance, s: Services) {
           throw new AppError(429, "otp_daily_limit", "Se pidieron demasiados códigos hoy. Probá mañana o pedile al remitente un link nuevo.");
         }
       }
+      // Topes por destino (correo o teléfono, de cualquier sobre u organización) y por organización: el de arriba es por
+      // destinatario, y con muchos sobres al mismo destino (p. ej. un formulario web con código completado una y otra
+      // vez con el correo de otro) se podía bombardear esa dirección.
+      await assertOtpDestinationCapacity(t, e.tenant_id, destination);
       // Un código nuevo invalida los anteriores.
       await t.query(`UPDATE otp_challenges SET expires_at = LEAST(expires_at, now()) WHERE recipient_id = $1 AND verified_at IS NULL`, [r.id]);
       await t.query(

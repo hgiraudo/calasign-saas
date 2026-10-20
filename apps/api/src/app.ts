@@ -69,11 +69,14 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
     genReqId: () => crypto.randomUUID(),
   });
 
+  // Cloudflare Turnstile en los formularios web públicos (opcional): su script y su iframe, solo si está configurado.
+  const turnstile = config.webForms.turnstileSiteKey && config.webForms.turnstileSecretKey ? ["https://challenges.cloudflare.com"] : [];
   await app.register(helmet, {
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        scriptSrc: ["'self'"],
+        scriptSrc: ["'self'", ...turnstile],
+        ...(turnstile.length ? { frameSrc: ["'self'", ...turnstile] } : {}),
         // Google Fonts: tipografía de la marca blanca (white-label/brand.ts).
         styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
         imgSrc: ["'self'", "data:", "blob:"],

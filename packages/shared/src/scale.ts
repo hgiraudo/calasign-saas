@@ -68,6 +68,15 @@ export interface BulkValidationResult {
   errors: BulkRowError[];
   /** Encabezados reconocidos del CSV (vacío si vino en JSON). */
   columns: string[];
+  /** Filas válidas iguales a una anterior (mismos destinatarios y prellenado): se crearía un sobre repetido. */
+  duplicates?: { row: number; sameAs: number }[];
+  /**
+   * Sobres que quedan en el cupo del mes del plan (null: sin tope). Si las filas válidas lo superan, crear el envío
+   * responde 402 plan_limit.
+   */
+  quotaRemaining?: number | null;
+  /** Avisos que no impiden enviar (texto en español): filas repetidas, cupo insuficiente. */
+  warnings?: string[];
 }
 
 export interface BulkSend {
@@ -194,6 +203,11 @@ export interface PublicWebForm {
   locale: Locale;
   /** Token anti-bots: se devuelve en el envío. */
   formToken: string;
+  /**
+   * Clave pública de Cloudflare Turnstile si la plataforma exige el desafío (TURNSTILE_SITE_KEY y TURNSTILE_SECRET_KEY):
+   * el envío tiene que traer `captchaToken`. null: sin desafío.
+   */
+  captchaSiteKey?: string | null;
 }
 
 export const SubmitWebFormInput = z.object({
@@ -210,6 +224,8 @@ export const SubmitWebFormInput = z.object({
   /** Trampa para bots: tiene que llegar vacío. */
   website: z.string().max(500).optional().nullable(),
   embed: z.boolean().optional(),
+  /** Token de Cloudflare Turnstile (solo si el formulario público trae `captchaSiteKey`). */
+  captchaToken: z.string().max(4096).optional().nullable(),
 });
 export type SubmitWebFormInput = z.input<typeof SubmitWebFormInput>;
 

@@ -12,7 +12,7 @@ import { InvalidPdfError, preparePdfUpload } from "@calasign/pdf";
 import type { Db } from "../infra/db";
 import { appendEvent, type Actor } from "../infra/evidence";
 import { enqueue } from "../infra/queue";
-import { AppError, assertNotStale, badRequest, conflict, notFound } from "../lib/errors";
+import { AppError, assertNotStale, badRequest, conflict, notFound, STALE_GENERIC_MESSAGE } from "../lib/errors";
 import { encrypt, iso, queryList, randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { config } from "../config";
 import { assertEnvelopeAccess, envelopeVisibilitySql } from "./access";
@@ -427,7 +427,7 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
       const e = await lockEnvelope(t, a.tenantId, req.params.id);
       if (e.status !== "sent" && e.status !== "awaiting_certificates") throw conflict("not_voidable", "Solo se puede anular un sobre enviado y en curso");
       // X-Expected-Updated-At opcional (el MCP lo manda con la versión que el usuario aprobó en la vista previa).
-      assertNotStale(req.headers, e.updated_at);
+      assertNotStale(req.headers, e.updated_at, STALE_GENERIC_MESSAGE);
       await t.query(`UPDATE envelopes SET status = 'voided', voided_at = now(), void_reason = $2, updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 millisecond'), version = version + 1 WHERE id = $1`, [
         e.id,
         input.reason,
@@ -468,7 +468,7 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
     await s.db.tx(async (t) => {
       const e = await lockEnvelope(t, a.tenantId, req.params.id);
       // X-Expected-Updated-At opcional (el MCP lo manda con la versión que el usuario aprobó en la vista previa).
-      assertNotStale(req.headers, e.updated_at);
+      assertNotStale(req.headers, e.updated_at, STALE_GENERIC_MESSAGE);
       // Un recordatorio manual cada 10 minutos por sobre: cada uno puede ser un SMS o WhatsApp (con costo) por firmante,
       // y sin esto solo limitaba el rate limit de la ruta.
       const recent = await t.one(

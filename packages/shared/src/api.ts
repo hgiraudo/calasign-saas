@@ -439,6 +439,11 @@ export interface SigningSession {
   signedAvailable: boolean;
   /** Ya firmó (o es copia) y el sobre sigue en curso: puede bajar una copia con lo firmado hasta ahora. */
   copyAvailable: boolean;
+  /**
+   * false: no se le manda la copia final (se registró solo en un formulario web y no validó su correo); el documento
+   * final se descarga desde este link cuando todos terminan. Ausente equivale a true.
+   */
+  finalCopyByMessage?: boolean;
   /** true si falta validar el código (OTP): documentos y campos vienen vacíos hasta verificarlo. */
   otpRequired: boolean;
   /** Destino enmascarado del código (ej. jo***@mail.com). */

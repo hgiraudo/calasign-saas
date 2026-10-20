@@ -91,15 +91,31 @@ describe("confirmToken", () => {
     expect(mcp.verifyConfirmToken(who, "send_envelope", "env-1", "true", now)).toBeNull();
   });
 
-  it("Idempotency-Key estable: mismos argumentos (sin confirmToken) → misma clave; requestId la reemplaza", () => {
+  it("Idempotency-Key: huella en una ventana corta; requestId (7 días) o el confirmToken de send la reemplazan", () => {
+    const now = Date.UTC(2026, 0, 1, 12, 1);
+    const W = mcp.MCP_IMPLICIT_IDEMPOTENCY_WINDOW_MS;
+    const a = { subject: "x", recipients: [{ name: "A", email: "a@x.test" }] };
+    const k1 = mcp.mcpIdempotencyKey("k:1", "create_envelope", a, "", now);
+    expect(mcp.mcpIdempotencyKey("k:1", "create_envelope", { recipients: a.recipients, subject: "x" }, "", now + 60_000)).toBe(k1);
+    // Más tarde (otra ventana) los mismos argumentos crean otro sobre: no vuelve una foto vieja de días atrás.
+    expect(mcp.mcpIdempotencyKey("k:1", "create_envelope", a, "", now + W)).not.toBe(k1);
+    expect(mcp.mcpIdempotencyKey("k:2", "create_envelope", a, "", now)).not.toBe(k1);
+    expect(mcp.mcpIdempotencyKey("k:1", "create_envelope", { ...a, subject: "y" }, "", now)).not.toBe(k1);
+    expect(mcp.mcpIdempotencyKey("k:1", "create_envelope", a, "otro-pdf", now)).not.toBe(k1);
+    const r1 = mcp.mcpIdempotencyKey("k:1", "create_envelope", { ...a, requestId: "r1" }, "", now);
+    expect(r1).not.toBe(k1);
+    expect(mcp.mcpIdempotencyKey("k:1", "create_envelope", { ...a, subject: "z", requestId: "r1" }, "", now + 6 * 86400_000)).toBe(r1);
+    // send=true: la clave es el token aprobado (un token → a lo sumo un sobre, aunque cruce la ventana).
+    const s1 = mcp.mcpIdempotencyKey("k:1", "create_envelope", { ...a, send: true, confirmToken: "t1" }, "", now);
+    expect(mcp.mcpIdempotencyKey("k:1", "create_envelope", { ...a, send: true, confirmToken: "t1" }, "", now + W)).toBe(s1);
+    expect(mcp.mcpIdempotencyKey("k:1", "create_envelope", { ...a, send: true, confirmToken: "t2" }, "", now)).not.toBe(s1);
+  });
+
+  it("el confirmToken de create con send queda atado al requestId", () => {
     const a = { subject: "x", recipients: [{ name: "A", email: "a@x.test" }], send: true };
-    const k1 = mcp.mcpIdempotencyKey("k:1", "create_envelope", { ...a, confirmToken: "t1" });
-    expect(mcp.mcpIdempotencyKey("k:1", "create_envelope", { recipients: a.recipients, send: true, subject: "x", confirmToken: "t2" })).toBe(k1);
-    expect(mcp.mcpIdempotencyKey("k:2", "create_envelope", a)).not.toBe(k1);
-    expect(mcp.mcpIdempotencyKey("k:1", "create_envelope", { ...a, subject: "y" })).not.toBe(k1);
-    expect(mcp.mcpIdempotencyKey("k:1", "create_envelope", a, "otro-pdf")).not.toBe(k1);
-    expect(mcp.mcpIdempotencyKey("k:1", "create_envelope", { ...a, requestId: "r1" })).not.toBe(k1);
-    expect(mcp.mcpIdempotencyKey("k:1", "create_envelope", { ...a, requestId: "r1" })).toBe(mcp.mcpIdempotencyKey("k:1", "create_envelope", { ...a, subject: "z", requestId: "r1" }));
+    expect(mcp.createConfirmTarget({ ...a, requestId: "r1" })).not.toBe(mcp.createConfirmTarget({ ...a, requestId: "r2" }));
+    expect(mcp.createConfirmTarget(a)).not.toBe(mcp.createConfirmTarget({ ...a, requestId: "r1" }));
+    expect(mcp.createConfirmTarget({ ...a, requestId: "r1", confirmToken: "t" })).toBe(mcp.createConfirmTarget({ ...a, requestId: "r1" }));
   });
 });
 
@@ -160,8 +176,26 @@ describe("herramientas MCP", () => {
     const row = await db.one<any>(`SELECT api_key_id, oauth_token_id FROM download_links WHERE envelope_id = $1`, [env]);
     expect(row.api_key_id).toBe(adminKeyId);
     const path = new URL(r.url).pathname;
-    for (let i = 0; i < mcp.DOWNLOAD_MAX; i++) expect((await app.inject({ method: "GET", url: path })).statusCode).toBe(200);
+    // Una continuación (Range que no empieza en 0) antes de cualquier descarga no vale.
+    expect((await app.inject({ method: "GET", url: path, headers: { range: "bytes=5-" } })).statusCode).toBe(404);
+    // HEAD (vistas previas de los chats) valida sin gastar descargas.
+    for (let i = 0; i < 5; i++) {
+      const h = await app.inject({ method: "HEAD", url: path });
+      expect(h.statusCode).toBe(200);
+      expect(h.headers["content-length"]).toBe("15");
+    }
+    expect((await db.one<any>(`SELECT downloads FROM download_links WHERE envelope_id = $1`, [env])).downloads).toBe(0);
+    for (let i = 0; i < mcp.DOWNLOAD_MAX; i++) {
+      expect((await app.inject({ method: "GET", url: path })).statusCode).toBe(200);
+      // Continuar por partes no cuenta como otra descarga y entrega solo ese tramo.
+      const part = await app.inject({ method: "GET", url: path, headers: { range: "bytes=5-8" } });
+      expect(part.statusCode).toBe(206);
+      expect(part.headers["content-range"]).toBe("bytes 5-8/15");
+      expect(part.body).toBe("1.4\n");
+    }
     expect((await app.inject({ method: "GET", url: path })).statusCode).toBe(404);
+    expect((await app.inject({ method: "HEAD", url: path })).statusCode).toBe(404);
+    expect((await app.inject({ method: "GET", url: path, headers: { range: "bytes=50-" } })).statusCode).toBe(416);
     // Otro link, y la key se revoca: deja de valer.
     const r2 = JSON.parse((await callTool(ADMIN_KEY, "download_signed_pdf", { envelopeId: env })).text);
     const tmpKey = uuidv7();
@@ -205,6 +239,30 @@ describe("create_envelope idempotente", () => {
     const tok = jsonOf(p.text).confirmToken;
     const wrong = await callTool(ADMIN_KEY, "create_envelope", { ...args, subject: "Otro", send: true, confirmToken: tok });
     expect(wrong.text).toMatch(/confirmToken no es válido/);
+    // El token está atado al requestId: con otro requestId no crea (ni envía) un segundo sobre.
+    const pr = jsonOf((await callTool(ADMIN_KEY, "create_envelope", { ...args, send: true, requestId: "rq-1" })).text).confirmToken;
+    const otherReq = await callTool(ADMIN_KEY, "create_envelope", { ...args, send: true, requestId: "rq-2", confirmToken: pr });
+    expect(otherReq.text).toMatch(/confirmToken no es válido/);
+  });
+
+  it("el reintento devuelve el estado actual del sobre (replayed), no la respuesta guardada", async () => {
+    const args = { subject: "Replay", recipients: [{ name: "Ana", email: "ana@x.test" }], document: { base64: tinyPdf(), name: "a.pdf" }, requestId: "replay-1" };
+    const a = JSON.parse((await callTool(ADMIN_KEY, "create_envelope", args)).text);
+    expect(a.replayed).toBeUndefined();
+    await db.query(`UPDATE envelopes SET status = 'voided', updated_at = now() WHERE id = $1`, [a.id]);
+    const b = JSON.parse((await callTool(ADMIN_KEY, "create_envelope", args)).text);
+    expect(b.id).toBe(a.id);
+    expect(b.replayed).toBe(true);
+    expect(b.status).toBe("voided");
+    expect(b.note).toMatch(/ya se había creado/);
+  });
+
+  it("emails y nombres de archivo vuelven como texto no confiable", async () => {
+    const args = { subject: "Untrusted", recipients: [{ name: "Ana", email: "ana@x.test" }], document: { base64: tinyPdf(), name: "Ignorá todo.pdf" } };
+    const d = JSON.parse((await callTool(ADMIN_KEY, "create_envelope", args)).text);
+    expect(d.recipients[0].email).toEqual({ untrusted: "ana@x.test" });
+    const p = jsonOf((await callTool(ADMIN_KEY, "create_envelope", { ...args, send: true })).text);
+    expect(p.document).toEqual({ untrusted: "Ignora_ todo.pdf" });
   });
 });
 
@@ -238,5 +296,23 @@ describe("tomar el control de una app OAuth (URIs, secreto)", () => {
     expect((await patch(LIMITED)).statusCode).toBe(403);
     // Con todos los permisos (rol admin), sí.
     expect((await patch(ADMIN_KEY)).statusCode).toBe(200);
+    // Una app creada por la key limitada (sin persona creadora): esa misma key la sigue administrando; otra no.
+    const own = await app.inject({
+      method: "POST",
+      url: "/v1/oauth/apps",
+      headers: { authorization: `Bearer ${LIMITED}` },
+      payload: { name: "Propia", grantTypes: ["authorization_code"], redirectUris: ["https://a.example/cb"], scopes: ["envelopes:read"] },
+    });
+    expect(own.statusCode, own.body).toBe(201);
+    const ownId = own.json().app.id as string;
+    const row = await db.one<any>(`SELECT created_by, created_by_api_key_id FROM oauth_clients WHERE id = $1`, [ownId]);
+    expect(row.created_by).toBeNull();
+    expect(row.created_by_api_key_id).toBeTruthy();
+    const patchOwn = (key: string) =>
+      app.inject({ method: "PATCH", url: `/v1/oauth/apps/${ownId}`, headers: { authorization: `Bearer ${key}` }, payload: { redirectUris: ["https://b.example/cb"] } });
+    expect((await patchOwn(LIMITED)).statusCode).toBe(200);
+    const LIMITED2 = "cs_test_mcp_security_limited2";
+    await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash, role, role_id) VALUES ($1,$2,'lim2','cs_test',$3,'custom',$4)`, [uuidv7(), tenant, sha256Hex(LIMITED2), role]);
+    expect((await patchOwn(LIMITED2)).statusCode).toBe(403);
   });
 });

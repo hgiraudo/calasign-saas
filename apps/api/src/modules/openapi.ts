@@ -648,7 +648,7 @@ const OPS: Op[] = [
     tag: "Envío masivo",
     summary: "Validar filas sin crear nada",
     description:
-      "Mismo cuerpo que POST /v1/bulk-sends. Cada fila se valida como un POST /v1/envelopes/from-template (roles, contactos, prefill). CSV con coma, punto y coma o tabulador; alias de columna en español y portugués (nombre, correo, telefono, canales…). Cuerpo de hasta 12 MB.",
+      "Mismo cuerpo que POST /v1/bulk-sends. Cada fila se valida como un POST /v1/envelopes/from-template (roles, contactos, prefill). CSV con coma, punto y coma o tabulador (el que más aparece en el encabezado); alias de columna en español y portugués (nombre, correo, telefono, canales…). Columnas repetidas o una comilla sin cerrar → 422 invalid_csv. Cuerpo de hasta 12 MB y 5000 filas. Avisa (sin rechazar) filas repetidas (`duplicates`) y si las filas válidas superan el cupo del mes (`quotaRemaining`).",
     body: CreateBulkSendInput,
     response: BulkValidationResultSchema,
     errors: ["template_empty", "invalid_csv", "no_rows", "too_many_rows", "plan_limit_bulk_send"],
@@ -660,13 +660,13 @@ const OPS: Op[] = [
     tag: "Envío masivo",
     summary: "Lanzar un envío masivo",
     description:
-      "Valida todas las filas antes de crear nada; con `skipInvalid: true` las inválidas quedan como failed y se envían las demás. Los sobres se crean y envían en segundo plano (un sobre por fila, de a 20), a nombre de quien lo lanza; cada uno lleva `bulkSendId` y `bulkRow` en metadata. Seguir el progreso con GET /v1/bulk-sends/{id}." +
+      "Valida todas las filas antes de crear nada; con `skipInvalid: true` las inválidas quedan como failed y se envían las demás. Los sobres se crean y envían en segundo plano (un sobre por fila, de a 20), a nombre de quien lo lanza; cada uno lleva `bulkSendId` y `bulkRow` en metadata. Si las filas válidas superan los sobres que quedan en el cupo del mes, 402 plan_limit (no se crea nada); si el cupo se agota durante el envío, las filas que faltan quedan failed. Seguir el progreso con GET /v1/bulk-sends/{id}." +
       IDEMPOTENT_NOTE,
     body: CreateBulkSendInput,
     status: 201,
     response: BulkSendSchema,
     idempotent: true,
-    errors: ["template_empty", "invalid_csv", "no_rows", "too_many_rows", "rows_invalid", "plan_limit_bulk_send"],
+    errors: ["template_empty", "invalid_csv", "no_rows", "too_many_rows", "rows_invalid", "plan_limit_bulk_send", "plan_limit_envelopes"],
   },
   {
     method: "get",
@@ -710,6 +710,17 @@ const OPS: Op[] = [
     response: BulkSendSchema,
     errors: ["not_cancellable"],
   },
+  {
+    method: "post",
+    path: "/v1/bulk-sends/{id}/retry-failed",
+    operationId: "retryFailedBulkSendRows",
+    tag: "Envío masivo",
+    summary: "Reintentar las filas fallidas",
+    description:
+      "Vuelve a encolar las filas failed cuyos datos son válidos (las que fallaron por el cupo, la plantilla o un error interno); las de datos inválidos siguen failed y se corrigen en un envío nuevo. Mismos permisos que crear (envelopes:create y el plan con envío masivo); lo hace quien lo lanzó o quien tiene envelopes:manage_all. Si no entran en el cupo del mes, 402 plan_limit. Un envío cancelado no se reintenta (409 not_retryable).",
+    response: BulkSendSchema,
+    errors: ["nothing_to_retry", "plan_limit_bulk_send", "plan_limit_envelopes"],
+  },
 
   // Formularios web
   {
@@ -728,7 +739,7 @@ const OPS: Op[] = [
     tag: "Formularios web",
     summary: "Crear formulario",
     description:
-      "Quien completa el formulario toma el rol `signerRoleId`: tiene que ser un rol signer del primer turno de la plantilla y sin destinatario fijo (si no, 400 invalid_role); los demás roles van en `fixedRecipients`. Un formulario `embeddable` no puede pedir código por correo (`requireOtp`): 400 invalid_form. Los sobres se crean a nombre de quien crea el formulario. Cada formulario crea como mucho 60 sobres por hora (después, 429 form_rate_limited).",
+      "Quien completa el formulario toma el rol `signerRoleId`: tiene que ser un rol signer del primer turno de la plantilla y sin destinatario fijo (si no, 400 invalid_role); los demás roles van en `fixedRecipients`. Un formulario `embeddable` no puede pedir código por correo (`requireOtp`): 400 invalid_form. Los sobres se crean a nombre de quien crea el formulario y cada envío del público crea y envía un sobre que cuenta para el cupo del plan. Topes: 60 sobres por hora por formulario y 100 por hora / 500 por día sumando todos los formularios de la organización (configurables por la plataforma; después, 429 form_rate_limited); el mismo correo en el mismo formulario dentro de 10 minutos no crea otro sobre (429 form_recent_submission). Los campos de quien completa el formulario cubiertos por `prefill` quedan de solo lectura.",
     body: WebFormInput,
     status: 201,
     response: WebFormSchema,
@@ -742,10 +753,10 @@ const OPS: Op[] = [
     tag: "Formularios web",
     summary: "Modificar",
     description:
-      "Lo hace quien lo creó o quien tiene envelopes:manage_all. La plantilla no se puede cambiar. Mismas reglas que al crear: el rol de quien completa tiene que ser signer, del primer turno y sin destinatario fijo (400 invalid_role); `embeddable` con `requireOtp` → 400 invalid_form.",
+      "Lo hace quien lo creó o quien tiene envelopes:manage_all. La plantilla no se puede cambiar. Mismas reglas que al crear: el rol de quien completa tiene que ser signer, del primer turno y sin destinatario fijo (400 invalid_role); `embeddable` con `requireOtp` → 400 invalid_form. Exige formularios web en el plan (402), salvo para desactivarlo (`active: false`), así se puede apagar tras bajar de plan.",
     body: UpdateWebFormInput,
     response: WebFormSchema,
-    errors: ["invalid_role", "invalid_form"],
+    errors: ["invalid_role", "invalid_form", "plan_limit_web_forms"],
   },
   { method: "delete", path: "/v1/web-forms/{id}", operationId: "deleteWebForm", tag: "Formularios web", summary: "Borrar", response: "none", status: 204 },
   {

@@ -1,11 +1,65 @@
 // Página pública de un formulario web (/f/:slug): la persona deja nombre y correo y entra directo a firmar.
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { contrastText, type PublicWebForm, type SubmitWebFormResponse } from "@calasign/shared";
 import { api, errorText, HttpError } from "../lib/api";
 import { useI18n } from "../lib/i18n";
 import { useScaleText } from "../lib/i18n-scale";
 import { ErrorBox, LocaleSwitcher, Logo, Spinner } from "../components/ui";
+
+type TurnstileApi = {
+  render: (el: HTMLElement, o: { sitekey: string; callback: (t: string) => void; "expired-callback": () => void; "error-callback": () => void; language?: string }) => string;
+  reset: (id: string) => void;
+  remove: (id: string) => void;
+};
+
+/** Script de Cloudflare Turnstile (una sola vez por página). */
+let turnstileScript: Promise<TurnstileApi> | null = null;
+function loadTurnstile(): Promise<TurnstileApi> {
+  const w = window as unknown as { turnstile?: TurnstileApi };
+  if (w.turnstile) return Promise.resolve(w.turnstile);
+  turnstileScript ??= new Promise((resolve, reject) => {
+    const el = Object.assign(document.createElement("script"), { src: "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit", async: true });
+    el.onload = () => (w.turnstile ? resolve(w.turnstile) : reject(new Error("turnstile")));
+    el.onerror = () => {
+      turnstileScript = null;
+      reject(new Error("turnstile"));
+    };
+    document.head.appendChild(el);
+  });
+  return turnstileScript;
+}
+
+/** Desafío anti-bots (solo si la plataforma lo configuró: el formulario trae captchaSiteKey). */
+function Captcha({ siteKey, locale, onToken, resetSignal }: { siteKey: string; locale: string; onToken: (t: string | null) => void; resetSignal: number }) {
+  const box = useRef<HTMLDivElement>(null);
+  const widget = useRef<{ api: TurnstileApi; id: string } | null>(null);
+  useEffect(() => {
+    let gone = false;
+    loadTurnstile()
+      .then((api) => {
+        if (gone || !box.current) return;
+        const id = api.render(box.current, { sitekey: siteKey, callback: (t) => onToken(t), "expired-callback": () => onToken(null), "error-callback": () => onToken(null), language: locale });
+        widget.current = { api, id };
+      })
+      .catch(() => onToken(null));
+    return () => {
+      gone = true;
+      if (widget.current) widget.current.api.remove(widget.current.id);
+      widget.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [siteKey]);
+  // El token es de un solo uso: después de un envío rechazado se pide otro.
+  useEffect(() => {
+    if (resetSignal && widget.current) {
+      onToken(null);
+      widget.current.api.reset(widget.current.id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resetSignal]);
+  return <div ref={box} />;
+}
 
 export function PublicFormPage() {
   const { slug = "" } = useParams();
@@ -22,6 +76,8 @@ export function PublicFormPage() {
   const [website, setWebsite] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [captcha, setCaptcha] = useState<string | null>(null);
+  const [captchaReset, setCaptchaReset] = useState(0);
 
   useEffect(() => {
     api<PublicWebForm>(`/v1/public/forms/${encodeURIComponent(slug)}`)
@@ -37,13 +93,16 @@ export function PublicFormPage() {
   const submitError = (err: unknown) => {
     if (err instanceof HttpError && err.code === "invalid_form_token") return st("pub.err.formToken");
     if (err instanceof HttpError && err.code === "too_fast") return st("pub.err.tooFast");
+    if (err instanceof HttpError && err.code === "captcha_failed") return st("pub.err.captcha");
+    if (err instanceof HttpError && err.code === "form_recent_submission") return st("pub.err.recent");
+    if (err instanceof HttpError && err.code === "form_rate_limited") return st("pub.err.busy");
     return errorText(err);
   };
 
   const send = (formToken: string) =>
     api<SubmitWebFormResponse>(`/v1/public/forms/${encodeURIComponent(slug)}/submit`, {
       method: "POST",
-      body: { name: name.trim(), email: email.trim(), phone: phone.trim() || null, locale, formToken, website, embed },
+      body: { name: name.trim(), email: email.trim(), phone: phone.trim() || null, locale, formToken, website, embed, captchaToken: captcha },
     });
 
   const submit = async (e: FormEvent) => {
@@ -68,11 +127,14 @@ export function PublicFormPage() {
           }
         } catch (retryErr) {
           setError(submitError(retryErr));
+          if (form.captchaSiteKey) setCaptchaReset((n) => n + 1);
         }
         setBusy(false);
         return;
       }
       setError(submitError(err));
+      // El desafío ya se usó (salvo que el rechazo fuera antes de verificarlo): se pide uno nuevo.
+      if (form.captchaSiteKey && !(err instanceof HttpError && err.code === "too_fast")) setCaptchaReset((n) => n + 1);
       setBusy(false);
     }
   };
@@ -128,9 +190,11 @@ export function PublicFormPage() {
                   <input tabIndex={-1} autoComplete="off" value={website} onChange={(e) => setWebsite(e.target.value)} />
                 </label>
                 {form.requireOtp && <p className="muted small">🔒 {st("pub.otpNote")}</p>}
-                <p className="muted small">{st("pub.copyNote")}</p>
+                {/* Sin código por correo no se valida la dirección: la copia final no se manda, se descarga al terminar. */}
+                <p className="muted small">{st(form.requireOtp ? "pub.copyNote" : "pub.copyNoteDownload")}</p>
+                {form.captchaSiteKey && <Captcha siteKey={form.captchaSiteKey} locale={locale} onToken={setCaptcha} resetSignal={captchaReset} />}
                 <ErrorBox error={error} />
-                <button type="submit" className="btn btn-accent btn-block" disabled={busy}>
+                <button type="submit" className="btn btn-accent btn-block" disabled={busy || Boolean(form.captchaSiteKey && !captcha)}>
                   {busy ? st("pub.sending") : `${st("pub.continue")} →`}
                 </button>
               </form>

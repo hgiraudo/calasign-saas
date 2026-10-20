@@ -287,6 +287,16 @@ export function BulkNewPage() {
                     </>
                   )}
                 </p>
+                {(result.duplicates?.length ?? 0) > 0 && (
+                  <p className="small warn-text" role="status">
+                    ⚠ {st("bulk.duplicates", { n: result.duplicates!.length, rows: result.duplicates!.slice(0, 10).map((d) => `${d.row} (= ${d.sameAs})`).join(", ") + (result.duplicates!.length > 10 ? "…" : "") })}
+                  </p>
+                )}
+                {result.quotaRemaining != null && result.valid > result.quotaRemaining && (
+                  <p className="small err-text" role="status">
+                    ⚠ {st("bulk.quotaShort", { valid: result.valid, remaining: result.quotaRemaining })}
+                  </p>
+                )}
                 {result.invalid === 0 ? (
                   <p className="ok-text small">✓ {st("bulk.allValid")}</p>
                 ) : (
@@ -406,6 +416,20 @@ export function BulkDetailPage() {
     }
   };
 
+  // Filas fallidas por un problema del momento (cupo, plantilla, error interno): se vuelven a encolar.
+  const retryFailed = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      setB(await api<BulkSend>(`/v1/bulk-sends/${id}/retry-failed`, { method: "POST" }));
+      await load();
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const filters = useMemo(() => ["", "sent", "failed", "pending", "cancelled"], []);
 
   if (!b) return loadError ? <ErrorBox error={loadError} /> : <Spinner />;
@@ -425,6 +449,11 @@ export function BulkDetailPage() {
           <a className="btn" href={`/v1/bulk-sends/${b.id}/results.csv`} download>
             ⬇ {st("bulk.downloadResults")}
           </a>
+          {b.status !== "cancelled" && b.failed > 0 && (
+            <button type="button" className="btn" disabled={busy} onClick={retryFailed}>
+              ↻ {st("bulk.retryFailed")}
+            </button>
+          )}
           {running && (
             <button type="button" className="btn btn-danger" onClick={() => setConfirm(true)}>
               {st("bulk.cancel")}

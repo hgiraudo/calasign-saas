@@ -209,7 +209,8 @@ export function SignerPage() {
   const download = session.signedAvailable ? (
     <>
       <SignerDownload path={`${base}/signed.pdf`} name={session.envelope.subject} primary label={t("sign.downloadSigned")} onAuth={reload} />
-      <RequestCopyButton base={base} />
+      {/* Sin correo validado (formulario web) no se le manda la copia: solo la descarga. */}
+      {session.finalCopyByMessage !== false && <RequestCopyButton base={base} />}
     </>
   ) : session.copyAvailable ? (
     <>
@@ -243,9 +244,11 @@ export function SignerPage() {
               ? t("sign.doneAvailable")
               : sealing
                 ? t("sign.sealing")
-                : recipient.role === "approver"
-                  ? sx("approve.doneText")
-                  : t("sign.doneText")
+                : session.finalCopyByMessage === false
+                  ? t("sign.doneTextDownload")
+                  : recipient.role === "approver"
+                    ? sx("approve.doneText")
+                    : t("sign.doneText")
           }
         >
           {download}

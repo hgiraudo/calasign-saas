@@ -173,7 +173,8 @@ export async function cancelPendingSubscriptions(d: { db: Db; log: { error: (o: 
   for (const r of rows) {
     if (down.has(r.provider)) continue;
     await cancelReplacedSubscription(d.db, { provider: r.provider, id: r.subscription_id }).catch((err) => {
-      if (!(err instanceof ProviderError && err.status >= 400 && err.status < 500)) down.add(r.provider);
+      // Proveedor caído (5xx, red, timeout, 408 o 429 por límite de pedidos): el resto de sus filas espera al próximo barrido.
+      if (!(err instanceof ProviderError && err.status >= 400 && err.status < 500 && err.status !== 408 && err.status !== 429)) down.add(r.provider);
       const ctx = { err: String(err), tenantId: r.tenant_id, provider: r.provider, subscriptionId: r.subscription_id, attempts: r.attempts + 1 };
       if (r.attempts + 1 >= SUBSCRIPTION_CANCEL_MAX_ATTEMPTS) {
         d.log.error({ ...ctx, alert: true }, "ALERTA: no se pudo cancelar una suscripción reemplazada tras el máximo de intentos; cancelarla a mano en el proveedor");
@@ -228,7 +229,11 @@ const isPlan = (p: unknown): p is PlanId => typeof p === "string" && (PLAN_IDS a
 
 // ───────────────────────────── Stripe ─────────────────────────────
 
-export async function handleStripeEvent(db: Db, event: any) {
+/** Logger mínimo de los manejadores de eventos (req.log en la ruta; los tests pueden omitirlo). */
+type WarnLog = { warn: (o: object, m: string) => void };
+const silentLog: WarnLog = { warn: () => {} };
+
+export async function handleStripeEvent(db: Db, event: any, log: WarnLog = silentLog) {
   const obj = event?.data?.object ?? {};
   switch (event.type) {
     case "checkout.session.completed":
@@ -272,7 +277,15 @@ export async function handleStripeEvent(db: Db, event: any) {
         // cancelada y se cancelaba la pagada. Si la consulta falla, el evento falla y Stripe lo reintenta.
         // También trae la fecha de renovación (si no, quedaba vacía, o la de la suscripción anterior, hasta el primer "updated").
         const live = await stripeGetSubscription(subscriptionId);
-        if (live.status !== "active" && live.status !== "trialing") return;
+        if (live.status !== "active" && live.status !== "trialing") {
+          // Pagado pero no activa (past_due, incomplete, canceled…): no se aplica. Si es un alta real que quedó trabada,
+          // el cliente pagó y sigue en su plan anterior: se deja rastro para revisarla.
+          log.warn(
+            { alert: true, tenantId, plan, subscriptionId, status: live.status, eventId: event.id },
+            "ALERTA: checkout de suscripción completado con la suscripción no activa en Stripe; no se aplicó el plan",
+          );
+          return;
+        }
         const renewsAt = live.periodEnd;
         await changeSubscription(
           db,
@@ -471,7 +484,7 @@ export async function billingWebhookRoutes(app: FastifyInstance, s: Services) {
         return reply.code(400).send({ error: { code: "invalid_json", message: "JSON inválido" } });
       }
       if (!event?.id) return { received: true, duplicate: true };
-      const claim = await processWebhookEvent(s.db, "stripe", event.id, () => handleStripeEvent(s.db, event));
+      const claim = await processWebhookEvent(s.db, "stripe", event.id, () => handleStripeEvent(s.db, event, req.log));
       return claimReply(reply, claim);
     });
 

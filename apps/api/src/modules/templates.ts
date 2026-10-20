@@ -527,6 +527,8 @@ export interface TemplatePlan {
   assigned: Map<string, FromTemplateInput["recipients"][number]>;
   /** Valor final de cada campo de la plantilla (prellenado o el fijado en la plantilla). */
   values: Map<string, string | null>;
+  /** Campos de la plantilla cuyo valor vino del prellenado del pedido. */
+  prefilled?: Set<string>;
 }
 
 /** Valida destinatarios y prellenado contra la plantilla, sin tocar la base. Lanza AppError con el problema. */
@@ -568,7 +570,7 @@ export function planFromTemplate(l: LoadedTemplate, input: FromTemplateInput): T
     }
     values.set(f.id, value);
   }
-  return { assigned, values };
+  return { assigned, values, prefilled: new Set(prefill.keys()) };
 }
 
 export interface FromTemplateContext {
@@ -588,6 +590,8 @@ export async function insertEnvelopeFromTemplate(
   extraMetadata: Record<string, unknown> = {},
   /** Recibe rol de la plantilla → id del destinatario creado. */
   onRecipients?: (byRole: Map<string, string>) => void,
+  /** lockPrefillRoles: roles de la plantilla cuyos campos prellenados quedan de solo lectura (formularios web). */
+  opts: { lockPrefillRoles?: string[] } = {},
 ): Promise<string> {
   const { tpl, row: tplRow, docs: tplDocs } = l;
   const envId = uuidv7();
@@ -675,6 +679,7 @@ export async function insertEnvelopeFromTemplate(
     const documentId = docMap.get(f.documentId);
     if (!recipientId || !documentId) continue;
     const value = plan.values.get(f.id) ?? null;
+    const lockPrefill = Boolean(opts.lockPrefillRoles?.includes(f.roleId) && plan.prefilled?.has(f.id) && value !== null && value !== "");
     fieldMap.set(f.id, uuidv7());
     await insertEnvelopeField(t, {
       id: fieldMap.get(f.id)!,
@@ -691,7 +696,7 @@ export async function insertEnvelopeFromTemplate(
       required: f.required,
       label: f.label,
       value,
-      readOnly: Boolean(f.readOnly && value),
+      readOnly: Boolean(f.readOnly && value) || lockPrefill,
       options: f.options,
       min: f.min,
       max: f.max,

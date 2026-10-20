@@ -8,7 +8,7 @@ import { config } from "../../config";
 import { uuidv7 } from "../../lib/util";
 import { deliver } from "../../notifications/channels";
 import { getAiProvider } from "./provider";
-import { assertAiAvailable, inputEstimate, isAiError, loadEnvelopeDocs, recordAiUse, saveMetadata, withAiReservation } from "./service";
+import { assertAiAvailable, inputEstimate, isAiError, loadEnvelopeDocs, recordAiUse, saveMetadata, withAiReservation, callModel } from "./service";
 import type { AppError } from "../../lib/errors";
 
 interface Deps {
@@ -86,7 +86,7 @@ export async function runAiSweep(d: Deps, now = new Date()) {
       await assertAiAvailable(d.db, e.tenant_id, { reserve: false }); // antes de analizar el PDF
       const docs = await loadEnvelopeDocs(d.db, d.blobs, e.id);
       const rid = await assertAiAvailable(d.db, e.tenant_id, { estimate: inputEstimate(docs) });
-      const r = await withAiReservation(d.db, e.tenant_id, () => getAiProvider().extractMetadata(docs), rid);
+      const r = await withAiReservation(d.db, e.tenant_id, () => callModel(() => getAiProvider().extractMetadata(docs)), rid);
       await saveMetadata(d.db, e.id, e.tenant_id, r.result.metadata, r.result.confidence, "ai");
       await recordAiUse(d.db, { reservationId: rid, tenantId: e.tenant_id, envelopeId: e.id, feature: "extract_metadata", usage: r.usage, actor: SYSTEM, data: { automatic: true } });
       extracted++;
@@ -97,7 +97,9 @@ export async function runAiSweep(d: Deps, now = new Date()) {
       const det = (err as AppError)?.details as { used?: number; budget?: number } | undefined;
       const monthSpent = isAiError(err) && ((err as AppError).code === "ai_disabled" || (det?.used != null && det.budget != null && det.used >= det.budget));
       // Falla transitoria (BYOK o almacenamiento caídos, lector de PDF ocupado): no cuenta como intento, se reintenta más tarde.
-      const transient = (err as AppError)?.status === 503;
+      // También el proveedor de IA saturado o caído (429, 5xx, sin conexión: callModel lo traduce a 503 ai_rate_limited o
+      // 502 ai_unavailable); antes contaba como intento y ese sobre no se volvía a tomar nunca.
+      const transient = (err as AppError)?.status === 503 || (err as AppError)?.code === "ai_unavailable";
       if (monthSpent) await d.db.query(`UPDATE envelopes SET ai_metadata_attempted_at = NULL WHERE id = $1`, [e.id]);
       // Transitoria: se reintenta en una hora (no en la próxima pasada).
       else if (transient) await d.db.query(`UPDATE envelopes SET ai_metadata_retry_at = now() + interval '1 hour' WHERE id = $1`, [e.id]);
@@ -113,6 +115,8 @@ export async function runAiSweep(d: Deps, now = new Date()) {
      FROM envelopes e
      -- Solo si el remitente sigue en la organización: a alguien que se fue no se le mandan datos de sus contratos.
      LEFT JOIN users u ON u.id = e.created_by AND EXISTS (SELECT 1 FROM memberships m WHERE m.user_id = u.id AND m.tenant_id = e.tenant_id)
+     -- Con la IA apagada o los avisos en 0 en la organización no sale ninguno (aunque estuviera programado).
+     JOIN tenants t ON t.id = e.tenant_id AND t.ai_enabled AND t.ai_renewal_alert_days > 0
      WHERE e.ai_renewal_alert_at IS NOT NULL AND e.ai_renewal_alert_at <= $1::date AND e.ai_renewal_alert_sent_at IS NULL
      LIMIT 50`,
     [today],

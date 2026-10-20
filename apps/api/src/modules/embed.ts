@@ -78,6 +78,11 @@ export async function issueSigningUrl(t: Db, a: AuthContext, envelopeId: string,
   const r = await t.one<any>(`SELECT * FROM recipients WHERE id = $1 AND envelope_id = $2`, [recipientId, e.id]);
   if (!r) throw notFound("Destinatario");
   if (!r.access_token_enc) throw conflict("not_available", "El destinatario todavía no está activo");
+  // Dentro del iframe de otro sitio la cookie de la sesión del código no se guarda: un firmante con OTP quedaba pidiendo
+  // el código sin fin. Para mostrarlo en un iframe tiene que autenticarlo la app (sin OTP); abierto en una pestaña sí sirve.
+  if (requested.length && String(r.auth_method ?? "").startsWith("otp_")) {
+    throw conflict("otp_not_embeddable", "Un firmante con código OTP no se puede mostrar dentro de un iframe: quitale el OTP (lo autentica tu aplicación) o abrí la URL en una pestaña");
+  }
   await t.query(
     `INSERT INTO embed_sessions (id, tenant_id, envelope_id, recipient_id, code_hash, return_url, frame_ancestors, created_by_actor, expires_at)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,

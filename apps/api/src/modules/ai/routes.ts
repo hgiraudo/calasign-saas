@@ -45,6 +45,8 @@ import {
   saveMetadata,
   sentSummary,
   usageInfo,
+  recomputeRenewalAlerts,
+  isAiError,
 } from "./service";
 
 type P = { Params: { id: string } };
@@ -113,6 +115,7 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
         a.userId,
       ],
     );
+    if (input.renewalAlertDays !== undefined && input.renewalAlertDays !== null) await recomputeRenewalAlerts(s.db, a.tenantId, input.renewalAlertDays);
     return getAiSettings(s.db, a.tenantId);
   });
 
@@ -140,8 +143,15 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
     let ai: RawSuggestion[] = [];
     let usage: DetectFieldsResponse["usage"] = null;
     let sent: DetectFieldsResponse["sent"] = null;
-    if (t?.ai_enabled) {
-      const rid = await assertAiAvailable(s.db, a.tenantId, { estimate: inputEstimate(docs) });
+    // Sin presupuesto o con un documento demasiado largo para el modelo, siguen las heurísticas (como con la IA apagada)
+    // en vez de fallar toda la detección.
+    const rid = t?.ai_enabled
+      ? await (async () => assertAiAvailable(s.db, a.tenantId, { estimate: inputEstimate(docs) }))().catch((err) => {
+          if (isAiError(err) || (err as AppError)?.status === 413) return null;
+          throw err;
+        })
+      : null;
+    if (rid) {
       const provider = getAiProvider();
       const r = await withAiReservation(s.db, a.tenantId, () => callModel(() => provider.detectFields(docs)), rid);
       const lineDoc = new Map(docs.flatMap((d) => d.pages.flatMap((p) => p.lines.map((l) => [l.id, { doc: d.id, page: p.page }] as const))));

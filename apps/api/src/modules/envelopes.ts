@@ -329,6 +329,8 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
       await insertPreparedDocument(t, a.tenantId, a.actor, e.id, doc);
       await assertDocumentLimits(t, "envelope", e.id);
       await touch(t, e.id);
+      // La revisión con IA contra el playbook era de los documentos anteriores: no queda a la vista como vigente.
+      await t.query(`UPDATE envelopes SET ai_review = NULL WHERE id = $1`, [e.id]);
     }));
     const d = (await loadDetail(s.db, a.tenantId, req.params.id)).documents.find((x) => x.id === doc.docId);
     reply.code(201);
@@ -347,6 +349,8 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
       await pruneDanglingConditions(t, "fields", e.id);
       await appendEvent(t, { tenantId: a.tenantId, envelopeId: e.id, type: "document.removed", actor: a.actor, data: { documentId: d.id, name: d.name } });
       await touch(t, e.id);
+      // La revisión con IA contra el playbook era de los documentos anteriores: no queda a la vista como vigente.
+      await t.query(`UPDATE envelopes SET ai_review = NULL WHERE id = $1`, [e.id]);
     });
     await deleteFilesIfUnused(s.db, s.blobs, [fileId]);
     return reply.code(204).send();
@@ -594,6 +598,12 @@ export async function replaceRecipients(t: Db, a: AuthContext, envelopeId: strin
     await t.query(`UPDATE recipients SET auth_method = $2 WHERE id = $1`, [r.id, r.authMethod ?? "link"]);
   }
   await setEmbeddedFlags(t, envelopeId, list);
+  // Un PUT que no manda `embedded` conserva el flag de la base: la regla "embebido sin OTP" se mira sobre lo guardado.
+  const otpEmbedded = await t.one<{ name: string }>(
+    `SELECT name FROM recipients WHERE envelope_id = $1 AND embedded AND auth_method LIKE 'otp\_%' LIMIT 1`,
+    [envelopeId],
+  );
+  if (otpEmbedded) throw badRequest("validation_error", `${otpEmbedded.name}: un firmante embebido no usa código OTP (lo autentica tu aplicación)`);
   await applyInPersonFlags(t, envelopeId, list, a);
   await applyIdentityFlags(t, envelopeId, list);
   await applyCertificateFlags(t, envelopeId, list);

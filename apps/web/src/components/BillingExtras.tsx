@@ -456,15 +456,18 @@ export function PaymentGate({
       </button>
     </div>
   ) : null;
-  if (!gate) {
-    shown.current = true;
-    return <>{children}</>;
-  }
-  // Si el formulario ya se había mostrado, sigue montado (oculto): al pagar se vuelve a él con lo ya cargado.
+  if (!gate) shown.current = true;
+  // Misma estructura con y sin el paso de pago (el formulario siempre en la segunda posición y dentro del mismo div): si
+  // cambiaba, React lo desmontaba y al volver del pago el firmante encontraba el formulario vacío. Oculto mientras se
+  // ve el pago; sin el pago, el div no altera el diseño (display: contents).
   return (
     <>
-      {wrap(gate)}
-      {shown.current && <div hidden>{children}</div>}
+      {gate ? wrap(gate) : null}
+      {(shown.current || !gate) && (
+        <div hidden={!!gate} style={gate ? undefined : { display: "contents" }}>
+          {children}
+        </div>
+      )}
     </>
   );
 }

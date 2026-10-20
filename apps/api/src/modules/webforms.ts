@@ -121,6 +121,14 @@ function checkConfig(l: LoadedTemplate, form: { template_id: string; signer_role
   }
 }
 
+/**
+ * Un formulario embebible con código: quien lo completa firma dentro del iframe (?embed=1), donde la cookie de la
+ * sesión del código no se guarda, y quedaba pidiendo el código sin fin.
+ */
+function assertEmbeddableWithoutOtp(embeddable: unknown, requireOtp: unknown) {
+  if (embeddable && requireOtp) throw badRequest("invalid_form", "Un formulario embebible no puede pedir código por correo (dentro de un iframe la verificación no se conserva)");
+}
+
 /** Dueño de los sobres del formulario: el usuario o la API key que lo creó. */
 const formOwner = (form: FormRow) => ({ tenantId: form.tenant_id as string, userId: (form.created_by ?? null) as string | null, apiKeyId: (form.created_by_api_key ?? null) as string | null });
 
@@ -232,6 +240,7 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
     const l = await loadTemplateForUse(s.db, a.tenantId, input.templateId);
     const row = { template_id: input.templateId, signer_role_id: input.signerRoleId, fixed_recipients: input.fixedRecipients, prefill: input.prefill ?? {} };
     checkConfig(l, row);
+    assertEmbeddableWithoutOtp(input.embeddable, input.requireOtp);
     const id = uuidv7();
     await s.db.query(
       `INSERT INTO web_forms (id, tenant_id, template_id, slug, name, description, signer_role_id, fixed_recipients, prefill, active, max_uses,
@@ -282,6 +291,7 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
       prefill: input.prefill ?? cur.prefill,
     };
     if (input.signerRoleId || input.fixedRecipients || input.prefill) checkConfig(await loadTemplateForUse(s.db, a.tenantId, cur.template_id), next);
+    assertEmbeddableWithoutOtp(input.embeddable ?? cur.embeddable, input.requireOtp ?? cur.require_otp);
     const has = (k: keyof typeof input) => input[k] !== undefined;
     await s.db.query(
       `UPDATE web_forms SET name = $2, description = $3, signer_role_id = $4, fixed_recipients = $5, prefill = $6, active = $7,
@@ -471,7 +481,7 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
       });
       const r = await s.db.one<any>(`SELECT access_token_enc FROM recipients WHERE id = $1`, [signerRecipientId]);
       reply.code(201);
-      return { envelopeId: envId, signingPath: `/s/${decrypt(r.access_token_enc)}${input.embed && form.embeddable ? "?embed=1" : ""}` };
+      return { envelopeId: envId, signingPath: `/s/${decrypt(r.access_token_enc)}${input.embed && form.embeddable && !form.require_otp ? "?embed=1" : ""}` };
     },
   );
 

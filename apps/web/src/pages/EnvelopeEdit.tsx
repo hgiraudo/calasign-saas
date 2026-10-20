@@ -570,7 +570,16 @@ function RecipientsStep({ recipients, onChange }: { recipients: DraftRecipient[]
                   <span>{sx("edit.authMethod")}</span>
                   <select value={r.authMethod} onChange={(e) => set(i, { authMethod: e.target.value as AuthMethod })}>
                     {AUTH_METHODS.map((m) => (
-                      <option key={m} value={m} disabled={(m === "otp_email" && !r.email.trim()) || ((m === "otp_sms" || m === "otp_whatsapp") && !r.phone.trim())}>
+                      <option
+                        key={m}
+                        value={m}
+                        // Un destinatario embebido no usa código (lo autentica la app del integrador: la API lo rechaza).
+                        disabled={
+                          (r.embedded && m.startsWith("otp_")) ||
+                          (m === "otp_email" && !r.email.trim()) ||
+                          ((m === "otp_sms" || m === "otp_whatsapp") && !r.phone.trim())
+                        }
+                      >
                         {authLabel(m)}
                       </option>
                     ))}

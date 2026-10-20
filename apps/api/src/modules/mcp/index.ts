@@ -8,7 +8,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 import { inspectPdf } from "@calasign/pdf";
-import { ENVELOPE_STATUSES, MCP_DEFAULT_SCOPES, OAUTH_SCOPES, RECIPIENT_ROLES } from "@calasign/shared";
+import { ENVELOPE_STATUSES, MCP_DEFAULT_SCOPES, OAUTH_SCOPES, RECIPIENT_ROLES, LOCALES } from "@calasign/shared";
 import { config } from "../../config";
 import { AppError, notFound } from "../../lib/errors";
 import { randomToken, sha256Hex, uuidv7 } from "../../lib/util";
@@ -277,6 +277,7 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
           templateId: z.string().uuid(),
           subject: z.string().min(1).max(300).optional(),
           message: z.string().max(5000).optional(),
+          locale: z.enum(LOCALES).optional().describe("Idioma de los correos, la página de firma y el certificado (es, pt-BR, en); sin él, el de la plantilla u organización"),
           recipients: z
             .array(
               z.object({
@@ -307,6 +308,7 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
         const d = await api(c, "POST", "/v1/envelopes/from-template", {
           templateId: a.templateId,
           subject: a.subject,
+          locale: a.locale,
           message: a.message,
           prefill: a.prefill,
           recipients: a.recipients.map((r: any) => ({
@@ -389,15 +391,19 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
       guard(async (a: { envelopeId: string }) => {
         const d = await api(c, "GET", `/v1/envelopes/${a.envelopeId}`); // control de acceso de la API
         if (d.envelope.status !== "completed") return fail(`El sobre está en estado "${d.envelope.status}": el PDF firmado existe recién cuando se completa.`);
-        const e = await s.db.one<any>(`SELECT signed_file_id FROM envelopes WHERE id = $1 AND tenant_id = $2`, [a.envelopeId, c.tenantId]);
-        if (!e?.signed_file_id) return fail("El sobre no tiene PDF firmado.");
         const token = randomToken(32);
         const expiresAt = new Date(Date.now() + config.mcp.downloadLinkTtlSec * 1000);
-        await s.db.query(
-          `INSERT INTO download_links (id, token_hash, tenant_id, envelope_id, file_id, created_by_label, expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-          [uuidv7(), sha256Hex(token), c.tenantId, a.envelopeId, e.signed_file_id, `agente IA (${c.name})`, expiresAt.toISOString()],
+        // Versión vigente leída en la misma sentencia que crea el link: si una renovación del sello de archivo se
+        // confirmaba entre la lectura y el INSERT, el link apuntaba a la versión anterior (con el hash de la nueva).
+        const link = await s.db.one<{ sha256: string }>(
+          `INSERT INTO download_links (id, token_hash, tenant_id, envelope_id, file_id, created_by_label, expires_at)
+           SELECT $1, $2, $3, e.id, e.signed_file_id, $5, $6 FROM envelopes e
+            WHERE e.id = $4 AND e.tenant_id = $3 AND e.status = 'completed' AND e.signed_file_id IS NOT NULL
+           RETURNING (SELECT sha256 FROM files WHERE id = download_links.file_id) AS sha256`,
+          [uuidv7(), sha256Hex(token), c.tenantId, a.envelopeId, `agente IA (${c.name})`, expiresAt.toISOString()],
         );
-        return { url: `${config.appUrl}/v1/downloads/${token}`, expiresAt: expiresAt.toISOString(), sha256: d.envelope.signedSha256 };
+        if (!link) return fail("El sobre no tiene PDF firmado.");
+        return { url: `${config.appUrl}/v1/downloads/${token}`, expiresAt: expiresAt.toISOString(), sha256: link.sha256 };
       }),
     );
 
@@ -414,6 +420,7 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
         inputSchema: {
           subject: z.string().trim().min(1).max(300),
           message: z.string().max(5000).optional().describe("Mensaje para los destinatarios"),
+          locale: z.enum(LOCALES).optional().describe("Idioma de los correos, la página de firma y el certificado (es, pt-BR, en); sin él, el de la plantilla u organización"),
           recipients: z
             .array(
               z.object({
@@ -458,6 +465,10 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
           if (!r.email && !r.phone) return fail(`El destinatario ${i + 1} (${r.name}) necesita email o phone`);
         }
         if (Boolean(a.document.base64) === Boolean(a.document.url)) return fail("Pasá el PDF en document.base64 o en document.url (uno de los dos)");
+        // Permiso antes de descargar o analizar el PDF (las llamadas a la API que lo exigen vienen después): un token de
+        // solo lectura hacía que el servidor bajara y parseara hasta 10 MB de cualquier URL.
+        const acc = await api(c, "GET", "/v1/me/access");
+        if (!acc.permissions?.includes("envelopes:create")) return fail("Esta conexión no tiene permiso para crear sobres (envelopes:create).");
         let pdf: Buffer;
         try {
           pdf = a.document.base64 ? decodePdfBase64(a.document.base64, PDF_MAX_BYTES) : await fetchPdf(a.document.url, PDF_MAX_BYTES);
@@ -517,6 +528,7 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
         // Una sola llamada a la API (atómica): si algo falla, no queda un borrador a medias.
         const d = await api(c, "POST", "/v1/envelopes", {
           subject: a.subject,
+          locale: a.locale,
           message: a.message ?? null,
           documents: [{ name: fileName, base64: pdf.toString("base64") }],
           recipients: a.recipients.map((r: any) => ({

@@ -11,8 +11,8 @@ Results are JSON text; API errors come back as `isError: true` with `Error <stat
 | `get_envelope` | read | `envelopeId` |
 | `get_signing_status` | read | `envelopeId` → signed / pending / declined lists + last events |
 | `list_templates` | read | `query?` → templates with their role names |
-| `create_envelope_from_template` | creates a **draft** (or also sends it with `send` + `confirm`) | `templateId`, `recipients[{role, name, email?, phone?, channels?}]`, `subject?`, `message?`, `prefill?`, `send?`, `confirm?` |
-| `create_envelope` * | creates a **draft** (or also sends it with `send` + `confirm`), in one atomic call | PDF as base64 or https URL, subject, recipients, fields/anchors, `send?`, `confirm?` — read its schema |
+| `create_envelope_from_template` | creates a **draft** (or also sends it with `send` + `confirm`) | `templateId`, `recipients[{role, name, email?, phone?, channels?}]`, `subject?`, `message?`, `locale?`, `prefill?`, `send?`, `confirm?` |
+| `create_envelope` * | creates a **draft** (or also sends it with `send` + `confirm`), in one atomic call | PDF as base64 or https URL, subject, `locale?`, recipients, fields/anchors, `send?`, `confirm?` — read its schema |
 | `send_envelope` | **notifies people** | `envelopeId`, `confirm` |
 | `remind_recipients` * | **notifies people** (pending signers) | `envelopeId`, `confirm` |
 | `void_envelope` | **cancels, irreversible** | `envelopeId`, `reason`, `confirm` |

@@ -265,7 +265,7 @@ function WebFormEditor({ form, initialTemplateId, onClose, onSaved }: { form: We
             {st("forms.active")}
           </label>
           <label className="check">
-            <input type="checkbox" checked={requireOtp} onChange={(e) => setRequireOtp(e.target.checked)} />
+            <input type="checkbox" checked={requireOtp} disabled={embeddable && !requireOtp} onChange={(e) => setRequireOtp(e.target.checked)} />
             {st("forms.requireOtp")}
           </label>
           <label className="check">
@@ -273,9 +273,11 @@ function WebFormEditor({ form, initialTemplateId, onClose, onSaved }: { form: We
             {st("forms.collectPhone")}
           </label>
           <label className="check">
-            <input type="checkbox" checked={embeddable} onChange={(e) => setEmbeddable(e.target.checked)} />
+            <input type="checkbox" checked={embeddable} disabled={requireOtp && !embeddable} onChange={(e) => setEmbeddable(e.target.checked)} />
             {st("forms.embeddable")}
           </label>
+          {/* La API rechaza las dos opciones juntas (ver assertEmbeddableWithoutOtp en webforms.ts). */}
+          {(requireOtp || embeddable) && <p className="muted small">{st("forms.embedNoOtp")}</p>}
         </fieldset>
         <div className="modal-foot">
           <button type="button" className="btn btn-ghost" onClick={onClose}>

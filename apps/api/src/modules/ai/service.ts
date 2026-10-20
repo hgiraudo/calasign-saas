@@ -159,7 +159,7 @@ export async function withAiReservation<T>(db: Db, tenantId: string, fn: () => P
 
 // ───────────────────────────── Documentos ─────────────────────────────
 
-/** Texto (con posiciones) de los documentos del sobre. Si los originales se purgaron por retención, usa el PDF sellado. */
+/** Texto (con posiciones) de los documentos del sobre. Si los originales se purgaron por retención, 410 purged. */
 export async function loadEnvelopeDocs(db: Db, blobs: BlobStore, envelopeId: string, opts: { documentId?: string } = {}): Promise<DocText[]> {
   if (opts.documentId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(opts.documentId)) {
     throw new AppError(404, "not_found", "Documento no encontrado");
@@ -170,17 +170,15 @@ export async function loadEnvelopeDocs(db: Db, blobs: BlobStore, envelopeId: str
     opts.documentId ? [envelopeId, opts.documentId] : [envelopeId],
   );
   if (opts.documentId && rows.length === 0) throw new AppError(404, "not_found", "Documento no encontrado");
-  const out: DocText[] = [];
-  const purged = rows.filter((r) => r.purged_at);
-  for (const r of rows.filter((x) => !x.purged_at)) {
-    out.push({ id: r.id, name: r.name, pages: await readText(await blobs.get(r.storage_key)) });
+  // Originales borrados por retención: no se usa el PDF sellado en su lugar. Trae el certificado de finalización, con
+  // correo, teléfono e IP de cada destinatario, y los valores cargados: eso no sale hacia el proveedor de IA (ver
+  // docs/IA.md: nunca datos de contacto).
+  if (rows.some((r) => r.purged_at)) {
+    throw new AppError(410, "purged", "Los originales de este sobre se eliminaron por la política de retención: la IA ya no puede leerlos");
   }
-  if (purged.length && !opts.documentId) {
-    const signed = await db.one<any>(
-      `SELECT f.storage_key FROM envelopes e JOIN files f ON f.id = e.signed_file_id WHERE e.id = $1 AND f.purged_at IS NULL`,
-      [envelopeId],
-    );
-    if (signed) out.push({ id: purged[0].id, name: "documento-firmado.pdf", pages: await readText(await blobs.get(signed.storage_key)) });
+  const out: DocText[] = [];
+  for (const r of rows) {
+    out.push({ id: r.id, name: r.name, pages: await readText(await blobs.get(r.storage_key)) });
   }
   return out;
 }
@@ -378,6 +376,22 @@ export async function saveMetadata(
      WHERE id = $1`,
     [envelopeId, JSON.stringify(metadata), JSON.stringify(confidence), source, alertAt],
   );
+}
+
+/**
+ * Al cambiar los días de aviso de la organización, las alertas pendientes se reprograman (con 0 se cancelan): si no,
+ * seguían saliendo con el valor anterior.
+ */
+export async function recomputeRenewalAlerts(db: Db, tenantId: string, alertDays: number) {
+  const rows = await db.query<{ id: string; ai_metadata: ContractMetadata; ai_renewal_alert_at: string | null }>(
+    `SELECT id, ai_metadata, to_char(ai_renewal_alert_at, 'YYYY-MM-DD') AS ai_renewal_alert_at FROM envelopes
+      WHERE tenant_id = $1 AND ai_metadata IS NOT NULL AND ai_renewal_alert_sent_at IS NULL`,
+    [tenantId],
+  );
+  for (const r of rows) {
+    const at = renewalAlertDate(r.ai_metadata, alertDays);
+    if (at !== r.ai_renewal_alert_at) await db.query(`UPDATE envelopes SET ai_renewal_alert_at = $2::date WHERE id = $1`, [r.id, at]);
+  }
 }
 
 export function isAiError(e: unknown) {

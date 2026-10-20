@@ -124,7 +124,9 @@ export function SignerPage() {
     const mine = ++seq.current;
     return api<SigningSession>(base)
       .then((s) => {
-        if (mine === seq.current) apply(s);
+        if (mine !== seq.current) return;
+        setError(null);
+        apply(s);
       })
       .catch((e) => {
         if (mine !== seq.current) return;

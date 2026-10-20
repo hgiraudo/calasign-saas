@@ -37,7 +37,7 @@ export const AI_OPS = [
     path: "/v1/envelopes/{id}/ai/detect-fields",
     tag: TAG,
     summary: "Sugerir campos (firma, iniciales, fecha, nombre) con su rol",
-    description: "Sin IA habilitada devuelve solo sugerencias por análisis del texto (no se envía nada). Coordenadas normalizadas 0..1. Con IA, un documento demasiado largo para el modelo responde 413 ai_input_too_large.",
+    description: "Sin IA habilitada devuelve solo sugerencias por análisis del texto (no se envía nada). Coordenadas normalizadas 0..1. Con IA, si no queda presupuesto o el documento es demasiado largo para el modelo, devuelve solo esas sugerencias (usage y sent en null).",
     body: DetectFieldsInput,
     errors: AI_ERRORS,
   },

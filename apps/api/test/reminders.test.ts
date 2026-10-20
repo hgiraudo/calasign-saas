@@ -27,8 +27,8 @@ describe("recordatorios automáticos y aviso de vencimiento", () => {
       [env, tenant, days(-3), days(5)],
     );
     await db.query(
-      `INSERT INTO recipients (id, tenant_id, envelope_id, role, routing_order, name, email, status) VALUES ($1,$2,$3,'signer',1,'Ana','a@x.com','sent')`,
-      [rec, tenant, env],
+      `INSERT INTO recipients (id, tenant_id, envelope_id, role, routing_order, name, email, status, sent_at) VALUES ($1,$2,$3,'signer',1,'Ana','a@x.com','sent',$4)`,
+      [rec, tenant, env, days(-3)],
     );
 
     const jobs = async () => (await db.query<any>(`SELECT payload FROM jobs ORDER BY id`)).map((j) => j.payload.kind);

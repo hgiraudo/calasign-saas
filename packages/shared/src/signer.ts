@@ -54,7 +54,11 @@ export const ReassignInput = z
     locale: z.enum(["es", "pt-BR", "en"]).optional().nullable(),
     reason: z.string().trim().max(1000).optional().nullable(),
   })
-  .refine((d) => d.email || d.phone, { message: "email o phone requerido" });
+  .refine((d) => d.email || d.phone, { message: "email o phone requerido" })
+  // El reemplazo nace sin chat de Telegram vinculado: con solo ese canal no le llegaba la invitación (y no daba error).
+  .refine((d) => !d.channels || d.channels.some((c) => c !== "telegram"), {
+    message: "con solo Telegram no le llega la invitación: agregá email o WhatsApp (el link de vinculación va por ahí)",
+  });
 export type ReassignInput = z.infer<typeof ReassignInput>;
 
 // ───────────── Verificación pública ─────────────

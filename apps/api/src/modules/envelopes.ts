@@ -600,7 +600,7 @@ export async function replaceRecipients(t: Db, a: AuthContext, envelopeId: strin
   await setEmbeddedFlags(t, envelopeId, list);
   // Un PUT que no manda `embedded` conserva el flag de la base: la regla "embebido sin OTP" se mira sobre lo guardado.
   const otpEmbedded = await t.one<{ name: string }>(
-    `SELECT name FROM recipients WHERE envelope_id = $1 AND embedded AND auth_method LIKE 'otp\_%' LIMIT 1`,
+    `SELECT name FROM recipients WHERE envelope_id = $1 AND embedded AND auth_method IN ('otp_email','otp_sms','otp_whatsapp') LIMIT 1`,
     [envelopeId],
   );
   if (otpEmbedded) throw badRequest("validation_error", `${otpEmbedded.name}: un firmante embebido no usa código OTP (lo autentica tu aplicación)`);

@@ -278,6 +278,10 @@ export async function callModel<T>(fn: () => Promise<T>): Promise<T> {
     if (e instanceof AppError) throw e;
     const status = (e as { status?: number }).status;
     if (status === 429) throw new AppError(503, "ai_rate_limited", "El proveedor de IA está saturado; probá de nuevo en un momento");
+    // Un 4xx del proveedor (pedido inválido, clave o modelo mal configurados) no es transitorio: no se reintenta solo.
+    if (typeof status === "number" && status >= 400 && status < 500) {
+      throw new AppError(502, "ai_request_rejected", "El proveedor de IA rechazó el pedido");
+    }
     throw new AppError(502, "ai_unavailable", "No se pudo contactar al proveedor de IA");
   }
 }

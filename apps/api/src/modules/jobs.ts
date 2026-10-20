@@ -253,6 +253,8 @@ async function notify(
   }
   // Si no salió por ningún canal, reintentar el job.
   if (delivered === 0 && errors.length) throw new Error(`no se pudo notificar: ${errors.join("; ")}`);
+  // Ningún canal posible (p. ej. solo Telegram sin vincular y sin otro canal para el link): que quede a la vista.
+  if (delivered === 0) d.log.warn({ envelopeId: e.id, recipientId: r.id, kind: p.kind, channels }, "aviso sin ningún canal posible: no salió");
 }
 
 /**
@@ -276,21 +278,29 @@ async function notifyStaff(
   for (const u of to) {
     if (!u.email) continue;
     const m = message(u);
+    // Como notify(): el envío cuenta apenas sale (si después falla el registro, un reintento no repite el correo a
+    // quien ya lo recibió) y el registro de una falla no corta el resto.
+    let res: Awaited<ReturnType<typeof deliver>>;
     try {
-      const res = await deliver({ channel: "email", to: u.email, subject: m.subject, text: m.text, html: m.html, link, locale: localeOf(u), tenantId: e.tenant_id, ...from });
-      await d.db.query(
+      res = await deliver({ channel: "email", to: u.email, subject: m.subject, text: m.text, html: m.html, link, locale: localeOf(u), tenantId: e.tenant_id, ...from });
+    } catch (err) {
+      errors.push(`${u.email}: ${String(err)}`);
+      await d.db
+        .query(
+          `INSERT INTO notifications (id, tenant_id, envelope_id, channel, template, destination, status, error) VALUES ($1,$2,$3,'email',$4,$5,'failed',$6)`,
+          [uuidv7(), e.tenant_id, e.id, kind, u.email, String(err).slice(0, 1000)],
+        )
+        .catch((x) => d.log.error({ err: String(x), envelopeId: e.id }, "no se pudo registrar el aviso fallido"));
+      continue;
+    }
+    delivered++;
+    await d.db
+      .query(
         `INSERT INTO notifications (id, tenant_id, envelope_id, channel, template, destination, status, provider, provider_message_id, sent_at)
          VALUES ($1,$2,$3,'email',$4,$5,'sent',$6,$7,now())`,
         [uuidv7(), e.tenant_id, e.id, kind, u.email, res.provider, res.messageId],
-      );
-      delivered++;
-    } catch (err) {
-      errors.push(`${u.email}: ${String(err)}`);
-      await d.db.query(
-        `INSERT INTO notifications (id, tenant_id, envelope_id, channel, template, destination, status, error) VALUES ($1,$2,$3,'email',$4,$5,'failed',$6)`,
-        [uuidv7(), e.tenant_id, e.id, kind, u.email, String(err).slice(0, 1000)],
-      );
-    }
+      )
+      .catch((x) => d.log.error({ err: String(x), envelopeId: e.id }, "aviso enviado pero no registrado"));
   }
   if (delivered === 0 && errors.length) throw new Error(`no se pudo notificar: ${errors.join("; ")}`);
 }

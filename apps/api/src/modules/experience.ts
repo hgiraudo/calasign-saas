@@ -112,10 +112,14 @@ function newToken() {
 }
 
 function checkContact(
-  c: { email?: string | null; phone?: string | null; channels: string[]; auth_method?: string; in_person?: boolean; embedded?: boolean },
+  c: { email?: string | null; phone?: string | null; channels: string[]; auth_method?: string; in_person?: boolean; embedded?: boolean; telegram_chat_id?: string | null },
   who: string,
 ) {
   if (c.in_person) return;
+  // Solo Telegram sin un chat vinculado (o con uno que se desvincula al cambiar el contacto): no le llegaba nada.
+  if (!c.embedded && c.channels.length && c.channels.every((x) => x === "telegram") && !c.telegram_chat_id) {
+    throw badRequest("invalid_contact", `${who}: con solo Telegram no le llega el aviso (no tiene un chat vinculado): agregá email o WhatsApp`);
+  }
   // Embebido: no recibe invitaciones, así que (como en RecipientInput) no necesita correo ni teléfono para sus canales.
   if (!c.embedded) {
     if (!c.email && !c.phone) throw badRequest("invalid_contact", `${who}: hace falta correo o teléfono`);
@@ -204,7 +208,17 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
       channels: p.channels ?? r.channels,
       locale: p.locale !== undefined ? p.locale : r.locale,
     };
-    checkContact({ ...next, auth_method: r.auth_method, in_person: r.auth_method === "in_person", embedded: Boolean(r.embedded) }, next.name);
+    const contactMoved = (next.email ?? null) !== (r.email ?? null) || (next.phone ?? null) !== (r.phone ?? null);
+    checkContact(
+      {
+        ...next,
+        auth_method: r.auth_method,
+        in_person: r.auth_method === "in_person",
+        embedded: Boolean(r.embedded),
+        telegram_chat_id: contactMoved ? null : r.telegram_chat_id,
+      },
+      next.name,
+    );
     const changes: Record<string, unknown> = {};
     if (next.name !== r.name) changes.name = { from: r.name, to: next.name };
     if ((next.email ?? null) !== (r.email ?? null)) changes.email = { from: masked(r.email), to: masked(next.email) };

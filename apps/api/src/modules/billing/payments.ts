@@ -1,6 +1,7 @@
 // Cobro al firmar: el sobre define un monto que paga un firmante, antes de firmar o después.
 // "after_sign": el sobre recién se completa (y se sella) cuando el pago se confirma.
 // "before_sign": el firmante no puede completar la firma hasta pagar.
+import { envelopeBaseUrl } from "../white-label/brand";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import {
   EnvelopePaymentInput,
@@ -474,7 +475,9 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
       throw err;
     }
 
-    const base = await tenantBaseUrl(s.db, e.tenant_id);
+    // El dominio del sobre (el de su sub-marca, si tiene): la sesión del código del firmante vive en ese host y, al volver
+    // del proveedor a otro, había que pedir otro código (y veía otro dominio).
+    const base = await envelopeBaseUrl(s.db, e.tenant_id, e.id);
     const back = `${base}/s/${token}`;
     let checkoutId: string;
     let url: string;
@@ -599,7 +602,7 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
       await markPaymentFailed(s.db, p.id, "rechazado en el pago simulado");
     }
     const r = await s.db.one<any>(`SELECT access_token_enc FROM recipients WHERE id = $1`, [p.recipient_id]);
-    const base = await tenantBaseUrl(s.db, p.tenant_id);
+    const base = await envelopeBaseUrl(s.db, p.tenant_id, p.envelope_id);
     const back = r?.access_token_enc ? `${base}/s/${decrypt(r.access_token_enc)}?payment=${outcome === "paid" ? "success" : "cancel"}` : base;
     if ((req.headers.accept ?? "").includes("application/json")) return { ok: true, outcome, redirect: back };
     return reply.redirect(back, 303);

@@ -3,6 +3,7 @@
 //   2. el firmante inicia la verificación (POST …/identity/start): flujo integrado (mock) o página del proveedor
 //   3. el resultado normalizado se contrasta con lo declarado (nombre y número de documento) y queda en la evidencia
 // Las imágenes del flujo integrado se cifran (AES-256-GCM) antes de guardarlas y siguen la política de retención.
+import { envelopeBaseUrl } from "../white-label/brand";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import {
   IDV_CAPTURE_KINDS,
@@ -420,7 +421,8 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
           verificationId: id,
           level: r.id_verification_level,
           person: { fullName: r.name, documentNumber: r.id_document_number ?? null, email: r.email, phone: r.phone },
-          returnUrl: `${await tenantBaseUrl(s.db, e.tenant_id)}/s/${req.params.token}?identity=return`,
+          // El dominio del sobre (sub-marca): ahí vive la sesión del código del firmante.
+          returnUrl: `${await envelopeBaseUrl(s.db, e.tenant_id, e.id)}/s/${req.params.token}?identity=return`,
           callbackUrl: `${config.appUrl}/v1/integrations/identity/${provider}/webhook`,
           locale: r.locale ?? e.locale,
         }));

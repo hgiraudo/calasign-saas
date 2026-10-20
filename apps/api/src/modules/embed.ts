@@ -80,7 +80,8 @@ export async function issueSigningUrl(t: Db, a: AuthContext, envelopeId: string,
   if (!r.access_token_enc) throw conflict("not_available", "El destinatario todavía no está activo");
   // Dentro del iframe de otro sitio la cookie de la sesión del código no se guarda: un firmante con OTP quedaba pidiendo
   // el código sin fin. Para mostrarlo en un iframe tiene que autenticarlo la app (sin OTP); abierto en una pestaña sí sirve.
-  if (requested.length && String(r.auth_method ?? "").startsWith("otp_")) {
+  // Sin frameAncestors propios la página igual se puede embeber en los orígenes de la organización (como el CSP).
+  if ((requested.length ? requested : allowed).length && String(r.auth_method ?? "").startsWith("otp_")) {
     throw conflict("otp_not_embeddable", "Un firmante con código OTP no se puede mostrar dentro de un iframe: quitale el OTP (lo autentica tu aplicación) o abrí la URL en una pestaña");
   }
   await t.query(

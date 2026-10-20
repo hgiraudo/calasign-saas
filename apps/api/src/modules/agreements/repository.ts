@@ -136,6 +136,14 @@ export async function agreementExpirySweep(d: Deps) {
      LIMIT 50`,
   );
   for (const a of due) {
+    // Se reclama antes de avisar: con varios workers (cada uno corre el barrido), dos tomaban el mismo acuerdo y el
+    // aviso salía dos veces.
+    const claimed = await d.db.query(
+      `UPDATE agreements SET expiry_notified_for = expiry_date
+        WHERE id = $1 AND (expiry_notified_for IS NULL OR expiry_notified_for <> expiry_date) RETURNING id`,
+      [a.id],
+    );
+    if (!claimed.length) continue;
     // Responsable: el dueño si sigue en la organización; si no hay (subido por API) o ya no es miembro, los
     // propietarios. Alguien que dejó la organización no tiene que seguir recibiendo datos de sus acuerdos.
     let to = a.owner_user_id
@@ -167,7 +175,6 @@ export async function agreementExpirySweep(d: Deps) {
         d.log.warn({ agreementId: a.id, err: String(err) }, "no se pudo avisar el vencimiento");
       }
     }
-    await d.db.query(`UPDATE agreements SET expiry_notified_for = expiry_date WHERE id = $1`, [a.id]);
   }
   return due.length;
 }

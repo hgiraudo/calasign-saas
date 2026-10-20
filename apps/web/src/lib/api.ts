@@ -197,6 +197,14 @@ const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
     "pt-BR": "A entrega já está sendo reenviada.",
     en: "The delivery is already being retried.",
   },
+  purged: {
+    "pt-BR": "Os originais deste envelope foram excluídos pela política de retenção; o PDF assinado continua disponível.",
+    en: "This envelope's originals were deleted by the retention policy; the signed PDF is still available.",
+  },
+  otp_not_embeddable: {
+    "pt-BR": "Um signatário com código OTP não pode ser exibido dentro de um iframe: remova o OTP ou abra o link em uma aba.",
+    en: "A signer with an OTP code can't be shown inside an iframe: remove the OTP or open the link in a tab.",
+  },
   template_has_forms: {
     "pt-BR": "O modelo tem formulários web ativos: quem os criou ou um administrador precisa desativá-los ou excluí-los antes.",
     en: "The template has active web forms: whoever created them or an admin must deactivate or delete them first.",

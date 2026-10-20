@@ -4,9 +4,9 @@
 import type { Db } from "../../infra/db";
 import { SYSTEM, appendEvent } from "../../infra/evidence";
 import type { BlobStore } from "../../infra/storage";
-import { config } from "../../config";
 import { uuidv7 } from "../../lib/util";
 import { deliver } from "../../notifications/channels";
+import { tenantBaseUrl } from "../custom-domains";
 import { getAiProvider } from "./provider";
 import { assertAiAvailable, inputEstimate, isAiError, loadEnvelopeDocs, recordAiUse, saveMetadata, withAiReservation, callModel } from "./service";
 import type { AppError } from "../../lib/errors";
@@ -66,7 +66,7 @@ export async function runAiSweep(d: Deps, now = new Date()) {
   // 1) Extracción automática (pocas por pasada: es costosa).
   const pending = await d.db.query<any>(
     `SELECT e.id, e.tenant_id FROM envelopes e JOIN tenants t ON t.id = e.tenant_id
-     WHERE e.status = 'completed' AND e.ai_metadata IS NULL
+     WHERE e.status = 'completed' AND e.ai_metadata IS NULL AND e.purged_at IS NULL
        AND (e.ai_metadata_attempted_at IS NULL OR e.ai_metadata_retry_at < now())
        -- Con la clave BYOK fallando no se puede leer el PDF: esos sobres esperan a que se recupere.
        AND t.byok_status <> 'failing'
@@ -124,6 +124,12 @@ export async function runAiSweep(d: Deps, now = new Date()) {
   for (const e of due) {
     const m = e.ai_metadata ?? {};
     const date = m.renewalDate ?? m.expiryDate;
+    // La fecha ya pasó (p. ej. las alertas se acumularon con la IA apagada): no se avisa de una renovación vencida, se
+    // da por cerrada.
+    if (!date || String(date) < today) {
+      await d.db.query(`UPDATE envelopes SET ai_renewal_alert_sent_at = now() WHERE id = $1 AND ai_renewal_alert_sent_at IS NULL`, [e.id]);
+      continue;
+    }
     const claimed = await d.db.tx(async (t) => {
       const cur = await t.one<any>(`SELECT ai_renewal_alert_sent_at FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
       if (cur?.ai_renewal_alert_sent_at) return false;
@@ -135,7 +141,8 @@ export async function runAiSweep(d: Deps, now = new Date()) {
     if (!claimed) continue;
     if (e.sender_email && date) {
       const L = ALERT[(e.sender_locale ?? e.locale) as keyof typeof ALERT] ?? ALERT.es;
-      const link = `${config.appUrl}/app/envelopes/${e.id}`;
+      // Con el dominio propio de la organización, como el resto de los avisos al equipo.
+      const link = `${await tenantBaseUrl(d.db, e.tenant_id)}/app/envelopes/${e.id}`;
       try {
         const res = await deliver({
           channel: "email",

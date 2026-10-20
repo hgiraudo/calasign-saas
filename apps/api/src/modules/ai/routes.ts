@@ -87,7 +87,8 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
   app.patch("/v1/settings/ai", { preHandler: auth }, async (req) => {
     const a = req.auth!;
     const input = UpdateAiSettingsInput.parse(req.body);
-    const t = await s.db.one<any>(`SELECT ai_notice_accepted_at, ai_notice_version FROM tenants WHERE id = $1`, [a.tenantId]);
+    const t = await s.db.one<any>(`SELECT ai_notice_accepted_at, ai_notice_version, ai_renewal_alert_days FROM tenants WHERE id = $1`, [a.tenantId]);
+    const prevDays = Number(t?.ai_renewal_alert_days ?? 30);
     const noticeOk = t?.ai_notice_accepted_at && t?.ai_notice_version === AI_NOTICE_VERSION;
     if (input.enabled === true && !noticeOk && !input.acceptNotice) {
       throw new AppError(422, "ai_notice_required", "Para habilitar la IA hay que aceptar el aviso de tratamiento de datos");
@@ -115,7 +116,8 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
         a.userId,
       ],
     );
-    if (input.renewalAlertDays !== undefined && input.renewalAlertDays !== null) await recomputeRenewalAlerts(s.db, a.tenantId, input.renewalAlertDays);
+    // Solo si cambió: recorre los sobres con metadatos de la organización.
+    if (input.renewalAlertDays != null && input.renewalAlertDays !== prevDays) await recomputeRenewalAlerts(s.db, a.tenantId, input.renewalAlertDays);
     return getAiSettings(s.db, a.tenantId);
   });
 
@@ -319,7 +321,7 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
     // Sin la verificación de identidad que pide el remitente, el firmante tampoco ve el contenido por esta vía.
     const blocked = identityBlocking(r);
     // Un sobre en curso vencido (aunque el barrido todavía no lo marcó) no consume cuota de IA.
-    const expired = e.status === "sent" && pastExpiry(e);
+    const expired = (e.status === "sent" && pastExpiry(e)) || Boolean(e.purged_at); // sin originales no hay qué resumir
     const enabled = Boolean(t?.ai_enabled && e.ai_signer_assist && ["sent", "completed"].includes(e.status) && !blocked && !expired);
     return { r, e, enabled, blocked, locale: (r.locale ?? e.locale ?? "es") as string };
   };

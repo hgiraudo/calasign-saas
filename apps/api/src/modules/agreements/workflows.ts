@@ -4,6 +4,7 @@
 // Ejecución: cada paso se "reclama" en una transacción corta, el efecto (render, HTTP) corre fuera de
 // transacción y el resultado se registra en otra transacción corta. Así nunca se bloquea la base durante
 // una llamada externa, y dos workers no ejecutan el mismo paso.
+import { envelopeBaseUrl } from "../white-label/brand";
 import { randomBytes } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import {
@@ -1036,7 +1037,8 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
           x.envelope_status === "sent" &&
           x.access_token_enc,
       );
-      if (r) signingUrl = `${await tenantBaseUrl(s.db, run.tenant_id)}/s/${decrypt(r.access_token_enc)}`;
+      // Con el dominio del sobre (sub-marca), como los avisos.
+      if (r) signingUrl = `${await envelopeBaseUrl(s.db, run.tenant_id, r.envelope_id)}/s/${decrypt(r.access_token_enc)}`;
     }
     return { runId: run.id, workflowName: wf?.name ?? "", organizationName: org?.name ?? "", status: run.status, step, signingUrl };
   }

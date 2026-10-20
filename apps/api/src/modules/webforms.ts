@@ -291,7 +291,10 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
       prefill: input.prefill ?? cur.prefill,
     };
     if (input.signerRoleId || input.fixedRecipients || input.prefill) checkConfig(await loadTemplateForUse(s.db, a.tenantId, cur.template_id), next);
-    assertEmbeddableWithoutOtp(input.embeddable ?? cur.embeddable, input.requireOtp ?? cur.require_otp);
+    // Solo si el pedido toca esas opciones: un formulario viejo con las dos se puede seguir pausando o editando.
+    if (input.embeddable !== undefined || input.requireOtp !== undefined) {
+      assertEmbeddableWithoutOtp(input.embeddable ?? cur.embeddable, input.requireOtp ?? cur.require_otp);
+    }
     const has = (k: keyof typeof input) => input[k] !== undefined;
     await s.db.query(
       `UPDATE web_forms SET name = $2, description = $3, signer_role_id = $4, fixed_recipients = $5, prefill = $6, active = $7,

@@ -16,7 +16,7 @@ import { config } from "../../config";
 import type { Db } from "../../infra/db";
 import { SYSTEM, appendEvent, type Actor } from "../../infra/evidence";
 import { AppError, badRequest, conflict, notFound } from "../../lib/errors";
-import { decrypt, iso, randomToken, sha256Hex, uuidv7 } from "../../lib/util";
+import { decrypt, encrypt, iso, randomToken, sha256Hex, uuidv7 } from "../../lib/util";
 import { authenticate, type Services } from "../context";
 import { advanceRouting, lockEnvelope, pastExpiry } from "../envelopes";
 import { assertLinkCurrent, resolveToken } from "../signing";
@@ -656,7 +656,7 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
       // El link tiene que seguir vigente y el cobro, a su cargo: una corrección del contacto o un reemplazo (el cobro
       // pasa al nuevo destinatario) confirmados durante la llamada al proveedor no le entregan el checkout a quien tenía
       // el link anterior ni le guardan al nuevo pagador un checkout armado con los datos del anterior.
-      assertLinkCurrent(await t.one<any>(`SELECT access_token_hash FROM recipients WHERE id = $1`, [r.id]), token);
+      assertLinkCurrent(await t.one<any>(`SELECT access_token_hash FROM recipients WHERE id = $1`, [r.id]), r);
       const row = await t.one<any>(`SELECT recipient_id, status, checkout_id, checkout_url FROM envelope_payments WHERE id = $1 FOR UPDATE`, [p.id]);
       if (row?.recipient_id !== r.id) throw notFound("Cobro");
       const closed = cur.status !== "sent" || pastExpiry(cur);
@@ -671,9 +671,12 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
       const replaced = row.checkout_id && row.checkout_id !== checkoutId ? (row.checkout_id as string) : null;
       const upd = await t.query(
         `UPDATE envelope_payments SET status = 'checkout_created', checkout_id = $2, checkout_url = $3, checkout_nonce_hash = $4, checkout_ref = $5,
-           stale_checkout_ids = CASE WHEN $6::text IS NULL THEN stale_checkout_ids ELSE array_append(stale_checkout_ids, $6::text) END, updated_at = now()
+           stale_checkout_ids = CASE WHEN $6::text IS NULL THEN stale_checkout_ids ELSE array_append(stale_checkout_ids, $6::text) END,
+           checkout_return_token_enc = $7, updated_at = now()
          WHERE id = $1 AND status NOT IN ('paid','refunded') RETURNING id`,
-        [p.id, checkoutId, url, nonceHash, checkoutRef, replaced],
+        // El token con el que se inició (el de sesión del canje embebido, si se pagó desde ahí): la vuelta del pago
+        // simulado va a ese y no al link permanente del destinatario. Stripe y Mercado Pago ya lo llevan en sus URLs.
+        [p.id, checkoutId, url, nonceHash, checkoutRef, replaced, encrypt(token)],
       );
       // El sobre se anuló, rechazó o venció mientras se creaba el checkout en el proveedor (red): el checkout queda
       // guardado para que closeStaleCheckouts lo cierre, pero no se entrega ni se suma el evento a la evidencia de un
@@ -739,9 +742,12 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
     } else {
       await markPaymentFailed(s.db, p.id, "rechazado en el pago simulado");
     }
-    const r = await s.db.one<any>(`SELECT access_token_enc FROM recipients WHERE id = $1`, [p.recipient_id]);
+    // Vuelve al link con el que se inició el checkout (un token de sesión del canje embebido no se cambia por el
+    // permanente); los checkouts de antes de la 0083 no lo guardaban: el link vigente del pagador, como antes.
+    const r = p.checkout_return_token_enc ? null : await s.db.one<any>(`SELECT access_token_enc FROM recipients WHERE id = $1`, [p.recipient_id]);
+    const backToken = p.checkout_return_token_enc ? decrypt(p.checkout_return_token_enc) : r?.access_token_enc ? decrypt(r.access_token_enc) : null;
     const base = await envelopeBaseUrl(s.db, p.tenant_id, p.envelope_id);
-    const back = r?.access_token_enc ? `${base}/s/${decrypt(r.access_token_enc)}?payment=${outcome === "paid" ? "success" : "cancel"}` : base;
+    const back = backToken ? `${base}/s/${backToken}?payment=${outcome === "paid" ? "success" : "cancel"}` : base;
     if ((req.headers.accept ?? "").includes("application/json")) return { ok: true, outcome, redirect: back };
     return reply.redirect(back, 303);
   });

@@ -18,6 +18,8 @@ var CalaSignPipedrive = (function () {
       noRecords: "Pipedrive no indicó ningún registro. Abrí esta acción desde un deal o una persona.",
       badResource: "Esta acción funciona desde Deals y Persons.",
       noMappings: "No hay mapeos activos de Pipedrive para este tipo de registro. Crealos en CalaSign → Ajustes → CRM y ERP.",
+      noAccount: "Pipedrive no indicó desde qué compañía se abrió la acción (companyId), así que no se ofrecen mapeos (podrían ser de otra compañía). Volvé a abrirla desde Pipedrive.",
+      accountUnknown: "Hay conexiones de Pipedrive sin su compañía guardada: sus mapeos no aparecen. Probá la conexión en CalaSign → Ajustes → CRM y ERP para habilitarla.",
       mapping: "Mapeo (plantilla)",
       sendNow: "Enviar ya (si no, queda en borrador para revisarlo)",
       records: "Registros",
@@ -38,6 +40,8 @@ var CalaSignPipedrive = (function () {
       noRecords: "Pipedrive did not pass any record. Open this action from a deal or a person.",
       badResource: "This action works from Deals and Persons.",
       noMappings: "There are no active Pipedrive mappings for this record type. Create one in CalaSign → Settings → CRM and ERP.",
+      noAccount: "Pipedrive did not say which company the action was opened from (companyId), so no mappings are offered (they could belong to another company). Open it again from Pipedrive.",
+      accountUnknown: "Some Pipedrive connections have no stored company: their mappings are not shown. Test the connection in CalaSign → Settings → CRM and ERP to enable it.",
       mapping: "Mapping (template)",
       sendNow: "Send now (otherwise it stays as a draft to review)",
       records: "Records",
@@ -58,6 +62,8 @@ var CalaSignPipedrive = (function () {
       noRecords: "O Pipedrive não informou nenhum registro. Abra esta ação a partir de um deal ou de uma pessoa.",
       badResource: "Esta ação funciona a partir de Deals e Persons.",
       noMappings: "Não há mapeamentos ativos do Pipedrive para este tipo de registro. Crie um em CalaSign → Configurações → CRM e ERP.",
+      noAccount: "O Pipedrive não informou de qual empresa a ação foi aberta (companyId), então nenhum mapeamento é oferecido (poderiam ser de outra empresa). Abra-a de novo a partir do Pipedrive.",
+      accountUnknown: "Há conexões do Pipedrive sem a empresa salva: os mapeamentos delas não aparecem. Teste a conexão em CalaSign → Configurações → CRM e ERP para habilitá-la.",
       mapping: "Mapeamento (modelo)",
       sendNow: "Enviar agora (senão fica como rascunho para revisar)",
       records: "Registros",
@@ -162,7 +168,8 @@ var CalaSignPipedrive = (function () {
   }
 
   /** Crea un sobre por registro, uno tras otro (el límite de la API es por minuto). companyId: la compañía de
-   *  Pipedrive desde la que se abrió la acción; la API rechaza (409 company_mismatch) un mapeo de otra compañía. */
+   *  Pipedrive desde la que se abrió la acción (load no ofrece mapeos sin ella); la API rechaza (409 company_mismatch)
+   *  un mapeo de otra compañía. */
   function sendAll(api, mappingId, ids, send, companyId, runId) {
     var out = [];
     var chain = Promise.resolve();
@@ -187,12 +194,16 @@ var CalaSignPipedrive = (function () {
   function load(api, params) {
     if (!params.objectType) return Promise.resolve({ state: "error", key: "badResource" });
     if (!params.ids.length) return Promise.resolve({ state: "error", key: "noRecords" });
-    // Con companyId solo vienen los mapeos de la conexión de ESA compañía (con dos compañías conectadas, un mapeo de la
-    // otra leería un deal ajeno con el mismo id).
-    return api("GET", "/v1/crm/mappings?provider=pipedrive" + (params.companyId ? "&companyId=" + encodeURIComponent(params.companyId) : ""))
+    // Solo los mapeos de la conexión de la compañía desde la que se abrió la acción (con dos compañías conectadas, un
+    // mapeo de la otra leería un deal ajeno con el mismo id). Sin companyId no se ofrece ninguno.
+    if (!params.companyId) return Promise.resolve({ state: "error", key: "noAccount" });
+    return api("GET", "/v1/crm/mappings?provider=pipedrive&companyId=" + encodeURIComponent(params.companyId))
       .then(function (r) {
         var maps = eligibleMappings(r.items, params.objectType);
-        return maps.length ? { state: "ready", mappings: maps } : { state: "error", key: "noMappings" };
+        // Conexiones sin su compañía guardada: sus mapeos no se listan con companyId; se avisa que hay que probarlas.
+        var accountUnknown = !!(r.connectionsWithoutAccount && r.connectionsWithoutAccount.length);
+        if (!maps.length) return { state: "error", key: accountUnknown ? "accountUnknown" : "noMappings" };
+        return { state: "ready", mappings: maps, accountUnknown: accountUnknown };
       })
       .catch(function (e) {
         if (e.status === 401) return { state: "login" };
@@ -246,15 +257,15 @@ var CalaSignPipedrive = (function () {
         }
         if (r.state === "error") {
           var parts = [head(), el(doc, "p", { class: "error", text: r.key ? T[r.key] : r.message })];
-          if (r.key === "noMappings") parts.push(el(doc, "p", {}, [el(doc, "a", { href: base + "/app/settings/crm", target: "_blank", rel: "noopener", text: T.settings })]));
+          if (r.key === "noMappings" || r.key === "accountUnknown") parts.push(el(doc, "p", {}, [el(doc, "a", { href: base + "/app/settings/crm", target: "_blank", rel: "noopener", text: T.settings })]));
           render(parts);
           return;
         }
-        form(r.mappings);
+        form(r.mappings, r.accountUnknown);
       });
     }
 
-    function form(maps) {
+    function form(maps, accountUnknown) {
       var select = el(doc, "select", { id: "mapping" });
       maps.forEach(function (m) {
         select.appendChild(el(doc, "option", { value: m.id, text: m.name }));
@@ -282,6 +293,7 @@ var CalaSignPipedrive = (function () {
         // Tope de 20 por vez: se avisa cuántos quedan afuera (antes se cortaba sin decir nada).
         params.skipped ? el(doc, "p", { class: "error", role: "alert", text: T.truncated.replace("{total}", String(params.total)).replace("{n}", String(params.skipped)) }) : null,
         el(doc, "p", { class: "muted", text: T.records + ": " + params.ids.join(", ") }),
+        accountUnknown ? el(doc, "p", { class: "muted", role: "status", text: T.accountUnknown }) : null,
         btn,
       ]);
       f.addEventListener("submit", function (e) {

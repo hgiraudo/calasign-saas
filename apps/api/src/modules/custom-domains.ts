@@ -8,9 +8,10 @@ import { SetCustomDomainInput, type CustomDomain, type HostBranding } from "@cal
 import { config } from "../config";
 import type { Db } from "../infra/db";
 import { AppError, badRequest, conflict, notFound } from "../lib/errors";
-import { iso, randomToken, requestPath, sha256Hex, uuidv7 } from "../lib/util";
+import { iso, randomToken, requestPath, uuidv7 } from "../lib/util";
 import { auditFromRequest, recordAudit } from "./audit";
 import { getTenantBranding } from "./branding";
+import { signerTokenHash } from "./signer-token";
 import { SESSION_COOKIE, authenticate, type Services } from "./context";
 
 const appHost = () => new URL(config.appUrl).hostname.toLowerCase();
@@ -421,8 +422,10 @@ export async function customDomainRoutes(app: FastifyInstance, s: Services) {
     const tenantId = await signerHostTenant(s.db, req.headers.host);
     if (!tenantId) return;
     const token = path.split("/")[3] ?? "";
-    if (!/^[A-Za-z0-9_-]{20,100}$/.test(token)) return;
-    const r = await s.db.one<any>(`SELECT tenant_id FROM recipients WHERE access_token_hash = $1`, [sha256Hex(token)]);
+    // El link permanente o un token de sesión del canje embebido (signer-token.ts).
+    const hash = await signerTokenHash(s.db, token);
+    if (!hash) return;
+    const r = await s.db.one<any>(`SELECT tenant_id FROM recipients WHERE access_token_hash = $1`, [hash]);
     if (r && r.tenant_id !== tenantId) return reply.code(404).send({ error: { code: "not_found", message: "Link no encontrado" } });
   });
 

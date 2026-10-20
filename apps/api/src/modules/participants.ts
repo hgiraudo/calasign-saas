@@ -172,7 +172,7 @@ export async function participantRoutes(app: FastifyInstance, s: Services) {
         if (e.status !== "sent" || pastExpiry(e)) throw conflict("envelope_closed", "El sobre ya no está disponible");
         if (!(e.allow_delegation ?? true)) throw forbidden("El remitente no permite delegar este sobre");
         const old = await t.one<any>(`SELECT * FROM recipients WHERE id = $1`, [r0.id]);
-        assertLinkCurrent(old, req.params.token);
+        assertLinkCurrent(old, r0);
         // Quien se registró solo en un formulario web (correo sin validar) no recibe correos: tampoco puede usar la
         // delegación para que la plataforma le escriba a un tercero.
         if (isUnverifiedSelfRegistered(old)) throw forbidden("Para delegar, validá primero tu correo");

@@ -39,21 +39,29 @@ Piezas comunes:
   (`companyId`). `GET /v1/crm/mappings?provider=…&companyId=` lista solo los mapeos de las conexiones de esa cuenta
   (`config.companyId` de Pipedrive, sacado de `/users/me`; `config.accountId` de Kommo, sacado de `/api/v4/account`).
   `POST /v1/crm/mappings/{id}/send` con otra cuenta responde 409 `company_mismatch`; si no, se leería el registro con el
-  mismo id en la cuenta equivocada. En Pipedrive y Kommo la cuenta es **obligatoria**: conectar falla si la prueba de
-  la conexión no la informa (como el `hub_id` de HubSpot); el envío sin `companyId` responde 400 `company_required` y
-  con una conexión sin cuenta guardada (conexiones viejas), 409 `crm_account_unknown` (probar la conexión la guarda);
-  `?companyId=` no lista mapeos de conexiones sin cuenta. Un cliente de la API que envía con un mapeo de Pipedrive o
-  Kommo tiene que mandar la cuenta. El envío acepta `Idempotency-Key`.
+  mismo id en la cuenta equivocada. En Pipedrive y Kommo la conexión tiene que tener **su cuenta guardada**: conectar
+  falla si la prueba de la conexión no la informa (como el `hub_id` de HubSpot) y el envío con una conexión sin cuenta
+  (conexiones viejas) responde 409 `crm_account_unknown` (probar la conexión la guarda). `companyId` es **opcional**:
+  sin él (la consola, clientes de la API) el registro se lee de la cuenta guardada en la conexión del mapeo. La acción
+  y el widget, en cambio, no ofrecen mapeos si no saben desde qué cuenta se abrieron (sin la cuenta, el listado
+  mezclaría mapeos de otras cuentas). `?companyId=` no lista mapeos de conexiones sin cuenta, y el listado devuelve
+  `connectionsWithoutAccount` con esas conexiones para avisar que hay que probarlas. El envío acepta `Idempotency-Key`.
 - **Bucle del webhook de HubSpot:** los eventos con `changeSource = INTEGRATION` y `sourceId` igual al `appId` del
   evento (o a `HUBSPOT_APP_ID`) son cambios hechos por la propia app (el write-back) y no disparan; además, un mapeo
   por webhook cuya propiedad de estado es la misma que la que dispara se rechaza (400 `crm_trigger_loop`).
 - **Adjunto en HubSpot:** el id del archivo subido se guarda en `crm_links.remote_ref` (`file:<id>`) antes de crear la
-  nota; si la nota falla, el reintento no vuelve a subir el PDF.
+  nota; si la nota falla, el reintento no vuelve a subir el PDF. Si HubSpot rechaza la nota con un 4xx que se refiere
+  al adjunto (archivo borrado o inválido), se olvida el archivo y el próximo intento lo vuelve a subir. Ese valor
+  intermedio no se expone: `remoteRef` es `null` hasta que el adjunto se completa.
 - **Desconectar** (`DELETE /v1/crm/connections/{id}`): revoca los tokens OAuth en el proveedor cuando hay endpoint
   documentado (HubSpot `DELETE /oauth/v1/refresh-tokens/{token}`, Salesforce `/services/oauth2/revoke`, Zoho
   `/oauth/v2/token/revoke`, Pipedrive `/oauth/revoke`); RD Station y Kommo no publican uno, y los tokens de app privada
-  de HubSpot o las claves de Siigo/Alegra se revocan en el proveedor. Si la revocación falla se registra en el log y se
-  desconecta igual (la auditoría `crm.disconnected` lleva `tokenRevoked`). Mapeos y vínculos se borran con la conexión,
+  de HubSpot o las claves de Siigo/Alegra se revocan en el proveedor. La revocación va **después** de borrar la
+  conexión, y no se hace si otra conexión OAuth del mismo proveedor (de cualquier organización, activa o no) usa la
+  misma cuenta (`portalId`, `companyId`, `accountId`, `orgId` de Zoho, `instanceUrl` de Salesforce; sin la cuenta
+  guardada, cualquier otra conexión OAuth del proveedor): revocar el refresh token puede desinstalar la app de toda la
+  cuenta (`tokenRevoked: "shared"`). Si la revocación falla se registra en el log y se desconecta igual (la auditoría
+  `crm.disconnected` lleva `tokenRevoked`). Las ejecuciones pendientes de la conexión pasan a `failed`. Mapeos y vínculos se borran con la conexión,
   pero la **actividad se conserva** (`crm_runs.connection_id` pasa a NULL, migración 0081, y la ejecución guarda el
   nombre y el proveedor en `detail.connection`). Se eligió esto en vez de un borrado lógico de la conexión porque es
   lo menos invasivo: ninguna consulta de conexiones o mapeos tiene que filtrar desconectadas.

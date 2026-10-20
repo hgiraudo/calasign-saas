@@ -784,11 +784,12 @@ await test("pipedrive: la acción lee los ids, filtra mapeos y envía uno por re
     { id: "m4", name: "Sin plantilla", objectType: "deal", templateId: null, active: true, send: true },
   ];
   let loggedIn = true;
+  let noAccount = [];
   const fakeFetch = async (url, init) => {
     calls.push({ url, method: init.method, credentials: init.credentials, headers: init.headers, body: init.body ? JSON.parse(init.body) : null });
     const res = (status, body) => ({ ok: status < 400, status, text: async () => JSON.stringify(body) });
     if (!loggedIn) return res(401, { error: { code: "unauthorized", message: "Sin sesión" } });
-    if (url === `${BASE}/v1/crm/mappings?provider=pipedrive` || url === `${BASE}/v1/crm/mappings?provider=pipedrive&companyId=5150`) return res(200, { items: mappings });
+    if (url === `${BASE}/v1/crm/mappings?provider=pipedrive&companyId=5150`) return res(200, { items: mappings, connectionsWithoutAccount: noAccount });
     const m = url.match(/\/v1\/crm\/mappings\/(\w+)\/send$/);
     if (m && init.body) {
       const b = JSON.parse(init.body);
@@ -798,8 +799,13 @@ await test("pipedrive: la acción lee los ids, filtra mapeos y envía uno por re
     return res(404, { error: { message: "?" } });
   };
   const api = PD.apiFactory(fakeFetch, BASE);
-  const ready = await PD.load(api, PD.parseParams("?resource=deal&selectedIds=42,43"));
+  // Sin companyId no se ofrecen mapeos (podrían ser de otra compañía) ni se llama a la API.
+  assert.equal((await PD.load(api, PD.parseParams("?resource=deal&selectedIds=42,43"))).key, "noAccount");
+  assert.equal(calls.length, 0);
+  for (const l of ["es", "en", "pt"]) assert.ok(PD.TEXT[l].noAccount && PD.TEXT[l].accountUnknown, l);
+  const ready = await PD.load(api, PD.parseParams("?resource=deal&selectedIds=42,43&companyId=5150"));
   assert.equal(ready.state, "ready");
+  assert.equal(ready.accountUnknown, false);
   assert.deepEqual(ready.mappings.map((x) => x.id), ["m1"]);
   assert.equal(calls[0].credentials, "include");
   const out = await PD.sendAll(api, "m1", ["42", "43"], true);
@@ -825,13 +831,18 @@ await test("pipedrive: la acción lee los ids, filtra mapeos y envía uno por re
   const win = { location: { search: "?resource=deal&selectedIds=42" }, crypto: { randomUUID: () => `u${store.size}` }, sessionStorage: { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v) } };
   assert.equal(PD.runIdFor(win), PD.runIdFor(win));
   assert.equal(PD.runIdFor({ ...win, sessionStorage: { getItem: () => { throw new Error("bloqueado"); } } }).length > 0, true);
-  assert.equal((await PD.load(api, PD.parseParams("?resource=person&selectedIds=8"))).mappings[0].id, "m3");
+  assert.equal((await PD.load(api, PD.parseParams("?resource=person&selectedIds=8&companyId=5150"))).mappings[0].id, "m3");
+  // Conexiones sin compañía guardada: se avisa (con mapeos, como nota; sin mapeos, como error).
+  noAccount = [{ id: "c9", name: "Vieja", provider: "pipedrive" }];
+  assert.equal((await PD.load(api, PD.parseParams("?resource=deal&selectedIds=42&companyId=5150"))).accountUnknown, true);
   assert.equal((await PD.load(api, PD.parseParams("?resource=deal"))).key, "noRecords");
   assert.equal((await PD.load(api, PD.parseParams("?resource=lead&selectedIds=1"))).key, "badResource");
   mappings.length = 0;
-  assert.equal((await PD.load(api, PD.parseParams("?resource=deal&selectedIds=42"))).key, "noMappings");
+  assert.equal((await PD.load(api, PD.parseParams("?resource=deal&selectedIds=42&companyId=5150"))).key, "accountUnknown");
+  noAccount = [];
+  assert.equal((await PD.load(api, PD.parseParams("?resource=deal&selectedIds=42&companyId=5150"))).key, "noMappings");
   loggedIn = false;
-  assert.equal((await PD.load(api, PD.parseParams("?resource=deal&selectedIds=42"))).state, "login");
+  assert.equal((await PD.load(api, PD.parseParams("?resource=deal&selectedIds=42&companyId=5150"))).state, "login");
 });
 
 // ───────── Kommo (widget sobre el conector nativo) ─────────
@@ -919,8 +930,12 @@ await test("kommo: send.js lee los ids, filtra mapeos de leads y envía uno por 
   assert.deepEqual(calls.at(-1).body, { objectId: "42", send: true, companyId: "31337" });
   assert.equal(calls.at(-1).headers["Idempotency-Key"], "km-31337-m1-42-r9");
   assert.equal((await KM.load(api, KM.parseParams("?ids="))).key, "noRecords");
+  // Sin la cuenta del widget no se ofrecen mapeos.
+  const before = calls.length;
+  assert.equal((await KM.load(api, KM.parseParams("?ids=42"))).key, "noAccount");
+  assert.equal(calls.length, before, "sin llamar a la API");
   loggedIn = false;
-  assert.equal((await KM.load(api, KM.parseParams("?ids=42"))).state, "login");
+  assert.equal((await KM.load(api, KM.parseParams("?ids=42&companyId=31337"))).state, "login");
 });
 
 // ───────── Zoho CRM ─────────

@@ -190,7 +190,7 @@ export async function otpRoutes(app: FastifyInstance, s: Services) {
       // El estado se vuelve a mirar con el sobre bloqueado: el de arriba se leyó sin bloqueo.
       if (!OTP_OPEN_STATUSES.includes((await lockEnvelope(t, e.tenant_id, e.id)).status)) throw envelopeClosed();
       // Y el link: una corrección del contacto confirmada mientras tanto no le manda un código al destino anterior.
-      assertLinkCurrent(await t.one<any>(`SELECT access_token_hash FROM recipients WHERE id = $1`, [r.id]), req.params.token);
+      assertLinkCurrent(await t.one<any>(`SELECT access_token_hash FROM recipients WHERE id = $1`, [r.id]), r);
       const last = await t.one<any>(
         `SELECT created_at, (SELECT count(*) FROM otp_challenges WHERE recipient_id = $1 AND created_at > now() - interval '1 hour') AS n,
                 (SELECT count(*) FROM otp_challenges WHERE recipient_id = $1 AND created_at > now() - interval '1 day') AS day
@@ -307,7 +307,7 @@ export async function otpRoutes(app: FastifyInstance, s: Services) {
       if (!OTP_OPEN_STATUSES.includes(cur.status)) throw envelopeClosed();
       // Con el link vigente: si una corrección del contacto se confirmó mientras tanto, quien tenía el link anterior no
       // deja autenticado ni "visto" al contacto corregido.
-      assertLinkCurrent(await t.one<any>(`SELECT access_token_hash FROM recipients WHERE id = $1`, [r.id]), req.params.token);
+      assertLinkCurrent(await t.one<any>(`SELECT access_token_hash FROM recipients WHERE id = $1`, [r.id]), r);
       // Un código se canjea una sola vez (dos verificaciones concurrentes no generan dos sesiones).
       const used = await t.query(`UPDATE otp_challenges SET verified_at = now() WHERE id = $1 AND verified_at IS NULL RETURNING id`, [ch.id]);
       if (!used.length) throw new AppError(400, "otp_expired", "El código ya se usó. Pedí uno nuevo.");

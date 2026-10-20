@@ -52,10 +52,12 @@ async function ensureFirstVersion(db: Db, e: { id: string; tenant_id: string; si
 /** Marca de un sobre B-T que tiene que completarse a B-LTA (el barrido lo toma enseguida, sin esperar el día). */
 const LTV_PENDING = "LTV pendiente";
 
-/** Calcula hasta cuándo vale el archivo (solo PDF con DSS: los B-B/B-T no se renuevan). */
 /** El PDF firmado se leyó del almacenamiento pero no se pudo analizar (archiveTimestampInfo: PDF ilegible). */
-class ArchiveParseError extends Error {}
+class ArchiveParseError extends Error {
+  override name = "ArchiveParseError";
+}
 
+/** Calcula hasta cuándo vale el archivo (solo PDF con DSS: los B-B/B-T no se renuevan). */
 async function inspectArchive(d: Deps, envelopeId: string) {
   const e = await signedFile(d.db, envelopeId);
   if (!e) return;

@@ -7,8 +7,8 @@ import type { Db } from "../infra/db";
 import { SYSTEM, appendEvent } from "../infra/evidence";
 import type { BlobStore } from "../infra/storage";
 import { AppError } from "../lib/errors";
-import { sha256Hex } from "../lib/util";
 import { authenticate, type Services } from "./context";
+import { signerTokenHash } from "./signer-token";
 
 interface Deps {
   db: Db;
@@ -181,11 +181,14 @@ export async function retentionRoutes(app: FastifyInstance, s: Services, log: De
     // sin eso respondía 410 (y el estado) para documentos de cualquier sobre.
     if (url === "/v1/signing/:token/documents/:documentId/file") {
       if (!/^[0-9a-f-]{36}$/i.test(p.documentId ?? "") || !p.token) return;
+      // El link permanente o un token de sesión del canje embebido (signer-token.ts).
+      const hash = await signerTokenHash(s.db, p.token);
+      if (!hash) return;
       const r = await s.db.one<any>(
         `SELECT f.purged_at, e.status FROM documents d JOIN files f ON f.id = d.file_id JOIN envelopes e ON e.id = d.envelope_id
           JOIN recipients rc ON rc.envelope_id = d.envelope_id AND rc.access_token_hash = $2
          WHERE d.id = $1`,
-        [p.documentId, sha256Hex(p.token)],
+        [p.documentId, hash],
       );
       // Anulado o vencido: que responda el handler (sobre cerrado), no "original borrado".
       if (r?.purged_at && !["voided", "expired"].includes(r.status)) throw purgedOriginal(r.status);

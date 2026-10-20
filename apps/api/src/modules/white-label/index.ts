@@ -5,8 +5,8 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { config } from "../../config";
 import type { Db } from "../../infra/db";
 import type { BlobStore } from "../../infra/storage";
-import { sha256Hex } from "../../lib/util";
 import type { Services } from "../context";
+import { signerTokenHash } from "../signer-token";
 import { assetPath, brandForHost, productLabel, publicTheme, rebrands, resolveBrand, type ResolvedBrand } from "./brand";
 import { brandFromKeyOrHost, whiteLabelRoutes } from "./routes";
 
@@ -24,19 +24,21 @@ export async function brandLogoForPdf(db: Db, blobs: BlobStore, b: ResolvedBrand
 
 // ───────────────────────────── HTML de la web ─────────────────────────────
 
-/** ¿Es la página pública de verificación? "/verify" y "/verify/" (la web muestra la misma página). */
+/** ¿Es la página pública de verificación? "/verify", "/verify/" y en cualquier capitalización (la web muestra la misma página). */
 export function isVerifyPath(path: string): boolean {
-  return path.replace(/\/+$/, "") === "/verify";
+  return path.replace(/\/+$/, "").toLowerCase() === "/verify";
 }
 
 /** Marca de la página pedida: link de firma (/s/:token), formulario (/f/:slug), ?b= de la verificación o el Host. */
 export async function brandForPage(db: Db, req: FastifyRequest): Promise<ResolvedBrand | null> {
   const [path, qs] = req.url.split("?");
   const sm = /^\/s\/([A-Za-z0-9_-]{20,100})$/.exec(path);
-  if (sm) {
+  // También con un token de sesión del canje embebido (signer-token.ts).
+  const signerHash = sm ? await signerTokenHash(db, sm[1]) : null;
+  if (signerHash) {
     const r = await db.one<{ tenant_id: string; brand_id: string | null }>(
       `SELECT e.tenant_id, e.brand_id FROM recipients r JOIN envelopes e ON e.id = r.envelope_id WHERE r.access_token_hash = $1`,
-      [sha256Hex(sm[1])],
+      [signerHash],
     );
     if (r) return resolveBrand(db, r.tenant_id, r.brand_id);
   }

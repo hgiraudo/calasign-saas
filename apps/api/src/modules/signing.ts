@@ -7,6 +7,7 @@ import type { Db } from "../infra/db";
 import { AppError, badRequest, conflict, notFound } from "../lib/errors";
 import { sha256Hex, uuidv7 } from "../lib/util";
 import { telegramLinkFor } from "./telegram";
+import { resolveSessionToken, SIGNER_TOKEN_RE } from "./signer-token";
 import { clientInfo, type Services } from "./context";
 import { advanceRouting, currentSignerGroup, lockEnvelope, pastExpiry, receivesSignerNotices, sendPdf } from "./envelopes";
 import { recordSignerDownload } from "./download-evidence";
@@ -29,24 +30,41 @@ const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 interface Resolved {
   recipient: any;
   envelope: any;
+  /** access_token_hash vigente del destinatario (el link permanente), también si se entró con un token de sesión. */
+  canonicalHash: string;
+  /** true si el token de la URL es un token de sesión derivado (canje embebido), no el link permanente. */
+  sessionToken: boolean;
 }
 
+/**
+ * Destinatario y sobre de un token de la URL del firmante (/s/:token, /v1/signing/:token/*). Acepta el link permanente
+ * y los tokens de sesión del canje embebido: los dos atribuyen todo al mismo destinatario.
+ */
 export async function resolveToken(db: Db, token: string): Promise<Resolved> {
-  if (!/^[A-Za-z0-9_-]{20,100}$/.test(token)) throw notFound("Link");
-  const recipient = await db.one<any>(`SELECT * FROM recipients WHERE access_token_hash = $1`, [sha256Hex(token)]);
+  if (!SIGNER_TOKEN_RE.test(token)) throw notFound("Link");
+  const hash = sha256Hex(token);
+  let recipient = await db.one<any>(`SELECT * FROM recipients WHERE access_token_hash = $1`, [hash]);
+  let sessionToken = false;
+  if (!recipient) {
+    const st = await resolveSessionToken(db, hash);
+    if (st) recipient = await db.one<any>(`SELECT * FROM recipients WHERE id = $1 AND access_token_hash = $2`, [st.recipient_id, st.access_token_hash]);
+    sessionToken = true;
+  }
   if (!recipient) throw notFound("Link");
   const envelope = await db.one<any>(`SELECT * FROM envelopes WHERE id = $1`, [recipient.envelope_id]);
   if (!envelope || envelope.status === "draft") throw notFound("Link");
-  return { recipient, envelope };
+  return { recipient, envelope, canonicalHash: recipient.access_token_hash, sessionToken };
 }
 
 /**
  * Con el sobre bloqueado: el link del pedido sigue siendo el vigente del destinatario. Una corrección del contacto
  * (link nuevo, consentimiento y apertura reiniciados) o un reemplazo pudo confirmarse entre resolveToken y el bloqueo;
  * sin esto, quien tenía el link anterior rechazaba, delegaba, consentía o "abría" en nombre del contacto corregido.
+ * `resolved` es el destinatario que devolvió resolveToken (su access_token_hash es el link con el que se entró, o del
+ * que deriva el token de sesión): no el token crudo de la URL, que para un token de sesión no coincide nunca.
  */
-export function assertLinkCurrent(r: any, token: string) {
-  if (!r || r.access_token_hash !== sha256Hex(token)) throw notFound("Link");
+export function assertLinkCurrent(r: any, resolved: { access_token_hash?: string | null }) {
+  if (!r || !resolved.access_token_hash || r.access_token_hash !== resolved.access_token_hash) throw notFound("Link");
 }
 
 export function recipientActor(req: FastifyRequest, r: any): Actor {
@@ -158,7 +176,7 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
         if (cur.status !== "sent" || pastExpiry(cur)) return;
         const upd = await t.query(
           `UPDATE recipients SET status = 'viewed', viewed_at = now() WHERE id = $1 AND status = 'sent' AND access_token_hash = $2 RETURNING id`,
-          [r0.id, sha256Hex(req.params.token)],
+          [r0.id, r0.access_token_hash],
         );
         if (upd.length) await appendEvent(t, { tenantId: e0.tenant_id, envelopeId: e0.id, type: "recipient.viewed", actor: recipientActor(req, r0) });
       });
@@ -193,7 +211,7 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
         // Solo con el link vigente: el consentimiento de quien tenía el link anterior no pasa al contacto corregido.
         const upd = await t.query(`UPDATE recipients SET consented_at = now() WHERE id = $1 AND consented_at IS NULL AND access_token_hash = $2 RETURNING id`, [
           r0.id,
-          sha256Hex(req.params.token),
+          r0.access_token_hash,
         ]);
         if (upd.length)
           await appendEvent(t, {
@@ -259,7 +277,7 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
     await s.db.tx(async (t) => {
       const e = await lockEnvelope(t, e0.tenant_id, e0.id);
       const r = await t.one<any>(`SELECT * FROM recipients WHERE id = $1`, [r0.id]);
-      assertLinkCurrent(r, req.params.token);
+      assertLinkCurrent(r, r0);
       if (e.status !== "sent" || pastExpiry(e)) throw new AppError(410, "envelope_closed", "El sobre ya no está disponible para firmar");
       if (r.role !== "signer" && r.role !== "approver") throw conflict("not_signer", "Este destinatario no firma");
       if (r.status === "signed") throw conflict("already_signed", "Ya firmaste este sobre");
@@ -371,7 +389,7 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
     await s.db.tx(async (t) => {
       const e = await lockEnvelope(t, e0.tenant_id, e0.id);
       const r = await t.one<any>(`SELECT * FROM recipients WHERE id = $1`, [r0.id]);
-      assertLinkCurrent(r, req.params.token);
+      assertLinkCurrent(r, r0);
       if (e.status !== "sent" || pastExpiry(e)) throw new AppError(410, "envelope_closed", "El sobre ya no está disponible");
       if ((r.role !== "signer" && r.role !== "approver") || !["sent", "viewed"].includes(r.status)) throw conflict("not_signable", "No podés rechazar este sobre");
       await t.query(`UPDATE recipients SET status = 'declined', declined_at = now(), decline_reason = $2 WHERE id = $1`, [r.id, input.reason]);

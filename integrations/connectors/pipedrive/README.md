@@ -18,9 +18,11 @@ Esta carpeta suma la pieza del **Pipedrive Marketplace**: una acción de app (*A
 2. Pipedrive abre una pestaña en `send.html?resource=deal&selectedIds=42&companyId=…&userId=…&token=…`.
 3. La página es del dominio de CalaSign y usa la **sesión del navegador** (si no hay sesión, pide iniciarla en otra
    pestaña y reintentar). No guarda API keys ni usa el JWT de Pipedrive.
-4. Lista los mapeos activos de Pipedrive para ese tipo de registro (`GET /v1/crm/mappings?provider=pipedrive`; alcanza
-   con el permiso de crear sobres) y, con el que elija el usuario, llama a `POST /v1/crm/mappings/{id}/send` por cada
-   registro (máximo 20 por vez). Muestra el resultado con un link a cada sobre.
+4. Lista los mapeos activos de Pipedrive para ese tipo de registro de la conexión de **esa compañía**
+   (`GET /v1/crm/mappings?provider=pipedrive&companyId=…`; alcanza con el permiso de crear sobres) y, con el que elija
+   el usuario, llama a `POST /v1/crm/mappings/{id}/send` con `companyId` por cada registro (máximo 20 por vez). Muestra
+   el resultado con un link a cada sobre. Sin `companyId` en la URL no ofrece mapeos (podrían ser de otra compañía), y
+   si hay conexiones sin su compañía guardada avisa que hay que probarlas en CalaSign.
 
 ## Registrar la app (Pipedrive Developer Hub)
 

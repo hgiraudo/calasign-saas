@@ -380,7 +380,7 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
       const rNow = await t.one<any>(`SELECT status, access_token_hash FROM recipients WHERE id = $1`, [r.id]);
       // Una corrección del contacto (link nuevo, verificaciones anuladas) confirmada mientras tanto: la verificación de
       // quien tenía el link anterior no queda en curso a nombre del contacto corregido.
-      assertLinkCurrent(rNow, req.params.token);
+      assertLinkCurrent(rNow, r);
       if (!["sent", "viewed"].includes(rNow?.status)) throw conflict("not_signable", "Ya no podés firmar este sobre");
       // Dos inicios simultáneos no crean dos verificaciones en curso ni consumen dos intentos (el índice único de 0019
       // lo garantiza también a nivel base).

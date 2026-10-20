@@ -16,10 +16,12 @@ Esta carpeta suma la pieza del **Kommo Marketplace**: un widget con el botón **
 
 1. En la **ficha de un lead** aparece el botón en el panel derecho; en la **lista de leads**, el widget aparece como
    acción sobre los seleccionados (máximo 20).
-2. El botón abre una pestaña en `send.html?ids=42[,43…]`. La página es del dominio de CalaSign y usa la **sesión del
-   navegador** (si no hay sesión, pide iniciarla y reintentar). No guarda API keys ni tokens en Kommo.
-3. Lista los mapeos activos de Kommo (`GET /v1/crm/mappings?provider=kommo`) y, con el que elija el usuario, llama a
-   `POST /v1/crm/mappings/{id}/send` por cada lead.
+2. El botón abre una pestaña en `send.html?ids=42[,43…]&companyId=<cuenta>`. La página es del dominio de CalaSign y
+   usa la **sesión del navegador** (si no hay sesión, pide iniciarla y reintentar). No guarda API keys ni tokens en Kommo.
+3. Lista los mapeos activos de la conexión de **esa cuenta** de Kommo (`GET /v1/crm/mappings?provider=kommo&companyId=…`)
+   y, con el que elija el usuario, llama a `POST /v1/crm/mappings/{id}/send` con `companyId` por cada lead. Sin la
+   cuenta no ofrece mapeos (podrían ser de otra cuenta), y si hay conexiones sin su cuenta guardada avisa que hay que
+   probarlas en CalaSign.
 
 ## Registrar la integración en Kommo
 

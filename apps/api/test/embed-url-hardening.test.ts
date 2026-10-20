@@ -105,7 +105,9 @@ describe("?embed=1 y frame-ancestors", () => {
     const code = String(su.json().url).split("/embed/")[1];
     const ex = await app.inject({ method: "GET", url: `/embed/${code}` });
     expect(ex.statusCode).toBe(302);
-    expect(ex.headers.location).toBe(`/s/${token}?embed=1`);
+    // Un token de sesión derivado, no el link permanente del destinatario (signer-token.ts).
+    expect(ex.headers.location).toMatch(/^\/s\/[A-Za-z0-9_-]{20,100}\?embed=1$/);
+    expect(ex.headers.location).not.toContain(token);
     const page = await app.inject({ method: "GET", url: String(ex.headers.location) });
     expect(frameAncestors(page.headers["content-security-policy"])).toBe(`'self' ${ORIGIN}`);
     const info = await app.inject({ method: "GET", url: `/v1/signing/${token}/embed` });

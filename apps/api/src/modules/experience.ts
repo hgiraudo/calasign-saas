@@ -655,7 +655,7 @@ export async function experienceRoutes(app: FastifyInstance, s: Services) {
       const e = await lockEnvelope(t, e0.tenant_id, e0.id);
       if (e.status !== "sent") throw new AppError(410, "envelope_closed", "El sobre ya no está disponible");
       const r = await t.one<any>(`SELECT * FROM recipients WHERE id = $1`, [r0.id]);
-      assertLinkCurrent(r, req.params.token);
+      assertLinkCurrent(r, r0);
       // Una corrección del nombre confirmada mientras tanto anuló la confirmación: la de ahora fue para el nombre que se
       // mostraba antes y no vale para el corregido.
       if (r.name !== r0.name) throw conflict("recipient_changed", "Los datos del firmante cambiaron: volvé a cargar la página");

@@ -1137,10 +1137,9 @@ step("Salesforce: OAuth con PKCE S256, contacto principal (OpportunityContactRol
     prefill: [{ field: "Monto", property: "value" }],
     writeBack: { statusProperty: "Estado CalaSign", statusValues: { sent: "Enviado", completed: "Firmado", declined: "Rechazado" }, attachPdf: true },
   });
-  // Pipedrive/Kommo: el envío dice desde qué cuenta se hace (la acción manda companyId); sin él, 400 company_required.
-  const noCompany = await api("POST", `/v1/crm/mappings/${pdMap.id}/send`, { objectId: "42" }, { expect: 400 });
-  assert(noCompany.error.code === "company_required", "envío de Pipedrive sin companyId → 400 company_required");
-  const pdSent = await api("POST", `/v1/crm/mappings/${pdMap.id}/send`, { objectId: "42", companyId: "5150" });
+  // Pipedrive/Kommo: companyId es opcional (la acción y el widget lo mandan; la consola no): sin él se usa la compañía
+  // guardada en la conexión del mapeo.
+  const pdSent = await api("POST", `/v1/crm/mappings/${pdMap.id}/send`, { objectId: "42" });
   const pdDet = await api("GET", `/v1/envelopes/${pdSent.envelopeId}`);
   assert(pdDet.recipients.some((r) => r.name === "Paula Principal PD" && r.email === "paula.pd@cliente.test"), "persona principal del deal como Cliente");
   assert(pdDet.recipients.some((r) => r.name === "Pedro Participante PD"), "participante del deal como Vendedor");
@@ -1198,7 +1197,9 @@ step("Salesforce: OAuth con PKCE S256, contacto principal (OpportunityContactRol
   assert(forA.join() === [pdMap.id, pdPersonMap.id].sort().join(), `con companyId de A no aparece el mapeo de B (${forA.length})`);
   const forB = (await api("GET", "/v1/crm/mappings?provider=pipedrive&companyId=6160")).items.map((x) => x.id);
   assert(forB.length === 1 && forB[0] === pdMapB.id, "con companyId de B solo el de B");
-  assert((await api("GET", "/v1/crm/mappings?provider=pipedrive")).items.length === 3, "sin companyId, todos los de Pipedrive");
+  const allPd = await api("GET", "/v1/crm/mappings?provider=pipedrive");
+  assert(allPd.items.length === 3, "sin companyId, todos los de Pipedrive");
+  assert(Array.isArray(allPd.connectionsWithoutAccount) && allPd.connectionsWithoutAccount.length === 0, "sin conexiones de Pipedrive sin compañía guardada");
   const mismatch = await api("POST", `/v1/crm/mappings/${pdMapB.id}/send`, { objectId: "42", companyId: "5150" }, { expect: 409 });
   assert(mismatch.error.code === "company_mismatch", "mapeo de B enviado desde A → 409 company_mismatch");
   const idem = { headers: { "idempotency-key": `pd-6160-${pdMapB.id}-42-run1` } };

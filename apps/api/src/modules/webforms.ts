@@ -23,6 +23,7 @@ import { requireFeature, tenantPlan } from "./billing/plans";
 import { rateLimitIpKey } from "../lib/ip";
 import { authenticate, clientInfo, type AuthContext, type Services } from "./context";
 import { setFrameAncestors, tenantFrameAncestors } from "./embed";
+import { issueSignerSessionToken } from "./signer-token";
 import { MIN_FILL_MS, publicTenantCapReached } from "./public-intake";
 import { sendEnvelope } from "./envelopes";
 import { insertEnvelopeFromTemplate, loadTemplateForUse, planFromTemplate, type LoadedTemplate } from "./templates";
@@ -570,19 +571,34 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
         await t.query(`UPDATE web_forms SET uses = uses + 1, updated_at = now() WHERE id = $1`, [form.id]);
         return id;
       });
-      const r = await s.db.one<any>(`SELECT access_token_enc FROM recipients WHERE id = $1`, [signerRecipientId]);
       const embedded = Boolean(input.embed && form.embeddable && !form.require_otp);
       if (embedded) {
         // La página del firmante solo se deja enmarcar con una sesión embebida usada (embed.ts): la del formulario
-        // embebible se registra ya usada, con los orígenes autorizados de la organización (como el formulario).
-        await s.db.query(
-          `INSERT INTO embed_sessions (id, tenant_id, envelope_id, recipient_id, code_hash, frame_ancestors, created_by_actor, expires_at, used_at, used_ip)
-           VALUES ($1,$2,$3,$4,$5,'{}',$6, now(), now(), $7)`,
-          [uuidv7(), form.tenant_id, envId, signerRecipientId, sha256Hex(randomToken(24)), `web_form:${form.id}`, ip],
-        );
+        // embebible se registra ya usada, con los orígenes autorizados de la organización (como el formulario). Y, como el
+        // canje de /embed/:code, el iframe recibe un token de sesión ligado a esa sesión (signer-token.ts), no el link
+        // permanente del destinatario (quedaba en el historial del iframe y en logs o proxies del sitio que lo enmarca).
+        const sessionToken = await s.db.tx(async (t) => {
+          const r = await t.one<any>(`SELECT access_token_hash FROM recipients WHERE id = $1`, [signerRecipientId]);
+          const embedSessionId = uuidv7();
+          await t.query(
+            `INSERT INTO embed_sessions (id, tenant_id, envelope_id, recipient_id, code_hash, frame_ancestors, created_by_actor, expires_at, used_at, used_ip)
+             VALUES ($1,$2,$3,$4,$5,'{}',$6, now(), now(), $7)`,
+            [embedSessionId, form.tenant_id, envId, signerRecipientId, sha256Hex(randomToken(24)), `web_form:${form.id}`, ip],
+          );
+          return issueSignerSessionToken(t, {
+            recipientId: signerRecipientId,
+            envelopeId: envId,
+            tenantId: form.tenant_id,
+            embedSessionId,
+            accessTokenHash: r.access_token_hash,
+          });
+        });
+        reply.code(201);
+        return { envelopeId: envId, signingPath: `/s/${sessionToken}?embed=1` };
       }
+      const r = await s.db.one<any>(`SELECT access_token_enc FROM recipients WHERE id = $1`, [signerRecipientId]);
       reply.code(201);
-      return { envelopeId: envId, signingPath: `/s/${decrypt(r.access_token_enc)}${embedded ? "?embed=1" : ""}` };
+      return { envelopeId: envId, signingPath: `/s/${decrypt(r.access_token_enc)}` };
     },
   );
 

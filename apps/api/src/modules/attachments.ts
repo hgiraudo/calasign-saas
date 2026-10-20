@@ -33,10 +33,10 @@ export async function attachmentRoutes(app: FastifyInstance, s: Services) {
   }
 
   /** Verifica que el firmante pueda tocar ese campo ahora. Devuelve el campo. */
-  async function guard(t: any, r0: any, e0: any, fieldId: string, token: string) {
+  async function guard(t: any, r0: any, e0: any, fieldId: string) {
     const e = await lockEnvelope(t, e0.tenant_id, e0.id);
     const r = await t.one(`SELECT * FROM recipients WHERE id = $1`, [r0.id]);
-    assertLinkCurrent(r, token);
+    assertLinkCurrent(r, r0);
     if (e.status !== "sent" || pastExpiry(e)) throw new AppError(410, "envelope_closed", "El sobre ya no está disponible para firmar");
     if (r.role !== "signer" || !["sent", "viewed"].includes(r.status)) throw conflict("not_signable", "No podés modificar este sobre");
     const group = await currentSignerGroup(t, e.id);
@@ -76,7 +76,7 @@ export async function attachmentRoutes(app: FastifyInstance, s: Services) {
     const ext = type === "application/pdf" ? "pdf" : type === "image/png" ? "png" : "jpg";
     const key = `tenants/${e0.tenant_id}/envelopes/${e0.id}/attachments/${fileId}.${ext}`;
     // Validar antes de subir, y de nuevo dentro de la transacción.
-    await s.db.tx((t) => guard(t, r0, e0, req.params.fieldId, req.params.token));
+    await s.db.tx((t) => guard(t, r0, e0, req.params.fieldId));
     await s.blobs.put(key, buf, type);
     const sha = sha256Hex(buf);
     const { ip, userAgent } = clientInfo(req);
@@ -84,7 +84,7 @@ export async function attachmentRoutes(app: FastifyInstance, s: Services) {
     // Si la transacción falla (el firmante completó o se cerró el sobre entre la subida y acá), el archivo ya subido no
     // lo referencia nada: sin fila en `files` la retención nunca lo borra (como las imágenes de firma en signing.ts).
     const field = await s.db.tx(async (t) => {
-      const { e, r, f } = await guard(t, r0, e0, req.params.fieldId, req.params.token);
+      const { e, r, f } = await guard(t, r0, e0, req.params.fieldId);
       previous = f.attachment_file_id ?? null;
       await t.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'attachment',$3,$4,$5,$6)`, [
         fileId,
@@ -115,7 +115,7 @@ export async function attachmentRoutes(app: FastifyInstance, s: Services) {
     const { recipient: r0, envelope: e0 } = await resolveToken(s.db, req.params.token);
     let previous: string | null = null;
     const field = await s.db.tx(async (t) => {
-      const { f } = await guard(t, r0, e0, req.params.fieldId, req.params.token);
+      const { f } = await guard(t, r0, e0, req.params.fieldId);
       previous = f.attachment_file_id ?? null;
       await t.query(`UPDATE fields SET attachment_file_id = NULL, value = NULL, filled_at = NULL WHERE id = $1`, [f.id]);
       return t.one(`SELECT * FROM fields WHERE id = $1`, [f.id]);

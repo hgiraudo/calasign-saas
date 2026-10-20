@@ -6,6 +6,7 @@ import {
   CRM_PROVIDER_OBJECTS,
   type CrmConnection,
   type CrmMapping,
+  type CrmMappingList,
   type CrmProvider,
   type CrmProviderInfo,
   type CrmRoleMapping,
@@ -75,6 +76,8 @@ export function CrmSettingsPage() {
   const [prov, setProv] = useState<ProvidersResponse | null>(null);
   const [conns, setConns] = useState<CrmConnection[] | null>(null);
   const [maps, setMaps] = useState<CrmMapping[] | null>(null);
+  // Conexiones de Pipedrive/Kommo sin su cuenta guardada: sus mapeos no se pueden enviar hasta probarlas.
+  const [noAccount, setNoAccount] = useState<CrmMappingList["connectionsWithoutAccount"]>([]);
   const [runs, setRuns] = useState<CrmRun[] | null>(null);
   const [templates, setTemplates] = useState<TemplateSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -85,7 +88,10 @@ export function CrmSettingsPage() {
     Promise.all([
       api<ProvidersResponse>("/v1/crm/providers").then(setProv),
       api<{ items: CrmConnection[] }>("/v1/crm/connections").then((r) => setConns(r.items)),
-      api<{ items: CrmMapping[] }>("/v1/crm/mappings").then((r) => setMaps(r.items)),
+      api<CrmMappingList>("/v1/crm/mappings").then((r) => {
+        setMaps(r.items);
+        setNoAccount(r.connectionsWithoutAccount ?? []);
+      }),
       api<{ items: CrmRun[] }>("/v1/crm/runs?limit=30").then((r) => setRuns(r.items)),
       api<{ items: TemplateSummary[] }>("/v1/templates").then((r) => setTemplates(r.items)),
     ]);
@@ -325,6 +331,11 @@ export function CrmSettingsPage() {
               load().catch((e) => setError(errorText(e)));
             }}
           />
+        )}
+        {noAccount.length > 0 && (
+          <div className="alert alert-warn" role="status">
+            {t("accountUnknown")} {noAccount.map((c) => c.name).join(", ")}
+          </div>
         )}
         {!maps ? (
           <Spinner />

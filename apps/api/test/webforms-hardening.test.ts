@@ -155,6 +155,19 @@ describe("formularios web: envíos del público", () => {
     expect(r.json().signingPath).toMatch(/\?embed=1$/);
     const page = await app.inject({ method: "GET", url: r.json().signingPath });
     expect(/frame-ancestors ([^;]*)/.exec(String(page.headers["content-security-policy"]))?.[1]?.trim()).toBe("'self' https://app.cliente.test");
+    // Un token de sesión ligado a la sesión embebida del formulario, no el link permanente del destinatario.
+    const { sha256Hex, decrypt } = await import("../src/lib/util");
+    const sessionToken = String(r.json().signingPath).slice(3).split("?")[0];
+    const rc = await db.one<any>(`SELECT id, access_token_enc FROM recipients WHERE envelope_id = $1 AND self_registered`, [r.json().envelopeId]);
+    expect(sessionToken).not.toBe(decrypt(rc.access_token_enc));
+    const st = await db.one<any>(
+      `SELECT st.recipient_id, es.created_by_actor FROM signer_session_tokens st JOIN embed_sessions es ON es.id = st.embed_session_id WHERE st.token_hash = $1`,
+      [sha256Hex(sessionToken)],
+    );
+    expect(st).toMatchObject({ recipient_id: rc.id, created_by_actor: expect.stringMatching(/^web_form:/) });
+    const sess = await app.inject({ method: "GET", url: `/v1/signing/${sessionToken}` });
+    expect(sess.statusCode).toBe(200);
+    expect(sess.json().recipient.id).toBe(rc.id);
     await db.query(`UPDATE tenants SET embed_frame_ancestors = '{}' WHERE id = $1`, [tenant]);
   });
 

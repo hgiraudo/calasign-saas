@@ -15,9 +15,10 @@ import { config } from "../config";
 import type { Db } from "../infra/db";
 import { appendEvent } from "../infra/evidence";
 import { badRequest, conflict, notFound } from "../lib/errors";
-import { decrypt, randomToken, sha256Hex, uuidv7 } from "../lib/util";
+import { randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { authenticate, clientInfo, type AuthContext, type Services } from "./context";
 import { envelopeBaseUrl } from "./white-label/brand";
+import { issueSignerSessionToken, signerTokenHash } from "./signer-token";
 
 const CODE_TTL_MS = 5 * 60_000;
 
@@ -204,27 +205,38 @@ export async function embedRoutes(app: FastifyInstance, s: Services) {
         )
       : null;
     reply.header("cache-control", "no-store").header("referrer-policy", "no-referrer");
-    // El destinatario pudo ser reemplazado (delegó, lo reasignaron) o quitado después de emitirse el código: su link ya
-    // no existe (access_token_enc NULL) y descifrarlo daba un error interno, con un evento de sesión ya registrado.
-    const r = sess ? await s.db.one<any>(`SELECT * FROM recipients WHERE id = $1`, [sess.recipient_id]) : null;
-    if (!sess || !r?.access_token_enc) {
-      return reply
+    const gone = () =>
+      reply
         .code(410)
         .type("text/html; charset=utf-8")
         .send(
           `<!doctype html><meta charset="utf-8"><title>Link vencido · Link expired</title><body style="font-family:sans-serif;padding:32px;color:#0b1f3a">` +
-            `<h1>Link vencido</h1><p>Este link de firma ya se usó o venció. Volvé a la aplicación para obtener uno nuevo.</p>` +
+            `<h1>Link vencido</h1><p>Este link de firma ya se usó o venció, o el sobre ya no está disponible. Volvé a la aplicación para obtener uno nuevo.</p>` +
             `<p>Link expirado · Link expired</p>`,
         );
-    }
-    await s.db.tx(async (t) => {
-      const cur = await t.one<any>(`SELECT status FROM envelopes WHERE id = $1 FOR UPDATE`, [sess.envelope_id]);
-      // El código vale 5 minutos: si el sobre se anuló, rechazó o venció mientras tanto, el firmante ve el sobre cerrado
-      // pero no se suma el inicio de sesión a su evidencia.
-      if (["voided", "declined", "expired"].includes(cur?.status)) return;
+    // El destinatario pudo ser reemplazado (delegó, lo reasignaron) o quitado después de emitirse el código: su link ya
+    // no existe (access_token_hash NULL).
+    const r = sess ? await s.db.one<any>(`SELECT * FROM recipients WHERE id = $1`, [sess.recipient_id]) : null;
+    if (!sess || !r?.access_token_hash) return gone();
+    // El canje entrega un token de sesión derivado (signer-token.ts, migración 0083), no el link permanente del
+    // destinatario: la URL de la página queda en el historial del iframe o la pestaña, en los logs y proxies del
+    // integrador y en equipos compartidos. Vence a las 2 h sin uso (deslizante, tope de 8 h desde el canje) y se revoca al
+    // cerrarse el sobre o rotar el link del destinatario.
+    const sessionToken = await s.db.tx(async (t) => {
+      const cur = await t.one<any>(`SELECT status, expires_at FROM envelopes WHERE id = $1 FOR UPDATE`, [sess.envelope_id]);
+      // El código vale 5 minutos: si el sobre se anuló, rechazó o venció mientras tanto, no se abre una sesión nueva ni se
+      // suma el inicio de sesión a su evidencia.
+      if (["voided", "declined", "expired"].includes(cur?.status) || (cur?.status === "sent" && cur.expires_at != null && new Date(cur.expires_at).getTime() <= Date.now())) return null;
       // Ni para un destinatario reemplazado (delegó, lo reasignaron) o con el link rotado después de leerlo arriba.
       const rNow = await t.one<any>(`SELECT access_token_hash FROM recipients WHERE id = $1`, [r.id]);
-      if (!rNow?.access_token_hash || rNow.access_token_hash !== r.access_token_hash) return;
+      if (!rNow?.access_token_hash || rNow.access_token_hash !== r.access_token_hash) return null;
+      const issued = await issueSignerSessionToken(t, {
+        recipientId: r.id,
+        envelopeId: sess.envelope_id,
+        tenantId: sess.tenant_id,
+        embedSessionId: sess.id,
+        accessTokenHash: r.access_token_hash,
+      });
       await appendEvent(t, {
         tenantId: sess.tenant_id,
         envelopeId: sess.envelope_id,
@@ -235,13 +247,15 @@ export async function embedRoutes(app: FastifyInstance, s: Services) {
           ? { embedSessionId: sess.id, authentication: "link", tabOnly: true, openedBy: sess.created_by_actor }
           : { embedSessionId: sess.id, authentication: "embedded", authenticatedBy: sess.created_by_actor },
       });
+      return issued;
     });
+    if (!sessionToken) return gone();
     setFrameAncestors(reply, await originsForRecipient(s.db, r.id, sess.tenant_id));
     // También "para pestaña": el modo embebido de la página es el que vuelve al returnUrl del integrador al terminar
     // (el CSP 'none' ya impide mostrarla en un iframe).
     const tabOnly = (sess.frame_ancestors ?? []).includes(TAB_ONLY);
     // "tab=1": la página muestra su marco completo (marca, idioma) y abre los proveedores en la misma pestaña.
-    return reply.redirect(`/s/${decrypt(r.access_token_enc)}?embed=1${tabOnly ? "&tab=1" : ""}`, 302);
+    return reply.redirect(`/s/${sessionToken}?embed=1${tabOnly ? "&tab=1" : ""}`, 302);
   });
 
   // ───────── Página del firmante en modo embebido: frame-ancestors dinámico ─────────
@@ -255,7 +269,9 @@ export async function embedRoutes(app: FastifyInstance, s: Services) {
     const m = /^\/s\/([A-Za-z0-9_-]{20,100})(?:\?(.*))?$/.exec(req.url);
     if (!m) return payload;
     const embedParam = /(?:^|&)embed=1(?:&|$)/.test(m[2] ?? "");
-    const r = await s.db.one<any>(`SELECT id, tenant_id FROM recipients WHERE access_token_hash = $1`, [sha256Hex(m[1])]);
+    // El link permanente o un token de sesión del canje (signer-token.ts).
+    const hash = await signerTokenHash(s.db, m[1]);
+    const r = hash ? await s.db.one<any>(`SELECT id, tenant_id FROM recipients WHERE access_token_hash = $1`, [hash]) : null;
     if (!r) return payload;
     // Con o sin embed=1, solo para un destinatario con una sesión embebida usada (canjeada en /embed/:code): con solo
     // agregar ?embed=1 al link del correo, la página se dejaba enmarcar en los orígenes de la organización.
@@ -272,8 +288,9 @@ export async function embedRoutes(app: FastifyInstance, s: Services) {
   });
 
   app.get<{ Params: { token: string } }>("/v1/signing/:token/embed", async (req): Promise<SigningEmbedInfo> => {
-    if (!/^[A-Za-z0-9_-]{20,100}$/.test(req.params.token)) throw notFound("Link");
-    const r = await s.db.one<any>(`SELECT id, tenant_id, embedded FROM recipients WHERE access_token_hash = $1`, [sha256Hex(req.params.token)]);
+    const hash = await signerTokenHash(s.db, req.params.token);
+    if (!hash) throw notFound("Link");
+    const r = await s.db.one<any>(`SELECT id, tenant_id, embedded FROM recipients WHERE access_token_hash = $1`, [hash]);
     if (!r) throw notFound("Link");
     // Misma ventana de 24 h que lastEmbedSession (y que isEmbeddedSigner para delegar): pasado ese plazo la página
     // abierta desde el correo ya no queda en modo embebido.

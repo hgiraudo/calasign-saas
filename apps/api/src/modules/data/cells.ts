@@ -9,6 +9,7 @@ import { CELL_CATALOG, cellById, cells, defaultCell, isConfiguredCell, servedCel
 import { badRequest } from "../../lib/errors";
 import { sha256Hex } from "../../lib/util";
 import { SESSION_COOKIE, type Services } from "../context";
+import { signerTokenHash } from "../signer-token";
 
 export function publicCells(): CellInfo[] {
   const configured = cells();
@@ -57,7 +58,9 @@ export async function tenantOfRequest(db: Db, req: FastifyRequest): Promise<stri
   }
   const m = SIGNING_RE.exec(req.url);
   if (m) {
-    const r = await db.one<any>(`SELECT tenant_id FROM recipients WHERE access_token_hash = $1`, [sha256Hex(m[1])]);
+    // El link permanente o un token de sesión del canje embebido (signer-token.ts).
+    const hash = await signerTokenHash(db, m[1]);
+    const r = hash ? await db.one<any>(`SELECT tenant_id FROM recipients WHERE access_token_hash = $1`, [hash]) : null;
     if (r) return r.tenant_id;
   }
   const cookie = req.cookies?.[SESSION_COOKIE];

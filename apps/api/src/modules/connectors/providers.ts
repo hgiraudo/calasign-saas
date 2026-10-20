@@ -392,7 +392,9 @@ const ensurePdf = (bytes: Uint8Array, what: string) => {
 
 const BAMBOO_FIELDS = ["firstName", "lastName", "displayName", "workEmail", "homeEmail", "mobilePhone", "jobTitle", "department", "division", "location", "hireDate", "employeeNumber", "supervisorEId", "payRate"];
 
-export async function testConnection(c: Conn): Promise<{ label: string | null }> {
+/** config: datos de la cuenta que se guardan en la conexión (Factorial: companyId, para no revocar al desconectar los
+ *  tokens de una cuenta que otra conexión sigue usando). */
+export async function testConnection(c: Conn): Promise<{ label: string | null; config?: Record<string, unknown> }> {
   switch (c.provider) {
     case "bamboohr":
       await get(c, "/employees/directory");
@@ -402,8 +404,10 @@ export async function testConnection(c: Conn): Promise<{ label: string | null }>
       return { label: `service user ${c.creds.serviceUserId}` };
     }
     case "factorial": {
-      await get(c, "/employees/employees?limit=1");
-      return { label: "Factorial" };
+      const d = await get(c, "/employees/employees?limit=1");
+      const first = (Array.isArray(d?.data) ? d.data : Array.isArray(d) ? d : [])[0];
+      const companyId = first?.company_id != null && /^[A-Za-z0-9_-]{1,64}$/.test(String(first.company_id)) ? String(first.company_id) : null;
+      return { label: "Factorial", ...(companyId ? { config: { companyId } } : {}) };
     }
     case "ironclad":
       await get(c, "/workflows?pageSize=1");

@@ -134,11 +134,11 @@ export const ConnectorFlowInput = z.object({
   /** webhook: evento que dispara (vacío: cualquiera), ej. "Created" en BambooHR o "workflow_updated_on_sign_step". */
   triggerConfig: z.object({ event: z.string().trim().max(200).optional().nullable() }).default({}),
   /**
-   * Secreto opcional para firmar el webhook entrante de este flujo (16 a 200 caracteres; null lo quita). Con secreto,
+   * Secreto opcional para firmar el webhook entrante de este flujo (16 a 200 caracteres; null o "" lo quitan). Con secreto,
    * el flujo solo se dispara si la entrega trae X-CalaSign-Signature: sha256=<hex HMAC-SHA256(secreto, cuerpo)> (o la
    * firma propia de HiBob/Factorial, ver docs/CONECTORES.md). La API nunca lo devuelve (webhookSigned dice si hay).
    */
-  webhookSecret: z.string().min(16).max(200).optional().nullable(),
+  webhookSecret: z.union([z.literal(""), z.string().min(16).max(200)]).optional().nullable(),
   send: z.boolean().default(true),
   active: z.boolean().default(true),
 });

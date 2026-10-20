@@ -27,6 +27,7 @@ const es = {
   "kommo.statusPlaceholder": "Nombre, código o id del campo del lead (ej. Estado CalaSign)",
   // Pipedrive
   "p.pipedrive": "Pipedrive",
+  "accountUnknown": "Estas conexiones no tienen guardada su cuenta y sus mapeos no se pueden enviar: probá la conexión para habilitarla.",
   "pipedrive.install": "La app de Pipedrive quedó instalada. Para terminar, conectá Pipedrive con OAuth desde su tarjeta.",
   "pipedrive.hint.deal":
     "Pipedrive · Deal: el contacto principal es la persona del deal; los participantes siguen en orden (contacto 1, 2…). Los campos personalizados se mapean por su key (hash de 40 caracteres) o por su nombre; los de opción única se leen como su etiqueta.",
@@ -158,6 +159,7 @@ const pt: Record<Key, string> = {
   "kommo.statusPlaceholder": "Nome, código ou id do campo do lead (ex. Estado CalaSign)",
   // Pipedrive
   "p.pipedrive": "Pipedrive",
+  "accountUnknown": "Estas conexões não têm a conta salva e os mapeamentos delas não podem ser enviados: teste a conexão para habilitá-la.",
   "pipedrive.install": "O app do Pipedrive foi instalado. Para concluir, conecte o Pipedrive com OAuth no cartão dele.",
   "pipedrive.hint.deal":
     "Pipedrive · Deal: o contato principal é a pessoa do deal; os participantes vêm em seguida (contato 1, 2…). Campos personalizados são mapeados pela key (hash de 40 caracteres) ou pelo nome; os de opção única são lidos como o rótulo.",
@@ -287,6 +289,7 @@ const en: Record<Key, string> = {
   "kommo.statusPlaceholder": "Lead field name, code or id (e.g. CalaSign status)",
   // Pipedrive
   "p.pipedrive": "Pipedrive",
+  "accountUnknown": "These connections have no stored account and their mappings cannot be sent: test the connection to enable it.",
   "pipedrive.install": "The Pipedrive app is installed. To finish, connect Pipedrive with OAuth from its card.",
   "pipedrive.hint.deal":
     "Pipedrive · Deal: the primary contact is the deal's person; participants follow in order (contact 1, 2…). Custom fields are mapped by key (40-character hash) or by name; single-option fields are read as their label.",

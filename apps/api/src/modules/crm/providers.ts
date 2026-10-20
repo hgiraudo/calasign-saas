@@ -726,6 +726,16 @@ export interface AttachInput {
   uploadedFileId?: string | null;
   /** HubSpot: se llama apenas se sube el archivo, antes de crear la nota (para guardarlo y no re-subirlo al reintentar). */
   onFileUploaded?: (fileId: string) => Promise<void>;
+  /** HubSpot: la nota se rechazó por el adjunto (4xx que menciona el archivo, p. ej. lo borraron de la carpeta): quien
+   *  llama olvida el archivo guardado para que el próximo intento lo vuelva a subir. */
+  onFileRejected?: (fileId: string) => Promise<void>;
+}
+
+/** 4xx de HubSpot al crear la nota que se refiere al adjunto (archivo inexistente o inválido en hs_attachment_ids). */
+export function isHubspotAttachmentRejection(err: unknown): boolean {
+  if (!(err instanceof CrmError) || err.status == null || err.status < 400 || err.status >= 500) return false;
+  if (err.authFailed || err.status === 429) return false;
+  return /attachment|hs_attachment_ids|file/i.test(err.message);
 }
 
 /** Adjunta el PDF sellado (o su referencia) al registro. Devuelve una referencia remota. */
@@ -746,15 +756,22 @@ export async function attachSigned(c: CrmConn, objectType: CrmObjectType, id: st
       fileId = String(file.id);
       await a.onFileUploaded?.(fileId);
     }
-    const created = await crmFetch(c, {
-      method: "POST",
-      path: "/crm/v3/objects/notes",
-      json: {
-        properties: { hs_timestamp: new Date().toISOString(), hs_note_body: note, hs_attachment_ids: fileId },
-        // 214 = nota → deal (asociación definida por HubSpot).
-        associations: [{ to: { id: String(id) }, types: [{ associationCategory: "HUBSPOT_DEFINED", associationTypeId: 214 }] }],
-      },
-    });
+    let created: any;
+    try {
+      created = await crmFetch(c, {
+        method: "POST",
+        path: "/crm/v3/objects/notes",
+        json: {
+          properties: { hs_timestamp: new Date().toISOString(), hs_note_body: note, hs_attachment_ids: fileId },
+          // 214 = nota → deal (asociación definida por HubSpot).
+          associations: [{ to: { id: String(id) }, types: [{ associationCategory: "HUBSPOT_DEFINED", associationTypeId: 214 }] }],
+        },
+      });
+    } catch (err) {
+      // El archivo guardado ya no sirve (borrado o inválido): sin esto, cada reintento repetía la nota con el mismo id.
+      if (isHubspotAttachmentRejection(err)) await a.onFileRejected?.(fileId);
+      throw err;
+    }
     return `file:${fileId} note:${created.id}`;
   }
   if (c.provider === "salesforce") {

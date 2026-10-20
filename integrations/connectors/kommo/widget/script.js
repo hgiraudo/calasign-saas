@@ -26,7 +26,8 @@ define(["jquery"], function ($) {
       var total = clean.length;
       clean = clean.slice(0, 200);
       // La cuenta de Kommo desde la que se envía: CalaSign solo ofrece los mapeos de la conexión de esta cuenta y
-      // rechaza un mapeo de otra (el mismo id de lead existe en las dos).
+      // rechaza un mapeo de otra (el mismo id de lead existe en las dos). Si Kommo no la informa, send.html se abre
+      // igual y muestra el error (sin la cuenta no ofrece mapeos: podrían ser de otra cuenta).
       var acc = accountId();
       window.open(SEND + "?ids=" + clean.join(",") + (total > clean.length ? "&total=" + total : "") + (acc ? "&companyId=" + acc : ""), "_blank", "noopener");
     }

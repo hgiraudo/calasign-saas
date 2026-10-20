@@ -1,4 +1,5 @@
-// CRM y conectores: cuenta obligatoria en Pipedrive/Kommo, revocación al desconectar conservando la actividad,
+// CRM y conectores: cuenta guardada obligatoria en Pipedrive/Kommo (companyId opcional en el envío), revocación al
+// desconectar (después del borrado y sin tocar cuentas compartidas) conservando la actividad,
 // webhook de conectores con ventana de deduplicación y firma HMAC por flujo, eventos propios de HubSpot, bucle de
 // write-back, reanudación del adjunto de HubSpot, portal obligatorio con token, retención de ejecuciones y auditoría.
 // App real sobre PGlite y un fetch falso (sin red).
@@ -167,7 +168,7 @@ describe("Pipedrive/Kommo: cuenta obligatoria", () => {
     expect(row!.config.companyId).toBe("5150");
   });
 
-  it("envío: sin cuenta guardada 409, sin companyId 400, de otra cuenta 409; ?companyId no lista mapeos sin cuenta", async () => {
+  it("envío: sin cuenta guardada 409, sin companyId usa la guardada, de otra cuenta 409; ?companyId no lista mapeos sin cuenta", async () => {
     const noAcc = await crmConn("pipedrive", { config: { apiDomain: "https://acme.pipedrive.com" } });
     const mNoAcc = await crmMapping(noAcc);
     let r = await app.inject({ method: "POST", url: `/v1/crm/mappings/${mNoAcc}/send`, headers: auth, payload: { objectId: "42", companyId: "5150" } });
@@ -176,17 +177,26 @@ describe("Pipedrive/Kommo: cuenta obligatoria", () => {
 
     const acc = await crmConn("kommo", { config: { baseDomain: "https://acme.kommo.com", accountId: "31337" } });
     const mAcc = await crmMapping(acc);
+    // Sin companyId (consola, clientes de API): se lee el registro de la cuenta guardada en la conexión.
+    handler = (c) => (c.url.startsWith("https://acme.kommo.com/api/v4/leads/42") ? json(404, {}) : json(404, {}));
     r = await app.inject({ method: "POST", url: `/v1/crm/mappings/${mAcc}/send`, headers: auth, payload: { objectId: "42" } });
-    expect(r.statusCode).toBe(400);
-    expect(r.json().error.code).toBe("company_required");
+    expect(r.json().error.code).toBe("crm_record_not_found");
+    expect(calls.some((c) => c.url.startsWith("https://acme.kommo.com/api/v4/leads/42"))).toBe(true);
+    // Sin companyId y sin cuenta guardada: 409 igual.
+    r = await app.inject({ method: "POST", url: `/v1/crm/mappings/${mNoAcc}/send`, headers: auth, payload: { objectId: "42" } });
+    expect(r.json().error.code).toBe("crm_account_unknown");
     r = await app.inject({ method: "POST", url: `/v1/crm/mappings/${mAcc}/send`, headers: auth, payload: { objectId: "42", companyId: "999" } });
     expect(r.statusCode).toBe(409);
     expect(r.json().error.code).toBe("company_mismatch");
 
     const list = await app.inject({ method: "GET", url: `/v1/crm/mappings?provider=pipedrive&companyId=5150`, headers: auth });
     expect(list.json().items.map((x: any) => x.id)).not.toContain(mNoAcc);
+    // Aviso de conexiones sin cuenta guardada (la UI pide probarlas).
+    expect(list.json().connectionsWithoutAccount.map((x: any) => x.id)).toContain(noAcc);
     const kList = await app.inject({ method: "GET", url: `/v1/crm/mappings?provider=kommo&companyId=31337`, headers: auth });
     expect(kList.json().items.map((x: any) => x.id)).toContain(mAcc);
+    expect(kList.json().connectionsWithoutAccount.map((x: any) => x.id)).not.toContain(noAcc);
+    expect(kList.json().connectionsWithoutAccount.map((x: any) => x.id)).not.toContain(acc);
   });
 });
 
@@ -206,8 +216,42 @@ describe("webhook de conectores", () => {
     expect(await runs(f)).toBe(1);
     const now = Date.now();
     vi.spyOn(Date, "now").mockReturnValue(now + 11 * 60_000);
+    // La franja anterior también cuenta mientras su ejecución sea de hace menos que la ventana (hora de la base).
+    await db.query(`UPDATE connector_runs SET created_at = created_at - interval '11 minutes' WHERE flow_id = $1`, [f]);
     expect((await post(c.token, body)).json().queued).toBe(1);
     expect(await runs(f)).toBe(2);
+  });
+
+  it("una reentrega justo después del borde de la franja también se deduplica", async () => {
+    const { hookDedupeWindowMs } = await import("../src/modules/connectors");
+    const c = await connConn("bamboohr");
+    const f = await connFlow(c.id);
+    const W = hookDedupeWindowMs();
+    const boundary = (Math.floor(Date.now() / W) + 1) * W;
+    const body = JSON.stringify({ recordId: "e-borde", event: "Created" });
+    const spy = vi.spyOn(Date, "now").mockReturnValue(boundary - 1_000);
+    expect((await post(c.token, body)).json().queued).toBe(1);
+    spy.mockReturnValue(boundary + 1_000);
+    expect((await post(c.token, body)).json().queued).toBe(0);
+    expect(await runs(f)).toBe(1);
+    // Pasada la ventana desde la primera ejecución, vuelve a disparar.
+    await db.query(`UPDATE connector_runs SET created_at = created_at - interval '11 minutes' WHERE flow_id = $1`, [f]);
+    expect((await post(c.token, body)).json().queued).toBe(1);
+    expect(await runs(f)).toBe(2);
+  });
+
+  it("cuerpo crudo: BOM inicial aceptado y claves __proto__/constructor.prototype descartadas", async () => {
+    const { parseHookJson } = await import("../src/modules/connectors");
+    expect(parseHookJson("\uFEFF{\"recordId\":\"e-bom\"}")).toEqual({ recordId: "e-bom" });
+    expect(parseHookJson("")).toBeNull();
+    const o: any = parseHookJson('{"a":1,"__proto__":{"polluted":true},"b":{"constructor":{"prototype":{"x":1}}}}');
+    expect(Object.prototype.hasOwnProperty.call(o, "__proto__")).toBe(false);
+    expect(o.b.constructor).toBe(Object);
+    expect(({} as any).polluted).toBeUndefined();
+    const c = await connConn("bamboohr");
+    const f = await connFlow(c.id);
+    expect((await post(c.token, "\uFEFF" + JSON.stringify({ recordId: "e-bom" }))).json().queued).toBe(1);
+    expect(await runs(f)).toBe(1);
   });
 
   it("flujo con secreto: sin firma o con otra 401; con X-CalaSign-Signature se encola; un flujo sin secreto no se afecta", async () => {
@@ -244,8 +288,14 @@ describe("webhook de conectores", () => {
     expect(JSON.stringify(r.json())).not.toContain("otro-secreto");
     const cleared = await app.inject({ method: "PATCH", url: `/v1/connectors/flows/${f}`, headers: auth, payload: { webhookSecret: null } });
     expect(cleared.json().webhookSigned).toBe(false);
+    // "" también lo quita (antes daba 400 por el mínimo de 16 caracteres).
+    await app.inject({ method: "PATCH", url: `/v1/connectors/flows/${f}`, headers: auth, payload: { webhookSecret: "otro-secreto-1234567" } });
+    const emptied = await app.inject({ method: "PATCH", url: `/v1/connectors/flows/${f}`, headers: auth, payload: { webhookSecret: "" } });
+    expect(emptied.statusCode).toBe(200);
+    expect(emptied.json().webhookSigned).toBe(false);
+    expect((await app.inject({ method: "PATCH", url: `/v1/connectors/flows/${f}`, headers: auth, payload: { webhookSecret: "corto" } })).statusCode).toBe(400);
     const a = await audits("connector.flow_updated", f);
-    expect(a.length).toBe(2);
+    expect(a.length).toBe(4);
     expect(JSON.stringify(a)).not.toContain("otro-secreto");
   });
 
@@ -304,6 +354,54 @@ describe("desconectar revoca tokens y conserva la actividad", () => {
     expect(calls.length).toBe(n);
   });
 
+  it("no revoca si otra conexión (de otra organización) usa la misma cuenta; revoca después de borrar; pendientes → failed", async () => {
+    const other = util.uuidv7();
+    await db.query(`INSERT INTO tenants (id, slug, name) VALUES ($1, $2, 'Otra')`, [other, `o-${other.slice(-8)}`]);
+    const otherConn = util.uuidv7();
+    await db.query(`INSERT INTO crm_connections (id, tenant_id, provider, name, auth_type, credentials_enc, config) VALUES ($1,$2,'hubspot','x','oauth',$3,$4)`, [
+      otherConn,
+      other,
+      util.encrypt(JSON.stringify({ access_token: "o-at", refresh_token: "o-rt" })),
+      JSON.stringify({ portalId: "9001" }),
+    ]);
+    const shared = await crmConn("hubspot", { creds: { access_token: "a", refresh_token: "shared-rt" }, config: { portalId: "9001" } });
+    const pending = util.uuidv7();
+    await db.query(`INSERT INTO crm_runs (id, tenant_id, connection_id, kind, status) VALUES ($1,$2,$3,'write_back','pending')`, [pending, tenant, shared]);
+    handler = () => new Response(null, { status: 204 });
+    expect((await app.inject({ method: "DELETE", url: `/v1/crm/connections/${shared}`, headers: auth })).statusCode).toBe(204);
+    expect(calls.some((c) => c.url.includes("/oauth/v1/refresh-tokens/"))).toBe(false);
+    expect((await audits("crm.disconnected", shared))[0].data.tokenRevoked).toBe("shared");
+    const run = await db.one<any>(`SELECT status, error FROM crm_runs WHERE id = $1`, [pending]);
+    expect(run).toMatchObject({ status: "failed" });
+    expect(run.error).toContain("desconect");
+
+    // Otra cuenta: se revoca, y para entonces la conexión ya está borrada.
+    const alone = await crmConn("hubspot", { creds: { access_token: "a", refresh_token: "alone-rt" }, config: { portalId: "9002" } });
+    let existedAtRevoke: unknown = "no-llamado";
+    handler = async (c) => {
+      if (c.url.endsWith("/oauth/v1/refresh-tokens/alone-rt")) existedAtRevoke = await db.one(`SELECT 1 FROM crm_connections WHERE id = $1`, [alone]);
+      return new Response(null, { status: 204 });
+    };
+    expect((await app.inject({ method: "DELETE", url: `/v1/crm/connections/${alone}`, headers: auth })).statusCode).toBe(204);
+    expect(existedAtRevoke).toBeNull();
+    expect((await audits("crm.disconnected", alone))[0].data.tokenRevoked).toBe(true);
+  });
+
+  it("conector Factorial: con otra conexión OAuth de la misma compañía no revoca; la prueba guarda companyId", async () => {
+    const a1 = await connConn("factorial", { auth: "oauth", creds: { access_token: "fa-at", refresh_token: "fa-rt-1" } });
+    const a2 = await connConn("factorial", { auth: "oauth", creds: { access_token: "fa-at", refresh_token: "fa-rt-2" } });
+    handler = (c) => (c.url.includes("/employees/employees") ? json(200, { data: [{ id: 1, company_id: 77 }] }) : json(404, {}));
+    for (const id of [a1.id, a2.id]) expect((await app.inject({ method: "POST", url: `/v1/connectors/connections/${id}/test`, headers: auth })).json().ok).toBe(true);
+    expect((await db.one<any>(`SELECT config FROM connector_connections WHERE id = $1`, [a1.id]))!.config.companyId).toBe("77");
+    handler = () => new Response("{}", { status: 200 });
+    expect((await app.inject({ method: "DELETE", url: `/v1/connectors/connections/${a1.id}`, headers: auth })).statusCode).toBe(204);
+    expect(calls.some((x) => x.url.endsWith("/oauth/revoke"))).toBe(false);
+    expect((await audits("connector.disconnected", a1.id))[0].data.tokenRevoked).toBe("shared");
+    // La última de la compañía sí se revoca.
+    expect((await app.inject({ method: "DELETE", url: `/v1/connectors/connections/${a2.id}`, headers: auth })).statusCode).toBe(204);
+    expect(calls.some((x) => x.url.endsWith("/oauth/revoke") && x.body.includes("fa-rt-2"))).toBe(true);
+  });
+
   it("conector Factorial OAuth: POST /oauth/revoke; actividad conservada", async () => {
     const c = await connConn("factorial", { auth: "oauth", creds: { access_token: "fa-at", refresh_token: "fa-rt" } });
     const runId = util.uuidv7();
@@ -342,6 +440,34 @@ describe("HubSpot", () => {
     expect(ref).toBe("file:f-1 note:n-1");
     expect(calls.some((c) => c.url.endsWith("/files/v3/files"))).toBe(false);
     expect(JSON.parse(calls.find((c) => c.url.endsWith("/notes"))!.body).properties.hs_attachment_ids).toBe("f-1");
+  });
+
+  it("adjunto: si la nota se rechaza por el archivo (4xx), se olvida el archivo guardado; con 5xx no", async () => {
+    const { CrmConn, attachSigned, isHubspotAttachmentRejection, CrmError } = await import("../src/modules/crm/providers");
+    const conn = new CrmConn({ id: "x", provider: "hubspot", auth_type: "token", credentials_enc: util.encrypt(JSON.stringify({ token: "pat" })), config: {} }, null);
+    let noteStatus = 400;
+    handler = (c) => (c.url.endsWith("/crm/v3/objects/notes") ? json(noteStatus, { message: "Attachment with id f-9 does not exist" }) : json(404, {}));
+    const rejected: string[] = [];
+    const input = { fileName: "a.pdf", pdf: new Uint8Array([37]), subject: "S", envelopeId: "e", sha256: "h", url: "u", uploadedFileId: "f-9", onFileRejected: async (id: string) => void rejected.push(id) };
+    await expect(attachSigned(conn, "deal", "42", input)).rejects.toThrow();
+    expect(rejected).toEqual(["f-9"]);
+    noteStatus = 503;
+    await expect(attachSigned(conn, "deal", "42", input)).rejects.toThrow();
+    expect(rejected).toEqual(["f-9"]);
+    expect(isHubspotAttachmentRejection(new CrmError("hubspot POST /crm/v3/objects/notes: HTTP 400 invalid association", 400))).toBe(false);
+    expect(isHubspotAttachmentRejection(new CrmError("HTTP 401 file", 401, true))).toBe(false);
+  });
+
+  it("remoteRef: el intermedio file:<id> no se expone hasta completar el adjunto", async () => {
+    const id = await crmConn("hubspot", { auth: "token", creds: { token: "pat" }, config: { portalId: "5" } });
+    const env = util.uuidv7();
+    await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, created_by) VALUES ($1,$2,'S','sent',$3)`, [env, tenant, user]);
+    const link = util.uuidv7();
+    await db.query(`INSERT INTO crm_links (id, tenant_id, connection_id, envelope_id, object_type, object_id, remote_ref) VALUES ($1,$2,$3,$4,'deal','42','file:f-1')`, [link, tenant, id, env]);
+    const get = async () => (await app.inject({ method: "GET", url: `/v1/crm/links?envelopeId=${env}`, headers: auth })).json().items[0];
+    expect((await get()).remoteRef).toBeNull();
+    await db.query(`UPDATE crm_links SET pdf_attached_at = now(), remote_ref = 'file:f-1 note:n-1' WHERE id = $1`, [link]);
+    expect((await get()).remoteRef).toBe("file:f-1 note:n-1");
   });
 
   it("token de app privada: sin account-info (o sin portalId) la prueba falla", async () => {

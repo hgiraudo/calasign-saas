@@ -111,7 +111,8 @@ const toLink = (r: any): CrmLink => ({
   objectId: r.object_id,
   lastStatus: r.last_status,
   pdfAttachedAt: iso(r.pdf_attached_at),
-  remoteRef: r.remote_ref,
+  // "file:<id>" es un estado intermedio (HubSpot: archivo subido, nota pendiente): no se expone hasta completar.
+  remoteRef: !r.pdf_attached_at && /^file:\S+$/.test(String(r.remote_ref ?? "")) ? null : r.remote_ref,
   createdAt: iso(r.created_at)!,
 });
 
@@ -165,6 +166,28 @@ async function loadConn(db: Db, tenantId: string, id: string) {
  * /api/v4/account). La acción de Pipedrive y el widget de Kommo mandan la cuenta desde la que se abrieron.
  */
 const ACCOUNT_KEY: Partial<Record<CrmProvider, string>> = { pipedrive: "companyId", kommo: "accountId" };
+
+/** Clave de config que identifica la cuenta del CRM a la que está instalada la app OAuth (para no revocar los tokens
+ *  de una cuenta que otra conexión sigue usando). */
+const INSTALL_ACCOUNT_KEY: Partial<Record<CrmProvider, string>> = { hubspot: "portalId", pipedrive: "companyId", kommo: "accountId", zoho: "orgId", salesforce: "instanceUrl" };
+
+/**
+ * ¿Otra conexión OAuth del mismo proveedor (de cualquier organización, activa o no) usa la misma cuenta del CRM?
+ * Si la conexión no tiene su cuenta guardada no se puede descartar: cuenta como compartida si existe cualquier otra
+ * conexión OAuth del proveedor. Se consulta después de borrar la conexión (excluida igual por id).
+ */
+async function crmAccountShared(db: Db, r: any): Promise<boolean> {
+  if (r.auth_type !== "oauth") return false;
+  const key = INSTALL_ACCOUNT_KEY[r.provider as CrmProvider];
+  if (!key) return false;
+  const value = r.config?.[key];
+  const known = value != null && value !== "";
+  const row = await db.one(
+    `SELECT 1 FROM crm_connections WHERE provider = $1 AND auth_type = 'oauth' AND id <> $2${known ? ` AND config->>'${key}' = $3` : ""} LIMIT 1`,
+    known ? [r.provider, r.id, String(value)] : [r.provider, r.id],
+  );
+  return !!row;
+}
 
 async function loadMapping(db: Db, tenantId: string, id: string) {
   if (!UUID.test(id)) throw notFound("Mapeo");
@@ -415,6 +438,10 @@ async function writeBackAndAttach(
         uploadedFileId: prevFile,
         onFileUploaded: async (fileId) => {
           await db.query(`UPDATE crm_links SET remote_ref = $2 WHERE id = $1 AND pdf_attached_at IS NULL`, [link.id, `file:${fileId}`]);
+        },
+        // La nota se rechazó por el adjunto: se olvida el archivo para volver a subirlo en el próximo intento.
+        onFileRejected: async (fileId) => {
+          await db.query(`UPDATE crm_links SET remote_ref = NULL WHERE id = $1 AND pdf_attached_at IS NULL AND remote_ref = $2`, [link.id, `file:${fileId}`]);
         },
         fileName: pdfName(pdf.subject, link.envelope_id),
         pdf: pdf.bytes,
@@ -776,20 +803,26 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
   app.delete<{ Params: { id: string } }>("/v1/crm/connections/:id", { preHandler: auth }, async (req, reply) => {
     const a = A(req);
     const r = await loadConn(s.db, a.tenantId, req.params.id);
-    // Primero se revocan los tokens en el proveedor (si tiene endpoint): sin bloquear la desconexión si falla.
-    let revoked: boolean | "failed" = false;
+    // El historial de ejecuciones se conserva (connection_id pasa a NULL, migración 0081) con el nombre y el proveedor.
+    // Mapeos y vínculos se borran con la conexión (sin credenciales no sirven). Las ejecuciones pendientes no se van a
+    // procesar (handleCrmJob no encuentra la conexión): se marcan fallidas para que no queden "pendientes" para siempre.
+    await s.db.tx(async (t) => {
+      await t.query(`UPDATE crm_runs SET detail = detail || $2::jsonb WHERE connection_id = $1`, [r.id, JSON.stringify({ connection: { name: r.name, provider: r.provider } })]);
+      await t.query(`UPDATE crm_runs SET status = 'failed', error = 'La conexión se desconectó', updated_at = now() WHERE connection_id = $1 AND status = 'pending'`, [r.id]);
+      await t.query(`DELETE FROM crm_connections WHERE id = $1`, [r.id]);
+    });
+    // Después del commit se revocan los tokens en el proveedor (si tiene endpoint), sin bloquear la desconexión si
+    // falla. Antes se revocaba primero: si el DELETE fallaba, la conexión quedaba guardada con tokens muertos.
+    // Revocar el refresh token puede desinstalar la app de toda la cuenta del CRM: si otra conexión (de cualquier
+    // organización) usa la misma cuenta, no se revoca.
+    let revoked: boolean | "failed" | "shared" = false;
     try {
-      revoked = await revokeCrmTokens(new CrmConn(r as ConnRow, null));
+      if (await crmAccountShared(s.db, r)) revoked = "shared";
+      else revoked = await revokeCrmTokens(new CrmConn(r as ConnRow, null));
     } catch (err) {
       revoked = "failed";
       req.log.warn({ err: String(err), provider: r.provider, connectionId: r.id }, "no se pudo revocar el token del CRM");
     }
-    // El historial de ejecuciones se conserva (connection_id pasa a NULL, migración 0081) con el nombre y el proveedor.
-    // Mapeos y vínculos se borran con la conexión (sin credenciales no sirven).
-    await s.db.tx(async (t) => {
-      await t.query(`UPDATE crm_runs SET detail = detail || $2::jsonb WHERE connection_id = $1`, [r.id, JSON.stringify({ connection: { name: r.name, provider: r.provider } })]);
-      await t.query(`DELETE FROM crm_connections WHERE id = $1`, [r.id]);
-    });
     await auditFromRequest(s.db, req, a, "crm.disconnected", { targetType: "crm_connection", targetId: r.id, data: { provider: r.provider, name: r.name, tokenRevoked: revoked } });
     return reply.code(204).send();
   });
@@ -842,7 +875,26 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
       where += ` AND template_id IN (SELECT t.id FROM templates t WHERE t.tenant_id = $1${templateVisibilitySql(a, params, "t")})`;
     }
     const rows = await s.db.query(`SELECT * FROM crm_mappings WHERE ${where} ORDER BY created_at DESC`, params);
-    return { items: rows.map(toMapping) };
+    // Aviso: conexiones activas de Pipedrive/Kommo sin su cuenta guardada (conexiones viejas). Sus mapeos no se pueden
+    // enviar (409 crm_account_unknown) ni se listan con ?companyId=: la consola, la acción y el widget piden probar la
+    // conexión, que guarda la cuenta.
+    const accParams: unknown[] = [a.tenantId];
+    let accWhere = `tenant_id = $1 AND active AND (${Object.entries(ACCOUNT_KEY)
+      .map(([p, k]) => `(provider = '${p}' AND COALESCE(config->>'${k}', '') = '')`)
+      .join(" OR ")})`;
+    if (req.query.connectionId && UUID.test(req.query.connectionId)) {
+      accParams.push(req.query.connectionId);
+      accWhere += ` AND id = $${accParams.length}`;
+    }
+    if (req.query.provider && (CRM_PROVIDERS as readonly string[]).includes(req.query.provider)) {
+      accParams.push(req.query.provider);
+      accWhere += ` AND provider = $${accParams.length}`;
+    }
+    const unknown = await s.db.query<any>(`SELECT id, name, provider FROM crm_connections WHERE ${accWhere} ORDER BY created_at`, accParams);
+    return {
+      items: rows.map(toMapping),
+      connectionsWithoutAccount: unknown.map((c) => ({ id: c.id as string, name: c.name as string, provider: c.provider as CrmProvider })),
+    };
   });
 
   app.post("/v1/crm/mappings", { preHandler: auth }, async (req, reply) => {
@@ -927,8 +979,9 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
     const a = A(req);
     const m = await loadMapping(s.db, a.tenantId, req.params.id);
     const input = SendFromCrmRecordInput.parse(req.body);
-    // Pipedrive y Kommo: el mismo id de registro existe en cada cuenta, así que el envío tiene que decir desde qué
-    // cuenta se hace (la acción y el widget mandan companyId) y la conexión tiene que tener la suya guardada.
+    // Pipedrive y Kommo: el mismo id de registro existe en cada cuenta, así que la conexión tiene que tener la suya
+    // guardada (el registro se lee siempre de esa cuenta). companyId es opcional: la acción y el widget lo mandan con
+    // la cuenta desde la que se abrieron y tiene que coincidir; sin él (consola, clientes de API) se usa la guardada.
     const conn = await loadConn(s.db, a.tenantId, m.connection_id);
     const key = ACCOUNT_KEY[conn.provider as CrmProvider];
     if (key) {
@@ -936,8 +989,7 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
       if (stored == null || stored === "") {
         throw new AppError(409, "crm_account_unknown", `La conexión de ${conn.provider} no tiene guardada su cuenta: probala (POST /v1/crm/connections/{id}/test) o volvé a conectarla`);
       }
-      if (!input.companyId) throw badRequest("company_required", `Indicá companyId: la cuenta de ${conn.provider} desde la que se envía`);
-      if (String(stored) !== input.companyId) {
+      if (input.companyId && String(stored) !== input.companyId) {
         throw new AppError(409, "company_mismatch", `El mapeo es de otra cuenta de ${conn.provider} (${stored}), no de la cuenta ${input.companyId} desde la que se envía`);
       }
     }

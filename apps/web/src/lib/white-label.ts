@@ -21,9 +21,10 @@ let version = 0;
 /** Página pública de verificación abierta: tema restringido (sin el CSS propio de la marca). */
 let verifyPage = typeof window !== "undefined" && isVerifyPath(window.location?.pathname ?? "");
 
-/** "/verify" y "/verify/" (el router muestra la misma página; el servidor también la trata como verificación). */
+/** "/verify" y "/verify/" sin distinguir mayúsculas (el router de React no las distingue y muestra la misma página en
+ *  "/Verify": sin esto ahí se aplicaba el CSS completo de la marca, que puede ocultar el veredicto). */
 export function isVerifyPath(path: string): boolean {
-  return path.replace(/\/+$/, "") === "/verify";
+  return path.replace(/\/+$/, "").toLowerCase() === "/verify";
 }
 const listeners = new Set<() => void>();
 

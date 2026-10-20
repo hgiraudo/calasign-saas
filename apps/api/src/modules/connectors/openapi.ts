@@ -49,7 +49,7 @@ export const CONNECTOR_OPS: Op[] = [
     path: "/v1/connectors/connections/{id}",
     tag: C,
     summary: "Quitar una conexión",
-    description: "Revoca el token OAuth en el proveedor cuando tiene endpoint (Factorial; si falla, se desconecta igual). Borra flujos y vínculos; la actividad se conserva.",
+    description: "Borra la conexión y después revoca el token OAuth en el proveedor cuando tiene endpoint (Factorial; si falla, se desconecta igual), salvo que otra conexión use la misma compañía. Borra flujos y vínculos; la actividad se conserva y las ejecuciones pendientes pasan a failed.",
     response: "none",
     status: 204,
   },

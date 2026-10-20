@@ -222,6 +222,13 @@ export interface CrmMapping {
   updatedAt: string;
 }
 
+/** GET /v1/crm/mappings. connectionsWithoutAccount: conexiones activas de Pipedrive/Kommo sin su cuenta guardada
+ *  (conexiones viejas): sus mapeos no se pueden enviar (409 crm_account_unknown) hasta probar la conexión. */
+export interface CrmMappingList {
+  items: CrmMapping[];
+  connectionsWithoutAccount: { id: string; name: string; provider: CrmProvider }[];
+}
+
 // ───────────────────────────── Envío desde un registro, vínculos y ejecuciones ─────────────────────────────
 
 export const SendFromCrmRecordInput = z.object({
@@ -231,9 +238,10 @@ export const SendFromCrmRecordInput = z.object({
   subject: z.string().trim().min(1).max(300).optional(),
   message: z.string().max(5000).optional().nullable(),
   /**
-   * Cuenta del CRM desde la que se envía (Pipedrive: company_id; Kommo: id de la cuenta). Lo mandan la acción de
-   * Pipedrive y el widget de Kommo: si la conexión del mapeo es de otra cuenta, 409 company_mismatch (con dos cuentas
-   * conectadas, el mismo id de registro existe en las dos y se leería el de la otra).
+   * Cuenta del CRM desde la que se envía (Pipedrive: company_id; Kommo: id de la cuenta). Opcional: lo mandan la
+   * acción de Pipedrive y el widget de Kommo y, si la conexión del mapeo es de otra cuenta, 409 company_mismatch (con
+   * dos cuentas conectadas, el mismo id de registro existe en las dos y se leería el de la otra). Sin él se usa la
+   * cuenta guardada en la conexión (si no tiene, 409 crm_account_unknown).
    */
   companyId: z.string().trim().regex(/^[A-Za-z0-9_-]{1,64}$/).optional(),
 });

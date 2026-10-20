@@ -14,6 +14,8 @@ var CalaSignKommo = (function () {
       retry: "Reintentar",
       noRecords: "Kommo no indicó ningún lead. Abrí el widget desde la ficha o la lista de leads.",
       noMappings: "No hay mapeos activos de Kommo para leads. Crealos en CalaSign → Ajustes → CRM y ERP.",
+      noAccount: "Kommo no indicó desde qué cuenta se abrió el widget, así que no se ofrecen mapeos (podrían ser de otra cuenta). Volvé a abrirlo desde Kommo o actualizá el widget.",
+      accountUnknown: "Hay conexiones de Kommo sin su cuenta guardada: sus mapeos no aparecen. Probá la conexión en CalaSign → Ajustes → CRM y ERP para habilitarla.",
       mapping: "Mapeo (plantilla)",
       sendNow: "Enviar ya (si no, queda en borrador para revisarlo)",
       records: "Leads",
@@ -33,6 +35,8 @@ var CalaSignKommo = (function () {
       retry: "Retry",
       noRecords: "Kommo did not pass any lead. Open the widget from a lead card or the leads list.",
       noMappings: "There are no active Kommo mappings for leads. Create one in CalaSign → Settings → CRM and ERP.",
+      noAccount: "Kommo did not say which account the widget was opened from, so no mappings are offered (they could belong to another account). Open it again from Kommo or update the widget.",
+      accountUnknown: "Some Kommo connections have no stored account: their mappings are not shown. Test the connection in CalaSign → Settings → CRM and ERP to enable it.",
       mapping: "Mapping (template)",
       sendNow: "Send now (otherwise it stays as a draft to review)",
       records: "Leads",
@@ -52,6 +56,8 @@ var CalaSignKommo = (function () {
       retry: "Tentar de novo",
       noRecords: "O Kommo não informou nenhum lead. Abra o widget a partir da ficha ou da lista de leads.",
       noMappings: "Não há mapeamentos ativos do Kommo para leads. Crie um em CalaSign → Configurações → CRM e ERP.",
+      noAccount: "O Kommo não informou de qual conta o widget foi aberto, então nenhum mapeamento é oferecido (poderiam ser de outra conta). Abra-o de novo a partir do Kommo ou atualize o widget.",
+      accountUnknown: "Há conexões do Kommo sem a conta salva: os mapeamentos delas não aparecem. Teste a conexão em CalaSign → Configurações → CRM e ERP para habilitá-la.",
       mapping: "Mapeamento (modelo)",
       sendNow: "Enviar agora (senão fica como rascunho para revisar)",
       records: "Leads",
@@ -154,8 +160,8 @@ var CalaSignKommo = (function () {
     };
   }
 
-  /** Un sobre por lead, uno tras otro (el límite de la API es por minuto). Con companyId, la API rechaza (409
-   *  company_mismatch) un mapeo de la conexión de otra cuenta. */
+  /** Un sobre por lead, uno tras otro (el límite de la API es por minuto). Se manda companyId (la cuenta del widget):
+   *  la API rechaza (409 company_mismatch) un mapeo de la conexión de otra cuenta. */
   function sendAll(api, mappingId, ids, send, companyId, runId) {
     var out = [];
     var chain = Promise.resolve();
@@ -178,10 +184,16 @@ var CalaSignKommo = (function () {
 
   function load(api, params) {
     if (!params.ids.length) return Promise.resolve({ state: "error", key: "noRecords" });
-    return api("GET", "/v1/crm/mappings?provider=kommo" + (params.companyId ? "&companyId=" + encodeURIComponent(params.companyId) : ""))
+    // Sin la cuenta de Kommo desde la que se abrió el widget no se ofrecen mapeos: con dos cuentas conectadas, un mapeo
+    // de la otra leería un lead ajeno con el mismo id (la API, sin companyId, usaría la cuenta de la conexión del mapeo).
+    if (!params.companyId) return Promise.resolve({ state: "error", key: "noAccount" });
+    return api("GET", "/v1/crm/mappings?provider=kommo&companyId=" + encodeURIComponent(params.companyId))
       .then(function (r) {
         var maps = eligibleMappings(r.items);
-        return maps.length ? { state: "ready", mappings: maps } : { state: "error", key: "noMappings" };
+        // Conexiones sin su cuenta guardada: sus mapeos no se listan con companyId; se avisa que hay que probarlas.
+        var accountUnknown = !!(r.connectionsWithoutAccount && r.connectionsWithoutAccount.length);
+        if (!maps.length) return { state: "error", key: accountUnknown ? "accountUnknown" : "noMappings" };
+        return { state: "ready", mappings: maps, accountUnknown: accountUnknown };
       })
       .catch(function (e) {
         if (e.status === 401) return { state: "login" };
@@ -235,15 +247,15 @@ var CalaSignKommo = (function () {
         }
         if (r.state === "error") {
           var parts = [head(), el(doc, "p", { class: "error", text: r.key ? T[r.key] : r.message })];
-          if (r.key === "noMappings") parts.push(el(doc, "p", {}, [el(doc, "a", { href: base + "/app/settings/crm", target: "_blank", rel: "noopener", text: T.settings })]));
+          if (r.key === "noMappings" || r.key === "accountUnknown") parts.push(el(doc, "p", {}, [el(doc, "a", { href: base + "/app/settings/crm", target: "_blank", rel: "noopener", text: T.settings })]));
           render(parts);
           return;
         }
-        form(r.mappings);
+        form(r.mappings, r.accountUnknown);
       });
     }
 
-    function form(maps) {
+    function form(maps, accountUnknown) {
       var select = el(doc, "select", { id: "mapping" });
       maps.forEach(function (m) {
         select.appendChild(el(doc, "option", { value: m.id, text: m.name }));
@@ -271,6 +283,7 @@ var CalaSignKommo = (function () {
         // Tope de 20 por vez: se avisa cuántos quedan afuera (antes se cortaba sin decir nada).
         params.skipped ? el(doc, "p", { class: "error", role: "alert", text: T.truncated.replace("{total}", String(params.total)).replace("{n}", String(params.skipped)) }) : null,
         el(doc, "p", { class: "muted", text: T.records + ": " + params.ids.join(", ") }),
+        accountUnknown ? el(doc, "p", { class: "muted", role: "status", text: T.accountUnknown }) : null,
         btn,
       ]);
       f.addEventListener("submit", function (e) {

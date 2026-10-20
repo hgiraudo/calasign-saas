@@ -170,6 +170,39 @@ function asAppError(err: unknown): AppError {
 const permanent = (err: unknown) =>
   (err instanceof ConnectorError && (err.authFailed || err.status === 422)) || err instanceof MappingError || (err instanceof AppError && err.status < 500);
 
+/**
+ * JSON del webhook a partir del cuerpo crudo (el parser propio de la ruta no pasa por el de Fastify): se quita el BOM
+ * inicial (algunos sistemas lo mandan y JSON.parse lo rechaza) y se descartan las claves __proto__ y
+ * constructor.prototype, como secure-json-parse en el parser de Fastify (no es dependencia directa de la API).
+ */
+export function parseHookJson(raw: string): unknown {
+  const text = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
+  if (!text) return null;
+  return JSON.parse(text, (k, v) => {
+    if (k === "__proto__") return undefined;
+    if (k === "constructor" && v && typeof v === "object" && Object.prototype.hasOwnProperty.call(v, "prototype")) return undefined;
+    return v;
+  });
+}
+
+/** Clave de config con la cuenta del proveedor a la que está instalada la app OAuth (Factorial: company_id). */
+const INSTALL_ACCOUNT_KEY: Partial<Record<string, string>> = { factorial: "companyId" };
+
+/** ¿Otra conexión OAuth del mismo proveedor (de cualquier organización, activa o no) usa la misma cuenta? Sin la cuenta
+ *  guardada no se puede descartar: cuenta como compartida si existe cualquier otra conexión OAuth del proveedor. */
+async function connectorAccountShared(db: Db, r: any): Promise<boolean> {
+  if (r.auth_type !== "oauth") return false;
+  const key = INSTALL_ACCOUNT_KEY[r.provider];
+  if (!key) return false;
+  const value = r.config?.[key];
+  const known = value != null && value !== "";
+  const row = await db.one(
+    `SELECT 1 FROM connector_connections WHERE provider = $1 AND auth_type = 'oauth' AND id <> $2${known ? ` AND config->>'${key}' = $3` : ""} LIMIT 1`,
+    known ? [r.provider, r.id, String(value)] : [r.provider, r.id],
+  );
+  return !!row;
+}
+
 async function loadConn(db: Db, tenantId: string, id: string) {
   if (!UUID.test(id)) throw notFound("Conexión");
   const r = await db.one<any>(`SELECT * FROM connector_connections WHERE id = $1 AND tenant_id = $2`, [id, tenantId]);
@@ -629,12 +662,12 @@ export async function connectorRoutes(app: FastifyInstance, s: Services) {
         const cfg: Record<string, unknown> = st.p === "ironclad" ? { region: st.r ?? "na1" } : {};
         const row: any = { id: uuidv7(), provider: st.p, auth_type: "oauth", credentials_enc: encrypt(JSON.stringify(creds)), config: cfg };
         const conn = new Conn(row, null);
-        const test = await testConnection(conn).catch(() => ({ label: null }));
+        const test: { label: string | null; config?: Record<string, unknown> } = await testConnection(conn).catch(() => ({ label: null }));
         const hook = newWebhookToken();
         await s.db.query(
           `INSERT INTO connector_connections (id, tenant_id, provider, category, name, auth_type, credentials_enc, config, account_label, webhook_token_hash, webhook_token_enc, created_by, last_success_at)
            VALUES ($1,$2,$3,$4,$5,'oauth',$6,$7,$8,$9,$10,$11, now())`,
-          [row.id, a.tenantId, st.p, CONNECTOR_CATEGORY[st.p], st.n, encrypt(JSON.stringify(conn.creds)), JSON.stringify(cfg), test.label, hook.hash, hook.enc, a.userId],
+          [row.id, a.tenantId, st.p, CONNECTOR_CATEGORY[st.p], st.n, encrypt(JSON.stringify(conn.creds)), JSON.stringify({ ...cfg, ...(test.config ?? {}) }), test.label, hook.hash, hook.enc, a.userId],
         );
         await auditFromRequest(s.db, req, a, "connector.connected", { targetType: "connector_connection", targetId: row.id, data: { provider: st.p, name: st.n } });
         return back(`connected=${st.p}`);
@@ -664,19 +697,24 @@ export async function connectorRoutes(app: FastifyInstance, s: Services) {
   app.delete<{ Params: { id: string } }>("/v1/connectors/connections/:id", { preHandler: auth }, async (req, reply) => {
     const a = A(req);
     const r = await loadConn(s.db, a.tenantId, req.params.id);
-    // Primero se revoca el token en el proveedor (si tiene endpoint): sin bloquear la desconexión si falla.
-    let revoked: boolean | "failed" = false;
+    // El historial de ejecuciones se conserva (connection_id pasa a NULL, migración 0081) con el nombre y el proveedor.
+    // Las pendientes no se van a procesar sin la conexión: se marcan fallidas.
+    await s.db.tx(async (t) => {
+      await t.query(`UPDATE connector_runs SET detail = detail || $2::jsonb WHERE connection_id = $1`, [r.id, JSON.stringify({ connection: { name: r.name, provider: r.provider } })]);
+      await t.query(`UPDATE connector_runs SET status = 'failed', error = 'La conexión se desconectó', updated_at = now() WHERE connection_id = $1 AND status = 'pending'`, [r.id]);
+      await t.query(`DELETE FROM connector_connections WHERE id = $1`, [r.id]);
+    });
+    // Después del commit se revoca el token en el proveedor (si tiene endpoint), sin bloquear la desconexión si falla.
+    // Revocar puede desinstalar la app de toda la cuenta: si otra conexión OAuth del mismo proveedor (de cualquier
+    // organización) usa la misma cuenta (config.companyId; sin cuenta guardada, cualquier otra), no se revoca.
+    let revoked: boolean | "failed" | "shared" = false;
     try {
-      revoked = await revokeConnectorTokens(r, JSON.parse(decrypt(r.credentials_enc)));
+      if (await connectorAccountShared(s.db, r)) revoked = "shared";
+      else revoked = await revokeConnectorTokens(r, JSON.parse(decrypt(r.credentials_enc)));
     } catch (err) {
       revoked = "failed";
       req.log.warn({ err: String(err), provider: r.provider, connectionId: r.id }, "no se pudo revocar el token del conector");
     }
-    // El historial de ejecuciones se conserva (connection_id pasa a NULL, migración 0081) con el nombre y el proveedor.
-    await s.db.tx(async (t) => {
-      await t.query(`UPDATE connector_runs SET detail = detail || $2::jsonb WHERE connection_id = $1`, [r.id, JSON.stringify({ connection: { name: r.name, provider: r.provider } })]);
-      await t.query(`DELETE FROM connector_connections WHERE id = $1`, [r.id]);
-    });
     await auditFromRequest(s.db, req, a, "connector.disconnected", { targetType: "connector_connection", targetId: r.id, data: { provider: r.provider, name: r.name, tokenRevoked: revoked } });
     return reply.code(204).send();
   });
@@ -686,7 +724,11 @@ export async function connectorRoutes(app: FastifyInstance, s: Services) {
     const r = await loadConn(s.db, a.tenantId, req.params.id);
     try {
       const t = await testConnection(open(s.db, r));
-      await s.db.query(`UPDATE connector_connections SET last_success_at = now(), last_error = NULL, account_label = COALESCE($2, account_label) WHERE id = $1`, [r.id, t.label]);
+      await s.db.query(`UPDATE connector_connections SET last_success_at = now(), last_error = NULL, account_label = COALESCE($2, account_label), config = config || $3::jsonb WHERE id = $1`, [
+        r.id,
+        t.label,
+        JSON.stringify(t.config ?? {}),
+      ]);
       return { ok: true, error: null };
     } catch (err) {
       const msg = asAppError(err).message.slice(0, 300);
@@ -904,7 +946,7 @@ export async function connectorRoutes(app: FastifyInstance, s: Services) {
         const raw = typeof req.body === "string" ? req.body : "";
         let body: unknown = null;
         try {
-          body = raw ? JSON.parse(raw) : null;
+          body = parseHookJson(raw);
         } catch {
           return reply.code(400).send({ error: { code: "invalid_json", message: "JSON inválido" } });
         }
@@ -926,8 +968,12 @@ export async function connectorRoutes(app: FastifyInstance, s: Services) {
         // Reentregas del mismo cuerpo no duplican, pero solo dentro de una ventana (por defecto 10 min): un segundo
         // disparo legítimo idéntico más tarde (el mismo empleado vuelve a pasar por el evento) tiene que enviarse.
         // Además, un registro con un sobre en curso no genera otro (skipIfOpen).
+        // La clave lleva la franja de la ventana; como las franjas son fijas, una reentrega justo después del borde
+        // caía en otra franja y se duplicaba: también se mira la clave de la franja anterior, y si esa ejecución es de
+        // hace menos que la ventana, se descarta.
         const bodyHash = sha256Hex(raw).slice(0, 32);
-        const bucket = Math.floor(Date.now() / hookDedupeWindowMs());
+        const windowMs = hookDedupeWindowMs();
+        const bucket = Math.floor(Date.now() / windowMs);
         let queued = 0;
         let matched = 0;
         let rejected = 0;
@@ -941,10 +987,16 @@ export async function connectorRoutes(app: FastifyInstance, s: Services) {
               rejected++;
               continue;
             }
+            const baseKey = `cn:hook:${f.id}:${ev.recordId}:${bodyHash}`;
+            const recent = await s.db.one(
+              `SELECT 1 FROM connector_runs WHERE dedupe_key = $1 AND created_at > now() - ($2::int * interval '1 millisecond')`,
+              [`${baseKey}:${bucket - 1}`, windowMs],
+            );
+            if (recent) continue;
             const ok = await queueRun(
               s.db,
               { tenantId: c.tenant_id, connectionId: c.id, flowId: f.id, linkId: null, envelopeId: null, kind: "send", event: ev.event ?? "webhook", objectType: f.object_type, objectId: ev.recordId, detail: { webhook: true, signed: signedOk.get(f.id) === true } },
-              `cn:hook:${f.id}:${ev.recordId}:${bodyHash}:${bucket}`,
+              `${baseKey}:${bucket}`,
             );
             if (ok) queued++;
           }

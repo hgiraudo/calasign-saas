@@ -305,10 +305,13 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
     let fileId: string | null = null;
     await s.db.tx(async (t) => {
       const tpl = await lockTemplate(t, a.tenantId, req.params.id);
+      // Borrar el documento borra sus campos en cascada (o deja la plantilla vacía): no puede romper un formulario activo.
+      const checkForms = await guardTemplateForms(t, a.tenantId, tpl.id, "documents");
       const r = await t.query<any>(`DELETE FROM template_documents WHERE id = $1 AND template_id = $2 RETURNING id, file_id`, [req.params.documentId, tpl.id]);
       if (!r.length) throw notFound("Documento");
       fileId = r[0].file_id;
       await pruneDanglingConditions(t, "template_fields", tpl.id);
+      await checkForms();
       await touch(t, tpl.id);
     });
     await deleteFilesIfUnused(s.db, s.blobs, [fileId]);
@@ -335,7 +338,8 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
       const tpl = await lockTemplate(t, a.tenantId, req.params.id);
       assertNotStale(req.headers, tpl.updated_at);
       const before = await templateLogicOrderProblems(t, tpl.id);
-      const checkForms = await guardTemplateForms(t, a.tenantId, tpl.id);
+      // Paso de roles: un firmante todavía sin campo de firma o una fórmula colgada los valida PUT fields (o el envío).
+      const checkForms = await guardTemplateForms(t, a.tenantId, tpl.id, "roles");
       const list = input.roles.map((r) => ({ ...r, id: r.id ?? uuidv7() }));
       const ids = list.map((r) => r.id);
       if (new Set(ids).size !== ids.length) throw badRequest("duplicate_ids", "Ids de roles repetidos");

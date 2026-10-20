@@ -281,6 +281,10 @@ const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
     "pt-BR": "A entrega já está sendo reenviada.",
     en: "The delivery is already being retried.",
   },
+  endpoint_inactive: {
+    "pt-BR": "O webhook está desativado: reative-o para reenviar a entrega.",
+    en: "The webhook is disabled: turn it back on to retry the delivery.",
+  },
   purged: {
     "pt-BR": "Os originais deste envelope foram excluídos pela política de retenção.",
     en: "This envelope's originals were deleted by the retention policy.",

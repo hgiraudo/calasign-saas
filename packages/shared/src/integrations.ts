@@ -40,10 +40,12 @@ export interface WebhookEndpoint {
   /** Hasta cuándo se firma también con el secreto anterior (después de rotarlo). */
   previousSecretExpiresAt?: string | null;
   /**
-   * Solo lectura: `credential_revoked` si está inactivo porque se revocó la credencial que lo creó (reactivarlo lo ata a
-   * la credencial actual); `null` si está activo o se pausó a mano.
+   * Solo lectura, por qué está inactivo: `credential_revoked` (se revocó la credencial que lo creó) o `permission_lost`
+   * (esa credencial ya no tiene webhooks:manage y envelopes:view_all): reactivarlo lo ata a la credencial actual;
+   * `gone` (el receptor respondió 410); `failing` (demasiadas entregas fallidas seguidas o días fallando sin éxito);
+   * `null` si está activo o se pausó a mano.
    */
-  deactivatedReason?: "credential_revoked" | null;
+  deactivatedReason?: "credential_revoked" | "permission_lost" | "gone" | "failing" | null;
   createdAt: string;
   updatedAt: string;
 }

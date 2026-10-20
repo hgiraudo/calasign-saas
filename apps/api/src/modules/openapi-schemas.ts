@@ -286,11 +286,11 @@ export const WebhookSchema = named(
     secretPrefix: z.string().describe("Primeros caracteres del secreto (whsec_…), para identificarlo."),
     previousSecretExpiresAt: iso().nullable().optional().describe("Después de rotar el secreto: hasta cuándo las entregas van firmadas también con el anterior."),
     deactivatedReason: z
-      .enum(["credential_revoked"])
+      .enum(["credential_revoked", "permission_lost", "gone", "failing"])
       .nullable()
       .optional()
       .describe(
-        "Solo lectura. `credential_revoked`: inactivo porque se revocó la API key o la app OAuth que lo creó (o el usuario dejó la organización); reactivarlo con `active: true` lo ata a la credencial actual. `null`: activo o pausado a mano.",
+        "Solo lectura. `credential_revoked`: inactivo porque se revocó la API key o la app OAuth que lo creó (o el usuario dejó la organización). `permission_lost`: esa credencial sigue vigente pero ya no tiene `webhooks:manage` y `envelopes:view_all` (cambio de rol o de scopes). En los dos casos, reactivarlo con `active: true` lo ata a la credencial actual. `gone`: el receptor respondió 410 Gone. `failing`: N entregas fallidas definitivas seguidas (50 por defecto) o 7 días fallando sin ninguna exitosa. `null`: activo o pausado a mano. Las desactivaciones automáticas quedan en la auditoría (webhook.deactivated) y se avisan por correo a quienes tienen `webhooks:manage`.",
       ),
     createdAt: iso(),
     updatedAt: iso(),

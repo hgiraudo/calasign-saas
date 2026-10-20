@@ -173,7 +173,11 @@ export type CreateEnvelopeInput = z.infer<typeof CreateEnvelopeInput>;
 export const UpdateEnvelopeInput = CreateEnvelopeInput.partial();
 export type UpdateEnvelopeInput = z.infer<typeof UpdateEnvelopeInput>;
 
-export const RecipientInput = z
+/**
+ * Destinatario sin la regla "solo Telegram requiere telegramChatId": PUT /recipients la valida en el servidor, porque un
+ * destinatario existente (mismo id) que ya vinculó su Telegram no necesita mandar el chat_id de nuevo.
+ */
+export const RecipientInputUnlinked = z
   .object({
     id: z.string().uuid().optional(),
     role: z.enum(RECIPIENT_ROLES).default("signer"),
@@ -226,13 +230,21 @@ export const RecipientInput = z
     message: "el código por SMS/WhatsApp requiere phone",
   })
   .refine((r) => r.embedded || r.inPerson || !r.channels.includes("email") || r.email, { message: "el canal email requiere email" })
-  .refine((r) => r.embedded || r.inPerson || !r.channels.includes("whatsapp") || r.phone, { message: "el canal whatsapp requiere phone" })
-  .refine((r) => r.embedded || r.inPerson || r.channels.some((c) => c !== "telegram") || r.telegramChatId, {
-    message: "con solo Telegram hace falta telegramChatId (o agregar email/WhatsApp para enviar el link de vinculación)",
-  });
+  .refine((r) => r.embedded || r.inPerson || !r.channels.includes("whatsapp") || r.phone, { message: "el canal whatsapp requiere phone" });
+
+/** Con solo Telegram (y avisos), hace falta saber a qué chat mandarlos. */
+export const telegramOnlyWithoutChat = (r: { embedded?: boolean; inPerson?: unknown; channels: readonly string[]; telegramChatId?: string | null }) =>
+  !r.embedded && !r.inPerson && r.channels.every((c) => c === "telegram") && !r.telegramChatId;
+export const TELEGRAM_ONLY_MESSAGE = "con solo Telegram hace falta telegramChatId (o agregar email/WhatsApp para enviar el link de vinculación)";
+
+export const RecipientInput = RecipientInputUnlinked.refine((r) => !telegramOnlyWithoutChat(r), { message: TELEGRAM_ONLY_MESSAGE });
 export type RecipientInput = z.input<typeof RecipientInput>;
 
-export const PutRecipientsInput = z.object({ recipients: z.array(RecipientInput).max(50) });
+/**
+ * Solo Telegram sin telegramChatId se acepta si el destinatario (mismo id) ya está vinculado; si no, 400 validation_error
+ * con el mismo mensaje que RecipientInput.
+ */
+export const PutRecipientsInput = z.object({ recipients: z.array(RecipientInputUnlinked).max(50) });
 export type PutRecipientsInput = z.input<typeof PutRecipientsInput>;
 
 export const FieldInput = z

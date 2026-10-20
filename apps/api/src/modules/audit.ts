@@ -5,7 +5,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { AuditLogEntry, AuditLogResponse } from "@calasign/shared";
 import type { Db } from "../infra/db";
 import { badRequest } from "../lib/errors";
-import { iso } from "../lib/util";
+import { iso, likeContains } from "../lib/util";
 import { authenticate, clientInfo, type AuthContext, type Services } from "./context";
 
 export interface AuditRecord {
@@ -228,8 +228,9 @@ function buildWhere(tenantId: string, q: AuditQuery) {
   if (q.actor) {
     // Texto en la etiqueta o id EXACTO del actor (como dice la documentación): con el mismo parámetro "%…%" el id
     // nunca coincidía y filtrar por el id de un usuario o una API key no devolvía nada.
-    params.push(`%${q.actor}%`, q.actor);
-    where += ` AND (actor_label ILIKE $${params.length - 1} OR actor_id = $${params.length})`;
+    // % y _ del texto se buscan literales.
+    params.push(likeContains(q.actor), q.actor);
+    where += ` AND (actor_label ILIKE $${params.length - 1} ESCAPE '\\' OR actor_id = $${params.length})`;
   }
   if (q.targetType) {
     params.push(q.targetType);

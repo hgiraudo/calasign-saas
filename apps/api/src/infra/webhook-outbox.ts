@@ -40,7 +40,8 @@ export async function queueWebhookFanout(
     await enqueue(
       db,
       "webhook",
-      { kind: "fanout", tenantId, envelopeId, type, recipientId, reason: typeof data.reason === "string" ? data.reason : null },
+      // seq: el fanout deriva de (sobre, seq, tipo) el id del evento, así re-ejecutarlo no duplica entregas.
+      { kind: "fanout", tenantId, envelopeId, seq, type, recipientId, reason: typeof data.reason === "string" ? data.reason : null },
       { dedupeKey: `whfan:${envelopeId}:${seq}:${type}` },
     );
   }

@@ -8,6 +8,7 @@ import https from "node:https";
 import { isIP } from "node:net";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import {
+  type Permission,
   CreateWebhookInput,
   RotateWebhookSecretInput,
   UpdateWebhookInput,
@@ -20,12 +21,26 @@ import { config } from "../config";
 import type { Db } from "../infra/db";
 import { enqueue } from "../infra/queue";
 import { badRequest, conflict, notFound } from "../lib/errors";
-import { decrypt, encrypt, iso, randomToken, uuidv7 } from "../lib/util";
+import { decrypt, encrypt, iso, randomToken, uuidv5, uuidv7 } from "../lib/util";
+import { sendTracked } from "../notifications/outbound";
+import { normLocale } from "../notifications/templates";
+import { loadAccess } from "./access";
 import { recordAudit } from "./audit";
 import { authenticate, type AuthContext, type Services } from "./context";
+import { permissionsForScopes } from "./oauth-tokens";
 
 const MAX_ATTEMPTS = 8;
 const TIMEOUT_MS = 10_000;
+/** Tope de endpoints por organización: cuentan los activos y los desactivados en los últimos 30 días. */
+export const MAX_WEBHOOKS = 20;
+const COUNTS_FOR_CAP = `(active OR deactivated_at IS NULL OR deactivated_at > now() - interval '30 days')`;
+/** Namespace de los UUIDv5 de eventos (event_id determinístico por sobre, seq y tipo). */
+const EVENT_ID_NAMESPACE = "6f1c3a52-6a0e-4d0b-9c55-2b8a4f6e9d17";
+
+/** id del evento de un fanout: el mismo (sobre, seq, tipo) da siempre el mismo id, así re-ejecutarlo no duplica entregas. */
+export function webhookEventId(envelopeId: string, seq: number, type: string) {
+  return uuidv5(`${envelopeId}:${seq}:${type}`, EVENT_ID_NAMESPACE);
+}
 export const SIGNATURE_HEADER = "CalaSign-Signature";
 
 // ───────────────────────────── Firma ─────────────────────────────
@@ -256,6 +271,9 @@ export async function safeRequest(
 
 // ───────────────────────────── Mapeo ─────────────────────────────
 
+const DEACTIVATION_REASONS = ["credential_revoked", "permission_lost", "gone", "failing"] as const;
+type DeactivationReason = (typeof DEACTIVATION_REASONS)[number];
+
 export const toEndpoint = (r: any): WebhookEndpoint => ({
   id: r.id,
   url: r.url,
@@ -263,7 +281,7 @@ export const toEndpoint = (r: any): WebhookEndpoint => ({
   events: r.events,
   active: r.active,
   // Solo en las filas leídas con DEACTIVATED_REASON (columna calculada, no guardada); si no, null.
-  deactivatedReason: !r.active && r.deactivated_reason === "credential_revoked" ? "credential_revoked" : null,
+  deactivatedReason: !r.active && DEACTIVATION_REASONS.includes(r.deactivated_reason) ? (r.deactivated_reason as DeactivationReason) : null,
   secretPrefix: r.secret_prefix,
   previousSecretExpiresAt: r.previous_secret_enc && r.previous_secret_expires_at && new Date(r.previous_secret_expires_at) > new Date() ? iso(r.previous_secret_expires_at) : null,
   createdAt: iso(r.created_at)!,
@@ -317,7 +335,8 @@ interface Deps {
 }
 
 type WebhookJob =
-  | { kind: "fanout"; tenantId: string; envelopeId: string; type: string; recipientId?: string | null; reason?: string | null }
+  // seq: el del evento de evidencia (los jobs encolados antes de la migración 0087 no lo traen).
+  | { kind: "fanout"; tenantId: string; envelopeId: string; seq?: number | null; type: string; recipientId?: string | null; reason?: string | null }
   | { kind: "deliver"; deliveryId: string; manual?: boolean };
 
 export async function handleWebhookJob(d: Deps, p: WebhookJob, job?: { attempts: number }) {
@@ -342,14 +361,15 @@ const ORPHANED_ORIGIN = `(
 /**
  * Columna calculada `deactivated_reason` (alias de la tabla: `ep`): "credential_revoked" si la suscripción está inactiva
  * y la credencial que la creó ya no vale (la desactivó deactivateOrphanedEndpoints, o se pausó y después se revocó la
- * credencial); NULL si está activa o se pausó a mano con la credencial vigente. Los conectores (n8n) reactivan solo en
- * el primer caso: reactivarla con PATCH { active: true } la ata a la credencial actual.
+ * credencial); si no, el motivo de una desactivación automática guardado (auto_deactivated_reason: "permission_lost",
+ * "gone", "failing"); NULL si está activa o se pausó a mano. Los conectores (n8n) reactivan con "credential_revoked" o
+ * "permission_lost": reactivarla con PATCH { active: true } la ata a la credencial actual.
  */
-export const DEACTIVATED_REASON = `CASE WHEN NOT ep.active AND ${ORPHANED_ORIGIN} THEN 'credential_revoked' END AS deactivated_reason`;
+export const DEACTIVATED_REASON = `CASE WHEN ep.active THEN NULL WHEN ${ORPHANED_ORIGIN} THEN 'credential_revoked' ELSE ep.auto_deactivated_reason END AS deactivated_reason`;
 
 async function deactivateOrphanedEndpoints(db: Db, tenantId: string) {
   const off = await db.query<{ id: string }>(
-    `UPDATE webhook_endpoints ep SET active = false, updated_at = now()
+    `UPDATE webhook_endpoints ep SET active = false, deactivated_at = now(), updated_at = now()
       WHERE ep.tenant_id = $1 AND ep.active AND ${ORPHANED_ORIGIN}
       RETURNING ep.id`,
     [tenantId],
@@ -366,12 +386,174 @@ async function deactivateOrphanedEndpoints(db: Db, tenantId: string) {
   }
 }
 
+/** Permisos que exige un webhook (access.ts: crearlo o modificarlo pide los dos). */
+const REQUIRED_PERMS: Permission[] = ["webhooks:manage", "envelopes:view_all"];
+
+/**
+ * Permisos actuales de la credencial que creó la suscripción: los del rol de la API key, o los del usuario recortados a
+ * los scopes que le concedió a la app OAuth (unión de sus tokens vigentes). null si no se pueden calcular (dejó la
+ * organización: eso lo cubre deactivateOrphanedEndpoints).
+ */
+async function originPermissions(db: Db, tenantId: string, ep: { created_by: string | null; created_by_api_key: string | null; oauth_client_id: string | null }) {
+  if (ep.created_by_api_key) return (await loadAccess(db, { tenantId, userId: null, apiKeyId: ep.created_by_api_key })).permissions;
+  if (!ep.oauth_client_id || !ep.created_by) return null;
+  let perms: ReadonlySet<Permission>;
+  try {
+    perms = (await loadAccess(db, { tenantId, userId: ep.created_by, apiKeyId: null })).permissions;
+  } catch {
+    return null;
+  }
+  const scopes = await db.query<{ s: string }>(
+    `SELECT DISTINCT unnest(scopes) AS s FROM oauth_tokens WHERE client_id = $1 AND user_id = $2 AND tenant_id = $3 AND revoked_at IS NULL`,
+    [ep.oauth_client_id, ep.created_by, tenantId],
+  );
+  const allowed = permissionsForScopes(scopes.map((r) => r.s));
+  return new Set([...perms].filter((p) => allowed.has(p)));
+}
+
+/** Cada cuánto se recalculan los permisos de las credenciales de origen de una organización (por proceso). */
+const PERMISSION_CHECK_TTL_MS = 60_000;
+const permissionCheckedAt = new Map<string, number>();
+
+/**
+ * Suscripciones creadas por una integración cuya credencial sigue vigente pero ya no tiene webhooks:manage y
+ * envelopes:view_all (le cambiaron el rol a la key o al usuario, o la app perdió el scope): se desactivan con motivo
+ * "permission_lost". Cacheado por organización durante PERMISSION_CHECK_TTL_MS para no recalcular en cada entrega.
+ */
+export async function deactivateEndpointsWithoutPermission(d: Deps, tenantId: string, opts: { force?: boolean } = {}) {
+  const now = Date.now();
+  if (!opts.force && now - (permissionCheckedAt.get(tenantId) ?? 0) < PERMISSION_CHECK_TTL_MS) return;
+  if (permissionCheckedAt.size > 10_000) permissionCheckedAt.clear();
+  permissionCheckedAt.set(tenantId, now);
+  const eps = await d.db.query<any>(
+    `SELECT ep.id, ep.url, ep.description, ep.created_by, ep.created_by_api_key, ep.oauth_client_id FROM webhook_endpoints ep
+      WHERE ep.tenant_id = $1 AND ep.active AND (ep.created_by_api_key IS NOT NULL OR ep.oauth_client_id IS NOT NULL) AND NOT ${ORPHANED_ORIGIN}`,
+    [tenantId],
+  );
+  for (const ep of eps) {
+    const perms = await originPermissions(d.db, tenantId, ep);
+    if (!perms) continue;
+    const missing = REQUIRED_PERMS.filter((p) => !perms.has(p));
+    if (missing.length) await autoDeactivate(d, tenantId, ep.id, "permission_lost", { missing });
+  }
+}
+
+/** Desactiva el endpoint (si sigue activo) con un motivo automático, lo registra en la auditoría y avisa al equipo. */
+async function autoDeactivate(d: Deps, tenantId: string, endpointId: string, reason: Exclude<DeactivationReason, "credential_revoked">, data: Record<string, unknown> = {}) {
+  const off = await d.db.query<any>(
+    `UPDATE webhook_endpoints SET active = false, auto_deactivated_reason = $2, deactivated_at = now(), updated_at = now()
+      WHERE id = $1 AND active RETURNING id, url, description`,
+    [endpointId, reason],
+  );
+  if (!off.length) return false;
+  await recordAudit(d.db, {
+    tenantId,
+    action: "webhook.deactivated",
+    actor: { type: "system", label: "CalaSign" },
+    targetType: "webhook",
+    targetId: endpointId,
+    data: { reason, ...data },
+  });
+  await notifyWebhookDeactivated(d, tenantId, off[0], reason).catch((err) =>
+    d.log.error({ endpointId, err: String(err) }, "no se pudo avisar la desactivación del webhook"),
+  );
+  return true;
+}
+
+const DEACTIVATION_MAIL: Record<"es" | "pt-BR" | "en", { subject: string; hello: (n: string) => string; body: (host: string) => string; reasons: Record<string, string>; cta: string; sign: string }> = {
+  es: {
+    subject: "CalaSign: se desactivó un webhook de tu organización",
+    hello: (n) => `Hola ${n}:`,
+    body: (h) => `Se desactivó el webhook que entrega eventos a ${h}: no va a recibir más eventos hasta que alguien lo reactive.`,
+    reasons: {
+      gone: "Motivo: el servidor respondió 410 Gone (el destino ya no existe).",
+      failing: "Motivo: las entregas fallan desde hace demasiado tiempo (sin ninguna entrega exitosa).",
+      permission_lost: "Motivo: la API key o la app que lo creó ya no tiene los permisos webhooks:manage y envelopes:view_all.",
+    },
+    cta: "Revisalo y reactivalo en Ajustes → Integraciones",
+    sign: "— CalaSign",
+  },
+  en: {
+    subject: "CalaSign: a webhook in your organization was disabled",
+    hello: (n) => `Hi ${n},`,
+    body: (h) => `The webhook that delivers events to ${h} was disabled: it won't receive any more events until someone turns it back on.`,
+    reasons: {
+      gone: "Reason: the server responded 410 Gone (the destination no longer exists).",
+      failing: "Reason: deliveries have been failing for too long (no successful delivery).",
+      permission_lost: "Reason: the API key or app that created it no longer has the webhooks:manage and envelopes:view_all permissions.",
+    },
+    cta: "Review it and turn it back on in Settings → Integrations",
+    sign: "— CalaSign",
+  },
+  "pt-BR": {
+    subject: "CalaSign: um webhook da sua organização foi desativado",
+    hello: (n) => `Olá ${n},`,
+    body: (h) => `O webhook que entrega eventos para ${h} foi desativado: ele não vai receber mais eventos até que alguém o reative.`,
+    reasons: {
+      gone: "Motivo: o servidor respondeu 410 Gone (o destino não existe mais).",
+      failing: "Motivo: as entregas estão falhando há tempo demais (sem nenhuma entrega bem-sucedida).",
+      permission_lost: "Motivo: a chave de API ou o aplicativo que o criou não tem mais as permissões webhooks:manage e envelopes:view_all.",
+    },
+    cta: "Revise e reative em Configurações → Integrações",
+    sign: "— CalaSign",
+  },
+};
+
+/** Correo a quienes pueden administrar webhooks (propietarios, administradores y roles con webhooks:manage). */
+async function notifyWebhookDeactivated(d: Deps, tenantId: string, ep: { id: string; url: string }, reason: string) {
+  const to = await d.db.query<any>(
+    `SELECT u.email, u.name, u.locale FROM memberships m JOIN users u ON u.id = m.user_id LEFT JOIN roles r ON r.id = m.role_id
+      WHERE m.tenant_id = $1 AND (m.role IN ('owner','admin') OR (m.role = 'custom' AND 'webhooks:manage' = ANY(r.permissions)))`,
+    [tenantId],
+  );
+  // Solo el host: la URL puede llevar un secreto (?token=…).
+  const host = hostOf(ep.url) ?? "?";
+  const link = `${config.appUrl}/app/settings/integrations`;
+  for (const u of to) {
+    if (!u.email) continue;
+    const locale = normLocale(u.locale);
+    const t = DEACTIVATION_MAIL[locale];
+    const text = [t.hello(u.name ?? ""), "", t.body(host), t.reasons[reason] ?? "", "", `${t.cta}: ${link}`, "", t.sign].join("\n");
+    await sendTracked(d.db, { tenantId, template: "webhook_deactivated", log: d.log }, { channel: "email", to: u.email, subject: t.subject, text, link, locale, tenantId }).catch(
+      (err) => d.log.warn({ tenantId, err: String(err) }, "aviso de webhook desactivado no enviado"),
+    );
+  }
+}
+
+/** Entrega exitosa: se reinicia la racha de fallas. */
+async function recordEndpointSuccess(db: Db, endpointId: string) {
+  await db.query(
+    `UPDATE webhook_endpoints SET consecutive_failures = 0, failing_since = NULL, last_success_at = now() WHERE id = $1`,
+    [endpointId],
+  );
+}
+
+/**
+ * Entrega fallida definitiva (agotados los reintentos automáticos): suma a la racha y, con config.webhooks.
+ * maxConsecutiveFailures seguidas o failingDays días fallando sin ningún éxito, desactiva el endpoint ("failing").
+ */
+async function recordEndpointFailure(d: Deps, tenantId: string, endpointId: string) {
+  const r = await d.db.one<any>(
+    `UPDATE webhook_endpoints SET consecutive_failures = consecutive_failures + 1, failing_since = COALESCE(failing_since, now())
+      WHERE id = $1 RETURNING active, consecutive_failures,
+        (failing_since < now() - make_interval(days => $2::int)) AS stale`,
+    [endpointId, config.webhooks.failingDays],
+  );
+  if (!r?.active) return;
+  if (r.consecutive_failures >= config.webhooks.maxConsecutiveFailures || r.stale) {
+    await autoDeactivate(d, tenantId, endpointId, "failing", { consecutiveFailures: r.consecutive_failures });
+  }
+}
+
 async function fanout(d: Deps, p: Extract<WebhookJob, { kind: "fanout" }>) {
   await deactivateOrphanedEndpoints(d.db, p.tenantId);
+  await deactivateEndpointsWithoutPermission(d, p.tenantId);
   const endpoints = await d.db.query<any>(`SELECT * FROM webhook_endpoints WHERE tenant_id = $1 AND active`, [p.tenantId]);
   const targets = endpoints.filter((ep) => ep.events.length === 0 || ep.events.includes(p.type));
   if (targets.length === 0) return;
-  const eventId = uuidv7();
+  // Determinístico: un reintento del job (o un worker que se cayó a mitad) no duplica las entregas (UNIQUE endpoint_id,
+  // event_id). Los jobs viejos sin seq siguen con un id nuevo por ejecución.
+  const eventId = typeof p.seq === "number" ? webhookEventId(p.envelopeId, p.seq, p.type) : uuidv7();
   const payload: WebhookEventPayload = {
     id: eventId,
     type: p.type as WebhookEventPayload["type"],
@@ -382,10 +564,12 @@ async function fanout(d: Deps, p: Extract<WebhookJob, { kind: "fanout" }>) {
   await d.db.tx(async (t) => {
     for (const ep of targets) {
       const id = uuidv7();
-      await t.query(
-        `INSERT INTO webhook_deliveries (id, tenant_id, endpoint_id, event_id, event_type, envelope_id, payload) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      const ins = await t.query(
+        `INSERT INTO webhook_deliveries (id, tenant_id, endpoint_id, event_id, event_type, envelope_id, payload) VALUES ($1,$2,$3,$4,$5,$6,$7)
+         ON CONFLICT (endpoint_id, event_id) DO NOTHING RETURNING id`,
         [id, p.tenantId, ep.id, eventId, p.type, p.envelopeId, JSON.stringify(payload)],
       );
+      if (!ins.length) continue; // ya registrada por una ejecución anterior
       await enqueue(t, "webhook", { kind: "deliver", deliveryId: id }, { maxAttempts: MAX_ATTEMPTS, dedupeKey: `whdel:${id}` });
     }
   });
@@ -411,6 +595,7 @@ async function deliverOne(d: Deps, deliveryId: string, attempt: number, manual: 
   // Una entrega encolada antes de revocar la credencial que creó la suscripción tampoco sale.
   if (row.active && !manual) {
     await deactivateOrphanedEndpoints(d.db, row.tenant_id);
+    await deactivateEndpointsWithoutPermission(d, row.tenant_id);
     row.active = Boolean((await d.db.one<any>(`SELECT active FROM webhook_endpoints WHERE id = $1`, [row.endpoint_id]))?.active);
   }
   if (!row.active && !manual) {
@@ -446,7 +631,9 @@ async function deliverOne(d: Deps, deliveryId: string, attempt: number, manual: 
   }
 
   const ok = error === null;
-  const willRetry = !ok && !manual && attempt < MAX_ATTEMPTS;
+  // 410 Gone: el receptor dice que el destino ya no existe. No se reintenta y el endpoint se desactiva en el acto.
+  const gone = statusCode === 410;
+  const willRetry = !ok && !manual && !gone && attempt < MAX_ATTEMPTS;
   const backoffSec = Math.min(3600, 5 * 2 ** (attempt - 1));
   await d.db.query(
     `UPDATE webhook_deliveries SET attempts = attempts + 1, last_attempt_at = now(), last_status_code = $2, last_response = $3, last_error = $4,
@@ -455,6 +642,9 @@ async function deliverOne(d: Deps, deliveryId: string, attempt: number, manual: 
      WHERE id = $1`,
     [deliveryId, statusCode, responseText, error, ok ? "succeeded" : willRetry ? "pending" : "failed", willRetry, String(backoffSec)],
   );
+  if (ok) await recordEndpointSuccess(d.db, row.endpoint_id);
+  else if (gone) await autoDeactivate(d, row.tenant_id, row.endpoint_id, "gone", { deliveryId });
+  else if (!willRetry && !manual) await recordEndpointFailure(d, row.tenant_id, row.endpoint_id);
   if (!ok) {
     // Solo el host: los integradores suelen poner un secreto en la URL (?token=…) y quedaba en los logs.
     d.log.warn({ deliveryId, host: hostOf(row.url), attempt, error }, "entrega de webhook fallida");
@@ -468,6 +658,21 @@ export async function webhookRoutes(app: FastifyInstance, s: Services) {
   const auth = authenticate(s);
   const A = (req: FastifyRequest) => req.auth as AuthContext;
   type P = { Params: { id: string } };
+  const deps: Deps = { db: s.db, log: app.log };
+  /** Antes de mostrar el estado: las de una credencial revocada o sin permisos quedan ya desactivadas. */
+  const refresh = async (tenantId: string) => {
+    await deactivateOrphanedEndpoints(s.db, tenantId);
+    await deactivateEndpointsWithoutPermission(deps, tenantId);
+  };
+  /** Tope de endpoints (con la organización bloqueada: altas simultáneas no lo pasan). `except`: el que se reactiva. */
+  const assertBelowCap = async (t: Db, tenantId: string, except: string | null = null) => {
+    await t.query(`SELECT id FROM tenants WHERE id = $1 FOR UPDATE`, [tenantId]);
+    const count = await t.one<any>(
+      `SELECT count(*)::int AS n FROM webhook_endpoints WHERE tenant_id = $1 AND ${COUNTS_FOR_CAP} AND id IS DISTINCT FROM $2`,
+      [tenantId, except],
+    );
+    if (count.n >= MAX_WEBHOOKS) throw badRequest("too_many_webhooks", `Máximo ${MAX_WEBHOOKS} webhooks por organización`);
+  };
 
   const load = async (tenantId: string, id: string) => {
     const r = await s.db.one<any>(`SELECT ep.*, ${DEACTIVATED_REASON} FROM webhook_endpoints ep WHERE ep.id = $1 AND ep.tenant_id = $2`, [id, tenantId]);
@@ -476,8 +681,8 @@ export async function webhookRoutes(app: FastifyInstance, s: Services) {
   };
 
   app.get("/v1/webhooks", { preHandler: auth }, async (req) => {
-    // Que la consola muestre ya desactivadas las de una credencial revocada (no recién en el próximo evento).
-    await deactivateOrphanedEndpoints(s.db, A(req).tenantId);
+    // Que la consola muestre ya desactivadas las de una credencial revocada o sin permisos (no recién en el próximo evento).
+    await refresh(A(req).tenantId);
     const rows = await s.db.query(`SELECT ep.*, ${DEACTIVATED_REASON} FROM webhook_endpoints ep WHERE ep.tenant_id = $1 ORDER BY ep.created_at DESC`, [A(req).tenantId]);
     return { items: rows.map(toEndpoint), eventTypes: WEBHOOK_EVENT_TYPES };
   });
@@ -489,12 +694,10 @@ export async function webhookRoutes(app: FastifyInstance, s: Services) {
     const secret = `whsec_${randomToken(24)}`;
     // Conteo e inserción con la organización bloqueada: altas simultáneas no pasan el tope.
     const row = await s.db.tx(async (t) => {
-      await t.query(`SELECT id FROM tenants WHERE id = $1 FOR UPDATE`, [a.tenantId]);
-      const count = await t.one<any>(`SELECT count(*)::int AS n FROM webhook_endpoints WHERE tenant_id = $1`, [a.tenantId]);
-      if (count.n >= 20) throw badRequest("too_many_webhooks", "Máximo 20 webhooks por organización");
+      await assertBelowCap(t, a.tenantId);
       return t.one(
-        `INSERT INTO webhook_endpoints (id, tenant_id, url, description, events, secret_enc, secret_prefix, active, created_by, created_by_api_key, oauth_client_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+        `INSERT INTO webhook_endpoints (id, tenant_id, url, description, events, secret_enc, secret_prefix, active, created_by, created_by_api_key, oauth_client_id, deactivated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, CASE WHEN $8 THEN NULL ELSE now() END) RETURNING *`,
         [
           uuidv7(),
           a.tenantId,
@@ -519,27 +722,36 @@ export async function webhookRoutes(app: FastifyInstance, s: Services) {
   // Como el listado: primero se desactivan los de una credencial revocada (si no, un conector como n8n lo veía activo
   // y daba la suscripción por buena hasta el próximo evento, que la desactivaba en silencio).
   app.get<P>("/v1/webhooks/:id", { preHandler: auth }, async (req) => {
-    await deactivateOrphanedEndpoints(s.db, A(req).tenantId);
+    await refresh(A(req).tenantId);
     return toEndpoint(await load(A(req).tenantId, req.params.id));
   });
 
   app.patch<P>("/v1/webhooks/:id", { preHandler: auth }, async (req) => {
     const a = A(req);
     const input = UpdateWebhookInput.parse(req.body);
-    await load(a.tenantId, req.params.id);
-    // Reactivar una suscripción que se desactivó porque se revocó la credencial que la creó la pasa a quien la reactiva
-    // (si no, se volvía a desactivar sola en el próximo evento). Solo en ese caso: pausar y reanudar una que funciona no
-    // le cambia el origen (si no, dejaba de cortarse al revocar la key de Zapier/Make). En el SET, ep.active es el valor
-    // anterior.
-    const retie = `($7 AND NOT ep.active AND ${ORPHANED_ORIGIN})`;
-    const row = await s.db.one(
-      `UPDATE webhook_endpoints ep SET url = COALESCE($3, url), description = CASE WHEN $4::boolean THEN $5 ELSE description END,
+    const cur = await load(a.tenantId, req.params.id);
+    // Reactivar una suscripción que se desactivó porque se revocó la credencial que la creó (o porque perdió los
+    // permisos) la pasa a quien la reactiva (si no, se volvía a desactivar sola en el próximo evento). Solo en ese caso:
+    // pausar y reanudar una que funciona no le cambia el origen (si no, dejaba de cortarse al revocar la key de
+    // Zapier/Make). En el SET, ep.* son los valores anteriores.
+    const retie = `($7 AND NOT ep.active AND (${ORPHANED_ORIGIN} OR ep.auto_deactivated_reason = 'permission_lost'))`;
+    // Reactivarla (o cambiarle la URL) empieza una racha nueva: si no, la primera falla la volvía a desactivar.
+    const reset = `(($7 AND NOT ep.active) OR ($3::text IS NOT NULL AND $3::text <> ep.url))`;
+    const sql = `UPDATE webhook_endpoints ep SET url = COALESCE($3, url), description = CASE WHEN $4::boolean THEN $5 ELSE description END,
          events = COALESCE($6, events), active = COALESCE($7, active), updated_at = now(),
+         deactivated_at = CASE WHEN COALESCE($7, ep.active) THEN NULL WHEN ep.active THEN now() ELSE ep.deactivated_at END,
+         auto_deactivated_reason = CASE WHEN COALESCE($7, ep.active) THEN NULL ELSE ep.auto_deactivated_reason END,
+         consecutive_failures = CASE WHEN ${reset} THEN 0 ELSE ep.consecutive_failures END,
+         failing_since = CASE WHEN ${reset} THEN NULL ELSE ep.failing_since END,
          created_by = CASE WHEN ${retie} THEN $8 ELSE created_by END,
          created_by_api_key = CASE WHEN ${retie} THEN $9 ELSE created_by_api_key END,
          oauth_client_id = CASE WHEN ${retie} THEN $10 ELSE oauth_client_id END
-       WHERE id = $1 AND tenant_id = $2 RETURNING ep.*, ${DEACTIVATED_REASON}`,
-      [
+       WHERE id = $1 AND tenant_id = $2 RETURNING ep.*, ${DEACTIVATED_REASON}`;
+    // Reactivar uno inactivo vuelve a ocupar un lugar del tope (los inactivos viejos no cuentan).
+    const reactivating = input.active === true && !cur.active;
+    const row = await s.db.tx(async (t) => {
+      if (reactivating) await assertBelowCap(t, a.tenantId, cur.id);
+      return t.one(sql, [
         req.params.id,
         a.tenantId,
         input.url ? validateUrl(input.url) : null,
@@ -550,8 +762,8 @@ export async function webhookRoutes(app: FastifyInstance, s: Services) {
         a.userId,
         a.apiKeyId,
         a.oauth && a.userId ? a.oauth.clientId : null,
-      ],
-    );
+      ]);
+    });
     return toEndpoint(row);
   });
 
@@ -598,22 +810,19 @@ export async function webhookRoutes(app: FastifyInstance, s: Services) {
     const a = A(req);
     const row = await s.db.one<any>(`SELECT * FROM webhook_deliveries WHERE id = $1 AND tenant_id = $2`, [req.params.id, a.tenantId]);
     if (!row) throw notFound("Entrega");
+    // Con el endpoint inactivo (pausado o desactivado por fallas, 410 o permisos) no sale: primero hay que reactivarlo.
+    const endpointActive = async (db: Db) => Boolean((await db.one<any>(`SELECT active FROM webhook_endpoints WHERE id = $1`, [row.endpoint_id]))?.active);
+    if (!(await endpointActive(s.db))) throw conflict("endpoint_inactive", "El webhook está desactivado: reactivalo para reintentar la entrega");
     // Pendiente con su reintento automático programado: se adelanta ese mismo trabajo (encolar otro mandaba el evento
     // dos veces). Si ya está en curso, o hay un reintento manual pedido, 409.
     if (row.status === "pending") {
-      const ep = await s.db.one<any>(`SELECT active FROM webhook_endpoints WHERE id = $1`, [row.endpoint_id]);
-      if (ep?.active) {
-        const moved = await s.db.query(
-          `UPDATE jobs SET run_at = now() WHERE dedupe_key = $1 AND status = 'pending' AND run_at > now() RETURNING id`,
-          [`whdel:${row.id}`],
-        );
-        if (moved.length) {
-          reply.code(202);
-          return toDelivery({ ...row, next_retry_at: null });
-        }
-      } else {
-        // Endpoint pausado: el reintento automático la marcaría fallida sin enviarla; se da por terminado y sale el manual.
-        await s.db.query(`UPDATE jobs SET status = 'done', finished_at = now() WHERE dedupe_key = $1 AND status = 'pending'`, [`whdel:${row.id}`]);
+      const moved = await s.db.query(
+        `UPDATE jobs SET run_at = now() WHERE dedupe_key = $1 AND status = 'pending' AND run_at > now() RETURNING id`,
+        [`whdel:${row.id}`],
+      );
+      if (moved.length) {
+        reply.code(202);
+        return toDelivery({ ...row, next_retry_at: null });
       }
       // Un intento en curso (automático o manual) o un manual ya pedido: 409. Si no queda ningún trabajo (un worker que
       // se cayó a mitad), sigue como reintento manual (si no, quedaba trabada en 409 para siempre).
@@ -628,6 +837,7 @@ export async function webhookRoutes(app: FastifyInstance, s: Services) {
       // pendiente (doble clic) pasaban los dos el chequeo de afuera y la mandaban dos veces.
       const cur = await t.one<any>(`SELECT status FROM webhook_deliveries WHERE id = $1 FOR UPDATE`, [row.id]);
       if (cur?.status !== row.status) throw conflict("delivery_pending", "La entrega ya se está reintentando");
+      if (!(await endpointActive(t))) throw conflict("endpoint_inactive", "El webhook está desactivado: reactivalo para reintentar la entrega");
       const live = await t.one(
         `SELECT 1 FROM jobs WHERE queue = 'webhook' AND status IN ('pending','running') AND payload->>'deliveryId' = $1 LIMIT 1`,
         [row.id],

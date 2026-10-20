@@ -89,7 +89,8 @@ function recipientProblem(r: DraftRecipient): Parameters<ReturnType<typeof useSi
     if (!email && !phone) return "edit.contactRequired";
     if (r.channels.includes("email") && !email) return "edit.emailChannelNeedsEmail";
     if (r.channels.includes("whatsapp") && !phone) return "edit.whatsappNeedsPhone";
-    if (r.channels.every((c) => c === "telegram") && !r.telegramChatId.trim()) return "edit.telegramNeedsChat";
+    // Ya vinculado (telegramLinked): la API conserva su chat_id, no hace falta escribirlo.
+    if (r.channels.every((c) => c === "telegram") && !r.telegramChatId.trim() && !r.telegramLinked) return "edit.telegramNeedsChat";
   }
   // Un código OTP sin su contacto: se avisa (antes se bajaba a "link" en silencio y el sobre salía con una
   // autenticación más débil). Las copias no tienen método (se guardan con "link").

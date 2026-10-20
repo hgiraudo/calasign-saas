@@ -573,9 +573,13 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
     return s.db.tx(async (t) => {
       const e = await lockEnvelope(t, a.tenantId, req.params.id);
       if (e.status !== "draft") throw conflict("not_draft", "El cobro solo se quita mientras el sobre es un borrador");
-      assertNotStale(req.headers, e.updated_at);
+      // Sin cobro no hay nada que pisar: quitarlo de nuevo (reintento, otra pestaña que ya lo quitó) no da 409 por la
+      // versión. Si había, la versión se controla después del DELETE: el 409 revierte la transacción (con el sobre bloqueado).
       const gone = await t.query(`DELETE FROM envelope_payments WHERE envelope_id = $1 RETURNING 1`, [e.id]);
-      if (gone.length) await touchEnvelope(t, e.id);
+      if (gone.length) {
+        assertNotStale(req.headers, e.updated_at);
+        await touchEnvelope(t, e.id);
+      }
       return paymentState(t, a.tenantId, e.id);
     });
   });

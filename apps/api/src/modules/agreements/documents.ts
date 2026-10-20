@@ -24,7 +24,7 @@ import type { Db } from "../../infra/db";
 import { appendEvent, type Actor } from "../../infra/evidence";
 import type { BlobStore } from "../../infra/storage";
 import { AppError, badRequest, conflict, notFound } from "../../lib/errors";
-import { iso, sha256Hex, uuidv7 } from "../../lib/util";
+import { iso, likeContains, sha256Hex, uuidv7 } from "../../lib/util";
 import { requirePerm } from "../access";
 import { auditFromRequest } from "../audit";
 import { getTenantBranding } from "../branding";
@@ -147,6 +147,8 @@ export async function createEnvelopeFromPdf(
       subject,
       spec.message ?? null,
       spec.locale,
+      // Ausente o null: 30 días (ver GenerateDocumentInput.expiresAt; a diferencia de los sobres sueltos, null no es
+      // sin vencimiento acá).
       spec.expiresAt ?? new Date(Date.now() + 30 * 86400_000).toISOString(),
       JSON.stringify(spec.metadata ?? {}),
     ],
@@ -283,8 +285,9 @@ export async function documentRoutes(app: FastifyInstance, s: Services) {
     const params: unknown[] = [a.tenantId];
     let where = `tenant_id = $1 AND archived_at IS NULL`;
     if (req.query.q) {
-      params.push(`%${req.query.q}%`);
-      where += ` AND name ILIKE $2`;
+      // % y _ se buscan como texto (como en sobres y plantillas).
+      params.push(likeContains(String(req.query.q)));
+      where += ` AND name ILIKE $2 ESCAPE '\\'`;
     }
     const rows = await s.db.query(`SELECT * FROM document_templates WHERE ${where} ORDER BY updated_at DESC LIMIT 200`, params);
     const clauses = await loadClauseMap(s.db, a.tenantId);

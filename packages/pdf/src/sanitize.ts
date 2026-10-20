@@ -27,6 +27,7 @@ import {
   type PDFContext,
   type PDFObject,
 } from "pdf-lib";
+import { constants, inflateRawSync, inflateSync } from "node:zlib";
 import { formUnsupportedError, hiddenLayersError } from "./errors";
 
 const N = (s: string) => PDFName.of(s);
@@ -535,17 +536,53 @@ export function unclosedMarkedContent(data: Uint8Array): number {
         i++;
         // Con ASCII85 como (primer) filtro los datos terminan en "~>": un " EI " dentro del texto codificado (es
         // posible: E e I son dígitos de ASCII85) no cierra la imagen. Se busca el EI después del fin de los datos.
+        // Justo después del "~>" el EI puede ir pegado (el ">" ya delimita): "~>EI" cierra la imagen.
+        let a85End = -1;
         if (inlineStart >= 0 && A85_INLINE.test(Buffer.from(data.buffer, data.byteOffset + inlineStart, start - inlineStart).toString("latin1"))) {
           while (i < n && !(data[i] === 0x7e && data[i + 1] === 0x3e)) i++;
           i += 2;
+          a85End = i;
         }
         inlineStart = -1;
-        while (i < n && !(data[i] === 0x45 && data[i + 1] === 0x49 && isWhite(data[i - 1]) && (i + 2 >= n || isWhite(data[i + 2]) || isDelim(data[i + 2])))) i++;
+        while (
+          i < n &&
+          !(data[i] === 0x45 && data[i + 1] === 0x49 && (isWhite(data[i - 1]) || i === a85End) && (i + 2 >= n || isWhite(data[i + 2]) || isDelim(data[i + 2])))
+        ) {
+          i++;
+        }
         i += 2;
       }
     }
   }
   return open;
+}
+
+const FLATE_NAMES = new Set(["FlateDecode", "Fl"]);
+
+/**
+ * Descomprime un stream cuyos filtros son todos Flate con zlib y un tope de salida (maxOutputLength corta sin reservar
+ * la memoria): pdf-lib lo descomprime entero y una bomba chica ocupaba cientos de MB. `null` si supera `max`; vacío si
+ * los datos están dañados (un lector tampoco los dibuja).
+ */
+function inflateCapped(data: Uint8Array, filters: number, max: number): Uint8Array | null {
+  let out = data;
+  for (let k = 0; k < filters; k++) {
+    const opts = { maxOutputLength: Math.max(1, max + 1), finishFlush: constants.Z_SYNC_FLUSH };
+    try {
+      try {
+        out = inflateSync(out, opts);
+      } catch (e) {
+        if (e instanceof RangeError) throw e;
+        // Encabezado o suma de control dañados (pdf-lib no los verifica): como deflate crudo.
+        out = inflateRawSync(out.subarray(2), opts);
+      }
+    } catch (e) {
+      if (e instanceof RangeError) return null;
+      return new Uint8Array();
+    }
+    if (out.length > max) return null;
+  }
+  return out;
 }
 
 function streamData(s: PDFObject | undefined): Uint8Array | undefined {
@@ -578,6 +615,17 @@ function markedScanData(s: PDFObject | undefined, room: number): Uint8Array | nu
   if (s instanceof PDFRawStream && !s.dict.has(N("Filter"))) return s.contents.length > room ? null : s.contents;
   // Con filtro los datos codificados ocupan a lo sumo ~2 veces lo decodificado (ASCIIHex): más que eso ni se decodifica.
   if (s instanceof PDFRawStream && s.contents.length > room * 4) return null;
+  if (s instanceof PDFRawStream) {
+    const ctx = s.dict.context;
+    const f = resolve(ctx, s.dict.get(N("Filter")));
+    const names = (f instanceof PDFArray ? f.asArray() : [f]).map((x) => nameOf(ctx, x));
+    if (names.some((x) => x && FLATE_NAMES.has(x))) {
+      // Con Flate, solo se decodifica acá (con tope): Flate solo y sin DecodeParms (un predictor en un content stream
+      // no tiene sentido). Otra combinación se deja como está.
+      if (names.some((x) => !x || !FLATE_NAMES.has(x)) || s.dict.has(N("DecodeParms"))) return null;
+      return inflateCapped(s.contents, names.length, room);
+    }
+  }
   const data = streamData(s) ?? new Uint8Array();
   return data.length > room ? null : data;
 }

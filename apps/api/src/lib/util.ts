@@ -17,6 +17,16 @@ export function uuidv7(): string {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }
 
+/** UUIDv5 (RFC 4122, SHA-1 sobre namespace + nombre): el mismo nombre da siempre el mismo id. */
+export function uuidv5(name: string, namespace: string): string {
+  const ns = Buffer.from(namespace.replace(/-/g, ""), "hex");
+  const b = createHash("sha1").update(ns).update(name, "utf8").digest().subarray(0, 16);
+  b[6] = (b[6] & 0x0f) | 0x50;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const h = b.toString("hex");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
 export function sha256Hex(data: string | Uint8Array): string {
   return createHash("sha256").update(data).digest("hex");
 }

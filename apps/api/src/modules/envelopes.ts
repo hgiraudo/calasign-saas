@@ -7,7 +7,7 @@ import {
   UpdateEnvelopeInput,
   VoidEnvelopeInput,
   type EnvelopeEvent,
-  type EnvelopeSummary, RESERVED_METADATA_KEYS } from "@calasign/shared";
+  type EnvelopeSummary, RESERVED_METADATA_KEYS, TELEGRAM_ONLY_MESSAGE, telegramOnlyWithoutChat } from "@calasign/shared";
 import { InvalidPdfError, preparePdfUpload } from "@calasign/pdf";
 import type { Db } from "../infra/db";
 import { appendEvent, type Actor } from "../infra/evidence";
@@ -311,6 +311,8 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
       // (migración 0072). Queda constancia en la auditoría de la organización (envelope.deleted, audit.ts).
       (req as FastifyRequest & { auditBefore?: Record<string, unknown> }).auditBefore = { subject: e.subject };
       await t.query(`DELETE FROM envelope_events WHERE envelope_id = $1`, [e.id]);
+      // Sin FK al sobre: las entregas de webhooks (con su asunto y firmantes en el payload) se borran a mano.
+      await t.query(`DELETE FROM webhook_deliveries WHERE envelope_id = $1`, [e.id]);
       await t.query(`DELETE FROM envelopes WHERE id = $1`, [e.id]);
     });
     // Los PDF del borrador que no usa nadie más (una plantilla, otro sobre) se borran del almacenamiento.
@@ -623,6 +625,17 @@ export async function replaceRecipients(t: Db, a: AuthContext, envelopeId: strin
   if (new Set(ids).size !== ids.length) throw badRequest("duplicate_ids", "Ids de destinatarios repetidos");
   const foreign = await t.query(`SELECT id FROM recipients WHERE id = ANY($1) AND envelope_id <> $2`, [ids, envelopeId]);
   if (foreign.length) throw conflict("id_in_use", "Id de destinatario en uso");
+  // Solo Telegram sin telegramChatId (PutRecipientsInput no lo rechaza): vale si el destinatario ya vinculó su Telegram.
+  const unlinked = list.flatMap((r, i) => (telegramOnlyWithoutChat(r) ? [{ r, i }] : []));
+  if (unlinked.length) {
+    const linked = new Set(
+      (await t.query<any>(`SELECT id FROM recipients WHERE envelope_id = $1 AND id = ANY($2) AND telegram_chat_id IS NOT NULL`, [envelopeId, unlinked.map((x) => x.r.id)])).map((x) => x.id),
+    );
+    const bad = unlinked.filter((x) => !linked.has(x.r.id));
+    if (bad.length) {
+      throw new AppError(400, "validation_error", bad.map((x) => `recipients.${x.i}: ${TELEGRAM_ONLY_MESSAGE}`).join("; "), bad.map((x) => ({ path: `recipients.${x.i}`, message: TELEGRAM_ONLY_MESSAGE })));
+    }
+  }
   // Borrar al pagador elimina en cascada el cobro configurado y el sobre salía sin cobrar, sin aviso (sendEnvelope solo
   // ve un cobro que ya no existe). Como en las correcciones: primero se quita o se reasigna el cobro.
   const payer = await t.one<any>(`SELECT r.name FROM envelope_payments p JOIN recipients r ON r.id = p.recipient_id WHERE p.envelope_id = $1 AND NOT (p.recipient_id = ANY($2))`, [

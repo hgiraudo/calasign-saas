@@ -45,6 +45,19 @@ export async function purgeOldIntegrationRuns(db: Db, days = integrationRunsRete
   return out;
 }
 
+/**
+ * Entregas de webhooks (webhook_deliveries) de más de WEBHOOK_DELIVERY_RETENTION_DAYS (90): guardan el payload con los
+ * datos del sobre (asunto, nombres y correos de los firmantes) y la respuesta del receptor, y crecían sin límite. De a
+ * 5000 por pasada. Devuelve cuántas borró.
+ */
+export async function purgeOldWebhookDeliveries(db: Db, days = config.webhooks.deliveryRetentionDays) {
+  const r = await db.query(
+    `DELETE FROM webhook_deliveries WHERE ctid IN (SELECT ctid FROM webhook_deliveries WHERE created_at < now() - make_interval(days => $1::int) LIMIT 5000) RETURNING id`,
+    [days],
+  );
+  return r.length;
+}
+
 /** Archivos borrables de un sobre: originales, imágenes de firma y adjuntos de firmantes. */
 async function purgeableFiles(db: Db, envelopeId: string) {
   return db.query<any>(
@@ -121,6 +134,8 @@ export async function purgeExpiredEnvelopes(d: Deps, opts: { tenantId?: string; 
       if (done.length) await t.query(`UPDATE files SET purged_at = now() WHERE id = ANY($1::uuid[])`, [done.map((f) => f.id)]);
       if (failed) return false; // Se reintenta en la próxima pasada.
       await t.query(`UPDATE envelopes SET purged_at = now(), updated_at = now() WHERE id = $1`, [e.id]);
+      // Las entregas de webhooks del sobre llevan en el payload su asunto y los datos de los firmantes.
+      await t.query(`DELETE FROM webhook_deliveries WHERE envelope_id = $1`, [e.id]);
       const kinds: Record<string, number> = {};
       for (const f of done) kinds[f.kind] = (kinds[f.kind] ?? 0) + 1;
       await appendEvent(t, {

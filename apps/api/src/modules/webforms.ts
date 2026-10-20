@@ -153,63 +153,93 @@ function checkConfig(l: LoadedTemplate, form: { template_id: string; signer_role
   try {
     planFromTemplate(l, buildInput(form, { name: "Validación", email: "validacion@example.com" }) as any);
   } catch (e) {
-    throw badRequest("invalid_form", `La plantilla no queda completa con esta configuración: ${(e as Error).message}`);
+    // cause (no va en la respuesta): formTemplateIssues distingue un rol sin destinatario (roles_missing).
+    throw Object.assign(badRequest("invalid_form", `La plantilla no queda completa con esta configuración: ${(e as Error).message}`), { cause: (e as AppError).code });
   }
 }
 
+/** Un problema de un formulario con su plantilla: kind separa lo que se puede arreglar en otro paso de la edición. */
+type FormIssue = { kind: "config" | "roles_missing" | "signature" | "formula"; message: string };
+
 /**
- * Lo que impide que un formulario cree y envíe sobres con su plantilla actual (null si no hay nada): su configuración
- * (checkConfig) y las reglas del envío que dependen solo de la plantilla (cada rol firmante con firma visual o con
- * certificado; fórmulas que citan un campo número que ya no está). Lo usan la consola, la página pública y la edición
- * de roles y campos de la plantilla (que no deja romper un formulario activo).
+ * Lo que impide que un formulario cree y envíe sobres con su plantilla actual: su configuración (checkConfig; un rol
+ * de la plantilla sin destinatario en el formulario es roles_missing) y las reglas del envío que dependen solo de la
+ * plantilla (cada rol firmante con firma visual o con certificado; fórmulas que citan un campo número que ya no está).
  */
-export function formTemplateIssue(l: LoadedTemplate, form: { template_id: string; signer_role_id: string; fixed_recipients: any[]; prefill: Record<string, string> }): string | null {
+function formTemplateIssues(l: LoadedTemplate, form: { template_id: string; signer_role_id: string; fixed_recipients: any[]; prefill: Record<string, string> }): FormIssue[] {
   try {
     checkConfig(l, form);
   } catch (e) {
-    return (e as Error).message;
+    const cause = (e as Error).cause;
+    return [{ kind: cause === "roles_missing" ? "roles_missing" : "config", message: (e as Error).message }];
   }
   const signers = l.tpl.roles.filter((r) => r.role === "signer");
   const signerIds = new Set(signers.map((r) => r.id));
   const fields = l.tpl.fields.filter((f) => signerIds.has(f.roleId));
-  const problems: string[] = [];
+  const issues: FormIssue[] = [];
   for (const r of signers) {
-    if (r.signatureType !== "certificate" && !fields.some((f) => f.roleId === r.id && f.type === "signature")) problems.push(signerWithoutSignature(r.name).message);
+    if (r.signatureType !== "certificate" && !fields.some((f) => f.roleId === r.id && f.type === "signature")) {
+      issues.push({ kind: "signature", message: signerWithoutSignature(r.name).message });
+    }
   }
-  problems.push(...danglingFormulaProblems(fields).map((p) => p.message));
-  return problems.length ? problems.join(". ") : null;
+  issues.push(...danglingFormulaProblems(fields).map((p) => ({ kind: "formula" as const, message: p.message })));
+  return issues;
 }
 
 /**
- * Antes de cambiar roles o campos de una plantilla (dentro de su transacción): devuelve el chequeo a correr después del
- * cambio, que rechaza con 409 template_has_forms si deja mal configurado algún formulario activo que hoy funciona (los
- * que ya estaban mal no bloquean: se puede seguir editando la plantilla para arreglarlos).
+ * Lo que impide que un formulario cree y envíe sobres con su plantilla actual (null si no hay nada). Lo usan la consola,
+ * la página pública y la edición de roles, campos y documentos de la plantilla (que no deja romper un formulario activo).
  */
-export async function guardTemplateForms(t: Db, tenantId: string, templateId: string): Promise<() => Promise<void>> {
-  const forms = await t.query<any>(
-    `SELECT id, name, template_id, signer_role_id, fixed_recipients, prefill FROM web_forms WHERE tenant_id = $1 AND template_id = $2 AND active ORDER BY name, id`,
+export function formTemplateIssue(l: LoadedTemplate, form: { template_id: string; signer_role_id: string; fixed_recipients: any[]; prefill: Record<string, string> }): string | null {
+  const issues = formTemplateIssues(l, form);
+  return issues.length ? issues.map((i) => i.message).join(". ") : null;
+}
+
+/**
+ * Antes de cambiar roles, campos o documentos de una plantilla (dentro de su transacción): devuelve el chequeo a correr
+ * después del cambio, que rechaza con 409 template_has_forms si deja mal configurado algún formulario que hoy recibe
+ * envíos (activo, sin vencer, con usos disponibles y habilitado por plan y dueño) y funciona. Los que ya estaban mal no
+ * bloquean: se puede seguir editando la plantilla para arreglarlos.
+ *
+ * `step: "roles"`: la edición de roles va antes que la de campos, así que un firmante sin campo de firma (p. ej. un rol
+ * que pasa de copia a firmante) o una fórmula colgada no cuentan: los rechaza PUT fields o el envío.
+ */
+export async function guardTemplateForms(t: Db, tenantId: string, templateId: string, step: "roles" | "fields" | "documents" = "fields"): Promise<() => Promise<void>> {
+  const candidates = await t.query<any>(
+    `SELECT * FROM web_forms WHERE tenant_id = $1 AND template_id = $2 AND active
+       AND (expires_at IS NULL OR expires_at > now()) AND (max_uses IS NULL OR uses < max_uses) ORDER BY name, id`,
     [tenantId, templateId],
   );
+  if (!candidates.length) return async () => {};
+  // Los que no reciben envíos por el plan o por su dueño tampoco bloquean (ya no funcionan).
+  const features = (await tenantPlan(t, tenantId)).plan.features;
+  const forms: any[] = [];
+  for (const f of candidates) if (!(await accessProblem(t, f, features))) forms.push(f);
   if (!forms.length) return async () => {};
-  const broken = async () => {
+  const issues = async () => {
     let l: LoadedTemplate;
     try {
       l = await loadTemplateForUse(t, tenantId, templateId);
-    } catch {
-      return new Set<string>(forms.map((f) => f.id));
+    } catch (e) {
+      return new Map<string, FormIssue[]>(forms.map((f) => [f.id, [{ kind: "config", message: (e as Error).message }]]));
     }
-    return new Set<string>(forms.filter((f) => formTemplateIssue(l, f) !== null).map((f) => f.id));
+    return new Map<string, FormIssue[]>(forms.map((f) => [f.id, formTemplateIssues(l, f)]));
   };
-  const before = await broken();
+  const before = await issues();
   return async () => {
-    const after = await broken();
-    const newly = forms.filter((f) => after.has(f.id) && !before.has(f.id));
+    const after = await issues();
+    const counted = (f: any) => (after.get(f.id) ?? []).filter((i) => step !== "roles" || (i.kind !== "signature" && i.kind !== "formula"));
+    const newly = forms.filter((f) => counted(f).length && !before.get(f.id)?.length);
     if (newly.length) {
+      // Un rol nuevo sin destinatario en el formulario no se puede ajustar antes (el rol todavía no existe): solo desactivarlo.
+      const onlyDeactivate = newly.some((f) => counted(f).some((i) => i.kind === "roles_missing"));
+      const one = newly.length === 1;
+      const fix = onlyDeactivate ? (one ? "desactivarlo" : "desactivarlos") : one ? "desactivarlo o ajustarlo" : "desactivarlos o ajustarlos";
       throw conflict(
         "template_has_forms",
-        newly.length === 1
-          ? `El cambio dejaría sin funcionar el formulario web "${newly[0].name}": desactivalo o ajustalo antes`
-          : `El cambio dejaría sin funcionar los formularios web ${newly.map((f) => `"${f.name}"`).join(", ")}: desactivalos o ajustalos antes`,
+        one
+          ? `El cambio dejaría sin funcionar el formulario web "${newly[0].name}": quien lo creó o un administrador tiene que ${fix} antes`
+          : `El cambio dejaría sin funcionar los formularios web ${newly.map((f) => `"${f.name}"`).join(", ")}: quien los creó o un administrador tiene que ${fix} antes`,
         { forms: newly.map((f) => ({ id: f.id, name: f.name })) },
       );
     }

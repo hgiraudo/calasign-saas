@@ -176,6 +176,8 @@ function WebhooksSection() {
                   {w.description ? `${w.description} · ` : ""}
                   {w.events.length ? w.events.join(", ") : tt("wh.allEvents")} · <code>{w.secretPrefix}…</code>
                 </span>
+                {/* Desactivado solo (credencial, permisos, 410 o fallas): el motivo, para saber qué arreglar antes de reactivarlo. */}
+                {!w.active && w.deactivatedReason && <span className="small warn-text">{tt(`wh.off.${w.deactivatedReason}`)}</span>}
               </div>
               <span className={`badge ${w.active && inPlan ? "badge-completed" : w.active ? "badge-expired" : "badge-voided"}`}>
                 {w.active ? (inPlan ? tt("wh.active") : tt("wh.noEffect")) : tt("wh.inactive")}

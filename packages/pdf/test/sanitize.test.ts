@@ -793,6 +793,8 @@ describe("contenido marcado sin cerrar", () => {
     // Sin ASCII85 (o con ASCII85 que no es el primer filtro) el EI entre blancos sigue cerrando la imagen.
     expect(n("BI /W 4 /H 1 /CS /G /BPC 8 ID 9jqo EI BDC ~> EI /P BMC")).toBe(2);
     expect(n("BI /W 4 /H 1 /F [/Fl /A85] ID xx EI /P BMC")).toBe(1);
+    // El EI pegado al "~>" (el ">" ya delimita) cierra la imagen: lo que sigue se cuenta.
+    expect(n("BI /W 4 /H 1 /CS /G /BPC 8 /F /A85 ID 9jqo EI BDC ^B ~>EI /P BMC")).toBe(1);
   });
 
   it("closeMarkedContent: sin BDC/BMC no toca nada; con BDC sin cerrar agrega el EMC (stream crudo o comprimido)", async () => {
@@ -814,6 +816,26 @@ describe("contenido marcado sin cerrar", () => {
       expect(contents, `abierto ${compressed}`).toBeInstanceOf(PDFArray);
       expect(decoded(open.doc.context.lookup((contents as PDFArray).get(3) as PDFRef)).trim()).toBe("EMC");
     }
+  });
+
+  it("closeMarkedContent: un stream Flate que descomprimido supera el tope (bomba chica) se deja sin tocar", async () => {
+    const { deflateSync } = await import("node:zlib");
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([200, 200]);
+    const ctx = doc.context;
+    const bomb = deflateSync(Buffer.concat([Buffer.from("/OC /oc1 BDC\n"), Buffer.alloc(40 * 1024 * 1024, 0x20)]));
+    expect(bomb.length).toBeLessThan(100 * 1024);
+    const ref = ctx.register(ctx.flateStream(new Uint8Array(0)));
+    ctx.assign(ref, PDFRawStream.of(ctx.obj({ Filter: "FlateDecode", Length: bomb.length }), bomb));
+    page.node.set(PDFName.of("Contents"), ref);
+    closeMarkedContent(doc);
+    expect(page.node.get(PDFName.of("Contents"))).toBe(ref);
+    // Un formulario con la misma bomba tampoco se reescribe.
+    const form = ctx.register(PDFRawStream.of(ctx.obj({ Type: "XObject", Subtype: "Form", BBox: [0, 0, 10, 10], Filter: "FlateDecode", Length: bomb.length }), bomb));
+    page.node.set(PDFName.of("Resources"), ctx.obj({ XObject: { X0: form } }));
+    page.node.set(PDFName.of("Contents"), ctx.register(ctx.stream("/X0 Do\n")));
+    closeMarkedContent(doc);
+    expect((ctx.lookup(form) as PDFRawStream).contents).toBe(bomb);
   });
 
   it("closeMarkedContent: una página más grande que el tope se deja como está", async () => {

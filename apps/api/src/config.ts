@@ -111,6 +111,14 @@ export const config = {
      */
     retentionDays: Math.max(1, Number(env.JOBS_RETENTION_DAYS ?? 30) || 30),
   },
+  webhooks: {
+    /** Entregas fallidas definitivas seguidas (agotados los reintentos) que desactivan el endpoint (motivo "failing"). */
+    maxConsecutiveFailures: Math.max(1, Number(env.WEBHOOK_MAX_CONSECUTIVE_FAILURES ?? 50) || 50),
+    /** Días fallando sin ninguna entrega exitosa que también lo desactivan. */
+    failingDays: Math.max(1, Number(env.WEBHOOK_FAILING_DAYS ?? 7) || 7),
+    /** Días que se guardan las entregas (webhook_deliveries, con el payload del sobre) antes de purgarlas. */
+    deliveryRetentionDays: Math.max(1, Number(env.WEBHOOK_DELIVERY_RETENTION_DAYS ?? 90) || 90),
+  },
   reminders: {
     /** Recordatorios manuales por sobre en 24 h (además de uno cada 10 minutos). */
     manualMaxPerDay: Number(env.REMINDERS_MANUAL_MAX_PER_DAY ?? 5),

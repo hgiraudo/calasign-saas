@@ -113,6 +113,66 @@ describe("plantilla con formularios web activos", () => {
     expect(again.statusCode).toBe(200);
   });
 
+  it("PUT roles en dos pasos: copia → firmante no bloquea (la firma la pide PUT fields); un rol nuevo pide solo desactivarlo", async () => {
+    const t = await templateWithForm("two-step");
+    const roles = (extra: object) => ({ roles: [{ id: t.role, name: "Cliente", role: "signer", routingOrder: 1 }, extra] });
+    // Rol nuevo: el formulario no tiene destinatario para él (y no se puede ajustar antes): 409 que pide desactivarlo.
+    const copia = uuid();
+    const add = await app.inject({ method: "PUT", url: `/v1/templates/${t.tpl}/roles`, headers: auth, payload: roles({ id: copia, name: "Copia", role: "cc", routingOrder: 2 }) });
+    expect(add.statusCode).toBe(409);
+    expect(add.json().error.message).toMatch(/quien lo creó o un administrador tiene que desactivarlo antes/);
+    expect(add.json().error.message).not.toMatch(/ajustar/);
+    // Con el formulario desactivado se agrega la copia, se le pone destinatario fijo y se reactiva.
+    await app.inject({ method: "PATCH", url: `/v1/web-forms/${t.form.id}`, headers: auth, payload: { active: false } });
+    expect((await app.inject({ method: "PUT", url: `/v1/templates/${t.tpl}/roles`, headers: auth, payload: roles({ id: copia, name: "Copia", role: "cc", routingOrder: 2 }) })).statusCode).toBe(200);
+    const patch = await app.inject({
+      method: "PATCH",
+      url: `/v1/web-forms/${t.form.id}`,
+      headers: auth,
+      payload: { active: true, fixedRecipients: [{ roleId: copia, name: "Copia", email: "copia@x.test" }] },
+    });
+    expect(patch.statusCode, patch.body).toBe(200);
+    // La copia pasa a firmante (todavía sin campo de firma): pasa; el campo se agrega después en PUT fields.
+    const toSigner = await app.inject({ method: "PUT", url: `/v1/templates/${t.tpl}/roles`, headers: auth, payload: roles({ id: copia, name: "Copia", role: "signer", routingOrder: 2 }) });
+    expect(toSigner.statusCode, toSigner.body).toBe(200);
+    const withSig = await app.inject({
+      method: "PUT",
+      url: `/v1/templates/${t.tpl}/fields`,
+      headers: auth,
+      payload: { fields: [...t.fields, { id: uuid(), documentId: t.doc, roleId: copia, type: "signature", ...box(0.7) }] },
+    });
+    expect(withSig.statusCode).toBe(200);
+    // Ya funcionando, quitarle la firma en PUT fields sí rompe el formulario.
+    const noSig = await app.inject({ method: "PUT", url: `/v1/templates/${t.tpl}/fields`, headers: auth, payload: { fields: t.fields } });
+    expect(noSig.statusCode).toBe(409);
+    expect(noSig.json().error.message).toMatch(/desactivarlo o ajustarlo antes/);
+  });
+
+  it("solo bloquean los formularios que reciben envíos (no vencidos ni agotados)", async () => {
+    const cc = (t: { role: string }) => ({ roles: [{ id: t.role, name: "Cliente", role: "cc", routingOrder: 1 }] });
+    const expired = await templateWithForm("expired");
+    await db.query(`UPDATE web_forms SET expires_at = now() - interval '1 day' WHERE id = $1`, [expired.form.id]);
+    expect((await app.inject({ method: "PUT", url: `/v1/templates/${expired.tpl}/roles`, headers: auth, payload: cc(expired) })).statusCode).toBe(200);
+    const used = await templateWithForm("used");
+    await db.query(`UPDATE web_forms SET max_uses = 2, uses = 2 WHERE id = $1`, [used.form.id]);
+    expect((await app.inject({ method: "PUT", url: `/v1/templates/${used.tpl}/roles`, headers: auth, payload: cc(used) })).statusCode).toBe(200);
+    // Con usos disponibles sí bloquea.
+    const left = await templateWithForm("left");
+    await db.query(`UPDATE web_forms SET max_uses = 3, uses = 2 WHERE id = $1`, [left.form.id]);
+    expect((await app.inject({ method: "PUT", url: `/v1/templates/${left.tpl}/roles`, headers: auth, payload: cc(left) })).statusCode).toBe(409);
+  });
+
+  it("DELETE de un documento de la plantilla que rompe un formulario activo → 409", async () => {
+    const t = await templateWithForm("doc-delete");
+    const del = () => app.inject({ method: "DELETE", url: `/v1/templates/${t.tpl}/documents/${t.doc}`, headers: auth });
+    const r = await del();
+    expect(r.statusCode).toBe(409);
+    expect(r.json().error.code).toBe("template_has_forms");
+    expect(await db.one(`SELECT 1 FROM template_documents WHERE id = $1`, [t.doc])).toBeTruthy();
+    await app.inject({ method: "PATCH", url: `/v1/web-forms/${t.form.id}`, headers: auth, payload: { active: false } });
+    expect((await del()).statusCode).toBe(204);
+  });
+
   it("envío público con la plantilla rota: no disponible, sin el detalle de la configuración", async () => {
     const { encrypt } = await import("../src/lib/util");
     const submit = (slug: string) =>
@@ -230,6 +290,42 @@ describe("cobro con X-Expected-Updated-At", () => {
   });
 });
 
+describe("cobro: quitar sin cobro", () => {
+  it("DELETE sin cobro configurado no controla la versión (no hay nada que pisar)", async () => {
+    const e = await app.inject({ method: "POST", url: "/v1/envelopes", headers: auth, payload: { subject: "Sin cobro" } });
+    const del = await app.inject({ method: "DELETE", url: `/v1/envelopes/${e.json().envelope.id}/payment`, headers: { ...auth, "x-expected-updated-at": stale } });
+    expect(del.statusCode).toBe(200);
+    expect(del.json().payment).toBeNull();
+  });
+});
+
+describe("destinatario solo Telegram", () => {
+  it("sin telegramChatId: 400 si no está vinculado; si ya lo está (mismo id), se guarda y conserva el chat", async () => {
+    const e = await app.inject({ method: "POST", url: "/v1/envelopes", headers: auth, payload: { subject: "Telegram" } });
+    const id = e.json().envelope.id as string;
+    const rid = uuid();
+    const put = (r: object) => app.inject({ method: "PUT", url: `/v1/envelopes/${id}/recipients`, headers: auth, payload: { recipients: [{ id: rid, name: "Ana", email: "ana@x.test", ...r }] } });
+    expect((await put({})).statusCode).toBe(200);
+    const bad = await put({ channels: ["telegram"] });
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json().error.code).toBe("validation_error");
+    expect(bad.json().error.message).toMatch(/telegramChatId/);
+    await db.query(`UPDATE recipients SET telegram_chat_id = '12345' WHERE id = $1`, [rid]);
+    const ok = await put({ channels: ["telegram"] });
+    expect(ok.statusCode, ok.body).toBe(200);
+    const row = await db.one<any>(`SELECT channels, telegram_chat_id FROM recipients WHERE id = $1`, [rid]);
+    expect(row).toEqual({ channels: ["telegram"], telegram_chat_id: "12345" });
+    // Otro destinatario nuevo solo Telegram sin chat sigue rechazado.
+    const other = await app.inject({
+      method: "PUT",
+      url: `/v1/envelopes/${id}/recipients`,
+      headers: auth,
+      payload: { recipients: [{ id: rid, name: "Ana", email: "ana@x.test", channels: ["telegram"] }, { name: "Beto", email: "b@x.test", channels: ["telegram"] }] },
+    });
+    expect(other.statusCode).toBe(400);
+  });
+});
+
 describe("expiresAt: ausente = 30 días, null = sin vencimiento", () => {
   it("alta en un paso, desde plantilla y clonado", async () => {
     const days = (iso: string | null) => (iso ? Math.round((Date.parse(iso) - Date.now()) / 86400_000) : null);
@@ -267,5 +363,26 @@ describe("búsqueda con comodines literales", () => {
     expect(await tpls("50%")).toEqual(["Descuento 50% marzo"]);
     expect(await tpls("a_b")).toEqual(["Plan a_b"]);
     expect(await tpls("\\")).toEqual([]);
+  });
+
+  it("% y _ literales en el actor del registro de auditoría y en las plantillas de documentos", async () => {
+    for (const label of ["Ventas 50%", "Ventas 50", "a_b", "axb"]) {
+      await db.query(`INSERT INTO account_audit_log (tenant_id, actor_type, actor_label, action) VALUES ($1, 'system', $2, 'test.like')`, [tenant, label]);
+      await db.query(`INSERT INTO document_templates (id, tenant_id, name, locale, source) VALUES ($1, $2, $3, 'es', 'x')`, [uuid(), tenant, label]);
+    }
+    const audit = async (q: string) => {
+      const r = await app.inject({ method: "GET", url: `/v1/audit-log?action=test.like&actor=${encodeURIComponent(q)}`, headers: auth });
+      expect(r.statusCode, r.body).toBe(200);
+      return r.json().items.map((e: any) => e.actorLabel ?? e.actor?.label).sort();
+    };
+    const docs = async (q: string) => {
+      const r = await app.inject({ method: "GET", url: `/v1/document-templates?q=${encodeURIComponent(q)}`, headers: auth });
+      expect(r.statusCode, r.body).toBe(200);
+      return r.json().items.map((e: any) => e.name).sort();
+    };
+    expect(await audit("50%")).toEqual(["Ventas 50%"]);
+    expect(await audit("a_b")).toEqual(["a_b"]);
+    expect(await docs("50%")).toEqual(["Ventas 50%"]);
+    expect(await docs("a_b")).toEqual(["a_b"]);
   });
 });

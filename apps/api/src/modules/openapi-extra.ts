@@ -285,7 +285,7 @@ export const ERRORS: Record<string, Err> = {
   },
   invalid_origin: { status: 400, code: "invalid_origin", message: "Solo orígenes https fuera del entorno local", summary: "Origen http fuera del entorno local" },
   invalid_url: { status: 400, code: "invalid_url", message: "La URL del webhook debe ser https", summary: "URL no https, con credenciales o a un destino local" },
-  too_many_webhooks: { status: 400, code: "too_many_webhooks", message: "Máximo 20 webhooks por organización", summary: "Tope de 20 endpoints" },
+  too_many_webhooks: { status: 400, code: "too_many_webhooks", message: "Máximo 20 webhooks por organización", summary: "Tope de 20 endpoints (activos o desactivados en los últimos 30 días)" },
   template_empty: { status: 400, code: "template_empty", message: "La plantilla no tiene documentos", summary: "Plantilla sin documentos" },
   unknown_role: { status: 400, code: "unknown_role", message: "Rol desconocido: Garante", summary: "roleId/role que no existe en la plantilla" },
   duplicate_role: { status: 400, code: "duplicate_role", message: "El rol Cliente tiene más de un destinatario", summary: "Dos destinatarios para el mismo rol" },
@@ -455,6 +455,12 @@ export const ERRORS: Record<string, Err> = {
     summary: "`companyId` no es la cuenta del CRM de la conexión del mapeo",
   },
   delivery_pending: { status: 409, code: "delivery_pending", message: "La entrega ya se está reintentando", summary: "La entrega tiene un intento en curso o un reintento manual ya pedido" },
+  endpoint_inactive: {
+    status: 409,
+    code: "endpoint_inactive",
+    message: "El webhook está desactivado: reactivalo para reintentar la entrega",
+    summary: "El endpoint de la entrega está inactivo (pausado o desactivado por fallas, 410 o permisos)",
+  },
   template_has_forms: {
     status: 409,
     code: "template_has_forms",

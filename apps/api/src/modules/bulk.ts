@@ -281,6 +281,8 @@ function prepareRows(l: LoadedTemplate, rows: BulkRowInput[], base: { templateId
       subject: row.subject || base.subject || undefined,
       message: base.message ?? undefined,
       locale: base.locale,
+      // null = 30 días en un envío masivo (como si no viniera; ver CreateBulkSendInput.expiresAt): a diferencia de
+      // from-template, donde null es sin vencimiento, acá siempre vencen.
       expiresAt: base.expiresAt ?? undefined,
       recipients: row.recipients.map(normalizeRecipient),
       prefill: row.prefill,
@@ -525,6 +527,7 @@ export async function bulkRoutes(app: FastifyInstance, s: Services) {
           loaded.tpl.template.name,
           input.name ?? null,
           prepared.length,
+          // expiresAt null queda guardado como "sin indicar": al procesar las filas da 30 días (ver prepareRows).
           JSON.stringify({ subject: input.subject ?? null, message: input.message ?? null, locale: input.locale ?? null, expiresAt: input.expiresAt ?? null }),
           JSON.stringify(actor),
           a.userId,

@@ -45,6 +45,10 @@ export const CreateBulkSendInput = z
     subject: z.string().trim().max(300).optional().nullable(),
     message: z.string().max(5000).optional().nullable(),
     locale: z.enum(LOCALES).optional(),
+    /**
+     * Vencimiento de cada sobre del envío. Ausente o null: 30 días (a diferencia de los sobres sueltos y desde
+     * plantilla, donde null es sin vencimiento: un envío masivo siempre vence).
+     */
     expiresAt: z.string().datetime({ offset: true }).optional().nullable(),
     /** Filas en JSON… */
     rows: z.array(BulkRowInput).max(BULK_MAX_ROWS).optional(),

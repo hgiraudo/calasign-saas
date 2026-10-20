@@ -21,7 +21,7 @@ import { embeddedAuthLabel } from "./embed";
 import { inPersonAuthLabels } from "./experience";
 import { handleWebhookJob } from "./webhooks";
 import { runAutomaticReminders } from "./reminders";
-import { purgeExpiredEnvelopes, purgeOldIntegrationRuns } from "./retention";
+import { purgeExpiredEnvelopes, purgeOldIntegrationRuns, purgeOldWebhookDeliveries } from "./retention";
 import { purgeUnusedDynamicClients } from "./oauth";
 import { brandForEnvelope, brandize, mailBranding, productLabel, rebrands, senderFor } from "./white-label/brand";
 import { brandLogoForPdf, recheckWhiteLabelDomains } from "./white-label";
@@ -649,6 +649,8 @@ export async function sweep(d: Deps, signal?: AbortSignal) {
     ["retention", () => purgeExpiredEnvelopes(d)],
     // Ejecuciones de CRM y conectores de más de INTEGRATION_RUNS_RETENTION_DAYS (180 por defecto).
     ["integration-runs", () => purgeOldIntegrationRuns(d.db)],
+    // Entregas de webhooks de más de WEBHOOK_DELIVERY_RETENTION_DAYS (90 por defecto).
+    ["webhook-deliveries", () => purgeOldWebhookDeliveries(d.db)],
     ["ai", () => runAiSweep(d)],
     ["agreements", () => agreementsSweep(d)],
     ["data", () => dataSweep(d)],

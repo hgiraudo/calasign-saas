@@ -103,7 +103,20 @@ export interface WorkerOptions {
   shutdownGraceMs?: number;
   /** Esperas entre reintentos de registrar como 'done' un job que terminó bien (por defecto 0,5 s, 2 s y 5 s). */
   recordRetryMs?: number[];
+  /** Candidatos listos más viejos que mira cada toma, además de los de prioridad alta (por defecto 100). */
+  claimCandidates?: number;
+  /**
+   * Al apagar, un job que sigue corriendo vuelve a 'pending' con run_at = now() + esto (por defecto 30 s): el handler
+   * local puede seguir hasta que el proceso salga y otro worker no tiene que tomarlo mientras tanto.
+   */
+  shutdownRequeueDelayMs?: number;
 }
+
+/**
+ * Niveles de prioridad > 0 de jobPriority: el claim los busca aparte (además de los listos más viejos) para que no
+ * esperen detrás de un atraso grande de prioridad menor.
+ */
+const URGENT_PRIORITIES = [20, 10, 5, 2];
 
 /** Cada cuánto el worker registra su latido en worker_heartbeats. */
 const WORKER_BEAT_MS = 15_000;
@@ -112,20 +125,36 @@ export function startWorker(db: Db, opts: WorkerOptions) {
   const workerId = `${hostname()}:${process.pid}`;
   const concurrency = opts.concurrency ?? 4;
   const pollMs = opts.pollMs ?? 1000;
-  const inflight = new Map<number, JobRow>();
+  const claimCandidates = Math.max(1, opts.claimCandidates ?? 100);
+  // handlerDone: el handler ya terminó bien (puede estar reintentando registrar 'done'): al apagar no se devuelve a la cola.
+  const inflight = new Map<number, JobRow & { handlerDone?: boolean }>();
   const abort = new AbortController();
   let stopped = false;
   let lastBeat = 0;
 
+  // Toma en dos pasos. Recorrer jobs_claim_idx (priority DESC, run_at, id) filtrando run_at <= now() pasaba por todos
+  // los pendientes FUTUROS de mayor prioridad (reintentos con backoff, pospuestos por BYOK…) antes de llegar a uno
+  // listo. Ahora los candidatos son: los `claimCandidates` listos más viejos (jobs_pending_run_at_idx) más, por cada
+  // nivel de prioridad alta conocido, sus listos más viejos (búsqueda por rango en jobs_claim_idx: priority = nivel y
+  // run_at <= now(), sin tocar futuros). Así un restablecimiento de contraseña no espera a que se vacíe un masivo de
+  // miles de jobs más viejos. Entre los candidatos se ordena por prioridad y se bloquea con SKIP LOCKED (el bloqueo
+  // vuelve a evaluar status/run_at: un candidato que otro worker tomó entretanto se salta).
   async function claim(limit: number): Promise<JobRow[]> {
     return db.tx((t) =>
       t.query<JobRow>(
         `UPDATE jobs SET status = 'running', locked_at = now(), locked_by = $2, attempts = attempts + 1
          WHERE id IN (
-           SELECT id FROM jobs WHERE status = 'pending' AND run_at <= now()
-           ORDER BY priority DESC, run_at, id LIMIT $1 FOR UPDATE SKIP LOCKED)
+           SELECT j.id FROM jobs j
+            WHERE j.id IN (
+                (SELECT c.id FROM jobs c WHERE c.status = 'pending' AND c.run_at <= now() ORDER BY c.run_at, c.id LIMIT $3)
+                UNION
+                (SELECT h.id FROM unnest($4::smallint[]) AS p(pr), LATERAL (
+                   SELECT c.id FROM jobs c WHERE c.status = 'pending' AND c.priority = p.pr AND c.run_at <= now()
+                    ORDER BY c.run_at, c.id LIMIT $1) h))
+              AND j.status = 'pending' AND j.run_at <= now()
+            ORDER BY j.priority DESC, j.run_at, j.id LIMIT $1 FOR UPDATE SKIP LOCKED)
          RETURNING id, queue, payload, attempts, max_attempts, (created_at > now() - interval '7 days') AS postponable`,
-        [limit, workerId],
+        [limit, workerId, claimCandidates, URGENT_PRIORITIES],
       ),
     );
   }
@@ -202,7 +231,7 @@ export function startWorker(db: Db, opts: WorkerOptions) {
   // El resultado se registra solo si el job sigue en este intento (`attempts` cambia con cada toma). Si el sweep lo
   // devolvió a la cola por tardar más de 10 minutos y otro worker ya lo tomó, este intento viejo no puede pisar su
   // estado: un error tardío lo reprogramaría mientras corre el siguiente y saldría una vez más.
-  async function run(job: JobRow) {
+  async function run(job: JobRow & { handlerDone?: boolean }) {
     const handler = opts.handlers[job.queue];
     // Latido: mientras el job corre, renueva `locked_at`. Sin esto, un job vivo que tardaba más de 10 minutos (una
     // finalización con TSA/OCSP lentos, un envío masivo grande) quedaba "trabado" para el sweep: lo devolvía a la cola
@@ -220,6 +249,7 @@ export function startWorker(db: Db, opts: WorkerOptions) {
       if (!handler) throw new Error(`sin handler para ${job.queue}`);
       await handler(job.payload, { id: job.id, attempts: job.attempts, maxAttempts: job.max_attempts, postponable: job.postponable });
       ok = true;
+      job.handlerDone = true;
     } catch (e) {
       failure = e;
     }
@@ -273,10 +303,12 @@ export function startWorker(db: Db, opts: WorkerOptions) {
   return {
     /**
      * Deja de tomar jobs, aborta el barrido y espera a los jobs en curso hasta `shutdownGraceMs` (25 s; systemd
-     * manda SIGKILL a los 90 s). Los que siguen corriendo al vencer vuelven a 'pending' SIN descontar el intento:
-     * la cola no sabe si su handler es idempotente (un correo pudo haber salido), así que el intento interrumpido
-     * cuenta; si era el último, el próximo error lo deja 'failed'. Si el handler llega a terminar antes de que el
-     * proceso salga, su 'done' igual se registra (mismo `attempts`).
+     * manda SIGKILL a los 90 s). Los que siguen corriendo al vencer vuelven a 'pending' SIN descontar el intento y con
+     * run_at dentro de `shutdownRequeueDelayMs` (30 s): la cola no sabe si su handler es idempotente (un correo pudo
+     * haber salido), así que el intento interrumpido cuenta. Los que estaban en su último intento no vuelven (el sweep
+     * los da por fallados a los 10 minutos) y los que ya terminaron (registro de 'done' reintentándose) tampoco: se
+     * marcan 'unrecorded'. Si el handler llega a terminar antes de que el proceso salga, su 'done' igual se registra
+     * (mismo `attempts`).
      */
     async stop() {
       stopped = true;
@@ -286,14 +318,25 @@ export function startWorker(db: Db, opts: WorkerOptions) {
       // 'running' sin correr (10 minutos, o 'failed' si era su último intento).
       await Promise.race([loopsDone, sleep(Math.max(0, deadline - Date.now()))]);
       while (inflight.size > 0 && Date.now() < deadline) await sleep(100);
+      const delaySec = Math.max(0, opts.shutdownRequeueDelayMs ?? 30_000) / 1000;
       for (const job of inflight.values()) {
         try {
+          if (job.handlerDone) {
+            // Ya hizo su trabajo y recordDone sigue reintentando: no se vuelve a correr. Se marca 'unrecorded' para
+            // que el sweep lo pase a 'done' (si tampoco se puede, queda como un worker caído).
+            await db.query(`UPDATE jobs SET locked_by = $3 WHERE id = $1 AND attempts = $2 AND status = 'running'`, [job.id, job.attempts, UNRECORDED]);
+            continue;
+          }
+          // Vuelve con run_at en el futuro: el handler local puede seguir hasta que el proceso salga y otro worker no
+          // tiene que tomarlo en paralelo. Si era su último intento no se devuelve: queda 'running' y el sweep lo da
+          // por fallado a los 10 minutos (o se registra 'done' si el handler llega a terminar).
           const back = await db.query(
-            `UPDATE jobs SET status = 'pending', locked_at = NULL, locked_by = NULL, run_at = now()
-              WHERE id = $1 AND attempts = $2 AND status = 'running' AND locked_by = $3 RETURNING id`,
-            [job.id, job.attempts, workerId],
+            `UPDATE jobs SET status = 'pending', locked_at = NULL, locked_by = NULL, run_at = now() + make_interval(secs => $4::float8)
+              WHERE id = $1 AND attempts = $2 AND status = 'running' AND locked_by = $3 AND attempts < max_attempts RETURNING id`,
+            [job.id, job.attempts, workerId, delaySec],
           );
           if (back.length) opts.log.info({ jobId: job.id, queue: job.queue }, "apagado: job en curso devuelto a la cola");
+          else opts.log.info({ jobId: job.id, queue: job.queue }, "apagado: job en curso en su último intento, queda para el barrido");
         } catch (e) {
           opts.log.error({ jobId: job.id, err: scrubPii(String(e)) }, "apagado: no se pudo devolver el job a la cola");
         }
@@ -335,41 +378,67 @@ export async function requeueStuckJobs(db: Db): Promise<{ id: number; queue: Job
 /** Estados finales del sobre: ningún flujo vuelve a encolar con una clave atada a un sobre así. */
 const FINAL_ENVELOPE_STATUSES = `('completed','declined','voided','expired')`;
 
+/** Clave del candado de la purga (pg_try_advisory_xact_lock): una sola purga a la vez entre todos los procesos. */
+const PURGE_LOCK_KEY = 0x6a6f6273; // "jobs"
+
 /**
- * Purga de jobs terminados ('done'/'failed') con `finished_at` de hace más de `olderThanDays`, de a `batch` (por ctid,
- * con el índice parcial de 0085) y hasta `maxBatches` lotes por pasada.
+ * Prefijos de las claves PERMANENTES (lista blanca): las que algún flujo usa como registro de "ya se hizo" mientras
+ * el sobre siga vivo. Si se agrega un enqueue con una clave así, va acá.
+ *  - invite:/completed:<rec> (envelopes.activateRecipient), certificate_request:<rec> (certsign), invite-verified:<rec> (otp)
+ *  - finalize:<sobre> (no finalize:<sobre>:retry:<uuid>, reintento manual con clave única), finalize-certsign:<sobre>
+ *  - expiry-warning:<rec>:<vence>[:<envío>] (reminders), exp:<conexión>:<sobre> (no la de reintento manual con
+ *    :<timestamp>), agr:ingest:<sobre>
+ */
+const PERMANENT_KEY = `(
+  starts_with(j.dedupe_key, 'invite:') OR starts_with(j.dedupe_key, 'completed:')
+  OR starts_with(j.dedupe_key, 'certificate_request:') OR starts_with(j.dedupe_key, 'invite-verified:')
+  OR (starts_with(j.dedupe_key, 'finalize:') AND strpos(j.dedupe_key, ':retry:') = 0)
+  OR starts_with(j.dedupe_key, 'finalize-certsign:') OR starts_with(j.dedupe_key, 'expiry-warning:')
+  OR (starts_with(j.dedupe_key, 'exp:') AND j.dedupe_key !~ '^exp:[^:]*:[^:]*:')
+  OR starts_with(j.dedupe_key, 'agr:ingest:'))`;
+
+/**
+ * Purga de jobs terminados ('done'/'failed') hace más de `olderThanDays`, de a `batch` y hasta `maxBatches` lotes por
+ * pasada. Cada lote corre en su transacción con pg_try_advisory_xact_lock: si otro proceso está purgando, esta pasada
+ * no hace nada. El barrido la llama como mucho una vez por hora por proceso (modules/jobs.ts).
  *
- * Política de dedupe (jobs.dedupe_key es única y varios flujos la usan como registro de "ya se hizo"):
- *  - Claves por día/hora/ronda o por id único (auto-reminder:<rec>:<día>, wf-resume:<run>:<hora>, whdel:<entrega>,
- *    whfan/ntf:<sobre>:<seq>, cnjob/crmjob:<run>, bulk:<id>:…, neg:…, wf:approval:…, agr:expiry:<acuerdo>:<fecha>,
- *    que además se guía por agreements.expiry_notified_for) → purgables pasado el plazo: ningún flujo las vuelve a
- *    generar después de 30 días.
- *  - Claves permanentes atadas a un sobre (invite:/completed:/certificate_request:/invite-verified:<rec>,
- *    finalize:/finalize-certsign:<sobre>, expiry-warning:<rec>:<vence>:<envío>, exp:<conexión>:<sobre>,
- *    agr:ingest:<sobre>) → se retienen mientras el sobre del payload (`envelopeId`) exista y no esté en un estado
- *    final (completed, declined, voided, expired): mientras siga vivo, purgarlas permitiría repetir la invitación,
- *    la finalización o el aviso de vencimiento.
- *  - Sin dedupe_key → purgables. auto-reminder: y wf-resume: (clave del día/hora) → purgables aunque el sobre siga vivo.
+ * Política de dedupe (jobs.dedupe_key es única y varios flujos la usan como registro de "ya se hizo"): LISTA BLANCA.
+ *  - Claves permanentes (PERMANENT_KEY) → se retienen mientras el sobre del payload (`envelopeId`) exista y no esté
+ *    en un estado final (completed, declined, voided, expired): purgarlas permitiría repetir la invitación, la
+ *    finalización o el aviso de vencimiento.
+ *  - Cualquier otra clave (por día/hora/ronda o por id único: auto-reminder:, wf-resume:, whdel:, whfan:, ntf:,
+ *    cnjob:, crmjob:, bulk:, neg:, wf:approval:, agr:expiry:…) y sin clave → purgables pasado el plazo.
+ *
+ * Una fila retenida no se vuelve a mirar en cada barrido: se le pone `purge_checked_at = now()` y el índice de la
+ * purga (0086) va por GREATEST(purge_checked_at, finished_at), así vuelve a ser candidata recién después de otro plazo.
  */
 export async function purgeFinishedJobs(db: Db, opts: { olderThanDays: number; batch?: number; maxBatches?: number; signal?: AbortSignal }): Promise<number> {
   const batch = opts.batch ?? 5000;
+  const days = Math.max(1, Math.floor(opts.olderThanDays));
   let total = 0;
   for (let i = 0; i < (opts.maxBatches ?? 10) && !opts.signal?.aborted; i++) {
-    const rows = await db.query(
-      `DELETE FROM jobs WHERE ctid IN (
-         SELECT j.ctid FROM jobs j
-          WHERE j.status IN ('done','failed') AND j.finished_at < now() - make_interval(days => $1::int)
-            AND NOT (j.dedupe_key IS NOT NULL AND j.dedupe_key NOT LIKE 'auto-reminder:%' AND j.dedupe_key NOT LIKE 'wf-resume:%' AND EXISTS (
-              SELECT 1 FROM envelopes e
-               WHERE e.id = CASE WHEN j.payload->>'envelopeId' ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
-                                 THEN (j.payload->>'envelopeId')::uuid END
-                 AND e.status NOT IN ${FINAL_ENVELOPE_STATUSES}))
-          LIMIT $2)
-       RETURNING 1 AS x`,
-      [Math.max(1, Math.floor(opts.olderThanDays)), batch],
-    );
-    total += rows.length;
-    if (rows.length < batch) break;
+    const r = await db.tx(async (t) => {
+      const lock = await t.one<{ ok: boolean }>(`SELECT pg_try_advisory_xact_lock($1) AS ok`, [PURGE_LOCK_KEY]);
+      if (!lock?.ok) return null;
+      return t.one<{ seen: number; deleted: number }>(
+        `WITH cand AS (
+           SELECT j.id, (j.dedupe_key IS NOT NULL AND ${PERMANENT_KEY} AND EXISTS (
+               SELECT 1 FROM envelopes e
+                WHERE e.id = CASE WHEN j.payload->>'envelopeId' ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+                                  THEN (j.payload->>'envelopeId')::uuid END
+                  AND e.status NOT IN ${FINAL_ENVELOPE_STATUSES})) AS keep
+             FROM jobs j
+            WHERE j.status IN ('done','failed') AND GREATEST(j.purge_checked_at, j.finished_at) < now() - make_interval(days => $1::int)
+            LIMIT $2),
+         del AS (DELETE FROM jobs WHERE id IN (SELECT id FROM cand WHERE NOT keep) RETURNING 1),
+         kept AS (UPDATE jobs SET purge_checked_at = now() WHERE id IN (SELECT id FROM cand WHERE keep) RETURNING 1)
+         SELECT (SELECT count(*) FROM cand)::int AS seen, (SELECT count(*) FROM del)::int AS deleted, (SELECT count(*) FROM kept)::int AS kept`,
+        [days, batch],
+      );
+    });
+    if (!r) break;
+    total += r.deleted;
+    if (r.seen < batch) break;
   }
   return total;
 }

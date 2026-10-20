@@ -602,6 +602,10 @@ export async function finalizeGaveUp(d: Deps, p: { envelopeId: string; tenantId:
 
 // ───────────────────────────── Tareas periódicas ─────────────────────────────
 
+/** Última purga de jobs terminados de este proceso (ver el paso "jobs-purge"). */
+let lastJobsPurgeAt = 0;
+const JOBS_PURGE_EVERY_MS = 3600_000;
+
 export async function sweep(d: Deps, signal?: AbortSignal) {
   // Cada tarea por separado: una que falla (p. ej. un proveedor caído) no puede frenar a las demás, en
   // particular el vencimiento de sobres de más abajo.
@@ -616,11 +620,15 @@ export async function sweep(d: Deps, signal?: AbortSignal) {
       },
     ],
     // Jobs terminados hace más de JOBS_RETENTION_DAYS (30): sin esto la tabla crecía para siempre. Retiene los que
-    // todavía deduplican (claves atadas a un sobre vivo): ver la política en purgeFinishedJobs (infra/queue.ts).
+    // todavía deduplican (claves atadas a un sobre vivo): ver la política en purgeFinishedJobs (infra/queue.ts). Como
+    // mucho una vez por hora por proceso (y una sola a la vez entre procesos, con un candado consultivo).
     [
       "jobs-purge",
       async () => {
-        await purgeFinishedJobs(d.db, { olderThanDays: config.jobs.retentionDays, signal });
+        if (Date.now() - lastJobsPurgeAt >= JOBS_PURGE_EVERY_MS) {
+          lastJobsPurgeAt = Date.now();
+          await purgeFinishedJobs(d.db, { olderThanDays: config.jobs.retentionDays, signal });
+        }
         await d.db.query(`DELETE FROM worker_heartbeats WHERE beat_at < now() - interval '1 day'`);
       },
     ],

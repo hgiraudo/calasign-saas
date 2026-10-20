@@ -106,6 +106,14 @@ const migrationsDir = fileURLToPath(new URL("../../migrations/", import.meta.url
 /** Clave del candado de migraciones (pg_advisory_xact_lock): dos procesos que arrancan a la vez no aplican la misma dos veces. */
 const MIGRATION_LOCK_KEY = 0x63616c61; // "cala"
 
+/**
+ * Aplica las migraciones pendientes de migrations/ en orden. Cada migración corre ENTERA en su propia transacción
+ * (junto con su registro en schema_migrations y el candado de migraciones): no puede usar sentencias que no corren en
+ * una transacción, como CREATE INDEX CONCURRENTLY (un CREATE INDEX común bloquea las escrituras de la tabla mientras
+ * dura). Sobre tablas grandes (jobs, evidencia, sobres…) la migración se limita al cambio de esquema (columnas
+ * nulables, índices) y los backfills se hacen de a lotes desde el barrido periódico (modules/jobs.ts), no acá: un
+ * UPDATE masivo dentro de la migración retiene bloqueos durante todo el arranque. Ver docs/MODELO-DE-DATOS.md.
+ */
 export async function migrate(db: Db, log: (m: string) => void = () => {}) {
   const isPg = db.dialect === "pg";
   // Candado por transacción (no de sesión: con el pool, el unlock podía ir por otra conexión). Cada paso lo toma y

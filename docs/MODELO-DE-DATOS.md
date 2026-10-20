@@ -133,3 +133,15 @@ El diagrama de arriba es el núcleo (0001). Cada bloque funcional agrega su prop
 
 Reglas: una migración por bloque, solo aditiva salvo cuando se recrea un `CHECK` para sumar un valor; nunca se edita una
 migración ya aplicada en un entorno.
+
+Cada migración corre entera en su propia transacción (`migrate` en `apps/api/src/infra/db.ts`, con un candado para que
+dos procesos que arrancan juntos no la apliquen dos veces). Consecuencias:
+
+- No se pueden usar sentencias que no corren dentro de una transacción, como `CREATE INDEX CONCURRENTLY`. Un
+  `CREATE INDEX` común bloquea las escrituras de la tabla mientras se construye: en tablas grandes, crear el índice a
+  mano con `CONCURRENTLY` antes de desplegar y dejar en la migración el `CREATE INDEX IF NOT EXISTS` (que entonces no
+  hace nada).
+- Sobre tablas grandes (`jobs`, `envelope_events`, `envelopes`…), la migración se limita al cambio de esquema (columnas
+  nulables, índices). Los backfills se hacen de a lotes desde el barrido periódico (`sweep` en
+  `apps/api/src/modules/jobs.ts`), no en la migración: un `UPDATE` masivo dentro de ella retiene los bloqueos durante
+  todo el arranque.

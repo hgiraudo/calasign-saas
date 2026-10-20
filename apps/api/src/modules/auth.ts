@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { CreateApiKeyInput, LoginInput, SignupInput, type ApiKey, type MeResponse } from "@calasign/shared";
+import { CreateApiKeyInput, LoginInput, SignupInput, type ApiKey, type MeResponse, type ResetPasswordResponse } from "@calasign/shared";
 import { conflict, notFound, unauthorized } from "../lib/errors";
 import { hashPassword, iso, randomToken, sha256Hex, slugify, uuidv7, verifyPassword } from "../lib/util";
 import { config } from "../config";
@@ -223,7 +223,7 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
       }).catch(() => {});
     }
     // Para la pantalla: credenciales activas que creó, por organización, y lo revocado (si lo pidió).
-    return reply.code(200).send({
+    const body: ResetPasswordResponse = {
       ok: true,
       createdCredentials: credentials
         .filter((c) => c.apiKeys || c.scimTokens || c.serviceApps || c.invitations)
@@ -234,7 +234,8 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
             invitations: credentials.reduce((n, c) => n + (c.revoked?.invitations ?? 0), 0),
           }
         : null,
-    });
+    };
+    return reply.code(200).send(body);
   });
 
   app.post("/v1/auth/logout", async (req, reply) => {

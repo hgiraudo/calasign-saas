@@ -170,7 +170,8 @@ async function createEnvelope(
     } catch (e) {
       if (e instanceof PdfSourceError) {
         if (e.code === "file_too_large") throw new AppError(413, "file_too_large", `${where}: ${e.message}`);
-        throw badRequest(e.code === "download_failed" || e.code === "invalid_url" ? "document_fetch_failed" : "invalid_pdf", `${where}: ${e.message}`);
+        // base64 inválido o contenido que no es PDF: not_pdf, el mismo código que la subida multipart (preparePdfUpload).
+        throw badRequest(e.code === "download_failed" || e.code === "invalid_url" ? "document_fetch_failed" : "not_pdf", `${where}: ${e.message}`);
       }
       throw e;
     }

@@ -63,5 +63,6 @@ export const LOWCODE_OPS: Op[] = [
       { name: "limit", description: "1 a 10", schema: { type: "integer", minimum: 1, maximum: 10 } },
     ],
     response: z.object({ items: z.array(WebhookEventSchema) }),
+    errors: ["invalid_event"],
   },
 ];

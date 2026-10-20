@@ -173,7 +173,8 @@ export const DEVAPI_OPS: Op[] = [
     summary: "Operación en lote (get, void, remind, delete) sobre hasta 100 sobres",
     description:
       "Cada id se procesa como su pedido individual (mismos permisos, validaciones y auditoría) y el resultado de cada uno va en `results`, en el mismo orden; " +
-      "un error en uno no corta el resto. Responde 200 aunque fallen elementos. Cada elemento cuenta para el límite de pedidos.",
+      "un error en uno no corta el resto. Responde 200 aunque fallen elementos. Cada elemento cuenta para el límite de pedidos. " +
+      "Cada resultado fallido trae el error de su pedido individual: p. ej. en remind, 429 reminded_recently (un recordatorio cada 10 minutos por sobre) o reminder_daily_limit (5 en 24 horas); en void, 409 not_voidable.",
     body: EnvelopeBatchInput,
     response: BatchResponseSchema,
   },

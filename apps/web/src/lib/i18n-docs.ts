@@ -401,7 +401,7 @@ export const docsEs = {
     "Al crear o editar el borrador: `reminderEveryDays` (1 a 60) reenvía la invitación cada N días a quienes tienen su turno pendiente; `expiryWarningDays` avisa N días antes del vencimiento; `allowDelegation` permite que el firmante delegue en otra persona. `null` desactiva cada opción.",
   "g.rem.manual.h": "Recordatorio manual",
   "g.rem.manual.p":
-    "`POST /v1/envelopes/{id}/remind` reenvía ya mismo la invitación a los pendientes del turno actual y devuelve cuántos se notificaron. Como mucho un recordatorio manual cada 10 minutos por sobre: antes responde `429 reminded_recently`. Si el sobre está en `awaiting_certificates`, le avisa al firmante con certificado al que le toca. Un sobre que no está en curso responde `409 not_in_progress`.",
+    "`POST /v1/envelopes/{id}/remind` reenvía ya mismo la invitación a los pendientes del turno actual y devuelve cuántos se notificaron. Como mucho un recordatorio manual cada 10 minutos por sobre: antes responde `429 reminded_recently`. Además hay un tope diario por sobre (5 en 24 horas, salvo otra configuración del servidor): pasado, `429 reminder_daily_limit`. Ninguno de los dos trae `retry-after`: no los reintentes en un loop. Si el sobre está en `awaiting_certificates`, le avisa al firmante con certificado al que le toca. Un sobre que no está en curso responde `409 not_in_progress`.",
   "g.rem.exp.h": "Vencimiento",
   "g.rem.exp.p":
     "`expiresAt` (ISO 8601 con zona horaria) define hasta cuándo se puede firmar. Si no lo indicás, el sobre vence **30 días** después de creado. Al vencer pasa a `expired` y se dispara `envelope.expired`. Para extenderlo en un sobre en curso, usá una corrección.",
@@ -563,26 +563,43 @@ export const docsEs = {
   "err.col.meaning": "Qué significa y qué hacer",
   "err.c.validation": "El cuerpo no cumple el esquema. `details[]` trae `path` y `message` de cada problema. No reintentes sin corregir.",
   "err.c.invalidId": "Un id de la ruta no es un UUID válido.",
-  "err.c.bad": "Otros errores del pedido, con un `code` específico (cursor inválido, texto ancla no encontrado, campo fuera de la página…).",
+  "err.c.bad":
+    "Otros errores del pedido, con un `code` específico: cursor inválido, texto ancla no encontrado, campo fuera de la página, un archivo que no es un PDF (`not_pdf`, el mismo código en todas las subidas), texto con caracteres no admitidos como el carácter nulo (`invalid_text`)…",
+  "err.c.oneshot":
+    "Errores del `multipart/form-data` de `POST /v1/envelopes`: un campo de texto que no es `payload` (`unknown_part`), una parte repetida (`duplicate_part`), `payload` que no es JSON válido (`invalid_json`), más de 10 documentos (`too_many_documents`) o dos documentos que citan la misma parte de archivo (`duplicate_document`).",
   "err.c.unauthorized": "Falta la credencial, es inválida, venció o fue revocada.",
   "err.c.plan":
     "La organización llegó a un límite de su plan o la funcionalidad no está incluida. `details` trae `plan`, el límite o la funcionalidad, `suggestedPlan` y `upgradeUrl`. Las lecturas nunca se bloquean por plan.",
   "err.c.forbidden": "El rol de la credencial no tiene el permiso (`details.permission`) o al token OAuth le falta un scope (`details.requiredScope`).",
+  "err.c.forbiddenOther":
+    "`two_factor_setup_required`: la organización exige verificación en dos pasos y el usuario todavía no la activó (activala y repetí). `ai_notice_required`: un administrador tiene que aceptar el aviso vigente de tratamiento de datos de la IA (Ajustes → IA). `bad_origin`: un pedido con cookie de sesión desde un origen que no es la web de CalaSign (con `Authorization` no aplica).",
   "err.c.notFound": "El recurso no existe o pertenece a otra organización.",
   "err.c.conflict": "El estado del recurso no permite la operación: por ejemplo, modificar un sobre que ya no es borrador o anular uno terminado.",
   "err.c.idem": "Reutilizaste una `Idempotency-Key` con otro cuerpo, o el pedido original todavía se está procesando (reintentá en unos segundos).",
   "err.c.versionChanged":
-    "Control de edición concurrente: mandaste `X-Expected-Updated-At` con el `updatedAt` que leíste al modificar un borrador (`PATCH /v1/envelopes/{id}`, `PUT …/recipients`, `PUT …/fields`, `PUT …/seal-options`, `PATCH …/ai/settings`) o una plantilla (`PATCH /v1/templates/{id}`, `PUT …/roles`, `PUT …/fields`, `PUT …/shares`), o al enviarlo (`POST …/send`), y alguien lo cambió mientras tanto. `details.updatedAt` trae el valor actual: recargá, revisá y repetí. Sin el encabezado no se controla. En una negociación significa que hay una versión nueva.",
+    "Control de edición concurrente: mandaste `X-Expected-Updated-At` con el `updatedAt` que leíste al modificar un borrador (`PATCH /v1/envelopes/{id}`, `PUT …/recipients`, `PUT …/fields`, `PUT …/seal-options`, `PATCH …/ai/settings`) o una plantilla (`PATCH /v1/templates/{id}`, `PUT …/roles`, `PUT …/fields`, `PUT …/shares`), o al enviarlo, anularlo o mandar un recordatorio (`POST …/send`, `POST …/void`, `POST …/remind`), y alguien lo cambió mientras tanto. `details.updatedAt` trae el valor actual: recargá, revisá y repetí. Sin el encabezado no se controla. En una negociación significa que hay una versión nueva.",
+  "err.c.crm":
+    "Envío desde un mapeo de CRM: la conexión no tiene guardada su cuenta (`crm_account_unknown`: probala con `POST /v1/crm/connections/{id}/test` o volvé a conectarla) o el `companyId` del pedido es de otra cuenta que la del mapeo (`company_mismatch`).",
   "err.c.purged":
-    "Los originales del sobre se borraron por la política de retención de la organización (cuenta desde que el sobre terminó: completado, anulado, rechazado o vencido). `410` al descargar el original, crear una plantilla desde el sobre o usar la IA; `409` al clonarlo. El PDF firmado y la evidencia se conservan.",
-  "err.c.tooLarge": "El archivo supera el tamaño máximo.",
+    "Los originales del sobre se borraron por la política de retención de la organización (cuenta desde que el sobre terminó: completado, anulado, rechazado o vencido). `410` al descargar el original, crear una plantilla desde el sobre o usar la IA; `409` al clonarlo. El PDF firmado y la evidencia se conservan. En el repositorio de acuerdos, `GET /v1/agreements/{id}/file` responde `410 purged` si el archivo ya se borró.",
+  "err.c.tooLarge":
+    "El archivo supera el tamaño máximo (`file_too_large`, el mismo código en todas las subidas, también cuando varios documentos juntos superan el total por pedido) o el JSON del sobre en `POST /v1/envelopes`, sin el base64 de los documentos, es demasiado grande (`payload_too_large`).",
+  "err.c.wrongCell":
+    "Los datos de la organización están en otra celda (región) de CalaSign. `details.cell` es la celda y `details.baseUrl` la URL de la API que la atiende (también en el encabezado `Location`, con la misma ruta). El pedido no se procesó: repetilo contra `details.baseUrl` y usá esa URL de ahí en más. Los SDKs lo hacen solos (una vez).",
   "err.c.unprocessable": "El pedido es válido pero no se puede procesar con esos datos (faltan roles de la plantilla, filas inválidas, PDF demasiado pesado para buscar anclas).",
   "err.c.rate": "Superaste el límite de pedidos por IP (código `rate_limited`; versiones anteriores de la API mandaban `bad_request`). Esperá lo que indica el encabezado `retry-after` (segundos) y reintentá.",
   "err.c.rateBiz":
-    "Tope de negocio con código propio (`reminded_recently`, `form_rate_limited`, `workflow_rate_limited`, `ai_signer_limit`, `ai_budget_exceeded`, `too_many_comments`, `too_many_proposals`, `archive_recently_renewed`, `too_many_attempts`). No trae `retry-after`: no lo reintentes en un loop; avisale al usuario o probá mucho más tarde.",
+    "Tope de negocio con código propio (`reminded_recently`, `reminder_daily_limit`, `form_rate_limited`, `workflow_rate_limited`, `ai_signer_limit`, `ai_budget_exceeded`, `too_many_comments`, `too_many_proposals`, `archive_recently_renewed`, `too_many_attempts`). No trae `retry-after`: no lo reintentes en un loop; avisale al usuario o probá mucho más tarde.",
   "err.c.internal": "Error nuestro. Es seguro reintentar con espera creciente; si usás `Idempotency-Key`, no se duplica nada.",
+  "err.c.upstream":
+    "Falló un servicio externo: la autoridad de sellado de tiempo (`tsa_unavailable`) o el proveedor de IA (`ai_unavailable`). Reintentá en unos minutos.",
+  "err.c.unavailable":
+    "Indisponibilidad temporal: almacenamiento de documentos (`storage_unavailable`), lector de PDF ocupado (`pdf_reader_busy`) o proveedor de IA saturado (`ai_rate_limited`). El pedido no se procesó: reintentá con espera creciente. `ai_unavailable` con `503` significa que el servidor no tiene proveedor de IA configurado.",
+  "err.c.byok":
+    "La clave de cifrado propia de la organización (BYOK, en tu KMS) no está disponible: no se pueden guardar ni leer documentos. **No lo reintentes en un loop:** un administrador tiene que restablecer el acceso a la clave (`details.keyArn`).",
+  "err.c.aiTimeout": "El proveedor de IA no respondió a tiempo. Probá de nuevo más tarde.",
   "err.codes.retry":
-    "**Qué reintentar:** errores de red, el `429` del límite por IP (con `retry-after`) y `5xx`, con espera exponencial y algo de azar. **Qué no:** los `429` con código propio (topes de negocio, sin `retry-after`) y el resto de los `4xx`, que no van a cambiar si repetís el mismo pedido.",
+    "**Qué reintentar:** errores de red, el `429` del límite por IP (con `retry-after`) y `5xx`, con espera exponencial y algo de azar. **Qué no:** los `429` con código propio (topes de negocio, sin `retry-after`), el `503 byok_key_unavailable` (hace falta que un administrador restablezca la clave) y el resto de los `4xx`, que no van a cambiar si repetís el mismo pedido. El `421 wrong_cell` se repite una vez contra `details.baseUrl`. Los SDKs oficiales aplican estas reglas solos.",
   "err.idem.h": "Idempotencia",
   "err.idem.p":
     "Si un pedido de creación se corta (timeout, red), no sabés si llegó. Mandá el encabezado `Idempotency-Key` con un valor único por operación —por ejemplo, el id del pedido en tu sistema— y reintentá con el mismo valor: CalaSign ejecuta la operación una sola vez y a los reintentos les devuelve la respuesta guardada, con el encabezado `idempotent-replay: true`.",
@@ -611,7 +628,8 @@ export const docsEs = {
   "sdk.f.node.deps": "Node.js ≥ 18 (fetch nativo), con tipos",
   "sdk.f.auth": "Autenticación",
   "sdk.f.retries": "Reintentos",
-  "sdk.f.retries.v": "Red, 429 (respeta Retry-After) y 5xx, backoff exponencial, 3 por defecto",
+  "sdk.f.retries.v":
+    "Red, 429 del límite por IP (respeta Retry-After) y 5xx salvo byok_key_unavailable, backoff exponencial, 3 por defecto. 421 wrong_cell: un reintento contra details.baseUrl, que queda como URL base",
   "sdk.f.idem": "Idempotency-Key automática",
   "sdk.f.errors": "Errores",
   "sdk.install": "Instalación",

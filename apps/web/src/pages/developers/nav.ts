@@ -126,7 +126,7 @@ export const NAV: NavGroup[] = [
         path: "errors",
         title: "err.title",
         headings: [h("format", "err.format.h"), h("codes", "err.codes.h"), h("idempotency", "err.idem.h"), h("pagination", "err.page.h"), h("rate-limits", "err.rate.h")],
-        keywords: "error 400 401 402 403 404 409 429 Idempotency-Key cursor nextCursor retry-after",
+        keywords: "error 400 401 402 403 404 409 413 421 429 500 502 503 504 wrong_cell byok_key_unavailable Idempotency-Key cursor nextCursor retry-after",
       },
       { path: "sdks", title: "sdk.title", headings: [h("python", "sdk.py.h"), h("node", "sdk.node.h"), h("openapi", "sdk.openapi.h")], keywords: "sdk python node openapi-generator" },
     ],

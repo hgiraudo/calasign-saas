@@ -144,6 +144,112 @@ assert _seen[3][2] == {"frameAncestors": ["https://app.example.com"]}, _seen[3]
 _srv.shutdown()
 ok("types/ids como str, adjunto con tipo y frame_ancestors")
 
+# Celdas (421 wrong_cell), 503 no reintentable, expected_updated_at en void/remind/send y paridad con el SDK de Node.
+_cell_log = []
+
+
+def _cell_handler(name, queue):
+    class _H(http.server.BaseHTTPRequestHandler):
+        def _any(self):
+            n = int(self.headers.get("content-length") or 0)
+            if n:
+                self.rfile.read(n)
+            _cell_log.append((name, self.command, self.path, self.headers.get("X-Expected-Updated-At")))
+            status, payload = queue.pop(0)
+            self.send_response(status)
+            self.send_header("content-type", "application/json")
+            if status == 421 and isinstance(payload, dict) and payload.get("error", {}).get("details", {}).get("baseUrl"):
+                self.send_header("location", payload["error"]["details"]["baseUrl"] + self.path)
+            self.end_headers()
+            self.wfile.write(json.dumps(payload).encode())
+
+        do_GET = do_POST = do_DELETE = _any
+
+        def log_message(self, *a):
+            pass
+
+    return _H
+
+
+_qa, _qb = [], []
+_sa = http.server.HTTPServer(("127.0.0.1", 0), _cell_handler("a", _qa))
+_sb = http.server.HTTPServer(("127.0.0.1", 0), _cell_handler("b", _qb))
+for _s in (_sa, _sb):
+    threading.Thread(target=_s.serve_forever, daemon=True).start()
+_base_a = f"http://127.0.0.1:{_sa.server_address[1]}"
+_base_b = f"http://127.0.0.1:{_sb.server_address[1]}"
+
+
+def _wrong(base):
+    return (421, {"error": {"code": "wrong_cell", "message": "otra región", "details": {"cell": "eu", "baseUrl": base}}})
+
+
+# Un POST sin idempotencia (remind) se repite una vez contra la otra celda y la URL queda para los siguientes.
+_qa[:] = [_wrong(_base_b + "/")]
+_qb[:] = [(200, {"notified": 1}), (200, {"items": [], "nextCursor": None})]
+_cs = CalaSign(api_key="k", base_url=_base_a, max_retries=0)
+assert _cs.envelopes.remind("e1") == {"notified": 1}
+assert _cs.base_url == _base_b, _cs.base_url
+_cs.envelopes.list(limit=5)
+assert [x[:3] for x in _cell_log] == [("a", "POST", "/v1/envelopes/e1/remind"), ("b", "POST", "/v1/envelopes/e1/remind"), ("b", "GET", "/v1/envelopes?limit=5")], _cell_log
+# Si la otra celda también responde 421 (o no hay baseUrl), se lanza wrong_cell con cell_base_url.
+_cell_log.clear()
+_qa[:] = [_wrong(_base_b)]
+_qb[:] = [_wrong(_base_a)]
+try:
+    CalaSign(api_key="k", base_url=_base_a, max_retries=0).envelopes.get("e1")
+    raise AssertionError("debió fallar")
+except CalaSignError as e:
+    assert (e.status, e.code, e.cell_base_url) == (421, "wrong_cell", _base_a), vars(e)
+assert len(_cell_log) == 2, _cell_log
+_qa[:] = [_wrong(None)]
+try:
+    CalaSign(api_key="k", base_url=_base_a, max_retries=0).envelopes.get("e1")
+    raise AssertionError("debió fallar")
+except CalaSignError as e:
+    assert (e.code, e.cell_base_url) == ("wrong_cell", None)
+ok("421 wrong_cell: un reintento contra details.baseUrl, que queda para los siguientes; si no, cell_base_url en el error")
+
+# 503 byok_key_unavailable no se reintenta (requiere acción de un admin); storage_unavailable sí.
+_cell_log.clear()
+_qa[:] = [(503, {"error": {"code": "byok_key_unavailable", "message": "clave", "details": {"keyArn": "arn"}}})]
+try:
+    CalaSign(api_key="k", base_url=_base_a, max_retries=3).envelopes.get("e1")
+    raise AssertionError("debió fallar")
+except CalaSignError as e:
+    assert (e.status, e.code) == (503, "byok_key_unavailable")
+assert len(_cell_log) == 1, _cell_log
+_qa[:] = [(503, {"error": {"code": "storage_unavailable", "message": "x"}}), (200, {"envelope": {"id": "e1"}})]
+assert CalaSign(api_key="k", base_url=_base_a, max_retries=3).envelopes.get("e1")["envelope"]["id"] == "e1"
+assert len(_cell_log) == 3, _cell_log
+ok("503 byok_key_unavailable no se reintenta; storage_unavailable sí")
+
+# expected_updated_at en void (sin reintento ante 5xx), remind y send; remove_document y webhooks.deliveries.
+_cell_log.clear()
+_at = "2026-01-01T00:00:00.000Z"
+_qa[:] = [(500, {"error": {"code": "internal_error", "message": "x"}})]
+try:
+    CalaSign(api_key="k", base_url=_base_a, max_retries=2).envelopes.void("e1", "r", expected_updated_at=_at)
+    raise AssertionError("debió fallar")
+except CalaSignError as e:
+    assert e.status == 500
+assert len(_cell_log) == 1 and _cell_log[0][3] == _at, _cell_log
+_qa[:] = [(200, {"notified": 1}), (200, {"envelope": {"id": "e1"}}), (204, {}), (200, {"items": [{"id": "d1"}]})]
+_cs = CalaSign(api_key="k", base_url=_base_a, max_retries=0)
+_cs.envelopes.remind("e1", expected_updated_at=_at)
+_cs.envelopes.send("e1", expected_updated_at=_at)
+_cs.envelopes.remove_document("e1", "doc1")
+assert _cs.webhooks.deliveries("w1") == [{"id": "d1"}]
+assert [x[1:] for x in _cell_log[1:]] == [
+    ("POST", "/v1/envelopes/e1/remind", _at),
+    ("POST", "/v1/envelopes/e1/send", _at),
+    ("DELETE", "/v1/envelopes/e1/documents/doc1", None),
+    ("GET", "/v1/webhooks/w1/deliveries", None),
+], _cell_log
+_sa.shutdown()
+_sb.shutdown()
+ok("expected_updated_at en void/remind/send; remove_document y webhooks.deliveries")
+
 if len(sys.argv) < 2:
     print("\n(sin URL de API: se omiten las pruebas en línea)")
     sys.exit(0)

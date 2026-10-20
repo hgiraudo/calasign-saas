@@ -394,7 +394,7 @@ export const docsEn: Record<DocsKey, string> = {
     "When creating or editing the draft: `reminderEveryDays` (1 to 60) resends the invitation every N days to those whose turn is pending; `expiryWarningDays` sends a warning N days before expiration; `allowDelegation` lets the signer delegate to someone else. `null` disables each option.",
   "g.rem.manual.h": "Manual reminder",
   "g.rem.manual.p":
-    "`POST /v1/envelopes/{id}/remind` immediately resends the invitation to pending recipients in the current routing step and returns how many were notified. At most one manual reminder every 10 minutes per envelope: sooner returns `429 reminded_recently`. If the envelope is in `awaiting_certificates`, it notifies the certificate signer whose turn it is. An envelope that isn't in progress returns `409 not_in_progress`.",
+    "`POST /v1/envelopes/{id}/remind` immediately resends the invitation to pending recipients in the current routing step and returns how many were notified. At most one manual reminder every 10 minutes per envelope: sooner returns `429 reminded_recently`. There's also a daily cap per envelope (5 in 24 hours unless the server is configured otherwise): beyond it, `429 reminder_daily_limit`. Neither has `retry-after`: don't retry them in a loop. If the envelope is in `awaiting_certificates`, it notifies the certificate signer whose turn it is. An envelope that isn't in progress returns `409 not_in_progress`.",
   "g.rem.exp.h": "Expiration",
   "g.rem.exp.p":
     "`expiresAt` (ISO 8601 with time zone) sets the signing deadline. If you don't set it, the envelope expires **30 days** after creation. On expiration it moves to `expired` and `envelope.expired` fires. To extend an envelope in progress, use a correction.",
@@ -556,26 +556,42 @@ export const docsEn: Record<DocsKey, string> = {
   "err.col.meaning": "What it means and what to do",
   "err.c.validation": "The body doesn't match the schema. `details[]` contains the `path` and `message` of each problem. Don't retry without fixing it.",
   "err.c.invalidId": "An id in the path isn't a valid UUID.",
-  "err.c.bad": "Other request errors, with a specific `code` (invalid cursor, anchor text not found, field outside the page…).",
+  "err.c.bad":
+    "Other request errors, with a specific `code`: invalid cursor, anchor text not found, field outside the page, a file that isn't a PDF (`not_pdf`, the same code on every upload path), text with disallowed characters such as the null character (`invalid_text`)…",
+  "err.c.oneshot":
+    "Errors in the `multipart/form-data` of `POST /v1/envelopes`: a text field other than `payload` (`unknown_part`), a repeated part (`duplicate_part`), a `payload` that isn't valid JSON (`invalid_json`), more than 10 documents (`too_many_documents`) or two documents citing the same file part (`duplicate_document`).",
   "err.c.unauthorized": "The credential is missing, invalid, expired or revoked.",
   "err.c.plan":
     "The organization hit a plan limit or the feature isn't included. `details` contains `plan`, the limit or feature, `suggestedPlan` and `upgradeUrl`. Reads are never blocked by plan.",
   "err.c.forbidden": "The credential's role lacks the permission (`details.permission`) or the OAuth token is missing a scope (`details.requiredScope`).",
+  "err.c.forbiddenOther":
+    "`two_factor_setup_required`: the organization requires two-step verification and the user hasn't enabled it yet (enable it and retry). `ai_notice_required`: an administrator has to accept the current AI data-processing notice (Settings → AI). `bad_origin`: a request with a session cookie from an origin other than the CalaSign web app (doesn't apply with `Authorization`).",
   "err.c.notFound": "The resource doesn't exist or belongs to another organization.",
   "err.c.conflict": "The resource's state doesn't allow the operation: for example, modifying an envelope that's no longer a draft or voiding a finished one.",
   "err.c.idem": "You reused an `Idempotency-Key` with a different body, or the original request is still being processed (retry in a few seconds).",
   "err.c.versionChanged":
-    "Concurrent editing control: you sent `X-Expected-Updated-At` with the `updatedAt` you read when modifying a draft (`PATCH /v1/envelopes/{id}`, `PUT …/recipients`, `PUT …/fields`, `PUT …/seal-options`, `PATCH …/ai/settings`) or a template (`PATCH /v1/templates/{id}`, `PUT …/roles`, `PUT …/fields`, `PUT …/shares`), or when sending it (`POST …/send`), and someone changed it in the meantime. `details.updatedAt` has the current value: reload, review and retry. Without the header nothing is checked. In a negotiation it means there's a new version.",
+    "Concurrent editing control: you sent `X-Expected-Updated-At` with the `updatedAt` you read when modifying a draft (`PATCH /v1/envelopes/{id}`, `PUT …/recipients`, `PUT …/fields`, `PUT …/seal-options`, `PATCH …/ai/settings`) or a template (`PATCH /v1/templates/{id}`, `PUT …/roles`, `PUT …/fields`, `PUT …/shares`), or when sending, voiding or reminding it (`POST …/send`, `POST …/void`, `POST …/remind`), and someone changed it in the meantime. `details.updatedAt` has the current value: reload, review and retry. Without the header nothing is checked. In a negotiation it means there's a new version.",
+  "err.c.crm":
+    "Sending from a CRM mapping: the connection has no stored account (`crm_account_unknown`: test it with `POST /v1/crm/connections/{id}/test` or reconnect it) or the request's `companyId` belongs to a different account than the mapping's (`company_mismatch`).",
   "err.c.purged":
-    "The envelope's originals were deleted by the organization's retention policy (counted from when the envelope ended: completed, voided, declined or expired). `410` when downloading the original, creating a template from the envelope or using AI; `409` when cloning it. The signed PDF and the evidence are kept.",
-  "err.c.tooLarge": "The file exceeds the maximum size.",
+    "The envelope's originals were deleted by the organization's retention policy (counted from when the envelope ended: completed, voided, declined or expired). `410` when downloading the original, creating a template from the envelope or using AI; `409` when cloning it. The signed PDF and the evidence are kept. In the agreements repository, `GET /v1/agreements/{id}/file` returns `410 purged` if the file was already deleted.",
+  "err.c.tooLarge":
+    "The file exceeds the maximum size (`file_too_large`, the same code on every upload path, also when several documents together exceed the per-request total) or the envelope JSON in `POST /v1/envelopes`, without the documents' base64, is too large (`payload_too_large`).",
+  "err.c.wrongCell":
+    "The organization's data lives in another CalaSign cell (region). `details.cell` is the cell and `details.baseUrl` the URL of the API that serves it (also in the `Location` header, with the same path). The request wasn't processed: repeat it against `details.baseUrl` and use that URL from then on. The SDKs do it for you (once).",
   "err.c.unprocessable": "The request is valid but can't be processed with that data (missing template roles, invalid rows, PDF too heavy to search for anchors).",
   "err.c.rate": "You exceeded the per-IP rate limit (code `rate_limited`; earlier API versions sent `bad_request`). Wait as long as the `retry-after` header says (in seconds) and retry.",
   "err.c.rateBiz":
-    "Business cap with its own code (`reminded_recently`, `form_rate_limited`, `workflow_rate_limited`, `ai_signer_limit`, `ai_budget_exceeded`, `too_many_comments`, `too_many_proposals`, `archive_recently_renewed`, `too_many_attempts`). There's no `retry-after`: don't retry it in a loop; tell the user or try much later.",
+    "Business cap with its own code (`reminded_recently`, `reminder_daily_limit`, `form_rate_limited`, `workflow_rate_limited`, `ai_signer_limit`, `ai_budget_exceeded`, `too_many_comments`, `too_many_proposals`, `archive_recently_renewed`, `too_many_attempts`). There's no `retry-after`: don't retry it in a loop; tell the user or try much later.",
   "err.c.internal": "Our error. It's safe to retry with increasing backoff; if you use `Idempotency-Key`, nothing gets duplicated.",
+  "err.c.upstream": "An external service failed: the timestamp authority (`tsa_unavailable`) or the AI provider (`ai_unavailable`). Retry in a few minutes.",
+  "err.c.unavailable":
+    "Temporary unavailability: document storage (`storage_unavailable`), PDF reader busy (`pdf_reader_busy`) or AI provider overloaded (`ai_rate_limited`). The request wasn't processed: retry with increasing backoff. `ai_unavailable` with `503` means the server has no AI provider configured.",
+  "err.c.byok":
+    "The organization's own encryption key (BYOK, in your KMS) is unavailable: documents can't be stored or read. **Don't retry it in a loop:** an administrator has to restore access to the key (`details.keyArn`).",
+  "err.c.aiTimeout": "The AI provider didn't respond in time. Try again later.",
   "err.codes.retry":
-    "**What to retry:** network errors, the per-IP rate-limit `429` (with `retry-after`) and `5xx`, with exponential backoff and some jitter. **What not to:** `429`s with their own code (business caps, no `retry-after`) and the rest of the `4xx` errors, which won't change if you repeat the same request.",
+    "**What to retry:** network errors, the per-IP rate-limit `429` (with `retry-after`) and `5xx`, with exponential backoff and some jitter. **What not to:** `429`s with their own code (business caps, no `retry-after`), `503 byok_key_unavailable` (an administrator has to restore the key) and the rest of the `4xx` errors, which won't change if you repeat the same request. Repeat a `421 wrong_cell` once against `details.baseUrl`. The official SDKs apply these rules for you.",
   "err.idem.h": "Idempotency",
   "err.idem.p":
     "If a create request is cut off (timeout, network), you don't know whether it went through. Send the `Idempotency-Key` header with a unique value per operation — for example, the request id in your system — and retry with the same value: CalaSign runs the operation only once and returns the stored response to retries, with the `idempotent-replay: true` header.",
@@ -604,7 +620,8 @@ export const docsEn: Record<DocsKey, string> = {
   "sdk.f.node.deps": "Node.js ≥ 18 (native fetch), with types",
   "sdk.f.auth": "Authentication",
   "sdk.f.retries": "Retries",
-  "sdk.f.retries.v": "Network, 429 (honors Retry-After) and 5xx, exponential backoff, 3 by default",
+  "sdk.f.retries.v":
+    "Network, per-IP 429 (honors Retry-After) and 5xx except byok_key_unavailable, exponential backoff, 3 by default. 421 wrong_cell: one retry against details.baseUrl, which becomes the base URL",
   "sdk.f.idem": "Automatic Idempotency-Key",
   "sdk.f.errors": "Errors",
   "sdk.install": "Installation",

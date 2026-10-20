@@ -207,7 +207,7 @@ step("IA deshabilitada → 403");
 
 // ───────────────────────────── Habilitar: requiere aceptar el aviso ─────────────────────────────
 
-await expectStatus(sender("PATCH", "/v1/settings/ai", { enabled: true }), 422, "habilitar sin aceptar el aviso");
+await expectStatus(sender("PATCH", "/v1/settings/ai", { enabled: true }), 403, "habilitar sin aceptar el aviso");
 settings = await sender("PATCH", "/v1/settings/ai", {
   enabled: true,
   acceptNotice: true,
@@ -215,7 +215,7 @@ settings = await sender("PATCH", "/v1/settings/ai", {
   playbook: ["Jurisdiccion debe ser Bogota", "Responsabilidad <= 12 meses", "Confidencialidad debe ser 5 anos"],
 });
 assert(settings.enabled && settings.noticeAcceptedAt && settings.playbook.length === 3, "IA habilitada con aviso aceptado y playbook");
-step("habilitar exige aceptar el aviso de tratamiento de datos (422 sin él)");
+step("habilitar exige aceptar el aviso de tratamiento de datos (403 sin él)");
 
 // ───────────────────────────── Detección con IA + transparencia ─────────────────────────────
 

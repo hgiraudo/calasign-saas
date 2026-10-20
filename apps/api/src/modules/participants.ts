@@ -4,7 +4,7 @@ import type { FastifyInstance } from "fastify";
 import { DelegateInput, ReassignInput } from "@calasign/shared";
 import type { Db } from "../infra/db";
 import { appendEvent, type Actor } from "../infra/evidence";
-import { conflict, forbidden, notFound } from "../lib/errors";
+import { AppError, conflict, forbidden, notFound } from "../lib/errors";
 import { encrypt, maskDestination, randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { authenticate, type Services } from "./context";
 import { activateRecipient, lockEnvelope, pastExpiry } from "./envelopes";
@@ -169,7 +169,8 @@ export async function participantRoutes(app: FastifyInstance, s: Services) {
       let discardedKeys: string[] = [];
       await s.db.tx(async (t) => {
         const e = await lockEnvelope(t, e0.tenant_id, e0.id);
-        if (e.status !== "sent" || pastExpiry(e)) throw conflict("envelope_closed", "El sobre ya no está disponible");
+        // 410, como el resto de la superficie del firmante (firmar, OTP, adjuntos, identidad).
+        if (e.status !== "sent" || pastExpiry(e)) throw new AppError(410, "envelope_closed", "El sobre ya no está disponible");
         if (!(e.allow_delegation ?? true)) throw forbidden("El remitente no permite delegar este sobre");
         const old = await t.one<any>(`SELECT * FROM recipients WHERE id = $1`, [r0.id]);
         assertLinkCurrent(old, r0);

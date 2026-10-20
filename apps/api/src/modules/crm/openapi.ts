@@ -1,6 +1,22 @@
 // Operaciones de CRM y ERP para el OpenAPI.
-import type { z } from "zod";
-import { CreateCrmLinkInput, CreateCrmMappingInput, CreateCrmTokenConnectionInput, SendFromCrmRecordInput, StartCrmOAuthInput, UpdateCrmConnectionInput, UpdateCrmMappingInput } from "@calasign/shared";
+import { z } from "zod";
+import {
+  CRM_OBJECT_TYPES,
+  CRM_PROVIDERS,
+  CRM_TRIGGERS,
+  CreateCrmLinkInput,
+  CreateCrmMappingInput,
+  CreateCrmTokenConnectionInput,
+  CrmPrefillMapping,
+  CrmRoleMapping,
+  CrmTriggerConfig,
+  CrmWriteBack,
+  SendFromCrmRecordInput,
+  StartCrmOAuthInput,
+  UpdateCrmConnectionInput,
+  UpdateCrmMappingInput,
+} from "@calasign/shared";
+import { named } from "../openapi-schemas";
 
 type Op = {
   method: "get" | "post" | "put" | "patch" | "delete";
@@ -13,7 +29,43 @@ type Op = {
   status?: number;
   auth?: "key" | "none";
   idempotent?: boolean;
+  /** Códigos del catálogo ERRORS (openapi-extra.ts). */
+  errors?: string[];
 };
+
+const iso = z.string().datetime();
+
+/** Espejo de CrmMapping (packages/shared/src/crm.ts). */
+const CrmMappingSchema = named(
+  "CrmMapping",
+  z.object({
+    id: z.string().uuid(),
+    connectionId: z.string().uuid(),
+    name: z.string(),
+    objectType: z.enum(CRM_OBJECT_TYPES),
+    templateId: z.string().uuid().nullable(),
+    roles: z.array(CrmRoleMapping),
+    prefill: z.array(CrmPrefillMapping),
+    writeBack: CrmWriteBack,
+    trigger: z.enum(CRM_TRIGGERS),
+    triggerConfig: CrmTriggerConfig,
+    send: z.boolean(),
+    active: z.boolean(),
+    createdAt: iso,
+    updatedAt: iso,
+  }),
+);
+
+/** Espejo de CrmMappingList (GET /v1/crm/mappings). */
+const CrmMappingListSchema = named(
+  "CrmMappingList",
+  z.object({
+    items: z.array(CrmMappingSchema),
+    connectionsWithoutAccount: z
+      .array(z.object({ id: z.string().uuid(), name: z.string(), provider: z.enum(CRM_PROVIDERS) }))
+      .describe("Conexiones activas de Pipedrive/Kommo sin su cuenta guardada: sus mapeos no se pueden enviar (409 crm_account_unknown) hasta probar la conexión."),
+  }),
+);
 
 const C = "CRM y ERP";
 
@@ -35,10 +87,18 @@ export const CRM_OPS: Op[] = [
     status: 204,
   },
   { method: "post", path: "/v1/crm/connections/{id}/test", tag: C, summary: "Probar una conexión" },
-  { method: "get", path: "/v1/crm/mappings", tag: C, summary: "Mapeos", description: "Query: connectionId, provider (solo mapeos de conexiones activas de ese proveedor), companyId (con provider pipedrive o kommo: solo conexiones de esa cuenta del CRM —company_id de Pipedrive, id de cuenta de Kommo—; las que no la tienen guardada no se incluyen). La respuesta trae connectionsWithoutAccount: conexiones activas de Pipedrive/Kommo sin su cuenta guardada (sus mapeos no se pueden enviar hasta probar la conexión). Alcanza con el permiso de crear sobres." },
-  { method: "post", path: "/v1/crm/mappings", tag: C, summary: "Crear un mapeo registro → plantilla", body: CreateCrmMappingInput, status: 201 },
-  { method: "get", path: "/v1/crm/mappings/{id}", tag: C, summary: "Ver un mapeo" },
-  { method: "patch", path: "/v1/crm/mappings/{id}", tag: C, summary: "Editar un mapeo", body: UpdateCrmMappingInput },
+  {
+    method: "get",
+    path: "/v1/crm/mappings",
+    tag: C,
+    summary: "Mapeos",
+    description:
+      "`connectionsWithoutAccount`: conexiones activas de Pipedrive/Kommo sin su cuenta guardada (conexiones viejas): sus mapeos no se pueden enviar (409 crm_account_unknown) ni se listan con `companyId` hasta probar la conexión (POST /v1/crm/connections/{id}/test), que la guarda. Alcanza con el permiso de crear sobres; sin settings:manage, solo los mapeos cuya plantilla puede usar la credencial.",
+    response: CrmMappingListSchema,
+  },
+  { method: "post", path: "/v1/crm/mappings", tag: C, summary: "Crear un mapeo registro → plantilla", body: CreateCrmMappingInput, status: 201, response: CrmMappingSchema },
+  { method: "get", path: "/v1/crm/mappings/{id}", tag: C, summary: "Ver un mapeo", response: CrmMappingSchema },
+  { method: "patch", path: "/v1/crm/mappings/{id}", tag: C, summary: "Editar un mapeo", body: UpdateCrmMappingInput, response: CrmMappingSchema },
   { method: "delete", path: "/v1/crm/mappings/{id}", tag: C, summary: "Borrar un mapeo", response: "none", status: 204 },
   {
     method: "post",
@@ -49,6 +109,7 @@ export const CRM_OPS: Op[] = [
     body: SendFromCrmRecordInput,
     status: 201,
     idempotent: true,
+    errors: ["crm_account_unknown", "company_mismatch"],
   },
   { method: "post", path: "/v1/crm/links", tag: C, summary: "Vincular un sobre a un registro", description: "Para ERP (cliente, contacto o factura) o CRM. Si el sobre ya está completo, se adjunta el PDF enseguida.", body: CreateCrmLinkInput, status: 201 },
   { method: "get", path: "/v1/crm/links", tag: C, summary: "Vínculos de un sobre", description: "Query: envelopeId (obligatorio)." },

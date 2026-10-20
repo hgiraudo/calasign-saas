@@ -135,6 +135,27 @@ export interface CreateApiKeyResponse {
   secret: string;
 }
 
+/** Credenciales activas que creó la persona en una organización (POST /v1/auth/password/reset). */
+export interface CreatedCredentialsSummary {
+  tenantId: string;
+  tenantName: string | null;
+  apiKeys: number;
+  scimTokens: number;
+  serviceApps: number;
+  invitations: number;
+}
+
+/**
+ * POST /v1/auth/password/reset. `createdCredentials`: por organización, las credenciales activas que creó la persona (no
+ * se revocan por defecto: pueden ser integraciones productivas). `revokedCredentials`: lo revocado con
+ * `revokeCreatedCredentials: true` (API keys e invitaciones pendientes; null si no se pidió).
+ */
+export interface ResetPasswordResponse {
+  ok: true;
+  createdCredentials: CreatedCredentialsSummary[];
+  revokedCredentials: { apiKeys: number; invitations: number } | null;
+}
+
 // ───────────────────────────── Sobres ─────────────────────────────
 
 export const CreateEnvelopeInput = z.object({

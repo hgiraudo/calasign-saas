@@ -455,7 +455,12 @@ export const BulkSendItemSchema = named(
     status: z.enum(BULK_ITEM_STATUSES),
     envelopeId: uuid().nullable(),
     recipients: z.array(z.string()).describe("Nombres de los destinatarios de la fila."),
-    error: z.string().nullable(),
+    error: z
+      .string()
+      .nullable()
+      .describe(
+        "Motivo de la falla (texto, no un código de error HTTP): validación de la fila, cupo del plan, o la plantilla dejó de estar disponible durante el envío (\"La plantilla fue eliminada\" u otro problema al cargarla). Las que no son de datos se reintentan con POST /v1/bulk-sends/{id}/retry-failed.",
+      ),
     processedAt: iso().nullable(),
   }),
 );

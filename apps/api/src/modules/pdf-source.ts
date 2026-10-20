@@ -5,7 +5,7 @@ import { safeRequest } from "./webhooks";
 
 export class PdfSourceError extends Error {
   constructor(
-    readonly code: "invalid_base64" | "not_a_pdf" | "file_too_large" | "invalid_url" | "download_failed",
+    readonly code: "invalid_base64" | "not_pdf" | "file_too_large" | "invalid_url" | "download_failed",
     message: string,
   ) {
     super(message);
@@ -30,7 +30,7 @@ export function decodePdfBase64(b64: string, maxBytes = config.maxUploadBytes): 
   if (!/^[A-Za-z0-9+/_-]+={0,2}$/.test(clean)) throw new PdfSourceError("invalid_base64", "base64 inválido");
   const buf = Buffer.from(clean, "base64");
   if (buf.length > maxBytes) throw new PdfSourceError("file_too_large", `el PDF supera ${mb(maxBytes)}`);
-  if (!looksLikePdf(buf)) throw new PdfSourceError("not_a_pdf", "el contenido no es un PDF");
+  if (!looksLikePdf(buf)) throw new PdfSourceError("not_pdf", "el contenido no es un PDF");
   return buf;
 }
 
@@ -53,7 +53,7 @@ export async function fetchPdf(url: string, maxBytes = config.maxUploadBytes): P
   }
   if (r.status >= 300 && r.status < 400) throw new PdfSourceError("download_failed", "la URL redirige: pasá la URL final del PDF");
   if (r.status !== 200) throw new PdfSourceError("download_failed", `la URL respondió HTTP ${r.status}`);
-  if (!looksLikePdf(r.body)) throw new PdfSourceError("not_a_pdf", "lo descargado no es un PDF");
+  if (!looksLikePdf(r.body)) throw new PdfSourceError("not_pdf", "lo descargado no es un PDF");
   return r.body;
 }
 

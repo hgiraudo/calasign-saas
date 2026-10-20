@@ -1,5 +1,7 @@
 // Operaciones de la Fase 6 (IA) para el documento OpenAPI.
+import { z } from "zod";
 import {
+  AI_FEATURES,
   AiAskInput,
   DetectFieldsInput,
   PlaybookReviewInput,
@@ -7,24 +9,54 @@ import {
   UpdateAiSettingsInput,
   UpdateEnvelopeAiInput,
 } from "@calasign/shared";
-import { EnvelopeAiMetadataSchema } from "../openapi-schemas";
+import { EnvelopeAiMetadataSchema, named } from "../openapi-schemas";
+
+/** Espejo de AiSettings (packages/shared/src/ai.ts): GET y PATCH /v1/settings/ai. */
+const AiSettingsSchema = named(
+  "AiSettings",
+  z.object({
+    enabled: z.boolean(),
+    provider: z.enum(["anthropic", "mock", "none"]).describe("none: el servidor no tiene proveedor de IA (503 ai_unavailable)."),
+    model: z.string(),
+    monthlyTokenBudget: z.number().int().describe("Presupuesto mensual que fijó la organización."),
+    planTokenCap: z.number().int().nullable().describe("Tope de tokens de IA por mes del plan vigente (null = sin tope del plan; 0 = el plan no incluye IA)."),
+    effectiveTokenBudget: z.number().int().describe("Lo que efectivamente se aplica: min(monthlyTokenBudget, planTokenCap)."),
+    autoExtractMetadata: z.boolean(),
+    renewalAlertDays: z.number().int(),
+    playbook: z.array(z.string()),
+    noticeVersion: z.string().describe("Versión vigente del aviso de tratamiento de datos."),
+    noticeAcceptedAt: z.string().datetime().nullable(),
+    noticeAcceptedBy: z.string().nullable(),
+    noticeAcceptedVersion: z.string().nullable().describe("Versión aceptada; si no coincide con noticeVersion, la IA queda en pausa (403 ai_notice_required) hasta aceptarla."),
+    usage: z.object({
+      month: z.string().describe("YYYY-MM"),
+      inputTokens: z.number().int(),
+      outputTokens: z.number().int(),
+      totalTokens: z.number().int(),
+      byFeature: z.array(z.object({ feature: z.enum(AI_FEATURES), requests: z.number().int(), tokens: z.number().int() })),
+    }),
+  }),
+);
 
 const TAG = "IA";
 const NOTE =
-  "Requiere IA habilitada para la organización (403 ai_disabled), el aviso de tratamiento de datos vigente aceptado (403 ai_notice_required), un plan que incluya IA (402 plan_limit, limit ai_tokens_per_month), proveedor configurado en el servidor (503 ai_unavailable) y presupuesto mensual disponible (429 ai_budget_exceeded; el efectivo es min(presupuesto de la organización, tope del plan)). Si el proveedor no responde a tiempo, 504 ai_timeout (el consumo estimado se descuenta igual). Un documento demasiado largo para el modelo responde 413 ai_input_too_large. Si los originales del sobre se borraron por la política de retención, 410 purged.";
+  "Requiere IA habilitada para la organización (403 ai_disabled), el aviso de tratamiento de datos vigente aceptado (403 ai_notice_required), un plan que incluya IA (402 plan_limit, limit ai_tokens_per_month), proveedor configurado en el servidor (503 ai_unavailable; no se resuelve reintentando) y presupuesto mensual disponible (429 ai_budget_exceeded; el efectivo es min(presupuesto de la organización, tope del plan)). Fallas del proveedor, reintentables: 503 ai_rate_limited (saturado: repetir en unos segundos), 502 ai_unavailable (no se pudo contactar) y 504 ai_timeout (no respondió a tiempo; el consumo estimado se descuenta igual). Un documento demasiado largo para el modelo responde 413 ai_input_too_large. Si los originales del sobre se borraron por la política de retención, 410 purged.";
 const SIGNER_NOTE = `Requiere IA habilitada para la organización (403 ai_disabled), con el aviso vigente aceptado, y presupuesto mensual disponible (429 ai_budget_exceeded). Un documento demasiado largo para el modelo responde 413 ai_input_too_large. Por firmante: hasta 30 consultas por día y 100 en total (resumen y preguntas juntos; después, 429 ai_signer_limit). Si el sobre exige verificar la identidad y todavía no se verificó, 403 identity_required.`;
-const AI_ERRORS = ["ai_input_too_large", "purged"];
-const SIGNER_ERRORS = ["ai_input_too_large", "ai_signer_limit", "identity_required"];
+const AI_AVAILABILITY = ["ai_disabled", "ai_notice_required", "ai_budget_exceeded", "ai_unavailable", "ai_unavailable_upstream", "ai_rate_limited", "ai_timeout"];
+const AI_ERRORS = ["ai_input_too_large", "purged", ...AI_AVAILABILITY];
+const SIGNER_ERRORS = ["ai_input_too_large", "ai_signer_limit", "identity_required", ...AI_AVAILABILITY];
 
 export const AI_OPS = [
-  { method: "get", path: "/v1/settings/ai", tag: TAG, summary: "Configuración de IA, proveedor y consumo del mes" },
+  { method: "get", path: "/v1/settings/ai", tag: TAG, summary: "Configuración de IA, proveedor y consumo del mes", response: AiSettingsSchema },
   {
     method: "patch",
     path: "/v1/settings/ai",
     tag: TAG,
     summary: "Habilitar IA, presupuesto, extracción automática, alertas de renovación y playbook",
-    description: "Habilitar exige acceptNotice: true si el aviso de tratamiento de datos vigente no está aceptado; si no, 422 ai_notice_required. monthlyTokenBudget no puede superar el tope de tokens de IA del plan (402 plan_limit, limit ai_tokens_per_month); en un plan sin IA tampoco se puede habilitar.",
+    description: "Habilitar exige acceptNotice: true si el aviso de tratamiento de datos vigente no está aceptado; si no, 403 ai_notice_required. monthlyTokenBudget no puede superar el tope de tokens de IA del plan (402 plan_limit, limit ai_tokens_per_month); en un plan sin IA tampoco se puede habilitar.",
     body: UpdateAiSettingsInput,
+    response: AiSettingsSchema,
+    errors: ["ai_notice_required"],
   },
   {
     method: "get",
@@ -41,7 +73,7 @@ export const AI_OPS = [
     summary: "Sugerir campos (firma, iniciales, fecha, nombre) con su rol",
     description: "Sin IA habilitada devuelve solo sugerencias por análisis del texto (no se envía nada). Coordenadas normalizadas 0..1. Con IA, si no queda presupuesto o el documento es demasiado largo para el modelo, devuelve solo esas sugerencias (usage y sent en null). Si los originales del sobre se borraron por la política de retención, 410 purged.",
     body: DetectFieldsInput,
-    errors: AI_ERRORS,
+    errors: ["purged", "ai_unavailable_upstream", "ai_rate_limited", "ai_timeout"],
   },
   {
     method: "patch",

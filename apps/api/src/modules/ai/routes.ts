@@ -110,7 +110,7 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
     // Al habilitar hace falta el aviso vigente. Ya habilitada con un aviso anterior se pueden guardar los demás ajustes:
     // la IA queda en pausa (assertAiAvailable: 403 ai_notice_required) hasta que se acepte la versión vigente.
     if (input.enabled === true && !before?.ai_enabled && !noticeOk && !input.acceptNotice) {
-      throw new AppError(422, "ai_notice_required", "Para habilitar la IA hay que aceptar el aviso de tratamiento de datos");
+      throw new AppError(403, "ai_notice_required", "Para habilitar la IA hay que aceptar el aviso de tratamiento de datos");
     }
     // Tope de tokens de IA del plan: el presupuesto de la organización no puede superarlo (lo paga la plataforma), y un
     // plan sin IA no la habilita.

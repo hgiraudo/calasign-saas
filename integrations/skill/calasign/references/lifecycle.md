@@ -44,7 +44,8 @@ the lawyer (2), CC the accountant (3).
 
 - Manual: `POST /v1/envelopes/{id}/remind` notifies pending recipients of the current step when `sent`; in
   `awaiting_certificates` it re-notifies the certificate signer whose turn it is. Other statuses → `409 not_in_progress`.
-  At most once per 10 minutes per envelope; sooner → `429 reminded_recently` (no `Retry-After`: don't retry in a loop).
+  At most once per 10 minutes per envelope; sooner → `429 reminded_recently`. There's also a daily cap per envelope
+  (5 per 24 hours by default) → `429 reminder_daily_limit`. Neither has `Retry-After`: don't retry in a loop.
 - Automatic: `reminderEveryDays` and `expiryWarningDays` on create/patch.
 - `expiresAt`: ISO date-time; default 30 days.
 

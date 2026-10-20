@@ -6,9 +6,12 @@ import {
   CreateNotificationIntegrationInput,
   CreateOAuthAppInput,
   CreateS3ConnectionInput,
+  CreateScimTokenInput,
   NOTIFICATION_KINDS,
   OAUTH_SCOPES,
   SetCustomDomainInput,
+  SSO_PROTOCOLS,
+  SsoSettingsInput,
   UpdateNotificationIntegrationInput,
   UpdateOAuthAppInput,
   UpdateStorageConnectionInput,
@@ -37,6 +40,38 @@ const OAuthApp = named(
   revokedAt: iso.nullable(),
   activeTokens: z.number().int(),
   canTakeOver: z.boolean().optional().describe("Si quien consulta puede rotar el secreto o cambiar las URI de redirección (la creó, es propietario o tiene los permisos de quien la creó)."),
+  }),
+);
+
+const SsoSettingsSchema = named(
+  "SsoSettings",
+  z.object({
+    enabled: z.boolean(),
+    protocol: z.enum(SSO_PROTOCOLS),
+    domains: z.array(z.string()),
+    jitEnabled: z.boolean(),
+    jitRole: z.enum(["admin", "member"]),
+    enforce: z.boolean(),
+    sessionTtlHours: z.number().int().describe("Duración absoluta de las sesiones abiertas por SSO (por defecto 24)."),
+    oidc: z.object({ issuer: z.string(), clientId: z.string(), scopes: z.string(), hasClientSecret: z.boolean(), trustUnverifiedEmail: z.boolean() }).nullable(),
+    saml: z.object({ entryPoint: z.string(), idpIssuer: z.string(), idpCertFingerprint: z.string().nullable(), emailAttribute: z.string().nullable() }).nullable(),
+    serviceProvider: z
+      .object({ oidcRedirectUri: z.string(), samlEntityId: z.string(), samlAcsUrl: z.string(), samlMetadataUrl: z.string(), loginUrl: z.string() })
+      .describe("Datos para configurar el IdP."),
+  }),
+);
+
+const ScimTokenSchema = named(
+  "ScimToken",
+  z.object({ id: z.string().uuid(), name: z.string(), prefix: z.string(), createdAt: iso, lastUsedAt: iso.nullable(), revokedAt: iso.nullable() }),
+);
+
+const ScimSettingsSchema = named(
+  "ScimSettings",
+  z.object({
+    baseUrl: z.string().describe("Base de los endpoints SCIM para configurar en el IdP."),
+    tokens: z.array(ScimTokenSchema),
+    defaultRole: z.enum(["admin", "member"]).describe("Rol con el que se dan de alta los usuarios aprovisionados."),
   }),
 );
 
@@ -167,11 +202,44 @@ export const PLATFORM_OPS: PlatformOp[] = [
     response: "html",
     auth: "none",
   },
-  { method: "post", path: "/v1/oauth/authorize/decision", operationId: "oauthAuthorizeDecision", tag: "OAuth 2.0", summary: "Aprobar o rechazar (lo usa la pantalla de consentimiento; solo sesión web)", body: AuthorizeDecision, response: z.object({ redirectTo: z.string() }), errors: ["session_required"] },
+  { method: "post", path: "/v1/oauth/authorize/decision", operationId: "oauthAuthorizeDecision", tag: "OAuth 2.0", summary: "Aprobar o rechazar (lo usa la pantalla de consentimiento; solo sesión web)", body: AuthorizeDecision, response: z.object({ redirectTo: z.string() }), errors: ["session_required", "invalid_target"] },
   { method: "get", path: "/v1/oauth/apps", operationId: "listOAuthApps", tag: "OAuth 2.0", summary: "Apps OAuth de la organización", response: z.object({ items: z.array(OAuthApp) }) },
   { method: "post", path: "/v1/oauth/apps", operationId: "createOAuthApp", tag: "OAuth 2.0", summary: "Registrar una app (el secreto se devuelve una sola vez)", body: CreateOAuthAppInput, status: 201, response: z.object({ app: OAuthApp, clientSecret: z.string().nullable() }) },
   { method: "patch", path: "/v1/oauth/apps/{id}", operationId: "updateOAuthApp", tag: "OAuth 2.0", summary: "Modificar una app", body: UpdateOAuthAppInput, response: OAuthApp },
-  { method: "post", path: "/v1/oauth/apps/{id}/rotate-secret", operationId: "rotateOAuthAppSecret", tag: "OAuth 2.0", summary: "Rotar el secreto (el anterior deja de valer)", response: z.object({ app: OAuthApp, clientSecret: z.string() }) },
+  { method: "get", path: "/v1/oauth/apps/{id}", operationId: "getOAuthApp", tag: "OAuth 2.0", summary: "Detalle de una app", response: OAuthApp },
+  {
+    method: "get",
+    path: "/v1/oauth/connected-apps",
+    operationId: "listConnectedApps",
+    tag: "OAuth 2.0",
+    summary: "Apps que el usuario autorizó (solo sesión web)",
+    description: "Las apps OAuth a las que el usuario de la sesión dio consentimiento en esta organización. Con API key u OAuth, 403 session_required.",
+    response: z.object({
+      items: z.array(
+        z.object({
+          clientId: z.string(),
+          name: z.string(),
+          organizationName: z.string().describe("Organización que publica la app (vacío si se registró dinámicamente)."),
+          scopes: z.array(z.enum(OAUTH_SCOPES)),
+          authorizedAt: iso,
+          unverified: z.boolean().describe("Registrada dinámicamente (conector MCP): sin organización que la publique."),
+        }),
+      ),
+    }),
+    errors: ["session_required"],
+  },
+  {
+    method: "delete",
+    path: "/v1/oauth/connected-apps/{clientId}",
+    operationId: "disconnectApp",
+    tag: "OAuth 2.0",
+    summary: "Desconectar una app autorizada (solo sesión web)",
+    description: "Borra el consentimiento y revoca los tokens y los códigos sin canjear que la app tiene del usuario en esta organización. Con API key u OAuth, 403 session_required.",
+    response: "none",
+    status: 204,
+    errors: ["session_required"],
+  },
+  { method: "post", path: "/v1/oauth/apps/{id}/rotate-secret", operationId: "rotateOAuthAppSecret", tag: "OAuth 2.0", summary: "Rotar el secreto (el anterior deja de valer)", errors: ["public_client"], response: z.object({ app: OAuthApp, clientSecret: z.string() }) },
   { method: "delete", path: "/v1/oauth/apps/{id}", operationId: "deleteOAuthApp", tag: "OAuth 2.0", summary: "Revocar una app y todos sus tokens", response: "none", status: 204 },
 
   { method: "get", path: "/v1/notification-integrations", operationId: "listNotificationIntegrations", tag: "Avisos a canales", summary: "Integraciones de avisos", response: z.object({ items: z.array(NotificationIntegration) }) },
@@ -211,6 +279,82 @@ export const PLATFORM_OPS: PlatformOp[] = [
   { method: "put", path: "/v1/domains", operationId: "setCustomDomain", tag: "Dominio propio", summary: "Registrar o cambiar el dominio", description: "Exige el dominio propio en el plan (402). No se pueden reclamar los hosts de la plataforma (APP_URL, PLATFORM_HOSTS).", body: SetCustomDomainInput, response: z.object({ domain: CustomDomain }), errors: ["plan_limit_custom_domain"] },
   { method: "post", path: "/v1/domains/verify", operationId: "verifyCustomDomain", tag: "Dominio propio", summary: "Verificar el registro TXT", description: "Verificar (o re-verificar) exige el dominio propio en el plan (402); quitarlo no.", response: z.object({ domain: CustomDomain }), errors: ["plan_limit_custom_domain"] },
   { method: "delete", path: "/v1/domains", operationId: "deleteCustomDomain", tag: "Dominio propio", summary: "Quitar el dominio", response: "none", status: 204 },
+  // SSO, SCIM y supresiones de correo (administración de la organización).
+  {
+    method: "get",
+    path: "/v1/settings/sso",
+    operationId: "getSsoSettings",
+    tag: "Equipo",
+    summary: "Configuración del inicio de sesión único (SSO)",
+    description: "Exige settings:manage (también para leer). Sin secretos: el client secret de OIDC solo se informa como hasClientSecret.",
+    response: SsoSettingsSchema,
+  },
+  {
+    method: "put",
+    path: "/v1/settings/sso",
+    operationId: "putSsoSettings",
+    tag: "Equipo",
+    summary: "Configurar SSO (OIDC o SAML)",
+    description:
+      "Solo un propietario (403 forbidden). Exige SSO en el plan (402), salvo para deshabilitarlo (`enabled: false`). Errores 400 propios: invalid_issuer / invalid_entry_point (URL no https), invalid_certificate (certificado del IdP inválido), certificate_required (SAML sin certificado), client_secret_required y oidc_config_required (OIDC incompleto), oidc_discovery_failed (no se pudo leer la configuración del IdP), sso_disabled (`enforce` sin `enabled`); 409 domain_taken si un dominio ya lo verificó otra organización.",
+    body: SsoSettingsInput,
+    response: SsoSettingsSchema,
+    errors: ["plan_limit_sso"],
+  },
+  {
+    method: "get",
+    path: "/v1/settings/scim",
+    operationId: "getScimSettings",
+    tag: "Equipo",
+    summary: "Aprovisionamiento SCIM: URL base, tokens y rol por defecto",
+    description: "Exige members:manage.",
+    response: ScimSettingsSchema,
+  },
+  {
+    method: "patch",
+    path: "/v1/settings/scim",
+    operationId: "updateScimSettings",
+    tag: "Equipo",
+    summary: "Cambiar el rol con que se dan de alta los usuarios aprovisionados",
+    description: "Exige members:manage y settings:manage, poder otorgar ese rol, y SCIM en el plan (402).",
+    body: z.object({ defaultRole: z.enum(["admin", "member"]) }),
+    response: ScimSettingsSchema,
+    errors: ["plan_limit_scim"],
+  },
+  {
+    method: "post",
+    path: "/v1/settings/scim/tokens",
+    operationId: "createScimToken",
+    tag: "Equipo",
+    summary: "Crear un token SCIM (el secreto se devuelve una sola vez)",
+    description: "Lo crea quien tiene todos los permisos de un administrador, o un propietario. Exige SCIM en el plan (402).",
+    body: CreateScimTokenInput,
+    status: 201,
+    response: z.object({ token: ScimTokenSchema, secret: z.string().describe("cs_scim_…; se muestra una sola vez.") }),
+    errors: ["plan_limit_scim"],
+  },
+  { method: "delete", path: "/v1/settings/scim/tokens/{id}", operationId: "revokeScimToken", tag: "Equipo", summary: "Revocar un token SCIM", description: "No exige el plan (se puede revocar tras bajar de plan).", response: "none", status: 204 },
+  {
+    method: "get",
+    path: "/v1/settings/email-suppressions",
+    operationId: "listEmailSuppressions",
+    tag: "Equipo",
+    summary: "Direcciones que se quejaron de los correos de la organización",
+    description: "Las 500 más recientes. A esas direcciones no se les escribe (ni códigos OTP: 409 otp_destination_suppressed) hasta quitarlas. Exige settings:manage.",
+    response: z.object({
+      items: z.array(z.object({ address: z.string(), reason: z.string(), detail: z.string().nullable(), createdAt: iso, updatedAt: iso })),
+    }),
+  },
+  {
+    method: "delete",
+    path: "/v1/settings/email-suppressions/{address}",
+    operationId: "deleteEmailSuppression",
+    tag: "Equipo",
+    summary: "Volver a escribirle a una dirección",
+    description: "Solo las quejas de la propia organización (los rebotes son globales y vencen solos): sin queja propia, 404.",
+    response: "none",
+    status: 204,
+  },
   { method: "get", path: "/v1/public/host-branding", operationId: "getHostBranding", tag: "Dominio propio", summary: "Marca de la organización según el Host", auth: "none" },
 ];
 

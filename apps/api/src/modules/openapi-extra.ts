@@ -1,6 +1,7 @@
 // Piezas del OpenAPI que no son operaciones: conversión Zod → JSON Schema con $ref a components.schemas,
 // catálogo de errores (con ejemplos reales del setErrorHandler de app.ts), tags, parámetros y operationId.
 import type { ZodTypeAny } from "zod";
+import { CRM_PROVIDERS } from "@calasign/shared";
 import { ignoreOverride, zodToJsonSchema } from "zod-to-json-schema";
 import { NAMED, REGISTRY } from "./openapi-schemas";
 
@@ -174,12 +175,62 @@ export const ERRORS: Record<string, Err> = {
   invalid_id: { status: 400, code: "invalid_id", message: "Identificador inválido", summary: "Un id de la ruta o del cuerpo no es un UUID" },
   invalid_idempotency_key: { status: 400, code: "invalid_idempotency_key", message: "Idempotency-Key demasiado larga", summary: "Idempotency-Key de más de 200 caracteres" },
   file_required: { status: 400, code: "file_required", message: "Falta el archivo (campo 'file')", summary: "Falta el campo file del multipart" },
-  invalid_pdf: {
+  not_pdf: {
     status: 400,
     code: "not_pdf",
     message: "El archivo no es un PDF",
-    summary: "PDF inválido. Otros códigos: encrypted, empty, too_many_pages, unreadable, ambiguous_pdf",
+    summary:
+      "El archivo (subido, en base64 o descargado de `url`) no es un PDF; también un base64 inválido. Mismo código en todas las vías de subida. Otros problemas del PDF: encrypted, empty, too_many_pages, unreadable, ambiguous_pdf (400)",
   },
+  unknown_part: {
+    status: 400,
+    code: "unknown_part",
+    message: "Parte \"datos\" desconocida: el JSON va en la parte \"payload\"",
+    summary: "multipart/form-data con un campo de texto que no es `payload`",
+  },
+  duplicate_part: { status: 400, code: "duplicate_part", message: "La parte \"contrato\" está repetida", summary: "Dos partes del multipart con el mismo nombre (también `payload` repetida)" },
+  invalid_json: { status: 400, code: "invalid_json", message: "La parte \"payload\" no es JSON válido", summary: "La parte `payload` del multipart no es JSON" },
+  too_many_documents: {
+    status: 400,
+    code: "too_many_documents",
+    message: "Hasta 10 documentos por llamada",
+    summary: "Más documentos que los admitidos: 10 en POST /v1/envelopes y 30 por sobre o plantilla al agregar uno (también too_many_pages: más de 1000 páginas en total)",
+  },
+  duplicate_document: {
+    status: 400,
+    code: "duplicate_document",
+    message: "documents[1]: la parte \"contrato\" ya se usó en otro documento",
+    summary: "Dos documentos citan con `file` la misma parte del multipart",
+  },
+  too_many_fields: {
+    status: 400,
+    code: "too_many_fields",
+    message: "Las anclas generan más de 500 campos",
+    summary: "Las anclas de texto (`anchor`) generan más de 500 campos (una por aparición: usar un texto más específico)",
+  },
+  unreadable_pdf: { status: 400, code: "unreadable_pdf", message: "No se pudo leer el PDF: Invalid PDF structure", summary: "El PDF no se pudo analizar para validar sus firmas" },
+  xml_sign_failed: {
+    status: 400,
+    code: "xml_sign_failed",
+    message: "No se pudo firmar el XML: no se encontró el nodo ext:ExtensionContent",
+    summary: "El XML no se pudo firmar con el perfil pedido (estructura que el perfil no admite)",
+  },
+  phone_required: { status: 400, code: "phone_required", message: "El teléfono es obligatorio", summary: "El formulario pide teléfono (collectPhone) y no vino" },
+  invalid_form_token: {
+    status: 400,
+    code: "invalid_form_token",
+    message: "El formulario venció: volvé a enviarlo en unos segundos",
+    details: { retryAfterSeconds: 3 },
+    summary: "formToken vencido, ajeno o ya usado: pedir uno nuevo con GET y reenviar pasado details.retryAfterSeconds",
+  },
+  invalid_event: { status: 400, code: "invalid_event", message: "Evento desconocido: envelope.archived", summary: "`event` que no es un tipo de evento de webhook" },
+  invalid_target: {
+    status: 400,
+    code: "invalid_target",
+    message: "Recurso desconocido: usá https://app.calasign.com/mcp",
+    summary: "`resource` (RFC 8707) distinto del servidor MCP de CalaSign",
+  },
+  public_client: { status: 400, code: "public_client", message: "Un cliente público no tiene secreto", summary: "La app es un cliente público (sin secreto): no hay secreto que rotar" },
   document_fetch_failed: {
     status: 400,
     code: "document_fetch_failed",
@@ -247,6 +298,12 @@ export const ERRORS: Record<string, Err> = {
   invalid_role: { status: 400, code: "invalid_role", message: "Rol inexistente", summary: "Rol inválido o inexistente (una API key no puede ser owner)" },
   invalid_group: { status: 400, code: "invalid_group", message: "Algún grupo no existe", summary: "groupIds con grupos de otra organización o inexistentes" },
   invalid_member: { status: 400, code: "invalid_member", message: "Algún usuario no es miembro de la organización", summary: "memberIds con usuarios que no son miembros" },
+  invalid_text: {
+    status: 400,
+    code: "invalid_text",
+    message: "El texto contiene caracteres no admitidos",
+    summary: "Un texto del pedido trae el carácter NUL (\\u0000), que no se puede guardar. Puede pasar en cualquier ruta que guarda texto",
+  },
 
   unauthorized: { status: 401, code: "unauthorized", message: "Autenticación requerida", summary: "Falta la credencial o no es válida (API key revocada, token vencido)" },
 
@@ -297,7 +354,26 @@ export const ERRORS: Record<string, Err> = {
     summary: "Ruta no disponible con tokens OAuth (solo API key o sesión)",
   },
   session_required: { status: 403, code: "session_required", message: "Esta operación requiere iniciar sesión en la web", summary: "Solo con sesión web (no API key ni OAuth)" },
-
+  two_factor_setup_required: {
+    status: 403,
+    code: "two_factor_setup_required",
+    message: "Tu organización exige verificación en dos pasos: activala para continuar",
+    summary: "Solo con sesión web: la organización exige 2FA y el usuario todavía no lo activó (todo responde esto salvo /v1/me, /v1/me/* —incluido /v1/me/2fa/*— y /v1/auth/*). Las API keys y los tokens OAuth no lo reciben",
+  },
+  bad_origin: {
+    status: 403,
+    code: "bad_origin",
+    message: "Origen no permitido",
+    summary: "Pedido que modifica con la cookie de sesión desde otro origen (header Origin ajeno, defensa CSRF). Con `Authorization` no aplica",
+  },
+  ai_disabled: { status: 403, code: "ai_disabled", message: "La IA no está habilitada para esta organización", summary: "La IA está deshabilitada en la organización (Ajustes → IA)" },
+  ai_notice_required: {
+    status: 403,
+    code: "ai_notice_required",
+    message: "La organización tiene que aceptar el aviso de tratamiento de datos vigente (Ajustes → IA)",
+    details: { noticeVersion: "ai-notice-v2" },
+    summary: "Falta aceptar el aviso de tratamiento de datos vigente (al usar la IA, o al habilitarla sin acceptNotice: true)",
+  },
   payment_required: {
     status: 402,
     code: "payment_required",
@@ -308,7 +384,49 @@ export const ERRORS: Record<string, Err> = {
   identity_required: { status: 403, code: "identity_required", message: "Hace falta verificar tu identidad para continuar", summary: "Falta la verificación de identidad del firmante" },
   invalid_brand: { status: 400, code: "invalid_brand", message: "La marca no existe en esta organización", summary: "brandId no es una sub-marca de la organización" },
   not_found: { status: 404, code: "not_found", message: "Sobre no encontrado", summary: "No existe o la credencial no puede verlo (el mensaje nombra el recurso)" },
-
+  envelope_closed: {
+    status: 410,
+    code: "envelope_closed",
+    message: "El sobre ya no está disponible",
+    summary: "El sobre ya no está en curso para el firmante (anulado, vencido, completado o rechazado)",
+  },
+  form_inactive: {
+    status: 410,
+    code: "form_inactive",
+    message: "Este formulario ya no está disponible",
+    summary: "El formulario se desactivó o quien lo creó ya no puede crear sobres (o el plan ya no incluye formularios web). También form_expired (venció) y form_exhausted (llegó a su máximo de envíos)",
+  },
+  form_unavailable: {
+    status: 410,
+    code: "form_unavailable",
+    message: "Este formulario ya no está disponible",
+    summary: "El formulario dejó de estar disponible mientras se procesaba el envío",
+  },
+  form_misconfigured: {
+    status: 409,
+    code: "form_misconfigured",
+    message: "Este formulario no está disponible",
+    summary: "La plantilla cambió después de publicar el formulario y su configuración ya no la completa (lo corrige quien lo creó)",
+  },
+  same_person: { status: 409, code: "same_person", message: "No podés delegar en vos mismo", summary: "Delegar en el mismo correo del firmante" },
+  certificate_in_use: {
+    status: 409,
+    code: "certificate_in_use",
+    message: "El certificado sella 1 sobre(s) que se están finalizando: esperá a que terminen",
+    summary: "El certificado es el sello de empresa de sobres que se están finalizando",
+  },
+  crm_account_unknown: {
+    status: 409,
+    code: "crm_account_unknown",
+    message: "La conexión de pipedrive no tiene guardada su cuenta: probala (POST /v1/crm/connections/{id}/test) o volvé a conectarla",
+    summary: "Conexión de Pipedrive o Kommo sin su cuenta guardada (conexiones viejas): probarla la guarda",
+  },
+  company_mismatch: {
+    status: 409,
+    code: "company_mismatch",
+    message: "El mapeo es de otra cuenta de pipedrive (12345), no de la cuenta 67890 desde la que se envía",
+    summary: "`companyId` no es la cuenta del CRM de la conexión del mapeo",
+  },
   delivery_pending: { status: 409, code: "delivery_pending", message: "La entrega ya se está reintentando", summary: "La entrega tiene un intento en curso o un reintento manual ya pedido" },
   template_has_forms: {
     status: 409,
@@ -403,7 +521,18 @@ export const ERRORS: Record<string, Err> = {
       "10 intentos en 15 minutos bloquean la cuenta: se cuentan antes de verificar y desde cualquier IP, y un acierto los borra. Vale para el login, aceptar una invitación con contraseña y el segundo paso (2FA). Además, 5 códigos fallidos en un mismo desafío de 2FA cortan ese desafío con 401 too_many_attempts (volver a ingresar la contraseña). Sin Retry-After: no reintentar en un loop.",
   },
 
-  file_too_large: { status: 413, code: "file_too_large", message: "El archivo supera el tamaño máximo", summary: "Archivo más grande que el máximo permitido" },
+  file_too_large: {
+    status: 413,
+    code: "file_too_large",
+    message: "El archivo supera el tamaño máximo",
+    summary: "Un archivo supera el máximo de subida, o los documentos del pedido o del sobre/plantilla superan el total admitido (100 MB por sobre o plantilla)",
+  },
+  payload_too_large: {
+    status: 413,
+    code: "payload_too_large",
+    message: "El sobre (sin el base64 de los documentos) supera 2 MB",
+    summary: "El JSON del sobre (la parte `payload`, o el cuerpo sin el base64 de los documentos) es demasiado grande",
+  },
 
   logic_order: {
     status: 422,
@@ -443,7 +572,12 @@ export const ERRORS: Record<string, Err> = {
   },
 
   pdf_too_heavy: { status: 422, code: "pdf_too_heavy", message: "El PDF es demasiado pesado para leer su texto", summary: "No se pudo leer el texto del PDF para buscar las anclas" },
-  pdf_reader_busy: { status: 503, code: "pdf_reader_busy", message: "Hay muchos documentos leyéndose en este momento; probá de nuevo en unos segundos", summary: "Lector de PDF saturado: reintentar" },
+  pdf_reader_busy: {
+    status: 503,
+    code: "pdf_reader_busy",
+    message: "Hay muchos documentos leyéndose en este momento; probá de nuevo en unos segundos",
+    summary: "Lector de PDF saturado. Reintentable: repetir en unos segundos (con espera creciente)",
+  },
 
   invalid_date: { status: 400, code: "invalid_date", message: "Fecha fuera de rango o inválida", summary: "Fecha que no existe o fuera del rango admitido (p. ej. año 0)" },
   too_many_replacements: {
@@ -522,6 +656,18 @@ export const ERRORS: Record<string, Err> = {
     details: { estimatedTokens: 250000, max: 150000 },
     summary: "Documento demasiado largo para la IA",
   },
+  reminder_daily_limit: {
+    status: 429,
+    code: "reminder_daily_limit",
+    message: "Ya se mandaron 5 recordatorios en las últimas 24 horas: probá mañana",
+    summary: "Tope de recordatorios manuales por sobre en 24 horas (5 por defecto). Sin Retry-After: no reintentar en un loop.",
+  },
+  ai_budget_exceeded: {
+    status: 429,
+    code: "ai_budget_exceeded",
+    message: "Se agotó el presupuesto mensual de IA de la organización",
+    summary: "Presupuesto mensual de tokens de IA agotado (el efectivo es min(presupuesto de la organización, tope del plan)). Sin Retry-After.",
+  },
   reminded_recently: {
     status: 429,
     code: "reminded_recently",
@@ -593,7 +739,51 @@ export const ERRORS: Record<string, Err> = {
     status: 502,
     code: "tsa_unavailable",
     message: "La autoridad de sellado de tiempo no respondió como se esperaba: reintentá en unos minutos",
-    summary: "La TSA externa falló: reintentar más tarde",
+    summary: "La TSA externa falló. Reintentable: repetir en unos minutos",
+  },
+  ai_unavailable_upstream: {
+    status: 502,
+    code: "ai_unavailable",
+    message: "No se pudo contactar al proveedor de IA",
+    summary: "El proveedor de IA no respondió (error de red o del proveedor). Reintentable más tarde",
+  },
+  ai_unavailable: {
+    status: 503,
+    code: "ai_unavailable",
+    message: "La IA no está disponible en este servidor",
+    summary: "El servidor no tiene proveedor de IA configurado. No reintentar: no se resuelve solo",
+  },
+  ai_rate_limited: {
+    status: 503,
+    code: "ai_rate_limited",
+    message: "El proveedor de IA está saturado; probá de nuevo en un momento",
+    summary: "El proveedor de IA está saturado. Reintentable: repetir en unos segundos (con espera creciente)",
+  },
+  ai_timeout: {
+    status: 504,
+    code: "ai_timeout",
+    message: "El proveedor de IA no respondió a tiempo; probá de nuevo más tarde",
+    summary: "El proveedor de IA no respondió a tiempo (el consumo estimado se descuenta igual). Reintentable más tarde",
+  },
+  storage_unavailable: {
+    status: 503,
+    code: "storage_unavailable",
+    message: "El almacenamiento de documentos no está disponible en este momento. Probá de nuevo en unos minutos.",
+    summary: "Falla transitoria del almacenamiento de documentos (o de KMS). Reintentable: repetir en unos minutos. Puede pasar en cualquier ruta que lee o guarda archivos",
+  },
+  byok_key_unavailable: {
+    status: 503,
+    code: "byok_key_unavailable",
+    message: "La clave de cifrado de tu organización (BYOK) no está disponible: no se pueden guardar ni leer documentos hasta que se restablezca el acceso a la clave.",
+    details: { keyArn: "arn:aws:kms:us-east-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab", cause: "AccessDeniedException" },
+    summary: "La clave KMS propia de la organización (BYOK) está deshabilitada o sin permiso para CalaSign. NO reintentar: requiere que un administrador restablezca el acceso a la clave (Ajustes → Datos)",
+  },
+  wrong_cell: {
+    status: 421,
+    code: "wrong_cell",
+    message: "Los datos de esta organización están en otra región",
+    details: { cell: "eu", baseUrl: "https://eu.calasign.com" },
+    summary: "La organización está en otra celda (región): repetir el pedido en details.baseUrl (el header Location trae la URL completa). details.baseUrl puede ser null si esa celda no tiene URL propia",
   },
 
   rate_limited: {
@@ -613,10 +803,12 @@ const STATUS_TEXT: Record<number, string> = {
   409: "Conflicto con el estado actual",
   410: "Ya no disponible",
   413: "Contenido demasiado grande",
+  421: "Organización en otra región (wrong_cell)",
   422: "No procesable",
   429: "Demasiados pedidos",
   502: "Servicio externo no disponible",
-  503: "Servicio ocupado",
+  503: "Servicio no disponible por ahora",
+  504: "Servicio externo sin respuesta",
 };
 
 /** Respuestas comunes en components.responses (nombre → status y códigos de ejemplo). */
@@ -626,10 +818,15 @@ const COMMON: { name: string; status: number; codes: string[] }[] = [
   { name: "BadRequestOrInvalidId", status: 400, codes: ["validation_error", "invalid_id"] },
   { name: "Unauthorized", status: 401, codes: ["unauthorized"] },
   { name: "PaymentRequired", status: 402, codes: ["plan_limit_api"] },
-  { name: "Forbidden", status: 403, codes: ["forbidden", "insufficient_scope"] },
-  { name: "ForbiddenNoOAuth", status: 403, codes: ["forbidden", "oauth_denied"] },
+  { name: "Forbidden", status: 403, codes: ["forbidden", "insufficient_scope", "two_factor_setup_required"] },
+  { name: "ForbiddenNoOAuth", status: 403, codes: ["forbidden", "oauth_denied", "two_factor_setup_required"] },
   { name: "NotFound", status: 404, codes: ["not_found"] },
   { name: "TooManyRequests", status: 429, codes: ["rate_limited"] },
+  // Globales: pueden pasar en cualquier ruta (no se repiten en cada operación; ver info.description).
+  { name: "InvalidText", status: 400, codes: ["invalid_text"] },
+  { name: "BadOrigin", status: 403, codes: ["bad_origin"] },
+  { name: "WrongCell", status: 421, codes: ["wrong_cell"] },
+  { name: "StorageUnavailable", status: 503, codes: ["storage_unavailable", "byok_key_unavailable"] },
 ];
 
 const RATE_HEADERS = {
@@ -639,11 +836,13 @@ const RATE_HEADERS = {
   "X-RateLimit-Reset": { $ref: "#/components/headers/RateLimitReset" },
 };
 
+const LOCATION_HEADER = { Location: { description: "URL del mismo pedido en el despliegue que atiende la celda de la organización (si tiene URL propia).", schema: { type: "string" } } };
+
 function errorResponse(status: number, codes: string[]) {
   const examples = Object.fromEntries(codes.map((c) => [c, { $ref: `#/components/examples/${c}` }]));
   return {
     description: STATUS_TEXT[status] ?? "Error",
-    ...(status === 429 ? { headers: RATE_HEADERS } : {}),
+    ...(status === 429 ? { headers: RATE_HEADERS } : status === 421 ? { headers: LOCATION_HEADER } : {}),
     content: { "application/json": { schema: ref("Error"), examples } },
   };
 }
@@ -699,6 +898,7 @@ export function errorResponses(op: Op, oauthDenied: boolean): Record<string, unk
     add("unauthorized");
     add("forbidden");
     add(oauthDenied ? "oauth_denied" : "insufficient_scope");
+    if (!/^\/v1\/(me|auth)(\/|$)/.test(op.path)) add("two_factor_setup_required");
     if (!/^\/v1\/(me|billing)(\/|$)/.test(op.path)) add("plan_limit_api");
   }
   if (op.body || op.form || op.query?.length) add("validation_error");
@@ -761,6 +961,7 @@ const ID_NOUNS: [RegExp, string, boolean, string][] = [
   [/^\/v1\/workflows\//, "del workflow", true, "WorkflowId"],
   [/^\/v1\/workflow-runs\//, "de la ejecución", true, "WorkflowRunId"],
   [/^\/v1\/negotiations\//, "de la negociación", true, "NegotiationId"],
+  [/^\/v1\/settings\/scim\/tokens\//, "del token SCIM", true, "ScimTokenId"],
 ];
 
 const NAMED_PARAMS: Record<string, [string, boolean]> = {
@@ -775,6 +976,11 @@ const NAMED_PARAMS: Record<string, [string, boolean]> = {
   domain: ["Dominio", false],
   slug: ["Slug público", false],
   index: ["Índice del paso (desde 0)", false],
+  commentId: ["Id del comentario", true],
+  fieldId: ["Id del campo", true],
+  clientId: ["client_id de la app OAuth", false],
+  address: ["Dirección de correo", false],
+  kind: ["Tipo de captura", false],
 };
 
 /** Parámetros de ruta reutilizados: nombre en components.parameters → definición. */
@@ -854,7 +1060,20 @@ export const EXTRA_QUERY: Record<string, QueryParam[]> = {
     LIMIT(25, 100),
   ],
   "get /v1/agreements/export.csv": AGREEMENT_FILTERS,
-  "get /v1/crm/mappings": [{ name: "connectionId", description: "Solo los mapeos de esa conexión.", schema: { type: "string", format: "uuid" } }],
+  "get /v1/crm/mappings": [
+    { name: "connectionId", description: "Solo los mapeos de esa conexión.", schema: { type: "string", format: "uuid" } },
+    {
+      name: "provider",
+      description: "Solo mapeos de conexiones activas de ese proveedor.",
+      schema: { type: "string", enum: [...CRM_PROVIDERS] },
+    },
+    {
+      name: "companyId",
+      description:
+        "Con provider pipedrive o kommo: solo conexiones de esa cuenta del CRM (company_id de Pipedrive, id de cuenta de Kommo); las que no la tienen guardada no se incluyen (ver connectionsWithoutAccount).",
+      schema: { type: "string", pattern: "^[A-Za-z0-9_-]{1,64}$" },
+    },
+  ],
   "get /v1/crm/links": [{ name: "envelopeId", description: "Sobre cuyos vínculos se listan.", required: true, schema: { type: "string", format: "uuid" } }],
   "get /v1/crm/runs": [
     { name: "connectionId", description: "Solo esa conexión.", schema: { type: "string", format: "uuid" } },
@@ -879,6 +1098,10 @@ export const EXTRA_QUERY: Record<string, QueryParam[]> = {
     { name: "status", description: "Estados separados por coma." },
   ],
   "get /v1/negotiations": [{ name: "status", description: "Estado de la negociación." }],
+  "get /v1/public/negotiations/{token}/diff": [
+    { name: "from", description: "Versión inicial (por defecto la anterior a la actual).", schema: { type: "integer" } },
+    { name: "to", description: "Versión final (por defecto la actual).", schema: { type: "integer" } },
+  ],
   "get /v1/negotiations/{id}/diff": [
     { name: "from", description: "Versión inicial (por defecto la anterior a la actual).", schema: { type: "integer" } },
     { name: "to", description: "Versión final (por defecto la actual).", schema: { type: "integer" } },
@@ -890,7 +1113,6 @@ export const EXTRA_DESCRIPTION: Record<string, string | null> = {
   "get /v1/envelopes/{id}/ai/preview": null,
   "get /v1/agreements": "Además de los filtros listados, `f.<campo>=valor` filtra por un campo propio (uno por campo).",
   "get /v1/agreements/export.csv": "Mismos filtros que la búsqueda (incluido `f.<campo>=valor`).",
-  "get /v1/crm/mappings": null,
   "get /v1/crm/links": null,
   "get /v1/crm/runs": null,
   "get /v1/connectors/flows": null,
@@ -929,7 +1151,7 @@ export const TAGS: [string, string][] = [
   ["Reportes", "Estadísticas de actividad y exportación de sobres."],
   ["OAuth 2.0", "Apps OAuth y tokens (client_credentials, authorization_code con PKCE, refresh_token)."],
   ["Identidad", "Cuenta, sesión y API keys."],
-  ["Equipo", "Miembros, invitaciones, roles y permisos, grupos y visibilidad compartida."],
+  ["Equipo", "Miembros, invitaciones, roles y permisos, grupos y visibilidad compartida; SSO, aprovisionamiento SCIM y direcciones suprimidas por quejas."],
   ["Auditoría", "Registro de acciones administrativas de la cuenta."],
   ["Marca", "Color, logo y pie de correo de la organización."],
   ["Dominio propio", "Dominio de la organización para los links de firma."],

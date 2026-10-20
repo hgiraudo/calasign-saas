@@ -310,3 +310,83 @@ describe("idempotencia en curso, descargas y respuestas raras", () => {
     expect(Date.now() - t0).toBeLessThan(2_000);
   });
 });
+
+describe("celdas (421 wrong_cell) y 503 no reintentables", () => {
+  const wrongCell = (baseUrl: string | null) =>
+    json(421, { error: { code: "wrong_cell", message: "otra región", details: { cell: "eu", baseUrl } } }, baseUrl ? { location: `${baseUrl}/v1/x` } : {});
+
+  it("reintenta una vez contra details.baseUrl (también un POST sin idempotencia) y la recuerda", async () => {
+    const f = fakeFetch([wrongCell("https://eu.api/"), json(200, { notified: 1 }), json(200, { items: [], nextCursor: null })]);
+    const cs = new CalaSign({ apiKey: "k", baseUrl: "https://api", fetch: f.fn, maxRetries: 0 });
+    expect(await cs.envelopes.remind("e1")).toEqual({ notified: 1 });
+    expect(f.calls.map((c) => c.url)).toEqual(["https://api/v1/envelopes/e1/remind", "https://eu.api/v1/envelopes/e1/remind"]);
+    expect(cs.baseUrl).toBe("https://eu.api");
+    await cs.envelopes.list({ limit: 5 });
+    expect(f.calls[2].url).toBe("https://eu.api/v1/envelopes?limit=5");
+  });
+
+  it("si la otra celda también responde 421, o no hay baseUrl, lanza wrong_cell con cellBaseUrl", async () => {
+    const f = fakeFetch([wrongCell("https://eu.api"), wrongCell("https://us.api")]);
+    const cs = new CalaSign({ apiKey: "k", baseUrl: "https://api", fetch: f.fn });
+    const err = await cs.envelopes.get("e1").catch((e) => e);
+    expect(err).toBeInstanceOf(CalaSignError);
+    expect(err.status).toBe(421);
+    expect(err.code).toBe("wrong_cell");
+    expect(err.cellBaseUrl).toBe("https://us.api");
+    expect(f.calls).toHaveLength(2);
+    const g = fakeFetch([wrongCell(null)]);
+    const cs2 = new CalaSign({ apiKey: "k", baseUrl: "https://api", fetch: g.fn });
+    const err2 = await cs2.envelopes.get("e1").catch((e) => e);
+    expect(err2.code).toBe("wrong_cell");
+    expect(err2.cellBaseUrl).toBeNull();
+    expect(g.calls).toHaveLength(1);
+    expect(cs2.baseUrl).toBe("https://api");
+  });
+
+  it("no pasa de https a http por un 421", async () => {
+    const f = fakeFetch([wrongCell("http://eu.api")]);
+    const cs = new CalaSign({ apiKey: "k", baseUrl: "https://api", fetch: f.fn });
+    await expect(cs.envelopes.get("e1")).rejects.toMatchObject({ code: "wrong_cell" });
+    expect(f.calls).toHaveLength(1);
+    expect(cs.baseUrl).toBe("https://api");
+  });
+
+  it("503 byok_key_unavailable no se reintenta; storage_unavailable y 503 sin código sí", async () => {
+    const f = fakeFetch([json(503, { error: { code: "byok_key_unavailable", message: "clave", details: { keyArn: "arn" } } })]);
+    const cs = new CalaSign({ apiKey: "k", baseUrl: "http://api", fetch: f.fn, maxRetries: 3 });
+    const err = await cs.envelopes.get("e1").catch((e) => e);
+    expect(err).toMatchObject({ status: 503, code: "byok_key_unavailable", details: { keyArn: "arn" } });
+    expect(f.calls).toHaveLength(1);
+    const g = fakeFetch([
+      json(503, { error: { code: "storage_unavailable", message: "x" } }, { "retry-after": "0.01" }),
+      json(503, {}, { "retry-after": "0.01" }),
+      json(200, { envelope: { id: "e1" } }),
+    ]);
+    const cs2 = new CalaSign({ apiKey: "k", baseUrl: "http://api", fetch: g.fn, maxRetries: 3 });
+    await cs2.envelopes.get("e1");
+    expect(g.calls).toHaveLength(3);
+  });
+
+  it("expectedUpdatedAt en void, remind y send; void con expectedUpdatedAt no se reintenta ante 5xx", async () => {
+    const at = "2026-01-01T00:00:00.000Z";
+    const f = fakeFetch([json(500, { error: { code: "internal_error", message: "x" } })]);
+    const cs = new CalaSign({ apiKey: "k", baseUrl: "http://api", fetch: f.fn, maxRetries: 2 });
+    await expect(cs.envelopes.void("e1", "r", { expectedUpdatedAt: at })).rejects.toMatchObject({ status: 500 });
+    expect(f.calls).toHaveLength(1);
+    expect(f.calls[0].headers["x-expected-updated-at"]).toBe(at);
+    const g = fakeFetch([json(200, { notified: 1 }), json(200, { envelope: { id: "e1" } })]);
+    const cs2 = new CalaSign({ apiKey: "k", baseUrl: "http://api", fetch: g.fn });
+    await cs2.envelopes.remind("e1", { expectedUpdatedAt: new Date(at) });
+    await cs2.envelopes.send("e1", { expectedUpdatedAt: at });
+    expect(g.calls[0].headers["x-expected-updated-at"]).toBe(at);
+    expect(g.calls[1].headers["x-expected-updated-at"]).toBe(at);
+    expect(g.calls[1].headers["idempotency-key"]).toBe("send-e1");
+  });
+
+  it("webhooks.get pide el endpoint por id", async () => {
+    const f = fakeFetch([json(200, { id: "w1", url: "https://x" })]);
+    const cs = new CalaSign({ apiKey: "k", baseUrl: "http://api", fetch: f.fn });
+    expect((await cs.webhooks.get("w1")).id).toBe("w1");
+    expect(f.calls[0]).toMatchObject({ method: "GET", url: "http://api/v1/webhooks/w1" });
+  });
+});

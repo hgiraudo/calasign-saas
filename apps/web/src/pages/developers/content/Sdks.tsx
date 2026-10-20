@@ -70,17 +70,18 @@ const me = await cs.request("GET", "/v1/me"); // ${t("sdk.c.any")}`;
     ["envelopes.create(data)", "envelopes.create(input)", "POST /v1/envelopes"],
     ["envelopes.from_template(data)", "envelopes.fromTemplate(input)", "POST /v1/envelopes/from-template"],
     ["envelopes.upload_document(id, bytes, name)", "envelopes.uploadDocument(id, bytes, name)", "POST /v1/envelopes/{id}/documents"],
+    ["envelopes.remove_document(id, doc_id)", "envelopes.removeDocument(id, docId)", "DELETE /v1/envelopes/{id}/documents/{docId}"],
     ["envelopes.set_recipients(id, list)", "envelopes.setRecipients(id, list)", "PUT /v1/envelopes/{id}/recipients"],
     ["envelopes.set_fields(id, list)", "envelopes.setFields(id, list)", "PUT /v1/envelopes/{id}/fields"],
-    ["envelopes.send(id)", "envelopes.send(id)", "POST /v1/envelopes/{id}/send"],
+    ["envelopes.send(id, expected_updated_at=…)", "envelopes.send(id, { expectedUpdatedAt })", "POST /v1/envelopes/{id}/send"],
     ["envelopes.get / list / iterate", "envelopes.get / list / iterate", "GET /v1/envelopes…"],
-    ["envelopes.void(id, reason)", "envelopes.void(id, reason)", "POST /v1/envelopes/{id}/void"],
-    ["envelopes.remind(id)", "envelopes.remind(id)", "POST /v1/envelopes/{id}/remind"],
+    ["envelopes.void(id, reason, expected_updated_at=…)", "envelopes.void(id, reason, { expectedUpdatedAt })", "POST /v1/envelopes/{id}/void"],
+    ["envelopes.remind(id, expected_updated_at=…)", "envelopes.remind(id, { expectedUpdatedAt })", "POST /v1/envelopes/{id}/remind"],
     ["envelopes.events(id)", "envelopes.events(id)", "GET /v1/envelopes/{id}/events"],
     ["envelopes.download_signed(id)", "envelopes.downloadSigned(id)", "GET /v1/envelopes/{id}/signed.pdf"],
     ["envelopes.signing_url(id, rid)", "envelopes.signingUrl(id, rid)", "POST …/signing-url"],
     ["templates.list / get", "templates.list / get", "GET /v1/templates…"],
-    ["webhooks.list / create / delete / test", "webhooks.list / create / update / delete / deliveries / test", "/v1/webhooks…"],
+    ["webhooks.list / get / create / update / delete / deliveries / test / rotate_secret", "webhooks.list / get / create / update / delete / deliveries / test / rotateSecret", "/v1/webhooks…"],
     ["construct_event(body, header, secret)", "constructWebhookEvent({ payload, header, secret })", t("sdk.m.verify")],
   ];
 
@@ -94,7 +95,7 @@ const me = await cs.request("GET", "/v1/me"); // ${t("sdk.c.any")}`;
           [t("sdk.f.auth"), "api_key · access_token · ClientCredentials", "apiKey · accessToken · oauth"],
           [t("sdk.f.retries"), t("sdk.f.retries.v"), t("sdk.f.retries.v")],
           [t("sdk.f.idem"), "create · send", "create · send"],
-          [t("sdk.f.errors"), "CalaSignError(status, code, details)", "CalaSignError(status, code, details)"],
+          [t("sdk.f.errors"), "CalaSignError(status, code, details) · cell_base_url", "CalaSignError(status, code, details) · cellBaseUrl"],
         ]}
       />
 

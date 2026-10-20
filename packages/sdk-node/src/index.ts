@@ -67,6 +67,17 @@ export class CalaSignError extends Error {
     super(message);
     this.name = "CalaSignError";
   }
+
+  /**
+   * En un 421 `wrong_cell` (los datos de la organización están en otra región/celda): la URL base del despliegue que
+   * sí la atiende (`details.baseUrl`, o `null` si la API no la conoce). El cliente ya reintenta solo una vez contra
+   * ella; si igual te llega este error, configurá `baseUrl` con este valor.
+   */
+  get cellBaseUrl(): string | null | undefined {
+    if (this.code !== "wrong_cell") return undefined;
+    const b = (this.details as { baseUrl?: unknown } | undefined)?.baseUrl;
+    return typeof b === "string" ? b : null;
+  }
 }
 
 export class WebhookSignatureError extends Error {
@@ -92,9 +103,17 @@ export interface CalaSignOptions {
   accessToken?: string;
   /** OAuth client credentials: el SDK pide y renueva el token solo. */
   oauth?: ClientCredentials;
-  /** Por defecto https://dev.calasign.com */
+  /**
+   * Por defecto https://dev.calasign.com. Si la organización vive en otra celda (región), la API responde 421
+   * `wrong_cell` con `details.baseUrl`: el cliente reintenta una vez contra esa URL y la usa en los pedidos siguientes
+   * (`cs.baseUrl` refleja la actual).
+   */
   baseUrl?: string;
-  /** Reintentos ante errores de red, 429 y 5xx. Por defecto 3. */
+  /**
+   * Reintentos ante errores de red, 429 (límite por IP) y 5xx. Por defecto 3. No se reintentan los 429 de negocio ni el
+   * 503 `byok_key_unavailable` (la clave de cifrado propia de la organización no está disponible: requiere que un
+   * administrador restablezca el acceso, no se arregla esperando unos segundos).
+   */
   maxRetries?: number;
   /** Tiempo máximo por intento. Por defecto 30 s. */
   timeoutMs?: number;
@@ -139,6 +158,11 @@ export interface DraftEditOptions {
   expectedUpdatedAt?: string | Date;
 }
 
+/** Opciones de `envelopes.send`: Idempotency-Key (por defecto `send-<id>`) y control de concurrencia opcional. */
+export interface SendEnvelopeOptions extends DraftEditOptions {
+  idempotencyKey?: string;
+}
+
 const draftHeaders = (o: DraftEditOptions): Record<string, string> | undefined =>
   o.expectedUpdatedAt ? { "x-expected-updated-at": isoOf(o.expectedUpdatedAt)! } : undefined;
 
@@ -157,6 +181,12 @@ export interface RawResponse {
 }
 
 const RETRY_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
+/**
+ * 503 que no se arreglan reintentando en segundos: `byok_key_unavailable` (la clave KMS propia de la organización no
+ * responde o se revocó; requiere acción de un administrador). El resto de los 503 (`storage_unavailable`,
+ * `pdf_reader_busy`, `ai_rate_limited`, sin código…) sí se reintentan.
+ */
+const NON_RETRYABLE_503_CODES = new Set(["byok_key_unavailable"]);
 /** Estados reintentables tras los que el pedido pudo haberse procesado igual (el resto se rechaza antes de procesarlo). */
 const MAYBE_PROCESSED_STATUS = new Set([500, 502, 504]);
 
@@ -195,7 +225,7 @@ function attemptSignal(timeoutMs: number, outer?: AbortSignal): { signal: AbortS
 // ───────────────────────────── Cliente ─────────────────────────────
 
 export class CalaSign {
-  readonly baseUrl: string;
+  private currentBaseUrl: string;
   private readonly fetchImpl: typeof fetch;
   private readonly maxRetries: number;
   private readonly timeoutMs: number;
@@ -212,7 +242,7 @@ export class CalaSign {
 
   constructor(private readonly opts: CalaSignOptions) {
     if (!opts.apiKey && !opts.accessToken && !opts.oauth) throw new Error("CalaSign: falta apiKey, accessToken u oauth");
-    this.baseUrl = (opts.baseUrl ?? "https://dev.calasign.com").replace(/\/$/, "");
+    this.currentBaseUrl = (opts.baseUrl ?? "https://dev.calasign.com").replace(/\/$/, "");
     this.fetchImpl = opts.fetch ?? globalThis.fetch.bind(globalThis);
     this.maxRetries = opts.maxRetries ?? 3;
     this.timeoutMs = opts.timeoutMs ?? 30_000;
@@ -223,6 +253,11 @@ export class CalaSign {
     this.webhooks = new WebhooksApi(this);
     this.brands = new BrandsApi(this);
     this.events = new EventsApi(this);
+  }
+
+  /** URL base actual: la de las opciones o, tras un 421 `wrong_cell`, la de la celda de la organización. */
+  get baseUrl(): string {
+    return this.currentBaseUrl;
   }
 
   /** Usuario (o app) y organización del token. */
@@ -266,8 +301,12 @@ export class CalaSign {
 
   /** Pedido genérico a la API v1 (para endpoints que el SDK todavía no envuelve). */
   async request<T = any>(method: string, path: string, o: RequestOptions = {}): Promise<T> {
-    const url = new URL(this.baseUrl + path);
-    for (const [k, v] of Object.entries(o.query ?? {})) if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, String(v));
+    const buildUrl = () => {
+      const u = new URL(this.currentBaseUrl + path);
+      for (const [k, v] of Object.entries(o.query ?? {})) if (v !== undefined && v !== null && v !== "") u.searchParams.set(k, String(v));
+      return u;
+    };
+    let url = buildUrl();
     const idem = o.idempotencyKey;
     const retryable = o.retryable ?? (method === "GET" || method === "PUT" || method === "DELETE" || Boolean(idem));
     // Todo error lleva la Idempotency-Key: quien lo atrapa puede reintentar con la misma sin duplicar.
@@ -275,6 +314,8 @@ export class CalaSign {
       new CalaSignError(message, status, code, details, requestId ?? null, idem ?? null);
     const aborted = () => fail("Pedido cancelado", 0, "aborted");
     let refreshed = false;
+    // 421 wrong_cell: un solo cambio de celda por pedido (si la nueva también responde 421, se lanza el error).
+    let cellSwitched = false;
     // Las esperas por un 409 idempotency_in_progress tienen su propio tope (en tiempo), aparte de maxRetries.
     let idemWaited = 0;
     let idemWaits = 0;
@@ -318,6 +359,19 @@ export class CalaSign {
           continue;
         }
         let text: string | undefined;
+        // 421 wrong_cell: la organización vive en otra celda. La API lo responde antes de procesar el pedido, así que
+        // repetirlo contra `details.baseUrl` es seguro (también un POST sin idempotencia); esa URL queda para los siguientes.
+        if (res.status === 421 && !cellSwitched) {
+          text = await res.text().catch(() => "");
+          const next = cellRedirect(text, this.currentBaseUrl);
+          if (next) {
+            cellSwitched = true;
+            this.currentBaseUrl = next;
+            url = buildUrl();
+            attempt--;
+            continue;
+          }
+        }
         if (RETRY_STATUS.has(res.status) && attempt < this.maxRetries && (retryable || res.status === 429 || res.status === 503)) {
           const raHeader = res.headers.get("retry-after");
           let retry = true;
@@ -326,6 +380,11 @@ export class CalaSign {
           if (res.status === 429 && !raHeader) {
             text = await res.text().catch(() => "");
             retry = !isBusiness429(text);
+          }
+          // 503 byok_key_unavailable: requiere que un administrador restablezca la clave; reintentar no sirve.
+          if (res.status === 503) {
+            text ??= await res.text().catch(() => "");
+            if (NON_RETRYABLE_503_CODES.has(errorCode(text) ?? "")) retry = false;
           }
           if (retry) {
             // Se descarta el cuerpo: si no, undici deja la conexión tomada hasta que el GC lo junte.
@@ -390,12 +449,36 @@ export class CalaSign {
 /** Códigos del 429 del límite por IP (genérico): cualquier otro código en un 429 es un tope de negocio. */
 const GENERIC_429_CODES = new Set(["bad_request", "rate_limited"]);
 
-function isBusiness429(text: string): boolean {
+function errorCode(text: string): string | undefined {
   try {
     const code = JSON.parse(text)?.error?.code;
-    return typeof code === "string" && !GENERIC_429_CODES.has(code);
+    return typeof code === "string" ? code : undefined;
   } catch {
-    return false;
+    return undefined;
+  }
+}
+
+function isBusiness429(text: string): boolean {
+  const code = errorCode(text);
+  return code !== undefined && !GENERIC_429_CODES.has(code);
+}
+
+/**
+ * URL base de la celda correcta en un 421 `wrong_cell` (`details.baseUrl`), o null si no viene o no es válida. No se
+ * pasa de https a http: la credencial viaja en cada pedido.
+ */
+function cellRedirect(text: string, current: string): string | null {
+  try {
+    const e = JSON.parse(text)?.error;
+    const b = e?.code === "wrong_cell" ? e?.details?.baseUrl : undefined;
+    if (typeof b !== "string" || !b) return null;
+    const u = new URL(b);
+    if (u.protocol !== "https:" && u.protocol !== "http:") return null;
+    if (new URL(current).protocol === "https:" && u.protocol !== "https:") return null;
+    const next = b.replace(/\/+$/, "");
+    return next === current ? null : next;
+  } catch {
+    return null;
   }
 }
 
@@ -557,8 +640,14 @@ class EnvelopesApi {
     return this.c.request("PUT", `/v1/envelopes/${seg(id)}/fields`, draftRequest(o, { fields }, true));
   }
 
-  send(id: string, o: { idempotencyKey?: string } = {}): Promise<EnvelopeDetail> {
-    return this.c.request("POST", `/v1/envelopes/${seg(id)}/send`, { idempotencyKey: o.idempotencyKey ?? `send-${seg(id)}` });
+  /**
+   * Envía el borrador (Idempotency-Key automática `send-<id>`: un reintento no envía dos veces). Con
+   * `expectedUpdatedAt`, 409 `version_changed` si el borrador cambió desde que lo revisaste. Con la Idempotency-Key el
+   * reintento de un envío que sí se procesó recibe la respuesta guardada, no un `version_changed` falso, así que sigue
+   * siendo reintentable.
+   */
+  send(id: string, o: SendEnvelopeOptions = {}): Promise<EnvelopeDetail> {
+    return this.c.request("POST", `/v1/envelopes/${seg(id)}/send`, { idempotencyKey: o.idempotencyKey ?? `send-${seg(id)}`, headers: draftHeaders(o) });
   }
 
   /**
@@ -566,8 +655,13 @@ class EnvelopesApi {
    * 409 `not_voidable`: en ese caso (solo tras un reintento cuyo intento previo pudo haberse procesado: red o
    * 500/502/504, no 429/503) se confirma con un GET y, si quedó `voided`, se devuelve el
    * detalle. Anular un sobre ya anulado sin reintentos sigue lanzando 409 `not_voidable`.
+   *
+   * Con `expectedUpdatedAt` (el `updatedAt` del sobre que el usuario revisó), 409 `version_changed` si cambió mientras
+   * tanto; en ese caso no se reintenta ante errores de red/5xx (como en `update`, ver `DraftEditOptions`): ante un
+   * `network_error` o 5xx, consultá el sobre para saber si quedó anulado.
    */
-  async void(id: string, reason: string): Promise<EnvelopeDetail> {
+  async void(id: string, reason: string, o: DraftEditOptions = {}): Promise<EnvelopeDetail> {
+    if (o.expectedUpdatedAt) return this.c.request("POST", `/v1/envelopes/${seg(id)}/void`, draftRequest(o, { reason }, true));
     let retried = false;
     try {
       return await this.c.request("POST", `/v1/envelopes/${seg(id)}/void`, { body: { reason }, retryable: true, onRetry: () => (retried = true) });
@@ -580,8 +674,13 @@ class EnvelopesApi {
     }
   }
 
-  remind(id: string): Promise<{ notified: number }> {
-    return this.c.request("POST", `/v1/envelopes/${seg(id)}/remind`);
+  /**
+   * Reenvía la invitación a los pendientes del turno actual. Topes: 429 `reminded_recently` (uno cada 10 min por sobre)
+   * y 429 `reminder_daily_limit` (tope diario por sobre); no se reintentan. Con `expectedUpdatedAt`, 409
+   * `version_changed` si el sobre cambió. No se reintenta ante errores de red/5xx (mandaría el recordatorio dos veces).
+   */
+  remind(id: string, o: DraftEditOptions = {}): Promise<{ notified: number }> {
+    return this.c.request("POST", `/v1/envelopes/${seg(id)}/remind`, { headers: draftHeaders(o) });
   }
 
   async events(id: string): Promise<EnvelopeEvent[]> {
@@ -651,6 +750,10 @@ class WebhooksApi {
 
   async list(): Promise<WebhookEndpoint[]> {
     return (await this.c.request<{ items: WebhookEndpoint[] }>("GET", "/v1/webhooks")).items;
+  }
+
+  get(id: string): Promise<WebhookEndpoint> {
+    return this.c.request("GET", `/v1/webhooks/${seg(id)}`);
   }
 
   /** El secreto se devuelve una sola vez: guardalo para verificar las firmas. */

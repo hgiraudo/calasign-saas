@@ -256,7 +256,7 @@ if (LOCAL) {
     ["/pagina.html", "no es un PDF"],
   ]) {
     const bad = await call("POST", "/v1/envelopes", { subject: `Oneshot URL mala ${stamp}`, documents: [{ url: `http://127.0.0.1:${port}${path}` }] });
-    assert(bad.status === 400 && ["document_fetch_failed", "invalid_pdf"].includes(bad.data.error.code), `URL que ${what}: ${bad.status} ${JSON.stringify(bad.data)}`);
+    assert(bad.status === 400 && ["document_fetch_failed", "not_pdf"].includes(bad.data.error.code), `URL que ${what}: ${bad.status} ${JSON.stringify(bad.data)}`);
   }
   srv.close();
   assert((await countBySubject(`Oneshot URL mala ${stamp}`)) === 0, "las URL malas no dejan sobres");
@@ -275,7 +275,7 @@ const failures = [
     { subject: subjectBad, documents: [{ base64: Buffer.from("%PDF-1.4 esto no es un pdf").toString("base64") }], recipients: [{ name: "X", email: `x+${stamp}@example.com` }] },
     400,
   ],
-  ["base64 que no es PDF", { subject: subjectBad, documents: [{ base64: Buffer.from("hola").toString("base64") }] }, 400, "invalid_pdf"],
+  ["base64 que no es PDF", { subject: subjectBad, documents: [{ base64: Buffer.from("hola").toString("base64") }] }, 400, "not_pdf"],
   [
     "ancla que no aparece",
     {

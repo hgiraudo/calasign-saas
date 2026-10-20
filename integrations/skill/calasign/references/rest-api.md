@@ -30,7 +30,13 @@ Authorization: Bearer <API key (cs_live_… / cs_test_…) or OAuth access token
 - Pagination: `GET /v1/envelopes?limit=25&cursor=<nextCursor>` (limit 1–100). Stop when `nextCursor` is null.
 - Max PDF size: 25 MB per document (configurable per environment). JSON bodies: 2 MB, except
   `POST /v1/envelopes` (room for one max-size PDF in base64; use multipart for more).
-- Rate limit: ~600 requests/minute per IP; 429 → wait and retry.
+- Rate limit: ~600 requests/minute per IP; 429 `rate_limited` with `Retry-After` → wait and retry. A 429 with
+  another code (e.g. `reminded_recently`, `reminder_daily_limit`) is a business cap: don't retry it in a loop.
+- Cells (regions): if the organization lives in another cell, any call answers `421 wrong_cell` with
+  `details.baseUrl` (and a `Location` header) without processing it → repeat once against that base URL and keep
+  using it.
+- 5xx: retry with backoff (same `Idempotency-Key`), except `503 byok_key_unavailable` (an admin must restore the
+  organization's encryption key).
 
 ## Main endpoints
 
@@ -45,7 +51,7 @@ Authorization: Bearer <API key (cs_live_… / cs_test_…) or OAuth access token
 | `PUT /v1/envelopes/{id}/recipients` | Replace recipients `{recipients:[…]}` |
 | `PUT /v1/envelopes/{id}/fields` | Replace fields `{fields:[…]}` (coordinates or `anchor`) |
 | `POST /v1/envelopes/{id}/send` | Send (validates: ≥1 document, every signer has a signature field) |
-| `POST /v1/envelopes/{id}/remind` | Re-notify pending signers of the current step → `{notified}`. Once per 10 min per envelope (`429 reminded_recently`) |
+| `POST /v1/envelopes/{id}/remind` | Re-notify pending signers of the current step → `{notified}`. Once per 10 min per envelope (`429 reminded_recently`) and a daily cap per envelope (5 per 24 h by default, `429 reminder_daily_limit`) |
 | `POST /v1/envelopes/{id}/void` | Void an in-progress envelope `{reason}` |
 | `GET /v1/envelopes/{id}/events` | Hash-chained audit trail |
 | `GET /v1/envelopes/{id}/signed.pdf` | Final sealed PDF (status `completed`) |
@@ -71,9 +77,10 @@ Authorization: Bearer <API key (cs_live_… / cs_test_…) or OAuth access token
 `"embedded": true` = signing inside your app (no invitations or reminders). An embedded recipient can't use an
 OTP `authMethod` (your app authenticates them → `400 validation_error`) and can't delegate.
 
-**Concurrent edits (optional).** `PATCH /v1/envelopes/{id}`, `PUT …/recipients`, `PUT …/fields` (drafts) and
-`PATCH /v1/templates/{id}`, `PUT …/roles`, `PUT …/fields` (templates) accept `X-Expected-Updated-At: <updatedAt you
-read>`. If the draft/template changed since then → `409 version_changed` with the current `details.updatedAt`:
+**Concurrent edits (optional).** `PATCH /v1/envelopes/{id}`, `PUT …/recipients`, `PUT …/fields` (drafts),
+`POST /v1/envelopes/{id}/send`, `POST …/void` and `POST …/remind`, and `PATCH /v1/templates/{id}`, `PUT …/roles`,
+`PUT …/fields` (templates) accept `X-Expected-Updated-At: <updatedAt you read>` (pass the `updatedAt` the user reviewed
+before approving a send/void/remind). If the draft/template/envelope changed since then → `409 version_changed` with the current `details.updatedAt`:
 re-read, review and repeat instead of overwriting someone else's changes. Without the header nothing is checked.
 
 ## One call: create (and send) the complete envelope

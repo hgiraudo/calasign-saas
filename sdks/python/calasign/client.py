@@ -15,7 +15,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterator, List, Mapping, Optional, Sequence, TypedDict, Union
 
-__all__ = ["CalaSign", "CalaSignError", "ClientCredentials"]
+__all__ = ["CalaSign", "CalaSignError", "ClientCredentials", "CreateEnvelopeResponse"]
 
 VERSION = "0.1.0"
 _RETRY_STATUS = {408, 425, 429, 500, 502, 503, 504}
@@ -25,6 +25,10 @@ _MAYBE_PROCESSED_STATUS = {500, 502, 504}
 # del cuerpo (IncompleteRead) o una respuesta mal formada (BadStatusLine) son HTTPException. HTTPError (respuesta con
 # status) también es OSError, pero se atrapa antes.
 _NETWORK_ERRORS = (OSError, http.client.HTTPException)
+# 503 que no se arreglan reintentando en segundos: la clave KMS propia de la organización (BYOK) no responde o se revocó;
+# requiere que un administrador restablezca el acceso. El resto de los 503 (storage_unavailable, pdf_reader_busy,
+# ai_rate_limited, sin código…) sí se reintentan.
+_NON_RETRYABLE_503_CODES = {"byok_key_unavailable"}
 
 
 # ───────────────────────────── Tipos (subconjunto del contrato de la API) ─────────────────────────────
@@ -70,6 +74,19 @@ class EnvelopeDetail(TypedDict, total=False):
     canManage: bool
 
 
+class SigningUrl(TypedDict, total=False):
+    recipientId: str
+    url: str
+    expiresAt: str
+    tabOnly: bool
+
+
+class CreateEnvelopeResponse(EnvelopeDetail, total=False):
+    """Respuesta de POST /v1/envelopes: el detalle del sobre y, si se envió con firmantes embebidos, sus URLs de firma."""
+
+    signingUrls: List[SigningUrl]
+
+
 class EnvelopeSummary(TypedDict, total=False):
     id: str
     subject: str
@@ -101,6 +118,16 @@ class CalaSignError(Exception):
         self.details = details
         self.request_id = request_id
         self.idempotency_key = idempotency_key
+
+    @property
+    def cell_base_url(self) -> Optional[str]:
+        """En un 421 `wrong_cell` (los datos de la organización están en otra celda/región): la URL base del despliegue
+        que sí la atiende (`details["baseUrl"]`; None si la API no la conoce o el error es otro). El cliente ya reintenta
+        solo una vez contra ella; si igual te llega este error, creá el cliente con `base_url` igual a este valor."""
+        if self.code != "wrong_cell" or not isinstance(self.details, dict):
+            return None
+        b = self.details.get("baseUrl")
+        return b if isinstance(b, str) else None
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"CalaSignError(status={self.status}, code={self.code!r}, message={str(self)!r})"
@@ -143,7 +170,10 @@ class CalaSign:
         idempotency_wait: float = 60.0,
     ):
         """`timeout`: segundos por operación de socket (conectar, cada lectura), no del pedido entero.
-        `idempotency_wait`: espera total ante un 409 idempotency_in_progress, aparte de `max_retries`."""
+        `idempotency_wait`: espera total ante un 409 idempotency_in_progress, aparte de `max_retries`.
+        `base_url`: si la organización vive en otra celda (región), la API responde 421 `wrong_cell` con
+        `details["baseUrl"]`; el cliente reintenta una vez contra esa URL y la guarda en `self.base_url` para los
+        pedidos siguientes."""
         if not (api_key or access_token or oauth):
             raise ValueError("CalaSign: falta api_key, access_token u oauth")
         self.base_url = base_url.rstrip("/")
@@ -229,14 +259,16 @@ class CalaSign:
         """Pedido a la API v1 con autenticación, reintentos e idempotencia. `raw=True` devuelve los bytes del cuerpo;
         con `with_headers=True` además, la tupla (bytes, headers). `headers`: headers extra (p. ej.
         X-Expected-Updated-At); no reemplazan Authorization ni Idempotency-Key."""
-        url = self.base_url + path
+        qs = ""
         if query:
             q = {k: v for k, v in query.items() if v not in (None, "")}
             if q:
-                url += "?" + urllib.parse.urlencode(q)
+                qs = "?" + urllib.parse.urlencode(q)
         if retryable is None:
             retryable = method in ("GET", "PUT", "DELETE") or idempotency_key is not None
         refreshed = False
+        # 421 wrong_cell: un solo cambio de celda por pedido (si la nueva también responde 421, se lanza el error).
+        cell_switched = False
         attempt = 0
         # Las esperas por un 409 idempotency_in_progress tienen su propio tope (en segundos), aparte de max_retries.
         idem_waited = 0.0
@@ -254,7 +286,7 @@ class CalaSign:
             elif json_body is not None:
                 data = json.dumps(json_body).encode()
                 req_headers["Content-Type"] = "application/json"
-            req = urllib.request.Request(url, data=data, method=method, headers=req_headers)
+            req = urllib.request.Request(self.base_url + path + qs, data=data, method=method, headers=req_headers)
             try:
                 with urllib.request.urlopen(req, timeout=self.timeout) as res:
                     payload = res.read()
@@ -274,11 +306,21 @@ class CalaSign:
                     refreshed = True
                     self._bearer(force=True)
                     continue
+                # 421 wrong_cell: la organización vive en otra celda. La API lo responde antes de procesar el pedido, así
+                # que repetirlo contra details.baseUrl es seguro (también un POST sin idempotencia); queda para los siguientes.
+                if status == 421 and not cell_switched:
+                    nxt = _cell_redirect(body, self.base_url)
+                    if nxt:
+                        cell_switched = True
+                        self.base_url = nxt
+                        continue
                 retry_after = e.headers.get("Retry-After")
                 # Un 429 sin Retry-After y con código propio (reminded_recently, form_rate_limited, ai_signer_limit…) es un
                 # tope de negocio que no se libera en segundos: no se reintenta. Solo el límite por IP (con Retry-After) sí.
                 business_429 = status == 429 and not retry_after and _is_business_429(body)
-                if status in _RETRY_STATUS and attempt < self.max_retries and (retryable or status in (429, 503)) and not business_429:
+                # 503 byok_key_unavailable: requiere que un administrador restablezca la clave; reintentar no sirve.
+                final_503 = status == 503 and _error_code(body) in _NON_RETRYABLE_503_CODES
+                if status in _RETRY_STATUS and attempt < self.max_retries and (retryable or status in (429, 503)) and not business_429 and not final_503:
                     time.sleep(_retry_delay(attempt, retry_after))
                     attempt += 1
                     # _on_retry avisa solo de reintentos cuyo intento previo pudo haberse procesado (red o 500/502/504).
@@ -379,7 +421,7 @@ class _Envelopes:
     def get(self, envelope_id: str) -> EnvelopeDetail:
         return self._c.request("GET", f"/v1/envelopes/{_seg(envelope_id)}")
 
-    def create(self, data: Dict[str, Any], *, idempotency_key: Optional[str] = None) -> EnvelopeDetail:
+    def create(self, data: Dict[str, Any], *, idempotency_key: Optional[str] = None) -> CreateEnvelopeResponse:
         """Crea un sobre en UNA llamada: solo el borrador ({"subject": …}) o completo, con "documents", "recipients",
         "fields" y, con "send": True, también enviado. Cada documento va con "content" (bytes del PDF: se sube como
         multipart, sin base64), "base64" o "url". Atómico e idempotente (Idempotency-Key automática). Con firmantes
@@ -402,7 +444,7 @@ class _Envelopes:
         payload = json.dumps({**data, "documents": documents})
         return self._c.request("POST", "/v1/envelopes", multipart={"payload": payload, **parts}, idempotency_key=key)
 
-    def create_and_send(self, data: Dict[str, Any], *, idempotency_key: Optional[str] = None) -> EnvelopeDetail:
+    def create_and_send(self, data: Dict[str, Any], *, idempotency_key: Optional[str] = None) -> CreateEnvelopeResponse:
         """Como create con "send": True: crea el sobre completo y lo envía en una sola llamada."""
         return self.create({**data, "send": True}, idempotency_key=idempotency_key)
 
@@ -420,6 +462,10 @@ class _Envelopes:
     def upload_document(self, envelope_id: str, content: bytes, filename: str = "documento.pdf") -> Document:
         return self._c.request("POST", f"/v1/envelopes/{_seg(envelope_id)}/documents", multipart={"file": (filename, content, "application/pdf")})
 
+    def remove_document(self, envelope_id: str, document_id: str) -> None:
+        """Quita un documento del borrador."""
+        self._c.request("DELETE", f"/v1/envelopes/{_seg(envelope_id)}/documents/{_seg(document_id)}")
+
     def set_recipients(self, envelope_id: str, recipients: List[Dict[str, Any]], *, expected_updated_at: Any = None) -> EnvelopeDetail:
         """Reemplaza los destinatarios del borrador. Con `expected_updated_at`, 409 `version_changed` si cambió."""
         return self._c.request(
@@ -436,14 +482,30 @@ class _Envelopes:
             "PUT", f"/v1/envelopes/{_seg(envelope_id)}/fields", json_body={"fields": fields}, retryable=_draft_retryable(expected_updated_at, None), headers=_expected(expected_updated_at)
         )
 
-    def send(self, envelope_id: str, *, idempotency_key: Optional[str] = None) -> EnvelopeDetail:
-        return self._c.request("POST", f"/v1/envelopes/{_seg(envelope_id)}/send", idempotency_key=idempotency_key or f"send-{_seg(envelope_id)}")
+    def send(self, envelope_id: str, *, idempotency_key: Optional[str] = None, expected_updated_at: Any = None) -> EnvelopeDetail:
+        """Envía el borrador (Idempotency-Key automática `send-<id>`: un reintento no envía dos veces). Con
+        `expected_updated_at`, 409 `version_changed` si el borrador cambió desde que lo revisaste. Sigue siendo
+        reintentable: con la Idempotency-Key, el reintento de un envío que sí se procesó recibe la respuesta guardada."""
+        return self._c.request(
+            "POST",
+            f"/v1/envelopes/{_seg(envelope_id)}/send",
+            idempotency_key=idempotency_key or f"send-{_seg(envelope_id)}",
+            headers=_expected(expected_updated_at),
+        )
 
-    def void(self, envelope_id: str, reason: str) -> EnvelopeDetail:
+    def void(self, envelope_id: str, reason: str, *, expected_updated_at: Any = None) -> EnvelopeDetail:
         """Anula el sobre. Se reintenta ante errores de red/5xx; si el primer intento sí llegó a anularlo, el reintento
         recibe 409 `not_voidable`: en ese caso (solo tras un reintento cuyo intento previo pudo haberse procesado: red o
         500/502/504, no 429/503) se confirma con un GET y, si quedó `voided`, se
-        devuelve el detalle. Anular un sobre ya anulado sin reintentos sigue lanzando 409 `not_voidable`."""
+        devuelve el detalle. Anular un sobre ya anulado sin reintentos sigue lanzando 409 `not_voidable`.
+
+        Con `expected_updated_at` (el `updatedAt` que el usuario revisó), 409 `version_changed` si cambió mientras tanto;
+        en ese caso no se reintenta ante errores de red/5xx (ver `_draft_retryable`): ante un `network_error` o 5xx,
+        consultá el sobre para saber si quedó anulado."""
+        if _expected(expected_updated_at):
+            return self._c.request(
+                "POST", f"/v1/envelopes/{_seg(envelope_id)}/void", json_body={"reason": reason}, retryable=False, headers=_expected(expected_updated_at)
+            )
         retried = []
         try:
             return self._c.request(
@@ -456,8 +518,11 @@ class _Envelopes:
                     return detail
             raise
 
-    def remind(self, envelope_id: str) -> Dict[str, Any]:
-        return self._c.request("POST", f"/v1/envelopes/{_seg(envelope_id)}/remind")
+    def remind(self, envelope_id: str, *, expected_updated_at: Any = None) -> Dict[str, Any]:
+        """Reenvía la invitación a los pendientes del turno actual → {"notified": n}. Topes: 429 `reminded_recently`
+        (uno cada 10 min por sobre) y 429 `reminder_daily_limit` (tope diario por sobre); no se reintentan. Con
+        `expected_updated_at`, 409 `version_changed` si el sobre cambió. No se reintenta ante errores de red/5xx."""
+        return self._c.request("POST", f"/v1/envelopes/{_seg(envelope_id)}/remind", headers=_expected(expected_updated_at))
 
     def events(self, envelope_id: str) -> List[Dict[str, Any]]:
         return self._c.request("GET", f"/v1/envelopes/{_seg(envelope_id)}/events")["items"]
@@ -603,6 +668,10 @@ class _Webhooks:
     def delete(self, webhook_id: str) -> None:
         self._c.request("DELETE", f"/v1/webhooks/{_seg(webhook_id)}")
 
+    def deliveries(self, webhook_id: str) -> List[Dict[str, Any]]:
+        """Últimas entregas del endpoint (estado, intentos, código de respuesta)."""
+        return self._c.request("GET", f"/v1/webhooks/{_seg(webhook_id)}/deliveries")["items"]
+
     def test(self, webhook_id: str) -> Dict[str, Any]:
         return self._c.request("POST", f"/v1/webhooks/{_seg(webhook_id)}/test")
 
@@ -705,10 +774,33 @@ def _error_body(e: urllib.error.HTTPError) -> Dict[str, Any]:
 _GENERIC_429_CODES = {"bad_request", "rate_limited"}
 
 
-def _is_business_429(body: Dict[str, Any]) -> bool:
+def _error_code(body: Dict[str, Any]) -> Optional[str]:
     err = body.get("error") if isinstance(body.get("error"), dict) else {}
     code = err.get("code")
-    return isinstance(code, str) and code not in _GENERIC_429_CODES
+    return code if isinstance(code, str) else None
+
+
+def _is_business_429(body: Dict[str, Any]) -> bool:
+    code = _error_code(body)
+    return code is not None and code not in _GENERIC_429_CODES
+
+
+def _cell_redirect(body: Dict[str, Any], current: str) -> Optional[str]:
+    """URL base de la celda correcta en un 421 `wrong_cell` (`details.baseUrl`), o None si no viene o no es válida. No
+    se pasa de https a http: la credencial viaja en cada pedido."""
+    err = body.get("error") if isinstance(body.get("error"), dict) else {}
+    if err.get("code") != "wrong_cell" or not isinstance(err.get("details"), dict):
+        return None
+    b = err["details"].get("baseUrl")
+    if not isinstance(b, str) or not b:
+        return None
+    scheme = urllib.parse.urlsplit(b).scheme
+    if scheme not in ("http", "https") or not urllib.parse.urlsplit(b).netloc:
+        return None
+    if urllib.parse.urlsplit(current).scheme == "https" and scheme != "https":
+        return None
+    nxt = b.rstrip("/")
+    return None if nxt == current else nxt
 
 
 def _retry_delay(attempt: int, retry_after: Optional[str]) -> float:

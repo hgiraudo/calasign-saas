@@ -353,7 +353,7 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
   app.get<{ Params: { id: string } }>("/v1/agreements/:id/file", { preHandler: auth }, async (req, reply: FastifyReply) => {
     const r = await loadAgreementForUser(s.db, A(req), req.params.id);
     const f = await s.db.one<any>(`SELECT storage_key, purged_at FROM files WHERE id = $1`, [r.file_id]);
-    if (!f || f.purged_at) throw new AppError(410, "file_purged", "El archivo ya no está disponible");
+    if (!f || f.purged_at) throw new AppError(410, "purged", "El archivo ya no está disponible");
     return sendPdf(reply, await s.blobs.get(f.storage_key), r.title);
   });
 

@@ -770,7 +770,8 @@ export async function assertDocumentLimits(t: Db, kind: "envelope" | "template",
   const L = ENVELOPE_LIMITS;
   if ((r?.n ?? 0) > L.documents) throw badRequest("too_many_documents", `Máximo ${L.documents} documentos`);
   if ((r?.pages ?? 0) > L.pages) throw badRequest("too_many_pages", `Máximo ${L.pages} páginas en total`);
-  if (Number(r?.bytes ?? 0) > L.bytes) throw badRequest("documents_too_large", `Los documentos superan ${Math.round(L.bytes / 1024 / 1024)} MB en total`);
+  // 413 file_too_large, como un archivo que supera el máximo de subida o el total de POST /v1/envelopes.
+  if (Number(r?.bytes ?? 0) > L.bytes) throw new AppError(413, "file_too_large", `Los documentos superan ${Math.round(L.bytes / 1024 / 1024)} MB en total`);
 }
 
 /**

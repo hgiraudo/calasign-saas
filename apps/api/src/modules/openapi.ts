@@ -16,6 +16,7 @@ import {
   CreateTemplateInput,
   CreateWebhookInput,
   DeclineInput,
+  DelegateInput,
   EmbedSettingsInput,
   ENVELOPE_STATUSES,
   EnvelopeFromTemplateInput,
@@ -28,6 +29,8 @@ import {
   InPersonConfirmInput,
   InviteMemberInput,
   LoginInput,
+  LOCALES,
+  OtpVerifyInput,
   PutRecipientsInput,
   PutSharesInput,
   PutTemplateFieldsInput,
@@ -38,6 +41,7 @@ import {
   RoleAssignment,
   SealOptionsInput,
   SignupInput,
+  SubmitWebFormInput,
   TemplateFromEnvelopeInput,
   UpdateBrandingInput,
   UpdateEnvelopeInput,
@@ -280,7 +284,14 @@ const OPS: Op[] = [
       "para enviar) no se crea nada. Sin esos agregados, crea un borrador vacío para completarlo paso a paso. " +
       "En multipart/form-data, el JSON va en la parte `payload` y cada PDF en su propia parte (sin `documents`, cada " +
       "archivo es un documento, en orden). Hasta 10 documentos; cada PDF hasta el máximo de subida. Sin expiresAt, vence " +
-      "a los 30 días. Si envía, cuenta para el cupo mensual del plan." +
+      "a los 30 días. Si envía, cuenta para el cupo mensual del plan. " +
+      "Errores propios: 400 not_pdf (un documento que no es PDF o un base64 inválido, por cualquier vía), " +
+      "document_fetch_failed (no se pudo descargar `url`), too_many_documents (más de 10), duplicate_ref, " +
+      "too_many_fields (las anclas generan más de 500 campos); en multipart, payload_required (falta la parte `payload`), " +
+      "invalid_json (`payload` no es JSON), unknown_part (un campo de texto que no es `payload`), duplicate_part (dos partes " +
+      "con el mismo nombre), file_part_missing / unused_file_part / duplicate_document (partes que no cuadran con " +
+      "`documents[].file`); 413 file_too_large (un PDF supera el máximo de subida o todos juntos superan el doble de ese máximo) y " +
+      "payload_too_large (el JSON del sobre, sin el base64 de los documentos, supera 2 MB)." +
       IDEMPOTENT_NOTE,
     body: CreateEnvelopeRequestBody,
     multipartPayload: "PDF del sobre (una parte por documento; el nombre de la parte es el que cita `documents[].file`).",
@@ -288,15 +299,22 @@ const OPS: Op[] = [
     response: CreateEnvelopeResponseSchema,
     idempotent: true,
     errors: [
-      "invalid_pdf",
+      "not_pdf",
       "invalid_field",
       "anchor_not_found",
+      "too_many_fields",
       "pdf_too_heavy",
       "pdf_reader_busy",
       "document_fetch_failed",
       "file_part_missing",
       "unused_file_part",
       "payload_required",
+      "invalid_json",
+      "unknown_part",
+      "duplicate_part",
+      "duplicate_document",
+      "too_many_documents",
+      "payload_too_large",
       "duplicate_ref",
       "duplicate_ids",
       "id_in_use",
@@ -330,12 +348,13 @@ const OPS: Op[] = [
     operationId: "addEnvelopeDocument",
     tag: "Sobres",
     summary: "Agregar documento PDF",
-    description: "multipart/form-data con el campo `file`. El PDF se normaliza al subirlo (lo que se ve es lo que se firma); el hash del archivo subido queda en la evidencia.",
+    description:
+      "multipart/form-data con el campo `file`. El PDF se normaliza al subirlo (lo que se ve es lo que se firma); el hash del archivo subido queda en la evidencia. Topes por sobre: 30 documentos y 1000 páginas en total (400 too_many_documents / too_many_pages) y 100 MB en total (413 file_too_large).",
     multipart: true,
     fileDescription: "PDF (sin contraseña). El nombre del archivo es el nombre del documento.",
     status: 201,
     response: DocumentSchema,
-    errors: ["not_draft", "invalid_pdf"],
+    errors: ["not_draft", "not_pdf", "too_many_documents"],
   },
   { method: "delete", path: "/v1/envelopes/{id}/documents/{documentId}", operationId: "deleteEnvelopeDocument", tag: "Sobres", summary: "Quitar documento", response: "none", status: 204, errors: ["not_draft"] },
   {
@@ -372,7 +391,7 @@ const OPS: Op[] = [
     body: PutFieldsWithAnchors,
     response: EnvelopeDetailSchema,
     expectedUpdatedAt: true,
-    errors: ["not_draft", "invalid_field", "anchor_not_found", "pdf_too_heavy", "pdf_reader_busy", "logic_order", "version_changed"],
+    errors: ["not_draft", "invalid_field", "anchor_not_found", "too_many_fields", "pdf_too_heavy", "pdf_reader_busy", "logic_order", "version_changed"],
   },
   {
     method: "post",
@@ -387,16 +406,29 @@ const OPS: Op[] = [
     expectedUpdatedAt: true,
     errors: ["not_draft", "envelope_incomplete", "plan_limit_envelopes", "version_changed"],
   },
-  { method: "post", path: "/v1/envelopes/{id}/void", operationId: "voidEnvelope", tag: "Sobres", summary: "Anular un sobre en curso", body: VoidEnvelopeInput, response: EnvelopeDetailSchema, errors: ["not_voidable"] },
+  {
+    method: "post",
+    path: "/v1/envelopes/{id}/void",
+    operationId: "voidEnvelope",
+    tag: "Sobres",
+    summary: "Anular un sobre en curso",
+    description: "Con X-Expected-Updated-At (opcional), 409 version_changed si el sobre cambió desde que se leyó (p. ej. alguien firmó) en vez de anular algo distinto de lo revisado.",
+    body: VoidEnvelopeInput,
+    response: EnvelopeDetailSchema,
+    expectedUpdatedAt: true,
+    errors: ["not_voidable", "version_changed"],
+  },
   {
     method: "post",
     path: "/v1/envelopes/{id}/remind",
     operationId: "remindEnvelope",
     tag: "Sobres",
     summary: "Reenviar a los firmantes pendientes",
-    description: "Avisa al grupo de ruteo actual (sin los embebidos ni los de firma en persona). Con el sobre en awaiting_certificates, avisa al firmante con certificado al que le toca. Como mucho un recordatorio manual cada 10 minutos por sobre (si no, 429 reminded_recently, sin Retry-After).",
+    description:
+      "Avisa al grupo de ruteo actual (sin los embebidos ni los de firma en persona). Con el sobre en awaiting_certificates, avisa al firmante con certificado al que le toca. Como mucho un recordatorio manual cada 10 minutos por sobre (si no, 429 reminded_recently) y 5 en 24 horas (configurable por la plataforma; si no, 429 reminder_daily_limit); ninguno de los dos trae Retry-After. Con X-Expected-Updated-At (opcional), 409 version_changed si el sobre cambió desde que se leyó.",
     response: z.object({ notified: z.number().int() }),
-    errors: ["not_in_progress", "reminded_recently"],
+    expectedUpdatedAt: true,
+    errors: ["not_in_progress", "reminded_recently", "reminder_daily_limit", "version_changed"],
   },
   {
     method: "post",
@@ -486,12 +518,13 @@ const OPS: Op[] = [
     operationId: "addTemplateDocument",
     tag: "Plantillas",
     summary: "Agregar documento PDF",
-    description: "multipart/form-data con el campo `file`. El PDF se normaliza al subirlo.",
+    description:
+      "multipart/form-data con el campo `file`. El PDF se normaliza al subirlo. Topes por plantilla: 30 documentos y 1000 páginas en total (400 too_many_documents / too_many_pages) y 100 MB en total (413 file_too_large).",
     multipart: true,
     fileDescription: "PDF (sin contraseña). El nombre del archivo es el nombre del documento.",
     status: 201,
     response: DocumentSchema,
-    errors: ["invalid_pdf"],
+    errors: ["not_pdf", "too_many_documents"],
   },
   { method: "delete", path: "/v1/templates/{id}/documents/{documentId}", operationId: "deleteTemplateDocument", tag: "Plantillas", summary: "Quitar documento", response: "none", status: 204 },
   { method: "get", path: "/v1/templates/{id}/documents/{documentId}/file", operationId: "downloadTemplateDocument", tag: "Plantillas", summary: "Descargar el PDF del documento", response: "pdf" },
@@ -786,6 +819,51 @@ const OPS: Op[] = [
     }),
   },
 
+  {
+    method: "get",
+    path: "/v1/public/forms/{slug}",
+    operationId: "getPublicWebForm",
+    tag: "Formularios web",
+    summary: "Formulario público (lo que ve quien entra al link)",
+    description:
+      "Sin autenticación (60 pedidos por minuto por IP). `available: false` con `unavailableReason` (inactive, expired, exhausted) si ya no recibe envíos. `formToken` va en el envío; `captchaSiteKey` (Cloudflare Turnstile), si viene, obliga a mandar `captchaToken`.",
+    response: z.object({
+      slug: z.string(),
+      name: z.string(),
+      description: z.string().nullable(),
+      organizationName: z.string(),
+      branding: z.object({ primaryColor: z.string().nullable(), logoUrl: z.string().nullable() }).nullable(),
+      available: z.boolean(),
+      unavailableReason: z.enum(["inactive", "expired", "exhausted"]).nullable(),
+      requireOtp: z.boolean(),
+      collectPhone: z.boolean(),
+      locale: z.enum(LOCALES),
+      formToken: z.string().describe("Token anti-bots: se devuelve en el envío. Vale 2 horas y un solo envío; no se puede enviar antes de 2,5 s."),
+      captchaSiteKey: z
+        .string()
+        .nullable()
+        .describe("Clave pública de Cloudflare Turnstile si la plataforma exige el desafío: el envío tiene que traer `captchaToken` (si no, 400 captcha_failed). null: sin desafío."),
+    }),
+    auth: "none",
+  },
+  {
+    method: "post",
+    path: "/v1/public/forms/{slug}/submit",
+    operationId: "submitPublicWebForm",
+    tag: "Formularios web",
+    summary: "Completar el formulario público (crea y envía el sobre)",
+    description:
+      "Sin autenticación (10 pedidos por minuto por IP). Crea el sobre desde la plantilla, con quien completa como firmante, y devuelve la ruta de su página de firma. " +
+      "Errores: 400 invalid_form_token (token vencido, ajeno o ya usado: pedir otro con GET y reenviar), phone_required, captcha_failed; 422 too_fast (antes de 2,5 s) o rejected (trampa anti-bots); " +
+      "410 form_inactive / form_expired / form_exhausted / form_unavailable (ya no recibe envíos); 409 form_misconfigured (la plantilla cambió y el formulario ya no la completa); " +
+      "429 form_recent_submission (el mismo correo desde la misma IP hace poco) o form_rate_limited (topes por formulario y por organización; sin Retry-After).",
+    body: SubmitWebFormInput,
+    status: 201,
+    response: z.object({ envelopeId: z.string().uuid(), signingPath: z.string().describe("Ruta relativa a la página de firma (con ?embed=1 si corresponde).") }),
+    auth: "none",
+    errors: ["invalid_form_token", "phone_required", "captcha_failed", "too_fast", "form_inactive", "form_unavailable", "form_misconfigured", "form_recent_submission", "form_rate_limited"],
+  },
+
   // Cobros
   {
     method: "get",
@@ -850,6 +928,138 @@ const OPS: Op[] = [
     auth: "token",
     response: z.object({ queued: z.literal(true), recipientId: z.string().uuid() }),
   },
+  {
+    method: "get",
+    path: "/v1/signing/{token}/documents/{documentId}/file",
+    operationId: "downloadSigningDocument",
+    tag: "Firmante",
+    summary: "PDF de un documento del sobre (para el visor)",
+    description: "Exige haber validado el código OTP si el firmante lo tiene (401 otp_required) y la verificación de identidad pendiente (403 identity_required). Si el sobre se anuló o venció, 410 envelope_closed.",
+    response: "pdf",
+    auth: "token",
+    errors: ["identity_required", "envelope_closed"],
+  },
+  {
+    method: "post",
+    path: "/v1/signing/{token}/otp/send",
+    operationId: "sendSigningOtp",
+    tag: "Firmante",
+    summary: "Enviar el código de verificación (OTP) al firmante",
+    description:
+      "Por correo, SMS o WhatsApp según el método del destinatario. Errores: 409 otp_not_required, otp_no_destination, otp_destination_suppressed; 410 envelope_closed; 429 otp_cooldown (details.resendInSeconds), otp_too_many, otp_daily_limit, otp_destination_limit, otp_tenant_limit; 502 otp_delivery_failed (reintentable en unos segundos).",
+    response: z.object({ sent: z.literal(true), destination: z.string().describe("Destino enmascarado."), resendInSeconds: z.number().int(), expiresAt: iso }),
+    auth: "token",
+    errors: ["envelope_closed"],
+  },
+  {
+    method: "post",
+    path: "/v1/signing/{token}/otp/verify",
+    operationId: "verifySigningOtp",
+    tag: "Firmante",
+    summary: "Validar el código de verificación",
+    description: "Errores: 400 invalid_code (details con los intentos que quedan), otp_expired (vencido, inexistente o ya usado: pedir otro); 429 otp_locked (demasiados intentos).",
+    body: OtpVerifyInput,
+    auth: "token",
+  },
+  {
+    method: "post",
+    path: "/v1/signing/{token}/fields/{fieldId}/attachment",
+    operationId: "uploadSigningAttachment",
+    tag: "Firmante",
+    summary: "Subir el archivo de un campo adjunto",
+    description: "PDF, JPG o PNG de hasta 10 MB (400 invalid_attachment si no). Solo el firmante al que le toca y que ya aceptó el uso de medios electrónicos (409 not_signable, not_your_turn, consent_required); 410 envelope_closed. Devuelve el campo.",
+    multipart: true,
+    fileDescription: "PDF, JPG o PNG (máx. 10 MB).",
+    auth: "token",
+    errors: ["envelope_closed"],
+  },
+  {
+    method: "delete",
+    path: "/v1/signing/{token}/fields/{fieldId}/attachment",
+    operationId: "deleteSigningAttachment",
+    tag: "Firmante",
+    summary: "Quitar el archivo de un campo adjunto",
+    description: "Mismas condiciones que al subirlo. Devuelve el campo.",
+    auth: "token",
+    errors: ["envelope_closed"],
+  },
+  {
+    method: "post",
+    path: "/v1/signing/{token}/delegate",
+    operationId: "delegateSigning",
+    tag: "Firmante",
+    summary: "Delegar en otra persona",
+    description:
+      "El nuevo destinatario hereda rol, campos y requisitos, y recibe la invitación; el link actual queda revocado. 403 forbidden si el remitente no permite delegar, si el firmante es embebido o si no validó su correo; 409 same_person (el mismo correo), not_replaceable o too_many_replacements; 410 envelope_closed. 10 pedidos por minuto.",
+    body: DelegateInput,
+    response: z.object({ delegated: z.literal(true), to: z.string().describe("Nombre de la persona en la que se delegó.") }),
+    auth: "token",
+    errors: ["same_person", "not_replaceable", "too_many_replacements", "envelope_closed"],
+  },
+  {
+    method: "get",
+    path: "/v1/signing/{token}/identity",
+    operationId: "getSigningIdentity",
+    tag: "Firmante",
+    summary: "Estado de la verificación de identidad del firmante",
+    auth: "token",
+  },
+  {
+    method: "post",
+    path: "/v1/signing/{token}/identity/start",
+    operationId: "startSigningIdentity",
+    tag: "Firmante",
+    summary: "Iniciar la verificación de identidad",
+    description: "Abre la sesión con el proveedor configurado (o la captura propia). 409 not_signable si ya no puede firmar; 410 envelope_closed.",
+    auth: "token",
+    errors: ["envelope_closed"],
+  },
+  {
+    method: "post",
+    path: "/v1/signing/{token}/identity/captures/{kind}",
+    operationId: "uploadSigningIdentityCapture",
+    tag: "Firmante",
+    summary: "Subir una foto de la verificación propia (documento o selfie)",
+    description: "JPG o PNG de hasta 8 MB (400 invalid_image). 400 invalid_capture si `kind` no corresponde al nivel pedido; 409 no_active_capture sin verificación iniciada.",
+    multipart: true,
+    fileDescription: "Foto JPG o PNG (máx. 8 MB).",
+    auth: "token",
+  },
+  {
+    method: "post",
+    path: "/v1/signing/{token}/identity/submit",
+    operationId: "submitSigningIdentity",
+    tag: "Firmante",
+    summary: "Enviar la verificación de identidad",
+    description: "409 no_active_verification sin verificación en curso; 422 captures_incomplete (details.missing) si faltan fotos.",
+    auth: "token",
+  },
+  {
+    method: "get",
+    path: "/v1/signing/{token}/payment",
+    operationId: "getSigningPayment",
+    tag: "Firmante",
+    summary: "Cobro que tiene que pagar el firmante",
+    auth: "token",
+  },
+  {
+    method: "post",
+    path: "/v1/signing/{token}/payment/checkout",
+    operationId: "startSigningPaymentCheckout",
+    tag: "Firmante",
+    summary: "Iniciar (o retomar) el pago",
+    description: "Devuelve la URL del checkout del proveedor. 409 already_paid, payment_not_available (after_sign antes de firmar o sobre cerrado) o payment_processing; 502 payment_provider_error. 20 pedidos por minuto.",
+    response: z.object({ url: z.string() }),
+    auth: "token",
+  },
+  {
+    method: "get",
+    path: "/v1/signing/{token}/embed",
+    operationId: "getSigningEmbedInfo",
+    tag: "Firmante",
+    summary: "Si la página de firma se muestra en modo embebido (y para qué orígenes)",
+    auth: "token",
+  },
 
   // Firma en persona
   {
@@ -903,7 +1113,17 @@ const OPS: Op[] = [
     body: UploadCertificateInput,
     status: 201,
   },
-  { method: "delete", path: "/v1/certificates/{id}", operationId: "deleteCertificate", tag: "Evidencia", summary: "Eliminar certificado (borra el material de clave)", response: "none", status: 204 },
+  {
+    method: "delete",
+    path: "/v1/certificates/{id}",
+    operationId: "deleteCertificate",
+    tag: "Evidencia",
+    summary: "Eliminar certificado (borra el material de clave)",
+    description: "Si es el sello de empresa de sobres que se están finalizando, 409 certificate_in_use (esperar a que terminen).",
+    response: "none",
+    status: 204,
+    errors: ["certificate_in_use"],
+  },
   { method: "get", path: "/v1/envelopes/{id}/seal-options", operationId: "getSealOptions", tag: "Evidencia", summary: "Sello de empresa y nivel de firma del sobre", response: SealOptionsSchema },
   {
     method: "put",
@@ -927,6 +1147,7 @@ const OPS: Op[] = [
     multipart: true,
     fileDescription: "PDF firmado.",
     auth: "none",
+    errors: ["not_pdf", "unreadable_pdf"],
   },
   {
     method: "post",
@@ -954,6 +1175,7 @@ const OPS: Op[] = [
     description:
       "Firma enveloped con el certificado de la organización. Perfiles: dgii-ecf (XMLDSig, C14N inclusiva), dian-fe (XAdES-EPES con política DIAN v2, dentro de ext:ExtensionContent), xades-bes, xades-epes (requiere policy). Devuelve el XML firmado y su verificación. Firmar en nombre de la empresa pide el permiso `settings:manage` (OAuth: scope `settings:write`).",
     body: XmlSignInput,
+    errors: ["xml_sign_failed"],
   },
   { method: "post", path: "/v1/xml/verify", operationId: "verifyXml", tag: "Firma XML", summary: "Verificar una firma XML (digests, SignatureValue, SigningCertificate)", body: XmlVerifyInput },
 
@@ -1439,6 +1661,11 @@ export function buildOpenApi() {
       description:
         "Firma electrónica en la nube. Autenticación con `Authorization: Bearer <API key o access token OAuth>`. " +
         "Errores: `{ error: { code, message, details? } }` (ver components.schemas.Error); los de /oauth/* siguen RFC 6749. " +
+        "Además de los de cada operación, cualquier ruta puede responder (components.responses): 400 invalid_text (texto con el carácter NUL), " +
+        "403 bad_origin (pedido con la cookie de sesión desde otro origen), 421 wrong_cell (la organización está en otra región: repetir en details.baseUrl; header Location), " +
+        "500 internal_error y 503 storage_unavailable (reintentable) o byok_key_unavailable (no reintentable: requiere que un administrador restablezca la clave BYOK). " +
+        "Reintentables con espera creciente: 429 rate_limited (según Retry-After), 502 tsa_unavailable y ai_unavailable, 503 storage_unavailable, pdf_reader_busy y ai_rate_limited, 504 ai_timeout; los 429 con código propio (reminded_recently, form_rate_limited…) no traen Retry-After y no se reintentan en un loop. " +
+        "Nombres: cuerpos y respuestas JSON en camelCase. Los parámetros de query también, salvo los filtros de búsqueda de GET /v1/envelopes (created_from, sent_to, template_id, created_via…) y de GET /v1/events (envelope_id, max_seconds), en snake_case, y los de /oauth/* (RFC 6749). " +
         "Límite general: 600 pedidos por minuto por IP, para todas las credenciales que salen de esa IP (algunas rutas tienen uno menor); cada respuesta trae X-RateLimit-Limit, X-RateLimit-Remaining y X-RateLimit-Reset, y un 429 trae Retry-After. " +
         "Webhooks firmados con `CalaSign-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, \"<t>.<body>\")>` (ver la sección webhooks). " +
         `Eventos: ${WEBHOOK_EVENT_TYPES.join(", ")}.`,
@@ -1466,7 +1693,7 @@ export function buildOpenApi() {
           in: "header",
           required: false,
           description:
-            "Control de edición concurrente (opcional): el `updatedAt` del borrador o la plantilla tal como se leyó (ISO 8601, con milisegundos). Si cambió desde entonces (otra pestaña u otra persona lo editó), 409 version_changed con el `updatedAt` actual en details, en vez de pisar esos cambios. Sin el encabezado (o con una fecha que no se puede leer) no se controla.",
+            "Control de edición concurrente (opcional): el `updatedAt` del borrador, la plantilla o el sobre (al anular o recordar uno en curso) tal como se leyó (ISO 8601, con milisegundos). Si cambió desde entonces (otra pestaña u otra persona lo editó), 409 version_changed con el `updatedAt` actual en details, en vez de pisar esos cambios. Sin el encabezado (o con una fecha que no se puede leer) no se controla.",
           schema: { type: "string", format: "date-time" },
         },
       },

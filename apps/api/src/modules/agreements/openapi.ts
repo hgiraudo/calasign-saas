@@ -1,6 +1,7 @@
 // Operaciones de Fase 6 (acuerdos) para el OpenAPI.
-import type { z } from "zod";
+import { z } from "zod";
 import {
+  AGREEMENT_FIELD_TYPES,
   AcceptNegotiationInput,
   AgreementFieldInput,
   AgreementViewInput,
@@ -18,8 +19,12 @@ import {
   UpdateAgreementInput,
   UpdateDocumentTemplateInput,
   UpdateWorkflowInput,
+  WORKFLOW_RUN_STATUSES,
+  WORKFLOW_STEP_STATUSES,
+  WORKFLOW_STEP_TYPES,
   WorkflowInput,
 } from "@calasign/shared";
+import { named } from "../openapi-schemas";
 
 type Op = {
   method: "get" | "post" | "put" | "patch" | "delete";
@@ -36,6 +41,58 @@ type Op = {
   errors?: string[];
 };
 
+const iso = z.string().datetime();
+
+/** Espejo de WorkflowRun (packages/shared/src/agreements.ts). */
+const WorkflowRunSchema = named(
+  "WorkflowRun",
+  z.object({
+    id: z.string().uuid(),
+    workflowId: z.string().uuid(),
+    workflowName: z.string(),
+    status: z.enum(WORKFLOW_RUN_STATUSES),
+    currentStep: z.number().int(),
+    context: z
+      .object({ data: z.record(z.string(), z.unknown()), documents: z.record(z.string(), z.unknown()), envelopes: z.record(z.string(), z.unknown()), http: z.record(z.string(), z.unknown()) })
+      .describe("Datos acumulados de la ejecución (vacíos si redacted)."),
+    steps: z.array(
+      z.object({
+        index: z.number().int(),
+        stepId: z.string(),
+        type: z.enum(WORKFLOW_STEP_TYPES),
+        name: z.string(),
+        status: z.enum(WORKFLOW_STEP_STATUSES),
+        attempts: z.number().int(),
+        output: z.record(z.string(), z.unknown()).nullable().describe("null si redacted."),
+        error: z.string().nullable(),
+        startedAt: iso.nullable(),
+        finishedAt: iso.nullable(),
+        canDecide: z.boolean().optional().describe("Aprobaciones: si quien consulta puede decidir."),
+      }),
+    ),
+    startedBy: z.string().nullable(),
+    collectUrl: z.string().nullable().describe("Link para completar pasos de datos (null si no tiene o si redacted)."),
+    canManage: z.boolean().optional().describe("Si quien consulta puede cancelarla o reintentarla."),
+    redacted: z
+      .boolean()
+      .optional()
+      .describe("true si quien consulta administra plantillas pero no la inició, no aprueba ningún paso ni ve todos los sobres: context vacío, output null en los pasos, sin collectUrl. Ausente si no."),
+    createdAt: iso,
+    updatedAt: iso,
+  }),
+);
+
+/** GET /v1/public/workflows/{slug} (PublicWorkflowStart). */
+const PublicWorkflowStartSchema = z.object({
+  workflowName: z.string(),
+  organizationName: z.string(),
+  description: z.string().nullable(),
+  captchaSiteKey: z
+    .string()
+    .nullable()
+    .describe("Clave pública de Cloudflare Turnstile si la plataforma exige el desafío: el inicio tiene que traer `captchaToken` (si no, 400 captcha_failed). null: sin desafío."),
+});
+
 const R = "Repositorio de acuerdos";
 const D = "Documentos generados";
 const W = "Workflows";
@@ -48,9 +105,22 @@ export const AGREEMENTS_OPS: Op[] = [
   { method: "get", path: "/v1/agreements/{id}", tag: R, summary: "Ver un acuerdo" },
   { method: "patch", path: "/v1/agreements/{id}", tag: R, summary: "Editar un acuerdo", body: UpdateAgreementInput },
   { method: "delete", path: "/v1/agreements/{id}", tag: R, summary: "Borrar un acuerdo externo", response: "none", status: 204 },
-  { method: "get", path: "/v1/agreements/{id}/file", tag: R, summary: "Descargar el PDF del acuerdo", response: "pdf" },
+  { method: "get", path: "/v1/agreements/{id}/file", tag: R, summary: "Descargar el PDF del acuerdo", description: "Si el archivo se borró por la política de retención, 410 purged.", response: "pdf", errors: ["purged"] },
   { method: "get", path: "/v1/agreement-fields", tag: R, summary: "Campos propios" },
   { method: "post", path: "/v1/agreement-fields", tag: R, summary: "Crear un campo propio", body: AgreementFieldInput, status: 201 },
+  {
+    method: "patch",
+    path: "/v1/agreement-fields/{id}",
+    tag: R,
+    summary: "Editar un campo propio",
+    description: "Solo los atributos presentes (label, type, options). La clave (`key`) no se puede cambiar: 400 immutable_key. Un campo de lista (select) necesita opciones (400 validation_error).",
+    body: z.object({
+      label: z.string().min(1).max(100).optional(),
+      type: z.enum(AGREEMENT_FIELD_TYPES).optional(),
+      options: z.array(z.string().min(1).max(100)).max(50).nullable().optional(),
+      key: z.string().optional().describe("Si viene, tiene que ser la clave actual."),
+    }),
+  },
   { method: "delete", path: "/v1/agreement-fields/{id}", tag: R, summary: "Borrar un campo propio", response: "none", status: 204 },
   { method: "get", path: "/v1/agreement-views", tag: R, summary: "Vistas guardadas" },
   { method: "post", path: "/v1/agreement-views", tag: R, summary: "Guardar una vista", body: AgreementViewInput, status: 201 },
@@ -91,6 +161,7 @@ export const AGREEMENTS_OPS: Op[] = [
     summary: "Ejecuciones",
     description:
       "Query: workflowId, status. Con templates:manage sin envelopes:view_all, las ejecuciones que no inició ni aprueba vienen con redacted: true (context vacío, output null, sin collectUrl).",
+    response: z.object({ items: z.array(WorkflowRunSchema) }),
   },
   {
     method: "get",
@@ -98,11 +169,12 @@ export const AGREEMENTS_OPS: Op[] = [
     tag: W,
     summary: "Ver una ejecución",
     description: "redacted: true si quien consulta solo administra plantillas (no la inició, no aprueba un paso ni ve todos los sobres): se omiten context, salidas de los pasos y collectUrl.",
+    response: WorkflowRunSchema,
   },
   { method: "post", path: "/v1/workflow-runs/{id}/steps/{index}/decision", tag: W, summary: "Aprobar o rechazar un paso de aprobación", description: "Rechazar deja la ejecución en rejected y anula sus sobres en curso.", body: ApprovalDecisionInput },
   { method: "post", path: "/v1/workflow-runs/{id}/cancel", tag: W, summary: "Cancelar una ejecución (anula sus sobres en curso)", description: "También una ejecución fallida: es la forma de anular los sobres que dejó en firma." },
   { method: "post", path: "/v1/workflow-runs/{id}/retry", tag: W, summary: "Reintentar el paso fallido" },
-  { method: "get", path: "/v1/public/workflows/{slug}", tag: W, summary: "Workflow con inicio público", auth: "none" },
+  { method: "get", path: "/v1/public/workflows/{slug}", tag: W, summary: "Workflow con inicio público", auth: "none", response: PublicWorkflowStartSchema },
   {
     method: "post",
     path: "/v1/public/workflows/{slug}/start",
@@ -143,6 +215,26 @@ export const AGREEMENTS_OPS: Op[] = [
   { method: "get", path: "/v1/negotiations/{id}/diff", tag: N, summary: "Diff entre versiones", description: "Query: from, to." },
   { method: "get", path: "/v1/negotiations/{id}/pdf", tag: N, summary: "PDF de la versión actual", response: "pdf" },
   {
+    method: "patch",
+    path: "/v1/negotiations/{id}",
+    tag: N,
+    summary: "Editar el borrador (versión nueva)",
+    description:
+      "Edición directa del remitente: `data` reemplaza los datos de la plantilla y `clauseOverrides` cambia el texto de cláusulas (se combinan con los cambios anteriores). Crea una versión nueva y avisa a las contrapartes. 409 closed si la negociación ya se cerró; 409 pdf_source si es un PDF subido (no se edita: subir otro como negociación nueva).",
+    body: z.object({
+      data: z.record(z.string(), z.unknown()).optional(),
+      clauseOverrides: z.record(z.string(), z.string().max(50_000)).optional().describe("Clave de la cláusula → texto nuevo."),
+      summary: z.string().max(500).optional().describe("Resumen del cambio (por defecto \"Edición del remitente\")."),
+    }),
+  },
+  {
+    method: "patch",
+    path: "/v1/negotiations/{id}/comments/{commentId}",
+    tag: N,
+    summary: "Marcar un comentario como resuelto (o reabrirlo)",
+    body: z.object({ resolved: z.boolean() }),
+  },
+  {
     method: "post",
     path: "/v1/negotiations/{id}/comments",
     tag: N,
@@ -172,6 +264,8 @@ export const AGREEMENTS_OPS: Op[] = [
   },
   { method: "post", path: "/v1/negotiations/{id}/cancel", tag: N, summary: "Cancelar la negociación" },
   { method: "get", path: "/v1/public/negotiations/{token}", tag: N, summary: "Vista de la contraparte", auth: "none" },
+  { method: "get", path: "/v1/public/negotiations/{token}/diff", tag: N, summary: "Diff entre versiones (contraparte)", auth: "none" },
+  { method: "get", path: "/v1/public/negotiations/{token}/pdf", tag: N, summary: "PDF de la versión actual (contraparte)", response: "pdf", auth: "none" },
   {
     method: "post",
     path: "/v1/public/negotiations/{token}/comments",

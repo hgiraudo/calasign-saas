@@ -394,7 +394,7 @@ export const docsPt: Record<DocsKey, string> = {
     "Ao criar ou editar o rascunho: `reminderEveryDays` (1 a 60) reenvia o convite a cada N dias para quem está com o turno pendente; `expiryWarningDays` avisa N dias antes da expiração; `allowDelegation` permite que o signatário delegue a outra pessoa. `null` desativa cada opção.",
   "g.rem.manual.h": "Lembrete manual",
   "g.rem.manual.p":
-    "`POST /v1/envelopes/{id}/remind` reenvia imediatamente o convite aos pendentes do turno atual e retorna quantos foram notificados. No máximo um lembrete manual a cada 10 minutos por envelope: antes disso responde `429 reminded_recently`. Se o envelope estiver em `awaiting_certificates`, avisa o signatário com certificado da vez. Um envelope que não está em andamento responde `409 not_in_progress`.",
+    "`POST /v1/envelopes/{id}/remind` reenvia imediatamente o convite aos pendentes do turno atual e retorna quantos foram notificados. No máximo um lembrete manual a cada 10 minutos por envelope: antes disso responde `429 reminded_recently`. Também há um limite diário por envelope (5 em 24 horas, salvo outra configuração do servidor): acima dele, `429 reminder_daily_limit`. Nenhum dos dois traz `retry-after`: não tente novamente em loop. Se o envelope estiver em `awaiting_certificates`, avisa o signatário com certificado da vez. Um envelope que não está em andamento responde `409 not_in_progress`.",
   "g.rem.exp.h": "Expiração",
   "g.rem.exp.p":
     "`expiresAt` (ISO 8601 com fuso horário) define até quando é possível assinar. Se você não informar, o envelope expira **30 dias** após a criação. Ao expirar, passa para `expired` e dispara `envelope.expired`. Para estender o prazo de um envelope em andamento, use uma correção.",
@@ -556,26 +556,43 @@ export const docsPt: Record<DocsKey, string> = {
   "err.col.meaning": "O que significa e o que fazer",
   "err.c.validation": "O corpo não respeita o esquema. `details[]` traz `path` e `message` de cada problema. Não tente novamente sem corrigir.",
   "err.c.invalidId": "Um id da rota não é um UUID válido.",
-  "err.c.bad": "Outros erros da requisição, com um `code` específico (cursor inválido, texto âncora não encontrado, campo fora da página…).",
+  "err.c.bad":
+    "Outros erros da requisição, com um `code` específico: cursor inválido, texto âncora não encontrado, campo fora da página, um arquivo que não é PDF (`not_pdf`, o mesmo código em todos os envios de arquivo), texto com caracteres não permitidos como o caractere nulo (`invalid_text`)…",
+  "err.c.oneshot":
+    "Erros do `multipart/form-data` de `POST /v1/envelopes`: um campo de texto que não é `payload` (`unknown_part`), uma parte repetida (`duplicate_part`), `payload` que não é JSON válido (`invalid_json`), mais de 10 documentos (`too_many_documents`) ou dois documentos que citam a mesma parte de arquivo (`duplicate_document`).",
   "err.c.unauthorized": "A credencial está ausente, é inválida, expirou ou foi revogada.",
   "err.c.plan":
     "A organização atingiu um limite do seu plano ou a funcionalidade não está incluída. `details` traz `plan`, o limite ou a funcionalidade, `suggestedPlan` e `upgradeUrl`. As leituras nunca são bloqueadas por plano.",
   "err.c.forbidden": "O papel da credencial não tem a permissão (`details.permission`) ou falta um scope ao token OAuth (`details.requiredScope`).",
+  "err.c.forbiddenOther":
+    "`two_factor_setup_required`: a organização exige verificação em duas etapas e o usuário ainda não a ativou (ative e repita). `ai_notice_required`: um administrador precisa aceitar o aviso vigente de tratamento de dados da IA (Configurações → IA). `bad_origin`: uma requisição com cookie de sessão de uma origem que não é a web do CalaSign (com `Authorization` não se aplica).",
   "err.c.notFound": "O recurso não existe ou pertence a outra organização.",
   "err.c.conflict": "O estado do recurso não permite a operação: por exemplo, modificar um envelope que não é mais rascunho ou anular um já encerrado.",
   "err.c.idem": "Você reutilizou uma `Idempotency-Key` com outro corpo, ou a requisição original ainda está sendo processada (tente novamente em alguns segundos).",
   "err.c.versionChanged":
-    "Controle de edição concorrente: você enviou `X-Expected-Updated-At` com o `updatedAt` que leu ao modificar um rascunho (`PATCH /v1/envelopes/{id}`, `PUT …/recipients`, `PUT …/fields`, `PUT …/seal-options`, `PATCH …/ai/settings`) ou um modelo (`PATCH /v1/templates/{id}`, `PUT …/roles`, `PUT …/fields`, `PUT …/shares`), ou ao enviá-lo (`POST …/send`), e alguém o alterou nesse meio-tempo. `details.updatedAt` traz o valor atual: recarregue, revise e repita. Sem o cabeçalho não há controle. Em uma negociação, significa que há uma versão nova.",
+    "Controle de edição concorrente: você enviou `X-Expected-Updated-At` com o `updatedAt` que leu ao modificar um rascunho (`PATCH /v1/envelopes/{id}`, `PUT …/recipients`, `PUT …/fields`, `PUT …/seal-options`, `PATCH …/ai/settings`) ou um modelo (`PATCH /v1/templates/{id}`, `PUT …/roles`, `PUT …/fields`, `PUT …/shares`), ou ao enviá-lo, anulá-lo ou mandar um lembrete (`POST …/send`, `POST …/void`, `POST …/remind`), e alguém o alterou nesse meio-tempo. `details.updatedAt` traz o valor atual: recarregue, revise e repita. Sem o cabeçalho não há controle. Em uma negociação, significa que há uma versão nova.",
+  "err.c.crm":
+    "Envio a partir de um mapeamento de CRM: a conexão não tem a conta salva (`crm_account_unknown`: teste com `POST /v1/crm/connections/{id}/test` ou reconecte) ou o `companyId` da requisição é de outra conta que não a do mapeamento (`company_mismatch`).",
   "err.c.purged":
-    "Os originais do envelope foram apagados pela política de retenção da organização (conta a partir do encerramento do envelope: concluído, anulado, recusado ou vencido). `410` ao baixar o original, criar um modelo a partir do envelope ou usar a IA; `409` ao cloná-lo. O PDF assinado e a evidência são mantidos.",
-  "err.c.tooLarge": "O arquivo excede o tamanho máximo.",
+    "Os originais do envelope foram apagados pela política de retenção da organização (conta a partir do encerramento do envelope: concluído, anulado, recusado ou vencido). `410` ao baixar o original, criar um modelo a partir do envelope ou usar a IA; `409` ao cloná-lo. O PDF assinado e a evidência são mantidos. No repositório de acordos, `GET /v1/agreements/{id}/file` responde `410 purged` se o arquivo já foi apagado.",
+  "err.c.tooLarge":
+    "O arquivo excede o tamanho máximo (`file_too_large`, o mesmo código em todos os envios de arquivo, também quando vários documentos juntos excedem o total por requisição) ou o JSON do envelope em `POST /v1/envelopes`, sem o base64 dos documentos, é grande demais (`payload_too_large`).",
+  "err.c.wrongCell":
+    "Os dados da organização estão em outra célula (região) do CalaSign. `details.cell` é a célula e `details.baseUrl` a URL da API que a atende (também no cabeçalho `Location`, com o mesmo caminho). A requisição não foi processada: repita contra `details.baseUrl` e use essa URL daí em diante. Os SDKs fazem isso sozinhos (uma vez).",
   "err.c.unprocessable": "A requisição é válida, mas não pode ser processada com esses dados (faltam papéis do modelo, linhas inválidas, PDF pesado demais para buscar âncoras).",
   "err.c.rate": "Você excedeu o limite de requisições por IP (código `rate_limited`; versões anteriores da API enviavam `bad_request`). Aguarde o tempo indicado no cabeçalho `retry-after` (segundos) e tente novamente.",
   "err.c.rateBiz":
-    "Limite de negócio com código próprio (`reminded_recently`, `form_rate_limited`, `workflow_rate_limited`, `ai_signer_limit`, `ai_budget_exceeded`, `too_many_comments`, `too_many_proposals`, `archive_recently_renewed`, `too_many_attempts`). Não traz `retry-after`: não tente novamente em loop; avise o usuário ou tente bem mais tarde.",
+    "Limite de negócio com código próprio (`reminded_recently`, `reminder_daily_limit`, `form_rate_limited`, `workflow_rate_limited`, `ai_signer_limit`, `ai_budget_exceeded`, `too_many_comments`, `too_many_proposals`, `archive_recently_renewed`, `too_many_attempts`). Não traz `retry-after`: não tente novamente em loop; avise o usuário ou tente bem mais tarde.",
   "err.c.internal": "Erro nosso. É seguro tentar novamente com espera crescente; se você usa `Idempotency-Key`, nada é duplicado.",
+  "err.c.upstream":
+    "Um serviço externo falhou: a autoridade de carimbo do tempo (`tsa_unavailable`) ou o provedor de IA (`ai_unavailable`). Tente novamente em alguns minutos.",
+  "err.c.unavailable":
+    "Indisponibilidade temporária: armazenamento de documentos (`storage_unavailable`), leitor de PDF ocupado (`pdf_reader_busy`) ou provedor de IA sobrecarregado (`ai_rate_limited`). A requisição não foi processada: tente novamente com espera crescente. `ai_unavailable` com `503` significa que o servidor não tem provedor de IA configurado.",
+  "err.c.byok":
+    "A chave de criptografia própria da organização (BYOK, no seu KMS) não está disponível: não é possível salvar nem ler documentos. **Não tente novamente em loop:** um administrador precisa restabelecer o acesso à chave (`details.keyArn`).",
+  "err.c.aiTimeout": "O provedor de IA não respondeu a tempo. Tente novamente mais tarde.",
   "err.codes.retry":
-    "**O que tentar novamente:** erros de rede, o `429` do limite por IP (com `retry-after`) e `5xx`, com espera exponencial e um pouco de aleatoriedade. **O que não:** os `429` com código próprio (limites de negócio, sem `retry-after`) e os demais `4xx`, que não vão mudar se você repetir a mesma requisição.",
+    "**O que tentar novamente:** erros de rede, o `429` do limite por IP (com `retry-after`) e `5xx`, com espera exponencial e um pouco de aleatoriedade. **O que não:** os `429` com código próprio (limites de negócio, sem `retry-after`), o `503 byok_key_unavailable` (um administrador precisa restabelecer a chave) e os demais `4xx`, que não vão mudar se você repetir a mesma requisição. Repita um `421 wrong_cell` uma vez contra `details.baseUrl`. Os SDKs oficiais aplicam essas regras sozinhos.",
   "err.idem.h": "Idempotência",
   "err.idem.p":
     "Se uma requisição de criação é interrompida (timeout, rede), você não sabe se ela chegou. Envie o cabeçalho `Idempotency-Key` com um valor único por operação —por exemplo, o id do pedido no seu sistema— e tente novamente com o mesmo valor: a CalaSign executa a operação uma única vez e devolve às novas tentativas a resposta guardada, com o cabeçalho `idempotent-replay: true`.",
@@ -604,7 +621,8 @@ export const docsPt: Record<DocsKey, string> = {
   "sdk.f.node.deps": "Node.js ≥ 18 (fetch nativo), com tipos",
   "sdk.f.auth": "Autenticação",
   "sdk.f.retries": "Novas tentativas",
-  "sdk.f.retries.v": "Rede, 429 (respeita Retry-After) e 5xx, backoff exponencial, 3 por padrão",
+  "sdk.f.retries.v":
+    "Rede, 429 do limite por IP (respeita Retry-After) e 5xx exceto byok_key_unavailable, backoff exponencial, 3 por padrão. 421 wrong_cell: uma nova tentativa contra details.baseUrl, que passa a ser a URL base",
   "sdk.f.idem": "Idempotency-Key automática",
   "sdk.f.errors": "Erros",
   "sdk.install": "Instalação",

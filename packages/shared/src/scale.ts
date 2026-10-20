@@ -175,7 +175,7 @@ export interface WebForm {
   updatedAt: string;
 }
 
-export type WebFormInactiveCode = "not_member" | "missing_permission" | "template_access" | "key_revoked" | "plan_feature" | "plan_api";
+export type WebFormInactiveCode = "not_member" | "missing_permission" | "template_access" | "key_revoked" | "plan_feature" | "plan_api" | "misconfigured";
 
 /** Lo que ve el público al abrir /f/:slug. */
 export interface PublicWebForm {

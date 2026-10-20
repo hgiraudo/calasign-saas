@@ -2,7 +2,7 @@
 // Autenticación con token Bearer por organización (guardado como hash). Desactivar un usuario le quita la
 // membresía, los grupos y las sesiones en la organización, pero sigue visible para el IdP (active: false).
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { revokeMemberAccess } from "../member-access";
+import { actingPerson, revokeMemberAccess } from "../member-access";
 import { BUILTIN_ROLE_PERMISSIONS, CreateScimTokenInput, type ScimSettings, type ScimToken } from "@calasign/shared";
 import { z } from "zod";
 import { config } from "../../config";
@@ -151,6 +151,11 @@ async function setActive(db: Db, tenantId: string, userId: string, active: boole
       userId,
       t?.scim_default_role ?? "member",
     ]);
+    // Una invitación pendiente al mismo correo ya no hace falta: si quedara, después de una baja lo volvía a sumar.
+    await db.query(
+      `UPDATE invitations SET revoked_at = now() WHERE tenant_id = $1 AND accepted_at IS NULL AND revoked_at IS NULL AND lower(email) = (SELECT lower(email) FROM users WHERE id = $2)`,
+      [tenantId, userId],
+    );
   } else if (!active && m) {
     // Los propietarios se administran desde la consola (allí solo otro propietario puede quitarlos): un token SCIM,
     // que puede crear un administrador, no puede desactivarlos.
@@ -396,7 +401,7 @@ export async function scimRoutes(app: FastifyInstance, s: Services) {
     const secret = `cs_scim_${randomToken(32)}`;
     const row = await s.db.one(
       `INSERT INTO scim_tokens (id, tenant_id, name, prefix, token_hash, created_by) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-      [uuidv7(), req.auth!.tenantId, input.name, secret.slice(0, 14), sha256Hex(secret), req.auth!.userId],
+      [uuidv7(), req.auth!.tenantId, input.name, secret.slice(0, 14), sha256Hex(secret), await actingPerson(s.db, req.auth!)],
     );
     reply.code(201);
     return { token: toToken(row), secret };

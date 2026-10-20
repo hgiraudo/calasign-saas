@@ -22,7 +22,7 @@ export interface AuthContext {
   /** Rol, permisos y grupos (RBAC). Lo completa authenticate(). */
   access?: AccessInfo;
   /** Presente si la petición vino con un access token OAuth: app y scopes concedidos. */
-  oauth?: { clientId: string; clientPublicId: string; scopes: string[] };
+  oauth?: { clientId: string; clientPublicId: string; scopes: string[]; ssoSession?: boolean };
 }
 
 declare module "fastify" {
@@ -48,6 +48,9 @@ export function authenticate(s: Services) {
         req.auth = await oauthAuthContext(s.db, key, ip, userAgent);
         enforceOAuthScope(req, req.auth);
         req.auth.access = await loadAccess(s.db, req.auth);
+        // Como la sesión web SSO: el segundo factor lo maneja el proveedor de identidad (si no, quien autorizó una app
+        // desde SSO en una organización con 2FA obligatorio quedaba con un token inservible y sin forma de activar 2FA).
+        if (req.auth.oauth?.ssoSession && req.auth.access) req.auth.access.twoFactorSetupRequired = false;
         restrictAccessToScopes(req.auth);
         await enforceRoutePolicy(s.db, req, req.auth);
         return;

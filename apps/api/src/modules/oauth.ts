@@ -33,6 +33,7 @@ import { hasPerm } from "./access";
 import { auditFromRequest } from "./audit";
 import { authenticate, SESSION_COOKIE, type AuthContext, type Services } from "./context";
 import { CODE_PREFIX, CODE_TTL_SEC, REFRESH_PREFIX, assertUserTokenAllowed, issueTokens, requireUserSession } from "./oauth-tokens";
+import { actingPerson } from "./member-access";
 
 // ───────────────────────────── Utilidades ─────────────────────────────
 
@@ -749,11 +750,13 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
     const id = uuidv7();
     const clientId = `csapp_${randomToken(12)}`;
     const secret = input.confidential === false ? null : `cssec_${randomToken(32)}`;
+    // A nombre de la persona (también si la crea una API key): así la app se inutiliza con su baja.
+    const creator = await actingPerson(s.db, a);
     await s.db.tx(async (t) => {
       await t.query(
         `INSERT INTO oauth_clients (id, tenant_id, client_id, secret_hash, secret_prefix, name, description, redirect_uris, grant_types, scopes, created_by)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-        [id, a.tenantId, clientId, secret ? sha256Hex(secret) : null, secret ? secret.slice(0, 12) : null, input.name, input.description ?? null, input.redirectUris ?? [], input.grantTypes, input.scopes, a.userId],
+        [id, a.tenantId, clientId, secret ? sha256Hex(secret) : null, secret ? secret.slice(0, 12) : null, input.name, input.description ?? null, input.redirectUris ?? [], input.grantTypes, input.scopes, creator],
       );
       if (usesCc) {
         // Identidad de servicio: una API key interna sin secreto utilizable; da el rol y la propiedad de los sobres.
@@ -761,7 +764,7 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
         await t.query(
           `INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash, created_by, role, role_id, oauth_client_id)
            VALUES ($1,$2,$3,'oauth',$4,$5,$6,$7,$8)`,
-          [keyId, a.tenantId, `App OAuth: ${input.name}`, sha256Hex(`unusable:${randomToken(32)}`), a.userId, role, input.roleId ?? null, id],
+          [keyId, a.tenantId, `App OAuth: ${input.name}`, sha256Hex(`unusable:${randomToken(32)}`), creator, role, input.roleId ?? null, id],
         );
         await t.query(`UPDATE oauth_clients SET service_api_key_id = $2 WHERE id = $1`, [id, keyId]);
       }

@@ -12,6 +12,7 @@ import { encrypt } from "../lib/util";
 import { enqueue } from "../infra/queue";
 import { recordAudit } from "./audit";
 import { z } from "zod";
+import { actingPerson } from "./member-access";
 
 const SESSION_DAYS = 14;
 
@@ -247,7 +248,8 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
     const id = uuidv7();
     const row = await s.db.one(
       `INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash, created_by, role, role_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-      [id, req.auth!.tenantId, input.name, secret.slice(0, 12), sha256Hex(secret), req.auth!.userId, role, roleId],
+      // A nombre de la persona (también si la crea una API key): así se revoca con su baja.
+      [id, req.auth!.tenantId, input.name, secret.slice(0, 12), sha256Hex(secret), await actingPerson(s.db, req.auth!), role, roleId],
     );
     reply.code(201);
     return { apiKey: toApiKey(row), secret };

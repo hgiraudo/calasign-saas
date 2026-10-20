@@ -211,13 +211,21 @@ export async function markPaymentPaid(
  */
 export async function closeStaleCheckouts(d: { db: Db; log: { error: (o: object, m: string) => void } }, limit = 50) {
   // Checkouts descartados al cambiar el pagador: se cierran en el proveedor (siguen cobrables hasta que se cierren).
-  const stale = await d.db.query<any>(`SELECT id, provider, stale_checkout_id FROM envelope_payments WHERE stale_checkout_id IS NOT NULL LIMIT $1`, [limit]);
+  const stale = await d.db.query<any>(
+    `SELECT id, provider, stale_checkout_id FROM envelope_payments WHERE stale_checkout_id IS NOT NULL ORDER BY updated_at LIMIT $1`,
+    [limit],
+  );
   for (const p of stale) {
     try {
       if (p.provider === "stripe") await stripeExpireCheckoutSession(p.stale_checkout_id);
       else if (p.provider === "mercadopago") await mpExpirePreference(p.stale_checkout_id);
       await d.db.query(`UPDATE envelope_payments SET stale_checkout_id = NULL WHERE id = $1 AND stale_checkout_id = $2`, [p.id, p.stale_checkout_id]);
     } catch (err) {
+      // Si el proveedor ya no lo conoce (no existe, otra cuenta), no hay nada que cerrar: se suelta para no reintentarlo
+      // para siempre (y no tapar a los demás).
+      if (/\b404\b|not found|no such|resource_missing/i.test(String(err))) {
+        await d.db.query(`UPDATE envelope_payments SET stale_checkout_id = NULL WHERE id = $1 AND stale_checkout_id = $2`, [p.id, p.stale_checkout_id]).catch(() => {});
+      }
       d.log.error({ err: String(err), paymentId: p.id }, "no se pudo cerrar un checkout descartado");
     }
   }

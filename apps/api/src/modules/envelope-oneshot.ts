@@ -32,6 +32,7 @@ import {
   replaceRecipients,
   sendEnvelope,
   type PreparedPdfDocument,
+  assertEnvelopeLogicOrder,
 } from "./envelopes";
 import { assignFieldIds } from "./logic";
 import { loadDetail } from "./mappers";
@@ -259,7 +260,10 @@ async function createEnvelope(
       await appendEvent(t, { tenantId: a.tenantId, envelopeId: id, type: "envelope.created", actor: a.actor, data: { subject: input.subject } });
       for (const d of docs) await insertPreparedDocument(t, a.tenantId, a.actor, id, d);
       if (recipients.length) await replaceRecipients(t, a, id, recipients);
-      if (fields.length) await replaceFields(t, a.tenantId, id, fields);
+      if (fields.length) {
+        await replaceFields(t, a.tenantId, id, fields);
+        await assertEnvelopeLogicOrder(t, id);
+      }
       if (!send) return;
       await sendEnvelope(t, a.tenantId, id, a.actor);
       // Firmantes embebidos a los que ya les toca: su URL de firma va en la respuesta (sin otra llamada).

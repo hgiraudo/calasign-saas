@@ -19,7 +19,7 @@ import { AppError, badRequest, notFound } from "../lib/errors";
 import { iso, sha256Hex, uuidv7 } from "../lib/util";
 import { assertTemplateAccess, templateVisibilitySql } from "./access";
 import { authenticate, type AuthContext, type Services } from "./context";
-import { assertDocumentLimits, idempotent, sendEnvelope, assertLogicOrder } from "./envelopes";
+import { assertDocumentLimits, idempotent, sendEnvelope, assertTemplateLogicOrder } from "./envelopes";
 import { checkSenderValue, insertEnvelopeField } from "./fieldvalues";
 import { assignFieldIds, copyFieldLogic, pruneDanglingConditions, saveFieldLogic } from "./logic";
 import { loadDetail, loadDocuments, toDocument } from "./mappers";
@@ -318,6 +318,8 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
       await t.query(`DELETE FROM template_fields f USING template_roles r WHERE f.role_id = r.id AND r.template_id = $1 AND r.role IN ('cc','approver')`, [tpl.id]);
       // Campos borrados (con su rol o por el cambio de rol): las condiciones que los citaban se quitan.
       await pruneDanglingConditions(t, "template_fields", tpl.id);
+      // Reordenar roles también puede dejar una condición citando a un rol que firma después.
+      await assertTemplateLogicOrder(t, tpl.id);
       await touch(t, tpl.id);
     });
     return loadTemplateDetail(s.db, a.tenantId, req.params.id);
@@ -366,10 +368,7 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
       }
       await saveFieldLogic(t, "template_fields", input.fields);
       // Condiciones que citan un campo de un rol que firma después (o en el mismo turno): ver logicOrderProblems.
-      await assertLogicOrder(
-        await t.query<any>(`SELECT id, role_id AS recipient_id, label, conditions, read_only FROM template_fields WHERE template_id = $1`, [tpl.id]),
-        await t.query<any>(`SELECT id, name, routing_order FROM template_roles WHERE template_id = $1`, [tpl.id]),
-      );
+      await assertTemplateLogicOrder(t, tpl.id);
       await touch(t, tpl.id);
     });
     return loadTemplateDetail(s.db, a.tenantId, req.params.id);

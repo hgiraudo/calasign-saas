@@ -6,8 +6,7 @@ import {
   UpdateEnvelopeInput,
   VoidEnvelopeInput,
   type EnvelopeEvent,
-  type EnvelopeSummary,
-} from "@calasign/shared";
+  type EnvelopeSummary, RESERVED_METADATA_KEYS } from "@calasign/shared";
 import { InvalidPdfError, preparePdfUpload } from "@calasign/pdf";
 import type { Db } from "../infra/db";
 import { appendEvent, type Actor } from "../infra/evidence";
@@ -282,7 +281,9 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
           input.locale ?? null,
           input.expiresAt !== undefined,
           input.expiresAt ?? null,
-          input.metadata ? JSON.stringify(input.metadata) : null,
+          // Las claves del sistema que ya tenía el borrador (plantilla, CRM, acuerdo…) se conservan: el cliente no las
+          // puede fijar, pero tampoco borrarlas al reescribir sus metadatos.
+          input.metadata ? JSON.stringify({ ...input.metadata, ...pickReservedMetadata(e.metadata) }) : null,
         ],
       );
       await applyEnvelopeSettings(t, e.id, input);
@@ -371,6 +372,8 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
       const e = await lockEnvelope(t, a.tenantId, req.params.id);
       requireDraft(e);
       await replaceRecipients(t, a, e.id, input.recipients);
+      // Reordenar destinatarios también puede dejar una condición citando a alguien que firma después.
+      await assertEnvelopeLogicOrder(t, e.id);
       await touch(t, e.id);
     });
     return loadDetail(s.db, a.tenantId, req.params.id);
@@ -385,10 +388,7 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
       requireDraft(e);
       await replaceFields(t, a.tenantId, e.id, input.fields);
       // Al diseñar la lógica (no al enviar: sobres y plantillas ya armadas no dejan de poder enviarse).
-      await assertLogicOrder(
-        await t.query<any>(`SELECT id, recipient_id, label, conditions, read_only FROM fields WHERE envelope_id = $1`, [e.id]),
-        await t.query<any>(`SELECT id, name, routing_order FROM recipients WHERE envelope_id = $1`, [e.id]),
-      );
+      await assertEnvelopeLogicOrder(t, e.id);
       await touch(t, e.id);
     });
     return loadDetail(s.db, a.tenantId, req.params.id);
@@ -760,6 +760,28 @@ export function logicOrderProblems(
 export async function assertLogicOrder(fields: Parameters<typeof logicOrderProblems>[0], recips: Parameters<typeof logicOrderProblems>[1]) {
   const problems = logicOrderProblems(fields, recips);
   if (problems.length) throw new AppError(422, "logic_order", problems.join(". "), { problems });
+}
+
+function pickReservedMetadata(m: Record<string, unknown> | null | undefined): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const k of RESERVED_METADATA_KEYS) if (m && k in m) out[k] = m[k];
+  return out;
+}
+
+/** El orden de la lógica de un sobre (después de guardar campos o destinatarios, o de crearlo en un paso). */
+export async function assertEnvelopeLogicOrder(t: Db, envelopeId: string) {
+  await assertLogicOrder(
+    await t.query<any>(`SELECT id, recipient_id, label, conditions, read_only FROM fields WHERE envelope_id = $1`, [envelopeId]),
+    await t.query<any>(`SELECT id, name, routing_order FROM recipients WHERE envelope_id = $1`, [envelopeId]),
+  );
+}
+
+/** Lo mismo para una plantilla (los roles hacen de destinatarios). */
+export async function assertTemplateLogicOrder(t: Db, templateId: string) {
+  await assertLogicOrder(
+    await t.query<any>(`SELECT id, role_id AS recipient_id, label, conditions, read_only FROM template_fields WHERE template_id = $1`, [templateId]),
+    await t.query<any>(`SELECT id, name, routing_order FROM template_roles WHERE template_id = $1`, [templateId]),
+  );
 }
 
 /** Valida y envía un borrador (dentro de la transacción del llamador). */

@@ -45,7 +45,7 @@ import { auditFromRequest, recordAudit } from "./audit";
 import { SESSION_COOKIE, authenticate, clientInfo, type AuthContext, type Services } from "./context";
 import { assertSessionAllowed } from "./identity/sso";
 import { assertInvitationCapacity } from "./billing/plans";
-import { revokeMemberAccess } from "./member-access";
+import { actingPerson, revokeMemberAccess } from "./member-access";
 
 const SESSION_DAYS = 14;
 const INVITE_DAYS = 7;
@@ -384,6 +384,7 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     if (cur.role === "owner" && a.access?.role !== "owner") throw forbidden("Solo un propietario puede cambiar el rol de otro propietario");
     assertCanManage(a, await permsOf(s.db, a.tenantId, cur.role, cur.role_id), "cambiar el rol de este miembro");
     assertCanGrant(a, target, await permsOf(s.db, a.tenantId, target.role, target.roleId));
+    let revoked: Awaited<ReturnType<typeof revokeMemberAccess>> | null = null;
     await s.db.tx(async (t) => {
       // Serializa los cambios de propietarios de la organización: dos bajas simultáneas no la dejan sin ninguno.
       await t.query(`SELECT id FROM tenants WHERE id = $1 FOR UPDATE`, [a.tenantId]);
@@ -394,11 +395,23 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
       if (cur.role === "owner" && target.role !== "owner" && (await ownerCount(t, a.tenantId)) === 0) {
         throw conflict("last_owner", "La organización tiene que tener al menos un propietario");
       }
+      // Con menos permisos que antes: las credenciales que creó con el rol anterior (API keys, apps de servicio, tokens
+      // SCIM, invitaciones pendientes) tenían esos permisos y los conservaban. Se revocan, como en una baja.
+      const before = await permsOf(t, a.tenantId, cur.role, cur.role_id);
+      const after = new Set(await permsOf(t, a.tenantId, target.role, target.roleId));
+      if (before.some((p) => !after.has(p))) revoked = await revokeMemberAccess(t, a.tenantId, req.params.userId!, { removal: false });
     });
+    const rv = revoked as Awaited<ReturnType<typeof revokeMemberAccess>> | null;
     await auditFromRequest(s.db, req, a, "member.role_changed", {
       targetType: "user",
       targetId: req.params.userId,
-      data: { from: cur.role === "custom" ? { role: "custom", roleId: cur.role_id } : cur.role, to: target.role === "custom" ? { role: "custom", roleId: target.roleId } : target.role },
+      data: {
+        from: cur.role === "custom" ? { role: "custom", roleId: cur.role_id } : cur.role,
+        to: target.role === "custom" ? { role: "custom", roleId: target.roleId } : target.role,
+        ...(rv && (rv.keys.length || rv.invitations || rv.serviceApps.length || rv.scimTokens)
+          ? { revokedCredentials: { apiKeys: rv.keys.map((k) => k.id), invitations: rv.invitations, serviceApps: rv.serviceApps, scimTokens: rv.scimTokens } }
+          : {}),
+      },
     });
     return { ok: true };
   });
@@ -499,7 +512,8 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
       await t.query(
         `INSERT INTO invitations (id, tenant_id, email, role, role_id, token_hash, invited_by, expires_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7, now() + interval '${INVITE_DAYS} days')`,
-        [id, a.tenantId, input.email, target.role, target.roleId, sha256Hex(token), a.userId],
+        // A nombre de la persona (también si invita una API key): así se revoca con su baja.
+        [id, a.tenantId, input.email, target.role, target.roleId, sha256Hex(token), await actingPerson(t, a)],
       );
     });
     const org = await s.db.one<any>(`SELECT name, default_locale FROM tenants WHERE id = $1`, [a.tenantId]);
@@ -562,6 +576,13 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
   /** Marca la invitación como aceptada y crea la membresía (una sola vez; una invitación revocada o vencida no sirve). */
   async function joinByInvitation(req: FastifyRequest, invitationId: string, userId: string, email: string) {
     const inv = await s.db.tx(async (t) => {
+      // Cupo de usuarios del plan al aceptar (no solo al invitar): después de bajar de plan, las invitaciones pendientes
+      // se seguían aceptando por encima del límite. Con la organización bloqueada, como el alta por SSO o SCIM.
+      const pre = await t.one<any>(`SELECT tenant_id FROM invitations WHERE id = $1`, [invitationId]);
+      if (pre) {
+        await t.query(`SELECT id FROM tenants WHERE id = $1 FOR UPDATE`, [pre.tenant_id]);
+        await assertInvitationCapacity(t, pre.tenant_id, email);
+      }
       const upd = await t.query<any>(
         `UPDATE invitations SET accepted_at = now(), accepted_by = $2
           WHERE id = $1 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now() RETURNING id, tenant_id, role, role_id`,

@@ -129,7 +129,22 @@ async function formProblem(db: Db, r: FormRow, planFeatures?: readonly string[])
   if (r.created_by_api_key && !features.includes("api")) {
     return { code: "plan_feature", message: "El plan actual de la organización no incluye el acceso por API (el formulario lo creó una API key)" };
   }
-  return ownerProblem(db, formOwner(r), r.template_id);
+  const owner = await ownerProblem(db, formOwner(r), r.template_id);
+  if (owner) return owner;
+  return configProblem(db, r);
+}
+
+/**
+ * La plantilla pudo cambiar después de publicar el formulario (rol que pasó a aprobador o copia, campos o roles que ya
+ * no cierran con el prellenado): la página pública y la consola lo muestran no disponible, como lo rechaza el envío.
+ */
+async function configProblem(db: Db, r: FormRow): Promise<FormProblem | null> {
+  try {
+    checkConfig(await loadTemplateForUse(db, r.tenant_id, r.template_id), r as any);
+    return null;
+  } catch (e) {
+    return { code: "misconfigured", message: `El formulario ya no coincide con su plantilla: ${(e as Error).message}` };
+  }
 }
 
 /**
@@ -145,7 +160,8 @@ async function formStates(db: Db, tenantId: string, rows: FormRow[]): Promise<Ma
     const o = formOwner(r);
     const k = `${o.userId ?? ""}|${o.apiKeyId ?? ""}|${r.template_id}`;
     if (!memo.has(k)) memo.set(k, formProblem(db, r, planFeatures));
-    out.set(r.id, await memo.get(k)!);
+    // La configuración es de cada formulario (no del dueño ni de la plantilla): se mira aparte.
+    out.set(r.id, (await memo.get(k)!) ?? (await configProblem(db, r)));
   }
   return out;
 }

@@ -129,7 +129,8 @@ export async function oauthAuthContext(db: Db, token: string, ip: string | null,
   const o = await resolveAccessToken(db, token);
   if (!o) throw unauthorized();
   if (o.userId) await assertUserTokenAllowed(db, { tenantId: o.tenantId, userId: o.userId, authMethod: o.authMethod, ssoTenantId: o.ssoTenantId, issuedAt: o.createdAt });
-  const oauth = { clientId: o.clientId, clientPublicId: o.clientPublicId, scopes: o.scopes };
+  // ssoSession: el token salió de una sesión SSO de esta organización (para la misma excepción de 2FA que la sesión web).
+  const oauth = { clientId: o.clientId, clientPublicId: o.clientPublicId, scopes: o.scopes, ssoSession: o.authMethod === "sso" && o.ssoTenantId === o.tenantId };
   if (o.userId) {
     return {
       tenantId: o.tenantId,

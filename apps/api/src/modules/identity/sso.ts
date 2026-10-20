@@ -352,6 +352,11 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
         await recordAudit(s.db, { tenantId, action: "auth.sso_denied", actor: { type: "anonymous", label: email }, ip, userAgent, data: { protocol, reason: "not_member" } });
         throw new AppError(403, "sso_not_member", "No sos miembro de esta organización. Pedí una invitación al administrador.");
       }
+      // Desactivado por SCIM: el alta automática por SSO no lo vuelve a sumar (lo decide el proveedor de identidad).
+      if (user && (await s.db.one(`SELECT 1 FROM scim_users WHERE tenant_id = $1 AND user_id = $2 AND active = false`, [tenantId, user.id]))) {
+        await recordAudit(s.db, { tenantId, action: "auth.sso_denied", actor: { type: "anonymous", label: email }, ip, userAgent, data: { protocol, reason: "scim_deactivated" } });
+        throw new AppError(403, "sso_not_member", "No sos miembro de esta organización. Pedí una invitación al administrador.");
+      }
       const overLimit = await s.db.tx(async (t) => {
         // Cupo de usuarios del plan, como en invitaciones y SCIM (con la organización bloqueada: dos altas simultáneas
         // no lo superan). El SSO es de Enterprise (sin cupo), pero la configuración queda al bajar de plan: sin esto,
@@ -371,6 +376,8 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
           user.id,
           c.jit_role,
         ]);
+        // Una invitación pendiente al mismo correo ya no hace falta: si quedara, después de una baja lo volvía a sumar.
+        await t.query(`UPDATE invitations SET revoked_at = now() WHERE tenant_id = $1 AND lower(email) = lower($2) AND accepted_at IS NULL AND revoked_at IS NULL`, [tenantId, email]);
         return null;
       });
       if (overLimit) {

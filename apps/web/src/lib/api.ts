@@ -197,6 +197,10 @@ const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
     "pt-BR": "A entrega já está sendo reenviada.",
     en: "The delivery is already being retried.",
   },
+  template_has_forms: {
+    "pt-BR": "O modelo tem formulários web ativos: quem os criou ou um administrador precisa desativá-los ou excluí-los antes.",
+    en: "The template has active web forms: whoever created them or an admin must deactivate or delete them first.",
+  },
   validation_error: { "pt-BR": "Há dados inválidos no pedido.", en: "The request has invalid data." },
 };
 

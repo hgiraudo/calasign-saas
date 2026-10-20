@@ -600,8 +600,16 @@ export async function webhookRoutes(app: FastifyInstance, s: Services) {
       if (live) throw conflict("delivery_pending", "La entrega ya se está reintentando");
     }
     await s.db.tx(async (t) => {
-      const upd = await t.query(`UPDATE webhook_deliveries SET status = 'pending', next_retry_at = NULL WHERE id = $1 AND status = $2 RETURNING id`, [row.id, row.status]);
-      if (!upd.length) throw conflict("delivery_pending", "La entrega ya se está reintentando");
+      // Con la entrega bloqueada se vuelve a mirar que no haya un intento vivo: dos reintentos simultáneos de una
+      // pendiente (doble clic) pasaban los dos el chequeo de afuera y la mandaban dos veces.
+      const cur = await t.one<any>(`SELECT status FROM webhook_deliveries WHERE id = $1 FOR UPDATE`, [row.id]);
+      if (cur?.status !== row.status) throw conflict("delivery_pending", "La entrega ya se está reintentando");
+      const live = await t.one(
+        `SELECT 1 FROM jobs WHERE queue = 'webhook' AND status IN ('pending','running') AND payload->>'deliveryId' = $1 LIMIT 1`,
+        [row.id],
+      );
+      if (live) throw conflict("delivery_pending", "La entrega ya se está reintentando");
+      await t.query(`UPDATE webhook_deliveries SET status = 'pending', next_retry_at = NULL WHERE id = $1`, [row.id]);
       await enqueue(t, "webhook", { kind: "deliver", deliveryId: row.id, manual: true }, { maxAttempts: 1 });
     });
     reply.code(202);

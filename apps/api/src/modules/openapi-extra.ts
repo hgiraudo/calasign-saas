@@ -308,8 +308,8 @@ export const ERRORS: Record<string, Err> = {
   template_has_forms: {
     status: 409,
     code: "template_has_forms",
-    message: "La plantilla tiene 1 formulario(s) web activo(s): desactivalos o borralos antes",
-    details: { webForms: 1 },
+    message: "La plantilla tiene formularios web activos (Alta de clientes): quien los creó o un administrador tiene que desactivarlos o borrarlos antes",
+    details: { webForms: 1, names: ["Alta de clientes"] },
     summary: "La plantilla tiene formularios web activos (se borrarían con ella)",
   },
   not_draft: { status: 409, code: "not_draft", message: "Solo se puede modificar un sobre en borrador", summary: "El sobre ya no es un borrador" },

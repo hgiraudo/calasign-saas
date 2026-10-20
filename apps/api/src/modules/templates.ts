@@ -206,8 +206,19 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
       const tpl = await lockTemplate(t, a.tenantId, req.params.id);
       // Sus formularios web se borran con ella (ON DELETE CASCADE): con alguno activo (que puede ser de otra persona y
       // tener el link publicado), primero hay que desactivarlo o borrarlo.
-      const forms = await t.one<{ n: number }>(`SELECT count(*)::int AS n FROM web_forms WHERE template_id = $1 AND active`, [tpl.id]);
-      if (forms?.n) throw conflict("template_has_forms", `La plantilla tiene ${forms.n} formulario(s) web activo(s): desactivalos o borralos antes`, { webForms: forms.n });
+      // Solo los que todavía reciben envíos (activos, sin vencer ni agotar); se nombran para saber a quién pedírselo.
+      const forms = await t.query<{ name: string }>(
+        `SELECT name FROM web_forms WHERE template_id = $1 AND active AND (expires_at IS NULL OR expires_at > now())
+            AND (max_uses IS NULL OR uses < max_uses) ORDER BY name LIMIT 20`,
+        [tpl.id],
+      );
+      if (forms.length) {
+        throw conflict(
+          "template_has_forms",
+          `La plantilla tiene formularios web activos (${forms.map((f) => f.name).join(", ")}): quien los creó o un administrador tiene que desactivarlos o borrarlos antes`,
+          { webForms: forms.length, names: forms.map((f) => f.name) },
+        );
+      }
       fileIds = (await t.query<any>(`SELECT file_id FROM template_documents WHERE template_id = $1`, [tpl.id])).map((d) => d.file_id);
       await t.query(`DELETE FROM templates WHERE id = $1`, [tpl.id]);
     });

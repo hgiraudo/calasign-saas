@@ -19,7 +19,12 @@ function readInjected(): PublicBrandTheme | null {
 let current: PublicBrandTheme | null = readInjected();
 let version = 0;
 /** Página pública de verificación abierta: tema restringido (sin el CSS propio de la marca). */
-let verifyPage = typeof window !== "undefined" && window.location?.pathname === "/verify";
+let verifyPage = typeof window !== "undefined" && isVerifyPath(window.location?.pathname ?? "");
+
+/** "/verify" y "/verify/" (el router muestra la misma página; el servidor también la trata como verificación). */
+export function isVerifyPath(path: string): boolean {
+  return path.replace(/\/+$/, "") === "/verify";
+}
 const listeners = new Set<() => void>();
 
 function ensure<T extends HTMLElement>(id: string, tag: string, parent: HTMLElement = document.head): T {
@@ -36,8 +41,9 @@ function apply(t: PublicBrandTheme | null) {
   if (typeof document === "undefined") return;
   const style = ensure<HTMLStyleElement>("brand-theme", "style");
   // En /verify solo barra, botones y fuente (verifyPageTheme): con el CSS propio una marca podía ocultar el veredicto.
-  // El tema pudo llegar completo desde la página del firmante (navegación dentro de la web): se recalcula.
-  style.textContent = t ? (verifyPage ? verifyCss(t) : t.css) : "";
+  // El tema pudo llegar completo desde la página del firmante (navegación dentro de la web): se recalcula. Y al revés: el
+  // que inyecta el servidor en /verify trae `css` restringido y el completo en `pageCss`, que se restaura al salir.
+  style.textContent = t ? (verifyPage ? verifyCss(t) : (t.pageCss ?? t.css)) : "";
   const font = document.getElementById("brand-font") as HTMLLinkElement | null;
   if (t?.fontCssUrl) {
     const l = font ?? ensure<HTMLLinkElement>("brand-font", "link");

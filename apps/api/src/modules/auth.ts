@@ -172,8 +172,7 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
       );
       if (!row) return null;
       // La verificación en dos pasos NO se borra al restablecer: controlar el correo no alcanza para saltearla (es justo
-      // lo que protege). Una 2FA puesta por quien registró la cuenta con este correo se limpia al vincularla por SSO/SCIM
-      // (secureUnprovenAccount), donde el proveedor de identidad sí prueba la identidad.
+      // lo que protege). Ver "Cuentas pre-registradas con un correo ajeno" en docs/ARQUITECTURA.md.
       await t.query(`UPDATE users SET password_hash = $2, password_reset_at = now() WHERE id = $1`, [row.user_id, pw]);
       await t.query(`DELETE FROM login_attempts WHERE user_id = $1`, [row.user_id]);
       // Restablecerla prueba que controla el correo: la contraseña vale también en las organizaciones que lo sumaron

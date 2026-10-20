@@ -3,7 +3,8 @@
 import { describe, expect, it } from "vitest";
 import { BrandConfigInput, FrameAncestor, isProtectedTextKey, originAllowed, type PublicBrandTheme } from "@calasign/shared";
 import { publicTheme, type ResolvedBrand } from "../src/modules/white-label/brand";
-import { brandText, setBrandTheme } from "../../web/src/lib/white-label";
+import { isVerifyPath } from "../src/modules/white-label/index";
+import { brandText, isVerifyPath as webIsVerifyPath, setBrandTheme, setVerifyPageMode } from "../../web/src/lib/white-label";
 
 describe("textos de la verificación con marca blanca", () => {
   it("las claves del veredicto y del reporte técnico están protegidas; título e intro no", () => {
@@ -13,9 +14,11 @@ describe("textos de la verificación con marca blanca", () => {
     for (const k of ["verify.title", "verify.text", "sign.doneTitle", "otp.title"]) expect(isProtectedTextKey(k)).toBe(false);
   });
 
-  it("el esquema rechaza un texto propio para el veredicto", () => {
-    expect(BrandConfigInput.safeParse({ texts: { es: { "verify.noMatchTitle": "Documento válido ✓" } } }).success).toBe(false);
-    expect(BrandConfigInput.safeParse({ texts: { en: { "val.intact": "OK" } } }).success).toBe(false);
+  it("el esquema descarta (no rechaza) un texto propio para el veredicto", () => {
+    expect(BrandConfigInput.parse({ texts: { es: { "verify.noMatchTitle": "Documento válido ✓", "sign.doneTitle": "¡Listo!" } } }).texts).toEqual({
+      es: { "sign.doneTitle": "¡Listo!" },
+    });
+    expect(BrandConfigInput.parse({ texts: { en: { "val.intact": "OK" } } }).texts).toEqual({ en: {} });
     expect(BrandConfigInput.safeParse({ texts: { es: { "verify.title": "Verificá tu documento", "sign.doneTitle": "¡Listo!" } } }).success).toBe(true);
   });
 
@@ -63,6 +66,42 @@ describe("textos de la verificación con marca blanca", () => {
     expect(v.css).toContain(".btn-primary{background:#00aa55");
     expect(v.css).not.toContain("--bg:");
     expect(v.css).not.toContain("--text:");
+    expect(v.pageCss).toBeUndefined();
+    // El index.html de /verify lleva además el CSS completo (pageCss) para restaurarlo al salir navegando.
+    expect(publicTheme(b, { verify: true, withPageCss: true }).pageCss).toBe(full.css);
+  });
+
+  it("/verify con barra final también es la verificación (servidor y web)", () => {
+    for (const f of [isVerifyPath, webIsVerifyPath]) {
+      expect(f("/verify")).toBe(true);
+      expect(f("/verify/")).toBe(true);
+      expect(f("/verifyx")).toBe(false);
+      expect(f("/s/verify")).toBe(false);
+    }
+  });
+
+  it("al salir de /verify navegando dentro de la web se restaura el CSS completo de la marca", () => {
+    const els = new Map<string, any>();
+    const fakeDoc = {
+      head: { appendChild: (el: any) => els.set(el.id, el) },
+      getElementById: (id: string) => els.get(id) ?? null,
+      createElement: () => ({ id: "", textContent: "", remove() {} }),
+      querySelector: () => null,
+    };
+    const g = globalThis as { document?: unknown };
+    const prev = g.document;
+    g.document = fakeDoc;
+    try {
+      setVerifyPageMode(true);
+      setBrandTheme({ theme: { fontSource: null }, css: ":root{--navy:#112233}", pageCss: ":root{--navy:#112233}\n.x{}", texts: {} } as unknown as PublicBrandTheme);
+      expect(els.get("brand-theme").textContent).not.toContain(".x{}");
+      setVerifyPageMode(false);
+      expect(els.get("brand-theme").textContent).toBe(":root{--navy:#112233}\n.x{}");
+    } finally {
+      setBrandTheme(null);
+      setVerifyPageMode(false);
+      g.document = prev;
+    }
   });
 });
 

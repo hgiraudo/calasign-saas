@@ -53,10 +53,19 @@ async function ensureFirstVersion(db: Db, e: { id: string; tenant_id: string; si
 const LTV_PENDING = "LTV pendiente";
 
 /** Calcula hasta cuándo vale el archivo (solo PDF con DSS: los B-B/B-T no se renuevan). */
+/** El PDF firmado se leyó del almacenamiento pero no se pudo analizar (archiveTimestampInfo: PDF ilegible). */
+class ArchiveParseError extends Error {}
+
 async function inspectArchive(d: Deps, envelopeId: string) {
   const e = await signedFile(d.db, envelopeId);
   if (!e) return;
-  const info = await archiveTimestampInfo(await d.blobs.get(e.storage_key));
+  const pdf = await d.blobs.get(e.storage_key);
+  let info: Awaited<ReturnType<typeof archiveTimestampInfo>>;
+  try {
+    info = await archiveTimestampInfo(pdf);
+  } catch (err) {
+    throw new ArchiveParseError(`PDF ilegible: ${String((err as Error)?.message ?? err).slice(0, 400)}`);
+  }
   const validUntil = info.hasDss && info.last ? info.last.tsaNotAfter : null;
   // Con sello de tiempo pero sin DSS, en una organización con nivel B-LT/B-LTA: el LTV falló al finalizar (TSA u
   // OCSP caídos) y el sobre quedaba en B-T para siempre, sin renovarse ni error visible. Queda marcado "LTV pendiente"
@@ -331,11 +340,20 @@ export async function archiveRoutes(app: FastifyInstance, s: Services, log: Deps
     if (Number(e.archive_renewals ?? 0) >= MAX_RENEWALS) {
       throw new AppError(409, "archive_renewal_limit", `El sobre llegó al máximo de ${MAX_RENEWALS} renovaciones del sello de archivo`);
     }
-    // Sin inspeccionar todavía (nunca se abrió el panel ni pasó el barrido): se calcula antes de decidir. Si la
-    // inspección falla (BYOK o almacenamiento caídos) se propaga el error: tragarlo terminaba en un 409
-    // archive_not_applicable engañoso (sin vencimiento calculado) en vez de la falla real (p. ej. 503).
+    // Sin inspeccionar todavía (nunca se abrió el panel ni pasó el barrido): se calcula antes de decidir. Si falla el
+    // almacenamiento (BYOK o disco/S3 caídos, p. ej. 503) se propaga: tragarlo terminaba en un 409
+    // archive_not_applicable engañoso. Si lo que falla es el análisis del PDF ya leído (archiveTimestampInfo: PDF
+    // ilegible), no hay sello de archivo que renovar: queda registrado como en el GET y responde 409
+    // archive_not_applicable (no un 500).
     if (e.status === "completed" && !e.archive_checked_at) {
-      await inspectArchive(deps(), e.id);
+      try {
+        await inspectArchive(deps(), e.id);
+      } catch (err) {
+        if (!(err instanceof ArchiveParseError)) throw err;
+        await s.db.query(`UPDATE envelopes SET archive_checked_at = now(), archive_error = $2 WHERE id = $1`, [e.id, String(err).slice(0, 500)]);
+        req.log.warn({ err: String(err).slice(0, 300), envelopeId: e.id }, "no se pudo analizar el PDF para renovar el sello de archivo");
+        throw new AppError(409, "archive_not_applicable", "No se pudo leer el PDF firmado para calcular su sello de archivo: no hay sello de archivo que renovar");
+      }
       e = await s.db.one<any>(`SELECT id, status, archive_renewals, archive_valid_until, archive_checked_at, archive_error FROM envelopes WHERE id = $1`, [e.id]);
     }
     // Qué se puede pedir a mano (decisión, docs/EVIDENCIA.md §2):

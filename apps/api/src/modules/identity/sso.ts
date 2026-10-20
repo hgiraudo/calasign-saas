@@ -14,7 +14,6 @@ import { SESSION_COOKIE, authenticate, clientInfo, type AuthContext, type Servic
 import { syncSsoDomains } from "../data/sso-domains";
 import { safeRequest } from "../webhooks";
 import { tenantPlan, usersCount } from "../billing/plans";
-import { secureUnprovenAccount } from "../member-access";
 
 /**
  * Duración absoluta (sin renovación) de una sesión abierta por SSO, configurable por organización
@@ -438,7 +437,6 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
           "Tu proveedor de identidad te desactivó en esta organización. Pedile a un administrador que te invite.",
         );
       }
-      let secured: Awaited<ReturnType<typeof secureUnprovenAccount>> = null;
       const overLimit = await s.db.tx(async (t) => {
         // Cupo de usuarios del plan, como en invitaciones y SCIM (con la organización bloqueada: dos altas simultáneas
         // no lo superan). El SSO es de Enterprise (sin cupo), pero la configuración queda al bajar de plan: sin esto,
@@ -450,11 +448,9 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
           const id = uuidv7();
           await t.query(`INSERT INTO users (id, email, name, password_hash, locale) VALUES ($1,$2,$3,'sso-only','es')`, [id, email, name?.trim() || email.split("@")[0]]);
           user = { id, name };
-        } else {
-          // Cuenta existente "huérfana" (registrada con contraseña, sin prueba del correo ni otras organizaciones): la
-          // pudo registrar otra persona. Su 2FA y sus sesiones se borran antes de vincularla (ver secureUnprovenAccount).
-          secured = await secureUnprovenAccount(t, user.id, tenantId);
         }
+        // Una cuenta YA existente se vincula tal cual: su 2FA y sus sesiones (de ésta y de otras organizaciones) no se
+        // tocan. Ver "Cuentas pre-registradas con un correo ajeno" en docs/ARQUITECTURA.md.
         // Sin contraseña en esta organización: si la cuenta ya existía, su contraseña pudo elegirla otra persona
         // (el registro no verifica el correo). Restablecerla (que prueba el control del correo) la habilita.
         await t.query(`INSERT INTO memberships (tenant_id, user_id, role, password_allowed) VALUES ($1,$2,$3,false) ON CONFLICT DO NOTHING`, [
@@ -479,7 +475,7 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
         targetId: user!.id,
         ip,
         userAgent,
-        data: { email, role: c.jit_role, ...(secured ? { unprovenAccountSecured: secured } : {}) },
+        data: { email, role: c.jit_role },
       });
     }
     await createSsoSession(reply, req, user!.id, tenantId, c);

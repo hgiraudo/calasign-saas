@@ -165,6 +165,20 @@ describe("renovación manual del sello de archivo", () => {
     expect(JSON.stringify(r.json())).not.toContain("archive_not_applicable");
   });
 
+  it("si el PDF firmado no se puede analizar (ilegible), 409 archive_not_applicable y queda registrado", async () => {
+    const { createBlobStore } = await import("../src/infra/storage");
+    const id = await completedEnvelope({});
+    await db.query(`UPDATE envelopes SET archive_checked_at = NULL WHERE id = $1`, [id]);
+    const f = await db.one<any>(`SELECT f.storage_key FROM envelopes e JOIN files f ON f.id = e.signed_file_id WHERE e.id = $1`, [id]);
+    await createBlobStore().put(f.storage_key, new TextEncoder().encode("esto no es un PDF"), "application/pdf");
+    const r = await renew(id);
+    expect(r.statusCode).toBe(409);
+    expect(r.json().error.code).toBe("archive_not_applicable");
+    const row = await db.one<any>(`SELECT archive_checked_at, archive_error FROM envelopes WHERE id = $1`, [id]);
+    expect(row.archive_checked_at).not.toBeNull();
+    expect(row.archive_error).toContain("PDF ilegible");
+  });
+
   it("409 si el PDF no es de archivo (B-B/B-T, sin LTV pendiente)", async () => {
     const id = await completedEnvelope({});
     const r = await renew(id);

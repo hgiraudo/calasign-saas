@@ -147,6 +147,11 @@ export type EmbedSettingsInput = z.infer<typeof EmbedSettingsInput>;
 
 export interface EmbedSettings {
   frameAncestors: string[];
+  /**
+   * Solo en la respuesta del PATCH: comodines demasiado amplios que estaban guardados (de antes de la validación) y
+   * volvieron en la lista; se descartaron en vez de rechazar el guardado.
+   */
+  discarded?: string[];
 }
 
 export const CreateSigningUrlInput = z.object({

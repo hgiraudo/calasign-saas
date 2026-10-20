@@ -140,69 +140,6 @@ export async function credentialsCreatedBy(t: Db, userId: string, opts: { revoke
   return [...out.values()];
 }
 
-/** Borra la verificación en dos pasos de la cuenta (secreto, alta pendiente y códigos de recuperación). */
-export async function clearTotp(t: Db, userId: string): Promise<boolean> {
-  const r = await t.query(
-    `UPDATE users SET totp_secret_enc = NULL, totp_pending_enc = NULL, totp_enabled_at = NULL, totp_recovery_hashes = '{}', totp_last_step = NULL
-      WHERE id = $1 AND (totp_secret_enc IS NOT NULL OR totp_pending_enc IS NOT NULL OR totp_enabled_at IS NOT NULL) RETURNING id`,
-    [userId],
-  );
-  return r.length > 0;
-}
-
-/**
- * Antes de vincular por SSO (JIT) o SCIM a la organización `tenantId` una cuenta YA existente que nunca probó el control
- * del correo: quien la registró pudo ser otra persona (el registro no verifica el correo), y su segundo factor y sus
- * sesiones (y tokens OAuth) quedarían en sus manos. Pero la 2FA y las sesiones son de la cuenta global: borrarlas por
- * decisión de un administrador de un dominio afecta también a las otras organizaciones de la persona. Por eso se limpia
- * SOLO si la cuenta es "huérfana":
- *  - no fue creada por SSO o SCIM (password_hash 'sso-only' / 'scim-provisioned': nadie la registró con contraseña);
- *  - nunca probó el control del correo (users.password_reset_at: el link del restablecimiento llega al correo; el
- *    registro no lo verifica y el link de una invitación también lo ve quien invita);
- *  - no tiene en esta organización una fila de scim_users activa y vigente con la membresía ya creada (el IdP ya la
- *    administraba: no es una vinculación nueva). Una fila inactiva o borrada no cuenta: la vinculación es ahora;
- *  - no es miembro de otra organización CON OTROS MIEMBROS (si lo es, esas organizaciones la conocen y su 2FA o sus
- *    sesiones no se tocan: el riesgo queda acotado a que la contraseña no vale en esta organización,
- *    password_allowed = false). La organización propia que crea el registro (donde es la única persona) no cuenta:
- *    todo registro tiene una, y quien registró la cuenta con un correo ajeno también.
- * En ese único caso (cuenta registrada con contraseña, sin otras membresías ni prueba del correo) se borran la 2FA, todas
- * sus sesiones, tokens OAuth, códigos sin canjear y desafíos pendientes. Devuelve null si no se tocó nada.
- * El llamador no lo aplica cuando SCIM crea al usuario inactivo (active = false): no hay vinculación todavía.
- */
-export async function secureUnprovenAccount(
-  t: Db,
-  userId: string,
-  tenantId: string,
-): Promise<{ totpCleared: boolean; sessionsClosed: number } | null> {
-  const u = await t.one<{ password_hash: string | null; password_reset_at: string | null }>(`SELECT password_hash, password_reset_at FROM users WHERE id = $1`, [userId]);
-  if (!u || u.password_reset_at) return null;
-  if (u.password_hash === "sso-only" || u.password_hash === "scim-provisioned") return null;
-  if (
-    await t.one(
-      `SELECT 1 FROM scim_users s JOIN memberships m ON m.tenant_id = s.tenant_id AND m.user_id = s.user_id
-        WHERE s.tenant_id = $1 AND s.user_id = $2 AND s.active AND s.deleted_at IS NULL`,
-      [tenantId, userId],
-    )
-  )
-    return null;
-  if (
-    await t.one(
-      `SELECT 1 FROM memberships m
-        WHERE m.user_id = $1 AND m.tenant_id <> $2
-          AND EXISTS (SELECT 1 FROM memberships o WHERE o.tenant_id = m.tenant_id AND o.user_id <> m.user_id)
-        LIMIT 1`,
-      [userId, tenantId],
-    )
-  )
-    return null;
-  const totpCleared = await clearTotp(t, userId);
-  const sessions = await t.query(`DELETE FROM sessions WHERE user_id = $1 RETURNING user_id`, [userId]);
-  await t.query(`UPDATE oauth_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL`, [userId]);
-  await t.query(`UPDATE oauth_authorization_codes SET used_at = now() WHERE user_id = $1 AND used_at IS NULL`, [userId]);
-  await t.query(`DELETE FROM login_challenges WHERE user_id = $1`, [userId]);
-  return { totpCleared, sessionsClosed: sessions.length };
-}
-
 /**
  * Sin tokens SCIM activos, la organización ya no tiene IdP que administre altas y bajas: las filas de scim_users
  * desactivadas o borradas dejan de tener sentido y bloquearían para siempre el alta JIT por SSO de esas personas

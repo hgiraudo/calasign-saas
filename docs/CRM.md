@@ -39,7 +39,37 @@ Piezas comunes:
   (`companyId`). `GET /v1/crm/mappings?provider=…&companyId=` lista solo los mapeos de las conexiones de esa cuenta
   (`config.companyId` de Pipedrive, sacado de `/users/me`; `config.accountId` de Kommo, sacado de `/api/v4/account`).
   `POST /v1/crm/mappings/{id}/send` con otra cuenta responde 409 `company_mismatch`; si no, se leería el registro con el
-  mismo id en la cuenta equivocada. El envío acepta `Idempotency-Key`.
+  mismo id en la cuenta equivocada. En Pipedrive y Kommo la cuenta es **obligatoria**: conectar falla si la prueba de
+  la conexión no la informa (como el `hub_id` de HubSpot); el envío sin `companyId` responde 400 `company_required` y
+  con una conexión sin cuenta guardada (conexiones viejas), 409 `crm_account_unknown` (probar la conexión la guarda);
+  `?companyId=` no lista mapeos de conexiones sin cuenta. Un cliente de la API que envía con un mapeo de Pipedrive o
+  Kommo tiene que mandar la cuenta. El envío acepta `Idempotency-Key`.
+- **Bucle del webhook de HubSpot:** los eventos con `changeSource = INTEGRATION` y `sourceId` igual al `appId` del
+  evento (o a `HUBSPOT_APP_ID`) son cambios hechos por la propia app (el write-back) y no disparan; además, un mapeo
+  por webhook cuya propiedad de estado es la misma que la que dispara se rechaza (400 `crm_trigger_loop`).
+- **Adjunto en HubSpot:** el id del archivo subido se guarda en `crm_links.remote_ref` (`file:<id>`) antes de crear la
+  nota; si la nota falla, el reintento no vuelve a subir el PDF.
+- **Desconectar** (`DELETE /v1/crm/connections/{id}`): revoca los tokens OAuth en el proveedor cuando hay endpoint
+  documentado (HubSpot `DELETE /oauth/v1/refresh-tokens/{token}`, Salesforce `/services/oauth2/revoke`, Zoho
+  `/oauth/v2/token/revoke`, Pipedrive `/oauth/revoke`); RD Station y Kommo no publican uno, y los tokens de app privada
+  de HubSpot o las claves de Siigo/Alegra se revocan en el proveedor. Si la revocación falla se registra en el log y se
+  desconecta igual (la auditoría `crm.disconnected` lleva `tokenRevoked`). Mapeos y vínculos se borran con la conexión,
+  pero la **actividad se conserva** (`crm_runs.connection_id` pasa a NULL, migración 0081, y la ejecución guarda el
+  nombre y el proveedor en `detail.connection`). Se eligió esto en vez de un borrado lógico de la conexión porque es
+  lo menos invasivo: ninguna consulta de conexiones o mapeos tiene que filtrar desconectadas.
+- **Retención:** las ejecuciones (`crm_runs`, y `connector_runs` de los conectores) de más de
+  `INTEGRATION_RUNS_RETENTION_DAYS` días (180 por defecto) se borran en el barrido periódico.
+- **Auditoría:** conectar, desconectar, activar/desactivar o renombrar conexiones (`crm.activated`, `crm.deactivated`,
+  `crm.updated`) y crear, editar o borrar mapeos (`crm.mapping_updated`, `crm.mapping_deleted`).
+- **Decisión — `objectId` libre en el envío:** `POST /v1/crm/mappings/{id}/send` solo exige `envelopes:create` y
+  acepta cualquier `objectId`, así que quien puede crear sobres puede leer (con el token de la conexión del admin)
+  los campos que el mapeo usa —destinatarios y prellenado— de cualquier registro del CRM, al crear el sobre. No hay
+  forma de distinguir un pedido del widget de Kommo o la acción de Pipedrive de uno directo: esos llaman a la API con
+  la sesión del usuario en CalaSign (el JWT de Pipedrive no se verifica) y `companyId` lo manda el cliente. Se deja
+  así a propósito: es el uso previsto (los vendedores envían desde cualquier registro), la lectura se limita a los
+  campos que eligió el admin en el mapeo y el sobre queda a nombre de quien envía (auditable). Para restringirlo, el
+  admin limita la plantilla del mapeo (sin acceso a la plantilla, 403) o no da `envelopes:create`. Lo mismo vale para
+  `POST /v1/connectors/flows/{id}/send` (`recordId`).
 - **Actividad** (`/v1/crm/runs`): cada envío, write-back y búsqueda queda registrado con intentos y error. Los errores
   transitorios se reintentan con el backoff de la cola; un **token revocado** o datos que no cierran no se reintentan
   solos (quedan como fallidos con el error visible, también en la conexión) y se reintentan a mano
@@ -52,6 +82,8 @@ Piezas comunes:
 | Variable | Para qué |
 |---|---|
 | `HUBSPOT_CLIENT_ID`, `HUBSPOT_CLIENT_SECRET` | App pública de HubSpot (OAuth + firma de webhooks). Sin ellas solo se puede conectar con token de app privada y el webhook responde 503. |
+| `HUBSPOT_APP_ID` | Opcional: id de la app pública. Los eventos del webhook con `changeSource = INTEGRATION` y ese `sourceId` se ignoran (por defecto se compara con el `appId` del evento). |
+| `INTEGRATION_RUNS_RETENTION_DAYS` | Días que se guardan las ejecuciones de CRM y conectores (por defecto 180). |
 | `SALESFORCE_CLIENT_ID`, `SALESFORCE_CLIENT_SECRET` | Connected App de Salesforce (OAuth con PKCE). |
 | `SALESFORCE_LOGIN_URL` | `https://login.salesforce.com` (por defecto) o `https://test.salesforce.com` para sandboxes. |
 | `ZOHO_CLIENT_ID`, `ZOHO_CLIENT_SECRET` | Cliente *Server-based Application* de Zoho (api-console.zoho.com) con **multi-DC** activado. Sirve para Zoho CRM y Bigin. Sin ellas la tarjeta de Zoho muestra "OAuth no configurado" (Zoho no tiene conexión por token). |
@@ -211,6 +243,9 @@ con el refresh token rotado guardado, PDF en Anexos (`data[file]`) + anotação,
 `referer` (token en el subdominio, JSON), instalación sin `state`, `referer` ajeno rechazado sin pedir token, envío
 desde un lead (contacto principal primero), campo de lista (`enum_id`), refresh, PDF por la Files API vinculado al lead
 + nota, lead inexistente (204) → 404.
+`apps/api/test/integrations-hardening.test.ts` (app sobre PGlite): cuenta obligatoria de Pipedrive/Kommo al conectar
+y al enviar, revocación al desconectar con la actividad conservada, eventos propios de HubSpot, bucle de write-back,
+reanudación del adjunto de HubSpot, `portalId` obligatorio con token, retención de ejecuciones y auditoría.
 Unitarias: `apps/api/test/crm-mapping.test.ts` (mapeo), `apps/api/test/crm-zoho.test.ts` (Zoho con un fetch falso:
 dominios aceptados, refresh en el DC de la cuenta, registros, write-back y adjuntos) y
 `apps/api/test/crm-pipedrive.test.ts` (Pipedrive con un fetch falso), `apps/api/test/crm-rdstation.test.ts` y

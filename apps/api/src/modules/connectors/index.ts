@@ -58,15 +58,22 @@ import {
   oauthConfigured,
   oauthTokenRequest,
   parseWebhook,
+  revokeConnectorTokens,
   searchRecords,
   supportsStatus,
   testConnection,
+  verifyHookSignature,
   writeStatus,
   type ConnRow,
   type OAuthProvider,
 } from "./providers";
 
 const UUID = /^[0-9a-f-]{36}$/i;
+/** Ventana de deduplicación de las entregas del webhook entrante (CONNECTOR_WEBHOOK_DEDUPE_MINUTES, por defecto 10). */
+export const hookDedupeWindowMs = () => {
+  const m = Number(process.env.CONNECTOR_WEBHOOK_DEDUPE_MINUTES);
+  return (Number.isFinite(m) && m > 0 ? Math.min(m, 24 * 60) : 10) * 60_000;
+};
 const hashToken = (t: string) => createHash("sha256").update(t).digest("hex");
 const webhookUrl = (token: string) => `${config.appUrl}/v1/integrations/connectors/hook/${token}`;
 const newWebhookToken = () => {
@@ -102,6 +109,7 @@ const toFlow = (r: any): ConnectorFlow => ({
   writeBack: { uploadSigned: true, uploadEvidence: false, ...(r.write_back ?? {}) },
   trigger: r.trigger,
   triggerConfig: r.trigger_config ?? {},
+  webhookSigned: Boolean(r.webhook_secret_enc),
   send: r.send,
   active: r.active,
   createdAt: iso(r.created_at)!,
@@ -642,14 +650,34 @@ export async function connectorRoutes(app: FastifyInstance, s: Services) {
     const r = await loadConn(s.db, a.tenantId, req.params.id);
     const input = UpdateConnectorConnectionInput.parse(req.body);
     await s.db.query(`UPDATE connector_connections SET name = COALESCE($2, name), active = COALESCE($3, active), updated_at = now() WHERE id = $1`, [r.id, input.name ?? null, input.active ?? null]);
-    return toConnection(await loadConn(s.db, a.tenantId, r.id));
+    const after = await loadConn(s.db, a.tenantId, r.id);
+    if (after.active !== r.active || after.name !== r.name) {
+      await auditFromRequest(s.db, req, a, after.active !== r.active ? (after.active ? "connector.activated" : "connector.deactivated") : "connector.updated", {
+        targetType: "connector_connection",
+        targetId: r.id,
+        data: { provider: r.provider, name: after.name, from: { name: r.name, active: r.active }, to: { name: after.name, active: after.active } },
+      });
+    }
+    return toConnection(after);
   });
 
   app.delete<{ Params: { id: string } }>("/v1/connectors/connections/:id", { preHandler: auth }, async (req, reply) => {
     const a = A(req);
     const r = await loadConn(s.db, a.tenantId, req.params.id);
-    await s.db.query(`DELETE FROM connector_connections WHERE id = $1`, [r.id]);
-    await auditFromRequest(s.db, req, a, "connector.disconnected", { targetType: "connector_connection", targetId: r.id, data: { provider: r.provider, name: r.name } });
+    // Primero se revoca el token en el proveedor (si tiene endpoint): sin bloquear la desconexión si falla.
+    let revoked: boolean | "failed" = false;
+    try {
+      revoked = await revokeConnectorTokens(r, JSON.parse(decrypt(r.credentials_enc)));
+    } catch (err) {
+      revoked = "failed";
+      req.log.warn({ err: String(err), provider: r.provider, connectionId: r.id }, "no se pudo revocar el token del conector");
+    }
+    // El historial de ejecuciones se conserva (connection_id pasa a NULL, migración 0081) con el nombre y el proveedor.
+    await s.db.tx(async (t) => {
+      await t.query(`UPDATE connector_runs SET detail = detail || $2::jsonb WHERE connection_id = $1`, [r.id, JSON.stringify({ connection: { name: r.name, provider: r.provider } })]);
+      await t.query(`DELETE FROM connector_connections WHERE id = $1`, [r.id]);
+    });
+    await auditFromRequest(s.db, req, a, "connector.disconnected", { targetType: "connector_connection", targetId: r.id, data: { provider: r.provider, name: r.name, tokenRevoked: revoked } });
     return reply.code(204).send();
   });
 
@@ -713,8 +741,8 @@ export async function connectorRoutes(app: FastifyInstance, s: Services) {
     await assertTemplateAccess(s.db, a, input.templateId, "view");
     const id = uuidv7();
     await s.db.query(
-      `INSERT INTO connector_flows (id, tenant_id, connection_id, name, object_type, template_id, document_source, role_map, prefill_map, write_back, trigger, trigger_config, send, active, created_by, created_by_api_key)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+      `INSERT INTO connector_flows (id, tenant_id, connection_id, name, object_type, template_id, document_source, role_map, prefill_map, write_back, trigger, trigger_config, send, active, created_by, created_by_api_key, webhook_secret_enc)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
       [
         id,
         a.tenantId,
@@ -732,9 +760,14 @@ export async function connectorRoutes(app: FastifyInstance, s: Services) {
         input.active,
         a.userId,
         a.apiKeyId,
+        input.webhookSecret ? encrypt(input.webhookSecret) : null,
       ],
     );
-    await auditFromRequest(s.db, req, a, "connector.flow_created", { targetType: "connector_flow", targetId: id, data: { name: input.name, provider: conn.provider } });
+    await auditFromRequest(s.db, req, a, "connector.flow_created", {
+      targetType: "connector_flow",
+      targetId: id,
+      data: { name: input.name, provider: conn.provider, webhookSigned: Boolean(input.webhookSecret) },
+    });
     reply.code(201);
     return toFlow(await loadFlow(s.db, a.tenantId, id));
   });
@@ -753,7 +786,8 @@ export async function connectorRoutes(app: FastifyInstance, s: Services) {
     await s.db.query(
       `UPDATE connector_flows SET name = COALESCE($2, name), object_type = $3, template_id = COALESCE($4, template_id), document_source = $5,
          role_map = COALESCE($6::jsonb, role_map), prefill_map = COALESCE($7::jsonb, prefill_map), write_back = COALESCE($8::jsonb, write_back),
-         trigger = COALESCE($9, trigger), trigger_config = COALESCE($10::jsonb, trigger_config), send = COALESCE($11, send), active = COALESCE($12, active), updated_at = now()
+         trigger = COALESCE($9, trigger), trigger_config = COALESCE($10::jsonb, trigger_config), send = COALESCE($11, send), active = COALESCE($12, active),
+         webhook_secret_enc = CASE WHEN $13::boolean THEN $14 ELSE webhook_secret_enc END, updated_at = now()
        WHERE id = $1`,
       [
         f.id,
@@ -768,8 +802,16 @@ export async function connectorRoutes(app: FastifyInstance, s: Services) {
         input.triggerConfig ? JSON.stringify(input.triggerConfig) : null,
         input.send ?? null,
         input.active ?? null,
+        // webhookSecret: sin el campo se conserva; null o "" lo quita; un texto lo reemplaza.
+        input.webhookSecret !== undefined,
+        input.webhookSecret ? encrypt(input.webhookSecret) : null,
       ],
     );
+    await auditFromRequest(s.db, req, a, "connector.flow_updated", {
+      targetType: "connector_flow",
+      targetId: f.id,
+      data: { name: input.name ?? f.name, fields: Object.keys((req.body as object) ?? {}) },
+    });
     return toFlow(await loadFlow(s.db, a.tenantId, f.id));
   });
 
@@ -777,6 +819,7 @@ export async function connectorRoutes(app: FastifyInstance, s: Services) {
     const a = A(req);
     const f = await loadFlow(s.db, a.tenantId, req.params.id);
     await s.db.query(`DELETE FROM connector_flows WHERE id = $1`, [f.id]);
+    await auditFromRequest(s.db, req, a, "connector.flow_deleted", { targetType: "connector_flow", targetId: f.id, data: { name: f.name } });
     return reply.code(204).send();
   });
 
@@ -824,7 +867,8 @@ export async function connectorRoutes(app: FastifyInstance, s: Services) {
     }
     params.push(Math.min(200, Math.max(1, Math.trunc(Number(req.query.limit ?? 50)) || 50)));
     const rows = await s.db.query(
-      `SELECT r.*, c.name AS connection_name, c.provider FROM connector_runs r LEFT JOIN connector_connections c ON c.id = r.connection_id
+      `SELECT r.*, COALESCE(c.name, r.detail->'connection'->>'name') AS connection_name, COALESCE(c.provider, r.detail->'connection'->>'provider') AS provider
+         FROM connector_runs r LEFT JOIN connector_connections c ON c.id = r.connection_id
         WHERE ${where} ORDER BY r.created_at DESC LIMIT $${params.length}`,
       params,
     );
@@ -844,37 +888,71 @@ export async function connectorRoutes(app: FastifyInstance, s: Services) {
     return { queued: true };
   });
 
-  // ───────── Webhook del sistema de origen (público; el secreto va en la URL) ─────────
+  // ───────── Webhook del sistema de origen (público; el secreto va en la URL y, opcional, una firma por flujo) ─────────
 
-  app.post<{ Params: { token: string } }>(
-    "/v1/integrations/connectors/hook/:token",
-    { config: { rateLimit: { max: 300, timeWindow: "1 minute" } }, bodyLimit: 512 * 1024 },
-    async (req, reply) => {
-      const token = String(req.params.token ?? "");
-      const c = token.startsWith("cshk_") ? await s.db.one<any>(`SELECT * FROM connector_connections WHERE webhook_token_hash = $1`, [hashToken(token)]) : null;
-      if (!c) return reply.code(404).send({ error: { code: "not_found", message: "Webhook inexistente" } });
-      if (!c.active) return reply.code(409).send({ error: { code: "connector_connection_inactive", message: "La conexión está desactivada" } });
-      const events = parseWebhook(c.provider, req.body);
-      if (!events.length) return { ok: true, queued: 0 };
-      const flows = await s.db.query<any>(`SELECT * FROM connector_flows WHERE connection_id = $1 AND active AND trigger = 'webhook'`, [c.id]);
-      // Reentregas del mismo cuerpo no duplican: la clave incluye el hash del cuerpo.
-      const bodyHash = sha256Hex(JSON.stringify(req.body ?? null)).slice(0, 32);
-      let queued = 0;
-      for (const ev of events) {
-        for (const f of flows) {
-          if (ev.objectType && ev.objectType !== f.object_type && CONNECTOR_PROVIDER_OBJECTS[c.provider as ConnectorProvider].length > 1) continue;
-          const want = f.trigger_config?.event;
-          if (want && String(ev.event ?? "").toLowerCase() !== String(want).toLowerCase()) continue;
-          const ok = await queueRun(
-            s.db,
-            { tenantId: c.tenant_id, connectionId: c.id, flowId: f.id, linkId: null, envelopeId: null, kind: "send", event: ev.event ?? "webhook", objectType: f.object_type, objectId: ev.recordId, detail: { webhook: true } },
-            `cn:hook:${f.id}:${ev.recordId}:${bodyHash}`,
-          );
-          if (ok) queued++;
+  // Cuerpo crudo (para verificar la firma HMAC sobre los bytes recibidos): el parser JSON solo de este contexto.
+  await app.register(async (o) => {
+    o.addContentTypeParser("application/json", { parseAs: "string" }, (_req, body, done) => done(null, body));
+    o.post<{ Params: { token: string } }>(
+      "/v1/integrations/connectors/hook/:token",
+      { config: { rateLimit: { max: 300, timeWindow: "1 minute" } }, bodyLimit: 512 * 1024 },
+      async (req, reply) => {
+        const token = String(req.params.token ?? "");
+        const c = token.startsWith("cshk_") ? await s.db.one<any>(`SELECT * FROM connector_connections WHERE webhook_token_hash = $1`, [hashToken(token)]) : null;
+        if (!c) return reply.code(404).send({ error: { code: "not_found", message: "Webhook inexistente" } });
+        if (!c.active) return reply.code(409).send({ error: { code: "connector_connection_inactive", message: "La conexión está desactivada" } });
+        const raw = typeof req.body === "string" ? req.body : "";
+        let body: unknown = null;
+        try {
+          body = raw ? JSON.parse(raw) : null;
+        } catch {
+          return reply.code(400).send({ error: { code: "invalid_json", message: "JSON inválido" } });
         }
-      }
-      return { ok: true, queued };
-    },
-  );
+        const events = parseWebhook(c.provider, body);
+        if (!events.length) return { ok: true, queued: 0 };
+        const flows = await s.db.query<any>(`SELECT * FROM connector_flows WHERE connection_id = $1 AND active AND trigger = 'webhook'`, [c.id]);
+        // Firma por flujo: un flujo con secreto solo se dispara si la entrega viene firmada con ese secreto.
+        const signedOk = new Map<string, boolean>();
+        for (const f of flows) {
+          if (!f.webhook_secret_enc) continue;
+          let ok = false;
+          try {
+            ok = verifyHookSignature(c.provider, decrypt(f.webhook_secret_enc), raw, req.headers as Record<string, unknown>);
+          } catch {
+            ok = false;
+          }
+          signedOk.set(f.id, ok);
+        }
+        // Reentregas del mismo cuerpo no duplican, pero solo dentro de una ventana (por defecto 10 min): un segundo
+        // disparo legítimo idéntico más tarde (el mismo empleado vuelve a pasar por el evento) tiene que enviarse.
+        // Además, un registro con un sobre en curso no genera otro (skipIfOpen).
+        const bodyHash = sha256Hex(raw).slice(0, 32);
+        const bucket = Math.floor(Date.now() / hookDedupeWindowMs());
+        let queued = 0;
+        let matched = 0;
+        let rejected = 0;
+        for (const ev of events) {
+          for (const f of flows) {
+            if (ev.objectType && ev.objectType !== f.object_type && CONNECTOR_PROVIDER_OBJECTS[c.provider as ConnectorProvider].length > 1) continue;
+            const want = f.trigger_config?.event;
+            if (want && String(ev.event ?? "").toLowerCase() !== String(want).toLowerCase()) continue;
+            matched++;
+            if (signedOk.get(f.id) === false) {
+              rejected++;
+              continue;
+            }
+            const ok = await queueRun(
+              s.db,
+              { tenantId: c.tenant_id, connectionId: c.id, flowId: f.id, linkId: null, envelopeId: null, kind: "send", event: ev.event ?? "webhook", objectType: f.object_type, objectId: ev.recordId, detail: { webhook: true, signed: signedOk.get(f.id) === true } },
+              `cn:hook:${f.id}:${ev.recordId}:${bodyHash}:${bucket}`,
+            );
+            if (ok) queued++;
+          }
+        }
+        if (matched > 0 && rejected === matched) return reply.code(401).send({ error: { code: "invalid_signature", message: "Firma inválida o ausente" } });
+        return { ok: true, queued, ...(rejected ? { rejected } : {}) };
+      },
+    );
+  });
 }
 

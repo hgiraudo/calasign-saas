@@ -4,7 +4,7 @@ import { dirname, resolve, sep } from "node:path";
 import { config } from "../config";
 import { AppError } from "../lib/errors";
 import { cellById, cells, type CellStorageConfig } from "./cells";
-import { KmsUnavailableError, isKeyError, kmsForKey } from "./kms";
+import { KmsUnavailableError, isKeyError, isTransientKmsError, kmsForKey } from "./kms";
 
 export interface PutOptions {
   /** Clave KMS del cliente (BYOK): S3 la usa como SSE-KMS; en disco se cifra con una clave de datos de esa clave. */
@@ -32,6 +32,12 @@ export const storageUnavailableError = () =>
 function kmsFailure(arn: string, e: unknown): Error {
   if (isKeyError(e)) return new KmsUnavailableError(arn, String((e as Error)?.message ?? e));
   console.warn(JSON.stringify({ level: "warn", msg: "falla transitoria de KMS", keyArn: arn, err: String((e as Error)?.message ?? e).slice(0, 300) }));
+  return storageUnavailableError();
+}
+
+/** Falla de KMS que no se atribuye a ninguna clave del cliente: se registra y se responde 503 genérico. */
+function kmsFailureUnattributed(key: string, e: unknown): AppError {
+  console.warn(JSON.stringify({ level: "warn", msg: "falla de KMS no atribuible a una clave", key, err: String((e as Error)?.message ?? e).slice(0, 300) }));
   return storageUnavailableError();
 }
 
@@ -121,16 +127,24 @@ class S3BlobStore implements BlobStore {
   }
   async put(key: string, data: Uint8Array, contentType: string, opts?: PutOptions) {
     const { m, c } = await this.clientP;
-    await c.send(
-      new m.PutObjectCommand({
-        Bucket: this.bucket,
-        Key: this.prefix + key,
-        Body: data,
-        ContentType: contentType,
-        ServerSideEncryption: "aws:kms",
-        ...(opts?.kmsKeyId ? { SSEKMSKeyId: opts.kmsKeyId, BucketKeyEnabled: true } : {}),
-      }),
-    );
+    try {
+      await c.send(
+        new m.PutObjectCommand({
+          Bucket: this.bucket,
+          Key: this.prefix + key,
+          Body: data,
+          ContentType: contentType,
+          ServerSideEncryption: "aws:kms",
+          ...(opts?.kmsKeyId ? { SSEKMSKeyId: opts.kmsKeyId, BucketKeyEnabled: true } : {}),
+        }),
+      );
+    } catch (e) {
+      // De la clave BYOK pedida: se atribuye a ella (RoutingBlobStore la marca). Transitorio de KMS (limitación de tasa,
+      // falla interna) o de la clave de la plataforma (sin BYOK): 503 genérico, sin ARN, no un 500 crudo.
+      if (isKeyError(e) && opts?.kmsKeyId) throw new KmsUnavailableError(opts.kmsKeyId, String((e as Error)?.message ?? e));
+      if (isKeyError(e) || isTransientKmsError(e)) throw kmsFailureUnattributed(key, e);
+      throw e;
+    }
   }
   async get(key: string) {
     const { m, c } = await this.clientP;
@@ -149,6 +163,8 @@ class S3BlobStore implements BlobStore {
         console.warn(JSON.stringify({ level: "warn", msg: "falla de KMS sin clave confirmada por HeadObject", key, err: String((e as Error)?.message ?? e).slice(0, 300) }));
         throw storageUnavailableError();
       }
+      // Transitorio de KMS (limitación de tasa, falla interna): no es de ninguna clave; 503, no un 500 crudo.
+      if (isTransientKmsError(e)) throw kmsFailureUnattributed(key, e);
       throw e;
     }
     return new Uint8Array(await r.Body!.transformToByteArray());
@@ -245,6 +261,9 @@ export class RoutingBlobStore implements BlobStore {
       await store.put(key, data, contentType, { ...opts, kmsKeyId: arn, tenantId });
     } catch (e) {
       if (e instanceof KmsUnavailableError || isKeyError(e)) return this.keyFailure(tenantId, arn, e);
+      // Transitorio de KMS (limitación de tasa, falla interna) que llegue crudo de algún almacenamiento: 503, sin marcar
+      // la clave ni exponer el ARN.
+      if (isTransientKmsError(e)) throw kmsFailureUnattributed(key, e);
       throw e;
     }
     if (ts!.byokStatus === "failing") await this.resolver.onKeySuccess(tenantId).catch(() => {});
@@ -267,6 +286,7 @@ export class RoutingBlobStore implements BlobStore {
         if (known) return this.keyFailure(tenantId, e.keyArn, e, false);
         return this.storageUnavailable(tenantId, e.keyArn, e);
       }
+      if (isTransientKmsError(e)) throw kmsFailureUnattributed(key, e);
       throw e;
     }
   }

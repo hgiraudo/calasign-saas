@@ -277,13 +277,18 @@ Resultado de las rondas de revisión de código de octubre de 2026; cada una tie
   alta JIT por SSO no vuelve a sumar a quien el IdP desactivó o borró (`sso_scim_deactivated`), mientras la
   organización tenga algún token SCIM activo. Un POST posterior lo reactiva. Al revocar el último token SCIM se borran
   las filas desactivadas o borradas (dejan de bloquear el JIT).
-- **Cuentas que nunca probaron el control del correo** (sin `users.password_reset_at`): al vincularlas por JIT o SCIM
-  (activo) se borran su 2FA, sus sesiones y sus tokens OAuth solo si la cuenta es huérfana: registrada con contraseña
-  (no `sso-only` ni `scim-provisioned`), sin fila activa y vigente en `scim_users` de esa organización con la membresía
-  ya creada (una inactiva o borrada no cuenta: SCIM limpia también al activar con PATCH/PUT o al volver a crear tras un
-  DELETE) y sin membresías en otras organizaciones con más miembros (la organización propia que crea el registro, donde
-  es la única persona, no cuenta). Con esas membresías no se toca (la 2FA y las sesiones son de la cuenta global): el riesgo queda
-  acotado por `password_allowed = false` en la organización que la vincula. Restablecer la contraseña NO borra la 2FA
+- **Cuentas pre-registradas con un correo ajeno** (riesgo residual aceptado): el registro no verifica el correo, así
+  que alguien puede crear la cuenta `ana@empresa.com` antes que Ana, con su contraseña y su 2FA. Si después la
+  organización de Ana la vincula por JIT (SSO) o SCIM, la cuenta se vincula TAL CUAL: no se borran su 2FA, sus
+  sesiones ni sus tokens OAuth (ni en esa organización ni en otras), tampoco al suspender y reactivar por SCIM. Lo que
+  acota el riesgo: la membresía creada por JIT/SCIM tiene `password_allowed = false` (la contraseña que eligió quien
+  registró la cuenta no sirve para entrar a esa organización; solo el SSO, que el IdP sí prueba) y un SSO exitoso
+  sigue funcionando. Lo que queda: quien pre-registró la cuenta conserva lo que ya tenía en la cuenta global (sus
+  sesiones y tokens abiertos, la organización propia del registro) y la 2FA que puso, que Ana no necesita para entrar
+  por SSO pero que le impide usar contraseña hasta que se borre manualmente. Hubo una limpieza automática al vincular (borraba 2FA y sesiones de
+  cuentas "no probadas"), y se quitó: los criterios para decidir qué cuenta es "huérfana" fallaban en los dos sentidos
+  (borraba la 2FA de empleados legítimos, p. ej. al suspender y reactivar por SCIM, y un atacante la esquivaba
+  sumando la cuenta a otra organización o restableciendo la contraseña). Restablecer la contraseña NO borra la 2FA
   (controlar el correo no alcanza para saltearla) ni revoca por defecto las credenciales que creó la persona: la
   respuesta (200) lista las activas por organización y, con `revokeCreatedCredentials: true`, revoca sus API keys e
   invitaciones pendientes (nunca tokens SCIM ni apps de servicio, que son de la organización). Se audita en cada

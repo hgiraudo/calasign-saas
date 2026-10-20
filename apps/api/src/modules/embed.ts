@@ -2,7 +2,15 @@
 // en un iframe (o redirige). La página del firmante se puede enmarcar solo desde los orígenes que la
 // organización autorizó (CSP frame-ancestors) y avisa al padre por postMessage.
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { CreateSigningUrlInput, EmbedSettingsInput, type EmbedSettings, type SigningEmbedInfo, type SigningUrlResponse } from "@calasign/shared";
+import { z } from "zod";
+import {
+  CreateSigningUrlInput,
+  EmbedSettingsInput,
+  wildcardOriginOk,
+  type EmbedSettings,
+  type SigningEmbedInfo,
+  type SigningUrlResponse,
+} from "@calasign/shared";
 import { config } from "../config";
 import type { Db } from "../infra/db";
 import { appendEvent } from "../infra/evidence";
@@ -59,9 +67,18 @@ export async function lastEmbedSession(db: Db, recipientId: string): Promise<{ f
   );
 }
 
-async function originsForRecipient(db: Db, recipientId: string, tenantId: string, last?: { frame_ancestors: string[] | null } | null): Promise<string[]> {
+/**
+ * Orígenes autorizados de la organización, sin los comodines demasiado amplios (https://*.com.ar…) guardados antes de
+ * que el esquema los rechazara (la 0082 los borró; esto cubre cualquier fila que quede). Lo usan el CSP de la página
+ * del firmante y de los formularios, /v1/signing/:token/embed y la configuración.
+ */
+export async function tenantFrameAncestors(db: Db, tenantId: string): Promise<string[]> {
   const t = await db.one<any>(`SELECT embed_frame_ancestors FROM tenants WHERE id = $1`, [tenantId]);
-  const allowed: string[] = t?.embed_frame_ancestors ?? [];
+  return ((t?.embed_frame_ancestors ?? []) as string[]).filter(wildcardOriginOk);
+}
+
+async function originsForRecipient(db: Db, recipientId: string, tenantId: string, last?: { frame_ancestors: string[] | null } | null): Promise<string[]> {
+  const allowed = await tenantFrameAncestors(db, tenantId);
   if (last === undefined) last = await lastEmbedSession(db, recipientId);
   const requested: string[] = last?.frame_ancestors ?? [];
   // Lo pedido para esa sesión, siempre dentro de lo autorizado por la organización.
@@ -85,8 +102,7 @@ export function pageStillAuthenticates(r: { auth_method?: string | null; id_veri
  * La usan POST …/signing-url y POST /v1/envelopes cuando envía un sobre con firmantes embebidos.
  */
 export async function issueSigningUrl(t: Db, a: AuthContext, envelopeId: string, recipientId: string, input: CreateSigningUrlInput): Promise<SigningUrlResponse> {
-  const tenant = await t.one<any>(`SELECT embed_frame_ancestors FROM tenants WHERE id = $1`, [a.tenantId]);
-  const allowed: string[] = tenant?.embed_frame_ancestors ?? [];
+  const allowed = await tenantFrameAncestors(t, a.tenantId);
   const requested = (input.frameAncestors ?? []).map((o) => o.toLowerCase().replace(/\/$/, ""));
   const notAllowed = requested.filter((o) => !allowed.includes(o));
   if (notAllowed.length) {
@@ -140,21 +156,26 @@ export async function embedRoutes(app: FastifyInstance, s: Services) {
 
   // ───────── Configuración de la organización ─────────
 
-  app.get("/v1/settings/embed", { preHandler: auth }, async (req): Promise<EmbedSettings> => {
-    const t = await s.db.one<any>(`SELECT embed_frame_ancestors FROM tenants WHERE id = $1`, [A(req).tenantId]);
-    return { frameAncestors: t?.embed_frame_ancestors ?? [] };
-  });
+  app.get("/v1/settings/embed", { preHandler: auth }, async (req): Promise<EmbedSettings> => ({ frameAncestors: await tenantFrameAncestors(s.db, A(req).tenantId) }));
 
   app.patch("/v1/settings/embed", { preHandler: auth }, async (req): Promise<EmbedSettings> => {
-    const input = EmbedSettingsInput.parse(req.body);
     const prev = await s.db.one<any>(`SELECT embed_frame_ancestors FROM tenants WHERE id = $1`, [A(req).tenantId]);
-    (req as FastifyRequest & { auditBefore?: Record<string, unknown> }).auditBefore = { frameAncestors: prev?.embed_frame_ancestors ?? [] };
-    const list = [...new Set(input.frameAncestors.map((o) => o.toLowerCase().replace(/\/$/, "")))];
+    const prevList: string[] = prev?.embed_frame_ancestors ?? [];
+    (req as FastifyRequest & { auditBefore?: Record<string, unknown> }).auditBefore = { frameAncestors: prevList };
+    // Un comodín demasiado amplio que YA estaba guardado (de antes de la validación) y vuelve tal cual en la lista
+    // completa se descarta con aviso (discarded) en vez de dar 400: si no, la organización no podía guardar nada. Uno
+    // nuevo sigue rechazándose.
+    const norm = (o: string) => o.trim().toLowerCase().replace(/\/$/, "");
+    const raw = z.object({ frameAncestors: z.array(z.string()).max(20) }).passthrough().parse(req.body);
+    const legacy = new Set(prevList.map(norm));
+    const discarded = [...new Set(raw.frameAncestors.map(norm).filter((o) => legacy.has(o) && !wildcardOriginOk(o)))];
+    const input = EmbedSettingsInput.parse({ ...raw, frameAncestors: raw.frameAncestors.filter((o) => !discarded.includes(norm(o))) });
+    const list = [...new Set(input.frameAncestors.map(norm))];
     if (config.environment !== "local" && list.some((o) => o.startsWith("http://"))) {
       throw badRequest("invalid_origin", "Solo orígenes https fuera del entorno local");
     }
     await s.db.query(`UPDATE tenants SET embed_frame_ancestors = $2 WHERE id = $1`, [A(req).tenantId, list]);
-    return { frameAncestors: list };
+    return { frameAncestors: list, ...(discarded.length ? { discarded } : {}) };
   });
 
   // ───────── URL de firma embebida ─────────

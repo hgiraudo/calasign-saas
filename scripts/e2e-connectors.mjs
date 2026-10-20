@@ -3,7 +3,7 @@
 // documentales (Box, SharePoint) contra servidores simulados. Autocontenida: levanta los simuladores y su propia API
 // (puerto 4117) con las URLs de los proveedores apuntando a ellos. Uso: node scripts/e2e-connectors.mjs
 import { spawn } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import http from "node:http";
 import { tmpdir } from "node:os";
@@ -470,6 +470,24 @@ const hookRun = await waitFor(async () => (await api("GET", "/v1/connectors/runs
 const hookRuns = (await api("GET", "/v1/connectors/runs")).items.filter((r) => r.flowId === hookFlow.id && r.kind === "send");
 assert(hookRuns.length === 1 && hookRun.objectId === "102", `un solo envío por evento repetido y filtrado por evento (${JSON.stringify(hookRuns.map((r) => [r.event, r.status, r.detail, r.error]))})`);
 step("BambooHR: webhook (URL secreta) dispara el alta del empleado 102; repetido no duplica; otro evento no dispara");
+
+// Secreto HMAC opcional del flujo: sin firma (o con otra) no dispara; firmado con X-CalaSign-Signature sí.
+const hookSecret = `whsec-${stamp}-0123456789`;
+const signedFlow = await api("PATCH", `/v1/connectors/flows/${hookFlow.id}`, { webhookSecret: hookSecret });
+assert(signedFlow.webhookSigned === true && !("webhookSecret" in signedFlow), "flujo con secreto (no se devuelve)");
+const sigBody = JSON.stringify({ employees: [{ id: "102", action: "Created", changedFields: ["firma"] }] });
+const unsigned = await fetch(bConn.webhookUrl, { method: "POST", headers: { "content-type": "application/json" }, body: sigBody });
+assert(unsigned.status === 401, `webhook sin firma → 401 (${unsigned.status})`);
+const wrongSig = await fetch(bConn.webhookUrl, { method: "POST", headers: { "content-type": "application/json", "x-calasign-signature": `sha256=${"0".repeat(64)}` }, body: sigBody });
+assert(wrongSig.status === 401, "firma incorrecta → 401");
+const signed = await fetch(bConn.webhookUrl, {
+  method: "POST",
+  headers: { "content-type": "application/json", "x-calasign-signature": `sha256=${createHmac("sha256", hookSecret).update(sigBody).digest("hex")}` },
+  body: sigBody,
+});
+assert(signed.status === 200 && (await signed.json()).queued === 1, "firmado → encolado");
+assert((await api("PATCH", `/v1/connectors/flows/${hookFlow.id}`, { webhookSecret: null })).webhookSigned === false, "secreto quitado");
+step("Webhook con secreto por flujo: sin firma o con otra → 401; con X-CalaSign-Signature (HMAC-SHA256 del cuerpo) se encola");
 
 // ── CLM: Ironclad con documento de origen ──
 await oauthDance("/v1/connectors/oauth/ironclad/start", { name: "Ironclad Legal" }, "/v1/connectors/oauth/ironclad/callback", "connected=ironclad");

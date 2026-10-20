@@ -44,7 +44,15 @@ export const CONNECTOR_OPS: Op[] = [
   },
   { method: "post", path: "/v1/connectors/oauth/{provider}/start", tag: C, summary: "Iniciar OAuth (Ironclad, Factorial)", description: "Devuelve authorizeUrl (PKCE S256). Requiere sesión web.", body: StartConnectorOAuthInput },
   { method: "patch", path: "/v1/connectors/connections/{id}", tag: C, summary: "Renombrar o desactivar una conexión", body: UpdateConnectorConnectionInput },
-  { method: "delete", path: "/v1/connectors/connections/{id}", tag: C, summary: "Quitar una conexión", response: "none", status: 204 },
+  {
+    method: "delete",
+    path: "/v1/connectors/connections/{id}",
+    tag: C,
+    summary: "Quitar una conexión",
+    description: "Revoca el token OAuth en el proveedor cuando tiene endpoint (Factorial; si falla, se desconecta igual). Borra flujos y vínculos; la actividad se conserva.",
+    response: "none",
+    status: 204,
+  },
   { method: "post", path: "/v1/connectors/connections/{id}/test", tag: C, summary: "Probar una conexión" },
   { method: "post", path: "/v1/connectors/connections/{id}/rotate-webhook", tag: C, summary: "Regenerar la URL de webhook", description: "La URL anterior deja de funcionar." },
   { method: "get", path: "/v1/connectors/connections/{id}/records", tag: C, summary: "Buscar empleados o contratos en el sistema de origen", description: "Query: q (texto), objectType. Hasta 25 resultados." },
@@ -80,7 +88,7 @@ export const CONNECTOR_OPS: Op[] = [
     tag: C,
     summary: "Webhook del sistema de origen",
     description:
-      "URL secreta por conexión (connection.webhookUrl). Entiende los eventos de BambooHR (employees[].id), HiBob, Factorial, Ironclad (payload.workflowID / recordId) y Juro (contract.id), o un cuerpo genérico {recordId, event}. Dispara los flujos con trigger webhook (filtrando por triggerConfig.event); un registro con un sobre en curso no genera otro.",
+      "URL secreta por conexión (connection.webhookUrl). Entiende los eventos de BambooHR (employees[].id), HiBob, Factorial, Ironclad (payload.workflowID / recordId) y Juro (contract.id), o un cuerpo genérico {recordId, event}. Dispara los flujos con trigger webhook (filtrando por triggerConfig.event); un registro con un sobre en curso no genera otro. La misma entrega repetida dentro de 10 minutos (CONNECTOR_WEBHOOK_DEDUPE_MINUTES) no duplica. Un flujo con webhookSecret solo se dispara con `X-CalaSign-Signature: sha256=<hex HMAC-SHA256(secreto, cuerpo crudo)>` (o Bob-Signature de HiBob / x-factorial-wh-challenge de Factorial); si todos los flujos que coinciden la exigen y no verifica, 401 invalid_signature.",
     auth: "none",
   },
 ];

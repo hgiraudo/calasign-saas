@@ -261,13 +261,42 @@ describe("almacenamiento por celda y BYOK", () => {
     expect(kms.isKeyError(s3Err("KMS.DisabledException", "x"))).toBe(true);
   });
 
-  it("en S3, un error transitorio de KMS no marca la clave del cliente", async () => {
-    const throttled = s3Err("KMS.ThrottlingException", "You have exceeded the rate at which you may call KMS");
-    const calls = s3With(throttled, { SSEKMSKeyId: OK_ARN });
+  it("en S3, un error transitorio de KMS (leer o guardar) da 503 storage_unavailable sin marcar la clave ni exponer el ARN", async () => {
+    for (const name of ["KMS.ThrottlingException", "KMSInternalException", "DependencyTimeoutException"]) {
+      const throttled = s3Err(name, "You have exceeded the rate at which you may call KMS");
+      const calls = s3With(throttled, { SSEKMSKeyId: OK_ARN });
+      const { resolver, failures } = fakeResolver({ [TENANT_A]: { cell: "us", byokKeyArn: OK_ARN, byokStatus: "active" } });
+      const store = storage.createBlobStore(resolver);
+      const g: any = await quiet(() => store.get(`tenants/${TENANT_A}/t.pdf`).catch((e) => e));
+      expect(g).toMatchObject({ status: 503, code: "storage_unavailable" });
+      expect(calls).toEqual(["GetObjectCommand"]);
+      const p: any = await quiet(() => store.put(`tenants/${TENANT_A}/t2.pdf`, new Uint8Array([1]), "application/pdf").catch((e) => e));
+      expect(p).toMatchObject({ status: 503, code: "storage_unavailable" });
+      expect(JSON.stringify(p.details ?? null)).not.toContain(OK_ARN);
+      // Sin BYOK (clave de la plataforma) también: 503, no un 500 crudo.
+      const plain: any = await quiet(() => storage.createBlobStore(fakeResolver({ [TENANT_A]: { cell: "us", byokKeyArn: null, byokStatus: "none" } }).resolver)
+        .put(`tenants/${TENANT_A}/t3.pdf`, new Uint8Array([1]), "application/pdf")
+        .catch((e) => e));
+      expect(plain).toMatchObject({ status: 503, code: "storage_unavailable" });
+      expect(failures).toEqual([]);
+    }
+  });
+
+  it("en S3, guardar con la clave BYOK deshabilitada sigue atribuyéndose a la clave (byok_key_unavailable)", async () => {
+    s3With(s3Err("KMS.DisabledException", "key is disabled"), { SSEKMSKeyId: OK_ARN });
     const { resolver, failures } = fakeResolver({ [TENANT_A]: { cell: "us", byokKeyArn: OK_ARN, byokStatus: "active" } });
-    await expect(storage.createBlobStore(resolver).get(`tenants/${TENANT_A}/t.pdf`)).rejects.toBe(throttled);
-    expect(calls).toEqual(["GetObjectCommand"]);
-    expect(failures).toEqual([]);
+    await expect(storage.createBlobStore(resolver).put(`tenants/${TENANT_A}/k.pdf`, new Uint8Array([1]), "application/pdf")).rejects.toMatchObject({
+      status: 503,
+      code: "byok_key_unavailable",
+    });
+    expect(failures).toEqual([`${TENANT_A}:${OK_ARN}`]);
+  });
+
+  it("isTransientKmsError: limitación, falla interna y timeout de dependencia; no los de la clave ni los de S3", () => {
+    for (const name of ["ThrottlingException", "KMS.ThrottlingException", "KMSInternalException", "KMS.DependencyTimeoutException"]) {
+      expect(kms.isTransientKmsError(s3Err(name, "x"))).toBe(true);
+    }
+    for (const name of ["KMS.DisabledException", "AccessDenied", "NoSuchKey"]) expect(kms.isTransientKmsError(s3Err(name, "x"))).toBe(false);
   });
 
   it("en disco, un error transitorio de KMS da 503 storage_unavailable sin marcar la clave; uno de la clave la marca", async () => {

@@ -309,6 +309,58 @@ export async function oauthTokenRequest(p: CrmOAuthProvider, params: Record<stri
   return body;
 }
 
+/**
+ * Revoca en el proveedor los tokens OAuth de una conexión que se desconecta. Solo los proveedores con un endpoint de
+ * revocación documentado (HubSpot, Salesforce, Zoho, Pipedrive); RD Station y Kommo no publican uno y los tokens
+ * de app privada de HubSpot o las claves de Siigo/Alegra los revoca el cliente en el proveedor. Devuelve false si no
+ * hay nada que revocar. Lanza ante un error: quien llama lo registra y sigue (desconectar nunca se bloquea por esto).
+ */
+export async function revokeCrmTokens(c: CrmConn): Promise<boolean> {
+  if (c.row.auth_type !== "oauth" || !isOAuthProvider(c.provider)) return false;
+  const p = c.provider;
+  const refresh: string | undefined = c.creds?.refresh_token || undefined;
+  const token: string | undefined = refresh ?? (c.creds?.access_token || undefined);
+  if (!token) return false;
+  const app = oauthApp(p);
+  const FORM = { "content-type": "application/x-www-form-urlencoded", accept: "application/json" };
+  let url: string;
+  let method = "POST";
+  let headers: Record<string, string> = {};
+  let body: URLSearchParams | undefined;
+  switch (p) {
+    case "hubspot":
+      // DELETE /oauth/v1/refresh-tokens/{token}: invalida el refresh token (y con él la instalación de la cuenta).
+      if (!refresh) return false;
+      url = `${BASES.hubspotApi()}/oauth/v1/refresh-tokens/${encodeURIComponent(refresh)}`;
+      method = "DELETE";
+      break;
+    case "salesforce": {
+      // /services/oauth2/revoke (RFC 7009): revocar el refresh token revoca también los access tokens.
+      const base = c.cfg.instanceUrl ? validateSalesforceInstance(String(c.cfg.instanceUrl)) : BASES.salesforceLogin();
+      url = `${base}/services/oauth2/revoke`;
+      headers = { ...FORM };
+      body = new URLSearchParams({ token });
+      break;
+    }
+    case "zoho":
+      url = `${validateZohoAccounts(String(c.cfg.accountsServer ?? zohoAccountsBase()))}/oauth/v2/token/revoke?token=${encodeURIComponent(token)}`;
+      break;
+    case "pipedrive":
+      // /oauth/revoke con Basic client_id:client_secret (como el canje del token).
+      url = `${BASES.pipedriveOAuth()}/oauth/revoke`;
+      headers = { ...FORM, authorization: "" };
+      body = new URLSearchParams({ token, token_type_hint: refresh ? "refresh_token" : "access_token" });
+      headers.authorization = `Basic ${Buffer.from(`${app.clientId}:${app.clientSecret}`).toString("base64")}`;
+      break;
+    default:
+      return false;
+  }
+  const res = await fetch(url, { method, headers, body, signal: AbortSignal.timeout(10_000) });
+  await res.body?.cancel().catch(() => {});
+  if (!res.ok) throw new CrmError(`revocación ${p}: HTTP ${res.status}`, res.status);
+  return true;
+}
+
 /** Valida el instance_url que devuelve Salesforce (es la única URL que viene del proveedor). */
 export function validateSalesforceInstance(raw: string): string {
   const u = new URL(raw);
@@ -493,9 +545,13 @@ export async function testConnection(c: CrmConn): Promise<{ label: string | null
         }
         return { label: info?.hub_domain ?? info?.user ?? null, config: { portalId: str(info?.hub_id) } };
       }
-      const info = await crmFetch(c, { path: "/account-info/v3/details" }).catch(() => null);
+      // Como en OAuth: sin el portal el disparo por webhook de la conexión nunca se activaría (y la conexión quedaba
+      // guardada rota sin aviso). El token de app privada necesita el scope de account-info (lo da cualquier token).
+      const info = await crmFetch(c, { path: "/account-info/v3/details" });
+      const portalId = str(info?.portalId);
+      if (!portalId) throw new CrmError("HubSpot no informó el portal (account-info sin portalId)");
       await crmFetch(c, { path: "/crm/v3/objects/deals?limit=1" });
-      return { label: info?.uiDomain ?? (info?.portalId ? `portal ${info.portalId}` : null), config: { portalId: str(info?.portalId) } };
+      return { label: info?.uiDomain ?? `portal ${portalId}`, config: { portalId } };
     }
     case "salesforce": {
       await crmFetch(c, { path: `/services/data/${SF_API_VERSION}/limits` });
@@ -666,6 +722,10 @@ export interface AttachInput {
   envelopeId: string;
   sha256: string;
   url: string;
+  /** HubSpot: id del archivo ya subido en un intento anterior (falló la nota): no se vuelve a subir. */
+  uploadedFileId?: string | null;
+  /** HubSpot: se llama apenas se sube el archivo, antes de crear la nota (para guardarlo y no re-subirlo al reintentar). */
+  onFileUploaded?: (fileId: string) => Promise<void>;
 }
 
 /** Adjunta el PDF sellado (o su referencia) al registro. Devuelve una referencia remota. */
@@ -680,17 +740,22 @@ export async function attachSigned(c: CrmConn, objectType: CrmObjectType, id: st
     form.append("file", new Blob([Buffer.from(a.pdf)], { type: "application/pdf" }), a.fileName);
     form.append("folderPath", "/CalaSign");
     form.append("options", JSON.stringify({ access: "PRIVATE", overwrite: false }));
-    const file = await crmFetch(c, { method: "POST", path: "/files/v3/files", form });
+    let fileId = a.uploadedFileId ?? null;
+    if (!fileId) {
+      const file = await crmFetch(c, { method: "POST", path: "/files/v3/files", form });
+      fileId = String(file.id);
+      await a.onFileUploaded?.(fileId);
+    }
     const created = await crmFetch(c, {
       method: "POST",
       path: "/crm/v3/objects/notes",
       json: {
-        properties: { hs_timestamp: new Date().toISOString(), hs_note_body: note, hs_attachment_ids: String(file.id) },
+        properties: { hs_timestamp: new Date().toISOString(), hs_note_body: note, hs_attachment_ids: fileId },
         // 214 = nota → deal (asociación definida por HubSpot).
         associations: [{ to: { id: String(id) }, types: [{ associationCategory: "HUBSPOT_DEFINED", associationTypeId: 214 }] }],
       },
     });
-    return `file:${file.id} note:${created.id}`;
+    return `file:${fileId} note:${created.id}`;
   }
   if (c.provider === "salesforce") {
     const created = await crmFetch(c, {

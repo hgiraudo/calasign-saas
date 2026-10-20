@@ -13,6 +13,7 @@ import {
   customCssProblemText,
   SetDomainInput,
   UpdateBrandInput,
+  withoutProtectedConfigTexts,
   type Brand,
   type BrandAssetKind,
   type BrandDomain,
@@ -145,7 +146,8 @@ async function toApi(db: Db, b: ResolvedBrand): Promise<Brand> {
     name: b.label,
     slug: b.key,
     isDefault: !b.brandId,
-    config: b.ownConfig,
+    // Sin textos protegidos guardados antes de la validación (la 0082 los borró; esto cubre una vista previa).
+    config: withoutProtectedConfigTexts(b.ownConfig),
     assets: { logoUrl: own.logoUrl, logoDarkUrl: own.logoDarkUrl, faviconUrl: own.faviconUrl, fontUrl: own.fontUrl },
     emailSender: { from: sender.from, replyTo: sender.replyTo, customDomain: sender.customDomain, warning: sender.warning },
     domain: dom ? domainToApi(dom) : null,

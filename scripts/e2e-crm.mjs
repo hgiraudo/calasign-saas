@@ -1137,7 +1137,10 @@ step("Salesforce: OAuth con PKCE S256, contacto principal (OpportunityContactRol
     prefill: [{ field: "Monto", property: "value" }],
     writeBack: { statusProperty: "Estado CalaSign", statusValues: { sent: "Enviado", completed: "Firmado", declined: "Rechazado" }, attachPdf: true },
   });
-  const pdSent = await api("POST", `/v1/crm/mappings/${pdMap.id}/send`, { objectId: "42" });
+  // Pipedrive/Kommo: el envío dice desde qué cuenta se hace (la acción manda companyId); sin él, 400 company_required.
+  const noCompany = await api("POST", `/v1/crm/mappings/${pdMap.id}/send`, { objectId: "42" }, { expect: 400 });
+  assert(noCompany.error.code === "company_required", "envío de Pipedrive sin companyId → 400 company_required");
+  const pdSent = await api("POST", `/v1/crm/mappings/${pdMap.id}/send`, { objectId: "42", companyId: "5150" });
   const pdDet = await api("GET", `/v1/envelopes/${pdSent.envelopeId}`);
   assert(pdDet.recipients.some((r) => r.name === "Paula Principal PD" && r.email === "paula.pd@cliente.test"), "persona principal del deal como Cliente");
   assert(pdDet.recipients.some((r) => r.name === "Pedro Participante PD"), "participante del deal como Vendedor");
@@ -1169,11 +1172,11 @@ step("Salesforce: OAuth con PKCE S256, contacto principal (OpportunityContactRol
   // La acción de Pipedrive lista solo los mapeos de conexiones de Pipedrive.
   const pdOnly = (await api("GET", "/v1/crm/mappings?provider=pipedrive")).items.map((x) => x.id).sort();
   assert(pdOnly.join() === [pdMap.id, pdPersonMap.id].sort().join(), `mapeos filtrados por proveedor (${pdOnly.length})`);
-  const pdDraft = await api("POST", `/v1/crm/mappings/${pdPersonMap.id}/send`, { objectId: "8" });
+  const pdDraft = await api("POST", `/v1/crm/mappings/${pdPersonMap.id}/send`, { objectId: "8", companyId: "5150" });
   assert(pdDraft.status === "draft", "sobre en borrador desde la persona");
   const pdDraftDet = await api("GET", `/v1/envelopes/${pdDraft.envelopeId}`);
   assert(pdDraftDet.recipients.some((r) => r.name === "Pedro Participante PD" && r.email === "pedro.pd@cliente.test"), "la persona como Cliente");
-  const missing = await api("POST", `/v1/crm/mappings/${pdPersonMap.id}/send`, { objectId: "999" }, { expect: 404 });
+  const missing = await api("POST", `/v1/crm/mappings/${pdPersonMap.id}/send`, { objectId: "999", companyId: "5150" }, { expect: 404 });
   assert(missing.error.code === "crm_record_not_found", "persona inexistente → 404");
   step("Pipedrive: envío desde una Person (borrador) y registro inexistente → 404");
 
@@ -1280,7 +1283,7 @@ step("Salesforce: OAuth con PKCE S256, contacto principal (OpportunityContactRol
     prefill: [{ field: "Monto", property: "price" }],
     writeBack: { statusProperty: "Estado CalaSign", statusValues: { sent: "Enviado", completed: "Firmado", declined: "Rechazado" }, attachPdf: true },
   });
-  const kmSent = await api("POST", `/v1/crm/mappings/${kmMap.id}/send`, { objectId: "42" });
+  const kmSent = await api("POST", `/v1/crm/mappings/${kmMap.id}/send`, { objectId: "42", companyId: "31337" });
   const kmDet = await api("GET", `/v1/envelopes/${kmSent.envelopeId}`);
   assert(kmDet.recipients.some((r) => r.name === "Karla Principal KM" && r.email === "karla.km@cliente.test"), "contacto principal del lead como Cliente");
   assert(kmDet.recipients.some((r) => r.name === "Kike Otro KM"), "otro contacto del lead como Vendedor");
@@ -1297,7 +1300,7 @@ step("Salesforce: OAuth con PKCE S256, contacto principal (OpportunityContactRol
   assert(km.notes[0].entity_id === 42 && /SHA-256/.test(km.notes[0].params.text) && km.notes[0].params.text.includes(`/app/envelopes/${kmSent.envelopeId}`), "nota con hash y link en el lead");
   step(`Kommo: firmado → token refrescado, estado «Firmado», PDF por la Files API (${km.files[0].parts} parte/s) vinculado al lead y nota con hash y link`);
 
-  const kmMissing = await api("POST", `/v1/crm/mappings/${kmMap.id}/send`, { objectId: "999" }, { expect: 404 });
+  const kmMissing = await api("POST", `/v1/crm/mappings/${kmMap.id}/send`, { objectId: "999", companyId: "31337" }, { expect: 404 });
   assert(kmMissing.error.code === "crm_record_not_found", "lead inexistente (204) → 404");
   step("Kommo: lead inexistente → 404");
 }

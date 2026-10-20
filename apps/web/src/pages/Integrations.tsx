@@ -304,6 +304,7 @@ function EmbedSection() {
   const [text, setText] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [discarded, setDiscarded] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -318,6 +319,7 @@ function EmbedSection() {
     setBusy(true);
     setError(null);
     setSaved(false);
+    setDiscarded([]);
     try {
       const frameAncestors = (text ?? "")
         .split(/[\s,]+/)
@@ -325,6 +327,7 @@ function EmbedSection() {
         .filter(Boolean);
       const r = await api<EmbedSettings>("/v1/settings/embed", { method: "PATCH", body: { frameAncestors } });
       setText(r.frameAncestors.join("\n"));
+      setDiscarded(r.discarded ?? []);
       setSaved(true);
     } catch (err) {
       setError(errorText(err));
@@ -347,6 +350,7 @@ function EmbedSection() {
             <span>{tt("embed.origins")}</span>
             <textarea rows={4} value={text ?? ""} readOnly={!canEdit} onChange={(e) => setText(e.target.value)} placeholder={`https://app.${placeholderText("domain")}`} />
           </label>
+          {discarded.length > 0 && <p className="muted small">{tt("embed.discarded").replace("{list}", discarded.join(", "))}</p>}
           {canEdit ? (
             <div className="row-end">
               {saved && <span className="muted small">{tt("embed.saved")}</span>}

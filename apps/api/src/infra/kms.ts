@@ -169,6 +169,18 @@ export function kmsClient(region: string): KmsLike {
 export const kmsForKey = (arn: string) => kmsClient(regionOfArn(arn) ?? config.storage.region);
 
 /**
+ * true si es un error transitorio de KMS (limitación de tasa, falla interna, timeout de una dependencia), directo del
+ * SDK de KMS o a través de S3 con SSE-KMS ("KMS.ThrottlingException"…). No es de la clave (isKeyError da false): el
+ * almacenamiento lo responde como 503 storage_unavailable, no como un 500 crudo.
+ */
+export function isTransientKmsError(e: unknown): boolean {
+  const err = e as any;
+  const ids = `${err?.name ?? ""} ${err?.Code ?? ""} ${err?.code ?? ""}`;
+  if (/(^|\s)(KMS\.)?(ThrottlingException|KMSInternalException|DependencyTimeoutException)(\s|$)/.test(ids)) return true;
+  return /^(KMS\.)?(ThrottlingException|KMSInternalException|DependencyTimeoutException)\b/.test(String(err?.message ?? ""));
+}
+
+/**
  * true si el error es de KMS (la clave: permisos, estado, inexistente) y no un problema transitorio de red ni un
  * error propio de S3. Un "AccessDenied" de S3 a secas (objeto inexistente sin s3:ListBucket, política del bucket)
  * no es de la clave: antes se le atribuía y la clave del cliente quedaba «failing» con alerta falsa.

@@ -142,18 +142,26 @@ export function withoutProtectedTexts<T extends Record<string, string> | undefin
   return Object.fromEntries(Object.entries(m).filter(([k]) => !isProtectedTextKey(k))) as T;
 }
 
+/** La configuración sin textos protegidos (por idioma; los idiomas que quedan vacíos se quitan). */
+export function withoutProtectedConfigTexts<T extends { texts?: Partial<Record<string, Record<string, string> | undefined>> }>(cfg: T): T {
+  if (!cfg?.texts) return cfg;
+  const texts: Record<string, Record<string, string>> = {};
+  for (const [l, m] of Object.entries(cfg.texts)) {
+    const own = withoutProtectedTexts(m);
+    if (own && Object.keys(own).length) texts[l] = own;
+  }
+  return { ...cfg, texts };
+}
+
+/**
+ * Textos propios de un idioma. Las claves protegidas (isProtectedTextKey) se DESCARTAN en vez de rechazarse: la consola
+ * reenvía la configuración completa al guardar y una marca con claves verify.* / val.* guardadas antes de la validación
+ * no podía guardar nada (400). No se aplican en ningún caso (ver withoutProtectedTexts al leer).
+ */
 const TextOverrides = z
   .record(z.string().regex(TEXT_KEY_RE), z.string().max(1000))
   .refine((r) => Object.keys(r).length <= 500, "máximo 500 textos por idioma")
-  .superRefine((r, ctx) => {
-    const bad = Object.keys(r).filter(isProtectedTextKey);
-    if (bad.length) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: `No se pueden cambiar los textos del resultado de la verificación: ${bad.slice(0, 5).join(", ")}${bad.length > 5 ? "…" : ""}`,
-      });
-    }
-  });
+  .transform((r) => withoutProtectedTexts(r));
 
 export const BrandConfigInput = z
   .object({
@@ -255,8 +263,13 @@ export interface PublicBrandTheme {
   /** Marca blanca total: no se muestra "Powered by" ni la marca de la plataforma. */
   whiteLabel: boolean;
   theme: ResolvedBrandTheme;
-  /** CSS listo para inyectar: variables del tema + CSS propio saneado. */
+  /** CSS listo para inyectar: variables del tema + CSS propio saneado (en /verify, el tema restringido). */
   css: string;
+  /**
+   * Solo en el tema que el servidor inyecta en /verify (donde `css` es el restringido): el CSS completo de la marca, para
+   * que la web lo restaure al salir de /verify navegando dentro de la aplicación. En /verify nunca se aplica.
+   */
+  pageCss?: string;
   links: BrandLinks;
   logoUrl: string | null;
   logoDarkUrl: string | null;

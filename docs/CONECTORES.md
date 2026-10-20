@@ -327,7 +327,11 @@ Un flujo define:
 - Cada conexión tiene una URL secreta: `/v1/integrations/connectors/hook/cshk_…`. En la base se guarda el hash; el secreto se guarda cifrado para mostrarlo a los admins. Se puede regenerar.
 - Entiende los cuerpos de BambooHR (`employees[].id`/`action`), HiBob, Factorial, Ironclad (`payload.workflowID`/`recordId`) y Juro (`contract.id`).
 - También acepta un cuerpo genérico `{recordId, event}`, útil para Power Automate, Zapier, Make o n8n.
-- Las reentregas del mismo cuerpo no duplican. Un registro con un sobre en curso no genera otro: el flujo se bloquea mientras se crea el sobre.
+- Las reentregas del mismo cuerpo no duplican **dentro de una ventana** de 10 minutos (`CONNECTOR_WEBHOOK_DEDUPE_MINUTES`; la clave lleva el hash del cuerpo y el tramo de tiempo): un segundo disparo idéntico más tarde sí se envía. Un registro con un sobre en curso no genera otro: el flujo se bloquea mientras se crea el sobre.
+- **Firma opcional por flujo** (`webhookSecret` al crear o editar el flujo; la API nunca lo devuelve, `webhookSigned` dice si hay; `null` lo quita). Con secreto, el flujo solo se dispara si la entrega trae:
+  - `X-CalaSign-Signature: sha256=<hex de HMAC-SHA256(secreto, cuerpo crudo)>` (Power Automate, Zapier, Make, n8n o scripts propios); o
+  - la firma del proveedor, si el secreto es el que se configuró allí: HiBob `Bob-Signature` = base64(HMAC-SHA512(secreto, cuerpo)); Factorial `x-factorial-wh-challenge` = el *challenge* de la suscripción (un secreto compartido, no HMAC). Las dos salen de la documentación pública: verificar contra cuentas reales. BambooHR, Ironclad y Juro no firman de una forma soportada: con ellos se usa el secreto de la URL (o un intermediario que firme).
+  - Si todos los flujos que coinciden con el evento exigen firma y no verifica: 401 `invalid_signature`. Los flujos sin secreto se siguen disparando solo con la URL.
 - El sobre queda a nombre de quien creó el flujo. Si esa persona ya no puede crear sobres con la plantilla, no se envía.
 
 **Devolución (write-back)**
@@ -346,6 +350,9 @@ Un flujo define:
 **Seguridad**
 
 - Credenciales y tokens cifrados en la base (`encrypt` de `lib/util`).
+- Desconectar revoca el token OAuth de Factorial (`POST /oauth/revoke`, Doorkeeper/RFC 7009, a verificar); Ironclad no publica un endpoint de revocación y las claves de API se revocan en cada sistema. Si falla, se registra y se desconecta igual. La actividad (`connector_runs`) se conserva con el nombre y el proveedor de la conexión (migración 0081) y se purga a los `INTEGRATION_RUNS_RETENTION_DAYS` días (180).
+- Auditoría: activar/desactivar o renombrar conexiones (`connector.activated`, `connector.deactivated`, `connector.updated`) y editar o borrar flujos (`connector.flow_updated`, `connector.flow_deleted`).
+- `POST /v1/connectors/flows/{id}/send` acepta cualquier `recordId` con `envelopes:create`: ver la decisión en `docs/CRM.md` («`objectId` libre en el envío»).
 - Las URLs base salen de variables de entorno, nunca del usuario:
   - el subdominio de BambooHR se valida como subdominio;
   - la región de Ironclad se elige de una lista cerrada;
@@ -364,6 +371,7 @@ Un flujo define:
 | `IRONCLAD_CLIENT_ID`, `IRONCLAD_CLIENT_SECRET` | App OAuth de Ironclad. Sin ellas se conecta igual con un token de API. Cada entorno (na1, eu1, demo) necesita su propia app. |
 | `FACTORIAL_CLIENT_ID`, `FACTORIAL_CLIENT_SECRET`, `FACTORIAL_SCOPE` | App OAuth de Factorial (opcional: se puede conectar con API key). |
 | `FACTORIAL_API_VERSION` | Versión de la API por fecha (por defecto `2026-07-01`). |
+| `CONNECTOR_WEBHOOK_DEDUPE_MINUTES` | Ventana en la que una entrega idéntica del webhook no se vuelve a disparar (por defecto 10, máximo 1440). |
 | `BOX_CLIENT_ID`, `BOX_CLIENT_SECRET` | App OAuth de Box (Custom App, User Authentication, permiso "Read and write all files and folders"). |
 | `MS_CLIENT_ID`, `MS_CLIENT_SECRET`, `MS_TENANT` | Ya existían para OneDrive. SharePoint usa la misma app. |
 | `BAMBOOHR_API_BASE`, `HIBOB_API_BASE`, `FACTORIAL_API_BASE`, `IRONCLAD_BASE`, `JURO_API_BASE`, `BOX_API_BASE`, `BOX_UPLOAD_BASE`, `BOX_AUTHORIZE_URL`, `MS_LOGIN_BASE`, `MS_GRAPH_BASE` | Solo para pruebas con simuladores. |

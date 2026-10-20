@@ -571,7 +571,13 @@ const OPS: Op[] = [
     tag: "Firma embebida",
     summary: "Cambiar orígenes autorizados (CSP frame-ancestors)",
     body: EmbedSettingsInput,
-    response: z.object({ frameAncestors: z.array(z.string()) }),
+    response: z.object({
+      frameAncestors: z.array(z.string()),
+      discarded: z
+        .array(z.string())
+        .optional()
+        .describe("Comodines demasiado amplios ya guardados que volvieron en la lista: se descartaron (uno nuevo da 400)."),
+    }),
     errors: ["invalid_origin"],
   },
 

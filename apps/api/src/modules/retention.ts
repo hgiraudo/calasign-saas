@@ -22,6 +22,29 @@ function daySeconds() {
   return !config.production && Number.isFinite(v) && v > 0 ? v : 86400;
 }
 
+/** Días que se guardan las ejecuciones de CRM y conectores (INTEGRATION_RUNS_RETENTION_DAYS, por defecto 180). */
+export function integrationRunsRetentionDays() {
+  const v = Number(process.env.INTEGRATION_RUNS_RETENTION_DAYS);
+  return Number.isFinite(v) && v >= 1 ? Math.floor(v) : 180;
+}
+
+/**
+ * Ejecuciones de CRM y conectores (crm_runs, connector_runs) más viejas que la retención: guardan ids de registros
+ * y errores del proveedor y crecían sin límite. De a 5000 por tabla y pasada para no bloquear. Las pendientes también
+ * (a esa edad ningún trabajo las va a retomar). Devuelve cuántas borró de cada tabla.
+ */
+export async function purgeOldIntegrationRuns(db: Db, days = integrationRunsRetentionDays()) {
+  const out: Record<string, number> = {};
+  for (const table of ["crm_runs", "connector_runs"] as const) {
+    const r = await db.query(
+      `DELETE FROM ${table} WHERE ctid IN (SELECT ctid FROM ${table} WHERE created_at < now() - make_interval(days => $1::int) LIMIT 5000) RETURNING id`,
+      [days],
+    );
+    out[table] = r.length;
+  }
+  return out;
+}
+
 /** Archivos borrables de un sobre: originales, imágenes de firma y adjuntos de firmantes. */
 async function purgeableFiles(db: Db, envelopeId: string) {
   return db.query<any>(

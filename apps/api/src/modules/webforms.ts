@@ -22,7 +22,7 @@ import { ownerProblem } from "./owner-check";
 import { requireFeature, tenantPlan } from "./billing/plans";
 import { rateLimitIpKey } from "../lib/ip";
 import { authenticate, clientInfo, type AuthContext, type Services } from "./context";
-import { setFrameAncestors } from "./embed";
+import { setFrameAncestors, tenantFrameAncestors } from "./embed";
 import { MIN_FILL_MS, publicTenantCapReached } from "./public-intake";
 import { sendEnvelope } from "./envelopes";
 import { insertEnvelopeFromTemplate, loadTemplateForUse, planFromTemplate, type LoadedTemplate } from "./templates";
@@ -593,8 +593,7 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
     if (!m) return payload;
     const form = await s.db.one<any>(`SELECT tenant_id, embeddable FROM web_forms WHERE slug = $1`, [m[1]]);
     if (form?.embeddable && /(?:^|&)embed=1(?:&|$)/.test(m[2] ?? "")) {
-      const t = await s.db.one<any>(`SELECT embed_frame_ancestors FROM tenants WHERE id = $1`, [form.tenant_id]);
-      setFrameAncestors(reply, t?.embed_frame_ancestors ?? []);
+      setFrameAncestors(reply, await tenantFrameAncestors(s.db, form.tenant_id));
     }
     return payload;
   });

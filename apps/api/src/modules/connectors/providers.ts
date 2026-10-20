@@ -13,6 +13,7 @@
 //  · Ironclad  /public/api/v1 con Bearer (token de API u OAuth); workflows (GET, document/{key}/download,
 //              POST upload-signed con "attachment") y records (GET, PATCH, POST attachments/{key}).
 //  · Juro      API v3 con x-api-key; GET /contracts/{id}, GET /contracts/{id}/pdf/binary, POST /contracts/upload.
+import { createHmac, timingSafeEqual } from "node:crypto";
 import type { ConnectorObjectType, ConnectorProvider, ConnectorRecordSummary, CrmRecord } from "@calasign/shared";
 import { config } from "../../config";
 import { BodyTooLargeError, MAX_API_RESPONSE_BYTES, readCapped, readCappedJson } from "../../lib/http-body";
@@ -101,6 +102,62 @@ export async function oauthTokenRequest(p: OAuthProvider, region: string | null 
     throw new ConnectorError(`token ${p}: HTTP ${res.status} ${body.error_description ?? body.error ?? ""}`.trim(), res.status, invalid);
   }
   return body;
+}
+
+/**
+ * Revoca en el proveedor el token OAuth de una conexión que se desconecta. Factorial (Doorkeeper): POST /oauth/revoke
+ * (RFC 7009) con client_id y client_secret. Ironclad no publica un endpoint de revocación y las claves de API
+ * (BambooHR, HiBob, Juro, tokens de Ironclad o Factorial) las revoca el cliente en el proveedor: false.
+ * Lanza ante un error: quien llama lo registra y sigue.
+ */
+export async function revokeConnectorTokens(row: ConnRow, creds: any): Promise<boolean> {
+  if (row.auth_type !== "oauth" || row.provider !== "factorial") return false;
+  const token: string | undefined = creds?.refresh_token || creds?.access_token || undefined;
+  if (!token) return false;
+  const app = oauthApp("factorial");
+  const res = await fetch(`${BASES.factorial()}/oauth/revoke`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+    body: new URLSearchParams({ token, token_type_hint: creds?.refresh_token ? "refresh_token" : "access_token", client_id: app.clientId ?? "", client_secret: app.clientSecret ?? "" }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  await res.body?.cancel().catch(() => {});
+  if (!res.ok) throw new ConnectorError(`revocación factorial: HTTP ${res.status}`, res.status);
+  return true;
+}
+
+// ───────────────────────────── Firma del webhook entrante ─────────────────────────────
+
+const safeEq = (a: string, b: string) => {
+  const x = Buffer.from(a);
+  const y = Buffer.from(b);
+  return x.length === y.length && timingSafeEqual(x, y);
+};
+
+/** Firma que espera X-CalaSign-Signature: "sha256=" + hex(HMAC-SHA256(secreto, cuerpo crudo)). */
+export const calasignHookSignature = (secret: string, raw: string) => `sha256=${createHmac("sha256", secret).update(raw).digest("hex")}`;
+
+/**
+ * Verifica la firma de un webhook entrante con el secreto de un flujo. Acepta:
+ *  · X-CalaSign-Signature: sha256=<hex HMAC-SHA256(secreto, cuerpo)> (o el hex solo): para iPaaS y scripts propios;
+ *  · HiBob: Bob-Signature = base64(HMAC-SHA512(secreto del webhook, cuerpo));
+ *  · Factorial: x-factorial-wh-challenge = el "challenge" configurado en la suscripción (no es HMAC: un secreto
+ *    compartido que Factorial manda en cada entrega).
+ * Lo del proveedor sale de su documentación pública (ver docs/CONECTORES.md, a verificar contra cuentas reales).
+ */
+export function verifyHookSignature(p: ConnectorProvider, secret: string, raw: string, headers: Record<string, unknown>): boolean {
+  const h = (k: string) => {
+    const v = headers[k];
+    return typeof v === "string" ? v.trim() : Array.isArray(v) && typeof v[0] === "string" ? v[0].trim() : "";
+  };
+  const cs = h("x-calasign-signature");
+  if (cs) {
+    const expected = calasignHookSignature(secret, raw);
+    return safeEq(cs.toLowerCase().startsWith("sha256=") ? `sha256=${cs.slice(7).toLowerCase()}` : `sha256=${cs.toLowerCase()}`, expected);
+  }
+  if (p === "hibob" && h("bob-signature")) return safeEq(h("bob-signature"), createHmac("sha512", secret).update(raw).digest("base64"));
+  if (p === "factorial" && h("x-factorial-wh-challenge")) return safeEq(h("x-factorial-wh-challenge"), secret);
+  return false;
 }
 
 // ───────────────────────────── Conexión ─────────────────────────────

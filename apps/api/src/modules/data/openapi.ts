@@ -32,7 +32,7 @@ export const DATA_OPS = [
     tag: TAG,
     summary: "Renovar ahora el sello de archivo (DSS + sello de documento)",
     description:
-      "Una renovación a la vez por sobre (409 archive_renewal_in_progress), hasta 3 por día (429 archive_recently_renewed, sin Retry-After) y 50 en total (409 archive_renewal_limit). Si la autoridad de sellado de tiempo falla, 502 tsa_unavailable: reintentar más tarde. 409 archive_not_due si falta para el vencimiento o si un sello nuevo no extendería la validez (el último ya es del certificado vigente de la TSA); 409 archive_not_applicable si el PDF no es de archivo.",
+      "Una renovación a la vez por sobre (409 archive_renewal_in_progress), hasta 3 por día (429 archive_recently_renewed, sin Retry-After) y 50 en total (409 archive_renewal_limit). Si la autoridad de sellado de tiempo falla, 502 tsa_unavailable: reintentar más tarde. 409 archive_not_due si falta para el vencimiento o si un sello nuevo no extendería la validez (el último ya es del certificado vigente de la TSA); 409 archive_not_applicable si el PDF no es de archivo (o no se puede analizar). Si falla el almacenamiento, 503 storage_unavailable o byok_key_unavailable.",
     errors: ["archive_renewal_in_progress", "archive_recently_renewed", "archive_renewal_limit", "archive_not_due", "archive_not_applicable", "tsa_unavailable"],
   },
 ] as const;

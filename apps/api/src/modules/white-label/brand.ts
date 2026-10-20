@@ -267,7 +267,7 @@ export function assetPath(b: Pick<ResolvedBrand, "key" | "assets">, kind: BrandA
 }
 
 /** Tema público para la web. `absolute`: URLs con el dominio de la marca (correos, PDF). */
-export function publicTheme(b: ResolvedBrand, opts: { absolute?: boolean; verify?: boolean } = {}): PublicBrandTheme {
+export function publicTheme(b: ResolvedBrand, opts: { absolute?: boolean; verify?: boolean; withPageCss?: boolean } = {}): PublicBrandTheme {
   const abs = (p: string | null) => (p && opts.absolute ? `${b.baseUrl}${p}` : p);
   const fontPath = assetPath(b, "font");
   const fontFace =
@@ -276,9 +276,8 @@ export function publicTheme(b: ResolvedBrand, opts: { absolute?: boolean; verify
       : null;
   // Página pública de verificación (`verify`): solo barra, botones y fuente, sin el CSS propio (con él una marca podía
   // ocultar el "✕" y mostrar un "✓" para un PDF adulterado).
-  const css = opts.verify
-    ? themeToCss(verifyPageTheme(b.theme), { fontFace })
-    : [themeToCss(b.theme, { fontFace }), b.customCss ?? ""].filter(Boolean).join("\n");
+  const fullCss = [themeToCss(b.theme, { fontFace }), b.customCss ?? ""].filter(Boolean).join("\n");
+  const css = opts.verify ? themeToCss(verifyPageTheme(b.theme), { fontFace }) : fullCss;
   const texts: PublicBrandTheme["texts"] = {};
   // Sin los textos del veredicto de la verificación (configuraciones guardadas antes de que el esquema los rechazara).
   for (const [l, m] of Object.entries(b.texts)) {
@@ -292,6 +291,8 @@ export function publicTheme(b: ResolvedBrand, opts: { absolute?: boolean; verify
     whiteLabel: b.whiteLabel,
     theme: b.theme,
     css,
+    // index.html de /verify: el CSS completo para restaurarlo al salir navegando (la web nunca lo aplica en /verify).
+    ...(opts.verify && opts.withPageCss ? { pageCss: fullCss } : {}),
     links: b.links,
     logoUrl: abs(assetPath(b, "logo")),
     logoDarkUrl: abs(assetPath(b, "logoDark")),

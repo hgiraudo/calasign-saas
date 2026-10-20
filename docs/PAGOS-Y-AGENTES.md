@@ -103,8 +103,9 @@ Precios mensuales por moneda en `packages/shared/src/billing.ts` (`PLAN_PRICES`;
   cuenta para el cupo del mes de la organización (como cualquier otro). Para que un formulario público no agote el cupo:
   60 sobres por hora por formulario (`WEBFORM_MAX_PER_FORM_HOUR`), 100 por hora y 500 por día sumando todos los
   formularios de la organización (`WEBFORM_MAX_PER_TENANT_HOUR`, `WEBFORM_MAX_PER_TENANT_DAY`) → `429 form_rate_limited`;
-  el mismo correo en el mismo formulario dentro de 10 minutos (`WEBFORM_DEDUPE_MINUTES`) no crea otro sobre →
-  `429 form_recent_submission`; límite por IP (10 envíos por minuto, en IPv6 por /64). Desafío anti-bots opcional con
+  el mismo correo desde la misma IP (en IPv6, el mismo /64) en el mismo formulario dentro de 10 minutos
+  (`WEBFORM_DEDUPE_MINUTES`, sin contar sobres anulados o rechazados) no crea otro sobre → `429 form_recent_submission`
+  (mensaje neutro); límite por IP (10 envíos por minuto, en IPv6 por /64). Desafío anti-bots opcional con
   Cloudflare Turnstile: con `TURNSTILE_SITE_KEY` y `TURNSTILE_SECRET_KEY` la página pública muestra el desafío y el
   envío exige su token (`400 captcha_failed`); sin las dos claves no cambia nada. Quien completa un formulario sin código
   por correo no recibe la copia final por correo (no validó la dirección): la descarga desde su página de firma.
@@ -113,9 +114,11 @@ Precios mensuales por moneda en `packages/shared/src/billing.ts` (`PLAN_PRICES`;
   responde `402 plan_limit` sin crear nada (`/validate` lo avisa en `quotaRemaining`); si el cupo se agota durante el
   envío, las filas que faltan quedan fallidas sin intentarse y se pueden reintentar con
   `POST /v1/bulk-sends/{id}/retry-failed`.
-- **Códigos de verificación (OTP)**: además de los topes por destinatario, como mucho 10 por hora y 30 por día al mismo
-  destino (correo o teléfono, sumando todos los sobres: `OTP_MAX_PER_DESTINATION_HOUR`, `OTP_MAX_PER_DESTINATION_DAY`) y
-  1000 por hora por organización (`OTP_MAX_PER_TENANT_HOUR`) → `429 otp_destination_limit` / `otp_tenant_limit`.
+- **Códigos de verificación (OTP)**: además de los topes por destinatario, contando solo códigos sin verificar: como mucho
+  10 por hora y 30 por día al mismo destino desde la misma organización (correo o teléfono, sumando todos sus sobres:
+  `OTP_MAX_PER_DESTINATION_HOUR`, `OTP_MAX_PER_DESTINATION_DAY`), 100 por hora al mismo destino sumando todas las
+  organizaciones (anti-abuso: `OTP_MAX_PER_DESTINATION_GLOBAL_HOUR`) y 1000 por hora por organización
+  (`OTP_MAX_PER_TENANT_HOUR`) → `429 otp_destination_limit` / `otp_tenant_limit`.
 - **Plan por defecto** (organizaciones sin suscripción): `BILLING_DEFAULT_PLAN`; si no se define, `free` en producción y
   `enterprise` fuera de producción (las pruebas no chocan con límites). Las organizaciones existentes al migrar quedaron en Business.
 - **Mes de cupo**: del día 1 a las 00:00 **UTC** (no en la zona de la organización): en UTC-3 el cupo se renueva el

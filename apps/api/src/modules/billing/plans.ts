@@ -196,7 +196,7 @@ export async function usageThisMonth(db: Db, tenantId: string): Promise<BillingU
     envelopesSentThisMonth(db, tenantId),
     usersCount(db, tenantId),
     db.query<{ channel: string; n: number }>(
-      `SELECT channel, count(*)::int AS n FROM notifications WHERE tenant_id = $1 AND status = 'sent' AND created_at >= $2 GROUP BY channel`,
+      `SELECT channel, count(*)::int AS n FROM notifications WHERE tenant_id = $1 AND status IN ('sent','bounced','complained') AND created_at >= $2 GROUP BY channel`,
       [tenantId, start.toISOString()],
     ),
   ]);

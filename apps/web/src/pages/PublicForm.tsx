@@ -32,24 +32,33 @@ function loadTurnstile(): Promise<TurnstileApi> {
 
 /** Desafío anti-bots (solo si la plataforma lo configuró: el formulario trae captchaSiteKey). */
 function Captcha({ siteKey, locale, onToken, resetSignal }: { siteKey: string; locale: string; onToken: (t: string | null) => void; resetSignal: number }) {
+  const st = useScaleText();
   const box = useRef<HTMLDivElement>(null);
   const widget = useRef<{ api: TurnstileApi; id: string } | null>(null);
+  // Si el script de Cloudflare no carga (red, bloqueador), se avisa con un botón para reintentar: sin esto el botón
+  // Continuar quedaba deshabilitado sin explicación.
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let gone = false;
+    setFailed(false);
     loadTurnstile()
       .then((api) => {
         if (gone || !box.current) return;
         const id = api.render(box.current, { sitekey: siteKey, callback: (t) => onToken(t), "expired-callback": () => onToken(null), "error-callback": () => onToken(null), language: locale });
         widget.current = { api, id };
       })
-      .catch(() => onToken(null));
+      .catch(() => {
+        onToken(null);
+        if (!gone) setFailed(true);
+      });
     return () => {
       gone = true;
       if (widget.current) widget.current.api.remove(widget.current.id);
       widget.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [siteKey]);
+  }, [siteKey, attempt]);
   // El token es de un solo uso: después de un envío rechazado se pide otro.
   useEffect(() => {
     if (resetSignal && widget.current) {
@@ -58,7 +67,19 @@ function Captcha({ siteKey, locale, onToken, resetSignal }: { siteKey: string; l
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resetSignal]);
-  return <div ref={box} />;
+  return (
+    <>
+      <div ref={box} />
+      {failed && (
+        <div className="alert alert-error stack">
+          <span>{st("pub.captchaLoadError")}</span>
+          <button type="button" className="btn btn-sm" onClick={() => setAttempt((n) => n + 1)}>
+            ↻ {st("pub.captchaRetry")}
+          </button>
+        </div>
+      )}
+    </>
+  );
 }
 
 export function PublicFormPage() {
@@ -119,6 +140,14 @@ export function PublicFormPage() {
         try {
           const fresh = await api<PublicWebForm>(`/v1/public/forms/${encodeURIComponent(slug)}`);
           setForm(fresh);
+          // Con desafío, el token del desafío pudo quedar gastado en el envío rechazado: no se reusa. Se pide uno nuevo
+          // y la persona vuelve a tocar Continuar cuando esté resuelto (ya con el token del formulario renovado).
+          if (fresh.available && form.captchaSiteKey) {
+            setCaptchaReset((n) => n + 1);
+            setError(st("pub.err.formTokenCaptcha"));
+            setBusy(false);
+            return;
+          }
           if (fresh.available) {
             const wait = Number((err.details as { retryAfterSeconds?: unknown } | undefined)?.retryAfterSeconds);
             await new Promise((r) => setTimeout(r, (Number.isFinite(wait) && wait > 0 ? Math.min(wait, 30) : 3) * 1000 + 300));

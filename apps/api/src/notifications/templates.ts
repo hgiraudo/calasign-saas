@@ -12,6 +12,9 @@ export type TemplateKind =
   | "finalize_failed"
   | "password_reset";
 
+/** Avisos de la plataforma de acuerdos (vencimientos y negociaciones): mismo diseño y marca que los de sobres. */
+export type AgreementTemplateKind = "agreement_expiry" | "negotiation_invite" | "negotiation_version" | "negotiation_proposal";
+
 export interface TemplateVars {
   recipientName: string;
   senderName: string;
@@ -21,9 +24,14 @@ export interface TemplateVars {
   link?: string | null;
   reason?: string | null;
   declinedBy?: string | null;
+  /** Acuerdos: fecha de vencimiento (AAAA-MM-DD) y días que faltan. */
+  date?: string | null;
+  days?: number | null;
+  /** Negociaciones: resumen del cambio o qué se propone cambiar. */
+  detail?: string | null;
 }
 
-type Dict = Record<TemplateKind, { subject: (v: TemplateVars) => string; lines: (v: TemplateVars) => string[]; cta?: string }>;
+type Dict = Record<TemplateKind | AgreementTemplateKind, { subject: (v: TemplateVars) => string; lines: (v: TemplateVars) => string[]; cta?: string }>;
 
 const T: Record<"es" | "pt-BR" | "en", Dict> = {
   es: {
@@ -91,6 +99,29 @@ const T: Record<"es" | "pt-BR" | "en", Dict> = {
       lines: (v) => [`Hola ${v.recipientName}:`, `${v.declinedBy ?? "Un firmante"} rechazó "${v.subject}".`, v.reason ? `Motivo: ${v.reason}` : ""],
       cta: "Ver sobre",
     },
+    agreement_expiry: {
+      subject: (v) => `Vence el ${v.date}: ${v.subject}`,
+      lines: (v) => [
+        `Hola ${v.recipientName}:`,
+        `El acuerdo "${v.subject}" vence el ${v.date} (${(v.days ?? 0) <= 0 ? "hoy" : `en ${v.days} día${v.days === 1 ? "" : "s"}`}). Revisalo para renovarlo o darlo de baja a tiempo.`,
+      ],
+      cta: "Ver acuerdo",
+    },
+    negotiation_invite: {
+      subject: (v) => `${v.organizationName} te invita a revisar "${v.subject}"`,
+      lines: (v) => [`Hola ${v.recipientName}:`, `${v.organizationName} compartió un borrador para que lo revises, comentes y propongas cambios antes de firmarlo.`],
+      cta: "Revisar",
+    },
+    negotiation_version: {
+      subject: (v) => `Nueva versión de "${v.subject}"`,
+      lines: (v) => [`Hola ${v.recipientName}:`, `Hay una nueva versión de "${v.subject}".`, v.detail ?? ""],
+      cta: "Revisar",
+    },
+    negotiation_proposal: {
+      subject: (v) => `${v.senderName} propuso un cambio en "${v.subject}"`,
+      lines: (v) => [`Hola ${v.recipientName}:`, `${v.senderName} propone cambiar ${v.detail ?? ""} en "${v.subject}".`],
+      cta: "Revisar",
+    },
   },
   "pt-BR": {
     invite: {
@@ -157,6 +188,29 @@ const T: Record<"es" | "pt-BR" | "en", Dict> = {
       lines: (v) => [`Olá ${v.recipientName},`, `${v.declinedBy ?? "Um signatário"} recusou "${v.subject}".`, v.reason ? `Motivo: ${v.reason}` : ""],
       cta: "Ver envelope",
     },
+    agreement_expiry: {
+      subject: (v) => `Vence em ${v.date}: ${v.subject}`,
+      lines: (v) => [
+        `Olá ${v.recipientName},`,
+        `O acordo "${v.subject}" vence em ${v.date} (${(v.days ?? 0) <= 0 ? "hoje" : `em ${v.days} dia${v.days === 1 ? "" : "s"}`}). Revise para renovar ou encerrar a tempo.`,
+      ],
+      cta: "Ver acordo",
+    },
+    negotiation_invite: {
+      subject: (v) => `${v.organizationName} convida você a revisar "${v.subject}"`,
+      lines: (v) => [`Olá ${v.recipientName},`, `${v.organizationName} compartilhou um rascunho para você revisar, comentar e propor mudanças antes de assiná-lo.`],
+      cta: "Revisar",
+    },
+    negotiation_version: {
+      subject: (v) => `Nova versão de "${v.subject}"`,
+      lines: (v) => [`Olá ${v.recipientName},`, `Há uma nova versão de "${v.subject}".`, v.detail ?? ""],
+      cta: "Revisar",
+    },
+    negotiation_proposal: {
+      subject: (v) => `${v.senderName} propôs uma mudança em "${v.subject}"`,
+      lines: (v) => [`Olá ${v.recipientName},`, `${v.senderName} propõe mudar ${v.detail ?? ""} em "${v.subject}".`],
+      cta: "Revisar",
+    },
   },
   en: {
     invite: {
@@ -222,6 +276,29 @@ const T: Record<"es" | "pt-BR" | "en", Dict> = {
       subject: (v) => `Declined: "${v.subject}"`,
       lines: (v) => [`Hi ${v.recipientName},`, `${v.declinedBy ?? "A signer"} declined "${v.subject}".`, v.reason ? `Reason: ${v.reason}` : ""],
       cta: "View envelope",
+    },
+    agreement_expiry: {
+      subject: (v) => `Expires on ${v.date}: ${v.subject}`,
+      lines: (v) => [
+        `Hi ${v.recipientName},`,
+        `The agreement "${v.subject}" expires on ${v.date} (${(v.days ?? 0) <= 0 ? "today" : `in ${v.days} day${v.days === 1 ? "" : "s"}`}). Review it to renew or terminate it in time.`,
+      ],
+      cta: "View agreement",
+    },
+    negotiation_invite: {
+      subject: (v) => `${v.organizationName} invites you to review "${v.subject}"`,
+      lines: (v) => [`Hi ${v.recipientName},`, `${v.organizationName} shared a draft for you to review, comment on and propose changes before signing it.`],
+      cta: "Review",
+    },
+    negotiation_version: {
+      subject: (v) => `New version of "${v.subject}"`,
+      lines: (v) => [`Hi ${v.recipientName},`, `There is a new version of "${v.subject}".`, v.detail ?? ""],
+      cta: "Review",
+    },
+    negotiation_proposal: {
+      subject: (v) => `${v.senderName} proposed a change to "${v.subject}"`,
+      lines: (v) => [`Hi ${v.recipientName},`, `${v.senderName} proposes changing ${v.detail ?? ""} in "${v.subject}".`],
+      cta: "Review",
     },
   },
 };
@@ -300,7 +377,7 @@ export function maskVars<V extends object>(v: V): { masked: V; unmask: (s: strin
 const okHex = (c: string | null | undefined): c is string => typeof c === "string" && /^#[0-9a-fA-F]{6}$/.test(c);
 const okFont = (f: string | null | undefined): f is string => typeof f === "string" && /^[A-Za-z0-9][A-Za-z0-9 ]{0,59}$/.test(f);
 
-export function render(kind: TemplateKind, localeIn: string | null | undefined, v: TemplateVars, brand: MailBranding = {}) {
+export function render(kind: TemplateKind | AgreementTemplateKind, localeIn: string | null | undefined, v: TemplateVars, brand: MailBranding = {}) {
   const color = okHex(brand.primaryColor) ? brand.primaryColor : null;
   const accent = okHex(brand.secondaryColor) ? brand.secondaryColor : "#2ec4b6";
   const btn = okHex(brand.buttonColor) ? brand.buttonColor : color ?? "#0f7c7c";

@@ -1,4 +1,5 @@
 // Recordatorios automáticos (cada N días) y aviso de vencimiento (N días antes). Lo llama el sweeper.
+import { config } from "../config";
 import type { Db } from "../infra/db";
 import { SYSTEM, appendEvent } from "../infra/evidence";
 import { enqueue } from "../infra/queue";
@@ -26,7 +27,7 @@ export async function runAutomaticReminders(db: Db, now = new Date()) {
         // Con el sobre bloqueado se vuelve a mirar que el recordatorio siga pendiente: otro barrido (otro worker, o la API
         // con el worker integrado) pudo enviarlo mientras tanto, y se sumaba un segundo envelope.reminded a la evidencia.
         const cur = await t.one<any>(
-          `SELECT status, reminder_every_days, (reminder_every_days IS NOT NULL AND COALESCE(last_reminder_at, sent_at) <= $2::timestamptz - make_interval(days => reminder_every_days)
+          `SELECT status, reminder_every_days, expires_at, (reminder_every_days IS NOT NULL AND COALESCE(last_reminder_at, sent_at) <= $2::timestamptz - make_interval(days => reminder_every_days)
                    AND (expires_at IS NULL OR expires_at > $2::timestamptz)) AS due
              FROM envelopes WHERE id = $1 FOR UPDATE`,
           [e.id, now.toISOString()],
@@ -36,11 +37,21 @@ export async function runAutomaticReminders(db: Db, now = new Date()) {
         // Cada uno a los N días de SU invitación (no del envío del sobre): al turno que se activó hace minutos le llegaba
         // un recordatorio enseguida de la invitación.
         const cutoff = now.getTime() - Number(cur.reminder_every_days) * 86400_000;
+        // Sin vencimiento, un tope de recordatorios automáticos por destinatario (REMINDERS_AUTO_MAX_WITHOUT_EXPIRY): si no,
+        // un sobre olvidado le escribía al firmante cada N días para siempre.
+        const capped = cur.expires_at == null;
         const pending = group.recipients.filter(
-          (r) => (r.status === "sent" || r.status === "viewed") && receivesSignerNotices(r) && r.sent_at && new Date(r.sent_at).getTime() <= cutoff,
+          (r) =>
+            (r.status === "sent" || r.status === "viewed") &&
+            receivesSignerNotices(r) &&
+            r.sent_at &&
+            new Date(r.sent_at).getTime() <= cutoff &&
+            !(capped && Number(r.auto_reminders_sent ?? 0) >= config.reminders.automaticMaxWithoutExpiry),
         );
-        for (const r of pending)
+        for (const r of pending) {
           await enqueue(t, "notify", { kind: "reminder", envelopeId: e.id, recipientId: r.id, tenantId: e.tenant_id }, { dedupeKey: `auto-reminder:${r.id}:${day}` });
+          await t.query(`UPDATE recipients SET auto_reminders_sent = auto_reminders_sent + 1 WHERE id = $1`, [r.id]);
+        }
         await t.query(`UPDATE envelopes SET last_reminder_at = $2 WHERE id = $1`, [e.id, now.toISOString()]);
         if (pending.length) {
           await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "envelope.reminded", actor: SYSTEM, data: { recipients: pending.length, automatic: true } });

@@ -4,6 +4,13 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 
+function list(v: string | undefined): string[] {
+  return (v ?? "")
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
+
 function bool(v: string | undefined, def: boolean) {
   if (v === undefined || v === "") return def;
   return ["1", "true", "yes", "on"].includes(v.toLowerCase());
@@ -76,6 +83,27 @@ export const config = {
     whiteLabelFrom: env.MAIL_FROM_WHITE_LABEL ?? null,
     /** SPF que tienen que incluir los dominios de correo propios (p. ej. "amazonses.com"). */
     spfInclude: env.MAIL_SPF_INCLUDE ?? null,
+    /**
+     * Rebotes y quejas de SES: ARN de los temas SNS (separados por coma) cuyas notificaciones acepta
+     * POST /v1/integrations/ses/sns. Sin ninguno, el endpoint rechaza todo. Ver docs/CORREO-REBOTES.md.
+     */
+    sesSnsTopicArns: list(env.SES_SNS_TOPIC_ARNS),
+    /** Configuration set de SES que publica rebotes y quejas (encabezado X-SES-CONFIGURATION-SET). Opcional. */
+    sesConfigurationSet: env.SES_CONFIGURATION_SET || null,
+  },
+  sms: {
+    /**
+     * Organizaciones (ids, separados por coma) autorizadas a usar un remitente alfanumérico propio en los SMS
+     * (marca blanca, `sms.senderId`). El resto sale con el número por defecto (TWILIO_FROM): un remitente
+     * alfanumérico sin verificar permite hacerse pasar por otra marca. Ver docs/MARCA-BLANCA.md.
+     */
+    alphanumericAllowedTenants: list(env.SMS_ALPHANUMERIC_ALLOWED_TENANTS),
+  },
+  reminders: {
+    /** Recordatorios manuales por sobre en 24 h (además de uno cada 10 minutos). */
+    manualMaxPerDay: Number(env.REMINDERS_MANUAL_MAX_PER_DAY ?? 5),
+    /** Recordatorios automáticos por destinatario cuando el sobre no tiene vencimiento. */
+    automaticMaxWithoutExpiry: Number(env.REMINDERS_AUTO_MAX_WITHOUT_EXPIRY ?? 10),
   },
   whatsapp: {
     token: env.WHATSAPP_TOKEN ?? null,
@@ -99,6 +127,8 @@ export const config = {
     botUsername: env.TELEGRAM_BOT_USERNAME ?? null,
     /** Secreto que Telegram manda en X-Telegram-Bot-Api-Secret-Token al webhook. */
     webhookSecret: env.TELEGRAM_WEBHOOK_SECRET ?? null,
+    /** Vigencia (minutos) del token de un solo uso de los links t.me/<bot>?start=… */
+    linkTtlMinutes: Number(env.TELEGRAM_LINK_TTL_MINUTES ?? 30),
   },
   /** Buzón de desarrollo: guarda todos los mensajes y los expone en /dev/mailbox. */
   devMailbox: bool(env.DEV_MAILBOX, !production),
@@ -122,10 +152,14 @@ export const config = {
     turnstileSecretKey: env.TURNSTILE_SECRET_KEY || null,
     turnstileVerifyUrl: env.TURNSTILE_VERIFY_URL ?? "https://challenges.cloudflare.com/turnstile/v0/siteverify",
   },
-  /** Códigos de verificación: topes por destino (correo o teléfono, sin importar el sobre) y por organización. */
+  /**
+   * Códigos de verificación (solo los no verificados): topes por organización + destino (correo o teléfono, sin
+   * importar el sobre), uno global por destino mucho más alto (anti-abuso entre organizaciones) y uno por organización.
+   */
   otp: {
     maxPerDestinationHour: Number(env.OTP_MAX_PER_DESTINATION_HOUR ?? 10),
     maxPerDestinationDay: Number(env.OTP_MAX_PER_DESTINATION_DAY ?? 30),
+    maxPerDestinationGlobalHour: Number(env.OTP_MAX_PER_DESTINATION_GLOBAL_HOUR ?? 100),
     maxPerTenantHour: Number(env.OTP_MAX_PER_TENANT_HOUR ?? 1000),
   },
   /** Planes, cobros y servidor MCP (Fase 6). */

@@ -16,12 +16,12 @@ import { config } from "../../config";
 import type { Db } from "../../infra/db";
 import { AppError, badRequest, conflict, forbidden, notFound } from "../../lib/errors";
 import { sha256Hex, uuidv7 } from "../../lib/util";
-import { deliver } from "../../notifications/channels";
+import { enqueue } from "../../infra/queue";
 import { hasPerm, requirePerm } from "../access";
 import { auditFromRequest } from "../audit";
 import { authenticate, type AuthContext, type Services } from "../context";
-import { tenantBaseUrl } from "../custom-domains";
 import { sendPdf } from "../envelopes";
+import { expiryNoticeKey } from "./notices";
 import { deleteFileIfUnused, discardBlobsOnFailure } from "../file-cleanup";
 import {
   agreementVisibilitySql,
@@ -103,79 +103,29 @@ export async function ingestEnvelope(d: Pick<Deps, "db" | "blobs" | "log">, enve
 
 // ───────────────────────────── Vencimientos ─────────────────────────────
 
-const REMINDER = {
-  es: {
-    subject: (t: string, d: string) => `Vence el ${d}: ${t}`,
-    body: (t: string, d: string, days: number) =>
-      `El acuerdo "${t}" vence el ${d} (${days <= 0 ? "hoy" : `en ${days} día${days === 1 ? "" : "s"}`}). Revisalo para renovarlo o darlo de baja a tiempo.`,
-    cta: "Ver acuerdo",
-  },
-  "pt-BR": {
-    subject: (t: string, d: string) => `Vence em ${d}: ${t}`,
-    body: (t: string, d: string, days: number) =>
-      `O acordo "${t}" vence em ${d} (${days <= 0 ? "hoje" : `em ${days} dia${days === 1 ? "" : "s"}`}). Revise para renovar ou encerrar a tempo.`,
-    cta: "Ver acordo",
-  },
-  en: {
-    subject: (t: string, d: string) => `Expires on ${d}: ${t}`,
-    body: (t: string, d: string, days: number) =>
-      `The agreement "${t}" expires on ${d} (${days <= 0 ? "today" : `in ${days} day${days === 1 ? "" : "s"}`}). Review it to renew or terminate it in time.`,
-    cta: "View agreement",
-  },
-} as const;
-
-/** Marca vencidos y avisa a los responsables antes del vencimiento (una vez por fecha de vencimiento). */
+/**
+ * Marca vencidos y encola el aviso a los responsables antes del vencimiento (una vez por fecha de vencimiento). El
+ * aviso sale por la cola "agreements" (notices.ts): con reintentos, marca blanca e idioma del destinatario, y el
+ * acuerdo queda como avisado (expiry_notified_for) recién cuando salieron todos los correos.
+ *
+ * Zona horaria: "hoy" es current_date de la base, que corre en UTC. Un acuerdo que vence el 31/12 pasa a vencido a
+ * las 00:00 UTC del 01/01 (21:00 del 31/12 en Buenos Aires) y el aviso puede llegar con un día de diferencia respecto
+ * de la hora local de la organización. Las fechas de vencimiento son fechas sin hora, así que no se corrige.
+ */
 export async function agreementExpirySweep(d: Deps) {
   await d.db.query(`UPDATE agreements SET status = 'expired', updated_at = now() WHERE status = 'active' AND expiry_date < current_date`);
   const due = await d.db.query<any>(
-    `SELECT ag.id, ag.tenant_id, ag.title, ag.expiry_date, ag.owner_user_id, (ag.expiry_date - current_date) AS days_left
+    `SELECT ag.id, ag.expiry_date::text AS expiry
      FROM agreements ag
      WHERE ag.status = 'active' AND ag.expiry_date IS NOT NULL
        AND ag.expiry_date - COALESCE(ag.notice_days, 30) <= current_date
        AND (ag.expiry_notified_for IS NULL OR ag.expiry_notified_for <> ag.expiry_date)
+       -- Ya encolado para este vencimiento (pendiente, en curso o fallado): no ocupa el lugar de los demás.
+       AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.dedupe_key = 'agr:expiry:' || ag.id::text || ':' || ag.expiry_date::text)
      LIMIT 50`,
   );
-  for (const a of due) {
-    // Se reclama antes de avisar: con varios workers (cada uno corre el barrido), dos tomaban el mismo acuerdo y el
-    // aviso salía dos veces.
-    const claimed = await d.db.query(
-      `UPDATE agreements SET expiry_notified_for = expiry_date
-        WHERE id = $1 AND (expiry_notified_for IS NULL OR expiry_notified_for <> expiry_date) RETURNING id`,
-      [a.id],
-    );
-    if (!claimed.length) continue;
-    // Responsable: el dueño si sigue en la organización; si no hay (subido por API) o ya no es miembro, los
-    // propietarios. Alguien que dejó la organización no tiene que seguir recibiendo datos de sus acuerdos.
-    let to = a.owner_user_id
-      ? await d.db.query<any>(`SELECT u.email, u.locale FROM users u JOIN memberships m ON m.user_id = u.id AND m.tenant_id = $2 WHERE u.id = $1`, [
-          a.owner_user_id,
-          a.tenant_id,
-        ])
-      : [];
-    if (!to.length) {
-      to = await d.db.query<any>(`SELECT u.email, u.locale FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.tenant_id = $1 AND m.role = 'owner'`, [
-        a.tenant_id,
-      ]);
-    }
-    const base = await tenantBaseUrl(d.db, a.tenant_id);
-    const date = String(a.expiry_date instanceof Date ? a.expiry_date.toISOString().slice(0, 10) : a.expiry_date).slice(0, 10);
-    for (const u of to) {
-      const L = REMINDER[(u.locale in REMINDER ? u.locale : "es") as keyof typeof REMINDER];
-      const link = `${base}/app/agreements/${a.id}`;
-      try {
-        await deliver({
-          channel: "email",
-          to: u.email,
-          subject: L.subject(a.title, date),
-          text: `${L.body(a.title, date, Number(a.days_left))}\n\n${L.cta}: ${link}`,
-          link,
-          tenantId: a.tenant_id,
-        });
-      } catch (err) {
-        d.log.warn({ agreementId: a.id, err: String(err) }, "no se pudo avisar el vencimiento");
-      }
-    }
-  }
+  // La clave de dedupe evita el aviso doble con varios workers (cada uno corre el barrido).
+  for (const a of due) await enqueue(d.db, "agreements", { kind: "expiry_notice", agreementId: a.id, expiryDate: a.expiry }, { dedupeKey: expiryNoticeKey(a.id, a.expiry) });
   return due.length;
 }
 

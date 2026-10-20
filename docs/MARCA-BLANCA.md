@@ -147,8 +147,12 @@ página propia reduce lo que se ve, pero el iframe de OneSpan sigue mostrando su
    - Un relay propio (Postfix) o proveedores que permiten cualquier remitente con SPF/DKIM del cliente funcionan tal cual.
    - `MAIL_FROM_WHITE_LABEL="Notificaciones <no-reply@notificaciones-firma.com>"`: dirección neutra para marcas con
      marca blanca total sin dominio propio (dominio del operador sin su marca, con SPF/DKIM/DMARC propios).
-4. SMS: con `TWILIO_ALLOW_ALPHANUMERIC=true` se usa `sms.senderId` como remitente (solo en países que lo permiten y con el
-   remitente registrado en Twilio).
+4. SMS: el remitente alfanumérico `sms.senderId` se usa solo si (a) la organización está en
+   `SMS_ALPHANUMERIC_ALLOWED_TENANTS` (ids de organización separados por coma) y (b) `TWILIO_ALLOW_ALPHANUMERIC=true`.
+   Si no, los SMS salen con el número por defecto (`TWILIO_FROM`), aunque la marca tenga un `senderId` guardado.
+   Motivo: un remitente alfanumérico no se verifica (cualquiera podía mandar los códigos como "BANCO" o con el nombre de
+   otra marca). Antes de agregar una organización a la lista: verificar que el nombre le pertenece y registrar el
+   remitente en Twilio para los países donde se usa (algunos exigen registro previo; otros no lo admiten).
 
 ### Dominio web
 

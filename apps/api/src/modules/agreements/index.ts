@@ -7,6 +7,7 @@ import type { Services } from "../context";
 import type { Deps } from "./common";
 import { documentRoutes } from "./documents";
 import { negotiationRoutes } from "./negotiations";
+import { handleNoticeJob, type NoticeJob } from "./notices";
 import { agreementExpirySweep, ingestEnvelope, repositoryRoutes } from "./repository";
 import { advanceRun, onEnvelopeEventForWorkflows, workflowRoutes } from "./workflows";
 
@@ -34,9 +35,11 @@ export async function queueAgreementEvents(db: Db, envelopeId: string, evidenceT
   if (waiting) await enqueue(db, "agreements", { kind: "envelope_event", envelopeId });
 }
 
-type AgreementsJob = { kind: "ingest"; envelopeId: string } | { kind: "envelope_event"; envelopeId: string } | { kind: "advance"; runId: string };
+type AgreementsJob = { kind: "ingest"; envelopeId: string } | { kind: "envelope_event"; envelopeId: string } | { kind: "advance"; runId: string } | NoticeJob;
 
-export async function handleAgreementsJob(d: Deps, p: AgreementsJob) {
+export async function handleAgreementsJob(d: Deps, p: AgreementsJob, jobId?: number) {
+  // Avisos por correo (vencimientos, negociaciones): jobId para no repetir a quien ya lo recibió en un reintento.
+  if (p.kind === "expiry_notice" || p.kind === "negotiation_notice" || p.kind === "proposal_notice") return handleNoticeJob(d, p, jobId);
   if (p.kind === "ingest") {
     await ingestEnvelope(d, p.envelopeId);
     // Si un workflow espera este sobre y su próximo paso actualiza el repositorio, ya encuentra el acuerdo.

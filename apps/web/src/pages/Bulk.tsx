@@ -449,7 +449,8 @@ export function BulkDetailPage() {
           <a className="btn" href={`/v1/bulk-sends/${b.id}/results.csv`} download>
             ⬇ {st("bulk.downloadResults")}
           </a>
-          {b.status !== "cancelled" && b.failed > 0 && (
+          {/* Solo si hay fallidas que se pueden reintentar (las que fallaron por sus datos se corrigen en un envío nuevo). */}
+          {b.status !== "cancelled" && (b.retryable ?? 0) > 0 && (
             <button type="button" className="btn" disabled={busy} onClick={retryFailed}>
               ↻ {st("bulk.retryFailed")}
             </button>

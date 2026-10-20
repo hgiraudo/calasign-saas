@@ -58,6 +58,7 @@ function WebFormEditor({ form, initialTemplateId, onClose, onSaved }: { form: We
     return ch && ch.length ? ch : ["email"];
   };
   const [prefill, setPrefill] = useState<Record<string, string>>(form?.prefill ?? {});
+  const [lockPrefill, setLockPrefill] = useState(form?.lockPrefill ?? false);
   const [active, setActive] = useState(form?.active ?? true);
   const [maxUses, setMaxUses] = useState<string>(form?.maxUses ? String(form.maxUses) : "");
   // Fecha local (el guardado usa 23:59:59 local): con slice del ISO en UTC, en América la fecha corría un día en cada edición.
@@ -137,6 +138,7 @@ function WebFormEditor({ form, initialTemplateId, onClose, onSaved }: { form: We
       // Solo etiquetas de esta plantilla: lo cargado para otra plantilla elegida antes quedaba oculto pero se mandaba, y
       // el guardado fallaba con "no hay ningún campo …" sin forma de borrarlo.
       prefill: Object.fromEntries(Object.entries(prefill).filter(([k, v]) => v.trim() && (!tpl || prefillable.some((f) => f.label === k)))),
+      lockPrefill,
       active,
       maxUses: maxUses ? Number(maxUses) : null,
       // Fecha sin tocar: se conserva el vencimiento guardado (uno puesto por la API a otra hora se corría a las 23:59).
@@ -244,6 +246,11 @@ function WebFormEditor({ form, initialTemplateId, onClose, onSaved }: { form: We
                     </label>
                   ))}
                 </div>
+                <label className="check">
+                  <input type="checkbox" checked={lockPrefill} onChange={(e) => setLockPrefill(e.target.checked)} />
+                  {st("forms.lockPrefill")}
+                </label>
+                <p className="muted small">{st("forms.lockPrefillHint")}</p>
               </fieldset>
             )}
           </>

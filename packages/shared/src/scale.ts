@@ -88,6 +88,8 @@ export interface BulkSend {
   total: number;
   sent: number;
   failed: number;
+  /** Fallidas que POST /v1/bulk-sends/:id/retry-failed volvería a encolar (las que fallaron por sus datos no). */
+  retryable: number;
   cancelled: number;
   pending: number;
   createdAt: string;
@@ -132,6 +134,11 @@ export const WebFormInput = z.object({
   /** Destinatarios fijos para los demás roles (p. ej. el representante de la empresa). */
   fixedRecipients: z.array(WebFormFixedRecipient).max(50).default([]),
   prefill: z.record(z.string(), z.string().max(2000)).optional(),
+  /**
+   * Los valores prellenados de los campos de quien completa el formulario quedan de solo lectura (no los puede cambiar).
+   * Por defecto no: son valores sugeridos que la persona puede corregir.
+   */
+  lockPrefill: z.boolean().default(false),
   active: z.boolean().default(true),
   maxUses: z.number().int().min(1).max(1_000_000).optional().nullable(),
   expiresAt: z.string().datetime({ offset: true }).optional().nullable(),
@@ -158,6 +165,8 @@ export interface WebForm {
   signerRoleId: string;
   fixedRecipients: { roleId: string; name: string; email: string | null; phone: string | null; channels: string[]; locale: Locale | null }[];
   prefill: Record<string, string>;
+  /** Los valores prellenados de los campos de quien completa el formulario son de solo lectura. */
+  lockPrefill: boolean;
   active: boolean;
   maxUses: number | null;
   uses: number;

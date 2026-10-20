@@ -6,9 +6,9 @@ import { enqueue } from "../infra/queue";
 import type { Db } from "../infra/db";
 import { AppError, badRequest, conflict, notFound } from "../lib/errors";
 import { sha256Hex, uuidv7 } from "../lib/util";
-import { telegramStartLink } from "../notifications/channels";
+import { telegramLinkFor } from "./telegram";
 import { clientInfo, type Services } from "./context";
-import { advanceRouting, currentSignerGroup, lockEnvelope, pastExpiry, sendPdf } from "./envelopes";
+import { advanceRouting, currentSignerGroup, lockEnvelope, pastExpiry, receivesSignerNotices, sendPdf } from "./envelopes";
 import { toDocument, toField, loadDocuments } from "./mappers";
 import { loadSignatureImages, toStampFields } from "./stamp-fields";
 import { assertEmbeddableImage, renderProgressCopyPdf } from "@calasign/pdf";
@@ -114,7 +114,9 @@ export async function buildSession(db: Db, token: string, r: any, e: any, authed
       status: r.status,
       locale: r.locale ?? e.locale,
       consented: Boolean(r.consented_at),
-      telegramLink: r.channels?.includes("telegram") && !r.telegram_chat_id ? telegramStartLink(token) : null,
+      // Token de vinculación propio y de vida corta (no el de firma: el link t.me pasa por Telegram). Solo con la página
+      // habilitada (código validado, sobre abierto).
+      telegramLink: r.channels?.includes("telegram") && !r.telegram_chat_id && !blocked ? await telegramLinkFor(db, r) : null,
       authMethod: r.auth_method ?? "link",
     },
     documents: blocked ? [] : docs.map(toDocument),
@@ -122,6 +124,8 @@ export async function buildSession(db: Db, token: string, r: any, e: any, authed
     canSign,
     signedAvailable: !blocked && e.status === "completed" && Boolean(e.signed_file_id),
     copyAvailable: !blocked && copyAllowed(r, e),
+    // Autorregistrado sin correo validado: la copia se descarga desde esta página (no puede pedir reenvíos); al
+    // completarse recibe solo un aviso por correo con el link a esta página (jobs.ts).
     finalCopyByMessage: !isUnverifiedSelfRegistered(r),
     otpRequired,
     otpDestination: otpRequired ? otpDestinationFor(r) : null,
@@ -370,7 +374,10 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
       await t.query(`UPDATE envelopes SET status = 'declined', updated_at = now(), version = version + 1 WHERE id = $1`, [e.id]);
       await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "recipient.declined", actor: recipientActor(req, r), data: { reason: input.reason } });
       await enqueue(t, "notify", { kind: "sender_declined", envelopeId: e.id, tenantId: e.tenant_id, declinedBy: r.id });
-      const others = await t.query<any>(`SELECT id FROM recipients WHERE envelope_id = $1 AND id <> $2 AND status IN ('sent','viewed','signed')`, [e.id, r.id]);
+      const others = (await t.query<any>(`SELECT * FROM recipients WHERE envelope_id = $1 AND id <> $2 AND status IN ('sent','viewed','signed')`, [e.id, r.id])).filter(
+        // Embebidos, en persona y autorregistrados sin correo validado no reciben avisos (ver receivesSignerNotices).
+        receivesSignerNotices,
+      );
       for (const o of others) await enqueue(t, "notify", { kind: "declined", envelopeId: e.id, recipientId: o.id, tenantId: e.tenant_id, declinedBy: r.id });
     });
     const { recipient, envelope } = await resolveToken(s.db, req.params.token);

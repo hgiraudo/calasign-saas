@@ -11,6 +11,13 @@ const DEFAULT = {
   en: { subject: "Your CalaSign verification code", text: 'Your code to sign "{{subject}}" is {{code}}. It expires in 10 minutes. Don\'t share it.' },
 } as const;
 
+const CODE_LABEL = { es: "Código", "pt-BR": "Código", en: "Code" } as const;
+
+/** Si la plantilla del código incluye la variable {{code}} (con o sin espacios). */
+export function hasCodeVariable(body: string): boolean {
+  return /\{\{\s*code\s*\}\}/.test(body);
+}
+
 /** Asunto y texto del código con la marca (plantilla propia si la hay). */
 export function OTP_MESSAGES(b: ResolvedBrand, localeIn: string, code: string, subject: string, def?: { subject: string; text: (code: string, subject: string) => string }) {
   const locale = normLocale(localeIn);
@@ -18,7 +25,10 @@ export function OTP_MESSAGES(b: ResolvedBrand, localeIn: string, code: string, s
   // Valores enmascarados: la marca blanca reemplaza el nombre de la plataforma en la plantilla, no en el asunto del sobre.
   const { masked: vars, unmask } = maskVars({ code, subject, productName: productLabel(b), organizationName: b.name, supportUrl: b.links.supportUrl ?? "" });
   const s = tpl?.subject?.trim() ? fillTemplate(tpl.subject, vars) : def?.subject ?? fillTemplate(DEFAULT[locale].subject, vars);
-  const t = tpl?.body?.trim() ? fillTemplate(tpl.body, vars) : def ? def.text(vars.code, vars.subject) : fillTemplate(DEFAULT[locale].text, vars);
+  let t = tpl?.body?.trim() ? fillTemplate(tpl.body, vars) : def ? def.text(vars.code, vars.subject) : fillTemplate(DEFAULT[locale].text, vars);
+  // Plantilla propia sin {{code}} (guardada antes de que se validara): sin esto el firmante recibía un mensaje sin el
+  // código y no podía firmar. Se agrega al final.
+  if (tpl?.body?.trim() && !hasCodeVariable(tpl.body)) t = `${t.trimEnd()}\n\n${CODE_LABEL[locale]}: ${vars.code}`;
   return { subject: unmask(brandize(s.replace(/[\r\n]+/g, " "), b)).replace(/[\r\n]+/g, " "), text: unmask(brandize(t, b)) };
 }
 

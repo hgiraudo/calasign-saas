@@ -77,6 +77,8 @@ const NEXT_DRAFT =
 
 /** Descargas permitidas por link de download_signed_pdf (más de una: visores y gestores de descargas reintentan). */
 export const DOWNLOAD_MAX = 3;
+/** Minutos desde la última descarga contada en los que se aceptan continuaciones (Range que no empieza en 0). */
+export const DOWNLOAD_CONTINUATION_WINDOW_MIN = 10;
 
 /** Vigencia del confirmToken de la vista previa. */
 const CONFIRM_TTL_MS = 5 * 60 * 1000;
@@ -162,17 +164,25 @@ export const MCP_IMPLICIT_IDEMPOTENCY_WINDOW_MS = 10 * 60 * 1000;
  * - con requestId del cliente: esa clave (vale lo que se guardan las claves, 7 días);
  * - con send=true y confirmToken: el token (cada vista previa aprobada crea y envía a lo sumo un sobre, aunque el token
  *   se repita antes de vencer);
- * - si no, la huella de los argumentos dentro de una ventana de ~10 minutos: pedir lo mismo más tarde crea otro sobre
- *   (y no devuelve uno viejo, quizá ya anulado).
+ * - si no, la huella de los argumentos en bloques de ~10 minutos: pedir lo mismo más tarde crea otro sobre (y no
+ *   devuelve uno viejo, quizá ya anulado). Ver mcpIdempotencyKeys para el borde entre bloques.
  */
 export function mcpIdempotencyKey(principal: string, tool: string, args: Record<string, unknown>, extra = "", now = Date.now()): string {
-  const basis =
-    typeof args.requestId === "string" && args.requestId
-      ? `req:${args.requestId}`
-      : args.send && typeof args.confirmToken === "string" && args.confirmToken
-        ? `tok:${sha256Hex(args.confirmToken)}`
-        : `args:${argsFingerprint(args, extra)}:${Math.floor(now / MCP_IMPLICIT_IDEMPOTENCY_WINDOW_MS)}`;
-  return `mcp-${sha256Hex(`${principal}\n${tool}\n${basis}`)}`;
+  return mcpIdempotencyKeys(principal, tool, args, extra, now)[0];
+}
+
+/**
+ * Claves candidatas: [la del bloque actual, la del anterior] con la huella implícita; [la única] en los demás casos.
+ * Un reintento que cae justo después del borde de un bloque busca el sobre en la clave del bloque anterior (ventana
+ * deslizante de entre 10 y 20 minutos): sin esto, el reintento a los pocos segundos de un borde creaba otro sobre.
+ */
+export function mcpIdempotencyKeys(principal: string, tool: string, args: Record<string, unknown>, extra = "", now = Date.now()): string[] {
+  const k = (basis: string) => `mcp-${sha256Hex(`${principal}\n${tool}\n${basis}`)}`;
+  if (typeof args.requestId === "string" && args.requestId) return [k(`req:${args.requestId}`)];
+  if (args.send && typeof args.confirmToken === "string" && args.confirmToken) return [k(`tok:${sha256Hex(args.confirmToken)}`)];
+  const fp = argsFingerprint(args, extra);
+  const bucket = Math.floor(now / MCP_IMPLICIT_IDEMPOTENCY_WINDOW_MS);
+  return [k(`args:${fp}:${bucket}`), k(`args:${fp}:${bucket - 1}`)];
 }
 
 /** Aviso de un create_* repetido: el sobre ya existía y se muestra cómo está ahora. */
@@ -279,7 +289,17 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
    * Alta de un sobre con Idempotency-Key. Si la API devuelve la respuesta guardada de un pedido anterior, esa foto puede
    * ser vieja (enviado, aunque después se anuló): se recarga el detalle actual y se marca `replayed: true`.
    */
-  async function createEnvelope(c: Caller, url: string, body: unknown, idempotencyKey: string): Promise<{ d: any; replayed: boolean }> {
+  async function createEnvelope(c: Caller, url: string, body: unknown, keys: string[]): Promise<{ d: any; replayed: boolean }> {
+    // Con varias candidatas (bloque actual y anterior): si el pedido ya se hizo con la del bloque anterior, se usa esa
+    // (la API devuelve el sobre ya creado); si no, la del bloque actual. La clave se guarda con el prefijo de la
+    // credencial (envelopes.ts idempotent), que es c.principal.
+    let idempotencyKey = keys[0];
+    for (const k of keys.slice(1)) {
+      if (await s.db.one(`SELECT 1 FROM idempotency_keys WHERE tenant_id = $1 AND key = $2`, [c.tenantId, `${c.principal}|${k}`])) {
+        idempotencyKey = k;
+        break;
+      }
+    }
     const r = await apiFull(c, "POST", url, body, undefined, { "idempotency-key": idempotencyKey });
     if (!r.replayed) return { d: r.json, replayed: false };
     try {
@@ -513,7 +533,7 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
             channels: r.channels ?? (r.email ? ["email"] : ["whatsapp"]),
           })),
           send: Boolean(a.send),
-        }, mcpIdempotencyKey(c.principal, "create_envelope_from_template", a));
+        }, mcpIdempotencyKeys(c.principal, "create_envelope_from_template", a));
         if (replayed) return { ...summarizeDetail(d), replayed: true, note: REPLAYED_NOTE, ...(d.envelope.status === "draft" ? { next: NEXT_DRAFT } : {}) };
         if (a.send) return summarizeDetail(d);
         return { ...summarizeDetail(d), next: NEXT_DRAFT };
@@ -768,7 +788,7 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
           })),
           fields,
           send: Boolean(a.send),
-        }, mcpIdempotencyKey(c.principal, "create_envelope", a, pdfSha));
+        }, mcpIdempotencyKeys(c.principal, "create_envelope", a, pdfSha));
         if (replayed) return { ...summarizeDetail(d), replayed: true, note: REPLAYED_NOTE, ...(d.envelope.status === "draft" ? { next: NEXT_DRAFT } : {}) };
         return {
           ...summarizeDetail(d),
@@ -953,25 +973,33 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
     async (req, reply) => {
       if (!tokenOk(req.params.token)) throw notFound("Link");
       // Range que no empieza en 0: continuación de una descarga ya contada (visor de PDF por partes, gestor de descargas
-      // que retoma). No gasta otra descarga, pero exige que el link ya se haya usado (y no pasado del tope) y entrega
-      // solo ese tramo: sin eso, "bytes=1-" bajaba el archivo entero sin límite.
-      const m = /^bytes=(\d+)-(\d*)$/.exec(String(req.headers.range ?? "").trim());
+      // que retoma). No gasta otra descarga, pero vale solo dentro de DOWNLOAD_CONTINUATION_WINDOW_MIN desde la última
+      // descarga contada y mientras el total servido no pase de DOWNLOAD_MAX × tamaño: sin eso, "bytes=1-" bajaba el
+      // archivo entero sin límite. Los bytes de cada tramo se calculan en SQL con el tamaño del archivo.
+      const m = /^bytes=(\d{1,15})-(\d{0,15})$/.exec(String(req.headers.range ?? "").trim());
       const start = m ? Number(m[1]) : 0;
+      const endReq = m && m[2] ? Number(m[2]) : null;
       const continuation = start > 0;
       const hash = sha256Hex(req.params.token);
+      // Bytes de este pedido (0 si el rango cae fuera del archivo: ese caso responde 416 sin servir nada).
+      const LEN = `GREATEST(0::bigint, LEAST(COALESCE($4::bigint, f.size_bytes - 1), f.size_bytes - 1) - $3::bigint + 1)`;
       const l = continuation
         ? await s.db.one<any>(
-            `SELECT l.id, f.storage_key, e.subject FROM download_links l, files f, envelopes e
-              WHERE ${LINK_VALID} AND l.downloads >= 1 AND l.downloads <= $2`,
-            [hash, DOWNLOAD_MAX],
+            `UPDATE download_links l SET bytes_served = l.bytes_served + ${LEN}
+               FROM files f, envelopes e
+              WHERE ${LINK_VALID} AND l.downloads >= 1 AND l.downloads <= $2
+                AND l.last_download_at > now() - make_interval(mins => $5)
+                AND l.bytes_served + ${LEN} <= $2::bigint * f.size_bytes
+             RETURNING l.id, f.storage_key, e.subject`,
+            [hash, DOWNLOAD_MAX, start, endReq, DOWNLOAD_CONTINUATION_WINDOW_MIN],
           )
         : // Un solo UPDATE atómico: vigente, con descargas disponibles y con la credencial válida.
           await s.db.one<any>(
-            `UPDATE download_links l SET downloads = l.downloads + 1
+            `UPDATE download_links l SET downloads = l.downloads + 1, last_download_at = now(), bytes_served = l.bytes_served + ${LEN}
                FROM files f, envelopes e
               WHERE ${LINK_VALID} AND l.downloads < $2
              RETURNING l.id, f.storage_key, e.subject`,
-            [hash, DOWNLOAD_MAX],
+            [hash, DOWNLOAD_MAX, start, endReq],
           );
       if (!l) throw notFound("Link");
       const bytes = await s.blobs.get(l.storage_key);

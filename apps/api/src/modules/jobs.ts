@@ -8,7 +8,10 @@ import { getSealProvider } from "../infra/seal";
 import { applyEvidencePipeline, planEvidence } from "./evidence-seal";
 import type { BlobStore } from "../infra/storage";
 import { decrypt, maskDestination, sha256Hex, uuidv7 } from "../lib/util";
-import { deliver, telegramStartLink } from "../notifications/channels";
+import { deliver } from "../notifications/channels";
+import { scrubPii, sendTracked } from "../notifications/outbound";
+import { pastExpiry, receivesSignerNotices } from "./envelopes";
+import { isUnverifiedSelfRegistered } from "./otp";
 import { normLocale, render, type TemplateKind } from "../notifications/templates";
 import { loadDocuments } from "./mappers";
 import { loadSignatureImages, toStampFields } from "./stamp-fields";
@@ -82,14 +85,28 @@ function whatsappTemplate(kind: TemplateKind): string | null {
   }
 }
 const TELEGRAM_HINT = {
-  es: "¿Preferís recibir los avisos por Telegram?",
-  "pt-BR": "Prefere receber os avisos pelo Telegram?",
-  en: "Prefer to get notifications on Telegram?",
+  es: "¿Preferís recibir los avisos por Telegram? Activalo desde la página de firma:",
+  "pt-BR": "Prefere receber os avisos pelo Telegram? Ative pela página de assinatura:",
+  en: "Prefer to get notifications on Telegram? Turn it on from the signing page:",
 } as const;
+
+/** Copia final a quien se registró en un formulario web sin validar su correo (sin adjunto: solo el link). */
+const UNVERIFIED_COPY_NOTE = {
+  es: "Recibís este correo porque se completó un formulario con esta dirección. Si no fuiste vos, podés ignorarlo.",
+  "pt-BR": "Você recebeu este e-mail porque um formulário foi preenchido com este endereço. Se não foi você, pode ignorá-lo.",
+  en: "You're receiving this email because a form was filled in with this address. If it wasn't you, you can ignore it.",
+} as const;
+
+/** Agrega un párrafo de texto al final del HTML del correo (antes de </body>). */
+function withHtmlNote(html: string, note: string): string {
+  const p = `<p style="font-family:Arial,sans-serif;font-size:12px;color:#5b6576;text-align:center;margin:12px 0">${escHtml(note)}</p>`;
+  const i = html.lastIndexOf("</body>");
+  return i >= 0 ? html.slice(0, i) + p + html.slice(i) : html + p;
+}
 
 export function createJobHandlers(d: Deps): Record<JobQueueName, JobHandler> {
   return {
-    notify: (p) => notify(d, p),
+    notify: (p, job) => notify(d, p, job?.id),
     finalize: async (p, job) => {
       try {
         await finalize(d, p);
@@ -102,7 +119,7 @@ export function createJobHandlers(d: Deps): Record<JobQueueName, JobHandler> {
     webhook: (p, job) => handleWebhookJob(d, p, job),
     bulk: (p, job) => handleBulkJob(d, p, job),
     platform: (p, job) => handlePlatformJob(d, p, job),
-    agreements: (p) => handleAgreementsJob(d, p),
+    agreements: (p, job) => handleAgreementsJob(d, p, job?.id),
   };
 }
 
@@ -111,6 +128,7 @@ export function createJobHandlers(d: Deps): Record<JobQueueName, JobHandler> {
 async function notify(
   d: Deps,
   p: { kind: TemplateKind; envelopeId: string; tenantId: string; recipientId?: string; declinedBy?: string; userId?: string; tokenEnc?: string },
+  jobId?: number,
 ) {
   if (p.kind === "password_reset") return notifyPasswordReset(d, p);
   const e = await d.db.one<any>(`SELECT * FROM envelopes WHERE id = $1`, [p.envelopeId]);
@@ -149,7 +167,7 @@ async function notify(
             )
           : [];
     const link = `${await tenantBaseUrl(d.db, e.tenant_id)}/app/envelopes/${e.id}`;
-    return notifyStaff(d, e, p.kind, to, (u) => render(p.kind, u.locale ?? e.locale, { ...base, recipientName: u.name, link }, mailBrand(p.kind, u.locale ?? e.locale)), link, () => e.locale, from);
+    return notifyStaff(d, e, p.kind, to, (u) => render(p.kind, u.locale ?? e.locale, { ...base, recipientName: u.name, link }, mailBrand(p.kind, u.locale ?? e.locale)), link, () => e.locale, from, jobId);
   }
 
   // Finalización fallida: a propietarios y administradores de la organización, y al remitente.
@@ -161,31 +179,43 @@ async function notify(
       [e.tenant_id, e.created_by],
     );
     const link = `${await tenantBaseUrl(d.db, e.tenant_id)}/app/envelopes/${e.id}`;
-    return notifyStaff(d, e, p.kind, to, (u) => render("finalize_failed", u.locale ?? e.locale, { ...base, recipientName: u.name, link }, mailBrand("finalize_failed", u.locale ?? e.locale)), link, (u) => u.locale ?? e.locale, from);
+    return notifyStaff(d, e, p.kind, to, (u) => render("finalize_failed", u.locale ?? e.locale, { ...base, recipientName: u.name, link }, mailBrand("finalize_failed", u.locale ?? e.locale)), link, (u) => u.locale ?? e.locale, from, jobId);
   }
 
   const r = await d.db.one<any>(`SELECT * FROM recipients WHERE id = $1`, [p.recipientId]);
   if (!r) return;
   // Invitaciones/recordatorios obsoletos (el sobre cambió de estado mientras esperaban en la cola).
   if ((p.kind === "invite" || p.kind === "reminder" || p.kind === "expiry_warning") && (e.status !== "sent" || !["sent", "viewed"].includes(r.status))) return;
+  // Ya vencido (el barrido todavía no lo pasó a 'expired'): un recordatorio o aviso de vencimiento llevaría a un link
+  // que ya no sirve para firmar.
+  if ((p.kind === "reminder" || p.kind === "expiry_warning") && pastExpiry(e)) return;
   if (p.kind === "certificate_request" && e.status !== "awaiting_certificates") return;
-  // Firma embebida: el integrador muestra la ceremonia en su app; no se mandan invitaciones ni avisos.
-  if ((p.kind === "invite" || p.kind === "reminder" || p.kind === "expiry_warning") && (r.embedded || r.auth_method === "in_person")) return;
-  // Autoregistrado en un formulario web público: sin correo verificado no se le escribe nada, tampoco la copia final
-  // (adjunta el documento firmado: llegaba a una dirección que escribió cualquiera). Ni rechazos, anulaciones o pedidos
-  // de firma con certificado; si no, el formulario serviría para hacer llegar correos a una dirección ajena. Tiene el
-  // link en la pantalla del formulario y desde ahí descarga el documento final al terminar.
-  if (r.self_registered && !(r.auth_method === "otp_email" && r.authenticated_at)) return;
+  // Embebidos (el integrador muestra la ceremonia en su app), en persona (firma en el dispositivo del anfitrión) y
+  // autorregistrados sin correo validado: sin invitaciones, recordatorios ni avisos de anulación o rechazo
+  // (receivesSignerNotices, la misma regla que usan los recordatorios y la anulación).
+  if (["invite", "reminder", "expiry_warning", "voided", "declined"].includes(p.kind) && !receivesSignerNotices(r)) return;
+  // Autoregistrado en un formulario web público sin correo verificado: tampoco pedidos de firma con certificado (si no,
+  // el formulario serviría para hacer llegar correos a una dirección ajena). La copia final sí, pero solo por correo y
+  // como un aviso con el link a su página de firmante (desde ahí descarga el documento), con una nota para quien no
+  // completó el formulario.
+  const unverified = isUnverifiedSelfRegistered(r);
+  if (unverified && p.kind !== "completed") return;
 
   const locale = r.locale ?? e.locale;
   const token = r.access_token_enc ? decrypt(r.access_token_enc) : null;
   const link = token && LINK_KINDS.includes(p.kind) ? `${wl.baseUrl}/s/${token}` : null;
-  const m = render(p.kind, locale, { ...base, recipientName: r.name, message: p.kind === "invite" ? e.message : null, link }, mailBrand(p.kind, locale));
+  const m0 = render(p.kind, locale, { ...base, recipientName: r.name, message: p.kind === "invite" ? e.message : null, link }, mailBrand(p.kind, locale));
+  const unverifiedNote = UNVERIFIED_COPY_NOTE[normLocale(locale)];
+  const m = unverified
+    ? { ...m0, text: `${m0.text}\n\n${unverifiedNote}`, html: withHtmlNote(m0.html, unverifiedNote) }
+    : m0;
 
   // Sin repetidos: los esquemas aceptan ["email","email",…] (también al delegar, desde el link público) y cada repetición
   // era un envío más del mismo aviso al mismo destino.
-  const channels: ("email" | "whatsapp" | "telegram")[] = [...new Set<"email" | "whatsapp" | "telegram">(r.channels ?? ["email"])];
-  const tgLink = token && channels.includes("telegram") && !r.telegram_chat_id ? telegramStartLink(token) : null;
+  const channels: ("email" | "whatsapp" | "telegram")[] = unverified ? ["email"] : [...new Set<"email" | "whatsapp" | "telegram">(r.channels ?? ["email"])];
+  // Telegram sin vincular: el correo invita a activarlo desde la página de firma (que genera un link t.me de un solo
+  // uso). El token de firma no viaja a Telegram.
+  const tgHint = link && channels.includes("telegram") && !r.telegram_chat_id && config.telegram.botUsername ? TELEGRAM_HINT[normLocale(locale)] : null;
   const errors: string[] = [];
   let delivered = 0;
 
@@ -194,25 +224,24 @@ async function notify(
     if (channel === "email") to = r.email;
     if (channel === "whatsapp") to = r.phone;
     if (channel === "telegram") to = r.telegram_chat_id;
-    if (!to) continue; // Telegram sin vincular: va el link de vinculación por los otros canales.
+    if (!to) continue; // Telegram sin vincular: va el aviso para vincularlo por los otros canales.
     const waTemplate = channel === "whatsapp" ? whatsappTemplate(p.kind) : null;
     if (channel === "whatsapp" && !waTemplate) {
       d.log.warn({ envelopeId: e.id, kind: p.kind }, "aviso sin plantilla de WhatsApp aprobada (WHATSAPP_*_TEMPLATE): no sale por WhatsApp");
       continue;
     }
-    const nid = uuidv7();
-    // Solo el envío decide si salió: un error al registrarlo después (insert, evento) no lo marca como fallido ni hace
-    // reintentar el job, que volvería a mandarlo por todos los canales.
-    let res!: Awaited<ReturnType<typeof deliver>>;
-    try {
-      const extra = tgLink ? `\n\n${TELEGRAM_HINT[locale as keyof typeof TELEGRAM_HINT] ?? TELEGRAM_HINT.es} ${tgLink}` : "";
-      res = await deliver({
+    // Cada canal se registra con el job: si otro canal falla y el job se reintenta (o el proceso murió entre canales),
+    // el reintento manda solo los canales que todavía no salieron. El registro después del envío no lo marca fallido.
+    const out = await sendTracked(
+      d.db,
+      { tenantId: e.tenant_id, envelopeId: e.id, recipientId: r.id, template: p.kind, jobId, log: d.log },
+      {
         channel,
         to,
         subject: m.subject,
-        text: channel === "telegram" ? telegramText(m.subject, m.text, m.platformFooter) : m.text + (channel === "email" ? extra : ""),
+        text: channel === "telegram" ? telegramText(m.subject, m.text, m.platformFooter) : m.text + (channel === "email" && tgHint ? `\n\n${tgHint} ${link}` : ""),
         // El aviso para vincular Telegram también en la versión HTML (casi todos los clientes muestran esa).
-        html: channel === "email" && tgLink ? withHtmlHint(m.html, TELEGRAM_HINT[locale as keyof typeof TELEGRAM_HINT] ?? TELEGRAM_HINT.es, tgLink) : m.html,
+        html: channel === "email" && tgHint && link ? withHtmlHint(m.html, tgHint, link) : m.html,
         link,
         cta: m.cta,
         locale,
@@ -221,42 +250,41 @@ async function notify(
         ...(waTemplate ? { template: waTemplate } : {}),
         tenantId: e.tenant_id,
         ...(channel === "email" ? from : {}),
-      });
-    } catch (err) {
-      errors.push(`${channel}: ${String(err)}`);
-      await d.db
-        .query(
-          `INSERT INTO notifications (id, tenant_id, envelope_id, recipient_id, channel, template, destination, status, error) VALUES ($1,$2,$3,$4,$5,$6,$7,'failed',$8)`,
-          [nid, e.tenant_id, e.id, r.id, channel, p.kind, to, String(err).slice(0, 1000)],
-        )
-        .catch((e2) => d.log.error({ err: String(e2), channel }, "no se pudo registrar el aviso fallido"));
+      },
+    );
+    if (out.status === "failed") {
+      // Sin el destino: el error termina en los logs y en jobs.last_error.
+      errors.push(`${channel}: ${out.error}`);
       continue;
     }
-    delivered++;
+    if (out.status === "already") continue; // ya enviado por este job
+    if (out.status === "sent") delivered++;
     try {
-      await d.db.query(
-        `INSERT INTO notifications (id, tenant_id, envelope_id, recipient_id, channel, template, destination, status, provider, provider_message_id, sent_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,'sent',$8,$9,now())`,
-        [nid, e.tenant_id, e.id, r.id, channel, p.kind, to, res.provider, res.messageId],
-      );
       await d.db.tx(async (t) => {
         await t.query(`SELECT id FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
         await appendEvent(t, {
           tenantId: e.tenant_id,
           envelopeId: e.id,
-          type: "notification.sent",
+          // Dirección suprimida (rebotó o se quejó antes): no sale, y el remitente lo ve en la actividad del sobre.
+          type: out.status === "sent" ? "notification.sent" : "notification.suppressed",
           actor: SYSTEM,
-          data: { recipientId: r.id, channel, template: p.kind, destination: maskDestination(to!), provider: res.provider },
+          data: {
+            recipientId: r.id,
+            channel,
+            template: p.kind,
+            destination: maskDestination(to!),
+            ...(out.status === "sent" ? { provider: out.res.provider } : {}),
+          },
         });
       });
     } catch (err) {
-      d.log.error({ err: String(err), envelopeId: e.id, channel }, "aviso enviado pero no registrado");
+      d.log.error({ err: scrubPii(String(err)), envelopeId: e.id, channel }, "aviso enviado pero no registrado");
     }
   }
-  // Si no salió por ningún canal, reintentar el job.
-  if (delivered === 0 && errors.length) throw new Error(`no se pudo notificar: ${errors.join("; ")}`);
+  // Algún canal falló: se reintenta el job (solo esos canales: los que salieron quedan registrados con el job).
+  if (errors.length) throw new Error(`no se pudo notificar: ${errors.join("; ")}`);
   // Ningún canal posible (p. ej. solo Telegram sin vincular y sin otro canal para el link): que quede a la vista.
-  if (delivered === 0) d.log.warn({ envelopeId: e.id, recipientId: r.id, kind: p.kind, channels }, "aviso sin ningún canal posible: no salió");
+  if (delivered === 0) d.log.warn({ envelopeId: e.id, recipientId: r.id, kind: p.kind, channels }, "aviso sin ningún canal nuevo: no salió");
 }
 
 /**
@@ -274,6 +302,7 @@ async function notifyStaff(
   link: string,
   localeOf: (u: { locale: string | null }) => string,
   from: { from?: string | null; replyTo?: string | null; dkim?: { domainName: string; keySelector: string; privateKey: string } | null } = {},
+  jobId?: number,
 ) {
   const errors: string[] = [];
   let delivered = 0;
@@ -282,29 +311,16 @@ async function notifyStaff(
     const m = message(u);
     // Como notify(): el envío cuenta apenas sale (si después falla el registro, un reintento no repite el correo a
     // quien ya lo recibió) y el registro de una falla no corta el resto.
-    let res: Awaited<ReturnType<typeof deliver>>;
-    try {
-      res = await deliver({ channel: "email", to: u.email, subject: m.subject, text: m.text, html: m.html, link, locale: localeOf(u), tenantId: e.tenant_id, ...from });
-    } catch (err) {
-      errors.push(`${u.email}: ${String(err)}`);
-      await d.db
-        .query(
-          `INSERT INTO notifications (id, tenant_id, envelope_id, channel, template, destination, status, error) VALUES ($1,$2,$3,'email',$4,$5,'failed',$6)`,
-          [uuidv7(), e.tenant_id, e.id, kind, u.email, String(err).slice(0, 1000)],
-        )
-        .catch((x) => d.log.error({ err: String(x), envelopeId: e.id }, "no se pudo registrar el aviso fallido"));
-      continue;
-    }
-    delivered++;
-    await d.db
-      .query(
-        `INSERT INTO notifications (id, tenant_id, envelope_id, channel, template, destination, status, provider, provider_message_id, sent_at)
-         VALUES ($1,$2,$3,'email',$4,$5,'sent',$6,$7,now())`,
-        [uuidv7(), e.tenant_id, e.id, kind, u.email, res.provider, res.messageId],
-      )
-      .catch((x) => d.log.error({ err: String(x), envelopeId: e.id }, "aviso enviado pero no registrado"));
+    const out = await sendTracked(
+      d.db,
+      { tenantId: e.tenant_id, envelopeId: e.id, template: kind, jobId, log: d.log },
+      { channel: "email", to: u.email, subject: m.subject, text: m.text, html: m.html, link, locale: localeOf(u), tenantId: e.tenant_id, ...from },
+    );
+    // Sin la dirección en el error: termina en los logs y en jobs.last_error.
+    if (out.status === "failed") errors.push(out.error);
+    else delivered++;
   }
-  if (delivered === 0 && errors.length) throw new Error(`no se pudo notificar: ${errors.join("; ")}`);
+  if (delivered === 0 && errors.length) throw new Error(`no se pudo notificar (${errors.length}): ${errors.join("; ")}`);
 }
 
 /** Correo de restablecimiento de contraseña. El token viaja cifrado en el job y se descarta si ya no sirve. */
@@ -563,6 +579,8 @@ export async function sweep(d: Deps) {
     // Links de descarga temporales (MCP): nada más los borraba.
     // Tokens de formularios web usados: vencen a las 2 h, después no hace falta recordarlos.
     ["web-form-tokens", () => d.db.query(`DELETE FROM web_form_token_uses WHERE used_at < now() - interval '1 day'`)],
+    // Tokens de vinculación de Telegram (30 minutos): vencidos hace más de un día ya no hacen falta.
+    ["telegram-link-tokens", () => d.db.query(`DELETE FROM telegram_link_tokens WHERE expires_at < now() - interval '1 day'`)],
     [
       "download-links",
       () => d.db.query(`DELETE FROM download_links WHERE ctid IN (SELECT ctid FROM download_links WHERE expires_at < now() - interval '1 day' LIMIT 5000)`),

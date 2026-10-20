@@ -42,7 +42,7 @@ import {
   type ResolvedBrand,
   type StoredTenantBranding,
 } from "./brand";
-import { OTP_MESSAGES } from "./otp-text";
+import { OTP_MESSAGES, hasCodeVariable } from "./otp-text";
 
 const isLocalEnv = () => config.environment === "local";
 const appHost = () => new URL(config.appUrl).hostname.toLowerCase();
@@ -101,7 +101,14 @@ async function requireBranding(db: Db, tenantId: string) {
 
 // ───────────────────────────── Validación ─────────────────────────────
 
-async function validateConfig(db: Db, tenantId: string, c: BrandConfigInput) {
+export async function validateConfig(db: Db, tenantId: string, c: BrandConfigInput) {
+  // La plantilla del código de verificación tiene que incluir {{code}}: sin él, los firmantes recibían un mensaje sin
+  // el código y no podían firmar.
+  for (const [locale, tpl] of Object.entries(c.templates?.otp_code ?? {})) {
+    if (tpl?.body?.trim() && !hasCodeVariable(tpl.body)) {
+      throw badRequest("otp_template_missing_code", `La plantilla del código de verificación (${locale}) tiene que incluir {{code}}`);
+    }
+  }
   if (c.customCss) {
     const p = customCssProblem(c.customCss);
     if (p) throw badRequest("invalid_css", `CSS propio: ${customCssProblemText(p)}`);

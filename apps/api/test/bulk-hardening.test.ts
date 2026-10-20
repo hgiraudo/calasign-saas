@@ -9,12 +9,16 @@ process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "calasign-bulk-hardening-"));
 delete process.env.DATABASE_URL;
 
 // Plantilla y dueño siempre válidos; el alta del sobre la decide cada prueba.
-const behavior: { fail: (n: number) => unknown } = { fail: () => null };
+const behavior: { fail: (n: number) => unknown; load: () => unknown } = { fail: () => null, load: () => null };
 let calls = 0;
 vi.mock("../src/modules/owner-check", () => ({ ownerCanStillCreate: vi.fn(async () => null) }));
 vi.mock("../src/modules/templates", async (orig) => ({
   ...(await orig<typeof import("../src/modules/templates")>()),
-  loadTemplateForUse: vi.fn(async () => ({ tpl: { roles: [], template: { id: "tpl" } } })),
+  loadTemplateForUse: vi.fn(async () => {
+    const err = behavior.load();
+    if (err) throw err;
+    return { tpl: { roles: [], template: { id: "tpl" } } };
+  }),
   planFromTemplate: vi.fn(() => ({})),
   insertEnvelopeFromTemplate: vi.fn(async () => {
     const err = behavior.fail(++calls);
@@ -29,6 +33,7 @@ let tenant: string;
 let user: string;
 let tpl: string;
 const log = { info: () => {}, warn: () => {} };
+const netError = (code = "ECONNRESET") => Object.assign(new Error("connection reset"), { code });
 
 beforeAll(async () => {
   const { createDb, migrate } = await import("../src/infra/db");
@@ -88,6 +93,10 @@ describe("CSV del envío masivo", () => {
 
   it("separador: el que más aparece en el encabezado (fuera de comillas)", async () => {
     const { parseCsv } = await import("../src/modules/bulk");
+    // Líneas vacías al principio: se mira la primera con datos.
+    expect(parseCsv("\n\r\na;b;c\n1;2;3\n")).toEqual([["a", "b", "c"], ["1", "2", "3"]]);
+    // Una comilla suelta en medio de un campo sin comillas no esconde los separadores que siguen.
+    expect(parseCsv('Pulg";a;b\n1;2;3\n')).toEqual([['Pulg"', "a", "b"], ["1", "2", "3"]]);
     expect(parseCsv("a;b\tc\td\n1;2\t3\t4\n")).toEqual([["a;b", "c", "d"], ["1;2", "3", "4"]]);
     expect(parseCsv('"x,y,z";b;c\n1;2;3\n')).toEqual([["x,y,z", "b", "c"], ["1", "2", "3"]]);
     expect(parseCsv("a,b\n1,2\n")).toEqual([["a", "b"], ["1", "2"]]);
@@ -127,7 +136,7 @@ describe("worker del envío masivo", () => {
     const { handleBulkJob } = await import("../src/modules/bulk");
     const { bulk, items } = await bulkWith(3);
     calls = 0;
-    behavior.fail = (n) => (n === 2 ? new Error("connection reset") : null);
+    behavior.fail = (n) => (n === 2 ? netError() : null);
     await expect(handleBulkJob({ db, log }, { bulkSendId: bulk, tenantId: tenant, itemIds: items }, { attempts: 1, maxAttempts: 8 })).rejects.toThrow("connection reset");
     expect(await statuses(bulk)).toEqual(["sent", "pending", "pending"]);
     expect(await bulkStatus(bulk)).toBe("running");
@@ -137,13 +146,58 @@ describe("worker del envío masivo", () => {
     expect(await bulkStatus(bulk)).toBe("completed");
   });
 
-  it("en el último intento las filas que quedan se cierran como fallidas y el envío termina", async () => {
+  it("transitorios: conexión, serialización, deadlock (también en cause); el resto no", async () => {
+    const { isTransientError } = await import("../src/modules/bulk");
+    expect(isTransientError(netError("ETIMEDOUT"))).toBe(true);
+    expect(isTransientError(Object.assign(new Error("x"), { code: "40001" }))).toBe(true);
+    expect(isTransientError(Object.assign(new Error("x"), { code: "40P01" }))).toBe(true);
+    expect(isTransientError(Object.assign(new Error("x"), { code: "08006" }))).toBe(true);
+    expect(isTransientError(Object.assign(new Error("x"), { code: "57P01" }))).toBe(true);
+    expect(isTransientError(new Error("wrap", { cause: netError() }))).toBe(true);
+    expect(isTransientError(new TypeError("Cannot read properties of undefined"))).toBe(false);
+    expect(isTransientError(Object.assign(new Error("x"), { code: "23505" }))).toBe(false);
+  });
+
+  it("una excepción inesperada (no transitoria) marca fallida solo esa fila y sigue, sin relanzar", async () => {
     const { handleBulkJob } = await import("../src/modules/bulk");
-    const { bulk, items } = await bulkWith(2);
+    const { bulk, items } = await bulkWith(3);
     calls = 0;
-    behavior.fail = () => new Error("db down");
-    await expect(handleBulkJob({ db, log }, { bulkSendId: bulk, tenantId: tenant, itemIds: items }, { attempts: 8, maxAttempts: 8 })).rejects.toThrow("db down");
-    expect(await statuses(bulk)).toEqual(["failed", "failed"]);
+    behavior.fail = (n) => (n === 2 ? new TypeError("Cannot read properties of undefined") : null);
+    await handleBulkJob({ db, log }, { bulkSendId: bulk, tenantId: tenant, itemIds: items }, { attempts: 1, maxAttempts: 8 });
+    expect(await statuses(bulk)).toEqual(["sent", "failed", "sent"]);
+    expect(await bulkStatus(bulk)).toBe("completed");
+  });
+
+  it("en el último intento, un error del momento deja fallida solo esa fila y sigue con las demás", async () => {
+    const { handleBulkJob } = await import("../src/modules/bulk");
+    const { bulk, items } = await bulkWith(3);
+    calls = 0;
+    behavior.fail = (n) => (n === 1 ? netError() : null);
+    await handleBulkJob({ db, log }, { bulkSendId: bulk, tenantId: tenant, itemIds: items }, { attempts: 8, maxAttempts: 8 });
+    expect(await statuses(bulk)).toEqual(["failed", "sent", "sent"]);
+    expect(await bulkStatus(bulk)).toBe("completed");
+  });
+
+  it("en el último intento, un error fuera de las filas cierra las de su ronda (no las reencoladas por retry-failed)", async () => {
+    const { handleBulkJob } = await import("../src/modules/bulk");
+    const { bulk, items } = await bulkWith(3);
+    // La fila 3 ya la volvió a encolar "Reintentar fallidas" (ronda 1): es de otro job.
+    await db.query(`UPDATE bulk_send_items SET retry_round = 1 WHERE id = $1`, [items[2]]);
+    behavior.load = () => netError();
+    try {
+      await expect(handleBulkJob({ db, log }, { bulkSendId: bulk, tenantId: tenant, itemIds: items }, { attempts: 8, maxAttempts: 8 })).rejects.toThrow("connection reset");
+    } finally {
+      behavior.load = () => null;
+    }
+    expect(await statuses(bulk)).toEqual(["failed", "failed", "pending"]);
+    expect(await bulkStatus(bulk)).toBe("running");
+    // El job de la ronda 1 la procesa; el viejo (ronda 0) ya no la toca.
+    calls = 0;
+    behavior.fail = () => null;
+    await handleBulkJob({ db, log }, { bulkSendId: bulk, tenantId: tenant, itemIds: [items[2]] }, { attempts: 1, maxAttempts: 8 });
+    expect(calls).toBe(0);
+    await handleBulkJob({ db, log }, { bulkSendId: bulk, tenantId: tenant, itemIds: [items[2]], retryRound: 1 }, { attempts: 1, maxAttempts: 8 });
+    expect(await statuses(bulk)).toEqual(["failed", "failed", "sent"]);
     expect(await bulkStatus(bulk)).toBe("completed");
   });
 
@@ -189,12 +243,26 @@ describe("POST /v1/bulk-sends/:id/retry-failed", () => {
       expect(over.json().error.code).toBe("plan_limit");
       await db.query(`DELETE FROM envelopes WHERE tenant_id = $1 AND subject = 'x'`, [tenant]);
 
+      // Las filas pendientes de otro envío en curso también ocupan el cupo: 998 enviados + 1 pendiente → queda 1.
+      await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, sent_at) SELECT gen_random_uuid(), $1, 'x', 'sent', now() FROM generate_series(1, 998)`, [tenant]);
+      const other = await bulkWith(1);
+      expect((await app.inject({ method: "POST", url: `/v1/bulk-sends/${bulk}/retry-failed`, headers })).statusCode).toBe(402);
+      await db.query(`UPDATE bulk_sends SET status = 'completed' WHERE id = $1`, [other.bulk]);
+      await db.query(`DELETE FROM envelopes WHERE tenant_id = $1 AND subject = 'x'`, [tenant]);
+
+      // El contador de fallidas que se pueden reintentar (la consola muestra el botón solo con alguna).
+      const before = (await app.inject({ method: "GET", url: `/v1/bulk-sends/${bulk}`, headers })).json();
+      expect(before).toMatchObject({ failed: 3, retryable: 2 });
       const ok = await app.inject({ method: "POST", url: `/v1/bulk-sends/${bulk}/retry-failed`, headers });
       expect(ok.statusCode).toBe(200);
-      expect(ok.json()).toMatchObject({ status: "running", pending: 2, failed: 1 });
+      expect(ok.json()).toMatchObject({ status: "running", pending: 2, failed: 1, retryable: 0 });
       expect(await statuses(bulk)).toEqual(["pending", "pending", "failed"]);
       const jobs = await db.query<any>(`SELECT payload FROM jobs WHERE queue = 'bulk' AND payload->>'bulkSendId' = $1`, [bulk]);
       expect(jobs.map((j) => j.payload.itemIds)).toEqual([[items[0], items[1]]]);
+      // Cada reintento es una ronda nueva (el cierre de un job viejo no toca estas filas).
+      expect(jobs[0].payload.retryRound).toBe(1);
+      const rounds = await db.query<any>(`SELECT retry_round FROM bulk_send_items WHERE id = ANY($1)`, [[items[0], items[1]]]);
+      expect(rounds.map((r) => r.retry_round)).toEqual([1, 1]);
 
       // Nada para reintentar → 409; cancelado → 409.
       await db.query(`UPDATE bulk_send_items SET status = 'sent' WHERE id = ANY($1)`, [[items[0], items[1]]]);

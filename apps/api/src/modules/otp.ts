@@ -4,12 +4,14 @@ import { randomInt, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { OtpVerifyInput, type OtpSendResponse } from "@calasign/shared";
 import { config } from "../config";
+import { rateLimitIpKey } from "../lib/ip";
 import type { Db } from "../infra/db";
 import { appendEvent } from "../infra/evidence";
 import { enqueue } from "../infra/queue";
 import { AppError, conflict } from "../lib/errors";
 import { maskDestination, randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { deliver } from "../notifications/channels";
+import { isSuppressed } from "../notifications/outbound";
 import { normLocale } from "../notifications/templates";
 import type { Services } from "./context";
 import { lastEmbedSession } from "./embed";
@@ -109,19 +111,30 @@ export function normalizeOtpDestination(d: string): string {
 }
 
 /**
- * Topes de códigos por destino (config.otp: por hora y por día, sumando todos los sobres y organizaciones) y por
- * organización (por hora). Se llama dentro de la transacción del envío, antes de reservar el código.
+ * Topes de códigos por destino. Se cuentan solo los códigos sin verificar (un firmante que valida su código no gasta
+ * cupo) y por organización + destino (config.otp: por hora y por día): una organización que manda muchos códigos a una
+ * dirección no deja sin códigos a los firmantes legítimos de otra. Además, un tope global por destino mucho más alto
+ * (sumando todas las organizaciones, solo contra abuso) y uno por organización (por hora). Se llama dentro de la
+ * transacción del envío, antes de reservar el código.
  */
 export async function assertOtpDestinationCapacity(db: Db, tenantId: string, destination: string) {
   const dest = normalizeOtpDestination(destination);
-  // Los teléfonos ya se guardan en E.164 (sin separadores) y el correo se compara sin mayúsculas (índice lower(destination)).
-  const c = await db.one<{ h: number; d: number; t: number }>(
-    `SELECT (SELECT count(*) FROM otp_challenges WHERE lower(destination) = $1 AND created_at > now() - interval '1 hour')::int AS h,
-            (SELECT count(*) FROM otp_challenges WHERE lower(destination) = $1 AND created_at > now() - interval '1 day')::int AS d,
+  // Los teléfonos ya se guardan en E.164 (sin separadores) y el correo se compara sin mayúsculas (índices lower(destination)).
+  const c = await db.one<{ h: number; d: number; g: number; t: number }>(
+    `SELECT (SELECT count(*) FROM otp_challenges WHERE tenant_id = $2 AND lower(destination) = $1 AND verified_at IS NULL
+               AND created_at > now() - interval '1 hour')::int AS h,
+            (SELECT count(*) FROM otp_challenges WHERE tenant_id = $2 AND lower(destination) = $1 AND verified_at IS NULL
+               AND created_at > now() - interval '1 day')::int AS d,
+            (SELECT count(*) FROM otp_challenges WHERE lower(destination) = $1 AND verified_at IS NULL
+               AND created_at > now() - interval '1 hour')::int AS g,
             (SELECT count(*) FROM otp_challenges WHERE tenant_id = $2 AND created_at > now() - interval '1 hour')::int AS t`,
     [dest, tenantId],
   );
-  if (Number(c?.h ?? 0) >= config.otp.maxPerDestinationHour || Number(c?.d ?? 0) >= config.otp.maxPerDestinationDay) {
+  if (
+    Number(c?.h ?? 0) >= config.otp.maxPerDestinationHour ||
+    Number(c?.d ?? 0) >= config.otp.maxPerDestinationDay ||
+    Number(c?.g ?? 0) >= config.otp.maxPerDestinationGlobalHour
+  ) {
     throw new AppError(429, "otp_destination_limit", "Se enviaron demasiados códigos a este destino. Probá más tarde.");
   }
   if (Number(c?.t ?? 0) >= config.otp.maxPerTenantHour) {
@@ -135,7 +148,8 @@ function codeHash(recipientId: string, code: string) {
 
 export async function otpRoutes(app: FastifyInstance, s: Services) {
   type P = { Params: { token: string } };
-  const rl = { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } };
+  // Por IP (en IPv6, por /64: lib/ip.ts), como el límite global.
+  const rl = { config: { rateLimit: { max: 20, timeWindow: "1 minute", keyGenerator: (req: FastifyRequest) => rateLimitIpKey(req.ip) } } };
 
   // Los endpoints del link (salvo la sesión, el propio OTP y los datos de la firma embebida) exigen el código validado si
   // el destinatario lo requiere. /embed (solo el returnUrl del integrador) lo pide la página una vez, al abrirse y antes
@@ -163,6 +177,10 @@ export async function otpRoutes(app: FastifyInstance, s: Services) {
     const locale = normLocale(r.locale ?? e.locale);
     const m = MSG[locale];
     const channel = METHOD_CHANNEL[method];
+    // Dirección suprimida por rebote permanente o queja (notifications/ses-feedback.ts): el código no llegaría.
+    if (channel === "email" && (await isSuppressed(s.db, destination))) {
+      throw conflict("otp_destination_suppressed", "No podemos enviar correos a esa dirección. Pedile al remitente que la corrija.");
+    }
     const challengeId = uuidv7();
     // Se reserva el código con el sobre bloqueado ANTES de enviarlo: pedidos simultáneos no esquivan la espera
     // entre envíos ni el máximo por hora (cada SMS/WhatsApp cuesta).
@@ -185,7 +203,7 @@ export async function otpRoutes(app: FastifyInstance, s: Services) {
           throw new AppError(429, "otp_daily_limit", "Se pidieron demasiados códigos hoy. Probá mañana o pedile al remitente un link nuevo.");
         }
       }
-      // Topes por destino (correo o teléfono, de cualquier sobre u organización) y por organización: el de arriba es por
+      // Topes por destino (correo o teléfono: por organización y, más alto, global) y por organización: el de arriba es por
       // destinatario, y con muchos sobres al mismo destino (p. ej. un formulario web con código completado una y otra
       // vez con el correo de otro) se podía bombardear esa dirección.
       await assertOtpDestinationCapacity(t, e.tenant_id, destination);

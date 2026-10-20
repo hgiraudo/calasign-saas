@@ -89,8 +89,18 @@ async function sendEmail(m: OutboundMessage): Promise<SendResult> {
     text: m.text,
     html: m.html,
     ...(m.dkim ? { dkim: m.dkim } : {}),
+    // Rebotes y quejas por SNS (docs/CORREO-REBOTES.md).
+    ...(config.mail.sesConfigurationSet ? { headers: { "X-SES-CONFIGURATION-SET": config.mail.sesConfigurationSet } } : {}),
   });
-  return { provider: "smtp", messageId: info.messageId ?? null };
+  // SES por SMTP responde "250 Ok <id de SES>": ese id (no el Message-ID del encabezado) es el que traen los avisos de
+  // rebote y queja (mail.messageId) para asociarlos al envío.
+  return { provider: "smtp", messageId: sesMessageId(info.response) ?? info.messageId ?? null };
+}
+
+/** Id de mensaje de SES en la respuesta SMTP ("250 Ok 0100018f…-000000"). */
+export function sesMessageId(response: string | undefined | null): string | null {
+  const m = /^250 Ok (\S+)\s*$/i.exec(String(response ?? "").trim());
+  return m?.[1] ?? null;
 }
 
 /** "Nombre <a@b.com>" → "a@b.com". */
@@ -172,8 +182,11 @@ export async function deliver(m: OutboundMessage & { cta?: string | null }): Pro
   return sendWhatsApp(m);
 }
 
-/** Link t.me para que el firmante vincule su chat. El parámetro es su token de firma (máx. 64 chars). */
-export function telegramStartLink(signingToken: string): string | null {
+/**
+ * Link t.me para que el firmante vincule su chat. El parámetro es un token de vinculación propio, de un solo uso y
+ * de vida corta (telegram.ts telegramLinkFor), nunca el token de firma: el link pasa por los servidores de Telegram.
+ */
+export function telegramStartLink(linkToken: string): string | null {
   if (!config.telegram.botUsername) return null;
-  return `https://t.me/${config.telegram.botUsername}?start=${signingToken}`;
+  return `https://t.me/${config.telegram.botUsername}?start=${linkToken}`;
 }

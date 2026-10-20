@@ -11,6 +11,7 @@ import { config } from "./config";
 import type { Db } from "./infra/db";
 import type { BlobStore } from "./infra/storage";
 import { AppError, rateLimitError } from "./lib/errors";
+import { rateLimitIpKey } from "./lib/ip";
 import { requestPath } from "./lib/util";
 import { LOG_REDACT_PATHS, safeRequestSerializer } from "./lib/redact";
 import { readMailbox } from "./notifications/channels";
@@ -20,6 +21,7 @@ import { envelopeRoutes } from "./modules/envelopes";
 import { signingRoutes } from "./modules/signing";
 import { signerFeatureRoutes } from "./modules/signer-features";
 import { telegramRoutes } from "./modules/telegram";
+import { sesFeedbackRoutes } from "./notifications/ses-feedback";
 import { webhookRoutes } from "./modules/webhooks";
 import { embedRoutes } from "./modules/embed";
 import { openApiRoutes } from "./modules/openapi";
@@ -97,7 +99,10 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
   await app.register(rateLimit, {
     max: 600,
     timeWindow: "1 minute",
-    allowList: config.environment === "local" ? ["127.0.0.1", "::1", "::ffff:127.0.0.1"] : [],
+    // Por IP y, en IPv6, por /64 (lib/ip.ts): un cliente IPv6 tiene el bloque entero. La lista de IPs sin límite se
+    // compara con esa clave (loopback queda igual; ::ffff:127.0.0.1 pasa a 127.0.0.1).
+    keyGenerator: (req) => rateLimitIpKey(req.ip),
+    allowList: config.environment === "local" ? ["127.0.0.1", "::1"] : [],
     // Código rate_limited y texto en español (los conectores y SDK tratan rate_limited igual que el bad_request de antes).
     errorResponseBuilder: rateLimitError,
   });
@@ -168,6 +173,7 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
   await identityRoutes(app, services);
   await signingRoutes(app, services);
   await telegramRoutes(app, services);
+  await sesFeedbackRoutes(app, services);
   await webhookRoutes(app, services);
   await embedRoutes(app, services);
   await openApiRoutes(app);

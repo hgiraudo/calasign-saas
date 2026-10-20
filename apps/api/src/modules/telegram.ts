@@ -1,10 +1,13 @@
-// Webhook del bot de Telegram: vincula el chat del firmante cuando abre t.me/<bot>?start=<token>.
+// Webhook del bot de Telegram: vincula el chat del firmante cuando abre t.me/<bot>?start=<token de vinculación>.
+// El token de vinculación es propio (no el de firma, que no tiene que pasar por Telegram), de un solo uso, vence en
+// TELEGRAM_LINK_TTL_MINUTES (30 por defecto) y se guarda como hash (telegram_link_tokens).
 import { timingSafeEqual } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { config } from "../config";
 import { SYSTEM, appendEvent } from "../infra/evidence";
-import { decrypt, sha256Hex } from "../lib/util";
-import { sendTelegram } from "../notifications/channels";
+import type { Db } from "../infra/db";
+import { decrypt, randomToken, sha256Hex } from "../lib/util";
+import { sendTelegram, telegramStartLink } from "../notifications/channels";
 import { normLocale } from "../notifications/templates";
 import type { Services } from "./context";
 import { envelopeBaseUrl } from "./white-label/brand";
@@ -23,6 +26,20 @@ const MSG = {
     "First open the signing link and enter the code we sent you; then tap this link again.",
 };
 
+/**
+ * Link t.me con un token de vinculación nuevo para el destinatario (null sin bot configurado o sin link de firma).
+ * Queda atado al link de firma vigente: si se corrige el contacto (link nuevo), deja de servir.
+ */
+export async function telegramLinkFor(db: Db, r: { id: string; access_token_hash?: string | null }): Promise<string | null> {
+  if (!config.telegram.botUsername || !r.access_token_hash) return null;
+  const token = randomToken(24);
+  await db.query(
+    `INSERT INTO telegram_link_tokens (token_hash, recipient_id, access_token_hash, expires_at) VALUES ($1,$2,$3, now() + make_interval(mins => $4))`,
+    [sha256Hex(token), r.id, r.access_token_hash, Math.max(1, Math.floor(config.telegram.linkTtlMinutes))],
+  );
+  return telegramStartLink(token);
+}
+
 export async function telegramRoutes(app: FastifyInstance, s: Services) {
   app.post("/v1/integrations/telegram/webhook", async (req, reply) => {
     const secret = config.telegram.webhookSecret;
@@ -38,8 +55,11 @@ export async function telegramRoutes(app: FastifyInstance, s: Services) {
     const m = /^\/start\s+([A-Za-z0-9_-]{20,64})$/.exec(text.trim());
     if (!chatId || !m) return { ok: true };
 
-    const token = m[1];
-    const r = await s.db.one<any>(`SELECT * FROM recipients WHERE access_token_hash = $1`, [sha256Hex(token)]);
+    const linkHash = sha256Hex(m[1]);
+    const lt = await s.db.one<any>(`SELECT recipient_id, access_token_hash FROM telegram_link_tokens WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now()`, [
+      linkHash,
+    ]);
+    const r = lt ? await s.db.one<any>(`SELECT * FROM recipients WHERE id = $1 AND access_token_hash = $2`, [lt.recipient_id, lt.access_token_hash]) : null;
     const e = r ? await s.db.one<any>(`SELECT * FROM envelopes WHERE id = $1`, [r.envelope_id]) : null;
     if (!r || !e || e.status === "draft") {
       await sendTelegram({ to: String(chatId), text: MSG.unknown, link: null }).catch(() => {});
@@ -61,14 +81,13 @@ export async function telegramRoutes(app: FastifyInstance, s: Services) {
         const cur = await t.one<{ authenticated_at: string | null }>(`SELECT authenticated_at FROM recipients WHERE id = $1`, [r.id]);
         if (!cur?.authenticated_at) return "needs_otp";
       }
+      // Un solo uso: el token se consume con el sobre bloqueado (dos /start con el mismo link no vinculan dos chats).
+      const used = await t.query(`UPDATE telegram_link_tokens SET used_at = now() WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now() RETURNING 1`, [linkHash]);
+      if (!used.length) return false;
       const upd = await t.query(
         `UPDATE recipients SET telegram_chat_id = $2
           WHERE id = $1 AND access_token_hash = $3 AND (telegram_chat_id IS NULL OR telegram_chat_id = $2) RETURNING id`,
-        [
-          r.id,
-          String(chatId),
-          sha256Hex(token),
-        ],
+        [r.id, String(chatId), lt.access_token_hash],
       );
       if (!upd.length) return false;
       await appendEvent(t, {

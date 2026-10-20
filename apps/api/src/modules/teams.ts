@@ -39,6 +39,7 @@ import {
 } from "../lib/totp";
 import { decrypt, encrypt, hashPassword, iso, randomToken, sha256Hex, uuidv7, verifyPassword } from "../lib/util";
 import { deliver } from "../notifications/channels";
+import { isSuppressed } from "../notifications/outbound";
 import { normLocale } from "../notifications/templates";
 import { hasPerm } from "./access";
 import { auditFromRequest, recordAudit } from "./audit";
@@ -532,14 +533,16 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     const acceptUrl = `${config.appUrl}/invite/${token}`;
     const mailLocale = normLocale(input.locale ?? org.default_locale);
     const roleForMail = target.role === "custom" ? target.roleName : ROLE_LABEL_I18N[mailLocale][target.role as "owner" | "admin" | "member"];
-    await sendInvitationEmail(a.tenantId, input.email, org.name, inviter ?? org.name, roleForMail, acceptUrl, mailLocale);
+    // Dirección suprimida por rebote permanente o queja: no se manda (el link de aceptación igual vuelve en la respuesta).
+    const emailSuppressed = await isSuppressed(s.db, input.email);
+    if (!emailSuppressed) await sendInvitationEmail(a.tenantId, input.email, org.name, inviter ?? org.name, roleForMail, acceptUrl, mailLocale);
     await auditFromRequest(s.db, req, a, "member.invited", { targetType: "invitation", targetId: id, data: { email: input.email, role: target.role, roleId: target.roleId } });
     const row = await s.db.one<any>(
       `SELECT i.*, r.name AS role_name, u.name AS invited_by_name FROM invitations i LEFT JOIN roles r ON r.id = i.role_id LEFT JOIN users u ON u.id = i.invited_by WHERE i.id = $1`,
       [id],
     );
     reply.code(201);
-    return { invitation: toInvitation(row), acceptUrl };
+    return { invitation: toInvitation(row), acceptUrl, ...(emailSuppressed ? { emailSuppressed: true } : {}) };
   });
 
   app.delete<P>("/v1/invitations/:id", { preHandler: auth }, async (req, reply) => {

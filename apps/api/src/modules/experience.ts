@@ -514,7 +514,7 @@ export async function reportsSummary(db: Db, tenantId: string, q: { from?: strin
       p,
     ),
     db.query<any>(
-      `SELECT channel, (count(*) FILTER (WHERE status = 'sent'))::int AS sent, (count(*) FILTER (WHERE status = 'failed'))::int AS failed
+      `SELECT channel, (count(*) FILTER (WHERE status IN ('sent','complained')))::int AS sent, (count(*) FILTER (WHERE status IN ('failed','bounced')))::int AS failed
        FROM notifications WHERE tenant_id = $1 AND created_at BETWEEN $2 AND $3 GROUP BY channel ORDER BY channel`,
       p,
     ),

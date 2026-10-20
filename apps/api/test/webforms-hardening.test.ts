@@ -60,7 +60,8 @@ beforeAll(async () => {
   }
   app = await buildApp({ db, blobs: createBlobStore(), logger: false });
   await app.ready();
-  const res = await app.inject({ method: "POST", url: "/v1/web-forms", headers: auth, payload: { templateId: tpl, name: "Alta de clientes", signerRoleId: role, prefill: { Plan: "Oro" } } });
+  const res = await app.inject({ method: "POST", url: "/v1/web-forms", headers: auth, payload: { templateId: tpl, name: "Alta de clientes", signerRoleId: role, prefill: { Plan: "Oro" }, lockPrefill: true } });
+  expect(res.json().lockPrefill).toBe(true);
   expect(res.statusCode).toBe(201);
   formId = res.json().id;
   slug = res.json().slug;
@@ -73,10 +74,16 @@ afterAll(async () => {
 });
 
 /** Envío del formulario con un token ya "viejo" (pasó el tiempo mínimo de llenado). */
-async function submit(email: string, extra: Record<string, unknown> = {}) {
+async function submit(email: string, extra: Record<string, unknown> = {}, opts: { slug?: string; ip?: string } = {}) {
   const { encrypt } = await import("../src/lib/util");
-  const formToken = encrypt(JSON.stringify({ s: slug, t: Date.now() - 5000, n: Math.random() }));
-  return app.inject({ method: "POST", url: `/v1/public/forms/${slug}/submit`, payload: { name: "Ana Pérez", email, formToken, ...extra } });
+  const sl = opts.slug ?? slug;
+  const formToken = encrypt(JSON.stringify({ s: sl, t: Date.now() - 5000, n: Math.random() }));
+  return app.inject({
+    method: "POST",
+    url: `/v1/public/forms/${sl}/submit`,
+    payload: { name: "Ana Pérez", email, formToken, ...extra },
+    ...(opts.ip ? { remoteAddress: opts.ip } : {}),
+  });
 }
 
 describe("formularios web: envíos del público", () => {
@@ -89,15 +96,44 @@ describe("formularios web: envíos del público", () => {
       { label: "Notas", value: null, read_only: false },
       { label: "Plan", value: "Oro", read_only: true },
     ]);
-    // La página de firma avisa que el documento final se descarga desde ahí (no se manda: el correo no está validado).
+    // La página de firma le pide guardar el link (el correo no está validado; el aviso de completado le llega igual, con la
+    // nota "si no fuiste vos", pero no se ofrece pedir otra copia por mensaje).
     const session = await app.inject({ method: "GET", url: `/v1/signing/${r.json().signingPath.slice(3)}` });
     expect(session.json().finalCopyByMessage).toBe(false);
     // Mismo correo (otra capitalización) en la ventana: 429 y ningún sobre nuevo.
     const again = await submit("ANA@x.test");
     expect(again.statusCode).toBe(429);
     expect(again.json().error.code).toBe("form_recent_submission");
+    expect(again.json().error.message).not.toMatch(/correo/);
     const n = await db.one<any>(`SELECT count(*)::int AS n FROM envelopes WHERE metadata->>'webFormId' = $1`, [formId]);
     expect(n.n).toBe(1);
+    // Desde otra IP (otro /64), el mismo correo sí crea otro: un tercero no le bloquea el formulario a esa persona.
+    const other = await submit("ana@x.test", {}, { ip: "2001:db8:aa:bb::7" });
+    expect(other.statusCode).toBe(201);
+    // Mismo /64 → duplicado.
+    expect((await submit("ana@x.test", {}, { ip: "2001:db8:aa:bb::99" })).statusCode).toBe(429);
+    // Un sobre anulado no cuenta: se puede volver a completar.
+    await db.query(`UPDATE envelopes SET status = 'voided' WHERE id = $1`, [env]);
+    expect((await submit("ana@x.test")).statusCode).toBe(201);
+  });
+
+  it("sin lockPrefill (por defecto) el prellenado se puede corregir", async () => {
+    const tplId = (await db.one<any>(`SELECT template_id, signer_role_id FROM web_forms WHERE id = $1`, [formId]))!;
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/web-forms",
+      headers: auth,
+      payload: { templateId: tplId.template_id, name: "Sin bloqueo", signerRoleId: tplId.signer_role_id, prefill: { Plan: "Plata" } },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().lockPrefill).toBe(false);
+    const r = await submit("dani@x.test", {}, { slug: res.json().slug });
+    expect(r.statusCode).toBe(201);
+    const f = await db.one<any>(`SELECT value, read_only FROM fields WHERE envelope_id = $1 AND label = 'Plan'`, [r.json().envelopeId]);
+    expect(f).toEqual({ value: "Plata", read_only: false });
+    // Se puede activar después.
+    const p = await app.inject({ method: "PATCH", url: `/v1/web-forms/${res.json().id}`, headers: auth, payload: { lockPrefill: true } });
+    expect(p.json().lockPrefill).toBe(true);
   });
 
   it("tope por organización sumando todos sus formularios", async () => {
@@ -121,15 +157,20 @@ describe("formularios web: envíos del público", () => {
     globalThis.fetch = (async (_url: unknown, init?: { body?: URLSearchParams }) => {
       const tok = init?.body?.get("response") ?? "";
       seen.push(tok);
-      return new Response(JSON.stringify({ success: tok === "good" }), { status: 200 });
+      if (tok === "down") throw new TypeError("fetch failed");
+      if (tok === "elsewhere") return new Response(JSON.stringify({ success: true, hostname: "otro-sitio.example" }), { status: 200 });
+      return new Response(JSON.stringify({ success: tok === "good", hostname: "localhost" }), { status: 200 });
     }) as typeof fetch;
     try {
       const pub = await app.inject({ method: "GET", url: `/v1/public/forms/${slug}` });
       expect(pub.json().captchaSiteKey).toBe("site-key");
       expect((await submit("caro@x.test")).json().error.code).toBe("captcha_failed");
       expect((await submit("caro@x.test", { captchaToken: "bad" })).json().error.code).toBe("captcha_failed");
+      // Red caída y token resuelto en otro sitio (hostname ajeno): se rechaza igual.
+      expect((await submit("caro@x.test", { captchaToken: "down" })).json().error.code).toBe("captcha_failed");
+      expect((await submit("caro@x.test", { captchaToken: "elsewhere" })).json().error.code).toBe("captcha_failed");
       expect((await submit("caro@x.test", { captchaToken: "good" })).statusCode).toBe(201);
-      expect(seen).toEqual(["bad", "good"]);
+      expect(seen).toEqual(["bad", "down", "elsewhere", "good"]);
     } finally {
       config.webForms.turnstileSiteKey = null;
       config.webForms.turnstileSecretKey = null;
@@ -157,27 +198,46 @@ describe("formularios web: envíos del público", () => {
 });
 
 describe("códigos de verificación: tope por destino", () => {
-  it("cuenta los códigos al mismo destino de todos los sobres (sin mayúsculas) y por organización", async () => {
+  it("cuenta por organización + destino (sin mayúsculas, solo sin verificar); otra organización no bloquea; tope global alto", async () => {
     const { assertOtpDestinationCapacity } = await import("../src/modules/otp");
     const { config } = await import("../src/config");
     const { uuidv7 } = await import("../src/lib/util");
+    const otherTenant = uuidv7();
+    await db.query(`INSERT INTO tenants (id, slug, name) VALUES ($1, $2, 'Otra')`, [otherTenant, `t-${otherTenant.slice(-8)}`]);
     const env = uuidv7();
     await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status) VALUES ($1, $2, 'x', 'sent')`, [env, tenant]);
-    const add = async (dest: string, n: number, tenantId = tenant) => {
+    const add = async (dest: string, n: number, tenantId = tenant, verified = false) => {
       for (let i = 0; i < n; i++) {
         const r = uuidv7();
         await db.query(`INSERT INTO recipients (id, tenant_id, envelope_id, role, name, email, status) VALUES ($1,$2,$3,'signer','V',$4,'sent')`, [r, tenant, env, dest]);
         await db.query(
-          `INSERT INTO otp_challenges (id, tenant_id, recipient_id, method, destination, code_hash, expires_at) VALUES ($1,$2,$3,'otp_email',$4,'h', now())`,
+          `INSERT INTO otp_challenges (id, tenant_id, recipient_id, method, destination, code_hash, expires_at, verified_at)
+           VALUES ($1,$2,$3,'otp_email',$4,'h', now(), ${verified ? "now()" : "NULL"})`,
           [uuidv7(), tenantId, r, dest],
         );
       }
     };
-    await add("Victima@x.test", config.otp.maxPerDestinationHour - 1);
+    // Otra organización agota su cupo con la misma dirección: no deja sin códigos a esta.
+    await add("Victima@x.test", config.otp.maxPerDestinationHour, otherTenant);
+    await expect(assertOtpDestinationCapacity(db, otherTenant, "victima@x.test")).rejects.toMatchObject({ code: "otp_destination_limit", status: 429 });
     await expect(assertOtpDestinationCapacity(db, tenant, "victima@x.test")).resolves.toBeUndefined();
-    await add("victima@X.test", 1, uuidv7());
+    // Los verificados no cuentan.
+    await add("victima@X.test", config.otp.maxPerDestinationHour, tenant, true);
+    await expect(assertOtpDestinationCapacity(db, tenant, "victima@x.test")).resolves.toBeUndefined();
+    await add("victima@X.test", config.otp.maxPerDestinationHour - 1);
+    await expect(assertOtpDestinationCapacity(db, tenant, "victima@x.test")).resolves.toBeUndefined();
+    await add("victima@X.test", 1);
     await expect(assertOtpDestinationCapacity(db, tenant, " VICTIMA@x.test ")).rejects.toMatchObject({ code: "otp_destination_limit", status: 429 });
     await expect(assertOtpDestinationCapacity(db, tenant, "otra@x.test")).resolves.toBeUndefined();
+    // Tope global (todas las organizaciones): bloquea también a una tercera.
+    const prevGlobal = config.otp.maxPerDestinationGlobalHour;
+    config.otp.maxPerDestinationGlobalHour = 2 * config.otp.maxPerDestinationHour;
+    try {
+      await expect(assertOtpDestinationCapacity(db, uuidv7(), "victima@x.test")).rejects.toMatchObject({ code: "otp_destination_limit" });
+    } finally {
+      config.otp.maxPerDestinationGlobalHour = prevGlobal;
+    }
+    await expect(assertOtpDestinationCapacity(db, uuidv7(), "victima@x.test")).resolves.toBeUndefined();
     const prev = config.otp.maxPerTenantHour;
     config.otp.maxPerTenantHour = 5;
     try {
@@ -198,5 +258,13 @@ describe("clave de límite por IP", () => {
     expect(rateLimitIpKey("::ffff:10.0.0.1")).toBe("10.0.0.1");
     expect(rateLimitIpKey("203.0.113.9")).toBe("203.0.113.9");
     expect(rateLimitIpKey("::1")).toBe("::1");
+    // Corchetes y puerto; IPv4 mapeada en notación hexadecimal.
+    expect(rateLimitIpKey("[2001:db8:1:2::5]:443")).toBe("2001:db8:1:2::/64");
+    expect(rateLimitIpKey("[::1]")).toBe("::1");
+    expect(rateLimitIpKey("203.0.113.9:5678")).toBe("203.0.113.9");
+    expect(rateLimitIpKey("::ffff:a00:1")).toBe("10.0.0.1");
+    expect(rateLimitIpKey("::FFFF:7f00:1")).toBe("127.0.0.1");
+    expect(rateLimitIpKey("0:0:0:0:0:ffff:c0a8:0101")).toBe("192.168.1.1");
+    expect(rateLimitIpKey("::ffff:127.0.0.1")).toBe("127.0.0.1");
   });
 });

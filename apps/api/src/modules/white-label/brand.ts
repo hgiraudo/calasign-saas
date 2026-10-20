@@ -218,13 +218,20 @@ export async function resolveBrand(db: Db, tenantId: string, brandId?: string | 
     },
     templates: cfg.templates ?? {},
     texts: cfg.texts ?? {},
-    smsSenderId: cfg.sms?.senderId ?? null,
+    // Remitente alfanumérico de SMS: solo para organizaciones autorizadas (SMS_ALPHANUMERIC_ALLOWED_TENANTS). Sin
+    // verificar, cualquiera podía mandar los códigos como "BANCO" o el nombre de otra marca; el resto usa TWILIO_FROM.
+    smsSenderId: cfg.sms?.senderId && smsAlphanumericAllowed(tenantId) ? cfg.sms.senderId : null,
     assets,
     baseUrl: await brandBaseUrl(db, tenantId, id),
     ownConfig: own,
     ownAssets,
     updatedAt,
   };
+}
+
+/** Si la organización puede usar un remitente alfanumérico propio en los SMS (lista blanca de configuración). */
+export function smsAlphanumericAllowed(tenantId: string): boolean {
+  return config.sms.alphanumericAllowedTenants.includes(tenantId);
 }
 
 /** Marca de un sobre (su sub-marca, o la de la organización). */

@@ -434,11 +434,14 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
       ]);
       await appendEvent(t, { tenantId: a.tenantId, envelopeId: e.id, type: "envelope.voided", actor: a.actor, data: { reason: input.reason } });
       // También quienes ya firmaron electrónicamente pero tenían pendiente la firma con certificado.
-      const notified = await t.query<any>(
-        `SELECT id FROM recipients r WHERE envelope_id = $1 AND (status IN ('sent','viewed')
-           OR EXISTS (SELECT 1 FROM certificate_signatures c WHERE c.recipient_id = r.id AND c.status = 'pending'))`,
-        [e.id],
-      );
+      // Embebidos, en persona y autorregistrados sin correo validado no reciben el aviso (receivesSignerNotices).
+      const notified = (
+        await t.query<any>(
+          `SELECT * FROM recipients r WHERE envelope_id = $1 AND (status IN ('sent','viewed')
+             OR EXISTS (SELECT 1 FROM certificate_signatures c WHERE c.recipient_id = r.id AND c.status = 'pending'))`,
+          [e.id],
+        )
+      ).filter(receivesSignerNotices);
       for (const r of notified) await enqueue(t, "notify", { kind: "voided", envelopeId: e.id, recipientId: r.id, tenantId: a.tenantId });
     });
     return loadDetail(s.db, a.tenantId, req.params.id);
@@ -476,6 +479,15 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
         [e.id],
       );
       if (recent) throw new AppError(429, "reminded_recently", "Ya se mandó un recordatorio hace unos minutos: esperá un poco antes de mandar otro");
+      // Tope diario por sobre (y por lo tanto por destinatario): sin él, uno cada 10 minutos eran hasta 144 mensajes por
+      // día al mismo firmante.
+      const today = await t.one<{ n: number }>(
+        `SELECT count(*)::int AS n FROM envelope_events WHERE envelope_id = $1 AND type = 'envelope.reminded' AND actor_type <> 'system' AND occurred_at > now() - interval '24 hours'`,
+        [e.id],
+      );
+      if ((today?.n ?? 0) >= config.reminders.manualMaxPerDay) {
+        throw new AppError(429, "reminder_daily_limit", `Ya se mandaron ${config.reminders.manualMaxPerDay} recordatorios en las últimas 24 horas: probá mañana`);
+      }
       if (e.status === "awaiting_certificates") {
         // Firma con certificado pendiente: se le vuelve a avisar al firmante al que le toca (sin dedupe: es un recordatorio).
         const pending = await t.one<any>(

@@ -27,15 +27,14 @@ import { config } from "../../config";
 import type { Db } from "../../infra/db";
 import { appendEvent } from "../../infra/evidence";
 import { AppError, badRequest, conflict, forbidden, notFound } from "../../lib/errors";
-import { decrypt, encrypt, iso, randomToken, sha256Hex, uuidv7 } from "../../lib/util";
-import { deliver } from "../../notifications/channels";
+import { encrypt, iso, randomToken, sha256Hex, uuidv7 } from "../../lib/util";
 import { hasPerm, requirePerm } from "../access";
 import { auditFromRequest } from "../audit";
 import { authenticate, type AuthContext, type Services } from "../context";
-import { tenantBaseUrl } from "../custom-domains";
 import { sendPdf } from "../envelopes";
 import { discardBlobsOnFailure } from "../file-cleanup";
 import { getPath, setPath } from "./common";
+import { enqueueNegotiationNotice, enqueueProposalNotice } from "./notices";
 import { agreementMetaFromMapping, createEnvelopeFromPdf, insertFileRow, loadClauseMap, loadDocTemplate, renderDocument, storeGeneratedPdf } from "./documents";
 import { ownerProblem } from "../owner-check";
 
@@ -199,21 +198,6 @@ async function newVersion(t: Db, n: any, data: Record<string, unknown>, override
   return version;
 }
 
-async function notifyParticipants(db: Db, n: any, kind: "invite" | "version", extra = "") {
-  const parts = await db.query<any>(`SELECT * FROM negotiation_participants WHERE negotiation_id = $1`, [n.id]);
-  const base = await tenantBaseUrl(db, n.tenant_id);
-  const org = await db.one<any>(`SELECT name FROM tenants WHERE id = $1`, [n.tenant_id]);
-  for (const p of parts) {
-    const link = `${base}/n/${decrypt(p.token_enc)}`;
-    const subject = kind === "invite" ? `${org?.name ?? "CalaSign"} te invita a revisar "${n.title}"` : `Nueva versión de "${n.title}"`;
-    const text =
-      kind === "invite"
-        ? `${p.name}:\n\n${org?.name ?? ""} compartió un borrador para que lo revises, comentes y propongas cambios antes de firmarlo.${n.message ? `\n\nMensaje: ${n.message}` : ""}\n\nRevisar: ${link}`
-        : `${p.name}:\n\nHay una nueva versión de "${n.title}". ${extra}\n\nRevisar: ${link}`;
-    await deliver({ channel: "email", to: p.email, subject, text, link, tenantId: n.tenant_id }).catch(() => undefined);
-  }
-}
-
 // ───────────────────────────── Rutas ─────────────────────────────
 
 export async function negotiationRoutes(app: FastifyInstance, s: Services) {
@@ -303,9 +287,10 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
         [id, JSON.stringify(input.data), text, userAuthor(a).name],
       );
       await insertParticipants(t, id, a.tenantId, input.participants as any);
+      // Invitación por la cola (outbox, misma transacción): con reintentos, marca e idioma (notices.ts).
+      await enqueueNegotiationNotice(t, id, "invite", 1);
     });
     const row = await s.db.one<any>(`SELECT * FROM negotiations WHERE id = $1`, [id]);
-    await notifyParticipants(s.db, row, "invite");
     await auditFromRequest(s.db, req, a, "negotiation.created", { targetType: "negotiation", targetId: id, data: { title: input.title } });
     reply.code(201);
     return fullView(s.db, row);
@@ -366,9 +351,9 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
         [id, text, userAuthor(a).name],
       );
       await insertParticipants(t, id, a.tenantId, meta.participants as any);
+      await enqueueNegotiationNotice(t, id, "invite", 1);
     }));
     const row = await s.db.one<any>(`SELECT * FROM negotiations WHERE id = $1`, [id]);
-    await notifyParticipants(s.db, row, "invite");
     reply.code(201);
     return fullView(s.db, row);
   });
@@ -413,10 +398,10 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
       const n = await loadForManage(a, req.params.id, true, t);
       if (n.status !== "open") throw conflict("closed", "La negociación ya está cerrada");
       if (n.source === "pdf") throw conflict("pdf_source", "Un PDF subido no se edita: subí una versión nueva como otra negociación");
-      await newVersion(t, n, input.data ?? n.data, { ...(n.clause_overrides ?? {}), ...(input.clauseOverrides ?? {}) }, userAuthor(a), input.summary ?? "Edición del remitente");
+      const v = await newVersion(t, n, input.data ?? n.data, { ...(n.clause_overrides ?? {}), ...(input.clauseOverrides ?? {}) }, userAuthor(a), input.summary ?? "Edición del remitente");
+      await enqueueNegotiationNotice(t, n.id, "version", v, { summary: input.summary ?? null });
     });
     const n = await loadForUser(a, req.params.id);
-    await notifyParticipants(s.db, n, "version", input.summary ?? "");
     return fullView(s.db, n);
   });
 
@@ -454,7 +439,6 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
   app.post<{ Params: { id: string; proposalId: string } }>("/v1/negotiations/:id/proposals/:proposalId/decision", { preHandler: auth }, async (req) => {
     const a = A(req);
     const input = ProposalDecisionInput.parse(req.body);
-    let accepted: any = null;
     await s.db.tx(async (t) => {
       const n = await loadForManage(a, req.params.id, true, t);
       if (n.status !== "open") throw conflict("closed", "La negociación ya está cerrada");
@@ -473,11 +457,10 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
       const overrides = { ...(n.clause_overrides ?? {}) };
       if (p.kind === "variable") setPath(data, p.key, p.new_value);
       else overrides[p.key] = p.new_value;
-      await newVersion(t, n, data, overrides, { type: "participant", name: p.author_name }, `Propuesta aceptada: ${p.kind === "variable" ? p.key : `cláusula ${p.key}`}`);
-      accepted = p;
+      const v = await newVersion(t, n, data, overrides, { type: "participant", name: p.author_name }, `Propuesta aceptada: ${p.kind === "variable" ? p.key : `cláusula ${p.key}`}`);
+      await enqueueNegotiationNotice(t, n.id, "version", v, { acceptedKey: p.key });
     });
     const n = await loadForUser(a, req.params.id);
-    if (accepted) await notifyParticipants(s.db, n, "version", `Se aceptó el cambio propuesto en ${accepted.key}.`);
     return fullView(s.db, n);
   });
 
@@ -675,6 +658,7 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
     if (old === input.newValue) throw badRequest("no_change", "El valor propuesto es igual al actual");
     // Con la negociación bloqueada: si mientras tanto se aceptó (el sobre ya salió) o cambió de versión, la propuesta
     // no se guarda (quedaría pendiente en una negociación cerrada, o con un "valor actual" que ya no lo es).
+    const proposalId = uuidv7();
     await s.db.tx(async (t) => {
       const locked = await t.one<any>(`SELECT status, current_version FROM negotiations WHERE id = $1 FOR UPDATE`, [n.id]);
       if (locked?.status !== "open") throw conflict("closed", "La negociación ya está cerrada");
@@ -689,26 +673,11 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
       await t.query(
         `INSERT INTO negotiation_proposals (id, negotiation_id, version, author_type, author_id, author_name, kind, key, old_value, new_value, comment)
          VALUES ($1,$2,$3,'participant',$4,$5,$6,$7,$8,$9,$10)`,
-        [uuidv7(), n.id, n.current_version, p.id, p.name, input.kind, input.key, old, input.newValue, input.comment ?? null],
+        [proposalId, n.id, n.current_version, p.id, p.name, input.kind, input.key, old, input.newValue, input.comment ?? null],
       );
+      // Aviso al remitente (o a los propietarios) por la cola: con reintentos, marca e idioma (notices.ts).
+      await enqueueProposalNotice(t, n.id, proposalId);
     });
-    // Aviso al remitente, si sigue en la organización; si no, a los propietarios (alguien tiene que decidir la
-    // propuesta para poder aceptar). Quien dejó la organización no recibe más datos de esta negociación.
-    let to = n.created_by
-      ? await s.db.query<any>(`SELECT u.email FROM users u JOIN memberships m ON m.user_id = u.id AND m.tenant_id = $2 WHERE u.id = $1`, [n.created_by, n.tenant_id])
-      : [];
-    if (!to.length) to = await s.db.query<any>(`SELECT u.email FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.tenant_id = $1 AND m.role = 'owner'`, [n.tenant_id]);
-    const link = `${await tenantBaseUrl(s.db, n.tenant_id)}/app/negotiations/${n.id}`;
-    for (const u of to) {
-      await deliver({
-        channel: "email",
-        to: u.email,
-        subject: `${p.name} propuso un cambio en "${n.title}"`,
-        text: `${p.name} propone cambiar ${input.kind === "variable" ? input.key : `la cláusula ${input.key}`}.\n\nRevisar: ${link}`,
-        link,
-        tenantId: n.tenant_id,
-      }).catch(() => undefined);
-    }
     reply.code(201);
     return fullView(s.db, n, p);
   });

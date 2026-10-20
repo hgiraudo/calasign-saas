@@ -15,7 +15,7 @@ import { config } from "../config";
 import type { Db } from "../infra/db";
 import { appendEvent, type Actor } from "../infra/evidence";
 import { AppError, badRequest, conflict, forbidden, notFound } from "../lib/errors";
-import { decrypt, encrypt, iso, sha256Hex, slugify, uuidv7 } from "../lib/util";
+import { decrypt, encrypt, hmacSign, iso, sha256Hex, slugify, uuidv7 } from "../lib/util";
 import { getTenantBranding } from "./branding";
 import { assertTemplateAccess, envelopeVisibilitySql, hasPerm, templateVisibilitySql } from "./access";
 import { ownerProblem } from "./owner-check";
@@ -25,7 +25,7 @@ import { authenticate, clientInfo, type AuthContext, type Services } from "./con
 import { setFrameAncestors } from "./embed";
 import { sendEnvelope } from "./envelopes";
 import { insertEnvelopeFromTemplate, loadTemplateForUse, planFromTemplate, type LoadedTemplate } from "./templates";
-import { tenantBaseUrl } from "./custom-domains";
+import { isPlatformHost, tenantBaseUrl, tenantForHost } from "./custom-domains";
 
 /** Tiempo mínimo entre abrir el formulario y enviarlo (un humano tarda más; un bot, menos). */
 const MIN_FILL_MS = 2500;
@@ -54,6 +54,7 @@ function toWebForm(r: FormRow, templateName: string, base: string, problem: Form
       locale: x.locale ?? null,
     })),
     prefill: r.prefill ?? {},
+    lockPrefill: Boolean(r.lock_prefill),
     active: r.active,
     maxUses: r.max_uses,
     uses: r.uses,
@@ -73,19 +74,35 @@ function captchaSiteKey(): string | null {
   return config.webForms.turnstileSiteKey && config.webForms.turnstileSecretKey ? config.webForms.turnstileSiteKey : null;
 }
 
-/** Valida el token de Turnstile con Cloudflare. Ante un error de red se rechaza (el desafío es obligatorio si está configurado). */
-export async function verifyTurnstile(token: string | null | undefined, ip: string | undefined): Promise<boolean> {
-  if (!token) return false;
+export type TurnstileResult = { ok: true } | { ok: false; reason: "missing" | "network" | "invalid" | "hostname"; detail?: string };
+
+/**
+ * Valida el token de Turnstile con Cloudflare. Ante un error de red se rechaza (el desafío es obligatorio si está
+ * configurado), pero se distingue en el motivo (y en el log) de un token inválido. `hostOk`: si la respuesta trae el
+ * hostname donde se resolvió el desafío, tiene que ser uno de los esperados (la plataforma o un dominio de la
+ * organización): un token resuelto en otro sitio con la misma clave pública no vale.
+ */
+export async function verifyTurnstile(
+  token: string | null | undefined,
+  ip: string | undefined,
+  hostOk: (hostname: string) => boolean | Promise<boolean> = () => true,
+): Promise<TurnstileResult> {
+  if (!token) return { ok: false, reason: "missing" };
   const body = new URLSearchParams({ secret: config.webForms.turnstileSecretKey ?? "", response: token });
   if (ip) body.set("remoteip", ip);
+  let j: { success?: unknown; hostname?: unknown; "error-codes"?: unknown };
   try {
     const res = await fetch(config.webForms.turnstileVerifyUrl, { method: "POST", body, signal: AbortSignal.timeout(5000) });
-    if (!res.ok) return false;
-    const j = (await res.json()) as { success?: unknown };
-    return j?.success === true;
-  } catch {
-    return false;
+    if (!res.ok) return { ok: false, reason: "network", detail: `HTTP ${res.status}` };
+    j = (await res.json()) as typeof j;
+  } catch (e) {
+    return { ok: false, reason: "network", detail: String((e as Error)?.message ?? e) };
   }
+  if (j?.success !== true) return { ok: false, reason: "invalid", detail: Array.isArray(j?.["error-codes"]) ? j["error-codes"].join(",") : undefined };
+  if (typeof j.hostname === "string" && j.hostname && !(await hostOk(j.hostname.toLowerCase().replace(/\.+$/, "")))) {
+    return { ok: false, reason: "hostname", detail: j.hostname };
+  }
+  return { ok: true };
 }
 
 function availability(r: FormRow): PublicWebForm["unavailableReason"] {
@@ -264,8 +281,8 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
     const id = uuidv7();
     await s.db.query(
       `INSERT INTO web_forms (id, tenant_id, template_id, slug, name, description, signer_role_id, fixed_recipients, prefill, active, max_uses,
-         expires_at, require_otp, embeddable, collect_phone, created_by, created_by_api_key)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+         expires_at, require_otp, embeddable, collect_phone, created_by, created_by_api_key, lock_prefill)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
       [
         id,
         a.tenantId,
@@ -284,6 +301,7 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
         input.collectPhone,
         a.userId,
         a.apiKeyId,
+        input.lockPrefill,
       ],
     );
     reply.code(201);
@@ -322,7 +340,7 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
     const has = (k: keyof typeof input) => input[k] !== undefined;
     await s.db.query(
       `UPDATE web_forms SET name = $2, description = $3, signer_role_id = $4, fixed_recipients = $5, prefill = $6, active = $7,
-         max_uses = $8, expires_at = $9, require_otp = $10, embeddable = $11, collect_phone = $12, updated_at = now()
+         max_uses = $8, expires_at = $9, require_otp = $10, embeddable = $11, collect_phone = $12, lock_prefill = $13, updated_at = now()
        WHERE id = $1`,
       [
         cur.id,
@@ -337,6 +355,7 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
         input.requireOtp ?? cur.require_otp,
         input.embeddable ?? cur.embeddable,
         input.collectPhone ?? cur.collect_phone,
+        input.lockPrefill ?? cur.lock_prefill,
       ],
     );
     const r = await load(a.tenantId, cur.id);
@@ -446,8 +465,15 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
       }
       if (form.collect_phone && !input.phone) throw badRequest("phone_required", "El teléfono es obligatorio");
       // Desafío anti-bots (opcional, por configuración de la plataforma): el token es de un solo uso.
-      if (captchaSiteKey() && !(await verifyTurnstile(input.captchaToken, req.ip))) {
-        throw new AppError(400, "captcha_failed", "No se pudo verificar que no sos un robot: completá la verificación y volvé a enviar");
+      if (captchaSiteKey()) {
+        // Hosts esperados: los de la plataforma o un dominio verificado de la organización del formulario.
+        const hostOk = async (h: string) => isPlatformHost(h) || (await tenantForHost(s.db, h)) === form.tenant_id;
+        const cap = await verifyTurnstile(input.captchaToken, req.ip, hostOk);
+        if (!cap.ok) {
+          if (cap.reason === "network") req.log.error({ webFormId: form.id, detail: cap.detail }, "formulario web: no se pudo consultar a Turnstile");
+          else if (cap.reason !== "missing") req.log.warn({ webFormId: form.id, reason: cap.reason, detail: cap.detail }, "formulario web: desafío Turnstile rechazado");
+          throw new AppError(400, "captcha_failed", "No se pudo verificar que no sos un robot: completá la verificación y volvé a enviar");
+        }
       }
 
       const loaded = await loadTemplateForUse(s.db, form.tenant_id, form.template_id);
@@ -469,24 +495,28 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
       const { ip, userAgent } = clientInfo(req);
       const actor: Actor = { type: "system", label: `Formulario web: ${form.name}`, ip, userAgent };
       let signerRecipientId = "";
+      const submitter = hmacSign("webform-submitter", `${form.id}\n${input.email.toLowerCase()}\n${rateLimitIpKey(req.ip)}`);
       const envId = await s.db.tx(async (t) => {
         const locked = await t.one<any>(`SELECT * FROM web_forms WHERE id = $1 FOR UPDATE`, [form.id]);
         if (!locked || availability(locked)) throw new AppError(410, "form_unavailable", "Este formulario ya no está disponible");
         // Un envío por token (si la transacción falla, el token vuelve a servir).
         const fresh = await t.query(`INSERT INTO web_form_token_uses (token_hash) VALUES ($1) ON CONFLICT DO NOTHING RETURNING 1`, [sha256Hex(input.formToken)]);
         if (!fresh.length) throw expiredToken();
-        // El mismo correo en el mismo formulario hace poco: no se crea otro sobre (cada uno consume la cuota del plan y,
-        // con código por correo, le manda otro código a esa dirección). No se devuelve el link del sobre anterior: el
-        // correo lo escribió quien completa el formulario y no está verificado.
+        // El mismo correo desde la misma IP (en IPv6, el mismo /64) en el mismo formulario hace poco: no se crea otro
+        // sobre (cada uno consume la cuota del plan y, con código por correo, le manda otro código a esa dirección).
+        // Por correo + IP: un tercero que escribe el correo de otro desde su conexión no le bloquea el formulario a esa
+        // persona. Un sobre anulado o rechazado no cuenta (se puede volver a completar). La huella va con HMAC (no se
+        // guarda la IP en los metadatos del sobre). No se devuelve el link del sobre anterior: el correo no está
+        // verificado; y el mensaje no confirma nada sobre ese correo.
         const W = config.webForms;
         const dup = await t.one(
-          `SELECT 1 FROM envelopes e JOIN recipients r ON r.envelope_id = e.id
+          `SELECT 1 FROM envelopes e
            WHERE e.tenant_id = $1 AND e.metadata->>'webFormId' = $2 AND e.created_at > now() - make_interval(mins => $3)
-             AND r.self_registered AND lower(r.email) = $4 LIMIT 1`,
-          [form.tenant_id, form.id, W.dedupeMinutes, input.email.toLowerCase()],
+             AND e.metadata->>'webFormSubmitter' = $4 AND e.status NOT IN ('voided', 'declined') LIMIT 1`,
+          [form.tenant_id, form.id, W.dedupeMinutes, submitter],
         );
         if (dup) {
-          throw new AppError(429, "form_recent_submission", "Ya se completó este formulario con ese correo hace unos minutos: seguí en la pestaña donde lo completaste o probá más tarde", {
+          throw new AppError(429, "form_recent_submission", "Ya recibimos un envío igual hace unos minutos: revisá la pestaña donde completaste el formulario o probá más tarde", {
             retryAfterSeconds: W.dedupeMinutes * 60,
           });
         }
@@ -515,11 +545,12 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
           loaded,
           fromTpl as any,
           plan,
-          { webFormId: form.id, webFormName: form.name },
+          { webFormId: form.id, webFormName: form.name, webFormSubmitter: submitter },
           (byRole) => (signerRecipientId = byRole.get(form.signer_role_id) ?? ""),
-          // Lo que prellenó quien configuró el formulario queda de solo lectura para quien lo completa (signing.ts
-          // conserva el valor de un campo de solo lectura aunque el pedido traiga otro).
-          { lockPrefillRoles: [form.signer_role_id] },
+          // Con lock_prefill (opcional por formulario), lo que prellenó quien lo configuró queda de solo lectura para
+          // quien lo completa (signing.ts conserva el valor de un campo de solo lectura aunque el pedido traiga otro).
+          // Sin la opción, como siempre: un valor sugerido que la persona puede corregir.
+          form.lock_prefill ? { lockPrefillRoles: [form.signer_role_id] } : {},
         );
         // El correo lo escribió quien completa el formulario y no está verificado: no recibe invitaciones ni
         // recordatorios (evita usar el formulario para mandar correos a terceros). Con OTP por correo, la invitación

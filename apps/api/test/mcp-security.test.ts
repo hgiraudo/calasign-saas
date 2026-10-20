@@ -5,7 +5,7 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "calasign-mcp-security-"));
 delete process.env.DATABASE_URL;
@@ -99,6 +99,16 @@ describe("confirmToken", () => {
     expect(mcp.mcpIdempotencyKey("k:1", "create_envelope", { recipients: a.recipients, subject: "x" }, "", now + 60_000)).toBe(k1);
     // Más tarde (otra ventana) los mismos argumentos crean otro sobre: no vuelve una foto vieja de días atrás.
     expect(mcp.mcpIdempotencyKey("k:1", "create_envelope", a, "", now + W)).not.toBe(k1);
+    // Borde entre bloques: un reintento justo después del borde también busca la clave del bloque anterior.
+    const edge = Math.ceil(now / W) * W;
+    const before = mcp.mcpIdempotencyKeys("k:1", "create_envelope", a, "", edge - 1000);
+    const after = mcp.mcpIdempotencyKeys("k:1", "create_envelope", a, "", edge + 1000);
+    expect(after[0]).not.toBe(before[0]);
+    expect(after[1]).toBe(before[0]);
+    // Dos bloques después, ya no.
+    expect(mcp.mcpIdempotencyKeys("k:1", "create_envelope", a, "", edge + W + 1000)).not.toContain(before[0]);
+    // Con requestId o confirmToken, una sola clave.
+    expect(mcp.mcpIdempotencyKeys("k:1", "create_envelope", { ...a, requestId: "r1" }, "", now)).toHaveLength(1);
     expect(mcp.mcpIdempotencyKey("k:2", "create_envelope", a, "", now)).not.toBe(k1);
     expect(mcp.mcpIdempotencyKey("k:1", "create_envelope", { ...a, subject: "y" }, "", now)).not.toBe(k1);
     expect(mcp.mcpIdempotencyKey("k:1", "create_envelope", a, "otro-pdf", now)).not.toBe(k1);
@@ -187,15 +197,27 @@ describe("herramientas MCP", () => {
     expect((await db.one<any>(`SELECT downloads FROM download_links WHERE envelope_id = $1`, [env])).downloads).toBe(0);
     for (let i = 0; i < mcp.DOWNLOAD_MAX; i++) {
       expect((await app.inject({ method: "GET", url: path })).statusCode).toBe(200);
+      if (i === mcp.DOWNLOAD_MAX - 1) break;
       // Continuar por partes no cuenta como otra descarga y entrega solo ese tramo.
       const part = await app.inject({ method: "GET", url: path, headers: { range: "bytes=5-8" } });
       expect(part.statusCode).toBe(206);
       expect(part.headers["content-range"]).toBe("bytes 5-8/15");
       expect(part.body).toBe("1.4\n");
+      if (i === 0) {
+        expect((await app.inject({ method: "GET", url: path, headers: { range: "bytes=50-" } })).statusCode).toBe(416);
+        // Fuera de la ventana desde la última descarga contada: la continuación ya no vale.
+        await db.query(`UPDATE download_links SET last_download_at = now() - interval '11 minutes' WHERE envelope_id = $1`, [env]);
+        expect((await app.inject({ method: "GET", url: path, headers: { range: "bytes=5-8" } })).statusCode).toBe(404);
+      }
     }
     expect((await app.inject({ method: "GET", url: path })).statusCode).toBe(404);
     expect((await app.inject({ method: "HEAD", url: path })).statusCode).toBe(404);
-    expect((await app.inject({ method: "GET", url: path, headers: { range: "bytes=50-" } })).statusCode).toBe(416);
+    // Bytes servidos: 3 descargas × 15 + 2 tramos × 4 = 53, más que DOWNLOAD_MAX × tamaño (45): dentro de la ventana,
+    // ninguna continuación más (sin esto, "bytes=1-" bajaba el archivo entero una y otra vez).
+    const served = (await db.one<any>(`SELECT bytes_served FROM download_links WHERE envelope_id = $1`, [env])).bytes_served;
+    expect(Number(served)).toBe(mcp.DOWNLOAD_MAX * 15 + (mcp.DOWNLOAD_MAX - 1) * 4);
+    expect((await app.inject({ method: "GET", url: path, headers: { range: "bytes=1-" } })).statusCode).toBe(404);
+    expect((await app.inject({ method: "GET", url: path, headers: { range: "bytes=5-8" } })).statusCode).toBe(404);
     // Otro link, y la key se revoca: deja de valer.
     const r2 = JSON.parse((await callTool(ADMIN_KEY, "download_signed_pdf", { envelopeId: env })).text);
     const tmpKey = uuidv7();
@@ -243,6 +265,24 @@ describe("create_envelope idempotente", () => {
     const pr = jsonOf((await callTool(ADMIN_KEY, "create_envelope", { ...args, send: true, requestId: "rq-1" })).text).confirmToken;
     const otherReq = await callTool(ADMIN_KEY, "create_envelope", { ...args, send: true, requestId: "rq-2", confirmToken: pr });
     expect(otherReq.text).toMatch(/confirmToken no es válido/);
+  });
+
+  it("un reintento justo después del borde del bloque de 10 minutos devuelve el mismo sobre", async () => {
+    const W = mcp.MCP_IMPLICIT_IDEMPOTENCY_WINDOW_MS;
+    const edge = Math.ceil(Date.now() / W) * W + W;
+    const args = { subject: "Borde", recipients: [{ name: "Ana", email: "ana@x.test" }], document: { base64: tinyPdf(), name: "a.pdf" } };
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(edge - 2000);
+      const a = await callTool(ADMIN_KEY, "create_envelope", args);
+      expect(a.isError, a.text).toBe(false);
+      vi.setSystemTime(edge + 2000);
+      const b = JSON.parse((await callTool(ADMIN_KEY, "create_envelope", args)).text);
+      expect(b.id).toBe(JSON.parse(a.text).id);
+      expect(b.replayed).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("el reintento devuelve el estado actual del sobre (replayed), no la respuesta guardada", async () => {

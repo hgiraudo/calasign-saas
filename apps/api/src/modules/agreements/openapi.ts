@@ -101,8 +101,8 @@ const W = "Workflows";
 const N = "Negociación";
 
 export const AGREEMENTS_OPS: Op[] = [
-  { method: "get", path: "/v1/agreements", tag: R, summary: "Buscar acuerdos", description: "Query: q (texto completo, sin acentos), status, source, tag, counterparty, expiresWithinDays, f.<campo>=valor, viewId, cursor, limit." },
-  { method: "get", path: "/v1/agreements/export.csv", tag: R, summary: "Exportar acuerdos a CSV", description: "Mismos filtros que la búsqueda." },
+  { method: "get", path: "/v1/agreements", tag: R, summary: "Buscar acuerdos", description: "Query: q (texto completo y título, sin acentos), status, source, tag, counterparty (nombre o correo de una contraparte), expiresWithinDays, f.<campo>=valor, viewId, cursor, limit. `total` viene solo en la primera página (sin cursor); en las siguientes es null." },
+  { method: "get", path: "/v1/agreements/export.csv", tag: R, summary: "Exportar acuerdos a CSV", description: "Mismos filtros que la búsqueda, más `sep` (`,` por defecto o `;` para Excel en español o portugués). Hasta 10.000 acuerdos (los más recientes): si hay más, header `X-Truncated: true` y una fila final TRUNCADO." },
   { method: "post", path: "/v1/agreements/upload", tag: R, summary: "Subir un acuerdo externo", multipart: true, status: 201, description: "multipart: 'meta' (JSON con title, counterparties, fechas, value, currency, tags, metadata) y luego 'file' (PDF)." },
   { method: "get", path: "/v1/agreements/{id}", tag: R, summary: "Ver un acuerdo" },
   { method: "patch", path: "/v1/agreements/{id}", tag: R, summary: "Editar un acuerdo", body: UpdateAgreementInput },

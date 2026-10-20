@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReportsSummary } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
+import { browserTimeZone, csvFormatParams, downloadCsv } from "../lib/csv";
 import { useI18n } from "../lib/i18n";
 import { useExpText } from "../lib/i18n-experience";
 import { ErrorBox, Spinner } from "../components/ui";
@@ -34,6 +35,8 @@ export function ReportsPage() {
   const [data, setData] = useState<ReportsSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [truncated, setTruncated] = useState(false);
 
   const range = useMemo(() => {
     const q = new URLSearchParams();
@@ -41,6 +44,10 @@ export function ReportsPage() {
     // (UTC-3 a UTC-5) y "desde el 1" sumaba la noche anterior.
     if (from) q.set("from", new Date(`${from}T00:00:00`).toISOString());
     if (to) q.set("to", new Date(`${to}T23:59:59.999`).toISOString());
+    // Los meses del gráfico (y las columnas *_local del CSV) en la zona del navegador: en UTC, lo creado la noche del
+    // último día del mes caía en el mes siguiente.
+    const tz = browserTimeZone();
+    if (tz) q.set("tz", tz);
     return q.toString();
   }, [from, to]);
 
@@ -64,6 +71,23 @@ export function ReportsPage() {
     // Solo al entrar: después, con el botón "Ver".
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // CSV con fetch: un error (sin permiso, rango inválido) se muestra como mensaje; con un <a href> el navegador
+  // mostraba el JSON del error.
+  const downloadReport = async () => {
+    setDownloading(true);
+    setError(null);
+    setTruncated(false);
+    try {
+      const day = new Date().toISOString().slice(0, 10);
+      const r = await downloadCsv(`/v1/reports/envelopes.csv?${shownRange}&${csvFormatParams(locale).toString()}`, `calasign-sobres-${day}.csv`);
+      setTruncated(r.truncated);
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   const nf = new Intl.NumberFormat(locale);
   const pf = new Intl.NumberFormat(locale, { style: "percent", maximumFractionDigits: 1 });
@@ -95,12 +119,13 @@ export function ReportsPage() {
           <button type="submit" className="btn btn-primary" disabled={loading}>
             {x("reports.apply")}
           </button>
-          <a className="btn" href={`/v1/reports/envelopes.csv?${shownRange}`}>
+          <button type="button" className="btn" onClick={() => void downloadReport()} disabled={downloading}>
             ⬇ {x("reports.csv")}
-          </a>
+          </button>
         </form>
       </div>
       <ErrorBox error={error} />
+      {truncated && <p className="muted small">{x("reports.csvTruncated")}</p>}
       {!data ? (
         loading && <Spinner />
       ) : (
@@ -181,6 +206,7 @@ function MonthChart({ data }: { data: ReportsSummary }) {
     total: m.created,
   }));
   const max = Math.max(1, ...rows.map((r) => r.total));
+  const nf = new Intl.NumberFormat(locale);
   const label = (k: SeriesKey) => x(`reports.s.${k}` as Parameters<typeof x>[0]);
   const monthName = (m: string) => {
     const [y, mo] = m.split("-").map(Number);
@@ -215,7 +241,7 @@ function MonthChart({ data }: { data: ReportsSummary }) {
             <g key={tk}>
               <line x1={pad.l} x2={W - pad.r} y1={y} y2={y} className="chart-grid" />
               <text x={pad.l - 6} y={y + 4} textAnchor="end" className="chart-axis">
-                {tk}
+                {nf.format(tk)}
               </text>
             </g>
           );

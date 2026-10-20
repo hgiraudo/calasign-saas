@@ -191,6 +191,8 @@ const Q = {
   cursor: { name: "cursor", description: "Valor de `nextCursor` de la página anterior (opaco)." },
   from: { name: "from", description: "Desde (ISO 8601). Por defecto, el día 1 del mes que está 5 meses antes de `to` (6 meses calendario).", schema: { type: "string", format: "date-time" } },
   to: { name: "to", description: "Hasta (ISO 8601). Por defecto, ahora. Rango máximo: 3 años.", schema: { type: "string", format: "date-time" } },
+  tz: { name: "tz", description: "Zona horaria IANA (p. ej. America/Argentina/Buenos_Aires). Una desconocida: 400 invalid_timezone." },
+  sep: { name: "sep", description: "Separador del CSV: `,` (por defecto) o `;` (Excel en español o portugués). También `comma` / `semicolon`.", schema: { type: "string", enum: [",", ";", "comma", "semicolon"] } },
 };
 const AUDIT_QUERY = [
   { name: "action", description: "Acción exacta (p. ej. api_key.created) o prefijo terminado en * (p. ej. member.*)." },
@@ -495,9 +497,11 @@ const OPS: Op[] = [
     operationId: "listTemplates",
     tag: "Plantillas",
     summary: "Listar plantillas",
-    description: "Las 200 modificadas más recientemente que la credencial puede ver (visibilidad de organización, propias o compartidas con sus grupos).",
-    query: [{ name: "q", description: "Texto en el nombre o la descripción." }],
-    response: z.object({ items: z.array(TemplateSummarySchema) }),
+    description:
+      "Las plantillas que la credencial puede ver (visibilidad de organización, propias o compartidas con sus grupos), de la modificada más recientemente a la más vieja, paginadas por cursor (`nextCursor`). Sin cursor, la primera página.",
+    query: [{ name: "q", description: "Texto en el nombre o la descripción." }, Q.cursor, Q.limit(200, 200)],
+    response: z.object({ items: z.array(TemplateSummarySchema), nextCursor: z.string().nullable() }),
+    errors: ["invalid_cursor"],
   },
   { method: "post", path: "/v1/templates", operationId: "createTemplate", tag: "Plantillas", summary: "Crear plantilla", body: CreateTemplateInput, status: 201, response: TemplateDetailSchema },
   { method: "get", path: "/v1/templates/{id}", operationId: "getTemplate", tag: "Plantillas", summary: "Detalle de la plantilla (documentos, roles y campos)", response: TemplateDetailSchema },
@@ -1095,10 +1099,10 @@ const OPS: Op[] = [
     operationId: "getReportsSummary",
     tag: "Reportes",
     summary: "Resumen de actividad",
-    description: "Totales, sobres por mes, remitentes y notificaciones por canal. Exige envelopes:view_all.",
-    query: [Q.from, Q.to],
+    description: "Totales, sobres por mes, remitentes y notificaciones por canal. Los meses de `byMonth` son meses calendario en `tz` (UTC por defecto). Exige envelopes:view_all.",
+    query: [Q.from, Q.to, { ...Q.tz, description: `Zona de los meses de byMonth. ${Q.tz.description}` }],
     response: ReportsSummarySchema,
-    errors: ["invalid_range"],
+    errors: ["invalid_range", "invalid_timezone"],
   },
   {
     method: "get",
@@ -1106,10 +1110,11 @@ const OPS: Op[] = [
     operationId: "exportEnvelopesCsv",
     tag: "Reportes",
     summary: "Exportar sobres a CSV",
-    description: "UTF-8 con BOM; las celdas que empiezan con = + - @ se prefijan con ' (contra inyección de fórmulas). Exige envelopes:view_all.",
-    query: [Q.from, Q.to],
+    description:
+      "UTF-8 con BOM; las celdas que empiezan con = + - @ se prefijan con ' (contra inyección de fórmulas). Hasta 50.000 sobres (los más recientes del rango): si hay más, header `X-Truncated: true` y una fila final TRUNCADO. Las fechas van en ISO UTC; con `tz` se agregan columnas *_local en esa zona. La exportación queda en la auditoría (reports.exported). Exige envelopes:view_all.",
+    query: [Q.from, Q.to, Q.sep, { ...Q.tz, description: `Agrega las columnas creado_local, enviado_local, completado_local y vence_local. ${Q.tz.description}` }],
     response: "csv",
-    errors: ["invalid_range"],
+    errors: ["invalid_range", "invalid_query", "invalid_timezone"],
   },
 
   // Evidencia
@@ -1260,10 +1265,11 @@ const OPS: Op[] = [
     operationId: "exportAuditLogCsv",
     tag: "Auditoría",
     summary: "Exportar la auditoría a CSV",
-    description: "Mismos filtros que el listado, hasta 50.000 filas. La exportación misma queda registrada (audit.exported).",
-    query: AUDIT_QUERY,
+    description:
+      "Mismos filtros que el listado, hasta 50.000 filas (si hay más, header `X-Truncated: true` y una fila final TRUNCADO). occurred_at en ISO UTC; con `tz` se agrega occurred_at_local. La exportación misma queda registrada (audit.exported).",
+    query: [...AUDIT_QUERY, Q.sep, { ...Q.tz, description: `Agrega la columna occurred_at_local. ${Q.tz.description}` }],
     response: "csv",
-    errors: ["invalid_query"],
+    errors: ["invalid_query", "invalid_timezone"],
   },
 
   // Equipo

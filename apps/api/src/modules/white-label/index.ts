@@ -51,24 +51,29 @@ export async function brandForPage(db: Db, req: FastifyRequest): Promise<Resolve
     const w = await db.one<{ tenant_id: string }>(`SELECT tenant_id FROM web_forms WHERE slug = $1`, [fm[1]]);
     if (w) return resolveBrand(db, w.tenant_id, null);
   }
-  // Links públicos de acuerdos: la marca de la organización dueña (sin sub-marca propia: usan la predeterminada).
+  // Links públicos de acuerdos: la marca de la organización dueña (sin sub-marca propia). Si la página se abre por el
+  // dominio de una sub-marca de esa misma organización, esa; si no, la predeterminada.
+  const tenantBrand = async (tenantId: string) => {
+    const byHost = await brandFromKeyOrHost(db, undefined, req.headers.host);
+    return resolveBrand(db, tenantId, byHost?.tenantId === tenantId ? byHost.brandId : null);
+  };
   const nm = /^\/n\/([A-Za-z0-9_-]{20,100})$/.exec(path);
   if (nm) {
     const r = await db.one<{ tenant_id: string }>(
       `SELECT n.tenant_id FROM negotiation_participants p JOIN negotiations n ON n.id = p.negotiation_id WHERE p.token_hash = $1`,
       [sha256Hex(nm[1])],
     );
-    if (r) return resolveBrand(db, r.tenant_id, null);
+    if (r) return tenantBrand(r.tenant_id);
   }
   const wm = /^\/w\/([A-Za-z0-9_-]{20,100})$/.exec(path);
   if (wm) {
     const r = await db.one<{ tenant_id: string }>(`SELECT tenant_id FROM workflow_runs WHERE public_token_hash = $1`, [sha256Hex(wm[1])]);
-    if (r) return resolveBrand(db, r.tenant_id, null);
+    if (r) return tenantBrand(r.tenant_id);
   }
   const wfm = /^\/wf\/([A-Za-z0-9_-]{1,100})$/.exec(path);
   if (wfm) {
     const r = await db.one<{ tenant_id: string }>(`SELECT tenant_id FROM workflows WHERE public_slug = $1 AND public_start`, [wfm[1]]);
-    if (r) return resolveBrand(db, r.tenant_id, null);
+    if (r) return tenantBrand(r.tenant_id);
   }
   const key = new URLSearchParams(qs ?? "").get("b") ?? undefined;
   const found = await brandFromKeyOrHost(db, isVerifyPath(path) ? key : undefined, req.headers.host);

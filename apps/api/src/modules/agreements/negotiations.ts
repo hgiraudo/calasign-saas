@@ -12,6 +12,7 @@ import {
   ProposalDecisionInput,
   analyzeTemplate,
   blocksToText,
+  checkClauseGraph,
   diffWords,
   renderTemplate,
   TemplateSyntaxError,
@@ -111,6 +112,24 @@ function renderNegotiation(n: any, data = n.data, overrides = n.clause_overrides
   // Copia de cláusulas guardada: modo compatible si trae ciclos de antes de validar el grafo (ver renderTemplateCompat).
   const r = renderTemplateCompat(n.template_source, data, { clauses: { ...(n.clause_snapshot ?? {}), ...(overrides ?? {}) }, locale: n.template_locale, missing: "placeholder" });
   return { blocks: r.blocks, text: blocksToText(r.blocks) };
+}
+
+/** Render sin modo compatible: lanza TemplateSyntaxError si las cláusulas se citan en ciclo o pasan el tope de niveles. */
+function renderNegotiationStrict(n: any, data: unknown, overrides: Record<string, string> | null | undefined): string {
+  if (n.source === "pdf") return "";
+  const r = renderTemplate(n.template_source, data, { clauses: { ...(n.clause_snapshot ?? {}), ...(overrides ?? {}) }, locale: n.template_locale, missing: "placeholder" });
+  return blocksToText(r.blocks);
+}
+
+const isLegacyGraphError = (e: unknown) => e instanceof TemplateSyntaxError && (e.reason === "clause_cycle" || e.reason === "clause_depth");
+
+function strictFails(n: any, data: unknown, overrides: Record<string, string> | null | undefined): boolean {
+  try {
+    renderNegotiationStrict(n, data, overrides);
+    return false;
+  } catch (e) {
+    return isLegacyGraphError(e);
+  }
 }
 
 function negotiableVariables(n: any): string[] {
@@ -233,11 +252,14 @@ async function newVersion(t: Db, n: any, data: Record<string, unknown>, override
   const version = n.current_version + 1;
   let text: string;
   try {
-    text = renderNegotiation(n, data, overrides).text;
+    text = renderNegotiationStrict(n, data, overrides);
   } catch (e) {
     // Una cláusula editada por el remitente con sintaxis inválida: 400 con la línea (antes, un 500).
-    if (e instanceof TemplateSyntaxError) throw badRequest("template_syntax", e.message, { line: e.line });
-    throw e;
+    if (!(e instanceof TemplateSyntaxError)) throw e;
+    // Un ciclo o un exceso de niveles solo se tolera (modo compatible) si ya venía de antes: la copia con las cláusulas
+    // anteriores tampoco renderiza en modo estricto. Uno que introduce este cambio es un 400.
+    if (!isLegacyGraphError(e) || !strictFails(n, data, n.clause_overrides)) throw badRequest("template_syntax", e.message, { line: e.line });
+    text = renderNegotiation(n, data, overrides).text;
   }
   await t.query(
     `INSERT INTO negotiation_versions (negotiation_id, version, data, clause_overrides, text_snapshot, author_type, author_name, summary)
@@ -480,7 +502,9 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
     await s.db.tx(async (t) => {
       const locked = await t.one<any>(`SELECT status, current_version FROM negotiations WHERE id = $1 FOR UPDATE`, [n.id]);
       if (locked?.status !== "open") throw conflict("closed", "La negociación ya está cerrada");
-      if (locked.current_version !== n.current_version) throw conflict("version_changed", "Hay una versión nueva: revisala y volvé a comentar");
+      if (locked.current_version !== n.current_version || (input.expectedVersion != null && locked.current_version !== input.expectedVersion)) {
+        throw conflict("version_changed", "Hay una versión nueva: revisala y volvé a comentar");
+      }
       await assertCommentCapacity(t, n.id, { type: "user", id: a.userId });
       await t.query(
         `INSERT INTO negotiation_comments (id, negotiation_id, version, author_type, author_id, author_name, quote, start_offset, end_offset, body)
@@ -737,7 +761,10 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
       if (!Object.hasOwn(c, input.key) || c[input.key] == null) throw badRequest("unknown_clause", "La cláusula no está en el documento");
       try {
         renderTemplate(input.newValue, {});
+        // Que la cláusula propuesta no se cite en ciclo ni pase el tope de niveles con el resto de la copia.
+        checkClauseGraph({ ...c, [input.key]: input.newValue }, [input.key]);
       } catch (e) {
+        if (e instanceof TemplateSyntaxError) throw badRequest("template_syntax", e.message, { line: e.line });
         throw badRequest("template_syntax", e instanceof Error ? e.message : String(e));
       }
       old = c[input.key];

@@ -129,7 +129,8 @@ export interface AgreementView {
 export interface ListAgreementsResponse {
   items: Agreement[];
   nextCursor: string | null;
-  total: number;
+  /** Cantidad que coincide con los filtros: solo en la primera página (sin cursor); null en las siguientes. */
+  total: number | null;
 }
 
 // ───────────────────────────── Documentos ─────────────────────────────

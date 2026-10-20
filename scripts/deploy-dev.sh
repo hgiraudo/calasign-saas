@@ -339,10 +339,12 @@ echo DEPLOY_OK $REL
 EOF
 
 echo "▶ desplegando en $INSTANCE por SSM"
-CMD=$(aws ssm send-command --instance-ids "$INSTANCE" --document-name AWS-RunShellScript --timeout-seconds 900 \
-  --parameters "$(python3 -c 'import json,sys;print(json.dumps({"commands":[sys.argv[1]],"executionTimeout":["900"]}))' "$REMOTE")" \
+# Tiempos coherentes con la espera del lock (hasta 10 minutos con flock -w 600) más el deploy en sí: 30 minutos de
+# ejecución en SSM y el sondeo local (360 × 5 s) igual de largo, para no abandonar un deploy que todavía corre.
+CMD=$(aws ssm send-command --instance-ids "$INSTANCE" --document-name AWS-RunShellScript --timeout-seconds 1800 \
+  --parameters "$(python3 -c 'import json,sys;print(json.dumps({"commands":[sys.argv[1]],"executionTimeout":["1800"]}))' "$REMOTE")" \
   --query Command.CommandId --output text)
-for i in $(seq 1 180); do
+for i in $(seq 1 360); do
   ST=$(aws ssm get-command-invocation --command-id "$CMD" --instance-id "$INSTANCE" --query Status --output text 2>/dev/null || echo Pending)
   case "$ST" in Success|Failed|Cancelled|TimedOut) break ;; esac
   sleep 5

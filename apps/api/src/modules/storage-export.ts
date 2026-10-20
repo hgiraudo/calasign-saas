@@ -164,6 +164,28 @@ async function accountLabel(p: OAuthProvider, tokenBody: any): Promise<string | 
 
 // ───────────────────────────── Subida por proveedor ─────────────────────────────
 
+/**
+ * Identidad del archivo que se exporta, para no duplicarlo al reintentar: si un intento anterior llegó a subirlo pero
+ * falló después (o el proceso murió antes de anotar la referencia), el reintento lo reutiliza (Drive, buscándolo por
+ * appProperties) o lo reemplaza (Dropbox, mismo nombre en modo overwrite) en lugar de crear una copia.
+ */
+interface UploadOpts {
+  envelopeId: string;
+  kind: "pdf" | "evidence";
+  /** true desde el segundo intento (attempts > 1). */
+  retry: boolean;
+}
+
+/** Consulta de Drive por el archivo ya exportado de un sobre (appProperties que pone uploadGdrive). */
+export function gdriveExportQuery(envelopeId: string, kind: string, folderId: string | null): string {
+  const lit = (v: string) => v.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+  return (
+    `appProperties has { key='calasignEnvelopeId' and value='${lit(envelopeId)}' } and ` +
+    `appProperties has { key='calasignKind' and value='${lit(kind)}' } and trashed = false` +
+    (folderId ? ` and '${lit(folderId)}' in parents` : "")
+  );
+}
+
 interface UploadResult {
   ref: string;
   /** Credenciales refrescadas o configuración actualizada (ej. id de carpeta creada). */
@@ -262,7 +284,15 @@ async function withResolvedFolder(db: Db, c: any): Promise<any> {
   return (await ensureGdriveFolder(db, c.id, String(folderId))) ?? c;
 }
 
-async function uploadGdrive(creds: OAuthCreds, cfg: any, name: string, bytes: Uint8Array, contentType: string, onRefresh?: OnRefresh): Promise<UploadResult> {
+async function uploadGdrive(
+  creds: OAuthCreds,
+  cfg: any,
+  name: string,
+  bytes: Uint8Array,
+  contentType: string,
+  onRefresh?: OnRefresh,
+  opts?: UploadOpts,
+): Promise<UploadResult> {
   const { token, updated } = await freshToken("gdrive", creds, onRefresh);
   const auth = { authorization: `Bearer ${token}` };
   let folderId: string | null = cfg.folderId ?? null;
@@ -271,8 +301,30 @@ async function uploadGdrive(creds: OAuthCreds, cfg: any, name: string, bytes: Ui
     folderId = await findOrCreateGdriveFolder(token, String(cfg.folder));
     newCfg.folderId = folderId;
   }
+  const done = (id: string, link?: string): UploadResult => ({
+    ref: link ?? `gdrive:${id}`,
+    creds: updated ?? undefined,
+    config: Object.keys(newCfg).length ? newCfg : undefined,
+  });
+  // Reintento: si un intento anterior ya lo subió, se usa ese (Drive permite nombres repetidos: subir de nuevo
+  // dejaba dos copias del mismo PDF en la carpeta).
+  if (opts?.retry) {
+    const q = gdriveExportQuery(opts.envelopeId, opts.kind, folderId);
+    const found: any = await (
+      await check(
+        await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,webViewLink)&pageSize=1`, {
+          headers: auth,
+          signal: AbortSignal.timeout(15_000),
+        }),
+        "buscar exportación previa",
+      )
+    ).json();
+    const prev = found?.files?.[0];
+    if (prev?.id) return done(prev.id, prev.webViewLink);
+  }
   const boundary = `calasign${randomToken(12)}`;
-  const meta = JSON.stringify({ name, mimeType: contentType, ...(folderId ? { parents: [folderId] } : {}) });
+  const appProperties = opts ? { calasignEnvelopeId: opts.envelopeId, calasignKind: opts.kind } : undefined;
+  const meta = JSON.stringify({ name, mimeType: contentType, ...(folderId ? { parents: [folderId] } : {}), ...(appProperties ? { appProperties } : {}) });
   const body = Buffer.concat([
     Buffer.from(`--${boundary}\r\ncontent-type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\ncontent-type: ${contentType}\r\n\r\n`),
     Buffer.from(bytes),
@@ -289,15 +341,27 @@ async function uploadGdrive(creds: OAuthCreds, cfg: any, name: string, bytes: Ui
       "subir a Drive",
     )
   ).json();
-  return { ref: res.webViewLink ?? `gdrive:${res.id}`, creds: updated ?? undefined, config: Object.keys(newCfg).length ? newCfg : undefined };
+  return done(res.id, res.webViewLink);
 }
 
-async function uploadDropbox(creds: OAuthCreds, cfg: any, name: string, bytes: Uint8Array, _contentType: string, onRefresh?: OnRefresh): Promise<UploadResult> {
+async function uploadDropbox(
+  creds: OAuthCreds,
+  cfg: any,
+  name: string,
+  bytes: Uint8Array,
+  _contentType: string,
+  onRefresh?: OnRefresh,
+  opts?: UploadOpts,
+): Promise<UploadResult> {
   const { token, updated } = await freshToken("dropbox", creds, onRefresh);
   const folder = String(cfg.folder ?? "").replace(/^\/+|\/+$/g, "");
   const path = `/${folder ? `${folder}/` : ""}${name}`;
+  // Primer intento: "add" con autorename (no pisa un archivo ajeno con el mismo nombre). Reintento: el nombre es
+  // determinista (asunto + id del sobre), así que "overwrite" reemplaza lo que un intento anterior llegó a subir en
+  // lugar de crear "… (1).pdf".
+  const mode = opts?.retry ? { mode: "overwrite", autorename: false } : { mode: "add", autorename: true };
   // Dropbox-API-Arg viaja en un header: los caracteres no ASCII van escapados.
-  const arg = JSON.stringify({ path, mode: "add", autorename: true, mute: true }).replace(/[\u007f-￿]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
+  const arg = JSON.stringify({ path, ...mode, mute: true }).replace(/[\u007f-￿]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
   const res: any = await (
     await check(
       await fetch("https://content.dropboxapi.com/2/files/upload", {
@@ -507,10 +571,11 @@ async function uploadTo(
   bytes: Uint8Array,
   contentType = "application/pdf",
   onRefresh?: OnRefresh,
+  opts?: UploadOpts,
 ): Promise<UploadResult> {
   const creds = JSON.parse(decrypt(credsEnc));
-  if (provider === "gdrive") return uploadGdrive(creds, cfg, name, bytes, contentType, onRefresh);
-  if (provider === "dropbox") return uploadDropbox(creds, cfg, name, bytes, contentType, onRefresh);
+  if (provider === "gdrive") return uploadGdrive(creds, cfg, name, bytes, contentType, onRefresh, opts);
+  if (provider === "dropbox") return uploadDropbox(creds, cfg, name, bytes, contentType, onRefresh, opts);
   if (provider === "onedrive") return uploadOnedrive(creds, cfg, name, bytes, contentType, onRefresh);
   if (provider === "sharepoint") return uploadSharepoint(creds, cfg, name, bytes, contentType, onRefresh);
   if (provider === "box") return uploadBox(creds, cfg, name, bytes, contentType, onRefresh);
@@ -546,7 +611,7 @@ export async function exportEnvelopeJob(db: Db, blobs: BlobStore, p: { connectio
   // Reclamo con vencimiento (por si el proceso muere a mitad): si otro trabajo ya la está subiendo, este no hace nada.
   const claimed = await db.query(
     `UPDATE storage_exports SET claimed_until = now() + interval '15 minutes', attempts = attempts + 1, updated_at = now()
-      WHERE id = $1 AND status <> 'succeeded' AND (claimed_until IS NULL OR claimed_until < now()) RETURNING id`,
+      WHERE id = $1 AND status <> 'succeeded' AND (claimed_until IS NULL OR claimed_until < now()) RETURNING id, attempts`,
     [ex.id],
   );
   if (!claimed.length) {
@@ -557,13 +622,14 @@ export async function exportEnvelopeJob(db: Db, blobs: BlobStore, p: { connectio
     throw new Error("exportación en curso en otro trabajo; se reintenta");
   }
   try {
-    await runExport(db, blobs, p, c, ex, e);
+    // Desde el segundo intento, la subida evita duplicar lo que un intento anterior pudo haber dejado.
+    await runExport(db, blobs, p, c, ex, e, Number((claimed[0] as any).attempts) > 1);
   } finally {
     await db.query(`UPDATE storage_exports SET claimed_until = NULL WHERE id = $1`, [ex.id]);
   }
 }
 
-async function runExport(db: Db, blobs: BlobStore, p: { connectionId: string; envelopeId: string }, c: any, ex: any, e: any) {
+async function runExport(db: Db, blobs: BlobStore, p: { connectionId: string; envelopeId: string }, c: any, ex: any, e: any, retry: boolean) {
   try {
     let cur = await withResolvedFolder(db, c);
     // El PDF ya subido en un intento anterior (falló solo el certificado de evidencia) no se vuelve a subir.
@@ -572,7 +638,11 @@ async function runExport(db: Db, blobs: BlobStore, p: { connectionId: string; en
     let pdfSha: string | null = prev?.pdf_ref ? prev.pdf_sha256 ?? null : null;
     if (!ref) {
       const bytes = await blobs.get(e.storage_key);
-      const r = await uploadTo(cur.provider, cur.credentials_enc, cur.config ?? {}, fileName(e.subject, p.envelopeId), bytes, "application/pdf", persistCreds(db, c.id));
+      const r = await uploadTo(cur.provider, cur.credentials_enc, cur.config ?? {}, fileName(e.subject, p.envelopeId), bytes, "application/pdf", persistCreds(db, c.id), {
+        envelopeId: p.envelopeId,
+        kind: "pdf",
+        retry,
+      });
       await persistUpload(db, c.id, r);
       ref = r.ref;
       pdfSha = e.sha256 ?? null;
@@ -583,7 +653,11 @@ async function runExport(db: Db, blobs: BlobStore, p: { connectionId: string; en
       cur = (await db.one<any>(`SELECT * FROM storage_connections WHERE id = $1`, [c.id])) ?? cur;
       // Describe el PDF que se subió (si una renovación del sello cambió el PDF entre medio, no el nuevo).
       const ev = await evidenceCertificate(db, p.envelopeId, { signedSha256: pdfSha });
-      const r2 = await uploadTo(cur.provider, cur.credentials_enc, cur.config ?? {}, `${safeBaseName(e.subject, p.envelopeId)} - evidencia.json`, ev, "application/json", persistCreds(db, c.id));
+      const r2 = await uploadTo(cur.provider, cur.credentials_enc, cur.config ?? {}, `${safeBaseName(e.subject, p.envelopeId)} - evidencia.json`, ev, "application/json", persistCreds(db, c.id), {
+        envelopeId: p.envelopeId,
+        kind: "evidence",
+        retry,
+      });
       await persistUpload(db, c.id, r2);
     }
     await db.query(`UPDATE storage_exports SET status = 'succeeded', remote_ref = $2, error = NULL, updated_at = now() WHERE id = $1`, [ex.id, ref]);

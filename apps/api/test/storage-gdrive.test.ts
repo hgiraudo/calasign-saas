@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { gdriveFolderQuery } from "../src/modules/storage-export";
+import { gdriveExportQuery, gdriveFolderQuery } from "../src/modules/storage-export";
 
 // Literal de Drive: dentro de '…' se escapan \ y ' (https://developers.google.com/drive/api/guides/ref-search-terms).
 const literal = (q: string) => /^name = '((?:[^'\\]|\\.)*)' and mimeType/.exec(q)?.[1];
@@ -9,6 +9,17 @@ describe("consulta de carpeta de Drive", () => {
     expect(literal(gdriveFolderQuery("Contratos\\Firmados"))).toBe("Contratos\\\\Firmados");
     expect(literal(gdriveFolderQuery("Fin\\"))).toBe("Fin\\\\");
     expect(literal(gdriveFolderQuery("D'Alessandro"))).toBe("D\\'Alessandro");
+  });
+});
+
+describe("reintento de exportación a Drive", () => {
+  it("busca el archivo ya subido por appProperties (sobre y tipo), en la carpeta y fuera de la papelera", () => {
+    const q = gdriveExportQuery("0199aaaa-bbbb-7ccc-8ddd-eeeeffff0000", "pdf", "carpeta'1");
+    expect(q).toContain("appProperties has { key='calasignEnvelopeId' and value='0199aaaa-bbbb-7ccc-8ddd-eeeeffff0000' }");
+    expect(q).toContain("appProperties has { key='calasignKind' and value='pdf' }");
+    expect(q).toContain("trashed = false");
+    expect(q).toContain("'carpeta\\'1' in parents");
+    expect(gdriveExportQuery("x", "evidence", null)).not.toContain("in parents");
   });
 });
 

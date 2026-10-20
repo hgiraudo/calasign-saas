@@ -161,15 +161,18 @@ export function PublicWorkflowRunPage() {
     if (!waiting) return;
     let delay = 5000;
     let h: number | undefined;
+    // Un load() en vuelo cuando se desmonta (o termina la espera) no vuelve a programar el sondeo.
+    let cancelled = false;
     const schedule = () => {
       window.clearTimeout(h);
-      if (document.hidden) return;
+      if (cancelled || document.hidden) return;
       h = window.setTimeout(() => {
         delay = Math.min(delay * 2, 60_000);
         void load().finally(schedule);
       }, delay);
     };
     const onVisible = () => {
+      if (cancelled) return;
       if (document.hidden) return window.clearTimeout(h);
       delay = 5000;
       void load().finally(schedule);
@@ -177,6 +180,7 @@ export function PublicWorkflowRunPage() {
     schedule();
     document.addEventListener("visibilitychange", onVisible);
     return () => {
+      cancelled = true;
       window.clearTimeout(h);
       document.removeEventListener("visibilitychange", onVisible);
     };

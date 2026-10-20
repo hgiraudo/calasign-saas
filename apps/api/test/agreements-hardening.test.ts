@@ -534,6 +534,47 @@ describe("negociaciones", () => {
     expect((await app.inject({ method: "POST", url: url("comments"), payload: { body: "sin versión" } })).statusCode).toBe(201);
   });
 
+  it("comentario del remitente con expectedVersion vieja: 409 version_changed", async () => {
+    const res = await create([{ name: "A", email: "a@x.com", role: "Cliente" }]);
+    const id = res.json().negotiation.id as string;
+    expect((await app.inject({ method: "POST", url: `/v1/negotiations/${id}/comments`, headers: H(), payload: { body: "v1", expectedVersion: 1 } })).statusCode).toBe(201);
+    expect((await app.inject({ method: "PATCH", url: `/v1/negotiations/${id}`, headers: H(), payload: { data: { cliente: "ACME SA", precio: "100" }, summary: "v2" } })).statusCode).toBe(200);
+    const late = await app.inject({ method: "POST", url: `/v1/negotiations/${id}/comments`, headers: H(), payload: { body: "tarde", expectedVersion: 1 } });
+    expect(late.statusCode).toBe(409);
+    expect(late.json().error.code).toBe("version_changed");
+    expect((await app.inject({ method: "POST", url: `/v1/negotiations/${id}/comments`, headers: H(), payload: { body: "v2", expectedVersion: 2 } })).statusCode).toBe(201);
+  });
+
+  it("cláusulas: un ciclo nuevo es 400; uno heredado de la copia guardada se tolera (modo compatible)", async () => {
+    for (const [slug, body] of [["negc2", "Dos."], ["negc1", "Uno\n\n{{clausula:negc2}}"]]) {
+      const r = await app.inject({ method: "POST", url: "/v1/clauses", headers: H(), payload: { slug, title: slug, body } });
+      expect(r.statusCode, r.body).toBe(201);
+    }
+    const tpl = await app.inject({ method: "POST", url: "/v1/document-templates", headers: H(), payload: { name: "Con cláusulas", source: "# Para {{cliente}}\n\n{{clausula:negc1}}\n\n{{firma:Cliente}}" } });
+    expect(tpl.statusCode).toBe(201);
+    const res = await app.inject({ method: "POST", url: "/v1/negotiations", headers: H(), payload: { title: "Cl", documentTemplateId: tpl.json().id, data: { cliente: "ACME" }, participants: [{ name: "A", email: "a@x.com", role: "Cliente" }] } });
+    expect(res.statusCode).toBe(201);
+    const id = res.json().negotiation.id as string;
+    // PATCH del remitente que cierra un ciclo: 400 (antes pasaba en modo compatible).
+    const cyc = await app.inject({ method: "PATCH", url: `/v1/negotiations/${id}`, headers: H(), payload: { clauseOverrides: { negc2: "Dos\n\n{{clausula:negc1}}" } } });
+    expect(cyc.statusCode).toBe(400);
+    expect(cyc.json().error.code).toBe("template_syntax");
+    // Propuesta de cláusula de la contraparte que cierra un ciclo: 400 al proponerla.
+    const { decrypt } = await import("../src/lib/util");
+    const part = await db.one<any>(`SELECT token_enc FROM negotiation_participants WHERE negotiation_id = $1`, [id]);
+    const token = decrypt(part.token_enc);
+    const prop = await app.inject({ method: "POST", url: `/v1/public/negotiations/${token}/proposals`, payload: { kind: "clause", key: "negc2", newValue: "Dos\n\n{{clausula:negc1}}" } });
+    expect(prop.statusCode).toBe(400);
+    expect(prop.json().error.code).toBe("template_syntax");
+    expect((await app.inject({ method: "POST", url: `/v1/public/negotiations/${token}/proposals`, payload: { kind: "clause", key: "negc2", newValue: "Dos bis." } })).statusCode).toBe(201);
+    // Copia guardada con un ciclo de antes de validar el grafo: editar datos u otra cláusula sigue funcionando.
+    await db.query(`UPDATE negotiations SET clause_snapshot = $2 WHERE id = $1`, [id, JSON.stringify({ negc1: "Uno\n\n{{clausula:negc2}}", negc2: "Dos\n\n{{clausula:negc1}}" })]);
+    expect((await app.inject({ method: "PATCH", url: `/v1/negotiations/${id}`, headers: H(), payload: { data: { cliente: "ACME SA" } } })).statusCode).toBe(200);
+    expect((await app.inject({ method: "PATCH", url: `/v1/negotiations/${id}`, headers: H(), payload: { clauseOverrides: { negc1: "Uno nuevo\n\n{{clausula:negc2}}" } } })).statusCode).toBe(200);
+    // Y arreglarlo también.
+    expect((await app.inject({ method: "PATCH", url: `/v1/negotiations/${id}`, headers: H(), payload: { clauseOverrides: { negc2: "Dos." } } })).statusCode).toBe(200);
+  });
+
   it("marca de las páginas públicas /n/:token, /w/:token y /wf/:slug", async () => {
     const { brandForPage } = await import("../src/modules/white-label");
     const { decrypt } = await import("../src/lib/util");
@@ -546,6 +587,14 @@ describe("negociaciones", () => {
     const start = await startPublic(slug, "203.0.113.77");
     expect(start.statusCode).toBe(201);
     expect((await page(`/w/${start.json().token}`))?.tenantId).toBe(tenant);
+    // Abierta por el dominio de una sub-marca de la misma organización: esa sub-marca (otra organización: la predeterminada).
+    const brand = randomUUID();
+    await db.query(`INSERT INTO brands (id, tenant_id, name, slug, config) VALUES ($1,$2,'Sub','sub-neg','{}')`, [brand, tenant]);
+    await db.query(`INSERT INTO brand_domains (id, tenant_id, brand_id, domain, status, verification_token) VALUES ($1,$2,$3,'firmas.sub-neg.example','verified','x')`, [randomUUID(), tenant, brand]);
+    const byHost = (url: string, host: string) => brandForPage(db, { url, headers: { host } } as any);
+    expect((await byHost(`/n/${decrypt(part.token_enc)}`, "firmas.sub-neg.example"))?.brandId).toBe(brand);
+    expect((await byHost(`/wf/${slug}`, "firmas.sub-neg.example"))?.brandId).toBe(brand);
+    expect((await page(`/n/${decrypt(part.token_enc)}`))?.brandId ?? null).toBeNull();
     // Desconocidos: cae al Host (que no es de ninguna marca).
     expect(await page(`/n/${"x".repeat(43)}`)).toBeNull();
     expect(await page(`/wf/inexistente`)).toBeNull();

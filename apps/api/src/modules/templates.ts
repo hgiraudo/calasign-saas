@@ -143,8 +143,12 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
   type P = { Params: { id: string; documentId?: string; envelopeId?: string } };
   const A = (req: any) => req.auth as AuthContext;
 
-  app.get<{ Querystring: { q?: string } }>("/v1/templates", { preHandler: auth }, async (req) => {
+  // Paginado por cursor (updated_at, id), como los sobres. Sin cursor: la primera página; el límite por defecto (200)
+  // es el tope que tenía el listado sin paginar, así quien no pagina recibe lo mismo que antes.
+  app.get<{ Querystring: { q?: string; cursor?: string; limit?: string } }>("/v1/templates", { preHandler: auth }, async (req) => {
     const a = A(req);
+    const rawLimit = Number(req.query.limit ?? 200);
+    const limit = Number.isFinite(rawLimit) ? Math.min(200, Math.max(1, Math.trunc(rawLimit))) : 200;
     const params: unknown[] = [a.tenantId];
     let where = `t.tenant_id = $1`;
     if (req.query.q) {
@@ -153,22 +157,47 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
       where += ` AND (t.name ILIKE ${q} OR t.description ILIKE ${q})`;
     }
     where += templateVisibilitySql(a, params);
-    const rows = await s.db.query<any>(`SELECT t.* FROM templates t WHERE ${where} ORDER BY t.updated_at DESC LIMIT 200`, params);
-    const ids = rows.map((r) => r.id);
+    if (req.query.cursor) {
+      // updated_at en microsegundos (un Date de JS solo tiene ms: se saltaban las del mismo milisegundo).
+      const [us, id] = Buffer.from(String(req.query.cursor), "base64url").toString().split("|");
+      if (!/^\d{1,17}$/.test(us ?? "") || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id ?? "")) {
+        throw badRequest("invalid_cursor", "Cursor inválido");
+      }
+      params.push(us, id);
+      where += ` AND (t.updated_at, t.id) < ('epoch'::timestamptz + $${params.length - 1}::bigint * interval '1 microsecond', $${params.length}::uuid)`;
+    }
+    params.push(limit + 1);
+    const rows = await s.db.query<any>(
+      `SELECT t.*, ((extract(epoch FROM t.updated_at) * 1000000)::bigint)::text AS cursor_us FROM templates t
+        WHERE ${where} ORDER BY t.updated_at DESC, t.id DESC LIMIT $${params.length}`,
+      params,
+    );
+    const page = rows.slice(0, limit);
+    const ids = page.map((r) => r.id);
     const [docs, roles] = ids.length
       ? await Promise.all([
           s.db.query<any>(`SELECT template_id, count(*)::int AS n FROM template_documents WHERE template_id = ANY($1) GROUP BY template_id`, [ids]),
           s.db.query<any>(`SELECT template_id, name, role FROM template_roles WHERE template_id = ANY($1) ORDER BY routing_order, position`, [ids]),
         ])
       : [[], []];
-    const items: TemplateSummary[] = rows.map((r) => ({
+    // Índices por plantilla (con find/filter por cada una era O(plantillas × roles)).
+    const docCount = new Map<string, number>(docs.map((d: any) => [d.template_id, d.n]));
+    const rolesOf = new Map<string, TemplateSummary["roles"]>();
+    for (const x of roles as any[]) {
+      const list = rolesOf.get(x.template_id) ?? [];
+      list.push({ name: x.name, role: x.role });
+      rolesOf.set(x.template_id, list);
+    }
+    const items: TemplateSummary[] = page.map((r) => ({
       ...toTemplate(r),
-      documentCount: docs.find((d: any) => d.template_id === r.id)?.n ?? 0,
-      roles: roles.filter((x: any) => x.template_id === r.id).map((x: any) => ({ name: x.name, role: x.role })),
+      documentCount: docCount.get(r.id) ?? 0,
+      roles: rolesOf.get(r.id) ?? [],
       // Si quien consulta puede editarla o borrarla (misma regla que assertTemplateAccess "manage"): la web oculta esas acciones.
       canManage: canManageTemplateRow(a, r),
     }));
-    return { items };
+    const last = page[page.length - 1];
+    const nextCursor = rows.length > limit && last ? Buffer.from(`${last.cursor_us}|${last.id}`).toString("base64url") : null;
+    return { items, nextCursor };
   });
 
   app.post("/v1/templates", { preHandler: auth }, async (req, reply) => {

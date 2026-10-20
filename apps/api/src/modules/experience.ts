@@ -36,6 +36,8 @@ import { DISCARD_CHECKOUT_SET } from "./billing/payments";
 import { checkSenderValue, insertEnvelopeField } from "./fieldvalues";
 import { pruneDanglingConditions, saveFieldLogic } from "./logic";
 import { csvCell } from "./agreements/common";
+import { auditFromRequest } from "./audit";
+import { csvBody, csvSep, localTsSql, resolveTimeZone } from "../lib/csv";
 import { loadDetail } from "./mappers";
 import { SIGNER_COOKIE, isUnverifiedSelfRegistered } from "./otp";
 import { assertLinkCurrent, recipientActor, resolveToken } from "./signing";
@@ -484,42 +486,44 @@ function parseRange(q: { from?: string; to?: string }) {
   return { from, to };
 }
 
-function monthsBetween(from: Date, to: Date): string[] {
-  const out: string[] = [];
-  const d = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), 1));
-  while (d <= to) {
-    out.push(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`);
-    d.setUTCMonth(d.getUTCMonth() + 1);
-  }
-  return out;
-}
-
-export async function reportsSummary(db: Db, tenantId: string, q: { from?: string; to?: string }): Promise<ReportsSummary> {
+/**
+ * Resumen de reportes. Los meses (byMonth) son meses calendario en `tz` (zona IANA, validada; UTC por defecto): en
+ * UTC, lo creado la noche del último día del mes en América caía en el mes siguiente.
+ */
+export async function reportsSummary(db: Db, tenantId: string, q: { from?: string; to?: string; tz?: string }): Promise<ReportsSummary> {
   const { from, to } = parseRange(q);
+  const tz = (await resolveTimeZone(db, q.tz)) ?? "UTC";
   const p = [tenantId, from.toISOString(), to.toISOString()];
-  const [tot, rate, months, senders, notif] = await Promise.all([
+  // Cada conteo filtra por la columna de fecha que le corresponde, con su índice (tenant_id, created_at / sent_at /
+  // completed_at): antes era una sola pasada por TODOS los sobres de la organización con FILTER por fecha.
+  const [created, sent, done, inProgress, months, monthList, senders, notif] = await Promise.all([
+    db.one<any>(`SELECT count(*)::int AS n FROM envelopes WHERE tenant_id = $1 AND created_at BETWEEN $2 AND $3`, p),
     db.one<any>(
-      `SELECT
-         count(*) FILTER (WHERE created_at BETWEEN $2 AND $3)::int AS created,
-         count(*) FILTER (WHERE sent_at BETWEEN $2 AND $3)::int AS sent,
-         count(*) FILTER (WHERE completed_at BETWEEN $2 AND $3)::int AS completed,
-         count(*) FILTER (WHERE status = 'declined' AND sent_at BETWEEN $2 AND $3)::int AS declined,
-         count(*) FILTER (WHERE status = 'voided' AND sent_at BETWEEN $2 AND $3)::int AS voided,
-         count(*) FILTER (WHERE status = 'expired' AND sent_at BETWEEN $2 AND $3)::int AS expired,
-         count(*) FILTER (WHERE status IN ('sent','awaiting_certificates','finalizing'))::int AS in_progress,
-         (avg(extract(epoch FROM (completed_at - sent_at))) FILTER (WHERE completed_at BETWEEN $2 AND $3 AND sent_at IS NOT NULL))::float8 AS avg_secs
-       FROM envelopes WHERE tenant_id = $1`,
-      p,
-    ),
-    db.one<any>(
-      `SELECT count(*)::int AS sent, (count(*) FILTER (WHERE status = 'completed'))::int AS completed
+      `SELECT count(*)::int AS sent,
+         (count(*) FILTER (WHERE status = 'completed'))::int AS completed_of_sent,
+         (count(*) FILTER (WHERE status = 'declined'))::int AS declined,
+         (count(*) FILTER (WHERE status = 'voided'))::int AS voided,
+         (count(*) FILTER (WHERE status = 'expired'))::int AS expired
        FROM envelopes WHERE tenant_id = $1 AND sent_at BETWEEN $2 AND $3`,
       p,
     ),
-    db.query<any>(
-      `SELECT to_char(date_trunc('month', created_at AT TIME ZONE 'UTC'), 'YYYY-MM') AS month, status, count(*)::int AS n
-       FROM envelopes WHERE tenant_id = $1 AND created_at BETWEEN $2 AND $3 GROUP BY 1, 2`,
+    db.one<any>(
+      `SELECT count(*)::int AS completed, (avg(extract(epoch FROM (completed_at - sent_at))) FILTER (WHERE sent_at IS NOT NULL))::float8 AS avg_secs
+       FROM envelopes WHERE tenant_id = $1 AND completed_at BETWEEN $2 AND $3`,
       p,
+    ),
+    // En curso ahora, sin importar el rango (índice tenant_id, status).
+    db.one<any>(`SELECT count(*)::int AS n FROM envelopes WHERE tenant_id = $1 AND status IN ('sent','awaiting_certificates','finalizing')`, [tenantId]),
+    db.query<any>(
+      `SELECT to_char(date_trunc('month', created_at AT TIME ZONE $4::text), 'YYYY-MM') AS month, status, count(*)::int AS n
+       FROM envelopes WHERE tenant_id = $1 AND created_at BETWEEN $2 AND $3 GROUP BY 1, 2`,
+      [...p, tz],
+    ),
+    // Los meses del rango, también en la zona pedida.
+    db.query<{ month: string }>(
+      `SELECT to_char(m, 'YYYY-MM') AS month FROM generate_series(date_trunc('month', $1::timestamptz AT TIME ZONE $3::text),
+         date_trunc('month', $2::timestamptz AT TIME ZONE $3::text), interval '1 month') AS m ORDER BY m`,
+      [from.toISOString(), to.toISOString(), tz],
     ),
     db.query<any>(
       `SELECT e.created_by AS user_id, u.name, u.email, count(*)::int AS sent, (count(*) FILTER (WHERE e.status = 'completed'))::int AS completed
@@ -534,7 +538,18 @@ export async function reportsSummary(db: Db, tenantId: string, q: { from?: strin
       p,
     ),
   ]);
-  const byMonth: ReportsMonth[] = monthsBetween(from, to).map((month) => ({
+  const tot = {
+    created: created?.n ?? 0,
+    sent: sent?.sent ?? 0,
+    completed: done?.completed ?? 0,
+    declined: sent?.declined ?? 0,
+    voided: sent?.voided ?? 0,
+    expired: sent?.expired ?? 0,
+    in_progress: inProgress?.n ?? 0,
+    avg_secs: done?.avg_secs ?? null,
+  };
+  const rate = { sent: tot.sent, completed: sent?.completed_of_sent ?? 0 };
+  const byMonth: ReportsMonth[] = monthList.map(({ month }) => ({
     month,
     created: 0,
     draft: 0,
@@ -556,6 +571,7 @@ export async function reportsSummary(db: Db, tenantId: string, q: { from?: strin
   return {
     from: from.toISOString(),
     to: to.toISOString(),
+    timeZone: tz,
     totals: {
       created: tot.created,
       sent: tot.sent,
@@ -582,27 +598,55 @@ export async function reportsSummary(db: Db, tenantId: string, q: { from?: strin
 /** Celda CSV: comillas, y prefijo ' contra inyección de fórmulas en planillas (la misma que el repositorio y el envío masivo). */
 export { csvCell };
 
-async function envelopesCsv(db: Db, tenantId: string, q: { from?: string; to?: string }) {
+/** Máximo de filas del CSV de sobres (se pide una más para saber si se cortó). */
+export const ENVELOPES_CSV_MAX = 50_000;
+
+/**
+ * CSV de sobres del rango. `sep`: "," o ";" (Excel en es/pt). `tz`: si viene, se agregan columnas *_local con la fecha y
+ * hora en esa zona (las columnas ISO en UTC quedan como estaban, por compatibilidad).
+ */
+async function envelopesCsv(db: Db, tenantId: string, q: { from?: string; to?: string; sep?: string; tz?: string }) {
   const { from, to } = parseRange(q);
-  const rows = await db.query<any>(
+  const sep = csvSep(q.sep);
+  const tz = await resolveTimeZone(db, q.tz);
+  const params: unknown[] = [tenantId, from.toISOString(), to.toISOString()];
+  let local = "";
+  if (tz) {
+    params.push(tz);
+    const z = `$${params.length}::text`;
+    local = `, ${localTsSql("e.created_at", z)} AS created_local, ${localTsSql("e.sent_at", z)} AS sent_local,
+       ${localTsSql("e.completed_at", z)} AS completed_local, ${localTsSql("e.expires_at", z)} AS expires_local`;
+  }
+  const all = await db.query<any>(
     `SELECT e.id, e.subject, e.status, e.created_via, e.created_at, e.sent_at, e.completed_at, e.expires_at,
        COALESCE(u.name, 'API') AS sender, u.email AS sender_email,
        (SELECT string_agg(r.name || COALESCE(' <' || r.email || '>', '') || ' [' || r.role || ': ' || r.status || ']', '; ' ORDER BY r.routing_order, r.created_at)
-          FROM recipients r WHERE r.envelope_id = e.id) AS recipients
+          FROM recipients r WHERE r.envelope_id = e.id) AS recipients${local}
      FROM envelopes e LEFT JOIN users u ON u.id = e.created_by
      WHERE e.tenant_id = $1 AND e.created_at BETWEEN $2 AND $3
-     ORDER BY e.created_at DESC LIMIT 50000`,
-    [tenantId, from.toISOString(), to.toISOString()],
+     ORDER BY e.created_at DESC, e.id DESC LIMIT ${ENVELOPES_CSV_MAX + 1}`,
+    params,
   );
+  // Una fila de más para saber si se cortó: el corte se avisa (header X-Truncated y fila final), no es silencioso.
+  const truncated = all.length > ENVELOPES_CSV_MAX;
+  const rows = truncated ? all.slice(0, ENVELOPES_CSV_MAX) : all;
   const head = ["id", "asunto", "estado", "origen", "creado", "enviado", "completado", "vence", "remitente", "correo_remitente", "destinatarios"];
-  const lines = [head.join(",")];
-  for (const r of rows)
+  if (tz) head.push("creado_local", "enviado_local", "completado_local", "vence_local");
+  const lines = [head.join(sep)];
+  for (const r of rows) {
+    const cells = [r.id, r.subject, r.status, r.created_via, r.created_at, r.sent_at, r.completed_at, r.expires_at, r.sender, r.sender_email, r.recipients];
+    if (tz) cells.push(r.created_local, r.sent_local, r.completed_local, r.expires_local);
+    lines.push(cells.map(csvCell).join(sep));
+  }
+  if (truncated) {
+    const last = rows[rows.length - 1];
     lines.push(
-      [r.id, r.subject, r.status, r.created_via, r.created_at, r.sent_at, r.completed_at, r.expires_at, r.sender, r.sender_email, r.recipients]
+      ["", `TRUNCADO: se exportaron los ${ENVELOPES_CSV_MAX} sobres más recientes del rango; hay más. Acotá el rango (to=${new Date(last.created_at).toISOString()}) para el resto.`]
         .map(csvCell)
-        .join(","),
+        .join(sep),
     );
-  return "﻿" + lines.join("\r\n") + "\r\n";
+  }
+  return { body: csvBody(lines), rows: rows.length, truncated };
 }
 
 // ───────────────────────────── Rutas ─────────────────────────────
@@ -741,18 +785,27 @@ export async function experienceRoutes(app: FastifyInstance, s: Services) {
 
   // ───────── Reportes ─────────
 
-  app.get<{ Querystring: { from?: string; to?: string } }>("/v1/reports/summary", { preHandler: auth }, async (req) =>
+  app.get<{ Querystring: { from?: string; to?: string; tz?: string } }>("/v1/reports/summary", { preHandler: auth }, async (req) =>
     reportsSummary(s.db, A(req).tenantId, req.query),
   );
 
-  app.get<{ Querystring: { from?: string; to?: string } }>("/v1/reports/envelopes.csv", { preHandler: auth }, async (req, reply: FastifyReply) => {
-    const csv = await envelopesCsv(s.db, A(req).tenantId, req.query);
+  app.get<{ Querystring: { from?: string; to?: string; sep?: string; tz?: string } }>("/v1/reports/envelopes.csv", { preHandler: auth }, async (req, reply: FastifyReply) => {
+    const a = A(req);
+    const csv = await envelopesCsv(s.db, a.tenantId, req.query);
+    // Exportar todos los sobres de la organización (asuntos, destinatarios, correos) queda en la auditoría, como la
+    // exportación de acuerdos y la de la auditoría misma.
+    await auditFromRequest(s.db, req, a, "reports.exported", {
+      targetType: "report",
+      targetId: "envelopes.csv",
+      data: { from: req.query.from ?? null, to: req.query.to ?? null, rows: csv.rows, truncated: csv.truncated },
+    });
+    if (csv.truncated) reply.header("x-truncated", "true");
     const day = new Date().toISOString().slice(0, 10);
     reply
       .header("content-type", "text/csv; charset=utf-8")
       .header("content-disposition", `attachment; filename="calasign-sobres-${day}.csv"`)
       .header("cache-control", "private, no-store");
-    return reply.send(csv);
+    return reply.send(csv.body);
   });
 
   // ───────── Copias del documento final ─────────

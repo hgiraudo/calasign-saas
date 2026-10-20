@@ -295,6 +295,9 @@ export async function enforceRoutePolicy(db: Db, req: FastifyRequest, a: AuthCon
     requirePerm(a, "settings:manage");
     // Archivo en un bucket propio o avisos a un canal: reciben los PDF firmados o los datos de todos los sobres.
     if (!isRead && !url.startsWith("/v1/domains")) requirePerm(a, "envelopes:view_all");
+    // El historial de exportaciones lista los asuntos de los sobres de toda la organización (sin filtrar por
+    // visibilidad): un rol con settings:manage pero sin envelopes:view_all no debe verlos.
+    if (url.startsWith("/v1/storage/exports")) requirePerm(a, "envelopes:view_all");
     return;
   }
   // Aprobaciones de workflows: quien fue asignado para aprobar es cualquier miembro (checkApprovers solo pide la

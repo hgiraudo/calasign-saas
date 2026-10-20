@@ -270,7 +270,20 @@ export function NegotiationPanel({
   const ta = useAgrText();
   const { locale } = useI18n();
   const nav = useNavigate();
-  const [view, setView] = useState<NegotiationView>(initial);
+  const [view, setViewRaw] = useState<NegotiationView>(initial);
+  // Versión nueva que trajo el sondeo mientras había una cita o un comentario a medio escribir: no se aplica en silencio
+  // (descartaría la cita); se avisa y se aplica cuando la persona lo pide o ya no hay nada pendiente.
+  const [pendingView, setPendingView] = useState<NegotiationView | null>(null);
+  // Generación de la vista: cada vista aplicada la incrementa; una respuesta del sondeo pedida antes se descarta (no
+  // pisa con datos viejos lo que devolvió una acción o un sondeo posterior).
+  const genRef = useRef(0);
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  const setView = useCallback((v: NegotiationView) => {
+    genRef.current++;
+    setViewRaw(v);
+    setPendingView((p) => (p && p.negotiation.currentVersion <= v.negotiation.currentVersion ? null : p));
+  }, []);
   const [sel, setSel] = useState<{ quote: string; start: number | null; end: number | null } | null>(null);
   const [comment, setComment] = useState("");
   const [diff, setDiff] = useState<NegotiationDiff | null>(null);
@@ -292,12 +305,21 @@ export function NegotiationPanel({
   busyRef.current = busy;
   const onViewRef = useRef(onView);
   onViewRef.current = onView;
+  const draftRef = useRef(false);
+  draftRef.current = Boolean(sel || comment.trim());
   useEffect(() => {
     const refresh = () => {
       if (document.hidden || busyRef.current) return;
+      const gen = genRef.current;
       api<NegotiationView>(base)
         .then((fresh) => {
-          if (busyRef.current) return;
+          // Respuesta vieja (otra vista se aplicó mientras tanto) o de una versión anterior a la que está en pantalla.
+          if (busyRef.current || gen !== genRef.current) return;
+          if (fresh.negotiation.currentVersion < viewRef.current.negotiation.currentVersion) return;
+          if (fresh.negotiation.currentVersion > viewRef.current.negotiation.currentVersion && draftRef.current) {
+            setPendingView(fresh);
+            return;
+          }
           setView(fresh);
           onViewRef.current?.(fresh);
         })
@@ -309,7 +331,13 @@ export function NegotiationPanel({
       window.clearInterval(h);
       document.removeEventListener("visibilitychange", refresh);
     };
-  }, [base]);
+  }, [base, setView]);
+
+  const showPending = () => {
+    if (!pendingView) return;
+    setView(pendingView);
+    onView?.(pendingView);
+  };
 
   const call = async (path: string, body: unknown, method: "POST" | "PATCH" = "POST") => {
     setBusy(true);
@@ -349,6 +377,14 @@ export function NegotiationPanel({
     <div className="stack">
       <ErrorBox error={error} />
       {!open && <div className="alert">{ta("neg.closed")}</div>}
+      {pendingView && (
+        <div className="alert row-between" role="status">
+          <span>{ta("neg.newVersionPending", { n: pendingView.negotiation.currentVersion })}</span>
+          <button type="button" className="btn btn-sm" onClick={showPending}>
+            {ta("neg.showNewVersion")}
+          </button>
+        </div>
+      )}
       <div className="agr-split-wide">
         <div className="stack">
           <div className="row-between">

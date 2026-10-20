@@ -4,6 +4,7 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import type { Agreement, AgreementFieldDef, AgreementStatus, AgreementView, Counterparty, ListAgreementsResponse } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
 import { formatDay, useI18n, confirmAction } from "../lib/i18n";
+import { csvFormatParams } from "../lib/csv";
 import { useAccess } from "../lib/access";
 import { parseAmountText } from "../lib/logic";
 import { useAgrText } from "../lib/i18n-agreements";
@@ -128,7 +129,8 @@ export function AgreementsPage() {
       const next = new URLSearchParams(params);
       next.set("cursor", data.nextCursor);
       const more = await api<ListAgreementsResponse>(`/v1/agreements?${next.toString()}`);
-      if (mine === seq.current) setData({ ...more, items: [...data.items, ...more.items] });
+      // El total viene solo en la primera página: se conserva el que ya se mostraba.
+      if (mine === seq.current) setData({ ...more, items: [...data.items, ...more.items], total: more.total ?? data.total });
     } catch (e) {
       if (mine === seq.current) setError(errorText(e));
     } finally {
@@ -159,7 +161,8 @@ export function AgreementsPage() {
     return f;
   };
 
-  const exportUrl = `/v1/agreements/export.csv?${query}`;
+  // Separador según el idioma (";" para Excel en español o portugués).
+  const exportUrl = `/v1/agreements/export.csv?${[query, csvFormatParams(locale).toString()].filter(Boolean).join("&")}`;
 
   return (
     <div className="page">
@@ -268,7 +271,7 @@ export function AgreementsPage() {
         <div className="empty">{query ? ta("repo.noResults") : ta("repo.empty")}</div>
       ) : (
         <>
-          <p className="muted small">{ta("repo.total", { n: data.total })}</p>
+          {data.total != null && <p className="muted small">{ta("repo.total", { n: data.total })}</p>}
           <div className="card table-scroll">
             <table className="table">
               <thead>

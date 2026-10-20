@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { AuditLogEntry, AuditLogResponse } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
 import { formatDateTime, useI18n } from "../lib/i18n";
+import { csvFormatParams } from "../lib/csv";
 import { useTeamsText } from "../lib/i18n-teams";
 import { ErrorBox, Spinner } from "../components/ui";
 import { useTitle } from "../lib/white-label";
@@ -78,7 +79,8 @@ export function AuditLogPage() {
           <h1>{tt("audit.title")}</h1>
           <p className="muted">{tt("audit.intro")}</p>
         </div>
-        <a className="btn" href={`/v1/audit-log.csv?${query(applied)}`} download>
+        {/* Separador según el idioma y, con la zona del navegador, la columna occurred_at_local. */}
+        <a className="btn" href={`/v1/audit-log.csv?${[query(applied), csvFormatParams(locale, { tz: true }).toString()].filter(Boolean).join("&")}`} download>
           {tt("audit.export")}
         </a>
       </div>

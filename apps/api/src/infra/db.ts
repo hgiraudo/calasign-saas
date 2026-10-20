@@ -81,7 +81,9 @@ async function createPgDb(url: string): Promise<Db> {
 
 async function createPgliteDb(dir: string): Promise<Db> {
   const { PGlite } = await import("@electric-sql/pglite");
-  const lite = await PGlite.create(dir);
+  // pg_trgm: el índice trigram de la búsqueda de acuerdos por título (migración 0088), como en Postgres.
+  const { pg_trgm } = await import("@electric-sql/pglite/contrib/pg_trgm");
+  const lite = await PGlite.create(dir, { extensions: { pg_trgm } });
   const close = () => lite.close();
   const root: Db = wrap(
     lite as unknown as Queryable,

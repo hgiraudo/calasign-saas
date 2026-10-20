@@ -95,6 +95,8 @@ export interface ReportsMonth {
 export interface ReportsSummary {
   from: string;
   to: string;
+  /** Zona horaria (IANA) de los meses de byMonth: la pedida con ?tz= o UTC. */
+  timeZone: string;
   totals: {
     created: number;
     sent: number;

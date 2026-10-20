@@ -760,6 +760,7 @@ export const VerifyResponseSchema = named(
 export const ReportsSummarySchema = z.object({
   from: iso(),
   to: iso(),
+  timeZone: z.string().describe("Zona horaria (IANA) de los meses de byMonth: la pedida con `tz` o UTC."),
   totals: z.object({
     created: z.number().int(),
     sent: z.number().int(),
@@ -773,7 +774,7 @@ export const ReportsSummarySchema = z.object({
   }),
   byMonth: z.array(
     z.object({
-      month: z.string().describe("YYYY-MM"),
+      month: z.string().describe("YYYY-MM, mes calendario en `timeZone`"),
       created: z.number().int(),
       draft: z.number().int(),
       inProgress: z.number().int(),

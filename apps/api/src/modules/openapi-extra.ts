@@ -267,7 +267,8 @@ export const ERRORS: Record<string, Err> = {
   duplicate_ref: { status: 400, code: "duplicate_ref", message: "Hay destinatarios con el mismo ref", summary: "Dos documentos o dos destinatarios con el mismo `ref`" },
   invalid_cursor: { status: 400, code: "invalid_cursor", message: "Cursor inválido", summary: "cursor que no salió de nextCursor" },
   invalid_range: { status: 400, code: "invalid_range", message: "Fechas inválidas (usar ISO 8601)", summary: "from/to inválidos, invertidos o rango mayor a 3 años" },
-  invalid_query: { status: 400, code: "invalid_query", message: "'from' no es una fecha válida", summary: "Filtro de fecha inválido" },
+  invalid_query: { status: 400, code: "invalid_query", message: "'from' no es una fecha válida", summary: "Filtro de fecha inválido o `sep` distinto de `,` / `;`" },
+  invalid_timezone: { status: 400, code: "invalid_timezone", message: "tz: zona horaria desconocida (usar un nombre IANA, p. ej. America/Argentina/Buenos_Aires)", summary: "`tz` que no es una zona horaria IANA" },
   duplicate_ids: { status: 400, code: "duplicate_ids", message: "Ids de destinatarios repetidos", summary: "Ids repetidos en la lista" },
   invalid_field: { status: 400, code: "invalid_field", message: "Campo 1: el destinatario no es firmante de este sobre", summary: "Campo con documento, página o destinatario inválido" },
   anchor_not_found: {

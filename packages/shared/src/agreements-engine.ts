@@ -824,20 +824,21 @@ export function clauseRefs(source: string): string[] {
  * Valida que las cláusulas `roots` (con la biblioteca `clauses`) no se citen en ciclo ni pasen de MAX_CLAUSE_DEPTH
  * niveles, mirando todas las ramas (un ciclo dentro de un {{#if}} que hoy no se cumple igual rompería otro documento).
  * Lanza TemplateSyntaxError. Una cláusula con errores de sintaxis no cita nada (se valida por separado).
+ * `refCache` (texto de la cláusula → citas) se puede compartir entre llamadas para no volver a parsear los mismos textos.
  */
-export function checkClauseGraph(clauses: Record<string, string>, roots: string[]): void {
-  const refs = new Map<string, string[]>();
+export function checkClauseGraph(clauses: Record<string, string>, roots: string[], refCache: Map<string, string[]> = new Map()): void {
   const height = new Map<string, number>();
   const visiting = new Set<string>();
   const refsOf = (slug: string) => {
-    let r = refs.get(slug);
+    const src = clauses[slug];
+    let r = refCache.get(src);
     if (!r) {
       try {
-        r = clauseRefs(clauses[slug]);
+        r = clauseRefs(src);
       } catch {
         r = [];
       }
-      refs.set(slug, r);
+      refCache.set(src, r);
     }
     return r;
   };

@@ -6,6 +6,7 @@ import type { AuditLogEntry, AuditLogResponse } from "@calasign/shared";
 import type { Db } from "../infra/db";
 import { badRequest } from "../lib/errors";
 import { iso, likeContains } from "../lib/util";
+import { csvBody, csvSep, localTsSql, resolveTimeZone } from "../lib/csv";
 import { authenticate, clientInfo, type AuthContext, type Services } from "./context";
 
 export interface AuditRecord {
@@ -84,11 +85,7 @@ const ROUTE_ACTIONS: Record<string, { action: string; extract?: Extract; dedupeM
       return { targetType: "api_key", targetId: body?.apiKey?.id, data: { name: body?.apiKey?.name, role: input.role ?? "admin", roleId: input.role === "custom" ? (input.roleId ?? null) : null } };
     },
   },
-  // Exportar todos los sobres con los datos de sus destinatarios, como las otras exportaciones (acuerdos, auditoría).
-  "GET /v1/reports/envelopes.csv": {
-    action: "reports.exported",
-    extract: ({ req }) => ({ targetType: "report", targetId: "envelopes.csv", data: { from: (req.query as any)?.from ?? null, to: (req.query as any)?.to ?? null } }),
-  },
+  // GET /v1/reports/envelopes.csv (reports.exported) lo registra su handler (experience.ts), con filas y corte.
   "DELETE /v1/api-keys/:id": { action: "api_key.revoked", extract: ({ params }) => ({ targetType: "api_key", targetId: params.id }) },
   "POST /v1/templates": { action: "template.created", extract: ({ body }) => ({ targetType: "template", targetId: body?.template?.id, data: { name: body?.template?.name } }) },
   "POST /v1/templates/from-envelope/:envelopeId": {
@@ -206,6 +203,9 @@ interface AuditQuery {
   to?: string;
   cursor?: string;
   limit?: string;
+  /** CSV: separador ("," o ";") y zona horaria de la columna occurred_at_local. */
+  sep?: string;
+  tz?: string;
 }
 
 /** Fecha del filtro; una inválida es un 400 (no un error interno). */
@@ -293,24 +293,34 @@ export async function auditRoutes(app: FastifyInstance, s: Services) {
   });
 
   app.get<{ Querystring: AuditQuery }>("/v1/audit-log.csv", { preHandler: auth }, async (req, reply) => {
+    const sep = csvSep(req.query.sep);
+    const tz = await resolveTimeZone(s.db, req.query.tz);
     const { params, where } = buildWhere(req.auth!.tenantId, req.query);
+    let local = "";
+    if (tz) {
+      params.push(tz);
+      local = `, ${localTsSql("occurred_at", `$${params.length}::text`)} AS occurred_local`;
+    }
     // Una fila de más para saber si se cortó: el corte se avisa (header X-Truncated y fila final), no es silencioso.
-    const all = await s.db.query<any>(`SELECT * FROM account_audit_log WHERE ${where} ORDER BY id DESC LIMIT ${CSV_MAX_ROWS + 1}`, params);
+    const all = await s.db.query<any>(`SELECT *${local} FROM account_audit_log WHERE ${where} ORDER BY id DESC LIMIT ${CSV_MAX_ROWS + 1}`, params);
     const truncated = all.length > CSV_MAX_ROWS;
     const rows = truncated ? all.slice(0, CSV_MAX_ROWS) : all;
+    // occurred_at sigue en ISO UTC (compatibilidad); con tz se agrega occurred_at_local al final.
     const header = ["id", "occurred_at", "action", "actor_type", "actor_id", "actor_label", "target_type", "target_id", "ip", "user_agent", "data"];
-    const lines = [header.join(",")];
-    for (const r of rows.map(toEntry)) {
-      lines.push(
-        [r.id, r.occurredAt, r.action, r.actorType, r.actorId, r.actorLabel, r.targetType, r.targetId, r.ip, r.userAgent, r.data].map(csvCell).join(","),
-      );
+    if (tz) header.push("occurred_at_local");
+    const lines = [header.join(sep)];
+    for (const raw of rows) {
+      const r = toEntry(raw);
+      const cells: unknown[] = [r.id, r.occurredAt, r.action, r.actorType, r.actorId, r.actorLabel, r.targetType, r.targetId, r.ip, r.userAgent, r.data];
+      if (tz) cells.push(raw.occurred_local);
+      lines.push(cells.map(csvCell).join(sep));
     }
     if (truncated) {
       const last = rows[rows.length - 1];
       lines.push(
         ["", "", `TRUNCADO: se exportaron las ${CSV_MAX_ROWS} filas más recientes; hay más. Acotá el rango con from/to (to=${iso(last.occurred_at)}) para el resto.`]
           .map(csvCell)
-          .join(","),
+          .join(sep),
       );
       reply.header("x-truncated", "true");
     }
@@ -319,6 +329,6 @@ export async function auditRoutes(app: FastifyInstance, s: Services) {
       .header("content-type", "text/csv; charset=utf-8")
       .header("content-disposition", `attachment; filename="auditoria-${new Date().toISOString().slice(0, 10)}.csv"`)
       .header("cache-control", "private, no-store");
-    return "﻿" + lines.join("\r\n") + "\r\n";
+    return csvBody(lines);
   });
 }

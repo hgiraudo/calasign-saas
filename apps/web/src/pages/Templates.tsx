@@ -1,5 +1,5 @@
 // Listado de plantillas: crear, usar, editar y eliminar.
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import type { TemplateDetail, TemplateSummary } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
@@ -7,6 +7,8 @@ import { formatDateTime, useI18n } from "../lib/i18n";
 import { ErrorBox, Modal, Spinner } from "../components/ui";
 import { useScaleText } from "../lib/i18n-scale";
 import { useTitle } from "../lib/white-label";
+
+const PAGE = 60;
 
 export function TemplatesPage() {
   const { t, locale } = useI18n();
@@ -19,14 +21,42 @@ export function TemplatesPage() {
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [deleting, setDeleting] = useState<TemplateSummary | null>(null);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  // Cada recarga (p. ej. tras borrar) invalida una página "cargar más" que estuviera en vuelo.
+  const seq = useRef(0);
 
   const load = useCallback(async () => {
+    const mine = ++seq.current;
     try {
-      setItems((await api<{ items: TemplateSummary[] }>("/v1/templates")).items);
+      const r = await api<{ items: TemplateSummary[]; nextCursor?: string | null }>(`/v1/templates?limit=${PAGE}`);
+      if (mine !== seq.current) return;
+      setItems(r.items);
+      setNextCursor(r.nextCursor ?? null);
     } catch (e) {
       setError(errorText(e));
     }
   }, []);
+
+  const loadMore = async () => {
+    if (!nextCursor || loadingMore) return;
+    const mine = seq.current;
+    setLoadingMore(true);
+    try {
+      const r = await api<{ items: TemplateSummary[]; nextCursor?: string | null }>(`/v1/templates?limit=${PAGE}&cursor=${encodeURIComponent(nextCursor)}`);
+      if (mine !== seq.current) return;
+      // Sin repetir: una plantilla editada mientras tanto puede volver a aparecer en otra página.
+      setItems((prev) => {
+        const seen = new Set((prev ?? []).map((x) => x.id));
+        return [...(prev ?? []), ...r.items.filter((x) => !seen.has(x.id))];
+      });
+      setNextCursor(r.nextCursor ?? null);
+    } catch (e) {
+      if (mine === seq.current) setError(errorText(e));
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   useEffect(() => {
     void load();
@@ -110,6 +140,13 @@ export function TemplatesPage() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+      {items && items.length > 0 && nextCursor && (
+        <div className="row-wrap" style={{ justifyContent: "center", marginTop: 16 }}>
+          <button type="button" className="btn" onClick={() => void loadMore()} disabled={loadingMore}>
+            {t("tpl.loadMore")}
+          </button>
         </div>
       )}
 

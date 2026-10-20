@@ -15,7 +15,8 @@ import { extractPdfPlainText, inspectPdf, InvalidPdfError, PdfReaderBusyError, r
 import { config } from "../../config";
 import type { Db } from "../../infra/db";
 import { AppError, badRequest, conflict, forbidden, notFound } from "../../lib/errors";
-import { sha256Hex, uuidv7 } from "../../lib/util";
+import { likeContains, sha256Hex, uuidv7 } from "../../lib/util";
+import { csvBody, csvSep } from "../../lib/csv";
 import { enqueue } from "../../infra/queue";
 import { hasPerm, requirePerm } from "../access";
 import { auditFromRequest } from "../audit";
@@ -35,8 +36,27 @@ import {
   type Deps,
 } from "./common";
 
-const AGREEMENT_SELECT = `SELECT ag.*, f.sha256, u.name AS owner_name FROM agreements ag
-  JOIN files f ON f.id = ag.file_id LEFT JOIN users u ON u.id = ag.owner_user_id`;
+/**
+ * Columnas del acuerdo que se leen (las de toAgreement + las de permisos). Explícitas, nunca `ag.*`: text_folded (el
+ * texto completo del PDF, hasta ~1 MB por acuerdo) y search_vector viajaban a Node en cada fila del listado y de la
+ * exportación sin usarse; con 100 filas por página eran decenas de MB por consulta.
+ */
+const AGREEMENT_COLS = `ag.id, ag.tenant_id, ag.source, ag.envelope_id, ag.file_id, ag.file_name, ag.title, ag.counterparties, ag.status,
+  ag.effective_date, ag.expiry_date, ag.renewal_date, ag.notice_days, ag.value, ag.currency, ag.tags, ag.metadata, ag.signatures,
+  ag.owner_user_id, ag.created_by_api_key, ag.completed_at, ag.created_at, ag.updated_at`;
+const AGREEMENT_FROM = `FROM agreements ag JOIN files f ON f.id = ag.file_id LEFT JOIN users u ON u.id = ag.owner_user_id`;
+const AGREEMENT_SELECT = `SELECT ${AGREEMENT_COLS}, f.sha256, u.name AS owner_name ${AGREEMENT_FROM}`;
+
+/**
+ * Título sin acentos y en minúsculas, en SQL. La misma expresión exacta que el índice trigram agreements_title_fold_trgm_idx
+ * (migración 0088): si cambia, hay que recrear el índice. Se pliega en SQL (no con una columna llenada por la aplicación)
+ * para no reescribir la tabla.
+ */
+export const titleFoldSql = (expr: string) =>
+  `translate(lower(${expr}), 'áàâãäåéèêëíìîïóòôõöúùûüýÿçñ', 'aaaaaaeeeeiiiiooooouuuuyycn')`;
+
+/** Máximo de filas del CSV de acuerdos (se pide una más para saber si se cortó). */
+const AGREEMENTS_CSV_MAX = 10_000;
 
 // ───────────────────────────── Ingesta ─────────────────────────────
 
@@ -160,11 +180,18 @@ function whereFor(a: AuthContext, f: AgreementFilters, params: unknown[]): strin
   params.push(a.tenantId);
   const w: string[] = [`ag.tenant_id = $${params.length}`, agreementVisibilitySql(a, params)];
   if (f.q?.trim()) {
-    params.push(fold(f.q.trim()));
+    const folded = fold(f.q.trim());
+    params.push(folded);
     const p = `$${params.length}`;
-    params.push(`%${fold(f.q.trim()).replace(/[%_\\]/g, (c) => `\\${c}`)}%`);
+    params.push(likeContains(folded));
     const like = `$${params.length}`;
-    w.push(`(ag.search_vector @@ websearch_to_tsquery('spanish', ${p}) OR ag.search_vector @@ websearch_to_tsquery('portuguese', ${p}) OR ag.title ILIKE ${like})`);
+    // Título plegado de los dos lados ("genero" encuentra "Género"; antes se comparaba la búsqueda plegada con el título
+    // tal cual). Con el índice trigram sobre la misma expresión (0088), las dos ramas usan índice (BitmapOr) y no se
+    // recorre toda la organización.
+    w.push(
+      `(ag.search_vector @@ websearch_to_tsquery('spanish', ${p}) OR ag.search_vector @@ websearch_to_tsquery('portuguese', ${p})` +
+        ` OR ${titleFoldSql("ag.title")} LIKE ${titleFoldSql(like)} ESCAPE '\\')`,
+    );
   }
   if (f.status) {
     params.push(f.status);
@@ -179,8 +206,14 @@ function whereFor(a: AuthContext, f: AgreementFilters, params: unknown[]): strin
     w.push(`$${params.length} = ANY(ag.tags)`);
   }
   if (f.counterparty) {
-    params.push(`%${f.counterparty.replace(/[%_\\]/g, (c) => `\\${c}`)}%`);
-    w.push(`ag.counterparties::text ILIKE $${params.length}`);
+    // Nombre o correo de alguna contraparte. Contra el JSON como texto, "name" o "role" encontraban todos los acuerdos
+    // (son claves del JSON) y un texto con comillas o barras no coincidía con su forma escapada.
+    params.push(likeContains(f.counterparty));
+    const n = `$${params.length}`;
+    w.push(
+      `EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(ag.counterparties) = 'array' THEN ag.counterparties ELSE '[]'::jsonb END) cp` +
+        ` WHERE cp->>'name' ILIKE ${n} ESCAPE '\\' OR cp->>'email' ILIKE ${n} ESCAPE '\\')`,
+    );
   }
   if (f.expiresWithinDays !== undefined) {
     params.push(f.expiresWithinDays);
@@ -241,8 +274,8 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
   async function list(a: AuthContext, f: AgreementFilters, cursor: string | undefined, limit: number): Promise<ListAgreementsResponse> {
     const params: unknown[] = [];
     let where = whereFor(a, f, params);
-    const countParams = [...params];
-    const total = Number((await s.db.one<any>(`SELECT count(*)::int AS n FROM agreements ag WHERE ${where}`, countParams))?.n ?? 0);
+    // El total solo en la primera página: en las siguientes es el mismo conteo (y recorre todo lo que coincide).
+    const total = cursor ? null : Number((await s.db.one<any>(`SELECT count(*)::int AS n FROM agreements ag WHERE ${where}`, [...params]))?.n ?? 0);
     if (cursor) {
       // created_at va en microsegundos (un Date de JS solo tiene ms: con ms se saltaban los acuerdos del mismo
       // milisegundo que el último de la página). Se aceptan también los cursores viejos con fecha ISO.
@@ -262,8 +295,8 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
     }
     params.push(limit + 1);
     const rows = await s.db.query<any>(
-      `SELECT ag.*, ((extract(epoch FROM ag.created_at) * 1000000)::bigint)::text AS cursor_us, f.sha256, u.name AS owner_name ${excerpt} FROM agreements ag JOIN files f ON f.id = ag.file_id
-       LEFT JOIN users u ON u.id = ag.owner_user_id WHERE ${where} ORDER BY ag.created_at DESC, ag.id DESC LIMIT $${params.length}`,
+      `SELECT ${AGREEMENT_COLS}, ((extract(epoch FROM ag.created_at) * 1000000)::bigint)::text AS cursor_us, f.sha256, u.name AS owner_name ${excerpt}
+       ${AGREEMENT_FROM} WHERE ${where} ORDER BY ag.created_at DESC, ag.id DESC LIMIT $${params.length}`,
       params,
     );
     const page = rows.slice(0, limit);
@@ -309,17 +342,22 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
 
   app.get<{ Querystring: Record<string, string | undefined> }>("/v1/agreements/export.csv", { preHandler: auth }, async (req, reply) => {
     const a = A(req);
-    const f = await filtersFromQuery(a, req.query);
+    const sep = csvSep(req.query.sep);
+    // sep no es un filtro (con una vista abierta, "sep=" vacío intentaría quitar un filtro inexistente).
+    const filterQuery = Object.fromEntries(Object.entries(req.query).filter(([k]) => k !== "sep"));
+    const f = await filtersFromQuery(a, filterQuery);
     const params: unknown[] = [];
     const where = whereFor(a, f, params);
-    const rows = await s.db.query<any>(
-      `SELECT ag.*, f.sha256, u.name AS owner_name FROM agreements ag JOIN files f ON f.id = ag.file_id LEFT JOIN users u ON u.id = ag.owner_user_id
-       WHERE ${where} ORDER BY ag.created_at DESC LIMIT 10000`,
+    // Una fila de más para saber si se cortó: el corte se avisa (header X-Truncated y fila final), no es silencioso.
+    const all = await s.db.query<any>(
+      `${AGREEMENT_SELECT} WHERE ${where} ORDER BY ag.created_at DESC, ag.id DESC LIMIT ${AGREEMENTS_CSV_MAX + 1}`,
       params,
     );
+    const truncated = all.length > AGREEMENTS_CSV_MAX;
+    const rows = truncated ? all.slice(0, AGREEMENTS_CSV_MAX) : all;
     const defs = await s.db.query<any>(`SELECT key, label FROM agreement_fields WHERE tenant_id = $1 ORDER BY position, created_at`, [a.tenantId]);
     const head = ["id", "titulo", "estado", "origen", "contrapartes", "vigencia_desde", "vencimiento", "renovacion", "valor", "moneda", "etiquetas", "responsable", "sha256", ...defs.map((x) => x.label)];
-    const lines = [head.map(csvCell).join(",")];
+    const lines = [head.map(csvCell).join(sep)];
     for (const r of rows) {
       const ag = toAgreement(r);
       lines.push(
@@ -340,12 +378,21 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
           ...defs.map((x) => ag.metadata[x.key] ?? ""),
         ]
           .map(csvCell)
-          .join(","),
+          .join(sep),
       );
     }
-    await auditFromRequest(s.db, req, a, "agreements.exported", { data: { rows: rows.length } });
-    reply.header("content-type", "text/csv; charset=utf-8").header("content-disposition", `attachment; filename="acuerdos.csv"`);
-    return "﻿" + lines.join("\r\n") + "\r\n";
+    if (truncated) {
+      lines.push(
+        ["", `TRUNCADO: se exportaron los ${AGREEMENTS_CSV_MAX} acuerdos más recientes; hay más. Acotá la búsqueda con filtros para el resto.`].map(csvCell).join(sep),
+      );
+      reply.header("x-truncated", "true");
+    }
+    await auditFromRequest(s.db, req, a, "agreements.exported", { data: { rows: rows.length, truncated } });
+    reply
+      .header("content-type", "text/csv; charset=utf-8")
+      .header("content-disposition", `attachment; filename="acuerdos.csv"`)
+      .header("cache-control", "private, no-store");
+    return csvBody(lines);
   });
 
   app.get<{ Params: { id: string } }>("/v1/agreements/:id", { preHandler: auth }, async (req) => toAgreement(await loadAgreementForUser(s.db, A(req), req.params.id)));

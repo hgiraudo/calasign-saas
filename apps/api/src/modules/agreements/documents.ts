@@ -678,17 +678,20 @@ function checkClauseSyntax(body: string, slug: string, library: Record<string, s
   try {
     renderTemplate(body, {});
     const lib = { ...library, [slug]: body };
-    checkClauseGraph(lib, [slug]);
+    // Citas parseadas una sola vez (por texto) para todas las pasadas del grafo.
+    const refCache = new Map<string, string[]>();
+    checkClauseGraph(lib, [slug], refCache);
     // Desde cada ancestro que hoy está bien: uno que ya venía roto (guardado antes de validar el grafo, por otra rama)
-    // no bloquea editar esta cláusula.
-    for (const anc of clauseAncestors(lib, slug)) {
+    // no bloquea editar esta cláusula. Los sanos se validan juntos (las alturas se calculan una vez).
+    const ok = clauseAncestors(lib, slug, refCache).filter((anc) => {
       try {
-        checkClauseGraph(library, [anc]);
+        checkClauseGraph(library, [anc], refCache);
+        return true;
       } catch {
-        continue;
+        return false;
       }
-      checkClauseGraph(lib, [anc]);
-    }
+    });
+    checkClauseGraph(lib, ok, refCache);
   } catch (e) {
     if (e instanceof TemplateSyntaxError) throw badRequest("template_syntax", e.message, { line: e.line });
     throw e;
@@ -696,15 +699,18 @@ function checkClauseSyntax(body: string, slug: string, library: Record<string, s
 }
 
 /** Cláusulas de la biblioteca que citan `slug` directa o indirectamente (todas las ramas; las que no parsean, no citan). */
-function clauseAncestors(lib: Record<string, string>, slug: string): string[] {
+function clauseAncestors(lib: Record<string, string>, slug: string, refCache = new Map<string, string[]>()): string[] {
   const citedBy = new Map<string, string[]>();
   for (const [k, src] of Object.entries(lib)) {
     if (src == null) continue;
-    let refs: string[];
-    try {
-      refs = parseRefs(src);
-    } catch {
-      refs = [];
+    let refs = refCache.get(src);
+    if (!refs) {
+      try {
+        refs = parseRefs(src);
+      } catch {
+        refs = [];
+      }
+      refCache.set(src, refs);
     }
     for (const r of refs) {
       const xs = citedBy.get(r);

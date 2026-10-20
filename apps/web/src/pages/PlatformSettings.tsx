@@ -585,7 +585,8 @@ export function StoragePage() {
     Promise.all([
       api<{ items: StorageProviderInfo[] }>("/v1/storage/providers").then((r) => setProviders(r.items)),
       api<{ items: StorageConnection[] }>("/v1/storage/connections").then((r) => setConns(r.items)),
-      api<{ items: StorageExport[] }>("/v1/storage/exports?limit=25").then((r) => setExports(r.items)),
+      // El historial lista asuntos de sobres de toda la organización: la API lo limita a envelopes:view_all.
+      canEdit ? api<{ items: StorageExport[] }>("/v1/storage/exports?limit=25").then((r) => setExports(r.items)) : Promise.resolve(setExports([])),
     ]);
   const { error, setError, act } = useAct(load);
 
@@ -803,8 +804,8 @@ export function StoragePage() {
         ))
       )}
 
-      <h2 style={{ marginTop: 24 }}>{p("sto.exports")}</h2>
-      {!exports ? (
+      {canEdit && <h2 style={{ marginTop: 24 }}>{p("sto.exports")}</h2>}
+      {!canEdit ? null : !exports ? (
         <Spinner />
       ) : exports.length === 0 ? (
         <div className="empty">{p("sto.exports.empty")}</div>

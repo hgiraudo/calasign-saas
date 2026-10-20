@@ -193,6 +193,24 @@ describe("proveedor", () => {
     }
     expect(P.aiProviderStatus().name).toBe("mock");
   });
+
+  it("sin clave: el mock se niega solo con APP_ENV=prod (no por NODE_ENV=production, como corre dev)", async () => {
+    const { config } = await import("../src/config");
+    const prev = { environment: config.environment, production: config.production };
+    const c = config as { environment: string; production: boolean };
+    try {
+      c.production = true;
+      c.environment = "dev";
+      P.setAiProviderForTests(undefined);
+      expect(P.aiProviderStatus().name).toBe("mock");
+      c.environment = "prod";
+      P.setAiProviderForTests(undefined);
+      expect(P.aiProviderStatus().name).toBe("none");
+    } finally {
+      Object.assign(c, prev);
+      P.setAiProviderForTests(undefined);
+    }
+  });
 });
 
 describe("texto enviado e ids de línea", () => {
@@ -254,10 +272,27 @@ describe("barrido de extracción automática", () => {
     expect(a.ai_metadata_attempted_at).not.toBeNull();
     expect(new Date(a.ai_metadata_retry_at).getTime() - Date.now()).toBeGreaterThan(5 * 3600_000);
   }, 60_000);
+
+  it("sin proveedor de IA no toma sobres: no gasta intentos ni abre la ventana de 30 días", async () => {
+    const t = await tenant("business");
+    await db.query(`UPDATE tenants SET ai_auto_extract = true WHERE id = $1`, [t]);
+    const env = uuidv7();
+    await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, completed_at) VALUES ($1, $2, 'S', 'completed', now())`, [env, t]);
+    const blobs = { get: async () => new Uint8Array() } as any;
+    const log = { warn: () => {}, info: () => {} };
+    P.setAiProviderForTests(null);
+    try {
+      await runAiSweep({ db, blobs, log });
+    } finally {
+      P.setAiProviderForTests(undefined);
+    }
+    const a = await db.one<any>(`SELECT ai_metadata_attempted_at, ai_metadata_first_attempt_at, ai_metadata_retry_at FROM envelopes WHERE id = $1`, [env]);
+    expect(a).toEqual({ ai_metadata_attempted_at: null, ai_metadata_first_attempt_at: null, ai_metadata_retry_at: null });
+  }, 60_000);
 });
 
 describe("uso de mensajes y alertas BYOK", () => {
-  it("el uso de mensajes no cuenta avisos de sistema (invitaciones, alertas BYOK, recordatorios internos)", async () => {
+  it("el uso de mensajes no cuenta avisos de sistema (invitaciones, alertas BYOK, recordatorios internos); sí los de la organización sin sobre", async () => {
     const t = await tenant("business");
     const env = uuidv7();
     const ins = (template: string, envelopeId: string | null) =>
@@ -270,6 +305,9 @@ describe("uso de mensajes y alertas BYOK", () => {
     await ins("byok_key_failing", null);
     await ins("ai_renewal_alert", env);
     expect((await plans.usageThisMonth(db, t)).messages.email).toBe(1);
+    // Un aviso de la organización sin sobre (negociación, workflow, formulario) sí cuenta.
+    await ins("negotiation_invite", null);
+    expect((await plans.usageThisMonth(db, t)).messages.email).toBe(2);
   });
 
   it("dos detecciones simultáneas de la falla de la clave dejan una sola alerta", async () => {

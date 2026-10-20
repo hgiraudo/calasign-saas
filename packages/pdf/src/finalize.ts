@@ -9,6 +9,7 @@ import { embedFonts, fitFontSize, safeMultiline, safeText, withDisplayedSpace, w
 import { labels, type CertLabels } from "./i18n";
 import type { SignatureProvider } from "./provider";
 import { assertPngSize } from "./images";
+import { findLastStartXref } from "./incremental";
 
 // @signpdf/signpdf exporta una instancia por defecto; según el bundler llega anidada.
 const signpdf = ((signpdfModule as unknown as { default?: typeof signpdfModule }).default ?? signpdfModule) as {
@@ -218,17 +219,15 @@ const CHAIN_HEAD_KEYWORD = "calasign-chain-head:";
  * entrada /Keywords con `calasign-chain-head:<hash>`. buildEnvelopeDocument la escribe con pdf-lib (setKeywords: string
  * hex UTF-16BE con BOM, `<FEFF0063...>`) y el PDF se guarda sin object streams, así que el diccionario queda legible en
  * los bytes; también se acepta string literal `(...)` o hex sin BOM (PDFDocEncoding). Las actualizaciones
- * incrementales posteriores (firmas con certificado propio, sello, LTV) agregan bytes al final: se toma la última
- * versión del objeto. Ir por el Info del trailer (y no por la última aparición del texto en todo el archivo) evita
- * tomar un texto igual que venga sin comprimir dentro de un documento subido por el remitente.
+ * incrementales posteriores (firmas con certificado propio, sello, LTV) agregan revisiones al final: el objeto se
+ * resuelve por la tabla xref (startxref, /Prev), no por la última aparición de `N 0 obj` en el archivo, que podría venir
+ * sin comprimir dentro de un documento subido por el remitente.
  * null si no se encuentra (PDF sellado antes de escribir la Keyword, o reescrito por otra herramienta): el que llama
  * puede recurrir a readCertificateChainHead.
  */
 export function findChainHeadKeyword(pdf: Uint8Array): string | null {
   const buf = Buffer.from(pdf.buffer, pdf.byteOffset, pdf.byteLength);
-  const info = lastInfoRef(buf);
-  if (!info) return null;
-  const obj = lastObject(buf, info.num, info.gen);
+  const obj = infoObjectViaXref(buf);
   if (!obj) return null;
   const m = /\/Keywords\s*(\(|<)/.exec(obj);
   if (!m) return null;
@@ -261,37 +260,76 @@ export function findChainHeadKeyword(pdf: Uint8Array): string | null {
   return k ? k[1] : null;
 }
 
-/** Referencia /Info del último trailer: la última aparición de `/Info N G R` en el archivo. */
-function lastInfoRef(buf: Buffer): { num: number; gen: number } | null {
-  let pos = buf.length;
-  // Unas pocas apariciones alcanzan: el trailer vigente está al final del archivo.
-  for (let tries = 0; tries < 8 && pos > 0; tries++) {
-    const at = buf.lastIndexOf("/Info", pos - 1, "latin1");
-    if (at < 0) return null;
-    const m = /^\/Info\s+(\d{1,10})\s+(\d{1,5})\s+R/.exec(buf.toString("latin1", at, Math.min(buf.length, at + 40)));
-    if (m) return { num: Number(m[1]), gen: Number(m[2]) };
-    pos = at;
+/**
+ * Diccionario Info vigente, resuelto como lo haría un lector: startxref → tabla xref clásica y trailer, siguiendo /Prev
+ * hacia las revisiones anteriores (la entrada más reciente de cada objeto gana), y el objeto leído en el offset exacto
+ * que indica la tabla. Buscar `N 0 obj` en todo el archivo no sirve: un content stream sin comprimir de un documento
+ * subido puede traer un `N 0 obj << /Keywords (...) >> endobj` falso. Devuelve el texto (latin1) del objeto, acotado a
+ * 64 KB; null si el xref es un xref stream (o híbrido sin la entrada) o si algo no cierra: el que llama recurre al
+ * respaldo que sí parsea el PDF.
+ */
+function infoObjectViaXref(buf: Buffer): string | null {
+  let offset: number;
+  try {
+    offset = findLastStartXref(buf);
+  } catch {
+    return null;
   }
-  return null;
-}
-
-/** Texto (latin1) de la última versión del objeto `num gen obj ... endobj`; acotado a 64 KB. */
-function lastObject(buf: Buffer, num: number, gen: number): string | null {
-  const needle = `${num} ${gen} obj`;
-  let pos = buf.length;
-  while (pos > 0) {
-    const at = buf.lastIndexOf(needle, pos - 1, "latin1");
-    if (at < 0) return null;
-    const before = at === 0 ? 0x0a : buf[at - 1];
-    // Que no sea el final de otro número (p. ej. "15 0 obj" dentro de "115 0 obj").
-    if (before < 0x30 || before > 0x39) {
-      const end = buf.indexOf("endobj", at, "latin1");
-      const stop = end < 0 ? Math.min(buf.length, at + 65_536) : Math.min(end, at + 65_536);
-      return buf.toString("latin1", at + needle.length, stop);
+  let info: { num: number; gen: number } | null = null;
+  const sections: { start: number; count: number; body: number }[][] = [];
+  const seen = new Set<number>();
+  // Cadena de revisiones (de la más nueva a la más vieja), acotada.
+  for (let rev = 0; rev < 256; rev++) {
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset >= buf.length || seen.has(offset)) return null;
+    seen.add(offset);
+    const head = buf.toString("latin1", offset, Math.min(buf.length, offset + 4));
+    if (head !== "xref") return null; // xref stream (u offset roto): que resuelva el respaldo.
+    let pos = offset + 4;
+    const subs: { start: number; count: number; body: number }[] = [];
+    const ws = (c: number) => c === 0x20 || c === 0x0a || c === 0x0d || c === 0x09 || c === 0x0c || c === 0x00;
+    for (;;) {
+      while (pos < buf.length && ws(buf[pos])) pos++;
+      if (buf.toString("latin1", pos, pos + 7) === "trailer") break;
+      const m = /^(\d{1,10})[ \t]+(\d{1,10})[ \t]*\r?\n?/.exec(buf.toString("latin1", pos, Math.min(buf.length, pos + 32)));
+      if (!m) return null;
+      const start = Number(m[1]);
+      const count = Number(m[2]);
+      const body = pos + m[0].length;
+      // Cada entrada ocupa 20 bytes (ISO 32000-1 §7.5.4).
+      if (body + count * 20 > buf.length) return null;
+      subs.push({ start, count, body });
+      pos = body + count * 20;
     }
-    pos = at;
+    sections.push(subs);
+    const tEnd = buf.indexOf("startxref", pos, "latin1");
+    const trailer = buf.toString("latin1", pos + 7, tEnd < 0 ? Math.min(buf.length, pos + 4096) : Math.min(tEnd, pos + 4096));
+    if (!info) {
+      const im = /\/Info\s+(\d{1,10})\s+(\d{1,5})\s+R/.exec(trailer);
+      if (im) info = { num: Number(im[1]), gen: Number(im[2]) };
+    }
+    const prev = /\/Prev\s+(\d{1,15})(?![\d.])/.exec(trailer);
+    if (!prev) break;
+    offset = Number(prev[1]);
   }
-  return null;
+  if (!info) return null;
+  // Entrada más reciente del objeto Info.
+  let entry: { offset: number; gen: number; type: string } | null = null;
+  for (const subs of sections) {
+    for (const s of subs) {
+      if (info.num < s.start || info.num >= s.start + s.count) continue;
+      const at = s.body + (info.num - s.start) * 20;
+      const m = /^(\d{10}) (\d{5}) ([nf])/.exec(buf.toString("latin1", at, at + 18));
+      if (!m) return null;
+      entry = { offset: Number(m[1]), gen: Number(m[2]), type: m[3] };
+    }
+    if (entry) break;
+  }
+  if (!entry || entry.type !== "n" || entry.gen !== info.gen || entry.offset >= buf.length) return null;
+  const m = /^(\d{1,10})\s+(\d{1,5})\s+obj/.exec(buf.toString("latin1", entry.offset, Math.min(buf.length, entry.offset + 32)));
+  if (!m || Number(m[1]) !== info.num || Number(m[2]) !== info.gen) return null;
+  const from = entry.offset + m[0].length;
+  const end = buf.indexOf("endobj", from, "latin1");
+  return buf.toString("latin1", from, end < 0 ? Math.min(buf.length, from + 65_536) : Math.min(end, from + 65_536));
 }
 
 /**

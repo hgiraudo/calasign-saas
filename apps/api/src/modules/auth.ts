@@ -12,7 +12,7 @@ import { encrypt } from "../lib/util";
 import { enqueue } from "../infra/queue";
 import { recordAudit } from "./audit";
 import { z } from "zod";
-import { actingPerson } from "./member-access";
+import { actingPerson, revokeCredentialsCreatedBy } from "./member-access";
 
 const SESSION_DAYS = 14;
 
@@ -154,7 +154,7 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
   app.post("/v1/auth/password/reset", { config: { rateLimit: { max: 10, timeWindow: "15 minutes" } } }, async (req, reply) => {
     const input = ResetPasswordInput.parse(req.body);
     const pw = await hashPassword(input.password);
-    const userId = await s.db.tx(async (t) => {
+    const done = await s.db.tx(async (t) => {
       // Primero la cuenta (como "olvidé mi contraseña", que bloquea users y después password_resets): con el orden
       // inverso, los dos a la vez para la misma persona se bloqueaban entre sí (deadlock, 500).
       const owner = await t.one<any>(`SELECT user_id FROM password_resets WHERE token_hash = $1`, [sha256Hex(input.token)]);
@@ -166,6 +166,10 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
         [sha256Hex(input.token)],
       );
       if (!row) return null;
+      // La verificación en dos pasos NO se borra al restablecer: controlar el correo no alcanza para saltearla (es justo
+      // lo que protege). Una 2FA puesta por quien registró la cuenta con este correo se limpia al vincularla por SSO/SCIM
+      // (secureUnprovenAccount), donde el proveedor de identidad sí prueba la identidad.
+      const totpCleared = false;
       await t.query(`UPDATE users SET password_hash = $2, password_reset_at = now() WHERE id = $1`, [row.user_id, pw]);
       await t.query(`DELETE FROM login_attempts WHERE user_id = $1`, [row.user_id]);
       // Restablecerla prueba que controla el correo: la contraseña vale también en las organizaciones que lo sumaron
@@ -181,24 +185,46 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
       await t.query(`UPDATE oauth_authorization_codes SET used_at = now() WHERE user_id = $1 AND used_at IS NULL`, [row.user_id]);
       await t.query(`DELETE FROM login_challenges WHERE user_id = $1`, [row.user_id]);
       await t.query(`UPDATE password_resets SET used_at = now() WHERE user_id = $1 AND used_at IS NULL`, [row.user_id]);
-      return row.user_id as string;
+      // Y las credenciales que creó (API keys, tokens SCIM, apps de servicio, invitaciones pendientes que mandó) en todas
+      // sus organizaciones: quien tenía la contraseña vieja pudo crearlas para seguir entrando después del cambio.
+      const revoked = await revokeCredentialsCreatedBy(t, row.user_id);
+      return { userId: row.user_id as string, revoked, totpCleared };
     });
-    if (!userId) throw new AppError(400, "invalid_token", "El link para restablecer la contraseña no es válido o ya venció");
+    if (!done) throw new AppError(400, "invalid_token", "El link para restablecer la contraseña no es válido o ya venció");
+    const { userId, revoked, totpCleared } = done;
     const u = await s.db.one<any>(`SELECT email FROM users WHERE id = $1`, [userId]);
     const { ip, userAgent } = clientInfo(req);
     const tenants = await s.db.query<any>(`SELECT tenant_id FROM memberships WHERE user_id = $1`, [userId]);
-    for (const m of tenants) {
+    // Auditoría en cada organización: sus miembros y, aunque ya no lo sea, donde se le revocaron credenciales.
+    const tenantIds = new Set<string>([...tenants.map((m) => m.tenant_id as string), ...revoked.map((r) => r.tenantId)]);
+    for (const tenantId of tenantIds) {
+      const r = revoked.find((x) => x.tenantId === tenantId);
       await recordAudit(s.db, {
-        tenantId: m.tenant_id,
+        tenantId,
         action: "user.password_reset",
         actor: { type: "user", id: userId, label: u?.email ?? null },
         targetType: "user",
         targetId: userId,
         ip,
         userAgent,
+        data: {
+          ...(r ? { revokedCredentials: { apiKeys: r.apiKeys, scimTokens: r.scimTokens, serviceApps: r.serviceApps, invitations: r.invitations } } : {}),
+          ...(totpCleared ? { twoFactorCleared: true } : {}),
+        },
       }).catch(() => {});
     }
-    return reply.code(204).send();
+    // Aviso para la pantalla: qué se revocó (sumado entre organizaciones) y si se borró la 2FA.
+    const sum = (f: (r: (typeof revoked)[number]) => number) => revoked.reduce((n, r) => n + f(r), 0);
+    return reply.code(200).send({
+      ok: true,
+      revokedCredentials: {
+        apiKeys: sum((r) => r.apiKeys.length),
+        scimTokens: sum((r) => r.scimTokens),
+        serviceApps: sum((r) => r.serviceApps.length),
+        invitations: sum((r) => r.invitations),
+      },
+      twoFactorCleared: totpCleared,
+    });
   });
 
   app.post("/v1/auth/logout", async (req, reply) => {

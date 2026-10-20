@@ -239,8 +239,8 @@ async function tableExists(db: Db, name: string): Promise<boolean> {
 
 /**
  * Avisos que no cuentan como mensajes de la organización en el uso: los de sistema (invitaciones al equipo, alertas de
- * la clave BYOK, recordatorios internos de renovación). Además solo cuentan los avisos de un sobre (envelope_id): los
- * correos de sistema sin sobre no son mensajería de la organización.
+ * la clave BYOK, recordatorios internos de renovación). El resto cuenta tenga sobre o no: los avisos de negociaciones,
+ * workflows o formularios también son mensajería de la organización.
  */
 export const SYSTEM_NOTIFICATION_TEMPLATES = ["invitation", "byok_key_failing", "ai_renewal_alert"] as const;
 
@@ -253,7 +253,7 @@ export async function usageThisMonth(db: Db, tenantId: string): Promise<BillingU
     usersCount(db, tenantId),
     db.query<{ channel: string; n: number }>(
       `SELECT channel, count(*)::int AS n FROM notifications WHERE tenant_id = $1 AND status IN ('sent','bounced','complained') AND created_at >= $2
-          AND envelope_id IS NOT NULL AND NOT (template = ANY($3::text[])) GROUP BY channel`,
+          AND NOT (template = ANY($3::text[])) GROUP BY channel`,
       [tenantId, start.toISOString(), [...SYSTEM_NOTIFICATION_TEMPLATES]],
     ),
   ]);

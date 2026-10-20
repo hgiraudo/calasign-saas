@@ -428,7 +428,7 @@ const invAna = await other.api("POST", "/v1/invitations", { email: `ana@${domain
 await new Client("ana-forgot").api("POST", "/v1/auth/password/forgot", { email: `ana@${domain}` }, 202);
 const resetMail = await waitMail((m) => m.to === `ana@${domain}` && m.link?.includes("/reset/"), "reset de Ana");
 const anaPw = "clave-de-ana-12345";
-await new Client("ana-reset").api("POST", "/v1/auth/password/reset", { token: resetMail.link.split("/reset/")[1], password: anaPw }, 204);
+await new Client("ana-reset").api("POST", "/v1/auth/password/reset", { token: resetMail.link.split("/reset/")[1], password: anaPw }, 200);
 await new Client("ana-accept").api("POST", `/v1/invite/${invAna.acceptUrl.split("/invite/")[1]}/accept`, { password: anaPw }, [200, 201]);
 // El reset cerró sus sesiones: vuelve a entrar por SSO a su organización y, con esa sesión, no puede cambiar a la otra.
 const ana2 = new Client("ana-sso");
@@ -456,7 +456,7 @@ await preSquatter.api("POST", "/v1/auth/login", { email: preEmail, password: "cl
 await preSquatter.api("POST", "/v1/auth/switch-tenant", { tenantId: me.tenant.id }, 401);
 await new Client("pre-forgot").api("POST", "/v1/auth/password/forgot", { email: preEmail }, 202);
 const preMail = await waitMail((m) => m.to === preEmail && m.link?.includes("/reset/"), "reset del dueño del correo");
-await new Client("pre-reset").api("POST", "/v1/auth/password/reset", { token: preMail.link.split("/reset/")[1], password: "clave-del-dueño-12" }, 204);
+await new Client("pre-reset").api("POST", "/v1/auth/password/reset", { token: preMail.link.split("/reset/")[1], password: "clave-del-dueño-12" }, 200);
 const preOwner = new Client("pre-owner");
 await preOwner.api("POST", "/v1/auth/login", { email: preEmail, password: "clave-del-dueño-12" });
 await preOwner.api("POST", "/v1/auth/switch-tenant", { tenantId: me.tenant.id });

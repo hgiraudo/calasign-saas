@@ -406,7 +406,7 @@ if (/^http:\/\/(localhost|127\.0\.0\.1)/.test(BASE)) {
     if (!evaReset) await new Promise((r) => setTimeout(r, 200));
   }
   if (!evaReset) throw new Error("no llegó el correo de restablecimiento de Eva");
-  await evaPw.api("POST", "/v1/auth/password/reset", { token: evaReset, password: "clave-nueva-de-eva-1234" }, 204);
+  await evaPw.api("POST", "/v1/auth/password/reset", { token: evaReset, password: "clave-nueva-de-eva-1234" }, 200);
   const evaBack = new Client("eva-back");
   const evaJoined = await evaBack.api("POST", `/v1/invite/${evaToken}/accept`, { password: "clave-nueva-de-eva-1234" });
   if (!evaJoined?.tenant?.id || !evaBack.cookie) throw new Error(`después de restablecer la contraseña, Eva sigue bloqueada: ${JSON.stringify(evaJoined)}`);

@@ -1,8 +1,10 @@
 // Aprovisionamiento SCIM 2.0 (RFC 7643 / 7644): Users y Groups sobre los miembros y grupos de la organización.
 // Autenticación con token Bearer por organización (guardado como hash). Desactivar un usuario le quita la
-// membresía, los grupos y las sesiones en la organización, pero sigue visible para el IdP (active: false).
+// membresía, los grupos y las sesiones en la organización, pero sigue visible para el IdP (active: false). Borrarlo
+// (DELETE) hace lo mismo y lo oculta (404, RFC 7644 §3.6), pero la fila queda (deleted_at): el alta JIT por SSO no lo
+// vuelve a sumar, y un POST posterior del IdP lo vuelve a aprovisionar.
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { actingPerson, revokeMemberAccess } from "../member-access";
+import { actingPerson, revokeMemberAccess, secureUnprovenAccount } from "../member-access";
 import { BUILTIN_ROLE_PERMISSIONS, CreateScimTokenInput, type ScimSettings, type ScimToken } from "@calasign/shared";
 import { z } from "zod";
 import { config } from "../../config";
@@ -64,14 +66,17 @@ interface UserRow {
   updated_at: string | null;
 }
 
-/** Usuarios visibles para SCIM: miembros de la organización + aprovisionados (aunque estén desactivados). */
+/**
+ * Usuarios visibles para SCIM: miembros de la organización + aprovisionados (aunque estén desactivados), salvo los
+ * borrados por SCIM (deleted_at) que no volvieron a ser miembros (p. ej. por una invitación desde la consola).
+ */
 const USERS_SQL = `
   SELECT u.id, u.email, u.name, u.created_at, su.external_id, su.given_name, su.family_name,
          (m.user_id IS NOT NULL) AS active, COALESCE(su.updated_at, u.created_at) AS updated_at
   FROM users u
   LEFT JOIN memberships m ON m.user_id = u.id AND m.tenant_id = $1
   LEFT JOIN scim_users su ON su.user_id = u.id AND su.tenant_id = $1
-  WHERE (m.user_id IS NOT NULL OR su.user_id IS NOT NULL)`;
+  WHERE (m.user_id IS NOT NULL OR (su.user_id IS NOT NULL AND su.deleted_at IS NULL))`;
 
 async function userGroups(db: Db, tenantId: string, userId: string) {
   return db.query<any>(
@@ -207,8 +212,12 @@ async function exceedsScimDefaultRole(db: Db, tenantId: string, role: string, ro
   return perms.some((p) => !allowed.has(p));
 }
 
+/** Fila de scim_users (si estaba borrada y el IdP vuelve a administrarlo, deja de estarlo). */
 async function ensureScimUser(db: Db, tenantId: string, userId: string) {
-  await db.query(`INSERT INTO scim_users (tenant_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [tenantId, userId]);
+  await db.query(
+    `INSERT INTO scim_users (tenant_id, user_id) VALUES ($1,$2) ON CONFLICT (tenant_id, user_id) DO UPDATE SET deleted_at = NULL WHERE scim_users.deleted_at IS NOT NULL`,
+    [tenantId, userId],
+  );
 }
 
 /** Aplica atributos (de POST/PUT o de un PATCH ya reducido) a un usuario existente. */
@@ -542,26 +551,33 @@ export async function scimRoutes(app: FastifyInstance, s: Services) {
       if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new ScimError(400, "userName (correo) es obligatorio", "invalidValue");
       const active = input.active === undefined ? true : asBool(input.active);
       await assertVerifiedDomain(s.db, tenantId, email);
+      let secured: Awaited<ReturnType<typeof secureUnprovenAccount>> = null;
       const userId = await s.db.tx(async (t) => {
         let u = await t.one<any>(`SELECT id FROM users WHERE lower(email) = $1`, [email]);
         if (u) {
+          // Un usuario borrado por SCIM (deleted_at) se puede volver a crear: el IdP no lo ve y no tiene otra forma.
           const known = await t.one(
-            `SELECT 1 FROM memberships WHERE tenant_id = $1 AND user_id = $2 UNION SELECT 1 FROM scim_users WHERE tenant_id = $1 AND user_id = $2`,
+            `SELECT 1 FROM memberships WHERE tenant_id = $1 AND user_id = $2 UNION SELECT 1 FROM scim_users WHERE tenant_id = $1 AND user_id = $2 AND deleted_at IS NULL`,
             [tenantId, u.id],
           );
           if (known) throw new ScimError(409, "El usuario ya existe en la organización", "uniqueness");
+          // Se vincula una cuenta existente: si nunca probó el control del correo, la pudo registrar otra persona; su
+          // 2FA y sus sesiones (y tokens OAuth) se borran (ver secureUnprovenAccount).
+          secured = await secureUnprovenAccount(t, u.id);
         } else {
           u = { id: uuidv7() };
           await t.query(`INSERT INTO users (id, email, name, password_hash, locale) VALUES ($1,$2,$3,'scim-provisioned','es')`, [u.id, email, displayNameOf(input, email)]);
         }
         await t.query(
-          `INSERT INTO scim_users (tenant_id, user_id, external_id, given_name, family_name, active) VALUES ($1,$2,$3,$4,$5,$6)`,
+          `INSERT INTO scim_users (tenant_id, user_id, external_id, given_name, family_name, active) VALUES ($1,$2,$3,$4,$5,$6)
+           ON CONFLICT (tenant_id, user_id) DO UPDATE SET external_id = EXCLUDED.external_id, given_name = EXCLUDED.given_name, family_name = EXCLUDED.family_name,
+             active = EXCLUDED.active, deleted_at = NULL, updated_at = now()`,
           [tenantId, u.id, input.externalId ?? null, input.name?.givenName ?? null, input.name?.familyName ?? null, active],
         );
         if (active) await setActive(t, tenantId, u.id, true);
         return u.id as string;
       });
-      await audit(req, "member.scim_provisioned", "user", userId, { email, active });
+      await audit(req, "member.scim_provisioned", "user", userId, { email, active, ...(secured ? { unprovenAccountSecured: secured } : {}) });
       reply.code(201).header("location", `${scimBase()}/Users/${userId}`);
       return toScimUser(s.db, tenantId, await findUser(s.db, tenantId, userId));
     });
@@ -596,7 +612,9 @@ export async function scimRoutes(app: FastifyInstance, s: Services) {
       const revoked = await s.db.tx(async (t) => {
         await ensureScimUser(t, tenantId, req.params.id);
         const r = await setActive(t, tenantId, req.params.id, false);
-        await t.query(`DELETE FROM scim_users WHERE tenant_id = $1 AND user_id = $2`, [tenantId, req.params.id]);
+        // La fila queda (active = false, deleted_at): sin ella el alta JIT por SSO lo volvía a sumar. GET y listados
+        // SCIM ya no lo muestran (404).
+        await t.query(`UPDATE scim_users SET active = false, deleted_at = now(), updated_at = now() WHERE tenant_id = $1 AND user_id = $2`, [tenantId, req.params.id]);
         return r;
       });
       await audit(req, "member.scim_deleted", "user", req.params.id, revokedData(revoked));

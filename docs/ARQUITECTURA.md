@@ -261,6 +261,18 @@ Resultado de las rondas de revisión de código de octubre de 2026; cada una tie
   SCIM puede sumar gente a grupos y dar de baja administradores.
 - **SSO**: una sesión abierta por SSO queda atada a esa organización (`/v1/me/access` solo la muestra a ella), no puede
   activar 2FA de la cuenta (`sso_session_2fa`) y se cierra si se apaga el SSO o cambia el proveedor de identidad.
+  Dura `sso_configs.session_ttl_hours` horas absolutas desde que se abre (1 a 336; por defecto 24, configurable en
+  Ajustes → SSO); bajarlo acorta también las sesiones SSO abiertas. Las sesiones con contraseña siguen en 14 días.
+  OIDC exige `email_verified` = `true` (o `"true"`) salvo que la conexión tenga `trustUnverifiedEmail` (para IdP que
+  no mandan el claim, como Microsoft Entra ID en algunas configuraciones). SAML guarda el ID de cada Assertion
+  (`saml_assertion_ids`, hasta su `NotOnOrAfter`) y rechaza las repetidas (`sso_assertion_replay`).
+- **SCIM DELETE** conserva la fila de `scim_users` (`active = false`, `deleted_at`): GET y listados devuelven 404, y el
+  alta JIT por SSO no vuelve a sumar a quien el IdP desactivó o borró (`sso_not_member`). Un POST posterior lo reactiva.
+- **Cuentas que nunca probaron el control del correo** (sin `users.password_reset_at`): al vincularlas por JIT o SCIM
+  se borran su 2FA, sus sesiones y sus tokens OAuth (quien la registró pudo ser otra persona). Restablecer la
+  contraseña NO borra la 2FA (controlar el correo no alcanza para saltearla). Restablecer la contraseña revoca además, en todas sus
+  organizaciones, las API keys, tokens SCIM, apps de servicio e invitaciones pendientes que creó (la respuesta, 200,
+  lo detalla). Activar o desactivar la 2FA cierra las otras sesiones y revoca los tokens OAuth de la cuenta.
   La redirección después del login acepta solo rutas propias (empiezan con `/`, sin `//`, hasta 4000 caracteres; si
   no, `/app`: nunca una URL cortada, para que la vuelta a `/oauth/authorize` de un conector MCP llegue entera).
 - **Invitaciones**: revocar o reemplazar una invitación pendiente exige poder otorgar su rol. Quien acepta una

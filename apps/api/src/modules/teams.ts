@@ -1046,6 +1046,22 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     }
   }
 
+  /**
+   * Al activar o desactivar la 2FA se cierran las OTRAS sesiones de la cuenta (la actual sigue) y se revocan sus tokens
+   * OAuth: si alguien tenía la contraseña y una sesión abierta (o una app autorizada), activarla no lo sacaba; y quien
+   * la desactiva desde una sesión robada no deja abiertas las del dueño sin enterarse. Devuelve cuántas sesiones cerró.
+   */
+  async function closeOtherSessions(req: FastifyRequest, userId: string): Promise<number> {
+    const cookie = req.cookies?.[SESSION_COOKIE];
+    return s.db.tx(async (t) => {
+      const closed = await t.query(`DELETE FROM sessions WHERE user_id = $1 AND token_hash <> $2 RETURNING user_id`, [userId, cookie ? sha256Hex(cookie) : ""]);
+      await t.query(`UPDATE oauth_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL`, [userId]);
+      await t.query(`UPDATE oauth_authorization_codes SET used_at = now() WHERE user_id = $1 AND used_at IS NULL`, [userId]);
+      await t.query(`DELETE FROM login_challenges WHERE user_id = $1`, [userId]);
+      return closed.length;
+    });
+  }
+
   app.post("/v1/me/2fa/setup", { preHandler: auth }, async (req) => {
     const a = A(req);
     if (!a.userId) throw forbidden("Solo para usuarios");
@@ -1075,7 +1091,8 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
       `UPDATE users SET totp_secret_enc = $2, totp_pending_enc = NULL, totp_enabled_at = now(), totp_last_step = $3, totp_recovery_hashes = $4 WHERE id = $1`,
       [a.userId, encrypt(secret), step, codes.map((c) => sha256Hex(normalizeRecoveryCode(c)))],
     );
-    await auditFromRequest(s.db, req, a, "user.2fa_enabled", { targetType: "user", targetId: a.userId });
+    const sessionsClosed = await closeOtherSessions(req, a.userId);
+    await auditFromRequest(s.db, req, a, "user.2fa_enabled", { targetType: "user", targetId: a.userId, data: { otherSessionsClosed: sessionsClosed } });
     return { recoveryCodes: codes };
   });
 
@@ -1093,7 +1110,8 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
       `UPDATE users SET totp_secret_enc = NULL, totp_pending_enc = NULL, totp_enabled_at = NULL, totp_recovery_hashes = '{}', totp_last_step = NULL WHERE id = $1`,
       [a.userId],
     );
-    await auditFromRequest(s.db, req, a, "user.2fa_disabled", { targetType: "user", targetId: a.userId });
+    const sessionsClosed = await closeOtherSessions(req, a.userId);
+    await auditFromRequest(s.db, req, a, "user.2fa_disabled", { targetType: "user", targetId: a.userId, data: { otherSessionsClosed: sessionsClosed } });
     return { ok: true };
   });
 

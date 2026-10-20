@@ -182,6 +182,29 @@ describe("workflows con inicio público", () => {
     }
   });
 
+  it("tope compartido: un run cuyo primer paso no es un formulario lo gasta al iniciar, aunque tenga un formulario después", async () => {
+    const { config } = await import("../src/config");
+    const [collect, approve] = collectThenApprove();
+    const res = await createWorkflow({ name: `Aprobar ${randomUUID().slice(0, 6)}`, publicStart: true, steps: [approve, collect] });
+    expect(res.statusCode).toBe(201);
+    const slug = (res.json().publicUrl as string).split("/wf/")[1];
+    const prev = config.webForms.maxPerTenantHour;
+    const n = (await db.one<any>(`SELECT count(*)::int AS n FROM workflow_runs WHERE tenant_id = $1 AND public_collected_at > now() - interval '1 hour'`, [tenant])).n;
+    config.webForms.maxPerTenantHour = n + 1;
+    try {
+      const first = await startPublic(slug, "192.0.2.11");
+      expect(first.statusCode).toBe(201);
+      const { sha256Hex } = await import("../src/lib/util");
+      const run = await db.one<any>(`SELECT public_collected_at FROM workflow_runs WHERE public_token_hash = $1`, [sha256Hex(first.json().token)]);
+      expect(run.public_collected_at).not.toBeNull();
+      const over = await startPublic(slug, "192.0.2.12");
+      expect(over.statusCode).toBe(429);
+      expect(over.json().error.code).toBe("workflow_rate_limited");
+    } finally {
+      config.webForms.maxPerTenantHour = prev;
+    }
+  });
+
   it("tope aparte (más alto) de inicios por organización y hora", async () => {
     const { config } = await import("../src/config");
     const wf = await publicWorkflow();
@@ -412,6 +435,44 @@ describe("negociaciones", () => {
     const envelopeId = acc.json().envelope.id;
     const recips = await db.query<any>(`SELECT email, role FROM recipients WHERE envelope_id = $1 ORDER BY email`, [envelopeId]);
     expect(recips.find((r: any) => r.email === "l@x.com").role).toBe("cc");
+  }, 60_000);
+
+  it("negociación sobre PDF subido: al aceptar, los observadores van como copia", async () => {
+    const content = "BT /F1 14 Tf 50 780 Td (Contrato subido) Tj ET";
+    const objs = [
+      "<< /Type /Catalog /Pages 2 0 R >>",
+      "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+      `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
+      "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ];
+    let pdf = "%PDF-1.4\n";
+    const offsets: number[] = [];
+    objs.forEach((o, i) => {
+      offsets.push(pdf.length);
+      pdf += `${i + 1} 0 obj\n${o}\nendobj\n`;
+    });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n` + offsets.map((o) => `${String(o).padStart(10, "0")} 00000 n \n`).join("");
+    pdf += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+    const meta = { title: "Subido", participants: [{ name: "A", email: "a@x.com", role: "Cliente" }, { name: "L", email: "l@x.com", role: "Abogado", observer: true }] };
+    const b = "----calasign" + randomUUID().slice(0, 8);
+    const body = Buffer.concat([
+      Buffer.from(`--${b}\r\nContent-Disposition: form-data; name="meta"\r\n\r\n${JSON.stringify(meta)}\r\n`),
+      Buffer.from(`--${b}\r\nContent-Disposition: form-data; name="file"; filename="c.pdf"\r\nContent-Type: application/pdf\r\n\r\n`),
+      Buffer.from(pdf, "latin1"),
+      Buffer.from(`\r\n--${b}--\r\n`),
+    ]);
+    const up = await app.inject({ method: "POST", url: "/v1/negotiations/upload", headers: { ...H(), "content-type": `multipart/form-data; boundary=${b}` }, payload: body });
+    expect(up.statusCode).toBe(201);
+    const id = up.json().negotiation.id as string;
+    const acc = await app.inject({ method: "POST", url: `/v1/negotiations/${id}/accept`, headers: H(), payload: {} });
+    expect(acc.statusCode).toBe(200);
+    const recips = await db.query<any>(`SELECT email, role FROM recipients WHERE envelope_id = $1 ORDER BY email`, [acc.json().envelope.id]);
+    expect(recips).toEqual([
+      { email: "a@x.com", role: "signer" },
+      { email: "l@x.com", role: "cc" },
+    ]);
   }, 60_000);
 
   it("topes de comentarios por contraparte, cancelación con propuestas pendientes y auditoría", async () => {

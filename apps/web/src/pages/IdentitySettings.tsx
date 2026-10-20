@@ -200,7 +200,7 @@ export function SsoSettingsPage() {
   const inPlan = hasFeature("sso");
   if (!data) return error ? <ErrorBox error={error} /> : <Spinner />;
 
-  const oidc = data.oidc ?? { issuer: "", clientId: "", scopes: "openid email profile", hasClientSecret: false };
+  const oidc = data.oidc ?? { issuer: "", clientId: "", scopes: "openid email profile", hasClientSecret: false, trustUnverifiedEmail: false };
   const saml = data.saml ?? { entryPoint: "", idpIssuer: "", idpCertFingerprint: null, emailAttribute: null };
   const domainText = domains ?? data.domains.join(", ");
 
@@ -220,7 +220,11 @@ export function SsoSettingsPage() {
       jitRole: data.jitRole,
       // La API rechaza "exigir" sin SSO habilitado (sso_disabled): sin esto, apagar el SSO fallaba siempre.
       enforce: data.enabled && data.enforce,
-      oidc: data.protocol === "oidc" && oidc.issuer ? { issuer: oidc.issuer, clientId: oidc.clientId, scopes: oidc.scopes, ...(secret ? { clientSecret: secret } : {}) } : null,
+      sessionTtlHours: data.sessionTtlHours,
+      oidc:
+        data.protocol === "oidc" && oidc.issuer
+          ? { issuer: oidc.issuer, clientId: oidc.clientId, scopes: oidc.scopes, trustUnverifiedEmail: oidc.trustUnverifiedEmail, ...(secret ? { clientSecret: secret } : {}) }
+          : null,
       // Sin certificado nuevo, el servidor conserva el actual.
       saml:
         data.protocol === "saml" && saml.entryPoint
@@ -292,6 +296,14 @@ export function SsoSettingsPage() {
                 <span>{tx("sso.scopes")}</span>
                 <input value={oidc.scopes} onChange={(e) => setData({ ...data, oidc: { ...oidc, scopes: e.target.value } })} />
               </label>
+              <label className="check idn-wide">
+                <input type="checkbox" checked={oidc.trustUnverifiedEmail} onChange={(e) => setData({ ...data, oidc: { ...oidc, trustUnverifiedEmail: e.target.checked } })} />
+                <span>
+                  {tx("sso.trustUnverifiedEmail")}
+                  <br />
+                  <small className="muted">{tx("sso.trustUnverifiedEmailHint")}</small>
+                </span>
+              </label>
             </div>
           ) : (
             <div className="idn-grid">
@@ -330,6 +342,19 @@ export function SsoSettingsPage() {
           <label className="check">
             <input type="checkbox" checked={data.enforce} onChange={(e) => setData({ ...data, enforce: e.target.checked })} disabled={!data.enabled} />
             <span>{tx("sso.enforce")}</span>
+          </label>
+          <label className="field idn-narrow">
+            <span>{tx("sso.sessionTtl")}</span>
+            <input
+              type="number"
+              min={1}
+              max={336}
+              step={1}
+              required
+              value={data.sessionTtlHours}
+              onChange={(e) => setData({ ...data, sessionTtlHours: Math.max(1, Math.min(336, Math.trunc(Number(e.target.value)) || 1)) })}
+            />
+            <small className="muted">{tx("sso.sessionTtlHint")}</small>
           </label>
         </fieldset>
         <ErrorBox error={error} />

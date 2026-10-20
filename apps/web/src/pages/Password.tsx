@@ -60,6 +60,32 @@ export function ForgotPasswordPage() {
   );
 }
 
+interface ResetResult {
+  revokedCredentials?: { apiKeys: number; scimTokens: number; serviceApps: number; invitations: number };
+  twoFactorCleared?: boolean;
+}
+
+/** Avisos después de restablecer: credenciales revocadas y 2FA borrada (si pasó). */
+function resetNotice(r: ResetResult | undefined, pw: ReturnType<typeof usePasswordText>): string[] {
+  const out: string[] = [];
+  const c = r?.revokedCredentials;
+  if (c) {
+    const items = (
+      [
+        ["revokedApiKeys", c.apiKeys],
+        ["revokedScimTokens", c.scimTokens],
+        ["revokedServiceApps", c.serviceApps],
+        ["revokedInvitations", c.invitations],
+      ] as const
+    )
+      .filter(([, n]) => n > 0)
+      .map(([k, n]) => pw(k).replace("{n}", String(n)));
+    if (items.length) out.push(pw("revokedNotice").replace("{items}", items.join(", ")));
+  }
+  if (r?.twoFactorCleared) out.push(pw("twoFactorCleared"));
+  return out;
+}
+
 export function ResetPasswordPage() {
   const { t } = useI18n();
   const pw = usePasswordText();
@@ -68,6 +94,7 @@ export function ResetPasswordPage() {
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
+  const [notice, setNotice] = useState<string[]>([]);
   const [invalid, setInvalid] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -80,7 +107,8 @@ export function ResetPasswordPage() {
     }
     setBusy(true);
     try {
-      await api("/v1/auth/password/reset", { method: "POST", body: { token, password } });
+      const r = await api<ResetResult | undefined>("/v1/auth/password/reset", { method: "POST", body: { token, password } });
+      setNotice(resetNotice(r, pw));
       setDone(true);
     } catch (err) {
       if (err instanceof HttpError && err.status === 400 && err.code === "invalid_token") setInvalid(true);
@@ -95,6 +123,7 @@ export function ResetPasswordPage() {
       <AuthShell title={pw("resetTitle")}>
         <div className="stack">
           <p role="status">{done ? pw("done") : pw("invalid")}</p>
+          {done && notice.map((n) => <p key={n} className="hint" role="note">{n}</p>)}
           <p className="muted center">
             {done ? <Link to="/login">{pw("backToLogin")}</Link> : <Link to="/forgot">{pw("requestNew")}</Link>}
           </p>

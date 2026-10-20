@@ -61,7 +61,7 @@ step("pedido de restablecimiento: 202 siempre, correo solo si la cuenta existe")
 
 await anon("POST", "/v1/auth/password/reset", { token, password: "corta" }, { expect: 400 });
 await anon("POST", "/v1/auth/password/reset", { token: "x".repeat(40), password: "clave-nueva-456789" }, { expect: 400 });
-await anon("POST", "/v1/auth/password/reset", { token, password: "clave-nueva-456789" }, { expect: 204 });
+await anon("POST", "/v1/auth/password/reset", { token, password: "clave-nueva-456789" }, { expect: 200 });
 step("contraseña nueva guardada (rechaza contraseña corta y token inválido)");
 
 await anon("POST", "/v1/auth/password/reset", { token, password: "otra-clave-000000" }, { expect: 400 });
@@ -88,7 +88,7 @@ await anon("POST", "/v1/auth/password/forgot", { email }, { expect: 202 });
 const second = (await resetLinkFor(anon, email)).link.split("/reset/")[1];
 assert(second !== first, "llegó un segundo link");
 await anon("POST", "/v1/auth/password/reset", { token: first, password: "clave-tercera-789012" }, { expect: 400 });
-await anon("POST", "/v1/auth/password/reset", { token: second, password: "clave-tercera-789012" }, { expect: 204 });
+await anon("POST", "/v1/auth/password/reset", { token: second, password: "clave-tercera-789012" }, { expect: 200 });
 step("un pedido nuevo invalida el link anterior");
 
 // Reintento de finalización: solo para sobres trabados en 'finalizing'.
@@ -110,7 +110,7 @@ const locked = await atk("POST", "/v1/auth/login", { email: lockEmail, password:
 assert(locked.error.code === "too_many_attempts", "cuenta bloqueada tras 10 intentos fallidos");
 await anon("POST", "/v1/auth/password/forgot", { email: lockEmail }, { expect: 202 });
 const lockToken = (await resetLinkFor(anon, lockEmail)).link.split("/reset/")[1];
-await anon("POST", "/v1/auth/password/reset", { token: lockToken, password: "clave-renovada-456" }, { expect: 204 });
+await anon("POST", "/v1/auth/password/reset", { token: lockToken, password: "clave-renovada-456" }, { expect: 200 });
 await client()("POST", "/v1/auth/login", { email: lockEmail, password: "clave-renovada-456" });
 step("10 intentos fallidos bloquean la cuenta (429 aun con la contraseña correcta); restablecerla la desbloquea");
 
@@ -144,7 +144,7 @@ step("10 intentos fallidos bloquean la cuenta (429 aun con la contraseña correc
   const code2 = new URL(dec2.redirectTo).searchParams.get("code");
   await anon("POST", "/v1/auth/password/forgot", { email: oEmail }, { expect: 202 });
   const t2 = (await resetLinkFor(anon, oEmail)).link.split("/reset/")[1];
-  await anon("POST", "/v1/auth/password/reset", { token: t2, password: "clave-propia-67890" }, { expect: 204 });
+  await anon("POST", "/v1/auth/password/reset", { token: t2, password: "clave-propia-67890" }, { expect: 200 });
   const acc = await fetch(BASE + "/v1/envelopes", { headers: { authorization: `Bearer ${tok.body.access_token}` } });
   assert(acc.status === 401, `el access token sigue valiendo después del reset (HTTP ${acc.status})`);
   const ref = await tokenPost({ grant_type: "refresh_token", refresh_token: tok.body.refresh_token });

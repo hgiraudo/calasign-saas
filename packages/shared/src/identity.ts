@@ -150,6 +150,11 @@ export const SsoSettingsInput = z
     jitRole: z.enum(["admin", "member"]).default("member"),
     /** Bloquea el ingreso con contraseña (salvo propietarios, como acceso de emergencia). */
     enforce: z.boolean().default(false),
+    /**
+     * Duración absoluta (horas, 1 a 336) de las sesiones abiertas por SSO; omitir para conservar la actual (por defecto
+     * 24). Bajarla acorta también las sesiones SSO ya abiertas.
+     */
+    sessionTtlHours: z.number().int().min(1).max(336).optional(),
     oidc: z
       .object({
         issuer: z.string().trim().url(),
@@ -157,6 +162,12 @@ export const SsoSettingsInput = z
         /** Se guarda cifrado; omitir para conservar el actual. */
         clientSecret: z.string().min(1).max(2000).optional(),
         scopes: z.string().trim().max(500).default("openid email profile"),
+        /**
+         * Aceptar el correo del IdP aunque el id_token no traiga email_verified (por defecto no: se exige true). Para IdP
+         * que no mandan ese claim, como Microsoft Entra ID en algunas configuraciones. Un false explícito se rechaza
+         * siempre. Omitir para conservar el valor actual.
+         */
+        trustUnverifiedEmail: z.boolean().optional(),
       })
       .optional()
       .nullable(),
@@ -186,7 +197,9 @@ export interface SsoSettings {
   jitEnabled: boolean;
   jitRole: "admin" | "member";
   enforce: boolean;
-  oidc: { issuer: string; clientId: string; scopes: string; hasClientSecret: boolean } | null;
+  /** Duración absoluta de las sesiones abiertas por SSO, en horas (por defecto 24). */
+  sessionTtlHours: number;
+  oidc: { issuer: string; clientId: string; scopes: string; hasClientSecret: boolean; trustUnverifiedEmail: boolean } | null;
   saml: { entryPoint: string; idpIssuer: string; idpCertFingerprint: string | null; emailAttribute: string | null } | null;
   /** Datos para configurar el IdP. */
   serviceProvider: {

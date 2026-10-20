@@ -366,12 +366,16 @@ económico o legal relevante. Explicá en ${lang(locale)} en una oración y cit�
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 let cached: AiProvider | null | undefined;
 
-/** Proveedor configurado; null en producción sin clave (nunca el mock en producción: respondería datos inventados). */
+/**
+ * Proveedor configurado; null en producción sin clave (nunca el mock en producción: respondería datos inventados).
+ * "Producción" es el entorno (APP_ENV=prod, como billing.mockEnabled), no NODE_ENV: dev corre con NODE_ENV=production y
+ * APP_ENV=dev, y sin clave tiene que quedar con el mock.
+ */
 function resolveProvider(): AiProvider | null {
   if (cached !== undefined) return cached;
   const forced = process.env.AI_PROVIDER;
   const hasKey = Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
-  if (config.production && (!hasKey || forced === "mock")) {
+  if (config.environment === "prod" && (!hasKey || forced === "mock")) {
     cached = null;
   } else if (forced === "mock" || (!hasKey && forced !== "anthropic")) {
     cached = new MockProvider();

@@ -7,7 +7,7 @@ import type { BlobStore } from "../../infra/storage";
 import { uuidv7 } from "../../lib/util";
 import { deliver } from "../../notifications/channels";
 import { tenantBaseUrl } from "../custom-domains";
-import { getAiProvider } from "./provider";
+import { aiProviderStatus, getAiProvider } from "./provider";
 import { assertAiAvailable, inputEstimate, isAiError, loadEnvelopeDocs, recordAiUse, saveMetadata, withAiReservation, callModel } from "./service";
 import type { AppError } from "../../lib/errors";
 import { planAiCapSql } from "../billing/plans";
@@ -70,8 +70,10 @@ export async function runAiSweep(d: Deps, now = new Date()) {
   let extracted = 0;
   let alerted = 0;
 
-  // 1) Extracción automática (pocas por pasada: es costosa).
-  const pending = await d.db.query<any>(
+  // 1) Extracción automática (pocas por pasada: es costosa). Sin proveedor de IA en el servidor (producción sin clave)
+  // no se toma ningún sobre: cada pasada reclamaba la tanda, fallaba con ai_unavailable y gastaba un intento y la
+  // ventana de 30 días de reintentos (a los 30 días quedaban sin extraer para siempre aunque se configurara la clave).
+  const pending = aiProviderStatus().name === "none" ? [] : await d.db.query<any>(
     `SELECT e.id, e.tenant_id FROM envelopes e JOIN tenants t ON t.id = e.tenant_id
      WHERE e.status = 'completed' AND e.ai_metadata IS NULL AND e.purged_at IS NULL
        -- Los reintentos, solo durante 30 días desde el primer intento (un error que no se arregla no se intenta para siempre).

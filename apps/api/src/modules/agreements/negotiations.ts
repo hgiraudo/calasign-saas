@@ -630,11 +630,13 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
           metadata: { negotiationId: n.id },
           send: false,
         });
+        // Los observadores van como copia (como en las negociaciones sobre plantilla); el resto, firmantes.
         for (const p of parts) {
-          await t.query(`INSERT INTO recipients (id, tenant_id, envelope_id, role, routing_order, name, email, channels) VALUES ($1,$2,$3,'signer',1,$4,$5,ARRAY['email'])`, [
+          await t.query(`INSERT INTO recipients (id, tenant_id, envelope_id, role, routing_order, name, email, channels) VALUES ($1,$2,$3,$4,1,$5,$6,ARRAY['email'])`, [
             uuidv7(),
             n.tenant_id,
             envId,
+            p.observer ? "cc" : "signer",
             p.name,
             p.email,
           ]);

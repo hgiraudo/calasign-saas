@@ -614,6 +614,8 @@ export async function sweep(d: Deps) {
     // Links de descarga temporales (MCP): nada más los borraba.
     // Tokens de formularios web usados: vencen a las 2 h, después no hace falta recordarlos.
     ["web-form-tokens", () => d.db.query(`DELETE FROM web_form_token_uses WHERE used_at < now() - interval '1 day'`)],
+    // IDs de Assertion SAML ya usadas (anti-replay): pasado su vencimiento la aserción ya no se acepta.
+    ["saml-assertion-ids", () => d.db.query(`DELETE FROM saml_assertion_ids WHERE ctid IN (SELECT ctid FROM saml_assertion_ids WHERE expires_at < now() LIMIT 5000)`)],
     // Tokens de vinculación de Telegram (30 minutos): vencidos hace más de un día ya no hacen falta.
     ["telegram-link-tokens", () => d.db.query(`DELETE FROM telegram_link_tokens WHERE expires_at < now() - interval '1 day'`)],
     [

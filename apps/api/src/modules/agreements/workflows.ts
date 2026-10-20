@@ -843,6 +843,7 @@ async function createRun(
   await db.tx(async (t) => {
     // Si lo borraron después de cargarlo, 404 (antes: violación de FK, 500).
     const isPublic = !p.startedBy && !p.startedByApiKey;
+    const chargesAtStart = isPublic && steps[0]?.type !== "collect_data";
     if (!(await t.one(`SELECT 1 FROM workflows WHERE id = $1 ${isPublic ? "FOR UPDATE" : "FOR KEY SHARE"}`, [wf.id]))) throw notFound("Workflow");
     // Link público: como los formularios web, un tope de ejecuciones por hora (cada una puede mandar sobres y consume
     // la cuota del plan).
@@ -854,10 +855,11 @@ async function createRun(
       if ((recent?.n ?? 0) >= MAX_PUBLIC_RUNS_PER_HOUR) throw new AppError(429, "workflow_rate_limited", "Demasiadas ejecuciones de este workflow: probá más tarde");
       // Por organización (con su lock; último lock: workflow → organización, como los formularios): inicios por hora,
       // completen o no el formulario (tope alto), y el cupo compartido con los formularios web, que cuenta solo los
-      // runs que hacen trabajo. Un run con formulario lo gasta al completarlo (envío del paso); uno sin formulario
-      // arranca solo y lo gasta ahora.
+      // runs que hacen trabajo. Un run que empieza con un formulario lo gasta al completarlo (envío del paso); si el
+      // primer paso es otro (genera documentos, manda sobres, llama a una URL), arranca solo y lo gasta ahora, aunque
+      // tenga un formulario más adelante.
       if (await publicStartsCapReached(t, wf.tenant_id)) throw new AppError(429, "workflow_rate_limited", "Demasiadas ejecuciones de este workflow: probá más tarde");
-      if (!token && (await publicTenantCapReached(t, wf.tenant_id))) throw new AppError(429, "workflow_rate_limited", "Demasiadas ejecuciones de este workflow: probá más tarde");
+      if (chargesAtStart && (await publicTenantCapReached(t, wf.tenant_id))) throw new AppError(429, "workflow_rate_limited", "Demasiadas ejecuciones de este workflow: probá más tarde");
     }
     await t.query(
       `INSERT INTO workflow_runs (id, tenant_id, workflow_id, steps, context, started_by, started_by_label, public_token_hash, public_token_enc, started_by_api_key, public_collected_at)
@@ -873,7 +875,7 @@ async function createRun(
         token ? sha256Hex(token) : null,
         token ? encrypt(token) : null,
         p.startedByApiKey ?? null,
-        isPublic && !token ? new Date() : null,
+        chargesAtStart ? new Date() : null,
       ],
     );
     for (const [idx, st] of steps.entries()) {

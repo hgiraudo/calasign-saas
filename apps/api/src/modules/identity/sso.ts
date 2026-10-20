@@ -14,8 +14,19 @@ import { SESSION_COOKIE, authenticate, clientInfo, type AuthContext, type Servic
 import { syncSsoDomains } from "../data/sso-domains";
 import { safeRequest } from "../webhooks";
 import { tenantPlan, usersCount } from "../billing/plans";
+import { secureUnprovenAccount } from "../member-access";
 
-const SESSION_DAYS = 14;
+/**
+ * Duración absoluta (sin renovación) de una sesión abierta por SSO, configurable por organización
+ * (sso_configs.session_ttl_hours, 1 h a 14 días; por defecto 24 h). Corta: así lo que el IdP decide (baja, bloqueo,
+ * cambio de políticas) llega a la sesión en horas y no en semanas. Las sesiones con contraseña siguen en 14 días.
+ */
+export const SSO_SESSION_TTL_DEFAULT_HOURS = 24;
+export const SSO_SESSION_TTL_MAX_HOURS = 14 * 24;
+export function ssoSessionTtlHours(c: { session_ttl_hours?: number | null } | null | undefined): number {
+  const h = Math.trunc(Number(c?.session_ttl_hours ?? SSO_SESSION_TTL_DEFAULT_HOURS));
+  return Number.isFinite(h) && h >= 1 ? Math.min(h, SSO_SESSION_TTL_MAX_HOURS) : SSO_SESSION_TTL_DEFAULT_HOURS;
+}
 const STATE_TTL_MIN = 10;
 /**
  * El state queda atado al navegador que inició el ingreso (cookie). Sin esto, alguien completa el ingreso con SU
@@ -42,6 +53,8 @@ interface SsoRow {
   saml_idp_issuer: string | null;
   saml_idp_cert: string | null;
   saml_email_attribute: string | null;
+  oidc_trust_unverified_email: boolean;
+  session_ttl_hours: number;
 }
 
 async function loadConfig(db: Db, tenantId: string): Promise<SsoRow | null> {
@@ -87,8 +100,15 @@ async function toSettings(db: Db, tenantId: string): Promise<SsoSettings> {
     jitEnabled: c?.jit_enabled ?? true,
     jitRole: c?.jit_role ?? "member",
     enforce: Boolean(c?.enforce),
+    sessionTtlHours: ssoSessionTtlHours(c),
     oidc: c?.oidc_issuer
-      ? { issuer: c.oidc_issuer, clientId: c.oidc_client_id ?? "", scopes: c.oidc_scopes ?? "openid email profile", hasClientSecret: Boolean(c.oidc_client_secret_enc) }
+      ? {
+          issuer: c.oidc_issuer,
+          clientId: c.oidc_client_id ?? "",
+          scopes: c.oidc_scopes ?? "openid email profile",
+          hasClientSecret: Boolean(c.oidc_client_secret_enc),
+          trustUnverifiedEmail: Boolean(c.oidc_trust_unverified_email),
+        }
       : null,
     saml: c?.saml_entry_point
       ? { entryPoint: c.saml_entry_point, idpIssuer: c.saml_idp_issuer ?? "", idpCertFingerprint: certFingerprint(c.saml_idp_cert), emailAttribute: c.saml_email_attribute }
@@ -302,6 +322,52 @@ function samlFor(db: Db, slug: string, c: SsoRow): SAML {
   });
 }
 
+/**
+ * OIDC: el correo vale solo con email_verified = true (o "true", que mandan algunos IdP). Si falta o es otra cosa se
+ * rechaza, salvo que la organización haya elegido confiar en el correo del IdP sin el claim (oidc_trust_unverified_email):
+ * algunos IdP no lo mandan (p. ej. Microsoft Entra ID según el tipo de cuenta y los claims opcionales configurados).
+ * Un false explícito se rechaza siempre.
+ */
+export function oidcEmailVerified(claims: Record<string, unknown>, trustUnverified: boolean): boolean {
+  const v = claims.email_verified;
+  if (v === true || v === "true") return true;
+  if (v === false || v === "false") return false;
+  return trustUnverified;
+}
+
+/** ID y vencimiento de la Assertion SAML ya validada (profile de node-saml). */
+export function samlAssertionInfo(profile: { getAssertion?: () => any }): { id: string | null; notOnOrAfter: Date | null } {
+  const a = profile.getAssertion?.()?.Assertion;
+  const id = typeof a?.$?.ID === "string" && a.$.ID.length > 0 && a.$.ID.length <= 512 ? a.$.ID : null;
+  const raw = a?.Conditions?.[0]?.$?.NotOnOrAfter ?? a?.Subject?.[0]?.SubjectConfirmation?.[0]?.SubjectConfirmationData?.[0]?.$?.NotOnOrAfter;
+  const d = typeof raw === "string" ? new Date(raw) : null;
+  return { id, notOnOrAfter: d && !Number.isNaN(d.getTime()) ? d : null };
+}
+
+/**
+ * Anti-replay SAML: registra el ID de la Assertion hasta que deja de ser válida (NotOnOrAfter, y como mínimo 10 min +
+ * tolerancia de reloj, que es lo que node-saml acepta desde IssueInstant; tope de un día). Devuelve false si ya se usó.
+ */
+export async function rememberSamlAssertion(db: Db, tenantId: string, id: string, notOnOrAfter: Date | null): Promise<boolean> {
+  const minMs = Date.now() + (10 * 60 + CLOCK_SKEW_S) * 1000;
+  const until = new Date(Math.min(Math.max(notOnOrAfter ? notOnOrAfter.getTime() + CLOCK_SKEW_S * 1000 : 0, minMs), Date.now() + 86_400_000));
+  const r = await db.query(
+    `INSERT INTO saml_assertion_ids (tenant_id, assertion_id, expires_at) VALUES ($1,$2,$3)
+     ON CONFLICT (tenant_id, assertion_id) DO UPDATE SET expires_at = EXCLUDED.expires_at WHERE saml_assertion_ids.expires_at < now()
+     RETURNING assertion_id`,
+    [tenantId, id, until.toISOString()],
+  );
+  return r.length > 0;
+}
+
+/**
+ * ¿El JIT tiene que rechazar a este usuario? Sí si la organización lo aprovisionó por SCIM y hoy no está activo
+ * (desactivado o borrado por el IdP): el alta automática por SSO no lo vuelve a sumar (lo decide el IdP por SCIM).
+ */
+export async function scimBlocksJit(db: Db, tenantId: string, userId: string): Promise<boolean> {
+  return Boolean(await db.one(`SELECT 1 FROM scim_users WHERE tenant_id = $1 AND user_id = $2 AND (active = false OR deleted_at IS NOT NULL)`, [tenantId, userId]));
+}
+
 // ───────────────────────────── Rutas ─────────────────────────────
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -318,15 +384,16 @@ export function safeRedirectPath(p: unknown): string {
 export async function ssoRoutes(app: FastifyInstance, s: Services) {
   const auth = authenticate(s);
 
-  async function createSsoSession(reply: FastifyReply, req: FastifyRequest, userId: string, tenantId: string) {
+  async function createSsoSession(reply: FastifyReply, req: FastifyRequest, userId: string, tenantId: string, c: SsoRow) {
     const token = randomToken();
     const { ip, userAgent } = clientInfo(req);
+    const hours = ssoSessionTtlHours(c);
     await s.db.query(
       `INSERT INTO sessions (token_hash, user_id, tenant_id, ip, user_agent, expires_at, auth_method, sso_tenant_id)
-       VALUES ($1,$2,$3,$4,$5, now() + interval '${SESSION_DAYS} days', 'sso', $3)`,
-      [sha256Hex(token), userId, tenantId, ip, userAgent],
+       VALUES ($1,$2,$3,$4,$5, now() + make_interval(hours => $6::int), 'sso', $3)`,
+      [sha256Hex(token), userId, tenantId, ip, userAgent, hours],
     );
-    reply.setCookie(SESSION_COOKIE, token, { path: "/", httpOnly: true, sameSite: "lax", secure: config.cookieSecure, maxAge: SESSION_DAYS * 86400 });
+    reply.setCookie(SESSION_COOKIE, token, { path: "/", httpOnly: true, sameSite: "lax", secure: config.cookieSecure, maxAge: hours * 3600 });
   }
 
   /** Une la identidad del IdP con un usuario (alta JIT si corresponde) y abre la sesión. */
@@ -354,11 +421,12 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
         await recordAudit(s.db, { tenantId, action: "auth.sso_denied", actor: { type: "anonymous", label: email }, ip, userAgent, data: { protocol, reason: "not_member" } });
         throw new AppError(403, "sso_not_member", "No sos miembro de esta organización. Pedí una invitación al administrador.");
       }
-      // Desactivado por SCIM: el alta automática por SSO no lo vuelve a sumar (lo decide el proveedor de identidad).
-      if (user && (await s.db.one(`SELECT 1 FROM scim_users WHERE tenant_id = $1 AND user_id = $2 AND active = false`, [tenantId, user.id]))) {
+      // Desactivado o borrado por SCIM: el alta automática por SSO no lo vuelve a sumar (lo decide el proveedor de identidad).
+      if (user && (await scimBlocksJit(s.db, tenantId, user.id))) {
         await recordAudit(s.db, { tenantId, action: "auth.sso_denied", actor: { type: "anonymous", label: email }, ip, userAgent, data: { protocol, reason: "scim_deactivated" } });
         throw new AppError(403, "sso_not_member", "No sos miembro de esta organización. Pedí una invitación al administrador.");
       }
+      let secured: Awaited<ReturnType<typeof secureUnprovenAccount>> = null;
       const overLimit = await s.db.tx(async (t) => {
         // Cupo de usuarios del plan, como en invitaciones y SCIM (con la organización bloqueada: dos altas simultáneas
         // no lo superan). El SSO es de Enterprise (sin cupo), pero la configuración queda al bajar de plan: sin esto,
@@ -370,6 +438,10 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
           const id = uuidv7();
           await t.query(`INSERT INTO users (id, email, name, password_hash, locale) VALUES ($1,$2,$3,'sso-only','es')`, [id, email, name?.trim() || email.split("@")[0]]);
           user = { id, name };
+        } else {
+          // Cuenta existente que nunca probó el control del correo: la pudo registrar otra persona. Su 2FA y sus
+          // sesiones (y tokens OAuth) se borran antes de vincularla (ver secureUnprovenAccount).
+          secured = await secureUnprovenAccount(t, user.id);
         }
         // Sin contraseña en esta organización: si la cuenta ya existía, su contraseña pudo elegirla otra persona
         // (el registro no verifica el correo). Restablecerla (que prueba el control del correo) la habilita.
@@ -395,10 +467,10 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
         targetId: user!.id,
         ip,
         userAgent,
-        data: { email, role: c.jit_role },
+        data: { email, role: c.jit_role, ...(secured ? { unprovenAccountSecured: secured } : {}) },
       });
     }
-    await createSsoSession(reply, req, user!.id, tenantId);
+    await createSsoSession(reply, req, user!.id, tenantId, c);
     await recordAudit(s.db, { tenantId, action: "auth.login_sso", actor: { type: "user", id: user!.id, label: email }, ip, userAgent, data: { protocol } });
   }
 
@@ -468,13 +540,13 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
       await syncSsoDomains(t, a.tenantId, input.domains ?? []);
       await t.query(
         `INSERT INTO sso_configs (tenant_id, enabled, protocol, jit_enabled, jit_role, enforce, oidc_issuer, oidc_client_id, oidc_client_secret_enc, oidc_scopes,
-           saml_entry_point, saml_idp_issuer, saml_idp_cert, saml_email_attribute, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14, now())
+           saml_entry_point, saml_idp_issuer, saml_idp_cert, saml_email_attribute, oidc_trust_unverified_email, session_ttl_hours, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16, now())
          ON CONFLICT (tenant_id) DO UPDATE SET enabled = EXCLUDED.enabled, protocol = EXCLUDED.protocol, jit_enabled = EXCLUDED.jit_enabled,
            jit_role = EXCLUDED.jit_role, enforce = EXCLUDED.enforce, oidc_issuer = EXCLUDED.oidc_issuer, oidc_client_id = EXCLUDED.oidc_client_id,
            oidc_client_secret_enc = EXCLUDED.oidc_client_secret_enc, oidc_scopes = EXCLUDED.oidc_scopes, saml_entry_point = EXCLUDED.saml_entry_point,
            saml_idp_issuer = EXCLUDED.saml_idp_issuer, saml_idp_cert = EXCLUDED.saml_idp_cert, saml_email_attribute = EXCLUDED.saml_email_attribute,
-           updated_at = now()`,
+           oidc_trust_unverified_email = EXCLUDED.oidc_trust_unverified_email, session_ttl_hours = EXCLUDED.session_ttl_hours, updated_at = now()`,
         [
           a.tenantId,
           input.enabled,
@@ -490,6 +562,9 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
           input.saml?.idpIssuer ?? cur?.saml_idp_issuer ?? null,
           cert,
           input.saml ? input.saml.emailAttribute ?? null : cur?.saml_email_attribute ?? null,
+          // Omitidos: se conservan los guardados.
+          input.oidc?.trustUnverifiedEmail ?? cur?.oidc_trust_unverified_email ?? false,
+          input.sessionTtlHours ?? cur?.session_ttl_hours ?? SSO_SESSION_TTL_DEFAULT_HOURS,
         ],
       );
       // Al deshabilitar el SSO o cambiar de IdP se cierran las sesiones (y los tokens OAuth) que abrió el IdP anterior:
@@ -511,6 +586,13 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
         await t.query(`DELETE FROM sessions WHERE auth_method = 'sso' AND sso_tenant_id = $1`, [a.tenantId]);
         await t.query(`UPDATE oauth_tokens SET revoked_at = now() WHERE tenant_id = $1 AND auth_method = 'sso' AND revoked_at IS NULL`, [a.tenantId]);
         await t.query(`UPDATE oauth_authorization_codes SET used_at = now() WHERE tenant_id = $1 AND auth_method = 'sso' AND used_at IS NULL`, [a.tenantId]);
+      }
+      // Duración más corta: las sesiones SSO ya abiertas no pasan del nuevo tope (contado desde que se abrieron).
+      if (input.sessionTtlHours != null && input.sessionTtlHours < ssoSessionTtlHours(cur)) {
+        await t.query(
+          `UPDATE sessions SET expires_at = LEAST(expires_at, created_at + make_interval(hours => $2::int)) WHERE auth_method = 'sso' AND sso_tenant_id = $1`,
+          [a.tenantId, input.sessionTtlHours],
+        );
       }
       // Al exigir SSO se cierran las sesiones con contraseña de quienes no son propietarios.
       if (input.enabled && input.enforce) {
@@ -625,7 +707,9 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
       const tok = await getJson(doc.token_endpoint, { method: "POST", headers, body: form.toString() });
       if (!tok.id_token) throw new Error("el IdP no devolvió id_token");
       const claims = await validateIdToken(tok.id_token, { issuer: c.oidc_issuer!, clientId: c.oidc_client_id!, nonce: st.nonce, jwksUri: doc.jwks_uri });
-      if (claims.email_verified === false) throw new AppError(403, "sso_email_unverified", "El correo no está verificado en el proveedor de identidad");
+      if (!oidcEmailVerified(claims, Boolean(c.oidc_trust_unverified_email))) {
+        throw new AppError(403, "sso_email_unverified", "El correo no está verificado en el proveedor de identidad");
+      }
       await completeLogin(req, reply, t.id, c, String(claims.email ?? ""), claims.name ?? ([claims.given_name, claims.family_name].filter(Boolean).join(" ") || null), "oidc");
       return reply.redirect(st.redirect_path || "/app", 302);
     } catch (err) {
@@ -665,6 +749,13 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
         try {
           const { profile } = await samlFor(s.db, t.slug, c).validatePostResponseAsync({ SAMLResponse: body.SAMLResponse ?? "", RelayState: body.RelayState });
           if (!profile) throw new Error("respuesta SAML sin perfil");
+          // Anti-replay: cada Assertion se usa una sola vez (además del InResponseTo de un solo uso).
+          const assertion = samlAssertionInfo(profile as any);
+          if (!assertion.id) throw new AppError(400, "sso_invalid_response", "La aserción SAML no tiene ID");
+          if (!(await rememberSamlAssertion(s.db, t.id, assertion.id, assertion.notOnOrAfter))) {
+            await recordAudit(s.db, { tenantId: t.id, action: "auth.sso_denied", actor: { type: "anonymous", label: null }, ...clientInfo(req), data: { protocol: "saml", reason: "assertion_replay" } });
+            throw new AppError(400, "sso_assertion_replay", "Esta respuesta SAML ya se usó");
+          }
           const attr = c.saml_email_attribute ? profile[c.saml_email_attribute] : null;
           const email = String(
             (Array.isArray(attr) ? attr[0] : attr) ?? profile.email ?? profile.mail ?? profile["urn:oid:0.9.2342.19200300.100.1.3"] ?? profile.nameID ?? "",

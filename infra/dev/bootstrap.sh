@@ -48,8 +48,10 @@ ${domain} {
 			mode 0640
 		}
 		format filter {
-			request>uri regexp "(/(?:s|signing|embed|invite|n|w|sessions|downloads|negotiations|workflow-runs|reset)/)[^/?]+|\?.*" "$${1}[redacted]"
+			request>uri regexp "(/(?:s|signing|embed|invite|n|w|sessions|downloads|negotiations|workflow-runs|reset|hook)/)[^/?]+|\?.*" "$${1}[redacted]"
 			request>headers>Referer delete
+			request>headers>X-Telegram-Bot-Api-Secret-Token delete
+			request>headers>X-Api-Key delete
 		}
 	}
 }

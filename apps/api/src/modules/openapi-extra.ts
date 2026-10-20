@@ -458,6 +458,12 @@ export const ERRORS: Record<string, Err> = {
     message: "Ya hay una renovación del sello de archivo en curso para este sobre",
     summary: "Una renovación a la vez por sobre",
   },
+  version_changed_negotiation: {
+    status: 409,
+    code: "version_changed",
+    message: "Hay una versión nueva: revisala y volvé a aceptar",
+    summary: "La negociación tiene una versión nueva desde la que se revisó: revisarla y repetir",
+  },
   version_changed: {
     status: 409,
     code: "version_changed",

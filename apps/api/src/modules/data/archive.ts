@@ -185,10 +185,11 @@ export async function archiveSweep(d: Deps, opts: { days?: number; force?: boole
     // recién no quedan detrás de los reintentos). Los "LTV pendiente" van aparte (ya se sabe qué les falta).
     `SELECT id FROM envelopes WHERE status = 'completed' AND signed_file_id IS NOT NULL AND archive_valid_until IS NULL
        AND (archive_checked_at IS NULL
-            OR (archive_error IS NOT NULL AND archive_error <> 'LTV pendiente' AND archive_checked_at < now() - interval '1 day'))
+            OR (archive_error IS NOT NULL AND archive_error NOT LIKE 'LTV pendiente%'
+                AND ($3::boolean OR archive_checked_at < now() - interval '1 day')))
        AND ($2::uuid IS NULL OR id = $2)
      ORDER BY archive_checked_at NULLS FIRST, completed_at LIMIT $1`,
-    [cfg.batch * 5, opts.envelopeId ?? null],
+    [cfg.batch * 5, opts.envelopeId ?? null, Boolean(opts.force)],
   );
   for (const p of pending) {
     try {
@@ -202,10 +203,15 @@ export async function archiveSweep(d: Deps, opts: { days?: number; force?: boole
   // B-T → B-LTA: los marcados "LTV pendiente" (por esta pasada, otra o el panel del sobre), sin volver a inspeccionarlos.
   // Con tope por pasada, y se cortan ante la primera falla (con la TSA caída, cada uno hacía todas las consultas OCSP/CRL).
   const toUpgrade = await d.db.query<any>(
-    `SELECT id FROM envelopes WHERE status = 'completed' AND archive_valid_until IS NULL AND archive_error = 'LTV pendiente'
+    // Los que fallaron ("LTV pendiente: …") se reintentan una vez por día sin volver a inspeccionarlos (antes cada
+    // reintento los re-descargaba y borraba el error visible) y van después de los nuevos: uno que falla siempre no
+    // corta a los demás.
+    `SELECT id FROM envelopes WHERE status = 'completed' AND archive_valid_until IS NULL
+       AND (archive_error = 'LTV pendiente'
+            OR (archive_error LIKE 'LTV pendiente:%' AND ($3::boolean OR archive_checked_at < now() - interval '1 day')))
        AND ($2::uuid IS NULL OR id = $2)
-     ORDER BY completed_at LIMIT $1`,
-    [cfg.batch, opts.envelopeId ?? null],
+     ORDER BY (archive_error = 'LTV pendiente') DESC, completed_at LIMIT $1`,
+    [cfg.batch, opts.envelopeId ?? null, Boolean(opts.force)],
   );
   for (const p of toUpgrade) {
     try {

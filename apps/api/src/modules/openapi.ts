@@ -1434,7 +1434,7 @@ export function buildOpenApi() {
           in: "header",
           required: false,
           description:
-            "Control de edición concurrente (opcional): el `updatedAt` del borrador o la plantilla tal como se leyó (ISO 8601, con milisegundos). Si cambió desde entonces (otra pestaña u otra persona lo editó), 409 version_changed con el `updatedAt` actual en details, en vez de pisar esos cambios. Sin el encabezado no se controla.",
+            "Control de edición concurrente (opcional): el `updatedAt` del borrador o la plantilla tal como se leyó (ISO 8601, con milisegundos). Si cambió desde entonces (otra pestaña u otra persona lo editó), 409 version_changed con el `updatedAt` actual en details, en vez de pisar esos cambios. Sin el encabezado (o con una fecha que no se puede leer) no se controla.",
           schema: { type: "string", format: "date-time" },
         },
       },

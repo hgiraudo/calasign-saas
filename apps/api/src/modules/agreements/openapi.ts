@@ -118,7 +118,7 @@ export const AGREEMENTS_OPS: Op[] = [
     description: "Hasta 500 comentarios por negociación (429 too_many_comments). Si mientras tanto hay una versión nueva, 409 version_changed.",
     body: NegotiationCommentInput,
     status: 201,
-    errors: ["too_many_comments", "version_changed"],
+    errors: ["too_many_comments", "version_changed_negotiation"],
   },
   {
     method: "post",
@@ -136,7 +136,7 @@ export const AGREEMENTS_OPS: Op[] = [
     summary: "Aceptar y crear el sobre",
     description: "`expectedVersion` (opcional): la versión que se revisó; si ya hay otra, 409 version_changed en vez de aceptar algo que no se vio.",
     body: AcceptNegotiationInput,
-    errors: ["version_changed"],
+    errors: ["version_changed_negotiation"],
   },
   { method: "post", path: "/v1/negotiations/{id}/cancel", tag: N, summary: "Cancelar la negociación" },
   { method: "get", path: "/v1/public/negotiations/{token}", tag: N, summary: "Vista de la contraparte", auth: "none" },
@@ -149,7 +149,7 @@ export const AGREEMENTS_OPS: Op[] = [
     body: NegotiationCommentInput,
     auth: "none",
     status: 201,
-    errors: ["too_many_comments", "version_changed"],
+    errors: ["too_many_comments", "version_changed_negotiation"],
   },
   {
     method: "post",
@@ -160,6 +160,6 @@ export const AGREEMENTS_OPS: Op[] = [
     body: NegotiationProposalInput,
     auth: "none",
     status: 201,
-    errors: ["too_many_proposals", "version_changed"],
+    errors: ["too_many_proposals", "version_changed_negotiation"],
   },
 ];

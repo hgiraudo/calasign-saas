@@ -50,7 +50,8 @@ trap 'rm -rf "$TMP"' EXIT
 # filtro de arriba (con su .git, su var/ y sus tfstate).
 # core.quotePath=false: con el valor por defecto, git escribe una ruta con tildes como "docs/gu\303\255a.md" (entre
 # comillas y con escapes), el [ -f ] de abajo no la encuentra y el archivo quedaba fuera del paquete sin aviso.
-{ git -c core.quotePath=false ls-files -co --exclude-standard; find apps/web/dist -type f; } | sort -u \
+# Solo lo versionado (más el build de la web): un archivo suelto sin versionar (notas, pruebas locales) no viaja.
+{ git -c core.quotePath=false ls-files -c; find apps/web/dist -type f; } | sort -u \
   | grep -vE '^var/|(^|/)tfplan$|\.tfplan$|\.tfstate|\.tfvars$' \
   | while IFS= read -r f; do if [ -f "$f" ]; then printf '%s\n' "$f"; fi; done > "$TMP/files"
 tar --no-recursion -czf "$TMP/rel.tgz" -T "$TMP/files"
@@ -96,6 +97,8 @@ chown -R calasign:calasign \$D
 cd \$D
 sudo -u calasign env HOME=/var/lib/calasign PATH=\$PATH COREPACK_ENABLE_DOWNLOAD_PROMPT=0 CI=true \
   corepack pnpm install --frozen-lockfile --filter '@calasign/api...' 2>&1 | tail -3
+# Instalado: el código queda de root (la app lo lee, no lo puede modificar).
+chown -R root:root \$D
 
 # Backup previo obligatorio, antes de tocar nada del host (secretos, hardening, Caddy): la versión nueva aplica
 # sus migraciones al arrancar y el rollback de abajo solo vuelve al código anterior, no deshace el esquema.
@@ -151,6 +154,9 @@ umask 022
 NEW_DROPIN=0
 mkdir -p /etc/systemd/system/calasign.service.d
 if ! cmp -s \$H/calasign-hardening.conf /etc/systemd/system/calasign.service.d/hardening.conf; then
+  # Copia del anterior: si la versión nueva no arranca, el rollback lo restaura (antes lo borraba y el servicio
+  # quedaba sin hardening).
+  if [ -f /etc/systemd/system/calasign.service.d/hardening.conf ]; then cp /etc/systemd/system/calasign.service.d/hardening.conf /root/hardening.conf.prev; else rm -f /root/hardening.conf.prev; fi
   install -m 0644 \$H/calasign-hardening.conf /etc/systemd/system/calasign.service.d/hardening.conf
   NEW_DROPIN=1
   systemctl daemon-reload
@@ -180,7 +186,11 @@ if ! healthy; then
   # Rollback: vuelve a la versión anterior (y saca el hardening si recién se instaló, por si es la causa).
   if [ -n "\$PREV" ] && [ -d "\$PREV" ] && [ "\$PREV" != "\$D" ]; then
     ln -sfn "\$PREV" /opt/calasign/current
-    if [ "\$NEW_DROPIN" = 1 ]; then rm -f /etc/systemd/system/calasign.service.d/hardening.conf; systemctl daemon-reload; fi
+    if [ "\$NEW_DROPIN" = 1 ]; then
+      if [ -f /root/hardening.conf.prev ]; then install -m 0644 /root/hardening.conf.prev /etc/systemd/system/calasign.service.d/hardening.conf
+      else rm -f /etc/systemd/system/calasign.service.d/hardening.conf; fi
+      systemctl daemon-reload
+    fi
     systemctl restart calasign
     if healthy; then echo "ROLLBACK_OK \$PREV"; else echo "ROLLBACK_FALLIDO \$PREV"; fi
     echo "Si la versión nueva ya migró la base, restaurar el backup previo (README → Restaurar un backup)."

@@ -94,9 +94,24 @@ async function mail(pred, what, secs = 30) {
   }
   throw new Error(`no llegó el mensaje: ${what}`);
 }
-/** Link de firma de la invitación más reciente a `to` cuyo asunto incluye `subject`. */
-const signLink = async (to, subject = "") =>
-  (await mail((x) => x.to === to && x.subject.includes(subject) && x.subject.includes("para firmar") && x.link?.includes("/s/"), `invitación a ${to}`)).link.split("/s/")[1];
+/**
+ * Link de firma de la invitación más reciente a `to` cuyo asunto incluye `subject`. Con `envelopeId`, solo una del sobre
+ * indicado: dos sobres seguidos con el mismo asunto y destinatarios (uno anulado) hacían que, bajo carga, se tomara la
+ * invitación del anterior.
+ */
+async function signLink(to, subject = "", envelopeId = null) {
+  for (let i = 0; i < 60; i++) {
+    const { items } = await api("GET", "/dev/mailbox");
+    for (const x of items.filter((x) => x.to === to && x.subject.includes(subject) && x.subject.includes("para firmar") && x.link?.includes("/s/"))) {
+      const token = x.link.split("/s/")[1];
+      if (!envelopeId) return token;
+      const s = await api("GET", `/v1/signing/${token}`, null, { anon: true }).catch(() => null);
+      if (s?.envelope?.id === envelopeId) return token;
+    }
+    await sleep(500);
+  }
+  throw new Error(`no llegó la invitación a ${to}`);
+}
 
 async function sign(token) {
   let s = await api("GET", `/v1/signing/${token}`, null, { anon: true });
@@ -254,8 +269,8 @@ assert(types === "date_signed,date_signed,signature,signature", `campos en las m
 assert(det.envelope.metadata.agreement.value === 1525.5 && det.envelope.metadata.agreement.expiryDate === data.vencimiento, "metadatos para el repositorio");
 step("generar: faltantes → 422, roles sin firmante o sin espacio de firma → 422; sobre con 4 campos ubicados en las marcas");
 
-await sign(await signLink(`jose+${stamp}@example.com`, cliente));
-await sign(await signLink(me.user.email, cliente));
+await sign(await signLink(`jose+${stamp}@example.com`, cliente, gen.envelopeId));
+await sign(await signLink(me.user.email, cliente, gen.envelopeId));
 await waitFor(async () => (await api("GET", `/v1/envelopes/${gen.envelopeId}`)).envelope.status === "completed", "sobre completado");
 step("sobre generado firmado por las dos partes y completado");
 

@@ -193,7 +193,8 @@ export function EnvelopeEditPage() {
     // Un código OTP sin su contacto: se avisa (antes se bajaba a "link" en silencio y el sobre salía con una
     // autenticación más débil).
     const noContact = recipients.find(
-      (r) => (r.authMethod === "otp_email" && !r.email.trim()) || ((r.authMethod === "otp_sms" || r.authMethod === "otp_whatsapp") && !r.phone.trim()),
+      // Las copias no tienen método (se guardan con "link").
+      (r) => r.role !== "cc" && ((r.authMethod === "otp_email" && !r.email.trim()) || ((r.authMethod === "otp_sms" || r.authMethod === "otp_whatsapp") && !r.phone.trim())),
     );
     if (noContact) {
       setStep("recipients");

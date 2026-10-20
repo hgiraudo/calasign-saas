@@ -52,7 +52,9 @@ function requireDraft(e: any) {
 }
 
 async function touch(db: Db, id: string) {
-  await db.query(`UPDATE envelopes SET updated_at = now(), version = version + 1 WHERE id = $1`, [id]);
+  // Estrictamente creciente (now() es la hora de inicio de la transacción: una que esperó el lock lo hacía retroceder y
+  // el control de edición concurrente daba un 409 falso).
+  await db.query(`UPDATE envelopes SET updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 millisecond'), version = version + 1 WHERE id = $1`, [id]);
 }
 
 /** Destinatarios firmantes del grupo de ruteo actual (el menor routing_order con firmantes pendientes). */

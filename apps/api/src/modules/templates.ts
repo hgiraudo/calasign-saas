@@ -95,7 +95,8 @@ async function lockTemplate(db: Db, tenantId: string, id: string) {
 }
 
 async function touch(db: Db, id: string) {
-  await db.query(`UPDATE templates SET updated_at = now() WHERE id = $1`, [id]);
+  // Estrictamente creciente (ver touch en envelopes.ts).
+  await db.query(`UPDATE templates SET updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 millisecond') WHERE id = $1`, [id]);
 }
 
 async function insertTemplateField(db: Db, tenantId: string, templateId: string, f: Omit<TemplateField, "id" | "conditions" | "formula"> & { id?: string }) {
@@ -182,7 +183,7 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
            description = CASE WHEN $3::boolean THEN $4 ELSE description END,
            subject = CASE WHEN $5::boolean THEN $6 ELSE subject END,
            message = CASE WHEN $7::boolean THEN $8 ELSE message END,
-           locale = COALESCE($9, locale), updated_at = now()
+           locale = COALESCE($9, locale), updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 millisecond')
          WHERE id = $1`,
         [
           tpl.id,

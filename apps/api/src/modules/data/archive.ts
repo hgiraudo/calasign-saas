@@ -12,7 +12,7 @@ import type { BlobStore } from "../../infra/storage";
 import { AppError, conflict, notFound } from "../../lib/errors";
 import { iso, sha256Hex, uuidv7 } from "../../lib/util";
 import { authenticate, type Services } from "../context";
-import { guardedFetch, trustAnchors } from "../evidence-seal";
+import { guardedFetch, resolveSealLevel, trustAnchors } from "../evidence-seal";
 import { discardBlobsOnFailure } from "../file-cleanup";
 
 const env = process.env;
@@ -42,7 +42,9 @@ async function signedFile(db: Db, envelopeId: string) {
 async function ensureFirstVersion(db: Db, e: { id: string; tenant_id: string; signed_file_id: string }, validUntil: string | null) {
   await db.query(
     `INSERT INTO envelope_signed_versions (id, tenant_id, envelope_id, file_id, version, reason, valid_until)
-     SELECT $1, $2, $3, $4, 1, 'completed', $5 WHERE NOT EXISTS (SELECT 1 FROM envelope_signed_versions WHERE envelope_id = $3)`,
+     SELECT $1, $2, $3, $4, 1, 'completed', $5 WHERE NOT EXISTS (SELECT 1 FROM envelope_signed_versions WHERE envelope_id = $3)
+     -- Dos inspecciones a la vez (GET /archive y el barrido): la que pierde no falla (antes dejaba un archive_error falso).
+     ON CONFLICT (envelope_id, version) DO NOTHING`,
     [uuidv7(), e.tenant_id, e.id, e.signed_file_id, validUntil],
   );
 }
@@ -55,6 +57,10 @@ async function inspectArchive(d: Deps, envelopeId: string) {
   const validUntil = info.hasDss && info.last ? info.last.tsaNotAfter : null;
   await d.db.query(`UPDATE envelopes SET archive_valid_until = $2, archive_checked_at = now(), archive_error = NULL WHERE id = $1`, [e.id, validUntil]);
   await ensureFirstVersion(d.db, e, validUntil);
+  // Con sello de tiempo pero sin DSS, en una organización con nivel B-LT/B-LTA: el LTV falló al finalizar (TSA u
+  // OCSP caídos) y el sobre quedaba en B-T para siempre, sin renovarse ni error visible. El barrido lo completa.
+  const level = info.last && !info.hasDss ? await resolveSealLevel(d.db, e.tenant_id) : null;
+  return { needsLtv: level === "B-LT" || level === "B-LTA" };
 }
 
 /** Agrega DSS + sello de documento nuevo y guarda la nueva versión. */
@@ -172,8 +178,18 @@ export async function archiveSweep(d: Deps, opts: { days?: number; force?: boole
   );
   for (const p of pending) {
     try {
-      await inspectArchive(d, p.id);
+      const r = await inspectArchive(d, p.id);
       inspected++;
+      if (r?.needsLtv) {
+        try {
+          await renewEnvelopeArchive(d, p.id);
+          renewed++;
+        } catch (err) {
+          // Queda a la vista y se reintenta una vez por día (la consulta de pendientes toma los que tienen error).
+          failed++;
+          await d.db.query(`UPDATE envelopes SET archive_checked_at = now(), archive_error = $2 WHERE id = $1`, [p.id, `LTV pendiente: ${String(err)}`.slice(0, 500)]);
+        }
+      }
     } catch (err) {
       d.log.warn({ envelopeId: p.id, err: String(err) }, "no se pudo leer el sello de archivo");
       await d.db.query(`UPDATE envelopes SET archive_checked_at = now(), archive_error = $2 WHERE id = $1`, [p.id, String(err).slice(0, 500)]);

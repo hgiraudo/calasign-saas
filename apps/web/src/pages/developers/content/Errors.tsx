@@ -13,6 +13,8 @@ const CODES: [string, string, string][] = [
   ["404", "not_found", "err.c.notFound"],
   ["409", "not_draft · not_voidable · not_in_progress · conflict", "err.c.conflict"],
   ["409", "idempotency_mismatch · idempotency_in_progress", "err.c.idem"],
+  ["409", "version_changed", "err.c.versionChanged"],
+  ["410 · 409", "purged", "err.c.purged"],
   ["413", "file_too_large", "err.c.tooLarge"],
   ["422", "roles_missing · rows_invalid · pdf_too_heavy", "err.c.unprocessable"],
   ["429", "bad_request + retry-after", "err.c.rate"],

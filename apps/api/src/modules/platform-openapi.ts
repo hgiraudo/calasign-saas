@@ -208,8 +208,8 @@ export const PLATFORM_OPS: PlatformOp[] = [
   },
 
   { method: "get", path: "/v1/domains", operationId: "getCustomDomain", tag: "Dominio propio", summary: "Dominio de la organización", response: z.object({ domain: CustomDomain.nullable() }) },
-  { method: "put", path: "/v1/domains", operationId: "setCustomDomain", tag: "Dominio propio", summary: "Registrar o cambiar el dominio", body: SetCustomDomainInput, response: z.object({ domain: CustomDomain }) },
-  { method: "post", path: "/v1/domains/verify", operationId: "verifyCustomDomain", tag: "Dominio propio", summary: "Verificar el registro TXT", response: z.object({ domain: CustomDomain }) },
+  { method: "put", path: "/v1/domains", operationId: "setCustomDomain", tag: "Dominio propio", summary: "Registrar o cambiar el dominio", description: "Exige el dominio propio en el plan (402). No se pueden reclamar los hosts de la plataforma (APP_URL, PLATFORM_HOSTS).", body: SetCustomDomainInput, response: z.object({ domain: CustomDomain }), errors: ["plan_limit_custom_domain"] },
+  { method: "post", path: "/v1/domains/verify", operationId: "verifyCustomDomain", tag: "Dominio propio", summary: "Verificar el registro TXT", description: "Verificar (o re-verificar) exige el dominio propio en el plan (402); quitarlo no.", response: z.object({ domain: CustomDomain }), errors: ["plan_limit_custom_domain"] },
   { method: "delete", path: "/v1/domains", operationId: "deleteCustomDomain", tag: "Dominio propio", summary: "Quitar el dominio", response: "none", status: 204 },
   { method: "get", path: "/v1/public/host-branding", operationId: "getHostBranding", tag: "Dominio propio", summary: "Marca de la organización según el Host", auth: "none" },
 ];

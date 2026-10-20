@@ -162,7 +162,7 @@ export const WHITE_LABEL_OPS: Op[] = [
     response: z.object({ domain: BrandDomainSchema }),
     errors: WL,
   },
-  { method: "post", path: "/v1/settings/brands/{id}/domain/verify", operationId: "verifyBrandDomain", tag: T, summary: "Verificar el dominio de la sub-marca", response: z.object({ domain: BrandDomainSchema }) },
+  { method: "post", path: "/v1/settings/brands/{id}/domain/verify", operationId: "verifyBrandDomain", tag: T, summary: "Verificar el dominio de la sub-marca", description: "Verificar (o re-verificar) exige la marca blanca en el plan (402); quitarlo no.", response: z.object({ domain: BrandDomainSchema }), errors: WL },
   { method: "delete", path: "/v1/settings/brands/{id}/domain", operationId: "deleteBrandDomain", tag: T, summary: "Quitar el dominio de la sub-marca", response: "none", status: 204 },
   { method: "get", path: "/v1/settings/email-domains", operationId: "listEmailDomains", tag: T, summary: "Dominios de correo (remitente propio)", response: z.object({ items: z.array(EmailDomainSchema) }) },
   {
@@ -177,7 +177,7 @@ export const WHITE_LABEL_OPS: Op[] = [
     status: 201,
     errors: WL,
   },
-  { method: "post", path: "/v1/settings/email-domains/{domain}/verify", operationId: "verifyEmailDomain", tag: T, summary: "Verificar un dominio de correo", response: EmailDomainSchema },
+  { method: "post", path: "/v1/settings/email-domains/{domain}/verify", operationId: "verifyEmailDomain", tag: T, summary: "Verificar un dominio de correo", description: "Verificar (o re-verificar) exige la marca blanca en el plan (402); quitarlo no.", response: EmailDomainSchema, errors: WL },
   { method: "delete", path: "/v1/settings/email-domains/{domain}", operationId: "deleteEmailDomain", tag: T, summary: "Quitar un dominio de correo", response: "none", status: 204 },
   {
     method: "get",

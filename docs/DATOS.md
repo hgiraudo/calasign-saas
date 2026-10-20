@@ -75,7 +75,12 @@ Ver también `EVIDENCIA.md` §2. El barrido (`archiveSweep`, en el worker, como 
 1. A cada sobre completado sin revisar (o cuya revisión falló hace más de un día: BYOK o almacenamiento caídos)
    le calcula `archive_valid_until` = vencimiento del certificado de la TSA
    del **último** sello de tiempo (sello de documento o, si no hay, el de la firma). Solo los PDF con DSS
-   (B-LT/B-LTA) tienen vigencia de archivo; los B-B/B-T no se renuevan.
+   (B-LT/B-LTA) tienen vigencia de archivo; los B-B y los B-T elegidos así por la organización no se renuevan.
+   Un sobre B-T (con sello de tiempo, sin DSS) en una organización con nivel B-LT/B-LTA es un LTV que falló al
+   finalizar (TSA u OCSP caídos): queda marcado "LTV pendiente" y el mismo barrido lo completa a B-LTA (DSS +
+   sello de documento), con el evento `envelope.archive_renewed` con `upgrade: true`. Si falla, el error queda a la
+   vista en el sobre y se reintenta una vez por día. Por pasada se completan como mucho `ARCHIVE_RENEWAL_BATCH`
+   sobres y se corta ante la primera falla (con la TSA caída, cada uno haría todas las consultas OCSP/CRL).
 2. Si vence dentro de `ARCHIVE_RENEWAL_DAYS` (180), agrega DSS (OCSP/CRL de hoy, incluida la cadena de esa
    TSA) + un **sello de documento nuevo** como revisión incremental, valida el resultado (todas las firmas
    íntegras y un sello de documento más), guarda la nueva versión y actualiza `signed_file_id`.
@@ -86,7 +91,8 @@ Ver también `EVIDENCIA.md` §2. El barrido (`archiveSweep`, en el worker, como 
    almacenamiento o conectores no se vuelve a subir; el JSON de evidencia que acompaña a cada exportación lleva
    el hash del PDF que efectivamente se subió.
 4. No se vuelve a renovar el mismo sobre antes de `ARCHIVE_RENEWAL_MIN_INTERVAL_DAYS` (30). Si la TSA vigente
-   vence igual o antes que la anterior, se deja `archive_error` (conviene configurar otra TSA).
+   vence igual o antes que la anterior, se deja `archive_error` (conviene configurar otra TSA); no aplica al
+   completar un B-T a B-LTA (no hay sello de archivo anterior con el que comparar).
 
 API: `GET /v1/envelopes/:id/archive` (vigencia y versiones), `POST /v1/envelopes/:id/archive/renew` (manual).
 La web lo muestra en el detalle del sobre completado. En local, `POST /dev/archive/sweep {days, envelopeId}`.

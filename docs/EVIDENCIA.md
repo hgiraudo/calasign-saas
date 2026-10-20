@@ -22,7 +22,9 @@ documento (B-LTA).
 **Elección del nivel.** `SEAL_LEVEL` (entorno) y `tenants.seal_level` (cada organización, `PATCH
 /v1/settings/evidence`). `auto` = B-LT si la cadena del sello publica OCSP/CRL; si no, B-T (no hay qué
 incrustar). Sin TSA todo queda en B-B. Si la TSA o el OCSP fallan y `TSA_REQUIRED=false`, el sobre se entrega en
-el nivel que se alcanzó y queda constancia en el evento `envelope.completed` (`seal.ltvError`).
+el nivel que se alcanzó y queda constancia en el evento `envelope.completed` (`seal.ltvError`). Si la
+organización pide B-LT/B-LTA y el sobre quedó en B-T, el barrido de archivo lo marca "LTV pendiente" y después lo
+completa a B-LTA (evento `envelope.archive_renewed` con `upgrade: true`; ver [`DATOS.md`](DATOS.md) §3).
 
 **Compatibilidad verificada.** `pdfsig` (poppler/NSS) valida las firmas CAdES y la cadena; los certificados
 de sello llevan EKU `emailProtection` además de `documentSigning` porque NSS lo exige. poppler todavía no
@@ -45,6 +47,14 @@ junto a la búsqueda por hash). Por firma: integridad (CMS + messageDigest), cob
 revisiones posteriores), sello de tiempo (messageImprint + firma del token), cadena hasta una raíz de
 confianza (`TRUST_STORE_DIR` + la raíz del sello de plataforma), revocación (OCSP/CRL del DSS; online solo si
 `VALIDATE_ONLINE_REVOCATION=true`, con protección SSRF: solo http(s) a IPs públicas) y nivel PAdES detectado.
+
+`chain.revocationUnknown` (por firma) y `summary.revocationUnknown` (en todo el PDF) indican que de algún
+certificado que no es la raíz no se pudo saber si estaba revocado: sin OCSP/CRL en el DSS ni consulta online, o
+solo con respuestas OCSP "unknown" (un "unknown" es provisional: se sigue buscando un OCSP "good"/"revoked" o una
+CRL, y si no aparece nada concluyente cuenta como no verificado). Topes de recursos: hasta 50 firmas por PDF (más
+es un error), 300 certificados, 300 OCSP y 300 CRL del DSS (las CRL de más de 5 MB se ignoran) y 300 certificados
+en el conjunto con el que se arman las cadenas (sin contar las raíces de confianza). Lo que pasa de esos topes se
+recorta, no se rechaza: un tope de recursos no es una firma rota.
 
 ## 4. Firma XML (facturación electrónica)
 

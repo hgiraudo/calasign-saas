@@ -67,8 +67,11 @@ Precios mensuales por moneda en `packages/shared/src/billing.ts` (`PLAN_PRICES`;
 - **Uso del mes**: se calcula de las tablas de negocio (sobres enviados, usuarios + invitaciones, mensajes por canal,
   verificaciones de identidad y tokens de IA si existe la tabla `ai_usage`).
 - **Suscripción**: `POST /v1/billing/checkout` → Stripe Billing (Checkout `mode=subscription` + portal) o Mercado Pago
-  (`preapproval`), o el simulado. Baja: `POST /v1/billing/cancel` (Mercado Pago/simulado) o el portal de Stripe.
-  Permiso `billing:manage` (propietarios y administradores).
+  (`preapproval`), o el simulado (nunca en producción, aunque `PAYMENTS_MOCK_ENABLED` esté prendida). Baja:
+  `POST /v1/billing/cancel` (Mercado Pago/simulado) o el portal de Stripe. El portal de Stripe sigue disponible
+  después de cancelar (`portalAvailable`: la organización conserva su cliente de Stripe, para ver facturas o volver a
+  suscribirse). Una suscripción de Stripe en `unpaid` baja la organización a Free pero queda vinculada: si se paga
+  la factura y vuelve a `active`, recupera el plan. Permiso `billing:manage` (propietarios y administradores).
 
 ## 3. Servidor MCP para agentes de IA
 
@@ -76,7 +79,8 @@ Precios mensuales por moneda en `packages/shared/src/billing.ts` (`PLAN_PRICES`;
 Descubrimiento OAuth: `/.well-known/oauth-protected-resource` (RFC 9728) y `/.well-known/oauth-authorization-server` (RFC 8414).
 
 Herramientas: `list_envelopes`, `get_envelope`, `get_signing_status`, `list_templates`, `get_account`,
-`create_envelope_from_template` y `create_envelope` (desde un PDF en base64 o URL https; crean en borrador), `send_envelope`,
+`create_envelope_from_template` y `create_envelope` (desde un PDF en base64 o URL https; por defecto crean en borrador; con
+`send: true` y `confirm: true` lo crean y lo envían en una sola llamada; aceptan `locale`: es, pt-BR, en), `send_envelope`,
 `void_envelope` y `remind_recipients` (**exigen `confirm: true`**: sin eso devuelven el resumen para que el usuario apruebe),
 `download_signed_pdf` (URL temporal, `MCP_DOWNLOAD_TTL_SEC`, por defecto 15 min). Todas llevan anotaciones MCP
 (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`, `title`).
@@ -92,7 +96,8 @@ plan y la misma evidencia; las acciones quedan con actor **«agente IA (&lt;app 
 | Variable | Uso |
 |---|---|
 | `BILLING_DEFAULT_PLAN` | Plan de las organizaciones sin suscripción. |
-| `PAYMENTS_MOCK_ENABLED` | Habilita el proveedor simulado en producción (no recomendado). |
+| `PAYMENTS_MOCK_ENABLED` | Habilita el proveedor simulado de los cobros al firmar en producción (no recomendado; fuera de producción siempre está). No afecta las suscripciones: la simulada nunca se ofrece en producción. |
+| `IDV_MOCK_ENABLED` | `1` habilita en producción el proveedor simulado de verificación de identidad (aprueba sin verificar; fuera de producción siempre está). |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_API_BASE` | Stripe (claves de test `sk_test_…` en dev). |
 | `MP_ACCESS_TOKEN`, `MP_WEBHOOK_SECRET`, `MP_API_BASE` | Mercado Pago (token `TEST-…` usa el sandbox). En producción sin `MP_WEBHOOK_SECRET` el webhook responde 503. |
 | `MCP_DOWNLOAD_TTL_SEC` | Vida de las URLs de descarga del MCP. |

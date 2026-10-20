@@ -86,8 +86,8 @@ export const AGREEMENTS_OPS: Op[] = [
   { method: "post", path: "/v1/workflows/{id}/runs", tag: W, summary: "Iniciar una ejecución", body: StartWorkflowInput, status: 201 },
   { method: "get", path: "/v1/workflow-runs", tag: W, summary: "Ejecuciones", description: "Query: workflowId, status." },
   { method: "get", path: "/v1/workflow-runs/{id}", tag: W, summary: "Ver una ejecución" },
-  { method: "post", path: "/v1/workflow-runs/{id}/steps/{index}/decision", tag: W, summary: "Aprobar o rechazar un paso de aprobación", body: ApprovalDecisionInput },
-  { method: "post", path: "/v1/workflow-runs/{id}/cancel", tag: W, summary: "Cancelar una ejecución (anula sus sobres en curso)" },
+  { method: "post", path: "/v1/workflow-runs/{id}/steps/{index}/decision", tag: W, summary: "Aprobar o rechazar un paso de aprobación", description: "Rechazar deja la ejecución en rejected y anula sus sobres en curso.", body: ApprovalDecisionInput },
+  { method: "post", path: "/v1/workflow-runs/{id}/cancel", tag: W, summary: "Cancelar una ejecución (anula sus sobres en curso)", description: "También una ejecución fallida: es la forma de anular los sobres que dejó en firma." },
   { method: "post", path: "/v1/workflow-runs/{id}/retry", tag: W, summary: "Reintentar el paso fallido" },
   { method: "get", path: "/v1/public/workflows/{slug}", tag: W, summary: "Workflow con inicio público", auth: "none" },
   {

@@ -12,7 +12,10 @@ Entorno de desarrollo: **https://dev.calasign.com**.
 | [`docs/IA.md`](docs/IA.md) | Funciones de IA, opt-in, presupuesto y proveedor (Claude o mock) |
 | [`docs/PAGOS-Y-AGENTES.md`](docs/PAGOS-Y-AGENTES.md) | Servidor MCP, cobro dentro de la firma, planes y facturación, medios de pago por país |
 | [`docs/CUSTOM-DOMAINS.md`](docs/CUSTOM-DOMAINS.md) | Dominio propio por cliente y TLS bajo demanda |
-| [`docs/CRM.md`](docs/CRM.md) | Conectores HubSpot, Salesforce, Siigo y Alegra |
+| [`docs/CRM.md`](docs/CRM.md) | Conectores HubSpot, Salesforce, Zoho CRM / Bigin, Pipedrive, RD Station CRM, Kommo, Siigo y Alegra |
+| [`docs/CONECTORES.md`](docs/CONECTORES.md) | Conectores sin código: Power Automate, Zapier, Make, n8n, Dynamics 365, RR. HH. y CLM (BambooHR, Ironclad, Juro, Box, SharePoint) |
+| [`docs/MARCA-BLANCA.md`](docs/MARCA-BLANCA.md) | Marca blanca: sub-marcas, textos y plantillas propios, remitente y dominios de correo/sub-marca |
+| [`docs/API-ROADMAP.md`](docs/API-ROADMAP.md) | Comparación de la API con la de otros proveedores de firma, brechas y roadmap |
 | [`docs/DATOS.md`](docs/DATOS.md) | BYOK, celdas de residencia de datos y renovación de sellos de archivo |
 | [`docs/FIRMA-CON-CERTIFICADO.md`](docs/FIRMA-CON-CERTIFICADO.md) | Firma con el certificado del titular (token PKCS#11, almacén de Windows, .p12) y el Firmador CalaSign |
 | [`docs/MCP-CONECTORES.md`](docs/MCP-CONECTORES.md) | Conectores MCP para Claude, ChatGPT, Claude Code y Gemini: registro dinámico de clientes OAuth (RFC 7591), `resource` (RFC 8707), herramientas |
@@ -31,7 +34,7 @@ La API completa y vigente está en `GET /v1/openapi.json` y en el portal de desa
 | API e integraciones | API REST v1 + OpenAPI, API keys y OAuth 2.0 (client credentials, authorization code + PKCE), firma embebida en iframe, webhooks HMAC con reintentos, anclas de texto, idempotencia, SDKs Node y Python, servidor MCP para agentes de IA (conectores de Claude, ChatGPT y Gemini con registro dinámico OAuth, skill, plugin de Claude Code, extensión MCPB, complemento de Word/Outlook), Slack/Teams, exportación a Google Drive/Dropbox/OneDrive/S3, dominio propio |
 | Equipos y empresa | Miembros e invitaciones, roles y permisos personalizados, grupos, auditoría de cuenta, retención, 2FA, SSO OIDC/SAML, SCIM, branding, reportes |
 | Acuerdos e IA | Repositorio con búsqueda, generación de documentos desde plantillas, workflows sin código, negociación con versiones, detección de campos, metadatos y alertas de renovación, revisión contra playbook |
-| CRM y ERP | Enviar a firmar desde HubSpot y Salesforce con write-back y PDF adjunto; Siigo y Alegra |
+| CRM y ERP | Enviar a firmar desde HubSpot, Salesforce, Zoho CRM / Bigin, Pipedrive, RD Station CRM y Kommo con write-back y PDF adjunto; Siigo y Alegra |
 | Datos | BYOK con KMS del cliente, residencia de datos por celdas, renovación automática de sellos de archivo |
 | Cobro | Planes Free/Starter/Business/Enterprise con límites, uso mensual, precios en USD/BRL/COP/DOP/HNL/PEN, Stripe y Mercado Pago |
 
@@ -46,23 +49,48 @@ corepack pnpm --filter @calasign/api dev         # http://localhost:4000
 
 Sin variables de entorno usa **PGlite** (Postgres embebido) en `var/`, archivos en disco, un sello autogenerado, IA y
 pagos simulados, y el **buzón de desarrollo** (`/app/dev-mailbox`) donde caen correos y mensajes con sus links.
-Configuración: `apps/api/src/config.ts` y las variables de cada documento de `docs/`.
+Configuración: `apps/api/src/config.ts` y las variables de cada documento de `docs/`. Las principales:
+
+| Variable | Por defecto | Uso |
+|---|---|---|
+| `PORT`, `HOST` | `4000`, `0.0.0.0` | Dónde escucha la API |
+| `APP_URL` | `http://localhost:5173` | URL pública (links de firma, correos); la cuenta solo existe en su host |
+| `APP_ENV` | `prod` con `NODE_ENV=production`, si no `local` | Nombre del entorno (`local`, `dev`, `prod`); las herramientas de prueba solo existen en `local` |
+| `PLATFORM_HOSTS` | — | Otros hosts de la plataforma donde existe la cuenta, separados por coma |
+| `TRUST_PROXY_HOPS` | `1` | Proxies delante de la API cuyo `X-Forwarded-For` se cree |
+| `DATABASE_URL` | — | Postgres; sin ella, PGlite en `DATA_DIR` |
+| `DATA_DIR` | `var/` | Datos locales (PGlite, archivos, clave generada) |
+| `SECRET_KEY` | generada en `var/` fuera de producción | 32 bytes en base64 (cifra tokens de firmante); obligatoria en producción |
+| `COOKIE_SECURE` | `true` en producción | Cookie de sesión solo por https |
+| `LOG_LEVEL` | `info` | Nivel de log |
+| `STORAGE_DRIVER` | `s3` si hay `S3_BUCKET`, si no `local` | Almacenamiento de archivos |
+| `S3_BUCKET`, `S3_PREFIX`, `AWS_REGION` | —, —, `us-east-1` | Bucket, prefijo de las claves y región |
+| `WORKER_INLINE` | `true` fuera de producción | Corre el worker de jobs dentro del proceso de la API |
+| `WORKER_CONCURRENCY` | `4` | Jobs en paralelo por worker |
+| `DB_POOL_MAX` | `10` | Conexiones del pool de Postgres |
+| `MIGRATE_ON_START` | — | `1` aplica las migraciones al arrancar en producción (fuera de producción siempre) |
+| `DEV_MAILBOX` | `true` fuera de producción | Buzón de desarrollo (`/app/dev-mailbox`, API `/dev/mailbox`) |
+| `MAX_UPLOAD_MB` | `25` | Tamaño máximo de subida |
+| `WEB_DIST` | `apps/web/dist` | Web compilada que sirve la API |
 
 ### Pruebas
 
 ```bash
 for t in e2e e2e-integrations e2e-signer e2e-productivity e2e-teams e2e-experience e2e-scale \
-         e2e-platform e2e-identity e2e-evidence e2e-mcp e2e-billing e2e-ai e2e-agreements e2e-data e2e-oneshot e2e-white-label; do
+         e2e-platform e2e-identity e2e-evidence e2e-mcp e2e-billing e2e-ai e2e-agreements e2e-data e2e-oneshot \
+         e2e-white-label e2e-api e2e-password; do
   node scripts/$t.mjs http://localhost:4000
 done
 node scripts/e2e-crm.mjs                 # levanta su propia API y simuladores de los proveedores
 node scripts/e2e-connectors.mjs          # ídem: BambooHR, Ironclad, Juro, Box y SharePoint (docs/CONECTORES.md)
+node scripts/e2e-lowcode.mjs             # ídem (puerto 4117): endpoints low-code, app de Zapier y trigger de n8n
+node scripts/e2e-certsign.mjs            # ídem, con su PKI de laboratorio y el Firmador (docs/FIRMA-CON-CERTIFICADO.md)
 (cd apps/api && ./node_modules/.bin/vitest run)
 (cd packages/pdf && ./node_modules/.bin/vitest run)
 (cd packages/xades && ../../apps/api/node_modules/.bin/vitest run)
 ```
 
-`e2e-integrations`, `e2e-teams`, `e2e-identity`, `e2e-ai`, `e2e-agreements`, `e2e-data` y `e2e-white-label` usan funciones que solo existen en el entorno
+`e2e-integrations`, `e2e-teams`, `e2e-identity`, `e2e-ai`, `e2e-agreements`, `e2e-data`, `e2e-white-label`, `e2e-api` y `e2e-password` usan funciones que solo existen en el entorno
 local (buzón sin sesión, barridos manuales, receptores en 127.0.0.1); el resto también corre contra
 `https://dev.calasign.com`.
 

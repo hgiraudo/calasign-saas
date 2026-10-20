@@ -74,7 +74,7 @@ campos en un solo pedido, los conectores pueden pasar a usarlo. Los endpoints ac
 
 | Endpoint | Para qué |
 |---|---|
-| `POST /v1/webhooks` responde con el header **`Location: <appUrl>/v1/webhooks/{id}`** | Triggers de Power Automate y Logic Apps: la plataforma hace DELETE a esa URL al borrar o editar el flujo. |
+| `POST /v1/webhooks` responde con el header **`Location: <appUrl>/v1/webhooks/{id}`** | Triggers de Power Automate y Logic Apps: la plataforma hace DELETE a esa URL al borrar o editar el flujo. La suscripción (REST hook) queda atada a la credencial que la creó (API key o token OAuth del usuario): si se revoca la key o la app, el usuario la desconecta o deja la organización, el webhook pasa a `active: false` antes de cualquier entrega (auditoría: `webhook.deactivated`). |
 | `GET /v1/webhooks/samples?event=&limit=` | Eventos de ejemplo con la forma exacta de una entrega. Se arman con los últimos sobres de la organización y, si no hay, uno sintético. Lo usan `performList` de Zapier y los datos de prueba de Make y n8n. |
 | `GET /v1/templates/{id}/input-schema` | Roles y campos prellenables de una plantilla, más el JSON Schema (draft-04 con `x-ms-summary`) de `roles` y `prefill`. Alimenta los campos dinámicos de las cuatro plataformas. |
 | `POST /v1/envelopes/from-template/{templateId}` | Igual que `/v1/envelopes/from-template`, pero con `roles: { <id o nombre del rol>: { name, email, phone } }` y `prefill: { <id o etiqueta>: valor }`. Ignora los valores vacíos y pasa los números a texto. Envía el sobre salvo que venga `send: false`. |
@@ -318,7 +318,8 @@ Un flujo define:
 **Cómo se envía**
 
 - Desde la UI: se busca el empleado o contrato (`GET /connections/{id}/records?q=`) y se pulsa "Crear sobre".
-- Por API: `POST /v1/connectors/flows/{id}/send {recordId}`.
+- Por API: `POST /v1/connectors/flows/{id}/send {recordId}` (admite `Idempotency-Key`: un reintento con la misma clave
+  devuelve el mismo sobre en vez de crear otro).
 - Por el webhook de la conexión.
 
 **Webhook**

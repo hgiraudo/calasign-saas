@@ -10,9 +10,9 @@ import {
 
 const TAG = "IA";
 const NOTE =
-  "Requiere IA habilitada para la organización (403 ai_disabled) y presupuesto mensual disponible (429 ai_budget_exceeded). Un documento demasiado largo para el modelo responde 413 ai_input_too_large.";
-const SIGNER_NOTE = `${NOTE} Por firmante: hasta 30 consultas por día y 100 en total (resumen y preguntas juntos; después, 429 ai_signer_limit). Si el sobre exige verificar la identidad y todavía no se verificó, 403 identity_required.`;
-const AI_ERRORS = ["ai_input_too_large"];
+  "Requiere IA habilitada para la organización (403 ai_disabled) y presupuesto mensual disponible (429 ai_budget_exceeded). Un documento demasiado largo para el modelo responde 413 ai_input_too_large. Si los originales del sobre se borraron por la política de retención, 410 purged.";
+const SIGNER_NOTE = `Requiere IA habilitada para la organización (403 ai_disabled) y presupuesto mensual disponible (429 ai_budget_exceeded). Un documento demasiado largo para el modelo responde 413 ai_input_too_large. Por firmante: hasta 30 consultas por día y 100 en total (resumen y preguntas juntos; después, 429 ai_signer_limit). Si el sobre exige verificar la identidad y todavía no se verificó, 403 identity_required.`;
+const AI_ERRORS = ["ai_input_too_large", "purged"];
 const SIGNER_ERRORS = ["ai_input_too_large", "ai_signer_limit", "identity_required"];
 
 export const AI_OPS = [
@@ -30,14 +30,15 @@ export const AI_OPS = [
     path: "/v1/envelopes/{id}/ai/preview",
     tag: TAG,
     summary: "Texto exacto que se enviaría al modelo (transparencia)",
-    description: "Query: feature (detect_fields | summary | ask | extract_metadata | playbook_review), documentId opcional.",
+    description: "Query: feature (detect_fields | summary | ask | extract_metadata | playbook_review), documentId opcional. Si los originales del sobre se borraron por la política de retención, 410 purged.",
+    errors: ["purged"],
   },
   {
     method: "post",
     path: "/v1/envelopes/{id}/ai/detect-fields",
     tag: TAG,
     summary: "Sugerir campos (firma, iniciales, fecha, nombre) con su rol",
-    description: "Sin IA habilitada devuelve solo sugerencias por análisis del texto (no se envía nada). Coordenadas normalizadas 0..1. Con IA, si no queda presupuesto o el documento es demasiado largo para el modelo, devuelve solo esas sugerencias (usage y sent en null).",
+    description: "Sin IA habilitada devuelve solo sugerencias por análisis del texto (no se envía nada). Coordenadas normalizadas 0..1. Con IA, si no queda presupuesto o el documento es demasiado largo para el modelo, devuelve solo esas sugerencias (usage y sent en null). Si los originales del sobre se borraron por la política de retención, 410 purged.",
     body: DetectFieldsInput,
     errors: AI_ERRORS,
   },

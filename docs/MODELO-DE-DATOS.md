@@ -30,7 +30,7 @@ jobs · idempotency_keys   (infraestructura, sin FK al negocio)
 | `sessions` | Sesiones web. | Se guarda el **hash** del token, nunca el token. |
 | `api_keys` | Credenciales de integración. | Hash + prefijo visible para identificarla; scopes; revocación lógica. |
 | `files` | Todo binario (en S3/disco). | SHA-256 obligatorio: es evidencia. `kind` separa originales, finales e imágenes de firma (distintas políticas de retención). |
-| `envelopes` | El sobre / transacción. | Máquina de estados con `CHECK`. `version` para concurrencia optimista. `metadata` para el `external_id` del integrador (dynamic-form). `signature_level` preparado para Fase 5. |
+| `envelopes` | El sobre / transacción. | Máquina de estados con `CHECK`. Concurrencia: `updated_at` es estrictamente creciente (cada cambio lo sube al menos 1 ms) y el cliente que manda `X-Expected-Updated-At` con el valor que leyó recibe `409 version_changed` si el borrador cambió mientras tanto (`version` se sigue incrementando, pero el control se hace con `updated_at`). `metadata` para el `external_id` del integrador (dynamic-form). `signature_level` preparado para Fase 5. |
 | `documents` | PDF dentro del sobre, ordenados. | Se guardan las dimensiones de cada página para validar y ubicar campos sin abrir el PDF. |
 | `recipients` | Firmantes y copias. | `routing_order` modela secuencial, paralelo y mixto con un solo número. `channels` (email, WhatsApp). Documento de identidad declarado (cédula, CPF…). Token del link en hash (búsqueda) y cifrado (reenvío). Evidencia del momento de firma (IP, user agent). |
 | `fields` | Campos ubicados en una página. | Coordenadas **normalizadas 0–1** desde arriba a la izquierda (como las ve el navegador); se convierten a puntos PDF solo al estampar. |
@@ -57,7 +57,8 @@ Cada evento: actor (`user`, `api_key`, `recipient`, `system`), IP, user agent, d
   si se extiende o se quita durante una pasada, el resto del lote no se borra. Un original compartido con una
   plantilla, otro sobre sin purgar, un acuerdo o una negociación se conserva; cuando ya solo lo usan sobres purgados
   (por ejemplo, el PDF de una plantilla borrada), un barrido de huérfanos lo borra. Un original purgado responde
-  `410 purged`.
+  `410 purged` (descarga del original, plantilla desde el sobre, operaciones de IA); clonar un sobre purgado responde
+  `409 purged`. El firmante de un sobre anulado o vencido que ya se purgó ve "sobre cerrado", no "original borrado".
 - PDF final sellado y `envelope_events`: se conservan siempre (la retención no los toca). Hoy no hay Object Lock en el
   almacenamiento ni un bloqueo a nivel base de datos: la inmutabilidad la da la cadena de hashes (cualquier cambio se
   detecta al verificar). Un bucket con Object Lock para los PDF finales queda como trabajo pendiente.
@@ -122,10 +123,11 @@ El diagrama de arriba es el núcleo (0001). Cada bloque funcional agrega su prop
 | `0055_archive_renewal_claim` | `envelopes.archive_renewing_until`: una renovación del sello de archivo a la vez por sobre |
 | `0056_stale_checkout` | `envelope_payments.stale_checkout_id`: el checkout descartado al cambiar el pagador se cierra en el proveedor |
 | `0057_export_pdf_sha` | Hash del PDF subido en exportaciones (`storage_exports.pdf_sha256`) y conectores (`connector_links.signed_sha256`): el JSON de evidencia describe ese PDF aunque después se renueve el sello |
-| `0058_ai_extract_retry` | `envelopes.ai_metadata_retry_at`: una extracción automática con IA que falló por algo transitorio se reintenta en una hora |
+| `0058_ai_extract_retry` | `envelopes.ai_metadata_retry_at`: una extracción automática con IA que falló se reintenta después de esa fecha (1 h si fue algo transitorio, 6 h si el proveedor rechazó el pedido), durante 30 días desde el primer intento |
 | `0059_webhook_origin` | `webhook_endpoints.created_by_api_key` y `oauth_client_id`: si se revoca la credencial que creó el webhook, se desactiva |
 | `0060_ai_extract_idx` | Índice parcial para el barrido de extracción automática con IA |
 | `0061_ai_extract_idx2` | Reemplaza los índices de 0011 y 0060 por uno por organización y más selectivo para ese barrido |
+| `0062_ai_first_attempt` | `envelopes.ai_metadata_first_attempt_at`: primer intento de la extracción automática, para contar los 30 días de reintentos desde ahí (no desde que se completó el sobre) |
 
 Reglas: una migración por bloque, solo aditiva salvo cuando se recrea un `CHECK` para sumar un valor; nunca se edita una
 migración ya aplicada en un entorno.

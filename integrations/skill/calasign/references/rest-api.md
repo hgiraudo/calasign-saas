@@ -49,7 +49,7 @@ Authorization: Bearer <API key (cs_live_… / cs_test_…) or OAuth access token
 | `POST /v1/envelopes/{id}/void` | Void an in-progress envelope `{reason}` |
 | `GET /v1/envelopes/{id}/events` | Hash-chained audit trail |
 | `GET /v1/envelopes/{id}/signed.pdf` | Final sealed PDF (status `completed`) |
-| `POST /v1/envelopes/{id}/recipients/{rid}/signing-url` | Embedded signing URL (single use, 5 min) |
+| `POST /v1/envelopes/{id}/recipients/{rid}/signing-url` | Embedded signing URL (single use, 5 min). For a non-embedded signer with an OTP code it comes back with `tabOnly: true` (open it in a tab or redirect, not an iframe); asking for it with `frameAncestors` → `409 otp_not_embeddable` |
 | `GET /v1/templates?q=` · `POST /v1/envelopes/from-template` | Templates with roles |
 | `GET/POST /v1/webhooks` | Webhook endpoints (secret returned once) |
 
@@ -67,6 +67,14 @@ Authorization: Bearer <API key (cs_live_… / cs_test_…) or OAuth access token
   "authMethod": "link"         // link | otp_email | otp_sms | otp_whatsapp | in_person
 }
 ```
+
+`"embedded": true` = signing inside your app (no invitations or reminders). An embedded recipient can't use an
+OTP `authMethod` (your app authenticates them → `400 validation_error`) and can't delegate.
+
+**Concurrent edits (optional).** `PATCH /v1/envelopes/{id}`, `PUT …/recipients`, `PUT …/fields` (drafts) and
+`PATCH /v1/templates/{id}`, `PUT …/roles`, `PUT …/fields` (templates) accept `X-Expected-Updated-At: <updatedAt you
+read>`. If the draft/template changed since then → `409 version_changed` with the current `details.updatedAt`:
+re-read, review and repeat instead of overwriting someone else's changes. Without the header nothing is checked.
 
 ## One call: create (and send) the complete envelope
 

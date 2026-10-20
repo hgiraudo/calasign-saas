@@ -12,8 +12,15 @@ curl -s {{BASE_URL}}/v1/webhooks -H "Authorization: Bearer $CALASIGN_API_KEY" -H
 
 A webhook created with an API key or a user's OAuth token is tied to that credential: if the key or the OAuth app is
 revoked, the user disconnects the app or leaves the organization, the webhook switches to `active: false` before any
-further delivery (audited as `webhook.deactivated`). `PATCH /v1/webhooks/{id}` with `"active": true` reactivates it and
-moves it to the caller's credential (pausing and resuming a healthy webhook doesn't change its origin).
+further delivery (audited as `webhook.deactivated`). `PATCH /v1/webhooks/{id}` with `"active": true` reactivates it and,
+only if it was deactivated for that reason, moves it to the caller's credential (pausing and resuming a healthy webhook
+doesn't change its origin).
+
+Plan: creating a webhook, activating one (`"active": true`) or changing its `url`/`events` without pausing it, sending a
+test (`POST /v1/webhooks/{id}/test`) and retrying a delivery (`POST /v1/webhook-deliveries/{id}/retry`) need webhooks in
+the plan (`402 plan_limit`); pausing or changing only the description doesn't. A retry while an attempt is running or a
+manual retry is already queued → `409 delivery_pending` (a delivery waiting for its automatic retry is just brought
+forward, not sent twice).
 
 Events: `envelope.sent`, `envelope.completed`, `envelope.declined`, `envelope.voided`, `envelope.expired`,
 `recipient.viewed`, `recipient.signed`, `recipient.declined`, `recipient.approved` (+ `webhook.test` from

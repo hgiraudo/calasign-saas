@@ -1,5 +1,6 @@
-// Políticas de retención: a los N días de completado un sobre se borran los originales, las imágenes de
-// firma y los adjuntos. Se conservan el PDF sellado (que ya los contiene) y el registro de eventos.
+// Políticas de retención: a los N días de terminado un sobre (completado, anulado, rechazado o vencido) se borran los
+// originales, las imágenes de firma, los adjuntos y las fotos de identidad. Se conservan el PDF sellado (si lo hay: ya
+// los contiene) y el registro de eventos.
 import type { FastifyInstance } from "fastify";
 import { config } from "../config";
 import type { Db } from "../infra/db";

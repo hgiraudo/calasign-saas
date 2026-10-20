@@ -319,7 +319,8 @@ const OPS: Op[] = [
       "Solo los campos presentes. `metadata` reemplaza la anterior, salvo las claves que pone el sistema (workflowRunId, webFormId, bulkSendId, crm, connector, agreement, templateId, clonedFrom…), que se conservan y que el cliente no puede fijar (se ignoran también al crear o clonar). `brandId` con una sub-marca distinta de la actual exige la marca blanca en el plan.",
     body: UpdateEnvelopeInput,
     response: EnvelopeDetailSchema,
-    errors: ["not_draft", "invalid_brand", "plan_limit_white_label"],
+    expectedUpdatedAt: true,
+    errors: ["not_draft", "invalid_brand", "plan_limit_white_label", "version_changed"],
   },
   { method: "delete", path: "/v1/envelopes/{id}", operationId: "deleteEnvelope", tag: "Sobres", summary: "Borrar borrador", response: "none", status: 204, errors: ["not_draft"] },
   {
@@ -336,7 +337,16 @@ const OPS: Op[] = [
     errors: ["not_draft", "invalid_pdf"],
   },
   { method: "delete", path: "/v1/envelopes/{id}/documents/{documentId}", operationId: "deleteEnvelopeDocument", tag: "Sobres", summary: "Quitar documento", response: "none", status: 204, errors: ["not_draft"] },
-  { method: "get", path: "/v1/envelopes/{id}/documents/{documentId}/file", operationId: "downloadEnvelopeDocument", tag: "Sobres", summary: "Descargar el PDF original", response: "pdf" },
+  {
+    method: "get",
+    path: "/v1/envelopes/{id}/documents/{documentId}/file",
+    operationId: "downloadEnvelopeDocument",
+    tag: "Sobres",
+    summary: "Descargar el PDF original",
+    description: "Si el original ya se borró por la política de retención, 410 purged (de un sobre completado sigue disponible el PDF firmado).",
+    response: "pdf",
+    errors: ["purged"],
+  },
   {
     method: "put",
     path: "/v1/envelopes/{id}/recipients",
@@ -344,10 +354,11 @@ const OPS: Op[] = [
     tag: "Sobres",
     summary: "Reemplazar destinatarios",
     description:
-      "Reemplaza la lista completa. Ids opcionales (UUID generados por el cliente para referenciarlos desde los campos; un id ya presente actualiza ese destinatario). `embedded: true` = firma embebida, sin invitaciones. Los campos de quien pasa a cc o approver se borran. Reordenar no puede dejar una condición citando a alguien que firma después (422 logic_order).",
+      "Reemplaza la lista completa. Ids opcionales (UUID generados por el cliente para referenciarlos desde los campos; un id ya presente actualiza ese destinatario). `embedded: true` = firma embebida, sin invitaciones: un destinatario embebido no puede usar código OTP (400 validation_error; lo autentica tu aplicación) ni delegar. Los campos de quien pasa a cc o approver se borran. Reordenar no puede dejar una condición citando a alguien que firma después (422 logic_order).",
     body: PutRecipientsInput,
     response: EnvelopeDetailSchema,
-    errors: ["not_draft", "duplicate_ids", "id_in_use", "identity_provider_unavailable", "plan_limit_kyc", "logic_order"],
+    expectedUpdatedAt: true,
+    errors: ["not_draft", "duplicate_ids", "id_in_use", "identity_provider_unavailable", "plan_limit_kyc", "logic_order", "version_changed"],
   },
   {
     method: "put",
@@ -359,7 +370,8 @@ const OPS: Op[] = [
       "Reemplaza la lista completa. Cada campo va con coordenadas normalizadas (page desde 0, x, y, width, height en 0..1; origen arriba a la izquierda) o con `anchor` para ubicarlo por un texto del PDF (se expande a un campo por aparición; offsets y tamaño en puntos). Solo destinatarios signer llevan campos. Una condición (`conditions`) solo puede citar un campo de solo lectura, del mismo destinatario o de alguien que firma antes (si no, 422 logic_order: se decidiría con un valor que todavía no existe).",
     body: PutFieldsWithAnchors,
     response: EnvelopeDetailSchema,
-    errors: ["not_draft", "invalid_field", "anchor_not_found", "pdf_too_heavy", "pdf_reader_busy", "logic_order"],
+    expectedUpdatedAt: true,
+    errors: ["not_draft", "invalid_field", "anchor_not_found", "pdf_too_heavy", "pdf_reader_busy", "logic_order", "version_changed"],
   },
   {
     method: "post",
@@ -444,14 +456,24 @@ const OPS: Op[] = [
   },
   { method: "post", path: "/v1/templates", operationId: "createTemplate", tag: "Plantillas", summary: "Crear plantilla", body: CreateTemplateInput, status: 201, response: TemplateDetailSchema },
   { method: "get", path: "/v1/templates/{id}", operationId: "getTemplate", tag: "Plantillas", summary: "Detalle de la plantilla (documentos, roles y campos)", response: TemplateDetailSchema },
-  { method: "patch", path: "/v1/templates/{id}", operationId: "updateTemplate", tag: "Plantillas", summary: "Modificar plantilla", body: UpdateTemplateInput, response: TemplateDetailSchema },
+  {
+    method: "patch",
+    path: "/v1/templates/{id}",
+    operationId: "updateTemplate",
+    tag: "Plantillas",
+    summary: "Modificar plantilla",
+    body: UpdateTemplateInput,
+    response: TemplateDetailSchema,
+    expectedUpdatedAt: true,
+    errors: ["version_changed"],
+  },
   {
     method: "delete",
     path: "/v1/templates/{id}",
     operationId: "deleteTemplate",
     tag: "Plantillas",
     summary: "Borrar plantilla",
-    description: "Los sobres ya creados desde la plantilla no cambian. Sus formularios web se borran con ella: con alguno activo, 409 template_has_forms (desactivarlos o borrarlos antes).",
+    description: "Los sobres ya creados desde la plantilla no cambian. Sus formularios web se borran con ella: con alguno que todavía recibe envíos (activo, sin vencer ni agotar), 409 template_has_forms con sus nombres en `details.names` (desactivarlos o borrarlos antes).",
     response: "none",
     status: 204,
     errors: ["template_has_forms"],
@@ -480,7 +502,8 @@ const OPS: Op[] = [
     description: "Reemplaza la lista completa (un id existente actualiza ese rol). Los nombres son únicos sin distinguir mayúsculas. Un rol cc o approver pierde sus campos.",
     body: PutTemplateRolesInput,
     response: TemplateDetailSchema,
-    errors: ["duplicate_ids", "duplicate_roles", "template_id_in_use", "certificate_not_applicable", "logic_order"],
+    expectedUpdatedAt: true,
+    errors: ["duplicate_ids", "duplicate_roles", "template_id_in_use", "certificate_not_applicable", "logic_order", "version_changed"],
   },
   {
     method: "put",
@@ -491,7 +514,8 @@ const OPS: Op[] = [
     description: "Reemplaza la lista completa. Coordenadas normalizadas como en los sobres (sin anclas); cada campo va con el roleId de un rol signer. Las condiciones siguen la misma regla de orden que en los sobres (422 logic_order).",
     body: PutTemplateFieldsInput,
     response: TemplateDetailSchema,
-    errors: ["invalid_field", "logic_order"],
+    expectedUpdatedAt: true,
+    errors: ["invalid_field", "logic_order", "version_changed"],
   },
   {
     method: "post",
@@ -500,10 +524,11 @@ const OPS: Op[] = [
     tag: "Plantillas",
     summary: "Crear plantilla desde un sobre",
     description:
-      "Copia asunto, mensaje, documentos, campos y lógica. Cada destinatario pasa a un rol (Firmante 1, Copia 1, Aprobador 1…); de los campos se conservan solo los valores de solo lectura que fijó el remitente.",
+      "Copia asunto, mensaje, documentos, campos y lógica. Cada destinatario pasa a un rol (Firmante 1, Copia 1, Aprobador 1…); de los campos se conservan solo los valores de solo lectura que fijó el remitente. Si los originales del sobre se borraron por la política de retención, 410 purged.",
     body: TemplateFromEnvelopeInput,
     status: 201,
     response: TemplateDetailSchema,
+    errors: ["purged"],
   },
   {
     method: "post",
@@ -570,7 +595,7 @@ const OPS: Op[] = [
     errors: ["invalid_url", "too_many_webhooks", "plan_limit_webhooks"],
   },
   { method: "get", path: "/v1/webhooks/{id}", operationId: "getWebhook", tag: "Webhooks", summary: "Detalle", response: WebhookSchema },
-  { method: "patch", path: "/v1/webhooks/{id}", operationId: "updateWebhook", tag: "Webhooks", summary: "Modificar", description: "Como al crearlo, pide `webhooks:manage` y además `envelopes:view_all`. Con `active: true` sobre un webhook desactivado porque se revocó la credencial que lo creó, pasa a la credencial de quien lo reactiva (ver crear).", body: UpdateWebhookInput, response: WebhookSchema, errors: ["invalid_url"] },
+  { method: "patch", path: "/v1/webhooks/{id}", operationId: "updateWebhook", tag: "Webhooks", summary: "Modificar", description: "Como al crearlo, pide `webhooks:manage` y además `envelopes:view_all`. Con `active: true` sobre un webhook desactivado porque se revocó la credencial que lo creó, pasa a la credencial de quien lo reactiva (ver crear). Activarlo (`active: true`) o cambiar `url` o `events` sin pausarlo exige webhooks en el plan (402); pausarlo o cambiar solo la descripción, no.", body: UpdateWebhookInput, response: WebhookSchema, errors: ["invalid_url", "plan_limit_webhooks"] },
   { method: "delete", path: "/v1/webhooks/{id}", operationId: "deleteWebhook", tag: "Webhooks", summary: "Borrar", response: "none", status: 204 },
   {
     method: "get",
@@ -587,9 +612,10 @@ const OPS: Op[] = [
     operationId: "testWebhook",
     tag: "Webhooks",
     summary: "Enviar un evento de prueba",
-    description: "Encola un evento webhook.test (un solo intento, también con el endpoint inactivo).",
+    description: "Encola un evento webhook.test (un solo intento, también con el endpoint inactivo). Exige webhooks en el plan (402).",
     status: 202,
     response: WebhookDeliverySchema,
+    errors: ["plan_limit_webhooks"],
   },
   {
     method: "post",
@@ -597,10 +623,10 @@ const OPS: Op[] = [
     operationId: "retryWebhookDelivery",
     tag: "Webhooks",
     summary: "Reintentar una entrega",
-    description: "Un intento manual inmediato (también con el endpoint inactivo). Con la entrega pendiente de su reintento automático, lo adelanta (no la manda dos veces); si ya hay un intento en curso o un reintento manual pedido, 409 delivery_pending. Pide `webhooks:manage` y además `envelopes:view_all`.",
+    description: "Un intento manual inmediato (también con el endpoint inactivo). Con la entrega pendiente de su reintento automático, lo adelanta (no la manda dos veces); si ya hay un intento en curso o un reintento manual pedido, 409 delivery_pending. Pide `webhooks:manage` y además `envelopes:view_all`, y webhooks en el plan (402).",
     status: 202,
     response: WebhookDeliverySchema,
-    errors: ["delivery_pending"],
+    errors: ["delivery_pending", "plan_limit_webhooks"],
   },
 
   // Envío masivo
@@ -700,7 +726,7 @@ const OPS: Op[] = [
     tag: "Formularios web",
     summary: "Crear formulario",
     description:
-      "Quien completa el formulario toma el rol `signerRoleId` (tiene que ser signer); los demás roles van en `fixedRecipients`. Los sobres se crean a nombre de quien crea el formulario. Cada formulario crea como mucho 60 sobres por hora (después, 429 form_rate_limited).",
+      "Quien completa el formulario toma el rol `signerRoleId`: tiene que ser un rol signer del primer turno de la plantilla y sin destinatario fijo (si no, 400 invalid_role); los demás roles van en `fixedRecipients`. Un formulario `embeddable` no puede pedir código por correo (`requireOtp`): 400 invalid_form. Los sobres se crean a nombre de quien crea el formulario. Cada formulario crea como mucho 60 sobres por hora (después, 429 form_rate_limited).",
     body: WebFormInput,
     status: 201,
     response: WebFormSchema,
@@ -713,7 +739,8 @@ const OPS: Op[] = [
     operationId: "updateWebForm",
     tag: "Formularios web",
     summary: "Modificar",
-    description: "Lo hace quien lo creó o quien tiene envelopes:manage_all. La plantilla no se puede cambiar.",
+    description:
+      "Lo hace quien lo creó o quien tiene envelopes:manage_all. La plantilla no se puede cambiar. Mismas reglas que al crear: el rol de quien completa tiene que ser signer, del primer turno y sin destinatario fijo (400 invalid_role); `embeddable` con `requireOtp` → 400 invalid_form.",
     body: UpdateWebFormInput,
     response: WebFormSchema,
     errors: ["invalid_role", "invalid_form"],
@@ -866,7 +893,7 @@ const OPS: Op[] = [
     operationId: "validatePdfSignatures",
     tag: "Evidencia",
     summary: "Validar las firmas de un PDF (público)",
-    description: "Por firma: integridad, cobertura, sello de tiempo, cadena hasta raíces de confianza, revocación (DSS u online) y nivel PAdES. Sirve para cualquier PDF firmado.",
+    description: "Por firma: integridad, cobertura, sello de tiempo, cadena hasta raíces de confianza, revocación (DSS u online) y nivel PAdES. Sirve para cualquier PDF firmado. `chain.revocationUnknown` (y `summary.revocationUnknown`) indica que de algún certificado que no es la raíz no se pudo saber si estaba revocado (sin OCSP/CRL en el PDF ni consulta online, o un OCSP que respondió \"unknown\").",
     multipart: true,
     fileDescription: "PDF firmado.",
     auth: "none",
@@ -1119,7 +1146,8 @@ const OPS: Op[] = [
     operationId: "updateSecuritySettings",
     tag: "Equipo",
     summary: "Cambiar retención y 2FA obligatorio",
-    description: "retentionDays: días después de completado un sobre en que se borran originales, imágenes de firma y adjuntos (null = nunca).",
+    description:
+      "retentionDays: días después de terminado un sobre (completado, anulado, rechazado o vencido) en que se borran los originales, las imágenes de firma, los adjuntos y las fotos de documentos de identidad (null = nunca). Se conservan el PDF firmado y la evidencia; pedir un original purgado responde 410 purged.",
     body: UpdateSecuritySettingsInput,
     response: z.object({ retentionDays: z.number().int().nullable(), require2fa: z.boolean() }),
     errors: ["enable_2fa_first"],
@@ -1349,6 +1377,7 @@ export function buildOpenApi() {
     const scope = op.auth === "none" || op.auth === "token" || op.auth === "client" ? null : requiredScope(op.path.replace(/\{(\w+)\}/g, ":$1"), op.method.toUpperCase());
     const params: unknown[] = [...pathParams(op.path), ...queryParams(op.query)];
     if (op.idempotent) params.push({ $ref: "#/components/parameters/IdempotencyKey" });
+    if (op.expectedUpdatedAt) params.push({ $ref: "#/components/parameters/ExpectedUpdatedAt" });
 
     const entry: Record<string, unknown> = {
       operationId,
@@ -1399,6 +1428,14 @@ export function buildOpenApi() {
             "Clave única del pedido (máx. 200 caracteres), por credencial (API key, app OAuth o usuario). Repetir el mismo pedido con la misma clave devuelve la respuesta guardada, con el mismo status y el header `Idempotent-Replay: true`. " +
             "La misma clave con otro método, URL o cuerpo → 409 idempotency_mismatch; mientras el primero sigue en curso → 409 idempotency_in_progress. Si el pedido falla, la clave se libera y se puede reintentar con ella.",
           schema: { type: "string", maxLength: 200 },
+        },
+        ExpectedUpdatedAt: {
+          name: "X-Expected-Updated-At",
+          in: "header",
+          required: false,
+          description:
+            "Control de edición concurrente (opcional): el `updatedAt` del borrador o la plantilla tal como se leyó (ISO 8601, con milisegundos). Si cambió desde entonces (otra pestaña u otra persona lo editó), 409 version_changed con el `updatedAt` actual en details, en vez de pisar esos cambios. Sin el encabezado no se controla.",
+          schema: { type: "string", format: "date-time" },
         },
       },
       headers: errors.headers,

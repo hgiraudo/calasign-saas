@@ -158,11 +158,12 @@ export const DEVAPI_OPS: Op[] = [
     summary: "Clonar un sobre como borrador nuevo",
     description:
       "Copia documentos, destinatarios (configuración, no estado) y campos con su lógica, en cualquier estado del original. No copia lo que escribieron los firmantes (salvo `includeValues`), ni adjuntos, firmas ni el cobro. " +
-      "Sin `metadata` en el pedido, la del original se copia con `clonedFrom` (sin las claves que lo atan a un proceso: workflow, formulario, envío masivo, CRM, conector, negociación; se conservan templateId, documentTemplateId y agreement); con `metadata` propia, esa reemplaza a la copiada (sin claves del sistema). Si el plan ya no incluye la marca blanca, el clon sale con la marca de la organización. El clon vence a los 30 días si no se indica `expiresAt`.",
+      "Sin `metadata` en el pedido, la del original se copia con `clonedFrom` (sin las claves que lo atan a un proceso: workflow, formulario, envío masivo, CRM, conector, negociación; se conservan templateId, documentTemplateId y agreement); con `metadata` propia, esa reemplaza a la copiada (sin claves del sistema). Si el plan ya no incluye la marca blanca, el clon sale con la marca de la organización. El clon vence a los 30 días si no se indica `expiresAt`. Si los originales del sobre se borraron por la política de retención, 409 purged.",
     body: CloneEnvelopeInput,
     bodyOptional: true,
     status: 201,
     response: EnvelopeDetailSchema,
+    errors: ["purged_clone"],
   },
   {
     method: "post",

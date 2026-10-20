@@ -37,6 +37,8 @@ export interface Op {
   status?: number;
   auth?: "key" | "token" | "none" | "client";
   idempotent?: boolean;
+  /** Admite el encabezado X-Expected-Updated-At (control de edición concurrente de borradores y plantillas: 409 version_changed). */
+  expectedUpdatedAt?: boolean;
   /** Cuerpo application/x-www-form-urlencoded (endpoints OAuth). */
   form?: ZodTypeAny;
   query?: QueryParam[];
@@ -270,6 +272,9 @@ export const ERRORS: Record<string, Err> = {
   plan_limit_web_forms: planFeature("web_forms", "Los formularios web", "business"),
   plan_limit_payments: planFeature("payments", "El cobro al firmar", "business"),
   plan_limit_kyc: planFeature("kyc", "La verificación de identidad", "business"),
+  plan_limit_custom_domain: planFeature("custom_domain", "El dominio propio", "enterprise"),
+  plan_limit_sso: planFeature("sso", "El inicio de sesión único (SSO)", "enterprise"),
+  plan_limit_scim: planFeature("scim", "El aprovisionamiento SCIM", "enterprise"),
 
   forbidden: {
     status: 403,
@@ -453,7 +458,26 @@ export const ERRORS: Record<string, Err> = {
     message: "Ya hay una renovación del sello de archivo en curso para este sobre",
     summary: "Una renovación a la vez por sobre",
   },
-  version_changed: { status: 409, code: "version_changed", message: "Hay una versión nueva: revisala y volvé a aceptar", summary: "La negociación tiene una versión nueva: revisarla y repetir" },
+  version_changed: {
+    status: 409,
+    code: "version_changed",
+    message: "Este borrador cambió en otra pestaña o lo editó otra persona: recargá para ver la versión actual",
+    details: { updatedAt: "2026-05-04T13:00:00.000Z" },
+    summary:
+      "El recurso cambió desde que se leyó: en un borrador de sobre o una plantilla, X-Expected-Updated-At no coincide con su updatedAt (details.updatedAt trae el actual; recargar y repetir); en una negociación, hay una versión nueva (revisarla y repetir)",
+  },
+  purged: {
+    status: 410,
+    code: "purged",
+    message: "El original se eliminó por la política de retención; el PDF firmado sigue disponible",
+    summary: "Los originales del sobre se borraron por la política de retención (retentionDays); el PDF firmado y la evidencia se conservan",
+  },
+  purged_clone: {
+    status: 409,
+    code: "purged",
+    message: "Los originales de este sobre se eliminaron por la política de retención: no se puede clonar",
+    summary: "No se puede clonar: los originales del sobre se borraron por la política de retención",
+  },
   proposal_outdated: {
     status: 409,
     code: "proposal_outdated",

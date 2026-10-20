@@ -425,7 +425,7 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
     await s.db.tx(async (t) => {
       const e = await lockEnvelope(t, a.tenantId, req.params.id);
       if (e.status !== "sent" && e.status !== "awaiting_certificates") throw conflict("not_voidable", "Solo se puede anular un sobre enviado y en curso");
-      await t.query(`UPDATE envelopes SET status = 'voided', voided_at = now(), void_reason = $2, updated_at = now(), version = version + 1 WHERE id = $1`, [
+      await t.query(`UPDATE envelopes SET status = 'voided', voided_at = now(), void_reason = $2, updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 millisecond'), version = version + 1 WHERE id = $1`, [
         e.id,
         input.reason,
       ]);
@@ -910,7 +910,7 @@ export async function sendEnvelope(t: Db, tenantId: string, envelopeId: string, 
   if (pay && !signers.some((r) => r.id === pay.recipient_id)) problems.push("Quien paga el cobro tiene que ser un firmante");
   if (problems.length) throw new AppError(422, "envelope_incomplete", problems.join(". "), { problems });
 
-  await t.query(`UPDATE envelopes SET status = 'sent', sent_at = now(), updated_at = now(), version = version + 1 WHERE id = $1`, [e.id]);
+  await t.query(`UPDATE envelopes SET status = 'sent', sent_at = now(), updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 millisecond'), version = version + 1 WHERE id = $1`, [e.id]);
   await appendEvent(t, {
     tenantId: tenantId,
     envelopeId: e.id,

@@ -11,6 +11,8 @@ OAuth endpoints use the RFC 6749 shape `{"error": "...", "error_description": ".
 | 400 | `anchor_not_found` | Anchor text not in the PDF → check spelling/case, or `ignoreIfNotPresent` |
 | 400 | `file_required`, `not_pdf`, `encrypted`, `empty`, `unreadable`, `too_many_pages` | Upload missing or PDF not usable (password-protected PDFs are rejected) → export a clean PDF |
 | 400 | `invalid_id` | An id is not a UUID |
+| 400 | `invalid_role` | Web form: the role of whoever fills it in must be a signer role in the template's first routing step, with no fixed recipient |
+| 400 | `invalid_form` | Web form: the template isn't complete with this configuration, or `embeddable` together with `requireOtp` (not allowed) |
 | 400 | `invalid_brand` | `brandId` isn't a sub-brand of the organization (choosing a different sub-brand also needs the white-label plan → 402) |
 | 401 | `unauthorized` | Missing/invalid/expired key or token → check `CALASIGN_API_KEY`, refresh OAuth token |
 | 402 | `plan_limit` / `payment_required` | Plan doesn't include this (API/MCP, monthly envelopes…) → upgrade in Settings → Plan |
@@ -22,7 +24,13 @@ OAuth endpoints use the RFC 6749 shape `{"error": "...", "error_description": ".
 | 409 | `idempotency_mismatch` | Same `Idempotency-Key` reused with a different body → use a new key |
 | 409 | `idempotency_in_progress` | Same key still running → wait and retry |
 | 409 | `conflict` | Concurrent change → re-read and retry |
-| 409 | `member_changed` / `version_changed` | The member's role or the negotiation changed meanwhile → re-read, review and repeat |
+| 409 | `version_changed` | Drafts and templates: you sent `X-Expected-Updated-At` (the `updatedAt` you read) and someone changed the draft/template meanwhile → `details.updatedAt` has the current value; re-read, review and repeat. Negotiations: there's a new version → review and repeat |
+| 409 | `member_changed` | The member's role changed meanwhile → re-read and repeat |
+| 409 | `otp_not_embeddable` | Signing URL requested with `frameAncestors` for a signer with an OTP code → open it in a tab/redirect (`tabOnly: true`) or remove the OTP |
+| 409 | `template_has_forms` | Deleting a template with web forms that still accept submissions (active, not expired or used up); `details.names` lists them → deactivate or delete them first |
+| 409 | `delivery_pending` | Webhook delivery retry while an attempt is running or a manual retry is already queued → wait |
+| 410 | `purged` | The envelope's originals were deleted by the retention policy (counted from completion, void, decline or expiry): original download, template from envelope, AI. The signed PDF and evidence remain → no retry |
+| 409 | `purged` | Cloning an envelope whose originals were purged by retention → can't clone it |
 | 409 | `proposal_outdated` | The text changed since the proposal was made → reject it and ask for a new one |
 | 409 | `too_many_replacements` | Envelope already had 20 delegations/reassignments → void and resend if needed |
 | 413 | `file_too_large` | PDF over the size limit (25 MB by default) |

@@ -6,8 +6,10 @@ links de otras organizaciones.
 
 ## Flujo
 
-1. **Ajustes → Dominio propio**: la organización escribe el dominio (`PUT /v1/domains`). No se aceptan subdominios de
-   `calasign.com`/`calasign.io` ni un dominio ya registrado por otra organización.
+1. **Ajustes → Dominio propio**: la organización escribe el dominio (`PUT /v1/domains`). Registrarlo y verificarlo
+   exigen el dominio propio en el plan (402 `plan_limit`, Enterprise); quitarlo no. No se aceptan los hosts de la
+   plataforma (el de `APP_URL` y los de `PLATFORM_HOSTS`), subdominios del dominio de la plataforma o de
+   `calasign.com`/`calasign.io` (400 `reserved_domain`) ni un dominio ya verificado por otra organización.
 2. Crea en su DNS:
    - **TXT** `_calasign-challenge.firmas.cliente.com` con el valor `calasign-verify=<token>` (verificación de propiedad).
    - **CNAME** `firmas.cliente.com` → el host de la plataforma (`dev.calasign.com` en dev).
@@ -24,8 +26,9 @@ links de otras organizaciones.
 
 ## Cambio en Caddy (no aplicado)
 
-`infra/dev/bootstrap.sh` hoy genera un Caddyfile con un solo sitio (`dev.calasign.com`). Para dominios propios hay que
-agregar TLS bajo demanda con `ask`:
+El Caddyfile del host es `infra/dev/host/Caddyfile` (lo instala `scripts/deploy-dev.sh` en cada deploy, validándolo
+antes de recargar Caddy, y `bootstrap.sh` en el primer arranque) y hoy tiene un solo sitio (`dev.calasign.com`). Para
+dominios propios hay que agregarle TLS bajo demanda con `ask`:
 
 ```caddyfile
 {

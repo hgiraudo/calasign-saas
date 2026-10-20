@@ -17,7 +17,7 @@ export const DATA_OPS = [
   { method: "post", path: "/v1/settings/byok/test", tag: TAG, summary: "Probar la clave KMS configurada" },
   { method: "delete", path: "/v1/settings/byok", tag: TAG, summary: "Dejar de usar la clave del cliente para lo nuevo", response: "none", status: 204 },
   { method: "get", path: "/v1/settings/sso/domains", tag: TAG, summary: "Dominios SSO y su verificación por DNS" },
-  { method: "post", path: "/v1/settings/sso/domains/{domain}/verify", tag: TAG, summary: "Verificar un dominio SSO (TXT _calasign-sso.<dominio>)" },
+  { method: "post", path: "/v1/settings/sso/domains/{domain}/verify", tag: TAG, summary: "Verificar un dominio SSO (TXT _calasign-sso.<dominio>)", description: "Exige SSO en el plan (402).", errors: ["plan_limit_sso"] },
   { method: "get", path: "/v1/envelopes/{id}/archive", tag: TAG, summary: "Vigencia del sello de archivo y versiones del PDF firmado" },
   {
     method: "post",

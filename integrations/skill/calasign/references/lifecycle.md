@@ -6,7 +6,7 @@ draft ──send──► sent ──all signed──► finalizing ──sealed
                  ├──a signer declines──► declined
                  ├──void (sender)──────► voided
                  ├──expiresAt passes───► expired
-                 └──certificate signing pending──► awaiting_certificates ──► completed
+                 └──certificate signing pending──► awaiting_certificates ──all signed──► finalizing ──► completed
 ```
 
 | Envelope status | Meaning | What you can do |
@@ -42,7 +42,8 @@ the lawyer (2), CC the accountant (3).
 
 ## Reminders & expiry
 
-- Manual: `POST /v1/envelopes/{id}/remind` notifies pending recipients of the current step (only when `sent`).
+- Manual: `POST /v1/envelopes/{id}/remind` notifies pending recipients of the current step when `sent`; in
+  `awaiting_certificates` it re-notifies the certificate signer whose turn it is. Other statuses → `409 not_in_progress`.
   At most once per 10 minutes per envelope; sooner → `429 reminded_recently` (no `Retry-After`: don't retry in a loop).
 - Automatic: `reminderEveryDays` and `expiryWarningDays` on create/patch.
 - `expiresAt`: ISO date-time; default 30 days.

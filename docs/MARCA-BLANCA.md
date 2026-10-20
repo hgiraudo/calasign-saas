@@ -8,7 +8,8 @@ blanca total.
   SDK Node `cs.brands.*`, SDK Python `client.brands.*`).
 - Plan: colores y logo = funcionalidad `branding`; todo lo que es marca blanca (ocultar la plataforma, nombre de
   producto, textos, plantillas, remitente propio, CSS propio, sub-marcas, dominios de correo/sub-marca) = `white_label`
-  (Enterprise). Fuera de producción el plan por defecto es Enterprise.
+  (Enterprise). Registrar y también verificar (o re-verificar) un dominio de correo o de sub-marca exige `white_label`
+  (402); quitarlo no. Fuera de producción el plan por defecto es Enterprise.
 - Prueba: `node scripts/e2e-white-label.mjs http://localhost:4000` (entorno local) y `apps/api/test/white-label.test.ts`.
 
 ## 1. Auditoría (octubre 2026)
@@ -63,7 +64,7 @@ página propia reduce lo que se ve, pero el iframe de OneSpan sigue mostrando su
 | WhatsApp | El nombre visible es el de la cuenta de WhatsApp Business de la plataforma y las plantillas aprobadas en Meta son de la plataforma (`calasign_signature_request`). Para una marca propia: número/WABA propio (no implementado por marca). |
 | Telegram | El bot es el de la plataforma (`TELEGRAM_BOT_USERNAME`). Un bot por marca no está implementado. |
 | Firmador (app de escritorio para firmar con certificado/token) | La app se llama "Firmador CalaSign"; el texto del correo ya dice "Firmador *Producto*", pero el instalador es el de la plataforma. Requiere un build por revendedor. |
-| Correos al equipo del cliente que no dependen de un sobre: restablecer contraseña, invitación al equipo (`teams.ts`) | Son de la cuenta (usuario), no de una marca; siguen con la marca de la plataforma. `teams.ts` lo está modificando otra sesión: pendiente. |
+| Correos al equipo del cliente que no dependen de un sobre: restablecer contraseña, invitación al equipo (`teams.ts`) | Son de la cuenta (usuario), no de una marca; siguen con la marca de la plataforma. |
 | Portal de desarrolladores (`/developers`), OpenAPI (`info.title`), SDKs (`@calasign/sdk`, `calasign`), headers de webhooks (`CalaSign-Signature`, `User-Agent: CalaSign-Webhooks/1.0`) | Los ve el integrador, no el firmante. Un revendedor publica su propia documentación; renombrar headers rompería integraciones existentes. |
 | `integrations/` (skill de Claude, MCPB, add-in de Office, Gemini, ChatGPT, sitio) | Artefactos estáticos con la marca de la plataforma, para usuarios del remitente. Un revendedor necesitaría builds propios (`integrations/build.mjs` con nombre/íconos parametrizados): pendiente. |
 | Proveedores de KYC, pagos y TSA | Sus pantallas/recibos llevan su marca (Truora, Veriff, Stripe, Mercado Pago). El proveedor de prueba se llama "CalaSign (prueba)". |

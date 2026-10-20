@@ -191,7 +191,7 @@ draft ──send──► sent ──(todos los firmantes firman)──► final
 
 ## 11. Desarrollo local
 
-`pnpm dev` levanta todo sin Docker: Postgres embebido (**PGlite**) si no hay `DATABASE_URL`, almacenamiento en disco (`var/`), un certificado de sello de desarrollo autogenerado, y un **buzón de desarrollo** (`/dev/mailbox`) donde caen los correos y mensajes de WhatsApp con sus links de firma. Con `DATABASE_URL`, `S3_BUCKET`, `KMS_KEY_ID` y `SMTP_URL` configurados, el mismo código usa la infraestructura real.
+`pnpm dev` levanta todo sin Docker: Postgres embebido (**PGlite**) si no hay `DATABASE_URL`, almacenamiento en disco (`var/`), un certificado de sello de desarrollo autogenerado, y un **buzón de desarrollo** (la página `/app/dev-mailbox` de la web, que lee la API `GET /dev/mailbox`) donde caen los correos y mensajes de WhatsApp con sus links de firma. Con `DATABASE_URL`, `S3_BUCKET`, `KMS_KEY_ID` y `SMTP_URL` configurados, el mismo código usa la infraestructura real.
 
 ## 12. Contrato de la API v1 (MVP, referencia histórica: el vigente es `/v1/openapi.json`)
 
@@ -248,8 +248,11 @@ Los tipos exactos (`EnvelopeDetail`, `RecipientInput`, `FieldInput`, `SigningSes
 
 Resultado de las rondas de revisión de código de octubre de 2026; cada una tiene su prueba e2e o unitaria.
 
-- **Sesiones solo en el dominio de la plataforma.** Los dominios propios y de sub-marca sirven al firmante, no la cuenta
-  (ver [CUSTOM-DOMAINS.md](CUSTOM-DOMAINS.md)).
+- **Sesiones solo en el dominio de la plataforma.** La cuenta (login, páginas de `/app`, APIs de sesión) existe solo en
+  el host de `APP_URL` y en los de `PLATFORM_HOSTS` (en local, también `localhost`, `127.0.0.1` y `[::1]`), por lista
+  blanca: en cualquier otro host las páginas de la cuenta redirigen a la plataforma, las APIs de sesión responden
+  401 `use_platform_host` y se ignora la cookie de sesión. Los dominios propios y de sub-marca sirven al firmante, no
+  la cuenta (ver [CUSTOM-DOMAINS.md](CUSTOM-DOMAINS.md)).
 - **Tokens OAuth**: nunca cuentan como propietario (un propietario autoriza → admin limitado a scopes); refresh tokens
   solo con el grant correspondiente; ver [MCP-CONECTORES.md](MCP-CONECTORES.md).
 - **Apps OAuth de servicio** (`client_credentials`): rotar el secreto, ampliar scopes o borrarlas exige tener todos los
@@ -258,8 +261,11 @@ Resultado de las rondas de revisión de código de octubre de 2026; cada una tie
   SCIM puede sumar gente a grupos y dar de baja administradores.
 - **SSO**: una sesión abierta por SSO queda atada a esa organización (`/v1/me/access` solo la muestra a ella), no puede
   activar 2FA de la cuenta (`sso_session_2fa`) y se cierra si se apaga el SSO o cambia el proveedor de identidad.
-  La redirección después del login acepta solo rutas propias.
-- **Invitaciones**: revocar o reemplazar una invitación pendiente exige poder otorgar su rol.
+  La redirección después del login acepta solo rutas propias (empiezan con `/`, sin `//`, hasta 4000 caracteres; si
+  no, `/app`: nunca una URL cortada, para que la vuelta a `/oauth/authorize` de un conector MCP llegue entera).
+- **Invitaciones**: revocar o reemplazar una invitación pendiente exige poder otorgar su rol. Quien acepta una
+  invitación a una organización con SSO obligatorio (y no es propietario) recibe 403 `sso_required` con
+  `details.joined: true` y `startUrl`: tiene que ingresar por SSO (una sesión con contraseña no le serviría).
 - **Links de firma**: ver, aceptar, firmar, rechazar, delegar, adjuntar, OTP, identidad y pago exigen bajo el lock que el
   link siga vigente (una corrección de contacto en vuelo no deja actuar al titular anterior), y la evidencia no registra
   eventos de sobres anulados, rechazados o vencidos.

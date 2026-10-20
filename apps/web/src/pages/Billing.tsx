@@ -66,13 +66,26 @@ export function BillingNoAccess() {
 const BEFORE_CHECKOUT_KEY = "calasign.billing.beforeCheckout";
 const snapshotOf = (d: BillingOverview) =>
   JSON.stringify([d.plan.id, d.defaultPlan, d.subscription.provider, d.subscription.status, d.subscription.renewsAt]);
+// Estados de una suscripción vigente: Stripe (active, trialing) y Mercado Pago (authorized).
 const ACTIVE_STATUSES = ["active", "authorized", "trialing"];
 function readSnapshot(): string | null {
   try {
-    return window.sessionStorage.getItem(BEFORE_CHECKOUT_KEY);
+    const v = window.sessionStorage.getItem(BEFORE_CHECKOUT_KEY);
+    // Un valor que no es el que se guardó (otra versión, editado a mano) cuenta como sin estado anterior.
+    return v !== null && Array.isArray(JSON.parse(v)) ? v : null;
   } catch {
     return null;
   }
+}
+/**
+ * ¿El checkout terminó bien? Un cambio cualquiera no alcanza (un pago rechazado deja la suscripción en incomplete o
+ * past_due, y eso también cambia el estado): tiene que haber cambiado el plan o la suscripción tiene que quedar activa.
+ */
+function checkoutSucceeded(d: BillingOverview, before: string): boolean {
+  if (snapshotOf(d) === before) return false;
+  const [planId, defaultPlan] = JSON.parse(before) as [string, boolean];
+  const planChanged = planId !== d.plan.id || defaultPlan !== d.defaultPlan;
+  return planChanged || ACTIVE_STATUSES.includes(d.subscription.status ?? "");
 }
 function writeSnapshot(v: string | null) {
   try {
@@ -113,6 +126,8 @@ export function BillingPage() {
     api<BillingOverview>("/v1/billing")
       .then((d) => {
         apply(d);
+        // Un error de una carga anterior (un sondeo que falló) no queda en pantalla cuando la siguiente sale bien.
+        setError(null);
         void refreshAccess();
         return d;
       })
@@ -142,7 +157,7 @@ export function BillingPage() {
           // Sin el estado anterior (otra pestaña, almacenamiento bloqueado): ya activo cuenta como listo; si no, se espera un cambio.
           if (!first.defaultPlan && first.plan.id !== "free" && ACTIVE_STATUSES.includes(first.subscription.status ?? "")) return finish("success");
           before = snapshotOf(first);
-        } else if (snapshotOf(first) !== before) return finish("success");
+        } else if (checkoutSucceeded(first, before)) return finish("success");
       }
       const started = Date.now();
       let delay = POLL_FIRST_MS;
@@ -150,7 +165,7 @@ export function BillingPage() {
         if (cancelled) return;
         const d = await load();
         if (cancelled) return;
-        if (d && before !== null && snapshotOf(d) !== before) return finish("success");
+        if (d && before !== null && checkoutSucceeded(d, before)) return finish("success");
         if (d && before === null) before = snapshotOf(d);
         if (Date.now() - started >= POLL_TOTAL_MS) return finish("slow");
         delay = Math.min(delay * 2, POLL_MAX_MS);
@@ -362,7 +377,7 @@ export function BillingPage() {
               {data.providers.map((p) => (
                 <option key={p.id} value={p.id} disabled={!p.configured}>
                   {providerName(p.id)}
-                  {p.configured ? "" : p.currencies && !p.currencies.includes(currency) ? ` (${b("billing.currencyUnsupported", { currency })})` : ` (${b("billing.notConfigured")})`}
+                  {p.configured ? "" : p.currencies?.length && !p.currencies.includes(currency) ? ` (${b("billing.currencyUnsupported", { currency })})` : ` (${b("billing.notConfigured")})`}
                 </option>
               ))}
             </select>

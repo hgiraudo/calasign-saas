@@ -181,7 +181,7 @@ export function verifyStripeSignature(payload: string, header: string | undefine
 
 // ───────────────────────────── Mercado Pago ─────────────────────────────
 
-async function mp(path: string, body: unknown | null, method = "POST", idempotencyKey?: string): Promise<any> {
+async function mp(path: string, body: unknown | null, method = "POST", idempotencyKey?: string, timeoutMs = 20_000): Promise<any> {
   const token = config.billing.mercadopago.accessToken;
   if (!token) throw new ProviderError("mercadopago", 503, "Mercado Pago no está configurado (MP_ACCESS_TOKEN)");
   const headers: Record<string, string> = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
@@ -190,7 +190,7 @@ async function mp(path: string, body: unknown | null, method = "POST", idempoten
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(20_000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   const data: any = await res.json().catch(() => ({}));
   if (!res.ok) throw new ProviderError("mercadopago", res.status, data?.message ?? `Mercado Pago HTTP ${res.status}`);
@@ -338,32 +338,53 @@ export function providerConfigured(id: "stripe" | "mercadopago" | "mock"): boole
 
 /** País de la cuenta de Mercado Pago (site_id) → moneda en la que cobra. */
 const MP_SITE_CURRENCY: Record<string, string> = { MLA: "ARS", MLB: "BRL", MLM: "MXN", MCO: "COP", MLC: "CLP", MPE: "PEN", MLU: "UYU" };
-let mpCurrencyCache: { currencies: string[]; until: number } | null = null;
+/** Última respuesta buena de GET /users/me (la moneda de una cuenta no cambia) y la consulta en vuelo. */
+let mpCurrencyKnown: string[] | null = null;
+let mpCurrencyRetryAt = 0;
+let mpCurrencyInflight: Promise<string[]> | null = null;
+const MP_ME_TIMEOUT_MS = 4_000;
+const MP_ME_RETRY_MS = 60_000;
 
 /**
  * Monedas en las que Mercado Pago puede cobrar suscripciones: MP_CURRENCIES; si no, la del país de la cuenta (GET
- * /users/me, cacheada); si no se puede saber, ARS. Una cuenta de Mercado Pago cobra solo en la moneda de su país: con
- * otra el preapproval falla (o cobra otra cosa).
+ * /users/me con timeout corto, una sola consulta en vuelo, y se cachea la última respuesta buena). Si nunca se pudo
+ * saber, ninguna (lista vacía): Mercado Pago no se ofrece para suscripciones hasta que la consulta responda. Una cuenta
+ * de Mercado Pago cobra solo en la moneda de su país: con otra el preapproval falla (o cobra otra cosa).
+ * En dev y producción conviene definir MP_CURRENCIES: evita depender de /users/me en el resumen de facturación.
  */
 export async function mpSubscriptionCurrencies(): Promise<string[]> {
   const fixed = config.billing.mercadopago.currencies;
   if (fixed.length) return fixed;
-  if (!config.billing.mercadopago.accessToken) return ["ARS"];
-  if (mpCurrencyCache && mpCurrencyCache.until > Date.now()) return mpCurrencyCache.currencies;
-  try {
-    const me = await mp("/users/me", null, "GET");
-    const cur = MP_SITE_CURRENCY[String(me?.site_id ?? "")];
-    mpCurrencyCache = cur ? { currencies: [cur], until: Number.POSITIVE_INFINITY } : { currencies: ["ARS"], until: Date.now() + 5 * 60_000 };
-  } catch {
-    // Error del momento: se vuelve a consultar en unos minutos.
-    mpCurrencyCache = { currencies: ["ARS"], until: Date.now() + 5 * 60_000 };
+  if (!config.billing.mercadopago.accessToken) return [];
+  if (mpCurrencyKnown) return mpCurrencyKnown;
+  // Tras un error o un site_id desconocido, no se reintenta en cada pedido (cada uno esperaría el timeout).
+  if (Date.now() < mpCurrencyRetryAt) return [];
+  if (!mpCurrencyInflight) {
+    mpCurrencyInflight = (async () => {
+      try {
+        const me = await mp("/users/me", null, "GET", undefined, MP_ME_TIMEOUT_MS);
+        const cur = MP_SITE_CURRENCY[String(me?.site_id ?? "")];
+        if (cur) {
+          mpCurrencyKnown = [cur];
+          return mpCurrencyKnown;
+        }
+      } catch {
+        // Error del momento (timeout, red, 5xx): desconocida; se vuelve a consultar en un rato.
+      }
+      mpCurrencyRetryAt = Date.now() + MP_ME_RETRY_MS;
+      return [];
+    })().finally(() => {
+      mpCurrencyInflight = null;
+    });
   }
-  return mpCurrencyCache.currencies;
+  return mpCurrencyInflight;
 }
 
 /** Solo para pruebas: olvida la moneda de la cuenta de Mercado Pago consultada. */
 export function resetMpCurrencyCache() {
-  mpCurrencyCache = null;
+  mpCurrencyKnown = null;
+  mpCurrencyRetryAt = 0;
+  mpCurrencyInflight = null;
 }
 
 /**

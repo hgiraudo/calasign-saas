@@ -97,6 +97,8 @@ function recipientProblem(r: DraftRecipient): Parameters<ReturnType<typeof useSi
   if (r.role !== "cc" && ((r.authMethod === "otp_email" && !email) || ((r.authMethod === "otp_sms" || r.authMethod === "otp_whatsapp") && !phone))) {
     return "edit.otpNeedsContact";
   }
+  // La API lo rechaza (missing_id_document): exigir que el certificado corresponda al documento sin documento cargado.
+  if (r.role === "signer" && r.cert.signatureType === "certificate" && r.cert.matchIdDocument && !r.idDocumentNumber.trim()) return "edit.certNeedsIdDocument";
   return null;
 }
 

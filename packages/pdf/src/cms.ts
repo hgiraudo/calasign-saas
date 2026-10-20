@@ -5,6 +5,7 @@ import { webcrypto, randomBytes } from "node:crypto";
 import * as asn1js from "asn1js";
 import * as pkijs from "pkijs";
 import { sha256, type SignatureProvider } from "./provider";
+import { normalizeEcdsaSignature, signingAlgorithmFor, type CmsSignatureAlgorithm } from "./sigalg";
 
 pkijs.setEngine("node", new pkijs.CryptoEngine({ name: "node", crypto: webcrypto as unknown as Crypto }));
 
@@ -33,8 +34,11 @@ export interface CmsOptions {
 export async function buildPadesCms(content: Uint8Array, provider: SignatureProvider, opts: CmsOptions = {}) {
   const chainDer = await provider.certificateChain();
   const signedAttrsDer = buildSignedAttributes(sha256(content), chainDer);
-  const signature = await provider.signDigest(sha256(signedAttrsDer));
-  return assembleCms({ signedAttrsDer, chainDer, signature, signatureAlgorithm: "RSASSA-PKCS1-v1_5" }, opts);
+  // El algoritmo sale de la clave del certificado: un prestador CSC con clave ECDSA firma con ecdsa-with-SHA256.
+  const { algorithm, namedCurve } = signingAlgorithmFor(chainDer[0]);
+  const raw = await provider.signDigest(sha256(signedAttrsDer));
+  const signature = algorithm === "ECDSA" ? normalizeEcdsaSignature(raw, namedCurve) : raw;
+  return assembleCms({ signedAttrsDer, chainDer, signature, signatureAlgorithm: algorithm }, opts);
 }
 
 /**
@@ -79,7 +83,7 @@ export function buildSignedAttributes(contentDigest: Uint8Array, chainDer: Uint8
   return new Uint8Array(new asn1js.Set({ value: sortedAttrs.map((a) => a.toSchema()) }).toBER(false));
 }
 
-export type CmsSignatureAlgorithm = "RSASSA-PKCS1-v1_5" | "ECDSA";
+export type { CmsSignatureAlgorithm };
 
 /** Arma el CMS SignedData a partir de los atributos firmados y la firma del titular (RSA o ECDSA en DER). */
 export async function assembleCms(

@@ -1,5 +1,5 @@
 import { addCadesSignatureIncremental, finalizeEnvelopePdf, InvalidPdfError, type CertificateRecipient, type StampField } from "@calasign/pdf";
-import { certsignStage } from "./certsign";
+import { certsignStage, discardCertsignFiles, sweepCertsignPrepared } from "./certsign";
 import { config } from "../config";
 import type { Db } from "../infra/db";
 import { SYSTEM, appendEvent, verifyRows } from "../infra/evidence";
@@ -681,6 +681,9 @@ export async function sweep(d: Deps, signal?: AbortSignal) {
     // Claves de idempotencia de más de 7 días: un reintento real llega en minutos u horas (Stripe las guarda 24 h) y
     // los conectores sin clave propia (Zapier, Make) usan una por día. Sin esto la tabla crecía sin límite.
     // De a 5000 por pasada para no bloquear la tabla.
+    // PDF preparados de códigos de firma con certificado que vencieron sin usarse: no tienen fila en `files` y quedaban
+    // para siempre en el almacenamiento.
+    ["certsign-prepared", () => sweepCertsignPrepared(d.db, d.blobs)],
     [
       "idempotency",
       () =>
@@ -710,12 +713,15 @@ export async function sweep(d: Deps, signal?: AbortSignal) {
   for (const e of expired) {
     if (signal?.aborted) return;
     try {
-      await d.db.tx(async (t) => {
+      const expiredNow = await d.db.tx(async (t) => {
         const cur = await t.one<any>(`SELECT status FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
-        if (cur?.status !== "sent" && cur?.status !== "awaiting_certificates") return;
+        if (cur?.status !== "sent" && cur?.status !== "awaiting_certificates") return false;
         await t.query(`UPDATE envelopes SET status = 'expired', updated_at = now(), version = version + 1 WHERE id = $1`, [e.id]);
         await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "envelope.expired", actor: SYSTEM });
+        return true;
       });
+      // Firma con certificado a medias: el PDF de trabajo y los preparados ya no se usan (la retención reintenta).
+      if (expiredNow) await discardCertsignFiles(d.db, d.blobs, e.id);
     } catch (err) {
       d.log.error({ err: String(err), envelopeId: e.id, step: "expire" }, "no se pudo vencer el sobre");
     }

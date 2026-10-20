@@ -94,6 +94,28 @@ describe("Dropbox: nunca pisa a ciegas", () => {
   });
 });
 
+describe("Dropbox: conexión sin files.metadata.read", () => {
+  const bytes = new TextEncoder().encode("%PDF-mio");
+  const opts = { envelopeId: "0199aaaa-bbbb-7ccc-8ddd-eeeeffff0000", kind: "pdf" as const, retry: true, legacyName: "C - 0199aaaa.pdf" };
+
+  it.each([
+    [401, { error_summary: "missing_scope/..", error: { ".tag": "missing_scope", required_scope: "files.metadata.read" } }],
+    [400, "Error in call to API function \"files/get_metadata\": Your app is not permitted to access this endpoint because it does not have the required scope 'files.metadata.read'."],
+  ])("get_metadata %i por scope: sube igual (add + autorename) en vez de fallar", async (status, body) => {
+    const calls = mockFetch((url) => (url.endsWith("/get_metadata") ? json(status, body) : json(200, { path_display: "/F/C.pdf" })));
+    const r = await uploadDropbox(creds, { folder: "F" }, "C.pdf", bytes, "application/pdf", undefined, opts);
+    expect(r.ref).toBe("dropbox:/F/C.pdf");
+    expect(calls.filter((c) => c.url.endsWith("/get_metadata"))).toHaveLength(1);
+    const up = calls.find((c) => c.url.endsWith("/files/upload"))!;
+    expect(JSON.parse(String((up.init.headers as any)["dropbox-api-arg"]))).toMatchObject({ mode: "add", autorename: true });
+  });
+
+  it("un 401 que no es de scope (token inválido) sigue fallando", async () => {
+    mockFetch(() => json(401, { error_summary: "invalid_access_token/.." }));
+    await expect(uploadDropbox(creds, { folder: "F" }, "C.pdf", bytes, "application/pdf", undefined, opts)).rejects.toThrow(/HTTP 401/);
+  });
+});
+
 describe("Drive: reintento reutiliza solo si coincide el sha256", () => {
   const bytes = new TextEncoder().encode("%PDF-mio");
   const mySha = createHash("sha256").update(bytes).digest("hex");
@@ -115,6 +137,8 @@ describe("Drive: reintento reutiliza solo si coincide el sha256", () => {
     const patch = calls.find((c) => c.init.method === "PATCH")!;
     expect(patch.url).toContain("/upload/drive/v3/files/f1?uploadType=multipart");
     expect(String(patch.init.body)).toContain(mySha);
+    // El meta lleva el nombre actual: un archivo subido con el formato viejo de nombre queda renombrado.
+    expect(String(patch.init.body)).toContain(`"name":"C.pdf"`);
   });
 
   it("primera subida: guarda el sha256 en appProperties", async () => {

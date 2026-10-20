@@ -67,7 +67,11 @@ export async function evidenceCertificate(db: Db, envelopeId: string, opts: { si
   const doc = {
     type: "calasign.evidence-certificate",
     version: 1,
-    generatedAt: new Date().toISOString(),
+    // Determinista: con la hora actual, cada reintento de una exportación generaba bytes distintos y los destinos que
+    // deduplican por contenido (Dropbox: content_hash; Drive: sha256 en appProperties) dejaban una copia por intento.
+    // Es el cierre del sobre (las exportaciones y los conectores solo corren con el sobre completado); si no lo tuviera,
+    // el último evento de la cadena y, sin eventos, la creación.
+    generatedAt: iso(e.completed_at) ?? (events.length ? iso(events[events.length - 1].occurred_at) : null) ?? iso(e.created_at),
     envelope: { id: e.id, subject: e.subject, status: e.status, createdAt: iso(e.created_at), completedAt: iso(e.completed_at) },
     signedPdf: { sha256: opts.signedSha256 ?? e.sha256 ?? null, algorithm: "SHA-256", note: "El PDF sellado (PAdES) incluye el certificado de finalización." },
     recipients: recipients.map((r) => ({

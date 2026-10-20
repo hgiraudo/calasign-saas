@@ -132,14 +132,23 @@ function strictFails(n: any, data: unknown, overrides: Record<string, string> | 
   }
 }
 
-/** ¿La copia actual ya tiene un ciclo o un exceso de niveles desde esta cláusula? */
-function clauseGraphFails(clauses: Record<string, string>, key: string): boolean {
+/** El ciclo o exceso de niveles que la copia ya tiene desde esta cláusula (null si no tiene). */
+function clauseGraphError(clauses: Record<string, string>, key: string): TemplateSyntaxError | null {
   try {
     checkClauseGraph(clauses, [key]);
-    return false;
+    return null;
   } catch (e) {
-    return isLegacyGraphError(e);
+    return isLegacyGraphError(e) ? (e as TemplateSyntaxError) : null;
   }
+}
+
+/**
+ * ¿El error del grafo con la propuesta es exactamente el heredado? Mismo motivo y misma cadena de cláusulas (el mensaje
+ * la nombra entera): una propuesta que deja el ciclo de antes como está se acepta, una que arma otro ciclo (u otra
+ * cadena demasiado larga) no.
+ */
+function sameGraphError(e: unknown, inherited: TemplateSyntaxError | null): boolean {
+  return Boolean(inherited) && isLegacyGraphError(e) && (e as TemplateSyntaxError).reason === inherited!.reason && (e as TemplateSyntaxError).message === inherited!.message;
 }
 
 function negotiableVariables(n: any): string[] {
@@ -776,8 +785,9 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
       } catch (e) {
         // Un ciclo o un exceso de niveles que ya tenía la copia actual desde esa cláusula (heredado, no lo introduce
         // la propuesta) no la bloquea: mismo criterio que strictFails al crear la versión. Si no, esa cláusula no se
-        // podía negociar nunca, ni siquiera para arreglar el ciclo.
-        if (!(isLegacyGraphError(e) && clauseGraphFails(c, input.key))) {
+        // podía negociar nunca, ni siquiera para arreglar el ciclo. Solo si es el MISMO error (motivo y cadena): una
+        // propuesta que arma un ciclo distinto (con la excusa de que ya había uno) se rechaza.
+        if (!sameGraphError(e, clauseGraphError(c, input.key))) {
           if (e instanceof TemplateSyntaxError) throw badRequest("template_syntax", e.message, { line: e.line });
           throw badRequest("template_syntax", e instanceof Error ? e.message : String(e));
         }

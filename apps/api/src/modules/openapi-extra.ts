@@ -268,7 +268,6 @@ export const ERRORS: Record<string, Err> = {
   invalid_cursor: { status: 400, code: "invalid_cursor", message: "Cursor inválido", summary: "cursor que no salió de nextCursor" },
   invalid_range: { status: 400, code: "invalid_range", message: "Fechas inválidas (usar ISO 8601)", summary: "from/to inválidos, invertidos o rango mayor a 3 años" },
   invalid_query: { status: 400, code: "invalid_query", message: "'from' no es una fecha válida", summary: "Filtro de fecha inválido o `sep` distinto de `,` / `;`" },
-  invalid_timezone: { status: 400, code: "invalid_timezone", message: "tz: zona horaria desconocida (usar un nombre IANA, p. ej. America/Argentina/Buenos_Aires)", summary: "`tz` que no es una zona horaria IANA" },
   duplicate_ids: { status: 400, code: "duplicate_ids", message: "Ids de destinatarios repetidos", summary: "Ids repetidos en la lista" },
   invalid_field: { status: 400, code: "invalid_field", message: "Campo 1: el destinatario no es firmante de este sobre", summary: "Campo con documento, página o destinatario inválido" },
   anchor_not_found: {
@@ -746,6 +745,21 @@ export const ERRORS: Record<string, Err> = {
     message: "Demasiados envíos de este formulario: probá más tarde",
     summary: "Tope de 60 sobres por hora por formulario web. Sin Retry-After.",
   },
+  missing_id_document: {
+    status: 400,
+    code: "missing_id_document",
+    message: "Ana Pérez: para exigir que el certificado corresponda al documento, cargá su número de documento",
+    details: { recipient: "Ana Pérez" },
+    summary:
+      "Se exige que el certificado del firmante corresponda a su documento (matchIdDocument) pero el destinatario no tiene número de documento. 400 al guardar destinatarios; 422 al presentar el certificado en el Firmador; al enviar aparece como problema dentro de envelope_incomplete.",
+  },
+  provider_test_limit: {
+    status: 429,
+    code: "provider_test_limit",
+    message: "Probaste los conectores de firma demasiadas veces: esperá una hora",
+    details: { max: 5 },
+    summary: "Tope de 5 pruebas por hora por organización de los conectores de firma remota (pueden tener costo por firma). Sin Retry-After.",
+  },
   workflow_rate_limited: {
     status: 429,
     code: "workflow_rate_limited",
@@ -933,6 +947,7 @@ export function errorComponents() {
       RateLimitLimit: int("Pedidos permitidos en la ventana (600/min por IP en general; algunas rutas tienen un límite menor)."),
       RateLimitRemaining: int("Pedidos que quedan en la ventana actual."),
       RateLimitReset: int("Segundos hasta que se renueva la ventana."),
+      TimeZone: { description: "Zona horaria IANA (nombre canónico) usada en las columnas *_local: la pedida con `tz`, o UTC si no se reconoce.", schema: { type: "string" } },
       IdempotentReplay: { description: "\"true\" cuando la respuesta es la guardada de un pedido anterior con la misma Idempotency-Key.", schema: { type: "string", enum: ["true"] } },
     },
   };

@@ -307,15 +307,18 @@ systemctl enable --now calasign-security-updates.timer >/dev/null 2>&1 || echo "
 # El deploy anterior instalaba dnf-automatic: se apaga su timer (el paquete queda, inofensivo).
 systemctl disable --now dnf-automatic.timer >/dev/null 2>&1 || true
 
-# pg_trgm (índice trigram de la búsqueda de acuerdos por título, migraciones 0088 y 0089) viene en el paquete contrib,
+# pg_trgm (índice trigram de la búsqueda de acuerdos por título, migraciones 0088 y 0090) viene en el paquete contrib,
 # que bootstrap no instalaba en las instancias viejas: sin él la migración no crea el índice y la búsqueda recorre
 # todos los acuerdos de la organización. Idempotente; se instala el contrib de la versión de Postgres presente (16 o
 # 15) y la extensión se crea como postgres, antes de reiniciar la app (que aplica las migraciones al arrancar).
+# El contrib va con la versión EXACTA del server instalado: sin fijarla, dnf resuelve el contrib más nuevo del repo y
+# arrastra el server (y las libs) a esa versión, actualizando la base fuera de la ventana de mantenimiento.
 # Si algo falla no corta el deploy: la app funciona sin el índice (y avisa en el log al arrancar).
 PG_MAJOR=
 if rpm -q --quiet postgresql16-server; then PG_MAJOR=16; elif rpm -q --quiet postgresql15-server; then PG_MAJOR=15; fi
 if [ -n "\$PG_MAJOR" ] && ! rpm -q --quiet postgresql\$PG_MAJOR-contrib; then
-  dnf -y -q install postgresql\$PG_MAJOR-contrib >/dev/null 2>&1 || echo "AVISO: no se pudo instalar postgresql\$PG_MAJOR-contrib (sin pg_trgm)" >&2
+  PG_VR=\$(rpm -q --qf '%{VERSION}-%{RELEASE}' postgresql\$PG_MAJOR-server)
+  dnf -y -q install "postgresql\$PG_MAJOR-contrib-\$PG_VR" >/dev/null 2>&1 || echo "AVISO: no se pudo instalar postgresql\$PG_MAJOR-contrib-\$PG_VR (sin pg_trgm)" >&2
 fi
 sudo -u postgres psql -d calasign -v ON_ERROR_STOP=1 -qc "CREATE EXTENSION IF NOT EXISTS pg_trgm" >/dev/null 2>&1 || echo "AVISO: no se pudo crear la extensión pg_trgm" >&2
 

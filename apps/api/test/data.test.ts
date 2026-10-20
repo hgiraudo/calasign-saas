@@ -393,14 +393,15 @@ describe("almacenamiento por celda y BYOK", () => {
 describe("custodia de certificados con BYOK", () => {
   it("envuelve y abre la clave con la clave del cliente, atada a la organización", async () => {
     const { sealKey, openKey } = custody;
-    const sealed = await sealKey("-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n", { tenantId: TENANT_A, keyArn: OK_ARN });
+    const CERT = "0192f0e0-0000-7000-8000-00000000c0de";
+    const sealed = await sealKey("-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n", { tenantId: TENANT_A, certificateId: CERT }, { tenantId: TENANT_A, keyArn: OK_ARN });
     expect(sealed.method).toBe("kms-byok");
     expect(sealed.keyArn).toBe(OK_ARN);
-    const row = { key_ciphertext: sealed.ciphertext, key_wrapped: sealed.wrapped, key_wrap_method: sealed.method, key_wrap_key_arn: OK_ARN, tenant_id: TENANT_A };
+    const row = { id: CERT, key_ciphertext: sealed.ciphertext, key_wrapped: sealed.wrapped, key_wrap_method: sealed.method, key_wrap_key_arn: OK_ARN, tenant_id: TENANT_A };
     expect(await openKey(row)).toContain("abc");
     // Con el contexto de otra organización no abre.
     await expect(openKey({ ...row, tenant_id: TENANT_B })).rejects.toMatchObject({ code: "byok_key_unavailable" });
-    await expect(sealKey("x", { tenantId: TENANT_A, keyArn: BAD_ARN })).rejects.toMatchObject({ code: "byok_key_unavailable" });
+    await expect(sealKey("x", { tenantId: TENANT_A, certificateId: CERT }, { tenantId: TENANT_A, keyArn: BAD_ARN })).rejects.toMatchObject({ code: "byok_key_unavailable" });
   }, 30_000);
 });
 

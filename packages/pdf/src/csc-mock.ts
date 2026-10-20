@@ -3,6 +3,7 @@
 import { createServer, type Server } from "node:http";
 import { constants, createPrivateKey, privateEncrypt, randomUUID } from "node:crypto";
 import type { LabIdentity, LabServer } from "./lab";
+import { ecdsaSignDigestForTests } from "./sigalg";
 
 export interface MockCscOptions {
   username: string;
@@ -48,8 +49,9 @@ export async function startMockCsc(o: MockCscOptions, port = 0, host = "127.0.0.
     const cred = o.credentials[body.credentialID];
     if (!cred) return json(400, { error: "invalid_request", error_description: "credentialID desconocido" });
     if (path === "credentials/info") {
+      const ec = createPrivateKey(cred.identity.keyPem).asymmetricKeyType === "ec";
       return json(200, {
-        key: { status: "enabled", algo: ["1.2.840.113549.1.1.11"], len: 2048 },
+        key: { status: "enabled", algo: [ec ? "1.2.840.10045.4.3.2" : "1.2.840.113549.1.1.11"], len: ec ? 256 : 2048 },
         cert: { status: "valid", certificates: cred.chainDer.map((d) => Buffer.from(d).toString("base64")) },
         authMode: "explicit",
       });
@@ -67,8 +69,15 @@ export async function startMockCsc(o: MockCscOptions, port = 0, host = "127.0.0.
       }
       sads.delete(body.SAD);
       const key = createPrivateKey(cred.identity.keyPem);
+      const ec = key.asymmetricKeyType === "ec";
+      // Como un prestador real: el signAlgo pedido tiene que corresponder a la clave de la credencial.
+      if (body.signAlgo !== (ec ? "1.2.840.10045.4.3.2" : "1.2.840.113549.1.1.11")) {
+        return json(400, { error: "invalid_request", error_description: "signAlgo no corresponde a la clave" });
+      }
       const signatures = (body.hashes as string[]).map((h) =>
-        privateEncrypt({ key, padding: constants.RSA_PKCS1_PADDING }, Buffer.concat([DIGEST_INFO_SHA256, Buffer.from(h, "base64")])).toString("base64"),
+        ec
+          ? Buffer.from(ecdsaSignDigestForTests(cred.identity.keyPem, new Uint8Array(Buffer.from(h, "base64")))).toString("base64")
+          : privateEncrypt({ key, padding: constants.RSA_PKCS1_PADDING }, Buffer.concat([DIGEST_INFO_SHA256, Buffer.from(h, "base64")])).toString("base64"),
       );
       return json(200, { signatures });
     }

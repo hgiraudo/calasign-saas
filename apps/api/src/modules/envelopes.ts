@@ -24,7 +24,7 @@ import { applyEnvelopeSettings } from "./participants";
 import { checkSenderValue, insertEnvelopeField } from "./fieldvalues";
 import { applyInPersonFlags } from "./experience";
 import { applyIdentityFlags } from "./identity/kyc";
-import { applyCertificateFlags } from "./certsign";
+import { MISSING_ID_DOCUMENT_SQL, applyCertificateFlags, discardCertsignFiles } from "./certsign";
 import { assignFieldIds, formulaRefs, pruneDanglingConditions, saveFieldLogic } from "./logic";
 import { paymentBlocksCompletion } from "./billing/payments";
 import { enforceEnvelopeQuota, requireFeature, tenantPlan } from "./billing/plans";
@@ -452,6 +452,9 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
       ).filter(receivesSignerNotices);
       for (const r of notified) await enqueue(t, "notify", { kind: "voided", envelopeId: e.id, recipientId: r.id, tenantId: a.tenantId });
     });
+    // Firma con certificado a medias: el PDF de trabajo y los preparados ya no se usan (si un borrado falla, la
+    // retención lo reintenta al purgar el sobre).
+    await discardCertsignFiles(s.db, s.blobs, req.params.id).catch((err) => req.log.warn({ err: String(err), envelopeId: req.params.id }, "no se pudieron borrar los PDF de la firma con certificado"));
     return loadDetail(s.db, a.tenantId, req.params.id);
   });
 
@@ -1005,6 +1008,10 @@ export async function sendEnvelope(t: Db, tenantId: string, envelopeId: string, 
     if (s1.signature_type !== "certificate" && !fields.some((f) => f.recipient_id === s1.id && f.type === "signature"))
       problems.push(signerWithoutSignature(s1.name));
   }
+  // Exige que el certificado corresponda a su documento pero no tiene el número cargado (p. ej. un sobre creado desde una
+  // plantilla que lo pide): antes el control se salteaba en silencio al firmar.
+  for (const m of await t.query<{ name: string }>(`SELECT name FROM recipients WHERE envelope_id = $1 AND ${MISSING_ID_DOCUMENT_SQL} ORDER BY routing_order, name`, [e.id]))
+    problems.push({ code: "missing_id_document", params: { name: m.name }, message: `${m.name}: para exigir que el certificado corresponda a su documento hay que cargar el número de documento` });
   if (e.expires_at && new Date(e.expires_at) <= new Date())
     problems.push({ code: "expiry_past", params: {}, message: "La fecha de vencimiento ya pasó" });
   problems.push(...danglingFormulaProblems(fields));

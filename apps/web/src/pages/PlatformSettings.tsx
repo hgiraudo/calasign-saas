@@ -575,7 +575,7 @@ export function StoragePage() {
   const p = usePlatformText();
   const { locale, t } = useI18n();
   // La API pide además envelopes:view_all para conectar o cambiar destinos (reciben los PDF de todos los sobres).
-  const { access, can } = useAccess();
+  const { access, failed: accessFailed, refresh: refreshAccess, can } = useAccess();
   const canEdit = can("envelopes:view_all");
   // Mientras los permisos cargan, can() dice que sí: el historial se pide recién con los permisos cargados (si no, un
   // miembro sin envelopes:view_all recibía un 403 y la página entera quedaba en error).
@@ -830,7 +830,19 @@ export function StoragePage() {
 
       {canEdit && <h2 style={{ marginTop: 24 }}>{p("sto.exports")}</h2>}
       {!canEdit ? null : !exports ? (
-        exportsError ? <ErrorBox error={exportsError} /> : <Spinner />
+        exportsError ? (
+          <ErrorBox error={exportsError} />
+        ) : accessFailed ? (
+          // Sin permisos (falló /v1/me/access) el historial no se pide: un aviso con reintento en vez de un spinner eterno.
+          <div className="alert alert-warn" role="alert">
+            {p("sto.exports.accessError")}{" "}
+            <button type="button" className="btn btn-sm" onClick={() => void refreshAccess()}>
+              {p("common.retry")}
+            </button>
+          </div>
+        ) : (
+          <Spinner />
+        )
       ) : exports.length === 0 ? (
         <div className="empty">{p("sto.exports.empty")}</div>
       ) : (

@@ -8,13 +8,15 @@ import { useI18n } from "./i18n";
 
 interface AccessCtx {
   access: AccessResponse | null;
+  /** La última carga de /v1/me/access de esta sesión falló (y no quedaron permisos anteriores): access sigue en null. */
+  failed: boolean;
   can: (p: Permission) => boolean;
   /** ¿El plan de la organización incluye esta función? Mientras carga, sí (la API igual responde 402 plan_limit). */
   hasFeature: (f: PlanFeature) => boolean;
   refresh: () => Promise<void>;
 }
 
-const Ctx = createContext<AccessCtx>({ access: null, can: () => true, hasFeature: () => true, refresh: async () => {} });
+const Ctx = createContext<AccessCtx>({ access: null, failed: false, can: () => true, hasFeature: () => true, refresh: async () => {} });
 
 export function AccessProvider({ children }: { children: ReactNode }) {
   const { me } = useAuth();
@@ -25,8 +27,9 @@ export function AccessProvider({ children }: { children: ReactNode }) {
   const key = me ? `${me.tenant.id}:${me.user.id}` : null;
   const keyRef = useRef(key);
   keyRef.current = key;
-  const [state, setState] = useState<{ key: string | null; access: AccessResponse | null }>({ key: null, access: null });
+  const [state, setState] = useState<{ key: string | null; access: AccessResponse | null; failed?: boolean }>({ key: null, access: null });
   const access = key !== null && state.key === key ? state.access : null;
+  const failed = key !== null && state.key === key && !state.access && Boolean(state.failed);
   // Solo vale la respuesta más reciente: una recarga pedida antes de cambiar de organización no pisa la de la nueva.
   const seq = useRef(0);
 
@@ -43,7 +46,7 @@ export function AccessProvider({ children }: { children: ReactNode }) {
       const a = await api<AccessResponse>("/v1/me/access");
       if (mine === seq.current) setState({ key: k, access: a });
     } catch {
-      if (mine === seq.current) setState((prev) => (background && prev.key === k ? prev : { key: k, access: null }));
+      if (mine === seq.current) setState((prev) => (background && prev.key === k && prev.access ? prev : { key: k, access: null, failed: true }));
     }
   }, []);
   const refresh = useCallback(() => load(false), [load]);
@@ -78,7 +81,7 @@ export function AccessProvider({ children }: { children: ReactNode }) {
   // Mientras carga, no se ocultan cosas (el servidor igual aplica los permisos).
   const can = useCallback((p: Permission) => (access ? access.permissions.includes(p) : true), [access]);
   const hasFeature = useCallback((f: PlanFeature) => (access?.planFeatures ? access.planFeatures.includes(f) : true), [access]);
-  return <Ctx.Provider value={{ access, can, hasFeature, refresh }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ access, failed, can, hasFeature, refresh }}>{children}</Ctx.Provider>;
 }
 
 /**

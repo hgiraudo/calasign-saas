@@ -65,7 +65,9 @@ function providerCfg(p: OAuthProvider): ProviderCfg {
       clientSecret: env.DROPBOX_CLIENT_SECRET,
       authorizeUrl: "https://www.dropbox.com/oauth2/authorize",
       tokenUrl: "https://api.dropboxapi.com/oauth2/token",
-      scope: "files.content.write account_info.read",
+      // files.metadata.read: get_metadata para reconocer en un reintento lo que ya subió un intento anterior. Las
+      // conexiones hechas antes de pedirlo no lo tienen: ahí se sube sin deduplicar (ver uploadDropbox).
+      scope: "files.content.write files.metadata.read account_info.read",
       extraAuthorize: { token_access_type: "offline" },
     };
   if (p === "box")
@@ -332,7 +334,8 @@ export async function uploadGdrive(
     const prev = files.find((f) => f?.id);
     if (prev) {
       const boundary = `calasign${randomToken(12)}`;
-      const meta = JSON.stringify({ appProperties: { calasignSha256: sha } });
+      // Con el nombre actual: un archivo subido con el formato viejo de nombre (8 caracteres del id) queda renombrado.
+      const meta = JSON.stringify({ name, appProperties: { calasignSha256: sha } });
       const body = Buffer.concat([
         Buffer.from(`--${boundary}\r\ncontent-type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\ncontent-type: ${contentType}\r\n\r\n`),
         Buffer.from(bytes),
@@ -385,8 +388,14 @@ export function dropboxContentHash(bytes: Uint8Array): string {
   return outer.digest("hex");
 }
 
-/** files/get_metadata: null si la ruta no existe (409 path/not_found). */
-async function dropboxMetadata(token: string, path: string): Promise<any | null> {
+/** La conexión no tiene permiso para leer metadatos (scope files.metadata.read): no se puede deduplicar. */
+const DROPBOX_NO_METADATA_SCOPE = Symbol("dropbox-no-metadata-scope");
+
+/**
+ * files/get_metadata: null si la ruta no existe (409 path/not_found); DROPBOX_NO_METADATA_SCOPE si al token le falta el
+ * scope (401 missing_scope, o un 400 que lo menciona: app o conexión anterior a pedir files.metadata.read).
+ */
+async function dropboxMetadata(token: string, path: string): Promise<any | null | typeof DROPBOX_NO_METADATA_SCOPE> {
   const res = await fetch("https://api.dropboxapi.com/2/files/get_metadata", {
     method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
@@ -397,6 +406,11 @@ async function dropboxMetadata(token: string, path: string): Promise<any | null>
     const t = await res.text().catch(() => "");
     if (/not_found/.test(t)) return null;
     throw new Error(`buscar exportación previa en Dropbox: HTTP 409 ${t.slice(0, 300)}`);
+  }
+  if (res.status === 401 || res.status === 400) {
+    const t = await res.text().catch(() => "");
+    if (/scope/i.test(t)) return DROPBOX_NO_METADATA_SCOPE;
+    throw new Error(`buscar exportación previa en Dropbox: HTTP ${res.status} ${t.slice(0, 300)}`);
   }
   return (await check(res, "buscar exportación previa en Dropbox")).json();
 }
@@ -417,11 +431,14 @@ export async function uploadDropbox(
   // Nunca "overwrite": aunque el nombre lleve el id del sobre, en la ruta puede haber otro archivo (uno que alguien
   // dejó con ese nombre, o el de otro sobre con el formato viejo de nombre). En un reintento se busca lo que un intento
   // anterior pudo haber subido (nombre actual y, por los reintentos en curso al cambiar el formato, el anterior) y se
-  // reutiliza solo si es byte a byte lo mismo (content_hash de Dropbox); si no, "add" con autorename.
+  // reutiliza solo si es byte a byte lo mismo (content_hash de Dropbox); si no, "add" con autorename. Sin permiso para
+  // leer metadatos (conexión anterior a pedir files.metadata.read) se sube igual, sin deduplicar: fallar siempre
+  // dejaba la exportación trabada; con autorename, a lo sumo queda una copia de más.
   if (opts?.retry) {
     const mine = dropboxContentHash(bytes);
     for (const p of [path, ...(opts.legacyName && opts.legacyName !== name ? [pathOf(opts.legacyName)] : [])]) {
       const meta = await dropboxMetadata(token, p);
+      if (meta === DROPBOX_NO_METADATA_SCOPE) break;
       if (meta?.[".tag"] === "file" && meta.content_hash === mine) return { ref: `dropbox:${meta.path_display ?? p}`, creds: updated ?? undefined };
     }
   }

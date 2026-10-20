@@ -191,7 +191,7 @@ const Q = {
   cursor: { name: "cursor", description: "Valor de `nextCursor` de la página anterior (opaco)." },
   from: { name: "from", description: "Desde (ISO 8601). Por defecto, el día 1 del mes que está 5 meses antes de `to` (6 meses calendario).", schema: { type: "string", format: "date-time" } },
   to: { name: "to", description: "Hasta (ISO 8601). Por defecto, ahora. Rango máximo: 3 años.", schema: { type: "string", format: "date-time" } },
-  tz: { name: "tz", description: "Zona horaria IANA (p. ej. America/Argentina/Buenos_Aires). Una desconocida: 400 invalid_timezone." },
+  tz: { name: "tz", description: "Zona horaria IANA (p. ej. America/Argentina/Buenos_Aires). Sin distinguir mayúsculas. Una desconocida (o mal escrita) no es un error: se usa UTC; en los CSV el header `X-Time-Zone` informa la zona usada." },
   sep: { name: "sep", description: "Separador del CSV: `,` (por defecto) o `;` (Excel en español o portugués). También `comma` / `semicolon`.", schema: { type: "string", enum: [",", ";", "comma", "semicolon"] } },
 };
 const AUDIT_QUERY = [
@@ -1102,7 +1102,7 @@ const OPS: Op[] = [
     description: "Totales, sobres por mes, remitentes y notificaciones por canal. Los meses de `byMonth` son meses calendario en `tz` (UTC por defecto). Exige envelopes:view_all.",
     query: [Q.from, Q.to, { ...Q.tz, description: `Zona de los meses de byMonth. ${Q.tz.description}` }],
     response: ReportsSummarySchema,
-    errors: ["invalid_range", "invalid_timezone"],
+    errors: ["invalid_range"],
   },
   {
     method: "get",
@@ -1111,10 +1111,10 @@ const OPS: Op[] = [
     tag: "Reportes",
     summary: "Exportar sobres a CSV",
     description:
-      "UTF-8 con BOM; las celdas que empiezan con = + - @ se prefijan con ' (contra inyección de fórmulas). Hasta 50.000 sobres (los más recientes del rango): si hay más, header `X-Truncated: true` y una fila final TRUNCADO. Las fechas van en ISO UTC; con `tz` se agregan columnas *_local en esa zona. La exportación queda en la auditoría (reports.exported). Exige envelopes:view_all.",
+      "UTF-8 con BOM; las celdas que empiezan con = + - @ se prefijan con ' (contra inyección de fórmulas). Hasta 50.000 sobres (los más recientes del rango): si hay más, header `X-Truncated: true` y una fila final TRUNCADO. Las fechas van en ISO UTC; con `tz` se agregan columnas *_local en esa zona y el header `X-Time-Zone` dice cuál se usó (UTC si `tz` no se reconoce). La exportación queda en la auditoría (reports.exported). Exige envelopes:view_all.",
     query: [Q.from, Q.to, Q.sep, { ...Q.tz, description: `Agrega las columnas creado_local, enviado_local, completado_local y vence_local. ${Q.tz.description}` }],
     response: "csv",
-    errors: ["invalid_range", "invalid_query", "invalid_timezone"],
+    errors: ["invalid_range", "invalid_query"],
   },
 
   // Evidencia
@@ -1181,7 +1181,7 @@ const OPS: Op[] = [
     auth: "none",
   },
   { method: "get", path: "/v1/signature-providers", operationId: "listSignatureProviders", tag: "Evidencia", summary: "Conectores de firma (plataforma, CSC v2, CA de Calasign)" },
-  { method: "post", path: "/v1/signature-providers/{id}/test", operationId: "testSignatureProvider", tag: "Evidencia", summary: "Probar un conector CSC (lista credenciales y firma un hash de prueba)" },
+  { method: "post", path: "/v1/signature-providers/{id}/test", operationId: "testSignatureProvider", tag: "Evidencia", summary: "Probar un conector CSC (firma un hash de prueba; devuelve si funcionó y el titular, sin credenciales; hasta 5 por hora por organización)", errors: ["provider_test_limit"] },
 
   // Firma XML
   {
@@ -1266,10 +1266,10 @@ const OPS: Op[] = [
     tag: "Auditoría",
     summary: "Exportar la auditoría a CSV",
     description:
-      "Mismos filtros que el listado, hasta 50.000 filas (si hay más, header `X-Truncated: true` y una fila final TRUNCADO). occurred_at en ISO UTC; con `tz` se agrega occurred_at_local. La exportación misma queda registrada (audit.exported).",
+      "Mismos filtros que el listado, hasta 50.000 filas (si hay más, header `X-Truncated: true` y una fila final TRUNCADO). occurred_at en ISO UTC; con `tz` se agrega occurred_at_local y el header `X-Time-Zone` dice la zona usada (UTC si `tz` no se reconoce). La exportación misma queda registrada (audit.exported).",
     query: [...AUDIT_QUERY, Q.sep, { ...Q.tz, description: `Agrega la columna occurred_at_local. ${Q.tz.description}` }],
     response: "csv",
-    errors: ["invalid_query", "invalid_timezone"],
+    errors: ["invalid_query"],
   },
 
   // Equipo
@@ -1575,7 +1575,11 @@ function successResponse(op: Op) {
   const headers = op.idempotent ? { headers: { "Idempotent-Replay": { $ref: "#/components/headers/IdempotentReplay" } } } : {};
   if (op.response === "none") return { description: op.responseDescription ?? "Sin contenido" };
   if (op.response === "pdf") return { description: "PDF", content: { "application/pdf": { schema: { type: "string", format: "binary" } } } };
-  if (op.response === "csv") return { description: "CSV (UTF-8 con BOM)", content: { "text/csv": { schema: { type: "string" } } } };
+  if (op.response === "csv") {
+    // Con `tz`, la zona usada en las columnas *_local (una desconocida cae a UTC).
+    const tzHeader = op.query?.some((q) => q.name === "tz") ? { headers: { "X-Time-Zone": { $ref: "#/components/headers/TimeZone" } } } : {};
+    return { description: "CSV (UTF-8 con BOM)", ...tzHeader, content: { "text/csv": { schema: { type: "string" } } } };
+  }
   if (op.response === "html") return { description: "Página HTML", content: { "text/html": { schema: { type: "string" } } } };
   // Sin esquema declarado: objeto JSON (la operación todavía no tiene su esquema de respuesta documentado).
   return { description, ...headers, content: { "application/json": { schema: op.response ? js(op.response) : { type: "object" } } } };

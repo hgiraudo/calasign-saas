@@ -112,7 +112,14 @@ function tinyPdf() {
 }
 const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
 /** "Foto" JPEG para el flujo integrado: cabecera JPEG + bytes al azar (el proveedor de prueba no decodifica). */
-const fakeJpeg = () => Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), randomBytes(4096)]);
+// JPEG con estructura válida (SOI, APP0 JFIF, SOS, datos al azar, EOI): la API recorre los segmentos para quitar metadatos.
+const fakeJpeg = () =>
+  Buffer.concat([
+    Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00]),
+    Buffer.from([0xff, 0xda, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3f, 0x00]),
+    randomBytes(4096),
+    Buffer.from([0xff, 0xd9]),
+  ]);
 
 async function upload(client, token, kind, bytes = fakeJpeg()) {
   const fd = new FormData();

@@ -4,6 +4,7 @@
 //   2. completeExternalSignature: se verifica la firma contra el certificado, se arma el CMS (con sello de
 //      tiempo si hay TSA) y se inserta en el placeholder. Las firmas anteriores del PDF no se tocan.
 import { X509Certificate, createHash, verify as cryptoVerify } from "node:crypto";
+import { normalizeEcdsaSignature, signingAlgorithmFor } from "./sigalg";
 import { buildSignaturePlaceholderIncremental } from "./incremental";
 import { fillByteRange } from "./placeholder";
 import { assembleCms, buildSignedAttributes, type CmsOptions, type CmsSignatureAlgorithm } from "./cms";
@@ -32,18 +33,6 @@ export interface PreparedExternalSignature {
 
 const sha256 = (b: Uint8Array) => new Uint8Array(createHash("sha256").update(b).digest());
 
-/** Tipo de clave del certificado del firmante (solo RSA y ECDSA P-256/P-384). */
-export function signingAlgorithmFor(certDer: Uint8Array): { algorithm: CmsSignatureAlgorithm; namedCurve: string | null } {
-  const key = new X509Certificate(Buffer.from(certDer)).publicKey;
-  if (key.asymmetricKeyType === "rsa") return { algorithm: "RSASSA-PKCS1-v1_5", namedCurve: null };
-  if (key.asymmetricKeyType === "ec") {
-    const curve = key.asymmetricKeyDetails?.namedCurve ?? null;
-    if (curve !== "prime256v1" && curve !== "secp384r1") throw new Error(`curva no soportada: ${curve ?? "desconocida"}`);
-    return { algorithm: "ECDSA", namedCurve: curve };
-  }
-  throw new Error(`tipo de clave no soportado: ${key.asymmetricKeyType}`);
-}
-
 export async function prepareExternalSignature(pdf: Uint8Array, chainDer: Uint8Array[], o: PrepareExternalOptions): Promise<PreparedExternalSignature> {
   if (!chainDer.length) throw new Error("falta el certificado del firmante");
   const { algorithm, namedCurve } = signingAlgorithmFor(chainDer[0]);
@@ -67,34 +56,6 @@ export async function prepareExternalSignature(pdf: Uint8Array, chainDer: Uint8A
     signatureAlgorithm: algorithm,
     namedCurve,
   };
-}
-
-/** ECDSA: acepta DER o r||s (IEEE P1363, lo que devuelven PKCS#11 y Windows) y devuelve DER. */
-export function normalizeEcdsaSignature(sig: Uint8Array, namedCurve: string | null): Uint8Array {
-  const coord = namedCurve === "secp384r1" ? 48 : 32;
-  // r||s cuyo primer byte es 0x30 (1 de cada 256) no es DER: se mira la estructura completa, no solo el tag.
-  if (sig.length === coord * 2 && !isDerEcdsa(sig)) {
-    const int = (b: Uint8Array) => {
-      let i = 0;
-      while (i < b.length - 1 && b[i] === 0) i++;
-      let v = b.subarray(i);
-      if (v[0] & 0x80) v = Uint8Array.from([0, ...v]);
-      return Uint8Array.from([0x02, v.length, ...v]);
-    };
-    const r = int(sig.subarray(0, coord));
-    const s = int(sig.subarray(coord));
-    const body = Uint8Array.from([...r, ...s]);
-    return Uint8Array.from([0x30, body.length, ...body]);
-  }
-  return sig;
-}
-
-/** SEQUENCE { INTEGER r, INTEGER s } en DER que ocupa exactamente `sig` (longitudes cortas: hasta P-384). */
-function isDerEcdsa(sig: Uint8Array): boolean {
-  if (sig.length < 8 || sig[0] !== 0x30 || sig[1] !== sig.length - 2 || sig[2] !== 0x02) return false;
-  const rLen = sig[3];
-  const sTag = 4 + rLen;
-  return sTag + 2 <= sig.length && sig[sTag] === 0x02 && sig[sTag + 1] === sig.length - sTag - 2;
 }
 
 /** Verifica la firma del titular sobre los atributos firmados con la clave pública de su certificado. */

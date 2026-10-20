@@ -16,6 +16,7 @@ export { renderDocumentPdf, type DocBlock, type DocRun, type DocMarkKind, type D
 export { extractPdfPlainText, type PdfText } from "./plain-text";
 export { archiveTimestampInfo, tsaCertificateNotAfter, type ArchiveTimestampInfo } from "./archive";
 export * from "./external";
+export { signingAlgorithmFor, normalizeEcdsaSignature, verifyEcdsaDigest } from "./sigalg";
 export * from "./certcheck";
 export { assertEmbeddableImage, assertPngSize, pngDimensions, MAX_PNG_PIXELS } from "./images";
 export { changesAfterRevision, type ChangesAfter } from "./revisions";

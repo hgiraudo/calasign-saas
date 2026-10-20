@@ -229,7 +229,8 @@ export const config = {
       apiBase: env.MP_API_BASE ?? "https://api.mercadopago.com",
       /**
        * Monedas en las que la cuenta de Mercado Pago puede cobrar suscripciones (MP_CURRENCIES, separadas por coma, p. ej.
-       * "ARS"). Una cuenta cobra solo en la moneda de su país. Vacío: la de la cuenta (GET /users/me), o ARS si no se sabe.
+       * "ARS"). Una cuenta cobra solo en la moneda de su país. Vacío: la de la cuenta (GET /users/me); si no se puede saber,
+       * Mercado Pago no se ofrece para suscripciones. En dev y producción conviene definirla.
        */
       currencies: (env.MP_CURRENCIES ?? "")
         .split(",")

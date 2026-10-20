@@ -28,6 +28,7 @@ import { lockEnvelope, pastExpiry } from "../envelopes";
 import { assertLinkCurrent, recipientActor, resolveToken } from "../signing";
 import { resolveSignerReturn, returnTokenEncToStore, sendNeutralReturn, setSignerReturnCookie, signerReturnUrl } from "../signer-return";
 import { matchIdentity } from "./namematch";
+import { stripImageMetadata } from "./image-meta";
 import { WebhookSignatureError, getAdapter, listProviders, mockDecide } from "./providers";
 import type { CertificateIdentity } from "@calasign/pdf";
 import { tenantBaseUrl } from "../custom-domains";
@@ -189,6 +190,20 @@ function maskDoc(n: string | null): string | null {
   return s.length <= 4 ? "****" : `${"*".repeat(Math.min(6, s.length - 4))}${s.slice(-4)}`;
 }
 
+/**
+ * Lo que se guarda en identity_verifications.result: el número de documento enmascarado y de la fecha de nacimiento
+ * solo el año. La comparación con lo declarado (matchIdentity) se hace antes, con el resultado completo del proveedor,
+ * y queda en name_match; nada lee después el número completo ni la fecha.
+ */
+export function storedIdvResult(result: IdvResult): IdvResult {
+  const birth = result.person?.birthDate ?? null;
+  return {
+    ...result,
+    document: { ...result.document, number: maskDoc(result.document?.number ?? null) },
+    person: { ...result.person, birthDate: birth ? (/(?:^|\D)((?:19|20)\d{2})(?:\D|$)/.exec(birth)?.[1] ?? null) : null },
+  };
+}
+
 const PROVIDER_NAMES: Record<string, string> = { mock: "CalaSign (prueba)", truora: "Truora", veriff: "Veriff" };
 
 export async function identityForCertificate(db: Db, recipients: any[]): Promise<Map<string, CertificateIdentity>> {
@@ -242,7 +257,7 @@ async function finalizeVerification(db: Db, verificationId: string, result: IdvR
     const settings = await getIdentitySettings(t, v.tenant_id);
 
     if (result.status === "pending" || result.status === "review") {
-      await t.query(`UPDATE identity_verifications SET status = 'pending', result = $2, updated_at = now() WHERE id = $1`, [v.id, JSON.stringify(result)]);
+      await t.query(`UPDATE identity_verifications SET status = 'pending', result = $2, updated_at = now() WHERE id = $1`, [v.id, JSON.stringify(storedIdvResult(result))]);
       return "pending";
     }
 
@@ -259,7 +274,7 @@ async function finalizeVerification(db: Db, verificationId: string, result: IdvR
 
     await t.query(
       `UPDATE identity_verifications SET status = $2, result = $3, name_match = $4, failure_reason = $5, completed_at = now(), updated_at = now() WHERE id = $1`,
-      [v.id, ok ? "verified" : "failed", JSON.stringify(result), JSON.stringify(nameMatch), reason],
+      [v.id, ok ? "verified" : "failed", JSON.stringify(storedIdvResult(result)), JSON.stringify(nameMatch), reason],
     );
     const summary = {
       verificationId: v.id,
@@ -496,8 +511,15 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
     if (!isJpeg && !isPng) throw badRequest("invalid_image", "Se esperaba una foto JPG o PNG");
     if (bytes.length < MIN_IMAGE_BYTES) throw badRequest("invalid_image", "La imagen es demasiado chica");
 
-    const plainHash = sha256Hex(bytes);
-    const enc = encryptBytes(bytes);
+    // Sin metadatos (EXIF con la ubicación GPS, modelo del equipo, XMP, comentarios): se guarda y se cifra solo la imagen.
+    let clean: Uint8Array;
+    try {
+      clean = stripImageMetadata(bytes);
+    } catch {
+      throw badRequest("invalid_image", "No se pudo leer la imagen: probá con otra foto");
+    }
+    const plainHash = sha256Hex(clean);
+    const enc = encryptBytes(clean);
     const fileId = uuidv7();
     const key = `tenants/${e.tenant_id}/envelopes/${e.id}/identity/${fileId}.bin`;
     await s.blobs.put(key, enc, "application/octet-stream");

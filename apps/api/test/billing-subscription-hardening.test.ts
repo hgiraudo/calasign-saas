@@ -12,11 +12,18 @@ delete process.env.DATABASE_URL;
 let server: Server;
 let siteId = "MLB";
 let meCalls = 0;
+let meMode: "ok" | "error" | "slow" = "ok";
 
 beforeAll(async () => {
   server = createServer((req, res) => {
     if (req.url?.startsWith("/users/me")) {
       meCalls++;
+      if (meMode === "error") {
+        res.writeHead(500, { "content-type": "application/json" });
+        res.end("{}");
+        return;
+      }
+      if (meMode === "slow") return; // nunca responde: corta el timeout
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ id: 1, site_id: siteId }));
       return;
@@ -28,7 +35,10 @@ beforeAll(async () => {
   const { config } = await import("../src/config");
   config.billing.mercadopago.apiBase = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
 });
-afterAll(() => server.close());
+afterAll(() => {
+  server.closeAllConnections();
+  server.close();
+});
 
 async function setup(o: { env?: string; stripeKey?: string | null; stripeHook?: string | null; mpToken?: string | null; mpHook?: string | null; mpCurrencies?: string[]; mock?: boolean }) {
   const { config } = await import("../src/config");
@@ -47,6 +57,7 @@ async function setup(o: { env?: string; stripeKey?: string | null; stripeHook?: 
 describe("proveedores de suscripción", () => {
   beforeEach(() => {
     meCalls = 0;
+    meMode = "ok";
   });
 
   it("Stripe exige STRIPE_WEBHOOK_SECRET; Mercado Pago, MP_WEBHOOK_SECRET en producción", async () => {
@@ -76,18 +87,47 @@ describe("proveedores de suscripción", () => {
     await expect(pickProvider("mock", "COP")).rejects.toMatchObject({ code: "provider_not_configured" });
   });
 
-  it("sin MP_CURRENCIES usa la moneda de la cuenta (cacheada) y, sin token, ARS", async () => {
+  it("sin MP_CURRENCIES usa la moneda de la cuenta (cacheada, una consulta en vuelo) y, sin token, ninguna", async () => {
     let p = await setup({ mpToken: "TEST-1" });
     siteId = "MLB";
-    expect(await p.mpSubscriptionCurrencies()).toEqual(["BRL"]);
+    const [a, b] = await Promise.all([p.mpSubscriptionCurrencies(), p.mpSubscriptionCurrencies()]);
+    expect(a).toEqual(["BRL"]);
+    expect(b).toEqual(["BRL"]);
     expect(await p.mpSubscriptionCurrencies()).toEqual(["BRL"]);
     expect(meCalls).toBe(1);
+    // Con un valor bueno, un error posterior no lo pisa (no se vuelve a consultar).
+    meMode = "error";
+    expect(await p.mpSubscriptionCurrencies()).toEqual(["BRL"]);
     p = await setup({});
-    expect(await p.mpSubscriptionCurrencies()).toEqual(["ARS"]);
+    expect(await p.mpSubscriptionCurrencies()).toEqual([]);
     // Sin proveedores no hay ninguno disponible: pickProvider explica la moneda.
     const { pickProvider } = await import("../src/modules/billing/subscriptions");
     await expect(pickProvider(undefined, "USD")).rejects.toMatchObject({ code: "provider_not_configured" });
   });
+});
+
+describe("moneda de Mercado Pago desconocida", () => {
+  beforeEach(() => {
+    meCalls = 0;
+    meMode = "ok";
+  });
+
+  it("si /users/me falla y nunca hubo un valor bueno, Mercado Pago no se ofrece (no ARS) y no reintenta enseguida", async () => {
+    const p = await setup({ mpToken: "TEST-1" });
+    meMode = "error";
+    expect(await p.mpSubscriptionCurrencies()).toEqual([]);
+    const ars = await p.subscriptionProvidersFor("ARS");
+    expect(ars.find((x) => x.id === "mercadopago")).toMatchObject({ configured: false, currencies: [] });
+    expect(meCalls).toBe(1);
+  });
+
+  it("/users/me tiene timeout corto (4 s)", async () => {
+    const p = await setup({ mpToken: "TEST-1" });
+    meMode = "slow";
+    const t0 = Date.now();
+    expect(await p.mpSubscriptionCurrencies()).toEqual([]);
+    expect(Date.now() - t0).toBeLessThan(6_000);
+  }, 10_000);
 });
 
 describe("/v1/billing con API key u OAuth", () => {

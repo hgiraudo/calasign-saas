@@ -181,11 +181,15 @@ export interface SignatureProviderInfo {
   configured: boolean;
 }
 
+/**
+ * Resultado de probar un conector CSC de la plataforma. Los conectores son de la plataforma (compartidos): solo se
+ * informa si funciona y el nombre del titular, sin las credenciales ni el certificado completo.
+ */
 export interface SignatureProviderTestResult {
   id: string;
   ok: boolean;
-  credentials: string[];
-  certificate: { subject: string; issuer: string; notAfter: string } | null;
+  /** Nombre común (CN) del titular del certificado de la credencial. */
+  holder: string | null;
   signatureVerified: boolean;
   error: string | null;
 }

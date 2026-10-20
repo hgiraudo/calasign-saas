@@ -1,9 +1,9 @@
 // Rutas de evidencia fuerte: nivel PAdES, certificados de la organización, firma XML, sello de empresa,
 // validación pública de PDF y conectores de firma (CSC v2).
-import { createPublicKey, createVerify, randomBytes, X509Certificate } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { signXml, verifyXml } from "@calasign/xades";
-import { validatePdf, sha256 as sha256Bytes } from "@calasign/pdf";
+import { commonName, parseCert, validatePdf, sha256 as sha256Bytes } from "@calasign/pdf";
 import {
   SealOptionsInput,
   UpdateEvidenceSettingsInput,
@@ -27,6 +27,9 @@ import { loadTenantCertificate, parseP12, sealKey, tenantCertificateProvider, to
 import { byokForCustody } from "./data/byok";
 import { lockEnvelope } from "./envelopes";
 import { getCscProvider, guardedFetch, listSignatureProviders, resolveSealLevel, trustAnchors } from "./evidence-seal";
+
+/** Pruebas de conectores de firma por organización y hora. */
+const SIGNATURE_PROVIDER_TESTS_PER_HOUR = 5;
 
 export async function evidenceRoutes(app: FastifyInstance, s: Services) {
   const auth = authenticate(s);
@@ -58,9 +61,9 @@ export async function evidenceRoutes(app: FastifyInstance, s: Services) {
     const input = UploadCertificateInput.parse(req.body);
     const parsed = parseP12(Buffer.from(input.p12Base64, "base64"), input.password);
     if (new Date(parsed.leaf.validTo) < new Date()) throw badRequest("certificate_expired", "El certificado está vencido");
-    const sealed = await sealKey(parsed.keyPkcs8Pem, await byokForCustody(s.db, req.auth!.tenantId));
-    const leaf = parsed.leaf;
     const id = uuidv7();
+    const sealed = await sealKey(parsed.keyPkcs8Pem, { tenantId: req.auth!.tenantId, certificateId: id }, await byokForCustody(s.db, req.auth!.tenantId));
+    const leaf = parsed.leaf;
     const cn = /(?:^|\n)CN=([^\n]+)/.exec(leaf.subject)?.[1] ?? null;
     const row = await s.db.one(
       `INSERT INTO tenant_certificates (id, tenant_id, name, subject, issuer, common_name, serial_number, not_before, not_after, sha256,
@@ -242,22 +245,34 @@ export async function evidenceRoutes(app: FastifyInstance, s: Services) {
 
   app.get("/v1/signature-providers", { preHandler: auth }, async () => ({ items: await listSignatureProviders() }));
 
+  // Los conectores CSC son de la plataforma (compartidos por todas las organizaciones) y no hay un rol de operador de
+  // plataforma: cualquier administrador de una organización puede probarlos. Por eso la prueba solo dice si funciona y
+  // el nombre del titular (sin la lista de credenciales, el certificado completo ni el error del prestador, que va al
+  // log) y tiene un tope por organización: cada prueba es una firma en el prestador (algunos cobran por firma).
   app.post<{ Params: { id: string } }>("/v1/signature-providers/:id/test", { preHandler: auth }, async (req) => {
     const provider = getCscProvider(req.params.id);
     if (!provider) throw notFound("Conector");
-    const res: SignatureProviderTestResult = { id: req.params.id, ok: false, credentials: [], certificate: null, signatureVerified: false, error: null };
+    const recent = await s.db.one<{ n: number }>(
+      `SELECT count(*)::int AS n FROM account_audit_log WHERE tenant_id = $1 AND action = 'signature_provider.tested' AND occurred_at > now() - interval '1 hour'`,
+      [req.auth!.tenantId],
+    );
+    if ((recent?.n ?? 0) >= SIGNATURE_PROVIDER_TESTS_PER_HOUR) {
+      throw new AppError(429, "provider_test_limit", `Se pueden hacer hasta ${SIGNATURE_PROVIDER_TESTS_PER_HOUR} pruebas de conectores por hora: probá más tarde`, {
+        max: SIGNATURE_PROVIDER_TESTS_PER_HOUR,
+      });
+    }
+    const res: SignatureProviderTestResult = { id: req.params.id, ok: false, holder: null, signatureVerified: false, error: null };
     try {
-      res.credentials = await provider.client.listCredentials();
       const chain = await provider.certificateChain();
-      const cert = new X509Certificate(Buffer.from(chain[0]));
-      res.certificate = { subject: cert.subject.replace(/\n/g, ", "), issuer: cert.issuer.replace(/\n/g, ", "), notAfter: new Date(cert.validTo).toISOString() };
-      // Firma de prueba sobre datos aleatorios, verificada con la clave pública del certificado.
-      const data = randomBytes(32);
-      const sig = await provider.signDigest(sha256Bytes(data));
-      res.signatureVerified = createVerify("RSA-SHA256").update(data).verify(createPublicKey(cert.publicKey.export({ type: "spki", format: "pem" })), Buffer.from(sig));
-      res.ok = res.signatureVerified;
+      res.holder = commonName(parseCert(chain[0]).subject) ?? null;
+      // Firma de prueba sobre datos aleatorios: signDigest ya la verifica con la clave pública del certificado de la
+      // credencial (RSA o ECDSA) y falla si no corresponde.
+      await provider.signDigest(sha256Bytes(randomBytes(32)));
+      res.signatureVerified = true;
+      res.ok = true;
     } catch (e) {
-      res.error = (e as Error).message;
+      req.log.warn({ provider: req.params.id, err: String((e as Error)?.message ?? e).slice(0, 500) }, "prueba de conector de firma fallida");
+      res.error = "No se pudo firmar con el conector: revisá su configuración (el detalle quedó en el log del servidor)";
     }
     await auditFromRequest(s.db, req, req.auth!, "signature_provider.tested", { targetType: "signature_provider", targetId: req.params.id, data: { ok: res.ok } });
     return res;

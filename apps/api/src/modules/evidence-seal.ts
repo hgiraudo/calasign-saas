@@ -196,7 +196,8 @@ function cscConfigs(): CscConfig[] {
 export async function listSignatureProviders(): Promise<SignatureProviderInfo[]> {
   const platform = await getSealProvider();
   const list: SignatureProviderInfo[] = [{ id: platform.id, type: "platform", level: "simple", baseUrl: null, configured: true }];
-  for (const c of cscConfigs()) list.push({ id: c.id, type: "csc", level: c.level ?? "qualified", baseUrl: c.baseUrl, configured: true });
+  // Sin la URL del prestador: los conectores son de la plataforma y cualquier organización los lista.
+  for (const c of cscConfigs()) list.push({ id: c.id, type: "csc", level: c.level ?? "qualified", baseUrl: null, configured: true });
   if (!list.some((p) => p.id === "calasign-ca")) list.push({ id: "calasign-ca", type: "csc", level: "advanced", baseUrl: null, configured: false });
   return list;
 }

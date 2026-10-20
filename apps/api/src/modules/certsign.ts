@@ -83,6 +83,84 @@ export async function applyCertificateFlags(
   }
   // Un rol que dejó de ser firmante no puede seguir con firma con certificado.
   await db.query(`UPDATE recipients SET signature_type = 'electronic' WHERE envelope_id = $1 AND role <> 'signer' AND signature_type = 'certificate'`, [envelopeId]);
+  // Exigir que el certificado corresponda al documento sin cargar el documento: antes el control se salteaba en silencio
+  // y firmaba cualquier certificado válido. Solo los destinatarios de este guardado (un alta suelta no se traba por otro).
+  const missing = await db.one<{ name: string }>(
+    `SELECT name FROM recipients WHERE envelope_id = $1 AND id = ANY($2::uuid[]) AND ${MISSING_ID_DOCUMENT_SQL} ORDER BY routing_order, name LIMIT 1`,
+    [envelopeId, list.map((r) => r.id)],
+  );
+  if (missing) throw missingIdDocument(missing.name, 400);
+}
+
+/** Firmante con certificado que exige corresponder al documento de identidad y no tiene el número cargado. */
+export const MISSING_ID_DOCUMENT_SQL = `role = 'signer' AND signature_type = 'certificate'
+  AND COALESCE((certificate_requirements->>'matchIdDocument')::boolean, false) AND COALESCE(btrim(id_document_number), '') = ''`;
+
+export function missingIdDocument(name: string, status: 400 | 422) {
+  return new AppError(
+    status,
+    "missing_id_document",
+    `${name}: para exigir que el certificado corresponda a su documento de identidad hay que cargar el número de documento`,
+    { recipient: name },
+  );
+}
+
+/**
+ * Borra los PDF de trabajo y los preparados de un sobre que ya no se va a firmar con certificado (anulado, vencido o
+ * purgado): no tienen fila en `files`, así que la retención de archivos no los ve. Primero el archivo y después la
+ * referencia: si un borrado falla queda la fila y se reintenta (en la purga por retención). Devuelve false si quedó alguno.
+ */
+export async function discardCertsignFiles(db: Db, blobs: BlobStore, envelopeId: string): Promise<boolean> {
+  let ok = true;
+  // Códigos sin usar: ya no sirven (el sobre está cerrado).
+  await db.query(`UPDATE certsign_sessions SET status = 'expired' WHERE envelope_id = $1 AND status IN ('created','prepared')`, [envelopeId]);
+  const sessions = await db.query<{ id: string; prepared_key: string }>(`SELECT id, prepared_key FROM certsign_sessions WHERE envelope_id = $1 AND prepared_key IS NOT NULL`, [envelopeId]);
+  for (const x of sessions) {
+    try {
+      await blobs.delete(x.prepared_key);
+      await db.query(`UPDATE certsign_sessions SET prepared_key = NULL WHERE id = $1 AND prepared_key = $2`, [x.id, x.prepared_key]);
+    } catch {
+      ok = false;
+    }
+  }
+  const cs = await db.one<{ working_key: string }>(`SELECT working_key FROM envelope_certsign WHERE envelope_id = $1`, [envelopeId]);
+  if (cs) {
+    try {
+      await blobs.delete(cs.working_key);
+      await db.query(`DELETE FROM envelope_certsign WHERE envelope_id = $1 AND working_key = $2`, [envelopeId, cs.working_key]);
+    } catch {
+      ok = false;
+    }
+  }
+  return ok;
+}
+
+/**
+ * Barrido: PDF preparados de códigos que vencieron sin usarse (o de sesiones ya cerradas que todavía los referencian).
+ * De a `limit` por pasada. Devuelve cuántos borró.
+ */
+export async function sweepCertsignPrepared(db: Db, blobs: BlobStore, limit = 200): Promise<number> {
+  const rows = await db.query<{ id: string; prepared_key: string }>(
+    `SELECT id, prepared_key FROM certsign_sessions
+      WHERE prepared_key IS NOT NULL AND (status IN ('expired','failed','completed') OR expires_at < now())
+      ORDER BY expires_at LIMIT $1`,
+    [limit],
+  );
+  let n = 0;
+  for (const x of rows) {
+    try {
+      await blobs.delete(x.prepared_key);
+      const upd = await db.query(
+        `UPDATE certsign_sessions SET prepared_key = NULL, status = CASE WHEN status IN ('created','prepared') THEN 'expired' ELSE status END
+          WHERE id = $1 AND prepared_key = $2 RETURNING id`,
+        [x.id, x.prepared_key],
+      );
+      n += upd.length;
+    } catch {
+      /* se reintenta en la próxima pasada */
+    }
+  }
+  return n;
 }
 
 // ───────────────────────────── Worker: PDF de trabajo y sello final ─────────────────────────────
@@ -380,6 +458,9 @@ export async function certsignRoutes(app: FastifyInstance, s: Services) {
     const { e, cs, pending } = await assertStillCurrent(s.db, sess);
     const r = await s.db.one<any>(`SELECT * FROM recipients WHERE id = $1`, [sess.recipient_id]);
     const reqs = normalizeRequirements(r.certificate_requirements, Boolean(r.id_document_number));
+    // Exige corresponder al documento pero no hay documento (sobres de antes del control al guardar): no se firma con
+    // cualquier certificado; el remitente tiene que corregir el destinatario.
+    if (reqs.matchIdDocument && !String(r.id_document_number ?? "").trim()) throw missingIdDocument(r.name, 422);
     let chainIn: Uint8Array[];
     try {
       chainIn = parseChain(input.chain);
@@ -449,28 +530,42 @@ export async function certsignRoutes(app: FastifyInstance, s: Services) {
     } catch (err) {
       throw badRequest("certificate_unsupported", (err as Error).message);
     }
-    const key = `tenants/${e.tenant_id}/envelopes/${e.id}/certsign/${sess.id}-prepared.pdf`;
+    // Un nombre por preparación: volver a mandar el certificado con el mismo código no pisa el PDF que otro pedido de la
+    // misma sesión (el Firmador bajando /prepared o firmando) todavía está usando.
+    const key = `tenants/${e.tenant_id}/envelopes/${e.id}/certsign/${sess.id}-${uuidv7()}-prepared.pdf`;
     await s.blobs.put(key, prep.preparedPdf, "application/pdf");
     // Solo si la sesión sigue abierta: una firma concurrente ya pudo completarla (o un código nuevo, vencerla).
-    const upd = await s.db.query(
-      `UPDATE certsign_sessions SET status = 'prepared', prepared_key = $2, byte_range = $3, signed_attrs = $4, chain_der = $5,
-         signature_algorithm = $6, named_curve = $7, cert_check = $8 WHERE id = $1 AND status IN ('created','prepared') RETURNING id`,
-      [
-        sess.id,
-        key,
-        JSON.stringify(prep.byteRange),
-        Buffer.from(prep.signedAttrsDer).toString("base64"),
-        JSON.stringify(check.chainDer.map((d) => Buffer.from(d).toString("base64"))),
-        prep.signatureAlgorithm,
-        prep.namedCurve,
-        JSON.stringify({ ...check, chainDer: undefined, revocation }),
-      ],
-    );
-    if (!upd.length) {
+    const replaced = await s.db
+      .tx(async (t) => {
+        const cur = await t.one<{ status: string; prepared_key: string | null }>(`SELECT status, prepared_key FROM certsign_sessions WHERE id = $1 FOR UPDATE`, [sess.id]);
+        if (!cur || !["created", "prepared"].includes(cur.status)) return null;
+        await t.query(
+          `UPDATE certsign_sessions SET status = 'prepared', prepared_key = $2, byte_range = $3, signed_attrs = $4, chain_der = $5,
+             signature_algorithm = $6, named_curve = $7, cert_check = $8 WHERE id = $1`,
+          [
+            sess.id,
+            key,
+            JSON.stringify(prep.byteRange),
+            Buffer.from(prep.signedAttrsDer).toString("base64"),
+            JSON.stringify(check.chainDer.map((d) => Buffer.from(d).toString("base64"))),
+            prep.signatureAlgorithm,
+            prep.namedCurve,
+            JSON.stringify({ ...check, chainDer: undefined, revocation }),
+          ],
+        );
+        return { previous: cur.prepared_key };
+      })
+      .catch(async (err) => {
+        await s.blobs.delete(key).catch(() => {});
+        throw err;
+      });
+    if (!replaced) {
       // La sesión ya se completó o venció: el PDF recién preparado no lo referencia nada.
       await s.blobs.delete(key).catch(() => {});
       throw new AppError(410, "code_used", "Este código ya no es válido: generá uno nuevo desde el link de firma");
     }
+    // El preparado anterior de esta misma sesión ya no lo referencia nada (una firma sobre él se rechaza: ver abajo).
+    if (replaced.previous) await s.blobs.delete(replaced.previous).catch(() => {});
     const res: CertsignPrepared = {
       digestToSign: Buffer.from(prep.digestToSign).toString("base64"),
       dataToSign: Buffer.from(prep.signedAttrsDer).toString("base64"),
@@ -542,8 +637,11 @@ export async function certsignRoutes(app: FastifyInstance, s: Services) {
     let superseded: string[] = [];
     await s.db.tx(async (t) => {
       const e = await lockEnvelope(t, sess.tenant_id, sess.envelope_id);
-      const cur = await t.one<any>(`SELECT status FROM certsign_sessions WHERE id = $1 FOR UPDATE`, [sess.id]);
+      const cur = await t.one<any>(`SELECT status, prepared_key FROM certsign_sessions WHERE id = $1 FOR UPDATE`, [sess.id]);
       if (cur?.status !== "prepared") throw new AppError(410, "code_used", "Este código ya se usó");
+      // Control optimista: si el certificado se volvió a mandar mientras tanto (preparación nueva), esta firma es de los
+      // atributos anteriores y el PDF que se armó sale de un preparado que ya no es el vigente.
+      if (cur.prepared_key !== sess.prepared_key) throw conflict("document_changed", "El documento se volvió a preparar: firmá de nuevo");
       const { pending, cs: prev } = await assertStillCurrent(t, sess);
       // El PDF de trabajo anterior y el preparado de esta sesión ya no los usa nada (ninguno tiene fila en `files`,
       // así que la retención no los ve): se borran después de confirmar.
@@ -566,7 +664,7 @@ export async function certsignRoutes(app: FastifyInstance, s: Services) {
           sha,
         ],
       );
-      await t.query(`UPDATE certsign_sessions SET status = 'completed', completed_at = now() WHERE id = $1`, [sess.id]);
+      await t.query(`UPDATE certsign_sessions SET status = 'completed', completed_at = now(), prepared_key = NULL WHERE id = $1`, [sess.id]);
       await appendEvent(t, {
         tenantId: e.tenant_id,
         envelopeId: e.id,

@@ -130,6 +130,10 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
 // español queda el texto de la API, que puede traer detalle, p. ej. el máximo de páginas).
 const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
   network_error: { "pt-BR": "Não foi possível conectar ao servidor.", en: "Couldn't connect to the server." },
+  provider_test_limit: {
+    "pt-BR": "Muitos testes de conectores de assinatura na última hora: tente mais tarde.",
+    en: "Too many signature connector tests in the last hour: try again later.",
+  },
   use_portal: { "pt-BR": "As assinaturas do Stripe são canceladas pelo portal de faturamento.", en: "Stripe subscriptions are canceled from the billing portal." },
   sso_session_2fa: {
     "pt-BR": "Com login único (SSO), o segundo fator é gerenciado pelo provedor de identidade: entre com sua senha para ativá-lo.",
@@ -429,6 +433,11 @@ const PROBLEM_TEXT: Record<string, Record<"es" | "pt-BR" | "en", string>> = {
     "pt-BR": 'A fórmula de "{field}" cita {refs}, que não está mais no envelope',
     en: 'The formula of "{field}" refers to {refs}, which is no longer in the envelope',
   },
+  missing_id_document: {
+    es: "{name}: para exigir que el certificado corresponda a su documento hay que cargar el número de documento",
+    "pt-BR": "{name}: para exigir que o certificado corresponda ao documento é preciso informar o número do documento",
+    en: "{name}: to require the certificate to match their ID document, enter the document number",
+  },
   payer_not_signer: {
     es: "Quien paga el cobro tiene que ser un firmante",
     "pt-BR": "Quem paga a cobrança precisa ser um signatário",
@@ -515,6 +524,13 @@ function detailText(code: string, details: unknown, loc: "pt-BR" | "en"): string
           : `O orçamento de IA não pode superar o limite do seu plano (${Number(d.max).toLocaleString("pt-BR")} tokens por mês). Altere-o em Faturamento.`;
     if (d.limit === "users") return en ? "You've reached your plan's user limit. Upgrade it in Billing." : "Você atingiu o limite de usuários do seu plano. Altere-o em Faturamento.";
     return en ? "Your plan doesn't include this. Upgrade it in Billing." : "O seu plano não inclui isso. Altere-o em Faturamento.";
+  }
+  // Firma con certificado que exige corresponder al documento, sin documento cargado (details.recipient: el nombre).
+  if (code === "missing_id_document") {
+    const who = typeof d.recipient === "string" && d.recipient ? `${d.recipient}: ` : "";
+    return en
+      ? `${who}to require the certificate to match their ID document, enter the document number.`
+      : `${who}para exigir que o certificado corresponda ao documento, informe o número do documento.`;
   }
   // El tope depende del camino (sobre o plantilla, alta en un paso): viene en details.max.
   if (code === "too_many_documents" && typeof d.max === "number")

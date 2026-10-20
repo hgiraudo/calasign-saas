@@ -575,6 +575,10 @@ describe("negociaciones", () => {
     // bloquea, como la edición del remitente; tampoco la que lo arregla.
     const inh = await app.inject({ method: "POST", url: `/v1/public/negotiations/${token}/proposals`, payload: { kind: "clause", key: "negc1", newValue: "Uno otra\n\n{{clausula:negc2}}" } });
     expect(inh.statusCode, inh.body).toBe(201);
+    // Pero no una que, con la excusa del ciclo heredado, arma otro distinto (negc1 → negc1 en vez de negc1 → negc2 → negc1).
+    const other = await app.inject({ method: "POST", url: `/v1/public/negotiations/${token}/proposals`, payload: { kind: "clause", key: "negc1", newValue: "Uno\n\n{{clausula:negc1}}" } });
+    expect(other.statusCode, other.body).toBe(400);
+    expect(other.json().error.code).toBe("template_syntax");
     // Y arreglarlo también.
     expect((await app.inject({ method: "PATCH", url: `/v1/negotiations/${id}`, headers: H(), payload: { clauseOverrides: { negc2: "Dos." } } })).statusCode).toBe(200);
     // Sin el ciclo heredado, una propuesta que lo vuelve a cerrar es 400 otra vez.

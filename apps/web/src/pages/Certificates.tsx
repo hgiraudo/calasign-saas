@@ -248,7 +248,7 @@ export function CertificatesPage() {
                       <span className="muted">{ev("prov.notConfigured")}</span>
                     ) : p.type === "csc" ? (
                       tests[p.id] ? (
-                        <span className={tests[p.id].ok ? "" : "error-text"}>{tests[p.id].ok ? `✓ ${ev("prov.ok")}` : `✕ ${ev("prov.fail")}: ${tests[p.id].error ?? ""}`}</span>
+                        <span className={tests[p.id].ok ? "" : "error-text"}>{tests[p.id].ok ? `✓ ${ev("prov.ok")}${tests[p.id].holder ? ` · ${tests[p.id].holder}` : ""}` : `✕ ${ev("prov.fail")}`}</span>
                       ) : (
                         <button type="button" className="btn btn-sm" onClick={() => void test(p.id)}>
                           {ev("prov.test")}

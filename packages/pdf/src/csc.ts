@@ -3,6 +3,7 @@
 // SignatureProvider: el documento no sale de CalaSign, solo el hash.
 import { X509Certificate, constants, publicDecrypt, timingSafeEqual } from "node:crypto";
 import type { SignatureProvider } from "./provider";
+import { normalizeEcdsaSignature, signingAlgorithmFor, verifyEcdsaDigest } from "./sigalg";
 
 export type CscAuth =
   | { type: "basic"; username: string; password: string }
@@ -35,6 +36,18 @@ export class CscError extends Error {
 
 const SHA256_OID = "2.16.840.1.101.3.4.2.1";
 const SHA256_RSA_OID = "1.2.840.113549.1.1.11";
+const SHA256_ECDSA_OID = "1.2.840.10045.4.3.2";
+
+/** signAlgo de signatures/signHash según la clave del certificado: sha256WithRSA o ecdsa-with-SHA256 (el hash es SHA-256). */
+export function cscSignAlgoFor(certDer: Uint8Array): { signAlgo: string; ecdsa: boolean; namedCurve: string | null } {
+  let alg;
+  try {
+    alg = signingAlgorithmFor(certDer);
+  } catch (e) {
+    throw new CscError(`El certificado de la credencial usa una clave que no se puede usar para firmar (${(e as Error).message}): se admiten RSA y ECDSA P-256/P-384`);
+  }
+  return alg.algorithm === "ECDSA" ? { signAlgo: SHA256_ECDSA_OID, ecdsa: true, namedCurve: alg.namedCurve } : { signAlgo: SHA256_RSA_OID, ecdsa: false, namedCurve: null };
+}
 
 export class CscClient {
   private token: string | null = null;
@@ -111,13 +124,13 @@ export class CscClient {
     return r.SAD;
   }
 
-  async signHash(credentialID: string, SAD: string, hashesB64: string[]): Promise<string[]> {
+  async signHash(credentialID: string, SAD: string, hashesB64: string[], signAlgo: string = SHA256_RSA_OID): Promise<string[]> {
     const r = await this.call<{ signatures: string[] }>("signatures/signHash", {
       credentialID,
       SAD,
       hashes: hashesB64,
       hashAlgo: SHA256_OID,
-      signAlgo: SHA256_RSA_OID,
+      signAlgo,
     });
     return r.signatures ?? [];
   }
@@ -155,14 +168,19 @@ export class CscSignatureProvider implements SignatureProvider {
 
   async signDigest(digest: Uint8Array): Promise<Uint8Array> {
     const id = await this.credential();
+    // El algoritmo sale de la clave del certificado de la credencial (antes se pedía siempre RSA: con una credencial
+    // ECDSA el prestador rechazaba el pedido o devolvía una firma que no verificaba).
+    const [leaf] = await this.certificateChain();
+    const alg = cscSignAlgoFor(leaf);
     const h = Buffer.from(digest).toString("base64");
     const sad = await this.client.authorize(id, [h]);
-    const [sig] = await this.client.signHash(id, sad, [h]);
+    const [sig] = await this.client.signHash(id, sad, [h], alg.signAlgo);
     if (!sig) throw new CscError("signatures/signHash no devolvió firma");
-    const out = new Uint8Array(Buffer.from(sig, "base64"));
+    const raw = new Uint8Array(Buffer.from(sig, "base64"));
+    // ECDSA: algunos prestadores devuelven r||s; el CMS lleva DER.
+    const out = alg.ecdsa ? normalizeEcdsaSignature(raw, alg.namedCurve) : raw;
     // No se incrusta una firma que no corresponda al certificado de la credencial y al hash pedido.
-    const [leaf] = await this.certificateChain();
-    if (!verifyRsaSha256Digest(leaf, digest, out)) {
+    if (!(alg.ecdsa ? verifyEcdsaDigest(leaf, digest, out) : verifyRsaSha256Digest(leaf, digest, out))) {
       throw new CscError("La firma devuelta por el prestador no corresponde al certificado de la credencial o al hash pedido");
     }
     return out;

@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes, scrypt as scryptCb, timingSafeEqual } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, scrypt as scryptCb, timingSafeEqual } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
@@ -60,6 +60,22 @@ function getSecretKey(): Buffer {
   }
   if (secretKey.length !== 32) throw new Error("SECRET_KEY debe ser de 32 bytes en base64");
   return secretKey;
+}
+
+/**
+ * HMAC-SHA256 (base64url) con una clave derivada de SECRET_KEY para `purpose` (separación de dominios: una firma de
+ * un propósito no vale para otro). Para tokens firmados de corta vida (p. ej. la confirmación de acciones del MCP).
+ */
+export function hmacSign(purpose: string, data: string): string {
+  const key = createHmac("sha256", getSecretKey()).update(`calasign:${purpose}`).digest();
+  return createHmac("sha256", key).update(data).digest("base64url");
+}
+
+/** Compara dos firmas de hmacSign en tiempo constante. */
+export function hmacEqual(a: string, b: string): boolean {
+  const x = Buffer.from(a);
+  const y = Buffer.from(b);
+  return x.length === y.length && timingSafeEqual(x, y);
 }
 
 export function encrypt(plain: string): string {

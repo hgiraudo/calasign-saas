@@ -77,8 +77,11 @@ const draft = await client.callTool({
   name: "create_envelope_from_template",
   arguments: { templateId, recipients: [{ role: "Cliente", name: "Ana Pérez", email: "ana@example.com" }] },
 });
+const preview = await client.callTool({ name: "send_envelope", arguments: { envelopeId } });
+const text = preview.content[0].text;
+const { confirmToken } = JSON.parse(text.slice(text.indexOf("\\n") + 1));
 // ${t("mcp.sdk.c.approve")}
-await client.callTool({ name: "send_envelope", arguments: { envelopeId, confirm: true } });`;
+await client.callTool({ name: "send_envelope", arguments: { envelopeId, confirmToken } });`;
 
   return (
     <DocPage title={t("mcp.title")} lead={t("mcp.lead")}>
@@ -112,7 +115,7 @@ WWW-Authenticate: Bearer resource_metadata="${BASE}/.well-known/oauth-protected-
             <code>{tool}</code> {mcpToolIsNew(tool) && <Badge tone="new">{t("ui.new")}</Badge>}
           </span>,
           <Md key="d" text={t(`mcp.tool.${tool}` as DocsKey)} />,
-          mcpToolNeedsConfirm(tool) ? <Badge key="c" tone="warn">confirm: true</Badge> : "—",
+          mcpToolNeedsConfirm(tool) ? <Badge key="c" tone="warn">confirmToken</Badge> : "—",
         ])}
       />
 

@@ -7,8 +7,8 @@ CalaSign como `Authorization: Bearer cs_live_…`.
 
 Herramientas: `list_envelopes`, `get_envelope`, `get_signing_status`, `list_templates`,
 `create_envelope_from_template`, `create_envelope`, `send_envelope`, `remind_recipients`, `void_envelope`,
-`download_signed_pdf`, `get_account`. Enviar y anular exigen `confirm: true`: el servidor devuelve primero un
-resumen para que la persona lo apruebe.
+`download_signed_pdf`, `get_account`. Enviar, anular y recordar van en dos pasos: el servidor devuelve primero
+una vista previa con un `confirmToken` (5 min) y solo con ese token, después de que la persona lo apruebe, ejecuta.
 
 > Verificado el 2026-10-18 contra la documentación pública. Lo marcado **(sin verificar)** puede cambiar.
 
@@ -33,7 +33,7 @@ acepta una API key fija en un header).
 - Las URIs de redirección que usa ChatGPT son `https://chatgpt.com/connector_platform_oauth_redirect` y
   `https://chatgpt.com/connector/oauth/{callback_id}`; con registro dinámico las declara ChatGPT al registrarse.
 - Las herramientas con `readOnlyHint` se ejecutan sin preguntar; `send_envelope` / `void_envelope` piden
-  confirmación en ChatGPT y además exigen `confirm: true` del lado de CalaSign.
+  confirmación en ChatGPT y además exigen, del lado de CalaSign, el `confirmToken` de una vista previa.
 
 ## API de OpenAI (Responses API, herramienta MCP remota)
 

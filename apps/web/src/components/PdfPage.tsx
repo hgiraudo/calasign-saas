@@ -23,6 +23,8 @@ export function PdfPage({ pdf, pageIndex, size, overlay, onOverlayPointerDown, o
   const [widthPx, setWidthPx] = useState(0);
   const [visible, setVisible] = useState(false);
   const [rendered, setRendered] = useState(false);
+  /** Se dibujó con pdf.js desde la última liberación (para no pedir la página solo para liberarla). */
+  const drawnRef = useRef(false);
 
   // Ancho real del contenedor.
   useEffect(() => {
@@ -40,6 +42,11 @@ export function PdfPage({ pdf, pageIndex, size, overlay, onOverlayPointerDown, o
   // de ~3 pantallas): un PDF largo en un móvil agotaba la memoria con todos los canvas vivos. Dos márgenes (histéresis)
   // para no dibujar y liberar en cada pequeño scroll. El contenedor conserva su tamaño (aspect-ratio) y los campos no
   // dependen del canvas: liberar no mueve el scroll.
+  // root: document (el viewport de este documento) y no el implícito: dentro de un iframe de otro origen (firma
+  // embebida) el root implícito es el viewport de la ventana de arriba y el navegador ignora rootMargin, así que las
+  // páginas se liberaban apenas salían de pantalla y se redibujaban al volver. Si el navegador no acepta un Document
+  // como root, se usa el implícito y, enmarcado, no se libera nada.
+  // Mientras se imprime no se libera (el cambio de layout de la impresión dispara los observadores).
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
@@ -47,24 +54,39 @@ export function PdfPage({ pdf, pageIndex, size, overlay, onOverlayPointerDown, o
       setVisible(true);
       return;
     }
-    const near = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) setVisible(true);
-      },
-      { rootMargin: "100% 0px" },
-    );
-    const far = new IntersectionObserver(
-      (entries) => {
-        const last = entries[entries.length - 1];
-        if (last && !last.isIntersecting) setVisible(false);
-      },
-      { rootMargin: "300% 0px" },
-    );
+    let printing = false;
+    const onBeforePrint = () => {
+      printing = true;
+    };
+    const onAfterPrint = () => {
+      printing = false;
+    };
+    window.addEventListener("beforeprint", onBeforePrint);
+    window.addEventListener("afterprint", onAfterPrint);
+    let canRelease = true;
+    const observer = (cb: IntersectionObserverCallback, rootMargin: string) => {
+      try {
+        return new IntersectionObserver(cb, { root: document, rootMargin });
+      } catch {
+        // Sin soporte de Document como root: en un iframe el margen no aplicaría (ver arriba).
+        if (window.top !== window) canRelease = false;
+        return new IntersectionObserver(cb, { rootMargin });
+      }
+    };
+    const near = observer((entries) => {
+      if (entries.some((e) => e.isIntersecting)) setVisible(true);
+    }, "100% 0px");
+    const far = observer((entries) => {
+      const last = entries[entries.length - 1];
+      if (canRelease && !printing && last && !last.isIntersecting) setVisible(false);
+    }, "300% 0px");
     near.observe(el);
     far.observe(el);
     return () => {
       near.disconnect();
       far.disconnect();
+      window.removeEventListener("beforeprint", onBeforePrint);
+      window.removeEventListener("afterprint", onAfterPrint);
     };
   }, []);
 
@@ -78,13 +100,20 @@ export function PdfPage({ pdf, pageIndex, size, overlay, onOverlayPointerDown, o
 
   useEffect(() => {
     if (!visible) {
-      // Lejos de la pantalla: libera la memoria del canvas (un canvas de 0×0 no reserva el bitmap) y la capa de texto.
+      // Lejos de la pantalla: libera la memoria del canvas (un canvas de 0×0 no reserva el bitmap) y los recursos de la
+      // página en pdf.js (page.cleanup). La capa de texto queda: es liviana y la usan Ctrl+F y los lectores de pantalla.
       const c = canvasRef.current;
       if (c && (c.width || c.height)) {
         c.width = 0;
         c.height = 0;
       }
-      textRef.current?.replaceChildren();
+      if (drawnRef.current) {
+        drawnRef.current = false;
+        pdf
+          ?.getPage(pageIndex + 1)
+          .then((page) => page.cleanup())
+          .catch(() => undefined);
+      }
       setRendered(false);
       return;
     }
@@ -105,6 +134,7 @@ export function PdfPage({ pdf, pageIndex, size, overlay, onOverlayPointerDown, o
         if (!ctx) return;
         canvas.width = Math.floor(viewport.width);
         canvas.height = Math.floor(viewport.height);
+        drawnRef.current = true;
         task = page.render({ canvasContext: ctx, viewport });
         await task.promise;
         if (cancelled) return;

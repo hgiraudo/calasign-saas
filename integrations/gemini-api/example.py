@@ -8,7 +8,7 @@ el modelo ve las herramientas de CalaSign (list_envelopes, get_signing_status, �
     export CALASIGN_API_KEY=cs_live_…  # CalaSign → Ajustes → API keys
     python example.py "¿Qué sobres tengo pendientes de firma?"
 
-Seguridad: send_envelope y void_envelope exigen confirm=true. Este ejemplo es de solo lectura por defecto
+Seguridad: send_envelope y void_envelope van en dos pasos (vista previa con confirmToken; solo con ese token ejecutan). Este ejemplo es de solo lectura por defecto
 (ALLOWED_TOOLS); si habilitás el envío, pedile confirmación a la persona antes de que el modelo lo haga.
 """
 import asyncio

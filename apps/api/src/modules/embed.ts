@@ -47,8 +47,11 @@ export function setFrameAncestors(reply: FastifyReply, origins: string[]) {
   if (origins.length) reply.removeHeader("x-frame-options");
 }
 
-/** Sesión embebida usada en las últimas 24 h (la que fija los orígenes del iframe), o null. */
-async function lastEmbedSession(db: Db, recipientId: string): Promise<{ frame_ancestors: string[] | null } | null> {
+/**
+ * Sesión embebida usada en las últimas 24 h (la que fija los orígenes del iframe), o null. También decide si el
+ * firmante cuenta como embebido para delegar (otp.ts isEmbeddedSigner): misma ventana.
+ */
+export async function lastEmbedSession(db: Db, recipientId: string): Promise<{ frame_ancestors: string[] | null } | null> {
   return db.one<any>(
     `SELECT frame_ancestors FROM embed_sessions WHERE recipient_id = $1 AND used_at IS NOT NULL AND created_at > now() - interval '24 hours'
      ORDER BY created_at DESC LIMIT 1`,
@@ -228,8 +231,10 @@ export async function embedRoutes(app: FastifyInstance, s: Services) {
     if (!/^[A-Za-z0-9_-]{20,100}$/.test(req.params.token)) throw notFound("Link");
     const r = await s.db.one<any>(`SELECT id, embedded FROM recipients WHERE access_token_hash = $1`, [sha256Hex(req.params.token)]);
     if (!r) throw notFound("Link");
+    // Misma ventana de 24 h que lastEmbedSession (y que isEmbeddedSigner para delegar): pasado ese plazo la página
+    // abierta desde el correo ya no queda en modo embebido.
     const last = await s.db.one<any>(
-      `SELECT return_url FROM embed_sessions WHERE recipient_id = $1 AND used_at IS NOT NULL ORDER BY created_at DESC LIMIT 1`,
+      `SELECT return_url FROM embed_sessions WHERE recipient_id = $1 AND used_at IS NOT NULL AND created_at > now() - interval '24 hours' ORDER BY created_at DESC LIMIT 1`,
       [r.id],
     );
     return { embedded: Boolean(r.embedded) || Boolean(last), returnUrl: last?.return_url ?? null };

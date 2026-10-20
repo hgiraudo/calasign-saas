@@ -17,7 +17,7 @@ import {
   mpGetPreapproval,
   ProviderError,
   stripeCancelSubscription,
-  stripeGetSubscriptionPeriodEnd,
+  stripeGetSubscription,
   toMinorUnits,
   verifyMercadoPagoSignature,
   verifyStripeSignature,
@@ -103,45 +103,82 @@ async function cancelProviderSubscription(c: Cancel) {
 }
 
 /**
- * Cancela en el proveedor una suscripción reemplazada (registrada en subscription_cancellations) y borra la fila. Si
- * entretanto volvió a ser la vigente de la organización, no se cancela. Si el proveedor falla, la fila queda (con el
- * error) para el barrido y se relanza el error.
+ * Cancela en el proveedor una suscripción reemplazada (registrada en subscription_cancellations) y marca la fila
+ * cancelada (done_at; no se borra: queda como constancia de que fue reemplazada, ver wasReplaced). Si es la vigente de
+ * la organización (no debería pasar: se registra en la misma transacción que la reemplaza), no se cancela y se borra
+ * la fila. Si el proveedor falla, la fila queda pendiente (con el error) para el barrido y se relanza el error.
+ *
+ * El chequeo "¿es la vigente?" va sin bloquear la organización (la llamada al proveedor tarda hasta 20 s y no se hace
+ * con la organización bloqueada). La ventana entre el chequeo y la cancelación no permite que vuelva a ser la vigente:
+ * la única forma es un alta de esa misma suscripción, y las altas (decide en changeSubscription, con la organización
+ * bloqueada) ignoran toda suscripción registrada en subscription_cancellations, que se inserta en la misma transacción
+ * que la reemplaza.
  */
 async function cancelReplacedSubscription(db: Db, c: Cancel) {
   const current = await db.one(`SELECT 1 FROM tenants WHERE billing_provider = $1 AND subscription_id = $2`, [c.provider, c.id]);
-  if (!current) {
-    try {
-      await cancelProviderSubscription(c);
-    } catch (err) {
-      // Mercado Pago no la conoce: no hay nada que cancelar (como con los checkouts descartados). Stripe ya trata 404.
-      if (!(err instanceof ProviderError && err.status === 404)) {
-        await db
-          .query(`UPDATE subscription_cancellations SET attempted_at = now(), attempts = attempts + 1, last_error = $3 WHERE provider = $1 AND subscription_id = $2`, [
-            c.provider,
-            c.id,
-            String(err).slice(0, 500),
-          ])
-          .catch(() => {});
-        throw err;
-      }
+  if (current) {
+    await db.query(`DELETE FROM subscription_cancellations WHERE provider = $1 AND subscription_id = $2 AND done_at IS NULL`, [c.provider, c.id]);
+    return;
+  }
+  try {
+    await cancelProviderSubscription(c);
+  } catch (err) {
+    // Mercado Pago no la conoce: no hay nada que cancelar (como con los checkouts descartados). Stripe ya trata 404.
+    if (!(err instanceof ProviderError && err.status === 404)) {
+      await db
+        .query(`UPDATE subscription_cancellations SET attempted_at = now(), attempts = attempts + 1, last_error = $3 WHERE provider = $1 AND subscription_id = $2`, [
+          c.provider,
+          c.id,
+          String(err).slice(0, 500),
+        ])
+        .catch(() => {});
+      throw err;
     }
   }
-  await db.query(`DELETE FROM subscription_cancellations WHERE provider = $1 AND subscription_id = $2`, [c.provider, c.id]);
+  await db.query(`UPDATE subscription_cancellations SET done_at = COALESCE(done_at, now()), last_error = NULL WHERE provider = $1 AND subscription_id = $2`, [c.provider, c.id]);
 }
 
 /**
- * Barrido periódico (jobs.ts): reintenta las suscripciones reemplazadas que no se pudieron cancelar en el proveedor.
- * Solo las que llevan más de un minuto sin intento, para no pisarse con la cancelación inmediata de changeSubscription.
+ * ¿La suscripción ya fue reemplazada (registrada para cancelar, cancelada o no)? Un alta atrasada o reprocesada de una
+ * suscripción reemplazada no se aplica: si no, volvía a ser la vigente y se cancelaba la que la había reemplazado.
  */
-export async function cancelPendingSubscriptions(d: { db: Db; log: { error: (o: object, m: string) => void } }, limit = 50) {
-  const rows = await d.db.query<{ provider: string; subscription_id: string; tenant_id: string }>(
-    `SELECT provider, subscription_id, tenant_id FROM subscription_cancellations WHERE attempted_at < now() - interval '1 minute' ORDER BY attempted_at LIMIT $1`,
-    [limit],
+async function wasReplaced(tx: Db, provider: string, id: string) {
+  return !!(await tx.one(`SELECT 1 FROM subscription_cancellations WHERE provider = $1 AND subscription_id = $2`, [provider, id]));
+}
+
+/** Intentos de cancelación de una suscripción reemplazada antes de dejar de reintentar (y avisar en el log). */
+export const SUBSCRIPTION_CANCEL_MAX_ATTEMPTS = 20;
+
+/**
+ * Barrido periódico (jobs.ts): reintenta las suscripciones reemplazadas que no se pudieron cancelar en el proveedor.
+ * Corre en el loop del worker, así que toma pocas por vez (cada llamada puede tardar 20 s con el proveedor caído) y con
+ * backoff exponencial por intentos: 1 min, 2, 4… hasta 1 día (el mínimo de un minuto evita pisarse con la cancelación
+ * inmediata de changeSubscription). Después de SUBSCRIPTION_CANCEL_MAX_ATTEMPTS intentos se deja de reintentar y se
+ * registra una alerta: hay que cancelarla a mano. Las filas se toman marcando attempted_at con FOR UPDATE SKIP LOCKED:
+ * dos barridos simultáneos (API y worker) no toman las mismas. Si un proveedor falla, el resto de las suyas espera al
+ * próximo intento (no se acumulan timeouts).
+ */
+export async function cancelPendingSubscriptions(d: { db: Db; log: { error: (o: object, m: string) => void } }, limit = 5) {
+  const rows = await d.db.query<{ provider: string; subscription_id: string; tenant_id: string; attempts: number }>(
+    `UPDATE subscription_cancellations SET attempted_at = now()
+      WHERE (provider, subscription_id) IN (
+        SELECT provider, subscription_id FROM subscription_cancellations
+         WHERE done_at IS NULL AND attempts < $2
+           AND attempted_at < now() - make_interval(secs => LEAST(60 * power(2, attempts), 86400))
+         ORDER BY attempted_at LIMIT $1 FOR UPDATE SKIP LOCKED)
+      RETURNING provider, subscription_id, tenant_id, attempts`,
+    [limit, SUBSCRIPTION_CANCEL_MAX_ATTEMPTS],
   );
+  const down = new Set<string>();
   for (const r of rows) {
-    await cancelReplacedSubscription(d.db, { provider: r.provider, id: r.subscription_id }).catch((err) =>
-      d.log.error({ err: String(err), tenantId: r.tenant_id, provider: r.provider, subscriptionId: r.subscription_id }, "no se pudo cancelar una suscripción reemplazada"),
-    );
+    if (down.has(r.provider)) continue;
+    await cancelReplacedSubscription(d.db, { provider: r.provider, id: r.subscription_id }).catch((err) => {
+      if (!(err instanceof ProviderError && err.status >= 400 && err.status < 500)) down.add(r.provider);
+      const ctx = { err: String(err), tenantId: r.tenant_id, provider: r.provider, subscriptionId: r.subscription_id, attempts: r.attempts + 1 };
+      if (r.attempts + 1 >= SUBSCRIPTION_CANCEL_MAX_ATTEMPTS) {
+        d.log.error({ ...ctx, alert: true }, "ALERTA: no se pudo cancelar una suscripción reemplazada tras el máximo de intentos; cancelarla a mano en el proveedor");
+      } else d.log.error(ctx, "no se pudo cancelar una suscripción reemplazada");
+    });
   }
 }
 
@@ -154,25 +191,34 @@ export async function cancelPendingSubscriptions(d: { db: Db; log: { error: (o: 
  * anterior (Stripe customer.subscription.deleted, Mercado Pago cancelled), ya no es la vigente y se ignora; al revés,
  * podía llegar entre la cancelación y el alta, verla todavía vigente y bajar la organización a Free. Si la cancelación
  * falla, el evento igual se da por procesado (el plan ya quedó bien) y el barrido periódico la reintenta.
+ * `incoming`: la suscripción que se está dando de alta. Si la organización no existe, se registra para cancelar (si
+ * no, seguiría cobrando sin que nadie la vea).
  */
 export async function changeSubscription(
   db: Db,
   tenantId: string,
   decide: (t: { billing_provider: string | null; subscription_id: string | null }, tx: Db) => Promise<{ cancel?: Cancel; apply: boolean }>,
   apply: (tx: Db) => Promise<void>,
+  incoming?: Cancel,
 ) {
   const cancel = await db.tx(async (tx): Promise<Cancel | null> => {
     const t = await tx.one<any>(`SELECT billing_provider, subscription_id FROM tenants WHERE id = $1 FOR UPDATE`, [tenantId]);
-    if (!t) return null;
-    const d = await decide(t, tx);
-    if (d.apply) await apply(tx);
-    if (!d.cancel) return null;
-    await tx.query(
+    let c: Cancel | undefined;
+    if (!t) c = incoming;
+    else {
+      const d = await decide(t, tx);
+      if (d.apply) await apply(tx);
+      c = d.cancel;
+    }
+    if (!c) return null;
+    // Si ya estaba registrada y cancelada (done_at), no se vuelve a llamar al proveedor.
+    const pending = await tx.query(
       `INSERT INTO subscription_cancellations (provider, subscription_id, tenant_id) VALUES ($1,$2,$3)
-       ON CONFLICT (provider, subscription_id) DO UPDATE SET attempted_at = now()`,
-      [d.cancel.provider, d.cancel.id, tenantId],
+       ON CONFLICT (provider, subscription_id) DO UPDATE SET attempted_at = now() WHERE subscription_cancellations.done_at IS NULL
+       RETURNING 1`,
+      [c.provider, c.id, tenantId],
     );
-    return d.cancel;
+    return pending.length ? c : null;
   });
   // Mejor esfuerzo: si falla queda registrada para el barrido.
   if (cancel) await cancelReplacedSubscription(db, cancel).catch(() => undefined);
@@ -213,22 +259,33 @@ export async function handleStripeEvent(db: Db, event: any) {
         // async_payment_succeeded (que vuelve por acá con payment_status=paid), igual que los cobros al firmar.
         if (obj.payment_status === "unpaid") return;
         const subscriptionId = typeof obj.subscription === "string" ? obj.subscription : null;
+        // Sin suscripción no hay nada que activar (y aplicar sin id cancelaba la vigente).
+        if (!subscriptionId) return;
         // Otra suscripción vigente (otro checkout de Stripe pagado en paralelo, o una de Mercado Pago autorizada mientras
         // este seguía abierto): queda la que se acaba de pagar y la anterior se cancela. Si no, la anterior seguiría
         // cobrando y, al pisarse subscription_id, ya no se podría ver ni cancelar desde la app.
         // Decidido con la organización bloqueada (changeSubscription): dos confirmaciones simultáneas leían la misma
         // suscripción anterior, cancelaban esa y la última pisaba a la otra, que seguía cobrando sin que la app la viera.
         // La nueva se aplica primero y la anterior se cancela en el proveedor después, fuera del bloqueo.
-        // Fecha de renovación desde el alta (si no, quedaba vacía, o la de la suscripción anterior, hasta el primer
-        // "updated"). Mejor esfuerzo: sin ella igual se activa el plan.
-        const renewsAt = subscriptionId ? await stripeGetSubscriptionPeriodEnd(subscriptionId).catch(() => null) : null;
+        // Estado vivo en Stripe: el evento puede ser un reintento de un alta vieja (A aplicada sin marcarse procesada;
+        // después B aplicó otra y canceló esta). Si ya no está activa no se aplica ni se cancela nada: si no, volvía la
+        // cancelada y se cancelaba la pagada. Si la consulta falla, el evento falla y Stripe lo reintenta.
+        // También trae la fecha de renovación (si no, quedaba vacía, o la de la suscripción anterior, hasta el primer "updated").
+        const live = await stripeGetSubscription(subscriptionId);
+        if (live.status !== "active" && live.status !== "trialing") return;
+        const renewsAt = live.periodEnd;
         await changeSubscription(
           db,
           tenantId,
-          async (t) => ({
-            cancel: t.subscription_id && t.subscription_id !== subscriptionId && t.billing_provider ? { provider: t.billing_provider, id: t.subscription_id } : undefined,
-            apply: true,
-          }),
+          async (t, tx) => {
+            // Defensa adicional: una suscripción ya reemplazada no vuelve a aplicarse (aunque Stripe todavía la vea activa
+            // porque la cancelación está pendiente).
+            if (await wasReplaced(tx, "stripe", subscriptionId)) return { apply: false };
+            return {
+              cancel: t.subscription_id && t.subscription_id !== subscriptionId && t.billing_provider ? { provider: t.billing_provider, id: t.subscription_id } : undefined,
+              apply: true,
+            };
+          },
           (tx) =>
             applySubscription(tx, tenantId, {
               plan,
@@ -239,6 +296,7 @@ export async function handleStripeEvent(db: Db, event: any) {
               renewsAt,
               source: "Stripe",
             }),
+          { provider: "stripe", id: subscriptionId },
         );
         if (obj.metadata?.checkoutId) await db.query(`UPDATE billing_checkouts SET status = 'completed', completed_at = now() WHERE id = $1`, [obj.metadata.checkoutId]);
       }
@@ -356,6 +414,8 @@ export async function handleMercadoPagoNotification(db: Db, type: string, dataId
           // Solo baja el plan si la que se cancela es la suscripción vigente (no una anterior reemplazada por otra).
           return { apply: t.billing_provider === "mercadopago" && t.subscription_id === pre.id };
         }
+        // Ya reemplazada (registrada para cancelar): una autorización atrasada no la vuelve a aplicar.
+        if (await wasReplaced(tx, "mercadopago", pre.id)) return { apply: false };
         if (t.billing_provider === "mercadopago" && t.subscription_id && t.subscription_id !== pre.id) {
           // Dos suscripciones autorizadas: queda la del checkout más reciente y la otra se cancela para no cobrar dos
           // veces (la notificación de una anterior puede llegar tarde y no tiene que pisar a la nueva).
@@ -378,6 +438,7 @@ export async function handleMercadoPagoNotification(db: Db, type: string, dataId
           renewsAt: pre.nextPaymentDate,
           source: "Mercado Pago",
         }),
+      active ? { provider: "mercadopago", id: pre.id } : undefined,
     );
   }
 }

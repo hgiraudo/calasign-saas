@@ -115,7 +115,7 @@ const es = {
   "mcp.intro":
     "CalaSign tiene un servidor MCP (Model Context Protocol) para que asistentes como Claude consulten sobres, creen uno desde una plantilla, lo envíen y descarguen el PDF firmado. Usa la misma API: valen los permisos del token, los límites del plan y la evidencia, que registra al agente como actor.",
   "mcp.tools": "Herramientas",
-  "mcp.confirm": "Enviar y anular exigen confirm: true: el agente tiene que mostrarle el resumen al usuario y pedirle aprobación antes.",
+  "mcp.confirm": "Enviar y anular van en dos pasos: el agente recibe una vista previa con un confirmToken, se la muestra al usuario y solo con su aprobación repite la llamada con ese token.",
   "mcp.auth": "Credencial: un access token OAuth (app con client credentials o authorization code) o una API key, en el encabezado Authorization.",
   "mcp.claudeCode": "Claude Code",
   "mcp.claudeDesktop": "Claude Desktop (claude_desktop_config.json)",
@@ -232,7 +232,7 @@ const pt: Record<Key, string> = {
   "mcp.intro":
     "A CalaSign tem um servidor MCP (Model Context Protocol) para que assistentes como o Claude consultem envelopes, criem um a partir de um modelo, enviem e baixem o PDF assinado. Usa a mesma API: valem as permissões do token, os limites do plano e a evidência, que registra o agente como ator.",
   "mcp.tools": "Ferramentas",
-  "mcp.confirm": "Enviar e anular exigem confirm: true: o agente precisa mostrar o resumo ao usuário e pedir aprovação antes.",
+  "mcp.confirm": "Enviar e anular são feitos em dois passos: o agente recebe uma prévia com um confirmToken, mostra ao usuário e só com a aprovação dele repete a chamada com esse token.",
   "mcp.auth": "Credencial: um access token OAuth (app com client credentials ou authorization code) ou uma API key, no cabeçalho Authorization.",
   "mcp.claudeCode": "Claude Code",
   "mcp.claudeDesktop": "Claude Desktop (claude_desktop_config.json)",
@@ -347,7 +347,7 @@ const en: Record<Key, string> = {
   "mcp.intro":
     "CalaSign has an MCP (Model Context Protocol) server so assistants like Claude can look up envelopes, create one from a template, send it and download the signed PDF. It uses the same API: token permissions, plan limits and evidence all apply, and the agent is recorded as the actor.",
   "mcp.tools": "Tools",
-  "mcp.confirm": "Send and void require confirm: true: the agent must show the user a summary and ask for approval first.",
+  "mcp.confirm": "Send and void take two steps: the agent gets a preview with a confirmToken, shows it to the user and only repeats the call with that token after they approve.",
   "mcp.auth": "Credential: an OAuth access token (client credentials or authorization code app) or an API key, in the Authorization header.",
   "mcp.claudeCode": "Claude Code",
   "mcp.claudeDesktop": "Claude Desktop (claude_desktop_config.json)",

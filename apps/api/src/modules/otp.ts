@@ -12,6 +12,7 @@ import { maskDestination, randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { deliver } from "../notifications/channels";
 import { normLocale } from "../notifications/templates";
 import type { Services } from "./context";
+import { lastEmbedSession } from "./embed";
 import { lockEnvelope, pastExpiry } from "./envelopes";
 import { brandedOtpMessage } from "./white-label/otp-text";
 import { assertLinkCurrent, buildSession, recipientActor, resolveToken } from "./signing";
@@ -63,12 +64,14 @@ export function isUnverifiedSelfRegistered(r: any): boolean {
 }
 
 /**
- * Firma dentro de la app del integrador: marcado como embebido o abierto alguna vez con una URL de firma embebida (una
- * embed_session usada). Mismo criterio que GET /v1/signing/:token/embed, que es el que pone la página en modo embebido.
+ * Firma dentro de la app del integrador: marcado como embebido o abierto con una URL de firma embebida (una
+ * embed_session usada) en las últimas 24 h. La ventana es la misma de embed.ts lastEmbedSession (la que enmarca la
+ * página al volver de un proveedor): pasado ese plazo la sesión embebida ya no rige, y un firmante que después abre su
+ * link desde el correo vuelve a poder delegar (antes una sesión usada alguna vez lo bloqueaba para siempre).
  */
 export async function isEmbeddedSigner(db: Db, r: any): Promise<boolean> {
   if (r.embedded) return true;
-  return Boolean(await db.one(`SELECT 1 FROM embed_sessions WHERE recipient_id = $1 AND used_at IS NOT NULL LIMIT 1`, [r.id]));
+  return Boolean(await lastEmbedSession(db, r.id));
 }
 
 /** `embedded`: resultado de isEmbeddedSigner (sin él solo cuenta el flag del destinatario). */

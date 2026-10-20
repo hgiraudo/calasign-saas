@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Prueba de punta a punta del servidor MCP (agentes de IA) con el cliente oficial del SDK:
-// token OAuth (client credentials), listar herramientas, crear desde plantilla, enviar con confirmación,
-// estado, URL de descarga; rechazo sin confirm, sin scope y sin credencial; API key; anulación.
+// token OAuth (client credentials), listar herramientas, crear desde plantilla (idempotente), enviar con la vista previa
+// y su confirmToken, estado, URL de descarga; rechazo sin confirmToken, sin scope y sin credencial; API key; anulación.
 // Conectores (Claude, ChatGPT, Claude Code, Gemini CLI): registro dinámico (RFC 7591), consentimiento + PKCE con la app
 // registrada, loopback con cualquier puerto, resource (RFC 8707), anotaciones de las herramientas, create_envelope desde
 // un PDF, remind_recipients, get_account, client_credentials rechazado, apps conectadas y revocación; CORS.
@@ -76,6 +76,17 @@ async function mcp(token, name = "e2e") {
   return client;
 }
 const parse = (r) => JSON.parse(r.content[0].text);
+/** confirmToken de una vista previa ("Confirmación requerida: …\n{json}"). */
+const previewOf = (r) => {
+  const t = r.content[0].text;
+  return JSON.parse(t.slice(t.indexOf("\n") + 1));
+};
+/** Acción con efecto en dos pasos: vista previa (sin confirmToken) y la misma llamada con su confirmToken. */
+async function confirmed(client, name, args) {
+  const p = await client.callTool({ name, arguments: args });
+  assert(p.isError && /Confirmación requerida/.test(p.content[0].text) && previewOf(p).confirmToken, `${name}: vista previa con confirmToken`);
+  return client.callTool({ name, arguments: { ...args, confirmToken: previewOf(p).confirmToken } });
+}
 
 // ── Organización, plantilla y app OAuth ──
 await api("POST", "/v1/auth/signup", { name: "Dueña MCP", email: `owner-mcp+${stamp}@example.com`, password: "una-clave-segura-123", organization: `MCP ${stamp}` });
@@ -135,23 +146,42 @@ const created = parse(
 );
 assert(created.status === "draft" && created.recipients.length === 1, "sobre en borrador desde plantilla");
 const envId = created.id;
+// Reintento con los mismos argumentos (timeout del agente): Idempotency-Key derivada → el mismo sobre, no otro.
+const again = parse(
+  await client.callTool({
+    name: "create_envelope_from_template",
+    arguments: { templateId: template.id, subject: `Contrato MCP ${stamp}`, recipients: [{ role: "Cliente", name: signer, email: `firmante-mcp+${stamp}@example.com` }] },
+  }),
+);
+assert(again.id === envId, "el reintento idéntico devuelve el mismo sobre");
 ok("list_templates + create_envelope_from_template (queda en borrador)");
 
 let r = await client.callTool({ name: "send_envelope", arguments: { envelopeId: envId } });
 assert(r.isError && /Confirmación requerida/.test(r.content[0].text) && r.content[0].text.includes(signer), "send_envelope sin confirm se rechaza con el resumen");
 let d = await api("GET", `/v1/envelopes/${envId}`);
 assert(d.envelope.status === "draft", "sin confirm no se envía nada");
-r = await client.callTool({ name: "send_envelope", arguments: { envelopeId: envId, confirm: false } });
-assert(r.isError, "confirm=false también se rechaza");
-const sent = parse(await client.callTool({ name: "send_envelope", arguments: { envelopeId: envId, confirm: true } }));
-assert(sent.status === "sent", "enviado con confirm=true");
+assert(/"untrusted"/.test(r.content[0].text) && /_notice/.test(r.content[0].text), "la vista previa marca el texto de terceros como no confiable");
+const tok = previewOf(r).confirmToken;
+r = await client.callTool({ name: "send_envelope", arguments: { envelopeId: envId, confirm: true } });
+assert(r.isError && /Confirmación requerida/.test(r.content[0].text), "el viejo confirm=true ya no envía (devuelve la vista previa)");
+r = await client.callTool({ name: "send_envelope", arguments: { envelopeId: envId, confirmToken: `${tok.slice(0, -2)}xx` } });
+assert(r.isError && /confirmToken no es válido/.test(r.content[0].text), "confirmToken alterado → rechazado");
+r = await client.callTool({ name: "void_envelope", arguments: { envelopeId: envId, reason: "x", confirmToken: tok } });
+assert(r.isError && /confirmToken no es válido/.test(r.content[0].text), "el confirmToken de un envío no sirve para anular");
+// El borrador cambia después de la vista previa: el token aprobado ya no envía (409 version_changed).
+await api("PATCH", `/v1/envelopes/${envId}`, { message: "cambiado después de la vista previa" });
+r = await client.callTool({ name: "send_envelope", arguments: { envelopeId: envId, confirmToken: tok } });
+assert(r.isError && /version_changed/.test(r.content[0].text), `borrador cambiado desde la vista previa → no se envía: ${r.content[0].text}`);
+assert((await api("GET", `/v1/envelopes/${envId}`)).envelope.status === "draft", "sigue en borrador");
+const sent = parse(await confirmed(client, "send_envelope", { envelopeId: envId }));
+assert(sent.status === "sent", "enviado con el confirmToken de la vista previa");
 const ev = await api("GET", `/v1/envelopes/${envId}/events`);
 const sentEv = ev.items.find((x) => x.type === "envelope.sent");
 assert(sentEv && sentEv.actorLabel.startsWith("agente IA (Asistente IA)"), `actor del envío: ${sentEv?.actorLabel}`);
-ok(`send_envelope: sin confirm no envía; con confirm=true sí; evidencia: «${sentEv.actorLabel}»`);
+ok(`send_envelope: sin confirmToken no envía; token alterado, de otra acción o de una versión vieja se rechaza; con el de la vista previa sí; evidencia: «${sentEv.actorLabel}»`);
 
 let st = parse(await client.callTool({ name: "get_signing_status", arguments: { envelopeId: envId } }));
-assert(st.status === "sent" && st.pending.length === 1 && st.pending[0].name === signer && !st.signedPdfAvailable, "estado: falta el firmante");
+assert(st.status === "sent" && st.pending.length === 1 && st.pending[0].name.untrusted === signer && !st.signedPdfAvailable, "estado: falta el firmante");
 r = await client.callTool({ name: "download_signed_pdf", arguments: { envelopeId: envId } });
 assert(r.isError && /completa/.test(r.content[0].text), "sin completar no hay PDF");
 
@@ -170,9 +200,11 @@ const dl = parse(await client.callTool({ name: "download_signed_pdf", arguments:
 assert(dl.url.startsWith(`${BASE}/v1/downloads/`) && new Date(dl.expiresAt) > new Date(), "URL temporal");
 const pdf = Buffer.from(await (await fetch(dl.url)).arrayBuffer());
 assert(pdf.subarray(0, 5).toString() === "%PDF-" && createHash("sha256").update(pdf).digest("hex") === dl.sha256, "el PDF descargado es el sellado");
+for (let i = 1; i < dl.maxDownloads; i++) assert((await fetch(dl.url)).status === 200, `descarga ${i + 1} de ${dl.maxDownloads}`);
+assert((await fetch(dl.url)).status === 404, "agotadas las descargas del link → 404");
 const bad = await fetch(`${BASE}/v1/downloads/${"x".repeat(43)}`);
 assert(bad.status === 404, "link inexistente → 404");
-ok("get_signing_status + firma + download_signed_pdf (URL temporal, SHA-256 verificado)");
+ok("get_signing_status + firma + download_signed_pdf (URL temporal con tope de descargas, SHA-256 verificado)");
 
 const le = parse(await client.callTool({ name: "list_envelopes", arguments: { status: "completed" } }));
 assert(le.items.some((e) => e.id === envId), "list_envelopes filtra por estado");
@@ -184,14 +216,16 @@ const second = parse(
     arguments: { templateId: template.id, recipients: [{ role: "Cliente", name: `Otro ${stamp}`, email: `otro-mcp+${stamp}@example.com` }] },
   }),
 );
-await client.callTool({ name: "send_envelope", arguments: { envelopeId: second.id, confirm: true } });
+await confirmed(client, "send_envelope", { envelopeId: second.id });
 r = await client.callTool({ name: "void_envelope", arguments: { envelopeId: second.id, reason: "Prueba" } });
-assert(r.isError && /Confirmación requerida/.test(r.content[0].text), "void sin confirm se rechaza");
-const voided = parse(await client.callTool({ name: "void_envelope", arguments: { envelopeId: second.id, reason: "Prueba", confirm: true } }));
-assert(voided.status === "voided", "anulado con confirm");
+assert(r.isError && /Confirmación requerida/.test(r.content[0].text), "void sin confirmToken se rechaza");
+r = await client.callTool({ name: "void_envelope", arguments: { envelopeId: second.id, reason: "Otro motivo", confirmToken: previewOf(r).confirmToken } });
+assert(r.isError && /confirmToken no es válido/.test(r.content[0].text), "el token aprobado vale solo para ese motivo");
+const voided = parse(await confirmed(client, "void_envelope", { envelopeId: second.id, reason: "Prueba" }));
+assert(voided.status === "voided", "anulado con confirmToken");
 const ev2 = await api("GET", `/v1/envelopes/${second.id}/events`);
 assert(ev2.items.find((x) => x.type === "envelope.voided")?.actorLabel.startsWith("agente IA (Asistente IA)"), "actor de la anulación");
-ok("void_envelope: sin confirm se rechaza; con confirm anula; evidencia con el agente");
+ok("void_envelope: sin confirmToken se rechaza; con el de la vista previa anula; evidencia con el agente");
 await client.close();
 
 // ── Scopes: token solo de lectura ──
@@ -380,12 +414,12 @@ const leftovers = await api("GET", `/v1/envelopes?q=${encodeURIComponent("x")}&s
 assert(!leftovers.items.some((e) => e.subject === "x"), "un create_envelope fallido no deja borradores");
 ok("create_envelope desde PDF: ancla, firma automática al pie, PDF inválido y URL bloqueada");
 
-// remind_recipients: sin confirm no avisa; enviado, con confirm sí.
-await dc.callTool({ name: "send_envelope", arguments: { envelopeId: ce2.id, confirm: true } });
+// remind_recipients: sin confirmToken no avisa; enviado, con el de la vista previa sí.
+await confirmed(dc, "send_envelope", { envelopeId: ce2.id });
 r = await dc.callTool({ name: "remind_recipients", arguments: { envelopeId: ce2.id } });
-assert(r.isError && /Confirmación requerida/.test(r.content[0].text) && r.content[0].text.includes(`Beto PDF ${stamp}`), "remind sin confirm");
-const rem = parse(await dc.callTool({ name: "remind_recipients", arguments: { envelopeId: ce2.id, confirm: true } }));
-assert(rem.notified === 1, `remind con confirm: ${JSON.stringify(rem)}`);
+assert(r.isError && /Confirmación requerida/.test(r.content[0].text) && r.content[0].text.includes(`Beto PDF ${stamp}`), "remind sin confirmToken");
+const rem = parse(await dc.callTool({ name: "remind_recipients", arguments: { envelopeId: ce2.id, confirmToken: previewOf(r).confirmToken } }));
+assert(rem.notified === 1, `remind con confirmToken: ${JSON.stringify(rem)}`);
 const ev3 = await api("GET", `/v1/envelopes/${ce2.id}/events`);
 assert(ev3.items.some((x) => x.type === "envelope.reminded" && x.actorLabel.includes(connectorName)), "evidencia del recordatorio con el conector");
 await dc.close();

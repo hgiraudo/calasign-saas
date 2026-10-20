@@ -26,7 +26,7 @@ When creating an envelope, set `locale` (`es`, `pt-BR` or `en`) to the language 
 ## Safety rules (mandatory)
 
 1. **Never send or void without explicit approval.** Sending notifies real people by e-mail/WhatsApp;
-   voiding cannot be undone. Before `send_envelope`/`void_envelope` with `confirm: true` (or `POST …/send`,
+   voiding cannot be undone. Before `send_envelope`/`void_envelope` with the preview's `confirmToken` (or `POST …/send`,
    `POST …/void`), show a summary — subject, documents, each recipient's name + e-mail/phone + role +
    order, field placement — and wait for a clear "yes" in the conversation. A previous approval does not
    cover a changed envelope.
@@ -64,14 +64,16 @@ The MCP server is `{{BASE_URL}}/mcp` (Streamable HTTP, OAuth 2.0 or API key as B
    signer without a signature field — nothing is created):
    - MCP: `create_envelope` (PDF as base64 or https URL, recipients, anchor fields) or
      `create_envelope_from_template` (`list_templates` first to get role names), with
-     `send: true, confirm: true` once the user approved. Without `send` they leave a **draft** (safe)
+     `send: true`: the first call returns a preview and a `confirmToken`; repeat it with that `confirmToken`
+     once the user approved. Without `send` they leave a **draft** (safe)
      that you can send later with `send_envelope`.
    - REST: a single `POST /v1/envelopes` with `documents`, `recipients`, `fields` and `"send": true`
      plus an `Idempotency-Key` header (see [references/rest-api.md](references/rest-api.md)); or
      `POST /v1/envelopes/from-template` with `"send": true`. Leave `send` out to create a draft only.
      The step-by-step endpoints (`…/documents`, `…/recipients`, `…/fields`, `…/send`) remain for
      editing an existing draft.
-5. If you created a draft first, send it after approval: `send_envelope` with `confirm: true`, or
+5. If you created a draft first, send it after approval: `send_envelope` (preview) and then `send_envelope` with its
+   `confirmToken`, or
    `POST /v1/envelopes/{id}/send` with an `Idempotency-Key` header.
 6. **Report**: envelope id, status, and the link `{{BASE_URL}}/app/envelopes/<id>`.
 

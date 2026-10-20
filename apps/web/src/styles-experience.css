@@ -20,10 +20,12 @@ h1[tabindex="-1"]:focus, h2[tabindex="-1"]:focus { outline: none; }
 .sfield ::placeholder { color: #475569; opacity: 1; }
 /* iOS amplía la página al enfocar un control con letra < 16px (y no la vuelve a achicar). En pantallas táctiles, el
    control enfocado pasa a 16px (!important: el tamaño a escala de la página va inline); la caja del campo no cambia de
-   tamaño: el control crece sobre ella (fondo blanco, por encima de lo demás) solo mientras se edita. */
+   tamaño: el control crece sobre ella (fondo blanco, por encima de lo demás) solo mientras se edita.
+   Solo controles de texto (los de .sfield hoy son <input> sin type, o sea texto): enumerados para que un tipo nuevo
+   (radio, range, color…) no herede el agrandado. */
 @media (pointer: coarse), (max-width: 640px) {
-  .sfield:has(input:not([type="checkbox"]):not([type="file"]):focus, select:focus, textarea:focus) { overflow: visible; z-index: 5; }
-  .sfield input:not([type="checkbox"]):not([type="file"]):focus, .sfield select:focus, .sfield textarea:focus {
+  .sfield:has(:is(input:not([type]), input[type="text"], input[type="email"], input[type="tel"], input[type="number"], input[type="date"], input[type="url"], input[type="search"]):focus, select:focus, textarea:focus) { overflow: visible; z-index: 5; }
+  .sfield :is(input:not([type]), input[type="text"], input[type="email"], input[type="tel"], input[type="number"], input[type="date"], input[type="url"], input[type="search"]):focus, .sfield select:focus, .sfield textarea:focus {
     font-size: 16px !important;
     min-height: 26px;
     background: #fff;

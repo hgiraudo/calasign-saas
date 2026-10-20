@@ -22,8 +22,9 @@ Arguments: $ARGUMENTS
 4. **Confirm.** Show a summary (file, subject, each signer `Name <email> — order N`, field placement) and
    ask for explicit approval. Do not send without a clear "yes".
 5. **Create and send in ONE call** (atomic: if something fails, nothing is left behind).
-   - If the CalaSign MCP tools are connected and `create_envelope` exists, call it with `send: true` and
-     `confirm: true` (PDF as base64; for files over ~5 MB prefer the REST API).
+   - If the CalaSign MCP tools are connected and `create_envelope` exists, call it with `send: true`: the
+     first call returns a preview and a `confirmToken`; after the user's "yes", repeat the same call with that
+     `confirmToken` (PDF as base64; for files over ~5 MB prefer the REST API).
    - Otherwise, if `CALASIGN_API_KEY` is set, use the skill's one-call REST request with `curl`: a single
      `POST /v1/envelopes` with `documents`, `recipients`, `fields`, `"send": true` and an `Idempotency-Key`
      (multipart with a `payload` part for large PDFs). Never print the key.

@@ -119,9 +119,15 @@ Descubrimiento OAuth: `/.well-known/oauth-protected-resource` (RFC 9728) y `/.we
 
 Herramientas: `list_envelopes`, `get_envelope`, `get_signing_status`, `list_templates`, `get_account`,
 `create_envelope_from_template` y `create_envelope` (desde un PDF en base64 o URL https; por defecto crean en borrador; con
-`send: true` y `confirm: true` lo crean y lo envían en una sola llamada; aceptan `locale`: es, pt-BR, en), `send_envelope`,
-`void_envelope` y `remind_recipients` (**exigen `confirm: true`**: sin eso devuelven el resumen para que el usuario apruebe),
-`download_signed_pdf` (URL temporal, `MCP_DOWNLOAD_TTL_SEC`, por defecto 15 min). Todas llevan anotaciones MCP
+`send: true` lo crean y lo envían en una sola llamada; aceptan `locale`: es, pt-BR, en; son idempotentes: los mismos
+argumentos, o el mismo `requestId`, devuelven el mismo sobre), `send_envelope`, `void_envelope` y `remind_recipients`.
+Las acciones con efecto (y la creación con `send: true`) van en **dos pasos**: sin `confirmToken` devuelven una vista
+previa con un `confirmToken` (HMAC con clave derivada de `SECRET_KEY` de acción + sobre o argumentos + `updatedAt` +
+credencial, 5 min); con él ejecutan, y enviar/anular/recordar mandan `X-Expected-Updated-At` con la versión aprobada
+(409 `version_changed` si el sobre cambió). El texto de terceros (asuntos, nombres, motivos, actores) vuelve como
+`{"untrusted": …}` con un `_notice`. `download_signed_pdf`: URL temporal (`MCP_DOWNLOAD_TTL_SEC`, por defecto 15 min),
+hasta 3 descargas y solo mientras la credencial que la pidió siga vigente. `get_account` devuelve el uso del mes solo
+con `envelopes:view_all` o `billing:manage`. Todas llevan anotaciones MCP
 (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`, `title`).
 
 Conectarlo desde Claude, ChatGPT, Claude Code o Gemini CLI con solo la URL (registro dinámico de clientes OAuth):

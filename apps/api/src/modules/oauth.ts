@@ -18,6 +18,7 @@ import {
   CreateOAuthAppInput,
   MCP_DEFAULT_SCOPES,
   OAUTH_SCOPES,
+  PERMISSIONS,
   UpdateOAuthAppInput,
   type AuthorizeInfo,
   type ConnectedApp,
@@ -189,9 +190,19 @@ async function assertCanManageServiceApp(db: Db, a: AuthContext, app: { service_
  * con api_keys:manage apuntaba la app "oficial" de un propietario a su servidor y mandaba el link de consentimiento.
  */
 async function assertCanTakeOverApp(db: Db, a: AuthContext, app: { created_by?: string | null }, what: string) {
-  if (!app.created_by || app.created_by === a.userId || a.access?.role === "owner") return;
-  const m = await db.one<any>(`SELECT role, role_id FROM memberships WHERE user_id = $1 AND tenant_id = $2`, [app.created_by, a.tenantId]);
-  if (!m) return;
+  if (a.access?.role === "owner") return;
+  if (app.created_by && app.created_by === a.userId) return;
+  const m = app.created_by
+    ? await db.one<any>(`SELECT role, role_id FROM memberships WHERE user_id = $1 AND tenant_id = $2`, [app.created_by, a.tenantId])
+    : null;
+  if (!m) {
+    // Sin creador conocido (app anterior a created_by, creada por una API key) o con un creador que ya no es miembro: no
+    // se sabe qué permisos tenía, así que hace falta un propietario o alguien con todos los permisos. Antes se permitía
+    // y cualquiera con api_keys:manage se quedaba con la app de un administrador que se fue.
+    const missing = PERMISSIONS.filter((p) => !hasPerm(a, p));
+    if (missing.length) throw new AppError(403, "forbidden", `No podés ${what}: hace falta un propietario o todos los permisos`, { missing });
+    return;
+  }
   if (m.role === "owner") throw new AppError(403, "forbidden", `No podés ${what}: la creó un propietario`);
   await assertCanGrantRole(db, a, m.role, m.role_id, what);
 }

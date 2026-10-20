@@ -77,6 +77,12 @@ describe("delegar con una sesión embebida", () => {
     expect((await delegate(token)).statusCode).toBe(403);
   });
 
+  it("con una sesión embebida de hace más de 24 h (después abrió el link del correo) puede delegar", async () => {
+    const { token } = await setup({ session: "iframe", usedHoursAgo: 30 });
+    expect((await app.inject({ method: "GET", url: `/v1/signing/${token}` })).json().canDelegate).toBe(true);
+    expect((await delegate(token)).statusCode).toBe(200);
+  });
+
   it("sin sesión embebida sigue pudiendo delegar", async () => {
     const { token } = await setup();
     expect((await app.inject({ method: "GET", url: `/v1/signing/${token}` })).json().canDelegate).toBe(true);

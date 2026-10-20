@@ -136,11 +136,14 @@ export async function stripeCreateSubscriptionCheckout(p: {
   return { id: s.id, url: s.url };
 }
 
-/** Fin del período vigente de una suscripción (en API recientes viene en cada ítem). null si no se informa. */
-export async function stripeGetSubscriptionPeriodEnd(id: string): Promise<string | null> {
+/**
+ * Estado vivo de una suscripción y fin del período vigente (en API recientes viene en cada ítem; null si no se
+ * informa). status es null si Stripe no lo informa.
+ */
+export async function stripeGetSubscription(id: string): Promise<{ status: string | null; periodEnd: string | null }> {
   const s = await stripe(`/v1/subscriptions/${encodeURIComponent(id)}`, null, "GET");
   const end = s?.current_period_end ?? s?.items?.data?.[0]?.current_period_end;
-  return typeof end === "number" ? new Date(end * 1000).toISOString() : null;
+  return { status: typeof s?.status === "string" ? s.status : null, periodEnd: typeof end === "number" ? new Date(end * 1000).toISOString() : null };
 }
 
 /** Cancela una suscripción de inmediato. Si ya estaba cancelada o no existe, no es un error (el webhook se reintenta). */
@@ -282,8 +285,18 @@ export async function mpGetPreapproval(id: string): Promise<{ id: string; status
   return { id: r.id, status: r.status, externalReference: r.external_reference ?? null, nextPaymentDate: r.next_payment_date ?? null };
 }
 
+/**
+ * Cancela un preapproval. Si Mercado Pago responde 400 (p. ej. porque ya estaba cancelado), se consulta: si ya está
+ * cancelado no es un error (como stripeCancelSubscription).
+ */
 export async function mpCancelPreapproval(id: string) {
-  await mp(`/preapproval/${encodeURIComponent(id)}`, { status: "cancelled" }, "PUT");
+  try {
+    await mp(`/preapproval/${encodeURIComponent(id)}`, { status: "cancelled" }, "PUT");
+  } catch (err) {
+    if (!(err instanceof ProviderError) || err.status !== 400) throw err;
+    const pre = await mpGetPreapproval(id).catch(() => null);
+    if (pre?.status !== "cancelled") throw err;
+  }
 }
 
 /**

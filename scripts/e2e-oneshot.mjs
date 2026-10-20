@@ -4,7 +4,7 @@
 // refs por posición/ref/email, firmante embebido con su URL de firma en la respuesta, Idempotency-Key (también en
 // multipart), atomicidad (PDF inválido, ancla que no aparece, sobre incompleto, parte faltante: no queda nada),
 // compatibilidad con el borrador vacío de siempre, plantilla + envío en una llamada con Idempotency-Key, la herramienta
-// MCP create_envelope con send + confirm, y que el firmante pueda completar la firma.
+// MCP create_envelope con send + confirmToken (vista previa), y que el firmante pueda completar la firma.
 // Uso: node scripts/e2e-oneshot.mjs [baseUrl]   (requiere el buzón de desarrollo)
 import { createServer } from "node:http";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -389,7 +389,7 @@ ok(`atomicidad: ${failures.length + 2} pedidos inválidos no dejan sobres a medi
   ok("plantilla + envío en una llamada, idempotente");
 }
 
-// ───────── 7. MCP: create_envelope en una llamada, con send + confirm ─────────
+// ───────── 7. MCP: create_envelope en una llamada, con send + confirmToken ─────────
 {
   const client = new Client({ name: "e2e-oneshot", version: "1.0.0" });
   await client.connect(new StreamableHTTPClientTransport(new URL(`${BASE}/mcp`), { requestInit: { headers: { Authorization: `Bearer ${key}` } } }));
@@ -402,16 +402,21 @@ ok(`atomicidad: ${failures.length + 2} pedidos inválidos no dejan sobres a medi
   };
   const noConfirm = await client.callTool({ name: "create_envelope", arguments: args });
   assert(noConfirm.isError && /Confirmación requerida/.test(noConfirm.content[0].text), "send sin confirm pide confirmación");
-  assert((await countBySubject(`MCP oneshot ${stamp}`)) === 0, "sin confirm no crea nada");
-  const sent = await client.callTool({ name: "create_envelope", arguments: { ...args, confirm: true } });
+  assert((await countBySubject(`MCP oneshot ${stamp}`)) === 0, "sin confirmToken no crea nada");
+  const confirmToken = JSON.parse(noConfirm.content[0].text.slice(noConfirm.content[0].text.indexOf("\n") + 1)).confirmToken;
+  assert(confirmToken, "la vista previa trae confirmToken");
+  const sent = await client.callTool({ name: "create_envelope", arguments: { ...args, confirmToken } });
   assert(!sent.isError, `create_envelope con send: ${sent.content?.[0]?.text}`);
   const out = JSON.parse(sent.content[0].text);
   assert(out.status === "sent" && out.documents.length === 1 && out.fields === 1, `MCP enviado: ${JSON.stringify(out)}`);
-  const bad = await client.callTool({ name: "create_envelope", arguments: { ...args, subject: `MCP oneshot malo ${stamp}`, fields: [{ recipientIndex: 0, anchorText: "[[nada]]" }], confirm: true } });
+  const badArgs = { ...args, subject: `MCP oneshot malo ${stamp}`, fields: [{ recipientIndex: 0, anchorText: "[[nada]]" }] };
+  const badPreview = await client.callTool({ name: "create_envelope", arguments: badArgs });
+  const badToken = JSON.parse(badPreview.content[0].text.slice(badPreview.content[0].text.indexOf("\n") + 1)).confirmToken;
+  const bad = await client.callTool({ name: "create_envelope", arguments: { ...badArgs, confirmToken: badToken } });
   assert(bad.isError && /anchor_not_found/.test(bad.content[0].text), "ancla inexistente: error");
   assert((await countBySubject(`MCP oneshot malo ${stamp}`)) === 0, "el fallo del MCP no deja borrador");
   await client.close();
-  ok("MCP create_envelope: crea y envía en una llamada con confirm; atómico");
+  ok("MCP create_envelope: crea y envía en una llamada con el confirmToken de la vista previa; atómico");
 }
 
 // ───────── 8. OpenAPI documenta el sobre completo ─────────

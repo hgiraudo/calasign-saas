@@ -332,7 +332,7 @@ describe("cambio de suscripción", () => {
         await handleStripeEvent(db, { type: "customer.subscription.deleted", data: { object: { id, status: "canceled", customer: "cus_1", metadata: { tenantId: t2 } } } });
         return json({ id, status: "canceled" });
       }
-      return json({ id: "sub_new", current_period_end: 1_900_000_000 });
+      return json({ id: "sub_new", status: "active", current_period_end: 1_900_000_000 });
     }) as typeof fetch;
     try {
       await handleStripeEvent(db, completed(t2, "sub_new"));
@@ -342,7 +342,8 @@ describe("cambio de suscripción", () => {
     expect(deleted).toEqual(["sub_old"]);
     expect(during).toMatchObject({ billing_plan: "business", subscription_id: "sub_new" });
     expect(await tenantRow(t2)).toMatchObject({ billing_plan: "business", subscription_id: "sub_new", billing_provider: "stripe" });
-    expect(await db.query(`SELECT 1 FROM subscription_cancellations WHERE tenant_id = $1`, [t2])).toHaveLength(0);
+    // La fila queda como constancia (cancelada), no se borra.
+    expect(await db.query(`SELECT subscription_id FROM subscription_cancellations WHERE tenant_id = $1 AND done_at IS NOT NULL`, [t2])).toEqual([{ subscription_id: "sub_old" }]);
   });
 
   it("si la cancelación falla, el plan queda aplicado y el barrido la reintenta", async () => {
@@ -356,7 +357,7 @@ describe("cambio de suscripción", () => {
         deleted.push(String(input).split("/").pop()!);
         return json({ status: "canceled" });
       }
-      return json({ id: "sub_new2", current_period_end: 1_900_000_000 });
+      return json({ id: "sub_new2", status: "active", current_period_end: 1_900_000_000 });
     }) as typeof fetch;
     const errors: object[] = [];
     try {
@@ -375,7 +376,7 @@ describe("cambio de suscripción", () => {
     }
     expect(errors).toEqual([]);
     expect(deleted).toEqual(["sub_old2"]);
-    expect(await db.query(`SELECT 1 FROM subscription_cancellations WHERE subscription_id = 'sub_old2'`)).toHaveLength(0);
+    expect(await db.query(`SELECT 1 FROM subscription_cancellations WHERE subscription_id = 'sub_old2' AND done_at IS NULL`)).toHaveLength(0);
   });
 
   it("dos confirmaciones seguidas: cada una cancela la que reemplazó y queda la última", async () => {
@@ -387,7 +388,7 @@ describe("cambio de suscripción", () => {
         deleted.push(String(input).split("/").pop()!);
         return json({ status: "canceled" });
       }
-      return json({ current_period_end: 1_900_000_000 });
+      return json({ status: "active", current_period_end: 1_900_000_000 });
     }) as typeof fetch;
     try {
       await Promise.all([handleStripeEvent(db, completed(t2, "sub_b")), handleStripeEvent(db, completed(t2, "sub_c"))]);
@@ -447,5 +448,120 @@ describe("cambio de suscripción", () => {
     }
     expect(calls).toBe(0);
     expect(await db.query(`SELECT 1 FROM subscription_cancellations WHERE subscription_id = 'sub_back'`)).toHaveLength(0);
+  });
+  it("un alta vieja reprocesada no vuelve a aplicar la cancelada ni cancela la vigente", async () => {
+    const { handleStripeEvent } = await import("../src/modules/billing/webhooks");
+    const t2 = await org("stripe", "sub_s3");
+    // B aplicó sub_s3 y canceló sub_s2 (que había aplicado A sin marcarse procesada).
+    await db.query(`INSERT INTO subscription_cancellations (provider, subscription_id, tenant_id, done_at) VALUES ('stripe', 'sub_s2', $1, now())`, [t2]);
+    const deleted: string[] = [];
+    let status = "canceled";
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "DELETE") {
+        deleted.push(String(input).split("/").pop()!);
+        return json({ status: "canceled" });
+      }
+      return json({ id: "sub_s2", status, current_period_end: 1_900_000_000 });
+    }) as typeof fetch;
+    try {
+      // Stripe reintenta el alta de A: la suscripción ya está cancelada en Stripe.
+      await handleStripeEvent(db, completed(t2, "sub_s2"));
+      expect(await tenantRow(t2)).toMatchObject({ subscription_id: "sub_s3", billing_provider: "stripe" });
+      // Aunque Stripe todavía la vea activa (cancelación pendiente), una reemplazada no se vuelve a aplicar.
+      status = "active";
+      await handleStripeEvent(db, completed(t2, "sub_s2"));
+    } finally {
+      globalThis.fetch = real;
+    }
+    expect(deleted).toEqual([]);
+    expect(await tenantRow(t2)).toMatchObject({ subscription_id: "sub_s3", billing_provider: "stripe" });
+  });
+
+  it("alta para una organización inexistente: la suscripción nueva se cancela", async () => {
+    const { handleStripeEvent } = await import("../src/modules/billing/webhooks");
+    const { uuidv7 } = await import("../src/lib/util");
+    const ghost = uuidv7();
+    const deleted: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "DELETE") {
+        deleted.push(String(input).split("/").pop()!);
+        return json({ status: "canceled" });
+      }
+      return json({ status: "active", current_period_end: 1_900_000_000 });
+    }) as typeof fetch;
+    try {
+      await handleStripeEvent(db, completed(ghost, "sub_orphan"));
+    } finally {
+      globalThis.fetch = real;
+    }
+    expect(deleted).toEqual(["sub_orphan"]);
+    expect(await db.one<any>(`SELECT tenant_id, done_at IS NOT NULL AS done FROM subscription_cancellations WHERE subscription_id = 'sub_orphan'`)).toMatchObject({ tenant_id: ghost, done: true });
+  });
+
+  it("barrido: backoff por intentos, máximo de intentos y sin tomar la misma fila dos veces", async () => {
+    const { cancelPendingSubscriptions, SUBSCRIPTION_CANCEL_MAX_ATTEMPTS } = await import("../src/modules/billing/webhooks");
+    const t2 = await org("stripe", "sub_cur_bk");
+    const ins = (id: string, attempts: number, ago: string) =>
+      db.query(`INSERT INTO subscription_cancellations (provider, subscription_id, tenant_id, attempts, attempted_at) VALUES ('stripe', $1, $2, $3, now() - $4::interval)`, [id, t2, attempts, ago]);
+    await ins("sub_bk_wait", 3, "5 minutes"); // backoff de 8 min: todavía no
+    await ins("sub_bk_due", 3, "9 minutes");
+    await ins("sub_bk_max", SUBSCRIPTION_CANCEL_MAX_ATTEMPTS, "30 days"); // agotada: no se reintenta
+    const deleted: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "DELETE") deleted.push(String(input).split("/").pop()!);
+      return json({ status: "canceled" });
+    }) as typeof fetch;
+    const errors: object[] = [];
+    try {
+      const log = { error: (o: object) => void errors.push(o) };
+      await Promise.all([cancelPendingSubscriptions({ db, log }), cancelPendingSubscriptions({ db, log })]);
+    } finally {
+      globalThis.fetch = real;
+    }
+    expect(errors).toEqual([]);
+    expect(deleted).toEqual(["sub_bk_due"]);
+    const rows = await db.query<any>(`SELECT subscription_id, done_at IS NOT NULL AS done FROM subscription_cancellations WHERE tenant_id = $1 ORDER BY subscription_id`, [t2]);
+    expect(rows).toEqual([
+      { subscription_id: "sub_bk_due", done: true },
+      { subscription_id: "sub_bk_max", done: false },
+      { subscription_id: "sub_bk_wait", done: false },
+    ]);
+  });
+
+  it("barrido: al llegar al máximo de intentos registra una alerta", async () => {
+    const { cancelPendingSubscriptions, SUBSCRIPTION_CANCEL_MAX_ATTEMPTS } = await import("../src/modules/billing/webhooks");
+    const t2 = await org("stripe", "sub_cur_al");
+    await db.query(`INSERT INTO subscription_cancellations (provider, subscription_id, tenant_id, attempts, attempted_at) VALUES ('stripe', 'sub_al', $1, $2, now() - interval '2 days')`, [
+      t2,
+      SUBSCRIPTION_CANCEL_MAX_ATTEMPTS - 1,
+    ]);
+    globalThis.fetch = (async () => json({ error: { message: "caído" } }, 500)) as typeof fetch;
+    const errors: any[] = [];
+    try {
+      await cancelPendingSubscriptions({ db, log: { error: (o) => void errors.push(o) } });
+    } finally {
+      globalThis.fetch = real;
+    }
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({ alert: true, subscriptionId: "sub_al", attempts: SUBSCRIPTION_CANCEL_MAX_ATTEMPTS });
+    expect((await db.one<any>(`SELECT attempts FROM subscription_cancellations WHERE subscription_id = 'sub_al'`))?.attempts).toBe(SUBSCRIPTION_CANCEL_MAX_ATTEMPTS);
+  });
+
+  it("Mercado Pago: un 400 al cancelar un preapproval ya cancelado cuenta como cancelado", async () => {
+    const { cancelPendingSubscriptions } = await import("../src/modules/billing/webhooks");
+    const t2 = await org("mercadopago", "pre_cur_400");
+    await db.query(`INSERT INTO subscription_cancellations (provider, subscription_id, tenant_id, attempted_at) VALUES ('mercadopago', 'pre_400', $1, now() - interval '5 minutes')`, [t2]);
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "PUT") return json({ message: "cannot modify a cancelled preapproval" }, 400);
+      return json({ id: String(input).split("/").pop(), status: "cancelled", external_reference: null });
+    }) as typeof fetch;
+    const errors: object[] = [];
+    try {
+      await cancelPendingSubscriptions({ db, log: { error: (o) => void errors.push(o) } });
+    } finally {
+      globalThis.fetch = real;
+    }
+    expect(errors).toEqual([]);
+    expect((await db.one<any>(`SELECT done_at IS NOT NULL AS done FROM subscription_cancellations WHERE subscription_id = 'pre_400'`))?.done).toBe(true);
   });
 });

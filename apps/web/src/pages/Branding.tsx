@@ -123,12 +123,14 @@ function usesWhiteLabel(c: BrandConfigInput): boolean {
 }
 
 /** Si la configuración nueva agrega o cambia algo respecto de la guardada (vaciar, apagar o dejar igual no cuenta). */
-function addsConfig(next: unknown, prev: unknown): boolean {
-  const unset = (v: unknown) => v === undefined || v === null || v === "" || v === false || (Array.isArray(v) && v.length === 0);
+function addsConfig(next: unknown, prev: unknown, literal = false): boolean {
+  // En textos y plantillas un "" sí es un valor (reemplaza al texto original por uno vacío): no cuenta como quitar.
+  const unset = (v: unknown) =>
+    v === undefined || v === null || (v === "" && !literal) || v === false || (Array.isArray(v) && v.length === 0);
   if (unset(next)) return false;
   if (Array.isArray(next) || typeof next !== "object") return JSON.stringify(next) !== JSON.stringify(prev);
   const p = prev && typeof prev === "object" && !Array.isArray(prev) ? (prev as Record<string, unknown>) : {};
-  return Object.entries(next as Record<string, unknown>).some(([k, v]) => addsConfig(v, p[k]));
+  return Object.entries(next as Record<string, unknown>).some(([k, v]) => addsConfig(v, p[k], literal || k === "texts" || k === "templates"));
 }
 
 export function BrandingPage() {

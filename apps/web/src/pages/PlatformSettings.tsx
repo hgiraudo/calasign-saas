@@ -302,7 +302,8 @@ function OAuthAppsAdmin() {
             </div>
             {!a.revokedAt && canManagePerms(access, permsOfRole(a.role, a.roleId)) && (
               <div className="row-wrap">
-                {a.confidential && (
+                {/* Rotar también exige poder hacerse cargo de la app (la API lo informa en canTakeOver). */}
+                {a.confidential && a.canTakeOver !== false && (
                   <button
                     type="button"
                     className="btn btn-sm"

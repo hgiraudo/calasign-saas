@@ -119,7 +119,7 @@ async function revokeFamily(db: Db, familyId: string) {
 
 // ───────────────────────────── Mapeo ─────────────────────────────
 
-async function toApp(db: Db, r: any): Promise<OAuthApp> {
+async function toApp(db: Db, r: any, viewer?: AuthContext): Promise<OAuthApp> {
   let role: string | null = null;
   let roleId: string | null = null;
   if (r.service_api_key_id) {
@@ -147,6 +147,9 @@ async function toApp(db: Db, r: any): Promise<OAuthApp> {
     updatedAt: iso(r.updated_at)!,
     revokedAt: iso(r.revoked_at),
     activeTokens: n?.n ?? 0,
+    ...(viewer
+      ? { canTakeOver: await assertCanTakeOverApp(db, viewer, r, "").then(() => true, () => false) }
+      : {}),
   };
 }
 
@@ -738,7 +741,7 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
 
   app.get("/v1/oauth/apps", { preHandler: auth }, async (req) => {
     const rows = await s.db.query<any>(`SELECT * FROM oauth_clients WHERE tenant_id = $1 ORDER BY created_at DESC`, [req.auth!.tenantId]);
-    return { items: await Promise.all(rows.map((r) => toApp(s.db, r))) };
+    return { items: await Promise.all(rows.map((r) => toApp(s.db, r, req.auth!))) };
   });
 
   app.post("/v1/oauth/apps", { preHandler: auth }, async (req, reply) => {
@@ -782,7 +785,7 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
     return r;
   };
 
-  app.get<{ Params: { id: string } }>("/v1/oauth/apps/:id", { preHandler: auth }, async (req) => toApp(s.db, await loadOwn(req.auth!, req.params.id)));
+  app.get<{ Params: { id: string } }>("/v1/oauth/apps/:id", { preHandler: auth }, async (req) => toApp(s.db, await loadOwn(req.auth!, req.params.id), req.auth!));
 
   app.patch<{ Params: { id: string } }>("/v1/oauth/apps/:id", { preHandler: auth }, async (req) => {
     const a = req.auth!;

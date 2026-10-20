@@ -79,7 +79,8 @@ function availability(r: FormRow): PublicWebForm["unavailableReason"] {
 function buildInput(form: FormRow, signer: { name: string; email: string; phone?: string | null; locale?: string }) {
   return {
     templateId: form.template_id,
-    locale: signer.locale as "es" | "pt-BR" | "en" | undefined,
+    // El idioma de quien completa el formulario es solo el suyo (va en su destinatario): el sobre (certificado, avisos
+    // a los destinatarios fijos sin idioma propio) sigue con el de la plantilla u organización.
     recipients: [
       ...(form.fixed_recipients ?? []).map((x: any) => ({ ...x, channels: x.channels ?? ["email"] })),
       { roleId: form.signer_role_id, name: signer.name, email: signer.email, phone: signer.phone ?? null, channels: ["email"] as ("email" | "whatsapp" | "telegram")[], locale: signer.locale ?? null },
@@ -104,6 +105,12 @@ function checkConfig(l: LoadedTemplate, form: { template_id: string; signer_role
   const role = l.tpl.roles.find((r) => r.id === form.signer_role_id);
   if (!role) throw badRequest("invalid_role", "El rol de quien completa el formulario no existe en la plantilla");
   if (role.role !== "signer") throw badRequest("invalid_role", "Quien completa el formulario tiene que ser un rol firmante");
+  // Y le tiene que tocar firmar primero: quien completa un formulario se registra solo (no se le mandan avisos hasta
+  // validar su correo), así que si firma después de otros nunca recibía el link y el sobre vencía.
+  const first = Math.min(...l.tpl.roles.filter((r) => r.role !== "cc").map((r) => r.routingOrder));
+  if (role.routingOrder > first) {
+    throw badRequest("invalid_role", "Quien completa el formulario tiene que firmar primero (su rol tiene que estar en el primer turno de la plantilla)");
+  }
   if (form.fixed_recipients.some((x) => x.roleId === form.signer_role_id)) {
     throw badRequest("invalid_role", "El rol de quien completa el formulario no puede tener un destinatario fijo");
   }
@@ -420,7 +427,7 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
       let signerRecipientId = "";
       const envId = await s.db.tx(async (t) => {
         const locked = await t.one<any>(`SELECT * FROM web_forms WHERE id = $1 FOR UPDATE`, [form.id]);
-        if (availability(locked)) throw new AppError(410, "form_unavailable", "Este formulario ya no está disponible");
+        if (!locked || availability(locked)) throw new AppError(410, "form_unavailable", "Este formulario ya no está disponible");
         // Un envío por token (si la transacción falla, el token vuelve a servir).
         const fresh = await t.query(`INSERT INTO web_form_token_uses (token_hash) VALUES ($1) ON CONFLICT DO NOTHING RETURNING 1`, [sha256Hex(input.formToken)]);
         if (!fresh.length) throw expiredToken();

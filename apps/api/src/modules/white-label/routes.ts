@@ -33,6 +33,7 @@ import { deleteFileIfUnused, discardBlobsOnFailure } from "../file-cleanup";
 import {
   brandForHost,
   DEFAULT_BRAND,
+  defaultConfigOf,
   mailBranding,
   publicTheme,
   resolveBrand,
@@ -76,16 +77,21 @@ async function requireWhiteLabel(db: Db, tenantId: string) {
 /** La configuración propia guardada de una marca (la por defecto en tenants.branding.whiteLabel). */
 async function storedBrandConfig(db: Db, tenantId: string, brandId: string | null): Promise<Record<string, unknown>> {
   if (brandId) return ((await db.one<any>(`SELECT config FROM brands WHERE id = $1 AND tenant_id = $2`, [brandId, tenantId]))?.config ?? {}) as Record<string, unknown>;
-  return ((await db.one<any>(`SELECT branding FROM tenants WHERE id = $1`, [tenantId]))?.branding?.whiteLabel ?? {}) as Record<string, unknown>;
+  // Con el color y el pie históricos (PATCH /v1/settings/branding), como la configuración que muestra la consola: si
+  // no, reenviar el color que ya estaba contaba como agregarlo.
+  const b = (await db.one<any>(`SELECT branding FROM tenants WHERE id = $1`, [tenantId]))?.branding ?? {};
+  return defaultConfigOf(b).config as Record<string, unknown>;
 }
 
 /** Si la configuración nueva agrega o cambia algo respecto de lo guardado (vaciar, apagar o dejar igual no cuenta). */
-function addsBrandConfig(next: unknown, prev: unknown): boolean {
-  const unset = (v: unknown) => v === undefined || v === null || v === "" || v === false || (Array.isArray(v) && v.length === 0);
+function addsBrandConfig(next: unknown, prev: unknown, literal = false): boolean {
+  // En textos y plantillas un "" sí es un valor (reemplaza al texto original por uno vacío): no cuenta como quitar.
+  const unset = (v: unknown) =>
+    v === undefined || v === null || (v === "" && !literal) || v === false || (Array.isArray(v) && v.length === 0);
   if (unset(next)) return false;
   if (Array.isArray(next) || typeof next !== "object") return JSON.stringify(next) !== JSON.stringify(prev);
   const p = prev && typeof prev === "object" && !Array.isArray(prev) ? (prev as Record<string, unknown>) : {};
-  return Object.entries(next as Record<string, unknown>).some(([k, v]) => addsBrandConfig(v, p[k]));
+  return Object.entries(next as Record<string, unknown>).some(([k, v]) => addsBrandConfig(v, p[k], literal || k === "texts" || k === "templates"));
 }
 
 async function requireBranding(db: Db, tenantId: string) {

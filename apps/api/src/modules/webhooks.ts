@@ -577,17 +577,31 @@ export async function webhookRoutes(app: FastifyInstance, s: Services) {
     // Pendiente con su reintento automático programado: se adelanta ese mismo trabajo (encolar otro mandaba el evento
     // dos veces). Si ya está en curso, o hay un reintento manual pedido, 409.
     if (row.status === "pending") {
-      const moved = await s.db.query(
-        `UPDATE jobs SET run_at = now() WHERE dedupe_key = $1 AND status = 'pending' AND run_at > now() RETURNING id`,
-        [`whdel:${row.id}`],
+      const ep = await s.db.one<any>(`SELECT active FROM webhook_endpoints WHERE id = $1`, [row.endpoint_id]);
+      if (ep?.active) {
+        const moved = await s.db.query(
+          `UPDATE jobs SET run_at = now() WHERE dedupe_key = $1 AND status = 'pending' AND run_at > now() RETURNING id`,
+          [`whdel:${row.id}`],
+        );
+        if (moved.length) {
+          reply.code(202);
+          return toDelivery({ ...row, next_retry_at: null });
+        }
+      } else {
+        // Endpoint pausado: el reintento automático la marcaría fallida sin enviarla; se da por terminado y sale el manual.
+        await s.db.query(`UPDATE jobs SET status = 'done', finished_at = now() WHERE dedupe_key = $1 AND status = 'pending'`, [`whdel:${row.id}`]);
+      }
+      // Un intento en curso (automático o manual) o un manual ya pedido: 409. Si no queda ningún trabajo (un worker que
+      // se cayó a mitad), sigue como reintento manual (si no, quedaba trabada en 409 para siempre).
+      const live = await s.db.one(
+        `SELECT 1 FROM jobs WHERE queue = 'webhook' AND status IN ('pending','running') AND payload->>'deliveryId' = $1 LIMIT 1`,
+        [row.id],
       );
-      if (!moved.length) throw conflict("delivery_pending", "La entrega ya se está reintentando");
-      reply.code(202);
-      return toDelivery({ ...row, next_retry_at: null });
+      if (live) throw conflict("delivery_pending", "La entrega ya se está reintentando");
     }
     await s.db.tx(async (t) => {
-      const upd = await t.query(`UPDATE webhook_deliveries SET status = 'pending', next_retry_at = NULL WHERE id = $1 AND status <> 'pending' RETURNING id`, [row.id]);
-      if (!upd.length) throw conflict("delivery_pending", "La entrega todavía está pendiente: se reintenta sola");
+      const upd = await t.query(`UPDATE webhook_deliveries SET status = 'pending', next_retry_at = NULL WHERE id = $1 AND status = $2 RETURNING id`, [row.id, row.status]);
+      if (!upd.length) throw conflict("delivery_pending", "La entrega ya se está reintentando");
       await enqueue(t, "webhook", { kind: "deliver", deliveryId: row.id, manual: true }, { maxAttempts: 1 });
     });
     reply.code(202);

@@ -95,7 +95,7 @@ function WebFormEditor({ form, initialTemplateId, onClose, onSaved }: { form: We
         setTpl(d);
         // El error de una plantilla anterior (p. ej. la de la URL, inexistente) no queda a la vista.
         setError(null);
-        const signers = d.roles.filter((r) => r.role === "signer");
+        const signers = formSignerRoles(d.roles);
         // Solo vale un rol firmante: si el rol guardado pasó a copia o aprobador, el select mostraba otro firmante pero
         // se guardaba el viejo.
         setSignerRoleId((cur) => (signers.some((r) => r.id === cur) ? cur : (signers[0]?.id ?? "")));
@@ -193,9 +193,7 @@ function WebFormEditor({ form, initialTemplateId, onClose, onSaved }: { form: We
             <label className="field">
               <span>{st("forms.signerRole")}</span>
               <select value={signerRoleId} onChange={(e) => setSignerRoleId(e.target.value)}>
-                {tpl.roles
-                  .filter((r) => r.role === "signer")
-                  .map((r) => (
+                {formSignerRoles(tpl.roles).map((r) => (
                     <option key={r.id} value={r.id}>
                       {r.name}
                     </option>
@@ -299,6 +297,16 @@ function inactiveWhy(f: WebForm, st: ReturnType<typeof useScaleText>): string | 
 }
 
 // ───────────────────────────── Listado ─────────────────────────────
+
+/**
+ * Roles que puede completar el público: firmantes del primer turno (la API rechaza los demás: quien se registra solo no
+ * recibe avisos hasta validar su correo, así que si firmaba después de otros nunca le llegaba el link).
+ */
+function formSignerRoles<R extends { role: string; routingOrder: number }>(roles: R[]): R[] {
+  const turns = roles.filter((r) => r.role !== "cc").map((r) => r.routingOrder);
+  const first = turns.length ? Math.min(...turns) : 0;
+  return roles.filter((r) => r.role === "signer" && r.routingOrder <= first);
+}
 
 export function WebFormsPage() {
   const st = useScaleText();

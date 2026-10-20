@@ -1,6 +1,7 @@
 // Ajustes → Plan y facturación: plan actual, uso del mes, planes con precios locales y suscripción.
 import { useEffect, useState } from "react";
 import { BILLING_CURRENCIES, PLAN_FEATURES, type BillingOverview, type BillingProvider, type PlanDefinition, type PlanFeature, type PlanId } from "@calasign/shared";
+import { useAccess } from "../lib/access";
 import { api, errorText } from "../lib/api";
 import { formatDateTime, useI18n } from "../lib/i18n";
 import { formatMoney, useBillingText, type BillingKey } from "../lib/i18n-billing";
@@ -40,17 +41,24 @@ export function BillingPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [provider, setProvider] = useState<BillingProvider | "">("");
+  // Las funciones del plan que usa el resto de la consola (avisos, botones) se vuelven a leer con cada cambio de plan.
+  const { refresh: refreshAccess } = useAccess();
   const checkout = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("checkout") : null;
 
   const load = () =>
     api<BillingOverview>("/v1/billing")
       .then((d) => {
         setData(d);
+        void refreshAccess();
         setProvider((p) => p || d.providers.find((x) => x.configured)?.id || "");
       })
       .catch((e) => setError(errorText(e)));
   useEffect(() => {
     void load();
+    // Al volver del checkout el webhook del proveedor puede activar el plan unos segundos después.
+    if (checkout !== "success") return;
+    const timers = [4000, 15000].map((ms) => window.setTimeout(() => void load(), ms));
+    return () => timers.forEach((x) => window.clearTimeout(x));
   }, []);
 
   const run = async (key: string, fn: () => Promise<void>) => {
@@ -80,6 +88,7 @@ export function BillingPage() {
         }
         if (!window.confirm(b("billing.downgradeConfirm"))) return;
         setData(await api<BillingOverview>("/v1/billing/cancel", { method: "POST" }));
+        void refreshAccess();
         return;
       }
       const r = await api<{ url: string }>("/v1/billing/checkout", { method: "POST", body: { plan: id, currency, provider: provider || undefined } });

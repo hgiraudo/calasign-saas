@@ -69,7 +69,7 @@ export const AGREEMENTS_OPS: Op[] = [
     tag: D,
     summary: "Generar el documento y crear el sobre",
     description:
-      "Las marcas {{firma:Rol}} se convierten en campos del firmante de ese rol. 422 si faltan datos, cláusulas o firmantes. El documento generado admite hasta 300 000 caracteres y 500 marcas de firma o campos (si no, 400 template_syntax).",
+      "Las marcas {{firma:Rol}} se convierten en campos del firmante de ese rol. 422 si faltan datos, cláusulas o firmantes. El documento generado admite hasta 300 000 caracteres y 500 marcas de firma o campos (si no, 400 template_syntax). Admite `Idempotency-Key`.",
     body: GenerateDocumentInput,
     status: 201,
   },

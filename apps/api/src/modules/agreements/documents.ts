@@ -29,7 +29,7 @@ import { requirePerm } from "../access";
 import { auditFromRequest } from "../audit";
 import { getTenantBranding } from "../branding";
 import { authenticate, type AuthContext, type Services } from "../context";
-import { sendEnvelope } from "../envelopes";
+import { sendEnvelope, idempotent } from "../envelopes";
 import { insertEnvelopeField } from "../fieldvalues";
 import { discardBlobsOnFailure } from "../file-cleanup";
 import { getPath, interpolate, toIsoDate, toNumberOrNull } from "./common";
@@ -395,44 +395,46 @@ export async function documentRoutes(app: FastifyInstance, s: Services) {
     return reply.send(Buffer.from(doc.pdf));
   });
 
-  app.post<{ Params: { id: string } }>("/v1/document-templates/:id/generate", { preHandler: auth }, async (req, reply) => {
-    const a = A(req);
-    requirePerm(a, "envelopes:create");
-    const input = GenerateDocumentInput.parse(req.body);
-    const tpl = await loadDocTemplate(s.db, a.tenantId, req.params.id);
-    const locale = input.locale ?? tpl.locale;
-    const doc = await renderDocument(s.db, a.tenantId, { source: tpl.source, data: input.data, locale, title: input.subject ?? tpl.name });
-    if (doc.missingClauses.length) throw new AppError(422, "missing_clauses", `Cláusulas inexistentes: ${doc.missingClauses.join(", ")}`, { missingClauses: doc.missingClauses });
-    if (doc.missing.length && !input.allowMissing) {
-      throw new AppError(422, "missing_variables", `Faltan datos: ${doc.missing.join(", ")}`, { missing: doc.missing });
-    }
-    const subject = input.subject ?? (interpolate(tpl.agreement_mapping?.title, input.data, locale) || tpl.name);
-    const file = await storeGeneratedPdf(s.blobs, a.tenantId, doc.pdf);
-    const agreement = agreementMetaFromMapping(tpl.agreement_mapping, input.data, locale);
-    // Si no se crea el sobre (p. ej. límite del plan al enviarlo), el PDF generado no lo referencia nada.
-    const envelopeId = await discardBlobsOnFailure(s.blobs, [file.key], () => s.db.tx((t) =>
-      createEnvelopeFromPdf(t, a, {
-        file,
-        fileName: `${tpl.name}.pdf`,
-        subject,
-        message: input.message ?? null,
-        locale,
-        expiresAt: input.expiresAt ?? null,
-        recipients: input.recipients,
-        marks: doc.marks,
-        metadata: {
-          ...(input.metadata ?? {}),
-          documentTemplateId: tpl.id,
-          dataSha256: sha256Hex(JSON.stringify(input.data)),
-          ...(agreement ? { agreement } : {}),
-        },
-        send: input.send,
-      }),
-    ));
-    const env = await s.db.one<any>(`SELECT status FROM envelopes WHERE id = $1`, [envelopeId]);
-    reply.code(201);
-    return { envelopeId, status: env.status, missing: doc.missing, pages: doc.pageCount };
-  });
+  // Con Idempotency-Key, como POST /v1/envelopes: un reintento después de un timeout no crea ni envía otro sobre.
+  app.post<{ Params: { id: string } }>("/v1/document-templates/:id/generate", { preHandler: auth }, async (req, reply) =>
+    idempotent(s, req, reply, async () => {
+      const a = A(req);
+      requirePerm(a, "envelopes:create");
+      const input = GenerateDocumentInput.parse(req.body);
+      const tpl = await loadDocTemplate(s.db, a.tenantId, req.params.id);
+      const locale = input.locale ?? tpl.locale;
+      const doc = await renderDocument(s.db, a.tenantId, { source: tpl.source, data: input.data, locale, title: input.subject ?? tpl.name });
+      if (doc.missingClauses.length) throw new AppError(422, "missing_clauses", `Cláusulas inexistentes: ${doc.missingClauses.join(", ")}`, { missingClauses: doc.missingClauses });
+      if (doc.missing.length && !input.allowMissing) {
+        throw new AppError(422, "missing_variables", `Faltan datos: ${doc.missing.join(", ")}`, { missing: doc.missing });
+      }
+      const subject = input.subject ?? (interpolate(tpl.agreement_mapping?.title, input.data, locale) || tpl.name);
+      const file = await storeGeneratedPdf(s.blobs, a.tenantId, doc.pdf);
+      const agreement = agreementMetaFromMapping(tpl.agreement_mapping, input.data, locale);
+      // Si no se crea el sobre (p. ej. límite del plan al enviarlo), el PDF generado no lo referencia nada.
+      const envelopeId = await discardBlobsOnFailure(s.blobs, [file.key], () => s.db.tx((t) =>
+        createEnvelopeFromPdf(t, a, {
+          file,
+          fileName: `${tpl.name}.pdf`,
+          subject,
+          message: input.message ?? null,
+          locale,
+          expiresAt: input.expiresAt ?? null,
+          recipients: input.recipients,
+          marks: doc.marks,
+          metadata: {
+            ...(input.metadata ?? {}),
+            documentTemplateId: tpl.id,
+            dataSha256: sha256Hex(JSON.stringify(input.data)),
+            ...(agreement ? { agreement } : {}),
+          },
+          send: input.send,
+        }),
+      ));
+      const env = await s.db.one<any>(`SELECT status FROM envelopes WHERE id = $1`, [envelopeId]);
+      return { status: 201, body: { envelopeId, status: env.status, missing: doc.missing, pages: doc.pageCount } };
+    }),
+  );
 
   // ───────── Cláusulas ─────────
 

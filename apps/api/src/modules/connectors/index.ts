@@ -38,7 +38,7 @@ import { decrypt, encrypt, iso, sha256Hex, uuidv7 } from "../../lib/util";
 import { assertEnvelopeAccess, assertTemplateAccess, envelopeVisibilitySql, hasPerm } from "../access";
 import { auditFromRequest } from "../audit";
 import { authenticate, type AuthContext, type Services } from "../context";
-import { sendEnvelope } from "../envelopes";
+import { sendEnvelope, idempotent } from "../envelopes";
 import { ownerCanStillCreate } from "../owner-check";
 import { insertEnvelopeFromTemplate, loadTemplateForUse, planFromTemplate } from "../templates";
 import { MappingError, mapPrefill, mapRecipients, neededProperties, statusForEvidence, statusValue } from "../crm/mapping";
@@ -780,15 +780,17 @@ export async function connectorRoutes(app: FastifyInstance, s: Services) {
     return reply.code(204).send();
   });
 
-  app.post<{ Params: { id: string } }>("/v1/connectors/flows/:id/send", { preHandler: auth, config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (req, reply) => {
-    const a = A(req);
-    const f = await loadFlow(s.db, a.tenantId, req.params.id);
-    const input = SendFromConnectorInput.parse(req.body);
-    if (f.template_id) await assertTemplateAccess(s.db, a, f.template_id, "view");
-    const out = await sendFromConnector(d, { tenantId: a.tenantId, userId: a.userId, apiKeyId: a.apiKeyId, actor: a.actor }, f, input.recordId, input);
-    reply.code(201);
-    return out!;
-  });
+  // Con Idempotency-Key, como POST /v1/envelopes: un reintento después de un timeout no crea ni envía otro sobre.
+  app.post<{ Params: { id: string } }>("/v1/connectors/flows/:id/send", { preHandler: auth, config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (req, reply) =>
+    idempotent(s, req, reply, async () => {
+      const a = A(req);
+      const f = await loadFlow(s.db, a.tenantId, req.params.id);
+      const input = SendFromConnectorInput.parse(req.body);
+      if (f.template_id) await assertTemplateAccess(s.db, a, f.template_id, "view");
+      const out = await sendFromConnector(d, { tenantId: a.tenantId, userId: a.userId, apiKeyId: a.apiKeyId, actor: a.actor }, f, input.recordId, input);
+      return { status: 201, body: out! };
+    }),
+  );
 
   // ───────── Vínculos y ejecuciones ─────────
 

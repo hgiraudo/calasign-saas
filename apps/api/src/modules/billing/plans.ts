@@ -136,7 +136,9 @@ function featureForRoute(url: string, method: string, body: unknown): { feature:
   if (url === "/v1/webhooks" || url === "/v1/webhooks/:id/test" || url === "/v1/webhook-deliveries/:id/retry") return { feature: "webhooks", label: "Los webhooks" };
   // Activar uno pausado (o cambiar su URL o eventos) también: sin el plan "Activar" respondía bien y nunca entregaba
   // nada. Pausarlo sí se permite.
-  if (url === "/v1/webhooks/:id" && method === "PATCH" && (body as { active?: unknown } | null)?.active !== false) {
+  // Solo la descripción, o pausar: se permite.
+  const wb = (body ?? {}) as { active?: unknown; url?: unknown; events?: unknown };
+  if (url === "/v1/webhooks/:id" && method === "PATCH" && (wb.active === true || ((wb.url !== undefined || wb.events !== undefined) && wb.active !== false))) {
     return { feature: "webhooks", label: "Los webhooks" };
   }
   if (url.startsWith("/v1/settings/branding")) return { feature: "branding", label: "La marca propia" };

@@ -15,7 +15,7 @@ import { InvalidPdfError, preparePdfUpload } from "@calasign/pdf";
 import { config } from "../config";
 import type { Db } from "../infra/db";
 import { appendEvent, type Actor } from "../infra/evidence";
-import { AppError, badRequest, notFound } from "../lib/errors";
+import { AppError, badRequest, conflict, notFound } from "../lib/errors";
 import { iso, sha256Hex, uuidv7 } from "../lib/util";
 import { assertTemplateAccess, templateVisibilitySql } from "./access";
 import { authenticate, type AuthContext, type Services } from "./context";
@@ -204,6 +204,10 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
     let fileIds: string[] = [];
     await s.db.tx(async (t) => {
       const tpl = await lockTemplate(t, a.tenantId, req.params.id);
+      // Sus formularios web se borran con ella (ON DELETE CASCADE): con alguno activo (que puede ser de otra persona y
+      // tener el link publicado), primero hay que desactivarlo o borrarlo.
+      const forms = await t.one<{ n: number }>(`SELECT count(*)::int AS n FROM web_forms WHERE template_id = $1 AND active`, [tpl.id]);
+      if (forms?.n) throw conflict("template_has_forms", `La plantilla tiene ${forms.n} formulario(s) web activo(s): desactivalos o borralos antes`, { webForms: forms.n });
       fileIds = (await t.query<any>(`SELECT file_id FROM template_documents WHERE template_id = $1`, [tpl.id])).map((d) => d.file_id);
       await t.query(`DELETE FROM templates WHERE id = $1`, [tpl.id]);
     });

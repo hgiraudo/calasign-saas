@@ -451,9 +451,10 @@ const OPS: Op[] = [
     operationId: "deleteTemplate",
     tag: "Plantillas",
     summary: "Borrar plantilla",
-    description: "Los sobres ya creados desde la plantilla no cambian.",
+    description: "Los sobres ya creados desde la plantilla no cambian. Sus formularios web se borran con ella: con alguno activo, 409 template_has_forms (desactivarlos o borrarlos antes).",
     response: "none",
     status: 204,
+    errors: ["template_has_forms"],
   },
   {
     method: "post",

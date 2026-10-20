@@ -108,6 +108,8 @@ export interface OAuthApp {
   updatedAt: string;
   revokedAt: string | null;
   activeTokens: number;
+  /** Si quien consulta puede rotar el secreto o cambiar las URI (la creó, es propietario o tiene los permisos de quien la creó). */
+  canTakeOver?: boolean;
 }
 
 export interface CreateOAuthAppResponse {

@@ -36,6 +36,7 @@ const OAuthApp = named(
   updatedAt: iso,
   revokedAt: iso.nullable(),
   activeTokens: z.number().int(),
+  canTakeOver: z.boolean().optional().describe("Si quien consulta puede rotar el secreto o cambiar las URI de redirección (la creó, es propietario o tiene los permisos de quien la creó)."),
   }),
 );
 

@@ -305,6 +305,13 @@ export const ERRORS: Record<string, Err> = {
   not_found: { status: 404, code: "not_found", message: "Sobre no encontrado", summary: "No existe o la credencial no puede verlo (el mensaje nombra el recurso)" },
 
   delivery_pending: { status: 409, code: "delivery_pending", message: "La entrega ya se está reintentando", summary: "La entrega tiene un intento en curso o un reintento manual ya pedido" },
+  template_has_forms: {
+    status: 409,
+    code: "template_has_forms",
+    message: "La plantilla tiene 1 formulario(s) web activo(s): desactivalos o borralos antes",
+    details: { webForms: 1 },
+    summary: "La plantilla tiene formularios web activos (se borrarían con ella)",
+  },
   not_draft: { status: 409, code: "not_draft", message: "Solo se puede modificar un sobre en borrador", summary: "El sobre ya no es un borrador" },
   idempotency_mismatch: {
     status: 409,

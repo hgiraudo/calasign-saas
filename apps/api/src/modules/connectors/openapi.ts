@@ -67,7 +67,7 @@ export const CONNECTOR_OPS: Op[] = [
     path: "/v1/connectors/flows/{id}/send",
     tag: C,
     summary: "Crear (y enviar) un sobre desde un empleado o contrato",
-    description: "Lee el registro, arma el sobre y lo vincula: al completarse, el PDF firmado (y la evidencia) vuelven al legajo o registro. 409 connector_reauth_required si la conexión perdió acceso.",
+    description: "Lee el registro, arma el sobre y lo vincula: al completarse, el PDF firmado (y la evidencia) vuelven al legajo o registro. 409 connector_reauth_required si la conexión perdió acceso. Admite `Idempotency-Key`.",
     body: SendFromConnectorInput,
     status: 201,
   },

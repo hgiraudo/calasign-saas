@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { logicOrderProblems } from "../src/modules/envelopes";
+import { logicOrderKeys, logicOrderProblems, newLogicOrderProblems } from "../src/modules/envelopes";
 
 const recips = [
   { id: "a", name: "Ana", routing_order: 1 },
@@ -40,5 +40,16 @@ describe("orden de la lógica entre firmantes", () => {
     expect(problems).toHaveLength(1);
     expect(problems[0]).toContain("Garantía");
     expect(problems[0]).toContain("Total");
+  });
+  it("un problema previo se reconoce aunque se regeneren los ids de la hoja de la fórmula y del campo dependiente", () => {
+    const build = (leaf: string, dep: string) => [
+      { id: leaf, recipient_id: "b", label: "Monto", type: "number", conditions: null },
+      { id: "t1", recipient_id: "a", label: "Total", type: "number", formula: "{Monto}", conditions: null },
+      { id: dep, recipient_id: "a", label: "Garantía", conditions: [{ fieldId: "t1" }] },
+    ];
+    const before = logicOrderKeys(build("m1", "g1"), recips);
+    expect(before).toHaveLength(1);
+    expect(newLogicOrderProblems(build("m2", "g2"), recips, before)).toEqual([]);
+    expect(newLogicOrderProblems(build("m2", "g2"), recips, [])).toHaveLength(1);
   });
 });

@@ -786,9 +786,10 @@ function logicOrderIssues(fields: LogicFields, recips: LogicRecips): { key: stri
         if ((order.get(src.recipient_id) ?? 0) >= (order.get(f.recipient_id) ?? 0)) {
           const via = src.id === cited.id ? "" : ` (a través de la fórmula de "${cited.label ?? "?"}")`;
           out.push({
-            // No el id del campo dependiente: un PUT sin ids o por anclas lo regenera en cada guardado y el problema
-            // previo parecía nuevo.
-            key: `${src.id}|${f.recipient_id}`,
+            // Ids estables: el del campo citado por la condición (las condiciones lo referencian, así que se conserva)
+            // y los destinatarios. No el del campo dependiente ni el de la hoja de una fórmula (se buscan por etiqueta):
+            // un PUT sin ids o por anclas los regenera en cada guardado y el problema previo parecía nuevo.
+            key: `${cited.id}|${src.recipient_id}|${f.recipient_id}`,
             message: `El campo "${f.label ?? "?"}" de ${name.get(f.recipient_id) ?? "?"} depende de un campo de ${name.get(src.recipient_id) ?? "?"}${via}, que firma después o al mismo tiempo`,
           });
         }
@@ -807,9 +808,19 @@ export function logicOrderProblems(fields: LogicFields, recips: LogicRecips): st
  * un sobre o plantilla armados antes de esta regla (o un cambio que no toca la lógica, como el correo o el nombre de
  * un destinatario) no quedan bloqueados.
  */
-export async function assertLogicOrder(fields: LogicFields, recips: LogicRecips, before: readonly string[] = []) {
+/** Los mensajes de los problemas que no estaban antes (claves de logicOrderKeys). */
+export function newLogicOrderProblems(fields: LogicFields, recips: LogicRecips, before: readonly string[] = []): string[] {
   const prev = new Set(before);
-  const problems = [...new Set(logicOrderIssues(fields, recips).filter((i) => !prev.has(i.key)).map((i) => i.message))];
+  return [...new Set(logicOrderIssues(fields, recips).filter((i) => !prev.has(i.key)).map((i) => i.message))];
+}
+
+/** Las claves de los problemas de orden (para comparar antes y después de un cambio). */
+export function logicOrderKeys(fields: LogicFields, recips: LogicRecips): string[] {
+  return logicOrderIssues(fields, recips).map((i) => i.key);
+}
+
+export async function assertLogicOrder(fields: LogicFields, recips: LogicRecips, before: readonly string[] = []) {
+  const problems = newLogicOrderProblems(fields, recips, before);
   if (problems.length) throw new AppError(422, "logic_order", problems.join(". "), { problems });
 }
 

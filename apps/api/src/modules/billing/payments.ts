@@ -325,7 +325,7 @@ export async function refundPaymentsOnClosedEnvelopes(d: { db: Db; log: { error:
   }
 }
 
-export async function markPaymentFailed(db: Db, paymentId: string, reason: string) {
+export async function markPaymentFailed(db: Db, paymentId: string, reason: string, payerRecipientId?: string | null) {
   await db.tx(async (t) => {
     const p0 = await t.one<any>(`SELECT * FROM envelope_payments WHERE id = $1`, [paymentId]);
     if (!p0) return;
@@ -333,6 +333,10 @@ export async function markPaymentFailed(db: Db, paymentId: string, reason: strin
     const p = await t.one<any>(`SELECT * FROM envelope_payments WHERE id = $1 FOR UPDATE`, [paymentId]);
     // Ya reembolsado: un rechazo tardío de otro intento no lo devuelve a "pending" (como en markPaymentPaid).
     if (p.status === "paid" || p.status === "refunded") return;
+    // Rechazo de un checkout armado para un pagador anterior (p. ej. su Boleto venció después de una reasignación): no
+    // toca el cobro del pagador actual (lo devolvía a "pending" con su sesión todavía en proceso y le sumaba
+    // payment.failed a su evidencia).
+    if (payerRecipientId && payerRecipientId !== p.recipient_id) return;
     // Vuelve a "pending": el firmante puede intentar de nuevo.
     await t.query(`UPDATE envelope_payments SET status = 'pending', updated_at = now() WHERE id = $1`, [p.id]);
     await appendEvent(t, {

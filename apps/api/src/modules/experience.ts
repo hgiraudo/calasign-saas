@@ -18,7 +18,7 @@ import { enqueue } from "../infra/queue";
 import { AppError, badRequest, conflict, forbidden, notFound } from "../lib/errors";
 import { decrypt, encrypt, maskDestination, randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { authenticate, clientInfo, type AuthContext, type Services } from "./context";
-import { activateRecipient, advanceRouting, currentSignerGroup, danglingFormulaProblems, lockEnvelope, logicOrderProblems, pastExpiry } from "./envelopes";
+import { activateRecipient, advanceRouting, currentSignerGroup, danglingFormulaProblems, envelopeLogicOrderProblems, lockEnvelope, newLogicOrderProblems, pastExpiry } from "./envelopes";
 import { checkSenderValue, insertEnvelopeField } from "./fieldvalues";
 import { pruneDanglingConditions, saveFieldLogic } from "./logic";
 import { csvCell } from "./agreements/common";
@@ -138,6 +138,9 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
   const diff: Record<string, unknown> = {};
   const recips = new Map((await db.query<any>(`SELECT * FROM recipients WHERE envelope_id = $1`, [e.id])).map((r) => [r.id, r]));
   const groupBefore = await currentSignerGroup(db, e.id);
+  // Problemas de orden de la lógica que el sobre ya tenía (enviado antes de la regla): una corrección solo se frena por
+  // los que agrega.
+  const logicBefore = await envelopeLogicOrderProblems(db, e.id);
 
   const requireUntouched = (r: any, what: string) => {
     if (IMMUTABLE.includes(r.status)) throw conflict("recipient_immutable", `${r.name} ya firmó o terminó su participación: no se puede modificar`);
@@ -406,7 +409,7 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
     const pendingIds = new Set(now.filter((r) => PENDING.includes(r.status)).map((r) => r.id));
     const all = await db.query<any>(`SELECT id, recipient_id, label, conditions, read_only, type, formula FROM fields WHERE envelope_id = $1`, [e.id]);
     const live = now.filter((r) => !["delegated", "reassigned"].includes(r.status));
-    problems.push(...logicOrderProblems(all.map((f) => (pendingIds.has(f.recipient_id) ? f : { ...f, conditions: null })), live));
+    problems.push(...newLogicOrderProblems(all.map((f) => (pendingIds.has(f.recipient_id) ? f : { ...f, conditions: null })), live, logicBefore));
   }
   if (problems.length) throw new AppError(422, "envelope_incomplete", problems.join(". "), { problems });
 

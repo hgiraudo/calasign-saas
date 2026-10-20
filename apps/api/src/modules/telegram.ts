@@ -17,6 +17,10 @@ const MSG = {
   },
   cta: { es: "Revisar y firmar", "pt-BR": "Revisar e assinar", en: "Review and sign" },
   unknown: "Link inválido o vencido. / Link inválido ou expirado. / Invalid or expired link.",
+  needsOtp:
+    "Primero abrí el link de firma e ingresá el código que te enviamos; después volvé a tocar este enlace. / " +
+    "Primeiro abra o link de assinatura e informe o código que enviamos; depois toque este link de novo. / " +
+    "First open the signing link and enter the code we sent you; then tap this link again.",
 };
 
 export async function telegramRoutes(app: FastifyInstance, s: Services) {
@@ -41,7 +45,7 @@ export async function telegramRoutes(app: FastifyInstance, s: Services) {
       await sendTelegram({ to: String(chatId), text: MSG.unknown, link: null }).catch(() => {});
       return { ok: true };
     }
-    const linked = await s.db.tx(async (t) => {
+    const linked = await s.db.tx(async (t): Promise<boolean | "needs_otp"> => {
       const cur = await t.one<any>(`SELECT status FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
       // Sobre anulado, rechazado o vencido: ya no hay avisos que recibir y no se suman eventos a su evidencia.
       if (["voided", "declined", "expired"].includes(cur?.status)) return false;
@@ -51,9 +55,11 @@ export async function telegramRoutes(app: FastifyInstance, s: Services) {
       // Con solo el link no se toma el canal de otra persona: no se reemplaza un chat ya vinculado, y si el link pide
       // código (OTP), el titular tiene que haberse autenticado antes (el link reenviado no alcanza para ver el sobre,
       // pero sí servía para recibir los avisos con el asunto y dejar al titular sin ellos).
+      // authenticated_at: lo marca el código validado y se borra al corregir el contacto (una validación del contacto
+      // anterior no vale para el nuevo).
       if (String(r.auth_method ?? "").startsWith("otp")) {
-        const authed = await t.one(`SELECT 1 FROM otp_challenges WHERE recipient_id = $1 AND verified_at IS NOT NULL LIMIT 1`, [r.id]);
-        if (!authed) return false;
+        const cur = await t.one<{ authenticated_at: string | null }>(`SELECT authenticated_at FROM recipients WHERE id = $1`, [r.id]);
+        if (!cur?.authenticated_at) return "needs_otp";
       }
       const upd = await t.query(
         `UPDATE recipients SET telegram_chat_id = $2
@@ -74,8 +80,8 @@ export async function telegramRoutes(app: FastifyInstance, s: Services) {
       });
       return true;
     });
-    if (!linked) {
-      await sendTelegram({ to: String(chatId), text: MSG.unknown, link: null }).catch(() => {});
+    if (linked !== true) {
+      await sendTelegram({ to: String(chatId), text: linked === "needs_otp" ? MSG.needsOtp : MSG.unknown, link: null }).catch(() => {});
       return { ok: true };
     }
     const locale = normLocale(r.locale ?? e.locale);

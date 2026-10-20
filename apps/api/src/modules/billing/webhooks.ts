@@ -90,7 +90,7 @@ export async function handleStripeEvent(db: Db, event: any) {
       return;
     }
     case "checkout.session.async_payment_failed": {
-      if (obj.mode === "payment" && obj.metadata?.paymentId) await markPaymentFailed(db, obj.metadata.paymentId, "pago rechazado por Stripe");
+      if (obj.mode === "payment" && obj.metadata?.paymentId) await markPaymentFailed(db, obj.metadata.paymentId, "pago rechazado por Stripe", obj.metadata.recipientId ?? null);
       return;
     }
     case "customer.subscription.updated":
@@ -152,7 +152,7 @@ export async function handleMercadoPagoNotification(db: Db, type: string, dataId
         if (row?.checkout_id) await mpExpirePreference(row.checkout_id).catch(() => undefined);
       }
     } else if (["rejected", "cancelled"].includes(pay.status)) {
-      await markPaymentFailed(db, paymentId, `pago ${pay.status} en Mercado Pago`);
+      await markPaymentFailed(db, paymentId, `pago ${pay.status} en Mercado Pago`, payerRecipientId || null);
     }
     return;
   }

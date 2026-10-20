@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { ApiKey, CreateApiKeyResponse, Permission } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
-import { useAccess } from "../lib/access";
+import { canManagePerms, PlanNotice, useAccess } from "../lib/access";
 import { formatDateTime, useI18n, confirmAction, placeholderText } from "../lib/i18n";
 import { ErrorBox, Spinner } from "../components/ui";
 import { useRoleLabel, useTeamsText } from "../lib/i18n-teams";
@@ -9,6 +9,7 @@ import { useRoleLabel, useTeamsText } from "../lib/i18n-teams";
 interface KeyRole {
   id: string;
   role: string;
+  roleId: string | null;
   roleName: string;
 }
 /** Rol de una opción, sin traducir: la etiqueta se arma al dibujar (si no, quedaba en el idioma del momento de la carga). */
@@ -32,7 +33,12 @@ export function ApiKeysPage() {
   const [role, setRole] = useState("admin");
   const [roleOptions, setRoleOptions] = useState<RoleOption[]>([]);
   const [keyRoles, setKeyRoles] = useState<Record<string, KeyRole>>({});
-  const { access } = useAccess();
+  const { access, hasFeature } = useAccess();
+  const inPlan = hasFeature("api");
+  // Como la API (assertCanGrant / assertCanManageApiKey): solo roles o keys con permisos que quien está en la sesión tiene.
+  const canGrant = (perms: readonly string[] | null | undefined) => canManagePerms(access, perms);
+  const keyPerms = (k: KeyRole | undefined) =>
+    !k ? null : roleOptions.find((o) => o.value === (k.role === "custom" ? `custom:${k.roleId}` : k.role))?.permissions ?? null;
 
   const load = () =>
     Promise.all([api<{ items: ApiKey[] }>("/v1/api-keys"), api<{ items: KeyRole[] }>("/v1/api-keys/roles")])
@@ -117,6 +123,7 @@ export function ApiKeysPage() {
         <h1>{t("keys.title")}</h1>
       </div>
       <p className="muted">{t("keys.intro")}</p>
+      <PlanNotice feature="api" />
 
       <form onSubmit={create} className="card pad row-wrap">
         <label className="field grow">
@@ -128,14 +135,14 @@ export function ApiKeysPage() {
             <span>{tm("keys.role")}</span>
             <select value={role} onChange={(e) => setRole(e.target.value)}>
               {roleOptions.map((o) => (
-                <option key={o.value} value={o.value}>
+                <option key={o.value} value={o.value} disabled={!canGrant(o.permissions)}>
                   {o.name ?? roleLabel(o.role)}
                 </option>
               ))}
             </select>
           </label>
         )}
-        <button className="btn btn-primary" disabled={busy || !name.trim()}>
+        <button className="btn btn-primary" disabled={busy || !name.trim() || !inPlan || !canGrant(roleOptions.find((o) => o.value === role)?.permissions)}>
           {t("keys.create")}
         </button>
       </form>
@@ -182,11 +189,11 @@ export function ApiKeysPage() {
                   <td className="right">
                     {k.revokedAt ? (
                       <span className="badge badge-voided">{t("keys.revoked")}</span>
-                    ) : (
+                    ) : canGrant(keyPerms(keyRoles[k.id])) ? (
                       <button type="button" className="btn btn-danger btn-sm" onClick={() => revoke(k.id)}>
                         {t("keys.revoke")}
                       </button>
-                    )}
+                    ) : null}
                   </td>
                 </tr>
               ))}

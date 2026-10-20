@@ -134,6 +134,11 @@ function featureForRoute(url: string, method: string, body: unknown): { feature:
   if (url === "/v1/web-forms") return { feature: "web_forms", label: "Los formularios web" };
   // Probar un endpoint o reenviar una entrega también envía: como los eventos (webhook-outbox.ts), solo con el plan.
   if (url === "/v1/webhooks" || url === "/v1/webhooks/:id/test" || url === "/v1/webhook-deliveries/:id/retry") return { feature: "webhooks", label: "Los webhooks" };
+  // Activar uno pausado (o cambiar su URL o eventos) también: sin el plan "Activar" respondía bien y nunca entregaba
+  // nada. Pausarlo sí se permite.
+  if (url === "/v1/webhooks/:id" && method === "PATCH" && (body as { active?: unknown } | null)?.active !== false) {
+    return { feature: "webhooks", label: "Los webhooks" };
+  }
   if (url.startsWith("/v1/settings/branding")) return { feature: "branding", label: "La marca propia" };
   if (url.startsWith("/v1/settings/sso")) return { feature: "sso", label: "El inicio de sesión único (SSO)" };
   if (url.startsWith("/v1/settings/scim")) return { feature: "scim", label: "El aprovisionamiento SCIM" };

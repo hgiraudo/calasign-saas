@@ -2,7 +2,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import type { IdentitySettings, IdvLevel, IdvProvider, ScimSettings, SsoSettings, SsoSettingsInput } from "@calasign/shared";
 import { IDV_LEVELS, MOCK_DECISIONS, PERMISSIONS } from "@calasign/shared";
-import { useAccess } from "../lib/access";
+import { PlanNotice, useAccess } from "../lib/access";
 import { api, errorText } from "../lib/api";
 import { formatDateTime, useI18n, confirmAction } from "../lib/i18n";
 import { useIdnText, type IdnKey } from "../lib/i18n-identity";
@@ -193,6 +193,11 @@ export function SsoSettingsPage() {
   const [domains, setDomains] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
+  // PUT /v1/settings/sso es solo del propietario (el IdP puede abrir sesión como cualquier miembro): para el resto la
+  // página queda de solo lectura. Sin el plan solo se puede apagar el SSO (enabled: false), no configurarlo.
+  const { access, hasFeature } = useAccess();
+  const readOnly = access !== null && access.role !== "owner";
+  const inPlan = hasFeature("sso");
   if (!data) return error ? <ErrorBox error={error} /> : <Spinner />;
 
   const oidc = data.oidc ?? { issuer: "", clientId: "", scopes: "openid email profile", hasClientSecret: false };
@@ -238,8 +243,14 @@ export function SsoSettingsPage() {
   const sp = data.serviceProvider;
   return (
     <Page title={tx("settings.sso")} intro={tx("sso.intro")}>
+      {readOnly && (
+        <div className="hint" role="note">
+          {tx("sso.ownerOnly")}
+        </div>
+      )}
+      <PlanNotice feature="sso" />
       <form className="stack" onSubmit={save}>
-        <div className="card pad stack">
+        <fieldset className="card pad stack" disabled={readOnly} style={{ minWidth: 0, margin: 0 }}>
           <label className="check">
             <input
               type="checkbox"
@@ -320,14 +331,16 @@ export function SsoSettingsPage() {
             <input type="checkbox" checked={data.enforce} onChange={(e) => setData({ ...data, enforce: e.target.checked })} disabled={!data.enabled} />
             <span>{tx("sso.enforce")}</span>
           </label>
-        </div>
+        </fieldset>
         <ErrorBox error={error} />
         {saved && <p className="alert alert-success">{tx("sso.saved")}</p>}
-        <div className="row-end">
-          <button className="btn btn-primary" disabled={busy}>
-            {tx("common.save")}
-          </button>
-        </div>
+        {!readOnly && (
+          <div className="row-end">
+            <button className="btn btn-primary" disabled={busy || (!inPlan && data.enabled)}>
+              {tx("common.save")}
+            </button>
+          </div>
+        )}
       </form>
       <div className="card pad stack">
         <h2>{tx("sso.spTitle")}</h2>
@@ -359,8 +372,10 @@ export function ScimSettingsPage() {
   const [busy, setBusy] = useState(false);
   // Como la API: cambiar algo pide settings:manage, y crear un token (o elegir administrador como rol por defecto)
   // pide además todos los permisos de administrador o ser propietario. Sin esto se veían controles que daban 403.
-  const { access, can } = useAccess();
+  const { access, can, hasFeature } = useAccess();
   const canEdit = can("settings:manage");
+  // Sin el plan se pueden ver y revocar los tokens, pero no crear otros ni cambiar el rol por defecto (402).
+  const inPlan = hasFeature("scim");
   const canAdmin = !access || access.role === "owner" || PERMISSIONS.every((p) => access.permissions.includes(p));
   if (!data) return error ? <ErrorBox error={error} /> : <Spinner />;
 
@@ -379,13 +394,14 @@ export function ScimSettingsPage() {
 
   return (
     <Page title={tx("settings.scim")} intro={tx("scim.intro")}>
+      <PlanNotice feature="scim" />
       <div className="card pad stack">
         <CopyRow label={tx("scim.baseUrl")} value={data.baseUrl} />
         <label className="field idn-narrow">
           <span>{tx("scim.defaultRole")}</span>
           <select
             value={data.defaultRole}
-            disabled={busy || !canEdit}
+            disabled={busy || !canEdit || !inPlan}
             onChange={(e) => run(async () => setData(await api<ScimSettings>("/v1/settings/scim", { method: "PATCH", body: { defaultRole: e.target.value } })))}
           >
             <option value="member">{roleLabel("member")}</option>
@@ -417,7 +433,7 @@ export function ScimSettingsPage() {
           }}
         >
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder={tx("scim.tokenName")} aria-label={tx("scim.tokenName")} required />
-          <button className="btn btn-primary" disabled={busy || !name.trim()}>
+          <button className="btn btn-primary" disabled={busy || !name.trim() || !inPlan}>
             {tx("scim.create")}
           </button>
         </form>

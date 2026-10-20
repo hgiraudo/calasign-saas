@@ -630,6 +630,8 @@ export const AccessSchema = named(
       .array(z.object({ id: uuid(), name: z.string(), slug: z.string(), role: z.enum(MEMBER_ROLES), roleName: z.string(), current: z.boolean() }))
       .describe("Organizaciones del usuario (vacío con una API key)."),
     twoFactor: z.object({ enabled: z.boolean(), requiredByTenant: z.boolean(), setupRequired: z.boolean() }),
+    planFeatures: z.array(z.enum(PLAN_FEATURES)).describe("Funciones del plan actual de la organización (lo que no figura responde 402 plan_limit)."),
+    planName: z.string().describe("Nombre del plan actual."),
   }),
 );
 

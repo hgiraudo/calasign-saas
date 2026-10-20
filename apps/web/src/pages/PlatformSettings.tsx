@@ -25,7 +25,7 @@ import { usePlatformText } from "../lib/i18n-platform";
 import { useConnText } from "../lib/i18n-connectors";
 import { useRoleLabel } from "../lib/i18n-teams";
 import { ErrorBox, Spinner } from "../components/ui";
-import { useAccess } from "../lib/access";
+import { canManagePerms, PlanNotice, useAccess } from "../lib/access";
 
 // ───────────────────────────── Comunes ─────────────────────────────
 
@@ -121,7 +121,8 @@ function OAuthAppsAdmin() {
   // app no tiene, y con solo Miembro/Administrador alguien con un rol personalizado con api_keys:manage no podía crear
   // ninguna app de servicio.
   const [role, setRole] = useState("member");
-  const { access } = useAccess();
+  const { access, hasFeature } = useAccess();
+  const inPlan = hasFeature("api");
   const [roleOptions, setRoleOptions] = useState<{ value: string; role: string; name: string | null; permissions: Permission[] }[]>([]);
   useEffect(() => {
     api<{ items: { id: string; name: string; permissions: Permission[] }[]; builtin: { role: string; permissions: Permission[] }[] }>("/v1/roles")
@@ -144,6 +145,11 @@ function OAuthAppsAdmin() {
     if (first) setRole((cur) => (cur === "member" ? first.value : cur));
   }, [access, roleOptions]);
   const [busy, setBusy] = useState(false);
+  // Permisos del rol de una app de servicio (o del rol elegido): la API rechaza crear, rotar o revocar una app cuyo rol
+  // tiene permisos que quien está en la sesión no tiene (assertCanGrantRole / assertCanManageServiceApp).
+  const permsOfRole = (r: string | null, roleId: string | null) =>
+    !r ? [] : roleOptions.find((o) => o.value === (r === "custom" ? `custom:${roleId}` : r))?.permissions ?? null;
+  const roleGrantable = canManagePerms(access, roleOptions.find((o) => o.value === role)?.permissions);
 
   useEffect(() => {
     load().catch((e) => setError(errorText(e)));
@@ -194,6 +200,7 @@ function OAuthAppsAdmin() {
       <p className="small muted">
         {p("oauth.endpoints", { authorize: `${origin}/oauth/authorize`, token: `${origin}/oauth/token`, revoke: `${origin}/oauth/revoke` })}
       </p>
+      <PlanNotice feature="api" />
 
       <form onSubmit={create} className="card pad stack" aria-label={p("oauth.new")}>
         <h2 style={{ margin: 0 }}>{p("oauth.new")}</h2>
@@ -234,8 +241,8 @@ function OAuthAppsAdmin() {
           <label className="field" style={{ maxWidth: 320 }}>
             <span>{p("oauth.role")}</span>
             <select value={role} onChange={(e) => setRole(e.target.value)}>
-              {(roleOptions.length ? roleOptions : [{ value: "member", role: "member", name: null }, { value: "admin", role: "admin", name: null }]).map((o) => (
-                <option key={o.value} value={o.value}>
+              {(roleOptions.length ? roleOptions : [{ value: "member", role: "member", name: null, permissions: null }, { value: "admin", role: "admin", name: null, permissions: null }]).map((o) => (
+                <option key={o.value} value={o.value} disabled={!canManagePerms(access, o.permissions)}>
                   {o.name ?? roleLabel(o.role)}
                 </option>
               ))}
@@ -253,7 +260,7 @@ function OAuthAppsAdmin() {
           </div>
         </fieldset>
         <div className="row-end">
-          <button className="btn btn-primary" disabled={busy || !name.trim() || grants.length === 0 || scopes.length === 0}>
+          <button className="btn btn-primary" disabled={busy || !name.trim() || grants.length === 0 || scopes.length === 0 || !inPlan || (grants.includes("client_credentials") && !roleGrantable)}>
             {p("oauth.create")}
           </button>
         </div>
@@ -293,7 +300,7 @@ function OAuthAppsAdmin() {
               </div>
               <span className={`badge ${a.revokedAt ? "badge-voided" : "badge-completed"}`}>{a.revokedAt ? p("oauth.revoked") : p("common.active")}</span>
             </div>
-            {!a.revokedAt && (
+            {!a.revokedAt && canManagePerms(access, permsOfRole(a.role, a.roleId)) && (
               <div className="row-wrap">
                 {a.confidential && (
                   <button
@@ -510,7 +517,7 @@ export function NotificationIntegrationsPage() {
                 {p("common.test")}
               </button>
               <button type="button" className="btn btn-sm" onClick={() => act(() => api(`/v1/notification-integrations/${it.id}`, { method: "PATCH", body: { active: !it.active } }))}>
-                {it.active ? p("common.inactive") : p("common.active")}
+                {it.active ? p("common.deactivate") : p("common.activate")}
               </button>
               <span className="grow" />
               <button type="button" className="btn btn-sm btn-danger" onClick={() => confirmAction() && act(() => api(`/v1/notification-integrations/${it.id}`, { method: "DELETE" }))}>
@@ -772,7 +779,7 @@ export function StoragePage() {
                 {p("common.test")}
               </button>
               <button type="button" className="btn btn-sm" onClick={() => act(() => api(`/v1/storage/connections/${c.id}`, { method: "PATCH", body: { active: !c.active } }))}>
-                {c.active ? p("common.inactive") : p("common.active")}
+                {c.active ? p("common.deactivate") : p("common.activate")}
               </button>
               <label className="row-wrap small">
                 <input
@@ -837,6 +844,8 @@ export function CustomDomainPage() {
   const [dom, setDom] = useState<CustomDomain | null | undefined>(undefined);
   const [input, setInput] = useState("");
   const [saving, setSaving] = useState(false);
+  // Sin el plan se puede ver, verificar y quitar el dominio actual, pero no configurar otro (PUT responde 402).
+  const inPlan = useAccess().hasFeature("custom_domain");
   const load = () => api<{ domain: CustomDomain | null }>("/v1/domains").then((r) => setDom(r.domain));
   const { error, setError, act } = useAct(load);
 
@@ -874,6 +883,7 @@ export function CustomDomainPage() {
 
   return (
     <Page title={p("dom.title")} intro={p("dom.intro")}>
+      <PlanNotice feature="custom_domain" />
       <ErrorBox error={error} />
       {dom === undefined ? (
         <Spinner />
@@ -895,7 +905,7 @@ export function CustomDomainPage() {
               <input required value={input} onChange={(e) => setInput(e.target.value)} placeholder={dom?.domain ?? "firmas.tuempresa.com"} />
             </label>
             <div style={{ alignSelf: "flex-end" }}>
-              <button className="btn btn-primary" disabled={saving}>{p("dom.set")}</button>
+              <button className="btn btn-primary" disabled={saving || !inPlan}>{p("dom.set")}</button>
             </div>
           </form>
 

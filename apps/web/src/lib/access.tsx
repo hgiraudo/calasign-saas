@@ -1,16 +1,20 @@
 // Rol, permisos y organizaciones de la sesión (GET /v1/me/access).
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import type { AccessResponse, Permission } from "@calasign/shared";
+import { Link } from "react-router-dom";
+import type { AccessResponse, Permission, PlanFeature } from "@calasign/shared";
 import { api } from "./api";
 import { useAuth } from "./auth";
+import { useI18n } from "./i18n";
 
 interface AccessCtx {
   access: AccessResponse | null;
   can: (p: Permission) => boolean;
+  /** ¿El plan de la organización incluye esta función? Mientras carga, sí (la API igual responde 402 plan_limit). */
+  hasFeature: (f: PlanFeature) => boolean;
   refresh: () => Promise<void>;
 }
 
-const Ctx = createContext<AccessCtx>({ access: null, can: () => true, refresh: async () => {} });
+const Ctx = createContext<AccessCtx>({ access: null, can: () => true, hasFeature: () => true, refresh: async () => {} });
 
 export function AccessProvider({ children }: { children: ReactNode }) {
   const { me } = useAuth();
@@ -45,7 +49,33 @@ export function AccessProvider({ children }: { children: ReactNode }) {
 
   // Mientras carga, no se ocultan cosas (el servidor igual aplica los permisos).
   const can = useCallback((p: Permission) => (access ? access.permissions.includes(p) : true), [access]);
-  return <Ctx.Provider value={{ access, can, refresh }}>{children}</Ctx.Provider>;
+  const hasFeature = useCallback((f: PlanFeature) => (access?.planFeatures ? access.planFeatures.includes(f) : true), [access]);
+  return <Ctx.Provider value={{ access, can, hasFeature, refresh }}>{children}</Ctx.Provider>;
+}
+
+/**
+ * ¿Puede quien está en la sesión administrar a alguien (o un rol, una API key, una app de servicio) con estos permisos?
+ * Como la API (assertCanManage / assertCanGrant): un propietario sí; si no, solo si tiene todos esos permisos. Sin datos
+ * todavía, no se oculta (la API decide).
+ */
+export function canManagePerms(access: { role?: string | null; permissions: readonly string[] } | null | undefined, perms: readonly string[] | null | undefined) {
+  if (!access || !perms) return true;
+  return access.role === "owner" || perms.every((p) => access.permissions.includes(p));
+}
+
+/**
+ * Aviso de función no incluida en el plan, con link a Facturación. Lo configurado se puede seguir viendo, pausando o
+ * quitando (la API lo permite sin el plan); lo que crea o activa algo nuevo se deshabilita en cada página.
+ */
+export function PlanNotice({ feature, text }: { feature: PlanFeature; text?: string }) {
+  const { access, hasFeature } = useAccess();
+  const { t } = useI18n();
+  if (hasFeature(feature)) return null;
+  return (
+    <div className="hint" role="note">
+      {text ?? t("common.notInPlan", { plan: access?.planName ?? "" })} <Link to="/app/settings/billing">{t("common.seePlans")}</Link>
+    </div>
+  );
 }
 
 export function useAccess() {

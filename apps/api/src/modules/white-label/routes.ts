@@ -73,6 +73,21 @@ async function requireWhiteLabel(db: Db, tenantId: string) {
   requireFeature(plan, "white_label", "La marca blanca");
 }
 
+/** La configuración propia guardada de una marca (la por defecto en tenants.branding.whiteLabel). */
+async function storedBrandConfig(db: Db, tenantId: string, brandId: string | null): Promise<Record<string, unknown>> {
+  if (brandId) return ((await db.one<any>(`SELECT config FROM brands WHERE id = $1 AND tenant_id = $2`, [brandId, tenantId]))?.config ?? {}) as Record<string, unknown>;
+  return ((await db.one<any>(`SELECT branding FROM tenants WHERE id = $1`, [tenantId]))?.branding?.whiteLabel ?? {}) as Record<string, unknown>;
+}
+
+/** Si la configuración nueva agrega o cambia algo respecto de lo guardado (vaciar, apagar o dejar igual no cuenta). */
+function addsBrandConfig(next: unknown, prev: unknown): boolean {
+  const unset = (v: unknown) => v === undefined || v === null || v === "" || v === false || (Array.isArray(v) && v.length === 0);
+  if (unset(next)) return false;
+  if (Array.isArray(next) || typeof next !== "object") return JSON.stringify(next) !== JSON.stringify(prev);
+  const p = prev && typeof prev === "object" && !Array.isArray(prev) ? (prev as Record<string, unknown>) : {};
+  return Object.entries(next as Record<string, unknown>).some(([k, v]) => addsBrandConfig(v, p[k]));
+}
+
 async function requireBranding(db: Db, tenantId: string) {
   const { plan } = await tenantPlan(db, tenantId);
   requireFeature(plan, "branding", "La marca propia");
@@ -366,8 +381,12 @@ export async function whiteLabelRoutes(app: FastifyInstance, s: Services) {
     const a = A(req);
     const input = UpdateBrandInput.parse(req.body);
     const cur = await loadBrand(s.db, a.tenantId, req.params.id);
-    await requireBranding(s.db, a.tenantId);
-    if (usesWhiteLabel(input.config) || cur.brandId) await requireWhiteLabel(s.db, a.tenantId);
+    // Quitar o dejar igual lo guardado no exige el plan (como PATCH /v1/settings/branding): después de bajar de plan,
+    // la marca seguía aplicándose y no se podía sacar sin volver a pagar.
+    if (addsBrandConfig(input.config, await storedBrandConfig(s.db, a.tenantId, cur.brandId))) {
+      await requireBranding(s.db, a.tenantId);
+      if (usesWhiteLabel(input.config) || cur.brandId) await requireWhiteLabel(s.db, a.tenantId);
+    }
     await validateConfig(s.db, a.tenantId, input.config);
     if (!cur.brandId) {
       // La marca por defecto también actualiza los campos históricos (los leen /v1/settings/branding y otros módulos).

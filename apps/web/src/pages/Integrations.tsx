@@ -11,7 +11,7 @@ import { api, errorText } from "../lib/api";
 import { formatDateTime, useI18n, confirmAction, placeholderText } from "../lib/i18n";
 import { useIntText } from "../lib/integrations-i18n";
 import { ErrorBox, Spinner } from "../components/ui";
-import { useAccess } from "../lib/access";
+import { PlanNotice, useAccess } from "../lib/access";
 
 export function IntegrationsPage() {
   const tt = useIntText();
@@ -31,7 +31,11 @@ function WebhooksSection() {
   const tt = useIntText();
   const { t } = useI18n();
   // La API pide además envelopes:view_all para crear, probar, pausar o borrar (reciben datos de todos los sobres).
-  const canEdit = useAccess().can("envelopes:view_all");
+  const { can, hasFeature } = useAccess();
+  const canEdit = can("envelopes:view_all");
+  // Sin el plan se pueden ver, pausar y borrar los webhooks, pero no crear, probar, reintentar ni activar (402): los
+  // que figuran activos no entregan nada.
+  const inPlan = hasFeature("webhooks");
   const [items, setItems] = useState<WebhookEndpoint[] | null>(null);
   const [url, setUrl] = useState("");
   const [description, setDescription] = useState("");
@@ -87,6 +91,7 @@ function WebhooksSection() {
     <section className="stack" style={{ marginTop: 24 }}>
       <h2>{tt("wh.title")}</h2>
       <p className="muted small">{tt("wh.intro")}</p>
+      <PlanNotice feature="webhooks" />
 
       {!canEdit ? (
         <div className="hint" role="note">
@@ -123,7 +128,7 @@ function WebhooksSection() {
           </div>
         </fieldset>
         <div className="row-end">
-          <button className="btn btn-primary" disabled={busy || !url.trim()}>
+          <button className="btn btn-primary" disabled={busy || !url.trim() || !inPlan}>
             {tt("wh.create")}
           </button>
         </div>
@@ -170,15 +175,22 @@ function WebhooksSection() {
                   {w.events.length ? w.events.join(", ") : tt("wh.allEvents")} · <code>{w.secretPrefix}…</code>
                 </span>
               </div>
-              <span className={`badge ${w.active ? "badge-completed" : "badge-voided"}`}>{w.active ? tt("wh.active") : tt("wh.inactive")}</span>
+              <span className={`badge ${w.active && inPlan ? "badge-completed" : w.active ? "badge-expired" : "badge-voided"}`}>
+                {w.active ? (inPlan ? tt("wh.active") : tt("wh.noEffect")) : tt("wh.inactive")}
+              </span>
             </div>
             <div className="row-wrap">
               {canEdit && (
                 <>
-                  <button type="button" className="btn btn-sm" onClick={() => act(() => api(`/v1/webhooks/${w.id}/test`, { method: "POST" }).then(() => setOpen(w.id)))}>
+                  <button type="button" className="btn btn-sm" disabled={!inPlan} onClick={() => act(() => api(`/v1/webhooks/${w.id}/test`, { method: "POST" }).then(() => setOpen(w.id)))}>
                     {tt("wh.test")}
                   </button>
-                  <button type="button" className="btn btn-sm" onClick={() => act(() => api(`/v1/webhooks/${w.id}`, { method: "PATCH", body: { active: !w.active } }))}>
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    disabled={!w.active && !inPlan}
+                    onClick={() => act(() => api(`/v1/webhooks/${w.id}`, { method: "PATCH", body: { active: !w.active } }))}
+                  >
                     {w.active ? tt("wh.pause") : tt("wh.resume")}
                   </button>
                 </>
@@ -193,7 +205,7 @@ function WebhooksSection() {
                 </button>
               )}
             </div>
-            {open === w.id && <Deliveries webhookId={w.id} canRetry={canEdit} />}
+            {open === w.id && <Deliveries webhookId={w.id} canRetry={canEdit && inPlan} />}
           </div>
         ))
       )}
@@ -261,6 +273,7 @@ function Deliveries({ webhookId, canRetry }: { webhookId: string; canRetry: bool
               </td>
               <td>{d.attempts}</td>
               <td className="right">
+                {/* Fallidas, o pendientes de su reintento automático (la API lo adelanta; si ya está en curso, 409 delivery_pending). */}
                 {canRetry && d.status !== "succeeded" && (
                   <button
                     type="button"

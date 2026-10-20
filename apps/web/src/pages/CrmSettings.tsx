@@ -289,7 +289,7 @@ export function CrmSettingsPage() {
                   {t("test")}
                 </button>
                 <button type="button" className="btn btn-sm" onClick={() => act(() => api(`/v1/crm/connections/${c.id}`, { method: "PATCH", body: { active: !c.active } }))}>
-                  {c.active ? t("inactive") : t("active")}
+                  {c.active ? t("deactivate") : t("activate")}
                 </button>
                 <button type="button" className="btn btn-sm btn-danger" onClick={() => confirmAction() && act(() => api(`/v1/crm/connections/${c.id}`, { method: "DELETE" }))}>
                   {t("delete")}

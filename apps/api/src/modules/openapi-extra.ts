@@ -304,6 +304,7 @@ export const ERRORS: Record<string, Err> = {
   invalid_brand: { status: 400, code: "invalid_brand", message: "La marca no existe en esta organización", summary: "brandId no es una sub-marca de la organización" },
   not_found: { status: 404, code: "not_found", message: "Sobre no encontrado", summary: "No existe o la credencial no puede verlo (el mensaje nombra el recurso)" },
 
+  delivery_pending: { status: 409, code: "delivery_pending", message: "La entrega ya se está reintentando", summary: "La entrega tiene un intento en curso o un reintento manual ya pedido" },
   not_draft: { status: 409, code: "not_draft", message: "Solo se puede modificar un sobre en borrador", summary: "El sobre ya no es un borrador" },
   idempotency_mismatch: {
     status: 409,

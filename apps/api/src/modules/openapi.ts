@@ -596,9 +596,10 @@ const OPS: Op[] = [
     operationId: "retryWebhookDelivery",
     tag: "Webhooks",
     summary: "Reintentar una entrega",
-    description: "Un intento manual inmediato (también con el endpoint inactivo). Pide `webhooks:manage` y además `envelopes:view_all`.",
+    description: "Un intento manual inmediato (también con el endpoint inactivo). Con la entrega pendiente de su reintento automático, lo adelanta (no la manda dos veces); si ya hay un intento en curso o un reintento manual pedido, 409 delivery_pending. Pide `webhooks:manage` y además `envelopes:view_all`.",
     status: 202,
     response: WebhookDeliverySchema,
+    errors: ["delivery_pending"],
   },
 
   // Envío masivo

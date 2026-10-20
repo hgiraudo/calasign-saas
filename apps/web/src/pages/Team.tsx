@@ -11,7 +11,7 @@ import {
 } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
 import { useAuth } from "../lib/auth";
-import { useAccess } from "../lib/access";
+import { canManagePerms, useAccess } from "../lib/access";
 import { formatDateTime, useI18n, confirmAction, placeholderText } from "../lib/i18n";
 import { useRoleLabel, useTeamsText } from "../lib/i18n-teams";
 import { ErrorBox, Modal, Spinner } from "../components/ui";
@@ -22,15 +22,6 @@ interface RolesResponse {
   builtin: { role: "owner" | "admin" | "member"; name: string; permissions: Permission[] }[];
 }
 
-/**
- * ¿Puede quien está en la sesión administrar a alguien (o un rol) con estos permisos? Como la API (assertCanManage):
- * un propietario sí; si no, solo si tiene todos esos permisos. Sin datos todavía, no se oculta (la API decide).
- */
-function canManagePerms(access: { role?: string | null; permissions: readonly string[] } | null | undefined, perms: readonly string[] | null) {
-  if (!access || !perms) return true;
-  return access.role === "owner" || perms.every((p) => access.permissions.includes(p));
-}
-
 function permsOfMember(roles: RolesResponse | null, m: { role: string; roleId?: string | null }): readonly string[] | null {
   if (!roles) return null;
   if (m.role === "custom") return roles.items.find((r) => r.id === m.roleId)?.permissions ?? null;
@@ -38,19 +29,33 @@ function permsOfMember(roles: RolesResponse | null, m: { role: string; roleId?: 
 }
 
 /** Opciones de rol para los selects: integrados + personalizados ("custom:<id>"). */
-function RoleSelect({ value, onChange, roles, allowOwner }: { value: string; onChange: (v: string) => void; roles: RolesResponse | null; allowOwner: boolean }) {
+function RoleSelect({
+  value,
+  onChange,
+  roles,
+  allowOwner,
+  ariaLabel,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  roles: RolesResponse | null;
+  allowOwner: boolean;
+  ariaLabel?: string;
+}) {
   const label = useRoleLabel();
+  // La API no deja otorgar permisos que uno no tiene (assertCanGrant): esos roles se muestran deshabilitados.
+  const { access } = useAccess();
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value)}>
+    <select value={value} onChange={(e) => onChange(e.target.value)} aria-label={ariaLabel}>
       {(roles?.builtin ?? [])
         .filter((b) => allowOwner || b.role !== "owner")
         .map((b) => (
-          <option key={b.role} value={b.role}>
+          <option key={b.role} value={b.role} disabled={!canManagePerms(access, b.permissions)}>
             {label(b.role)}
           </option>
         ))}
       {(roles?.items ?? []).map((r) => (
-        <option key={r.id} value={`custom:${r.id}`}>
+        <option key={r.id} value={`custom:${r.id}`} disabled={!canManagePerms(access, r.permissions)}>
           {r.name}
         </option>
       ))}
@@ -95,7 +100,7 @@ export function TeamPage() {
         ))}
       </div>
       <ErrorBox error={error} />
-      {current === "members" && <MembersTab roles={roles} manage={manage} />}
+      {current === "members" && <MembersTab roles={roles} manage={manage} reloadRoles={loadRoles} />}
       {current === "invitations" && <InvitationsTab roles={roles} />}
       {current === "roles" && <RolesTab roles={roles} reload={loadRoles} />}
       {current === "groups" && <GroupsTab manage={manage} />}
@@ -105,7 +110,7 @@ export function TeamPage() {
 
 // ───────────────────────────── Miembros ─────────────────────────────
 
-function MembersTab({ roles, manage }: { roles: RolesResponse | null; manage: boolean }) {
+function MembersTab({ roles, manage, reloadRoles }: { roles: RolesResponse | null; manage: boolean; reloadRoles: () => Promise<unknown> }) {
   const tt = useTeamsText();
   const { me } = useAuth();
   const { access, refresh: refreshAccess } = useAccess();
@@ -131,6 +136,8 @@ function MembersTab({ roles, manage }: { roles: RolesResponse | null; manage: bo
       // El rol propio cambió: sin recargar los permisos, la pantalla seguía ofreciendo acciones que ya no tiene (403).
       if (m.userId === me?.user.id) await refreshAccess();
       await load();
+      // Los conteos de miembros por rol cambiaron.
+      void reloadRoles();
     } catch (e) {
       setError(errorText(e));
     }
@@ -144,6 +151,7 @@ function MembersTab({ roles, manage }: { roles: RolesResponse | null; manage: bo
       await api(`/v1/members/${removing.userId}`, { method: "DELETE" });
       setRemoving(null);
       await load();
+      void reloadRoles();
     } catch (e) {
       setRemoving(null);
       setError(errorText(e));
@@ -185,7 +193,7 @@ function MembersTab({ roles, manage }: { roles: RolesResponse | null; manage: bo
                   </td>
                   <td>
                     {manage && canTouch ? (
-                      <RoleSelect value={value} roles={roles} allowOwner={isOwner} onChange={(v) => changeRole(m, v)} />
+                      <RoleSelect value={value} roles={roles} allowOwner={isOwner} onChange={(v) => changeRole(m, v)} ariaLabel={tt("team.roleOf", { name: m.name })} />
                     ) : (
                       label(m.role, m.roleName)
                     )}

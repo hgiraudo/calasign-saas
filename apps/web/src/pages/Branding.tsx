@@ -21,7 +21,7 @@ import {
 } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
 import { useAuth } from "../lib/auth";
-import { useAccess } from "../lib/access";
+import { PlanNotice, useAccess } from "../lib/access";
 import { confirmAction, LOCALE_LABELS, useI18n } from "../lib/i18n";
 import { useWlText, type WlKey } from "../lib/i18n-white-label";
 import { ErrorBox, Spinner } from "../components/ui";
@@ -105,11 +105,39 @@ main{padding:14px;flex:1}.card{background:#fff;border-radius:var(--radius);paddi
 ${o.powered ? `<div class="signer-foot">${esc(o.powered)}</div>` : ""}</div></body></html>`;
 }
 
+// ───────────────────────────── Plan ─────────────────────────────
+// Como la API (white-label/routes.ts): guardar exige el plan solo si la configuración agrega o cambia algo respecto de
+// lo guardado (quitar o dejar igual siempre se permite); marca blanca si usa funciones de marca blanca o es sub-marca.
+
+/** Lo que es marca blanca (no simple marca): ocultar la plataforma, textos/plantillas, remitente, CSS. */
+function usesWhiteLabel(c: BrandConfigInput): boolean {
+  return Boolean(
+    c.hidePoweredBy ||
+      c.productName ||
+      c.customCss ||
+      c.email?.fromEmail ||
+      c.sms?.senderId ||
+      Object.values(c.templates ?? {}).some((x) => x && Object.keys(x).length) ||
+      Object.values(c.texts ?? {}).some((x) => x && Object.keys(x).length),
+  );
+}
+
+/** Si la configuración nueva agrega o cambia algo respecto de la guardada (vaciar, apagar o dejar igual no cuenta). */
+function addsConfig(next: unknown, prev: unknown): boolean {
+  const unset = (v: unknown) => v === undefined || v === null || v === "" || v === false || (Array.isArray(v) && v.length === 0);
+  if (unset(next)) return false;
+  if (Array.isArray(next) || typeof next !== "object") return JSON.stringify(next) !== JSON.stringify(prev);
+  const p = prev && typeof prev === "object" && !Array.isArray(prev) ? (prev as Record<string, unknown>) : {};
+  return Object.entries(next as Record<string, unknown>).some(([k, v]) => addsConfig(v, p[k]));
+}
+
 export function BrandingPage() {
   const { t } = useI18n();
   const w = useWlText();
   const { me, refresh } = useAuth();
-  const { refresh: refreshAccess } = useAccess();
+  const { access, refresh: refreshAccess, hasFeature } = useAccess();
+  const hasBranding = hasFeature("branding");
+  const hasWhiteLabel = hasFeature("white_label");
   const [brands, setBrands] = useState<Brand[] | null>(null);
   const [sel, setSel] = useState("default");
   const [tab, setTab] = useState<Tab>("theme");
@@ -274,6 +302,14 @@ export function BrandingPage() {
 
   if (!brands || !brand) return error ? <div className="page"><ErrorBox error={error} /></div> : <Spinner />;
 
+  // Guardar algo que agrega funciones fuera del plan respondería 402: se avisa y no se ofrece.
+  const blockedByPlan =
+    dirty &&
+    addsConfig(clean(cfg), brand.config ?? {}) &&
+    (!hasBranding || ((usesWhiteLabel(clean(cfg)) || !brand.isDefault) && !hasWhiteLabel));
+  // Subir archivos: el logo de la marca de la organización pide marca propia; el resto (y en sub-marcas), marca blanca.
+  const canUpload = (kind: BrandAssetKind) => hasBranding && (hasWhiteLabel || (kind === "logo" && brand.isDefault));
+
   return (
     <div className="page">
       <div className="page-head">
@@ -282,6 +318,7 @@ export function BrandingPage() {
           <p className="muted">{w("intro")}</p>
         </div>
       </div>
+      {hasBranding ? <PlanNotice feature="white_label" text={w("plan.whiteLabel", { plan: access?.planName ?? "" })} /> : <PlanNotice feature="branding" />}
       <ErrorBox error={error} />
 
       <div className="card pad row-wrap" style={{ marginBottom: "1rem" }}>
@@ -299,7 +336,7 @@ export function BrandingPage() {
           <span>{w("brand.newName")}</span>
           <div className="row-wrap">
             <input value={newName} maxLength={120} onChange={(e) => setNewName(e.target.value)} />
-            <button type="button" className="btn btn-sm" disabled={busy || newName.trim().length < 2} onClick={create}>
+            <button type="button" className="btn btn-sm" disabled={busy || newName.trim().length < 2 || !hasWhiteLabel} onClick={create}>
               + {w("brand.create")}
             </button>
           </div>
@@ -387,12 +424,12 @@ export function BrandingPage() {
                 )}
               </div>
               {theme.fontSource === "google" && <small className="muted">{w("font.googleNote")}</small>}
-              {theme.fontSource === "upload" && <Asset label={w("asset.font")} kind="font" url={brand.assets.fontUrl} accept=".woff2,.woff,.ttf,.otf" onUpload={upload} onRemove={removeAsset} busy={busy} />}
+              {theme.fontSource === "upload" && <Asset label={w("asset.font")} kind="font" url={brand.assets.fontUrl} accept=".woff2,.woff,.ttf,.otf" onUpload={upload} onRemove={removeAsset} busy={busy} canUpload={canUpload} />}
 
               <h3>{w("assets")}</h3>
-              <Asset label={w("asset.logo")} kind="logo" url={brand.assets.logoUrl} accept="image/png,image/jpeg,image/svg+xml" onUpload={upload} onRemove={removeAsset} busy={busy} />
-              <Asset label={w("asset.logoDark")} kind="logoDark" url={brand.assets.logoDarkUrl} dark accept="image/png,image/jpeg,image/svg+xml" onUpload={upload} onRemove={removeAsset} busy={busy} />
-              <Asset label={w("asset.favicon")} kind="favicon" url={brand.assets.faviconUrl} accept="image/png,image/svg+xml,image/x-icon,.ico" onUpload={upload} onRemove={removeAsset} busy={busy} />
+              <Asset label={w("asset.logo")} kind="logo" url={brand.assets.logoUrl} accept="image/png,image/jpeg,image/svg+xml" onUpload={upload} onRemove={removeAsset} busy={busy} canUpload={canUpload} />
+              <Asset label={w("asset.logoDark")} kind="logoDark" url={brand.assets.logoDarkUrl} dark accept="image/png,image/jpeg,image/svg+xml" onUpload={upload} onRemove={removeAsset} busy={busy} canUpload={canUpload} />
+              <Asset label={w("asset.favicon")} kind="favicon" url={brand.assets.faviconUrl} accept="image/png,image/svg+xml,image/x-icon,.ico" onUpload={upload} onRemove={removeAsset} busy={busy} canUpload={canUpload} />
 
               <h3>{w("links")}</h3>
               <div className="grid-2">
@@ -409,7 +446,7 @@ export function BrandingPage() {
 
           {tab === "email" && <EmailEditor brand={brand} cfg={cfg} set={set} setIn={setIn} />}
 
-          {tab === "domains" && <DomainsEditor key={brand.id} brand={brand} onBrand={replaceBrand} />}
+          {tab === "domains" && <DomainsEditor key={brand.id} brand={brand} onBrand={replaceBrand} canAdd={hasWhiteLabel} />}
 
           {tab === "advanced" && (
             <>
@@ -427,10 +464,11 @@ export function BrandingPage() {
 
           {tab !== "domains" && (
             <div className="row-wrap">
-              <button id="wl-save" type="button" className="btn btn-primary" disabled={busy || Boolean(cssProblem)} onClick={save}>
+              <button id="wl-save" type="button" className="btn btn-primary" disabled={busy || Boolean(cssProblem) || blockedByPlan} onClick={save}>
                 {busy ? t("common.saving") : t("common.save")}
               </button>
               {saved && <span className="muted small">✓ {w("saved")}</span>}
+              {blockedByPlan && <span className="muted small">{w("plan.unsaved")}</span>}
             </div>
           )}
         </div>
@@ -455,7 +493,18 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
   );
 }
 
-function Asset(p: { label: string; kind: BrandAssetKind; url: string | null; accept: string; dark?: boolean; busy: boolean; onUpload: (k: BrandAssetKind, f: File) => void; onRemove: (k: BrandAssetKind) => void }) {
+function Asset(p: {
+  label: string;
+  kind: BrandAssetKind;
+  url: string | null;
+  accept: string;
+  dark?: boolean;
+  busy: boolean;
+  onUpload: (k: BrandAssetKind, f: File) => void;
+  onRemove: (k: BrandAssetKind) => void;
+  /** Sin el plan no se sube nada nuevo (402), pero se puede quitar lo que ya está. */
+  canUpload: (k: BrandAssetKind) => boolean;
+}) {
   const w = useWlText();
   const ref = useRef<HTMLInputElement>(null);
   return (
@@ -463,14 +512,14 @@ function Asset(p: { label: string; kind: BrandAssetKind; url: string | null; acc
       <span>{p.label}</span>
       <div className="row-wrap">
         {p.url && p.kind !== "font" ? <img className="logo-thumb" src={p.url} alt="" style={p.dark ? { background: "#0b1f3a" } : undefined} /> : p.url ? <span className="small">✓</span> : <span className="muted small">—</span>}
-        <label className="btn btn-sm">
+        <label className="btn btn-sm" aria-disabled={!p.canUpload(p.kind) || undefined} style={p.canUpload(p.kind) ? undefined : { opacity: 0.5, pointerEvents: "none" }}>
           {w("asset.upload")}
           <input
             ref={ref}
             type="file"
             hidden
             accept={p.accept}
-            disabled={p.busy}
+            disabled={p.busy || !p.canUpload(p.kind)}
             onChange={(e) => {
               const f = e.target.files?.[0];
               if (f) p.onUpload(p.kind, f);
@@ -673,7 +722,7 @@ function EmailPreview({ brandId, cfg }: { brandId: string; cfg: BrandConfigInput
   );
 }
 
-function DomainsEditor({ brand, onBrand }: { brand: Brand; onBrand: (b: Brand) => void }) {
+function DomainsEditor({ brand, onBrand, canAdd }: { brand: Brand; onBrand: (b: Brand) => void; canAdd: boolean }) {
   const w = useWlText();
   const [mail, setMail] = useState<EmailDomain[] | null>(null);
   const [newMail, setNewMail] = useState("");
@@ -709,7 +758,7 @@ function DomainsEditor({ brand, onBrand }: { brand: Brand; onBrand: (b: Brand) =
         <>
           <div className="row-wrap">
             <input placeholder="firmas.cliente.com" value={web} onChange={(e) => setWeb(e.target.value.trim().toLowerCase())} />
-            <button type="button" className="btn btn-sm" disabled={busy || !web} onClick={() => {
+            <button type="button" className="btn btn-sm" disabled={busy || !web || !canAdd} onClick={() => {
                 // Reemplaza el dominio actual (quizás ya verificado): se confirma antes.
                 if (d && web !== d.domain && !confirmAction()) return;
                 void run(async () => (await api(`/v1/settings/brands/${brand.id}/domain`, { method: "PUT", body: { domain: web } }), refreshBrand()));
@@ -743,7 +792,7 @@ function DomainsEditor({ brand, onBrand }: { brand: Brand; onBrand: (b: Brand) =
       <p className="muted small">{w("domains.mailHint")}</p>
       <div className="row-wrap">
         <input placeholder="cliente.com" value={newMail} onChange={(e) => setNewMail(e.target.value.trim().toLowerCase())} />
-        <button type="button" className="btn btn-sm" disabled={busy || !newMail} onClick={() => run(async () => (await api("/v1/settings/email-domains", { method: "POST", body: { domain: newMail } }), setNewMail(""), reload()))}>
+        <button type="button" className="btn btn-sm" disabled={busy || !newMail || !canAdd} onClick={() => run(async () => (await api("/v1/settings/email-domains", { method: "POST", body: { domain: newMail } }), setNewMail(""), reload()))}>
           {w("domains.add")}
         </button>
       </div>

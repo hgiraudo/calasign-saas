@@ -1,5 +1,6 @@
 // Fase 4 — Equipos: miembros, invitaciones, roles (RBAC), grupos, auditoría, retención y 2FA.
 import { z } from "zod";
+import type { PlanFeature } from "./billing";
 
 // ───────────────────────────── Permisos ─────────────────────────────
 
@@ -73,6 +74,9 @@ export interface AccessResponse {
   groups: { id: string; name: string }[];
   tenants: TenantMembershipSummary[];
   twoFactor: { enabled: boolean; requiredByTenant: boolean; setupRequired: boolean };
+  /** Funciones del plan actual de la organización (para que la consola no ofrezca lo que el plan no incluye). */
+  planFeatures: PlanFeature[];
+  planName: string;
 }
 
 export const SwitchTenantInput = z.object({ tenantId: z.string().uuid() });

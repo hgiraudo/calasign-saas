@@ -44,7 +44,7 @@ import { hasPerm } from "./access";
 import { auditFromRequest, recordAudit } from "./audit";
 import { SESSION_COOKIE, authenticate, clientInfo, type AuthContext, type Services } from "./context";
 import { assertSessionAllowed } from "./identity/sso";
-import { assertInvitationCapacity } from "./billing/plans";
+import { assertInvitationCapacity, tenantPlan } from "./billing/plans";
 import { actingPerson, revokeMemberAccess } from "./member-access";
 
 const SESSION_DAYS = 14;
@@ -326,7 +326,17 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
       const t = await s.db.one<any>(`SELECT require_2fa FROM tenants WHERE id = $1`, [a.tenantId]);
       twoFactor = { enabled: Boolean(u?.totp_enabled_at), requiredByTenant: Boolean(t?.require_2fa), setupRequired: acc.twoFactorSetupRequired };
     }
-    return { role: acc.role, roleName: acc.roleName, permissions: [...acc.permissions], groups, tenants, twoFactor };
+    const { plan } = await tenantPlan(s.db, a.tenantId);
+    return {
+      role: acc.role,
+      roleName: acc.roleName,
+      permissions: [...acc.permissions],
+      groups,
+      tenants,
+      twoFactor,
+      planFeatures: [...plan.features],
+      planName: plan.name,
+    };
   });
 
   app.post("/v1/auth/switch-tenant", { preHandler: auth }, async (req) => {

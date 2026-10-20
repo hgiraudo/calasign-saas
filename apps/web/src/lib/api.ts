@@ -166,7 +166,85 @@ const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
     "pt-BR": "Só são aceitos PDF, JPG ou PNG que não estejam danificados nem protegidos.",
     en: "Only PDF, JPG or PNG files that aren't damaged or protected are accepted.",
   },
+  // Consola de administración (equipo, integraciones, SSO, facturación)
+  role_in_use: {
+    "pt-BR": "O perfil está atribuído: altere antes esses membros, API keys ou convites.",
+    en: "The role is assigned: change those members, API keys or invitations first.",
+  },
+  last_owner: { "pt-BR": "A organização precisa ter pelo menos um proprietário.", en: "The organization must have at least one owner." },
+  member_changed: {
+    "pt-BR": "O perfil do membro mudou nesse meio-tempo: recarregue e tente de novo.",
+    en: "The member's role changed in the meantime: reload and try again.",
+  },
+  enable_2fa_first: {
+    "pt-BR": "Ative a sua verificação em duas etapas antes de exigi-la da organização.",
+    en: "Enable your own two-step verification before requiring it for the organization.",
+  },
+  too_many_webhooks: { "pt-BR": "Máximo de 20 webhooks por organização.", en: "Maximum of 20 webhooks per organization." },
+  role_exists: { "pt-BR": "Já existe um perfil com esse nome.", en: "A role with that name already exists." },
+  group_exists: { "pt-BR": "Já existe um grupo com esse nome.", en: "A group with that name already exists." },
+  already_member: { "pt-BR": "Essa pessoa já é membro da organização.", en: "That person is already a member of the organization." },
+  invalid_member: { "pt-BR": "Algum usuário não é membro da organização.", en: "Some user isn't a member of the organization." },
+  byok_key_test_failed: { "pt-BR": "A chave não passou no teste.", en: "The key didn't pass the test." },
+  client_secret_required: { "pt-BR": "Falta o client secret do OIDC.", en: "The OIDC client secret is missing." },
+  certificate_required: { "pt-BR": "Falta o certificado de assinatura do IdP.", en: "The IdP signing certificate is missing." },
+  oidc_discovery_failed: {
+    "pt-BR": "Não foi possível ler a configuração do provedor de identidade: verifique o issuer.",
+    en: "Couldn't read the identity provider's configuration: check the issuer.",
+  },
+  already_subscribed: { "pt-BR": "A organização já tem esse plano.", en: "The organization already has that plan." },
+  delivery_pending: {
+    "pt-BR": "A entrega já está sendo reenviada.",
+    en: "The delivery is already being retried.",
+  },
+  validation_error: { "pt-BR": "Há dados inválidos no pedido.", en: "The request has invalid data." },
 };
+
+// Nombres de las funciones de plan (plan_limit) para pt-BR y en.
+const FEATURE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
+  api: { "pt-BR": "O acesso por API", en: "API access" },
+  webhooks: { "pt-BR": "Os webhooks", en: "Webhooks" },
+  branding: { "pt-BR": "A marca própria", en: "Custom branding" },
+  white_label: { "pt-BR": "A marca branca", en: "White label" },
+  payments: { "pt-BR": "A cobrança ao assinar", en: "Payments at signing" },
+  bulk_send: { "pt-BR": "O envio em massa", en: "Bulk send" },
+  web_forms: { "pt-BR": "Os formulários web", en: "Web forms" },
+  kyc: { "pt-BR": "A verificação de identidade", en: "Identity verification" },
+  sso: { "pt-BR": "O login único (SSO)", en: "Single sign-on (SSO)" },
+  scim: { "pt-BR": "O provisionamento SCIM", en: "SCIM provisioning" },
+  custom_domain: { "pt-BR": "O domínio próprio", en: "Custom domain" },
+};
+
+/**
+ * forbidden y plan_limit traen el porqué en `details` (permiso faltante, permisos de más, función o cupo del plan):
+ * en pt-BR y en el texto se arma con eso; sin details, un texto genérico.
+ */
+function detailText(code: string, details: unknown, loc: "pt-BR" | "en"): string | undefined {
+  const d = (details && typeof details === "object" && !Array.isArray(details) ? details : {}) as Record<string, unknown>;
+  const en = loc === "en";
+  if (code === "forbidden") {
+    if (typeof d.permission === "string") return en ? `You don't have the permission ${d.permission}.` : `Você não tem a permissão ${d.permission}.`;
+    if (Array.isArray(d.missing) && d.missing.length) {
+      const list = d.missing.map(String).join(", ");
+      return en ? `It involves permissions you don't have: ${list}.` : `Envolve permissões que você não tem: ${list}.`;
+    }
+    return en ? "You don't have permission to do this." : "Você não tem permissão para fazer isso.";
+  }
+  if (code === "plan_limit") {
+    const feature = typeof d.feature === "string" ? FEATURE_TEXT[d.feature]?.[loc] ?? d.feature : null;
+    if (feature) return en ? `${feature} is not included in your plan. Upgrade it in Billing.` : `${feature}: não incluído no seu plano. Altere-o em Faturamento.`;
+    if (d.limit === "envelopes_per_month")
+      return en ? "You've reached your plan's monthly envelope limit. Upgrade it in Billing." : "Você atingiu o limite mensal de envelopes do seu plano. Altere-o em Faturamento.";
+    if (d.limit === "users") return en ? "You've reached your plan's user limit. Upgrade it in Billing." : "Você atingiu o limite de usuários do seu plano. Altere-o em Faturamento.";
+    return en ? "Your plan doesn't include this. Upgrade it in Billing." : "O seu plano não inclui isso. Altere-o em Faturamento.";
+  }
+  if (code === "validation_error" && Array.isArray(details)) {
+    // Los motivos vienen en español; los campos sí sirven en cualquier idioma.
+    const paths = [...new Set(details.map((x) => (x && typeof x === "object" ? (x as { path?: unknown }).path : null)).filter((x): x is string => typeof x === "string" && x !== ""))];
+    if (paths.length) return (en ? "The request has invalid data: " : "Há dados inválidos no pedido: ") + paths.join(", ");
+  }
+  return undefined;
+}
 
 /**
  * Texto legible de un error. El mensaje de la API ya trae lo necesario (los errores de validación incluyen ruta y
@@ -189,7 +267,7 @@ export function errorText(e: unknown): string {
       const list = Array.isArray(missing) ? [...new Set(missing.map(String))].join(", ") : "";
       return (loc === "en" ? "Still to complete: " : "Ainda falta preencher: ") + list;
     }
-    const tr = loc !== "es" ? CODE_TEXT[e.code]?.[loc] : undefined;
+    const tr = loc !== "es" ? detailText(e.code, e.details, loc) ?? CODE_TEXT[e.code]?.[loc] : undefined;
     return tr ?? (e.message || (NO_MESSAGE[loc] ?? NO_MESSAGE.es)(e.status));
   }
   if (e instanceof Error) return e.message;

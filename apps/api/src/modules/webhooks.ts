@@ -19,7 +19,7 @@ import {
 import { config } from "../config";
 import type { Db } from "../infra/db";
 import { enqueue } from "../infra/queue";
-import { badRequest, notFound } from "../lib/errors";
+import { badRequest, conflict, notFound } from "../lib/errors";
 import { decrypt, encrypt, iso, randomToken, uuidv7 } from "../lib/util";
 import { recordAudit } from "./audit";
 import { authenticate, type AuthContext, type Services } from "./context";
@@ -574,8 +574,20 @@ export async function webhookRoutes(app: FastifyInstance, s: Services) {
     const a = A(req);
     const row = await s.db.one<any>(`SELECT * FROM webhook_deliveries WHERE id = $1 AND tenant_id = $2`, [req.params.id, a.tenantId]);
     if (!row) throw notFound("Entrega");
+    // Pendiente con su reintento automático programado: se adelanta ese mismo trabajo (encolar otro mandaba el evento
+    // dos veces). Si ya está en curso, o hay un reintento manual pedido, 409.
+    if (row.status === "pending") {
+      const moved = await s.db.query(
+        `UPDATE jobs SET run_at = now() WHERE dedupe_key = $1 AND status = 'pending' AND run_at > now() RETURNING id`,
+        [`whdel:${row.id}`],
+      );
+      if (!moved.length) throw conflict("delivery_pending", "La entrega ya se está reintentando");
+      reply.code(202);
+      return toDelivery({ ...row, next_retry_at: null });
+    }
     await s.db.tx(async (t) => {
-      await t.query(`UPDATE webhook_deliveries SET status = 'pending', next_retry_at = NULL WHERE id = $1`, [row.id]);
+      const upd = await t.query(`UPDATE webhook_deliveries SET status = 'pending', next_retry_at = NULL WHERE id = $1 AND status <> 'pending' RETURNING id`, [row.id]);
+      if (!upd.length) throw conflict("delivery_pending", "La entrega todavía está pendiente: se reintenta sola");
       await enqueue(t, "webhook", { kind: "deliver", deliveryId: row.id, manual: true }, { maxAttempts: 1 });
     });
     reply.code(202);

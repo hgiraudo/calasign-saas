@@ -176,11 +176,13 @@ function OrgPolicies() {
           void save({ retentionDays: n });
         }}
       >
-        <strong>{tt("sec.retention")}</strong>
-        <span className="muted small">{tt("sec.retentionHelp")}</span>
+        <label htmlFor="sec-retention-days">
+          <strong>{tt("sec.retention")}</strong>
+        </label>
+        <span id="sec-retention-help" className="muted small">{tt("sec.retentionHelp")}</span>
         <div className="row-wrap">
-          <input type="number" min={1} max={36500} value={days} onChange={(e) => setDays(e.target.value)} style={{ width: 120 }} />
-          <span className="muted">{tt("sec.days")}</span>
+          <input id="sec-retention-days" aria-describedby="sec-retention-help sec-retention-unit" type="number" min={1} max={36500} value={days} onChange={(e) => setDays(e.target.value)} style={{ width: 120 }} />
+          <span id="sec-retention-unit" className="muted">{tt("sec.days")}</span>
           <button className="btn btn-primary">{tt("sec.save")}</button>
         </div>
       </form>

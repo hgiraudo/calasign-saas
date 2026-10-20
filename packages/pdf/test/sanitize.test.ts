@@ -934,6 +934,31 @@ describe("contenido marcado sin cerrar", () => {
     expect(closedAtEnd(doc, page)).toBe(1);
   });
 
+  it("closeMarkedContent: Predictor con Columns enorme o Predictor desconocido no se decodifica: se cierra de más", async () => {
+    const { deflateSync } = await import("node:zlib");
+    const data = deflateSync(Buffer.from("\x00/OC /oc1 BDC 0 0 1 rg 0 0 10 10 re f\n", "latin1"));
+    for (const parms of [
+      // 32 colores × 16 bits × 2^24 columnas: 1 GiB por fila; antes se reservaba aunque el stream tuviera pocos bytes.
+      { Predictor: 12, Colors: 32, BitsPerComponent: 16, Columns: 1 << 24 },
+      { Predictor: 16, Columns: 8 },
+      { Predictor: 12.5, Columns: 8 },
+    ]) {
+      const { doc, page } = await pageWith({ Filter: "FlateDecode", DecodeParms: parms }, data);
+      const t0 = Date.now();
+      closeMarkedContent(doc);
+      expect(Date.now() - t0, JSON.stringify(parms)).toBeLessThan(2000);
+      expect(closedAtEnd(doc, page), JSON.stringify(parms)).toBeGreaterThanOrEqual(1024);
+    }
+  });
+
+  it("closeMarkedContent: Flate sin encabezado zlib (deflate crudo) se decodifica entero", async () => {
+    const { deflateRawSync } = await import("node:zlib");
+    const raw = deflateRawSync(Buffer.from("/OC /oc1 BDC 0 0 1 rg 0 0 10 10 re f\n"));
+    const { doc, page } = await pageWith({ Filter: "FlateDecode" }, raw);
+    closeMarkedContent(doc);
+    expect(closedAtEnd(doc, page)).toBe(1);
+  });
+
   it("un BDC sin cerrar en una capa apagada de un original viejo no esconde lo estampado", async () => {
     for (const where of ["page", "form"] as const) {
       const bytes = await unclosedLayer(where);

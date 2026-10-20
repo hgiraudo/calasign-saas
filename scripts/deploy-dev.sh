@@ -111,7 +111,15 @@ rm -f \$PKG
 # próximo deploy con permiso de escritura sobre la versión nueva, antes del chown a root. Ni como root: pnpm 9 corre
 # los scripts de instalación de las dependencias, y como root tendrían el host entero. El usuario de build no tiene
 # shell ni nada más que escribir que su cache y, durante la instalación, la carpeta de la versión.
-id calasign-build >/dev/null 2>&1 || useradd --system --no-create-home --home-dir /var/cache/calasign-build --shell /sbin/nologin calasign-build
+# Idempotente: si el grupo quedó de un intento anterior (usuario borrado a mano, useradd cortado), useradd sin -g
+# fallaba con "group calasign-build exists" y el deploy abortaba.
+if ! id calasign-build >/dev/null 2>&1; then
+  if getent group calasign-build >/dev/null; then
+    useradd --system -g calasign-build --no-create-home --home-dir /var/cache/calasign-build --shell /sbin/nologin calasign-build
+  else
+    useradd --system -U --no-create-home --home-dir /var/cache/calasign-build --shell /sbin/nologin calasign-build
+  fi
+fi
 BUILD_HOME=/var/cache/calasign-build
 if [ -L \$BUILD_HOME ] || { [ -e \$BUILD_HOME ] && [ ! -d \$BUILD_HOME ]; }; then echo "\$BUILD_HOME no es un directorio: deploy abortado" >&2; exit 1; fi
 install -d -o calasign-build -g calasign-build -m 0700 \$BUILD_HOME
@@ -169,6 +177,13 @@ if aws ssm get-parameters-by-path --path /calasign-saas/dev/ --with-decryption -
   # Nombre y valor separados por NUL (un valor puede tener saltos de línea; NUL no puede aparecer).
   while IFS= read -r -d '' k && IFS= read -r -d '' v; do
     case "\$k" in SECRET_KEY|SEAL_CHAIN_PEM) continue ;; esac
+    # secrets.env se lee después de base.env y lo pisa: un parámetro con el nombre de una variable de base.env (o de
+    # NODE_OPTIONS) cambiaba la base, el puerto, DATA_DIR o el tope de memoria de la app sin que se viera en el repo.
+    case "\$k" in
+      NODE_OPTIONS|NODE_ENV|APP_ENV|PORT|HOST|APP_URL|DATABASE_URL|DATA_DIR|S3_BUCKET|AWS_REGION|KMS_KEY_ID|SEAL_CHAIN_FILE|TSA_URL|TSA_REQUIRED|DEV_MAILBOX|WORKER_INLINE|MIGRATE_ON_START|COOKIE_SECURE)
+        echo "AVISO: parámetro SSM \$k pisaría una variable fija de la app (base.env/NODE_OPTIONS): se ignora" >&2
+        continue ;;
+    esac
     if ! [[ "\$k" =~ ^[A-Z_][A-Z0-9_]*\$ ]]; then echo "AVISO: parámetro SSM \$k no es un nombre de variable válido: se ignora" >&2; continue; fi
     if [ -n "\$v" ]; then envq "\$k" "\$v" >> \$SECRETS_TMP; fi
   done < <(jq -j '.Parameters[] | (.Name | sub("^/calasign-saas/dev/"; "")) + "\\u0000" + .Value + "\\u0000"' \$SSM_JSON)
@@ -212,18 +227,19 @@ if ! cmp -s \$H/calasign-hardening.conf /etc/systemd/system/calasign.service.d/h
   systemctl daemon-reload
 fi
 # Caddy. API admin por socket unix (/run/caddy/admin.sock, ver el Caddyfile) en vez de localhost:2019, que la app podía
-# usar para reconfigurar el proxy en memoria. El drop-in crea /run/caddy y fija el socket en ExecReload.
-# En el primer deploy con el socket, "systemctl reload" falla (el Caddy en marcha todavía escucha en :2019 y el socket
-# no existe): cae al restart, un corte de un segundo, una sola vez.
+# usar para reconfigurar el proxy en memoria. El drop-in crea /run/caddy, fija el socket en ExecReload y pone
+# Type=notify: systemctl restart/reload esperan a que Caddy cargue la config, e is-active refleja si arrancó de verdad.
 mkdir -p /etc/systemd/system/caddy.service.d
 if ! cmp -s \$H/caddy-calasign.conf /etc/systemd/system/caddy.service.d/calasign.conf; then
   install -m 0644 \$H/caddy-calasign.conf /etc/systemd/system/caddy.service.d/calasign.conf
   systemctl daemon-reload
 fi
+# Siempre se guarda el vigente (haya cambios o no): si el reload o el arranque fallan, se vuelve a ese y no a un .prev
+# viejo de otro deploy.
+if [ -f /etc/caddy/Caddyfile ]; then cp -p /etc/caddy/Caddyfile /etc/caddy/Caddyfile.prev; fi
 sed 's/__DOMAIN__/$DOMAIN/' \$H/Caddyfile > /etc/caddy/Caddyfile.new
 if /usr/local/bin/caddy adapt --config /etc/caddy/Caddyfile.new >/dev/null 2>&1; then
   if ! cmp -s /etc/caddy/Caddyfile.new /etc/caddy/Caddyfile; then
-    cp -p /etc/caddy/Caddyfile /etc/caddy/Caddyfile.prev 2>/dev/null || true
     mv /etc/caddy/Caddyfile.new /etc/caddy/Caddyfile
   else
     rm -f /etc/caddy/Caddyfile.new
@@ -233,37 +249,53 @@ else
   rm -f /etc/caddy/Caddyfile.new
 fi
 chmod 0640 /var/log/caddy-access.log 2>/dev/null || true
+CADDY_SOCK=/run/caddy/admin.sock
+caddy_restore_prev() {
+  journalctl -u caddy -n 20 --no-pager >&2 || true
+  if [ -f /etc/caddy/Caddyfile.prev ]; then cp -p /etc/caddy/Caddyfile.prev /etc/caddy/Caddyfile; fi
+}
 # Siempre se recarga (ExecReload usa --force), haya cambiado o no el archivo: descarta cualquier config que se haya
-# cargado en memoria por la API admin desde el deploy anterior.
-systemctl reload caddy || systemctl restart caddy || true
+# cargado en memoria por la API admin desde el deploy anterior. El reload habla con el socket: si no existe (primer
+# deploy con el socket, el Caddy en marcha todavía escucha en :2019; o Caddy parado), restart, un corte de un segundo.
+if [ -S \$CADDY_SOCK ]; then
+  if ! systemctl reload caddy; then
+    echo "AVISO: falló el reload de Caddy con el Caddyfile nuevo; se restaura el anterior" >&2
+    caddy_restore_prev
+    systemctl reload caddy || systemctl restart caddy || true
+  fi
+else
+  systemctl restart caddy || true
+fi
+for i in \$(seq 1 10); do if [ -S \$CADDY_SOCK ]; then break; fi; sleep 1; done
 if ! systemctl is-active -q caddy; then
   # "caddy adapt" no valida todo (p. ej. la dirección del admin): si no arranca con el archivo nuevo, vuelve al anterior.
   echo "AVISO: Caddy no arrancó con el Caddyfile nuevo; se restaura el anterior" >&2
-  journalctl -u caddy -n 20 --no-pager >&2 || true
-  if [ -f /etc/caddy/Caddyfile.prev ]; then cp -p /etc/caddy/Caddyfile.prev /etc/caddy/Caddyfile; fi
+  caddy_restore_prev
   systemctl restart caddy || echo "AVISO: Caddy sigue caído" >&2
 fi
 # Validación (solo avisos): el puerto 2019 ya no responde, root llega al socket y el usuario de la app no.
+# Por el socket va Host 127.0.0.1: Caddy 2.7+ rechaza Host localhost en la API admin por socket (403).
 #   a mano: ss -ltnp | grep 2019 (vacío); ls -ld /run/caddy /run/caddy/admin.sock (caddy:caddy 0750 / srw-rw----);
-#   curl --unix-socket /run/caddy/admin.sock http://localhost/config/ (root: JSON);
-#   runuser -u calasign -- curl --unix-socket /run/caddy/admin.sock http://localhost/config/ (Permission denied).
+#   curl --unix-socket /run/caddy/admin.sock http://127.0.0.1/config/ (root: JSON);
+#   runuser -u calasign -- curl --unix-socket /run/caddy/admin.sock http://127.0.0.1/config/ (Permission denied).
 if curl -s -m 2 -o /dev/null http://127.0.0.1:2019/config/; then echo "AVISO: la API admin de Caddy sigue en localhost:2019" >&2; fi
-if ! curl -sf -m 2 -o /dev/null --unix-socket /run/caddy/admin.sock http://localhost/config/; then echo "AVISO: root no llega a la API admin de Caddy por /run/caddy/admin.sock" >&2; fi
-if runuser -u calasign -- curl -s -m 2 -o /dev/null --unix-socket /run/caddy/admin.sock http://localhost/config/ 2>/dev/null; then
+if ! curl -sf -m 2 -o /dev/null --unix-socket \$CADDY_SOCK http://127.0.0.1/config/; then echo "AVISO: root no llega a la API admin de Caddy por \$CADDY_SOCK" >&2; fi
+if runuser -u calasign -- curl -s -m 2 -o /dev/null --unix-socket \$CADDY_SOCK http://127.0.0.1/config/ 2>/dev/null; then
   echo "AVISO: el usuario calasign llega a la API admin de Caddy" >&2
 fi
 
-# Parches de seguridad del SO: dnf-automatic aplica a diario solo las actualizaciones de seguridad (idempotente). No
-# reinicia el equipo (un kernel nuevo queda para el próximo reinicio). Si falla (repo caído, dnf ocupado) no corta el deploy.
-if rpm -q dnf-automatic >/dev/null 2>&1 || timeout 300 dnf -y -q install dnf-automatic >/dev/null 2>&1; then
-  sed -i -E -e 's/^[#[:space:]]*upgrade_type[[:space:]]*=.*/upgrade_type = security/' \
-    -e 's/^[#[:space:]]*apply_updates[[:space:]]*=.*/apply_updates = yes/' /etc/dnf/automatic.conf || true
-  grep -q '^upgrade_type = security' /etc/dnf/automatic.conf && grep -q '^apply_updates = yes' /etc/dnf/automatic.conf \
-    || echo "AVISO: no se pudo configurar /etc/dnf/automatic.conf" >&2
-  systemctl enable --now dnf-automatic.timer >/dev/null 2>&1 || echo "AVISO: no se pudo activar dnf-automatic.timer" >&2
-else
-  echo "AVISO: no se pudo instalar dnf-automatic" >&2
-fi
+# Parches de seguridad del SO: timer propio (calasign-security-updates) en vez de dnf-automatic, que en AL2023 no
+# aplicaba nada (el releasever queda fijo en la versión instalada y los parches salen en versiones nuevas del repo).
+# Corre a diario "dnf upgrade --security --releasever=latest" sin postgresql* (no reinicia la base); no reinicia
+# servicios ni el equipo por su cuenta (un kernel nuevo queda para el próximo reinicio) y no corre durante un deploy
+# (lock de /run/calasign-deploy.lock). Node (/opt/node) y Caddy (/usr/local/bin) no son paquetes: se actualizan
+# cambiando NODE_VERSION/CADDY_VERSION en bootstrap.sh. Si algo falla no corta el deploy.
+install -m 0644 \$H/calasign-security-updates.service /etc/systemd/system/calasign-security-updates.service
+install -m 0644 \$H/calasign-security-updates.timer /etc/systemd/system/calasign-security-updates.timer
+systemctl daemon-reload
+systemctl enable --now calasign-security-updates.timer >/dev/null 2>&1 || echo "AVISO: no se pudo activar calasign-security-updates.timer" >&2
+# El deploy anterior instalaba dnf-automatic: se apaga su timer (el paquete queda, inofensivo).
+systemctl disable --now dnf-automatic.timer >/dev/null 2>&1 || true
 
 healthy() { for i in \$(seq 1 60); do curl -sf localhost:4000/healthz >/dev/null && return 0; sleep 1; done; return 1; }
 # -e (no -f): en el primer deploy current no existe y "readlink -f" igual devuelve "/opt/calasign/current"; el

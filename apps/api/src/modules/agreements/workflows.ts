@@ -542,6 +542,9 @@ async function executeStep(d: Deps, run: any, step: WorkflowStep, index: number)
         documentTemplateId: tpl.id,
         agreement: agreementMetaFromMapping(tpl.agreement_mapping, data, tpl.locale),
         locale: tpl.locale,
+        // Constancia de la versión de la plantilla y de las cláusulas con que se generó (va a la metadata del sobre).
+        provenance: doc.provenance,
+        templateRoles: doc.templateRoles,
       };
       return {
         kind: "complete",
@@ -612,13 +615,17 @@ async function executeStep(d: Deps, run: any, step: WorkflowStep, index: number)
               locale: doc.locale ?? locale,
               recipients,
               marks: doc.marks ?? [],
+              templateRoles: doc.templateRoles ?? [],
               metadata: {
                 workflowId: run.workflow_id,
                 workflowRunId: run.id,
                 ...(doc.documentTemplateId ? { documentTemplateId: doc.documentTemplateId } : {}),
+                ...(doc.provenance ? { documentProvenance: doc.provenance } : {}),
                 ...(doc.agreement ? { agreement: doc.agreement } : {}),
               },
               send: true,
+              // Firma condicional ({{#if garante}}{{firma:Garante}}{{/if}}) que no salió: ese firmante no se agrega.
+              onSkippedRoles: (roles) => d.log.warn({ runId: run.id, roles }, "workflow: firmantes sin marcas en el documento generado, no se agregaron al sobre"),
             },
           ).catch((e) => {
             if (e instanceof AppError) throw new StepFailure(e.message);
@@ -740,11 +747,11 @@ async function executeStep(d: Deps, run: any, step: WorkflowStep, index: number)
         );
       }
       if (step.config.expiryDate) {
-        const dt = toIsoDate(interpolate(step.config.expiryDate, data, locale));
+        const dt = toIsoDate(interpolate(step.config.expiryDate, data, locale), locale);
         if (dt) set("expiry_date", dt, "::date");
       }
       if (step.config.value) {
-        const n = toNumberOrNull(interpolate(step.config.value, data, locale));
+        const n = toNumberOrNull(interpolate(step.config.value, data, locale), locale);
         if (n !== null) set("value", n);
       }
       // Solo un código ISO 4217 (tres letras); otra cosa ("$", "pesos", una variable vacía) se descarta.

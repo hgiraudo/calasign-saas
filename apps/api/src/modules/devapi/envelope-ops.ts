@@ -132,7 +132,7 @@ export async function cloneEnvelope(t: Services["db"], a: AuthContext, sourceId:
   const id = uuidv7();
   // Sin las claves del sistema que lo atan a un proceso del original (workflow, formulario, envío masivo, CRM…): el clon
   // no es parte de ellos. Las que describen el documento (plantilla, acuerdo) se conservan.
-  const keep = Object.fromEntries(["templateId", "documentTemplateId", "agreement"].filter((k) => src.metadata && k in src.metadata).map((k) => [k, src.metadata[k]]));
+  const keep = Object.fromEntries(["templateId", "documentTemplateId", "documentProvenance", "agreement"].filter((k) => src.metadata && k in src.metadata).map((k) => [k, src.metadata[k]]));
   const metadata = input.metadata ?? { ...stripReservedMetadata(src.metadata), ...keep, clonedFrom: src.id };
   await t.query(
     `INSERT INTO envelopes (id, tenant_id, created_by, created_via, subject, message, expires_at, metadata, created_by_api_key)

@@ -1,5 +1,5 @@
 // Utilidades compartidas por los módulos de acuerdos (Fase 6).
-import { blocksToText, renderTemplate, type Agreement } from "@calasign/shared";
+import { blocksToText, parseLocaleNumber, renderTemplate, type Agreement } from "@calasign/shared";
 import type { Db } from "../../infra/db";
 import type { BlobStore } from "../../infra/storage";
 import { hasPerm, envelopeVisibilitySql } from "../access";
@@ -52,29 +52,29 @@ export function setPath(data: Record<string, unknown>, path: string, value: unkn
   cur[parts[parts.length - 1]] = value;
 }
 
-export function toNumberOrNull(v: unknown): number | null {
-  if (typeof v === "number") return Number.isFinite(v) ? v : null;
-  if (typeof v !== "string" || !v.trim()) return null;
-  let s = v.trim().replace(/[^\d,.-]/g, "");
-  // Sin dígitos no es un número ("a convenir"): Number("") daría 0 y el acuerdo quedaría con valor 0.
-  if (!/\d/.test(s)) return null;
-  if (s.includes(",") && s.includes(".")) s = s.lastIndexOf(",") > s.lastIndexOf(".") ? s.replace(/\./g, "").replace(",", ".") : s.replace(/,/g, "");
-  // 1.500.000 / 1,500,000: el mismo separador repetido entre grupos de 3 cifras son miles (como en el motor de
-  // plantillas). Antes daba "número inválido" en los formularios de workflow.
-  else if (/^-?\d{1,3}([.,])\d{3}(?:\1\d{3})+$/.test(s)) s = s.replace(/[.,]/g, "");
-  else if (s.includes(",")) s = s.replace(",", ".");
-  const n = Number(s);
-  return Number.isFinite(n) ? n : null;
+/**
+ * Número escrito por una persona según el idioma ("1.500" = 1500 en es/pt, "2,500" = 2500 en en): el mismo criterio que el
+ * motor de plantillas (parseLocaleNumber). Ambiguo o mal formado: null.
+ */
+export function toNumberOrNull(v: unknown, locale = "es"): number | null {
+  if (typeof v === "boolean") return null;
+  return parseLocaleNumber(v, locale);
 }
 
-/** AAAA-MM-DD a partir de "2027-03-01", "01/03/2027" o una fecha ISO; null si no se entiende. */
-export function toIsoDate(v: unknown): string | null {
+/**
+ * AAAA-MM-DD a partir de "2027-03-01", "01/03/2027" (día/mes en es/pt, mes/día en en) o una fecha ISO; null si no se
+ * entiende.
+ */
+export function toIsoDate(v: unknown, locale = "es"): string | null {
   if (typeof v !== "string" || !v.trim()) return null;
   const s = v.trim();
   let y: string, mo: string, d: string;
   let m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
   if (m) [y, mo, d] = [m[1], m[2], m[3]];
-  else if ((m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s))) [y, mo, d] = [m[3], m[2].padStart(2, "0"), m[1].padStart(2, "0")];
+  else if ((m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s))) {
+    const [a, b] = /^en\b/i.test(locale) ? [m[2], m[1]] : [m[1], m[2]];
+    [y, mo, d] = [m[3], b.padStart(2, "0"), a.padStart(2, "0")];
+  }
   else return null;
   // Tiene que ser una fecha que exista ("31/02/2027" no): si no, Postgres la rechaza al guardarla como date y la
   // ingesta del acuerdo o el paso del workflow fallan.

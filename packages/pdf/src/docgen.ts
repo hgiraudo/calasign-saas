@@ -23,7 +23,7 @@ export type DocRun = { text: string; b?: boolean; i?: boolean } | { mark: DocMar
 export type DocBlock =
   | { type: "heading"; level: 1 | 2 | 3; runs: DocRun[] }
   | { type: "paragraph"; runs: DocRun[] }
-  | { type: "list"; ordered: boolean; items: DocRun[][] }
+  | { type: "list"; ordered: boolean; items: DocRun[][]; start?: number }
   | { type: "table"; header: DocRun[][] | null; rows: DocRun[][][] }
   | { type: "pagebreak" };
 
@@ -213,7 +213,11 @@ export async function renderDocumentPdf(blocks: DocBlock[], opts: RenderDocOptio
   }
 
   /** Dibuja líneas ya maquetadas; `top` es el borde superior de la primera línea. Devuelve el nuevo y. */
-  function drawLines(lines: Line[], x0: number, width: number, opts2: { align?: "left" | "center"; color?: ReturnType<typeof rgb>; paginate?: boolean } = {}) {
+  /**
+   * `repeat`: encabezado de tabla repetido en otra página. Sus marcas no se dibujan ni se registran: si no, cada página
+   * de la tabla agregaba otro campo de firma del mismo rol (el firmante tenía que firmar N veces lo mismo).
+   */
+  function drawLines(lines: Line[], x0: number, width: number, opts2: { align?: "left" | "center"; color?: ReturnType<typeof rgb>; paginate?: boolean; repeat?: boolean } = {}) {
     for (const line of lines) {
       if (opts2.paginate !== false) ensure(line.height);
       const lineW = line.items.length ? line.items[line.items.length - 1].x + itemW(line.items[line.items.length - 1].item) : 0;
@@ -223,11 +227,12 @@ export async function renderDocumentPdf(blocks: DocBlock[], opts: RenderDocOptio
       const baseline = markLine ? top - (line.height - CAPTION - 4) : top - line.ascent - (line.height - line.ascent * 1.2) / 2;
       for (const { item, x } of line.items) {
         if (item.k === "word") page.drawText(item.text, { x: x0 + off + x, y: baseline, size: item.size, font: item.font, color: opts2.color ?? INK });
-        else if (item.k === "mark") {
+        else if (item.k === "mark" && !opts2.repeat) {
           const bx = x0 + off + x;
           const by = baseline; // borde inferior del espacio de firma
           page.drawLine({ start: { x: bx, y: by }, end: { x: bx + item.w, y: by }, thickness: 0.7, color: MUTED });
-          const cap = safe(fonts.r, `${CAPTIONS[locale][item.kind]} — ${item.role}`);
+          // La leyenda se recorta al ancho del espacio: un rol largo se salía de la celda (o de la hoja) y se superponía.
+          const cap = fitText(fonts.r, safe(fonts.r, `${CAPTIONS[locale][item.kind]} — ${item.role}`), 7, item.w);
           page.drawText(cap, { x: bx, y: by - CAPTION + 1, size: 7, font: fonts.r, color: MUTED });
           marks.push({
             kind: item.kind,
@@ -270,7 +275,8 @@ export async function renderDocumentPdf(blocks: DocBlock[], opts: RenderDocOptio
       block.items.forEach((runs, idx) => {
         const lines = layout(toItems(runs, BASE), contentW - indent, BASE);
         ensure(lines[0]?.height ?? BASE * LH);
-        const label = block.ordered ? `${idx + 1}.` : "•";
+        // Una lista numerada que empieza en otro número ("3. …", después de un párrafo) lo conserva.
+        const label = block.ordered ? `${(block.start ?? 1) + idx}.` : "•";
         const markerY = y - BASE - (BASE * LH - BASE * 1.2) / 2;
         page.drawText(label, { x: M.left + (block.ordered ? 0 : 6), y: markerY, size: BASE, font: fonts.r, color: INK });
         drawLines(lines, M.left + indent, contentW - indent);
@@ -298,13 +304,13 @@ export async function renderDocumentPdf(blocks: DocBlock[], opts: RenderDocOptio
       return { cells, h };
     };
     const header = block.header ? layoutRow(block.header, true) : null;
-    const drawRow = (r: { cells: Line[][]; h: number }, isHeader: boolean) => {
+    const drawRow = (r: { cells: Line[][]; h: number }, isHeader: boolean, repeat = false) => {
       const top = y;
       let x = M.left;
       if (isHeader) page.drawRectangle({ x: M.left, y: top - r.h, width: contentW, height: r.h, color: rgb(0.94, 0.95, 0.97) });
       r.cells.forEach((lines, c) => {
         y = top - pad;
-        drawLines(lines, x + pad, widths[c] - pad * 2, { paginate: false, color: isHeader ? accent : INK });
+        drawLines(lines, x + pad, widths[c] - pad * 2, { paginate: false, color: isHeader ? accent : INK, repeat });
         page.drawRectangle({ x, y: top - r.h, width: widths[c], height: r.h, borderColor: RULE, borderWidth: 0.5 });
         x += widths[c];
       });
@@ -331,7 +337,7 @@ export async function renderDocumentPdf(blocks: DocBlock[], opts: RenderDocOptio
           // No entra ni la primera línea: a la página siguiente (si la página ya está vacía, se dibuja igual).
           if (pageHasContent() && !(header && y === PAGE.h - M.top - header.h)) {
             newPage();
-            if (header) drawRow(header, true);
+            if (header) drawRow(header, true, true);
             continue;
           }
         }
@@ -346,7 +352,7 @@ export async function renderDocumentPdf(blocks: DocBlock[], opts: RenderDocOptio
         rest = rest.map((ls, c) => ls.slice(take[c]));
         if (rest.every((ls) => ls.length === 0)) break;
         newPage();
-        if (header) drawRow(header, true);
+        if (header) drawRow(header, true, true);
       }
     }
     y -= 10;
@@ -365,6 +371,22 @@ export async function renderDocumentPdf(blocks: DocBlock[], opts: RenderDocOptio
 
 function itemW(it: Item): number {
   return it.k === "word" || it.k === "space" || it.k === "mark" ? it.w : 0;
+}
+
+/** Recorta `text` (con "…") para que entre en `maxW` puntos a ese tamaño. */
+function fitText(font: PDFFont, text: string, size: number, maxW: number): string {
+  if (font.widthOfTextAtSize(text, size) <= maxW) return text;
+  const ell = "…";
+  const ellW = font.widthOfTextAtSize(ell, size);
+  let out = "";
+  let w = 0;
+  for (const ch of text) {
+    const cw = charWidth(font, ch, size);
+    if (w + cw + ellW > maxW) break;
+    out += ch;
+    w += cw;
+  }
+  return out.trimEnd() + ell;
 }
 
 function safe(font: PDFFont, text: string): string {

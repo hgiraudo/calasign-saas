@@ -1,0 +1,19 @@
+# Parches de seguridad del SO (lo instala scripts/deploy-dev.sh; reemplaza a dnf-automatic, que en Amazon Linux 2023 no
+# aplicaba nada: el releasever queda fijo en la versión instalada y los parches salen en versiones nuevas del repo).
+# - --releasever=latest --security: solo los avisos de seguridad de la versión más nueva del repo.
+# - --exclude=postgresql*: Postgres no se actualiza por acá (el rpm reiniciaría la base); se hace a mano, con backup.
+# - No reinicia servicios ni el equipo por su cuenta: solo lo que haga el scriptlet de cada rpm. Un kernel o una glibc
+#   nuevos quedan para el próximo reinicio (dnf needs-restarting -r dice si hace falta).
+# - flock -n sobre el lock del deploy: si hay un deploy en curso, sale sin hacer nada (código 75, que no cuenta como falla).
+# - Node (/opt/node) y Caddy (/usr/local/bin/caddy) no son paquetes rpm: NO se parchean por esta vía; se actualizan
+#   cambiando NODE_VERSION/CADDY_VERSION (y sus checksums) en infra/dev/bootstrap.sh.
+[Unit]
+Description=CalaSign dev: parches de seguridad del SO (dnf)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/flock -n -E 75 /run/calasign-deploy.lock /usr/bin/dnf -y upgrade --security --releasever=latest --exclude=postgresql*
+SuccessExitStatus=75
+TimeoutStartSec=30min

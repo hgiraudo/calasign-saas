@@ -62,3 +62,30 @@ describe("renderDocumentPdf", () => {
     expect(marks[0].x + marks[0].width).toBeLessThanOrEqual(1);
   });
 });
+
+describe("renderDocumentPdf: listas, encabezados repetidos y leyendas", () => {
+  it("una lista numerada conserva su número inicial", async () => {
+    const { pdf } = await renderDocumentPdf([{ type: "list", ordered: true, start: 3, items: [[{ text: "Tercero" }], [{ text: "Cuarto" }]] }]);
+    const { text } = await extractPdfPlainText(pdf);
+    expect(text).toMatch(/3\.\s*Tercero/);
+    expect(text).toMatch(/4\.\s*Cuarto/);
+    expect(text).not.toMatch(/1\.\s*Tercero/);
+  });
+
+  it("las marcas de un encabezado de tabla repetido en otras páginas no se registran otra vez", async () => {
+    const rows = Array.from({ length: 120 }, (_, i) => [[{ text: `Fila ${i + 1}` }], [{ text: "x" }]]);
+    const { marks, pageCount } = await renderDocumentPdf([{ type: "table", header: [[{ text: "Detalle" }], [{ mark: "initials", role: "Cliente" }]], rows }]);
+    expect(pageCount).toBeGreaterThan(1);
+    expect(marks).toHaveLength(1);
+    expect(marks[0].page).toBe(0);
+  });
+
+  it("la leyenda de un rol largo se recorta al ancho del espacio de firma", async () => {
+    const role = "Representante legal de la parte compradora y garante solidario";
+    const { pdf } = await renderDocumentPdf([{ type: "paragraph", runs: [{ mark: "date", role }] }]);
+    const { text } = await extractPdfPlainText(pdf);
+    expect(text).toContain("Fecha — Representante");
+    expect(text).not.toContain("garante solidario");
+    expect(text).toContain("…");
+  });
+});

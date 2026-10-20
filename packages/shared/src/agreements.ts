@@ -156,6 +156,20 @@ export const DocumentTemplateInput = z.object({
 export type DocumentTemplateInput = z.infer<typeof DocumentTemplateInput>;
 export const UpdateDocumentTemplateInput = DocumentTemplateInput.partial();
 
+/** Plantilla en el listado (GET /v1/document-templates): sin la fuente; el editor pide el detalle. */
+export interface DocumentTemplateSummary {
+  id: string;
+  name: string;
+  description: string | null;
+  locale: string;
+  sampleData: Record<string, unknown> | null;
+  agreementMapping: AgreementMapping | null;
+  analysis: TemplateAnalysis | null;
+  syntaxError: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface DocumentTemplate {
   id: string;
   name: string;
@@ -226,11 +240,24 @@ export const GenerateDocumentInput = z.object({
   metadata: UserMetadata.optional(),
 });
 export type GenerateDocumentInput = z.input<typeof GenerateDocumentInput>;
+/** Aviso al generar: signer_without_marks = firmantes sin marcas en el documento generado (no se agregaron al sobre). */
+export interface GenerateWarning {
+  code: "signer_without_marks";
+  message: string;
+  roles: string[];
+}
 export interface GenerateDocumentResponse {
   envelopeId: string;
   status: string;
   missing: string[];
   pages: number;
+  warnings?: GenerateWarning[];
+}
+
+/** GET /v1/clauses/{id}/usage y details de 409 clause_in_use. */
+export interface ClauseUsage {
+  templates: { id: string; name: string }[];
+  clauses: { id: string; slug: string; title: string }[];
 }
 
 export const RenderDocumentInput = z.object({

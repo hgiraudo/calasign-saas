@@ -31,8 +31,9 @@ type Inline =
 type Node =
   | { k: "heading"; level: 1 | 2 | 3; inl: Inline[] }
   | { k: "para"; lines: Inline[][] }
-  | { k: "li"; ordered: boolean; inl: Inline[] }
-  | { k: "row"; cells: Inline[][]; header: boolean }
+  | { k: "li"; ordered: boolean; inl: Inline[]; num?: number }
+  /** newTable: la fila viene después de una línea en blanco (empieza otra tabla, no continúa la anterior). */
+  | { k: "row"; cells: Inline[][]; header: boolean; newTable?: boolean }
   | { k: "pagebreak" }
   | { k: "clause"; slug: string }
   | { k: "if"; cond: Cond; then: Node[]; else: Node[] }
@@ -43,7 +44,8 @@ export type Run = { text: string; b?: boolean; i?: boolean } | { mark: MarkKind;
 export type ResolvedBlock =
   | { type: "heading"; level: 1 | 2 | 3; runs: Run[] }
   | { type: "paragraph"; runs: Run[] }
-  | { type: "list"; ordered: boolean; items: Run[][] }
+  /** start: número del primer ítem de una lista numerada que no empieza en 1 ("3. …"); ausente si empieza en 1. */
+  | { type: "list"; ordered: boolean; items: Run[][]; start?: number }
   | { type: "table"; header: Run[][] | null; rows: Run[][][] }
   | { type: "pagebreak" };
 
@@ -51,10 +53,15 @@ export class TemplateSyntaxError extends Error {
   constructor(
     message: string,
     readonly line: number,
+    /** Motivo puntual cuando hace falta distinguirlo (role_too_long, clause_cycle, clause_depth). */
+    readonly reason?: string,
   ) {
     super(line > 0 ? `Línea ${line}: ${message}` : message);
   }
 }
+
+/** Largo máximo del nombre de un rol de firma ({{firma:Rol}}), como el de los firmantes al generar. */
+export const MAX_ROLE_LENGTH = 80;
 
 const MARK_TAGS: Record<string, MarkKind> = {
   firma: "signature",
@@ -84,7 +91,7 @@ const RE_CLAUSE_LINE = /^\s*\{\{\s*(?:cl[aá]usula|clausula|clause)\s*:\s*([\w-]
 const RE_PAGEBREAK = /^\s*(?:\{\{\s*(?:salto|quebra|pagebreak)\s*\}\}|\\pagebreak)\s*$/i;
 const RE_HEADING = /^(#{1,3})\s+(.*)$/;
 const RE_UL = /^\s*[-•]\s+(.*)$/;
-const RE_OL = /^\s*\d+[.)]\s+(.*)$/;
+const RE_OL = /^\s*(\d{1,9})[.)]\s+(.*)$/;
 const RE_ROW = /^\s*\|(.*)\|\s*$/;
 /**
  * Fila separadora de tabla (|---|:---:|). Sin regex: la anterior, con varios \s* seguidos, tardaba tiempo cúbico con
@@ -214,7 +221,12 @@ function parseInline(src: string, line: number): Inline[] {
     if (/^(cl[aá]usula|clause)\s*:/i.test(tag)) throw new TemplateSyntaxError("{{clausula:…}} va en su propia línea", line);
     if (/^(salto|quebra|pagebreak)$/i.test(tag)) throw new TemplateSyntaxError("{{salto}} va en su propia línea", line);
     const mk = /^([a-z_]+)\s*:\s*(.+)$/i.exec(tag);
-    if (mk && MARK_TAGS[mk[1].toLowerCase()]) return [{ t: "mark", kind: MARK_TAGS[mk[1].toLowerCase()], role: mk[2].trim() }];
+    if (mk && MARK_TAGS[mk[1].toLowerCase()]) {
+      const role = mk[2].trim().replace(/\s+/g, " ");
+      // El firmante de un rol se indica con ese nombre (máximo 80 caracteres): un rol más largo nunca podría generarse.
+      if (role.length > MAX_ROLE_LENGTH) throw new TemplateSyntaxError(`el rol «${role.slice(0, 40)}…» supera los ${MAX_ROLE_LENGTH} caracteres`, line, "role_too_long");
+      return [{ t: "mark", kind: MARK_TAGS[mk[1].toLowerCase()], role }];
+    }
     const vm = new RegExp(String.raw`^(${PATH})\s*(?:\|\s*([a-z]+)\s*(?::\s*(.+))?)?$`, "i").exec(tag);
     if (!vm) throw new TemplateSyntaxError(`etiqueta inválida: {{${tag}}}`, line);
     const filter = vm[2]?.toLowerCase() ?? null;
@@ -307,12 +319,14 @@ export function parseTemplate(source: string): Node[] {
       }
       if ((m = RE_ROW.exec(raw))) {
         endPara();
-        out.push({ k: "row", cells: splitCells(m[1]).map((c) => parseInline(c.trim(), ln)), header: false });
+        // Después de una línea en blanco empieza otra tabla: dos tablas separadas no se fusionan en una.
+        const newTable = i >= 2 && lines[i - 2].trim() === "";
+        out.push({ k: "row", cells: splitCells(m[1]).map((c) => parseInline(c.trim(), ln)), header: false, ...(newTable ? { newTable } : {}) });
         continue;
       }
       if ((m = RE_OL.exec(raw))) {
         endPara();
-        out.push({ k: "li", ordered: true, inl: parseInline(m[1], ln) });
+        out.push({ k: "li", ordered: true, inl: parseInline(m[2], ln), num: Number(m[1]) });
         continue;
       }
       if ((m = RE_UL.exec(raw))) {
@@ -368,6 +382,8 @@ export interface RenderResult {
   marks: { kind: MarkKind; role: string }[];
   /** Cláusulas citadas que no existen en la biblioteca. */
   missingClauses: string[];
+  /** Cláusulas que se insertaron en el resultado (para dejar constancia de su versión). */
+  usedClauses: string[];
 }
 
 type Scope = Map<string, unknown>;
@@ -377,13 +393,34 @@ export const MAX_RENDER_WORK = 20_000;
 // 300 000 caracteres son unas 100 páginas: el PDF se arma en el hilo principal y más texto lo bloqueaba.
 export const MAX_RENDER_CHARS = 300_000;
 export const MAX_MARKS = 500;
+/** Cláusulas que citan cláusulas: niveles de anidamiento admitidos (más es un error, no se descarta en silencio). */
+export const MAX_CLAUSE_DEPTH = 8;
+
+const clauseCycleError = (chain: string[]) =>
+  new TemplateSyntaxError(`las cláusulas se citan en ciclo: ${chain.map((c) => `{{clausula:${c}}}`).join(" → ")}`, 0, "clause_cycle");
+const clauseDepthError = (chain: string[]) =>
+  new TemplateSyntaxError(`demasiados niveles de cláusulas que citan cláusulas (máximo ${MAX_CLAUSE_DEPTH}): ${chain.join(" → ")}`, 0, "clause_depth");
+
+/** Clave para comparar roles: sin distinguir mayúsculas ni espacios repetidos ("cliente" y "Cliente" son el mismo). */
+export function roleKey(role: string): string {
+  return role.trim().replace(/\s+/g, " ").toLocaleLowerCase("es");
+}
 
 export function renderTemplate(source: string, data: unknown, opts: RenderOptions = {}): RenderResult {
   const missing = new Set<string>();
   const missingClauses = new Set<string>();
+  const usedClauses = new Set<string>();
   const marks: { kind: MarkKind; role: string }[] = [];
   const locale = opts.locale ?? "es";
   const clauseCache = new Map<string, Node[]>();
+  // Roles sin distinguir mayúsculas: todas las marcas usan la grafía de la primera aparición (como analyzeTemplate).
+  const roleSpelling = new Map<string, string>();
+  const canonRole = (r: string) => {
+    const k = roleKey(r);
+    let v = roleSpelling.get(k);
+    if (v === undefined) roleSpelling.set(k, (v = r.trim().replace(/\s+/g, " ")));
+    return v;
+  };
   // Presupuesto de salida: {{#each}} anidados (o cláusulas que citan cientos de cláusulas) multiplican el trabajo, y una
   // variable larga repetida en un each multiplica el texto. Sin tope, un pedido de cualquier cuenta colgaba la API.
   let work = 0;
@@ -428,11 +465,11 @@ export function renderTemplate(source: string, data: unknown, opts: RenderOption
     if (c.op === "truthy") return c.neg ? !truthy(v) : truthy(v);
     const target = c.value;
     if (c.op === "eq" || c.op === "ne") {
-      const eq = typeof target === "number" ? toNum(v) === target : typeof target === "boolean" ? truthy(v) === target : String(v ?? "") === target;
+      const eq = typeof target === "number" ? toNum(v, locale) === target : typeof target === "boolean" ? truthy(v) === target : String(v ?? "") === target;
       return c.op === "eq" ? eq : !eq;
     }
-    const a = toNum(v);
-    const b = typeof target === "number" ? target : toNum(target);
+    const a = toNum(v, locale);
+    const b = typeof target === "number" ? target : toNum(target, locale);
     if (a === null || b === null) return false;
     return c.op === "gt" ? a > b : c.op === "lt" ? a < b : c.op === "ge" ? a >= b : a <= b;
   }
@@ -451,11 +488,11 @@ export function renderTemplate(source: string, data: unknown, opts: RenderOption
       case "lower":
         return String(v).toLocaleLowerCase(locale);
       case "number": {
-        const n = toNum(v);
+        const n = toNum(v, locale);
         return n === null ? String(v) : new Intl.NumberFormat(locale, { maximumFractionDigits: arg ? Number(arg) : 2 }).format(n);
       }
       case "money": {
-        const n = toNum(v);
+        const n = toNum(v, locale);
         if (n === null) return String(v);
         try {
           return new Intl.NumberFormat(locale, { style: "currency", currency: (arg ?? "USD").toUpperCase() }).format(n);
@@ -464,7 +501,7 @@ export function renderTemplate(source: string, data: unknown, opts: RenderOption
         }
       }
       case "date": {
-        const d = parseDate(v);
+        const d = parseDate(v, locale);
         if (!d) return String(v);
         return new Intl.DateTimeFormat(locale, { dateStyle: arg === "long" ? "long" : "short", timeZone: "UTC" }).format(d);
       }
@@ -488,8 +525,9 @@ export function renderTemplate(source: string, data: unknown, opts: RenderOption
         charge(1);
         // Cada marca es un campo del sobre: el mismo tope que al cargar campos.
         if (marks.length >= MAX_MARKS) throw new TemplateSyntaxError(`el documento tiene demasiadas marcas de firma o campos (máximo ${MAX_MARKS})`, 0);
-        marks.push({ kind: x.kind, role: x.role });
-        out.push({ mark: x.kind, role: x.role });
+        const role = canonRole(x.role);
+        marks.push({ kind: x.kind, role });
+        out.push({ mark: x.kind, role });
       } else if (x.t === "if") out.push(...evalInline(evalCond(x.cond, scopes) ? x.then : x.else, scopes, style));
       else if (x.t === "b") out.push(...evalInline(x.c, scopes, { ...style, b: true }));
       else out.push(...evalInline(x.c, scopes, { ...style, i: true }));
@@ -498,17 +536,18 @@ export function renderTemplate(source: string, data: unknown, opts: RenderOption
   }
 
   const blocks: ResolvedBlock[] = [];
-  function emitNodes(nodes: Node[], scopes: Scope[], depth: number) {
+  // `chain`: cláusulas que se están expandiendo (de afuera hacia adentro), para detectar ciclos.
+  function emitNodes(nodes: Node[], scopes: Scope[], chain: string[]) {
     for (const n of nodes) {
       charge(1);
-      if (n.k === "if") emitNodes(evalCond(n.cond, scopes) ? n.then : n.else, scopes, depth);
+      if (n.k === "if") emitNodes(evalCond(n.cond, scopes) ? n.then : n.else, scopes, chain);
       else if (n.k === "each") {
         const arr = lookup(n.path, scopes);
         if (!Array.isArray(arr)) {
           if (arr == null) missing.add(n.path);
           continue;
         }
-        arr.forEach((item, idx) => emitNodes(n.body, [...scopes, new Map<string, unknown>([[n.as, item], ["@index", idx + 1]])], depth));
+        arr.forEach((item, idx) => emitNodes(n.body, [...scopes, new Map<string, unknown>([[n.as, item], ["@index", idx + 1]])], chain));
       } else if (n.k === "clause") {
         // Propias del objeto: un slug como "constructor" no toma lo heredado de Object.prototype.
         const src = opts.clauses && Object.hasOwn(opts.clauses, n.slug) ? opts.clauses[n.slug] : undefined;
@@ -516,13 +555,17 @@ export function renderTemplate(source: string, data: unknown, opts: RenderOption
           missingClauses.add(n.slug);
           continue;
         }
-        if (depth >= 3) continue; // cláusulas que citan cláusulas: máximo 3 niveles (evita ciclos)
+        // Un ciclo (a → a, a → b → a) duplicaba el texto hasta el tope de niveles y un nivel más profundo se perdía sin
+        // aviso: ahora los dos son errores de la plantilla.
+        if (chain.includes(n.slug)) throw clauseCycleError([...chain.slice(chain.indexOf(n.slug)), n.slug]);
+        if (chain.length >= MAX_CLAUSE_DEPTH) throw clauseDepthError([...chain, n.slug]);
+        usedClauses.add(n.slug);
         let parsed = clauseCache.get(n.slug);
         if (!parsed) {
           parsed = parseTemplate(src);
           clauseCache.set(n.slug, parsed);
         }
-        emitNodes(parsed, scopes, depth + 1);
+        emitNodes(parsed, scopes, [...chain, n.slug]);
       } else if (n.k === "heading") blocks.push({ type: "heading", level: n.level, runs: evalInline(n.inl, scopes) });
       else if (n.k === "para") {
         const runs: Run[] = [];
@@ -535,21 +578,21 @@ export function renderTemplate(source: string, data: unknown, opts: RenderOption
         const last = blocks[blocks.length - 1];
         const runs = evalInline(n.inl, scopes);
         if (last?.type === "list" && last.ordered === n.ordered) last.items.push(runs);
-        else blocks.push({ type: "list", ordered: n.ordered, items: [runs] });
+        else blocks.push({ type: "list", ordered: n.ordered, items: [runs], ...(n.ordered && n.num != null && n.num !== 1 ? { start: n.num } : {}) });
       } else if (n.k === "row") {
         charge(n.cells.length); // celdas vacías también ocupan memoria
         const cells = n.cells.map((c) => evalInline(c, scopes));
         const last = blocks[blocks.length - 1];
         if (n.header) {
-          if (last?.type === "table" && !last.header && last.rows.length === 0) last.header = cells;
+          if (last?.type === "table" && !n.newTable && !last.header && last.rows.length === 0) last.header = cells;
           else blocks.push({ type: "table", header: cells, rows: [] });
-        } else if (last?.type === "table") last.rows.push(cells);
+        } else if (last?.type === "table" && !n.newTable) last.rows.push(cells);
         else blocks.push({ type: "table", header: null, rows: [cells] });
       } else if (n.k === "pagebreak") blocks.push({ type: "pagebreak" });
     }
   }
-  emitNodes(parseTemplate(source), [], 0);
-  return { blocks, missing: [...missing], marks, missingClauses: [...missingClauses] };
+  emitNodes(parseTemplate(source), [], []);
+  return { blocks, missing: [...missing], marks, missingClauses: [...missingClauses], usedClauses: [...usedClauses] };
 }
 
 function pushText(out: Run[], v: string, style: { b?: boolean; i?: boolean }) {
@@ -563,40 +606,86 @@ function isObj(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-function toNum(v: unknown): number | null {
+const reSep = (c: "." | ",") => (c === "." ? "\\." : ",");
+
+/** Separador decimal del idioma: "." en inglés, "," en español y portugués. */
+function decimalSep(locale: string): "." | "," {
+  return /^en\b/i.test(locale) ? "." : ",";
+}
+
+/**
+ * Número escrito por una persona ("1.500", "2,500", "US$ 1.234,56") según el idioma de la plantilla. Con un solo
+ * separador seguido de exactamente 3 cifras ("1.500", "2,500") decide el idioma: en es/pt el punto agrupa miles y la
+ * coma es decimal; en inglés al revés. Antes "1.500" valía 1,5 en un contrato en español. Con los dos separadores, el
+ * último es el decimal y los grupos de miles tienen que ser de 3 cifras; un formato que no cierra (p. ej. "1,2.3") es
+ * ambiguo: null, y el valor se imprime tal cual.
+ */
+export function parseLocaleNumber(v: unknown, locale = "es"): number | null {
   if (typeof v === "number") return Number.isFinite(v) ? v : null;
   if (typeof v === "boolean") return v ? 1 : 0;
   if (typeof v !== "string" || !v.trim()) return null;
   let s = v.trim().replace(/[^\d,.-]/g, "");
   // Sin dígitos no es un número ("a convenir", "-"): Number("") daría 0 y el contrato diría "US$ 0,00".
   if (!/\d/.test(s)) return null;
-  // 1.234,56 → 1234.56 ; 1,234.56 → 1234.56
-  if (s.includes(",") && s.includes(".")) s = s.lastIndexOf(",") > s.lastIndexOf(".") ? s.replace(/\./g, "").replace(",", ".") : s.replace(/,/g, "");
-  // 1.500.000 / 1,500,000: el mismo separador repetido entre grupos de 3 cifras son miles (no hay otra lectura).
-  // Antes daba NaN: {{valor | money:COP}} salía sin formato y {{#if valor > 1000000}} era falso.
-  else if (/^-?\d{1,3}([.,])\d{3}(?:\1\d{3})+$/.test(s)) s = s.replace(/[.,]/g, "");
-  else if (s.includes(",")) s = s.replace(",", ".");
+  const dec = decimalSep(locale);
+  const hasDot = s.includes(".");
+  const hasComma = s.includes(",");
+  if (hasDot && hasComma) {
+    // 1.234,56 / 1,234.56: el último separador es el decimal y el otro agrupa de a 3.
+    const d = s.lastIndexOf(",") > s.lastIndexOf(".") ? "," : ".";
+    const g = d === "," ? "." : ",";
+    const re = new RegExp(String.raw`^-?\d{1,3}(?:${reSep(g)}\d{3})+${reSep(d)}\d+$`);
+    if (!re.test(s)) return null;
+    s = s.split(g).join("").replace(d, ".");
+  } else if (hasDot || hasComma) {
+    const sep = hasDot ? "." : ",";
+    const parts = s.split(sep);
+    if (parts.length > 2) {
+      // 1.500.000 / 1,500,000: el mismo separador repetido entre grupos de 3 cifras son miles (no hay otra lectura).
+      if (!new RegExp(String.raw`^-?\d{1,3}(?:${reSep(sep)}\d{3})+$`).test(s)) return null;
+      s = parts.join("");
+    } else if (/^-?[1-9]\d{0,2}$/.test(parts[0]) && /^\d{3}$/.test(parts[1])) {
+      // Un solo grupo de 3 cifras ("1.500", "2,500"): miles si el separador no es el decimal del idioma.
+      s = sep === dec ? `${parts[0]}.${parts[1]}` : parts.join("");
+    } else s = `${parts[0]}.${parts[1]}`;
+  }
+  if (!/^-?\d*\.?\d+$|^-?\d+\.?$/.test(s)) return null;
   const n = Number(s);
   return Number.isFinite(n) ? n : null;
 }
 
-function parseDate(v: unknown): Date | null {
-  if (v instanceof Date) return v;
+const toNum = parseLocaleNumber;
+
+/**
+ * Fecha escrita con barras según el idioma: en inglés mes/día/año (03/01/2027 = 1 de marzo), en español y portugués
+ * día/mes/año (03/01/2027 = 3 de enero). AAAA-MM-DD vale en todos.
+ */
+export function parseLocaleDate(v: unknown, locale = "es"): Date | null {
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v;
   if (typeof v !== "string" && typeof v !== "number") return null;
   const s = String(v).trim();
   // Día, mes y año explícitos tienen que existir: Date.UTC (y new Date con "2027-02-31") corren el 31/02 al 3 de
   // marzo, y el contrato decía una fecha que nadie escribió. Una fecha inexistente se imprime tal cual vino.
-  const dmy = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s);
+  const slash = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s);
   const ymd = /^(\d{4})-(\d{2})-(\d{2})(?=$|T)/.exec(s);
-  const parts = dmy ? { y: +dmy[3], m: +dmy[2], d: +dmy[1] } : ymd ? { y: +ymd[1], m: +ymd[2], d: +ymd[3] } : null;
+  const mdy = /^en\b/i.test(locale);
+  const parts = slash
+    ? { y: +slash[3], m: +(mdy ? slash[1] : slash[2]), d: +(mdy ? slash[2] : slash[1]) }
+    : ymd
+      ? { y: +ymd[1], m: +ymd[2], d: +ymd[3] }
+      : null;
   if (parts) {
     const check = new Date(Date.UTC(parts.y, parts.m - 1, parts.d));
     if (check.getUTCFullYear() !== parts.y || check.getUTCMonth() !== parts.m - 1 || check.getUTCDate() !== parts.d) return null;
-    if (dmy) return check;
+    if (slash) return check;
   }
+  // Otro texto con barras (03/01/27) no se adivina: new Date lo leería como mes/día en cualquier idioma.
+  if (s.includes("/")) return null;
   const d = new Date(s);
   return Number.isNaN(d.getTime()) ? null : d;
 }
+
+const parseDate = parseLocaleDate;
 
 // ───────────────────────────── Análisis ─────────────────────────────
 
@@ -604,21 +693,29 @@ export interface TemplateAnalysis {
   /** Variables de nivel superior (fuera de bucles), por ruta. */
   variables: string[];
   loops: { path: string; as: string; fields: string[] }[];
+  /** Roles de las marcas, sin repetir (sin distinguir mayúsculas: vale la grafía de la primera aparición). */
   roles: string[];
+  /** Roles con marcas (iniciales, fecha, nombre) pero sin ningún {{firma:Rol}}: no se puede generar el sobre con ellos. */
+  unsignedRoles?: string[];
   clauses: string[];
 }
 
 export function analyzeTemplate(source: string, clauses: Record<string, string> = {}): TemplateAnalysis {
   const vars = new Set<string>();
   const loops = new Map<string, { path: string; as: string; fields: Set<string> }>();
-  const roles = new Set<string>();
+  const roles = new Map<string, string>();
+  const signed = new Set<string>();
   const usedClauses = new Set<string>();
   const seenClauses = new Set<string>();
 
   function inl(xs: Inline[], loopVars: Map<string, { path: string; as: string; fields: Set<string> }>) {
     for (const x of xs) {
       if (x.t === "var") addPath(x.path, loopVars);
-      else if (x.t === "mark") roles.add(x.role);
+      else if (x.t === "mark") {
+        const k = roleKey(x.role);
+        if (!roles.has(k)) roles.set(k, x.role.trim().replace(/\s+/g, " "));
+        if (x.kind === "signature") signed.add(k);
+      }
       else if (x.t === "if") {
         addPath(x.cond.path, loopVars);
         inl(x.then, loopVars);
@@ -674,9 +771,70 @@ export function analyzeTemplate(source: string, clauses: Record<string, string> 
   return {
     variables: [...vars].sort(),
     loops: [...loops.values()].map((l) => ({ path: l.path, as: l.as, fields: [...l.fields].sort() })),
-    roles: [...roles],
+    roles: [...roles.values()],
+    unsignedRoles: [...roles].filter(([k]) => !signed.has(k)).map(([, v]) => v),
     clauses: [...usedClauses],
   };
+}
+
+// ───────────────────────────── Grafo de cláusulas ─────────────────────────────
+
+/** Cláusulas citadas por un texto, en todas las ramas ({{#if}}/{{else}}, {{#each}}), sin evaluar datos. */
+export function clauseRefs(source: string): string[] {
+  const out = new Set<string>();
+  const walk = (ns: Node[]) => {
+    for (const n of ns) {
+      if (n.k === "clause") out.add(n.slug);
+      else if (n.k === "if") {
+        walk(n.then);
+        walk(n.else);
+      } else if (n.k === "each") walk(n.body);
+    }
+  };
+  walk(parseTemplate(source));
+  return [...out];
+}
+
+/**
+ * Valida que las cláusulas `roots` (con la biblioteca `clauses`) no se citen en ciclo ni pasen de MAX_CLAUSE_DEPTH
+ * niveles, mirando todas las ramas (un ciclo dentro de un {{#if}} que hoy no se cumple igual rompería otro documento).
+ * Lanza TemplateSyntaxError. Una cláusula con errores de sintaxis no cita nada (se valida por separado).
+ */
+export function checkClauseGraph(clauses: Record<string, string>, roots: string[]): void {
+  const refs = new Map<string, string[]>();
+  const height = new Map<string, number>();
+  const visiting = new Set<string>();
+  const refsOf = (slug: string) => {
+    let r = refs.get(slug);
+    if (!r) {
+      try {
+        r = clauseRefs(clauses[slug]);
+      } catch {
+        r = [];
+      }
+      refs.set(slug, r);
+    }
+    return r;
+  };
+  const dfs = (slug: string, stack: string[]): number => {
+    if (!Object.hasOwn(clauses, slug) || clauses[slug] == null) return 0;
+    if (visiting.has(slug)) throw clauseCycleError([...stack.slice(stack.indexOf(slug)), slug]);
+    const done = height.get(slug);
+    if (done !== undefined) {
+      if (stack.length + done > MAX_CLAUSE_DEPTH) throw clauseDepthError([...stack, slug]);
+      return done;
+    }
+    if (stack.length >= MAX_CLAUSE_DEPTH) throw clauseDepthError([...stack, slug]);
+    visiting.add(slug);
+    stack.push(slug);
+    let h = 0;
+    for (const c of refsOf(slug)) h = Math.max(h, dfs(c, stack));
+    stack.pop();
+    visiting.delete(slug);
+    height.set(slug, h + 1);
+    return h + 1;
+  };
+  for (const r of roots) dfs(r, []);
 }
 
 // ───────────────────────────── Texto plano y diff ─────────────────────────────
@@ -687,7 +845,7 @@ export function blocksToText(blocks: ResolvedBlock[]): string {
   const out: string[] = [];
   for (const b of blocks) {
     if (b.type === "heading" || b.type === "paragraph") out.push(runText(b.runs));
-    else if (b.type === "list") b.items.forEach((it, i) => out.push(`${b.ordered ? `${i + 1}.` : "•"} ${runText(it)}`));
+    else if (b.type === "list") b.items.forEach((it, i) => out.push(`${b.ordered ? `${(b.start ?? 1) + i}.` : "•"} ${runText(it)}`));
     else if (b.type === "table") {
       if (b.header) out.push(b.header.map(runText).join(" | "));
       b.rows.forEach((r) => out.push(r.map(runText).join(" | ")));

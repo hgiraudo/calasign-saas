@@ -69,6 +69,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
+Type=notify
 User=caddy
 Group=caddy
 ExecStart=/usr/local/bin/caddy run --environ --config /etc/caddy/Caddyfile

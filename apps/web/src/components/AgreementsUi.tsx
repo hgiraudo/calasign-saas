@@ -4,6 +4,8 @@ import { NavLink } from "react-router-dom";
 import type { DiffPart, ResolvedBlock, Run } from "@calasign/shared";
 import { useAgrText } from "../lib/i18n-agreements";
 
+type AgrText = ReturnType<typeof useAgrText>;
+
 export function AgreementsTabs() {
   const ta = useAgrText();
   const tabs: [string, string][] = [
@@ -24,17 +26,20 @@ export function AgreementsTabs() {
   );
 }
 
-const MARK_LABEL: Record<string, string> = { signature: "✍", initials: "AB", date: "📅", name: "👤" };
+/** Texto de cada marca (no un emoji suelto: el lector de pantalla leía "pluma estilográfica" o "calendario"). */
+const MARK_KEY = { signature: "mark.signature", initials: "mark.initials", date: "mark.date", name: "mark.name" } as const;
 
-function runs(rs: Run[]): ReactNode {
+function runs(rs: Run[], ta: AgrText): ReactNode {
   return rs.map((r, i) => {
     if ("br" in r) return <br key={i} />;
-    if ("mark" in r)
+    if ("mark" in r) {
+      const label = `${ta(MARK_KEY[r.mark])}: ${r.role}`;
       return (
-        <span key={i} className={`agr-mark agr-mark-${r.mark}`}>
-          {MARK_LABEL[r.mark]} {r.role}
+        <span key={i} className={`agr-mark agr-mark-${r.mark}`} role="img" aria-label={label} title={label}>
+          {label}
         </span>
       );
+    }
     let node: ReactNode = r.text;
     if (r.i) node = <em>{node}</em>;
     if (r.b) node = <strong>{node}</strong>;
@@ -85,6 +90,7 @@ export function DocPreview({
   onSelect?: (sel: { quote: string; start: number | null; end: number | null } | null) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const ta = useAgrText();
   const handleUp = () => {
     if (!onSelect) return;
     const sel = window.getSelection();
@@ -123,17 +129,25 @@ export function DocPreview({
       {blocks.map((b, i) => {
         if (b.type === "heading") {
           const H = (`h${b.level + 1}` as "h2" | "h3" | "h4");
-          return <H key={i}>{runs(b.runs)}</H>;
+          return <H key={i}>{runs(b.runs, ta)}</H>;
         }
-        if (b.type === "paragraph") return <p key={i}>{runs(b.runs)}</p>;
+        if (b.type === "paragraph") return <p key={i}>{runs(b.runs, ta)}</p>;
         if (b.type === "list") {
-          const L = b.ordered ? "ol" : "ul";
+          // Una lista numerada que empieza en otro número ("3. …") lo conserva, como en el PDF.
+          if (b.ordered)
+            return (
+              <ol key={i} start={b.start}>
+                {b.items.map((it, j) => (
+                  <li key={j}>{runs(it, ta)}</li>
+                ))}
+              </ol>
+            );
           return (
-            <L key={i}>
+            <ul key={i}>
               {b.items.map((it, j) => (
-                <li key={j}>{runs(it)}</li>
+                <li key={j}>{runs(it, ta)}</li>
               ))}
-            </L>
+            </ul>
           );
         }
         if (b.type === "table")
@@ -144,7 +158,7 @@ export function DocPreview({
                   <thead>
                     <tr>
                       {b.header.map((c, j) => (
-                        <th key={j}>{runs(c)}</th>
+                        <th key={j}>{runs(c, ta)}</th>
                       ))}
                     </tr>
                   </thead>
@@ -153,7 +167,7 @@ export function DocPreview({
                   {b.rows.map((r, j) => (
                     <tr key={j}>
                       {r.map((c, k) => (
-                        <td key={k}>{runs(c)}</td>
+                        <td key={k}>{runs(c, ta)}</td>
                       ))}
                     </tr>
                   ))}

@@ -234,6 +234,10 @@ const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
     en: "Only PDF, JPG or PNG files that aren't damaged or protected are accepted.",
   },
   // Consola de administración (equipo, integraciones, SSO, facturación)
+  clause_in_use: {
+    "pt-BR": "A cláusula é usada em modelos de documentos ou em outras cláusulas: remova essas citações antes de excluí-la.",
+    en: "The clause is used in document templates or other clauses: remove those references before deleting it.",
+  },
   role_in_use: {
     "pt-BR": "O perfil está atribuído: altere antes esses membros, API keys ou convites.",
     en: "The role is assigned: change those members, API keys or invitations first.",
@@ -568,6 +572,13 @@ function httpErrorText(e: HttpError, loc: "es" | "pt-BR" | "en"): string {
     if (loc !== "es" && e.code === "fields_incomplete") {
       const list = Array.isArray(missing) ? [...new Set(missing.map(String))].join(", ") : "";
       return (loc === "en" ? "Still to complete: " : "Ainda falta preencher: ") + list;
+    }
+    if (loc !== "es" && e.code === "clause_in_use") {
+      // Con los nombres de lo que la usa (details.templates / details.clauses), como el mensaje en español.
+      const d = e.details as { templates?: { name?: unknown }[]; clauses?: { title?: unknown }[] } | undefined;
+      const names = [...(d?.templates ?? []).map((x) => String(x.name ?? "")), ...(d?.clauses ?? []).map((x) => String(x.title ?? ""))].filter(Boolean);
+      const base = loc === "en" ? "The clause is used in: " : "A cláusula é usada em: ";
+      if (names.length) return base + names.slice(0, 10).join(", ") + (names.length > 10 ? "…" : "");
     }
     const det = e.details as { problems?: unknown; issues?: unknown } | undefined;
     const problems = Array.isArray(det?.issues) ? det.issues : det?.problems;

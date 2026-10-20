@@ -27,7 +27,7 @@ import {
   type PDFContext,
   type PDFObject,
 } from "pdf-lib";
-import { constants, inflateSync } from "node:zlib";
+import { constants, inflateRawSync, inflateSync } from "node:zlib";
 import { formUnsupportedError, hiddenLayersError } from "./errors";
 import { decodeFilterCapped, type CappedFilter } from "./stream-budget";
 
@@ -573,6 +573,17 @@ function inflateCapped(data: Uint8Array, max: number): Uint8Array | null {
     if (e instanceof RangeError) return null;
   }
   if (data.length < 2) return new Uint8Array();
+  // Encabezado zlib inválido (método distinto de deflate o FCHECK que no cierra): puede ser deflate crudo, sin
+  // encabezado. Se prueba eso primero, con el mismo tope; pisar los dos primeros bytes destruía el comienzo de esos datos.
+  if ((data[0] & 0x0f) !== 8 || ((data[0] << 8) | data[1]) % 31 !== 0) {
+    try {
+      const raw = inflateRawSync(data, { maxOutputLength: Math.max(1, max + 1), finishFlush: constants.Z_SYNC_FLUSH });
+      if (raw.length > max) return null;
+      if (raw.length > 0) return raw;
+    } catch (e) {
+      if (e instanceof RangeError) return null;
+    }
+  }
   const fixed = new Uint8Array(data.length);
   fixed.set(data);
   fixed[0] = 0x78;
@@ -582,7 +593,7 @@ function inflateCapped(data: Uint8Array, max: number): Uint8Array | null {
 
 /**
  * Deshace un predictor PNG (10-15) o TIFF (2, de 8 bits) como pdf.js. `null` con parámetros que no se saben aplicar
- * (TIFF de otro ancho de componente, valores absurdos).
+ * (TIFF de otro ancho de componente, predictor desconocido, valores absurdos, filas más largas que los datos).
  */
 function undoPredictor(ctx: PDFContext, parms: PDFDict, data: Uint8Array, predictor: number): Uint8Array | null {
   const colors = numOf(ctx, parms.get(N("Colors"))) ?? 1;
@@ -599,14 +610,18 @@ function undoPredictor(ctx: PDFContext, parms: PDFDict, data: Uint8Array, predic
     }
     return out;
   }
-  if (predictor < 10) return null;
+  if (!Number.isInteger(predictor) || predictor < 10 || predictor > 15) return null;
+  // Columns sale del archivo (hasta 2^24, hasta 1 GiB por fila): una fila más larga que todos los datos no es un
+  // predictor PNG real y reservar prev/row de ese tamaño, con un stream de pocos bytes, agotaba la memoria.
+  if (rowBytes > data.length) return null;
   const out = new Uint8Array(Math.floor(data.length / (rowBytes + 1)) * rowBytes + Math.max(0, (data.length % (rowBytes + 1)) - 1));
-  let prev = new Uint8Array(rowBytes);
+  const rowAlloc = Math.min(rowBytes, data.length);
+  let prev = new Uint8Array(rowAlloc);
   let o = 0;
   for (let at = 0; at < data.length; at += rowBytes + 1) {
     const type = data[at];
     const raw = data.subarray(at + 1, Math.min(at + 1 + rowBytes, data.length));
-    const row = new Uint8Array(rowBytes);
+    const row = new Uint8Array(rowAlloc);
     for (let i = 0; i < raw.length; i++) {
       const a = i >= pix ? row[i - pix] : 0;
       const b = prev[i];

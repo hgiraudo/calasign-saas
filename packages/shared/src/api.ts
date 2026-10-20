@@ -34,6 +34,7 @@ export const RESERVED_METADATA_KEYS = [
   "negotiationId",
   "negotiationVersion",
   "documentTemplateId",
+  "documentProvenance",
   "agreement",
   "templateId",
   "clonedFrom",

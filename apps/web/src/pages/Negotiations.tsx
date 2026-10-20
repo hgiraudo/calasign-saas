@@ -2,7 +2,7 @@
 // (documento con selección para comentar, propuestas, versiones con diff).
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import type { DocumentTemplate, NegotiationDiff, NegotiationSummary, NegotiationView } from "@calasign/shared";
+import type { DocumentTemplateSummary, NegotiationDiff, NegotiationSummary, NegotiationView } from "@calasign/shared";
 import { api, errorText, HttpError } from "../lib/api";
 import { confirmAction, formatDateTime, useI18n } from "../lib/i18n";
 import { useAgrText, type AgreementsTextKey } from "../lib/i18n-agreements";
@@ -87,7 +87,7 @@ export function NegotiationsPage() {
 function CreateNegotiationModal({ kind, onClose, onCreated }: { kind: "template" | "pdf"; onClose: () => void; onCreated: (v: NegotiationView) => void }) {
   const ta = useAgrText();
   const { t } = useI18n();
-  const [templates, setTemplates] = useState<DocumentTemplate[]>([]);
+  const [templates, setTemplates] = useState<DocumentTemplateSummary[]>([]);
   const [templateId, setTemplateId] = useState("");
   const [title, setTitle] = useState("");
   const [json, setJson] = useState("{}");
@@ -99,7 +99,7 @@ function CreateNegotiationModal({ kind, onClose, onCreated }: { kind: "template"
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     if (kind !== "template") return;
-    api<{ items: DocumentTemplate[] }>("/v1/document-templates")
+    api<{ items: DocumentTemplateSummary[] }>("/v1/document-templates")
       .then((r) => {
         setTemplates(r.items);
         if (r.items[0]) {

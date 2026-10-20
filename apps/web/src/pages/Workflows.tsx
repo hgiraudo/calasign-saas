@@ -1,7 +1,7 @@
 // Workflows sin código (Fase 6): listado, editor de pasos (lista vertical), ejecuciones y detalle con aprobación.
 import { useCallback, useEffect, useRef, useState, type FormEvent, type InputHTMLAttributes, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import type { CollectField, DocumentTemplate, Member, Workflow, WorkflowRun, WorkflowStep, WorkflowStepType } from "@calasign/shared";
+import type { CollectField, DocumentTemplateSummary, Member, Workflow, WorkflowRun, WorkflowStep, WorkflowStepType } from "@calasign/shared";
 import { WORKFLOW_STEP_TYPES } from "@calasign/shared";
 import { api, errorText, uuid } from "../lib/api";
 import { confirmAction, formatDateTime, placeholderText, useI18n } from "../lib/i18n";
@@ -142,7 +142,7 @@ function F({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-function StepConfig({ step, onChange, members, templates }: { step: WorkflowStep; onChange: (s: WorkflowStep) => void; members: Member[]; templates: DocumentTemplate[] }) {
+function StepConfig({ step, onChange, members, templates }: { step: WorkflowStep; onChange: (s: WorkflowStep) => void; members: Member[]; templates: DocumentTemplateSummary[] }) {
   const ta = useAgrText();
   const { t: tc } = useI18n();
   const set = (patch: Record<string, unknown>) => onChange({ ...step, config: { ...step.config, ...patch } } as WorkflowStep);
@@ -345,7 +345,7 @@ export function WorkflowEditPage() {
   const [publicStart, setPublicStart] = useState(false);
   const [steps, setSteps] = useState<WorkflowStep[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
-  const [templates, setTemplates] = useState<DocumentTemplate[]>([]);
+  const [templates, setTemplates] = useState<DocumentTemplateSummary[]>([]);
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -363,7 +363,7 @@ export function WorkflowEditPage() {
 
   useEffect(() => {
     api<{ items: Member[] }>("/v1/members").then((r) => setMembers(r.items)).catch(() => undefined);
-    api<{ items: DocumentTemplate[] }>("/v1/document-templates").then((r) => setTemplates(r.items)).catch(() => undefined);
+    api<{ items: DocumentTemplateSummary[] }>("/v1/document-templates").then((r) => setTemplates(r.items)).catch(() => undefined);
     if (isNew) {
       setName(ta("wf.new"));
       return;

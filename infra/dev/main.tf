@@ -221,6 +221,14 @@ resource "aws_iam_role_policy" "app" {
       { Sid = "Sello", Effect = "Allow", Action = ["kms:Sign", "kms:GetPublicKey", "kms:DescribeKey"], Resource = aws_kms_key.seal.arn },
       { Sid = "Parametros", Effect = "Allow", Action = ["ssm:GetParameter"], Resource = "arn:aws:ssm:us-east-1:${var.account_id}:parameter/calasign-saas/dev/*" },
       {
+        # deploy-dev.sh lee todos los secretos con get-parameters-by-path --path /calasign-saas/dev/: IAM evalúa
+        # GetParametersByPath contra el ARN de la ruta (sin "/*"), así que van los dos.
+        Sid      = "ParametrosPorRuta"
+        Effect   = "Allow"
+        Action   = ["ssm:GetParametersByPath"]
+        Resource = ["arn:aws:ssm:us-east-1:${var.account_id}:parameter/calasign-saas/dev", "arn:aws:ssm:us-east-1:${var.account_id}:parameter/calasign-saas/dev/*"]
+      },
+      {
         # PutMetricData no admite ARN de recurso: se acota por namespace.
         Sid       = "MetricasBackup"
         Effect    = "Allow"

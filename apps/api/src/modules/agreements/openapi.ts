@@ -39,6 +39,8 @@ type Op = {
   auth?: "key" | "none";
   /** Códigos del catálogo ERRORS (openapi-extra.ts). */
   errors?: string[];
+  /** Admite X-Expected-Updated-At (409 version_changed si el recurso cambió desde que se leyó). */
+  expectedUpdatedAt?: boolean;
 };
 
 const iso = z.string().datetime();
@@ -126,10 +128,26 @@ export const AGREEMENTS_OPS: Op[] = [
   { method: "post", path: "/v1/agreement-views", tag: R, summary: "Guardar una vista", body: AgreementViewInput, status: 201 },
   { method: "delete", path: "/v1/agreement-views/{id}", tag: R, summary: "Borrar una vista", response: "none", status: 204 },
 
-  { method: "get", path: "/v1/document-templates", tag: D, summary: "Plantillas de documentos" },
+  {
+    method: "get",
+    path: "/v1/document-templates",
+    tag: D,
+    summary: "Plantillas de documentos",
+    description: "Listado sin la fuente (`source`): metadatos, datos de ejemplo y análisis (variables, roles, cláusulas). El texto se lee con GET /v1/document-templates/{id}.",
+  },
   { method: "post", path: "/v1/document-templates", tag: D, summary: "Crear una plantilla de documento", body: DocumentTemplateInput, status: 201 },
   { method: "get", path: "/v1/document-templates/{id}", tag: D, summary: "Ver una plantilla (con análisis de variables y roles)" },
-  { method: "patch", path: "/v1/document-templates/{id}", tag: D, summary: "Editar una plantilla", body: UpdateDocumentTemplateInput },
+  {
+    method: "patch",
+    path: "/v1/document-templates/{id}",
+    tag: D,
+    summary: "Editar una plantilla",
+    description:
+      "Con `X-Expected-Updated-At` (el updatedAt leído), 409 version_changed si otra persona la cambió mientras tanto. Un rol de firma de más de 80 caracteres es 400 template_syntax.",
+    body: UpdateDocumentTemplateInput,
+    expectedUpdatedAt: true,
+    errors: ["version_changed", "template_syntax"],
+  },
   { method: "delete", path: "/v1/document-templates/{id}", tag: D, summary: "Archivar una plantilla", response: "none", status: 204 },
   { method: "post", path: "/v1/document-templates/{id}/preview", tag: D, summary: "Vista previa (bloques + variables faltantes)" },
   { method: "post", path: "/v1/document-templates/render", tag: D, summary: "PDF de prueba de una plantilla o de un texto", body: RenderDocumentInput, response: "pdf" },
@@ -139,14 +157,39 @@ export const AGREEMENTS_OPS: Op[] = [
     tag: D,
     summary: "Generar el documento y crear el sobre",
     description:
-      "Las marcas {{firma:Rol}} se convierten en campos del firmante de ese rol. 422 si faltan datos, cláusulas o firmantes. El documento generado admite hasta 300 000 caracteres y 500 marcas de firma o campos (si no, 400 template_syntax). Admite `Idempotency-Key`.",
+      "Las marcas {{firma:Rol}} se convierten en campos del firmante de ese rol. 422 si faltan datos, cláusulas o firmantes. Un firmante cuyo rol la plantilla declara pero no tiene ninguna marca en el documento generado (p. ej. una firma dentro de un {{#if}} que no se cumplió) no se agrega al sobre; un rol que la plantilla no declara da 422 unknown_roles y se informa en `warnings` (code signer_without_marks, roles); si no queda ningún firmante, 422 unknown_roles. La metadata del sobre guarda `documentProvenance` (sha256 de la fuente de la plantilla y de cada cláusula insertada). El documento generado admite hasta 300 000 caracteres y 500 marcas de firma o campos (si no, 400 template_syntax). Admite `Idempotency-Key`.",
     body: GenerateDocumentInput,
     status: 201,
   },
   { method: "get", path: "/v1/clauses", tag: D, summary: "Biblioteca de cláusulas" },
   { method: "post", path: "/v1/clauses", tag: D, summary: "Crear una cláusula", body: ClauseInput, status: 201 },
-  { method: "patch", path: "/v1/clauses/{id}", tag: D, summary: "Editar una cláusula" },
-  { method: "delete", path: "/v1/clauses/{id}", tag: D, summary: "Borrar una cláusula", response: "none", status: 204 },
+  {
+    method: "get",
+    path: "/v1/clauses/{id}/usage",
+    tag: D,
+    summary: "Dónde se usa una cláusula",
+    description: "Plantillas de documentos no archivadas y otras cláusulas que la citan con {{clausula:codigo}} (en cualquier rama de un {{#if}} o {{#each}}): `{ templates: [{id, name}], clauses: [{id, slug, title}] }`.",
+  },
+  {
+    method: "patch",
+    path: "/v1/clauses/{id}",
+    tag: D,
+    summary: "Editar una cláusula",
+    description:
+      "Con `X-Expected-Updated-At`, 409 version_changed si cambió mientras tanto. 400 template_syntax si el texto tiene errores, si las cláusulas quedarían citándose en ciclo o con más de 8 niveles de cláusulas que citan cláusulas.",
+    expectedUpdatedAt: true,
+    errors: ["version_changed", "template_syntax"],
+  },
+  {
+    method: "delete",
+    path: "/v1/clauses/{id}",
+    tag: D,
+    summary: "Borrar una cláusula",
+    description: "409 clause_in_use si la citan plantillas no archivadas u otras cláusulas (details con la misma forma que GET /v1/clauses/{id}/usage).",
+    response: "none",
+    status: 204,
+    errors: ["clause_in_use"],
+  },
 
   { method: "get", path: "/v1/workflows", tag: W, summary: "Workflows" },
   { method: "post", path: "/v1/workflows", tag: W, summary: "Crear un workflow", body: WorkflowInput, status: 201 },

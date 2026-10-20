@@ -212,10 +212,37 @@ describe("ejecuciones de workflows", () => {
     expect(full.json().redacted).toBeUndefined();
     expect(full.json().context.data).toEqual({ secreto: "123" });
 
+    // Error de un paso HTTP: redactado, solo el código (sin el cuerpo de la respuesta externa).
+    await db.query(`UPDATE workflow_run_steps SET type = 'http_request', status = 'failed', error = $2 WHERE run_id = $1 AND idx = 0`, [
+      runId,
+      'El servicio respondió HTTP 500: {"apiKey":"sk_live_secreto"}',
+    ]);
+    const red2 = await app.inject({ method: "GET", url: `/v1/workflow-runs/${runId}`, headers: H(tplAdmin.session) });
+    expect(red2.json().steps[0].error).toBe("El servicio respondió HTTP 500");
+    const full2 = await app.inject({ method: "GET", url: `/v1/workflow-runs/${runId}`, headers: H(viewer.session) });
+    expect(full2.json().steps[0].error).toContain("sk_live_secreto");
+    const { redactedHttpError } = await import("../src/modules/agreements/workflows");
+    expect(redactedHttpError("No se pudo conectar: getaddrinfo ENOTFOUND interno.acme")).toBe("No se pudo conectar");
+    expect(redactedHttpError("otra cosa con datos")).toBe("La llamada HTTP falló");
+    expect(redactedHttpError(null)).toBeNull();
+
     // Las que inicia él sí las ve completas.
     const mine = await app.inject({ method: "POST", url: `/v1/workflows/${wf.json().id}/runs`, headers: H(tplAdmin.session), payload: { data: { propio: true } } });
     expect(mine.statusCode).toBe(201);
     expect(mine.json().context.data).toEqual({ propio: true });
     expect(mine.json().collectUrl).toMatch(/\/w\//);
+  });
+});
+
+describe("orden de bloqueos", () => {
+  it("PATCH /v1/roles/:id bloquea la organización antes que el rol (como el cambio de rol de un miembro)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync(new URL("../src/modules/teams.ts", import.meta.url), "utf8");
+    const start = src.indexOf('app.patch<P>("/v1/roles/:id"');
+    const body = src.slice(start, src.indexOf("app.delete<P>(\"/v1/roles/:id\"", start));
+    const tenantLock = body.indexOf("FROM tenants WHERE id = $1 FOR UPDATE");
+    const roleLock = body.indexOf("FROM roles WHERE id = $1 AND tenant_id = $2 FOR UPDATE");
+    expect(tenantLock).toBeGreaterThan(-1);
+    expect(roleLock).toBeGreaterThan(tenantLock);
   });
 });

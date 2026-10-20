@@ -104,6 +104,13 @@ export const config = {
      */
     alphanumericAllowedTenants: list(env.SMS_ALPHANUMERIC_ALLOWED_TENANTS),
   },
+  jobs: {
+    /**
+     * Días que se guardan los jobs terminados (done/failed) antes de purgarlos. Los que todavía deduplican (clave atada
+     * a un sobre que no terminó) se retienen igual: ver purgeFinishedJobs en infra/queue.ts.
+     */
+    retentionDays: Math.max(1, Number(env.JOBS_RETENTION_DAYS ?? 30) || 30),
+  },
   reminders: {
     /** Recordatorios manuales por sobre en 24 h (además de uno cada 10 minutos). */
     manualMaxPerDay: Number(env.REMINDERS_MANUAL_MAX_PER_DAY ?? 5),

@@ -48,15 +48,18 @@ export async function runAutomaticReminders(db: Db, now = new Date()) {
             new Date(r.sent_at).getTime() <= cutoff &&
             !(capped && Number(r.auto_reminders_sent ?? 0) >= config.reminders.automaticMaxWithoutExpiry),
         );
+        let queuedCount = 0;
         for (const r of pending) {
-          await enqueue(t, "notify", { kind: "reminder", envelopeId: e.id, recipientId: r.id, tenantId: e.tenant_id }, { dedupeKey: `auto-reminder:${r.id}:${day}` });
+          const queued = await enqueue(t, "notify", { kind: "reminder", envelopeId: e.id, recipientId: r.id, tenantId: e.tenant_id }, { dedupeKey: `auto-reminder:${r.id}:${day}` });
           // Solo cuenta para el tope (sobre sin vencimiento). Se pone en 0 al corregir el contacto (link nuevo) o con un
-          // recordatorio manual (el remitente sigue esperando la firma).
-          if (capped) await t.query(`UPDATE recipients SET auto_reminders_sent = auto_reminders_sent + 1 WHERE id = $1`, [r.id]);
+          // recordatorio manual (el remitente sigue esperando la firma). Solo si encoló: con la clave del día ya usada
+          // no sale ningún recordatorio y no debe consumir el tope.
+          if (queued) queuedCount++;
+          if (capped && queued) await t.query(`UPDATE recipients SET auto_reminders_sent = auto_reminders_sent + 1 WHERE id = $1`, [r.id]);
         }
         await t.query(`UPDATE envelopes SET last_reminder_at = $2 WHERE id = $1`, [e.id, now.toISOString()]);
-        if (pending.length) {
-          await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "envelope.reminded", actor: SYSTEM, data: { recipients: pending.length, automatic: true } });
+        if (queuedCount) {
+          await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "envelope.reminded", actor: SYSTEM, data: { recipients: queuedCount, automatic: true } });
           reminded++;
         }
       });

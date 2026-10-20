@@ -68,6 +68,10 @@ Configuración: `apps/api/src/config.ts` y las variables de cada documento de `d
 | `WORKER_INLINE` | `true` fuera de producción | Corre el worker de jobs dentro del proceso de la API |
 | `WORKER_CONCURRENCY` | `4` | Jobs en paralelo por worker |
 | `DB_POOL_MAX` | `10` | Conexiones del pool de Postgres |
+| `DB_CONNECT_TIMEOUT_MS` | `10000` | Espera máxima para obtener/abrir una conexión de Postgres |
+| `DB_STATEMENT_TIMEOUT_MS` | `60000` | `statement_timeout` de la sesión (0 = sin límite; las migraciones lo desactivan con `SET LOCAL`) |
+| `DB_IDLE_IN_TX_TIMEOUT_MS` | `300000` | `idle_in_transaction_session_timeout` de la sesión (0 = sin límite; algunas transacciones esperan llamadas externas como S3 o la TSA) |
+| `JOBS_RETENTION_DAYS` | `30` | Días que se guardan los jobs terminados; los que todavía deduplican (sobre sin terminar) se retienen (ver `purgeFinishedJobs`) |
 | `MIGRATE_ON_START` | — | `1` aplica las migraciones al arrancar en producción (fuera de producción siempre) |
 | `DEV_MAILBOX` | `true` fuera de producción | Buzón de desarrollo (`/app/dev-mailbox`, API `/dev/mailbox`) |
 | `MAX_UPLOAD_MB` | `25` | Tamaño máximo de subida |

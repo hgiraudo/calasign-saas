@@ -26,7 +26,7 @@ import { encrypt, encryptBytes, iso, sha256Hex, uuidv7 } from "../../lib/util";
 import { authenticate, type Services } from "../context";
 import { lockEnvelope, pastExpiry } from "../envelopes";
 import { assertLinkCurrent, recipientActor, resolveToken } from "../signing";
-import { neutralReturnPage, resolveSignerReturn, setSignerReturnCookie, signerReturnUrl } from "../signer-return";
+import { resolveSignerReturn, returnTokenEncToStore, sendNeutralReturn, setSignerReturnCookie, signerReturnUrl } from "../signer-return";
 import { matchIdentity } from "./namematch";
 import { WebhookSignatureError, getAdapter, listProviders, mockDecide } from "./providers";
 import type { CertificateIdentity } from "@calasign/pdf";
@@ -313,9 +313,9 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
   });
 
   async function context(req: FastifyRequest<P>) {
-    const { recipient: r, envelope: e } = await resolveToken(s.db, req.params.token);
+    const { recipient: r, envelope: e, sessionToken } = await resolveToken(s.db, req.params.token);
     if (!identityRequired(r)) throw conflict("identity_not_required", "Este link no requiere verificación de identidad");
-    return { r, e };
+    return { r, e, sessionToken };
   }
 
   async function sessionOut(token: string) {
@@ -343,7 +343,7 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
   });
 
   app.post<P>("/v1/signing/:token/identity/start", rl, async (req, reply) => {
-    const { r, e } = await context(req);
+    const { r, e, sessionToken } = await context(req);
     // Vencido (aunque el barrido todavía no lo marcó): no se abre una sesión paga en el proveedor.
     if (e.status !== "sent" || pastExpiry(e)) throw new AppError(410, "envelope_closed", "El sobre ya no está disponible");
     if (!["sent", "viewed"].includes(r.status)) throw conflict("not_signable", "Ya no podés firmar este sobre");
@@ -367,7 +367,9 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
       // Retomada: la vuelta del proveedor (ruta neutra, signer-return.ts) va al token con que se retoma ahora, no al del
       // primer inicio (un token de sesión del canje embebido ya vencido, o el permanente dentro del iframe).
       setSignerReturnCookie(reply, "identity", current.id, req.params.token);
-      await s.db.query(`UPDATE identity_verifications SET return_token_enc = $2 WHERE id = $1 AND recipient_id = $3`, [current.id, encrypt(req.params.token), r.id]);
+      // Un token de sesión vigente guardado (iframe embebido) no se pisa con el permanente (returnTokenEncToStore).
+      const returnEnc = await returnTokenEncToStore(s.db, { token: req.params.token, sessionToken, storedTokenEnc: current.return_token_enc, recipientId: r.id });
+      await s.db.query(`UPDATE identity_verifications SET return_token_enc = $2 WHERE id = $1 AND recipient_id = $3`, [current.id, returnEnc, r.id]);
       return sessionOut(req.params.token);
     }
     const used = await attemptsUsed(s.db, r.id);
@@ -468,7 +470,7 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
           key: typeof req.query.k === "string" ? req.query.k : undefined,
         })
       : null;
-    if (!token) return neutralReturnPage(reply, "identity");
+    if (!token) return sendNeutralReturn(s.db, req, reply, "identity", v ?? null);
     const base = await envelopeBaseUrl(s.db, v.tenant_id, v.envelope_id);
     reply.header("cache-control", "no-store").header("referrer-policy", "no-referrer");
     return reply.redirect(`${base}/s/${token}?identity=return`, 303);

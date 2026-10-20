@@ -131,6 +131,15 @@ export function seesRunData(a: AuthContext, r: { started_by?: string | null; sta
   return a.userId != null && r.steps.some((st) => st.type === "approval" && st.config.approverUserId === a.userId);
 }
 
+/** Error de un paso HTTP sin el cuerpo de la respuesta ni el detalle de la conexión (vista redactada). */
+export function redactedHttpError(error: string | null | undefined): string | null {
+  if (!error) return error ?? null;
+  const m = /HTTP (\d{3})\b/.exec(error);
+  if (m) return `El servicio respondió HTTP ${m[1]}`;
+  if (error.startsWith("No se pudo conectar")) return "No se pudo conectar";
+  return "La llamada HTTP falló";
+}
+
 async function toRun(db: Db, r: any, a?: AuthContext): Promise<WorkflowRun> {
   const wf = await db.one<any>(`SELECT name FROM workflows WHERE id = $1`, [r.workflow_id]);
   const steps = await db.query<any>(`SELECT * FROM workflow_run_steps WHERE run_id = $1 ORDER BY idx`, [r.id]);
@@ -158,7 +167,9 @@ async function toRun(db: Db, r: any, a?: AuthContext): Promise<WorkflowRun> {
         attempts: st.attempts,
         // Salidas (respuestas HTTP, valores recolectados, id del sobre generado): con los datos de la ejecución.
         output: redacted ? null : st.output,
-        error: st.error,
+        // El error de un paso HTTP lleva el cuerpo de la respuesta externa (o el detalle de la conexión): redactado,
+        // solo el código HTTP.
+        error: redacted && st.type === "http_request" ? redactedHttpError(st.error) : st.error,
         startedAt: iso(st.started_at),
         finishedAt: iso(st.finished_at),
         ...(def?.type === "approval" && st.status === "waiting" && a ? { canDecide: canDecide(a, def) } : {}),

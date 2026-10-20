@@ -20,7 +20,7 @@ import { encrypt, iso, randomToken, sha256Hex, uuidv7 } from "../../lib/util";
 import { authenticate, type Services } from "../context";
 import { advanceRouting, lockEnvelope, pastExpiry } from "../envelopes";
 import { assertLinkCurrent, resolveToken } from "../signing";
-import { neutralReturnPage, resolveSignerReturn, setSignerReturnCookie, signerReturnUrl } from "../signer-return";
+import { resolveSignerReturn, returnTokenEncToStore, sendNeutralReturn, setSignerReturnCookie, signerReturnUrl } from "../signer-return";
 import {
   ProviderError,
   mpCreatePreference,
@@ -571,7 +571,7 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
 
   app.post<T>("/v1/signing/:token/payment/checkout", { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } }, async (req, reply) => {
     const token = req.params.token;
-    const { recipient: r, envelope: e } = await resolveToken(s.db, token);
+    const { recipient: r, envelope: e, sessionToken } = await resolveToken(s.db, token);
     const p = await s.db.one<any>(`SELECT * FROM envelope_payments WHERE envelope_id = $1`, [e.id]);
     const info = signerInfo(p, r, e);
     if (!info.required) throw notFound("Cobro");
@@ -581,9 +581,11 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
     // Vuelta neutra (signer-return.ts): el proveedor vuelve a /v1/payments/return/:id y de ahí al token con el que se
     // está pagando ahora en este navegador (cookie) o, sin cookie (iframe de terceros), al último con que se inició o
     // retomó el checkout (guardado acá también al reutilizarlo: antes la vuelta iba al token del primer inicio).
+    // Un token de sesión vigente guardado (iframe embebido) no se pisa con el permanente (returnTokenEncToStore).
     setSignerReturnCookie(reply, "payments", p.id, token);
+    const returnEnc = await returnTokenEncToStore(s.db, { token, sessionToken, storedTokenEnc: p.recipient_id === r.id ? p.checkout_return_token_enc : null, recipientId: r.id });
     const rememberReturn = () =>
-      s.db.query(`UPDATE envelope_payments SET checkout_return_token_enc = $2 WHERE id = $1 AND recipient_id = $3`, [p.id, encrypt(token), r.id]);
+      s.db.query(`UPDATE envelope_payments SET checkout_return_token_enc = $2 WHERE id = $1 AND recipient_id = $3`, [p.id, returnEnc, r.id]);
 
     // Un checkout anterior que sigue cobrable se reutiliza: si se creara otro (doble clic, dos pestañas), el firmante
     // podría pagar los dos y el segundo cobro quedaría sin acreditar (markPaymentPaid lo ignora).
@@ -679,7 +681,7 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
         await t.query(`UPDATE envelope_payments SET stale_checkout_ids = array_append(stale_checkout_ids, $2), checkout_return_token_enc = $3, updated_at = now() WHERE id = $1`, [
           p.id,
           checkoutId,
-          encrypt(token),
+          returnEnc,
         ]);
         return { url: row.checkout_url as string };
       }
@@ -692,7 +694,7 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
          WHERE id = $1 AND status NOT IN ('paid','refunded') RETURNING id`,
         // El token con el que se inició (el de sesión del canje embebido, si se pagó desde ahí): el fallback de la vuelta
         // neutra sin cookie (signer-return.ts).
-        [p.id, checkoutId, url, nonceHash, checkoutRef, replaced, encrypt(token)],
+        [p.id, checkoutId, url, nonceHash, checkoutRef, replaced, returnEnc],
       );
       // El sobre se anuló, rechazó o venció mientras se creaba el checkout en el proveedor (red): el checkout queda
       // guardado para que closeStaleCheckouts lo cierre, pero no se entrega ni se suma el evento a la evidencia de un
@@ -729,7 +731,7 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
           key: typeof req.query.k === "string" ? req.query.k : undefined,
         })
       : null;
-    if (!token) return neutralReturnPage(reply, "payments");
+    if (!token) return sendNeutralReturn(s.db, req, reply, "payments", p ?? null);
     const e = await s.db.one<any>(`SELECT tenant_id FROM envelopes WHERE id = $1`, [p.envelope_id]);
     const base = await envelopeBaseUrl(s.db, e.tenant_id, p.envelope_id);
     const outcome = req.query.payment === "success" ? "success" : "cancel";

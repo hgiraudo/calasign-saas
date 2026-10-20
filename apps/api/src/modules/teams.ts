@@ -780,6 +780,9 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     const revokedByUser: Record<string, { apiKeys: string[]; invitations: number; serviceApps: string[]; scimTokens: number }> = {};
     try {
       await s.db.tx(async (t) => {
+        // Mismo orden de bloqueos que el cambio de rol de un miembro (organización y después rol/membresía): en orden
+        // inverso, un PATCH del rol simultáneo a un cambio de rol de uno de sus miembros podía trabarse (deadlock).
+        await t.query(`SELECT id FROM tenants WHERE id = $1 FOR UPDATE`, [a.tenantId]);
         const locked = await t.one<{ permissions: string[] | null }>(`SELECT permissions FROM roles WHERE id = $1 AND tenant_id = $2 FOR UPDATE`, [cur.id, a.tenantId]);
         if (!locked) throw notFound("Rol");
         await t.query(

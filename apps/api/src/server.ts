@@ -20,7 +20,7 @@ checkAiProviderConfig(app.log);
 let worker: { stop(): Promise<void> } | null = null;
 if (config.workerInline) {
   const deps = { db, blobs, log: app.log };
-  worker = startWorker(db, { handlers: createJobHandlers(deps), log: app.log, onTick: () => sweep(deps) });
+  worker = startWorker(db, { handlers: createJobHandlers(deps), log: app.log, onTick: (signal) => sweep(deps, signal) });
   app.log.info("worker en el mismo proceso");
 }
 
@@ -32,7 +32,8 @@ for (const sig of ["SIGINT", "SIGTERM"] as const) {
     app.log.info(`${sig}: cerrando`);
     await app.close();
     await worker?.stop();
-    await db.close();
+    // Con tope: pool.end() espera a las conexiones prestadas (p. ej. un paso del barrido que no atiende la señal).
+    await Promise.race([db.close(), new Promise((r) => setTimeout(r, 5_000))]);
     process.exit(0);
   });
 }

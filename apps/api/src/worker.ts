@@ -19,14 +19,15 @@ const worker = startWorker(db, {
   handlers: createJobHandlers(deps),
   log,
   concurrency: Number(process.env.WORKER_CONCURRENCY ?? 4),
-  onTick: () => sweep(deps),
+  onTick: (signal) => sweep(deps, signal),
 });
 log.info({ env: config.environment }, "worker iniciado");
 
 for (const sig of ["SIGINT", "SIGTERM"] as const) {
   process.on(sig, async () => {
     await worker.stop();
-    await db.close();
+    // Con tope: pool.end() espera a las conexiones prestadas (p. ej. un paso del barrido que no atiende la señal).
+    await Promise.race([db.close(), new Promise((r) => setTimeout(r, 5_000))]);
     process.exit(0);
   });
 }

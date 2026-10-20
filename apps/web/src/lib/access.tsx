@@ -33,7 +33,9 @@ export function AccessProvider({ children }: { children: ReactNode }) {
   // Último pedido de /v1/me/access: las recargas automáticas (403, volver a la pestaña) se espacian.
   const lastAt = useRef(0);
 
-  const refresh = useCallback(async () => {
+  // background: recarga automática (403, volver a la pestaña). Si falla (red caída, 5xx), se conservan los permisos
+  // anteriores de la misma sesión: volver a null mostraba todo (mientras carga no se oculta nada) hasta la próxima.
+  const load = useCallback(async (background: boolean) => {
     lastAt.current = Date.now();
     const mine = ++seq.current;
     const k = keyRef.current;
@@ -41,9 +43,10 @@ export function AccessProvider({ children }: { children: ReactNode }) {
       const a = await api<AccessResponse>("/v1/me/access");
       if (mine === seq.current) setState({ key: k, access: a });
     } catch {
-      if (mine === seq.current) setState({ key: k, access: null });
+      if (mine === seq.current) setState((prev) => (background && prev.key === k ? prev : { key: k, access: null }));
     }
   }, []);
+  const refresh = useCallback(() => load(false), [load]);
 
   useEffect(() => {
     if (key) void refresh();
@@ -56,7 +59,7 @@ export function AccessProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!key) return;
     const maybe = (minMs: number) => {
-      if (Date.now() - lastAt.current >= minMs) void refresh();
+      if (Date.now() - lastAt.current >= minMs) void load(true);
     };
     const onForbidden = () => maybe(5_000);
     const onVisible = () => {
@@ -70,7 +73,7 @@ export function AccessProvider({ children }: { children: ReactNode }) {
       window.removeEventListener("focus", onVisible);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [key, refresh]);
+  }, [key, load]);
 
   // Mientras carga, no se ocultan cosas (el servidor igual aplica los permisos).
   const can = useCallback((p: Permission) => (access ? access.permissions.includes(p) : true), [access]);

@@ -240,6 +240,21 @@ describe("webhook de conectores", () => {
     expect(await runs(f)).toBe(2);
   });
 
+  it("orden inverso a los lados del borde (la de la franja nueva entra primero) tampoco duplica", async () => {
+    const { hookDedupeWindowMs } = await import("../src/modules/connectors");
+    const c = await connConn("bamboohr");
+    const f = await connFlow(c.id);
+    const W = hookDedupeWindowMs();
+    const boundary = (Math.floor(Date.now() / W) + 1) * W;
+    const body = JSON.stringify({ recordId: "e-borde-inv", event: "Created" });
+    const spy = vi.spyOn(Date, "now").mockReturnValue(boundary + 1_000);
+    expect((await post(c.token, body)).json().queued).toBe(1);
+    // La segunda calculó su franja (la anterior) antes de tomar el bloqueo.
+    spy.mockReturnValue(boundary - 1_000);
+    expect((await post(c.token, body)).json().queued).toBe(0);
+    expect(await runs(f)).toBe(1);
+  });
+
   it("cuerpo crudo: BOM inicial aceptado y claves __proto__/constructor.prototype descartadas", async () => {
     const { parseHookJson } = await import("../src/modules/connectors");
     expect(parseHookJson("\uFEFF{\"recordId\":\"e-bom\"}")).toEqual({ recordId: "e-bom" });
@@ -422,6 +437,31 @@ describe("desconectar revoca tokens y conserva la actividad", () => {
     expect(calls.some((x) => x.url.endsWith("/oauth/revoke") && x.body.includes("fa-rt-unknown"))).toBe(true);
     expect((await audits("connector.disconnected", b2.id))[0].data.tokenRevoked).toBe(true);
     await app.inject({ method: "DELETE", url: `/v1/connectors/connections/${b1.id}`, headers: auth });
+  });
+
+  it("conector Factorial por OAuth sin compañía determinable: la vuelta lleva warning=account_unknown", async () => {
+    const cb = (name: string) => {
+      const state = util.encrypt(JSON.stringify({ t: tenant, u: user, p: "factorial", n: name, r: null, v: "verifier", exp: Date.now() + 600_000 }));
+      return app.inject({ method: "GET", url: `/v1/connectors/oauth/factorial/callback?code=c1&state=${encodeURIComponent(state)}`, cookies: { cs_session: session } });
+    };
+    handler = (c) =>
+      c.url.endsWith("/oauth/token")
+        ? json(200, { access_token: "fa-at", refresh_token: "fa-rt-cb", expires_in: 3600 })
+        : c.url.includes("/employees/employees") || c.url.includes("/companies/legal_entities")
+          ? json(200, { data: [] })
+          : json(404, {});
+    let r = await cb("FA sin compañía");
+    expect(r.statusCode).toBe(302);
+    expect(String(r.headers.location)).toBe("/app/settings/connectors?connected=factorial&warning=account_unknown");
+    // Con compañía: sin aviso.
+    handler = (c) =>
+      c.url.endsWith("/oauth/token")
+        ? json(200, { access_token: "fa-at", refresh_token: "fa-rt-cb2", expires_in: 3600 })
+        : c.url.includes("/employees/employees")
+          ? json(200, { data: [{ id: 1, company_id: 77 }] })
+          : json(404, {});
+    r = await cb("FA con compañía");
+    expect(String(r.headers.location)).toBe("/app/settings/connectors?connected=factorial");
   });
 
   it("CRM Salesforce y Zoho: revocar no desinstala la app, se revoca aunque otra conexión use la misma cuenta", async () => {

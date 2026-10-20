@@ -8,6 +8,7 @@ import rateLimit from "@fastify/rate-limit";
 import fastifyStatic from "@fastify/static";
 import { ZodError } from "zod";
 import { config } from "./config";
+import { queueHealth } from "./infra/queue";
 import type { Db } from "./infra/db";
 import type { BlobStore } from "./infra/storage";
 import { AppError, rateLimitError } from "./lib/errors";
@@ -163,9 +164,18 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
   registerConnectorCors(app);
 
   const services = { db: deps.db, blobs: deps.blobs };
+  // Público (lo usa el deploy): sin datos del entorno.
   app.get("/healthz", async () => {
     await deps.db.query("SELECT 1");
-    return { ok: true, env: config.environment };
+    return { ok: true };
+  });
+  // Estado de la cola (latido de los workers, edad del pendiente más viejo listo para correr): solo desde la propia
+  // máquina y sin pasar por el proxy (Caddy/ALB agregan X-Forwarded-For). Sin ids de worker ni datos de jobs.
+  app.get("/internal/health", async (req, reply) => {
+    const loopback = (a: string | undefined) => !!a && (a === "::1" || a.startsWith("127.") || a.startsWith("::ffff:127."));
+    const proxied = req.headers["x-forwarded-for"] !== undefined || req.headers.forwarded !== undefined || req.headers["x-real-ip"] !== undefined;
+    if (proxied || !loopback(req.socket.remoteAddress) || !loopback(req.ip)) return reply.code(404).send({ error: { code: "not_found", message: "No encontrado" } });
+    return { ok: true, queue: await queueHealth(deps.db) };
   });
   await authRoutes(app, services);
   await envelopeRoutes(app, services);

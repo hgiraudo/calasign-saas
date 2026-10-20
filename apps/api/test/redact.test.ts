@@ -25,6 +25,20 @@ describe("redactUrl", () => {
     expect(out).toContain("lang=es");
     expect(out).not.toContain("abc123");
   });
+  it("redacta `k` de los retornos de pago/identidad, el nonce `n` y tokens en el primer segmento de un valor", () => {
+    const pay = redactUrl(`/v1/payments/return/abc?payment=success&k=${TOKEN}`);
+    expect(pay).toContain("k=[redactado]");
+    expect(pay).toContain("payment=success");
+    expect(pay).not.toContain(TOKEN);
+    expect(redactUrl(`/v1/identity/return/abc?k=short`)).toBe("/v1/identity/return/abc?k=[redactado]");
+    expect(redactUrl(`/v1/payments/mock/checkout/abc?n=xyz`)).toBe("/v1/payments/mock/checkout/abc?n=[redactado]");
+    // Un parámetro no listado cuyo valor es directamente un token (sin "/") también se redacta.
+    const ref = redactUrl(`/v1/algo?ref=${TOKEN}`);
+    expect(ref).not.toContain(TOKEN);
+    expect(decodeURIComponent(ref)).toBe("/v1/algo?ref=[redactado]");
+    expect(redactUrl(`/v1/algo?next=${encodeURIComponent(`/s/${TOKEN}`)}`)).not.toContain(TOKEN);
+    expect(redactUrl("/v1/algo?lang=es")).toBe("/v1/algo?lang=es");
+  });
   it("el serializador no incluye headers", () => {
     const s = safeRequestSerializer({ method: "GET", url: `/s/${TOKEN}`, hostname: "x", ip: "1.2.3.4" });
     expect(s.url).toBe("/s/[redactado]");

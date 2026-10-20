@@ -401,6 +401,47 @@ describe("canje embebido → token de sesión", () => {
     }
   });
 
+  it("página neutra: marca del sobre e idioma del destinatario; sin id, Accept-Language", async () => {
+    const { envelope, recipient } = await setup();
+    const { uuidv7 } = await import("../src/lib/util");
+    const brand = uuidv7();
+    await db.query(`INSERT INTO brands (id, tenant_id, name, slug, config) VALUES ($1,$2,'Acme','acme-ret',$3)`, [brand, tenant, JSON.stringify({ productName: "FirmaPro" })]);
+    await db.query(`UPDATE envelopes SET brand_id = $2 WHERE id = $1`, [envelope, brand]);
+    await db.query(`UPDATE recipients SET locale = 'en' WHERE id = $1`, [recipient]);
+    const payment = await mockPayment(envelope, recipient);
+    let ret = await app.inject({ method: "GET", url: `/v1/payments/return/${payment}?payment=success` });
+    expect(ret.statusCode).toBe(200);
+    expect(ret.body).toContain("The payment returned to FirmaPro");
+    expect(ret.body).toContain("<title>FirmaPro</title>");
+    expect(ret.body).not.toMatch(/CalaSign/);
+    expect(ret.body).not.toContain("volvió");
+    ret = await app.inject({ method: "GET", url: `/v1/identity/return/${uuidv7()}?k=x`, headers: { "accept-language": "pt-BR,pt;q=0.9,en;q=0.5" } });
+    expect(ret.statusCode).toBe(200);
+    expect(ret.body).toContain("A verificação de identidade voltou para");
+    expect(ret.body).toContain("Você pode fechar esta aba");
+    ret = await app.inject({ method: "GET", url: `/v1/identity/return/${uuidv7()}` });
+    expect(ret.body).toContain("La verificación de identidad volvió a");
+  });
+
+  it("iniciar desde el link permanente no pisa el token de sesión vigente guardado (fallback del iframe)", async () => {
+    const { envelope, recipient, token } = await setup();
+    const payment = await mockPayment(envelope, recipient);
+    const { session } = await redeem(envelope, recipient);
+    expect((await signing(session, "/payment/checkout", "POST")).statusCode).toBe(200);
+    expect((await signing(token, "/payment/checkout", "POST")).statusCode).toBe(200);
+    const { signerReturnUrl } = await import("../src/modules/signer-return");
+    const r = await db.one<any>(`SELECT id, access_token_hash FROM recipients WHERE id = $1`, [recipient]);
+    const back = signerReturnUrl("http://localhost:5173", "payments", payment, r, { payment: "success" });
+    let ret = await followReturn(back);
+    expect(String(ret.headers.location)).toContain(`/s/${session}?payment=success`);
+    // Revocado el de sesión, el permanente sí lo reemplaza.
+    const { sha256Hex } = await import("../src/lib/util");
+    await db.query(`UPDATE signer_session_tokens SET revoked_at = now() - interval '1 second' WHERE token_hash = $1`, [sha256Hex(session)]);
+    expect((await signing(token, "/payment/checkout", "POST")).statusCode).toBe(200);
+    ret = await followReturn(back);
+    expect(String(ret.headers.location)).toContain(`/s/${token}?payment=success`);
+  });
+
   it("canje con el sobre ya completado: el token nace revocado con 15 minutos de gracia", async () => {
     const { envelope, recipient } = await setup();
     const su = await app.inject({ method: "POST", url: `/v1/envelopes/${envelope}/recipients/${recipient}/signing-url`, headers: auth, payload: { frameAncestors: [ORIGIN] } });

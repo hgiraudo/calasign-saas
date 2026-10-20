@@ -75,7 +75,8 @@ export function ConnectorsSettingsPage() {
 
   useEffect(() => {
     load().catch((e) => setError(errorText(e)));
-    if (params.get("connected")) setNote(t("connected"));
+    // Conectado por OAuth sin poder determinar la cuenta (Factorial sin compañía): el mismo aviso que al probarla.
+    if (params.get("connected")) setNote(params.get("warning") === "account_unknown" ? `${t("connected")} ${t("testAccountUnknown")}` : t("connected"));
     if (params.get("error")) setError(t("error", { code: params.get("error") ?? "" }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

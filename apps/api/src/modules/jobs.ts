@@ -3,7 +3,7 @@ import { certsignStage } from "./certsign";
 import { config } from "../config";
 import type { Db } from "../infra/db";
 import { SYSTEM, appendEvent, verifyRows } from "../infra/evidence";
-import { enqueue, isLastAttempt, requeueStuckJobs, type JobHandler, type JobQueueName } from "../infra/queue";
+import { enqueue, isLastAttempt, purgeFinishedJobs, requeueStuckJobs, type JobHandler, type JobQueueName } from "../infra/queue";
 import { getSealProvider } from "../infra/seal";
 import { applyEvidencePipeline, planEvidence } from "./evidence-seal";
 import type { BlobStore } from "../infra/storage";
@@ -359,7 +359,13 @@ async function notifyPasswordReset(d: Deps, p: { userId?: string; tokenEnc?: str
   const link = `${config.appUrl}/reset/${token}`;
   const vars = { recipientName: u.name, senderName: "CalaSign", organizationName: "CalaSign", subject: "", link };
   const m = render("password_reset", u.locale, { ...vars, subject: render("password_reset", u.locale, vars).subject });
-  await deliver({ channel: "email", to: u.email, subject: m.subject, text: m.text, html: m.html, link, locale: u.locale });
+  try {
+    await deliver({ channel: "email", to: u.email, subject: m.subject, text: m.text, html: m.html, link, locale: u.locale });
+  } catch (e) {
+    // Sin la dirección (ni el link con el token) en el error: termina en jobs.last_error y en los logs. Los
+    // proveedores SMTP suelen repetir el destinatario en el rechazo ("550 <ana@…>: user unknown").
+    throw new Error(`no se pudo enviar el correo de restablecimiento: ${scrubPii(String(e)).split(token).join("[token]").slice(0, 500)}`);
+  }
 }
 
 // ───────────────────────────── Finalización y sellado ─────────────────────────────
@@ -596,7 +602,7 @@ export async function finalizeGaveUp(d: Deps, p: { envelopeId: string; tenantId:
 
 // ───────────────────────────── Tareas periódicas ─────────────────────────────
 
-export async function sweep(d: Deps) {
+export async function sweep(d: Deps, signal?: AbortSignal) {
   // Cada tarea por separado: una que falla (p. ej. un proveedor caído) no puede frenar a las demás, en
   // particular el vencimiento de sobres de más abajo.
   const steps: [string, () => Promise<unknown>][] = [
@@ -607,6 +613,15 @@ export async function sweep(d: Deps) {
         for (const j of await requeueStuckJobs(d.db)) {
           if (j.queue === "finalize") await finalizeGaveUp(d, j.payload, new Error("el worker se detuvo durante la finalización (intentos agotados)"));
         }
+      },
+    ],
+    // Jobs terminados hace más de JOBS_RETENTION_DAYS (30): sin esto la tabla crecía para siempre. Retiene los que
+    // todavía deduplican (claves atadas a un sobre vivo): ver la política en purgeFinishedJobs (infra/queue.ts).
+    [
+      "jobs-purge",
+      async () => {
+        await purgeFinishedJobs(d.db, { olderThanDays: config.jobs.retentionDays, signal });
+        await d.db.query(`DELETE FROM worker_heartbeats WHERE beat_at < now() - interval '1 day'`);
       },
     ],
     ["reminders", () => runAutomaticReminders(d.db)],
@@ -652,12 +667,15 @@ export async function sweep(d: Deps) {
     ],
   ];
   for (const [name, step] of steps) {
+    // Apagado: no se empieza otra tarea (la que está en curso termina sola o la corta el cierre de la base).
+    if (signal?.aborted) return;
     try {
       await step();
     } catch (err) {
       d.log.error({ err: String(err), step: name }, "tarea periódica falló");
     }
   }
+  if (signal?.aborted) return;
   const expired = await d.db
     .query<any>(`SELECT id, tenant_id FROM envelopes WHERE status IN ('sent','awaiting_certificates') AND expires_at < now() ORDER BY expires_at LIMIT 100`)
     .catch((err) => {
@@ -667,6 +685,7 @@ export async function sweep(d: Deps) {
   // De a uno con su propio manejo de errores: un sobre que falla (p. ej. una integración rota de una organización)
   // no frena el vencimiento de los demás ni los pasos de pagos de abajo.
   for (const e of expired) {
+    if (signal?.aborted) return;
     try {
       await d.db.tx(async (t) => {
         const cur = await t.one<any>(`SELECT status FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
@@ -678,6 +697,7 @@ export async function sweep(d: Deps) {
       d.log.error({ err: String(err), envelopeId: e.id, step: "expire" }, "no se pudo vencer el sobre");
     }
   }
+  if (signal?.aborted) return;
   // Después del vencimiento, así los sobres que vencieron recién también cierran su checkout.
   await closeStaleCheckouts(d).catch((err) => d.log.error({ err: String(err), step: "payments" }, "tarea periódica falló"));
   await refundPaymentsOnClosedEnvelopes(d).catch((err) => d.log.error({ err: String(err), step: "refunds" }, "tarea periódica falló"));

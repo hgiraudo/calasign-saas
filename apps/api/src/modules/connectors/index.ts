@@ -665,7 +665,7 @@ export async function connectorRoutes(app: FastifyInstance, s: Services) {
         const cfg: Record<string, unknown> = st.p === "ironclad" ? { region: st.r ?? "na1" } : {};
         const row: any = { id: uuidv7(), provider: st.p, auth_type: "oauth", credentials_enc: encrypt(JSON.stringify(creds)), config: cfg };
         const conn = new Conn(row, null);
-        const test: { label: string | null; config?: Record<string, unknown> } = await testConnection(conn).catch(() => ({ label: null }));
+        const test: { label: string | null; config?: Record<string, unknown>; warning?: string } = await testConnection(conn).catch(() => ({ label: null }));
         const hook = newWebhookToken();
         await s.db.query(
           `INSERT INTO connector_connections (id, tenant_id, provider, category, name, auth_type, credentials_enc, config, account_label, webhook_token_hash, webhook_token_enc, created_by, last_success_at)
@@ -673,7 +673,8 @@ export async function connectorRoutes(app: FastifyInstance, s: Services) {
           [row.id, a.tenantId, st.p, CONNECTOR_CATEGORY[st.p], st.n, encrypt(JSON.stringify(conn.creds)), JSON.stringify({ ...cfg, ...(test.config ?? {}) }), test.label, hook.hash, hook.enc, a.userId],
         );
         await auditFromRequest(s.db, req, a, "connector.connected", { targetType: "connector_connection", targetId: row.id, data: { provider: st.p, name: st.n } });
-        return back(`connected=${st.p}`);
+        // Sin la cuenta (Factorial sin compañía): se avisa en la consola, como al probar la conexión.
+        return back(`connected=${st.p}${test.warning === "account_unknown" ? "&warning=account_unknown" : ""}`);
       } catch (err) {
         req.log.warn({ err: String(err) }, "no se pudo conectar el conector");
         return back("error=token_exchange_failed");
@@ -975,8 +976,8 @@ export async function connectorRoutes(app: FastifyInstance, s: Services) {
         // disparo legítimo idéntico más tarde (el mismo empleado vuelve a pasar por el evento) tiene que enviarse.
         // Además, un registro con un sobre en curso no genera otro (skipIfOpen).
         // La clave lleva la franja de la ventana; como las franjas son fijas, una reentrega justo después del borde
-        // caía en otra franja y se duplicaba: también se mira la clave de la franja anterior, y si esa ejecución es de
-        // hace menos que la ventana, se descarta.
+        // caía en otra franja y se duplicaba: se mira cualquier ejecución de la misma clave base (de cualquier franja)
+        // de hace menos que la ventana, y si existe, se descarta.
         const bodyHash = sha256Hex(raw).slice(0, 32);
         const windowMs = hookDedupeWindowMs();
         const bucket = Math.floor(Date.now() / windowMs);
@@ -998,9 +999,15 @@ export async function connectorRoutes(app: FastifyInstance, s: Services) {
             // anterior, otra en la nueva) ya no ven las dos "nada en la franja anterior" e insertan cada una la suya.
             const ok = await s.db.tx(async (t) => {
               await t.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [baseKey]);
+              // Cualquier franja de la misma clave base dentro de la ventana (hora de la base, leída después del
+              // bloqueo): la franja calculada antes del bloqueo puede quedar desordenada entre dos entregas
+              // (la que llegó primero con la franja nueva toma el bloqueo después), y mirar solo la anterior duplicaba.
               const recent = await t.one(
-                `SELECT 1 FROM connector_runs WHERE dedupe_key = $1 AND created_at > now() - ($2::int * interval '1 millisecond')`,
-                [`${baseKey}:${bucket - 1}`, windowMs],
+                `SELECT 1 FROM connector_runs
+                  WHERE flow_id = $3 AND object_id = $4 AND left(dedupe_key, length($1)) = $1
+                    AND created_at > clock_timestamp() - ($2::int * interval '1 millisecond')
+                  LIMIT 1`,
+                [`${baseKey}:`, windowMs, f.id, ev.recordId],
               );
               if (recent) return false;
               return queueRun(

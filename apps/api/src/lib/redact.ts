@@ -38,6 +38,13 @@ const SECRET_PARAMS = new Set([
   "samlresponse",
   "relaystate",
   "code_verifier",
+  // Retorno de pagos y verificación de identidad: `k` lleva el token del firmante (de sesión o permanente).
+  "k",
+  // Nonce de los checkouts simulados (pagos y suscripciones).
+  "n",
+  "nonce",
+  "ticket",
+  "otp",
 ]);
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -46,7 +53,8 @@ const TOKEN_LIKE = /^[A-Za-z0-9_-]{24,}$/;
 
 function redactSegments(path: string): string {
   const segs = path.split("/");
-  // segs[0] es "" (la ruta empieza con "/").
+  // En una ruta segs[0] es "" (empieza con "/"); en un valor de query el primer segmento también puede ser un token.
+  if (segs[0] && TOKEN_LIKE.test(segs[0]) && !UUID.test(segs[0])) segs[0] = REDACTED;
   for (let i = 1; i < segs.length; i++) {
     const s = segs[i];
     if (!s) continue;

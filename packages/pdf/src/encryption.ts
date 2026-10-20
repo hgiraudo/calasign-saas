@@ -95,7 +95,7 @@ export function opensWithoutPassword(doc: PDFDocument): boolean {
  * del filtro de /StmF va primero (poppler y qpdf lo priorizan: es el que corresponde a AESV2/V2 por filtro; en bytes si
  * es menor que 40, en bits si no; sin él o sin el filtro, 128: AESV2, 16 bytes) y después el /Length del /Encrypt
  * (pdf.js 4.x usa el del /Encrypt si está y el del filtro solo si falta). Fuera de ese caso, el /Length del /Encrypt (40
- * por defecto; 128 en R4 sin /CF). Probar los dos: si cualquiera abre sin contraseña, el PDF solo restringe permisos (`pdf_restricted`).
+ * por defecto; 128 en R4 sin /CF); en R4 con /CF y sin /StmF, también el /Length de /StdCF. Probar los dos: si cualquiera abre sin contraseña, el PDF solo restringe permisos (`pdf_restricted`).
  */
 function keyLengthCandidates(ctx: PDFDocument["context"], enc: PDFDict, r: number): number[] {
   const num = (o: PDFObject | undefined) => {
@@ -109,8 +109,15 @@ function keyLengthCandidates(ctx: PDFDocument["context"], enc: PDFDict, r: numbe
   const len = num(enc.get(PDFName.of("Length")));
   const cfDict = dict(enc.get(PDFName.of("CF")));
   const stmF = enc.get(PDFName.of("StmF"));
+  const bits = (cf: number | undefined) => (!cf ? 128 : cf < 40 ? cf * 8 : cf);
+  if (r === 4 && cfDict && stmF === undefined) {
+    // Sin /StmF hay lectores que igual toman el filtro /StdCF (el único que define el estándar): su /Length también
+    // es candidato, después del /Length del /Encrypt.
+    const base = len ?? 128;
+    const std = num(dict(cfDict.get(PDFName.of("StdCF")))?.get(PDFName.of("Length")));
+    return std === undefined || bits(std) === base ? [base] : [base, bits(std)];
+  }
   if (r !== 4 || !cfDict || !(stmF instanceof PDFName)) return [len ?? (r === 4 ? 128 : 40)];
-  const cf = num(dict(cfDict.get(stmF))?.get(PDFName.of("Length")));
-  const fromFilter = !cf ? 128 : cf < 40 ? cf * 8 : cf;
+  const fromFilter = bits(num(dict(cfDict.get(stmF))?.get(PDFName.of("Length"))));
   return len === undefined || len === fromFilter ? [fromFilter] : [fromFilter, len];
 }

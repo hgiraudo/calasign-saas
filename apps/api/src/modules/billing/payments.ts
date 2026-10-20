@@ -15,7 +15,7 @@ import {
 import { config } from "../../config";
 import type { Db } from "../../infra/db";
 import { SYSTEM, appendEvent, type Actor } from "../../infra/evidence";
-import { AppError, badRequest, conflict, notFound } from "../../lib/errors";
+import { AppError, assertNotStale, badRequest, conflict, notFound } from "../../lib/errors";
 import { encrypt, iso, randomToken, sha256Hex, uuidv7 } from "../../lib/util";
 import { authenticate, type Services } from "../context";
 import { advanceRouting, lockEnvelope, pastExpiry } from "../envelopes";
@@ -518,10 +518,22 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
 
   app.get("/v1/payments/providers", { preHandler: auth }, async () => ({ items: paymentProviders() }));
 
-  app.get<E>("/v1/envelopes/:id/payment", { preHandler: auth }, async (req) => {
-    const p = await s.db.one<any>(`SELECT * FROM envelope_payments WHERE envelope_id = $1 AND tenant_id = $2`, [req.params.id, req.auth!.tenantId]);
-    return { payment: p ? toPayment(p) : null, providers: paymentProviders() };
-  });
+  /**
+   * Cobro del sobre con el updatedAt del sobre (X-Expected-Updated-At del siguiente guardado del editor). Con `db` = la
+   * transacción del guardado, es el que dejó ese guardado (no el de otro posterior).
+   */
+  const paymentState = async (db: Db, tenantId: string, envelopeId: string) => {
+    const e = await db.one<any>(`SELECT updated_at FROM envelopes WHERE id = $1 AND tenant_id = $2`, [envelopeId, tenantId]);
+    if (!e) throw notFound("Sobre");
+    const p = await db.one<any>(`SELECT * FROM envelope_payments WHERE envelope_id = $1 AND tenant_id = $2`, [envelopeId, tenantId]);
+    return { payment: p ? toPayment(p) : null, providers: paymentProviders(), envelopeUpdatedAt: new Date(e.updated_at).toISOString() };
+  };
+  // Configurar o quitar el cobro cambia el borrador: updatedAt nuevo (el editor y el envío con X-Expected-Updated-At lo
+  // ven) y, con el encabezado, 409 version_changed si otra pestaña u otra persona lo cambió desde que se cargó.
+  const touchEnvelope = (db: Db, id: string) =>
+    db.query(`UPDATE envelopes SET updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 millisecond'), version = version + 1 WHERE id = $1`, [id]);
+
+  app.get<E>("/v1/envelopes/:id/payment", { preHandler: auth }, async (req) => paymentState(s.db, req.auth!.tenantId, req.params.id));
 
   app.put<E>("/v1/envelopes/:id/payment", { preHandler: auth }, async (req) => {
     const a = req.auth!;
@@ -529,9 +541,10 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
     if (!providerConfigured(input.provider)) {
       throw badRequest("provider_not_configured", `El proveedor ${input.provider} no está configurado en este entorno`);
     }
-    await s.db.tx(async (t) => {
+    return s.db.tx(async (t) => {
       const e = await lockEnvelope(t, a.tenantId, req.params.id);
       if (e.status !== "draft") throw conflict("not_draft", "El cobro se configura mientras el sobre es un borrador");
+      assertNotStale(req.headers, e.updated_at);
       const r = await t.one<any>(`SELECT id, role FROM recipients WHERE id = $1 AND envelope_id = $2`, [input.payerRecipientId, e.id]);
       if (!r) throw badRequest("invalid_payer", "El pagador tiene que ser un destinatario del sobre");
       if (r.role !== "signer") throw badRequest("invalid_payer", "El pagador tiene que ser un firmante");
@@ -549,19 +562,22 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
         actor: a.actor,
         data: { amount: input.amount, currency: input.currency, provider: input.provider, timing: input.timing, payerRecipientId: input.payerRecipientId },
       });
+      await touchEnvelope(t, e.id);
+      return paymentState(t, a.tenantId, e.id);
     });
-    const p = await s.db.one<any>(`SELECT * FROM envelope_payments WHERE envelope_id = $1`, [req.params.id]);
-    return { payment: toPayment(p), providers: paymentProviders() };
   });
 
-  app.delete<E>("/v1/envelopes/:id/payment", { preHandler: auth }, async (req, reply) => {
+  // 200 con el estado (sin cobro) y el updatedAt nuevo del sobre: el editor lo necesita para su próximo guardado.
+  app.delete<E>("/v1/envelopes/:id/payment", { preHandler: auth }, async (req) => {
     const a = req.auth!;
-    await s.db.tx(async (t) => {
+    return s.db.tx(async (t) => {
       const e = await lockEnvelope(t, a.tenantId, req.params.id);
       if (e.status !== "draft") throw conflict("not_draft", "El cobro solo se quita mientras el sobre es un borrador");
-      await t.query(`DELETE FROM envelope_payments WHERE envelope_id = $1`, [e.id]);
+      assertNotStale(req.headers, e.updated_at);
+      const gone = await t.query(`DELETE FROM envelope_payments WHERE envelope_id = $1 RETURNING 1`, [e.id]);
+      if (gone.length) await touchEnvelope(t, e.id);
+      return paymentState(t, a.tenantId, e.id);
     });
-    return reply.code(204).send();
   });
 
   // ───────── Firmante ─────────

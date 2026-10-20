@@ -4,7 +4,11 @@ import type { CorrectEnvelopeInput, EnvelopeDetail, InPersonSessionResponse, Rec
 import { api, errorText, uuid } from "../lib/api";
 import { useI18n } from "../lib/i18n";
 import { useExpText } from "../lib/i18n-experience";
+import { useSignerText } from "../lib/i18n-signer";
 import { ErrorBox, Modal, OrderInput } from "./ui";
+import { PHONE_RE } from "./SignerExtras";
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /** Abre la ceremonia de firma en persona en este mismo navegador (el dispositivo del anfitrión). */
 export function InPersonButton({ envelopeId, recipient, onError }: { envelopeId: string; recipient: Recipient; onError: (e: string) => void }) {
@@ -87,6 +91,7 @@ const toLocalInput = (iso: string | null) => {
 /** Corrección del sobre en curso: mensaje, vencimiento, contactos, altas y bajas. */
 export function CorrectionModal({ detail, onClose, onDone }: { detail: EnvelopeDetail; onClose: () => void; onDone: (d: EnvelopeDetail) => void }) {
   const x = useExpText();
+  const sx = useSignerText();
   const { t } = useI18n();
   const env = detail.envelope;
   const [message, setMessage] = useState(env.message ?? "");
@@ -127,6 +132,32 @@ export function CorrectionModal({ detail, onClose, onDone }: { detail: EnvelopeD
     if (!expires && env.expiresAt) {
       setError(x("correct.expiryRequired"));
       return;
+    }
+    // Correo y teléfono como los exige la API, avisados con el nombre del destinatario (la API solo dice
+    // "updateRecipients.N.phone: …"). Solo se revisa lo que se cambia: un dato viejo sin tocar no bloquea la corrección.
+    const rows = [
+      ...contacts
+        .filter((c) => !c.remove)
+        .map((c) => ({
+          name: c.name.trim() || c.original.name,
+          nameEmpty: !c.name.trim(),
+          email: c.email.trim() !== (c.original.email ?? "") ? c.email.trim() : "",
+          phone: c.phone.trim() !== (c.original.phone ?? "") ? c.phone.trim() : "",
+        })),
+      ...added.filter((a) => a.name.trim()).map((a, i) => ({ name: a.name.trim() || x("correct.newName") + ` ${i + 1}`, nameEmpty: false, email: a.email.trim(), phone: "" })),
+    ];
+    for (const r of rows) {
+      const problem = r.nameEmpty
+        ? sx("edit.nameRequired")
+        : r.email && !EMAIL_RE.test(r.email)
+          ? sx("edit.emailInvalid")
+          : r.phone && !PHONE_RE.test(r.phone)
+            ? sx("delegate.phoneInvalid")
+            : null;
+      if (problem) {
+        setError(`${r.name}: ${problem}`);
+        return;
+      }
     }
     setBusy(true);
     setError(null);

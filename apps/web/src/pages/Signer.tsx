@@ -1,6 +1,6 @@
 // Experiencia del firmante: /s/:token. Sin cuenta, mobile-first.
 import { useFieldLogic } from "../lib/logic";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useParams } from "react-router-dom";
 import type { CompleteSigningInput, Field, SignatureImageInput, SigningSession } from "@calasign/shared";
 import { AUTO_FIELD_TYPES, ATTACHMENT_MAX_BYTES, contrastText, formatSigningDate, parseNumberLoose, signingDateForDisplay } from "@calasign/shared";
@@ -307,7 +307,7 @@ export function SignerPage() {
     return (
       <>
         {gate}
-        <div hidden={!!gate} style={gate ? undefined : { display: "contents" }}>
+        <HiddenFlow hidden={!!gate}>
           <PaymentGate
             base={base}
             check={paymentCheck}
@@ -328,10 +328,44 @@ export function SignerPage() {
               onPaymentRequired={() => setPaymentCheck((n) => n + 1)}
             />
           </PaymentGate>
-        </div>
+        </HiddenFlow>
       </>
     );
   }
+}
+
+/**
+ * Contenedor del flujo de firma que se oculta mientras se vuelve a pedir el código. Mientras está visible recuerda el
+ * desplazamiento y el elemento con foco; al volver a mostrarse los restaura (si no, el firmante quedaba arriba de todo
+ * y sin foco, lejos del campo que estaba completando). Los listeners se registran con useLayoutEffect para que se quiten
+ * en el mismo commit que oculta el flujo, antes del "scroll" que genera el cambio de alto de la página.
+ */
+function HiddenFlow({ hidden, children }: { hidden: boolean; children: ReactNode }) {
+  const saved = useRef<{ y: number; el: HTMLElement | null } | null>(null);
+  useLayoutEffect(() => {
+    if (hidden) return;
+    const pending = saved.current;
+    if (pending) {
+      saved.current = null;
+      window.scrollTo({ top: pending.y });
+      if (pending.el && pending.el !== document.body && document.contains(pending.el)) pending.el.focus({ preventScroll: true });
+    }
+    const remember = () => {
+      saved.current = { y: window.scrollY, el: document.activeElement as HTMLElement | null };
+    };
+    remember();
+    window.addEventListener("scroll", remember, { passive: true });
+    document.addEventListener("focusin", remember);
+    return () => {
+      window.removeEventListener("scroll", remember);
+      document.removeEventListener("focusin", remember);
+    };
+  }, [hidden]);
+  return (
+    <div hidden={hidden} style={hidden ? undefined : { display: "contents" }}>
+      {children}
+    </div>
+  );
 }
 
 type SessionBranding = SigningSession["branding"];
@@ -642,6 +676,9 @@ function SigningFlow({
     } catch (e) {
       setError(errorText(e));
       setBusy(false);
+      // Si la sesión cambió (p. ej. venció y se vuelve a pedir el código), el modal se cierra antes de resincronizar:
+      // si no, quedaba abierto dentro del flujo oculto y reaparecía (o atrapaba el teclado) detrás del código.
+      if (isStaleError(e)) setDeclining(false);
       onTerminalError(e);
     }
   };

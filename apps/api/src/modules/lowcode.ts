@@ -108,7 +108,8 @@ export function toFromTemplateInput(templateId: string, raw: unknown, tpl: Pick<
     subject: input.subject,
     message: input.message,
     locale: input.locale,
-    expiresAt: input.expiresAt,
+    // Las plataformas sin código mandan null por un campo vacío: es "sin indicar" (30 días), no "sin vencimiento".
+    expiresAt: input.expiresAt ?? undefined,
     metadata: input.metadata,
     recipients,
     prefill,

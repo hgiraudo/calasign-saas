@@ -42,6 +42,9 @@ export function Modal({
     // Al cerrar, el foco vuelve a donde estaba (el botón que abrió el modal).
     const previous = opener.current;
     const onKey = (e: KeyboardEvent) => {
+      // Modal oculto (p. ej. dentro del flujo de firma que queda montado y oculto mientras se pide el código): no
+      // responde al teclado; si no, Escape lo cerraba y Tab movía el foco a elementos invisibles.
+      if (ref.current && ref.current.offsetParent === null) return;
       if (e.key === "Escape") onCloseRef.current();
       if (e.key !== "Tab" || !ref.current) return;
       // Trampa de foco: Tab y Shift+Tab no salen del modal.

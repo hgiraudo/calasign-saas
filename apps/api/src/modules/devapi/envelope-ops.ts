@@ -16,7 +16,7 @@ import { AppError, notFound } from "../../lib/errors";
 import { iso, uuidv7 } from "../../lib/util";
 import { hasPerm } from "../access";
 import { authenticate, type AuthContext, type Services } from "../context";
-import { insertEnvelopeField } from "../fieldvalues";
+import { VALUE_FIELD_TYPES, checkSenderValue, insertEnvelopeField } from "../fieldvalues";
 import { copyFieldLogic } from "../logic";
 import { loadDetail, loadDocuments } from "../mappers";
 
@@ -144,7 +144,8 @@ export async function cloneEnvelope(t: Services["db"], a: AuthContext, sourceId:
       a.apiKeyId ? "api" : "web",
       input.subject ?? src.subject,
       input.message !== undefined ? input.message : src.message,
-      input.expiresAt ?? new Date(Date.now() + 30 * 86400_000).toISOString(),
+      // Sin expiresAt, 30 días; con null, sin vencimiento (antes null también daba 30 días).
+      input.expiresAt === undefined ? new Date(Date.now() + 30 * 86400_000).toISOString() : input.expiresAt,
       JSON.stringify(metadata),
       a.apiKeyId,
     ],
@@ -217,8 +218,19 @@ export async function cloneEnvelope(t: Services["db"], a: AuthContext, sourceId:
     if (!recipientId || !documentId) continue;
     const nf = uuidv7();
     fieldMap.set(f.id, nf);
-    // Un adjunto no se copia (es un archivo del firmante); las firmas e iniciales tampoco.
-    const keepValue = f.read_only || (input.includeValues && !IMAGE_TYPES.has(f.type) && f.type !== "attachment");
+    // Lo que fijó el remitente (solo lectura) se copia siempre. Con includeValues, también lo que escribieron los
+    // firmantes, pero solo de los tipos que un remitente puede prellenar y con un valor que pasa su validación: una
+    // casilla, fecha, firma o adjunto prellenados en un borrador no se pueden editar ni quitar desde la consola (la API
+    // los rechaza al guardar los campos). Una fórmula se recalcula, no se copia.
+    let keptValue: string | null = null;
+    if (f.read_only) keptValue = f.value;
+    else if (input.includeValues && VALUE_FIELD_TYPES.includes(f.type) && !f.formula) {
+      try {
+        keptValue = checkSenderValue({ type: f.type, label: f.label, options: f.options ?? null, min: f.min_value ?? null, max: f.max_value ?? null, value: f.value }, "Campo");
+      } catch {
+        keptValue = null;
+      }
+    }
     await insertEnvelopeField(t, {
       id: nf,
       tenantId: a.tenantId,
@@ -233,7 +245,7 @@ export async function cloneEnvelope(t: Services["db"], a: AuthContext, sourceId:
       height: f.height,
       required: f.required,
       label: f.label,
-      value: keepValue ? f.value : null,
+      value: keptValue,
       readOnly: Boolean(f.read_only),
       options: f.options ?? null,
       min: f.min_value ?? null,

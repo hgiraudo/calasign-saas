@@ -137,6 +137,14 @@ export function queryList(v: unknown): string[] {
     .filter(Boolean);
 }
 
+/**
+ * Patrón de ILIKE "contiene" para un texto buscado: %, _ y \ se escapan (se buscan literales, no como comodines).
+ * Usar con ESCAPE '\' en la consulta.
+ */
+export function likeContains(q: string): string {
+  return `%${q.replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
+}
+
 export function iso(d: Date | string | null | undefined): string | null {
   if (!d) return null;
   return (d instanceof Date ? d : new Date(d)).toISOString();

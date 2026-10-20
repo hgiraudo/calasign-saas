@@ -302,7 +302,10 @@ describe("envío de un borrador con cobro", () => {
         payload: { provider: "mock", amount: 10, currency: "USD", description: "x", timing: "before_sign", payerRecipientId: s.recipient },
       });
       expect(put.statusCode).toBe(402);
-      expect((await app.inject({ method: "DELETE", url, headers: auth })).statusCode).toBe(204);
+      // 200 con el estado sin cobro y el updatedAt nuevo del sobre (antes 204 sin cuerpo).
+      const del = await app.inject({ method: "DELETE", url, headers: auth });
+      expect(del.statusCode).toBe(200);
+      expect(del.json().payment).toBeNull();
       expect(await db.one(`SELECT 1 FROM envelope_payments WHERE envelope_id = $1`, [s.envelope])).toBeFalsy();
       // Sin cobro el control del plan ya no aplica (falla después por el borrador incompleto: sin documentos).
       expect((await db.tx((t) => sendEnvelope(t, tenant, s.envelope, SYSTEM)).catch((e) => e)).code).toBe("envelope_incomplete");

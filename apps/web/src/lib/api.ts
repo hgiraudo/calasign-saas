@@ -492,6 +492,15 @@ function detailText(code: string, details: unknown, loc: "pt-BR" | "en"): string
   // El tope depende del camino (sobre o plantilla, alta en un paso): viene en details.max.
   if (code === "too_many_documents" && typeof d.max === "number")
     return en ? `Too many documents (at most ${d.max.toLocaleString("en")}).` : `Há documentos demais (máximo ${d.max.toLocaleString("pt-BR")}).`;
+  // Editar roles o campos de una plantilla rompería formularios web activos (details.forms); sin forms, es el borrado
+  // de la plantilla (texto de CODE_TEXT).
+  if (code === "template_has_forms" && Array.isArray(d.forms) && d.forms.length) {
+    const list = d.forms.map((f) => `"${String((f as { name?: unknown } | null)?.name ?? "")}"`).join(", ");
+    const one = d.forms.length === 1;
+    return en
+      ? `This change would break the web form${one ? "" : "s"} ${list}: deactivate or adjust ${one ? "it" : "them"} first.`
+      : `A alteração deixaria sem funcionar ${one ? "o formulário web" : "os formulários web"} ${list}: desative-${one ? "o" : "os"} ou ajuste-${one ? "o" : "os"} antes.`;
+  }
   if (code === "validation_error" && Array.isArray(details)) {
     // Los motivos vienen en español; los campos sí sirven en cualquier idioma.
     const paths = [...new Set(details.map((x) => (x && typeof x === "object" ? (x as { path?: unknown }).path : null)).filter((x): x is string => typeof x === "string" && x !== ""))];
@@ -521,9 +530,32 @@ const RATE_LIMITED: Record<"es" | "pt-BR" | "en", string> = {
   en: "Too many requests in a row: wait a minute and try again.",
 };
 
-export function errorText(e: unknown): string {
+const RECIPIENT_WORD: Record<"es" | "pt-BR" | "en", string> = { es: "Destinatario", "pt-BR": "Destinatário", en: "Recipient" };
+
+/**
+ * Las rutas de validación de destinatarios ("recipients.1.email: Invalid email") no le dicen nada a quien usa la
+ * consola: pasan a "Destinatario 2 (email)" o, si se conocen los nombres (en el orden enviado), al nombre.
+ */
+function humanizeRecipientPaths(text: string, loc: "es" | "pt-BR" | "en", names?: readonly string[]): string {
+  return text.replace(/\brecipients\.(\d+)(?:\.([A-Za-z]\w*(?:\.\w+)*))?/g, (_m, n: string, rest: string | undefined) => {
+    const i = Number(n);
+    const who = names?.[i]?.trim() || `${RECIPIENT_WORD[loc] ?? RECIPIENT_WORD.es} ${i + 1}`;
+    return rest ? `${who} (${rest})` : who;
+  });
+}
+
+/** `recipientNames`: nombres de los destinatarios en el orden en que se mandaron (para los errores "recipients.N…"). */
+export function errorText(e: unknown, opts: { recipientNames?: readonly string[] } = {}): string {
   if (e instanceof HttpError) {
     const loc = currentLocale();
+    return humanizeRecipientPaths(httpErrorText(e, loc), loc, opts.recipientNames);
+  }
+  if (e instanceof Error) return e.message;
+  return String(e);
+}
+
+function httpErrorText(e: HttpError, loc: "es" | "pt-BR" | "en"): string {
+  {
     if (e.status === 429 && (e.code === "rate_limited" || e.code === "bad_request" || e.code === "http_429")) {
       // En español, el texto de la API (dice cuántos segundos esperar) si es el nuevo; si no, el propio.
       return loc === "es" && e.code === "rate_limited" && e.message ? e.message : RATE_LIMITED[loc] ?? RATE_LIMITED.es;
@@ -542,8 +574,6 @@ export function errorText(e: unknown): string {
     const tr = loc !== "es" ? detailText(e.code, e.details, loc) ?? CODE_TEXT[e.code]?.[loc] : undefined;
     return tr ?? (e.message || (NO_MESSAGE[loc] ?? NO_MESSAGE.es)(e.status));
   }
-  if (e instanceof Error) return e.message;
-  return String(e);
 }
 
 export function uuid(): string {

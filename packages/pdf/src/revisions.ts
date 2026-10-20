@@ -92,7 +92,7 @@ function isInvisibleWidget(ctx: PDFContext, annot: PDFDict): boolean {
  *   esos valores; si alguno no la tiene, el lector la arma con /DA y /DR y se comparan), y NeedAppearances cuando queda
  *   false o se quita (true hace que el lector regenere las apariencias).
  * - De los marcadores (/Outlines) sí cuentan las acciones (/A, salvo un GoTo simple, que equivale a /Dest) y los
- *   elementos de estructura (/SE) de cada ítem: un marcador nuevo con JavaScript o Launch es contenido activo. Los
+ *   elementos de estructura (/SE, por presencia y tipo /S) de cada ítem: un marcador nuevo con JavaScript o Launch es contenido activo. Los
  *   títulos, /Dest, colores y el orden no (lo que reescriben los editores al regenerar marcadores).
  * Sí cuentan como cambio de contenido: capas (/OCProperties), acciones (/OpenAction, /AA, /URI), /Names /JavaScript y
  * /EmbeddedFiles (los demás árboles de /Names, como /Dests, no), portafolio (/Collection), /PageMode, XFA,
@@ -214,8 +214,14 @@ function outlineParts(ctx: PDFContext, canon: Canon, cat: PDFDict): string[] {
     const s = action?.get(PDFName.of("S"));
     const plainGoTo = action && s instanceof PDFName && s.decodeText() === "GoTo" && action.get(PDFName.of("Next")) === undefined;
     if (a !== undefined && !plainGoTo) parts.push(`Outlines.A=${canon.of(a)}`);
+    // /SE apunta a un elemento del árbol de estructura: su subárbol canónico arrastra /P, /K y todo /StructTreeRoot (que
+    // los editores reescriben y se ignora), y daba falsos positivos. Cuenta la presencia y el tipo (/S) del elemento.
     const se = item.get(PDFName.of("SE"));
-    if (se !== undefined) parts.push(`Outlines.SE=${canon.of(se)}`);
+    if (se !== undefined) {
+      const seType = lookupDict(ctx, se)?.get(PDFName.of("S"));
+      const st = seType instanceof PDFRef ? ctx.lookup(seType) : seType;
+      parts.push(`Outlines.SE=${st instanceof PDFName ? st.decodeText() : "-"}`);
+    }
     stack.push(item.get(PDFName.of("Next")), item.get(PDFName.of("First")));
   }
   return parts;

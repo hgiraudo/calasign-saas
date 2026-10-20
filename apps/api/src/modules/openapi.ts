@@ -164,6 +164,15 @@ const CreateEnvelopeResponseSchema = named("CreateEnvelopeResponse", EnvelopeDet
     .describe("Con send y destinatarios embedded: la URL de firma embebida (un solo uso, 5 minutos) de cada uno al que ya le toca."),
 }));
 
+const PaymentStateSchema = named(
+  "EnvelopePaymentState",
+  z.object({
+    payment: EnvelopePaymentSchema.nullable(),
+    providers: z.array(PaymentProviderSchema),
+    envelopeUpdatedAt: iso.describe("updatedAt del sobre tras leer o guardar (para X-Expected-Updated-At del siguiente guardado)."),
+  }),
+);
+
 const PutFieldsWithAnchors = z.object({ fields: z.array(z.union([FieldInput, AnchorFieldInput])).max(500) });
 /** addRecipients y addFields se validan con RecipientInput y FieldInput (en el contrato son unknown[]). */
 const CorrectEnvelopeBody = CorrectEnvelopeInput.extend({
@@ -286,7 +295,7 @@ const OPS: Op[] = [
       "para enviar) no se crea nada. Sin esos agregados, crea un borrador vacío para completarlo paso a paso. " +
       "En multipart/form-data, el JSON va en la parte `payload` y cada PDF en su propia parte (sin `documents`, cada " +
       "archivo es un documento, en orden). Hasta 10 documentos; cada PDF hasta el máximo de subida. Sin expiresAt, vence " +
-      "a los 30 días. Si envía, cuenta para el cupo mensual del plan. " +
+      "a los 30 días (con expiresAt: null, no vence). Si envía, cuenta para el cupo mensual del plan. " +
       "Errores propios: 400 not_pdf (un documento que no es PDF o un base64 inválido, por cualquier vía), " +
       "document_fetch_failed (no se pudo descargar `url`), too_many_documents (más de 10), duplicate_ref, " +
       "too_many_fields (las anclas generan más de 500 campos); en multipart, payload_required (falta la parte `payload`), " +
@@ -540,7 +549,7 @@ const OPS: Op[] = [
     body: PutTemplateRolesInput,
     response: TemplateDetailSchema,
     expectedUpdatedAt: true,
-    errors: ["duplicate_ids", "duplicate_roles", "template_id_in_use", "certificate_not_applicable", "logic_order", "version_changed"],
+    errors: ["duplicate_ids", "duplicate_roles", "template_id_in_use", "certificate_not_applicable", "logic_order", "template_has_forms_edit", "version_changed"],
   },
   {
     method: "put",
@@ -552,7 +561,7 @@ const OPS: Op[] = [
     body: PutTemplateFieldsInput,
     response: TemplateDetailSchema,
     expectedUpdatedAt: true,
-    errors: ["invalid_field", "logic_order", "version_changed"],
+    errors: ["invalid_field", "logic_order", "template_has_forms_edit", "version_changed"],
   },
   {
     method: "post",
@@ -574,7 +583,7 @@ const OPS: Op[] = [
     tag: "Plantillas",
     summary: "Crear sobre desde una plantilla (y enviarlo en la misma llamada)",
     description:
-      "Un destinatario por rol (por `roleId` o por nombre en `role`). `prefill` completa campos por id o por etiqueta (sin distinguir mayúsculas). Con `send: true` se envía en el mismo pedido (y aplica el cupo mensual); si no, queda en borrador. Sin expiresAt, vence a los 30 días." +
+      "Un destinatario por rol (por `roleId` o por nombre en `role`). `prefill` completa campos por id o por etiqueta (sin distinguir mayúsculas). Con `send: true` se envía en el mismo pedido (y aplica el cupo mensual); si no, queda en borrador. Sin expiresAt, vence a los 30 días; con expiresAt: null, no vence." +
       IDEMPOTENT_NOTE,
     body: EnvelopeFromTemplateInput,
     status: 201,
@@ -881,7 +890,7 @@ const OPS: Op[] = [
     operationId: "getEnvelopePayment",
     tag: "Cobros",
     summary: "Cobro del sobre",
-    response: z.object({ payment: EnvelopePaymentSchema.nullable(), providers: z.array(PaymentProviderSchema) }),
+    response: PaymentStateSchema,
   },
   {
     method: "put",
@@ -889,10 +898,11 @@ const OPS: Op[] = [
     operationId: "putEnvelopePayment",
     tag: "Cobros",
     summary: "Configurar el cobro (borrador)",
-    description: "Uno por sobre (reemplaza el anterior). Paga un firmante: before_sign bloquea su firma hasta pagar; after_sign cobra después de firmar y el sobre se completa recién con el pago.",
+    description: "Uno por sobre (reemplaza el anterior). Paga un firmante: before_sign bloquea su firma hasta pagar; after_sign cobra después de firmar y el sobre se completa recién con el pago. Cambia el `updatedAt` del sobre (devuelto en `envelopeUpdatedAt`).",
     body: EnvelopePaymentInput,
-    response: z.object({ payment: EnvelopePaymentSchema, providers: z.array(PaymentProviderSchema) }),
-    errors: ["provider_not_configured", "invalid_payer", "not_draft", "plan_limit_payments"],
+    response: PaymentStateSchema,
+    expectedUpdatedAt: true,
+    errors: ["provider_not_configured", "invalid_payer", "not_draft", "plan_limit_payments", "version_changed"],
   },
   {
     method: "delete",
@@ -900,9 +910,10 @@ const OPS: Op[] = [
     operationId: "deleteEnvelopePayment",
     tag: "Cobros",
     summary: "Quitar el cobro (borrador)",
-    response: "none",
-    status: 204,
-    errors: ["not_draft", "plan_limit_payments"],
+    description: "Responde el estado sin cobro y el `envelopeUpdatedAt` nuevo (si había cobro, cambia el `updatedAt` del sobre).",
+    response: PaymentStateSchema,
+    expectedUpdatedAt: true,
+    errors: ["not_draft", "plan_limit_payments", "version_changed"],
   },
 
   // Firmante

@@ -24,7 +24,7 @@ import { rateLimitIpKey } from "../lib/ip";
 import { authenticate, clientInfo, type AuthContext, type Services } from "./context";
 import { setFrameAncestors, tenantFrameAncestors } from "./embed";
 import { MIN_FILL_MS, publicTenantCapReached } from "./public-intake";
-import { sendEnvelope } from "./envelopes";
+import { danglingFormulaProblems, sendEnvelope, signerWithoutSignature } from "./envelopes";
 import { insertEnvelopeFromTemplate, loadTemplateForUse, planFromTemplate, type LoadedTemplate } from "./templates";
 import { isPlatformHost, tenantBaseUrl, tenantForHost } from "./custom-domains";
 
@@ -158,6 +158,65 @@ function checkConfig(l: LoadedTemplate, form: { template_id: string; signer_role
 }
 
 /**
+ * Lo que impide que un formulario cree y envíe sobres con su plantilla actual (null si no hay nada): su configuración
+ * (checkConfig) y las reglas del envío que dependen solo de la plantilla (cada rol firmante con firma visual o con
+ * certificado; fórmulas que citan un campo número que ya no está). Lo usan la consola, la página pública y la edición
+ * de roles y campos de la plantilla (que no deja romper un formulario activo).
+ */
+export function formTemplateIssue(l: LoadedTemplate, form: { template_id: string; signer_role_id: string; fixed_recipients: any[]; prefill: Record<string, string> }): string | null {
+  try {
+    checkConfig(l, form);
+  } catch (e) {
+    return (e as Error).message;
+  }
+  const signers = l.tpl.roles.filter((r) => r.role === "signer");
+  const signerIds = new Set(signers.map((r) => r.id));
+  const fields = l.tpl.fields.filter((f) => signerIds.has(f.roleId));
+  const problems: string[] = [];
+  for (const r of signers) {
+    if (r.signatureType !== "certificate" && !fields.some((f) => f.roleId === r.id && f.type === "signature")) problems.push(signerWithoutSignature(r.name).message);
+  }
+  problems.push(...danglingFormulaProblems(fields).map((p) => p.message));
+  return problems.length ? problems.join(". ") : null;
+}
+
+/**
+ * Antes de cambiar roles o campos de una plantilla (dentro de su transacción): devuelve el chequeo a correr después del
+ * cambio, que rechaza con 409 template_has_forms si deja mal configurado algún formulario activo que hoy funciona (los
+ * que ya estaban mal no bloquean: se puede seguir editando la plantilla para arreglarlos).
+ */
+export async function guardTemplateForms(t: Db, tenantId: string, templateId: string): Promise<() => Promise<void>> {
+  const forms = await t.query<any>(
+    `SELECT id, name, template_id, signer_role_id, fixed_recipients, prefill FROM web_forms WHERE tenant_id = $1 AND template_id = $2 AND active ORDER BY name, id`,
+    [tenantId, templateId],
+  );
+  if (!forms.length) return async () => {};
+  const broken = async () => {
+    let l: LoadedTemplate;
+    try {
+      l = await loadTemplateForUse(t, tenantId, templateId);
+    } catch {
+      return new Set<string>(forms.map((f) => f.id));
+    }
+    return new Set<string>(forms.filter((f) => formTemplateIssue(l, f) !== null).map((f) => f.id));
+  };
+  const before = await broken();
+  return async () => {
+    const after = await broken();
+    const newly = forms.filter((f) => after.has(f.id) && !before.has(f.id));
+    if (newly.length) {
+      throw conflict(
+        "template_has_forms",
+        newly.length === 1
+          ? `El cambio dejaría sin funcionar el formulario web "${newly[0].name}": desactivalo o ajustalo antes`
+          : `El cambio dejaría sin funcionar los formularios web ${newly.map((f) => `"${f.name}"`).join(", ")}: desactivalos o ajustalos antes`,
+        { forms: newly.map((f) => ({ id: f.id, name: f.name })) },
+      );
+    }
+  };
+}
+
+/**
  * Un formulario embebible con código: quien lo completa firma dentro del iframe (?embed=1), donde la cookie de la
  * sesión del código no se guarda, y quedaba pidiendo el código sin fin.
  */
@@ -199,8 +258,8 @@ async function configProblem(db: Db, r: FormRow, templates?: Map<string, Promise
       tpl.catch(() => {});
       templates?.set(r.template_id, tpl);
     }
-    checkConfig(await tpl, r as any);
-    return null;
+    const issue = formTemplateIssue(await tpl, r as any);
+    return issue ? { code: "misconfigured", message: `El formulario ya no coincide con su plantilla: ${issue}` } : null;
   } catch (e) {
     return { code: "misconfigured", message: `El formulario ya no coincide con su plantilla: ${(e as Error).message}` };
   }
@@ -478,18 +537,18 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
       const loaded = await loadTemplateForUse(s.db, form.tenant_id, form.template_id);
       // La plantilla pudo cambiar después de publicar el formulario (p. ej. el rol pasó a aprobador o copia): sin esto,
       // quien completa el formulario sin verificar quedaba como aprobador o recibía la copia final sin firmar.
-      try {
-        checkConfig(loaded, form);
-      } catch (e) {
-        req.log.warn({ webFormId: form.id, err: String(e) }, "formulario web mal configurado");
-        throw conflict("form_misconfigured", "Este formulario no está disponible");
-      }
+      const misconfigured = (detail: unknown) => {
+        req.log.warn({ webFormId: form.id, err: detail instanceof Error ? detail.message : String(detail) }, "formulario web mal configurado");
+        return conflict("form_misconfigured", "Este formulario no está disponible");
+      };
+      const issue = formTemplateIssue(loaded, form);
+      if (issue) throw misconfigured(issue);
       const fromTpl = buildInput(form, { name: input.name, email: input.email, phone: input.phone, locale: input.locale });
       let plan;
       try {
         plan = planFromTemplate(loaded, fromTpl as any);
       } catch (e) {
-        throw conflict("form_misconfigured", `El formulario no está bien configurado: ${(e as Error).message}`);
+        throw misconfigured(e);
       }
       const { ip, userAgent } = clientInfo(req);
       const actor: Actor = { type: "system", label: `Formulario web: ${form.name}`, ip, userAgent };
@@ -565,6 +624,9 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
             req.log.warn({ webFormId: form.id }, "formulario web: la organización llegó al límite de su plan");
             throw new AppError(410, "form_inactive", "Este formulario ya no está disponible");
           }
+          // Lo que falta para enviar (p. ej. un rol sin campo de firma) es de la configuración, no de quien completa el
+          // formulario: un error genérico (el detalle, al log).
+          if (e instanceof AppError && e.code === "envelope_incomplete") throw misconfigured(e);
           throw e;
         });
         await t.query(`UPDATE web_forms SET uses = uses + 1, updated_at = now() WHERE id = $1`, [form.id]);

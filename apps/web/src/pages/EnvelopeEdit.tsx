@@ -6,7 +6,7 @@ import { AiFieldDetect, AiReviewPanel } from "../components/AiPanels";
 import { useExpText } from "../lib/i18n-experience";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import type { Channel, Document, Envelope, EnvelopeDetail, Locale, RecipientRole } from "@calasign/shared";
-import { CHANNELS, ID_DOCUMENT_TYPES, LOCALES } from "@calasign/shared";
+import { CHANNELS, ID_DOCUMENT_TYPES, LOCALES, PREFILLABLE_FIELD_TYPES } from "@calasign/shared";
 import { HttpError, api, errorText, fieldErrorIndex, isVersionChanged, uuid, type VersionedSave } from "../lib/api";
 import { LOCALE_LABELS, expiryFromDateInput, localDateInput, useI18n, useUnsavedWarning, confirmAction } from "../lib/i18n";
 import { forgetPdf } from "../lib/pdf";
@@ -42,6 +42,8 @@ interface DraftRecipient {
   embedded: boolean;
   /** Anfitrión de la firma en persona ya elegido (por API u otra persona): se conserva al guardar. */
   inPersonHostId: string | null;
+  /** Agregado en esta edición y nunca guardado: se quita sin confirmar (no tiene campos guardados). */
+  isNew?: boolean;
 }
 
 const CHANNEL_LABELS: Record<Channel, string> = { email: "Email", whatsapp: "WhatsApp", telegram: "Telegram" };
@@ -71,6 +73,32 @@ function toDraftRecipients(d: EnvelopeDetail): DraftRecipient[] {
   }));
 }
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** Lo que la API rechazaría de un destinatario (los refine de RecipientInput), como clave de texto; null si está bien. */
+function recipientProblem(r: DraftRecipient): Parameters<ReturnType<typeof useSignerText>>[0] | null {
+  const email = r.email.trim();
+  const phone = r.phone.trim();
+  if (!r.name.trim()) return "edit.nameRequired";
+  if (email && !EMAIL_RE.test(email)) return "edit.emailInvalid";
+  // Teléfono como lo exige la API (E.164): con un aviso propio, no el "phone inválido" de la validación.
+  if (phone && !PHONE_RE.test(phone)) return "delegate.phoneInvalid";
+  // Embebido o en persona: no recibe avisos, no necesita contacto.
+  const inPerson = r.role !== "cc" && r.authMethod === "in_person";
+  if (!r.embedded && !inPerson) {
+    if (!email && !phone) return "edit.contactRequired";
+    if (r.channels.includes("email") && !email) return "edit.emailChannelNeedsEmail";
+    if (r.channels.includes("whatsapp") && !phone) return "edit.whatsappNeedsPhone";
+    if (r.channels.every((c) => c === "telegram") && !r.telegramChatId.trim()) return "edit.telegramNeedsChat";
+  }
+  // Un código OTP sin su contacto: se avisa (antes se bajaba a "link" en silencio y el sobre salía con una
+  // autenticación más débil). Las copias no tienen método (se guardan con "link").
+  if (r.role !== "cc" && ((r.authMethod === "otp_email" && !email) || ((r.authMethod === "otp_sms" || r.authMethod === "otp_whatsapp") && !phone))) {
+    return "edit.otpNeedsContact";
+  }
+  return null;
+}
+
 function toDraftFields(d: EnvelopeDetail): DraftField[] {
   return d.fields.map((f) => ({
     id: f.id,
@@ -84,8 +112,10 @@ function toDraftFields(d: EnvelopeDetail): DraftField[] {
     height: f.height,
     required: f.required,
     label: f.label,
-    value: f.value,
-    readOnly: f.readOnly,
+    // Solo los tipos que el remitente puede prellenar llevan valor en el borrador: uno de otro tipo (p. ej. una casilla
+    // o fecha copiada de un sobre firmado) no se ve ni se puede quitar en el editor y la API rechaza el guardado.
+    value: PREFILLABLE_FIELD_TYPES.includes(f.type) ? f.value : null,
+    readOnly: PREFILLABLE_FIELD_TYPES.includes(f.type) ? f.readOnly : false,
     options: f.options,
     min: f.min,
     max: f.max,
@@ -135,11 +165,12 @@ export function EnvelopeEditPage() {
     setDetail(d);
   }, []);
   const expected = () => (version.current ? { "X-Expected-Updated-At": version.current } : undefined);
-  const fail = useCallback((e: unknown) => {
+  /** `recipientNames`: los destinatarios enviados, para nombrarlos en los errores "recipients.N…" de la API. */
+  const fail = useCallback((e: unknown, recipientNames?: string[]) => {
     if (e instanceof HttpError && e.code === "version_changed") {
       setStale(true);
       setError(null);
-    } else setError(errorText(e));
+    } else setError(errorText(e, { recipientNames }));
   }, []);
   // Otros paneles (sello, asistencia de IA) también cambian el updatedAt del sobre: guardan con la versión del editor
   // (si otro cambió el borrador, 409 y el aviso de recargar), el editor queda ocupado hasta que terminan y adopta el
@@ -199,23 +230,15 @@ export function EnvelopeEditPage() {
 
   const saveRecipients = async (): Promise<boolean> => {
     if (!recDirty) return true;
-    // Teléfono como lo exige la API (E.164): con un aviso propio, no el "phone inválido" de la validación.
-    // Un código OTP sin su contacto: se avisa (antes se bajaba a "link" en silencio y el sobre salía con una
-    // autenticación más débil).
-    const noContact = recipients.find(
-      // Las copias no tienen método (se guardan con "link").
-      (r) => r.role !== "cc" && ((r.authMethod === "otp_email" && !r.email.trim()) || ((r.authMethod === "otp_sms" || r.authMethod === "otp_whatsapp") && !r.phone.trim())),
-    );
-    if (noContact) {
-      setStep("recipients");
-      setError(`${noContact.name.trim() || sx("edit.authMethod")}: ${sx("edit.otpNeedsContact")}`);
-      return false;
-    }
-    const badPhone = recipients.find((r) => r.phone.trim() && !PHONE_RE.test(r.phone.trim()));
-    if (badPhone) {
-      setStep("recipients");
-      setError(`${badPhone.name.trim() || t("edit.phone")}: ${sx("delegate.phoneInvalid")}`);
-      return false;
+    // Lo que rechazaría la validación de la API (RecipientInput), avisado con el nombre del destinatario (la API solo
+    // dice "recipients.N.email: …").
+    for (const [i, r] of recipients.entries()) {
+      const problem = recipientProblem(r);
+      if (problem) {
+        setStep("recipients");
+        setError(`${r.name.trim() || sx("edit.recipientN", { n: i + 1 })}: ${sx(problem)}`);
+        return false;
+      }
     }
     setBusy(true);
     setError(null);
@@ -255,7 +278,7 @@ export function EnvelopeEditPage() {
       setFieldsDirty(false);
       return true;
     } catch (e) {
-      fail(e);
+      fail(e, recipients.map((r) => r.name.trim()));
       return false;
     } finally {
       setBusy(false);
@@ -675,6 +698,7 @@ function RecipientsStep({
         telegramLinked: false,
         idDocumentType: "",
         idDocumentNumber: "",
+        isNew: true,
       },
     ]);
   };
@@ -688,8 +712,9 @@ function RecipientsStep({
       }),
     );
   // Un destinatario ya guardado se borra con sus campos (y las condiciones que los citaban) al guardar: se confirma.
+  // Uno recién agregado (nunca guardado) se quita sin preguntar.
   const del = (i: number) => {
-    if (recipients[i]?.id && !confirmAction()) return;
+    if (!recipients[i]?.isNew && !confirmAction()) return;
     onChange(recipients.filter((_, j) => j !== i));
   };
 
@@ -1031,7 +1056,7 @@ function ReviewStep({
           </label>
         </fieldset>
         <SealOptionsPanel envelopeId={env.id} versioned={versioned} disabled={busy} />
-        <PaymentOptionsPanel envelopeId={env.id} recipients={detail.recipients} onUnsavedChange={setPaymentUnsaved} />
+        <PaymentOptionsPanel envelopeId={env.id} recipients={detail.recipients} onUnsavedChange={setPaymentUnsaved} versioned={versioned} />
         <AiReviewPanel envelopeId={env.id} versioned={versioned} disabled={busy} />
         <button type="button" className="btn btn-primary btn-block" disabled={busy || !subject.trim()} onClick={send}>
           {sending ? t("edit.sending") : t("edit.send")}

@@ -427,6 +427,14 @@ export const ERRORS: Record<string, Err> = {
     message: "Este formulario no está disponible",
     summary: "La plantilla cambió después de publicar el formulario y su configuración ya no la completa (lo corrige quien lo creó)",
   },
+  template_has_forms_edit: {
+    status: 409,
+    code: "template_has_forms",
+    message: 'El cambio dejaría sin funcionar el formulario web "Alta de clientes": desactivalo o ajustalo antes',
+    details: { forms: [{ id: "0190f1a2-0000-7000-8000-000000000001", name: "Alta de clientes" }] },
+    summary:
+      "Cambiar roles o campos de la plantilla dejaría mal configurado un formulario web activo que hoy funciona (rol de quien lo completa que deja de firmar o de ir primero, prellenado o destinatario fijo de algo que ya no está, rol firmante sin campo de firma, fórmula colgada). details.forms lista esos formularios ({id, name}); los que ya estaban mal no bloquean",
+  },
   same_person: { status: 409, code: "same_person", message: "No podés delegar en vos mismo", summary: "Delegar en el mismo correo del firmante" },
   certificate_in_use: {
     status: 409,

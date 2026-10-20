@@ -5,6 +5,7 @@ import { api, errorText, HttpError } from "../lib/api";
 import { useI18n } from "../lib/i18n";
 import { useSignerText } from "../lib/i18n-signer";
 import { ErrorBox, Modal } from "./ui";
+import { useFocusOnMount } from "./ExperienceExtras";
 
 /**
  * Error del firmante que indica que la sesión quedó desactualizada: venció (401), falta verificar la identidad
@@ -38,6 +39,9 @@ export function OtpGate({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [wait, setWait] = useState(0);
+  // Al aparecer (también cuando reemplaza al flujo de firma que quedó oculto) el foco va al encabezado: si no, quedaba
+  // en un elemento oculto del flujo y el lector de pantalla no anunciaba el pedido del código.
+  const heading = useFocusOnMount<HTMLHeadingElement>();
 
   useEffect(() => {
     if (wait <= 0) return;
@@ -61,7 +65,10 @@ export function OtpGate({
         setSent({ sent: true, destination: session.otpDestination ?? "", resendInSeconds: d?.resendInSeconds ?? 0, expiresAt: "" } as OtpSendResponse);
       }
       setError(errorText(e));
-      if (isStaleError(e)) void onStale?.();
+      // otp_no_destination / otp_destination_suppressed son datos del destinatario (el remitente debe corregirlos), no
+      // un cambio de la sesión: resincronizar solo borraba el error. Sí se resincroniza si la sesión venció, el link ya
+      // no existe, el sobre se cerró o el código dejó de exigirse.
+      if (e instanceof HttpError && ([401, 404, 410].includes(e.status) || e.code === "otp_not_required")) void onStale?.();
     } finally {
       setBusy(false);
     }
@@ -94,7 +101,9 @@ export function OtpGate({
         </p>
         <h1>{session.envelope.subject}</h1>
       </div>
-      <h2>🔒 {sx("otp.title")}</h2>
+      <h2 ref={heading} tabIndex={-1}>
+        🔒 {sx("otp.title")}
+      </h2>
       <p className="muted" role="status" aria-live="polite">
         {sent ? sx("otp.sentTo", { dest }) : sx("otp.text", { dest })}
       </p>
@@ -183,8 +192,10 @@ export function DelegateModal({
     } catch (e) {
       setError(errorText(e));
       setBusy(false);
-      // same_person (409) es un dato a corregir en el formulario, no un cambio de la sesión.
-      if (isStaleError(e) && !(e instanceof HttpError && e.code === "same_person")) {
+      // Solo cierran el formulario los errores de sesión (vencida, link inexistente, sobre cerrado) y el 409
+      // not_replaceable (el firmante ya no puede delegar). Los demás 409 (otp_destination_required, invalid_channels,
+      // too_many_replacements, same_person) son datos a corregir: el modal sigue abierto con el error.
+      if (e instanceof HttpError && ([401, 404, 410].includes(e.status) || (e.status === 409 && e.code === "not_replaceable"))) {
         // La pantalla que corresponde (código, cierre) reemplaza al formulario: el modal se cierra.
         onClose();
         void onStale?.();

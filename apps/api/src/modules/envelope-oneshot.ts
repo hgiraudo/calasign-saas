@@ -251,7 +251,8 @@ async function createEnvelope(
           input.subject,
           input.message ?? null,
           input.locale ?? tenant?.default_locale ?? "es",
-          input.expiresAt ?? new Date(Date.now() + 30 * 86400_000).toISOString(),
+          // Sin expiresAt, 30 días; con null, sin vencimiento (antes null también daba 30 días).
+          input.expiresAt === undefined ? new Date(Date.now() + 30 * 86400_000).toISOString() : input.expiresAt,
           JSON.stringify(input.metadata ?? {}),
           a.apiKeyId,
         ],

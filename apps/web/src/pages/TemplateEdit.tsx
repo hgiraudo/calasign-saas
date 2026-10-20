@@ -20,6 +20,8 @@ interface DraftRole {
   role: RecipientRole;
   routingOrder: number;
   cert?: CertDraft;
+  /** Agregado en esta edición y nunca guardado: se quita sin confirmar (no se pierde nada guardado). */
+  isNew?: boolean;
 }
 
 function toDraftFields(d: TemplateDetail): DraftField[] {
@@ -162,7 +164,7 @@ export function TemplateEditPage() {
       if (step === "roles" && dirty.roles) {
         const d = await api<TemplateDetail>(`/v1/templates/${id}/roles`, {
           method: "PUT",
-          body: { roles: roles.map(({ cert, ...r }) => ({ ...r, name: r.name.trim(), ...draftToCert(cert ?? EMPTY_CERT_DRAFT, r.role) })) },
+          body: { roles: roles.map(({ cert, isNew: _isNew, ...r }) => ({ ...r, name: r.name.trim(), ...draftToCert(cert ?? EMPTY_CERT_DRAFT, r.role) })) },
           headers: expected(),
         });
         track(d);
@@ -617,7 +619,7 @@ function RolesStep({
                 </select>
               </label>
               {r.role === "signer" && <CertificateOption value={r.cert ?? EMPTY_CERT_DRAFT} hasIdDocument onChange={(v) => set(i, { cert: v })} />}
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => (!roles[i]?.id || confirmAction()) && onChange(roles.filter((_, j) => j !== i))}>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => (roles[i]?.isNew || confirmAction()) && onChange(roles.filter((_, j) => j !== i))}>
                 {t("common.delete")}
               </button>
             </div>
@@ -636,6 +638,7 @@ function RolesStep({
               name: "",
               role: "signer",
               routingOrder: roles.reduce((m, r) => Math.max(m, r.routingOrder), 0) + 1,
+              isNew: true,
             },
           ])
         }

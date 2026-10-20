@@ -466,6 +466,9 @@ export function stripActiveContent(doc: PDFDocument, catalog: boolean): void {
 
 // ───────────────────── Contenido marcado sin cerrar ─────────────────────
 
+/** Diccionario de una imagen en línea cuyo (primer) filtro es ASCII85: `/F /A85`, `/Filter [/ASCII85Decode …]`. */
+const A85_INLINE = /\/(?:F|Filter)\s*(?:\[\s*)?\/(?:A85|ASCII85Decode)(?![^\s\/\[\]<>()%{}])/;
+
 const isWhite = (c: number) => c === 0x20 || c === 0x0a || c === 0x0d || c === 0x09 || c === 0x0c || c === 0x00;
 const isDelim = (c: number) => c === 0x28 || c === 0x29 || c === 0x3c || c === 0x3e || c === 0x5b || c === 0x5d || c === 0x7b || c === 0x7d || c === 0x2f || c === 0x25;
 
@@ -480,6 +483,7 @@ export function unclosedMarkedContent(data: Uint8Array): number {
   let nest = 0; // [ ] y << >>
   const n = data.length;
   let i = 0;
+  let inlineStart = -1; // posición del último BI (diccionario de la imagen en línea)
   while (i < n) {
     const c = data[i];
     if (isWhite(c)) {
@@ -525,9 +529,17 @@ export function unclosedMarkedContent(data: Uint8Array): number {
       const w = String.fromCharCode(...data.subarray(start, i));
       if (w === "BDC" || w === "BMC") open++;
       else if (w === "EMC") open = Math.max(0, open - 1);
+      else if (w === "BI") inlineStart = i;
       else if (w === "ID") {
         // Datos binarios de la imagen hasta un EI entre blancos (como pdf.js y poppler).
         i++;
+        // Con ASCII85 como (primer) filtro los datos terminan en "~>": un " EI " dentro del texto codificado (es
+        // posible: E e I son dígitos de ASCII85) no cierra la imagen. Se busca el EI después del fin de los datos.
+        if (inlineStart >= 0 && A85_INLINE.test(Buffer.from(data.buffer, data.byteOffset + inlineStart, start - inlineStart).toString("latin1"))) {
+          while (i < n && !(data[i] === 0x7e && data[i + 1] === 0x3e)) i++;
+          i += 2;
+        }
+        inlineStart = -1;
         while (i < n && !(data[i] === 0x45 && data[i + 1] === 0x49 && isWhite(data[i - 1]) && (i + 2 >= n || isWhite(data[i + 2]) || isDelim(data[i + 2])))) i++;
         i += 2;
       }
@@ -547,11 +559,37 @@ function streamData(s: PDFObject | undefined): Uint8Array | undefined {
 }
 
 /**
+ * Tope de bytes (descomprimidos) que se tokenizan por página o por formulario. Como en compressPlainStreams, lo más
+ * grande se deja como está: tokenizar y copiar decenas de MB por página bloqueaba el worker.
+ */
+const MAX_MARKED_SCAN = 32 * 1024 * 1024;
+
+/** Si los bytes contienen un BDC o un BMC (búsqueda nativa: casi gratis frente a tokenizar). */
+function mentionsMarkedContent(data: Uint8Array): boolean {
+  const b = Buffer.from(data.buffer, data.byteOffset, data.length);
+  return b.indexOf("BDC", 0, "latin1") !== -1 || b.indexOf("BMC", 0, "latin1") !== -1;
+}
+
+/**
+ * Contenido de un stream para buscar contenido marcado: un stream sin filtro se mira en sus bytes crudos (sin copiarlos
+ * ni decodificarlos). `null` si supera `room` bytes; vacío si no se puede leer (un lector tampoco lo dibuja).
+ */
+function markedScanData(s: PDFObject | undefined, room: number): Uint8Array | null {
+  if (s instanceof PDFRawStream && !s.dict.has(N("Filter"))) return s.contents.length > room ? null : s.contents;
+  // Con filtro los datos codificados ocupan a lo sumo ~2 veces lo decodificado (ASCIIHex): más que eso ni se decodifica.
+  if (s instanceof PDFRawStream && s.contents.length > room * 4) return null;
+  const data = streamData(s) ?? new Uint8Array();
+  return data.length > room ? null : data;
+}
+
+/**
  * Cierra el contenido marcado que el original deja abierto: un `/OC /x BDC` sin EMC en una capa apagada dejaba oculto
  * todo lo que se dibuja después en la página, incluido lo estampado al sellar. En cada página se cuentan BDC/BMC contra
  * EMC sobre todos sus content streams y se agregan los EMC que falten al final, después del Q que envuelve el original
  * (el contenido queda entre q/Q como al estampar). Lo mismo dentro de cada XObject de formulario que dibuja la página
  * (también los widgets aplanados y los anidados): el EMC va al final de su stream. Se hace siempre, con o sin capas.
+ * Rápido en el caso común: un stream sin "BDC" ni "BMC" no se tokeniza (y la página tampoco), y uno sin filtro se busca
+ * en sus bytes crudos. Páginas o formularios de más de MAX_MARKED_SCAN bytes se dejan como están.
  */
 export function closeMarkedContent(doc: PDFDocument): void {
   const ctx = doc.context;
@@ -564,8 +602,8 @@ export function closeMarkedContent(doc: PDFDocument): void {
       seenForms.add(keyOf(raw));
       const form = resolve(ctx, raw);
       if (!(form instanceof PDFStream) || nameOf(ctx, form.dict.get(N("Subtype"))) !== "Form") continue;
-      const data = streamData(form);
-      const missing = data ? unclosedMarkedContent(data) : 0;
+      const data = markedScanData(form, MAX_MARKED_SCAN);
+      const missing = data?.length && mentionsMarkedContent(data) ? unclosedMarkedContent(data) : 0;
       if (data && missing > 0) {
         const fixed = ctx.flateStream(Buffer.concat([Buffer.from(data), Buffer.from("\n" + "EMC\n".repeat(missing))]));
         for (const [k, v] of form.dict.entries()) {
@@ -582,8 +620,20 @@ export function closeMarkedContent(doc: PDFDocument): void {
     const raw = page.node.get(N("Contents"));
     const contents = resolve(ctx, raw);
     const refs = contents instanceof PDFArray ? contents.asArray() : raw ? [raw] : [];
-    const parts = refs.map((r) => streamData(resolve(ctx, r)) ?? new Uint8Array());
-    const missing = unclosedMarkedContent(Buffer.concat(parts.flatMap((p) => [p, Buffer.from("\n")])));
+    const parts: Uint8Array[] = [];
+    let size = 0;
+    let marked = false;
+    for (const r of refs) {
+      const part = markedScanData(resolve(ctx, r), MAX_MARKED_SCAN - size);
+      if (part === null) {
+        marked = false; // supera el tope: la página se deja como está
+        break;
+      }
+      parts.push(part);
+      size += part.length;
+      marked ||= mentionsMarkedContent(part);
+    }
+    const missing = marked ? unclosedMarkedContent(Buffer.concat(parts.flatMap((p) => [p, Buffer.from("\n")]))) : 0;
     if (missing > 0) {
       page.node.set(
         N("Contents"),

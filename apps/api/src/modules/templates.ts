@@ -16,14 +16,15 @@ import { config } from "../config";
 import type { Db } from "../infra/db";
 import { appendEvent, type Actor } from "../infra/evidence";
 import { AppError, assertNotStale, badRequest, conflict, notFound } from "../lib/errors";
-import { iso, sha256Hex, uuidv7 } from "../lib/util";
+import { iso, likeContains, sha256Hex, uuidv7 } from "../lib/util";
 import { assertTemplateAccess, canManageTemplateRow, templateVisibilitySql } from "./access";
 import { authenticate, type AuthContext, type Services } from "./context";
 import { assertDocumentLimits, idempotent, sendEnvelope, assertTemplateLogicOrder, templateLogicOrderProblems } from "./envelopes";
-import { checkSenderValue, insertEnvelopeField } from "./fieldvalues";
+import { VALUE_FIELD_TYPES, checkSenderValue, insertEnvelopeField } from "./fieldvalues";
 import { assignFieldIds, copyFieldLogic, pruneDanglingConditions, saveFieldLogic } from "./logic";
 import { loadDetail, loadDocuments, toDocument } from "./mappers";
 import { deleteFilesIfUnused, discardBlobsOnFailure } from "./file-cleanup";
+import { guardTemplateForms } from "./webforms";
 
 const toTemplate = (r: any) => ({
   id: r.id,
@@ -56,6 +57,16 @@ const toTemplateField = (r: any): TemplateField => ({
   conditions: Array.isArray(r.conditions) && r.conditions.length ? r.conditions : null,
   formula: r.formula ?? null,
 });
+
+/** Valor prellenado de un campo de un borrador que se puede llevar a una plantilla (tipos prellenables, valor válido). */
+function draftPrefill(f: any): string | null {
+  if (!VALUE_FIELD_TYPES.includes(f.type) || f.formula) return null;
+  try {
+    return checkSenderValue({ type: f.type, label: f.label, options: f.options ?? null, min: f.min_value ?? null, max: f.max_value ?? null, value: f.value }, "Campo");
+  } catch {
+    return null;
+  }
+}
 
 async function loadTemplateDocuments(db: Db, templateId: string) {
   return db.query(
@@ -137,8 +148,9 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
     const params: unknown[] = [a.tenantId];
     let where = `t.tenant_id = $1`;
     if (req.query.q) {
-      params.push(`%${req.query.q}%`);
-      where += ` AND (t.name ILIKE $${params.length} OR t.description ILIKE $${params.length})`;
+      params.push(likeContains(String(req.query.q)));
+      const q = `$${params.length} ESCAPE '\\'`;
+      where += ` AND (t.name ILIKE ${q} OR t.description ILIKE ${q})`;
     }
     where += templateVisibilitySql(a, params);
     const rows = await s.db.query<any>(`SELECT t.* FROM templates t WHERE ${where} ORDER BY t.updated_at DESC LIMIT 200`, params);
@@ -323,6 +335,7 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
       const tpl = await lockTemplate(t, a.tenantId, req.params.id);
       assertNotStale(req.headers, tpl.updated_at);
       const before = await templateLogicOrderProblems(t, tpl.id);
+      const checkForms = await guardTemplateForms(t, a.tenantId, tpl.id);
       const list = input.roles.map((r) => ({ ...r, id: r.id ?? uuidv7() }));
       const ids = list.map((r) => r.id);
       if (new Set(ids).size !== ids.length) throw badRequest("duplicate_ids", "Ids de roles repetidos");
@@ -353,6 +366,9 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
       await pruneDanglingConditions(t, "template_fields", tpl.id);
       // Reordenar roles también puede dejar una condición citando a un rol que firma después.
       await assertTemplateLogicOrder(t, tpl.id, before);
+      // Un formulario web activo que hoy funciona no puede quedar roto (rol que deja de firmar o de ir primero, prellenado
+      // de un campo que ya no está, rol sin firma...): 409 template_has_forms con los formularios.
+      await checkForms();
       await touch(t, tpl.id);
     });
     return loadTemplateDetail(s.db, a.tenantId, req.params.id);
@@ -366,6 +382,7 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
       const tpl = await lockTemplate(t, a.tenantId, req.params.id);
       assertNotStale(req.headers, tpl.updated_at);
       const before = await templateLogicOrderProblems(t, tpl.id);
+      const checkForms = await guardTemplateForms(t, a.tenantId, tpl.id);
       const docs = new Map((await t.query<any>(`SELECT id, page_count FROM template_documents WHERE template_id = $1`, [tpl.id])).map((d) => [d.id, d]));
       const signerRoles = new Set(
         (await t.query<any>(`SELECT id FROM template_roles WHERE template_id = $1 AND role = 'signer'`, [tpl.id])).map((r) => r.id),
@@ -404,6 +421,7 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
       await saveFieldLogic(t, "template_fields", input.fields);
       // Condiciones que citan un campo de un rol que firma después (o en el mismo turno): ver logicOrderProblems.
       await assertTemplateLogicOrder(t, tpl.id, before);
+      await checkForms();
       await touch(t, tpl.id);
     });
     return loadTemplateDetail(s.db, a.tenantId, req.params.id);
@@ -486,8 +504,9 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
           height: f.height,
           required: f.required,
           label: f.label,
-          // Solo se conservan los valores que fijó el remitente, no lo que escribieron los firmantes.
-          value: f.read_only ? f.value : null,
+          // Solo se conservan los valores que fijó el remitente, no lo que escribieron los firmantes. En un borrador
+          // nadie firmó todavía: lo prellenado (aunque no sea de solo lectura) también es del remitente.
+          value: f.read_only ? f.value : env.status === "draft" ? draftPrefill(f) : null,
           readOnly: Boolean(f.read_only),
           options: f.options ?? null,
           min: f.min_value ?? null,
@@ -624,7 +643,8 @@ export async function insertEnvelopeFromTemplate(
       subject,
       input.message !== undefined ? input.message : tplRow.message,
       input.locale ?? tplRow.locale ?? tenant?.default_locale ?? "es",
-      input.expiresAt ?? new Date(Date.now() + 30 * 86400_000).toISOString(),
+      // Sin expiresAt, 30 días; con null, sin vencimiento (antes null también daba 30 días).
+      input.expiresAt === undefined ? new Date(Date.now() + 30 * 86400_000).toISOString() : input.expiresAt,
       JSON.stringify({ ...(input.metadata ?? {}), ...extraMetadata, templateId: tpl.template.id }),
       ctx.apiKeyId,
     ],

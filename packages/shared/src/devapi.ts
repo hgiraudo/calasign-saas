@@ -70,7 +70,8 @@ export const CloneEnvelopeInput = z.object({
   message: z.string().max(5000).optional().nullable(),
   /** Reemplaza la metadata copiada (por defecto se copia la del original, con `clonedFrom`). */
   metadata: UserMetadata.optional(),
-  expiresAt: z.string().datetime({ offset: true }).optional(),
+  /** Vencimiento del clon: ausente, 30 días; null, sin vencimiento. */
+  expiresAt: z.string().datetime({ offset: true }).optional().nullable(),
   /** false = solo documentos (sin destinatarios ni campos). Por defecto true. */
   includeRecipients: z.boolean().optional(),
   /** false = sin campos. Por defecto true (requiere includeRecipients). */

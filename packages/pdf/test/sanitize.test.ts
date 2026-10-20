@@ -22,7 +22,7 @@ import {
 } from "pdf-lib";
 import * as asn1js from "asn1js";
 import { beforeAll, describe, expect, it } from "vitest";
-import { unclosedMarkedContent } from "../src/sanitize";
+import { closeMarkedContent, unclosedMarkedContent } from "../src/sanitize";
 import {
   IncrementalUpdate,
   InvalidPdfError,
@@ -631,7 +631,7 @@ function rc4(key: Buffer, data: Buffer): Buffer {
 }
 
 /** PDF con /Encrypt R4 (AESV2) y contraseña de usuario vacía, SIN /Length en /Encrypt (solo en /CF /StdCF). */
-async function r4WithoutLength(cfLength: number, encryptLength?: number) {
+async function r4WithoutLength(cfLength: number, encryptLength?: number, withStmF = true) {
   const { createHash, randomBytes } = await import("node:crypto");
   const md5 = (...b: Buffer[]) => createHash("md5").update(Buffer.concat(b)).digest();
   const pad = Buffer.from("28bf4e5e4e758a4164004e56fffa01082e2e00b6d0683e802f0ca9fe6453697a", "hex");
@@ -659,8 +659,7 @@ async function r4WithoutLength(cfLength: number, encryptLength?: number) {
       U: hex(u),
       P: p,
       ...(encryptLength !== undefined ? { Length: encryptLength } : {}),
-      StmF: "StdCF",
-      StrF: "StdCF",
+      ...(withStmF ? { StmF: "StdCF", StrF: "StdCF" } : {}),
       CF: { StdCF: { CFM: "AESV2", AuthEvent: "DocOpen", Length: cfLength } },
     }),
   );
@@ -679,6 +678,12 @@ describe("PDF cifrado", () => {
     expect(await codeOf(preparePdfUpload(await r4WithoutLength(128, 40)))).toBe("pdf_restricted");
     expect(await codeOf(preparePdfUpload(await r4WithoutLength(16, 40)))).toBe("pdf_restricted");
     expect(await codeOf(preparePdfUpload(await r4WithoutLength(128, 128)))).toBe("pdf_restricted");
+  });
+
+  it("R4 con /CF y sin /StmF: también se prueba el /Length de /StdCF (además del /Length del /Encrypt): pdf_restricted", async () => {
+    expect(await codeOf(preparePdfUpload(await r4WithoutLength(16, 40, false)))).toBe("pdf_restricted");
+    expect(await codeOf(preparePdfUpload(await r4WithoutLength(128, 40, false)))).toBe("pdf_restricted");
+    expect(await codeOf(preparePdfUpload(await r4WithoutLength(16, undefined, false)))).toBe("pdf_restricted");
   });
 
   it.skipIf(!hasGs)("solo con permisos (contraseña de usuario vacía): pdf_restricted; con contraseña: encrypted", async () => {
@@ -781,6 +786,47 @@ describe("contenido marcado sin cerrar", () => {
     expect(n(image)).toBe(1);
   });
 
+  it("imagen en línea con ASCII85: un EI dentro de los datos codificados no cierra la imagen (termina en ~>)", () => {
+    const n = (s: string) => unclosedMarkedContent(Buffer.from(s, "latin1"));
+    expect(n("BI /W 4 /H 1 /CS /G /BPC 8 /F /A85 ID 9jqo EI BDC ^B ~> EI /P BMC")).toBe(1);
+    expect(n("BI /W 4 /H 1 /CS /G /BPC 8 /Filter [/ASCII85Decode /FlateDecode] ID 9jqo EI BMC ~> EI /P BMC")).toBe(1);
+    // Sin ASCII85 (o con ASCII85 que no es el primer filtro) el EI entre blancos sigue cerrando la imagen.
+    expect(n("BI /W 4 /H 1 /CS /G /BPC 8 ID 9jqo EI BDC ~> EI /P BMC")).toBe(2);
+    expect(n("BI /W 4 /H 1 /F [/Fl /A85] ID xx EI /P BMC")).toBe(1);
+  });
+
+  it("closeMarkedContent: sin BDC/BMC no toca nada; con BDC sin cerrar agrega el EMC (stream crudo o comprimido)", async () => {
+    const make = async (content: string, compressed: boolean) => {
+      const doc = await PDFDocument.create();
+      const page = doc.addPage([200, 200]);
+      const ctx = doc.context;
+      const ref = ctx.register(compressed ? ctx.flateStream(content) : ctx.stream(content));
+      page.node.set(PDFName.of("Contents"), ref);
+      return { doc, page, ref };
+    };
+    for (const compressed of [false, true]) {
+      const clean = await make("0 0 1 rg 0 0 10 10 re f\n", compressed);
+      closeMarkedContent(clean.doc);
+      expect(clean.page.node.get(PDFName.of("Contents")), `limpio ${compressed}`).toBe(clean.ref);
+      const open = await make("/OC /oc1 BDC 0 0 1 rg 0 0 10 10 re f\n", compressed);
+      closeMarkedContent(open.doc);
+      const contents = open.page.node.get(PDFName.of("Contents"));
+      expect(contents, `abierto ${compressed}`).toBeInstanceOf(PDFArray);
+      expect(decoded(open.doc.context.lookup((contents as PDFArray).get(3) as PDFRef)).trim()).toBe("EMC");
+    }
+  });
+
+  it("closeMarkedContent: una página más grande que el tope se deja como está", async () => {
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([200, 200]);
+    const ctx = doc.context;
+    const big = Buffer.concat([Buffer.from("/OC /oc1 BDC\n"), Buffer.alloc(33 * 1024 * 1024, 0x20)]);
+    const ref = ctx.register(ctx.stream(big));
+    page.node.set(PDFName.of("Contents"), ref);
+    closeMarkedContent(doc);
+    expect(page.node.get(PDFName.of("Contents"))).toBe(ref);
+  });
+
   it("un BDC sin cerrar en una capa apagada de un original viejo no esconde lo estampado", async () => {
     for (const where of ["page", "form"] as const) {
       const bytes = await unclosedLayer(where);
@@ -879,6 +925,36 @@ describe("revisiones posteriores: marcadores y valores por defecto del formulari
     expect(await withOutline((u) => ({ A: u.context.obj({ S: "GoTo", D: [u.doc.getPage(0).ref, PDFName.of("Fit")] }) }))).toBe("evidence_only");
     expect(await withOutline((u) => ({ A: u.context.obj({ S: "JavaScript", JS: PDFString.of("app.alert(1)") }) }))).toBe("content");
     expect(await withOutline((u) => ({ A: u.context.obj({ S: "Launch", F: PDFString.of("calc.exe") }) }))).toBe("content");
+  });
+
+  it("/SE de un marcador: cuenta por presencia y tipo (/S), no por el árbol de estructura que reescriben los editores", async () => {
+    const base = await render(await (await baseDoc()).doc.save());
+    const u = await IncrementalUpdate.open(base);
+    const ctx = u.context;
+    const treeRoot = u.add(ctx.obj({ Type: "StructTreeRoot" }));
+    const elem = u.add(ctx.obj({ Type: "StructElem", S: "H1", P: treeRoot, Pg: u.doc.getPage(0).ref }));
+    ctx.lookup(treeRoot, PDFDict).set(PDFName.of("K"), elem);
+    const root = u.add(ctx.obj({ Type: "Outlines" }));
+    const item = u.add(ctx.obj({ Title: PDFString.of("Cláusula 1"), Parent: root, SE: elem }));
+    const rootDict = ctx.lookup(root, PDFDict);
+    rootDict.set(PDFName.of("First"), item);
+    rootDict.set(PDFName.of("Last"), item);
+    rootDict.set(PDFName.of("Count"), PDFNumber.of(1));
+    u.doc.catalog.set(PDFName.of("StructTreeRoot"), treeRoot);
+    u.doc.catalog.set(PDFName.of("Outlines"), root);
+    u.touch(u.catalogRef);
+    const signed = await addSignatureIncremental(u.serialize(), { type: "Sig", fieldName: "Firma", signatureLength: 16_000, sign: (c) => buildPadesCms(c, provider, {}) });
+    const later = async (change: (d: PDFDict) => void) => {
+      const l = await IncrementalUpdate.open(signed);
+      const d = l.context.lookup(elem, PDFDict);
+      change(d);
+      l.touch(elem);
+      return (await validatePdf(l.serialize(), {})).signatures[0].changesAfter;
+    };
+    // Un editor reescribe el elemento (texto alternativo, hijos): no cambia el marcador.
+    expect(await later((d) => d.set(PDFName.of("Alt"), PDFString.of("Título")))).toBe("evidence_only");
+    // Cambia el tipo del elemento al que apunta el marcador: cuenta.
+    expect(await later((d) => d.set(PDFName.of("S"), PDFName.of("Link")))).toBe("content");
   });
 
   it("/DA /DR /Q del /AcroForm cuentan si algún widget que no es de firma no tiene /AP /N", async () => {

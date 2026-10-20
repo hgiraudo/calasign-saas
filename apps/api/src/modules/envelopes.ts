@@ -13,7 +13,7 @@ import type { Db } from "../infra/db";
 import { appendEvent, type Actor } from "../infra/evidence";
 import { enqueue } from "../infra/queue";
 import { AppError, assertNotStale, badRequest, conflict, notFound, STALE_GENERIC_MESSAGE } from "../lib/errors";
-import { encrypt, iso, queryList, randomToken, sha256Hex, uuidv7 } from "../lib/util";
+import { encrypt, iso, likeContains, queryList, randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { config } from "../config";
 import { assertEnvelopeAccess, envelopeVisibilitySql } from "./access";
 import { authenticate, type AuthContext, type Services } from "./context";
@@ -201,8 +201,10 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
         where += ` AND e.status = ANY($${params.length})`;
       }
       if (req.query.q) {
-        params.push(`%${req.query.q}%`);
-        where += ` AND (e.subject ILIKE $${params.length} OR EXISTS (SELECT 1 FROM recipients r WHERE r.envelope_id = e.id AND (r.name ILIKE $${params.length} OR r.email ILIKE $${params.length})))`;
+        // Sin escapar, "%" o "_" eran comodines: buscar "50%" o "a_b" traía cualquier sobre.
+        params.push(likeContains(String(req.query.q)));
+        const q = `$${params.length} ESCAPE '\\'`;
+        where += ` AND (e.subject ILIKE ${q} OR EXISTS (SELECT 1 FROM recipients r WHERE r.envelope_id = e.id AND (r.name ILIKE ${q} OR r.email ILIKE ${q})))`;
       }
       // Filtros avanzados (fechas, metadata, destinatario, plantilla, origen): devapi/search.ts.
       where += envelopeSearchSql(req.query as Record<string, unknown>, params);

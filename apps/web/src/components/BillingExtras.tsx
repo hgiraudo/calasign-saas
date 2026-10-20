@@ -11,7 +11,7 @@ import {
   type SignerPaymentInfo,
   type SigningSession,
 } from "@calasign/shared";
-import { api, errorText, HttpError } from "../lib/api";
+import { api, errorText, HttpError, isVersionChanged, runVersioned, type VersionedSave } from "../lib/api";
 import { useI18n } from "../lib/i18n";
 import { formatMoney, useBillingText } from "../lib/i18n-billing";
 import { parseAmountText } from "../lib/logic";
@@ -25,6 +25,8 @@ const CLOSED_ENVELOPE = ["voided", "expired", "declined"];
 interface PaymentResponse {
   payment: EnvelopePayment | null;
   providers: PaymentProviderInfo[];
+  /** updatedAt del sobre (configurar o quitar el cobro lo cambia). */
+  envelopeUpdatedAt?: string;
 }
 
 const PROVIDER_LABEL: Record<Exclude<PaymentProvider, "mock">, string> = { stripe: "Stripe", mercadopago: "Mercado Pago" };
@@ -47,9 +49,12 @@ export function PaymentOptionsPanel({
   envelopeId,
   recipients,
   onUnsavedChange,
+  versioned,
 }: {
   envelopeId: string;
   recipients: Recipient[];
+  /** Control de versión del editor (configurar o quitar el cobro cambia el updatedAt del sobre). */
+  versioned?: VersionedSave;
   /** Avisa si hay un cobro cargado sin guardar (el envío no lo toma: se guarda con su propio botón). */
   onUnsavedChange?: (unsaved: boolean) => void;
 }) {
@@ -127,14 +132,21 @@ export function PaymentOptionsPanel({
     }
     setBusy(true);
     try {
-      const r = await api<PaymentResponse>(`/v1/envelopes/${envelopeId}/payment`, {
-        method: "PUT",
-        body: { amount: value, currency, description: description.trim(), payerRecipientId: payer, timing, provider },
-      });
+      const r = await runVersioned(
+        versioned,
+        (headers) =>
+          api<PaymentResponse>(`/v1/envelopes/${envelopeId}/payment`, {
+            method: "PUT",
+            body: { amount: value, currency, description: description.trim(), payerRecipientId: payer, timing, provider },
+            headers,
+          }),
+        (x) => x.envelopeUpdatedAt,
+      );
       setData(r);
       setSaved(true);
     } catch (e) {
-      setError(errorText(e));
+      // El editor ya avisa que el borrador cambió (con el botón para recargar).
+      if (!(versioned && isVersionChanged(e))) setError(errorText(e));
     } finally {
       setBusy(false);
     }
@@ -144,12 +156,17 @@ export function PaymentOptionsPanel({
     setBusy(true);
     setError(null);
     try {
-      await api(`/v1/envelopes/${envelopeId}/payment`, { method: "DELETE" });
-      setData((d) => (d ? { ...d, payment: null } : d));
+      const r = await runVersioned(
+        versioned,
+        (headers) => api<PaymentResponse | undefined>(`/v1/envelopes/${envelopeId}/payment`, { method: "DELETE", headers }),
+        (x) => x?.envelopeUpdatedAt,
+      );
+      // Una API anterior respondía 204 sin cuerpo.
+      setData((d) => (r ? r : d ? { ...d, payment: null } : d));
       setEnabled(false);
       setSaved(false);
     } catch (e) {
-      setError(errorText(e));
+      if (!(versioned && isVersionChanged(e))) setError(errorText(e));
     } finally {
       setBusy(false);
     }

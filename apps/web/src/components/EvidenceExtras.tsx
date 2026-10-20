@@ -134,6 +134,7 @@ export function ValidationReportView({ report }: { report: PdfValidationResponse
               {s.chain.entries.length > 0 && (
                 <span className={`badge ${chainOk ? "badge-completed" : s.chain.revoked || s.chain.timeValid === false ? "badge-declined" : "badge-sent"}`}>{chainLabel}</span>
               )}
+              {chainOk && s.chain.revocationUnknown && <span className="badge badge-sent">{ev("val.revUnknown")}</span>}
               {s.level && <span className="badge badge-draft">{s.level}</span>}
             </div>
             <table className="table small">

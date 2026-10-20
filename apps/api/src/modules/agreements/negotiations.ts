@@ -562,8 +562,8 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
           fileName: `${n.title}.pdf`,
           subject: input.subject ?? n.title,
           message: input.message ?? null,
-          // El de la negociación o, si no tiene, el de la organización (no siempre español).
-          locale: n.template_locale ?? (await t.one<{ default_locale: string | null }>(`SELECT default_locale FROM tenants WHERE id = $1`, [n.tenant_id]))?.default_locale ?? "es",
+          // Sobre un PDF subido no hay idioma de plantilla (template_locale queda en su valor por defecto): el de la organización.
+          locale: (await t.one<{ default_locale: string | null }>(`SELECT default_locale FROM tenants WHERE id = $1`, [n.tenant_id]))?.default_locale ?? "es",
           recipients: [],
           marks: [],
           metadata: { negotiationId: n.id },

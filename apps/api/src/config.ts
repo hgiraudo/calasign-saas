@@ -30,7 +30,7 @@ export const config = {
    */
   platformHosts: (env.PLATFORM_HOSTS ?? "")
     .split(",")
-    .map((h) => h.trim().toLowerCase())
+    .map((h) => h.trim().toLowerCase().replace(/:\d+$/, "").replace(/\.$/, ""))
     .filter(Boolean),
   repoRoot,
   dataDir,

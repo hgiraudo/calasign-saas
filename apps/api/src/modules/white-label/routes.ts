@@ -28,7 +28,7 @@ import { render, type TemplateKind } from "../../notifications/templates";
 import { auditFromRequest, recordAudit } from "../audit";
 import { authenticate, type AuthContext, type Services } from "../context";
 import { requireFeature, tenantPlan } from "../billing/plans";
-import { invalidateDomainCache, resolveTxt, routesToPlatform } from "../custom-domains";
+import { invalidateDomainCache, isPlatformHost, resolveTxt, routesToPlatform } from "../custom-domains";
 import { deleteFileIfUnused, discardBlobsOnFailure } from "../file-cleanup";
 import {
   brandForHost,
@@ -345,7 +345,7 @@ const isDirectLoopback = (req: FastifyRequest) => {
 
 function assertClaimable(domain: string) {
   for (const root of new Set([platformRoot(), "calasign.com", "calasign.io"])) {
-    if (domain === appHost() || domain === root || domain.endsWith(`.${root}`)) throw badRequest("reserved_domain", `No se pueden usar dominios de ${root}`);
+    if (isPlatformHost(domain) || domain === root || domain.endsWith(`.${root}`)) throw badRequest("reserved_domain", `No se pueden usar dominios de ${root}`);
   }
 }
 
@@ -700,7 +700,7 @@ export async function whiteLabelRoutes(app: FastifyInstance, s: Services) {
   app.get<{ Querystring: { domain?: string } }>("/internal/tls-allowed-brand", async (req, reply) => {
     if (!isDirectLoopback(req)) return reply.code(404).send();
     const d = String(req.query.domain ?? "").toLowerCase();
-    if (d && d === appHost()) return reply.code(200).send("ok");
+    if (d && isPlatformHost(d)) return reply.code(200).send("ok");
     const r = d
       ? ((await s.db.one(`SELECT 1 FROM custom_domains WHERE domain = $1 AND status = 'verified'`, [d])) ??
         (await s.db.one(`SELECT 1 FROM brand_domains WHERE domain = $1 AND status = 'verified'`, [d])))

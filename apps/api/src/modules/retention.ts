@@ -163,7 +163,8 @@ export async function retentionRoutes(app: FastifyInstance, s: Services, log: De
          WHERE d.id = $1`,
         [p.documentId, sha256Hex(p.token)],
       );
-      if (r?.purged_at) throw purgedOriginal(r.status);
+      // Anulado o vencido: que responda el handler (sobre cerrado), no "original borrado".
+      if (r?.purged_at && !["voided", "expired"].includes(r.status)) throw purgedOriginal(r.status);
     }
     // "Plantilla desde sobre" lo mira su handler, con el sobre bloqueado y después de autenticar (templates.ts).
   });

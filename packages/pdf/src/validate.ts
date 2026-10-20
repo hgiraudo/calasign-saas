@@ -59,14 +59,14 @@ export interface SignatureReport {
    * "content" la firma verifica sobre su revisión, pero el documento que se muestra ya no es el firmado. */
   changesAfter: ChangesAfter;
   /** trusted: llega a una raíz de confianza. timeValid: todos los certificados eran válidos al momento de firmar. */
-  chain: { trusted: boolean; anchor: string | null; entries: ChainEntry[]; timeValid?: boolean; revoked?: boolean };
+  chain: { trusted: boolean; anchor: string | null; entries: ChainEntry[]; timeValid?: boolean; revoked?: boolean; revocationUnknown?: boolean };
   level: PadesLevel | null;
 }
 
 export interface ValidationReport {
   signatures: SignatureReport[];
   dss: { certs: number; ocsps: number; crls: number } | null;
-  summary: { count: number; allValid: boolean; allTrusted: boolean; anyRevoked: boolean; modifiedAfterSigning: boolean };
+  summary: { count: number; allValid: boolean; allTrusted: boolean; anyRevoked: boolean; modifiedAfterSigning: boolean; revocationUnknown: boolean };
 }
 
 export interface ValidateOptions {
@@ -124,6 +124,20 @@ async function verifyToken(token: pkijs.SignedData, imprintOf: Uint8Array, pool:
   return { time: tst.genTime.toISOString(), tsa: tsa ? commonName(tsa.subject) ?? nameToString(tsa.subject) : null, valid, trusted };
 }
 
+/** Sin repetidos (por huella) y con tope: buildChain prueba con firma cada candidato con el mismo emisor. */
+function dedupePool(certs: pkijs.Certificate[]): pkijs.Certificate[] {
+  const seen = new Set<string>();
+  const out: pkijs.Certificate[] = [];
+  for (const c of certs) {
+    const fp = fingerprint(certDer(c));
+    if (seen.has(fp)) continue;
+    seen.add(fp);
+    out.push(c);
+    if (out.length > MAX_CERT_POOL) throw new Error(`el PDF trae demasiados certificados (máximo ${MAX_CERT_POOL})`);
+  }
+  return out;
+}
+
 async function chainReport(
   leaf: pkijs.Certificate,
   pool: pkijs.Certificate[],
@@ -171,7 +185,9 @@ async function chainReport(
   const revoked = entries.some(
     (e) => e.revocation.status === "revoked" && (!e.revocation.revokedAt || new Date(e.revocation.revokedAt) <= at),
   );
-  return { trusted, anchor: trusted ? nameToString(last.subject) : null, entries, timeValid, revoked };
+  // "De confianza" no dice nada de la revocación si no hubo datos (sin DSS ni consulta online): se informa aparte.
+  const revocationUnknown = entries.some((e) => e.revocation.status === "not_checked");
+  return { trusted, anchor: trusted ? nameToString(last.subject) : null, entries, timeValid, revoked, revocationUnknown };
 }
 
 export async function validatePdf(pdf: Uint8Array, opts: ValidateOptions = {}): Promise<ValidationReport> {
@@ -186,9 +202,21 @@ export async function validatePdf(pdf: Uint8Array, opts: ValidateOptions = {}): 
  */
 export const MAX_VALIDATE_SIGNATURES = 50;
 
+/**
+ * Topes del DSS y del conjunto de certificados (el validador es público): con miles de certificados o una CRL enorme,
+ * el parseo ASN.1 y las verificaciones de firma consumían memoria y CPU sin límite.
+ */
+export const MAX_DSS_ITEMS = 300;
+export const MAX_CRL_BYTES = 5 * 1024 * 1024;
+export const MAX_CERT_POOL = 300;
+
 async function validatePdfUnbudgeted(pdf: Uint8Array, opts: ValidateOptions): Promise<ValidationReport> {
   const { signatures, dss } = await readPdfSignatures(pdf);
   if (signatures.length > MAX_VALIDATE_SIGNATURES) throw new Error(`el PDF tiene demasiadas firmas (${signatures.length}; máximo ${MAX_VALIDATE_SIGNATURES})`);
+  if (dss && (dss.certs.length > MAX_DSS_ITEMS || dss.ocsps.length > MAX_DSS_ITEMS || dss.crls.length > MAX_DSS_ITEMS)) {
+    throw new Error(`el DSS del PDF es demasiado grande (máximo ${MAX_DSS_ITEMS} certificados, OCSP o CRL)`);
+  }
+  if (dss?.crls.some((c) => c.length > MAX_CRL_BYTES)) throw new Error(`el DSS del PDF trae una CRL demasiado grande (máximo ${MAX_CRL_BYTES / 1048576} MB)`);
   const anchorsDer = opts.trustAnchors ?? [];
   const anchors = new Set(anchorsDer.map(fingerprint));
   const dssCerts = (dss?.certs ?? []).map((d) => {
@@ -231,7 +259,7 @@ async function validatePdfUnbudgeted(pdf: Uint8Array, opts: ValidateOptions): Pr
         continue;
       }
       const signer = signerCertOf(sd);
-      const pool = [...cmsCertificates(sd), ...dssCerts, ...anchorsDer.map(parseCert)];
+      const pool = dedupePool([...cmsCertificates(sd), ...dssCerts, ...anchorsDer.map(parseCert)]);
 
       if (s.type === "DocTimeStamp") {
         const ts = await verifyToken(sd, content, pool, anchors);
@@ -269,7 +297,7 @@ async function validatePdfUnbudgeted(pdf: Uint8Array, opts: ValidateOptions): Pr
       let timestamp: SignatureReport["timestamp"] = null;
       if (tsToken) {
         const sigValue = new Uint8Array(sd.signerInfos[0].signature.valueBlock.valueHexView);
-        pool.push(...cmsCertificates(tsToken));
+        pool.push(...dedupePool(cmsCertificates(tsToken)).slice(0, 20));
         timestamp = await verifyToken(tsToken, sigValue, pool, anchors);
       }
       const signingTimeAttr = sd.signerInfos[0].signedAttrs?.attributes.find((a) => a.type === OIDS.signingTime);
@@ -291,7 +319,8 @@ async function validatePdfUnbudgeted(pdf: Uint8Array, opts: ValidateOptions): Pr
         integrity,
         // Validez de la cadena al momento de firmar: la fecha del sello de tiempo solo si es de una TSA de confianza (prueba de
         // existencia). Sin eso, la fecha declarada la elige quien firma: se evalúa al día de hoy (sin prueba de existencia).
-        chain: signer
+        // Sin integridad no se analiza la cadena (es lo más costoso y el informe ya dice que la firma no vale).
+        chain: signer && integrity.valid
           ? await chainReport(signer, pool, anchors, dss, opts, timestamp?.valid && timestamp.trusted ? new Date(timestamp.time) : new Date())
           : { trusted: false, anchor: null, entries: [] },
         level,
@@ -347,6 +376,7 @@ async function validatePdfUnbudgeted(pdf: Uint8Array, opts: ValidateOptions): Pr
       allTrusted: reports.length > 0 && reports.every((r) => r.chain.trusted && r.chain.timeValid !== false && !r.chain.revoked),
       anyRevoked: reports.some((r) => r.chain.entries.some((e) => e.revocation.status === "revoked")),
       modifiedAfterSigning,
+      revocationUnknown: reports.some((r) => r.chain.revocationUnknown === true),
     },
   };
 }

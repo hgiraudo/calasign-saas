@@ -41,7 +41,7 @@ privada nunca sale del dispositivo: el servidor manda un hash y recibe una firma
    incremental **PAdES B-T** (CAdES detached, `ETSI.CAdES.detached`, con sello de tiempo RFC 3161) y no invalida
    las anteriores. Al terminar uno, se avisa al siguiente.
 4. **Sello y LTV.** Con la última firma, `ready = true` y el sobre vuelve a `finalizing`. El job `finalize`
-   agrega el sello de la plataforma como otra revisión incremental (campo `SelloCalaSign`) y después corre el
+   agrega el sello de la plataforma como otra revisión incremental (campo `SelloIntegridad`) y después corre el
    proceso de evidencia de siempre (DSS/LTV según `SEAL_LEVEL`). El sobre queda `completed`.
 
 Mientras el sobre está en `awaiting_certificates` se puede anular: los códigos del Firmador ya emitidos dejan de servir (410).

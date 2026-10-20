@@ -239,11 +239,28 @@ function goodCovers(thisUpdate: Date | undefined, nextUpdate: Date | undefined, 
  * Estado según una respuesta OCSP (DER de OCSPResponse) ya obtenida. Con `at`, una respuesta "good"/"unknown" que no
  * cubre ese momento no cuenta (devuelve null); "revoked" cuenta siempre.
  */
+/** Respuestas OCSP parseadas por objeto (como las CRL: el validador público las recorre para cada certificado de cada firma). */
+const ocspParsed = new WeakMap<Uint8Array, pkijs.BasicOCSPResponse | null>();
+
+function parseOcspCached(der: Uint8Array): pkijs.BasicOCSPResponse | null {
+  if (ocspParsed.has(der)) return ocspParsed.get(der)!;
+  let basic: pkijs.BasicOCSPResponse | null = null;
+  try {
+    const resp = pkijs.OCSPResponse.fromBER(toAB(der));
+    if (resp.responseBytes && resp.responseBytes.responseType === OIDS.basicOcsp) {
+      basic = pkijs.BasicOCSPResponse.fromBER(resp.responseBytes.response.valueBlock.valueHexView.slice().buffer);
+    }
+  } catch {
+    basic = null;
+  }
+  ocspParsed.set(der, basic);
+  return basic;
+}
+
 export async function statusFromOcsp(ocspDer: Uint8Array, cert: pkijs.Certificate, issuer: pkijs.Certificate, at?: Date): Promise<RevocationResult | null> {
   try {
-    const resp = pkijs.OCSPResponse.fromBER(toAB(ocspDer));
-    if (!resp.responseBytes || resp.responseBytes.responseType !== OIDS.basicOcsp) return null;
-    const basic = pkijs.BasicOCSPResponse.fromBER(resp.responseBytes.response.valueBlock.valueHexView.slice().buffer);
+    const basic = parseOcspCached(ocspDer);
+    if (!basic) return null;
     const serial = serialHex(cert);
     const single = basic.tbsResponseData.responses.find(
       (r) => Buffer.from(r.certID.serialNumber.valueBlock.valueHexView).toString("hex") === serial,
@@ -336,11 +353,35 @@ async function verifyWithIssuerKey(basic: pkijs.BasicOCSPResponse, issuer: pkijs
 }
 
 /** Estado según una CRL. Con `at`, una CRL que no cubre ese momento solo cuenta si revoca al certificado. */
+/**
+ * CRL parseadas y firmas ya verificadas, por objeto (el validador público recorre las mismas CRL del DSS para cada
+ * certificado de cada firma: parsearlas y verificarlas cada vez permitía colgar la API con un PDF armado).
+ */
+const crlParsed = new WeakMap<Uint8Array, pkijs.CertificateRevocationList | null>();
+const crlVerified = new WeakMap<pkijs.CertificateRevocationList, Map<string, boolean>>();
+
+function parseCrlCached(der: Uint8Array): pkijs.CertificateRevocationList | null {
+  if (crlParsed.has(der)) return crlParsed.get(der)!;
+  let crl: pkijs.CertificateRevocationList | null = null;
+  try {
+    crl = pkijs.CertificateRevocationList.fromBER(toAB(der));
+  } catch {
+    crl = null;
+  }
+  crlParsed.set(der, crl);
+  return crl;
+}
+
 export async function statusFromCrl(crlDer: Uint8Array, cert: pkijs.Certificate, issuer: pkijs.Certificate, at?: Date): Promise<RevocationResult | null> {
   try {
-    const crl = pkijs.CertificateRevocationList.fromBER(toAB(crlDer));
+    const crl = parseCrlCached(crlDer);
+    if (!crl) return null;
     if (!crl.issuer.isEqual(issuer.subject)) return null;
-    if (!(await crl.verify({ issuerCertificate: issuer }))) return null;
+    let byIssuer = crlVerified.get(crl);
+    if (!byIssuer) crlVerified.set(crl, (byIssuer = new Map()));
+    const key = serialHex(issuer);
+    if (!byIssuer.has(key)) byIssuer.set(key, await crl.verify({ issuerCertificate: issuer }).catch(() => false));
+    if (!byIssuer.get(key)) return null;
     const serial = serialHex(cert);
     const hit = (crl.revokedCertificates ?? []).find((r) => Buffer.from(r.userCertificate.valueBlock.valueHexView).toString("hex") === serial);
     if (hit) return { status: "revoked", source: "crl", revokedAt: hit.revocationDate.value.toISOString() };

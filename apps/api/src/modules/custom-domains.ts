@@ -17,6 +17,8 @@ const appHost = () => new URL(config.appUrl).hostname.toLowerCase();
 const isLocalEnv = () => config.environment === "local";
 /** Dominio registrable de la plataforma (calasign.com): sus subdominios no se pueden reclamar. */
 const platformRoot = () => appHost().split(".").slice(-2).join(".");
+/** Host de la plataforma: el de APP_URL o uno de PLATFORM_HOSTS (no es un dominio de firmantes ni se puede reclamar). */
+export const isPlatformHost = (h: string) => h === appHost() || config.platformHosts.includes(h);
 
 /** Páginas de la cuenta (web): en un dominio propio redirigen al dominio de la plataforma. */
 const ACCOUNT_PAGES = ["/app", "/login", "/signup", "/forgot", "/reset", "/invite", "/oauth/authorize", "/developers"];
@@ -115,7 +117,7 @@ export async function tenantForHost(db: Db, host: string | undefined): Promise<s
   // Sin el punto final: "firmas.cliente.com." es el mismo dominio (el navegador lo abre con el mismo certificado), pero
   // no coincidía y ahí se servía la cuenta con su cookie de sesión, como si fuera un host ajeno a la organización.
   const h = (host ?? "").split(":")[0].toLowerCase().replace(/\.+$/, "");
-  if (!h || h === appHost() || h === "localhost" || h === "127.0.0.1") return null;
+  if (!h || isPlatformHost(h) || h === "localhost" || h === "127.0.0.1") return null;
   return cached(`h:${h}`, async () => {
     const r = await db.one<any>(`SELECT tenant_id FROM custom_domains WHERE domain = $1 AND status = 'verified'`, [h]);
     return r?.tenant_id ?? null;
@@ -129,7 +131,7 @@ export async function tenantForHost(db: Db, host: string | undefined): Promise<s
  */
 async function signerHostTenant(db: Db, host: string | undefined): Promise<string | null> {
   const h = (host ?? "").split(":")[0].toLowerCase().replace(/\.+$/, "");
-  if (!h || h === appHost() || h === "localhost" || h === "127.0.0.1") return null;
+  if (!h || isPlatformHost(h) || h === "localhost" || h === "127.0.0.1") return null;
   return cached(`s:${h}`, async () => {
     const r = await db.one<any>(
       `SELECT tenant_id FROM custom_domains WHERE domain = $1 AND status = 'verified'
@@ -254,7 +256,7 @@ export async function customDomainRoutes(app: FastifyInstance, s: Services) {
     const a = req.auth!;
     const { domain } = SetCustomDomainInput.parse(req.body);
     for (const root of new Set([platformRoot(), "calasign.com", "calasign.io"])) {
-      if (domain === appHost() || domain === root || domain.endsWith(`.${root}`)) {
+      if (isPlatformHost(domain) || domain === root || domain.endsWith(`.${root}`)) {
         throw badRequest("reserved_domain", `No se pueden usar dominios de ${root}`);
       }
     }
@@ -360,7 +362,7 @@ export async function customDomainRoutes(app: FastifyInstance, s: Services) {
   app.get<{ Querystring: { domain?: string } }>("/internal/tls-allowed", async (req, reply) => {
     if (!isDirectLoopback(req)) return reply.code(404).send();
     const d = String(req.query.domain ?? "").toLowerCase();
-    if (d && d === appHost()) return reply.code(200).send("ok");
+    if (d && isPlatformHost(d)) return reply.code(200).send("ok");
     const r = d ? await s.db.one(`SELECT 1 FROM custom_domains WHERE domain = $1 AND status = 'verified'`, [d]) : null;
     return reply.code(r ? 200 : 404).send(r ? "ok" : "");
   });
@@ -375,8 +377,7 @@ export async function customDomainRoutes(app: FastifyInstance, s: Services) {
   app.addHook("onRequest", async (req, reply) => {
     const host = String(req.headers.host ?? "").toLowerCase().replace(/:\d+$/, "").replace(/\.$/, "");
     const platform =
-      host === appHost() ||
-      config.platformHosts.includes(host) ||
+      isPlatformHost(host) ||
       (config.environment === "local" && (host === "localhost" || host === "127.0.0.1" || host === "[::1]"));
     if (platform) return;
     const path = requestPath(req);

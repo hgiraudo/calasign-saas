@@ -136,6 +136,8 @@ export interface PdfValidationSignature {
     timeValid?: boolean;
     /** Algún certificado de la cadena estaba revocado al momento de evaluación. */
     revoked?: boolean;
+    /** De algún certificado (que no es la raíz) no se pudo saber si estaba revocado: sin OCSP/CRL en el PDF ni consulta online. */
+    revocationUnknown?: boolean;
   };
   level: "B-B" | "B-T" | "B-LT" | "B-LTA" | null;
 }
@@ -144,7 +146,7 @@ export interface PdfValidationResponse {
   sha256: string;
   signatures: PdfValidationSignature[];
   dss: { certs: number; ocsps: number; crls: number } | null;
-  summary: { count: number; allValid: boolean; allTrusted: boolean; anyRevoked: boolean; modifiedAfterSigning?: boolean };
+  summary: { count: number; allValid: boolean; allTrusted: boolean; anyRevoked: boolean; modifiedAfterSigning?: boolean; revocationUnknown?: boolean };
   /** true si se consultó OCSP/CRL online además del DSS. */
   onlineRevocation: boolean;
 }

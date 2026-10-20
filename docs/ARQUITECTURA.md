@@ -263,11 +263,15 @@ Resultado de las rondas de revisión de código de octubre de 2026; cada una tie
   activar 2FA de la cuenta (`sso_session_2fa`) y se cierra si se apaga el SSO o cambia el proveedor de identidad.
   Dura `sso_configs.session_ttl_hours` horas absolutas desde que se abre (1 a 336; por defecto 24, configurable en
   Ajustes → SSO); bajarlo acorta también las sesiones SSO abiertas. Las sesiones con contraseña siguen en 14 días.
-  Los tokens OAuth autorizados desde una sesión SSO tampoco pasan de esa duración (contada desde el primer token de la
-  familia): el refresh vence con ella y, vencida, `/oauth/token` responde `invalid_grant`.
+  Los tokens OAuth autorizados desde una sesión SSO tampoco pasan de esa sesión: el código guarda cuándo vence
+  (`oauth_authorization_codes.sso_session_expires_at`, 0080) y la familia tiene como tope el menor entre ese
+  vencimiento y la creación del código + la duración de la conexión (`oauth_tokens.sso_deadline`; sin él, el primer
+  token + la duración). El refresh vence con ella y, vencida, `/oauth/token` responde `invalid_grant` (también al canjear
+  un código cuya sesión ya venció).
   OIDC exige `email_verified` = `true` (o `"true"`) salvo que la conexión tenga `trustUnverifiedEmail` (para IdP que
   no mandan el claim, como Microsoft Entra ID por defecto; la 0079 lo activó en las conexiones OIDC ya existentes y la
-  consola avisa al configurar un issuer de Entra). SAML guarda el ID de cada Assertion
+  consola avisa al configurar un issuer de Entra, `login.microsoftonline.com` o `sts.windows.net`). Al cambiar el issuer
+  sin mandar `trustUnverifiedEmail` vuelve a `false`: la confianza era en el IdP anterior. SAML guarda el ID de cada Assertion
   (`saml_assertion_ids`, hasta su `NotOnOrAfter`) y rechaza las repetidas (`sso_assertion_replay`).
 - **SCIM DELETE** conserva la fila de `scim_users` (`active = false`, `deleted_at`): GET y listados devuelven 404, y el
   alta JIT por SSO no vuelve a sumar a quien el IdP desactivó o borró (`sso_scim_deactivated`), mientras la
@@ -275,13 +279,15 @@ Resultado de las rondas de revisión de código de octubre de 2026; cada una tie
   las filas desactivadas o borradas (dejan de bloquear el JIT).
 - **Cuentas que nunca probaron el control del correo** (sin `users.password_reset_at`): al vincularlas por JIT o SCIM
   (activo) se borran su 2FA, sus sesiones y sus tokens OAuth solo si la cuenta es huérfana: registrada con contraseña
-  (no `sso-only` ni `scim-provisioned`), sin fila previa en `scim_users` de esa organización y sin membresías en otras
-  organizaciones. Con otras membresías no se toca (la 2FA y las sesiones son de la cuenta global): el riesgo queda
+  (no `sso-only` ni `scim-provisioned`), sin fila activa y vigente en `scim_users` de esa organización con la membresía
+  ya creada (una inactiva o borrada no cuenta: SCIM limpia también al activar con PATCH/PUT o al volver a crear tras un
+  DELETE) y sin membresías en otras organizaciones con más miembros (la organización propia que crea el registro, donde
+  es la única persona, no cuenta). Con esas membresías no se toca (la 2FA y las sesiones son de la cuenta global): el riesgo queda
   acotado por `password_allowed = false` en la organización que la vincula. Restablecer la contraseña NO borra la 2FA
   (controlar el correo no alcanza para saltearla) ni revoca por defecto las credenciales que creó la persona: la
   respuesta (200) lista las activas por organización y, con `revokeCreatedCredentials: true`, revoca sus API keys e
   invitaciones pendientes (nunca tokens SCIM ni apps de servicio, que son de la organización). Se audita en cada
-  organización. Activar o desactivar la 2FA cierra las otras sesiones y revoca los tokens OAuth de la cuenta.
+  organización de la que es miembro y, en las que ya no lo es, solo si ahí se le revocó algo. Activar o desactivar la 2FA cierra las otras sesiones y revoca los tokens OAuth de la cuenta.
   La redirección después del login acepta solo rutas propias (empiezan con `/`, sin `//`, hasta 4000 caracteres; si
   no, `/app`: nunca una URL cortada, para que la vuelta a `/oauth/authorize` de un conector MCP llegue entera).
 - **Invitaciones**: revocar o reemplazar una invitación pendiente exige poder otorgar su rol. Quien acepta una

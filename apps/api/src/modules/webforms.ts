@@ -15,7 +15,7 @@ import { config } from "../config";
 import type { Db } from "../infra/db";
 import { appendEvent, type Actor } from "../infra/evidence";
 import { AppError, badRequest, conflict, forbidden, notFound } from "../lib/errors";
-import { decrypt, encrypt, hmacSign, iso, sha256Hex, slugify, uuidv7 } from "../lib/util";
+import { decrypt, encrypt, hmacSign, iso, randomToken, sha256Hex, slugify, uuidv7 } from "../lib/util";
 import { getTenantBranding } from "./branding";
 import { assertTemplateAccess, envelopeVisibilitySql, hasPerm, templateVisibilitySql } from "./access";
 import { ownerProblem } from "./owner-check";
@@ -571,8 +571,18 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
         return id;
       });
       const r = await s.db.one<any>(`SELECT access_token_enc FROM recipients WHERE id = $1`, [signerRecipientId]);
+      const embedded = Boolean(input.embed && form.embeddable && !form.require_otp);
+      if (embedded) {
+        // La página del firmante solo se deja enmarcar con una sesión embebida usada (embed.ts): la del formulario
+        // embebible se registra ya usada, con los orígenes autorizados de la organización (como el formulario).
+        await s.db.query(
+          `INSERT INTO embed_sessions (id, tenant_id, envelope_id, recipient_id, code_hash, frame_ancestors, created_by_actor, expires_at, used_at, used_ip)
+           VALUES ($1,$2,$3,$4,$5,'{}',$6, now(), now(), $7)`,
+          [uuidv7(), form.tenant_id, envId, signerRecipientId, sha256Hex(randomToken(24)), `web_form:${form.id}`, ip],
+        );
+      }
       reply.code(201);
-      return { envelopeId: envId, signingPath: `/s/${decrypt(r.access_token_enc)}${input.embed && form.embeddable && !form.require_otp ? "?embed=1" : ""}` };
+      return { envelopeId: envId, signingPath: `/s/${decrypt(r.access_token_enc)}${embedded ? "?embed=1" : ""}` };
     },
   );
 

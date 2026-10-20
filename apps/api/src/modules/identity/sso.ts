@@ -547,6 +547,7 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
     }
     if (input.enforce && !input.enabled) throw badRequest("sso_disabled", "Para exigir SSO primero hay que habilitarlo");
 
+    const oidcIssuerChanged = (input.oidc?.issuer ?? cur?.oidc_issuer ?? null) !== (cur?.oidc_issuer ?? null);
     await s.db.tx(async (t) => {
       // Conserva la verificación DNS de los dominios que siguen (ver modules/data/sso-domains.ts).
       await syncSsoDomains(t, a.tenantId, input.domains ?? []);
@@ -574,8 +575,9 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
           input.saml?.idpIssuer ?? cur?.saml_idp_issuer ?? null,
           cert,
           input.saml ? input.saml.emailAttribute ?? null : cur?.saml_email_attribute ?? null,
-          // Omitidos: se conservan los guardados.
-          input.oidc?.trustUnverifiedEmail ?? cur?.oidc_trust_unverified_email ?? false,
+          // Omitida: se conserva la guardada, salvo que cambie el issuer: la confianza era en el IdP anterior (p. ej. la
+          // que 0079 dio a las conexiones existentes) y un IdP nuevo arranca sin ella (false) hasta que se pida.
+          input.oidc?.trustUnverifiedEmail ?? (oidcIssuerChanged ? false : cur?.oidc_trust_unverified_email ?? false),
           input.sessionTtlHours ?? cur?.session_ttl_hours ?? SSO_SESSION_TTL_DEFAULT_HOURS,
         ],
       );

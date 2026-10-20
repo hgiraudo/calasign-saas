@@ -468,8 +468,9 @@ class _Envelopes:
     def signing_url(
         self, envelope_id: str, recipient_id: str, *, return_url: Optional[str] = None, frame_ancestors: Optional[Sequence[str]] = None
     ) -> Dict[str, Any]:
-        """URL de firma (5 min, un solo uso) de un destinatario, embebido (iframe) o no (abrirla en una pestaña o
-        redirigir). Devuelve {"url", "expiresAt", "tabOnly"?}: `tabOnly` True (destinatarios con OTP) significa que no
+        """URL de firma (5 min, un solo uso) de un destinatario, embebido (iframe) o no embebido con una autenticación
+        que la página igual exige (código OTP, firma presencial o verificación de identidad pendiente; abrirla en una
+        pestaña o redirigir). Un destinatario no embebido que solo tiene el link por correo da 409 `not_embedded`. Devuelve {"url", "expiresAt", "tabOnly"?}: `tabOnly` True (destinatarios con OTP) significa que no
         se puede embeber; pedir `frame_ancestors` para ellos da 409 `otp_not_embeddable`. `frame_ancestors`:
         subconjunto de los orígenes autorizados de la organización que pueden embeber la firma (por defecto, todos).
         En un iframe, la página de firma avisa por postMessage `viewed`, `signing_complete`, `declined`, `error` y

@@ -140,6 +140,24 @@ describe("formularios web: envíos del público", () => {
     expect(p.json().lockPrefill).toBe(true);
   });
 
+  it("formulario embebible: la página de firma (?embed=1) se puede enmarcar (sesión embebida registrada al enviar)", async () => {
+    const f = (await db.one<any>(`SELECT template_id, signer_role_id FROM web_forms WHERE id = $1`, [formId]))!;
+    await db.query(`UPDATE tenants SET embed_frame_ancestors = $2 WHERE id = $1`, [tenant, ["https://app.cliente.test"]]);
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/web-forms",
+      headers: auth,
+      payload: { templateId: f.template_id, name: "Embebible", signerRoleId: f.signer_role_id, embeddable: true },
+    });
+    expect(res.statusCode).toBe(201);
+    const r = await submit("emi@x.test", { embed: true }, { slug: res.json().slug });
+    expect(r.statusCode).toBe(201);
+    expect(r.json().signingPath).toMatch(/\?embed=1$/);
+    const page = await app.inject({ method: "GET", url: r.json().signingPath });
+    expect(/frame-ancestors ([^;]*)/.exec(String(page.headers["content-security-policy"]))?.[1]?.trim()).toBe("'self' https://app.cliente.test");
+    await db.query(`UPDATE tenants SET embed_frame_ancestors = '{}' WHERE id = $1`, [tenant]);
+  });
+
   it("tope por organización sumando todos sus formularios", async () => {
     const { config } = await import("../src/config");
     const prev = config.webForms.maxPerTenantHour;

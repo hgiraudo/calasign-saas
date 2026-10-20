@@ -181,6 +181,9 @@ export function isKeyError(e: unknown): boolean {
   if (/^(ENOTFOUND|EAI_AGAIN|ECONNRESET|ECONNREFUSED|ECONNABORTED|ETIMEDOUT|EPIPE|EHOSTUNREACH|ENETUNREACH|UND_ERR)/.test(code)) return false;
   if (/^(TimeoutError|AbortError)$/.test(String(err?.name ?? ""))) return false;
   const ids = `${err?.name ?? ""} ${err?.Code ?? ""} ${err?.code ?? ""}`;
+  // Transitorios de KMS (limitación de tasa, falla interna, timeout de una dependencia como un CloudHSM): no dicen nada
+  // de la clave. Antes "KMS.ThrottlingException" coincidía con KMS.* y la clave del cliente quedaba «failing».
+  if (/(^|\s)(KMS\.)?(ThrottlingException|KMSInternalException|DependencyTimeoutException)(\s|$)/.test(ids)) return false;
   // Excepciones de KMS (SDK de KMS: "DisabledException", "AccessDeniedException"…; S3 con SSE-KMS: "KMS.DisabledException",
   // "KMS.KMSInvalidStateException"…). Las de S3 no terminan en "Exception" ("AccessDenied", "NoSuchKey", "NotFound").
   if (/(^|\s)(KMS\.[A-Za-z]+|KMSInvalidStateException|DisabledException|NotFoundException|InvalidKeyUsageException|IncorrectKeyException|InvalidCiphertextException|KeyUnavailableException|AccessDeniedException|InvalidGrantTokenException)(\s|$)/.test(ids)) return true;

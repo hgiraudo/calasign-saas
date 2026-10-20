@@ -122,9 +122,38 @@ export type BrandTemplateInput = z.infer<typeof BrandTemplateInput>;
 const localeRecord = <T extends z.ZodTypeAny>(v: T) => z.object(Object.fromEntries(LOCALES.map((l) => [l, v.optional()])) as Record<(typeof LOCALES)[number], z.ZodOptional<T>>).strict();
 
 export const TEXT_KEY_RE = /^[a-zA-Z0-9_.-]{1,80}$/;
+
+/** Textos de la página de verificación que una marca sí puede cambiar (título e introducción). */
+export const VERIFY_TEXT_KEYS_ALLOWED: readonly string[] = ["verify.title", "verify.text"];
+
+/**
+ * Textos que una marca NO puede reemplazar: el veredicto y los datos de la verificación pública (verify.*: válido, no
+ * coincide, cadena rota, tabla del sobre…) y el reporte técnico de validación del PDF (val.*). Con un texto propio, una
+ * marca podía hacer que /verify?b=<marca> dijera "Documento válido ✓" para un PDF adulterado.
+ */
+export function isProtectedTextKey(key: string): boolean {
+  if (key.startsWith("val.")) return true;
+  return key.startsWith("verify.") && !VERIFY_TEXT_KEYS_ALLOWED.includes(key);
+}
+
+/** Quita de los textos propios las claves protegidas (para configuraciones guardadas antes de la validación). */
+export function withoutProtectedTexts<T extends Record<string, string> | undefined>(m: T): T {
+  if (!m) return m;
+  return Object.fromEntries(Object.entries(m).filter(([k]) => !isProtectedTextKey(k))) as T;
+}
+
 const TextOverrides = z
   .record(z.string().regex(TEXT_KEY_RE), z.string().max(1000))
-  .refine((r) => Object.keys(r).length <= 500, "máximo 500 textos por idioma");
+  .refine((r) => Object.keys(r).length <= 500, "máximo 500 textos por idioma")
+  .superRefine((r, ctx) => {
+    const bad = Object.keys(r).filter(isProtectedTextKey);
+    if (bad.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `No se pueden cambiar los textos del resultado de la verificación: ${bad.slice(0, 5).join(", ")}${bad.length > 5 ? "…" : ""}`,
+      });
+    }
+  });
 
 export const BrandConfigInput = z
   .object({
@@ -135,7 +164,7 @@ export const BrandConfigInput = z
     /** Marca blanca total: sin "Powered by" ni menciones a la plataforma en nada que vea un firmante. */
     hidePoweredBy: z.boolean().optional(),
     theme: BrandThemeInput.optional(),
-    /** CSS propio (sin url(), @import ni barras invertidas). Se aplica a firmante, verificación y embebido. */
+    /** CSS propio (sin url(), @import ni barras invertidas). Se aplica a firmante y embebido (no a la verificación pública). */
     customCss: z.string().max(20_000).nullable().optional(),
     links: BrandLinksInput.optional(),
     email: BrandEmailInput.optional(),
@@ -328,6 +357,15 @@ export function contrastText(hex: string): string {
 export const FONT_STACK = 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
 
 /** Variables y reglas CSS del tema (las mismas en el servidor, la web y la vista previa). */
+/**
+ * Tema de la página pública de verificación: solo la barra (color y texto), los botones y la fuente. Sin el fondo ni el
+ * color del texto (podían ocultar el resultado) y nunca el CSS propio.
+ */
+export function verifyPageTheme(t: Partial<ResolvedBrandTheme>): Partial<ResolvedBrandTheme> {
+  const { primaryColor, headerTextColor, buttonColor, buttonTextColor, fontFamily, fontSource } = t;
+  return { primaryColor, headerTextColor, buttonColor, buttonTextColor, fontFamily, fontSource };
+}
+
 export function themeToCss(t: Partial<ResolvedBrandTheme>, opts: { fontFace?: string | null } = {}): string {
   const vars: string[] = [];
   const rules: string[] = [];

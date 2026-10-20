@@ -180,6 +180,10 @@ const MAX_RENEWALS_PER_DAY = 3;
 /** Vencimiento del certificado actual de la TSA: una consulta (un sello) cada 6 h como mucho. Las fallas no se cachean. */
 const TSA_CACHE_MS = 6 * 3600_000;
 let tsaCache: { url: string; notAfter: string; at: number } | null = null;
+/** Tests: fija el vencimiento del certificado actual de la TSA (sin consultarla). */
+export const primeTsaCacheForTests = (url: string, notAfter: string) => {
+  tsaCache = { url, notAfter, at: Date.now() };
+};
 export async function currentTsaNotAfter(tsaUrl: string): Promise<string | null> {
   if (tsaCache && tsaCache.url === tsaUrl && Date.now() - tsaCache.at < TSA_CACHE_MS) return tsaCache.notAfter;
   try {
@@ -327,9 +331,11 @@ export async function archiveRoutes(app: FastifyInstance, s: Services, log: Deps
     if (Number(e.archive_renewals ?? 0) >= MAX_RENEWALS) {
       throw new AppError(409, "archive_renewal_limit", `El sobre llegó al máximo de ${MAX_RENEWALS} renovaciones del sello de archivo`);
     }
-    // Sin inspeccionar todavía (nunca se abrió el panel ni pasó el barrido): se calcula antes de decidir.
+    // Sin inspeccionar todavía (nunca se abrió el panel ni pasó el barrido): se calcula antes de decidir. Si la
+    // inspección falla (BYOK o almacenamiento caídos) se propaga el error: tragarlo terminaba en un 409
+    // archive_not_applicable engañoso (sin vencimiento calculado) en vez de la falla real (p. ej. 503).
     if (e.status === "completed" && !e.archive_checked_at) {
-      await inspectArchive(deps(), e.id).catch(() => {});
+      await inspectArchive(deps(), e.id);
       e = await s.db.one<any>(`SELECT id, status, archive_renewals, archive_valid_until, archive_checked_at, archive_error FROM envelopes WHERE id = $1`, [e.id]);
     }
     // Qué se puede pedir a mano (decisión, docs/EVIDENCIA.md §2):
@@ -350,6 +356,16 @@ export async function archiveRoutes(app: FastifyInstance, s: Services, log: Deps
       throw new AppError(409, "archive_not_due", "El sello de archivo todavía no está por vencer: se renueva solo cuando se acerca su vencimiento", {
         validUntil: iso(e.archive_valid_until),
       });
+    } else {
+      // Como el barrido: si el último sello ya es del certificado que la TSA usa hoy (o de uno que vence después), un
+      // sello nuevo no extiende la validez y solo cuesta un sello y otro PDF.
+      const tsaNotAfter = config.seal.tsaUrl ? await currentTsaNotAfter(config.seal.tsaUrl) : null;
+      if (tsaNotAfter && new Date(e.archive_valid_until).getTime() >= new Date(tsaNotAfter).getTime()) {
+        throw new AppError(409, "archive_not_due", "Renovar ahora no extendería la validez: el sello de archivo ya es del certificado vigente de la autoridad de sellado de tiempo", {
+          validUntil: iso(e.archive_valid_until),
+          tsaNotAfter: iso(tsaNotAfter),
+        });
+      }
     }
     const recent = await s.db.one<any>(
       `SELECT count(*)::int AS n FROM envelope_signed_versions WHERE envelope_id = $1 AND reason = 'archive_renewal' AND created_at > now() - interval '1 day'`,

@@ -20,19 +20,36 @@ export function isOAuthAccessToken(token: string) {
 }
 
 /**
- * Tope de una familia de tokens autorizada desde una sesión SSO: inicio de la familia (su primer token) + la duración de
- * sesión de la conexión (sso_configs.session_ttl_hours, la de la organización del IdP). Como la sesión web SSO, el
- * acceso que dio el IdP no se estira más allá de esa duración con refresh tokens: vencido, hay que volver a autorizar
- * (pasando por el IdP). null si la familia todavía no tiene tokens (empieza ahora).
+ * Tope de una familia de tokens autorizada desde una sesión SSO: el menor entre el que se fijó al emitir el primer token
+ * (oauth_tokens.sso_deadline: vencimiento de la sesión SSO que autorizó, o creación del código + duración de la
+ * conexión) y el inicio de la familia (su primer token) + la duración de sesión de la conexión
+ * (sso_configs.session_ttl_hours, la de la organización del IdP; si se acortó después, también acorta). Como la sesión
+ * web SSO, el acceso que dio el IdP no se estira más allá de esa duración con refresh tokens: vencido, hay que volver a
+ * autorizar (pasando por el IdP). null si la familia todavía no tiene tokens (empieza ahora).
  */
 export async function ssoFamilyDeadline(db: Db, familyId: string, ssoTenantId: string | null): Promise<Date | null> {
-  const r = await db.one<{ started: string | null; ttl: number | null }>(
+  const r = await db.one<{ started: string | null; fixed: string | null; ttl: number | null }>(
     `SELECT (SELECT min(created_at) FROM oauth_tokens WHERE family_id = $1) AS started,
+            (SELECT min(sso_deadline) FROM oauth_tokens WHERE family_id = $1) AS fixed,
             (SELECT session_ttl_hours FROM sso_configs WHERE tenant_id = $2) AS ttl`,
     [familyId, ssoTenantId],
   );
   if (!r?.started) return null;
-  return new Date(new Date(r.started).getTime() + ssoSessionTtlHours({ session_ttl_hours: r.ttl }) * 3600_000);
+  const byTtl = new Date(r.started).getTime() + ssoSessionTtlHours({ session_ttl_hours: r.ttl }) * 3600_000;
+  return new Date(r.fixed ? Math.min(byTtl, new Date(r.fixed).getTime()) : byTtl);
+}
+
+/**
+ * Tope de una familia nueva autorizada con un código emitido desde una sesión SSO: el menor entre el vencimiento de esa
+ * sesión (oauth_authorization_codes.sso_session_expires_at) y la creación del código + la duración de la conexión. Así
+ * el tope arranca en la sesión que autorizó, no en el canje.
+ */
+export async function ssoCodeDeadline(
+  db: Db,
+  code: { created_at: string | Date; sso_session_expires_at?: string | Date | null; sso_tenant_id: string | null },
+): Promise<Date> {
+  const byTtl = new Date(code.created_at).getTime() + (await ssoTtlSeconds(db, code.sso_tenant_id)) * 1000;
+  return new Date(code.sso_session_expires_at ? Math.min(byTtl, new Date(code.sso_session_expires_at).getTime()) : byTtl);
 }
 
 /** Duración de la conexión SSO de la organización, en segundos (para una familia que empieza ahora). */
@@ -56,6 +73,8 @@ export async function issueTokens(
     /** Cómo se autenticó el usuario que autorizó (ver userTokenAllowed). */
     authMethod?: string | null;
     ssoTenantId?: string | null;
+    /** Familia nueva autorizada desde una sesión SSO: tope ya calculado (ver ssoCodeDeadline). */
+    ssoDeadline?: Date | null;
   },
 ) {
   const familyId = t.familyId ?? uuidv7();
@@ -63,12 +82,13 @@ export async function issueTokens(
   let cap: string | null = null;
   if (t.authMethod === "sso") {
     const deadline = t.familyId ? await ssoFamilyDeadline(db, t.familyId, t.ssoTenantId ?? null) : null;
-    cap = (deadline ?? new Date(Date.now() + (await ssoTtlSeconds(db, t.ssoTenantId ?? null)) * 1000)).toISOString();
+    const fresh = Date.now() + (await ssoTtlSeconds(db, t.ssoTenantId ?? null)) * 1000;
+    cap = (deadline ?? new Date(t.ssoDeadline ? Math.min(fresh, t.ssoDeadline.getTime()) : fresh)).toISOString();
   }
   const access = ACCESS_PREFIX + randomToken(32);
   const accessRow = await db.one<{ expires_at: string }>(
-    `INSERT INTO oauth_tokens (id, token_hash, kind, client_id, tenant_id, user_id, service_api_key_id, scopes, family_id, code_hash, expires_at, auth_method, sso_tenant_id)
-     VALUES ($1,$2,'access',$3,$4,$5,$6,$7,$8,$9, LEAST(now() + ($10 || ' seconds')::interval, COALESCE($13::timestamptz, 'infinity')), $11, $12)
+    `INSERT INTO oauth_tokens (id, token_hash, kind, client_id, tenant_id, user_id, service_api_key_id, scopes, family_id, code_hash, expires_at, auth_method, sso_tenant_id, sso_deadline)
+     VALUES ($1,$2,'access',$3,$4,$5,$6,$7,$8,$9, LEAST(now() + ($10 || ' seconds')::interval, COALESCE($13::timestamptz, 'infinity')), $11, $12, $13::timestamptz)
      RETURNING expires_at`,
     [uuidv7(), sha256Hex(access), t.clientId, t.tenantId, t.userId, t.serviceApiKeyId, t.scopes, familyId, t.codeHash ?? null, String(ACCESS_TTL_SEC), t.authMethod ?? null, t.ssoTenantId ?? null, cap],
   );
@@ -76,8 +96,8 @@ export async function issueTokens(
   if (t.withRefresh) {
     refresh = REFRESH_PREFIX + randomToken(32);
     await db.query(
-      `INSERT INTO oauth_tokens (id, token_hash, kind, client_id, tenant_id, user_id, service_api_key_id, scopes, family_id, code_hash, expires_at, auth_method, sso_tenant_id)
-       VALUES ($1,$2,'refresh',$3,$4,$5,$6,$7,$8,$9, LEAST(now() + ($10 || ' seconds')::interval, COALESCE($13::timestamptz, 'infinity')), $11, $12)`,
+      `INSERT INTO oauth_tokens (id, token_hash, kind, client_id, tenant_id, user_id, service_api_key_id, scopes, family_id, code_hash, expires_at, auth_method, sso_tenant_id, sso_deadline)
+       VALUES ($1,$2,'refresh',$3,$4,$5,$6,$7,$8,$9, LEAST(now() + ($10 || ' seconds')::interval, COALESCE($13::timestamptz, 'infinity')), $11, $12, $13::timestamptz)`,
       [uuidv7(), sha256Hex(refresh), t.clientId, t.tenantId, t.userId, t.serviceApiKeyId, t.scopes, familyId, t.codeHash ?? null, String(REFRESH_TTL_SEC), t.authMethod ?? null, t.ssoTenantId ?? null, cap],
     );
   }

@@ -28,7 +28,7 @@ import { render, type TemplateKind } from "../../notifications/templates";
 import { auditFromRequest, recordAudit } from "../audit";
 import { authenticate, type AuthContext, type Services } from "../context";
 import { requireFeature, tenantPlan } from "../billing/plans";
-import { invalidateDomainCache, isPlatformHost, resolveTxt, routesToPlatform } from "../custom-domains";
+import { invalidateDomainCache, isPlatformHost, resolveTxt, routesToPlatform, webDomainLockKey } from "../custom-domains";
 import { deleteFileIfUnused, discardBlobsOnFailure } from "../file-cleanup";
 import {
   brandForHost,
@@ -531,16 +531,20 @@ export async function whiteLabelRoutes(app: FastifyInstance, s: Services) {
     const b = await loadBrand(s.db, a.tenantId, req.params.id);
     const { domain } = SetDomainInput.parse(req.body);
     assertClaimable(domain);
-    const taken =
-      (await s.db.one(`SELECT 1 FROM brand_domains WHERE domain = $1 AND status = 'verified' AND brand_id <> $2`, [domain, b.brandId])) ??
-      (await s.db.one(`SELECT 1 FROM custom_domains WHERE domain = $1 AND status = 'verified'`, [domain]));
-    if (taken) throw conflict("domain_taken", "Ese dominio ya está en uso");
-    const cur = await s.db.one<any>(`SELECT * FROM brand_domains WHERE brand_id = $1`, [b.brandId]);
-    if (cur?.domain !== domain) {
-      await s.db.tx(async (t) => {
-        await t.query(`DELETE FROM brand_domains WHERE brand_id = $1`, [b.brandId]);
-        await t.query(`INSERT INTO brand_domains (id, tenant_id, brand_id, domain, verification_token) VALUES ($1,$2,$3,$4,$5)`, [uuidv7(), a.tenantId, b.brandId, domain, randomToken(18)]);
-      });
+    // Con el lock por dominio (el de custom-domains.ts): el chequeo cruzado no corre a la vez que una verificación.
+    const changed = await s.db.tx(async (t) => {
+      await t.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [webDomainLockKey(domain)]);
+      const taken =
+        (await t.one(`SELECT 1 FROM brand_domains WHERE domain = $1 AND status = 'verified' AND brand_id <> $2`, [domain, b.brandId])) ??
+        (await t.one(`SELECT 1 FROM custom_domains WHERE domain = $1 AND status = 'verified'`, [domain]));
+      if (taken) throw conflict("domain_taken", "Ese dominio ya está en uso");
+      const cur = await t.one<any>(`SELECT * FROM brand_domains WHERE brand_id = $1`, [b.brandId]);
+      if (cur?.domain === domain) return false;
+      await t.query(`DELETE FROM brand_domains WHERE brand_id = $1`, [b.brandId]);
+      await t.query(`INSERT INTO brand_domains (id, tenant_id, brand_id, domain, verification_token) VALUES ($1,$2,$3,$4,$5)`, [uuidv7(), a.tenantId, b.brandId, domain, randomToken(18)]);
+      return true;
+    });
+    if (changed) {
       invalidateDomainCache();
       await auditFromRequest(s.db, req, a, "brand.domain_set", { targetType: "domain", targetId: domain });
     }
@@ -567,18 +571,25 @@ export async function whiteLabelRoutes(app: FastifyInstance, s: Services) {
       ok = false;
       error = `El dominio todavía no apunta a la plataforma: creá el CNAME ${r.domain} → ${appHost()}`;
     }
-    if (ok && (await s.db.one(`SELECT 1 FROM custom_domains WHERE domain = $1 AND status = 'verified'`, [r.domain]))) {
-      ok = false;
-      error = "Ese dominio ya está en uso";
-    }
+    // Cruce con los dominios propios y marca de verificado bajo el lock por dominio (el mismo que custom-domains.ts):
+    // dos verificaciones simultáneas (sub-marca y dominio propio) quedaban las dos verificadas.
     try {
-      await s.db.query(
-        `UPDATE brand_domains SET status = CASE WHEN $2 THEN 'verified' ELSE status END, verified_at = CASE WHEN $2 AND verified_at IS NULL THEN now() ELSE verified_at END,
-           last_checked_at = now(), last_error = $3, recheck_failures = CASE WHEN $2 THEN 0 ELSE recheck_failures END WHERE id = $1`,
-        // Un intento fallido no pone el contador en cero: si no, reintentar a mano mantenía verificado para siempre un
-        // dominio que la re-verificación ya estaba por bajar (como en custom-domains.ts).
-        [r.id, ok, error],
-      );
+      ok = await s.db.tx(async (t) => {
+        await t.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [webDomainLockKey(r.domain)]);
+        let okT = ok;
+        if (okT && (await t.one(`SELECT 1 FROM custom_domains WHERE domain = $1 AND status = 'verified'`, [r.domain]))) {
+          okT = false;
+          error = "Ese dominio ya está en uso";
+        }
+        await t.query(
+          `UPDATE brand_domains SET status = CASE WHEN $2 THEN 'verified' ELSE status END, verified_at = CASE WHEN $2 AND verified_at IS NULL THEN now() ELSE verified_at END,
+             last_checked_at = now(), last_error = $3, recheck_failures = CASE WHEN $2 THEN 0 ELSE recheck_failures END WHERE id = $1`,
+          // Un intento fallido no pone el contador en cero: si no, reintentar a mano mantenía verificado para siempre un
+          // dominio que la re-verificación ya estaba por bajar (como en custom-domains.ts).
+          [r.id, okT, error],
+        );
+        return okT;
+      });
     } catch (e) {
       if ((e as { code?: string }).code !== "23505") throw e;
       ok = false;
@@ -674,14 +685,16 @@ export async function whiteLabelRoutes(app: FastifyInstance, s: Services) {
   // ───────── Público ─────────
 
   /**
-   * Tema de la marca para la web: por ?b= (id de sub-marca o slug de la organización, lo usa el link de verificación
-   * del certificado) o por el Host (dominio propio). 404 si no hay marca: la web usa la de la plataforma.
+   * Tema de la marca para la verificación pública: por ?b= (id de sub-marca o slug de la organización, lo usa el link de
+   * verificación del certificado) o por el Host (dominio propio). 404 si no hay marca: la web usa la de la plataforma.
+   * Restringido (sin CSS propio, sin fondo ni color de texto): la marca no puede cambiar cómo se ve el veredicto.
    */
   app.get<{ Querystring: { b?: string } }>("/v1/public/brand-theme", async (req, reply) => {
     const found = await brandFromKeyOrHost(s.db, req.query.b, req.headers.host);
     if (!found) return reply.code(404).send({ error: { code: "not_found", message: "Sin marca" } });
     reply.header("cache-control", "public, max-age=60");
-    return publicTheme(await resolveBrand(s.db, found.tenantId, found.brandId));
+    // Solo la usa la verificación pública (?b= del certificado): tema restringido, sin CSS propio.
+    return publicTheme(await resolveBrand(s.db, found.tenantId, found.brandId), { verify: true });
   });
 
   app.get<{ Params: { key: string; kind: string } }>("/v1/public/brand-assets/:key/:kind", async (req, reply) => {

@@ -1,7 +1,7 @@
 // Modo embebido de la página del firmante (/s/:token?embed=1): oculta el marco de CalaSign, avisa a
 // la ventana contenedora por postMessage y, si el integrador lo pidió, vuelve a su returnUrl.
 import { useEffect, useRef } from "react";
-import type { EmbedMessage, SigningEmbedInfo, SigningSession } from "@calasign/shared";
+import { originAllowed, type EmbedMessage, type SigningEmbedInfo, type SigningSession } from "@calasign/shared";
 import "./embed.css";
 
 const embedKey = (token: string) => `cs-embed:${token}`;
@@ -99,6 +99,19 @@ export const tokenOfBase = (base: string) => decodeURIComponent(base.split("/")[
 type BridgeType = EmbedMessage["type"];
 type BridgeMessage = EmbedMessage;
 
+/**
+ * Destino de postMessage: el origen del contenedor (location.ancestorOrigins, Chrome/Safari) si está entre los
+ * orígenes de la sesión embebida que informa la API. Sin ancestorOrigins (Firefox) o sin orígenes conocidos queda "*":
+ * el CSP frame-ancestors ya limita quién puede enmarcar la página y los avisos solo llevan ids y el tipo de evento.
+ */
+let targetOrigin: Promise<string> = Promise.resolve("*");
+
+function pickTargetOrigin(origins: readonly string[] | undefined): string {
+  const parent = (window.location as Location & { ancestorOrigins?: DOMStringList }).ancestorOrigins?.[0];
+  if (parent && parent !== "null" && origins?.length && originAllowed(parent, origins)) return parent;
+  return "*";
+}
+
 function post(type: BridgeType, session: SigningSession | null) {
   const msg: BridgeMessage = {
     source: "calasign",
@@ -107,11 +120,13 @@ function post(type: BridgeType, session: SigningSession | null) {
     recipientId: session?.recipient.id ?? null,
   };
   if (type === "closed" && session) msg.status = session.envelope.status;
-  try {
-    if (window.parent !== window) window.parent.postMessage(msg, "*");
-  } catch {
-    /* el contenedor puede no existir */
-  }
+  void targetOrigin.then((target) => {
+    try {
+      if (window.parent !== window) window.parent.postMessage(msg, target);
+    } catch {
+      /* el contenedor puede no existir */
+    }
+  });
 }
 
 /** Puente con el integrador. Llamar siempre (antes de cualquier return) en la página del firmante. */
@@ -127,10 +142,11 @@ export function useEmbedBridge(token: string, session: SigningSession | null, in
   useEffect(() => {
     if (!embedded || !token) return;
     if (framed) document.documentElement.classList.add("cs-embedded");
-    returnUrl.current = fetch(`/v1/signing/${encodeURIComponent(token)}/embed`, { headers: { Accept: "application/json" } })
+    const info = fetch(`/v1/signing/${encodeURIComponent(token)}/embed`, { headers: { Accept: "application/json" } })
       .then((r) => (r.ok ? (r.json() as Promise<SigningEmbedInfo>) : null))
-      .then((info) => info?.returnUrl ?? null)
       .catch(() => null);
+    returnUrl.current = info.then((i) => i?.returnUrl ?? null);
+    targetOrigin = info.then((i) => pickTargetOrigin(i?.origins));
   }, [embedded, token]);
 
   useEffect(() => {

@@ -235,6 +235,14 @@ export async function recheckVerifiedDomains(
   return { checked: rows.length, demoted };
 }
 
+/**
+ * Clave del lock por dominio web (pg_advisory_xact_lock) compartida por el dominio propio de la organización y el de
+ * las sub-marcas: el alta y la verificación de uno chequean que el otro no lo tenga.
+ */
+export function webDomainLockKey(domain: string): string {
+  return `web-domain:${domain.toLowerCase()}`;
+}
+
 /** El pedido viene por loopback y sin pasar por el proxy (Caddy agrega X-Forwarded-For a lo que proxea). */
 function isDirectLoopback(req: FastifyRequest) {
   const ra = req.socket.remoteAddress ?? "";
@@ -303,34 +311,42 @@ export async function customDomainRoutes(app: FastifyInstance, s: Services) {
         error = `El dominio todavía no apunta a CalaSign: creá el CNAME ${r.domain} → ${appHost()} y volvé a verificar`;
       }
     }
-    if (ok && r.status !== "verified") {
-      const other = await s.db.one(`SELECT 1 FROM custom_domains WHERE domain = $1 AND status = 'verified' AND tenant_id <> $2`, [r.domain, a.tenantId]);
-      if (other) {
-        ok = false;
-        error = "Ese dominio ya lo verificó otra organización";
-      }
-    }
-    // Ni como dominio web de una sub-marca (white-label/routes.ts hace el chequeo inverso): con los dos verificados, la
-    // marca, los links y el aislamiento de sesión dependían de qué tabla se consultaba primero.
-    if (ok && (await s.db.one(`SELECT 1 FROM brand_domains WHERE domain = $1 AND status = 'verified'`, [r.domain]))) {
-      ok = false;
-      error = "Ese dominio ya está en uso";
-    }
+    // Cruces y marca de verificado bajo un lock por dominio (el mismo que white-label/routes.ts al verificar el dominio
+    // de una sub-marca): sin él, dos verificaciones simultáneas (dominio propio y sub-marca) veían la otra tabla sin el
+    // dominio verificado y quedaban las dos verificadas (el índice único es por tabla).
     try {
-      await s.db.query(
-        `UPDATE custom_domains SET status = CASE WHEN $2 THEN 'verified' ELSE status END,
-           verified_at = CASE WHEN $2 AND verified_at IS NULL THEN now() ELSE verified_at END,
-           last_checked_at = now(), last_error = $3, recheck_failures = CASE WHEN $2 THEN 0 ELSE recheck_failures END WHERE id = $1`,
-        [r.id, ok, error],
-      );
+      ok = await s.db.tx(async (t) => {
+        await t.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [webDomainLockKey(r.domain)]);
+        let okT = ok;
+        if (okT && r.status !== "verified") {
+          const other = await t.one(`SELECT 1 FROM custom_domains WHERE domain = $1 AND status = 'verified' AND tenant_id <> $2`, [r.domain, a.tenantId]);
+          if (other) {
+            okT = false;
+            error = "Ese dominio ya lo verificó otra organización";
+          }
+        }
+        // Ni como dominio web de una sub-marca (white-label/routes.ts hace el chequeo inverso): con los dos verificados, la
+        // marca, los links y el aislamiento de sesión dependían de qué tabla se consultaba primero.
+        if (okT && (await t.one(`SELECT 1 FROM brand_domains WHERE domain = $1 AND status = 'verified'`, [r.domain]))) {
+          okT = false;
+          error = "Ese dominio ya está en uso";
+        }
+        await t.query(
+          `UPDATE custom_domains SET status = CASE WHEN $2 THEN 'verified' ELSE status END,
+             verified_at = CASE WHEN $2 AND verified_at IS NULL THEN now() ELSE verified_at END,
+             last_checked_at = now(), last_error = $3, recheck_failures = CASE WHEN $2 THEN 0 ELSE recheck_failures END WHERE id = $1`,
+          [r.id, okT, error],
+        );
+        // Verificado: los registros pendientes de otras organizaciones para el mismo dominio ya no sirven.
+        if (okT) await t.query(`DELETE FROM custom_domains WHERE domain = $1 AND status = 'pending' AND tenant_id <> $2`, [r.domain, a.tenantId]);
+        return okT;
+      });
     } catch (e) {
       // Carrera con otra organización que verificó el mismo dominio a la vez (índice único de verificados).
       if ((e as { code?: string }).code !== "23505") throw e;
       ok = false;
       await s.db.query(`UPDATE custom_domains SET last_checked_at = now(), last_error = $2 WHERE id = $1`, [r.id, "Ese dominio ya lo verificó otra organización"]);
     }
-    // Verificado: los registros pendientes de otras organizaciones para el mismo dominio ya no sirven.
-    if (ok) await s.db.query(`DELETE FROM custom_domains WHERE domain = $1 AND status = 'pending' AND tenant_id <> $2`, [r.domain, a.tenantId]);
     invalidate();
     if (ok) await auditFromRequest(s.db, req, a, "domain.verified", { targetType: "domain", targetId: r.domain });
     return { domain: toApi(await s.db.one<any>(`SELECT * FROM custom_domains WHERE id = $1`, [r.id])) };

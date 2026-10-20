@@ -103,6 +103,15 @@ describe("BYOK: propietario, historial y aviso", () => {
     expect((await byok.tenantStorage(db, tenant)).byokStatus).toBe("active");
     expect((await byok.tenantStorage(db, tenant, { fresh: true })).byokStatus).toBe("none");
   });
+
+  it("la custodia de certificados (escritura) lee la clave sin caché", async () => {
+    await db.query(`UPDATE tenants SET byok_key_arn = $2, byok_status = 'active' WHERE id = $1`, [tenant, KEY1]);
+    byok.invalidateTenantStorage(tenant);
+    expect(await byok.byokForCustody(db, tenant)).toEqual({ tenantId: tenant, keyArn: KEY1 });
+    await byok.tenantStorage(db, tenant); // queda en caché como activa
+    await db.query(`UPDATE tenants SET byok_status = 'none' WHERE id = $1`, [tenant]);
+    expect(await byok.byokForCustody(db, tenant)).toBeNull();
+  });
 });
 
 describe("renovación manual del sello de archivo", () => {
@@ -129,6 +138,31 @@ describe("renovación manual del sello de archivo", () => {
     const r = await renew(id);
     expect(r.statusCode).toBe(409);
     expect(r.json().error.code).toBe("archive_not_due");
+  });
+
+  it("409 archive_not_due si un sello nuevo no extendería la validez (el último ya es del certificado vigente de la TSA)", async () => {
+    const { primeTsaCacheForTests, resetArchiveSweepClock } = await import("../src/modules/data/archive");
+    const { config } = await import("../src/config");
+    const validUntil = new Date(Date.now() + 10 * 86_400_000).toISOString();
+    const id = await completedEnvelope({ validUntil });
+    try {
+      primeTsaCacheForTests(config.seal.tsaUrl, new Date(Date.now() + 5 * 86_400_000).toISOString());
+      const r = await renew(id);
+      expect(r.statusCode).toBe(409);
+      expect(r.json().error.code).toBe("archive_not_due");
+      expect(r.json().error.details).toMatchObject({ validUntil });
+    } finally {
+      resetArchiveSweepClock();
+    }
+  });
+
+  it("si la inspección previa falla, se propaga el error (no un 409 engañoso)", async () => {
+    const id = await completedEnvelope({});
+    await db.query(`UPDATE envelopes SET archive_checked_at = NULL WHERE id = $1`, [id]);
+    // El PDF firmado no está en el almacenamiento: la inspección falla.
+    const r = await renew(id);
+    expect(r.statusCode).toBeGreaterThanOrEqual(500);
+    expect(JSON.stringify(r.json())).not.toContain("archive_not_applicable");
   });
 
   it("409 si el PDF no es de archivo (B-B/B-T, sin LTV pendiente)", async () => {

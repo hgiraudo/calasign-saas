@@ -20,6 +20,21 @@ export interface BlobStore {
   delete(key: string): Promise<void>;
 }
 
+/** Falla del almacenamiento (o de KMS) que no se atribuye a ninguna clave: 503 genérico, sin ARN. */
+export const storageUnavailableError = () =>
+  new AppError(503, "storage_unavailable", "El almacenamiento de documentos no está disponible en este momento. Probá de nuevo en unos minutos.");
+
+/**
+ * Error de KMS al cifrar o descifrar con la clave `arn`: si es de la clave (permisos, estado, inexistente) se atribuye a
+ * ella (KmsUnavailableError); si es transitorio (red, limitación de tasa, falla interna de KMS) es una falla genérica
+ * de almacenamiento y la clave no queda «failing».
+ */
+function kmsFailure(arn: string, e: unknown): Error {
+  if (isKeyError(e)) return new KmsUnavailableError(arn, String((e as Error)?.message ?? e));
+  console.warn(JSON.stringify({ level: "warn", msg: "falla transitoria de KMS", keyArn: arn, err: String((e as Error)?.message ?? e).slice(0, 300) }));
+  return storageUnavailableError();
+}
+
 // ───────────── Disco ─────────────
 
 /** Encabezado de archivos cifrados con BYOK en disco: "CSBYOK1\n" + largo (u32) + JSON + cifrado. */
@@ -41,7 +56,7 @@ class LocalBlobStore implements BlobStore {
       try {
         dk = await kmsForKey(opts.kmsKeyId).generateDataKey({ KeyId: opts.kmsKeyId, KeySpec: "AES_256", EncryptionContext: ctx });
       } catch (e) {
-        throw new KmsUnavailableError(opts.kmsKeyId, String((e as Error)?.message ?? e));
+        throw kmsFailure(opts.kmsKeyId, e);
       }
       const iv = randomBytes(12);
       const key32 = Buffer.from(dk.Plaintext);
@@ -69,7 +84,7 @@ class LocalBlobStore implements BlobStore {
       const r = await kmsForKey(h.arn).decrypt({ CiphertextBlob: Buffer.from(h.wrapped, "base64"), KeyId: h.arn, EncryptionContext: h.ctx });
       plainKey = Buffer.from(r.Plaintext);
     } catch (e) {
-      throw new KmsUnavailableError(h.arn, String((e as Error)?.message ?? e));
+      throw kmsFailure(h.arn, e);
     }
     const d = createDecipheriv("aes-256-gcm", plainKey, Buffer.from(h.iv, "base64"));
     d.setAuthTag(Buffer.from(h.tag, "base64"));
@@ -125,11 +140,14 @@ class S3BlobStore implements BlobStore {
     } catch (e) {
       // El error de KMS no dice con qué clave está cifrado el objeto (puede ser una clave BYOK anterior o la de la
       // plataforma). HeadObject no necesita KMS y la informa: solo con esa confirmación la falla se atribuye a una
-      // clave. Si el HEAD falla o el objeto no dice su clave, se relanza el error original (sin atribuirlo a ninguna):
-      // un AccessDenied de S3 o un objeto inexistente no tienen que dejar «failing» la clave del cliente.
+      // clave. Si el HEAD falla o el objeto no dice su clave, la falla no se atribuye a ninguna (503
+      // storage_unavailable, no un 500): un AccessDenied de S3 o un objeto inexistente no tienen que dejar «failing» la
+      // clave del cliente. Errores que no son de KMS (NoSuchKey, red…) se relanzan como estaban.
       if (isKeyError(e)) {
         const h = await c.send(new m.HeadObjectCommand({ Bucket: this.bucket, Key: this.prefix + key })).catch(() => null);
         if (h?.SSEKMSKeyId) throw new KmsUnavailableError(h.SSEKMSKeyId, String((e as Error)?.message ?? e));
+        console.warn(JSON.stringify({ level: "warn", msg: "falla de KMS sin clave confirmada por HeadObject", key, err: String((e as Error)?.message ?? e).slice(0, 300) }));
+        throw storageUnavailableError();
       }
       throw e;
     }
@@ -217,7 +235,7 @@ export class RoutingBlobStore implements BlobStore {
    */
   private storageUnavailable(tenantId: string, arn: string, e: unknown): never {
     console.warn(JSON.stringify({ level: "warn", msg: "falla de KMS con una clave que no es BYOK de la organización", tenantId, keyArn: arn, err: String((e as Error)?.message ?? e).slice(0, 300) }));
-    throw new AppError(503, "storage_unavailable", "El almacenamiento de documentos no está disponible en este momento. Probá de nuevo en unos minutos.");
+    throw storageUnavailableError();
   }
   async put(key: string, data: Uint8Array, contentType: string, opts?: PutOptions) {
     const { tenantId, store, ts } = await this.target(key, true);

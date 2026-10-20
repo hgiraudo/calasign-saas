@@ -52,7 +52,8 @@ export async function tenantStorage(db: Db, tenantId: string, opts?: { fresh?: b
 
 /** Clave BYOK para envolver claves de certificados en custodia (null: la de la plataforma). */
 export async function byokForCustody(db: Db, tenantId: string): Promise<{ tenantId: string; keyArn: string } | null> {
-  const ts = await tenantStorage(db, tenantId);
+  // Se usa al envolver una clave nueva (escritura): sin caché, como las escrituras de archivos.
+  const ts = await tenantStorage(db, tenantId, { fresh: true });
   return ts.byokStatus !== "none" && ts.byokKeyArn ? { tenantId, keyArn: ts.byokKeyArn } : null;
 }
 
@@ -129,8 +130,13 @@ export async function isTenantByokKey(db: Db, tenantId: string, keyArn: string):
   return Boolean(r?.known);
 }
 
-/** Historial: cierra la clave vigente (si es otra) y abre la nueva. Dentro de la transacción del cambio. */
-async function recordKeyChange(db: Db, tenantId: string, newArn: string | null) {
+/**
+ * Historial: cierra la clave vigente (si es otra) y abre la nueva. Al INICIO de la transacción del cambio: bloquea la
+ * organización (un PUT y un DELETE concurrentes se serializan y no dejan dos claves abiertas, o ninguna, en el
+ * historial) y devuelve la clave y el estado anteriores leídos bajo ese bloqueo (para el aviso y la auditoría).
+ */
+async function recordKeyChange(db: Db, tenantId: string, newArn: string | null): Promise<{ byok_key_arn: string | null; byok_status: string } | null> {
+  const before = await db.one<{ byok_key_arn: string | null; byok_status: string }>(`SELECT byok_key_arn, byok_status FROM tenants WHERE id = $1 FOR UPDATE`, [tenantId]);
   await db.query(`UPDATE tenant_byok_keys SET deactivated_at = now() WHERE tenant_id = $1 AND deactivated_at IS NULL AND key_arn IS DISTINCT FROM $2`, [tenantId, newArn]);
   if (newArn) {
     await db.query(
@@ -139,6 +145,7 @@ async function recordKeyChange(db: Db, tenantId: string, newArn: string | null) 
       [tenantId, newArn],
     );
   }
+  return before;
 }
 
 const PREVIOUS_KEY_NOTICE = (arn: string) =>
@@ -287,17 +294,19 @@ export async function byokRoutes(app: FastifyInstance, s: Services) {
     const ts = await tenantStorage(s.db, a.tenantId, { fresh: true });
     const res = await testKey(input.keyArn, a.tenantId, ts.cell);
     if (!res.ok) throw new AppError(422, "byok_key_test_failed", `La clave no pasó la prueba: ${res.error}`, { checks: res.checks });
-    await s.db.tx(async (t) => {
+    const before = await s.db.tx(async (t) => {
+      const b = await recordKeyChange(t, a.tenantId, input.keyArn);
       await t.query(
         `UPDATE tenants SET byok_key_arn = $2, byok_status = 'active', byok_error = NULL, byok_checked_at = now(), byok_enabled_at = now(), byok_alerted_at = NULL WHERE id = $1`,
         [a.tenantId, input.keyArn],
       );
-      await recordKeyChange(t, a.tenantId, input.keyArn);
+      return b;
     });
     invalidateTenantStorage(a.tenantId);
-    await auditFromRequest(s.db, req, a, "byok.enabled", { targetType: "kms_key", targetId: input.keyArn, data: { previous: ts.byokKeyArn } });
+    const previous = before?.byok_key_arn ?? null;
+    await auditFromRequest(s.db, req, a, "byok.enabled", { targetType: "kms_key", targetId: input.keyArn, data: { previous } });
     // Cambio de clave (o reactivación con otra): lo ya guardado sigue dependiendo de las claves anteriores.
-    const prev = ts.byokKeyArn && ts.byokKeyArn !== input.keyArn ? ts.byokKeyArn : null;
+    const prev = previous && previous !== input.keyArn ? previous : null;
     return { ...(await settingsFor(s.db, a.tenantId)), notice: prev ? PREVIOUS_KEY_NOTICE(prev) : null };
   });
 
@@ -329,10 +338,10 @@ export async function byokRoutes(app: FastifyInstance, s: Services) {
   // (no se re-cifra): la respuesta lo avisa. Antes respondía 204 sin cuerpo.
   app.delete("/v1/settings/byok", { preHandler: auth }, async (req): Promise<ByokSettings> => {
     const a = req.auth!;
-    const t = await s.db.one<any>(`SELECT byok_key_arn, byok_status FROM tenants WHERE id = $1`, [a.tenantId]);
-    await s.db.tx(async (tx) => {
+    const t = await s.db.tx(async (tx) => {
+      const b = await recordKeyChange(tx, a.tenantId, null);
       await tx.query(`UPDATE tenants SET byok_status = 'none', byok_error = NULL WHERE id = $1`, [a.tenantId]);
-      await recordKeyChange(tx, a.tenantId, null);
+      return b;
     });
     invalidateTenantStorage(a.tenantId);
     await auditFromRequest(s.db, req, a, "byok.disabled", { targetType: "kms_key", targetId: t?.byok_key_arn ?? null });

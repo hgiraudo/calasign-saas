@@ -193,6 +193,13 @@ export function SsoSettingsPage() {
   const [domains, setDomains] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
+  // Confianza en el correo sin email_verified: es del IdP guardado. Si se cambia el issuer (otro IdP) vuelve a false
+  // (como en la API cuando no se manda), salvo que se marque a mano; si se vuelve al issuer guardado, se restablece.
+  const [savedOidc, setSavedOidc] = useState<{ issuer: string; trust: boolean } | null>(null);
+  const [trustTouched, setTrustTouched] = useState(false);
+  useEffect(() => {
+    if (data && !savedOidc) setSavedOidc({ issuer: data.oidc?.issuer ?? "", trust: data.oidc?.trustUnverifiedEmail ?? false });
+  }, [data, savedOidc]);
   // PUT /v1/settings/sso es solo del propietario (el IdP puede abrir sesión como cualquier miembro): para el resto la
   // página queda de solo lectura. Sin el plan solo se puede apagar el SSO (enabled: false), no configurarlo.
   const { access, hasFeature } = useAccess();
@@ -232,7 +239,10 @@ export function SsoSettingsPage() {
           : null,
     };
     try {
-      setData(await api<SsoSettings>("/v1/settings/sso", { method: "PUT", body }));
+      const next = await api<SsoSettings>("/v1/settings/sso", { method: "PUT", body });
+      setData(next);
+      setSavedOidc({ issuer: next.oidc?.issuer ?? "", trust: next.oidc?.trustUnverifiedEmail ?? false });
+      setTrustTouched(false);
       setSecret("");
       setCert("");
       setDomains(null);
@@ -282,7 +292,14 @@ export function SsoSettingsPage() {
             <div className="idn-grid">
               <label className="field">
                 <span>{tx("sso.issuer")}</span>
-                <input value={oidc.issuer} onChange={(e) => setData({ ...data, oidc: { ...oidc, issuer: e.target.value } })} placeholder="https://login.microsoftonline.com/<tenant>/v2.0" />
+                <input
+                  value={oidc.issuer}
+                  onChange={(e) => {
+                    const issuer = e.target.value;
+                    const sameIdp = savedOidc !== null && issuer.trim() === savedOidc.issuer.trim();
+                    setData({ ...data, oidc: { ...oidc, issuer, ...(trustTouched ? {} : { trustUnverifiedEmail: sameIdp ? savedOidc!.trust : false }) } });
+                  }}
+                  placeholder="https://login.microsoftonline.com/<tenant>/v2.0" />
               </label>
               <label className="field">
                 <span>{tx("sso.clientId")}</span>
@@ -296,13 +313,20 @@ export function SsoSettingsPage() {
                 <span>{tx("sso.scopes")}</span>
                 <input value={oidc.scopes} onChange={(e) => setData({ ...data, oidc: { ...oidc, scopes: e.target.value } })} />
               </label>
-              {/^https:\/\/login\.microsoftonline\.com\//i.test(oidc.issuer.trim()) && (
+              {/^https:\/\/(login\.microsoftonline\.com|sts\.windows\.net)\//i.test(oidc.issuer.trim()) && (
                 <p className="alert alert-warn idn-wide" role="note">
                   {tx("sso.entraWarning")}
                 </p>
               )}
               <label className="check idn-wide">
-                <input type="checkbox" checked={oidc.trustUnverifiedEmail} onChange={(e) => setData({ ...data, oidc: { ...oidc, trustUnverifiedEmail: e.target.checked } })} />
+                <input
+                  type="checkbox"
+                  checked={oidc.trustUnverifiedEmail}
+                  onChange={(e) => {
+                    setTrustTouched(true);
+                    setData({ ...data, oidc: { ...oidc, trustUnverifiedEmail: e.target.checked } });
+                  }}
+                />
                 <span>
                   {tx("sso.trustUnverifiedEmail")}
                   <br />

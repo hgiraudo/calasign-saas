@@ -261,6 +261,10 @@ const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
     "pt-BR": "Os originais deste envelope foram excluídos pela política de retenção.",
     en: "This envelope's originals were deleted by the retention policy.",
   },
+  not_embedded: {
+    "pt-BR": "O destinatário não é incorporado e não tem outra autenticação: crie-o com embedded: true ou exija um código (OTP).",
+    en: "The recipient isn't embedded and has no other authentication: create it with embedded: true or require a code (OTP).",
+  },
   otp_not_embeddable: {
     "pt-BR": "Um signatário com código OTP não pode ser exibido dentro de um iframe: remova o OTP ou abra o link em uma aba.",
     en: "A signer with an OTP code can't be shown inside an iframe: remove the OTP or open the link in a tab.",

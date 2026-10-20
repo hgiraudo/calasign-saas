@@ -317,6 +317,12 @@ export const ERRORS: Record<string, Err> = {
     details: { webForms: 1, names: ["Alta de clientes"] },
     summary: "La plantilla tiene formularios web activos (se borrarían con ella)",
   },
+  not_embedded: {
+    status: 409,
+    code: "not_embedded",
+    message: "El destinatario no es embebido y no tiene otra autenticación: creá el destinatario con embedded: true o exigí un código (OTP)",
+    summary: "URL de firma pedida para un destinatario no embebido que solo se autentica con el link por correo",
+  },
   otp_not_embeddable: {
     status: 409,
     code: "otp_not_embeddable",
@@ -458,6 +464,18 @@ export const ERRORS: Record<string, Err> = {
     code: "archive_renewal_limit",
     message: "El sobre llegó al máximo de 50 renovaciones del sello de archivo",
     summary: "Tope de 50 renovaciones del sello de archivo por sobre",
+  },
+  archive_not_due: {
+    status: 409,
+    code: "archive_not_due",
+    message: "El sello de archivo todavía no está por vencer: se renueva solo cuando se acerca su vencimiento",
+    summary: "Falta para el vencimiento del sello de archivo, o renovar no lo extendería (el sello ya es del certificado vigente de la TSA)",
+  },
+  archive_not_applicable: {
+    status: 409,
+    code: "archive_not_applicable",
+    message: "El PDF no tiene datos de validación a largo plazo (B-LT/B-LTA): no hay sello de archivo que renovar",
+    summary: "El PDF no es de archivo (B-B/B-T) o el nivel de la organización no lo completa a B-LTA",
   },
   archive_renewal_in_progress: {
     status: 409,

@@ -67,8 +67,9 @@ CalaSign(oauth=ClientCredentials("csapp_…", "cssec_…", scope="envelopes:read
   `{"bytes": …, "content_type": …}` (un adjunto puede ser PDF o imagen).
 - `envelopes.signing_url(id, recipient_id, return_url=…, frame_ancestors=["https://app.tuempresa.com"])` →
   `{"url", "expiresAt", "tabOnly"?}`: URL de 5 minutos y un solo uso para destinatarios embebidos (iframe;
-  `frame_ancestors` son los orígenes, de los autorizados de la organización, que pueden embeberla) o no (abrirla en una
-  pestaña o redirigir). `tabOnly: True` (destinatarios con OTP) significa que no se puede embeber: pedir
+  `frame_ancestors` son los orígenes, de los autorizados de la organización, que pueden embeberla) o no embebidos que la
+  página igual autentica (código OTP, firma presencial o verificación de identidad pendiente: abrirla en una pestaña o
+  redirigir). Un destinatario no embebido que solo tiene el link por correo da 409 `not_embedded`. `tabOnly: True` (destinatarios con OTP) significa que no se puede embeber: pedir
   `frame_ancestors` para ellos da 409 `otp_not_embeddable`. En un iframe, la página de firma avisa por `postMessage`
   los eventos `viewed`, `signing_complete`, `declined`, `error` y `closed` (con `status`).
 - `webhooks.update(id, **campos)` (PATCH parcial: `url`, `events`, `description`, `active`). Al revocar la API key o el

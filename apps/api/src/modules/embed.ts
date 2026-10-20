@@ -69,6 +69,18 @@ async function originsForRecipient(db: Db, recipientId: string, tenantId: string
 }
 
 /**
+ * La página de firma le sigue exigiendo al destinatario una autenticación propia aunque llegue por la URL del integrador:
+ * código OTP (cada navegador lo vuelve a pedir), firma presencial (sesión del anfitrión) o verificación de identidad
+ * todavía no superada (una vez verificada, la página ya no la vuelve a pedir).
+ */
+export function pageStillAuthenticates(r: { auth_method?: string | null; id_verification_provider?: string | null; identity_status?: string | null; role?: string | null }): boolean {
+  const m = String(r.auth_method ?? "");
+  if (m.startsWith("otp_") || m === "in_person") return true;
+  // Igual que identityBlocking (identity/kyc.ts): solo firmantes y aprobadores la tienen que superar.
+  return Boolean(r.id_verification_provider) && (r.role === "signer" || r.role === "approver") && r.identity_status !== "verified";
+}
+
+/**
  * Crea una URL de firma embebida de un solo uso para un destinatario activo, dentro de la transacción del llamador.
  * La usan POST …/signing-url y POST /v1/envelopes cuando envía un sobre con firmantes embebidos.
  */
@@ -95,6 +107,15 @@ export async function issueSigningUrl(t: Db, a: AuthContext, envelopeId: string,
   // piden frameAncestors, 409; si no, la URL sale "para pestaña" (TAB_ONLY: la página no se deja embeber, ni siquiera
   // en los orígenes de la organización, y se abre sin el modo embebido).
   const otp = String(r.auth_method ?? "").startsWith("otp_");
+  // Un destinatario NO embebido recibe su link por correo/SMS y nadie más debería poder abrir su ceremonia: la URL
+  // (que no pide nada más que el código de un solo uso) solo se entrega si la página igual le exige autenticarse
+  // (pageStillAuthenticates). Si no, cualquiera con una API key podía firmar por él.
+  if (!r.embedded && !pageStillAuthenticates(r)) {
+    throw conflict(
+      "not_embedded",
+      "El destinatario no es embebido y no tiene otra autenticación: creá el destinatario con embedded: true (lo autentica tu aplicación) o exigí un código (OTP) o verificación de identidad",
+    );
+  }
   if (requested.length && otp) {
     throw conflict("otp_not_embeddable", "Un firmante con código OTP no se puede mostrar dentro de un iframe: quitale el OTP (lo autentica tu aplicación) o abrí la URL en una pestaña");
   }
@@ -205,8 +226,8 @@ export async function embedRoutes(app: FastifyInstance, s: Services) {
   // ───────── Página del firmante en modo embebido: frame-ancestors dinámico ─────────
 
   // Con embed=1 (la página abierta desde /embed/:code). Sin él, la misma página vuelve al iframe desde un proveedor de
-  // pago o identidad (?payment=success, ?identity=return): si no, el CSP 'none' de helmet la dejaba en blanco. Sin
-  // embed=1 solo se relaja para un destinatario con una sesión embebida usada (no para cualquiera marcado embebido ni
+  // pago o identidad (?payment=success, ?identity=return): si no, el CSP 'none' de helmet la dejaba en blanco. En los
+  // dos casos solo se relaja para un destinatario con una sesión embebida usada (no para cualquiera marcado embebido ni
   // con los orígenes de la organización por defecto si no la abrió nunca un integrador).
   app.addHook("onSend", async (req, reply, payload) => {
     if (req.method !== "GET") return payload;
@@ -215,12 +236,14 @@ export async function embedRoutes(app: FastifyInstance, s: Services) {
     const embedParam = /(?:^|&)embed=1(?:&|$)/.test(m[2] ?? "");
     const r = await s.db.one<any>(`SELECT id, tenant_id FROM recipients WHERE access_token_hash = $1`, [sha256Hex(m[1])]);
     if (!r) return payload;
-    if (embedParam) {
-      setFrameAncestors(reply, await originsForRecipient(s.db, r.id, r.tenant_id));
-      return payload;
-    }
+    // Con o sin embed=1, solo para un destinatario con una sesión embebida usada (canjeada en /embed/:code): con solo
+    // agregar ?embed=1 al link del correo, la página se dejaba enmarcar en los orígenes de la organización.
     const last = await lastEmbedSession(s.db, r.id);
     if (!last) return payload;
+    if (embedParam) {
+      setFrameAncestors(reply, await originsForRecipient(s.db, r.id, r.tenant_id, last));
+      return payload;
+    }
     const origins = await originsForRecipient(s.db, r.id, r.tenant_id, last);
     // Sin orígenes (p. ej. sesión "para pestaña") queda el 'none' de helmet.
     if (origins.length) setFrameAncestors(reply, origins);
@@ -229,14 +252,16 @@ export async function embedRoutes(app: FastifyInstance, s: Services) {
 
   app.get<{ Params: { token: string } }>("/v1/signing/:token/embed", async (req): Promise<SigningEmbedInfo> => {
     if (!/^[A-Za-z0-9_-]{20,100}$/.test(req.params.token)) throw notFound("Link");
-    const r = await s.db.one<any>(`SELECT id, embedded FROM recipients WHERE access_token_hash = $1`, [sha256Hex(req.params.token)]);
+    const r = await s.db.one<any>(`SELECT id, tenant_id, embedded FROM recipients WHERE access_token_hash = $1`, [sha256Hex(req.params.token)]);
     if (!r) throw notFound("Link");
     // Misma ventana de 24 h que lastEmbedSession (y que isEmbeddedSigner para delegar): pasado ese plazo la página
     // abierta desde el correo ya no queda en modo embebido.
     const last = await s.db.one<any>(
-      `SELECT return_url FROM embed_sessions WHERE recipient_id = $1 AND used_at IS NOT NULL AND created_at > now() - interval '24 hours' ORDER BY created_at DESC LIMIT 1`,
+      `SELECT return_url, frame_ancestors FROM embed_sessions WHERE recipient_id = $1 AND used_at IS NOT NULL AND created_at > now() - interval '24 hours' ORDER BY created_at DESC LIMIT 1`,
       [r.id],
     );
-    return { embedded: Boolean(r.embedded) || Boolean(last), returnUrl: last?.return_url ?? null };
+    // Los orígenes (los mismos que ya publica el CSP de la página) para que la página no avise por postMessage a "*".
+    const origins = last ? await originsForRecipient(s.db, r.id, r.tenant_id, last) : [];
+    return { embedded: Boolean(r.embedded) || Boolean(last), returnUrl: last?.return_url ?? null, origins };
   });
 }

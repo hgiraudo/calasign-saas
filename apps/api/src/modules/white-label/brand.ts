@@ -7,6 +7,8 @@ import {
   FONT_FAMILY_RE,
   googleFontCssUrl,
   themeToCss,
+  verifyPageTheme,
+  withoutProtectedTexts,
   type BrandAssetKind,
   type BrandConfigInput,
   type BrandLinks,
@@ -265,16 +267,24 @@ export function assetPath(b: Pick<ResolvedBrand, "key" | "assets">, kind: BrandA
 }
 
 /** Tema público para la web. `absolute`: URLs con el dominio de la marca (correos, PDF). */
-export function publicTheme(b: ResolvedBrand, opts: { absolute?: boolean } = {}): PublicBrandTheme {
+export function publicTheme(b: ResolvedBrand, opts: { absolute?: boolean; verify?: boolean } = {}): PublicBrandTheme {
   const abs = (p: string | null) => (p && opts.absolute ? `${b.baseUrl}${p}` : p);
   const fontPath = assetPath(b, "font");
   const fontFace =
     b.theme.fontSource === "upload" && fontPath && b.theme.fontFamily
       ? `@font-face{font-family:"${b.theme.fontFamily}";src:url("${fontPath}");font-display:swap}`
       : null;
-  const css = [themeToCss(b.theme, { fontFace }), b.customCss ?? ""].filter(Boolean).join("\n");
+  // Página pública de verificación (`verify`): solo barra, botones y fuente, sin el CSS propio (con él una marca podía
+  // ocultar el "✕" y mostrar un "✓" para un PDF adulterado).
+  const css = opts.verify
+    ? themeToCss(verifyPageTheme(b.theme), { fontFace })
+    : [themeToCss(b.theme, { fontFace }), b.customCss ?? ""].filter(Boolean).join("\n");
   const texts: PublicBrandTheme["texts"] = {};
-  for (const [l, m] of Object.entries(b.texts)) if (m && Object.keys(m).length) texts[l as Locale] = m;
+  // Sin los textos del veredicto de la verificación (configuraciones guardadas antes de que el esquema los rechazara).
+  for (const [l, m] of Object.entries(b.texts)) {
+    const own = withoutProtectedTexts(m);
+    if (own && Object.keys(own).length) texts[l as Locale] = own;
+  }
   return {
     brandId: b.brandId ?? DEFAULT_BRAND,
     name: b.name,

@@ -60,8 +60,10 @@ Paso a paso (sobre que se arma de a poco): `uploadDocument`, `setRecipients`, `s
   `X-Request-Id`, para soporte). Errores de red y cortes a mitad del cuerpo (también en las descargas): `network_error`
   (en los GET se reintentan); un 2xx que no es JSON: `invalid_response`.
 - **URL de firma**: `cs.envelopes.signingUrl(envelopeId, recipientId, { returnUrl })` → `{ url, expiresAt, tabOnly? }`,
-  URL de 5 minutos y un solo uso, para destinatarios embebidos (iframe, con `frameAncestors`) o no (abrirla en una
-  pestaña o redirigir). `tabOnly: true` (destinatarios con OTP) significa que no se puede embeber: abrila en una pestaña
+  URL de 5 minutos y un solo uso, para destinatarios embebidos (iframe, con `frameAncestors`) o no embebidos que la
+  página igual autentica (código OTP, firma presencial o verificación de identidad pendiente: abrirla en una pestaña o
+  redirigir). Para un destinatario no embebido que solo tiene el link por correo responde 409 `not_embedded` (crealo con
+  `embedded: true` o exigí un código). `tabOnly: true` (destinatarios con OTP) significa que no se puede embeber: abrila en una pestaña
   o redirigí; pedir `frameAncestors` para ellos da 409 `otp_not_embeddable`. En un iframe, la página de firma avisa por
   `postMessage` los eventos `viewed`, `signing_complete`, `declined`, `error` y `closed` (con `status`).
 - **Descarga**: `cs.envelopes.downloadSigned(id)` → `Uint8Array` del PDF sellado.

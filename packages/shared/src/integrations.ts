@@ -96,6 +96,42 @@ export interface WebhookEventPayload {
 
 // ───────────────────────────── Firma embebida ─────────────────────────────
 
+/**
+ * Sufijos públicos (y de hosting compartido) comunes: con un comodín sobre ellos (https://*.com.ar, https://*.github.io)
+ * cualquiera que registre un dominio o un sitio debajo podía enmarcar la firma. Lista corta (no hay una lib de la PSL
+ * instalada): los genéricos, los de segundo nivel de la región y los de hosting donde cualquiera crea un subdominio.
+ */
+export const COMMON_PUBLIC_SUFFIXES: ReadonlySet<string> = new Set([
+  // Segundo nivel por país (región y principales)
+  "com.ar", "net.ar", "org.ar", "gob.ar", "gov.ar", "edu.ar", "int.ar", "mil.ar", "tur.ar",
+  "com.br", "net.br", "org.br", "gov.br", "edu.br", "art.br", "blog.br", "app.br", "dev.br", "eco.br", "ind.br", "inf.br", "tv.br",
+  "com.mx", "org.mx", "gob.mx", "edu.mx", "net.mx",
+  "com.uy", "org.uy", "edu.uy", "gub.uy", "net.uy",
+  "com.py", "org.py", "edu.py", "gov.py", "net.py", "coop.py",
+  "cl", "gob.cl", "co", "com.co", "org.co", "edu.co", "gov.co", "net.co",
+  "com.pe", "org.pe", "gob.pe", "edu.pe", "net.pe", "nom.pe",
+  "com.ec", "org.ec", "gob.ec", "edu.ec", "net.ec", "com.bo", "org.bo", "gob.bo", "com.ve", "org.ve", "gob.ve",
+  "com.es", "org.es", "nom.es", "gob.es", "edu.es",
+  "co.uk", "org.uk", "ac.uk", "gov.uk", "me.uk", "ltd.uk", "plc.uk", "net.uk",
+  "com.au", "net.au", "org.au", "edu.au", "gov.au", "co.nz", "org.nz", "net.nz",
+  "co.jp", "ne.jp", "or.jp", "co.kr", "com.cn", "net.cn", "org.cn", "com.tw", "com.hk", "com.sg", "co.in", "net.in", "org.in",
+  "co.za", "org.za", "com.tr", "com.pt", "com.pl", "co.il", "com.ru",
+  // Hosting compartido: cualquiera crea un subdominio
+  "github.io", "gitlab.io", "herokuapp.com", "vercel.app", "netlify.app", "pages.dev", "workers.dev", "web.app",
+  "firebaseapp.com", "appspot.com", "azurewebsites.net", "cloudfront.net", "blogspot.com", "glitch.me", "onrender.com",
+  "fly.dev", "repl.co", "ngrok.io", "ngrok-free.app", "s3.amazonaws.com", "amazonaws.com", "wixsite.com", "myshopify.com",
+]);
+
+/** Comodín aceptable: al menos dos etiquetas después de "*." y que no sea un sufijo público común. */
+export function wildcardOriginOk(origin: string): boolean {
+  const m = /^https:\/\/\*\.([^:/]+)(?::\d+)?$/i.exec(origin.trim());
+  if (!m) return true;
+  const host = m[1].toLowerCase().replace(/\.$/, "");
+  const labels = host.split(".");
+  if (labels.length < 2 || labels.some((l) => !l)) return false;
+  return !COMMON_PUBLIC_SUFFIXES.has(host);
+}
+
 /** Orígenes https completos, sin ruta: https://app.cliente.com o https://*.cliente.com */
 export const FrameAncestor = z
   .string()
@@ -103,7 +139,8 @@ export const FrameAncestor = z
   .max(300)
   .regex(/^(https:\/\/(\*\.)?[a-z0-9.-]+(:\d+)?|http:\/\/(localhost|127\.0\.0\.1)(:\d+)?)$/i, {
     message: "origen inválido (https://dominio[:puerto], sin ruta)",
-  });
+  })
+  .refine(wildcardOriginOk, { message: "comodín demasiado amplio: usá https://*.tudominio.com (no un sufijo público como *.com o *.com.ar)" });
 
 export const EmbedSettingsInput = z.object({ frameAncestors: z.array(FrameAncestor).max(20) });
 export type EmbedSettingsInput = z.infer<typeof EmbedSettingsInput>;
@@ -141,6 +178,29 @@ export interface SigningUrlResponse {
 export interface SigningEmbedInfo {
   embedded: boolean;
   returnUrl: string | null;
+  /**
+   * Orígenes que pueden enmarcar la página en la sesión embebida usada (los mismos del CSP frame-ancestors; vacío sin
+   * sesión). La página los usa como destino de postMessage en vez de "*".
+   */
+  origins?: string[];
+}
+
+/** El origen coincide con uno de la lista (exacto o con comodín https://*.dominio). */
+export function originAllowed(origin: string, list: readonly string[]): boolean {
+  const o = origin.toLowerCase();
+  return list.some((raw) => {
+    const a = raw.toLowerCase();
+    if (a === o) return true;
+    const m = /^https:\/\/\*\.(.+)$/.exec(a);
+    if (!m) return false;
+    try {
+      const u = new URL(o);
+      const want = new URL(`https://${m[1]}`);
+      return u.protocol === "https:" && u.port === want.port && u.hostname.endsWith(`.${want.hostname}`);
+    } catch {
+      return false;
+    }
+  });
 }
 
 /** Mensajes que la página del firmante envía a window.parent (postMessage) en modo embebido. */

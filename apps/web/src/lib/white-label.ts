@@ -1,7 +1,7 @@
 // Marca blanca en la web: tema de la marca activa (inyectado por el servidor en index.html, o el de la sesión de firma),
 // aplicado a toda la página (CSS, título, favicon) y a los textos (nombre del producto y textos propios por idioma).
 import { useSyncExternalStore } from "react";
-import type { Locale, PublicBrandTheme } from "@calasign/shared";
+import { isProtectedTextKey, themeToCss, verifyPageTheme, type Locale, type PublicBrandTheme } from "@calasign/shared";
 
 const PLATFORM = "CalaSign";
 
@@ -18,6 +18,8 @@ function readInjected(): PublicBrandTheme | null {
 
 let current: PublicBrandTheme | null = readInjected();
 let version = 0;
+/** Página pública de verificación abierta: tema restringido (sin el CSS propio de la marca). */
+let verifyPage = typeof window !== "undefined" && window.location?.pathname === "/verify";
 const listeners = new Set<() => void>();
 
 function ensure<T extends HTMLElement>(id: string, tag: string, parent: HTMLElement = document.head): T {
@@ -33,7 +35,9 @@ function ensure<T extends HTMLElement>(id: string, tag: string, parent: HTMLElem
 function apply(t: PublicBrandTheme | null) {
   if (typeof document === "undefined") return;
   const style = ensure<HTMLStyleElement>("brand-theme", "style");
-  style.textContent = t?.css ?? "";
+  // En /verify solo barra, botones y fuente (verifyPageTheme): con el CSS propio una marca podía ocultar el veredicto.
+  // El tema pudo llegar completo desde la página del firmante (navegación dentro de la web): se recalcula.
+  style.textContent = t ? (verifyPage ? verifyCss(t) : t.css) : "";
   const font = document.getElementById("brand-font") as HTMLLinkElement | null;
   if (t?.fontCssUrl) {
     const l = font ?? ensure<HTMLLinkElement>("brand-font", "link");
@@ -48,6 +52,21 @@ function apply(t: PublicBrandTheme | null) {
       icon.href = t.faviconUrl ?? "data:,";
     }
   }
+}
+
+function verifyCss(t: PublicBrandTheme): string {
+  const fontFace =
+    t.theme.fontSource === "upload" && t.fontUrl && t.theme.fontFamily
+      ? `@font-face{font-family:"${t.theme.fontFamily}";src:url("${t.fontUrl}");font-display:swap}`
+      : null;
+  return themeToCss(verifyPageTheme(t.theme), { fontFace });
+}
+
+/** La página de verificación avisa al montarse/desmontarse: cambia el CSS de la marca que se aplica. */
+export function setVerifyPageMode(on: boolean) {
+  if (verifyPage === on) return;
+  verifyPage = on;
+  apply(current);
 }
 
 /** Activa (o quita) la marca. La llaman la página del firmante, la verificación y el arranque. */
@@ -96,7 +115,8 @@ export function productName(t: PublicBrandTheme | null | undefined = current): s
 export function brandText(locale: Locale, key: string, original: string): string {
   const t = current;
   if (!t) return original;
-  const own = t.texts?.[locale]?.[key];
+  // Los textos del veredicto de la verificación y del reporte técnico no se reemplazan nunca (isProtectedTextKey).
+  const own = isProtectedTextKey(key) ? undefined : t.texts?.[locale]?.[key];
   const s = own ?? original;
   if (!rebrands(t)) return s;
   // Reemplazos con función: un "$&", "$'" o "$$" en el nombre o el link no se interpreta como patrón.

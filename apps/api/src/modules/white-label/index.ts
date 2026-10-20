@@ -59,8 +59,9 @@ function indexHtml(): string | null {
 const escAttr = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
 /** index.html con la marca: título, favicon, color, CSS del tema y los datos que lee la web al arrancar. */
-export function injectBrand(html: string, b: ResolvedBrand): string {
-  const theme = publicTheme(b);
+export function injectBrand(html: string, b: ResolvedBrand, opts: { verify?: boolean } = {}): string {
+  // En /verify, tema restringido (sin el CSS propio): ver publicTheme.
+  const theme = publicTheme(b, { verify: opts.verify });
   const title = escAttr(rebrands(b) ? productLabel(b) : b.name || productLabel(b));
   // Reemplazos con función: con un texto como reemplazo, "$'", "$`", "$&" o "$$" en el nombre, el CSS o los textos de
   // la marca se interpretaban como patrones (p. ej. "$'" copiaba el resto del documento dentro de <title>).
@@ -94,7 +95,7 @@ export async function sendBrandedIndex(db: Db, req: FastifyRequest, reply: Fasti
   if (!html) return false;
   const b = await brandForPage(db, req).catch(() => null);
   if (!b) return false;
-  reply.header("cache-control", "no-cache").type("text/html; charset=utf-8").send(injectBrand(html, b));
+  reply.header("cache-control", "no-cache").type("text/html; charset=utf-8").send(injectBrand(html, b, { verify: req.url.split("?")[0] === "/verify" }));
   return true;
 }
 

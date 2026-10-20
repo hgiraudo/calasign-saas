@@ -26,6 +26,7 @@ OAuth endpoints use the RFC 6749 shape `{"error": "...", "error_description": ".
 | 409 | `conflict` | Concurrent change → re-read and retry |
 | 409 | `version_changed` | Drafts and templates: you sent `X-Expected-Updated-At` (the `updatedAt` you read) and someone changed the draft/template meanwhile → `details.updatedAt` has the current value; re-read, review and repeat. Negotiations: there's a new version → review and repeat |
 | 409 | `member_changed` | The member's role changed meanwhile → re-read and repeat |
+| 409 | `not_embedded` | Signing URL requested for a non-embedded recipient that only authenticates with the emailed link → create it with `embedded: true` or require an OTP code |
 | 409 | `otp_not_embeddable` | Signing URL requested with `frameAncestors` for a signer with an OTP code → open it in a tab/redirect (`tabOnly: true`) or remove the OTP |
 | 409 | `template_has_forms` | Deleting a template with web forms that still accept submissions (active, not expired or used up); `details.names` lists them → deactivate or delete them first |
 | 409 | `delivery_pending` | Webhook delivery retry while an attempt is running or a manual retry is already queued → wait |

@@ -121,8 +121,9 @@ describe("cuentas que nunca probaron el control del correo", () => {
     expect(audit.data.unprovenAccountSecured).toMatchObject({ totpCleared: true, sessionsClosed: 1 });
   });
 
-  it("SCIM: con membresías en otras organizaciones no se tocan la 2FA ni las sesiones (son de la cuenta global)", async () => {
+  it("SCIM: con membresías en otras organizaciones (con más miembros) no se tocan la 2FA ni las sesiones (son de la cuenta global)", async () => {
     const other = await newTenant();
+    await newUser("colega-otra-org@x.test", { tenantId: other });
     const u = await newUser("con-otra-org@empresa.test", { tenantId: other, totp: true });
     await newSession(u, other);
     const r = await app.inject({ method: "POST", url: "/scim/v2/Users", headers: scimHeaders, payload: { userName: "con-otra-org@empresa.test" } });
@@ -168,7 +169,8 @@ describe("cuentas que nunca probaron el control del correo", () => {
     expect(await db.tx((t) => secureUnprovenAccount(t, b, t2))).toBeNull();
     expect(await totpOn(b)).toBe(true);
     expect(await sessionCount(b)).toBe(1);
-    // Miembro de otra organización: no (la 2FA y las sesiones de las otras organizaciones no se tocan).
+    // Miembro de otra organización con más miembros: no (la 2FA y las sesiones de las otras organizaciones no se tocan).
+    await newUser("jit-colega@x.test", { tenantId: t3 });
     const c = await newUser("jit-c@empresa.test", { tenantId: t3, totp: true });
     await newSession(c, t3);
     expect(await db.tx((t) => secureUnprovenAccount(t, c, t2))).toBeNull();
@@ -181,11 +183,125 @@ describe("cuentas que nunca probaron el control del correo", () => {
       expect(await db.tx((t) => secureUnprovenAccount(t, d, t2))).toBeNull();
       expect(await totpOn(d)).toBe(true);
     }
-    // Ya tiene fila SCIM en esta organización: no.
-    const e = await newUser("jit-e@empresa.test", { totp: true });
-    await db.query(`INSERT INTO scim_users (tenant_id, user_id, active) VALUES ($1,$2,false)`, [t2, e]);
+    // Ya administrada por SCIM en esta organización (fila activa y vigente con la membresía creada): no.
+    const e = await newUser("jit-e@empresa.test", { tenantId: t2, totp: true });
+    await db.query(`INSERT INTO scim_users (tenant_id, user_id, active) VALUES ($1,$2,true)`, [t2, e]);
     expect(await db.tx((t) => secureUnprovenAccount(t, e, t2))).toBeNull();
     expect(await totpOn(e)).toBe(true);
+    // Una fila SCIM inactiva o borrada (sin membresía) no excluye: la vinculación es ahora.
+    for (const [i, cols] of [
+      [0, { active: false, deleted: false }],
+      [1, { active: false, deleted: true }],
+    ] as const) {
+      const f = await newUser(`jit-f${i}@empresa.test`, { totp: true });
+      await db.query(`INSERT INTO scim_users (tenant_id, user_id, active, deleted_at) VALUES ($1,$2,$3,$4)`, [t2, f, cols.active, cols.deleted ? new Date().toISOString() : null]);
+      expect(await db.tx((t) => secureUnprovenAccount(t, f, t2))).toMatchObject({ totpCleared: true });
+    }
+  });
+
+  it("la organización propia del registro (única persona en ella) no cuenta como otra membresía", async () => {
+    const { secureUnprovenAccount } = await import("../src/modules/member-access");
+    // Registro real: crea la cuenta y su organización (propietaria y única miembro).
+    const signup = await app.inject({
+      method: "POST",
+      url: "/v1/auth/signup",
+      payload: { name: "Registrada", email: "registrada@empresa.test", password: "una-clave-larga-1", organization: "Org propia" },
+    });
+    expect(signup.statusCode).toBe(201);
+    const u = (await db.one<any>(`SELECT id FROM users WHERE email = 'registrada@empresa.test'`))!.id as string;
+    await db.query(`UPDATE users SET totp_secret_enc = 'x', totp_enabled_at = now(), totp_recovery_hashes = '{h}' WHERE id = $1`, [u]);
+    expect(await sessionCount(u)).toBe(1);
+    // SCIM la vincula: se limpia (su organización propia no la protege).
+    const r = await app.inject({ method: "POST", url: "/scim/v2/Users", headers: scimHeaders, payload: { userName: "registrada@empresa.test" } });
+    expect(r.statusCode).toBe(201);
+    expect(await totpOn(u)).toBe(false);
+    expect(await sessionCount(u)).toBe(0);
+    const audit = await db.one<any>(`SELECT data FROM account_audit_log WHERE tenant_id = $1 AND action = 'member.scim_provisioned' AND target_id = $2`, [tenant, u]);
+    expect(audit.data.unprovenAccountSecured).toMatchObject({ totpCleared: true, sessionsClosed: 1 });
+
+    // Lo mismo por SSO (JIT) en otra organización.
+    const signup2 = await app.inject({
+      method: "POST",
+      url: "/v1/auth/signup",
+      payload: { name: "Registrada 2", email: "registrada2@empresa.test", password: "una-clave-larga-1", organization: "Otra org propia" },
+    });
+    expect(signup2.statusCode).toBe(201);
+    const u2 = (await db.one<any>(`SELECT id FROM users WHERE email = 'registrada2@empresa.test'`))!.id as string;
+    await db.query(`UPDATE users SET totp_secret_enc = 'x', totp_enabled_at = now() WHERE id = $1`, [u2]);
+    const t2 = await newTenant();
+    expect(await db.tx((t) => secureUnprovenAccount(t, u2, t2))).toEqual({ totpCleared: true, sessionsClosed: 1 });
+
+    // Con una membresía real en otra organización con más miembros: no se limpia.
+    const signup3 = await app.inject({
+      method: "POST",
+      url: "/v1/auth/signup",
+      payload: { name: "Registrada 3", email: "registrada3@empresa.test", password: "una-clave-larga-1", organization: "Org 3" },
+    });
+    const u3 = (await db.one<any>(`SELECT id FROM users WHERE email = 'registrada3@empresa.test'`))!.id as string;
+    expect(signup3.statusCode).toBe(201);
+    await db.query(`UPDATE users SET totp_secret_enc = 'x', totp_enabled_at = now() WHERE id = $1`, [u3]);
+    const team = await newTenant();
+    await newUser("colega-equipo@x.test", { tenantId: team });
+    await db.query(`INSERT INTO memberships (tenant_id, user_id, role) VALUES ($1,$2,'member')`, [team, u3]);
+    expect(await db.tx((t) => secureUnprovenAccount(t, u3, t2))).toBeNull();
+    expect(await totpOn(u3)).toBe(true);
+    expect(await sessionCount(u3)).toBe(1);
+  });
+
+  it("SCIM: creada inactiva y activada después (PATCH o PUT active = true) se limpia al crear la membresía", async () => {
+    for (const method of ["PATCH", "PUT"] as const) {
+      const other = await newTenant();
+      const email = `activada-${method.toLowerCase()}@empresa.test`;
+      const u = await newUser(email, { totp: true });
+      await newSession(u, other);
+      const created = await app.inject({ method: "POST", url: "/scim/v2/Users", headers: scimHeaders, payload: { userName: email, active: false } });
+      expect(created.statusCode).toBe(201);
+      expect(await totpOn(u)).toBe(true);
+      const r =
+        method === "PATCH"
+          ? await app.inject({
+              method: "PATCH",
+              url: `/scim/v2/Users/${u}`,
+              headers: scimHeaders,
+              payload: { schemas: ["urn:ietf:params:scim:api:messages:2.0:PatchOp"], Operations: [{ op: "replace", path: "active", value: true }] },
+            })
+          : await app.inject({ method: "PUT", url: `/scim/v2/Users/${u}`, headers: scimHeaders, payload: { userName: email, active: true } });
+      expect(r.statusCode).toBe(200);
+      expect(await db.one(`SELECT 1 FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [tenant, u])).not.toBeNull();
+      expect(await totpOn(u)).toBe(false);
+      expect(await sessionCount(u)).toBe(0);
+      const action = method === "PATCH" ? "member.scim_activated" : "member.scim_updated";
+      const audit = await db.one<any>(`SELECT data FROM account_audit_log WHERE tenant_id = $1 AND action = $2 AND target_id = $3`, [tenant, action, u]);
+      expect(audit.data.unprovenAccountSecured).toMatchObject({ totpCleared: true, sessionsClosed: 1 });
+    }
+  });
+
+  it("SCIM: borrada (DELETE) y creada de nuevo se limpia al volver a vincularla", async () => {
+    const other = await newTenant();
+    const email = "re-creada@empresa.test";
+    const u = await newUser(email);
+    const first = await app.inject({ method: "POST", url: "/scim/v2/Users", headers: scimHeaders, payload: { userName: email } });
+    expect(first.statusCode).toBe(201);
+    expect((await app.inject({ method: "DELETE", url: `/scim/v2/Users/${u}`, headers: scimHeaders })).statusCode).toBe(204);
+    // Mientras tanto, alguien con la contraseña pone su 2FA y abre sesión en otra organización.
+    await db.query(`UPDATE users SET totp_secret_enc = 'x', totp_enabled_at = now() WHERE id = $1`, [u]);
+    await newSession(u, other);
+    const again = await app.inject({ method: "POST", url: "/scim/v2/Users", headers: scimHeaders, payload: { userName: email } });
+    expect(again.statusCode).toBe(201);
+    expect(await totpOn(u)).toBe(false);
+    expect(await sessionCount(u)).toBe(0);
+  });
+
+  it("SCIM: reactivar a quien ya es miembro (PUT con active = true) no limpia nada", async () => {
+    const email = "ya-miembro@empresa.test";
+    const u = await newUser(email);
+    expect((await app.inject({ method: "POST", url: "/scim/v2/Users", headers: scimHeaders, payload: { userName: email } })).statusCode).toBe(201);
+    await db.query(`UPDATE users SET totp_secret_enc = 'x', totp_enabled_at = now() WHERE id = $1`, [u]);
+    await newSession(u, tenant);
+    const r = await app.inject({ method: "PUT", url: `/scim/v2/Users/${u}`, headers: scimHeaders, payload: { userName: email, active: true } });
+    expect(r.statusCode).toBe(200);
+    expect(await totpOn(u)).toBe(true);
+    expect(await sessionCount(u)).toBe(1);
   });
 });
 
@@ -272,6 +388,26 @@ describe("restablecer la contraseña", () => {
     expect(await db.one(`SELECT 1 FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [x.t1, x.u])).not.toBeNull();
     const a1 = await db.one<any>(`SELECT data FROM account_audit_log WHERE tenant_id = $1 AND action = 'user.password_reset'`, [x.t1]);
     expect(a1.data).toMatchObject({ revokeCreatedCredentials: true, revokedCredentials: { apiKeys: [x.key], invitations: 1 } });
+  });
+
+  it("en una organización de la que ya no es miembro solo se audita si ahí se le revocó algo", async () => {
+    for (const revoke of [false, true]) {
+      const x = await setup(`reset-ex-${revoke}@empresa.test`);
+      const ex = await newTenant();
+      const exKey = util.uuidv7();
+      await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash, created_by) VALUES ($1,$2,'k','cs_test',$3,$4)`, [exKey, ex, util.sha256Hex(util.randomToken()), x.u]);
+      const r = await app.inject({
+        method: "POST",
+        url: "/v1/auth/password/reset",
+        payload: { token: await resetToken(x.u), password: "una-clave-nueva-larga", revokeCreatedCredentials: revoke },
+      });
+      expect(r.statusCode).toBe(200);
+      const audited = await db.one(`SELECT 1 FROM account_audit_log WHERE tenant_id = $1 AND action = 'user.password_reset'`, [ex]);
+      if (revoke) expect(audited).not.toBeNull();
+      else expect(audited).toBeNull();
+      // En las organizaciones de las que es miembro se audita siempre.
+      expect(await db.one(`SELECT 1 FROM account_audit_log WHERE tenant_id = $1 AND action = 'user.password_reset'`, [x.t2])).not.toBeNull();
+    }
   });
 });
 
@@ -378,6 +514,99 @@ describe("SSO", () => {
     });
     expect(r.statusCode).toBe(400);
     expect(r.json().error).toBe("invalid_grant");
+  });
+
+  it("tokens OAuth autorizados desde una sesión SSO: el tope arranca en la sesión que autorizó, no en el canje", async () => {
+    const { createHash } = await import("node:crypto");
+    const t1 = await newTenant();
+    await db.query(`INSERT INTO sso_configs (tenant_id, enabled, protocol, session_ttl_hours) VALUES ($1, true, 'oidc', 8)`, [t1]);
+    const u = await newUser("oauth-sso-code@empresa.test", { tenantId: t1, proven: true });
+    const client = util.uuidv7();
+    const clientId = `cs_cli_${client.slice(-12)}`;
+    await db.query(
+      `INSERT INTO oauth_clients (id, tenant_id, client_id, name, redirect_uris, grant_types, scopes) VALUES ($1,$2,$3,'app','{https://app.test/cb}','{authorization_code,refresh_token}','{envelopes:read,offline_access}')`,
+      [client, t1, clientId],
+    );
+    // Sesión SSO que vence en 30 minutos (la conexión permitiría 8 h).
+    const cookie = util.randomToken();
+    await db.query(
+      `INSERT INTO sessions (token_hash, user_id, tenant_id, expires_at, auth_method, sso_tenant_id) VALUES ($1,$2,$3, now() + interval '30 minutes', 'sso', $3)`,
+      [util.sha256Hex(cookie), u, t1],
+    );
+    const verifier = util.randomToken() + util.randomToken();
+    const challenge = createHash("sha256").update(verifier).digest("base64url");
+    const authorize = {
+      response_type: "code",
+      client_id: clientId,
+      redirect_uri: "https://app.test/cb",
+      scope: "envelopes:read offline_access",
+      code_challenge: challenge,
+      code_challenge_method: "S256",
+    };
+    const decide = async () => {
+      const d = await app.inject({ method: "POST", url: "/v1/oauth/authorize/decision", cookies: { cs_session: cookie }, payload: { ...authorize, approve: true } });
+      expect(d.statusCode).toBe(200);
+      return new URL(d.json().redirectTo).searchParams.get("code")!;
+    };
+    const exchange = (code: string) =>
+      app.inject({
+        method: "POST",
+        url: "/oauth/token",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        payload: new URLSearchParams({ grant_type: "authorization_code", code, redirect_uri: "https://app.test/cb", code_verifier: verifier, client_id: clientId }).toString(),
+      });
+    const sess = await db.one<any>(`SELECT expires_at FROM sessions WHERE token_hash = $1`, [util.sha256Hex(cookie)]);
+    const code = await decide();
+    const stored = await db.one<any>(`SELECT sso_session_expires_at FROM oauth_authorization_codes WHERE code_hash = $1`, [util.sha256Hex(code)]);
+    expect(new Date(stored.sso_session_expires_at).getTime()).toBe(new Date(sess.expires_at).getTime());
+    const tok = await exchange(code);
+    expect(tok.statusCode).toBe(200);
+    const rows = await db.query<any>(`SELECT kind, expires_at, sso_deadline FROM oauth_tokens WHERE code_hash = $1`, [util.sha256Hex(code)]);
+    const refresh = rows.find((r) => r.kind === "refresh");
+    // El refresh vence con la sesión que autorizó (30 min), no a las 8 h del canje.
+    expect(new Date(refresh.expires_at).getTime()).toBeLessThanOrEqual(new Date(sess.expires_at).getTime());
+    expect(new Date(refresh.sso_deadline).getTime()).toBe(new Date(sess.expires_at).getTime());
+    // Al rotar, el tope de la familia se mantiene (no vuelve a contar 8 h desde el primer token).
+    const rot = await app.inject({
+      method: "POST",
+      url: "/oauth/token",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      payload: new URLSearchParams({ grant_type: "refresh_token", refresh_token: tok.json().refresh_token, client_id: clientId }).toString(),
+    });
+    expect(rot.statusCode).toBe(200);
+    const after = await db.query<any>(`SELECT expires_at FROM oauth_tokens WHERE code_hash = $1 AND kind = 'refresh' AND used_at IS NULL`, [util.sha256Hex(code)]);
+    expect(after).toHaveLength(1);
+    expect(new Date(after[0].expires_at).getTime()).toBeLessThanOrEqual(new Date(sess.expires_at).getTime());
+
+    // La sesión ya venció cuando se canjea el código: no se emiten tokens.
+    const late = await decide();
+    await db.query(`UPDATE oauth_authorization_codes SET sso_session_expires_at = now() - interval '1 second' WHERE code_hash = $1`, [util.sha256Hex(late)]);
+    const r = await exchange(late);
+    expect(r.statusCode).toBe(400);
+    expect(r.json().error).toBe("invalid_grant");
+  });
+
+  it("al cambiar el issuer OIDC sin mandar trustUnverifiedEmail, la confianza vuelve a false", async () => {
+    const t1 = await newTenant();
+    const owner = await newUser("owner-issuer@empresa.test", { tenantId: t1, role: "owner", proven: true });
+    const cookie = await newSession(owner, t1);
+    // Como dejó 0079 a una conexión existente: confianza heredada.
+    await db.query(
+      `INSERT INTO sso_configs (tenant_id, enabled, protocol, oidc_issuer, oidc_client_id, oidc_trust_unverified_email) VALUES ($1, false, 'oidc', 'https://login.microsoftonline.com/x/v2.0', 'abc', true)`,
+      [t1],
+    );
+    const put = (oidc: Record<string, unknown>) => app.inject({ method: "PUT", url: "/v1/settings/sso", cookies: { cs_session: cookie }, payload: { enabled: false, protocol: "oidc", oidc } });
+    // Mismo issuer, sin mandarla: se conserva.
+    const same = await put({ issuer: "https://login.microsoftonline.com/x/v2.0", clientId: "abc" });
+    expect(same.statusCode).toBe(200);
+    expect(same.json().oidc.trustUnverifiedEmail).toBe(true);
+    // Otro issuer, sin mandarla: false.
+    const other = await put({ issuer: "https://idp-nuevo.empresa.test", clientId: "abc" });
+    expect(other.statusCode).toBe(200);
+    expect(other.json().oidc.trustUnverifiedEmail).toBe(false);
+    // Otro issuer pidiéndola explícitamente: true.
+    const explicit = await put({ issuer: "https://otro-idp.empresa.test", clientId: "abc", trustUnverifiedEmail: true });
+    expect(explicit.json().oidc.trustUnverifiedEmail).toBe(true);
   });
 
   it("0079: las conexiones OIDC existentes confían en el correo sin email_verified y las sesiones SSO abiertas se recortan", async () => {

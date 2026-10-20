@@ -146,8 +146,16 @@ const revokedData = (r: Revoked | null | undefined) =>
     ? { revokedCredentials: { apiKeys: r.keys.map((k) => k.id), invitations: r.invitations, serviceApps: r.serviceApps, scimTokens: r.scimTokens } }
     : {};
 
-async function setActive(db: Db, tenantId: string, userId: string, active: boolean): Promise<Revoked | null> {
+type Secured = Awaited<ReturnType<typeof secureUnprovenAccount>>;
+/** Resultado de activar o desactivar: lo revocado (baja) y la limpieza de una cuenta sin prueba del correo (alta). */
+type ActiveResult = { revoked: Revoked | null; secured: Secured };
+
+/** Para la auditoría: la limpieza de la cuenta al vincularla, si la hubo. */
+const securedData = (r: ActiveResult | null | undefined) => (r?.secured ? { unprovenAccountSecured: r.secured } : {});
+
+async function setActive(db: Db, tenantId: string, userId: string, active: boolean): Promise<ActiveResult> {
   let revoked: Revoked | null = null;
+  let secured: Secured = null;
   const m = await db.one<any>(`SELECT role FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [tenantId, userId]);
   if (active && !m) {
     // Cupo de usuarios del plan: una alta o reactivación por SCIM ocupa un lugar igual que una invitación.
@@ -157,6 +165,11 @@ async function setActive(db: Db, tenantId: string, userId: string, active: boole
     if (plan.users !== null && (await usersCount(db, tenantId)) >= plan.users) {
       throw new ScimError(402, `plan_limit: el plan ${plan.name} permite hasta ${plan.users} usuario(s); ampliá el plan en ${UPGRADE_URL}`, "plan_limit");
     }
+    // Acá se vincula la cuenta a la organización (alta activa, reactivación o PATCH/PUT active = true de un usuario
+    // creado inactivo o borrado): si es "huérfana" (registrada con contraseña, sin prueba del correo ni otras
+    // organizaciones con más miembros), la pudo registrar otra persona y su 2FA y sus sesiones se borran antes de
+    // vincularla (ver secureUnprovenAccount). Se llama antes de crear la membresía.
+    secured = await secureUnprovenAccount(db, userId, tenantId);
     const t = await db.one<any>(`SELECT scim_default_role FROM tenants WHERE id = $1`, [tenantId]);
     // Sin contraseña en esta organización hasta que el usuario la restablezca: si la cuenta ya existía, su contraseña
     // pudo elegirla otra persona (el registro no verifica el correo). Ver 0029_r11_identity.
@@ -181,7 +194,7 @@ async function setActive(db: Db, tenantId: string, userId: string, active: boole
     revoked = await revokeMemberAccess(db, tenantId, userId);
   }
   await db.query(`UPDATE scim_users SET active = $3, updated_at = now() WHERE tenant_id = $1 AND user_id = $2`, [tenantId, userId, active]);
-  return revoked;
+  return { revoked, secured };
 }
 
 /**
@@ -221,7 +234,7 @@ async function ensureScimUser(db: Db, tenantId: string, userId: string) {
 }
 
 /** Aplica atributos (de POST/PUT o de un PATCH ya reducido) a un usuario existente. */
-async function applyUserAttrs(db: Db, tenantId: string, userId: string, attrs: Record<string, unknown>): Promise<Revoked | null> {
+async function applyUserAttrs(db: Db, tenantId: string, userId: string, attrs: Record<string, unknown>): Promise<ActiveResult | null> {
   await ensureScimUser(db, tenantId, userId);
   const sets: string[] = [];
   const params: unknown[] = [tenantId, userId];
@@ -564,7 +577,7 @@ export async function scimRoutes(app: FastifyInstance, s: Services) {
       if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new ScimError(400, "userName (correo) es obligatorio", "invalidValue");
       const active = input.active === undefined ? true : asBool(input.active);
       await assertVerifiedDomain(s.db, tenantId, email);
-      let secured: Awaited<ReturnType<typeof secureUnprovenAccount>> = null;
+      let secured: Secured = null;
       const userId = await s.db.tx(async (t) => {
         let u = await t.one<any>(`SELECT id FROM users WHERE lower(email) = $1`, [email]);
         if (u) {
@@ -574,10 +587,8 @@ export async function scimRoutes(app: FastifyInstance, s: Services) {
             [tenantId, u.id],
           );
           if (known) throw new ScimError(409, "El usuario ya existe en la organización", "uniqueness");
-          // Se vincula una cuenta existente: si es "huérfana" (registrada con contraseña, sin prueba del correo ni otras
-          // organizaciones ni fila SCIM previa acá), la pudo registrar otra persona y su 2FA y sus sesiones se borran
-          // (ver secureUnprovenAccount). Creada inactiva (active = false) todavía no se vincula: no se toca.
-          if (active) secured = await secureUnprovenAccount(t, u.id, tenantId);
+          // Se vincula una cuenta existente: la limpieza de una cuenta "huérfana" la hace setActive al crear la
+          // membresía. Creada inactiva (active = false) todavía no se vincula: no se toca (sí al activarla después).
         } else {
           u = { id: uuidv7() };
           await t.query(`INSERT INTO users (id, email, name, password_hash, locale) VALUES ($1,$2,$3,'scim-provisioned','es')`, [u.id, email, displayNameOf(input, email)]);
@@ -588,7 +599,7 @@ export async function scimRoutes(app: FastifyInstance, s: Services) {
              active = EXCLUDED.active, deleted_at = NULL, updated_at = now()`,
           [tenantId, u.id, input.externalId ?? null, input.name?.givenName ?? null, input.name?.familyName ?? null, active],
         );
-        if (active) await setActive(t, tenantId, u.id, true);
+        if (active) secured = (await setActive(t, tenantId, u.id, true)).secured;
         return u.id as string;
       });
       await audit(req, "member.scim_provisioned", "user", userId, { email, active, ...(secured ? { unprovenAccountSecured: secured } : {}) });
@@ -602,8 +613,8 @@ export async function scimRoutes(app: FastifyInstance, s: Services) {
       const input = ScimUserInput.parse(req.body);
       const attrs = flattenUser(input);
       if (!("active" in attrs)) attrs.active = true;
-      const revoked = await s.db.tx((t) => applyUserAttrs(t, tenantId, req.params.id, attrs));
-      await audit(req, "member.scim_updated", "user", req.params.id, { fields: Object.keys(attrs), ...revokedData(revoked) });
+      const r = await s.db.tx((t) => applyUserAttrs(t, tenantId, req.params.id, attrs));
+      await audit(req, "member.scim_updated", "user", req.params.id, { fields: Object.keys(attrs), ...revokedData(r?.revoked), ...securedData(r) });
       return toScimUser(s.db, tenantId, await findUser(s.db, tenantId, req.params.id));
     });
 
@@ -612,10 +623,11 @@ export async function scimRoutes(app: FastifyInstance, s: Services) {
       await findUser(s.db, tenantId, req.params.id);
       const input = PatchInput.parse(req.body);
       const attrs = userPatchToAttrs(input.Operations);
-      const revoked = await s.db.tx((t) => applyUserAttrs(t, tenantId, req.params.id, attrs));
+      const r = await s.db.tx((t) => applyUserAttrs(t, tenantId, req.params.id, attrs));
       await audit(req, "active" in attrs ? (asBool(attrs.active) ? "member.scim_activated" : "member.scim_deactivated") : "member.scim_updated", "user", req.params.id, {
         fields: Object.keys(attrs),
-        ...revokedData(revoked),
+        ...revokedData(r?.revoked),
+        ...securedData(r),
       });
       return toScimUser(s.db, tenantId, await findUser(s.db, tenantId, req.params.id));
     });
@@ -625,7 +637,7 @@ export async function scimRoutes(app: FastifyInstance, s: Services) {
       await findUser(s.db, tenantId, req.params.id);
       const revoked = await s.db.tx(async (t) => {
         await ensureScimUser(t, tenantId, req.params.id);
-        const r = await setActive(t, tenantId, req.params.id, false);
+        const r = (await setActive(t, tenantId, req.params.id, false)).revoked;
         // La fila queda (active = false, deleted_at): sin ella el alta JIT por SSO lo volvía a sumar. GET y listados
         // SCIM ya no lo muestran (404).
         await t.query(`UPDATE scim_users SET active = false, deleted_at = now(), updated_at = now() WHERE tenant_id = $1 AND user_id = $2`, [tenantId, req.params.id]);

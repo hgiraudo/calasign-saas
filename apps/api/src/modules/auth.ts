@@ -201,8 +201,11 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
     const u = await s.db.one<any>(`SELECT email FROM users WHERE id = $1`, [userId]);
     const { ip, userAgent } = clientInfo(req);
     const tenants = await s.db.query<any>(`SELECT tenant_id FROM memberships WHERE user_id = $1`, [userId]);
-    // Auditoría en cada organización: sus miembros y, aunque ya no lo sea, donde tiene (o se le revocaron) credenciales.
-    const tenantIds = new Set<string>([...tenants.map((m) => m.tenant_id as string), ...credentials.map((c) => c.tenantId)]);
+    // Auditoría en cada organización de la que es miembro y, donde ya no lo es, solo si ahí se le revocó algo: el
+    // restablecimiento de la contraseña de alguien ajeno no es asunto de esa organización (y su registro, que es
+    // append-only, no tiene que mostrar el correo de quien ya no es miembro salvo que haya cambiado algo propio).
+    const revokedIn = (c: (typeof credentials)[number]) => Boolean(c.revoked && (c.revoked.apiKeys.length || c.revoked.invitations));
+    const tenantIds = new Set<string>([...tenants.map((m) => m.tenant_id as string), ...credentials.filter(revokedIn).map((c) => c.tenantId)]);
     for (const tenantId of tenantIds) {
       const c = credentials.find((x) => x.tenantId === tenantId);
       await recordAudit(s.db, {

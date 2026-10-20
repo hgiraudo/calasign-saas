@@ -112,6 +112,9 @@ página propia reduce lo que se ve, pero el iframe de OneSpan sigue mostrando su
   El cuerpo es texto (una línea en blanco separa párrafos); el HTML base (colores, logo, botón, pie) lo arma la plataforma:
   no se aceptan plantillas HTML completas (seguridad y entregabilidad).
 - Textos: cualquier clave de los diccionarios de la web (p. ej. `sign.doneTitle`, `otp.title`), por idioma (es, pt-BR, en).
+  Excepto los de la verificación pública: las claves `verify.*` (salvo `verify.title` y `verify.text`) y `val.*` (veredicto,
+  cadena, reporte técnico) se rechazan al guardar y no se aplican nunca. En `/verify` tampoco se aplica el CSS propio ni
+  el fondo/color de texto del tema: solo la barra (color, logo), los botones y la fuente.
 - Archivos: `logo`, `logoDark` (fondos oscuros: login, verificación), `favicon` (PNG/SVG/ICO), `font` (WOFF2/WOFF/TTF/OTF).
   Se sirven en `/v1/public/brand-assets/<marca>/<tipo>` y, en correos y PDF, con el dominio de la marca.
 

@@ -594,8 +594,10 @@ class EnvelopesApi {
   }
 
   /**
-   * URL de firma (5 min, un solo uso) de un destinatario: embebida (`embedded: true`, en un iframe con
-   * `frameAncestors`) o no (para abrirla en una pestaña o redirigir). Devuelve `{ url, expiresAt, tabOnly? }`:
+   * URL de firma (5 min, un solo uso) de un destinatario: embebido (`embedded: true`, en un iframe con
+   * `frameAncestors`) o no embebido con una autenticación que la página igual exige (código OTP, firma presencial o
+   * verificación de identidad pendiente; para abrirla en una pestaña o redirigir). Un destinatario no embebido que solo
+   * tiene el link por correo da 409 `not_embedded`. Devuelve `{ url, expiresAt, tabOnly? }`:
    * `tabOnly: true` para destinatarios con OTP, que no se pueden embeber (abrir en pestaña/redirigir); pedir
    * `frameAncestors` para ellos da 409 `otp_not_embeddable`. Embebida, la página avisa por `postMessage` los eventos
    * `viewed`, `signing_complete`, `declined`, `error` y `closed` (este último con `status`).

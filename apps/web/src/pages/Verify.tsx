@@ -7,7 +7,7 @@ import { useSignerText } from "../lib/i18n-signer";
 import { ErrorBox, LocaleSwitcher, Logo, Spinner } from "../components/ui";
 import { ValidationReportView } from "../components/EvidenceExtras";
 import { BrandFooter } from "../components/BrandFooter";
-import { brandTheme, setBrandTheme } from "../lib/white-label";
+import { brandTheme, setBrandTheme, setVerifyPageMode } from "../lib/white-label";
 
 export function VerifyPage() {
   const { t, locale } = useI18n();
@@ -24,6 +24,11 @@ export function VerifyPage() {
   const seq = useRef(0);
   // Marca blanca: el link del certificado trae ?b=<marca>. Normalmente el servidor ya la inyectó en la página; si se
   // llegó navegando dentro de la web, se pide acá.
+  // Tema restringido mientras esta página está abierta (sin el CSS propio de la marca: ver white-label.ts).
+  useEffect(() => {
+    setVerifyPageMode(true);
+    return () => setVerifyPageMode(false);
+  }, []);
   useEffect(() => {
     const b = new URLSearchParams(window.location.search).get("b");
     if (!b || brandTheme()) return;

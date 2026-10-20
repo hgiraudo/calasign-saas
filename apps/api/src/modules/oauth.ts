@@ -33,7 +33,7 @@ import { iso, randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { hasPerm } from "./access";
 import { auditFromRequest } from "./audit";
 import { authenticate, SESSION_COOKIE, type AuthContext, type Services } from "./context";
-import { CODE_PREFIX, CODE_TTL_SEC, REFRESH_PREFIX, assertUserTokenAllowed, issueTokens, requireUserSession, ssoFamilyDeadline } from "./oauth-tokens";
+import { CODE_PREFIX, CODE_TTL_SEC, REFRESH_PREFIX, assertUserTokenAllowed, issueTokens, requireUserSession, ssoCodeDeadline, ssoFamilyDeadline } from "./oauth-tokens";
 import { actingPerson } from "./member-access";
 
 // ───────────────────────────── Utilidades ─────────────────────────────
@@ -523,9 +523,14 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
             }
             await t.query(`UPDATE oauth_authorization_codes SET used_at = now() WHERE code_hash = $1`, [codeHash]);
             await userGrantAllowed(t, { tenantId: code.tenant_id, userId: code.user_id, authMethod: code.auth_method, ssoTenantId: code.sso_tenant_id, issuedAt: new Date(code.created_at) });
+            // Autorizado desde una sesión SSO: el tope de la familia arranca en esa sesión (no en el canje); si ya pasó,
+            // no se emiten tokens que nacerían vencidos.
+            const ssoDeadline = code.auth_method === "sso" ? await ssoCodeDeadline(t, code) : null;
+            if (ssoDeadline && ssoDeadline <= new Date()) throw new OAuthError(400, "invalid_grant", "La sesión de inicio único venció: volvé a autorizar la aplicación");
             return issueTokens(t, {
               authMethod: code.auth_method,
               ssoTenantId: code.sso_tenant_id,
+              ssoDeadline,
               clientId: c.id,
               tenantId: code.tenant_id,
               userId: code.user_id,
@@ -693,13 +698,26 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
     }
     // Cómo se autenticó la sesión que autoriza: los tokens lo heredan y valen solo mientras esa sesión valdría
     // (p. ej. con "SSO obligatorio", un token autorizado con contraseña deja de valer).
-    const sess = await s.db.one<any>(`SELECT auth_method, sso_tenant_id FROM sessions WHERE token_hash = $1`, [sha256Hex(req.cookies?.[SESSION_COOKIE] ?? "")]);
+    const sess = await s.db.one<any>(`SELECT auth_method, sso_tenant_id, expires_at FROM sessions WHERE token_hash = $1`, [sha256Hex(req.cookies?.[SESSION_COOKIE] ?? "")]);
     const code = CODE_PREFIX + randomToken(32);
     await s.db.tx(async (t) => {
       await t.query(
-        `INSERT INTO oauth_authorization_codes (code_hash, client_id, tenant_id, user_id, redirect_uri, scopes, code_challenge, code_challenge_method, expires_at, auth_method, sso_tenant_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,'S256', now() + ($8 || ' seconds')::interval, $9, $10)`,
-        [sha256Hex(code), v.client.id, a.tenantId, a.userId, v.redirectUri, v.scopes, v.req.code_challenge, String(CODE_TTL_SEC), sess?.auth_method ?? "password", sess?.sso_tenant_id ?? null],
+        `INSERT INTO oauth_authorization_codes (code_hash, client_id, tenant_id, user_id, redirect_uri, scopes, code_challenge, code_challenge_method, expires_at, auth_method, sso_tenant_id, sso_session_expires_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,'S256', now() + ($8 || ' seconds')::interval, $9, $10, $11)`,
+        [
+          sha256Hex(code),
+          v.client.id,
+          a.tenantId,
+          a.userId,
+          v.redirectUri,
+          v.scopes,
+          v.req.code_challenge,
+          String(CODE_TTL_SEC),
+          sess?.auth_method ?? "password",
+          sess?.sso_tenant_id ?? null,
+          // Autorizado desde una sesión SSO: los tokens no pasan del vencimiento de esa sesión (ver ssoCodeDeadline).
+          sess?.auth_method === "sso" ? sess.expires_at : null,
+        ],
       );
       await t.query(
         `INSERT INTO oauth_consents (client_id, user_id, tenant_id, scopes) VALUES ($1,$2,$3,$4)

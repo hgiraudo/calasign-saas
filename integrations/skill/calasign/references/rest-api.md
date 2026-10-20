@@ -49,7 +49,7 @@ Authorization: Bearer <API key (cs_live_… / cs_test_…) or OAuth access token
 | `POST /v1/envelopes/{id}/void` | Void an in-progress envelope `{reason}` |
 | `GET /v1/envelopes/{id}/events` | Hash-chained audit trail |
 | `GET /v1/envelopes/{id}/signed.pdf` | Final sealed PDF (status `completed`) |
-| `POST /v1/envelopes/{id}/recipients/{rid}/signing-url` | Embedded signing URL (single use, 5 min). For a non-embedded signer with an OTP code it comes back with `tabOnly: true` (open it in a tab or redirect, not an iframe); asking for it with `frameAncestors` → `409 otp_not_embeddable` |
+| `POST /v1/envelopes/{id}/recipients/{rid}/signing-url` | Embedded signing URL (single use, 5 min). A non-embedded recipient only gets one if the page still authenticates them (OTP code, in-person, or pending ID verification); link-only → `409 not_embedded`. For a non-embedded signer with an OTP code it comes back with `tabOnly: true` (open it in a tab or redirect, not an iframe); asking for it with `frameAncestors` → `409 otp_not_embeddable` |
 | `GET /v1/templates?q=` · `POST /v1/envelopes/from-template` | Templates with roles |
 | `GET/POST /v1/webhooks` | Webhook endpoints (secret returned once) |
 

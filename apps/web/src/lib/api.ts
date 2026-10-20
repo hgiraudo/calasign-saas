@@ -318,7 +318,7 @@ const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
   finalize_in_progress: { "pt-BR": "A finalização já está em andamento.", en: "Finalization is already in progress." },
   duplicate_recipient: { "pt-BR": "Um destinatário aparece mais de uma vez.", en: "A recipient appears more than once." },
   too_many_fields: { "pt-BR": "O envelope tem campos demais.", en: "The envelope has too many fields." },
-  too_many_documents: { "pt-BR": "Há documentos demais (máximo 30 por envelope ou modelo).", en: "Too many documents (at most 30 per envelope or template)." },
+  too_many_documents: { "pt-BR": "Há documentos demais.", en: "Too many documents." },
   weak_password: { "pt-BR": "A senha precisa ter pelo menos 10 caracteres.", en: "The password must be at least 10 characters long." },
   invalid_csv: { "pt-BR": "O CSV tem erros: revise as colunas e o formato.", en: "The CSV has errors: check the columns and the format." },
   duplicate_ids: { "pt-BR": "Há IDs de destinatários repetidos.", en: "Some recipient IDs are repeated." },
@@ -414,6 +414,10 @@ export function problemText(p: unknown, loc: "es" | "pt-BR" | "en"): string {
   const tpl = typeof code === "string" ? PROBLEM_TEXT[code]?.[loc] : undefined;
   if (!tpl) return typeof message === "string" ? message : String(code ?? "");
   const vars = (params && typeof params === "object" ? params : {}) as Record<string, unknown>;
+  // Falta un parámetro que la plantilla necesita (p. ej. el campo no tiene nombre y la API omite params.field): el
+  // texto de la API está mejor que una plantilla con "{field}" literal.
+  const missing = [...tpl.matchAll(/\{(\w+)\}/g)].some(([, k]) => vars[k] == null);
+  if (missing && typeof message === "string" && message) return message;
   return tpl.replace(/\{(\w+)\}/g, (m, k: string) => (vars[k] == null ? m : String(vars[k])));
 }
 
@@ -473,6 +477,9 @@ function detailText(code: string, details: unknown, loc: "pt-BR" | "en"): string
     if (d.limit === "users") return en ? "You've reached your plan's user limit. Upgrade it in Billing." : "Você atingiu o limite de usuários do seu plano. Altere-o em Faturamento.";
     return en ? "Your plan doesn't include this. Upgrade it in Billing." : "O seu plano não inclui isso. Altere-o em Faturamento.";
   }
+  // El tope depende del camino (sobre o plantilla, alta en un paso): viene en details.max.
+  if (code === "too_many_documents" && typeof d.max === "number")
+    return en ? `Too many documents (at most ${d.max.toLocaleString("en")}).` : `Há documentos demais (máximo ${d.max.toLocaleString("pt-BR")}).`;
   if (code === "validation_error" && Array.isArray(details)) {
     // Los motivos vienen en español; los campos sí sirven en cualquier idioma.
     const paths = [...new Set(details.map((x) => (x && typeof x === "object" ? (x as { path?: unknown }).path : null)).filter((x): x is string => typeof x === "string" && x !== ""))];

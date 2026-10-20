@@ -598,8 +598,9 @@ export function danglingFormulaProblems(fields: { type: string; label: string | 
       const refs = missing.map((m) => `{${m}}`).join(", ");
       problems.push({
         code: "formula_missing_ref",
-        params: { field: f.label ?? "", refs },
-        message: `La fórmula de "${f.label ?? "un campo"}" cita ${refs}, que ya no está en el sobre`,
+        // Sin nombre, sin params.field: la consola cae al message (no muestra "La fórmula de \"\"…").
+        params: f.label ? { field: f.label, refs } : { refs },
+        message: `La fórmula de ${f.label ? `"${f.label}"` : "un campo"} cita ${refs}, que ya no está en el sobre`,
       });
     }
   }

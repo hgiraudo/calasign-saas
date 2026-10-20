@@ -1,5 +1,6 @@
 // Textos del bloque "firmante y evidencia" (OTP, aprobador, delegación, reasignación, recordatorios, verificación).
 // Diccionario propio para no tocar el principal; usa el idioma activo de useI18n().
+import { interpolate } from "./interpolate";
 import { brandText } from "./white-label";
 import { useCallback } from "react";
 import { useI18n } from "./i18n";
@@ -238,9 +239,8 @@ export function useSignerText() {
   const { locale } = useI18n();
   return useCallback(
     (key: Key, vars?: Record<string, string | number>) => {
-      let s: string = brandText(locale, key, (DICTS[locale] ?? es)[key] ?? es[key]);
-      if (vars) for (const [k, v] of Object.entries(vars)) s = s.replaceAll(`{${k}}`, () => String(v)); // función: un "$&" o "$'" en un nombre no se interpreta como patrón
-      return s;
+      const s: string = brandText(locale, key, (DICTS[locale] ?? es)[key] ?? es[key]);
+      return interpolate(s, vars);
     },
     [locale],
   );

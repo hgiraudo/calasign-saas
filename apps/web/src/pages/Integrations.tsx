@@ -8,7 +8,7 @@ import {
   type WebhookEndpoint,
 } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
-import { formatDateTime, useI18n, confirmAction, placeholderText } from "../lib/i18n";
+import { formatDateTime, useI18n, confirmAction, placeholderText, interpolate } from "../lib/i18n";
 import { useIntText } from "../lib/integrations-i18n";
 import { ErrorBox, Spinner } from "../components/ui";
 import { PlanNotice, useAccess } from "../lib/access";
@@ -352,7 +352,7 @@ function EmbedSection() {
             <span>{tt("embed.origins")}</span>
             <textarea rows={4} value={text ?? ""} readOnly={!canEdit} onChange={(e) => setText(e.target.value)} placeholder={`https://app.${placeholderText("domain")}`} />
           </label>
-          {discarded.length > 0 && <p className="muted small">{tt("embed.discarded").replace("{list}", discarded.join(", "))}</p>}
+          {discarded.length > 0 && <p className="muted small">{interpolate(tt("embed.discarded"), { list: discarded.join(", ") })}</p>}
           {canEdit ? (
             <div className="row-end">
               {saved && <span className="muted small">{tt("embed.saved")}</span>}

@@ -43,6 +43,27 @@ describe("contraste WCAG", () => {
     expect(themeToCss({ primaryColor: "#facc15", buttonTextColor: "#123456" })).toContain(".btn-primary{color:#123456}");
   });
 
+  it("themeToCss: el texto de .btn-primary sigue ≥ 4.5:1 en hover (también con texto oscuro sobre un color medio)", () => {
+    const bgOf = (css: string, re: RegExp) => re.exec(css)?.[1];
+    for (const primary of ["#3b82f6", "#22c55e", "#f97316", "#0ea5e9", "#facc15", "#0b1f3a", "#8b5cf6", "#e11d48"]) {
+      const css = themeToCss({ primaryColor: primary });
+      const fg = bgOf(css, /\.btn-primary\{color:(#[0-9a-f]{6})\}/)!;
+      const hover = bgOf(css, /--navy-2:(#[0-9a-f]{6})/)!;
+      const hoverFg = bgOf(css, /\.btn-primary:hover\{color:(#[0-9a-f]{6})\}/)!;
+      expect(hover, primary).toBeTruthy();
+      expect(hoverFg, primary).toBeTruthy();
+      expect(contrastRatio(hoverFg, hover), primary).toBeGreaterThanOrEqual(4.5);
+      // Con texto blanco el hover sigue oscureciendo (como antes).
+      if (fg === "#ffffff") expect(relativeLuminance(hover)).toBeLessThan(relativeLuminance(primary));
+    }
+    for (const btn of ["#3b82f6", "#22c55e", "#f97316", "#facc15"]) {
+      const css = themeToCss({ primaryColor: "#0b1f3a", buttonColor: btn });
+      const m = /\.btn-primary:hover\{background:(#[0-9a-f]{6});border-color:#[0-9a-f]{6};color:(#[0-9a-f]{6})\}/.exec(css);
+      expect(m, btn).toBeTruthy();
+      expect(contrastRatio(m![2], m![1]), btn).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
   it("correos: botón y encabezado sin logo con texto que contrasta", () => {
     const vars = { recipientName: "Ana", senderName: "Juan", organizationName: "ACME", subject: "Contrato", link: "https://x.test/s/1" };
     const light = render("invite", "es", vars, { primaryColor: "#fde047", brandName: "ACME" }).html;

@@ -50,7 +50,8 @@ CalaSign(oauth=ClientCredentials("csapp_…", "cssec_…", scope="envelopes:read
   (y header `Location`). El cliente repite el pedido una sola vez contra esa URL (es seguro: la API no lo procesó) y la
   guarda en `cs.base_url` para los siguientes, también para pedir el token OAuth. Como la credencial viaja a esa URL,
   solo la sigue si su host comparte el dominio registrable con la `base_url` inicial (`eu.calasign.com` desde
-  `dev.calasign.com`; con sufijos de dos niveles como `com.ar` o `co.uk` se comparan tres etiquetas) o está en
+  `dev.calasign.com`; con sufijos de dos niveles como `com.ar` o `co.uk` se comparan tres etiquetas; en hosting
+  compartido como `herokuapp.com`, `vercel.app` o `github.io`, el host completo) o está en
   `allowed_cell_hosts=["host", "host:puerto"]`; con `follow_cell_redirects=False` no la sigue nunca. Si no puede (no
   permitida, sin `baseUrl`, de https a http o la otra celda también responde 421), lanza el `CalaSignError` con
   `e.cell_base_url`. El cambio de celda es seguro con pedidos concurrentes desde varios hilos (lock).

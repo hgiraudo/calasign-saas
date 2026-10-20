@@ -136,6 +136,16 @@ describe("PAdES B-LT / B-LTA", () => {
     expect(out.match(/Certificate Validation: Certificate is Trusted/g)?.length ?? 0).toBe(2);
   }, 120_000);
 
+  it("un PDF propio renovado (B-LTA dos veces) sigue dando evidence_only con la lista blanca del catálogo", async () => {
+    const seal = new LocalKeyProvider("lab-seal", pki.seal.keyPem, pki.sealChainPem);
+    const { pdf: lta } = await applyLtv(await sealedBT(seal), { level: "B-LTA", tsaUrl: `${server.url}/tsr` });
+    const { pdf: renewed } = await applyLtv(lta, { level: "B-LTA", tsaUrl: `${server.url}/tsr` });
+    const v = await validatePdf(renewed, { trustAnchors: [pki.root.certDer] });
+    expect(v.signatures).toHaveLength(3);
+    expect(v.signatures.map((s) => s.changesAfter)).toEqual(["evidence_only", "evidence_only", "none"]);
+    expect(v.summary).toMatchObject({ allValid: true, allTrusted: true, modifiedAfterSigning: false, anyWeakAlgorithm: false });
+  }, 120_000);
+
   it("detecta un certificado revocado (CRL/OCSP del DSS) y una alteración posterior", async () => {
     const company = await pki.issue("Empresa Revocada");
     const provider = new LocalKeyProvider("rev", company.keyPem, company.certPem + pki.intermediate.certPem + pki.root.certPem);

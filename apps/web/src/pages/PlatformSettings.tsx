@@ -20,7 +20,7 @@ import {
   type StorageProviderInfo,
 } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
-import { formatDateTime, useI18n, confirmAction, placeholderText } from "../lib/i18n";
+import { formatDateTime, useI18n, confirmAction, placeholderText, interpolate } from "../lib/i18n";
 import { usePlatformText } from "../lib/i18n-platform";
 import { useConnText } from "../lib/i18n-connectors";
 import { useRoleLabel } from "../lib/i18n-teams";
@@ -386,7 +386,7 @@ const CHANNELS: Record<NotificationKind, { label: string; url: string; name: str
   webex: { label: "Webex", url: "https://webexapis.com/v1/webhooks/incoming/…", name: "" },
 };
 const channelNamePlaceholder = (k: NotificationKind) => (CHANNELS[k].name ? `${CHANNELS[k].name}${placeholderText("chatChannel")}` : placeholderText("chatTeam"));
-const channelUrlPlaceholder = (k: NotificationKind) => CHANNELS[k].url.replace("{domain}", placeholderText("domain"));
+const channelUrlPlaceholder = (k: NotificationKind) => interpolate(CHANNELS[k].url, { domain: placeholderText("domain") });
 
 export function NotificationIntegrationsPage() {
   const p = usePlatformText();

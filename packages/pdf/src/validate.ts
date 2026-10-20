@@ -1,7 +1,9 @@
 // Validador de firmas PDF: integridad criptográfica, cobertura, sello de tiempo, cadena hasta una raíz
 // de confianza, revocación (DSS incrustado u online) y nivel PAdES detectado.
+import { X509Certificate } from "node:crypto";
 import { fetchCrl, fetchOcsp, statusFromCrl, statusFromOcsp, type Fetcher, type RevocationStatus } from "./pki";
 import {
+  asn1js,
   HASH_BY_OID,
   OIDS,
   buildChain,
@@ -61,12 +63,28 @@ export interface SignatureReport {
   /** trusted: llega a una raíz de confianza. timeValid: todos los certificados eran válidos al momento de firmar. */
   chain: { trusted: boolean; anchor: string | null; entries: ChainEntry[]; timeValid?: boolean; revoked?: boolean; revocationUnknown?: boolean };
   level: PadesLevel | null;
+  /**
+   * Algoritmos débiles: resumen SHA-1 o MD5 (de la firma, del sello de tiempo o de un certificado de la cadena que no es
+   * la raíz) o clave RSA de menos de 2048 bits. La firma puede verificar, pero ya no prueba nada: no cuenta para
+   * summary.allValid ni summary.allTrusted. `weakAlgorithmReasons` dice cuáles.
+   */
+  weakAlgorithm: boolean;
+  weakAlgorithmReasons: string[];
 }
 
 export interface ValidationReport {
   signatures: SignatureReport[];
   dss: { certs: number; ocsps: number; crls: number } | null;
-  summary: { count: number; allValid: boolean; allTrusted: boolean; anyRevoked: boolean; modifiedAfterSigning: boolean; revocationUnknown: boolean };
+  summary: {
+    count: number;
+    allValid: boolean;
+    allTrusted: boolean;
+    anyRevoked: boolean;
+    modifiedAfterSigning: boolean;
+    revocationUnknown: boolean;
+    /** Alguna firma o sello usa algoritmos débiles (ver SignatureReport.weakAlgorithm). */
+    anyWeakAlgorithm: boolean;
+  };
 }
 
 export interface ValidateOptions {
@@ -91,14 +109,97 @@ function summary(c: pkijs.Certificate): CertSummary {
 
 const EKU_TIME_STAMPING = "1.3.6.1.5.5.7.3.8";
 
+// ───────────────────── Algoritmos débiles ─────────────────────
+const WEAK_DIGESTS: Record<string, string> = { "1.3.14.3.2.26": "SHA-1", "1.2.840.113549.2.5": "MD5" };
+const WEAK_SIGNATURE_ALGS: Record<string, string> = {
+  "1.2.840.113549.1.1.4": "MD5 con RSA",
+  "1.2.840.113549.1.1.5": "SHA-1 con RSA",
+  "1.3.14.3.2.29": "SHA-1 con RSA",
+  "1.2.840.10045.4.1": "ECDSA con SHA-1",
+  "1.2.840.10040.4.3": "DSA con SHA-1",
+};
+const OID_RSA = "1.2.840.113549.1.1.1";
+
+/** Algoritmos débiles del firmante de un CMS (o de un token de sello de tiempo). */
+function weakCmsAlgorithms(sd: pkijs.SignedData, label: string, out: Set<string>) {
+  const si = sd.signerInfos[0];
+  const d = WEAK_DIGESTS[si?.digestAlgorithm.algorithmId ?? ""];
+  if (d) out.add(`${label}: resumen ${d}`);
+  const a = WEAK_SIGNATURE_ALGS[si?.signatureAlgorithm.algorithmId ?? ""];
+  if (a) out.add(`${label}: algoritmo ${a}`);
+}
+
+/** Clave RSA corta o, si no es una raíz (autofirmado), firmado con SHA-1/MD5. */
+function weakCertificate(c: pkijs.Certificate, out: Set<string>) {
+  const who = commonName(c.subject) ?? nameToString(c.subject);
+  if (c.subjectPublicKeyInfo.algorithm.algorithmId === OID_RSA) {
+    try {
+      const bits = new X509Certificate(Buffer.from(certDer(c))).publicKey.asymmetricKeyDetails?.modulusLength;
+      if (bits !== undefined && bits < 2048) out.add(`certificado ${who}: clave RSA de ${bits} bits`);
+    } catch {
+      // clave ilegible: lo decide la verificación
+    }
+  }
+  const alg = WEAK_SIGNATURE_ALGS[c.signatureAlgorithm.algorithmId];
+  if (alg && !isSelfSigned(c)) out.add(`certificado ${who}: firmado con ${alg}`);
+}
+
+/**
+ * El atributo firmado signingCertificateV2 (ESSCertIDv2) o signingCertificate (ESSCertID, SHA-1) tiene que identificar
+ * al certificado con el que se verifica la firma: hash del certificado y, si está, IssuerSerial (emisor y número de
+ * serie). Si no coincide, alguien pudo reemplazar el certificado del CMS por otro con la misma clave.
+ */
+function signingCertificateIssue(sd: pkijs.SignedData, signer: pkijs.Certificate): string | null {
+  const attrs = sd.signerInfos[0].signedAttrs?.attributes ?? [];
+  const v2 = attrs.find((a) => a.type === OIDS.signingCertificateV2);
+  const attr = v2 ?? attrs.find((a) => a.type === OIDS.signingCertificate);
+  if (!attr) return null;
+  const bad = "El certificado firmante no coincide con el atributo signingCertificate";
+  try {
+    const outer = attr.values[0] as asn1js.Sequence;
+    const first = (outer.valueBlock.value[0] as asn1js.Sequence).valueBlock.value[0] as asn1js.Sequence;
+    const els = first.valueBlock.value;
+    let i = 0;
+    let alg = v2 ? "sha256" : "sha1";
+    if (v2 && els[0] instanceof asn1js.Sequence) {
+      const oid = (els[0].valueBlock.value[0] as asn1js.ObjectIdentifier).valueBlock.toString();
+      const a = HASH_BY_OID[oid];
+      if (!a) return bad;
+      alg = a;
+      i = 1;
+    }
+    const certHash = els[i];
+    if (!(certHash instanceof asn1js.OctetString)) return bad;
+    const want = Buffer.from(certHash.valueBlock.valueHexView);
+    const encodings = [certDer(signer), new Uint8Array(signer.toSchema(false).toBER(false))];
+    if (!encodings.some((d) => Buffer.from(hash(alg, d)).equals(want))) return bad;
+    const issuerSerial = els[i + 1];
+    if (issuerSerial instanceof asn1js.Sequence) {
+      const [names, serial] = issuerSerial.valueBlock.value;
+      if (!(serial instanceof asn1js.Integer) || !serial.isEqual(signer.serialNumber)) return bad;
+      const dn = (names as asn1js.Sequence).valueBlock.value.find((g) => g.idBlock.tagClass === 3 && g.idBlock.tagNumber === 4) as asn1js.Constructed | undefined;
+      if (dn) {
+        const name = new pkijs.RelativeDistinguishedNames({ schema: dn.valueBlock.value[0] });
+        if (!name.isEqual(signer.issuer)) return bad;
+      }
+    }
+    return null;
+  } catch {
+    return bad;
+  }
+}
+
 function hasTimeStampingEku(c: pkijs.Certificate): boolean {
   const ext = c.extensions?.find((e) => e.extnID === "2.5.29.37");
   const ids: string[] = ((ext?.parsedValue as pkijs.ExtKeyUsage | undefined)?.keyPurposes ?? []).map(String);
   return ids.includes(EKU_TIME_STAMPING);
 }
 
-async function verifyToken(token: pkijs.SignedData, imprintOf: Uint8Array, pool: pkijs.Certificate[], anchors: Set<string>) {
+async function verifyToken(token: pkijs.SignedData, imprintOf: Uint8Array, pool: pkijs.Certificate[], anchors: Set<string>, weak: Set<string>) {
   const tst = tstInfoOf(token);
+  weakCmsAlgorithms(token, "sello de tiempo", weak);
+  const imprintWeak = WEAK_DIGESTS[tst.messageImprint.hashAlgorithm.algorithmId];
+  if (imprintWeak) weak.add(`sello de tiempo: resumen ${imprintWeak}`);
   const alg = HASH_BY_OID[tst.messageImprint.hashAlgorithm.algorithmId] ?? "sha256";
   const expected = Buffer.from(hash(alg, imprintOf));
   const got = Buffer.from(tst.messageImprint.hashedMessage.valueBlock.valueHexView);
@@ -110,6 +211,7 @@ async function verifyToken(token: pkijs.SignedData, imprintOf: Uint8Array, pool:
     sigOk = false;
   }
   const tsa = signerCertOf(token);
+  if (tsa) weakCertificate(tsa, weak);
   const valid = sigOk && expected.equals(got);
   let trusted = false;
   if (valid && tsa && hasTimeStampingEku(tsa)) {
@@ -148,8 +250,10 @@ async function chainReport(
   dss: PdfDss | null,
   opts: ValidateOptions,
   at: Date,
+  weak: Set<string>,
 ): Promise<SignatureReport["chain"]> {
   const chain = await buildChain(leaf, pool);
+  for (const c of chain) weakCertificate(c, weak);
   const timeValid = chain.every((c) => c.notBefore.value <= at && at <= c.notAfter.value);
   const last = chain[chain.length - 1];
   const trusted = isSelfSigned(last) && anchors.has(fingerprint(certDer(last)));
@@ -251,6 +355,8 @@ async function validatePdfUnbudgeted(pdf: Uint8Array, opts: ValidateOptions): Pr
 
   for (const [index, s] of signatures.entries()) {
     const end = s.byteRange[2] + s.byteRange[3];
+    const weak = new Set<string>();
+    const weakOf = () => ({ weakAlgorithm: weak.size > 0, weakAlgorithmReasons: [...weak] });
     const base = {
       index,
       fieldName: s.fieldName,
@@ -275,6 +381,7 @@ async function validatePdfUnbudgeted(pdf: Uint8Array, opts: ValidateOptions): Pr
           integrity: { valid: false, reason: `CMS ilegible: ${(e as Error).message}` },
           chain: { trusted: false, anchor: null, entries: [] },
           level: null,
+          ...weakOf(),
         });
         continue;
       }
@@ -282,7 +389,7 @@ async function validatePdfUnbudgeted(pdf: Uint8Array, opts: ValidateOptions): Pr
       const pool = [...dedupePool([...cmsCertificates(sd), ...dssCerts]), ...anchorCerts];
 
       if (s.type === "DocTimeStamp") {
-        const ts = await verifyToken(sd, content, pool, anchors);
+        const ts = await verifyToken(sd, content, pool, anchors, weak);
         reports.push({
           ...base,
           kind: "document_timestamp",
@@ -290,8 +397,9 @@ async function validatePdfUnbudgeted(pdf: Uint8Array, opts: ValidateOptions): Pr
           signingTime: ts.time,
           timestamp: ts,
           integrity: brIssue ? { valid: false, reason: brIssue } : ts.valid ? { valid: true } : { valid: false, reason: "El sello de documento no corresponde al contenido" },
-          chain: signer ? await chainReport(signer, pool, anchors, dss, opts, new Date(ts.time)) : { trusted: false, anchor: null, entries: [] },
+          chain: signer ? await chainReport(signer, pool, anchors, dss, opts, new Date(ts.time), weak) : { trusted: false, anchor: null, entries: [] },
           level: null,
+          ...weakOf(),
         });
         continue;
       }
@@ -312,13 +420,20 @@ async function validatePdfUnbudgeted(pdf: Uint8Array, opts: ValidateOptions): Pr
         const ok = s.subFilter === "adbe.pkcs7.sha1" && inner.equals(Buffer.from(hash("sha1", content)));
         if (!ok) integrity = { valid: false, reason: "El CMS trae contenido incrustado que no es este documento" };
       }
+      if (integrity.valid && signer) {
+        const certIssue = signingCertificateIssue(sd, signer);
+        if (certIssue) integrity = { valid: false, reason: certIssue };
+      }
       if (brIssue) integrity = { valid: false, reason: brIssue };
+      weakCmsAlgorithms(sd, "firma", weak);
+      if (s.subFilter === "adbe.pkcs7.sha1" || s.subFilter === "adbe.x509.rsa_sha1") weak.add(`firma: SubFilter ${s.subFilter}`);
+      if (signer) weakCertificate(signer, weak);
       const tsToken = signatureTimestamp(sd);
       let timestamp: SignatureReport["timestamp"] = null;
       if (tsToken) {
         const sigValue = new Uint8Array(sd.signerInfos[0].signature.valueBlock.valueHexView);
         pool.push(...dedupePool(cmsCertificates(tsToken)).slice(0, 20));
-        timestamp = await verifyToken(tsToken, sigValue, pool, anchors);
+        timestamp = await verifyToken(tsToken, sigValue, pool, anchors, weak);
       }
       const signingTimeAttr = sd.signerInfos[0].signedAttrs?.attributes.find((a) => a.type === OIDS.signingTime);
       const signingTime = s.signingTimeM ?? (signingTimeAttr ? (signingTimeAttr.values[0] as any).toDate?.()?.toISOString?.() ?? null : null);
@@ -341,9 +456,10 @@ async function validatePdfUnbudgeted(pdf: Uint8Array, opts: ValidateOptions): Pr
         // existencia). Sin eso, la fecha declarada la elige quien firma: se evalúa al día de hoy (sin prueba de existencia).
         // Sin integridad no se analiza la cadena (es lo más costoso y el informe ya dice que la firma no vale).
         chain: signer && integrity.valid
-          ? await chainReport(signer, pool, anchors, dss, opts, timestamp?.valid && timestamp.trusted ? new Date(timestamp.time) : new Date())
+          ? await chainReport(signer, pool, anchors, dss, opts, timestamp?.valid && timestamp.trusted ? new Date(timestamp.time) : new Date(), weak)
           : { trusted: false, anchor: null, entries: [] },
         level,
+        ...weakOf(),
       });
     } catch (e) {
       // Una firma o sello mal formado (sin signerInfos, sello sin TSTInfo…) se informa como inválido: antes hacía
@@ -357,6 +473,7 @@ async function validatePdfUnbudgeted(pdf: Uint8Array, opts: ValidateOptions): Pr
         integrity: { valid: false, reason: `Firma ilegible: ${(e as Error)?.message ?? String(e)}` },
         chain: { trusted: false, anchor: null, entries: [] },
         level: null,
+        ...weakOf(),
       });
     }
   }
@@ -392,11 +509,12 @@ async function validatePdfUnbudgeted(pdf: Uint8Array, opts: ValidateOptions): Pr
     dss: dss ? { certs: dss.certs.length, ocsps: dss.ocsps.length, crls: dss.crls.length } : null,
     summary: {
       count: reports.length,
-      allValid: reports.length > 0 && !modifiedAfterSigning && reports.every((r) => r.integrity.valid && (!r.timestamp || r.timestamp.valid)),
-      allTrusted: reports.length > 0 && reports.every((r) => r.chain.trusted && r.chain.timeValid !== false && !r.chain.revoked),
+      allValid: reports.length > 0 && !modifiedAfterSigning && reports.every((r) => r.integrity.valid && (!r.timestamp || r.timestamp.valid) && !r.weakAlgorithm),
+      allTrusted: reports.length > 0 && reports.every((r) => r.chain.trusted && r.chain.timeValid !== false && !r.chain.revoked && !r.weakAlgorithm),
       anyRevoked: reports.some((r) => r.chain.entries.some((e) => e.revocation.status === "revoked")),
       modifiedAfterSigning,
       revocationUnknown: reports.some((r) => r.chain.revocationUnknown === true),
+      anyWeakAlgorithm: reports.some((r) => r.weakAlgorithm),
     },
   };
 }

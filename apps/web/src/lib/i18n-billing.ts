@@ -1,6 +1,6 @@
 // Textos de planes y facturación, cobro al firmar y servidor MCP.
 import { brandText } from "./white-label";
-import { formatNumber, pluralize, useI18n } from "./i18n";
+import { formatNumber, formatText, useI18n } from "./i18n";
 
 const es = {
   "nav.billing": "Plan y facturación",
@@ -370,9 +370,8 @@ export function useBillingText() {
   const { locale } = useI18n();
   const d = DICTS[locale] ?? es;
   return (k: Key, vars?: Record<string, string | number>) => {
-    let s: string = brandText(locale, k, d[k] ?? es[k] ?? k);
-    if (vars) for (const [n, v] of Object.entries(vars)) s = s.split(`{${n}}`).join(typeof v === "number" ? formatNumber(v, locale) : String(v));
-    return typeof vars?.n === "number" ? pluralize(locale, s, vars.n) : s;
+    const s: string = brandText(locale, k, d[k] ?? es[k] ?? k);
+    return formatText(locale, s, vars, (v) => (typeof v === "number" ? formatNumber(v, locale) : String(v)));
   };
 }
 

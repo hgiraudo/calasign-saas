@@ -386,6 +386,19 @@ export function darkenToContrast(hex: string, min = 4.5, against = "#ffffff"): s
   return c;
 }
 
+/**
+ * Fondo de hover de .btn-primary para un texto `fg` sobre `bg`: oscurecido (`amount`) como siempre, salvo que eso baje
+ * el contraste del texto por debajo de 4.5:1 (texto oscuro sobre un color medio: oscurecer el fondo lo acerca al
+ * texto); entonces se aclara, que lo aleja.
+ */
+function buttonHoverBg(bg: string, fg: string, amount: number): string {
+  const dark = shade(bg, -amount);
+  const dc = contrastRatio(fg, dark);
+  if (dc >= 4.5 || dc >= contrastRatio(fg, bg)) return dark;
+  const light = shade(bg, amount);
+  return contrastRatio(fg, light) > dc ? light : dark;
+}
+
 export const FONT_STACK = 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
 
 /** Variables y reglas CSS del tema (las mismas en el servidor, la web y la vista previa). */
@@ -401,8 +414,13 @@ export function verifyPageTheme(t: Partial<ResolvedBrandTheme>): Partial<Resolve
 export function themeToCss(t: Partial<ResolvedBrandTheme>, opts: { fontFace?: string | null } = {}): string {
   const vars: string[] = [];
   const rules: string[] = [];
+  const btn = okColor(t.buttonColor) ? t.buttonColor : null;
   if (okColor(t.primaryColor)) {
-    vars.push(`--navy:${t.primaryColor}`, `--navy-2:${shade(t.primaryColor, -0.15)}`, `--brand-primary:${t.primaryColor}`);
+    // --navy-2 es solo el hover de .btn-primary (styles.css): sin color de botón propio, el botón usa el principal y su
+    // texto (propio o calculado) tiene que seguir leyéndose en hover.
+    const btnFg = okColor(t.buttonTextColor) ? t.buttonTextColor : contrastText(t.primaryColor);
+    const hover = btn ? shade(t.primaryColor, -0.15) : buttonHoverBg(t.primaryColor, btnFg, 0.15);
+    vars.push(`--navy:${t.primaryColor}`, `--navy-2:${hover}`, `--brand-primary:${t.primaryColor}`);
     const head = okColor(t.headerTextColor) ? t.headerTextColor : contrastText(t.primaryColor);
     rules.push(`.signer-bar,.topbar,.brand-preview-bar{background:${t.primaryColor};color:${head}}`, `.logo{color:${t.primaryColor}}`);
     // El número del paso actual va sobre el color principal (--navy): texto blanco o oscuro según contraste.
@@ -421,15 +439,21 @@ export function themeToCss(t: Partial<ResolvedBrandTheme>, opts: { fontFace?: st
     rules.push(`.signer,body{background:${t.backgroundColor}}`);
   }
   if (okColor(t.textColor)) vars.push(`--text:${t.textColor}`);
-  const btn = okColor(t.buttonColor) ? t.buttonColor : null;
   if (btn) {
     const fg = okColor(t.buttonTextColor) ? t.buttonTextColor : contrastText(btn);
-    rules.push(`.btn-primary{background:${btn};border-color:${btn};color:${fg}}`, `.btn-primary:hover{background:${shade(btn, -0.12)};border-color:${shade(btn, -0.12)}}`);
+    const hover = buttonHoverBg(btn, fg, 0.12);
+    // El color del texto también en hover: si ni aclarando llega a 4.5:1, el calculado contra el fondo de hover.
+    const hoverFg = !okColor(t.buttonTextColor) && contrastRatio(fg, hover) < 4.5 ? contrastText(hover) : fg;
+    rules.push(`.btn-primary{background:${btn};border-color:${btn};color:${fg}}`, `.btn-primary:hover{background:${hover};border-color:${hover};color:${hoverFg}}`);
   } else if (okColor(t.buttonTextColor)) {
     rules.push(`.btn-primary{color:${t.buttonTextColor}}`);
   } else if (okColor(t.primaryColor)) {
-    // Sin color de botón, .btn-primary usa el principal (--navy): el texto blanco fijo no se leía sobre uno claro.
-    rules.push(`.btn-primary{color:${contrastText(t.primaryColor)}}`);
+    // Sin color de botón, .btn-primary usa el principal (--navy): el texto blanco fijo no se leía sobre uno claro. El
+    // hover (--navy-2) se calculó arriba para este mismo texto; el color va también en :hover por si no alcanza.
+    const fg = contrastText(t.primaryColor);
+    const hover = buttonHoverBg(t.primaryColor, fg, 0.15);
+    const hoverFg = contrastRatio(fg, hover) < 4.5 ? contrastText(hover) : fg;
+    rules.push(`.btn-primary{color:${fg}}`, `.btn-primary:hover{color:${hoverFg}}`);
   }
   if (typeof t.borderRadius === "number" && t.borderRadius >= 0 && t.borderRadius <= 24) {
     vars.push(`--radius:${t.borderRadius}px`);

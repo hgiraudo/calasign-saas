@@ -1,4 +1,5 @@
 // Textos de la marca blanca (Ajustes → Marca y pie de las páginas públicas). Usa el idioma activo de useI18n().
+import { interpolate } from "./interpolate";
 import { useCallback } from "react";
 import { useI18n } from "./i18n";
 import { brandText } from "./white-label";
@@ -411,9 +412,8 @@ export function useWlText() {
   const { locale } = useI18n();
   return useCallback(
     (k: Key, vars?: Record<string, string | number>) => {
-      let s: string = brandText(locale, `wl.${k}`, (DICTS[locale] ?? es)[k] ?? es[k]);
-      if (vars) for (const [n, v] of Object.entries(vars)) s = s.replaceAll(`{${n}}`, () => String(v));
-      return s;
+      const s: string = brandText(locale, `wl.${k}`, (DICTS[locale] ?? es)[k] ?? es[k]);
+      return interpolate(s, vars);
     },
     [locale],
   );

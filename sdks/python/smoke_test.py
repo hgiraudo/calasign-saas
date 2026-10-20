@@ -240,6 +240,28 @@ for _t in _ths:
 assert len(_res) == 2 and _cs.base_url == _base_b, (_res, _cell_log)
 ok("421 concurrentes: se comparan contra la base del intento; el cambio de base va con lock")
 
+# Dominio registrable: tres etiquetas solo con ccTLD de 2 letras + segundo nivel genérico; hosting compartido, host entero.
+from calasign.client import _registrable_domain as _rd
+
+for _h, _want in [
+    ("api.ibm.com", "ibm.com"),
+    ("eu.api.calasign.com.ar", "calasign.com.ar"),
+    ("api.calasign.co.uk", "calasign.co.uk"),
+    ("api.calasign.gob.ar.", "calasign.gob.ar"),
+    ("x.foo.de", "foo.de"),
+    ("api.abc.xyz", "abc.xyz"),
+    ("a.herokuapp.com", "a.herokuapp.com"),
+    ("b.x.vercel.app", "b.x.vercel.app"),
+    ("herokuapp.com", "herokuapp.com"),
+    ("API.Calasign.COM", "calasign.com"),
+    ("api.calasign.com.\u00e1r", "com.\u00e1r"),  # ccTLD no ASCII: no cuenta como ccTLD (igual que /^[a-z]{2}$/ en Node)
+    ("127.0.0.1", "127.0.0.1"),
+    ("localhost", "localhost"),
+]:
+    assert _rd(_h) == _want, (_h, _rd(_h), _want)
+assert _rd("a.github.io") != _rd("b.github.io")
+ok("dominio registrable: ccTLD + segundo nivel genérico, hosting compartido por host completo")
+
 # Solo se sigue el 421 hacia el mismo dominio registrable (o allowed_cell_hosts); follow_cell_redirects=False no lo sigue.
 _base_b_lh = _base_b.replace("127.0.0.1", "localhost")
 _cell_log.clear()

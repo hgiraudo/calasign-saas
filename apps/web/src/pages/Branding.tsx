@@ -499,14 +499,11 @@ export function BrandingPage() {
               <button id="wl-save" type="button" className="btn btn-primary" disabled={busy || Boolean(cssProblem) || blockedByPlan} onClick={save}>
                 {busy ? t("common.saving") : t("common.save")}
               </button>
-              <span role="status" className="muted small">
-                {saved && !contrastWarn ? `✓ ${w("saved")}` : ""}
+              {/* Una sola región viva, montada desde el principio: un role="status" que aparece junto con su texto no
+                  siempre se anuncia. El aviso de contraste reemplaza al "Guardado" en la misma región. */}
+              <span role="status" className="small">
+                {saved && contrastWarn ? <span className="warn-text">⚠ {contrastWarn}</span> : saved ? <span className="muted">✓ {w("saved")}</span> : null}
               </span>
-              {saved && contrastWarn && (
-                <p role="status" className="small warn-text">
-                  ⚠ {contrastWarn}
-                </p>
-              )}
               {blockedByPlan && <span className="muted small">{w("plan.unsaved")}</span>}
             </div>
           )}

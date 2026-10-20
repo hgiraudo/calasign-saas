@@ -1,6 +1,6 @@
 // Textos de CRM y ERP (HubSpot, Salesforce, Zoho CRM / Bigin, Pipedrive, RD Station CRM, Kommo, Siigo, Alegra).
 import { brandText } from "./white-label";
-import { formatNumber, pluralize, useI18n } from "./i18n";
+import { formatNumber, formatText, useI18n } from "./i18n";
 
 const es = {
   "card.crm": "CRM y ERP",
@@ -400,8 +400,7 @@ export function useCrmText() {
   const { locale } = useI18n();
   const d = DICTS[locale] ?? es;
   return (k: Key | string, vars?: Record<string, string | number>) => {
-    let s: string = brandText(locale, k, (d as Record<string, string>)[k] ?? (es as Record<string, string>)[k] ?? k);
-    if (vars) for (const [n, v] of Object.entries(vars)) s = s.replace(`{${n}}`, () => (typeof v === "number" ? formatNumber(v, locale) : String(v)));
-    return typeof vars?.n === "number" ? pluralize(locale, s, vars.n) : s;
+    const s: string = brandText(locale, k, (d as Record<string, string>)[k] ?? (es as Record<string, string>)[k] ?? k);
+    return formatText(locale, s, vars, (v) => (typeof v === "number" ? formatNumber(v, locale) : String(v)));
   };
 }

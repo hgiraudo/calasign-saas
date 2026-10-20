@@ -515,17 +515,27 @@ function cellRedirect(text: string, current: string): string | null {
   }
 }
 
+// Segundos niveles genéricos bajo un ccTLD (com.ar, co.uk, gob.ar…): ahí el dominio registrable tiene tres etiquetas.
+const SECOND_LEVELS = new Set(["com", "co", "net", "org", "gob", "gov", "edu", "ac", "mil", "nom"]);
+// Hosting compartido: cualquiera registra un subdominio, así que el "dominio" no identifica a nadie (a.herokuapp.com y
+// b.herokuapp.com son de dueños distintos). Ahí se exige el host completo idéntico (o allowedCellHosts).
+const SHARED_HOSTING = new Set(["herokuapp.com", "vercel.app", "github.io", "netlify.app", "pages.dev", "azurewebsites.net", "cloudfront.net", "appspot.com"]);
+
 /**
- * Dominio registrable aproximado (sin lista de sufijos públicos): las dos últimas etiquetas, o tres si la penúltima
- * tiene 2-3 letras (com.ar, co.uk). Una IP o un nombre sin puntos se comparan enteros.
+ * Dominio registrable aproximado (sin lista de sufijos públicos): las dos últimas etiquetas, o tres si la última es un
+ * ccTLD de 2 letras y la penúltima un segundo nivel genérico (calasign.com.ar, calasign.co.uk; api.ibm.com → ibm.com).
+ * Una IP, un nombre sin puntos o un host de hosting compartido se comparan enteros.
  */
 function registrableDomain(hostname: string): string {
   const h = hostname.toLowerCase().replace(/\.$/, "");
   if (h.includes(":") || h.startsWith("[") || /^\d+(\.\d+){3}$/.test(h)) return h;
   const labels = h.split(".");
   if (labels.length <= 2) return h;
-  const n = /^[a-z]{2,3}$/.test(labels[labels.length - 2]) ? 3 : 2;
-  return labels.slice(-n).join(".");
+  const last = labels[labels.length - 1];
+  const pen = labels[labels.length - 2];
+  const n = /^[a-z]{2}$/.test(last) && SECOND_LEVELS.has(pen) ? 3 : 2;
+  const d = labels.slice(-n).join(".");
+  return SHARED_HOSTING.has(d) ? h : d;
 }
 
 function backoff(attempt: number) {

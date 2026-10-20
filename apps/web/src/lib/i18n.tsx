@@ -3,6 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import type { Locale } from "@calasign/shared";
 import { prodEn, prodEs, prodPt, type ProdKey } from "./i18n-productivity";
 import { brandText, useBrandVersion } from "./white-label";
+import { interpolate, pluralize } from "./interpolate";
 
 const es = {
   "app.name": "CalaSign",
@@ -699,20 +700,10 @@ export type TFunc = (key: MessageKey, vars?: Record<string, string | number>) =>
 export type TNFunc = (key: MessageKey, n: number, vars?: Record<string, string | number>) => string;
 
 /**
- * Elige la forma de un texto "uno|otros" (ya con las variables puestas) según Intl.PluralRules del idioma. Un texto
- * sin "|" se devuelve tal cual.
+ * Elige la forma de un texto "uno|otros" CRUDO (antes de interpolar) según Intl.PluralRules del idioma; en es/pt el 0
+ * va en plural. Un texto sin "|" se devuelve tal cual. Implementación en lib/interpolate.ts.
  */
-export function pluralize(locale: Locale, text: string, n: number): string {
-  const parts = text.split("|");
-  if (parts.length < 2) return text;
-  let cat: string;
-  try {
-    cat = new Intl.PluralRules(locale).select(n);
-  } catch {
-    cat = n === 1 ? "one" : "other";
-  }
-  return cat === "one" ? parts[0] : parts[parts.length - 1];
-}
+export { pluralize, interpolate, formatText } from "./interpolate";
 
 /** Número con el formato del idioma de la app (separador de miles y decimales). */
 export function formatNumber(n: number, locale: Locale = activeLocale, opts?: Intl.NumberFormatOptions): string {
@@ -771,15 +762,20 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   const brandV = useBrandVersion();
   const t = useCallback<TFunc>(
     (key, vars) => {
-      let s: string = brandText(locale, key, DICTS[locale][key] ?? DICTS.es[key] ?? key);
-      if (vars) for (const [k, v] of Object.entries(vars)) s = s.replace(`{${k}}`, () => String(v));
-      return s;
+      return interpolate(brandText(locale, key, DICTS[locale][key] ?? DICTS.es[key] ?? key), vars);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [locale, brandV],
   );
 
-  const tn = useCallback<TNFunc>((key, n, vars) => pluralize(locale, t(key, { ...vars, n: formatNumber(n, locale) }), n), [locale, t]);
+  // Plural primero (sobre el texto crudo) y variables después: así {n} se reemplaza en todas sus apariciones y un
+  // valor con "|" no altera la elección de forma.
+  const tn = useCallback<TNFunc>(
+    (key, n, vars) =>
+      interpolate(pluralize(locale, brandText(locale, key, DICTS[locale][key] ?? DICTS.es[key] ?? key), n), { ...vars, n: formatNumber(n, locale) }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [locale, brandV],
+  );
 
   const value = useMemo(() => ({ locale, setLocale, t, tn, explicit }), [locale, setLocale, t, tn, explicit]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

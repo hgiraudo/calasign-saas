@@ -2,20 +2,21 @@ import { PDFDocument } from "pdf-lib";
 import { displayedSize } from "./layout";
 import { viewerDiffersFromPdfLib } from "./revisions";
 import { DecodeBudgetError, structureWithinBudget, withDecodeBudget } from "./stream-budget";
+import { InvalidPdfError } from "./errors";
+import { opensWithoutPassword } from "./encryption";
+import { compressPlainStreams, dropUnreachable, flattenForm, hasSignedSignatureFields, resolveOptionalContent, stripActiveContent } from "./sanitize";
 
-export class InvalidPdfError extends Error {
-  constructor(
-    readonly code: "not_pdf" | "encrypted" | "empty" | "too_many_pages" | "unreadable" | "ambiguous_pdf",
-    message: string,
-  ) {
-    super(message);
-  }
-}
+export { InvalidPdfError, type InvalidPdfCode } from "./errors";
 
 export interface PdfInfo {
   pageCount: number;
   /** Tamaño mostrado de cada página en puntos (CropBox + rotación). */
   pages: { width: number; height: number }[];
+  /**
+   * El archivo subido traía firmas digitales (campos /FT /Sig con valor). preparePdfUpload las elimina al reescribirlo
+   * (la copia guardada y el PDF final no las conservan): conviene avisarle al remitente.
+   */
+  hadSignatures: boolean;
 }
 
 /**
@@ -31,7 +32,7 @@ async function inspectPdfUnbudgeted(bytes: Uint8Array, maxPages: number): Promis
   const doc = await loadChecked(bytes, maxPages);
   // El firmante ve el documento en un lector (por el xref) y el PDF final se arma con pdf-lib: tienen que coincidir.
   if (await viewerDiffersFromPdfLib(bytes, doc)) throw ambiguous();
-  return infoOf(doc);
+  return infoOf(doc, hasSignedSignatureFields(doc));
 }
 
 export interface PreparedPdf {
@@ -52,7 +53,14 @@ export interface PreparedPdf {
  * Consecuencias (las mismas que ya tenía el PDF final, que nunca conservó la estructura del original):
  * - Firmas previas del archivo subido dejan de verificar en la copia guardada (el PDF final tampoco las conservaba).
  * - El hash del archivo guardado no es el del archivo subido: conviene registrar ambos en la evidencia.
- * - Los campos de formulario se conservan con sus apariencias tal como venían (no se regeneran).
+ * - Saneamiento (sanitize.ts), para que lo guardado sea exactamente lo que ve el firmante y lo que se sella:
+ *   - contenido opcional (capas): si alguna está apagada se rechaza (`pdf_hidden_layers`); si todas están encendidas se
+ *     quita /OCProperties (sin él los lectores muestran todo y el marcado /OC no tiene efecto);
+ *   - formularios: se fijan en la página tal como se ven (sin widgets ocultos, apariencia según /AS, regenerada si hay
+ *     NeedAppearances; si no se puede, `pdf_form_unsupported`) y se elimina el /AcroForm (con XFA);
+ *   - contenido activo: acciones que no sean URI/GoTo/Named, /AA, adjuntos, multimedia, JavaScript de documento;
+ *   - los streams sin filtro se comprimen y los objetos que quedaron sueltos se descartan.
+ * - `info.hadSignatures`: el archivo subido traía firmas digitales (se pierden).
  */
 export async function preparePdfUpload(bytes: Uint8Array, maxPages = 500): Promise<PreparedPdf> {
   return budgeted(() => preparePdfUploadUnbudgeted(bytes, maxPages));
@@ -60,6 +68,12 @@ export async function preparePdfUpload(bytes: Uint8Array, maxPages = 500): Promi
 
 async function preparePdfUploadUnbudgeted(bytes: Uint8Array, maxPages: number): Promise<PreparedPdf> {
   const doc = await loadChecked(bytes, maxPages);
+  const hadSignatures = hasSignedSignatureFields(doc);
+  resolveOptionalContent(doc, "upload");
+  await flattenForm(doc, true);
+  stripActiveContent(doc, true);
+  compressPlainStreams(doc);
+  dropUnreachable(doc);
   let out: Uint8Array;
   try {
     out = await doc.save({ useObjectStreams: true, updateFieldAppearances: false, addDefaultPage: false });
@@ -70,7 +84,7 @@ async function preparePdfUploadUnbudgeted(bytes: Uint8Array, maxPages: number): 
   // Se valida lo que se va a guardar, no lo subido: páginas, tamaños y (por las dudas) que ya no sea ambiguo.
   const again = await loadChecked(out, maxPages);
   if (again.getPageCount() !== doc.getPageCount() || (await viewerDiffersFromPdfLib(out, again))) throw ambiguous();
-  return { info: infoOf(again), bytes: out };
+  return { info: infoOf(again, hadSignatures), bytes: out };
 }
 
 async function loadChecked(bytes: Uint8Array, maxPages: number): Promise<PDFDocument> {
@@ -85,10 +99,10 @@ async function loadChecked(bytes: Uint8Array, maxPages: number): Promise<PDFDocu
   } catch (e) {
     if (e instanceof DecodeBudgetError) throw e;
     const msg = String((e as Error).message ?? e);
-    if (/encrypt/i.test(msg)) throw new InvalidPdfError("encrypted", "El PDF está protegido con contraseña");
+    if (/encrypt/i.test(msg)) throw await encryptedError(bytes);
     throw new InvalidPdfError("unreadable", "No se pudo leer el PDF");
   }
-  if (doc.isEncrypted) throw new InvalidPdfError("encrypted", "El PDF está protegido con contraseña");
+  if (doc.isEncrypted) throw await encryptedError(bytes, doc);
   // Un PDF sin catálogo ni árbol de páginas (p. ej. solo el encabezado "%PDF-" y basura) carga sin error, pero
   // getPages() tira un TypeError: era un 500 en vez de un 400.
   let pages: ReturnType<PDFDocument["getPages"]>;
@@ -124,9 +138,26 @@ function ambiguous() {
   );
 }
 
-function infoOf(doc: PDFDocument): PdfInfo {
+/**
+ * PDF cifrado. Si abre sin contraseña (solo restricciones de permisos) el mensaje es otro: no hace falta ninguna
+ * contraseña, alcanza con volver a exportarlo (pdf-lib no descifra, así que no se puede aceptar tal cual).
+ */
+async function encryptedError(bytes: Uint8Array, loaded?: PDFDocument): Promise<InvalidPdfError> {
+  let restricted = false;
+  try {
+    restricted = opensWithoutPassword(loaded ?? (await PDFDocument.load(bytes, { updateMetadata: false, ignoreEncryption: true })));
+  } catch (e) {
+    if (e instanceof DecodeBudgetError) throw e;
+  }
+  return restricted
+    ? new InvalidPdfError("pdf_restricted", "El PDF tiene restricciones de uso (permisos): volvé a exportarlo o imprimilo a PDF y subilo de nuevo.")
+    : new InvalidPdfError("encrypted", "El PDF está protegido con contraseña");
+}
+
+function infoOf(doc: PDFDocument, hadSignatures: boolean): PdfInfo {
   const pages = doc.getPages();
   return {
+    hadSignatures,
     pageCount: pages.length,
     pages: pages.map((p) => {
       const s = displayedSize(p);

@@ -180,7 +180,25 @@ export const ERRORS: Record<string, Err> = {
     code: "not_pdf",
     message: "El archivo no es un PDF",
     summary:
-      "El archivo (subido, en base64 o descargado de `url`) no es un PDF; también un base64 inválido. Mismo código en todas las vías de subida. Otros problemas del PDF: encrypted, empty, too_many_pages, unreadable, ambiguous_pdf (400)",
+      "El archivo (subido, en base64 o descargado de `url`) no es un PDF; también un base64 inválido. Mismo código en todas las vías de subida. Otros problemas del PDF: encrypted, pdf_restricted, empty, too_many_pages, unreadable, ambiguous_pdf, pdf_hidden_layers, pdf_form_unsupported (400)",
+  },
+  pdf_restricted: {
+    status: 400,
+    code: "pdf_restricted",
+    message: "El PDF tiene restricciones de uso (permisos): volvé a exportarlo o imprimilo a PDF y subilo de nuevo.",
+    summary: "PDF cifrado solo con permisos (abre sin contraseña, pero no se puede procesar): volver a exportarlo o imprimirlo a PDF. Con contraseña de apertura el código es encrypted",
+  },
+  pdf_hidden_layers: {
+    status: 400,
+    code: "pdf_hidden_layers",
+    message: "El PDF tiene capas ocultas (contenido opcional apagado): exportalo de nuevo sin capas o imprimilo a PDF y volvé a subirlo.",
+    summary: "El PDF tiene contenido opcional (capas) apagado: el firmante no lo vería y el PDF sellado sí. Exportarlo sin capas o imprimirlo a PDF",
+  },
+  pdf_form_unsupported: {
+    status: 400,
+    code: "pdf_form_unsupported",
+    message: "El PDF tiene un formulario cuyos campos no se pueden fijar tal como se ven: imprimilo a PDF y volvé a subirlo.",
+    summary: "Los campos de formulario del PDF se fijan en la página al subirlo; uno no se pudo dibujar tal como lo muestra un lector (p. ej. NeedAppearances con caracteres que la fuente estándar no tiene). Imprimirlo a PDF",
   },
   unknown_part: {
     status: 400,
@@ -194,7 +212,8 @@ export const ERRORS: Record<string, Err> = {
     status: 400,
     code: "too_many_documents",
     message: "Hasta 10 documentos por llamada",
-    summary: "Más documentos que los admitidos: 10 en POST /v1/envelopes y 30 por sobre o plantilla al agregar uno (también too_many_pages: más de 1000 páginas en total)",
+    details: { max: 10 },
+    summary: "Más documentos que los admitidos (el tope va en details.max): 10 en POST /v1/envelopes y 30 por sobre o plantilla al agregar uno (también too_many_pages: más de 1000 páginas en total)",
   },
   duplicate_document: {
     status: 400,

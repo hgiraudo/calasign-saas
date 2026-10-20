@@ -2,19 +2,16 @@
 // agrega el certificado de finalización y sella con PAdES.
 import { PDFDocument, PDFPage, rgb, type PDFImage } from "pdf-lib";
 import { pdflibAddPlaceholder } from "@signpdf/placeholder-pdf-lib";
-import { SUBFILTER_ETSI_CADES_DETACHED, Signer } from "@signpdf/utils";
-import signpdfModule from "@signpdf/signpdf";
+import { SUBFILTER_ETSI_CADES_DETACHED } from "@signpdf/utils";
 import { buildPadesCms, type CmsOptions } from "./cms";
 import { embedFonts, fitFontSize, safeMultiline, safeText, withDisplayedSpace, wrapText, type Fonts } from "./layout";
 import { labels, type CertLabels } from "./i18n";
 import type { SignatureProvider } from "./provider";
 import { assertPngSize } from "./images";
 import { findLastStartXref } from "./incremental";
+import { newByteRangePlaceholder, signPlaceholder } from "./placeholder";
+import { sanitizeForSealing } from "./sanitize";
 
-// @signpdf/signpdf exporta una instancia por defecto; según el bundler llega anidada.
-const signpdf = ((signpdfModule as unknown as { default?: typeof signpdfModule }).default ?? signpdfModule) as {
-  sign(pdf: Buffer, signer: Signer, signingTime?: Date): Promise<Buffer>;
-};
 
 export type StampFieldType =
   | "signature"
@@ -389,12 +386,7 @@ async function stampDocuments(
   decorate?: (page: PDFPage) => void,
 ) {
   for (let di = 0; di < documents.length; di++) {
-    const src = await PDFDocument.load(documents[di].bytes, { updateMetadata: false });
-    try {
-      src.getForm().flatten();
-    } catch {
-      // Formularios rotos: se copian tal cual.
-    }
+    const src = await loadForSealing(documents[di].bytes);
     const copied = await out.copyPages(src, src.getPageIndices());
     for (let pi = 0; pi < copied.length; pi++) {
       const page = out.addPage(copied[pi]);
@@ -409,9 +401,27 @@ async function stampDocuments(
   }
 }
 
-/** Agrega el diccionario de firma y sella. El PDF se guarda sin object streams para poder ubicar el ByteRange. */
+/**
+ * Un documento (o adjunto PDF) a copiar en el PDF final, saneado como en la subida (preparePdfUpload): los originales
+ * guardados antes de ese saneamiento pueden traer formularios, capas o contenido activo. Con capas apagadas el sellado
+ * falla (InvalidPdfError pdf_hidden_layers): el PDF final las mostraría y el firmante no las vio.
+ */
+async function loadForSealing(bytes: Uint8Array): Promise<PDFDocument> {
+  const src = await PDFDocument.load(bytes, { updateMetadata: false });
+  await sanitizeForSealing(src);
+  return src;
+}
+
+/**
+ * Agrega el diccionario de firma y sella. El PDF se guarda sin object streams para poder ubicar el ByteRange. El
+ * placeholder del ByteRange lleva un nombre aleatorio: un `/ByteRange [0 /********** ...]` literal en el contenido de un
+ * documento subido no se confunde con el nuestro (con el nombre por defecto, @signpdf encontraba dos y el sellado del
+ * sobre fallaba para siempre).
+ */
 export async function sealPdfDocument(doc: PDFDocument, seal: SealOptions): Promise<Uint8Array> {
+  const byteRangePlaceholder = newByteRangePlaceholder();
   pdflibAddPlaceholder({
+    byteRangePlaceholder,
     pdfDoc: doc,
     reason: seal.reason ?? "Sello de integridad CalaSign",
     contactInfo: seal.contactInfo ?? "https://calasign.com",
@@ -421,27 +431,15 @@ export async function sealPdfDocument(doc: PDFDocument, seal: SealOptions): Prom
     subFilter: SUBFILTER_ETSI_CADES_DETACHED,
     widgetRect: [0, 0, 0, 0],
   });
-  const unsigned = Buffer.from(await doc.save({ useObjectStreams: false }));
-
-  class PadesSigner extends Signer {
-    async sign(content: Buffer): Promise<Buffer> {
-      return Buffer.from(await buildPadesCms(new Uint8Array(content), seal.provider, seal));
-    }
-  }
-  const signed = await signpdf.sign(unsigned, new PadesSigner());
-  return new Uint8Array(signed);
+  const unsigned = await doc.save({ useObjectStreams: false });
+  return signPlaceholder(unsigned, byteRangePlaceholder, 0, (content) => buildPadesCms(content, seal.provider, seal));
 }
 
 /** Agrega un adjunto: páginas del PDF o la imagen en una página A4, con un rótulo arriba. */
 async function appendAttachment(out: PDFDocument, fonts: Fonts, L: CertLabels, a: FinalizeAttachment, envelopeId: string) {
   const caption = safeText(fonts.regular, `${L.attachment}: ${a.name} — ${L.uploadedBy} ${a.recipientName}`);
   if (a.contentType === "application/pdf") {
-    const src = await PDFDocument.load(a.bytes, { updateMetadata: false });
-    try {
-      src.getForm().flatten();
-    } catch {
-      // se copia tal cual
-    }
+    const src = await loadForSealing(a.bytes);
     const copied = await out.copyPages(src, src.getPageIndices());
     for (const p of copied) {
       const page = out.addPage(p);

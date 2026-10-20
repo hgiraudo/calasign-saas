@@ -3,12 +3,8 @@
 // tocan, así que las firmas anteriores siguen siendo válidas. Es la base de B-LT (DSS), B-LTA (sello de
 // documento) y de una segunda firma (sello de empresa).
 import { PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFObject, PDFRawStream, PDFRef, PDFString, decodePDFRawStream } from "pdf-lib";
-import { DEFAULT_BYTE_RANGE_PLACEHOLDER, SUBFILTER_ETSI_CADES_DETACHED, Signer } from "@signpdf/utils";
-import signpdfModule from "@signpdf/signpdf";
-
-const signpdf = ((signpdfModule as unknown as { default?: typeof signpdfModule }).default ?? signpdfModule) as {
-  sign(pdf: Buffer, signer: Signer, signingTime?: Date): Promise<Buffer>;
-};
+import { SUBFILTER_ETSI_CADES_DETACHED } from "@signpdf/utils";
+import { newByteRangePlaceholder, signPlaceholder } from "./placeholder";
 
 export const SUBFILTER_RFC3161 = "ETSI.RFC3161";
 
@@ -140,23 +136,28 @@ export interface IncrementalSignatureOptions {
 
 /** Agrega una firma (o un sello de documento) como revisión incremental, sin alterar las anteriores. */
 export async function addSignatureIncremental(pdf: Uint8Array, o: IncrementalSignatureOptions): Promise<Uint8Array> {
-  const unsigned = Buffer.from(await buildSignaturePlaceholderIncremental(pdf, o));
-  class FnSigner extends Signer {
-    async sign(content: Buffer): Promise<Buffer> {
-      return Buffer.from(await o.sign(new Uint8Array(content)));
-    }
-  }
-  return new Uint8Array(await signpdf.sign(unsigned, new FnSigner()));
+  const p = await buildSignaturePlaceholderIncremental(pdf, o);
+  return signPlaceholder(p.pdf, p.placeholder, p.from, o.sign);
+}
+
+export interface IncrementalPlaceholder {
+  /** El PDF con la revisión nueva (ByteRange y Contents vacíos). */
+  pdf: Uint8Array;
+  /** Nombre aleatorio del placeholder del ByteRange (ver placeholder.ts). */
+  placeholder: string;
+  /** Dónde empieza la revisión nueva: el placeholder se busca solo desde ahí. */
+  from: number;
 }
 
 /**
  * Revisión incremental con el campo de firma y el placeholder (ByteRange y Contents vacíos), sin firmar.
  * Base de la firma en dos pasos (firma remota: el firmante firma un hash en su dispositivo).
  */
-export async function buildSignaturePlaceholderIncremental(pdf: Uint8Array, o: Omit<IncrementalSignatureOptions, "sign">): Promise<Uint8Array> {
+export async function buildSignaturePlaceholderIncremental(pdf: Uint8Array, o: Omit<IncrementalSignatureOptions, "sign">): Promise<IncrementalPlaceholder> {
   const u = await IncrementalUpdate.open(pdf);
   const ctx = u.context;
-  const byteRange = ctx.obj([0, PDFName.of(DEFAULT_BYTE_RANGE_PLACEHOLDER), PDFName.of(DEFAULT_BYTE_RANGE_PLACEHOLDER), PDFName.of(DEFAULT_BYTE_RANGE_PLACEHOLDER)]);
+  const placeholder = newByteRangePlaceholder();
+  const byteRange = ctx.obj([0, PDFName.of(placeholder), PDFName.of(placeholder), PDFName.of(placeholder)]);
   const sigFields: Record<string, PDFObject> = {
     Type: PDFName.of(o.type),
     Filter: PDFName.of("Adobe.PPKLite"),
@@ -211,7 +212,7 @@ export async function buildSignaturePlaceholderIncremental(pdf: Uint8Array, o: O
     u.touch(u.catalogRef);
   }
 
-  return u.serialize();
+  return { pdf: u.serialize(), placeholder, from: pdf.length };
 }
 
 /** Material de validación para el diccionario DSS (DER). */

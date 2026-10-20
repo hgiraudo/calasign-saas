@@ -4,8 +4,8 @@
 //   2. completeExternalSignature: se verifica la firma contra el certificado, se arma el CMS (con sello de
 //      tiempo si hay TSA) y se inserta en el placeholder. Las firmas anteriores del PDF no se tocan.
 import { X509Certificate, createHash, verify as cryptoVerify } from "node:crypto";
-import { findByteRange } from "@signpdf/utils";
 import { buildSignaturePlaceholderIncremental } from "./incremental";
+import { fillByteRange } from "./placeholder";
 import { assembleCms, buildSignedAttributes, type CmsOptions, type CmsSignatureAlgorithm } from "./cms";
 
 export interface PrepareExternalOptions {
@@ -55,20 +55,8 @@ export async function prepareExternalSignature(pdf: Uint8Array, chainDer: Uint8A
     location: o.location,
     signatureLength: o.signatureLength ?? 32_000,
   });
-  // Igual que @signpdf/signpdf: sin salto final, ByteRange real en lugar del placeholder.
-  let buf = Buffer.from(withPlaceholder);
-  while (buf.length && (buf[buf.length - 1] === 0x0a || buf[buf.length - 1] === 0x0d)) buf = buf.subarray(0, buf.length - 1);
-  const { byteRangePlaceholder, byteRangePlaceholderPosition } = findByteRange(buf);
-  if (!byteRangePlaceholder || byteRangePlaceholderPosition === undefined) throw new Error("no se encontró el placeholder del ByteRange");
-  const byteRangeEnd = byteRangePlaceholderPosition + byteRangePlaceholder.length;
-  const contentsTagPos = buf.indexOf("/Contents ", byteRangeEnd);
-  const placeholderPos = buf.indexOf("<", contentsTagPos);
-  const placeholderEnd = buf.indexOf(">", placeholderPos);
-  const br: [number, number, number, number] = [0, placeholderPos, placeholderEnd + 1, 0];
-  br[3] = buf.length - br[2];
-  let actual = `/ByteRange [${br.join(" ")}]`;
-  actual += " ".repeat(byteRangePlaceholder.length - actual.length);
-  buf = Buffer.concat([buf.subarray(0, byteRangePlaceholderPosition), Buffer.from(actual), buf.subarray(byteRangeEnd)]);
+  // Sin salto final, ByteRange real en lugar del placeholder (buscado solo en la revisión nueva: ver placeholder.ts).
+  const { pdf: buf, byteRange: br } = fillByteRange(withPlaceholder.pdf, withPlaceholder.placeholder, withPlaceholder.from);
   const content = Buffer.concat([buf.subarray(0, br[1]), buf.subarray(br[2], br[2] + br[3])]);
   const signedAttrsDer = buildSignedAttributes(sha256(content), chainDer);
   return {

@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { PdfValidationResponse, PublicBrandTheme, VerifyResponse } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
-import { formatDateTime, useI18n } from "../lib/i18n";
+import { formatDateTime, interpolate, useI18n } from "../lib/i18n";
 import { useSignerText } from "../lib/i18n-signer";
 import { ErrorBox, LocaleSwitcher, Logo, Spinner } from "../components/ui";
 import { ValidationReportView } from "../components/EvidenceExtras";
@@ -123,9 +123,7 @@ export function VerifyPage() {
             <p className="muted">{result.match ? (broken ? sx("verify.brokenText") : sx("verify.matchText")) : sx("verify.noMatchText")}</p>
             {result.match && result.version && !result.version.isLatest && (
               <p className="notice" role="status" data-testid="verify-older-version">
-                {sx("verify.olderVersion")
-                  .replace("{n}", String(result.version.number))
-                  .replace("{latest}", String(result.version.latest))}
+                {interpolate(sx("verify.olderVersion"), { n: result.version.number, latest: result.version.latest })}
               </p>
             )}
             {result.match && result.envelope && (

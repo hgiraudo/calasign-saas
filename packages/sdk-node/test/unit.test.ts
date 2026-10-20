@@ -393,6 +393,24 @@ describe("celdas (421 wrong_cell) y 503 no reintentables", () => {
     const cs3 = new CalaSign({ apiKey: "k", baseUrl: "https://api.calasign.com.ar", fetch: g2.fn });
     await expect(cs3.envelopes.get("e1")).rejects.toMatchObject({ code: "wrong_cell" });
     expect(g2.calls).toHaveLength(1);
+    // Tres etiquetas solo con ccTLD + segundo nivel genérico: api.ibm.com → ibm.com (antes "api.ibm.com" por "ibm" de 3 letras).
+    const ibm = fakeFetch([wrongCell("https://eu.ibm.com"), json(200, { envelope: { id: "e1" } })]);
+    const csIbm = new CalaSign({ apiKey: "k", baseUrl: "https://api.ibm.com", fetch: ibm.fn });
+    await csIbm.envelopes.get("e1");
+    expect(csIbm.baseUrl).toBe("https://eu.ibm.com");
+    const uk = fakeFetch([wrongCell("https://eu.calasign.co.uk"), json(200, { envelope: { id: "e1" } })]);
+    const csUk = new CalaSign({ apiKey: "k", baseUrl: "https://api.calasign.co.uk", fetch: uk.fn });
+    await csUk.envelopes.get("e1");
+    expect(csUk.baseUrl).toBe("https://eu.calasign.co.uk");
+    // Hosting compartido: b.herokuapp.com no es "el mismo dominio" que a.herokuapp.com; solo con allowedCellHosts.
+    const hk = fakeFetch([wrongCell("https://b.herokuapp.com")]);
+    const csHk = new CalaSign({ apiKey: "k", baseUrl: "https://a.herokuapp.com", fetch: hk.fn });
+    await expect(csHk.envelopes.get("e1")).rejects.toMatchObject({ code: "wrong_cell", cellBaseUrl: "https://b.herokuapp.com" });
+    expect(hk.calls).toHaveLength(1);
+    const hk2 = fakeFetch([wrongCell("https://b.herokuapp.com"), json(200, { envelope: { id: "e1" } })]);
+    const csHk2 = new CalaSign({ apiKey: "k", baseUrl: "https://a.herokuapp.com", fetch: hk2.fn, allowedCellHosts: ["b.herokuapp.com"] });
+    await csHk2.envelopes.get("e1");
+    expect(csHk2.baseUrl).toBe("https://b.herokuapp.com");
     // allowedCellHosts habilita otro dominio, también para el pedido de token OAuth.
     const h = fakeFetch([
       json(200, { access_token: "t1", expires_in: 3600 }),

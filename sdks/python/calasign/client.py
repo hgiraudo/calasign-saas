@@ -7,6 +7,7 @@ import http.client
 import json
 import math
 import random
+import re
 import threading
 import time
 import urllib.error
@@ -834,18 +835,33 @@ def _cell_redirect(body: Dict[str, Any], current: str) -> Optional[str]:
     return None if nxt == current else nxt
 
 
+# Segundos niveles genéricos bajo un ccTLD (com.ar, co.uk, gob.ar…): ahí el dominio registrable tiene tres etiquetas.
+_SECOND_LEVELS = frozenset({"com", "co", "net", "org", "gob", "gov", "edu", "ac", "mil", "nom"})
+# Hosting compartido: cualquiera registra un subdominio (a.herokuapp.com y b.herokuapp.com son de dueños distintos).
+# Ahí se exige el host completo idéntico (o allowed_cell_hosts).
+_SHARED_HOSTING = frozenset(
+    {"herokuapp.com", "vercel.app", "github.io", "netlify.app", "pages.dev", "azurewebsites.net", "cloudfront.net", "appspot.com"}
+)
+_IPV4_RE = re.compile(r"^[0-9]+(\.[0-9]+){3}$")
+_CCTLD_RE = re.compile(r"^[a-z]{2}$")
+
+
 def _registrable_domain(hostname: str) -> str:
-    """Dominio registrable aproximado (sin lista de sufijos públicos): las dos últimas etiquetas, o tres si la penúltima
-    tiene 2-3 letras (com.ar, co.uk). Una IP o un nombre sin puntos se comparan enteros."""
-    h = hostname.lower().rstrip(".")
-    if ":" in h or all(p.isdigit() for p in h.split(".")):
+    """Dominio registrable aproximado (sin lista de sufijos públicos): las dos últimas etiquetas, o tres si la última es
+    un ccTLD de 2 letras y la penúltima un segundo nivel genérico (calasign.com.ar, calasign.co.uk; api.ibm.com →
+    ibm.com). Una IP, un nombre sin puntos o un host de hosting compartido se comparan enteros. Mismo criterio (ASCII)
+    que el SDK de Node."""
+    h = hostname.lower()
+    if h.endswith("."):
+        h = h[:-1]
+    if ":" in h or h.startswith("[") or _IPV4_RE.fullmatch(h):
         return h
     labels = h.split(".")
     if len(labels) <= 2:
         return h
-    pen = labels[-2]
-    n = 3 if 2 <= len(pen) <= 3 and pen.isalpha() else 2
-    return ".".join(labels[-n:])
+    n = 3 if _CCTLD_RE.fullmatch(labels[-1]) and labels[-2] in _SECOND_LEVELS else 2
+    d = ".".join(labels[-n:])
+    return h if d in _SHARED_HOSTING else d
 
 
 def _retry_delay(attempt: int, retry_after: Optional[str]) -> float:

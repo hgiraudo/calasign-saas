@@ -81,21 +81,33 @@ function isInvisibleWidget(ctx: PDFContext, annot: PDFDict): boolean {
 }
 
 /**
- * Huella de lo que, a nivel de documento, cambia lo que se muestra sin tocar las páginas: capas opcionales (OCProperties
- * decide qué contenido se ve), acciones al abrir (OpenAction/AA), JavaScript de documento, y en AcroForm XFA (reemplaza
- * la vista entera) y NeedAppearances (regenera las apariencias de los campos). Las revisiones legítimas (DSS, firmas y
- * sellos) solo tocan /DSS y AcroForm /Fields y /SigFlags.
+ * Huella del catálogo (lo que, a nivel de documento, decide qué y cómo se muestra sin tocar las páginas), por lista
+ * blanca: se compara el catálogo canónico completo salvo lo que una firma o una renovación legítima agrega —/DSS (LTV),
+ * /Perms y, del /AcroForm, /Fields y /SigFlags (cada firma y sello de documento suma su campo)—. Las páginas (/Pages) se
+ * comparan aparte (pageFingerprints). Cualquier otra diferencia cuenta como cambio de contenido: capas (/OCProperties),
+ * acciones (/OpenAction, /AA), /Names (adjuntos /EmbeddedFiles, /JavaScript, destinos), portafolio (/Collection),
+ * /PageMode, metadatos, y del /AcroForm XFA, NeedAppearances, /DR, /DA…
+ * Lo que agrega la plataforma (sello PAdES, sello de empresa, firma con certificado propio, DSS de B-LT y sello de
+ * documento de B-LTA) solo toca /DSS y /AcroForm /Fields y /SigFlags (incremental.ts).
  */
+const CATALOG_EVIDENCE_KEYS = new Set(["Pages", "DSS", "Perms", "AcroForm"]);
+const ACROFORM_EVIDENCE_KEYS = new Set(["Fields", "SigFlags"]);
+
 function documentFingerprint(doc: PDFDocument): string {
   const ctx = doc.context;
   const canon = new Canon(ctx);
   const cat = doc.catalog;
-  const parts = ["OCProperties", "OpenAction", "AA"].map((k) => `${k}=${canon.of(cat.get(PDFName.of(k)))}`);
-  const names = lookupDict(ctx, cat.get(PDFName.of("Names")));
-  parts.push(`JavaScript=${canon.of(names?.get(PDFName.of("JavaScript")))}`);
+  const parts: string[] = [];
+  for (const [k, v] of cat.entries()) {
+    const key = k.decodeText();
+    if (!CATALOG_EVIDENCE_KEYS.has(key)) parts.push(`${key}=${canon.of(v)}`);
+  }
   const acro = lookupDict(ctx, cat.get(PDFName.of("AcroForm")));
-  for (const k of ["XFA", "NeedAppearances"]) parts.push(`AcroForm.${k}=${canon.of(acro?.get(PDFName.of(k)))}`);
-  return h(parts.join("|"));
+  for (const [k, v] of acro?.entries() ?? []) {
+    const key = k.decodeText();
+    if (!ACROFORM_EVIDENCE_KEYS.has(key)) parts.push(`AcroForm.${key}=${canon.of(v)}`);
+  }
+  return h(parts.sort().join("|"));
 }
 
 function lookupDict(ctx: PDFContext, o: PDFObject | undefined): PDFDict | undefined {

@@ -488,7 +488,16 @@ function TemplateDocuments({
       {!readOnly && (
       <div className="dropzone">
         <p>{t("edit.dropHint")}</p>
-        <button type="button" className="btn btn-primary" disabled={busy} onClick={() => inputRef.current?.click()}>
+        {/* aria-disabled (no disabled) mientras sube: un botón deshabilitado pierde el foco y el lector de pantalla deja
+            de anunciar el progreso "Subiendo…" que muestra; el clic se ignora. */}
+        <button
+          type="button"
+          className="btn btn-primary"
+          aria-disabled={busy}
+          onClick={() => {
+            if (!busy) inputRef.current?.click();
+          }}
+        >
           {uploading ? `${t("edit.uploading")} ${uploading}` : t("edit.upload")}
         </button>
         <input

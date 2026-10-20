@@ -2,7 +2,7 @@
 import { useState, type FormEvent } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { api, errorText, HttpError } from "../lib/api";
-import { currentLocale, formatNumber, pluralize, useI18n } from "../lib/i18n";
+import { currentLocale, formatNumber, formatText, interpolate, useI18n } from "../lib/i18n";
 import { usePasswordText } from "../lib/i18n-password";
 import { ErrorBox } from "../components/ui";
 import { AuthShell } from "./Auth";
@@ -67,7 +67,7 @@ interface ResetResult {
 
 type PwText = ReturnType<typeof usePasswordText>;
 const countList = (pw: PwText, items: readonly (readonly [Parameters<PwText>[0], number])[]) =>
-  items.filter(([, n]) => n > 0).map(([k, n]) => pluralize(currentLocale(), pw(k).replace("{n}", formatNumber(n)), n));
+  items.filter(([, n]) => n > 0).map(([k, n]) => formatText(currentLocale(), pw(k), { n }, (v) => (typeof v === "number" ? formatNumber(v) : v)));
 
 /** Avisos después de restablecer: lo revocado (si se pidió) y las credenciales creadas que siguen activas, por organización. */
 function resetNotice(r: ResetResult | undefined, pw: PwText): { revoked: string | null; active: string[] } {
@@ -84,7 +84,7 @@ function resetNotice(r: ResetResult | undefined, pw: PwText): { revoked: string 
       return items.length ? `${c.tenantName ?? c.tenantId}: ${items.join(", ")}` : null;
     })
     .filter((x): x is string => Boolean(x));
-  return { revoked: revokedItems.length ? pw("revokedNotice").replace("{items}", revokedItems.join(", ")) : null, active };
+  return { revoked: revokedItems.length ? interpolate(pw("revokedNotice"), { items: revokedItems.join(", ") }) : null, active };
 }
 
 export function ResetPasswordPage() {

@@ -1,6 +1,6 @@
 // Textos de Fase 6 (plataforma de acuerdos): repositorio, documentos, cláusulas, workflows y negociación.
 import { brandText } from "./white-label";
-import { formatNumber, pluralize, useI18n } from "./i18n";
+import { formatNumber, formatText, useI18n } from "./i18n";
 
 const es = {
   "nav.agreements": "Acuerdos",
@@ -912,8 +912,7 @@ export function useAgrText() {
   const { locale } = useI18n();
   const d = DICTS[locale] ?? es;
   return (k: Key, vars?: Record<string, string | number>) => {
-    let s: string = brandText(locale, k, d[k] ?? es[k] ?? k);
-    if (vars) for (const [n, v] of Object.entries(vars)) s = s.replace(`{${n}}`, () => (typeof v === "number" ? formatNumber(v, locale) : String(v)));
-    return typeof vars?.n === "number" ? pluralize(locale, s, vars.n) : s;
+    const s: string = brandText(locale, k, d[k] ?? es[k] ?? k);
+    return formatText(locale, s, vars, (v) => (typeof v === "number" ? formatNumber(v, locale) : String(v)));
   };
 }

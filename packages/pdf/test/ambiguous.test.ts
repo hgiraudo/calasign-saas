@@ -216,7 +216,7 @@ describe("preparePdfUpload: el PDF guardado es el que ve pdf-lib", () => {
     }
   });
 
-  it("conserva texto, tamaño de página, rotación y campos de formulario de un PDF normal", async () => {
+  it("conserva texto, tamaño de página y rotación de un PDF normal; los campos de formulario quedan fijos en la página", async () => {
     const doc = await PDFDocument.create();
     const font = await doc.embedFont(StandardFonts.Helvetica);
     const p = doc.addPage([612, 792]);
@@ -228,9 +228,10 @@ describe("preparePdfUpload: el PDF guardado es el que ve pdf-lib", () => {
     const original = await doc.save();
     const prepared = await preparePdfUpload(original);
     expect(prepared.info).toEqual(await inspectPdf(original));
-    expect((await extractPdfPlainText(prepared.bytes)).text).toBe((await extractPdfPlainText(original)).text);
+    // El formulario se aplana (sanitize.ts): el valor del campo pasa a ser texto de la página, como lo ve el lector.
+    expect((await extractPdfPlainText(prepared.bytes)).text).toBe("Contrato de serviciosACME S.A.");
     const again = await PDFDocument.load(prepared.bytes);
-    expect(again.getForm().getTextField("cliente").getText()).toBe("ACME S.A.");
+    expect(again.getForm().getFields()).toHaveLength(0);
     expect(again.getPages()[0].getRotation().angle).toBe(90);
   });
 

@@ -45,8 +45,8 @@ Paso a paso (sobre que se arma de a poco): `uploadDocument`, `setRecipients`, `s
   `details.baseUrl` (y header `Location`). El SDK repite el pedido una sola vez contra esa URL (es seguro: la API no lo
   procesó) y la usa en los pedidos siguientes, también para pedir el token OAuth (`cs.baseUrl` refleja la actual). Como
   la credencial viaja a esa URL, solo la sigue si su host comparte el dominio registrable con la `baseUrl` inicial
-  (`eu.calasign.com` desde `dev.calasign.com`; con sufijos de dos niveles como `com.ar` o `co.uk` se comparan tres
-  etiquetas) o está en `allowedCellHosts: ["host", "host:puerto"]`; con `followCellRedirects: false` no la sigue nunca.
+  (`eu.calasign.com` desde `dev.calasign.com`; con sufijos de dos niveles como `com.ar` o `co.uk` se comparan tres etiquetas; en hosting
+  compartido como `herokuapp.com`, `vercel.app` o `github.io`, el host completo) o está en `allowedCellHosts: ["host", "host:puerto"]`; con `followCellRedirects: false` no la sigue nunca.
   Si no puede (no permitida, sin `baseUrl`, de https a http o la otra celda también responde 421), lanza el
   `CalaSignError` con `err.cellBaseUrl`.
 - **Idempotencia**: `envelopes.create`, `envelopes.createAndSend`, `envelopes.fromTemplate` y `envelopes.send` mandan `Idempotency-Key` automática

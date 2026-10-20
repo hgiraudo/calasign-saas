@@ -149,6 +149,13 @@ export function FieldEditor({ envelopeId, documents, signers, fields, onChange, 
     if (!signers.find((s) => s.id === activeRecipient)) setActiveRecipient(signers[0]?.id ?? "");
   }, [signers, activeRecipient]);
 
+  // Se borró el documento (o la página) elegido para "Agregar a la página": se vuelve a proponer la más visible, así el
+  // selector y el botón muestran una página que existe.
+  useEffect(() => {
+    if (tool && placeAt && !isPageTarget(placeAt)) setPlaceAt(mostVisiblePage());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [documents, tool, placeAt]);
+
   const colorOf = useCallback(
     (recipientId: string) => {
       const i = signers.findIndex((s) => s.id === recipientId);
@@ -241,16 +248,38 @@ export function FieldEditor({ envelopeId, documents, signers, fields, onChange, 
     return f.id;
   };
 
+  /**
+   * Parte de la ventana donde se ve el documento: sin la barra superior fija (.topbar, sticky arriba) ni la barra de
+   * pasos del asistente (.wizard-nav, sticky abajo), que tapan lo que queda debajo de ellas.
+   */
+  const visibleArea = () => {
+    let top = 0;
+    let bottom = window.innerHeight;
+    const bar = document.querySelector<HTMLElement>(".topbar")?.getBoundingClientRect();
+    if (bar && bar.bottom > top && bar.top <= 0) top = bar.bottom;
+    const nav = document.querySelector<HTMLElement>(".wizard-nav")?.getBoundingClientRect();
+    if (nav && nav.top < bottom && nav.top > top) bottom = nav.top;
+    return { top, bottom, left: 0, right: window.innerWidth };
+  };
+
+  /** ¿`documentId:índice` es una página de los documentos actuales? (un documento borrado deja un valor viejo). */
+  const isPageTarget = (target: string): boolean => {
+    const i = target.lastIndexOf(":");
+    const doc = documents.find((d) => d.id === target.slice(0, i));
+    return Boolean(doc?.pages[Number(target.slice(i + 1))]);
+  };
+
   /** La página con más superficie a la vista (para proponerla al agregar un campo con el teclado). */
   const mostVisiblePage = (): string => {
     let best = "";
     let bestArea = -1;
+    const v = visibleArea();
     for (const el of Array.from(document.querySelectorAll<HTMLElement>(".editor-docs .pdf-page"))) {
       const docId = el.closest<HTMLElement>(".doc-view")?.dataset.document;
       if (!docId) continue;
       const r = el.getBoundingClientRect();
-      const h = Math.max(0, Math.min(r.bottom, window.innerHeight) - Math.max(r.top, 0));
-      const w = Math.max(0, Math.min(r.right, window.innerWidth) - Math.max(r.left, 0));
+      const h = Math.max(0, Math.min(r.bottom, v.bottom) - Math.max(r.top, v.top));
+      const w = Math.max(0, Math.min(r.right, v.right) - Math.max(r.left, v.left));
       if (h * w > bestArea) {
         bestArea = h * w;
         best = `${docId}:${el.dataset.page ?? "0"}`;
@@ -262,7 +291,8 @@ export function FieldEditor({ envelopeId, documents, signers, fields, onChange, 
   /** Teclado: pone el campo de la herramienta activa en el centro de la parte visible de la página elegida. */
   const placeByKeyboard = () => {
     if (!tool) return;
-    const target = placeAt || mostVisiblePage();
+    // Si la página elegida ya no existe (se borró su documento), la más visible: el botón nunca queda sin efecto.
+    const target = isPageTarget(placeAt) ? placeAt : mostVisiblePage();
     const i = target.lastIndexOf(":");
     const doc = documents.find((d) => d.id === target.slice(0, i));
     const page = Number(target.slice(i + 1));
@@ -272,10 +302,11 @@ export function FieldEditor({ envelopeId, documents, signers, fields, onChange, 
     const el = document.querySelector<HTMLElement>(`.editor-docs .doc-view[data-document="${CSS.escape(doc.id)}"] .pdf-page[data-page="${page}"]`);
     if (el) {
       const r = el.getBoundingClientRect();
-      const top = Math.max(r.top, 0);
-      const bottom = Math.min(r.bottom, window.innerHeight);
-      const left = Math.max(r.left, 0);
-      const right = Math.min(r.right, window.innerWidth);
+      const v = visibleArea();
+      const top = Math.max(r.top, v.top);
+      const bottom = Math.min(r.bottom, v.bottom);
+      const left = Math.max(r.left, v.left);
+      const right = Math.min(r.right, v.right);
       if (bottom > top && right > left && r.height > 0 && r.width > 0) {
         relY = ((top + bottom) / 2 - r.top) / r.height;
         relX = ((left + right) / 2 - r.left) / r.width;

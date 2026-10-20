@@ -1,4 +1,5 @@
 // Textos de la firma con certificado propio (Firmador CalaSign). Diccionario propio para no tocar lib/i18n.tsx.
+import { interpolate } from "./interpolate";
 import { brandText } from "./white-label";
 import { useI18n } from "./i18n";
 
@@ -155,8 +156,7 @@ export function useCertsignText() {
   const { locale } = useI18n();
   const d = (DICTS as Record<string, Record<Key, string>>)[locale] ?? es;
   return (k: Key, vars?: Record<string, string | number>) => {
-    let s = brandText(locale, k, d[k] ?? es[k]);
-    if (vars) for (const [name, v] of Object.entries(vars)) s = s.split(`{${name}}`).join(String(v));
-    return s;
+    const s = brandText(locale, k, d[k] ?? es[k]);
+    return interpolate(s, vars);
   };
 }

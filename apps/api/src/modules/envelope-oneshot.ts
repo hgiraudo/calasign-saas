@@ -146,7 +146,7 @@ async function createEnvelope(
 
   // ── Documentos: se obtienen y normalizan todos antes de guardar nada.
   const docInputs = input.documents ?? [...files.keys()].map((file) => ({ file }) as { file: string; ref?: string; name?: string; base64?: string; url?: string });
-  if (docInputs.length > ONE_SHOT_MAX_DOCUMENTS) throw badRequest("too_many_documents", `Hasta ${ONE_SHOT_MAX_DOCUMENTS} documentos por llamada`);
+  if (docInputs.length > ONE_SHOT_MAX_DOCUMENTS) throw badRequest("too_many_documents", `Hasta ${ONE_SHOT_MAX_DOCUMENTS} documentos por llamada`, { max: ONE_SHOT_MAX_DOCUMENTS });
   const used = new Set<string>();
   const docs: (PreparedPdfDocument & { ref?: string })[] = [];
   let total = 0;

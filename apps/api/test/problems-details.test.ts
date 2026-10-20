@@ -47,6 +47,12 @@ describe("details.issues con código y parámetros", () => {
     expect(p.message).toContain("a través de la fórmula");
   });
 
+  it("formula_missing_ref sin nombre de campo: sin params.field (la consola usa el message)", () => {
+    const [p] = danglingFormulaProblems([{ type: "number", label: null, formula: "{Monto}" }]);
+    expect(p.params).toEqual({ refs: "{Monto}" });
+    expect(p.message).toBe('La fórmula de un campo cita {Monto}, que ya no está en el sobre');
+  });
+
   it("formula_missing_ref y envelope_incomplete", () => {
     const problems = [
       ...danglingFormulaProblems([{ type: "number", label: "Total", formula: "{Monto} + {Iva}" }]),

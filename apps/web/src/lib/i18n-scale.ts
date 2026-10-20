@@ -160,7 +160,6 @@ const es = {
   "pub.notFound": "No encontramos este formulario.",
   "pub.err.formToken": "El formulario venció. Volvé a tocar Continuar: tus datos siguen cargados.",
   "pub.err.tooFast": "Esperá unos segundos y volvé a tocar Continuar.",
-  "pub.poweredBy": "Firma electrónica con CalaSign",
 } as const;
 
 type Key = keyof typeof es;
@@ -314,7 +313,6 @@ const pt: Record<Key, string> = {
   "pub.notFound": "Não encontramos este formulário.",
   "pub.err.formToken": "O formulário expirou. Toque em Continuar novamente: seus dados continuam preenchidos.",
   "pub.err.tooFast": "Aguarde alguns segundos e toque em Continuar novamente.",
-  "pub.poweredBy": "Assinatura eletrônica com CalaSign",
 };
 
 const en: Record<Key, string> = {
@@ -466,7 +464,6 @@ const en: Record<Key, string> = {
   "pub.notFound": "We couldn't find this form.",
   "pub.err.formToken": "The form expired. Tap Continue again: your details are still filled in.",
   "pub.err.tooFast": "Wait a few seconds and tap Continue again.",
-  "pub.poweredBy": "Electronic signature by CalaSign",
 };
 
 const DICTS: Record<string, Record<Key, string>> = { es, "pt-BR": pt, en };

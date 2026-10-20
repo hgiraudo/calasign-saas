@@ -6,6 +6,7 @@ import { currentLocale, formatNumber, formatText, interpolate, useI18n } from ".
 import { usePasswordText } from "../lib/i18n-password";
 import { ErrorBox } from "../components/ui";
 import { AuthShell } from "./Auth";
+import { useAuth } from "../lib/auth";
 
 export function ForgotPasswordPage() {
   const { t } = useI18n();
@@ -91,6 +92,7 @@ export function ResetPasswordPage() {
   const { t } = useI18n();
   const pw = usePasswordText();
   const { token = "" } = useParams();
+  const { setMe } = useAuth();
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
@@ -111,6 +113,9 @@ export function ResetPasswordPage() {
     try {
       const r = await api<ResetResult | undefined>("/v1/auth/password/reset", { method: "POST", body: { token, password, revokeCreatedCredentials: revokeCreated } });
       setNotice(resetNotice(r, pw));
+      // El restablecimiento cierra las sesiones: la de esta pestaña (si había) ya no vale, y la app no debe seguir
+      // mostrándose como con sesión iniciada.
+      setMe(null);
       setDone(true);
     } catch (err) {
       if (err instanceof HttpError && err.status === 400 && err.code === "invalid_token") setInvalid(true);

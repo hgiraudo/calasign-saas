@@ -35,7 +35,7 @@ import { sendPdf } from "../envelopes";
 import { discardBlobsOnFailure } from "../file-cleanup";
 import { getPath, setPath } from "./common";
 import { enqueueNegotiationNotice, enqueueProposalNotice } from "./notices";
-import { agreementMetaFromMapping, createEnvelopeFromPdf, insertFileRow, loadClauseMap, loadDocTemplate, renderDocument, storeGeneratedPdf } from "./documents";
+import { agreementMetaFromMapping, createEnvelopeFromPdf, insertFileRow, loadClauseMap, loadDocTemplate, renderDocument, renderTemplateCompat, storeGeneratedPdf } from "./documents";
 import { ownerProblem } from "../owner-check";
 
 // ───────────────────────────── Render de una versión ─────────────────────────────
@@ -108,7 +108,8 @@ function clausesFor(n: any): Record<string, string> {
 
 function renderNegotiation(n: any, data = n.data, overrides = n.clause_overrides): { blocks: ResolvedBlock[]; text: string } {
   if (n.source === "pdf") return { blocks: [], text: "" };
-  const r = renderTemplate(n.template_source, data, { clauses: { ...(n.clause_snapshot ?? {}), ...(overrides ?? {}) }, locale: n.template_locale, missing: "placeholder" });
+  // Copia de cláusulas guardada: modo compatible si trae ciclos de antes de validar el grafo (ver renderTemplateCompat).
+  const r = renderTemplateCompat(n.template_source, data, { clauses: { ...(n.clause_snapshot ?? {}), ...(overrides ?? {}) }, locale: n.template_locale, missing: "placeholder" });
   return { blocks: r.blocks, text: blocksToText(r.blocks) };
 }
 
@@ -439,7 +440,7 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
       const f = await s.db.one<any>(`SELECT storage_key FROM files WHERE id = $1`, [n.file_id]);
       return s.blobs.get(f.storage_key);
     }
-    return (await renderDocument(s.db, n.tenant_id, { source: n.template_source, data: n.data, locale: n.template_locale, title: n.title, clauses: clausesFor(n) })).pdf;
+    return (await renderDocument(s.db, n.tenant_id, { source: n.template_source, data: n.data, locale: n.template_locale, title: n.title, clauses: clausesFor(n), legacyClauseFallback: true })).pdf;
   }
 
   // Edición directa del remitente (cambia datos o el texto de una cláusula): versión nueva.
@@ -566,7 +567,7 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
     let marks: any[] = [];
     let finalPdf: Uint8Array;
     if (n.source === "template") {
-      const doc = await renderDocument(s.db, n.tenant_id, { source: n.template_source, data: n.data, locale: n.template_locale, title: n.title, clauses: clausesFor(n) });
+      const doc = await renderDocument(s.db, n.tenant_id, { source: n.template_source, data: n.data, locale: n.template_locale, title: n.title, clauses: clausesFor(n), legacyClauseFallback: true });
       // Como al generar un documento: una cláusula que cita la plantilla y no existe se omitía en silencio y el sobre
       // salía a firmar sin ese texto.
       if (doc.missingClauses.length)
@@ -703,7 +704,9 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
     await s.db.tx(async (t) => {
       const locked = await t.one<any>(`SELECT status, current_version FROM negotiations WHERE id = $1 FOR UPDATE`, [n.id]);
       if (locked?.status !== "open") throw conflict("closed", "La negociación ya está cerrada");
-      if (locked.current_version !== n.current_version) throw conflict("version_changed", "Hay una versión nueva: revisala y volvé a comentar");
+      if (locked.current_version !== n.current_version || (input.expectedVersion != null && locked.current_version !== input.expectedVersion)) {
+        throw conflict("version_changed", "Hay una versión nueva: revisala y volvé a comentar");
+      }
       await assertCommentCapacity(t, n.id, { type: "participant", id: p.id });
       await t.query(
         `INSERT INTO negotiation_comments (id, negotiation_id, version, author_type, author_id, author_name, quote, start_offset, end_offset, body)
@@ -721,6 +724,10 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
     if (n.status !== "open") throw conflict("closed", "La negociación ya está cerrada");
     if (!p.can_propose) throw forbidden("Podés comentar, pero no proponer cambios en esta negociación");
     if (n.source === "pdf") throw conflict("pdf_source", "En un PDF subido solo se puede comentar");
+    // Antes de validar la clave y el valor contra el documento: con una versión vieja, el error útil es version_changed.
+    if (input.expectedVersion != null && input.expectedVersion !== n.current_version) {
+      throw conflict("version_changed", "Hay una versión nueva: revisala y volvé a proponer");
+    }
     let old: string;
     if (input.kind === "variable") {
       if (!negotiableVariables(n).includes(input.key)) throw badRequest("not_negotiable", `«${input.key}» no se puede negociar`);
@@ -742,7 +749,9 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
     await s.db.tx(async (t) => {
       const locked = await t.one<any>(`SELECT status, current_version FROM negotiations WHERE id = $1 FOR UPDATE`, [n.id]);
       if (locked?.status !== "open") throw conflict("closed", "La negociación ya está cerrada");
-      if (locked.current_version !== n.current_version) throw conflict("version_changed", "Hay una versión nueva: revisala y volvé a proponer");
+      if (locked.current_version !== n.current_version || (input.expectedVersion != null && locked.current_version !== input.expectedVersion)) {
+        throw conflict("version_changed", "Hay una versión nueva: revisala y volvé a proponer");
+      }
       const pend = await t.one<any>(
         `SELECT count(*)::int AS n FROM negotiation_proposals WHERE negotiation_id = $1 AND author_type = 'participant' AND author_id = $2 AND status = 'pending'`,
         [n.id, p.id],

@@ -1,6 +1,6 @@
 // Negociación antes de firmar (Fase 6): listado, alta, y panel compartido por el remitente y la contraparte
 // (documento con selección para comentar, propuestas, versiones con diff).
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import type { DocumentTemplateSummary, NegotiationDiff, NegotiationSummary, NegotiationView } from "@calasign/shared";
 import { api, errorText, HttpError } from "../lib/api";
@@ -282,6 +282,34 @@ export function NegotiationPanel({
   // La selección (cita y posición) es del texto de una versión: si cambia (p. ej. al aceptar una propuesta), el
   // comentario se guardaba en la versión nueva con la posición del texto anterior y quedaba anclado en otro lugar.
   useEffect(() => setSel(null), [n.currentVersion]);
+  // Si la negociación se cerró (aceptada o cancelada, p. ej. un 409 closed al proponer), no queda el modal abierto.
+  useEffect(() => {
+    if (!open) setProposing(false);
+  }, [open]);
+  // Al volver a la pestaña y cada 60 s con la pestaña visible, se trae la vista al día: la otra parte pudo sacar una
+  // versión nueva, decidir propuestas o cerrar la negociación. No pisa una acción en curso.
+  const busyRef = useRef(false);
+  busyRef.current = busy;
+  const onViewRef = useRef(onView);
+  onViewRef.current = onView;
+  useEffect(() => {
+    const refresh = () => {
+      if (document.hidden || busyRef.current) return;
+      api<NegotiationView>(base)
+        .then((fresh) => {
+          if (busyRef.current) return;
+          setView(fresh);
+          onViewRef.current?.(fresh);
+        })
+        .catch(() => {});
+    };
+    const h = window.setInterval(refresh, 60_000);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.clearInterval(h);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [base]);
 
   const call = async (path: string, body: unknown, method: "POST" | "PATCH" = "POST") => {
     setBusy(true);
@@ -351,7 +379,7 @@ export function NegotiationPanel({
                 className="stack"
                 onSubmit={async (e) => {
                   e.preventDefault();
-                  const v = await call("/comments", { body: comment.trim(), quote: sel?.quote ?? null, start: sel?.start ?? null, end: sel?.end ?? null });
+                  const v = await call("/comments", { body: comment.trim(), quote: sel?.quote ?? null, start: sel?.start ?? null, end: sel?.end ?? null, expectedVersion: n.currentVersion });
                   if (v) {
                     setComment("");
                     setSel(null);
@@ -393,7 +421,7 @@ export function NegotiationPanel({
           <div className="card pad stack">
             <div className="row-between">
               <strong>{ta("neg.proposals")}</strong>
-              {mode === "participant" && open && n.source === "template" && view.me?.canPropose && (
+              {mode === "participant" && open && n.source === "template" && view.me?.canPropose && (view.variables.length > 0 || view.clauses.length > 0) && (
                 <button type="button" className="btn btn-sm" onClick={() => setProposing(true)}>
                   {ta("neg.propose")}
                 </button>
@@ -490,7 +518,7 @@ export function NegotiationPanel({
           error={error}
           onClose={() => setProposing(false)}
           onSubmit={async (body) => {
-            const v = await call("/proposals", body);
+            const v = await call("/proposals", { ...(body as object), expectedVersion: n.currentVersion });
             if (v) setProposing(false);
           }}
         />
@@ -533,6 +561,8 @@ function ProposeModal({
           {view.variables.length > 0 && (
             <button
               type="button"
+              role="tab"
+              aria-selected={kind === "variable"}
               className={kind === "variable" ? "active" : ""}
               onClick={() => {
                 setKind("variable");
@@ -545,6 +575,8 @@ function ProposeModal({
           {view.clauses.length > 0 && (
             <button
               type="button"
+              role="tab"
+              aria-selected={kind === "clause"}
               className={kind === "clause" ? "active" : ""}
               onClick={() => {
                 setKind("clause");

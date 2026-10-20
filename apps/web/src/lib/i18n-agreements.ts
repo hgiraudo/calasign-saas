@@ -324,12 +324,18 @@ const es = {
   "pub.done": "Proceso completado.",
   "pub.ended": "Este proceso terminó.",
   "pub.notFound": "No encontramos este link.",
-  "pub.poweredBy": "Firma electrónica por CalaSign",
   "pub.err.captcha": "No pudimos confirmar que no sos un robot. Completá la verificación y volvé a tocar Empezar.",
   "pub.err.tooFast": "Esperá unos segundos y volvé a enviar.",
   "pub.err.recent": "Ya recibimos un envío igual hace unos minutos. Revisá la pestaña donde lo completaste o probá más tarde.",
   "pub.err.inactive": "Este formulario ya no está disponible.",
   "pub.err.rateLimited": "Hay demasiadas solicitudes en este momento. Probá más tarde.",
+  "pub.err.notWaiting": "Este formulario ya fue completado.",
+  "pub.err.fields": "Revisá los campos marcados.",
+  "pub.err.required": "obligatorio",
+  "pub.err.email": "correo inválido",
+  "pub.err.number": "número inválido",
+  "pub.err.date": "fecha inválida",
+  "pub.err.option": "opción inválida",
 };
 
 type Key = keyof typeof es;
@@ -644,12 +650,18 @@ const pt: Record<Key, string> = {
   "pub.done": "Processo concluído.",
   "pub.ended": "Este processo terminou.",
   "pub.notFound": "Não encontramos este link.",
-  "pub.poweredBy": "Assinatura eletrônica pela CalaSign",
   "pub.err.captcha": "Não conseguimos confirmar que você não é um robô. Conclua a verificação e toque em Começar novamente.",
   "pub.err.tooFast": "Aguarde alguns segundos e envie novamente.",
   "pub.err.recent": "Já recebemos um envio igual há poucos minutos. Verifique a aba onde você o preencheu ou tente mais tarde.",
   "pub.err.inactive": "Este formulário não está mais disponível.",
   "pub.err.rateLimited": "Há solicitações demais no momento. Tente mais tarde.",
+  "pub.err.notWaiting": "Este formulário já foi preenchido.",
+  "pub.err.fields": "Revise os campos marcados.",
+  "pub.err.required": "obrigatório",
+  "pub.err.email": "e-mail inválido",
+  "pub.err.number": "número inválido",
+  "pub.err.date": "data inválida",
+  "pub.err.option": "opção inválida",
 };
 
 const en: Record<Key, string> = {
@@ -962,12 +974,18 @@ const en: Record<Key, string> = {
   "pub.done": "Process completed.",
   "pub.ended": "This process has ended.",
   "pub.notFound": "We couldn't find this link.",
-  "pub.poweredBy": "Electronic signature by CalaSign",
   "pub.err.captcha": "We couldn't confirm you're not a robot. Complete the check and tap Start again.",
   "pub.err.tooFast": "Wait a few seconds and submit again.",
   "pub.err.recent": "We already received an identical submission a few minutes ago. Check the tab where you filled it in or try again later.",
   "pub.err.inactive": "This form is no longer available.",
   "pub.err.rateLimited": "There are too many requests right now. Please try again later.",
+  "pub.err.notWaiting": "This form has already been completed.",
+  "pub.err.fields": "Check the highlighted fields.",
+  "pub.err.required": "required",
+  "pub.err.email": "invalid email",
+  "pub.err.number": "invalid number",
+  "pub.err.date": "invalid date",
+  "pub.err.option": "invalid option",
 };
 
 const DICTS: Record<string, Record<Key, string>> = { es, "pt-BR": pt, en };

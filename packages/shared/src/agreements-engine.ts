@@ -18,7 +18,8 @@ export type MarkKind = "signature" | "initials" | "date" | "name";
 
 export type Cond =
   | { op: "truthy"; path: string; neg: boolean }
-  | { op: "eq" | "ne" | "gt" | "lt" | "ge" | "le"; path: string; value: string | number | boolean };
+  /** num: texto del literal numérico tal como se escribió ("1.500"); se interpreta al renderizar con el idioma de la plantilla. */
+  | { op: "eq" | "ne" | "gt" | "lt" | "ge" | "le"; path: string; value: string | number | boolean; num?: string };
 
 type Inline =
   | { t: "text"; v: string }
@@ -115,18 +116,30 @@ export function parseCond(src: string, line = 0): Cond {
   const m = new RegExp(String.raw`^(${PATH})\s*(==|!=|>=|<=|>|<)\s*(.+)$`).exec(s);
   if (m) {
     const ops = { "==": "eq", "!=": "ne", ">": "gt", "<": "lt", ">=": "ge", "<=": "le" } as const;
-    return { op: ops[m[2] as keyof typeof ops], path: m[1], value: parseLiteral(m[3].trim(), line) };
+    const lit = m[3].trim();
+    const value = parseLiteral(lit, line);
+    return { op: ops[m[2] as keyof typeof ops], path: m[1], value, ...(typeof value === "number" && RE_NUM_LIT.test(lit) ? { num: lit } : {}) };
   }
   const t = new RegExp(String.raw`^(!?)\s*(${PATH})$`).exec(s);
   if (t) return { op: "truthy", path: t[2], neg: t[1] === "!" };
   throw new TemplateSyntaxError(`condición inválida: ${s}`, line);
 }
 
+/** Literal numérico con separadores de miles o decimales ("1500", "1.500", "2,5", "-3"). */
+const RE_NUM_LIT = /^-?[\d.,]*\d[\d.,]*$/;
+
 function parseLiteral(s: string, line: number): string | number | boolean {
   const q = /^"(.*)"$|^'(.*)'$/.exec(s);
   if (q) return q[1] ?? q[2] ?? "";
   if (s === "true" || s === "verdadero") return true;
   if (s === "false" || s === "falso") return false;
+  // El valor definitivo depende del idioma de la plantilla ("1.500" es 1500 en es/pt y 1,5 en en, igual que en los
+  // datos): se resuelve al renderizar con parseLocaleNumber (Cond.num). Acá solo se valida que sea un número en algún
+  // idioma y se deja una lectura de respaldo.
+  if (RE_NUM_LIT.test(s)) {
+    const n = parseLocaleNumber(s, "es") ?? parseLocaleNumber(s, "en");
+    if (n !== null) return n;
+  }
   const n = Number(s.replace(",", "."));
   if (s !== "" && Number.isFinite(n)) return n;
   throw new TemplateSyntaxError(`valor inválido en la condición: ${s} (usá comillas para texto)`, line);
@@ -372,6 +385,12 @@ export interface RenderOptions {
   locale?: string;
   /** Cómo mostrar una variable faltante: "empty" (por defecto) o "placeholder" ([ruta]). */
   missing?: "empty" | "placeholder";
+  /**
+   * Comportamiento anterior a la validación del grafo de cláusulas, solo para documentos ya guardados (p. ej. la copia
+   * de cláusulas de una negociación creada antes): cláusulas que citan cláusulas hasta 3 niveles, y lo que pase de ahí
+   * (incluidos los ciclos) se omite sin error. Así una negociación vieja no deja de renderizar. No usar en documentos nuevos.
+   */
+  legacyClauseRecursion?: boolean;
 }
 
 export interface RenderResult {
@@ -463,7 +482,7 @@ export function renderTemplate(source: string, data: unknown, opts: RenderOption
   function evalCond(c: Cond, scopes: Scope[]): boolean {
     const v = lookup(c.path, scopes);
     if (c.op === "truthy") return c.neg ? !truthy(v) : truthy(v);
-    const target = c.value;
+    const target = c.num !== undefined ? (toNum(c.num, locale) ?? c.value) : c.value;
     if (c.op === "eq" || c.op === "ne") {
       const eq = typeof target === "number" ? toNum(v, locale) === target : typeof target === "boolean" ? truthy(v) === target : String(v ?? "") === target;
       return c.op === "eq" ? eq : !eq;
@@ -557,8 +576,10 @@ export function renderTemplate(source: string, data: unknown, opts: RenderOption
         }
         // Un ciclo (a → a, a → b → a) duplicaba el texto hasta el tope de niveles y un nivel más profundo se perdía sin
         // aviso: ahora los dos son errores de la plantilla.
-        if (chain.includes(n.slug)) throw clauseCycleError([...chain.slice(chain.indexOf(n.slug)), n.slug]);
-        if (chain.length >= MAX_CLAUSE_DEPTH) throw clauseDepthError([...chain, n.slug]);
+        if (opts.legacyClauseRecursion) {
+          if (chain.length >= 3) continue;
+        } else if (chain.includes(n.slug)) throw clauseCycleError([...chain.slice(chain.indexOf(n.slug)), n.slug]);
+        else if (chain.length >= MAX_CLAUSE_DEPTH) throw clauseDepthError([...chain, n.slug]);
         usedClauses.add(n.slug);
         let parsed = clauseCache.get(n.slug);
         if (!parsed) {
@@ -667,17 +688,21 @@ export function parseLocaleDate(v: unknown, locale = "es"): Date | null {
   // Día, mes y año explícitos tienen que existir: Date.UTC (y new Date con "2027-02-31") corren el 31/02 al 3 de
   // marzo, y el contrato decía una fecha que nadie escribió. Una fecha inexistente se imprime tal cual vino.
   const slash = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s);
+  // AAAA/M/D: con el año primero no hay ambigüedad, es año/mes/día en cualquier idioma.
+  const ymdSlash = /^(\d{4})\/(\d{1,2})\/(\d{1,2})$/.exec(s);
   const ymd = /^(\d{4})-(\d{2})-(\d{2})(?=$|T)/.exec(s);
   const mdy = /^en\b/i.test(locale);
   const parts = slash
     ? { y: +slash[3], m: +(mdy ? slash[1] : slash[2]), d: +(mdy ? slash[2] : slash[1]) }
-    : ymd
-      ? { y: +ymd[1], m: +ymd[2], d: +ymd[3] }
-      : null;
+    : ymdSlash
+      ? { y: +ymdSlash[1], m: +ymdSlash[2], d: +ymdSlash[3] }
+      : ymd
+        ? { y: +ymd[1], m: +ymd[2], d: +ymd[3] }
+        : null;
   if (parts) {
     const check = new Date(Date.UTC(parts.y, parts.m - 1, parts.d));
     if (check.getUTCFullYear() !== parts.y || check.getUTCMonth() !== parts.m - 1 || check.getUTCDate() !== parts.d) return null;
-    if (slash) return check;
+    if (slash || ymdSlash) return check;
   }
   // Otro texto con barras (03/01/27) no se adivina: new Date lo leería como mes/día en cualquier idioma.
   if (s.includes("/")) return null;

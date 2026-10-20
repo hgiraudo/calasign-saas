@@ -74,7 +74,9 @@ export AWS_REGION=$REGION PATH=/opt/node/bin:/usr/local/bin:\$PATH
 # Un deploy a la vez: dos en paralelo (dos terminales, un reintento con el anterior todavía corriendo en SSM) se pisaban
 # el symlink current, secrets.env y el rollback. /run es de root; el lock se libera solo cuando termina el script.
 exec 9>/run/calasign-deploy.lock
-flock -n 9 || { echo "Otro deploy en curso en la instancia: deploy abortado" >&2; exit 1; }
+# Espera hasta 10 minutos: el timer de parches de seguridad (calasign-security-updates) toma el mismo lock mientras
+# corre dnf, y un deploy que coincide con él no tiene que fallar.
+flock -w 600 9 || { echo "Otro deploy o el timer de parches de seguridad (calasign-security-updates) sigue con el lock de la instancia después de 10 minutos: deploy abortado" >&2; exit 1; }
 D=/opt/calasign/releases/$REL
 # /opt/calasign y releases/ quedan de root (bootstrap los dejaba del usuario calasign, el de la app). Root crea, extrae
 # y borra versiones ahí adentro: con la app comprometida, releases/ podía pasar a ser un symlink (p. ej. a /etc) y la
@@ -259,9 +261,17 @@ caddy_restore_prev() {
 # deploy con el socket, el Caddy en marcha todavía escucha en :2019; o Caddy parado), restart, un corte de un segundo.
 if [ -S \$CADDY_SOCK ]; then
   if ! systemctl reload caddy; then
-    echo "AVISO: falló el reload de Caddy con el Caddyfile nuevo; se restaura el anterior" >&2
-    caddy_restore_prev
-    systemctl reload caddy || systemctl restart caddy || true
+    # El reload puede fallar por algo ajeno al archivo (socket ocupado, un timeout): solo si el Caddyfile en uso no
+    # valida se vuelve al anterior; si valida, se reintenta el reload y, si tampoco, un restart con el mismo archivo.
+    if /usr/local/bin/caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1; then
+      echo "AVISO: falló el reload de Caddy pero el Caddyfile valida; se reintenta (reload y, si no, restart)" >&2
+      journalctl -u caddy -n 20 --no-pager >&2 || true
+      systemctl reload caddy || systemctl restart caddy || true
+    else
+      echo "AVISO: falló el reload de Caddy y el Caddyfile nuevo no valida; se restaura el anterior" >&2
+      caddy_restore_prev
+      systemctl reload caddy || systemctl restart caddy || true
+    fi
   fi
 else
   systemctl restart caddy || true

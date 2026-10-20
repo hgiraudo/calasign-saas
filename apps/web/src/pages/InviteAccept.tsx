@@ -9,12 +9,14 @@ import { useAuth } from "../lib/auth";
 import { useRoleLabel, useTeamsText } from "../lib/i18n-teams";
 import { ErrorBox, LocaleSwitcher, Logo, Spinner } from "../components/ui";
 import { TwoFactorStep } from "../components/TwoFactorStep";
+import { productName, useBrandTheme } from "../lib/white-label";
 
 export function InviteAcceptPage() {
   const { token } = useParams();
   const tt = useTeamsText();
   const roleLabel = useRoleLabel();
   const { me, setMe } = useAuth();
+  const brand = useBrandTheme();
   const nav = useNavigate();
   const [inv, setInv] = useState<InvitationPreview | null>(null);
   const [name, setName] = useState("");
@@ -106,7 +108,7 @@ export function InviteAcceptPage() {
           <Logo />
           <LocaleSwitcher compact />
         </div>
-        <h1>{inv ? tt("inv.title", { org: inv.organizationName }) : "CalaSign"}</h1>
+        <h1>{inv ? tt("inv.title", { org: inv.organizationName }) : productName(brand)}</h1>
         {body()}
       </div>
     </div>

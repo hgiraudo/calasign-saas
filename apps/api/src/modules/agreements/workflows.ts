@@ -39,7 +39,7 @@ import { enqueueWorkflowApprovalNotice } from "./notices";
 import { ownerCanStillCreate } from "../owner-check";
 import { tenantBaseUrl } from "../custom-domains";
 import { assertPublicDestination, safeRequest, signPayload } from "../webhooks";
-import { getPath, interpolate, refreshSearchVector, setPath, toIsoDate, toNumberOrNull, type Deps } from "./common";
+import { getPath, interpolate, interpolateValue, refreshSearchVector, setPath, toIsoDate, toNumberOrNull, type Deps } from "./common";
 import { agreementMetaFromMapping, createEnvelopeFromPdf, insertFileRow, renderDocument, storeGeneratedPdf } from "./documents";
 import { ingestEnvelope } from "./repository";
 
@@ -747,11 +747,11 @@ async function executeStep(d: Deps, run: any, step: WorkflowStep, index: number)
         );
       }
       if (step.config.expiryDate) {
-        const dt = toIsoDate(interpolate(step.config.expiryDate, data, locale), locale);
+        const dt = toIsoDate(interpolateValue(step.config.expiryDate, data, locale), locale);
         if (dt) set("expiry_date", dt, "::date");
       }
       if (step.config.value) {
-        const n = toNumberOrNull(interpolate(step.config.value, data, locale), locale);
+        const n = toNumberOrNull(interpolateValue(step.config.value, data, locale), locale);
         if (n !== null) set("value", n);
       }
       // Solo un código ISO 4217 (tres letras); otra cosa ("$", "pesos", una variable vacía) se descarta.

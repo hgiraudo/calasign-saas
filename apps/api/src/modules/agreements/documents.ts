@@ -22,7 +22,9 @@ import {
   type GenerateWarning,
   type GenerateRecipientInput,
   type MarkKind,
+  type RenderOptions,
   type RenderPreviewResponse,
+  type RenderResult,
 } from "@calasign/shared";
 import { inspectPdf, renderDocumentPdf, type DocMarkPosition } from "@calasign/pdf";
 import { z } from "zod";
@@ -38,7 +40,7 @@ import { authenticate, type AuthContext, type Services } from "../context";
 import { sendEnvelope, idempotent } from "../envelopes";
 import { insertEnvelopeField } from "../fieldvalues";
 import { discardBlobsOnFailure } from "../file-cleanup";
-import { getPath, interpolate, toIsoDate, toNumberOrNull } from "./common";
+import { getPath, interpolate, interpolateValue, toIsoDate, toNumberOrNull } from "./common";
 
 // ───────────────────────────── Render ─────────────────────────────
 
@@ -69,12 +71,24 @@ export interface RenderedDocument {
 export async function renderDocument(
   db: Db,
   tenantId: string,
-  p: { source: string; data: unknown; locale: string; title?: string; clauses?: Record<string, string> },
+  p: {
+    source: string;
+    data: unknown;
+    locale: string;
+    title?: string;
+    clauses?: Record<string, string>;
+    /**
+     * Copia de cláusulas ya guardada (negociaciones): si cita cláusulas en ciclo o con demasiados niveles, se renderiza
+     * con el comportamiento anterior (legacyClauseRecursion) en lugar de fallar. Ver renderTemplateCompat.
+     */
+    legacyClauseFallback?: boolean;
+  },
 ): Promise<RenderedDocument> {
   const clauses = p.clauses ?? (await loadClauseMap(db, tenantId));
   let r;
   try {
-    r = renderTemplate(p.source, p.data, { clauses, locale: p.locale });
+    const opts = { clauses, locale: p.locale };
+    r = p.legacyClauseFallback ? renderTemplateCompat(p.source, p.data, opts) : renderTemplate(p.source, p.data, opts);
   } catch (e) {
     if (e instanceof TemplateSyntaxError) throw badRequest("template_syntax", e.message, { line: e.line });
     throw e;
@@ -90,6 +104,23 @@ export async function renderDocument(
   // omitir sin error cuando el documento generado no tiene sus marcas (ver onSkippedRoles).
   const templateRoles = analyzeTemplate(p.source, clauses).roles;
   return { ...out, missing: r.missing, missingClauses: r.missingClauses, text: blocksToText(r.blocks), provenance, templateRoles };
+}
+
+/**
+ * renderTemplate para documentos guardados antes de que el motor validara el grafo de cláusulas (p. ej. la copia de
+ * cláusulas de una negociación creada antes, o editada con una propuesta): si la copia cita cláusulas en ciclo o con
+ * más de MAX_CLAUSE_DEPTH niveles, se renderiza en modo compatible (hasta 3 niveles, lo que sigue se omite, como antes)
+ * en lugar de dejar la negociación sin poder verse, descargarse ni aceptarse. Documentos nuevos: renderTemplate.
+ */
+export function renderTemplateCompat(source: string, data: unknown, opts: RenderOptions): RenderResult {
+  try {
+    return renderTemplate(source, data, opts);
+  } catch (e) {
+    if (e instanceof TemplateSyntaxError && (e.reason === "clause_cycle" || e.reason === "clause_depth")) {
+      return renderTemplate(source, data, { ...opts, legacyClauseRecursion: true });
+    }
+    throw e;
+  }
 }
 
 /** Sube el PDF y devuelve los datos del archivo (antes de abrir una transacción). */
@@ -267,8 +298,8 @@ export async function createEnvelopeFromPdf(
 /** Metadatos para el repositorio a partir del mapeo de la plantilla (se guardan en el sobre). */
 export function agreementMetaFromMapping(mapping: AgreementMapping | null | undefined, data: unknown, locale: string) {
   if (!mapping) return null;
-  const val = (src: string | null | undefined) => (src ? interpolate(src.includes("{{") ? src : `{{${src}}}`, data, locale) : "");
-  const raw = (src: string | null | undefined) => (src && !src.includes("{{") ? getPath(data, src) : val(src));
+  // Ruta suelta ("monto") o "{{monto}}": el valor de los datos tal cual (un número JSON no pasa por texto y vuelta).
+  const raw = (src: string | null | undefined) => (!src ? "" : !src.includes("{{") ? getPath(data, src) : interpolateValue(src, data, locale));
   const out: Record<string, unknown> = {};
   if (mapping.title) out.title = interpolate(mapping.title, data, locale) || undefined;
   const v = toNumberOrNull(raw(mapping.value), locale);
@@ -318,6 +349,8 @@ function toSummary(r: any, a: { analysis: DocumentTemplate["analysis"]; syntaxEr
 const analysisCache = new Map<string, { analysis: DocumentTemplate["analysis"]; syntaxError: string | null }>();
 const ANALYSIS_CACHE_MAX = 2000;
 
+const RE_CLAUSE_TAG = /\{\{\s*(?:cl[aá]usula|clause)\s*:\s*([\w-]+)\s*\}\}/gi;
+
 /** Plantillas (no archivadas) y cláusulas que citan la cláusula `slug` con {{clausula:slug}}. */
 export async function clauseUsage(db: Db, tenantId: string, slug: string, exceptClauseId?: string) {
   // Prefiltro por texto (LIKE con el código) y después el análisis real (todas las ramas, sin distinguir la grafía).
@@ -326,7 +359,9 @@ export async function clauseUsage(db: Db, tenantId: string, slug: string, except
     try {
       return parseRefs(src).includes(slug);
     } catch {
-      return false;
+      // Con un error de sintaxis en otra parte del texto el parser no devuelve nada: se cuenta como uso cualquier
+      // {{clausula:slug}} escrito (mejor un 409 de más que borrar una cláusula que se usa).
+      return [...src.matchAll(RE_CLAUSE_TAG)].some((m) => m[1] === slug);
     }
   };
   const templates = (
@@ -600,7 +635,9 @@ export async function documentRoutes(app: FastifyInstance, s: Services) {
       assertNotStale(req.headers, cur.updated_at, STALE_DOC_MESSAGE);
       const input = ClauseInput.parse({ slug: cur.slug, title: cur.title, body: cur.body, category: cur.category, ...(req.body as object) });
       if (input.slug !== cur.slug) throw badRequest("immutable_slug", "El código de una cláusula no se puede cambiar (lo citan las plantillas)");
-      checkClauseSyntax(input.body, cur.slug, await loadClauseMap(t, a.tenantId));
+      // Solo si cambió el texto: cambiar el título o la categoría de una cláusula guardada antes de validar el grafo no
+      // tiene que exigir arreglar sus citas.
+      if (input.body !== cur.body) checkClauseSyntax(input.body, cur.slug, await loadClauseMap(t, a.tenantId));
       const row = await t.one<any>(
         `UPDATE clauses SET title = $2, body = $3, category = $4, updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 millisecond') WHERE id = $1 RETURNING *`,
         [cur.id, input.title, input.body, input.category ?? null],
@@ -632,15 +669,59 @@ export async function documentRoutes(app: FastifyInstance, s: Services) {
 
 const STALE_DOC_MESSAGE = "Cambió en otra pestaña o lo editó otra persona: recargá para ver la versión actual";
 
-/** Sintaxis de la cláusula y, con ella incluida en la biblioteca, que no se citen en ciclo ni pasen el tope de niveles. */
+/**
+ * Sintaxis de la cláusula y, con ella incluida en la biblioteca, que no se citen en ciclo ni pasen el tope de niveles.
+ * El grafo se recorre desde la cláusula y desde todas las que la citan directa o indirectamente (en cualquier rama):
+ * una cita nueva puede no pasar el tope desde la editada pero sí desde una cláusula que la incluye.
+ */
 function checkClauseSyntax(body: string, slug: string, library: Record<string, string>) {
   try {
     renderTemplate(body, {});
-    checkClauseGraph({ ...library, [slug]: body }, [slug]);
+    const lib = { ...library, [slug]: body };
+    checkClauseGraph(lib, [slug]);
+    // Desde cada ancestro que hoy está bien: uno que ya venía roto (guardado antes de validar el grafo, por otra rama)
+    // no bloquea editar esta cláusula.
+    for (const anc of clauseAncestors(lib, slug)) {
+      try {
+        checkClauseGraph(library, [anc]);
+      } catch {
+        continue;
+      }
+      checkClauseGraph(lib, [anc]);
+    }
   } catch (e) {
     if (e instanceof TemplateSyntaxError) throw badRequest("template_syntax", e.message, { line: e.line });
     throw e;
   }
+}
+
+/** Cláusulas de la biblioteca que citan `slug` directa o indirectamente (todas las ramas; las que no parsean, no citan). */
+function clauseAncestors(lib: Record<string, string>, slug: string): string[] {
+  const citedBy = new Map<string, string[]>();
+  for (const [k, src] of Object.entries(lib)) {
+    if (src == null) continue;
+    let refs: string[];
+    try {
+      refs = parseRefs(src);
+    } catch {
+      refs = [];
+    }
+    for (const r of refs) {
+      const xs = citedBy.get(r);
+      if (xs) xs.push(k);
+      else citedBy.set(r, [k]);
+    }
+  }
+  const out = new Set<string>();
+  const queue = [slug];
+  while (queue.length) {
+    for (const p of citedBy.get(queue.pop()!) ?? []) {
+      if (p === slug || out.has(p)) continue;
+      out.add(p);
+      queue.push(p);
+    }
+  }
+  return [...out];
 }
 
 /** Roles de más de 80 caracteres: no se guardan (ningún firmante podría tomarlos al generar). */

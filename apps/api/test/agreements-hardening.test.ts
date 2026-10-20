@@ -508,6 +508,49 @@ describe("negociaciones", () => {
     expect(actions).toEqual(expect.arrayContaining(["negotiation.created", "negotiation.updated", "negotiation.cancelled"]));
   });
 
+  it("comentarios y propuestas de la contraparte con expectedVersion: 409 version_changed si cambió la versión", async () => {
+    const res = await create([{ name: "A", email: "a@x.com", role: "Cliente" }]);
+    expect(res.statusCode).toBe(201);
+    const id = res.json().negotiation.id as string;
+    const { decrypt } = await import("../src/lib/util");
+    const part = await db.one<any>(`SELECT token_enc FROM negotiation_participants WHERE negotiation_id = $1`, [id]);
+    const token = decrypt(part.token_enc);
+    const url = (r: string) => `/v1/public/negotiations/${token}/${r}`;
+    expect((await app.inject({ method: "POST", url: url("comments"), payload: { body: "ok", expectedVersion: 1 } })).statusCode).toBe(201);
+    expect((await app.inject({ method: "POST", url: url("proposals"), payload: { kind: "variable", key: "precio", newValue: "95", expectedVersion: 1 } })).statusCode).toBe(201);
+    // El remitente saca la versión 2: lo que la contraparte escribió viendo la 1 no se guarda.
+    const edit = await app.inject({ method: "PATCH", url: `/v1/negotiations/${id}`, headers: H(), payload: { data: { cliente: "ACME SA", precio: "100" }, summary: "v2" } });
+    expect(edit.statusCode).toBe(200);
+    const c = await app.inject({ method: "POST", url: url("comments"), payload: { body: "tarde", expectedVersion: 1 } });
+    expect(c.statusCode).toBe(409);
+    expect(c.json().error.code).toBe("version_changed");
+    // Aunque el valor propuesto sea igual al vigente, el error útil es la versión (no no_change).
+    const pr = await app.inject({ method: "POST", url: url("proposals"), payload: { kind: "variable", key: "precio", newValue: "100", expectedVersion: 1 } });
+    expect(pr.statusCode).toBe(409);
+    expect(pr.json().error.code).toBe("version_changed");
+    const n = (await db.one<any>(`SELECT current_version FROM negotiations WHERE id = $1`, [id])).current_version as number;
+    expect((await app.inject({ method: "POST", url: url("comments"), payload: { body: "visto", expectedVersion: n } })).statusCode).toBe(201);
+    // Sin expectedVersion (clientes viejos), como antes.
+    expect((await app.inject({ method: "POST", url: url("comments"), payload: { body: "sin versión" } })).statusCode).toBe(201);
+  });
+
+  it("marca de las páginas públicas /n/:token, /w/:token y /wf/:slug", async () => {
+    const { brandForPage } = await import("../src/modules/white-label");
+    const { decrypt } = await import("../src/lib/util");
+    const page = (url: string) => brandForPage(db, { url, headers: { host: "otro.example" } } as any);
+    const res = await create([{ name: "A", email: "a@x.com", role: "Cliente" }]);
+    const part = await db.one<any>(`SELECT token_enc FROM negotiation_participants WHERE negotiation_id = $1`, [res.json().negotiation.id]);
+    expect((await page(`/n/${decrypt(part.token_enc)}`))?.tenantId).toBe(tenant);
+    const { slug } = await publicWorkflow();
+    expect((await page(`/wf/${slug}?x=1`))?.tenantId).toBe(tenant);
+    const start = await startPublic(slug, "203.0.113.77");
+    expect(start.statusCode).toBe(201);
+    expect((await page(`/w/${start.json().token}`))?.tenantId).toBe(tenant);
+    // Desconocidos: cae al Host (que no es de ninguna marca).
+    expect(await page(`/n/${"x".repeat(43)}`)).toBeNull();
+    expect(await page(`/wf/inexistente`)).toBeNull();
+  });
+
   it("auditoría de plantillas y cláusulas", async () => {
     expect((await app.inject({ method: "PATCH", url: `/v1/document-templates/${templateId}`, headers: H(), payload: { name: "Servicios v2" } })).statusCode).toBe(200);
     const cl = await app.inject({ method: "POST", url: "/v1/clauses", headers: H(), payload: { slug: "confid", title: "Confidencialidad", body: "Las partes guardan reserva." } });

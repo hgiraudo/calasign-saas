@@ -51,6 +51,7 @@ export function LoginPage() {
       <AuthShell title={t("auth.login")}>
         <TwoFactorStep
           challengeToken={challenge}
+          from={from}
           onBack={() => setChallenge(null)}
           onDone={(m) => {
             setMe(m);

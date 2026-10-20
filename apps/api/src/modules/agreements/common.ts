@@ -30,6 +30,20 @@ export function interpolate(src: string | null | undefined, data: unknown, local
   }
 }
 
+/**
+ * Como interpolate, pero si la plantilla es una sola variable sin filtro ("{{monto}}") devuelve el valor tal cual está en
+ * los datos: un número JSON (2.125) sigue siendo número. Interpolado daba "2.125" y releído con el idioma de la plantilla
+ * (toNumberOrNull(…, "es")) valía 2125. Para lo que después se parsea como número o fecha.
+ */
+export function interpolateValue(src: string | null | undefined, data: unknown, locale = "es"): unknown {
+  const m = src ? /^\{\{\s*([A-Za-zÀ-ÿ_][\wÀ-ÿ]*(?:\.[\wÀ-ÿ]+)*)\s*\}\}$/.exec(src.trim()) : null;
+  if (m) {
+    const v = getPath(data, m[1]);
+    if (typeof v === "number" || typeof v === "string") return v;
+  }
+  return interpolate(src, data, locale);
+}
+
 /** Lectura de una ruta (a.b.c) en datos JSON, sin evaluar nada. */
 export function getPath(data: unknown, path: string): unknown {
   let cur: unknown = data;
@@ -71,6 +85,8 @@ export function toIsoDate(v: unknown, locale = "es"): string | null {
   let y: string, mo: string, d: string;
   let m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
   if (m) [y, mo, d] = [m[1], m[2], m[3]];
+  // AAAA/M/D: año primero es año/mes/día en cualquier idioma (como parseLocaleDate del motor).
+  else if ((m = /^(\d{4})\/(\d{1,2})\/(\d{1,2})$/.exec(s))) [y, mo, d] = [m[1], m[2].padStart(2, "0"), m[3].padStart(2, "0")];
   else if ((m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s))) {
     const [a, b] = /^en\b/i.test(locale) ? [m[2], m[1]] : [m[1], m[2]];
     [y, mo, d] = [m[3], b.padStart(2, "0"), a.padStart(2, "0")];

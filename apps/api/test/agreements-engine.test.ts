@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { analyzeTemplate, blocksToText, checkClauseGraph, diffWords, parseLocaleDate, parseLocaleNumber, parseTemplate, renderTemplate, TemplateSyntaxError } from "@calasign/shared";
-import { toIsoDate, toNumberOrNull } from "../src/modules/agreements/common";
+import { interpolateValue, toIsoDate, toNumberOrNull } from "../src/modules/agreements/common";
+import { agreementMetaFromMapping, renderTemplateCompat } from "../src/modules/agreements/documents";
 
 const SRC = `# Contrato con {{cliente.nombre}}
 Entre **{{empresa}}** y *{{cliente.nombre | upper}}*.
@@ -257,5 +258,63 @@ describe("motor de plantillas: cláusulas, listas, números, fechas y roles", ()
     const src = "{{firma:Cliente}}\n{{#if garante}}\n{{firma:Garante}}\n{{/if}}";
     expect(renderTemplate(src, {}).marks.map((m) => m.role)).toEqual(["Cliente"]);
     expect(renderTemplate(src, { garante: "Juan" }).marks.map((m) => m.role)).toEqual(["Cliente", "Garante"]);
+  });
+});
+
+describe("números y fechas: literales, valores crudos y compatibilidad de cláusulas", () => {
+  it("los literales numéricos de las condiciones usan el idioma de la plantilla, como los datos", () => {
+    const src = "{{#if monto > 1.500}}grande{{else}}chico{{/if}}";
+    // es: "1.500" = 1500
+    expect(blocksToText(renderTemplate(src, { monto: 1000 }, { locale: "es" }).blocks)).toBe("chico");
+    expect(blocksToText(renderTemplate(src, { monto: 2000 }, { locale: "es" }).blocks)).toBe("grande");
+    // en: "1.500" = 1,5
+    expect(blocksToText(renderTemplate(src, { monto: 1000 }, { locale: "en" }).blocks)).toBe("grande");
+    const en = "{{#if monto >= 2,500}}si{{else}}no{{/if}}";
+    expect(blocksToText(renderTemplate(en, { monto: "2,400" }, { locale: "en" }).blocks)).toBe("no");
+    expect(blocksToText(renderTemplate(en, { monto: 2400 }, { locale: "en" }).blocks)).toBe("no");
+    expect(blocksToText(renderTemplate(en, { monto: 2400 }, { locale: "es" }).blocks)).toBe("si"); // es: 2,5
+    expect(blocksToText(renderTemplate("{{#if x == 1,5}}ok{{/if}}", { x: "1,5" }, { locale: "es" }).blocks)).toBe("ok");
+    expect(() => parseTemplate("{{#if x > 1,2.3}}a{{/if}}")).toThrow(TemplateSyntaxError);
+  });
+
+  it("parseLocaleDate y toIsoDate aceptan AAAA/M/D en cualquier idioma", () => {
+    expect(parseLocaleDate("2027/3/1", "es")?.toISOString().slice(0, 10)).toBe("2027-03-01");
+    expect(parseLocaleDate("2027/03/01", "en")?.toISOString().slice(0, 10)).toBe("2027-03-01");
+    expect(parseLocaleDate("2027/02/31", "es")).toBeNull();
+    expect(toIsoDate("2027/3/1", "en")).toBe("2027-03-01");
+    expect(toIsoDate("2027/02/30")).toBeNull();
+  });
+
+  it("interpolateValue: una sola variable sin filtro conserva el número (2.125 no pasa a 2125)", () => {
+    const data = { monto: 2.125, total: "1.500", fecha: "2027-03-01", c: { v: 7 } };
+    expect(interpolateValue("{{monto}}", data, "es")).toBe(2.125);
+    expect(interpolateValue(" {{ c.v }} ", data, "es")).toBe(7);
+    expect(toNumberOrNull(interpolateValue("{{monto}}", data, "es"), "es")).toBe(2.125);
+    // Texto escrito por una persona: sigue el idioma.
+    expect(toNumberOrNull(interpolateValue("{{total}}", data, "es"), "es")).toBe(1500);
+    expect(toIsoDate(interpolateValue("{{fecha}}", data, "es"), "es")).toBe("2027-03-01");
+    // Con filtro o con más texto se interpola.
+    expect(interpolateValue("{{monto | number}}", data, "es")).toBe("2,13");
+    expect(interpolateValue("US$ {{monto}}", data, "es")).toBe("US$ 2.125");
+    expect(interpolateValue("{{falta}}", data, "es")).toBe("");
+  });
+
+  it("agreementMetaFromMapping conserva un número JSON con decimales (ruta suelta o {{variable}})", () => {
+    const data = { monto: 2.125, vence: "2028/1/15" };
+    expect(agreementMetaFromMapping({ value: "{{monto}}", expiryDate: "{{vence}}" } as any, data, "es")).toMatchObject({ value: 2.125, expiryDate: "2028-01-15" });
+    expect(agreementMetaFromMapping({ value: "monto" } as any, data, "es")).toMatchObject({ value: 2.125 });
+  });
+
+  it("legacyClauseRecursion: ciclos y niveles de más se omiten (3 niveles) en vez de fallar; renderTemplateCompat lo usa solo ante esos errores", () => {
+    const clauses = { a: "A\n{{clausula:b}}", b: "B\n{{clausula:a}}" };
+    expect(() => renderTemplate("{{clausula:a}}", {}, { clauses })).toThrow(/ciclo/);
+    const legacy = renderTemplate("{{clausula:a}}", {}, { clauses, legacyClauseRecursion: true });
+    expect(blocksToText(legacy.blocks).replace(/\s+/g, " ").trim()).toBe("A B A");
+    expect(blocksToText(renderTemplateCompat("{{clausula:a}}", {}, { clauses }).blocks).replace(/\s+/g, " ").trim()).toBe("A B A");
+    // Sin ciclo, igual que renderTemplate (más de 3 niveles incluidos).
+    const deep = { p1: "1\n{{clausula:p2}}", p2: "2\n{{clausula:p3}}", p3: "3\n{{clausula:p4}}", p4: "4" };
+    expect(blocksToText(renderTemplateCompat("{{clausula:p1}}", {}, { clauses: deep }).blocks).replace(/\s+/g, " ").trim()).toBe("1 2 3 4");
+    // Otros errores de sintaxis siguen fallando.
+    expect(() => renderTemplateCompat("{{#if x}}", {}, {})).toThrow(TemplateSyntaxError);
   });
 });

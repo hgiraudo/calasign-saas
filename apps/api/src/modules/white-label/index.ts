@@ -5,6 +5,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { config } from "../../config";
 import type { Db } from "../../infra/db";
 import type { BlobStore } from "../../infra/storage";
+import { sha256Hex } from "../../lib/util";
 import type { Services } from "../context";
 import { signerTokenHash } from "../signer-token";
 import { assetPath, brandForHost, productLabel, publicTheme, rebrands, resolveBrand, type ResolvedBrand } from "./brand";
@@ -29,7 +30,10 @@ export function isVerifyPath(path: string): boolean {
   return path.replace(/\/+$/, "").toLowerCase() === "/verify";
 }
 
-/** Marca de la página pedida: link de firma (/s/:token), formulario (/f/:slug), ?b= de la verificación o el Host. */
+/**
+ * Marca de la página pedida: link de firma (/s/:token), formulario (/f/:slug), negociación (/n/:token), ejecución de un
+ * workflow (/w/:token), inicio público de un workflow (/wf/:slug), ?b= de la verificación o el Host.
+ */
 export async function brandForPage(db: Db, req: FastifyRequest): Promise<ResolvedBrand | null> {
   const [path, qs] = req.url.split("?");
   const sm = /^\/s\/([A-Za-z0-9_-]{20,100})$/.exec(path);
@@ -46,6 +50,25 @@ export async function brandForPage(db: Db, req: FastifyRequest): Promise<Resolve
   if (fm) {
     const w = await db.one<{ tenant_id: string }>(`SELECT tenant_id FROM web_forms WHERE slug = $1`, [fm[1]]);
     if (w) return resolveBrand(db, w.tenant_id, null);
+  }
+  // Links públicos de acuerdos: la marca de la organización dueña (sin sub-marca propia: usan la predeterminada).
+  const nm = /^\/n\/([A-Za-z0-9_-]{20,100})$/.exec(path);
+  if (nm) {
+    const r = await db.one<{ tenant_id: string }>(
+      `SELECT n.tenant_id FROM negotiation_participants p JOIN negotiations n ON n.id = p.negotiation_id WHERE p.token_hash = $1`,
+      [sha256Hex(nm[1])],
+    );
+    if (r) return resolveBrand(db, r.tenant_id, null);
+  }
+  const wm = /^\/w\/([A-Za-z0-9_-]{20,100})$/.exec(path);
+  if (wm) {
+    const r = await db.one<{ tenant_id: string }>(`SELECT tenant_id FROM workflow_runs WHERE public_token_hash = $1`, [sha256Hex(wm[1])]);
+    if (r) return resolveBrand(db, r.tenant_id, null);
+  }
+  const wfm = /^\/wf\/([A-Za-z0-9_-]{1,100})$/.exec(path);
+  if (wfm) {
+    const r = await db.one<{ tenant_id: string }>(`SELECT tenant_id FROM workflows WHERE public_slug = $1 AND public_start`, [wfm[1]]);
+    if (r) return resolveBrand(db, r.tenant_id, null);
   }
   const key = new URLSearchParams(qs ?? "").get("b") ?? undefined;
   const found = await brandFromKeyOrHost(db, isVerifyPath(path) ? key : undefined, req.headers.host);

@@ -279,7 +279,22 @@ function normDraft(d: Draft) {
     .map((x) => x.trim())
     .filter(Boolean)
     .join(",");
-  return JSON.stringify({ ...d, name: d.name.trim(), sample: obj ? JSON.stringify(obj) : d.sample, mapping: { ...d.mapping, tags } });
+  return JSON.stringify({ ...d, name: d.name.trim(), sample: obj ? stableStringify(obj) : d.sample, mapping: { ...d.mapping, tags } });
+}
+
+/**
+ * JSON con las claves ordenadas en todos los niveles: Postgres (jsonb) devuelve los datos de ejemplo con otro orden de
+ * claves, y sin esto la plantilla recién guardada figuraba con cambios sin guardar.
+ */
+function stableStringify(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(stableStringify).join(",")}]`;
+  if (v && typeof v === "object") {
+    return `{${Object.keys(v)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${stableStringify((v as Record<string, unknown>)[k])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(v) ?? "null";
 }
 const sameDraft = (a: Draft, b: Draft) => normDraft(a) === normDraft(b);
 

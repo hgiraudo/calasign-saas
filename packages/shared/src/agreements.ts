@@ -591,12 +591,16 @@ export const NegotiationCommentInput = z.object({
   // Tope: un offset fuera del rango de integer de Postgres daba 500.
   start: z.number().int().min(0).max(10_000_000).nullable().optional(),
   end: z.number().int().min(0).max(10_000_000).nullable().optional(),
+  /** La versión que vio quien comenta: si cambió mientras tanto, 409 version_changed (no queda anclado a un texto que no vio). */
+  expectedVersion: z.number().int().min(1).optional(),
 }).refine((c) => c.start == null || c.end == null || c.start <= c.end, { message: "start no puede ser mayor que end", path: ["end"] });
 export const NegotiationProposalInput = z.object({
   kind: z.enum(["variable", "clause"]),
   key: z.string().trim().min(1).max(200),
   newValue: z.string().max(50_000),
   comment: z.string().max(2000).nullable().optional(),
+  /** La versión que vio quien propone: si cambió mientras tanto, 409 version_changed. */
+  expectedVersion: z.number().int().min(1).optional(),
 });
 export const ProposalDecisionInput = z.object({ accept: z.boolean() });
 export const AcceptNegotiationInput = z.object({

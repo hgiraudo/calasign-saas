@@ -144,6 +144,51 @@ describe("cláusulas", () => {
   });
 });
 
+describe("cláusulas: grafo desde los ancestros, cambios sin texto y uso con errores de sintaxis", () => {
+  const insertRaw = async (slug: string, body: string) => {
+    const tenant = await db.one<any>(`SELECT tenant_id FROM clauses LIMIT 1`);
+    const id = crypto.randomUUID();
+    await db.query(`INSERT INTO clauses (id, tenant_id, slug, title, body) VALUES ($1,$2,$3,$4,$5)`, [id, tenant.tenant_id, slug, `Cláusula ${slug}`, body]);
+    return id;
+  };
+
+  it("una cita nueva que pasa el tope de niveles desde una cláusula que cita a la editada: 400 clause_depth", async () => {
+    // n1 → n2 → … → n8: 8 niveles (el máximo).
+    expect((await clause("n8", "Fin")).statusCode).toBe(201);
+    for (let i = 7; i >= 1; i--) expect((await clause(`n${i}`, `N${i}\n{{clausula:n${i + 1}}}`)).statusCode).toBe(201);
+    const leaf = await clause("n9", "Hoja");
+    expect(leaf.statusCode).toBe(201);
+    const n8 = (await app.inject({ method: "GET", url: "/v1/clauses", headers: H() })).json().items.find((x: any) => x.slug === "n8");
+    // Desde n8 son 2 niveles, pero desde n1 serían 9.
+    const deep = await app.inject({ method: "PATCH", url: `/v1/clauses/${n8.id}`, headers: H(), payload: { body: "Fin\n{{#if x}}\n{{clausula:n9}}\n{{/if}}" } });
+    expect(deep.statusCode, deep.body).toBe(400);
+    expect(deep.json().error.message).toMatch(/niveles/);
+    // Una cláusula nueva por encima de n1 sería el 9º nivel.
+    expect((await clause("n0", "{{clausula:n1}}")).statusCode).toBe(400);
+  });
+
+  it("cambiar solo el título de una cláusula guardada con un ciclo (antes de validar) no exige arreglarlo", async () => {
+    const id = await insertRaw("vieja-ciclo", "Vieja\n{{clausula:vieja-ciclo}}");
+    const t = await app.inject({ method: "PATCH", url: `/v1/clauses/${id}`, headers: H(), payload: { title: "Renombrada" } });
+    expect(t.statusCode, t.body).toBe(200);
+    const b = await app.inject({ method: "PATCH", url: `/v1/clauses/${id}`, headers: H(), payload: { body: "Vieja\n{{clausula:vieja-ciclo}} " } });
+    expect(b.statusCode).toBe(400);
+    // Un ancestro roto de antes (otra rama) no bloquea editar una cláusula que cita.
+    const hoja = (await clause("hoja-de-rota", "H")).json();
+    await insertRaw("rota", "{{clausula:rota}}\n{{clausula:hoja-de-rota}}");
+    const ok = await app.inject({ method: "PATCH", url: `/v1/clauses/${hoja.id}`, headers: H(), payload: { body: "H2" } });
+    expect(ok.statusCode, ok.body).toBe(200);
+  });
+
+  it("uso: una cláusula con un error de sintaxis en otra parte igual cuenta como uso si escribe {{clausula:slug}}", async () => {
+    const base = (await clause("objetivo", "Objetivo")).json();
+    await insertRaw("con-error", "{{#if x}}\n{{ clausula : objetivo }}");
+    const usage = await app.inject({ method: "GET", url: `/v1/clauses/${base.id}/usage`, headers: H() });
+    expect(usage.json().clauses.map((x: any) => x.slug)).toEqual(["con-error"]);
+    expect((await app.inject({ method: "DELETE", url: `/v1/clauses/${base.id}`, headers: H() })).statusCode).toBe(409);
+  });
+});
+
 describe("generar", () => {
   it("una firma condicional que no salió: el firmante se omite con aviso (no 422) y la metadata guarda la versión", async () => {
     const body = "Las partes guardan reserva.";

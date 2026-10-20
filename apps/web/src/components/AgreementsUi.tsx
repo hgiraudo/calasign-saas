@@ -1,5 +1,5 @@
 // Piezas compartidas de la sección Acuerdos: pestañas, vista previa de documentos y diff.
-import { Fragment, useRef, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, type ReactNode } from "react";
 import { NavLink } from "react-router-dom";
 import type { DiffPart, ResolvedBlock, Run } from "@calasign/shared";
 import { useAgrText } from "../lib/i18n-agreements";
@@ -123,8 +123,30 @@ export function DocPreview({
     if (!best) return onSelect({ quote: quote.slice(0, 2000), start: null, end: null });
     onSelect({ quote: quote.slice(0, 2000), start: best.start, end: best.end });
   };
+  // En móviles la selección se ajusta con los tiradores después del toque (no hay mouseup ni keyup): se sigue con
+  // selectionchange, con espera para no recalcular en cada movimiento. Solo toma selecciones dentro del documento; las
+  // de afuera (p. ej. al pasar al cuadro del comentario) no borran la cita: eso queda para mouseup/keyup en el documento.
+  const latest = useRef(handleUp);
+  latest.current = handleUp;
+  const selectable = Boolean(onSelect);
+  useEffect(() => {
+    if (!selectable) return;
+    let h: number | undefined;
+    const onChange = () => {
+      window.clearTimeout(h);
+      h = window.setTimeout(() => {
+        const sel = window.getSelection();
+        if (sel && !sel.isCollapsed && sel.toString().trim() && ref.current?.contains(sel.anchorNode)) latest.current();
+      }, 350);
+    };
+    document.addEventListener("selectionchange", onChange);
+    return () => {
+      window.clearTimeout(h);
+      document.removeEventListener("selectionchange", onChange);
+    };
+  }, [selectable]);
   return (
-    <div className="agr-doc" ref={ref} onMouseUp={handleUp} onKeyUp={handleUp}>
+    <div className="agr-doc" ref={ref} onMouseUp={handleUp} onKeyUp={handleUp} onTouchEnd={() => window.setTimeout(handleUp, 0)}>
       {blocks.length === 0 && <p className="muted small">—</p>}
       {blocks.map((b, i) => {
         if (b.type === "heading") {

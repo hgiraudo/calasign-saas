@@ -6,6 +6,7 @@ import { api, errorText, HttpError } from "../lib/api";
 import { useI18n } from "../lib/i18n";
 import { useScaleText } from "../lib/i18n-scale";
 import { ErrorBox, LocaleSwitcher, Logo, Spinner } from "../components/ui";
+import { BrandFooter } from "../components/BrandFooter";
 
 type TurnstileApi = {
   render: (el: HTMLElement, o: { sitekey: string; callback: (t: string) => void; "expired-callback": () => void; "error-callback": () => void; language?: string }) => string;
@@ -120,6 +121,19 @@ export function PublicFormPage() {
     return errorText(err);
   };
 
+  /**
+   * 410 (o 409 form_misconfigured) al enviar: el formulario dejó de recibir envíos mientras la persona lo completaba.
+   * Se muestra el estado "no disponible" (con el motivo, si lo hay) en vez de un error que invita a reintentar.
+   */
+  const markUnavailable = (err: unknown): boolean => {
+    if (!(err instanceof HttpError)) return false;
+    const reasons: Record<string, PublicWebForm["unavailableReason"]> = { form_inactive: "inactive", form_expired: "expired", form_exhausted: "exhausted", form_unavailable: null, form_misconfigured: null };
+    if (!(err.code in reasons) || (err.status !== 410 && err.code !== "form_misconfigured")) return false;
+    setForm((f) => (f ? { ...f, available: false, unavailableReason: reasons[err.code] } : f));
+    setError(null);
+    return true;
+  };
+
   const send = (formToken: string) =>
     api<SubmitWebFormResponse>(`/v1/public/forms/${encodeURIComponent(slug)}/submit`, {
       method: "POST",
@@ -155,9 +169,17 @@ export function PublicFormPage() {
             return;
           }
         } catch (retryErr) {
+          if (markUnavailable(retryErr)) {
+            setBusy(false);
+            return;
+          }
           setError(submitError(retryErr));
           if (form.captchaSiteKey) setCaptchaReset((n) => n + 1);
         }
+        setBusy(false);
+        return;
+      }
+      if (markUnavailable(err)) {
         setBusy(false);
         return;
       }
@@ -231,7 +253,7 @@ export function PublicFormPage() {
           )}
         </div>
       </main>
-      {!embed && <footer className="pubform-foot">{st("pub.poweredBy")}</footer>}
+      {!embed && <BrandFooter className="pubform-foot" />}
     </div>
   );
 }

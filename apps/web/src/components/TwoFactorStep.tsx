@@ -6,7 +6,18 @@ import { api, errorText } from "../lib/api";
 import { useTeamsText } from "../lib/i18n-teams";
 import { ErrorBox } from "./ui";
 
-export function TwoFactorStep({ challengeToken, onDone, onBack }: { challengeToken: string; onDone: (m: MeResponse) => void; onBack: () => void }) {
+export function TwoFactorStep({
+  challengeToken,
+  onDone,
+  onBack,
+  from = "/app",
+}: {
+  challengeToken: string;
+  onDone: (m: MeResponse) => void;
+  onBack: () => void;
+  /** A dónde volver después del ingreso por SSO (la página que se pidió antes del login). */
+  from?: string;
+}) {
   const tt = useTeamsText();
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -20,7 +31,7 @@ export function TwoFactorStep({ challengeToken, onDone, onBack }: { challengeTok
       onDone(await api<MeResponse>("/v1/auth/2fa/verify", { method: "POST", body: { challengeToken, code } }));
     } catch (err) {
       // Invitación a una organización con SSO obligatorio: ya es miembro, se ingresa por el IdP.
-      if (redirectIfSsoRequired(err)) return;
+      if (redirectIfSsoRequired(err, from)) return;
       setError(errorText(err));
     } finally {
       setBusy(false);

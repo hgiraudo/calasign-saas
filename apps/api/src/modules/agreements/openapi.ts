@@ -133,7 +133,8 @@ export const AGREEMENTS_OPS: Op[] = [
     path: "/v1/document-templates",
     tag: D,
     summary: "Plantillas de documentos",
-    description: "Listado sin la fuente (`source`): metadatos, datos de ejemplo y análisis (variables, roles, cláusulas). El texto se lee con GET /v1/document-templates/{id}.",
+    description:
+      "Listado sin la fuente: metadatos, datos de ejemplo y análisis (variables, roles, cláusulas). **Cambio:** los ítems ya no incluyen `source` (antes sí); quien lo leía del listado tiene que pedir cada plantilla con GET /v1/document-templates/{id}, que sí lo trae.",
   },
   { method: "post", path: "/v1/document-templates", tag: D, summary: "Crear una plantilla de documento", body: DocumentTemplateInput, status: 201 },
   { method: "get", path: "/v1/document-templates/{id}", tag: D, summary: "Ver una plantilla (con análisis de variables y roles)" },

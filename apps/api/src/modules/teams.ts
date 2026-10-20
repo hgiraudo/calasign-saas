@@ -439,11 +439,12 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
       targetType: "user",
       targetId: userId,
       data:
-        revoked.keys.length || revoked.invitations || revoked.serviceApps.length
+        revoked.keys.length || revoked.invitations || revoked.serviceApps.length || revoked.scimTokens
           ? {
               ...(revoked.keys.length ? { revokedApiKeys: revoked.keys.map((k) => ({ id: k.id, name: k.name })) } : {}),
               ...(revoked.invitations ? { revokedInvitations: revoked.invitations } : {}),
               ...(revoked.serviceApps.length ? { disabledServiceAppSecrets: revoked.serviceApps } : {}),
+              ...(revoked.scimTokens ? { revokedScimTokens: revoked.scimTokens } : {}),
             }
           : undefined,
     });
@@ -581,7 +582,9 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
       const pre = await t.one<any>(`SELECT tenant_id FROM invitations WHERE id = $1`, [invitationId]);
       if (pre) {
         await t.query(`SELECT id FROM tenants WHERE id = $1 FOR UPDATE`, [pre.tenant_id]);
-        await assertInvitationCapacity(t, pre.tenant_id, email);
+        // Si ya es miembro no ocupa un lugar nuevo (la membresía existente se conserva).
+        const member = await t.one(`SELECT 1 FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [pre.tenant_id, userId]);
+        if (!member) await assertInvitationCapacity(t, pre.tenant_id, email);
       }
       const upd = await t.query<any>(
         `UPDATE invitations SET accepted_at = now(), accepted_by = $2

@@ -124,23 +124,31 @@ const formOwner = (form: FormRow) => ({ tenantId: form.tenant_id as string, user
  */
 async function formProblem(db: Db, r: FormRow, planFeatures?: readonly string[]): Promise<FormProblem | null> {
   const features = planFeatures ?? (await tenantPlan(db, r.tenant_id)).plan.features;
-  if (!features.includes("web_forms")) return { code: "plan_feature", message: "El plan actual de la organización no incluye formularios web" };
-  // Creado con una API key: los sobres salen a nombre de la key, así que (como el envío masivo) exige acceso por API.
-  if (r.created_by_api_key && !features.includes("api")) {
+  return (await accessProblem(db, r, features)) ?? configProblem(db, r);
+}
+
+/** Plan y dueño (sin la configuración de cada formulario): lo que comparten los formularios de un mismo dueño y plantilla. */
+async function accessProblem(db: Db, r: FormRow, planFeatures: readonly string[]): Promise<FormProblem | null> {
+  if (!planFeatures.includes("web_forms")) return { code: "plan_feature", message: "El plan actual de la organización no incluye formularios web" };
+  if (r.created_by_api_key && !planFeatures.includes("api")) {
     return { code: "plan_feature", message: "El plan actual de la organización no incluye el acceso por API (el formulario lo creó una API key)" };
   }
-  const owner = await ownerProblem(db, formOwner(r), r.template_id);
-  if (owner) return owner;
-  return configProblem(db, r);
+  return ownerProblem(db, formOwner(r), r.template_id);
 }
 
 /**
  * La plantilla pudo cambiar después de publicar el formulario (rol que pasó a aprobador o copia, campos o roles que ya
  * no cierran con el prellenado): la página pública y la consola lo muestran no disponible, como lo rechaza el envío.
  */
-async function configProblem(db: Db, r: FormRow): Promise<FormProblem | null> {
+async function configProblem(db: Db, r: FormRow, templates?: Map<string, Promise<any>>): Promise<FormProblem | null> {
   try {
-    checkConfig(await loadTemplateForUse(db, r.tenant_id, r.template_id), r as any);
+    let tpl = templates?.get(r.template_id);
+    if (!tpl) {
+      tpl = loadTemplateForUse(db, r.tenant_id, r.template_id);
+      tpl.catch(() => {});
+      templates?.set(r.template_id, tpl);
+    }
+    checkConfig(await tpl, r as any);
     return null;
   } catch (e) {
     return { code: "misconfigured", message: `El formulario ya no coincide con su plantilla: ${(e as Error).message}` };
@@ -155,13 +163,14 @@ async function configProblem(db: Db, r: FormRow): Promise<FormProblem | null> {
 async function formStates(db: Db, tenantId: string, rows: FormRow[]): Promise<Map<string, FormProblem | null>> {
   const planFeatures = (await tenantPlan(db, tenantId)).plan.features;
   const memo = new Map<string, Promise<FormProblem | null>>();
+  const templates = new Map<string, Promise<any>>();
   const out = new Map<string, FormProblem | null>();
   for (const r of rows) {
     const o = formOwner(r);
     const k = `${o.userId ?? ""}|${o.apiKeyId ?? ""}|${r.template_id}`;
-    if (!memo.has(k)) memo.set(k, formProblem(db, r, planFeatures));
-    // La configuración es de cada formulario (no del dueño ni de la plantilla): se mira aparte.
-    out.set(r.id, (await memo.get(k)!) ?? (await configProblem(db, r)));
+    if (!memo.has(k)) memo.set(k, accessProblem(db, r, planFeatures));
+    // La configuración es de cada formulario (no del dueño ni de la plantilla): se mira aparte, con la plantilla cargada una vez.
+    out.set(r.id, (await memo.get(k)!) ?? (await configProblem(db, r, templates)));
   }
   return out;
 }

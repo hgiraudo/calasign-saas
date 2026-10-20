@@ -463,7 +463,12 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
     await checkCustomFields(s.db, a.tenantId, meta.metadata as Record<string, unknown> | undefined);
     const sha = sha256Hex(bytes);
     const dup = await s.db.one<any>(
-      `SELECT ag.id FROM agreements ag JOIN files f ON f.id = ag.file_id WHERE ag.tenant_id = $1 AND f.sha256 = $2 LIMIT 1`,
+      // También contra las otras versiones firmadas del sobre (antes o después de una renovación del sello de archivo).
+      `SELECT ag.id FROM agreements ag JOIN files f ON f.id = ag.file_id WHERE ag.tenant_id = $1 AND f.sha256 = $2
+       UNION ALL
+       SELECT ag.id FROM agreements ag JOIN envelope_signed_versions v ON v.envelope_id = ag.envelope_id JOIN files vf ON vf.id = v.file_id
+        WHERE ag.tenant_id = $1 AND vf.sha256 = $2
+       LIMIT 1`,
       [a.tenantId, sha],
     );
     if (dup) throw conflict("duplicate", "Ese PDF ya está en el repositorio", { agreementId: dup.id });

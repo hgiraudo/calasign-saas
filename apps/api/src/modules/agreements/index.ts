@@ -52,4 +52,20 @@ export async function handleAgreementsJob(d: Deps, p: AgreementsJob) {
 /** Tarea periódica (worker): vencimientos del repositorio. */
 export async function agreementsSweep(d: Deps) {
   await agreementExpirySweep(d);
+  await ingestBackfill(d);
+}
+
+/**
+ * Ingestas que agotaron sus intentos (almacenamiento o clave BYOK caídos más que el backoff del job): sin esto el
+ * sobre completado no llegaba nunca al repositorio. Se re-arma el mismo job (no se recorre por sobres sin acuerdo:
+ * eso volvía a crear los acuerdos que alguien borró a propósito). A lo sumo una vez cada 6 horas y por 30 días.
+ */
+async function ingestBackfill(d: Deps) {
+  const rows = await d.db.query<{ id: number }>(
+    `UPDATE jobs SET status = 'pending', attempts = 0, run_at = now(), finished_at = NULL, locked_at = NULL
+      WHERE id IN (SELECT id FROM jobs WHERE queue = 'agreements' AND status = 'failed' AND dedupe_key LIKE 'agr:ingest:%'
+                     AND finished_at < now() - interval '6 hours' AND created_at > now() - interval '30 days' LIMIT 20)
+      RETURNING id`,
+  );
+  if (rows.length) d.log.info({ jobs: rows.length }, "ingestas al repositorio re-encoladas");
 }

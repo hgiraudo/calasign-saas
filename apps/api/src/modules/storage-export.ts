@@ -539,7 +539,7 @@ export async function exportEnvelopeJob(db: Db, blobs: BlobStore, p: { connectio
     return;
   }
   const e = await db.one<any>(
-    `SELECT e.subject, e.status, f.storage_key FROM envelopes e JOIN files f ON f.id = e.signed_file_id WHERE e.id = $1`,
+    `SELECT e.subject, e.status, f.storage_key, f.sha256 FROM envelopes e JOIN files f ON f.id = e.signed_file_id WHERE e.id = $1`,
     [p.envelopeId],
   );
   if (!e || e.status !== "completed") return;
@@ -567,18 +567,22 @@ async function runExport(db: Db, blobs: BlobStore, p: { connectionId: string; en
   try {
     let cur = await withResolvedFolder(db, c);
     // El PDF ya subido en un intento anterior (falló solo el certificado de evidencia) no se vuelve a subir.
-    let ref: string = (await db.one<any>(`SELECT pdf_ref FROM storage_exports WHERE id = $1`, [ex.id]))?.pdf_ref ?? null;
+    const prev = await db.one<any>(`SELECT pdf_ref, pdf_sha256 FROM storage_exports WHERE id = $1`, [ex.id]);
+    let ref: string = prev?.pdf_ref ?? null;
+    let pdfSha: string | null = prev?.pdf_ref ? prev.pdf_sha256 ?? null : null;
     if (!ref) {
       const bytes = await blobs.get(e.storage_key);
       const r = await uploadTo(cur.provider, cur.credentials_enc, cur.config ?? {}, fileName(e.subject, p.envelopeId), bytes, "application/pdf", persistCreds(db, c.id));
       await persistUpload(db, c.id, r);
       ref = r.ref;
-      await db.query(`UPDATE storage_exports SET pdf_ref = $2, updated_at = now() WHERE id = $1`, [ex.id, ref]);
+      pdfSha = e.sha256 ?? null;
+      await db.query(`UPDATE storage_exports SET pdf_ref = $2, pdf_sha256 = $3, updated_at = now() WHERE id = $1`, [ex.id, ref, pdfSha]);
     }
     if (c.config?.includeEvidence) {
       // Con la fila releída: la subida del PDF pudo renovar el token o fijar la carpeta.
       cur = (await db.one<any>(`SELECT * FROM storage_connections WHERE id = $1`, [c.id])) ?? cur;
-      const ev = await evidenceCertificate(db, p.envelopeId);
+      // Describe el PDF que se subió (si una renovación del sello cambió el PDF entre medio, no el nuevo).
+      const ev = await evidenceCertificate(db, p.envelopeId, { signedSha256: pdfSha });
       const r2 = await uploadTo(cur.provider, cur.credentials_enc, cur.config ?? {}, `${safeBaseName(e.subject, p.envelopeId)} - evidencia.json`, ev, "application/json", persistCreds(db, c.id));
       await persistUpload(db, c.id, r2);
     }

@@ -33,7 +33,8 @@ export async function loadSignedBundle(db: Db, blobs: BlobStore, envelopeId: str
 }
 
 /** JSON del certificado de evidencia (bytes UTF-8). */
-export async function evidenceCertificate(db: Db, envelopeId: string): Promise<Uint8Array> {
+/** opts.signedSha256: el hash del PDF que acompaña a este JSON (el que se subió, aunque después se haya renovado). */
+export async function evidenceCertificate(db: Db, envelopeId: string, opts: { signedSha256?: string | null } = {}): Promise<Uint8Array> {
   const e = await db.one<any>(
     `SELECT e.id, e.tenant_id, e.brand_id, e.subject, e.status, e.created_at, e.completed_at, f.sha256
        FROM envelopes e LEFT JOIN files f ON f.id = e.signed_file_id WHERE e.id = $1`,
@@ -57,7 +58,7 @@ export async function evidenceCertificate(db: Db, envelopeId: string): Promise<U
     version: 1,
     generatedAt: new Date().toISOString(),
     envelope: { id: e.id, subject: e.subject, status: e.status, createdAt: iso(e.created_at), completedAt: iso(e.completed_at) },
-    signedPdf: { sha256: e.sha256 ?? null, algorithm: "SHA-256", note: "El PDF sellado (PAdES) incluye el certificado de finalización." },
+    signedPdf: { sha256: opts.signedSha256 ?? e.sha256 ?? null, algorithm: "SHA-256", note: "El PDF sellado (PAdES) incluye el certificado de finalización." },
     recipients: recipients.map((r) => ({
       name: r.name,
       email: r.email,

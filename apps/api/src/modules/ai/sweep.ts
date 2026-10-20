@@ -92,7 +92,10 @@ export async function runAiSweep(d: Deps, now = new Date()) {
       // tomar en cada pasada y ocupaba la tanda de todas las organizaciones.
       const det = (err as AppError)?.details as { used?: number; budget?: number } | undefined;
       const monthSpent = isAiError(err) && ((err as AppError).code === "ai_disabled" || (det?.used != null && det.budget != null && det.used >= det.budget));
-      if (monthSpent) await d.db.query(`UPDATE envelopes SET ai_metadata_attempted_at = NULL WHERE id = $1`, [e.id]);
+      // Falla transitoria (BYOK o almacenamiento caídos, lector de PDF ocupado): tampoco es un intento, se reintenta.
+      const transient = (err as AppError)?.status === 503;
+      if (monthSpent || transient) await d.db.query(`UPDATE envelopes SET ai_metadata_attempted_at = NULL WHERE id = $1`, [e.id]);
+      if (transient) d.log.warn({ envelopeId: e.id, err: String(err) }, "extracción automática postergada (falla transitoria)");
       else if (!isAiError(err)) d.log.warn({ envelopeId: e.id, err: String(err) }, "extracción automática de metadatos falló");
     }
   }

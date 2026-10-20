@@ -221,10 +221,12 @@ export async function closeStaleCheckouts(d: { db: Db; log: { error: (o: object,
       else if (p.provider === "mercadopago") await mpExpirePreference(p.stale_checkout_id);
       await d.db.query(`UPDATE envelope_payments SET stale_checkout_id = NULL WHERE id = $1 AND stale_checkout_id = $2`, [p.id, p.stale_checkout_id]);
     } catch (err) {
-      // Si el proveedor ya no lo conoce (no existe, otra cuenta), no hay nada que cerrar: se suelta para no reintentarlo
-      // para siempre (y no tapar a los demás).
-      if (/\b404\b|not found|no such|resource_missing/i.test(String(err))) {
+      // Si el proveedor ya no lo conoce (404), no hay nada que cerrar: se suelta para no reintentarlo para siempre.
+      if (err instanceof ProviderError && err.status === 404) {
         await d.db.query(`UPDATE envelope_payments SET stale_checkout_id = NULL WHERE id = $1 AND stale_checkout_id = $2`, [p.id, p.stale_checkout_id]).catch(() => {});
+      } else {
+        // Cualquier otro error (proveedor caído, sin configurar): pasa al final de la cola para no tapar a los demás.
+        await d.db.query(`UPDATE envelope_payments SET updated_at = now() WHERE id = $1`, [p.id]).catch(() => {});
       }
       d.log.error({ err: String(err), paymentId: p.id }, "no se pudo cerrar un checkout descartado");
     }
@@ -260,6 +262,7 @@ export async function closeStaleCheckouts(d: { db: Db; log: { error: (o: object,
         });
       });
     } catch (err) {
+      await d.db.query(`UPDATE envelope_payments SET updated_at = now() WHERE id = $1`, [p.id]).catch(() => {});
       d.log.error({ err: String(err), paymentId: p.id }, "no se pudo cerrar el checkout de un sobre cerrado");
     }
   }

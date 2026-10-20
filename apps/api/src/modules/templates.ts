@@ -19,7 +19,7 @@ import { AppError, badRequest, notFound } from "../lib/errors";
 import { iso, sha256Hex, uuidv7 } from "../lib/util";
 import { assertTemplateAccess, templateVisibilitySql } from "./access";
 import { authenticate, type AuthContext, type Services } from "./context";
-import { assertDocumentLimits, idempotent, sendEnvelope, assertTemplateLogicOrder } from "./envelopes";
+import { assertDocumentLimits, idempotent, sendEnvelope, assertTemplateLogicOrder, templateLogicOrderProblems } from "./envelopes";
 import { checkSenderValue, insertEnvelopeField } from "./fieldvalues";
 import { assignFieldIds, copyFieldLogic, pruneDanglingConditions, saveFieldLogic } from "./logic";
 import { loadDetail, loadDocuments, toDocument } from "./mappers";
@@ -290,6 +290,7 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
     const input = PutTemplateRolesInput.parse(req.body);
     await s.db.tx(async (t) => {
       const tpl = await lockTemplate(t, a.tenantId, req.params.id);
+      const before = await templateLogicOrderProblems(t, tpl.id);
       const list = input.roles.map((r) => ({ ...r, id: r.id ?? uuidv7() }));
       const ids = list.map((r) => r.id);
       if (new Set(ids).size !== ids.length) throw badRequest("duplicate_ids", "Ids de roles repetidos");
@@ -319,7 +320,7 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
       // Campos borrados (con su rol o por el cambio de rol): las condiciones que los citaban se quitan.
       await pruneDanglingConditions(t, "template_fields", tpl.id);
       // Reordenar roles también puede dejar una condición citando a un rol que firma después.
-      await assertTemplateLogicOrder(t, tpl.id);
+      await assertTemplateLogicOrder(t, tpl.id, before);
       await touch(t, tpl.id);
     });
     return loadTemplateDetail(s.db, a.tenantId, req.params.id);
@@ -331,6 +332,7 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
     assignFieldIds(input.fields);
     await s.db.tx(async (t) => {
       const tpl = await lockTemplate(t, a.tenantId, req.params.id);
+      const before = await templateLogicOrderProblems(t, tpl.id);
       const docs = new Map((await t.query<any>(`SELECT id, page_count FROM template_documents WHERE template_id = $1`, [tpl.id])).map((d) => [d.id, d]));
       const signerRoles = new Set(
         (await t.query<any>(`SELECT id FROM template_roles WHERE template_id = $1 AND role = 'signer'`, [tpl.id])).map((r) => r.id),
@@ -368,7 +370,7 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
       }
       await saveFieldLogic(t, "template_fields", input.fields);
       // Condiciones que citan un campo de un rol que firma después (o en el mismo turno): ver logicOrderProblems.
-      await assertTemplateLogicOrder(t, tpl.id);
+      await assertTemplateLogicOrder(t, tpl.id, before);
       await touch(t, tpl.id);
     });
     return loadTemplateDetail(s.db, a.tenantId, req.params.id);
@@ -386,6 +388,7 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
       // Con el sobre en FOR SHARE: una purga por retención en curso termina antes y acá se ve (si no, la plantilla
       // quedaba apuntando a originales borrados).
       const locked = await t.one<any>(`SELECT purged_at FROM envelopes WHERE id = $1 FOR SHARE`, [env.id]);
+      if (!locked) throw notFound("Sobre"); // Se borró (borrador) entre la lectura y el bloqueo.
       if (locked?.purged_at) throw new AppError(410, "purged", "Los originales de este sobre se eliminaron por la política de retención");
       await t.query(
         `INSERT INTO templates (id, tenant_id, name, description, subject, message, locale, created_by, created_by_api_key) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,

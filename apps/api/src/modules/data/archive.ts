@@ -53,7 +53,7 @@ async function inspectArchive(d: Deps, envelopeId: string) {
   if (!e) return;
   const info = await archiveTimestampInfo(await d.blobs.get(e.storage_key));
   const validUntil = info.hasDss && info.last ? info.last.tsaNotAfter : null;
-  await d.db.query(`UPDATE envelopes SET archive_valid_until = $2, archive_checked_at = now() WHERE id = $1`, [e.id, validUntil]);
+  await d.db.query(`UPDATE envelopes SET archive_valid_until = $2, archive_checked_at = now(), archive_error = NULL WHERE id = $1`, [e.id, validUntil]);
   await ensureFirstVersion(d.db, e, validUntil);
 }
 
@@ -125,6 +125,10 @@ async function renewClaimed(d: Deps, envelopeId: string, tsaUrl: string, actor: 
          archive_error = $4, updated_at = now() WHERE id = $1`,
       [e.id, fileId, next.last!.tsaNotAfter, notExtended ? "La TSA actual vence igual o antes que la anterior: conviene renovar con otra TSA" : null],
     );
+    // El repositorio de acuerdos y los enlaces de descarga vigentes pasan a la versión renovada (si no, seguían
+    // sirviendo la anterior, sin el sello nuevo, y mostrando otro hash que el sobre).
+    await t.query(`UPDATE agreements SET file_id = $3, updated_at = now() WHERE envelope_id = $1 AND file_id = $2`, [e.id, e.signed_file_id, fileId]);
+    await t.query(`UPDATE download_links SET file_id = $3 WHERE envelope_id = $1 AND file_id = $2 AND expires_at > now()`, [e.id, e.signed_file_id, fileId]);
     await appendEvent(t, {
       tenantId: e.tenant_id,
       envelopeId: e.id,
@@ -158,7 +162,11 @@ export async function archiveSweep(d: Deps, opts: { days?: number; force?: boole
   let renewed = 0;
   let failed = 0;
   const pending = await d.db.query<any>(
-    `SELECT id FROM envelopes WHERE status = 'completed' AND signed_file_id IS NOT NULL AND archive_checked_at IS NULL AND ($2::uuid IS NULL OR id = $2)
+    // Una inspección que falló (BYOK o almacenamiento caídos) se reintenta una vez por día: si no, ese sobre no se
+    // renovaba nunca más y su validez a largo plazo vencía sin aviso.
+    `SELECT id FROM envelopes WHERE status = 'completed' AND signed_file_id IS NOT NULL AND archive_valid_until IS NULL
+       AND (archive_checked_at IS NULL OR (archive_error IS NOT NULL AND archive_checked_at < now() - interval '1 day'))
+       AND ($2::uuid IS NULL OR id = $2)
      ORDER BY completed_at LIMIT $1`,
     [cfg.batch * 5, opts.envelopeId ?? null],
   );

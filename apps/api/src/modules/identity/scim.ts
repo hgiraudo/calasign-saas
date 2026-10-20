@@ -133,7 +133,16 @@ function displayNameOf(input: z.infer<typeof ScimUserInput>, email: string): str
 }
 
 /** Activa / desactiva la membresía de un usuario aprovisionado. */
-async function setActive(db: Db, tenantId: string, userId: string, active: boolean) {
+type Revoked = Awaited<ReturnType<typeof revokeMemberAccess>>;
+
+/** Lo revocado al desactivar, para la auditoría (como member.removed desde la consola). */
+const revokedData = (r: Revoked | null | undefined) =>
+  r && (r.keys.length || r.invitations || r.serviceApps.length || r.scimTokens)
+    ? { revokedCredentials: { apiKeys: r.keys.map((k) => k.id), invitations: r.invitations, serviceApps: r.serviceApps, scimTokens: r.scimTokens } }
+    : {};
+
+async function setActive(db: Db, tenantId: string, userId: string, active: boolean): Promise<Revoked | null> {
+  let revoked: Revoked | null = null;
   const m = await db.one<any>(`SELECT role FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [tenantId, userId]);
   if (active && !m) {
     // Cupo de usuarios del plan: una alta o reactivación por SCIM ocupa un lugar igual que una invitación.
@@ -164,9 +173,10 @@ async function setActive(db: Db, tenantId: string, userId: string, active: boole
     await db.query(`DELETE FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [tenantId, userId]);
     await db.query(`DELETE FROM sessions WHERE tenant_id = $1 AND user_id = $2`, [tenantId, userId]);
     // Como la baja desde la consola: API keys, invitaciones que mandó, tokens OAuth y secretos de sus apps de servicio.
-    await revokeMemberAccess(db, tenantId, userId);
+    revoked = await revokeMemberAccess(db, tenantId, userId);
   }
   await db.query(`UPDATE scim_users SET active = $3, updated_at = now() WHERE tenant_id = $1 AND user_id = $2`, [tenantId, userId, active]);
+  return revoked;
 }
 
 /**
@@ -202,7 +212,7 @@ async function ensureScimUser(db: Db, tenantId: string, userId: string) {
 }
 
 /** Aplica atributos (de POST/PUT o de un PATCH ya reducido) a un usuario existente. */
-async function applyUserAttrs(db: Db, tenantId: string, userId: string, attrs: Record<string, unknown>) {
+async function applyUserAttrs(db: Db, tenantId: string, userId: string, attrs: Record<string, unknown>): Promise<Revoked | null> {
   await ensureScimUser(db, tenantId, userId);
   const sets: string[] = [];
   const params: unknown[] = [tenantId, userId];
@@ -246,7 +256,7 @@ async function applyUserAttrs(db: Db, tenantId: string, userId: string, attrs: R
       await db.query(`UPDATE users SET email = $2 WHERE id = $1`, [userId, email]);
     }
   }
-  if ("active" in attrs) await setActive(db, tenantId, userId, asBool(attrs.active));
+  return "active" in attrs ? setActive(db, tenantId, userId, asBool(attrs.active)) : null;
 }
 
 function flattenUser(input: z.infer<typeof ScimUserInput>): Record<string, unknown> {
@@ -562,8 +572,8 @@ export async function scimRoutes(app: FastifyInstance, s: Services) {
       const input = ScimUserInput.parse(req.body);
       const attrs = flattenUser(input);
       if (!("active" in attrs)) attrs.active = true;
-      await s.db.tx((t) => applyUserAttrs(t, tenantId, req.params.id, attrs));
-      await audit(req, "member.scim_updated", "user", req.params.id, { fields: Object.keys(attrs) });
+      const revoked = await s.db.tx((t) => applyUserAttrs(t, tenantId, req.params.id, attrs));
+      await audit(req, "member.scim_updated", "user", req.params.id, { fields: Object.keys(attrs), ...revokedData(revoked) });
       return toScimUser(s.db, tenantId, await findUser(s.db, tenantId, req.params.id));
     });
 
@@ -572,9 +582,10 @@ export async function scimRoutes(app: FastifyInstance, s: Services) {
       await findUser(s.db, tenantId, req.params.id);
       const input = PatchInput.parse(req.body);
       const attrs = userPatchToAttrs(input.Operations);
-      await s.db.tx((t) => applyUserAttrs(t, tenantId, req.params.id, attrs));
+      const revoked = await s.db.tx((t) => applyUserAttrs(t, tenantId, req.params.id, attrs));
       await audit(req, "active" in attrs ? (asBool(attrs.active) ? "member.scim_activated" : "member.scim_deactivated") : "member.scim_updated", "user", req.params.id, {
         fields: Object.keys(attrs),
+        ...revokedData(revoked),
       });
       return toScimUser(s.db, tenantId, await findUser(s.db, tenantId, req.params.id));
     });
@@ -582,12 +593,13 @@ export async function scimRoutes(app: FastifyInstance, s: Services) {
     sub.delete<{ Params: { id: string } }>(`${BASE}/Users/:id`, async (req, reply: FastifyReply) => {
       const { tenantId } = T(req);
       await findUser(s.db, tenantId, req.params.id);
-      await s.db.tx(async (t) => {
+      const revoked = await s.db.tx(async (t) => {
         await ensureScimUser(t, tenantId, req.params.id);
-        await setActive(t, tenantId, req.params.id, false);
+        const r = await setActive(t, tenantId, req.params.id, false);
         await t.query(`DELETE FROM scim_users WHERE tenant_id = $1 AND user_id = $2`, [tenantId, req.params.id]);
+        return r;
       });
-      await audit(req, "member.scim_deleted", "user", req.params.id);
+      await audit(req, "member.scim_deleted", "user", req.params.id, revokedData(revoked));
       return reply.code(204).send();
     });
 

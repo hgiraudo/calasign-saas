@@ -371,9 +371,10 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
     await s.db.tx(async (t) => {
       const e = await lockEnvelope(t, a.tenantId, req.params.id);
       requireDraft(e);
+      const before = await envelopeLogicOrderProblems(t, e.id);
       await replaceRecipients(t, a, e.id, input.recipients);
       // Reordenar destinatarios también puede dejar una condición citando a alguien que firma después.
-      await assertEnvelopeLogicOrder(t, e.id);
+      await assertEnvelopeLogicOrder(t, e.id, before);
       await touch(t, e.id);
     });
     return loadDetail(s.db, a.tenantId, req.params.id);
@@ -386,9 +387,10 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
     await s.db.tx(async (t) => {
       const e = await lockEnvelope(t, a.tenantId, req.params.id);
       requireDraft(e);
+      const before = await envelopeLogicOrderProblems(t, e.id);
       await replaceFields(t, a.tenantId, e.id, input.fields);
       // Al diseñar la lógica (no al enviar: sobres y plantillas ya armadas no dejan de poder enviarse).
-      await assertEnvelopeLogicOrder(t, e.id);
+      await assertEnvelopeLogicOrder(t, e.id, before);
       await touch(t, e.id);
     });
     return loadDetail(s.db, a.tenantId, req.params.id);
@@ -757,8 +759,17 @@ export function logicOrderProblems(
   return [...new Set(out)];
 }
 
-export async function assertLogicOrder(fields: Parameters<typeof logicOrderProblems>[0], recips: Parameters<typeof logicOrderProblems>[1]) {
-  const problems = logicOrderProblems(fields, recips);
+/**
+ * before: los problemas que ya había antes del cambio. Solo se rechazan los nuevos: un sobre o plantilla armados antes
+ * de esta regla (o un cambio que no toca la lógica, como el correo de un destinatario) no quedan bloqueados.
+ */
+export async function assertLogicOrder(
+  fields: Parameters<typeof logicOrderProblems>[0],
+  recips: Parameters<typeof logicOrderProblems>[1],
+  before: readonly string[] = [],
+) {
+  const prev = new Set(before);
+  const problems = logicOrderProblems(fields, recips).filter((p) => !prev.has(p));
   if (problems.length) throw new AppError(422, "logic_order", problems.join(". "), { problems });
 }
 
@@ -768,20 +779,37 @@ function pickReservedMetadata(m: Record<string, unknown> | null | undefined): Re
   return out;
 }
 
-/** El orden de la lógica de un sobre (después de guardar campos o destinatarios, o de crearlo en un paso). */
-export async function assertEnvelopeLogicOrder(t: Db, envelopeId: string) {
-  await assertLogicOrder(
+const envelopeLogicRows = async (t: Db, envelopeId: string) =>
+  [
     await t.query<any>(`SELECT id, recipient_id, label, conditions, read_only FROM fields WHERE envelope_id = $1`, [envelopeId]),
     await t.query<any>(`SELECT id, name, routing_order FROM recipients WHERE envelope_id = $1`, [envelopeId]),
-  );
+  ] as const;
+
+const templateLogicRows = async (t: Db, templateId: string) =>
+  [
+    await t.query<any>(`SELECT id, role_id AS recipient_id, label, conditions, read_only FROM template_fields WHERE template_id = $1`, [templateId]),
+    await t.query<any>(`SELECT id, name, routing_order FROM template_roles WHERE template_id = $1`, [templateId]),
+  ] as const;
+
+/** Los problemas de orden que ya tiene un sobre (antes de un cambio: ver assertLogicOrder). */
+export async function envelopeLogicOrderProblems(t: Db, envelopeId: string) {
+  return logicOrderProblems(...(await envelopeLogicRows(t, envelopeId)));
+}
+
+export async function templateLogicOrderProblems(t: Db, templateId: string) {
+  return logicOrderProblems(...(await templateLogicRows(t, templateId)));
+}
+
+/** El orden de la lógica de un sobre (después de guardar campos o destinatarios, o de crearlo en un paso). */
+export async function assertEnvelopeLogicOrder(t: Db, envelopeId: string, before: readonly string[] = []) {
+  const [fields, recips] = await envelopeLogicRows(t, envelopeId);
+  await assertLogicOrder(fields, recips, before);
 }
 
 /** Lo mismo para una plantilla (los roles hacen de destinatarios). */
-export async function assertTemplateLogicOrder(t: Db, templateId: string) {
-  await assertLogicOrder(
-    await t.query<any>(`SELECT id, role_id AS recipient_id, label, conditions, read_only FROM template_fields WHERE template_id = $1`, [templateId]),
-    await t.query<any>(`SELECT id, name, routing_order FROM template_roles WHERE template_id = $1`, [templateId]),
-  );
+export async function assertTemplateLogicOrder(t: Db, templateId: string, before: readonly string[] = []) {
+  const [fields, recips] = await templateLogicRows(t, templateId);
+  await assertLogicOrder(fields, recips, before);
 }
 
 /** Valida y envía un borrador (dentro de la transacción del llamador). */

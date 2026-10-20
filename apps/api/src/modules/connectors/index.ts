@@ -411,18 +411,21 @@ async function writeBack(d: { db: Db; blobs: BlobStore }, conn: Conn, link: any,
     const bundle = await loadSignedBundle(db, d.blobs, link.envelope_id);
     if (bundle) {
       const refs: string[] = [];
+      // Hash del PDF entregado: el JSON de evidencia lo describe a él (no a una versión renovada después).
+      let signedSha: string | null = bundle.sha256;
       if (wb.uploadSigned !== false) {
         // El PDF ya entregado en un intento anterior no se vuelve a subir (falló la evidencia o el estado).
         let signedRef: string | null = link.signed_ref;
         if (!signedRef) {
           signedRef = await deliverFile(conn, objectType, link.object_id, { name: `${bundle.baseName}.pdf`, bytes: bundle.pdf, contentType: "application/pdf" }, wb.folder, "signed");
-          await db.query(`UPDATE connector_links SET signed_ref = $2 WHERE id = $1`, [link.id, signedRef]);
-        }
+          await db.query(`UPDATE connector_links SET signed_ref = $2, signed_sha256 = $3 WHERE id = $1`, [link.id, signedRef, bundle.sha256]);
+          signedSha = bundle.sha256;
+        } else signedSha = link.signed_sha256 ?? null;
         refs.push(signedRef);
       }
       if (wb.uploadEvidence) {
         if (acceptsEvidenceFile(conn.provider, objectType)) {
-          const ev = await evidenceCertificate(db, link.envelope_id);
+          const ev = await evidenceCertificate(db, link.envelope_id, { signedSha256: signedSha });
           refs.push(await deliverFile(conn, objectType, link.object_id, { name: `${bundle.baseName} - evidencia.json`, bytes: ev, contentType: "application/json" }, wb.folder, "evidence"));
         } else detail.evidence = `${conn.provider} (${objectType}) no recibe archivos adicionales: la evidencia va dentro del PDF sellado`;
       }

@@ -62,8 +62,16 @@ export async function purgeExpiredEnvelopes(d: Deps, opts: { tenantId?: string; 
     // Todo con el sobre bloqueado: un clon o una plantilla "desde sobre" que lee el sobre a la vez (FOR SHARE) espera,
     // y no queda apuntando a un original que se está borrando.
     const ok = await d.db.tx(async (t) => {
-      const cur = await t.one<any>(`SELECT status, purged_at FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
-      if (cur?.status !== "completed" || cur.purged_at) return false;
+      // La política se vuelve a mirar acá (con la organización compartida: un cambio de retención espera a este sobre):
+      // si un administrador la extendió o la quitó mientras corría la pasada, el resto del lote no se borra.
+      const cur = await t.one<any>(
+        `SELECT e.status, e.purged_at, t.retention_days,
+                (e.completed_at < now() - make_interval(secs => t.retention_days * $2::double precision)) AS due
+           FROM envelopes e JOIN tenants t ON t.id = e.tenant_id WHERE e.id = $1 FOR UPDATE OF e FOR SHARE OF t`,
+        [e.id, daySeconds()],
+      );
+      if (cur?.status !== "completed" || cur.purged_at || cur.retention_days == null) return false;
+      if (!opts.ignoreAge && !cur.due) return false;
       const files = await purgeableFiles(t, e.id);
       const done: any[] = [];
       let failed = 0;
@@ -92,11 +100,12 @@ export async function purgeExpiredEnvelopes(d: Deps, opts: { tenantId?: string; 
     });
     if (ok) purged++;
   }
-  // Originales que al purgar su sobre todavía usaba una plantilla, otro sobre o un acuerdo: cuando ya solo los
+  // Originales (también los de una plantilla, kind 'template', que comparten sus sobres) que al purgar su sobre todavía
+  // usaba una plantilla, otro sobre o un acuerdo: cuando ya solo los
   // referencian sobres purgados, se borran (si no, quedaban para siempre y se seguían sirviendo).
   const orphans = await d.db.query<any>(
     `SELECT f.id, f.storage_key FROM files f
-      WHERE f.purged_at IS NULL AND f.kind = 'original'
+      WHERE f.purged_at IS NULL AND f.kind <> 'signed'
         AND EXISTS (SELECT 1 FROM documents dd JOIN envelopes ee ON ee.id = dd.envelope_id WHERE dd.file_id = f.id AND ee.purged_at IS NOT NULL)
         AND NOT EXISTS (SELECT 1 FROM documents dd JOIN envelopes ee ON ee.id = dd.envelope_id WHERE dd.file_id = f.id AND ee.purged_at IS NULL)
         AND NOT EXISTS (SELECT 1 FROM template_documents td WHERE td.file_id = f.id)

@@ -13,13 +13,24 @@ export interface SignedBundle {
   subject: string;
   sha256: string;
   pdf: Uint8Array;
-  /** Nombre base sin extensión ("Contrato ACME - 0190ab12"). */
+  /** Nombre base sin extensión ("Contrato ACME - 0190ab12-…", con el id completo del sobre). */
   baseName: string;
 }
 
+const safeSubject = (subject: string) => subject.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 100) || "documento";
+
+/**
+ * Nombre base del archivo exportado: asunto + id COMPLETO del sobre. Con solo los primeros 8 caracteres (el prefijo
+ * de tiempo de un uuidv7, que se repite durante ~65 s) dos sobres con el mismo asunto completados casi juntos (un
+ * envío masivo) compartían nombre, y un destino que escribe por nombre (S3, Dropbox) pisaba el PDF de otro sobre.
+ */
 export function safeBaseName(subject: string, envelopeId: string) {
-  const safe = subject.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 100) || "documento";
-  return `${safe} - ${envelopeId.slice(0, 8)}`;
+  return `${safeSubject(subject)} - ${envelopeId}`;
+}
+
+/** Nombre que se usaba antes (8 caracteres del id): solo para reconocer lo que subió un intento previo al cambio. */
+export function legacySafeBaseName(subject: string, envelopeId: string) {
+  return `${safeSubject(subject)} - ${envelopeId.slice(0, 8)}`;
 }
 
 /** PDF sellado del sobre (null si todavía no está completo). */

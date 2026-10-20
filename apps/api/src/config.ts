@@ -227,6 +227,14 @@ export const config = {
       accessToken: env.MP_ACCESS_TOKEN ?? null,
       webhookSecret: env.MP_WEBHOOK_SECRET ?? null,
       apiBase: env.MP_API_BASE ?? "https://api.mercadopago.com",
+      /**
+       * Monedas en las que la cuenta de Mercado Pago puede cobrar suscripciones (MP_CURRENCIES, separadas por coma, p. ej.
+       * "ARS"). Una cuenta cobra solo en la moneda de su país. Vacío: la de la cuenta (GET /users/me), o ARS si no se sabe.
+       */
+      currencies: (env.MP_CURRENCIES ?? "")
+        .split(",")
+        .map((c) => c.trim().toUpperCase())
+        .filter((c) => /^[A-Z]{3}$/.test(c)) as string[],
     },
   },
   mcp: {

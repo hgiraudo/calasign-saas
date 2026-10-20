@@ -132,6 +132,16 @@ function strictFails(n: any, data: unknown, overrides: Record<string, string> | 
   }
 }
 
+/** ¿La copia actual ya tiene un ciclo o un exceso de niveles desde esta cláusula? */
+function clauseGraphFails(clauses: Record<string, string>, key: string): boolean {
+  try {
+    checkClauseGraph(clauses, [key]);
+    return false;
+  } catch (e) {
+    return isLegacyGraphError(e);
+  }
+}
+
 function negotiableVariables(n: any): string[] {
   if (n.source === "pdf") return [];
   const all = analyzeTemplate(n.template_source, clausesFor(n)).variables;
@@ -764,8 +774,13 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
         // Que la cláusula propuesta no se cite en ciclo ni pase el tope de niveles con el resto de la copia.
         checkClauseGraph({ ...c, [input.key]: input.newValue }, [input.key]);
       } catch (e) {
-        if (e instanceof TemplateSyntaxError) throw badRequest("template_syntax", e.message, { line: e.line });
-        throw badRequest("template_syntax", e instanceof Error ? e.message : String(e));
+        // Un ciclo o un exceso de niveles que ya tenía la copia actual desde esa cláusula (heredado, no lo introduce
+        // la propuesta) no la bloquea: mismo criterio que strictFails al crear la versión. Si no, esa cláusula no se
+        // podía negociar nunca, ni siquiera para arreglar el ciclo.
+        if (!(isLegacyGraphError(e) && clauseGraphFails(c, input.key))) {
+          if (e instanceof TemplateSyntaxError) throw badRequest("template_syntax", e.message, { line: e.line });
+          throw badRequest("template_syntax", e instanceof Error ? e.message : String(e));
+        }
       }
       old = c[input.key];
     }

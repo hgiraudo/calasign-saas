@@ -3,7 +3,7 @@ import { AiSettingsPage } from "./pages/AiSettings";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { RequireAuth } from "./lib/auth";
-import { AccessProvider } from "./lib/access";
+import { AccessProvider, RequirePermission } from "./lib/access";
 import { LoginPage, SignupPage } from "./pages/Auth";
 import { ForgotPasswordPage, ResetPasswordPage } from "./pages/Password";
 import { EnvelopeListPage } from "./pages/EnvelopeList";
@@ -18,7 +18,7 @@ import { TemplatesPage } from "./pages/Templates";
 import { TemplateEditPage } from "./pages/TemplateEdit";
 import { TemplateUsePage } from "./pages/TemplateUse";
 import { BrandingPage } from "./pages/Branding";
-import { BillingPage } from "./pages/Billing";
+import { BillingNoAccess, BillingPage } from "./pages/Billing";
 import { TeamPage } from "./pages/Team";
 import { SettingsHomePage } from "./pages/SettingsHome";
 import { CertificatesPage } from "./pages/Certificates";
@@ -98,7 +98,14 @@ export function App() {
         <Route path="/app/templates/:id/edit" element={<TemplateEditPage />} />
         <Route path="/app/templates/:id/use" element={<TemplateUsePage />} />
         <Route path="/app/settings/branding" element={<BrandingPage />} />
-        <Route path="/app/settings/billing" element={<BillingPage />} />
+        <Route
+          path="/app/settings/billing"
+          element={
+            <RequirePermission perm="billing:manage" fallback={<BillingNoAccess />}>
+              <BillingPage />
+            </RequirePermission>
+          }
+        />
         <Route path="/app/settings" element={<SettingsHomePage />} />
         <Route path="/app/settings/certificates" element={<CertificatesPage />} />
         <Route path="/app/settings/ai" element={<AiSettingsPage />} />

@@ -7,6 +7,7 @@ import { createBlobStore } from "./infra/storage";
 import { createJobHandlers, sweep } from "./modules/jobs";
 import { createTenantStorageResolver } from "./modules/data";
 import { checkAiProviderConfig } from "./modules/ai/provider";
+import { warnIfTitleIndexMissing } from "./modules/agreements/repository";
 
 const db = await createDb();
 const blobs = createBlobStore(createTenantStorageResolver(db));
@@ -14,6 +15,7 @@ const app = await buildApp({ db, blobs });
 
 // En entornos chicos (local, dev) la API aplica migraciones y corre el worker en el mismo proceso.
 if (!config.production || process.env.MIGRATE_ON_START === "1") await migrate(db, (m) => app.log.info(m));
+await warnIfTitleIndexMissing(db, app.log);
 await getSealProvider();
 checkAiProviderConfig(app.log);
 

@@ -25,10 +25,11 @@ import {
   ProviderError,
   mpCancelPreapproval,
   mpCreatePreapproval,
-  providerConfigured,
   stripeCancelSubscription,
   stripeCreatePortal,
   stripeCreateSubscriptionCheckout,
+  subscriptionProviderConfigured,
+  subscriptionProvidersFor,
 } from "./providers";
 
 function priceOf(plan: PlanId, currency: BillingCurrency): number | null {
@@ -44,19 +45,18 @@ function formatMoney(amount: number, currency: string) {
   }
 }
 
-/** Aplica el resultado de una suscripción (webhook verificado o checkout simulado). */
-
 /**
  * Suscripción simulada: nunca en producción, aunque PAYMENTS_MOCK_ENABLED esté prendida para probar los cobros al firmar
  * (con ella cualquier organización con billing:manage llegaba a Enterprise sin pagar).
  */
 function subscriptionMockEnabled() {
-  return config.billing.mockEnabled && config.environment !== "prod";
+  return subscriptionProviderConfigured("mock");
 }
 
-function subscriptionProviderConfigured(id: "stripe" | "mercadopago" | "mock") {
-  return id === "mock" ? subscriptionMockEnabled() : providerConfigured(id);
-}
+/**
+ * Aplica el resultado de una suscripción (webhook verificado o checkout simulado). `cancelAtPeriodEnd`/`cancelAt`
+ * (Stripe): la baja programada; sin informarlos se conservan los de la misma suscripción y, con otra, se borran.
+ */
 export async function applySubscription(
   db: Db,
   tenantId: string,
@@ -67,6 +67,8 @@ export async function applySubscription(
     subscriptionId?: string | null;
     status: string;
     renewsAt?: string | null;
+    cancelAtPeriodEnd?: boolean;
+    cancelAt?: string | null;
     source: string;
   },
 ) {
@@ -78,9 +80,24 @@ export async function applySubscription(
        -- Sin fecha nueva (p. ej. el alta por checkout.session.completed) se conserva la que había; en Free, ninguna.
        -- La de otra suscripción (cambio de plan o de proveedor) no se conserva.
        plan_renews_at = CASE WHEN $2 = 'free' THEN NULL WHEN subscription_id IS DISTINCT FROM $5 THEN $7::timestamptz
-                             ELSE COALESCE($7::timestamptz, plan_renews_at) END, plan_updated_at = now()
+                             ELSE COALESCE($7::timestamptz, plan_renews_at) END, plan_updated_at = now(),
+       subscription_cancel_at_period_end = CASE WHEN $2 = 'free' OR $5::text IS NULL THEN false WHEN $8::boolean IS NOT NULL THEN $8::boolean
+                                                WHEN subscription_id IS DISTINCT FROM $5 THEN false ELSE subscription_cancel_at_period_end END,
+       subscription_cancel_at = CASE WHEN $2 = 'free' OR $5::text IS NULL THEN NULL WHEN $9::boolean THEN $10::timestamptz
+                                     WHEN subscription_id IS DISTINCT FROM $5 THEN NULL ELSE subscription_cancel_at END
      WHERE id = $1`,
-    [tenantId, s.plan, s.provider, s.customerId ?? null, s.subscriptionId ?? null, s.status, s.renewsAt ?? null],
+    [
+      tenantId,
+      s.plan,
+      s.provider,
+      s.customerId ?? null,
+      s.subscriptionId ?? null,
+      s.status,
+      s.renewsAt ?? null,
+      s.cancelAtPeriodEnd ?? null,
+      s.cancelAt !== undefined,
+      s.cancelAt ?? null,
+    ],
   );
   if (before.billing_plan !== s.plan) {
     await recordAudit(db, {
@@ -107,26 +124,33 @@ export async function billingOverview(db: Db, tenantId: string): Promise<Billing
       provider: t.billing_provider ?? null,
       status: t.subscription_status ?? null,
       renewsAt: iso(t.plan_renews_at),
+      cancelAtPeriodEnd: Boolean(t.subscription_cancel_at_period_end),
+      cancelAt: iso(t.subscription_cancel_at),
       manageable: Boolean(t.subscription_id) || plan.id !== "free",
       portalAvailable: String(t.billing_customer_id ?? "").startsWith("cus_"),
     },
     usage: await usageThisMonth(db, tenantId),
     plans: PLAN_IDS.map((id) => ({ ...planById(id), price: priceOf(id, currency) })),
-    providers: (["stripe", "mercadopago", "mock"] as const)
-      .filter((p) => p !== "mock" || subscriptionMockEnabled())
-      .map((id) => ({ id, configured: subscriptionProviderConfigured(id) })),
+    // Por moneda: Mercado Pago cobra solo en la de su cuenta (MP_CURRENCIES).
+    providers: await subscriptionProvidersFor(currency),
   };
 }
 
-function pickProvider(requested: BillingProvider | undefined, currency: BillingCurrency): BillingProvider {
+/** Proveedor del checkout: el pedido (si se puede usar en esa moneda) o el primero disponible. */
+export async function pickProvider(requested: BillingProvider | undefined, currency: BillingCurrency): Promise<BillingProvider> {
+  const available = await subscriptionProvidersFor(currency);
+  const ok = (id: BillingProvider) => available.some((p) => p.id === id && p.configured);
   if (requested) {
-    if (!subscriptionProviderConfigured(requested)) throw badRequest("provider_not_configured", `El proveedor ${requested} no está configurado`);
-    return requested;
+    if (ok(requested)) return requested;
+    if (subscriptionProviderConfigured(requested)) {
+      throw badRequest("provider_currency_unsupported", `El proveedor ${requested} no cobra suscripciones en ${currency}`);
+    }
+    throw badRequest("provider_not_configured", `El proveedor ${requested} no está configurado`);
   }
-  // Monedas locales: Mercado Pago (Pix/PSE) si está; si no, Stripe; si no, el de prueba.
+  // Monedas locales: Mercado Pago (Pix/PSE) si está y cobra en esa moneda; si no, Stripe; si no, el de prueba.
   const order: BillingProvider[] = currency === "USD" ? ["stripe", "mercadopago", "mock"] : ["mercadopago", "stripe", "mock"];
-  const p = order.find((x) => subscriptionProviderConfigured(x));
-  if (!p) throw badRequest("provider_not_configured", "No hay ningún proveedor de cobro configurado");
+  const p = order.find(ok);
+  if (!p) throw badRequest("provider_not_configured", `No hay ningún proveedor de cobro configurado para ${currency}`);
   return p;
 }
 
@@ -148,7 +172,7 @@ export async function subscriptionRoutes(app: FastifyInstance, s: Services) {
     const currency = (input.currency ?? t.billing_currency ?? "USD") as BillingCurrency;
     const amount = priceOf(input.plan, currency);
     if (!amount) throw badRequest("invalid_plan", "Ese plan no tiene precio en esa moneda");
-    const provider = pickProvider(input.provider, currency);
+    const provider = await pickProvider(input.provider, currency);
     // Cambio de plan con una suscripción vigente: es un checkout nuevo. Cuando se confirma, el webhook cancela la
     // anterior (webhooks.ts), así no cobran las dos. El portal de Stripe no sirve para esto: los precios se crean en
     // cada checkout (price_data) y el portal solo cambia a productos del catálogo, así que mandar ahí dejaba al cliente

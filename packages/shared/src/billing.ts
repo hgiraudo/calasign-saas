@@ -81,15 +81,24 @@ export interface BillingOverview {
   currency: BillingCurrency;
   subscription: {
     provider: BillingProvider | null;
+    /** Estado en el proveedor (Stripe: active, trialing, past_due, unpaid…; Mercado Pago: authorized, paused…). */
     status: string | null;
     renewsAt: string | null;
+    /** Stripe: la suscripción se cancela al terminar el período en curso (no se renueva el `renewsAt`). */
+    cancelAtPeriodEnd?: boolean;
+    /** Stripe: fecha programada de la baja, si la hay. */
+    cancelAt?: string | null;
     manageable: boolean;
     /** Hay un cliente de Stripe: el portal (facturas, medio de pago) está disponible, también después de una baja. */
     portalAvailable?: boolean;
   };
   usage: BillingUsage;
   plans: (PlanDefinition & { price: number | null })[];
-  providers: { id: BillingProvider; configured: boolean }[];
+  /**
+   * Proveedores para la moneda de la organización: `configured` = se puede pagar con él en esa moneda (credenciales,
+   * webhook y moneda soportada); `currencies` = monedas que acepta (null = todas). Mercado Pago cobra solo en la de su cuenta.
+   */
+  providers: { id: BillingProvider; configured: boolean; currencies?: string[] | null }[];
 }
 
 export const BillingCheckoutInput = z.object({

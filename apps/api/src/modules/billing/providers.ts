@@ -335,3 +335,61 @@ export function providerConfigured(id: "stripe" | "mercadopago" | "mock"): boole
   if (id === "mercadopago") return Boolean(config.billing.mercadopago.accessToken);
   return config.billing.mockEnabled;
 }
+
+/** País de la cuenta de Mercado Pago (site_id) → moneda en la que cobra. */
+const MP_SITE_CURRENCY: Record<string, string> = { MLA: "ARS", MLB: "BRL", MLM: "MXN", MCO: "COP", MLC: "CLP", MPE: "PEN", MLU: "UYU" };
+let mpCurrencyCache: { currencies: string[]; until: number } | null = null;
+
+/**
+ * Monedas en las que Mercado Pago puede cobrar suscripciones: MP_CURRENCIES; si no, la del país de la cuenta (GET
+ * /users/me, cacheada); si no se puede saber, ARS. Una cuenta de Mercado Pago cobra solo en la moneda de su país: con
+ * otra el preapproval falla (o cobra otra cosa).
+ */
+export async function mpSubscriptionCurrencies(): Promise<string[]> {
+  const fixed = config.billing.mercadopago.currencies;
+  if (fixed.length) return fixed;
+  if (!config.billing.mercadopago.accessToken) return ["ARS"];
+  if (mpCurrencyCache && mpCurrencyCache.until > Date.now()) return mpCurrencyCache.currencies;
+  try {
+    const me = await mp("/users/me", null, "GET");
+    const cur = MP_SITE_CURRENCY[String(me?.site_id ?? "")];
+    mpCurrencyCache = cur ? { currencies: [cur], until: Number.POSITIVE_INFINITY } : { currencies: ["ARS"], until: Date.now() + 5 * 60_000 };
+  } catch {
+    // Error del momento: se vuelve a consultar en unos minutos.
+    mpCurrencyCache = { currencies: ["ARS"], until: Date.now() + 5 * 60_000 };
+  }
+  return mpCurrencyCache.currencies;
+}
+
+/** Solo para pruebas: olvida la moneda de la cuenta de Mercado Pago consultada. */
+export function resetMpCurrencyCache() {
+  mpCurrencyCache = null;
+}
+
+/**
+ * ¿Se puede cobrar una suscripción con este proveedor? Además de las credenciales, el webhook: sin él la confirmación
+ * del pago nunca llega y el cliente paga sin que se active el plan. Stripe exige STRIPE_WEBHOOK_SECRET (sin él el
+ * webhook rechaza todo); Mercado Pago, MP_WEBHOOK_SECRET en producción (sin él el webhook responde 503). El simulado,
+ * nunca en producción.
+ */
+export function subscriptionProviderConfigured(id: "stripe" | "mercadopago" | "mock"): boolean {
+  if (id === "mock") return config.billing.mockEnabled && config.environment !== "prod";
+  if (id === "stripe") return providerConfigured("stripe") && Boolean(config.billing.stripe.webhookSecret);
+  return providerConfigured("mercadopago") && (Boolean(config.billing.mercadopago.webhookSecret) || config.environment !== "prod");
+}
+
+/**
+ * Proveedores de suscripción para una moneda: `configured` es si se puede pagar con él en esa moneda; `currencies`,
+ * las monedas que acepta (null = todas).
+ */
+export async function subscriptionProvidersFor(currency: string): Promise<{ id: "stripe" | "mercadopago" | "mock"; configured: boolean; currencies: string[] | null }[]> {
+  const ids = (["stripe", "mercadopago", "mock"] as const).filter((p) => p !== "mock" || subscriptionProviderConfigured("mock"));
+  const out = [];
+  for (const id of ids) {
+    const ready = subscriptionProviderConfigured(id);
+    // La moneda de Mercado Pago solo se consulta si está configurado (sin token no hay a quién preguntarle).
+    const currencies = id === "mercadopago" && ready ? await mpSubscriptionCurrencies() : null;
+    out.push({ id, configured: ready && (currencies === null || currencies.includes(currency)), currencies });
+  }
+  return out;
+}

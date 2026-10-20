@@ -89,6 +89,7 @@ export function ReportsPage() {
     }
   };
 
+  const requestedTz = new URLSearchParams(shownRange).get("tz");
   const nf = new Intl.NumberFormat(locale);
   const pf = new Intl.NumberFormat(locale, { style: "percent", maximumFractionDigits: 1 });
   const avg = data?.totals.avgHoursToComplete;
@@ -126,6 +127,10 @@ export function ReportsPage() {
       </div>
       <ErrorBox error={error} />
       {truncated && <p className="muted small">{x("reports.csvTruncated")}</p>}
+      {/* Una zona del navegador que el servidor no conoce cae a UTC: se avisa en lugar de agrupar en silencio. */}
+      {data && requestedTz && data.timeZone.toLowerCase() !== requestedTz.toLowerCase() && (
+        <p className="muted small">{x("reports.tzFallback", { tz: requestedTz, used: data.timeZone })}</p>
+      )}
       {!data ? (
         loading && <Spinner />
       ) : (

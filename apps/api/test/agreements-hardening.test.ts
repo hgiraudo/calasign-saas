@@ -571,8 +571,15 @@ describe("negociaciones", () => {
     await db.query(`UPDATE negotiations SET clause_snapshot = $2 WHERE id = $1`, [id, JSON.stringify({ negc1: "Uno\n\n{{clausula:negc2}}", negc2: "Dos\n\n{{clausula:negc1}}" })]);
     expect((await app.inject({ method: "PATCH", url: `/v1/negotiations/${id}`, headers: H(), payload: { data: { cliente: "ACME SA" } } })).statusCode).toBe(200);
     expect((await app.inject({ method: "PATCH", url: `/v1/negotiations/${id}`, headers: H(), payload: { clauseOverrides: { negc1: "Uno nuevo\n\n{{clausula:negc2}}" } } })).statusCode).toBe(200);
+    // Propuesta de la contraparte sobre una cláusula del ciclo heredado (la copia actual ya falla desde ahí): no se
+    // bloquea, como la edición del remitente; tampoco la que lo arregla.
+    const inh = await app.inject({ method: "POST", url: `/v1/public/negotiations/${token}/proposals`, payload: { kind: "clause", key: "negc1", newValue: "Uno otra\n\n{{clausula:negc2}}" } });
+    expect(inh.statusCode, inh.body).toBe(201);
     // Y arreglarlo también.
     expect((await app.inject({ method: "PATCH", url: `/v1/negotiations/${id}`, headers: H(), payload: { clauseOverrides: { negc2: "Dos." } } })).statusCode).toBe(200);
+    // Sin el ciclo heredado, una propuesta que lo vuelve a cerrar es 400 otra vez.
+    const again = await app.inject({ method: "POST", url: `/v1/public/negotiations/${token}/proposals`, payload: { kind: "clause", key: "negc2", newValue: "Dos\n\n{{clausula:negc1}}" } });
+    expect(again.statusCode).toBe(400);
   });
 
   it("marca de las páginas públicas /n/:token, /w/:token y /wf/:slug", async () => {

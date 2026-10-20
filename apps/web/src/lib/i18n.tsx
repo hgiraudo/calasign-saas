@@ -26,6 +26,7 @@ const es = {
   "common.needsViewAll": "Solo lectura: cambiar estos ajustes requiere además el permiso de ver todos los sobres de la organización.",
   "common.notInPlan": "No incluido en tu plan ({plan}): podés ver, pausar o quitar lo que ya está configurado, pero no crear ni activar nada nuevo.",
   "common.seePlans": "Ver planes",
+  "common.askAdminPlan": "Pedile a un administrador de tu organización que revise el plan.",
   "common.notInPlanShort": "No incluido en tu plan",
 
   "nav.envelopes": "Sobres",
@@ -262,6 +263,7 @@ const ptBR: Dict = {
   "common.needsViewAll": "Somente leitura: alterar estas configurações requer também a permissão de ver todos os envelopes da organização.",
   "common.notInPlan": "Não incluído no seu plano ({plan}): você pode ver, pausar ou remover o que já está configurado, mas não criar nem ativar nada novo.",
   "common.seePlans": "Ver planos",
+  "common.askAdminPlan": "Peça a um administrador da sua organização para revisar o plano.",
   "common.notInPlanShort": "Não incluído no seu plano",
   "nav.envelopes": "Envelopes",
   "nav.apiKeys": "API keys",
@@ -484,6 +486,7 @@ const en: Dict = {
   "common.needsViewAll": "Read-only: changing these settings also requires the permission to view all of the organization's envelopes.",
   "common.notInPlan": "Not included in your plan ({plan}): you can view, pause or remove what is already configured, but not create or enable anything new.",
   "common.seePlans": "See plans",
+  "common.askAdminPlan": "Ask an administrator of your organization to review the plan.",
   "common.notInPlanShort": "Not included in your plan",
   "nav.envelopes": "Envelopes",
   "nav.apiKeys": "API keys",

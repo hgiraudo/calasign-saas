@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { AuditLogEntry, AuditLogResponse } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
 import { formatDateTime, useI18n } from "../lib/i18n";
-import { csvFormatParams } from "../lib/csv";
+import { csvFormatParams, downloadCsv } from "../lib/csv";
 import { useTeamsText } from "../lib/i18n-teams";
 import { ErrorBox, Spinner } from "../components/ui";
 import { useTitle } from "../lib/white-label";
@@ -67,6 +67,24 @@ export function AuditLogPage() {
     void load(applied);
   }, [applied]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const [downloading, setDownloading] = useState(false);
+  const [csvTruncated, setCsvTruncated] = useState(false);
+  const exportCsv = async () => {
+    setDownloading(true);
+    setError(null);
+    setCsvTruncated(false);
+    try {
+      const day = new Date().toISOString().slice(0, 10);
+      const qs = [query(applied), csvFormatParams(locale, { tz: true }).toString()].filter(Boolean).join("&");
+      const r = await downloadCsv(`/v1/audit-log.csv?${qs}`, `auditoria-${day}.csv`);
+      setCsvTruncated(r.truncated);
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   const submit = (e: FormEvent) => {
     e.preventDefault();
     setApplied({ ...filters });
@@ -79,11 +97,13 @@ export function AuditLogPage() {
           <h1>{tt("audit.title")}</h1>
           <p className="muted">{tt("audit.intro")}</p>
         </div>
-        {/* Separador según el idioma y, con la zona del navegador, la columna occurred_at_local. */}
-        <a className="btn" href={`/v1/audit-log.csv?${[query(applied), csvFormatParams(locale, { tz: true }).toString()].filter(Boolean).join("&")}`} download>
+        {/* Separador según el idioma y, con la zona del navegador, la columna occurred_at_local. Con fetch: un error
+            (sin permiso, sesión vencida) se muestra como mensaje; con un <a href> el navegador abría el JSON del error. */}
+        <button type="button" className="btn" onClick={() => void exportCsv()} disabled={downloading}>
           {tt("audit.export")}
-        </a>
+        </button>
       </div>
+      {csvTruncated && <p className="muted small">{tt("audit.csvTruncated")}</p>}
       <form className="card pad row-wrap" onSubmit={submit} style={{ marginBottom: "1rem" }}>
         <label className="field grow">
           <span>{tt("audit.filterAction")}</span>

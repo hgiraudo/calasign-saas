@@ -14,23 +14,39 @@ export function csvSep(raw: unknown): CsvSep {
   throw badRequest("invalid_query", "sep: se acepta ',' o ';'");
 }
 
-// Zonas ya validadas contra Postgres (son unas 600: el conjunto queda acotado).
-const knownZones = new Set<string>(["UTC"]);
+// Zonas ya resueltas contra Postgres, por nombre en minúsculas → nombre canónico (son unas 600: el conjunto queda
+// acotado). Las desconocidas también se recuerdan (con tope) para no recorrer pg_timezone_names en cada pedido.
+const knownZones = new Map<string, string>([["utc", "UTC"]]);
+const unknownZones = new Set<string>();
+const UNKNOWN_ZONES_MAX = 1000;
 
 /**
- * Zona horaria IANA pedida con ?tz= (p. ej. America/Argentina/Buenos_Aires), validada contra pg_timezone_names: la
- * misma lista que usa AT TIME ZONE, así nunca llega a la consulta un nombre que Postgres rechace (sería un 500).
+ * Zona horaria IANA pedida con ?tz= (p. ej. America/Argentina/Buenos_Aires), resuelta contra pg_timezone_names (la
+ * misma lista que usa AT TIME ZONE, así nunca llega a la consulta un nombre que Postgres rechace) sin distinguir
+ * mayúsculas ("america/sao_paulo" → "America/Sao_Paulo"): devuelve el nombre canónico. Una zona que Postgres no conoce
+ * (un navegador con tzdata más nueva que la del servidor, un nombre mal escrito) cae a UTC en lugar de un 400: la zona
+ * solo cambia cómo se agrupan o muestran las fechas, y quien llama informa la zona usada.
  * Sin valor: null (quien llama decide el valor por defecto, en general UTC).
  */
 export async function resolveTimeZone(db: Db, raw: unknown): Promise<string | null> {
   if (raw === undefined || raw === null || raw === "") return null;
   const tz = String(raw);
-  if (tz.length > 64 || !/^[A-Za-z0-9_+\-/]+$/.test(tz)) throw badRequest("invalid_timezone", "tz: zona horaria inválida");
-  if (knownZones.has(tz)) return tz;
-  const ok = await db.one(`SELECT 1 AS ok FROM pg_timezone_names WHERE name = $1`, [tz]);
-  if (!ok) throw badRequest("invalid_timezone", "tz: zona horaria desconocida (usar un nombre IANA, p. ej. America/Argentina/Buenos_Aires)");
-  knownZones.add(tz);
-  return tz;
+  if (tz.length > 64 || !/^[A-Za-z0-9_+\-/]+$/.test(tz)) return "UTC";
+  const key = tz.toLowerCase();
+  const known = knownZones.get(key);
+  if (known) return known;
+  if (unknownZones.has(key)) return "UTC";
+  // Si hay varias con el mismo nombre salvo mayúsculas (no pasa en tzdata), la que coincide exacto.
+  const row = await db.one<{ name: string }>(
+    `SELECT name FROM pg_timezone_names WHERE lower(name) = lower($1) ORDER BY (name = $1) DESC, name LIMIT 1`,
+    [tz],
+  );
+  if (!row) {
+    if (unknownZones.size < UNKNOWN_ZONES_MAX) unknownZones.add(key);
+    return "UTC";
+  }
+  knownZones.set(key, row.name);
+  return row.name;
 }
 
 /** Fecha y hora local en `tz` (AAAA-MM-DD HH:MM:SS), para las columnas *_local: Excel la reconoce como fecha. */

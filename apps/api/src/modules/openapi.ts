@@ -1222,7 +1222,7 @@ const OPS: Op[] = [
     response: BrandingSchema,
     errors: ["invalid_logo", "plan_limit_branding"],
   },
-  { method: "delete", path: "/v1/settings/branding/logo", operationId: "deleteBrandingLogo", tag: "Marca", summary: "Quitar el logo", response: BrandingSchema, errors: ["plan_limit_branding"] },
+  { method: "delete", path: "/v1/settings/branding/logo", operationId: "deleteBrandingLogo", tag: "Marca", summary: "Quitar el logo", response: BrandingSchema },
 
   // Verificación de identidad
   { method: "get", path: "/v1/settings/identity", operationId: "getIdentitySettings", tag: "Verificación de identidad", summary: "Configuración de verificación de identidad", response: IdentitySettingsSchema },

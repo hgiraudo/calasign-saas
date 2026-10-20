@@ -307,6 +307,18 @@ systemctl enable --now calasign-security-updates.timer >/dev/null 2>&1 || echo "
 # El deploy anterior instalaba dnf-automatic: se apaga su timer (el paquete queda, inofensivo).
 systemctl disable --now dnf-automatic.timer >/dev/null 2>&1 || true
 
+# pg_trgm (índice trigram de la búsqueda de acuerdos por título, migraciones 0088 y 0089) viene en el paquete contrib,
+# que bootstrap no instalaba en las instancias viejas: sin él la migración no crea el índice y la búsqueda recorre
+# todos los acuerdos de la organización. Idempotente; se instala el contrib de la versión de Postgres presente (16 o
+# 15) y la extensión se crea como postgres, antes de reiniciar la app (que aplica las migraciones al arrancar).
+# Si algo falla no corta el deploy: la app funciona sin el índice (y avisa en el log al arrancar).
+PG_MAJOR=
+if rpm -q --quiet postgresql16-server; then PG_MAJOR=16; elif rpm -q --quiet postgresql15-server; then PG_MAJOR=15; fi
+if [ -n "\$PG_MAJOR" ] && ! rpm -q --quiet postgresql\$PG_MAJOR-contrib; then
+  dnf -y -q install postgresql\$PG_MAJOR-contrib >/dev/null 2>&1 || echo "AVISO: no se pudo instalar postgresql\$PG_MAJOR-contrib (sin pg_trgm)" >&2
+fi
+sudo -u postgres psql -d calasign -v ON_ERROR_STOP=1 -qc "CREATE EXTENSION IF NOT EXISTS pg_trgm" >/dev/null 2>&1 || echo "AVISO: no se pudo crear la extensión pg_trgm" >&2
+
 healthy() { for i in \$(seq 1 60); do curl -sf localhost:4000/healthz >/dev/null && return 0; sleep 1; done; return 1; }
 # -e (no -f): en el primer deploy current no existe y "readlink -f" igual devuelve "/opt/calasign/current"; el
 # rollback lo tomaba como versión anterior y dejaba current apuntando a sí mismo.
@@ -340,11 +352,12 @@ EOF
 
 echo "▶ desplegando en $INSTANCE por SSM"
 # Tiempos coherentes con la espera del lock (hasta 10 minutos con flock -w 600) más el deploy en sí: 30 minutos de
-# ejecución en SSM y el sondeo local (360 × 5 s) igual de largo, para no abandonar un deploy que todavía corre.
+# ejecución en SSM y el sondeo local algo más largo (400 × 5 s, más lo que tarda cada consulta), para no abandonar un
+# deploy que todavía corre ni cortar justo antes de que SSM informe el TimedOut.
 CMD=$(aws ssm send-command --instance-ids "$INSTANCE" --document-name AWS-RunShellScript --timeout-seconds 1800 \
   --parameters "$(python3 -c 'import json,sys;print(json.dumps({"commands":[sys.argv[1]],"executionTimeout":["1800"]}))' "$REMOTE")" \
   --query Command.CommandId --output text)
-for i in $(seq 1 360); do
+for i in $(seq 1 400); do
   ST=$(aws ssm get-command-invocation --command-id "$CMD" --instance-id "$INSTANCE" --query Status --output text 2>/dev/null || echo Pending)
   case "$ST" in Success|Failed|Cancelled|TimedOut) break ;; esac
   sleep 5

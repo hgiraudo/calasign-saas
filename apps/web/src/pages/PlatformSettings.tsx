@@ -575,23 +575,47 @@ export function StoragePage() {
   const p = usePlatformText();
   const { locale, t } = useI18n();
   // La API pide además envelopes:view_all para conectar o cambiar destinos (reciben los PDF de todos los sobres).
-  const canEdit = useAccess().can("envelopes:view_all");
+  const { access, can } = useAccess();
+  const canEdit = can("envelopes:view_all");
+  // Mientras los permisos cargan, can() dice que sí: el historial se pide recién con los permisos cargados (si no, un
+  // miembro sin envelopes:view_all recibía un 403 y la página entera quedaba en error).
+  const accessReady = access !== null;
   const [params] = useSearchParams();
   const [providers, setProviders] = useState<StorageProviderInfo[] | null>(null);
   const [conns, setConns] = useState<StorageConnection[] | null>(null);
   const [exports, setExports] = useState<StorageExport[] | null>(null);
+  const [exportsError, setExportsError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
-  const load = () =>
+  // El historial lista asuntos de sobres de toda la organización: la API lo limita a envelopes:view_all. Su error se
+  // muestra en su sección y no rompe el resto de la página.
+  const loadExports = async () => {
+    if (!accessReady) return;
+    if (!canEdit) {
+      setExports([]);
+      return;
+    }
+    try {
+      setExports((await api<{ items: StorageExport[] }>("/v1/storage/exports?limit=25")).items);
+      setExportsError(null);
+    } catch (e) {
+      setExportsError(errorText(e));
+    }
+  };
+  const loadBase = () =>
     Promise.all([
       api<{ items: StorageProviderInfo[] }>("/v1/storage/providers").then((r) => setProviders(r.items)),
       api<{ items: StorageConnection[] }>("/v1/storage/connections").then((r) => setConns(r.items)),
-      // El historial lista asuntos de sobres de toda la organización: la API lo limita a envelopes:view_all.
-      canEdit ? api<{ items: StorageExport[] }>("/v1/storage/exports?limit=25").then((r) => setExports(r.items)) : Promise.resolve(setExports([])),
     ]);
+  const load = () => Promise.all([loadBase(), loadExports()]);
   const { error, setError, act } = useAct(load);
 
   useEffect(() => {
-    load().catch((e) => setError(errorText(e)));
+    void loadExports();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accessReady, canEdit]);
+
+  useEffect(() => {
+    loadBase().catch((e) => setError(errorText(e)));
     if (params.get("connected")) setNote(p("sto.connected"));
     if (params.get("error")) setError(p("sto.error", { code: params.get("error") ?? "" }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -806,7 +830,7 @@ export function StoragePage() {
 
       {canEdit && <h2 style={{ marginTop: 24 }}>{p("sto.exports")}</h2>}
       {!canEdit ? null : !exports ? (
-        <Spinner />
+        exportsError ? <ErrorBox error={exportsError} /> : <Spinner />
       ) : exports.length === 0 ? (
         <div className="empty">{p("sto.exports.empty")}</div>
       ) : (

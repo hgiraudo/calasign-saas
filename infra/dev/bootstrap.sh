@@ -21,7 +21,8 @@ ln -sf /opt/node/bin/corepack /usr/local/bin/corepack
 ln -sf /opt/node/bin/npm /usr/local/bin/npm
 
 # PostgreSQL
-dnf -y install postgresql16-server postgresql16 || dnf -y install postgresql15-server postgresql15
+# contrib: pg_trgm (índice trigram de la búsqueda de acuerdos por título).
+dnf -y install postgresql16-server postgresql16 postgresql16-contrib || dnf -y install postgresql15-server postgresql15 postgresql15-contrib
 postgresql-setup --initdb
 systemctl enable --now postgresql
 

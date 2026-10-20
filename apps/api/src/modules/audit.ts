@@ -300,6 +300,8 @@ export async function auditRoutes(app: FastifyInstance, s: Services) {
     if (tz) {
       params.push(tz);
       local = `, ${localTsSql("occurred_at", `$${params.length}::text`)} AS occurred_local`;
+      // Zona usada en occurred_at_local (una desconocida cae a UTC).
+      reply.header("x-time-zone", tz);
     }
     // Una fila de más para saber si se cortó: el corte se avisa (header X-Truncated y fila final), no es silencioso.
     const all = await s.db.query<any>(`SELECT *${local} FROM account_audit_log WHERE ${where} ORDER BY id DESC LIMIT ${CSV_MAX_ROWS + 1}`, params);

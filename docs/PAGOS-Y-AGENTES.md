@@ -166,4 +166,7 @@ plan y la misma evidencia; las acciones quedan con actor **«agente IA (&lt;app 
 | `IDV_MOCK_ENABLED` | `1` habilita en producción el proveedor simulado de verificación de identidad (aprueba sin verificar; fuera de producción siempre está). |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_API_BASE` | Stripe (claves de test `sk_test_…` en dev). |
 | `MP_ACCESS_TOKEN`, `MP_WEBHOOK_SECRET`, `MP_API_BASE` | Mercado Pago (token `TEST-…` usa el sandbox). En producción sin `MP_WEBHOOK_SECRET` el webhook responde 503. |
+| `MP_CURRENCIES` | Monedas en las que Mercado Pago cobra suscripciones (p. ej. `ARS` o `BRL,ARS`). Vacío: la moneda de la cuenta (`GET /users/me`), o ARS si no se puede saber. En otras monedas no se ofrece. |
+
+Un proveedor figura como disponible para suscripciones solo con su webhook configurado: Stripe exige `STRIPE_WEBHOOK_SECRET` y Mercado Pago, en producción, `MP_WEBHOOK_SECRET` (sin él nunca llegaría la confirmación del pago).
 | `MCP_DOWNLOAD_TTL_SEC` | Vida de las URLs de descarga del MCP. |

@@ -201,7 +201,14 @@ export async function enforceRoutePolicy(db: Db, req: FastifyRequest, a: AuthCon
 
   // Plan y facturación: límites del plan (402 plan_limit) y permiso billing:manage.
   await enforcePlanForRequest(db, req, a);
-  if (/^\/v1\/billing(\/|$)/.test(url)) return requirePerm(a, "billing:manage");
+  if (/^\/v1\/billing(\/|$)/.test(url)) {
+    // Cambiar la suscripción (checkout, baja, moneda, portal) es de una persona en la consola: una API key o un token
+    // OAuth con billing:manage podían cancelar el plan o iniciar cobros. Leer el resumen sí se permite.
+    if (!isRead && (a.apiKeyId || a.oauth)) {
+      throw new AppError(403, "billing_requires_user", "La suscripción solo se puede cambiar desde la consola, con una sesión de usuario");
+    }
+    return requirePerm(a, "billing:manage");
+  }
 
 
   // Sobres

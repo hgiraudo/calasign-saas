@@ -477,10 +477,24 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
 
 // ───────────────────────────── Reportes ─────────────────────────────
 
-function parseRange(q: { from?: string; to?: string }) {
+/**
+ * Rango del reporte. Sin `from`: el comienzo del mes, cinco meses antes del de `to`, en la zona `tz` (el primer mes del
+ * gráfico, que también va agrupado en esa zona). Calculado en UTC, al oeste de Greenwich el rango empezaba el día 1 a
+ * las 00:00 UTC (la tarde del último día del mes anterior en la zona) y el gráfico sumaba un mes casi vacío al principio.
+ */
+async function parseRange(db: Db, q: { from?: string; to?: string }, tz: string) {
   const to = q.to ? new Date(q.to) : new Date();
-  const from = q.from ? new Date(q.from) : new Date(Date.UTC(to.getUTCFullYear(), to.getUTCMonth() - 5, 1));
-  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) throw badRequest("invalid_range", "Fechas inválidas (usar ISO 8601)");
+  if (Number.isNaN(to.getTime())) throw badRequest("invalid_range", "Fechas inválidas (usar ISO 8601)");
+  let from: Date;
+  if (q.from) from = new Date(q.from);
+  else {
+    const r = await db.one<{ f: Date | string }>(
+      `SELECT (date_trunc('month', $1::timestamptz AT TIME ZONE $2::text) - interval '5 months') AT TIME ZONE $2::text AS f`,
+      [to.toISOString(), tz],
+    );
+    from = new Date(r!.f);
+  }
+  if (Number.isNaN(from.getTime())) throw badRequest("invalid_range", "Fechas inválidas (usar ISO 8601)");
   if (from > to) throw badRequest("invalid_range", "'from' es posterior a 'to'");
   if (to.getTime() - from.getTime() > 3 * 366 * 86400_000) throw badRequest("invalid_range", "El rango máximo es de 3 años");
   return { from, to };
@@ -491,8 +505,8 @@ function parseRange(q: { from?: string; to?: string }) {
  * UTC, lo creado la noche del último día del mes en América caía en el mes siguiente.
  */
 export async function reportsSummary(db: Db, tenantId: string, q: { from?: string; to?: string; tz?: string }): Promise<ReportsSummary> {
-  const { from, to } = parseRange(q);
   const tz = (await resolveTimeZone(db, q.tz)) ?? "UTC";
+  const { from, to } = await parseRange(db, q, tz);
   const p = [tenantId, from.toISOString(), to.toISOString()];
   // Cada conteo filtra por la columna de fecha que le corresponde, con su índice (tenant_id, created_at / sent_at /
   // completed_at): antes era una sola pasada por TODOS los sobres de la organización con FILTER por fecha.
@@ -606,9 +620,9 @@ export const ENVELOPES_CSV_MAX = 50_000;
  * hora en esa zona (las columnas ISO en UTC quedan como estaban, por compatibilidad).
  */
 async function envelopesCsv(db: Db, tenantId: string, q: { from?: string; to?: string; sep?: string; tz?: string }) {
-  const { from, to } = parseRange(q);
   const sep = csvSep(q.sep);
   const tz = await resolveTimeZone(db, q.tz);
+  const { from, to } = await parseRange(db, q, tz ?? "UTC");
   const params: unknown[] = [tenantId, from.toISOString(), to.toISOString()];
   let local = "";
   if (tz) {
@@ -646,7 +660,7 @@ async function envelopesCsv(db: Db, tenantId: string, q: { from?: string; to?: s
         .join(sep),
     );
   }
-  return { body: csvBody(lines), rows: rows.length, truncated };
+  return { body: csvBody(lines), rows: rows.length, truncated, timeZone: tz };
 }
 
 // ───────────────────────────── Rutas ─────────────────────────────
@@ -800,6 +814,8 @@ export async function experienceRoutes(app: FastifyInstance, s: Services) {
       data: { from: req.query.from ?? null, to: req.query.to ?? null, rows: csv.rows, truncated: csv.truncated },
     });
     if (csv.truncated) reply.header("x-truncated", "true");
+    // Zona usada en las columnas *_local (una desconocida cae a UTC).
+    if (csv.timeZone) reply.header("x-time-zone", csv.timeZone);
     const day = new Date().toISOString().slice(0, 10);
     reply
       .header("content-type", "text/csv; charset=utf-8")

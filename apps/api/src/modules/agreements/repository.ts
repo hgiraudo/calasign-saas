@@ -47,13 +47,39 @@ const AGREEMENT_COLS = `ag.id, ag.tenant_id, ag.source, ag.envelope_id, ag.file_
 const AGREEMENT_FROM = `FROM agreements ag JOIN files f ON f.id = ag.file_id LEFT JOIN users u ON u.id = ag.owner_user_id`;
 const AGREEMENT_SELECT = `SELECT ${AGREEMENT_COLS}, f.sha256, u.name AS owner_name ${AGREEMENT_FROM}`;
 
+/** Letras latinas con diacríticos (minúsculas y mayúsculas) y su letra base, posición a posición, para titleFoldSql. */
+export const TITLE_FOLD_FROM = "áàâãäåāăąçćčĉċďđéèêëēĕėęěğĝġģĥħíìîïīĭįĩıĵķĺļľŀłñńņňóòôõöøōŏőŕŗřśŝşšșţťŧțúùûüũūŭůűųŵýÿŷźżžÁÀÂÃÄÅĀĂĄÇĆČĈĊĎĐÉÈÊËĒĔĖĘĚĞĜĠĢĤĦÍÌÎÏĪĬĮĨİĴĶĹĻĽĿŁÑŃŅŇÓÒÔÕÖØŌŎŐŔŖŘŚŜŞŠȘŢŤŦȚÚÙÛÜŨŪŬŮŰŲŴÝŸŶŹŻŽ";
+export const TITLE_FOLD_TO = "aaaaaaaaacccccddeeeeeeeeegggghhiiiiiiiiijklllllnnnnooooooooorrrsssssttttuuuuuuuuuuwyyyzzzaaaaaaaaacccccddeeeeeeeeegggghhiiiiiiiiijklllllnnnnooooooooorrrsssssttttuuuuuuuuuuwyyyzzz";
+
 /**
  * Título sin acentos y en minúsculas, en SQL. La misma expresión exacta que el índice trigram agreements_title_fold_trgm_idx
- * (migración 0088): si cambia, hay que recrear el índice. Se pliega en SQL (no con una columna llenada por la aplicación)
- * para no reescribir la tabla.
+ * (migración 0090): si cambia, hay que recrear el índice. Se pliega en SQL (no con una columna llenada por la aplicación)
+ * para no reescribir la tabla. normalize(…, NFC): un título con la tilde como carácter combinante aparte ("e" + U+0301)
+ * queda como "é" y lo alcanza el translate. Las mayúsculas acentuadas también están en el translate: con un LC_CTYPE C,
+ * lower() solo pasa a minúsculas el ASCII. Va de los dos lados del LIKE (título y búsqueda ya plegada con fold()), así
+ * que las letras que fold() no descompone (ł, ø, đ, ħ, ı) igual coinciden con su letra base.
  */
-export const titleFoldSql = (expr: string) =>
-  `translate(lower(${expr}), 'áàâãäåéèêëíìîïóòôõöúùûüýÿçñ', 'aaaaaaeeeeiiiiooooouuuuyycn')`;
+export const titleFoldSql = (expr: string) => `translate(lower(normalize(${expr}, NFC)), '${TITLE_FOLD_FROM}', '${TITLE_FOLD_TO}')`;
+
+/**
+ * Al arrancar (solo Postgres; PGlite trae pg_trgm cargado): avisa si falta el índice trigram de títulos. La migración
+ * no falla sin pg_trgm (instancia sin el paquete contrib, Postgres administrado que no la permite) y la búsqueda sigue
+ * funcionando, pero recorre todos los acuerdos de la organización: el aviso deja a la vista lo que falta instalar.
+ */
+export async function warnIfTitleIndexMissing(db: Db, log: { warn(o: object, m?: string): void }): Promise<void> {
+  if (db.dialect !== "pg") return;
+  try {
+    const r = await db.one<any>(`SELECT 1 AS ok FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'agreements_title_fold_trgm_idx'`);
+    if (!r) {
+      log.warn(
+        { index: "agreements_title_fold_trgm_idx" },
+        "falta el índice trigram de títulos de acuerdos (pg_trgm no disponible: instalar postgresql*-contrib y reaplicar la migración 0090); la búsqueda por título recorre la tabla",
+      );
+    }
+  } catch (err) {
+    log.warn({ err: String((err as Error)?.message ?? err) }, "no se pudo revisar el índice trigram de títulos de acuerdos");
+  }
+}
 
 /** Máximo de filas del CSV de acuerdos (se pide una más para saber si se cortó). */
 const AGREEMENTS_CSV_MAX = 10_000;

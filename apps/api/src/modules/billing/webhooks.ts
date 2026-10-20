@@ -358,6 +358,9 @@ export async function handleStripeEvent(db: Db, event: any, log: WarnLog = silen
           subscriptionId: ended ? null : obj.id,
           status: obj.status ?? (ended ? "canceled" : "active"),
           renewsAt: obj.current_period_end ? new Date(obj.current_period_end * 1000).toISOString() : null,
+          // Baja programada desde el portal: "a fin de período" (cancel_at_period_end) o en una fecha (cancel_at).
+          cancelAtPeriodEnd: !ended && obj.cancel_at_period_end === true,
+          cancelAt: !ended && Number.isFinite(obj.cancel_at) ? new Date(obj.cancel_at * 1000).toISOString() : null,
           source: "Stripe",
         });
       });

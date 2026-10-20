@@ -18,12 +18,13 @@ import type { Db } from "../infra/db";
 import { enqueue } from "../infra/queue";
 import type { BlobStore } from "../infra/storage";
 import { AppError, badRequest, notFound } from "../lib/errors";
-import { decrypt, encrypt, iso, randomToken, uuidv7 } from "../lib/util";
+import { createHash } from "node:crypto";
+import { decrypt, encrypt, iso, randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { hasPerm } from "./access";
 import { auditFromRequest } from "./audit";
 import { authenticate, type Services } from "./context";
 import { assertPublicDestination, safeHttpAgent, safeHttpsAgent } from "./webhooks";
-import { evidenceCertificate, safeBaseName } from "./connectors/evidence-file";
+import { evidenceCertificate, legacySafeBaseName, safeBaseName } from "./connectors/evidence-file";
 
 const isLocalEnv = () => config.environment === "local";
 
@@ -166,14 +167,17 @@ async function accountLabel(p: OAuthProvider, tokenBody: any): Promise<string | 
 
 /**
  * Identidad del archivo que se exporta, para no duplicarlo al reintentar: si un intento anterior llegó a subirlo pero
- * falló después (o el proceso murió antes de anotar la referencia), el reintento lo reutiliza (Drive, buscándolo por
- * appProperties) o lo reemplaza (Dropbox, mismo nombre en modo overwrite) en lugar de crear una copia.
+ * falló después (o el proceso murió antes de anotar la referencia), el reintento lo reutiliza si tiene los mismos bytes
+ * (Drive: buscándolo por appProperties y comparando el sha256 guardado ahí; Dropbox: por ruta y content_hash) en lugar
+ * de crear una copia.
  */
-interface UploadOpts {
+export interface UploadOpts {
   envelopeId: string;
   kind: "pdf" | "evidence";
   /** true desde el segundo intento (attempts > 1). */
   retry: boolean;
+  /** Nombre con el formato anterior (id del sobre recortado): un intento previo al cambio pudo subirlo así. */
+  legacyName?: string;
 }
 
 /** Consulta de Drive por el archivo ya exportado de un sobre (appProperties que pone uploadGdrive). */
@@ -284,7 +288,7 @@ async function withResolvedFolder(db: Db, c: any): Promise<any> {
   return (await ensureGdriveFolder(db, c.id, String(folderId))) ?? c;
 }
 
-async function uploadGdrive(
+export async function uploadGdrive(
   creds: OAuthCreds,
   cfg: any,
   name: string,
@@ -306,24 +310,50 @@ async function uploadGdrive(
     creds: updated ?? undefined,
     config: Object.keys(newCfg).length ? newCfg : undefined,
   });
+  const sha = sha256Hex(bytes);
   // Reintento: si un intento anterior ya lo subió, se usa ese (Drive permite nombres repetidos: subir de nuevo
-  // dejaba dos copias del mismo PDF en la carpeta).
+  // dejaba dos copias del mismo PDF en la carpeta). Solo si son los mismos bytes (sha256 en appProperties): si el
+  // contenido cambió entre intentos (renovación del sello, certificado regenerado) se reemplaza el contenido de ese
+  // mismo archivo, que es de este sobre y de este tipo, en lugar de dejar el viejo o crear otro al lado.
   if (opts?.retry) {
     const q = gdriveExportQuery(opts.envelopeId, opts.kind, folderId);
     const found: any = await (
       await check(
-        await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,webViewLink)&pageSize=1`, {
+        await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,webViewLink,appProperties)&pageSize=10`, {
           headers: auth,
           signal: AbortSignal.timeout(15_000),
         }),
         "buscar exportación previa",
       )
     ).json();
-    const prev = found?.files?.[0];
-    if (prev?.id) return done(prev.id, prev.webViewLink);
+    const files: any[] = Array.isArray(found?.files) ? found.files : [];
+    const same = files.find((f) => f?.id && f.appProperties?.calasignSha256 === sha);
+    if (same) return done(same.id, same.webViewLink);
+    const prev = files.find((f) => f?.id);
+    if (prev) {
+      const boundary = `calasign${randomToken(12)}`;
+      const meta = JSON.stringify({ appProperties: { calasignSha256: sha } });
+      const body = Buffer.concat([
+        Buffer.from(`--${boundary}\r\ncontent-type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\ncontent-type: ${contentType}\r\n\r\n`),
+        Buffer.from(bytes),
+        Buffer.from(`\r\n--${boundary}--`),
+      ]);
+      const upd: any = await (
+        await check(
+          await fetch(`https://www.googleapis.com/upload/drive/v3/files/${encodeURIComponent(prev.id)}?uploadType=multipart&fields=id,webViewLink`, {
+            method: "PATCH",
+            headers: { ...auth, "content-type": `multipart/related; boundary=${boundary}` },
+            body,
+            signal: AbortSignal.timeout(60_000),
+          }),
+          "actualizar exportación previa en Drive",
+        )
+      ).json();
+      return done(upd.id ?? prev.id, upd.webViewLink ?? prev.webViewLink);
+    }
   }
   const boundary = `calasign${randomToken(12)}`;
-  const appProperties = opts ? { calasignEnvelopeId: opts.envelopeId, calasignKind: opts.kind } : undefined;
+  const appProperties = opts ? { calasignEnvelopeId: opts.envelopeId, calasignKind: opts.kind, calasignSha256: sha } : undefined;
   const meta = JSON.stringify({ name, mimeType: contentType, ...(folderId ? { parents: [folderId] } : {}), ...(appProperties ? { appProperties } : {}) });
   const body = Buffer.concat([
     Buffer.from(`--${boundary}\r\ncontent-type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\ncontent-type: ${contentType}\r\n\r\n`),
@@ -344,7 +374,34 @@ async function uploadGdrive(
   return done(res.id, res.webViewLink);
 }
 
-async function uploadDropbox(
+/**
+ * content_hash de Dropbox (https://www.dropbox.com/developers/reference/content-hash): SHA-256 de cada bloque de
+ * 4 MiB, concatenados, y SHA-256 de esa concatenación, en hex.
+ */
+export function dropboxContentHash(bytes: Uint8Array): string {
+  const BLOCK = 4 * 1024 * 1024;
+  const outer = createHash("sha256");
+  for (let off = 0; off < bytes.length; off += BLOCK) outer.update(createHash("sha256").update(bytes.subarray(off, off + BLOCK)).digest());
+  return outer.digest("hex");
+}
+
+/** files/get_metadata: null si la ruta no existe (409 path/not_found). */
+async function dropboxMetadata(token: string, path: string): Promise<any | null> {
+  const res = await fetch("https://api.dropboxapi.com/2/files/get_metadata", {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({ path }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (res.status === 409) {
+    const t = await res.text().catch(() => "");
+    if (/not_found/.test(t)) return null;
+    throw new Error(`buscar exportación previa en Dropbox: HTTP 409 ${t.slice(0, 300)}`);
+  }
+  return (await check(res, "buscar exportación previa en Dropbox")).json();
+}
+
+export async function uploadDropbox(
   creds: OAuthCreds,
   cfg: any,
   name: string,
@@ -355,13 +412,21 @@ async function uploadDropbox(
 ): Promise<UploadResult> {
   const { token, updated } = await freshToken("dropbox", creds, onRefresh);
   const folder = String(cfg.folder ?? "").replace(/^\/+|\/+$/g, "");
-  const path = `/${folder ? `${folder}/` : ""}${name}`;
-  // Primer intento: "add" con autorename (no pisa un archivo ajeno con el mismo nombre). Reintento: el nombre es
-  // determinista (asunto + id del sobre), así que "overwrite" reemplaza lo que un intento anterior llegó a subir en
-  // lugar de crear "… (1).pdf".
-  const mode = opts?.retry ? { mode: "overwrite", autorename: false } : { mode: "add", autorename: true };
+  const pathOf = (n: string) => `/${folder ? `${folder}/` : ""}${n}`;
+  const path = pathOf(name);
+  // Nunca "overwrite": aunque el nombre lleve el id del sobre, en la ruta puede haber otro archivo (uno que alguien
+  // dejó con ese nombre, o el de otro sobre con el formato viejo de nombre). En un reintento se busca lo que un intento
+  // anterior pudo haber subido (nombre actual y, por los reintentos en curso al cambiar el formato, el anterior) y se
+  // reutiliza solo si es byte a byte lo mismo (content_hash de Dropbox); si no, "add" con autorename.
+  if (opts?.retry) {
+    const mine = dropboxContentHash(bytes);
+    for (const p of [path, ...(opts.legacyName && opts.legacyName !== name ? [pathOf(opts.legacyName)] : [])]) {
+      const meta = await dropboxMetadata(token, p);
+      if (meta?.[".tag"] === "file" && meta.content_hash === mine) return { ref: `dropbox:${meta.path_display ?? p}`, creds: updated ?? undefined };
+    }
+  }
   // Dropbox-API-Arg viaja en un header: los caracteres no ASCII van escapados.
-  const arg = JSON.stringify({ path, ...mode, mute: true }).replace(/[\u007f-￿]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
+  const arg = JSON.stringify({ path, mode: "add", autorename: true, mute: true }).replace(/[\u007f-￿]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
   const res: any = await (
     await check(
       await fetch("https://content.dropboxapi.com/2/files/upload", {
@@ -592,6 +657,7 @@ async function persistUpload(db: Db, connId: string, r: UploadResult) {
 }
 
 const fileName = (subject: string, envelopeId: string) => `${safeBaseName(subject, envelopeId)}.pdf`;
+const legacyFileName = (subject: string, envelopeId: string) => `${legacySafeBaseName(subject, envelopeId)}.pdf`;
 
 // ───────────────────────────── Job de exportación ─────────────────────────────
 
@@ -642,6 +708,7 @@ async function runExport(db: Db, blobs: BlobStore, p: { connectionId: string; en
         envelopeId: p.envelopeId,
         kind: "pdf",
         retry,
+        legacyName: legacyFileName(e.subject, p.envelopeId),
       });
       await persistUpload(db, c.id, r);
       ref = r.ref;
@@ -657,6 +724,7 @@ async function runExport(db: Db, blobs: BlobStore, p: { connectionId: string; en
         envelopeId: p.envelopeId,
         kind: "evidence",
         retry,
+        legacyName: `${legacySafeBaseName(e.subject, p.envelopeId)} - evidencia.json`,
       });
       await persistUpload(db, c.id, r2);
     }

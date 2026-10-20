@@ -96,14 +96,25 @@ export function canManagePerms(access: { role?: string | null; permissions: read
  * quitando (la API lo permite sin el plan); lo que crea o activa algo nuevo se deshabilita en cada página.
  */
 export function PlanNotice({ feature, text }: { feature: PlanFeature; text?: string }) {
-  const { access, hasFeature } = useAccess();
+  const { access, hasFeature, can } = useAccess();
   const { t } = useI18n();
   if (hasFeature(feature)) return null;
   return (
     <div className="hint" role="note">
-      {text ?? t("common.notInPlan", { plan: access?.planName ?? "" })} <Link to="/app/settings/billing">{t("common.seePlans")}</Link>
+      {text ?? t("common.notInPlan", { plan: access?.planName ?? "" })}{" "}
+      {/* Facturación exige billing:manage: sin el permiso, el link llevaba a un 403. */}
+      {can("billing:manage") ? <Link to="/app/settings/billing">{t("common.seePlans")}</Link> : t("common.askAdminPlan")}
     </div>
   );
+}
+
+/**
+ * Guarda de ruta por permiso: sin él muestra `fallback` (un mensaje claro) en vez de la página, que fallaría con un 403
+ * crudo. Mientras cargan los permisos se muestra la página (la API igual los aplica).
+ */
+export function RequirePermission({ perm, fallback, children }: { perm: Permission; fallback: ReactNode; children: ReactNode }) {
+  const { can } = useAccess();
+  return <>{can(perm) ? children : fallback}</>;
 }
 
 export function useAccess() {

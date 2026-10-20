@@ -175,9 +175,28 @@ describe("reportes", () => {
     expect(utc.json().byMonth.map((m: any) => m.month)).toEqual(["2026-01", "2026-02", "2026-03"]);
     expect(utc.json().byMonth.find((m: any) => m.month === "2026-02").created).toBe(1);
 
+    // Zona desconocida (p. ej. un navegador con tzdata más nueva que la del servidor): UTC, informado en timeZone.
     const bad = await app.inject({ method: "GET", url: `/v1/reports/summary?${range}&tz=Marte/Olimpo`, headers: H() });
-    expect(bad.statusCode).toBe(400);
-    expect(bad.json().error.code).toBe("invalid_timezone");
+    expect(bad.statusCode).toBe(200);
+    expect(bad.json().timeZone).toBe("UTC");
+    expect(bad.json().byMonth.map((m: any) => m.month)).toEqual(["2026-01", "2026-02", "2026-03"]);
+    // Sin distinguir mayúsculas: devuelve el nombre canónico.
+    const ci = await app.inject({ method: "GET", url: `/v1/reports/summary?${range}&tz=america/argentina/buenos_aires`, headers: H() });
+    expect(ci.statusCode).toBe(200);
+    expect(ci.json().timeZone).toBe("America/Argentina/Buenos_Aires");
+    expect(ci.json().byMonth.find((m: any) => m.month === "2026-01").created).toBe(1);
+  });
+
+  it("sin 'from': el comienzo del mes cinco meses antes, en la zona pedida (al oeste de UTC)", async () => {
+    const to = encodeURIComponent("2026-03-15T12:00:00Z");
+    const ba = await app.inject({ method: "GET", url: `/v1/reports/summary?to=${to}&tz=America/Argentina/Buenos_Aires`, headers: H() });
+    expect(ba.statusCode).toBe(200);
+    // 1/10/2025 00:00 en Buenos Aires (UTC-3).
+    expect(ba.json().from).toBe("2025-10-01T03:00:00.000Z");
+    expect(ba.json().byMonth.map((m: any) => m.month)).toEqual(["2025-10", "2025-11", "2025-12", "2026-01", "2026-02", "2026-03"]);
+    const utc = await app.inject({ method: "GET", url: `/v1/reports/summary?to=${to}`, headers: H() });
+    expect(utc.json().from).toBe("2025-10-01T00:00:00.000Z");
+    expect(utc.json().byMonth).toHaveLength(6);
   });
 
   it("CSV de sobres: separador, columnas locales, sin corte y auditado", async () => {
@@ -217,6 +236,18 @@ describe("reportes", () => {
     expect(r.statusCode).toBe(200);
     const head = r.body.split("\r\n")[0];
     expect(head).toBe("﻿id;occurred_at;action;actor_type;actor_id;actor_label;target_type;target_id;ip;user_agent;data;occurred_at_local");
+  });
+
+  it("CSV con zona desconocida: columnas locales en UTC (no 400) e informada en X-Time-Zone", async () => {
+    const r = await app.inject({ method: "GET", url: `/v1/audit-log.csv?tz=Marte/Olimpo`, headers: H() });
+    expect(r.statusCode).toBe(200);
+    expect(r.headers["x-time-zone"]).toBe("UTC");
+    expect(r.body.split("\r\n")[0]).toContain("occurred_at_local");
+    const range = `from=${encodeURIComponent("2026-01-01T00:00:00Z")}&to=${encodeURIComponent("2026-03-01T00:00:00Z")}`;
+    const e = await app.inject({ method: "GET", url: `/v1/reports/envelopes.csv?${range}&sep=%3B&tz=AMERICA/ARGENTINA/BUENOS_AIRES`, headers: H() });
+    expect(e.statusCode).toBe(200);
+    expect(e.headers["x-time-zone"]).toBe("America/Argentina/Buenos_Aires");
+    expect(e.body).toContain(";2026-01-31 23:30:00;");
   });
 });
 

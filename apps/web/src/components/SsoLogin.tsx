@@ -30,7 +30,7 @@ export function SsoErrorNotice() {
   const code = raw && /^[a-z0-9_.-]{1,60}$/i.test(raw) ? raw : raw ? "error" : null;
   if (!code) return null;
   // Los códigos que la persona puede resolver (o tiene que pedirle a alguien) tienen un mensaje propio.
-  if (code === "sso_plan_limit" || code === "sso_state_invalid") return <ErrorBox error={tx(`login.ssoError.${code}`)} />;
+  if (code === "sso_plan_limit" || code === "sso_state_invalid" || code === "sso_scim_deactivated") return <ErrorBox error={tx(`login.ssoError.${code}`)} />;
   return <ErrorBox error={tx("login.ssoError", { code })} />;
 }
 

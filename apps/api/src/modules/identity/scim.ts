@@ -4,7 +4,7 @@
 // (DELETE) hace lo mismo y lo oculta (404, RFC 7644 §3.6), pero la fila queda (deleted_at): el alta JIT por SSO no lo
 // vuelve a sumar, y un POST posterior del IdP lo vuelve a aprovisionar.
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { actingPerson, revokeMemberAccess, secureUnprovenAccount } from "../member-access";
+import { actingPerson, releaseScimJitBlocks, revokeMemberAccess, secureUnprovenAccount } from "../member-access";
 import { BUILTIN_ROLE_PERMISSIONS, CreateScimTokenInput, type ScimSettings, type ScimToken } from "@calasign/shared";
 import { z } from "zod";
 import { config } from "../../config";
@@ -427,11 +427,24 @@ export async function scimRoutes(app: FastifyInstance, s: Services) {
   });
 
   app.delete<{ Params: { id: string } }>("/v1/settings/scim/tokens/:id", { preHandler: auth }, async (req, reply) => {
-    const r = await s.db.query(`UPDATE scim_tokens SET revoked_at = now() WHERE id = $1 AND tenant_id = $2 AND revoked_at IS NULL RETURNING id`, [
-      req.params.id,
-      req.auth!.tenantId,
-    ]);
-    if (!r.length) throw notFound("Token SCIM");
+    const tenantId = req.auth!.tenantId;
+    const released = await s.db.tx(async (t) => {
+      const r = await t.query(`UPDATE scim_tokens SET revoked_at = now() WHERE id = $1 AND tenant_id = $2 AND revoked_at IS NULL RETURNING id`, [req.params.id, tenantId]);
+      if (!r.length) throw notFound("Token SCIM");
+      // Era el último: sin IdP que administre, las bajas por SCIM ya no bloquean el alta JIT por SSO.
+      return releaseScimJitBlocks(t, tenantId);
+    });
+    if (released) {
+      await recordAudit(s.db, {
+        tenantId,
+        action: "scim.jit_blocks_released",
+        actor: { type: req.auth!.apiKeyId ? "api_key" : "user", id: req.auth!.apiKeyId ?? req.auth!.userId, label: req.auth!.actor.label },
+        targetType: "scim_token",
+        targetId: req.params.id,
+        data: { scimUsersReleased: released },
+        ...clientInfo(req),
+      }).catch(() => {});
+    }
     return reply.code(204).send();
   });
 
@@ -561,9 +574,10 @@ export async function scimRoutes(app: FastifyInstance, s: Services) {
             [tenantId, u.id],
           );
           if (known) throw new ScimError(409, "El usuario ya existe en la organización", "uniqueness");
-          // Se vincula una cuenta existente: si nunca probó el control del correo, la pudo registrar otra persona; su
-          // 2FA y sus sesiones (y tokens OAuth) se borran (ver secureUnprovenAccount).
-          secured = await secureUnprovenAccount(t, u.id);
+          // Se vincula una cuenta existente: si es "huérfana" (registrada con contraseña, sin prueba del correo ni otras
+          // organizaciones ni fila SCIM previa acá), la pudo registrar otra persona y su 2FA y sus sesiones se borran
+          // (ver secureUnprovenAccount). Creada inactiva (active = false) todavía no se vincula: no se toca.
+          if (active) secured = await secureUnprovenAccount(t, u.id, tenantId);
         } else {
           u = { id: uuidv7() };
           await t.query(`INSERT INTO users (id, email, name, password_hash, locale) VALUES ($1,$2,$3,'scim-provisioned','es')`, [u.id, email, displayNameOf(input, email)]);

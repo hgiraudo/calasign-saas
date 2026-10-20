@@ -29,9 +29,14 @@ const cache = new Map<string, { v: TenantStorage; at: number }>();
 const CACHE_MS = 15_000;
 export const invalidateTenantStorage = (tenantId?: string) => (tenantId ? cache.delete(tenantId) : cache.clear());
 
-export async function tenantStorage(db: Db, tenantId: string): Promise<TenantStorage> {
+/**
+ * Celda y clave BYOK de la organización. Caché de 15 s por proceso para lecturas; `fresh` (escrituras de archivos)
+ * va siempre a la base (una fila por PK): un cambio o desactivación de la clave hecho en otro proceso (API ↔ worker)
+ * no puede seguir cifrando lo nuevo con la clave anterior durante la vida de la caché.
+ */
+export async function tenantStorage(db: Db, tenantId: string, opts?: { fresh?: boolean }): Promise<TenantStorage> {
   const c = cache.get(tenantId);
-  if (c && Date.now() - c.at < CACHE_MS) return c.v;
+  if (!opts?.fresh && c && Date.now() - c.at < CACHE_MS) return c.v;
   const r = await db.one<any>(
     `SELECT t.byok_key_arn, t.byok_status, COALESCE(d.cell, t.cell) AS cell FROM tenants t LEFT JOIN tenant_directory d ON d.tenant_id = t.id WHERE t.id = $1`,
     [tenantId],
@@ -114,9 +119,35 @@ export async function markKeyHealthy(db: Db, tenantId: string) {
   await recordAudit(db, { tenantId, action: "byok.key_recovered", actor: { type: "system", label: "CalaSign" } }).catch(() => {});
 }
 
+/** La clave es o fue BYOK de la organización (historial; la actual también, por si es anterior a la migración 0078). */
+export async function isTenantByokKey(db: Db, tenantId: string, keyArn: string): Promise<boolean> {
+  const r = await db.one<any>(
+    `SELECT EXISTS (SELECT 1 FROM tenant_byok_keys WHERE tenant_id = $1 AND key_arn = $2)
+         OR EXISTS (SELECT 1 FROM tenants WHERE id = $1 AND byok_key_arn = $2) AS known`,
+    [tenantId, keyArn],
+  );
+  return Boolean(r?.known);
+}
+
+/** Historial: cierra la clave vigente (si es otra) y abre la nueva. Dentro de la transacción del cambio. */
+async function recordKeyChange(db: Db, tenantId: string, newArn: string | null) {
+  await db.query(`UPDATE tenant_byok_keys SET deactivated_at = now() WHERE tenant_id = $1 AND deactivated_at IS NULL AND key_arn IS DISTINCT FROM $2`, [tenantId, newArn]);
+  if (newArn) {
+    await db.query(
+      `INSERT INTO tenant_byok_keys (tenant_id, key_arn) SELECT $1, $2
+        WHERE NOT EXISTS (SELECT 1 FROM tenant_byok_keys WHERE tenant_id = $1 AND key_arn = $2 AND deactivated_at IS NULL)`,
+      [tenantId, newArn],
+    );
+  }
+}
+
+const PREVIOUS_KEY_NOTICE = (arn: string) =>
+  `Los documentos guardados antes de este cambio siguen cifrados con la clave anterior (${arn}): no la deshabilites ni le quites el permiso a CalaSign mientras tengas que poder leerlos (no se re-cifran).`;
+
 export function createTenantStorageResolver(db: Db): TenantStorageResolver {
   return {
-    resolve: (tenantId) => tenantStorage(db, tenantId),
+    resolve: (tenantId, opts) => tenantStorage(db, tenantId, opts),
+    isTenantKey: (tenantId, keyArn) => isTenantByokKey(db, tenantId, keyArn),
     onKeyFailure: (tenantId, keyArn, error) => markKeyFailing(db, tenantId, keyArn, error),
     onKeySuccess: (tenantId) => markKeyHealthy(db, tenantId),
   };
@@ -250,19 +281,24 @@ export async function byokRoutes(app: FastifyInstance, s: Services) {
   app.get("/v1/settings/byok", { preHandler: auth }, async (req) => settingsFor(s.db, req.auth!.tenantId));
 
   // Activa (o cambia) la clave: solo si la prueba completa pasa.
-  app.put("/v1/settings/byok", { preHandler: auth }, async (req) => {
+  app.put("/v1/settings/byok", { preHandler: auth }, async (req): Promise<ByokSettings> => {
     const a = req.auth!;
     const input = SetByokInput.parse(req.body);
-    const ts = await tenantStorage(s.db, a.tenantId);
+    const ts = await tenantStorage(s.db, a.tenantId, { fresh: true });
     const res = await testKey(input.keyArn, a.tenantId, ts.cell);
     if (!res.ok) throw new AppError(422, "byok_key_test_failed", `La clave no pasó la prueba: ${res.error}`, { checks: res.checks });
-    await s.db.query(
-      `UPDATE tenants SET byok_key_arn = $2, byok_status = 'active', byok_error = NULL, byok_checked_at = now(), byok_enabled_at = now(), byok_alerted_at = NULL WHERE id = $1`,
-      [a.tenantId, input.keyArn],
-    );
+    await s.db.tx(async (t) => {
+      await t.query(
+        `UPDATE tenants SET byok_key_arn = $2, byok_status = 'active', byok_error = NULL, byok_checked_at = now(), byok_enabled_at = now(), byok_alerted_at = NULL WHERE id = $1`,
+        [a.tenantId, input.keyArn],
+      );
+      await recordKeyChange(t, a.tenantId, input.keyArn);
+    });
     invalidateTenantStorage(a.tenantId);
     await auditFromRequest(s.db, req, a, "byok.enabled", { targetType: "kms_key", targetId: input.keyArn, data: { previous: ts.byokKeyArn } });
-    return settingsFor(s.db, a.tenantId);
+    // Cambio de clave (o reactivación con otra): lo ya guardado sigue dependiendo de las claves anteriores.
+    const prev = ts.byokKeyArn && ts.byokKeyArn !== input.keyArn ? ts.byokKeyArn : null;
+    return { ...(await settingsFor(s.db, a.tenantId)), notice: prev ? PREVIOUS_KEY_NOTICE(prev) : null };
   });
 
   app.post("/v1/settings/byok/test", { preHandler: auth, config: { rateLimit: { max: 20, timeWindow: "1 minute" } } }, async (req): Promise<ByokTestResult> => {
@@ -289,14 +325,19 @@ export async function byokRoutes(app: FastifyInstance, s: Services) {
     return { ok: res.ok, status: now.byok_status, checks: res.checks, error: res.error };
   });
 
-  // Desactivar: lo nuevo vuelve a la clave de la plataforma. Lo ya cifrado con la clave del cliente la sigue necesitando.
-  app.delete("/v1/settings/byok", { preHandler: auth }, async (req, reply) => {
+  // Desactivar: lo nuevo vuelve a la clave de la plataforma. Lo ya cifrado con la clave del cliente la sigue necesitando
+  // (no se re-cifra): la respuesta lo avisa. Antes respondía 204 sin cuerpo.
+  app.delete("/v1/settings/byok", { preHandler: auth }, async (req): Promise<ByokSettings> => {
     const a = req.auth!;
-    const t = await s.db.one<any>(`SELECT byok_key_arn FROM tenants WHERE id = $1`, [a.tenantId]);
-    await s.db.query(`UPDATE tenants SET byok_status = 'none', byok_error = NULL WHERE id = $1`, [a.tenantId]);
+    const t = await s.db.one<any>(`SELECT byok_key_arn, byok_status FROM tenants WHERE id = $1`, [a.tenantId]);
+    await s.db.tx(async (tx) => {
+      await tx.query(`UPDATE tenants SET byok_status = 'none', byok_error = NULL WHERE id = $1`, [a.tenantId]);
+      await recordKeyChange(tx, a.tenantId, null);
+    });
     invalidateTenantStorage(a.tenantId);
     await auditFromRequest(s.db, req, a, "byok.disabled", { targetType: "kms_key", targetId: t?.byok_key_arn ?? null });
-    return reply.code(204).send();
+    const was = t?.byok_key_arn && t.byok_status !== "none" ? (t.byok_key_arn as string) : null;
+    return { ...(await settingsFor(s.db, a.tenantId)), notice: was ? PREVIOUS_KEY_NOTICE(was) : null };
   });
 }
 

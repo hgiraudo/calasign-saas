@@ -61,7 +61,7 @@ describe("celdas", () => {
 });
 
 /** Resolver de prueba: celda y clave por organización, registra fallas. */
-function fakeResolver(map: Record<string, { cell: string; byokKeyArn: string | null; byokStatus: "none" | "active" | "failing" }>) {
+function fakeResolver(map: Record<string, { cell: string; byokKeyArn: string | null; byokStatus: "none" | "active" | "failing" }>, history: string[] = []) {
   const failures: string[] = [];
   const successes: string[] = [];
   return {
@@ -69,6 +69,7 @@ function fakeResolver(map: Record<string, { cell: string; byokKeyArn: string | n
     successes,
     resolver: {
       resolve: async (t: string) => map[t] ?? { cell: "us", byokKeyArn: null, byokStatus: "none" as const },
+      isTenantKey: async (_t: string, arn: string) => history.includes(arn),
       onKeyFailure: async (t: string, arn: string) => void failures.push(`${t}:${arn}`),
       onKeySuccess: async (t: string) => void successes.push(t),
     },
@@ -170,9 +171,10 @@ describe("almacenamiento por celda y BYOK", () => {
       const key = `tenants/${TENANT_A}/byok/viejo.pdf`;
       await storage.createBlobStore(fakeResolver({ [TENANT_A]: { cell: "us", byokKeyArn: OLD_ARN, byokStatus: "active" } }).resolver).put(key, new Uint8Array([7]), "application/pdf");
       broken.add(OLD_ARN);
-      const { resolver, failures } = fakeResolver({ [TENANT_A]: { cell: "us", byokKeyArn: OK_ARN, byokStatus: "active" } });
-      await expect(storage.createBlobStore(resolver).get(key)).rejects.toMatchObject({ status: 503, code: "byok_key_unavailable" });
-      expect(failures).toEqual([`${TENANT_A}:${OLD_ARN}`]);
+      // La anterior está en el historial de la organización: 503 de la clave (con su ARN), sin marcar la actual.
+      const { resolver, failures } = fakeResolver({ [TENANT_A]: { cell: "us", byokKeyArn: OK_ARN, byokStatus: "active" } }, [OLD_ARN]);
+      await expect(storage.createBlobStore(resolver).get(key)).rejects.toMatchObject({ status: 503, code: "byok_key_unavailable", details: { keyArn: OLD_ARN } });
+      expect(failures).toEqual([]);
     } finally {
       kms.setKmsClientFactory(() => kms.mockKms());
     }
@@ -188,9 +190,88 @@ describe("almacenamiento por celda y BYOK", () => {
     }));
     process.env.CELLS = JSON.stringify({ us: { default: true, storage: { driver: "s3", bucket: "b-us" } } });
     cellsMod.resetCells();
+    const { resolver, failures } = fakeResolver({ [TENANT_A]: { cell: "us", byokKeyArn: OK_ARN, byokStatus: "active" } }, [OLD_ARN]);
+    await expect(storage.createBlobStore(resolver).get(`tenants/${TENANT_A}/viejo.pdf`)).rejects.toMatchObject({ status: 503, code: "byok_key_unavailable" });
+    expect(failures).toEqual([]);
+  });
+
+  /** S3 simulado: GetObject falla con `getErr`; HeadObject devuelve `head` (o falla si es un Error). */
+  function s3With(getErr: Error, head: Record<string, unknown> | Error) {
+    const calls: string[] = [];
+    storage.setS3ClientFactory(() => ({
+      send: async (cmd: any) => {
+        calls.push(cmd.constructor.name);
+        if (cmd.constructor.name === "HeadObjectCommand") {
+          if (head instanceof Error) throw head;
+          return head;
+        }
+        throw getErr;
+      },
+    }));
+    process.env.CELLS = JSON.stringify({ us: { default: true, storage: { driver: "s3", bucket: "b-us" } } });
+    cellsMod.resetCells();
+    return calls;
+  }
+  const s3Err = (name: string, message: string) => Object.assign(new Error(message), { name, Code: name });
+
+  it("un AccessDenied de S3 (sin s3:ListBucket o por la política del bucket) no se le atribuye a la clave BYOK", async () => {
+    const original = s3Err("AccessDenied", "Access Denied");
+    const calls = s3With(original, { SSEKMSKeyId: OK_ARN });
+    const { resolver, failures } = fakeResolver({ [TENANT_A]: { cell: "us", byokKeyArn: OK_ARN, byokStatus: "active" } }, [OK_ARN]);
+    await expect(storage.createBlobStore(resolver).get(`tenants/${TENANT_A}/no-existe.pdf`)).rejects.toBe(original);
+    expect(failures).toEqual([]);
+    expect(calls).toEqual(["GetObjectCommand"]); // ni siquiera se consulta la clave del objeto
+  });
+
+  it("un AccessDenied de S3 que sí es de KMS se atribuye a la clave confirmada por HeadObject", async () => {
+    s3With(s3Err("AccessDenied", "User: arn:aws:sts::1:assumed-role/app is not authorized to perform: kms:Decrypt on resource: " + OK_ARN), { SSEKMSKeyId: OK_ARN });
     const { resolver, failures } = fakeResolver({ [TENANT_A]: { cell: "us", byokKeyArn: OK_ARN, byokStatus: "active" } });
-    await expect(storage.createBlobStore(resolver).get(`tenants/${TENANT_A}/viejo.pdf`)).rejects.toMatchObject({ status: 503 });
-    expect(failures).toEqual([`${TENANT_A}:${OLD_ARN}`]);
+    await expect(storage.createBlobStore(resolver).get(`tenants/${TENANT_A}/k.pdf`)).rejects.toMatchObject({ status: 503, code: "byok_key_unavailable" });
+    expect(failures).toEqual([`${TENANT_A}:${OK_ARN}`]);
+  });
+
+  it("si HeadObject falla, se relanza el error original sin atribuirlo a ninguna clave", async () => {
+    const original = s3Err("KMS.DisabledException", "The ciphertext refers to a customer master key that is disabled");
+    s3With(original, s3Err("Forbidden", "Forbidden"));
+    const { resolver, failures } = fakeResolver({ [TENANT_A]: { cell: "us", byokKeyArn: OK_ARN, byokStatus: "active" } });
+    await expect(storage.createBlobStore(resolver).get(`tenants/${TENANT_A}/h.pdf`)).rejects.toBe(original);
+    expect(failures).toEqual([]);
+  });
+
+  it("con BYOK desactivada (none) una falla de su clave no la marca como fallida", async () => {
+    s3With(s3Err("KMS.DisabledException", "key is disabled"), { SSEKMSKeyId: OK_ARN });
+    const { resolver, failures } = fakeResolver({ [TENANT_A]: { cell: "us", byokKeyArn: OK_ARN, byokStatus: "none" } }, [OK_ARN]);
+    await expect(storage.createBlobStore(resolver).get(`tenants/${TENANT_A}/d.pdf`)).rejects.toMatchObject({ status: 503, code: "byok_key_unavailable" });
+    expect(failures).toEqual([]);
+  });
+
+  it("un objeto anterior a BYOK cifrado con la clave de la plataforma: 503 genérico, sin el ARN interno", async () => {
+    const PLATFORM = "arn:aws:kms:us-east-1:999999999999:key/plataforma";
+    s3With(s3Err("KMS.KMSInvalidStateException", "key pending deletion"), { SSEKMSKeyId: PLATFORM });
+    const { resolver, failures } = fakeResolver({ [TENANT_A]: { cell: "us", byokKeyArn: OK_ARN, byokStatus: "active" } }, [OK_ARN]);
+    const warn = console.warn;
+    console.warn = () => {};
+    try {
+      const err: any = await storage.createBlobStore(resolver).get(`tenants/${TENANT_A}/pre-byok.pdf`).catch((e) => e);
+      expect(err).toMatchObject({ status: 503, code: "storage_unavailable" });
+      expect(JSON.stringify(err.details ?? null)).not.toContain(PLATFORM);
+      expect(err.message).not.toMatch(/organizaci/);
+    } finally {
+      console.warn = warn;
+    }
+    expect(failures).toEqual([]);
+  });
+
+  it("isKeyError: solo errores de KMS, no los de S3", () => {
+    expect(kms.isKeyError(s3Err("AccessDenied", "Access Denied"))).toBe(false);
+    expect(kms.isKeyError(s3Err("NoSuchKey", "The specified key does not exist."))).toBe(false);
+    expect(kms.isKeyError(s3Err("NotFound", "Not Found"))).toBe(false);
+    expect(kms.isKeyError(new Error("User is not authorized to perform: s3:GetObject"))).toBe(false);
+    expect(kms.isKeyError(s3Err("AccessDenied", "not authorized to perform: kms:Decrypt"))).toBe(true);
+    expect(kms.isKeyError(s3Err("KMS.KMSInvalidStateException", "x"))).toBe(true);
+    expect(kms.isKeyError(s3Err("AccessDeniedException", "x"))).toBe(true);
+    expect(kms.isKeyError(s3Err("DisabledException", "x"))).toBe(true);
+    expect(kms.isKeyError(new Error("KMSInvalidStateException: la clave x no está habilitada"))).toBe(true);
   });
 
   it("una falla de red hacia S3 no marca la clave del cliente como fallida", async () => {

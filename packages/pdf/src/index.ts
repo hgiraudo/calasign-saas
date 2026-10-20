@@ -14,7 +14,7 @@ export { fetchOcsp, fetchCrl, statusFromOcsp, statusFromCrl, type Fetcher, type 
 export { extractPdfText, substringBox, type PageText, type TextLine } from "./text";
 export { renderDocumentPdf, type DocBlock, type DocRun, type DocMarkKind, type DocMarkPosition, type RenderDocOptions } from "./docgen";
 export { extractPdfPlainText, type PdfText } from "./plain-text";
-export { archiveTimestampInfo, type ArchiveTimestampInfo } from "./archive";
+export { archiveTimestampInfo, tsaCertificateNotAfter, type ArchiveTimestampInfo } from "./archive";
 export * from "./external";
 export * from "./certcheck";
 export { assertEmbeddableImage, assertPngSize, pngDimensions, MAX_PNG_PIXELS } from "./images";

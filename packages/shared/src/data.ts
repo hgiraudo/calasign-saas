@@ -27,6 +27,11 @@ export interface ByokSettings {
   keyPolicy: Record<string, unknown>;
   /** Celda (región) de los datos: la clave tiene que estar en esa región. */
   region: string;
+  /**
+   * Solo en la respuesta de PUT/DELETE: aviso de que lo guardado antes del cambio sigue cifrado con la clave anterior
+   * (no se re-cifra). null si no hubo clave anterior.
+   */
+  notice?: string | null;
 }
 
 export interface ByokTestResult {

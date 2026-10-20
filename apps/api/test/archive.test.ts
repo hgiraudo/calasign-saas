@@ -141,5 +141,42 @@ describe("renovación de sellos de archivo", () => {
     // No se vuelve a renovar antes del intervalo mínimo (sin forzar) y el barrido normal está limitado a 1 por hora.
     const again = await archiveSweep({ db, blobs, log }, { days: 2000 });
     expect(again.renewed).toBe(0);
+
+    // Pasado el intervalo mínimo: el último sello ya es del certificado que la TSA usa hoy, así que "renovar" no
+    // extendería nada. El barrido consulta ese certificado y saltea el sobre (antes renovaba cada 30 días).
+    const { resetArchiveSweepClock } = await import("../src/modules/data/archive");
+    await db.query(`UPDATE envelopes SET archive_checked_at = now() - interval '31 days', archive_error = NULL WHERE id = $1`, [env]);
+    resetArchiveSweepClock();
+    const sameTsa = await archiveSweep({ db, blobs, log }, { days: 2000 });
+    expect(sameTsa).toMatchObject({ renewed: 0, failed: 0 });
+    expect((await archiveInfo(db, env)).renewals).toBe(1);
+
+    // El tope de renovaciones también vale para el barrido (aun forzado).
+    await db.query(`UPDATE envelopes SET archive_renewals = 50 WHERE id = $1`, [env]);
+    expect((await archiveSweep({ db, blobs, log }, { days: 2000, force: true, envelopeId: env })).renewed).toBe(0);
+
+    // B-T con "LTV pendiente" que se completa: la versión original (sin DSS) no tenía vigencia de archivo.
+    const bt = uuidv7();
+    const btFile = uuidv7();
+    const btKey = `tenants/${tenant}/envelopes/${bt}/${btFile}-signed.pdf`;
+    await blobs.put(btKey, sealed, "application/pdf");
+    await db.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'signed',$3,'application/pdf',$4,$5)`, [
+      btFile,
+      tenant,
+      btKey,
+      sealed.length,
+      sha256Hex(sealed),
+    ]);
+    await db.query(
+      `INSERT INTO envelopes (id, tenant_id, subject, status, completed_at, signed_file_id, archive_checked_at, archive_error)
+       VALUES ($1,$2,'S','completed', now(), $3, now(), 'LTV pendiente')`,
+      [bt, tenant, btFile],
+    );
+    expect((await archiveSweep({ db, blobs, log }, { force: true, envelopeId: bt })).renewed).toBe(1);
+    const btInfo = await archiveInfo(db, bt);
+    expect(btInfo.versions.map((v) => [v.reason, v.validUntil === null])).toEqual([
+      ["completed", true],
+      ["archive_renewal", false],
+    ]);
   }, 120_000);
 });

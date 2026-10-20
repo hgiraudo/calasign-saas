@@ -19,6 +19,8 @@ export function ByokSettingsPage() {
   const [testMsg, setTestMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  /** Aviso del cambio/desactivación: lo anterior sigue cifrado con la clave anterior. */
+  const [notice, setNotice] = useState<string | null>(null);
 
   const load = () =>
     api<ByokSettings>("/v1/settings/byok")
@@ -41,7 +43,9 @@ export function ByokSettingsPage() {
     setChecks(null);
     setTestMsg(null);
     try {
-      setData(await api<ByokSettings>("/v1/settings/byok", { method: "PUT", body: { keyArn: arn.trim() } }));
+      const d = await api<ByokSettings>("/v1/settings/byok", { method: "PUT", body: { keyArn: arn.trim() } });
+      setData(d);
+      setNotice(d.notice ?? null);
       setTestMsg(dt("byok.testOk"));
     } catch (err) {
       setError(errorText(err));
@@ -74,7 +78,8 @@ export function ByokSettingsPage() {
     // El error de una prueba fallida anterior quedaba a la vista después de desactivar sin problemas.
     setError(null);
     try {
-      await api("/v1/settings/byok", { method: "DELETE" });
+      const d = await api<ByokSettings>("/v1/settings/byok", { method: "DELETE" });
+      setNotice(d?.notice ?? null);
       await load();
       setChecks(null);
       setTestMsg(null);
@@ -93,6 +98,12 @@ export function ByokSettingsPage() {
           <p className="muted">{dt("byok.intro")}</p>
         </div>
       </div>
+
+      {notice && (
+        <p className="alert alert-warn" role="status">
+          {notice}
+        </p>
+      )}
 
       {data.status === "failing" && (
         <p className="alert alert-error" role="alert">

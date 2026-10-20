@@ -33,7 +33,7 @@ import { iso, randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { hasPerm } from "./access";
 import { auditFromRequest } from "./audit";
 import { authenticate, SESSION_COOKIE, type AuthContext, type Services } from "./context";
-import { CODE_PREFIX, CODE_TTL_SEC, REFRESH_PREFIX, assertUserTokenAllowed, issueTokens, requireUserSession } from "./oauth-tokens";
+import { CODE_PREFIX, CODE_TTL_SEC, REFRESH_PREFIX, assertUserTokenAllowed, issueTokens, requireUserSession, ssoFamilyDeadline } from "./oauth-tokens";
 import { actingPerson } from "./member-access";
 
 // ───────────────────────────── Utilidades ─────────────────────────────
@@ -553,6 +553,12 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
               return "reused" as const;
             }
             if (new Date(old.expires_at) <= new Date()) throw new OAuthError(400, "invalid_grant", "refresh_token vencido");
+            // Autorizado desde una sesión SSO: la familia no pasa de la duración de sesión de la conexión (contada desde que
+            // empezó), aunque el refresh token sea anterior a ese tope (ver ssoFamilyDeadline).
+            if (old.auth_method === "sso") {
+              const deadline = await ssoFamilyDeadline(t, old.family_id, old.sso_tenant_id);
+              if (deadline && deadline <= new Date()) throw new OAuthError(400, "invalid_grant", "La sesión de inicio único venció: volvé a autorizar la aplicación");
+            }
             const requested = parseScopes(body.scope);
             const scopes = requested.length ? requested : old.scopes;
             if (scopes.some((x: string) => !old.scopes.includes(x))) throw new OAuthError(400, "invalid_scope", "No se pueden ampliar los scopes");

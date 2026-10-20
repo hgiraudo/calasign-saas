@@ -16,7 +16,6 @@ import { randomToken, sha256Hex } from "../lib/util";
  * corresponde como persona (sus tokens OAuth ya se limitan a los permisos del rol nuevo).
  */
 export async function revokeMemberAccess(t: Db, tenantId: string, userId: string, opts: { removal?: boolean } = {}) {
-  // (Con removal = false lo usa también el restablecimiento de contraseña: ver revokeCredentialsCreatedBy.)
   const removal = opts.removal !== false;
   const keys = await t.query<{ id: string; name: string }>(
     `UPDATE api_keys SET revoked_at = now() WHERE tenant_id = $1 AND created_by = $2 AND revoked_at IS NULL AND oauth_client_id IS NULL RETURNING id, name`,
@@ -49,6 +48,8 @@ export async function revokeMemberAccess(t: Db, tenantId: string, userId: string
   if (apps.length) {
     await t.query(`UPDATE oauth_tokens SET revoked_at = now() WHERE client_id = ANY($1::uuid[]) AND revoked_at IS NULL`, [apps.map((a) => a.id)]);
   }
+  // Si era el último token SCIM activo, las bajas del IdP dejan de bloquear el JIT (ver releaseScimJitBlocks).
+  if (scimTokens.length) await releaseScimJitBlocks(t, tenantId);
   return { keys, invitations: invitations.length, serviceApps: apps.map((a) => a.client_id), scimTokens: scimTokens.length };
 }
 
@@ -63,29 +64,80 @@ export async function actingPerson(db: Db, a: { userId?: string | null; apiKeyId
   return k?.created_by ?? null;
 }
 
+export interface CreatedCredentials {
+  tenantId: string;
+  tenantName: string | null;
+  /** Activas (después de la revocación, si se pidió). */
+  apiKeys: number;
+  scimTokens: number;
+  serviceApps: number;
+  invitations: number;
+  /** Lo revocado en esta organización (solo con revoke = true): IDs de API keys y cantidad de invitaciones. */
+  revoked?: { apiKeys: string[]; invitations: number };
+}
+
 /**
- * Restablecer la contraseña corta lo que la persona creó con la contraseña vieja, en todas sus organizaciones: si alguien
- * la tenía, pudo crear API keys, tokens SCIM o apps de servicio (y mandar invitaciones) que seguían entrando después del
- * cambio. Misma revocación que un cambio de rol (revokeMemberAccess con removal = false: no toca la membresía).
- * Devuelve lo revocado por organización (solo las que tuvieron algo), para la auditoría y el aviso.
+ * Credenciales activas que la persona creó, por organización (solo las que tienen alguna), para el restablecimiento de
+ * contraseña: quien tenía la contraseña vieja pudo crearlas para seguir entrando después del cambio, pero también pueden
+ * ser integraciones productivas, así que por defecto NO se revocan: la respuesta las lista para que la persona decida.
+ * Con revoke = true se revocan solo sus API keys y las invitaciones pendientes que mandó. Los tokens SCIM y las apps de
+ * servicio son de la organización (los usa el IdP o una integración de todos): nunca se tocan acá; un administrador los
+ * revisa y rota desde la configuración.
  */
-export async function revokeCredentialsCreatedBy(t: Db, userId: string) {
-  const tenants = await t.query<{ tenant_id: string }>(
-    `SELECT tenant_id FROM memberships WHERE user_id = $1
-     UNION SELECT tenant_id FROM api_keys WHERE created_by = $1 AND revoked_at IS NULL
-     UNION SELECT tenant_id FROM scim_tokens WHERE created_by = $1 AND revoked_at IS NULL
-     UNION SELECT tenant_id FROM oauth_clients WHERE created_by = $1 AND service_api_key_id IS NOT NULL AND revoked_at IS NULL
-     UNION SELECT tenant_id FROM invitations WHERE invited_by = $1 AND accepted_at IS NULL AND revoked_at IS NULL`,
+export async function credentialsCreatedBy(t: Db, userId: string, opts: { revoke?: boolean } = {}): Promise<CreatedCredentials[]> {
+  const revokedByTenant = new Map<string, { apiKeys: string[]; invitations: number }>();
+  if (opts.revoke) {
+    const keys = await t.query<{ id: string; tenant_id: string }>(
+      `UPDATE api_keys SET revoked_at = now() WHERE created_by = $1 AND revoked_at IS NULL AND oauth_client_id IS NULL RETURNING id, tenant_id`,
+      [userId],
+    );
+    const invs = await t.query<{ tenant_id: string }>(
+      `UPDATE invitations SET revoked_at = now() WHERE invited_by = $1 AND accepted_at IS NULL AND revoked_at IS NULL RETURNING tenant_id`,
+      [userId],
+    );
+    const slot = (id: string) => revokedByTenant.get(id) ?? revokedByTenant.set(id, { apiKeys: [], invitations: 0 }).get(id)!;
+    for (const k of keys) slot(k.tenant_id).apiKeys.push(k.id);
+    for (const i of invs) slot(i.tenant_id).invitations++;
+  }
+  const rows = await t.query<any>(
+    `WITH c AS (
+       SELECT tenant_id, 'api_key' AS kind FROM api_keys WHERE created_by = $1 AND revoked_at IS NULL AND oauth_client_id IS NULL
+       UNION ALL SELECT tenant_id, 'scim_token' FROM scim_tokens WHERE created_by = $1 AND revoked_at IS NULL
+       UNION ALL SELECT tenant_id, 'service_app' FROM oauth_clients
+                  WHERE created_by = $1 AND service_api_key_id IS NOT NULL AND secret_hash IS NOT NULL AND revoked_at IS NULL
+       UNION ALL SELECT tenant_id, 'invitation' FROM invitations
+                  WHERE invited_by = $1 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now()
+     )
+     SELECT c.tenant_id, t.name AS tenant_name,
+            count(*) FILTER (WHERE kind = 'api_key')::int AS api_keys,
+            count(*) FILTER (WHERE kind = 'scim_token')::int AS scim_tokens,
+            count(*) FILTER (WHERE kind = 'service_app')::int AS service_apps,
+            count(*) FILTER (WHERE kind = 'invitation')::int AS invitations
+       FROM c JOIN tenants t ON t.id = c.tenant_id
+      GROUP BY c.tenant_id, t.name ORDER BY t.name`,
     [userId],
   );
-  const out: { tenantId: string; apiKeys: string[]; scimTokens: number; serviceApps: string[]; invitations: number }[] = [];
-  for (const { tenant_id } of tenants) {
-    const r = await revokeMemberAccess(t, tenant_id, userId, { removal: false });
-    if (r.keys.length || r.scimTokens || r.serviceApps.length || r.invitations) {
-      out.push({ tenantId: tenant_id, apiKeys: r.keys.map((k) => k.id), scimTokens: r.scimTokens, serviceApps: r.serviceApps, invitations: r.invitations });
-    }
+  const out = new Map<string, CreatedCredentials>();
+  for (const r of rows) {
+    out.set(r.tenant_id, {
+      tenantId: r.tenant_id,
+      tenantName: r.tenant_name ?? null,
+      apiKeys: Number(r.api_keys),
+      scimTokens: Number(r.scim_tokens),
+      serviceApps: Number(r.service_apps),
+      invitations: Number(r.invitations),
+    });
   }
-  return out;
+  for (const [tenantId, revoked] of revokedByTenant) {
+    let e = out.get(tenantId);
+    if (!e) {
+      const tn = await t.one<{ name: string }>(`SELECT name FROM tenants WHERE id = $1`, [tenantId]);
+      e = { tenantId, tenantName: tn?.name ?? null, apiKeys: 0, scimTokens: 0, serviceApps: 0, invitations: 0 };
+      out.set(tenantId, e);
+    }
+    e.revoked = revoked;
+  }
+  return [...out.values()];
 }
 
 /** Borra la verificación en dos pasos de la cuenta (secreto, alta pendiente y códigos de recuperación). */
@@ -109,16 +161,45 @@ export async function emailControlProven(t: Db, userId: string): Promise<boolean
 }
 
 /**
- * Antes de vincular por SSO (JIT) o SCIM una cuenta YA existente que nunca probó el control del correo: quien la
- * registró pudo ser otra persona (el registro no verifica el correo). Su segundo factor y sus sesiones abiertas (y
- * tokens OAuth) quedarían en manos de esa persona, así que se borran. Devuelve null si la cuenta ya lo había probado.
+ * Antes de vincular por SSO (JIT) o SCIM a la organización `tenantId` una cuenta YA existente que nunca probó el control
+ * del correo: quien la registró pudo ser otra persona (el registro no verifica el correo), y su segundo factor y sus
+ * sesiones (y tokens OAuth) quedarían en sus manos. Pero la 2FA y las sesiones son de la cuenta global: borrarlas por
+ * decisión de un administrador de un dominio afecta también a las otras organizaciones de la persona. Por eso se limpia
+ * SOLO si la cuenta es "huérfana":
+ *  - no fue creada por SSO o SCIM (password_hash 'sso-only' / 'scim-provisioned': nadie la registró con contraseña);
+ *  - nunca probó el control del correo (emailControlProven);
+ *  - no tiene fila en scim_users de esta organización (el IdP ya la administraba: no es una vinculación nueva);
+ *  - no es miembro de ninguna otra organización (si lo es, esas organizaciones la conocen y su 2FA o sus sesiones no se
+ *    tocan: el riesgo queda acotado a que la contraseña no vale en esta organización, password_allowed = false).
+ * En ese único caso (cuenta registrada con contraseña, sin otras membresías ni prueba del correo) se borran la 2FA, todas
+ * sus sesiones, tokens OAuth, códigos sin canjear y desafíos pendientes. Devuelve null si no se tocó nada.
+ * El llamador no lo aplica cuando SCIM crea al usuario inactivo (active = false): no hay vinculación todavía.
  */
-export async function secureUnprovenAccount(t: Db, userId: string): Promise<{ totpCleared: boolean; sessionsClosed: number } | null> {
-  if (await emailControlProven(t, userId)) return null;
+export async function secureUnprovenAccount(
+  t: Db,
+  userId: string,
+  tenantId: string,
+): Promise<{ totpCleared: boolean; sessionsClosed: number } | null> {
+  const u = await t.one<{ password_hash: string | null; password_reset_at: string | null }>(`SELECT password_hash, password_reset_at FROM users WHERE id = $1`, [userId]);
+  if (!u || u.password_reset_at) return null;
+  if (u.password_hash === "sso-only" || u.password_hash === "scim-provisioned") return null;
+  if (await t.one(`SELECT 1 FROM scim_users WHERE tenant_id = $1 AND user_id = $2`, [tenantId, userId])) return null;
+  if (await t.one(`SELECT 1 FROM memberships WHERE user_id = $1 AND tenant_id <> $2 LIMIT 1`, [userId, tenantId])) return null;
   const totpCleared = await clearTotp(t, userId);
   const sessions = await t.query(`DELETE FROM sessions WHERE user_id = $1 RETURNING user_id`, [userId]);
   await t.query(`UPDATE oauth_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL`, [userId]);
   await t.query(`UPDATE oauth_authorization_codes SET used_at = now() WHERE user_id = $1 AND used_at IS NULL`, [userId]);
   await t.query(`DELETE FROM login_challenges WHERE user_id = $1`, [userId]);
   return { totpCleared, sessionsClosed: sessions.length };
+}
+
+/**
+ * Sin tokens SCIM activos, la organización ya no tiene IdP que administre altas y bajas: las filas de scim_users
+ * desactivadas o borradas dejan de tener sentido y bloquearían para siempre el alta JIT por SSO de esas personas
+ * (scimBlocksJit). Se borran al revocar el último token. Devuelve cuántas.
+ */
+export async function releaseScimJitBlocks(t: Db, tenantId: string): Promise<number> {
+  if (await t.one(`SELECT 1 FROM scim_tokens WHERE tenant_id = $1 AND revoked_at IS NULL LIMIT 1`, [tenantId])) return 0;
+  const r = await t.query(`DELETE FROM scim_users WHERE tenant_id = $1 AND (active = false OR deleted_at IS NOT NULL) RETURNING user_id`, [tenantId]);
+  return r.length;
 }

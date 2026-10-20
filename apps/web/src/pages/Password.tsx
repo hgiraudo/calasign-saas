@@ -61,29 +61,30 @@ export function ForgotPasswordPage() {
 }
 
 interface ResetResult {
-  revokedCredentials?: { apiKeys: number; scimTokens: number; serviceApps: number; invitations: number };
-  twoFactorCleared?: boolean;
+  createdCredentials?: { tenantId: string; tenantName: string | null; apiKeys: number; scimTokens: number; serviceApps: number; invitations: number }[];
+  revokedCredentials?: { apiKeys: number; invitations: number } | null;
 }
 
-/** Avisos después de restablecer: credenciales revocadas y 2FA borrada (si pasó). */
-function resetNotice(r: ResetResult | undefined, pw: ReturnType<typeof usePasswordText>): string[] {
-  const out: string[] = [];
-  const c = r?.revokedCredentials;
-  if (c) {
-    const items = (
-      [
-        ["revokedApiKeys", c.apiKeys],
-        ["revokedScimTokens", c.scimTokens],
-        ["revokedServiceApps", c.serviceApps],
-        ["revokedInvitations", c.invitations],
-      ] as const
-    )
-      .filter(([, n]) => n > 0)
-      .map(([k, n]) => pw(k).replace("{n}", String(n)));
-    if (items.length) out.push(pw("revokedNotice").replace("{items}", items.join(", ")));
-  }
-  if (r?.twoFactorCleared) out.push(pw("twoFactorCleared"));
-  return out;
+type PwText = ReturnType<typeof usePasswordText>;
+const countList = (pw: PwText, items: readonly (readonly [Parameters<PwText>[0], number])[]) =>
+  items.filter(([, n]) => n > 0).map(([k, n]) => pw(k).replace("{n}", String(n)));
+
+/** Avisos después de restablecer: lo revocado (si se pidió) y las credenciales creadas que siguen activas, por organización. */
+function resetNotice(r: ResetResult | undefined, pw: PwText): { revoked: string | null; active: string[] } {
+  const rv = r?.revokedCredentials;
+  const revokedItems = rv ? countList(pw, [["revokedApiKeys", rv.apiKeys], ["revokedInvitations", rv.invitations]]) : [];
+  const active = (r?.createdCredentials ?? [])
+    .map((c) => {
+      const items = countList(pw, [
+        ["activeApiKeys", c.apiKeys],
+        ["activeScimTokens", c.scimTokens],
+        ["activeServiceApps", c.serviceApps],
+        ["activeInvitations", c.invitations],
+      ]);
+      return items.length ? `${c.tenantName ?? c.tenantId}: ${items.join(", ")}` : null;
+    })
+    .filter((x): x is string => Boolean(x));
+  return { revoked: revokedItems.length ? pw("revokedNotice").replace("{items}", revokedItems.join(", ")) : null, active };
 }
 
 export function ResetPasswordPage() {
@@ -94,7 +95,8 @@ export function ResetPasswordPage() {
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
-  const [notice, setNotice] = useState<string[]>([]);
+  const [revokeCreated, setRevokeCreated] = useState(false);
+  const [notice, setNotice] = useState<{ revoked: string | null; active: string[] }>({ revoked: null, active: [] });
   const [invalid, setInvalid] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -107,7 +109,7 @@ export function ResetPasswordPage() {
     }
     setBusy(true);
     try {
-      const r = await api<ResetResult | undefined>("/v1/auth/password/reset", { method: "POST", body: { token, password } });
+      const r = await api<ResetResult | undefined>("/v1/auth/password/reset", { method: "POST", body: { token, password, revokeCreatedCredentials: revokeCreated } });
       setNotice(resetNotice(r, pw));
       setDone(true);
     } catch (err) {
@@ -123,7 +125,21 @@ export function ResetPasswordPage() {
       <AuthShell title={pw("resetTitle")}>
         <div className="stack">
           <p role="status">{done ? pw("done") : pw("invalid")}</p>
-          {done && notice.map((n) => <p key={n} className="hint" role="note">{n}</p>)}
+          {done && notice.revoked && (
+            <p className="hint" role="note">
+              {notice.revoked}
+            </p>
+          )}
+          {done && notice.active.length > 0 && (
+            <div className="hint" role="note">
+              <p>{pw("activeNotice")}</p>
+              <ul>
+                {notice.active.map((n) => (
+                  <li key={n}>{n}</li>
+                ))}
+              </ul>
+            </div>
+          )}
           <p className="muted center">
             {done ? <Link to="/login">{pw("backToLogin")}</Link> : <Link to="/forgot">{pw("requestNew")}</Link>}
           </p>
@@ -143,6 +159,14 @@ export function ResetPasswordPage() {
         <label className="field">
           <span>{pw("confirmPassword")}</span>
           <input type="password" autoComplete="new-password" minLength={10} required value={confirm} onChange={(e) => setConfirm(e.target.value)} />
+        </label>
+        <label className="check">
+          <input type="checkbox" checked={revokeCreated} onChange={(e) => setRevokeCreated(e.target.checked)} />
+          <span>
+            {pw("revokeCreated")}
+            <br />
+            <small className="muted">{pw("revokeCreatedHint")}</small>
+          </span>
         </label>
         <ErrorBox error={error} />
         <button className="btn btn-primary btn-block" disabled={busy}>

@@ -365,7 +365,15 @@ export async function rememberSamlAssertion(db: Db, tenantId: string, id: string
  * (desactivado o borrado por el IdP): el alta automática por SSO no lo vuelve a sumar (lo decide el IdP por SCIM).
  */
 export async function scimBlocksJit(db: Db, tenantId: string, userId: string): Promise<boolean> {
-  return Boolean(await db.one(`SELECT 1 FROM scim_users WHERE tenant_id = $1 AND user_id = $2 AND (active = false OR deleted_at IS NOT NULL)`, [tenantId, userId]));
+  // Solo mientras la organización tenga SCIM en uso (algún token activo): sin IdP que administre, una baja vieja no
+  // puede bloquear para siempre (al revocar el último token las filas se borran: releaseScimJitBlocks).
+  return Boolean(
+    await db.one(
+      `SELECT 1 FROM scim_users WHERE tenant_id = $1 AND user_id = $2 AND (active = false OR deleted_at IS NOT NULL)
+          AND EXISTS (SELECT 1 FROM scim_tokens WHERE tenant_id = $1 AND revoked_at IS NULL)`,
+      [tenantId, userId],
+    ),
+  );
 }
 
 // ───────────────────────────── Rutas ─────────────────────────────
@@ -424,7 +432,11 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
       // Desactivado o borrado por SCIM: el alta automática por SSO no lo vuelve a sumar (lo decide el proveedor de identidad).
       if (user && (await scimBlocksJit(s.db, tenantId, user.id))) {
         await recordAudit(s.db, { tenantId, action: "auth.sso_denied", actor: { type: "anonymous", label: email }, ip, userAgent, data: { protocol, reason: "scim_deactivated" } });
-        throw new AppError(403, "sso_not_member", "No sos miembro de esta organización. Pedí una invitación al administrador.");
+        throw new AppError(
+          403,
+          "sso_scim_deactivated",
+          "Tu proveedor de identidad te desactivó en esta organización. Pedile a un administrador que te invite.",
+        );
       }
       let secured: Awaited<ReturnType<typeof secureUnprovenAccount>> = null;
       const overLimit = await s.db.tx(async (t) => {
@@ -439,9 +451,9 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
           await t.query(`INSERT INTO users (id, email, name, password_hash, locale) VALUES ($1,$2,$3,'sso-only','es')`, [id, email, name?.trim() || email.split("@")[0]]);
           user = { id, name };
         } else {
-          // Cuenta existente que nunca probó el control del correo: la pudo registrar otra persona. Su 2FA y sus
-          // sesiones (y tokens OAuth) se borran antes de vincularla (ver secureUnprovenAccount).
-          secured = await secureUnprovenAccount(t, user.id);
+          // Cuenta existente "huérfana" (registrada con contraseña, sin prueba del correo ni otras organizaciones): la
+          // pudo registrar otra persona. Su 2FA y sus sesiones se borran antes de vincularla (ver secureUnprovenAccount).
+          secured = await secureUnprovenAccount(t, user.id, tenantId);
         }
         // Sin contraseña en esta organización: si la cuenta ya existía, su contraseña pudo elegirla otra persona
         // (el registro no verifica el correo). Restablecerla (que prueba el control del correo) la habilita.

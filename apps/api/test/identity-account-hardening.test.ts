@@ -1,5 +1,5 @@
 // Endurecimiento de identidad (migración 0077): SCIM DELETE conserva la fila y bloquea el JIT, restablecer la contraseña
-// revoca credenciales creadas y borra la 2FA de cuentas sin prueba del correo, 2FA cierra otras sesiones, email_verified
+// lista (y opcionalmente revoca) credenciales creadas, 2FA cierra otras sesiones, email_verified
 // en OIDC, anti-replay SAML, duración de sesiones SSO y vinculación de cuentas sin prueba del correo. App real sobre PGlite.
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -109,9 +109,9 @@ describe("SCIM DELETE", () => {
 });
 
 describe("cuentas que nunca probaron el control del correo", () => {
-  it("SCIM: al vincular una cuenta existente sin prueba del correo se borran su 2FA y sus sesiones", async () => {
+  it("SCIM: al vincular una cuenta huérfana (sin otras organizaciones ni prueba del correo) se borran su 2FA y sus sesiones", async () => {
     const other = await newTenant();
-    const u = await newUser("previa@empresa.test", { tenantId: other, totp: true });
+    const u = await newUser("previa@empresa.test", { totp: true });
     await newSession(u, other);
     const r = await app.inject({ method: "POST", url: "/scim/v2/Users", headers: scimHeaders, payload: { userName: "previa@empresa.test" } });
     expect(r.statusCode).toBe(201);
@@ -121,9 +121,21 @@ describe("cuentas que nunca probaron el control del correo", () => {
     expect(audit.data.unprovenAccountSecured).toMatchObject({ totpCleared: true, sessionsClosed: 1 });
   });
 
+  it("SCIM: con membresías en otras organizaciones no se tocan la 2FA ni las sesiones (son de la cuenta global)", async () => {
+    const other = await newTenant();
+    const u = await newUser("con-otra-org@empresa.test", { tenantId: other, totp: true });
+    await newSession(u, other);
+    const r = await app.inject({ method: "POST", url: "/scim/v2/Users", headers: scimHeaders, payload: { userName: "con-otra-org@empresa.test" } });
+    expect(r.statusCode).toBe(201);
+    expect(await totpOn(u)).toBe(true);
+    expect(await sessionCount(u)).toBe(1);
+    const audit = await db.one<any>(`SELECT data FROM account_audit_log WHERE tenant_id = $1 AND action = 'member.scim_provisioned' AND target_id = $2`, [tenant, u]);
+    expect(audit.data.unprovenAccountSecured).toBeUndefined();
+  });
+
   it("SCIM: una cuenta que ya restableció su contraseña conserva su 2FA y sus sesiones", async () => {
     const other = await newTenant();
-    const u = await newUser("probada@empresa.test", { tenantId: other, totp: true, proven: true });
+    const u = await newUser("probada@empresa.test", { totp: true, proven: true });
     await newSession(u, other);
     const r = await app.inject({ method: "POST", url: "/scim/v2/Users", headers: scimHeaders, payload: { userName: "probada@empresa.test" } });
     expect(r.statusCode).toBe(201);
@@ -131,18 +143,49 @@ describe("cuentas que nunca probaron el control del correo", () => {
     expect(await sessionCount(u)).toBe(1);
   });
 
-  it("secureUnprovenAccount (JIT por SSO): borra 2FA y sesiones solo si la cuenta no probó el correo", async () => {
+  it("SCIM: creado inactivo (active = false) no se limpia", async () => {
+    const other = await newTenant();
+    const u = await newUser("inactiva-previa@empresa.test", { totp: true });
+    await newSession(u, other);
+    const r = await app.inject({ method: "POST", url: "/scim/v2/Users", headers: scimHeaders, payload: { userName: "inactiva-previa@empresa.test", active: false } });
+    expect(r.statusCode).toBe(201);
+    expect(await totpOn(u)).toBe(true);
+    expect(await sessionCount(u)).toBe(1);
+  });
+
+  it("secureUnprovenAccount (JIT por SSO): solo cuentas huérfanas registradas con contraseña y sin fila SCIM", async () => {
     const { secureUnprovenAccount } = await import("../src/modules/member-access");
     const t2 = await newTenant();
-    const a = await newUser("jit-a@empresa.test", { tenantId: t2, totp: true });
-    await newSession(a, t2);
-    expect(await db.tx((t) => secureUnprovenAccount(t, a))).toEqual({ totpCleared: true, sessionsClosed: 1 });
+    const t3 = await newTenant();
+    // Huérfana: se limpia.
+    const a = await newUser("jit-a@empresa.test", { totp: true });
+    await newSession(a, t3);
+    expect(await db.tx((t) => secureUnprovenAccount(t, a, t2))).toEqual({ totpCleared: true, sessionsClosed: 1 });
     expect(await totpOn(a)).toBe(false);
-    const b = await newUser("jit-b@empresa.test", { tenantId: t2, totp: true, proven: true });
-    await newSession(b, t2);
-    expect(await db.tx((t) => secureUnprovenAccount(t, b))).toBeNull();
+    // Probó el correo: no.
+    const b = await newUser("jit-b@empresa.test", { totp: true, proven: true });
+    await newSession(b, t3);
+    expect(await db.tx((t) => secureUnprovenAccount(t, b, t2))).toBeNull();
     expect(await totpOn(b)).toBe(true);
     expect(await sessionCount(b)).toBe(1);
+    // Miembro de otra organización: no (la 2FA y las sesiones de las otras organizaciones no se tocan).
+    const c = await newUser("jit-c@empresa.test", { tenantId: t3, totp: true });
+    await newSession(c, t3);
+    expect(await db.tx((t) => secureUnprovenAccount(t, c, t2))).toBeNull();
+    expect(await totpOn(c)).toBe(true);
+    expect(await sessionCount(c)).toBe(1);
+    // Creada por SSO o SCIM: no (nadie la registró con contraseña).
+    for (const hash of ["sso-only", "scim-provisioned"]) {
+      const d = await newUser(`jit-${hash}@empresa.test`, { totp: true });
+      await db.query(`UPDATE users SET password_hash = $2 WHERE id = $1`, [d, hash]);
+      expect(await db.tx((t) => secureUnprovenAccount(t, d, t2))).toBeNull();
+      expect(await totpOn(d)).toBe(true);
+    }
+    // Ya tiene fila SCIM en esta organización: no.
+    const e = await newUser("jit-e@empresa.test", { totp: true });
+    await db.query(`INSERT INTO scim_users (tenant_id, user_id, active) VALUES ($1,$2,false)`, [t2, e]);
+    expect(await db.tx((t) => secureUnprovenAccount(t, e, t2))).toBeNull();
+    expect(await totpOn(e)).toBe(true);
   });
 });
 
@@ -153,10 +196,10 @@ describe("restablecer la contraseña", () => {
     return token;
   }
 
-  it("revoca API keys y tokens SCIM creados por el usuario en todas sus organizaciones, audita en cada una y avisa", async () => {
+  async function setup(email: string) {
     const t1 = await newTenant();
     const t2 = await newTenant();
-    const u = await newUser("reset@empresa.test", { tenantId: t1, role: "owner", totp: true });
+    const u = await newUser(email, { tenantId: t1, role: "owner", totp: true });
     await db.query(`INSERT INTO memberships (tenant_id, user_id, role) VALUES ($1,$2,'admin')`, [t2, u]);
     const key = util.uuidv7();
     await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash, created_by) VALUES ($1,$2,'k','cs_test',$3,$4)`, [key, t1, util.sha256Hex(util.randomToken()), u]);
@@ -164,28 +207,109 @@ describe("restablecer la contraseña", () => {
     await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash) VALUES ($1,$2,'ajena','cs_test',$3)`, [otherKey, t1, util.sha256Hex(util.randomToken())]);
     const scim = util.uuidv7();
     await db.query(`INSERT INTO scim_tokens (id, tenant_id, name, prefix, token_hash, created_by) VALUES ($1,$2,'s','cs_scim',$3,$4)`, [scim, t2, util.sha256Hex(util.randomToken()), u]);
+    // App de servicio (client_credentials) creada por la persona, con su API key interna.
+    const svcKey = util.uuidv7();
+    const svcApp = util.uuidv7();
+    await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash, created_by) VALUES ($1,$2,'svc','cs_svc',$3,$4)`, [svcKey, t2, util.sha256Hex(util.randomToken()), u]);
+    await db.query(
+      `INSERT INTO oauth_clients (id, tenant_id, client_id, secret_hash, name, grant_types, scopes, service_api_key_id, created_by)
+       VALUES ($1,$2,$3,$4,'svc','{client_credentials}','{envelopes:read}',$5,$6)`,
+      [svcApp, t2, `cs_cli_${svcApp.slice(-12)}`, util.sha256Hex("secreto"), svcKey, u],
+    );
+    await db.query(`UPDATE api_keys SET oauth_client_id = $2 WHERE id = $1`, [svcKey, svcApp]);
+    const inv = util.uuidv7();
+    await db.query(
+      `INSERT INTO invitations (id, tenant_id, email, role, token_hash, invited_by, expires_at) VALUES ($1,$2,'invitado@x.test','member',$3,$4, now() + interval '7 days')`,
+      [inv, t1, util.sha256Hex(util.randomToken()), u],
+    );
+    return { t1, t2, u, key, otherKey, scim, svcApp, inv };
+  }
 
-    const r = await app.inject({ method: "POST", url: "/v1/auth/password/reset", payload: { token: await resetToken(u), password: "una-clave-nueva-larga" } });
+  const revokedAt = async (table: string, id: string) => (await db.one<any>(`SELECT revoked_at FROM ${table} WHERE id = $1`, [id]))!.revoked_at;
+
+  it("por defecto no revoca nada: lista las credenciales activas por organización y audita en cada una", async () => {
+    const x = await setup("reset@empresa.test");
+    const r = await app.inject({ method: "POST", url: "/v1/auth/password/reset", payload: { token: await resetToken(x.u), password: "una-clave-nueva-larga" } });
     expect(r.statusCode).toBe(200);
-    expect(r.json()).toMatchObject({ ok: true, revokedCredentials: { apiKeys: 1, scimTokens: 1, serviceApps: 0, invitations: 0 }, twoFactorCleared: false });
-    expect((await db.one<any>(`SELECT revoked_at FROM api_keys WHERE id = $1`, [key]))!.revoked_at).not.toBeNull();
-    expect((await db.one<any>(`SELECT revoked_at FROM api_keys WHERE id = $1`, [otherKey]))!.revoked_at).toBeNull();
-    expect((await db.one<any>(`SELECT revoked_at FROM scim_tokens WHERE id = $1`, [scim]))!.revoked_at).not.toBeNull();
-    // La membresía sigue.
-    expect(await db.one(`SELECT 1 FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [t1, u])).not.toBeNull();
-    // La 2FA no se borra al restablecer (controlar el correo no alcanza para saltearla).
-    expect(await totpOn(u)).toBe(true);
-    const a1 = await db.one<any>(`SELECT data FROM account_audit_log WHERE tenant_id = $1 AND action = 'user.password_reset'`, [t1]);
-    expect(a1.data).toMatchObject({ revokedCredentials: { apiKeys: [key], scimTokens: 0 } });
+    const body = r.json();
+    expect(body).toMatchObject({ ok: true, revokedCredentials: null });
+    expect(body.twoFactorCleared).toBeUndefined();
+    const byTenant = Object.fromEntries(body.createdCredentials.map((c: any) => [c.tenantId, c]));
+    expect(byTenant[x.t1]).toMatchObject({ tenantName: "Org", apiKeys: 1, scimTokens: 0, serviceApps: 0, invitations: 1 });
+    expect(byTenant[x.t2]).toMatchObject({ apiKeys: 0, scimTokens: 1, serviceApps: 1, invitations: 0 });
+    expect(await revokedAt("api_keys", x.key)).toBeNull();
+    expect(await revokedAt("scim_tokens", x.scim)).toBeNull();
+    expect(await revokedAt("invitations", x.inv)).toBeNull();
+    expect((await db.one<any>(`SELECT secret_hash FROM oauth_clients WHERE id = $1`, [x.svcApp]))!.secret_hash).toBe(util.sha256Hex("secreto"));
+    // La 2FA no se borra al restablecer.
+    expect(await totpOn(x.u)).toBe(true);
+    const a1 = await db.one<any>(`SELECT data FROM account_audit_log WHERE tenant_id = $1 AND action = 'user.password_reset'`, [x.t1]);
+    expect(a1.data).toMatchObject({ revokeCreatedCredentials: false, activeCreatedCredentials: { apiKeys: 1, invitations: 1 } });
+    expect(a1.data.revokedCredentials).toBeUndefined();
     expect(a1.data.twoFactorCleared).toBeUndefined();
-    const a2 = await db.one<any>(`SELECT data FROM account_audit_log WHERE tenant_id = $1 AND action = 'user.password_reset'`, [t2]);
-    expect(a2.data).toMatchObject({ revokedCredentials: { apiKeys: [], scimTokens: 1 } });
+    const a2 = await db.one<any>(`SELECT data FROM account_audit_log WHERE tenant_id = $1 AND action = 'user.password_reset'`, [x.t2]);
+    expect(a2.data).toMatchObject({ activeCreatedCredentials: { scimTokens: 1, serviceApps: 1 } });
+  });
 
-    // Segundo restablecimiento: tampoco.
-    const r2 = await app.inject({ method: "POST", url: "/v1/auth/password/reset", payload: { token: await resetToken(u), password: "otra-clave-nueva-larga" } });
-    expect(r2.statusCode).toBe(200);
-    expect(r2.json()).toMatchObject({ revokedCredentials: { apiKeys: 0, scimTokens: 0 }, twoFactorCleared: false });
-    expect(await totpOn(u)).toBe(true);
+  it("revokeCreatedCredentials: revoca solo sus API keys e invitaciones (nunca tokens SCIM ni apps de servicio)", async () => {
+    const x = await setup("reset-revoca@empresa.test");
+    const r = await app.inject({
+      method: "POST",
+      url: "/v1/auth/password/reset",
+      payload: { token: await resetToken(x.u), password: "una-clave-nueva-larga", revokeCreatedCredentials: true },
+    });
+    expect(r.statusCode).toBe(200);
+    expect(r.json().revokedCredentials).toEqual({ apiKeys: 1, invitations: 1 });
+    const byTenant = Object.fromEntries(r.json().createdCredentials.map((c: any) => [c.tenantId, c]));
+    expect(byTenant[x.t1]).toBeUndefined();
+    expect(byTenant[x.t2]).toMatchObject({ apiKeys: 0, scimTokens: 1, serviceApps: 1 });
+    expect(await revokedAt("api_keys", x.key)).not.toBeNull();
+    expect(await revokedAt("api_keys", x.otherKey)).toBeNull();
+    expect(await revokedAt("invitations", x.inv)).not.toBeNull();
+    expect(await revokedAt("scim_tokens", x.scim)).toBeNull();
+    expect((await db.one<any>(`SELECT secret_hash FROM oauth_clients WHERE id = $1`, [x.svcApp]))!.secret_hash).toBe(util.sha256Hex("secreto"));
+    // La membresía sigue.
+    expect(await db.one(`SELECT 1 FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [x.t1, x.u])).not.toBeNull();
+    const a1 = await db.one<any>(`SELECT data FROM account_audit_log WHERE tenant_id = $1 AND action = 'user.password_reset'`, [x.t1]);
+    expect(a1.data).toMatchObject({ revokeCreatedCredentials: true, revokedCredentials: { apiKeys: [x.key], invitations: 1 } });
+  });
+});
+
+describe("SCIM: revocar el último token libera el bloqueo del JIT", () => {
+  it("borra las filas inactivas o borradas de scim_users y el JIT deja de estar bloqueado", async () => {
+    const { scimBlocksJit } = await import("../src/modules/identity/sso");
+    const t1 = await newTenant();
+    const owner = await newUser("owner-scim@empresa.test", { tenantId: t1, role: "owner", proven: true });
+    const cookie = await newSession(owner, t1);
+    const tok1 = util.uuidv7();
+    const tok2 = util.uuidv7();
+    for (const id of [tok1, tok2]) {
+      await db.query(`INSERT INTO scim_tokens (id, tenant_id, name, prefix, token_hash) VALUES ($1,$2,'idp','cs_scim',$3)`, [id, t1, util.sha256Hex(util.randomToken())]);
+    }
+    const off = await newUser("desactivada-scim@empresa.test");
+    const on = await newUser("activa-scim@empresa.test", { tenantId: t1 });
+    await db.query(`INSERT INTO scim_users (tenant_id, user_id, active, deleted_at) VALUES ($1,$2,false, now())`, [t1, off]);
+    await db.query(`INSERT INTO scim_users (tenant_id, user_id, active) VALUES ($1,$2,true)`, [t1, on]);
+    expect(await scimBlocksJit(db, t1, off)).toBe(true);
+
+    // Queda otro token activo: sigue bloqueado.
+    expect((await app.inject({ method: "DELETE", url: `/v1/settings/scim/tokens/${tok1}`, cookies: { cs_session: cookie } })).statusCode).toBe(204);
+    expect(await scimBlocksJit(db, t1, off)).toBe(true);
+    // El último: se liberan.
+    expect((await app.inject({ method: "DELETE", url: `/v1/settings/scim/tokens/${tok2}`, cookies: { cs_session: cookie } })).statusCode).toBe(204);
+    expect(await db.one(`SELECT 1 FROM scim_users WHERE tenant_id = $1 AND user_id = $2`, [t1, off])).toBeNull();
+    expect(await db.one(`SELECT 1 FROM scim_users WHERE tenant_id = $1 AND user_id = $2`, [t1, on])).not.toBeNull();
+    expect(await scimBlocksJit(db, t1, off)).toBe(false);
+    const audit = await db.one<any>(`SELECT data FROM account_audit_log WHERE tenant_id = $1 AND action = 'scim.jit_blocks_released'`, [t1]);
+    expect(audit.data).toMatchObject({ scimUsersReleased: 1 });
+  });
+
+  it("sin tokens SCIM activos una fila vieja no bloquea", async () => {
+    const { scimBlocksJit } = await import("../src/modules/identity/sso");
+    const t1 = await newTenant();
+    const u = await newUser("vieja-scim@empresa.test");
+    await db.query(`INSERT INTO scim_users (tenant_id, user_id, active) VALUES ($1,$2,false)`, [t1, u]);
+    expect(await scimBlocksJit(db, t1, u)).toBe(false);
   });
 });
 
@@ -221,6 +345,60 @@ describe("2FA: activar o desactivar cierra las otras sesiones", () => {
 });
 
 describe("SSO", () => {
+  it("tokens OAuth autorizados desde una sesión SSO no pasan de la duración de la conexión", async () => {
+    const { issueTokens, ssoFamilyDeadline } = await import("../src/modules/oauth-tokens");
+    const t1 = await newTenant();
+    await db.query(`INSERT INTO sso_configs (tenant_id, enabled, protocol, session_ttl_hours) VALUES ($1, true, 'oidc', 2)`, [t1]);
+    const u = await newUser("oauth-sso@empresa.test", { tenantId: t1, proven: true });
+    const client = util.uuidv7();
+    const clientId = `cs_cli_${client.slice(-12)}`;
+    await db.query(
+      `INSERT INTO oauth_clients (id, tenant_id, client_id, name, redirect_uris, grant_types, scopes) VALUES ($1,$2,$3,'app','{https://app.test/cb}','{authorization_code}','{envelopes:read,offline_access}')`,
+      [client, t1, clientId],
+    );
+    const tok = await issueTokens(db, { clientId: client, tenantId: t1, userId: u, serviceApiKeyId: null, scopes: ["envelopes:read", "offline_access"], withRefresh: true, authMethod: "sso", ssoTenantId: t1 });
+    const rows = await db.query<any>(`SELECT kind, created_at, expires_at, family_id FROM oauth_tokens WHERE client_id = $1`, [client]);
+    const refresh = rows.find((r) => r.kind === "refresh");
+    // El refresh vence con la sesión SSO (2 h), no a los 30 días.
+    expect(new Date(refresh.expires_at).getTime() - new Date(refresh.created_at).getTime()).toBeLessThanOrEqual(2 * 3600_000 + 1000);
+    expect(tok.expires_in).toBeLessThanOrEqual(3600);
+    expect((await ssoFamilyDeadline(db, refresh.family_id, t1))!.getTime()).toBeLessThanOrEqual(new Date(refresh.created_at).getTime() + 2 * 3600_000 + 1);
+
+    // Con contraseña: sin tope.
+    const pw = await issueTokens(db, { clientId: client, tenantId: t1, userId: u, serviceApiKeyId: null, scopes: ["envelopes:read", "offline_access"], withRefresh: true, authMethod: "password" });
+    expect(pw.expires_in).toBe(3600);
+
+    // La familia empezó hace más que la duración: el refresh se rechaza aunque el token todavía no haya vencido.
+    await db.query(`UPDATE oauth_tokens SET created_at = now() - interval '3 hours', expires_at = now() + interval '1 day' WHERE family_id = $1`, [refresh.family_id]);
+    const r = await app.inject({
+      method: "POST",
+      url: "/oauth/token",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      payload: new URLSearchParams({ grant_type: "refresh_token", refresh_token: tok.refresh_token!, client_id: clientId }).toString(),
+    });
+    expect(r.statusCode).toBe(400);
+    expect(r.json().error).toBe("invalid_grant");
+  });
+
+  it("0079: las conexiones OIDC existentes confían en el correo sin email_verified y las sesiones SSO abiertas se recortan", async () => {
+    const { readFileSync } = await import("node:fs");
+    const t1 = await newTenant();
+    const t2 = await newTenant();
+    await db.query(`INSERT INTO sso_configs (tenant_id, enabled, protocol, oidc_issuer, session_ttl_hours) VALUES ($1, true, 'oidc', 'https://login.microsoftonline.com/x/v2.0', 8)`, [t1]);
+    await db.query(`INSERT INTO sso_configs (tenant_id, enabled, protocol, saml_entry_point) VALUES ($1, true, 'saml', 'https://idp.test/sso')`, [t2]);
+    const u = await newUser("mig-0079@empresa.test", { tenantId: t1, proven: true });
+    await newSession(u, t1, "sso");
+    const pwSession = await newSession(u, t1, "password");
+    const sql = readFileSync(new URL("../migrations/0079_identity_sso_compat.sql", import.meta.url), "utf8");
+    for (const stmt of sql.split(/;\s*$/m).map((x) => x.trim()).filter((x) => x && !/^(--[^\n]*\n?)*$/.test(x))) await db.query(stmt);
+    expect((await db.one<any>(`SELECT oidc_trust_unverified_email FROM sso_configs WHERE tenant_id = $1`, [t1]))!.oidc_trust_unverified_email).toBe(true);
+    expect((await db.one<any>(`SELECT oidc_trust_unverified_email FROM sso_configs WHERE tenant_id = $1`, [t2]))!.oidc_trust_unverified_email).toBe(false);
+    const sso = await db.one<any>(`SELECT created_at, expires_at FROM sessions WHERE user_id = $1 AND auth_method = 'sso'`, [u]);
+    expect(new Date(sso.expires_at).getTime() - new Date(sso.created_at).getTime()).toBeLessThanOrEqual(8 * 3600_000);
+    const pwRow = await db.one<any>(`SELECT created_at, expires_at FROM sessions WHERE token_hash = $1`, [util.sha256Hex(pwSession)]);
+    expect(new Date(pwRow.expires_at).getTime() - new Date(pwRow.created_at).getTime()).toBeGreaterThan(13 * 86400_000);
+  });
+
   it("OIDC email_verified: solo true o \"true\"; si falta, según la opción de la conexión; false nunca", async () => {
     const { oidcEmailVerified } = await import("../src/modules/identity/sso");
     expect(oidcEmailVerified({ email_verified: true }, false)).toBe(true);

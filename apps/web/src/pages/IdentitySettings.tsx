@@ -296,6 +296,11 @@ export function SsoSettingsPage() {
                 <span>{tx("sso.scopes")}</span>
                 <input value={oidc.scopes} onChange={(e) => setData({ ...data, oidc: { ...oidc, scopes: e.target.value } })} />
               </label>
+              {/^https:\/\/login\.microsoftonline\.com\//i.test(oidc.issuer.trim()) && (
+                <p className="alert alert-warn idn-wide" role="note">
+                  {tx("sso.entraWarning")}
+                </p>
+              )}
               <label className="check idn-wide">
                 <input type="checkbox" checked={oidc.trustUnverifiedEmail} onChange={(e) => setData({ ...data, oidc: { ...oidc, trustUnverifiedEmail: e.target.checked } })} />
                 <span>

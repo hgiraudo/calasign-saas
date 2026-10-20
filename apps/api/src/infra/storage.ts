@@ -123,8 +123,10 @@ class S3BlobStore implements BlobStore {
     try {
       r = await c.send(new m.GetObjectCommand({ Bucket: this.bucket, Key: this.prefix + key }));
     } catch (e) {
-      // El error de KMS no dice con qué clave está cifrado el objeto (puede ser una clave BYOK anterior).
-      // HeadObject no necesita KMS y la informa: así no se marca como fallida la clave actual por un objeto viejo.
+      // El error de KMS no dice con qué clave está cifrado el objeto (puede ser una clave BYOK anterior o la de la
+      // plataforma). HeadObject no necesita KMS y la informa: solo con esa confirmación la falla se atribuye a una
+      // clave. Si el HEAD falla o el objeto no dice su clave, se relanza el error original (sin atribuirlo a ninguna):
+      // un AccessDenied de S3 o un objeto inexistente no tienen que dejar «failing» la clave del cliente.
       if (isKeyError(e)) {
         const h = await c.send(new m.HeadObjectCommand({ Bucket: this.bucket, Key: this.prefix + key })).catch(() => null);
         if (h?.SSEKMSKeyId) throw new KmsUnavailableError(h.SSEKMSKeyId, String((e as Error)?.message ?? e));
@@ -162,7 +164,10 @@ export interface TenantStorage {
 
 /** Lo implementa modules/data/byok.ts (lee tenants, marca la clave como fallida y avisa a los administradores). */
 export interface TenantStorageResolver {
-  resolve(tenantId: string): Promise<TenantStorage>;
+  /** `fresh`: leer de la base sin caché (escrituras). */
+  resolve(tenantId: string, opts?: { fresh?: boolean }): Promise<TenantStorage>;
+  /** La clave es o fue una clave BYOK de la organización (historial tenant_byok_keys). */
+  isTenantKey?(tenantId: string, keyArn: string): Promise<boolean>;
   onKeyFailure(tenantId: string, keyArn: string, error: string): Promise<void>;
   onKeySuccess(tenantId: string): Promise<void>;
 }
@@ -187,16 +192,17 @@ export class RoutingBlobStore implements BlobStore {
     return s;
   }
 
-  private async target(key: string) {
+  /** `fresh`: sin caché (escrituras: una clave BYOK cambiada o desactivada en otro proceso no puede seguir usándose). */
+  private async target(key: string, fresh = false) {
     const m = TENANT_KEY_RE.exec(key);
     if (!m) return { tenantId: null, store: this.storeForCell(cells().find((c) => c.default)!.id), ts: null as TenantStorage | null };
-    const ts = await this.resolver.resolve(m[1]);
+    const ts = await this.resolver.resolve(m[1], fresh ? { fresh: true } : undefined);
     return { tenantId: m[1], store: this.storeForCell(ts.cell), ts };
   }
 
-  private async keyFailure(tenantId: string, arn: string, e: unknown): Promise<never> {
+  private async keyFailure(tenantId: string, arn: string, e: unknown, mark = true): Promise<never> {
     const msg = String((e as Error)?.message ?? e);
-    await this.resolver.onKeyFailure(tenantId, arn, msg).catch(() => {});
+    if (mark) await this.resolver.onKeyFailure(tenantId, arn, msg).catch(() => {});
     throw new AppError(
       503,
       "byok_key_unavailable",
@@ -205,8 +211,16 @@ export class RoutingBlobStore implements BlobStore {
     );
   }
 
+  /**
+   * Falla de KMS de un objeto cifrado con una clave que no es (ni fue) de la organización: p. ej. un archivo anterior a
+   * BYOK cifrado con la clave de la plataforma. No se culpa a "la clave de tu organización" ni se expone el ARN interno.
+   */
+  private storageUnavailable(tenantId: string, arn: string, e: unknown): never {
+    console.warn(JSON.stringify({ level: "warn", msg: "falla de KMS con una clave que no es BYOK de la organización", tenantId, keyArn: arn, err: String((e as Error)?.message ?? e).slice(0, 300) }));
+    throw new AppError(503, "storage_unavailable", "El almacenamiento de documentos no está disponible en este momento. Probá de nuevo en unos minutos.");
+  }
   async put(key: string, data: Uint8Array, contentType: string, opts?: PutOptions) {
-    const { tenantId, store, ts } = await this.target(key);
+    const { tenantId, store, ts } = await this.target(key, true);
     const arn = ts && ts.byokStatus !== "none" ? ts.byokKeyArn : null;
     if (!arn || !tenantId) return store.put(key, data, contentType, opts);
     try {
@@ -223,10 +237,18 @@ export class RoutingBlobStore implements BlobStore {
     try {
       return await store.get(key);
     } catch (e) {
-      // La falla es de la clave con la que se cifró ESE archivo (puede ser una BYOK anterior a la actual): se le
-      // atribuye a esa clave. Solo si no se sabe cuál es se supone la actual.
-      if (tenantId && e instanceof KmsUnavailableError) return this.keyFailure(tenantId, e.keyArn, e);
-      if (tenantId && ts?.byokKeyArn && isKeyError(e)) return this.keyFailure(tenantId, ts.byokKeyArn, e);
+      // La falla es de la clave con la que se cifró ESE archivo (confirmada por el almacenamiento: encabezado en disco
+      // o HeadObject en S3). Si es la BYOK actual (y activa) se marca fallida; si es una BYOK anterior de la organización
+      // se responde igual pero sin marcar la actual; si no es de la organización (la de la plataforma, en un archivo
+      // anterior a BYOK), es una falla de almacenamiento genérica. Un error de KMS sin clave confirmada no se le
+      // atribuye a ninguna (antes se suponía la actual).
+      if (tenantId && e instanceof KmsUnavailableError) {
+        const current = ts && ts.byokStatus !== "none" && ts.byokKeyArn === e.keyArn;
+        if (current) return this.keyFailure(tenantId, e.keyArn, e);
+        const known = ts?.byokKeyArn === e.keyArn || (await this.resolver.isTenantKey?.(tenantId, e.keyArn).catch(() => false));
+        if (known) return this.keyFailure(tenantId, e.keyArn, e, false);
+        return this.storageUnavailable(tenantId, e.keyArn, e);
+      }
       throw e;
     }
   }

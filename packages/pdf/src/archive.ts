@@ -1,6 +1,8 @@
 // Datos para la renovación de sellos de archivo (PAdES B-LTA): cuál es el último sello de tiempo del PDF
 // (sello de documento o, si no hay, el de la firma) y hasta cuándo vale el certificado de su TSA. Cuando ese
 // vencimiento se acerca hay que agregar DSS + un nuevo sello de documento (applyLtv con nivel B-LTA).
+import { randomBytes } from "node:crypto";
+import { requestTimestampToken } from "./cms";
 import { commonName, nameToString, parseSignedData, signatureTimestamp, signerCertOf, tstInfoOf } from "./pki";
 import { readPdfSignatures } from "./signatures";
 
@@ -39,4 +41,16 @@ export async function archiveTimestampInfo(pdf: Uint8Array): Promise<ArchiveTime
     }
   }
   return { last, documentTimestamps: docTs, hasDss: Boolean(dss) };
+}
+
+/**
+ * Hasta cuándo vale el certificado con el que la TSA firma HOY (pide un sello sobre un hash al azar). Sirve para no
+ * "renovar" un archivo cuyo último sello ya es de ese mismo certificado: la renovación no extendería la validez.
+ */
+export async function tsaCertificateNotAfter(url: string, authHeader?: string | null): Promise<string> {
+  const digest = new Uint8Array(randomBytes(32));
+  const token = await requestTimestampToken(url, digest, authHeader);
+  const cert = signerCertOf(parseSignedData(token));
+  if (!cert) throw new Error("La TSA devolvió un sello sin su certificado");
+  return cert.notAfter.value.toISOString();
 }

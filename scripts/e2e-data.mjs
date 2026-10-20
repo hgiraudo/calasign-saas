@@ -215,7 +215,8 @@ if (!mockOn) {
   assert(t.ok && t.status === "active", "la prueba la vuelve a activar");
   const d2 = await draftWithDoc(A, "BYOK 2");
   assert(d2.doc.id, "vuelve a guardar");
-  await A.api("DELETE", "/v1/settings/byok", null, { expect: 204 });
+  const off = await A.api("DELETE", "/v1/settings/byok", null);
+  assert(off.status === "none" && /clave anterior/.test(off.notice ?? ""), "desactivar avisa que lo anterior sigue con la clave");
   assert((await A.api("GET", "/v1/settings/byok")).status === "none", "desactivada");
   const plain = await draftWithDoc(A, "Sin BYOK", tinyPdf("Sin BYOK"));
   if (DATA_DIR) {
@@ -350,20 +351,21 @@ if (ev2.effectiveLevel !== "B-LTA") {
   assert(docTs.length === 2 && val.signatures.every((x) => x.integrity.valid), `PDF renovado: ${docTs.length} sellos de documento, todos íntegros`);
   const events = (await A.api("GET", `/v1/envelopes/${ar.envelope.id}/events`)).items;
   assert(events.some((e) => e.type === "envelope.archive_renewed"), "evento de renovación en la evidencia");
-  const manual = await A.api("POST", `/v1/envelopes/${ar.envelope.id}/archive/renew`, {});
-  assert(manual.renewals === 2 && manual.versions.length === 3, "renovación manual");
+  // Recién renovado (vence en años): la renovación manual se rechaza (no gasta un sello sin extender nada).
+  const manual = await A.api("POST", `/v1/envelopes/${ar.envelope.id}/archive/renew`, {}, { expect: 409 });
+  assert(manual.error.code === "archive_not_due", `renovación manual fuera de término: ${JSON.stringify(manual)}`);
   const verifyBytes = async (bytes) => {
     const f = new FormData();
     f.append("file", new Blob([bytes], { type: "application/pdf" }), "v.pdf");
     return anon.api("POST", "/v1/verify", f);
   };
   const oldV = await verifyBytes(pdfV1);
-  assert(oldV.match && oldV.envelope.id === ar.envelope.id && oldV.version?.number === 1 && oldV.version.latest === 3 && oldV.version.isLatest === false,
+  assert(oldV.match && oldV.envelope.id === ar.envelope.id && oldV.version?.number === 1 && oldV.version.latest === 2 && oldV.version.isLatest === false,
     `verify reconoce la versión anterior a la renovación: ${JSON.stringify(oldV.version)}`);
   const latestPdf = Buffer.from(await (await A.api("GET", `/v1/envelopes/${ar.envelope.id}/signed.pdf`, null, { raw: true })).arrayBuffer());
   const newV = await verifyBytes(latestPdf);
-  assert(newV.match && newV.version?.isLatest === true && newV.version.number === 3 && newV.version.reason === "archive_renewal", `verify de la versión vigente: ${JSON.stringify(newV.version)}`);
-  ok("archivo: vigencia calculada, barrido renueva con DSS + sello de documento nuevo (2 sellos válidos), historial de versiones, evento, renovación manual y verify de versiones anteriores");
+  assert(newV.match && newV.version?.isLatest === true && newV.version.number === 2 && newV.version.reason === "archive_renewal", `verify de la versión vigente: ${JSON.stringify(newV.version)}`);
+  ok("archivo: vigencia calculada, barrido renueva con DSS + sello de documento nuevo (2 sellos válidos), historial de versiones, evento, renovación manual fuera de término rechazada y verify de versiones anteriores");
 }
 await A.api("PATCH", "/v1/settings/evidence", { sealLevel: ev.sealLevel });
 

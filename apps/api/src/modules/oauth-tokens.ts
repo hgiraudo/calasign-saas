@@ -6,7 +6,7 @@ import type { Db } from "../infra/db";
 import { AppError, unauthorized } from "../lib/errors";
 import { randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import type { AuthContext } from "./context";
-import { assertSessionAllowed } from "./identity/sso";
+import { assertSessionAllowed, ssoSessionTtlHours } from "./identity/sso";
 
 export const ACCESS_PREFIX = "csat_";
 export const REFRESH_PREFIX = "csrt_";
@@ -17,6 +17,28 @@ export const CODE_TTL_SEC = 600;
 
 export function isOAuthAccessToken(token: string) {
   return token.startsWith(ACCESS_PREFIX);
+}
+
+/**
+ * Tope de una familia de tokens autorizada desde una sesión SSO: inicio de la familia (su primer token) + la duración de
+ * sesión de la conexión (sso_configs.session_ttl_hours, la de la organización del IdP). Como la sesión web SSO, el
+ * acceso que dio el IdP no se estira más allá de esa duración con refresh tokens: vencido, hay que volver a autorizar
+ * (pasando por el IdP). null si la familia todavía no tiene tokens (empieza ahora).
+ */
+export async function ssoFamilyDeadline(db: Db, familyId: string, ssoTenantId: string | null): Promise<Date | null> {
+  const r = await db.one<{ started: string | null; ttl: number | null }>(
+    `SELECT (SELECT min(created_at) FROM oauth_tokens WHERE family_id = $1) AS started,
+            (SELECT session_ttl_hours FROM sso_configs WHERE tenant_id = $2) AS ttl`,
+    [familyId, ssoTenantId],
+  );
+  if (!r?.started) return null;
+  return new Date(new Date(r.started).getTime() + ssoSessionTtlHours({ session_ttl_hours: r.ttl }) * 3600_000);
+}
+
+/** Duración de la conexión SSO de la organización, en segundos (para una familia que empieza ahora). */
+async function ssoTtlSeconds(db: Db, ssoTenantId: string | null): Promise<number> {
+  const r = ssoTenantId ? await db.one<{ session_ttl_hours: number | null }>(`SELECT session_ttl_hours FROM sso_configs WHERE tenant_id = $1`, [ssoTenantId]) : null;
+  return ssoSessionTtlHours(r) * 3600;
 }
 
 /** Emite un access token (y opcionalmente un refresh token de la misma familia). */
@@ -37,25 +59,32 @@ export async function issueTokens(
   },
 ) {
   const familyId = t.familyId ?? uuidv7();
+  // Autorizado desde una sesión SSO: ningún token de la familia vence después del tope (ver ssoFamilyDeadline).
+  let cap: string | null = null;
+  if (t.authMethod === "sso") {
+    const deadline = t.familyId ? await ssoFamilyDeadline(db, t.familyId, t.ssoTenantId ?? null) : null;
+    cap = (deadline ?? new Date(Date.now() + (await ssoTtlSeconds(db, t.ssoTenantId ?? null)) * 1000)).toISOString();
+  }
   const access = ACCESS_PREFIX + randomToken(32);
-  await db.query(
+  const accessRow = await db.one<{ expires_at: string }>(
     `INSERT INTO oauth_tokens (id, token_hash, kind, client_id, tenant_id, user_id, service_api_key_id, scopes, family_id, code_hash, expires_at, auth_method, sso_tenant_id)
-     VALUES ($1,$2,'access',$3,$4,$5,$6,$7,$8,$9, now() + ($10 || ' seconds')::interval, $11, $12)`,
-    [uuidv7(), sha256Hex(access), t.clientId, t.tenantId, t.userId, t.serviceApiKeyId, t.scopes, familyId, t.codeHash ?? null, String(ACCESS_TTL_SEC), t.authMethod ?? null, t.ssoTenantId ?? null],
+     VALUES ($1,$2,'access',$3,$4,$5,$6,$7,$8,$9, LEAST(now() + ($10 || ' seconds')::interval, COALESCE($13::timestamptz, 'infinity')), $11, $12)
+     RETURNING expires_at`,
+    [uuidv7(), sha256Hex(access), t.clientId, t.tenantId, t.userId, t.serviceApiKeyId, t.scopes, familyId, t.codeHash ?? null, String(ACCESS_TTL_SEC), t.authMethod ?? null, t.ssoTenantId ?? null, cap],
   );
   let refresh: string | null = null;
   if (t.withRefresh) {
     refresh = REFRESH_PREFIX + randomToken(32);
     await db.query(
       `INSERT INTO oauth_tokens (id, token_hash, kind, client_id, tenant_id, user_id, service_api_key_id, scopes, family_id, code_hash, expires_at, auth_method, sso_tenant_id)
-       VALUES ($1,$2,'refresh',$3,$4,$5,$6,$7,$8,$9, now() + ($10 || ' seconds')::interval, $11, $12)`,
-      [uuidv7(), sha256Hex(refresh), t.clientId, t.tenantId, t.userId, t.serviceApiKeyId, t.scopes, familyId, t.codeHash ?? null, String(REFRESH_TTL_SEC), t.authMethod ?? null, t.ssoTenantId ?? null],
+       VALUES ($1,$2,'refresh',$3,$4,$5,$6,$7,$8,$9, LEAST(now() + ($10 || ' seconds')::interval, COALESCE($13::timestamptz, 'infinity')), $11, $12)`,
+      [uuidv7(), sha256Hex(refresh), t.clientId, t.tenantId, t.userId, t.serviceApiKeyId, t.scopes, familyId, t.codeHash ?? null, String(REFRESH_TTL_SEC), t.authMethod ?? null, t.ssoTenantId ?? null, cap],
     );
   }
   return {
     access_token: access,
     token_type: "Bearer" as const,
-    expires_in: ACCESS_TTL_SEC,
+    expires_in: cap ? Math.max(0, Math.min(ACCESS_TTL_SEC, Math.floor((new Date(accessRow!.expires_at).getTime() - Date.now()) / 1000))) : ACCESS_TTL_SEC,
     ...(refresh ? { refresh_token: refresh } : {}),
     scope: t.scopes.join(" "),
   };

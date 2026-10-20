@@ -168,7 +168,11 @@ export function kmsClient(region: string): KmsLike {
 /** Cliente para una clave dada (usa la región del ARN). */
 export const kmsForKey = (arn: string) => kmsClient(regionOfArn(arn) ?? config.storage.region);
 
-/** true si el error es de la clave (permisos, estado, inexistente) y no un problema transitorio de red. */
+/**
+ * true si el error es de KMS (la clave: permisos, estado, inexistente) y no un problema transitorio de red ni un
+ * error propio de S3. Un "AccessDenied" de S3 a secas (objeto inexistente sin s3:ListBucket, política del bucket)
+ * no es de la clave: antes se le atribuía y la clave del cliente quedaba «failing» con alerta falsa.
+ */
 export function isKeyError(e: unknown): boolean {
   const err = e as any;
   // Red caída, DNS o timeout (hacia S3 o KMS): no dice nada de la clave. Antes "getaddrinfo ENOTFOUND
@@ -176,7 +180,12 @@ export function isKeyError(e: unknown): boolean {
   const code = String(err?.code ?? err?.errno ?? err?.cause?.code ?? "");
   if (/^(ENOTFOUND|EAI_AGAIN|ECONNRESET|ECONNREFUSED|ECONNABORTED|ETIMEDOUT|EPIPE|EHOSTUNREACH|ENETUNREACH|UND_ERR)/.test(code)) return false;
   if (/^(TimeoutError|AbortError)$/.test(String(err?.name ?? ""))) return false;
-  const s = `${err?.name ?? ""} ${err?.Code ?? ""} ${err?.message ?? e}`;
-  // Nombres de error de KMS (y de S3 con SSE-KMS: "KMS.DisabledException"), con mayúsculas: un host "kms.…" no cuenta.
-  return /AccessDenied|KMSInvalidState|DisabledException|NotFoundException|InvalidKeyUsage|IncorrectKey|InvalidCiphertext|KeyUnavailable|KMS\.|not authorized|no está habilitada/.test(s);
+  const ids = `${err?.name ?? ""} ${err?.Code ?? ""} ${err?.code ?? ""}`;
+  // Excepciones de KMS (SDK de KMS: "DisabledException", "AccessDeniedException"…; S3 con SSE-KMS: "KMS.DisabledException",
+  // "KMS.KMSInvalidStateException"…). Las de S3 no terminan en "Exception" ("AccessDenied", "NoSuchKey", "NotFound").
+  if (/(^|\s)(KMS\.[A-Za-z]+|KMSInvalidStateException|DisabledException|NotFoundException|InvalidKeyUsageException|IncorrectKeyException|InvalidCiphertextException|KeyUnavailableException|AccessDeniedException|InvalidGrantTokenException)(\s|$)/.test(ids)) return true;
+  // Un AccessDenied de S3 es de la clave solo si el mensaje lo dice ("… not authorized to perform: kms:Decrypt …",
+  // "The ciphertext refers to a customer master key …"). El KMS simulado usa los mismos nombres al principio del mensaje.
+  const msg = String(err?.message ?? e);
+  return /\bkms:[A-Za-z]+|customer master key|\bKMS key\b|^(KMSInvalidStateException|IncorrectKeyException|InvalidCiphertextException)\b/.test(msg);
 }

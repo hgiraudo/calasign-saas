@@ -12,12 +12,17 @@ import { encrypt } from "../lib/util";
 import { enqueue } from "../infra/queue";
 import { recordAudit } from "./audit";
 import { z } from "zod";
-import { actingPerson, revokeCredentialsCreatedBy } from "./member-access";
+import { actingPerson, credentialsCreatedBy } from "./member-access";
 
 const SESSION_DAYS = 14;
 
 const ForgotPasswordInput = z.object({ email: z.string().trim().toLowerCase().email().max(320) });
-const ResetPasswordInput = z.object({ token: z.string().regex(/^[A-Za-z0-9_-]{20,100}$/), password: z.string().min(10).max(200) });
+const ResetPasswordInput = z.object({
+  token: z.string().regex(/^[A-Za-z0-9_-]{20,100}$/),
+  password: z.string().min(10).max(200),
+  /** Revocar también las API keys e invitaciones pendientes que creó la persona (por defecto no). */
+  revokeCreatedCredentials: z.boolean().optional().default(false),
+});
 
 export async function authRoutes(app: FastifyInstance, s: Services) {
   const auth = authenticate(s);
@@ -169,7 +174,6 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
       // La verificación en dos pasos NO se borra al restablecer: controlar el correo no alcanza para saltearla (es justo
       // lo que protege). Una 2FA puesta por quien registró la cuenta con este correo se limpia al vincularla por SSO/SCIM
       // (secureUnprovenAccount), donde el proveedor de identidad sí prueba la identidad.
-      const totpCleared = false;
       await t.query(`UPDATE users SET password_hash = $2, password_reset_at = now() WHERE id = $1`, [row.user_id, pw]);
       await t.query(`DELETE FROM login_attempts WHERE user_id = $1`, [row.user_id]);
       // Restablecerla prueba que controla el correo: la contraseña vale también en las organizaciones que lo sumaron
@@ -185,20 +189,22 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
       await t.query(`UPDATE oauth_authorization_codes SET used_at = now() WHERE user_id = $1 AND used_at IS NULL`, [row.user_id]);
       await t.query(`DELETE FROM login_challenges WHERE user_id = $1`, [row.user_id]);
       await t.query(`UPDATE password_resets SET used_at = now() WHERE user_id = $1 AND used_at IS NULL`, [row.user_id]);
-      // Y las credenciales que creó (API keys, tokens SCIM, apps de servicio, invitaciones pendientes que mandó) en todas
-      // sus organizaciones: quien tenía la contraseña vieja pudo crearlas para seguir entrando después del cambio.
-      const revoked = await revokeCredentialsCreatedBy(t, row.user_id);
-      return { userId: row.user_id as string, revoked, totpCleared };
+      // Las credenciales que creó (API keys, tokens SCIM, apps de servicio, invitaciones) NO se revocan por defecto: pueden
+      // ser integraciones productivas. Se listan en la respuesta para que decida; si lo pide (p. ej. sospecha que alguien
+      // usó su cuenta), se revocan sus API keys e invitaciones pendientes. Los tokens SCIM y las apps de servicio son de
+      // la organización: los revisa un administrador.
+      const credentials = await credentialsCreatedBy(t, row.user_id, { revoke: input.revokeCreatedCredentials });
+      return { userId: row.user_id as string, credentials };
     });
     if (!done) throw new AppError(400, "invalid_token", "El link para restablecer la contraseña no es válido o ya venció");
-    const { userId, revoked, totpCleared } = done;
+    const { userId, credentials } = done;
     const u = await s.db.one<any>(`SELECT email FROM users WHERE id = $1`, [userId]);
     const { ip, userAgent } = clientInfo(req);
     const tenants = await s.db.query<any>(`SELECT tenant_id FROM memberships WHERE user_id = $1`, [userId]);
-    // Auditoría en cada organización: sus miembros y, aunque ya no lo sea, donde se le revocaron credenciales.
-    const tenantIds = new Set<string>([...tenants.map((m) => m.tenant_id as string), ...revoked.map((r) => r.tenantId)]);
+    // Auditoría en cada organización: sus miembros y, aunque ya no lo sea, donde tiene (o se le revocaron) credenciales.
+    const tenantIds = new Set<string>([...tenants.map((m) => m.tenant_id as string), ...credentials.map((c) => c.tenantId)]);
     for (const tenantId of tenantIds) {
-      const r = revoked.find((x) => x.tenantId === tenantId);
+      const c = credentials.find((x) => x.tenantId === tenantId);
       await recordAudit(s.db, {
         tenantId,
         action: "user.password_reset",
@@ -208,22 +214,24 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
         ip,
         userAgent,
         data: {
-          ...(r ? { revokedCredentials: { apiKeys: r.apiKeys, scimTokens: r.scimTokens, serviceApps: r.serviceApps, invitations: r.invitations } } : {}),
-          ...(totpCleared ? { twoFactorCleared: true } : {}),
+          revokeCreatedCredentials: input.revokeCreatedCredentials,
+          activeCreatedCredentials: { apiKeys: c?.apiKeys ?? 0, scimTokens: c?.scimTokens ?? 0, serviceApps: c?.serviceApps ?? 0, invitations: c?.invitations ?? 0 },
+          ...(c?.revoked ? { revokedCredentials: c.revoked } : {}),
         },
       }).catch(() => {});
     }
-    // Aviso para la pantalla: qué se revocó (sumado entre organizaciones) y si se borró la 2FA.
-    const sum = (f: (r: (typeof revoked)[number]) => number) => revoked.reduce((n, r) => n + f(r), 0);
+    // Para la pantalla: credenciales activas que creó, por organización, y lo revocado (si lo pidió).
     return reply.code(200).send({
       ok: true,
-      revokedCredentials: {
-        apiKeys: sum((r) => r.apiKeys.length),
-        scimTokens: sum((r) => r.scimTokens),
-        serviceApps: sum((r) => r.serviceApps.length),
-        invitations: sum((r) => r.invitations),
-      },
-      twoFactorCleared: totpCleared,
+      createdCredentials: credentials
+        .filter((c) => c.apiKeys || c.scimTokens || c.serviceApps || c.invitations)
+        .map((c) => ({ tenantId: c.tenantId, tenantName: c.tenantName, apiKeys: c.apiKeys, scimTokens: c.scimTokens, serviceApps: c.serviceApps, invitations: c.invitations })),
+      revokedCredentials: input.revokeCreatedCredentials
+        ? {
+            apiKeys: credentials.reduce((n, c) => n + (c.revoked?.apiKeys.length ?? 0), 0),
+            invitations: credentials.reduce((n, c) => n + (c.revoked?.invitations ?? 0), 0),
+          }
+        : null,
     });
   });
 

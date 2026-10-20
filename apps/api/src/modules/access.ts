@@ -225,6 +225,12 @@ export async function enforceRoutePolicy(db: Db, req: FastifyRequest, a: AuthCon
   if (url.startsWith("/v1/templates/:id")) return assertTemplateAccess(db, a, params.id, isRead ? "view" : "manage");
   if (url.startsWith("/v1/templates") && method === "POST") return requirePerm(a, "envelopes:create");
 
+  // BYOK: activar, cambiar o desactivar la clave decide quién puede leer los documentos de la organización: solo un propietario.
+  if (url === "/v1/settings/byok" && (method === "PUT" || method === "DELETE")) {
+    requirePerm(a, "settings:manage");
+    if (a.access?.role !== "owner") throw forbidden("Solo un propietario de la organización puede activar, cambiar o desactivar la clave BYOK");
+    return;
+  }
   // Identidad (Fase 5): SSO exige settings:manage (también para leer la configuración); SCIM, members:manage.
   if (url.startsWith("/v1/settings/sso")) return requirePerm(a, "settings:manage");
   if (url.startsWith("/v1/settings/scim")) {

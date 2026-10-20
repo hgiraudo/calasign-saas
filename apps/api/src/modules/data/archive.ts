@@ -3,7 +3,7 @@
 // que venza, el barrido agrega un DSS nuevo (OCSP/CRL de hoy, incluida la cadena de esa TSA) y un sello de
 // documento nuevo, como revisión incremental. La versión anterior se conserva (historial + /v1/verify por hash).
 import type { FastifyInstance } from "fastify";
-import { applyLtv, archiveTimestampInfo, validatePdf } from "@calasign/pdf";
+import { applyLtv, archiveTimestampInfo, tsaCertificateNotAfter, validatePdf } from "@calasign/pdf";
 import type { ArchiveInfo } from "@calasign/shared";
 import { config } from "../../config";
 import type { Db } from "../../infra/db";
@@ -125,7 +125,8 @@ async function renewClaimed(d: Deps, envelopeId: string, tsaUrl: string, actor: 
   await discardBlobsOnFailure(d.blobs, [key], () => d.db.tx(async (t) => {
     const cur = await t.one<any>(`SELECT signed_file_id FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
     if (cur?.signed_file_id !== e.signed_file_id) throw conflict("archive_changed", "El PDF cambió mientras se renovaba; se reintenta en el próximo barrido");
-    await ensureFirstVersion(t, e, prev.last ? prev.last.tsaNotAfter : null);
+    // Como inspectArchive: un B-T (sin DSS) no tenía validez de archivo; su vencimiento no es el de la TSA.
+    await ensureFirstVersion(t, e, prev.hasDss && prev.last ? prev.last.tsaNotAfter : null);
     // La renovación agrega revisiones al mismo PDF: el certificado (y su hash final) es el del archivo anterior.
     await t.query(
       `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256, chain_head)
@@ -167,6 +168,28 @@ async function renewClaimed(d: Deps, envelopeId: string, tsaUrl: string, actor: 
 }
 
 let lastRun = 0;
+/** Tests: permite volver a correr el barrido sin `force` antes de la hora. */
+export const resetArchiveSweepClock = () => {
+  lastRun = 0;
+  tsaCache = null;
+};
+
+const MAX_RENEWALS = 50;
+const MAX_RENEWALS_PER_DAY = 3;
+
+/** Vencimiento del certificado actual de la TSA: una consulta (un sello) cada 6 h como mucho. Las fallas no se cachean. */
+const TSA_CACHE_MS = 6 * 3600_000;
+let tsaCache: { url: string; notAfter: string; at: number } | null = null;
+export async function currentTsaNotAfter(tsaUrl: string): Promise<string | null> {
+  if (tsaCache && tsaCache.url === tsaUrl && Date.now() - tsaCache.at < TSA_CACHE_MS) return tsaCache.notAfter;
+  try {
+    const notAfter = await tsaCertificateNotAfter(tsaUrl);
+    tsaCache = { url: tsaUrl, notAfter, at: Date.now() };
+    return notAfter;
+  } catch {
+    return null;
+  }
+}
 
 /** Barrido: completa la fecha de vencimiento de los archivos nuevos y renueva los que vencen pronto. */
 export async function archiveSweep(d: Deps, opts: { days?: number; force?: boolean; envelopeId?: string } = {}) {
@@ -226,16 +249,25 @@ export async function archiveSweep(d: Deps, opts: { days?: number; force?: boole
     }
   }
   const due = await d.db.query<any>(
-    `SELECT id FROM envelopes WHERE status = 'completed' AND archive_valid_until IS NOT NULL
+    `SELECT id, archive_valid_until FROM envelopes WHERE status = 'completed' AND archive_valid_until IS NOT NULL
        AND archive_valid_until < now() + make_interval(days => $1)
        AND (archive_renewals = 0 OR $3::boolean OR archive_checked_at < now() - make_interval(days => $4))
        -- Tras una falla (TSA caída, OCSP inaccesible) no se reintenta en cada barrido horario: una vez por día.
        AND ($3::boolean OR archive_error IS NULL OR archive_checked_at < now() - interval '1 day')
        AND ($5::uuid IS NULL OR id = $5)
+       -- El tope de renovaciones de la ruta manual vale también para el barrido.
+       AND archive_renewals < $6
      ORDER BY archive_valid_until LIMIT $2`,
-    [days, cfg.batch, Boolean(opts.force), cfg.minIntervalDays, opts.envelopeId ?? null],
+    [days, cfg.batch, Boolean(opts.force), cfg.minIntervalDays, opts.envelopeId ?? null, MAX_RENEWALS],
   );
+  // Si el último sello ya es del certificado que la TSA usa hoy (o de uno que vence después), renovar no extiende la
+  // validez: con una sola TSA cuyo certificado vence dentro de la ventana, cada sobre nuevo se "renovaba" enseguida y
+  // después cada 30 días sin ganar nada. Se consulta el certificado actual una vez (con caché) y se saltean esos
+  // sobres; como van ordenados por vencimiento, a partir del primero que se saltea se saltean todos. `force` (solo el
+  // barrido de desarrollo y los tests) no lo aplica.
+  const tsaNotAfter = due.length && !opts.force ? await currentTsaNotAfter(config.seal.tsaUrl) : null;
   for (const e of due) {
+    if (tsaNotAfter && new Date(e.archive_valid_until).getTime() >= new Date(tsaNotAfter).getTime()) continue;
     try {
       await renewEnvelopeArchive(d, e.id);
       renewed++;
@@ -266,9 +298,6 @@ export async function archiveInfo(db: Db, envelopeId: string): Promise<ArchiveIn
   };
 }
 
-const MAX_RENEWALS = 50;
-const MAX_RENEWALS_PER_DAY = 3;
-
 export async function archiveRoutes(app: FastifyInstance, s: Services, log: Deps["log"]) {
   const auth = authenticate(s);
   const deps = (): Deps => ({ db: s.db, blobs: s.blobs, log });
@@ -289,11 +318,38 @@ export async function archiveRoutes(app: FastifyInstance, s: Services, log: Deps
   });
 
   app.post<{ Params: { id: string } }>("/v1/envelopes/:id/archive/renew", { preHandler: auth, config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req) => {
-    const e = await s.db.one<any>(`SELECT id, archive_renewals FROM envelopes WHERE id = $1 AND tenant_id = $2`, [req.params.id, req.auth!.tenantId]);
+    let e = await s.db.one<any>(
+      `SELECT id, status, archive_renewals, archive_valid_until, archive_checked_at, archive_error FROM envelopes WHERE id = $1 AND tenant_id = $2`,
+      [req.params.id, req.auth!.tenantId],
+    );
     if (!e) throw notFound("Sobre");
     // Cada renovación pide un sello de tiempo (con costo) y guarda otro PDF, más grande, que no se borra: con tope.
     if (Number(e.archive_renewals ?? 0) >= MAX_RENEWALS) {
       throw new AppError(409, "archive_renewal_limit", `El sobre llegó al máximo de ${MAX_RENEWALS} renovaciones del sello de archivo`);
+    }
+    // Sin inspeccionar todavía (nunca se abrió el panel ni pasó el barrido): se calcula antes de decidir.
+    if (e.status === "completed" && !e.archive_checked_at) {
+      await inspectArchive(deps(), e.id).catch(() => {});
+      e = await s.db.one<any>(`SELECT id, status, archive_renewals, archive_valid_until, archive_checked_at, archive_error FROM envelopes WHERE id = $1`, [e.id]);
+    }
+    // Qué se puede pedir a mano (decisión, docs/EVIDENCIA.md §2):
+    //  - un archivo (PDF con DSS: B-LT/B-LTA) que vence dentro de la ventana de renovación: es justamente un pedido de
+    //    archivo y se renueva con B-LTA aunque hoy la organización use otro nivel (el PDF ya era de archivo);
+    //  - un "LTV pendiente" (B-T que tenía que quedar B-LT/B-LTA), solo si el nivel vigente de la organización lo sigue
+    //    pidiendo: con B-B/B-T no se fuerza B-LTA sobre un PDF que la organización decidió no archivar.
+    // Lo demás es 409: antes cualquier pedido agregaba un sello (con costo) aunque faltaran años para el vencimiento.
+    const ltvPending = !e.archive_valid_until && typeof e.archive_error === "string" && e.archive_error.startsWith(LTV_PENDING);
+    if (ltvPending) {
+      const level = await resolveSealLevel(s.db, req.auth!.tenantId);
+      if (level !== "B-LT" && level !== "B-LTA") {
+        throw new AppError(409, "archive_not_applicable", `La organización usa el nivel ${level}: el PDF no se completa a un sello de archivo (B-LTA)`);
+      }
+    } else if (!e.archive_valid_until) {
+      throw new AppError(409, "archive_not_applicable", "El PDF no tiene datos de validación a largo plazo (B-LT/B-LTA): no hay sello de archivo que renovar");
+    } else if (new Date(e.archive_valid_until).getTime() > Date.now() + archiveConfig().days * 86_400_000) {
+      throw new AppError(409, "archive_not_due", "El sello de archivo todavía no está por vencer: se renueva solo cuando se acerca su vencimiento", {
+        validUntil: iso(e.archive_valid_until),
+      });
     }
     const recent = await s.db.one<any>(
       `SELECT count(*)::int AS n FROM envelope_signed_versions WHERE envelope_id = $1 AND reason = 'archive_renewal' AND created_at > now() - interval '1 day'`,

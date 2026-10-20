@@ -40,6 +40,14 @@ el resultado, guarda la nueva versión (historial en `envelope_signed_versions`,
 registra `envelope.archive_renewed`. Pendiente: renovar también ante el debilitamiento de algoritmos
 (SHA-256/RSA-2048), no solo por vencimiento de la TSA.
 
+El barrido consulta (con caché de 6 h) hasta cuándo vale el certificado que la TSA usa hoy y no renueva los
+sobres cuyo último sello ya vence en esa fecha o después (no extendería nada); también respeta el tope de 50
+renovaciones por sobre. La renovación manual (`POST /v1/envelopes/:id/archive/renew`) responde 409 si el PDF no
+es de archivo (`archive_not_applicable`: sin DSS, salvo un «LTV pendiente» con la organización en B-LT/B-LTA) o
+si todavía faltan más de `ARCHIVE_RENEWAL_DAYS` para el vencimiento (`archive_not_due`). Un PDF que ya es de
+archivo se renueva con B-LTA aunque la organización haya pasado después a B-B/B-T: el pedido es justamente de
+archivo y ese PDF ya lo era; un B-T no se completa a B-LTA si el nivel vigente no lo pide.
+
 ## 3. Validación
 
 `packages/pdf/src/validate.ts` y `POST /v1/validate` (público, rate-limited; la página `/verify` lo muestra

@@ -67,7 +67,8 @@ export async function runAiSweep(d: Deps, now = new Date()) {
   const pending = await d.db.query<any>(
     `SELECT e.id, e.tenant_id FROM envelopes e JOIN tenants t ON t.id = e.tenant_id
      WHERE e.status = 'completed' AND e.ai_metadata IS NULL AND e.purged_at IS NULL
-       AND (e.ai_metadata_attempted_at IS NULL OR e.ai_metadata_retry_at < now())
+       -- Los reintentos, solo durante los primeros 30 días del sobre (un error que no se arregla no se intenta para siempre).
+       AND (e.ai_metadata_attempted_at IS NULL OR (e.ai_metadata_retry_at < now() AND e.completed_at > now() - interval '30 days'))
        -- Con la clave BYOK fallando no se puede leer el PDF: esos sobres esperan a que se recupere.
        AND t.byok_status <> 'failing'
        AND t.ai_enabled AND t.ai_auto_extract
@@ -100,9 +101,13 @@ export async function runAiSweep(d: Deps, now = new Date()) {
       // También el proveedor de IA saturado o caído (429, 5xx, sin conexión: callModel lo traduce a 503 ai_rate_limited o
       // 502 ai_unavailable); antes contaba como intento y ese sobre no se volvía a tomar nunca.
       const transient = (err as AppError)?.status === 503 || (err as AppError)?.code === "ai_unavailable";
+      // El proveedor rechazó el pedido (clave revocada, modelo mal configurado, saldo agotado): suele ser de la
+      // configuración, no del sobre; se reintenta en 6 h (antes de esta pasada se perdía para siempre).
+      const rejected = (err as AppError)?.code === "ai_request_rejected";
       if (monthSpent) await d.db.query(`UPDATE envelopes SET ai_metadata_attempted_at = NULL WHERE id = $1`, [e.id]);
       // Transitoria: se reintenta en una hora (no en la próxima pasada).
       else if (transient) await d.db.query(`UPDATE envelopes SET ai_metadata_retry_at = now() + interval '1 hour' WHERE id = $1`, [e.id]);
+      else if (rejected) await d.db.query(`UPDATE envelopes SET ai_metadata_retry_at = now() + interval '6 hours' WHERE id = $1`, [e.id]);
       if (transient) d.log.warn({ envelopeId: e.id, err: String(err) }, "extracción automática postergada (falla transitoria)");
       else if (!isAiError(err)) d.log.warn({ envelopeId: e.id, err: String(err) }, "extracción automática de metadatos falló");
     }

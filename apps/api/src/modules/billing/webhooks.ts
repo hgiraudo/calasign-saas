@@ -103,8 +103,11 @@ export async function handleStripeEvent(db: Db, event: any) {
         // los eventos, y un "updated" (status active) atrasado de una suscripción ya borrada volvía a dar el plan pago
         // sin cobro. El alta la hace checkout.session.completed.
         if (!t?.subscription_id || t.subscription_id !== obj.id) return;
-        const ended = event.type === "customer.subscription.deleted" || ["canceled", "unpaid", "incomplete_expired"].includes(obj.status);
-        const plan: PlanId = ended ? "free" : isPlan(obj.metadata?.plan) ? obj.metadata.plan : "free";
+        const ended = event.type === "customer.subscription.deleted" || ["canceled", "incomplete_expired"].includes(obj.status);
+        // "unpaid": Stripe no la cancela (si se paga la factura vuelve a "active"). Se baja a Free pero sigue vinculada:
+        // si se desvinculaba, el "active" posterior se ignoraba y el cliente que pagó quedaba en Free (y sin portal).
+        const unpaid = obj.status === "unpaid";
+        const plan: PlanId = ended || unpaid ? "free" : isPlan(obj.metadata?.plan) ? obj.metadata.plan : "free";
         await applySubscription(tx, tenantId, {
           plan,
           provider: ended ? null : "stripe",

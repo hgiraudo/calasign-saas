@@ -58,6 +58,8 @@ export async function runAutomaticReminders(db: Db, now = new Date()) {
      WHERE status = 'sent' AND expires_at IS NOT NULL AND expiry_warning_days IS NOT NULL
        AND (expiry_warning_sent_at IS NULL OR expiry_warning_sent_at < $1::timestamptz - interval '1 hour')
        AND expires_at > $1::timestamptz AND expires_at <= $1::timestamptz + make_interval(days => expiry_warning_days)
+     -- Primero los que todavía no recibieron ningún aviso (los re-chequeos horarios no los demoran).
+     ORDER BY expiry_warning_sent_at NULLS FIRST
      LIMIT 200`,
     [now.toISOString()],
   );

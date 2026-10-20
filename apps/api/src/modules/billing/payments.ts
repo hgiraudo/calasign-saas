@@ -579,7 +579,7 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
     // Referrer-Policy same-origin: con no-referrer el navegador manda "Origin: null" y el control de origen rechaza el POST.
     reply
       .type("text/html; charset=utf-8")
-      .header("content-security-policy", mockPageCsp(new URL(await tenantBaseUrl(s.db, p.tenant_id)).origin))
+      .header("content-security-policy", mockPageCsp(new URL(await envelopeBaseUrl(s.db, p.tenant_id, p.envelope_id)).origin))
       .header("referrer-policy", "same-origin");
     return mockPage({
       title: "Pago simulado",

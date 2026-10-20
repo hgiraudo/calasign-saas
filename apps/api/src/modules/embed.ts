@@ -31,6 +31,9 @@ export function embeddedAuthLabel(locale: string) {
   return AUTH_LABEL[locale] ?? AUTH_LABEL.es;
 }
 
+/** Marca en embed_sessions.frame_ancestors de una URL que no se puede embeber (firmante con OTP). */
+const TAB_ONLY = "'none'";
+
 function cspFrameAncestors(origins: string[]) {
   return origins.length ? `'self' ${origins.join(" ")}` : "'none'";
 }
@@ -80,14 +83,17 @@ export async function issueSigningUrl(t: Db, a: AuthContext, envelopeId: string,
   if (!r.access_token_enc) throw conflict("not_available", "El destinatario todavía no está activo");
   // Dentro del iframe de otro sitio la cookie de la sesión del código no se guarda: un firmante con OTP quedaba pidiendo
   // el código sin fin. Para mostrarlo en un iframe tiene que autenticarlo la app (sin OTP); abierto en una pestaña sí sirve.
-  // Sin frameAncestors propios la página igual se puede embeber en los orígenes de la organización (como el CSP).
-  if ((requested.length ? requested : allowed).length && String(r.auth_method ?? "").startsWith("otp_")) {
+  // Un firmante con OTP no se puede mostrar en un iframe (la cookie de la sesión del código no se guarda ahí): si se
+  // piden frameAncestors, 409; si no, la URL sale "para pestaña" (TAB_ONLY: la página no se deja embeber, ni siquiera
+  // en los orígenes de la organización, y se abre sin el modo embebido).
+  const otp = String(r.auth_method ?? "").startsWith("otp_");
+  if (requested.length && otp) {
     throw conflict("otp_not_embeddable", "Un firmante con código OTP no se puede mostrar dentro de un iframe: quitale el OTP (lo autentica tu aplicación) o abrí la URL en una pestaña");
   }
   await t.query(
     `INSERT INTO embed_sessions (id, tenant_id, envelope_id, recipient_id, code_hash, return_url, frame_ancestors, created_by_actor, expires_at)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-    [uuidv7(), a.tenantId, e.id, r.id, sha256Hex(code), input.returnUrl ?? null, requested, a.actor.label ?? a.actor.type, expiresAt.toISOString()],
+    [uuidv7(), a.tenantId, e.id, r.id, sha256Hex(code), input.returnUrl ?? null, otp ? [TAB_ONLY] : requested, a.actor.label ?? a.actor.type, expiresAt.toISOString()],
   );
   await appendEvent(t, {
     tenantId: a.tenantId,
@@ -176,7 +182,8 @@ export async function embedRoutes(app: FastifyInstance, s: Services) {
       });
     });
     setFrameAncestors(reply, await originsForRecipient(s.db, r.id, sess.tenant_id));
-    return reply.redirect(`/s/${decrypt(r.access_token_enc)}?embed=1`, 302);
+    const tabOnly = (sess.frame_ancestors ?? []).includes(TAB_ONLY);
+    return reply.redirect(`/s/${decrypt(r.access_token_enc)}${tabOnly ? "" : "?embed=1"}`, 302);
   });
 
   // ───────── Página del firmante en modo embebido: frame-ancestors dinámico ─────────

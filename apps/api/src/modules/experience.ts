@@ -265,7 +265,12 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
     // revoca, no se le cierra la sesión ni se desvincula su Telegram) y no pierde lo que ya hizo.
     if (destinationChanged && r.access_token_hash) {
       const t = newToken();
-      await db.query(`UPDATE recipients SET access_token_hash = $2, access_token_enc = $3, telegram_chat_id = NULL WHERE id = $1`, [r.id, t.hash, t.enc]);
+      // sent_at: el contacto nuevo recibe la invitación ahora (los recordatorios y el aviso de vencimiento cuentan desde ahí).
+      await db.query(
+        `UPDATE recipients SET access_token_hash = $2, access_token_enc = $3, telegram_chat_id = NULL,
+           sent_at = CASE WHEN sent_at IS NOT NULL THEN now() END WHERE id = $1`,
+        [r.id, t.hash, t.enc],
+      );
       // El checkout de un cobro pendiente se armó con el contacto y el link anteriores: se descarta.
       await db.query(`UPDATE envelope_payments SET stale_checkout_id = COALESCE(checkout_id, stale_checkout_id), checkout_id = NULL, checkout_url = NULL, updated_at = now() WHERE recipient_id = $1 AND status <> 'paid'`, [r.id]);
       // Un código de embed sin usar emitido para el contacto anterior abriría el link nuevo: se vence.

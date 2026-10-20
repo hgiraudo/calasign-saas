@@ -45,6 +45,18 @@ function formatMoney(amount: number, currency: string) {
 }
 
 /** Aplica el resultado de una suscripción (webhook verificado o checkout simulado). */
+
+/**
+ * Suscripción simulada: nunca en producción, aunque PAYMENTS_MOCK_ENABLED esté prendida para probar los cobros al firmar
+ * (con ella cualquier organización con billing:manage llegaba a Enterprise sin pagar).
+ */
+function subscriptionMockEnabled() {
+  return config.billing.mockEnabled && config.environment !== "prod";
+}
+
+function subscriptionProviderConfigured(id: "stripe" | "mercadopago" | "mock") {
+  return id === "mock" ? subscriptionMockEnabled() : providerConfigured(id);
+}
 export async function applySubscription(
   db: Db,
   tenantId: string,
@@ -63,7 +75,8 @@ export async function applySubscription(
   await db.query(
     `UPDATE tenants SET billing_plan = $2, plan = $2, billing_provider = $3,
        billing_customer_id = COALESCE($4, billing_customer_id), subscription_id = $5, subscription_status = $6,
-       plan_renews_at = $7, plan_updated_at = now()
+       -- Sin fecha nueva (p. ej. el alta por checkout.session.completed) se conserva la que había; en Free, ninguna.
+       plan_renews_at = CASE WHEN $2 = 'free' THEN NULL ELSE COALESCE($7::timestamptz, plan_renews_at) END, plan_updated_at = now()
      WHERE id = $1`,
     [tenantId, s.plan, s.provider, s.customerId ?? null, s.subscriptionId ?? null, s.status, s.renewsAt ?? null],
   );
@@ -97,19 +110,19 @@ export async function billingOverview(db: Db, tenantId: string): Promise<Billing
     usage: await usageThisMonth(db, tenantId),
     plans: PLAN_IDS.map((id) => ({ ...PLANS[id], price: priceOf(id, currency) })),
     providers: (["stripe", "mercadopago", "mock"] as const)
-      .filter((p) => p !== "mock" || config.billing.mockEnabled)
-      .map((id) => ({ id, configured: providerConfigured(id) })),
+      .filter((p) => p !== "mock" || subscriptionMockEnabled())
+      .map((id) => ({ id, configured: subscriptionProviderConfigured(id) })),
   };
 }
 
 function pickProvider(requested: BillingProvider | undefined, currency: BillingCurrency): BillingProvider {
   if (requested) {
-    if (!providerConfigured(requested)) throw badRequest("provider_not_configured", `El proveedor ${requested} no está configurado`);
+    if (!subscriptionProviderConfigured(requested)) throw badRequest("provider_not_configured", `El proveedor ${requested} no está configurado`);
     return requested;
   }
   // Monedas locales: Mercado Pago (Pix/PSE) si está; si no, Stripe; si no, el de prueba.
   const order: BillingProvider[] = currency === "USD" ? ["stripe", "mercadopago", "mock"] : ["mercadopago", "stripe", "mock"];
-  const p = order.find((x) => providerConfigured(x));
+  const p = order.find((x) => subscriptionProviderConfigured(x));
   if (!p) throw badRequest("provider_not_configured", "No hay ningún proveedor de cobro configurado");
   return p;
 }
@@ -158,7 +171,9 @@ export async function subscriptionRoutes(app: FastifyInstance, s: Services) {
           successUrl: `${back}?checkout=success`,
           cancelUrl: `${back}?checkout=cancel`,
           metadata: { tenantId: a.tenantId, plan: input.plan, checkoutId },
-          customerId: t.billing_provider === "stripe" ? t.billing_customer_id : null,
+          // El customer de Stripe se reutiliza aunque la suscripción haya terminado (facturas en un solo lugar, sin
+          // duplicados).
+          customerId: String(t.billing_customer_id ?? "").startsWith("cus_") ? t.billing_customer_id : null,
           customerEmail: user?.email ?? null,
         });
         url = c.url;
@@ -198,7 +213,8 @@ export async function subscriptionRoutes(app: FastifyInstance, s: Services) {
 
   app.post("/v1/billing/portal", { preHandler: auth }, async (req) => {
     const t = await s.db.one<any>(`SELECT * FROM tenants WHERE id = $1`, [req.auth!.tenantId]);
-    if (t.billing_provider !== "stripe" || !t.billing_customer_id) {
+    // También después de una baja: el portal es donde están las facturas anteriores.
+    if (!String(t.billing_customer_id ?? "").startsWith("cus_")) {
       throw conflict("portal_not_available", "El portal de facturación está disponible para suscripciones de Stripe");
     }
     try {
@@ -229,7 +245,7 @@ export async function subscriptionRoutes(app: FastifyInstance, s: Services) {
   // ───────── Checkout simulado (fuera de producción) ─────────
   type M = { Params: { id: string }; Querystring: { n?: string } };
   async function loadMock(id: string, nonce: string | undefined) {
-    if (!config.billing.mockEnabled) throw notFound("Checkout");
+    if (!subscriptionMockEnabled()) throw notFound("Checkout");
     const c = await s.db.one<any>(`SELECT * FROM billing_checkouts WHERE id = $1 AND provider = 'mock'`, [id]);
     if (!c || !nonce || !c.nonce_hash || sha256Hex(nonce) !== c.nonce_hash) throw notFound("Checkout");
     return c;

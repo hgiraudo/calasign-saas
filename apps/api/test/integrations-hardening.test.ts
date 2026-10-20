@@ -402,6 +402,43 @@ describe("desconectar revoca tokens y conserva la actividad", () => {
     expect(calls.some((x) => x.url.endsWith("/oauth/revoke") && x.body.includes("fa-rt-2"))).toBe(true);
   });
 
+  it("conector Factorial sin empleados: companyId de las entidades legales; sin ninguna, aviso al probar y se revoca igual", async () => {
+    const b1 = await connConn("factorial", { auth: "oauth", creds: { access_token: "fa-at", refresh_token: "fa-rt-le" } });
+    handler = (c) =>
+      c.url.includes("/employees/employees") ? json(200, { data: [] }) : c.url.includes("/companies/legal_entities") ? json(200, { data: [{ id: 3, company_id: 88 }] }) : json(404, {});
+    let t = (await app.inject({ method: "POST", url: `/v1/connectors/connections/${b1.id}/test`, headers: auth })).json();
+    expect(t).toMatchObject({ ok: true, warning: null });
+    expect((await db.one<any>(`SELECT config FROM connector_connections WHERE id = $1`, [b1.id]))!.config.companyId).toBe("88");
+
+    // Ni empleados ni entidades legales: no se adivina la compañía; la prueba avisa.
+    const b2 = await connConn("factorial", { auth: "oauth", creds: { access_token: "fa-at", refresh_token: "fa-rt-unknown" } });
+    handler = (c) => (c.url.includes("/employees/employees") || c.url.includes("/companies/legal_entities") ? json(200, { data: [] }) : json(404, {}));
+    t = (await app.inject({ method: "POST", url: `/v1/connectors/connections/${b2.id}/test`, headers: auth })).json();
+    expect(t).toMatchObject({ ok: true, warning: "account_unknown" });
+    expect((await db.one<any>(`SELECT config FROM connector_connections WHERE id = $1`, [b2.id]))!.config.companyId).toBeUndefined();
+    // Sin evidencia de que se comparta (aunque haya otras conexiones de Factorial): se revoca.
+    handler = () => new Response("{}", { status: 200 });
+    expect((await app.inject({ method: "DELETE", url: `/v1/connectors/connections/${b2.id}`, headers: auth })).statusCode).toBe(204);
+    expect(calls.some((x) => x.url.endsWith("/oauth/revoke") && x.body.includes("fa-rt-unknown"))).toBe(true);
+    expect((await audits("connector.disconnected", b2.id))[0].data.tokenRevoked).toBe(true);
+    await app.inject({ method: "DELETE", url: `/v1/connectors/connections/${b1.id}`, headers: auth });
+  });
+
+  it("CRM Salesforce y Zoho: revocar no desinstala la app, se revoca aunque otra conexión use la misma cuenta", async () => {
+    const instanceUrl = "https://acme.my.salesforce.com";
+    const s1 = await crmConn("salesforce", { creds: { access_token: "sf-at", refresh_token: "sf-rt-1" }, config: { instanceUrl } });
+    await crmConn("salesforce", { creds: { access_token: "sf-at", refresh_token: "sf-rt-2" }, config: { instanceUrl } });
+    handler = () => new Response(null, { status: 200 });
+    expect((await app.inject({ method: "DELETE", url: `/v1/crm/connections/${s1}`, headers: auth })).statusCode).toBe(204);
+    expect(calls.some((c) => c.url.endsWith("/services/oauth2/revoke") && c.body.includes("sf-rt-1"))).toBe(true);
+    expect((await audits("crm.disconnected", s1))[0].data.tokenRevoked).toBe(true);
+    const z1 = await crmConn("zoho", { creds: { access_token: "z-at", refresh_token: "z-rt-1" }, config: { orgId: "555" } });
+    await crmConn("zoho", { creds: { access_token: "z-at", refresh_token: "z-rt-2" }, config: { orgId: "555" } });
+    expect((await app.inject({ method: "DELETE", url: `/v1/crm/connections/${z1}`, headers: auth })).statusCode).toBe(204);
+    expect(calls.some((c) => c.url.includes("/oauth/v2/token/revoke?token=z-rt-1"))).toBe(true);
+    expect((await audits("crm.disconnected", z1))[0].data.tokenRevoked).toBe(true);
+  });
+
   it("conector Factorial OAuth: POST /oauth/revoke; actividad conservada", async () => {
     const c = await connConn("factorial", { auth: "oauth", creds: { access_token: "fa-at", refresh_token: "fa-rt" } });
     const runId = util.uuidv7();

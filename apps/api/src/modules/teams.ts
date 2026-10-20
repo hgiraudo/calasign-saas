@@ -444,19 +444,27 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
       if (cur.role === "owner" && (await ownerCount(t, a.tenantId)) === 0) throw conflict("last_owner", "La organización tiene que tener al menos un propietario");
       // Cierra sus sesiones en esta organización.
       await t.query(`DELETE FROM sessions WHERE user_id = $1 AND tenant_id = $2`, [userId, a.tenantId]);
+      // Sobres en curso donde era anfitrión de una firma en persona: nadie más que un administrador (envelopes:manage_all)
+      // puede abrir esa sesión. Se listan en la auditoría de la baja para que alguien los corrija o los abra.
+      const hosted = await t.query<{ id: string }>(
+        `SELECT DISTINCT e.id FROM recipients r JOIN envelopes e ON e.id = r.envelope_id
+          WHERE e.tenant_id = $1 AND e.status = 'sent' AND r.in_person_host_user_id = $2 AND r.status IN ('created', 'sent', 'viewed')`,
+        [a.tenantId, userId],
+      );
       // Y el acceso que conserva por otras vías: API keys, invitaciones que mandó, tokens OAuth, secretos de apps de servicio.
-      return revokeMemberAccess(t, a.tenantId, userId);
+      return { ...(await revokeMemberAccess(t, a.tenantId, userId)), inPersonHostEnvelopes: hosted.map((h) => h.id) };
     });
     await auditFromRequest(s.db, req, a, "member.removed", {
       targetType: "user",
       targetId: userId,
       data:
-        revoked.keys.length || revoked.invitations || revoked.serviceApps.length || revoked.scimTokens
+        revoked.keys.length || revoked.invitations || revoked.serviceApps.length || revoked.scimTokens || revoked.inPersonHostEnvelopes.length
           ? {
               ...(revoked.keys.length ? { revokedApiKeys: revoked.keys.map((k) => ({ id: k.id, name: k.name })) } : {}),
               ...(revoked.invitations ? { revokedInvitations: revoked.invitations } : {}),
               ...(revoked.serviceApps.length ? { disabledServiceAppSecrets: revoked.serviceApps } : {}),
               ...(revoked.scimTokens ? { revokedScimTokens: revoked.scimTokens } : {}),
+              ...(revoked.inPersonHostEnvelopes.length ? { inPersonHostEnvelopes: revoked.inPersonHostEnvelopes } : {}),
             }
           : undefined,
     });
@@ -767,17 +775,42 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
       assertCanManage(a, cur.permissions ?? [], "editar los permisos de este rol");
       assertCanGrant(a, { role: "custom" }, input.permissions);
     }
+    // Recortar permisos: lo que crearon sus miembros con el rol anterior (API keys, apps de servicio, tokens SCIM,
+    // invitaciones pendientes) conservaba esos permisos. Se revoca en la misma transacción, como al bajarle el rol a un miembro.
+    const revokedByUser: Record<string, { apiKeys: string[]; invitations: number; serviceApps: string[]; scimTokens: number }> = {};
     try {
-      await s.db.query(
-        `UPDATE roles SET name = COALESCE($2, name), description = CASE WHEN $3::boolean THEN $4 ELSE description END,
-           permissions = COALESCE($5, permissions), updated_at = now() WHERE id = $1`,
-        [cur.id, input.name ?? null, input.description !== undefined, input.description ?? null, input.permissions ? [...new Set(input.permissions)] : null],
-      );
+      await s.db.tx(async (t) => {
+        const locked = await t.one<{ permissions: string[] | null }>(`SELECT permissions FROM roles WHERE id = $1 AND tenant_id = $2 FOR UPDATE`, [cur.id, a.tenantId]);
+        if (!locked) throw notFound("Rol");
+        await t.query(
+          `UPDATE roles SET name = COALESCE($2, name), description = CASE WHEN $3::boolean THEN $4 ELSE description END,
+             permissions = COALESCE($5, permissions), updated_at = now() WHERE id = $1`,
+          [cur.id, input.name ?? null, input.description !== undefined, input.description ?? null, input.permissions ? [...new Set(input.permissions)] : null],
+        );
+        if (!input.permissions) return;
+        const after = new Set<string>(input.permissions);
+        if (!(locked.permissions ?? []).some((p) => !after.has(p))) return;
+        const members = await t.query<{ user_id: string }>(`SELECT user_id FROM memberships WHERE tenant_id = $1 AND role_id = $2`, [a.tenantId, cur.id]);
+        for (const m of members) {
+          const rv = await revokeMemberAccess(t, a.tenantId, m.user_id, { removal: false });
+          if (rv.keys.length || rv.invitations || rv.serviceApps.length || rv.scimTokens) {
+            revokedByUser[m.user_id] = { apiKeys: rv.keys.map((k) => k.id), invitations: rv.invitations, serviceApps: rv.serviceApps, scimTokens: rv.scimTokens };
+          }
+        }
+      });
     } catch (e) {
       if (/roles_tenant_name_uq/.test(String(e))) throw conflict("role_exists", "Ya existe un rol con ese nombre");
       throw e;
     }
-    await auditFromRequest(s.db, req, a, "role.updated", { targetType: "role", targetId: cur.id, data: { from: cur.permissions, to: input.permissions ?? cur.permissions } });
+    await auditFromRequest(s.db, req, a, "role.updated", {
+      targetType: "role",
+      targetId: cur.id,
+      data: {
+        from: cur.permissions,
+        to: input.permissions ?? cur.permissions,
+        ...(Object.keys(revokedByUser).length ? { revokedCredentials: revokedByUser } : {}),
+      },
+    });
     return toRole(await s.db.one(`SELECT *, 0 AS member_count FROM roles WHERE id = $1`, [cur.id]));
   });
 

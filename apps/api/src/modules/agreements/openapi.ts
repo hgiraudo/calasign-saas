@@ -84,8 +84,21 @@ export const AGREEMENTS_OPS: Op[] = [
   { method: "patch", path: "/v1/workflows/{id}", tag: W, summary: "Editar un workflow", body: UpdateWorkflowInput },
   { method: "delete", path: "/v1/workflows/{id}", tag: W, summary: "Borrar un workflow", response: "none", status: 204 },
   { method: "post", path: "/v1/workflows/{id}/runs", tag: W, summary: "Iniciar una ejecución", body: StartWorkflowInput, status: 201 },
-  { method: "get", path: "/v1/workflow-runs", tag: W, summary: "Ejecuciones", description: "Query: workflowId, status." },
-  { method: "get", path: "/v1/workflow-runs/{id}", tag: W, summary: "Ver una ejecución" },
+  {
+    method: "get",
+    path: "/v1/workflow-runs",
+    tag: W,
+    summary: "Ejecuciones",
+    description:
+      "Query: workflowId, status. Con templates:manage sin envelopes:view_all, las ejecuciones que no inició ni aprueba vienen con redacted: true (context vacío, output null, sin collectUrl).",
+  },
+  {
+    method: "get",
+    path: "/v1/workflow-runs/{id}",
+    tag: W,
+    summary: "Ver una ejecución",
+    description: "redacted: true si quien consulta solo administra plantillas (no la inició, no aprueba un paso ni ve todos los sobres): se omiten context, salidas de los pasos y collectUrl.",
+  },
   { method: "post", path: "/v1/workflow-runs/{id}/steps/{index}/decision", tag: W, summary: "Aprobar o rechazar un paso de aprobación", description: "Rechazar deja la ejecución en rejected y anula sus sobres en curso.", body: ApprovalDecisionInput },
   { method: "post", path: "/v1/workflow-runs/{id}/cancel", tag: W, summary: "Cancelar una ejecución (anula sus sobres en curso)", description: "También una ejecución fallida: es la forma de anular los sobres que dejó en firma." },
   { method: "post", path: "/v1/workflow-runs/{id}/retry", tag: W, summary: "Reintentar el paso fallido" },

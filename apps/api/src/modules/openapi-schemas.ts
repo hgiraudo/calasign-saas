@@ -376,6 +376,7 @@ export const TemplateSummarySchema = named(
   TemplateSchema.extend({
     documentCount: z.number().int(),
     roles: z.array(z.object({ name: z.string(), role: z.enum(RECIPIENT_ROLES) })),
+    canManage: z.boolean().optional().describe("Si quien consulta puede editar, borrar o compartir la plantilla (templates:manage o quien la creó)"),
   }),
 );
 
@@ -398,7 +399,13 @@ export const TemplateFieldSchema = named(
 
 export const TemplateDetailSchema = named(
   "TemplateDetail",
-  z.object({ template: TemplateSchema, documents: z.array(DocumentSchema), roles: z.array(TemplateRoleSchema), fields: z.array(TemplateFieldSchema) }),
+  z.object({
+    template: TemplateSchema,
+    documents: z.array(DocumentSchema),
+    roles: z.array(TemplateRoleSchema),
+    fields: z.array(TemplateFieldSchema),
+    canManage: z.boolean().optional().describe("Solo en GET /v1/templates/{id}: si quien consulta puede modificar la plantilla (editar, borrar, compartir)"),
+  }),
 );
 
 // ───────────────────────────── Envío masivo ─────────────────────────────

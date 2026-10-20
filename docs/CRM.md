@@ -57,10 +57,10 @@ Piezas comunes:
   documentado (HubSpot `DELETE /oauth/v1/refresh-tokens/{token}`, Salesforce `/services/oauth2/revoke`, Zoho
   `/oauth/v2/token/revoke`, Pipedrive `/oauth/revoke`); RD Station y Kommo no publican uno, y los tokens de app privada
   de HubSpot o las claves de Siigo/Alegra se revocan en el proveedor. La revocación va **después** de borrar la
-  conexión, y no se hace si otra conexión OAuth del mismo proveedor (de cualquier organización, activa o no) usa la
-  misma cuenta (`portalId`, `companyId`, `accountId`, `orgId` de Zoho, `instanceUrl` de Salesforce; sin la cuenta
-  guardada, cualquier otra conexión OAuth del proveedor): revocar el refresh token puede desinstalar la app de toda la
-  cuenta (`tokenRevoked: "shared"`). Si la revocación falla se registra en el log y se desconecta igual (la auditoría
+  conexión. En HubSpot y Pipedrive, donde revocar el refresh token desinstala la app de toda la cuenta, no se hace si
+  otra conexión OAuth del mismo proveedor (de cualquier organización, activa o no) usa la misma cuenta (`portalId`,
+  `companyId`; sin la cuenta guardada, cualquier otra conexión OAuth del proveedor) (`tokenRevoked: "shared"`). En
+  Salesforce y Zoho revocar invalida solo los tokens de esa autorización: se revoca siempre. Si la revocación falla se registra en el log y se desconecta igual (la auditoría
   `crm.disconnected` lleva `tokenRevoked`). Las ejecuciones pendientes de la conexión pasan a `failed`. Mapeos y vínculos se borran con la conexión,
   pero la **actividad se conserva** (`crm_runs.connection_id` pasa a NULL, migración 0081, y la ejecución guarda el
   nombre y el proveedor en `detail.connection`). Se eligió esto en vez de un borrado lógico de la conexión porque es

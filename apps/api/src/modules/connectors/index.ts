@@ -189,17 +189,20 @@ export function parseHookJson(raw: string): unknown {
 const INSTALL_ACCOUNT_KEY: Partial<Record<string, string>> = { factorial: "companyId" };
 
 /** ¿Otra conexión OAuth del mismo proveedor (de cualquier organización, activa o no) usa la misma cuenta? Sin la cuenta
- *  guardada no se puede descartar: cuenta como compartida si existe cualquier otra conexión OAuth del proveedor. */
+ *  guardada no hay evidencia de que se comparta: no cuenta como compartida y se revoca (antes, una cuenta de Factorial
+ *  sin empleados no guardaba companyId y, con cualquier otra conexión de Factorial en la plataforma, nunca se revocaba).
+ *  Probar la conexión avisa cuando no se pudo determinar la cuenta (warning "account_unknown"). */
 async function connectorAccountShared(db: Db, r: any): Promise<boolean> {
   if (r.auth_type !== "oauth") return false;
   const key = INSTALL_ACCOUNT_KEY[r.provider];
   if (!key) return false;
   const value = r.config?.[key];
-  const known = value != null && value !== "";
-  const row = await db.one(
-    `SELECT 1 FROM connector_connections WHERE provider = $1 AND auth_type = 'oauth' AND id <> $2${known ? ` AND config->>'${key}' = $3` : ""} LIMIT 1`,
-    known ? [r.provider, r.id, String(value)] : [r.provider, r.id],
-  );
+  if (value == null || value === "") return false;
+  const row = await db.one(`SELECT 1 FROM connector_connections WHERE provider = $1 AND auth_type = 'oauth' AND id <> $2 AND config->>'${key}' = $3 LIMIT 1`, [
+    r.provider,
+    r.id,
+    String(value),
+  ]);
   return !!row;
 }
 
@@ -706,7 +709,7 @@ export async function connectorRoutes(app: FastifyInstance, s: Services) {
     });
     // Después del commit se revoca el token en el proveedor (si tiene endpoint), sin bloquear la desconexión si falla.
     // Revocar puede desinstalar la app de toda la cuenta: si otra conexión OAuth del mismo proveedor (de cualquier
-    // organización) usa la misma cuenta (config.companyId; sin cuenta guardada, cualquier otra), no se revoca.
+    // organización) usa la misma cuenta (config.companyId), no se revoca; sin cuenta guardada se revoca.
     let revoked: boolean | "failed" | "shared" = false;
     try {
       if (await connectorAccountShared(s.db, r)) revoked = "shared";
@@ -729,7 +732,10 @@ export async function connectorRoutes(app: FastifyInstance, s: Services) {
         t.label,
         JSON.stringify(t.config ?? {}),
       ]);
-      return { ok: true, error: null };
+      // warning "account_unknown" (Factorial OAuth): no se pudo determinar la compañía; al desconectar se revoca el
+      // token aunque otra conexión use la misma cuenta.
+      const warning = t.warning && r.auth_type === "oauth" && !(r.config?.companyId) ? t.warning : null;
+      return { ok: true, error: null, warning };
     } catch (err) {
       const msg = asAppError(err).message.slice(0, 300);
       await s.db.query(`UPDATE connector_connections SET last_error = $2 WHERE id = $1`, [r.id, msg]);
@@ -988,16 +994,21 @@ export async function connectorRoutes(app: FastifyInstance, s: Services) {
               continue;
             }
             const baseKey = `cn:hook:${f.id}:${ev.recordId}:${bodyHash}`;
-            const recent = await s.db.one(
-              `SELECT 1 FROM connector_runs WHERE dedupe_key = $1 AND created_at > now() - ($2::int * interval '1 millisecond')`,
-              [`${baseKey}:${bucket - 1}`, windowMs],
-            );
-            if (recent) continue;
-            const ok = await queueRun(
-              s.db,
-              { tenantId: c.tenant_id, connectionId: c.id, flowId: f.id, linkId: null, envelopeId: null, kind: "send", event: ev.event ?? "webhook", objectType: f.object_type, objectId: ev.recordId, detail: { webhook: true, signed: signedOk.get(f.id) === true } },
-              `${baseKey}:${bucket}`,
-            );
+            // Con un bloqueo por clave base: dos reentregas simultáneas a los lados del borde de la franja (una en la
+            // anterior, otra en la nueva) ya no ven las dos "nada en la franja anterior" e insertan cada una la suya.
+            const ok = await s.db.tx(async (t) => {
+              await t.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [baseKey]);
+              const recent = await t.one(
+                `SELECT 1 FROM connector_runs WHERE dedupe_key = $1 AND created_at > now() - ($2::int * interval '1 millisecond')`,
+                [`${baseKey}:${bucket - 1}`, windowMs],
+              );
+              if (recent) return false;
+              return queueRun(
+                t,
+                { tenantId: c.tenant_id, connectionId: c.id, flowId: f.id, linkId: null, envelopeId: null, kind: "send", event: ev.event ?? "webhook", objectType: f.object_type, objectId: ev.recordId, detail: { webhook: true, signed: signedOk.get(f.id) === true } },
+                `${baseKey}:${bucket}`,
+              );
+            });
             if (ok) queued++;
           }
         }

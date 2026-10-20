@@ -119,19 +119,34 @@ function startedByMe(a: AuthContext, r: any) {
   return (a.userId != null && r.started_by === a.userId) || (a.apiKeyId != null && r.started_by_api_key === a.apiKeyId);
 }
 
+/**
+ * ¿Ve los datos de la ejecución (context, salidas de los pasos, sobres generados, link de recolección)? Quien la inició,
+ * quien tiene que aprobar un paso (necesita los datos para decidir) y quien ve todos los sobres. Quien solo administra
+ * plantillas (templates:manage) la ve para cancelarla o reintentarla, pero no los datos que cargó otra persona o el
+ * formulario público, ni los links a sus sobres.
+ */
+export function seesRunData(a: AuthContext, r: { started_by?: string | null; started_by_api_key?: string | null; steps: WorkflowStep[] }) {
+  if (startedByMe(a, r)) return true;
+  if (hasPerm(a, "envelopes:view_all") || hasPerm(a, "envelopes:manage_all")) return true;
+  return a.userId != null && r.steps.some((st) => st.type === "approval" && st.config.approverUserId === a.userId);
+}
+
 async function toRun(db: Db, r: any, a?: AuthContext): Promise<WorkflowRun> {
   const wf = await db.one<any>(`SELECT name FROM workflows WHERE id = $1`, [r.workflow_id]);
   const steps = await db.query<any>(`SELECT * FROM workflow_run_steps WHERE run_id = $1 ORDER BY idx`, [r.id]);
   const defs: WorkflowStep[] = r.steps;
   const base = await tenantBaseUrl(db, r.tenant_id);
   const hasCollect = defs.some((x) => x.type === "collect_data");
+  const redacted = Boolean(a && !seesRunData(a, r));
   return {
     id: r.id,
     workflowId: r.workflow_id,
     workflowName: wf?.name ?? "",
     status: r.status,
     currentStep: r.current_step,
-    context: { data: r.context.data ?? {}, documents: summarizeDocs(r.context.documents ?? {}), envelopes: r.context.envelopes ?? {}, http: r.context.http ?? {} },
+    context: redacted
+      ? { data: {}, documents: {}, envelopes: {}, http: {} }
+      : { data: r.context.data ?? {}, documents: summarizeDocs(r.context.documents ?? {}), envelopes: r.context.envelopes ?? {}, http: r.context.http ?? {} },
     steps: steps.map((st) => {
       const def = defs[st.idx];
       return {
@@ -141,7 +156,8 @@ async function toRun(db: Db, r: any, a?: AuthContext): Promise<WorkflowRun> {
         name: st.name,
         status: st.status,
         attempts: st.attempts,
-        output: st.output,
+        // Salidas (respuestas HTTP, valores recolectados, id del sobre generado): con los datos de la ejecución.
+        output: redacted ? null : st.output,
         error: st.error,
         startedAt: iso(st.started_at),
         finishedAt: iso(st.finished_at),
@@ -151,9 +167,10 @@ async function toRun(db: Db, r: any, a?: AuthContext): Promise<WorkflowRun> {
     startedBy: r.started_by_label,
     // El enlace público lleva al formulario y, después, al link de firma de quien lo completa: solo para quien puede
     // administrar el run (como cancelar o reintentar), no para el aprobador ni quien solo puede ver.
-    collectUrl: a && (startedByMe(a, r) || hasPerm(a, "templates:manage")) && hasCollect && r.public_token_enc && ["running", "waiting"].includes(r.status) ? `${base}/w/${decrypt(r.public_token_enc)}` : null,
+    collectUrl: a && !redacted && (startedByMe(a, r) || hasPerm(a, "templates:manage")) && hasCollect && r.public_token_enc && ["running", "waiting"].includes(r.status) ? `${base}/w/${decrypt(r.public_token_enc)}` : null,
     // Cancelar y reintentar: quien lo inició o quien administra plantillas (lo mismo que exige la API).
     canManage: Boolean(a && (startedByMe(a, r) || hasPerm(a, "templates:manage"))),
+    ...(redacted ? { redacted: true } : {}),
     createdAt: iso(r.created_at)!,
     updatedAt: iso(r.updated_at)!,
   };

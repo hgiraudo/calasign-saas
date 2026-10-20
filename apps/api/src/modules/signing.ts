@@ -30,8 +30,6 @@ const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 interface Resolved {
   recipient: any;
   envelope: any;
-  /** access_token_hash vigente del destinatario (el link permanente), también si se entró con un token de sesión. */
-  canonicalHash: string;
   /** true si el token de la URL es un token de sesión derivado (canje embebido), no el link permanente. */
   sessionToken: boolean;
 }
@@ -47,13 +45,15 @@ export async function resolveToken(db: Db, token: string): Promise<Resolved> {
   let sessionToken = false;
   if (!recipient) {
     const st = await resolveSessionToken(db, hash);
-    if (st) recipient = await db.one<any>(`SELECT * FROM recipients WHERE id = $1 AND access_token_hash = $2`, [st.recipient_id, st.access_token_hash]);
-    sessionToken = true;
+    if (st) {
+      recipient = await db.one<any>(`SELECT * FROM recipients WHERE id = $1 AND access_token_hash = $2`, [st.recipient_id, st.access_token_hash]);
+      sessionToken = true;
+    }
   }
   if (!recipient) throw notFound("Link");
   const envelope = await db.one<any>(`SELECT * FROM envelopes WHERE id = $1`, [recipient.envelope_id]);
   if (!envelope || envelope.status === "draft") throw notFound("Link");
-  return { recipient, envelope, canonicalHash: recipient.access_token_hash, sessionToken };
+  return { recipient, envelope, sessionToken };
 }
 
 /**

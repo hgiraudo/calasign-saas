@@ -154,13 +154,17 @@ export function templateVisibilitySql(a: AuthContext, params: unknown[], alias =
   return ` AND (${alias}.visibility = 'organization' OR ${owner} OR EXISTS (SELECT 1 FROM template_shares ts WHERE ts.template_id = ${alias}.id AND ts.group_id = ANY(${g})))`;
 }
 
+/** Regla de "manage" de assertTemplateAccess sobre una fila ya cargada (con created_by y created_by_api_key). */
+export function canManageTemplateRow(a: AuthContext, t: { created_by: string | null; created_by_api_key: string | null }): boolean {
+  if (hasPerm(a, "templates:manage")) return true;
+  return a.apiKeyId ? t.created_by_api_key === a.apiKeyId : a.userId !== null && t.created_by === a.userId;
+}
+
 export async function assertTemplateAccess(db: Db, a: AuthContext, templateId: string, mode: "view" | "manage") {
   if (!/^[0-9a-f-]{36}$/i.test(templateId)) throw notFound("Plantilla");
   const t = await db.one<any>(`SELECT id, created_by, created_by_api_key, visibility FROM templates WHERE id = $1 AND tenant_id = $2`, [templateId, a.tenantId]);
   if (!t) throw notFound("Plantilla");
-  if (hasPerm(a, "templates:manage")) return;
-  const own = a.apiKeyId ? t.created_by_api_key === a.apiKeyId : a.userId !== null && t.created_by === a.userId;
-  if (own) return;
+  if (canManageTemplateRow(a, t)) return;
   let canView = t.visibility === "organization";
   if (!canView && (a.access?.groupIds.length ?? 0) > 0) {
     canView = Boolean(await db.one(`SELECT 1 FROM template_shares WHERE template_id = $1 AND group_id = ANY($2::uuid[])`, [templateId, a.access!.groupIds]));

@@ -2,7 +2,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import type { AccessResponse, Permission, PlanFeature } from "@calasign/shared";
-import { api } from "./api";
+import { api, FORBIDDEN_EVENT } from "./api";
 import { useAuth } from "./auth";
 import { useI18n } from "./i18n";
 
@@ -30,7 +30,11 @@ export function AccessProvider({ children }: { children: ReactNode }) {
   // Solo vale la respuesta más reciente: una recarga pedida antes de cambiar de organización no pisa la de la nueva.
   const seq = useRef(0);
 
+  // Último pedido de /v1/me/access: las recargas automáticas (403, volver a la pestaña) se espacian.
+  const lastAt = useRef(0);
+
   const refresh = useCallback(async () => {
+    lastAt.current = Date.now();
     const mine = ++seq.current;
     const k = keyRef.current;
     try {
@@ -45,6 +49,27 @@ export function AccessProvider({ children }: { children: ReactNode }) {
     if (key) void refresh();
     // Sin sesión, una respuesta todavía en camino no se aplica.
     else seq.current++;
+  }, [key, refresh]);
+
+  // Los permisos cambian sin que la consola se entere (otro administrador cambió el rol o recortó el rol): se vuelven
+  // a pedir al recibir un 403 forbidden y al volver a la pestaña, como mucho cada 5 s y 30 s respectivamente.
+  useEffect(() => {
+    if (!key) return;
+    const maybe = (minMs: number) => {
+      if (Date.now() - lastAt.current >= minMs) void refresh();
+    };
+    const onForbidden = () => maybe(5_000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") maybe(30_000);
+    };
+    window.addEventListener(FORBIDDEN_EVENT, onForbidden);
+    window.addEventListener("focus", onVisible);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener(FORBIDDEN_EVENT, onForbidden);
+      window.removeEventListener("focus", onVisible);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [key, refresh]);
 
   // Mientras carga, no se ocultan cosas (el servidor igual aplica los permisos).

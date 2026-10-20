@@ -155,19 +155,17 @@ describe("formularios web: envíos del público", () => {
     expect(r.json().signingPath).toMatch(/\?embed=1$/);
     const page = await app.inject({ method: "GET", url: r.json().signingPath });
     expect(/frame-ancestors ([^;]*)/.exec(String(page.headers["content-security-policy"]))?.[1]?.trim()).toBe("'self' https://app.cliente.test");
-    // Un token de sesión ligado a la sesión embebida del formulario, no el link permanente del destinatario.
-    const { sha256Hex, decrypt } = await import("../src/lib/util");
-    const sessionToken = String(r.json().signingPath).slice(3).split("?")[0];
+    // El link permanente del destinatario (no un token de sesión): quien completa el formulario no recibe la copia
+    // final por correo y la descarga desde ese link, también después de cerrarse el sobre. La sesión embebida queda
+    // registrada (para el CSP) sin token de sesión asociado.
+    const { decrypt } = await import("../src/lib/util");
+    const linkToken = String(r.json().signingPath).slice(3).split("?")[0];
     const rc = await db.one<any>(`SELECT id, access_token_enc FROM recipients WHERE envelope_id = $1 AND self_registered`, [r.json().envelopeId]);
-    expect(sessionToken).not.toBe(decrypt(rc.access_token_enc));
-    const st = await db.one<any>(
-      `SELECT st.recipient_id, es.created_by_actor FROM signer_session_tokens st JOIN embed_sessions es ON es.id = st.embed_session_id WHERE st.token_hash = $1`,
-      [sha256Hex(sessionToken)],
-    );
-    expect(st).toMatchObject({ recipient_id: rc.id, created_by_actor: expect.stringMatching(/^web_form:/) });
-    const sess = await app.inject({ method: "GET", url: `/v1/signing/${sessionToken}` });
-    expect(sess.statusCode).toBe(200);
-    expect(sess.json().recipient.id).toBe(rc.id);
+    expect(linkToken).toBe(decrypt(rc.access_token_enc));
+    const es = await db.one<any>(`SELECT created_by_actor, used_at FROM embed_sessions WHERE recipient_id = $1`, [rc.id]);
+    expect(es).toMatchObject({ created_by_actor: expect.stringMatching(/^web_form:/) });
+    expect(es.used_at).not.toBeNull();
+    expect((await db.one<any>(`SELECT count(*)::int AS n FROM signer_session_tokens WHERE recipient_id = $1`, [rc.id])).n).toBe(0);
     await db.query(`UPDATE tenants SET embed_frame_ancestors = '{}' WHERE id = $1`, [tenant]);
   });
 

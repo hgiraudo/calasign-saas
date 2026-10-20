@@ -393,8 +393,9 @@ const ensurePdf = (bytes: Uint8Array, what: string) => {
 const BAMBOO_FIELDS = ["firstName", "lastName", "displayName", "workEmail", "homeEmail", "mobilePhone", "jobTitle", "department", "division", "location", "hireDate", "employeeNumber", "supervisorEId", "payRate"];
 
 /** config: datos de la cuenta que se guardan en la conexión (Factorial: companyId, para no revocar al desconectar los
- *  tokens de una cuenta que otra conexión sigue usando). */
-export async function testConnection(c: Conn): Promise<{ label: string | null; config?: Record<string, unknown> }> {
+ *  tokens de una cuenta que otra conexión sigue usando). warning: código de aviso para quien prueba la conexión
+ *  ("account_unknown": no se pudo determinar la cuenta; al desconectar se revoca igual). */
+export async function testConnection(c: Conn): Promise<{ label: string | null; config?: Record<string, unknown>; warning?: "account_unknown" }> {
   switch (c.provider) {
     case "bamboohr":
       await get(c, "/employees/directory");
@@ -405,9 +406,11 @@ export async function testConnection(c: Conn): Promise<{ label: string | null; c
     }
     case "factorial": {
       const d = await get(c, "/employees/employees?limit=1");
-      const first = (Array.isArray(d?.data) ? d.data : Array.isArray(d) ? d : [])[0];
-      const companyId = first?.company_id != null && /^[A-Za-z0-9_-]{1,64}$/.test(String(first.company_id)) ? String(first.company_id) : null;
-      return { label: "Factorial", ...(companyId ? { config: { companyId } } : {}) };
+      // La compañía sale del primer empleado; una cuenta sin empleados (recién creada) la informa en sus entidades
+      // legales (companies/legal_entities, también con company_id). Sin ninguna de las dos no se adivina: se avisa.
+      let companyId = factorialCompanyId(d);
+      if (!companyId) companyId = factorialCompanyId(await get(c, "/companies/legal_entities?limit=1").catch(() => null));
+      return companyId ? { label: "Factorial", config: { companyId } } : { label: "Factorial", warning: "account_unknown" };
     }
     case "ironclad":
       await get(c, "/workflows?pageSize=1");
@@ -416,6 +419,12 @@ export async function testConnection(c: Conn): Promise<{ label: string | null; c
       await get(c, "/contracts?limit=1");
       return { label: "Juro" };
   }
+}
+
+/** company_id del primer elemento de una lista de Factorial ({ data: [...] } o [...]), o null. */
+function factorialCompanyId(d: any): string | null {
+  const first = (Array.isArray(d?.data) ? d.data : Array.isArray(d) ? d : [])[0];
+  return first?.company_id != null && /^[A-Za-z0-9_-]{1,64}$/.test(String(first.company_id)) ? String(first.company_id) : null;
 }
 
 /** Busca registros para elegir desde la UI (filtra por nombre/correo/título). */

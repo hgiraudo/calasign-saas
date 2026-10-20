@@ -143,7 +143,13 @@ async function notify(
   const e = await d.db.one<any>(`SELECT * FROM envelopes WHERE id = $1`, [p.envelopeId]);
   if (!e) return;
   const org = await d.db.one<any>(`SELECT name FROM tenants WHERE id = $1`, [e.tenant_id]);
-  const sender = e.created_by ? await d.db.one<any>(`SELECT name, email, locale FROM users WHERE id = $1`, [e.created_by]) : null;
+  const sender = e.created_by
+    ? await d.db.one<any>(
+        `SELECT u.name, u.email, u.locale, EXISTS (SELECT 1 FROM memberships m WHERE m.tenant_id = $2 AND m.user_id = u.id) AS is_member
+           FROM users u WHERE u.id = $1`,
+        [e.created_by, e.tenant_id],
+      )
+    : null;
   const decliner = p.declinedBy ? await d.db.one<any>(`SELECT name, decline_reason FROM recipients WHERE id = $1`, [p.declinedBy]) : null;
   // Marca blanca: la marca del sobre (sub-marca o la de la organización) da colores, logo, plantillas, textos, dominio
   // de los links y remitente (white-label/brand.ts).
@@ -152,7 +158,8 @@ async function notify(
   const sendAs = await senderFor(d.db, wl);
   const from = { from: sendAs.from, replyTo: sendAs.replyTo, dkim: sendAs.dkim };
   const base = {
-    senderName: sender?.name ?? (rebrands(wl) || e.brand_id ? wl.name : org?.name) ?? productLabel(wl),
+    // Quien dejó la organización ya no habla en su nombre: los recordatorios y avisos salen con el de la marca u organización.
+    senderName: (sender?.is_member ? sender.name : null) ?? (rebrands(wl) || e.brand_id ? wl.name : org?.name) ?? productLabel(wl),
     organizationName: rebrands(wl) || e.brand_id ? wl.name : org?.name ?? "",
     subject: e.subject,
     declinedBy: decliner?.name ?? null,
@@ -620,6 +627,15 @@ export async function sweep(d: Deps) {
     ["saml-assertion-ids", () => d.db.query(`DELETE FROM saml_assertion_ids WHERE ctid IN (SELECT ctid FROM saml_assertion_ids WHERE expires_at < now() LIMIT 5000)`)],
     // Tokens de vinculación de Telegram (30 minutos): vencidos hace más de un día ya no hacen falta.
     ["telegram-link-tokens", () => d.db.query(`DELETE FROM telegram_link_tokens WHERE expires_at < now() - interval '1 day'`)],
+    // Tokens de sesión del firmante (canje embebido, 0083): vencidos o revocados hace más de un día ya no abren nada
+    // (resolveSessionToken los rechaza); de a 5000 por pasada, por los índices de expires_at y revoked_at (0084).
+    [
+      "signer-session-tokens",
+      () =>
+        d.db.query(
+          `DELETE FROM signer_session_tokens WHERE ctid IN (SELECT ctid FROM signer_session_tokens WHERE expires_at < now() - interval '1 day' OR revoked_at < now() - interval '1 day' LIMIT 5000)`,
+        ),
+    ],
     [
       "download-links",
       () => d.db.query(`DELETE FROM download_links WHERE ctid IN (SELECT ctid FROM download_links WHERE expires_at < now() - interval '1 day' LIMIT 5000)`),

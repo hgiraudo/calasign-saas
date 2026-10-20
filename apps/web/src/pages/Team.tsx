@@ -549,9 +549,12 @@ function RolesTab({ roles, reload }: { roles: RolesResponse | null; reload: () =
 
 function GroupsTab({ manage }: { manage: boolean }) {
   const tt = useTeamsText();
+  const { me } = useAuth();
+  const { access } = useAccess();
   const [groups, setGroups] = useState<Group[] | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
-  type Draft = { id?: string; name: string; description: string; memberIds: string[] };
+  /** original: integrantes al abrir la edición (los que la API no cuenta como "sumados"). */
+  type Draft = { id?: string; name: string; description: string; memberIds: string[]; original?: string[] };
   const [editing, setEditingRaw] = useState<Draft | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -603,6 +606,15 @@ function GroupsTab({ manage }: { manage: boolean }) {
   };
 
   if (!groups) return error ? <ErrorBox error={error} /> : <Spinner />;
+  // Como assertCanAddToGroup en la API: sumar a alguien a un grupo existente le da acceso a lo compartido con él. Lo
+  // hace un propietario, un integrante del grupo o quien tiene envelopes:view_all y templates:manage; los demás solo
+  // pueden quitar integrantes. Sin datos de permisos todavía, no se bloquea (la API decide).
+  const canAddMembers =
+    !editing?.id ||
+    !access ||
+    access.role === "owner" ||
+    (access.permissions.includes("envelopes:view_all") && access.permissions.includes("templates:manage")) ||
+    Boolean(me && editing.original?.includes(me.user.id));
   return (
     <div className="stack">
       {manage && (
@@ -632,7 +644,15 @@ function GroupsTab({ manage }: { manage: boolean }) {
                         <button
                           type="button"
                           className="btn btn-sm"
-                          onClick={() => setEditing({ id: g.id, name: g.name, description: g.description ?? "", memberIds: g.members.map((m) => m.userId) })}
+                          onClick={() =>
+                            setEditing({
+                              id: g.id,
+                              name: g.name,
+                              description: g.description ?? "",
+                              memberIds: g.members.map((m) => m.userId),
+                              original: g.members.map((m) => m.userId),
+                            })
+                          }
                         >
                           {tt("groups.edit")}
                         </button>
@@ -674,12 +694,14 @@ function GroupsTab({ manage }: { manage: boolean }) {
             </label>
             <fieldset className="field">
               <legend>{tt("groups.members")}</legend>
+              {!canAddMembers && <p className="muted small">{tt("groups.addRestricted")}</p>}
               <div className="stack" style={{ gap: "0.4rem", maxHeight: 260, overflow: "auto" }}>
                 {members.map((m) => (
                   <label key={m.userId} className="row-wrap" style={{ fontWeight: 450 }}>
                     <input
                       type="checkbox"
                       checked={editing.memberIds.includes(m.userId)}
+                      disabled={!canAddMembers && !editing.original?.includes(m.userId)}
                       onChange={(e) =>
                         setEditing({
                           ...editing,

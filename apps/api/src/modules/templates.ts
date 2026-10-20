@@ -17,7 +17,7 @@ import type { Db } from "../infra/db";
 import { appendEvent, type Actor } from "../infra/evidence";
 import { AppError, assertNotStale, badRequest, conflict, notFound } from "../lib/errors";
 import { iso, sha256Hex, uuidv7 } from "../lib/util";
-import { assertTemplateAccess, templateVisibilitySql } from "./access";
+import { assertTemplateAccess, canManageTemplateRow, templateVisibilitySql } from "./access";
 import { authenticate, type AuthContext, type Services } from "./context";
 import { assertDocumentLimits, idempotent, sendEnvelope, assertTemplateLogicOrder, templateLogicOrderProblems } from "./envelopes";
 import { checkSenderValue, insertEnvelopeField } from "./fieldvalues";
@@ -153,6 +153,8 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
       ...toTemplate(r),
       documentCount: docs.find((d: any) => d.template_id === r.id)?.n ?? 0,
       roles: roles.filter((x: any) => x.template_id === r.id).map((x: any) => ({ name: x.name, role: x.role })),
+      // Si quien consulta puede editarla o borrarla (misma regla que assertTemplateAccess "manage"): la web oculta esas acciones.
+      canManage: canManageTemplateRow(a, r),
     }));
     return { items };
   });
@@ -170,7 +172,17 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
     return loadTemplateDetail(s.db, a.tenantId, id);
   });
 
-  app.get<P>("/v1/templates/:id", { preHandler: auth }, async (req) => loadTemplateDetail(s.db, A(req).tenantId, req.params.id));
+  // canManage: si quien consulta puede modificarla (editar, borrar, compartir); quien la ve por ser de la organización
+  // o por un grupo solo la usa. La web muestra el editor en solo lectura en vez de un 403 al guardar.
+  app.get<P>("/v1/templates/:id", { preHandler: auth }, async (req) => {
+    const a = A(req);
+    const d = await loadTemplateDetail(s.db, a.tenantId, req.params.id);
+    const canManage = await assertTemplateAccess(s.db, a, req.params.id, "manage").then(
+      () => true,
+      () => false,
+    );
+    return { ...d, canManage };
+  });
 
   app.patch<P>("/v1/templates/:id", { preHandler: auth }, async (req) => {
     const a = A(req);

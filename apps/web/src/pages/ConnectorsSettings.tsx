@@ -240,9 +240,10 @@ export function ConnectorsSettingsPage() {
                   className="btn btn-sm"
                   onClick={() =>
                     act(async () => {
-                      const r = await api<{ ok: boolean; error: string | null }>(`/v1/connectors/connections/${c.id}/test`, { method: "POST" });
+                      const r = await api<{ ok: boolean; error: string | null; warning?: string | null }>(`/v1/connectors/connections/${c.id}/test`, { method: "POST" });
                       if (!r.ok) throw new Error(r.error ?? "error");
-                    }, t("testOk"))
+                      setNote(r.warning === "account_unknown" ? t("testAccountUnknown") : t("testOk"));
+                    })
                   }
                 >
                   {t("test")}

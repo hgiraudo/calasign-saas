@@ -16,10 +16,11 @@ import { config } from "../../config";
 import type { Db } from "../../infra/db";
 import { SYSTEM, appendEvent, type Actor } from "../../infra/evidence";
 import { AppError, badRequest, conflict, notFound } from "../../lib/errors";
-import { decrypt, encrypt, iso, randomToken, sha256Hex, uuidv7 } from "../../lib/util";
+import { encrypt, iso, randomToken, sha256Hex, uuidv7 } from "../../lib/util";
 import { authenticate, type Services } from "../context";
 import { advanceRouting, lockEnvelope, pastExpiry } from "../envelopes";
 import { assertLinkCurrent, resolveToken } from "../signing";
+import { neutralReturnPage, resolveSignerReturn, setSignerReturnCookie, signerReturnUrl } from "../signer-return";
 import {
   ProviderError,
   mpCreatePreference,
@@ -568,7 +569,7 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
     return signerInfo(p, r, e);
   });
 
-  app.post<T>("/v1/signing/:token/payment/checkout", { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } }, async (req) => {
+  app.post<T>("/v1/signing/:token/payment/checkout", { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } }, async (req, reply) => {
     const token = req.params.token;
     const { recipient: r, envelope: e } = await resolveToken(s.db, token);
     const p = await s.db.one<any>(`SELECT * FROM envelope_payments WHERE envelope_id = $1`, [e.id]);
@@ -577,18 +578,29 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
     if (settled(p)) throw conflict("already_paid", "El pago ya está confirmado");
     if (!info.canPay) throw conflict("payment_not_available", p.timing === "after_sign" ? "El pago se habilita después de firmar" : "El sobre no admite pagos ahora");
 
+    // Vuelta neutra (signer-return.ts): el proveedor vuelve a /v1/payments/return/:id y de ahí al token con el que se
+    // está pagando ahora en este navegador (cookie) o, sin cookie (iframe de terceros), al último con que se inició o
+    // retomó el checkout (guardado acá también al reutilizarlo: antes la vuelta iba al token del primer inicio).
+    setSignerReturnCookie(reply, "payments", p.id, token);
+    const rememberReturn = () =>
+      s.db.query(`UPDATE envelope_payments SET checkout_return_token_enc = $2 WHERE id = $1 AND recipient_id = $3`, [p.id, encrypt(token), r.id]);
+
     // Un checkout anterior que sigue cobrable se reutiliza: si se creara otro (doble clic, dos pestañas), el firmante
     // podría pagar los dos y el segundo cobro quedaría sin acreditar (markPaymentPaid lo ignora).
     try {
       if (p.provider === "stripe" && p.checkout_id) {
         const prev = await stripeGetCheckoutSession(p.checkout_id);
-        if (prev.status === "open" && prev.url) return { url: prev.url };
+        if (prev.status === "open" && prev.url) {
+          await rememberReturn();
+          return { url: prev.url };
+        }
         if (prev.status === "complete" && p.status === "checkout_created")
           throw conflict("payment_processing", "El pago se está procesando; en unos instantes queda confirmado");
       } else if (p.provider === "mercadopago" && p.checkout_url) {
         // También después de un pago rechazado (status vuelve a "pending"): la preferencia de Checkout Pro sigue
         // cobrable y el comprador puede reintentar en ella. Una preferencia nueva dejaría dos cobrables y, si se pagan
         // las dos, el segundo cobro no se acredita.
+        await rememberReturn();
         return { url: p.checkout_url as string };
       }
     } catch (err) {
@@ -599,7 +611,7 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
     // El dominio del sobre (el de su sub-marca, si tiene): la sesión del código del firmante vive en ese host y, al volver
     // del proveedor a otro, había que pedir otro código (y veía otro dominio).
     const base = await envelopeBaseUrl(s.db, e.tenant_id, e.id);
-    const back = `${base}/s/${token}`;
+    const back = (outcome: "success" | "cancel") => signerReturnUrl(base, "payments", p.id, r, { payment: outcome });
     let checkoutId: string;
     let url: string;
     let nonceHash: string | null = null;
@@ -618,8 +630,8 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
           amount: Number(p.amount),
           currency: p.currency,
           description: p.description,
-          successUrl: `${back}?payment=success`,
-          cancelUrl: `${back}?payment=cancel`,
+          successUrl: back("success"),
+          cancelUrl: back("cancel"),
           // recipientId: a quién se le armó el checkout (si el pagador cambia y igual se paga este, se reembolsa).
           metadata: { paymentId: p.id, envelopeId: e.id, tenantId: e.tenant_id, recipientId: r.id },
           customerEmail: r.email,
@@ -640,8 +652,8 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
           currency: p.currency,
           externalReference: `pay:${p.id}:${r.id}:${checkoutRef}`, // pagador y checkout para los que se armó (ver markPaymentPaid)
           notificationUrl: `${config.appUrl}/v1/integrations/payments/mercadopago/webhook`,
-          successUrl: `${back}?payment=success`,
-          failureUrl: `${back}?payment=cancel`,
+          successUrl: back("success"),
+          failureUrl: back("cancel"),
           payerEmail: r.email,
         });
         checkoutId = c.id;
@@ -664,7 +676,11 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
       // nuestro, que nadie recibió, queda para cerrarlo en el proveedor. Antes se pisaba checkout_id y el otro quedaba
       // cobrable sin registro (dos preferencias de Mercado Pago pagables).
       if (row.checkout_id && row.checkout_url && row.checkout_id !== p.checkout_id && row.checkout_id !== checkoutId && !closed && !settled(row)) {
-        await t.query(`UPDATE envelope_payments SET stale_checkout_ids = array_append(stale_checkout_ids, $2), updated_at = now() WHERE id = $1`, [p.id, checkoutId]);
+        await t.query(`UPDATE envelope_payments SET stale_checkout_ids = array_append(stale_checkout_ids, $2), checkout_return_token_enc = $3, updated_at = now() WHERE id = $1`, [
+          p.id,
+          checkoutId,
+          encrypt(token),
+        ]);
         return { url: row.checkout_url as string };
       }
       // El checkout que se reemplaza (una sesión de Stripe vencida, por ejemplo) también se manda a cerrar, por las dudas.
@@ -674,8 +690,8 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
            stale_checkout_ids = CASE WHEN $6::text IS NULL THEN stale_checkout_ids ELSE array_append(stale_checkout_ids, $6::text) END,
            checkout_return_token_enc = $7, updated_at = now()
          WHERE id = $1 AND status NOT IN ('paid','refunded') RETURNING id`,
-        // El token con el que se inició (el de sesión del canje embebido, si se pagó desde ahí): la vuelta del pago
-        // simulado va a ese y no al link permanente del destinatario. Stripe y Mercado Pago ya lo llevan en sus URLs.
+        // El token con el que se inició (el de sesión del canje embebido, si se pagó desde ahí): el fallback de la vuelta
+        // neutra sin cookie (signer-return.ts).
         [p.id, checkoutId, url, nonceHash, checkoutRef, replaced, encrypt(token)],
       );
       // El sobre se anuló, rechazó o venció mientras se creaba el checkout en el proveedor (red): el checkout queda
@@ -693,6 +709,32 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
     });
     if (!open) throw conflict("payment_not_available", "El sobre no admite pagos ahora");
     return open;
+  });
+
+  // ───────── Vuelta del proveedor (success/cancel de Stripe, Mercado Pago y el simulado) ─────────
+
+  type R = { Params: { id: string }; Querystring: { payment?: string; k?: string } };
+  app.get<R>("/v1/payments/return/:id", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (req, reply) => {
+    const id = req.params.id;
+    const p = /^[0-9a-f-]{36}$/i.test(id)
+      ? await s.db.one<any>(`SELECT id, envelope_id, recipient_id, checkout_return_token_enc FROM envelope_payments WHERE id = $1`, [id])
+      : null;
+    const token = p
+      ? await resolveSignerReturn(s.db, req, {
+          kind: "payments",
+          id: p.id,
+          recipientId: p.recipient_id,
+          envelopeId: p.envelope_id,
+          storedTokenEnc: p.checkout_return_token_enc,
+          key: typeof req.query.k === "string" ? req.query.k : undefined,
+        })
+      : null;
+    if (!token) return neutralReturnPage(reply, "payments");
+    const e = await s.db.one<any>(`SELECT tenant_id FROM envelopes WHERE id = $1`, [p.envelope_id]);
+    const base = await envelopeBaseUrl(s.db, e.tenant_id, p.envelope_id);
+    const outcome = req.query.payment === "success" ? "success" : "cancel";
+    reply.header("cache-control", "no-store").header("referrer-policy", "no-referrer");
+    return reply.redirect(`${base}/s/${token}?payment=${outcome}`, 303);
   });
 
   // ───────── Proveedor simulado (fuera de producción) ─────────
@@ -742,12 +784,10 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
     } else {
       await markPaymentFailed(s.db, p.id, "rechazado en el pago simulado");
     }
-    // Vuelve al link con el que se inició el checkout (un token de sesión del canje embebido no se cambia por el
-    // permanente); los checkouts de antes de la 0083 no lo guardaban: el link vigente del pagador, como antes.
-    const r = p.checkout_return_token_enc ? null : await s.db.one<any>(`SELECT access_token_enc FROM recipients WHERE id = $1`, [p.recipient_id]);
-    const backToken = p.checkout_return_token_enc ? decrypt(p.checkout_return_token_enc) : r?.access_token_enc ? decrypt(r.access_token_enc) : null;
+    // Como Stripe y Mercado Pago: a la vuelta neutra (signer-return.ts), que lleva al token con el que se está pagando.
+    const r = await s.db.one<any>(`SELECT id, access_token_hash FROM recipients WHERE id = $1`, [p.recipient_id]);
     const base = await envelopeBaseUrl(s.db, p.tenant_id, p.envelope_id);
-    const back = backToken ? `${base}/s/${backToken}?payment=${outcome === "paid" ? "success" : "cancel"}` : base;
+    const back = r ? signerReturnUrl(base, "payments", p.id, r, { payment: outcome === "paid" ? "success" : "cancel" }) : base;
     if ((req.headers.accept ?? "").includes("application/json")) return { ok: true, outcome, redirect: back };
     return reply.redirect(back, 303);
   });

@@ -169,6 +169,8 @@ export interface Template {
 export interface TemplateSummary extends Template {
   documentCount: number;
   roles: { name: string; role: RecipientRole }[];
+  /** Si quien consulta puede editarla, borrarla o compartirla (templates:manage o quien la creó). */
+  canManage?: boolean;
 }
 
 export interface TemplateDetail {
@@ -176,6 +178,8 @@ export interface TemplateDetail {
   documents: Document[];
   roles: TemplateRole[];
   fields: TemplateField[];
+  /** Solo en GET /v1/templates/{id}: si quien consulta puede modificarla. */
+  canManage?: boolean;
 }
 
 // ───────────────────────────── Branding ─────────────────────────────

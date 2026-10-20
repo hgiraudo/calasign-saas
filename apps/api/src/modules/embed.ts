@@ -236,6 +236,9 @@ export async function embedRoutes(app: FastifyInstance, s: Services) {
         tenantId: sess.tenant_id,
         embedSessionId: sess.id,
         accessTokenHash: r.access_token_hash,
+        // Sobre ya completado (el código se emitió antes o el integrador lo abre para mostrar el cierre): el disparador de
+        // la 0083 no vuelve a correr, así que el token nace con la misma gracia de 15 minutos que al cerrarse.
+        closedGraceMinutes: cur?.status === "completed" ? 15 : undefined,
       });
       await appendEvent(t, {
         tenantId: sess.tenant_id,

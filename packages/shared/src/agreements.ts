@@ -410,6 +410,11 @@ export interface WorkflowRun {
   collectUrl: string | null;
   /** Si quien consulta puede cancelarlo o reintentarlo. */
   canManage?: boolean;
+  /**
+   * true: quien consulta administra plantillas pero no la inició, no aprueba ningún paso ni ve todos los sobres. Se
+   * omiten los datos (context vacío, output null en los pasos, sin collectUrl).
+   */
+  redacted?: boolean;
   createdAt: string;
   updatedAt: string;
 }

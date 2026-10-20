@@ -263,8 +263,17 @@ describe("canje embebido → token de sesión", () => {
     expect(c.statusCode).toBe(200);
   });
 
-  it("pago simulado iniciado con el token de sesión: la vuelta va a ese token", async () => {
-    const { envelope, recipient, token } = await setup();
+  /** Vuelta del proveedor: sigue la URL que se le dio al proveedor (ruta neutra) con o sin la cookie de la página. */
+  const followReturn = (url: string, cookie?: string) => {
+    const u = new URL(url);
+    return app.inject({ method: "GET", url: `${u.pathname}${u.search}`, headers: cookie ? { cookie } : {} });
+  };
+  const returnCookie = (res: { headers: Record<string, unknown> }) => {
+    const raw = ([] as string[]).concat((res.headers["set-cookie"] as any) ?? []).find((c) => c.startsWith("cs_signer_return="));
+    return raw ? { pair: raw.split(";")[0], raw } : null;
+  };
+
+  async function mockPayment(envelope: string, recipient: string) {
     const { uuidv7 } = await import("../src/lib/util");
     const payment = uuidv7();
     await db.query(
@@ -272,10 +281,11 @@ describe("canje embebido → token de sesión", () => {
        VALUES ($1,$2,$3,$4,'mock',100,'USD','Honorarios','before_sign','pending')`,
       [payment, tenant, envelope, recipient],
     );
-    const { session } = await redeem(envelope, recipient);
-    const co = await signing(session, "/payment/checkout", "POST");
-    expect(co.statusCode).toBe(200);
-    const u = new URL(co.json().url);
+    return payment;
+  }
+
+  async function completeMock(checkoutUrl: string) {
+    const u = new URL(checkoutUrl);
     const done = await app.inject({
       method: "POST",
       url: `${u.pathname.replace(/\/?$/, "")}/complete${u.search}`,
@@ -283,12 +293,76 @@ describe("canje embebido → token de sesión", () => {
       payload: "outcome=paid",
     });
     expect(done.statusCode).toBe(200);
-    const back = String(done.json().redirect);
-    expect(back).toContain(`/s/${session}?payment=success`);
+    return String(done.json().redirect);
+  }
+
+  it("pago simulado: la vuelta es neutra y lleva al token con que se pagó (cookie), sin el permanente en la URL", async () => {
+    const { envelope, recipient, token } = await setup();
+    const payment = await mockPayment(envelope, recipient);
+    const { session } = await redeem(envelope, recipient);
+    const co = await signing(session, "/payment/checkout", "POST");
+    expect(co.statusCode).toBe(200);
+    const ck = returnCookie(co)!;
+    expect(ck.raw).toContain(`Path=/v1/payments/return/${payment}`);
+    expect(ck.raw).toMatch(/HttpOnly/i);
+    expect(ck.raw).toMatch(/SameSite=Lax/i);
+    expect(ck.raw).toMatch(/Max-Age=7200/);
+    const back = await completeMock(co.json().url);
+    expect(back).toContain(`/v1/payments/return/${payment}?`);
+    expect(back).toContain("payment=success");
     expect(back).not.toContain(token);
+    expect(back).not.toContain(session);
+    const ret = await followReturn(back, ck.pair);
+    expect(ret.statusCode).toBe(303);
+    expect(String(ret.headers.location)).toMatch(new RegExp(`/s/${session}\\?payment=success$`));
   });
 
-  it("verificación de identidad iniciada con el token de sesión: el proveedor vuelve a ese token", async () => {
+  it("checkout reutilizado desde otra sesión: la vuelta va al token actual, no al del primer inicio", async () => {
+    const { envelope, recipient } = await setup();
+    const { uuidv7 } = await import("../src/lib/util");
+    const payment = uuidv7();
+    // Preferencia de Mercado Pago ya creada (se reutiliza siempre): sus URLs de vuelta se armaron en el primer inicio.
+    await db.query(
+      `INSERT INTO envelope_payments (id, tenant_id, envelope_id, recipient_id, provider, amount, currency, description, timing, status, checkout_id, checkout_url)
+       VALUES ($1,$2,$3,$4,'mercadopago',100,'USD','Honorarios','before_sign','checkout_created','pref_1','https://mp.test/checkout/pref_1')`,
+      [payment, tenant, envelope, recipient],
+    );
+    const { session: first } = await redeem(envelope, recipient);
+    expect((await signing(first, "/payment/checkout", "POST")).statusCode).toBe(200);
+    const { session: second } = await redeem(envelope, recipient);
+    const co = await signing(second, "/payment/checkout", "POST");
+    expect(co.json().url).toBe("https://mp.test/checkout/pref_1");
+    const ck = returnCookie(co)!;
+    const { signerReturnUrl } = await import("../src/modules/signer-return");
+    const r = await db.one<any>(`SELECT id, access_token_hash FROM recipients WHERE id = $1`, [recipient]);
+    const back = signerReturnUrl("http://localhost:5173", "payments", payment, r, { payment: "success" });
+    // Con la cookie de este navegador: el token con el que se retomó.
+    let ret = await followReturn(back, ck.pair);
+    expect(String(ret.headers.location)).toContain(`/s/${second}?payment=success`);
+    // Sin cookie (iframe de terceros): fallback al último token guardado, si la URL trae la clave k.
+    ret = await followReturn(back);
+    expect(ret.statusCode).toBe(303);
+    expect(String(ret.headers.location)).toContain(`/s/${second}?payment=success`);
+    // Una cookie con el token vencido o de otro destinatario no gana: se usa el fallback.
+    ret = await followReturn(back, "cs_signer_return=AAAAAAAAAAAAAAAAAAAAAAAA");
+    expect(String(ret.headers.location)).toContain(`/s/${second}?payment=success`);
+    // Sin cookie ni clave (o con una clave de otro pago): página neutra, sin token.
+    const noKey = new URL(back);
+    noKey.searchParams.delete("k");
+    ret = await followReturn(noKey.toString());
+    expect(ret.statusCode).toBe(200);
+    expect(ret.headers["content-type"]).toContain("text/html");
+    expect(ret.body).not.toContain(second);
+    noKey.searchParams.set("k", "x".repeat(43));
+    expect((await followReturn(noKey.toString())).statusCode).toBe(200);
+    // Rotar el link del destinatario invalida la clave y los tokens de sesión: neutra.
+    await db.query(`UPDATE recipients SET access_token_hash = $2 WHERE id = $1`, [recipient, "f".repeat(64)]);
+    ret = await followReturn(back, ck.pair);
+    expect(ret.statusCode).toBe(200);
+    expect(ret.headers.location).toBeUndefined();
+  });
+
+  it("verificación de identidad: vuelta neutra al token con que se inició o retomó", async () => {
     const { envelope, recipient, token } = await setup({ idv: "veriff" });
     let callback = "";
     globalThis.fetch = (async (input: any, init?: any) => {
@@ -303,10 +377,65 @@ describe("canje embebido → token de sesión", () => {
       const { session } = await redeem(envelope, recipient);
       const st = await signing(session, "/identity/start", "POST");
       expect(st.statusCode).toBe(200);
-      expect(callback).toContain(`/s/${session}?identity=return`);
+      const v = await db.one<any>(`SELECT id FROM identity_verifications WHERE recipient_id = $1`, [recipient]);
+      expect(callback).toContain(`/v1/identity/return/${v.id}?k=`);
       expect(callback).not.toContain(token);
+      expect(callback).not.toContain(session);
+      const ck1 = returnCookie(st)!;
+      expect(ck1.raw).toContain(`Path=/v1/identity/return/${v.id}`);
+      let ret = await followReturn(callback, ck1.pair);
+      expect(ret.statusCode).toBe(303);
+      expect(String(ret.headers.location)).toMatch(new RegExp(`/s/${session}\\?identity=return$`));
+      // Retomada desde otra sesión (la verificación sigue en curso): la vuelta va al token nuevo.
+      const { session: second } = await redeem(envelope, recipient);
+      const st2 = await signing(second, "/identity/start", "POST");
+      expect(st2.statusCode).toBe(200);
+      ret = await followReturn(callback, returnCookie(st2)!.pair);
+      expect(String(ret.headers.location)).toContain(`/s/${second}?identity=return`);
+      ret = await followReturn(callback);
+      expect(String(ret.headers.location)).toContain(`/s/${second}?identity=return`);
+      // Id desconocido: neutra.
+      expect((await app.inject({ method: "GET", url: `/v1/identity/return/${recipient}?k=x` })).statusCode).toBe(200);
     } finally {
       globalThis.fetch = real;
     }
   });
+
+  it("canje con el sobre ya completado: el token nace revocado con 15 minutos de gracia", async () => {
+    const { envelope, recipient } = await setup();
+    const su = await app.inject({ method: "POST", url: `/v1/envelopes/${envelope}/recipients/${recipient}/signing-url`, headers: auth, payload: { frameAncestors: [ORIGIN] } });
+    expect(su.statusCode).toBe(201);
+    await db.query(`UPDATE envelopes SET status = 'completed' WHERE id = $1`, [envelope]);
+    const ex = await app.inject({ method: "GET", url: `/embed/${String(su.json().url).split("/embed/")[1]}` });
+    expect(ex.statusCode).toBe(302);
+    const session = String(ex.headers.location).split("/s/")[1].split("?")[0];
+    const { sha256Hex } = await import("../src/lib/util");
+    const row = await db.one<any>(`SELECT revoked_at FROM signer_session_tokens WHERE token_hash = $1`, [sha256Hex(session)]);
+    const mins = (new Date(row.revoked_at).getTime() - Date.now()) / 60_000;
+    expect(mins).toBeGreaterThan(14);
+    expect(mins).toBeLessThanOrEqual(15);
+    expect((await signing(session)).statusCode).toBe(200);
+    await db.query(`UPDATE signer_session_tokens SET revoked_at = now() - interval '1 second' WHERE token_hash = $1`, [sha256Hex(session)]);
+    expect((await signing(session)).statusCode).toBe(404);
+  });
+
+  it("el barrido purga los tokens vencidos o revocados hace más de un día", async () => {
+    const { envelope, recipient } = await setup();
+    const { session: oldExpired } = await redeem(envelope, recipient);
+    const { session: oldRevoked } = await redeem(envelope, recipient);
+    const { session: recentRevoked } = await redeem(envelope, recipient);
+    const { session: alive } = await redeem(envelope, recipient);
+    const { sha256Hex } = await import("../src/lib/util");
+    await db.query(`UPDATE signer_session_tokens SET expires_at = now() - interval '25 hours' WHERE token_hash = $1`, [sha256Hex(oldExpired)]);
+    await db.query(`UPDATE signer_session_tokens SET revoked_at = now() - interval '25 hours' WHERE token_hash = $1`, [sha256Hex(oldRevoked)]);
+    await db.query(`UPDATE signer_session_tokens SET revoked_at = now() - interval '2 hours' WHERE token_hash = $1`, [sha256Hex(recentRevoked)]);
+    const { sweep } = await import("../src/modules/jobs");
+    const { createBlobStore } = await import("../src/infra/storage");
+    const log = { info() {}, warn() {}, error() {} };
+    await sweep({ db, blobs: createBlobStore(), log });
+    const left = (await db.query<any>(`SELECT token_hash FROM signer_session_tokens WHERE recipient_id = $1`, [recipient])).map((x) => x.token_hash);
+    expect(left).toEqual(expect.arrayContaining([sha256Hex(recentRevoked), sha256Hex(alive)]));
+    expect(left).not.toContain(sha256Hex(oldExpired));
+    expect(left).not.toContain(sha256Hex(oldRevoked));
+  }, 60_000);
 });

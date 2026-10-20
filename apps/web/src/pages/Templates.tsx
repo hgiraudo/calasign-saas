@@ -96,12 +96,15 @@ export function TemplatesPage() {
                 <Link className="btn btn-sm" to={`/app/forms?template=${it.id}`}>
                   {sc("forms.useFromTemplate")}
                 </Link>
+                {/* Sin permiso para modificarla (la ve por la organización o un grupo): se puede ver, no editar ni borrar. */}
                 <Link className="btn btn-sm" to={`/app/templates/${it.id}/edit`}>
-                  {t("tpl.edit")}
+                  {it.canManage === false ? t("tpl.view") : t("tpl.edit")}
                 </Link>
-                <button type="button" className="btn btn-ghost btn-sm" onClick={() => setDeleting(it)}>
-                  {t("common.delete")}
-                </button>
+                {it.canManage !== false && (
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => setDeleting(it)}>
+                    {t("common.delete")}
+                  </button>
+                )}
               </div>
             </div>
           ))}

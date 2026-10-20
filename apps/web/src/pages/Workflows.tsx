@@ -733,7 +733,11 @@ export function WorkflowRunPage() {
         </div>
         <div className="card pad stack">
           <strong>{ta("run.data")}</strong>
-          <pre className="agr-run-out">{JSON.stringify(run.context.data, null, 2)}</pre>
+          {run.redacted ? (
+            <p className="muted small">{ta("run.redacted")}</p>
+          ) : (
+            <pre className="agr-run-out">{JSON.stringify(run.context.data, null, 2)}</pre>
+          )}
         </div>
       </div>
     </div>

@@ -18,6 +18,7 @@ import { enqueue } from "../infra/queue";
 import { AppError, badRequest, conflict, forbidden, notFound } from "../lib/errors";
 import { decrypt, encrypt, maskDestination, randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { authenticate, clientInfo, type AuthContext, type Services } from "./context";
+import { hasPerm } from "./access";
 import { activateRecipient, advanceRouting, currentSignerGroup, danglingFormulaProblems, envelopeLogicOrderProblems, lockEnvelope, newLogicOrderProblems, pastExpiry } from "./envelopes";
 import { DISCARD_CHECKOUT_SET } from "./billing/payments";
 import { checkSenderValue, insertEnvelopeField } from "./fieldvalues";
@@ -613,7 +614,10 @@ export async function experienceRoutes(app: FastifyInstance, s: Services) {
       const r = await t.one<any>(`SELECT * FROM recipients WHERE id = $1 AND envelope_id = $2`, [req.params.recipientId, e.id]);
       if (!r) throw notFound("Destinatario");
       if (r.auth_method !== "in_person") throw conflict("not_in_person", "Este destinatario no firma en persona");
-      if (r.in_person_host_user_id !== a.userId) throw forbidden("Solo el anfitrión asignado puede abrir la firma en persona");
+      // Además del anfitrión, quien administra todos los sobres (envelopes:manage_all): si el anfitrión dejó la organización
+      // o no está, la firma en persona no queda bloqueada hasta corregir el sobre.
+      const asHost = r.in_person_host_user_id === a.userId;
+      if (!asHost && !hasPerm(a, "envelopes:manage_all")) throw forbidden("Solo el anfitrión asignado puede abrir la firma en persona");
       if (!["sent", "viewed"].includes(r.status)) throw conflict("not_signable", "Este destinatario ya no está pendiente");
       const group = await currentSignerGroup(t, e.id);
       if (group.order !== r.routing_order) throw conflict("not_your_turn", "Todavía no es el turno de este firmante");
@@ -631,7 +635,14 @@ export async function experienceRoutes(app: FastifyInstance, s: Services) {
         envelopeId: e.id,
         type: "recipient.in_person_started",
         actor: a.actor,
-        data: { recipientId: r.id, recipientName: r.name, hostUserId: a.userId, device: userAgent, ip },
+        data: {
+          recipientId: r.id,
+          recipientName: r.name,
+          hostUserId: a.userId,
+          ...(asHost ? {} : { assignedHostUserId: r.in_person_host_user_id ?? null, openedByAdmin: true }),
+          device: userAgent,
+          ip,
+        },
       });
       path = `/s/${token}?inperson=1`;
     });
@@ -660,7 +671,14 @@ export async function experienceRoutes(app: FastifyInstance, s: Services) {
       // mostraba antes y no vale para el corregido.
       if (r.name !== r0.name) throw conflict("recipient_changed", "Los datos del firmante cambiaron: volvé a cargar la página");
       if (r.identity_confirmed_at) return;
-      const host = await t.one<any>(`SELECT name, email FROM users WHERE id = $1`, [r.in_person_host_user_id]);
+      // Quien abrió la sesión en su dispositivo: el anfitrión asignado o un administrador (envelopes:manage_all).
+      const opened = await t.one<{ host: string | null }>(
+        `SELECT data->>'hostUserId' AS host FROM envelope_events
+          WHERE envelope_id = $1 AND type = 'recipient.in_person_started' AND data->>'recipientId' = $2 ORDER BY seq DESC LIMIT 1`,
+        [e.id, r.id],
+      );
+      const hostUserId = opened?.host ?? r.in_person_host_user_id;
+      const host = await t.one<any>(`SELECT name, email FROM users WHERE id = $1`, [hostUserId]);
       await t.query(`UPDATE recipients SET identity_confirmed_at = now(), authenticated_at = now() WHERE id = $1`, [r.id]);
       await appendEvent(t, {
         tenantId: e.tenant_id,
@@ -669,7 +687,7 @@ export async function experienceRoutes(app: FastifyInstance, s: Services) {
         actor: recipientActor(req, r),
         data: {
           method: "in_person",
-          hostUserId: r.in_person_host_user_id,
+          hostUserId,
           host: host ? `${host.name} <${host.email}>` : null,
           idDocumentDeclared: input.idDocumentNumber ? maskDestination(input.idDocumentNumber) : null,
           idDocumentMatches:

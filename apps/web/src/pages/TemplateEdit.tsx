@@ -227,6 +227,9 @@ export function TemplateEditPage() {
 
   if (!detail) return error ? <div className="page"><ErrorBox error={error} /></div> : <Spinner />;
   const stepIdx = STEPS.indexOf(step);
+  // Quien la ve por ser de la organización o por un grupo (sin templates:manage ni haberla creado) solo la consulta:
+  // editor en solo lectura en vez de un 403 al guardar.
+  const readOnly = detail.canManage === false;
   const stepLabel = (s: Step) =>
     s === "details" ? t("tpl.step.details") : s === "roles" ? t("tpl.roles") : t(s === "documents" ? "edit.step.documents" : "edit.step.fields");
 
@@ -238,7 +241,7 @@ export function TemplateEditPage() {
             ← {t("tpl.title")}
           </Link>
           <h1>{info.name || detail.template.name}</h1>
-          <ShareControl kind="templates" id={id!} canEdit versioned={versioned} disabled={busy} />
+          <ShareControl kind="templates" id={id!} canEdit={!readOnly} versioned={versioned} disabled={busy} />
         </div>
         {/* Se guarda el paso actual antes de usarla: con un Link, los cambios sin guardar se perdían y el sobre salía
             con la versión anterior de la plantilla. */}
@@ -266,6 +269,11 @@ export function TemplateEditPage() {
       </ol>
 
       <ErrorBox error={error} />
+      {readOnly && (
+        <div className="alert" role="status">
+          {t("tpl.readOnly")}
+        </div>
+      )}
       {stale && (
         <div className="alert alert-error row-between" role="alert">
           <span>{t("edit.versionChanged")}</span>
@@ -277,7 +285,7 @@ export function TemplateEditPage() {
 
       {/* Bloqueado mientras se guarda: la respuesta marca el paso como guardado y lo tipeado entretanto se perdía. */}
       {step === "details" && (
-        <fieldset className="form-lock card pad stack" disabled={busy} aria-busy={busy || undefined}>
+        <fieldset className="form-lock card pad stack" disabled={busy || readOnly} aria-busy={busy || undefined}>
           <label className="field">
             <span>{t("tpl.name")}</span>
             <input
@@ -352,6 +360,7 @@ export function TemplateEditPage() {
           documents={detail.documents}
           setError={setError}
           busy={busy}
+          readOnly={readOnly}
           setBusy={setBusy}
           // Todo lo de la plantilla, no solo los campos: con track + campos se adoptaba la versión del servidor sin sus
           // datos (nombre, roles de otra pestaña) y el próximo guardado los pisaba sin 409. Acá no hay cambios sin
@@ -364,6 +373,7 @@ export function TemplateEditPage() {
         <RolesStep
           roles={roles}
           busy={busy}
+          readOnly={readOnly}
           fieldCount={(rid) => fields.filter((f) => f.recipientId === rid).length}
           onChange={(r) => {
             setRoles(r);
@@ -381,6 +391,7 @@ export function TemplateEditPage() {
           fileUrl={(docId) => `/v1/templates/${id}/documents/${docId}/file`}
           focus={focusField}
           onChange={(f) => {
+            if (readOnly) return;
             setFields(f);
             setDirty((x) => ({ ...x, fields: true }));
             fieldsRev.current++;
@@ -416,6 +427,7 @@ function TemplateDocuments({
   onChanged,
   setError,
   busy,
+  readOnly,
   setBusy,
 }: {
   templateId: string;
@@ -423,6 +435,7 @@ function TemplateDocuments({
   onChanged: () => Promise<void>;
   setError: (e: string | null) => void;
   busy: boolean;
+  readOnly: boolean;
   setBusy: (b: boolean) => void;
 }) {
   const { t } = useI18n();
@@ -472,6 +485,7 @@ function TemplateDocuments({
 
   return (
     <div className="stack">
+      {!readOnly && (
       <div className="dropzone">
         <p>{t("edit.dropHint")}</p>
         <label className="btn btn-primary">
@@ -487,6 +501,7 @@ function TemplateDocuments({
           />
         </label>
       </div>
+      )}
       {documents.length === 0 ? (
         <div className="empty">{t("edit.noDocuments")}</div>
       ) : (
@@ -500,9 +515,11 @@ function TemplateDocuments({
                   {d.pageCount} {t("edit.pages")} · {formatBytes(d.sizeBytes)}
                 </div>
               </div>
-              <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => remove(d.id)}>
-                {t("common.delete")}
-              </button>
+              {!readOnly && (
+                <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => remove(d.id)}>
+                  {t("common.delete")}
+                </button>
+              )}
             </li>
           ))}
         </ul>
@@ -514,10 +531,13 @@ function TemplateDocuments({
 function RolesStep({
   roles,
   busy,
+  readOnly,
   fieldCount,
   onChange,
 }: {
   roles: DraftRole[];
+  /** Sin permiso para modificar la plantilla: solo se consulta. */
+  readOnly: boolean;
   /** Guardando: bloqueado (al volver, la respuesta reemplaza los roles y lo tipeado entretanto se perdía). */
   busy: boolean;
   /** Campos ubicados para el rol (se borran al guardar si deja de ser firmante). */
@@ -528,7 +548,7 @@ function RolesStep({
   const set = (i: number, patch: Partial<DraftRole>) => onChange(roles.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   let signerIdx = -1;
   return (
-    <fieldset className="form-lock stack" disabled={busy} aria-busy={busy || undefined}>
+    <fieldset className="form-lock stack" disabled={busy || readOnly} aria-busy={busy || undefined}>
       <p className="muted small">
         {t("tpl.rolesHint")} {t("edit.orderHint")}
       </p>
@@ -573,6 +593,7 @@ function RolesStep({
           </div>
         );
       })}
+      {!readOnly && (
       <button
         type="button"
         className="btn"
@@ -590,6 +611,7 @@ function RolesStep({
       >
         + {t("tpl.addRole")}
       </button>
+      )}
     </fieldset>
   );
 }

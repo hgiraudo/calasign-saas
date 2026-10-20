@@ -168,8 +168,10 @@ async function loadConn(db: Db, tenantId: string, id: string) {
 const ACCOUNT_KEY: Partial<Record<CrmProvider, string>> = { pipedrive: "companyId", kommo: "accountId" };
 
 /** Clave de config que identifica la cuenta del CRM a la que está instalada la app OAuth (para no revocar los tokens
- *  de una cuenta que otra conexión sigue usando). */
-const INSTALL_ACCOUNT_KEY: Partial<Record<CrmProvider, string>> = { hubspot: "portalId", pipedrive: "companyId", kommo: "accountId", zoho: "orgId", salesforce: "instanceUrl" };
+ *  de una cuenta que otra conexión sigue usando). Solo los proveedores en los que revocar desinstala la app de toda la
+ *  cuenta: HubSpot (DELETE del refresh token) y Pipedrive (/oauth/revoke). En Salesforce y Zoho revocar invalida solo
+ *  los tokens de esta conexión (cada autorización tiene los suyos): se revoca siempre. Kommo no tiene revocación. */
+const INSTALL_ACCOUNT_KEY: Partial<Record<CrmProvider, string>> = { hubspot: "portalId", pipedrive: "companyId" };
 
 /**
  * ¿Otra conexión OAuth del mismo proveedor (de cualquier organización, activa o no) usa la misma cuenta del CRM?

@@ -35,19 +35,25 @@ function assert(c, m) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function session() {
-  let cookie = "";
+  // Cookies por nombre: la de sesión y otras que pone la API (p. ej. cs_signer_return al iniciar un pago).
+  const jar = new Map();
   return async function api(method, path, body, { raw = false, expect, bearer, headers = {} } = {}) {
     const h = { ...headers };
     if (bearer) h.authorization = `Bearer ${bearer}`;
-    else if (cookie) h.cookie = cookie;
+    else if (jar.size) h.cookie = [...jar].map(([k, v]) => `${k}=${v}`).join("; ");
     let payload = body;
     if (body && !(body instanceof FormData)) {
       h["content-type"] = "application/json";
       payload = JSON.stringify(body);
     }
     const res = await fetch(BASE + path, { method, headers: h, body: payload, redirect: "manual" });
-    const set = res.headers.get("set-cookie");
-    if (set && !bearer) cookie = set.split(";")[0];
+    if (!bearer) {
+      for (const c of res.headers.getSetCookie?.() ?? []) {
+        const [kv] = c.split(";");
+        const i = kv.indexOf("=");
+        jar.set(kv.slice(0, i).trim(), kv.slice(i + 1));
+      }
+    }
     if (raw) return res;
     const text = await res.text();
     const data = text && (res.headers.get("content-type") ?? "").includes("json") ? JSON.parse(text) : text;

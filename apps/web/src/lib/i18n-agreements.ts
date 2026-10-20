@@ -236,6 +236,7 @@ const es = {
   "run.retry": "Reintentar",
   "run.collectLink": "Link para completar los datos",
   "run.data": "Datos",
+  "run.redacted": "Los datos de esta ejecución (lo cargado, las respuestas de los pasos y sus sobres) los ven quien la inició, quien aprueba un paso y quien ve todos los sobres.",
   "run.attempts": "{n} intentos",
   "run.startedBy": "Iniciado por",
 
@@ -537,6 +538,7 @@ const pt: Record<Key, string> = {
   "run.retry": "Tentar novamente",
   "run.collectLink": "Link para preencher os dados",
   "run.data": "Dados",
+  "run.redacted": "Os dados desta execução (o que foi preenchido, as respostas das etapas e seus envelopes) são vistos por quem a iniciou, por quem aprova uma etapa e por quem vê todos os envelopes.",
   "run.attempts": "{n} tentativas",
   "run.startedBy": "Iniciado por",
   "neg.title": "Negociações",
@@ -832,6 +834,7 @@ const en: Record<Key, string> = {
   "run.retry": "Retry",
   "run.collectLink": "Link to fill in the data",
   "run.data": "Data",
+  "run.redacted": "This run's data (what was entered, step responses and its envelopes) is visible to whoever started it, step approvers and anyone who can view all envelopes.",
   "run.attempts": "{n} attempts",
   "run.startedBy": "Started by",
   "neg.title": "Negotiations",

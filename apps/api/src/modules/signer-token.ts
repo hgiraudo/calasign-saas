@@ -41,17 +41,19 @@ export async function resolveSessionToken(db: Db, hash: string): Promise<{ recip
 
 /**
  * Emite un token de sesión para una sesión embebida ya registrada (canje de /embed/:code, formulario web embebido),
- * dentro de la transacción del llamador. Devuelve el token (solo se guarda su hash).
+ * dentro de la transacción del llamador. Devuelve el token (solo se guarda su hash). `closedGraceMinutes`: el sobre ya
+ * está cerrado (completado) y el token nace revocado con esa gracia, como si el disparador de la 0083 hubiera corrido.
  */
 export async function issueSignerSessionToken(
   t: Db,
-  o: { recipientId: string; envelopeId: string; tenantId: string; embedSessionId: string; accessTokenHash: string },
+  o: { recipientId: string; envelopeId: string; tenantId: string; embedSessionId: string; accessTokenHash: string; closedGraceMinutes?: number },
 ): Promise<string> {
   const token = randomToken();
   await t.query(
-    `INSERT INTO signer_session_tokens (token_hash, recipient_id, envelope_id, tenant_id, embed_session_id, access_token_hash, last_used_at, expires_at, max_expires_at)
-     VALUES ($1,$2,$3,$4,$5,$6, now(), now() + make_interval(hours => $7), now() + make_interval(hours => $8))`,
-    [sha256Hex(token), o.recipientId, o.envelopeId, o.tenantId, o.embedSessionId, o.accessTokenHash, SIGNER_SESSION_TOKEN_HOURS, SIGNER_SESSION_TOKEN_MAX_HOURS],
+    `INSERT INTO signer_session_tokens (token_hash, recipient_id, envelope_id, tenant_id, embed_session_id, access_token_hash, last_used_at, expires_at, max_expires_at, revoked_at)
+     VALUES ($1,$2,$3,$4,$5,$6, now(), now() + make_interval(hours => $7), now() + make_interval(hours => $8),
+             CASE WHEN $9::int IS NULL THEN NULL ELSE now() + make_interval(mins => $9::int) END)`,
+    [sha256Hex(token), o.recipientId, o.envelopeId, o.tenantId, o.embedSessionId, o.accessTokenHash, SIGNER_SESSION_TOKEN_HOURS, SIGNER_SESSION_TOKEN_MAX_HOURS, o.closedGraceMinutes ?? null],
   );
   return token;
 }

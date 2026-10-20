@@ -15,6 +15,18 @@ export class HttpError extends Error {
 }
 
 export const UNAUTHORIZED_EVENT = "calasign:unauthorized";
+/**
+ * Un 403 forbidden de la consola: los permisos de la sesión pueden haber cambiado (otro administrador le cambió el rol
+ * o recortó los permisos del rol). AccessProvider vuelve a pedir /v1/me/access para que la consola deje de ofrecer lo
+ * que ya no puede hacer.
+ */
+export const FORBIDDEN_EVENT = "calasign:forbidden";
+
+function signalAuthErrors(res: Response, path: string, code: string | undefined) {
+  if (typeof window === "undefined") return;
+  if (res.status === 401 && path !== "/v1/me") window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+  if (res.status === 403 && code === "forbidden" && !path.startsWith("/v1/me/access")) window.dispatchEvent(new Event(FORBIDDEN_EVENT));
+}
 
 /** El recurso cambió desde que se cargó (otra pestaña u otra persona): 409 version_changed de X-Expected-Updated-At. */
 export function isVersionChanged(e: unknown): boolean {
@@ -108,7 +120,7 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
     // Un 401 en medio de un flujo puede ser la sesión del remitente que venció o se cerró (p. ej. al activar SSO
     // obligatorio): AuthProvider revisa /v1/me y, si la sesión ya no existe, manda al login. Un 401 de firmante
     // (OTP) no cierra nada porque /v1/me sigue respondiendo.
-    if (res.status === 401 && path !== "/v1/me" && typeof window !== "undefined") window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+    signalAuthErrors(res, path, err?.code);
     throw new HttpError(res.status, err?.code ?? `http_${res.status}`, err?.message || res.statusText, err?.details);
   }
   return data as T;
@@ -429,8 +441,8 @@ export async function fetchResponse(path: string, init: RequestInit = {}): Promi
     networkError(e);
   }
   if (!res.ok) {
-    if (res.status === 401 && path !== "/v1/me" && typeof window !== "undefined") window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
     const err = ((await res.json().catch(() => null)) as ApiError | null)?.error;
+    signalAuthErrors(res, path, err?.code);
     throw new HttpError(res.status, err?.code ?? `http_${res.status}`, err?.message || res.statusText, err?.details);
   }
   return res;

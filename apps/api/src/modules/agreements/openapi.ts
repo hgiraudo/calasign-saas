@@ -96,13 +96,23 @@ export const AGREEMENTS_OPS: Op[] = [
     tag: W,
     summary: "Iniciar desde el link público",
     description:
-      "Hasta 60 ejecuciones públicas por hora por workflow (después, 429 workflow_rate_limited, sin Retry-After). Los destinatarios cuyo correo o teléfono escribió quien completó el formulario quedan autorregistrados: no reciben invitaciones ni recordatorios hasta validar su correo.",
+      "Cuerpo: { website?, captchaToken? } (captchaToken obligatorio si GET devuelve captchaSiteKey; si no, 400 captcha_failed). Exige la funcionalidad web_forms del plan (si no, 404). Hasta 60 ejecuciones públicas por hora por workflow y un tope por organización compartido con los formularios web (después, 429 workflow_rate_limited, sin Retry-After). Los destinatarios cuyo correo o teléfono escribió quien completó el formulario quedan autorregistrados: no reciben invitaciones ni recordatorios hasta validar su correo.",
     auth: "none",
     status: 201,
-    errors: ["workflow_rate_limited"],
+    errors: ["workflow_rate_limited", "captcha_failed"],
   },
   { method: "get", path: "/v1/public/workflow-runs/{token}", tag: W, summary: "Estado público de una ejecución", auth: "none" },
-  { method: "post", path: "/v1/public/workflow-runs/{token}/steps/{index}", tag: W, summary: "Completar un paso de datos", body: SubmitCollectInput, auth: "none" },
+  {
+    method: "post",
+    path: "/v1/public/workflow-runs/{token}/steps/{index}",
+    tag: W,
+    summary: "Completar un paso de datos",
+    description:
+      "410 workflow_inactive si el workflow se desactivó (o, en una ejecución pública, se despublicó o el plan ya no incluye web_forms); 422 too_fast si se envía menos de 2,5 s después de mostrarse; 429 form_recent_submission si el mismo correo desde la misma IP completó otra ejecución del workflow hace poco. Las ejecuciones que esperan un formulario vencen (cancelled) a los 7 días sin actividad.",
+    body: SubmitCollectInput,
+    auth: "none",
+    errors: ["workflow_inactive", "too_fast", "form_recent_submission"],
+  },
 
   { method: "get", path: "/v1/negotiations", tag: N, summary: "Negociaciones" },
   { method: "post", path: "/v1/negotiations", tag: N, summary: "Compartir un borrador para negociar", body: CreateNegotiationInput, status: 201 },

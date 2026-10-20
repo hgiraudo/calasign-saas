@@ -357,6 +357,19 @@ async function notifyPasswordReset(d: Deps, p: { userId?: string; tokenEnc?: str
 
 // ───────────────────────────── Finalización y sellado ─────────────────────────────
 
+/** IP de la última apertura (recipient.viewed) del destinatario anterior a su firma; si no hay, la de la última. */
+export function certificateViewIp(
+  events: { type: string; actor_id: string | null; occurred_at: string | Date; ip?: string | null }[],
+  recipientId: string,
+  signedAt: string | Date | null,
+): string | null {
+  const views = events.filter((x) => x.type === "recipient.viewed" && x.actor_id === recipientId);
+  if (!views.length) return null;
+  const limit = signedAt ? new Date(signedAt).getTime() : null;
+  const before = limit === null ? [] : views.filter((x) => new Date(x.occurred_at).getTime() <= limit);
+  return ((before.length ? before : views).at(-1)?.ip as string | null | undefined) ?? null;
+}
+
 async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
   const e = await d.db.one<any>(`SELECT * FROM envelopes WHERE id = $1`, [p.envelopeId]);
   if (!e || e.status !== "finalizing") return;
@@ -374,12 +387,10 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
   const docBytes = await Promise.all(docs.map((x) => d.blobs.get(x.storage_key)));
   const stampFields: StampField[] = toStampFields(fields, docs, sigImages);
 
-  // El ÚLTIMO evento de ese tipo del destinatario: la IP del certificado (sin signed_ip) es la de su última apertura, no
-  // la de la primera (p. ej. desde otro dispositivo, días antes).
-  const ev = (r: any, type: string) => {
-    for (let i = events.length - 1; i >= 0; i--) if (events[i].type === type && events[i].actor_id === r.id) return events[i];
-    return undefined;
-  };
+  // IP del certificado sin signed_ip: la de la última apertura ANTERIOR a la firma (la sesión desde la que firmó), no la
+  // de la primera (otro dispositivo, días antes) ni una posterior (volvió a abrir el link después de firmar). Sin
+  // apertura anterior (o sin fecha de firma), la última.
+  const lastViewIp = (r: any) => certificateViewIp(events, r.id, r.signed_at);
   const inPersonLabels = await inPersonAuthLabels(d.db, recips, e.locale);
   const identities = await identityForCertificate(d.db, recips);
   const certRecipients: CertificateRecipient[] = recips.map((r) => ({
@@ -395,7 +406,7 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
     viewedAt: r.viewed_at ? new Date(r.viewed_at).toISOString() : null,
     consentedAt: r.consented_at ? new Date(r.consented_at).toISOString() : null,
     signedAt: r.signed_at ? new Date(r.signed_at).toISOString() : null,
-    ip: r.signed_ip ?? ev(r, "recipient.viewed")?.ip ?? null,
+    ip: r.signed_ip ?? lastViewIp(r),
     userAgent: r.signed_user_agent ?? null,
     signaturePng: sigImages.get(`${r.id}:signature`) ?? null,
     note: replacementNote(r, recips, e.locale),
@@ -514,8 +525,9 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
     const cur = await t.one<any>(`SELECT status FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
     if (cur?.status !== "finalizing") return false;
     await t.query(
-      `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'signed',$3,'application/pdf',$4,$5)`,
-      [fileId, e.tenant_id, key, pdf.length, sha],
+      // chain_head: el hash final impreso en el certificado de este PDF (la verificación pública lo usa sin parsearlo).
+      `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256, chain_head) VALUES ($1,$2,'signed',$3,'application/pdf',$4,$5,$6)`,
+      [fileId, e.tenant_id, key, pdf.length, sha, /^[0-9a-f]{64}$/.test(chainHead) ? chainHead : null],
     );
     await t.query(
       `UPDATE envelopes SET status = 'completed', completed_at = $2, signed_file_id = $3, updated_at = now(), version = version + 1 WHERE id = $1`,

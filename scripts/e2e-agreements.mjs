@@ -407,6 +407,8 @@ assert(pv.status === "waiting" && pv.step?.fields.length === 4, "el run espera l
 await api("POST", `/v1/public/workflow-runs/${started.token}/steps/0`, { values: { nombre: "x" } }, { anon: true, expect: 400 });
 // 31/02 no existe: se rechaza en el formulario (antes pasaba y el repositorio fallaba al guardarla como date).
 await api("POST", `/v1/public/workflow-runs/${started.token}/steps/0`, { values: { nombre: "x", email: "x@example.com", plazo: "1", inicio: "31/02/2027" } }, { anon: true, expect: 400 });
+// Tiempo mínimo de llenado del formulario público (public-intake.ts MIN_FILL_MS): un envío inmediato es de un bot.
+await sleep(2600);
 const wfClient = `María Gonçalves ${stamp}`;
 const wfEmail = `maria+${stamp}@example.com`;
 pv = await api("POST", `/v1/public/workflow-runs/${started.token}/steps/0`, { values: { nombre: wfClient, email: wfEmail.toUpperCase(), plazo: "18" } }, { anon: true });
@@ -439,6 +441,7 @@ step("workflow: link público → datos (validados) → aprobación → contrato
 
 // Un visitante que tipea el correo del firmante fijo de la empresa no recibe el link de la empresa.
 const st2 = await api("POST", `/v1/public/workflows/${slug}/start`, {}, { anon: true });
+await sleep(2600);
 let pv2 = await api("POST", `/v1/public/workflow-runs/${st2.token}/steps/0`, { values: { nombre: `Intruso ${stamp}`, email: me.user.email, plazo: "1" } }, { anon: true });
 let run2 = await api("POST", `/v1/workflow-runs/${pv2.runId}/steps/1/decision`, { approve: true });
 assert(run2.steps[3].status === "completed", `el sobre del segundo run se envió (${run2.steps[3].status})`);
@@ -499,15 +502,18 @@ step("workflow por API: rechazo y cancelación");
   const kslug = kwf.publicUrl.split("/wf/")[1];
   const values = { nombre: `Key ${stamp}`, email: `key+${stamp}@example.com`, plazo: "6" };
   const s1 = await api("POST", `/v1/public/workflows/${kslug}/start`, {}, { anon: true });
+  await sleep(2600);
   const v1 = await api("POST", `/v1/public/workflow-runs/${s1.token}/steps/0`, { values }, { anon: true });
   const kr1 = await api("GET", `/v1/workflow-runs/${v1.runId}`);
   assert(kr1.status === "completed", `run público de la key enviado (${kr1.status} ${JSON.stringify(kr1.steps.map((x) => x.error))})`);
   await api("GET", `/v1/envelopes/${kr1.context.envelopes.firma.envelopeId}`, null, asKey); // el sobre es de la key
   const s2 = await api("POST", `/v1/public/workflows/${kslug}/start`, {}, { anon: true });
+  await sleep(2600);
   await api("DELETE", `/v1/api-keys/${key.apiKey.id}`, null, { expect: 204 });
   await api("GET", `/v1/public/workflows/${kslug}`, null, { anon: true, expect: 404 });
   await api("POST", `/v1/public/workflows/${kslug}/start`, {}, { anon: true, expect: 404 });
-  const v2 = await api("POST", `/v1/public/workflow-runs/${s2.token}/steps/0`, { values }, { anon: true });
+  // Otro correo: el mismo correo desde la misma IP en minutos se deduplica (form_recent_submission).
+  const v2 = await api("POST", `/v1/public/workflow-runs/${s2.token}/steps/0`, { values: { ...values, email: `key2+${stamp}@example.com` } }, { anon: true });
   const kr2 = await api("GET", `/v1/workflow-runs/${v2.runId}`);
   assert(kr2.status === "failed" && !kr2.context.envelopes.firma && /revocada/.test(kr2.steps[2].error ?? ""), `con la key revocada no se envía (${kr2.status})`);
   step("workflow público de una API key: sobres a su nombre; revocada, el link no se ofrece y los runs en curso no envían");

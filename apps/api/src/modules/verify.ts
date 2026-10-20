@@ -22,6 +22,7 @@ export async function verifyRoutes(app: FastifyInstance, s: Services) {
     // siendo un documento auténtico de CalaSign.
     const hit = await s.db.one<any>(
       `SELECT e.id, e.tenant_id, e.brand_id, e.subject, e.completed_at, t.name AS org, (e.signed_file_id = f.id) AS is_latest,
+              f.id AS file_id, f.chain_head,
               v.version, v.reason, v.created_at AS version_created_at,
               (SELECT max(version) FROM envelope_signed_versions WHERE envelope_id = e.id) AS latest_version
        FROM files f
@@ -45,13 +46,10 @@ export async function verifyRoutes(app: FastifyInstance, s: Services) {
       ),
       s.db.one<any>(`SELECT data FROM envelope_events WHERE envelope_id = $1 AND type = 'envelope.completed' ORDER BY seq DESC LIMIT 1`, [hit.id]),
       s.db.query<any>(`SELECT * FROM envelope_events WHERE envelope_id = $1 ORDER BY seq`, [hit.id]),
-      // El hash final impreso en el certificado de ESTE PDF (metadatos o texto): es lo que ata la cadena al documento.
-      readCertificateChainHead(bytes).catch((err) => {
-        if (err instanceof PdfReaderBusyError) throw new AppError(503, "pdf_reader_busy", err.message);
-        throw err;
-      }),
+      // El hash final impreso en el certificado de ESTE PDF: es lo que ata la cadena al documento.
+      printedChainHead(s, hit.file_id, hit.chain_head, bytes),
     ]);
-    const chain = anchorChain(verifyRows(rows), rows, printed?.head ?? null, completed?.data?.certificateChainHead ?? null);
+    const chain = anchorChain(verifyRows(rows), rows, printed, completed?.data?.certificateChainHead ?? null);
     const seal = completed?.data?.seal ?? {};
     const res: VerifyResponse = {
       match: true,
@@ -71,6 +69,21 @@ export async function verifyRoutes(app: FastifyInstance, s: Services) {
     };
     return res;
   });
+}
+
+/**
+ * Hash final impreso en el certificado del PDF sellado. El sha256 ya coincidió con un archivo sellado: si al sellarlo se
+ * guardó files.chain_head, es ese (sin parsear el PDF en el hilo principal). Archivos sellados antes de la columna: se
+ * lee del PDF (metadatos o texto) una vez y se guarda ('' = el PDF no lo trae).
+ */
+async function printedChainHead(s: Services, fileId: string, stored: string | null, bytes: Uint8Array): Promise<string | null> {
+  if (stored !== null && stored !== undefined) return stored || null;
+  const found = await readCertificateChainHead(bytes).catch((err) => {
+    if (err instanceof PdfReaderBusyError) throw new AppError(503, "pdf_reader_busy", err.message);
+    throw err;
+  });
+  await s.db.query(`UPDATE files SET chain_head = $2 WHERE id = $1 AND chain_head IS NULL`, [fileId, found?.head ?? ""]).catch(() => undefined);
+  return found?.head ?? null;
 }
 
 /**

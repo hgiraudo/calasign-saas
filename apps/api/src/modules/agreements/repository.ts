@@ -384,7 +384,11 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
     if (input.value !== undefined) set("value", input.value);
     if (input.currency !== undefined) set("currency", input.currency);
     if (input.tags !== undefined) set("tags", [...new Set(input.tags)]);
-    if (input.metadata !== undefined) set("metadata", JSON.stringify({ ...(r.metadata ?? {}), ...input.metadata }), "::jsonb");
+    // Fusión en SQL (no con lo leído antes): dos cambios simultáneos de claves distintas no se pisan.
+    if (input.metadata !== undefined) {
+      params.push(JSON.stringify(input.metadata ?? {}));
+      sets.push(`metadata = COALESCE(metadata, '{}'::jsonb) || $${params.length}::jsonb`);
+    }
     if (sets.length) {
       await s.db.query(`UPDATE agreements SET ${sets.join(", ")}, updated_at = now() WHERE id = $1`, params);
       await refreshSearchVector(s.db, r.id);
@@ -521,6 +525,7 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
         if (String(e).includes("unique") || String(e).includes("duplicate")) throw conflict("duplicate_key", "Ya existe un campo con esa clave");
         throw e;
       });
+    await auditFromRequest(s.db, req, a, "agreement_field.created", { targetType: "agreement_field", targetId: (row as any).id, data: { key: input.key, type: input.type } });
     reply.code(201);
     return toField(row);
   });
@@ -538,14 +543,16 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
       input.type,
       input.options ? JSON.stringify(input.options) : null,
     ]);
+    await auditFromRequest(s.db, req, a, "agreement_field.updated", { targetType: "agreement_field", targetId: cur.id, data: { key: cur.key, fields: Object.keys((req.body as object) ?? {}) } });
     return toField(row);
   });
 
   app.delete<{ Params: { id: string } }>("/v1/agreement-fields/:id", { preHandler: auth }, async (req, reply) => {
     const a = A(req);
     requirePerm(a, "settings:manage");
-    const r = await s.db.query(`DELETE FROM agreement_fields WHERE id = $1 AND tenant_id = $2 RETURNING id`, [req.params.id, a.tenantId]);
+    const r = await s.db.query<any>(`DELETE FROM agreement_fields WHERE id = $1 AND tenant_id = $2 RETURNING id, key`, [req.params.id, a.tenantId]);
     if (!r.length) throw notFound("Campo");
+    await auditFromRequest(s.db, req, a, "agreement_field.deleted", { targetType: "agreement_field", targetId: r[0].id, data: { key: r[0].key } });
     return reply.code(204).send();
   });
 

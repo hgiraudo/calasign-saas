@@ -5,8 +5,22 @@ import { useNavigate, useParams } from "react-router-dom";
 import type { NegotiationView, PublicWorkflowRun, PublicWorkflowStart } from "@calasign/shared";
 import { api, errorText, HttpError } from "../lib/api";
 import { useAgrText } from "../lib/i18n-agreements";
+import { useI18n } from "../lib/i18n";
 import { ErrorBox, LocaleSwitcher, Logo, Spinner } from "../components/ui";
 import { NegotiationPanel } from "./Negotiations";
+import { Captcha } from "./PublicForm";
+
+/** Errores de los links públicos de workflows con texto propio (el resto, el genérico). */
+function publicError(e: unknown, ta: ReturnType<typeof useAgrText>): string {
+  if (e instanceof HttpError) {
+    if (e.code === "captcha_failed") return ta("pub.err.captcha");
+    if (e.code === "too_fast") return ta("pub.err.tooFast");
+    if (e.code === "form_recent_submission") return ta("pub.err.recent");
+    if (e.code === "workflow_inactive") return ta("pub.err.inactive");
+    if (e.code === "workflow_rate_limited") return ta("pub.err.rateLimited");
+  }
+  return errorText(e);
+}
 
 function PublicShell({ org, children }: { org?: string; children: React.ReactNode }) {
   const ta = useAgrText();
@@ -35,6 +49,10 @@ export function PublicWorkflowStartPage() {
   // El workflow arrancó pero su primer paso no es un formulario público (p. ej. una aprobación interna): no es un error.
   const [started, setStarted] = useState(false);
   const trap = useRef<HTMLInputElement>(null);
+  const { locale } = useI18n();
+  // Desafío anti-bots (si la plataforma lo configuró): el token es de un solo uso, se pide otro tras un rechazo.
+  const [captcha, setCaptcha] = useState<string | null>(null);
+  const [captchaReset, setCaptchaReset] = useState(0);
   useEffect(() => {
     api<PublicWorkflowStart>(`/v1/public/workflows/${encodeURIComponent(slug ?? "")}`)
       .then(setInfo)
@@ -44,12 +62,16 @@ export function PublicWorkflowStartPage() {
     setBusy(true);
     setError(null);
     try {
-      const r = await api<{ token: string | null; runId: string }>(`/v1/public/workflows/${encodeURIComponent(slug ?? "")}/start`, { method: "POST", body: { website: trap.current?.value ?? "" } });
+      const r = await api<{ token: string | null; runId: string }>(`/v1/public/workflows/${encodeURIComponent(slug ?? "")}/start`, {
+        method: "POST",
+        body: { website: trap.current?.value ?? "", captchaToken: captcha },
+      });
       if (r.token) nav(`/w/${r.token}`, { replace: true });
       else setStarted(true);
     } catch (e) {
-      setError(errorText(e));
+      setError(publicError(e, ta));
       setBusy(false);
+      if (info?.captchaSiteKey) setCaptchaReset((n) => n + 1);
     }
   };
   return (
@@ -66,8 +88,9 @@ export function PublicWorkflowStartPage() {
             ) : (
               <>
                 <input ref={trap} tabIndex={-1} autoComplete="off" aria-hidden="true" name="website" style={{ position: "absolute", left: "-5000px" }} />
+                {info.captchaSiteKey && <Captcha siteKey={info.captchaSiteKey} locale={locale} onToken={setCaptcha} resetSignal={captchaReset} />}
                 <div>
-                  <button type="button" className="btn btn-primary" onClick={start} disabled={busy}>
+                  <button type="button" className="btn btn-primary" onClick={start} disabled={busy || Boolean(info.captchaSiteKey && !captcha)}>
                     {ta("pub.start")}
                   </button>
                 </div>
@@ -117,7 +140,7 @@ export function PublicWorkflowRunPage() {
       setValues({});
       setSent(true);
     } catch (err) {
-      setError(errorText(err));
+      setError(publicError(err, ta));
     } finally {
       setBusy(false);
     }

@@ -12,13 +12,22 @@ que crear (Terraform o consola) y la configuración de la API.
   - Acepta solo los temas de `SES_SNS_TOPIC_ARNS` (lista blanca; vacía = rechaza todo con 403).
   - `SubscriptionConfirmation`: visita `SubscribeURL` (también en `sns.<región>.amazonaws.com`) solo si el mensaje pasó
     la verificación. La suscripción queda confirmada sola al crearla.
-  - Mensajes con `Timestamp` de más de 1 hora (o más de 5 minutos en el futuro) se rechazan (403 `stale`). El
-    certificado queda en caché hasta su `validTo`; después se descarga y valida de nuevo.
+  - Mensajes con `Timestamp` de más de 24 horas (o más de 5 minutos en el futuro) se rechazan (403 `stale`). La
+    ventana es amplia a propósito: SNS reintenta una entrega fallida durante horas (más con una política de reintentos
+    propia) y con una ventana de 1 hora se perdían rebotes y quejas reales después de una caída de la API. Un mensaje
+    firmado capturado y reenviado dentro de la ventana no hace daño: el procesamiento es idempotente (renueva la misma
+    supresión, no vuelve a marcar el aviso ni a registrar el evento). El certificado queda en caché hasta su `validTo`;
+    después se descarga y valida de nuevo.
   - `Bounce` con `bounceType = Permanent` → supresión **global** (`email_suppressions`, motivo `bounce`, `tenant_id`
     NULL) que **vence** a los `EMAIL_BOUNCE_SUPPRESSION_DAYS` días (60 por defecto; un rebote nuevo la renueva);
     transitorio → solo queda el detalle en el aviso (`notifications.feedback_detail`).
-  - `Complaint` → supresión **solo para la organización** del envío (la del aviso con ese `provider_message_id`;
-    motivo `complaint`, sin vencimiento). Una queja sin aviso asociado no suprime.
+  - `Complaint` → supresión **solo para la organización** del envío (motivo `complaint`, sin vencimiento). La
+    organización es la del aviso con ese `provider_message_id` o, si el correo no dejó fila en `notifications`, la de
+    la etiqueta `tenant` del correo (`mail.tags.tenant` del evento del configuration set): la API manda
+    `X-SES-MESSAGE-TAGS: tenant=<id>` en todo correo de una organización enviado por SES (configuration set
+    configurado o SMTP `email-smtp.<región>.amazonaws.com`; SES quita el encabezado antes de entregar). Una queja sin
+    aviso ni etiqueta (p. ej. restablecer contraseña, que no es de una organización) no suprime. Las notificaciones
+    de identidad (`notificationType`) no traen etiquetas: con ellas solo vale el aviso registrado.
   - El aviso enviado se encuentra por `notifications.provider_message_id` (el id de SES, que la API toma de la respuesta
     SMTP `250 Ok <id>`) y pasa a `status = 'bounced'` / `'complained'`. Si es de un sobre, se agrega
     `notification.bounced` / `notification.complained` a su actividad (destino enmascarado).
@@ -31,13 +40,15 @@ que crear (Terraform o consola) y la configuración de la API.
   quien tiene el link). Un rebote no lo frena (la persona lo pide en ese momento, con los topes de envío); si valida
   el código, el rebote de esa dirección se borra.
 - Invitaciones al equipo: con la dirección suprimida no sale el correo (el link de aceptación vuelve igual); la
-  respuesta no lo dice (sería información de otra organización), queda en el log del servidor.
+  respuesta no lo dice (sería información de otra organización), queda en el log del servidor. Las invitaciones y las
+  alertas de BYOK quedan registradas en `notifications` (plantillas `invitation`, `byok_key_failing`).
 
 ### Quitar una supresión
 
 - **Quejas de la organización**: `GET /v1/settings/email-suppressions` (lista) y
   `DELETE /v1/settings/email-suppressions/:address` (con `settings:manage`; queda en la auditoría como
-  `email_suppression.removed`). Una organización no puede quitar un rebote global (403).
+  `email_suppression.removed`). Sin una queja propia para esa dirección responde 404, también si la dirección tiene
+  un rebote global (no se revela: es información de otras organizaciones).
 - **Rebotes globales**: no hay administración de plataforma. Vencen solos, se borran cuando la persona valida un
   código por correo, o a mano:
   `DELETE FROM email_suppressions WHERE tenant_id IS NULL AND address = lower('…');`

@@ -23,12 +23,11 @@ import { requireFeature, tenantPlan } from "./billing/plans";
 import { rateLimitIpKey } from "../lib/ip";
 import { authenticate, clientInfo, type AuthContext, type Services } from "./context";
 import { setFrameAncestors } from "./embed";
+import { MIN_FILL_MS, publicTenantCapReached } from "./public-intake";
 import { sendEnvelope } from "./envelopes";
 import { insertEnvelopeFromTemplate, loadTemplateForUse, planFromTemplate, type LoadedTemplate } from "./templates";
 import { isPlatformHost, tenantBaseUrl, tenantForHost } from "./custom-domains";
 
-/** Tiempo mínimo entre abrir el formulario y enviarlo (un humano tarda más; un bot, menos). */
-const MIN_FILL_MS = 2500;
 const MAX_FILL_MS = 2 * 3600_000;
 
 type FormRow = any;
@@ -70,7 +69,7 @@ function toWebForm(r: FormRow, templateName: string, base: string, problem: Form
 }
 
 /** Cloudflare Turnstile: solo con las dos claves configuradas (si falta una, el formulario sigue como antes). */
-function captchaSiteKey(): string | null {
+export function captchaSiteKey(): string | null {
   return config.webForms.turnstileSiteKey && config.webForms.turnstileSecretKey ? config.webForms.turnstileSiteKey : null;
 }
 
@@ -529,13 +528,8 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
         // Y por organización, sumando todos sus formularios (por hora y por día): con muchos formularios, el tope de cada
         // uno no impedía agotar la cuota del mes en un rato. Con un lock por organización, dos formularios a la vez no
         // lo superan (el orden de bloqueo es siempre formulario → organización).
-        await t.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`webform-tenant:${form.tenant_id}`]);
-        const org = await t.one<{ h: number; d: number }>(
-          `SELECT count(*) FILTER (WHERE created_at > now() - interval '1 hour')::int AS h, count(*)::int AS d
-           FROM envelopes WHERE tenant_id = $1 AND (metadata->>'webFormId') IS NOT NULL AND created_at > now() - interval '1 day'`,
-          [form.tenant_id],
-        );
-        if ((org?.h ?? 0) >= W.maxPerTenantHour || (org?.d ?? 0) >= W.maxPerTenantDay) {
+        // El cupo es compartido con los workflows de inicio público (public-intake.ts).
+        if (await publicTenantCapReached(t, form.tenant_id)) {
           req.log.warn({ webFormId: form.id, tenantId: form.tenant_id }, "formularios web: la organización llegó a su tope de envíos");
           throw new AppError(429, "form_rate_limited", "Demasiados envíos de este formulario: probá más tarde");
         }

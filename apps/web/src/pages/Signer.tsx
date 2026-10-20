@@ -3,7 +3,7 @@ import { useFieldLogic } from "../lib/logic";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useParams } from "react-router-dom";
 import type { CompleteSigningInput, Field, SignatureImageInput, SigningSession } from "@calasign/shared";
-import { AUTO_FIELD_TYPES, ATTACHMENT_MAX_BYTES, contrastText, formatSigningDate, parseNumberLoose } from "@calasign/shared";
+import { AUTO_FIELD_TYPES, ATTACHMENT_MAX_BYTES, contrastText, formatSigningDate, parseNumberLoose, signingDateForDisplay } from "@calasign/shared";
 import { api, errorText, fetchResponse, HttpError, readBody } from "../lib/api";
 import { formatDate, formatDateTime, useI18n } from "../lib/i18n";
 import { DocumentView } from "../components/DocumentView";
@@ -636,7 +636,7 @@ function SigningFlow({
         ? recipient.name
         : f.type === "email"
           ? (recipient.email ?? "")
-          : formatSigningDate(new Date(), recipient.locale);
+          : signingDateForDisplay(formatSigningDate(new Date(), recipient.locale));
 
   const uploadAttachment = async (f: Field, file: File) => {
     if (file.size > ATTACHMENT_MAX_BYTES) {
@@ -859,7 +859,7 @@ function SigningFlow({
           downloads={session.documents.map((d) => (
             <SignerDownload
               key={d.id}
-              path={`${base}/documents/${d.id}/file`}
+              path={`${base}/documents/${d.id}/file?download=1`}
               name={d.name.replace(/\.pdf$/i, "")}
               label={session.documents.length > 1 ? `${sx("doc.download")}: ${d.name}` : sx("doc.download")}
               onAuth={() => api<SigningSession>(base).then(onDone, () => undefined)}

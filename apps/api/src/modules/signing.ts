@@ -167,7 +167,7 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
     return buildSession(s.db, req.params.token, recipient, envelope, authed);
   });
 
-  app.get<P>("/v1/signing/:token/documents/:documentId/file", rl, async (req, reply) => {
+  app.get<P & { Querystring: { download?: string } }>("/v1/signing/:token/documents/:documentId/file", rl, async (req, reply) => {
     const { envelope, recipient } = await resolveToken(s.db, req.params.token);
     assertCanReadDocuments(recipient, envelope);
     const d = await s.db.one<any>(
@@ -176,7 +176,8 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
     );
     if (!d) throw notFound("Documento");
     const bytes = await s.blobs.get(d.storage_key);
-    await recordSignerDownload(s.db, req.log, envelope, recipientActor(req, recipient), "document", req.params.documentId);
+    // Solo la descarga explícita (?download=1, el botón de la página): el visor pide el archivo en cada apertura.
+    if (req.query.download === "1") await recordSignerDownload(s.db, req.log, envelope, recipientActor(req, recipient), "document", req.params.documentId);
     reply.header("content-type", "application/pdf").header("cache-control", "private, no-store");
     return reply.send(Buffer.from(bytes));
   });

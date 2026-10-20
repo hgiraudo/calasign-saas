@@ -12,7 +12,7 @@ import { config } from "../../config";
 import type { TenantStorage, TenantStorageResolver } from "../../infra/storage";
 import { AppError } from "../../lib/errors";
 import { iso } from "../../lib/util";
-import { deliver } from "../../notifications/channels";
+import { sendTracked } from "../../notifications/outbound";
 import { auditFromRequest, recordAudit } from "../audit";
 import { authenticate, type Services } from "../context";
 
@@ -73,7 +73,8 @@ export async function markKeyFailing(db: Db, tenantId: string, keyArn: string, e
     [tenantId],
   );
   for (const a of admins) {
-    await deliver({
+    // Registrado en notifications: un rebote o una queja de la alerta se atribuye a la organización.
+    await sendTracked(db, { tenantId, template: "byok_key_failing" }, {
       channel: "email",
       to: a.email,
       tenantId,

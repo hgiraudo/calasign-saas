@@ -84,14 +84,21 @@ export interface VerifyResponse {
 }
 
 /**
- * Fecha de firma tal como se estampa en el PDF (dd/mm/aaaa, o aaaa-mm-dd en inglés), en UTC y diciéndolo: cerca de la
- * medianoche la fecha UTC no es la local del firmante, y sin el sufijo parecía la local. No hay zona horaria por
- * organización ni por firmante, y la del navegador no sirve como evidencia (la elige el cliente). La usan la API al
- * estampar y la página del firmante para la vista previa (antes mostraba otra fecha y otro formato).
+ * Fecha de firma tal como se guarda en el campo (dd/mm/aaaa, o aaaa-mm-dd en inglés), en UTC. El valor guardado no
+ * lleva sufijo (es el que devuelven la API, las exportaciones y los webhooks, como siempre); al estampar en el PDF y en
+ * la vista previa del firmante se le agrega " UTC" (signingDateForDisplay): cerca de la medianoche la fecha UTC no es
+ * la local del firmante y sin decirlo parecía la local. No hay zona horaria por organización ni por firmante, y la del
+ * navegador no sirve como evidencia (la elige el cliente).
  */
 export function formatSigningDate(d: Date, locale: string) {
   const dd = String(d.getUTCDate()).padStart(2, "0");
   const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
   const yyyy = d.getUTCFullYear();
-  return locale === "en" ? `${yyyy}-${mm}-${dd} UTC` : `${dd}/${mm}/${yyyy} UTC`;
+  return locale === "en" ? `${yyyy}-${mm}-${dd}` : `${dd}/${mm}/${yyyy}`;
+}
+
+/** Fecha de firma guardada → texto visible (PDF, vista previa): con " UTC" (sin duplicarlo en valores que ya lo traen). */
+export function signingDateForDisplay(value: string): string {
+  const v = value.trim();
+  return !v || /\bUTC$/.test(v) ? v : `${v} UTC`;
 }

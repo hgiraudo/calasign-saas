@@ -43,7 +43,7 @@ describe("hash final del certificado legible desde el PDF", () => {
   });
 
   it("sin metadatos (PDF anterior), sale del texto impreso en el certificado", async () => {
-    for (const locale of ["es", "en"]) {
+    for (const locale of ["es", "pt-BR", "en"]) {
       const doc = await PDFDocument.load(await renderEnvelopePdf(await input(locale)));
       doc.setKeywords([]);
       const legacy = await doc.save();

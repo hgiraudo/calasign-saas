@@ -90,11 +90,36 @@ async function sendEmail(m: OutboundMessage): Promise<SendResult> {
     html: m.html,
     ...(m.dkim ? { dkim: m.dkim } : {}),
     // Rebotes y quejas por SNS (docs/CORREO-REBOTES.md).
-    ...(config.mail.sesConfigurationSet ? { headers: { "X-SES-CONFIGURATION-SET": config.mail.sesConfigurationSet } } : {}),
+    ...(isSesSmtp() ? { headers: sesHeaders(config.mail.sesConfigurationSet, m.tenantId) } : {}),
   });
   // SES por SMTP responde "250 Ok <id de SES>": ese id (no el Message-ID del encabezado) es el que traen los avisos de
   // rebote y queja (mail.messageId) para asociarlos al envío.
   return { provider: "smtp", messageId: sesMessageId(info.response) ?? info.messageId ?? null };
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** SMTP de SES: configuration set configurado o el host email-smtp.<región>.amazonaws.com. */
+function isSesSmtp(): boolean {
+  if (config.mail.sesConfigurationSet) return true;
+  try {
+    return /^email-smtp(-fips)?\.[a-z0-9-]+\.amazonaws\.com$/i.test(new URL(config.mail.smtpUrl ?? "").hostname);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Encabezados para SES: el configuration set (si hay) y, si el correo es de una organización, la etiqueta
+ * tenant=<id>. SES la devuelve en los eventos de rebote/queja del configuration set (mail.tags) y con ella una queja
+ * se atribuye a la organización aunque el correo no haya dejado fila en notifications. SES quita los X-SES-* antes de
+ * entregar: solo se mandan por SES (con otro SMTP llegarían al destinatario).
+ */
+export function sesHeaders(configurationSet: string | null | undefined, tenantId?: string | null): Record<string, string> {
+  return {
+    ...(configurationSet ? { "X-SES-CONFIGURATION-SET": configurationSet } : {}),
+    ...(tenantId && UUID_RE.test(tenantId) ? { "X-SES-MESSAGE-TAGS": `tenant=${tenantId.toLowerCase()}` } : {}),
+  };
 }
 
 /** Id de mensaje de SES en la respuesta SMTP ("250 Ok 0100018f…-000000"). */

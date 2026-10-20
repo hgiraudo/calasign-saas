@@ -345,6 +345,8 @@ export async function documentRoutes(app: FastifyInstance, s: Services) {
             : null,
       ],
     );
+    // El texto de la plantilla es lo que firman los documentos que genera: quién lo cambió queda en la auditoría.
+    await auditFromRequest(s.db, req, a, "document_template.updated", { targetType: "document_template", targetId: cur.id, data: { name: (row as any).name, fields: Object.keys((req.body as object) ?? {}) } });
     return toTemplate(row, await loadClauseMap(s.db, a.tenantId));
   });
 
@@ -460,6 +462,7 @@ export async function documentRoutes(app: FastifyInstance, s: Services) {
         if (/unique|duplicate/i.test(String(e))) throw conflict("duplicate_slug", "Ya existe una cláusula con ese código");
         throw e;
       });
+    await auditFromRequest(s.db, req, a, "clause.created", { targetType: "clause", targetId: (row as any).id, data: { slug: input.slug, title: input.title } });
     reply.code(201);
     return toClause(row);
   });
@@ -478,14 +481,16 @@ export async function documentRoutes(app: FastifyInstance, s: Services) {
       input.body,
       input.category ?? null,
     ]);
+    await auditFromRequest(s.db, req, a, "clause.updated", { targetType: "clause", targetId: cur.id, data: { slug: cur.slug, fields: Object.keys((req.body as object) ?? {}) } });
     return toClause(row);
   });
 
   app.delete<{ Params: { id: string } }>("/v1/clauses/:id", { preHandler: auth }, async (req, reply) => {
     const a = A(req);
     requirePerm(a, "templates:manage");
-    const r = await s.db.query(`DELETE FROM clauses WHERE id = $1 AND tenant_id = $2 RETURNING id`, [req.params.id, a.tenantId]);
+    const r = await s.db.query<any>(`DELETE FROM clauses WHERE id = $1 AND tenant_id = $2 RETURNING id, slug, title`, [req.params.id, a.tenantId]);
     if (!r.length) throw notFound("Cláusula");
+    await auditFromRequest(s.db, req, a, "clause.deleted", { targetType: "clause", targetId: r[0].id, data: { slug: r[0].slug, title: r[0].title } });
     return reply.code(204).send();
   });
 }

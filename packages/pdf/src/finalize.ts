@@ -228,7 +228,7 @@ export async function readCertificateChainHead(pdf: Uint8Array): Promise<{ head:
   try {
     const { extractPdfPlainText } = await import("./plain-text");
     const { text } = await extractPdfPlainText(pdf, 5_000_000);
-    const names = ["es", "pt", "en"].map((l) => labels(l).chainHead.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    const names = ["es", "pt-BR", "en"].map((l) => labels(l).chainHead.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
     const re = new RegExp(`(?:${names.join("|")})\\s*([0-9a-f]{64})`, "g");
     let last: string | null = null;
     for (const x of text.matchAll(re)) last = x[1];

@@ -42,11 +42,50 @@ import { ownerProblem } from "../owner-check";
 
 /** Topes por negociación: los enlaces de participantes son públicos y cada propuesta manda un correo. */
 const MAX_COMMENTS = 500;
+/** Por contraparte: una sola no puede agotar el cupo de todas. */
+const MAX_COMMENTS_PER_PARTICIPANT = 100;
 const MAX_PENDING_PROPOSALS_PER_AUTHOR = 20;
 
-async function assertCommentCapacity(t: Db, negotiationId: string) {
-  const c = await t.one<any>(`SELECT count(*)::int AS n FROM negotiation_comments WHERE negotiation_id = $1`, [negotiationId]);
-  if ((c?.n ?? 0) >= MAX_COMMENTS) throw new AppError(429, "too_many_comments", `La negociación llegó al máximo de ${MAX_COMMENTS} comentarios`);
+/**
+ * Cupo de comentarios. Las contrapartes (links públicos) comparten MAX_COMMENTS y cada una tiene a lo sumo
+ * MAX_COMMENTS_PER_PARTICIPANT; el remitente y su equipo tienen un cupo aparte de MAX_COMMENTS, así las contrapartes no
+ * le dejan sin poder responder. Se llama con la negociación bloqueada (FOR UPDATE).
+ */
+async function assertCommentCapacity(t: Db, negotiationId: string, by: { type: "user" | "participant"; id: string | null }) {
+  const c = await t.one<{ total: number; mine: number }>(
+    `SELECT count(*)::int AS total, count(*) FILTER (WHERE author_id IS NOT DISTINCT FROM $3::text)::int AS mine
+       FROM negotiation_comments WHERE negotiation_id = $1 AND author_type = $2`,
+    [negotiationId, by.type, by.id],
+  );
+  if ((c?.total ?? 0) >= MAX_COMMENTS) throw new AppError(429, "too_many_comments", `La negociación llegó al máximo de ${MAX_COMMENTS} comentarios`);
+  if (by.type === "participant" && (c?.mine ?? 0) >= MAX_COMMENTS_PER_PARTICIPANT) {
+    throw new AppError(429, "too_many_comments", `Llegaste al máximo de ${MAX_COMMENTS_PER_PARTICIPANT} comentarios en esta negociación`);
+  }
+}
+
+/**
+ * Participantes contra los roles de firma del documento: un rol repetido (dos contrapartes firmarían el mismo lugar),
+ * un rol que el documento no tiene (no firmaría nada), o más de un rol sin contraparte (al aceptar, el remitente puede
+ * firmar uno solo y los demás lugares quedaban sin firmante).
+ */
+export function checkNegotiationRoles(participants: { role?: string | null; email: string }[], markRoles: string[], templateRoles: string[]) {
+  const known = new Map<string, string>();
+  for (const r of [...templateRoles, ...markRoles]) known.set(r.toLowerCase(), r);
+  const seen = new Set<string>();
+  for (const p of participants) {
+    const role = p.role?.trim();
+    if (!role) continue;
+    const k = role.toLowerCase();
+    if (seen.has(k)) throw badRequest("duplicate_role", `El rol «${role}» está asignado a más de una contraparte`);
+    seen.add(k);
+    if (!known.has(k)) throw badRequest("unknown_role", `El documento no tiene el rol de firma «${role}»`);
+  }
+  const missing = [...new Set(markRoles.map((r) => r.toLowerCase()))].filter((r) => !seen.has(r));
+  if (missing.length > 1) {
+    throw badRequest("missing_roles", `Faltan contrapartes para los roles: ${missing.map((r) => known.get(r) ?? r).join(", ")} (el remitente puede firmar solo uno)`, {
+      roles: missing.map((r) => known.get(r) ?? r),
+    });
+  }
 }
 
 function clausesFor(n: any): Record<string, string> {
@@ -271,11 +310,14 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
       message: input.message ?? null,
     };
     let text: string;
+    let markRoles: string[];
     try {
       text = renderNegotiation(n).text;
+      markRoles = renderTemplate(tpl.source, input.data, { clauses: snapshot, locale: tpl.locale, missing: "placeholder" }).marks.map((m) => m.role);
     } catch (e) {
       throw badRequest("template_syntax", e instanceof Error ? e.message : String(e));
     }
+    checkNegotiationRoles(input.participants, markRoles, analyzeTemplate(tpl.source, clauses).roles);
     await s.db.tx(async (t) => {
       await t.query(
         `INSERT INTO negotiations (id, tenant_id, title, source, document_template_id, template_source, template_locale, clause_snapshot, negotiable, data, message, created_by)
@@ -354,6 +396,7 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
       await enqueueNegotiationNotice(t, id, "invite", 1);
     }));
     const row = await s.db.one<any>(`SELECT * FROM negotiations WHERE id = $1`, [id]);
+    await auditFromRequest(s.db, req, a, "negotiation.created", { targetType: "negotiation", targetId: id, data: { title: meta.title, source: "pdf", sha256: f.sha256 } });
     reply.code(201);
     return fullView(s.db, row);
   });
@@ -394,14 +437,20 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
         summary: z.string().max(500).optional(),
       })
       .parse(req.body);
-    await s.db.tx(async (t) => {
+    const version = await s.db.tx(async (t) => {
       const n = await loadForManage(a, req.params.id, true, t);
       if (n.status !== "open") throw conflict("closed", "La negociación ya está cerrada");
       if (n.source === "pdf") throw conflict("pdf_source", "Un PDF subido no se edita: subí una versión nueva como otra negociación");
       const v = await newVersion(t, n, input.data ?? n.data, { ...(n.clause_overrides ?? {}), ...(input.clauseOverrides ?? {}) }, userAuthor(a), input.summary ?? "Edición del remitente");
       await enqueueNegotiationNotice(t, n.id, "version", v, { summary: input.summary ?? null });
+      return v;
     });
     const n = await loadForUser(a, req.params.id);
+    await auditFromRequest(s.db, req, a, "negotiation.updated", {
+      targetType: "negotiation",
+      targetId: n.id,
+      data: { version, fields: Object.keys(input.data ?? {}).slice(0, 50), clauses: Object.keys(input.clauseOverrides ?? {}).slice(0, 50) },
+    });
     return fullView(s.db, n);
   });
 
@@ -416,7 +465,7 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
       const locked = await t.one<any>(`SELECT status, current_version FROM negotiations WHERE id = $1 FOR UPDATE`, [n.id]);
       if (locked?.status !== "open") throw conflict("closed", "La negociación ya está cerrada");
       if (locked.current_version !== n.current_version) throw conflict("version_changed", "Hay una versión nueva: revisala y volvé a comentar");
-      await assertCommentCapacity(t, n.id);
+      await assertCommentCapacity(t, n.id, { type: "user", id: a.userId });
       await t.query(
         `INSERT INTO negotiation_comments (id, negotiation_id, version, author_type, author_id, author_name, quote, start_offset, end_offset, body)
          VALUES ($1,$2,$3,'user',$4,$5,$6,$7,$8,$9)`,
@@ -439,14 +488,14 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
   app.post<{ Params: { id: string; proposalId: string } }>("/v1/negotiations/:id/proposals/:proposalId/decision", { preHandler: auth }, async (req) => {
     const a = A(req);
     const input = ProposalDecisionInput.parse(req.body);
-    await s.db.tx(async (t) => {
+    const decided = await s.db.tx(async (t) => {
       const n = await loadForManage(a, req.params.id, true, t);
       if (n.status !== "open") throw conflict("closed", "La negociación ya está cerrada");
       const p = await t.one<any>(`SELECT * FROM negotiation_proposals WHERE id = $1 AND negotiation_id = $2 FOR UPDATE`, [req.params.proposalId, n.id]);
       if (!p) throw notFound("Propuesta");
       if (p.status !== "pending") throw conflict("decided", "La propuesta ya fue decidida");
       await t.query(`UPDATE negotiation_proposals SET status = $2, decided_at = now() WHERE id = $1`, [p.id, input.accept ? "accepted" : "rejected"]);
-      if (!input.accept) return;
+      if (!input.accept) return { negotiationId: n.id, proposal: p, version: null as number | null };
       // Si el texto cambió desde que se hizo la propuesta (edición o otra propuesta aceptada), aceptarla pisaría ese
       // cambio sin que se vea: el "valor actual" que muestra es el de entonces.
       if (p.version !== n.current_version) {
@@ -459,6 +508,12 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
       else overrides[p.key] = p.new_value;
       const v = await newVersion(t, n, data, overrides, { type: "participant", name: p.author_name }, `Propuesta aceptada: ${p.kind === "variable" ? p.key : `cláusula ${p.key}`}`);
       await enqueueNegotiationNotice(t, n.id, "version", v, { acceptedKey: p.key });
+      return { negotiationId: n.id, proposal: p, version: v as number | null };
+    });
+    await auditFromRequest(s.db, req, a, input.accept ? "negotiation.proposal_accepted" : "negotiation.proposal_rejected", {
+      targetType: "negotiation",
+      targetId: decided.negotiationId,
+      data: { proposalId: decided.proposal.id, kind: decided.proposal.kind, key: decided.proposal.key, author: decided.proposal.author_name, version: decided.version },
     });
     const n = await loadForUser(a, req.params.id);
     return fullView(s.db, n);
@@ -469,8 +524,15 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
     const n = await loadForManage(a, req.params.id);
     if (n.status !== "open") throw conflict("closed", "La negociación ya está cerrada");
     // Solo si sigue abierta: una aceptación simultánea ya pudo crear (y enviar) el sobre; pisarla la dejaba "cancelada".
-    const upd = await s.db.query(`UPDATE negotiations SET status = 'cancelled', updated_at = now() WHERE id = $1 AND status = 'open' RETURNING id`, [n.id]);
-    if (!upd.length) throw conflict("closed", "La negociación ya está cerrada");
+    const rejected = await s.db.tx(async (t) => {
+      const upd = await t.query(`UPDATE negotiations SET status = 'cancelled', updated_at = now() WHERE id = $1 AND status = 'open' RETURNING id`, [n.id]);
+      if (!upd.length) throw conflict("closed", "La negociación ya está cerrada");
+      // Las propuestas sin decidir quedan rechazadas (el CHECK de estados es pending/accepted/rejected): si no, seguían
+      // "pendientes" para siempre en una negociación cerrada (contadores, vista de la contraparte).
+      const r = await t.query(`UPDATE negotiation_proposals SET status = 'rejected', decided_at = now() WHERE negotiation_id = $1 AND status = 'pending' RETURNING id`, [n.id]);
+      return r.length;
+    });
+    await auditFromRequest(s.db, req, a, "negotiation.cancelled", { targetType: "negotiation", targetId: n.id, data: { title: n.title, pendingProposalsRejected: rejected } });
     return fullView(s.db, await loadForUser(a, n.id));
   });
 
@@ -624,7 +686,7 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
       const locked = await t.one<any>(`SELECT status, current_version FROM negotiations WHERE id = $1 FOR UPDATE`, [n.id]);
       if (locked?.status !== "open") throw conflict("closed", "La negociación ya está cerrada");
       if (locked.current_version !== n.current_version) throw conflict("version_changed", "Hay una versión nueva: revisala y volvé a comentar");
-      await assertCommentCapacity(t, n.id);
+      await assertCommentCapacity(t, n.id, { type: "participant", id: p.id });
       await t.query(
         `INSERT INTO negotiation_comments (id, negotiation_id, version, author_type, author_id, author_name, quote, start_offset, end_offset, body)
          VALUES ($1,$2,$3,'participant',$4,$5,$6,$7,$8,$9)`,

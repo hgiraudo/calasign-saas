@@ -5,9 +5,13 @@
 //   que tiene que ser https://sns.<región>.amazonaws.com/… (la región del TopicArn).
 // - TopicArn en la lista blanca SES_SNS_TOPIC_ARNS.
 // - SubscriptionConfirmation: se visita SubscribeURL solo si el mensaje pasó la verificación.
-// - Timestamp del mensaje de hace más de 1 hora (o del futuro): rechazado (un mensaje firmado capturado no se reproduce).
+// - Timestamp del mensaje de hace más de 24 horas (o del futuro): rechazado. SNS reintenta una entrega fallida durante
+//   horas (más con una política de reintentos propia): con una ventana corta se perdían avisos reales tras una caída de
+//   la API. Un mensaje firmado capturado y reenviado dentro de la ventana no hace daño: el procesamiento es idempotente
+//   (renueva la misma supresión y no vuelve a marcar el aviso ni a registrar el evento).
 // - Rebote permanente: supresión global de la dirección con vencimiento (EMAIL_BOUNCE_SUPPRESSION_DAYS). Queja:
-//   supresión solo para la organización del envío (por provider_message_id). El aviso queda 'bounced'/'complained' y,
+//   supresión solo para la organización del envío (por provider_message_id o, si el correo no dejó fila en
+//   notifications, por la etiqueta tenant=<id> que manda channels.ts en X-SES-MESSAGE-TAGS). El aviso queda 'bounced'/'complained' y,
 //   si es de un sobre, se registra en su actividad.
 // - Quitar una supresión: la organización, sus quejas (GET/DELETE /v1/settings/email-suppressions, settings:manage).
 //   Las globales (rebotes) no tienen pantalla (no hay administración de plataforma): vencen solas, se borran cuando la
@@ -18,7 +22,7 @@ import { config } from "../config";
 import type { Db } from "../infra/db";
 import { SYSTEM, appendEvent } from "../infra/evidence";
 import { readCappedText } from "../lib/http-body";
-import { forbidden, notFound } from "../lib/errors";
+import { notFound } from "../lib/errors";
 import { maskDestination } from "../lib/util";
 import { auditFromRequest } from "../modules/audit";
 import { authenticate, type AuthContext, type Services } from "../modules/context";
@@ -75,8 +79,11 @@ export function snsStringToSign(m: Record<string, unknown>): string | null {
 
 /** Certificados ya validados, con su vencimiento: pasado validTo se vuelven a descargar y validar. */
 const certCache = new Map<string, { pem: string; validTo: number }>();
-/** Antigüedad máxima del Timestamp de un mensaje SNS (SNS reintenta durante bastante menos con la política por defecto). */
-const MAX_MESSAGE_AGE_MS = 60 * 60_000;
+/**
+ * Antigüedad máxima del Timestamp de un mensaje SNS: 24 h, para no perder avisos que SNS reintenta tras una caída. La
+ * protección contra un reenvío la da la idempotencia de applySesEvent, no la ventana.
+ */
+const MAX_MESSAGE_AGE_MS = 24 * 60 * 60_000;
 
 async function defaultFetchCert(url: string): Promise<string> {
   const res = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(10_000) });
@@ -198,7 +205,7 @@ export async function applySesEvent(db: Db, ev: any): Promise<string> {
       const address = typeof r?.emailAddress === "string" ? normAddress(r.emailAddress) : "";
       if (!address) continue;
       const detail = `complaint${ev.complaint?.complaintFeedbackType ? `/${ev.complaint.complaintFeedbackType}` : ""}`.slice(0, 200);
-      await suppressComplaint(db, address, detail, messageId);
+      await suppressComplaint(db, address, detail, messageId, tenantTag(ev));
       await markNotifications(db, messageId, address, "complained", detail);
     }
     return "complaint";
@@ -217,20 +224,33 @@ async function suppressBounce(db: Db, address: string, detail: string, messageId
   );
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Etiqueta tenant=<id> del correo (mail.tags del evento de SES; ver channels.ts sesHeaders). */
+export function tenantTag(ev: any): string | null {
+  const v = ev?.mail?.tags?.tenant;
+  const id = Array.isArray(v) ? v[0] : v;
+  return typeof id === "string" && UUID_RE.test(id) ? id.toLowerCase() : null;
+}
+
 /**
- * Queja: solo para la organización que mandó el correo (la del aviso con ese provider_message_id). La persona se quejó
- * de esa organización; las demás le pueden seguir escribiendo. Sin aviso asociado no se sabe de quién es: no se suprime.
+ * Queja: solo para la organización que mandó el correo (la del aviso con ese provider_message_id o, si el correo no
+ * dejó fila, la de su etiqueta tenant). La persona se quejó de esa organización; las demás le pueden seguir
+ * escribiendo. Sin aviso ni etiqueta no se sabe de quién es (p. ej. restablecer contraseña): no se suprime.
  */
-async function suppressComplaint(db: Db, address: string, detail: string, messageId: string | null) {
-  if (!messageId) return;
-  const n = await db.one<{ tenant_id: string }>(`SELECT tenant_id FROM notifications WHERE provider_message_id = $1 AND channel = 'email' LIMIT 1`, [messageId]);
-  if (!n) return;
+async function suppressComplaint(db: Db, address: string, detail: string, messageId: string | null, tagTenant: string | null) {
+  const n = messageId
+    ? await db.one<{ tenant_id: string }>(`SELECT tenant_id FROM notifications WHERE provider_message_id = $1 AND channel = 'email' LIMIT 1`, [messageId])
+    : null;
+  const tenantId = n?.tenant_id ?? tagTenant;
+  if (!tenantId) return;
+  // Con la etiqueta, la organización puede no existir más (o el id no ser de una): no se inserta nada.
   await db.query(
     `INSERT INTO email_suppressions (address, reason, detail, provider_message_id, tenant_id)
-     VALUES ($1,'complaint',$2,$3,$4)
+     SELECT $1,'complaint',$2,$3,t.id FROM tenants t WHERE t.id = $4::uuid
      ON CONFLICT (tenant_id, address) WHERE tenant_id IS NOT NULL DO UPDATE SET
        detail = EXCLUDED.detail, provider_message_id = EXCLUDED.provider_message_id, updated_at = now()`,
-    [address, detail, messageId, n.tenant_id],
+    [address, detail, messageId, tenantId],
   );
 }
 
@@ -292,16 +312,13 @@ export async function sesFeedbackRoutes(app: FastifyInstance, s: Services) {
   });
 
   // Volver a escribirle a una dirección que se quejó (p. ej. la persona pidió seguir recibiendo los avisos). Solo las
-  // quejas de la propia organización: los rebotes son globales y no los quita una organización (vencen solos).
+  // quejas de la propia organización: los rebotes son globales y no los quita una organización (vencen solos). Sin
+  // queja propia, 404 siempre: no se revela si la dirección rebota en la plataforma (eso es de otras organizaciones).
   app.delete<{ Params: { address: string } }>("/v1/settings/email-suppressions/:address", { preHandler: auth }, async (req, reply) => {
     const a = A(req);
     const address = normAddress(req.params.address ?? "");
     const r = await s.db.query<any>(`DELETE FROM email_suppressions WHERE tenant_id = $1 AND address = $2 RETURNING reason`, [a.tenantId, address]);
-    if (!r.length) {
-      const global = await s.db.one(`SELECT 1 FROM email_suppressions WHERE tenant_id IS NULL AND address = $1 AND (expires_at IS NULL OR expires_at > now())`, [address]);
-      if (global) throw forbidden("Esa dirección rebota (supresión de toda la plataforma): vence sola o se libera cuando la persona valida un código por correo");
-      throw notFound("Supresión");
-    }
+    if (!r.length) throw notFound("Supresión");
     await auditFromRequest(s.db, req, a, "email_suppression.removed", { targetType: "email_suppression", data: { address, reason: r[0].reason } });
     reply.code(204);
     return null;

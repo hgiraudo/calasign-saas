@@ -138,7 +138,11 @@ describe("avisos a firmantes por varios canales", () => {
     expect(isTransientSendError(Object.assign(new Error("Try later"), { responseCode: 451 }))).toBe(true);
     expect(isTransientSendError(Object.assign(new Error("conn"), { code: "ECONNRESET" }))).toBe(true);
     expect(isTransientSendError(new TypeError("fetch failed", { cause: Object.assign(new Error("x"), { code: "UND_ERR_CONNECT_TIMEOUT" }) }))).toBe(true);
-    expect(isTransientSendError(new Error("WhatsApp no configurado"))).toBe(false);
+    // Configuración de la plataforma (canal sin configurar, credenciales SMTP rechazadas): se reintenta.
+    expect(isTransientSendError(new Error("WhatsApp no configurado"))).toBe(true);
+    expect(isTransientSendError(Object.assign(new Error("Invalid login: 535 Authentication Credentials Invalid"), { code: "EAUTH", responseCode: 535 }))).toBe(true);
+    expect(isTransientSendError(new Error("535 Authentication Credentials Invalid"))).toBe(true);
+    expect(isTransientSendError(new Error("550 mailbox unavailable"))).toBe(false);
     expect(isTransientSendError(new Error("algo raro"))).toBe(true);
   });
 

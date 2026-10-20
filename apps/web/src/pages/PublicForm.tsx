@@ -31,7 +31,7 @@ function loadTurnstile(): Promise<TurnstileApi> {
 }
 
 /** Desafío anti-bots (solo si la plataforma lo configuró: el formulario trae captchaSiteKey). */
-function Captcha({ siteKey, locale, onToken, resetSignal }: { siteKey: string; locale: string; onToken: (t: string | null) => void; resetSignal: number }) {
+export function Captcha({ siteKey, locale, onToken, resetSignal }: { siteKey: string; locale: string; onToken: (t: string | null) => void; resetSignal: number }) {
   const st = useScaleText();
   const box = useRef<HTMLDivElement>(null);
   const widget = useRef<{ api: TurnstileApi; id: string } | null>(null);

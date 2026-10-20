@@ -436,6 +436,8 @@ export interface PublicWorkflowStart {
   workflowName: string;
   organizationName: string;
   description: string | null;
+  /** Cloudflare Turnstile: si viene, el inicio exige `captchaToken` (POST .../start). */
+  captchaSiteKey: string | null;
 }
 
 // ───────────────────────────── Negociación ─────────────────────────────

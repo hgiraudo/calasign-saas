@@ -14,10 +14,12 @@ process.env.TELEGRAM_WEBHOOK_SECRET = "s3cret";
 
 const mails: { to: string; subject: string; text: string; from?: string | null }[] = [];
 let failMail: string | null = null;
+/** Código SMTP del fallo simulado: 4xx transitorio (se reintenta), 5xx permanente. */
+let failCode = "550";
 vi.mock("../src/notifications/channels", async (orig) => ({
   ...(await orig<typeof import("../src/notifications/channels")>()),
   deliver: vi.fn(async (m: { to: string; subject: string; text: string; from?: string | null }) => {
-    if (failMail && m.to === failMail) throw new Error(`550 rejected ${m.to}`);
+    if (failMail && m.to === failMail) throw new Error(`${failCode} rejected ${m.to}`);
     mails.push(m);
     return { provider: "smtp", messageId: `id-${mails.length}` };
   }),
@@ -158,12 +160,36 @@ describe("supresiones de correo de la organización", () => {
     expect(list.statusCode).toBe(200);
     expect(list.json().items.map((i: any) => i.address)).toEqual(["queja@x.com"]);
     expect((await app.inject({ method: "DELETE", url: "/v1/settings/email-suppressions/ajena%40x.com", headers: auth })).statusCode).toBe(404);
-    expect((await app.inject({ method: "DELETE", url: "/v1/settings/email-suppressions/rebota2%40x.com", headers: auth })).statusCode).toBe(403);
+    // Un rebote global no se revela: 404 como cualquier dirección sin queja propia.
+    expect((await app.inject({ method: "DELETE", url: "/v1/settings/email-suppressions/rebota2%40x.com", headers: auth })).statusCode).toBe(404);
     expect((await app.inject({ method: "DELETE", url: "/v1/settings/email-suppressions/Queja%40X.com", headers: auth })).statusCode).toBe(204);
     expect(await db.one(`SELECT 1 FROM email_suppressions WHERE address = 'queja@x.com'`)).toBeFalsy();
     expect(await db.one(`SELECT 1 FROM email_suppressions WHERE address = 'ajena@x.com'`)).toBeTruthy();
     const audit = await db.one<any>(`SELECT data FROM account_audit_log WHERE tenant_id = $1 AND action = 'email_suppression.removed'`, [tenant]);
     expect(audit.data.address).toBe("queja@x.com");
+  });
+});
+
+describe("envío registrado", () => {
+  it("si no se puede marcar 'failed' tras un error de envío, la fila 'queued' se borra y el reintento vuelve a enviar", async () => {
+    const { sendTracked } = await import("../src/notifications/outbound");
+    // Base que falla al actualizar el estado del aviso (p. ej. la conexión se cayó justo ahí).
+    const flaky = new Proxy(db, {
+      get(target, prop, recv) {
+        const v = Reflect.get(target, prop, recv);
+        if (prop !== "query") return typeof v === "function" ? v.bind(target) : v;
+        return (sql: string, params?: unknown[]) =>
+          /^\s*UPDATE notifications SET status/.test(sql) ? Promise.reject(new Error("conexión perdida")) : (v as any).call(target, sql, params);
+      },
+    }) as typeof db;
+    failMail = "falla@x.com";
+    const msg = { channel: "email" as const, to: "falla@x.com", subject: "s", text: "t" };
+    const out = await sendTracked(flaky, { tenantId: tenant, template: "invite", jobId: 987_654 }, msg);
+    expect(out).toMatchObject({ status: "failed" });
+    expect(await db.one(`SELECT 1 FROM notifications WHERE job_id = 987654`)).toBeFalsy();
+    failMail = null;
+    const again = await sendTracked(db, { tenantId: tenant, template: "invite", jobId: 987_654 }, msg);
+    expect(again.status).toBe("sent");
   });
 });
 
@@ -252,7 +278,9 @@ describe("vencimiento de acuerdos", () => {
 
     mails.length = 0;
     failMail = "socia@x.com";
+    failCode = "451"; // transitorio: el job se reintenta
     await expect(handleAgreementsJob(d, job.payload, job.id)).rejects.toThrow();
+    failCode = "550";
     expect((await db.one<any>(`SELECT expiry_notified_for FROM agreements WHERE id = $1`, [ag])).expiry_notified_for).toBeNull();
     expect(mails.map((m) => m.to)).toEqual(["dueno@x.com"]);
     expect(mails[0]!.subject).toMatch(/^Expires on /);
@@ -262,6 +290,23 @@ describe("vencimiento de acuerdos", () => {
     expect(mails.map((m) => m.to)).toEqual(["dueno@x.com", "socia@x.com"]);
     expect(mails[1]!.subject).toMatch(/^Vence em /);
     expect((await db.one<any>(`SELECT expiry_notified_for IS NOT NULL AS ok FROM agreements WHERE id = $1`, [ag])).ok).toBe(true);
+
+    // Error permanente (550) con un destino: el job no falla (no se re-encola cada día) y el acuerdo queda avisado.
+    // Un job nuevo del mismo vencimiento (otro id) no repite a quien ya lo recibió.
+    await db.query(`UPDATE agreements SET expiry_date = current_date + 6, expiry_notified_for = NULL WHERE id = $1`, [ag]);
+    expect(await agreementExpirySweep(d)).toBe(1);
+    const job2 = await db.one<any>(`SELECT id, payload FROM jobs WHERE dedupe_key LIKE $1 AND status = 'pending'`, [`agr:expiry:${ag}:%`]);
+    mails.length = 0;
+    failMail = "socia@x.com";
+    await handleAgreementsJob(d, job2.payload, job2.id);
+    expect(mails.map((m) => m.to)).toEqual(["dueno@x.com"]);
+    expect((await db.one<any>(`SELECT expiry_notified_for IS NOT NULL AS ok FROM agreements WHERE id = $1`, [ag])).ok).toBe(true);
+    await db.query(`UPDATE agreements SET expiry_notified_for = NULL WHERE id = $1`, [ag]);
+    const again = await db.one<any>(`INSERT INTO jobs (queue, payload) VALUES ('agreements', $1) RETURNING id`, [JSON.stringify(job2.payload)]);
+    failMail = null;
+    await handleAgreementsJob(d, job2.payload, again.id);
+    // dueno ya lo tenía (otro job del mismo aviso); socia rebotó en forma permanente y ahora sí sale.
+    expect(mails.map((m) => m.to)).toEqual(["dueno@x.com", "socia@x.com"]);
     await db.query(`DELETE FROM memberships WHERE user_id = ANY($1)`, [owners]);
   });
 });

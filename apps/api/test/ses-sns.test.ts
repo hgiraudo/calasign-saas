@@ -90,14 +90,18 @@ describe("SNS: verificación", () => {
     expect((await verifySnsMessage({ ...signed, SignatureVersion: "3" }, deps())).ok).toBe(false);
   });
 
-  it("rechaza mensajes de más de 1 hora (o del futuro) y revalida el certificado vencido del caché", async () => {
+  it("rechaza mensajes de más de 24 horas (o del futuro) y revalida el certificado vencido del caché", async () => {
     const { verifySnsMessage, clearSnsCertCache } = await import("../src/notifications/ses-feedback");
     clearSnsCertCache();
-    const old = { ...notification({ notificationType: "Delivery" }), Timestamp: new Date(Date.now() - 2 * 3600_000).toISOString() };
+    // Un reintento de SNS horas después de una caída se acepta.
+    const retried = { ...notification({ notificationType: "Delivery" }), Timestamp: new Date(Date.now() - 6 * 3600_000).toISOString() };
+    expect((await verifySnsMessage(await sign(retried), deps())).ok).toBe(true);
+    const old = { ...notification({ notificationType: "Delivery" }), Timestamp: new Date(Date.now() - 25 * 3600_000).toISOString() };
     expect(await verifySnsMessage(await sign(old), deps())).toEqual({ ok: false, reason: "stale" });
     const future = { ...notification({ notificationType: "Delivery" }), Timestamp: new Date(Date.now() + 3600_000).toISOString() };
     expect(await verifySnsMessage(await sign(future), deps())).toEqual({ ok: false, reason: "stale" });
     // Con el certificado en caché, pasado su validTo se vuelve a descargar (y uno vencido se rechaza).
+    clearSnsCertCache();
     fetchCert.mockClear();
     const ok = await sign(notification({ notificationType: "Delivery" }));
     expect((await verifySnsMessage(ok, deps())).ok).toBe(true);
@@ -196,5 +200,29 @@ describe("SES: rebotes y quejas", () => {
     const orphan = { eventType: "Complaint", mail: { messageId: "ses-nadie" }, complaint: { complainedRecipients: [{ emailAddress: "huerfana@x.com" }] } };
     await handleSnsMessage(db, await sign(notification(orphan)), deps());
     expect(await db.one(`SELECT 1 FROM email_suppressions WHERE address = 'huerfana@x.com'`)).toBeFalsy();
+  });
+
+  it("queja de un correo sin fila en notifications: se atribuye por la etiqueta tenant del correo", async () => {
+    const { handleSnsMessage } = await import("../src/notifications/ses-feedback");
+    const { uuidv7 } = await import("../src/lib/util");
+    const complaint = (to: string, tags?: Record<string, string[]>) => ({
+      eventType: "Complaint",
+      mail: { messageId: `ses-${uuidv7()}`, ...(tags ? { tags } : {}) },
+      complaint: { complainedRecipients: [{ emailAddress: to }] },
+    });
+    await handleSnsMessage(db, await sign(notification(complaint("Etiqueta@x.com", { tenant: [tenant.toUpperCase()], "ses:configuration-set": ["cs"] }))), deps());
+    expect(await db.one<any>(`SELECT tenant_id, reason FROM email_suppressions WHERE address = 'etiqueta@x.com'`)).toEqual({ tenant_id: tenant, reason: "complaint" });
+    // Etiqueta de una organización que no existe o inválida: no suprime (y no falla).
+    await handleSnsMessage(db, await sign(notification(complaint("fantasma@x.com", { tenant: [uuidv7()] }))), deps());
+    await handleSnsMessage(db, await sign(notification(complaint("rara@x.com", { tenant: ["no-es-uuid"] }))), deps());
+    expect(await db.one(`SELECT 1 FROM email_suppressions WHERE address IN ('fantasma@x.com','rara@x.com')`)).toBeFalsy();
+  });
+
+  it("los correos por SES llevan la etiqueta tenant (X-SES-MESSAGE-TAGS)", async () => {
+    const { sesHeaders } = await import("../src/notifications/channels");
+    expect(sesHeaders("cs", tenant)).toEqual({ "X-SES-CONFIGURATION-SET": "cs", "X-SES-MESSAGE-TAGS": `tenant=${tenant}` });
+    expect(sesHeaders(null, tenant)).toEqual({ "X-SES-MESSAGE-TAGS": `tenant=${tenant}` });
+    expect(sesHeaders("cs", null)).toEqual({ "X-SES-CONFIGURATION-SET": "cs" });
+    expect(sesHeaders("cs", "x,y=z")).toEqual({ "X-SES-CONFIGURATION-SET": "cs" });
   });
 });

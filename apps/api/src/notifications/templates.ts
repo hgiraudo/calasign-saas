@@ -13,7 +13,7 @@ export type TemplateKind =
   | "password_reset";
 
 /** Avisos de la plataforma de acuerdos (vencimientos y negociaciones): mismo diseño y marca que los de sobres. */
-export type AgreementTemplateKind = "agreement_expiry" | "negotiation_invite" | "negotiation_version" | "negotiation_proposal";
+export type AgreementTemplateKind = "agreement_expiry" | "negotiation_invite" | "negotiation_version" | "negotiation_proposal" | "workflow_approval";
 
 export interface TemplateVars {
   recipientName: string;
@@ -122,6 +122,11 @@ const T: Record<"es" | "pt-BR" | "en", Dict> = {
       lines: (v) => [`Hola ${v.recipientName}:`, `${v.senderName} propone cambiar ${v.detail ?? ""} en "${v.subject}".`],
       cta: "Revisar",
     },
+    workflow_approval: {
+      subject: (v) => `Aprobación pendiente: ${v.subject}`,
+      lines: (v) => [`Hola ${v.recipientName}:`, `El workflow "${v.subject}" espera tu aprobación (paso "${v.detail ?? ""}").`],
+      cta: "Revisar y decidir",
+    },
   },
   "pt-BR": {
     invite: {
@@ -211,6 +216,11 @@ const T: Record<"es" | "pt-BR" | "en", Dict> = {
       lines: (v) => [`Olá ${v.recipientName},`, `${v.senderName} propõe mudar ${v.detail ?? ""} em "${v.subject}".`],
       cta: "Revisar",
     },
+    workflow_approval: {
+      subject: (v) => `Aprovação pendente: ${v.subject}`,
+      lines: (v) => [`Olá ${v.recipientName},`, `O workflow "${v.subject}" aguarda sua aprovação (etapa "${v.detail ?? ""}").`],
+      cta: "Revisar e decidir",
+    },
   },
   en: {
     invite: {
@@ -299,6 +309,11 @@ const T: Record<"es" | "pt-BR" | "en", Dict> = {
       subject: (v) => `${v.senderName} proposed a change to "${v.subject}"`,
       lines: (v) => [`Hi ${v.recipientName},`, `${v.senderName} proposes changing ${v.detail ?? ""} in "${v.subject}".`],
       cta: "Review",
+    },
+    workflow_approval: {
+      subject: (v) => `Approval pending: ${v.subject}`,
+      lines: (v) => [`Hi ${v.recipientName},`, `The workflow "${v.subject}" is waiting for your approval (step "${v.detail ?? ""}").`],
+      cta: "Review and decide",
     },
   },
 };

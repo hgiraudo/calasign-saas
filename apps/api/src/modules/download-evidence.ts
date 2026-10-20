@@ -1,5 +1,6 @@
-// Descargas del firmante: quedan en la cadena de evidencia del sobre (document.downloaded). La página del firmante
-// vuelve a pedir el PDF en cada apertura: se registra una vez por destinatario, archivo y lapso (DEDUPE_MINUTES).
+// Descargas del firmante: quedan en la cadena de evidencia del sobre (document.downloaded). Solo las explícitas:
+// signed.pdf, copy.pdf y el documento con ?download=1 (el botón de descarga de la página del firmante); el visor pide el
+// mismo archivo en cada apertura y eso no es una descarga. Una vez por destinatario, archivo y lapso (DEDUPE_MINUTES).
 import type { FastifyBaseLogger } from "fastify";
 import type { Db } from "../infra/db";
 import { appendEvent, type Actor } from "../infra/evidence";
@@ -18,9 +19,13 @@ const recentlyRecorded = (db: Db, envelopeId: string, recipientId: string, kind:
     [envelopeId, recipientId, kind, documentId ?? "", DOWNLOAD_DEDUPE_MINUTES],
   );
 
+/** Espera máxima por el lock del sobre: con el sobre ocupado (p. ej. una firma en curso) no se demora la descarga. */
+const LOCK_TIMEOUT = "1s";
+
 /**
  * Registra la descarga (con el sobre bloqueado, como los demás eventos). No corta la descarga si falla: el archivo ya
- * se autorizó y el error queda en el log.
+ * se autorizó y el error queda en el log. Con el sobre bloqueado por otra transacción espera a lo sumo LOCK_TIMEOUT y
+ * sigue sin registrar.
  */
 export async function recordSignerDownload(
   db: Db,
@@ -36,6 +41,7 @@ export async function recordSignerDownload(
     // Lectura previa sin lock: las descargas repetidas no hacen cola sobre el sobre.
     if (await recentlyRecorded(db, e.id, recipientId, kind, documentId)) return;
     await db.tx(async (t) => {
+      await t.query(`SET LOCAL lock_timeout = '${LOCK_TIMEOUT}'`);
       await t.one(`SELECT id FROM envelopes WHERE id = $1 AND tenant_id = $2 FOR UPDATE`, [e.id, e.tenant_id]);
       if (await recentlyRecorded(t, e.id, recipientId, kind, documentId)) return;
       await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "document.downloaded", actor, data: { kind, documentId } });

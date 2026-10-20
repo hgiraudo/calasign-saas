@@ -9,7 +9,7 @@ import { documentRoutes } from "./documents";
 import { negotiationRoutes } from "./negotiations";
 import { handleNoticeJob, type NoticeJob } from "./notices";
 import { agreementExpirySweep, ingestEnvelope, repositoryRoutes } from "./repository";
-import { advanceRun, onEnvelopeEventForWorkflows, workflowRoutes } from "./workflows";
+import { advanceRun, onEnvelopeEventForWorkflows, workflowRoutes, workflowRunsSweep } from "./workflows";
 
 export async function agreementRoutes(app: FastifyInstance, s: Services) {
   await repositoryRoutes(app, s);
@@ -39,7 +39,7 @@ type AgreementsJob = { kind: "ingest"; envelopeId: string } | { kind: "envelope_
 
 export async function handleAgreementsJob(d: Deps, p: AgreementsJob, jobId?: number) {
   // Avisos por correo (vencimientos, negociaciones): jobId para no repetir a quien ya lo recibió en un reintento.
-  if (p.kind === "expiry_notice" || p.kind === "negotiation_notice" || p.kind === "proposal_notice") return handleNoticeJob(d, p, jobId);
+  if (p.kind === "expiry_notice" || p.kind === "negotiation_notice" || p.kind === "proposal_notice" || p.kind === "workflow_approval_notice") return handleNoticeJob(d, p, jobId);
   if (p.kind === "ingest") {
     await ingestEnvelope(d, p.envelopeId);
     // Si un workflow espera este sobre y su próximo paso actualiza el repositorio, ya encuentra el acuerdo.
@@ -57,6 +57,7 @@ export async function agreementsSweep(d: Deps) {
   await agreementExpirySweep(d);
   await ingestBackfill(d);
   await resumeStalledRuns(d);
+  await workflowRunsSweep(d);
 }
 
 /**

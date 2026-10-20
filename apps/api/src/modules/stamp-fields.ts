@@ -1,6 +1,7 @@
 // Campos de un sobre listos para estampar en el PDF (con la imagen de firma/iniciales de cada destinatario).
 // Lo usan el sellado final y la copia en curso que puede bajar un firmante antes de que firmen todos.
 import type { StampField } from "@calasign/pdf";
+import { signingDateForDisplay } from "@calasign/shared";
 import type { Db } from "../infra/db";
 import type { BlobStore } from "../infra/storage";
 
@@ -24,7 +25,8 @@ export function toStampFields(fields: any[], docs: any[], sigImages: Map<string,
     width: f.width,
     height: f.height,
     type: f.type,
-    value: f.value,
+    // La fecha de firma se guarda sin zona; en el PDF se aclara que es UTC (los valores fijos del remitente, tal cual).
+    value: f.type === "date_signed" && !f.read_only && typeof f.value === "string" ? signingDateForDisplay(f.value) : f.value,
     imagePng:
       f.type === "signature"
         ? sigImages.get(`${f.recipient_id}:signature`) ?? null

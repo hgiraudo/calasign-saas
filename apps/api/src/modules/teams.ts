@@ -38,8 +38,7 @@ import {
   verifyTotp,
 } from "../lib/totp";
 import { decrypt, encrypt, hashPassword, iso, maskDestination, randomToken, sha256Hex, uuidv7, verifyPassword } from "../lib/util";
-import { deliver } from "../notifications/channels";
-import { isSuppressed } from "../notifications/outbound";
+import { isSuppressed, sendTracked } from "../notifications/outbound";
 import { normLocale } from "../notifications/templates";
 import { hasPerm } from "./access";
 import { auditFromRequest, recordAudit } from "./audit";
@@ -274,7 +273,7 @@ const INVITE_TEXT = {
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
-async function sendInvitationEmail(tenantId: string, to: string, org: string, inviter: string, roleName: string, link: string, localeIn?: string | null) {
+async function sendInvitationEmail(db: Db, tenantId: string, to: string, org: string, inviter: string, roleName: string, link: string, localeIn?: string | null) {
   const L = INVITE_TEXT[normLocale(localeIn)];
   const subject = L.subject(org);
   const line = L.body(inviter, org, roleName);
@@ -285,7 +284,9 @@ async function sendInvitationEmail(tenantId: string, to: string, org: string, in
 <p style="font-size:15px;line-height:1.5">${esc(line)}</p>
 <p style="margin:24px 0"><a href="${esc(link)}" style="background:#0f7c7c;color:#fff;text-decoration:none;padding:12px 22px;border-radius:6px;font-weight:bold">${esc(L.cta)}</a></p>
 <p style="font-size:12px;color:#5b6576">${esc(L.expires(INVITE_DAYS))}<br>${esc(link)}</p></div></body></html>`;
-  return deliver({ channel: "email", to, subject, text, html, link, tenantId, locale: localeIn ?? "es" });
+  // Registrado en notifications (con la organización): un rebote o una queja de este correo se atribuye a ella.
+  const out = await sendTracked(db, { tenantId, template: "invitation" }, { channel: "email", to, subject, text, html, link, tenantId, locale: localeIn ?? "es" });
+  if (out.status === "failed") throw new Error(`no se pudo enviar la invitación: ${out.error}`);
 }
 
 // ───────────────────────────── Rutas ─────────────────────────────
@@ -538,7 +539,7 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     // organización y la queja, de la persona): queda solo en el log del servidor, con la dirección enmascarada.
     const emailSuppressed = await isSuppressed(s.db, input.email, a.tenantId);
     if (emailSuppressed) req.log.info({ tenantId: a.tenantId, invitationId: id, email: maskDestination(input.email) }, "invitación sin correo: dirección suprimida");
-    else await sendInvitationEmail(a.tenantId, input.email, org.name, inviter ?? org.name, roleForMail, acceptUrl, mailLocale);
+    else await sendInvitationEmail(s.db, a.tenantId, input.email, org.name, inviter ?? org.name, roleForMail, acceptUrl, mailLocale);
     await auditFromRequest(s.db, req, a, "member.invited", { targetType: "invitation", targetId: id, data: { email: input.email, role: target.role, roleId: target.roleId } });
     const row = await s.db.one<any>(
       `SELECT i.*, r.name AS role_name, u.name AS invited_by_name FROM invitations i LEFT JOIN roles r ON r.id = i.role_id LEFT JOIN users u ON u.id = i.invited_by WHERE i.id = $1`,

@@ -1,4 +1,4 @@
-// Evidencia append-only en la base (migración 0072), verificación pública atada al hash del certificado del PDF y
+// Evidencia append-only en la base (migraciones 0072 y 0074), verificación pública atada al hash del certificado del PDF y
 // registro de descargas (firmante: cadena del sobre; remitente: auditoría de la organización). App real sobre PGlite.
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -95,6 +95,21 @@ describe("evidencia append-only (0072)", () => {
       await t.query(`UPDATE envelope_events SET actor_label = 'x' WHERE envelope_id = $1`, [env]);
     });
     await expect(db.query(`UPDATE envelope_events SET actor_label = 'y' WHERE envelope_id = $1`, [env])).rejects.toThrow(rejected);
+  });
+
+  it("un sobre no vuelve a borrador (0074): la excepción de borradores no sirve para borrar evidencia", async () => {
+    const env = await envelopeWithEvents("sent");
+    await expect(db.query(`UPDATE envelopes SET status = 'draft' WHERE id = $1`, [env])).rejects.toThrow(rejected);
+    await expect(db.query(`DELETE FROM envelope_events WHERE envelope_id = $1`, [env])).rejects.toThrow(rejected);
+    // Otros cambios de estado y de columnas siguen permitidos; un borrador puede seguir siendo borrador.
+    await db.query(`UPDATE envelopes SET status = 'voided', subject = 'x' WHERE id = $1`, [env]);
+    const draft = await envelopeWithEvents("draft");
+    await db.query(`UPDATE envelopes SET status = 'draft', subject = 'y' WHERE id = $1`, [draft]);
+    // Mantenimiento explícito.
+    await db.tx(async (t) => {
+      await t.query(`SET LOCAL calasign.allow_evidence_write = 'on'`);
+      await t.query(`UPDATE envelopes SET status = 'draft' WHERE id = $1`, [env]);
+    });
   });
 
   it("account_audit_log: rechaza UPDATE y DELETE", async () => {
@@ -198,6 +213,37 @@ describe("verificación pública atada al certificado del PDF", () => {
     expect(bad.chain).toMatchObject({ ok: false, reason: "certificate_head_mismatch" });
   }, 60_000);
 
+  it("files.chain_head: un PDF sellado sin la columna se lee una vez y se guarda; después se usa sin parsear", async () => {
+    const { sha256Hex } = await import("../src/lib/util");
+    const { env, pdf } = await sealedEnvelope();
+    const head = (await db.one<any>(`SELECT data->>'certificateChainHead' AS h FROM envelope_events WHERE envelope_id = $1 AND type = 'envelope.completed'`, [env])).h;
+    const file = () => db.one<any>(`SELECT id, chain_head FROM files WHERE sha256 = $1`, [sha256Hex(pdf)]);
+    expect((await file()).chain_head).toBeNull();
+    expect((await upload(pdf)).json().chain).toMatchObject({ ok: true });
+    expect((await file()).chain_head).toBe(head);
+    // Con la columna, la verificación usa ese valor (no el PDF): uno distinto del guardado en la evidencia no ancla.
+    await db.query(`UPDATE files SET chain_head = $2 WHERE id = $1`, [(await file()).id, "f".repeat(64)]);
+    expect((await upload(pdf)).json().chain).toMatchObject({ ok: false, reason: "certificate_head_mismatch" });
+    // '' = ya se leyó y el PDF no lo trae: se ancla con el guardado en envelope.completed.
+    await db.query(`UPDATE files SET chain_head = '' WHERE id = $1`, [(await file()).id]);
+    expect((await upload(pdf)).json().chain).toMatchObject({ ok: true });
+  }, 60_000);
+
+  it("certificado: IP de la última apertura anterior a la firma (si no hay, la última)", async () => {
+    const { certificateViewIp } = await import("../src/modules/jobs");
+    const v = (actor: string, at: string, ip: string) => ({ type: "recipient.viewed", actor_id: actor, occurred_at: at, ip });
+    const events = [
+      v("r1", "2026-01-01T10:00:00Z", "1.1.1.1"),
+      v("r2", "2026-01-01T10:30:00Z", "9.9.9.9"),
+      v("r1", "2026-01-02T10:00:00Z", "2.2.2.2"),
+      v("r1", "2026-01-05T10:00:00Z", "3.3.3.3"),
+    ];
+    expect(certificateViewIp(events, "r1", "2026-01-03T00:00:00Z")).toBe("2.2.2.2");
+    expect(certificateViewIp(events, "r1", null)).toBe("3.3.3.3");
+    expect(certificateViewIp(events, "r1", "2025-12-31T00:00:00Z")).toBe("3.3.3.3");
+    expect(certificateViewIp(events, "r3", null)).toBeNull();
+  });
+
   it("anchorChain: cadena rota, sin hash del certificado, o el guardado contradice al impreso", async () => {
     const { anchorChain } = await import("../src/modules/verify");
     const rows = [{ hash: "a" }, { hash: "b" }];
@@ -222,10 +268,49 @@ describe("verificación pública atada al certificado del PDF", () => {
     const ev = await db.query<any>(`SELECT actor_id, data FROM envelope_events WHERE envelope_id = $1 AND type = 'document.downloaded'`, [env]);
     expect(ev).toEqual([{ actor_id: recipient, data: { kind: "signed", documentId: null } }]);
 
+    // El documento: el visor (sin ?download=1) no es una descarga; el botón (?download=1) sí.
+    const doc = uuidv7();
+    const fileId = (await db.one<any>(`SELECT signed_file_id FROM envelopes WHERE id = $1`, [env])).signed_file_id;
+    await db.query(`INSERT INTO documents (id, tenant_id, envelope_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,1,'d.pdf',$4,1,'[]')`, [
+      doc,
+      tenant,
+      env,
+      fileId,
+    ]);
+    expect((await app.inject({ method: "GET", url: `/v1/signing/${token}/documents/${doc}/file` })).statusCode).toBe(200);
+    const kinds = async () =>
+      (await db.query<any>(`SELECT data FROM envelope_events WHERE envelope_id = $1 AND type = 'document.downloaded' ORDER BY seq`, [env])).map((r) => r.data.kind);
+    expect(await kinds()).toEqual(["signed"]);
+    expect((await app.inject({ method: "GET", url: `/v1/signing/${token}/documents/${doc}/file?download=1` })).statusCode).toBe(200);
+    expect(await kinds()).toEqual(["signed", "document"]);
+
     for (let i = 0; i < 2; i++) expect((await app.inject({ method: "GET", url: `/v1/envelopes/${env}/signed.pdf`, headers })).statusCode).toBe(200);
     const audit = await db.query<any>(`SELECT target_id FROM account_audit_log WHERE tenant_id = $1 AND action = 'envelope.signed_pdf_downloaded'`, [tenant]);
     expect(audit).toEqual([{ target_id: env }]);
   }, 60_000);
+});
+
+describe("fecha de firma", () => {
+  it("se guarda sin zona (como antes) y se estampa con ' UTC'", async () => {
+    const { formatSigningDate, signingDateForDisplay } = await import("@calasign/shared");
+    const { toStampFields } = await import("../src/modules/stamp-fields");
+    const d = new Date("2026-03-04T23:30:00Z");
+    expect(formatSigningDate(d, "es")).toBe("04/03/2026");
+    expect(formatSigningDate(d, "en")).toBe("2026-03-04");
+    expect(signingDateForDisplay("04/03/2026")).toBe("04/03/2026 UTC");
+    expect(signingDateForDisplay("04/03/2026 UTC")).toBe("04/03/2026 UTC");
+    const base = { document_id: "d", page: 0, x: 0, y: 0, width: 10, height: 10, recipient_id: "r" };
+    const out = toStampFields(
+      [
+        { ...base, type: "date_signed", value: "04/03/2026", read_only: false },
+        { ...base, type: "date_signed", value: "1 de marzo", read_only: true },
+        { ...base, type: "text", value: "04/03/2026", read_only: false },
+      ],
+      [{ id: "d" }],
+      new Map(),
+    );
+    expect(out.map((f) => f.value)).toEqual(["04/03/2026 UTC", "1 de marzo", "04/03/2026"]);
+  });
 });
 
 describe("auditoría", () => {

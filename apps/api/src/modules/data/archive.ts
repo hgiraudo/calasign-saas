@@ -126,13 +126,12 @@ async function renewClaimed(d: Deps, envelopeId: string, tsaUrl: string, actor: 
     const cur = await t.one<any>(`SELECT signed_file_id FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
     if (cur?.signed_file_id !== e.signed_file_id) throw conflict("archive_changed", "El PDF cambió mientras se renovaba; se reintenta en el próximo barrido");
     await ensureFirstVersion(t, e, prev.last ? prev.last.tsaNotAfter : null);
-    await t.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'signed',$3,'application/pdf',$4,$5)`, [
-      fileId,
-      e.tenant_id,
-      key,
-      r.pdf.length,
-      sha,
-    ]);
+    // La renovación agrega revisiones al mismo PDF: el certificado (y su hash final) es el del archivo anterior.
+    await t.query(
+      `INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256, chain_head)
+       VALUES ($1,$2,'signed',$3,'application/pdf',$4,$5,(SELECT chain_head FROM files WHERE id = $6))`,
+      [fileId, e.tenant_id, key, r.pdf.length, sha, e.signed_file_id],
+    );
     await t.query(
       `INSERT INTO envelope_signed_versions (id, tenant_id, envelope_id, file_id, version, reason, valid_until) VALUES ($1,$2,$3,$4,$5,'archive_renewal',$6)`,
       [uuidv7(), e.tenant_id, e.id, fileId, versionNo, next.last!.tsaNotAfter],

@@ -39,16 +39,19 @@ const WA_TRANSIENT_CODE = /"code":(1|2|4|80007|130429|131000|131048|131056)\b/;
 
 /**
  * Si un error de envío es del momento y vale reintentarlo: red, timeout, 5xx o 429 del proveedor, SMTP 4xx. Los
- * permanentes (4xx del proveedor: número inválido, plantilla rechazada, chat bloqueado; SMTP 5xx; canal sin configurar)
- * no se arreglan reintentando. Uno desconocido se toma como transitorio (como antes: se reintenta).
+ * permanentes (4xx del proveedor: número inválido, plantilla rechazada, chat bloqueado; SMTP 5xx) no se arreglan
+ * reintentando. Uno desconocido se toma como transitorio (como antes: se reintenta).
+ * Credenciales SMTP rechazadas (EAUTH / 535) y canal sin configurar: son de la plataforma, no del destinatario; se
+ * arreglan corrigiendo la configuración, y el aviso tiene que salir después (no perderse para siempre).
  */
 export function isTransientSendError(err: unknown): boolean {
   for (let cur: any = err, depth = 0; cur && depth < 3; cur = cur.cause, depth++) {
     if (cur.name === "TimeoutError" || cur.name === "AbortError") return true;
-    if (typeof cur.code === "string" && TRANSIENT_NET.test(cur.code)) return true;
+    if (typeof cur.code === "string" && (TRANSIENT_NET.test(cur.code) || cur.code === "EAUTH")) return true;
   }
   const e = err as any;
   const rc = Number(e?.responseCode); // nodemailer (respuesta SMTP)
+  if (rc === 535) return true;
   if (rc >= 400 && rc < 500) return true;
   if (rc >= 500 && rc < 600) return false;
   const msg = String(e?.message ?? e);
@@ -58,9 +61,9 @@ export function isTransientSendError(err: unknown): boolean {
     if (st === 408 || st === 429 || st >= 500) return true;
     return /WhatsApp API/.test(msg) && WA_TRANSIENT_CODE.test(msg);
   }
-  const smtp = /^(?:Error: )?([45])\d\d[\s-]/.exec(msg.trim());
-  if (smtp) return smtp[1] === "4";
-  if (/no configurado/.test(msg)) return false;
+  if (/no configurado/.test(msg)) return true;
+  const smtp = /^(?:Error: )?([45])(\d\d)[\s-]/.exec(msg.trim());
+  if (smtp) return smtp[1] === "4" || `${smtp[1]}${smtp[2]}` === "535";
   return true;
 }
 
@@ -132,13 +135,30 @@ export async function sendTracked(db: Db, t: TrackedSend, m: OutboundMessage & {
           WHERE id = $1`,
         [id, status, extra.provider ?? null, extra.messageId ?? null, extra.error ?? null],
       )
-      .catch(logFail);
+      .then(
+        () => true,
+        (e) => {
+          logFail(e);
+          return false;
+        },
+      );
   let res: SendResult;
   try {
     res = await deliver(m);
   } catch (err) {
     const error = scrubPii(String(err)).slice(0, 1000);
-    if (queued) await finish("failed", { error });
+    // Si no se pudo marcar 'failed', la fila quedaría 'queued' y el reintento del job la tomaría como ya enviada
+    // ('already'): se borra (no salió nada). Si tampoco se puede borrar, se relanza para que el job no se dé por hecho.
+    if (queued && !(await finish("failed", { error }))) {
+      const removed = await db.query(`DELETE FROM notifications WHERE id = $1 AND status = 'queued'`, [id]).then(
+        () => true,
+        (e) => {
+          logFail(e);
+          return false;
+        },
+      );
+      if (!removed) throw new Error(`no se pudo registrar el fallo del aviso: ${error}`);
+    }
     return { status: "failed", error, transient: isTransientSendError(err) };
   }
   if (queued) await finish("sent", { provider: res.provider, messageId: res.messageId });

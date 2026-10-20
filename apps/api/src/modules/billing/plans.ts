@@ -144,7 +144,7 @@ function featureForRoute(url: string, method: string, body: unknown): { feature:
   if (url.startsWith("/v1/settings/branding")) return { feature: "branding", label: "La marca propia" };
   if (url.startsWith("/v1/settings/sso")) return { feature: "sso", label: "El inicio de sesión único (SSO)" };
   if (url.startsWith("/v1/settings/scim")) return { feature: "scim", label: "El aprovisionamiento SCIM" };
-  if (url === "/v1/domains") return { feature: "custom_domain", label: "El dominio propio" };
+  if (url === "/v1/domains" || url === "/v1/domains/verify") return { feature: "custom_domain", label: "El dominio propio" };
   if (url === "/v1/envelopes/:id/payment") return { feature: "payments", label: "El cobro al firmar" };
   if (url === "/v1/api-keys" || url === "/v1/oauth/apps") return { feature: "api", label: "El acceso por API" };
   return null;

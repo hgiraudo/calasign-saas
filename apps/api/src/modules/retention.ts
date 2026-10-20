@@ -143,8 +143,21 @@ export async function retentionRoutes(app: FastifyInstance, s: Services, log: De
     const p = (req.params ?? {}) as Record<string, string>;
     if (url === "/v1/envelopes/:id/documents/:documentId/file" || url === "/v1/signing/:token/documents/:documentId/file") {
       if (!/^[0-9a-f-]{36}$/i.test(p.documentId ?? "")) return;
-      const r = await s.db.one<any>(`SELECT f.purged_at FROM documents d JOIN files f ON f.id = d.file_id WHERE d.id = $1`, [p.documentId]);
-      if (r?.purged_at) throw new AppError(410, "purged", "El original se eliminó por la política de retención; el PDF firmado sigue disponible");
+      const r = await s.db.one<any>(
+        `SELECT f.purged_at, e.status FROM documents d JOIN files f ON f.id = d.file_id JOIN envelopes e ON e.id = d.envelope_id WHERE d.id = $1`,
+        [p.documentId],
+      );
+      // Solo un sobre completado tiene PDF firmado (anulados, rechazados y vencidos también se purgan).
+      if (r?.purged_at) {
+        throw new AppError(
+          410,
+          "purged",
+          r.status === "completed"
+            ? "El original se eliminó por la política de retención; el PDF firmado sigue disponible"
+            : "El original se eliminó por la política de retención",
+          { envelopeStatus: r.status },
+        );
+      }
     }
     if (url === "/v1/templates/from-envelope/:envelopeId" && /^[0-9a-f-]{36}$/i.test(p.envelopeId ?? "")) {
       const r = await s.db.one<any>(`SELECT purged_at FROM envelopes WHERE id = $1`, [p.envelopeId]);

@@ -181,7 +181,10 @@ export async function subscriptionRoutes(app: FastifyInstance, s: Services) {
         // si no, la organización no se podía volver a suscribir.
         const reuse = String(t.billing_customer_id ?? "").startsWith("cus_") ? (t.billing_customer_id as string) : null;
         const c = await stripeCreateSubscriptionCheckout({ ...params, customerId: reuse }).catch((err) => {
-          if (reuse && err instanceof ProviderError && err.status >= 400 && err.status < 500) {
+          // Solo si el problema es el customer (no existe en esta cuenta, otra moneda): un 429 o una clave inválida no
+          // tienen que terminar en un customer duplicado.
+          const customerProblem = err instanceof ProviderError && err.status === 400 && (err.param === "customer" || /customer|currenc/i.test(`${err.code ?? ""} ${err.message}`));
+          if (reuse && customerProblem) {
             return stripeCreateSubscriptionCheckout({ ...params, customerId: null });
           }
           throw err;

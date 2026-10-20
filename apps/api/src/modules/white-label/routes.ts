@@ -542,6 +542,8 @@ export async function whiteLabelRoutes(app: FastifyInstance, s: Services) {
 
   app.post<P>("/v1/settings/brands/:id/domain/verify", { preHandler: auth, config: { rateLimit: { max: 20, timeWindow: "1 minute" } } }, async (req) => {
     const a = A(req);
+    // Verificar (o re-verificar uno que se desverificó) exige el plan, como darlo de alta; quitarlo no.
+    await requireWhiteLabel(s.db, a.tenantId);
     const b = await loadBrand(s.db, a.tenantId, req.params.id);
     const r = b.brandId ? await s.db.one<any>(`SELECT * FROM brand_domains WHERE brand_id = $1`, [b.brandId]) : null;
     if (!r) throw notFound("Dominio");
@@ -616,6 +618,8 @@ export async function whiteLabelRoutes(app: FastifyInstance, s: Services) {
 
   app.post<P>("/v1/settings/email-domains/:domain/verify", { preHandler: auth, config: { rateLimit: { max: 20, timeWindow: "1 minute" } } }, async (req) => {
     const a = A(req);
+    // Verificar (o re-verificar uno que se desverificó) exige el plan, como darlo de alta; quitarlo no.
+    await requireWhiteLabel(s.db, a.tenantId);
     const r = await s.db.one<any>(`SELECT * FROM email_domains WHERE tenant_id = $1 AND domain = $2`, [a.tenantId, String(req.params.domain).toLowerCase()]);
     if (!r) throw notFound("Dominio de correo");
     // Primero estricto: si el DNS no responde, un dominio ya verificado no pasa a pendiente por apretar "verificar"

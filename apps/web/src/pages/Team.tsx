@@ -149,6 +149,11 @@ function MembersTab({ roles, manage, reloadRoles }: { roles: RolesResponse | nul
     setError(null);
     try {
       await api(`/v1/members/${removing.userId}`, { method: "DELETE" });
+      // Salió de la organización: su sesión en ella ya no existe.
+      if (removing.userId === me?.user.id) {
+        window.location.assign("/login");
+        return;
+      }
       setRemoving(null);
       await load();
       void reloadRoles();
@@ -215,6 +220,18 @@ function MembersTab({ roles, manage, reloadRoles }: { roles: RolesResponse | nul
           </tbody>
         </table>
       </div>
+      {/* Sin permiso de administrar miembros: igual puede salir de la organización (un propietario no, desde acá). */}
+      {!manage &&
+        (() => {
+          const mine = items.find((m) => m.userId === me?.user.id);
+          return mine && mine.role !== "owner" ? (
+            <div className="row-wrap">
+              <button type="button" className="btn btn-danger btn-sm" onClick={() => setRemoving(mine)}>
+                {tt("team.leave")}
+              </button>
+            </div>
+          ) : null;
+        })()}
       {removing && (
         <Modal
           title={tt("team.remove")}

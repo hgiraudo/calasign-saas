@@ -198,8 +198,8 @@ const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
     en: "The delivery is already being retried.",
   },
   purged: {
-    "pt-BR": "Os originais deste envelope foram excluídos pela política de retenção; o PDF assinado continua disponível.",
-    en: "This envelope's originals were deleted by the retention policy; the signed PDF is still available.",
+    "pt-BR": "Os originais deste envelope foram excluídos pela política de retenção.",
+    en: "This envelope's originals were deleted by the retention policy.",
   },
   otp_not_embeddable: {
     "pt-BR": "Um signatário com código OTP não pode ser exibido dentro de um iframe: remova o OTP ou abra o link em uma aba.",

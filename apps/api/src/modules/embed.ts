@@ -118,6 +118,8 @@ export async function embedRoutes(app: FastifyInstance, s: Services) {
 
   app.patch("/v1/settings/embed", { preHandler: auth }, async (req): Promise<EmbedSettings> => {
     const input = EmbedSettingsInput.parse(req.body);
+    const prev = await s.db.one<any>(`SELECT embed_frame_ancestors FROM tenants WHERE id = $1`, [A(req).tenantId]);
+    (req as FastifyRequest & { auditBefore?: Record<string, unknown> }).auditBefore = { frameAncestors: prev?.embed_frame_ancestors ?? [] };
     const list = [...new Set(input.frameAncestors.map((o) => o.toLowerCase().replace(/\/$/, "")))];
     if (config.environment !== "local" && list.some((o) => o.startsWith("http://"))) {
       throw badRequest("invalid_origin", "Solo orígenes https fuera del entorno local");
@@ -187,7 +189,9 @@ export async function embedRoutes(app: FastifyInstance, s: Services) {
     setFrameAncestors(reply, await originsForRecipient(s.db, r.id, sess.tenant_id));
     // También "para pestaña": el modo embebido de la página es el que vuelve al returnUrl del integrador al terminar
     // (el CSP 'none' ya impide mostrarla en un iframe).
-    return reply.redirect(`/s/${decrypt(r.access_token_enc)}?embed=1`, 302);
+    const tabOnly = (sess.frame_ancestors ?? []).includes(TAB_ONLY);
+    // "tab=1": la página muestra su marco completo (marca, idioma) y abre los proveedores en la misma pestaña.
+    return reply.redirect(`/s/${decrypt(r.access_token_enc)}?embed=1${tabOnly ? "&tab=1" : ""}`, 302);
   });
 
   // ───────── Página del firmante en modo embebido: frame-ancestors dinámico ─────────

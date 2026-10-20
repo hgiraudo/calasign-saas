@@ -369,9 +369,13 @@ export async function customDomainRoutes(app: FastifyInstance, s: Services) {
   // controla su DNS y podría quedarse con la cookie de sesión de quien entra ahí, que vale en el dominio de la
   // plataforma y en sus otras organizaciones. Las páginas de la cuenta redirigen a la plataforma, las rutas que crean
   // una sesión no existen acá, y la cookie de sesión de cuenta se ignora.
+  // Por lista blanca: la cuenta solo existe en el host de la plataforma (APP_URL; en local, también localhost). Antes se
+  // aplicaba solo a los dominios verificados, y uno que dejaba de estarlo (borrado o desverificado) pero seguía
+  // apuntando a la plataforma, con su certificado todavía vigente, servía el login real y se quedaba con la cookie.
   app.addHook("onRequest", async (req, reply) => {
-    const tenantId = await signerHostTenant(s.db, req.headers.host);
-    if (!tenantId) return;
+    const host = String(req.headers.host ?? "").toLowerCase().replace(/:\d+$/, "").replace(/\.$/, "");
+    const platform = host === appHost() || (config.environment === "local" && (host === "localhost" || host === "127.0.0.1"));
+    if (platform) return;
     const path = requestPath(req);
     if (req.method === "GET" && (path === "/" || ACCOUNT_PAGES.some((p) => under(path, p)))) {
       return reply.redirect(`${config.appUrl}${req.url}`, 302);

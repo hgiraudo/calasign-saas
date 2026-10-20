@@ -8,6 +8,9 @@ export class ProviderError extends Error {
     readonly provider: string,
     readonly status: number,
     message: string,
+    /** Stripe: error.code y error.param (p. ej. resource_missing / "customer"). */
+    readonly code?: string | null,
+    readonly param?: string | null,
   ) {
     super(message);
   }
@@ -45,7 +48,7 @@ async function stripe(path: string, params: Record<string, unknown> | null, meth
     signal: AbortSignal.timeout(20_000),
   });
   const body: any = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ProviderError("stripe", res.status, body?.error?.message ?? `Stripe HTTP ${res.status}`);
+  if (!res.ok) throw new ProviderError("stripe", res.status, body?.error?.message ?? `Stripe HTTP ${res.status}`, body?.error?.code ?? null, body?.error?.param ?? null);
   return body;
 }
 
@@ -133,7 +136,6 @@ export async function stripeCreateSubscriptionCheckout(p: {
   return { id: s.id, url: s.url };
 }
 
-/** Cancela una suscripción de inmediato. Si ya estaba cancelada o no existe, no es un error (el webhook se reintenta). */
 /** Fin del período vigente de una suscripción (en API recientes viene en cada ítem). null si no se informa. */
 export async function stripeGetSubscriptionPeriodEnd(id: string): Promise<string | null> {
   const s = await stripe(`/v1/subscriptions/${encodeURIComponent(id)}`, null, "GET");
@@ -141,6 +143,7 @@ export async function stripeGetSubscriptionPeriodEnd(id: string): Promise<string
   return typeof end === "number" ? new Date(end * 1000).toISOString() : null;
 }
 
+/** Cancela una suscripción de inmediato. Si ya estaba cancelada o no existe, no es un error (el webhook se reintenta). */
 export async function stripeCancelSubscription(id: string) {
   const path = `/v1/subscriptions/${encodeURIComponent(id)}`;
   try {

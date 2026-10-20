@@ -57,7 +57,11 @@ type Extract = (ctx: { req: FastifyRequest; body: any; params: Record<string, st
 const ROUTE_ACTIONS: Record<string, { action: string; extract?: Extract }> = {
   "POST /v1/api-keys": {
     action: "api_key.created",
-    extract: ({ body }) => ({ targetType: "api_key", targetId: body?.apiKey?.id, data: { name: body?.apiKey?.name, role: body?.apiKey?.roleName ?? body?.apiKey?.role ?? null } }),
+    // El rol sale del pedido (la respuesta no lo trae); la política de rutas ya lo validó. Sin rol, la key es admin.
+    extract: ({ body, req }) => {
+      const input = (req.body ?? {}) as { role?: string; roleId?: string };
+      return { targetType: "api_key", targetId: body?.apiKey?.id, data: { name: body?.apiKey?.name, role: input.role ?? "admin", roleId: input.roleId ?? null } };
+    },
   },
   // Exportar todos los sobres con los datos de sus destinatarios, como las otras exportaciones (acuerdos, auditoría).
   "GET /v1/reports/envelopes.csv": {

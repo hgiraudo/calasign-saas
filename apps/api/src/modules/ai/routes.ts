@@ -89,6 +89,14 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
     const input = UpdateAiSettingsInput.parse(req.body);
     const t = await s.db.one<any>(`SELECT ai_notice_accepted_at, ai_notice_version, ai_renewal_alert_days FROM tenants WHERE id = $1`, [a.tenantId]);
     const prevDays = Number(t?.ai_renewal_alert_days ?? 30);
+    const before = await s.db.one<any>(`SELECT ai_enabled, ai_auto_extract, ai_monthly_token_budget FROM tenants WHERE id = $1`, [a.tenantId]);
+    // Valores anteriores para la auditoría (settings.changed registra también los nuevos).
+    (req as FastifyRequest & { auditBefore?: Record<string, unknown> }).auditBefore = {
+      enabled: Boolean(before?.ai_enabled),
+      autoExtractMetadata: Boolean(before?.ai_auto_extract),
+      renewalAlertDays: prevDays,
+      monthlyTokenBudget: before?.ai_monthly_token_budget ?? null,
+    };
     const noticeOk = t?.ai_notice_accepted_at && t?.ai_notice_version === AI_NOTICE_VERSION;
     if (input.enabled === true && !noticeOk && !input.acceptNotice) {
       throw new AppError(422, "ai_notice_required", "Para habilitar la IA hay que aceptar el aviso de tratamiento de datos");

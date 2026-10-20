@@ -13,6 +13,9 @@ const embedKey = (token: string) => `cs-embed:${token}`;
  */
 export function isEmbedded(token?: string): boolean {
   if (typeof window === "undefined") return false;
+  // URL "para pestaña" (firmante con OTP): no es embebido (marco completo, proveedores en la misma pestaña); solo
+  // conserva la vuelta al returnUrl (ver isTabReturn).
+  if (isTabReturn(token)) return false;
   if (new URLSearchParams(window.location.search).get("embed") === "1") {
     if (token)
       try {
@@ -25,6 +28,29 @@ export function isEmbedded(token?: string): boolean {
   if (token)
     try {
       if (window.sessionStorage.getItem(embedKey(token)) === "1") return true;
+    } catch {
+      /* sin almacenamiento */
+    }
+  return false;
+}
+
+/** URL de firma "para pestaña" (?embed=1&tab=1): al terminar vuelve al returnUrl del integrador. */
+export function isTabReturn(token?: string): boolean {
+  if (typeof window === "undefined") return false;
+  const key = token ? `${embedKey(token)}:tab` : null;
+  const q = new URLSearchParams(window.location.search);
+  if (q.get("embed") === "1" && q.get("tab") === "1") {
+    if (key)
+      try {
+        window.sessionStorage.setItem(key, "1");
+      } catch {
+        /* sin almacenamiento */
+      }
+    return true;
+  }
+  if (key)
+    try {
+      return window.sessionStorage.getItem(key) === "1";
     } catch {
       /* sin almacenamiento */
     }
@@ -90,7 +116,9 @@ function post(type: BridgeType, session: SigningSession | null) {
 
 /** Puente con el integrador. Llamar siempre (antes de cualquier return) en la página del firmante. */
 export function useEmbedBridge(token: string, session: SigningSession | null, invalid: boolean) {
-  const embedded = isEmbedded(token);
+  // También en modo pestaña (avisa y vuelve al returnUrl), pero sin ocultar el marco de la página.
+  const framed = isEmbedded(token);
+  const embedded = framed || isTabReturn(token);
   const sent = useRef<Set<string>>(new Set());
   // Promesa (no el valor): si la sesión ya llega firmada (recarga del iframe), la redirección esperaba 1,2 s y leía
   // returnUrl antes de que respondiera /embed, y el firmante quedaba sin volver al integrador.
@@ -98,7 +126,7 @@ export function useEmbedBridge(token: string, session: SigningSession | null, in
 
   useEffect(() => {
     if (!embedded || !token) return;
-    document.documentElement.classList.add("cs-embedded");
+    if (framed) document.documentElement.classList.add("cs-embedded");
     returnUrl.current = fetch(`/v1/signing/${encodeURIComponent(token)}/embed`, { headers: { Accept: "application/json" } })
       .then((r) => (r.ok ? (r.json() as Promise<SigningEmbedInfo>) : null))
       .then((info) => info?.returnUrl ?? null)
@@ -171,5 +199,5 @@ export function useEmbedBridge(token: string, session: SigningSession | null, in
     }
   }, [embedded, session, invalid, token]);
 
-  return embedded;
+  return framed;
 }

@@ -373,7 +373,12 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
     return fullView(s.db, row);
   });
 
-  app.get<{ Params: { id: string } }>("/v1/negotiations/:id", { preHandler: auth }, async (req) => fullView(s.db, await loadForUser(A(req), req.params.id)));
+  app.get<{ Params: { id: string } }>("/v1/negotiations/:id", { preHandler: auth }, async (req) => {
+    const a = A(req);
+    const n = await loadForUser(a, req.params.id);
+    // canManage: lo mismo que exige loadForManage (la web no ofrece aceptar, cancelar ni decidir si la API lo rechazaría).
+    return { ...(await fullView(s.db, n)), canManage: n.created_by === a.userId || hasPerm(a, "envelopes:manage_all") };
+  });
 
   app.get<{ Params: { id: string }; Querystring: { from?: string; to?: string } }>("/v1/negotiations/:id/diff", { preHandler: auth }, async (req) => {
     const n = await loadForUser(A(req), req.params.id);
@@ -557,7 +562,8 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
           fileName: `${n.title}.pdf`,
           subject: input.subject ?? n.title,
           message: input.message ?? null,
-          locale: "es",
+          // El de la negociación o, si no tiene, el de la organización (no siempre español).
+          locale: n.template_locale ?? (await t.one<{ default_locale: string | null }>(`SELECT default_locale FROM tenants WHERE id = $1`, [n.tenant_id]))?.default_locale ?? "es",
           recipients: [],
           marks: [],
           metadata: { negotiationId: n.id },

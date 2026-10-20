@@ -53,6 +53,20 @@ export async function handleAgreementsJob(d: Deps, p: AgreementsJob) {
 export async function agreementsSweep(d: Deps) {
   await agreementExpirySweep(d);
   await ingestBackfill(d);
+  await resumeStalledRuns(d);
+}
+
+/**
+ * Runs en "running" sin movimiento hace más de 15 minutos: el avance en línea (aprobar, formulario público, iniciar,
+ * reintentar) o un job murió a mitad y nadie lo volvía a encolar. advanceRun ya retoma los pasos abandonados.
+ * Una vez por run y por hora (clave de dedupe).
+ */
+async function resumeStalledRuns(d: Deps) {
+  const rows = await d.db.query<{ id: string }>(
+    `SELECT id FROM workflow_runs WHERE status = 'running' AND updated_at < now() - interval '15 minutes' ORDER BY updated_at LIMIT 50`,
+  );
+  const hour = new Date().toISOString().slice(0, 13);
+  for (const r of rows) await enqueue(d.db, "agreements", { kind: "advance", runId: r.id }, { dedupeKey: `wf-resume:${r.id}:${hour}` });
 }
 
 /**

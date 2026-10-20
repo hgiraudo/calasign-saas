@@ -672,12 +672,13 @@ export function WorkflowRunPage() {
           </div>
         </div>
         <div className="row-wrap">
-          {run.status === "failed" && failedStep && failedStep.type !== "approval" && failedStep.type !== "wait_for_completion" && (
+          {run.canManage !== false && run.status === "failed" && failedStep && failedStep.type !== "approval" && failedStep.type !== "wait_for_completion" && (
             <button type="button" className="btn" disabled={busy} onClick={() => act(`/v1/workflow-runs/${run.id}/retry`)}>
               {ta("run.retry")}
             </button>
           )}
-          {["running", "waiting"].includes(run.status) && (
+          {/* Un run fallado también se cancela (anula los sobres que dejó en firma). */}
+          {run.canManage !== false && ["running", "waiting", "failed"].includes(run.status) && (
             <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => confirmAction() && act(`/v1/workflow-runs/${run.id}/cancel`)}>
               {ta("run.cancel")}
             </button>

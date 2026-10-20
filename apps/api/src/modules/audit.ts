@@ -60,7 +60,7 @@ const ROUTE_ACTIONS: Record<string, { action: string; extract?: Extract }> = {
     // El rol sale del pedido (la respuesta no lo trae); la política de rutas ya lo validó. Sin rol, la key es admin.
     extract: ({ body, req }) => {
       const input = (req.body ?? {}) as { role?: string; roleId?: string };
-      return { targetType: "api_key", targetId: body?.apiKey?.id, data: { name: body?.apiKey?.name, role: input.role ?? "admin", roleId: input.roleId ?? null } };
+      return { targetType: "api_key", targetId: body?.apiKey?.id, data: { name: body?.apiKey?.name, role: input.role ?? "admin", roleId: input.role === "custom" ? (input.roleId ?? null) : null } };
     },
   },
   // Exportar todos los sobres con los datos de sus destinatarios, como las otras exportaciones (acuerdos, auditoría).

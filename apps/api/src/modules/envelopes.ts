@@ -1,3 +1,4 @@
+import { purgedOriginal } from "./retention";
 import { applyEnvelopeBrand } from "./white-label/routes";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import {
@@ -359,10 +360,13 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
   app.get<P>("/v1/envelopes/:id/documents/:documentId/file", { preHandler: auth }, async (req, reply) => {
     const a = A(req);
     const d = await s.db.one<any>(
-      `SELECT f.storage_key, d.name FROM documents d JOIN files f ON f.id = d.file_id WHERE d.id = $1 AND d.envelope_id = $2 AND d.tenant_id = $3`,
+      `SELECT f.storage_key, f.purged_at, d.name, e.status FROM documents d JOIN files f ON f.id = d.file_id JOIN envelopes e ON e.id = d.envelope_id
+        WHERE d.id = $1 AND d.envelope_id = $2 AND d.tenant_id = $3`,
       [req.params.documentId, req.params.id, a.tenantId],
     );
     if (!d) throw notFound("Documento");
+    // Acá (después de autenticar y de comprobar que el documento es de este sobre y organización), no en un hook previo.
+    if (d.purged_at) throw purgedOriginal(d.status);
     reply.header("content-type", "application/pdf").header("cache-control", "private, max-age=300");
     return reply.send(Buffer.from(await s.blobs.get(d.storage_key)));
   });

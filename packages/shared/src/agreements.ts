@@ -408,6 +408,8 @@ export interface WorkflowRun {
   startedBy: string | null;
   /** Link para completar pasos de datos (solo si el run tiene pasos de recolección). */
   collectUrl: string | null;
+  /** Si quien consulta puede cancelarlo o reintentarlo. */
+  canManage?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -523,6 +525,8 @@ export interface NegotiationProposal {
 
 export interface NegotiationView {
   negotiation: NegotiationSummary;
+  /** Remitente: si quien consulta puede modificarla (crear versiones, decidir, aceptar, cancelar). */
+  canManage?: boolean;
   /** Documento de la versión actual. */
   blocks: ResolvedBlock[];
   text: string;

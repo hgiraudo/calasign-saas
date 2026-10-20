@@ -6,6 +6,7 @@ import type { Db } from "../infra/db";
 import { SYSTEM, appendEvent } from "../infra/evidence";
 import type { BlobStore } from "../infra/storage";
 import { AppError } from "../lib/errors";
+import { sha256Hex } from "../lib/util";
 import { authenticate, type Services } from "./context";
 
 interface Deps {
@@ -136,33 +137,35 @@ export async function purgeExpiredEnvelopes(d: Deps, opts: { tenantId?: string; 
   return { purged, candidates: due.length };
 }
 
+/** 410 de un original borrado por retención. Solo un sobre completado tiene PDF firmado. */
+export function purgedOriginal(status: string) {
+  return new AppError(
+    410,
+    "purged",
+    status === "completed"
+      ? "El original se eliminó por la política de retención; el PDF firmado sigue disponible"
+      : "El original se eliminó por la política de retención",
+  );
+}
+
 export async function retentionRoutes(app: FastifyInstance, s: Services, log: Deps["log"]) {
   // Documentos cuyo original ya se borró por retención: 410 en lugar de un error interno.
   app.addHook("preHandler", async (req) => {
     const url = req.routeOptions?.url;
     const p = (req.params ?? {}) as Record<string, string>;
-    if (url === "/v1/envelopes/:id/documents/:documentId/file" || url === "/v1/signing/:token/documents/:documentId/file") {
-      if (!/^[0-9a-f-]{36}$/i.test(p.documentId ?? "")) return;
+    // La ruta del sobre lo mira en su handler, después de autenticar (envelopes.ts). La del firmante, atada a su token:
+    // sin eso respondía 410 (y el estado) para documentos de cualquier sobre.
+    if (url === "/v1/signing/:token/documents/:documentId/file") {
+      if (!/^[0-9a-f-]{36}$/i.test(p.documentId ?? "") || !p.token) return;
       const r = await s.db.one<any>(
-        `SELECT f.purged_at, e.status FROM documents d JOIN files f ON f.id = d.file_id JOIN envelopes e ON e.id = d.envelope_id WHERE d.id = $1`,
-        [p.documentId],
+        `SELECT f.purged_at, e.status FROM documents d JOIN files f ON f.id = d.file_id JOIN envelopes e ON e.id = d.envelope_id
+          JOIN recipients rc ON rc.envelope_id = d.envelope_id AND rc.access_token_hash = $2
+         WHERE d.id = $1`,
+        [p.documentId, sha256Hex(p.token)],
       );
-      // Solo un sobre completado tiene PDF firmado (anulados, rechazados y vencidos también se purgan).
-      if (r?.purged_at) {
-        throw new AppError(
-          410,
-          "purged",
-          r.status === "completed"
-            ? "El original se eliminó por la política de retención; el PDF firmado sigue disponible"
-            : "El original se eliminó por la política de retención",
-          { envelopeStatus: r.status },
-        );
-      }
+      if (r?.purged_at) throw purgedOriginal(r.status);
     }
-    if (url === "/v1/templates/from-envelope/:envelopeId" && /^[0-9a-f-]{36}$/i.test(p.envelopeId ?? "")) {
-      const r = await s.db.one<any>(`SELECT purged_at FROM envelopes WHERE id = $1`, [p.envelopeId]);
-      if (r?.purged_at) throw new AppError(410, "purged", "Los originales de este sobre se eliminaron por la política de retención");
-    }
+    // "Plantilla desde sobre" lo mira su handler, con el sobre bloqueado y después de autenticar (templates.ts).
   });
 
   // Solo local: aplica la retención ya, ignorando la antigüedad (pruebas de punta a punta).

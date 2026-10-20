@@ -24,6 +24,14 @@ export const config = {
   trustProxyHops: Number(env.TRUST_PROXY_HOPS ?? 1),
   /** URL pública de la web (links de firma, correos). */
   appUrl: (env.APP_URL ?? "http://localhost:5173").replace(/\/$/, ""),
+  /**
+   * Otros hosts de la plataforma donde existe la cuenta (además del de APP_URL), separados por coma: p. ej. el apex si
+   * APP_URL es www, o el host que pone un proxy que reescribe Host. El resto solo sirve lo que ven los firmantes.
+   */
+  platformHosts: (env.PLATFORM_HOSTS ?? "")
+    .split(",")
+    .map((h) => h.trim().toLowerCase())
+    .filter(Boolean),
   repoRoot,
   dataDir,
   /** Sin DATABASE_URL se usa PGlite (Postgres embebido) en var/pglite. */

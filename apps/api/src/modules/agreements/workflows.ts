@@ -139,6 +139,8 @@ async function toRun(db: Db, r: any, a?: AuthContext): Promise<WorkflowRun> {
     // El enlace público lleva al formulario y, después, al link de firma de quien lo completa: solo para quien puede
     // administrar el run (como cancelar o reintentar), no para el aprobador ni quien solo puede ver.
     collectUrl: a && (startedByMe(a, r) || hasPerm(a, "templates:manage")) && hasCollect && r.public_token_enc && ["running", "waiting"].includes(r.status) ? `${base}/w/${decrypt(r.public_token_enc)}` : null,
+    // Cancelar y reintentar: quien lo inició o quien administra plantillas (lo mismo que exige la API).
+    canManage: Boolean(a && (startedByMe(a, r) || hasPerm(a, "templates:manage"))),
     createdAt: iso(r.created_at)!,
     updatedAt: iso(r.updated_at)!,
   };
@@ -312,18 +314,39 @@ async function resolveEnvelopeWait(t: Db, runId: string, envelopeId: string, sta
   return true;
 }
 
+/**
+ * Anula los sobres del run que siguen en curso (al cancelarlo o cuando un aprobador lo rechaza). También los que ya no
+ * figuran en el contexto: dos pasos con la misma clave de sobre dejan solo el último.
+ */
+async function voidRunEnvelopes(t: Db, run: any, actor: Actor, reason: string) {
+  const envIds = new Set(Object.values((run.context?.envelopes ?? {}) as Record<string, { envelopeId: string }>).map((e) => e.envelopeId));
+  for (const x of await t.query<any>(`SELECT id FROM envelopes WHERE tenant_id = $1 AND metadata->>'workflowRunId' = $2`, [run.tenant_id, run.id])) envIds.add(x.id);
+  for (const envelopeId of envIds) {
+    const env = await t.one<any>(`SELECT id, tenant_id, status FROM envelopes WHERE id = $1 FOR UPDATE`, [envelopeId]);
+    if (env?.status !== "sent" && env?.status !== "awaiting_certificates") continue;
+    await t.query(`UPDATE envelopes SET status = 'voided', voided_at = now(), void_reason = $2, updated_at = now(), version = version + 1 WHERE id = $1`, [env.id, reason]);
+    await appendEvent(t, { tenantId: env.tenant_id, envelopeId: env.id, type: "envelope.voided", actor, data: { reason, workflowRunId: run.id } });
+    const notified = await t.query<any>(
+      `SELECT r.id FROM recipients r WHERE r.envelope_id = $1 AND (r.status IN ('sent','viewed')
+         OR EXISTS (SELECT 1 FROM certificate_signatures c WHERE c.recipient_id = r.id AND c.status = 'pending'))`,
+      [env.id],
+    );
+    for (const r of notified) await enqueue(t, "notify", { kind: "voided", envelopeId: env.id, recipientId: r.id, tenantId: env.tenant_id });
+  }
+}
+
 /** Evento de un sobre (completado, rechazado, anulado, vencido): destraba los runs que lo esperan. */
 export async function onEnvelopeEventForWorkflows(d: Deps, envelopeId: string) {
   const env = await d.db.one<any>(`SELECT status FROM envelopes WHERE id = $1`, [envelopeId]);
   if (!env || !["completed", "declined", "voided", "expired"].includes(env.status)) return;
   const runs = await d.db.query<any>(`SELECT id FROM workflow_runs WHERE status = 'waiting' AND context->'waitingEnvelope' = to_jsonb($1::text)`, [envelopeId]);
   for (const r of runs) {
-    let resumed = false;
     await d.db.tx(async (t) => {
       await t.query(`SELECT id FROM workflow_runs WHERE id = $1 FOR UPDATE`, [r.id]);
-      resumed = (await resolveEnvelopeWait(t, r.id, envelopeId, env.status)) && env.status === "completed";
+      const resumed = (await resolveEnvelopeWait(t, r.id, envelopeId, env.status)) && env.status === "completed";
+      // En la misma transacción que lo pasa a "running": si el proceso caía entre las dos, el run quedaba trabado.
+      if (resumed) await enqueue(t, "agreements", { kind: "advance", runId: r.id });
     });
-    if (resumed) await enqueue(d.db, "agreements", { kind: "advance", runId: r.id });
   }
 }
 
@@ -372,7 +395,9 @@ async function executeStep(d: Deps, run: any, step: WorkflowStep, index: number)
       if (!tpl) throw new StepFailure("La plantilla de documento no existe o fue archivada");
       const doc = await renderDocument(d.db, run.tenant_id, { source: tpl.source, data, locale: tpl.locale, title: interpolate(tpl.agreement_mapping?.title, data, tpl.locale) || tpl.name }).catch(
         (e) => {
-          throw new StepFailure(e instanceof Error ? e.message : String(e));
+          // Solo los errores de la plantilla o los datos son definitivos; uno de la base (cláusulas, marca) se reintenta.
+          if (e instanceof AppError) throw new StepFailure(e.message);
+          throw e;
         },
       );
       if (doc.missingClauses.length) throw new StepFailure(`Cláusulas inexistentes: ${doc.missingClauses.join(", ")}`);
@@ -466,12 +491,24 @@ async function executeStep(d: Deps, run: any, step: WorkflowStep, index: number)
           // firmante fijo de la organización con el mismo correo). El resto se avisa normalmente: el tope de ejecuciones
           // por hora limita el abuso.
           if (!run.started_by && !run.started_by_api_key && selfService.length) {
-            await t.query(
+            const marked = await t.query<{ id: string; name: string; email: string }>(
               `UPDATE recipients r SET self_registered = true
                 WHERE r.envelope_id = $1 AND lower(r.email) = ANY($2::text[]) AND r.status IN ('sent','viewed')
-                  AND (SELECT count(*) FROM recipients x WHERE x.envelope_id = r.envelope_id AND lower(x.email) = lower(r.email)) = 1`,
+                  AND (SELECT count(*) FROM recipients x WHERE x.envelope_id = r.envelope_id AND lower(x.email) = lower(r.email)) = 1
+                RETURNING r.id, r.name, r.email`,
               [envelopeId, selfService.map((x) => x.toLowerCase())],
             );
+            // Como en los formularios web: la evidencia deja constancia de que el correo lo escribió quien usó el link
+            // público (no está verificado).
+            for (const m of marked) {
+              await appendEvent(t, {
+                tenantId: run.tenant_id,
+                envelopeId,
+                type: "recipient.self_registered",
+                actor: { type: "recipient", id: m.id, label: `${m.name} <${m.email}>` },
+                data: { workflowRunId: run.id, workflowId: run.workflow_id ?? null },
+              });
+            }
           }
           c.envelopes = { ...(c.envelopes ?? {}), [step.config.envelopeKey]: { envelopeId } };
           c.selfServiceSigners = { ...(c.selfServiceSigners ?? {}), [envelopeId]: selfService };
@@ -888,7 +925,11 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
         JSON.stringify(output),
       ]);
       if (input.approve) await t.query(`UPDATE workflow_runs SET status = 'running', current_step = current_step + 1, updated_at = now() WHERE id = $1`, [run.id]);
-      else await t.query(`UPDATE workflow_runs SET status = 'rejected', updated_at = now() WHERE id = $1`, [run.id]);
+      else {
+        await t.query(`UPDATE workflow_runs SET status = 'rejected', updated_at = now() WHERE id = $1`, [run.id]);
+        // Rechazado: los sobres que el run ya había enviado no siguen en firma.
+        await voidRunEnvelopes(t, run, a.actor, "Workflow rechazado");
+      }
     });
     await auditFromRequest(s.db, req, a, input.approve ? "workflow.step_approved" : "workflow.step_rejected", { targetType: "workflow_run", targetId: run0.id });
     if (input.approve) await advanceNow(deps, run0.id);
@@ -901,26 +942,11 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
     if (!startedByMe(a, run0) && !hasPerm(a, "templates:manage")) throw forbidden();
     await s.db.tx(async (t) => {
       const run = await t.one<any>(`SELECT * FROM workflow_runs WHERE id = $1 FOR UPDATE`, [run0.id]);
-      if (!["running", "waiting"].includes(run.status)) throw conflict("not_active", "La ejecución ya terminó");
+      // Un run fallado también se puede cancelar: es la forma de anular los sobres que dejó en firma.
+      if (!["running", "waiting", "failed"].includes(run.status)) throw conflict("not_active", "La ejecución ya terminó");
       await t.query(`UPDATE workflow_runs SET status = 'cancelled', updated_at = now() WHERE id = $1`, [run.id]);
       await t.query(`UPDATE workflow_run_steps SET status = 'cancelled', finished_at = now() WHERE run_id = $1 AND status IN ('pending','running','waiting')`, [run.id]);
-      // Los sobres enviados por el run que siguen en curso se anulan. También los que ya no figuran en el contexto: dos
-      // pasos con la misma clave de sobre dejan solo el último, y el primero seguía en curso con el run cancelado.
-      const envIds = new Set(Object.values((run.context?.envelopes ?? {}) as Record<string, { envelopeId: string }>).map((e) => e.envelopeId));
-      for (const x of await t.query<any>(`SELECT id FROM envelopes WHERE tenant_id = $1 AND metadata->>'workflowRunId' = $2`, [run.tenant_id, run.id])) envIds.add(x.id);
-      for (const envelopeId of envIds) {
-        const env = await t.one<any>(`SELECT id, tenant_id, status FROM envelopes WHERE id = $1 FOR UPDATE`, [envelopeId]);
-        if (env?.status !== "sent" && env?.status !== "awaiting_certificates") continue;
-        const reason = "Workflow cancelado";
-        await t.query(`UPDATE envelopes SET status = 'voided', voided_at = now(), void_reason = $2, updated_at = now(), version = version + 1 WHERE id = $1`, [env.id, reason]);
-        await appendEvent(t, { tenantId: env.tenant_id, envelopeId: env.id, type: "envelope.voided", actor: a.actor, data: { reason, workflowRunId: run.id } });
-        const notified = await t.query<any>(
-          `SELECT r.id FROM recipients r WHERE r.envelope_id = $1 AND (r.status IN ('sent','viewed')
-             OR EXISTS (SELECT 1 FROM certificate_signatures c WHERE c.recipient_id = r.id AND c.status = 'pending'))`,
-          [env.id],
-        );
-        for (const r of notified) await enqueue(t, "notify", { kind: "voided", envelopeId: env.id, recipientId: r.id, tenantId: env.tenant_id });
-      }
+      await voidRunEnvelopes(t, run, a.actor, "Workflow cancelado");
     });
     await auditFromRequest(s.db, req, a, "workflow.run_cancelled", { targetType: "workflow_run", targetId: run0.id });
     return toRun(s.db, await s.db.one(`SELECT * FROM workflow_runs WHERE id = $1`, [run0.id]), a);

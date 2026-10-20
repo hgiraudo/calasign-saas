@@ -414,7 +414,7 @@ export function NegotiationPanel({
                   <DiffView parts={[{ op: "del", text: p.oldValue }, { op: "ins", text: `\n${p.newValue}` }]} />
                 )}
                 {p.comment && <div className="muted">“{p.comment}”</div>}
-                {mode === "sender" && open && p.status === "pending" && (
+                {mode === "sender" && view.canManage !== false && open && p.status === "pending" && (
                   <div className="row-wrap">
                     <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={() => call(`/proposals/${p.id}/decision`, { accept: true })}>
                       {ta("neg.accept")}
@@ -445,7 +445,7 @@ export function NegotiationPanel({
                 </div>
               ))}
           </div>
-          {mode === "sender" && (
+          {mode === "sender" && view.canManage !== false && (
             <div className="row-wrap">
               {open && (
                 <button

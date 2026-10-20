@@ -64,6 +64,10 @@ Notas:
   agrega a lo que proxea, no a sus propias consultas `ask`), así que no se puede consultar desde afuera.
 - En producción (ECS + ALB) el equivalente es un ALB con certificados de ACM por dominio (cuota de certificados por
   ALB) o CloudFront con SaaS Manager / multi-tenant distributions; el endpoint de verificación es el mismo.
+- **La cuenta solo existe en el host de la plataforma** (el de `APP_URL`, más los de `PLATFORM_HOSTS`, separados por
+  coma; en local también `localhost`, `127.0.0.1` y `[::1]`). Cualquier otro `Host` recibe el trato de un dominio
+  propio (ver abajo). Por eso: el health check del balanceador va a `/healthz` (no a `/`, que redirige), y un proxy
+  delante de la API tiene que conservar el `Host` original (o agregarlo a `PLATFORM_HOSTS`).
 
 ## Qué cambia en la app
 
@@ -74,7 +78,7 @@ Notas:
 | `/v1/signing/*` por un dominio propio | 404 si el link es de otra organización. |
 | URLs embebidas, Telegram, Firmador | Usan el dominio de la marca del sobre (sub-marca con dominio propio, o el de la organización). |
 | Formularios web | Usan el dominio propio de la organización (`tenantBaseUrl`); no tienen sub-marca. |
-| La cuenta en un dominio propio o de sub-marca | **No se sirve.** `/`, `/app`, `/login`, `/signup`, `/forgot`, `/reset`, `/invite`, `/oauth/authorize` y `/developers` redirigen (302) al dominio de la plataforma; `/v1/auth`, `/v1/invite`, `/v1/oauth/authorize`, `/v1/me` y `/v1/integrations/sso` responden 401 `use_platform_host`, y la cookie de sesión `cs_session` se ignora. La organización controla el DNS de su dominio: si se sirviera el login ahí podría quedarse con sesiones que valen en la plataforma y en otras organizaciones. API keys y tokens OAuth (`Authorization: Bearer`) funcionan igual. El Host se normaliza (sin puerto ni punto final). |
+| La cuenta en cualquier host que no sea el de la plataforma (dominio propio, de sub-marca, uno que dejó de estar verificado o cualquier otro) | **No se sirve.** `/`, `/app`, `/login`, `/signup`, `/forgot`, `/reset`, `/invite`, `/oauth/authorize` y `/developers` redirigen (302) al dominio de la plataforma; `/v1/auth`, `/v1/invite`, `/v1/oauth/authorize`, `/v1/me` y `/v1/integrations/sso` responden 401 `use_platform_host`, y la cookie de sesión `cs_session` se ignora. La organización controla el DNS de su dominio: si se sirviera el login ahí podría quedarse con sesiones que valen en la plataforma y en otras organizaciones. API keys y tokens OAuth (`Authorization: Bearer`) funcionan igual. El Host se normaliza (sin puerto ni punto final). |
 | Toda la web en el dominio propio | `index.html` con el tema, título y favicon de la marca; manifest y página sin conexión propios (ver [MARCA-BLANCA.md](MARCA-BLANCA.md)). |
 
 ## Pruebas locales

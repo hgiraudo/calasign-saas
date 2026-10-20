@@ -374,7 +374,10 @@ export async function customDomainRoutes(app: FastifyInstance, s: Services) {
   // apuntando a la plataforma, con su certificado todavía vigente, servía el login real y se quedaba con la cookie.
   app.addHook("onRequest", async (req, reply) => {
     const host = String(req.headers.host ?? "").toLowerCase().replace(/:\d+$/, "").replace(/\.$/, "");
-    const platform = host === appHost() || (config.environment === "local" && (host === "localhost" || host === "127.0.0.1"));
+    const platform =
+      host === appHost() ||
+      config.platformHosts.includes(host) ||
+      (config.environment === "local" && (host === "localhost" || host === "127.0.0.1" || host === "[::1]"));
     if (platform) return;
     const path = requestPath(req);
     if (req.method === "GET" && (path === "/" || ACCOUNT_PAGES.some((p) => under(path, p)))) {

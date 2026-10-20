@@ -234,7 +234,7 @@ function MembersTab({ roles, manage, reloadRoles }: { roles: RolesResponse | nul
         })()}
       {removing && (
         <Modal
-          title={tt("team.remove")}
+          title={removing.userId === me?.user.id ? tt("team.leave") : tt("team.remove")}
           onClose={() => setRemoving(null)}
           footer={
             <>

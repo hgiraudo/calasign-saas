@@ -529,12 +529,12 @@ const OPS: Op[] = [
     tag: "Firma embebida",
     summary: "URL de firma embebida (un solo uso, vence en 5 minutos)",
     description:
-      "Con el sobre enviado (sent, awaiting_certificates o completed); al enviarlo, todos los destinatarios quedan activos, pero cada uno firma cuando le toca según routingOrder. Pedir una URL nueva cada vez que se muestra la ceremonia. Al terminar redirige a returnUrl con ?event=signing_complete|declined. Dentro de un iframe también avisa por postMessage (`viewed`, `signing_complete`, `declined`, `error` y `closed` con `status` si el sobre terminó sin que este firmante actuara). Un destinatario embebido no usa código OTP (lo autentica tu aplicación) ni puede delegar.",
+      "Con el sobre enviado (sent, awaiting_certificates o completed); al enviarlo, todos los destinatarios quedan activos, pero cada uno firma cuando le toca según routingOrder. Pedir una URL nueva cada vez que se muestra la ceremonia. Al terminar redirige a returnUrl con ?event=signing_complete|declined. Dentro de un iframe también avisa por postMessage (`viewed`, `signing_complete`, `declined`, `error` y `closed` con `status` si el sobre terminó sin que este firmante actuara). Un destinatario embebido no usa código OTP (lo autentica tu aplicación) ni puede delegar. Para un firmante con código OTP la URL sale con `tabOnly: true`: sirve para una pestaña o una redirección (vuelve a returnUrl), no para un iframe; pedirla con frameAncestors responde 409 otp_not_embeddable.",
     body: CreateSigningUrlInput,
     bodyOptional: true,
     status: 201,
     response: SigningUrlSchema,
-    errors: ["frame_ancestor_not_allowed", "not_available"],
+    errors: ["frame_ancestor_not_allowed", "not_available", "otp_not_embeddable"],
   },
   { method: "get", path: "/v1/settings/embed", operationId: "getEmbedSettings", tag: "Firma embebida", summary: "Orígenes autorizados a enmarcar la firma", response: z.object({ frameAncestors: z.array(z.string()) }) },
   {

@@ -122,7 +122,7 @@ interface SignatureProvider {
 - **Multi-tenant en tablas compartidas** con `tenant_id` en todas las tablas de negocio. Defensa en profundidad: **Row Level Security** con `SET LOCAL app.tenant_id` por transacción (producción). Clientes enterprise: celda dedicada con el mismo código.
 - IDs **UUIDv7** (ordenados por tiempo: buena localidad de índice a gran escala, no exponen volumen como un serial).
 - `envelope_events` crece rápido: se particiona por mes y se archiva a S3 (Parquet) después del período caliente, sin perder la cadena de hashes.
-- **Archivos en S3**, nunca en la base. Clave `tenant/<tenant_id>/envelopes/<envelope_id>/<file_id>`. Cifrado SSE-KMS con clave por celda (BYOK por tenant en Fase 5). Los PDF finales van a un bucket con **Object Lock en modo compliance** según la retención del plan.
+- **Archivos en S3**, nunca en la base. Clave `tenant/<tenant_id>/envelopes/<envelope_id>/<file_id>`. Cifrado SSE-KMS con clave por celda (BYOK por tenant en Fase 5). Diseño previsto: los PDF finales en un bucket con **Object Lock en modo compliance**. Estado actual: un solo bucket, versionado, sin Object Lock (en `infra/dev` está apagado); la integridad la garantiza la cadena de hashes de la evidencia y el sello PAdES. Ver `MODELO-DE-DATOS.md` (Retención).
 - Escala de referencia por celda: 10 M de sobres/año ≈ 0,3 sobres/s de media y picos de 50–100/s en envíos masivos. Postgres con réplicas de lectura lo resuelve con margen; el cuello de botella real es la CPU de los workers de PDF, que escalan solos.
 
 ## 5. Flujo de un sobre

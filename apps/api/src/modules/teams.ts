@@ -975,6 +975,9 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
       const u = await s.db.one<any>(`SELECT totp_enabled_at FROM users WHERE id = $1`, [a.userId]);
       if (!u?.totp_enabled_at) throw conflict("enable_2fa_first", "Activá tu verificación en dos pasos antes de exigirla a la organización");
     }
+    // Valores anteriores para la auditoría (settings.changed los registra con los nuevos).
+    const prev = await s.db.one<any>(`SELECT retention_days, require_2fa FROM tenants WHERE id = $1`, [a.tenantId]);
+    (req as FastifyRequest & { auditBefore?: Record<string, unknown> }).auditBefore = { retentionDays: prev?.retention_days ?? null, require2fa: Boolean(prev?.require_2fa) };
     await s.db.query(
       `UPDATE tenants SET retention_days = CASE WHEN $2::boolean THEN $3 ELSE retention_days END, require_2fa = COALESCE($4, require_2fa) WHERE id = $1`,
       [a.tenantId, input.retentionDays !== undefined, input.retentionDays ?? null, input.require2fa ?? null],

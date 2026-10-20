@@ -77,6 +77,8 @@ export interface BillingOverview {
     status: string | null;
     renewsAt: string | null;
     manageable: boolean;
+    /** Hay un cliente de Stripe: el portal (facturas, medio de pago) está disponible, también después de una baja. */
+    portalAvailable?: boolean;
   };
   usage: BillingUsage;
   plans: (PlanDefinition & { price: number | null })[];

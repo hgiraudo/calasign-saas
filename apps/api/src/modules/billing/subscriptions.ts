@@ -76,7 +76,9 @@ export async function applySubscription(
     `UPDATE tenants SET billing_plan = $2, plan = $2, billing_provider = $3,
        billing_customer_id = COALESCE($4, billing_customer_id), subscription_id = $5, subscription_status = $6,
        -- Sin fecha nueva (p. ej. el alta por checkout.session.completed) se conserva la que había; en Free, ninguna.
-       plan_renews_at = CASE WHEN $2 = 'free' THEN NULL ELSE COALESCE($7::timestamptz, plan_renews_at) END, plan_updated_at = now()
+       -- La de otra suscripción (cambio de plan o de proveedor) no se conserva.
+       plan_renews_at = CASE WHEN $2 = 'free' THEN NULL WHEN subscription_id IS DISTINCT FROM $5 THEN $7::timestamptz
+                             ELSE COALESCE($7::timestamptz, plan_renews_at) END, plan_updated_at = now()
      WHERE id = $1`,
     [tenantId, s.plan, s.provider, s.customerId ?? null, s.subscriptionId ?? null, s.status, s.renewsAt ?? null],
   );
@@ -106,6 +108,7 @@ export async function billingOverview(db: Db, tenantId: string): Promise<Billing
       status: t.subscription_status ?? null,
       renewsAt: iso(t.plan_renews_at),
       manageable: Boolean(t.subscription_id) || plan.id !== "free",
+      portalAvailable: String(t.billing_customer_id ?? "").startsWith("cus_"),
     },
     usage: await usageThisMonth(db, tenantId),
     plans: PLAN_IDS.map((id) => ({ ...PLANS[id], price: priceOf(id, currency) })),
@@ -164,17 +167,24 @@ export async function subscriptionRoutes(app: FastifyInstance, s: Services) {
         nonceHash = sha256Hex(nonce);
         url = `${config.appUrl}/v1/billing/mock/checkout/${checkoutId}?n=${nonce}`;
       } else if (provider === "stripe") {
-        const c = await stripeCreateSubscriptionCheckout({
+        const params = {
           planName: PLANS[input.plan].name,
           amount,
           currency,
           successUrl: `${back}?checkout=success`,
           cancelUrl: `${back}?checkout=cancel`,
           metadata: { tenantId: a.tenantId, plan: input.plan, checkoutId },
-          // El customer de Stripe se reutiliza aunque la suscripción haya terminado (facturas en un solo lugar, sin
-          // duplicados).
-          customerId: String(t.billing_customer_id ?? "").startsWith("cus_") ? t.billing_customer_id : null,
           customerEmail: user?.email ?? null,
+        };
+        // El customer de Stripe se reutiliza aunque la suscripción haya terminado (facturas en un solo lugar, sin
+        // duplicados). Si Stripe lo rechaza (otra moneda que la de sus facturas, claves de otra cuenta), se crea uno nuevo:
+        // si no, la organización no se podía volver a suscribir.
+        const reuse = String(t.billing_customer_id ?? "").startsWith("cus_") ? (t.billing_customer_id as string) : null;
+        const c = await stripeCreateSubscriptionCheckout({ ...params, customerId: reuse }).catch((err) => {
+          if (reuse && err instanceof ProviderError && err.status >= 400 && err.status < 500) {
+            return stripeCreateSubscriptionCheckout({ ...params, customerId: null });
+          }
+          throw err;
         });
         url = c.url;
         providerRef = c.id;

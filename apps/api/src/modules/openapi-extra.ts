@@ -312,6 +312,12 @@ export const ERRORS: Record<string, Err> = {
     details: { webForms: 1, names: ["Alta de clientes"] },
     summary: "La plantilla tiene formularios web activos (se borrarían con ella)",
   },
+  otp_not_embeddable: {
+    status: 409,
+    code: "otp_not_embeddable",
+    message: "Un firmante con código OTP no se puede mostrar dentro de un iframe",
+    summary: "Se pidieron frameAncestors para un firmante con código OTP (sin frameAncestors la URL sale para pestaña)",
+  },
   not_draft: { status: 409, code: "not_draft", message: "Solo se puede modificar un sobre en borrador", summary: "El sobre ya no es un borrador" },
   idempotency_mismatch: {
     status: 409,

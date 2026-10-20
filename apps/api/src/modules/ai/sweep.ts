@@ -67,8 +67,9 @@ export async function runAiSweep(d: Deps, now = new Date()) {
   const pending = await d.db.query<any>(
     `SELECT e.id, e.tenant_id FROM envelopes e JOIN tenants t ON t.id = e.tenant_id
      WHERE e.status = 'completed' AND e.ai_metadata IS NULL AND e.purged_at IS NULL
-       -- Los reintentos, solo durante los primeros 30 días del sobre (un error que no se arregla no se intenta para siempre).
-       AND (e.ai_metadata_attempted_at IS NULL OR (e.ai_metadata_retry_at < now() AND e.completed_at > now() - interval '30 days'))
+       -- Los reintentos, solo durante 30 días desde el primer intento (un error que no se arregla no se intenta para siempre).
+       AND (e.ai_metadata_attempted_at IS NULL
+            OR (e.ai_metadata_retry_at < now() AND COALESCE(e.ai_metadata_first_attempt_at, e.ai_metadata_attempted_at) > now() - interval '30 days'))
        -- Con la clave BYOK fallando no se puede leer el PDF: esos sobres esperan a que se recupere.
        AND t.byok_status <> 'failing'
        AND t.ai_enabled AND t.ai_auto_extract
@@ -80,7 +81,8 @@ export async function runAiSweep(d: Deps, now = new Date()) {
   for (const e of pending) {
     // Se reclama el sobre: con varios workers (cada uno corre el barrido), dos tomaban el mismo y el modelo se llamaba
     // (y se cobraba) dos veces.
-    const claimed = await d.db.query(`UPDATE envelopes SET ai_metadata_attempted_at = now(), ai_metadata_retry_at = NULL
+    const claimed = await d.db.query(`UPDATE envelopes SET ai_metadata_attempted_at = now(), ai_metadata_retry_at = NULL,
+          ai_metadata_first_attempt_at = COALESCE(ai_metadata_first_attempt_at, now())
         WHERE id = $1 AND (ai_metadata_attempted_at IS NULL OR ai_metadata_retry_at < now()) RETURNING id`, [e.id]);
     if (!claimed.length) continue;
     try {

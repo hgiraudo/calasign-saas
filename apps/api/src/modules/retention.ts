@@ -40,12 +40,20 @@ async function purgeableFiles(db: Db, envelopeId: string) {
   );
 }
 
+/**
+ * Cuándo terminó el sobre (para contar los días de retención). También los anulados, rechazados y vencidos: si no, sus
+ * originales, adjuntos, imágenes de firma y fotos de documentos de identidad no se borraban nunca.
+ */
+const CLOSED_STATUSES = ["completed", "voided", "declined", "expired"];
+const CLOSED_AT = `CASE e.status WHEN 'completed' THEN e.completed_at WHEN 'voided' THEN e.voided_at WHEN 'expired' THEN e.expires_at
+  ELSE (SELECT max(r.declined_at) FROM recipients r WHERE r.envelope_id = e.id) END`;
+
 export async function purgeExpiredEnvelopes(d: Deps, opts: { tenantId?: string; ignoreAge?: boolean; limit?: number } = {}) {
   const params: unknown[] = [];
-  let where = `e.status = 'completed' AND e.purged_at IS NULL AND t.retention_days IS NOT NULL`;
+  let where = `e.status IN ('completed','voided','declined','expired') AND e.purged_at IS NULL AND t.retention_days IS NOT NULL`;
   if (!opts.ignoreAge) {
     params.push(daySeconds());
-    where += ` AND e.completed_at < now() - make_interval(secs => t.retention_days * $${params.length}::double precision)`;
+    where += ` AND ${CLOSED_AT} < now() - make_interval(secs => t.retention_days * $${params.length}::double precision)`;
   }
   if (opts.tenantId) {
     params.push(opts.tenantId);
@@ -54,7 +62,7 @@ export async function purgeExpiredEnvelopes(d: Deps, opts: { tenantId?: string; 
   params.push(opts.limit ?? 50);
   const due = await d.db.query<any>(
     `SELECT e.id, e.tenant_id, t.retention_days FROM envelopes e JOIN tenants t ON t.id = e.tenant_id WHERE ${where}
-     ORDER BY e.completed_at LIMIT $${params.length}`,
+     ORDER BY ${CLOSED_AT} LIMIT $${params.length}`,
     params,
   );
   let purged = 0;
@@ -67,11 +75,11 @@ export async function purgeExpiredEnvelopes(d: Deps, opts: { tenantId?: string; 
       // que la bloquea, de IA a miembros, quedaba esperando).
       const cur = await t.one<any>(
         `SELECT e.status, e.purged_at, t.retention_days,
-                (e.completed_at < now() - make_interval(secs => t.retention_days * $2::double precision)) AS due
+                (${CLOSED_AT} < now() - make_interval(secs => t.retention_days * $2::double precision)) AS due
            FROM envelopes e JOIN tenants t ON t.id = e.tenant_id WHERE e.id = $1 FOR UPDATE OF e`,
         [e.id, daySeconds()],
       );
-      if (cur?.status !== "completed" || cur.purged_at || cur.retention_days == null) return false;
+      if (!CLOSED_STATUSES.includes(cur?.status) || cur.purged_at || cur.retention_days == null) return false;
       if (!opts.ignoreAge && !cur.due) return false;
       const files = await purgeableFiles(t, e.id);
       const done: any[] = [];
@@ -95,7 +103,7 @@ export async function purgeExpiredEnvelopes(d: Deps, opts: { tenantId?: string; 
         envelopeId: e.id,
         type: "envelope.purged",
         actor: SYSTEM,
-        data: { retentionDays: cur.retention_days, files: done.length, kinds, kept: ["signed_pdf", "events"] },
+        data: { retentionDays: cur.retention_days, files: done.length, kinds, kept: cur.status === "completed" ? ["signed_pdf", "events"] : ["events"], status: cur.status },
       });
       return true;
     });

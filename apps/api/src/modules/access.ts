@@ -321,6 +321,9 @@ export async function enforceRoutePolicy(db: Db, req: FastifyRequest, a: AuthCon
   if (url.startsWith("/v1/settings/byok") || url.startsWith("/v1/settings/sso/domains")) return requirePerm(a, "settings:manage");
   // Reportes: estadísticas de toda la organización.
   if (url.startsWith("/v1/reports")) return requirePerm(a, "envelopes:view_all");
+  // Salir de la organización: quitarse a uno mismo (con su sesión, no con una key ni un token de app) no pide
+  // members:manage; el handler cuida que no quede sin propietario.
+  if (method === "DELETE" && url === "/v1/members/:userId" && a.userId && !a.apiKeyId && !a.oauth && params.userId === a.userId) return;
   if (/^\/v1\/(members|roles|groups|invitations)(\/|$)/.test(url) && !isRead) return requirePerm(a, "members:manage");
   if (url.startsWith("/v1/invitations") && isRead) return requirePerm(a, "members:manage");
   // Rechazo por defecto: una ruta autenticada que cambia datos y no coincidió con ninguna regla de arriba tiene que

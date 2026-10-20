@@ -268,7 +268,7 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
       // sent_at: el contacto nuevo recibe la invitación ahora (los recordatorios y el aviso de vencimiento cuentan desde ahí).
       await db.query(
         `UPDATE recipients SET access_token_hash = $2, access_token_enc = $3, telegram_chat_id = NULL,
-           sent_at = CASE WHEN sent_at IS NOT NULL THEN now() END WHERE id = $1`,
+           sent_at = CASE WHEN sent_at IS NOT NULL AND auth_method <> 'in_person' AND NOT embedded THEN now() ELSE sent_at END WHERE id = $1`,
         [r.id, t.hash, t.enc],
       );
       // El checkout de un cobro pendiente se armó con el contacto y el link anteriores: se descarta.

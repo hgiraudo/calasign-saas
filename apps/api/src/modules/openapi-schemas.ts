@@ -247,7 +247,11 @@ export const EnvelopeEventSchema = named(
 
 export const SigningUrlSchema = named(
   "SigningUrl",
-  z.object({ url: z.string().url().describe("URL de un solo uso para el iframe o la redirección."), expiresAt: iso() }),
+  z.object({
+    url: z.string().url().describe("URL de un solo uso para el iframe o la redirección."),
+    expiresAt: iso(),
+    tabOnly: z.boolean().optional().describe("true: el firmante tiene código OTP; la URL se abre en una pestaña o redirección (no dentro de un iframe)."),
+  }),
 );
 
 // ───────────────────────────── Webhooks ─────────────────────────────

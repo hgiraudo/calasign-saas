@@ -109,8 +109,8 @@ const es = {
   "sec.require2faHelp": "Quien no la tenga activa solo va a poder configurarla hasta hacerlo.",
   "sec.retention": "Retención de documentos",
   "sec.retentionHelp":
-    "Días después de completado un sobre en que se borran los originales, las imágenes de firma y los adjuntos. El PDF firmado y el registro de evidencia se conservan siempre. Vacío = no borrar.",
-  "sec.retentionConfirm": "Los originales, imágenes de firma y adjuntos de los sobres completados hace más de {n} días se van a borrar para siempre. ¿Continuar?",
+    "Días después de terminado un sobre (completado, anulado, rechazado o vencido) en que se borran los originales, las imágenes de firma, los adjuntos y las fotos de identidad. El PDF firmado y el registro de evidencia se conservan siempre. Vacío = no borrar.",
+  "sec.retentionConfirm": "Los originales, imágenes de firma y adjuntos de los sobres terminados hace más de {n} días se van a borrar para siempre. ¿Continuar?",
   "sec.days": "días",
   "sec.save": "Guardar",
   "sec.saved": "Guardado.",
@@ -246,8 +246,8 @@ const pt: Record<Key, string> = {
   "sec.require2faHelp": "Quem não a tiver ativa só poderá configurá-la até fazê-lo.",
   "sec.retention": "Retenção de documentos",
   "sec.retentionHelp":
-    "Dias após a conclusão de um envelope em que os originais, as imagens de assinatura e os anexos são apagados. O PDF assinado e o registro de evidências são sempre mantidos. Vazio = não apagar.",
-  "sec.retentionConfirm": "Os originais, imagens de assinatura e anexos dos envelopes concluídos há mais de {n} dias serão apagados para sempre. Continuar?",
+    "Dias após o encerramento de um envelope (concluído, anulado, recusado ou expirado) em que os originais, as imagens de assinatura, os anexos e as fotos de identidade são apagados. O PDF assinado e o registro de evidências são sempre mantidos. Vazio = não apagar.",
+  "sec.retentionConfirm": "Os originais, imagens de assinatura e anexos dos envelopes encerrados há mais de {n} dias serão apagados para sempre. Continuar?",
   "sec.days": "dias",
   "sec.save": "Salvar",
   "sec.saved": "Salvo.",
@@ -381,8 +381,8 @@ const en: Record<Key, string> = {
   "sec.require2faHelp": "Members without it can only set it up until they do.",
   "sec.retention": "Document retention",
   "sec.retentionHelp":
-    "Days after an envelope is completed when originals, signature images and attachments are deleted. The signed PDF and the evidence log are always kept. Empty = never delete.",
-  "sec.retentionConfirm": "Originals, signature images and attachments of envelopes completed more than {n} days ago will be permanently deleted. Continue?",
+    "Days after an envelope ends (completed, voided, declined or expired) when originals, signature images, attachments and ID photos are deleted. The signed PDF and the evidence log are always kept. Empty = never delete.",
+  "sec.retentionConfirm": "Originals, signature images and attachments of envelopes that ended more than {n} days ago will be permanently deleted. Continue?",
   "sec.days": "days",
   "sec.save": "Save",
   "sec.saved": "Saved.",

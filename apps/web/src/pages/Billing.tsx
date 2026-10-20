@@ -150,7 +150,7 @@ export function BillingPage() {
                 ))}
               </select>
             </label>
-            {data.subscription.provider === "stripe" && (
+            {(data.subscription.portalAvailable ?? data.subscription.provider === "stripe") && (
               <button
                 type="button"
                 className="btn"

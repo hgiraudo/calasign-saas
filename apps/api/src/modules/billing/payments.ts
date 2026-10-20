@@ -18,7 +18,6 @@ import { SYSTEM, appendEvent, type Actor } from "../../infra/evidence";
 import { AppError, badRequest, conflict, notFound } from "../../lib/errors";
 import { decrypt, iso, randomToken, sha256Hex, uuidv7 } from "../../lib/util";
 import { authenticate, type Services } from "../context";
-import { tenantBaseUrl } from "../custom-domains";
 import { advanceRouting, lockEnvelope, pastExpiry } from "../envelopes";
 import { assertLinkCurrent, resolveToken } from "../signing";
 import {

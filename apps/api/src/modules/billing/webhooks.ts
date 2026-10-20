@@ -15,6 +15,7 @@ import {
   mpGetPayment,
   mpGetPreapproval,
   stripeCancelSubscription,
+  stripeGetSubscriptionPeriodEnd,
   toMinorUnits,
   verifyMercadoPagoSignature,
   verifyStripeSignature,
@@ -70,6 +71,9 @@ export async function handleStripeEvent(db: Db, event: any) {
         // cobrando y, al pisarse subscription_id, ya no se podría ver ni cancelar desde la app.
         // Con la organización bloqueada: dos confirmaciones simultáneas leían la misma suscripción anterior, cancelaban
         // esa y la última pisaba a la otra, que seguía cobrando sin que la app la viera.
+        // Fecha de renovación desde el alta (si no, quedaba vacía, o la de la suscripción anterior, hasta el primer
+        // "updated"). Mejor esfuerzo: sin ella igual se activa el plan.
+        const renewsAt = subscriptionId ? await stripeGetSubscriptionPeriodEnd(subscriptionId).catch(() => null) : null;
         await db.tx(async (tx) => {
           const t = await tx.one<any>(`SELECT billing_provider, subscription_id FROM tenants WHERE id = $1 FOR UPDATE`, [tenantId]);
           if (t?.subscription_id && t.subscription_id !== subscriptionId) {
@@ -82,6 +86,7 @@ export async function handleStripeEvent(db: Db, event: any) {
             customerId: typeof obj.customer === "string" ? obj.customer : null,
             subscriptionId,
             status: "active",
+            renewsAt,
             source: "Stripe",
           });
         });

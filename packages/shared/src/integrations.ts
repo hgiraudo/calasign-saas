@@ -128,6 +128,8 @@ export interface SigningUrlResponse {
   /** URL de un solo uso para el iframe o la redirección. */
   url: string;
   expiresAt: string;
+  /** true: el firmante tiene código OTP y la URL solo se abre en una pestaña o redirección (no dentro de un iframe). */
+  tabOnly?: boolean;
 }
 
 /** GET /v1/signing/:token/embed — configuración de la ceremonia embebida para la página del firmante. */

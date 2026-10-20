@@ -55,7 +55,15 @@ type Extract = (ctx: { req: FastifyRequest; body: any; params: Record<string, st
 
 /** Acciones de otros módulos, por "MÉTODO ruta". */
 const ROUTE_ACTIONS: Record<string, { action: string; extract?: Extract }> = {
-  "POST /v1/api-keys": { action: "api_key.created", extract: ({ body }) => ({ targetType: "api_key", targetId: body?.apiKey?.id, data: { name: body?.apiKey?.name } }) },
+  "POST /v1/api-keys": {
+    action: "api_key.created",
+    extract: ({ body }) => ({ targetType: "api_key", targetId: body?.apiKey?.id, data: { name: body?.apiKey?.name, role: body?.apiKey?.roleName ?? body?.apiKey?.role ?? null } }),
+  },
+  // Exportar todos los sobres con los datos de sus destinatarios, como las otras exportaciones (acuerdos, auditoría).
+  "GET /v1/reports/envelopes.csv": {
+    action: "reports.exported",
+    extract: ({ req }) => ({ targetType: "report", targetId: "envelopes.csv", data: { from: (req.query as any)?.from ?? null, to: (req.query as any)?.to ?? null } }),
+  },
   "DELETE /v1/api-keys/:id": { action: "api_key.revoked", extract: ({ params }) => ({ targetType: "api_key", targetId: params.id }) },
   "POST /v1/templates": { action: "template.created", extract: ({ body }) => ({ targetType: "template", targetId: body?.template?.id, data: { name: body?.template?.name } }) },
   "POST /v1/templates/from-envelope/:envelopeId": {
@@ -76,6 +84,15 @@ const ROUTE_ACTIONS: Record<string, { action: string; extract?: Extract }> = {
   },
   "DELETE /v1/web-forms/:id": { action: "web_form.deleted", extract: ({ params }) => ({ targetType: "web_form", targetId: params.id }) },
 };
+
+const AUDITED_VALUES = ["retentionDays", "require2fa", "enabled", "autoExtractMetadata", "renewalAlertDays", "monthlyTokenBudget", "frameAncestors"];
+
+function auditValues(req: FastifyRequest): Record<string, unknown> {
+  const body = (req.body && typeof req.body === "object" ? req.body : {}) as Record<string, unknown>;
+  const to = Object.fromEntries(AUDITED_VALUES.filter((k) => k in body).map((k) => [k, body[k]]));
+  const from = (req as FastifyRequest & { auditBefore?: Record<string, unknown> }).auditBefore;
+  return { ...(Object.keys(to).length ? { to } : {}), ...(from ? { from } : {}) };
+}
 
 export function registerAuditHooks(app: FastifyInstance, s: Services) {
   app.addHook("onSend", async (req, reply, payload) => {
@@ -111,7 +128,13 @@ export function registerAuditHooks(app: FastifyInstance, s: Services) {
         await auditFromRequest(s.db, req, req.auth, "settings.changed", {
           targetType: "settings",
           targetId: url.replace("/v1/settings/", ""),
-          data: { method: req.method, fields: req.body && typeof req.body === "object" ? Object.keys(req.body as object) : [] },
+          data: {
+            method: req.method,
+            fields: req.body && typeof req.body === "object" ? Object.keys(req.body as object) : [],
+            // Valores de los ajustes sensibles (no secretos): sin ellos no se sabía, p. ej., que alguien bajó la retención a
+            // 1 día (y borró originales) y la volvió a subir. "from": el valor anterior, si el handler lo dejó.
+            ...auditValues(req),
+          },
         });
         return payload;
       }

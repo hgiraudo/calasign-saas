@@ -52,14 +52,18 @@ Cada evento: actor (`user`, `api_key`, `recipient`, `system`), IP, user agent, d
 
 ## Retención
 
-- Originales, adjuntos e imágenes de firma: se borran al vencer la retención configurada por la organización
-  (`tenants.retention_days`, días desde que se completó el sobre). La política se vuelve a leer al purgar cada sobre:
+- Originales, adjuntos, imágenes de firma y fotos de identidad: se borran al vencer la retención configurada por la
+  organización (`tenants.retention_days`, días desde que el sobre terminó: completado, anulado, rechazado o vencido). La política se vuelve a leer al purgar cada sobre:
   si se extiende o se quita durante una pasada, el resto del lote no se borra. Un original compartido con una
   plantilla, otro sobre sin purgar, un acuerdo o una negociación se conserva; cuando ya solo lo usan sobres purgados
   (por ejemplo, el PDF de una plantilla borrada), un barrido de huérfanos lo borra. Un original purgado responde
   `410 purged`.
-- PDF final sellado y `envelope_events`: se conservan durante todo el plazo legal (Object Lock).
-- Datos personales de destinatarios: anonimizables a pedido (LGPD / Ley 1581 / Ley 172-13 / Ley 29733) salvo lo que la evidencia legal exige conservar.
+- PDF final sellado y `envelope_events`: se conservan siempre (la retención no los toca). Hoy no hay Object Lock en el
+  almacenamiento ni un bloqueo a nivel base de datos: la inmutabilidad la da la cadena de hashes (cualquier cambio se
+  detecta al verificar). Un bucket con Object Lock para los PDF finales queda como trabajo pendiente.
+- Datos personales de destinatarios: todavía no hay una función de anonimización a pedido (LGPD / Ley 1581 / Ley
+  172-13 / Ley 29733). Hasta que exista, un pedido de supresión se atiende con la retención (originales, adjuntos,
+  imágenes y fotos) y lo que la evidencia legal exige conservar se mantiene.
 
 ## Migraciones
 

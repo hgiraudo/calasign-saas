@@ -84,8 +84,11 @@ export async function runAutomaticReminders(db: Db, now = new Date()) {
         // aviso del nuevo sale). Los jobs no se borran, así que la clave sirve de registro.
         let fresh = 0;
         for (const r of pending) {
-          const dedupeKey = `expiry-warning:${r.id}:${new Date(cur.expires_at).toISOString()}`;
-          if (await t.one(`SELECT 1 FROM jobs WHERE dedupe_key = $1`, [dedupeKey])) continue;
+          // Con el sent_at del destinatario: si se corrigió el contacto (invitación nueva), el contacto nuevo también lo recibe.
+          const dedupeKey = `expiry-warning:${r.id}:${new Date(cur.expires_at).toISOString()}:${r.sent_at ? new Date(r.sent_at).getTime() : 0}`;
+          // También el formato anterior de la clave (sin sent_at): si no, los avisos ya enviados salían otra vez.
+          const legacyKey = `expiry-warning:${r.id}:${new Date(cur.expires_at).toISOString()}`;
+          if (await t.one(`SELECT 1 FROM jobs WHERE dedupe_key = $1 OR (dedupe_key = $2 AND created_at >= $3::timestamptz)`, [dedupeKey, legacyKey, r.sent_at ?? new Date(0)])) continue;
           await enqueue(t, "notify", { kind: "expiry_warning", envelopeId: e.id, recipientId: r.id, tenantId: e.tenant_id }, { dedupeKey });
           fresh++;
         }

@@ -100,9 +100,9 @@ export async function issueSigningUrl(t: Db, a: AuthContext, envelopeId: string,
     envelopeId: e.id,
     type: "recipient.embedded_url_created",
     actor: a.actor,
-    data: { recipientId: r.id, returnHost: input.returnUrl ? new URL(input.returnUrl).host : null, frameAncestors: requested },
+    data: { recipientId: r.id, returnHost: input.returnUrl ? new URL(input.returnUrl).host : null, frameAncestors: requested, ...(otp ? { tabOnly: true } : {}) },
   });
-  return { url: `${await envelopeBaseUrl(t, a.tenantId, e.id)}/embed/${code}`, expiresAt: expiresAt.toISOString() };
+  return { url: `${await envelopeBaseUrl(t, a.tenantId, e.id)}/embed/${code}`, expiresAt: expiresAt.toISOString(), ...(otp ? { tabOnly: true } : {}) };
 }
 
 export async function embedRoutes(app: FastifyInstance, s: Services) {
@@ -178,12 +178,16 @@ export async function embedRoutes(app: FastifyInstance, s: Services) {
         envelopeId: sess.envelope_id,
         type: "recipient.embedded_session_started",
         actor: { type: "recipient", id: r.id, label: r.email ? `${r.name} <${r.email}>` : r.name, ip, userAgent },
-        data: { embedSessionId: sess.id, authentication: "embedded", authenticatedBy: sess.created_by_actor },
+        // Para pestaña (firmante con OTP): la app no lo autentica, lo hace el código.
+        data: (sess.frame_ancestors ?? []).includes(TAB_ONLY)
+          ? { embedSessionId: sess.id, authentication: "link", tabOnly: true, openedBy: sess.created_by_actor }
+          : { embedSessionId: sess.id, authentication: "embedded", authenticatedBy: sess.created_by_actor },
       });
     });
     setFrameAncestors(reply, await originsForRecipient(s.db, r.id, sess.tenant_id));
-    const tabOnly = (sess.frame_ancestors ?? []).includes(TAB_ONLY);
-    return reply.redirect(`/s/${decrypt(r.access_token_enc)}${tabOnly ? "" : "?embed=1"}`, 302);
+    // También "para pestaña": el modo embebido de la página es el que vuelve al returnUrl del integrador al terminar
+    // (el CSP 'none' ya impide mostrarla en un iframe).
+    return reply.redirect(`/s/${decrypt(r.access_token_enc)}?embed=1`, 302);
   });
 
   // ───────── Página del firmante en modo embebido: frame-ancestors dinámico ─────────

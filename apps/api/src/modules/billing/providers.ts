@@ -134,6 +134,13 @@ export async function stripeCreateSubscriptionCheckout(p: {
 }
 
 /** Cancela una suscripción de inmediato. Si ya estaba cancelada o no existe, no es un error (el webhook se reintenta). */
+/** Fin del período vigente de una suscripción (en API recientes viene en cada ítem). null si no se informa. */
+export async function stripeGetSubscriptionPeriodEnd(id: string): Promise<string | null> {
+  const s = await stripe(`/v1/subscriptions/${encodeURIComponent(id)}`, null, "GET");
+  const end = s?.current_period_end ?? s?.items?.data?.[0]?.current_period_end;
+  return typeof end === "number" ? new Date(end * 1000).toISOString() : null;
+}
+
 export async function stripeCancelSubscription(id: string) {
   const path = `/v1/subscriptions/${encodeURIComponent(id)}`;
   try {

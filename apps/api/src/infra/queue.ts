@@ -121,7 +121,7 @@ export function startWorker(db: Db, opts: WorkerOptions) {
       if (job.postponable && isByokUnavailable(e)) {
         const postponed = await db.query(
           `UPDATE jobs SET status = 'pending', attempts = attempts - 1, last_error = $2, locked_at = NULL, run_at = now() + interval '10 minutes'
-            WHERE id = $1 AND attempts = $3 AND created_at > now() - interval '7 days' RETURNING id`,
+            WHERE id = $1 AND attempts = $3 RETURNING id`, // el límite de 7 días ya lo vio el handler (postponable)
           [job.id, err.slice(0, 4000), job.attempts],
         );
         if (postponed.length) {

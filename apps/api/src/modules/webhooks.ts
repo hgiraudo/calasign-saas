@@ -328,16 +328,19 @@ export async function handleWebhookJob(d: Deps, p: WebhookJob, job?: { attempts:
  * app revocada, el usuario la desconectó (tokens revocados) o dejó la organización. Se desactivan (quedan a la vista en
  * la consola): si no, el tercero seguía recibiendo los datos de todos los sobres después de cortarle el acceso.
  */
+/** La credencial que creó la suscripción (alias `ep`) ya no vale. */
+const ORPHANED_ORIGIN = `(
+  (ep.created_by_api_key IS NOT NULL AND NOT EXISTS (SELECT 1 FROM api_keys k WHERE k.id = ep.created_by_api_key AND k.revoked_at IS NULL))
+  OR (ep.oauth_client_id IS NOT NULL AND (
+    NOT EXISTS (SELECT 1 FROM oauth_clients c WHERE c.id = ep.oauth_client_id AND c.revoked_at IS NULL)
+    OR NOT EXISTS (SELECT 1 FROM memberships m WHERE m.tenant_id = ep.tenant_id AND m.user_id = ep.created_by)
+    OR NOT EXISTS (SELECT 1 FROM oauth_tokens ot WHERE ot.client_id = ep.oauth_client_id AND ot.user_id = ep.created_by
+                     AND ot.tenant_id = ep.tenant_id AND ot.revoked_at IS NULL))))`;
+
 async function deactivateOrphanedEndpoints(db: Db, tenantId: string) {
   const off = await db.query<{ id: string }>(
     `UPDATE webhook_endpoints ep SET active = false, updated_at = now()
-      WHERE ep.tenant_id = $1 AND ep.active AND (
-        (ep.created_by_api_key IS NOT NULL AND NOT EXISTS (SELECT 1 FROM api_keys k WHERE k.id = ep.created_by_api_key AND k.revoked_at IS NULL))
-        OR (ep.oauth_client_id IS NOT NULL AND (
-          NOT EXISTS (SELECT 1 FROM oauth_clients c WHERE c.id = ep.oauth_client_id AND c.revoked_at IS NULL)
-          OR NOT EXISTS (SELECT 1 FROM memberships m WHERE m.tenant_id = ep.tenant_id AND m.user_id = ep.created_by)
-          OR NOT EXISTS (SELECT 1 FROM oauth_tokens ot WHERE ot.client_id = ep.oauth_client_id AND ot.user_id = ep.created_by
-                           AND ot.tenant_id = ep.tenant_id AND ot.revoked_at IS NULL))))
+      WHERE ep.tenant_id = $1 AND ep.active AND ${ORPHANED_ORIGIN}
       RETURNING ep.id`,
     [tenantId],
   );
@@ -387,6 +390,11 @@ async function deliverOne(d: Deps, deliveryId: string, attempt: number, manual: 
     [deliveryId],
   );
   if (!row || row.status === "succeeded") return;
+  // Una entrega encolada antes de revocar la credencial que creó la suscripción tampoco sale.
+  if (row.active && !manual) {
+    await deactivateOrphanedEndpoints(d.db, row.tenant_id);
+    row.active = Boolean((await d.db.one<any>(`SELECT active FROM webhook_endpoints WHERE id = $1`, [row.endpoint_id]))?.active);
+  }
   if (!row.active && !manual) {
     await d.db.query(`UPDATE webhook_deliveries SET status = 'failed', last_error = 'endpoint desactivado', next_retry_at = NULL WHERE id = $1`, [deliveryId]);
     return;
@@ -449,6 +457,8 @@ export async function webhookRoutes(app: FastifyInstance, s: Services) {
   };
 
   app.get("/v1/webhooks", { preHandler: auth }, async (req) => {
+    // Que la consola muestre ya desactivadas las de una credencial revocada (no recién en el próximo evento).
+    await deactivateOrphanedEndpoints(s.db, A(req).tenantId);
     const rows = await s.db.query(`SELECT * FROM webhook_endpoints WHERE tenant_id = $1 ORDER BY created_at DESC`, [A(req).tenantId]);
     return { items: rows.map(toEndpoint), eventTypes: WEBHOOK_EVENT_TYPES };
   });
@@ -493,14 +503,17 @@ export async function webhookRoutes(app: FastifyInstance, s: Services) {
     const a = A(req);
     const input = UpdateWebhookInput.parse(req.body);
     await load(a.tenantId, req.params.id);
+    // Reactivar una suscripción que se desactivó porque se revocó la credencial que la creó la pasa a quien la reactiva
+    // (si no, se volvía a desactivar sola en el próximo evento). Solo en ese caso: pausar y reanudar una que funciona no
+    // le cambia el origen (si no, dejaba de cortarse al revocar la key de Zapier/Make). En el SET, ep.active es el valor
+    // anterior.
+    const retie = `($7 AND NOT ep.active AND ${ORPHANED_ORIGIN})`;
     const row = await s.db.one(
-      `UPDATE webhook_endpoints SET url = COALESCE($3, url), description = CASE WHEN $4::boolean THEN $5 ELSE description END,
+      `UPDATE webhook_endpoints ep SET url = COALESCE($3, url), description = CASE WHEN $4::boolean THEN $5 ELSE description END,
          events = COALESCE($6, events), active = COALESCE($7, active), updated_at = now(),
-         -- Quien la (re)activa pasa a ser su origen: si no, una suscripción desactivada porque se revocó la credencial
-         -- que la creó se volvía a desactivar sola en el próximo evento.
-         created_by = CASE WHEN $7 THEN $8 ELSE created_by END,
-         created_by_api_key = CASE WHEN $7 THEN $9 ELSE created_by_api_key END,
-         oauth_client_id = CASE WHEN $7 THEN $10 ELSE oauth_client_id END
+         created_by = CASE WHEN ${retie} THEN $8 ELSE created_by END,
+         created_by_api_key = CASE WHEN ${retie} THEN $9 ELSE created_by_api_key END,
+         oauth_client_id = CASE WHEN ${retie} THEN $10 ELSE oauth_client_id END
        WHERE id = $1 AND tenant_id = $2 RETURNING *`,
       [
         req.params.id,

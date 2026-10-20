@@ -121,6 +121,7 @@ El diagrama de arriba es el núcleo (0001). Cada bloque funcional agrega su prop
 | `0058_ai_extract_retry` | `envelopes.ai_metadata_retry_at`: una extracción automática con IA que falló por algo transitorio se reintenta en una hora |
 | `0059_webhook_origin` | `webhook_endpoints.created_by_api_key` y `oauth_client_id`: si se revoca la credencial que creó el webhook, se desactiva |
 | `0060_ai_extract_idx` | Índice parcial para el barrido de extracción automática con IA |
+| `0061_ai_extract_idx2` | Reemplaza los índices de 0011 y 0060 por uno por organización y más selectivo para ese barrido |
 
 Reglas: una migración por bloque, solo aditiva salvo cuando se recrea un `CHECK` para sumar un valor; nunca se edita una
 migración ya aplicada en un entorno.

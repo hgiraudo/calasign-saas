@@ -66,12 +66,33 @@ export class CalaSignTrigger implements INodeType {
 			async checkExists(this: IHookFunctions): Promise<boolean> {
 				const data = this.getWorkflowStaticData('node');
 				if (!data.webhookId) return false;
+				const path = `/v1/webhooks/${encodeURIComponent(String(data.webhookId))}`;
+				let ep: IDataObject;
 				try {
-					const ep = await calaSignRequest(this, 'GET', `/v1/webhooks/${encodeURIComponent(String(data.webhookId))}`);
-					if (ep.url === this.getNodeWebhookUrl('default') && ep.active) return true;
+					ep = await calaSignRequest(this, 'GET', path);
 				} catch (error) {
 					// Borrado del lado de CalaSign (o sin acceso): se vuelve a crear al activar.
 					this.logger.debug('CalaSign: webhook no encontrado, se registra de nuevo', { error: (error as Error).message });
+					delete data.webhookId;
+					delete data.secret;
+					return false;
+				}
+				if (ep.url === this.getNodeWebhookUrl('default')) {
+					if (ep.active) return true;
+					// Inactivo: la API lo desactiva cuando se revoca la credencial que lo creó (p. ej. al reconectar la
+					// cuenta). Reactivarlo lo ata a la credencial actual y conserva id y secreto.
+					try {
+						const re = await calaSignRequest(this, 'PATCH', path, { body: { active: true, events: this.getNodeParameter('events') as string[] } });
+						if (re.active) return true;
+					} catch (error) {
+						this.logger.debug('CalaSign: no se pudo reactivar el webhook, se registra de nuevo', { error: (error as Error).message });
+					}
+					// No se pudo reactivar: se borra antes de crear otro, para no acumular webhooks inactivos (máximo 20).
+					try {
+						await calaSignRequest(this, 'DELETE', path);
+					} catch (error) {
+						this.logger.debug('CalaSign: no se pudo borrar el webhook inactivo', { error: (error as Error).message });
+					}
 				}
 				delete data.webhookId;
 				delete data.secret;

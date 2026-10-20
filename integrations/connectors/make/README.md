@@ -21,6 +21,20 @@ Envelope**, **Search Envelopes**.
 **Make Apps Editor** de VS Code (desarrollo local): completar `origins` con la zona y el id de la app creada, poner la
 API key de Make (scopes `sdk-apps:read`, `sdk-apps:write`) en `.secrets/apikey` y hacer *Deploy*.
 
+**Webhook firmado.** El *attach* guarda el `secret` que devuelve `POST /v1/webhooks` y la condición del webhook
+(`calasignAcceptEvent`) verifica `CalaSign-Signature` (HMAC-SHA256 sobre `"<t>.<cuerpo>"`, se acepta cualquier `v1`,
+tolerancia de 300 s). Make no expone el cuerpo crudo: se re-serializa con `JSON.stringify` (la API firma el
+`JSON.stringify` compacto del mismo objeto). Los webhooks adjuntados antes de esta versión no tienen secreto guardado y no
+se verifican hasta apagar y prender el escenario.
+
+**Revocar o reconectar la conexión.** Al revocar la API key (o el token OAuth) con la que se creó el webhook, CalaSign lo
+desactiva (`active: false`) y el escenario deja de recibir eventos. La solución es apagar y volver a prender el escenario
+(Make hace *detach* y *attach* con la conexión actual).
+
+**Errores.** Solo el 429 del límite de tasa genérico (con `Retry-After`, código `rate_limited`/`bad_request`) es
+`RateLimitError`; los 429 de negocio (`reminded_recently`, etc.) son `RuntimeError`. Un 409 `idempotency_in_progress` es
+`ConnectionError` (reintentable). Ver `calasignErrorType`.
+
 ## Pasos para publicar (cuenta de Make de CalaSign)
 
 1. Make → **Custom apps → Create a new app** (`calasign`, color `#1F4E79`, ícono de 512×512).

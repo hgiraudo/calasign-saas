@@ -506,7 +506,12 @@ export async function webhookRoutes(app: FastifyInstance, s: Services) {
     return { webhook: toEndpoint(row), secret };
   });
 
-  app.get<P>("/v1/webhooks/:id", { preHandler: auth }, async (req) => toEndpoint(await load(A(req).tenantId, req.params.id)));
+  // Como el listado: primero se desactivan los de una credencial revocada (si no, un conector como n8n lo veía activo
+  // y daba la suscripción por buena hasta el próximo evento, que la desactivaba en silencio).
+  app.get<P>("/v1/webhooks/:id", { preHandler: auth }, async (req) => {
+    await deactivateOrphanedEndpoints(s.db, A(req).tenantId);
+    return toEndpoint(await load(A(req).tenantId, req.params.id));
+  });
 
   app.patch<P>("/v1/webhooks/:id", { preHandler: auth }, async (req) => {
     const a = A(req);

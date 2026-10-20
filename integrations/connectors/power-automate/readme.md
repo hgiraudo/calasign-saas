@@ -40,6 +40,8 @@ An OAuth 2.0 variant is provided in `apiProperties.oauth.json` (authorization co
 
 - One subscription per flow; an organization can have up to 20 webhooks.
 - The signed document is available only when the envelope status is `completed`.
+- Revoking the API key (or OAuth authorization) that created the trigger subscription, or reconnecting the connection with another key, deactivates the subscription and the flow silently stops firing. Turn the flow off and on again (or re-save it) to subscribe again with the current connection.
+- Idempotency keys are shared by every call made with the same connection and are tied to the request: use a different key for each action (for example `@{workflow().run.name}-create` and `@{workflow().run.name}-send`) and, inside an *Apply to each* loop, add the item index or ID. Reusing one key for two different calls returns `409 idempotency_mismatch`.
 
 ## Deployment instructions
 

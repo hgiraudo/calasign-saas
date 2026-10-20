@@ -13,6 +13,15 @@ App de Zapier Platform CLI (`zapier-platform-core` 19.2.1, Node 22). Base URL: `
 
 Autenticación: API key (`Authorization: Bearer cs_live_…`), solo hacia la API de CalaSign.
 
+**Revocar o reconectar la cuenta.** Al revocar la API key con la que se creó la suscripción (o reconectar la cuenta con
+otra key) CalaSign desactiva el webhook del Zap (`active: false`) y el trigger deja de dispararse sin error visible. La
+solución es apagar y volver a prender el Zap: Zapier lo desuscribe (el `DELETE` con la key vieja no falla) y lo vuelve a
+suscribir con la credencial actual.
+
+Errores: un 429 del límite de tasa genérico (con `Retry-After`) se reintenta (`ThrottledError`); los 429 de negocio
+(`reminded_recently`, etc.) son errores normales. Un 409 `idempotency_in_progress` (otra ejecución con la misma
+Idempotency-Key en curso) se reintenta a los pocos segundos.
+
 ## Publicar (lo hace el dueño de la cuenta de Zapier de CalaSign)
 
 ```bash

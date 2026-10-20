@@ -53,6 +53,7 @@ class Envelope(TypedDict, total=False):
     subject: str
     status: str
     createdAt: str
+    updatedAt: str
     sentAt: Optional[str]
     completedAt: Optional[str]
     metadata: Dict[str, Any]
@@ -220,9 +221,12 @@ class CalaSign:
         retryable: Optional[bool] = None,
         raw: bool = False,
         with_headers: bool = False,
+        headers: Optional[Mapping[str, str]] = None,
+        _on_retry: Optional[Any] = None,
     ) -> Any:
         """Pedido a la API v1 con autenticación, reintentos e idempotencia. `raw=True` devuelve los bytes del cuerpo;
-        con `with_headers=True` además, la tupla (bytes, headers)."""
+        con `with_headers=True` además, la tupla (bytes, headers). `headers`: headers extra (p. ej.
+        X-Expected-Updated-At); no reemplazan Authorization ni Idempotency-Key."""
         url = self.base_url + path
         if query:
             q = {k: v for k, v in query.items() if v not in (None, "")}
@@ -235,18 +239,20 @@ class CalaSign:
         # Las esperas por un 409 idempotency_in_progress tienen su propio tope (en segundos), aparte de max_retries.
         idem_waited = 0.0
         idem_waits = 0
+        extra = {k.title(): str(v) for k, v in (headers or {}).items()}
         while True:
-            headers = {"Authorization": f"Bearer {self._bearer()}", "Accept": "application/json", "User-Agent": self.user_agent}
+            req_headers = dict(extra)
+            req_headers.update({"Authorization": f"Bearer {self._bearer()}", "Accept": "application/json", "User-Agent": self.user_agent})
             if idempotency_key:
-                headers["Idempotency-Key"] = idempotency_key
+                req_headers["Idempotency-Key"] = idempotency_key
             data: Optional[bytes] = None
             if multipart is not None:
                 data, ctype = _encode_multipart(multipart)
-                headers["Content-Type"] = ctype
+                req_headers["Content-Type"] = ctype
             elif json_body is not None:
                 data = json.dumps(json_body).encode()
-                headers["Content-Type"] = "application/json"
-            req = urllib.request.Request(url, data=data, method=method, headers=headers)
+                req_headers["Content-Type"] = "application/json"
+            req = urllib.request.Request(url, data=data, method=method, headers=req_headers)
             try:
                 with urllib.request.urlopen(req, timeout=self.timeout) as res:
                     payload = res.read()
@@ -273,6 +279,8 @@ class CalaSign:
                 if status in _RETRY_STATUS and attempt < self.max_retries and (retryable or status in (429, 503)) and not business_429:
                     time.sleep(_retry_delay(attempt, retry_after))
                     attempt += 1
+                    if _on_retry:
+                        _on_retry()
                     continue
                 err = body.get("error") if isinstance(body.get("error"), dict) else {}
                 # El pedido original con esta Idempotency-Key sigue ejecutándose (típico del reintento después de un
@@ -296,6 +304,8 @@ class CalaSign:
                 if retryable and attempt < self.max_retries:
                     time.sleep(_retry_delay(attempt, None))
                     attempt += 1
+                    if _on_retry:
+                        _on_retry()
                     continue
                 raise CalaSignError(f"Error de red: {e}", 0, "network_error", None, None, idempotency_key) from None
 
@@ -393,8 +403,10 @@ class _Envelopes:
         """Como create con "send": True: crea el sobre completo y lo envía en una sola llamada."""
         return self.create({**data, "send": True}, idempotency_key=idempotency_key)
 
-    def update(self, envelope_id: str, data: Dict[str, Any]) -> EnvelopeDetail:
-        return self._c.request("PATCH", f"/v1/envelopes/{_seg(envelope_id)}", json_body=data, retryable=True)
+    def update(self, envelope_id: str, data: Dict[str, Any], *, expected_updated_at: Any = None) -> EnvelopeDetail:
+        """Edita el borrador. Con `expected_updated_at` (el `updatedAt` del sobre que cargaste), 409 `version_changed`
+        (con `details["updatedAt"]`, el actual) si alguien lo modificó mientras tanto: recargá, reaplicá y reintentá."""
+        return self._c.request("PATCH", f"/v1/envelopes/{_seg(envelope_id)}", json_body=data, retryable=True, headers=_expected(expected_updated_at))
 
     def delete(self, envelope_id: str) -> None:
         self._c.request("DELETE", f"/v1/envelopes/{_seg(envelope_id)}")
@@ -402,17 +414,34 @@ class _Envelopes:
     def upload_document(self, envelope_id: str, content: bytes, filename: str = "documento.pdf") -> Document:
         return self._c.request("POST", f"/v1/envelopes/{_seg(envelope_id)}/documents", multipart={"file": (filename, content, "application/pdf")})
 
-    def set_recipients(self, envelope_id: str, recipients: List[Dict[str, Any]]) -> EnvelopeDetail:
-        return self._c.request("PUT", f"/v1/envelopes/{_seg(envelope_id)}/recipients", json_body={"recipients": recipients})
+    def set_recipients(self, envelope_id: str, recipients: List[Dict[str, Any]], *, expected_updated_at: Any = None) -> EnvelopeDetail:
+        """Reemplaza los destinatarios del borrador. Con `expected_updated_at`, 409 `version_changed` si cambió."""
+        return self._c.request(
+            "PUT", f"/v1/envelopes/{_seg(envelope_id)}/recipients", json_body={"recipients": recipients}, headers=_expected(expected_updated_at)
+        )
 
-    def set_fields(self, envelope_id: str, fields: List[Dict[str, Any]]) -> EnvelopeDetail:
-        return self._c.request("PUT", f"/v1/envelopes/{_seg(envelope_id)}/fields", json_body={"fields": fields})
+    def set_fields(self, envelope_id: str, fields: List[Dict[str, Any]], *, expected_updated_at: Any = None) -> EnvelopeDetail:
+        """Reemplaza los campos del borrador. Con `expected_updated_at`, 409 `version_changed` si cambió."""
+        return self._c.request("PUT", f"/v1/envelopes/{_seg(envelope_id)}/fields", json_body={"fields": fields}, headers=_expected(expected_updated_at))
 
     def send(self, envelope_id: str, *, idempotency_key: Optional[str] = None) -> EnvelopeDetail:
         return self._c.request("POST", f"/v1/envelopes/{_seg(envelope_id)}/send", idempotency_key=idempotency_key or f"send-{_seg(envelope_id)}")
 
     def void(self, envelope_id: str, reason: str) -> EnvelopeDetail:
-        return self._c.request("POST", f"/v1/envelopes/{_seg(envelope_id)}/void", json_body={"reason": reason}, retryable=True)
+        """Anula el sobre. Se reintenta ante errores de red/5xx; si el primer intento sí llegó a anularlo, el reintento
+        recibe 409 `not_voidable`: en ese caso (solo tras un reintento) se confirma con un GET y, si quedó `voided`, se
+        devuelve el detalle. Anular un sobre ya anulado sin reintentos sigue lanzando 409 `not_voidable`."""
+        retried = []
+        try:
+            return self._c.request(
+                "POST", f"/v1/envelopes/{_seg(envelope_id)}/void", json_body={"reason": reason}, retryable=True, _on_retry=lambda: retried.append(1)
+            )
+        except CalaSignError as e:
+            if retried and e.code == "not_voidable":
+                detail = self.get(envelope_id)
+                if (detail.get("envelope") or {}).get("status") == "voided":
+                    return detail
+            raise
 
     def remind(self, envelope_id: str) -> Dict[str, Any]:
         return self._c.request("POST", f"/v1/envelopes/{_seg(envelope_id)}/remind")
@@ -426,8 +455,12 @@ class _Envelopes:
     def signing_url(
         self, envelope_id: str, recipient_id: str, *, return_url: Optional[str] = None, frame_ancestors: Optional[Sequence[str]] = None
     ) -> Dict[str, Any]:
-        """`frame_ancestors`: subconjunto de los orígenes autorizados de la organización que pueden embeber la firma
-        (por defecto, todos)."""
+        """URL de firma (5 min, un solo uso) de un destinatario, embebido (iframe) o no (abrirla en una pestaña o
+        redirigir). Devuelve {"url", "expiresAt", "tabOnly"?}: `tabOnly` True (destinatarios con OTP) significa que no
+        se puede embeber; pedir `frame_ancestors` para ellos da 409 `otp_not_embeddable`. `frame_ancestors`:
+        subconjunto de los orígenes autorizados de la organización que pueden embeber la firma (por defecto, todos).
+        En un iframe, la página de firma avisa por postMessage `viewed`, `signing_complete`, `declined`, `error` y
+        `closed` (con `status`)."""
         body: Dict[str, Any] = {"returnUrl": return_url} if return_url else {}
         if frame_ancestors is not None:
             body["frameAncestors"] = [frame_ancestors] if isinstance(frame_ancestors, str) else list(frame_ancestors)
@@ -544,6 +577,15 @@ class _Webhooks:
             body["description"] = description
         return self._c.request("POST", "/v1/webhooks", json_body=body)
 
+    def get(self, webhook_id: str) -> Dict[str, Any]:
+        return self._c.request("GET", f"/v1/webhooks/{_seg(webhook_id)}")
+
+    def update(self, webhook_id: str, **fields: Any) -> Dict[str, Any]:
+        """PATCH parcial: url, events, description, active. Una suscripción creada con una API key o token OAuth se
+        desactiva (active False) al revocar esa credencial; `update(id, active=True)` la reactiva y la ata a la
+        credencial actual (conserva id y secreto)."""
+        return self._c.request("PATCH", f"/v1/webhooks/{_seg(webhook_id)}", json_body=fields, retryable=True)
+
     def delete(self, webhook_id: str) -> None:
         self._c.request("DELETE", f"/v1/webhooks/{_seg(webhook_id)}")
 
@@ -606,6 +648,12 @@ def _iso(value: Any) -> Optional[str]:
             value = value.replace(tzinfo=datetime.timezone.utc)
         return value.isoformat()
     return str(value)
+
+
+def _expected(value: Any) -> Optional[Dict[str, str]]:
+    """Header X-Expected-Updated-At (control de edición concurrente de borradores) o None."""
+    iso = _iso(value)
+    return {"X-Expected-Updated-At": iso} if iso else None
 
 
 def _seg(value: str) -> str:

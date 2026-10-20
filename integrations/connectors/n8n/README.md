@@ -3,7 +3,7 @@
 Community nodes for [CalaSign]({{BASE_URL}}) e-signature.
 
 - **CalaSign**: send an envelope from a template (recipients per role and prefilled fields loaded from the template), send a PDF from a binary property to one or more signers (signatures on the last page or on the anchor texts `\firma1\`, `\firma2\`…), get / list envelopes, download the signed PDF, void, remind; list templates.
-- **CalaSign Trigger**: starts a workflow on `envelope.sent`, `envelope.completed`, `envelope.declined`, `envelope.voided`, `envelope.expired`, `recipient.viewed`, `recipient.signed`, `recipient.declined`, `recipient.approved`. It registers the webhook when the workflow is activated, removes it when deactivated, and verifies the `CalaSign-Signature` HMAC.
+- **CalaSign Trigger**: starts a workflow on `envelope.sent`, `envelope.completed`, `envelope.declined`, `envelope.voided`, `envelope.expired`, `recipient.viewed`, `recipient.signed`, `recipient.declined`, `recipient.approved`. It registers the webhook when the workflow is activated, removes it when deactivated, and verifies the `CalaSign-Signature` HMAC. If the subscription was deactivated (the credential that created it was revoked or replaced), activating the workflow reactivates it with the current credential (same id and secret); if that fails, it deletes it and registers a new one.
 
 ## Credentials
 

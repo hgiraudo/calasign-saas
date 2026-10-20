@@ -461,7 +461,7 @@ export const ERRORS: Record<string, Err> = {
   version_changed_negotiation: {
     status: 409,
     code: "version_changed",
-    message: "Hay una versión nueva: revisala y volvé a aceptar",
+    message: "Hay una versión nueva: revisala y repetí",
     summary: "La negociación tiene una versión nueva desde la que se revisó: revisarla y repetir",
   },
   version_changed: {
@@ -470,7 +470,7 @@ export const ERRORS: Record<string, Err> = {
     message: "Este borrador cambió en otra pestaña o lo editó otra persona: recargá para ver la versión actual",
     details: { updatedAt: "2026-05-04T13:00:00.000Z" },
     summary:
-      "El recurso cambió desde que se leyó: en un borrador de sobre o una plantilla, X-Expected-Updated-At no coincide con su updatedAt (details.updatedAt trae el actual; recargar y repetir); en una negociación, hay una versión nueva (revisarla y repetir)",
+      "El borrador del sobre o la plantilla cambió desde que se leyó: X-Expected-Updated-At no coincide con su updatedAt (details.updatedAt trae el actual; recargar y repetir)",
   },
   purged: {
     status: 410,

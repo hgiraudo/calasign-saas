@@ -45,7 +45,15 @@ CalaSign(oauth=ClientCredentials("csapp_…", "cssec_…", scope="envelopes:read
 - `envelopes.create`, `envelopes.create_and_send`, `envelopes.from_template` y `envelopes.send` usan `Idempotency-Key` automática: un reintento
   no duplica nada. Los POST sin idempotencia no se reintentan ante errores de red. Si el pedido original con la misma
   clave sigue en curso (409 `idempotency_in_progress`), el cliente espera y repite hasta recibir la respuesta guardada,
-  con un tope propio (`idempotency_wait=60.0` segundos) que no gasta `max_retries`.
+  con un tope propio (`idempotency_wait=60.0` segundos) que no gasta `max_retries`. Las claves son por credencial (no
+  por ruta) y quedan atadas al pedido (método, URL y cuerpo): la misma clave en dos llamadas distintas da 409
+  `idempotency_mismatch`.
+- Edición concurrente de borradores: `envelopes.update`, `set_recipients` y `set_fields` aceptan
+  `expected_updated_at=detail["envelope"]["updatedAt"]` (header `X-Expected-Updated-At`). Si el borrador cambió desde
+  que lo cargaste, 409 `version_changed` con `e.details["updatedAt"]` (el actual): recargá, reaplicá y reintentá.
+- `envelopes.void` se reintenta ante errores de red/5xx; si un reintento recibe 409 `not_voidable` porque el primer
+  intento ya lo anuló, el cliente lo confirma con un GET y devuelve el sobre anulado. Anular dos veces a propósito sigue
+  dando 409 `not_voidable`.
 - Errores como `CalaSignError` con `.status`, `.code`, `.details`, `.request_id` (header `X-Request-Id`, para soporte)
   e `.idempotency_key` (la del pedido, si tenía: reintentá con `idempotency_key=e.idempotency_key` sin riesgo de
   duplicar).
@@ -54,9 +62,16 @@ CalaSign(oauth=ClientCredentials("csapp_…", "cssec_…", scope="envelopes:read
 - `events.list(types=…)` y `envelopes.batch(action, ids)` aceptan una lista o un solo valor como `str`.
 - `envelopes.download_attachment(id, field_id)` devuelve los bytes; `download_attachment_with_type` devuelve
   `{"bytes": …, "content_type": …}` (un adjunto puede ser PDF o imagen).
-- `envelopes.signing_url(id, recipient_id, return_url=…, frame_ancestors=["https://app.tuempresa.com"])`: los orígenes
-  (de los autorizados de la organización) que pueden embeber la firma.
-- `cs.request(method, path, json_body=…, query=…)` para cualquier otro endpoint.
+- `envelopes.signing_url(id, recipient_id, return_url=…, frame_ancestors=["https://app.tuempresa.com"])` →
+  `{"url", "expiresAt", "tabOnly"?}`: URL de 5 minutos y un solo uso para destinatarios embebidos (iframe;
+  `frame_ancestors` son los orígenes, de los autorizados de la organización, que pueden embeberla) o no (abrirla en una
+  pestaña o redirigir). `tabOnly: True` (destinatarios con OTP) significa que no se puede embeber: pedir
+  `frame_ancestors` para ellos da 409 `otp_not_embeddable`. En un iframe, la página de firma avisa por `postMessage`
+  los eventos `viewed`, `signing_complete`, `declined`, `error` y `closed` (con `status`).
+- `webhooks.update(id, **campos)` (PATCH parcial: `url`, `events`, `description`, `active`). Al revocar la API key o el
+  token OAuth que creó una suscripción, esta se desactiva (`active: False`); `webhooks.update(id, active=True)` la
+  reactiva y la ata a la credencial actual (conserva id y secreto).
+- `cs.request(method, path, json_body=…, query=…, headers=…)` para cualquier otro endpoint.
 
 ## Webhooks
 

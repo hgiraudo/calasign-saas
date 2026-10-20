@@ -123,7 +123,7 @@
             "required": false,
             "type": "string",
             "x-ms-summary": "Idempotency key",
-            "description": "Unique value for this send (for example the flow run name). If the action is retried with the same key and inputs, the envelope already created is returned instead of sending another one.",
+            "description": "Unique value for this send, for example @{workflow().run.name}-template. If the action is retried with the same key and inputs, the envelope already created is returned instead of sending another one. Keys are shared by every call made with this connection: use a different key for each call, never the same one for two different actions (that returns 409 idempotency_mismatch). Inside an Apply to each loop, add the item index or ID (for example @{workflow().run.name}-send-@{items('Apply_to_each')?['id']}).",
             "x-ms-visibility": "advanced"
           },
           {
@@ -223,7 +223,7 @@
             "required": false,
             "type": "string",
             "x-ms-summary": "Idempotency key",
-            "description": "Unique value for this call (for example the flow run name). If the action is retried with the same key and inputs, the draft already created is returned instead of creating another one.",
+            "description": "Unique value for this call, for example @{workflow().run.name}-create. If the action is retried with the same key and inputs, the draft already created is returned instead of creating another one. Keys are shared by every call made with this connection: use a different key for each call, never the same one for two different actions (that returns 409 idempotency_mismatch). Inside an Apply to each loop, add the item index or ID (for example @{workflow().run.name}-send-@{items('Apply_to_each')?['id']}).",
             "x-ms-visibility": "advanced"
           },
           {
@@ -339,7 +339,7 @@
             "required": false,
             "type": "string",
             "x-ms-summary": "Idempotency key",
-            "description": "Unique value for this send (for example the flow run name). If the action is retried with the same key, the first result is returned instead of sending again.",
+            "description": "Unique value for this send, for example @{workflow().run.name}-send. If the action is retried with the same key, the first result is returned instead of sending again. Keys are shared by every call made with this connection: use a different key for each call, never the same one for two different actions (that returns 409 idempotency_mismatch). Inside an Apply to each loop, add the item index or ID (for example @{workflow().run.name}-send-@{items('Apply_to_each')?['id']}).",
             "x-ms-visibility": "advanced"
           }
         ],
@@ -568,7 +568,7 @@
           "x-ms-summary": "Channels",
           "description": "Invitation channels. Defaults to email.",
           "x-ms-visibility": "advanced",
-          "items": { "type": "string", "enum": ["email", "whatsapp", "telegram"] }
+          "items": { "type": "string", "enum": ["email", "whatsapp"] }
         }
       }
     },

@@ -42,7 +42,7 @@
           "host": { "apiId": "/providers/Microsoft.PowerApps/apis/shared_calasign", "connectionName": "shared_calasign", "operationId": "SendFromTemplate" },
           "parameters": {
             "templateId": "@coalesce(triggerOutputs()?['body/calasign_templateid'], parameters('CalaSignTemplateId'))",
-            "Idempotency-Key": "@{workflow()?['run']?['name']}",
+            "Idempotency-Key": "@{workflow()?['run']?['name']}-template-@{triggerOutputs()?['body/opportunityid']}",
             "body/subject": "@{triggerOutputs()?['body/name']}",
             "body/roles": "@addProperty(json('{}'), parameters('CalaSignRole'), addProperty(addProperty(json('{}'), 'name', outputs('Get_the_primary_contact')?['body/fullname']), 'email', outputs('Get_the_primary_contact')?['body/emailaddress1']))",
             "body/metadata/recordId": "@triggerOutputs()?['body/opportunityid']",

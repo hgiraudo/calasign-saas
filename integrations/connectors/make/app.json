@@ -15,7 +15,7 @@
     "response": {
       "error": {
         "message": "[{{statusCode}}] {{ifempty(body.error.message, body.error_description)}}",
-        "type": "{{if(statusCode = 429, 'RateLimitError', if(statusCode = 401, 'InvalidAccessTokenError', 'RuntimeError'))}}"
+        "type": "{{calasignErrorType(statusCode, headers, body)}}"
       }
     },
     "log": { "sanitize": ["request.headers.authorization"] }
@@ -146,14 +146,14 @@
         }
       ],
       "communication": {
-        "condition": "{{body.type != 'webhook.test'}}",
+        "condition": "{{calasignAcceptEvent(body, headers, webhook.secret)}}",
         "output": "{{calasignFlattenEvent(body)}}"
       },
       "attach": {
         "url": "/v1/webhooks",
         "method": "POST",
         "body": { "url": "{{webhook.url}}", "events": "{{parameters.events}}", "description": "Make" },
-        "response": { "data": { "externalHookId": "{{body.webhook.id}}" } }
+        "response": { "data": { "externalHookId": "{{body.webhook.id}}", "secret": "{{body.secret}}" } }
       },
       "detach": {
         "url": "/v1/webhooks/{{webhook.externalHookId}}",
@@ -182,7 +182,7 @@
       }
     }
   },
-  "functions": ["calasignTemplateForm", "calasignRecipients", "calasignFields", "calasignFlattenEvent", "calasignIdempotencyKey", "calasignDocumentId", "calasignDocumentPages", "calasignIsDraft", "calasignNeedsUpload", "calasignShouldSend"],
+  "functions": ["calasignTemplateForm", "calasignRecipients", "calasignFields", "calasignFlattenEvent", "calasignIdempotencyKey", "calasignDocumentId", "calasignDocumentPages", "calasignIsDraft", "calasignNeedsUpload", "calasignShouldSend", "calasignAcceptEvent", "calasignErrorType"],
   "modules": {
     "watchEnvelopeEvents": {
       "label": "Watch Envelope Events",

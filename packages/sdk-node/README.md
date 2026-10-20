@@ -43,17 +43,30 @@ Paso a paso (sobre que se arma de a poco): `uploadDocument`, `setRecipients`, `s
   errores de red. Si el pedido original con la misma clave sigue en curso (409 `idempotency_in_progress`, típico del
   reintento tras un timeout), el SDK espera y repite hasta recibir la respuesta guardada, con un tope propio
   (`idempotencyWaitMs`, por defecto 60 s) que no gasta `maxRetries`. Todo `CalaSignError` de un pedido con clave trae
-  `err.idempotencyKey`: reintentá con `{ idempotencyKey: err.idempotencyKey }` sin riesgo de duplicar.
+  `err.idempotencyKey`: reintentá con `{ idempotencyKey: err.idempotencyKey }` sin riesgo de duplicar. Las claves son
+  por credencial (no por ruta) y quedan atadas al pedido (método, URL y cuerpo): usar la misma clave para dos llamadas
+  distintas da 409 `idempotency_mismatch`.
+- **Edición concurrente de borradores**: `envelopes.update`, `setRecipients` y `setFields` aceptan
+  `{ expectedUpdatedAt: envelope.updatedAt }` (header `X-Expected-Updated-At`). Si el borrador cambió desde que lo
+  cargaste, la API responde 409 `version_changed` con `err.details.updatedAt` (el valor actual): recargá, reaplicá el
+  cambio y reintentá.
+- **Anular**: `envelopes.void` se reintenta ante errores de red/5xx; si un reintento recibe 409 `not_voidable` porque el
+  primer intento ya lo anuló, el SDK lo confirma con un GET y devuelve el sobre anulado. Anular dos veces a propósito
+  sigue dando 409 `not_voidable`.
 - **Paginación**: `for await (const e of cs.envelopes.iterate({ status: "completed" })) { … }`.
 - **Errores** como `CalaSignError` con `status`, `code`, `details` (los mismos de la API) y `requestId` (header
   `X-Request-Id`, para soporte). Errores de red y cortes a mitad del cuerpo (también en las descargas): `network_error`
   (en los GET se reintentan); un 2xx que no es JSON: `invalid_response`.
-- **Firma embebida**: `cs.envelopes.signingUrl(envelopeId, recipientId, { returnUrl })` → URL de 5 minutos para un iframe.
+- **URL de firma**: `cs.envelopes.signingUrl(envelopeId, recipientId, { returnUrl })` → `{ url, expiresAt, tabOnly? }`,
+  URL de 5 minutos y un solo uso, para destinatarios embebidos (iframe, con `frameAncestors`) o no (abrirla en una
+  pestaña o redirigir). `tabOnly: true` (destinatarios con OTP) significa que no se puede embeber: abrila en una pestaña
+  o redirigí; pedir `frameAncestors` para ellos da 409 `otp_not_embeddable`. En un iframe, la página de firma avisa por
+  `postMessage` los eventos `viewed`, `signing_complete`, `declined`, `error` y `closed` (con `status`).
 - **Descarga**: `cs.envelopes.downloadSigned(id)` → `Uint8Array` del PDF sellado.
 - **Eventos**: `for await (const ev of cs.events.poll({ after, signal }))`; al abortar `signal` se cancelan la espera
   y el pedido en curso y el iterador termina sin lanzar.
 - **Cualquier otro endpoint**: `cs.request("GET", "/v1/…")` con la misma autenticación y reintentos (`{ raw: true }` devuelve
-  `{ bytes, headers }`; `{ signal }` lo cancela).
+  `{ bytes, headers }`; `{ signal }` lo cancela; `{ headers }` agrega headers).
 
 ## Webhooks
 

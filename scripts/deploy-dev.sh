@@ -1,7 +1,7 @@
 #!/bin/bash
 # Despliega el working tree actual en dev.calasign.com.
 #   1. compila la web
-#   2. empaqueta el repo (archivos versionados + no ignorados + apps/web/dist) y lo sube a S3
+#   2. empaqueta el repo (archivos versionados, con sus cambios sin commitear, + apps/web/dist) y lo sube a S3
 #   3. por SSM (sin SSH): descarga, instala dependencias, rota el symlink, reinicia y espera /healthz
 # Requiere: perfil AWS con permiso para asumir OrganizationAccountAccessRole en calasign-sandbox.
 set -euo pipefail
@@ -12,8 +12,15 @@ REGION=us-east-1
 BUCKET="calasign-saas-dev-$ACCOUNT"
 DOMAIN=dev.calasign.com
 INSTANCE="${INSTANCE_ID:-$(cd infra/dev && terraform output -raw instance_id)}"
-# Se empaqueta el working tree (también lo staged y los archivos nuevos no ignorados): "dirty" si difiere de HEAD.
-REL="$(date -u +%Y%m%d%H%M%S)-$(git rev-parse --short HEAD)$([ -z "$(git status --porcelain)" ] || echo -dirty)"
+# Se empaquetan los archivos versionados (con sus cambios sin commitear): "dirty" si difieren de HEAD. Un archivo nuevo
+# de código sin `git add` no viajaría (el server arrancaría sin él, después de migrar): se aborta.
+NEW_SRC="$(git ls-files -o --exclude-standard -- apps packages integrations)"
+if [ -n "$NEW_SRC" ]; then
+  echo "Hay archivos nuevos sin versionar que no viajarían en el paquete (agregalos con git add o ignoralos):" >&2
+  echo "$NEW_SRC" >&2
+  exit 1
+fi
+REL="$(date -u +%Y%m%d%H%M%S)-$(git rev-parse --short HEAD)$([ -z "$(git status --porcelain --untracked-files=no)" ] || echo -dirty)"
 
 # El estado local de Terraform guarda SECRET_KEY en claro: que solo lo lea el usuario.
 chmod 600 infra/dev/terraform.tfstate* 2>/dev/null || true
@@ -96,9 +103,11 @@ rm -f \$PKG
 chown -R calasign:calasign \$D
 cd \$D
 sudo -u calasign env HOME=/var/lib/calasign PATH=\$PATH COREPACK_ENABLE_DOWNLOAD_PROMPT=0 CI=true \
-  corepack pnpm install --frozen-lockfile --filter '@calasign/api...' 2>&1 | tail -3
-# Instalado: el código queda de root (la app lo lee, no lo puede modificar).
+  corepack pnpm install --frozen-lockfile --config.package-import-method=copy --filter '@calasign/api...' 2>&1 | tail -3
+# Instalado: el código queda de root (la app lo lee, no lo puede modificar), legible para todos sin depender del umask
+# de quien desplegó (tar conserva los modos locales). Copia, no hardlinks al store de pnpm: el chown no lo alcanza.
 chown -R root:root \$D
+chmod -R u+rwX,go+rX,go-w \$D
 
 # Backup previo obligatorio, antes de tocar nada del host (secretos, hardening, Caddy): la versión nueva aplica
 # sus migraciones al arrancar y el rollback de abajo solo vuelve al código anterior, no deshace el esquema.

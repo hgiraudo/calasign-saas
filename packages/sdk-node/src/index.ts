@@ -108,8 +108,10 @@ export interface CalaSignOptions {
   userAgent?: string;
 }
 
-interface RequestOptions {
+export interface RequestOptions {
   body?: unknown;
+  /** Headers extra del pedido (p. ej. `X-Expected-Updated-At`). No reemplazan Authorization ni Idempotency-Key. */
+  headers?: Record<string, string>;
   form?: FormData;
   query?: Record<string, string | number | undefined | null>;
   idempotencyKey?: string;
@@ -119,7 +121,21 @@ interface RequestOptions {
   raw?: boolean;
   /** Cancela el pedido (y las esperas entre reintentos); se combina con el timeout de cada intento. */
   signal?: AbortSignal;
+  /** Se llama antes de cada reintento (error de red, 429/5xx o corte al leer la respuesta). */
+  onRetry?: () => void;
 }
+
+/**
+ * Control de concurrencia de los borradores: el `updatedAt` del sobre (o plantilla) que cargaste. Si cambió desde
+ * entonces (otra persona o proceso lo editó), la API responde 409 `version_changed` con `details.updatedAt` (el valor
+ * actual): volvé a cargar, reaplicá el cambio y reintentá con el nuevo `updatedAt`.
+ */
+export interface DraftEditOptions {
+  expectedUpdatedAt?: string | Date;
+}
+
+const draftHeaders = (o: DraftEditOptions): Record<string, string> | undefined =>
+  o.expectedUpdatedAt ? { "x-expected-updated-at": isoOf(o.expectedUpdatedAt)! } : undefined;
 
 /** Respuesta de `request(…, { raw: true })`. */
 export interface RawResponse {
@@ -250,6 +266,7 @@ export class CalaSign {
     for (let attempt = 0; ; attempt++) {
       if (o.signal?.aborted) throw aborted();
       const headers: Record<string, string> = {
+        ...Object.fromEntries(Object.entries(o.headers ?? {}).map(([k, v]) => [k.toLowerCase(), String(v)])),
         authorization: `Bearer ${await this.bearer()}`,
         accept: "application/json",
         "user-agent": this.userAgent,
@@ -271,6 +288,7 @@ export class CalaSign {
           // Error de red: solo se reintenta si el pedido es idempotente (si no, podría duplicarse).
           if (retryable && attempt < this.maxRetries) {
             await sleep(backoff(attempt), o.signal);
+            o.onRetry?.();
             continue;
           }
           throw fail(`Error de red: ${(err as Error).message}`, 0, "network_error");
@@ -299,6 +317,7 @@ export class CalaSign {
             if (text === undefined) await res.body?.cancel().catch(() => {});
             const ra = Number(raHeader);
             await sleep(Number.isFinite(ra) && ra > 0 ? Math.min(ra * 1000, 30_000) : backoff(attempt), o.signal);
+            o.onRetry?.();
             continue;
           }
         }
@@ -314,6 +333,7 @@ export class CalaSign {
             if (o.signal?.aborted) throw aborted();
             if (retryable && attempt < this.maxRetries) {
               await sleep(backoff(attempt), o.signal);
+              o.onRetry?.();
               continue;
             }
             throw fail(`Error de red: ${(err as Error).message}`, 0, "network_error", undefined, requestId);
@@ -489,8 +509,9 @@ class EnvelopesApi {
     return this.create({ ...input, send: true }, o);
   }
 
-  update(id: string, input: UpdateEnvelopeInput): Promise<EnvelopeDetail> {
-    return this.c.request("PATCH", `/v1/envelopes/${seg(id)}`, { body: input, retryable: true });
+  /** Edita el borrador. Con `expectedUpdatedAt`, 409 `version_changed` si alguien lo modificó mientras tanto. */
+  update(id: string, input: UpdateEnvelopeInput, o: DraftEditOptions = {}): Promise<EnvelopeDetail> {
+    return this.c.request("PATCH", `/v1/envelopes/${seg(id)}`, { body: input, retryable: true, headers: draftHeaders(o) });
   }
 
   delete(id: string): Promise<void> {
@@ -507,20 +528,36 @@ class EnvelopesApi {
     return this.c.request("DELETE", `/v1/envelopes/${seg(id)}/documents/${seg(documentId)}`);
   }
 
-  setRecipients(id: string, recipients: RecipientInput[]): Promise<EnvelopeDetail> {
-    return this.c.request("PUT", `/v1/envelopes/${seg(id)}/recipients`, { body: { recipients } });
+  /** Reemplaza los destinatarios del borrador. Con `expectedUpdatedAt`, 409 `version_changed` si cambió. */
+  setRecipients(id: string, recipients: RecipientInput[], o: DraftEditOptions = {}): Promise<EnvelopeDetail> {
+    return this.c.request("PUT", `/v1/envelopes/${seg(id)}/recipients`, { body: { recipients }, headers: draftHeaders(o) });
   }
 
-  setFields(id: string, fields: (FieldInput | Record<string, unknown>)[]): Promise<EnvelopeDetail> {
-    return this.c.request("PUT", `/v1/envelopes/${seg(id)}/fields`, { body: { fields } });
+  /** Reemplaza los campos del borrador. Con `expectedUpdatedAt`, 409 `version_changed` si cambió. */
+  setFields(id: string, fields: (FieldInput | Record<string, unknown>)[], o: DraftEditOptions = {}): Promise<EnvelopeDetail> {
+    return this.c.request("PUT", `/v1/envelopes/${seg(id)}/fields`, { body: { fields }, headers: draftHeaders(o) });
   }
 
   send(id: string, o: { idempotencyKey?: string } = {}): Promise<EnvelopeDetail> {
     return this.c.request("POST", `/v1/envelopes/${seg(id)}/send`, { idempotencyKey: o.idempotencyKey ?? `send-${seg(id)}` });
   }
 
-  void(id: string, reason: string): Promise<EnvelopeDetail> {
-    return this.c.request("POST", `/v1/envelopes/${seg(id)}/void`, { body: { reason }, retryable: true });
+  /**
+   * Anula el sobre. Se reintenta ante errores de red/5xx; si el primer intento sí llegó a anularlo, el reintento recibe
+   * 409 `not_voidable`: en ese caso (solo tras un reintento) se confirma con un GET y, si quedó `voided`, se devuelve el
+   * detalle. Anular un sobre ya anulado sin reintentos sigue lanzando 409 `not_voidable`.
+   */
+  async void(id: string, reason: string): Promise<EnvelopeDetail> {
+    let retried = false;
+    try {
+      return await this.c.request("POST", `/v1/envelopes/${seg(id)}/void`, { body: { reason }, retryable: true, onRetry: () => (retried = true) });
+    } catch (err) {
+      if (retried && err instanceof CalaSignError && err.code === "not_voidable") {
+        const detail = await this.get(id);
+        if (detail.envelope.status === "voided") return detail;
+      }
+      throw err;
+    }
   }
 
   remind(id: string): Promise<{ notified: number }> {
@@ -536,7 +573,13 @@ class EnvelopesApi {
     return (await this.c.request<RawResponse>("GET", `/v1/envelopes/${seg(id)}/signed.pdf`, { raw: true })).bytes;
   }
 
-  /** URL de firma embebida (5 min, un solo uso) para un destinatario con `embedded: true`. */
+  /**
+   * URL de firma (5 min, un solo uso) de un destinatario: embebida (`embedded: true`, en un iframe con
+   * `frameAncestors`) o no (para abrirla en una pestaña o redirigir). Devuelve `{ url, expiresAt, tabOnly? }`:
+   * `tabOnly: true` para destinatarios con OTP, que no se pueden embeber (abrir en pestaña/redirigir); pedir
+   * `frameAncestors` para ellos da 409 `otp_not_embeddable`. Embebida, la página avisa por `postMessage` los eventos
+   * `viewed`, `signing_complete`, `declined`, `error` y `closed` (este último con `status`).
+   */
   signingUrl(envelopeId: string, recipientId: string, input: CreateSigningUrlInput = {}): Promise<SigningUrlResponse> {
     return this.c.request("POST", `/v1/envelopes/${seg(envelopeId)}/recipients/${seg(recipientId)}/signing-url`, { body: input });
   }

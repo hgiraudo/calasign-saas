@@ -6,8 +6,32 @@ import { useI18n } from "../lib/i18n";
 import { useSignerText } from "../lib/i18n-signer";
 import { ErrorBox, Modal } from "./ui";
 
+/**
+ * Error del firmante que indica que la sesión quedó desactualizada: venció (401), falta verificar la identidad
+ * (403 identity_required), el link ya no existe (404) o el sobre cambió de estado (409, 410). Se vuelve a pedir la
+ * sesión para mostrar la pantalla que corresponde (código, verificación, cierre) en lugar de solo el texto del error.
+ */
+export function isStaleError(e: unknown): boolean {
+  if (!(e instanceof HttpError)) return false;
+  return [401, 404, 409, 410].includes(e.status) || (e.status === 403 && e.code === "identity_required");
+}
+
+/** Códigos de 429 con los que el último código enviado puede seguir vigente: se muestra el campo para escribirlo. */
+const OTP_LIMIT_CODES = ["otp_cooldown", "otp_too_many", "otp_daily_limit", "otp_destination_limit", "otp_tenant_limit"];
+
 /** Pide y valida el código antes de mostrar los documentos. */
-export function OtpGate({ session, base, onDone }: { session: SigningSession; base: string; onDone: (s: SigningSession) => void }) {
+export function OtpGate({
+  session,
+  base,
+  onDone,
+  onStale,
+}: {
+  session: SigningSession;
+  base: string;
+  onDone: (s: SigningSession) => void;
+  /** Vuelve a pedir la sesión ante un error terminal (sobre cerrado, link inexistente, código ya no exigido). */
+  onStale?: () => unknown;
+}) {
   const sx = useSignerText();
   const [sent, setSent] = useState<OtpSendResponse | null>(null);
   const [code, setCode] = useState("");
@@ -33,10 +57,11 @@ export function OtpGate({ session, base, onDone }: { session: SigningSession; ba
       if (d?.resendInSeconds) setWait(d.resendInSeconds);
       // Ya se mandó un código hace poco (p. ej. el celular recargó la página al volver de los mensajes): se muestra el
       // campo para escribirlo. Si no, quedaba solo el botón deshabilitado y había que pedir otro (que anula el anterior).
-      if (e instanceof HttpError && (e.code === "otp_cooldown" || e.code === "otp_too_many") && !sent) {
+      if (e instanceof HttpError && OTP_LIMIT_CODES.includes(e.code ?? "") && !sent) {
         setSent({ sent: true, destination: session.otpDestination ?? "", resendInSeconds: d?.resendInSeconds ?? 0, expiresAt: "" } as OtpSendResponse);
       }
       setError(errorText(e));
+      if (isStaleError(e)) void onStale?.();
     } finally {
       setBusy(false);
     }
@@ -56,6 +81,7 @@ export function OtpGate({ session, base, onDone }: { session: SigningSession; ba
       verifying.current = false;
       setError(errorText(e));
       setBusy(false);
+      if (isStaleError(e)) void onStale?.();
     }
   };
 
@@ -118,7 +144,18 @@ export const normalizePhone = (v: string) => {
 };
 
 /** El firmante delega en otra persona. */
-export function DelegateModal({ base, onClose, onDone }: { base: string; onClose: () => void; onDone: (name: string) => void }) {
+export function DelegateModal({
+  base,
+  onClose,
+  onDone,
+  onStale,
+}: {
+  base: string;
+  onClose: () => void;
+  onDone: (name: string) => void;
+  /** Vuelve a pedir la sesión ante un error terminal (sesión vencida, sobre cerrado…). */
+  onStale?: () => unknown;
+}) {
   const sx = useSignerText();
   const { t } = useI18n();
   const [name, setName] = useState("");
@@ -146,6 +183,12 @@ export function DelegateModal({ base, onClose, onDone }: { base: string; onClose
     } catch (e) {
       setError(errorText(e));
       setBusy(false);
+      // same_person (409) es un dato a corregir en el formulario, no un cambio de la sesión.
+      if (isStaleError(e) && !(e instanceof HttpError && e.code === "same_person")) {
+        // La pantalla que corresponde (código, cierre) reemplaza al formulario: el modal se cierra.
+        onClose();
+        void onStale?.();
+      }
     }
   };
 

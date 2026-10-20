@@ -5,12 +5,27 @@ import type { IdentityStartResponse, IdvCaptureKind, SigningIdentity, SigningSes
 import { api, errorText } from "../lib/api";
 import { useIdnText, type IdnKey } from "../lib/i18n-identity";
 import { ErrorBox, Spinner } from "./ui";
-import { isEmbedded, tokenOfBase } from "../lib/embed";
+import { prepareProviderTab, tokenOfBase } from "../lib/embed";
+import { isStaleError } from "./SignerExtras";
 
 const PROVIDER_NAMES: Record<string, string> = { mock: "CalaSign", truora: "Truora", veriff: "Veriff" };
 const REASONS = ["name_mismatch", "document_number_mismatch", "document_unreadable", "face_mismatch", "liveness_failed", "document_front_back_identical"];
 
-export function IdentityGate({ session, base, onDone }: { session: SigningSession; base: string; onDone: (s: SigningSession) => void }) {
+export function IdentityGate({
+  session,
+  base,
+  onDone,
+  onStale,
+}: {
+  session: SigningSession;
+  base: string;
+  onDone: (s: SigningSession) => void;
+  /**
+   * Vuelve a pedir la sesión ante un error terminal (sesión vencida, sobre anulado o vencido, destinatario reemplazado):
+   * la página pasa a la pantalla que corresponde (código, cierre) en lugar de quedar en la verificación.
+   */
+  onStale: () => unknown;
+}) {
   const tx = useIdnText();
   const [idn, setIdn] = useState<SigningIdentity>(session.identity!);
   const [busy, setBusy] = useState(false);
@@ -34,6 +49,9 @@ export function IdentityGate({ session, base, onDone }: { session: SigningSessio
     [refreshSession],
   );
 
+  const onStaleRef = useRef(onStale);
+  onStaleRef.current = onStale;
+
   const call = async (path: string, method: "GET" | "POST" = "POST") => {
     setBusy(true);
     setError(null);
@@ -42,21 +60,42 @@ export function IdentityGate({ session, base, onDone }: { session: SigningSessio
       await handle(r.identity);
     } catch (e) {
       setError(errorText(e));
+      if (isStaleError(e)) void onStale();
     } finally {
       setBusy(false);
     }
   };
 
-  // Flujos con página del proveedor: se consulta el resultado mientras está en curso.
+  // Flujos con página del proveedor: se consulta el resultado mientras está en curso. Si la verificación en curso
+  // desaparece (el sobre se cerró y el servidor la canceló) o la sesión ya no vale, se deja de consultar y se recarga
+  // la sesión: antes se seguía esperando un resultado que no iba a llegar.
   const polling = idn.mode === "redirect" && idn.status === "in_progress";
   useEffect(() => {
     if (!polling) return;
+    let stopped = false;
+    const stop = () => {
+      stopped = true;
+      window.clearInterval(h);
+      void onStaleRef.current();
+    };
     const h = window.setInterval(() => {
       api<IdentityStartResponse>(`${base}/identity`)
-        .then((r) => handle(r.identity))
-        .catch(() => {});
+        .then((r) => {
+          if (stopped) return;
+          // El estado nuevo se aplica siempre (un intento fallido también deja verificationId en null y muestra
+          // "reintentar"); además, sin verificación en curso se recarga la sesión por si el sobre se cerró.
+          const gone = r.identity !== null && r.identity.status !== "verified" && r.identity.verificationId === null;
+          void handle(r.identity);
+          if (gone) stop();
+        })
+        .catch((e) => {
+          if (!stopped && isStaleError(e)) stop();
+        });
     }, 4000);
-    return () => window.clearInterval(h);
+    return () => {
+      stopped = true;
+      window.clearInterval(h);
+    };
   }, [polling, base, handle]);
 
   const reasonText = idn.failureReason
@@ -67,11 +106,13 @@ export function IdentityGate({ session, base, onDone }: { session: SigningSessio
 
   const decline = async () => {
     setBusy(true);
+    setError(null);
     try {
       onDone(await api<SigningSession>(`${base}/decline`, { method: "POST", body: { reason: reason.trim() || tx("idv.failedTitle") } }));
     } catch (e) {
       setError(errorText(e));
       setBusy(false);
+      if (isStaleError(e)) void onStale();
     }
   };
 
@@ -128,10 +169,14 @@ export function IdentityGate({ session, base, onDone }: { session: SigningSessio
           <p className="muted">{tx("idv.redirectText", { provider })}</p>
           {idn.redirectUrl && (
             // Embebido, el proveedor se abre en otra pestaña (muchos no cargan en un iframe y la vuelta perdía el modo
-            // embebido); esta página sigue consultando el resultado.
-            <a className="btn btn-primary btn-block" href={idn.redirectUrl} rel="noopener" target={isEmbedded(tokenOfBase(base)) ? "_blank" : undefined}>
+            // embebido), sin opener, como el pago; esta página sigue consultando el resultado.
+            <button
+              type="button"
+              className="btn btn-primary btn-block"
+              onClick={() => prepareProviderTab(tokenOfBase(base)).open(idn.redirectUrl!)}
+            >
               {tx("idv.redirectGo", { provider })}
-            </a>
+            </button>
           )}
           <p className="muted small" aria-live="polite">
             <Spinner /> {tx("idv.waiting")}

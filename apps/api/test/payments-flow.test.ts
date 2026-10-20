@@ -194,6 +194,23 @@ describe("checkout del firmante", () => {
   });
 });
 
+describe("pago previo y sobre cerrado", () => {
+  const complete = (token: string) => app.inject({ method: "POST", url: `/v1/signing/${token}/complete`, payload: { fields: [] } });
+  it("abierto con el pago pendiente: 402 payment_required", async () => {
+    const s = await setup();
+    const r = await complete(s.token);
+    expect(r.statusCode).toBe(402);
+    expect(r.json().code ?? r.json().error?.code).toBe("payment_required");
+  });
+  it("anulado o vencido sin marcar: no exige el pago, responde 410 (antes 402 con un pago imposible)", async () => {
+    for (const o of [{ status: "voided" }, { expiresAt: new Date(Date.now() - 60_000).toISOString() }]) {
+      const s = await setup(o);
+      const r = await complete(s.token);
+      expect(r.statusCode).toBe(410);
+    }
+  });
+});
+
 describe("reembolsos y disputas informados por el proveedor", () => {
   it("Stripe charge.refunded total: cobro reembolsado, evento una vez, sobre sin cambios ni trabado", async () => {
     const { handleStripeEvent } = await import("../src/modules/billing/webhooks");

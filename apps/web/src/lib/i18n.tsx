@@ -88,6 +88,8 @@ const es = {
   "edit.noDocuments": "Todavía no hay documentos.",
   "edit.hadSignatures":
     "{names}: el archivo traía firmas digitales. Al subirlo se sanea (formularios aplanados, contenido activo y adjuntos eliminados) y esas firmas se pierden: el documento guardado y el PDF final no las conservan.",
+  "edit.formAppearanceMismatch":
+    "{names}: el formulario pedía que el lector redibujara los campos y alguno no se pudo redibujar. Quedó fijado como estaba guardado en el archivo, que otro programa podría mostrar distinto: revisá el documento antes de enviarlo.",
   "edit.addRecipient": "Agregar destinatario",
   "edit.role": "Rol",
   "edit.role.signer": "Firmante",
@@ -169,8 +171,8 @@ const es = {
   "detail.voidedReason": "Anulado:",
   "detail.sha": "SHA-256 del PDF final",
   "detail.finalizeFailed": "No se pudo terminar de sellar el documento. Podés reintentarlo; si vuelve a fallar, contactá a soporte.",
-  "detail.finalizeFailedLayers":
-    "No se puede sellar el documento: tiene capas ocultas (contenido opcional apagado) y el PDF final mostraría contenido que los firmantes no vieron. Reintentar no lo resuelve: anulá el sobre y envialo de nuevo con el PDF exportado sin capas o impreso a PDF.",
+  "detail.finalizeFailedUnsealable":
+    "El documento no se puede sellar (código {code}). Reintentar no lo resuelve: anulá el sobre y envialo de nuevo (con el PDF exportado de nuevo o impreso a PDF).",
   "detail.retryFinalize": "Reintentar finalización",
   "detail.finalizeRetried": "Reintento en curso",
 
@@ -316,6 +318,8 @@ const ptBR: Dict = {
   "edit.noDocuments": "Ainda não há documentos.",
   "edit.hadSignatures":
     "{names}: o arquivo tinha assinaturas digitais. Ao enviá-lo, ele é saneado (formulários achatados, conteúdo ativo e anexos removidos) e essas assinaturas se perdem: o documento salvo e o PDF final não as conservam.",
+  "edit.formAppearanceMismatch":
+    "{names}: o formulário pedia que o leitor redesenhasse os campos e algum não pôde ser redesenhado. Ficou fixado como estava salvo no arquivo, que outro programa poderia mostrar diferente: revise o documento antes de enviá-lo.",
   "edit.addRecipient": "Adicionar destinatário",
   "edit.role": "Função",
   "edit.role.signer": "Signatário",
@@ -395,8 +399,8 @@ const ptBR: Dict = {
   "detail.voidedReason": "Cancelado:",
   "detail.sha": "SHA-256 do PDF final",
   "detail.finalizeFailed": "Não foi possível concluir a selagem do documento. Você pode tentar novamente; se falhar de novo, contate o suporte.",
-  "detail.finalizeFailedLayers":
-    "Não é possível selar o documento: ele tem camadas ocultas (conteúdo opcional desativado) e o PDF final mostraria conteúdo que os signatários não viram. Tentar novamente não resolve: anule o envelope e envie-o de novo com o PDF exportado sem camadas ou impresso como PDF.",
+  "detail.finalizeFailedUnsealable":
+    "O documento não pode ser selado (código {code}). Tentar novamente não resolve: anule o envelope e envie-o de novo (com o PDF exportado novamente ou impresso como PDF).",
   "detail.retryFinalize": "Tentar finalizar novamente",
   "detail.finalizeRetried": "Nova tentativa em andamento",
   "keys.title": "API keys",
@@ -536,6 +540,8 @@ const en: Dict = {
   "edit.noDocuments": "No documents yet.",
   "edit.hadSignatures":
     "{names}: the file had digital signatures. Uploaded PDFs are sanitized (forms flattened, active content and attachments removed) and those signatures are lost: the stored document and the final PDF don't keep them.",
+  "edit.formAppearanceMismatch":
+    "{names}: the form asked the reader to redraw its fields and some couldn't be redrawn. They were fixed as saved in the file, which another program might show differently: review the document before sending it.",
   "edit.addRecipient": "Add recipient",
   "edit.role": "Role",
   "edit.role.signer": "Signer",
@@ -615,8 +621,8 @@ const en: Dict = {
   "detail.voidedReason": "Voided:",
   "detail.sha": "SHA-256 of final PDF",
   "detail.finalizeFailed": "The document could not be sealed. You can retry; if it fails again, contact support.",
-  "detail.finalizeFailedLayers":
-    "The document can't be sealed: it has hidden layers (optional content turned off) and the final PDF would show content the signers didn't see. Retrying won't fix it: void the envelope and send it again with the PDF exported without layers or printed to PDF.",
+  "detail.finalizeFailedUnsealable":
+    "The document can't be sealed (code {code}). Retrying won't fix it: void the envelope and send it again (with the PDF exported again or printed to PDF).",
   "detail.retryFinalize": "Retry finalization",
   "detail.finalizeRetried": "Retry in progress",
   "keys.title": "API keys",

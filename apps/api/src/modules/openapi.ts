@@ -157,7 +157,7 @@ const CreateEnvelopeRequestBody = CreateEnvelopeInput.extend({
   embeddedSigning: CreateSigningUrlInput.optional().describe("Opciones (returnUrl, frameAncestors) de las URLs de firma embebida de la respuesta."),
 });
 const CreateEnvelopeResponseSchema = named("CreateEnvelopeResponse", EnvelopeDetailSchema.extend({
-  documents: z.array(UploadedDocumentSchema).describe("Los documentos creados, con `hadSignatures` (firmas previas del archivo que se perdieron al sanearlo)."),
+  documents: z.array(UploadedDocumentSchema).describe("Los documentos creados, con `hadSignatures` (firmas previas del archivo que se perdieron al sanearlo) y `formAppearanceMismatch` (aviso: alguna apariencia de formulario no se pudo regenerar y se fijó la guardada)."),
   signingUrls: z
     .array(SigningUrlSchema.extend({ recipientId: z.string().uuid() }))
     .optional()
@@ -351,7 +351,7 @@ const OPS: Op[] = [
     tag: "Sobres",
     summary: "Agregar documento PDF",
     description:
-      "multipart/form-data con el campo `file`. El PDF se normaliza al subirlo (lo que se ve es lo que se firma); el hash del archivo subido queda en la evidencia. El PDF se sanea: formularios aplanados tal como se ven, contenido activo (JavaScript, acciones, multimedia) y adjuntos eliminados; las capas ocultas se rechazan (pdf_hidden_layers) y las firmas digitales previas se pierden (`hadSignatures` en la respuesta). Topes por sobre: 30 documentos y 1000 páginas en total (400 too_many_documents / too_many_pages) y 100 MB en total (413 file_too_large).",
+      "multipart/form-data con el campo `file`. El PDF se normaliza al subirlo (lo que se ve es lo que se firma); el hash del archivo subido queda en la evidencia. El PDF se sanea: formularios aplanados tal como se ven, contenido activo (JavaScript, acciones, multimedia) y adjuntos eliminados; las capas ocultas se rechazan (pdf_hidden_layers) y las firmas digitales previas se pierden (`hadSignatures` en la respuesta); si alguna apariencia de formulario no se pudo regenerar se fija la guardada y se avisa con `formAppearanceMismatch`. Topes por sobre: 30 documentos y 1000 páginas en total (400 too_many_documents / too_many_pages) y 100 MB en total (413 file_too_large).",
     multipart: true,
     fileDescription: "PDF (sin contraseña). El nombre del archivo es el nombre del documento.",
     status: 201,
@@ -521,7 +521,7 @@ const OPS: Op[] = [
     tag: "Plantillas",
     summary: "Agregar documento PDF",
     description:
-      "multipart/form-data con el campo `file`. El PDF se normaliza al subirlo. El PDF se sanea: formularios aplanados tal como se ven, contenido activo (JavaScript, acciones, multimedia) y adjuntos eliminados; las capas ocultas se rechazan (pdf_hidden_layers) y las firmas digitales previas se pierden (`hadSignatures` en la respuesta). Topes por plantilla: 30 documentos y 1000 páginas en total (400 too_many_documents / too_many_pages) y 100 MB en total (413 file_too_large).",
+      "multipart/form-data con el campo `file`. El PDF se normaliza al subirlo. El PDF se sanea: formularios aplanados tal como se ven, contenido activo (JavaScript, acciones, multimedia) y adjuntos eliminados; las capas ocultas se rechazan (pdf_hidden_layers) y las firmas digitales previas se pierden (`hadSignatures` en la respuesta); si alguna apariencia de formulario no se pudo regenerar se fija la guardada y se avisa con `formAppearanceMismatch`. Topes por plantilla: 30 documentos y 1000 páginas en total (400 too_many_documents / too_many_pages) y 100 MB en total (413 file_too_large).",
     multipart: true,
     fileDescription: "PDF (sin contraseña). El nombre del archivo es el nombre del documento.",
     status: 201,

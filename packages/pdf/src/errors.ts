@@ -19,12 +19,14 @@ export class InvalidPdfError extends Error {
   }
 }
 
-export function hiddenLayersError(context: "upload" | "seal"): InvalidPdfError {
+/**
+ * Capas ocultas al subir. Al sellar un original viejo con capas no hay error: el PDF final lleva /OCProperties con el
+ * mismo estado (finalize.ts); cualquier InvalidPdfError del sellado se avisa con su código (anular y reenviar).
+ */
+export function hiddenLayersError(): InvalidPdfError {
   return new InvalidPdfError(
     "pdf_hidden_layers",
-    context === "upload"
-      ? "El PDF tiene capas ocultas (contenido opcional apagado): exportalo de nuevo sin capas o imprimilo a PDF y volvé a subirlo."
-      : "El documento tiene capas ocultas (contenido opcional apagado): no se sella porque el PDF final mostraría contenido que el firmante no vio.",
+    "El PDF tiene capas ocultas (contenido opcional apagado): exportalo de nuevo sin capas o imprimilo a PDF y volvé a subirlo.",
   );
 }
 

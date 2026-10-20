@@ -143,6 +143,10 @@ describe("finalización de originales viejos", () => {
     await handlers.notify(jobs[0].payload, { id: 2, attempts: 1, maxAttempts: 8 });
     expect(sent.map((m) => m.to)).toEqual([senderEmail]);
     expect(sent[0].text).toMatch(/Contrato/);
+    // Aviso genérico para cualquier documento no sellable: el código y que reintentar no lo resuelve.
+    expect(sent[0].text).toMatch(/no se puede sellar \(código pdf_form_unsupported\)/);
+    expect(sent[0].text).toMatch(/Reintentar no lo resuelve: anulá el sobre/);
+    expect(sent[0].text).not.toMatch(/capas/);
     await db.close();
   }, 180_000);
 });

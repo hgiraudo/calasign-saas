@@ -72,26 +72,32 @@ export function opensWithoutPassword(doc: PDFDocument): boolean {
     const idRaw = ctx.trailerInfo.ID as PDFObject | undefined;
     const idArr = idRaw instanceof PDFRef ? ctx.lookup(idRaw) : idRaw;
     const id0 = idArr instanceof PDFArray ? bytesOf(idArr.get(0)) ?? Buffer.alloc(0) : Buffer.alloc(0);
-    const n = r === 2 ? 5 : Math.min(16, Math.max(5, keyLengthBits(ctx, enc, r) / 8));
     const encryptMetadata = enc.get(PDFName.of("EncryptMetadata"));
     const noMeta = r >= 4 && encryptMetadata instanceof PDFBool && !encryptMetadata.asBoolean();
-    let key = md5(PAD, o.subarray(0, 32), pBuf, id0, noMeta ? Buffer.from([255, 255, 255, 255]) : Buffer.alloc(0));
-    if (r >= 3) for (let i = 0; i < 50; i++) key = md5(key.subarray(0, n));
-    key = key.subarray(0, n);
-    if (r === 2) return rc4(key, PAD).equals(u.subarray(0, 32));
-    let x = rc4(key, md5(PAD, id0));
-    for (let i = 1; i <= 19; i++) x = rc4(Buffer.from(key.map((b) => b ^ i)), x);
-    return x.equals(u.subarray(0, 16));
+    const lengths = r === 2 ? [40] : keyLengthCandidates(ctx, enc, r);
+    return lengths.some((bits) => {
+      const n = r === 2 ? 5 : Math.min(16, Math.max(5, Math.floor(bits / 8)));
+      let key = md5(PAD, o.subarray(0, 32), pBuf, id0, noMeta ? Buffer.from([255, 255, 255, 255]) : Buffer.alloc(0));
+      if (r >= 3) for (let i = 0; i < 50; i++) key = md5(key.subarray(0, n));
+      key = key.subarray(0, n);
+      if (r === 2) return rc4(key, PAD).equals(u.subarray(0, 32));
+      let x = rc4(key, md5(PAD, id0));
+      for (let i = 1; i <= 19; i++) x = rc4(Buffer.from(key.map((b) => b ^ i)), x);
+      return x.equals(u.subarray(0, 16));
+    });
   } catch {
     return false;
   }
 }
 
 /**
- * Largo de la clave en bits. /Length del /Encrypt; en R4 sin él, el /Length del filtro de /StmF (/StdCF) en /CF (como
- * pdf.js: en bytes si es menor que 40, en bits si no) o 128 (AESV2, 16 bytes; también el valor por defecto de pdf.js).
+ * Largos de clave (en bits) con los que algún lector abre el documento. En R4 con /CF y /StmF (un nombre), el /Length
+ * del filtro de /StmF va primero (poppler y qpdf lo priorizan: es el que corresponde a AESV2/V2 por filtro; en bytes si
+ * es menor que 40, en bits si no; sin él o sin el filtro, 128: AESV2, 16 bytes) y después el /Length del /Encrypt
+ * (pdf.js 4.x usa el del /Encrypt si está y el del filtro solo si falta). Fuera de ese caso, el /Length del /Encrypt (40
+ * por defecto; 128 en R4 sin /CF). Probar los dos: si cualquiera abre sin contraseña, el PDF solo restringe permisos (`pdf_restricted`).
  */
-function keyLengthBits(ctx: PDFDocument["context"], enc: PDFDict, r: number): number {
+function keyLengthCandidates(ctx: PDFDocument["context"], enc: PDFDict, r: number): number[] {
   const num = (o: PDFObject | undefined) => {
     const v = o instanceof PDFRef ? ctx.lookup(o) : o;
     return v instanceof PDFNumber ? v.asNumber() : undefined;
@@ -101,10 +107,10 @@ function keyLengthBits(ctx: PDFDocument["context"], enc: PDFDict, r: number): nu
     return v instanceof PDFDict ? v : undefined;
   };
   const len = num(enc.get(PDFName.of("Length")));
-  if (len !== undefined || r !== 4) return len ?? 40;
+  const cfDict = dict(enc.get(PDFName.of("CF")));
   const stmF = enc.get(PDFName.of("StmF"));
-  const filter = dict(dict(enc.get(PDFName.of("CF")))?.get(stmF instanceof PDFName ? stmF : PDFName.of("StdCF")));
-  const cf = num(filter?.get(PDFName.of("Length")));
-  if (!cf) return 128;
-  return cf < 40 ? cf * 8 : cf;
+  if (r !== 4 || !cfDict || !(stmF instanceof PDFName)) return [len ?? (r === 4 ? 128 : 40)];
+  const cf = num(dict(cfDict.get(stmF))?.get(PDFName.of("Length")));
+  const fromFilter = !cf ? 128 : cf < 40 ? cf * 8 : cf;
+  return len === undefined || len === fromFilter ? [fromFilter] : [fromFilter, len];
 }

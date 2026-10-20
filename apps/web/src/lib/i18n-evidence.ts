@@ -95,6 +95,7 @@ const es = {
   "val.tsaUntrusted": "TSA no reconocida",
   "val.weak": "Algoritmo débil",
   "val.weakReasons": "Algoritmos débiles",
+  "val.warnings": "Avisos",
   "val.weakSummary":
     "Alguna firma usa algoritmos débiles (SHA-1, MD5 o claves RSA de menos de 2048 bits): aunque verifique, ya no prueba que el documento no se alteró ni quién lo firmó.",
   "val.revocation": "Revocación",
@@ -200,6 +201,7 @@ const pt: Record<Key, string> = {
   "val.tsaUntrusted": "TSA não reconhecida",
   "val.weak": "Algoritmo fraco",
   "val.weakReasons": "Algoritmos fracos",
+  "val.warnings": "Avisos",
   "val.weakSummary":
     "Alguma assinatura usa algoritmos fracos (SHA-1, MD5 ou chaves RSA de menos de 2048 bits): mesmo que verifique, já não prova que o documento não foi alterado nem quem o assinou.",
   "val.revocation": "Revogação",
@@ -303,6 +305,7 @@ const en: Record<Key, string> = {
   "val.tsaUntrusted": "Unrecognized TSA",
   "val.weak": "Weak algorithm",
   "val.weakReasons": "Weak algorithms",
+  "val.warnings": "Warnings",
   "val.weakSummary":
     "A signature uses weak algorithms (SHA-1, MD5 or RSA keys shorter than 2048 bits): even if it verifies, it no longer proves that the document wasn't altered or who signed it.",
   "val.revocation": "Revocation",

@@ -284,8 +284,8 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
     }));
     reply.code(201);
     const d = (await loadTemplateDetail(s.db, a.tenantId, req.params.id)).documents.find((x) => x.id === docId);
-    // hadSignatures: solo en la respuesta de la subida (las firmas previas del archivo se pierden al sanearlo).
-    return d && { ...d, hadSignatures: info.hadSignatures };
+    // hadSignatures y formAppearanceMismatch: solo en la respuesta de la subida (avisos del saneamiento del PDF).
+    return d && { ...d, hadSignatures: info.hadSignatures, formAppearanceMismatch: info.formAppearanceMismatch };
   });
 
   app.delete<P>("/v1/templates/:id/documents/:documentId", { preHandler: auth }, async (req, reply) => {

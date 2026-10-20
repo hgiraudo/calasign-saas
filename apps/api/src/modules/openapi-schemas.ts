@@ -100,6 +100,11 @@ export const UploadedDocumentSchema = named(
       .describe(
         "El archivo subido traía firmas digitales. Al subirlo, el PDF se sanea (formularios aplanados, contenido activo y adjuntos eliminados) y esas firmas se pierden: ni la copia guardada ni el PDF final las conservan. Conviene avisarle a quien lo subió.",
       ),
+    formAppearanceMismatch: z
+      .boolean()
+      .describe(
+        "Aviso no bloqueante: el formulario del PDF pedía regenerar las apariencias de los campos (NeedAppearances) y alguna no se pudo regenerar (caracteres que la fuente estándar no admite, texto enriquecido). Se fijó la apariencia guardada en el archivo, que otro lector podría mostrar distinta: conviene revisar cómo quedó el documento antes de enviarlo.",
+      ),
   }),
 );
 

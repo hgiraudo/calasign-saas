@@ -9,13 +9,18 @@ import {
   type PaymentTiming,
   type Recipient,
   type SignerPaymentInfo,
+  type SigningSession,
 } from "@calasign/shared";
-import { api, errorText } from "../lib/api";
+import { api, errorText, HttpError } from "../lib/api";
 import { useI18n } from "../lib/i18n";
 import { formatMoney, useBillingText } from "../lib/i18n-billing";
 import { parseAmountText } from "../lib/logic";
 import { ErrorBox, Spinner } from "./ui";
 import { prepareProviderTab, tokenOfBase } from "../lib/embed";
+import { isStaleError } from "./SignerExtras";
+
+/** Estados del sobre con los que ya no se puede pagar ni firmar. */
+const CLOSED_ENVELOPE = ["voided", "expired", "declined"];
 
 interface PaymentResponse {
   payment: EnvelopePayment | null;
@@ -285,7 +290,18 @@ export function EnvelopePaymentSummary({ envelopeId, recipients, envelopeStatus 
 }
 
 /** Panel de pago del firmante. `info` viene de GET /v1/signing/:token/payment. */
-function SignerPaymentPanel({ base, info, onPaid }: { base: string; info: SignerPaymentInfo; onPaid: () => void }) {
+function SignerPaymentPanel({
+  base,
+  info,
+  onPaid,
+  onStale,
+}: {
+  base: string;
+  info: SignerPaymentInfo;
+  onPaid: () => void;
+  /** Vuelve a pedir la sesión del firmante (sobre cerrado, sesión vencida): la página muestra la pantalla que corresponde. */
+  onStale: () => unknown;
+}) {
   const b = useBillingText();
   const { locale } = useI18n();
   const [busy, setBusy] = useState(false);
@@ -296,6 +312,8 @@ function SignerPaymentPanel({ base, info, onPaid }: { base: string; info: Signer
   // onPaid suele venir como función inline: con una ref, el sondeo no se reinicia (ni reinicia su tope) en cada render.
   const onPaidRef = useRef(onPaid);
   onPaidRef.current = onPaid;
+  const onStaleRef = useRef(onStale);
+  onStaleRef.current = onStale;
 
   // Al volver del proveedor, el webhook puede tardar: se consulta hasta ver el pago confirmado. Cada 3 s el primer minuto
   // y medio y después cada 30 s (antes se dejaba de consultar a los 90 s y quedaba "confirmando" para siempre, con la
@@ -307,11 +325,25 @@ function SignerPaymentPanel({ base, info, onPaid }: { base: string; info: Signer
     let done = false;
     const tick = () => {
       api<SignerPaymentInfo>(`${base}/payment`)
-        .then((r) => {
-          if (r.status === "paid" && !done) {
+        .then(async (r) => {
+          if (done) return;
+          if (r.status === "paid") {
             done = true;
             window.clearTimeout(id);
             onPaidRef.current();
+            return;
+          }
+          if (r.canPay) return;
+          // Ya no se puede pagar: si el sobre se cerró (anulado, vencido, rechazado) el pago no va a confirmarse; se deja
+          // de consultar y se recarga la sesión para mostrar el cierre (antes quedaba "confirmando" para siempre).
+          const closed = await api<SigningSession>(base).then(
+            (s) => CLOSED_ENVELOPE.includes(s.envelope.status),
+            (e) => e instanceof HttpError && [404, 410].includes(e.status),
+          );
+          if (closed && !done) {
+            done = true;
+            window.clearTimeout(id);
+            void onStaleRef.current();
           }
         })
         .catch(() => {});
@@ -338,6 +370,9 @@ function SignerPaymentPanel({ base, info, onPaid }: { base: string; info: Signer
       tab.cancel();
       setError(errorText(e));
       setBusy(false);
+      // Ya pagado o en proceso (otra pestaña, el webhook llegó): se vuelve a consultar el pago en lugar de dejar el botón.
+      if (e instanceof HttpError && e.status === 409 && (e.code === "already_paid" || e.code === "payment_processing")) onPaid();
+      else if (isStaleError(e)) void onStale();
     }
   };
 
@@ -414,6 +449,7 @@ export function SignerPaymentAfterSign({ base, onPaid }: { base: string; onPaid:
         reload();
         onPaid();
       }}
+      onStale={onPaid}
     />
   );
 }
@@ -429,14 +465,30 @@ export function PaymentGate({
   children,
   wrap,
   check = 0,
+  onStale,
 }: {
   base: string;
   children: ReactNode;
   wrap: (n: ReactNode) => ReactNode;
   check?: number;
+  /** Vuelve a pedir la sesión: el pago bloquea la firma pero ya no se puede pagar (sobre cerrado, turno cambiado). */
+  onStale: () => unknown;
 }) {
   const b = useBillingText();
   const { info, loaded, error, reload, retry } = usePaymentInfo(base);
+  const onStaleRef = useRef(onStale);
+  onStaleRef.current = onStale;
+  // Pago que bloquea la firma pero que no se puede hacer (el sobre se anuló o venció, el firmante ya no está en turno):
+  // antes quedaba el panel sin botón. Se recarga la sesión una vez por consulta del pago y, mientras, un indicador; si
+  // la página sigue en el flujo, se muestra el panel.
+  const needsResync = loaded && !!info?.required && info.blocksSigning && !info.canPay;
+  const staleFor = useRef<SignerPaymentInfo | null>(null);
+  const [resynced, setResynced] = useState<SignerPaymentInfo | null>(null);
+  useEffect(() => {
+    if (!needsResync || !info || staleFor.current === info) return;
+    staleFor.current = info;
+    void Promise.resolve(onStaleRef.current()).finally(() => setResynced(info));
+  }, [needsResync, info]);
   const shown = useRef(false);
   const lastCheck = useRef(check);
   useEffect(() => {
@@ -447,7 +499,11 @@ export function PaymentGate({
   const gate = !loaded ? (
     <Spinner />
   ) : info?.required && info.blocksSigning ? (
-    <SignerPaymentPanel base={base} info={info} onPaid={reload} />
+    needsResync && resynced !== info ? (
+      <Spinner />
+    ) : (
+      <SignerPaymentPanel base={base} info={info} onPaid={reload} onStale={onStale} />
+    )
   ) : error ? (
     <div className="card pad stack">
       <ErrorBox error={b("signerPay.loadError", { error })} />

@@ -187,6 +187,16 @@ export function ValidationReportView({ report }: { report: PdfValidationResponse
                     <td className="break">{s.weakAlgorithmReasons!.join(" · ")}</td>
                   </tr>
                 )}
+                {(s.warnings?.length ?? 0) > 0 && (
+                  <tr>
+                    <th>{ev("val.warnings")}</th>
+                    <td className="break">
+                      {s.warnings!.map((w, i) => (
+                        <div key={i}>{w}</div>
+                      ))}
+                    </td>
+                  </tr>
+                )}
                 {!s.integrity.valid && s.integrity.reason && (
                   <tr>
                     <th>{ev("val.integrity")}</th>

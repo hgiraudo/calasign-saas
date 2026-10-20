@@ -121,8 +121,8 @@ export function createJobHandlers(d: Deps): Record<JobQueueName, JobHandler> {
         await finalize(d, p);
       } catch (err) {
         // Un documento que no se puede sellar (InvalidPdfError al sanear un original viejo) falla igual en cada intento:
-        // se registra el fallo y se avisa ya, sin reintentar. (Las capas ocultas de un original viejo ya no fallan: el PDF
-        // final lleva /OCProperties con el mismo estado.)
+        // se registra el fallo y se avisa ya, sin reintentar; el aviso lleva el código (anular y reenviar). Las capas
+        // ocultas de un original viejo no fallan: el PDF final lleva /OCProperties con el mismo estado.
         // Si registrarlo falla, el error sale y el job se reintenta (y vuelve a llegar acá).
         if (err instanceof InvalidPdfError) {
           await finalizeGaveUp(d, p, err);
@@ -172,8 +172,9 @@ async function notify(
     subject: e.subject,
     declinedBy: decliner?.name ?? null,
     reason: p.kind === "voided" ? e.void_reason : decliner?.decline_reason ?? null,
-    // finalize_failed por un documento con capas ocultas (p. ej. un original viejo): reintentar no lo resuelve.
-    hiddenLayers: p.kind === "finalize_failed" && p.reason === "pdf_hidden_layers",
+    // finalize_failed por un documento que no se puede sellar (InvalidPdfError: finalizeGaveUp pone su código en
+    // `reason`): reintentar no lo resuelve.
+    unsealableCode: p.kind === "finalize_failed" && p.reason ? p.reason : null,
   };
 
   // Avisos al remitente.

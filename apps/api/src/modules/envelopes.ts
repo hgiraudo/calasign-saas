@@ -342,8 +342,8 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
     }));
     const d = (await loadDetail(s.db, a.tenantId, req.params.id)).documents.find((x) => x.id === doc.docId);
     reply.code(201);
-    // hadSignatures: solo en la respuesta de la subida (las firmas previas del archivo se pierden al sanearlo).
-    return d && { ...d, hadSignatures: doc.hadSignatures };
+    // hadSignatures y formAppearanceMismatch: solo en la respuesta de la subida (avisos del saneamiento del PDF).
+    return d && { ...d, hadSignatures: doc.hadSignatures, formAppearanceMismatch: doc.formAppearanceMismatch };
   });
 
   app.delete<P>("/v1/envelopes/:id/documents/:documentId", { preHandler: auth }, async (req, reply) => {
@@ -729,6 +729,8 @@ export interface PreparedPdfDocument {
   uploadedSha256: string;
   /** El archivo subido traía firmas digitales: el saneamiento las elimina (ni la copia guardada ni el PDF final las conservan). */
   hadSignatures: boolean;
+  /** Aviso no bloqueante: alguna apariencia de formulario no se pudo regenerar (NeedAppearances) y se fijó la guardada. */
+  formAppearanceMismatch: boolean;
 }
 
 /**
@@ -755,6 +757,7 @@ export async function preparePdfDocument(tenantId: string, envelopeId: string, u
     sha256: sha256Hex(bytes),
     uploadedSha256: sha256Hex(uploaded),
     hadSignatures: info.hadSignatures,
+    formAppearanceMismatch: info.formAppearanceMismatch,
   };
 }
 

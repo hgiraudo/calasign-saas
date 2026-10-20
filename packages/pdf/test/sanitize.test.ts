@@ -22,6 +22,7 @@ import {
 } from "pdf-lib";
 import * as asn1js from "asn1js";
 import { beforeAll, describe, expect, it } from "vitest";
+import { unclosedMarkedContent } from "../src/sanitize";
 import {
   IncrementalUpdate,
   InvalidPdfError,
@@ -329,6 +330,9 @@ describe("formularios", () => {
     };
     const prep = await preparePdfUpload(await build(true));
     expect(await text(prep.bytes)).toContain("GUARDADA");
+    // Se acepta, con un aviso no bloqueante: un lector regeneraría la apariencia y podría mostrar otra cosa.
+    expect(prep.info.formAppearanceMismatch).toBe(true);
+    expect((await preparePdfUpload(await formDoc())).info.formAppearanceMismatch).toBe(false);
     expect(await codeOf(preparePdfUpload(await build(false)))).toBe("pdf_form_unsupported");
   });
 
@@ -627,7 +631,7 @@ function rc4(key: Buffer, data: Buffer): Buffer {
 }
 
 /** PDF con /Encrypt R4 (AESV2) y contraseña de usuario vacía, SIN /Length en /Encrypt (solo en /CF /StdCF). */
-async function r4WithoutLength(cfLength: number) {
+async function r4WithoutLength(cfLength: number, encryptLength?: number) {
   const { createHash, randomBytes } = await import("node:crypto");
   const md5 = (...b: Buffer[]) => createHash("md5").update(Buffer.concat(b)).digest();
   const pad = Buffer.from("28bf4e5e4e758a4164004e56fffa01082e2e00b6d0683e802f0ca9fe6453697a", "hex");
@@ -647,7 +651,18 @@ async function r4WithoutLength(cfLength: number) {
   const ctx = doc.context;
   const hex = (b: Buffer) => PDFHexString.of(b.toString("hex"));
   const enc = ctx.register(
-    ctx.obj({ Filter: "Standard", V: 4, R: 4, O: hex(o), U: hex(u), P: p, StmF: "StdCF", StrF: "StdCF", CF: { StdCF: { CFM: "AESV2", AuthEvent: "DocOpen", Length: cfLength } } }),
+    ctx.obj({
+      Filter: "Standard",
+      V: 4,
+      R: 4,
+      O: hex(o),
+      U: hex(u),
+      P: p,
+      ...(encryptLength !== undefined ? { Length: encryptLength } : {}),
+      StmF: "StdCF",
+      StrF: "StdCF",
+      CF: { StdCF: { CFM: "AESV2", AuthEvent: "DocOpen", Length: cfLength } },
+    }),
   );
   ctx.trailerInfo.Encrypt = enc;
   ctx.trailerInfo.ID = ctx.obj([hex(id), hex(id)]);
@@ -658,6 +673,12 @@ describe("PDF cifrado", () => {
   it("R4 sin /Length en /Encrypt toma el largo de /CF /StdCF (16 bytes o 128 bits): pdf_restricted", async () => {
     expect(await codeOf(preparePdfUpload(await r4WithoutLength(16)))).toBe("pdf_restricted");
     expect(await codeOf(preparePdfUpload(await r4WithoutLength(128)))).toBe("pdf_restricted");
+  });
+
+  it("R4 con /Length en /Encrypt distinto del de /CF /StdCF: manda el del filtro (la clave de 16 bytes abre): pdf_restricted", async () => {
+    expect(await codeOf(preparePdfUpload(await r4WithoutLength(128, 40)))).toBe("pdf_restricted");
+    expect(await codeOf(preparePdfUpload(await r4WithoutLength(16, 40)))).toBe("pdf_restricted");
+    expect(await codeOf(preparePdfUpload(await r4WithoutLength(128, 128)))).toBe("pdf_restricted");
   });
 
   it.skipIf(!hasGs)("solo con permisos (contraseña de usuario vacía): pdf_restricted; con contraseña: encrypted", async () => {
@@ -701,5 +722,188 @@ describe("estado gráfico del original", () => {
     const iOrig = streams.findIndex((s) => s.includes("1 0 0 -1 0 800 cm"));
     expect(streams.slice(0, iOrig).join("").trim()).toBe("q");
     expect(streams[iOrig + 1].trim()).toBe("Q");
+  });
+});
+
+const hasPoppler = (() => {
+  try {
+    execFileSync("pdftoppm", ["-v"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+/** Píxeles oscuros de la página `page` (1-based) renderizada con poppler en gris a baja resolución. */
+function darkPixels(pdf: Uint8Array, page: number): number {
+  const dir = mkdtempSync(join(tmpdir(), "bdc-"));
+  writeFileSync(join(dir, "in.pdf"), pdf);
+  execFileSync("pdftoppm", ["-gray", "-r", "72", "-f", String(page), "-l", String(page), join(dir, "in.pdf"), join(dir, "p")]);
+  const pgm = readFileSync(join(dir, `p-${page}.pgm`));
+  // P5 ancho alto maxval y los píxeles (1 byte cada uno).
+  const header = /^P5\s+(\d+)\s+(\d+)\s+(\d+)\s/.exec(pgm.toString("latin1", 0, 64))!;
+  const pixels = pgm.subarray(header[0].length);
+  let dark = 0;
+  for (const v of pixels) if (v < 128) dark++;
+  return dark;
+}
+
+/** Original viejo con una capa apagada y un `/OC /oc1 BDC` que nunca se cierra (en la página o en un XObject). */
+async function unclosedLayer(where: "page" | "form") {
+  const doc = await PDFDocument.create();
+  const page = doc.addPage([400, 400]);
+  const ctx = doc.context;
+  const ocg = ctx.register(ctx.obj({ Type: "OCG", Name: PDFString.of("capa") }));
+  doc.catalog.set(PDFName.of("OCProperties"), ctx.obj({ OCGs: [ocg], D: { OFF: [ocg] } }));
+  const ops = "/OC /oc1 BDC 0 1 0 rg 10 10 50 50 re f\n";
+  if (where === "page") {
+    page.node.set(PDFName.of("Resources"), ctx.obj({ Properties: { oc1: ocg } }));
+    page.node.addContentStream(ctx.register(ctx.stream(ops)));
+  } else {
+    const form = ctx.register(ctx.stream(ops, { Type: "XObject", Subtype: "Form", BBox: [0, 0, 400, 400], Resources: { Properties: { oc1: ocg } } }));
+    page.node.set(PDFName.of("Resources"), ctx.obj({ XObject: { X0: form } }));
+    page.node.addContentStream(ctx.register(ctx.stream("/X0 Do\n")));
+  }
+  return doc.save();
+}
+
+describe("contenido marcado sin cerrar", () => {
+  it("cuenta BDC/BMC contra EMC ignorando strings, comentarios, arrays, diccionarios e imágenes en línea", () => {
+    const n = (s: string | Buffer) => unclosedMarkedContent(typeof s === "string" ? Buffer.from(s, "latin1") : s);
+    expect(n("/OC /a BDC 0 0 1 1 re f")).toBe(1);
+    expect(n("/P BMC /OC /a BDC EMC")).toBe(1);
+    expect(n("/OC /a BDC EMC EMC EMC")).toBe(0); // EMC de más: no se toca
+    expect(n("(BDC \\) BMC (EMC)) Tj")).toBe(0);
+    expect(n("<424443> Tj % BDC BMC\n")).toBe(0);
+    expect(n("[(a) BDC 3] TJ /Span << /ActualText (x) /K BMC >> BDC")).toBe(1);
+    expect(n("/BDC /EMC /BMC")).toBe(0);
+    const image = Buffer.concat([Buffer.from("BI /W 4 /H 1 /CS /G /BPC 8 ID "), Buffer.from(" EMC BDC\x00\xff"), Buffer.from(" EI /P BMC")]);
+    expect(n(image)).toBe(1);
+  });
+
+  it("un BDC sin cerrar en una capa apagada de un original viejo no esconde lo estampado", async () => {
+    for (const where of ["page", "form"] as const) {
+      const bytes = await unclosedLayer(where);
+      const field = { documentIndex: 0, page: 0, x: 0.1, y: 0.4, width: 0.8, height: 0.2, type: "text" as const, value: "FIRMADO POR JUAN" };
+      const sealed = await finalizeEnvelopePdf({ documents: [{ name: "a.pdf", bytes }], fields: [field], certificate: cert() }, { provider });
+      expect((await validatePdf(sealed, { trustAnchors: pemToDerList(rootPem) })).summary.allValid, where).toBe(true);
+      const out = await PDFDocument.load(sealed);
+      const { streams, xobjects } = drawn(out, out.getPages()[0]);
+      if (where === "page") {
+        // q <original con el BDC> Q EMC y recién después lo estampado.
+        const iOrig = streams.findIndex((s) => s.includes("/oc1 BDC"));
+        expect(streams[iOrig - 1].trim()).toBe("q");
+        expect(streams[iOrig + 1].trim()).toBe("Q");
+        expect(streams[iOrig + 2].trim()).toBe("EMC");
+        expect(streams.slice(iOrig + 3).join("\n")).toMatch(/Tj/);
+      } else {
+        const form = xobjects.find((x) => x.includes("/oc1 BDC"));
+        expect(form?.trim().endsWith("EMC")).toBe(true);
+      }
+      if (hasPoppler) {
+        // Poppler: antes la página salía en blanco (todo quedaba dentro de la capa apagada).
+        expect(darkPixels(sealed, 1), where).toBeGreaterThan(20);
+      }
+    }
+  });
+
+  it("un original con el contenido marcado bien cerrado no se toca", async () => {
+    const bytes = await layered((ctx, ocg) => ctx.obj({ OCGs: [ocg], D: ctx.obj({ OFF: [ocg] }) }) as PDFDict);
+    const out = await PDFDocument.load(await render(bytes));
+    expect(drawn(out, out.getPages()[0]).streams.filter((s) => s.trim() === "EMC")).toHaveLength(0);
+  });
+});
+
+describe("capas: /Order y /RBGroups indirectos", () => {
+  it("se resuelven antes de copiarlos al PDF final", async () => {
+    const bytes = await layered((ctx, ocg, ocg2) => ctx.obj({ OCGs: [ocg, ocg2], D: { OFF: [ocg], Order: ctx.register(ctx.obj([ocg, ocg2])), RBGroups: ctx.register(ctx.obj([[ocg, ocg2]])) } }) as PDFDict);
+    const l = await finalLayers(await render(bytes));
+    const d = l.ocp!.lookup(PDFName.of("D"), PDFDict);
+    expect(d.lookup(PDFName.of("Order"), PDFArray).asArray()).toHaveLength(2);
+    expect(d.lookup(PDFName.of("Order"), PDFArray).get(0)).toBe(l.oc1);
+    expect(d.lookup(PDFName.of("RBGroups"), PDFArray).asArray()).toHaveLength(1);
+  });
+});
+
+describe("archivos asociados (/AF) y embebidos (/EF) en cualquier diccionario", () => {
+  async function afDoc() {
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([400, 400]);
+    const ctx = doc.context;
+    const ef = ctx.register(ctx.stream("MZ-PAYLOAD-SECRET", { Type: "EmbeddedFile" }));
+    const fs = ctx.register(ctx.obj({ Type: "Filespec", F: PDFString.of("x.exe"), UF: PDFString.of("x.exe"), EF: { F: ef }, AFRelationship: "Data" }));
+    const xo = ctx.register(ctx.stream("0 0 1 rg 0 0 10 10 re f", { Type: "XObject", Subtype: "Form", BBox: [0, 0, 10, 10], AF: [fs] }));
+    page.node.set(PDFName.of("Resources"), ctx.obj({ XObject: { X0: xo } }));
+    page.node.addContentStream(ctx.register(ctx.stream("q /X0 Do Q")));
+    // Una anotación de enlace con un /Filespec (acción permitida no; pero el /FS queda alcanzable desde la anotación).
+    page.node.set(PDFName.of("Annots"), ctx.obj([ctx.obj({ Type: "Annot", Subtype: "Link", Rect: [0, 0, 10, 10], FS: fs })]));
+    doc.catalog.set(PDFName.of("StructTreeRoot"), ctx.register(ctx.obj({ Type: "StructTreeRoot", K: { Type: "StructElem", S: "Document", AF: [fs] } })));
+    return doc.save({ useObjectStreams: false });
+  }
+  const embedded = (doc: PDFDocument) =>
+    doc.context.enumerateIndirectObjects().filter(([, o]) => o instanceof PDFStream && o.dict.get(PDFName.of("Type")) === PDFName.of("EmbeddedFile"));
+
+  it("al subir no queda ningún archivo embebido (XObject, estructura, anotación)", async () => {
+    const prep = await preparePdfUpload(await afDoc());
+    const doc = await PDFDocument.load(prep.bytes);
+    expect(embedded(doc)).toHaveLength(0);
+    expect(Buffer.from(prep.bytes).includes("MZ-PAYLOAD")).toBe(false);
+  });
+
+  it("al sellar un original viejo tampoco se copian", async () => {
+    const out = await render(await afDoc());
+    expect(embedded(await PDFDocument.load(out))).toHaveLength(0);
+    expect(Buffer.from(out).includes("MZ-PAYLOAD")).toBe(false);
+  });
+});
+
+describe("revisiones posteriores: marcadores y valores por defecto del formulario", () => {
+  it("un marcador nuevo con JavaScript es contenido; uno sin acción (título y /Dest) o con un GoTo simple, evidencia", async () => {
+    const sealed = await seal(await (await baseDoc()).doc.save());
+    const withOutline = async (item: (u: IncrementalUpdate) => Record<string, unknown>) => {
+      const u = await IncrementalUpdate.open(sealed);
+      const ctx = u.context;
+      const root = u.add(ctx.obj({ Type: "Outlines" }));
+      const it = u.add(ctx.obj({ Title: PDFString.of("Cláusula 1"), Parent: root, ...item(u) }));
+      const rootDict = ctx.lookup(root, PDFDict);
+      rootDict.set(PDFName.of("First"), it);
+      rootDict.set(PDFName.of("Last"), it);
+      rootDict.set(PDFName.of("Count"), PDFNumber.of(1));
+      // Ciclo: /Next apunta a sí mismo (no tiene que colgar el análisis).
+      ctx.lookup(it, PDFDict).set(PDFName.of("Next"), it);
+      u.doc.catalog.set(PDFName.of("Outlines"), root);
+      u.touch(u.catalogRef);
+      return (await validatePdf(u.serialize(), {})).signatures[0].changesAfter;
+    };
+    expect(await withOutline((u) => ({ Dest: [u.doc.getPage(0).ref, PDFName.of("Fit")] }))).toBe("evidence_only");
+    expect(await withOutline((u) => ({ A: u.context.obj({ S: "GoTo", D: [u.doc.getPage(0).ref, PDFName.of("Fit")] }) }))).toBe("evidence_only");
+    expect(await withOutline((u) => ({ A: u.context.obj({ S: "JavaScript", JS: PDFString.of("app.alert(1)") }) }))).toBe("content");
+    expect(await withOutline((u) => ({ A: u.context.obj({ S: "Launch", F: PDFString.of("calc.exe") }) }))).toBe("content");
+  });
+
+  it("/DA /DR /Q del /AcroForm cuentan si algún widget que no es de firma no tiene /AP /N", async () => {
+    // Revisión firmada con un campo de texto (con o sin apariencia) y después una revisión que cambia /DA.
+    const build = async (withAp: boolean) => {
+      const base = await render(await (await baseDoc()).doc.save());
+      const u = await IncrementalUpdate.open(base);
+      const ctx = u.context;
+      const page = u.doc.getPage(0);
+      const ap = u.add(ctx.stream("BT /Helv 12 Tf 2 8 Td (hola) Tj ET", { Type: "XObject", Subtype: "Form", BBox: [0, 0, 150, 30] }));
+      const widget = u.add(
+        ctx.obj({ Type: "Annot", Subtype: "Widget", FT: "Tx", T: PDFString.of("campo"), V: PDFString.of("hola"), Rect: [50, 50, 200, 80], P: page.ref, ...(withAp ? { AP: { N: ap } } : {}) }),
+      );
+      page.node.set(PDFName.of("Annots"), ctx.obj([widget]));
+      u.touch(page.ref);
+      u.doc.catalog.set(PDFName.of("AcroForm"), u.add(ctx.obj({ Fields: [widget], DA: PDFString.of("/Helv 12 Tf 0 g") })));
+      u.touch(u.catalogRef);
+      const signed = await addSignatureIncremental(u.serialize(), { type: "Sig", fieldName: "Firma", signatureLength: 16_000, sign: (c) => buildPadesCms(c, provider, {}) });
+      const later = await IncrementalUpdate.open(signed);
+      const acroRef = later.doc.catalog.get(PDFName.of("AcroForm")) as PDFRef;
+      later.context.lookup(acroRef, PDFDict).set(PDFName.of("DA"), PDFString.of("/Helv 40 Tf 1 0 0 rg"));
+      later.touch(acroRef);
+      return (await validatePdf(later.serialize(), {})).signatures[0].changesAfter;
+    };
+    expect(await build(true)).toBe("evidence_only");
+    expect(await build(false)).toBe("content");
   });
 });

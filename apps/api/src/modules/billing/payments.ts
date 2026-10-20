@@ -502,7 +502,10 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
   app.addHook("preHandler", async (req: FastifyRequest) => {
     if ((req.routeOptions?.url ?? "") !== "/v1/signing/:token/complete") return;
     const token = (req.params as { token?: string }).token ?? "";
-    const { recipient } = await resolveToken(s.db, token);
+    const { recipient, envelope: e } = await resolveToken(s.db, token);
+    // Sobre anulado, vencido (aunque el barrido no lo haya marcado), rechazado o ya cerrado: no se exige el pago (no se
+    // puede pagar) y el handler responde el estado real (410/409), con el que la página muestra el cierre.
+    if (e.status !== "sent" || pastExpiry(e)) return;
     const p = await s.db.one<any>(`SELECT * FROM envelope_payments WHERE recipient_id = $1 AND timing = 'before_sign' AND status NOT IN ('paid','refunded')`, [recipient.id]);
     if (p) {
       throw new AppError(402, "payment_required", "Para firmar primero hay que completar el pago", {

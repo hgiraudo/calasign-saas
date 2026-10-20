@@ -504,6 +504,8 @@ function DocumentsStep({
   const [uploading, setUploading] = useState<string | null>(null);
   // Archivos subidos que traían firmas digitales (se pierden al sanear el PDF): aviso que no bloquea.
   const [hadSignatures, setHadSignatures] = useState<string[]>([]);
+  // Archivos cuyo formulario no se pudo fijar tal como lo regeneraría un lector (se fijó la apariencia guardada).
+  const [appearanceMismatch, setAppearanceMismatch] = useState<string[]>([]);
   const [over, setOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -514,6 +516,7 @@ function DocumentsStep({
     setBusy(true);
     setError(null);
     const signed: string[] = [];
+    const mismatched: string[] = [];
     for (const file of Array.from(files)) {
       setUploading(file.name);
       try {
@@ -521,6 +524,7 @@ function DocumentsStep({
         form.append("file", file, file.name);
         const res = await api<Document>(`/v1/envelopes/${envelopeId}/documents`, { method: "POST", form });
         if (res?.hadSignatures) signed.push(file.name);
+        if (res?.formAppearanceMismatch) mismatched.push(file.name);
       } catch (e) {
         setError(`${file.name}: ${errorText(e)}`);
         break;
@@ -528,6 +532,7 @@ function DocumentsStep({
     }
     setUploading(null);
     setHadSignatures(signed);
+    setAppearanceMismatch(mismatched);
     if (inputRef.current) inputRef.current.value = "";
     // Fuera del try de cada archivo: si la recarga fallaba, el rechazo quedaba sin manejar y la lista sin actualizar
     // ni aviso.
@@ -594,6 +599,11 @@ function DocumentsStep({
       {hadSignatures.length > 0 && (
         <div className="alert alert-warn" role="status">
           {t("edit.hadSignatures", { names: hadSignatures.join(", ") })}
+        </div>
+      )}
+      {appearanceMismatch.length > 0 && (
+        <div className="alert alert-warn" role="status">
+          {t("edit.formAppearanceMismatch", { names: appearanceMismatch.join(", ") })}
         </div>
       )}
       {documents.length === 0 ? (

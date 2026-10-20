@@ -293,6 +293,11 @@ export interface Document {
    * firmas digitales, que se pierden al sanear el PDF (ni la copia guardada ni el PDF final las conservan).
    */
   hadSignatures?: boolean;
+  /**
+   * Solo en la respuesta de una subida: aviso no bloqueante. El formulario pedía regenerar las apariencias
+   * (NeedAppearances) y alguna no se pudo regenerar: se fijó la apariencia guardada, que otro lector podría mostrar distinta.
+   */
+  formAppearanceMismatch?: boolean;
 }
 
 export interface Recipient {

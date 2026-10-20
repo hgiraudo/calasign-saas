@@ -88,12 +88,25 @@ function isInvisibleWidget(ctx: PDFContext, annot: PDFDict): boolean {
  * - lo de cada firma o renovación: /DSS (LTV), /Perms y, del /AcroForm, /Fields y /SigFlags;
  * - lo que reescriben firmadores y editores (iText, pyHanko, Acrobat): /Extensions (ESIC), /Version, /Metadata (XMP),
  *   /Lang, /MarkInfo, /StructTreeRoot, /PageLabels, /ViewerPreferences, /Outlines (marcadores) y /Dests; del /AcroForm,
- *   /DR, /DA, /Q y NeedAppearances cuando queda false o se quita (true hace que el lector regenere las apariencias).
+ *   /DR, /DA y /Q mientras todo widget que no es de firma tenga apariencia propia (/AP /N: el lector la dibuja y no usa
+ *   esos valores; si alguno no la tiene, el lector la arma con /DA y /DR y se comparan), y NeedAppearances cuando queda
+ *   false o se quita (true hace que el lector regenere las apariencias).
+ * - De los marcadores (/Outlines) sí cuentan las acciones (/A, salvo un GoTo simple, que equivale a /Dest) y los
+ *   elementos de estructura (/SE) de cada ítem: un marcador nuevo con JavaScript o Launch es contenido activo. Los
+ *   títulos, /Dest, colores y el orden no (lo que reescriben los editores al regenerar marcadores).
  * Sí cuentan como cambio de contenido: capas (/OCProperties), acciones (/OpenAction, /AA, /URI), /Names /JavaScript y
  * /EmbeddedFiles (los demás árboles de /Names, como /Dests, no), portafolio (/Collection), /PageMode, XFA,
  * NeedAppearances true y cualquier otra clave del catálogo que no esté en la lista de arriba.
  * Lo que agrega la plataforma (sello PAdES, sello de empresa, firma con certificado propio, DSS de B-LT y sello de
  * documento de B-LTA) solo toca /DSS y /AcroForm /Fields y /SigFlags (incremental.ts).
+ *
+ * Riesgo residual de las claves cosméticas ignoradas (no cambian lo que se dibuja en las páginas, pero sí cómo se
+ * presenta el documento): /ViewerPreferences puede cambiar el título de la ventana (DisplayDocTitle), ocultar barras o
+ * cambiar la dirección de lectura y las opciones de impresión; /StructTreeRoot cambia lo que leen los lectores de
+ * pantalla y el texto alternativo (/Alt, /ActualText) de una exportación accesible; /PageLabels cambia los números de
+ * página que muestra el lector (p. ej. que la página 3 se rotule "1"); los títulos de /Outlines pueden ser engañosos.
+ * Ninguna altera el contenido firmado de las páginas; se aceptan porque los firmadores y editores legítimos las
+ * reescriben a menudo y marcarlas daría falsos positivos.
  */
 const CATALOG_IGNORED_KEYS = new Set([
   "Pages",
@@ -112,7 +125,10 @@ const CATALOG_IGNORED_KEYS = new Set([
   "Outlines",
   "Dests",
 ]);
-const ACROFORM_IGNORED_KEYS = new Set(["Fields", "SigFlags", "DR", "DA", "Q", "NeedAppearances"]);
+const ACROFORM_IGNORED_KEYS = new Set(["Fields", "SigFlags", "NeedAppearances"]);
+/** Del /AcroForm, ignoradas solo si todo widget que no es de firma tiene /AP /N (allWidgetsHaveAppearance). */
+const ACROFORM_DEFAULTS_KEYS = new Set(["DR", "DA", "Q"]);
+const MAX_OUTLINE_ITEMS = 100_000;
 const NAMES_COMPARED_KEYS = ["JavaScript", "EmbeddedFiles"];
 
 function documentFingerprint(doc: PDFDocument): string {
@@ -125,10 +141,13 @@ function documentFingerprint(doc: PDFDocument): string {
     if (!CATALOG_IGNORED_KEYS.has(key)) parts.push(`${key}=${canon.of(v)}`);
   }
   const acro = lookupDict(ctx, cat.get(PDFName.of("AcroForm")));
+  const defaultsUnused = acro ? allWidgetsHaveAppearance(doc) : true;
   for (const [k, v] of acro?.entries() ?? []) {
     const key = k.decodeText();
-    if (!ACROFORM_IGNORED_KEYS.has(key)) parts.push(`AcroForm.${key}=${canon.of(v)}`);
+    if (ACROFORM_IGNORED_KEYS.has(key) || (defaultsUnused && ACROFORM_DEFAULTS_KEYS.has(key))) continue;
+    parts.push(`AcroForm.${key}=${canon.of(v)}`);
   }
+  parts.push(...outlineParts(ctx, canon, cat));
   const rawNeed = acro?.get(PDFName.of("NeedAppearances"));
   const need = rawNeed instanceof PDFRef ? ctx.lookup(rawNeed) : rawNeed;
   if (need instanceof PDFBool && need.asBoolean()) parts.push("AcroForm.NeedAppearances=true");
@@ -138,6 +157,68 @@ function documentFingerprint(doc: PDFDocument): string {
     if (v !== undefined) parts.push(`Names.${key}=${canon.of(v)}`);
   }
   return h(parts.sort().join("|"));
+}
+
+/**
+ * true si todo widget que no es de un campo de firma tiene apariencia normal (/AP /N): el lector la dibuja y no usa los
+ * valores por defecto del /AcroForm (/DA, /DR, /Q). Recorre los widgets de las páginas.
+ */
+function allWidgetsHaveAppearance(doc: PDFDocument): boolean {
+  const ctx = doc.context;
+  for (const p of doc.getPages()) {
+    for (const a of lookupArray(ctx, p.node.get(PDFName.of("Annots"))) ?? []) {
+      const d = lookupDict(ctx, a);
+      const subtype = d?.get(PDFName.of("Subtype"));
+      if (!d || !(subtype instanceof PDFName) || subtype.decodeText() !== "Widget") continue;
+      if (fieldType(ctx, d) === "Sig") continue;
+      if (lookupDict(ctx, d.get(PDFName.of("AP")))?.get(PDFName.of("N")) === undefined) return false;
+    }
+  }
+  return true;
+}
+
+/** /FT del campo de un widget (heredado de /Parent). */
+function fieldType(ctx: PDFContext, d: PDFDict): string | undefined {
+  let cur: PDFDict | undefined = d;
+  for (let i = 0; cur && i < 32; i++) {
+    const ft = cur.get(PDFName.of("FT"));
+    if (ft instanceof PDFName) return ft.decodeText();
+    cur = lookupDict(ctx, cur.get(PDFName.of("Parent")));
+  }
+  return undefined;
+}
+
+/**
+ * Acciones (/A) y elementos de estructura (/SE) de los marcadores, ordenados (el orden y los títulos no cuentan). Un GoTo
+ * simple (sin /Next) no cuenta, igual que /Dest. Recorre /First y /Next con tope de ítems y detección de ciclos.
+ */
+function outlineParts(ctx: PDFContext, canon: Canon, cat: PDFDict): string[] {
+  const parts: string[] = [];
+  const seen = new Set<unknown>();
+  const root = lookupDict(ctx, cat.get(PDFName.of("Outlines")));
+  const stack: (PDFObject | undefined)[] = [root?.get(PDFName.of("First"))];
+  while (stack.length) {
+    const raw = stack.pop();
+    const key = raw instanceof PDFRef ? raw.tag : raw;
+    const item = lookupDict(ctx, raw);
+    if (!item || seen.has(key) || seen.has(item)) continue;
+    if (seen.size >= MAX_OUTLINE_ITEMS) {
+      // Demasiados marcadores para recorrerlos: no se puede afirmar que no tengan acciones.
+      parts.push("Outlines=too_many");
+      break;
+    }
+    seen.add(key);
+    seen.add(item);
+    const a = item.get(PDFName.of("A"));
+    const action = lookupDict(ctx, a);
+    const s = action?.get(PDFName.of("S"));
+    const plainGoTo = action && s instanceof PDFName && s.decodeText() === "GoTo" && action.get(PDFName.of("Next")) === undefined;
+    if (a !== undefined && !plainGoTo) parts.push(`Outlines.A=${canon.of(a)}`);
+    const se = item.get(PDFName.of("SE"));
+    if (se !== undefined) parts.push(`Outlines.SE=${canon.of(se)}`);
+    stack.push(item.get(PDFName.of("Next")), item.get(PDFName.of("First")));
+  }
+  return parts;
 }
 
 function lookupDict(ctx: PDFContext, o: PDFObject | undefined): PDFDict | undefined {

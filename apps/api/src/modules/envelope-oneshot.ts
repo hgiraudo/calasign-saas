@@ -278,8 +278,16 @@ async function createEnvelope(
   // Si algo falla (también a mitad de la subida), los PDF ya subidos se borran: no los referencia nada.
   await discardBlobsOnFailure(s.blobs, keys, write);
   const loaded = await loadDetail(s.db, a.tenantId, id);
-  // hadSignatures por documento (solo en esta respuesta): las firmas previas del archivo se pierden al sanearlo.
-  const had = new Map(docs.map((d) => [d.docId, d.hadSignatures]));
-  const detail = { ...loaded, documents: loaded.documents.map((d) => ({ ...d, hadSignatures: had.get(d.id) ?? false })) };
+  // Avisos del saneamiento por documento (solo en esta respuesta): firmas previas perdidas y apariencias de formulario
+  // que no se pudieron regenerar.
+  const prepared = new Map(docs.map((d) => [d.docId, d]));
+  const detail = {
+    ...loaded,
+    documents: loaded.documents.map((d) => ({
+      ...d,
+      hadSignatures: prepared.get(d.id)?.hadSignatures ?? false,
+      formAppearanceMismatch: prepared.get(d.id)?.formAppearanceMismatch ?? false,
+    })),
+  };
   return { status: 201, body: signingUrls.length ? { ...detail, signingUrls } : detail };
 }

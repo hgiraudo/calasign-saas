@@ -20,6 +20,7 @@ import {
   PDFTextField,
   StandardFonts,
   concatTransformationMatrix,
+  decodePDFRawStream,
   drawObject,
   popGraphicsState,
   pushGraphicsState,
@@ -74,7 +75,7 @@ function* allDicts(ctx: PDFContext): Generator<PDFDict> {
 export interface OptionalContentState {
   /** Capas listadas en /OCProperties /OCGs, con su estado al abrir. */
   groups: { ref: PDFObject; on: boolean }[];
-  /** /D /Order (orden del panel de capas) y /D /RBGroups, para copiarlos al PDF final. */
+  /** /D /Order (orden del panel de capas) y /D /RBGroups (ya resueltos si eran referencias), para el PDF final. */
   order: PDFObject | undefined;
   rbGroups: PDFObject | undefined;
   /** Por qué hay contenido oculto al abrir, o null si todo se ve. */
@@ -122,7 +123,8 @@ export function readOptionalContent(doc: PDFDocument): OptionalContentState | nu
       }
     }
   }
-  return { groups, order: d?.get(N("Order")), rbGroups: d?.get(N("RBGroups")), hidden };
+  // Resueltos acá: el PDF final concatena sus elementos (LayerMerger), y una referencia al array no se podía concatenar.
+  return { groups, order: resolve(ctx, d?.get(N("Order"))), rbGroups: resolve(ctx, d?.get(N("RBGroups"))), hidden };
 }
 
 /** Por qué el documento tiene contenido opcional oculto al abrirlo, o null si todo se ve (readOptionalContent). */
@@ -189,7 +191,7 @@ function evalVisibility(e: Visibility | null, state: GroupState): boolean {
  * reescribir los content streams), que es lo mismo que muestra la copia de páginas del sellado (no copia el catálogo).
  */
 export function resolveOptionalContent(doc: PDFDocument): void {
-  if (hiddenOptionalContent(doc)) throw hiddenLayersError("upload");
+  if (hiddenOptionalContent(doc)) throw hiddenLayersError();
   doc.catalog.delete(N("OCProperties"));
 }
 
@@ -231,14 +233,15 @@ export function hasSignedSignatureFields(doc: PDFDocument): boolean {
  * - Apariencia: /AP /N; si es un diccionario de estados, el de /AS (sin /AS o sin ese estado, nada, como un lector).
  * - Con /NeedAppearances el lector regenera la apariencia de texto y listas a partir del valor: se regenera igual (pdf-lib,
  *   Helvetica). También si un campo con valor no tiene apariencia. Si no se puede (texto fuera de WinAnsi, /RV), se
- *   conserva la apariencia guardada; si el campo no tiene ninguna, al subir se rechaza (`pdf_form_unsupported`) y al
- *   sellar (`strict` false) se sigue sin ella.
+ *   conserva la apariencia guardada y, con NeedAppearances, se devuelve `appearanceMismatch` (un lector podría mostrar
+ *   otra cosa: aviso no bloqueante al subir); si el campo no tiene ninguna, al subir se rechaza (`pdf_form_unsupported`)
+ *   y al sellar (`strict` false) se sigue sin ella.
  * - Ubicación según ISO 32000-1 §12.5.5: la BBox transformada por /Matrix se lleva a /Rect.
  */
-export async function flattenForm(doc: PDFDocument, strict: boolean): Promise<void> {
+export async function flattenForm(doc: PDFDocument, strict: boolean): Promise<{ appearanceMismatch: boolean }> {
   const ctx = doc.context;
   const acro = dictOf(ctx, doc.catalog.get(N("AcroForm")));
-  if (acro) await regenerateAppearances(doc, acro, strict);
+  const appearanceMismatch = acro ? await regenerateAppearances(doc, acro, strict) : false;
   for (const page of doc.getPages()) {
     const raw = page.node.get(N("Annots"));
     const annots = resolve(ctx, raw);
@@ -267,9 +270,11 @@ export async function flattenForm(doc: PDFDocument, strict: boolean): Promise<vo
     }
   }
   doc.catalog.delete(N("AcroForm"));
+  return { appearanceMismatch };
 }
 
-async function regenerateAppearances(doc: PDFDocument, acro: PDFDict, strict: boolean) {
+/** Regenera las apariencias; true si con NeedAppearances alguna no se pudo regenerar y quedó la guardada. */
+async function regenerateAppearances(doc: PDFDocument, acro: PDFDict, strict: boolean): Promise<boolean> {
   const ctx = doc.context;
   const needAppearances = resolve(ctx, acro.get(N("NeedAppearances")));
   const need = needAppearances instanceof PDFBool && needAppearances.asBoolean();
@@ -278,8 +283,9 @@ async function regenerateAppearances(doc: PDFDocument, acro: PDFDict, strict: bo
     fields = doc.getForm().getFields();
   } catch {
     if (strict && need) throw formUnsupportedError();
-    return;
+    return false;
   }
+  let mismatch = false;
   let font: Awaited<ReturnType<PDFDocument["embedFont"]>> | undefined;
   for (const field of fields) {
     if (!(field instanceof PDFTextField || field instanceof PDFDropdown || field instanceof PDFOptionList)) continue;
@@ -300,8 +306,12 @@ async function regenerateAppearances(doc: PDFDocument, acro: PDFDict, strict: bo
         // sin widgets legibles
       }
       if (!hasAppearance) throw formUnsupportedError();
+      // Con NeedAppearances un lector regeneraría la apariencia a partir del valor (quizás distinta de la guardada, que
+      // es la que se fija): se acepta con un aviso no bloqueante (PdfInfo.formAppearanceMismatch).
+      if (need) mismatch = true;
     }
   }
+  return mismatch;
 }
 
 function drawWidget(page: PDFPage, widget: PDFDict) {
@@ -391,17 +401,24 @@ function keepAction(ctx: PDFContext, a: PDFObject | undefined): boolean {
 }
 
 /**
- * Quita el contenido activo: /AA y /AF (archivos asociados) de páginas, /AA de anotaciones; en /A solo quedan URI, GoTo
+ * Quita el contenido activo: /AF (archivos asociados) de cualquier diccionario y /EF (archivos embebidos) de toda
+ * especificación de archivo; /AA de páginas y anotaciones; en /A solo quedan URI, GoTo
  * y Named estándar; se eliminan las anotaciones FileAttachment, Sound, Movie, RichMedia, Screen y 3D. Con `catalog`,
- * también /AA, /AF, /OpenAction que no sea un destino o un GoTo, /Names /JavaScript y /EmbeddedFiles, /Collection
+ * también /AA, /OpenAction que no sea un destino o un GoTo, /Names /JavaScript y /EmbeddedFiles, /Collection
  * (portafolio) y las acciones de los marcadores.
  * (XFA va con el /AcroForm, que flattenForm elimina.)
  */
 export function stripActiveContent(doc: PDFDocument, catalog: boolean): void {
   const ctx = doc.context;
+  // Archivos asociados (/AF, PDF 2.0 y PDF/A-3) en cualquier diccionario (XObjects, elementos de estructura, anotaciones…)
+  // y los archivos embebidos (/EF) de toda especificación de archivo: sin esto quedaban alcanzables y se guardaban (al
+  // subir) o se copiaban con las páginas (al sellar).
+  for (const d of allDicts(ctx)) {
+    d.delete(N("AF"));
+    d.delete(N("EF"));
+  }
   for (const page of doc.getPages()) {
     page.node.delete(N("AA"));
-    page.node.delete(N("AF"));
     const raw = page.node.get(N("Annots"));
     const annots = resolve(ctx, raw);
     if (!(annots instanceof PDFArray)) continue;
@@ -424,8 +441,6 @@ export function stripActiveContent(doc: PDFDocument, catalog: boolean): void {
   const cat = doc.catalog;
   cat.delete(N("AA"));
   cat.delete(N("Collection"));
-  // Archivos asociados (PDF/A-3, Factur-X): sus /EF quedarían alcanzables y se guardarían.
-  cat.delete(N("AF"));
   const open = cat.get(N("OpenAction"));
   if (open !== undefined && !(resolve(ctx, open) instanceof PDFArray)) {
     const d = dictOf(ctx, open);
@@ -446,6 +461,136 @@ export function stripActiveContent(doc: PDFDocument, catalog: boolean): void {
     seen.add(item);
     if (item.has(N("A")) && !keepAction(ctx, item.get(N("A")))) item.delete(N("A"));
     stack.push(dictOf(ctx, item.get(N("Next"))), dictOf(ctx, item.get(N("First"))));
+  }
+}
+
+// ───────────────────── Contenido marcado sin cerrar ─────────────────────
+
+const isWhite = (c: number) => c === 0x20 || c === 0x0a || c === 0x0d || c === 0x09 || c === 0x0c || c === 0x00;
+const isDelim = (c: number) => c === 0x28 || c === 0x29 || c === 0x3c || c === 0x3e || c === 0x5b || c === 0x5d || c === 0x7b || c === 0x7d || c === 0x2f || c === 0x25;
+
+/**
+ * Secuencias de contenido marcado (BDC/BMC) que un content stream abre y no cierra con EMC. Tokeniza lo justo: saltea
+ * strings literales (con paréntesis anidados y escapes) y hexadecimales, comentarios, nombres, arrays y diccionarios
+ * (un operador ahí adentro no es un operador) y los datos de las imágenes en línea (BI … ID <datos> EI). Un EMC de más
+ * no cuenta (no se toca: un lector lo ignora).
+ */
+export function unclosedMarkedContent(data: Uint8Array): number {
+  let open = 0;
+  let nest = 0; // [ ] y << >>
+  const n = data.length;
+  let i = 0;
+  while (i < n) {
+    const c = data[i];
+    if (isWhite(c)) {
+      i++;
+    } else if (c === 0x25) {
+      while (i < n && data[i] !== 0x0a && data[i] !== 0x0d) i++;
+    } else if (c === 0x28) {
+      let depth = 1;
+      i++;
+      while (i < n && depth > 0) {
+        if (data[i] === 0x5c) i += 2;
+        else {
+          if (data[i] === 0x28) depth++;
+          else if (data[i] === 0x29) depth--;
+          i++;
+        }
+      }
+    } else if (c === 0x3c && data[i + 1] === 0x3c) {
+      nest++;
+      i += 2;
+    } else if (c === 0x3e && data[i + 1] === 0x3e) {
+      if (nest > 0) nest--;
+      i += 2;
+    } else if (c === 0x3c) {
+      while (i < n && data[i] !== 0x3e) i++;
+      i++;
+    } else if (c === 0x5b) {
+      nest++;
+      i++;
+    } else if (c === 0x5d) {
+      if (nest > 0) nest--;
+      i++;
+    } else if (c === 0x2f) {
+      i++;
+      while (i < n && !isWhite(data[i]) && !isDelim(data[i])) i++;
+    } else if (isDelim(c)) {
+      i++;
+    } else {
+      const start = i;
+      while (i < n && !isWhite(data[i]) && !isDelim(data[i])) i++;
+      const len = i - start;
+      if (nest > 0 || len < 2 || len > 3) continue;
+      const w = String.fromCharCode(...data.subarray(start, i));
+      if (w === "BDC" || w === "BMC") open++;
+      else if (w === "EMC") open = Math.max(0, open - 1);
+      else if (w === "ID") {
+        // Datos binarios de la imagen hasta un EI entre blancos (como pdf.js y poppler).
+        i++;
+        while (i < n && !(data[i] === 0x45 && data[i + 1] === 0x49 && isWhite(data[i - 1]) && (i + 2 >= n || isWhite(data[i + 2]) || isDelim(data[i + 2])))) i++;
+        i += 2;
+      }
+    }
+  }
+  return open;
+}
+
+function streamData(s: PDFObject | undefined): Uint8Array | undefined {
+  try {
+    if (s instanceof PDFRawStream) return decodePDFRawStream(s).decode();
+    if (s instanceof PDFStream) return s.getContents();
+  } catch {
+    // Filtro desconocido o datos dañados: un lector tampoco lo dibuja.
+  }
+  return undefined;
+}
+
+/**
+ * Cierra el contenido marcado que el original deja abierto: un `/OC /x BDC` sin EMC en una capa apagada dejaba oculto
+ * todo lo que se dibuja después en la página, incluido lo estampado al sellar. En cada página se cuentan BDC/BMC contra
+ * EMC sobre todos sus content streams y se agregan los EMC que falten al final, después del Q que envuelve el original
+ * (el contenido queda entre q/Q como al estampar). Lo mismo dentro de cada XObject de formulario que dibuja la página
+ * (también los widgets aplanados y los anidados): el EMC va al final de su stream. Se hace siempre, con o sin capas.
+ */
+export function closeMarkedContent(doc: PDFDocument): void {
+  const ctx = doc.context;
+  const seenForms = new Set<unknown>();
+  const fixForms = (resources: PDFDict | undefined, depth: number) => {
+    if (!resources || depth > 16) return;
+    const xobjects = dictOf(ctx, resources.get(N("XObject")));
+    for (const [name, raw] of xobjects?.entries() ?? []) {
+      if (seenForms.has(keyOf(raw)) || seenForms.size > 10_000) continue;
+      seenForms.add(keyOf(raw));
+      const form = resolve(ctx, raw);
+      if (!(form instanceof PDFStream) || nameOf(ctx, form.dict.get(N("Subtype"))) !== "Form") continue;
+      const data = streamData(form);
+      const missing = data ? unclosedMarkedContent(data) : 0;
+      if (data && missing > 0) {
+        const fixed = ctx.flateStream(Buffer.concat([Buffer.from(data), Buffer.from("\n" + "EMC\n".repeat(missing))]));
+        for (const [k, v] of form.dict.entries()) {
+          const key = k.decodeText();
+          if (key !== "Length" && key !== "Filter" && key !== "DecodeParms") fixed.dict.set(k, v);
+        }
+        if (raw instanceof PDFRef) ctx.assign(raw, fixed);
+        else xobjects!.set(name, fixed);
+      }
+      fixForms(dictOf(ctx, form.dict.get(N("Resources"))), depth + 1);
+    }
+  };
+  for (const page of doc.getPages()) {
+    const raw = page.node.get(N("Contents"));
+    const contents = resolve(ctx, raw);
+    const refs = contents instanceof PDFArray ? contents.asArray() : raw ? [raw] : [];
+    const parts = refs.map((r) => streamData(resolve(ctx, r)) ?? new Uint8Array());
+    const missing = unclosedMarkedContent(Buffer.concat(parts.flatMap((p) => [p, Buffer.from("\n")])));
+    if (missing > 0) {
+      page.node.set(
+        N("Contents"),
+        ctx.obj([ctx.getPushGraphicsStateContentStream(), ...refs, ctx.getPopGraphicsStateContentStream(), ctx.register(ctx.stream("EMC\n".repeat(missing)))]),
+      );
+    }
+    fixForms(dictOf(ctx, page.node.getInheritableAttribute(N("Resources"))), 0);
   }
 }
 
@@ -508,5 +653,6 @@ export async function sanitizeForSealing(doc: PDFDocument): Promise<OptionalCont
   const layers = readOptionalContent(doc);
   await flattenForm(doc, false);
   stripActiveContent(doc, false);
+  closeMarkedContent(doc);
   return layers;
 }

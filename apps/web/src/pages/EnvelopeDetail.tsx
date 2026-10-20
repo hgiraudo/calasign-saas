@@ -86,8 +86,9 @@ export function EnvelopeDetailPage() {
   // La finalización falló definitivamente si el último evento de finalización es finalize_failed.
   const lastFinalize = [...events].reverse().find((ev) => ev.type === "envelope.finalize_failed" || ev.type === "envelope.finalize_retried");
   const finalizeFailed = detail?.envelope.status === "finalizing" && lastFinalize?.type === "envelope.finalize_failed";
-  // Capas ocultas en un documento (original subido antes del saneamiento): reintentar no lo resuelve.
-  const finalizeHiddenLayers = finalizeFailed && lastFinalize?.data?.code === "pdf_hidden_layers";
+  // Documento que no se puede sellar (InvalidPdfError al sanear un original viejo: el evento trae el código): reintentar
+  // no lo resuelve.
+  const unsealableCode = finalizeFailed && typeof lastFinalize?.data?.code === "string" ? lastFinalize.data.code : null;
 
   const retryFinalize = async () => {
     setBusy(true);
@@ -198,7 +199,7 @@ export function EnvelopeDetailPage() {
       {notice && <div className="alert alert-success" role="status">{notice}</div>}
       {finalizeFailed && (
         <div className="alert alert-warn row-wrap" role="alert">
-          <span>{finalizeHiddenLayers ? t("detail.finalizeFailedLayers") : t("detail.finalizeFailed")}</span>
+          <span>{unsealableCode ? t("detail.finalizeFailedUnsealable", { code: unsealableCode }) : t("detail.finalizeFailed")}</span>
           <button type="button" className="btn btn-sm" disabled={busy} onClick={retryFinalize}>
             {t("detail.retryFinalize")}
           </button>

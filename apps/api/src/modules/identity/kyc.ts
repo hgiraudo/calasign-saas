@@ -234,6 +234,9 @@ async function finalizeVerification(db: Db, verificationId: string, result: IdvR
     // recipient.identity_verified / identity_failed a la evidencia de un sobre cerrado o de alguien que ya no firma.
     if (e.status !== "sent" || !["sent", "viewed"].includes(r?.status)) {
       await t.query(`UPDATE identity_verifications SET status = 'canceled', updated_at = now() WHERE id = $1`, [v.id]);
+      // Sin verificación en curso, el destinatario no queda "in_progress" (la sesión mostraba una verificación en curso
+      // sin verificationId y la página esperaba un resultado que ya no iba a llegar).
+      if (r) await t.query(`UPDATE recipients SET identity_status = 'pending' WHERE id = $1 AND identity_status = 'in_progress'`, [r.id]);
       return "canceled";
     }
     const settings = await getIdentitySettings(t, v.tenant_id);

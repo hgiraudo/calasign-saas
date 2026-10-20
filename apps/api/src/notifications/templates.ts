@@ -29,8 +29,11 @@ export interface TemplateVars {
   days?: number | null;
   /** Negociaciones: resumen del cambio o qué se propone cambiar. */
   detail?: string | null;
-  /** finalize_failed: un documento tiene capas ocultas y no se puede sellar (reintentar no lo resuelve). */
-  hiddenLayers?: boolean;
+  /**
+   * finalize_failed: código del error de un documento que no se puede sellar (InvalidPdfError al sanear un original
+   * viejo, p. ej. `pdf_form_unsupported`): reintentar no lo resuelve. null o ausente: fallo transitorio agotado.
+   */
+  unsealableCode?: string | null;
 }
 
 type Dict = Record<TemplateKind | AgreementTemplateKind, { subject: (v: TemplateVars) => string; lines: (v: TemplateVars) => string[]; cta?: string }>;
@@ -64,10 +67,10 @@ const T: Record<"es" | "pt-BR" | "en", Dict> = {
       subject: (v) => `No se pudo completar "${v.subject}"`,
       lines: (v) => [
         `Hola ${v.recipientName}:`,
-        ...(v.hiddenLayers
+        ...(v.unsealableCode
           ? [
-              `Todas las partes firmaron "${v.subject}", pero el documento tiene capas ocultas (contenido opcional apagado) y no se puede sellar: el PDF final mostraría contenido que los firmantes no vieron. No se perdió nada: el sobre quedó en espera.`,
-              "Reintentar no lo resuelve: anulá el sobre y envialo de nuevo con el PDF exportado sin capas (o impreso a PDF). Si necesitás ayuda, escribinos a contacto@calasign.com.",
+              `Todas las partes firmaron "${v.subject}", pero el documento no se puede sellar (código ${v.unsealableCode}). No se perdió nada: el sobre quedó en espera.`,
+              "Reintentar no lo resuelve: anulá el sobre y envialo de nuevo (con el PDF exportado de nuevo o impreso a PDF). Si necesitás ayuda, escribinos a contacto@calasign.com.",
             ]
           : [
               `Todas las partes firmaron "${v.subject}", pero el sellado del documento final falló después de varios reintentos. No se perdió nada: el sobre quedó en espera.`,
@@ -165,10 +168,10 @@ const T: Record<"es" | "pt-BR" | "en", Dict> = {
       subject: (v) => `Não foi possível concluir "${v.subject}"`,
       lines: (v) => [
         `Olá ${v.recipientName},`,
-        ...(v.hiddenLayers
+        ...(v.unsealableCode
           ? [
-              `Todas as partes assinaram "${v.subject}", mas o documento tem camadas ocultas (conteúdo opcional desativado) e não pode ser selado: o PDF final mostraria conteúdo que os signatários não viram. Nada foi perdido: o envelope ficou em espera.`,
-              "Tentar novamente não resolve: anule o envelope e envie-o de novo com o PDF exportado sem camadas (ou impresso como PDF). Se precisar de ajuda, escreva para contacto@calasign.com.",
+              `Todas as partes assinaram "${v.subject}", mas o documento não pode ser selado (código ${v.unsealableCode}). Nada foi perdido: o envelope ficou em espera.`,
+              "Tentar novamente não resolve: anule o envelope e envie-o de novo (com o PDF exportado novamente ou impresso como PDF). Se precisar de ajuda, escreva para contacto@calasign.com.",
             ]
           : [
               `Todas as partes assinaram "${v.subject}", mas a selagem do documento final falhou após várias tentativas. Nada foi perdido: o envelope ficou em espera.`,
@@ -266,10 +269,10 @@ const T: Record<"es" | "pt-BR" | "en", Dict> = {
       subject: (v) => `"${v.subject}" could not be completed`,
       lines: (v) => [
         `Hi ${v.recipientName},`,
-        ...(v.hiddenLayers
+        ...(v.unsealableCode
           ? [
-              `Everyone signed "${v.subject}", but the document has hidden layers (optional content turned off) and can't be sealed: the final PDF would show content the signers didn't see. Nothing was lost: the envelope is on hold.`,
-              "Retrying won't fix it: void the envelope and send it again with the PDF exported without layers (or printed to PDF). If you need help, write to contacto@calasign.com.",
+              `Everyone signed "${v.subject}", but the document can't be sealed (code ${v.unsealableCode}). Nothing was lost: the envelope is on hold.`,
+              "Retrying won't fix it: void the envelope and send it again (with the PDF exported again or printed to PDF). If you need help, write to contacto@calasign.com.",
             ]
           : [
               `Everyone signed "${v.subject}", but sealing the final document failed after several retries. Nothing was lost: the envelope is on hold.`,

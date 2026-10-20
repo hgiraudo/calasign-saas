@@ -17,6 +17,12 @@ export interface PdfInfo {
    * (la copia guardada y el PDF final no las conservan): conviene avisarle al remitente.
    */
   hadSignatures: boolean;
+  /**
+   * Aviso no bloqueante: el formulario pedía regenerar las apariencias (/NeedAppearances) y alguna no se pudo regenerar
+   * (texto fuera de WinAnsi, texto enriquecido): se fijó la apariencia guardada, que un lector podría mostrar distinta.
+   * Conviene que el remitente revise cómo quedó el documento.
+   */
+  formAppearanceMismatch: boolean;
 }
 
 /**
@@ -32,7 +38,7 @@ async function inspectPdfUnbudgeted(bytes: Uint8Array, maxPages: number): Promis
   const doc = await loadChecked(bytes, maxPages);
   // El firmante ve el documento en un lector (por el xref) y el PDF final se arma con pdf-lib: tienen que coincidir.
   if (await viewerDiffersFromPdfLib(bytes, doc)) throw ambiguous();
-  return infoOf(doc, hasSignedSignatureFields(doc));
+  return infoOf(doc, hasSignedSignatureFields(doc), false);
 }
 
 export interface PreparedPdf {
@@ -61,6 +67,7 @@ export interface PreparedPdf {
  *   - contenido activo: acciones que no sean URI/GoTo/Named, /AA, adjuntos, multimedia, JavaScript de documento;
  *   - los streams sin filtro se comprimen y los objetos que quedaron sueltos se descartan.
  * - `info.hadSignatures`: el archivo subido traía firmas digitales (se pierden).
+ * - `info.formAppearanceMismatch`: con NeedAppearances, alguna apariencia no se pudo regenerar y se fijó la guardada.
  */
 export async function preparePdfUpload(bytes: Uint8Array, maxPages = 500): Promise<PreparedPdf> {
   return budgeted(() => preparePdfUploadUnbudgeted(bytes, maxPages));
@@ -70,7 +77,7 @@ async function preparePdfUploadUnbudgeted(bytes: Uint8Array, maxPages: number): 
   const doc = await loadChecked(bytes, maxPages);
   const hadSignatures = hasSignedSignatureFields(doc);
   resolveOptionalContent(doc);
-  await flattenForm(doc, true);
+  const { appearanceMismatch } = await flattenForm(doc, true);
   stripActiveContent(doc, true);
   compressPlainStreams(doc);
   dropUnreachable(doc);
@@ -84,7 +91,7 @@ async function preparePdfUploadUnbudgeted(bytes: Uint8Array, maxPages: number): 
   // Se valida lo que se va a guardar, no lo subido: páginas, tamaños y (por las dudas) que ya no sea ambiguo.
   const again = await loadChecked(out, maxPages);
   if (again.getPageCount() !== doc.getPageCount() || (await viewerDiffersFromPdfLib(out, again))) throw ambiguous();
-  return { info: infoOf(again, hadSignatures), bytes: out };
+  return { info: infoOf(again, hadSignatures, appearanceMismatch), bytes: out };
 }
 
 async function loadChecked(bytes: Uint8Array, maxPages: number): Promise<PDFDocument> {
@@ -154,10 +161,11 @@ async function encryptedError(bytes: Uint8Array, loaded?: PDFDocument): Promise<
     : new InvalidPdfError("encrypted", "El PDF está protegido con contraseña");
 }
 
-function infoOf(doc: PDFDocument, hadSignatures: boolean): PdfInfo {
+function infoOf(doc: PDFDocument, hadSignatures: boolean, formAppearanceMismatch: boolean): PdfInfo {
   const pages = doc.getPages();
   return {
     hadSignatures,
+    formAppearanceMismatch,
     pageCount: pages.length,
     pages: pages.map((p) => {
       const s = displayedSize(p);

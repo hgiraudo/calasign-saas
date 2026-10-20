@@ -401,6 +401,37 @@ describe("canje embebido → token de sesión", () => {
     }
   });
 
+  it("verificación cancelada por el cierre del sobre: el destinatario vuelve a 'pending' y la sesión no queda en curso", async () => {
+    const { envelope, recipient, token } = await setup({ idv: "veriff", embedded: false });
+    globalThis.fetch = (async (input: any, init?: any) => {
+      const url = String(input?.url ?? input);
+      if (url.startsWith("https://veriff.test/v1/sessions"))
+        return new Response(JSON.stringify({ verification: { id: "vf_close", url: "https://veriff.test/go/vf_close" } }), { status: 201, headers: { "content-type": "application/json" } });
+      return real(input, init);
+    }) as typeof fetch;
+    try {
+      expect((await signing(token, "/identity/start", "POST")).statusCode).toBe(200);
+      expect((await db.one<any>(`SELECT identity_status FROM recipients WHERE id = $1`, [recipient])).identity_status).toBe("in_progress");
+      await db.query(`UPDATE envelopes SET status = 'voided' WHERE id = $1`, [envelope]);
+      // Resultado tardío del proveedor (webhook de decisión): la verificación se cancela.
+      const { veriffSignature } = await import("../src/modules/identity/providers");
+      const raw = JSON.stringify({ status: "success", verification: { id: "vf_close", status: "approved", person: { firstName: "Ana" } } });
+      const wh = await app.inject({
+        method: "POST",
+        url: "/v1/integrations/identity/veriff/webhook",
+        payload: raw,
+        headers: { "content-type": "application/json", "x-hmac-signature": veriffSignature(raw, "veriff_test_secret") },
+      });
+      expect(wh.statusCode).toBe(200);
+      expect((await db.one<any>(`SELECT status FROM identity_verifications WHERE recipient_id = $1`, [recipient])).status).toBe("canceled");
+      expect((await db.one<any>(`SELECT identity_status FROM recipients WHERE id = $1`, [recipient])).identity_status).toBe("pending");
+      const ses = await signing(token);
+      if (ses.statusCode === 200) expect(ses.json().identity?.status ?? "pending").not.toBe("in_progress");
+    } finally {
+      globalThis.fetch = real;
+    }
+  });
+
   it("página neutra: marca del sobre e idioma del destinatario; sin id, Accept-Language", async () => {
     const { envelope, recipient } = await setup();
     const { uuidv7 } = await import("../src/lib/util");

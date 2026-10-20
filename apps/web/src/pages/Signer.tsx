@@ -10,7 +10,7 @@ import { DocumentView } from "../components/DocumentView";
 import { SignaturePad } from "../components/SignaturePad";
 import { ErrorBox, LocaleSwitcher, Logo, Modal, Spinner } from "../components/ui";
 import { isEmbedded, isTabReturn, tokenOfBase, useEmbedBridge } from "../lib/embed";
-import { DelegateModal, OtpGate } from "../components/SignerExtras";
+import { DelegateModal, isStaleError, OtpGate } from "../components/SignerExtras";
 import { useSignerText } from "../lib/i18n-signer";
 import { InPersonBlocked, InPersonDone, InPersonHandover, RequestCopyButton, useFocusOnMount } from "../components/ExperienceExtras";
 import { useExpText } from "../lib/i18n-experience";
@@ -135,6 +135,12 @@ export function SignerPage() {
       });
   }, [base, apply]);
 
+  /**
+   * Última sesión con la que se mostró el flujo de firma. Si la sesión del código vence a mitad (401 → se vuelve a pedir
+   * el código), el flujo queda montado y oculto mientras se valida: al volver, sigue lo que el firmante ya completó.
+   */
+  const lastFlow = useRef<SigningSession | null>(null);
+
   // Después de la última firma el sobre queda en 'finalizing' mientras se sella el PDF (en segundo plano):
   // se consulta cada pocos segundos para mostrar el botón de descarga apenas esté listo.
   const sealing = session?.envelope.status === "finalizing";
@@ -198,12 +204,14 @@ export function SignerPage() {
         <InPersonBlocked session={session} />
       </SignerShell>
     );
-  if (session.otpRequired)
-    return (
-      <SignerShell org={session.envelope.organizationName}>
-        <OtpGate session={session} base={base} onDone={apply} />
+  if (session.otpRequired) {
+    const otp = (
+      <SignerShell org={session.envelope.organizationName} branding={session.branding}>
+        <OtpGate session={session} base={base} onDone={apply} onStale={resync} />
       </SignerShell>
     );
+    return lastFlow.current ? renderFlow(lastFlow.current, otp) : otp;
+  }
 
   const { envelope, recipient } = session;
   const download = session.signedAvailable ? (
@@ -221,6 +229,8 @@ export function SignerPage() {
   ) : null;
 
   let content: ReactNode;
+  // Cualquier otra pantalla deja de conservar el flujo oculto (un código pedido después ya no lo vuelve a montar).
+  lastFlow.current = null;
   // Un firmante con certificado pendiente ya figura como "signed" (etapa electrónica): si el sobre se anuló o
   // venció mientras esperaba su certificado, se muestra el cierre en lugar del paso del Firmador.
   const certPending = session.certificateSigning != null && session.certificateSigning.status !== "signed";
@@ -274,31 +284,12 @@ export function SignerPage() {
   } else if (session.inPerson?.active && !session.inPerson.identityConfirmed) {
     content = <InPersonHandover session={session} base={base} onDone={reload} />;
   } else if (session.identity?.required && session.identity.status !== "verified") {
-    content = <IdentityGate session={session} base={base} onDone={apply} />;
+    content = <IdentityGate session={session} base={base} onDone={apply} onStale={resync} />;
   } else if (!recipient.consented) {
     content = <Consent session={session} base={base} onDone={apply} />;
   } else {
-    return (
-      <PaymentGate
-        base={base}
-        check={paymentCheck}
-        wrap={(n) => (
-          <SignerShell org={envelope.organizationName} branding={session.branding}>
-            {error && <ErrorBox error={error} />}
-            {n}
-          </SignerShell>
-        )}
-      >
-        <SigningFlow
-          session={session}
-          base={base}
-          onDone={apply}
-          onDelegated={setDelegatedTo}
-          onStale={resync}
-          onPaymentRequired={() => setPaymentCheck((n) => n + 1)}
-        />
-      </PaymentGate>
-    );
+    lastFlow.current = session;
+    return renderFlow(session, null);
   }
 
   return (
@@ -307,6 +298,40 @@ export function SignerPage() {
       {content}
     </SignerShell>
   );
+
+  /**
+   * Flujo de firma (detrás del pago previo). Con `gate` (el pedido del código), el flujo queda montado pero oculto, en la
+   * misma posición del árbol que sin él: React no lo desmonta y no se pierden los campos, la firma ni los adjuntos.
+   */
+  function renderFlow(s: SigningSession, gate: ReactNode) {
+    return (
+      <>
+        {gate}
+        <div hidden={!!gate} style={gate ? undefined : { display: "contents" }}>
+          <PaymentGate
+            base={base}
+            check={paymentCheck}
+            onStale={resync}
+            wrap={(n) => (
+              <SignerShell org={s.envelope.organizationName} branding={s.branding}>
+                {error && <ErrorBox error={error} />}
+                {n}
+              </SignerShell>
+            )}
+          >
+            <SigningFlow
+              session={s}
+              base={base}
+              onDone={apply}
+              onDelegated={setDelegatedTo}
+              onStale={resync}
+              onPaymentRequired={() => setPaymentCheck((n) => n + 1)}
+            />
+          </PaymentGate>
+        </div>
+      </>
+    );
+  }
 }
 
 type SessionBranding = SigningSession["branding"];
@@ -432,7 +457,7 @@ function CcView({ session, base, download }: { session: SigningSession; base: st
         {download}
       </div>
       {session.documents.map((d) => (
-        <DocumentView key={d.id} doc={d} url={`${base}/documents/${d.id}/file`} />
+        <DocumentView key={d.id} doc={d} url={`${base}/documents/${d.id}/file`} headingLevel={2} />
       ))}
     </div>
   );
@@ -597,14 +622,14 @@ function SigningFlow({
   };
 
   /**
-   * Errores terminales: la sesión venció (401), el link ya no existe (404), el sobre cambió de estado (409, 410).
-   * Antes solo se veía el texto; ahora se recarga la sesión y la página pasa a la pantalla que corresponde.
+   * Errores terminales: la sesión venció (401), falta verificar la identidad (403 identity_required), el link ya no
+   * existe (404), el sobre cambió de estado (409, 410). Antes solo se veía el texto; ahora se recarga la sesión y la
+   * página pasa a la pantalla que corresponde (código, verificación, cierre).
    * Con 402 (pago previo pendiente) se vuelve a consultar el pago para mostrar el paso de pago; lo cargado se conserva.
    */
   const onTerminalError = (e: unknown) => {
-    if (!(e instanceof HttpError)) return;
-    if (e.status === 402 && e.code === "payment_required") onPaymentRequired();
-    else if ([401, 404, 409, 410].includes(e.status)) void onStale();
+    if (e instanceof HttpError && e.status === 402 && e.code === "payment_required") onPaymentRequired();
+    else if (isStaleError(e)) void onStale();
   };
 
   const decline = async () => {
@@ -652,6 +677,7 @@ function SigningFlow({
       setValues((v) => ({ ...v, [f.id]: res.value ?? file.name }));
     } catch (e) {
       setError(errorText(e));
+      onTerminalError(e);
     } finally {
       setUploading(null);
     }
@@ -668,6 +694,7 @@ function SigningFlow({
       setValues((v) => ({ ...v, [f.id]: "" }));
     } catch (e) {
       setError(errorText(e));
+      onTerminalError(e);
     } finally {
       setUploading(null);
     }
@@ -823,19 +850,22 @@ function SigningFlow({
         <div className="signer-org">
           <BrandOrg org={session.envelope.organizationName} branding={session.branding} />
         </div>
-        <div className="signer-progress" aria-live="polite">
-          <div
-            className="progress"
-            role="progressbar"
-            aria-label={x("a11y.progress")}
-            aria-valuemin={0}
-            aria-valuemax={required.length}
-            aria-valuenow={done}
-          >
-            <div className="progress-bar" style={{ width: `${required.length ? (done / required.length) * 100 : 100}%` }} />
+        {/* Sin campos obligatorios no hay progreso que mostrar (un progressbar con valuemax=0 es inválido). */}
+        {required.length > 0 && (
+          <div className="signer-progress" aria-live="polite">
+            <div
+              className="progress"
+              role="progressbar"
+              aria-label={x("a11y.progress")}
+              aria-valuemin={0}
+              aria-valuemax={required.length}
+              aria-valuenow={done}
+            >
+              <div className="progress-bar" style={{ width: `${(done / required.length) * 100}%` }} />
+            </div>
+            <span className="small">{t("sign.progress", { done, total: required.length })}</span>
           </div>
-          <span className="small">{t("sign.progress", { done, total: required.length })}</span>
-        </div>
+        )}
         <div className="signer-actions">
           <LocaleSwitcher compact />
           <button type="button" className="btn btn-ghost btn-sm on-dark hide-xs" onClick={() => setDeclining(true)}>
@@ -876,6 +906,7 @@ function SigningFlow({
               key={d.id}
               doc={d}
               url={`${base}/documents/${d.id}/file`}
+              headingLevel={2}
               renderOverlay={(page, widthPx) => {
                 const size = d.pages[page];
                 const pageHeightPx = widthPx * (size.height / size.width);
@@ -928,7 +959,7 @@ function SigningFlow({
         />
       )}
 
-      {delegating && <DelegateModal base={base} onClose={() => setDelegating(false)} onDone={(name) => onDelegated(name)} />}
+      {delegating && <DelegateModal base={base} onClose={() => setDelegating(false)} onDone={(name) => onDelegated(name)} onStale={onStale} />}
 
       {declining && (
         <Modal

@@ -15,9 +15,12 @@ interface Props {
   onPageDrop?: (page: number, e: DragEvent<HTMLDivElement>) => void;
   overlayClassName?: string;
   showTitle?: boolean;
+  /** Nivel del título del documento: 2 en la página del firmante (debajo del h1 del asunto), 3 en el editor. */
+  headingLevel?: 2 | 3;
 }
 
-export function DocumentView({ doc, url, renderOverlay, onPagePointerDown, onPageDrop, overlayClassName, showTitle = true }: Props) {
+export function DocumentView({ doc, url, renderOverlay, onPagePointerDown, onPageDrop, overlayClassName, showTitle = true, headingLevel = 3 }: Props) {
+  const Heading = headingLevel === 2 ? "h2" : "h3";
   const { t } = useI18n();
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -39,9 +42,9 @@ export function DocumentView({ doc, url, renderOverlay, onPagePointerDown, onPag
   return (
     <section className="doc-view" data-document={doc.id}>
       {showTitle && (
-        <h3 className="doc-title">
+        <Heading className="doc-title">
           {doc.name} <span className="muted small">· {doc.pageCount} {t("edit.pages")}</span>
-        </h3>
+        </Heading>
       )}
       <ErrorBox error={error} />
       {doc.pages.map((size, i) => (

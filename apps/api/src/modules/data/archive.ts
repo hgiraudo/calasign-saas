@@ -181,39 +181,43 @@ export async function archiveSweep(d: Deps, opts: { days?: number; force?: boole
   let failed = 0;
   const pending = await d.db.query<any>(
     // Una inspección que falló (BYOK o almacenamiento caídos) se reintenta una vez por día: si no, ese sobre no se
-    // renovaba nunca más y su validez a largo plazo vencía sin aviso.
+    // renovaba nunca más y su validez a largo plazo vencía sin aviso. Primero los nunca inspeccionados (los completados
+    // recién no quedan detrás de los reintentos). Los "LTV pendiente" van aparte (ya se sabe qué les falta).
     `SELECT id FROM envelopes WHERE status = 'completed' AND signed_file_id IS NOT NULL AND archive_valid_until IS NULL
-       AND (archive_checked_at IS NULL OR archive_error = 'LTV pendiente'
-            OR (archive_error IS NOT NULL AND archive_checked_at < now() - interval '1 day'))
+       AND (archive_checked_at IS NULL
+            OR (archive_error IS NOT NULL AND archive_error <> 'LTV pendiente' AND archive_checked_at < now() - interval '1 day'))
        AND ($2::uuid IS NULL OR id = $2)
-     ORDER BY completed_at LIMIT $1`,
+     ORDER BY archive_checked_at NULLS FIRST, completed_at LIMIT $1`,
     [cfg.batch * 5, opts.envelopeId ?? null],
   );
-  // Upgrades B-T → B-LTA por pasada: con tope, y se cortan ante la primera falla (con la TSA caída, cada uno hacía todas
-  // las consultas OCSP/CRL antes de fallar).
-  let upgrades = 0;
-  let upgradeFailed = false;
   for (const p of pending) {
     try {
-      const r = await inspectArchive(d, p.id);
+      await inspectArchive(d, p.id);
       inspected++;
-      if (r?.needsLtv && !upgradeFailed && upgrades < cfg.batch) {
-        upgrades++;
-        try {
-          await renewEnvelopeArchive(d, p.id);
-          renewed++;
-        } catch (err) {
-          // Otra renovación (manual u otro worker) la está haciendo: no es una falla.
-          if (err instanceof AppError && err.code === "archive_renewal_in_progress") continue;
-          // Queda a la vista y se reintenta una vez por día (la consulta de pendientes toma los que tienen error).
-          failed++;
-          upgradeFailed = true;
-          await d.db.query(`UPDATE envelopes SET archive_checked_at = now(), archive_error = $2 WHERE id = $1`, [p.id, `${LTV_PENDING}: ${String(err)}`.slice(0, 500)]);
-        }
-      }
     } catch (err) {
       d.log.warn({ envelopeId: p.id, err: String(err) }, "no se pudo leer el sello de archivo");
       await d.db.query(`UPDATE envelopes SET archive_checked_at = now(), archive_error = $2 WHERE id = $1`, [p.id, String(err).slice(0, 500)]);
+    }
+  }
+  // B-T → B-LTA: los marcados "LTV pendiente" (por esta pasada, otra o el panel del sobre), sin volver a inspeccionarlos.
+  // Con tope por pasada, y se cortan ante la primera falla (con la TSA caída, cada uno hacía todas las consultas OCSP/CRL).
+  const toUpgrade = await d.db.query<any>(
+    `SELECT id FROM envelopes WHERE status = 'completed' AND archive_valid_until IS NULL AND archive_error = 'LTV pendiente'
+       AND ($2::uuid IS NULL OR id = $2)
+     ORDER BY completed_at LIMIT $1`,
+    [cfg.batch, opts.envelopeId ?? null],
+  );
+  for (const p of toUpgrade) {
+    try {
+      await renewEnvelopeArchive(d, p.id);
+      renewed++;
+    } catch (err) {
+      // Otra renovación (manual u otro worker) la está haciendo, o ya cambió el PDF: no es una falla.
+      if (err instanceof AppError && (err.code === "archive_renewal_in_progress" || err.code === "archive_changed")) continue;
+      // Queda a la vista y se reintenta una vez por día (la consulta de pendientes toma los que tienen error).
+      failed++;
+      await d.db.query(`UPDATE envelopes SET archive_checked_at = now(), archive_error = $2 WHERE id = $1`, [p.id, `${LTV_PENDING}: ${String(err)}`.slice(0, 500)]);
+      break;
     }
   }
   const due = await d.db.query<any>(

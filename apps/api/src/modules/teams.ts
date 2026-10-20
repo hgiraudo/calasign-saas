@@ -584,6 +584,23 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     };
   });
 
+  /**
+   * Recién sumado por una invitación a una organización con SSO obligatorio (y sin ser propietario): una sesión con
+   * contraseña no le serviría (el primer pedido daba sso_required y la web mostraba "tu sesión terminó"). Se lo manda a
+   * ingresar por SSO. Por la membresía (no la invitación): quien ya era propietario lo sigue siendo.
+   */
+  async function assertJoinedWithoutSso(tenantId: string, userId: string, email: string) {
+    const m = await s.db.one<{ role: string }>(`SELECT role FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [tenantId, userId]);
+    if (!m || m.role === "owner") return;
+    const sso = await s.db.one<any>(`SELECT c.enabled, c.enforce, t.slug FROM sso_configs c JOIN tenants t ON t.id = c.tenant_id WHERE c.tenant_id = $1`, [tenantId]);
+    if (sso?.enabled && sso.enforce) {
+      throw new AppError(403, "sso_required", "Te sumaste a la organización: ingresá con su inicio de sesión único (SSO)", {
+        joined: true,
+        startUrl: `/v1/auth/sso/start?org=${encodeURIComponent(sso.slug)}&login_hint=${encodeURIComponent(email)}`,
+      });
+    }
+  }
+
   /** Marca la invitación como aceptada y crea la membresía (una sola vez; una invitación revocada o vencida no sirve). */
   async function joinByInvitation(req: FastifyRequest, invitationId: string, userId: string, email: string) {
     const inv = await s.db.tx(async (t) => {
@@ -680,17 +697,7 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     // Sin segundo factor pendiente: el ingreso con contraseña terminó bien (con 2FA se vacía al verificar el código).
     if (verifiedByPassword) await clearLoginAttempts(s.db, user.id);
     await joinByInvitation(req, inv.id, user.id, inv.email);
-    // SSO obligatorio (y no es propietario): ya es miembro, pero una sesión con contraseña no le serviría (el primer
-    // pedido daba sso_required y la web mostraba "tu sesión terminó"). Se lo manda a ingresar por SSO.
-    if (inv.role !== "owner") {
-      const sso = await s.db.one<any>(`SELECT c.enabled, c.enforce, t.slug FROM sso_configs c JOIN tenants t ON t.id = c.tenant_id WHERE c.tenant_id = $1`, [inv.tenant_id]);
-      if (sso?.enabled && sso.enforce) {
-        throw new AppError(403, "sso_required", "Te sumaste a la organización: ingresá con su inicio de sesión único (SSO)", {
-          joined: true,
-          startUrl: `/v1/auth/sso/start?org=${encodeURIComponent(sso.slug)}&login_hint=${encodeURIComponent(inv.email)}`,
-        });
-      }
-    }
+    await assertJoinedWithoutSso(inv.tenant_id, user.id, inv.email);
     if (sessionUserId) {
       await s.db.query(`UPDATE sessions SET tenant_id = $2 WHERE token_hash = $1`, [sha256Hex(cookie!), inv.tenant_id]);
     } else {
@@ -1114,7 +1121,11 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     const consumed = await s.db.query(`DELETE FROM login_challenges WHERE token_hash = $1 RETURNING user_id`, [ch.token_hash]);
     if (!consumed.length) throw new AppError(401, "challenge_expired", "El ingreso venció: volvé a ingresar tu contraseña");
     // Desafío de una invitación aceptada con contraseña: recién ahora, con el segundo factor, se suma a la organización.
-    if (ch.invitation_id) await joinByInvitation(req, ch.invitation_id, ch.user_id, u?.email ?? "");
+    if (ch.invitation_id) {
+      await joinByInvitation(req, ch.invitation_id, ch.user_id, u?.email ?? "");
+      // Como en /accept sin 2FA: con SSO obligatorio, al IdP (no una sesión con contraseña que no le sirve).
+      await assertJoinedWithoutSso(ch.tenant_id, ch.user_id, u?.email ?? "");
+    }
     await createUserSession(s.db, req, reply, ch.user_id, ch.tenant_id);
     await recordAudit(s.db, { tenantId: ch.tenant_id, action: "auth.login", actor: { type: "user", id: ch.user_id, label: u?.email }, data: { twoFactor: method }, ...clientInfo(req) });
     return meResponse(s.db, ch.user_id, ch.tenant_id);

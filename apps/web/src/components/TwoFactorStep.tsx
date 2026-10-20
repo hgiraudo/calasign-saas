@@ -1,4 +1,5 @@
 // Segundo paso del ingreso: código TOTP o de recuperación.
+import { redirectIfSsoRequired } from "./SsoLogin";
 import { useState, type FormEvent } from "react";
 import type { MeResponse } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
@@ -18,6 +19,8 @@ export function TwoFactorStep({ challengeToken, onDone, onBack }: { challengeTok
     try {
       onDone(await api<MeResponse>("/v1/auth/2fa/verify", { method: "POST", body: { challengeToken, code } }));
     } catch (err) {
+      // Invitación a una organización con SSO obligatorio: ya es miembro, se ingresa por el IdP.
+      if (redirectIfSsoRequired(err)) return;
       setError(errorText(err));
     } finally {
       setBusy(false);

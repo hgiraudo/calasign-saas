@@ -202,13 +202,11 @@ const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
     en: "This single sign-on session belongs to another organization: sign in again.",
   },
   email_taken: { "pt-BR": "Já existe uma conta com esse e-mail.", en: "An account with that email already exists." },
-  weak_password: { "pt-BR": "A senha é muito fraca.", en: "The password is too weak." },
   account_required: { "pt-BR": "Para aceitar, entre com sua conta.", en: "To accept, sign in with your account." },
   two_factor_setup_required: {
     "pt-BR": "Sua organização exige a verificação em duas etapas: ative-a em Configurações → Segurança.",
     en: "Your organization requires two-step verification: turn it on in Settings → Security.",
   },
-  invalid_request: { "pt-BR": "O pedido de autorização é inválido.", en: "The authorization request is invalid." },
   invalid_scope: { "pt-BR": "O aplicativo pediu permissões inválidas.", en: "The app requested invalid permissions." },
   invalid_redirect_uri: { "pt-BR": "O endereço de retorno do aplicativo não é permitido.", en: "The app's redirect address isn't allowed." },
   invalid_client: { "pt-BR": "O aplicativo não existe ou foi revogado.", en: "The app doesn't exist or was revoked." },

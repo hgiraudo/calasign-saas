@@ -818,27 +818,44 @@ describe("contenido marcado sin cerrar", () => {
     }
   });
 
-  it("closeMarkedContent: un stream Flate que descomprimido supera el tope (bomba chica) se deja sin tocar", async () => {
-    const { deflateSync } = await import("node:zlib");
+  /** Cantidad de EMC que se agregaron al final de la página (0 si no se tocó). */
+  const closedAtEnd = (doc: PDFDocument, page: PDFPage) => {
+    const c = page.node.get(PDFName.of("Contents"));
+    if (!(c instanceof PDFArray)) return 0;
+    const last = decoded(doc.context.lookup(c.get(c.size() - 1) as PDFRef));
+    return (last.match(/EMC/g) ?? []).length;
+  };
+  const pageWith = async (dict: Record<string, unknown>, bytes: Uint8Array) => {
     const doc = await PDFDocument.create();
     const page = doc.addPage([200, 200]);
     const ctx = doc.context;
+    const ref = ctx.register(PDFRawStream.of(ctx.obj({ ...dict, Length: bytes.length } as never) as unknown as PDFDict, bytes));
+    page.node.set(PDFName.of("Contents"), ref);
+    return { doc, page, ref };
+  };
+
+  it("closeMarkedContent: un stream Flate que descomprimido supera el tope (bomba chica) no se tokeniza: se cierra de más", async () => {
+    const { deflateSync } = await import("node:zlib");
     const bomb = deflateSync(Buffer.concat([Buffer.from("/OC /oc1 BDC\n"), Buffer.alloc(40 * 1024 * 1024, 0x20)]));
     expect(bomb.length).toBeLessThan(100 * 1024);
-    const ref = ctx.register(ctx.flateStream(new Uint8Array(0)));
-    ctx.assign(ref, PDFRawStream.of(ctx.obj({ Filter: "FlateDecode", Length: bomb.length }), bomb));
-    page.node.set(PDFName.of("Contents"), ref);
+    const { doc, page, ref } = await pageWith({ Filter: "FlateDecode" }, bomb);
+    const ctx = doc.context;
     closeMarkedContent(doc);
-    expect(page.node.get(PDFName.of("Contents"))).toBe(ref);
-    // Un formulario con la misma bomba tampoco se reescribe.
+    // No se pudo contar: el original queda intacto entre q/Q y después van los EMC de reserva (los sobrantes son inocuos).
+    const c = page.node.get(PDFName.of("Contents")) as PDFArray;
+    expect(c.get(1)).toBe(ref);
+    expect(closedAtEnd(doc, page)).toBeGreaterThanOrEqual(1024);
+    // Un formulario con la misma bomba no se reescribe: los EMC de reserva van al final de la página que lo dibuja.
     const form = ctx.register(PDFRawStream.of(ctx.obj({ Type: "XObject", Subtype: "Form", BBox: [0, 0, 10, 10], Filter: "FlateDecode", Length: bomb.length }), bomb));
-    page.node.set(PDFName.of("Resources"), ctx.obj({ XObject: { X0: form } }));
-    page.node.set(PDFName.of("Contents"), ctx.register(ctx.stream("/X0 Do\n")));
+    const page2 = doc.addPage([200, 200]);
+    page2.node.set(PDFName.of("Resources"), ctx.obj({ XObject: { X0: form } }));
+    page2.node.set(PDFName.of("Contents"), ctx.register(ctx.stream("/X0 Do\n")));
     closeMarkedContent(doc);
     expect((ctx.lookup(form) as PDFRawStream).contents).toBe(bomb);
+    expect(closedAtEnd(doc, page2)).toBeGreaterThanOrEqual(1024);
   });
 
-  it("closeMarkedContent: una página más grande que el tope se deja como está", async () => {
+  it("closeMarkedContent: una página más grande que el tope no se tokeniza: se cierra de más", async () => {
     const doc = await PDFDocument.create();
     const page = doc.addPage([200, 200]);
     const ctx = doc.context;
@@ -846,7 +863,75 @@ describe("contenido marcado sin cerrar", () => {
     const ref = ctx.register(ctx.stream(big));
     page.node.set(PDFName.of("Contents"), ref);
     closeMarkedContent(doc);
+    expect((page.node.get(PDFName.of("Contents")) as PDFArray).get(1)).toBe(ref);
+    expect(closedAtEnd(doc, page)).toBeGreaterThanOrEqual(1024);
+  });
+
+  it("closeMarkedContent: filtros combinados, abreviados y DecodeParms se decodifican (no quedan sin revisar)", async () => {
+    const { deflateSync } = await import("node:zlib");
+    const ops = Buffer.from("/OC /oc1 BDC 0 0 1 rg 0 0 10 10 re f\n");
+    const a85 = (b: Buffer) => {
+      let out = "";
+      for (let i = 0; i < b.length; i += 4) {
+        const chunk = Buffer.alloc(4);
+        b.copy(chunk, 0, i, Math.min(i + 4, b.length));
+        let v = chunk.readUInt32BE(0);
+        const digits: string[] = [];
+        for (let k = 0; k < 5; k++) {
+          digits.unshift(String.fromCharCode(33 + (v % 85)));
+          v = Math.floor(v / 85);
+        }
+        out += digits.slice(0, Math.min(4, b.length - i) + 1).join("");
+      }
+      return Buffer.from(out + "~>", "latin1");
+    };
+    // Predictor PNG 12 (Up) con 8 columnas: cada fila lleva un byte de tipo 2 y la diferencia con la anterior.
+    const png = (b: Buffer, cols: number) => {
+      const rows: Buffer[] = [];
+      let prev = Buffer.alloc(cols);
+      for (let i = 0; i < b.length; i += cols) {
+        const row = Buffer.alloc(cols);
+        b.copy(row, 0, i, Math.min(i + cols, b.length));
+        rows.push(Buffer.from([2]), Buffer.from(row.map((x, k) => (x - prev[k]) & 0xff)));
+        prev = row;
+      }
+      return Buffer.concat(rows);
+    };
+    const cases: [string, Record<string, unknown>, Uint8Array][] = [
+      ["A85+Flate", { Filter: ["ASCII85Decode", "FlateDecode"] }, a85(deflateSync(ops))],
+      ["A85+Fl abreviados", { Filter: ["A85", "Fl"] }, a85(deflateSync(ops))],
+      ["AHx", { Filter: "AHx" }, Buffer.from(ops.toString("hex") + ">")],
+      ["DecodeParms vacío", { Filter: "FlateDecode", DecodeParms: {} }, deflateSync(ops)],
+      ["Predictor 12", { Filter: "FlateDecode", DecodeParms: { Predictor: 12, Columns: 8 } }, deflateSync(png(ops, 8))],
+      ["A85 + Flate con Predictor 12", { Filter: ["A85", "Fl"], DecodeParms: [null, { Predictor: 12, Columns: 8 }] }, a85(deflateSync(png(ops, 8)))],
+    ];
+    for (const [label, dict, bytes] of cases) {
+      const { doc, page } = await pageWith(dict, bytes);
+      closeMarkedContent(doc);
+      expect(closedAtEnd(doc, page), label).toBe(1);
+    }
+    // Sin BDC no se toca, también con filtros combinados.
+    const { doc, page, ref } = await pageWith({ Filter: ["A85", "Fl"] }, a85(deflateSync(Buffer.from("0 0 10 10 re f\n"))));
+    closeMarkedContent(doc);
     expect(page.node.get(PDFName.of("Contents"))).toBe(ref);
+  });
+
+  it("closeMarkedContent: con un filtro desconocido no se puede contar: se cierra de más", async () => {
+    const { doc, page } = await pageWith({ Filter: "JBIG2Decode" }, Buffer.from("/OC /oc1 BDC\n"));
+    closeMarkedContent(doc);
+    expect(closedAtEnd(doc, page)).toBeGreaterThanOrEqual(1024);
+  });
+
+  it("closeMarkedContent: Flate dañado (basura después de un bloque válido) conserva lo que se pudo leer", async () => {
+    const { deflateSync, constants } = await import("node:zlib");
+    const ok = deflateSync(Buffer.from("/OC /oc1 BDC 0 0 1 rg 0 0 10 10 re f\n"), { finishFlush: constants.Z_SYNC_FLUSH });
+    // Sin bloque final ni suma de control, y después bytes que no son deflate válido: zlib lo rechaza entero.
+    const broken = Buffer.concat([ok, Buffer.from([0xff, 0xff, 0xff, 0xff, 0x13, 0x37])]);
+    const { inflateSync } = await import("node:zlib");
+    expect(() => inflateSync(broken, { finishFlush: constants.Z_SYNC_FLUSH })).toThrow();
+    const { doc, page } = await pageWith({ Filter: "FlateDecode" }, broken);
+    closeMarkedContent(doc);
+    expect(closedAtEnd(doc, page)).toBe(1);
   });
 
   it("un BDC sin cerrar en una capa apagada de un original viejo no esconde lo estampado", async () => {

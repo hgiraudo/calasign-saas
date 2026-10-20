@@ -15,6 +15,12 @@ export type TemplateKind =
 /** Avisos de la plataforma de acuerdos (vencimientos y negociaciones): mismo diseño y marca que los de sobres. */
 export type AgreementTemplateKind = "agreement_expiry" | "negotiation_invite" | "negotiation_version" | "negotiation_proposal" | "workflow_approval";
 
+/**
+ * Avisos a la organización sobre su cuenta (no sobre un sobre): mismo diseño y marca. webhook_deactivated: `detail` es
+ * el host del webhook y `reason` el motivo ya traducido.
+ */
+export type OrgNoticeKind = "webhook_deactivated";
+
 export interface TemplateVars {
   recipientName: string;
   senderName: string;
@@ -36,7 +42,7 @@ export interface TemplateVars {
   unsealableCode?: string | null;
 }
 
-type Dict = Record<TemplateKind | AgreementTemplateKind, { subject: (v: TemplateVars) => string; lines: (v: TemplateVars) => string[]; cta?: string }>;
+type Dict = Record<TemplateKind | AgreementTemplateKind | OrgNoticeKind, { subject: (v: TemplateVars) => string; lines: (v: TemplateVars) => string[]; cta?: string }>;
 
 const T: Record<"es" | "pt-BR" | "en", Dict> = {
   es: {
@@ -139,6 +145,15 @@ const T: Record<"es" | "pt-BR" | "en", Dict> = {
       lines: (v) => [`Hola ${v.recipientName}:`, `El workflow "${v.subject}" espera tu aprobación (paso "${v.detail ?? ""}").`],
       cta: "Revisar y decidir",
     },
+    webhook_deactivated: {
+      subject: () => "CalaSign: se desactivó un webhook de tu organización",
+      lines: (v) => [
+        `Hola ${v.recipientName}:`,
+        `Se desactivó el webhook que entrega eventos a ${v.detail ?? ""}: no va a recibir más eventos hasta que alguien lo reactive.`,
+        v.reason ?? "",
+      ],
+      cta: "Revisalo y reactivalo en Ajustes → Integraciones",
+    },
   },
   "pt-BR": {
     invite: {
@@ -239,6 +254,15 @@ const T: Record<"es" | "pt-BR" | "en", Dict> = {
       subject: (v) => `Aprovação pendente: ${v.subject}`,
       lines: (v) => [`Olá ${v.recipientName},`, `O workflow "${v.subject}" aguarda sua aprovação (etapa "${v.detail ?? ""}").`],
       cta: "Revisar e decidir",
+    },
+    webhook_deactivated: {
+      subject: () => "CalaSign: um webhook da sua organização foi desativado",
+      lines: (v) => [
+        `Olá ${v.recipientName},`,
+        `O webhook que entrega eventos para ${v.detail ?? ""} foi desativado: ele não vai receber mais eventos até que alguém o reative.`,
+        v.reason ?? "",
+      ],
+      cta: "Revise e reative em Configurações → Integrações",
     },
   },
   en: {
@@ -341,6 +365,15 @@ const T: Record<"es" | "pt-BR" | "en", Dict> = {
       lines: (v) => [`Hi ${v.recipientName},`, `The workflow "${v.subject}" is waiting for your approval (step "${v.detail ?? ""}").`],
       cta: "Review and decide",
     },
+    webhook_deactivated: {
+      subject: () => "CalaSign: a webhook in your organization was disabled",
+      lines: (v) => [
+        `Hi ${v.recipientName},`,
+        `The webhook that delivers events to ${v.detail ?? ""} was disabled: it won't receive any more events until someone turns it back on.`,
+        v.reason ?? "",
+      ],
+      cta: "Review it and turn it back on in Settings → Integrations",
+    },
   },
 };
 
@@ -420,7 +453,7 @@ export function maskVars<V extends object>(v: V): { masked: V; unmask: (s: strin
 const okHex = (c: string | null | undefined): c is string => typeof c === "string" && /^#[0-9a-fA-F]{6}$/.test(c);
 const okFont = (f: string | null | undefined): f is string => typeof f === "string" && /^[A-Za-z0-9][A-Za-z0-9 ]{0,59}$/.test(f);
 
-export function render(kind: TemplateKind | AgreementTemplateKind, localeIn: string | null | undefined, v: TemplateVars, brand: MailBranding = {}) {
+export function render(kind: TemplateKind | AgreementTemplateKind | OrgNoticeKind, localeIn: string | null | undefined, v: TemplateVars, brand: MailBranding = {}) {
   const color = okHex(brand.primaryColor) ? brand.primaryColor : null;
   const accent = okHex(brand.secondaryColor) ? brand.secondaryColor : "#2ec4b6";
   const btn = okHex(brand.buttonColor) ? brand.buttonColor : color ?? "#0f7c7c";

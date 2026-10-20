@@ -18,13 +18,25 @@ function bool(v: string | undefined, def: boolean) {
 
 const env = process.env;
 const production = env.NODE_ENV === "production";
+// Entorno: solo local | dev | prod. Un valor mal escrito ("production", "staging") caía en las ramas "no prod" (mock de
+// pagos, plan enterprise por defecto, claves cs_test) sin aviso; se aborta el arranque. Sin APP_ENV: prod con
+// NODE_ENV=production, local si no (tests y e2e locales no la definen). "local" relaja controles (allowList del rate
+// limit, /dev/mailbox sin sesión, hosts localhost): no se permite con NODE_ENV=production.
+const APP_ENVS = ["local", "dev", "prod"] as const;
+const appEnv = (env.APP_ENV?.trim() || (production ? "prod" : "local")) as (typeof APP_ENVS)[number];
+if (!(APP_ENVS as readonly string[]).includes(appEnv)) {
+  throw new Error(`APP_ENV inválido: "${env.APP_ENV}" (valores admitidos: ${APP_ENVS.join(", ")})`);
+}
+if (production && appEnv === "local") {
+  throw new Error("APP_ENV=local no se admite con NODE_ENV=production (usar dev o prod)");
+}
 const dataDir = resolve(env.DATA_DIR ?? resolve(repoRoot, "var"));
 mkdirSync(dataDir, { recursive: true });
 
 export const config = {
   production,
   /** Nombre del entorno para mostrar y para logs: local, dev, prod. */
-  environment: env.APP_ENV ?? (production ? "prod" : "local"),
+  environment: appEnv as string,
   port: Number(env.PORT ?? 4000),
   host: env.HOST ?? "0.0.0.0",
   /** Cantidad de proxies delante de la API cuyo X-Forwarded-For se cree (0 = ninguno). */
@@ -116,6 +128,11 @@ export const config = {
     maxConsecutiveFailures: Math.max(1, Number(env.WEBHOOK_MAX_CONSECUTIVE_FAILURES ?? 50) || 50),
     /** Días fallando sin ninguna entrega exitosa que también lo desactivan. */
     failingDays: Math.max(1, Number(env.WEBHOOK_FAILING_DAYS ?? 7) || 7),
+    /**
+     * Horas mínimas fallando sin ningún éxito para que la racha (maxConsecutiveFailures) desactive el endpoint: si no,
+     * una caída de 15 minutos del receptor durante un envío masivo de 50 sobres lo desactivaba.
+     */
+    failingMinHours: Math.max(0, Number.isFinite(Number(env.WEBHOOK_FAILING_MIN_HOURS ?? 72)) ? Number(env.WEBHOOK_FAILING_MIN_HOURS ?? 72) : 72),
     /** Días que se guardan las entregas (webhook_deliveries, con el payload del sobre) antes de purgarlas. */
     deliveryRetentionDays: Math.max(1, Number(env.WEBHOOK_DELIVERY_RETENTION_DAYS ?? 90) || 90),
   },
@@ -187,7 +204,7 @@ export const config = {
   /** Planes, cobros y servidor MCP (Fase 6). */
   billing: {
     /** Plan de las organizaciones sin suscripción. En producción "free"; fuera de producción "enterprise" (pruebas sin límites). */
-    defaultPlan: (env.BILLING_DEFAULT_PLAN ?? ((env.APP_ENV ?? (production ? "prod" : "local")) === "prod" ? "free" : "enterprise")) as
+    defaultPlan: (env.BILLING_DEFAULT_PLAN ?? (appEnv === "prod" ? "free" : "enterprise")) as
       | "free"
       | "starter"
       | "business"
@@ -204,7 +221,7 @@ export const config = {
       return Number.isInteger(n) && n >= 0 ? n : undefined;
     })(),
     /** El proveedor de prueba ("mock") solo existe fuera de producción. */
-    mockEnabled: (env.APP_ENV ?? (production ? "prod" : "local")) !== "prod" || bool(env.PAYMENTS_MOCK_ENABLED, false),
+    mockEnabled: appEnv !== "prod" || bool(env.PAYMENTS_MOCK_ENABLED, false),
     stripe: { secretKey: env.STRIPE_SECRET_KEY ?? null, webhookSecret: env.STRIPE_WEBHOOK_SECRET ?? null, apiBase: env.STRIPE_API_BASE ?? "https://api.stripe.com" },
     mercadopago: {
       accessToken: env.MP_ACCESS_TOKEN ?? null,

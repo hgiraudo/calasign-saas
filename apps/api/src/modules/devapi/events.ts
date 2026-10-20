@@ -210,6 +210,16 @@ const openStreams = new Map<string, number>();
 export async function eventRoutes(app: FastifyInstance, s: Services) {
   const auth = authenticate(s);
   const A = (req: FastifyRequest) => req.auth as AuthContext;
+  // Apagado: app.close() espera a que terminen las conexiones abiertas, y un stream SSE dura hasta `max_seconds` (hasta
+  // una hora): systemd mataba el proceso a los 90 s sin que el cliente recibiera el cierre. En preClose (antes de dejar
+  // de aceptar conexiones y de esperar las abiertas) cada stream termina con `event: end` (reason "shutdown") y su
+  // último `id:`: EventSource reconecta contra la instancia nueva y retoma desde ahí.
+  let shuttingDown = false;
+  const stopOnShutdown = new Set<() => void>();
+  app.addHook("preClose", async () => {
+    shuttingDown = true;
+    for (const stop of stopOnShutdown) stop();
+  });
 
   app.get<{ Querystring: EventQuery }>("/v1/events", { preHandler: auth }, async (req) => {
     const raw = Number(req.query.limit ?? 100);
@@ -225,6 +235,9 @@ export async function eventRoutes(app: FastifyInstance, s: Services) {
     const f = parseFilters(req.query, (req.headers["last-event-id"] as string | undefined)?.trim() || undefined);
     const startAfter = f.after || f.since ? f.after : await currentCursor(s, a.tenantId);
     const maxSec = Math.min(3600, Math.max(5, Math.trunc(Number(req.query.max_seconds ?? 300)) || 300));
+    if (shuttingDown) {
+      return reply.code(503).header("retry-after", "5").send({ error: { code: "shutting_down", message: "El servidor se está reiniciando" } });
+    }
     const n = openStreams.get(a.tenantId) ?? 0;
     if (n >= MAX_STREAMS_PER_TENANT) {
       return reply.code(429).header("retry-after", "30").send({ error: { code: "too_many_streams", message: `Máximo ${MAX_STREAMS_PER_TENANT} streams abiertos por organización` } });
@@ -240,20 +253,27 @@ export async function eventRoutes(app: FastifyInstance, s: Services) {
     });
     let closed = false;
     req.raw.on("close", () => (closed = true));
+    // Despierta la espera en curso (el sleep entre lecturas o un 'drain' pendiente) cuando el servidor se apaga.
+    let wake = () => {};
+    const onShutdown = () => wake();
+    stopOnShutdown.add(onShutdown);
     // Respeta la contrapresión: con un `since` lejano y un cliente lento (o que no lee), escribir sin esperar 'drain'
     // acumulaba en memoria todo el historial de la organización durante hasta una hora. Un cliente que nunca lee no
     // retiene el stream más allá de `max_seconds`.
     const deadline = Date.now() + maxSec * 1000;
     const write = async (chunk: string) => {
       if (res.write(chunk) || closed) return;
+      if (shuttingDown) return;
       await new Promise<void>((resolve) => {
         const timer = setTimeout(() => done(), Math.max(0, deadline - Date.now()));
         const done = () => {
           clearTimeout(timer);
           res.off("drain", done);
           res.off("close", done);
+          wake = () => {};
           resolve();
         };
+        wake = done;
         res.on("drain", done);
         res.on("close", done);
       });
@@ -292,7 +312,7 @@ export async function eventRoutes(app: FastifyInstance, s: Services) {
     let lastAuthCheck = Date.now();
     let endReason = "max_seconds";
     try {
-      while (!closed && Date.now() < deadline) {
+      while (!closed && !shuttingDown && Date.now() < deadline) {
         if (Date.now() - lastAuthCheck > 60_000) {
           if (!(await stillAllowed())) {
             endReason = "unauthorized";
@@ -307,7 +327,7 @@ export async function eventRoutes(app: FastifyInstance, s: Services) {
         let complete = true;
         for (let i = 0; i < page.items.length; i++) {
           const ev = page.items[i];
-          if (closed || Date.now() >= deadline) {
+          if (closed || shuttingDown || Date.now() >= deadline) {
             complete = false;
             break;
           }
@@ -322,12 +342,22 @@ export async function eventRoutes(app: FastifyInstance, s: Services) {
           res.write(`: ping\n\n`);
           lastBeat = Date.now();
         }
-        await new Promise((r) => setTimeout(r, 1000));
+        await new Promise<void>((r) => {
+          const t = setTimeout(() => done(), 1000);
+          const done = () => {
+            clearTimeout(t);
+            wake = () => {};
+            r();
+          };
+          wake = done;
+        });
       }
+      if (shuttingDown) endReason = "shutdown";
       if (!closed) res.write(`${delivered ? `id: ${delivered}\n` : ""}event: end\ndata: {"reason":"${endReason}"}\n\n`);
     } catch (err) {
       req.log.warn({ err }, "stream de eventos cortado");
     } finally {
+      stopOnShutdown.delete(onShutdown);
       openStreams.set(a.tenantId, Math.max(0, (openStreams.get(a.tenantId) ?? 1) - 1));
       res.end();
     }

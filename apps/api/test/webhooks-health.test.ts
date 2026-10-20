@@ -11,11 +11,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "calasign-webhooks-health-"));
 delete process.env.DATABASE_URL;
 
-const mails: { to: string; subject: string; text: string }[] = [];
+const mails: { to: string; subject: string; text: string; html?: string; from?: string }[] = [];
 vi.mock("../src/notifications/channels", async (orig) => ({
   ...(await orig<typeof import("../src/notifications/channels")>()),
-  deliver: vi.fn(async (m: { to: string; subject: string; text: string }) => {
-    mails.push({ to: m.to, subject: m.subject, text: m.text });
+  deliver: vi.fn(async (m: { to: string; subject: string; text: string; html?: string; from?: string }) => {
+    mails.push({ to: m.to, subject: m.subject, text: m.text, html: m.html, from: m.from });
     return { provider: "smtp", messageId: `id-${mails.length}` };
   }),
 }));
@@ -31,6 +31,8 @@ let server: http.Server;
 let base = "";
 let status = 200;
 let hits = 0;
+/** Se ejecuta en el receptor antes de responder (p. ej. cambiar la URL del endpoint mientras se entrega). */
+let onHit: (() => Promise<void>) | null = null;
 const log = { info() {}, warn() {}, error() {} };
 
 beforeAll(async () => {
@@ -46,8 +48,9 @@ beforeAll(async () => {
   await app.ready();
   server = http.createServer((req, res) => {
     req.resume();
-    req.on("end", () => {
+    req.on("end", async () => {
       hits++;
+      await onHit?.();
       res.statusCode = status;
       res.end("ok");
     });
@@ -64,7 +67,21 @@ beforeEach(() => {
   mails.length = 0;
   hits = 0;
   status = 200;
+  onHit = null;
 });
+
+/** Corre los avisos de desactivación encolados (como el worker de la cola "webhook"). */
+async function runNotices(tenantId: string) {
+  const jobs = await db.query<any>(
+    `SELECT id, payload FROM jobs WHERE queue = 'webhook' AND status = 'pending' AND payload->>'kind' = 'deactivated_notice' AND payload->>'tenantId' = $1 ORDER BY id`,
+    [tenantId],
+  );
+  for (const j of jobs) {
+    await wh.handleWebhookJob({ db, log }, j.payload, { attempts: 1, id: Number(j.id) });
+    await db.query(`UPDATE jobs SET status = 'done' WHERE id = $1`, [j.id]);
+  }
+  return jobs.length;
+}
 
 /** Organización con una propietaria (recibe los avisos), una API key (rol a elección) y una sesión. */
 async function org(keyRole = "admin") {
@@ -130,9 +147,9 @@ describe("event_id determinístico", () => {
 });
 
 describe("desactivación automática", () => {
-  it("410 Gone: desactiva en el acto, sin reintento, con auditoría y aviso", async () => {
+  it("410 Gone de una integración: desactiva en el acto, sin reintento, con auditoría y aviso encolado", async () => {
     const o = await org();
-    const id = await endpoint(o.tenant);
+    const id = await endpoint(o.tenant, { apiKey: o.keyId });
     const d = await delivery(o.tenant, id);
     status = 410;
     await expect(wh.handleWebhookJob({ db, log }, { kind: "deliver", deliveryId: d }, { attempts: 1 })).resolves.toBeUndefined();
@@ -144,6 +161,9 @@ describe("desactivación automática", () => {
     expect(e.deactivated_at).not.toBeNull();
     const audit = await db.query<any>(`SELECT data FROM account_audit_log WHERE tenant_id = $1 AND action = 'webhook.deactivated'`, [o.tenant]);
     expect(audit.map((a) => a.data.reason)).toEqual(["gone"]);
+    // El correo no sale en la entrega: se encola (un job por endpoint y motivo).
+    expect(mails).toHaveLength(0);
+    expect(await runNotices(o.tenant)).toBe(1);
     expect(mails).toHaveLength(1);
     expect(mails[0].subject).toContain("disabled");
     // Solo el host: no el ?token= de la URL.
@@ -151,9 +171,48 @@ describe("desactivación automática", () => {
     expect(mails[0].text).not.toContain("secreto");
   });
 
+  it("410 Gone de un endpoint creado a mano: falla definitiva (racha), no lo desactiva", async () => {
+    const o = await org();
+    const id = await endpoint(o.tenant);
+    const d = await delivery(o.tenant, id);
+    status = 410;
+    await expect(wh.handleWebhookJob({ db, log }, { kind: "deliver", deliveryId: d }, { attempts: 1 })).resolves.toBeUndefined();
+    expect(await db.one<any>(`SELECT status, next_retry_at FROM webhook_deliveries WHERE id = $1`, [d])).toMatchObject({ status: "failed", next_retry_at: null });
+    const e = await ep(id);
+    expect(e).toMatchObject({ active: true, consecutive_failures: 1 });
+    expect(await runNotices(o.tenant)).toBe(0);
+  });
+
+  it("410 Gone de la URL vieja: no desactiva el endpoint al que le cambiaron la URL durante la entrega", async () => {
+    const o = await org();
+    const id = await endpoint(o.tenant, { apiKey: o.keyId });
+    status = 410;
+    onHit = async () => {
+      await db.query(`UPDATE webhook_endpoints SET url = 'https://example.com/nueva' WHERE id = $1`, [id]);
+    };
+    await wh.handleWebhookJob({ db, log }, { kind: "deliver", deliveryId: await delivery(o.tenant, id) }, { attempts: 1 });
+    expect(await ep(id)).toMatchObject({ active: true, url: "https://example.com/nueva", consecutive_failures: 0 });
+  });
+
+  it("50 fallas en 15 minutos no lo desactivan; con la racha y 72 h fallando, sí", async () => {
+    const o = await org();
+    const id = await endpoint(o.tenant);
+    status = 500;
+    for (let i = 0; i < 50; i++) await wh.handleWebhookJob({ db, log }, { kind: "deliver", deliveryId: await delivery(o.tenant, id) }, { attempts: 8 });
+    expect(await ep(id)).toMatchObject({ active: true, consecutive_failures: 50 });
+    await db.query(`UPDATE webhook_endpoints SET failing_since = now() - interval '15 minutes' WHERE id = $1`, [id]);
+    await wh.handleWebhookJob({ db, log }, { kind: "deliver", deliveryId: await delivery(o.tenant, id) }, { attempts: 8 });
+    expect((await ep(id)).active).toBe(true);
+    await db.query(`UPDATE webhook_endpoints SET failing_since = now() - interval '73 hours' WHERE id = $1`, [id]);
+    await wh.handleWebhookJob({ db, log }, { kind: "deliver", deliveryId: await delivery(o.tenant, id) }, { attempts: 8 });
+    expect(wh.toEndpoint(await ep(id)).deactivatedReason).toBe("failing");
+  });
+
   it("racha de fallas definitivas: desactiva con 'failing'; un éxito la reinicia", async () => {
     const prev = config.webhooks.maxConsecutiveFailures;
+    const prevHours = config.webhooks.failingMinHours;
     config.webhooks.maxConsecutiveFailures = 3;
+    config.webhooks.failingMinHours = 0;
     try {
       const o = await org();
       const id = await endpoint(o.tenant);
@@ -180,6 +239,7 @@ describe("desactivación automática", () => {
       e = await ep(id);
       expect(e.active).toBe(false);
       expect(wh.toEndpoint(e).deactivatedReason).toBe("failing");
+      expect(await runNotices(o.tenant)).toBe(1);
       expect(mails).toHaveLength(1);
       // Inactivo: la siguiente entrega automática no sale.
       const before = hits;
@@ -187,6 +247,7 @@ describe("desactivación automática", () => {
       expect(hits).toBe(before);
     } finally {
       config.webhooks.maxConsecutiveFailures = prev;
+      config.webhooks.failingMinHours = prevHours;
     }
   });
 
@@ -239,6 +300,69 @@ describe("desactivación automática", () => {
     expect(wh.toEndpoint(await ep(oauthEp)).deactivatedReason).toBe("permission_lost");
   });
 
+  it("refresh tokens ya usados no cuentan como autorización vigente", async () => {
+    const o = await org();
+    const client = util.uuidv7();
+    await db.query(`INSERT INTO oauth_clients (id, tenant_id, client_id, name, grant_types, scopes) VALUES ($1,$2,$3,'App','{authorization_code}','{webhooks:manage,envelopes:read}')`, [
+      client,
+      o.tenant,
+      `cid-${client.slice(-8)}`,
+    ]);
+    const token = (scopes: string[], used: boolean) =>
+      db.query(
+        `INSERT INTO oauth_tokens (id, token_hash, kind, client_id, tenant_id, user_id, scopes, family_id, expires_at, used_at)
+         VALUES ($1,$2,'refresh',$3,$4,$5,$6,$1, now() + interval '30 days', CASE WHEN $7 THEN now() END)`,
+        [util.uuidv7(), util.randomToken(), client, o.tenant, o.user, scopes, used],
+      );
+    // Solo un refresh usado (rotado): la app ya no está conectada.
+    await token(["webhooks:manage", "envelopes:read"], true);
+    const orphan = await endpoint(o.tenant, { oauthClient: client, createdBy: o.user, active: false });
+    expect(wh.toEndpoint(await ep(orphan)).deactivatedReason).toBe("credential_revoked");
+    // Con uno vigente sin envelopes:read: los scopes del usado no suman.
+    await token(["webhooks:manage"], false);
+    await db.query(`UPDATE webhook_endpoints SET active = true WHERE id = $1`, [orphan]);
+    await wh.deactivateEndpointsWithoutPermission({ db, log }, o.tenant, { force: true });
+    expect(wh.toEndpoint(await ep(orphan)).deactivatedReason).toBe("permission_lost");
+  });
+
+  it("client_credentials: la key de servicio se recorta a los scopes vigentes de la app", async () => {
+    const o = await org();
+    const client = util.uuidv7();
+    await db.query(`INSERT INTO oauth_clients (id, tenant_id, client_id, name, grant_types, scopes) VALUES ($1,$2,$3,'Svc','{client_credentials}','{webhooks:manage,envelopes:read}')`, [
+      client,
+      o.tenant,
+      `cid-${client.slice(-8)}`,
+    ]);
+    const svcKey = util.uuidv7();
+    await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash, role, oauth_client_id) VALUES ($1,$2,'svc','oauth',$3,'admin',$4)`, [svcKey, o.tenant, util.sha256Hex(svcKey), client]);
+    await db.query(`UPDATE oauth_clients SET service_api_key_id = $2 WHERE id = $1`, [client, svcKey]);
+    const id = await endpoint(o.tenant, { apiKey: svcKey });
+    await wh.deactivateEndpointsWithoutPermission({ db, log }, o.tenant, { force: true });
+    expect((await ep(id)).active).toBe(true);
+    // Le quitan envelopes:read a la app (el rol de la key sigue siendo admin).
+    await db.query(`UPDATE oauth_clients SET scopes = '{webhooks:manage}' WHERE id = $1`, [client]);
+    await wh.deactivateEndpointsWithoutPermission({ db, log }, o.tenant, { force: true });
+    expect(wh.toEndpoint(await ep(id)).deactivatedReason).toBe("permission_lost");
+  });
+
+  it("el aviso sale con la marca de la organización y una sola vez por desactivación", async () => {
+    const o = await org("member");
+    await db.query(`UPDATE tenants SET branding = $2::jsonb WHERE id = $1`, [o.tenant, JSON.stringify({ whiteLabel: { productName: "FirmaYa" } })]);
+    const id = await endpoint(o.tenant, { apiKey: o.keyId });
+    await wh.deactivateEndpointsWithoutPermission({ db, log }, o.tenant, { force: true });
+    expect(await runNotices(o.tenant)).toBe(1);
+    expect(mails).toHaveLength(1);
+    expect(mails[0].subject).toContain("FirmaYa");
+    expect(mails[0].subject).not.toContain("CalaSign");
+    expect(mails[0].html).toContain("127.0.0.1");
+    expect(mails[0].text).toContain("/app/settings/integrations");
+    expect(mails[0].text).not.toContain("secreto");
+    // Un reintento del mismo job no repite el correo.
+    const job = await db.one<any>(`SELECT id, payload FROM jobs WHERE queue = 'webhook' AND payload->>'endpointId' = $1`, [id]);
+    await wh.handleWebhookJob({ db, log }, job.payload, { attempts: 2, id: Number(job.id) });
+    expect(mails).toHaveLength(1);
+  });
+
   it("el chequeo de permisos se cachea por organización", async () => {
     const o = await org("admin");
     const id = await endpoint(o.tenant, { apiKey: o.keyId });
@@ -281,6 +405,21 @@ describe("rutas", () => {
     const ok = await app.inject({ method: "PATCH", url: `/v1/webhooks/${old}`, headers: o.auth, payload: { active: true } });
     expect(ok.statusCode).toBe(200);
     expect(ok.json().active).toBe(true);
+  });
+
+  it("tope absoluto de 100 webhooks por organización, contando los inactivos viejos", async () => {
+    const o = await org();
+    for (let i = 0; i < wh.MAX_WEBHOOKS_TOTAL; i++) {
+      const id = await endpoint(o.tenant, { active: false });
+      await db.query(`UPDATE webhook_endpoints SET deactivated_at = now() - interval '40 days' WHERE id = $1`, [id]);
+    }
+    const r = await app.inject({ method: "POST", url: "/v1/webhooks", headers: o.auth, payload: { url: "https://example.com/h" } });
+    expect(r.statusCode).toBe(400);
+    expect(JSON.stringify(r.json())).toContain("máximo 100");
+    // Borrando uno, se puede crear.
+    const one = (await db.one<any>(`SELECT id FROM webhook_endpoints WHERE tenant_id = $1 LIMIT 1`, [o.tenant]))!.id;
+    expect((await app.inject({ method: "DELETE", url: `/v1/webhooks/${one}`, headers: o.auth })).statusCode).toBe(204);
+    expect((await app.inject({ method: "POST", url: "/v1/webhooks", headers: o.auth, payload: { url: "https://example.com/h" } })).statusCode).toBe(201);
   });
 
   it("reactivar uno desactivado por fallas limpia el motivo y la racha", async () => {

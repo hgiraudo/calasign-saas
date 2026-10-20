@@ -27,8 +27,9 @@ import {
   type PDFContext,
   type PDFObject,
 } from "pdf-lib";
-import { constants, inflateRawSync, inflateSync } from "node:zlib";
+import { constants, inflateSync } from "node:zlib";
 import { formUnsupportedError, hiddenLayersError } from "./errors";
+import { decodeFilterCapped, type CappedFilter } from "./stream-budget";
 
 const N = (s: string) => PDFName.of(s);
 
@@ -557,30 +558,111 @@ export function unclosedMarkedContent(data: Uint8Array): number {
   return open;
 }
 
-const FLATE_NAMES = new Set(["FlateDecode", "Fl"]);
+/**
+ * Descomprime Flate con zlib y un tope de salida (maxOutputLength corta sin reservar la memoria): pdf-lib lo
+ * descomprime entero y una bomba chica ocupaba cientos de MB. `null` si supera `max`. Con datos dañados (suma de control,
+ * bloque inválido, basura en el medio) zlib no devuelve nada: se decodifica con pdf-lib (que no verifica la suma ni el
+ * encabezado: se reemplaza por uno válido) dentro del mismo tope, y se conserva lo leído hasta el error, que es lo que
+ * dibuja un lector.
+ */
+function inflateCapped(data: Uint8Array, max: number): Uint8Array | null {
+  try {
+    const out = inflateSync(data, { maxOutputLength: Math.max(1, max + 1), finishFlush: constants.Z_SYNC_FLUSH });
+    return out.length > max ? null : out;
+  } catch (e) {
+    if (e instanceof RangeError) return null;
+  }
+  if (data.length < 2) return new Uint8Array();
+  const fixed = new Uint8Array(data.length);
+  fixed.set(data);
+  fixed[0] = 0x78;
+  fixed[1] = 0x9c;
+  return decodeFilterCapped("Flate", fixed, max);
+}
 
 /**
- * Descomprime un stream cuyos filtros son todos Flate con zlib y un tope de salida (maxOutputLength corta sin reservar
- * la memoria): pdf-lib lo descomprime entero y una bomba chica ocupaba cientos de MB. `null` si supera `max`; vacío si
- * los datos están dañados (un lector tampoco los dibuja).
+ * Deshace un predictor PNG (10-15) o TIFF (2, de 8 bits) como pdf.js. `null` con parámetros que no se saben aplicar
+ * (TIFF de otro ancho de componente, valores absurdos).
  */
-function inflateCapped(data: Uint8Array, filters: number, max: number): Uint8Array | null {
-  let out = data;
-  for (let k = 0; k < filters; k++) {
-    const opts = { maxOutputLength: Math.max(1, max + 1), finishFlush: constants.Z_SYNC_FLUSH };
-    try {
-      try {
-        out = inflateSync(out, opts);
-      } catch (e) {
-        if (e instanceof RangeError) throw e;
-        // Encabezado o suma de control dañados (pdf-lib no los verifica): como deflate crudo.
-        out = inflateRawSync(out.subarray(2), opts);
-      }
-    } catch (e) {
-      if (e instanceof RangeError) return null;
-      return new Uint8Array();
+function undoPredictor(ctx: PDFContext, parms: PDFDict, data: Uint8Array, predictor: number): Uint8Array | null {
+  const colors = numOf(ctx, parms.get(N("Colors"))) ?? 1;
+  const bpc = numOf(ctx, parms.get(N("BitsPerComponent"))) ?? 8;
+  const columns = numOf(ctx, parms.get(N("Columns"))) ?? 1;
+  if (![1, 2, 4, 8, 16].includes(bpc) || !(colors >= 1 && colors <= 32) || !(columns >= 1 && columns <= 1 << 24)) return null;
+  const pix = Math.ceil((colors * bpc) / 8);
+  const rowBytes = Math.ceil((colors * bpc * columns) / 8);
+  if (predictor === 2) {
+    if (bpc !== 8) return null;
+    const out = new Uint8Array(data);
+    for (let r = 0; r < out.length; r += rowBytes) {
+      for (let i = r + pix; i < Math.min(r + rowBytes, out.length); i++) out[i] = (out[i] + out[i - pix]) & 0xff;
     }
-    if (out.length > max) return null;
+    return out;
+  }
+  if (predictor < 10) return null;
+  const out = new Uint8Array(Math.floor(data.length / (rowBytes + 1)) * rowBytes + Math.max(0, (data.length % (rowBytes + 1)) - 1));
+  let prev = new Uint8Array(rowBytes);
+  let o = 0;
+  for (let at = 0; at < data.length; at += rowBytes + 1) {
+    const type = data[at];
+    const raw = data.subarray(at + 1, Math.min(at + 1 + rowBytes, data.length));
+    const row = new Uint8Array(rowBytes);
+    for (let i = 0; i < raw.length; i++) {
+      const a = i >= pix ? row[i - pix] : 0;
+      const b = prev[i];
+      const c = i >= pix ? prev[i - pix] : 0;
+      let p = 0;
+      if (type === 1) p = a;
+      else if (type === 2) p = b;
+      else if (type === 3) p = (a + b) >> 1;
+      else if (type === 4) {
+        const pa = Math.abs(b - c), pb = Math.abs(a - c), pc = Math.abs(a + b - 2 * c);
+        p = pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+      } else if (type !== 0) return out.subarray(0, o); // tipo de fila inválido: pdf.js deja de leer ahí
+      row[i] = (raw[i] + p) & 0xff;
+    }
+    out.set(row.subarray(0, raw.length), o);
+    o += raw.length;
+    prev = row;
+  }
+  return out.subarray(0, o);
+}
+
+const FILTER_KINDS: Record<string, CappedFilter> = {
+  FlateDecode: "Flate",
+  Fl: "Flate",
+  LZWDecode: "LZW",
+  LZW: "LZW",
+  ASCII85Decode: "ASCII85",
+  A85: "ASCII85",
+  ASCIIHexDecode: "ASCIIHex",
+  AHx: "ASCIIHex",
+  RunLengthDecode: "RunLength",
+  RL: "RunLength",
+};
+
+/**
+ * Decodifica un stream con todos sus filtros en orden (también los nombres abreviados y los predictores de Flate/LZW,
+ * que pdf-lib no aplica), con un tope de `max` bytes en cada paso. `null` si supera el tope o tiene un filtro o un
+ * predictor que no se sabe decodificar: quien llama no puede saber qué dibuja un lector con él.
+ */
+function decodeStreamCapped(s: PDFRawStream, max: number): Uint8Array | null {
+  const ctx = s.dict.context;
+  const f = resolve(ctx, s.dict.get(N("Filter")));
+  const filters = f instanceof PDFArray ? f.asArray() : [f];
+  const p = resolve(ctx, s.dict.get(N("DecodeParms")));
+  // Como pdf.js: un diccionario suelto (sin arreglo) vale para el primer filtro.
+  const parmsList = p instanceof PDFArray ? p.asArray() : [p];
+  let out: Uint8Array | null = s.contents;
+  for (let k = 0; k < filters.length && out; k++) {
+    const name = nameOf(ctx, filters[k]) ?? "";
+    const kind = Object.hasOwn(FILTER_KINDS, name) ? FILTER_KINDS[name] : undefined;
+    if (!kind) return null;
+    const parms = dictOf(ctx, parmsList[k]);
+    const predictor = (parms && numOf(ctx, parms.get(N("Predictor")))) ?? 1;
+    if (kind === "Flate") out = inflateCapped(out, max);
+    else out = decodeFilterCapped(kind, out, max, (parms && numOf(ctx, parms.get(N("EarlyChange")))) ?? 1);
+    if (out && predictor > 1 && (kind === "Flate" || kind === "LZW")) out = undoPredictor(ctx, parms!, out, predictor);
   }
   return out;
 }
@@ -597,9 +679,19 @@ function streamData(s: PDFObject | undefined): Uint8Array | undefined {
 
 /**
  * Tope de bytes (descomprimidos) que se tokenizan por página o por formulario. Como en compressPlainStreams, lo más
- * grande se deja como está: tokenizar y copiar decenas de MB por página bloqueaba el worker.
+ * grande no se tokeniza: tokenizar y copiar decenas de MB por página bloqueaba el worker.
  */
 const MAX_MARKED_SCAN = 32 * 1024 * 1024;
+
+/**
+ * EMC que se agregan al final de una página cuyo contenido (o el de un formulario que dibuja) no se pudo leer: más
+ * grande que el tope, o con un filtro o predictor que no se sabe decodificar. Como no se puede contar lo que queda
+ * abierto, se cierra "de más": los EMC sobrantes son inocuos (pdf.js, poppler y MuPDF ignoran un EMC sin BDC/BMC
+ * abierto, pdf.js también en la capa de texto) y van después del Q que envuelve el original, así que no alteran nada
+ * de lo que el original dibuja. Cierra hasta esta profundidad de anidamiento (4 KB por página afectada); un original
+ * que anide más que esto en un stream que no se puede leer queda sin cerrar del todo (caso deliberadamente hostil).
+ */
+const FALLBACK_EMC = 1024;
 
 /** Si los bytes contienen un BDC o un BMC (búsqueda nativa: casi gratis frente a tokenizar). */
 function mentionsMarkedContent(data: Uint8Array): boolean {
@@ -609,23 +701,15 @@ function mentionsMarkedContent(data: Uint8Array): boolean {
 
 /**
  * Contenido de un stream para buscar contenido marcado: un stream sin filtro se mira en sus bytes crudos (sin copiarlos
- * ni decodificarlos). `null` si supera `room` bytes; vacío si no se puede leer (un lector tampoco lo dibuja).
+ * ni decodificarlos); con filtros se decodifican todos (decodeStreamCapped) con tope. `null` si no se puede leer (supera
+ * `room` bytes, o filtro/predictor desconocido); con datos dañados, lo que se pudo leer (lo que dibuja un lector).
  */
 function markedScanData(s: PDFObject | undefined, room: number): Uint8Array | null {
   if (s instanceof PDFRawStream && !s.dict.has(N("Filter"))) return s.contents.length > room ? null : s.contents;
   // Con filtro los datos codificados ocupan a lo sumo ~2 veces lo decodificado (ASCIIHex): más que eso ni se decodifica.
   if (s instanceof PDFRawStream && s.contents.length > room * 4) return null;
-  if (s instanceof PDFRawStream) {
-    const ctx = s.dict.context;
-    const f = resolve(ctx, s.dict.get(N("Filter")));
-    const names = (f instanceof PDFArray ? f.asArray() : [f]).map((x) => nameOf(ctx, x));
-    if (names.some((x) => x && FLATE_NAMES.has(x))) {
-      // Con Flate, solo se decodifica acá (con tope): Flate solo y sin DecodeParms (un predictor en un content stream
-      // no tiene sentido). Otra combinación se deja como está.
-      if (names.some((x) => !x || !FLATE_NAMES.has(x)) || s.dict.has(N("DecodeParms"))) return null;
-      return inflateCapped(s.contents, names.length, room);
-    }
-  }
+  if (s instanceof PDFRawStream) return room > 0 ? decodeStreamCapped(s, room) : null;
+  // Otro objeto (no stream, o un stream que armó pdf-lib en este proceso): lo que dé pdf-lib.
   const data = streamData(s) ?? new Uint8Array();
   return data.length > room ? null : data;
 }
@@ -637,17 +721,25 @@ function markedScanData(s: PDFObject | undefined, room: number): Uint8Array | nu
  * (el contenido queda entre q/Q como al estampar). Lo mismo dentro de cada XObject de formulario que dibuja la página
  * (también los widgets aplanados y los anidados): el EMC va al final de su stream. Se hace siempre, con o sin capas.
  * Rápido en el caso común: un stream sin "BDC" ni "BMC" no se tokeniza (y la página tampoco), y uno sin filtro se busca
- * en sus bytes crudos. Páginas o formularios de más de MAX_MARKED_SCAN bytes se dejan como están.
+ * en sus bytes crudos. Si la página o uno de sus formularios no se puede leer (más de MAX_MARKED_SCAN bytes, filtro o
+ * predictor desconocido), no se sabe cuántos quedan abiertos: se agregan FALLBACK_EMC al final de la página.
  */
 export function closeMarkedContent(doc: PDFDocument): void {
   const ctx = doc.context;
-  const seenForms = new Set<unknown>();
-  const fixForms = (resources: PDFDict | undefined, depth: number) => {
-    if (!resources || depth > 16) return;
+  /** Por formulario: si él o uno de sus anidados no se pudo leer (un formulario compartido se revisa una vez). */
+  const formUnreadable = new Map<unknown, boolean>();
+  const fixForms = (resources: PDFDict | undefined, depth: number): boolean => {
+    if (!resources || depth > 16) return false;
+    let unreadable = false;
     const xobjects = dictOf(ctx, resources.get(N("XObject")));
     for (const [name, raw] of xobjects?.entries() ?? []) {
-      if (seenForms.has(keyOf(raw)) || seenForms.size > 10_000) continue;
-      seenForms.add(keyOf(raw));
+      const key = keyOf(raw);
+      if (formUnreadable.has(key)) {
+        unreadable ||= formUnreadable.get(key)!;
+        continue;
+      }
+      if (formUnreadable.size > 10_000) continue;
+      formUnreadable.set(key, false); // en curso (ciclos)
       const form = resolve(ctx, raw);
       if (!(form instanceof PDFStream) || nameOf(ctx, form.dict.get(N("Subtype"))) !== "Form") continue;
       const data = markedScanData(form, MAX_MARKED_SCAN);
@@ -661,8 +753,11 @@ export function closeMarkedContent(doc: PDFDocument): void {
         if (raw instanceof PDFRef) ctx.assign(raw, fixed);
         else xobjects!.set(name, fixed);
       }
-      fixForms(dictOf(ctx, form.dict.get(N("Resources"))), depth + 1);
+      const bad = fixForms(dictOf(ctx, form.dict.get(N("Resources"))), depth + 1) || data === null;
+      formUnreadable.set(key, bad);
+      unreadable ||= bad;
     }
+    return unreadable;
   };
   for (const page of doc.getPages()) {
     const raw = page.node.get(N("Contents"));
@@ -671,24 +766,25 @@ export function closeMarkedContent(doc: PDFDocument): void {
     const parts: Uint8Array[] = [];
     let size = 0;
     let marked = false;
+    let unreadable = false;
     for (const r of refs) {
       const part = markedScanData(resolve(ctx, r), MAX_MARKED_SCAN - size);
       if (part === null) {
-        marked = false; // supera el tope: la página se deja como está
+        unreadable = true;
         break;
       }
       parts.push(part);
       size += part.length;
       marked ||= mentionsMarkedContent(part);
     }
-    const missing = marked ? unclosedMarkedContent(Buffer.concat(parts.flatMap((p) => [p, Buffer.from("\n")]))) : 0;
+    unreadable = fixForms(dictOf(ctx, page.node.getInheritableAttribute(N("Resources"))), 0) || unreadable;
+    const missing = unreadable ? FALLBACK_EMC : marked ? unclosedMarkedContent(Buffer.concat(parts.flatMap((p) => [p, Buffer.from("\n")]))) : 0;
     if (missing > 0) {
       page.node.set(
         N("Contents"),
-        ctx.obj([ctx.getPushGraphicsStateContentStream(), ...refs, ctx.getPopGraphicsStateContentStream(), ctx.register(ctx.stream("EMC\n".repeat(missing)))]),
+        ctx.obj([ctx.getPushGraphicsStateContentStream(), ...refs, ctx.getPopGraphicsStateContentStream(), ctx.register(ctx.flateStream("EMC\n".repeat(missing)))]),
       );
     }
-    fixForms(dictOf(ctx, page.node.getInheritableAttribute(N("Resources"))), 0);
   }
 }
 

@@ -119,3 +119,44 @@ export async function withDecodeBudget<T>(fn: () => Promise<T>, budget = MAX_DEC
   if (b.exceeded) throw new DecodeBudgetError();
   return out;
 }
+
+// ─── Decodificación de un filtro con tope propio (sincrónica) ───
+
+type DecoderStream = Decoder & { bufferLength: number; getBytes(): Uint8Array };
+const stream = (name: string) => require(`pdf-lib/cjs/core/streams/${name}`).default;
+const Stream = stream("Stream") as new (data: Uint8Array) => unknown;
+const DECODERS: Record<string, (s: unknown, earlyChange: number) => DecoderStream> = {
+  Flate: (s) => new (stream("FlateStream"))(s),
+  LZW: (s, early) => new (stream("LZWStream"))(s, undefined, early),
+  ASCII85: (s) => new (stream("Ascii85Stream"))(s),
+  ASCIIHex: (s) => new (stream("AsciiHexStream"))(s),
+  RunLength: (s) => new (stream("RunLengthStream"))(s),
+};
+export type CappedFilter = keyof typeof DECODERS;
+
+/**
+ * Decodifica `data` con un filtro de pdf-lib (sin predictores: pdf-lib no los aplica) y un tope propio de `max` bytes
+ * de salida, que no se suma al de la operación de afuera (lo que reserva queda acotado por `max`). Si los datos están
+ * dañados devuelve lo decodificado hasta el error, como hacen los lectores (pdf.js dibuja lo que pudo leer). `null` si
+ * supera el tope o si el filtro no arranca (encabezado inválido).
+ */
+export function decodeFilterCapped(filter: CappedFilter, data: Uint8Array, max: number, earlyChange = 1): Uint8Array | null {
+  // ensureBuffer reserva en potencias de 2: el total reservado es a lo sumo el doble de lo decodificado.
+  const b: Budget = { remaining: 2 * max + 1024, exceeded: false };
+  return budgets.run(b, () => {
+    let dec: DecoderStream;
+    try {
+      dec = DECODERS[filter](new Stream(data), earlyChange);
+    } catch {
+      return null;
+    }
+    let out: Uint8Array;
+    try {
+      out = dec.getBytes();
+    } catch {
+      if (b.exceeded) return null;
+      out = dec.buffer.subarray(0, dec.bufferLength); // datos dañados: lo leído hasta el error
+    }
+    return b.exceeded || out.length > max ? null : out;
+  });
+}

@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import nodemailer from "nodemailer";
 import SMTPTransport from "nodemailer/lib/smtp-transport/index.js";
@@ -35,12 +35,41 @@ export interface SendResult {
 }
 
 const mailboxDir = resolve(config.dataDir, "mailbox");
+/** Los mensajes del buzón de desarrollo se borran a los 7 días (antes se acumulaban sin límite en DATA_DIR). */
+const MAILBOX_MAX_AGE_MS = 7 * 24 * 3600 * 1000;
+/** La purga recorre el buzón entero: se hace en la primera escritura y después cada tantas, no en todas. */
+const MAILBOX_PURGE_EVERY = 50;
+let mailboxWrites = 0;
+
+/**
+ * Subcarpeta por organización (mailbox/<tenantId>/): leer el buzón de una organización ya no abre los mensajes de todas.
+ * Un id inesperado (no es una ruta segura) o sin organización va a "_none". Los mensajes viejos en la raíz se siguen leyendo.
+ */
+function tenantFolder(tenantId: string | null | undefined) {
+  return tenantId && /^[A-Za-z0-9_-]{1,64}$/.test(tenantId) ? tenantId : "_none";
+}
+
+async function purgeMailbox() {
+  const cutoff = Date.now() - MAILBOX_MAX_AGE_MS;
+  const purgeDir = async (dir: string, depth: number) => {
+    for (const e of await readdir(dir, { withFileTypes: true }).catch(() => [])) {
+      const p = resolve(dir, e.name);
+      if (e.isDirectory() && depth === 0) await purgeDir(p, 1);
+      else if (e.isFile() && e.name.endsWith(".json")) {
+        const st = await stat(p).catch(() => null);
+        if (st && st.mtimeMs < cutoff) await rm(p, { force: true });
+      }
+    }
+  };
+  await purgeDir(mailboxDir, 0);
+}
 
 async function toMailbox(m: OutboundMessage): Promise<SendResult> {
-  await mkdir(mailboxDir, { recursive: true });
+  const dir = resolve(mailboxDir, tenantFolder(m.tenantId));
+  await mkdir(dir, { recursive: true });
   const id = uuidv7();
   await writeFile(
-    resolve(mailboxDir, `${id}.json`),
+    resolve(dir, `${id}.json`),
     JSON.stringify({
       id,
       tenantId: m.tenantId ?? null,
@@ -56,14 +85,40 @@ async function toMailbox(m: OutboundMessage): Promise<SendResult> {
       createdAt: new Date().toISOString(),
     }),
   );
+  // Sin esperarla ni hacer fallar el envío: es limpieza.
+  if (mailboxWrites++ % MAILBOX_PURGE_EVERY === 0) void purgeMailbox().catch(() => {});
   return { provider: "dev-mailbox", messageId: id };
+}
+
+/** Archivos .json de una carpeta del buzón (vacío si no existe). */
+async function mailboxFiles(dir: string) {
+  const names = await readdir(dir).catch(() => [] as string[]);
+  return names.filter((f) => f.endsWith(".json")).map((f) => ({ name: f, path: resolve(dir, f) }));
 }
 
 export async function readMailbox(tenantId: string | null, limit = 100) {
   try {
-    const files = (await readdir(mailboxDir)).filter((f) => f.endsWith(".json")).sort().reverse().slice(0, 2000);
-    const all = await Promise.all(files.map(async (f) => JSON.parse(await readFile(resolve(mailboxDir, f), "utf8"))));
-    return all.filter((m) => tenantId === null || m.tenantId === tenantId).slice(0, limit);
+    // La raíz tiene los mensajes de antes de las subcarpetas (de todas las organizaciones: se filtran por tenantId).
+    const files = await mailboxFiles(mailboxDir);
+    if (tenantId === null) {
+      const dirs = (await readdir(mailboxDir, { withFileTypes: true }).catch(() => [])).filter((e) => e.isDirectory());
+      for (const d of dirs) files.push(...(await mailboxFiles(resolve(mailboxDir, d.name))));
+    } else {
+      files.push(...(await mailboxFiles(resolve(mailboxDir, tenantFolder(tenantId)))));
+    }
+    // Nombres uuidv7: el orden alfabético es el cronológico.
+    const recent = files.sort((x, y) => (x.name < y.name ? 1 : x.name > y.name ? -1 : 0)).slice(0, 2000);
+    // Un archivo que la purga borró entre el listado y la lectura (o a medio escribir) se saltea, no vacía la respuesta.
+    const all = await Promise.all(
+      recent.map(async (f) => {
+        try {
+          return JSON.parse(await readFile(f.path, "utf8"));
+        } catch {
+          return null;
+        }
+      }),
+    );
+    return all.filter((m) => m && (tenantId === null || m.tenantId === tenantId)).slice(0, limit);
   } catch {
     return [];
   }

@@ -72,7 +72,8 @@ Configuración: `apps/api/src/config.ts` y las variables de cada documento de `d
 | `DB_STATEMENT_TIMEOUT_MS` | `60000` | `statement_timeout` de la sesión (0 = sin límite; las migraciones lo desactivan con `SET LOCAL`) |
 | `DB_IDLE_IN_TX_TIMEOUT_MS` | `300000` | `idle_in_transaction_session_timeout` de la sesión (0 = sin límite; algunas transacciones esperan llamadas externas como S3 o la TSA) |
 | `JOBS_RETENTION_DAYS` | `30` | Días que se guardan los jobs terminados; los que todavía deduplican (sobre sin terminar) se retienen (ver `purgeFinishedJobs`) |
-| `WEBHOOK_MAX_CONSECUTIVE_FAILURES` | `50` | Entregas de webhook fallidas definitivas seguidas que desactivan el endpoint (motivo `failing`, con aviso a quienes tienen `webhooks:manage`) |
+| `WEBHOOK_MAX_CONSECUTIVE_FAILURES` | `50` | Entregas de webhook fallidas definitivas seguidas que desactivan el endpoint (motivo `failing`, con aviso a quienes tienen `webhooks:manage`), si además viene fallando desde hace `WEBHOOK_FAILING_MIN_HOURS` |
+| `WEBHOOK_FAILING_MIN_HOURS` | `72` | Horas mínimas fallando sin ningún éxito para que la racha de fallas desactive el endpoint (una caída corta del receptor con muchos eventos no lo desactiva) |
 | `WEBHOOK_FAILING_DAYS` | `7` | Días fallando sin ninguna entrega exitosa que también desactivan el endpoint |
 | `WEBHOOK_DELIVERY_RETENTION_DAYS` | `90` | Días que se guardan las entregas de webhooks (con el payload del sobre) |
 | `MIGRATE_ON_START` | — | `1` aplica las migraciones al arrancar en producción (fuera de producción siempre) |

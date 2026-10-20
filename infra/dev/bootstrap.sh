@@ -38,11 +38,16 @@ useradd --system --home /var/lib/caddy --create-home --shell /sbin/nologin caddy
 mkdir -p /etc/caddy
 # Igual a infra/dev/host/Caddyfile (deploy-dev.sh lo vuelve a instalar desde ahí). Los secretos de los links
 # (ruta y query) no van al log.
+# API admin por socket unix (no localhost:2019, alcanzable por la app): ver el comentario en el Caddyfile.
 cat > /etc/caddy/Caddyfile <<'EOF'
+{
+	admin unix//run/caddy/admin.sock|0660
+}
+
 ${domain} {
 	encode zstd gzip
 	reverse_proxy 127.0.0.1:4000
-	header Strict-Transport-Security "max-age=31536000"
+	header ?Strict-Transport-Security "max-age=31536000"
 	log {
 		output file /var/log/caddy-access.log {
 			mode 0640
@@ -67,7 +72,9 @@ Wants=network-online.target
 User=caddy
 Group=caddy
 ExecStart=/usr/local/bin/caddy run --environ --config /etc/caddy/Caddyfile
-ExecReload=/usr/local/bin/caddy reload --config /etc/caddy/Caddyfile --force
+ExecReload=/usr/local/bin/caddy reload --config /etc/caddy/Caddyfile --address unix//run/caddy/admin.sock --force
+RuntimeDirectory=caddy
+RuntimeDirectoryMode=0750
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 NoNewPrivileges=true

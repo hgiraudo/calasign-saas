@@ -1,9 +1,19 @@
 # Caddy de dev.calasign.com. Lo instala scripts/deploy-dev.sh (valida antes de recargar) y bootstrap.sh en el
 # primer arranque. __DOMAIN__ se reemplaza al instalar.
+{
+	# API admin por socket unix, no en localhost:2019: ahí la alcanzaba cualquier proceso local, incluida la app (una app
+	# comprometida podía reconfigurar el proxy en memoria: redirigir el tráfico, servir otro certificado, loguear secretos).
+	# El socket es del usuario caddy (0660, grupo caddy) dentro de /run/caddy (0750, RuntimeDirectory del drop-in
+	# caddy.service.d/calasign.conf): el usuario calasign no lo puede abrir. Root (deploy, `systemctl reload caddy`) sí.
+	admin unix//run/caddy/admin.sock|0660
+}
+
 __DOMAIN__ {
 	encode zstd gzip
 	reverse_proxy 127.0.0.1:4000
-	header Strict-Transport-Security "max-age=31536000"
+	# Helmet ya manda HSTS en las respuestas de la app: con `?` Caddy lo agrega solo si falta (502 con la app caída,
+	# respuestas que no pasan por helmet) en vez de duplicar el encabezado.
+	header ?Strict-Transport-Security "max-age=31536000"
 	log {
 		output file /var/log/caddy-access.log {
 			mode 0640

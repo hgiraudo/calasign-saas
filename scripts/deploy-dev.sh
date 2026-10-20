@@ -13,8 +13,9 @@ BUCKET="calasign-saas-dev-$ACCOUNT"
 DOMAIN=dev.calasign.com
 INSTANCE="${INSTANCE_ID:-$(cd infra/dev && terraform output -raw instance_id)}"
 # Se empaquetan los archivos versionados (con sus cambios sin commitear): "dirty" si difieren de HEAD. Un archivo nuevo
-# de código sin `git add` no viajaría (el server arrancaría sin él, después de migrar): se aborta.
-NEW_SRC="$(git ls-files -o --exclude-standard -- apps packages integrations)"
+# de código sin `git add` no viajaría (el server arrancaría sin él, después de migrar): se aborta. Lo mismo con la
+# configuración del host (infra/dev/host): el script remoto instala esos archivos y corta si falta uno.
+NEW_SRC="$(git ls-files -o --exclude-standard -- apps packages integrations infra/dev/host)"
 if [ -n "$NEW_SRC" ]; then
   echo "Hay archivos nuevos sin versionar que no viajarían en el paquete (agregalos con git add o ignoralos):" >&2
   echo "$NEW_SRC" >&2
@@ -70,6 +71,10 @@ aws s3 cp --only-show-errors "$TMP/rel.tgz" "s3://$BUCKET/releases/$REL.tgz"
 read -r -d '' REMOTE <<EOF || true
 set -euo pipefail
 export AWS_REGION=$REGION PATH=/opt/node/bin:/usr/local/bin:\$PATH
+# Un deploy a la vez: dos en paralelo (dos terminales, un reintento con el anterior todavía corriendo en SSM) se pisaban
+# el symlink current, secrets.env y el rollback. /run es de root; el lock se libera solo cuando termina el script.
+exec 9>/run/calasign-deploy.lock
+flock -n 9 || { echo "Otro deploy en curso en la instancia: deploy abortado" >&2; exit 1; }
 D=/opt/calasign/releases/$REL
 # /opt/calasign y releases/ quedan de root (bootstrap los dejaba del usuario calasign, el de la app). Root crea, extrae
 # y borra versiones ahí adentro: con la app comprometida, releases/ podía pasar a ser un symlink (p. ej. a /etc) y la
@@ -92,7 +97,7 @@ PKG=\$(mktemp /var/tmp/calasign-rel.XXXXXX)
 HOSTCFG=\$(mktemp -d /var/tmp/calasign-host.XXXXXX)
 # También los temporales de secretos y cadena de abajo: si SSM falla (set -e corta en la asignación), no quedan
 # sueltos en /etc/calasign. Después del mv ya no existen y rm no hace nada.
-trap 'rm -rf "\$PKG" "\$HOSTCFG" \${CHAIN_TMP:+"\$CHAIN_TMP"} \${SECRETS_TMP:+"\$SECRETS_TMP"} \${SSM_ERR:+"\$SSM_ERR"}' EXIT
+trap 'rm -rf "\$PKG" "\$HOSTCFG" \${CHAIN_TMP:+"\$CHAIN_TMP"} \${SECRETS_TMP:+"\$SECRETS_TMP"} \${SSM_ERR:+"\$SSM_ERR"} \${SSM_JSON:+"\$SSM_JSON"}' EXIT
 aws s3 cp --only-show-errors s3://$BUCKET/releases/$REL.tgz \$PKG
 echo "$SHA  \$PKG" | sha256sum -c --quiet || { echo "El paquete descargado no coincide con el subido: deploy abortado" >&2; exit 1; }
 tar -xzf \$PKG -C \$HOSTCFG infra/dev/host
@@ -100,10 +105,22 @@ tar -xzf \$PKG -C \$HOSTCFG infra/dev/host
 # deploy seguía con una versión a medio extraer.
 tar -xzf \$PKG -C \$D
 rm -f \$PKG
-chown -R calasign:calasign \$D
+# Dependencias: las instala un usuario de build dedicado (calasign-build), con HOME, store de pnpm y COREPACK_HOME en
+# /var/cache/calasign-build (de ese usuario, 0700). Antes corría como calasign con HOME=/var/lib/calasign, escribible
+# por la app: una app comprometida podía cambiar el pnpm cacheado por corepack (o el store) y su código corría en el
+# próximo deploy con permiso de escritura sobre la versión nueva, antes del chown a root. Ni como root: pnpm 9 corre
+# los scripts de instalación de las dependencias, y como root tendrían el host entero. El usuario de build no tiene
+# shell ni nada más que escribir que su cache y, durante la instalación, la carpeta de la versión.
+id calasign-build >/dev/null 2>&1 || useradd --system --no-create-home --home-dir /var/cache/calasign-build --shell /sbin/nologin calasign-build
+BUILD_HOME=/var/cache/calasign-build
+if [ -L \$BUILD_HOME ] || { [ -e \$BUILD_HOME ] && [ ! -d \$BUILD_HOME ]; }; then echo "\$BUILD_HOME no es un directorio: deploy abortado" >&2; exit 1; fi
+install -d -o calasign-build -g calasign-build -m 0700 \$BUILD_HOME
+chown -R calasign-build:calasign-build \$D
 cd \$D
-sudo -u calasign env HOME=/var/lib/calasign PATH=\$PATH COREPACK_ENABLE_DOWNLOAD_PROMPT=0 CI=true \
-  corepack pnpm install --frozen-lockfile --config.package-import-method=copy --filter '@calasign/api...' 2>&1 | tail -3
+# 9>&-: el lock del deploy no pasa a pnpm (ni a algo que deje corriendo).
+sudo -u calasign-build env HOME=\$BUILD_HOME COREPACK_HOME=\$BUILD_HOME/corepack PATH=\$PATH COREPACK_ENABLE_DOWNLOAD_PROMPT=0 CI=true \
+  corepack pnpm install --frozen-lockfile --config.package-import-method=copy --config.store-dir=\$BUILD_HOME/pnpm-store \
+  --filter '@calasign/api...' 9>&- 2>&1 | tail -3
 # Instalado: el código queda de root (la app lo lee, no lo puede modificar), legible para todos sin depender del umask
 # de quien desplegó (tar conserva los modos locales). Copia, no hardlinks al store de pnpm: el chown no lo alcanza.
 chown -R root:root \$D
@@ -138,20 +155,44 @@ SK=\$(aws ssm get-parameter --with-decryption --name /calasign-saas/dev/SECRET_K
 envq() { local v; v=\$(printf '%s' "\$2" | sed -e 's/\\\\/\\\\\\\\/g' -e 's/"/\\\\"/g'); printf '%s="%s"\\n' "\$1" "\$v"; }
 SECRETS_TMP=\$(mktemp /etc/calasign/secrets.env.XXXXXX)
 envq SECRET_KEY "\$SK" > \$SECRETS_TMP
-# Un parámetro opcional que no existe se saltea; cualquier otro error de SSM (throttling, permisos, red) corta el
-# deploy. Antes todo error se tragaba y la clave faltaba en secrets.env sin aviso (p. ej. SMTP_URL: los correos
-# dejaban de salir después del deploy).
+# El resto de los secretos: todos los parámetros de /calasign-saas/dev/ (el nombre del parámetro es el de la variable),
+# salvo SECRET_KEY (arriba) y SEAL_CHAIN_PEM (va a un archivo). Un secreto nuevo se agrega con solo crear el parámetro;
+# antes había que sumarlo a una lista fija acá, y si se olvidaba la app arrancaba sin él.
+# Cualquier error de SSM (throttling, permisos, red) corta el deploy: un error tragado dejaba la clave fuera de
+# secrets.env sin aviso (p. ej. SMTP_URL: los correos dejaban de salir después del deploy).
 SSM_ERR=\$(mktemp)
-for k in TELEGRAM_BOT_TOKEN TELEGRAM_BOT_USERNAME TELEGRAM_WEBHOOK_SECRET WHATSAPP_TOKEN WHATSAPP_PHONE_NUMBER_ID WHATSAPP_TEMPLATE WHATSAPP_OTP_TEMPLATE WHATSAPP_COMPLETED_TEMPLATE WHATSAPP_VOIDED_TEMPLATE WHATSAPP_DECLINED_TEMPLATE SMTP_URL ANTHROPIC_API_KEY TWILIO_ACCOUNT_SID TWILIO_AUTH_TOKEN TWILIO_FROM VERIFF_API_KEY VERIFF_SHARED_SECRET TRUORA_API_KEY TRUORA_FLOW_ID TRUORA_WEBHOOK_SECRET GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET DROPBOX_CLIENT_ID DROPBOX_CLIENT_SECRET MS_CLIENT_ID MS_CLIENT_SECRET STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET MP_ACCESS_TOKEN MP_WEBHOOK_SECRET; do
-  if v=\$(aws ssm get-parameter --with-decryption --name /calasign-saas/dev/\$k --query Parameter.Value --output text 2>\$SSM_ERR); then
+SSM_JSON=\$(mktemp)
+command -v jq >/dev/null || dnf -y -q install jq >/dev/null
+if aws ssm get-parameters-by-path --path /calasign-saas/dev/ --with-decryption --output json > \$SSM_JSON 2>\$SSM_ERR; then
+  # El while lee de una sustitución de proceso, cuyo error no corta el script: se valida el JSON antes.
+  jq -e '.Parameters | type == "array"' \$SSM_JSON >/dev/null || { echo "Respuesta de SSM inválida: deploy abortado" >&2; exit 1; }
+  # Nombre y valor separados por NUL (un valor puede tener saltos de línea; NUL no puede aparecer).
+  while IFS= read -r -d '' k && IFS= read -r -d '' v; do
+    case "\$k" in SECRET_KEY|SEAL_CHAIN_PEM) continue ;; esac
+    if ! [[ "\$k" =~ ^[A-Z_][A-Z0-9_]*\$ ]]; then echo "AVISO: parámetro SSM \$k no es un nombre de variable válido: se ignora" >&2; continue; fi
     if [ -n "\$v" ]; then envq "\$k" "\$v" >> \$SECRETS_TMP; fi
-  elif ! grep -q ParameterNotFound \$SSM_ERR; then
-    echo "No se pudo leer \$k de SSM: deploy abortado" >&2
-    cat \$SSM_ERR >&2
-    rm -f \$SSM_ERR \$SECRETS_TMP \$CHAIN_TMP
-    exit 1
-  fi
-done
+  done < <(jq -j '.Parameters[] | (.Name | sub("^/calasign-saas/dev/"; "")) + "\\u0000" + .Value + "\\u0000"' \$SSM_JSON)
+elif grep -q AccessDenied \$SSM_ERR; then
+  # El rol de la instancia todavía no tiene ssm:GetParametersByPath (hace falta un terraform apply): lista fija, como
+  # antes. Un parámetro de la lista que no existe se saltea.
+  echo "AVISO: sin ssm:GetParametersByPath; se leen los secretos de la lista fija" >&2
+  for k in TELEGRAM_BOT_TOKEN TELEGRAM_BOT_USERNAME TELEGRAM_WEBHOOK_SECRET WHATSAPP_TOKEN WHATSAPP_PHONE_NUMBER_ID WHATSAPP_TEMPLATE WHATSAPP_OTP_TEMPLATE WHATSAPP_COMPLETED_TEMPLATE WHATSAPP_VOIDED_TEMPLATE WHATSAPP_DECLINED_TEMPLATE SMTP_URL ANTHROPIC_API_KEY TWILIO_ACCOUNT_SID TWILIO_AUTH_TOKEN TWILIO_FROM VERIFF_API_KEY VERIFF_SHARED_SECRET TRUORA_API_KEY TRUORA_FLOW_ID TRUORA_WEBHOOK_SECRET GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET DROPBOX_CLIENT_ID DROPBOX_CLIENT_SECRET MS_CLIENT_ID MS_CLIENT_SECRET STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET MP_ACCESS_TOKEN MP_WEBHOOK_SECRET; do
+    if v=\$(aws ssm get-parameter --with-decryption --name /calasign-saas/dev/\$k --query Parameter.Value --output text 2>\$SSM_ERR); then
+      if [ -n "\$v" ]; then envq "\$k" "\$v" >> \$SECRETS_TMP; fi
+    elif ! grep -q ParameterNotFound \$SSM_ERR; then
+      echo "No se pudo leer \$k de SSM: deploy abortado" >&2
+      cat \$SSM_ERR >&2
+      rm -f \$SSM_ERR \$SSM_JSON \$SECRETS_TMP \$CHAIN_TMP
+      exit 1
+    fi
+  done
+else
+  echo "No se pudieron leer los parámetros de SSM: deploy abortado" >&2
+  cat \$SSM_ERR >&2
+  rm -f \$SSM_ERR \$SSM_JSON \$SECRETS_TMP \$CHAIN_TMP
+  exit 1
+fi
+rm -f \$SSM_JSON
 rm -f \$SSM_ERR
 chmod 600 \$SECRETS_TMP
 chmod 644 \$CHAIN_TMP
@@ -170,18 +211,58 @@ if ! cmp -s \$H/calasign-hardening.conf /etc/systemd/system/calasign.service.d/h
   NEW_DROPIN=1
   systemctl daemon-reload
 fi
+# Caddy. API admin por socket unix (/run/caddy/admin.sock, ver el Caddyfile) en vez de localhost:2019, que la app podía
+# usar para reconfigurar el proxy en memoria. El drop-in crea /run/caddy y fija el socket en ExecReload.
+# En el primer deploy con el socket, "systemctl reload" falla (el Caddy en marcha todavía escucha en :2019 y el socket
+# no existe): cae al restart, un corte de un segundo, una sola vez.
+mkdir -p /etc/systemd/system/caddy.service.d
+if ! cmp -s \$H/caddy-calasign.conf /etc/systemd/system/caddy.service.d/calasign.conf; then
+  install -m 0644 \$H/caddy-calasign.conf /etc/systemd/system/caddy.service.d/calasign.conf
+  systemctl daemon-reload
+fi
 sed 's/__DOMAIN__/$DOMAIN/' \$H/Caddyfile > /etc/caddy/Caddyfile.new
 if /usr/local/bin/caddy adapt --config /etc/caddy/Caddyfile.new >/dev/null 2>&1; then
   if ! cmp -s /etc/caddy/Caddyfile.new /etc/caddy/Caddyfile; then
+    cp -p /etc/caddy/Caddyfile /etc/caddy/Caddyfile.prev 2>/dev/null || true
     mv /etc/caddy/Caddyfile.new /etc/caddy/Caddyfile
-    chmod 0640 /var/log/caddy-access.log 2>/dev/null || true
-    systemctl reload caddy || systemctl restart caddy
   else
     rm -f /etc/caddy/Caddyfile.new
   fi
 else
   echo "AVISO: el Caddyfile nuevo no valida; se mantiene el actual" >&2
   rm -f /etc/caddy/Caddyfile.new
+fi
+chmod 0640 /var/log/caddy-access.log 2>/dev/null || true
+# Siempre se recarga (ExecReload usa --force), haya cambiado o no el archivo: descarta cualquier config que se haya
+# cargado en memoria por la API admin desde el deploy anterior.
+systemctl reload caddy || systemctl restart caddy || true
+if ! systemctl is-active -q caddy; then
+  # "caddy adapt" no valida todo (p. ej. la dirección del admin): si no arranca con el archivo nuevo, vuelve al anterior.
+  echo "AVISO: Caddy no arrancó con el Caddyfile nuevo; se restaura el anterior" >&2
+  journalctl -u caddy -n 20 --no-pager >&2 || true
+  if [ -f /etc/caddy/Caddyfile.prev ]; then cp -p /etc/caddy/Caddyfile.prev /etc/caddy/Caddyfile; fi
+  systemctl restart caddy || echo "AVISO: Caddy sigue caído" >&2
+fi
+# Validación (solo avisos): el puerto 2019 ya no responde, root llega al socket y el usuario de la app no.
+#   a mano: ss -ltnp | grep 2019 (vacío); ls -ld /run/caddy /run/caddy/admin.sock (caddy:caddy 0750 / srw-rw----);
+#   curl --unix-socket /run/caddy/admin.sock http://localhost/config/ (root: JSON);
+#   runuser -u calasign -- curl --unix-socket /run/caddy/admin.sock http://localhost/config/ (Permission denied).
+if curl -s -m 2 -o /dev/null http://127.0.0.1:2019/config/; then echo "AVISO: la API admin de Caddy sigue en localhost:2019" >&2; fi
+if ! curl -sf -m 2 -o /dev/null --unix-socket /run/caddy/admin.sock http://localhost/config/; then echo "AVISO: root no llega a la API admin de Caddy por /run/caddy/admin.sock" >&2; fi
+if runuser -u calasign -- curl -s -m 2 -o /dev/null --unix-socket /run/caddy/admin.sock http://localhost/config/ 2>/dev/null; then
+  echo "AVISO: el usuario calasign llega a la API admin de Caddy" >&2
+fi
+
+# Parches de seguridad del SO: dnf-automatic aplica a diario solo las actualizaciones de seguridad (idempotente). No
+# reinicia el equipo (un kernel nuevo queda para el próximo reinicio). Si falla (repo caído, dnf ocupado) no corta el deploy.
+if rpm -q dnf-automatic >/dev/null 2>&1 || timeout 300 dnf -y -q install dnf-automatic >/dev/null 2>&1; then
+  sed -i -E -e 's/^[#[:space:]]*upgrade_type[[:space:]]*=.*/upgrade_type = security/' \
+    -e 's/^[#[:space:]]*apply_updates[[:space:]]*=.*/apply_updates = yes/' /etc/dnf/automatic.conf || true
+  grep -q '^upgrade_type = security' /etc/dnf/automatic.conf && grep -q '^apply_updates = yes' /etc/dnf/automatic.conf \
+    || echo "AVISO: no se pudo configurar /etc/dnf/automatic.conf" >&2
+  systemctl enable --now dnf-automatic.timer >/dev/null 2>&1 || echo "AVISO: no se pudo activar dnf-automatic.timer" >&2
+else
+  echo "AVISO: no se pudo instalar dnf-automatic" >&2
 fi
 
 healthy() { for i in \$(seq 1 60); do curl -sf localhost:4000/healthz >/dev/null && return 0; sleep 1; done; return 1; }

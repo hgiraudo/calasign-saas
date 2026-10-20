@@ -195,6 +195,11 @@ export const RecipientInput = z
   })
   .refine((r) => r.embedded || r.inPerson || r.email || r.phone, { message: "email o phone requerido" })
   .refine((r) => r.authMethod !== "in_person" || r.inPerson, { message: "la firma en persona se configura con inPerson" })
+  // La sesión del código vive en una cookie del sitio de firma: dentro del iframe de otro sitio los navegadores no la
+  // guardan y el firmante quedaba pidiendo el código sin fin. En la firma embebida autentica el integrador.
+  .refine((r) => !(r.embedded && String(r.authMethod ?? "").startsWith("otp_")), {
+    message: "un firmante embebido no usa código OTP (lo autentica tu aplicación)",
+  })
   .refine((r) => r.authMethod !== "otp_email" || r.email, { message: "el código por email requiere email" })
   .refine((r) => !(r.authMethod === "otp_sms" || r.authMethod === "otp_whatsapp") || r.phone, {
     message: "el código por SMS/WhatsApp requiere phone",

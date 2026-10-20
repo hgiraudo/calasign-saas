@@ -66,6 +66,9 @@ export function canDelegate(r: any, e: any): boolean {
   return (
     e.status === "sent" &&
     !isUnverifiedSelfRegistered(r) &&
+    // Embebido: firma dentro de la app del integrador, que es quien decide quién firma (delegar desde el iframe lo
+    // dejaba colgado, sin evento ni vuelta al returnUrl).
+    !r.embedded &&
     (e.allow_delegation ?? true) &&
     (r.role === "signer" || r.role === "approver") &&
     ["sent", "viewed"].includes(r.status)

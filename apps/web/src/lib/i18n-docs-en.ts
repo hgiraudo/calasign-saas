@@ -336,8 +336,10 @@ export const docsEn: Record<DocsKey, string> = {
   "g.embed.ev.complete": "They signed (or approved). You also get the `recipient.signed` webhook.",
   "g.embed.ev.declined": "They declined the document.",
   "g.embed.ev.error": "The link is invalid or has expired: request a new URL.",
+  "g.embed.ev.closed":
+    "The envelope ended without this person signing or declining: it was voided, expired, declined by another recipient, or was already completed. Includes `status` with the envelope status (`voided`, `expired`, `declined` or `completed`). It does not redirect to the `returnUrl`.",
   "g.embed.events.p":
-    "Each message is `{ source: \"calasign\", type, envelopeId, recipientId }` and is sent only once per type. Treat browser events as a UI signal: the business confirmation is the [webhooks](/developers/webhooks), which are signed.",
+    "Each message is `{ source: \"calasign\", type, envelopeId, recipientId }` (plus `status` on `closed`) and is sent only once per type. Treat browser events as a UI signal: the business confirmation is the [webhooks](/developers/webhooks), which are signed.",
   "g.embed.security":
     "With embedded signing, **your application** is what authenticates the person: the evidence records that the session was opened by your integration (“authenticated by the integrator”). Only request the URL for the signed-in person who corresponds to that recipient.",
   // ───────── Guide: anchors ─────────

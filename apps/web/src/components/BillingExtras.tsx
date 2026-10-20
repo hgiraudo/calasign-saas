@@ -372,14 +372,34 @@ function SignerPaymentPanel({ base, info, onPaid }: { base: string; info: Signer
 function usePaymentInfo(base: string) {
   const [info, setInfo] = useState<SignerPaymentInfo | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // Solo cuenta la respuesta del último pedido (un reintento no queda pisado por uno anterior que llega tarde).
+  const seq = useRef(0);
   const load = useCallback(() => {
+    const mine = ++seq.current;
     api<SignerPaymentInfo>(`${base}/payment`)
-      .then(setInfo)
-      .catch(() => setInfo(null))
-      .finally(() => setLoaded(true));
+      .then((i) => {
+        if (mine !== seq.current) return;
+        setInfo(i);
+        setError(null);
+      })
+      .catch((e) => {
+        if (mine !== seq.current) return;
+        setInfo(null);
+        setError(errorText(e));
+      })
+      .finally(() => {
+        if (mine === seq.current) setLoaded(true);
+      });
   }, [base]);
   useEffect(load, [load]);
-  return { info, loaded, reload: load };
+  /** Reintento después de un error: vuelve al indicador de carga mientras tanto. */
+  const retry = useCallback(() => {
+    setLoaded(false);
+    setError(null);
+    load();
+  }, [load]);
+  return { info, loaded, error, reload: load, retry };
 }
 
 /** Después de firmar (after_sign): muestra el pago pendiente, si le toca a este firmante. */
@@ -398,10 +418,53 @@ export function SignerPaymentAfterSign({ base, onPaid }: { base: string; onPaid:
   );
 }
 
-/** Antes de firmar (before_sign): si el pago bloquea la firma, muestra el pago en lugar del flujo de firma. */
-export function PaymentGate({ base, children, wrap }: { base: string; children: ReactNode; wrap: (n: ReactNode) => ReactNode }) {
-  const { info, loaded, reload } = usePaymentInfo(base);
-  if (!loaded) return <>{wrap(<Spinner />)}</>;
-  if (info?.required && info.blocksSigning) return <>{wrap(<SignerPaymentPanel base={base} info={info} onPaid={reload} />)}</>;
-  return <>{children}</>;
+/**
+ * Antes de firmar (before_sign): si el pago bloquea la firma, muestra el pago en lugar del flujo de firma.
+ * Si no se pudo consultar el pago (429, red, 5xx) se muestra el error con "Reintentar": antes se dejaba pasar al
+ * formulario y "Finalizar" fallaba con 402. `check` vuelve a consultar (p. ej. después de ese 402); el flujo de firma
+ * queda montado (oculto) mientras se muestra el pago, para no perder lo que el firmante ya completó.
+ */
+export function PaymentGate({
+  base,
+  children,
+  wrap,
+  check = 0,
+}: {
+  base: string;
+  children: ReactNode;
+  wrap: (n: ReactNode) => ReactNode;
+  check?: number;
+}) {
+  const b = useBillingText();
+  const { info, loaded, error, reload, retry } = usePaymentInfo(base);
+  const shown = useRef(false);
+  const lastCheck = useRef(check);
+  useEffect(() => {
+    if (lastCheck.current === check) return;
+    lastCheck.current = check;
+    reload();
+  }, [check, reload]);
+  const gate = !loaded ? (
+    <Spinner />
+  ) : info?.required && info.blocksSigning ? (
+    <SignerPaymentPanel base={base} info={info} onPaid={reload} />
+  ) : error ? (
+    <div className="card pad stack">
+      <ErrorBox error={b("signerPay.loadError", { error })} />
+      <button type="button" className="btn btn-primary btn-block" onClick={retry}>
+        {b("signerPay.retry")}
+      </button>
+    </div>
+  ) : null;
+  if (!gate) {
+    shown.current = true;
+    return <>{children}</>;
+  }
+  // Si el formulario ya se había mostrado, sigue montado (oculto): al pagar se vuelve a él con lo ya cargado.
+  return (
+    <>
+      {wrap(gate)}
+      {shown.current && <div hidden>{children}</div>}
+    </>
+  );
 }

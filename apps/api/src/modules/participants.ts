@@ -175,6 +175,7 @@ export async function participantRoutes(app: FastifyInstance, s: Services) {
         // Quien se registró solo en un formulario web (correo sin validar) no recibe correos: tampoco puede usar la
         // delegación para que la plataforma le escriba a un tercero.
         if (isUnverifiedSelfRegistered(old)) throw forbidden("Para delegar, validá primero tu correo");
+        if (old.embedded) throw forbidden("Un firmante embebido no puede delegar: lo decide la aplicación que lo integra");
         if (old.email && input.email && old.email.toLowerCase() === input.email.toLowerCase())
           throw conflict("same_person", "No podés delegar en vos mismo");
         ({ discardedKeys } = await replaceRecipient(t, e, old, input, "delegated", recipientActor(req, old)));

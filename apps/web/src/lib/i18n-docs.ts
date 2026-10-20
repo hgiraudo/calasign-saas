@@ -343,8 +343,10 @@ export const docsEs = {
   "g.embed.ev.complete": "Firmó (o aprobó). Recibís también el webhook `recipient.signed`.",
   "g.embed.ev.declined": "Rechazó el documento.",
   "g.embed.ev.error": "El link no es válido o ya venció: pedí una URL nueva.",
+  "g.embed.ev.closed":
+    "El sobre terminó sin que esta persona firmara ni rechazara: se anuló, venció, lo rechazó otro destinatario o ya estaba completado. Incluye `status` con el estado del sobre (`voided`, `expired`, `declined` o `completed`). No redirige al `returnUrl`.",
   "g.embed.events.p":
-    "Cada mensaje es `{ source: \"calasign\", type, envelopeId, recipientId }` y se envía una sola vez por tipo. Tratá los eventos del navegador como una señal para la interfaz: la confirmación de negocio son los [webhooks](/developers/webhooks), que van firmados.",
+    "Cada mensaje es `{ source: \"calasign\", type, envelopeId, recipientId }` (más `status` en `closed`) y se envía una sola vez por tipo. Tratá los eventos del navegador como una señal para la interfaz: la confirmación de negocio son los [webhooks](/developers/webhooks), que van firmados.",
   "g.embed.security":
     "Con firma embebida, **tu aplicación** es la que autentica a la persona: la evidencia registra que la sesión la abrió tu integración («autenticada por el integrador»). Pedí la URL solo para la persona que inició sesión y que corresponde a ese destinatario.",
   // ───────── Guía: anclas ─────────

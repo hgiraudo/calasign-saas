@@ -108,6 +108,8 @@ const es = {
   "signerPay.paid": "Pago confirmado. ¡Gracias!",
   "signerPay.confirming": "Estamos confirmando tu pago…",
   "signerPay.canceled": "El pago no se completó. Podés intentar de nuevo.",
+  "signerPay.loadError": "No pudimos consultar el pago del documento ({error}). Probá de nuevo para seguir.",
+  "signerPay.retry": "Reintentar",
 
   "mcp.title": "Agentes de IA (MCP)",
   "mcp.intro":
@@ -224,6 +226,8 @@ const pt: Record<Key, string> = {
   "signerPay.paid": "Pagamento confirmado. Obrigado!",
   "signerPay.confirming": "Estamos confirmando seu pagamento…",
   "signerPay.canceled": "O pagamento não foi concluído. Você pode tentar de novo.",
+  "signerPay.loadError": "Não conseguimos consultar o pagamento do documento ({error}). Tente de novo para continuar.",
+  "signerPay.retry": "Tentar de novo",
   "mcp.title": "Agentes de IA (MCP)",
   "mcp.intro":
     "A CalaSign tem um servidor MCP (Model Context Protocol) para que assistentes como o Claude consultem envelopes, criem um a partir de um modelo, enviem e baixem o PDF assinado. Usa a mesma API: valem as permissões do token, os limites do plano e a evidência, que registra o agente como ator.",
@@ -337,6 +341,8 @@ const en: Record<Key, string> = {
   "signerPay.paid": "Payment confirmed. Thank you!",
   "signerPay.confirming": "Confirming your payment…",
   "signerPay.canceled": "The payment wasn't completed. You can try again.",
+  "signerPay.loadError": "We couldn't check the payment for this document ({error}). Try again to continue.",
+  "signerPay.retry": "Retry",
   "mcp.title": "AI agents (MCP)",
   "mcp.intro":
     "CalaSign has an MCP (Model Context Protocol) server so assistants like Claude can look up envelopes, create one from a template, send it and download the signed PDF. It uses the same API: token permissions, plan limits and evidence all apply, and the agent is recorded as the actor.",

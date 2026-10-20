@@ -108,6 +108,15 @@ export function OtpGate({ session, base, onDone }: { session: SigningSession; ba
   );
 }
 
+/** Teléfono como lo exige la API (E.164, regex de Contact en @calasign/shared): "+" código de país y 7 a 15 dígitos. */
+const PHONE_RE = /^\+[1-9]\d{6,14}$/;
+
+/** Deja solo dígitos y un "+" inicial (quita espacios, guiones, puntos y paréntesis que se pegan con el número). */
+const normalizePhone = (v: string) => {
+  const digits = v.replace(/\D/g, "");
+  return v.trim().startsWith("+") ? `+${digits}` : digits;
+};
+
 /** El firmante delega en otra persona. */
 export function DelegateModal({ base, onClose, onDone }: { base: string; onClose: () => void; onDone: (name: string) => void }) {
   const sx = useSignerText();
@@ -121,6 +130,11 @@ export function DelegateModal({ base, onClose, onDone }: { base: string; onClose
   const valid = name.trim() && email.trim() && reason.trim();
 
   const submit = async () => {
+    // Sin "+código de país" la API respondía un error genérico de validación.
+    if (phone && !PHONE_RE.test(phone)) {
+      setError(sx("delegate.phoneInvalid"));
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -163,7 +177,7 @@ export function DelegateModal({ base, onClose, onDone }: { base: string; onClose
         </label>
         <label className="field">
           <span>{sx("delegate.phone")}</span>
-          <input type="tel" value={phone} placeholder="+5730012345678" onChange={(e) => setPhone(e.target.value.replace(/[^\d+]/g, ""))} />
+          <input type="tel" value={phone} placeholder="+5730012345678" onChange={(e) => setPhone(normalizePhone(e.target.value))} />
         </label>
         <label className="field">
           <span>{sx("delegate.reason")}</span>
@@ -196,6 +210,10 @@ export function ReassignModal({
   const [error, setError] = useState<string | null>(null);
 
   const submit = async () => {
+    if (phone && !PHONE_RE.test(phone)) {
+      setError(sx("delegate.phoneInvalid"));
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -240,7 +258,7 @@ export function ReassignModal({
         </label>
         <label className="field">
           <span>{sx("delegate.phone")}</span>
-          <input type="tel" value={phone} placeholder="+5730012345678" onChange={(e) => setPhone(e.target.value.replace(/[^\d+]/g, ""))} />
+          <input type="tel" value={phone} placeholder="+5730012345678" onChange={(e) => setPhone(normalizePhone(e.target.value))} />
         </label>
         <label className="field">
           <span>{sx("reassign.reason")}</span>

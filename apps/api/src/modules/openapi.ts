@@ -529,7 +529,7 @@ const OPS: Op[] = [
     tag: "Firma embebida",
     summary: "URL de firma embebida (un solo uso, vence en 5 minutos)",
     description:
-      "Con el sobre enviado (sent, awaiting_certificates o completed); al enviarlo, todos los destinatarios quedan activos, pero cada uno firma cuando le toca según routingOrder. Pedir una URL nueva cada vez que se muestra la ceremonia. Al terminar redirige a returnUrl con ?event=signing_complete|declined.",
+      "Con el sobre enviado (sent, awaiting_certificates o completed); al enviarlo, todos los destinatarios quedan activos, pero cada uno firma cuando le toca según routingOrder. Pedir una URL nueva cada vez que se muestra la ceremonia. Al terminar redirige a returnUrl con ?event=signing_complete|declined. Dentro de un iframe también avisa por postMessage (`viewed`, `signing_complete`, `declined`, `error` y `closed` con `status` si el sobre terminó sin que este firmante actuara). Un destinatario embebido no usa código OTP (lo autentica tu aplicación) ni puede delegar.",
     body: CreateSigningUrlInput,
     bodyOptional: true,
     status: 201,

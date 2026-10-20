@@ -1,5 +1,5 @@
 // Experiencia del firmante: /s/:token. Sin cuenta, mobile-first.
-import { formatComputedLocal, useFieldLogic } from "../lib/logic";
+import { useFieldLogic } from "../lib/logic";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useParams } from "react-router-dom";
 import type { CompleteSigningInput, Field, SignatureImageInput, SigningSession } from "@calasign/shared";
@@ -97,6 +97,8 @@ export function SignerPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [base]);
   useEmbedBridge(token, session, invalid);
+  // Pago antes de firmar: al cambiar, el PaymentGate vuelve a consultar el pago (p. ej. "Finalizar" respondió 402).
+  const [paymentCheck, setPaymentCheck] = useState(0);
   // Recarga después de pagar, firmar con certificado o la entrega presencial. Con la sesión ya cargada, un error
   // de esta recarga se muestra arriba del contenido (antes solo se veía si todavía no había sesión).
   // Solo cuenta la respuesta del último pedido: una más vieja ("finalizing") que llega tarde no pisa a una nueva.
@@ -111,6 +113,23 @@ export function SignerPage() {
       })
       .catch((e) => {
         if (mine === seq.current) setError(errorText(e));
+      });
+  }, [base, apply]);
+  /**
+   * Un error terminal al finalizar o rechazar (sesión vencida, sobre anulado, ya firmado…): se vuelve a pedir la
+   * sesión y se aplica como en la carga, para mostrar la pantalla que corresponde (OTP, cierre) en lugar de solo el
+   * texto del error. Un link que ya no existe pasa a "link inválido", como al cargar.
+   */
+  const resync = useCallback(() => {
+    const mine = ++seq.current;
+    return api<SigningSession>(base)
+      .then((s) => {
+        if (mine === seq.current) apply(s);
+      })
+      .catch((e) => {
+        if (mine !== seq.current) return;
+        if (e instanceof HttpError && [400, 401, 403, 404, 410].includes(e.status)) setInvalid(true);
+        else setError(errorText(e));
       });
   }, [base, apply]);
 
@@ -152,6 +171,23 @@ export function SignerPage() {
     return (
       <SignerShell org={session.envelope.organizationName}>
         <Final icon="↪" ok title={sx("delegate.doneTitle")} text={sx("delegate.doneText", { name: delegatedTo })} />
+      </SignerShell>
+    );
+  // Sobre anulado, vencido o rechazado: el cierre se muestra antes del código. Si no, el firmante con OTP pedía y
+  // escribía el código para recibir después un 410.
+  const closedStatus = session.envelope.status;
+  if (session.otpRequired && (closedStatus === "voided" || closedStatus === "expired" || closedStatus === "declined"))
+    return (
+      <SignerShell org={session.envelope.organizationName} branding={session.branding}>
+        {closedStatus === "voided" ? (
+          <Final icon="⊘" title={t("sign.voidedTitle")} text={t("sign.closedText")} />
+        ) : closedStatus === "expired" ? (
+          <Final icon="⌛" title={t("sign.expiredTitle")} text={t("sign.closedText")} />
+        ) : session.recipient.status === "declined" ? (
+          <Final icon="✕" title={t("sign.declinedTitle")} text={t("sign.declinedText")} />
+        ) : (
+          <Final icon="✕" title={t("sign.declinedByOtherTitle")} text={t("sign.closedText")} />
+        )}
       </SignerShell>
     );
   if (session.otpRequired && session.inPerson)
@@ -215,6 +251,9 @@ export function SignerPage() {
           <SignerPaymentAfterSign base={base} onPaid={reload} />
         </Final>
       );
+  } else if (session.inPerson?.active && recipient.status === "declined") {
+    // Rechazo en una sesión presencial: también se cierra la sesión del anfitrión y se ofrece volver al sobre.
+    content = <InPersonDone session={session} base={base} declined />;
   } else if (recipient.status === "declined") {
     content = <Final icon="✕" title={t("sign.declinedTitle")} text={t("sign.declinedText")} />;
   } else if (envelope.status === "voided") {
@@ -237,6 +276,7 @@ export function SignerPage() {
     return (
       <PaymentGate
         base={base}
+        check={paymentCheck}
         wrap={(n) => (
           <SignerShell org={envelope.organizationName} branding={session.branding}>
             {error && <ErrorBox error={error} />}
@@ -244,7 +284,14 @@ export function SignerPage() {
           </SignerShell>
         )}
       >
-        <SigningFlow session={session} base={base} onDone={apply} onDelegated={setDelegatedTo} />
+        <SigningFlow
+          session={session}
+          base={base}
+          onDone={apply}
+          onDelegated={setDelegatedTo}
+          onStale={resync}
+          onPaymentRequired={() => setPaymentCheck((n) => n + 1)}
+        />
       </PaymentGate>
     );
   }
@@ -400,13 +447,19 @@ function SigningFlow({
   base,
   onDone,
   onDelegated,
+  onStale,
+  onPaymentRequired,
 }: {
   session: SigningSession;
   base: string;
   onDone: (s: SigningSession) => void;
   onDelegated: (name: string) => void;
+  /** Vuelve a pedir la sesión después de un error terminal (401, 404, 409, 410). */
+  onStale: () => Promise<unknown>;
+  /** "Finalizar" respondió 402: el pago previo a la firma está pendiente. */
+  onPaymentRequired: () => void;
 }) {
-  const { t, locale } = useI18n();
+  const { t } = useI18n();
   const sx = useSignerText();
   const x = useExpText();
   const [delegating, setDelegating] = useState(false);
@@ -534,7 +587,19 @@ function SigningFlow({
     } catch (e) {
       setError(errorText(e));
       setBusy(false);
+      onTerminalError(e);
     }
+  };
+
+  /**
+   * Errores terminales: la sesión venció (401), el link ya no existe (404), el sobre cambió de estado (409, 410).
+   * Antes solo se veía el texto; ahora se recarga la sesión y la página pasa a la pantalla que corresponde.
+   * Con 402 (pago previo pendiente) se vuelve a consultar el pago para mostrar el paso de pago; lo cargado se conserva.
+   */
+  const onTerminalError = (e: unknown) => {
+    if (!(e instanceof HttpError)) return;
+    if (e.status === 402 && e.code === "payment_required") onPaymentRequired();
+    else if ([401, 404, 409, 410].includes(e.status)) void onStale();
   };
 
   const decline = async () => {
@@ -547,6 +612,7 @@ function SigningFlow({
     } catch (e) {
       setError(errorText(e));
       setBusy(false);
+      onTerminalError(e);
     }
   };
 
@@ -616,7 +682,9 @@ function SigningFlow({
     if (f.formula) {
       return (
         <div key={f.id} id={`f-${f.id}`} className={`${cls} auto computed`} style={style} title={f.formula}>
-          <span style={{ fontSize }}>{formatComputedLocal(logic.computed.get(f.id), locale)}</span>
+          {/* El mismo texto que se estampa en el PDF sellado (formatComputed: punto decimal, sin separador de miles):
+              con el formato local la vista previa mostraba "1.234,5" y el PDF "1234.5". */}
+          <span style={{ fontSize }}>{logic.computed.get(f.id) ?? ""}</span>
         </div>
       );
     }

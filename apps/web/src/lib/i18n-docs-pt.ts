@@ -336,8 +336,10 @@ export const docsPt: Record<DocsKey, string> = {
   "g.embed.ev.complete": "Assinou (ou aprovou). Você também recebe o webhook `recipient.signed`.",
   "g.embed.ev.declined": "Recusou o documento.",
   "g.embed.ev.error": "O link não é válido ou já expirou: peça uma URL nova.",
+  "g.embed.ev.closed":
+    "O envelope terminou sem que esta pessoa assinasse ou recusasse: foi anulado, expirou, outro destinatário recusou ou já estava concluído. Inclui `status` com o status do envelope (`voided`, `expired`, `declined` ou `completed`). Não redireciona para o `returnUrl`.",
   "g.embed.events.p":
-    "Cada mensagem é `{ source: \"calasign\", type, envelopeId, recipientId }` e é enviada uma única vez por tipo. Trate os eventos do navegador como um sinal para a interface: a confirmação de negócio são os [webhooks](/developers/webhooks), que são assinados.",
+    "Cada mensagem é `{ source: \"calasign\", type, envelopeId, recipientId }` (mais `status` em `closed`) e é enviada uma única vez por tipo. Trate os eventos do navegador como um sinal para a interface: a confirmação de negócio são os [webhooks](/developers/webhooks), que são assinados.",
   "g.embed.security":
     "Com assinatura incorporada, **a sua aplicação** é quem autentica a pessoa: a evidência registra que a sessão foi aberta pela sua integração («autenticada pelo integrador»). Peça a URL apenas para a pessoa que fez login e que corresponde a esse destinatário.",
   // ───────── Guia: âncoras ─────────

@@ -66,13 +66,21 @@ export function prepareProviderTab(token: string): { open(url: string): "tab" | 
 /** Token de la base de la API del firmante (/v1/signing/<token>). */
 export const tokenOfBase = (base: string) => decodeURIComponent(base.split("/")[3] ?? "");
 
-function post(type: EmbedMessage["type"], session: SigningSession | null) {
-  const msg: EmbedMessage = {
+/**
+ * Tipos de aviso al integrador. "closed": el sobre terminó sin que este firmante firmara ni rechazara (anulado, vencido,
+ * rechazado por otro, completado); lleva `status` con el estado del sobre. Sin él, el iframe quedaba esperando.
+ */
+type BridgeType = EmbedMessage["type"];
+type BridgeMessage = EmbedMessage;
+
+function post(type: BridgeType, session: SigningSession | null) {
+  const msg: BridgeMessage = {
     source: "calasign",
     type,
     envelopeId: session?.envelope.id ?? null,
     recipientId: session?.recipient.id ?? null,
   };
+  if (type === "closed" && session) msg.status = session.envelope.status;
   try {
     if (window.parent !== window) window.parent.postMessage(msg, "*");
   } catch {
@@ -99,7 +107,7 @@ export function useEmbedBridge(token: string, session: SigningSession | null, in
 
   useEffect(() => {
     if (!embedded) return;
-    const once = (type: EmbedMessage["type"]) => {
+    const once = (type: BridgeType) => {
       if (sent.current.has(type)) return false;
       sent.current.add(type);
       post(type, session);
@@ -136,6 +144,10 @@ export function useEmbedBridge(token: string, session: SigningSession | null, in
       };
     }
     if (done) finish(done);
+    // Cierre ajeno a este firmante (anulado, vencido, rechazado por otro, ya completado): la página muestra la pantalla
+    // final y se avisa una vez al integrador. Solo postMessage: el returnUrl sigue reservado a firma y rechazo.
+    const env = session.envelope.status;
+    if (!done && (env === "voided" || env === "expired" || env === "declined" || env === "completed")) once("closed");
 
     function finish(done: "signing_complete" | "declined") {
       if (!once(done)) return;

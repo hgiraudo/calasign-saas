@@ -80,7 +80,7 @@ export function InPersonHandover({ session, base, onDone }: { session: SigningSe
 }
 
 /** Después de firmar en persona: se cierra la sesión del firmante y el dispositivo vuelve al anfitrión. */
-export function InPersonDone({ session, base }: { session: SigningSession; base: string }) {
+export function InPersonDone({ session, base, declined }: { session: SigningSession; base: string; declined?: boolean }) {
   const x = useExpText();
   const h = useFocusOnMount<HTMLHeadingElement>();
   const [ended, setEnded] = useState(false);
@@ -91,13 +91,14 @@ export function InPersonDone({ session, base }: { session: SigningSession; base:
   }, [base]);
   return (
     <div className="final card">
-      <div className="final-icon ok" aria-hidden="true">
-        ✓
+      {/* También para el rechazo presencial: la sesión del anfitrión se cierra igual y se vuelve al sobre. */}
+      <div className={`final-icon${declined ? "" : " ok"}`} aria-hidden="true">
+        {declined ? "✕" : "✓"}
       </div>
       <h1 ref={h} tabIndex={-1}>
-        {x("inperson.doneTitle", { name: session.recipient.name })}
+        {x(declined ? "inperson.declinedTitle" : "inperson.doneTitle", { name: session.recipient.name })}
       </h1>
-      <p className="muted">{x("inperson.doneText", { host: session.inPerson?.hostName ?? "" })}</p>
+      <p className="muted">{x(declined ? "inperson.declinedText" : "inperson.doneText", { host: session.inPerson?.hostName ?? "" })}</p>
       <div className="final-actions">
         {ended ? (
           <a className="btn btn-primary" href={`/app/envelopes/${session.envelope.id}`}>

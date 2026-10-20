@@ -139,9 +139,12 @@ export interface SigningEmbedInfo {
 /** Mensajes que la página del firmante envía a window.parent (postMessage) en modo embebido. */
 export interface EmbedMessage {
   source: "calasign";
-  type: "viewed" | "signing_complete" | "declined" | "error";
+  /** "closed": el sobre terminó sin que este firmante firmara ni rechazara (anulado, vencido, rechazado por otro, completado). */
+  type: "viewed" | "signing_complete" | "declined" | "error" | "closed";
   envelopeId: string | null;
   recipientId: string | null;
+  /** Con "closed": estado del sobre. */
+  status?: string;
 }
 
 // ───────────────────────────── Anclas de texto ─────────────────────────────

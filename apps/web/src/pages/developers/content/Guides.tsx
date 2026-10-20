@@ -83,6 +83,7 @@ export function EmbeddedGuide() {
       case "viewed":           onViewed(); break;
       case "signing_complete": onSigned(e.data.envelopeId); break;
       case "declined":         onDeclined(); break;
+      case "closed":           onClosed(e.data.status); break;
       case "error":            requestNewUrl(); break;
     }
   });
@@ -134,7 +135,8 @@ export function EmbeddedGuide() {
           [<code key="1">viewed</code>, t("g.embed.ev.viewed")],
           [<code key="2">signing_complete</code>, t("g.embed.ev.complete")],
           [<code key="3">declined</code>, t("g.embed.ev.declined")],
-          [<code key="4">error</code>, t("g.embed.ev.error")],
+          [<code key="4">closed</code>, t("g.embed.ev.closed")],
+          [<code key="5">error</code>, t("g.embed.ev.error")],
         ]}
       />
       <Md text={t("g.embed.events.p")} />

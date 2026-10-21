@@ -310,7 +310,7 @@ export const docsEn: Record<DocsKey, string> = {
     "This endpoint accepts `Idempotency-Key`: send a unique key per envelope and, if you retry after a timeout or a 5xx with the same key and the same body, you get the envelope already created instead of creating (and sending) another one.",
   "g.tpl.prefill.h": "Prefilling fields",
   "g.tpl.prefill.p":
-    "`prefill` is an object `{ \"key\": \"value\" }` where the key is the `id` of a template field or its **label** (`label`, case-insensitive). If several fields share a label, they're all filled in. A key that doesn't match any field returns `400 unknown_prefill`. Fields marked `readOnly` in the template are locked for the signer.",
+    "`prefill` is an object `{ \"key\": \"value\" }` where the key is the `id` of a template field or its **label** (`label`, case-insensitive, ignoring surrounding spaces). By label, every field with that label that accepts a value is filled in (text, number, dropdown, company or title; editable and without a formula). A key that doesn't match any field returns `400 unknown_prefill`. Fields marked `readOnly` in the template are locked for the signer.",
   // ───────── Guide: embedded signing ─────────
   "g.embed.title": "Embedded signing",
   "g.embed.lead":

@@ -526,11 +526,14 @@ function isAuto(f: Field) {
 /** Campos en los que el firmante escribe o elige un valor. */
 const VALUE_TYPES = ["text", "number", "dropdown", "company", "title"];
 
-// Aproximación del ajuste del texto estampado (packages/pdf layoutFieldText): nunca se pierde un carácter; el texto va
-// en una línea achicado (desde min(0.7·alto, 11) pt) o, si tiene palabras y así sale más grande, partido entre
-// palabras con interlineado 1.15 (los grupos sin letras, como "$ 1.234,00", no se separan). Se avisa cuando quedaría
-// por debajo de ~6 pt (difícil de leer) o ni así entraría. Se mide con una fuente parecida a DejaVu Sans.
+// Aproximación del ajuste del texto estampado (packages/pdf layoutFieldText), con las mismas reglas: nunca se pierde un
+// carácter. 1) Si entra en una línea al tamaño de siempre (desde min(0.7·alto, 11) pt achicando) y ese tamaño es
+// ≥ 6 pt, una línea. 2) Si no, partido en los espacios (los grupos sin letras, como "$ 1.234,00", juntos si entran; una
+// palabra que no entra en el ancho, por carácter) al mayor tamaño entre 4 pt y el máximo con el que entra en el alto.
+// 3) Si ni a 4 pt entra en el alto, sigue debajo de la caja. Se avisa cuando quedaría por debajo de ~6 pt (o del máximo
+// de la caja, si es más chica) o saliéndose de la caja. Se mide con una fuente parecida a DejaVu Sans.
 const STAMP_LEGIBLE_SIZE = 6;
+const STAMP_MIN_WRAP_SIZE = 4;
 const STAMP_LINE_HEIGHT = 1.15;
 let measureCtx: CanvasRenderingContext2D | null | undefined;
 function stampLegible(text: string, boxW: number, boxH: number): boolean {
@@ -539,10 +542,18 @@ function stampLegible(text: string, boxW: number, boxH: number): boolean {
   if (!ctx || boxW <= 2 || boxH <= 0) return true;
   const maxW = boxW - 2;
   const maxSize = Math.min(boxH * 0.7, 11);
+  const legible = Math.min(STAMP_LEGIBLE_SIZE, maxSize) - 0.01;
   // El ancho es proporcional al tamaño: se mide una vez a 10 px y se escala.
   ctx.font = `10px "DejaVu Sans", Verdana, Arial, sans-serif`;
-  const width = (t: string, size: number) => (ctx.measureText(t).width * size) / 10;
-  let best = Math.min(maxSize, (maxW * 10) / Math.max(1, ctx.measureText(text).width));
+  const cache = new Map<string, number>();
+  const w1 = (t: string) => {
+    let w = cache.get(t);
+    if (w === undefined) cache.set(t, (w = ctx.measureText(t).width / 10));
+    return w;
+  };
+  // 1) Una línea al tamaño de siempre.
+  if (Math.min(maxSize, maxW / Math.max(1e-6, w1(text))) >= legible) return true;
+  // 2) Partido: cantidad de líneas a tamaño s (aproximada, como wrapFieldUnits en el PDF).
   const units: string[] = [];
   let prevNoLetters = false;
   for (const tok of text.split(" ").filter(Boolean)) {
@@ -551,28 +562,44 @@ function stampLegible(text: string, boxW: number, boxH: number): boolean {
     else units.push(tok);
     prevNoLetters = noLetters;
   }
-  if (units.length > 1) {
-    for (let s = Math.min(maxSize, boxH / (2 * STAMP_LINE_HEIGHT)); s > best; s -= 0.25) {
-      let lines = 1;
-      let line = "";
-      let ok = true;
-      for (const u of units) {
-        const candidate = line ? `${line} ${u}` : u;
-        if (!line || width(candidate, s) <= maxW) line = candidate;
-        else {
-          lines++;
-          line = u;
+  const lineCount = (s: string[], size: number) => {
+    const sp = w1(" ") * size;
+    let lines = 0;
+    let lineW = -1; // -1: línea vacía
+    const add = (w: number) => {
+      if (lineW >= 0 && lineW + sp + w <= maxW) lineW += sp + w;
+      else if (w <= maxW) {
+        lines++;
+        lineW = w;
+      } else return false;
+      return true;
+    };
+    for (const u of s) {
+      if (add(w1(u) * size)) continue;
+      for (const tok of u.split(" ")) {
+        if (add(w1(tok) * size)) continue;
+        lineW = -1;
+        for (const ch of Array.from(tok)) {
+          const cw = w1(ch) * size;
+          if (lineW >= 0 && lineW + cw <= maxW) lineW += cw;
+          else {
+            lines++;
+            lineW = cw;
+          }
         }
-        if (width(line, s) > maxW) ok = false;
-      }
-      if (ok && lines * s * STAMP_LINE_HEIGHT <= boxH) {
-        best = s;
-        break;
       }
     }
+    return lines;
+  };
+  // El mayor tamaño legible con el que entra en el alto de la caja; si no hay, se avisa.
+  for (let s = maxSize; s >= Math.min(STAMP_MIN_WRAP_SIZE, maxSize) - 0.01 && s >= legible; s -= 0.25) {
+    if (lineCount(units, s) * s * STAMP_LINE_HEIGHT <= boxH + 1e-6) return true;
   }
-  return best >= Math.min(STAMP_LEGIBLE_SIZE, maxSize) - 0.01;
+  return false;
 }
+
+/** Prefijo con que el PDF estampa un adjunto (packages/pdf i18n `attachment`, en el idioma del sobre). */
+const STAMP_ATTACHMENT_PREFIX: Record<string, string> = { es: "Adjunto", en: "Attachment", "pt-BR": "Anexo" };
 
 function SigningFlow({
   session,
@@ -678,12 +705,12 @@ function SigningFlow({
     for (const f of interactive) {
       if (!VALUE_TYPES.includes(f.type) && f.type !== "attachment") continue;
       const v = (values[f.id] ?? "").replace(/\s+/g, " ").trim();
-      const text = f.type === "attachment" && v ? `Adjunto: ${v}` : v;
+      const text = f.type === "attachment" && v ? `${STAMP_ATTACHMENT_PREFIX[session.envelope.locale ?? "es"] ?? STAMP_ATTACHMENT_PREFIX.es}: ${v}` : v;
       const page = session.documents.find((d) => d.id === f.documentId)?.pages[f.page];
       if (text && page && !stampLegible(text, f.width * page.width, f.height * page.height)) out.add(f.id);
     }
     return out;
-  }, [interactive, values, session.documents]);
+  }, [interactive, values, session.documents, session.envelope.locale]);
   const firstOverflow = interactive.find((f) => overflowing.has(f.id));
 
   const goTo = (f: Field | undefined) => {
@@ -923,7 +950,10 @@ function SigningFlow({
       return (
         <div key={f.id} id={`f-${f.id}`} className={`${cls} sfield-attach`} style={style}>
           {name ? (
-            <span className="attach-chip" style={{ fontSize: Math.max(9, Math.min(fontSize, 14)) }}>
+            <span
+              className="attach-chip"
+              style={{ fontSize: Math.max(9, Math.min(fontSize, 14)), ...(overflowing.has(f.id) ? { outline: "2px solid var(--warn, #d97706)", outlineOffset: -2 } : null) }}
+            >
               📎 <span className="attach-name">{name}</span>
               <button type="button" className="attach-x" aria-label={t("common.delete")} disabled={uploading !== null} onClick={() => removeAttachment(f)}>
                 ×

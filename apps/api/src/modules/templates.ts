@@ -19,7 +19,15 @@ import { AppError, assertNotStale, badRequest, conflict, notFound } from "../lib
 import { iso, likeContains, sha256Hex, uuidv7 } from "../lib/util";
 import { assertTemplateAccess, canManageTemplateRow, templateVisibilitySql } from "./access";
 import { authenticate, type AuthContext, type Services } from "./context";
-import { assertDocumentLimits, idempotent, sendEnvelope, assertTemplateLogicOrder, templateLogicOrderProblems } from "./envelopes";
+import {
+  assertDocumentLimits,
+  danglingFormulaProblems,
+  idempotent,
+  sendEnvelope,
+  signerWithoutSignature,
+  assertTemplateLogicOrder,
+  templateLogicOrderProblems,
+} from "./envelopes";
 import { VALUE_FIELD_TYPES, checkSenderValue, insertEnvelopeField } from "./fieldvalues";
 import { assignFieldIds, copyFieldLogic, pruneDanglingConditions, saveFieldLogic } from "./logic";
 import { loadDetail, loadDocuments, toDocument } from "./mappers";
@@ -109,6 +117,26 @@ async function lockTemplate(db: Db, tenantId: string, id: string) {
 async function touch(db: Db, id: string) {
   // Estrictamente creciente (ver touch en envelopes.ts).
   await db.query(`UPDATE templates SET updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 millisecond') WHERE id = $1`, [id]);
+}
+
+/**
+ * Un envío masivo en cola o en curso arma cada sobre con la plantilla tal como está al procesar su fila: cambiar roles,
+ * campos, documentos, asunto o mensaje (o borrarla) a mitad del envío mezclaba versiones o hacía fallar filas ya
+ * validadas. Se rechaza con 409 template_in_use_bulk hasta que el envío termine (o se cancele). Dentro de la
+ * transacción de la edición, después de lockTemplate: el alta de un envío masivo toma la plantilla FOR SHARE y
+ * controla que no cambió desde que la validó (ver bulk.ts), así no se cruzan.
+ */
+export async function assertTemplateNotInBulk(db: Db, templateId: string) {
+  const r = await db.one<{ n: number }>(`SELECT count(*)::int AS n FROM bulk_sends WHERE template_id = $1 AND status IN ('queued','running')`, [templateId]);
+  if (r && r.n > 0) {
+    throw conflict(
+      "template_in_use_bulk",
+      r.n === 1
+        ? "La plantilla se está usando en un envío masivo en curso: esperá a que termine (o cancelalo) antes de modificarla o borrarla"
+        : `La plantilla se está usando en ${r.n} envíos masivos en curso: esperá a que terminen (o cancelalos) antes de modificarla o borrarla`,
+      { bulkSends: r.n },
+    );
+  }
 }
 
 async function insertTemplateField(db: Db, tenantId: string, templateId: string, f: Omit<TemplateField, "id" | "conditions" | "formula"> & { id?: string }) {
@@ -232,6 +260,8 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
     await s.db.tx(async (t) => {
       const tpl = await lockTemplate(t, a.tenantId, req.params.id);
       assertNotStale(req.headers, tpl.updated_at);
+      // Asunto, mensaje e idioma van en cada sobre del envío masivo; el nombre y la descripción no.
+      if (input.subject !== undefined || input.message !== undefined || input.locale !== undefined) await assertTemplateNotInBulk(t, tpl.id);
       await t.query(
         `UPDATE templates SET name = COALESCE($2, name),
            description = CASE WHEN $3::boolean THEN $4 ELSE description END,
@@ -260,6 +290,7 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
     let fileIds: string[] = [];
     await s.db.tx(async (t) => {
       const tpl = await lockTemplate(t, a.tenantId, req.params.id);
+      await assertTemplateNotInBulk(t, tpl.id);
       // Sus formularios web se borran con ella (ON DELETE CASCADE): con alguno activo (que puede ser de otra persona y
       // tener el link publicado), primero hay que desactivarlo o borrarlo.
       // Solo los que todavía reciben envíos (activos, sin vencer ni agotar); se nombran para saber a quién pedírselo.
@@ -310,6 +341,7 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
     // Si la plantilla se borró entre el chequeo y acá, el PDF subido no lo referencia nada.
     await discardBlobsOnFailure(s.blobs, [key], () => s.db.tx(async (t) => {
       const tpl = await lockTemplate(t, a.tenantId, req.params.id);
+      await assertTemplateNotInBulk(t, tpl.id);
       const pos = await t.one<any>(`SELECT COALESCE(MAX(position), 0) + 1 AS p FROM template_documents WHERE template_id = $1`, [tpl.id]);
       await t.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'template',$3,'application/pdf',$4,$5)`, [
         fileId,
@@ -336,6 +368,7 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
     let fileId: string | null = null;
     await s.db.tx(async (t) => {
       const tpl = await lockTemplate(t, a.tenantId, req.params.id);
+      await assertTemplateNotInBulk(t, tpl.id);
       // Borrar el documento borra sus campos en cascada (o deja la plantilla vacía): no puede romper un formulario activo.
       const checkForms = await guardTemplateForms(t, a.tenantId, tpl.id, "documents");
       const r = await t.query<any>(`DELETE FROM template_documents WHERE id = $1 AND template_id = $2 RETURNING id, file_id`, [req.params.documentId, tpl.id]);
@@ -368,6 +401,7 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
     await s.db.tx(async (t) => {
       const tpl = await lockTemplate(t, a.tenantId, req.params.id);
       assertNotStale(req.headers, tpl.updated_at);
+      await assertTemplateNotInBulk(t, tpl.id);
       const before = await templateLogicOrderProblems(t, tpl.id);
       // Paso de roles: un firmante todavía sin campo de firma o una fórmula colgada los valida PUT fields (o el envío).
       const checkForms = await guardTemplateForms(t, a.tenantId, tpl.id, "roles");
@@ -416,6 +450,7 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
     await s.db.tx(async (t) => {
       const tpl = await lockTemplate(t, a.tenantId, req.params.id);
       assertNotStale(req.headers, tpl.updated_at);
+      await assertTemplateNotInBulk(t, tpl.id);
       const before = await templateLogicOrderProblems(t, tpl.id);
       const checkForms = await guardTemplateForms(t, a.tenantId, tpl.id);
       const docs = new Map((await t.query<any>(`SELECT id, page_count FROM template_documents WHERE template_id = $1`, [tpl.id])).map((d) => [d.id, d]));
@@ -581,14 +616,58 @@ export interface LoadedTemplate {
   tpl: TemplateDetail;
   row: any;
   docs: any[];
+  /** updated_at (texto, con microsegundos) de la versión leída: el envío masivo controla al darse de alta que no cambió. */
+  stamp?: string;
 }
 
+/**
+ * La plantilla entera (fila, roles, campos y documentos) de una misma versión. Las lecturas son varias consultas: en
+ * READ COMMITTED, una edición confirmada entre una y otra (p. ej. PUT fields entre los roles y los campos) daba una
+ * mezcla de versiones. Toda edición sube updated_at (touch) en su misma transacción: si cambió entre antes y después de
+ * leer, se vuelve a leer. Sin candados: sirve también dentro de una transacción ajena (formularios, CRM, conectores).
+ */
 export async function loadTemplateForUse(db: Db, tenantId: string, templateId: string): Promise<LoadedTemplate> {
-  const tpl = await loadTemplateDetail(db, tenantId, templateId);
-  const row = await db.one<any>(`SELECT * FROM templates WHERE id = $1`, [tpl.template.id]);
-  const docs = await loadTemplateDocuments(db, tpl.template.id);
-  if (docs.length === 0) throw badRequest("template_empty", "La plantilla no tiene documentos");
-  return { tpl, row, docs };
+  const stamp = async () => (await db.one<{ v: string }>(`SELECT updated_at::text AS v FROM templates WHERE id = $1 AND tenant_id = $2`, [templateId, tenantId]))?.v;
+  for (let attempt = 0; ; attempt++) {
+    const before = await stamp();
+    if (before === undefined) throw notFound("Plantilla");
+    const tpl = await loadTemplateDetail(db, tenantId, templateId);
+    const row = await db.one<any>(`SELECT * FROM templates WHERE id = $1`, [tpl.template.id]);
+    const docs = await loadTemplateDocuments(db, tpl.template.id);
+    const after = await stamp();
+    if (after === undefined) throw notFound("Plantilla");
+    if (after === before) {
+      if (docs.length === 0) throw badRequest("template_empty", "La plantilla no tiene documentos");
+      return { tpl, row, docs, stamp: after };
+    }
+    // Código de serialización: quien llama lo trata como error del momento (el envío masivo reintenta el job).
+    if (attempt >= 4) throw Object.assign(new Error("La plantilla se está modificando: probá de nuevo en unos segundos"), { code: "40001" });
+  }
+}
+
+/** Etiqueta normalizada para comparar (prellenado, columnas del CSV): sin espacios a los lados ni mayúsculas. */
+export const normLabel = (s: string) => s.trim().toLowerCase();
+
+/** Campo que acepta un valor del remitente al prellenar por etiqueta: tipo con valor, editable y sin fórmula. */
+export const isPrefillable = (f: Pick<TemplateField, "type" | "readOnly" | "formula">) => VALUE_FIELD_TYPES.includes(f.type) && !f.readOnly && !f.formula;
+
+/**
+ * Lo que impide enviar un sobre armado con la plantilla, sea quien sea el destinatario: un rol firmante sin campo de
+ * firma (salvo firma con certificado) y fórmulas que citan un campo número que ya no está. Lo usan los formularios web
+ * y la validación del envío masivo (antes, cada fila fallaba al enviarse).
+ */
+export function templateSendIssues(l: LoadedTemplate): { kind: "signature" | "formula"; message: string }[] {
+  const signers = l.tpl.roles.filter((r) => r.role === "signer");
+  const signerIds = new Set(signers.map((r) => r.id));
+  const fields = l.tpl.fields.filter((f) => signerIds.has(f.roleId));
+  const issues: { kind: "signature" | "formula"; message: string }[] = [];
+  for (const r of signers) {
+    if (r.signatureType !== "certificate" && !fields.some((f) => f.roleId === r.id && f.type === "signature")) {
+      issues.push({ kind: "signature", message: signerWithoutSignature(r.name).message });
+    }
+  }
+  issues.push(...danglingFormulaProblems(fields).map((p) => ({ kind: "formula" as const, message: p.message })));
+  return issues;
 }
 
 export interface TemplatePlan {
@@ -617,12 +696,30 @@ export function planFromTemplate(l: LoadedTemplate, input: FromTemplateInput): T
     });
   }
 
-  // Prellenado: por id de campo o por etiqueta (sin distinguir mayúsculas).
+  // Prellenado: por id de campo o por etiqueta (sin espacios a los lados ni mayúsculas). Por etiqueta, solo los campos
+  // que aceptan un valor (tipo con valor, editables, sin fórmula): una firma o un campo de solo lectura con la misma
+  // etiqueta que un texto hacían fallar el pedido. Error solo si ninguno lo acepta.
   const prefill = new Map<string, string>();
+  const prefillKey = new Map<string, string>();
   for (const [k, v] of Object.entries(input.prefill ?? {})) {
-    const matches = tpl.fields.filter((f) => f.id === k || (f.label && f.label.toLowerCase() === k.toLowerCase()));
-    if (matches.length === 0) throw badRequest("unknown_prefill", `No hay ningún campo "${k}" en la plantilla`);
-    for (const f of matches) prefill.set(f.id, v);
+    const byId = tpl.fields.find((f) => f.id === k);
+    let matches: TemplateField[];
+    if (byId) matches = [byId];
+    else {
+      const sameLabel = tpl.fields.filter((f) => f.label && normLabel(f.label) === normLabel(k));
+      if (sameLabel.length === 0) throw badRequest("unknown_prefill", `No hay ningún campo "${k}" en la plantilla`);
+      matches = sameLabel.filter(isPrefillable);
+      if (matches.length === 0) {
+        throw badRequest("readonly_field", `El campo "${k}" no se puede prellenar (es de solo lectura, calculado o de un tipo que no lleva valor)`);
+      }
+    }
+    for (const f of matches) {
+      // "Plan" y " plan" (o un id y su etiqueta) para el mismo campo con valores distintos: no se elige uno en silencio.
+      const prev = prefillKey.get(f.id);
+      if (prev !== undefined && prefill.get(f.id) !== v) throw badRequest("duplicate_prefill", `"${prev}" y "${k}" prellenan el mismo campo con valores distintos`);
+      prefill.set(f.id, v);
+      prefillKey.set(f.id, k);
+    }
   }
   const values = new Map<string, string | null>();
   for (const f of tpl.fields) {

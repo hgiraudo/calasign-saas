@@ -178,7 +178,7 @@ for (let i = 1; i <= ROWS; i++) {
 const csv = "﻿" + lines.join("\r\n") + "\r\n";
 
 const val = await api("POST", "/v1/bulk-sends/validate", { templateId: template.id, csv });
-assert(val.total === ROWS && val.invalid === 2 && val.errors.map((e) => e.row).join(",") === "7,19", `validación: ${JSON.stringify(val.errors)}`);
+assert(val.total === ROWS && val.invalid === 2 && val.errors.map((e) => e.row).join(",") === "8,20", `validación: ${JSON.stringify(val.errors)}`);
 const rejected = await api("POST", "/v1/bulk-sends", { templateId: template.id, csv }, { expect: 422 });
 assert(rejected.error.details.invalid === 2, "sin skipInvalid → 422 con el detalle");
 await api("POST", "/v1/bulk-sends/validate", { templateId: template.id, csv: "Cliente.email;Desconocido.name\r\na@b.com;x\r\n" }, { expect: 422 });

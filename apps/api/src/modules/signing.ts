@@ -5,7 +5,7 @@ import { appendEvent, type Actor } from "../infra/evidence";
 import { enqueue } from "../infra/queue";
 import type { Db } from "../infra/db";
 import { AppError, badRequest, conflict, notFound } from "../lib/errors";
-import { sha256Hex, uuidv7 } from "../lib/util";
+import { BUMP_UPDATED_AT, sha256Hex, uuidv7 } from "../lib/util";
 import { telegramLinkFor } from "./telegram";
 import { resolveSessionToken, SIGNER_TOKEN_RE } from "./signer-token";
 import { clientInfo, type Services } from "./context";
@@ -113,7 +113,7 @@ export async function declineEvidence(db: Db, req: FastifyRequest, r: any, envel
       data.recipient = signer.label;
       data.actorRole = "in_person_host";
       return {
-        actor: { type: "user", id: hostUserId, label: host ? `${host.name} <${host.email}>` : null, ip: signer.ip, userAgent: signer.userAgent } as Actor,
+        actor: { type: "user", id: hostUserId, label: host ? `${host.name} <${host.email}>` : "Anfitrión (usuario eliminado)", ip: signer.ip, userAgent: signer.userAgent } as Actor,
         data,
       };
     }
@@ -172,6 +172,7 @@ export async function buildSession(db: Db, token: string, r: any, e: any, authed
       senderName: sender?.name ?? (rebrands(wl) || e.brand_id ? wl.name : org?.name) ?? productLabel(wl),
       organizationName: rebrands(wl) || e.brand_id ? wl.name : org?.name ?? "",
       expiresAt: e.expires_at ? new Date(e.expires_at).toISOString() : null,
+      locale: e.locale ?? "es",
     },
     recipient: {
       id: r.id,
@@ -458,7 +459,7 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
       if (e.status !== "sent" || pastExpiry(e)) throw new AppError(410, "envelope_closed", "El sobre ya no está disponible");
       if ((r.role !== "signer" && r.role !== "approver") || !["sent", "viewed"].includes(r.status)) throw conflict("not_signable", "No podés rechazar este sobre");
       await t.query(`UPDATE recipients SET status = 'declined', declined_at = now(), decline_reason = $2 WHERE id = $1`, [r.id, input.reason]);
-      await t.query(`UPDATE envelopes SET status = 'declined', updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 millisecond'), version = version + 1 WHERE id = $1`, [e.id]);
+      await t.query(`UPDATE envelopes SET status = 'declined', updated_at = ${BUMP_UPDATED_AT}, version = version + 1 WHERE id = $1`, [e.id]);
       await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "recipient.declined", ...(await declineEvidence(t, req, r, e.id, input.reason)) });
       await enqueue(t, "notify", { kind: "sender_declined", envelopeId: e.id, tenantId: e.tenant_id, declinedBy: r.id });
       const others = (await t.query<any>(`SELECT * FROM recipients WHERE envelope_id = $1 AND id <> $2 AND status IN ('sent','viewed','signed')`, [e.id, r.id])).filter(

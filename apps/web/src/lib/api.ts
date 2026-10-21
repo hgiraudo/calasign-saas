@@ -452,6 +452,23 @@ const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
   too_many_documents: { "pt-BR": "Há documentos demais.", en: "Too many documents." },
   weak_password: { "pt-BR": "A senha precisa ter pelo menos 10 caracteres.", en: "The password must be at least 10 characters long." },
   invalid_csv: { "pt-BR": "O CSV tem erros: revise as colunas e o formato.", en: "The CSV has errors: check the columns and the format." },
+  csv_encoding: {
+    "pt-BR": "O arquivo tem caracteres que não puderam ser lidos: salve-o como \"CSV UTF-8\" e envie de novo.",
+    en: "The file has characters that couldn't be read: save it as \"CSV UTF-8\" and upload it again.",
+  },
+  template_in_use_bulk: {
+    "pt-BR": "O modelo está sendo usado em um envio em massa em andamento: espere terminar (ou cancele-o) antes de alterá-lo ou excluí-lo.",
+    en: "The template is being used by a bulk send in progress: wait for it to finish (or cancel it) before changing or deleting it.",
+  },
+  template_changed: {
+    "pt-BR": "O modelo mudou enquanto o envio era preparado: valide o arquivo de novo e envie outra vez.",
+    en: "The template changed while the send was being prepared: validate the file again and resend.",
+  },
+  template_not_sendable: {
+    "pt-BR": "O modelo não pode ser enviado: cada papel signatário precisa de um campo de assinatura e as fórmulas não podem citar campos que não existem.",
+    en: "The template can't be sent: every signer role needs a signature field and formulas can't reference fields that no longer exist.",
+  },
+  invalid_expiry: { "pt-BR": "A data de vencimento é inválida ou já passou.", en: "The expiration date is invalid or has already passed." },
   duplicate_ids: { "pt-BR": "Há IDs de destinatários repetidos.", en: "Some recipient IDs are repeated." },
   id_in_use: { "pt-BR": "O ID do destinatário já está em uso.", en: "The recipient ID is already in use." },
   crm_account_unknown: {
@@ -525,6 +542,11 @@ const PROBLEM_TEXT: Record<string, Record<"es" | "pt-BR" | "en", string>> = {
     es: "{name}: para exigir que el certificado corresponda a su documento hay que cargar el número de documento",
     "pt-BR": "{name}: para exigir que o certificado corresponda ao documento é preciso informar o número do documento",
     en: "{name}: to require the certificate to match their ID document, enter the document number",
+  },
+  telegram_unlinked: {
+    es: "{name}: tiene solo Telegram y no tiene un chat vinculado; agregá correo o WhatsApp (o vinculá su Telegram)",
+    "pt-BR": "{name}: tem só Telegram e nenhum chat vinculado; adicione e-mail ou WhatsApp (ou vincule o Telegram)",
+    en: "{name}: has only Telegram and no linked chat; add email or WhatsApp (or link their Telegram)",
   },
   payer_not_signer: {
     es: "Quien paga el cobro tiene que ser un firmante",

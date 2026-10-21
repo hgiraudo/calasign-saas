@@ -10,7 +10,7 @@ import type { Db } from "../../infra/db";
 import { SYSTEM, appendEvent, type Actor } from "../../infra/evidence";
 import type { BlobStore } from "../../infra/storage";
 import { AppError, conflict, notFound } from "../../lib/errors";
-import { iso, sha256Hex, uuidv7 } from "../../lib/util";
+import { BUMP_UPDATED_AT, iso, sha256Hex, uuidv7 } from "../../lib/util";
 import { authenticate, type Services } from "../context";
 import { guardedFetch, resolveSealLevel, trustAnchors } from "../evidence-seal";
 import { discardBlobsOnFailure } from "../file-cleanup";
@@ -150,7 +150,7 @@ async function renewClaimed(d: Deps, envelopeId: string, tsaUrl: string, actor: 
     );
     await t.query(
       `UPDATE envelopes SET signed_file_id = $2, archive_valid_until = $3, archive_checked_at = now(), archive_renewals = archive_renewals + 1,
-         archive_error = $4, updated_at = now() WHERE id = $1`,
+         archive_error = $4, updated_at = ${BUMP_UPDATED_AT} WHERE id = $1`,
       [e.id, fileId, next.last!.tsaNotAfter, notExtended ? "La TSA actual vence igual o antes que la anterior: conviene renovar con otra TSA" : null],
     );
     // El repositorio de acuerdos y los enlaces de descarga vigentes pasan a la versión renovada (si no, seguían

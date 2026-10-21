@@ -310,7 +310,7 @@ export const docsPt: Record<DocsKey, string> = {
     "Este endpoint aceita `Idempotency-Key`: envie uma chave única por envelope e, se tentar de novo após um timeout ou um 5xx com a mesma chave e o mesmo corpo, você recebe o envelope já criado em vez de criar (e enviar) outro.",
   "g.tpl.prefill.h": "Pré-preencher campos",
   "g.tpl.prefill.p":
-    "`prefill` é um objeto `{ \"clave\": \"valor\" }` em que a chave é o `id` de um campo do modelo ou o seu **rótulo** (`label`, sem diferenciar maiúsculas). Se vários campos compartilham o rótulo, todos são preenchidos. Uma chave que não corresponde a nenhum campo retorna `400 unknown_prefill`. Os campos com `readOnly` no modelo ficam bloqueados para o signatário.",
+    "`prefill` é um objeto `{ \"clave\": \"valor\" }` em que a chave é o `id` de um campo do modelo ou o seu **rótulo** (`label`, sem diferenciar maiúsculas nem espaços nas pontas). Pelo rótulo são preenchidos todos os campos com esse rótulo que aceitam um valor (texto, número, lista, empresa ou cargo; editáveis e sem fórmula). Uma chave que não corresponde a nenhum campo retorna `400 unknown_prefill`. Os campos com `readOnly` no modelo ficam bloqueados para o signatário.",
   // ───────── Guia: assinatura incorporada ─────────
   "g.embed.title": "Assinatura incorporada",
   "g.embed.lead":

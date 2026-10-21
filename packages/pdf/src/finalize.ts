@@ -550,14 +550,16 @@ function drawField(page: PDFPage, fonts: Fonts, f: StampField, img: PDFImage | n
     const raw = f.type === "attachment" ? (f.value ? `${L.attachment}: ${f.value}` : "") : (f.value ?? "");
     const text = safeText(fonts.regular, raw.replace(/\s+/g, " ").trim());
     if (!text) return;
-    const fit = layoutFieldText(fonts.regular, text, bw, bh);
-    // Sin recorte al rectángulo del campo: en un documento firmado no se puede perder ningún carácter del valor. Si ni
-    // al tamaño mínimo entra en una línea, se dibuja igual (sobresale de la caja, como siempre) en vez de ocultarse.
+    // Lugar hasta el borde visible de la página: las líneas que no entran en la caja siguen hacia abajo sin salir de
+    // la hoja (ver layoutFieldText).
+    const fit = layoutFieldText(fonts.regular, text, bw, bh, { below: Math.min(by + bh, H) - 2, right: W - bx });
+    // Sin recorte al rectángulo del campo: en un documento firmado no se puede perder ningún carácter del valor.
     if (!fit.wrapped) {
       page.drawText(fit.lines[0]!, { x: bx + 1, y: by + (bh - fit.size * 0.72) / 2, size: fit.size, font: fonts.regular, color: INK });
     } else {
       const lh = fit.size * FIELD_LINE_HEIGHT;
-      const top = by + (bh + fit.lines.length * lh) / 2;
+      // Entra en la caja: centrado en el alto. No entra: desde el borde de arriba de la caja hacia abajo.
+      const top = fit.overflows ? Math.min(by + bh, H) : by + (bh + fit.lines.length * lh) / 2;
       fit.lines.forEach((line, i) => {
         page.drawText(line, { x: bx + 1, y: top - i * lh - fit.size * 0.9, size: fit.size, font: fonts.regular, color: INK });
       });
@@ -568,29 +570,73 @@ function drawField(page: PDFPage, fonts: Fonts, f: StampField, img: PDFImage | n
 /** Debajo de este tamaño el texto estampado se considera difícil de leer (la web avisa al firmante). No trunca nada. */
 export const FIELD_LEGIBLE_FONT_SIZE = 6;
 const FIELD_LINE_HEIGHT = 1.15;
+/** Tamaño mínimo dentro de la caja; más chico sólo para no salirse de la página. */
+const FIELD_MIN_WRAP_SIZE = 4;
+const FIELD_MIN_PAGE_SIZE = 1;
+
+export interface FieldTextLayout {
+  size: number;
+  lines: string[];
+  /** Más de una línea (o partido): se dibuja línea por línea. */
+  wrapped: boolean;
+  /** Las líneas no entran en el alto de la caja y siguen hacia abajo (sin salir de la página). */
+  overflows: boolean;
+}
 
 /**
- * Cómo entra el texto de un campo en su caja (bw × bh, en puntos), SIN perder nunca un carácter:
- * - en una línea achicando como siempre (de min(0.7·alto, 11) hasta 4 pt; si ni así entra, sobresale: `overflows`);
- * - si el texto tiene espacios y partido en líneas sólo entre palabras (nunca dentro de una: un correo, un importe o
- *   un número largo no se cortan) entra en el alto a un tamaño mayor que en una línea, va en varias líneas.
+ * Cómo entra el texto de un campo en su caja (bw × bh, en puntos). Regla definitiva (nunca se pierde un carácter, nunca
+ * se recorta ni se dibuja fuera de la página):
+ * 1. Si entra en UNA línea al tamaño que elegía siempre fitFontSize (de min(0.7·alto, 11) pt achicando de a 0.25) y ese
+ *    tamaño es ≥ FIELD_LEGIBLE_FONT_SIZE (6 pt): una línea exactamente como antes, sin partir (las plantillas
+ *    existentes no cambian; una caja alta que sólo necesitaba achicar un poco no se parte).
+ * 2. Si no, se parte: primero en los espacios; los grupos numéricos "pegados" (importes, teléfonos) van juntos si entran
+ *    en una línea; una palabra que no entra en el ancho se parte por carácter (grafema): CJK, tailandés, nombres de
+ *    archivo, números largos. Se elige el mayor tamaño entre 4 pt y min(0.7·alto, 11) con el que todas las líneas entran
+ *    en el alto de la caja (un grupo o número sin letras sólo se parte si a ningún tamaño ≥ 4 pt entra entero).
+ * 3. Si ni a 4 pt entran en el alto, quedan a 4 pt y las líneas de más siguen debajo de la caja, hasta el borde visible
+ *    de la página (`room`); si ni así entran, se achica más (hasta 1 pt) para que todo quede dentro de la página.
+ * El ancho de partido es el de la caja, limitado por el borde derecho de la página.
  */
-export function layoutFieldText(font: PDFFont, text: string, bw: number, bh: number): { size: number; lines: string[]; wrapped: boolean; overflows: boolean } {
+export function layoutFieldText(font: PDFFont, text: string, bw: number, bh: number, room: { below?: number; right?: number } = {}): FieldTextLayout {
   const maxW = bw - 2;
   const maxSize = Math.min(bh * 0.7, 11);
   const single = fitFontSize(font, text, maxW, maxSize);
-  const singleFits = font.widthOfTextAtSize(text, single) <= maxW;
-  if (singleFits && single >= maxSize) return { size: single, lines: [text], wrapped: false, overflows: false };
+  if (single >= FIELD_LEGIBLE_FONT_SIZE && font.widthOfTextAtSize(text, single) <= maxW) return { size: single, lines: [text], wrapped: false, overflows: false };
+
+  const width = widthAt1(font);
   const units = wrapUnits(text);
-  if (units.length > 1) {
-    for (let s = Math.min(maxSize, bh / (2 * FIELD_LINE_HEIGHT)); s > single; s -= 0.25) {
-      const lines = greedyLines(font, units, s, maxW);
-      if (lines.length > 1 && lines.length * s * FIELD_LINE_HEIGHT <= bh && lines.every((l) => font.widthOfTextAtSize(l, s) <= maxW)) {
-        return { size: s, lines, wrapped: true, overflows: false };
-      }
+  const wrapW = Math.max(1, Math.min(bw, room.right ?? Infinity) - 2);
+  const minSize = Math.min(FIELD_MIN_WRAP_SIZE, maxSize);
+  const result = (size: number, lines: string[]): FieldTextLayout => {
+    const overflows = lines.length * size * FIELD_LINE_HEIGHT > bh + 1e-6;
+    return { size, lines, wrapped: lines.length > 1 || overflows, overflows };
+  };
+  const sizes: number[] = [];
+  for (let s = maxSize; s > minSize; s -= 0.25) sizes.push(s);
+  sizes.push(minSize);
+  // Un importe, teléfono o número no se parte si a algún tamaño ≥ 4 pt entra entero en una línea; las palabras con
+  // letras (incluido CJK o tailandés, sin espacios) se parten por carácter al mayor tamaño posible.
+  for (const numbersWhole of [true, false]) {
+    for (const s of sizes) {
+      const w = wrapFieldUnits(units, width, s, wrapW);
+      if ((!numbersWhole || !w.numberSplit) && !w.tooWide && w.lines.length * s * FIELD_LINE_HEIGHT <= bh + 1e-6) return result(s, w.lines);
     }
   }
-  return { size: single, lines: [text], wrapped: false, overflows: !singleFits };
+  const availH = Math.max(1, room.below ?? Infinity);
+  for (let s = minSize; ; s -= 0.25) {
+    const w = wrapFieldUnits(units, width, s, wrapW);
+    if ((!w.tooWide && w.lines.length * s * FIELD_LINE_HEIGHT <= availH + 1e-6) || s - 0.25 < FIELD_MIN_PAGE_SIZE) return result(s, w.lines);
+  }
+}
+
+/** Ancho a 1 pt, con caché (el ancho es proporcional al tamaño; sumar anchos de partes nunca da menos que el real). */
+function widthAt1(font: PDFFont): (s: string) => number {
+  const cache = new Map<string, number>();
+  return (s) => {
+    let w = cache.get(s);
+    if (w === undefined) cache.set(s, (w = font.widthOfTextAtSize(s, 1)));
+    return w;
+  };
 }
 
 /**
@@ -609,20 +655,58 @@ function wrapUnits(text: string): string[] {
   return units;
 }
 
-/** Arma líneas sin partir ninguna unidad (una más ancha que `maxW` queda sola en su línea, más ancha). */
-function greedyLines(font: PDFFont, units: string[], size: number, maxW: number): string[] {
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+/**
+ * Líneas de a lo sumo `maxW` a tamaño `size`: se corta en los espacios; una unidad que no entra sola en el ancho se
+ * separa en sus palabras, y una palabra que no entra se parte por grafema. `tooWide`: algún grafema solo ya es más
+ * ancho que `maxW` (va solo en su línea). `numberSplit`: hubo que partir un grupo o token sin letras (importe, número).
+ */
+function wrapFieldUnits(units: string[], width: (s: string) => number, size: number, maxW: number): { lines: string[]; tooWide: boolean; numberSplit: boolean } {
   const lines: string[] = [];
+  const sp = width(" ") * size;
   let line = "";
+  let lineW = 0;
+  let tooWide = false;
+  let numberSplit = false;
+  const add = (tok: string, w: number): boolean => {
+    if (line && lineW + sp + w <= maxW) {
+      line += ` ${tok}`;
+      lineW += sp + w;
+      return true;
+    }
+    if (w <= maxW) {
+      if (line) lines.push(line);
+      line = tok;
+      lineW = w;
+      return true;
+    }
+    return false;
+  };
   for (const u of units) {
-    const candidate = line ? `${line} ${u}` : u;
-    if (!line || font.widthOfTextAtSize(candidate, size) <= maxW) line = candidate;
-    else {
-      lines.push(line);
-      line = u;
+    if (add(u, width(u) * size)) continue;
+    if (!/\p{L}/u.test(u)) numberSplit = true;
+    for (const tok of u.split(" ")) {
+      if (add(tok, width(tok) * size)) continue;
+      if (line) lines.push(line);
+      line = "";
+      lineW = 0;
+      for (const { segment: ch } of graphemes.segment(tok)) {
+        const cw = width(ch) * size;
+        if (cw > maxW) tooWide = true;
+        if (line && lineW + cw > maxW) {
+          lines.push(line);
+          line = ch;
+          lineW = cw;
+        } else {
+          line += ch;
+          lineW += cw;
+        }
+      }
     }
   }
   if (line) lines.push(line);
-  return lines;
+  return { lines, tooWide, numberSplit };
 }
 
 function drawPageFooter(page: PDFPage, fonts: Fonts, L: CertLabels, envelopeId: string) {

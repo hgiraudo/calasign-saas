@@ -18,7 +18,8 @@ import { hasPerm } from "../access";
 import { authenticate, type AuthContext, type Services } from "../context";
 import { VALUE_FIELD_TYPES, checkSenderValue, insertEnvelopeField } from "../fieldvalues";
 import { applyCertificateFlags } from "../certsign";
-import { applyIdentityFlags } from "../identity/kyc";
+import { applyIdentityFlags, providerReady } from "../identity/kyc";
+import { explicitRequirements } from "../certsign-requirements";
 import { copyFieldLogic } from "../logic";
 import { loadDetail, loadDocuments } from "../mappers";
 
@@ -122,8 +123,28 @@ export async function loadFormData(s: Services, tenantId: string, envelopeId: st
   };
 }
 
-/** Clona un sobre como borrador nuevo. Devuelve el id. Corre dentro de la transacción del llamador. */
-export async function cloneEnvelope(t: Services["db"], a: AuthContext, sourceId: string, input: CloneEnvelopeInput): Promise<string> {
+/**
+ * Algo del original que el clon no pudo conservar tal cual (el borrador se crea igual; se informa en la respuesta y en
+ * el evento envelope.created):
+ * - telegram_relink_required: el chat de Telegram no se copia (es de quien abrió el link del original). Si Telegram
+ *   es su único canal (`telegramOnly`), el envío falla (422 telegram_unlinked) hasta cargar telegramChatId o agregar
+ *   email/WhatsApp; si no, recibe el link por sus otros canales y vuelve a vincular Telegram desde él.
+ * - identity_verification_dropped: verificación de identidad quitada (`reason`: plan sin kyc, proveedor no configurado).
+ * - certificate_id_match_dropped: el control de que el certificado corresponda al documento se bajó (no tiene número de
+ *   documento cargado), con la marca idDocumentMatchSkipped para la evidencia.
+ */
+export interface CloneWarning {
+  code: "telegram_relink_required" | "identity_verification_dropped" | "certificate_id_match_dropped";
+  /** Destinatario del clon. */
+  recipientId: string;
+  recipient: string;
+  reason?: string;
+  telegramOnly?: boolean;
+  message: string;
+}
+
+/** Clona un sobre como borrador nuevo. Devuelve el id y los avisos. Corre dentro de la transacción del llamador. */
+export async function cloneEnvelope(t: Services["db"], a: AuthContext, sourceId: string, input: CloneEnvelopeInput): Promise<{ id: string; warnings: CloneWarning[] }> {
   // FOR SHARE: espera a una purga por retención en curso (que bloquea el sobre) y ve su purged_at.
   const src = await t.one<any>(`SELECT * FROM envelopes WHERE id = $1 AND tenant_id = $2 FOR SHARE`, [sourceId, a.tenantId]);
   if (!src) throw notFound("Sobre");
@@ -170,7 +191,19 @@ export async function cloneEnvelope(t: Services["db"], a: AuthContext, sourceId:
     const cert = await t.one(`SELECT 1 FROM tenant_certificates WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL FOR SHARE`, [src.company_seal_certificate_id, a.tenantId]);
     if (!cert) await t.query(`UPDATE envelopes SET company_seal_certificate_id = NULL WHERE id = $1`, [id]);
   }
-  await appendEvent(t, { tenantId: a.tenantId, envelopeId: id, type: "envelope.created", actor: a.actor, data: { subject: input.subject ?? src.subject, clonedFrom: src.id } });
+  const warnings: CloneWarning[] = [];
+  const recMap = includeRecipients ? await cloneRecipients(t, a, src.id, id, warnings) : new Map<string, string>();
+  await appendEvent(t, {
+    tenantId: a.tenantId,
+    envelopeId: id,
+    type: "envelope.created",
+    actor: a.actor,
+    data: {
+      subject: input.subject ?? src.subject,
+      clonedFrom: src.id,
+      ...(warnings.length ? { warnings: warnings.map(({ code, recipientId, reason, telegramOnly }) => ({ code, recipientId, reason, telegramOnly })) } : {}),
+    },
+  });
 
   // Documentos: los archivos son inmutables, el clon referencia los mismos originales.
   const docMap = new Map<string, string>();
@@ -189,56 +222,7 @@ export async function cloneEnvelope(t: Services["db"], a: AuthContext, sourceId:
       data: { documentId: nd, name: d.name, sha256: d.sha256, pages: d.page_count, clonedFrom: src.id },
     });
   }
-  if (!includeRecipients) return id;
-
-  // Destinatarios vigentes (no los reemplazados por una delegación o reasignación: su reemplazo ya está en la lista).
-  const recMap = new Map<string, string>();
-  const recips = await t.query<any>(
-    `SELECT id, role, id_verification_provider, id_verification_level, signature_type, certificate_requirements
-       FROM recipients WHERE envelope_id = $1 AND status NOT IN ('delegated','reassigned') ORDER BY routing_order, created_at, id`,
-    [src.id],
-  );
-  const cols = RECIPIENT_CONFIG_COLUMNS.join(", ");
-  for (const r of recips) {
-    const nr = uuidv7();
-    recMap.set(r.id, nr);
-    await t.query(
-      `INSERT INTO recipients (id, tenant_id, envelope_id, ${cols}) SELECT $1, tenant_id, $2, ${cols} FROM recipients WHERE id = $3`,
-      [nr, id, r.id],
-    );
-  }
-  // El anfitrión de una firma en persona del original pudo dejar la organización: sin él nadie abre la sesión y ese
-  // firmante no recibe invitación, así que el sobre quedaba trabado al enviarlo. Como en replaceRecipient, firma por link.
-  await t.query(
-    `UPDATE recipients r SET in_person_host_user_id = NULL, auth_method = 'link'
-      WHERE r.envelope_id = $1 AND r.in_person_host_user_id IS NOT NULL
-        AND NOT EXISTS (SELECT 1 FROM memberships m WHERE m.tenant_id = r.tenant_id AND m.user_id = r.in_person_host_user_id)`,
-    [id],
-  );
-  // Sin el chat de Telegram copiado, un destinatario solo por Telegram no tendría por dónde recibir su link: se le
-  // suma el correo (o WhatsApp) que ya tiene. Sin ninguno queda para completar en el borrador.
-  await t.query(
-    `UPDATE recipients SET channels = CASE WHEN email IS NOT NULL THEN array_append(channels, 'email') ELSE array_append(channels, 'whatsapp') END
-      WHERE envelope_id = $1 AND NOT embedded AND in_person_host_user_id IS NULL AND channels <@ ARRAY['telegram']::text[]
-        AND (email IS NOT NULL OR phone IS NOT NULL)`,
-    [id],
-  );
-  // Verificación de identidad y firma con certificado: con los mismos controles que PUT recipients (plan con kyc,
-  // proveedor configurado, rol firmante, número de documento).
-  const cloned = recips.map((r) => ({ ...r, id: recMap.get(r.id)! }));
-  await applyIdentityFlags(
-    t,
-    id,
-    cloned.filter((r) => r.id_verification_provider).map((r) => ({ id: r.id, role: r.role, idVerification: { provider: r.id_verification_provider, level: r.id_verification_level ?? undefined } })),
-  );
-  await applyCertificateFlags(
-    t,
-    id,
-    cloned
-      .filter((r) => r.signature_type === "certificate")
-      .map((r) => ({ id: r.id, role: r.role, signatureType: "certificate" as const, certificateRequirements: r.certificate_requirements ?? undefined })),
-  );
-  if (!includeFields) return id;
+  if (!includeFields) return { id, warnings };
 
   const fields = await t.query<any>(`SELECT * FROM fields WHERE envelope_id = $1`, [src.id]);
   const fieldMap = new Map<string, string>();
@@ -283,7 +267,101 @@ export async function cloneEnvelope(t: Services["db"], a: AuthContext, sourceId:
     });
   }
   await copyFieldLogic(t, "fields", fields, fieldMap);
-  return id;
+  return { id, warnings };
+}
+
+/** Copia los destinatarios vigentes del original al clon `id`. Devuelve original → clon; los avisos van en `warnings`. */
+async function cloneRecipients(t: Services["db"], a: AuthContext, srcId: string, id: string, warnings: CloneWarning[]): Promise<Map<string, string>> {
+  // Destinatarios vigentes (no los reemplazados por una delegación o reasignación: su reemplazo ya está en la lista).
+  const recMap = new Map<string, string>();
+  const recips = await t.query<any>(
+    `SELECT id, role, name, id_document_number, id_verification_provider, id_verification_level, signature_type, certificate_requirements
+       FROM recipients WHERE envelope_id = $1 AND status NOT IN ('delegated','reassigned') ORDER BY routing_order, created_at, id`,
+    [srcId],
+  );
+  const cols = RECIPIENT_CONFIG_COLUMNS.join(", ");
+  for (const r of recips) {
+    const nr = uuidv7();
+    recMap.set(r.id, nr);
+    await t.query(
+      `INSERT INTO recipients (id, tenant_id, envelope_id, ${cols}) SELECT $1, tenant_id, $2, ${cols} FROM recipients WHERE id = $3`,
+      [nr, id, r.id],
+    );
+  }
+  // El anfitrión de una firma en persona del original pudo dejar la organización: sin él nadie abre la sesión y ese
+  // firmante no recibe invitación, así que el sobre quedaba trabado al enviarlo. Como en replaceRecipient, firma por link.
+  await t.query(
+    `UPDATE recipients r SET in_person_host_user_id = NULL, auth_method = 'link'
+      WHERE r.envelope_id = $1 AND r.in_person_host_user_id IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM memberships m WHERE m.tenant_id = r.tenant_id AND m.user_id = r.in_person_host_user_id)`,
+    [id],
+  );
+  // El chat de Telegram no se copia (es de quien abrió el link del original): los canales quedan como estaban (no se
+  // agrega email/WhatsApp a quien eligió solo Telegram) y se avisa para volver a vincular. Solo Telegram y sin chat, el
+  // envío lo rechaza (telegram_unlinked) hasta cargar telegramChatId o agregar otro canal.
+  for (const r of await t.query<{ id: string; name: string; channels: string[] }>(
+    `SELECT id, name, channels FROM recipients WHERE envelope_id = $1 AND NOT embedded AND in_person_host_user_id IS NULL AND 'telegram' = ANY(channels)
+      ORDER BY routing_order, created_at, id`,
+    [id],
+  )) {
+    const telegramOnly = r.channels.every((c) => c === "telegram");
+    warnings.push({
+      code: "telegram_relink_required",
+      recipientId: r.id,
+      recipient: r.name,
+      telegramOnly,
+      message: telegramOnly
+        ? `${r.name}: el chat de Telegram no se copia; cargá telegramChatId o agregá email/WhatsApp antes de enviar`
+        : `${r.name}: el chat de Telegram no se copia; recibe el link por sus otros canales y vuelve a vincular Telegram desde él`,
+    });
+  }
+  // Verificación de identidad y firma con certificado: pasan por los mismos controles que PUT recipients, pero lo que el
+  // plan o el entorno actual ya no admiten se quita (con aviso) en vez de impedir el clonado.
+  const cloned = recips.map((r) => ({ ...r, id: recMap.get(r.id)! }));
+  const withIdv = cloned.filter((r) => r.id_verification_provider);
+  const hasKyc = withIdv.length > 0 && (await tenantPlan(t, a.tenantId)).plan.features.includes("kyc");
+  const idv: { id: string; role: string; idVerification: { provider: any; level?: any } }[] = [];
+  for (const r of withIdv) {
+    const reason = !hasKyc ? "plan_without_kyc" : !providerReady(r.id_verification_provider) ? "provider_unavailable" : r.role === "cc" ? "not_applicable" : null;
+    if (!reason) {
+      idv.push({ id: r.id, role: r.role, idVerification: { provider: r.id_verification_provider, level: r.id_verification_level ?? undefined } });
+      continue;
+    }
+    warnings.push({
+      code: "identity_verification_dropped",
+      recipientId: r.id,
+      recipient: r.name,
+      reason,
+      message:
+        reason === "plan_without_kyc"
+          ? `${r.name}: se quitó la verificación de identidad (el plan actual no la incluye)`
+          : reason === "provider_unavailable"
+            ? `${r.name}: se quitó la verificación de identidad (el proveedor ${r.id_verification_provider} no está configurado)`
+            : `${r.name}: se quitó la verificación de identidad (no aplica a copias)`,
+    });
+  }
+  await applyIdentityFlags(t, id, idv);
+  const certs = cloned.filter((r) => r.signature_type === "certificate" && r.role === "signer");
+  await applyCertificateFlags(
+    t,
+    id,
+    certs.map((r) => {
+      let req = r.certificate_requirements ?? undefined;
+      if (req?.matchIdDocument === true && !String(r.id_document_number ?? "").trim()) {
+        // Como downgradeIdMatchSql: sin documento no hay con qué comparar; queda la marca para la evidencia.
+        req = { ...explicitRequirements(req), matchIdDocument: false, idDocumentMatchSkipped: true };
+        warnings.push({
+          code: "certificate_id_match_dropped",
+          recipientId: r.id,
+          recipient: r.name,
+          reason: "missing_id_document",
+          message: `${r.name}: no se exige que el certificado corresponda a su documento (no tiene número de documento cargado)`,
+        });
+      }
+      return { id: r.id, role: r.role, signatureType: "certificate" as const, certificateRequirements: req };
+    }),
+  );
+  return recMap;
 }
 
 /** Operación individual que ejecuta cada elemento de un lote (misma política, auditoría y validaciones). */
@@ -324,9 +402,9 @@ export async function envelopeOpsRoutes(app: FastifyInstance, s: Services) {
     const a = A(req);
     if (!hasPerm(a, "envelopes:create")) throw new AppError(403, "forbidden", "No podés crear sobres", { permission: "envelopes:create" });
     const input = CloneEnvelopeInput.parse(req.body ?? {});
-    const id = await s.db.tx((t) => cloneEnvelope(t, a, req.params.id, input));
+    const { id, warnings } = await s.db.tx((t) => cloneEnvelope(t, a, req.params.id, input));
     reply.code(201);
-    return loadDetail(s.db, a.tenantId, id);
+    return { ...(await loadDetail(s.db, a.tenantId, id)), warnings };
   });
 
   // Lote: cada elemento se ejecuta como su pedido individual (app.inject con la misma credencial), así aplican la

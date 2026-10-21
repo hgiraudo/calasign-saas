@@ -1,7 +1,7 @@
 // Envío masivo (Fase 4): listado, asistente (plantilla → CSV → revisar y enviar) y detalle con progreso.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import type { BulkSend, BulkSendItem, BulkValidationResult, TemplateSummary } from "@calasign/shared";
+import type { BulkSend, BulkSendItem, BulkValidationResult, TemplateDetail, TemplateSummary } from "@calasign/shared";
 import { api, errorText, HttpError, uuid } from "../lib/api";
 import { formatDateTime, useI18n } from "../lib/i18n";
 import { useScaleText } from "../lib/i18n-scale";
@@ -120,6 +120,18 @@ export function BulkListPage() {
 
 // ───────────────────────────── Asistente ─────────────────────────────
 
+/**
+ * Texto del CSV elegido: UTF-8 si lo es (con o sin BOM); si no, Windows-1252, como lo guarda Excel en Windows con
+ * "CSV (delimitado por comas)". Antes se leía siempre como UTF-8 y las letras con tilde llegaban como "�" a los sobres.
+ */
+function decodeCsv(buf: ArrayBuffer): string {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(buf);
+  } catch {
+    return new TextDecoder("windows-1252").decode(buf);
+  }
+}
+
 export function BulkNewPage() {
   const st = useScaleText();
   const { t } = useI18n();
@@ -138,14 +150,36 @@ export function BulkNewPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api<{ items: TemplateSummary[] }>("/v1/templates")
-      .then((r) => {
-        setTemplates(r.items);
-        // Una plantilla de la URL que no está en la lista (borrada o sin acceso): el select mostraba la primera pero se
-        // validaba y enviaba con la de la URL (404).
-        setTemplateId((cur) => (r.items.some((x) => x.id === cur) ? cur : (r.items[0]?.id ?? "")));
-      })
-      .catch((e) => setError(errorText(e)));
+    let alive = true;
+    const wanted = params.get("template") ?? "";
+    (async () => {
+      const r = await api<{ items: TemplateSummary[] }>("/v1/templates");
+      let items = r.items;
+      // La lista trae hasta 200: una plantilla de la URL que no está ahí se pide aparte. Si no existe o no hay acceso,
+      // se avisa y no se elige ninguna (antes quedaba elegida la primera de la lista sin decir nada).
+      if (wanted && !items.some((x) => x.id === wanted)) {
+        try {
+          if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(wanted)) throw new HttpError(404, "not_found", "");
+          const d = await api<TemplateDetail>(`/v1/templates/${encodeURIComponent(wanted)}`);
+          const extra: TemplateSummary = { ...d.template, documentCount: d.documents.length, roles: d.roles.map((x) => ({ name: x.name, role: x.role })) };
+          items = [extra, ...items];
+        } catch (e) {
+          // Un corte de red o un 5xx no es "no existe": se muestra ese error.
+          if (!(e instanceof HttpError) || e.status === 0 || e.status >= 500) throw e;
+          if (!alive) return;
+          setTemplateId("");
+          setError(st("bulk.templateMissing"));
+        }
+      }
+      if (!alive) return;
+      setTemplates(items);
+      if (!wanted) setTemplateId((cur) => cur || (items[0]?.id ?? ""));
+    })().catch((e) => alive && setError(errorText(e)));
+    return () => {
+      alive = false;
+    };
+    // Solo al entrar: la plantilla de la URL es la inicial.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Cada cambio del CSV o de la plantilla invalida la validación, también la que todavía está en camino: si no, una
@@ -207,7 +241,7 @@ export function BulkNewPage() {
     const mine = ++fileSeq.current;
     setFileName(f.name);
     try {
-      const text = await f.text();
+      const text = decodeCsv(await f.arrayBuffer());
       if (mine !== fileSeq.current) return;
       setCsv(text);
       // El error de un archivo anterior que no se pudo leer no queda a la vista con el nuevo ya cargado.
@@ -238,6 +272,7 @@ export function BulkNewPage() {
             <label className="field">
               <span>{st("bulk.template")}</span>
               <select value={templateId} onChange={(e) => setTemplateId(e.target.value)}>
+                {!templateId && <option value="">{st("bulk.chooseTemplate")}</option>}
                 {templates.map((tp) => (
                   <option key={tp.id} value={tp.id}>
                     {tp.name} — {tp.roles.map((r) => r.name).join(", ")}
@@ -454,7 +489,7 @@ export function BulkDetailPage() {
           {/* Solo si hay fallidas que se pueden reintentar (las que fallaron por sus datos se corrigen en un envío nuevo). */}
           {b.status !== "cancelled" && (b.retryable ?? 0) > 0 && (
             <button type="button" className="btn" disabled={busy} onClick={retryFailed}>
-              ↻ {st("bulk.retryFailed")}
+              ↻ {st("bulk.retryFailed")} ({b.retryable})
             </button>
           )}
           {running && (

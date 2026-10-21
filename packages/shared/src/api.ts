@@ -460,6 +460,8 @@ export interface SigningSession {
     senderName: string;
     organizationName: string;
     expiresAt: string | null;
+    /** Idioma del sobre: el del certificado y los rótulos estampados en el PDF (p. ej. "Adjunto: …"). */
+    locale: Locale;
   };
   recipient: {
     id: string;

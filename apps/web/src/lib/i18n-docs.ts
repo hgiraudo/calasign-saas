@@ -318,7 +318,7 @@ export const docsEs = {
     "Este endpoint acepta `Idempotency-Key`: mandá una clave única por sobre y, si reintentás después de un timeout o un 5xx con la misma clave y el mismo cuerpo, recibís el sobre ya creado en lugar de crear (y enviar) otro.",
   "g.tpl.prefill.h": "Prellenar campos",
   "g.tpl.prefill.p":
-    "`prefill` es un objeto `{ \"clave\": \"valor\" }` donde la clave es el `id` de un campo de la plantilla o su **etiqueta** (`label`, sin distinguir mayúsculas). Si varios campos comparten etiqueta, se completan todos. Una clave que no coincide con ningún campo devuelve `400 unknown_prefill`. Los campos con `readOnly` en la plantilla quedan bloqueados para el firmante.",
+    "`prefill` es un objeto `{ \"clave\": \"valor\" }` donde la clave es el `id` de un campo de la plantilla o su **etiqueta** (`label`, sin distinguir mayúsculas ni espacios a los lados). Por etiqueta se completan todos los campos con esa etiqueta que admiten un valor (texto, número, lista, empresa o cargo; editables y sin fórmula). Una clave que no coincide con ningún campo devuelve `400 unknown_prefill`. Los campos con `readOnly` en la plantilla quedan bloqueados para el firmante.",
   // ───────── Guía: firma embebida ─────────
   "g.embed.title": "Firma embebida",
   "g.embed.lead":

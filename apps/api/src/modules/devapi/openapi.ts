@@ -91,6 +91,24 @@ const FormDataSchema = named(
   }),
 );
 
+const CloneResponseSchema = named(
+  "EnvelopeCloneResult",
+  EnvelopeDetailSchema.extend({
+    warnings: z
+      .array(
+        z.object({
+          code: z.enum(["telegram_relink_required", "identity_verification_dropped", "certificate_id_match_dropped"]),
+          recipientId: z.string().uuid().describe("Destinatario del clon."),
+          recipient: z.string(),
+          reason: z.string().optional().describe("identity_verification_dropped: plan_without_kyc, provider_unavailable o not_applicable; certificate_id_match_dropped: missing_id_document."),
+          telegramOnly: z.boolean().optional().describe("telegram_relink_required: Telegram es su único canal (el envío responde 422 telegram_unlinked hasta cargar telegramChatId o agregar email/WhatsApp)."),
+          message: z.string(),
+        }),
+      )
+      .describe("Lo que el clon no pudo conservar tal cual (también queda en el evento envelope.created)."),
+  }),
+);
+
 const BatchResponseSchema = named(
   "EnvelopeBatchResponse",
   z.object({
@@ -163,11 +181,12 @@ export const DEVAPI_OPS: Op[] = [
     summary: "Clonar un sobre como borrador nuevo",
     description:
       "Copia documentos, destinatarios (configuración, no estado) y campos con su lógica, en cualquier estado del original. No copia lo que escribieron los firmantes (salvo `includeValues`, que copia los de los tipos prellenables: text, number, dropdown, company y title), ni adjuntos, firmas ni el cobro. " +
-      "Sin `metadata` en el pedido, la del original se copia con `clonedFrom` (sin las claves que lo atan a un proceso: workflow, formulario, envío masivo, CRM, conector, negociación; se conservan templateId, documentTemplateId, documentProvenance y agreement); con `metadata` propia, esa reemplaza a la copiada (sin claves del sistema). Si el plan ya no incluye la marca blanca, el clon sale con la marca de la organización. El clon vence a los 30 días si no se indica `expiresAt` (con `expiresAt: null`, no vence). Si los originales del sobre se borraron por la política de retención, 409 purged.",
+      "Sin `metadata` en el pedido, la del original se copia con `clonedFrom` (sin las claves que lo atan a un proceso: workflow, formulario, envío masivo, CRM, conector, negociación; se conservan templateId, documentTemplateId, documentProvenance y agreement); con `metadata` propia, esa reemplaza a la copiada (sin claves del sistema). Si el plan ya no incluye la marca blanca, el clon sale con la marca de la organización. El clon vence a los 30 días si no se indica `expiresAt` (con `expiresAt: null`, no vence). Si los originales del sobre se borraron por la política de retención, 409 purged. " +
+      "Lo que el plan o el entorno actual ya no admiten no impide el clonado: se quita y se informa en `warnings` (verificación de identidad sin kyc en el plan o sin proveedor configurado; control del documento del certificado sin número de documento). El chat de Telegram no se copia: los canales quedan iguales y se avisa (`telegram_relink_required`).",
     body: CloneEnvelopeInput,
     bodyOptional: true,
     status: 201,
-    response: EnvelopeDetailSchema,
+    response: CloneResponseSchema,
     errors: ["purged_clone"],
   },
   {

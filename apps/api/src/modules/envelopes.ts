@@ -1027,6 +1027,14 @@ export async function sendEnvelope(t: Db, tenantId: string, envelopeId: string, 
     );
   for (const m of await t.query<{ name: string }>(`SELECT name FROM recipients WHERE envelope_id = $1 AND ${MISSING_ID_DOCUMENT_SQL} ORDER BY routing_order, name`, [e.id]))
     problems.push({ code: "missing_id_document", params: { name: m.name }, message: `${m.name}: para exigir que el certificado corresponda a su documento hay que cargar el número de documento` });
+  // Solo Telegram y sin chat vinculado (p. ej. un clon: el chat no se copia, o se desvinculó): no le llegaría el link.
+  for (const r of recips)
+    if (!r.embedded && !r.in_person_host_user_id && r.channels?.length && r.channels.every((c: string) => c === "telegram") && !r.telegram_chat_id)
+      problems.push({
+        code: "telegram_unlinked",
+        params: { name: r.name },
+        message: `${r.name}: tiene solo Telegram y no tiene un chat vinculado; cargá telegramChatId o agregá email/WhatsApp`,
+      });
   if (e.expires_at && new Date(e.expires_at) <= new Date())
     problems.push({ code: "expiry_past", params: {}, message: "La fecha de vencimiento ya pasó" });
   problems.push(...danglingFormulaProblems(fields));

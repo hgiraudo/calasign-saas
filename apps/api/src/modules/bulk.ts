@@ -8,6 +8,7 @@ import {
   PLANS,
   PLAN_IDS,
   EnvelopeFromTemplateInput,
+  LOCALES,
   type BulkRowError,
   type BulkRowInput,
   type BulkSend,
@@ -25,7 +26,16 @@ import { idempotent } from "./envelopes";
 import { ownerCanStillCreate } from "./owner-check";
 import { envelopesSentThisMonth, planLimitError, requireFeature, tenantPlan } from "./billing/plans";
 import { authenticate, type AuthContext, type Services } from "./context";
-import { insertEnvelopeFromTemplate, loadTemplateDetail, loadTemplateForUse, planFromTemplate, type LoadedTemplate } from "./templates";
+import {
+  insertEnvelopeFromTemplate,
+  isPrefillable,
+  loadTemplateDetail,
+  loadTemplateForUse,
+  normLabel,
+  planFromTemplate,
+  templateSendIssues,
+  type LoadedTemplate,
+} from "./templates";
 
 const CHUNK = 20;
 type FromTemplateInput = ReturnType<typeof EnvelopeFromTemplateInput.parse>;
@@ -82,19 +92,34 @@ function detectDelimiter(src: string): string {
  * memoria. Una comilla sin cerrar al final lanza CsvFileError con la línea donde empieza.
  */
 export function parseCsv(text: string, maxRecords = Infinity): string[][] {
+  return parseCsvWithLines(text, maxRecords).rows;
+}
+
+/**
+ * parseCsv con la línea del archivo donde empieza cada fila (`lines[i]` es la de `rows[i]`): los errores se informan
+ * con el número de línea que se ve al abrir el archivo, contando las líneas vacías y los saltos dentro de comillas.
+ */
+export function parseCsvWithLines(text: string, maxRecords = Infinity): { rows: string[][]; lines: number[] } {
   const src = text.replace(/^\uFEFF/, "");
   const delim = detectDelimiter(src);
   const rows: string[][] = [];
+  const lines: number[] = [];
   let row: string[] = [];
   let cell = "";
   let q = false;
   let line = 1;
   let quoteLine = 0;
+  let recordLine = 1;
   const push = () => {
     row.push(cell);
-    if (row.some((c) => c.trim() !== "")) rows.push(row);
+    if (row.some((c) => c.trim() !== "")) {
+      rows.push(row);
+      lines.push(recordLine);
+    }
     row = [];
     cell = "";
+    // El salto que cierra la fila ya se contó: la próxima empieza en la línea actual.
+    recordLine = line;
   };
   for (let i = 0; i < src.length && rows.length <= maxRecords; i++) {
     const c = src[i];
@@ -120,10 +145,10 @@ export function parseCsv(text: string, maxRecords = Infinity): string[][] {
       push();
     } else cell += c;
   }
-  if (rows.length > maxRecords) return rows;
+  if (rows.length > maxRecords) return { rows, lines };
   if (q) throw new CsvFileError(`Hay una comilla sin cerrar que empieza en la línea ${quoteLine} del archivo`);
   if (cell !== "" || row.length) push();
-  return rows;
+  return { rows, lines };
 }
 
 function csvEscape(v: unknown): string {
@@ -157,17 +182,19 @@ const ATTR_ALIASES: Record<string, keyof BulkRowInput["recipients"][number]> = {
 export function csvToRows(
   text: string,
   roles: { id: string; name: string }[],
-): { rows: BulkRowInput[]; columns: string[]; fileErrors: string[]; tooManyRows?: boolean } {
+): { rows: BulkRowInput[]; columns: string[]; fileErrors: string[]; tooManyRows?: boolean; lines?: number[] } {
   let table: string[][];
+  let lines: number[];
   try {
     // Encabezado + el máximo de filas + 1: con una de más ya se sabe que se pasa, sin leer (ni armar) el resto.
-    table = parseCsv(text, BULK_MAX_ROWS + 1);
+    ({ rows: table, lines } = parseCsvWithLines(text, BULK_MAX_ROWS + 1));
   } catch (e) {
     if (e instanceof CsvFileError) return { rows: [], columns: [], fileErrors: [e.message] };
     throw e;
   }
   if (table.length === 0) return { rows: [], columns: [], fileErrors: ["El CSV está vacío"] };
-  const header = table[0].map((h) => h.trim());
+  // Sin el apóstrofo que agrega una planilla (o csvCell en el modelo) para que un encabezado no se lea como fórmula.
+  const header = table[0].map((h) => h.trim().replace(/^'/, "").trim());
   if (table.length - 1 > BULK_MAX_ROWS) return { rows: [], columns: header, fileErrors: [], tooManyRows: true };
   const fileErrors: string[] = [];
   // Columnas repetidas (también dos alias del mismo dato, p. ej. Cliente.email y Cliente.correo): la última pisaba a la
@@ -178,7 +205,7 @@ export function csvToRows(
     if (prev !== undefined) fileErrors.push(prev.toLowerCase() === h.toLowerCase() ? `Columna "${h}" repetida` : `Las columnas "${prev}" y "${h}" son el mismo dato`);
     else seen.set(key, h);
   };
-  type Col = { kind: "attr"; roleId: string; attr: string } | { kind: "field"; label: string } | { kind: "subject" } | { kind: "ignore" };
+  type Col = { kind: "attr"; roleId: string; attr: string; whatsapp?: boolean } | { kind: "field"; label: string } | { kind: "subject" } | { kind: "ignore" };
   const cols: Col[] = header.map((h) => {
     const lower = h.toLowerCase();
     if (!h) return { kind: "ignore" };
@@ -186,22 +213,24 @@ export function csvToRows(
       dupCheck("subject", h);
       return { kind: "subject" };
     }
+    // Primero un dato de un rol (Rol.email): un rol llamado "Campo" o "Field" no se toma por un campo a prellenar.
+    const dot = h.lastIndexOf(".");
+    const roleName = dot > 0 ? h.slice(0, dot).trim().toLowerCase() : "";
+    const attrKey = dot > 0 ? h.slice(dot + 1).trim().toLowerCase() : "";
+    // Solo claves propias: "Firmante.constructor" leía la función heredada y no daba el error de dato desconocido.
+    const attr = dot > 0 && Object.hasOwn(ATTR_ALIASES, attrKey) ? ATTR_ALIASES[attrKey] : undefined;
+    const role = dot > 0 ? roles.find((r) => r.name.trim().toLowerCase() === roleName) : undefined;
+    if (role && attr) {
+      dupCheck(`attr:${role.id}:${attr}`, h);
+      // Rol.whatsapp: el teléfono, y además el canal WhatsApp.
+      return { kind: "attr", roleId: role.id, attr, whatsapp: attrKey === "whatsapp" };
+    }
     const fm = /^(field|campo)[.:](.+)$/i.exec(h);
     if (fm) {
-      dupCheck(`field:${fm[2].trim().toLowerCase()}`, h);
+      dupCheck(`field:${normLabel(fm[2])}`, h);
       return { kind: "field", label: fm[2].trim() };
     }
-    const dot = h.lastIndexOf(".");
     if (dot > 0) {
-      const roleName = h.slice(0, dot).trim().toLowerCase();
-      const attrKey = h.slice(dot + 1).trim().toLowerCase();
-      // Solo claves propias: "Firmante.constructor" leía la función heredada y no daba el error de dato desconocido.
-      const attr = Object.hasOwn(ATTR_ALIASES, attrKey) ? ATTR_ALIASES[attrKey] : undefined;
-      const role = roles.find((r) => r.name.toLowerCase() === roleName);
-      if (role && attr) {
-        dupCheck(`attr:${role.id}:${attr}`, h);
-        return { kind: "attr", roleId: role.id, attr };
-      }
       if (!role) fileErrors.push(`Columna "${h}": no hay ningún rol "${h.slice(0, dot)}" en la plantilla`);
       else fileErrors.push(`Columna "${h}": dato desconocido (usá name, email, phone, channels o locale)`);
       return { kind: "ignore" };
@@ -211,6 +240,7 @@ export function csvToRows(
   });
   const rows: BulkRowInput[] = table.slice(1).map((cells) => {
     const byRole = new Map<string, Record<string, unknown>>();
+    const whatsapp = new Set<string>();
     const prefill: Record<string, string> = {};
     let subject: string | null = null;
     cols.forEach((c, i) => {
@@ -222,14 +252,24 @@ export function csvToRows(
         const rec = byRole.get(c.roleId) ?? { roleId: c.roleId };
         if (v) {
           if (c.attr === "channels") rec.channels = v.toLowerCase().split(/[|\s,/+]+/).filter(Boolean);
-          else rec[c.attr] = c.attr === "email" ? v.toLowerCase() : v;
+          else if (c.attr === "email") rec.email = v.toLowerCase();
+          // Idioma sin distinguir mayúsculas ("PT-br", "pt_BR"): se guarda como lo espera la API (uno de LOCALES).
+          else if (c.attr === "locale") rec.locale = LOCALES.find((l) => l.toLowerCase() === v.toLowerCase().replace(/_/g, "-")) ?? v;
+          else rec[c.attr] = v;
+          if (c.whatsapp) whatsapp.add(c.roleId);
         }
         byRole.set(c.roleId, rec);
       }
     });
+    for (const roleId of whatsapp) {
+      const rec = byRole.get(roleId)!;
+      // Sin columna de canales, los de siempre (correo si hay correo) más WhatsApp.
+      const base = Array.isArray(rec.channels) && rec.channels.length ? (rec.channels as string[]) : rec.email ? ["email"] : [];
+      rec.channels = [...new Set([...base, "whatsapp"])];
+    }
     return { recipients: [...byRole.values()] as BulkRowInput["recipients"], prefill, subject };
   });
-  return { rows, columns: header, fileErrors };
+  return { rows, columns: header, fileErrors, lines: lines.slice(1) };
 }
 
 /** CSV de ejemplo para una plantilla: una columna por dato de cada rol y por campo prellenable con etiqueta. */
@@ -242,13 +282,14 @@ export function csvSkeleton(tpl: Awaited<ReturnType<typeof loadTemplateDetail>>)
     header.push(...[`${r.name}.name`, `${r.name}.email`, `${r.name}.phone`, `${r.name}.channels`].map(csvCell));
     example.push(csvCell(`Nombre ${r.name}`), csvCell(`${r.name.toLowerCase().replace(/[^a-z0-9]+/g, ".")}@example.com`), csvEscape("+5491100000000"), "email");
   }
+  // Una columna por etiqueta (sin distinguir mayúsculas ni espacios a los lados, como el prellenado), solo si algún
+  // campo con esa etiqueta acepta un valor.
   const labels = new Set<string>();
   for (const f of tpl.fields) {
-    if (!f.label || f.readOnly || f.formula) continue;
-    if (!["text", "number", "dropdown", "company", "title"].includes(f.type)) continue;
-    if (labels.has(f.label)) continue;
-    labels.add(f.label);
-    header.push(csvCell(`field.${f.label}`));
+    if (!f.label?.trim() || !isPrefillable(f)) continue;
+    if (labels.has(normLabel(f.label))) continue;
+    labels.add(normLabel(f.label));
+    header.push(csvCell(`field.${f.label.trim()}`));
     example.push(csvCell(f.type === "dropdown" ? (f.options?.[0] ?? "") : f.type === "number" ? "100" : ""));
   }
   return `${header.join(",")}\r\n${example.join(",")}\r\n`;
@@ -263,19 +304,41 @@ interface Prepared {
   names: string[];
 }
 
+/**
+ * Teléfono como lo escribe la gente o lo deja una planilla: sin espacios, guiones, puntos ni paréntesis, y el prefijo
+ * internacional 00 como +. Solo dígitos (sin +) queda así y la fila da un error propio (ver prepareRows): agregarle un
+ * + adivinando no es seguro (un número nacional, p. ej. 11 98765-4321 de São Paulo, pasaría a ser de otro país y el
+ * mensaje le llegaría a otra persona).
+ */
+export function normalizePhone(v: string): string {
+  const p = v.replace(/[\s\-.()\u00a0]/g, "");
+  return /^00[1-9]/.test(p) ? `+${p.slice(2)}` : p;
+}
+
+const PHONE_NO_COUNTRY = "falta el código de país: escribilo con + adelante (p. ej. +5491123456789)";
+
 function normalizeRecipient(r: BulkRowInput["recipients"][number]) {
   const x: Record<string, unknown> = { ...r };
   for (const k of Object.keys(x)) if (x[k] === "" || x[k] === null) delete x[k];
+  if (typeof x.phone === "string") x.phone = normalizePhone(x.phone);
   if (!x.channels || (Array.isArray(x.channels) && x.channels.length === 0)) {
     x.channels = x.email ? ["email"] : x.phone ? ["whatsapp"] : ["email"];
   }
   return x;
 }
 
-function prepareRows(l: LoadedTemplate, rows: BulkRowInput[], base: { templateId: string; subject?: string | null; message?: string | null; locale?: string; expiresAt?: string | null }) {
+/** `lineNumbers`: la línea del archivo de cada fila (CSV); sin ella, la posición en la lista (JSON). */
+function prepareRows(
+  l: LoadedTemplate,
+  rows: BulkRowInput[],
+  base: { templateId: string; subject?: string | null; message?: string | null; locale?: string; expiresAt?: string | null },
+  lineNumbers?: number[],
+) {
   const roleName = new Map(l.tpl.roles.map((r) => [r.id, r.name]));
   return rows.map((row, i): Prepared => {
+    const rowNo = lineNumbers?.[i] ?? i + 1;
     const names = row.recipients.map((r) => r.name ?? "").filter(Boolean);
+    const recipients = row.recipients.map(normalizeRecipient);
     const candidate = {
       templateId: base.templateId,
       subject: row.subject || base.subject || undefined,
@@ -284,7 +347,7 @@ function prepareRows(l: LoadedTemplate, rows: BulkRowInput[], base: { templateId
       // null = 30 días en un envío masivo (como si no viniera; ver CreateBulkSendInput.expiresAt): a diferencia de
       // from-template, donde null es sin vencimiento, acá siempre vencen.
       expiresAt: base.expiresAt ?? undefined,
-      recipients: row.recipients.map(normalizeRecipient),
+      recipients,
       prefill: row.prefill,
       metadata: row.metadata,
       send: true,
@@ -296,17 +359,19 @@ function prepareRows(l: LoadedTemplate, rows: BulkRowInput[], base: { templateId
         if (k === "recipients" && typeof idx === "number") {
           const r = row.recipients[idx];
           const who = (r?.roleId && roleName.get(r.roleId)) || r?.role || `destinatario ${idx + 1}`;
-          return `${who}${attr ? `.${String(attr)}` : ""}: ${iss.message}`;
+          const phone = recipients[idx]?.phone;
+          const msg = attr === "phone" && typeof phone === "string" && /^\d+$/.test(phone) ? PHONE_NO_COUNTRY : iss.message;
+          return `${who}${attr ? `.${String(attr)}` : ""}: ${msg}`;
         }
         return `${iss.path.join(".") || "fila"}: ${iss.message}`;
       });
-      return { row: i + 1, input: null, errors, names };
+      return { row: rowNo, input: null, errors, names };
     }
     try {
       planFromTemplate(l, parsed.data);
-      return { row: i + 1, input: parsed.data, errors: [], names };
+      return { row: rowNo, input: parsed.data, errors: [], names };
     } catch (e) {
-      return { row: i + 1, input: null, errors: [e instanceof AppError ? e.message : String(e)], names };
+      return { row: rowNo, input: null, errors: [e instanceof AppError ? e.message : String(e)], names };
     }
   });
 }
@@ -316,15 +381,24 @@ async function resolveRows(s: Services, a: AuthContext, raw: unknown) {
   const input = CreateBulkSendInput.parse(raw);
   // Una plantilla restringida no se puede usar sin poder verla.
   await assertTemplateAccess(s.db, a, input.templateId, "view");
+  // Un vencimiento ya pasado daba sobres que no se podían enviar (cada fila fallaba al procesarse).
+  if (input.expiresAt && Date.parse(input.expiresAt) <= Date.now()) throw badRequest("invalid_expiry", "La fecha de vencimiento ya pasó");
   const loaded = await loadTemplateForUse(s.db, tenantId, input.templateId);
+  // Lo que impide enviar cualquier sobre de la plantilla (rol firmante sin campo de firma, fórmula colgada), como en los
+  // formularios web: antes se validaban las filas y fallaban todas al enviarse.
+  const issues = templateSendIssues(loaded).map((i) => i.message);
+  if (issues.length) throw new AppError(422, "template_not_sendable", `La plantilla no se puede enviar: ${issues.join(". ")}`, { templateIssues: issues });
   let rows: BulkRowInput[];
   let columns: string[] = [];
+  let lines: number[] | undefined;
   if (input.csv !== undefined) {
+    assertCsvEncoding(input.csv);
     const r = csvToRows(input.csv, loaded.tpl.roles);
     if (r.tooManyRows) throw badRequest("too_many_rows", `Máximo ${BULK_MAX_ROWS} filas por envío`);
     if (r.fileErrors.length) throw new AppError(422, "invalid_csv", r.fileErrors.join(". "), { fileErrors: r.fileErrors, columns: r.columns });
     rows = r.rows;
     columns = r.columns;
+    lines = r.lines;
   } else rows = input.rows ?? [];
   if (rows.length === 0) throw badRequest("no_rows", "No hay filas para enviar");
   if (rows.length > BULK_MAX_ROWS) throw badRequest("too_many_rows", `Máximo ${BULK_MAX_ROWS} filas por envío`);
@@ -334,8 +408,21 @@ async function resolveRows(s: Services, a: AuthContext, raw: unknown) {
     message: input.message,
     locale: input.locale,
     expiresAt: input.expiresAt,
-  });
+  }, lines);
   return { input, loaded, prepared, columns };
+}
+
+/**
+ * Un CSV que no estaba en UTF-8 (p. ej. guardado por Excel en Windows-1252) y se leyó como UTF-8 trae U+FFFD donde
+ * iban las letras con tilde: los nombres llegaban así a los sobres. La web lo decodifica bien antes de mandarlo; si
+ * igual llega con U+FFFD (API, otro cliente), es un error del archivo con la línea.
+ */
+export function assertCsvEncoding(csv: string) {
+  const at = csv.indexOf("\uFFFD");
+  if (at < 0) return;
+  const line = csv.slice(0, at).split("\n").length;
+  const msg = `El archivo tiene caracteres que no se pudieron leer (línea ${line}): guardalo como "CSV UTF-8" y volvé a subirlo`;
+  throw new AppError(422, "csv_encoding", msg, { fileErrors: [msg], line });
 }
 
 function validationResult(prepared: Prepared[], columns: string[]): BulkValidationResult {
@@ -349,7 +436,7 @@ function rowKey(input: FromTemplateInput): string {
     .map((r) => [r.roleId ?? `@${(r.role ?? "").toLowerCase()}`, (r.name ?? "").trim().toLowerCase(), (r.email ?? "").trim().toLowerCase(), (r.phone ?? "").trim()])
     .sort((a, b) => a[0].localeCompare(b[0]));
   const prefill = Object.entries(input.prefill ?? {})
-    .map(([k, v]) => [k.toLowerCase(), v])
+    .map(([k, v]) => [normLabel(k), v])
     .sort((a, b) => a[0].localeCompare(b[0]));
   return JSON.stringify([recips, prefill]);
 }
@@ -426,11 +513,12 @@ async function loadBulk(db: Db, a: AuthContext, id: string): Promise<BulkSend> {
 }
 
 async function countsFor(db: Db, ids: string[]) {
-  // "retryable": fallidas que "Reintentar fallidas" volvería a encolar (las que guardan el pedido entero; las que
-  // fallaron por sus datos guardan solo los nombres).
+  // "retryable": fallidas que "Reintentar fallidas" volvería a encolar: las que guardan el pedido entero (las inválidas
+  // por sus datos guardan solo los nombres) y fallaron por algo del momento (retryable; NULL en filas anteriores a la
+  // columna, que se reintentaban todas).
   const rows = ids.length
     ? await db.query<any>(
-        `SELECT bulk_send_id, CASE WHEN status = 'failed' AND input ? 'templateId' THEN 'retryable' ELSE status END AS status, count(*)::int AS n
+        `SELECT bulk_send_id, CASE WHEN status = 'failed' AND input ? 'templateId' AND retryable IS NOT FALSE THEN 'retryable' ELSE status END AS status, count(*)::int AS n
            FROM bulk_send_items WHERE bulk_send_id = ANY($1) GROUP BY 1, 2`,
         [ids],
       )
@@ -514,6 +602,12 @@ export async function bulkRoutes(app: FastifyInstance, s: Services) {
     const id = uuidv7();
     const actor: Actor = { type: a.actor.type, id: a.actor.id, label: a.actor.label, ip: a.actor.ip, userAgent: a.actor.userAgent };
     await s.db.tx(async (t) => {
+      // La plantilla, FOR SHARE hasta el commit: una edición en curso termina antes (y acá se ve que cambió) y una
+      // posterior ve este envío en cola y responde 409 template_in_use_bulk. Si cambió desde que se validaron las
+      // filas, se vuelve a validar (las filas podían no cerrar con la versión nueva).
+      const cur = await t.one<{ v: string }>(`SELECT updated_at::text AS v FROM templates WHERE id = $1 AND tenant_id = $2 FOR SHARE`, [loaded.tpl.template.id, a.tenantId]);
+      if (!cur) throw notFound("Plantilla");
+      if (loaded.stamp && cur.v !== loaded.stamp) throw conflict("template_changed", "La plantilla cambió mientras se preparaba el envío: validá el archivo de nuevo y volvé a enviarlo");
       // Todo o nada con el cupo del mes: si no entran todas las filas válidas, no se lanza (antes se enviaban hasta
       // agotarlo y el resto fallaba fila por fila). Dentro de la transacción del alta y con lock por organización:
       // dos POST simultáneos no pasan con el mismo cupo. El cupo se vuelve a controlar en cada envío (sendEnvelope).
@@ -540,8 +634,8 @@ export async function bulkRoutes(app: FastifyInstance, s: Services) {
         const ok = p.errors.length === 0;
         if (ok) pendingIds.push(itemId);
         await t.query(
-          `INSERT INTO bulk_send_items (id, tenant_id, bulk_send_id, row_number, input, status, error, processed_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+          `INSERT INTO bulk_send_items (id, tenant_id, bulk_send_id, row_number, input, status, error, processed_at, retryable)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
           [
             itemId,
             a.tenantId,
@@ -551,6 +645,8 @@ export async function bulkRoutes(app: FastifyInstance, s: Services) {
             ok ? "pending" : "failed",
             ok ? null : p.errors.join("; ").slice(0, 2000),
             ok ? null : new Date().toISOString(),
+            // Inválida por sus datos: se corrige en un envío nuevo, no se reintenta.
+            ok ? null : false,
           ],
         );
       }
@@ -628,8 +724,8 @@ export async function bulkRoutes(app: FastifyInstance, s: Services) {
     return loadBulk(s.db, a, req.params.id);
   });
 
-  // Reintenta las filas fallidas por un problema del momento (cupo, plantilla, error interno). Las que fallaron por sus
-  // datos no: hay que corregirlas en un envío nuevo. Mismos permisos que crear el envío, y quien lo lanzó (o quien
+  // Reintenta las filas fallidas por un problema del momento (cupo, plan o permisos de quien lo lanzó, error interno o
+  // temporal). Las que fallaron por sus datos o por la plantilla no: hay que corregirlas en un envío nuevo. Mismos permisos que crear el envío, y quien lo lanzó (o quien
   // administra todos los sobres).
   app.post<{ Params: { id: string } }>("/v1/bulk-sends/:id/retry-failed", { preHandler: auth }, async (req) => {
     const a = A(req);
@@ -641,14 +737,17 @@ export async function bulkRoutes(app: FastifyInstance, s: Services) {
       if (!ownsBulk(a, b) && !hasPerm(a, "envelopes:manage_all")) throw forbidden("Solo quien lanzó el envío masivo (o quien administra todos los sobres) puede reintentarlo");
       if (b.status === "cancelled") throw conflict("not_retryable", "El envío masivo se canceló");
       // Las filas con datos válidos guardan el pedido entero (con templateId); las que fallaron por sus datos, solo los nombres.
-      const failed = await t.query<any>(`SELECT id, input FROM bulk_send_items WHERE bulk_send_id = $1 AND status = 'failed' AND input ? 'templateId' ORDER BY row_number`, [b.id]);
+      const failed = await t.query<any>(
+        `SELECT id, input FROM bulk_send_items WHERE bulk_send_id = $1 AND status = 'failed' AND input ? 'templateId' AND retryable IS NOT FALSE ORDER BY row_number`,
+        [b.id],
+      );
       const ids = failed.filter((i) => EnvelopeFromTemplateInput.safeParse(i.input).success).map((i) => i.id as string);
-      if (!ids.length) throw conflict("nothing_to_retry", "No hay filas para reintentar (las que tienen errores en sus datos se corrigen en un envío nuevo)");
+      if (!ids.length) throw conflict("nothing_to_retry", "No hay filas para reintentar (las que fallaron por sus datos o por la plantilla se corrigen en un envío nuevo)");
       await assertQuotaFor(t, a.tenantId, ids.length);
       // Nueva ronda: el cierre del último intento de un job anterior (que pudo quedar corriendo) solo toca las filas de
       // su ronda, no las que se reencolan acá.
       const round = (await t.one<{ r: number }>(`SELECT COALESCE(max(retry_round), 0)::int + 1 AS r FROM bulk_send_items WHERE bulk_send_id = $1`, [b.id]))!.r;
-      await t.query(`UPDATE bulk_send_items SET status = 'pending', error = NULL, processed_at = NULL, envelope_id = NULL, retry_round = $2 WHERE id = ANY($1)`, [ids, round]);
+      await t.query(`UPDATE bulk_send_items SET status = 'pending', error = NULL, processed_at = NULL, envelope_id = NULL, retryable = NULL, retry_round = $2 WHERE id = ANY($1)`, [ids, round]);
       await t.query(`UPDATE bulk_sends SET status = 'running', completed_at = NULL, updated_at = now() WHERE id = $1`, [b.id]);
       for (let i = 0; i < ids.length; i += CHUNK) {
         await enqueue(t, "bulk", { bulkSendId: b.id, tenantId: a.tenantId, itemIds: ids.slice(i, i + CHUNK), retryRound: round }, { dedupeKey: `bulk:${b.id}:retry:${round}:${i / CHUNK}` });
@@ -712,7 +811,7 @@ export async function bulkJobGaveUp(d: BulkDeps, p: BulkJobPayload, err: unknown
   if (!p?.bulkSendId || !Array.isArray(p.itemIds)) return;
   const msg = `No se pudo procesar la fila: ${(err as Error)?.message ?? String(err)}`.slice(0, 2000);
   await d.db.query(
-    `UPDATE bulk_send_items SET status = 'failed', error = $3, processed_at = now()
+    `UPDATE bulk_send_items SET status = 'failed', error = $3, processed_at = now(), retryable = true
       WHERE bulk_send_id = $1 AND id = ANY($2) AND status IN ('pending','processing') AND retry_round = $4`,
     [p.bulkSendId, p.itemIds, msg, p.retryRound ?? 0],
   );
@@ -737,6 +836,9 @@ async function runBulkJob(d: BulkDeps, p: BulkJobPayload, job?: JobContext) {
   if (b.status === "queued") await d.db.query(`UPDATE bulk_sends SET status = 'running', updated_at = now() WHERE id = $1 AND status = 'queued'`, [b.id]);
   let loaded: LoadedTemplate | null = null;
   let loadError: string | null = null;
+  // Si las filas que no se pueden armar se pueden reintentar después: plan o permisos de quien lanzó el envío se pueden
+  // arreglar; una plantilla borrada o vacía no (habría que lanzar otro envío).
+  let loadRetryable = false;
   try {
     if (!b.template_id) throw conflict("template_deleted", "La plantilla fue eliminada");
     loaded = await loadTemplateForUse(d.db, b.tenant_id, b.template_id);
@@ -753,6 +855,7 @@ async function runBulkJob(d: BulkDeps, p: BulkJobPayload, job?: JobContext) {
   if (ownerGone) {
     loaded = null;
     loadError = ownerGone;
+    loadRetryable = true;
   }
   // El plan vigente, no el del momento en que se lanzó: si la organización pasó a un plan sin envío masivo (o, para
   // un envío lanzado con API key, sin acceso por API), las filas que faltan no se envían. Lo mismo que los formularios web.
@@ -760,9 +863,11 @@ async function runBulkJob(d: BulkDeps, p: BulkJobPayload, job?: JobContext) {
   if (!plan.features.includes("bulk_send")) {
     loaded = null;
     loadError = `El plan ${plan.name} no incluye el envío masivo`;
+    loadRetryable = true;
   } else if (ctx.apiKeyId && !plan.features.includes("api")) {
     loaded = null;
     loadError = `El plan ${plan.name} no incluye el acceso por API`;
+    loadRetryable = true;
   }
 
   for (const itemId of p.itemIds) {
@@ -797,19 +902,23 @@ async function runBulkJob(d: BulkDeps, p: BulkJobPayload, job?: JobContext) {
         d.log.warn({ bulkSendId: b.id, itemId, err: String(e) }, transient ? "envío masivo: error del momento en el último intento" : "envío masivo: error inesperado en una fila");
         msg = transient ? "No se pudo procesar la fila (error temporal); podés reintentarla" : "Error interno al crear el sobre de esta fila; podés reintentarla";
       }
+      // Se puede reintentar lo del momento o ajeno a la fila (error temporal o interno, cupo, plan o permisos de quien
+      // lo lanzó); lo que es de sus datos o de la plantilla (validación, prellenado, plantilla borrada) fallaría igual.
+      const retryable = e instanceof AppError ? e.code === "plan_limit" || (e.code === "bulk_unavailable" && loadRetryable) : !(e instanceof ZodError);
       if (e instanceof AppError && e.code === "plan_limit") {
         // Cupo del mes agotado: las filas que faltan (de todo el envío) fallarían igual. Se marcan sin intentarlas.
-        await d.db.query(`UPDATE bulk_send_items SET status = 'failed', error = $2, processed_at = now() WHERE bulk_send_id = $1 AND status = 'pending'`, [
+        await d.db.query(`UPDATE bulk_send_items SET status = 'failed', error = $2, processed_at = now(), retryable = true WHERE bulk_send_id = $1 AND status = 'pending'`, [
           b.id,
           msg.slice(0, 2000),
         ]);
         d.log.warn({ bulkSendId: b.id, itemId }, "envío masivo: la organización llegó al cupo del plan");
         break;
       }
-      await d.db.query(`UPDATE bulk_send_items SET status = 'failed', error = $2, processed_at = now() WHERE id = $1 AND status = 'pending' AND retry_round = $3`, [
+      await d.db.query(`UPDATE bulk_send_items SET status = 'failed', error = $2, processed_at = now(), retryable = $4 WHERE id = $1 AND status = 'pending' AND retry_round = $3`, [
         itemId,
         msg.slice(0, 2000),
         round,
+        retryable,
       ]);
       d.log.warn({ bulkSendId: b.id, itemId, err: msg }, "fila de envío masivo falló");
     }

@@ -64,7 +64,7 @@ function mockEnabled() {
   return config.environment !== "prod" || process.env.IDV_MOCK_ENABLED === "1";
 }
 
-function providerReady(p: IdvProvider) {
+export function providerReady(p: IdvProvider) {
   return p === "mock" ? mockEnabled() : getAdapter(p).configured();
 }
 

@@ -215,6 +215,21 @@ describe("worker del envío masivo", () => {
     expect(await bulkStatus(bulk)).toBe("completed");
     const errs = await db.query<any>(`SELECT error FROM bulk_send_items WHERE bulk_send_id = $1 AND row_number >= 3`, [bulk]);
     expect(errs.every((e) => /límite de sobres/.test(e.error))).toBe(true);
+    // Reintentables: las del cupo sí; la que falló por su prellenado no.
+    const flags = await db.query<any>(`SELECT retryable FROM bulk_send_items WHERE bulk_send_id = $1 ORDER BY row_number`, [bulk]);
+    expect(flags.map((f) => f.retryable)).toEqual([false, null, true, true, true]);
+  });
+
+  it("una excepción inesperada deja la fila reintentable; el contador y retry-failed solo cuentan esas", async () => {
+    const { handleBulkJob } = await import("../src/modules/bulk");
+    const { AppError } = await import("../src/lib/errors");
+    const { bulk, items } = await bulkWith(2);
+    calls = 0;
+    behavior.fail = (n) => (n === 1 ? new TypeError("boom") : new AppError(400, "unknown_prefill", "No hay ningún campo"));
+    await handleBulkJob({ db, log }, { bulkSendId: bulk, tenantId: tenant, itemIds: items });
+    behavior.fail = () => null;
+    const flags = await db.query<any>(`SELECT retryable FROM bulk_send_items WHERE bulk_send_id = $1 ORDER BY row_number`, [bulk]);
+    expect(flags.map((f) => f.retryable)).toEqual([true, false]);
   });
 });
 
@@ -234,6 +249,12 @@ describe("POST /v1/bulk-sends/:id/retry-failed", () => {
       await db.query(`UPDATE bulk_send_items SET status = 'failed', error = 'x' WHERE bulk_send_id = $1`, [bulk]);
       // Fila 3: falló por sus datos (se guardan solo los nombres): no se reintenta.
       await db.query(`UPDATE bulk_send_items SET input = '{"recipients":[{"name":"P3"}]}' WHERE id = $1`, [items[2]]);
+      // Otra fila con el pedido entero pero que falló por algo permanente (retryable = false): tampoco.
+      const perm = await bulkWith(1);
+      await db.query(`UPDATE bulk_sends SET status = 'completed' WHERE id = $1`, [perm.bulk]);
+      await db.query(`UPDATE bulk_send_items SET status = 'failed', error = 'x', retryable = false WHERE bulk_send_id = $1`, [perm.bulk]);
+      expect((await app.inject({ method: "GET", url: `/v1/bulk-sends/${perm.bulk}`, headers })).json()).toMatchObject({ failed: 1, retryable: 0 });
+      expect((await app.inject({ method: "POST", url: `/v1/bulk-sends/${perm.bulk}/retry-failed`, headers })).json().error.code).toBe("nothing_to_retry");
 
       // Business: 1000 sobres por mes; con 999 enviados no entran las 2 filas.
       await db.query(`UPDATE tenants SET billing_plan = 'business' WHERE id = $1`, [tenant]);

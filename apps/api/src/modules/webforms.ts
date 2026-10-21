@@ -24,8 +24,8 @@ import { rateLimitIpKey } from "../lib/ip";
 import { authenticate, clientInfo, type AuthContext, type Services } from "./context";
 import { setFrameAncestors, tenantFrameAncestors } from "./embed";
 import { MIN_FILL_MS, publicTenantCapReached } from "./public-intake";
-import { danglingFormulaProblems, sendEnvelope, signerWithoutSignature } from "./envelopes";
-import { insertEnvelopeFromTemplate, loadTemplateForUse, planFromTemplate, type LoadedTemplate } from "./templates";
+import { sendEnvelope } from "./envelopes";
+import { insertEnvelopeFromTemplate, loadTemplateForUse, planFromTemplate, templateSendIssues, type LoadedTemplate } from "./templates";
 import { isPlatformHost, tenantBaseUrl, tenantForHost } from "./custom-domains";
 
 const MAX_FILL_MS = 2 * 3600_000;
@@ -173,17 +173,7 @@ function formTemplateIssues(l: LoadedTemplate, form: { template_id: string; sign
     const cause = (e as Error).cause;
     return [{ kind: cause === "roles_missing" ? "roles_missing" : "config", message: (e as Error).message }];
   }
-  const signers = l.tpl.roles.filter((r) => r.role === "signer");
-  const signerIds = new Set(signers.map((r) => r.id));
-  const fields = l.tpl.fields.filter((f) => signerIds.has(f.roleId));
-  const issues: FormIssue[] = [];
-  for (const r of signers) {
-    if (r.signatureType !== "certificate" && !fields.some((f) => f.roleId === r.id && f.type === "signature")) {
-      issues.push({ kind: "signature", message: signerWithoutSignature(r.name).message });
-    }
-  }
-  issues.push(...danglingFormulaProblems(fields).map((p) => ({ kind: "formula" as const, message: p.message })));
-  return issues;
+  return templateSendIssues(l);
 }
 
 /**

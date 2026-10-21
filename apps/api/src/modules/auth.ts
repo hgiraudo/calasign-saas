@@ -5,8 +5,13 @@ import { hashPassword, iso, randomToken, sha256Hex, slugify, uuidv7, verifyPassw
 import { forgetCredentialHash } from "../lib/ip";
 import { config } from "../config";
 import { cellForSignup, registerTenantCell } from "./data/cells";
-import { authenticate, clearSessionCookie, clientInfo, sessionCookieToken, setSessionCookie, type Services } from "./context";
-import { assertCanManageApiKey, clearLoginAttempts, createTwoFactorChallenge, takeLoginAttempt } from "./teams";
+import { authenticate, clearSessionCookie, clientInfo, sessionCookieToken, type Services } from "./context";
+import { assertCanManageApiKey, createTwoFactorChallenge } from "./teams";
+import { clearLoginAttempts, takeLoginAttempt } from "./login-attempts";
+import { openPasswordSession } from "./sessions";
+import { enqueueSecurityNotice } from "./security-notices";
+import { assertPasswordStrength } from "../lib/password-policy";
+import { ipNetworkKey } from "../lib/ip";
 import { passwordLoginTenant } from "./identity/sso";
 import { AppError } from "../lib/errors";
 import { encrypt } from "../lib/util";
@@ -15,7 +20,9 @@ import { recordAudit } from "./audit";
 import { z } from "zod";
 import { actingPerson, credentialsCreatedBy } from "./member-access";
 
-const SESSION_DAYS = 14;
+/** "Olvidé mi contraseña": pedidos por hora por (cuenta, red del cliente) y techo por cuenta desde cualquier red. */
+const RESETS_PER_NETWORK_HOUR = 3;
+const RESETS_PER_ACCOUNT_HOUR = 20;
 
 const ForgotPasswordInput = z.object({ email: z.string().trim().toLowerCase().email().max(320) });
 const ResetPasswordInput = z.object({
@@ -28,15 +35,8 @@ const ResetPasswordInput = z.object({
 export async function authRoutes(app: FastifyInstance, s: Services) {
   const auth = authenticate(s);
 
-  async function createSession(reply: any, req: any, userId: string, tenantId: string) {
-    const token = randomToken();
-    const { ip, userAgent } = clientInfo(req);
-    await s.db.query(
-      `INSERT INTO sessions (token_hash, user_id, tenant_id, ip, user_agent, expires_at)
-       VALUES ($1, $2, $3, $4, $5, now() + interval '${SESSION_DAYS} days')`,
-      [sha256Hex(token), userId, tenantId, ip, userAgent],
-    );
-    setSessionCookie(reply, token, SESSION_DAYS * 86400);
+  async function createSession(reply: any, req: any, userId: string, tenantId: string, opts: { rememberMe?: boolean } = {}) {
+    await openPasswordSession(s.db, req, reply, userId, tenantId, opts);
   }
 
   async function me(userId: string, tenantId: string): Promise<MeResponse> {
@@ -56,7 +56,9 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
     // que el ingreso, con el mismo bloqueo por cuenta) crea una organización nueva para esa cuenta. No se crea otra
     // cuenta ni se toca la existente (contraseña, nombre, 2FA). Con 2FA no: crear la organización abriría una sesión con
     // solo la contraseña. Con organizaciones, o sin la contraseña correcta, sigue siendo email_taken (sin revelar más).
-    const userId = existing ? await existingAccountWithoutOrganization(existing, input.password) : uuidv7();
+    // Cuenta nueva: contraseña no común ni basada en el correo (la existente ya tiene su contraseña).
+    if (!existing) assertPasswordStrength(input.password, input.email);
+    const userId = existing ? await existingAccountWithoutOrganization(existing, input.password, clientInfo(req).ip) : uuidv7();
     const tenantId = uuidv7();
     const pw = existing ? null : await hashPassword(input.password);
     const locale = input.locale ?? "es";
@@ -112,14 +114,14 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
    * verificar la real (no too_many_attempts, que la delataba). El signup no empuja al bloqueo a las cuentas con
    * organizaciones (eso queda para /v1/auth/login).
    */
-  async function existingAccountWithoutOrganization(u: { id: string; password_hash: unknown; totp_enabled_at: unknown }, password: string): Promise<string> {
+  async function existingAccountWithoutOrganization(u: { id: string; password_hash: unknown; totp_enabled_at: unknown }, password: string, ip: string | null): Promise<string> {
     const taken = () => conflict("email_taken", "Ya existe una cuenta con ese correo");
     const hasOrganization = !!(await s.db.one(`SELECT 1 FROM memberships WHERE user_id = $1 LIMIT 1`, [u.id]));
     const hasPassword = typeof u.password_hash === "string" && u.password_hash.startsWith("scrypt$");
     let candidate = !hasOrganization && hasPassword;
     if (candidate) {
       try {
-        await takeLoginAttempt(s.db, u.id);
+        await takeLoginAttempt(s.db, u.id, ip);
       } catch (e) {
         if (!(e instanceof AppError) || e.code !== "too_many_attempts") throw e;
         candidate = false; // bloqueada: como cualquier otra cuenta existente
@@ -127,7 +129,7 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
     }
     const ok = (await verifyPassword(password, candidate ? (u.password_hash as string) : DUMMY_HASH)) && candidate;
     if (!ok) throw taken();
-    await clearLoginAttempts(s.db, u.id);
+    await clearLoginAttempts(s.db, u.id, ip);
     if (u.totp_enabled_at) {
       throw new AppError(409, "account_without_organization_2fa", "Tu cuenta tiene verificación en dos pasos y no pertenece a ninguna organización: pedí que te inviten a una.");
     }
@@ -141,10 +143,10 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
     // las cuentas sin contraseña (altas por SSO o SCIM): su marca no es un hash scrypt y verifyPassword respondía al
     // instante, lo que delataba esas cuentas.
     const hasPassword = typeof u?.password_hash === "string" && u.password_hash.startsWith("scrypt$");
-    // Límite por cuenta (además del de IP): muchos intentos fallidos recientes bloquean la cuenta 15 minutos,
-    // aunque lleguen desde IPs distintas; el intento se cuenta antes de verificar (ver takeLoginAttempt). Se responde
-    // igual con la contraseña correcta, para no confirmarla.
-    if (u) await takeLoginAttempt(s.db, u.id);
+    // Límite por (cuenta, red) y techo global por cuenta (además del de IP de la ruta): el intento se cuenta antes de
+    // verificar (ver login-attempts.ts). Se responde igual con la contraseña correcta, para no confirmarla.
+    const ip = clientInfo(req).ip;
+    if (u) await takeLoginAttempt(s.db, u.id, ip);
     const ok = (await verifyPassword(input.password, hasPassword ? u.password_hash : DUMMY_HASH)) && hasPassword;
     if (!u || !ok) throw unauthorized();
 
@@ -153,7 +155,7 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
     if (!pick) {
       // Contraseña correcta pero sin organizaciones (la quitaron de la única que tenía, o una aceptación de invitación
       // vieja dejó la cuenta suelta): no es un 401 genérico, que hacía pensar que la contraseña estaba mal.
-      await clearLoginAttempts(s.db, u.id);
+      await clearLoginAttempts(s.db, u.id, ip);
       // Con 2FA el alta con la misma contraseña no le crea una organización (account_without_organization_2fa): solo
       // le queda una invitación.
       const totp = await s.db.one(`SELECT 1 FROM users WHERE id = $1 AND totp_enabled_at IS NOT NULL`, [u.id]);
@@ -168,7 +170,7 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
     }
     // Contraseña correcta: si el acceso es por SSO o hay que restablecerla, no es un intento fallido (si no, se seguía
     // contando y terminaba en too_many_attempts en vez de la indicación de SSO).
-    if ("passwordResetRequired" in pick || "ssoRequired" in pick) await clearLoginAttempts(s.db, u.id);
+    if ("passwordResetRequired" in pick || "ssoRequired" in pick) await clearLoginAttempts(s.db, u.id, ip);
     if ("passwordResetRequired" in pick) {
       // Sus organizaciones la sumaron por SCIM o SSO (sin SSO habilitado ahora): la contraseña se habilita al restablecerla.
       throw new AppError(403, "password_reset_required", "Para ingresar con contraseña, restablecela desde \"Olvidé mi contraseña\"");
@@ -179,17 +181,17 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
       });
     }
     const m = { tenant_id: pick.tenantId };
-    const challenge = await createTwoFactorChallenge(s.db, u.id, m.tenant_id);
-    // Con segundo factor, el contador se vacía recién cuando el código es correcto: si no, quien tiene la contraseña
-    // volvía a ingresarla para vaciarlo entre tandas de códigos.
+    const challenge = await createTwoFactorChallenge(s.db, u.id, m.tenant_id, null, { rememberMe: input.rememberMe });
+    // Con segundo factor, el contador se vacía recién cuando el código es correcto.
     if (challenge) return challenge;
-    await clearLoginAttempts(s.db, u.id);
-    await createSession(reply, req, u.id, m.tenant_id);
+    await clearLoginAttempts(s.db, u.id, ip);
+    await createSession(reply, req, u.id, m.tenant_id, { rememberMe: input.rememberMe });
     return me(u.id, m.tenant_id);
   });
 
   // ───────── Recuperación de contraseña ─────────
-  // Siempre 202 (no revela si el correo existe). Límite por IP (ruta) y por cuenta (3 pedidos por hora).
+  // Siempre 202 (no revela si el correo existe). Límite por IP (ruta), por (cuenta, red) (3 pedidos por hora) y un techo
+  // por cuenta (20 por hora, contra el bombardeo de correos). Pedidos desde otra red no agotan el cupo de la persona.
 
   app.post("/v1/auth/password/forgot", { config: { rateLimit: { max: 5, timeWindow: "15 minutes" } } }, async (req, reply) => {
     const input = ForgotPasswordInput.parse(req.body);
@@ -197,17 +199,26 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
     if (u) {
       {
         const token = randomToken();
+        const ip = clientInfo(req).ip;
+        const ipKey = ipNetworkKey(ip);
         await s.db.tx(async (t) => {
-          // Con la cuenta bloqueada: pedidos en paralelo (desde varias IP) pasaban todos el tope de 3 por hora.
+          // Con la cuenta bloqueada: pedidos en paralelo (desde varias IP) pasaban todos el tope.
           await t.query(`SELECT id FROM users WHERE id = $1 FOR UPDATE`, [u.id]);
-          const recent = await t.one<any>(`SELECT count(*)::int AS n FROM password_resets WHERE user_id = $1 AND created_at > now() - interval '1 hour'`, [u.id]);
-          if ((recent?.n ?? 0) >= 3) return;
-          // Un pedido nuevo invalida los links anteriores que no se usaron.
+          const recent = await t.one<{ fromNetwork: number; total: number }>(
+            `SELECT count(*) FILTER (WHERE ip_key = $2)::int AS "fromNetwork", count(*)::int AS total
+               FROM password_resets WHERE user_id = $1 AND created_at > now() - interval '1 hour'`,
+            [u.id, ipKey],
+          );
+          // El tope es por (cuenta, red): un tercero que pide links para el correo de otra persona agota solo su cupo,
+          // no el de ella (antes, 3 pedidos ajenos dejaban sin correo el pedido legítimo durante una hora).
+          if ((recent?.fromNetwork ?? 0) >= RESETS_PER_NETWORK_HOUR || (recent?.total ?? 0) >= RESETS_PER_ACCOUNT_HOUR) return;
+          // Un pedido nuevo reemplaza a los anteriores: invalida los links que no se usaron.
           await t.query(`UPDATE password_resets SET used_at = now() WHERE user_id = $1 AND used_at IS NULL`, [u.id]);
-          await t.query(`INSERT INTO password_resets (token_hash, user_id, ip, expires_at) VALUES ($1,$2,$3, now() + interval '30 minutes')`, [
+          await t.query(`INSERT INTO password_resets (token_hash, user_id, ip, ip_key, expires_at) VALUES ($1,$2,$3,$4, now() + interval '30 minutes')`, [
             sha256Hex(token),
             u.id,
-            clientInfo(req).ip,
+            ip,
+            ipKey,
           ]);
           await enqueue(t, "notify", { kind: "password_reset", userId: u.id, tokenEnc: encrypt(token) });
         });
@@ -219,6 +230,13 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
 
   app.post("/v1/auth/password/reset", { config: { rateLimit: { max: 10, timeWindow: "15 minutes" } } }, async (req, reply) => {
     const input = ResetPasswordInput.parse(req.body);
+    // Contraseña no común ni basada en el correo: con el correo de la cuenta del link (si el link no sirve, el error es
+    // el de siempre, invalid_token, sin revelar nada).
+    const holder = await s.db.one<{ email: string }>(
+      `SELECT u.email FROM password_resets r JOIN users u ON u.id = r.user_id WHERE r.token_hash = $1 AND r.used_at IS NULL AND r.expires_at > now()`,
+      [sha256Hex(input.token)],
+    );
+    if (holder) assertPasswordStrength(input.password, holder.email);
     const pw = await hashPassword(input.password);
     const done = await s.db.tx(async (t) => {
       // Primero la cuenta (como "olvidé mi contraseña", que bloquea users y después password_resets): con el orden
@@ -254,6 +272,8 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
       // usó su cuenta), se revocan sus API keys e invitaciones pendientes. Los tokens SCIM y las apps de servicio son de
       // la organización: los revisa un administrador.
       const credentials = await credentialsCreatedBy(t, row.user_id, { revoke: input.revokeCreatedCredentials });
+      // Aviso al correo de la cuenta (en la misma transacción: si el cambio se confirma, el aviso sale).
+      await enqueueSecurityNotice(t, req, row.user_id, "password_changed");
       return { userId: row.user_id as string, credentials };
     });
     if (!done) throw new AppError(400, "invalid_token", "El link para restablecer la contraseña no es válido o ya venció");

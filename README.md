@@ -62,6 +62,7 @@ Configuración: `apps/api/src/config.ts` y las variables de cada documento de `d
 | `DATA_DIR` | `var/` | Datos locales (PGlite, archivos, clave generada) |
 | `SECRET_KEY` | generada en `var/` fuera de producción | 32 bytes en base64 (cifra tokens de firmante); obligatoria en producción |
 | `COOKIE_SECURE` | `true` en producción | Cookie de sesión solo por https |
+| `SESSION_IDLE_HOURS` | `24` | Horas sin actividad tras las que se cierra una sesión web sin "recordarme" |
 | `LOG_LEVEL` | `info` | Nivel de log |
 | `STORAGE_DRIVER` | `s3` si hay `S3_BUCKET`, si no `local` | Almacenamiento de archivos |
 | `S3_BUCKET`, `S3_PREFIX`, `AWS_REGION` | —, —, `us-east-1` | Bucket, prefijo de las claves y región |

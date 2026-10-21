@@ -434,7 +434,7 @@ const otherTenantId = (await other.api("GET", "/v1/me")).tenant.id;
 const invAna = await other.api("POST", "/v1/invitations", { email: `ana@${domain}`, role: "member" }, 201);
 await new Client("ana-forgot").api("POST", "/v1/auth/password/forgot", { email: `ana@${domain}` }, 202);
 const resetMail = await waitMail((m) => m.to === `ana@${domain}` && m.link?.includes("/reset/"), "reset de Ana");
-const anaPw = "clave-de-ana-12345";
+const anaPw = "frase-larga-de-acceso-12"; // sin la parte local del correo (ana@…): weak_password
 await new Client("ana-reset").api("POST", "/v1/auth/password/reset", { token: resetMail.link.split("/reset/")[1], password: anaPw }, 200);
 await new Client("ana-accept").api("POST", `/v1/invite/${invAna.acceptUrl.split("/invite/")[1]}/accept`, { password: anaPw }, [200, 201]);
 // El reset cerró sus sesiones: vuelve a entrar por SSO a su organización y, con esa sesión, no puede cambiar a la otra.

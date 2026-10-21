@@ -1,7 +1,7 @@
 // Revisiones posteriores a una firma que cambian lo que se ve o lo que se ejecuta y antes pasaban como "evidence_only".
 import { PDFArray, PDFDict, PDFDocument, PDFName, PDFRef, PDFString } from "pdf-lib";
 import { describe, expect, it } from "vitest";
-import { IncrementalUpdate, changesAfterRevision, findLastStartXref, withDecodeBudget } from "../src";
+import { IncrementalUpdate, changesAfterRevision, findLastStartXref, revisionCache, withDecodeBudget } from "../src";
 
 describe("changesAfterRevision", () => {
   it("revisión firmada con un objeto duplicado oculto que una revisión posterior activa (hide-and-replace) → content", async () => {
@@ -200,10 +200,183 @@ describe("changesAfterRevision", () => {
     const results = await withDecodeBudget(async () => {
       const current = await PDFDocument.load(pdf, { updateMetadata: false, ignoreEncryption: true });
       const out: string[] = [];
-      for (const end of ends) out.push(await changesAfterRevision(pdf, end, new Set(keys), current));
+      const cache = revisionCache(pdf);
+      for (const end of ends) out.push(await changesAfterRevision(pdf, end, new Set(keys), current, cache));
       return out;
     }, 24 * 1024 * 1024); // antes de cachear el control de ambigüedad y los streams de objetos hacían falta ~30 MB
     expect(results).toEqual(ends.map(() => "evidence_only"));
     expect(Date.now() - t0).toBeLessThan(10_000);
   }, 60_000);
+});
+
+describe("changesAfterRevision: regresiones de la 145ª pasada", () => {
+  type Extra = Record<string, unknown> | ((u: IncrementalUpdate) => Record<string, unknown>);
+
+  /** Revisión posterior que agrega a la página una anotación (por defecto, un widget de firma invisible). */
+  async function laterAnnot(extra: Extra, withSig: boolean) {
+    const doc = await PDFDocument.create();
+    doc.addPage([200, 200]).drawText("hello");
+    const signed = await doc.save({ useObjectStreams: false });
+    const end = signed.length;
+    const u = await IncrementalUpdate.open(signed);
+    const ctx = u.context;
+    const br = [0, 10, 20, end + 1000];
+    const sig = withSig ? { V: u.add(ctx.obj({ Type: "Sig", ByteRange: br, Contents: PDFString.of("x") })) } : {};
+    const p = u.doc.getPages()[0];
+    const more = typeof extra === "function" ? extra(u) : extra;
+    const w = u.add(ctx.obj({ Type: "Annot", Subtype: "Widget", FT: "Sig", Rect: [0, 0, 0, 0], F: 132, P: p.ref, T: PDFString.of("Firma2"), ...sig, ...more } as never));
+    p.node.set(PDFName.of("Annots"), ctx.obj([w]));
+    u.touch(p.ref);
+    return { full: u.serialize(), end, key: br.join(",") };
+  }
+  const fullPageAp = (u: IncrementalUpdate) => ({
+    AP: u.context.obj({ N: u.add(u.context.stream("1 0 0 rg 0 0 200 200 re f", { Type: "XObject", Subtype: "Form", BBox: [0, 0, 200, 200] })) }),
+  });
+  const emptyAp = (u: IncrementalUpdate) => ({
+    AP: u.context.obj({ N: u.add(u.context.stream(" ", { Type: "XObject", Subtype: "Form", BBox: [0, 0, 0, 0] })) }),
+  });
+
+  it("dos ObjStm con el mismo diccionario y largo: el xref apunta un objeto al malicioso → content", async () => {
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([200, 200]);
+    page.drawText("hello");
+    const ctx = doc.context;
+    const media = ctx.register(ctx.obj([0, 0, 200, 200]));
+    page.node.set(PDFName.of("MediaBox"), media);
+    const signed = Buffer.from(await doc.save({ useObjectStreams: false }));
+    const M = media.objectNumber;
+    const E = ctx.largestObjectNumber + 1;
+    const [A, B, X] = [E + 1, E + 2, E + 3];
+    // Mismo /N, /First y /Length (pdf-lib copia los bytes del stream: su byteOffset es siempre 0).
+    const objStm = (num: number, box: string) => {
+      const head = `${E} 0 ${M} 5 `;
+      const body = `${head}null ${box}`;
+      return Buffer.from(`${num} 0 obj\n<< /Type /ObjStm /N 2 /First ${head.length} /Length ${body.length} >>\nstream\n${body}\nendstream\nendobj\n`, "latin1");
+    };
+    // B (malicioso) primero: pdf-lib se queda con la última definición (A, benigna); el lector, con lo que dice el xref.
+    const parts: Buffer[] = [signed, Buffer.from("\n")];
+    const offB = signed.length + 1;
+    parts.push(objStm(B, "[0 0 900 900]"));
+    const offA = offB + parts[2].length;
+    parts.push(objStm(A, "[0 0 200 200]"));
+    const offX = offA + parts[3].length;
+    // W [1 4 2]; /Index en este orden: E (en A) se resuelve antes que M (en B).
+    const row = (t: number, a: number, b: number) => Buffer.from([t, (a >>> 24) & 255, (a >>> 16) & 255, (a >>> 8) & 255, a & 255, (b >>> 8) & 255, b & 255]);
+    const rows = Buffer.concat([row(2, A, 0), row(2, B, 1), row(1, offA, 0), row(1, offB, 0), row(1, offX, 0)]);
+    const root = ctx.trailerInfo.Root!.toString();
+    const xref = Buffer.concat([
+      Buffer.from(
+        `${X} 0 obj\n<< /Type /XRef /Size ${X + 1} /Root ${root} /Prev ${findLastStartXref(signed)} /W [1 4 2] /Index [${E} 1 ${M} 1 ${A} 1 ${B} 1 ${X} 1] /Length ${rows.length} >>\nstream\n`,
+        "latin1",
+      ),
+      rows,
+      Buffer.from(`\nendstream\nendobj\nstartxref\n${offX}\n%%EOF\n`, "latin1"),
+    ]);
+    const full = new Uint8Array(Buffer.concat([...parts, xref]));
+    expect(await changesAfterRevision(full, signed.length, new Set())).toBe("content");
+  });
+
+  it("anotación /Text con /FT /Sig, /V que verifica y /Contents → content", async () => {
+    const { full, end, key } = await laterAnnot({ Subtype: "Text", Contents: PDFString.of("Pagar a otra cuenta"), F: 2 }, true);
+    expect(await changesAfterRevision(full, end, new Set([key]))).toBe("content");
+  });
+
+  it("anotación /Text con /FT /Sig vacía (sin /V) → content", async () => {
+    const { full, end } = await laterAnnot({ Subtype: "Text", Contents: PDFString.of("x"), F: 2 }, false);
+    expect(await changesAfterRevision(full, end, new Set())).toBe("content");
+  });
+
+  it("anotación /FileAttachment con /FT /Sig → content", async () => {
+    const { full, end, key } = await laterAnnot(
+      (u) => ({ Subtype: "FileAttachment", FS: u.context.obj({ Type: "Filespec", F: PDFString.of("a.exe") }), F: 2 }),
+      true,
+    );
+    expect(await changesAfterRevision(full, end, new Set([key]))).toBe("content");
+  });
+
+  it("widget de firma invisible con /AF (archivo asociado) → content", async () => {
+    const af = (u: IncrementalUpdate) => ({ AF: u.context.obj([u.context.obj({ Type: "Filespec", F: PDFString.of("a.exe") })]) });
+    const later = await laterAnnot(af, true);
+    expect(await changesAfterRevision(later.full, later.end, new Set([later.key]))).toBe("content");
+    const empty = await laterAnnot(af, false);
+    expect(await changesAfterRevision(empty.full, empty.end, new Set())).toBe("content");
+  });
+
+  it("campo de firma vacío con claves fuera de la lista (/Contents, /Q) → content", async () => {
+    for (const extra of [{ Contents: PDFString.of("x") }, { Q: 1 }]) {
+      const { full, end } = await laterAnnot(extra, false);
+      expect(await changesAfterRevision(full, end, new Set())).toBe("content");
+    }
+  });
+
+  it("campo de firma vacío pre-creado e invisible (sin /AP o con /AP vacío, /MK, /DA…) → evidence_only", async () => {
+    const plain = await laterAnnot({ Ff: 0, DA: PDFString.of("/Helv 0 Tf 0 g"), StructParent: 2, TU: PDFString.of("Firma") }, false);
+    expect(await changesAfterRevision(plain.full, plain.end, new Set())).toBe("evidence_only");
+    const withAp = await laterAnnot((u) => ({ ...emptyAp(u), MK: u.context.obj({}) }), false);
+    expect(await changesAfterRevision(withAp.full, withAp.end, new Set())).toBe("evidence_only");
+  });
+
+  it("campo de firma vacío de área cero con /AP que dibuja: content salvo con Hidden", async () => {
+    const shown = await laterAnnot(fullPageAp, false);
+    expect(await changesAfterRevision(shown.full, shown.end, new Set())).toBe("content");
+    const hidden = await laterAnnot((u) => ({ ...fullPageAp(u), F: 2 }), false);
+    expect(await changesAfterRevision(hidden.full, hidden.end, new Set())).toBe("evidence_only");
+  });
+
+  it("widget de firma con NoView y Print (/F 36), de página entera y /AP → content", async () => {
+    const extra = (u: IncrementalUpdate) => ({ ...fullPageAp(u), F: 36, Rect: [0, 0, 200, 200] });
+    const empty = await laterAnnot(extra, false);
+    expect(await changesAfterRevision(empty.full, empty.end, new Set())).toBe("content");
+    // Aunque la firma posterior verifique: con Print se imprime.
+    const later = await laterAnnot(extra, true);
+    expect(await changesAfterRevision(later.full, later.end, new Set([later.key]))).toBe("content");
+    // NoView sin Print no se ve ni se imprime.
+    const noPrint = await laterAnnot((u) => ({ ...extra(u), F: 32 }), true);
+    expect(await changesAfterRevision(noPrint.full, noPrint.end, new Set([noPrint.key]))).toBe("evidence_only");
+  });
+
+  /** Campo de firma vacío y visible en lo firmado; la revisión posterior le cuelga otro widget (fuera de /Annots). */
+  async function kidAddedToExistingField(kid: (u: IncrementalUpdate) => Record<string, unknown>) {
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([200, 200]);
+    page.drawText("hello");
+    const ctx = doc.context;
+    const parent = ctx.register(ctx.obj({ FT: "Sig", T: PDFString.of("Firma1") }));
+    const w1 = ctx.register(ctx.obj({ Type: "Annot", Subtype: "Widget", Rect: [10, 10, 60, 30], F: 4, P: page.ref, Parent: parent }));
+    (ctx.lookup(parent) as PDFDict).set(PDFName.of("Kids"), ctx.obj([w1]));
+    page.node.set(PDFName.of("Annots"), ctx.obj([w1]));
+    doc.catalog.set(PDFName.of("AcroForm"), ctx.obj({ Fields: [parent] }));
+    const signed = await doc.save({ useObjectStreams: false });
+    const u = await IncrementalUpdate.open(signed);
+    const pageRef = u.doc.getPages()[0].ref;
+    const w2 = u.add(u.context.obj({ Type: "Annot", Subtype: "Widget", P: pageRef, Parent: parent, ...kid(u) } as never));
+    (u.context.lookup(parent) as PDFDict).set(PDFName.of("Kids"), u.context.obj([w1, w2]));
+    u.touch(parent);
+    return { full: u.serialize(), end: signed.length };
+  }
+
+  it("widget nuevo colgado de un campo de firma existente → content; si es un widget de evidencia → evidence_only", async () => {
+    const visible = await kidAddedToExistingField((u) => ({ Rect: [0, 0, 200, 200], F: 4, ...fullPageAp(u) }));
+    expect(await changesAfterRevision(visible.full, visible.end, new Set())).toBe("content");
+    const invisible = await kidAddedToExistingField(() => ({ Rect: [0, 0, 0, 0], F: 132 }));
+    expect(await changesAfterRevision(invisible.full, invisible.end, new Set())).toBe("evidence_only");
+  });
+
+  it("dos validaciones de PDFs que comparten ArrayBuffer (como un pool de Buffer) no se mezclan", async () => {
+    const doc = await PDFDocument.create();
+    const js = doc.context.obj({ S: "JavaScript", JS: PDFString.of("app.alert('x')") });
+    const bad = await laterAnnot({ AA: js }, true);
+    const good = await laterAnnot({}, true);
+    const pool = new ArrayBuffer(bad.full.length + good.full.length + 64);
+    const first = new Uint8Array(pool, 0, bad.full.length);
+    first.set(bad.full);
+    expect(await changesAfterRevision(first, bad.end, new Set([bad.key]))).toBe("content");
+    const second = new Uint8Array(pool, bad.full.length + 8, good.full.length);
+    second.set(good.full);
+    expect(await changesAfterRevision(second, good.end, new Set([good.key]))).toBe("evidence_only");
+    // La misma región reescrita con otro PDF.
+    const third = new Uint8Array(pool, 0, good.full.length);
+    third.set(good.full);
+    expect(await changesAfterRevision(third, good.end, new Set([good.key]))).toBe("evidence_only");
+  });
 });

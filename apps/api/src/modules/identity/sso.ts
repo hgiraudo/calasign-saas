@@ -424,8 +424,9 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
     const { ip, userAgent } = clientInfo(req);
     const hours = ssoSessionTtlHours(c);
     await s.db.query(
-      `INSERT INTO sessions (token_hash, user_id, tenant_id, ip, user_agent, expires_at, auth_method, sso_tenant_id)
-       VALUES ($1,$2,$3,$4,$5, now() + make_interval(hours => $6::int), 'sso', $3)`,
+      // Sin "recordarme": vence a las horas de la conexión y, antes, tras config.sessionIdleHours sin actividad.
+      `INSERT INTO sessions (token_hash, user_id, tenant_id, ip, user_agent, expires_at, auth_method, sso_tenant_id, remember, authenticated_at, last_seen_at)
+       VALUES ($1,$2,$3,$4,$5, now() + make_interval(hours => $6::int), 'sso', $3, false, now(), now())`,
       [sha256Hex(token), userId, tenantId, ip, userAgent, hours],
     );
     setSessionCookie(reply, token, hours * 3600);

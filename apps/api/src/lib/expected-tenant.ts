@@ -14,7 +14,7 @@ export const EXPECTED_TENANT_HEADER = "x-calasign-tenant";
 export const EXPECTED_USER_HEADER = "x-calasign-user";
 
 /** Pedidos donde el encabezado no aplica: cerrar sesión siempre se puede, desde cualquier pestaña. */
-const EXEMPT = new Set(["/v1/auth/logout"]);
+const EXEMPT = new Set(["/v1/auth/logout", "/v1/auth/logout-all"]);
 
 function header(req: FastifyRequest, name: string): string | undefined {
   const raw = req.headers[name];

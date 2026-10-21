@@ -10,7 +10,12 @@ export type TemplateKind =
   | "expiry_warning"
   | "certificate_request"
   | "finalize_failed"
-  | "password_reset";
+  | "password_reset"
+  // Avisos de seguridad de la cuenta (security-notices.ts): `date` cuándo (UTC) y `detail` la red de origen enmascarada.
+  | "password_changed"
+  | "2fa_enabled"
+  | "2fa_disabled"
+  | "2fa_recovery_regenerated";
 
 /** Avisos de la plataforma de acuerdos (vencimientos y negociaciones): mismo diseño y marca que los de sobres. */
 export type AgreementTemplateKind = "agreement_expiry" | "negotiation_invite" | "negotiation_version" | "negotiation_proposal" | "workflow_approval";
@@ -94,6 +99,42 @@ const T: Record<"es" | "pt-BR" | "en", Dict> = {
         "Si no lo pediste, ignorá este correo: tu contraseña no cambia.",
       ],
       cta: "Elegir una contraseña nueva",
+    },
+    password_changed: {
+      subject: () => "Se cambió la contraseña de tu cuenta de CalaSign",
+      lines: (v) => [
+        `Hola ${v.recipientName}:`,
+        `La contraseña de tu cuenta se restableció el ${v.date}${v.detail ? ` (desde la red ${v.detail})` : ""}. Se cerraron todas las sesiones abiertas.`,
+        "Si fuiste vos, no tenés que hacer nada. Si no, restablecé tu contraseña ahora y avisá a soporte (contacto@calasign.com).",
+      ],
+      cta: "Restablecer mi contraseña",
+    },
+    "2fa_enabled": {
+      subject: () => "Se activó la verificación en dos pasos en tu cuenta de CalaSign",
+      lines: (v) => [
+        `Hola ${v.recipientName}:`,
+        `Se activó la verificación en dos pasos en tu cuenta el ${v.date}${v.detail ? ` (desde la red ${v.detail})` : ""}. Se cerraron las demás sesiones.`,
+        "Si no fuiste vos, alguien entró a tu cuenta: restablecé tu contraseña y escribí a soporte (contacto@calasign.com) para quitar ese segundo factor.",
+      ],
+      cta: "Revisar la seguridad de mi cuenta",
+    },
+    "2fa_disabled": {
+      subject: () => "Se desactivó la verificación en dos pasos en tu cuenta de CalaSign",
+      lines: (v) => [
+        `Hola ${v.recipientName}:`,
+        `Se desactivó la verificación en dos pasos de tu cuenta el ${v.date}${v.detail ? ` (desde la red ${v.detail})` : ""}. Se cerraron las demás sesiones.`,
+        "Si no fuiste vos, restablecé tu contraseña ahora y volvé a activarla.",
+      ],
+      cta: "Revisar la seguridad de mi cuenta",
+    },
+    "2fa_recovery_regenerated": {
+      subject: () => "Se generaron códigos de recuperación nuevos para tu cuenta de CalaSign",
+      lines: (v) => [
+        `Hola ${v.recipientName}:`,
+        `Se generaron códigos de recuperación nuevos para la verificación en dos pasos el ${v.date}${v.detail ? ` (desde la red ${v.detail})` : ""}. Los anteriores ya no sirven.`,
+        "Si no fuiste vos, restablecé tu contraseña ahora y regenerá los códigos.",
+      ],
+      cta: "Revisar la seguridad de mi cuenta",
     },
     completed: {
       subject: (v) => `Completado: "${v.subject}"`,
@@ -213,6 +254,42 @@ const T: Record<"es" | "pt-BR" | "en", Dict> = {
       ],
       cta: "Escolher uma nova senha",
     },
+    password_changed: {
+      subject: () => "A senha da sua conta CalaSign foi alterada",
+      lines: (v) => [
+        `Olá ${v.recipientName},`,
+        `A senha da sua conta foi redefinida em ${v.date}${v.detail ? ` (a partir da rede ${v.detail})` : ""}. Todas as sessões abertas foram encerradas.`,
+        "Se foi você, não precisa fazer nada. Se não, redefina sua senha agora e avise o suporte (contacto@calasign.com).",
+      ],
+      cta: "Redefinir minha senha",
+    },
+    "2fa_enabled": {
+      subject: () => "A verificação em duas etapas foi ativada na sua conta CalaSign",
+      lines: (v) => [
+        `Olá ${v.recipientName},`,
+        `A verificação em duas etapas foi ativada na sua conta em ${v.date}${v.detail ? ` (a partir da rede ${v.detail})` : ""}. As demais sessões foram encerradas.`,
+        "Se não foi você, alguém entrou na sua conta: redefina sua senha e escreva para o suporte (contacto@calasign.com) para remover esse segundo fator.",
+      ],
+      cta: "Revisar a segurança da minha conta",
+    },
+    "2fa_disabled": {
+      subject: () => "A verificação em duas etapas foi desativada na sua conta CalaSign",
+      lines: (v) => [
+        `Olá ${v.recipientName},`,
+        `A verificação em duas etapas da sua conta foi desativada em ${v.date}${v.detail ? ` (a partir da rede ${v.detail})` : ""}. As demais sessões foram encerradas.`,
+        "Se não foi você, redefina sua senha agora e ative-a novamente.",
+      ],
+      cta: "Revisar a segurança da minha conta",
+    },
+    "2fa_recovery_regenerated": {
+      subject: () => "Novos códigos de recuperação foram gerados para sua conta CalaSign",
+      lines: (v) => [
+        `Olá ${v.recipientName},`,
+        `Novos códigos de recuperação da verificação em duas etapas foram gerados em ${v.date}${v.detail ? ` (a partir da rede ${v.detail})` : ""}. Os anteriores não valem mais.`,
+        "Se não foi você, redefina sua senha agora e gere os códigos novamente.",
+      ],
+      cta: "Revisar a segurança da minha conta",
+    },
     completed: {
       subject: (v) => `Concluído: "${v.subject}"`,
       lines: (v) => [`Olá ${v.recipientName},`, `Todas as partes assinaram "${v.subject}". Você pode baixar o documento final com o certificado de conclusão.`],
@@ -330,6 +407,42 @@ const T: Record<"es" | "pt-BR" | "en", Dict> = {
         "If you didn't ask for this, ignore this email: your password stays the same.",
       ],
       cta: "Choose a new password",
+    },
+    password_changed: {
+      subject: () => "Your CalaSign password was changed",
+      lines: (v) => [
+        `Hi ${v.recipientName},`,
+        `Your account password was reset on ${v.date}${v.detail ? ` (from network ${v.detail})` : ""}. All open sessions were signed out.`,
+        "If this was you, there's nothing to do. If not, reset your password now and contact support (contacto@calasign.com).",
+      ],
+      cta: "Reset my password",
+    },
+    "2fa_enabled": {
+      subject: () => "Two-step verification was turned on for your CalaSign account",
+      lines: (v) => [
+        `Hi ${v.recipientName},`,
+        `Two-step verification was turned on for your account on ${v.date}${v.detail ? ` (from network ${v.detail})` : ""}. Your other sessions were signed out.`,
+        "If this wasn't you, someone got into your account: reset your password and write to support (contacto@calasign.com) to remove that second factor.",
+      ],
+      cta: "Review my account security",
+    },
+    "2fa_disabled": {
+      subject: () => "Two-step verification was turned off for your CalaSign account",
+      lines: (v) => [
+        `Hi ${v.recipientName},`,
+        `Two-step verification was turned off for your account on ${v.date}${v.detail ? ` (from network ${v.detail})` : ""}. Your other sessions were signed out.`,
+        "If this wasn't you, reset your password now and turn it back on.",
+      ],
+      cta: "Review my account security",
+    },
+    "2fa_recovery_regenerated": {
+      subject: () => "New recovery codes were generated for your CalaSign account",
+      lines: (v) => [
+        `Hi ${v.recipientName},`,
+        `New two-step verification recovery codes were generated on ${v.date}${v.detail ? ` (from network ${v.detail})` : ""}. The previous ones no longer work.`,
+        "If this wasn't you, reset your password now and regenerate the codes.",
+      ],
+      cta: "Review my account security",
     },
     completed: {
       subject: (v) => `Completed: "${v.subject}"`,

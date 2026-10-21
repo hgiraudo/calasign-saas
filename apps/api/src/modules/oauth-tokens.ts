@@ -67,6 +67,8 @@ export async function issueTokens(
     userId: string | null;
     serviceApiKeyId: string | null;
     scopes: string[];
+    /** Scopes del refresh token (por defecto, los del access token): un refresh con scope más chico conserva los de la concesión. */
+    refreshScopes?: string[];
     familyId?: string;
     codeHash?: string | null;
     withRefresh: boolean;
@@ -98,7 +100,7 @@ export async function issueTokens(
     await db.query(
       `INSERT INTO oauth_tokens (id, token_hash, kind, client_id, tenant_id, user_id, service_api_key_id, scopes, family_id, code_hash, expires_at, auth_method, sso_tenant_id, sso_deadline)
        VALUES ($1,$2,'refresh',$3,$4,$5,$6,$7,$8,$9, LEAST(now() + ($10 || ' seconds')::interval, COALESCE($13::timestamptz, 'infinity')), $11, $12, $13::timestamptz)`,
-      [uuidv7(), sha256Hex(refresh), t.clientId, t.tenantId, t.userId, t.serviceApiKeyId, t.scopes, familyId, t.codeHash ?? null, String(REFRESH_TTL_SEC), t.authMethod ?? null, t.ssoTenantId ?? null, cap],
+      [uuidv7(), sha256Hex(refresh), t.clientId, t.tenantId, t.userId, t.serviceApiKeyId, t.refreshScopes ?? t.scopes, familyId, t.codeHash ?? null, String(REFRESH_TTL_SEC), t.authMethod ?? null, t.ssoTenantId ?? null, cap],
     );
   }
   return {

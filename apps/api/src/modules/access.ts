@@ -184,6 +184,8 @@ const SELF_SCOPED_MUTATIONS = new Set([
   "POST /v1/me/2fa/disable",
   "POST /v1/me/2fa/recovery-codes",
   "POST /v1/auth/switch-tenant",
+  "POST /v1/auth/logout-all",
+  "DELETE /v1/me/sessions/:id",
   "POST /v1/oauth/authorize/decision",
   "DELETE /v1/oauth/connected-apps/:clientId",
 ]);

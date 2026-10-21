@@ -1,7 +1,8 @@
 // Seguridad: 2FA del usuario y políticas de la organización (exigir 2FA, retención).
 import { useEffect, useState, type FormEvent } from "react";
-import type { SecuritySettings, TotpEnableResponse, TotpSetupResponse } from "@calasign/shared";
-import { api, errorText } from "../lib/api";
+import type { AccountSession, SecuritySettings, TotpEnableResponse, TotpSetupResponse } from "@calasign/shared";
+import { api, errorText, HttpError } from "../lib/api";
+import { useAuth } from "../lib/auth";
 import { useAccess } from "../lib/access";
 import { useTeamsText } from "../lib/i18n-teams";
 import { ErrorBox, Spinner } from "../components/ui";
@@ -29,6 +30,11 @@ function MyTwoFactor() {
   const [codes, setCodes] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Re-autenticación: activar la 2FA o regenerar códigos pide la contraseña (o un ingreso reciente). Se pide solo si
+  // la API responde reauth_required (con un ingreso de hace menos de 10 minutos no hace falta).
+  const [askPassword, setAskPassword] = useState(false);
+  const [password, setPassword] = useState("");
+  const withPassword = <T extends object>(body: T) => (password ? { ...body, password } : body);
 
   const run = async (fn: () => Promise<void>) => {
     setBusy(true);
@@ -36,20 +42,27 @@ function MyTwoFactor() {
     try {
       await fn();
     } catch (e) {
+      if (e instanceof HttpError && e.code === "reauth_required" && (e.details as { password?: boolean } | undefined)?.password !== false) {
+        setAskPassword(true);
+        if (!password) return;
+      }
+      if (e instanceof HttpError && e.code === "invalid_password") setPassword("");
       setError(errorText(e));
     } finally {
       setBusy(false);
     }
   };
 
-  const start = () => run(async () => setSetup(await api<TotpSetupResponse>("/v1/me/2fa/setup", { method: "POST" })));
+  const start = () => run(async () => setSetup(await api<TotpSetupResponse>("/v1/me/2fa/setup", { method: "POST", body: withPassword({}) })));
   const enable = (e: FormEvent) => {
     e.preventDefault();
     return run(async () => {
-      const r = await api<TotpEnableResponse>("/v1/me/2fa/enable", { method: "POST", body: { code } });
+      const r = await api<TotpEnableResponse>("/v1/me/2fa/enable", { method: "POST", body: withPassword({ code }) });
       setCodes(r.recoveryCodes);
       setSetup(null);
       setCode("");
+      setPassword("");
+      setAskPassword(false);
       await refresh();
     });
   };
@@ -64,9 +77,11 @@ function MyTwoFactor() {
   };
   const regenerate = () =>
     run(async () => {
-      const r = await api<TotpEnableResponse>("/v1/me/2fa/recovery-codes", { method: "POST", body: { code } });
+      const r = await api<TotpEnableResponse>("/v1/me/2fa/recovery-codes", { method: "POST", body: withPassword({ code }) });
       setCodes(r.recoveryCodes);
       setCode("");
+      setPassword("");
+      setAskPassword(false);
     });
 
   return (
@@ -74,10 +89,19 @@ function MyTwoFactor() {
       <h2>{tt("sec.my2fa")}</h2>
       <p className="muted">{enabled ? tt("sec.2faOn") : tt("sec.2faOff")}</p>
       {codes && <RecoveryCodes codes={codes} />}
+      {askPassword && (
+        <div className="stack">
+          <label className="field">
+            <span>{tt("sec.passwordConfirm")}</span>
+            <input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} style={{ maxWidth: 320 }} />
+          </label>
+          <span className="muted small">{tt("sec.passwordConfirmHelp")}</span>
+        </div>
+      )}
       {!enabled && !setup && (
         <div>
-          <button type="button" className="btn btn-primary" disabled={busy} onClick={start}>
-            {tt("sec.setup")}
+          <button type="button" className="btn btn-primary" disabled={busy || (askPassword && !password)} onClick={start}>
+            {askPassword ? tt("sec.continue") : tt("sec.setup")}
           </button>
         </div>
       )}
@@ -121,6 +145,77 @@ function MyTwoFactor() {
           </div>
         </form>
       )}
+      <ErrorBox error={error} />
+    </section>
+  );
+}
+
+function MySessions() {
+  const tt = useTeamsText();
+  const { logout } = useAuth();
+  const [items, setItems] = useState<AccountSession[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = () =>
+    api<{ items: AccountSession[] }>("/v1/me/sessions")
+      .then((r) => setItems(r.items))
+      .catch((e) => setError(errorText(e)));
+  useEffect(() => {
+    void load();
+  }, []);
+
+  const close = async (sess: AccountSession) => {
+    if (sess.current) return logout();
+    setBusy(true);
+    setError(null);
+    try {
+      await api(`/v1/me/sessions/${encodeURIComponent(sess.id)}`, { method: "DELETE" });
+      await load();
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const closeAll = () => {
+    if (!window.confirm(tt("sec.logoutAllConfirm"))) return;
+    void logout({ all: true });
+  };
+  const fmt = (d: string) => new Date(d).toLocaleString();
+
+  return (
+    <section className="card pad stack">
+      <h2>{tt("sec.sessions")}</h2>
+      <p className="muted small">{tt("sec.sessionsHelp")}</p>
+      {!items && !error && <Spinner />}
+      {items && (
+        <ul className="stack" style={{ listStyle: "none", padding: 0, margin: 0 }}>
+          {items.map((x) => (
+            <li key={x.id} className="row-wrap" style={{ justifyContent: "space-between", borderBottom: "1px solid var(--border)", paddingBottom: 8 }}>
+              <span className="stack" style={{ gap: 2 }}>
+                <strong>
+                  {x.userAgent ?? tt("sec.sessionUnknown")}
+                  {x.current && <span className="badge" style={{ marginLeft: 8 }}>{tt("sec.sessionCurrent")}</span>}
+                  {x.method === "sso" && <span className="badge" style={{ marginLeft: 8 }}>{tt("sec.sessionSso")}</span>}
+                  {x.rememberMe && <span className="badge" style={{ marginLeft: 8 }}>{tt("sec.sessionRemembered")}</span>}
+                </strong>
+                <span className="muted small">
+                  {x.ip ?? ""} · {tt("sec.sessionCreated", { date: fmt(x.createdAt) })} · {tt("sec.sessionLastSeen", { date: fmt(x.lastSeenAt) })}
+                </span>
+              </span>
+              <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void close(x)}>
+                {tt("sec.sessionClose")}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div>
+        <button type="button" className="btn btn-danger" disabled={busy} onClick={closeAll}>
+          {tt("sec.logoutAll")}
+        </button>
+      </div>
       <ErrorBox error={error} />
     </section>
   );
@@ -204,6 +299,7 @@ export function SecurityPage() {
       </div>
       {access?.twoFactor.setupRequired && <div className="alert alert-warn">{tt("sec.setupRequired")}</div>}
       <MyTwoFactor />
+      <MySessions />
       {can("settings:manage") && !access?.twoFactor.setupRequired && <OrgPolicies />}
     </div>
   );

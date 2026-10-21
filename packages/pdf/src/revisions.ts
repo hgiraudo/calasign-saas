@@ -71,13 +71,44 @@ class Canon {
 
   /**
    * Widget de un campo de firma con su cadena de campos (/Parent): cada diccionario sin las claves de `omit` ni /Parent
-   * (la cadena ya dice quién es el padre) y, en los campos padre, sin /Kids (los widgets hermanos están en sus páginas y se
-   * comparan ahí; por /Kids volvería a entrar el /V que se quiere omitir).
+   * (la cadena ya dice quién es el padre). De los campos padre, /Kids no se compara por referencia (por ahí volvería a
+   * entrar el /V que se quiere omitir) sino como el conjunto de sus hijos, cada uno sin /Parent, /Kids ni `omit` (y
+   * con sus propios hijos, recursivamente): un widget nuevo colgado de un campo de firma existente cuenta, salvo que
+   * `isEvidence` diga que es un widget de evidencia (los que pageFingerprints no compara).
    */
-  field(chain: PDFDict[], omit: ReadonlySet<string>): string {
+  field(chain: PDFDict[], omit: ReadonlySet<string>, isEvidence: (kid: PDFDict) => boolean): string {
     const own = new Set([...omit, "Parent"]);
     const parent = new Set([...own, "Kids"]);
-    return chain.map((d, i) => this.dict(d, undefined, i === 0 ? own : parent)).join(">");
+    const inChain = new Set(chain);
+    return chain
+      .map((d, i) => (i === 0 ? this.dict(d, undefined, own) : this.dict(d, undefined, parent) + this.kids(d, parent, isEvidence, inChain, new Set(), 0)))
+      .join(">");
+  }
+
+  /** Los hijos (/Kids) de un campo como conjunto; los de la cadena se comparan aparte y los de evidencia no cuentan. */
+  private kids(d: PDFDict, omit: ReadonlySet<string>, isEvidence: (kid: PDFDict) => boolean, inChain: Set<PDFDict>, seen: Set<PDFDict>, depth: number): string {
+    const raw = d.get(PDFName.of("Kids"));
+    if (raw === undefined) return "";
+    const arr = raw instanceof PDFRef ? this.ctx.lookup(raw) : raw;
+    if (!(arr instanceof PDFArray)) return `{K:${this.of(raw)}}`;
+    if (depth > 8) return "{K:deep}";
+    const out: string[] = [];
+    for (const k of arr.asArray()) {
+      const kid = k instanceof PDFRef ? this.ctx.lookup(k) : k;
+      if (!(kid instanceof PDFDict)) {
+        out.push(this.of(k));
+        continue;
+      }
+      if (inChain.has(kid)) continue;
+      if (seen.has(kid)) {
+        out.push("cycle");
+        continue;
+      }
+      if (isEvidence(kid)) continue;
+      seen.add(kid);
+      out.push(this.dict(kid, undefined, omit) + this.kids(kid, omit, isEvidence, inChain, seen, depth + 1));
+    }
+    return `{K:${out.sort().join(",")}}`;
   }
 }
 
@@ -98,11 +129,21 @@ function isAnnotation(d: PDFDict): boolean {
 
 /**
  * Claves que, en el widget de un campo de firma o en cualquier campo de su cadena (/Parent), impiden que cuente como
- * evidencia: acciones (/A, /AA: JavaScript al abrir la página, Launch, acciones de campo heredables) y capas (/OC). Es
- * una lista de exclusión: los firmadores de terceros (iText, Acrobat, pyHanko) agregan /StructParent, /Lock, /SV, /TU,
- * /NM, /M, /BS, /Border, /DR, /Parent, /Kids, /DV…, que no hacen nada en un widget que no se ve.
+ * evidencia: acciones (/A, /AA: JavaScript al abrir la página, Launch, acciones de campo heredables), capas (/OC) y lo
+ * que lleva contenido o archivos aunque el widget no se vea (/FS, /AF, /Contents, /Popup, /RichMediaContent). Para las
+ * firmas posteriores que verifican es una lista de exclusión: los firmadores de terceros (iText, Acrobat, pyHanko)
+ * agregan /StructParent, /Lock, /SV, /TU, /NM, /M, /BS, /Border, /DR, /Parent, /Kids, /DV…, que no hacen nada en un
+ * widget que no se ve.
  */
-const ACTIVE_FIELD_KEYS = ["A", "AA", "OC"].map((k) => PDFName.of(k));
+const DENIED_FIELD_KEYS = ["A", "AA", "OC", "FS", "AF", "Contents", "Popup", "RichMediaContent"].map((k) => PDFName.of(k));
+/**
+ * Un campo de firma vacío no está respaldado por ninguna firma: solo se saltea con estas claves (lista de inclusión) en
+ * toda su cadena. /AP se admite aparte (emptyFieldSkippable).
+ */
+const EMPTY_FIELD_ALLOWED_KEYS = new Set([
+  "Type", "Subtype", "FT", "Rect", "F", "P", "T", "Ff", "DA", "MK", "Parent", "Kids", "StructParent", "TU", "NM", "M",
+  "Border", "BS", "DR", "Lock", "SV",
+]);
 /**
  * Del widget de un campo de firma (y de sus campos padre) no se comparan /Lock ni /SV (qué campos bloquear al firmar y
  * los valores semilla: restringen la firma, no cambian lo que se ve) y, si la firma es posterior y verifica, tampoco /V.
@@ -119,8 +160,14 @@ interface SignatureField {
   empty: boolean;
 }
 
-/** Si `annot` es el widget de un campo de firma (/FT /Sig, propio o heredado), su cadena de campos y su valor. */
+/**
+ * Si `annot` es un widget (/Subtype /Widget) de un campo de firma (/FT /Sig, propio o heredado), su cadena de campos y su
+ * valor. Cualquier otra anotación con /FT /Sig (un /Text, un /FileAttachment) no es un campo de firma: se compara entera.
+ */
 function signatureField(ctx: PDFContext, annot: PDFDict): SignatureField | null {
+  const sub = annot.get(PDFName.of("Subtype"));
+  const subv = sub instanceof PDFRef ? ctx.lookup(sub) : sub;
+  if (!(subv instanceof PDFName) || subv.decodeText() !== "Widget") return null;
   const chain: PDFDict[] = [];
   let ft: PDFObject | undefined;
   let v: PDFObject | undefined;
@@ -135,24 +182,85 @@ function signatureField(ctx: PDFContext, annot: PDFDict): SignatureField | null 
   return { chain, key: br ? br.map((n) => (n instanceof PDFNumber ? n.asNumber() : NaN)).join(",") : null, empty: v === undefined };
 }
 
-function hasActiveKeys(chain: PDFDict[]): boolean {
-  return chain.some((d) => ACTIVE_FIELD_KEYS.some((k) => d.has(k)));
+function hasDeniedKeys(chain: PDFDict[]): boolean {
+  return chain.some((d) => DENIED_FIELD_KEYS.some((k) => d.has(k)));
 }
 
-/**
- * Widget que no se ve: rectángulo de área cero o banderas Hidden (2) / NoView (32). Solo esos cuentan como evidencia:
- * un widget de firma visible puede dibujar cualquier cosa encima de la página (su apariencia es un dibujo arbitrario),
- * así que una firma posterior visible —aunque verifique, por ejemplo con un certificado autofirmado— sí cambia lo que se ve.
- */
-function isInvisibleWidget(ctx: PDFContext, annot: PDFDict): boolean {
+function flagsOf(ctx: PDFContext, annot: PDFDict): number {
   const f = annot.get(PDFName.of("F"));
-  const flags = f instanceof PDFNumber ? f.asNumber() : 0;
-  if (flags & 2 || flags & 32) return true;
+  const fv = f instanceof PDFRef ? ctx.lookup(f) : f;
+  return fv instanceof PDFNumber ? fv.asNumber() : 0;
+}
+
+function zeroAreaRect(ctx: PDFContext, annot: PDFDict): boolean {
   const rect = lookupArray(ctx, annot.get(PDFName.of("Rect")));
   if (!rect || rect.length !== 4) return false;
   const [x1, y1, x2, y2] = rect.map((n) => (n instanceof PDFNumber ? n.asNumber() : NaN));
   if ([x1, y1, x2, y2].some((n) => !Number.isFinite(n))) return false;
   return Math.abs(x2 - x1) < 0.01 || Math.abs(y2 - y1) < 0.01;
+}
+
+/**
+ * Widget que no se ve: bandera Hidden (2), rectángulo de área cero, o NoView (32) sin Print (4) (con Print se imprime).
+ * Solo esos cuentan como evidencia: un widget de firma visible puede dibujar cualquier cosa encima de la página (su
+ * apariencia es un dibujo arbitrario), así que una firma posterior visible —aunque verifique, por ejemplo con un
+ * certificado autofirmado— sí cambia lo que se ve.
+ */
+function isInvisibleWidget(ctx: PDFContext, annot: PDFDict): boolean {
+  const flags = flagsOf(ctx, annot);
+  if (flags & 2) return true;
+  if (flags & 32 && !(flags & 4)) return true;
+  return zeroAreaRect(ctx, annot);
+}
+
+/** ¿El stream (o cada stream de un diccionario de estados) no dibuja nada? Solo espacios tras decodificarlo. */
+function drawsNothing(ctx: PDFContext, o: PDFObject | undefined, depth = 0): boolean {
+  const v = o instanceof PDFRef ? ctx.lookup(o) : o;
+  if (v instanceof PDFRawStream) {
+    let bytes: Uint8Array;
+    try {
+      bytes = decodePDFRawStream(v).decode();
+    } catch {
+      return false;
+    }
+    return bytes.every((c) => c === 0x20 || c === 0x09 || c === 0x0a || c === 0x0d || c === 0x0c || c === 0x00);
+  }
+  if (v instanceof PDFStream) return v.getContents().every((c) => c === 0x20 || c === 0x09 || c === 0x0a || c === 0x0d || c === 0x0c || c === 0x00);
+  if (v instanceof PDFDict && depth === 0 && !(v.get(PDFName.of("Type")) || v.get(PDFName.of("Subtype")))) {
+    return [...v.entries()].every(([, x]) => drawsNothing(ctx, x, 1));
+  }
+  return false;
+}
+
+/**
+ * Un campo de firma vacío se saltea solo si cada diccionario de su cadena tiene claves de EMPTY_FIELD_ALLOWED_KEYS y, si
+ * tiene /AP, o sus apariencias no dibujan nada o el widget tiene área cero y la bandera Hidden.
+ */
+function emptyFieldSkippable(ctx: PDFContext, chain: PDFDict[]): boolean {
+  for (const d of chain) {
+    for (const [k] of d.entries()) {
+      const key = k.decodeText();
+      if (key === "AP" && d === chain[0]) continue;
+      if (!EMPTY_FIELD_ALLOWED_KEYS.has(key)) return false;
+    }
+  }
+  const widget = chain[0];
+  const ap = widget.get(PDFName.of("AP"));
+  if (ap === undefined) return true;
+  if (zeroAreaRect(ctx, widget) && flagsOf(ctx, widget) & 2) return true;
+  const apd = lookupDict(ctx, ap);
+  if (!apd) return false;
+  return [...apd.entries()].every(([, x]) => drawsNothing(ctx, x));
+}
+
+/**
+ * ¿pageFingerprints no compara este widget? Widgets invisibles, sin claves prohibidas en su cadena, de firmas posteriores
+ * que verifican (únicos con su ByteRange) o de campos de firma vacíos que pasan emptyFieldSkippable.
+ */
+function isEvidenceWidget(ctx: PDFContext, d: PDFDict, sig: SignatureField | null, evidence: Set<string>, widgets: Map<string, Set<unknown>>): boolean {
+  if (!sig || hasDeniedKeys(sig.chain) || !isInvisibleWidget(ctx, d)) return false;
+  if (sig.key && evidence.has(sig.key) && widgets.get(sig.key)?.size === 1) return true;
+  return sig.empty && emptyFieldSkippable(ctx, sig.chain);
 }
 
 /**
@@ -334,14 +442,15 @@ function pageFingerprints(doc: PDFDocument, evidence: Set<string>): string[] {
   return pages.map(({ node, annots }) => {
     const inherited = new Map(INHERITABLE.map((k) => [k, node.getInheritableAttribute(PDFName.of(k)) as PDFObject | undefined]));
     const visible: string[] = [];
+    const isEvidenceKid = (kid: PDFDict) => isEvidenceWidget(ctx, kid, signatureField(ctx, kid), evidence, widgets);
     for (const { d, sig } of annots) {
       if (!sig) {
         visible.push(h(canon.dict(d)));
         continue;
       }
+      if (isEvidenceWidget(ctx, d, sig, evidence, widgets)) continue;
       const later = !!sig.key && evidence.has(sig.key) && widgets.get(sig.key)?.size === 1;
-      if ((later || sig.empty) && !hasActiveKeys(sig.chain) && isInvisibleWidget(ctx, d)) continue;
-      visible.push(h(canon.field(sig.chain, later ? LATER_SIGNATURE_OMIT : SIGNATURE_FIELD_OMIT)));
+      visible.push(h(canon.field(sig.chain, later ? LATER_SIGNATURE_OMIT : SIGNATURE_FIELD_OMIT, isEvidenceKid)));
     }
     visible.sort();
     return h(`${canon.dict(node, inherited)}|${visible.join(",")}`);
@@ -354,12 +463,37 @@ function lookupArray(ctx: PDFContext, o: PDFObject | undefined): PDFObject[] | u
 }
 
 /**
+ * Cachés de una validación (una llamada de nivel superior sobre un mismo `pdf`): texto latin1 del archivo, ObjStm
+ * descomprimidos y el control de ambigüedad de cada revisión firmada. No se comparten entre llamadas: un `Uint8Array`
+ * de un pool (Buffer.from de algo chico) comparte su ArrayBuffer con otros datos que cambian entre llamadas.
+ */
+export interface RevisionCache {
+  readonly pdf: Uint8Array;
+  text?: string;
+  readonly objStms: Map<string, PDFContext>;
+  readonly ambiguity: Map<number, Promise<boolean>>;
+}
+
+/** Caché para varias llamadas a changesAfterRevision sobre el mismo `pdf` (las revisiones de una misma validación). */
+export function revisionCache(pdf: Uint8Array): RevisionCache {
+  return { pdf, objStms: new Map(), ambiguity: new Map() };
+}
+
+/**
  * Compara lo visible (páginas, su contenido y recursos, y anotaciones) entre la revisión firmada (`pdf[0, end)`) y el
  * documento completo. `laterSignatures`: ByteRanges ("a,b,c,d") de las firmas y sellos que verifican; solo sus widgets
- * agregados después de `end` cuentan como evidencia. `current` permite reutilizar el documento completo ya cargado.
+ * agregados después de `end` cuentan como evidencia. `current` permite reutilizar el documento completo ya cargado y
+ * `cache` (revisionCache(pdf)), lo ya calculado para otras revisiones del mismo `pdf` en la misma validación.
  */
-export async function changesAfterRevision(pdf: Uint8Array, end: number, laterSignatures: Set<string>, current?: PDFDocument): Promise<ChangesAfter> {
+export async function changesAfterRevision(
+  pdf: Uint8Array,
+  end: number,
+  laterSignatures: Set<string>,
+  current?: PDFDocument,
+  cache?: RevisionCache,
+): Promise<ChangesAfter> {
   if (end >= pdf.length) return "none";
+  const rc = cache && cache.pdf === pdf ? cache : revisionCache(pdf);
   try {
     const loaded = current ?? (await PDFDocument.load(pdf, { updateMetadata: false, ignoreEncryption: true }));
     const signedBytes = pdf.subarray(0, end);
@@ -372,7 +506,7 @@ export async function changesAfterRevision(pdf: Uint8Array, end: number, laterSi
     const docA = documentFingerprint(signed);
     // Cada lectura posible del documento completo tiene que mostrar lo firmado (más evidencia).
     for (const start of viewerStarts(pdf)) {
-      const full = await asViewerSees(pdf, end, loaded, start);
+      const full = await asViewerSees(pdf, end, loaded, start, rc);
       const b = pageFingerprints(full, evidence);
       const samePages = a.length === b.length && a.every((x, i) => x === b[i]);
       if (!samePages || docA !== documentFingerprint(full)) return "content";
@@ -382,7 +516,7 @@ export async function changesAfterRevision(pdf: Uint8Array, end: number, laterSi
     // apuntar el xref a ese duplicado: pdf-lib veía lo mismo antes y después ("evidence_only") y el lector, que antes
     // mostraba el original, pasaba a mostrar el reemplazo. Una revisión firmada ambigua no permite afirmar nada.
     // Va al final (es lo más caro y solo cambia un "evidence_only") y se recuerda por revisión.
-    if (await signedRevisionAmbiguous(pdf, end, signed)) return "content";
+    if (await signedRevisionAmbiguous(pdf, end, signed, rc)) return "content";
     return "evidence_only";
   } catch {
     // Si la revisión firmada no se puede leer, no se puede afirmar que lo que se muestra es lo firmado.
@@ -390,17 +524,14 @@ export async function changesAfterRevision(pdf: Uint8Array, end: number, laterSi
   }
 }
 
-/** Resultado del control de ambigüedad de cada revisión firmada (`end`) de un PDF: se calcula una vez por revisión. */
-const ambiguityCache = new WeakMap<Uint8Array, Map<number, Promise<boolean>>>();
-
-function signedRevisionAmbiguous(pdf: Uint8Array, end: number, signed: PDFDocument): Promise<boolean> {
-  let byEnd = ambiguityCache.get(pdf);
-  if (!byEnd) ambiguityCache.set(pdf, (byEnd = new Map()));
+/** Resultado del control de ambigüedad de cada revisión firmada (`end`): se calcula una vez por revisión y validación. */
+function signedRevisionAmbiguous(pdf: Uint8Array, end: number, signed: PDFDocument, rc: RevisionCache): Promise<boolean> {
+  const byEnd = rc.ambiguity;
   let p = byEnd.get(end);
   if (!p) {
-    byEnd.set(end, (p = viewerDiffersFromPdfLib(pdf.subarray(0, end), signed)));
+    byEnd.set(end, (p = viewerDiffersFromPdfLib(pdf.subarray(0, end), signed, rc)));
     // Un error (p. ej. el tope de descompresión) no se recuerda: el próximo intento lo vuelve a calcular.
-    p.catch(() => byEnd!.delete(end));
+    p.catch(() => byEnd.delete(end));
   }
   return p;
 }
@@ -441,17 +572,17 @@ function objectAt(pdf: Uint8Array, offset: number, ctx: PDFContext, expectNum?: 
  * Sección xref en `offset` (absoluto). Los offsets del archivo (entradas, /Prev, /XRefStm) se miden desde el encabezado
  * `%PDF-` (pdf.js hace `moveStart` ahí): se devuelven absolutos sumándoles `shift`.
  */
-function readXrefSection(pdf: Uint8Array, offset: number, ctx: PDFContext, shift: number): XrefSection {
+function readXrefSection(pdf: Uint8Array, offset: number, ctx: PDFContext, shift: number, rc: RevisionCache): XrefSection {
   const head = Buffer.from(pdf.subarray(offset, Math.min(pdf.length, offset + 16))).toString("latin1");
-  if (/^\s*xref/.test(head)) return readXrefTable(pdf, offset, ctx, shift);
+  if (/^\s*xref/.test(head)) return readXrefTable(pdf, offset, ctx, shift, rc);
   const { obj } = objectAt(pdf, offset, ctx);
   if (!(obj instanceof PDFRawStream) || obj.dict.get(PDFName.of("Type")) !== PDFName.of("XRef")) throw new Error("startxref no apunta a un xref");
   return readXrefStream(obj, shift);
 }
 
-function readXrefTable(pdf: Uint8Array, offset: number, ctx: PDFContext, shift: number): XrefSection {
-  // Texto de todo el buffer (compartido entre las revisiones, que son vistas del mismo archivo), acotado a `pdf`.
-  const { text, base } = latin1(pdf);
+function readXrefTable(pdf: Uint8Array, offset: number, ctx: PDFContext, shift: number, rc: RevisionCache): XrefSection {
+  // Texto del archivo (compartido entre las revisiones, que son prefijos del mismo archivo), acotado a `pdf`.
+  const { text, base } = latin1(pdf, rc);
   const limit = base + pdf.length;
   let pos = base + offset;
   const at = (src: string) => {
@@ -525,14 +656,17 @@ function readXrefStream(stream: PDFRawStream, shift: number): XrefSection {
 class RootChangedError extends Error {}
 
 /**
- * El texto latin1 del PDF, una vez por archivo: antes se copiaba el archivo entero por cada sección de xref y miles de
- * secciones (/Prev) en un PDF de decenas de MB bloqueaban la API varios minutos.
+ * El texto latin1 del PDF, una vez por validación: antes se copiaba el archivo entero por cada sección de xref y miles
+ * de secciones (/Prev) en un PDF de decenas de MB bloqueaban la API varios minutos. Se decodifica exactamente el rango
+ * de `rc.pdf` (no todo su ArrayBuffer, que en un pool tiene otros datos); una vista que no está dentro de ese rango se
+ * decodifica aparte.
  */
-const latin1Cache = new WeakMap<ArrayBufferLike, string>();
-function latin1(pdf: Uint8Array): { text: string; base: number } {
-  let s = latin1Cache.get(pdf.buffer);
-  if (s === undefined) latin1Cache.set(pdf.buffer, (s = Buffer.from(pdf.buffer as ArrayBuffer).toString("latin1")));
-  return { text: s, base: pdf.byteOffset };
+function latin1(pdf: Uint8Array, rc: RevisionCache): { text: string; base: number } {
+  const top = rc.pdf;
+  const inside = pdf.buffer === top.buffer && pdf.byteOffset >= top.byteOffset && pdf.byteOffset + pdf.byteLength <= top.byteOffset + top.byteLength;
+  if (!inside) return { text: Buffer.from(pdf.buffer, pdf.byteOffset, pdf.byteLength).toString("latin1"), base: 0 };
+  rc.text ??= Buffer.from(top.buffer, top.byteOffset, top.byteLength).toString("latin1");
+  return { text: rc.text, base: pdf.byteOffset - top.byteOffset };
 }
 
 /** Tope de secciones de xref en la cadena de una revisión (un documento real tiene pocas). */
@@ -615,11 +749,11 @@ function viewerStarts(pdf: Uint8Array): ViewerStart[] {
  * objetos duplicados mostraría una cosa al firmante y otra en el PDF firmado. Si el xref no se puede leer, los lectores
  * reconstruyen el índice recorriendo el archivo (como pdf-lib), así que eso no cuenta como diferencia.
  */
-export async function viewerDiffersFromPdfLib(pdf: Uint8Array, loaded: PDFDocument): Promise<boolean> {
+export async function viewerDiffersFromPdfLib(pdf: Uint8Array, loaded: PDFDocument, rc: RevisionCache = revisionCache(pdf)): Promise<boolean> {
   for (const start of viewerStarts(pdf)) {
     let viewer: PDFDocument;
     try {
-      viewer = await asViewerSees(pdf, 0, loaded, start);
+      viewer = await asViewerSees(pdf, 0, loaded, start, rc);
     } catch (e) {
       if (e instanceof RootChangedError) return true;
       continue;
@@ -641,7 +775,7 @@ export async function viewerDiffersFromPdfLib(pdf: Uint8Array, loaded: PDFDocume
  * de las revisiones posteriores a `end`. Si coincide con `loaded`, lo devuelve sin tocarlo (se reutiliza entre firmas).
  * Con `end` = 0, el documento entero (toda la cadena de xref).
  */
-async function asViewerSees(pdf: Uint8Array, end: number, loaded: PDFDocument, start: ViewerStart): Promise<PDFDocument> {
+async function asViewerSees(pdf: Uint8Array, end: number, loaded: PDFDocument, start: ViewerStart, rc: RevisionCache): Promise<PDFDocument> {
   const ctx = loaded.context;
   const sections: XrefSection[] = [];
   const seen = new Set<number>();
@@ -656,7 +790,7 @@ async function asViewerSees(pdf: Uint8Array, end: number, loaded: PDFDocument, s
     seen.add(off);
     // Como un cambio de /Root: se trata como ambiguo (un error genérico se tomaría como "sin diferencias").
     if (seen.size > MAX_XREF_SECTIONS) throw new RootChangedError("demasiadas secciones de xref");
-    const s = readXrefSection(pdf, off, ctx, start.shift);
+    const s = readXrefSection(pdf, off, ctx, start.shift, rc);
     sections.push(s);
     // Archivo híbrido: las entradas del xref stream (/XRefStm) valen menos que las de la tabla.
     if (s.xrefStm !== null) {
@@ -683,11 +817,13 @@ async function asViewerSees(pdf: Uint8Array, end: number, loaded: PDFDocument, s
     const loc = effective.get(num);
     if (!loc || loc.kind !== "n") throw new Error(`ObjStm ${num} fuera de las revisiones posteriores`);
     const scratch = PDFContext.create();
-    const { obj } = objectAt(pdf, loc.offset, scratch, num);
+    const { gen, obj } = objectAt(pdf, loc.offset, scratch, num);
     if (!(obj instanceof PDFRawStream) || obj.dict.get(PDFName.of("Type")) !== PDFName.of("ObjStm")) throw new Error("ObjStm inválido");
-    // El mismo stream (mismos bytes del mismo archivo) se descomprime una sola vez entre revisiones y lecturas.
-    const decoded = decodedObjStms(pdf);
-    const key = `${obj.contents.byteOffset}:${obj.contents.length}:${obj.dict.toString()}`;
+    // El mismo stream se descomprime una sola vez entre revisiones y lecturas de esta validación. La clave es su posición
+    // en el archivo, su número y generación, su diccionario y el hash de sus bytes (pdf-lib copia los bytes del stream,
+    // así que su byteOffset no dice nada: dos streams del mismo largo y diccionario chocaban).
+    const decoded = rc.objStms;
+    const key = `${loc.offset}:${num}:${gen}:${obj.dict.toString()}:${h(obj.contents)}`;
     let parsed = decoded.get(key);
     if (!parsed) {
       await PDFObjectStreamParser.forStream(obj).parseIntoContext();
@@ -781,14 +917,6 @@ function sameBytes(a: PDFObject, b: PDFObject): boolean {
   } catch {
     return false;
   }
-}
-
-/** ObjStm ya descomprimidos de cada archivo (por posición de sus bytes en el buffer), compartidos entre revisiones. */
-const objStmCache = new WeakMap<ArrayBufferLike, Map<string, PDFContext>>();
-function decodedObjStms(pdf: Uint8Array): Map<string, PDFContext> {
-  let m = objStmCache.get(pdf.buffer);
-  if (!m) objStmCache.set(pdf.buffer, (m = new Map()));
-  return m;
 }
 
 /** Objetos indirectos alcanzables desde el catálogo (/Root) en la vista de pdf-lib. */

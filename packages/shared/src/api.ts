@@ -94,6 +94,8 @@ export type SignupInput = z.infer<typeof SignupInput>;
 export const LoginInput = z.object({
   email: z.string().trim().toLowerCase().email(),
   password: z.string().min(1).max(200),
+  /** "Recordarme": cookie persistente de 14 días. Sin él, cookie de sesión del navegador y cierre por inactividad. */
+  rememberMe: z.boolean().optional(),
 });
 export type LoginInput = z.infer<typeof LoginInput>;
 

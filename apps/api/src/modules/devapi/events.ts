@@ -9,7 +9,7 @@ import { bearerToken, iso, queryList, sha256Hex } from "../../lib/util";
 import { envelopeVisibilitySql, loadAccess, type AccessInfo } from "../access";
 import { tenantPlan } from "../billing/plans";
 import { webhookEventId } from "../webhooks";
-import { authenticate, sessionCookieToken, type AuthContext, type Services } from "../context";
+import { authenticate, sessionAliveSql, sessionCookieToken, type AuthContext, type Services } from "../context";
 import { isOAuthAccessToken, resolveAccessToken, restrictAccessToScopes } from "../oauth-tokens";
 
 /**
@@ -290,7 +290,7 @@ export async function eventRoutes(app: FastifyInstance, s: Services) {
     const sessionToken = bearer ? null : (sessionCookieToken(req) ?? null);
     const stillAllowed = async () => {
       if (oauthToken && !(await resolveAccessToken(s.db, oauthToken))) return false;
-      if (sessionToken && !(await s.db.one(`SELECT 1 FROM sessions WHERE token_hash = $1 AND expires_at > now()`, [sha256Hex(sessionToken)]))) return false;
+      if (sessionToken && !(await s.db.one(`SELECT 1 FROM sessions s WHERE s.token_hash = $1 AND ${sessionAliveSql("s")}`, [sha256Hex(sessionToken)]))) return false;
       if (a.apiKeyId && !(await s.db.one(`SELECT 1 FROM api_keys WHERE id = $1 AND revoked_at IS NULL`, [a.apiKeyId]))) return false;
       if (!a.apiKeyId && a.userId && !(await s.db.one(`SELECT 1 FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [a.tenantId, a.userId]))) return false;
       // Plan: el acceso por API (key u OAuth) pudo salir del plan; el polling ya respondía 402 y el stream seguía.

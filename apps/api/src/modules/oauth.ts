@@ -581,11 +581,15 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
               userId: old.user_id,
               serviceApiKeyId: old.service_api_key_id,
               scopes,
+              // Un refresh con scope más chico (RFC 6749 §6) acota solo el access token: el refresh token nuevo conserva
+              // los scopes de la concesión (si no, pedir un token de lectura dejaba la autorización recortada para
+              // siempre, y sin offline_access en el pedido ni siquiera devolvía un refresh token nuevo).
+              refreshScopes: old.scopes,
               familyId: old.family_id,
               codeHash: old.code_hash,
               authMethod: old.auth_method,
               ssoTenantId: old.sso_tenant_id,
-              withRefresh: scopes.includes("offline_access"),
+              withRefresh: old.scopes.includes("offline_access"),
             });
           });
           if (result === "reused") throw new OAuthError(400, "invalid_grant", "refresh_token reutilizado: se revocaron todos los tokens de esta autorización");

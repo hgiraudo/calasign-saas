@@ -471,4 +471,9 @@ export const MORE_CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
     "pt-BR": "Os metadados do contrato mudaram enquanto eram extraídos (alguém os editou ou extraiu de novo): revise-os e, se necessário, extraia-os novamente.",
     en: "The contract metadata changed while it was being extracted (someone edited it or extracted it again): review it and, if needed, extract it again.",
   },
+  reauth_required: {
+    "pt-BR": "Confirme sua senha para continuar (ou, se sua conta não tem senha, entre novamente e repita a ação em até 10 minutos).",
+    en: "Confirm your password to continue (or, if your account has no password, sign in again and repeat the action within 10 minutes).",
+  },
+  invalid_password: { "pt-BR": "A senha não está correta.", en: "The password is incorrect." },
 };

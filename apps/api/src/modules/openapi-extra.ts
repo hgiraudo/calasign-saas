@@ -626,7 +626,7 @@ export const ERRORS: Record<string, Err> = {
     code: "too_many_attempts",
     message: "Demasiados intentos fallidos. Probá de nuevo en unos minutos o restablecé tu contraseña.",
     summary:
-      "10 intentos en 15 minutos bloquean la cuenta: se cuentan antes de verificar y desde cualquier IP, y un acierto los borra. Vale para el login, aceptar una invitación con contraseña y el segundo paso (2FA). Además, 5 códigos fallidos en un mismo desafío de 2FA cortan ese desafío con 401 too_many_attempts (volver a ingresar la contraseña). Sin Retry-After: no reintentar en un loop.",
+      "10 intentos en 15 minutos desde una misma red (/24 en IPv4, /64 en IPv6) bloquean la cuenta para esa red, y 100 por hora desde cualquier red la bloquean del todo; se cuentan antes de verificar y un acierto borra el cupo de esa red. Vale para el login, aceptar una invitación con contraseña, el alta con una cuenta existente y la confirmación de contraseña de acciones sensibles. El segundo paso (2FA) tiene su propio cupo (10 códigos en 15 minutos por cuenta) y 5 códigos fallidos en un mismo desafío lo cortan con 401 too_many_attempts (volver a ingresar la contraseña). Sin Retry-After: no reintentar en un loop.",
   },
 
   file_too_large: {

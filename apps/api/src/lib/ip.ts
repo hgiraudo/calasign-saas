@@ -50,6 +50,19 @@ export function rateLimitIpKey(ip: string | undefined | null): string {
     .join(":")}::/64`;
 }
 
+/**
+ * Red del cliente para los límites de ingreso por (cuenta, red): una IPv4 por su /24 y una IPv6 por su /64 (un
+ * atacante suele tener varias direcciones contiguas; la persona legítima, desde otra red, no comparte el cupo).
+ * También es la forma enmascarada con la que se muestran las IP de las sesiones.
+ */
+export function ipNetworkKey(ip: string | undefined | null): string {
+  const v = normalizeIp(ip);
+  if (!v) return "unknown";
+  if (isIPv6(v)) return v === "::1" ? v : rateLimitIpKey(v);
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.\d{1,3}$/.exec(v);
+  return m ? `${m[1]}.${m[2]}.${m[3]}.0/24` : v.slice(0, 64);
+}
+
 declare module "fastify" {
   interface FastifyContextConfig {
     /**

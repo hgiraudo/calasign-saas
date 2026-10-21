@@ -129,6 +129,11 @@ export const config = {
   secretKey: env.SECRET_KEY || null,
   cookieSecure: bool(env.COOKIE_SECURE, production),
   /**
+   * Horas sin actividad tras las que se cierra una sesión web (contraseña o SSO) sin "recordarme". Las que pidieron
+   * "recordarme" duran 14 días desde el ingreso. SESSION_IDLE_HOURS, por defecto 24.
+   */
+  sessionIdleHours: Math.max(1, Math.floor(numEnv(env.SESSION_IDLE_HOURS, 24)) || 24),
+  /**
    * Dominios (Domain=) con los que el cierre de sesión borra además la cookie de nombre viejo (cs_session): una
    * cs_session plantada desde un subdominio con Domain= de un dominio padre no se borraba con el Set-Cookie sin Domain
    * y, mientras se lea la cookie vieja, volvía a abrir una sesión después del logout. Por defecto, el host de APP_URL y

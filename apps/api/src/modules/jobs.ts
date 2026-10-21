@@ -13,6 +13,7 @@ import { isSuppressed, scrubPii, sendTracked } from "../notifications/outbound";
 import { pastExpiry, receivesSignerNotices } from "./envelopes";
 import { isUnverifiedSelfRegistered } from "./otp";
 import { normLocale, render, type TemplateKind } from "../notifications/templates";
+import { isSecurityNoticeKind, type SecurityNoticeKind } from "./security-notices";
 import { loadDocuments } from "./mappers";
 import { loadSignatureImages, toStampFields } from "./stamp-fields";
 import { finalizeFieldLogic } from "./logic";
@@ -163,6 +164,7 @@ async function notify(
   jobId?: number,
 ) {
   if (p.kind === "password_reset") return notifyPasswordReset(d, p);
+  if (isSecurityNoticeKind(p.kind)) return notifySecurityNotice(d, p as unknown as { kind: SecurityNoticeKind; userId?: string; at?: string; network?: string | null });
   // Alerta de renovación detectada con IA (ai/sweep.ts): al remitente, no a un destinatario.
   if ((p.kind as string) === "ai_renewal_alert") return notifyAiRenewalAlert(d, p as { envelopeId: string; tenantId: string; date?: string }, jobId);
   const e = await d.db.one<any>(`SELECT * FROM envelopes WHERE id = $1`, [p.envelopeId]);
@@ -414,6 +416,32 @@ async function notifyPasswordReset(d: Deps, p: { userId?: string; tokenEnc?: str
     // Sin la dirección (ni el link con el token) en el error: termina en jobs.last_error y en los logs. Los
     // proveedores SMTP suelen repetir el destinatario en el rechazo ("550 <ana@…>: user unknown").
     throw new Error(`no se pudo enviar el correo de restablecimiento: ${scrubPii(String(e)).split(token).join("[token]").slice(0, 500)}`);
+  }
+}
+
+/**
+ * Aviso de seguridad de la cuenta (security-notices.ts) a su correo, con la marca de la plataforma (la cuenta vale en
+ * todas sus organizaciones). Como el restablecimiento: no se le escribe a una dirección con rebote permanente vigente.
+ */
+async function notifySecurityNotice(d: Deps, p: { kind: SecurityNoticeKind; userId?: string; at?: string; network?: string | null }) {
+  if (!p.userId) return;
+  const u = await d.db.one<any>(`SELECT email, name, locale FROM users WHERE id = $1`, [p.userId]);
+  if (!u?.email) return;
+  const locale = normLocale(u.locale);
+  const when = new Date(p.at ?? Date.now());
+  const date = `${when.toLocaleString(locale, { dateStyle: "long", timeStyle: "short", timeZone: "UTC" })} UTC`;
+  const link = p.kind === "password_changed" ? `${config.appUrl}/forgot` : `${config.appUrl}/app/settings/security`;
+  const vars = { recipientName: u.name, senderName: "CalaSign", organizationName: "CalaSign", subject: "", link, date, detail: p.network ?? null };
+  const m = render(p.kind, u.locale, { ...vars, subject: render(p.kind, u.locale, vars).subject });
+  if (await isSuppressed(d.db, u.email, null)) {
+    d.log.warn({ userId: p.userId, kind: p.kind }, "aviso de seguridad no enviado: dirección suprimida (rebote permanente)");
+    return;
+  }
+  try {
+    const res = await deliver({ channel: "email", to: u.email, subject: m.subject, text: m.text, html: m.html, link, locale: u.locale });
+    d.log.info({ userId: p.userId, kind: p.kind, provider: res.provider, messageId: res.messageId }, "aviso de seguridad enviado");
+  } catch (e) {
+    throw new Error(`no se pudo enviar el aviso de seguridad: ${scrubPii(String(e)).slice(0, 500)}`);
   }
 }
 

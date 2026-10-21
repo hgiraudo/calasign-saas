@@ -17,7 +17,7 @@ const SRC = fileURLToPath(new URL("../src", import.meta.url));
  */
 const EXCLUDED: [RegExp, string][] = [
   [/^\/v1\/auth\//, "sesión de la web: login con 2FA, contraseña, SSO, cambio de organización (signup y login sí se documentan)"],
-  [/^\/v1\/me\/2fa\//, "verificación en dos pasos del usuario (solo sesión web)"],
+  [/^\/v1\/me\/(2fa|sessions)(\/|$)/, "verificación en dos pasos y sesiones abiertas del usuario (solo sesión web)"],
   [/^\/v1\/billing(\/|$)/, "suscripción de la organización (consola web: cambiarla exige sesión de usuario, 403 billing_requires_user)"],
   [/^\/v1\/invite\//, "aceptar una invitación (link del correo)"],
   [/^\/v1\/integrations\//, "webhooks entrantes de proveedores (Stripe, Mercado Pago, SES, Telegram, KYC, SAML ACS); el de HubSpot sí se documenta"],

@@ -63,9 +63,18 @@ export function sessionCookieNames(): readonly string[] {
   return SESSION_COOKIE_NAMES;
 }
 
-/** Deja la cookie de sesión (y borra la del nombre viejo si quedaba). */
-export function setSessionCookie(reply: FastifyReply, token: string, maxAgeSeconds: number) {
-  reply.setCookie(SESSION_COOKIE, token, { path: "/", httpOnly: true, sameSite: "lax", secure: config.cookieSecure, maxAge: maxAgeSeconds });
+/**
+ * Deja la cookie de sesión (y borra la del nombre viejo si quedaba). `maxAgeSeconds` null: cookie de sesión del
+ * navegador (se borra al cerrarlo), para los ingresos sin "recordarme".
+ */
+export function setSessionCookie(reply: FastifyReply, token: string, maxAgeSeconds: number | null) {
+  reply.setCookie(SESSION_COOKIE, token, {
+    path: "/",
+    httpOnly: true,
+    sameSite: "lax",
+    secure: config.cookieSecure,
+    ...(maxAgeSeconds == null ? {} : { maxAge: maxAgeSeconds }),
+  });
   if (SESSION_COOKIE !== LEGACY_SESSION_COOKIE) reply.clearCookie(LEGACY_SESSION_COOKIE, { path: "/", secure: config.cookieSecure });
 }
 
@@ -77,6 +86,19 @@ export function clearSessionCookie(reply: FastifyReply) {
   // Domain=<padre> no se borra con el Set-Cookie sin Domain (los atributos tienen que coincidir).
   if (SESSION_COOKIE !== LEGACY_SESSION_COOKIE)
     for (const domain of config.legacySessionCookieDomains) reply.clearCookie(LEGACY_SESSION_COOKIE, { path: "/", domain, secure: config.cookieSecure });
+}
+
+/** Vida máxima de una sesión web con "recordarme" (y de la cookie persistente). */
+export const SESSION_DAYS = 14;
+/** Cada cuánto se actualiza sessions.last_seen_at como mucho. */
+export const SESSION_TOUCH_MINUTES = 5;
+
+/**
+ * Condición SQL de una sesión vigente (alias de la tabla sessions): sin vencer y, sin "recordarme", con actividad en
+ * las últimas config.sessionIdleHours horas (número de la configuración, no un dato del pedido).
+ */
+export function sessionAliveSql(alias: string): string {
+  return `${alias}.expires_at > now() AND (${alias}.remember OR ${alias}.last_seen_at > now() - interval '${config.sessionIdleHours} hours')`;
 }
 
 export function clientInfo(req: FastifyRequest) {
@@ -145,11 +167,15 @@ export function authenticate(s: Services) {
     const token = sessionCookieToken(req);
     if (!token) throw unauthorized();
     const row = await s.db.one<any>(
-      `SELECT s.user_id, s.tenant_id, s.auth_method, s.sso_tenant_id, u.name, u.email FROM sessions s JOIN users u ON u.id = s.user_id
-       WHERE s.token_hash = $1 AND s.expires_at > now()`,
+      `SELECT s.user_id, s.tenant_id, s.auth_method, s.sso_tenant_id, s.last_seen_at < now() - interval '${SESSION_TOUCH_MINUTES} minutes' AS stale,
+              u.name, u.email
+         FROM sessions s JOIN users u ON u.id = s.user_id
+        WHERE s.token_hash = $1 AND ${sessionAliveSql("s")}`,
       [sha256Hex(token)],
     );
     if (!row) throw unauthorized();
+    // Última actividad (cierre por inactividad): a lo sumo una escritura cada SESSION_TOUCH_MINUTES por sesión.
+    if (row.stale) s.db.query(`UPDATE sessions SET last_seen_at = now() WHERE token_hash = $1`, [sha256Hex(token)]).catch(() => {});
     // Pestaña que quedó en otra organización o cuenta (x-calasign-tenant / x-calasign-user): 409 tenant_mismatch.
     assertExpectedSession(req, { tenantId: row.tenant_id, userId: row.user_id });
     req.auth = {

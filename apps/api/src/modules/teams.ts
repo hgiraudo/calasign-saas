@@ -12,7 +12,9 @@ import {
   PutTemplateSharesInput,
   RoleAssignment,
   SwitchTenantInput,
+  ReauthInput,
   TotpCodeInput,
+  TotpReauthInput,
   TwoFactorLoginInput,
   UpdateGroupInput,
   UpdateRoleInput,
@@ -43,12 +45,15 @@ import { normLocale, render } from "../notifications/templates";
 import { mailBranding, resolveBrand, senderFor } from "./white-label/brand";
 import { hasPerm } from "./access";
 import { auditFromRequest, recordAudit } from "./audit";
-import { authenticate, clientInfo, sessionCookieToken, setSessionCookie, type AuthContext, type Services } from "./context";
+import { authenticate, clientInfo, sessionAliveSql, sessionCookieToken, type AuthContext, type Services } from "./context";
 import { assertSessionAllowed } from "./identity/sso";
 import { assertInvitationCapacity, tenantPlan } from "./billing/plans";
 import { actingPerson, clearConsoleRemoval, recordConsoleRemoval, revokeMemberAccess } from "./member-access";
+import { clearLoginAttempts, clearTwoFactorAttempts, takeLoginAttempt, takeTwoFactorAttempt } from "./login-attempts";
+import { assertRecentAuth, openPasswordSession } from "./sessions";
+import { enqueueSecurityNotice } from "./security-notices";
+import { assertPasswordStrength } from "../lib/password-policy";
 
-const SESSION_DAYS = 14;
 const INVITE_DAYS = 7;
 const ROLE_LABEL: Record<string, string> = { owner: "Propietario", admin: "Administrador", member: "Miembro" };
 const ROLE_LABEL_I18N = {
@@ -59,15 +64,8 @@ const ROLE_LABEL_I18N = {
 
 // ───────────────────────────── Sesiones ─────────────────────────────
 
-export async function createUserSession(db: Db, req: FastifyRequest, reply: FastifyReply, userId: string, tenantId: string) {
-  const token = randomToken();
-  const { ip, userAgent } = clientInfo(req);
-  await db.query(
-    `INSERT INTO sessions (token_hash, user_id, tenant_id, ip, user_agent, expires_at)
-     VALUES ($1, $2, $3, $4, $5, now() + interval '${SESSION_DAYS} days')`,
-    [sha256Hex(token), userId, tenantId, ip, userAgent],
-  );
-  setSessionCookie(reply, token, SESSION_DAYS * 86400);
+export async function createUserSession(db: Db, req: FastifyRequest, reply: FastifyReply, userId: string, tenantId: string, opts: { rememberMe?: boolean } = {}) {
+  await openPasswordSession(db, req, reply, userId, tenantId, opts);
 }
 
 async function meResponse(db: Db, userId: string, tenantId: string) {
@@ -85,13 +83,19 @@ async function meResponse(db: Db, userId: string, tenantId: string) {
  * Si el usuario tiene 2FA, crea un desafío y devuelve su token (no se crea sesión todavía). `invitationId`: el
  * desafío viene de aceptar una invitación, que se acepta recién al verificar el segundo factor.
  */
-export async function createTwoFactorChallenge(db: Db, userId: string, tenantId: string, invitationId: string | null = null): Promise<TwoFactorChallenge | null> {
+export async function createTwoFactorChallenge(
+  db: Db,
+  userId: string,
+  tenantId: string,
+  invitationId: string | null = null,
+  opts: { rememberMe?: boolean } = {},
+): Promise<TwoFactorChallenge | null> {
   const u = await db.one<any>(`SELECT totp_enabled_at FROM users WHERE id = $1`, [userId]);
   if (!u?.totp_enabled_at) return null;
   const token = randomToken();
   await db.query(
-    `INSERT INTO login_challenges (token_hash, user_id, tenant_id, invitation_id, expires_at) VALUES ($1,$2,$3,$4, now() + interval '10 minutes')`,
-    [sha256Hex(token), userId, tenantId, invitationId],
+    `INSERT INTO login_challenges (token_hash, user_id, tenant_id, invitation_id, expires_at, remember) VALUES ($1,$2,$3,$4, now() + interval '10 minutes', $5)`,
+    [sha256Hex(token), userId, tenantId, invitationId, opts.rememberMe === true],
   );
   return { twoFactorRequired: true, challengeToken: token };
 }
@@ -117,64 +121,8 @@ async function checkSecondFactor(db: Db, userId: string, code: string): Promise<
   return used.length ? "recovery" : null;
 }
 
-export const MAX_FAILED_LOGINS = 10;
-
-const tooManyAttempts = () =>
-  new AppError(429, "too_many_attempts", "Demasiados intentos fallidos. Probá de nuevo en unos minutos o restablecé tu contraseña.");
-
-/**
- * Antes de verificar una contraseña o un código: bloqueo por cuenta. Además de los fallos auditados (que se escriben
- * después de verificar), cuenta el intento en el momento con un contador atómico: si no, muchos pedidos en paralelo
- * (desde IP distintas) veían todos menos de MAX_FAILED_LOGINS y probaban cientos de contraseñas. Un acierto lo vacía.
- */
-export async function takeLoginAttempt(db: Db, userId: string) {
-  if ((await recentFailedLogins(db, userId)) >= MAX_FAILED_LOGINS) throw tooManyAttempts();
-  const r = await db.one<{ n: number }>(
-    `INSERT INTO login_attempts (user_id, window_start, n) VALUES ($1, now(), 1)
-     ON CONFLICT (user_id) DO UPDATE SET
-       n = CASE WHEN login_attempts.window_start < now() - interval '15 minutes' THEN 1 ELSE login_attempts.n + 1 END,
-       window_start = CASE WHEN login_attempts.window_start < now() - interval '15 minutes' THEN now() ELSE login_attempts.window_start END
-     RETURNING n`,
-    [userId],
-  );
-  if ((r?.n ?? 0) > MAX_FAILED_LOGINS) throw tooManyAttempts();
-}
-
-export async function clearLoginAttempts(db: Db, userId: string) {
-  await db.query(`DELETE FROM login_attempts WHERE user_id = $1`, [userId]);
-}
-
-/**
- * Intentos fallidos de los últimos 15 minutos. La auditoría registra una fila por organización del usuario: se cuentan
- * las de su primera organización. Sin organizaciones (p. ej. lo quitaron de la única que tenía), cada fallo queda en
- * una sola fila (la de la organización que lo invitó) y se cuentan todas: si no, el bloqueo no lo alcanzaba nunca.
- */
-export async function recentFailedLogins(db: Db, userId: string): Promise<number> {
-  const first = await db.one<{ tenant_id: string }>(`SELECT tenant_id FROM memberships WHERE user_id = $1::uuid ORDER BY created_at LIMIT 1`, [userId]);
-  // Con organización, solo sus filas; sin organizaciones, todas las del usuario. Dos consultas (y no un OR con
-  // "NOT EXISTS"), ambas sobre el índice (action, actor_id, occurred_at) y acotadas a la ventana de 15 minutos.
-  const params: unknown[] = [userId];
-  let scope = "";
-  if (first) {
-    params.push(first.tenant_id);
-    scope = ` AND tenant_id = $2::uuid`;
-  }
-  const r = await db.one<{ n: number }>(
-    `SELECT count(*)::int AS n FROM account_audit_log
-     WHERE action = 'auth.login_failed' AND actor_id = $1::text AND occurred_at > now() - interval '15 minutes'${scope}
-       -- Restablecer la contraseña (no solo pedirlo) desbloquea la cuenta. users.password_reset_at vale también sin
-       -- organizaciones (ahí el restablecimiento no deja auditoría); la auditoría cubre los restablecimientos anteriores
-       -- a esa columna. Solo importan los de la ventana (los fallos anteriores ya no cuentan); actor_id = target_id en
-       -- user.password_reset (lo hace la propia persona, auth.ts).
-       AND occurred_at > COALESCE(GREATEST(
-             (SELECT password_reset_at FROM users WHERE id = $1::uuid),
-             (SELECT max(occurred_at) FROM account_audit_log
-               WHERE action = 'user.password_reset' AND actor_id = $1::text AND target_id = $1::text
-                 AND occurred_at > now() - interval '15 minutes'${scope})), '-infinity')`,
-    params,
-  );
-  return r?.n ?? 0;
-}
+// Bloqueo por intentos de ingreso: login-attempts.ts (se reexporta para los módulos que lo importaban de acá).
+export { MAX_FAILED_LOGINS, clearLoginAttempts, takeLoginAttempt } from "./login-attempts";
 
 // ───────────────────────────── Helpers de roles ─────────────────────────────
 
@@ -691,7 +639,7 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     if (cookie) {
       const srow = await s.db.one<any>(
         // Una sesión SSO solo sirve como prueba de identidad dentro de su propia organización (Fase 5).
-        `SELECT u.id, u.email FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = $1 AND s.expires_at > now()
+        `SELECT u.id, u.email FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = $1 AND ${sessionAliveSql("s")}
            AND (s.auth_method = 'password' OR s.sso_tenant_id = $2)`,
         [sha256Hex(cookie), inv.tenant_id],
       );
@@ -702,16 +650,16 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     let verifiedByPassword = false;
     let newUser: { name: string; passwordHash: string; locale: string } | null = null;
     if (user && !sessionUserId) {
-      // Es un ingreso con contraseña: mismo bloqueo por cuenta que /v1/auth/login, y los fallos cuentan para ese
+      // Sin contraseña no hay intento que contar (p. ej. la pantalla consultando si hace falta): 401 sin tocar el bloqueo.
+      if (!input.password) throw unauthorized();
+      // Es un ingreso con contraseña: mismo bloqueo por (cuenta, red) que /v1/auth/login, y los fallos cuentan para ese
       // bloqueo. Si no, alguien que invita el correo de otra persona a su propia organización prueba contraseñas acá
       // sin límite por cuenta (solo el de IP) y, si acierta, se queda con una sesión de esa persona.
-      await takeLoginAttempt(s.db, user.id);
-      if (!input.password || !(await verifyPassword(input.password, user.password_hash))) {
-        if (input.password) {
-          const tenants = await s.db.query<any>(`SELECT tenant_id FROM memberships WHERE user_id = $1`, [user.id]);
-          for (const m of tenants.length ? tenants : [{ tenant_id: inv.tenant_id }]) {
-            await recordAudit(s.db, { tenantId: m.tenant_id, action: "auth.login_failed", actor: { type: "anonymous", id: user.id, label: inv.email }, data: { reason: "bad_password_invitation" }, ...clientInfo(req) });
-          }
+      await takeLoginAttempt(s.db, user.id, clientInfo(req).ip);
+      if (!(await verifyPassword(input.password, user.password_hash))) {
+        const tenants = await s.db.query<any>(`SELECT tenant_id FROM memberships WHERE user_id = $1`, [user.id]);
+        for (const m of tenants.length ? tenants : [{ tenant_id: inv.tenant_id }]) {
+          await recordAudit(s.db, { tenantId: m.tenant_id, action: "auth.login_failed", actor: { type: "anonymous", id: user.id, label: inv.email }, data: { reason: "bad_password_invitation" }, ...clientInfo(req) });
         }
         throw unauthorized();
       }
@@ -719,7 +667,7 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     }
     if (!user) {
       if (!input.name || !input.password) throw badRequest("account_required", "Para crear la cuenta hacen falta nombre y contraseña");
-      if (input.password.length < 10) throw badRequest("weak_password", "La contraseña debe tener al menos 10 caracteres");
+      assertPasswordStrength(input.password, inv.email);
       // La cuenta se crea junto con la membresía (joinByInvitation), en una sola transacción.
       const org = await s.db.one<any>(`SELECT default_locale FROM tenants WHERE id = $1`, [inv.tenant_id]);
       newUser = { name: input.name, passwordHash: await hashPassword(input.password), locale: org?.default_locale ?? "es" };
@@ -731,7 +679,7 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
       return createTwoFactorChallenge(s.db, user.id, inv.tenant_id, inv.id);
     }
     // Sin segundo factor pendiente: el ingreso con contraseña terminó bien (con 2FA se vacía al verificar el código).
-    if (user && verifiedByPassword) await clearLoginAttempts(s.db, user.id);
+    if (user && verifiedByPassword) await clearLoginAttempts(s.db, user.id, clientInfo(req).ip);
     const userId = await joinByInvitation(req, inv.id, user ? (user.id as string) : newUser!, inv.email);
     await assertJoinedWithoutSso(inv.tenant_id, userId, inv.email);
     if (sessionUserId) {
@@ -1138,8 +1086,11 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     const a = A(req);
     if (!a.userId) throw forbidden("Solo para usuarios");
     await assertAccountSession(req);
+    const { password } = ReauthInput.parse(req.body ?? {});
     const u = await s.db.one<any>(`SELECT email, totp_enabled_at FROM users WHERE id = $1`, [a.userId]);
     if (u.totp_enabled_at) throw conflict("2fa_already_enabled", "La verificación en dos pasos ya está activa");
+    // Con una cookie robada no se activa un segundo factor ajeno (que dejaría afuera al dueño de la cuenta).
+    await assertRecentAuth(s.db, req, a.userId, password);
     const secret = generateTotpSecret();
     await s.db.query(`UPDATE users SET totp_pending_enc = $2 WHERE id = $1`, [a.userId, encrypt(secret)]);
     const url = otpauthUrl(secret, u.email);
@@ -1151,10 +1102,11 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     const a = A(req);
     if (!a.userId) throw forbidden("Solo para usuarios");
     await assertAccountSession(req);
-    const { code } = TotpCodeInput.parse(req.body);
+    const { code, password } = TotpReauthInput.parse(req.body);
     const u = await s.db.one<any>(`SELECT totp_pending_enc, totp_enabled_at FROM users WHERE id = $1`, [a.userId]);
     if (u.totp_enabled_at) throw conflict("2fa_already_enabled", "La verificación en dos pasos ya está activa");
     if (!u.totp_pending_enc) throw badRequest("2fa_setup_required", "Primero generá el código QR");
+    await assertRecentAuth(s.db, req, a.userId, password);
     const secret = decrypt(u.totp_pending_enc);
     const step = verifyTotp(secret, code);
     if (step === null) throw badRequest("invalid_code", "Código incorrecto");
@@ -1165,6 +1117,7 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     );
     const sessionsClosed = await closeOtherSessions(req, a.userId);
     await auditAccountSecurity(req, a, "user.2fa_enabled", { otherSessionsClosed: sessionsClosed });
+    await enqueueSecurityNotice(s.db, req, a.userId, "2fa_enabled").catch((err) => req.log.error({ err }, "no se pudo encolar el aviso de seguridad"));
     return { recoveryCodes: codes };
   });
 
@@ -1184,17 +1137,21 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     );
     const sessionsClosed = await closeOtherSessions(req, a.userId);
     await auditAccountSecurity(req, a, "user.2fa_disabled", { otherSessionsClosed: sessionsClosed });
+    await enqueueSecurityNotice(s.db, req, a.userId, "2fa_disabled").catch((err) => req.log.error({ err }, "no se pudo encolar el aviso de seguridad"));
     return { ok: true };
   });
 
   app.post("/v1/me/2fa/recovery-codes", { preHandler: auth, config: { rateLimit: { max: 5, timeWindow: "1 minute" } } }, async (req) => {
     const a = A(req);
     if (!a.userId) throw forbidden("Solo para usuarios");
-    const { code } = TotpCodeInput.parse(req.body);
+    const { code, password } = TotpReauthInput.parse(req.body);
+    // Antes de consumir el código: sin re-autenticación no se gasta un paso TOTP.
+    await assertRecentAuth(s.db, req, a.userId, password);
     if ((await checkSecondFactor(s.db, a.userId, code)) !== "totp") throw badRequest("invalid_code", "Código incorrecto");
     const codes = generateRecoveryCodes();
     await s.db.query(`UPDATE users SET totp_recovery_hashes = $2 WHERE id = $1`, [a.userId, codes.map((c) => sha256Hex(normalizeRecoveryCode(c)))]);
     await auditAccountSecurity(req, a, "user.2fa_recovery_regenerated");
+    await enqueueSecurityNotice(s.db, req, a.userId, "2fa_recovery_regenerated").catch((err) => req.log.error({ err }, "no se pudo encolar el aviso de seguridad"));
     return { recoveryCodes: codes };
   });
 
@@ -1209,16 +1166,17 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
       await s.db.query(`DELETE FROM login_challenges WHERE token_hash = $1`, [ch.token_hash]);
       throw new AppError(401, "too_many_attempts", "Demasiados intentos: volvé a ingresar tu contraseña");
     }
-    // El bloqueo por cuenta también corta los desafíos ya abiertos: si no, alguien con la contraseña junta muchos
-    // desafíos antes de fallar y prueba 5 códigos en cada uno.
+    // Cupo de códigos de la cuenta (login-attempts.ts): también corta los desafíos ya abiertos (si no, alguien con la
+    // contraseña junta muchos desafíos antes de fallar y prueba 5 códigos en cada uno). Es propio del segundo paso: los
+    // fallos de contraseña desde otras redes no bloquean un desafío que ya pasó la contraseña.
     try {
-      await takeLoginAttempt(s.db, ch.user_id);
+      await takeTwoFactorAttempt(s.db, ch.user_id);
     } catch (e) {
       await s.db.query(`DELETE FROM login_challenges WHERE token_hash = $1`, [ch.token_hash]);
       throw e;
     }
     const method = await checkSecondFactor(s.db, ch.user_id, input.code);
-    if (method) await clearLoginAttempts(s.db, ch.user_id);
+    if (method) await clearTwoFactorAttempts(s.db, ch.user_id, clientInfo(req).ip);
     const u = await s.db.one<any>(`SELECT email FROM users WHERE id = $1`, [ch.user_id]);
     if (!method) {
       // Se registra en todas sus organizaciones (como la contraseña incorrecta): el bloqueo se cuenta en la primera,
@@ -1238,7 +1196,7 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
       // Como en /accept sin 2FA: con SSO obligatorio, al IdP (no una sesión con contraseña que no le sirve).
       await assertJoinedWithoutSso(ch.tenant_id, ch.user_id, u?.email ?? "");
     }
-    await createUserSession(s.db, req, reply, ch.user_id, ch.tenant_id);
+    await createUserSession(s.db, req, reply, ch.user_id, ch.tenant_id, { rememberMe: Boolean(ch.remember) });
     await recordAudit(s.db, { tenantId: ch.tenant_id, action: "auth.login", actor: { type: "user", id: ch.user_id, label: u?.email }, data: { twoFactor: method }, ...clientInfo(req) });
     return meResponse(s.db, ch.user_id, ch.tenant_id);
   });

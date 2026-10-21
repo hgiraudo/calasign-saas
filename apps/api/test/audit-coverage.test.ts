@@ -1,6 +1,6 @@
 // Cobertura de la auditoría de cuenta: SSO y SCIM con valores anterior/nuevo (sin secretos), tokens SCIM con id, nombre
 // y prefijo, targetId real (no el patrón de la ruta), descarga de adjuntos, cambios de conexiones de almacenamiento,
-// 2FA en todas las organizaciones del usuario y el conteo de ingresos fallidos sin organización. App real sobre PGlite.
+// y 2FA en todas las organizaciones del usuario. App real sobre PGlite.
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -248,26 +248,5 @@ describe("2FA", () => {
         expect(rows[0]).toMatchObject({ actor_id: u, target_id: u, target_type: "user" });
       }
     }
-  });
-});
-
-describe("intentos fallidos", () => {
-  it("sin organizaciones cuenta los fallos de todas; con organización, solo los de la primera", async () => {
-    const { recentFailedLogins } = await import("../src/modules/teams");
-    const t1 = await newTenant();
-    const t2 = await newTenant();
-    const u = await newUser(null);
-    await db.query(`UPDATE users SET password_reset_at = NULL WHERE id = $1`, [u]);
-    const fail = (t: string, ago = "0 minutes") =>
-      db.query(`INSERT INTO account_audit_log (tenant_id, actor_type, actor_id, action, occurred_at) VALUES ($1,'anonymous',$2,'auth.login_failed', now() - $3::interval)`, [t, u, ago]);
-    await fail(t1);
-    await fail(t2);
-    await fail(t2, "20 minutes"); // fuera de la ventana
-    expect(await recentFailedLogins(db, u)).toBe(2);
-    await db.query(`INSERT INTO memberships (tenant_id, user_id, role) VALUES ($1,$2,'member')`, [t1, u]);
-    expect(await recentFailedLogins(db, u)).toBe(1);
-    // Un restablecimiento posterior desbloquea.
-    await db.query(`INSERT INTO account_audit_log (tenant_id, actor_type, actor_id, action, target_id, occurred_at) VALUES ($1,'user',$2,'user.password_reset',$2, now() + interval '1 second')`, [t1, u]);
-    expect(await recentFailedLogins(db, u)).toBe(0);
   });
 });

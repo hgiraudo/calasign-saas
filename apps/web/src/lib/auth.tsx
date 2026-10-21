@@ -13,7 +13,8 @@ interface AuthCtx {
   loading: boolean;
   refresh: () => Promise<MeResponse | null>;
   setMe: (m: MeResponse | null) => void;
-  logout: () => Promise<void>;
+  /** `all`: cierra todas las sesiones de la cuenta (y revoca las apps conectadas), no solo esta. */
+  logout: (opts?: { all?: boolean }) => Promise<void>;
   /** La sesión terminó mientras se usaba la app (no es un logout propio). */
   expired: boolean;
 }
@@ -64,9 +65,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Recarga completa al login (no navegación de la SPA): descarta todo lo que quedó en memoria de la sesión (PDFs y
   // datos cacheados, estado de las páginas) y la página no queda en el historial como una vista con datos. Quien la
   // llama ya confirmó descartar los cambios sin guardar (confirmDiscardUnsaved).
-  const logout = useCallback(async () => {
+  const logout = useCallback(async (opts?: { all?: boolean }) => {
     try {
-      await api("/v1/auth/logout", { method: "POST" });
+      await api(opts?.all === true ? "/v1/auth/logout-all" : "/v1/auth/logout", { method: "POST" });
     } finally {
       broadcastSessionChange({ kind: "logout", tenantId: null, userId: null });
       setMe(null);

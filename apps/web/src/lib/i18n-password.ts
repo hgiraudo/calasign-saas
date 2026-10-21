@@ -31,6 +31,7 @@ const es = {
   notAllowed: "En esa organización tu acceso se creó con inicio de sesión único (SSO) o SCIM: ingresá con SSO o restablecé tu contraseña para usarla ahí.",
   sessionExpired: "Tu sesión terminó (venció o se cerró). Volvé a ingresar para seguir donde estabas.",
   badCredentials: "Correo o contraseña incorrectos.",
+  rememberMe: "Recordarme en este dispositivo (14 días)",
   // Sesión vencida con cambios sin guardar: no se manda al login (se perdían); se ingresa en otra pestaña y se sigue.
   lostTitle: "Tu sesión venció",
   lostBody: "Tenés cambios sin guardar en esta pantalla. Para no perderlos, iniciá sesión en otra pestaña y después tocá «Reintentar» para seguir donde estabas.",
@@ -78,6 +79,7 @@ const pt: Record<Key, string> = {
   notAllowed: "Nessa organização seu acesso foi criado com login único (SSO) ou SCIM: entre com SSO ou redefina sua senha para usá-la lá.",
   sessionExpired: "Sua sessão terminou (expirou ou foi encerrada). Entre novamente para continuar de onde parou.",
   badCredentials: "E-mail ou senha incorretos.",
+  rememberMe: "Lembrar de mim neste dispositivo (14 dias)",
   lostTitle: "Sua sessão expirou",
   lostBody: "Há alterações não salvas nesta tela. Para não perdê-las, entre em outra aba e depois toque em «Tentar novamente» para continuar de onde parou.",
   lostLogin: "Entrar em outra aba",
@@ -122,6 +124,7 @@ const en: Record<Key, string> = {
   notAllowed: "In that organization your access was created through single sign-on (SSO) or SCIM: sign in with SSO or reset your password to use it there.",
   sessionExpired: "Your session ended (it expired or was closed). Sign in again to pick up where you left off.",
   badCredentials: "Incorrect email or password.",
+  rememberMe: "Remember me on this device (14 days)",
   lostTitle: "Your session expired",
   lostBody: "You have unsaved changes on this screen. To keep them, sign in in another tab and then tap “Retry” to pick up where you left off.",
   lostLogin: "Sign in in another tab",

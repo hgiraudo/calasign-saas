@@ -126,7 +126,11 @@ const CACHE_MAX = 10_000;
 function cached<T extends string | null>(key: string, load: () => Promise<T>): Promise<T> {
   const c = cache.get(key);
   if (c && Date.now() - c.at < CACHE_MS) return Promise.resolve(c.value as T);
+  const gen = generation;
   return load().then((v) => {
+    // Una consulta en curso durante un cambio de dominio (invalidate) no guarda el resultado anterior al cambio: lo
+    // leería después brandForHost (que ya tiene la generación nueva) y lo guardaría como vigente.
+    if (gen !== generation) return v;
     if (cache.size >= CACHE_MAX) cache.clear();
     cache.set(key, { value: v, at: Date.now() });
     return v;

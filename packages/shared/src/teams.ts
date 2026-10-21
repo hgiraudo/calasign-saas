@@ -222,6 +222,30 @@ export interface TotpSetupResponse {
 export const TotpCodeInput = z.object({ code: z.string().trim().min(6).max(20) });
 export type TotpCodeInput = z.infer<typeof TotpCodeInput>;
 
+/**
+ * Re-autenticación de acciones sensibles (activar la 2FA, regenerar códigos de recuperación): la contraseña actual o,
+ * sin ella, un ingreso en los últimos 10 minutos (las cuentas sin contraseña, p. ej. solo SSO, solo tienen esta).
+ * Sin ninguna de las dos: 403 reauth_required (details.password: si la cuenta tiene contraseña).
+ */
+export const ReauthInput = z.object({ password: z.string().min(1).max(200).optional() });
+export type ReauthInput = z.infer<typeof ReauthInput>;
+export const TotpReauthInput = TotpCodeInput.extend({ password: z.string().min(1).max(200).optional() });
+export type TotpReauthInput = z.infer<typeof TotpReauthInput>;
+
+/** Sesión web abierta de la cuenta (GET /v1/me/sessions). */
+export interface AccountSession {
+  id: string;
+  createdAt: string;
+  lastSeenAt: string;
+  /** Navegador y sistema, abreviado ("Firefox · Windows"). */
+  userAgent: string | null;
+  /** Red de origen enmascarada (/24 en IPv4, /64 en IPv6). */
+  ip: string | null;
+  method: "password" | "sso";
+  rememberMe: boolean;
+  current: boolean;
+}
+
 export interface TotpEnableResponse {
   /** Códigos de recuperación de un solo uso. Se muestran una vez. */
   recoveryCodes: string[];

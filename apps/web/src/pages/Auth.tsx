@@ -44,6 +44,7 @@ export function LoginPage() {
   const from = (loc.state as { from?: string } | null)?.from ?? "/app";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [rememberMe, setRememberMe] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [challenge, setChallenge] = useState<string | null>(null);
@@ -75,7 +76,7 @@ export function LoginPage() {
     setError(null);
     setResetRequired(false);
     try {
-      const m = await api<MeResponse | TwoFactorChallenge>("/v1/auth/login", { method: "POST", body: { email, password } });
+      const m = await api<MeResponse | TwoFactorChallenge>("/v1/auth/login", { method: "POST", body: { email, password, rememberMe } });
       if ("twoFactorRequired" in m) {
         setChallenge(m.challengeToken);
         return;
@@ -116,6 +117,10 @@ export function LoginPage() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
           />
+        </label>
+        <label className="row-wrap" style={{ gap: 8 }}>
+          <input type="checkbox" checked={rememberMe} onChange={(e) => setRememberMe(e.target.checked)} />
+          <span>{pw("rememberMe")}</span>
         </label>
         <ErrorBox error={error} />
         {resetRequired && (

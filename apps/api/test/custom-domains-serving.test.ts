@@ -231,4 +231,43 @@ describe("marca por Host", () => {
     await db.query(`UPDATE brand_domains SET status = 'verified' WHERE brand_id = $1`, [A.brand]);
     invalidateDomainCache();
   });
+
+  it("una consulta en curso durante un cambio de dominio no deja en la caché el valor anterior (tenantForHost, brandForHost)", async () => {
+    const { brandForHost } = await import("../src/modules/white-label/brand");
+    const { tenantForHost, invalidateDomainCache } = await import("../src/modules/custom-domains");
+    // Base falsa: la primera consulta de custom_domains se demora y devuelve el valor previo al cambio.
+    const slowDb = () => {
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      const state = { domainQueries: 0 };
+      const fake = {
+        one: async (sql: string) => {
+          if (!/custom_domains/.test(sql)) return null;
+          if (++state.domainQueries === 1) {
+            await gate;
+            return { tenant_id: "organizacion-anterior" };
+          }
+          return null;
+        },
+      } as unknown as Db;
+      return { fake, release, state };
+    };
+
+    const t = slowDb();
+    const pending = tenantForHost(t.fake, "carrera-1.example.org");
+    await new Promise((r) => setImmediate(r));
+    invalidateDomainCache();
+    t.release();
+    expect(await pending).toBe("organizacion-anterior");
+    expect(await tenantForHost(t.fake, "carrera-1.example.org")).toBeNull();
+    expect(t.state.domainQueries).toBe(2);
+
+    const b = slowDb();
+    const pendingBrand = brandForHost(b.fake, "carrera-2.example.org");
+    await new Promise((r) => setImmediate(r));
+    invalidateDomainCache();
+    b.release();
+    expect(await pendingBrand).toEqual({ tenantId: "organizacion-anterior", brandId: null });
+    expect(await brandForHost(b.fake, "carrera-2.example.org")).toBeNull();
+  });
 });

@@ -290,7 +290,7 @@ Resultado de las rondas de revisión de código de octubre de 2026; cada una tie
 - **SSO**: una sesión abierta por SSO queda atada a esa organización (`/v1/me/access` solo la muestra a ella), no puede
   activar 2FA de la cuenta (`sso_session_2fa`) y se cierra si se apaga el SSO o cambia el proveedor de identidad.
   Dura `sso_configs.session_ttl_hours` horas absolutas desde que se abre (1 a 336; por defecto 24, configurable en
-  Ajustes → SSO); bajarlo acorta también las sesiones SSO abiertas. Las sesiones con contraseña siguen en 14 días.
+  Ajustes → SSO); bajarlo acorta también las sesiones SSO abiertas. Las sesiones con contraseña duran 14 días con "recordarme" (ver Sesiones abajo).
   Los tokens OAuth autorizados desde una sesión SSO tampoco pasan de esa sesión: el código guarda cuándo vence
   (`oauth_authorization_codes.sso_session_expires_at`, 0080) y la familia tiene como tope el menor entre ese
   vencimiento y la creación del código + la duración de la conexión (`oauth_tokens.sso_deadline`; sin él, el primer
@@ -323,6 +323,40 @@ Resultado de las rondas de revisión de código de octubre de 2026; cada una tie
   organización de la que es miembro y, en las que ya no lo es, solo si ahí se le revocó algo. Activar o desactivar la 2FA cierra las otras sesiones y revoca los tokens OAuth de la cuenta.
   La redirección después del login acepta solo rutas propias (empiezan con `/`, sin `//`, hasta 4000 caracteres; si
   no, `/app`: nunca una URL cortada, para que la vuelta a `/oauth/authorize` de un conector MCP llegue entera).
+- **Sesiones** (0122): sin "recordarme" (`rememberMe` en `/v1/auth/login`, casilla en la web) la cookie es de sesión
+  del navegador y la sesión se cierra tras `SESSION_IDLE_HOURS` (por defecto 24) sin actividad; con "recordarme",
+  cookie persistente y 14 días desde el ingreso, sin cierre por inactividad. Las SSO no tienen "recordarme": vencen a
+  las horas de la conexión y, antes, por inactividad. `sessions.last_seen_at` se actualiza como mucho cada 5 minutos.
+  `GET /v1/me/sessions` lista las sesiones abiertas de la cuenta (navegador abreviado, red enmascarada /24 o /64, la
+  actual marcada), `DELETE /v1/me/sessions/:id` cierra una y `POST /v1/auth/logout-all` cierra todas (también la
+  actual) y revoca los tokens OAuth, los códigos sin canjear y los desafíos de 2FA de la cuenta (Seguridad → Sesiones).
+- **Re-autenticación**: activar la 2FA (`/v1/me/2fa/setup` y `/enable`) y regenerar los códigos de recuperación piden
+  la contraseña actual en el cuerpo (`password`, cuenta para el bloqueo de intentos) o un ingreso con credenciales en
+  los últimos 10 minutos (`sessions.authenticated_at`; cambiar de organización no lo renueva). Las cuentas sin
+  contraseña (solo SSO) solo tienen la segunda opción. Sin ninguna: 403 `reauth_required` (`details.password`);
+  contraseña incorrecta: 403 `invalid_password`.
+- **Bloqueo de ingresos** (`login-attempts.ts`): 10 intentos de contraseña en 15 minutos por (cuenta, red /24 o /64)
+  bloquean esa red; 100 por hora desde cualquier red bloquean la cuenta (contra la prueba distribuida). Los fallos
+  desde otra red no bloquean a la persona. Los códigos del segundo paso tienen su propio cupo (10 en 15 minutos por
+  cuenta, además de 5 por desafío): un desafío que ya pasó la contraseña no lo cortan los fallos de contraseña de
+  terceros. Aceptar una invitación sin contraseña no cuenta un intento. "Olvidé mi contraseña" tiene tope por
+  (cuenta, red) (3 por hora) y un techo por cuenta (20 por hora); cada pedido nuevo invalida los links anteriores.
+- **Contraseñas**: además del mínimo de 10 caracteres, el alta, el restablecimiento y la cuenta creada al aceptar una
+  invitación rechazan (400 `weak_password`, `details.reason`) las contraseñas comunes (lista sin conexión
+  `apps/api/src/lib/common-passwords.txt.gz`, de SecLists, MIT) y las que son o contienen la parte local del correo.
+- **Avisos de seguridad**: cambiar la contraseña (restablecerla), activar o desactivar la 2FA y regenerar los códigos de
+  recuperación mandan un correo a la cuenta (con la fecha y la red enmascarada), con la marca de la plataforma, por la
+  cola `notify` (respeta la supresión por rebote).
+- **Quitar la 2FA de una cuenta (soporte)**: no hay ruta de API ni de administrador de organización (la 2FA es de la
+  cuenta global; un administrador de una organización no puede quitar el segundo factor de alguien que también es
+  miembro de otras). Si la persona perdió el teléfono y los códigos de recuperación, soporte: (1) verifica la identidad
+  por un canal independiente del correo (p. ej. un propietario de una de sus organizaciones que la conozca, o una
+  videollamada con documento) y deja constancia del pedido; (2) en la base de su celda ejecuta
+  `UPDATE users SET totp_secret_enc = NULL, totp_pending_enc = NULL, totp_enabled_at = NULL, totp_recovery_hashes = '{}', totp_last_step = NULL WHERE id = '<id>';`
+  seguido de `DELETE FROM sessions WHERE user_id = '<id>'; DELETE FROM login_challenges WHERE user_id = '<id>'; UPDATE oauth_tokens SET revoked_at = now() WHERE user_id = '<id>' AND revoked_at IS NULL;`;
+  (3) registra en `account_audit_log` de cada organización de la persona una fila `user.2fa_disabled` con
+  `actor_type = 'system'` y `data = {"by": "support", "ticket": "<n.º>"}`, y (4) le pide que ingrese, restablezca la
+  contraseña si hay sospecha de robo y vuelva a activar la 2FA (si su organización la exige, se lo pide al entrar).
 - **Invitaciones**: revocar o reemplazar una invitación pendiente exige poder otorgar su rol. Quien acepta una
   invitación a una organización con SSO obligatorio (y no es propietario) recibe 403 `sso_required` con
   `details.joined: true` y `startUrl`: tiene que ingresar por SSO (una sesión con contraseña no le serviría).

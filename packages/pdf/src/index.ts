@@ -38,7 +38,7 @@ export * from "./external";
 export { signingAlgorithmFor, normalizeEcdsaSignature, verifyEcdsaDigest } from "./sigalg";
 export * from "./certcheck";
 export { assertEmbeddableImage, assertPngSize, pngDimensions, pngInkPixels, MAX_PNG_PIXELS } from "./images";
-export { changesAfterRevision, type ChangesAfter } from "./revisions";
+export { changesAfterRevision, revisionCache, type ChangesAfter, type RevisionCache } from "./revisions";
 export * from "./stream-budget";
 export { MAX_TEXT_STREAM_BYTES, textStreamBytes, assertTextReadable } from "./text-budget";
 export { PdfReaderBusyError } from "./pdfjs-run";

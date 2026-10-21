@@ -27,7 +27,7 @@ import type { PadesLevel } from "./ltv";
 import { byteRangeIssue, readPdfSignatures, signedContent, type PdfDss } from "./signatures";
 import { withDecodeBudget } from "./stream-budget";
 import { PDFDocument } from "pdf-lib";
-import { changesAfterRevision, type ChangesAfter } from "./revisions";
+import { changesAfterRevision, revisionCache, type ChangesAfter } from "./revisions";
 
 export interface CertSummary {
   subject: string;
@@ -495,11 +495,12 @@ async function validatePdfUnbudgeted(pdf: Uint8Array, opts: ValidateOptions): Pr
   const current = reports.some((r) => r.modifiedAfter) ? await PDFDocument.load(pdf, { updateMetadata: false, ignoreEncryption: true }) : undefined;
   // Una vez por revisión: varias firmas que terminan en el mismo lugar comparten el resultado.
   const byEnd = new Map<number, Promise<ChangesAfter>>();
+  const revCache = revisionCache(pdf);
   for (const r of reports) {
     if (r.modifiedAfter) {
       const [, , c, d] = signatures[r.index].byteRange;
       let p = byEnd.get(c + d);
-      if (!p) byEnd.set(c + d, (p = changesAfterRevision(pdf, c + d, verified, current)));
+      if (!p) byEnd.set(c + d, (p = changesAfterRevision(pdf, c + d, verified, current, revCache)));
       r.changesAfter = await p;
     }
   }

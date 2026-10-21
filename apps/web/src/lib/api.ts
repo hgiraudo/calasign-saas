@@ -453,7 +453,10 @@ export const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
   duplicate_recipient: { "pt-BR": "Um destinatário aparece mais de uma vez.", en: "A recipient appears more than once." },
   too_many_fields: { "pt-BR": "O envelope tem campos demais.", en: "The envelope has too many fields." },
   too_many_documents: { "pt-BR": "Há documentos demais.", en: "Too many documents." },
-  weak_password: { "pt-BR": "A senha precisa ter pelo menos 10 caracteres.", en: "The password must be at least 10 characters long." },
+  weak_password: {
+    "pt-BR": "Senha fraca: use pelo menos 10 caracteres, que não seja uma senha comum nem contenha seu e-mail.",
+    en: "Weak password: use at least 10 characters, not a common password and not containing your email.",
+  },
   invalid_csv: { "pt-BR": "O CSV tem erros: revise as colunas e o formato.", en: "The CSV has errors: check the columns and the format." },
   csv_encoding: {
     "pt-BR": "O arquivo tem caracteres que não puderam ser lidos: salve-o como \"CSV UTF-8\" e envie de novo.",

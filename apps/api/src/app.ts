@@ -18,6 +18,7 @@ import { requestPath } from "./lib/util";
 import { LOG_REDACT_PATHS, safeRequestSerializer } from "./lib/redact";
 import { readMailbox } from "./notifications/channels";
 import { authRoutes } from "./modules/auth";
+import { sessionRoutes } from "./modules/sessions";
 import { authenticate, bearerCredentialTenant } from "./modules/context";
 import { envelopeRoutes } from "./modules/envelopes";
 import { signingRoutes } from "./modules/signing";
@@ -273,6 +274,7 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
     return { ok: true, queue: await queueHealth(deps.db) };
   });
   await authRoutes(app, services);
+  await sessionRoutes(app, services);
   await envelopeRoutes(app, services);
   await signerFeatureRoutes(app, services);
   await identityRoutes(app, services);

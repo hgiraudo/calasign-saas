@@ -296,10 +296,10 @@ if (runRes.status === 404) {
 
 // ───────────────────────────── 6. 2FA (TOTP) ─────────────────────────────
 
-const setup = await bob.api("POST", "/v1/me/2fa/setup");
+const setup = await bob.api("POST", "/v1/me/2fa/setup", { password: "clave-de-bob-123" }); // re-autenticación (contraseña o ingreso de hace < 10 min)
 if (!setup.qrSvg.startsWith("<svg") || !setup.otpauthUrl.startsWith("otpauth://totp/")) throw new Error("setup 2FA");
-await bob.api("POST", "/v1/me/2fa/enable", { code: "000000" }, 400);
-const { recoveryCodes } = await bob.api("POST", "/v1/me/2fa/enable", { code: totp(setup.secret, nowStep()) });
+await bob.api("POST", "/v1/me/2fa/enable", { code: "000000", password: "clave-de-bob-123" }, 400);
+const { recoveryCodes } = await bob.api("POST", "/v1/me/2fa/enable", { code: totp(setup.secret, nowStep()), password: "clave-de-bob-123" });
 if (recoveryCodes.length !== 10) throw new Error("códigos de recuperación");
 await bob.api("POST", "/v1/auth/logout");
 const bob2 = new Client("bob2");
@@ -337,22 +337,22 @@ step("2FA: login pide segundo factor; código incorrecto → 401; código de rec
 
 // Exigir 2FA a la organización.
 await owner.api("PATCH", "/v1/settings/security", { require2fa: true }, 409);
-const oSetup = await owner.api("POST", "/v1/me/2fa/setup");
-await owner.api("POST", "/v1/me/2fa/enable", { code: totp(oSetup.secret, nowStep()) });
+const oSetup = await owner.api("POST", "/v1/me/2fa/setup", { password: ownerPw });
+await owner.api("POST", "/v1/me/2fa/enable", { code: totp(oSetup.secret, nowStep()), password: ownerPw });
 await owner.api("PATCH", "/v1/settings/security", { require2fa: true });
 const blocked = await carol.raw("GET", "/v1/envelopes");
 const blockedBody = await blocked.json();
 if (blocked.status !== 403 || blockedBody.error.code !== "two_factor_setup_required") throw new Error("carol debería estar bloqueada hasta activar 2FA");
 acc = await carol.api("GET", "/v1/me/access");
 if (!acc.twoFactor.setupRequired) throw new Error("setupRequired");
-const cSetup = await carol.api("POST", "/v1/me/2fa/setup");
-await carol.api("POST", "/v1/me/2fa/enable", { code: totp(cSetup.secret, nowStep()) });
+const cSetup = await carol.api("POST", "/v1/me/2fa/setup", { password: "clave-de-carol-123" });
+await carol.api("POST", "/v1/me/2fa/enable", { code: totp(cSetup.secret, nowStep()), password: "clave-de-carol-123" });
 await carol.api("GET", "/v1/envelopes");
 await bob3.api("POST", "/v1/me/2fa/disable", { code: totp(setup.secret, nowStep() + 1) }, [400, 409]);
 step("exigir 2FA: no se puede activar sin tenerlo uno mismo (409); sin 2FA se bloquea el acceso (403) hasta activarlo");
 
-// Bloqueo por cuenta en el segundo paso: con la contraseña se juntan varios desafíos antes de fallar; tras 10 códigos
-// incorrectos, ni un desafío ya abierto acepta el código correcto. (Solo en local: en un entorno remoto el límite
+// Bloqueo por cuenta en el segundo paso (cupo propio de los códigos): con la contraseña se juntan varios desafíos antes
+// de fallar; tras 10 códigos incorrectos, ni un desafío ya abierto acepta el código correcto. (Solo en local: en un entorno remoto el límite
 // por IP de la ruta corta antes.)
 if (/^http:\/\/(localhost|127\.0\.0\.1)/.test(BASE)) {
   const chs = [];
@@ -450,8 +450,8 @@ step("quitar a un miembro cierra su acceso y revoca sus API keys (401); el últi
   const invFin = await owner.api("POST", "/v1/invitations", { email: finEmail, role: "admin" });
   const fin = new Client("fin");
   const finMe = await fin.api("POST", `/v1/invite/${invFin.acceptUrl.split("/invite/")[1]}/accept`, { name: "Fin", password: "clave-de-fin-1234" });
-  const finSetup = await fin.api("POST", "/v1/me/2fa/setup"); // la organización exige 2FA
-  await fin.api("POST", "/v1/me/2fa/enable", { code: totp(finSetup.secret, nowStep()) });
+  const finSetup = await fin.api("POST", "/v1/me/2fa/setup", { password: "clave-de-fin-1234" }); // la organización exige 2FA
+  await fin.api("POST", "/v1/me/2fa/enable", { code: totp(finSetup.secret, nowStep()), password: "clave-de-fin-1234" });
   const back = await fin.api("POST", "/v1/invitations", { email: `fin2+${stamp}@example.com`, role: "admin" });
   const backToken = back.acceptUrl.split("/invite/")[1];
   await owner.api("DELETE", `/v1/members/${finMe.user.id}`, undefined, 204);

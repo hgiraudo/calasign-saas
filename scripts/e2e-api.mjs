@@ -264,7 +264,7 @@ try {
     assert(empresa.value === null && fijo.value === "Valor del remitente" && fijo.readOnly, "sin lo que escribió el firmante, con lo fijado por el remitente");
     assert(B.fields.every((f) => f.recipientId === B.recipients[0].id), "los campos apuntan al destinatario nuevo");
     const withValues = await api("POST", `/v1/envelopes/${A.id}/clone`, { includeValues: true, metadata: { lote: "x" } }, { expect: 201 });
-    assert(withValues.fields.find((f) => f.label === "Empresa").value === "ACME Dominicana SRL" && withValues.envelope.metadata.lote === "x" && !withValues.envelope.metadata.clonedFrom, "includeValues y metadata propia");
+    assert(withValues.fields.find((f) => f.label === "Empresa").value === "ACME Dominicana SRL" && withValues.envelope.metadata.lote === "x" && withValues.envelope.metadata.clonedFrom === A.id, "includeValues y metadata propia (conserva clonedFrom)");
     const docsOnly = await api("POST", `/v1/envelopes/${A.id}/clone`, { includeRecipients: false }, { expect: 201 });
     assert(docsOnly.recipients.length === 0 && docsOnly.fields.length === 0 && docsOnly.documents.length === 1, "includeRecipients: false");
     await api("POST", `/v1/envelopes/${randomUUID()}/clone`, {}, { expect: 404 });

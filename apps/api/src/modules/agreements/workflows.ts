@@ -25,7 +25,7 @@ import type { Db } from "../../infra/db";
 import { appendEvent, type Actor } from "../../infra/evidence";
 import { enqueue } from "../../infra/queue";
 import { AppError, badRequest, conflict, forbidden, notFound } from "../../lib/errors";
-import { decrypt, encrypt, hmacSign, iso, queryList, randomToken, sha256Hex, uuidv7 } from "../../lib/util";
+import { BUMP_UPDATED_AT, decrypt, encrypt, hmacSign, iso, queryList, randomToken, sha256Hex, uuidv7 } from "../../lib/util";
 import { rateLimitIpKey } from "../../lib/ip";
 import { hasPerm, requirePerm } from "../access";
 import { auditFromRequest } from "../audit";
@@ -374,7 +374,7 @@ async function voidRunEnvelopes(t: Db, run: any, actor: Actor, reason: string) {
   for (const envelopeId of envIds) {
     const env = await t.one<any>(`SELECT id, tenant_id, status FROM envelopes WHERE id = $1 FOR UPDATE`, [envelopeId]);
     if (env?.status !== "sent" && env?.status !== "awaiting_certificates") continue;
-    await t.query(`UPDATE envelopes SET status = 'voided', voided_at = now(), void_reason = $2, updated_at = now(), version = version + 1 WHERE id = $1`, [env.id, reason]);
+    await t.query(`UPDATE envelopes SET status = 'voided', voided_at = now(), void_reason = $2, updated_at = ${BUMP_UPDATED_AT}, version = version + 1 WHERE id = $1`, [env.id, reason]);
     await appendEvent(t, { tenantId: env.tenant_id, envelopeId: env.id, type: "envelope.voided", actor, data: { reason, workflowRunId: run.id } });
     const notified = await t.query<any>(
       `SELECT r.id FROM recipients r WHERE r.envelope_id = $1 AND (r.status IN ('sent','viewed')

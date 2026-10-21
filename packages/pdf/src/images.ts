@@ -57,9 +57,12 @@ export async function assertEmbeddableImage(bytes: Uint8Array, contentType: "ima
 
 /**
  * Decodifica un PNG (con el mismo tope de píxeles y de concurrencia que al incrustarlo) y cuenta los píxeles con tinta:
- * visibles (alfa ≥ 64) y no casi blancos. Lanza si el PNG está dañado o es demasiado grande. Sirve para rechazar una
+ * visibles (alfa ≥ 32: el borde suavizado de un trazo cuenta) y no casi blancos. Lanza si el PNG está dañado o es demasiado grande. Sirve para rechazar una
  * firma "adoptada" transparente, toda blanca o de un punto.
  */
+/** Alfa mínimo de un píxel con tinta. La web (SignaturePad) cuenta igual antes de habilitar "Adoptar". */
+export const INK_MIN_ALPHA = 32;
+
 export async function pngInkPixels(bytes: Uint8Array, maxPixels = MAX_PNG_PIXELS): Promise<number> {
   assertPngSize(bytes, maxPixels);
   return withDecodeSlot(async () => {
@@ -69,7 +72,7 @@ export async function pngInkPixels(bytes: Uint8Array, maxPixels = MAX_PNG_PIXELS
     let ink = 0;
     const n = png.width * png.height;
     for (let i = 0; i < n; i++) {
-      if (alpha && alpha[i]! < 64) continue;
+      if (alpha && alpha[i]! < INK_MIN_ALPHA) continue;
       if (rgb[i * 3]! > 240 && rgb[i * 3 + 1]! > 240 && rgb[i * 3 + 2]! > 240) continue;
       ink++;
     }

@@ -1,11 +1,11 @@
 // Lógica de campos (Fase 4): condiciones de visibilidad y campos número calculados.
 // Todo se evalúa en el servidor al completar; la web lo replica solo para mostrarlo en vivo.
 import {
-  AUTO_FIELD_TYPES,
   computeFormulas,
   computeLogic,
   formulaRefs,
   parseFormula,
+  signerFixedLogicValue,
   type FieldCondition,
   type LogicField,
 } from "@calasign/shared";
@@ -181,9 +181,8 @@ export async function prepareCompletionLogic(
     if (own.has(id) && !r.read_only) {
       // Tipos cuyo valor no sale de lo enviado: un valor inventado no puede mostrar u ocultar campos condicionados.
       if (r.type === "attachment") return r.attachment_file_id ? (r.value ?? null) : null;
-      if (r.type === "signature") return server.hasSig ? "signed" : null;
-      if (r.type === "initials") return server.hasIni || server.hasSig ? "signed" : null;
-      if ((AUTO_FIELD_TYPES as readonly string[]).includes(r.type)) return server.autoValue(r.type);
+      const fixed = signerFixedLogicValue(r.type, { hasSignature: server.hasSig, hasInitials: server.hasIni, autoValue: server.autoValue });
+      if (fixed !== undefined) return fixed;
       if (r.type === "checkbox") return submitted.get(id) === "true" ? "true" : "false";
       if (submitted.has(id)) return submitted.get(id) ?? null;
     }

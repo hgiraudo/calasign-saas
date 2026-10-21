@@ -7,7 +7,7 @@ import { enqueue, isLastAttempt, purgeFinishedJobs, requeueStuckJobs, type GaveU
 import { getSealProvider } from "../infra/seal";
 import { applyEvidencePipeline, planEvidence } from "./evidence-seal";
 import type { BlobStore } from "../infra/storage";
-import { decrypt, maskDestination, sha256Hex, uuidv7 } from "../lib/util";
+import { BUMP_UPDATED_AT, decrypt, maskDestination, sha256Hex, uuidv7 } from "../lib/util";
 import { deliver } from "../notifications/channels";
 import { scrubPii, sendTracked } from "../notifications/outbound";
 import { pastExpiry, receivesSignerNotices } from "./envelopes";
@@ -569,7 +569,7 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
       [fileId, e.tenant_id, key, pdf.length, sha, /^[0-9a-f]{64}$/.test(chainHead) ? chainHead : null],
     );
     await t.query(
-      `UPDATE envelopes SET status = 'completed', completed_at = $2, signed_file_id = $3, updated_at = now(), version = version + 1 WHERE id = $1`,
+      `UPDATE envelopes SET status = 'completed', completed_at = $2, signed_file_id = $3, updated_at = ${BUMP_UPDATED_AT}, version = version + 1 WHERE id = $1`,
       [e.id, completedAt, fileId],
     );
     await t.query(`UPDATE recipients SET status = 'completed' WHERE envelope_id = $1 AND role = 'cc'`, [e.id]);
@@ -816,7 +816,7 @@ export async function expireDueEnvelopes(d: Deps, signal?: AbortSignal) {
       const expiredNow = await d.db.tx(async (t) => {
         const cur = await t.one<any>(`SELECT status FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
         if (cur?.status !== "sent" && cur?.status !== "awaiting_certificates") return false;
-        await t.query(`UPDATE envelopes SET status = 'expired', updated_at = now(), version = version + 1 WHERE id = $1`, [e.id]);
+        await t.query(`UPDATE envelopes SET status = 'expired', updated_at = ${BUMP_UPDATED_AT}, version = version + 1 WHERE id = $1`, [e.id]);
         await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "envelope.expired", actor: SYSTEM });
         return true;
       });

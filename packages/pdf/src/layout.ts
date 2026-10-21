@@ -108,7 +108,10 @@ export function fitFontSize(font: PDFFont, text: string, maxWidth: number, maxSi
   return size;
 }
 
-/** Corta texto en líneas que entren en `maxWidth`. Respeta palabras; parte palabras demasiado largas. */
+/**
+ * Corta texto en líneas que entren en `maxWidth`. Respeta palabras; parte palabras demasiado largas, con al menos un
+ * carácter por línea (un carácter más ancho que `maxWidth` va solo en su línea, nunca una línea vacía).
+ */
 export function wrapText(font: PDFFont, text: string, size: number, maxWidth: number): string[] {
   const lines: string[] = [];
   for (const paragraph of text.split(/\r?\n/)) {
@@ -125,7 +128,7 @@ export function wrapText(font: PDFFont, text: string, size: number, maxWidth: nu
       } else {
         let chunk = "";
         for (const ch of word) {
-          if (font.widthOfTextAtSize(chunk + ch, size) > maxWidth) {
+          if (chunk && font.widthOfTextAtSize(chunk + ch, size) > maxWidth) {
             lines.push(chunk);
             chunk = ch;
           } else chunk += ch;

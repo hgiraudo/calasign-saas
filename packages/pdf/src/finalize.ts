@@ -6,11 +6,6 @@ import {
   PDFName,
   PDFObjectCopier,
   PDFPage,
-  clip,
-  endPath,
-  popGraphicsState,
-  pushGraphicsState,
-  rectangle,
   rgb,
   type PDFFont,
   type PDFImage,
@@ -19,7 +14,7 @@ import {
 import { pdflibAddPlaceholder } from "@signpdf/placeholder-pdf-lib";
 import { SUBFILTER_ETSI_CADES_DETACHED } from "@signpdf/utils";
 import { buildPadesCms, type CmsOptions } from "./cms";
-import { embedFonts, fitFontSize, fontCharset, safeMultiline, safeText, withDisplayedSpace, wrapText, type Fonts } from "./layout";
+import { embedFonts, fitFontSize, safeMultiline, safeText, withDisplayedSpace, wrapText, type Fonts } from "./layout";
 import { labels, type CertLabels } from "./i18n";
 import type { SignatureProvider } from "./provider";
 import { assertPngSize } from "./images";
@@ -556,10 +551,9 @@ function drawField(page: PDFPage, fonts: Fonts, f: StampField, img: PDFImage | n
     const text = safeText(fonts.regular, raw.replace(/\s+/g, " ").trim());
     if (!text) return;
     const fit = layoutFieldText(fonts.regular, text, bw, bh);
-    // Recorte al rectángulo del campo: ningún texto estampado sale de su caja (ni pisa el contenido vecino del documento).
-    page.pushOperators(pushGraphicsState(), rectangle(bx, by, bw, bh), clip(), endPath());
-    if (fit.lines.length === 1 && !fit.wrapped) {
-      // Una línea que entra: misma posición que antes del ajuste por líneas.
+    // Sin recorte al rectángulo del campo: en un documento firmado no se puede perder ningún carácter del valor. Si ni
+    // al tamaño mínimo entra en una línea, se dibuja igual (sobresale de la caja, como siempre) en vez de ocultarse.
+    if (!fit.wrapped) {
       page.drawText(fit.lines[0]!, { x: bx + 1, y: by + (bh - fit.size * 0.72) / 2, size: fit.size, font: fonts.regular, color: INK });
     } else {
       const lh = fit.size * FIELD_LINE_HEIGHT;
@@ -568,43 +562,67 @@ function drawField(page: PDFPage, fonts: Fonts, f: StampField, img: PDFImage | n
         page.drawText(line, { x: bx + 1, y: top - i * lh - fit.size * 0.9, size: fit.size, font: fonts.regular, color: INK });
       });
     }
-    page.pushOperators(popGraphicsState());
   });
 }
 
-/** Tamaño mínimo legible del texto estampado: por debajo se trunca con "…" en vez de seguir achicando. */
-export const FIELD_MIN_FONT_SIZE = 6;
+/** Debajo de este tamaño el texto estampado se considera difícil de leer (la web avisa al firmante). No trunca nada. */
+export const FIELD_LEGIBLE_FONT_SIZE = 6;
 const FIELD_LINE_HEIGHT = 1.15;
 
 /**
- * Cómo entra el texto de un campo en su caja (bw × bh, en puntos): en una línea si entra achicando hasta el mínimo
- * legible (igual que siempre); si no, en varias líneas al mayor tamaño que entren en el alto; si tampoco, al mínimo
- * con tantas líneas como entren y la última truncada con "…". `truncated` indica que se perdió texto.
+ * Cómo entra el texto de un campo en su caja (bw × bh, en puntos), SIN perder nunca un carácter:
+ * - en una línea achicando como siempre (de min(0.7·alto, 11) hasta 4 pt; si ni así entra, sobresale: `overflows`);
+ * - si el texto tiene espacios y partido en líneas sólo entre palabras (nunca dentro de una: un correo, un importe o
+ *   un número largo no se cortan) entra en el alto a un tamaño mayor que en una línea, va en varias líneas.
  */
-export function layoutFieldText(font: PDFFont, text: string, bw: number, bh: number): { size: number; lines: string[]; wrapped: boolean; truncated: boolean } {
+export function layoutFieldText(font: PDFFont, text: string, bw: number, bh: number): { size: number; lines: string[]; wrapped: boolean; overflows: boolean } {
   const maxW = bw - 2;
   const maxSize = Math.min(bh * 0.7, 11);
-  const minSize = Math.min(FIELD_MIN_FONT_SIZE, maxSize);
-  const single = fitFontSize(font, text, maxW, maxSize, minSize);
-  if (font.widthOfTextAtSize(text, single) <= maxW) return { size: single, lines: [text], wrapped: false, truncated: false };
-  for (let s = maxSize; s >= minSize; s -= 0.25) {
-    const lines = wrapText(font, text, s, maxW);
-    if (lines.length * s * FIELD_LINE_HEIGHT <= bh && lines.every((l) => font.widthOfTextAtSize(l, s) <= maxW)) {
-      return { size: s, lines, wrapped: true, truncated: false };
+  const single = fitFontSize(font, text, maxW, maxSize);
+  const singleFits = font.widthOfTextAtSize(text, single) <= maxW;
+  if (singleFits && single >= maxSize) return { size: single, lines: [text], wrapped: false, overflows: false };
+  const units = wrapUnits(text);
+  if (units.length > 1) {
+    for (let s = Math.min(maxSize, bh / (2 * FIELD_LINE_HEIGHT)); s > single; s -= 0.25) {
+      const lines = greedyLines(font, units, s, maxW);
+      if (lines.length > 1 && lines.length * s * FIELD_LINE_HEIGHT <= bh && lines.every((l) => font.widthOfTextAtSize(l, s) <= maxW)) {
+        return { size: s, lines, wrapped: true, overflows: false };
+      }
     }
   }
-  const all = wrapText(font, text, minSize, maxW);
-  const n = Math.max(1, Math.floor(bh / (minSize * FIELD_LINE_HEIGHT)));
-  const lines = all.slice(0, n);
-  if (lines.length === all.length && lines.every((l) => font.widthOfTextAtSize(l, minSize) <= maxW)) {
-    return { size: minSize, lines, wrapped: lines.length > 1, truncated: false };
+  return { size: single, lines: [text], wrapped: false, overflows: !singleFits };
+}
+
+/**
+ * Unidades que no se separan al partir el texto de un campo: palabras, salvo que dos seguidas no tengan letras
+ * ("$ 1.234,00", "+54 11 4444 5555", "12 345"), que van juntas para que un importe o un número no quede partido.
+ */
+function wrapUnits(text: string): string[] {
+  const units: string[] = [];
+  let prevNoLetters = false;
+  for (const tok of text.split(" ").filter(Boolean)) {
+    const noLetters = !/\p{L}/u.test(tok);
+    if (noLetters && prevNoLetters && units.length) units[units.length - 1] += ` ${tok}`;
+    else units.push(tok);
+    prevNoLetters = noLetters;
   }
-  const ell = fontCharset(font).has(0x2026) ? "…" : "...";
-  // La última línea visible lleva el resto del texto, cortado por caracteres (no por bytes) hasta que entre con "…".
-  const chars = Array.from(lines.length < all.length ? `${lines[n - 1]} ${all.slice(n).join(" ")}` : lines[lines.length - 1]!);
-  while (chars.length && font.widthOfTextAtSize(chars.join("").trimEnd() + ell, minSize) > maxW) chars.pop();
-  lines[lines.length - 1] = chars.join("").trimEnd() + ell;
-  return { size: minSize, lines, wrapped: lines.length > 1, truncated: true };
+  return units;
+}
+
+/** Arma líneas sin partir ninguna unidad (una más ancha que `maxW` queda sola en su línea, más ancha). */
+function greedyLines(font: PDFFont, units: string[], size: number, maxW: number): string[] {
+  const lines: string[] = [];
+  let line = "";
+  for (const u of units) {
+    const candidate = line ? `${line} ${u}` : u;
+    if (!line || font.widthOfTextAtSize(candidate, size) <= maxW) line = candidate;
+    else {
+      lines.push(line);
+      line = u;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
 }
 
 function drawPageFooter(page: PDFPage, fonts: Fonts, L: CertLabels, envelopeId: string) {

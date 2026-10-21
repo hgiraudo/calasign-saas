@@ -50,7 +50,7 @@ import { appendEvent, SYSTEM, type Actor } from "../infra/evidence";
 import { enqueue } from "../infra/queue";
 import type { BlobStore } from "../infra/storage";
 import { AppError, badRequest, conflict, notFound } from "../lib/errors";
-import { iso, sha256Hex, uuidv7 } from "../lib/util";
+import { BUMP_UPDATED_AT, iso, sha256Hex, uuidv7 } from "../lib/util";
 import { authenticate, clientInfo, type Services } from "./context";
 import { envelopeBaseUrl } from "./white-label/brand";
 import { lockEnvelope, pastExpiry } from "./envelopes";
@@ -271,7 +271,7 @@ export async function certsignStage(
         [uuidv7(), e.tenant_id, e.id, r.id, i + 1, `FirmaCertificado${i + 1}`],
       );
     }
-    await t.query(`UPDATE envelopes SET status = 'awaiting_certificates', updated_at = now(), version = version + 1 WHERE id = $1`, [e.id]);
+    await t.query(`UPDATE envelopes SET status = 'awaiting_certificates', updated_at = ${BUMP_UPDATED_AT}, version = version + 1 WHERE id = $1`, [e.id]);
     await appendEvent(t, {
       tenantId: e.tenant_id,
       envelopeId: e.id,
@@ -769,7 +769,7 @@ export async function certsignRoutes(app: FastifyInstance, s: Services) {
         await enqueue(t, "notify", { kind: "certificate_request", envelopeId: e.id, recipientId: next.recipient_id, tenantId: e.tenant_id }, { dedupeKey: `certificate_request:${next.recipient_id}` });
       } else {
         await t.query(`UPDATE envelope_certsign SET ready = true, updated_at = now() WHERE envelope_id = $1`, [e.id]);
-        await t.query(`UPDATE envelopes SET status = 'finalizing', updated_at = now(), version = version + 1 WHERE id = $1`, [e.id]);
+        await t.query(`UPDATE envelopes SET status = 'finalizing', updated_at = ${BUMP_UPDATED_AT}, version = version + 1 WHERE id = $1`, [e.id]);
         await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "envelope.finalizing", actor: SYSTEM, data: { afterCertificateSignatures: true } });
         await enqueue(t, "finalize", { envelopeId: e.id, tenantId: e.tenant_id }, { dedupeKey: `finalize-certsign:${e.id}` });
         envelopeStatus = "finalizing";

@@ -57,7 +57,10 @@ export async function appendEvent(
       hash,
     ],
   );
-  await queueWebhookFanout(db, e.tenantId, e.envelopeId, e.type, seq, e.data ?? {}, e.actor.type === "recipient" ? e.actor.id ?? null : null);
+  // El destinatario del evento: el que diga data.recipientId (p. ej. un rechazo en persona registrado a nombre del
+  // anfitrión) o, si no, el actor cuando es un destinatario.
+  const recipientId = typeof e.data?.recipientId === "string" ? e.data.recipientId : e.actor.type === "recipient" ? e.actor.id ?? null : null;
+  await queueWebhookFanout(db, e.tenantId, e.envelopeId, e.type, seq, e.data ?? {}, recipientId);
   return { seq, hash };
 }
 

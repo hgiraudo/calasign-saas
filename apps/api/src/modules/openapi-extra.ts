@@ -1281,7 +1281,7 @@ const WEBHOOK_TEXT: Record<string, string> = {
   "envelope.expired": "El sobre venció sin completarse.",
   "recipient.viewed": "Un destinatario abrió el sobre (data.recipientId).",
   "recipient.signed": "Un destinatario firmó (data.recipientId).",
-  "recipient.declined": "Un destinatario rechazó (data.recipientId, data.reason).",
+  "recipient.declined": "Un destinatario rechazó (data.recipientId, data.reason; en la evidencia también identityVerified y, en persona, inPersonConfirmed).",
   "recipient.approved": "Un aprobador aprobó (data.recipientId).",
   "webhook.test": "Evento de prueba (POST /v1/webhooks/{id}/test); data.envelope es null.",
 };

@@ -410,6 +410,14 @@ const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
   invalid_field: { "pt-BR": "Há um campo inválido.", en: "A field is invalid." },
   invalid_formula: { "pt-BR": "Há uma fórmula inválida.", en: "A formula is invalid." },
   invalid_condition: { "pt-BR": "Há uma condição inválida.", en: "A condition is invalid." },
+  documents_changed: {
+    "pt-BR": "Os documentos do envelope mudaram durante a revisão: revise-o de novo.",
+    en: "The envelope's documents changed during the review: run it again.",
+  },
+  signature_level_locked: {
+    "pt-BR": "O nível de assinatura só pode ser alterado em um rascunho; em um envelope enviado só é possível alterar o selo da empresa.",
+    en: "The signature level can only be changed on a draft; on a sent envelope only the company seal can be changed.",
+  },
   not_draft: { "pt-BR": "O envelope não é mais um rascunho (já foi enviado).", en: "The envelope is no longer a draft (it was already sent)." },
   recipient_is_payer: {
     "pt-BR": "Esse destinatário é responsável pela cobrança: remova ou altere a cobrança antes.",

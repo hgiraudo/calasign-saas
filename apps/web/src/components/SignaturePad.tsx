@@ -8,6 +8,12 @@ import { useExpText } from "../lib/i18n-experience";
 const W = 720;
 const H = 240;
 const FONT = "'Dancing Script', cursive";
+/**
+ * Mismo criterio que la API al recibir la imagen (packages/pdf pngInkPixels + SIGNATURE_MIN_INK_PIXELS en signing.ts):
+ * píxeles con alfa ≥ 32 y no casi blancos, al menos 24. Un toque suelto no llega y la API lo rechazaba al finalizar.
+ */
+const INK_MIN_ALPHA = 32;
+const MIN_INK_PIXELS = 24;
 
 interface Props {
   purpose: "signature" | "initials";
@@ -22,6 +28,9 @@ export function SignaturePad({ purpose, defaultText, onAdopt, onClose }: Props) 
   const [tab, setTab] = useState<"draw" | "type">("type");
   const [text, setText] = useState(defaultText);
   const [hasInk, setHasInk] = useState(false);
+  /** Hay trazo y alcanza para que la API lo acepte (se mide al soltar el puntero, no en cada movimiento). */
+  const [enoughInk, setEnoughInk] = useState(false);
+  const [typedInk, setTypedInk] = useState(false);
   const [fontReady, setFontReady] = useState(false);
   const drawRef = useRef<HTMLCanvasElement>(null);
   const typeRef = useRef<HTMLCanvasElement>(null);
@@ -52,7 +61,10 @@ export function SignaturePad({ purpose, defaultText, onAdopt, onClose }: Props) 
     if (!ctx) return;
     ctx.clearRect(0, 0, W, H);
     const value = text.trim();
-    if (!value) return;
+    if (!value) {
+      setTypedInk(false);
+      return;
+    }
     let size = purpose === "initials" ? 120 : 96;
     ctx.fillStyle = "#0B1F3A";
     ctx.textAlign = "center";
@@ -62,6 +74,7 @@ export function SignaturePad({ purpose, defaultText, onAdopt, onClose }: Props) 
       size -= 4;
     } while (ctx.measureText(value).width > W - 40 && size > 20);
     ctx.fillText(value, W / 2, H / 2 + 6);
+    setTypedInk(inkPixels(c) >= MIN_INK_PIXELS);
   }, [text, tab, fontReady, purpose]);
 
   const pos = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -105,29 +118,36 @@ export function SignaturePad({ purpose, defaultText, onAdopt, onClose }: Props) 
   const onUp = () => {
     drawing.current = false;
     last.current = null;
+    const c = drawRef.current;
+    if (c) setEnoughInk(inkPixels(c) >= MIN_INK_PIXELS);
   };
 
   // El lienzo de dibujo se desmonta al pasar a "Escribir": al volver está vacío. Sin esto, hasInk seguía en true y
   // "Adoptar" adoptaba una firma en blanco.
   useEffect(() => {
-    if (tab === "draw") setHasInk(false);
+    if (tab === "draw") {
+      setHasInk(false);
+      setEnoughInk(false);
+    }
   }, [tab]);
 
   const clear = useCallback(() => {
     const c = drawRef.current;
     c?.getContext("2d")?.clearRect(0, 0, W, H);
     setHasInk(false);
+    setEnoughInk(false);
   }, []);
 
   // Escrita: hasta que cargue la fuente manuscrita el lienzo muestra la de reserva, y se adoptaba esa imagen.
-  const canAdopt = tab === "draw" ? hasInk : text.trim().length > 0 && fontReady;
+  const canAdopt = tab === "draw" ? hasInk && enoughInk : text.trim().length > 0 && fontReady && typedInk;
+  const tooShort = tab === "draw" ? hasInk && !enoughInk : text.trim().length > 0 && fontReady && !typedInk;
 
   const adopt = () => {
     const c = tab === "draw" ? drawRef.current : typeRef.current;
     if (!c || !canAdopt) return;
     const trimmed = trimCanvas(c);
-    // Sin ningún trazo no hay firma que adoptar (nunca una imagen en blanco).
-    if (!trimmed) return;
+    // Sin trazo suficiente no hay firma que adoptar (nunca una imagen en blanco ni un punto que la API rechaza).
+    if (!trimmed || inkPixels(trimmed) < MIN_INK_PIXELS) return;
     const dataUrl = trimmed.toDataURL("image/png");
     onAdopt({
       kind: tab === "draw" ? "drawn" : "typed",
@@ -198,6 +218,11 @@ export function SignaturePad({ purpose, defaultText, onAdopt, onClose }: Props) 
             <input value={text} onChange={(e) => setText(e.target.value)} maxLength={purpose === "initials" ? 6 : 80} autoFocus />
           </label>
           <canvas ref={typeRef} width={W} height={H} className="sig-canvas" role="img" aria-label={text.trim() || t("sign.typeHere")} />
+          {tooShort && (
+            <p className="small warn-text" role="status">
+              {x("sig.tooShort")}
+            </p>
+          )}
         </div>
       ) : (
         <div className="sigpad" role="tabpanel" id="sigpanel" aria-labelledby="sigtab-draw">
@@ -214,7 +239,13 @@ export function SignaturePad({ purpose, defaultText, onAdopt, onClose }: Props) 
             aria-label={t("sign.drawHere")}
           />
           <div className="sigpad-actions">
-            <span className="muted">{t("sign.drawHere")}</span>
+            {tooShort ? (
+              <span className="warn-text" role="status">
+                {x("sig.tooShort")}
+              </span>
+            ) : (
+              <span className="muted">{t("sign.drawHere")}</span>
+            )}
             <button type="button" className="btn btn-ghost btn-sm" onClick={clear}>
               {t("sign.clear")}
             </button>
@@ -223,6 +254,20 @@ export function SignaturePad({ purpose, defaultText, onAdopt, onClose }: Props) 
       )}
     </Modal>
   );
+}
+
+/** Píxeles con tinta, como pngInkPixels en la API: alfa ≥ 32 y no casi blancos. */
+function inkPixels(c: HTMLCanvasElement): number {
+  const ctx = c.getContext("2d");
+  if (!ctx || !c.width || !c.height) return 0;
+  const d = ctx.getImageData(0, 0, c.width, c.height).data;
+  let ink = 0;
+  for (let i = 0; i < d.length; i += 4) {
+    if (d[i + 3]! < INK_MIN_ALPHA) continue;
+    if (d[i]! > 240 && d[i + 1]! > 240 && d[i + 2]! > 240) continue;
+    ink++;
+  }
+  return ink;
 }
 
 /** Recorta el área transparente alrededor del trazo (con margen). null si el lienzo está vacío. */

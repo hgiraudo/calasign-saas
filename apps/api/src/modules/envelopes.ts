@@ -13,7 +13,7 @@ import type { Db } from "../infra/db";
 import { appendEvent, type Actor } from "../infra/evidence";
 import { enqueue } from "../infra/queue";
 import { AppError, assertNotStale, badRequest, conflict, notFound, STALE_GENERIC_MESSAGE } from "../lib/errors";
-import { encrypt, iso, likeContains, queryList, randomToken, sha256Hex, uuidv7 } from "../lib/util";
+import { BUMP_UPDATED_AT, encrypt, iso, likeContains, queryList, randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { config } from "../config";
 import { assertEnvelopeAccess, envelopeVisibilitySql } from "./access";
 import { authenticate, type AuthContext, type Services } from "./context";
@@ -56,7 +56,7 @@ function requireDraft(e: any) {
 async function touch(db: Db, id: string) {
   // Estrictamente creciente (now() es la hora de inicio de la transacción: una que esperó el lock lo hacía retroceder y
   // el control de edición concurrente daba un 409 falso).
-  await db.query(`UPDATE envelopes SET updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 millisecond'), version = version + 1 WHERE id = $1`, [id]);
+  await db.query(`UPDATE envelopes SET updated_at = ${BUMP_UPDATED_AT}, version = version + 1 WHERE id = $1`, [id]);
 }
 
 /** Destinatarios firmantes del grupo de ruteo actual (el menor routing_order con firmantes pendientes). */
@@ -105,7 +105,7 @@ export async function advanceRouting(db: Db, tenantId: string, envelopeId: strin
   if (group.order === null) {
     // Cobro al firmar: el sobre se completa recién con el pago confirmado.
     if (await paymentBlocksCompletion(db, tenantId, envelopeId, actor)) return;
-    await db.query(`UPDATE envelopes SET status = 'finalizing', updated_at = now() WHERE id = $1`, [envelopeId]);
+    await db.query(`UPDATE envelopes SET status = 'finalizing', updated_at = ${BUMP_UPDATED_AT} WHERE id = $1`, [envelopeId]);
     await appendEvent(db, { tenantId, envelopeId, type: "envelope.finalizing", actor });
     await enqueue(db, "finalize", { envelopeId, tenantId }, { dedupeKey: `finalize:${envelopeId}` });
     return;
@@ -437,7 +437,7 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
       if (e.status !== "sent" && e.status !== "awaiting_certificates") throw conflict("not_voidable", "Solo se puede anular un sobre enviado y en curso");
       // X-Expected-Updated-At opcional (el MCP lo manda con la versión que el usuario aprobó en la vista previa).
       assertNotStale(req.headers, e.updated_at, STALE_GENERIC_MESSAGE);
-      await t.query(`UPDATE envelopes SET status = 'voided', voided_at = now(), void_reason = $2, updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 millisecond'), version = version + 1 WHERE id = $1`, [
+      await t.query(`UPDATE envelopes SET status = 'voided', voided_at = now(), void_reason = $2, updated_at = ${BUMP_UPDATED_AT}, version = version + 1 WHERE id = $1`, [
         e.id,
         input.reason,
       ]);
@@ -632,10 +632,14 @@ export async function replaceRecipients(t: Db, a: AuthContext, envelopeId: strin
   // Solo Telegram sin telegramChatId (PutRecipientsInput no lo rechaza): vale si el destinatario ya vinculó su Telegram.
   const unlinked = list.flatMap((r, i) => (telegramOnlyWithoutChat(r) ? [{ r, i }] : []));
   if (unlinked.length) {
-    const linked = new Set(
-      (await t.query<any>(`SELECT id FROM recipients WHERE envelope_id = $1 AND id = ANY($2) AND telegram_chat_id IS NOT NULL`, [envelopeId, unlinked.map((x) => x.r.id)])).map((x) => x.id),
+    // Con el mismo correo y teléfono: si cambiaron, el upsert descarta el chat vinculado (es de la persona anterior).
+    const linked = new Map(
+      (await t.query<any>(`SELECT id, email, phone FROM recipients WHERE envelope_id = $1 AND id = ANY($2) AND telegram_chat_id IS NOT NULL`, [envelopeId, unlinked.map((x) => x.r.id)])).map((x) => [x.id, x]),
     );
-    const bad = unlinked.filter((x) => !linked.has(x.r.id));
+    const bad = unlinked.filter((x) => {
+      const row = linked.get(x.r.id);
+      return !row || row.email !== (x.r.email ?? null) || row.phone !== (x.r.phone ?? null);
+    });
     if (bad.length) {
       throw new AppError(400, "validation_error", bad.map((x) => `recipients.${x.i}: ${TELEGRAM_ONLY_MESSAGE}`).join("; "), bad.map((x) => ({ path: `recipients.${x.i}`, message: TELEGRAM_ONLY_MESSAGE })));
     }
@@ -654,7 +658,10 @@ export async function replaceRecipients(t: Db, a: AuthContext, envelopeId: strin
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
        ON CONFLICT (id) DO UPDATE SET role = EXCLUDED.role, routing_order = EXCLUDED.routing_order, name = EXCLUDED.name,
          email = EXCLUDED.email, phone = EXCLUDED.phone, locale = EXCLUDED.locale, channels = EXCLUDED.channels,
-         telegram_chat_id = COALESCE(EXCLUDED.telegram_chat_id, recipients.telegram_chat_id),
+         -- El chat de Telegram vinculado es de la persona que abrió su link: si cambió el correo o el teléfono, la fila
+         -- reutilizada es otra persona y el link del nuevo destinatario no puede ir al chat del anterior.
+         telegram_chat_id = CASE WHEN recipients.email IS DISTINCT FROM EXCLUDED.email OR recipients.phone IS DISTINCT FROM EXCLUDED.phone
+                                 THEN EXCLUDED.telegram_chat_id ELSE COALESCE(EXCLUDED.telegram_chat_id, recipients.telegram_chat_id) END,
          id_document_type = EXCLUDED.id_document_type, id_document_number = EXCLUDED.id_document_number`,
       [
         r.id,
@@ -1038,7 +1045,7 @@ export async function sendEnvelope(t: Db, tenantId: string, envelopeId: string, 
     problems.push({ code: "payer_not_signer", params: {}, message: "Quien paga el cobro tiene que ser un firmante" });
   if (problems.length) throw problemsError("envelope_incomplete", problems);
 
-  await t.query(`UPDATE envelopes SET status = 'sent', sent_at = now(), updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 millisecond'), version = version + 1 WHERE id = $1`, [e.id]);
+  await t.query(`UPDATE envelopes SET status = 'sent', sent_at = now(), updated_at = ${BUMP_UPDATED_AT}, version = version + 1 WHERE id = $1`, [e.id]);
   await appendEvent(t, {
     tenantId: tenantId,
     envelopeId: e.id,

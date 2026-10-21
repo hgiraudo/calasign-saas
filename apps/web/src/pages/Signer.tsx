@@ -526,34 +526,52 @@ function isAuto(f: Field) {
 /** Campos en los que el firmante escribe o elige un valor. */
 const VALUE_TYPES = ["text", "number", "dropdown", "company", "title"];
 
-// Aproximación del ajuste del texto estampado (packages/pdf layoutFieldText): tamaño mínimo de 6 pt (o menos en una
-// caja muy baja), interlineado 1.15 y 1 pt de margen a cada lado. Se mide con una fuente parecida a DejaVu Sans.
-const STAMP_MIN_SIZE = 6;
+// Aproximación del ajuste del texto estampado (packages/pdf layoutFieldText): nunca se pierde un carácter; el texto va
+// en una línea achicado (desde min(0.7·alto, 11) pt) o, si tiene palabras y así sale más grande, partido entre
+// palabras con interlineado 1.15 (los grupos sin letras, como "$ 1.234,00", no se separan). Se avisa cuando quedaría
+// por debajo de ~6 pt (difícil de leer) o ni así entraría. Se mide con una fuente parecida a DejaVu Sans.
+const STAMP_LEGIBLE_SIZE = 6;
+const STAMP_LINE_HEIGHT = 1.15;
 let measureCtx: CanvasRenderingContext2D | null | undefined;
-function stampFits(text: string, boxW: number, boxH: number): boolean {
+function stampLegible(text: string, boxW: number, boxH: number): boolean {
   if (measureCtx === undefined) measureCtx = typeof document === "undefined" ? null : document.createElement("canvas").getContext("2d");
   const ctx = measureCtx;
   if (!ctx || boxW <= 2 || boxH <= 0) return true;
-  const size = Math.min(STAMP_MIN_SIZE, boxH * 0.7, 11);
-  ctx.font = `${size}px "DejaVu Sans", Verdana, Arial, sans-serif`;
   const maxW = boxW - 2;
-  if (ctx.measureText(text).width <= maxW) return true;
-  const maxLines = Math.max(1, Math.floor(boxH / (size * 1.15)));
-  let lines = 1;
-  let line = "";
-  for (const word of text.split(" ")) {
-    const candidate = line ? `${line} ${word}` : word;
-    if (ctx.measureText(candidate).width <= maxW) {
-      line = candidate;
-      continue;
-    }
-    // Palabra más larga que la caja: se parte en tantas líneas como ocupe.
-    const wordLines = Math.max(1, Math.ceil(ctx.measureText(word).width / maxW));
-    lines += line ? wordLines : wordLines - 1;
-    line = wordLines > 1 ? "" : word;
-    if (lines > maxLines) return false;
+  const maxSize = Math.min(boxH * 0.7, 11);
+  // El ancho es proporcional al tamaño: se mide una vez a 10 px y se escala.
+  ctx.font = `10px "DejaVu Sans", Verdana, Arial, sans-serif`;
+  const width = (t: string, size: number) => (ctx.measureText(t).width * size) / 10;
+  let best = Math.min(maxSize, (maxW * 10) / Math.max(1, ctx.measureText(text).width));
+  const units: string[] = [];
+  let prevNoLetters = false;
+  for (const tok of text.split(" ").filter(Boolean)) {
+    const noLetters = !/\p{L}/u.test(tok);
+    if (noLetters && prevNoLetters && units.length) units[units.length - 1] += ` ${tok}`;
+    else units.push(tok);
+    prevNoLetters = noLetters;
   }
-  return lines <= maxLines;
+  if (units.length > 1) {
+    for (let s = Math.min(maxSize, boxH / (2 * STAMP_LINE_HEIGHT)); s > best; s -= 0.25) {
+      let lines = 1;
+      let line = "";
+      let ok = true;
+      for (const u of units) {
+        const candidate = line ? `${line} ${u}` : u;
+        if (!line || width(candidate, s) <= maxW) line = candidate;
+        else {
+          lines++;
+          line = u;
+        }
+        if (width(line, s) > maxW) ok = false;
+      }
+      if (ok && lines * s * STAMP_LINE_HEIGHT <= boxH) {
+        best = s;
+        break;
+      }
+    }
+  }
+  return best >= Math.min(STAMP_LEGIBLE_SIZE, maxSize) - 0.01;
 }
 
 function SigningFlow({
@@ -599,7 +617,7 @@ function SigningFlow({
   const [serverProblems, setServerProblems] = useState<ReadonlySet<string>>(() => new Set());
   /** Campo al que ir apenas llegue la sesión recargada después de un 422. */
   const [jumpTo, setJumpTo] = useState<string | null>(null);
-  const logic = useFieldLogic(session, values);
+  const logic = useFieldLogic(session, values, { signature: !!signature, initials: !!initials });
 
   // Sesión recargada (p. ej. después de un 422 al finalizar): lo escrito se conserva; los adjuntos siguen al servidor
   // (el que la página creía subido puede no estar) y los campos nuevos toman su valor.
@@ -653,14 +671,16 @@ function SigningFlow({
     return n === null || (f.min != null && n < f.min) || (f.max != null && n > f.max);
   });
 
-  // Textos que no van a entrar en su espacio del PDF ni al tamaño mínimo legible (se estampan cortados con "…").
+  // Textos que el firmante controla y que en el PDF quedarían por debajo del tamaño legible (se estampan completos,
+  // pero muy chicos o saliéndose de su espacio). El adjunto se estampa como "<Adjunto>: <nombre del archivo>".
   const overflowing = useMemo(() => {
     const out = new Set<string>();
     for (const f of interactive) {
-      if (!VALUE_TYPES.includes(f.type)) continue;
-      const text = (values[f.id] ?? "").replace(/\s+/g, " ").trim();
+      if (!VALUE_TYPES.includes(f.type) && f.type !== "attachment") continue;
+      const v = (values[f.id] ?? "").replace(/\s+/g, " ").trim();
+      const text = f.type === "attachment" && v ? `Adjunto: ${v}` : v;
       const page = session.documents.find((d) => d.id === f.documentId)?.pages[f.page];
-      if (text && page && !stampFits(text, f.width * page.width, f.height * page.height)) out.add(f.id);
+      if (text && page && !stampLegible(text, f.width * page.width, f.height * page.height)) out.add(f.id);
     }
     return out;
   }, [interactive, values, session.documents]);

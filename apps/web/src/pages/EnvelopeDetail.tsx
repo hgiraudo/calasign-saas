@@ -75,7 +75,8 @@ export function EnvelopeDetailPage() {
 
   if (notFound) return <Navigate to="/app" replace />;
   if (!detail) return loadError ? <div className="page"><ErrorBox error={loadError} /></div> : <Spinner />;
-  if (detail.envelope.status === "draft") return <Navigate to={`/app/envelopes/${id}/edit`} replace />;
+  // Un borrador se edita en el asistente; quien solo puede verlo (canManage false) se queda acá, de solo lectura.
+  if (detail.envelope.status === "draft" && detail.canManage !== false) return <Navigate to={`/app/envelopes/${id}/edit`} replace />;
   // Quien lo ve por un grupo, como anfitrión o con view_all no puede modificarlo: sin estas acciones (la API daba 403).
   // Sin el dato (respuestas de acciones, que no lo traen) no se oculta nada: la API decide.
   const canManage = detail.canManage !== false;
@@ -145,9 +146,11 @@ export function EnvelopeDetailPage() {
           <h1>{env.subject}</h1>
           <div className="row-wrap">
             <StatusBadge status={env.status} />
-            <span className="muted small">
-              {t("detail.sent")}: {formatDateTime(env.sentAt, locale)}
-            </span>
+            {env.sentAt && (
+              <span className="muted small">
+                {t("detail.sent")}: {formatDateTime(env.sentAt, locale)}
+              </span>
+            )}
             {env.completedAt && (
               <span className="muted small">
                 {t("status.completed")}: {formatDateTime(env.completedAt, locale)}
@@ -322,6 +325,12 @@ export function EnvelopeDetailPage() {
                     {ev.actorLabel ?? ev.actorType}
                     {ev.ip && <span className="muted"> · IP {ev.ip}</span>}
                   </div>
+                  {ev.type === "recipient.declined" && ev.data?.actorRole === "in_person_host" && (
+                    <div className="small warn-text">{t("detail.declineInPersonUnconfirmed", { name: String(ev.data.recipient ?? "") })}</div>
+                  )}
+                  {ev.type === "recipient.declined" && ev.data?.identityVerified === false && (
+                    <div className="small warn-text">{t("detail.declineIdentityUnverified")}</div>
+                  )}
                   <div className="muted small mono" title={ev.hash}>
                     #{ev.seq} · {ev.hash.slice(0, 12)}…
                   </div>

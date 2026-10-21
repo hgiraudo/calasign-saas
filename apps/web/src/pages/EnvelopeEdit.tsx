@@ -373,7 +373,9 @@ export function EnvelopeEditPage() {
 
   if (notFound) return <Navigate to="/app" replace />;
   if (!detail) return error ? <div className="page"><ErrorBox error={error} /></div> : <Spinner />;
-  if (detail.envelope.status !== "draft") return <Navigate to={`/app/envelopes/${id}`} replace />;
+  // Quien solo puede ver el borrador (por un grupo, como anfitrión o con view_all) lo ve en el detalle, de solo lectura:
+  // el asistente le dejaba editar todo y cada guardado daba 403.
+  if (detail.envelope.status !== "draft" || detail.canManage === false) return <Navigate to={`/app/envelopes/${id}`} replace />;
 
   const stepIdx = STEPS.indexOf(step);
 
@@ -387,6 +389,7 @@ export function EnvelopeEditPage() {
           <h1>
             {detail.envelope.subject} <StatusBadge status={detail.envelope.status} />
           </h1>
+          {/* Quien no puede gestionarlo ya salió al detalle (arriba). */}
           <ShareControl kind="envelopes" id={id!} canEdit />
         </div>
         <SaveAsTemplateButton

@@ -20,7 +20,7 @@ import { config } from "../config";
 import type { Db } from "../infra/db";
 import { appendEvent } from "../infra/evidence";
 import { AppError, assertNotStale, badRequest, conflict, notFound } from "../lib/errors";
-import { sha256Hex, uuidv7 } from "../lib/util";
+import { BUMP_UPDATED_AT, sha256Hex, uuidv7 } from "../lib/util";
 import { auditFromRequest } from "./audit";
 import { authenticate, type Services } from "./context";
 import { loadTenantCertificate, parseP12, sealKey, tenantCertificateProvider, toTenantCertificate } from "./custody";
@@ -195,6 +195,11 @@ export async function evidenceRoutes(app: FastifyInstance, s: Services) {
         input.companySealCertificateId !== undefined &&
         !(await t.one(`SELECT 1 FROM jobs WHERE queue = 'finalize' AND status IN ('pending','running') AND payload->>'envelopeId' = $1 LIMIT 1`, [e.id]));
       if (!["draft", "sent"].includes(e.status) && !recovering) throw conflict("not_editable", "El sobre ya está finalizado");
+      // El nivel de firma declarado es parte de lo que se les presentó a los firmantes: enviado el sobre ya no cambia (solo
+      // el sello de empresa). Mandar el mismo valor vigente no es un cambio.
+      if (e.status !== "draft" && input.signatureLevel !== undefined && input.signatureLevel !== e.signature_level) {
+        throw conflict("signature_level_locked", "El nivel de firma solo se puede cambiar en un borrador; en un sobre enviado solo se puede cambiar el sello de empresa");
+      }
       // Cambia el updatedAt del sobre: con X-Expected-Updated-At (el editor lo manda) no tapa una edición ajena.
       assertNotStale(req.headers, e.updated_at);
       // El certificado se vuelve a leer con la fila bloqueada: si se borró entre el chequeo y acá, el sobre no puede
@@ -209,7 +214,7 @@ export async function evidenceRoutes(app: FastifyInstance, s: Services) {
       await t.query(
         `UPDATE envelopes SET company_seal_certificate_id = CASE WHEN $2::boolean THEN $3::uuid ELSE company_seal_certificate_id END,
            signature_level = COALESCE($4, signature_level),
-           updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 millisecond'), version = version + 1 WHERE id = $1`,
+           updated_at = ${BUMP_UPDATED_AT}, version = version + 1 WHERE id = $1`,
         [e.id, input.companySealCertificateId !== undefined, input.companySealCertificateId ?? null, input.signatureLevel ?? null],
       );
       await appendEvent(t, {

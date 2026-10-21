@@ -270,3 +270,27 @@ export function computeFormulas(fields: LogicField[], valueOf: (id: string) => s
   return out;
 }
 
+
+/** Lo que fija el servidor al completar en los campos propios cuyo valor no decide el firmante. */
+export interface SignerFixedValues {
+  /** Adoptó una firma (imagen) en este envío. */
+  hasSignature: boolean;
+  /** Adoptó iniciales en este envío. */
+  hasInitials: boolean;
+  /** Valor de los automáticos: nombre, correo y fecha de firma (formatSigningDate, sin " UTC"). */
+  autoValue: (type: "name" | "email" | "date_signed") => string | null;
+}
+
+/**
+ * Valor que ve la lógica (condiciones/fórmulas) en un campo propio, no de solo lectura, que fija el servidor: firma,
+ * iniciales y automáticos (nombre, correo, fecha). `undefined` si el valor lo decide el firmante. Lo usan la API al
+ * completar y la web en vivo, para que las dos oculten/exijan los mismos campos. Las iniciales cuentan como firmadas
+ * también con sólo la firma adoptada: es lo que acepta /complete y lo que se estampa (la firma ocupa su lugar).
+ * (Los tipos automáticos se repiten acá en vez de importar AUTO_FIELD_TYPES de api.ts, que importa este módulo.)
+ */
+export function signerFixedLogicValue(type: string, s: SignerFixedValues): string | null | undefined {
+  if (type === "signature") return s.hasSignature ? "signed" : null;
+  if (type === "initials") return s.hasInitials || s.hasSignature ? "signed" : null;
+  if (type === "name" || type === "email" || type === "date_signed") return s.autoValue(type);
+  return undefined;
+}

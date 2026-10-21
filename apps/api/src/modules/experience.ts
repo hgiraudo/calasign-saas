@@ -16,7 +16,7 @@ import type { Db } from "../infra/db";
 import { appendEvent } from "../infra/evidence";
 import { enqueue } from "../infra/queue";
 import { AppError, badRequest, conflict, forbidden, notFound } from "../lib/errors";
-import { decrypt, encrypt, maskDestination, randomToken, sha256Hex, uuidv7 } from "../lib/util";
+import { BUMP_UPDATED_AT, decrypt, encrypt, maskDestination, randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { authenticate, clientInfo, type AuthContext, type Services } from "./context";
 import { hasPerm } from "./access";
 import {
@@ -58,12 +58,14 @@ const IMMUTABLE = ["signed", "declined", "completed", "delegated", "reassigned"]
 export async function applyInPersonFlags(
   db: Db,
   envelopeId: string,
-  list: { id: string; inPerson?: { hostUserId?: string | null } | null }[],
+  list: { id: string; role?: string; authMethod?: string; inPerson?: { hostUserId?: string | null } | null }[],
   a: AuthContext,
 ) {
   for (const r of list) {
-    if (r.inPerson === undefined) continue;
-    if (r.inPerson === null) {
+    // Sin inPerson pero con otro authMethod explícito (o como copia): se pidió dejar la firma en persona; antes el
+    // anfitrión guardado volvía a poner "in_person" y el cambio se descartaba en silencio.
+    const leavesInPerson = r.inPerson === undefined && (r.role === "cc" || (r.authMethod !== undefined && r.authMethod !== "in_person"));
+    if (r.inPerson === null || leavesInPerson) {
       await db.query(
         `UPDATE recipients SET in_person_host_user_id = NULL, auth_method = CASE WHEN auth_method = 'in_person' THEN 'link' ELSE auth_method END
          WHERE id = $1 AND envelope_id = $2`,
@@ -71,6 +73,7 @@ export async function applyInPersonFlags(
       );
       continue;
     }
+    if (r.inPerson === undefined) continue;
     const host = r.inPerson.hostUserId ?? a.userId;
     if (!host) throw badRequest("host_required", "inPerson.hostUserId es obligatorio cuando se usa una API key");
     const member = await db.one(`SELECT 1 FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [a.tenantId, host]);
@@ -457,7 +460,7 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
   if (updated.length) diff.recipientsUpdated = updated;
   if (!Object.keys(diff).length) throw badRequest("no_changes", "No hay cambios para aplicar");
 
-  await db.query(`UPDATE envelopes SET updated_at = now(), version = version + 1 WHERE id = $1`, [e.id]);
+  await db.query(`UPDATE envelopes SET updated_at = ${BUMP_UPDATED_AT}, version = version + 1 WHERE id = $1`, [e.id]);
   await appendEvent(db, { tenantId: e.tenant_id, envelopeId: e.id, type: "envelope.corrected", actor: a.actor, data: { ...diff, reason: input.reason ?? null } });
 
   // Ruteo: si se agregó alguien al grupo actual (o se vació), avanzar.

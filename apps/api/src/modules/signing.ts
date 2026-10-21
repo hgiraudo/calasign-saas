@@ -87,6 +87,40 @@ export function recipientActor(req: FastifyRequest, r: any): Actor {
 
 export { formatSigningDate };
 
+/**
+ * Actor y datos del rechazo. Se puede rechazar sin haber pasado la verificación de identidad (quien no quiere hacer
+ * el KYC tiene que poder rechazar) ni la confirmación presencial, pero la evidencia lo dice: `identityVerified` (KYC:
+ * true/false, o null si el destinatario no la requiere) e `inPersonConfirmed` (sólo en persona). En persona sin
+ * identidad confirmada no consta quién tocó "Rechazar" en el dispositivo del anfitrión: el actor es el anfitrión
+ * (sesión abierta por él), no el firmante; `recipientId`/`recipient` dicen de quién era el lugar.
+ */
+export async function declineEvidence(db: Db, req: FastifyRequest, r: any, envelopeId: string, reason: string | null | undefined) {
+  const identityVerified = r.id_verification_provider ? r.identity_status === "verified" : null;
+  const inPerson = r.auth_method === "in_person";
+  const inPersonConfirmed = inPerson ? Boolean(r.identity_confirmed_at) : null;
+  const signer = recipientActor(req, r);
+  const data: Record<string, unknown> = { reason, recipientId: r.id, identityVerified };
+  if (inPerson) data.inPersonConfirmed = inPersonConfirmed;
+  if (inPerson && !inPersonConfirmed) {
+    const opened = await db.one<{ host: string | null }>(
+      `SELECT data->>'hostUserId' AS host FROM envelope_events
+        WHERE envelope_id = $1 AND type = 'recipient.in_person_started' AND data->>'recipientId' = $2 ORDER BY seq DESC LIMIT 1`,
+      [envelopeId, r.id],
+    );
+    const hostUserId = opened?.host ?? r.in_person_host_user_id ?? null;
+    const host = hostUserId ? await db.one<any>(`SELECT name, email FROM users WHERE id = $1`, [hostUserId]) : null;
+    if (hostUserId) {
+      data.recipient = signer.label;
+      data.actorRole = "in_person_host";
+      return {
+        actor: { type: "user", id: hostUserId, label: host ? `${host.name} <${host.email}>` : null, ip: signer.ip, userAgent: signer.userAgent } as Actor,
+        data,
+      };
+    }
+  }
+  return { actor: signer, data };
+}
+
 /** Copia en curso: el destinatario ya firmó (o es copia) y el sobre todavía no tiene su PDF final. */
 function copyAllowed(r: any, e: any): boolean {
   const open = ["sent", "awaiting_certificates", "finalizing"].includes(e.status);
@@ -424,8 +458,8 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
       if (e.status !== "sent" || pastExpiry(e)) throw new AppError(410, "envelope_closed", "El sobre ya no está disponible");
       if ((r.role !== "signer" && r.role !== "approver") || !["sent", "viewed"].includes(r.status)) throw conflict("not_signable", "No podés rechazar este sobre");
       await t.query(`UPDATE recipients SET status = 'declined', declined_at = now(), decline_reason = $2 WHERE id = $1`, [r.id, input.reason]);
-      await t.query(`UPDATE envelopes SET status = 'declined', updated_at = now(), version = version + 1 WHERE id = $1`, [e.id]);
-      await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "recipient.declined", actor: recipientActor(req, r), data: { reason: input.reason } });
+      await t.query(`UPDATE envelopes SET status = 'declined', updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 millisecond'), version = version + 1 WHERE id = $1`, [e.id]);
+      await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "recipient.declined", ...(await declineEvidence(t, req, r, e.id, input.reason)) });
       await enqueue(t, "notify", { kind: "sender_declined", envelopeId: e.id, tenantId: e.tenant_id, declinedBy: r.id });
       const others = (await t.query<any>(`SELECT * FROM recipients WHERE envelope_id = $1 AND id <> $2 AND status IN ('sent','viewed','signed')`, [e.id, r.id])).filter(
         // Embebidos, en persona y autorregistrados sin correo validado no reciben avisos (ver receivesSignerNotices).

@@ -230,3 +230,87 @@ describe("completar: chequeo previo sin bloqueo", () => {
     expect(puts).toBe(mid);
   });
 });
+
+describe("completar: iniciales y automáticos en la lógica (mismo criterio que la web)", () => {
+  it("con sólo la firma adoptada las iniciales cuentan como firmadas (es lo que se estampa)", async () => {
+    const s = await setup([
+      { key: "sig", type: "signature" },
+      { key: "ini", type: "initials" },
+      { key: "t1", type: "text", label: "Tras iniciales", conditions: [{ fieldKey: "ini", operator: "filled" }] },
+      { key: "t2", type: "text", label: "Si es Ana", conditions: [{ fieldKey: "name", operator: "equals", value: "Ana" }] },
+      { key: "name", type: "name" },
+    ]);
+    const r = await complete(s.token, { fields: [], signature: { kind: "drawn", imagePng: INKED } });
+    expect(r.statusCode).toBe(422);
+    // Visibles (y obligatorios) los dos condicionados: iniciales "firmadas" con la firma y el nombre automático.
+    expect(r.json().error.details.fields.map((f: { id: string }) => f.id).sort()).toEqual([s.ids.t1, s.ids.t2].sort());
+  });
+
+  it("signerFixedLogicValue: firma, iniciales y automáticos", async () => {
+    const { signerFixedLogicValue } = await import("@calasign/shared");
+    const st = (hasSignature: boolean, hasInitials: boolean) => ({ hasSignature, hasInitials, autoValue: (t: string) => `auto:${t}` });
+    expect(signerFixedLogicValue("initials", st(true, false))).toBe("signed");
+    expect(signerFixedLogicValue("initials", st(false, false))).toBeNull();
+    expect(signerFixedLogicValue("signature", st(false, true))).toBeNull();
+    expect(signerFixedLogicValue("date_signed", st(false, false))).toBe("auto:date_signed");
+    expect(signerFixedLogicValue("text", st(true, true))).toBeUndefined();
+  });
+});
+
+describe("rechazar: la evidencia dice si la identidad estaba verificada o confirmada", () => {
+  const lastDecline = (envelope: string) =>
+    db.one<any>(`SELECT actor_type, actor_id, actor_label, data FROM envelope_events WHERE envelope_id = $1 AND type = 'recipient.declined'`, [envelope]);
+
+  it("KYC pendiente: se puede rechazar y queda identityVerified: false", async () => {
+    const s = await setup([{ key: "sig", type: "signature" }]);
+    await db.query(`UPDATE recipients SET id_verification_provider = 'mock', identity_status = 'pending' WHERE id = $1`, [s.recipient]);
+    const r = await app.inject({ method: "POST", url: `/v1/signing/${s.token}/decline`, payload: { reason: "No quiero verificar" } });
+    expect(r.statusCode).toBe(200);
+    const ev = await lastDecline(s.envelope);
+    expect(ev.actor_type).toBe("recipient");
+    expect(ev.data).toMatchObject({ reason: "No quiero verificar", recipientId: s.recipient, identityVerified: false });
+    expect(ev.data).not.toHaveProperty("inPersonConfirmed");
+  });
+
+  it("sin KYC: identityVerified null", async () => {
+    const s = await setup([{ key: "sig", type: "signature" }]);
+    expect((await app.inject({ method: "POST", url: `/v1/signing/${s.token}/decline`, payload: { reason: "No" } })).statusCode).toBe(200);
+    expect((await lastDecline(s.envelope)).data.identityVerified).toBeNull();
+  });
+
+  async function inPerson(confirmed: boolean) {
+    const { randomToken, sha256Hex, uuidv7 } = await import("../src/lib/util");
+    const s = await setup([{ key: "sig", type: "signature" }]);
+    const host = uuidv7();
+    await db.query(`INSERT INTO users (id, email, name, password_hash) VALUES ($1, $2, 'Hugo Host', 'x')`, [host, `host-${host.slice(-6)}@x.test`]);
+    await db.query(`UPDATE recipients SET auth_method = 'in_person', in_person_host_user_id = $2, identity_confirmed_at = $3 WHERE id = $1`, [
+      s.recipient,
+      host,
+      confirmed ? new Date() : null,
+    ]);
+    const cookie = randomToken();
+    await db.query(`INSERT INTO signer_sessions (token_hash, recipient_id, method, ip, expires_at) VALUES ($1,$2,'in_person','127.0.0.1', now() + interval '1 hour')`, [
+      sha256Hex(cookie),
+      s.recipient,
+    ]);
+    const r = await app.inject({ method: "POST", url: `/v1/signing/${s.token}/decline`, payload: { reason: "No" }, cookies: { cs_signer: cookie } });
+    expect(r.statusCode).toBe(200);
+    return { ...s, host, ev: await lastDecline(s.envelope) };
+  }
+
+  it("en persona sin identidad confirmada: el actor es el anfitrión", async () => {
+    const { ev, host, recipient } = await inPerson(false);
+    expect(ev.actor_type).toBe("user");
+    expect(ev.actor_id).toBe(host);
+    expect(ev.actor_label).toContain("Hugo Host");
+    expect(ev.data).toMatchObject({ recipientId: recipient, inPersonConfirmed: false, actorRole: "in_person_host", recipient: "Ana <ana@x.test>" });
+  });
+
+  it("en persona con identidad confirmada: el actor es el firmante", async () => {
+    const { ev, recipient } = await inPerson(true);
+    expect(ev.actor_type).toBe("recipient");
+    expect(ev.actor_id).toBe(recipient);
+    expect(ev.data).toMatchObject({ inPersonConfirmed: true });
+    expect(ev.data).not.toHaveProperty("actorRole");
+  });
+});

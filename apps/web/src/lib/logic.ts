@@ -1,9 +1,15 @@
 // Lógica de campos en vivo para el firmante (Fase 4). Usa las mismas funciones que el servidor;
 // el servidor vuelve a evaluar todo al completar, esto es solo para mostrarlo.
 import { useMemo } from "react";
-import { computeLogic, type Field, type LogicField, type SigningSession } from "@calasign/shared";
+import { computeLogic, formatSigningDate, signerFixedLogicValue, type Field, type LogicField, type SigningSession } from "@calasign/shared";
 
-export function useFieldLogic(session: SigningSession, values: Record<string, string>) {
+/**
+ * `adopted`: si el firmante ya adoptó firma e iniciales en esta página. Con eso y los automáticos (nombre, correo y la
+ * fecha de hoy con el mismo formato que guarda el servidor) la lógica ve lo mismo que verá /complete; antes un campo
+ * condicionado a la propia firma o al propio nombre quedaba oculto acá y obligatorio en el servidor (o al revés).
+ */
+export function useFieldLogic(session: SigningSession, values: Record<string, string>, adopted: { signature: boolean; initials: boolean }) {
+  const { signature: hasSignature, initials: hasInitials } = adopted;
   return useMemo(() => {
     const own = session.fields;
     const others = session.logicFields ?? [];
@@ -18,6 +24,13 @@ export function useFieldLogic(session: SigningSession, values: Record<string, st
       const f = ownById.get(id);
       if (f) {
         if (f.readOnly) return f.value;
+        const fixed = signerFixedLogicValue(f.type, {
+          hasSignature,
+          hasInitials,
+          autoValue: (t) =>
+            t === "name" ? session.recipient.name : t === "email" ? (session.recipient.email ?? "") : formatSigningDate(new Date(), session.recipient.locale),
+        });
+        if (fixed !== undefined) return fixed;
         if (f.type === "checkbox") return values[id] === "true" ? "true" : "false";
         return values[id] ?? f.value ?? null;
       }
@@ -25,7 +38,7 @@ export function useFieldLogic(session: SigningSession, values: Record<string, st
     };
     // Igual que el servidor: las condiciones sobre un campo calculado miran el valor calculado.
     return computeLogic(all, valueOf);
-  }, [session.fields, session.logicFields, values]);
+  }, [session.fields, session.logicFields, session.recipient, values, hasSignature, hasInitials]);
 }
 
 /** Muestra un número calculado con el formato local. */

@@ -23,7 +23,7 @@ import {
 import { config } from "../../config";
 import { appendEvent } from "../../infra/evidence";
 import { runAiSweep } from "./sweep";
-import { AppError, assertNotStale, badRequest, notFound } from "../../lib/errors";
+import { AppError, assertNotStale, badRequest, conflict, notFound } from "../../lib/errors";
 import { identityBlocking } from "../identity/kyc";
 import { iso, uuidv7 } from "../../lib/util";
 import { authenticate, type AuthContext, type Services } from "../context";
@@ -72,6 +72,15 @@ function citations(docs: DocText[], raw: RawCitation[]): AiCitation[] {
       const loc = locateQuote(docs, c.quote, c.page);
       return { page: loc.verified ? loc.page : (c.page ?? loc.page), documentId: loc.documentId, quote: c.quote.trim().slice(0, 500), verified: loc.verified };
     });
+}
+
+/** Huella de los documentos de un sobre (ids y contenido, en orden) para saber si cambiaron durante una revisión. */
+async function reviewDocsKey(db: Services["db"], envelopeId: string): Promise<string> {
+  const rows = await db.query<{ id: string; sha256: string }>(
+    `SELECT d.id, f.sha256 FROM documents d JOIN files f ON f.id = d.file_id WHERE d.envelope_id = $1 ORDER BY d.position, d.id`,
+    [envelopeId],
+  );
+  return rows.map((r) => `${r.id}:${r.sha256}`).join(",");
 }
 
 async function envelopeOf(s: Services, req: FastifyRequest & { params: { id: string } }) {
@@ -319,6 +328,9 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
     const t = await s.db.one<any>(`SELECT ai_playbook FROM tenants WHERE id = $1`, [a.tenantId]);
     const rules: string[] = input.rules ?? (Array.isArray(t?.ai_playbook) ? t.ai_playbook : []);
     if (rules.length === 0) throw badRequest("playbook_empty", "No hay reglas para revisar: cargá el playbook en Ajustes → IA");
+    // Huella de los documentos revisados (antes de leerlos): si cambian mientras el modelo responde, el resultado ya no
+    // es de los documentos vigentes y no se guarda (subir o quitar un documento deja ai_review en NULL).
+    const docsKey = await reviewDocsKey(s.db, e.id);
     const docs = await loadEnvelopeDocs(s.db, s.blobs, e.id);
     const rid = await assertAiAvailable(s.db, a.tenantId, { estimate: inputEstimate(docs), envelopeId: e.id });
     const provider = getAiProvider();
@@ -341,7 +353,13 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
       sent: sentSummary(docs, text),
       usage: usageInfo(r.usage),
     };
-    await s.db.query(`UPDATE envelopes SET ai_review = $2 WHERE id = $1`, [e.id, JSON.stringify(out)]);
+    const stored = await s.db.tx(async (tx) => {
+      await tx.query(`SELECT id FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
+      if ((await reviewDocsKey(tx, e.id)) !== docsKey) return false;
+      await tx.query(`UPDATE envelopes SET ai_review = $2 WHERE id = $1`, [e.id, JSON.stringify(out)]);
+      return true;
+    });
+    // El uso se registra igual: el modelo ya respondió (y consumió).
     await recordAiUse(s.db, {
       reservationId: rid,
       tenantId: a.tenantId,
@@ -351,6 +369,7 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
       actor: a.actor,
       data: { rules: rules.length, violations: out.findings.filter((f) => f.status === "violation").length },
     });
+    if (!stored) throw conflict("documents_changed", "Los documentos del sobre cambiaron durante la revisión: volvé a revisarlo");
     return out;
   });
 

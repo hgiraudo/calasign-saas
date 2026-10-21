@@ -86,6 +86,7 @@ const es = {
   "a11y.progress": "Avance de la firma",
   "a11y.close": "Cerrar",
   "a11y.typeHint": "Podés firmar escribiendo tu nombre: no hace falta dibujar.",
+  "sig.tooShort": "El trazo es demasiado chico para ser una firma: dibujala un poco más grande.",
 } as const;
 
 type Key = keyof typeof es;
@@ -172,6 +173,7 @@ const pt: Dict = {
   "a11y.progress": "Progresso da assinatura",
   "a11y.close": "Fechar",
   "a11y.typeHint": "Você pode assinar digitando seu nome: não precisa desenhar.",
+  "sig.tooShort": "O traço é pequeno demais para ser uma assinatura: desenhe um pouco maior.",
 };
 
 const en: Dict = {
@@ -255,6 +257,7 @@ const en: Dict = {
   "a11y.progress": "Signing progress",
   "a11y.close": "Close",
   "a11y.typeHint": "You can sign by typing your name: no need to draw.",
+  "sig.tooShort": "The stroke is too small to be a signature: draw it a little larger.",
 };
 
 const DICTS: Record<string, Dict> = { es, "pt-BR": pt, en };

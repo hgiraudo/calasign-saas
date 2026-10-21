@@ -213,3 +213,10 @@ export function hostOf(url: string): string | null {
     return null;
   }
 }
+
+/**
+ * Nuevo updated_at estrictamente creciente para un UPDATE (now() es la hora de inicio de la transacción: una que esperó
+ * el lock lo hacía retroceder y el control de edición concurrente, x-expected-updated-at, daba un 409 falso o no veía
+ * un cambio). Uso: `SET updated_at = ${BUMP_UPDATED_AT}`.
+ */
+export const BUMP_UPDATED_AT = "GREATEST(clock_timestamp(), updated_at + interval '1 millisecond')";

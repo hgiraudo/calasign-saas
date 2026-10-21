@@ -17,6 +17,8 @@ import { iso, uuidv7 } from "../../lib/util";
 import { hasPerm } from "../access";
 import { authenticate, type AuthContext, type Services } from "../context";
 import { VALUE_FIELD_TYPES, checkSenderValue, insertEnvelopeField } from "../fieldvalues";
+import { applyCertificateFlags } from "../certsign";
+import { applyIdentityFlags } from "../identity/kyc";
 import { copyFieldLogic } from "../logic";
 import { loadDetail, loadDocuments } from "../mappers";
 
@@ -32,16 +34,16 @@ const RECIPIENT_CONFIG_COLUMNS = [
   "phone",
   "locale",
   "channels",
-  "telegram_chat_id",
+  // Sin telegram_chat_id: el chat vinculado es de quien abrió el link del original (ver replaceRecipients); el
+  // destinatario del clon lo vuelve a vincular desde su link.
   "id_document_type",
   "id_document_number",
   "auth_method",
   "embedded",
   "in_person_host_user_id",
-  "id_verification_provider",
-  "id_verification_level",
-  "signature_type",
-  "certificate_requirements",
+  // La verificación de identidad (id_verification_*) y la firma con certificado (signature_type,
+  // certificate_requirements) no se copian tal cual: pasan por applyIdentityFlags / applyCertificateFlags, que controlan
+  // el plan y el proveedor como un PUT recipients.
 ] as const;
 
 /** Columnas de configuración del sobre que se copian al clonar. */
@@ -133,7 +135,11 @@ export async function cloneEnvelope(t: Services["db"], a: AuthContext, sourceId:
   // Sin las claves del sistema que lo atan a un proceso del original (workflow, formulario, envío masivo, CRM…): el clon
   // no es parte de ellos. Las que describen el documento (plantilla, acuerdo) se conservan.
   const keep = Object.fromEntries(["templateId", "documentTemplateId", "documentProvenance", "agreement"].filter((k) => src.metadata && k in src.metadata).map((k) => [k, src.metadata[k]]));
-  const metadata = input.metadata ?? { ...stripReservedMetadata(src.metadata), ...keep, clonedFrom: src.id };
+  // Con metadata propia, las claves reservadas que describen el documento y clonedFrom se conservan igual (como en
+  // PATCH, que no deja pisar las reservadas): el integrador no puede borrar ni falsificar la procedencia.
+  const metadata = input.metadata
+    ? { ...stripReservedMetadata(input.metadata), ...keep, clonedFrom: src.id }
+    : { ...stripReservedMetadata(src.metadata), ...keep, clonedFrom: src.id };
   await t.query(
     `INSERT INTO envelopes (id, tenant_id, created_by, created_via, subject, message, expires_at, metadata, created_by_api_key)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
@@ -188,7 +194,8 @@ export async function cloneEnvelope(t: Services["db"], a: AuthContext, sourceId:
   // Destinatarios vigentes (no los reemplazados por una delegación o reasignación: su reemplazo ya está en la lista).
   const recMap = new Map<string, string>();
   const recips = await t.query<any>(
-    `SELECT id FROM recipients WHERE envelope_id = $1 AND status NOT IN ('delegated','reassigned') ORDER BY routing_order, created_at, id`,
+    `SELECT id, role, id_verification_provider, id_verification_level, signature_type, certificate_requirements
+       FROM recipients WHERE envelope_id = $1 AND status NOT IN ('delegated','reassigned') ORDER BY routing_order, created_at, id`,
     [src.id],
   );
   const cols = RECIPIENT_CONFIG_COLUMNS.join(", ");
@@ -207,6 +214,29 @@ export async function cloneEnvelope(t: Services["db"], a: AuthContext, sourceId:
       WHERE r.envelope_id = $1 AND r.in_person_host_user_id IS NOT NULL
         AND NOT EXISTS (SELECT 1 FROM memberships m WHERE m.tenant_id = r.tenant_id AND m.user_id = r.in_person_host_user_id)`,
     [id],
+  );
+  // Sin el chat de Telegram copiado, un destinatario solo por Telegram no tendría por dónde recibir su link: se le
+  // suma el correo (o WhatsApp) que ya tiene. Sin ninguno queda para completar en el borrador.
+  await t.query(
+    `UPDATE recipients SET channels = CASE WHEN email IS NOT NULL THEN array_append(channels, 'email') ELSE array_append(channels, 'whatsapp') END
+      WHERE envelope_id = $1 AND NOT embedded AND in_person_host_user_id IS NULL AND channels <@ ARRAY['telegram']::text[]
+        AND (email IS NOT NULL OR phone IS NOT NULL)`,
+    [id],
+  );
+  // Verificación de identidad y firma con certificado: con los mismos controles que PUT recipients (plan con kyc,
+  // proveedor configurado, rol firmante, número de documento).
+  const cloned = recips.map((r) => ({ ...r, id: recMap.get(r.id)! }));
+  await applyIdentityFlags(
+    t,
+    id,
+    cloned.filter((r) => r.id_verification_provider).map((r) => ({ id: r.id, role: r.role, idVerification: { provider: r.id_verification_provider, level: r.id_verification_level ?? undefined } })),
+  );
+  await applyCertificateFlags(
+    t,
+    id,
+    cloned
+      .filter((r) => r.signature_type === "certificate")
+      .map((r) => ({ id: r.id, role: r.role, signatureType: "certificate" as const, certificateRequirements: r.certificate_requirements ?? undefined })),
   );
   if (!includeFields) return id;
 

@@ -7,6 +7,7 @@ import type { Db } from "../infra/db";
 import { SYSTEM, appendEvent } from "../infra/evidence";
 import type { BlobStore } from "../infra/storage";
 import { AppError } from "../lib/errors";
+import { BUMP_UPDATED_AT } from "../lib/util";
 import { authenticate, type Services } from "./context";
 import { signerTokenHash } from "./signer-token";
 import { discardCertsignFiles } from "./certsign";
@@ -171,7 +172,7 @@ export async function purgeExpiredEnvelopes(d: Deps, opts: { tenantId?: string; 
       // Resultado de la verificación de identidad: queda solo el resumen (estado, tipo y país del documento, puntajes),
       // sin nombre, número de documento ni año de nacimiento. Lo que pide la evidencia ya está en los eventos.
       await t.query(`UPDATE identity_verifications SET result = ${PURGED_IDV_RESULT_SQL}, updated_at = now() WHERE envelope_id = $1 AND result IS NOT NULL`, [e.id]);
-      await t.query(`UPDATE envelopes SET purged_at = now(), updated_at = now(), retention_error = NULL WHERE id = $1`, [e.id]);
+      await t.query(`UPDATE envelopes SET purged_at = now(), updated_at = ${BUMP_UPDATED_AT}, retention_error = NULL WHERE id = $1`, [e.id]);
       // Las entregas de webhooks del sobre llevan en el payload su asunto y los datos de los firmantes.
       await t.query(`DELETE FROM webhook_deliveries WHERE envelope_id = $1`, [e.id]);
       const kinds: Record<string, number> = {};

@@ -23,26 +23,46 @@ export const UNAUTHORIZED_EVENT = "calasign:unauthorized";
 export const FORBIDDEN_EVENT = "calasign:forbidden";
 
 /**
- * La sesión del servidor está en otra organización que la que cargó esta pestaña (se cambió en otra pestaña): 409
- * tenant_mismatch. AuthProvider recarga la página con un aviso.
+ * La sesión del servidor está en otra organización o es de otra cuenta que la que cargó esta pestaña (se cambió en otra
+ * pestaña): 409 tenant_mismatch. AuthProvider recarga la página con un aviso (solo en la consola).
  */
 export const TENANT_MISMATCH_EVENT = "calasign:tenant-mismatch";
 
-/** Organización que cargó esta pestaña (AuthProvider la fija con /v1/me); va en x-calasign-tenant en cada escritura. */
-let expectedTenantId: string | null = null;
-export function setExpectedTenant(id: string | null): void {
-  expectedTenantId = id;
+/** Organización y usuario que cargó esta pestaña (AuthProvider los fija con /v1/me); van en cada escritura. */
+let expectedSession: { tenantId: string; userId: string } | null = null;
+export function setExpectedSession(s: { tenantId: string; userId: string } | null): void {
+  expectedSession = s;
 }
 
-/** Encabezado x-calasign-tenant para un pedido que modifica (no en lecturas, ni si quien llama ya lo puso). */
-function withExpectedTenant(method: string, headers: Record<string, string>): Record<string, string> {
-  if (!expectedTenantId || method === "GET" || method === "HEAD" || Object.keys(headers).some((k) => k.toLowerCase() === "x-calasign-tenant")) return headers;
-  return { ...headers, "x-calasign-tenant": expectedTenantId };
+/**
+ * Pedidos públicos (firmante, firma con certificado, formularios y flujos públicos, verificación, invitaciones): no
+ * dependen de la sesión de la consola, así que no llevan los encabezados ni recargan la pestaña por un cambio de sesión.
+ */
+const PUBLIC_API_PREFIXES = ["/v1/signing/", "/v1/certsign/sessions/", "/v1/public/", "/v1/verify", "/v1/invite/"];
+
+/** La pestaña muestra la consola (/app…): solo esas se recargan cuando la sesión cambia en otra pestaña. */
+export function isConsolePage(): boolean {
+  if (typeof window === "undefined") return false;
+  const p = window.location.pathname;
+  return p === "/app" || p.startsWith("/app/");
+}
+
+/**
+ * x-calasign-tenant y x-calasign-user para un pedido de la consola que modifica (no en lecturas, ni en pedidos públicos,
+ * ni si quien llama ya los puso): el servidor responde 409 tenant_mismatch si la sesión ya es de otra organización o
+ * de otra cuenta.
+ */
+function withExpectedTenant(method: string, headers: Record<string, string>, path: string): Record<string, string> {
+  if (!expectedSession || method === "GET" || method === "HEAD") return headers;
+  if (PUBLIC_API_PREFIXES.some((p) => path.startsWith(p))) return headers;
+  const has = (h: string) => Object.keys(headers).some((k) => k.toLowerCase() === h);
+  if (has("x-calasign-tenant") || has("x-calasign-user")) return headers;
+  return { ...headers, "x-calasign-tenant": expectedSession.tenantId, "x-calasign-user": expectedSession.userId };
 }
 
 function signalAuthErrors(res: Response, path: string, code: string | undefined) {
   if (typeof window === "undefined") return;
-  if (res.status === 409 && code === "tenant_mismatch") window.dispatchEvent(new Event(TENANT_MISMATCH_EVENT));
+  if (res.status === 409 && code === "tenant_mismatch" && isConsolePage()) window.dispatchEvent(new Event(TENANT_MISMATCH_EVENT));
   if (res.status === 401 && path !== "/v1/me") window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
   if (res.status === 403 && code === "forbidden" && !path.startsWith("/v1/me/access")) window.dispatchEvent(new Event(FORBIDDEN_EVENT));
 }
@@ -117,7 +137,7 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
   try {
     res = await fetch(path, {
       method,
-      headers: withExpectedTenant(method, headers),
+      headers: withExpectedTenant(method, headers, path),
       body,
       credentials: "include",
       signal: opts.signal,
@@ -651,6 +671,12 @@ function httpErrorText(e: HttpError, loc: "es" | "pt-BR" | "en"): string {
       // En español, el texto de la API (dice cuántos segundos esperar) si es el nuevo; si no, el propio.
       return loc === "es" && e.code === "rate_limited" && e.message ? e.message : RATE_LIMITED[loc] ?? RATE_LIMITED.es;
     }
+    // Cuenta sin organizaciones con 2FA: el alta con la misma contraseña no le sirve, solo una invitación.
+    if (loc !== "es" && e.code === "no_organization" && (e.details as { twoFactor?: unknown } | undefined)?.twoFactor === true) {
+      return loc === "en"
+        ? "Your account doesn't belong to any organization. Since it has two-step verification, ask to be invited to one."
+        : "Sua conta não pertence a nenhuma organização. Como ela tem verificação em duas etapas, peça um convite para uma.";
+    }
     const missing = (e.details as { missing?: unknown } | undefined)?.missing;
     if (loc !== "es" && e.code === "fields_incomplete") {
       const list = Array.isArray(missing) ? [...new Set(missing.map(String))].join(", ") : "";
@@ -696,7 +722,7 @@ export async function fetchResponse(path: string, init: RequestInit = {}): Promi
   try {
     const method = (init.method ?? "GET").toUpperCase();
     const headers = init.headers instanceof Headers ? Object.fromEntries(init.headers.entries()) : Array.isArray(init.headers) ? Object.fromEntries(init.headers) : { ...(init.headers ?? {}) };
-    res = await fetch(path, { credentials: "include", ...init, headers: withExpectedTenant(method, headers as Record<string, string>) });
+    res = await fetch(path, { credentials: "include", ...init, headers: withExpectedTenant(method, headers as Record<string, string>, path) });
   } catch (e) {
     networkError(e);
   }

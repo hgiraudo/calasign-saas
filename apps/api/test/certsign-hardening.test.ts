@@ -273,11 +273,16 @@ describe("delegación y reasignación de un firmante que debe corresponder a su 
     expect(r.doc).toBe("40999888");
     expect(r.r).toMatchObject({ matchIdDocument: true, idDocumentSource: "delegator" });
     expect(r.r.idDocumentMatchSkipped).toBeUndefined();
-    // El tipo de documento del original pasa al reemplazo; el evento registra el número enmascarado y su procedencia.
+    // El tipo de documento del original no pasa al reemplazo (la persona nueva puede tener otro): sin indicarlo queda
+    // sin tipo; quien delega puede indicarlo. El evento registra el número enmascarado y su procedencia.
     const y = await sentEnvelope(MATCH, "30111222");
     await db.query(`UPDATE recipients SET id_document_type = 'dni' WHERE id = $1`, [y.rec]);
     expect((await delegate(y.token, { idDocumentNumber: "40999888" })).statusCode).toBe(200);
-    expect((await db.one<any>(`SELECT id_document_type FROM recipients WHERE replaces = $1`, [y.rec])).id_document_type).toBe("dni");
+    expect((await db.one<any>(`SELECT id_document_type FROM recipients WHERE replaces = $1`, [y.rec])).id_document_type).toBeNull();
+    const z = await sentEnvelope(MATCH, "30111222");
+    await db.query(`UPDATE recipients SET id_document_type = 'dni' WHERE id = $1`, [z.rec]);
+    expect((await delegate(z.token, { idDocumentNumber: "40999888", idDocumentType: "passport" })).statusCode).toBe(200);
+    expect((await db.one<any>(`SELECT id_document_type FROM recipients WHERE replaces = $1`, [z.rec])).id_document_type).toBe("passport");
     const ev = await db.one<any>(`SELECT data FROM envelope_events WHERE envelope_id = $1 AND type = 'recipient.delegated'`, [y.env]);
     expect(ev.data).toMatchObject({ idDocument: "****9888", idDocumentSource: "delegator" });
     expect(JSON.stringify(ev.data)).not.toContain("40999888");

@@ -95,6 +95,9 @@ const CLOSED_STATUSES = ["completed", "voided", "declined", "expired"];
 const CLOSED_AT = `CASE e.status WHEN 'completed' THEN e.completed_at WHEN 'voided' THEN e.voided_at WHEN 'expired' THEN e.expires_at
   ELSE (SELECT max(r.declined_at) FROM recipients r WHERE r.envelope_id = e.id) END`;
 
+/** Espera antes de reintentar un sobre (o archivo huérfano) cuyo borrado falló. */
+const RETRY_BACKOFF = "6 hours";
+
 export async function purgeExpiredEnvelopes(d: Deps, opts: { tenantId?: string; ignoreAge?: boolean; limit?: number } = {}) {
   const params: unknown[] = [];
   let where = `e.status IN ('completed','voided','declined','expired') AND e.purged_at IS NULL AND t.retention_days IS NOT NULL`;
@@ -106,14 +109,27 @@ export async function purgeExpiredEnvelopes(d: Deps, opts: { tenantId?: string; 
     params.push(opts.tenantId);
     where += ` AND e.tenant_id = $${params.length}`;
   }
+  // Un sobre cuyo borrado falló hace menos de RETRY_BACKOFF queda para después (y detrás de los que nunca se
+  // intentaron): si no, 50 que fallan siempre quedaban primeros en el ORDER BY y la retención no avanzaba para nadie.
+  // La pasada a mano (ignoreAge, solo local) los reintenta igual.
+  if (!opts.ignoreAge) where += ` AND (e.retention_attempted_at IS NULL OR e.retention_attempted_at < now() - interval '${RETRY_BACKOFF}')`;
   params.push(opts.limit ?? 50);
   const due = await d.db.query<any>(
     `SELECT e.id, e.tenant_id, t.retention_days FROM envelopes e JOIN tenants t ON t.id = e.tenant_id WHERE ${where}
-     ORDER BY ${CLOSED_AT} LIMIT $${params.length}`,
+     ORDER BY e.retention_attempted_at NULLS FIRST, ${CLOSED_AT} LIMIT $${params.length}`,
     params,
   );
   let purged = 0;
+  let failedEnvelopes = 0;
+  const markFailed = async (envelopeId: string, error: string) => {
+    failedEnvelopes++;
+    await d.db
+      .query(`UPDATE envelopes SET retention_attempted_at = now(), retention_error = $2 WHERE id = $1`, [envelopeId, error.slice(0, 1000)])
+      .catch((err) => d.log.error({ envelopeId, err: String(err) }, "retención: no se pudo registrar el fallo"));
+  };
   for (const e of due) {
+    // Cada sobre con su manejo de errores: uno que falla (almacenamiento, clave, base) no corta la pasada.
+    let failure: string | null = null;
     // Todo con el sobre bloqueado: un clon o una plantilla "desde sobre" que lee el sobre a la vez (FOR SHARE) espera,
     // y no queda apuntando a un original que se está borrando.
     const ok = await d.db.tx(async (t) => {
@@ -147,11 +163,15 @@ export async function purgeExpiredEnvelopes(d: Deps, opts: { tenantId?: string; 
         failed++;
         d.log.error({ envelopeId: e.id }, "retención: no se pudieron borrar los PDF de la firma con certificado");
       }
-      if (failed) return false; // Se reintenta en la próxima pasada.
+      if (failed) {
+        // Se reintenta pasado RETRY_BACKOFF (lo ya borrado queda marcado).
+        failure = `no se pudieron borrar ${failed} archivo(s) del almacenamiento`;
+        return false;
+      }
       // Resultado de la verificación de identidad: queda solo el resumen (estado, tipo y país del documento, puntajes),
       // sin nombre, número de documento ni año de nacimiento. Lo que pide la evidencia ya está en los eventos.
       await t.query(`UPDATE identity_verifications SET result = ${PURGED_IDV_RESULT_SQL}, updated_at = now() WHERE envelope_id = $1 AND result IS NOT NULL`, [e.id]);
-      await t.query(`UPDATE envelopes SET purged_at = now(), updated_at = now() WHERE id = $1`, [e.id]);
+      await t.query(`UPDATE envelopes SET purged_at = now(), updated_at = now(), retention_error = NULL WHERE id = $1`, [e.id]);
       // Las entregas de webhooks del sobre llevan en el payload su asunto y los datos de los firmantes.
       await t.query(`DELETE FROM webhook_deliveries WHERE envelope_id = $1`, [e.id]);
       const kinds: Record<string, number> = {};
@@ -164,8 +184,13 @@ export async function purgeExpiredEnvelopes(d: Deps, opts: { tenantId?: string; 
         data: { retentionDays: cur.retention_days, files: done.length, kinds, kept: cur.status === "completed" ? ["signed_pdf", "events"] : ["events"], status: cur.status },
       });
       return true;
+    }).catch((err) => {
+      failure = String((err as Error)?.message ?? err);
+      d.log.error({ envelopeId: e.id, err: failure }, "retención: no se pudo purgar el sobre");
+      return false;
     });
     if (ok) purged++;
+    else if (failure) await markFailed(e.id, failure);
   }
   // Originales (también los de una plantilla, kind 'template', que comparten sus sobres) que al purgar su sobre todavía
   // usaba una plantilla, otro sobre o un acuerdo: cuando ya solo los
@@ -178,7 +203,10 @@ export async function purgeExpiredEnvelopes(d: Deps, opts: { tenantId?: string; 
         AND NOT EXISTS (SELECT 1 FROM template_documents td WHERE td.file_id = f.id)
         AND NOT EXISTS (SELECT 1 FROM agreements ag WHERE ag.file_id = f.id)
         AND NOT EXISTS (SELECT 1 FROM negotiations ng WHERE ng.file_id = f.id)
+        -- Uno que falló hace poco queda para después (si no, 100 que fallan siempre trababan la pasada).
+        ${opts.ignoreAge ? "" : `AND (f.purge_attempted_at IS NULL OR f.purge_attempted_at < now() - interval '${RETRY_BACKOFF}')`}
         ${opts.tenantId ? "AND f.tenant_id = $1" : ""}
+      ORDER BY f.purge_attempted_at NULLS FIRST
       LIMIT 100`,
     opts.tenantId ? [opts.tenantId] : [],
   );
@@ -188,10 +216,13 @@ export async function purgeExpiredEnvelopes(d: Deps, opts: { tenantId?: string; 
       await d.db.query(`UPDATE files SET purged_at = now() WHERE id = $1 AND purged_at IS NULL`, [f.id]);
     } catch (err) {
       d.log.error({ fileId: f.id, err: String(err) }, "retención: no se pudo borrar el archivo");
+      await d.db
+        .query(`UPDATE files SET purge_attempted_at = now() WHERE id = $1`, [f.id])
+        .catch((e2) => d.log.error({ fileId: f.id, err: String(e2) }, "retención: no se pudo registrar el fallo"));
     }
   }
   if (purged) d.log.info({ purged }, "retención aplicada");
-  return { purged, candidates: due.length };
+  return { purged, candidates: due.length, failed: failedEnvelopes };
 }
 
 /** 410 de un original borrado por retención. Solo un sobre completado tiene PDF firmado. */

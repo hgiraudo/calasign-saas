@@ -4,6 +4,7 @@ import type { MeResponse, TwoFactorChallenge } from "@calasign/shared";
 import { TwoFactorStep } from "../components/TwoFactorStep";
 import { api, errorText, HttpError } from "../lib/api";
 import { useAuth } from "../lib/auth";
+import { broadcastSessionChange } from "../lib/session-sync";
 import { useI18n } from "../lib/i18n";
 import { ErrorBox, LocaleSwitcher, Logo, Spinner } from "../components/ui";
 import { SsoErrorNotice, SsoLoginBox, redirectIfSsoRequired } from "../components/SsoLogin";
@@ -27,6 +28,11 @@ export function AuthShell({ title, children }: { title: string; children: ReactN
       </div>
     </div>
   );
+}
+
+/** Entrar o crear cuenta mueve la cookie: las pestañas de la consola con otra cuenta u organización se recargan. */
+function announceLogin(m: MeResponse) {
+  broadcastSessionChange({ kind: "login", tenantId: m.tenant.id, userId: m.user.id });
 }
 
 export function LoginPage() {
@@ -55,6 +61,7 @@ export function LoginPage() {
           onBack={() => setChallenge(null)}
           onDone={(m) => {
             setMe(m);
+            announceLogin(m);
             nav(from, { replace: true });
           }}
         />
@@ -74,6 +81,7 @@ export function LoginPage() {
         return;
       }
       setMe(m);
+      announceLogin(m);
       nav(from, { replace: true });
     } catch (err) {
       if (redirectIfSsoRequired(err, from)) return;
@@ -154,6 +162,7 @@ export function SignupPage() {
     try {
       const m = await api<MeResponse>("/v1/auth/signup", { method: "POST", body: { ...form, locale, ...(cell ? { cell } : {}) } });
       setMe(m);
+      announceLogin(m);
       nav("/app", { replace: true });
     } catch (err) {
       setError(errorText(err));

@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { CreateApiKeyInput, LoginInput, SignupInput, type ApiKey, type MeResponse, type ResetPasswordResponse } from "@calasign/shared";
 import { conflict, notFound, unauthorized } from "../lib/errors";
 import { hashPassword, iso, randomToken, sha256Hex, slugify, uuidv7, verifyPassword } from "../lib/util";
+import { forgetCredentialHash } from "../lib/ip";
 import { config } from "../config";
 import { cellForSignup, registerTenantCell } from "./data/cells";
 import { authenticate, clearSessionCookie, clientInfo, sessionCookieToken, setSessionCookie, type Services } from "./context";
@@ -102,15 +103,30 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
     return me(userId, tenantId);
   });
 
-  /** Signup con un correo ya registrado: el id de la cuenta si no tiene organizaciones y la contraseña es la suya. */
+  /**
+   * Signup con un correo ya registrado: el id de la cuenta si no tiene organizaciones y la contraseña es la suya.
+   * Desde afuera, toda cuenta existente se ve igual salvo con la contraseña correcta de una cuenta sin organizaciones:
+   * siempre una verificación scrypt (la real o una ficticia) y siempre email_taken. El intento cuenta para el bloqueo
+   * por cuenta solo en las cuentas sin organizaciones con contraseña (las únicas a las que el signup les puede abrir
+   * una sesión: así no sirve para probar contraseñas sin límite), y una cuenta ya bloqueada responde email_taken sin
+   * verificar la real (no too_many_attempts, que la delataba). El signup no empuja al bloqueo a las cuentas con
+   * organizaciones (eso queda para /v1/auth/login).
+   */
   async function existingAccountWithoutOrganization(u: { id: string; password_hash: unknown; totp_enabled_at: unknown }, password: string): Promise<string> {
     const taken = () => conflict("email_taken", "Ya existe una cuenta con ese correo");
-    if (await s.db.one(`SELECT 1 FROM memberships WHERE user_id = $1 LIMIT 1`, [u.id])) throw taken();
+    const hasOrganization = !!(await s.db.one(`SELECT 1 FROM memberships WHERE user_id = $1 LIMIT 1`, [u.id]));
     const hasPassword = typeof u.password_hash === "string" && u.password_hash.startsWith("scrypt$");
-    if (!hasPassword) throw taken();
-    // Mismo bloqueo por cuenta que /v1/auth/login: el signup no sirve para probar contraseñas sin límite.
-    await takeLoginAttempt(s.db, u.id);
-    if (!(await verifyPassword(password, u.password_hash as string))) throw taken();
+    let candidate = !hasOrganization && hasPassword;
+    if (candidate) {
+      try {
+        await takeLoginAttempt(s.db, u.id);
+      } catch (e) {
+        if (!(e instanceof AppError) || e.code !== "too_many_attempts") throw e;
+        candidate = false; // bloqueada: como cualquier otra cuenta existente
+      }
+    }
+    const ok = (await verifyPassword(password, candidate ? (u.password_hash as string) : DUMMY_HASH)) && candidate;
+    if (!ok) throw taken();
     await clearLoginAttempts(s.db, u.id);
     if (u.totp_enabled_at) {
       throw new AppError(409, "account_without_organization_2fa", "Tu cuenta tiene verificación en dos pasos y no pertenece a ninguna organización: pedí que te inviten a una.");
@@ -138,10 +154,16 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
       // Contraseña correcta pero sin organizaciones (la quitaron de la única que tenía, o una aceptación de invitación
       // vieja dejó la cuenta suelta): no es un 401 genérico, que hacía pensar que la contraseña estaba mal.
       await clearLoginAttempts(s.db, u.id);
+      // Con 2FA el alta con la misma contraseña no le crea una organización (account_without_organization_2fa): solo
+      // le queda una invitación.
+      const totp = await s.db.one(`SELECT 1 FROM users WHERE id = $1 AND totp_enabled_at IS NOT NULL`, [u.id]);
       throw new AppError(
         403,
         "no_organization",
-        "Tu cuenta no pertenece a ninguna organización. Para crear una, registrate con este mismo correo y contraseña, o pedí que te inviten.",
+        totp
+          ? "Tu cuenta no pertenece a ninguna organización. Como tiene verificación en dos pasos, pedí que te inviten a una."
+          : "Tu cuenta no pertenece a ninguna organización. Para crear una, registrate con este mismo correo y contraseña, o pedí que te inviten.",
+        totp ? { twoFactor: true } : undefined,
       );
     }
     // Contraseña correcta: si el acceso es por SSO o hay que restablecerla, no es un intento fallido (si no, se seguía
@@ -333,11 +355,13 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
 
   app.delete<{ Params: { id: string } }>("/v1/api-keys/:id", { preHandler: auth }, async (req, reply) => {
     await assertCanManageApiKey(s.db, req.auth!, req.params.id);
-    const r = await s.db.query(`UPDATE api_keys SET revoked_at = now() WHERE id = $1 AND tenant_id = $2 AND revoked_at IS NULL AND oauth_client_id IS NULL RETURNING id`, [
+    const r = await s.db.query(`UPDATE api_keys SET revoked_at = now() WHERE id = $1 AND tenant_id = $2 AND revoked_at IS NULL AND oauth_client_id IS NULL RETURNING key_hash`, [
       req.params.id,
       req.auth!.tenantId,
     ]);
     if (r.length === 0) throw notFound("API key");
+    // El límite de pedidos de esta réplica deja de contarla por credencial (las demás, al primer pedido rechazado).
+    forgetCredentialHash((r[0] as { key_hash: string }).key_hash);
     return reply.code(204).send();
   });
 }

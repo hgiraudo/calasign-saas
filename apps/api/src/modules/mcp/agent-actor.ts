@@ -13,13 +13,18 @@ export function agentHeaders(name: string): Record<string, string> {
   return { [AGENT_SECRET_HEADER]: SECRET, [AGENT_NAME_HEADER]: encodeURIComponent(name.slice(0, 80)) };
 }
 
-export function applyAgentActor(req: FastifyRequest, a: AuthContext) {
+/** Pedido interno del servidor MCP (app.inject con el secreto de este proceso): no se puede falsificar desde la red. */
+export function isInternalAgentRequest(req: FastifyRequest): boolean {
   const got = req.headers[AGENT_SECRET_HEADER];
-  if (typeof got !== "string") return;
+  if (typeof got !== "string") return false;
   // Largo en bytes (no en caracteres): con caracteres multibyte timingSafeEqual lanzaba y el pedido respondía 500.
   const gotBuf = Buffer.from(got);
   const secretBuf = Buffer.from(SECRET);
-  if (gotBuf.length !== secretBuf.length || !timingSafeEqual(gotBuf, secretBuf)) return;
+  return gotBuf.length === secretBuf.length && timingSafeEqual(gotBuf, secretBuf);
+}
+
+export function applyAgentActor(req: FastifyRequest, a: AuthContext) {
+  if (!isInternalAgentRequest(req)) return;
   let name = "agente";
   try {
     name = decodeURIComponent(String(req.headers[AGENT_NAME_HEADER] ?? "agente")).slice(0, 80);

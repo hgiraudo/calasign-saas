@@ -2,6 +2,9 @@
 // recordatorios automáticos y verificación pública. Sin dependencias de api.ts (api.ts importa de acá).
 import { z } from "zod";
 
+/** cedula (RD, CO), cpf (BR), dni (HN, PE), ce = carné de extranjería (PE, CO), passport, other. */
+export const ID_DOCUMENT_TYPES = ["cedula", "cpf", "dni", "passport", "other", "ce"] as const;
+
 /** Cómo se autentica el destinatario antes de ver los documentos. */
 export const AUTH_METHODS = ["link", "otp_email", "otp_sms", "otp_whatsapp", "in_person"] as const;
 export type AuthMethod = (typeof AUTH_METHODS)[number];
@@ -45,6 +48,8 @@ const Contact = {
    * su documento (matchIdDocument), la delegación lo exige (409 delegation_requires_id_match) y el control se mantiene.
    */
   idDocumentNumber: z.string().trim().max(50).optional().nullable(),
+  /** Tipo de ese documento (DNI, CPF…). No se hereda del firmante original: sin indicarlo, queda sin tipo. */
+  idDocumentType: z.enum(ID_DOCUMENT_TYPES).optional().nullable(),
 };
 
 export const DelegateInput = z

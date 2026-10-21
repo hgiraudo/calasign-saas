@@ -18,14 +18,16 @@ export interface EnqueueOptions {
  * momento (restablecer la contraseña, el PDF final, su invitación) no hace cola detrás de un envío masivo de miles.
  * Contrapartida: con la cola saturada de avisos, el masivo espera; nunca al revés.
  */
+export const PRIORITY = { passwordReset: 20, finalize: 10, invite: 5, notify: 2, normal: 0, bulk: -10 } as const;
+
 export function jobPriority(queue: JobQueueName, payload: unknown): number {
   const kind = (payload as { kind?: unknown } | null)?.kind;
-  if (queue === "notify" && kind === "password_reset") return 20;
-  if (queue === "finalize") return 10;
-  if (queue === "notify" && (kind === "invite" || kind === "certificate_request")) return 5;
-  if (queue === "notify") return 2;
-  if (queue === "bulk") return -10;
-  return 0;
+  if (queue === "notify" && kind === "password_reset") return PRIORITY.passwordReset;
+  if (queue === "finalize") return PRIORITY.finalize;
+  if (queue === "notify" && (kind === "invite" || kind === "certificate_request")) return PRIORITY.invite;
+  if (queue === "notify") return PRIORITY.notify;
+  if (queue === "bulk") return PRIORITY.bulk;
+  return PRIORITY.normal;
 }
 
 /**
@@ -113,10 +115,13 @@ export interface WorkerOptions {
 }
 
 /**
- * Niveles de prioridad > 0 de jobPriority: el claim los busca aparte (además de los listos más viejos) para que no
- * esperen detrás de un atraso grande de prioridad menor.
+ * Todos los niveles de jobPriority por encima del masivo (incluido el 0: webhooks, plataforma, acuerdos): el claim los
+ * busca aparte (además de los listos más viejos) para que no esperen detrás de un atraso grande de prioridad menor.
+ * Antes la lista era [20, 10, 5, 2] y los de prioridad 0 esperaban a que se vaciara un masivo de miles de filas.
+ * Salen de PRIORITY: un nivel nuevo entra solo. Cada nivel es una búsqueda por rango en jobs_claim_idx
+ * (priority = nivel AND run_at <= now()), sin recorrer los futuros.
  */
-const URGENT_PRIORITIES = [20, 10, 5, 2];
+export const URGENT_PRIORITIES: number[] = [...new Set(Object.values(PRIORITY))].filter((p) => p > PRIORITY.bulk).sort((a, b) => b - a);
 
 /** Cada cuánto el worker registra su latido en worker_heartbeats. */
 const WORKER_BEAT_MS = 15_000;
@@ -351,28 +356,36 @@ export function startWorker(db: Db, opts: WorkerOptions) {
  * (p. ej. uno que tumba el proceso cada vez) pasa a 'failed' en vez de reintentarse para siempre; se devuelven
  * esos jobs para que el llamador pueda reaccionar.
  */
-export async function requeueStuckJobs(db: Db): Promise<{ id: number; queue: JobQueueName; payload: any }[]> {
+export interface GaveUpJob {
+  id: number;
+  queue: JobQueueName;
+  payload: any;
+  /** Cuándo se encoló (los "ya avisado" se miran desde acá: ver finalizeGaveUp). */
+  createdAt: Date;
+}
+
+export async function requeueStuckJobs(db: Db): Promise<GaveUpJob[]> {
   // Terminados bien pero sin registrar (ver recordDone): ya hicieron su trabajo, no se vuelven a correr.
   await db.query(
     `UPDATE jobs SET status = 'done', finished_at = now(), locked_at = NULL, payload = ${SCRUBBED_PAYLOAD}
       WHERE status = 'running' AND locked_by = $1`,
     [UNRECORDED],
   );
-  const rows = await db.query<{ id: number; queue: JobQueueName; payload: any; status: string }>(
+  const rows = await db.query<{ id: number; queue: JobQueueName; payload: any; status: string; created_at: Date }>(
     `UPDATE jobs SET
        status = CASE WHEN attempts >= max_attempts THEN 'failed' ELSE 'pending' END,
        locked_at = NULL,
        finished_at = CASE WHEN attempts >= max_attempts THEN now() END,
        last_error = CASE WHEN attempts >= max_attempts THEN left(COALESCE(last_error || E'\\n', '') || 'el worker se detuvo durante el job (intentos agotados)', 4000) ELSE last_error END
      WHERE status = 'running' AND locked_at < now() - interval '10 minutes'
-     RETURNING id, queue, payload, status`,
+     RETURNING id, queue, payload, status, created_at`,
   );
   // El payload completo se devuelve (finalizeGaveUp lo usa); el token de restablecimiento se borra igual.
   const failed = rows.filter((r) => r.status === "failed");
   for (const r of failed) {
     if (r.payload?.kind === "password_reset") await db.query(`UPDATE jobs SET payload = ${SCRUBBED_PAYLOAD} WHERE id = $1`, [r.id]);
   }
-  return failed.map(({ id, queue, payload }) => ({ id, queue, payload }));
+  return failed.map(({ id, queue, payload, created_at }) => ({ id, queue, payload, createdAt: new Date(created_at) }));
 }
 
 /** Estados finales del sobre: ningún flujo vuelve a encolar con una clave atada a un sobre así. */

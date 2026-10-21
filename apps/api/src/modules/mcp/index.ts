@@ -14,6 +14,7 @@ import { ENVELOPE_STATUSES, MCP_DEFAULT_SCOPES, OAUTH_SCOPES, RECIPIENT_ROLES, L
 import { config } from "../../config";
 import { AppError, notFound } from "../../lib/errors";
 import { bearerToken, canonicalJson, hmacEqual, hmacSign, randomToken, sha256Hex, uuidv7 } from "../../lib/util";
+import { forgetCredential, rememberAuthenticatedCredential } from "../../lib/ip";
 import type { Services } from "../context";
 import { sendPdf } from "../envelopes";
 import { assertUserTokenAllowed, isOAuthAccessToken, resolveAccessToken } from "../oauth-tokens";
@@ -206,10 +207,21 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
       .send({ error: { code: "unauthorized", message } });
   }
 
+  /**
+   * Credencial del agente. Como authenticate(): una válida queda recordada para el límite de pedidos (cuenta en su cupo
+   * sin volver a consultarla, lib/ip.ts) y una que dejó de valer se olvida (cuenta en la IP).
+   */
   async function resolveCaller(req: FastifyRequest): Promise<Caller | null> {
-    // El esquema sin distinguir mayúsculas; los pedidos internos (app.inject) llevan la forma canónica.
     const token = bearerToken(req.headers.authorization);
     if (!token) return null;
+    const c = await resolveCallerToken(req, token);
+    if (c) rememberAuthenticatedCredential(token, c.tenantId);
+    else forgetCredential(token);
+    return c;
+  }
+
+  async function resolveCallerToken(req: FastifyRequest, token: string): Promise<Caller | null> {
+    // El esquema sin distinguir mayúsculas; los pedidos internos (app.inject) llevan la forma canónica.
     const authz = `Bearer ${token}`;
     if (isOAuthAccessToken(token)) {
       const o = await resolveAccessToken(s.db, token);
@@ -870,7 +882,8 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
   // ───────── Transporte Streamable HTTP (sin sesión: cada POST es independiente) ─────────
 
   // bodyLimit: create_envelope puede traer el PDF en base64 (tope PDF_MAX_BYTES, ~4/3 en base64).
-  app.post("/mcp", { bodyLimit: PDF_MAX_BASE64 + 1024 * 1024, config: { rateLimit: { max: 300, timeWindow: "1 minute" } } }, async (req, reply) => {
+  // rateLimitByCredential: /mcp autentica por su cuenta (resolveCaller), así que el límite cuenta por credencial válida.
+  app.post("/mcp", { bodyLimit: PDF_MAX_BASE64 + 1024 * 1024, config: { rateLimit: { max: 300, timeWindow: "1 minute" }, rateLimitByCredential: true } }, async (req, reply) => {
     const caller = await resolveCaller(req);
     if (!caller) return unauthorizedReply(reply, "Hace falta un access token OAuth o una API key válidos");
     const { plan } = await tenantPlan(s.db, caller.tenantId);

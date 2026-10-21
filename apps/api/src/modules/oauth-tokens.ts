@@ -156,6 +156,16 @@ export async function resolveAccessToken(db: Db, token: string): Promise<Resolve
   };
 }
 
+/** Organización de un access token vigente (solo lectura, para el límite de pedidos: context.ts bearerCredentialTenant). */
+export async function accessTokenTenant(db: Db, token: string): Promise<string | null> {
+  const r = await db.one<{ tenant_id: string }>(
+    `SELECT t.tenant_id FROM oauth_tokens t JOIN oauth_clients c ON c.id = t.client_id
+      WHERE t.token_hash = $1 AND t.kind = 'access' AND t.revoked_at IS NULL AND t.expires_at > now() AND c.revoked_at IS NULL`,
+    [sha256Hex(token)],
+  );
+  return r?.tenant_id ?? null;
+}
+
 /**
  * Un token de usuario vale solo mientras valdría la sesión con la que se autorizó:
  *  - el usuario sigue siendo miembro y el token es de su membresía actual (quitarlo y volver a agregarlo, por la

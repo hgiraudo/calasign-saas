@@ -186,7 +186,8 @@ export async function pendingInvitationFor(t: Db, tenantId: string, email: strin
 
 /**
  * Alta por SSO (JIT) o SCIM, dentro de la transacción y con la organización bloqueada. Si hay una invitación vigente
- * para el correo, se acepta con SU rol (no el rol por defecto del JIT/SCIM) y no cuenta como un lugar más del plan.
+ * para el correo, se acepta con SU rol (no el rol por defecto del JIT/SCIM; una de propietaria, como administradora) y
+ * no cuenta como un lugar más del plan.
  * Una baja desde la consola se respeta salvo que la persona tenga una invitación nueva. Sin membresía previa.
  */
 export async function provisionMembership(
@@ -197,7 +198,10 @@ export async function provisionMembership(
   defaultRole: string,
 ): Promise<{ role: string; roleId: string | null; invitationId: string | null }> {
   const inv = await pendingInvitationFor(t, tenantId, email);
-  const role = inv ? inv.role : defaultRole;
+  // Una invitación como propietaria no da la propiedad por SSO/SCIM (el IdP no prueba que quien entra sea quien la
+  // recibió con la misma fuerza que aceptarla con su cuenta): entra como administradora y la propiedad se transfiere
+  // a mano desde la consola.
+  const role = inv ? (inv.role === "owner" ? "admin" : inv.role) : defaultRole;
   const roleId = inv ? inv.role_id : null;
   // Sin contraseña en esta organización hasta que la restablezca (ver 0029_r11_identity).
   await t.query(`INSERT INTO memberships (tenant_id, user_id, role, role_id, password_allowed) VALUES ($1,$2,$3,$4,false) ON CONFLICT DO NOTHING`, [

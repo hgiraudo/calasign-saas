@@ -2,7 +2,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import type { MeResponse } from "@calasign/shared";
-import { api, errorText, HttpError, setExpectedTenant, TENANT_MISMATCH_EVENT, UNAUTHORIZED_EVENT } from "./api";
+import { api, errorText, HttpError, isConsolePage, setExpectedSession, TENANT_MISMATCH_EVENT, UNAUTHORIZED_EVENT } from "./api";
 import { broadcastSessionChange, onSessionChange } from "./session-sync";
 import { confirmUnload, hasUnsavedChanges } from "./i18n";
 import { usePasswordText } from "./i18n-password";
@@ -29,9 +29,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [sessionLost, setSessionLost] = useState(false);
   const meRef = useRef(me);
   meRef.current = me;
-  // Organización que muestra esta pestaña: va en x-calasign-tenant en cada escritura (409 tenant_mismatch si la sesión
-  // se movió a otra en otra pestaña). Se fija al renderizar para que el primer pedido después de setMe ya la lleve.
-  setExpectedTenant(me?.tenant.id ?? null);
+  // Organización y cuenta que muestra esta pestaña: van en x-calasign-tenant / x-calasign-user en cada escritura (409
+  // tenant_mismatch si la sesión se movió a otra organización o cuenta en otra pestaña). Se fija al renderizar para que
+  // el primer pedido después de setMe ya los lleve.
+  setExpectedSession(me ? { tenantId: me.tenant.id, userId: me.user.id } : null);
   /** Sesión terminada: al login con aviso, salvo que haya cambios sin guardar (entonces, el aviso sin desmontar). */
   const endSession = useCallback(() => {
     if (meRef.current && hasUnsavedChanges()) {
@@ -137,7 +138,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     window.addEventListener(TENANT_MISMATCH_EVENT, onMismatch);
     const stop = onSessionChange((c) => {
       const cur = meRef.current;
-      if (!cur) return;
+      // Solo la consola: una pestaña de firmante (o de verificación, invitación…) no depende de la sesión.
+      if (!cur || !isConsolePage()) return;
       if (c.kind === "logout" || c.tenantId !== cur.tenant.id || (c.userId !== null && c.userId !== cur.user.id)) sessionChangedElsewhere();
     });
     return () => {

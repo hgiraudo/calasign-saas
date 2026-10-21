@@ -1,6 +1,6 @@
 // Componentes del bloque "firmante y evidencia": código OTP, delegación (firmante) y reasignación (remitente).
 import { useEffect, useRef, useState } from "react";
-import type { EnvelopeDetail, OtpSendResponse, Recipient, SigningSession } from "@calasign/shared";
+import { ID_DOCUMENT_TYPES, type EnvelopeDetail, type OtpSendResponse, type Recipient, type SigningSession } from "@calasign/shared";
 import { api, errorText, HttpError } from "../lib/api";
 import { useI18n } from "../lib/i18n";
 import { useSignerText } from "../lib/i18n-signer";
@@ -175,6 +175,8 @@ export function DelegateModal({
   // nueva (409 delegation_requires_id_match) y recién ahí se muestra el campo.
   const [needsIdDoc, setNeedsIdDoc] = useState(false);
   const [idDoc, setIdDoc] = useState("");
+  // Tipo del documento de la persona nueva (no se hereda el del firmante original): opcional.
+  const [idDocType, setIdDocType] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const valid = name.trim() && email.trim() && reason.trim() && (!needsIdDoc || idDoc.trim());
@@ -190,7 +192,7 @@ export function DelegateModal({
     try {
       const r = await api<{ delegated: boolean; to: string }>(`${base}/delegate`, {
         method: "POST",
-        body: { name: name.trim(), email: email.trim(), phone: phone.trim() || null, reason: reason.trim(), idDocumentNumber: idDoc.trim() || null },
+        body: { name: name.trim(), email: email.trim(), phone: phone.trim() || null, reason: reason.trim(), idDocumentNumber: idDoc.trim() || null, idDocumentType: (idDoc.trim() && idDocType) || null },
       });
       onDone(r.to);
     } catch (e) {
@@ -247,10 +249,25 @@ export function DelegateModal({
           <textarea rows={2} maxLength={1000} value={reason} onChange={(e) => setReason(e.target.value)} />
         </label>
         {needsIdDoc && (
-          <label className="field">
-            <span>{sx("delegate.idDoc")}</span>
-            <input value={idDoc} maxLength={50} onChange={(e) => setIdDoc(e.target.value)} autoFocus />
-          </label>
+          <>
+            <label className="field">
+              <span>
+                {t("edit.idType")} <span className="muted">({t("common.optional")})</span>
+              </span>
+              <select value={idDocType} onChange={(e) => setIdDocType(e.target.value)}>
+                <option value="">—</option>
+                {ID_DOCUMENT_TYPES.map((x) => (
+                  <option key={x} value={x}>
+                    {x.toUpperCase()}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              <span>{sx("delegate.idDoc")}</span>
+              <input value={idDoc} maxLength={50} onChange={(e) => setIdDoc(e.target.value)} autoFocus />
+            </label>
+          </>
         )}
       </div>
     </Modal>

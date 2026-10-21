@@ -42,6 +42,7 @@ interface NewContact {
   locale?: string | null;
   reason?: string | null;
   idDocumentNumber?: string | null;
+  idDocumentType?: string | null;
 }
 
 /**
@@ -114,8 +115,9 @@ export async function replaceRecipient(
       encrypt(token),
       host,
       idDocumentNumber,
-      // El tipo del documento del original (DNI, CPF…): el número nuevo se compara con el certificado igual que el anterior.
-      idDocumentNumber ? (old.id_document_type ?? null) : null,
+      // El tipo lo indica quien delega o reasigna (la persona nueva puede tener otro documento que la original): no se
+      // hereda. Sin indicarlo, queda sin tipo (el control del certificado compara el número).
+      idDocumentNumber ? (c.idDocumentType ?? null) : null,
     ],
   );
   // Los adjuntos que subió el anterior no pasan al reemplazo; el llamador borra los archivos después de confirmar.

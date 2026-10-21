@@ -404,6 +404,9 @@ export async function cleanupRunDocuments(d: Deps, runId: string) {
     if (!run || ["running", "waiting"].includes(run.status)) return;
     const ids = runDocumentFileIds(run.context);
     if (!ids.length || run.context?.documentsCleaned) return;
+    // La marca va antes (un reintento del run la ve y no usa documentos que se están borrando). Un borrado que falla en
+    // el almacenamiento no se pierde: deleteFileIfUnused conserva la fila y lo anota en pending_file_deletions, que el
+    // barrido reintenta.
     await d.db.query(`UPDATE workflow_runs SET context = context || '{"documentsCleaned": true}'::jsonb WHERE id = $1 AND status NOT IN ('running','waiting')`, [runId]);
     await deleteFilesIfUnused(d.db, d.blobs, ids);
   } catch (err) {

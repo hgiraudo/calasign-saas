@@ -1007,7 +1007,7 @@ const OPS: Op[] = [
     tag: "Firmante",
     summary: "Delegar en otra persona",
     description:
-      "El nuevo destinatario hereda rol, campos y requisitos, y recibe la invitación; el link actual queda revocado. 403 forbidden si el remitente no permite delegar, si el firmante es embebido o si no validó su correo; 409 same_person (el mismo correo), not_replaceable, too_many_replacements o delegation_requires_id_match (el firmante debe firmar con un certificado que corresponda a su documento: hay que indicar idDocumentNumber de la persona nueva y el control se mantiene); 410 envelope_closed. 10 pedidos por minuto.",
+      "El nuevo destinatario hereda rol, campos y requisitos, y recibe la invitación; el link actual queda revocado. 403 forbidden si el remitente no permite delegar, si el firmante es embebido o si no validó su correo; 409 same_person (el mismo correo), not_replaceable, too_many_replacements o delegation_requires_id_match (el firmante debe firmar con un certificado que corresponda a su documento: hay que indicar idDocumentNumber de la persona nueva, y opcionalmente idDocumentType, que no se hereda del original; el control se mantiene); 410 envelope_closed. 10 pedidos por minuto.",
     body: DelegateInput,
     response: z.object({ delegated: z.literal(true), to: z.string().describe("Nombre de la persona en la que se delegó.") }),
     auth: "token",

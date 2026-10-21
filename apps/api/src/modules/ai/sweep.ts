@@ -4,8 +4,9 @@
 import type { Db } from "../../infra/db";
 import { SYSTEM, appendEvent } from "../../infra/evidence";
 import type { BlobStore } from "../../infra/storage";
-import { uuidv7 } from "../../lib/util";
-import { deliver } from "../../notifications/channels";
+import { enqueue } from "../../infra/queue";
+import { sendTracked } from "../../notifications/outbound";
+import { brandForEnvelope, senderFor } from "../white-label/brand";
 import { tenantBaseUrl } from "../custom-domains";
 import { aiProviderStatus, getAiProvider } from "./provider";
 import { assertAiAvailable, inputEstimate, isAiError, loadEnvelopeDocs, recordAiUse, saveMetadata, withAiReservation, callModel } from "./service";
@@ -95,8 +96,10 @@ export async function runAiSweep(d: Deps, now = new Date()) {
   );
   for (const e of pending) {
     // Se reclama el sobre: con varios workers (cada uno corre el barrido), dos tomaban el mismo y el modelo se llamaba
-    // (y se cobraba) dos veces.
-    const claimed = await d.db.query(`UPDATE envelopes SET ai_metadata_attempted_at = now(), ai_metadata_retry_at = NULL,
+    // (y se cobraba) dos veces. El reclamo es un arriendo de 6 h (ai_metadata_retry_at): si el proceso muere a mitad o
+    // el error no se reconoce abajo, el sobre se vuelve a tomar pasado ese plazo (dentro de la ventana de 30 días). Antes
+    // quedaba con retry_at NULL y no se reintentaba nunca.
+    const claimed = await d.db.query(`UPDATE envelopes SET ai_metadata_attempted_at = now(), ai_metadata_retry_at = now() + interval '6 hours',
           ai_metadata_first_attempt_at = COALESCE(ai_metadata_first_attempt_at, now())
         WHERE id = $1 AND ((ai_metadata_attempted_at IS NULL AND (ai_metadata_retry_at IS NULL OR ai_metadata_retry_at <= now())) OR ai_metadata_retry_at < now())
         RETURNING id`, [e.id]);
@@ -111,6 +114,7 @@ export async function runAiSweep(d: Deps, now = new Date()) {
         () => callModel(() => getAiProvider().extractMetadata(docs)),
       );
       await saveMetadata(d.db, e.id, e.tenant_id, r.result.metadata, r.result.confidence, "ai");
+      await d.db.query(`UPDATE envelopes SET ai_metadata_retry_at = NULL WHERE id = $1`, [e.id]);
       await recordAiUse(d.db, { reservationId: rid, tenantId: e.tenant_id, envelopeId: e.id, feature: "extract_metadata", usage: r.usage, actor: SYSTEM, data: { automatic: true } });
       extracted++;
     } catch (err) {
@@ -134,7 +138,7 @@ export async function runAiSweep(d: Deps, now = new Date()) {
       // configuración, no del sobre; se reintenta en 6 h (antes de esta pasada se perdía para siempre).
       // Un timeout (504 ai_timeout) también espera 6 h: el documento es pesado y cada intento se cobra.
       const rejected = code === "ai_request_rejected" || code === "ai_timeout";
-      if (off) await d.db.query(`UPDATE envelopes SET ai_metadata_attempted_at = NULL,
+      if (off) await d.db.query(`UPDATE envelopes SET ai_metadata_attempted_at = NULL, ai_metadata_retry_at = NULL,
            -- Solo si este era el primer intento (el reclamo pone las dos con el mismo now()): si no, cada vez reiniciaba
            -- la ventana de 30 días.
            ai_metadata_first_attempt_at = CASE WHEN ai_metadata_first_attempt_at = ai_metadata_attempted_at THEN NULL ELSE ai_metadata_first_attempt_at END
@@ -149,6 +153,7 @@ export async function runAiSweep(d: Deps, now = new Date()) {
       else if (transient) await d.db.query(`UPDATE envelopes SET ai_metadata_retry_at = now() + interval '1 hour' WHERE id = $1`, [e.id]);
       else if (rejected) await d.db.query(`UPDATE envelopes SET ai_metadata_retry_at = now() + interval '6 hours' WHERE id = $1`, [e.id]);
       if (transient) d.log.warn({ envelopeId: e.id, err: String(err) }, "extracción automática postergada (falla transitoria)");
+      // Cualquier otro error: queda el arriendo del reclamo (reintento en 6 h, mientras dure la ventana de 30 días).
       else if (!isAiError(err)) d.log.warn({ envelopeId: e.id, err: String(err) }, "extracción automática de metadatos falló");
     }
   }
@@ -175,39 +180,70 @@ export async function runAiSweep(d: Deps, now = new Date()) {
       await d.db.query(`UPDATE envelopes SET ai_renewal_alert_sent_at = now() WHERE id = $1 AND ai_renewal_alert_sent_at IS NULL`, [e.id]);
       continue;
     }
+    // El correo sale por la cola de avisos (notify), encolado en la misma transacción que la marca de enviado: si el
+    // envío falla, el job se reintenta (antes se marcaba enviado y un fallo de SMTP la perdía). Pasa por sendTracked
+    // (direcciones suprimidas, registro) y con el remitente de la marca, como el resto de los avisos al equipo.
     const claimed = await d.db.tx(async (t) => {
       const cur = await t.one<any>(`SELECT ai_renewal_alert_sent_at FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
       if (cur?.ai_renewal_alert_sent_at) return false;
       await t.query(`UPDATE envelopes SET ai_renewal_alert_sent_at = now() WHERE id = $1`, [e.id]);
       await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "ai.renewal_alert", actor: SYSTEM, data: { date, notified: Boolean(e.sender_email) } });
+      if (e.sender_email) {
+        await enqueue(t, "notify", { kind: "ai_renewal_alert", envelopeId: e.id, tenantId: e.tenant_id, date: String(date) }, { dedupeKey: `ai-renewal:${e.id}:${date}` });
+      }
       return true;
     });
     // Otro barrido (otro worker) ya la mandó: no se repite el correo.
     if (!claimed) continue;
-    if (e.sender_email && date) {
-      const L = ALERT[(e.sender_locale ?? e.locale) as keyof typeof ALERT] ?? ALERT.es;
-      // Con el dominio propio de la organización, como el resto de los avisos al equipo.
-      const link = `${await tenantBaseUrl(d.db, e.tenant_id)}/app/envelopes/${e.id}`;
-      try {
-        const res = await deliver({
-          channel: "email",
-          to: e.sender_email,
-          subject: L.subject(e.subject, date),
-          text: `${L.body(e.sender_name ?? "", e.subject, date, m.autoRenewal ?? null, m.noticePeriodDays ?? null)}\n\n${link}`,
-          link,
-          locale: e.sender_locale ?? e.locale,
-          tenantId: e.tenant_id,
-        });
-        await d.db.query(
-          `INSERT INTO notifications (id, tenant_id, envelope_id, channel, template, destination, status, provider, provider_message_id, sent_at)
-           VALUES ($1,$2,$3,'email','ai_renewal_alert',$4,'sent',$5,$6,now())`,
-          [uuidv7(), e.tenant_id, e.id, e.sender_email, res.provider, res.messageId],
-        );
-      } catch (err) {
-        d.log.warn({ envelopeId: e.id, err: String(err) }, "no se pudo enviar la alerta de renovación");
-      }
-    }
     alerted++;
   }
   return { extracted, alerted };
+}
+
+/**
+ * Job de aviso (cola notify, kind "ai_renewal_alert"): el correo de la alerta de renovación al remitente. Solo si sigue
+ * en la organización; con la marca del sobre (remitente, dominio de los links) y por sendTracked (suprimidas, registro
+ * en notifications, sin repetir en un reintento del job). Un error del momento relanza para que la cola reintente.
+ */
+export async function notifyAiRenewalAlert(
+  d: { db: Db; log: { warn(o: object, m?: string): void; error(o: object, m?: string): void } },
+  p: { envelopeId: string; tenantId: string; date?: string },
+  jobId?: number,
+) {
+  const e = await d.db.one<any>(
+    `SELECT e.id, e.tenant_id, e.brand_id, e.subject, e.locale, e.ai_metadata, u.name AS sender_name, u.email AS sender_email, u.locale AS sender_locale
+       FROM envelopes e
+       JOIN users u ON u.id = e.created_by AND EXISTS (SELECT 1 FROM memberships m WHERE m.user_id = u.id AND m.tenant_id = e.tenant_id)
+      WHERE e.id = $1`,
+    [p.envelopeId],
+  );
+  if (!e?.sender_email) return;
+  const m = e.ai_metadata ?? {};
+  const date = p.date ?? m.renewalDate ?? m.expiryDate;
+  if (!date) return;
+  const locale = e.sender_locale ?? e.locale;
+  const L = ALERT[locale as keyof typeof ALERT] ?? ALERT.es;
+  // Con el dominio propio de la organización, como el resto de los avisos al equipo.
+  const link = `${await tenantBaseUrl(d.db, e.tenant_id)}/app/envelopes/${e.id}`;
+  const sendAs = await senderFor(d.db, await brandForEnvelope(d.db, e));
+  const out = await sendTracked(
+    d.db,
+    { tenantId: e.tenant_id, envelopeId: e.id, template: "ai_renewal_alert", jobId, log: d.log },
+    {
+      channel: "email",
+      to: e.sender_email,
+      subject: L.subject(e.subject, date),
+      text: `${L.body(e.sender_name ?? "", e.subject, date, m.autoRenewal ?? null, m.noticePeriodDays ?? null)}\n\n${link}`,
+      link,
+      locale,
+      tenantId: e.tenant_id,
+      from: sendAs.from,
+      replyTo: sendAs.replyTo,
+      dkim: sendAs.dkim,
+    },
+  );
+  if (out.status === "failed") {
+    if (out.transient) throw new Error(`no se pudo enviar la alerta de renovación: ${out.error}`);
+    d.log.warn({ envelopeId: e.id, err: out.error }, "no se pudo enviar la alerta de renovación");
+  }
 }

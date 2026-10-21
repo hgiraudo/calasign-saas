@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import Fastify, { type FastifyError } from "fastify";
+import Fastify, { type FastifyError, type FastifyRequest } from "fastify";
 import cookie from "@fastify/cookie";
 import helmet from "@fastify/helmet";
 import multipart from "@fastify/multipart";
@@ -12,12 +12,12 @@ import { queueHealth } from "./infra/queue";
 import type { Db } from "./infra/db";
 import type { BlobStore } from "./infra/storage";
 import { AppError, rateLimitError } from "./lib/errors";
-import { rateLimitIpKey, rateLimitKey } from "./lib/ip";
+import { markBearerAuthRoutes, rateLimitIdentity, rateLimitIpKey, type RateLimitIdentity } from "./lib/ip";
 import { requestPath } from "./lib/util";
 import { LOG_REDACT_PATHS, safeRequestSerializer } from "./lib/redact";
 import { readMailbox } from "./notifications/channels";
 import { authRoutes } from "./modules/auth";
-import { authenticate } from "./modules/context";
+import { authenticate, bearerCredentialTenant } from "./modules/context";
 import { envelopeRoutes } from "./modules/envelopes";
 import { signingRoutes } from "./modules/signing";
 import { signerFeatureRoutes } from "./modules/signer-features";
@@ -34,6 +34,7 @@ import { experienceRoutes } from "./modules/experience";
 import { scaleRoutes } from "./modules/scale";
 import { oauthRoutes } from "./modules/oauth";
 import { registerConnectorCors } from "./modules/mcp/cors";
+import { isInternalAgentRequest } from "./modules/mcp/agent-actor";
 import { notificationIntegrationRoutes } from "./modules/notify-integrations";
 import { storageRoutes } from "./modules/storage-export";
 import { customDomainRoutes } from "./modules/custom-domains";
@@ -52,7 +53,6 @@ import { certsignRoutes } from "./modules/certsign";
 import { sendBrandedIndex, whiteLabelModule } from "./modules/white-label";
 import { devApiRoutes } from "./modules/devapi";
 import { INTEGRATIONS_PREFIX, integrationsStaticHeaders } from "./modules/integrations-static";
-import { registerExpectedTenantCheck } from "./lib/expected-tenant";
 
 /** Ver el hook que la pone en buildApp. */
 export const PERMISSIONS_POLICY = "camera=(self), microphone=(), geolocation=(), payment=(), usb=()";
@@ -138,25 +138,47 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
   }
   await app.register(cookie);
   await app.register(multipart, { limits: { files: 1, fileSize: config.maxUploadBytes } });
+  // X-Request-Id en toda respuesta (también errores, 429 del límite, 404 y las que escriben directo sobre la conexión,
+  // como el stream de eventos y /mcp): es el id de los logs, el que los SDK muestran como requestId. Antes de los
+  // hooks del límite de pedidos para que el 429 también lo lleve.
+  app.addHook("onRequest", async (req, reply) => {
+    reply.raw.setHeader("x-request-id", req.id);
+  });
+  // Rutas con authenticate(): con límite propio cuentan por credencial (lib/ip.ts rateLimitIdentity).
+  app.addHook("onRoute", (opts) => markBearerAuthRoutes(opts));
+  // Clave del límite, una vez por pedido (la usan el tope por IP y organización y el límite global o de la ruta).
+  const rateLimitIds = new WeakMap<FastifyRequest, Promise<RateLimitIdentity>>();
+  const verifyCredential = (token: string) => bearerCredentialTenant(deps.db, token);
+  const identityOf = (req: FastifyRequest) => {
+    let p = rateLimitIds.get(req);
+    if (!p) rateLimitIds.set(req, (p = rateLimitIdentity(req, verifyCredential)));
+    return p;
+  };
   // En el entorno local (pruebas de punta a punta seguidas) la IP local no tiene límite; en dev y prod sí.
   await app.register(rateLimit, {
     max: 600,
     timeWindow: "1 minute",
-    // Por IP y, en IPv6, por /64; con una credencial Bearer ya autenticada en este proceso, por credencial (hash). Las
-    // rutas con límite propio (config.rateLimit) heredan este keyGenerator y cuentan siempre por IP salvo que pidan
-    // config.rateLimitByCredential (lib/ip.ts rateLimitKey). El store es el de memoria del proceso: el límite es por
-    // réplica. Las IPs sin límite del entorno local se comparan con la clave de IP (loopback queda igual;
-    // ::ffff:127.0.0.1 pasa a 127.0.0.1), también con credencial.
-    keyGenerator: (req) => rateLimitKey(req),
+    // Por IP y, en IPv6, por /64; con una credencial Bearer válida (verificada contra la base, con caché), por
+    // credencial (hash), también en las rutas con límite propio que autentican (lib/ip.ts rateLimitIdentity). El store
+    // es el de memoria del proceso: el límite es por réplica. Las IPs sin límite del entorno local se comparan con la
+    // clave de IP (loopback queda igual; ::ffff:127.0.0.1 pasa a 127.0.0.1), también con credencial.
+    keyGenerator: async (req) => (await identityOf(req)).key,
     allowList: config.environment === "local" ? (req) => ["127.0.0.1", "::1"].includes(rateLimitIpKey(req.ip)) : [],
     // Código rate_limited y texto en español (los conectores y SDK tratan rate_limited igual que el bad_request de antes).
     errorResponseBuilder: rateLimitError,
   });
-  // Tope grueso por IP también para el tráfico que cuenta por credencial: varias keys válidas desde una misma IP no
-  // multiplican sin fin el cupo. Holgado (5 veces el global) para no frenar a las integraciones detrás de un NAT.
-  const ipCeiling = app.createRateLimit({ max: 3000, timeWindow: "1 minute", keyGenerator: (req) => `ipceil:${rateLimitIpKey(req.ip)}` });
+  // Tope grueso por (IP, organización) para el tráfico que cuenta por credencial: varias keys de una misma organización
+  // desde una IP no multiplican sin fin el cupo; organizaciones distintas detrás de una misma IP (un cliente MCP
+  // alojado, Zapier) no se lo reparten. Holgado (5 veces el global). No cuenta los pedidos internos del servidor MCP
+  // (app.inject con el secreto en memoria del proceso): el pedido a /mcp ya contó.
+  const ipCeiling = app.createRateLimit({
+    max: 3000,
+    timeWindow: "1 minute",
+    keyGenerator: async (req) => `ipceil:${rateLimitIpKey(req.ip)}:${(await identityOf(req)).tenantId}`,
+  });
   app.addHook("onRequest", async (req, reply) => {
-    if (!rateLimitKey(req).startsWith("cred:")) return;
+    if (isInternalAgentRequest(req)) return;
+    if (!(await identityOf(req)).key.startsWith("cred:")) return;
     const r = await ipCeiling(req);
     if (r.isAllowed || !r.isExceeded) return;
     reply.header("retry-after", r.ttlInSeconds);
@@ -198,12 +220,6 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
     return reply.code(500).send({ error: { code: "internal_error", message: "Error interno" } });
   });
 
-  // X-Request-Id en toda respuesta (también errores, 404 y las que escriben directo sobre la conexión, como el stream
-  // de eventos y /mcp): es el id de los logs, el que los SDK muestran como requestId.
-  app.addHook("onRequest", async (req, reply) => {
-    reply.raw.setHeader("x-request-id", req.id);
-  });
-
   // Solo peticiones de la misma web pueden usar la cookie para modificar (defensa CSRF adicional a SameSite=Lax).
   app.addHook("onRequest", async (req, reply) => {
     const path = requestPath(req);
@@ -225,8 +241,6 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
 
   // Conectores MCP desde el navegador: CORS abierto (sin cookies) en los endpoints OAuth/MCP (ver mcp/cors.ts).
   registerConnectorCors(app);
-  // Pestaña que quedó en otra organización (x-calasign-tenant distinto del de la sesión): 409 tenant_mismatch.
-  registerExpectedTenantCheck(app, deps.db);
 
   const services = { db: deps.db, blobs: deps.blobs };
   // Público (lo usa el deploy): sin datos del entorno.

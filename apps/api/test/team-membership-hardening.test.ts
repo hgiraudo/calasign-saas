@@ -164,6 +164,22 @@ describe("x-calasign-tenant", () => {
       payload: { name: "Por API", permissions: [] },
     });
     expect(byKey.statusCode).toBe(201);
+    // Otra cuenta en la misma cookie (x-calasign-user distinto): también 409.
+    const otherUser = await app.inject({
+      method: "POST",
+      url: "/v1/roles",
+      headers: H(o.ownerSession, { "x-calasign-tenant": o.id, "x-calasign-user": util.uuidv7() }),
+      payload: { name: "Otra cuenta", permissions: [] },
+    });
+    expect(otherUser.statusCode).toBe(409);
+    expect(otherUser.json().error.code).toBe("tenant_mismatch");
+    expect(
+      (await app.inject({ method: "POST", url: "/v1/roles", headers: H(o.ownerSession, { "x-calasign-tenant": o.id, "x-calasign-user": o.ownerId }), payload: { name: "Misma cuenta", permissions: [] } }))
+        .statusCode,
+    ).toBe(201);
+    // Rutas públicas (firmante): no pasan por authenticate(), el encabezado no aplica.
+    const pub = await app.inject({ method: "POST", url: `/v1/signing/${util.randomToken()}/otp/send`, headers: H(o.ownerSession, { "x-calasign-tenant": other }), payload: {} });
+    expect(pub.json()?.error?.code).not.toBe("tenant_mismatch");
     // Cerrar sesión siempre se puede.
     const extra = await session(o.ownerId, o.id);
     expect((await app.inject({ method: "POST", url: "/v1/auth/logout", headers: H(extra, { "x-calasign-tenant": other }) })).statusCode).toBe(204);
@@ -197,6 +213,16 @@ describe("baja desde la consola", () => {
     expect(await db.one(`SELECT 1 FROM member_removals WHERE tenant_id = $1 AND user_id = $2`, [o.id, uid])).toBeNull();
   });
 
+  it("salir por cuenta propia no deja una baja que bloquee el JIT", async () => {
+    const o = await org("sale.test");
+    const uid = await member(o.id, "sale@sale.test");
+    const own = await session(uid, o.id);
+    expect((await app.inject({ method: "DELETE", url: `/v1/members/${uid}`, headers: H(own) })).statusCode).toBe(204);
+    expect(await db.one(`SELECT 1 FROM member_removals WHERE tenant_id = $1 AND user_id = $2`, [o.id, uid])).toBeNull();
+    expect((await ssoLogin(o.slug, "sale@sale.test")).headers.location).toBe("/app");
+    expect(await membership(o.id, uid)).not.toBeNull();
+  });
+
   it("aceptar una invitación por el link también borra la baja", async () => {
     const o = await org("baja2.test");
     const pw = "una-clave-larga-123";
@@ -211,6 +237,18 @@ describe("baja desde la consola", () => {
 });
 
 describe("JIT / SCIM con una invitación pendiente", () => {
+  it("una invitación como propietaria entra como administradora por JIT o SCIM", async () => {
+    const o = await org("jitowner.test");
+    await invite(o.id, "duena@jitowner.test", "owner", o.ownerId);
+    expect((await ssoLogin(o.slug, "duena@jitowner.test")).headers.location).toBe("/app");
+    const u = await userByEmail("duena@jitowner.test");
+    expect(await membership(o.id, u!.id)).toMatchObject({ role: "admin" });
+    await invite(o.id, "duena2@jitowner.test", "owner", o.ownerId);
+    const r = await app.inject({ method: "POST", url: "/scim/v2/Users", headers: o.scimHeaders, payload: { userName: "duena2@jitowner.test", active: true } });
+    expect(r.statusCode).toBe(201);
+    expect(await membership(o.id, r.json().id)).toMatchObject({ role: "admin" });
+  });
+
   it("JIT: entra con el rol de la invitación y su invitación no cuenta como un lugar más del plan", async () => {
     // Starter: 3 usuarios. Propietario + un miembro + la invitación de la persona = 3.
     const o = await org("jitinv.test", "starter");
@@ -286,6 +324,36 @@ describe("aceptar una invitación sin dejar cuentas sueltas", () => {
     // Ya con organización: un signup más es email_taken aunque la contraseña sea la suya.
     const twice = await app.inject({ method: "POST", url: "/v1/auth/signup", payload: { email: "suelta@solo.test", password: pw, name: "X", organization: "Otra" } });
     expect(twice.statusCode).toBe(409);
+  });
+});
+
+describe("signup con un correo existente", () => {
+  it("no cuenta intentos en cuentas con organizaciones; una cuenta sin organizaciones bloqueada responde email_taken", async () => {
+    const o = await org("signup-lock.test");
+    const signup = (email: string, password: string) =>
+      app.inject({ method: "POST", url: "/v1/auth/signup", payload: { email, password, name: "X", organization: "Org" }, remoteAddress: `203.0.113.${Math.floor(Math.random() * 200) + 1}` });
+    const taken = await signup(`owner@signup-lock.test`, "otra-clave-larga-123");
+    expect(taken.json().error.code).toBe("email_taken");
+    expect(await db.one(`SELECT 1 FROM login_attempts WHERE user_id = $1`, [o.ownerId])).toBeNull();
+
+    const pw = "una-clave-larga-123";
+    const uid = await user("bloqueada@signup-lock.test", await util.hashPassword(pw));
+    await db.query(`INSERT INTO login_attempts (user_id, window_start, n) VALUES ($1, now(), 1000)`, [uid]);
+    const locked = await signup("bloqueada@signup-lock.test", "otra-clave-larga-123");
+    expect(locked.statusCode).toBe(409);
+    expect(locked.json().error.code).toBe("email_taken");
+    // Ni con la contraseña correcta mientras dura el bloqueo.
+    expect((await signup("bloqueada@signup-lock.test", pw)).json().error.code).toBe("email_taken");
+  });
+
+  it("login sin organizaciones con 2FA: el aviso pide una invitación", async () => {
+    const pw = "una-clave-larga-123";
+    const uid = await user("suelta2fa@solo.test", await util.hashPassword(pw));
+    await db.query(`UPDATE users SET totp_enabled_at = now() WHERE id = $1`, [uid]);
+    const r = await app.inject({ method: "POST", url: "/v1/auth/login", payload: { email: "suelta2fa@solo.test", password: pw } });
+    expect(r.statusCode).toBe(403);
+    expect(r.json().error).toMatchObject({ code: "no_organization", details: { twoFactor: true } });
+    expect(r.json().error.message).toContain("invit");
   });
 });
 

@@ -289,6 +289,76 @@ describe("barrido de extracción automática", () => {
     const a = await db.one<any>(`SELECT ai_metadata_attempted_at, ai_metadata_first_attempt_at, ai_metadata_retry_at FROM envelopes WHERE id = $1`, [env]);
     expect(a).toEqual({ ai_metadata_attempted_at: null, ai_metadata_first_attempt_at: null, ai_metadata_retry_at: null });
   }, 60_000);
+
+  it("el reclamo es un arriendo de 6 h: un error no clasificado (o un proceso caído) se reintenta pasado el plazo", async () => {
+    const t = await tenant("business");
+    await db.query(`UPDATE tenants SET ai_auto_extract = true WHERE id = $1`, [t]);
+    const env = uuidv7();
+    await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, completed_at) VALUES ($1, $2, 'S', 'completed', now() - interval '100 days')`, [env, t]);
+    const blobs = { get: async () => new Uint8Array() } as any;
+    const log = { warn: () => {}, info: () => {} };
+    // Los sobres de otras pruebas (misma base) quedan fuera de la tanda.
+    await db.query(`UPDATE envelopes SET ai_metadata_retry_at = now() + interval '1 year' WHERE id <> $1 AND ai_metadata IS NULL`, [env]);
+    let calls = 0;
+    const base = P.getAiProvider();
+    P.setAiProviderForTests(
+      Object.assign(Object.create(Object.getPrototypeOf(base)), base, {
+        extractMetadata: async () => {
+          calls++;
+          throw new P.AiRefusalError("el modelo se negó"); // 422 ai_refused: ninguna rama lo clasifica
+        },
+      }),
+    );
+    try {
+      await runAiSweep({ db, blobs, log });
+      const a = await db.one<any>(`SELECT ai_metadata_attempted_at, ai_metadata_retry_at FROM envelopes WHERE id = $1`, [env]);
+      expect(calls).toBe(1);
+      expect(a.ai_metadata_attempted_at).not.toBeNull();
+      expect(new Date(a.ai_metadata_retry_at).getTime() - Date.now()).toBeGreaterThan(5 * 3600_000);
+      // Dentro del arriendo no se vuelve a tomar.
+      await runAiSweep({ db, blobs, log });
+      expect(calls).toBe(1);
+      // Vencido el arriendo, se reintenta (dentro de la ventana de 30 días).
+      await db.query(`UPDATE envelopes SET ai_metadata_retry_at = now() - interval '1 minute' WHERE id = $1`, [env]);
+      await runAiSweep({ db, blobs, log });
+      expect(calls).toBe(2);
+    } finally {
+      P.setAiProviderForTests(undefined);
+    }
+  }, 60_000);
+
+  it("alerta de renovación: sale por la cola de avisos (con clave por fecha), por sendTracked y sin repetirse", async () => {
+    const t = await tenant("business");
+    await db.query(`UPDATE tenants SET ai_renewal_alert_days = 30 WHERE id = $1`, [t]);
+    const user = uuidv7();
+    const email = `ana-${user.slice(-6)}@x.com`;
+    await db.query(`INSERT INTO users (id, email, name, password_hash) VALUES ($1, $2, 'Ana', 'x')`, [user, email]);
+    await db.query(`INSERT INTO memberships (tenant_id, user_id, role) VALUES ($1, $2, 'owner')`, [t, user]);
+    const env = uuidv7();
+    const date = new Date(Date.now() + 20 * 86400_000).toISOString().slice(0, 10);
+    await db.query(
+      `INSERT INTO envelopes (id, tenant_id, subject, status, created_by, completed_at, ai_metadata, ai_renewal_alert_at)
+       VALUES ($1, $2, 'Contrato', 'completed', $3, now(), $4, current_date)`,
+      [env, t, user, JSON.stringify({ expiryDate: date, autoRenewal: false })],
+    );
+    const blobs = { get: async () => new Uint8Array() } as any;
+    const log = { warn: () => {}, info: () => {}, error: () => {} };
+    P.setAiProviderForTests(null);
+    try {
+      expect((await runAiSweep({ db, blobs, log })).alerted).toBe(1);
+      expect((await runAiSweep({ db, blobs, log })).alerted).toBe(0);
+    } finally {
+      P.setAiProviderForTests(undefined);
+    }
+    const jobs = await db.query<any>(`SELECT id, payload, dedupe_key FROM jobs WHERE payload->>'envelopeId' = $1 AND payload->>'kind' = 'ai_renewal_alert'`, [env]);
+    expect(jobs.map((j) => j.dedupe_key)).toEqual([`ai-renewal:${env}:${date}`]);
+    // El job del aviso: dirección suprimida → no sale (antes se mandaba igual, con deliver directo).
+    const { notifyAiRenewalAlert } = await import("../src/modules/ai/sweep");
+    await db.query(`INSERT INTO email_suppressions (address, tenant_id, reason) VALUES ($1, $2, 'complaint')`, [email, t]);
+    await notifyAiRenewalAlert({ db, log }, jobs[0].payload, jobs[0].id);
+    const n = await db.query<any>(`SELECT status, template FROM notifications WHERE envelope_id = $1`, [env]);
+    expect(n).toEqual([{ status: "suppressed", template: "ai_renewal_alert" }]);
+  }, 60_000);
 });
 
 describe("uso de mensajes y alertas BYOK", () => {

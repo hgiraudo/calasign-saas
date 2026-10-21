@@ -449,7 +449,8 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
       // Cierra sus sesiones en esta organización.
       await t.query(`DELETE FROM sessions WHERE user_id = $1 AND tenant_id = $2`, [userId, a.tenantId]);
       // La baja se sostiene: el alta JIT por SSO o una activación por SCIM no lo vuelven a sumar hasta que lo inviten.
-      await recordConsoleRemoval(t, a.tenantId, userId, await actingPerson(t, a));
+      // Salir por cuenta propia no es una baja de la organización: no bloquea que el IdP la vuelva a sumar.
+      if (userId !== a.userId) await recordConsoleRemoval(t, a.tenantId, userId, await actingPerson(t, a));
       // Sobres en curso donde era anfitrión de una firma en persona: nadie más que un administrador (envelopes:manage_all)
       // puede abrir esa sesión. Se listan en la auditoría de la baja para que alguien los corrija o los abra.
       const hosted = await t.query<{ id: string }>(

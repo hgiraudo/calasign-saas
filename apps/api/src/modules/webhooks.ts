@@ -19,7 +19,7 @@ import {
 } from "@calasign/shared";
 import { config } from "../config";
 import type { Db } from "../infra/db";
-import { enqueue } from "../infra/queue";
+import { enqueue, isLastAttempt, type JobContext } from "../infra/queue";
 import { badRequest, conflict, notFound } from "../lib/errors";
 import { decrypt, encrypt, hostOf, iso, randomToken, uuidv5, uuidv7 } from "../lib/util";
 import { sendTracked } from "../notifications/outbound";
@@ -347,10 +347,34 @@ type WebhookJob =
   | { kind: "deliver"; deliveryId: string; manual?: boolean }
   | { kind: "deactivated_notice"; tenantId: string; endpointId: string; reason: Exclude<DeactivationReason, "credential_revoked"> };
 
-export async function handleWebhookJob(d: Deps, p: WebhookJob, job?: { attempts: number; id?: number }) {
+export async function handleWebhookJob(d: Deps, p: WebhookJob, job?: Omit<JobContext, "maxAttempts"> & { maxAttempts?: number }) {
   if (p.kind === "fanout") return fanout(d, p);
   if (p.kind === "deactivated_notice") return notifyWebhookDeactivated(d, p, job?.id);
-  return deliverOne(d, p.deliveryId, job?.attempts ?? 1, Boolean(p.manual));
+  try {
+    return await deliverOne(d, p.deliveryId, job?.attempts ?? 1, Boolean(p.manual));
+  } catch (err) {
+    // Último intento con un error fuera del POST (base, descifrado del secreto…): la entrega no puede quedar
+    // 'pending' para siempre.
+    if (job?.maxAttempts != null && isLastAttempt(job as JobContext, err)) {
+      await webhookJobGaveUp(d, p, String((err as Error)?.message ?? err)).catch((e) =>
+        d.log.error({ deliveryId: p.deliveryId, err: String(e) }, "no se pudo marcar la entrega del webhook como fallida"),
+      );
+    }
+    throw err;
+  }
+}
+
+/**
+ * El job de una entrega no va a correr más (último intento fallido o worker muerto en el último intento): la entrega
+ * que siguiera 'pending' pasa a 'failed'. Idempotente; los jobs de fanout y avisos no tienen fila propia.
+ */
+export async function webhookJobGaveUp(d: Pick<Deps, "db">, p: WebhookJob, error: string) {
+  if (p?.kind !== "deliver" || !p.deliveryId) return;
+  await d.db.query(
+    `UPDATE webhook_deliveries SET status = 'failed', next_retry_at = NULL, last_error = left(COALESCE(last_error || E'\\n', '') || $2, 1000)
+      WHERE id = $1 AND status = 'pending'`,
+    [p.deliveryId, error],
+  );
 }
 
 /**

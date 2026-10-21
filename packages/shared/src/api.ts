@@ -1,7 +1,7 @@
 // Contrato de la API v1. Fuente de verdad para apps/api y apps/web.
 // Entradas: esquemas Zod (se validan en el servidor). Salidas: tipos TypeScript.
 import { z } from "zod";
-import { AUTH_METHODS, EnvelopeReminderSettings, type AuthMethod } from "./signer";
+import { AUTH_METHODS, EnvelopeReminderSettings, ID_DOCUMENT_TYPES, type AuthMethod } from "./signer";
 import { InPersonInput, type InPersonHost, type SigningInPerson } from "./experience";
 import { FieldConditions, FieldFormula, type FieldCondition } from "./scale-logic";
 import { IdVerificationInput, type RecipientIdentity, type SigningIdentity } from "./identity";
@@ -70,8 +70,7 @@ export type FieldType = (typeof FIELD_TYPES)[number];
 /** Campos que el servidor completa solo (el firmante no los edita). */
 export const AUTO_FIELD_TYPES: readonly FieldType[] = ["date_signed", "name", "email"];
 
-/** cedula (RD, CO), cpf (BR), dni (HN, PE), ce = carné de extranjería (PE, CO), passport, other. */
-export const ID_DOCUMENT_TYPES = ["cedula", "cpf", "dni", "passport", "other", "ce"] as const;
+export { ID_DOCUMENT_TYPES };
 
 // ───────────────────────────── Errores ─────────────────────────────
 

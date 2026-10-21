@@ -4,10 +4,11 @@ import type { Db } from "../infra/db";
 import type { BlobStore } from "../infra/storage";
 import type { Actor } from "../infra/evidence";
 import { bearerToken, sha256Hex } from "../lib/util";
-import { forgetCredential, rememberAuthenticatedCredential } from "../lib/ip";
+import { AUTHENTICATES, forgetCredential, rememberAuthenticatedCredential } from "../lib/ip";
 import { unauthorized } from "../lib/errors";
+import { assertExpectedSession } from "../lib/expected-tenant";
 import { enforceRoutePolicy, loadAccess, type AccessInfo } from "./access";
-import { enforceOAuthScope, isOAuthAccessToken, oauthAuthContext, restrictAccessToScopes } from "./oauth-tokens";
+import { accessTokenTenant, enforceOAuthScope, isOAuthAccessToken, oauthAuthContext, restrictAccessToScopes } from "./oauth-tokens";
 import { applySessionSsoPolicy } from "./identity/sso";
 import { applyAgentActor } from "./mcp/agent-actor";
 
@@ -82,6 +83,17 @@ export function clientInfo(req: FastifyRequest) {
   return { ip: req.ip ?? null, userAgent: (req.headers["user-agent"] as string | undefined)?.slice(0, 500) ?? null };
 }
 
+/**
+ * Verificación liviana (solo lectura, por índice único) de una credencial Bearer para el límite de pedidos
+ * (lib/ip.ts rateLimitIdentity): la organización de la API key o del access token OAuth vigente, o null. No reemplaza
+ * a authenticate() (membresía, política SSO, scopes): solo decide en qué cupo cuenta el pedido.
+ */
+export async function bearerCredentialTenant(db: Db, token: string): Promise<string | null> {
+  if (isOAuthAccessToken(token)) return accessTokenTenant(db, token);
+  const row = await db.one<{ tenant_id: string }>(`SELECT tenant_id FROM api_keys WHERE key_hash = $1 AND revoked_at IS NULL`, [sha256Hex(token)]);
+  return row?.tenant_id ?? null;
+}
+
 /** Resuelve sesión (cookie), API key o access token OAuth (Bearer). */
 export function authenticate(s: Services) {
   const inner = async (req: FastifyRequest, _reply: FastifyReply) => {
@@ -96,8 +108,8 @@ export function authenticate(s: Services) {
           forgetCredential(key);
           throw e;
         }
-        // Credencial válida: desde el próximo pedido cuenta en su propio cupo del límite (lib/ip.ts rateLimitKey).
-        rememberAuthenticatedCredential(key);
+        // Credencial válida: cuenta en su propio cupo del límite (lib/ip.ts rateLimitIdentity) sin volver a consultarla.
+        rememberAuthenticatedCredential(key, req.auth.tenantId);
         enforceOAuthScope(req, req.auth);
         req.auth.access = await loadAccess(s.db, req.auth);
         // Como la sesión web SSO: el segundo factor lo maneja el proveedor de identidad (si no, quien autorizó una app
@@ -115,7 +127,7 @@ export function authenticate(s: Services) {
         forgetCredential(key);
         throw unauthorized();
       }
-      rememberAuthenticatedCredential(key);
+      rememberAuthenticatedCredential(key, row.tenant_id);
       s.db.query(`UPDATE api_keys SET last_used_at = now() WHERE id = $1`, [row.id]).catch(() => {});
       req.auth = {
         tenantId: row.tenant_id,
@@ -135,6 +147,8 @@ export function authenticate(s: Services) {
       [sha256Hex(token)],
     );
     if (!row) throw unauthorized();
+    // Pestaña que quedó en otra organización o cuenta (x-calasign-tenant / x-calasign-user): 409 tenant_mismatch.
+    assertExpectedSession(req, { tenantId: row.tenant_id, userId: row.user_id });
     req.auth = {
       tenantId: row.tenant_id,
       userId: row.user_id,
@@ -145,9 +159,11 @@ export function authenticate(s: Services) {
     await applySessionSsoPolicy(s.db, req.auth, row);
     await enforceRoutePolicy(s.db, req, req.auth);
   };
-  return async (req: FastifyRequest, reply: FastifyReply) => {
+  const handler = async (req: FastifyRequest, reply: FastifyReply) => {
     await inner(req, reply);
     // Pedidos que hace el servidor MCP en nombre de un agente de IA: la evidencia lo nombra.
     if (req.auth) applyAgentActor(req, req.auth);
   };
+  // Las rutas que lo usan cuentan en el cupo de la credencial también con límite propio (lib/ip.ts markBearerAuthRoutes).
+  return Object.assign(handler, { [AUTHENTICATES]: true });
 }

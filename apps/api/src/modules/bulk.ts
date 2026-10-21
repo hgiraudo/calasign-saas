@@ -693,20 +693,30 @@ export async function handleBulkJob(d: BulkDeps, p: BulkJobPayload, job?: JobCon
     // terminado: si no, quedaban pendientes y el envío "en curso" para siempre. Solo las de su ronda: las que
     // "Reintentar fallidas" ya volvió a encolar son de otro job.
     if (isLastAttempt(job, err)) {
-      const msg = `No se pudo procesar la fila: ${(err as Error)?.message ?? String(err)}`.slice(0, 2000);
       try {
-        await d.db.query(
-          `UPDATE bulk_send_items SET status = 'failed', error = $3, processed_at = now()
-            WHERE bulk_send_id = $1 AND id = ANY($2) AND status IN ('pending','processing') AND retry_round = $4`,
-          [p.bulkSendId, p.itemIds, msg, p.retryRound ?? 0],
-        );
-        await finishIfDone(d, p.bulkSendId);
+        await bulkJobGaveUp(d, p, err);
       } catch (e) {
         d.log.warn({ bulkSendId: p.bulkSendId, err: String(e) }, "no se pudieron cerrar las filas del envío masivo");
       }
     }
     throw err;
   }
+}
+
+/**
+ * Un job del masivo no va a correr más (último intento fallido, o el worker murió en el último intento y el barrido lo
+ * dio por fallado): sus filas que quedaron se cierran como fallidas y, si no queda nada, el envío como terminado. Solo
+ * las de su ronda. Idempotente.
+ */
+export async function bulkJobGaveUp(d: BulkDeps, p: BulkJobPayload, err: unknown) {
+  if (!p?.bulkSendId || !Array.isArray(p.itemIds)) return;
+  const msg = `No se pudo procesar la fila: ${(err as Error)?.message ?? String(err)}`.slice(0, 2000);
+  await d.db.query(
+    `UPDATE bulk_send_items SET status = 'failed', error = $3, processed_at = now()
+      WHERE bulk_send_id = $1 AND id = ANY($2) AND status IN ('pending','processing') AND retry_round = $4`,
+    [p.bulkSendId, p.itemIds, msg, p.retryRound ?? 0],
+  );
+  await finishIfDone(d, p.bulkSendId);
 }
 
 async function finishIfDone(d: BulkDeps, bulkSendId: string) {

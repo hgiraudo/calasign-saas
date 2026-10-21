@@ -3,7 +3,7 @@ import { certsignStage, discardCertsignFiles, sweepCertsignPrepared } from "./ce
 import { config } from "../config";
 import type { Db } from "../infra/db";
 import { SYSTEM, appendEvent, verifyRows } from "../infra/evidence";
-import { enqueue, isLastAttempt, purgeFinishedJobs, requeueStuckJobs, type JobHandler, type JobQueueName } from "../infra/queue";
+import { enqueue, isLastAttempt, purgeFinishedJobs, requeueStuckJobs, type GaveUpJob, type JobHandler, type JobQueueName } from "../infra/queue";
 import { getSealProvider } from "../infra/seal";
 import { applyEvidencePipeline, planEvidence } from "./evidence-seal";
 import type { BlobStore } from "../infra/storage";
@@ -16,13 +16,14 @@ import { normLocale, render, type TemplateKind } from "../notifications/template
 import { loadDocuments } from "./mappers";
 import { loadSignatureImages, toStampFields } from "./stamp-fields";
 import { finalizeFieldLogic } from "./logic";
-import { handleBulkJob } from "./bulk";
+import { bulkJobGaveUp, handleBulkJob } from "./bulk";
 import { embeddedAuthLabel } from "./embed";
 import { inPersonAuthLabels } from "./experience";
-import { handleWebhookJob } from "./webhooks";
+import { handleWebhookJob, webhookJobGaveUp } from "./webhooks";
 import { runAutomaticReminders } from "./reminders";
 import { purgeExpiredEnvelopes, purgeOldIntegrationRuns, purgeOldWebhookDeliveries } from "./retention";
 import { purgeUnusedDynamicClients } from "./oauth";
+import { retryPendingFileDeletions } from "./file-cleanup";
 import { brandForEnvelope, brandize, mailBranding, productLabel, rebrands, senderFor } from "./white-label/brand";
 import { brandLogoForPdf, recheckWhiteLabelDomains } from "./white-label";
 import { handlePlatformJob } from "./platform-fanout";
@@ -32,6 +33,7 @@ import { identityForCertificate, maskDocNumber } from "./identity/kyc";
 import { closeStaleCheckouts, paymentsForCertificate, refundPaymentsOnClosedEnvelopes } from "./billing/payments";
 import { cancelPendingSubscriptions } from "./billing/webhooks";
 import { runAiSweep } from "./ai";
+import { notifyAiRenewalAlert } from "./ai/sweep";
 import { agreementsSweep, handleAgreementsJob } from "./agreements";
 
 interface Deps {
@@ -148,6 +150,8 @@ async function notify(
   jobId?: number,
 ) {
   if (p.kind === "password_reset") return notifyPasswordReset(d, p);
+  // Alerta de renovación detectada con IA (ai/sweep.ts): al remitente, no a un destinatario.
+  if ((p.kind as string) === "ai_renewal_alert") return notifyAiRenewalAlert(d, p as { envelopeId: string; tenantId: string; date?: string }, jobId);
   const e = await d.db.one<any>(`SELECT * FROM envelopes WHERE id = $1`, [p.envelopeId]);
   if (!e) return;
   const org = await d.db.one<any>(`SELECT name FROM tenants WHERE id = $1`, [e.tenant_id]);
@@ -212,11 +216,22 @@ async function notify(
   const r = await d.db.one<any>(`SELECT * FROM recipients WHERE id = $1`, [p.recipientId]);
   if (!r) return;
   // Invitaciones/recordatorios obsoletos (el sobre cambió de estado mientras esperaban en la cola).
-  if ((p.kind === "invite" || p.kind === "reminder" || p.kind === "expiry_warning") && (e.status !== "sent" || !["sent", "viewed"].includes(r.status))) return;
+  // Esperando firmas con certificado: el pedido (y su recordatorio automático) y el aviso de vencimiento van al firmante
+  // con certificado que todavía no firmó (ya firmó electrónicamente: su estado no es 'sent'/'viewed').
+  const certPending =
+    e.status === "awaiting_certificates" && (p.kind === "certificate_request" || p.kind === "expiry_warning")
+      ? Boolean(await d.db.one(`SELECT 1 FROM certificate_signatures WHERE recipient_id = $1 AND status = 'pending'`, [r.id]))
+      : false;
+  if (
+    (p.kind === "invite" || p.kind === "reminder" || p.kind === "expiry_warning") &&
+    !(p.kind === "expiry_warning" && certPending) &&
+    (e.status !== "sent" || !["sent", "viewed"].includes(r.status))
+  )
+    return;
   // Ya vencido (el barrido todavía no lo pasó a 'expired'): un recordatorio o aviso de vencimiento llevaría a un link
   // que ya no sirve para firmar.
   if ((p.kind === "reminder" || p.kind === "expiry_warning") && pastExpiry(e)) return;
-  if (p.kind === "certificate_request" && e.status !== "awaiting_certificates") return;
+  if (p.kind === "certificate_request" && (e.status !== "awaiting_certificates" || !certPending)) return;
   // Embebidos (el integrador muestra la ceremonia en su app), en persona (firma en el dispositivo del anfitrión) y
   // autorregistrados sin correo validado: sin invitaciones, recordatorios ni avisos de anulación o rechazo
   // (receivesSignerNotices, la misma regla que usan los recordatorios y la anulación).
@@ -600,13 +615,24 @@ async function finalize(d: Deps, p: { envelopeId: string; tenantId: string }) {
  * El sobre sigue en 'finalizing' (no se completa ni se pierde nada) hasta que alguien lo reintente con
  * POST /v1/envelopes/:id/retry-finalize.
  */
-export async function finalizeGaveUp(d: Deps, p: { envelopeId: string; tenantId: string }, err: unknown) {
+export async function finalizeGaveUp(d: Deps, p: { envelopeId: string; tenantId: string }, err: unknown, opts: { unlessReportedSince?: Date } = {}) {
   const message = (err instanceof Error ? err.message : String(err)).slice(0, 500);
   // Documento que no se puede sellar (determinista: reintentar no lo arregla): el código va en el evento y en el aviso.
   const code = err instanceof InvalidPdfError ? err.code : null;
   await d.db.tx(async (t) => {
     const e = await t.one<any>(`SELECT id, tenant_id, status FROM envelopes WHERE id = $1 FOR UPDATE`, [p.envelopeId]);
     if (!e || e.status !== "finalizing") return;
+    // Desde el barrido (job dado por fallado al morir el worker, o el barrido de respaldo): si ya hay un
+    // envelope.finalize_failed posterior a la creación del job, ya se avisó (con el sobre bloqueado: dos barridos a la
+    // vez no lo duplican).
+    if (
+      opts.unlessReportedSince &&
+      (await t.one(`SELECT 1 FROM envelope_events WHERE envelope_id = $1 AND type = 'envelope.finalize_failed' AND occurred_at >= $2 LIMIT 1`, [
+        e.id,
+        opts.unlessReportedSince.toISOString(),
+      ]))
+    )
+      return;
     await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "envelope.finalize_failed", actor: SYSTEM, data: { error: message, ...(code ? { code } : {}) } });
     await enqueue(t, "notify", { kind: "finalize_failed", envelopeId: e.id, tenantId: e.tenant_id, ...(code ? { reason: code } : {}) });
   });
@@ -614,6 +640,63 @@ export async function finalizeGaveUp(d: Deps, p: { envelopeId: string; tenantId:
 }
 
 // ───────────────────────────── Tareas periódicas ─────────────────────────────
+
+const WORKER_DIED = "el worker se detuvo durante el job (intentos agotados)";
+
+/**
+ * Lo que hace cada cola cuando un job suyo se da por fallado sin que su handler llegara a la lógica de último intento
+ * (el worker murió en el último intento: requeueStuckJobs). Una cola sin entrada no necesita nada.
+ */
+const JOB_GAVE_UP: Partial<Record<JobQueueName, (d: Deps, j: GaveUpJob) => Promise<void>>> = {
+  finalize: (d, j) => finalizeGaveUp(d, j.payload, new Error("el worker se detuvo durante la finalización (intentos agotados)"), { unlessReportedSince: j.createdAt }),
+  bulk: (d, j) => bulkJobGaveUp(d, j.payload, new Error(WORKER_DIED)),
+  webhook: (d, j) => webhookJobGaveUp(d, j.payload, WORKER_DIED),
+};
+
+/**
+ * Devuelve a la cola los jobs trabados y, para los que agotaron sus intentos con el worker caído (el handler no llegó a
+ * su lógica de "último intento": avisar la finalización fallida, cerrar las filas del masivo, la entrega del webhook),
+ * corre el cierre de su cola (JOB_GAVE_UP). Cada uno por separado: uno que falla no pierde los demás (la finalización
+ * la retoma además sweepUnreportedFinalizeFailures).
+ */
+export async function requeueStuckJobsAndClose(d: Deps) {
+  for (const j of await requeueStuckJobs(d.db)) {
+    const hook = JOB_GAVE_UP[j.queue];
+    if (!hook) continue;
+    try {
+      await hook(d, j);
+    } catch (err) {
+      d.log.error({ err: String(err), jobId: j.id, queue: j.queue }, "no se pudo cerrar un job dado por fallado");
+    }
+  }
+}
+
+/**
+ * Sobres en 'finalizing' cuyo último job de finalización quedó 'failed', sin otro pendiente o en curso, y sin un
+ * envelope.finalize_failed posterior a la creación de ese job: se registra y se avisa (finalizeGaveUp, idempotente con
+ * `unlessReportedSince`). De a 20 por pasada; los sobres en 'finalizing' son pocos (índice parcial, 0096).
+ */
+export async function sweepUnreportedFinalizeFailures(d: Deps) {
+  const rows = await d.db.query<{ id: string; tenant_id: string; created_at: Date; last_error: string | null }>(
+    `SELECT e.id, e.tenant_id, j.created_at, j.last_error FROM envelopes e
+       JOIN LATERAL (SELECT jf.status, jf.created_at, jf.last_error FROM jobs jf
+                      WHERE jf.queue = 'finalize' AND jf.payload->>'envelopeId' = e.id::text
+                      ORDER BY jf.created_at DESC, jf.id DESC LIMIT 1) j ON j.status = 'failed'
+      WHERE e.status = 'finalizing'
+        AND NOT EXISTS (SELECT 1 FROM jobs jp WHERE jp.queue = 'finalize' AND jp.payload->>'envelopeId' = e.id::text AND jp.status IN ('pending','running'))
+        AND NOT EXISTS (SELECT 1 FROM envelope_events ev WHERE ev.envelope_id = e.id AND ev.type = 'envelope.finalize_failed' AND ev.occurred_at >= j.created_at)
+      ORDER BY e.updated_at LIMIT 20`,
+  );
+  for (const r of rows) {
+    try {
+      const msg = (r.last_error ?? "la finalización agotó sus intentos").split("\n")[0];
+      await finalizeGaveUp(d, { envelopeId: r.id, tenantId: r.tenant_id }, new Error(msg), { unlessReportedSince: new Date(r.created_at) });
+    } catch (err) {
+      d.log.error({ err: String(err), envelopeId: r.id }, "no se pudo registrar el fallo de finalización");
+    }
+  }
+  return rows.length;
+}
 
 /** Última purga de jobs terminados de este proceso (ver el paso "jobs-purge"). */
 let lastJobsPurgeAt = 0;
@@ -623,15 +706,10 @@ export async function sweep(d: Deps, signal?: AbortSignal) {
   // Cada tarea por separado: una que falla (p. ej. un proveedor caído) no puede frenar a las demás, en
   // particular el vencimiento de sobres de más abajo.
   const steps: [string, () => Promise<unknown>][] = [
-    [
-      "requeue",
-      async () => {
-        // Jobs que agotaron sus intentos con el worker caído: una finalización no puede quedar trabada en silencio.
-        for (const j of await requeueStuckJobs(d.db)) {
-          if (j.queue === "finalize") await finalizeGaveUp(d, j.payload, new Error("el worker se detuvo durante la finalización (intentos agotados)"));
-        }
-      },
-    ],
+    ["requeue", () => requeueStuckJobsAndClose(d)],
+    // Respaldo durable: sobres en 'finalizing' cuya finalización falló definitivamente sin dejar constancia (el aviso
+    // de arriba falló, o el proceso murió entre marcar el job y avisar).
+    ["finalize-gave-up", () => sweepUnreportedFinalizeFailures(d)],
     // Jobs terminados hace más de JOBS_RETENTION_DAYS (30): sin esto la tabla crecía para siempre. Retiene los que
     // todavía deduplican (claves atadas a un sobre vivo): ver la política en purgeFinishedJobs (infra/queue.ts). Como
     // mucho una vez por hora por proceso (y una sola a la vez entre procesos, con un candado consultivo).
@@ -647,6 +725,8 @@ export async function sweep(d: Deps, signal?: AbortSignal) {
     ],
     ["reminders", () => runAutomaticReminders(d.db)],
     ["retention", () => purgeExpiredEnvelopes(d)],
+    // Archivos sin uso cuyo borrado en el almacenamiento falló (deleteFileIfUnused los anota): se reintentan.
+    ["file-deletions", () => retryPendingFileDeletions(d.db, d.blobs)],
     // Ejecuciones de CRM y conectores de más de INTEGRATION_RUNS_RETENTION_DAYS (180 por defecto).
     ["integration-runs", () => purgeOldIntegrationRuns(d.db)],
     // Entregas de webhooks de más de WEBHOOK_DELIVERY_RETENTION_DAYS (90 por defecto).
@@ -702,8 +782,28 @@ export async function sweep(d: Deps, signal?: AbortSignal) {
     }
   }
   if (signal?.aborted) return;
+  await expireDueEnvelopes(d, signal);
+  if (signal?.aborted) return;
+  // Después del vencimiento, así los sobres que vencieron recién también cierran su checkout.
+  await closeStaleCheckouts(d).catch((err) => d.log.error({ err: String(err), step: "payments" }, "tarea periódica falló"));
+  await refundPaymentsOnClosedEnvelopes(d).catch((err) => d.log.error({ err: String(err), step: "refunds" }, "tarea periódica falló"));
+  // Suscripciones reemplazadas que no se pudieron cancelar en el proveedor al cambiar de suscripción.
+  await cancelPendingSubscriptions(d).catch((err) => d.log.error({ err: String(err), step: "subscriptions" }, "tarea periódica falló"));
+}
+
+/**
+ * Vence los sobres enviados (o esperando certificados) cuyo vencimiento pasó, de a 100 por pasada. Un sobre que falla
+ * queda marcado (sweep_failed_at) y se reintenta pasada una hora, detrás de los demás.
+ */
+export async function expireDueEnvelopes(d: Deps, signal?: AbortSignal) {
   const expired = await d.db
-    .query<any>(`SELECT id, tenant_id FROM envelopes WHERE status IN ('sent','awaiting_certificates') AND expires_at < now() ORDER BY expires_at LIMIT 100`)
+    // Uno que falló hace menos de una hora queda para después (y detrás de los demás): si no, 100 sobres que fallan
+    // siempre ocupaban la tanda en cada pasada y no vencía ningún otro.
+    .query<any>(
+      `SELECT id, tenant_id FROM envelopes WHERE status IN ('sent','awaiting_certificates') AND expires_at < now()
+          AND (sweep_failed_at IS NULL OR sweep_failed_at < now() - interval '1 hour')
+        ORDER BY sweep_failed_at NULLS FIRST, expires_at LIMIT 100`,
+    )
     .catch((err) => {
       d.log.error({ err: String(err), step: "expire" }, "tarea periódica falló");
       return [] as any[];
@@ -724,14 +824,11 @@ export async function sweep(d: Deps, signal?: AbortSignal) {
       if (expiredNow) await discardCertsignFiles(d.db, d.blobs, e.id);
     } catch (err) {
       d.log.error({ err: String(err), envelopeId: e.id, step: "expire" }, "no se pudo vencer el sobre");
+      await d.db
+        .query(`UPDATE envelopes SET sweep_failed_at = now() WHERE id = $1`, [e.id])
+        .catch((e2) => d.log.error({ err: String(e2), envelopeId: e.id }, "no se pudo registrar el fallo del vencimiento"));
     }
   }
-  if (signal?.aborted) return;
-  // Después del vencimiento, así los sobres que vencieron recién también cierran su checkout.
-  await closeStaleCheckouts(d).catch((err) => d.log.error({ err: String(err), step: "payments" }, "tarea periódica falló"));
-  await refundPaymentsOnClosedEnvelopes(d).catch((err) => d.log.error({ err: String(err), step: "refunds" }, "tarea periódica falló"));
-  // Suscripciones reemplazadas que no se pudieron cancelar en el proveedor al cambiar de suscripción.
-  await cancelPendingSubscriptions(d).catch((err) => d.log.error({ err: String(err), step: "subscriptions" }, "tarea periódica falló"));
 }
 
 const REPLACED = {

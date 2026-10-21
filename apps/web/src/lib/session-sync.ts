@@ -1,8 +1,8 @@
-// Aviso entre pestañas de que la sesión cambió (cambio de organización, invitación aceptada, cierre de sesión): la
+// Aviso entre pestañas de que la sesión cambió (cambio de organización, invitación aceptada, ingreso, cierre de sesión): la
 // cookie es una sola, así que las demás pestañas quedaban mostrando la organización anterior y lo que guardaban iba a
 // parar a la nueva. BroadcastChannel y, si no existe, el evento storage de localStorage.
 
-export type SessionChange = { kind: "switch" | "accept" | "logout"; tenantId: string | null; userId: string | null };
+export type SessionChange = { kind: "switch" | "accept" | "login" | "logout"; tenantId: string | null; userId: string | null };
 
 const CHANNEL = "calasign-session";
 const STORAGE_KEY = "calasign:session-change";
@@ -43,7 +43,7 @@ export function onSessionChange(cb: (change: SessionChange) => void): () => void
   const handle = (raw: unknown) => {
     const m = raw as (SessionChange & { from?: string }) | null;
     if (!m || typeof m !== "object" || m.from === TAB_ID) return;
-    if (m.kind !== "switch" && m.kind !== "accept" && m.kind !== "logout") return;
+    if (m.kind !== "switch" && m.kind !== "accept" && m.kind !== "login" && m.kind !== "logout") return;
     cb({ kind: m.kind, tenantId: typeof m.tenantId === "string" ? m.tenantId : null, userId: typeof m.userId === "string" ? m.userId : null });
   };
   const ch = channel();

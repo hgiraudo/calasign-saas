@@ -1,6 +1,6 @@
 // Cliente HTTP mínimo para la API v1 (mismo origen, cookie de sesión).
 import type { ApiError } from "@calasign/shared";
-import { currentLocale } from "./i18n";
+import { currentLocale, fieldTypeLabel } from "./i18n";
 
 export class HttpError extends Error {
   status: number;
@@ -259,6 +259,10 @@ const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
   identity_required: { "pt-BR": "É preciso verificar sua identidade para continuar.", en: "You need to verify your identity to continue." },
   fields_invalid: { "pt-BR": "Há campos com valores inválidos.", en: "Some fields have invalid values." },
   invalid_image: { "pt-BR": "A imagem da assinatura não é válida.", en: "The signature image isn't valid." },
+  blank_signature: {
+    "pt-BR": "A assinatura está vazia ou quase sem traço: desenhe ou escreva de novo.",
+    en: "The signature is blank or has almost no stroke: draw or type it again.",
+  },
   busy: { "pt-BR": "Estamos preparando outras cópias: tente de novo em alguns segundos.", en: "We're preparing other copies: try again in a few seconds." },
   tsa_unavailable: {
     "pt-BR": "A autoridade de carimbo do tempo não respondeu como esperado: tente novamente em alguns minutos.",
@@ -686,9 +690,12 @@ function httpErrorText(e: HttpError, loc: "es" | "pt-BR" | "en"): string {
         : "Sua conta não pertence a nenhuma organização. Como ela tem verificação em duas etapas, peça um convite para uma.";
     }
     const missing = (e.details as { missing?: unknown } | undefined)?.missing;
-    if (loc !== "es" && e.code === "fields_incomplete") {
-      const list = Array.isArray(missing) ? [...new Set(missing.map(String))].join(", ") : "";
-      return (loc === "en" ? "Still to complete: " : "Ainda falta preencher: ") + list;
+    if (e.code === "fields_incomplete") {
+      // Los campos sin etiqueta se nombran por su tipo en el idioma del firmante (details.fields: id, tipo y etiqueta);
+      // `missing` (las etiquetas con el nombre del tipo en español) queda para servidores anteriores.
+      const named = missingFieldNames(e.details, loc);
+      const list = named ?? (Array.isArray(missing) ? [...new Set(missing.map(String))].join(", ") : "");
+      if (loc !== "es" || named) return (loc === "en" ? "Still to complete: " : loc === "es" ? "Faltan completar: " : "Ainda falta preencher: ") + list;
     }
     if (loc !== "es" && e.code === "clause_in_use") {
       // Con los nombres de lo que la usa (details.templates / details.clauses), como el mensaje en español.
@@ -706,6 +713,35 @@ function httpErrorText(e: HttpError, loc: "es" | "pt-BR" | "en"): string {
     const tr = loc !== "es" ? detailText(e.code, e.details, loc) ?? CODE_TEXT[e.code]?.[loc] : undefined;
     return tr ?? (e.message || (NO_MESSAGE[loc] ?? NO_MESSAGE.es)(e.status));
   }
+}
+
+/**
+ * Error del firmante que indica que la sesión quedó desactualizada: venció (401), falta verificar la identidad
+ * (403 identity_required), el link ya no existe (404) o el sobre cambió de estado (409, 410). Se vuelve a pedir la
+ * sesión para mostrar la pantalla que corresponde (código, verificación, cierre) en lugar de solo el texto del error.
+ */
+export function isStaleError(e: unknown): boolean {
+  if (!(e instanceof HttpError)) return false;
+  return [401, 404, 409, 410].includes(e.status) || (e.status === 403 && e.code === "identity_required");
+}
+
+/** Campos de un 422 fields_incomplete / fields_invalid de /complete (details.fields), si el servidor los manda. */
+export function problemFields(e: unknown): { id: string; type: string; label: string | null }[] {
+  if (!(e instanceof HttpError) || (e.code !== "fields_incomplete" && e.code !== "fields_invalid")) return [];
+  const list = (e.details as { fields?: unknown } | undefined)?.fields;
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter((f): f is { id: string; type: string; label?: unknown } => typeof f?.id === "string" && typeof f?.type === "string")
+    .map((f) => ({ id: f.id, type: f.type, label: typeof f.label === "string" && f.label.trim() ? f.label.trim() : null }));
+}
+
+function missingFieldNames(details: unknown, loc: "es" | "pt-BR" | "en"): string | null {
+  const list = (details as { fields?: unknown } | undefined)?.fields;
+  if (!Array.isArray(list) || !list.length) return null;
+  const names = list.map((f: { type?: unknown; label?: unknown }) =>
+    typeof f?.label === "string" && f.label.trim() ? f.label.trim() : fieldTypeLabel(String(f?.type ?? ""), loc),
+  );
+  return [...new Set(names)].join(", ");
 }
 
 export function uuid(): string {

@@ -86,7 +86,7 @@ function tinyPdf(label) {
   out += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
   return Buffer.from(out, "latin1");
 }
-const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAAAAADhZOFXAAAADElEQVR4nGNgoA4AAABIAAEuuDx+AAAAAElFTkSuQmCC";
 
 const owner = session();
 await owner("POST", "/v1/auth/signup", { name: "Dueña Cobros", email: `owner-bill+${stamp}@example.com`, password: "una-clave-segura-123", organization: `Cobros ${stamp}` });

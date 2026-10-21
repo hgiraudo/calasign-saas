@@ -54,8 +54,8 @@ function tinyPdf() {
   return Buffer.from(out, "latin1");
 }
 
-// PNG 1x1 negro.
-const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+// PNG 8x8 negro (una firma necesita un mínimo de píxeles con tinta).
+const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAAAAADhZOFXAAAADElEQVR4nGNgoA4AAABIAAEuuDx+AAAAAElFTkSuQmCC";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function linkFor(name) {

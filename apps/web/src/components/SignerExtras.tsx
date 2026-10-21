@@ -1,21 +1,14 @@
 // Componentes del bloque "firmante y evidencia": código OTP, delegación (firmante) y reasignación (remitente).
 import { useEffect, useRef, useState } from "react";
 import { ID_DOCUMENT_TYPES, type EnvelopeDetail, type OtpSendResponse, type Recipient, type SigningSession } from "@calasign/shared";
-import { api, errorText, HttpError } from "../lib/api";
+import { api, errorText, HttpError, isStaleError } from "../lib/api";
 import { useI18n } from "../lib/i18n";
 import { useSignerText } from "../lib/i18n-signer";
 import { ErrorBox, Modal } from "./ui";
 import { useFocusOnMount } from "./ExperienceExtras";
 
-/**
- * Error del firmante que indica que la sesión quedó desactualizada: venció (401), falta verificar la identidad
- * (403 identity_required), el link ya no existe (404) o el sobre cambió de estado (409, 410). Se vuelve a pedir la
- * sesión para mostrar la pantalla que corresponde (código, verificación, cierre) en lugar de solo el texto del error.
- */
-export function isStaleError(e: unknown): boolean {
-  if (!(e instanceof HttpError)) return false;
-  return [401, 404, 409, 410].includes(e.status) || (e.status === 403 && e.code === "identity_required");
-}
+// En lib/api.ts (sin dependencias de componentes): lo usan también ExperienceExtras y DeclineModal.
+export { isStaleError };
 
 /** Códigos de 429 con los que el último código enviado puede seguir vigente: se muestra el campo para escribirlo. */
 const OTP_LIMIT_CODES = ["otp_cooldown", "otp_too_many", "otp_daily_limit", "otp_destination_limit", "otp_tenant_limit"];
@@ -158,12 +151,15 @@ export function DelegateModal({
   onClose,
   onDone,
   onStale,
+  authMethod,
 }: {
   base: string;
   onClose: () => void;
   onDone: (name: string) => void;
   /** Vuelve a pedir la sesión ante un error terminal (sesión vencida, sobre cerrado…). */
   onStale?: () => unknown;
+  /** Verificación del firmante: la persona nueva la hereda, así que con código por SMS/WhatsApp necesita teléfono. */
+  authMethod?: string | null;
 }) {
   const sx = useSignerText();
   const { t } = useI18n();
@@ -179,7 +175,11 @@ export function DelegateModal({
   const [idDocType, setIdDocType] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const valid = name.trim() && email.trim() && reason.trim() && (!needsIdDoc || idDoc.trim());
+  // La API pide correo o teléfono; el destino del código heredado (correo con otp_email, teléfono con SMS/WhatsApp) es obligatorio.
+  const phoneRequired = authMethod === "otp_sms" || authMethod === "otp_whatsapp";
+  const emailRequired = authMethod === "otp_email";
+  const contactOk = phoneRequired ? !!phone.trim() : emailRequired ? !!email.trim() : !!(email.trim() || phone.trim());
+  const valid = name.trim() && contactOk && reason.trim() && (!needsIdDoc || idDoc.trim());
 
   const submit = async () => {
     // Sin "+código de país" la API respondía un error genérico de validación.
@@ -192,7 +192,7 @@ export function DelegateModal({
     try {
       const r = await api<{ delegated: boolean; to: string }>(`${base}/delegate`, {
         method: "POST",
-        body: { name: name.trim(), email: email.trim(), phone: phone.trim() || null, reason: reason.trim(), idDocumentNumber: idDoc.trim() || null, idDocumentType: (idDoc.trim() && idDocType) || null },
+        body: { name: name.trim(), email: email.trim() || null, phone: phone.trim() || null, reason: reason.trim(), idDocumentNumber: idDoc.trim() || null, idDocumentType: (idDoc.trim() && idDocType) || null },
       });
       onDone(r.to);
     } catch (e) {
@@ -231,6 +231,7 @@ export function DelegateModal({
     >
       <div className="stack">
         <p className="muted small">{sx("delegate.text")}</p>
+        {!phoneRequired && !emailRequired && <p className="muted small">{sx("delegate.contactHint")}</p>}
         <ErrorBox error={error} />
         <label className="field">
           <span>{sx("delegate.name")}</span>
@@ -241,7 +242,7 @@ export function DelegateModal({
           <input type="email" value={email} maxLength={320} onChange={(e) => setEmail(e.target.value)} />
         </label>
         <label className="field">
-          <span>{sx("delegate.phone")}</span>
+          <span>{sx(phoneRequired ? "delegate.phoneRequired" : "delegate.phone")}</span>
           <input type="tel" value={phone} placeholder="+5730012345678" onChange={(e) => setPhone(normalizePhone(e.target.value))} />
         </label>
         <label className="field">

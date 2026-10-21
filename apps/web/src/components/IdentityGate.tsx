@@ -7,6 +7,8 @@ import { useIdnText, type IdnKey } from "../lib/i18n-identity";
 import { ErrorBox, Spinner } from "./ui";
 import { prepareProviderTab, tokenOfBase } from "../lib/embed";
 import { isStaleError } from "./SignerExtras";
+import { DeclineModal } from "./DeclineModal";
+import { useI18n } from "../lib/i18n";
 
 const PROVIDER_NAMES: Record<string, string> = { mock: "CalaSign", truora: "Truora", veriff: "Veriff" };
 const REASONS = ["name_mismatch", "document_number_mismatch", "document_unreadable", "face_mismatch", "liveness_failed", "document_front_back_identical"];
@@ -27,6 +29,8 @@ export function IdentityGate({
   onStale: () => unknown;
 }) {
   const tx = useIdnText();
+  const { t } = useI18n();
+  const [decliningModal, setDecliningModal] = useState(false);
   const [idn, setIdn] = useState<SigningIdentity>(session.identity!);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -142,7 +146,7 @@ export function IdentityGate({
           <p className="muted">{tx("idv.failedFinal", { org })}</p>
           {declining ? (
             <div className="stack">
-              <textarea rows={3} value={reason} onChange={(e) => setReason(e.target.value)} aria-label={tx("idv.decline")} />
+              <textarea rows={3} maxLength={1000} value={reason} onChange={(e) => setReason(e.target.value)} aria-label={tx("idv.decline")} />
               <button type="button" className="btn btn-danger" disabled={busy} onClick={decline}>
                 {tx("idv.decline")}
               </button>
@@ -185,6 +189,13 @@ export function IdentityGate({
       ) : (
         <BuiltinCapture idn={idn} base={base} busy={busy} onIdentity={handle} onError={setError} onSubmit={() => call("/submit")} />
       )}
+      {/* Rechazar sin verificarse (el servidor no exige la identidad para rechazar). Agotados los intentos ya está arriba. */}
+      {!exhausted && (
+        <button type="button" className="btn btn-ghost btn-block" disabled={busy} onClick={() => setDecliningModal(true)}>
+          {t("sign.decline")}
+        </button>
+      )}
+      {decliningModal && <DeclineModal base={base} onClose={() => setDecliningModal(false)} onDone={onDone} onStale={onStale} />}
     </div>
   );
 }

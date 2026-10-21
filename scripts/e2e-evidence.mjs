@@ -56,7 +56,7 @@ const assert = (c, m) => {
   if (!c) throw new Error(`falló: ${m}`);
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAAAAADhZOFXAAAADElEQVR4nGNgoA4AAABIAAEuuDx+AAAAAElFTkSuQmCC";
 
 function tinyPdf() {
   const objs = [];

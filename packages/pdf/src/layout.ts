@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { PDFDocument, PDFFont, PDFName, PDFPage, concatTransformationMatrix, popGraphicsState, pushGraphicsState } from "pdf-lib";
+import { PDFDocument, PDFFont, PDFName, PDFNull, PDFPage, PDFRef, concatTransformationMatrix, popGraphicsState, pushGraphicsState } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
 
 const fontsDir = fileURLToPath(new URL("../fonts/", import.meta.url));
@@ -50,9 +50,15 @@ export function visibleBox(page: PDFPage): Box {
 /** Tamaño Carta: el que usa pdf.js para una página sin /MediaBox (ni propia ni heredada). */
 export const LETTER_MEDIABOX: Box = { x: 0, y: 0, width: 612, height: 792 };
 
-/** true si la página no tiene /MediaBox (pdf-lib tiraba UnexpectedObjectTypeError al leerla). */
+/**
+ * true si la página no tiene /MediaBox (pdf-lib tiraba UnexpectedObjectTypeError al leerla). Una referencia colgada (a
+ * un objeto que no existe) o a null cuenta como que falta, como en pdf.js; de otro tipo, no (getMediaBox la rechaza).
+ */
 export function lacksMediaBox(page: PDFPage): boolean {
-  return page.node.getInheritableAttribute(PDFName.of("MediaBox")) === undefined;
+  const raw = page.node.getInheritableAttribute(PDFName.of("MediaBox"));
+  if (raw === undefined) return true;
+  const v = raw instanceof PDFRef ? page.node.context.lookup(raw) : raw;
+  return v === undefined || v === PDFNull;
 }
 
 /** La MediaBox, o Carta si falta (como pdf.js). */

@@ -4,11 +4,12 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { useParams } from "react-router-dom";
 import type { CompleteSigningInput, Field, SignatureImageInput, SigningSession } from "@calasign/shared";
 import { AUTO_FIELD_TYPES, ATTACHMENT_MAX_BYTES, contrastText, formatSigningDate, parseNumberLoose, signingDateForDisplay } from "@calasign/shared";
-import { api, errorText, fetchResponse, HttpError, readBody } from "../lib/api";
+import { api, errorText, fetchResponse, HttpError, problemFields, readBody } from "../lib/api";
 import { formatDate, formatDateTime, useI18n } from "../lib/i18n";
 import { DocumentView } from "../components/DocumentView";
 import { SignaturePad } from "../components/SignaturePad";
-import { ErrorBox, LocaleSwitcher, Logo, Modal, Spinner } from "../components/ui";
+import { ErrorBox, LocaleSwitcher, Logo, Spinner } from "../components/ui";
+import { DeclineModal } from "../components/DeclineModal";
 import { isEmbedded, isTabReturn, tokenOfBase, useEmbedBridge } from "../lib/embed";
 import { DelegateModal, isStaleError, OtpGate } from "../components/SignerExtras";
 import { useSignerText } from "../lib/i18n-signer";
@@ -282,11 +283,11 @@ export function SignerPage() {
   } else if (!session.canSign) {
     content = <Final icon="⏳" title={t("sign.notYourTurnTitle")} text={t("sign.notYourTurnText")} />;
   } else if (session.inPerson?.active && !session.inPerson.identityConfirmed) {
-    content = <InPersonHandover session={session} base={base} onDone={reload} />;
+    content = <InPersonHandover session={session} base={base} onDone={reload} onDeclined={apply} onStale={resync} />;
   } else if (session.identity?.required && session.identity.status !== "verified") {
     content = <IdentityGate session={session} base={base} onDone={apply} onStale={resync} />;
   } else if (!recipient.consented) {
-    content = <Consent session={session} base={base} onDone={apply} />;
+    content = <Consent session={session} base={base} onDone={apply} onStale={resync} />;
   } else {
     lastFlow.current = session;
     return renderFlow(session, null);
@@ -449,11 +450,23 @@ function EnvelopeIntro({ session, downloads }: { session: SigningSession; downlo
   );
 }
 
-function Consent({ session, base, onDone }: { session: SigningSession; base: string; onDone: (s: SigningSession) => void }) {
+function Consent({
+  session,
+  base,
+  onDone,
+  onStale,
+}: {
+  session: SigningSession;
+  base: string;
+  onDone: (s: SigningSession) => void;
+  /** Vuelve a pedir la sesión ante un error terminal (sesión vencida, sobre anulado o vencido…). */
+  onStale: () => unknown;
+}) {
   const { t } = useI18n();
   const [checked, setChecked] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [declining, setDeclining] = useState(false);
   const accept = async () => {
     setBusy(true);
     setError(null);
@@ -462,6 +475,8 @@ function Consent({ session, base, onDone }: { session: SigningSession; base: str
     } catch (e) {
       setError(errorText(e));
       setBusy(false);
+      // Sesión vencida, sobre cerrado o link reemplazado: la página pasa a la pantalla que corresponde.
+      if (isStaleError(e)) void onStale();
     }
   };
   return (
@@ -476,6 +491,11 @@ function Consent({ session, base, onDone }: { session: SigningSession; base: str
       <button type="button" className="btn btn-primary btn-block" disabled={!checked || busy} onClick={accept}>
         {t("sign.consentAccept")}
       </button>
+      {/* Se puede rechazar sin aceptar el uso de medios electrónicos (el servidor lo admite). */}
+      <button type="button" className="btn btn-ghost btn-block" disabled={busy} onClick={() => setDeclining(true)}>
+        {t("sign.decline")}
+      </button>
+      {declining && <DeclineModal base={base} onClose={() => setDeclining(false)} onDone={onDone} onStale={onStale} />}
     </div>
   );
 }
@@ -505,6 +525,36 @@ function isAuto(f: Field) {
 
 /** Campos en los que el firmante escribe o elige un valor. */
 const VALUE_TYPES = ["text", "number", "dropdown", "company", "title"];
+
+// Aproximación del ajuste del texto estampado (packages/pdf layoutFieldText): tamaño mínimo de 6 pt (o menos en una
+// caja muy baja), interlineado 1.15 y 1 pt de margen a cada lado. Se mide con una fuente parecida a DejaVu Sans.
+const STAMP_MIN_SIZE = 6;
+let measureCtx: CanvasRenderingContext2D | null | undefined;
+function stampFits(text: string, boxW: number, boxH: number): boolean {
+  if (measureCtx === undefined) measureCtx = typeof document === "undefined" ? null : document.createElement("canvas").getContext("2d");
+  const ctx = measureCtx;
+  if (!ctx || boxW <= 2 || boxH <= 0) return true;
+  const size = Math.min(STAMP_MIN_SIZE, boxH * 0.7, 11);
+  ctx.font = `${size}px "DejaVu Sans", Verdana, Arial, sans-serif`;
+  const maxW = boxW - 2;
+  if (ctx.measureText(text).width <= maxW) return true;
+  const maxLines = Math.max(1, Math.floor(boxH / (size * 1.15)));
+  let lines = 1;
+  let line = "";
+  for (const word of text.split(" ")) {
+    const candidate = line ? `${line} ${word}` : word;
+    if (ctx.measureText(candidate).width <= maxW) {
+      line = candidate;
+      continue;
+    }
+    // Palabra más larga que la caja: se parte en tantas líneas como ocupe.
+    const wordLines = Math.max(1, Math.ceil(ctx.measureText(word).width / maxW));
+    lines += line ? wordLines : wordLines - 1;
+    line = wordLines > 1 ? "" : word;
+    if (lines > maxLines) return false;
+  }
+  return lines <= maxLines;
+}
 
 function SigningFlow({
   session,
@@ -540,13 +590,34 @@ function SigningFlow({
   const [initials, setInitials] = useState<Adopted | null>(null);
   const [pad, setPad] = useState<"signature" | "initials" | null>(null);
   const [declining, setDeclining] = useState(false);
-  const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   /** Campo señalado por el último error de "Finalizar" (aria-invalid + aria-describedby al texto del error). */
   const [invalidId, setInvalidId] = useState<string | null>(null);
+  /** Campos que el servidor rechazó en el último "Finalizar" (422): siguen marcados aunque la página los vea completos. */
+  const [serverProblems, setServerProblems] = useState<ReadonlySet<string>>(() => new Set());
+  /** Campo al que ir apenas llegue la sesión recargada después de un 422. */
+  const [jumpTo, setJumpTo] = useState<string | null>(null);
   const logic = useFieldLogic(session, values);
+
+  // Sesión recargada (p. ej. después de un 422 al finalizar): lo escrito se conserva; los adjuntos siguen al servidor
+  // (el que la página creía subido puede no estar) y los campos nuevos toman su valor.
+  useEffect(() => {
+    setValues((v) => {
+      let next = v;
+      for (const f of session.fields) {
+        const own = VALUE_TYPES.includes(f.type) || f.type === "checkbox" || f.type === "attachment";
+        if (!own) continue;
+        const server = f.value ?? (f.type === "checkbox" ? "false" : "");
+        if (f.type === "attachment" ? v[f.id] !== server : !(f.id in v)) {
+          if (next === v) next = { ...v };
+          next[f.id] = server;
+        }
+      }
+      return next;
+    });
+  }, [session.fields]);
 
   const docOrder = useMemo(() => new Map(session.documents.map((d) => [d.id, d.position])), [session.documents]);
   const ordered = useMemo(
@@ -582,6 +653,19 @@ function SigningFlow({
     return n === null || (f.min != null && n < f.min) || (f.max != null && n > f.max);
   });
 
+  // Textos que no van a entrar en su espacio del PDF ni al tamaño mínimo legible (se estampan cortados con "…").
+  const overflowing = useMemo(() => {
+    const out = new Set<string>();
+    for (const f of interactive) {
+      if (!VALUE_TYPES.includes(f.type)) continue;
+      const text = (values[f.id] ?? "").replace(/\s+/g, " ").trim();
+      const page = session.documents.find((d) => d.id === f.documentId)?.pages[f.page];
+      if (text && page && !stampFits(text, f.width * page.width, f.height * page.height)) out.add(f.id);
+    }
+    return out;
+  }, [interactive, values, session.documents]);
+  const firstOverflow = interactive.find((f) => overflowing.has(f.id));
+
   const goTo = (f: Field | undefined) => {
     if (!f) {
       document.getElementById("finish-btn")?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -598,9 +682,21 @@ function SigningFlow({
     }
   };
 
+  useEffect(() => {
+    if (!jumpTo) return;
+    setJumpTo(null);
+    const f = ordered.find((x) => x.id === jumpTo);
+    if (!f) return;
+    setInvalidId(f.id);
+    goTo(f);
+    // goTo se arma en cada render; basta con correr al llegar la sesión nueva.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jumpTo, ordered]);
+
   const finish = async () => {
     // Con un adjunto todavía subiendo, se completaba sin él y la subida fallaba después (el firmante lo creía adjuntado).
     if (uploading) return;
+    setServerProblems(new Set());
     if (pending.length) {
       const f = pending[0];
       setError(sx("missing.field", { label: f.label || t(`field.${f.type}`) }));
@@ -651,6 +747,16 @@ function SigningFlow({
     } catch (e) {
       setError(errorText(e));
       setBusy(false);
+      const problems = problemFields(e);
+      if (problems.length || (e instanceof HttpError && e.status === 422 && (e.code === "fields_incomplete" || e.code === "fields_invalid"))) {
+        // La página creía todo completo y el servidor no (un adjunto que no llegó, una condición distinta…): se recarga
+        // la sesión conservando lo escrito y se va al primer campo que falta.
+        setServerProblems(new Set(problems.map((p) => p.id)));
+        void Promise.resolve(onStale()).then(() => {
+          if (problems[0]) setJumpTo(problems[0].id);
+        });
+        return;
+      }
       onTerminalError(e);
     }
   };
@@ -664,23 +770,6 @@ function SigningFlow({
   const onTerminalError = (e: unknown) => {
     if (e instanceof HttpError && e.status === 402 && e.code === "payment_required") onPaymentRequired();
     else if (isStaleError(e)) void onStale();
-  };
-
-  const decline = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      const s = await api<SigningSession>(`${base}/decline`, { method: "POST", body: { reason } });
-      setDeclining(false);
-      onDone(s);
-    } catch (e) {
-      setError(errorText(e));
-      setBusy(false);
-      // Si la sesión cambió (p. ej. venció y se vuelve a pedir el código), el modal se cierra antes de resincronizar:
-      // si no, quedaba abierto dentro del flujo oculto y reaparecía (o atrapaba el teclado) detrás del código.
-      if (isStaleError(e)) setDeclining(false);
-      onTerminalError(e);
-    }
   };
 
   const recipient = session.recipient;
@@ -739,7 +828,7 @@ function SigningFlow({
 
   // Deja de marcarse apenas se completa (o se corrige el número), o si el error mostrado ya es otro.
   const invalidNow =
-    error && invalidId && (pending.some((f) => f.id === invalidId) || badNumber?.id === invalidId) ? invalidId : null;
+    error && invalidId && (pending.some((f) => f.id === invalidId) || badNumber?.id === invalidId || serverProblems.has(invalidId)) ? invalidId : null;
   const errProps = (f: Field) =>
     invalidNow === f.id ? { "aria-invalid": true as const, "aria-describedby": "sign-finish-error" } : {};
 
@@ -855,7 +944,7 @@ function SigningFlow({
             {...errProps(f)}
             inputMode={f.type === "number" ? "decimal" : undefined}
             maxLength={2000}
-            style={{ fontSize }}
+            style={{ fontSize, ...(overflowing.has(f.id) ? { outline: "2px solid var(--warn, #d97706)", outlineOffset: -2 } : null) }}
           />
         </div>
       );
@@ -959,6 +1048,11 @@ function SigningFlow({
           ) : (
             <p className="small muted">{t("sign.progress", { done, total: required.length })}</p>
           )}
+          {firstOverflow && (
+            <p className="small" role="status">
+              ⚠ {sx("stamp.overflow", { label: firstOverflow.label || t(`field.${firstOverflow.type}`) })}
+            </p>
+          )}
           {error && (
             <p id="sign-finish-error" className="small error-text">
               {error}
@@ -996,31 +1090,9 @@ function SigningFlow({
         />
       )}
 
-      {delegating && <DelegateModal base={base} onClose={() => setDelegating(false)} onDone={(name) => onDelegated(name)} onStale={onStale} />}
+      {delegating && <DelegateModal base={base} authMethod={session.recipient.authMethod} onClose={() => setDelegating(false)} onDone={(name) => onDelegated(name)} onStale={onStale} />}
 
-      {declining && (
-        <Modal
-          title={t("sign.declineTitle")}
-          onClose={() => setDeclining(false)}
-          footer={
-            <>
-              <button type="button" className="btn btn-ghost" onClick={() => setDeclining(false)}>
-                {t("common.cancel")}
-              </button>
-              <button type="button" className="btn btn-danger" disabled={busy || !reason.trim()} onClick={decline}>
-                {t("sign.declineConfirm")}
-              </button>
-            </>
-          }
-        >
-          <label className="field">
-            <span>{t("sign.declineReason")}</span>
-            <textarea rows={3} maxLength={1000} value={reason} onChange={(e) => setReason(e.target.value)} autoFocus />
-          </label>
-          {/* El error del rechazo se muestra acá: el de la página queda tapado por el modal. */}
-          <ErrorBox error={error} />
-        </Modal>
-      )}
+      {declining && <DeclineModal base={base} onClose={() => setDeclining(false)} onDone={onDone} onStale={onStale} />}
     </div>
   );
 }

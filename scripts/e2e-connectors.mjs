@@ -333,7 +333,7 @@ async function waitFor(fn, what, ms = 30_000) {
   }
   throw new Error(`timeout esperando: ${what}`);
 }
-const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAAAAADhZOFXAAAADElEQVR4nGNgoA4AAABIAAEuuDx+AAAAAElFTkSuQmCC";
 async function signAll(envelopeId, names) {
   for (const name of names) {
     const link = await waitFor(async () => {

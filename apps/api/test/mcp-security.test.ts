@@ -267,6 +267,22 @@ describe("create_envelope idempotente", () => {
     expect(otherReq.text).toMatch(/confirmToken no es válido/);
   });
 
+  // Con la cola de PDFs llena, el sobre no se crea y el mensaje dice que se reintente (antes: "El PDF no es válido").
+  it("con los PDFs ocupados, falla como reintentable y no como PDF inválido", async () => {
+    const { PDF_INGEST_LIMITS } = await import("@calasign/pdf");
+    const saved = { ...PDF_INGEST_LIMITS };
+    Object.assign(PDF_INGEST_LIMITS, { maxConcurrent: 0, queueWaitMs: 0, maxQueue: 0 });
+    try {
+      const args = { subject: "Ocupado", recipients: [{ name: "Ana", email: "ana@x.test" }], document: { base64: tinyPdf(), name: "a.pdf" }, requestId: "busy-1" };
+      const r = await callTool(ADMIN_KEY, "create_envelope", args);
+      expect(r.isError).toBe(true);
+      expect(r.text).toMatch(/reintentable/);
+      expect(r.text).not.toMatch(/no es válido/);
+    } finally {
+      Object.assign(PDF_INGEST_LIMITS, saved);
+    }
+  });
+
   it("un reintento justo después del borde del bloque de 10 minutos devuelve el mismo sobre", async () => {
     const W = mcp.MCP_IMPLICIT_IDEMPOTENCY_WINDOW_MS;
     const edge = Math.ceil(Date.now() / W) * W + W;

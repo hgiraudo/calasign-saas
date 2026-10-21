@@ -1,10 +1,25 @@
 // Arma el PDF final de un sobre: estampa los campos completados en cada documento, une todo,
 // agrega el certificado de finalización y sella con PAdES.
-import { PDFArray, PDFDocument, PDFName, PDFObjectCopier, PDFPage, rgb, type PDFImage, type PDFObject } from "pdf-lib";
+import {
+  PDFArray,
+  PDFDocument,
+  PDFName,
+  PDFObjectCopier,
+  PDFPage,
+  clip,
+  endPath,
+  popGraphicsState,
+  pushGraphicsState,
+  rectangle,
+  rgb,
+  type PDFFont,
+  type PDFImage,
+  type PDFObject,
+} from "pdf-lib";
 import { pdflibAddPlaceholder } from "@signpdf/placeholder-pdf-lib";
 import { SUBFILTER_ETSI_CADES_DETACHED } from "@signpdf/utils";
 import { buildPadesCms, type CmsOptions } from "./cms";
-import { embedFonts, fitFontSize, safeMultiline, safeText, withDisplayedSpace, wrapText, type Fonts } from "./layout";
+import { embedFonts, fitFontSize, fontCharset, safeMultiline, safeText, withDisplayedSpace, wrapText, type Fonts } from "./layout";
 import { labels, type CertLabels } from "./i18n";
 import type { SignatureProvider } from "./provider";
 import { assertPngSize } from "./images";
@@ -540,9 +555,56 @@ function drawField(page: PDFPage, fonts: Fonts, f: StampField, img: PDFImage | n
     const raw = f.type === "attachment" ? (f.value ? `${L.attachment}: ${f.value}` : "") : (f.value ?? "");
     const text = safeText(fonts.regular, raw.replace(/\s+/g, " ").trim());
     if (!text) return;
-    const size = fitFontSize(fonts.regular, text, bw - 2, Math.min(bh * 0.7, 11));
-    page.drawText(text, { x: bx + 1, y: by + (bh - size * 0.72) / 2, size, font: fonts.regular, color: INK });
+    const fit = layoutFieldText(fonts.regular, text, bw, bh);
+    // Recorte al rectángulo del campo: ningún texto estampado sale de su caja (ni pisa el contenido vecino del documento).
+    page.pushOperators(pushGraphicsState(), rectangle(bx, by, bw, bh), clip(), endPath());
+    if (fit.lines.length === 1 && !fit.wrapped) {
+      // Una línea que entra: misma posición que antes del ajuste por líneas.
+      page.drawText(fit.lines[0]!, { x: bx + 1, y: by + (bh - fit.size * 0.72) / 2, size: fit.size, font: fonts.regular, color: INK });
+    } else {
+      const lh = fit.size * FIELD_LINE_HEIGHT;
+      const top = by + (bh + fit.lines.length * lh) / 2;
+      fit.lines.forEach((line, i) => {
+        page.drawText(line, { x: bx + 1, y: top - i * lh - fit.size * 0.9, size: fit.size, font: fonts.regular, color: INK });
+      });
+    }
+    page.pushOperators(popGraphicsState());
   });
+}
+
+/** Tamaño mínimo legible del texto estampado: por debajo se trunca con "…" en vez de seguir achicando. */
+export const FIELD_MIN_FONT_SIZE = 6;
+const FIELD_LINE_HEIGHT = 1.15;
+
+/**
+ * Cómo entra el texto de un campo en su caja (bw × bh, en puntos): en una línea si entra achicando hasta el mínimo
+ * legible (igual que siempre); si no, en varias líneas al mayor tamaño que entren en el alto; si tampoco, al mínimo
+ * con tantas líneas como entren y la última truncada con "…". `truncated` indica que se perdió texto.
+ */
+export function layoutFieldText(font: PDFFont, text: string, bw: number, bh: number): { size: number; lines: string[]; wrapped: boolean; truncated: boolean } {
+  const maxW = bw - 2;
+  const maxSize = Math.min(bh * 0.7, 11);
+  const minSize = Math.min(FIELD_MIN_FONT_SIZE, maxSize);
+  const single = fitFontSize(font, text, maxW, maxSize, minSize);
+  if (font.widthOfTextAtSize(text, single) <= maxW) return { size: single, lines: [text], wrapped: false, truncated: false };
+  for (let s = maxSize; s >= minSize; s -= 0.25) {
+    const lines = wrapText(font, text, s, maxW);
+    if (lines.length * s * FIELD_LINE_HEIGHT <= bh && lines.every((l) => font.widthOfTextAtSize(l, s) <= maxW)) {
+      return { size: s, lines, wrapped: true, truncated: false };
+    }
+  }
+  const all = wrapText(font, text, minSize, maxW);
+  const n = Math.max(1, Math.floor(bh / (minSize * FIELD_LINE_HEIGHT)));
+  const lines = all.slice(0, n);
+  if (lines.length === all.length && lines.every((l) => font.widthOfTextAtSize(l, minSize) <= maxW)) {
+    return { size: minSize, lines, wrapped: lines.length > 1, truncated: false };
+  }
+  const ell = fontCharset(font).has(0x2026) ? "…" : "...";
+  // La última línea visible lleva el resto del texto, cortado por caracteres (no por bytes) hasta que entre con "…".
+  const chars = Array.from(lines.length < all.length ? `${lines[n - 1]} ${all.slice(n).join(" ")}` : lines[lines.length - 1]!);
+  while (chars.length && font.widthOfTextAtSize(chars.join("").trimEnd() + ell, minSize) > maxW) chars.pop();
+  lines[lines.length - 1] = chars.join("").trimEnd() + ell;
+  return { size: minSize, lines, wrapped: lines.length > 1, truncated: true };
 }
 
 function drawPageFooter(page: PDFPage, fonts: Fonts, L: CertLabels, envelopeId: string) {

@@ -752,6 +752,12 @@ export function currentLocale(): Locale {
   return activeLocale;
 }
 
+/** Nombre del tipo de campo ("field.signature" → "Firma") en el idioma activo, para código fuera de React. */
+export function fieldTypeLabel(type: string, locale: Locale = activeLocale): string {
+  const key = `field.${type}` as MessageKey;
+  return DICTS[locale][key] ?? DICTS.es[key] ?? type;
+}
+
 /** Confirmación para acciones destructivas que no tienen modal propio (revocar, rotar, borrar). */
 export function confirmAction(): boolean {
   return typeof window === "undefined" || window.confirm(DICTS[activeLocale]["common.confirmAction"]);

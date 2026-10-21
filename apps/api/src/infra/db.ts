@@ -124,8 +124,46 @@ export async function createDb(): Promise<Db> {
 
 const migrationsDir = fileURLToPath(new URL("../../migrations/", import.meta.url));
 
-/** Clave del candado de migraciones (pg_advisory_xact_lock): dos procesos que arrancan a la vez no aplican la misma dos veces. */
+/** Clave del candado de migraciones (pg_try_advisory_[xact_]lock): dos procesos que arrancan a la vez no aplican la misma dos veces. */
 const MIGRATION_LOCK_KEY = 0x63616c61; // "cala"
+
+export interface MigrateOptions {
+  /** Directorio de migraciones (tests). */
+  dir?: string;
+  /** Pausa entre intentos de tomar el candado de migraciones (ms). */
+  lockPollMs?: number;
+  /** Espera total máxima por el candado de migraciones antes de fallar (ms). */
+  lockTimeoutMs?: number;
+}
+
+/** Pausa entre intentos de tomar el candado de migraciones. */
+const LOCK_POLL_MS = 500;
+/** Espera máxima por el candado: otra migración puede reescribir una tabla grande, pero no esperar para siempre. */
+const LOCK_TIMEOUT_MS = 60 * 60_000;
+/** Cada cuánto se avisa en el log que se sigue esperando. */
+const LOCK_LOG_EVERY_MS = 30_000;
+
+class MigrationLockBusy extends Error {}
+
+/** Espera antes del intento `attempt + 1` de tomar el candado; falla si esta toma ya esperó más del tope. */
+function lockWaiter(log: (m: string) => void, opts: MigrateOptions) {
+  const poll = opts.lockPollMs ?? LOCK_POLL_MS;
+  const timeout = opts.lockTimeoutMs ?? LOCK_TIMEOUT_MS;
+  let since = 0;
+  let lastLog = 0;
+  return async (attempt: number) => {
+    const now = Date.now();
+    if (attempt === 0) since = now; // cada toma del candado tiene su propio tope
+    if (now - since >= timeout) {
+      throw new Error(`no se pudo tomar el candado de migraciones en ${Math.round(timeout / 1000)} s (otro proceso está migrando)`);
+    }
+    if (lastLog === 0 || now - lastLog >= LOCK_LOG_EVERY_MS) {
+      lastLog = now;
+      log(`esperando el candado de migraciones (otro proceso está migrando)…`);
+    }
+    await new Promise((r) => setTimeout(r, poll));
+  };
+}
 
 /** Marca (primera línea con contenido de la migración) para correrla fuera de una transacción. */
 const NO_TX_MARKER = /^\s*--\s*no-transaction\b/i;
@@ -160,19 +198,33 @@ export function stripConcurrently(stmt: string): string {
  * índices) y los backfills se hacen de a lotes desde el barrido periódico (modules/jobs.ts), no acá: un UPDATE masivo
  * dentro de la migración retiene bloqueos durante todo el arranque. Ver docs/MODELO-DE-DATOS.md.
  */
-export async function migrate(db: Db, log: (m: string) => void = () => {}, opts: { dir?: string } = {}) {
+export async function migrate(db: Db, log: (m: string) => void = () => {}, opts: MigrateOptions = {}) {
   const isPg = db.dialect === "pg";
   const dir = opts.dir ?? migrationsDir;
+  const wait = lockWaiter(log, opts);
   // Candado por transacción (no de sesión: con el pool, el unlock podía ir por otra conexión). Cada paso lo toma y
   // relee lo aplicado adentro, así una API y un worker que arrancan juntos se serializan. Sin límite de tiempo por
   // sentencia: una migración que reescribe una tabla grande puede pasar legítimamente el statement_timeout del pool.
-  const prelude = async (t: Db) => {
-    if (!isPg) return;
-    await t.query(`SET LOCAL statement_timeout = 0`);
-    await t.query(`SELECT pg_advisory_xact_lock($1)`, [MIGRATION_LOCK_KEY]);
+  // El candado se pide con pg_try_advisory_xact_lock y, si está tomado, se aborta la transacción y se reintenta entera
+  // después de una pausa: un proceso bloqueado DENTRO de pg_advisory_xact_lock retiene una instantánea, y el CREATE
+  // INDEX CONCURRENTLY de quien tiene el candado espera a que esa instantánea termine (se trababan entre sí).
+  const lockedTx = async <T>(fn: (t: Db) => Promise<T>): Promise<T> => {
+    if (!isPg) return db.tx(fn);
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await db.tx(async (t) => {
+          await t.query(`SET LOCAL statement_timeout = 0`);
+          const r = await t.one<{ locked: boolean }>(`SELECT pg_try_advisory_xact_lock($1) AS locked`, [MIGRATION_LOCK_KEY]);
+          if (!r?.locked) throw new MigrationLockBusy();
+          return fn(t);
+        });
+      } catch (e) {
+        if (!(e instanceof MigrationLockBusy)) throw e;
+      }
+      await wait(attempt); // fuera de la transacción: sin instantánea retenida mientras se espera
+    }
   };
-  await db.tx(async (t) => {
-    await prelude(t);
+  await lockedTx(async (t) => {
     await t.query(`CREATE TABLE IF NOT EXISTS schema_migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())`);
   });
   const applied = new Set((await db.query<{ name: string }>(`SELECT name FROM schema_migrations`)).map((r) => r.name));
@@ -182,9 +234,8 @@ export async function migrate(db: Db, log: (m: string) => void = () => {}, opts:
     const sql = readFileSync(resolve(dir, f), "utf8");
     const noTx = isPg && isNoTransactionMigration(sql);
     const done = noTx
-      ? await migrateWithoutTx(db, f, sql)
-      : await db.tx(async (t) => {
-          await prelude(t);
+      ? await migrateWithoutTx(db, f, sql, wait)
+      : await lockedTx(async (t) => {
           // Otro proceso pudo aplicarla mientras se esperaba el candado.
           if (isPg && (await t.one(`SELECT 1 FROM schema_migrations WHERE name = $1`, [f]))) return false;
           // Una sentencia por llamada: PGlite y pg con parámetros no aceptan múltiples.
@@ -197,12 +248,19 @@ export async function migrate(db: Db, log: (m: string) => void = () => {}, opts:
 }
 
 /** Migración `-- no-transaction` en Postgres: una conexión fija, candado de sesión y sin statement_timeout. */
-async function migrateWithoutTx(db: Db, f: string, sql: string): Promise<boolean> {
+async function migrateWithoutTx(db: Db, f: string, sql: string, wait: (attempt: number) => Promise<void>): Promise<boolean> {
   const run = db.session ?? ((fn: (d: Db) => Promise<boolean>) => fn(db));
   return run(async (c) => {
     await c.query(`SET statement_timeout = 0`);
-    await c.query(`SELECT pg_advisory_lock($1)`, [MIGRATION_LOCK_KEY]);
+    let locked = false;
     try {
+      // pg_try_advisory_lock con pausas, fuera de toda transacción (ver lockedTx en migrate).
+      for (let attempt = 0; ; attempt++) {
+        const r = await c.one<{ locked: boolean }>(`SELECT pg_try_advisory_lock($1) AS locked`, [MIGRATION_LOCK_KEY]);
+        if (r?.locked) break;
+        await wait(attempt);
+      }
+      locked = true;
       if (await c.one(`SELECT 1 FROM schema_migrations WHERE name = $1`, [f])) return false;
       for (const stmt of splitSql(sql)) {
         const idx = concurrentIndexName(stmt);
@@ -217,7 +275,7 @@ async function migrateWithoutTx(db: Db, f: string, sql: string): Promise<boolean
       await c.query(`INSERT INTO schema_migrations (name) VALUES ($1) ON CONFLICT (name) DO NOTHING`, [f]);
       return true;
     } finally {
-      await c.query(`SELECT pg_advisory_unlock($1)`, [MIGRATION_LOCK_KEY]).catch(() => {});
+      if (locked) await c.query(`SELECT pg_advisory_unlock($1)`, [MIGRATION_LOCK_KEY]).catch(() => {});
       await c.query(`RESET statement_timeout`).catch(() => {});
     }
   });

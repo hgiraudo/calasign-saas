@@ -98,7 +98,7 @@ function tinyPdf(title) {
   return Buffer.from(out, "latin1");
 }
 
-const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAAAAADhZOFXAAAADElEQVR4nGNgoA4AAABIAAEuuDx+AAAAAElFTkSuQmCC";
 const sig = { kind: "typed", imagePng: PNG, text: "Firma" };
 
 const sender = client();

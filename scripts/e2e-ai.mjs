@@ -125,7 +125,7 @@ function heavyPdf() {
   return Buffer.concat(parts);
 }
 
-const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAAAAADhZOFXAAAADElEQVR4nGNgoA4AAABIAAEuuDx+AAAAAElFTkSuQmCC";
 const stamp = Date.now();
 const sender = client();
 const mailbox = client();
@@ -296,8 +296,14 @@ const sweep2 = await sender("POST", "/dev/ai/sweep");
 assert(sweep2.alerted >= 1, "el sweeper envía la alerta");
 meta = await sender("GET", `/v1/envelopes/${envelope.id}/ai/metadata`);
 assert(meta.renewalAlertSentAt, "alerta marcada como enviada");
-const { items } = await mailbox("GET", "/dev/mailbox");
-assert(items.some((m) => m.to === `ia+${stamp}@example.com` && m.subject.includes(soon)), "el remitente recibe la alerta de renovación");
+// La alerta sale por la cola de notificaciones: se espera a que llegue.
+let gotAlert = false;
+for (let i = 0; i < 40 && !gotAlert; i++) {
+  const { items } = await mailbox("GET", "/dev/mailbox");
+  gotAlert = items.some((m) => m.to === `ia+${stamp}@example.com` && m.subject.includes(soon));
+  if (!gotAlert) await new Promise((r) => setTimeout(r, 250));
+}
+assert(gotAlert, "el remitente recibe la alerta de renovación");
 const sweep3 = await sender("POST", "/dev/ai/sweep");
 assert(sweep3.alerted === 0, "la alerta no se repite");
 step("edición manual de metadatos; alerta de renovación enviada al remitente una sola vez");

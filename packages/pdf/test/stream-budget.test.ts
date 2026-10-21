@@ -2,6 +2,7 @@ import { deflateSync } from "node:zlib";
 import { PDFDocument, StandardFonts } from "pdf-lib";
 import { describe, expect, it } from "vitest";
 import { InvalidPdfError, inspectPdf, preparePdfUpload, structureWithinBudget, validatePdf } from "../src";
+import { textStreamBytes } from "../src/text-budget";
 
 /**
  * PDF mínimo con un stream de objetos que se descomprime en `size` bytes, escrito de forma que una lectura con
@@ -95,7 +96,7 @@ describe("tope de descompresión al cargar un PDF", () => {
     for (const v of variants) {
       const t0 = performance.now();
       structureWithinBudget(new Uint8Array(Buffer.from(v, "latin1")));
-      expect(performance.now() - t0).toBeLessThan(3000);
+      expect(performance.now() - t0).toBeLessThan(10000);
     }
   });
 
@@ -118,6 +119,47 @@ describe("tope de descompresión al cargar un PDF", () => {
       await expect(validatePdf(pdf)).rejects.toThrow(/demasiado grande/);
     }, 120_000);
   }
+
+  // Un diccionario relleno deja el "obj" fuera de la ventana de búsqueda: antes, el stream se salteaba sin medirlo.
+  it("un stream de objetos con el diccionario relleno se mide igual (o se rechaza sin encabezado)", () => {
+    const padded = (size: number, header = "4 0 obj\n") => {
+      const comp = deflateSync(Buffer.alloc(size, 0x20), { level: 9 });
+      const head = `%PDF-1.7\n${header}<< /N 1 /First 4 /Filter /FlateDecode /Length ${comp.length}${" ".repeat(20_000)}/Type /ObjStm >>\nstream\n`;
+      return new Uint8Array(Buffer.concat([Buffer.from(head, "latin1"), comp, Buffer.from("\nendstream\nendobj\n%%EOF\n", "latin1")]));
+    };
+    expect(structureWithinBudget(padded(4 * 1024 * 1024), 1024 * 1024)).toBe(false);
+    expect(structureWithinBudget(padded(512 * 1024), 1024 * 1024)).toBe(true);
+    // Con el nombre escapado (#53 = S) también.
+    expect(structureWithinBudget(new Uint8Array(Buffer.from(Buffer.from(padded(4 * 1024 * 1024)).toString("latin1").replace("/ObjStm", "/Obj#53tm"), "latin1")), 1024 * 1024)).toBe(false);
+    // Sin ningún "obj" antes: no se puede medir, se rechaza.
+    expect(structureWithinBudget(padded(1024, ""), 1024 * 1024)).toBe(false);
+  });
+
+  // Un PDF grande y legítimo puede tener más de 4096 streams de objetos: el tope crece con el tamaño del archivo.
+  it("muchos streams de objetos chicos: se aceptan si el archivo los justifica", () => {
+    const build = (n: number, pad: number) => {
+      const parts: Buffer[] = [Buffer.from("%PDF-1.7\n")];
+      for (let i = 1; i <= n; i++) {
+        const comp = deflateSync(Buffer.from(`${i} 0 ` + "x".repeat(pad)), { level: 0 });
+        parts.push(Buffer.from(`${i} 0 obj\n<< /Type /ObjStm /N 1 /First 4 /Filter /FlateDecode /Length ${comp.length} >>\nstream\n`, "latin1"));
+        parts.push(comp, Buffer.from("\nendstream\nendobj\n", "latin1"));
+      }
+      return new Uint8Array(Buffer.concat(parts));
+    };
+    const big = build(6000, 1024);
+    expect(big.length / 6000).toBeGreaterThan(1024);
+    expect(structureWithinBudget(big)).toBe(true);
+    // Miles de streams diminutos en un archivo chico siguen rechazándose.
+    const tiny = build(6000, 0);
+    expect(tiny.length / 6000).toBeLessThan(1024);
+    expect(structureWithinBudget(tiny)).toBe(false);
+  });
+
+  // textStreamBytes cargaba el PDF con pdf-lib sin el tope de descompresión: un stream de objetos escondido se
+  // descomprimía entero.
+  it("medir el texto también rechaza un stream de objetos escondido", async () => {
+    expect(await textStreamBytes(pdfWithHiddenObjStm(200 * 1024 * 1024, "type"))).toBeNull();
+  }, 120_000);
 
   it("un PDF normal con streams de objetos pasa", async () => {
     const doc = await PDFDocument.create();

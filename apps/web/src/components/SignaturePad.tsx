@@ -119,7 +119,8 @@ export function SignaturePad({ purpose, defaultText, onAdopt, onClose }: Props) 
     setHasInk(false);
   }, []);
 
-  const canAdopt = tab === "draw" ? hasInk : text.trim().length > 0;
+  // Escrita: hasta que cargue la fuente manuscrita el lienzo muestra la de reserva, y se adoptaba esa imagen.
+  const canAdopt = tab === "draw" ? hasInk : text.trim().length > 0 && fontReady;
 
   const adopt = () => {
     const c = tab === "draw" ? drawRef.current : typeRef.current;

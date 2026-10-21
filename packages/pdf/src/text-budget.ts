@@ -6,7 +6,7 @@
 import { constants, inflateSync } from "node:zlib";
 import { PDFArray, PDFDocument, PDFName, PDFRawStream, PDFRef, type PDFObject } from "pdf-lib";
 import { InvalidPdfError } from "./inspect";
-import { structureWithinBudget } from "./stream-budget";
+import { DecodeBudgetError, structureWithinBudget, withDecodeBudget } from "./stream-budget";
 
 /** Total descomprimido admitido para los streams que pdf.js lee al extraer el texto. */
 export const MAX_TEXT_STREAM_BYTES = 48 * 1024 * 1024;
@@ -25,8 +25,11 @@ export async function textStreamBytes(pdf: Uint8Array, budget = MAX_TEXT_STREAM_
   if (!structureWithinBudget(pdf)) return null;
   let doc: PDFDocument;
   try {
-    doc = await PDFDocument.load(pdf, { updateMetadata: false, ignoreEncryption: true });
-  } catch {
+    // Con el tope de descompresión dentro de pdf-lib (como inspectPdf): el chequeo de arriba no ve los streams de
+    // objetos con /Type o /Filter indirectos.
+    doc = await withDecodeBudget(() => PDFDocument.load(pdf, { updateMetadata: false, ignoreEncryption: true }));
+  } catch (e) {
+    if (e instanceof DecodeBudgetError) return null;
     return 0; // ilegible para pdf-lib: lo decide pdf.js (que en general tampoco lo abre)
   }
   if (doc.isEncrypted) return null; // lo descifrado no se puede medir sin descifrar

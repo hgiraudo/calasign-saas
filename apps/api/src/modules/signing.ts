@@ -13,7 +13,7 @@ import { advanceRouting, currentSignerGroup, lockEnvelope, pastExpiry, receivesS
 import { recordSignerDownload } from "./download-evidence";
 import { toDocument, toField, loadDocuments } from "./mappers";
 import { loadSignatureImages, toStampFields } from "./stamp-fields";
-import { assertEmbeddableImage, renderProgressCopyPdf } from "@calasign/pdf";
+import { pngInkPixels, renderProgressCopyPdf } from "@calasign/pdf";
 import { canDelegate, isEmbeddedSigner, isSignerAuthenticated, isUnverifiedSelfRegistered, otpDestinationFor } from "./otp";
 import { checkValue, VALUE_FIELD_TYPES } from "./fieldvalues";
 import { brandForEnvelope, productLabel, publicTheme, rebrands } from "./white-label/brand";
@@ -26,6 +26,8 @@ import { purgedOriginal } from "./retention";
 
 /** Tope de píxeles de la imagen de firma o iniciales (el lienzo de la web es mucho menor). */
 const SIGNATURE_MAX_PIXELS = 2000 * 1000;
+/** Píxeles con tinta mínimos de una firma o iniciales: menos es un lienzo vacío, blanco o un toque suelto. */
+const SIGNATURE_MIN_INK_PIXELS = 24;
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 interface Resolved {
@@ -66,6 +68,16 @@ export async function resolveToken(db: Db, token: string): Promise<Resolved> {
  */
 export function assertLinkCurrent(r: any, resolved: { access_token_hash?: string | null }) {
   if (!r || !resolved.access_token_hash || r.access_token_hash !== resolved.access_token_hash) throw notFound("Link");
+}
+
+/** Estado del sobre y del destinatario que permite completar; `groupOrder`: el turno de firma en curso. */
+function assertCanComplete(e: any, r: any, groupOrder: number | null) {
+  if (e.status !== "sent" || pastExpiry(e)) throw new AppError(410, "envelope_closed", "El sobre ya no está disponible para firmar");
+  if (r.role !== "signer" && r.role !== "approver") throw conflict("not_signer", "Este destinatario no firma");
+  if (r.status === "signed") throw conflict("already_signed", "Ya firmaste este sobre");
+  if (!["sent", "viewed"].includes(r.status)) throw conflict("not_signable", "No podés firmar este sobre");
+  if (groupOrder !== r.routing_order) throw conflict("not_your_turn", "Todavía no es tu turno de firmar");
+  if (!r.consented_at) throw conflict("consent_required", "Primero hay que aceptar el uso de medios electrónicos");
 }
 
 export function recipientActor(req: FastifyRequest, r: any): Actor {
@@ -237,6 +249,9 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
     const input = CompleteSigningInput.parse(req.body);
     const { recipient: r0, envelope: e0 } = await resolveToken(s.db, req.params.token);
     const actor = recipientActor(req, r0);
+    // Chequeo previo sin bloqueo (se repite con el sobre bloqueado): un pedido que igual va a fallar no decodifica ni
+    // sube imágenes de firma.
+    assertCanComplete(e0, r0, e0.status === "sent" ? (await currentSignerGroup(s.db, e0.id)).order : null);
 
     const decodePng = (b64: string | undefined, what: string) => {
       if (!b64) return null;
@@ -249,13 +264,16 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
     const iniPng = decodePng(input.initials?.imagePng, "Iniciales");
     // Se decodifica ahora (con tope de píxeles): un PNG dañado o que declara dimensiones enormes haría fallar (o tumbar)
     // el sellado del sobre después de que el firmante ya figura como firmado.
+    // Además, una firma transparente, toda blanca o de un punto no es una firma: se rechaza antes de guardarla.
     for (const [png, what] of [[sigPng, "Firma"], [iniPng, "Iniciales"]] as const) {
       if (!png) continue;
+      let ink: number;
       try {
-        await assertEmbeddableImage(new Uint8Array(png), "image/png", SIGNATURE_MAX_PIXELS);
+        ink = await pngInkPixels(new Uint8Array(png), SIGNATURE_MAX_PIXELS);
       } catch {
         throw badRequest("invalid_image", `${what}: la imagen está dañada o es demasiado grande`);
       }
+      if (ink < SIGNATURE_MIN_INK_PIXELS) throw badRequest("blank_signature", `${what}: la imagen no tiene trazo visible`);
     }
 
     // Subir imágenes antes de la transacción (no se bloquea el sobre durante I/O externa).
@@ -273,7 +291,9 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
         const fileId = uuidv7();
         const key = `tenants/${e0.tenant_id}/envelopes/${e0.id}/signatures/${fileId}.png`;
         await s.blobs.put(key, png, "image/png");
-        stored.push({ purpose, kind: meta.kind, text: meta.text ?? null, fileId, key, png });
+        // El texto es informativo (no se estampa: va la imagen) y solo tiene sentido en una firma escrita con teclado.
+        const text = meta.kind === "typed" ? meta.text?.trim() || null : null;
+        stored.push({ purpose, kind: meta.kind, text, fileId, key, png });
       }
     } catch (err) {
       // Falló la subida de las iniciales con la firma ya subida: esa firma tampoco la referencia nada.
@@ -284,13 +304,7 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
       const e = await lockEnvelope(t, e0.tenant_id, e0.id);
       const r = await t.one<any>(`SELECT * FROM recipients WHERE id = $1`, [r0.id]);
       assertLinkCurrent(r, r0);
-      if (e.status !== "sent" || pastExpiry(e)) throw new AppError(410, "envelope_closed", "El sobre ya no está disponible para firmar");
-      if (r.role !== "signer" && r.role !== "approver") throw conflict("not_signer", "Este destinatario no firma");
-      if (r.status === "signed") throw conflict("already_signed", "Ya firmaste este sobre");
-      if (!["sent", "viewed"].includes(r.status)) throw conflict("not_signable", "No podés firmar este sobre");
-      const group = await currentSignerGroup(t, e.id);
-      if (group.order !== r.routing_order) throw conflict("not_your_turn", "Todavía no es tu turno de firmar");
-      if (!r.consented_at) throw conflict("consent_required", "Primero hay que aceptar el uso de medios electrónicos");
+      assertCanComplete(e, r, (await currentSignerGroup(t, e.id)).order);
       // En persona: el certificado dice "identidad confirmada en el dispositivo del anfitrión"; sin la confirmación
       // (POST …/in-person/confirm) la firma no puede completarse aunque la sesión del anfitrión esté abierta.
       if (r.auth_method === "in_person" && !r.identity_confirmed_at)
@@ -305,12 +319,20 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
       const now = new Date();
       const locale = r.locale ?? e.locale;
       const missing: string[] = [];
+      // Ids y tipos de los campos que faltan o son inválidos: la web los ubica y los nombra en el idioma del firmante.
+      const missingFields: { id: string; type: string; label: string | null }[] = [];
+      const invalidFields: { id: string; type: string; label: string | null; error: string }[] = [];
+      const miss = (f: any, fallback: string) => {
+        missing.push(f.label ?? fallback);
+        missingFields.push({ id: f.id, type: f.type, label: f.label ?? null });
+      };
       const hasSig = stored.some((x) => x.purpose === "signature");
       const hasIni = stored.some((x) => x.purpose === "initials");
 
       const invalid: string[] = [];
       // Lógica (Fase 4): campos ocultos por sus condiciones no se exigen ni se estampan; los calculados los fija el servidor.
-      const logic = await prepareCompletionLogic(t, e.id, r.id, values);
+      const autoValue = (type: string) => (type === "name" ? r.name : type === "email" ? r.email ?? "" : formatSigningDate(now, locale));
+      const logic = await prepareCompletionLogic(t, e.id, r.id, values, { hasSig, hasIni, autoValue });
       for (const f of fields) {
         if (logic.hidden.has(f.id)) continue;
         if (logic.computed.has(f.id)) {
@@ -322,35 +344,38 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
           v = f.value;
         } else if (f.type === "attachment") {
           v = f.attachment_file_id ? f.value : null;
-          if (f.required && !f.attachment_file_id) missing.push(f.label ?? "Adjunto");
+          if (f.required && !f.attachment_file_id) miss(f, "Adjunto");
         } else if (VALUE_FIELD_TYPES.includes(f.type) && f.type !== "text") {
           const res = checkValue(
             { type: f.type, required: f.required, label: f.label, options: f.options, min: f.min_value, max: f.max_value },
             values.has(f.id) ? values.get(f.id) : f.value,
           );
           if ("error" in res) {
-            if (res.error === "obligatorio") missing.push(f.label ?? f.type);
-            else invalid.push(`${f.label ?? f.type}: ${res.error}`);
+            if (res.error === "obligatorio") miss(f, f.type);
+            else {
+              invalid.push(`${f.label ?? f.type}: ${res.error}`);
+              invalidFields.push({ id: f.id, type: f.type, label: f.label ?? null, error: res.error });
+            }
           } else v = res.value;
         } else if ((AUTO_FIELD_TYPES as string[]).includes(f.type)) {
-          v = f.type === "name" ? r.name : f.type === "email" ? r.email ?? "" : formatSigningDate(now, locale);
+          v = autoValue(f.type);
         } else if (f.type === "signature") {
-          if (!hasSig) missing.push(f.label ?? "Firma");
+          if (!hasSig) miss(f, "Firma");
           v = "signed";
         } else if (f.type === "initials") {
-          if (!hasIni && !hasSig) missing.push(f.label ?? "Iniciales");
+          if (!hasIni && !hasSig) miss(f, "Iniciales");
           v = "signed";
         } else if (f.type === "checkbox") {
           v = values.get(f.id) === "true" ? "true" : "false";
-          if (f.required && v !== "true") missing.push(f.label ?? "Casilla");
+          if (f.required && v !== "true") miss(f, "Casilla");
         } else {
           v = (values.has(f.id) ? values.get(f.id) ?? "" : f.value ?? "").trim() || null;
-          if (f.required && !v) missing.push(f.label ?? "Texto");
+          if (f.required && !v) miss(f, "Texto");
         }
         await t.query(`UPDATE fields SET value = $2, filled_at = now() WHERE id = $1`, [f.id, v]);
       }
-      if (missing.length) throw new AppError(422, "fields_incomplete", `Faltan completar: ${[...new Set(missing)].join(", ")}`, { missing });
-      if (invalid.length) throw new AppError(422, "fields_invalid", `Valores inválidos: ${invalid.join("; ")}`, { invalid });
+      if (missing.length) throw new AppError(422, "fields_incomplete", `Faltan completar: ${[...new Set(missing)].join(", ")}`, { missing, fields: missingFields });
+      if (invalid.length) throw new AppError(422, "fields_invalid", `Valores inválidos: ${invalid.join("; ")}`, { invalid, fields: invalidFields });
 
       for (const x of stored) {
         await t.query(

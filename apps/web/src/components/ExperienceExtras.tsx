@@ -1,9 +1,11 @@
 // Piezas de la página del firmante para la firma en persona y el pedido de copias.
 import { useEffect, useRef, useState } from "react";
 import type { SigningSession } from "@calasign/shared";
-import { api, errorText } from "../lib/api";
+import { api, errorText, isStaleError } from "../lib/api";
+import { useI18n } from "../lib/i18n";
 import { useExpText } from "../lib/i18n-experience";
 import { ErrorBox } from "./ui";
+import { DeclineModal } from "./DeclineModal";
 
 /** Lleva el foco a un encabezado cuando cambia la pantalla (lectores de pantalla y teclado). */
 export function useFocusOnMount<T extends HTMLElement>() {
@@ -31,9 +33,28 @@ export function InPersonBlocked({ session }: { session: SigningSession }) {
   );
 }
 
-/** Pantalla de entrega del dispositivo: el firmante confirma su identidad. */
-export function InPersonHandover({ session, base, onDone }: { session: SigningSession; base: string; onDone: () => void }) {
+/**
+ * Pantalla de entrega del dispositivo: el firmante confirma su identidad. También puede rechazar ahí mismo (el
+ * servidor admite el rechazo sin la confirmación): el rechazo queda a su nombre y la sesión presencial se cierra igual.
+ */
+export function InPersonHandover({
+  session,
+  base,
+  onDone,
+  onDeclined,
+  onStale,
+}: {
+  session: SigningSession;
+  base: string;
+  onDone: () => void;
+  /** Sesión devuelta por el rechazo (la página pasa a la pantalla final del rechazo presencial). */
+  onDeclined: (s: SigningSession) => void;
+  /** Vuelve a pedir la sesión ante un error terminal (sesión vencida, sobre anulado o vencido…). */
+  onStale: () => unknown;
+}) {
   const x = useExpText();
+  const { t } = useI18n();
+  const [declining, setDeclining] = useState(false);
   const h = useFocusOnMount<HTMLHeadingElement>();
   const [checked, setChecked] = useState(false);
   const [idNumber, setIdNumber] = useState("");
@@ -49,6 +70,7 @@ export function InPersonHandover({ session, base, onDone }: { session: SigningSe
     } catch (e) {
       setError(errorText(e));
       setBusy(false);
+      if (isStaleError(e)) void onStale();
     }
   };
   return (
@@ -75,6 +97,10 @@ export function InPersonHandover({ session, base, onDone }: { session: SigningSe
       <button type="button" className="btn btn-primary btn-block" disabled={!checked || busy} onClick={confirm}>
         {x("inperson.continue")}
       </button>
+      <button type="button" className="btn btn-ghost btn-block" disabled={busy} onClick={() => setDeclining(true)}>
+        {t("sign.decline")}
+      </button>
+      {declining && <DeclineModal base={base} onClose={() => setDeclining(false)} onDone={onDeclined} onStale={onStale} />}
     </div>
   );
 }

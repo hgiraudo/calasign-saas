@@ -9,7 +9,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
-import { inspectPdf } from "@calasign/pdf";
+import { inspectPdf, PdfIngestBusyError } from "@calasign/pdf";
 import { ENVELOPE_STATUSES, MCP_DEFAULT_SCOPES, OAUTH_SCOPES, RECIPIENT_ROLES, LOCALES } from "@calasign/shared";
 import { config } from "../../config";
 import { AppError, notFound } from "../../lib/errors";
@@ -756,6 +756,8 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
         try {
           pageCount = (await inspectPdf(pdf)).pageCount;
         } catch (e) {
+          // Sin lugar para procesar el PDF ahora: no es un PDF inválido, se puede reintentar con los mismos argumentos.
+          if (e instanceof PdfIngestBusyError) return fail(`${e.message} (reintentable: volvé a llamar con los mismos argumentos en ${e.retryAfterSeconds} s).`);
           return fail(`El PDF no es válido: ${(e as Error).message}`);
         }
         const SIZE: Record<string, [number, number]> = { signature: [160, 45], initials: [60, 35], date_signed: [110, 20] };

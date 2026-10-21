@@ -1,6 +1,7 @@
 // Lógica de campos (Fase 4): condiciones de visibilidad y campos número calculados.
 // Todo se evalúa en el servidor al completar; la web lo replica solo para mostrarlo en vivo.
 import {
+  AUTO_FIELD_TYPES,
   computeFormulas,
   computeLogic,
   formulaRefs,
@@ -159,7 +160,17 @@ const toLogic = (r: any): LogicField => ({
  * `submitted` son los valores que mandó; los de otros destinatarios salen de la base.
  * Marca `hidden` en la base (los ocultos quedan vacíos y no se estampan).
  */
-export async function prepareCompletionLogic(db: Db, envelopeId: string, recipientId: string, submitted: Map<string, string>) {
+export async function prepareCompletionLogic(
+  db: Db,
+  envelopeId: string,
+  recipientId: string,
+  submitted: Map<string, string>,
+  /**
+   * Lo que el servidor va a guardar en los campos cuyo valor no decide el firmante: la firma/iniciales que de verdad
+   * adoptó (no un "signed" mandado a mano), y los automáticos (nombre, correo, fecha) que fija el servidor.
+   */
+  server: { hasSig: boolean; hasIni: boolean; autoValue: (type: string) => string | null },
+) {
   const rows = await db.query<any>(`SELECT * FROM fields WHERE envelope_id = $1`, [envelopeId]);
   const all = rows.map(toLogic);
   const own = new Set(rows.filter((r) => r.recipient_id === recipientId).map((r) => r.id));
@@ -168,6 +179,11 @@ export async function prepareCompletionLogic(db: Db, envelopeId: string, recipie
     const r = rowById.get(id);
     if (!r) return null;
     if (own.has(id) && !r.read_only) {
+      // Tipos cuyo valor no sale de lo enviado: un valor inventado no puede mostrar u ocultar campos condicionados.
+      if (r.type === "attachment") return r.attachment_file_id ? (r.value ?? null) : null;
+      if (r.type === "signature") return server.hasSig ? "signed" : null;
+      if (r.type === "initials") return server.hasIni || server.hasSig ? "signed" : null;
+      if ((AUTO_FIELD_TYPES as readonly string[]).includes(r.type)) return server.autoValue(r.type);
       if (r.type === "checkbox") return submitted.get(id) === "true" ? "true" : "false";
       if (submitted.has(id)) return submitted.get(id) ?? null;
     }

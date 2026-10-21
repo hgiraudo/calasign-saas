@@ -1,4 +1,6 @@
 import { PDFDocument } from "pdf-lib";
+// El decodificador que usa pdf-lib al incrustar (no se exporta en su índice): decodificar con él valida lo mismo que embedPng.
+import { PNG } from "pdf-lib/cjs/utils/png.js";
 
 /**
  * Tope de píxeles de un PNG. pdf-lib decodifica el PNG entero y reserva memoria según el ancho y alto de la cabecera,
@@ -51,4 +53,26 @@ export async function assertEmbeddableImage(bytes: Uint8Array, contentType: "ima
     assertPngSize(bytes, maxPixels);
     await withDecodeSlot(() => doc.embedPng(bytes).then(() => undefined));
   } else await doc.embedJpg(bytes);
+}
+
+/**
+ * Decodifica un PNG (con el mismo tope de píxeles y de concurrencia que al incrustarlo) y cuenta los píxeles con tinta:
+ * visibles (alfa ≥ 64) y no casi blancos. Lanza si el PNG está dañado o es demasiado grande. Sirve para rechazar una
+ * firma "adoptada" transparente, toda blanca o de un punto.
+ */
+export async function pngInkPixels(bytes: Uint8Array, maxPixels = MAX_PNG_PIXELS): Promise<number> {
+  assertPngSize(bytes, maxPixels);
+  return withDecodeSlot(async () => {
+    const png = PNG.load(bytes);
+    const rgb = png.rgbChannel;
+    const alpha = png.alphaChannel; // undefined si todos los píxeles son opacos
+    let ink = 0;
+    const n = png.width * png.height;
+    for (let i = 0; i < n; i++) {
+      if (alpha && alpha[i]! < 64) continue;
+      if (rgb[i * 3]! > 240 && rgb[i * 3 + 1]! > 240 && rgb[i * 3 + 2]! > 240) continue;
+      ink++;
+    }
+    return ink;
+  });
 }

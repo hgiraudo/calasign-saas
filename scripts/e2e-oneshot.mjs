@@ -75,7 +75,7 @@ const contract = pdf([
   ["Firma del proveedor: [[firma2]]", 200],
 ]);
 const annex = pdf([["Anexo E2E", 760]]);
-const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAAAAADhZOFXAAAADElEQVR4nGNgoA4AAABIAAEuuDx+AAAAAElFTkSuQmCC";
 
 async function linkFor(name) {
   for (let i = 0; i < 60; i++) {

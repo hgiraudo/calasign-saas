@@ -13,8 +13,14 @@ const decodeNames = (s: string) => s.replace(/#([0-9a-fA-F]{2})/g, (_, h) => Str
 
 /** Hasta dónde se busca hacia atrás el "obj" que abre el diccionario de un stream. */
 const DICT_WINDOW = 8 * 1024;
-/** Streams de objetos/referencias comprimidos admitidos (cada descompresión tiene un costo fijo de ~50 µs). */
-const MAX_STRUCTURE_STREAMS = 4096;
+/**
+ * Streams de objetos/referencias comprimidos admitidos: 4096, o uno por KB del archivo si es más (un PDF grande y
+ * legítimo puede tener muchos; lo descomprimido y lo leído siguen acotados por sus propios topes). Cada descompresión
+ * tiene un costo fijo de ~50–130 µs en el hilo: con uno cada 200 bytes, un archivo de 25 MB armado con streams
+ * diminutos bloqueaba ~17 s; con uno por KB, ~3 s (antes del tope fijo, 0,5 s).
+ */
+const MIN_STRUCTURE_STREAMS = 4096;
+const BYTES_PER_STRUCTURE_STREAM = 1024;
 // Espacio en blanco (PDF y lo que \s aceptaba en latin1).
 const isSpace = (c: number) => c === 0x20 || (c >= 0x09 && c <= 0x0d) || c === 0x00 || c === 0xa0;
 
@@ -27,6 +33,7 @@ export function structureWithinBudget(pdf: Uint8Array, budget = MAX_STRUCTURE_BY
   // armado con miles de "stream" seguidos (antes, cuadrático: 1 MB tardaba 30 s) agota el tope y se rechaza.
   let work = 4 * buf.length + 1024 * 1024;
   let streams = 0;
+  const maxStreams = Math.max(MIN_STRUCTURE_STREAMS, Math.floor(buf.length / BYTES_PER_STRUCTURE_STREAM));
   for (let at = buf.indexOf("stream"); at >= 0; at = buf.indexOf("stream", at + 6)) {
     // "endstream" no abre un stream.
     if (at >= 3 && buf[at - 3] === 0x65 && buf[at - 2] === 0x6e && buf[at - 1] === 0x64) continue;
@@ -35,11 +42,25 @@ export function structureWithinBudget(pdf: Uint8Array, budget = MAX_STRUCTURE_BY
     while (i > 0 && isSpace(buf[i - 1])) i--;
     if (i < 2 || buf[i - 1] !== 0x3e || buf[i - 2] !== 0x3e) continue;
     const dictEnd = i - 2;
-    const from = Math.max(0, dictEnd - DICT_WINDOW);
-    const rel = buf.subarray(from, dictEnd).lastIndexOf("obj");
+    let from = Math.max(0, dictEnd - DICT_WINDOW);
+    let rel = buf.subarray(from, dictEnd).lastIndexOf("obj");
     work -= rel < 0 ? dictEnd - from : dictEnd - from - rel;
     if (work < 0) return false;
-    if (rel < 0) continue;
+    if (rel < 0) {
+      // Sin "obj" en la ventana: si ahí ya se ve un /ObjStm o /XRef (un diccionario relleno para que el encabezado
+      // quede fuera de la ventana), se sigue buscando hacia atrás con lo que queda del tope de lectura; sin encontrarlo,
+      // se rechaza. Si no, no es un stream estructural.
+      if (!/\/(ObjStm|XRef)\b/.test(decodeNames(buf.toString("latin1", from, dictEnd)))) continue;
+      while (rel < 0 && from > 0) {
+        const end = Math.min(dictEnd, from + 2); // solapa 2 bytes: un "obj" partido entre dos tramos
+        from = Math.max(0, from - DICT_WINDOW);
+        const r = buf.subarray(from, end).lastIndexOf("obj");
+        work -= r < 0 ? end - from : end - from - r;
+        if (work < 0) return false;
+        rel = r;
+      }
+      if (rel < 0) return false;
+    }
     const dictStart = from + rel;
     const dict = decodeNames(buf.toString("latin1", dictStart, dictEnd + 2));
     if (!/\/Type\s*\/(ObjStm|XRef)\b/.test(dict)) continue;
@@ -48,7 +69,7 @@ export function structureWithinBudget(pdf: Uint8Array, budget = MAX_STRUCTURE_BY
     if (names.length === 0) continue; // sin filtro: ocupa lo que ocupa en el archivo
     // Solo FlateDecode (lo que usan los generadores reales); otro filtro no se puede acotar acá.
     if (names.some((n) => n !== "/FlateDecode" && n !== "/Fl")) return false;
-    if (++streams > MAX_STRUCTURE_STREAMS) return false;
+    if (++streams > maxStreams) return false;
     let dataStart = at + 6;
     if (buf[dataStart] === 0x0d) dataStart++;
     if (buf[dataStart] === 0x0a) dataStart++;

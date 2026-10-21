@@ -20,7 +20,7 @@ let tenant = "";
 const ORIGIN = "https://app.integrador.test";
 const KEY = "cs_test_signer_session_token_key";
 const auth = { authorization: `Bearer ${KEY}` };
-const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAAAAADhZOFXAAAADElEQVR4nGNgoA4AAABIAAEuuDx+AAAAAElFTkSuQmCC";
 const real = globalThis.fetch;
 
 beforeAll(async () => {

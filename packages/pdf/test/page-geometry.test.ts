@@ -49,6 +49,30 @@ describe("geometría de las páginas", () => {
     expect((await inspectPdf(page(""))).pages[0]).toEqual({ width: 612, height: 792 });
   });
 
+  // Una /MediaBox que apunta a un objeto inexistente (o a null) cuenta como que falta (pdf.js usa Carta).
+  it.each([
+    ["referencia colgada", "/MediaBox 9 0 R"],
+    ["referencia a null", "/MediaBox 5 0 R"],
+  ])("MediaBox con %s: Carta", async (_n, box) => {
+    // Objeto 5: null (con su entrada en la tabla de referencias).
+    const withNull = (pdf: Uint8Array) => {
+      const s = Buffer.from(pdf).toString("latin1");
+      const at = s.indexOf("xref\n");
+      const obj = "5 0 obj\nnull\nendobj\n";
+      const fixed = s.slice(0, at) + obj + s.slice(at)
+        .replace("xref\n0 5\n", "xref\n0 6\n")
+        .replace("trailer", String(at).padStart(10, "0") + " 00000 n \ntrailer")
+        .replace("/Size 5", "/Size 6")
+        .replace(/startxref\n\d+/, `startxref\n${at + obj.length}`);
+      return new Uint8Array(Buffer.from(fixed, "latin1"));
+    };
+    const pdf = withNull(page(box));
+    expect((await inspectPdf(pdf)).pages[0]).toEqual({ width: 612, height: 792 });
+    const prepared = await preparePdfUpload(pdf);
+    expect(prepared.info.pages[0]).toEqual({ width: 612, height: 792 });
+    expect((await PDFDocument.load(prepared.bytes)).getPage(0).getMediaBox()).toEqual({ x: 0, y: 0, width: 612, height: 792 });
+  });
+
   it("acepta los extremos del rango", async () => {
     expect((await preparePdfUpload(page("/MediaBox [0 0 3 14400]"))).info.pages[0]).toEqual({ width: 3, height: 14400 });
   });

@@ -110,7 +110,7 @@ function tinyPdf() {
   out += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${x}\n%%EOF\n`;
   return Buffer.from(out, "latin1");
 }
-const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAAAAADhZOFXAAAADElEQVR4nGNgoA4AAABIAAEuuDx+AAAAAElFTkSuQmCC";
 /** "Foto" JPEG para el flujo integrado: cabecera JPEG + bytes al azar (el proveedor de prueba no decodifica). */
 // JPEG con estructura válida (SOI, APP0 JFIF, SOS, datos al azar, EOI): la API recorre los segmentos para quitar metadatos.
 const fakeJpeg = () =>

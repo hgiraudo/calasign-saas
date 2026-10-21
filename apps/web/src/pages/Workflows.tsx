@@ -1,7 +1,7 @@
 // Workflows sin código (Fase 6): listado, editor de pasos (lista vertical), ejecuciones y detalle con aprobación.
 import { useCallback, useEffect, useRef, useState, type FormEvent, type InputHTMLAttributes, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import type { CollectField, DocumentTemplateSummary, Member, Workflow, WorkflowRun, WorkflowStep, WorkflowStepType } from "@calasign/shared";
+import type { CollectField, DocumentTemplateSummary, Member, Workflow, WorkflowRun, WorkflowRunSummary, WorkflowStep, WorkflowStepType } from "@calasign/shared";
 import { WORKFLOW_STEP_TYPES } from "@calasign/shared";
 import { api, errorText, uuid } from "../lib/api";
 import { allowNextNavigation, confirmAction, formatDateTime, placeholderText, useI18n, useUnsavedWarning } from "../lib/i18n";
@@ -346,7 +346,7 @@ export function WorkflowEditPage() {
   const [steps, setSteps] = useState<WorkflowStep[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
   const [templates, setTemplates] = useState<DocumentTemplateSummary[]>([]);
-  const [runs, setRuns] = useState<WorkflowRun[]>([]);
+  const [runs, setRuns] = useState<WorkflowRunSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -356,7 +356,7 @@ export function WorkflowEditPage() {
 
   const loadRuns = useCallback(() => {
     if (isNew) return;
-    api<{ items: WorkflowRun[] }>(`/v1/workflow-runs?workflowId=${id}`)
+    api<{ items: WorkflowRunSummary[] }>(`/v1/workflow-runs?workflowId=${id}`)
       .then((r) => setRuns(r.items))
       .catch(() => undefined);
   }, [id, isNew]);
@@ -405,7 +405,11 @@ export function WorkflowEditPage() {
     setError(null);
     try {
       const body = draft;
-      const w = isNew ? await api<WorkflowWithSecret>("/v1/workflows", { method: "POST", body }) : await api<WorkflowWithSecret>(`/v1/workflows/${id}`, { method: "PATCH", body });
+      // X-Expected-Updated-At: si otra pestaña u otra persona lo guardó mientras tanto, 409 version_changed en vez de
+      // pisar sus cambios.
+      const w = isNew
+        ? await api<WorkflowWithSecret>("/v1/workflows", { method: "POST", body })
+        : await api<WorkflowWithSecret>(`/v1/workflows/${id}`, { method: "PATCH", body, headers: wf ? { "X-Expected-Updated-At": wf.updatedAt } : undefined });
       if (isNew) {
         // Recién guardado: pasar a la URL del flujo creado no es salir con cambios sin guardar.
         allowNextNavigation();

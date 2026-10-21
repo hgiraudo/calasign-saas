@@ -458,6 +458,26 @@ export interface WorkflowRun {
    * omiten los datos (context vacío, output null en los pasos, sin collectUrl).
    */
   redacted?: boolean;
+  /** IP desde la que se inició por el link público (solo para quien ve la auditoría; startedBy ya no la lleva). */
+  startedByIp?: string;
+  /** Los datos de la ejecución (contexto, salidas) se borraron por la política de retención. */
+  dataPurgedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Fila del listado de ejecuciones (GET /v1/workflow-runs): sin contexto, pasos ni salidas (ver el detalle). */
+export interface WorkflowRunSummary {
+  id: string;
+  workflowId: string;
+  workflowName: string;
+  status: WorkflowRunStatus;
+  currentStep: number;
+  stepCount: number;
+  currentStepName: string | null;
+  startedBy: string | null;
+  canManage: boolean;
+  redacted?: boolean;
   createdAt: string;
   updatedAt: string;
 }

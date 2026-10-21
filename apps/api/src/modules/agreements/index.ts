@@ -9,6 +9,7 @@ import { documentRoutes } from "./documents";
 import { negotiationRoutes } from "./negotiations";
 import { handleNoticeJob, type NoticeJob } from "./notices";
 import { agreementExpirySweep, ingestEnvelope, repositoryRoutes } from "./repository";
+import { agreementsRetentionSweep } from "./retention";
 import { advanceRun, onEnvelopeEventForWorkflows, workflowRoutes, workflowRunsSweep } from "./workflows";
 
 export async function agreementRoutes(app: FastifyInstance, s: Services) {
@@ -52,12 +53,14 @@ export async function handleAgreementsJob(d: Deps, p: AgreementsJob, jobId?: num
   if (p.kind === "advance") await advanceRun(d, p.runId);
 }
 
-/** Tarea periódica (worker): vencimientos del repositorio. */
+/** Tarea periódica (worker): vencimientos del repositorio, workflows trabados o vencidos y retención de datos. */
 export async function agreementsSweep(d: Deps) {
   await agreementExpirySweep(d);
   await ingestBackfill(d);
   await resumeStalledRuns(d);
   await workflowRunsSweep(d);
+  // Retención: datos de ejecuciones terminadas y negociaciones cerradas vencidas (retention.ts).
+  await agreementsRetentionSweep(d);
 }
 
 /**

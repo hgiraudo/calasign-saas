@@ -35,7 +35,7 @@ import { auditFromRequest } from "../audit";
 import { authenticate, type AuthContext, type Services } from "../context";
 import { sendPdf } from "../envelopes";
 import { discardBlobsOnFailure } from "../file-cleanup";
-import { getPath, setPath } from "./common";
+import { getPath, mergeDataPatch, setPath } from "./common";
 import { enqueueNegotiationNotice, enqueueProposalNotice } from "./notices";
 import { agreementMetaFromMapping, createEnvelopeFromPdf, insertFileRow, loadClauseMap, loadDocTemplate, renderDocument, renderTemplateCompat, storeGeneratedPdf } from "./documents";
 import { ownerProblem } from "../owner-check";
@@ -534,13 +534,21 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
         data: z.record(z.string(), z.unknown()).optional(),
         clauseOverrides: z.record(z.string(), z.string().max(50_000)).optional(),
         summary: z.string().max(500).optional(),
+        expectedVersion: z.number().int().min(1).optional(),
       })
       .parse(req.body);
     const version = await s.db.tx(async (t) => {
       const n = await loadForManage(a, req.params.id, true, t);
       if (n.status !== "open") throw conflict("closed", "La negociación ya está cerrada");
       if (n.source === "pdf") throw conflict("pdf_source", "Un PDF subido no se edita: subí una versión nueva como otra negociación");
-      const v = await newVersion(t, n, input.data ?? n.data, { ...(n.clause_overrides ?? {}), ...(input.clauseOverrides ?? {}) }, userAuthor(a), input.summary ?? "Edición del remitente");
+      // Con la negociación bloqueada: si mientras tanto se aceptó una propuesta u otra edición, no se pisa sin verla.
+      if (input.expectedVersion !== undefined && input.expectedVersion !== n.current_version) {
+        throw conflict("version_changed", "Hay una versión nueva: revisala y volvé a editar");
+      }
+      // `data` es un cambio parcial (fusión profunda; null borra la clave): reemplazar todo borraba en silencio las
+      // propuestas aceptadas mientras tanto que el cliente no tenía.
+      const data = input.data ? mergeDataPatch(n.data ?? {}, input.data) : n.data;
+      const v = await newVersion(t, n, data, { ...(n.clause_overrides ?? {}), ...(input.clauseOverrides ?? {}) }, userAuthor(a), input.summary ?? "Edición del remitente");
       await enqueueNegotiationNotice(t, n.id, "version", v, { summary: input.summary ?? null });
       return v;
     });
@@ -759,6 +767,8 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
     if (!p) throw notFound("Negociación");
     const n = await s.db.one<any>(`SELECT * FROM negotiations WHERE id = $1`, [p.negotiation_id]);
     if (!n) throw notFound("Negociación");
+    // Datos borrados por la retención (negociación cerrada hace tiempo): el link de la contraparte ya no muestra nada.
+    if (n.data_purged_at) throw new AppError(410, "purged", "Esta negociación ya no está disponible");
     return { p, n };
   }
   const partAuthor = (p: any): NegotiationAuthor => ({ type: "participant", name: p.name });

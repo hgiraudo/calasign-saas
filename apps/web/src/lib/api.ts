@@ -169,7 +169,7 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
 
 // Errores de archivo con código estable que la API describe en español: en pt-BR y en se muestran traducidos (en
 // español queda el texto de la API, que puede traer detalle, p. ej. el máximo de páginas).
-const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
+export const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
   network_error: { "pt-BR": "Não foi possível conectar ao servidor.", en: "Couldn't connect to the server." },
   provider_test_limit: {
     "pt-BR": "Muitos testes de conectores de assinatura na última hora: tente mais tarde.",
@@ -589,7 +589,7 @@ export function problemText(p: unknown, loc: "es" | "pt-BR" | "en"): string {
 }
 
 // Encabezado traducido de los errores que traen la lista de problemas (en el texto de la API, en español).
-const PROBLEMS_HEADER: Record<string, Record<"es" | "pt-BR" | "en", string>> = {
+export const PROBLEMS_HEADER: Record<string, Record<"es" | "pt-BR" | "en", string>> = {
   envelope_incomplete: { es: "Antes de enviar falta resolver:", "pt-BR": "Antes de enviar, falta resolver:", en: "Before sending, fix the following:" },
   logic_order: {
     es: "La lógica de los campos no respeta el orden de firma:",
@@ -749,7 +749,7 @@ function httpErrorText(e: HttpError, loc: "es" | "pt-BR" | "en"): string {
       return `${PROBLEMS_HEADER[e.code][loc] ?? PROBLEMS_HEADER[e.code].es} ${problems.map((p) => problemText(p, loc)).join(". ")}`;
     }
     if (e.code === "file_too_large" && (e.details as { limit?: unknown } | undefined)?.limit === "total") return FILE_TOO_LARGE_TOTAL[loc] ?? FILE_TOO_LARGE_TOTAL.es;
-    const tr = loc !== "es" ? detailText(e.code, e.details, loc) ?? (CODE_TEXT[e.code] ?? MORE_CODE_TEXT[e.code])?.[loc] : undefined;
+    const tr = loc !== "es" ? detailText(e.code, e.details, loc) ?? CODE_TEXT[e.code]?.[loc] ?? MORE_CODE_TEXT[e.code]?.[loc] : undefined;
     return tr ?? (e.message || (NO_MESSAGE[loc] ?? NO_MESSAGE.es)(e.status));
   }
 }

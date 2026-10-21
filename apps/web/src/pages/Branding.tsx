@@ -177,7 +177,14 @@ export function BrandingPage() {
   const [dirty, setDirty] = useState(false);
   const [newName, setNewName] = useState("");
   // Aviso al salir con cambios sin guardar (configuración/nombre de la marca, o el nombre de la organización).
-  useUnsavedWarning(dirty || (sel === "default" && !!me && orgName.trim() !== me.tenant.name));
+  // El nombre de la organización cuenta aunque se haya pasado a otra marca (el campo se oculta, pero lo escrito sigue ahí).
+  const orgDirty = !!me && orgName.trim() !== me.tenant.name;
+  useUnsavedWarning(dirty || orgDirty);
+  // Tras confirmar descartar: el nombre de la organización vuelve al guardado (el campo solo se ve en la marca por
+  // defecto y Guardar solo lo envía desde ahí; si no, quedaría un cambio invisible avisando para siempre).
+  const discardOrgName = () => {
+    if (me) setOrgName(me.tenant.name);
+  };
 
   const brand = brands?.find((b) => b.id === sel) ?? null;
 
@@ -204,7 +211,10 @@ export function BrandingPage() {
     const b = brands?.find((x) => x.id === id);
     if (!b) return;
     // Cambiar de marca descarta lo editado en la actual.
-    if (id !== sel && dirty && !confirmDiscardUnsaved()) return;
+    if (id !== sel && (dirty || orgDirty)) {
+      if (!confirmDiscardUnsaved()) return;
+      discardOrgName();
+    }
     setSel(id);
     setCfg(b.config ?? {});
     setName(b.name);
@@ -262,7 +272,10 @@ export function BrandingPage() {
 
   const create = () => {
     // Crear abre la marca nueva: lo editado en la actual se descartaría.
-    if (dirty && !confirmDiscardUnsaved()) return;
+    if (dirty || orgDirty) {
+      if (!confirmDiscardUnsaved()) return;
+      discardOrgName();
+    }
     return run(async () => {
       const b = await api<Brand>("/v1/settings/brands", { method: "POST", body: { name: newName.trim() } });
       setNewName("");
@@ -272,7 +285,10 @@ export function BrandingPage() {
 
   const remove = () => {
     if (sel === "default" || !confirmAction()) return;
-    if (dirty && !confirmDiscardUnsaved()) return;
+    if (dirty || orgDirty) {
+      if (!confirmDiscardUnsaved()) return;
+      discardOrgName();
+    }
     run(async () => {
       await api(`/v1/settings/brands/${sel}`, { method: "DELETE" });
       await load("default");

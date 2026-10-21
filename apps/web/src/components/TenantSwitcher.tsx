@@ -6,7 +6,7 @@ import { useAccess } from "../lib/access";
 import { useAuth } from "../lib/auth";
 import { useRoleLabel, useTeamsText } from "../lib/i18n-teams";
 import { usePasswordText } from "../lib/i18n-password";
-import { confirmDiscardUnsaved } from "../lib/i18n";
+import { allowNextNavigation, confirmDiscardUnsaved } from "../lib/i18n";
 import { broadcastSessionChange } from "../lib/session-sync";
 
 export function TenantSwitcher() {
@@ -27,13 +27,15 @@ export function TenantSwitcher() {
       onClick={(e) => e.stopPropagation()}
       onChange={async (e) => {
         // Cambiar de organización lleva al inicio: con un editor con cambios sin guardar, se confirma antes.
-        if (!confirmDiscardUnsaved({ navigating: true })) return;
+        if (!confirmDiscardUnsaved()) return;
         const select = e.currentTarget;
         try {
           const m = await api<MeResponse>("/v1/auth/switch-tenant", { method: "POST", body: { tenantId: e.target.value } });
           setMe(m);
           // Las demás pestañas siguen en la organización anterior: se recargan (ver lib/session-sync.ts).
           broadcastSessionChange({ kind: "switch", tenantId: m.tenant.id, userId: m.user.id });
+          // Ya confirmado arriba: el bloqueo de navegación no vuelve a preguntar (solo si el cambio salió bien).
+          allowNextNavigation();
           nav("/app");
         } catch (err) {
           // Sin manejar, el rechazo quedaba en la consola y el usuario no sabía por qué no cambió (p. ej. sesión SSO atada a una organización).

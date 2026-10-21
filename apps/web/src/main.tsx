@@ -19,6 +19,7 @@ import "./styles-certsign.css";
 import { App } from "./App";
 import { I18nProvider, UnsavedChangesGuard } from "./lib/i18n";
 import { AuthProvider } from "./lib/auth";
+import { RouteError } from "./components/RouteError";
 
 registerServiceWorker();
 
@@ -58,6 +59,8 @@ const router = createBrowserRouter([
         </AuthProvider>
       </I18nProvider>
     ),
+    // Un error de render en cualquier página: pantalla neutra con "Recargar" en lugar de la traza del router.
+    errorElement: <RouteError />,
   },
 ]);
 

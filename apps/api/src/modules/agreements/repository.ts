@@ -14,7 +14,9 @@ import {
 import { extractPdfPlainText, inspectPdf, InvalidPdfError, PdfReaderBusyError, readPdfSignatures } from "@calasign/pdf";
 import { config } from "../../config";
 import type { Db } from "../../infra/db";
-import { AppError, badRequest, conflict, forbidden, notFound } from "../../lib/errors";
+import { AppError, assertNotStale, badRequest, conflict, forbidden, notFound } from "../../lib/errors";
+
+const STALE_AGREEMENT_MESSAGE = "Este acuerdo cambió en otra pestaña o lo editó otra persona: recargá para ver la versión actual";
 import { likeContains, sha256Hex, uuidv7 } from "../../lib/util";
 import { csvBody, csvSep } from "../../lib/csv";
 import { enqueue } from "../../infra/queue";
@@ -462,10 +464,21 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
       params.push(JSON.stringify(input.metadata ?? {}));
       sets.push(`metadata = COALESCE(metadata, '{}'::jsonb) || $${params.length}::jsonb`);
     }
-    if (sets.length) {
-      await s.db.query(`UPDATE agreements SET ${sets.join(", ")}, updated_at = now() WHERE id = $1`, params);
-      await refreshSearchVector(s.db, r.id);
-      await auditFromRequest(s.db, req, a, "agreement.updated", { targetType: "agreement", targetId: r.id, data: { fields: Object.keys(input) } });
+    // Control de edición concurrente (X-Expected-Updated-At, opcional): con la fila bloqueada, si el acuerdo cambió desde
+    // que se cargó (otra pestaña, otra persona, un workflow), 409 version_changed en vez de pisar esos cambios.
+    const stale = req.headers["x-expected-updated-at"] !== undefined;
+    if (sets.length || stale) {
+      await s.db.tx(async (t) => {
+        const cur = await t.one<any>(`SELECT updated_at FROM agreements WHERE id = $1 FOR UPDATE`, [r.id]);
+        if (!cur) throw notFound("Acuerdo");
+        assertNotStale(req.headers, cur.updated_at, STALE_AGREEMENT_MESSAGE);
+        if (!sets.length) return;
+        // updated_at estrictamente creciente: dos guardados en el mismo milisegundo daban el mismo valor y el control
+        // de arriba no veía el segundo.
+        await t.query(`UPDATE agreements SET ${sets.join(", ")}, updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 millisecond') WHERE id = $1`, params);
+        await refreshSearchVector(t, r.id);
+      });
+      if (sets.length) await auditFromRequest(s.db, req, a, "agreement.updated", { targetType: "agreement", targetId: r.id, data: { fields: Object.keys(input) } });
     }
     return toAgreement(await loadAgreementForUser(s.db, a, r.id));
   });

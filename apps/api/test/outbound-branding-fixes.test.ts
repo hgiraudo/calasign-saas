@@ -203,7 +203,7 @@ describe("rechazo de SES del dominio propio", () => {
       expect(calls).toHaveLength(1);
       expect(calls[0].dkim).toBeUndefined();
       expect(calls[0].from).toContain("Firmas ACME");
-      // Se informa igual el rechazo (en espera) para que el aviso siga anotado en el dominio.
+      // Se informa que salió en espera por el rechazo (solo informativo: quien llama no vuelve a anotar el aviso).
       expect(again.identityRejectedDomain).toBe("acme.test");
       expect(again.identityBackoff).toBe(true);
       expect(again.dkimDomain).toBeUndefined();
@@ -273,7 +273,7 @@ describe("rechazo de SES del dominio propio", () => {
     expect(await lastError()).toBe("otro");
   });
 
-  it("en espera por el rechazo: cada envío vuelve a anotar el aviso si se borró (sin escribir si ya está, sin repetir el log)", async () => {
+  it("en espera por el rechazo: el envío no escribe en el dominio ni repite el log (solo un rechazo real anota)", async () => {
     const { sendTracked, SES_IDENTITY_ERROR } = await import("../src/notifications/outbound");
     const t = await newTenant();
     await verifiedMailDomain(t, "acme6.test");
@@ -286,18 +286,26 @@ describe("rechazo de SES del dominio propio", () => {
         nextResult = {};
       }
     };
-    await db.query(`UPDATE email_domains SET last_error = NULL WHERE tenant_id = $1`, [t]);
-    await send({ identityRejectedDomain: "acme6.test", identityBackoff: true });
-    expect((await db.one<any>(`SELECT last_error FROM email_domains WHERE tenant_id = $1`, [t])).last_error).toBe(SES_IDENTITY_ERROR);
-    expect(warn).not.toHaveBeenCalled();
-    // Ya anotado: la consulta no coincide con ninguna fila (IS DISTINCT FROM), no hay escritura (la versión de la fila no cambia).
     const version = async () => (await db.one<any>(`SELECT xmin::text AS v FROM email_domains WHERE tenant_id = $1`, [t])).v;
-    const before = await version();
+    const lastError = async () => (await db.one<any>(`SELECT last_error FROM email_domains WHERE tenant_id = $1`, [t])).last_error;
+    // Sin aviso anotado (p. ej. lo borró un envío aceptado de otra réplica): en espera no se vuelve a anotar (no oscila).
+    await db.query(`UPDATE email_domains SET last_error = NULL WHERE tenant_id = $1`, [t]);
+    let before = await version();
     await send({ identityRejectedDomain: "acme6.test", identityBackoff: true });
     expect(await version()).toBe(before);
-    // Un rechazo nuevo (no en espera) sí se registra en el log.
+    expect(await lastError()).toBeNull();
+    expect(warn).not.toHaveBeenCalled();
+    // Con el aviso anotado: tampoco escribe.
+    await db.query(`UPDATE email_domains SET last_error = $2 WHERE tenant_id = $1`, [t, SES_IDENTITY_ERROR]);
+    before = await version();
+    await send({ identityRejectedDomain: "acme6.test", identityBackoff: true });
+    expect(await version()).toBe(before);
+    expect(await lastError()).toBe(SES_IDENTITY_ERROR);
+    // Un rechazo real (no en espera) sí se registra en el log (y anota si hace falta).
+    await db.query(`UPDATE email_domains SET last_error = NULL WHERE tenant_id = $1`, [t]);
     await send({ identityRejectedDomain: "acme6.test" });
     expect(warn).toHaveBeenCalledTimes(1);
+    expect(await lastError()).toBe(SES_IDENTITY_ERROR);
   });
 
   it("el envío registrado anota el rechazo en el dominio de correo", async () => {

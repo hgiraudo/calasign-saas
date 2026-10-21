@@ -314,6 +314,13 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
       await t.query(`DELETE FROM envelope_events WHERE envelope_id = $1`, [e.id]);
       // Sin FK al sobre: las entregas de webhooks (con su asunto y firmantes en el payload) se borran a mano.
       await t.query(`DELETE FROM webhook_deliveries WHERE envelope_id = $1`, [e.id]);
+      // El borrador que dejó una negociación aceptada (PDF subido, o aceptada sin enviar): la negociación vuelve a
+      // quedar abierta, sin sobre. Si no, quedaba "aceptada" sin sobre (la FK lo dejaba en null) y no había forma de
+      // volver a generarlo; abierta, se puede aceptar de nuevo (o cancelar).
+      await t.query(
+        `UPDATE negotiations SET status = 'open', envelope_id = NULL, updated_at = now() WHERE envelope_id = $1 AND tenant_id = $2 AND status = 'accepted' AND data_purged_at IS NULL`,
+        [e.id, e.tenant_id],
+      );
       await t.query(`DELETE FROM envelopes WHERE id = $1`, [e.id]);
     });
     // Los PDF del borrador que no usa nadie más (una plantilla, otro sobre) se borran del almacenamiento.

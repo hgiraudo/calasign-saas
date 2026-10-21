@@ -58,12 +58,45 @@ export function getPath(data: unknown, path: string): unknown {
 export function setPath(data: Record<string, unknown>, path: string, value: unknown) {
   const parts = path.split(".");
   if (parts.some((p) => p === "__proto__" || p === "constructor" || p === "prototype")) throw new Error("ruta inválida");
-  let cur: Record<string, unknown> = data;
+  // Se entra a objetos y listas existentes ("partes.0.nombre" cambia el nombre del primer elemento de la lista): antes
+  // una lista se reemplazaba por un objeto {"0": {...}} y el documento perdía el resto de sus elementos. Solo se crea un
+  // objeto vacío donde no hay nada o hay un valor simple.
+  let cur: Record<string, unknown> | unknown[] = data;
+  const isIndex = (p: string) => /^(0|[1-9]\d{0,5})$/.test(p);
+  const slot = (c: Record<string, unknown> | unknown[], p: string): unknown => (Array.isArray(c) ? (isIndex(p) ? c[Number(p)] : undefined) : c[p]);
+  const put = (c: Record<string, unknown> | unknown[], p: string, v: unknown) => {
+    if (Array.isArray(c)) {
+      // En una lista solo valen índices (una clave "nombre" en una lista se perdería al guardar el JSON).
+      if (!isIndex(p)) throw new Error("ruta inválida");
+      c[Number(p)] = v;
+    } else c[p] = v;
+  };
   for (const p of parts.slice(0, -1)) {
-    if (cur[p] == null || typeof cur[p] !== "object" || Array.isArray(cur[p])) cur[p] = {};
-    cur = cur[p] as Record<string, unknown>;
+    let next = slot(cur, p);
+    if (next == null || typeof next !== "object") {
+      next = {};
+      put(cur, p, next);
+    }
+    cur = next as Record<string, unknown> | unknown[];
   }
-  cur[parts[parts.length - 1]] = value;
+  put(cur, parts[parts.length - 1], value);
+}
+
+/**
+ * Fusión profunda de un cambio sobre datos JSON (PATCH): los objetos se combinan clave por clave, `null` borra la clave
+ * y cualquier otro valor (texto, número, lista) reemplaza al anterior. Devuelve una copia; no modifica `base`.
+ */
+export function mergeDataPatch(base: Record<string, unknown>, patch: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...(base ?? {}) };
+  for (const [k, v] of Object.entries(patch)) {
+    if (k === "__proto__" || k === "constructor" || k === "prototype") continue;
+    if (v === null) delete out[k];
+    else if (typeof v === "object" && !Array.isArray(v)) {
+      const prev = out[k];
+      out[k] = mergeDataPatch(prev != null && typeof prev === "object" && !Array.isArray(prev) ? (prev as Record<string, unknown>) : {}, v as Record<string, unknown>);
+    } else out[k] = v;
+  }
+  return out;
 }
 
 /**

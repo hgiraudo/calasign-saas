@@ -438,4 +438,8 @@ export const MORE_CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
     "pt-BR": "O texto mudou desde que a proposta foi feita: rejeite-a e peça uma nova.",
     en: "The text changed since the proposal was made: reject it and ask for a new one.",
   },
+  runs_with_open_envelopes: {
+    "pt-BR": "Uma execução com falha deixou envelopes em assinatura: cancele a execução primeiro (isso anula esses envelopes).",
+    en: "A failed run left envelopes out for signature: cancel the run first (that voids those envelopes).",
+  },
 };

@@ -41,6 +41,8 @@ type Op = {
   errors?: string[];
   /** Admite X-Expected-Updated-At (409 version_changed si el recurso cambió desde que se leyó). */
   expectedUpdatedAt?: boolean;
+  /** Admite Idempotency-Key. */
+  idempotent?: boolean;
 };
 
 const iso = z.string().datetime();
@@ -75,10 +77,31 @@ const WorkflowRunSchema = named(
     startedBy: z.string().nullable(),
     collectUrl: z.string().nullable().describe("Link para completar pasos de datos (null si no tiene o si redacted)."),
     canManage: z.boolean().optional().describe("Si quien consulta puede cancelarla o reintentarla."),
+    startedByIp: z.string().optional().describe("IP desde la que se inició por el link público (solo con audit:view)."),
+    dataPurgedAt: iso.optional().describe("Los datos de la ejecución se borraron por la política de retención."),
     redacted: z
       .boolean()
       .optional()
       .describe("true si quien consulta administra plantillas pero no la inició, no aprueba ningún paso ni ve todos los sobres: context vacío, output null en los pasos, sin collectUrl. Ausente si no."),
+    createdAt: iso,
+    updatedAt: iso,
+  }),
+);
+
+/** Espejo de WorkflowRunSummary (GET /v1/workflow-runs). */
+const WorkflowRunSummarySchema = named(
+  "WorkflowRunSummary",
+  z.object({
+    id: z.string().uuid(),
+    workflowId: z.string().uuid(),
+    workflowName: z.string(),
+    status: z.enum(WORKFLOW_RUN_STATUSES),
+    currentStep: z.number().int(),
+    stepCount: z.number().int(),
+    currentStepName: z.string().nullable(),
+    startedBy: z.string().nullable(),
+    canManage: z.boolean(),
+    redacted: z.boolean().optional(),
     createdAt: iso,
     updatedAt: iso,
   }),
@@ -105,7 +128,16 @@ export const AGREEMENTS_OPS: Op[] = [
   { method: "get", path: "/v1/agreements/export.csv", tag: R, summary: "Exportar acuerdos a CSV", description: "Mismos filtros que la búsqueda, más `sep` (`,` por defecto o `;` para Excel en español o portugués). Hasta 10.000 acuerdos (los más recientes): si hay más, header `X-Truncated: true` y una fila final TRUNCADO." },
   { method: "post", path: "/v1/agreements/upload", tag: R, summary: "Subir un acuerdo externo", multipart: true, status: 201, description: "multipart: 'meta' (JSON con title, counterparties, fechas, value, currency, tags, metadata) y luego 'file' (PDF)." },
   { method: "get", path: "/v1/agreements/{id}", tag: R, summary: "Ver un acuerdo" },
-  { method: "patch", path: "/v1/agreements/{id}", tag: R, summary: "Editar un acuerdo", body: UpdateAgreementInput },
+  {
+    method: "patch",
+    path: "/v1/agreements/{id}",
+    tag: R,
+    summary: "Editar un acuerdo",
+    description: "Solo cambian los campos enviados (metadata se combina clave por clave con la guardada). Con `X-Expected-Updated-At`, 409 version_changed si el acuerdo cambió desde que se leyó.",
+    body: UpdateAgreementInput,
+    expectedUpdatedAt: true,
+    errors: ["version_changed"],
+  },
   { method: "delete", path: "/v1/agreements/{id}", tag: R, summary: "Borrar un acuerdo externo", response: "none", status: 204 },
   { method: "get", path: "/v1/agreements/{id}/file", tag: R, summary: "Descargar el PDF del acuerdo", description: "Si el archivo se borró por la política de retención, 410 purged.", response: "pdf", errors: ["purged"] },
   { method: "get", path: "/v1/agreement-fields", tag: R, summary: "Campos propios" },
@@ -194,25 +226,61 @@ export const AGREEMENTS_OPS: Op[] = [
 
   { method: "get", path: "/v1/workflows", tag: W, summary: "Workflows" },
   { method: "post", path: "/v1/workflows", tag: W, summary: "Crear un workflow", body: WorkflowInput, status: 201 },
-  { method: "get", path: "/v1/workflows/{id}", tag: W, summary: "Ver un workflow" },
-  { method: "patch", path: "/v1/workflows/{id}", tag: W, summary: "Editar un workflow", body: UpdateWorkflowInput },
-  { method: "delete", path: "/v1/workflows/{id}", tag: W, summary: "Borrar un workflow", response: "none", status: 204 },
-  { method: "post", path: "/v1/workflows/{id}/runs", tag: W, summary: "Iniciar una ejecución", body: StartWorkflowInput, status: 201 },
+  {
+    method: "get",
+    path: "/v1/workflows/{id}",
+    tag: W,
+    summary: "Ver un workflow",
+    description:
+      "Sin templates:manage, los pasos «llamar a un servicio» vienen con los encabezados, la ruta y la consulta de la URL y el cuerpo enmascarados (••••••); con templates:manage, completos (y signingSecret). Al guardar, un valor enmascarado conserva el guardado.",
+  },
+  {
+    method: "patch",
+    path: "/v1/workflows/{id}",
+    tag: W,
+    summary: "Editar un workflow",
+    description: "Con `X-Expected-Updated-At`, 409 version_changed si el workflow cambió desde que se leyó. Un encabezado, URL o cuerpo enmascarado (••••••) conserva el valor guardado del mismo paso.",
+    body: UpdateWorkflowInput,
+    expectedUpdatedAt: true,
+    errors: ["version_changed"],
+  },
+  {
+    method: "delete",
+    path: "/v1/workflows/{id}",
+    tag: W,
+    summary: "Borrar un workflow",
+    description: "409 runs_in_progress si hay ejecuciones en curso; 409 runs_with_open_envelopes si una ejecución fallida dejó sobres en firma (cancelarla primero: los anula).",
+    response: "none",
+    status: 204,
+    errors: ["runs_with_open_envelopes"],
+  },
+  {
+    method: "post",
+    path: "/v1/workflows/{id}/runs",
+    tag: W,
+    summary: "Iniciar una ejecución",
+    description:
+      "Los pasos «llamar a un servicio» mandan `CalaSign-Signature`, `CalaSign-Workflow-Run` y `CalaSign-Idempotency-Key: <runId>:<índice del paso>` (igual en cada reintento del paso). Las respuestas guardadas con saveAs quedan disponibles como {{http.<saveAs>.campo}} en los pasos siguientes. Admite `Idempotency-Key`.",
+    body: StartWorkflowInput,
+    status: 201,
+    idempotent: true,
+  },
   {
     method: "get",
     path: "/v1/workflow-runs",
     tag: W,
     summary: "Ejecuciones",
     description:
-      "Query: workflowId, status. Con templates:manage sin envelopes:view_all, las ejecuciones que no inició ni aprueba vienen con redacted: true (context vacío, output null, sin collectUrl).",
-    response: z.object({ items: z.array(WorkflowRunSchema) }),
+      "Query: workflowId, status. Resúmenes (sin context, steps ni collectUrl: ver GET /v1/workflow-runs/{id}); las 100 más recientes. Con templates:manage sin envelopes:view_all, las ejecuciones que no inició ni aprueba vienen con redacted: true.",
+    response: z.object({ items: z.array(WorkflowRunSummarySchema) }),
   },
   {
     method: "get",
     path: "/v1/workflow-runs/{id}",
     tag: W,
     summary: "Ver una ejecución",
-    description: "redacted: true si quien consulta solo administra plantillas (no la inició, no aprueba un paso ni ve todos los sobres): se omiten context, salidas de los pasos y collectUrl.",
+    description:
+      "redacted: true si quien consulta solo administra plantillas (no la inició, no aprueba un paso ni ve todos los sobres): se omiten context, salidas de los pasos y collectUrl, y los errores de los pasos vienen sin detalle.",
     response: WorkflowRunSchema,
   },
   { method: "post", path: "/v1/workflow-runs/{id}/steps/{index}/decision", tag: W, summary: "Aprobar o rechazar un paso de aprobación", description: "Rechazar deja la ejecución en rejected y anula sus sobres en curso.", body: ApprovalDecisionInput },
@@ -264,9 +332,11 @@ export const AGREEMENTS_OPS: Op[] = [
     tag: N,
     summary: "Editar el borrador (versión nueva)",
     description:
-      "Edición directa del remitente: `data` reemplaza los datos de la plantilla y `clauseOverrides` cambia el texto de cláusulas (se combinan con los cambios anteriores). Crea una versión nueva y avisa a las contrapartes. 409 closed si la negociación ya se cerró; 409 pdf_source si es un PDF subido (no se edita: subir otro como negociación nueva).",
+      "Edición directa del remitente: `data` es un cambio parcial que se fusiona con los datos guardados (objetos clave por clave; `null` borra la clave; listas y valores simples reemplazan) y `clauseOverrides` cambia el texto de cláusulas (se combinan con los cambios anteriores). Crea una versión nueva y avisa a las contrapartes. `expectedVersion` (opcional): la versión que se editó; si ya hay otra, 409 version_changed. 409 closed si la negociación ya se cerró; 409 pdf_source si es un PDF subido (no se edita: subir otro como negociación nueva).",
+    errors: ["version_changed_negotiation"],
     body: z.object({
-      data: z.record(z.string(), z.unknown()).optional(),
+      data: z.record(z.string(), z.unknown()).optional().describe("Cambio parcial: se fusiona con los datos guardados; null borra la clave."),
+      expectedVersion: z.number().int().min(1).optional().describe("Versión sobre la que se editó (409 version_changed si ya hay otra)."),
       clauseOverrides: z.record(z.string(), z.string().max(50_000)).optional().describe("Clave de la cláusula → texto nuevo."),
       summary: z.string().max(500).optional().describe("Resumen del cambio (por defecto \"Edición del remitente\")."),
     }),

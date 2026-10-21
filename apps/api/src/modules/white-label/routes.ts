@@ -25,6 +25,7 @@ import { config } from "../../config";
 import type { Db } from "../../infra/db";
 import { AppError, badRequest, conflict, notFound } from "../../lib/errors";
 import { encrypt, iso, randomToken, sha256Hex, slugify, uuidv7 } from "../../lib/util";
+import { SES_IDENTITY_ERROR } from "../../notifications/outbound";
 import { render, type TemplateKind } from "../../notifications/templates";
 import { auditFromRequest, recordAudit } from "../audit";
 import { authenticate, type AuthContext, type Services } from "../context";
@@ -341,7 +342,7 @@ export async function recheckWhiteLabelDomains(d: { db: Db; log: { warn(o: objec
       await d.db.query(`UPDATE email_domains SET status = 'pending', last_checked_at = now(), last_error = $2 WHERE id = $1`, [r.id, "Re-verificación: falta el TXT de propiedad o la clave DKIM"]);
     } else if (f) {
       // El aviso de rechazo de SES no se toca: el DNS no dice nada de la identidad en SES. Lo borra el primer correo con
-      // DKIM que SES acepte, y mientras lo siga rechazando cada envío lo mantiene (outbound.noteDkimSendResult).
+      // DKIM que SES acepte y solo lo anota un rechazo real de SES (outbound.noteDkimSendResult).
       await d.db.query(`UPDATE email_domains SET last_checked_at = now(), spf_ok = $2, dmarc_ok = $3 WHERE id = $1`, [r.id, f.spf, f.dmarc]);
     } else {
       await d.db.query(`UPDATE email_domains SET last_checked_at = now() WHERE id = $1`, [r.id]);
@@ -666,8 +667,11 @@ export async function whiteLabelRoutes(app: FastifyInstance, s: Services) {
     try {
       await s.db.query(
         `UPDATE email_domains SET status = CASE WHEN $2 THEN 'verified' WHEN $6 THEN status ELSE 'pending' END, verified_at = CASE WHEN $2 AND verified_at IS NULL THEN now() ELSE verified_at END,
-           spf_ok = CASE WHEN $6 THEN spf_ok ELSE $3 END, dmarc_ok = CASE WHEN $6 THEN dmarc_ok ELSE $4 END, last_checked_at = now(), last_error = $5 WHERE id = $1`,
-        [r.id, ok, f.spf, f.dmarc, error, unknown],
+           spf_ok = CASE WHEN $6 THEN spf_ok ELSE $3 END, dmarc_ok = CASE WHEN $6 THEN dmarc_ok ELSE $4 END, last_checked_at = now(),
+           last_error = CASE WHEN $5::text IS NULL AND last_error = $7 THEN last_error ELSE $5 END WHERE id = $1`,
+        // Con el DNS bien, el aviso de rechazo de SES se conserva: el DNS no dice nada de la identidad en SES (solo lo
+        // borra un correo con DKIM aceptado; ver outbound.noteDkimSendResult).
+        [r.id, ok, f.spf, f.dmarc, error, unknown, SES_IDENTITY_ERROR],
       );
     } catch (e) {
       if ((e as { code?: string }).code !== "23505") throw e;

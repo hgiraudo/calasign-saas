@@ -707,6 +707,13 @@ export const ERRORS: Record<string, Err> = {
     message: "Ya hay una renovación del sello de archivo en curso para este sobre",
     summary: "Una renovación a la vez por sobre",
   },
+  runs_with_open_envelopes: {
+    status: 409,
+    code: "runs_with_open_envelopes",
+    message: "Hay una ejecución fallida que dejó sobres en firma: cancelá la ejecución primero (anula esos sobres)",
+    details: { runs: 1 },
+    summary: "Una ejecución fallida del workflow dejó sobres en firma: cancelarla (anula los sobres) y volver a borrar",
+  },
   version_changed_negotiation: {
     status: 409,
     code: "version_changed",

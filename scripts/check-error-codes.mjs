@@ -4,7 +4,7 @@
 // traducción, la persona veía el texto en español.
 //
 //   node scripts/check-error-codes.mjs          → lista los faltantes (sale con 1 si hay alguno no permitido)
-//   node scripts/check-error-codes.mjs --json   → { apiCodes, translated, dynamic, missing, allowlisted }
+//   node scripts/check-error-codes.mjs --json   → { apiCodes, translated, dynamic, missing, allowlisted, incomplete }
 //
 // Lo usa apps/api/test/error-codes-i18n.test.ts.
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -92,32 +92,72 @@ export function collectApiCodes() {
   return { codes, dynamic };
 }
 
-/** Códigos con texto en pt-BR/en en la consola. */
-export function collectTranslatedCodes() {
-  const src = readFileSync(WEB_API, "utf8");
-  const out = new Set();
-  const block = (name) => {
-    const start = src.indexOf(`const ${name}:`);
-    if (start < 0) throw new Error(`${name} no encontrado en ${WEB_API}`);
-    const end = src.indexOf("\n};", start);
-    return src.slice(start, end);
-  };
-  // Claves de primer nivel (dos espacios de sangría) de los diccionarios por código.
-  for (const name of ["CODE_TEXT", "PROBLEMS_HEADER"]) {
-    for (const m of block(name).matchAll(/^ {2}(?:"([^"]+)"|([a-z0-9_]+)):/gm)) out.add(m[1] ?? m[2]);
+/**
+ * Fuente del objeto literal asignado a `const NAME` (con o sin export y con cualquier anotación de tipo), desde la "{"
+ * hasta su "}" de cierre. Se saltean strings y comentarios al contar llaves (un texto con "}" no corta el bloque).
+ */
+function objectLiteral(src, name, file) {
+  const decl = new RegExp(`\\b(?:export\\s+)?const ${name}\\b`).exec(src);
+  if (!decl) throw new Error(`${name} no encontrado en ${file}`);
+  const eq = src.indexOf("=", decl.index);
+  const open = src.indexOf("{", eq);
+  if (eq < 0 || open < 0) throw new Error(`${name} en ${file} no es un objeto literal`);
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    const c = src[i];
+    if (c === '"' || c === "'" || c === "`") {
+      for (i++; i < src.length && src[i] !== c; i++) if (src[i] === "\\") i++;
+    } else if (c === "/" && src[i + 1] === "/") {
+      i = src.indexOf("\n", i);
+      if (i < 0) break;
+    } else if (c === "/" && src[i + 1] === "*") {
+      i = src.indexOf("*/", i) + 1;
+    } else if (c === "{") depth++;
+    else if (c === "}" && --depth === 0) return src.slice(open + 1, i);
   }
-  // Textos agregados aparte (lib/api-error-text.ts, MORE_CODE_TEXT).
+  throw new Error(`${name} en ${file}: no se encontró el cierre del objeto`);
+}
+
+/** Entradas de primer nivel (clave → fuente del valor) de la fuente de un objeto literal (sin las llaves externas). */
+function topLevelEntries(body) {
+  const keys = [...body.matchAll(/^ {2}(?:"([^"]+)"|([A-Za-z0-9_]+)):/gm)];
+  return keys.map((m, i) => [m[1] ?? m[2], body.slice(m.index + m[0].length, i + 1 < keys.length ? keys[i + 1].index : body.length)]);
+}
+
+/** Códigos con texto en pt-BR/en en la consola; `incomplete`: entradas sin alguno de los idiomas que exige su diccionario. */
+export function collectTranslations() {
+  const src = readFileSync(WEB_API, "utf8");
   const more = readFileSync(WEB_MORE, "utf8");
-  for (const m of more.matchAll(/^ {2}(?:"([^"]+)"|([a-z0-9_]+)):/gm)) out.add(m[1] ?? m[2]);
+  const out = new Set();
+  const incomplete = [];
+  const dicts = [
+    { name: "CODE_TEXT", src, file: WEB_API, locales: ["pt-BR", "en"] },
+    { name: "PROBLEMS_HEADER", src, file: WEB_API, locales: ["es", "pt-BR", "en"] },
+    // Textos agregados aparte (lib/api-error-text.ts): solo el objeto MORE_CODE_TEXT, no el resto del archivo.
+    { name: "MORE_CODE_TEXT", src: more, file: WEB_MORE, locales: ["pt-BR", "en"] },
+  ];
+  for (const d of dicts) {
+    for (const [code, value] of topLevelEntries(objectLiteral(d.src, d.name, d.file))) {
+      const lacking = d.locales.filter((l) => !new RegExp(`(?:^|[\\s{,])(?:"${l}"|${l.includes("-") ? "(?!)" : l})\\s*:`).test(value));
+      if (lacking.length) incomplete.push({ code, dict: d.name, lacking });
+      else out.add(code);
+    }
+  }
   // Casos especiales de detailText / httpErrorText (code === "x" / e.code === "x").
   const fnStart = src.indexOf("function detailText(");
+  if (fnStart < 0) throw new Error(`detailText no encontrado en ${WEB_API}`);
   for (const m of src.slice(fnStart).matchAll(/\bcode === "([a-z0-9_]+)"/g)) out.add(m[1]);
-  return out;
+  return { translated: out, incomplete };
+}
+
+/** Códigos con texto en pt-BR/en en la consola. */
+export function collectTranslatedCodes() {
+  return collectTranslations().translated;
 }
 
 export function check() {
   const { codes, dynamic } = collectApiCodes();
-  const translated = collectTranslatedCodes();
+  const { translated, incomplete } = collectTranslations();
   const missing = [];
   const allowlisted = [];
   for (const [code, file] of [...codes].sort(([a], [b]) => a.localeCompare(b))) {
@@ -125,7 +165,7 @@ export function check() {
     if (ALLOWLIST.has(code)) allowlisted.push(code);
     else missing.push({ code, file });
   }
-  return { apiCodes: codes.size, translated: translated.size, dynamic, missing, allowlisted };
+  return { apiCodes: codes.size, translated: translated.size, dynamic, missing, allowlisted, incomplete };
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
@@ -139,6 +179,10 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       console.log(`Sin texto en pt-BR/en (${r.missing.length}):`);
       for (const m of r.missing) console.log(`  ${m.code}  (${m.file})`);
     } else console.log("Todos los códigos tienen texto.");
+    if (r.incomplete.length) {
+      console.log(`Entradas sin todos sus idiomas (${r.incomplete.length}):`);
+      for (const i of r.incomplete) console.log(`  ${i.code} en ${i.dict}: falta ${i.lacking.join(", ")}`);
+    }
   }
-  process.exitCode = r.missing.length ? 1 : 0;
+  process.exitCode = r.missing.length || r.incomplete.length ? 1 : 0;
 }

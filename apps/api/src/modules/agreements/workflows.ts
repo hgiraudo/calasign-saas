@@ -18,13 +18,15 @@ import {
   type PublicWorkflowStart,
   type Workflow,
   type WorkflowRun,
+  type WorkflowRunSummary,
   type WorkflowStep,
 } from "@calasign/shared";
 import { config } from "../../config";
 import type { Db } from "../../infra/db";
 import { appendEvent, type Actor } from "../../infra/evidence";
 import { enqueue } from "../../infra/queue";
-import { AppError, badRequest, conflict, forbidden, notFound } from "../../lib/errors";
+import { AppError, assertNotStale, badRequest, conflict, forbidden, notFound } from "../../lib/errors";
+import { idempotent } from "../envelopes";
 import { BUMP_UPDATED_AT, decrypt, encrypt, hmacSign, iso, queryList, randomToken, sha256Hex, uuidv7 } from "../../lib/util";
 import { rateLimitIpKey } from "../../lib/ip";
 import { hasPerm, requirePerm } from "../access";
@@ -40,6 +42,7 @@ import { ownerCanStillCreate } from "../owner-check";
 import { tenantBaseUrl } from "../custom-domains";
 import { assertPublicDestination, safeRequest, signPayload } from "../webhooks";
 import { getPath, interpolate, interpolateValue, refreshSearchVector, setPath, toIsoDate, toNumberOrNull, type Deps } from "./common";
+import { channelHasAddress } from "./documents";
 import { agreementMetaFromMapping, createEnvelopeFromPdf, insertFileRow, renderDocument, storeGeneratedPdf } from "./documents";
 import { ingestEnvelope } from "./repository";
 
@@ -72,12 +75,15 @@ interface RunContext {
 }
 
 const MAX_PUBLIC_RUNS_PER_HOUR = 60;
+const STALE_WORKFLOW_MESSAGE = "Este workflow cambió en otra pestaña o lo editó otra persona: recargá para ver la versión actual";
 /** Un run esperando un formulario sin actividad durante este tiempo se cancela (barrido). */
 export const COLLECT_IDLE_DAYS = 7;
 /** Un run fallado sin actividad durante este tiempo pierde sus PDFs generados que no usó ningún sobre. */
 const FAILED_DOCS_RETENTION_DAYS = 30;
 /** Correo de un destinatario que es exactamente una variable ({{cliente.email}}). */
 const SELF_SERVICE_EMAIL = /^\s*\{\{\s*([A-Za-z_@][\w.@]*)\s*\}\}\s*$/;
+/** Teléfono E.164 (como GenerateRecipientInput). */
+const E164_PHONE = /^\+[1-9]\d{6,14}$/;
 
 type StepResult =
   | {
@@ -93,21 +99,33 @@ type StepResult =
 
 // ───────────────────────────── Mapeo ─────────────────────────────
 
-async function toWorkflow(db: Db, r: any, withSecret: boolean): Promise<Workflow & { signingSecret?: string }> {
-  const counts = await db.one<any>(
-    `SELECT count(*)::int AS total, count(*) FILTER (WHERE status IN ('running','waiting'))::int AS running FROM workflow_runs WHERE workflow_id = $1`,
-    [r.id],
-  );
+/**
+ * `secrets`: ve los encabezados (credenciales) y el secreto de firma (solo en el detalle, con templates:manage).
+ * `manage`: ve la URL completa y el cuerpo de las llamadas a servicios (templates:manage; el resto ve el dominio).
+ */
+async function toWorkflow(
+  db: Db,
+  r: any,
+  withSecret: boolean,
+  opts: { manage?: boolean; counts?: { total: number; running: number }; baseUrl?: string } = {},
+): Promise<Workflow & { signingSecret?: string }> {
+  const counts =
+    opts.counts ??
+    (await db.one<any>(
+      `SELECT count(*)::int AS total, count(*) FILTER (WHERE status IN ('running','waiting'))::int AS running FROM workflow_runs WHERE workflow_id = $1`,
+      [r.id],
+    ));
   return {
     id: r.id,
     name: r.name,
     description: r.description,
     active: r.active,
     publicStart: r.public_start,
-    publicUrl: r.public_start && r.public_slug ? `${await tenantBaseUrl(db, r.tenant_id)}/wf/${r.public_slug}` : null,
+    publicUrl: r.public_start && r.public_slug ? `${opts.baseUrl ?? (await tenantBaseUrl(db, r.tenant_id))}/wf/${r.public_slug}` : null,
     // Los encabezados de las llamadas a servicios suelen llevar credenciales (Authorization, API keys): como el secreto
-    // de firma, solo los ve quien administra los workflows.
-    steps: withSecret ? r.steps : redactStepSecrets(r.steps),
+    // de firma, solo los ve quien administra los workflows. La ruta y la consulta de la URL y el cuerpo también pueden
+    // llevarlas (https://hooks.x/T0/B1/secreto, {"token": "..."}): sin templates:manage se enmascaran.
+    steps: withSecret ? r.steps : redactStepSecrets(r.steps, opts.manage ?? false),
     runs: { total: counts?.total ?? 0, running: counts?.running ?? 0 },
     createdAt: iso(r.created_at)!,
     updatedAt: iso(r.updated_at)!,
@@ -140,6 +158,19 @@ export function redactedHttpError(error: string | null | undefined): string | nu
   return "La llamada HTTP falló";
 }
 
+/**
+ * Error de un paso en la vista redactada: el de un paso HTTP solo con el código; el de cualquier otro paso puede citar
+ * los datos de la ejecución (correos inválidos, variables faltantes, valores): un texto genérico.
+ */
+export function redactedStepError(type: string, error: string | null | undefined): string | null {
+  if (!error) return error ?? null;
+  if (type === "http_request") return redactedHttpError(error);
+  return "El paso falló";
+}
+
+/** Quien ve la IP desde la que se inició una ejecución por el link público: quien ve la auditoría de la organización. */
+const seesStartIp = (a: AuthContext | undefined) => Boolean(a && hasPerm(a, "audit:view"));
+
 async function toRun(db: Db, r: any, a?: AuthContext): Promise<WorkflowRun> {
   const wf = await db.one<any>(`SELECT name FROM workflows WHERE id = $1`, [r.workflow_id]);
   const steps = await db.query<any>(`SELECT * FROM workflow_run_steps WHERE run_id = $1 ORDER BY idx`, [r.id]);
@@ -167,20 +198,46 @@ async function toRun(db: Db, r: any, a?: AuthContext): Promise<WorkflowRun> {
         attempts: st.attempts,
         // Salidas (respuestas HTTP, valores recolectados, id del sobre generado): con los datos de la ejecución.
         output: redacted ? null : st.output,
-        // El error de un paso HTTP lleva el cuerpo de la respuesta externa (o el detalle de la conexión): redactado,
-        // solo el código HTTP.
-        error: redacted && st.type === "http_request" ? redactedHttpError(st.error) : st.error,
+        // El error de un paso HTTP lleva el cuerpo de la respuesta externa (o el detalle de la conexión) y el de los
+        // demás puede citar los datos: redactado, solo el código HTTP o un texto genérico.
+        error: redacted ? redactedStepError(st.type, st.error) : st.error,
         startedAt: iso(st.started_at),
         finishedAt: iso(st.finished_at),
         ...(def?.type === "approval" && st.status === "waiting" && a ? { canDecide: canDecide(a, def) } : {}),
       };
     }),
     startedBy: r.started_by_label,
+    // IP del inicio por el link público: dato personal, solo para quien ve la auditoría (y no en la vista redactada).
+    ...(r.started_by_ip && !redacted && seesStartIp(a) ? { startedByIp: r.started_by_ip } : {}),
     // El enlace público lleva al formulario y, después, al link de firma de quien lo completa: solo para quien puede
     // administrar el run (como cancelar o reintentar), no para el aprobador ni quien solo puede ver.
     collectUrl: a && !redacted && (startedByMe(a, r) || hasPerm(a, "templates:manage")) && hasCollect && r.public_token_enc && ["running", "waiting"].includes(r.status) ? `${base}/w/${decrypt(r.public_token_enc)}` : null,
     // Cancelar y reintentar: quien lo inició o quien administra plantillas (lo mismo que exige la API).
     canManage: Boolean(a && (startedByMe(a, r) || hasPerm(a, "templates:manage"))),
+    ...(redacted ? { redacted: true } : {}),
+    ...(r.data_purged_at ? { dataPurgedAt: iso(r.data_purged_at)! } : {}),
+    createdAt: iso(r.created_at)!,
+    updatedAt: iso(r.updated_at)!,
+  };
+}
+
+/**
+ * Resumen para el listado (sin datos, pasos ni salidas): el detalle (GET /v1/workflow-runs/:id) trae el resto. Los
+ * nombres de los workflows vienen ya resueltos (una consulta para toda la página).
+ */
+function toRunSummary(r: any, workflowName: string, a: AuthContext): WorkflowRunSummary {
+  const defs: WorkflowStep[] = r.steps;
+  const redacted = !seesRunData(a, r);
+  return {
+    id: r.id,
+    workflowId: r.workflow_id,
+    workflowName,
+    status: r.status,
+    currentStep: r.current_step,
+    stepCount: defs.length,
+    currentStepName: defs[r.current_step]?.name ?? null,
+    startedBy: r.started_by_label,
+    canManage: startedByMe(a, r) || hasPerm(a, "templates:manage"),
     ...(redacted ? { redacted: true } : {}),
     createdAt: iso(r.created_at)!,
     updatedAt: iso(r.updated_at)!,
@@ -188,30 +245,69 @@ async function toRun(db: Db, r: any, a?: AuthContext): Promise<WorkflowRun> {
 }
 
 const MASKED_HEADER = "••••••";
+const MASKED = MASKED_HEADER;
 
-function redactStepSecrets(steps: WorkflowStep[]): WorkflowStep[] {
-  return steps.map((st) =>
-    st.type === "http_request" && st.config.headers
-      ? { ...st, config: { ...st.config, headers: Object.fromEntries(Object.keys(st.config.headers).map((k) => [k, MASKED_HEADER])) } }
-      : st,
-  );
+/** URL con la ruta y la consulta enmascaradas (queda el origen: a qué servicio llama). */
+export function maskUrl(raw: string): string {
+  try {
+    const u = new URL(raw);
+    if ((u.pathname === "/" || u.pathname === "") && !u.search && !u.hash) return `${u.origin}/`;
+    return `${u.origin}/${MASKED}`;
+  } catch {
+    return MASKED;
+  }
 }
 
 /**
- * Un encabezado que vuelve enmascarado (pasos leídos del listado, que siempre enmascara) conserva el valor guardado del
- * mismo paso: si no, guardar esos pasos reemplazaba la credencial por "••••••" y las llamadas empezaban a fallar.
+ * Pasos para quien no ve las credenciales: encabezados enmascarados siempre; sin `manage` (templates:manage), también la
+ * ruta y la consulta de la URL y el cuerpo (pueden llevar el secreto de un webhook).
  */
-function restoreMaskedHeaders(steps: WorkflowStep[], prev: WorkflowStep[]): WorkflowStep[] {
+export function redactStepSecrets(steps: WorkflowStep[], manage = false): WorkflowStep[] {
+  return steps.map((st) => {
+    if (st.type !== "http_request") return st;
+    const config = { ...st.config };
+    if (config.headers) config.headers = Object.fromEntries(Object.keys(config.headers).map((k) => [k, MASKED_HEADER]));
+    if (!manage) {
+      config.url = maskUrl(config.url);
+      if (config.bodyTemplate) config.bodyTemplate = MASKED;
+    }
+    return { ...st, config };
+  });
+}
+
+/**
+ * Un valor que vuelve enmascarado (pasos leídos del listado o por alguien sin templates:manage) conserva el valor
+ * guardado del mismo paso: si no, guardar esos pasos reemplazaba la credencial por "••••••" y las llamadas empezaban a
+ * fallar. Vale para los encabezados, la URL (si coincide con la enmascarada de la guardada) y el cuerpo.
+ */
+export function restoreMaskedHeaders(steps: WorkflowStep[], prev: WorkflowStep[]): WorkflowStep[] {
   const prevById = new Map(prev.map((st) => [st.id, st]));
   return steps.map((st) => {
-    if (st.type !== "http_request" || !st.config.headers) return st;
+    if (st.type !== "http_request") return st;
     const old = prevById.get(st.id);
-    const oldHeaders = old?.type === "http_request" ? old.config.headers ?? {} : {};
-    const headers = Object.fromEntries(
-      Object.entries(st.config.headers).map(([k, v]) => [k, v === MASKED_HEADER && Object.prototype.hasOwnProperty.call(oldHeaders, k) ? oldHeaders[k] : v]),
-    );
-    return { ...st, config: { ...st.config, headers } };
+    const oldCfg = old?.type === "http_request" ? old.config : null;
+    const config = { ...st.config };
+    if (config.headers) {
+      const oldHeaders = oldCfg?.headers ?? {};
+      config.headers = Object.fromEntries(
+        Object.entries(config.headers).map(([k, v]) => [k, v === MASKED_HEADER && Object.prototype.hasOwnProperty.call(oldHeaders, k) ? oldHeaders[k] : v]),
+      );
+    }
+    if (oldCfg) {
+      if (config.url !== oldCfg.url && sameUrl(config.url, maskUrl(oldCfg.url))) config.url = oldCfg.url;
+      if (config.bodyTemplate === MASKED && oldCfg.bodyTemplate) config.bodyTemplate = oldCfg.bodyTemplate;
+    }
+    return { ...st, config };
   });
+}
+
+/** Compara URLs como las normaliza el navegador (el "••••••" puede volver codificado como %E2%80%A2…). */
+function sameUrl(a: string, b: string): boolean {
+  try {
+    return new URL(a).toString() === new URL(b).toString();
+  } catch {
+    return a === b;
+  }
 }
 
 function summarizeDocs(docs: Record<string, any>) {
@@ -503,7 +599,9 @@ export async function onEnvelopeEventForWorkflows(d: Deps, envelopeId: string) {
 
 async function executeStep(d: Deps, run: any, step: WorkflowStep, index: number): Promise<StepResult> {
   const ctx: RunContext = run.context;
-  const data = ctx.data ?? {};
+  // Variables de los pasos: los datos del run y las respuestas guardadas de los servicios ({{http.clave.campo}}, ver
+  // saveAs). `http` pisa una clave "http" de los datos (las respuestas guardadas mandan).
+  const data: Record<string, unknown> = { ...(ctx.data ?? {}), http: ctx.http ?? {} };
   const wf = await d.db.one<any>(`SELECT name, created_by, created_by_api_key, signing_secret_enc FROM workflows WHERE id = $1`, [run.workflow_id]);
   const tenant = await d.db.one<any>(`SELECT default_locale, name FROM tenants WHERE id = $1`, [run.tenant_id]);
   const locale = tenant?.default_locale ?? "es";
@@ -570,12 +668,20 @@ async function executeStep(d: Deps, run: any, step: WorkflowStep, index: number)
         const email = interpolate(r.email, data, locale).trim().toLowerCase() || null;
         const phone = interpolate(r.phone, data, locale).replace(/[^\d+]/g, "") || null;
         if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new StepFailure(`Correo inválido para ${r.role}: ${email}`);
+        // El mismo formato que la API de generación (GenerateRecipientInput): +código de país y número, sin espacios.
+        if (phone && !E164_PHONE.test(phone)) throw new StepFailure(`Teléfono inválido para ${r.role}: usá el formato internacional (+5491122334455)`);
+        const channels = r.channels ?? (email ? ["email" as const] : ["whatsapp" as const]);
+        // Algún canal con dirección: con solo WhatsApp y sin teléfono (o solo correo y sin correo) el sobre salía sin
+        // poder avisarle a nadie y el firmante nunca recibía el link.
+        if (!channelHasAddress(channels, { email, phone })) {
+          throw new StepFailure(`${r.role}: ningún canal configurado (${channels.join(", ")}) tiene dirección (correo o teléfono)`);
+        }
         return {
           role: r.role,
           name: interpolate(r.name, data, locale).trim() || r.role,
           email,
           phone,
-          channels: r.channels ?? (email ? ["email" as const] : ["whatsapp" as const]),
+          channels,
           cc: r.cc ?? false,
         };
       });
@@ -692,7 +798,8 @@ async function executeStep(d: Deps, run: any, step: WorkflowStep, index: number)
         : JSON.stringify({
             event: "workflow.step",
             run: { id: run.id, workflowId: run.workflow_id, workflowName: wf?.name, step: { index, name: step.name } },
-            data,
+            data: ctx.data ?? {},
+            http: ctx.http ?? {},
             documents: summarizeDocs(ctx.documents ?? {}),
             envelopes: ctx.envelopes ?? {},
           });
@@ -705,6 +812,8 @@ async function executeStep(d: Deps, run: any, step: WorkflowStep, index: number)
       headers["user-agent"] = "CalaSign-Workflows/1";
       headers["CalaSign-Signature"] = signPayload(decrypt(wf.signing_secret_enc), body);
       headers["CalaSign-Workflow-Run"] = run.id;
+      // El mismo valor en cada reintento del paso (timeout, 5xx): el servicio puede descartar la llamada repetida.
+      headers["CalaSign-Idempotency-Key"] = `${run.id}:${index}`;
       let res: { status: number; body: Buffer };
       try {
         // safeRequest valida el destino en la misma resolución DNS que usa la conexión y no sigue redirecciones.
@@ -873,7 +982,7 @@ function validateSteps(steps: WorkflowStep[]) {
 async function createRun(
   db: Db,
   wf: any,
-  p: { data: Record<string, unknown>; startedBy: string | null; startedByApiKey?: string | null; startedByLabel: string; actor: Actor },
+  p: { data: Record<string, unknown>; startedBy: string | null; startedByApiKey?: string | null; startedByLabel: string; startedByIp?: string | null; actor: Actor },
 ): Promise<{ runId: string; token: string | null }> {
   const steps: WorkflowStep[] = wf.steps;
   const runId = uuidv7();
@@ -900,8 +1009,8 @@ async function createRun(
       if (chargesAtStart && (await publicTenantCapReached(t, wf.tenant_id))) throw new AppError(429, "workflow_rate_limited", "Demasiadas ejecuciones de este workflow: probá más tarde");
     }
     await t.query(
-      `INSERT INTO workflow_runs (id, tenant_id, workflow_id, steps, context, started_by, started_by_label, public_token_hash, public_token_enc, started_by_api_key, public_collected_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      `INSERT INTO workflow_runs (id, tenant_id, workflow_id, steps, context, started_by, started_by_label, public_token_hash, public_token_enc, started_by_api_key, public_collected_at, started_by_ip)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
       [
         runId,
         wf.tenant_id,
@@ -914,6 +1023,7 @@ async function createRun(
         token ? encrypt(token) : null,
         p.startedByApiKey ?? null,
         chargesAtStart ? new Date() : null,
+        p.startedByIp ?? null,
       ],
     );
     for (const [idx, st] of steps.entries()) {
@@ -976,8 +1086,20 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
 
   app.get("/v1/workflows", { preHandler: auth }, async (req) => {
     const a = A(req);
-    const rows = await s.db.query(`SELECT * FROM workflows WHERE tenant_id = $1 ORDER BY updated_at DESC`, [a.tenantId]);
-    return { items: await Promise.all(rows.map((r) => toWorkflow(s.db, r, false))) };
+    const rows = await s.db.query<any>(`SELECT * FROM workflows WHERE tenant_id = $1 ORDER BY updated_at DESC`, [a.tenantId]);
+    // Conteos y dominio en una consulta para toda la lista (antes, dos por workflow).
+    const counts = new Map(
+      (
+        await s.db.query<any>(
+          `SELECT workflow_id, count(*)::int AS total, count(*) FILTER (WHERE status IN ('running','waiting'))::int AS running
+             FROM workflow_runs WHERE tenant_id = $1 GROUP BY workflow_id`,
+          [a.tenantId],
+        )
+      ).map((c) => [c.workflow_id as string, { total: c.total as number, running: c.running as number }]),
+    );
+    const baseUrl = rows.some((r) => r.public_start) ? await tenantBaseUrl(s.db, a.tenantId) : undefined;
+    const manage = hasPerm(a, "templates:manage");
+    return { items: await Promise.all(rows.map((r) => toWorkflow(s.db, r, false, { manage, counts: counts.get(r.id) ?? { total: 0, running: 0 }, baseUrl }))) };
   });
 
   app.post("/v1/workflows", { preHandler: auth }, async (req, reply) => {
@@ -1011,27 +1133,37 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
 
   app.get<{ Params: { id: string } }>("/v1/workflows/:id", { preHandler: auth }, async (req) => {
     const a = A(req);
-    return toWorkflow(s.db, await loadWorkflow(a, req.params.id), hasPerm(a, "templates:manage"));
+    const manage = hasPerm(a, "templates:manage");
+    return toWorkflow(s.db, await loadWorkflow(a, req.params.id), manage, { manage });
   });
 
   app.patch<{ Params: { id: string } }>("/v1/workflows/:id", { preHandler: auth }, async (req) => {
     const a = A(req);
     requirePerm(a, "templates:manage");
-    const cur = await loadWorkflow(a, req.params.id);
+    const cur0 = await loadWorkflow(a, req.params.id);
     const input = UpdateWorkflowInput.parse(req.body);
-    const steps = input.steps ? restoreMaskedHeaders(input.steps as WorkflowStep[], cur.steps as WorkflowStep[]) : (cur.steps as WorkflowStep[]);
-    validateSteps(steps);
-    if (input.steps) await checkApprovers(a.tenantId, steps);
-    const publicStart = input.publicStart ?? cur.public_start;
-    const active = input.active ?? cur.active;
-    // Publicar o activar un link público exige el plan (como los formularios web). Solo al pasar de false a true: tras
-    // una baja de plan, editar el nombre o los pasos de un workflow que ya estaba publicado no se bloquea (el link
-    // igual no se ofrece sin el plan), y despublicarlo o desactivarlo tampoco.
-    if (publicStart && active && (!cur.public_start || !cur.active)) requireFeature((await tenantPlan(s.db, a.tenantId)).plan, "web_forms", "El inicio público de workflows");
+    // Chequeos que consultan la base fuera de la transacción (miembros, plantillas, plan); los que dependen de lo
+    // guardado se repiten con la fila bloqueada.
+    if (input.steps) await checkApprovers(a.tenantId, input.steps as WorkflowStep[]);
+    const planAllowsPublic = (await tenantPlan(s.db, a.tenantId)).plan;
     const actor = a.actor;
     const { row, cancelled } = await s.db.tx(async (t) => {
+      // Con la fila bloqueada y control de edición concurrente (X-Expected-Updated-At, como las plantillas): dos
+      // pestañas o dos personas guardando a la vez ya no se pisan en silencio (la segunda recibe 409 version_changed).
+      const cur = await t.one<any>(`SELECT * FROM workflows WHERE id = $1 AND tenant_id = $2 FOR UPDATE`, [cur0.id, a.tenantId]);
+      if (!cur) throw notFound("Workflow");
+      assertNotStale(req.headers, cur.updated_at, STALE_WORKFLOW_MESSAGE);
+      const steps = input.steps ? restoreMaskedHeaders(input.steps as WorkflowStep[], cur.steps as WorkflowStep[]) : (cur.steps as WorkflowStep[]);
+      validateSteps(steps);
+      const publicStart = input.publicStart ?? cur.public_start;
+      const active = input.active ?? cur.active;
+      // Publicar o activar un link público exige el plan (como los formularios web). Solo al pasar de false a true: tras
+      // una baja de plan, editar el nombre o los pasos de un workflow que ya estaba publicado no se bloquea (el link
+      // igual no se ofrece sin el plan), y despublicarlo o desactivarlo tampoco.
+      if (publicStart && active && (!cur.public_start || !cur.active)) requireFeature(planAllowsPublic, "web_forms", "El inicio público de workflows");
       const row = await t.one<any>(
-        `UPDATE workflows SET name = $2, description = $3, active = $4, public_start = $5, public_slug = $6, steps = $7, updated_at = now() WHERE id = $1 RETURNING *`,
+        `UPDATE workflows SET name = $2, description = $3, active = $4, public_start = $5, public_slug = $6, steps = $7,
+           updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 millisecond') WHERE id = $1 RETURNING *`,
         [
           cur.id,
           input.name ?? cur.name,
@@ -1057,7 +1189,7 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
     for (const id of cancelled) await cleanupRunDocuments(deps, id);
     await auditFromRequest(s.db, req, a, "workflow.updated", {
       targetType: "workflow",
-      targetId: cur.id,
+      targetId: cur0.id,
       data: { fields: Object.keys((req.body as object) ?? {}), ...(cancelled.length ? { publicRunsCancelled: cancelled.length } : {}) },
     });
     return toWorkflow(s.db, row, true);
@@ -1075,6 +1207,20 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
       // Desactivar el workflow solo cancela las del link público que esperan su formulario; las iniciadas por una persona
       // o una API key siguen hasta terminar o cancelarlas.
       if (active) throw conflict("runs_in_progress", "Hay ejecuciones en curso: cancelalas (desactivar el workflow solo cancela las del link público que esperan su formulario)");
+      // Una ejecución fallida puede haber dejado sobres en firma: cancelarla es la forma de anularlos. Borrado el
+      // workflow (y sus ejecuciones en cascada), esos sobres quedaban en firma sin forma de anularlos desde el workflow.
+      const open = await t.one<{ n: number }>(
+        `SELECT count(DISTINCT r.id)::int AS n FROM workflow_runs r JOIN envelopes e ON e.tenant_id = r.tenant_id AND e.metadata->>'workflowRunId' = r.id::text
+          WHERE r.workflow_id = $1 AND r.status = 'failed' AND e.status IN ('sent','awaiting_certificates')`,
+        [cur.id],
+      );
+      if (open?.n) {
+        throw conflict(
+          "runs_with_open_envelopes",
+          `Hay ${open.n === 1 ? "una ejecución fallida que dejó sobres" : `${open.n} ejecuciones fallidas que dejaron sobres`} en firma: cancelá la ejecución primero (anula esos sobres)`,
+          { runs: open.n },
+        );
+      }
       // Los PDFs generados de sus runs (el borrado en cascada se lleva los runs, que eran lo único que los citaba).
       const runs = await t.query<{ context: RunContext }>(`SELECT context FROM workflow_runs WHERE workflow_id = $1`, [cur.id]);
       await t.query(`DELETE FROM workflows WHERE id = $1`, [cur.id]);
@@ -1086,21 +1232,24 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
     return reply.code(204).send();
   });
 
+  // Con Idempotency-Key (como generar un documento): un reintento de la integración (timeout, red) devuelve la misma
+  // ejecución en vez de iniciar otra que vuelva a mandar los sobres.
   app.post<{ Params: { id: string } }>("/v1/workflows/:id/runs", { preHandler: auth }, async (req, reply) => {
     const a = A(req);
     const wf = await loadWorkflow(a, req.params.id);
     if (!wf.active) throw conflict("inactive", "El workflow está desactivado");
     const input = StartWorkflowInput.parse(req.body ?? {});
-    const { runId } = await createRun(s.db, wf, {
-      data: input.data,
-      startedBy: a.userId,
-      startedByApiKey: a.userId ? null : a.apiKeyId,
-      startedByLabel: a.actor.label ?? "API",
-      actor: a.actor,
+    return idempotent(s, req, reply, async () => {
+      const { runId } = await createRun(s.db, wf, {
+        data: input.data,
+        startedBy: a.userId,
+        startedByApiKey: a.userId ? null : a.apiKeyId,
+        startedByLabel: a.actor.label ?? "API",
+        actor: a.actor,
+      });
+      await advanceNow(deps, runId);
+      return { status: 201, body: await toRun(s.db, await s.db.one(`SELECT * FROM workflow_runs WHERE id = $1`, [runId]), a) };
     });
-    await advanceNow(deps, runId);
-    reply.code(201);
-    return toRun(s.db, await s.db.one(`SELECT * FROM workflow_runs WHERE id = $1`, [runId]), a);
   });
 
   app.get<{ Querystring: { workflowId?: string; status?: string } }>("/v1/workflow-runs", { preHandler: auth }, async (req) => {
@@ -1125,8 +1274,14 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
         where += ` AND r.started_by_api_key = $${params.length}`;
       }
     }
-    const rows = await s.db.query(`SELECT r.* FROM workflow_runs r WHERE ${where} ORDER BY r.created_at DESC LIMIT 100`, params);
-    return { items: await Promise.all(rows.map((r) => toRun(s.db, r, a))) };
+    // Resúmenes (sin contexto, pasos ni salidas: el detalle los trae) y los nombres de los workflows en la misma consulta.
+    const rows = await s.db.query<any>(
+      `SELECT r.id, r.workflow_id, r.tenant_id, r.status, r.current_step, r.steps, r.started_by, r.started_by_api_key, r.started_by_label,
+              r.created_at, r.updated_at, w.name AS workflow_name
+         FROM workflow_runs r JOIN workflows w ON w.id = r.workflow_id WHERE ${where} ORDER BY r.created_at DESC LIMIT 100`,
+      params,
+    );
+    return { items: rows.map((r) => toRunSummary(r, r.workflow_name ?? "", a)) };
   });
 
   app.get<{ Params: { id: string } }>("/v1/workflow-runs/:id", { preHandler: auth }, async (req) => {
@@ -1191,6 +1346,7 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
       const run = await t.one<any>(`SELECT * FROM workflow_runs WHERE id = $1 FOR UPDATE`, [run0.id]);
       const st = await t.one<any>(`SELECT * FROM workflow_run_steps WHERE run_id = $1 AND idx = $2`, [run.id, run.current_step]);
       if (run.status !== "failed" || st?.status !== "failed") throw conflict("not_failed", "Solo se reintenta una ejecución con un paso fallido");
+      if (run.data_purged_at) throw conflict("not_retryable", "Los datos de esta ejecución se borraron por la política de retención: iniciá una nueva ejecución");
       if (st.type === "approval" || st.type === "wait_for_completion") throw conflict("not_retryable", "Este paso no se puede reintentar: iniciá una nueva ejecución");
       if (run.context?.documentsCleaned) {
         // Solo si algún paso pendiente envía un PDF generado antes (ya borrado). Si no, el reintento sigue: los
@@ -1236,7 +1392,8 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
       }
     }
     const { ip } = clientInfo(req);
-    const { runId, token } = await createRun(s.db, wf, { data: {}, startedBy: null, startedByLabel: `Link público (${ip ?? "?"})`, actor: { type: "system", label: "Link público" } });
+    // La IP no va en la etiqueta (la ve cualquiera que vea la ejecución): queda aparte, para quien ve la auditoría.
+    const { runId, token } = await createRun(s.db, wf, { data: {}, startedBy: null, startedByLabel: "Link público", startedByIp: ip ?? null, actor: { type: "system", label: "Link público" } });
     await advanceNow(deps, runId);
     reply.code(201);
     const fresh = await s.db.one<any>(`SELECT public_token_enc FROM workflow_runs WHERE id = $1`, [runId]);
@@ -1344,6 +1501,9 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
     const def = (run0.steps as WorkflowStep[])[index];
     if (!def || def.type !== "collect_data") throw notFound("Paso");
     await assertRunAcceptsInput(s.db, run0);
+    // Números y fechas como los escribe una persona en el idioma de la organización ("2,500" es 2500 en inglés y 2,5 en
+    // español; 03/01/2027 es 1 de marzo en español y 3 de enero en inglés). Antes, siempre en español.
+    const locale = (await s.db.one<{ default_locale: string | null }>(`SELECT default_locale FROM tenants WHERE id = $1`, [run0.tenant_id]))?.default_locale ?? "es";
     // Validación por campo.
     const values: Record<string, unknown> = {};
     const errors: { path: string; message: string }[] = [];
@@ -1355,10 +1515,10 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
         continue;
       }
       if (f.type === "email" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(raw)) errors.push({ path: f.key, message: `${f.label}: correo inválido` });
-      else if (f.type === "number" && toNumberOrNull(raw) === null) errors.push({ path: f.key, message: `${f.label}: número inválido` });
-      else if (f.type === "date" && !toIsoDate(raw)) errors.push({ path: f.key, message: `${f.label}: fecha inválida` });
+      else if (f.type === "number" && toNumberOrNull(raw, locale) === null) errors.push({ path: f.key, message: `${f.label}: número inválido` });
+      else if (f.type === "date" && !toIsoDate(raw, locale)) errors.push({ path: f.key, message: `${f.label}: fecha inválida` });
       else if (f.type === "select" && !(f.options ?? []).includes(raw)) errors.push({ path: f.key, message: `${f.label}: opción inválida` });
-      values[f.key] = f.type === "number" ? toNumberOrNull(raw) : f.type === "date" ? toIsoDate(raw) : f.type === "email" ? raw.toLowerCase() : raw;
+      values[f.key] = f.type === "number" ? toNumberOrNull(raw, locale) : f.type === "date" ? toIsoDate(raw, locale) : f.type === "email" ? raw.toLowerCase() : raw;
     }
     if (errors.length) throw new AppError(400, "validation_error", errors.map((e) => e.message).join("; "), errors);
     // Huella de quien lo completa (run público con correo): HMAC de workflow + correo + IP (en IPv6, el /64).

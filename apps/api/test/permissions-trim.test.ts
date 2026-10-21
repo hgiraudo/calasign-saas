@@ -206,7 +206,11 @@ describe("ejecuciones de workflows", () => {
     expect(redacted.json()).toMatchObject({ redacted: true, collectUrl: null, canManage: true, context: { data: {}, envelopes: {}, http: {}, documents: {} } });
     expect(redacted.json().steps.every((s: { output: unknown }) => s.output === null)).toBe(true);
     const list = await app.inject({ method: "GET", url: "/v1/workflow-runs", headers: H(tplAdmin.session) });
-    expect(list.json().items.find((r: { id: string }) => r.id === runId).context.data).toEqual({});
+    // El listado trae resúmenes: sin contexto ni pasos (el detalle los trae, redactados).
+    const item = list.json().items.find((r: { id: string }) => r.id === runId);
+    expect(item).toMatchObject({ redacted: true, canManage: true });
+    expect(item.context).toBeUndefined();
+    expect(item.steps).toBeUndefined();
 
     const full = await app.inject({ method: "GET", url: `/v1/workflow-runs/${runId}`, headers: H(viewer.session) });
     expect(full.json().redacted).toBeUndefined();

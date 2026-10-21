@@ -344,6 +344,9 @@ export async function auditRoutes(app: FastifyInstance, s: Services) {
     const tz = await resolveTimeZone(s.db, req.query.tz);
     const { params, where: w0 } = buildWhere(req.auth!.tenantId, req.query);
     let where = w0;
+    // Sufijo del nombre del archivo en una continuación: cada parte se descarga con un nombre distinto (si no, el
+    // navegador las numeraba "(1)", "(2)" o pisaba la anterior).
+    let partSuffix = "";
     // Continuación de un export truncado: las filas estrictamente anteriores a (occurred_at, id) de esa fila, en el mismo
     // orden. Con el par (y no solo con "to=<fecha>") no se saltean ni repiten filas con el mismo instante; la fecha se
     // toma de la base (precisión de microsegundos, que el ISO del CSV no tiene).
@@ -353,6 +356,7 @@ export async function auditRoutes(app: FastifyInstance, s: Services) {
       const ref = await s.db.one<any>(`SELECT 1 FROM account_audit_log WHERE id = $1 AND tenant_id = $2`, [b, req.auth!.tenantId]);
       if (!ref) throw badRequest("invalid_query", "'beforeId' no corresponde a una fila del registro de esta organización");
       params.push(b);
+      partSuffix = `-desde-${b}`;
       where += ` AND (occurred_at, id) < (SELECT occurred_at, id FROM account_audit_log WHERE id = $${params.length})`;
     }
     let local = "";
@@ -388,7 +392,7 @@ export async function auditRoutes(app: FastifyInstance, s: Services) {
     await auditFromRequest(s.db, req, req.auth!, "audit.exported", { data: { rows: rows.length, truncated, filters: req.query } });
     reply
       .header("content-type", "text/csv; charset=utf-8")
-      .header("content-disposition", `attachment; filename="auditoria-${new Date().toISOString().slice(0, 10)}.csv"`)
+      .header("content-disposition", `attachment; filename="auditoria-${new Date().toISOString().slice(0, 10)}${partSuffix}.csv"`)
       .header("cache-control", "private, no-store");
     return csvBody(lines);
   });

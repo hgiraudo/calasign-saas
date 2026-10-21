@@ -908,20 +908,18 @@ export function hasUnsavedChanges(): boolean {
   return unsavedEditors > 0;
 }
 
-// Quien navega por código tras confirmDiscardUnsaved() (p. ej. cambiar de organización y volver al inicio) ya
-// confirmó: el bloqueo de navegación no vuelve a preguntar si navega poco después.
+// Quien navega por código tras confirmar (allowNextNavigation() justo antes de navigate()) ya confirmó: el bloqueo de
+// navegación no vuelve a preguntar. La ventana es corta: si la navegación no ocurre, no queda un permiso suelto.
 let navConfirmedAt = 0;
-const NAV_CONFIRM_WINDOW_MS = 30_000;
+const NAV_CONFIRM_WINDOW_MS = 1500;
 
 /**
- * true si no hay cambios sin guardar o si la persona confirma descartarlos. Con `navigating` (quien llama va a
- * navegar por código enseguida), el bloqueo de navegación no vuelve a preguntar.
+ * true si no hay cambios sin guardar o si la persona confirma descartarlos. Si después se navega por código, llamar a
+ * allowNextNavigation() justo antes de navigate() (solo cuando la navegación de verdad ocurre).
  */
-export function confirmDiscardUnsaved(opts: { navigating?: boolean } = {}): boolean {
+export function confirmDiscardUnsaved(): boolean {
   if (unsavedEditors === 0 || typeof window === "undefined") return true;
-  if (!window.confirm(DICTS[activeLocale]["common.unsavedLeave"])) return false;
-  if (opts.navigating) navConfirmedAt = Date.now();
-  return true;
+  return window.confirm(DICTS[activeLocale]["common.unsavedLeave"]);
 }
 
 /** La navegación por código que sigue no pregunta por cambios sin guardar (p. ej. tras borrar lo que se editaba). */

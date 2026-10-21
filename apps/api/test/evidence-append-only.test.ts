@@ -396,6 +396,9 @@ describe("auditoría", () => {
     const rest = await app.inject({ method: "GET", url: `/v1/audit-log.csv?action=bulk.test&beforeId=${next}`, headers });
     expect(rest.statusCode).toBe(200);
     expect(rest.headers["x-truncated"]).toBeUndefined();
+    // Cada parte con su propio nombre de archivo (la primera sin sufijo, la continuación con "-desde-<beforeId>").
+    expect(res.headers["content-disposition"]).toMatch(/filename="auditoria-\d{4}-\d{2}-\d{2}\.csv"/);
+    expect(rest.headers["content-disposition"]).toMatch(new RegExp(`filename="auditoria-\\d{4}-\\d{2}-\\d{2}-desde-${next}\\.csv"`));
     const restLines = rest.body.trim().split("\r\n");
     expect(restLines.length).toBe(2);
     const idOf = (l: string) => Number(l.split(",")[0].replace(/"/g, ""));

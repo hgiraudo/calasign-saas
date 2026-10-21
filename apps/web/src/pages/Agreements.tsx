@@ -472,6 +472,21 @@ function draftToBody(d: MetaDraft, fields: AgreementFieldDef[], valueLabel: stri
     if (base && (base.metadata[f.key] ?? "") === v) continue;
     metadata[f.key] = v === "" ? null : f.type === "number" ? parseAmount(v, f.label) : v;
   }
+  const full = fullBody(d, valueLabel, metadata);
+  if (!base) return full;
+  // Edición: solo los campos que cambiaron respecto de lo cargado. Reenviar todos pisaba lo que otra persona, la API o
+  // un workflow cambió mientras tanto en otro campo (y un valor viejo sin tocar volvía a guardarse).
+  // Los campos del borrador se llaman igual que los del cuerpo: se compara lo escrito con lo cargado.
+  const out: Partial<typeof full> = {};
+  for (const k of Object.keys(full) as (keyof typeof full)[]) {
+    if (k === "metadata") continue;
+    if (JSON.stringify(d[k]) !== JSON.stringify(base[k])) (out as Record<string, unknown>)[k] = full[k];
+  }
+  if (Object.keys(metadata).length) out.metadata = metadata;
+  return out;
+}
+
+function fullBody(d: MetaDraft, valueLabel: string, metadata: Record<string, string | number | null>) {
   return {
     title: d.title.trim(),
     status: d.status,
@@ -840,7 +855,9 @@ export function AgreementDetailPage() {
     }
     setBusy(true);
     try {
-      const x = await api<Agreement>(`/v1/agreements/${id}`, { method: "PATCH", body });
+      // X-Expected-Updated-At: si el acuerdo cambió desde que se cargó (otra pestaña, otra persona, un workflow), 409
+      // version_changed en vez de pisarlo.
+      const x = await api<Agreement>(`/v1/agreements/${id}`, { method: "PATCH", body, headers: a ? { "X-Expected-Updated-At": a.updatedAt } : undefined });
       setA(x);
       setD(draftFrom(x));
       setSaved(true);

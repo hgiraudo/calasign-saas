@@ -163,6 +163,14 @@ export interface PdfEnvelopeSpec {
   templateRoles?: string[];
 }
 
+/**
+ * ¿Alguno de los canales tiene a dónde mandar? email → correo; whatsapp → teléfono. Telegram no cuenta: sin un chat
+ * vinculado, el link de vinculación sale por correo o WhatsApp.
+ */
+export function channelHasAddress(channels: readonly string[], r: { email?: string | null; phone?: string | null }): boolean {
+  return channels.some((c) => (c === "email" && !!r.email) || (c === "whatsapp" && !!r.phone));
+}
+
 /** Crea el sobre a partir de un PDF generado. Debe correr dentro de una transacción. Devuelve el id del sobre. */
 export async function createEnvelopeFromPdf(
   t: Db,
@@ -201,6 +209,12 @@ export async function createEnvelopeFromPdf(
   }
   for (const r of spec.recipients) {
     if (!r.email && !r.phone) throw new AppError(422, "recipient_contact", `${r.name}: falta correo o teléfono`);
+    // Los canales elegidos tienen que tener a dónde mandar: solo WhatsApp con solo correo (o al revés) creaba un sobre
+    // que nunca le avisaba a ese destinatario.
+    const channels = r.channels ?? (r.email ? ["email"] : ["whatsapp"]);
+    if (!channelHasAddress(channels, r)) {
+      throw new AppError(422, "recipient_contact", `${r.name}: ningún canal elegido (${channels.join(", ")}) tiene dirección: falta el correo o el teléfono`);
+    }
   }
 
   // El asunto puede salir de datos interpolados (sin tope, con saltos de línea o vacío): como en los demás caminos.

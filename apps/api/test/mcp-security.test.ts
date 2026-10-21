@@ -212,6 +212,16 @@ describe("herramientas MCP", () => {
     }
     expect((await app.inject({ method: "GET", url: path })).statusCode).toBe(404);
     expect((await app.inject({ method: "HEAD", url: path })).statusCode).toBe(404);
+    // Auditoría: el link creado y una sola descarga registrada por link (la primera), con la credencial que lo pidió.
+    const linkId = (await db.one<any>(`SELECT id FROM download_links WHERE envelope_id = $1`, [env])).id;
+    const created = await db.query<any>(`SELECT * FROM account_audit_log WHERE tenant_id = $1 AND action = 'envelope.download_link_created' AND target_id = $2`, [tenant, env]);
+    expect(created).toHaveLength(1);
+    expect(created[0]).toMatchObject({ actor_type: "api_key", actor_id: adminKeyId });
+    expect(created[0].data).toMatchObject({ linkId, apiKeyId: adminKeyId });
+    const downloaded = await db.query<any>(`SELECT * FROM account_audit_log WHERE tenant_id = $1 AND action = 'envelope.signed_pdf_downloaded' AND target_id = $2`, [tenant, env]);
+    expect(downloaded).toHaveLength(1);
+    expect(downloaded[0]).toMatchObject({ actor_type: "api_key", actor_id: adminKeyId, target_type: "envelope" });
+    expect(downloaded[0].data).toMatchObject({ via: "download_link", linkId, apiKeyId: adminKeyId });
     // Bytes servidos: 3 descargas × 15 + 2 tramos × 4 = 53, más que DOWNLOAD_MAX × tamaño (45): dentro de la ventana,
     // ninguna continuación más (sin esto, "bytes=1-" bajaba el archivo entero una y otra vez).
     const served = (await db.one<any>(`SELECT bytes_served FROM download_links WHERE envelope_id = $1`, [env])).bytes_served;

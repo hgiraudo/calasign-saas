@@ -56,6 +56,30 @@ export function auditFromRequest(db: Db, req: FastifyRequest, a: AuthContext, ac
   });
 }
 
+/**
+ * Valores que cambiaron entre dos instantáneas (solo las claves distintas): { from: {…}, to: {…} }. Para auditar
+ * cambios de configuración con su valor anterior y el nuevo; las instantáneas no llevan secretos (a lo sumo un
+ * booleano "cambió" o una huella).
+ */
+export function changedValues(before: Record<string, unknown>, after: Record<string, unknown>) {
+  const from: Record<string, unknown> = {};
+  const to: Record<string, unknown> = {};
+  for (const k of new Set([...Object.keys(before), ...Object.keys(after)])) {
+    const b = before[k] ?? null;
+    const a = after[k] ?? null;
+    if (JSON.stringify(b) !== JSON.stringify(a)) {
+      from[k] = b;
+      to[k] = a;
+    }
+  }
+  return { from, to, changed: Object.keys(to) };
+}
+
+/** Ruta real del pedido (con los parámetros en lugar de ":id"), para el targetId del registro genérico. */
+export function realPath(pattern: string, params: Record<string, string>) {
+  return pattern.replace(/:(\w+)/g, (m, k: string) => (typeof params[k] === "string" ? params[k] : m));
+}
+
 type Extract = (ctx: { req: FastifyRequest; body: any; params: Record<string, string> }) => Partial<AuditRecord> | null;
 
 /** Acciones de otros módulos, por "MÉTODO ruta". dedupeMinutes: no repetir la misma acción del mismo actor sobre el
@@ -119,6 +143,12 @@ const ROUTE_ACTIONS: Record<string, { action: string; extract?: Extract; dedupeM
     extract: ({ params, req }) => ({ targetType: "web_form", targetId: params.id, data: { fields: Object.keys((req.body as object) ?? {}) } }),
   },
   "DELETE /v1/web-forms/:id": { action: "web_form.deleted", extract: ({ params }) => ({ targetType: "web_form", targetId: params.id }) },
+  // Adjuntos que subieron los firmantes: quién los descargó (como los originales y el PDF firmado).
+  "GET /v1/envelopes/:id/attachments/:fieldId": {
+    action: "envelope.attachment_downloaded",
+    dedupeMinutes: 10,
+    extract: ({ params }) => ({ targetType: "field", targetId: params.fieldId, data: { envelopeId: params.id } }),
+  },
 };
 
 const AUDITED_VALUES = ["retentionDays", "require2fa", "enabled", "autoExtractMetadata", "renewalAlertDays", "monthlyTokenBudget", "frameAncestors"];
@@ -165,7 +195,8 @@ export function registerAuditHooks(app: FastifyInstance, s: Services) {
         if ((req as AuditedRequest).audited) return payload;
         await auditFromRequest(s.db, req, req.auth, "settings.changed", {
           targetType: "settings",
-          targetId: url.replace("/v1/settings/", ""),
+          // La ruta real (p. ej. "scim/tokens/<id>"), no el patrón con ":id".
+          targetId: realPath(url, params).replace("/v1/settings/", ""),
           data: {
             method: req.method,
             fields: req.body && typeof req.body === "object" ? Object.keys(req.body as object) : [],
@@ -220,6 +251,8 @@ interface AuditQuery {
   /** CSV: separador ("," o ";") y zona horaria de la columna occurred_at_local. */
   sep?: string;
   tz?: string;
+  /** CSV: continuar un export truncado a partir de (sin incluir) la fila con este id (el de la última exportada). */
+  beforeId?: string;
 }
 
 /** Fecha del filtro; una inválida es un 400 (no un error interno). */
@@ -309,7 +342,19 @@ export async function auditRoutes(app: FastifyInstance, s: Services) {
   app.get<{ Querystring: AuditQuery }>("/v1/audit-log.csv", { preHandler: auth }, async (req, reply) => {
     const sep = csvSep(req.query.sep);
     const tz = await resolveTimeZone(s.db, req.query.tz);
-    const { params, where } = buildWhere(req.auth!.tenantId, req.query);
+    const { params, where: w0 } = buildWhere(req.auth!.tenantId, req.query);
+    let where = w0;
+    // Continuación de un export truncado: las filas estrictamente anteriores a (occurred_at, id) de esa fila, en el mismo
+    // orden. Con el par (y no solo con "to=<fecha>") no se saltean ni repiten filas con el mismo instante; la fecha se
+    // toma de la base (precisión de microsegundos, que el ISO del CSV no tiene).
+    if (req.query.beforeId !== undefined) {
+      const b = typeof req.query.beforeId === "string" && /^\d{1,18}$/.test(req.query.beforeId) ? Number(req.query.beforeId) : NaN;
+      if (!Number.isSafeInteger(b)) throw badRequest("invalid_query", "'beforeId' tiene que ser el id de una fila del registro");
+      const ref = await s.db.one<any>(`SELECT 1 FROM account_audit_log WHERE id = $1 AND tenant_id = $2`, [b, req.auth!.tenantId]);
+      if (!ref) throw badRequest("invalid_query", "'beforeId' no corresponde a una fila del registro de esta organización");
+      params.push(b);
+      where += ` AND (occurred_at, id) < (SELECT occurred_at, id FROM account_audit_log WHERE id = $${params.length})`;
+    }
     let local = "";
     if (tz) {
       params.push(tz);
@@ -318,7 +363,7 @@ export async function auditRoutes(app: FastifyInstance, s: Services) {
       reply.header("x-time-zone", tz);
     }
     // Una fila de más para saber si se cortó: el corte se avisa (header X-Truncated y fila final), no es silencioso.
-    const all = await s.db.query<any>(`SELECT *${local} FROM account_audit_log WHERE ${where} ORDER BY id DESC LIMIT ${CSV_MAX_ROWS + 1}`, params);
+    const all = await s.db.query<any>(`SELECT *${local} FROM account_audit_log WHERE ${where} ORDER BY occurred_at DESC, id DESC LIMIT ${CSV_MAX_ROWS + 1}`, params);
     const truncated = all.length > CSV_MAX_ROWS;
     const rows = truncated ? all.slice(0, CSV_MAX_ROWS) : all;
     // occurred_at sigue en ISO UTC (compatibilidad); con tz se agrega occurred_at_local al final.
@@ -334,11 +379,11 @@ export async function auditRoutes(app: FastifyInstance, s: Services) {
     if (truncated) {
       const last = rows[rows.length - 1];
       lines.push(
-        ["", "", `TRUNCADO: se exportaron las ${CSV_MAX_ROWS} filas más recientes; hay más. Acotá el rango con from/to (to=${iso(last.occurred_at)}) para el resto.`]
+        ["", "", `TRUNCADO: se exportaron las ${CSV_MAX_ROWS} filas más recientes; hay más. Para el resto, repetí la exportación con los mismos filtros y beforeId=${last.id}.`]
           .map(csvCell)
           .join(sep),
       );
-      reply.header("x-truncated", "true");
+      reply.header("x-truncated", "true").header("x-next-before-id", String(last.id));
     }
     await auditFromRequest(s.db, req, req.auth!, "audit.exported", { data: { rows: rows.length, truncated, filters: req.query } });
     reply

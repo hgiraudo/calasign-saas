@@ -102,9 +102,31 @@ export const SES_IDENTITY_ERROR = "SES rechazó el remitente: el dominio no est�
 export async function noteSesIdentityRejection(db: Db, tenantId: string | null | undefined, domain: string, log?: TrackedSend["log"]) {
   (log?.warn ?? log?.error)?.call(log, { tenantId, domain }, "SES rechazó el dominio de correo propio (identidad sin verificar en SES): se envió desde la dirección de la plataforma");
   if (!tenantId) return;
+  sesErrorClean.delete(`${tenantId}:${domain.toLowerCase()}`);
   await db
     .query(`UPDATE email_domains SET last_error = $3 WHERE tenant_id = $1 AND domain = $2 AND last_error IS DISTINCT FROM $3`, [tenantId, domain, SES_IDENTITY_ERROR])
     .catch((e) => log?.error({ err: scrubPii(String(e)), domain }, "no se pudo anotar el rechazo de SES en el dominio"));
+}
+
+/**
+ * Dominios propios (organización:dominio) que en este proceso ya se sabe que no tienen anotado el rechazo de SES: tras
+ * un envío con DKIM aceptado, el aviso se borra una sola vez por dominio y proceso (no una escritura por correo).
+ */
+const sesErrorClean = new Set<string>();
+
+/** Después de un envío: anota el rechazo de SES del dominio propio, o lo borra si SES ya aceptó un correo firmado con él. */
+export async function noteDkimSendResult(db: Db, tenantId: string | null | undefined, res: SendResult, log?: TrackedSend["log"]) {
+  if (res.identityRejectedDomain) return noteSesIdentityRejection(db, tenantId, res.identityRejectedDomain, log);
+  if (!res.dkimDomain || !tenantId) return;
+  const key = `${tenantId}:${res.dkimDomain.toLowerCase()}`;
+  if (sesErrorClean.has(key)) return;
+  await db.query(`UPDATE email_domains SET last_error = NULL WHERE tenant_id = $1 AND domain = $2 AND last_error = $3`, [tenantId, res.dkimDomain, SES_IDENTITY_ERROR]).then(
+    () => {
+      if (sesErrorClean.size > 10_000) sesErrorClean.clear();
+      sesErrorClean.add(key);
+    },
+    (e) => log?.error({ err: scrubPii(String(e)), domain: res.dkimDomain }, "no se pudo borrar el rechazo de SES del dominio"),
+  );
 }
 
 /**
@@ -177,6 +199,6 @@ export async function sendTracked(db: Db, t: TrackedSend, m: OutboundMessage & {
     return { status: "failed", error, transient: isTransientSendError(err) };
   }
   if (queued) await finish("sent", { provider: res.provider, messageId: res.messageId });
-  if (res.identityRejectedDomain) await noteSesIdentityRejection(db, t.tenantId, res.identityRejectedDomain, t.log);
+  await noteDkimSendResult(db, t.tenantId, res, t.log);
   return { status: "sent", res, id };
 }

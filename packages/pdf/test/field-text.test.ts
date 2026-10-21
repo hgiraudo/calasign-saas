@@ -1,6 +1,6 @@
 import { PDFDocument } from "pdf-lib";
 import { describe, expect, it } from "vitest";
-import { layoutFieldText } from "../src";
+import { fieldTextInternals, layoutFieldText } from "../src";
 import { embedFonts, fitFontSize, wrapText } from "../src/layout";
 
 async function font() {
@@ -84,7 +84,7 @@ describe("layoutFieldText (texto estampado en la caja del campo, sin perder cara
     for (const l of fit.lines) expect(l.includes(" ")).toBe(false);
   });
 
-  it("valor de 2000 caracteres: rápido (búsqueda binaria del tamaño)", async () => {
+  it("valor de 2000 caracteres: rápido (anchos medidos una vez, partido cortado apenas sobran líneas)", async () => {
     const f = await font();
     const base = "Buenos Aires Departamento Responsable de Administración $ 1.234,00 東京都渋谷区 ";
     let text = "";
@@ -145,6 +145,88 @@ describe("layoutFieldText (texto estampado en la caja del campo, sin perder cara
     expect(strip(tight.lines.join(""))).toBe(strip(text));
     for (const l of tight.lines) expect(f.widthOfTextAtSize(l, tight.size)).toBeLessThanOrEqual(58 + 1e-6);
     expect(tight.lines.length * tight.size * 1.15).toBeLessThanOrEqual(30);
+  });
+});
+
+describe("layoutFieldText: el tamaño elegido es el de un recorrido exhaustivo de arriba hacia abajo", () => {
+  const { wrapUnits, wrapFieldUnits, widthAt1, FIELD_LINE_HEIGHT: LH, FIELD_MIN_WRAP_SIZE, FIELD_MIN_PAGE_SIZE } = fieldTextInternals;
+  type F = Awaited<ReturnType<typeof font>>;
+
+  /** Referencia: cada tamaño de 0,25 en 0,25 desde arriba, el primero que sirve (sin búsquedas ni atajos). */
+  function bruteForce(f: F, text: string, bw: number, bh: number, room: { below?: number; right?: number } = {}) {
+    const width = widthAt1(f);
+    const maxSize = Math.min(bh * 0.7, 11);
+    const minSize = Math.min(FIELD_MIN_WRAP_SIZE, maxSize);
+    const units = wrapUnits(text);
+    const wrapW = Math.max(1, Math.min(bw, room.right ?? Infinity) - 2);
+    const fits = (n: number, s: number, h: number) => n * s * LH <= h + 1e-6;
+    const sizes: number[] = [];
+    for (let s = maxSize; s > minSize; s -= 0.25) sizes.push(s);
+    sizes.push(minSize);
+    for (const [sw, nw] of [[false, true], [false, false], [true, true], [true, false]] as const) {
+      for (const s of sizes) {
+        const w = wrapFieldUnits(units, width, s, wrapW, sw);
+        if ((!nw || !w.numberSplit) && !w.wordSplit && !w.tooWide && fits(w.lines.length, s, bh)) return { size: s, lines: w.lines };
+      }
+    }
+    const availH = Math.max(1, room.below ?? Infinity);
+    const small: number[] = [];
+    for (let s = minSize; ; s -= 0.25) {
+      small.push(s);
+      if (s - 0.25 < FIELD_MIN_PAGE_SIZE) break;
+    }
+    const below = (sw: boolean) => {
+      for (const s of small) {
+        const w = wrapFieldUnits(units, width, s, wrapW, sw);
+        if (!w.wordSplit && !w.tooWide && fits(w.lines.length, s, availH)) return { size: s, lines: w.lines };
+      }
+      return null;
+    };
+    const whole = below(false);
+    const split = below(true);
+    const best = whole && (!split || whole.size >= split.size) ? whole : split;
+    if (best) return best;
+    const last = small[small.length - 1]!;
+    return { size: last, lines: wrapFieldUnits(units, width, last, wrapW, true).lines };
+  }
+
+  it.each([
+    ["5555 a Aires 1.234,00 5555 11 1 +54 Ana", 55.2, 10.14, 4.35],
+    ["a +54 4444 Ana 1.234,00 2 1 5555", 34.8, 32, 6.75],
+  ])("%s en %d×%d: no se queda con un tamaño más chico ni se sale de la caja", async (text, bw, bh, approx) => {
+    const f = await font();
+    const fit = layoutFieldText(f, text, bw, bh);
+    expect(fit.overflows).toBe(false);
+    expect(fit.size).toBeCloseTo(approx, 1);
+    expect(fit).toMatchObject(bruteForce(f, text, bw, bh));
+  });
+
+  it("2000 casos al azar (semilla fija): igual al recorrido exhaustivo", async () => {
+    const f = await font();
+    let seed = 0x5eed1234;
+    const rnd = () => {
+      // mulberry32
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    const vocab = ["a", "de", "Ana", "Buenos", "Aires", "x", "1", "2", "$", "1.234,00", "+54", "11", "4444", "5555", "%", "12", "Mm", "Wwww", "iii", "firmante", "東京都渋谷区", "correo@ejemplo.com.ar"];
+    for (let i = 0; i < 2000; i++) {
+      const n = 1 + Math.floor(rnd() * 12);
+      const text = Array.from({ length: n }, () => vocab[Math.floor(rnd() * vocab.length)]).join(" ");
+      const bw = 8 + rnd() * 100;
+      const bh = 4 + rnd() * 45;
+      const room = rnd() < 0.5 ? {} : { below: 5 + rnd() * 100, right: bw * (0.5 + rnd()) };
+      const fit = layoutFieldText(f, text, bw, bh, room);
+      const ctx = JSON.stringify({ text, bw, bh, room });
+      const ref = bruteForce(f, text, bw, bh, room);
+      if (fit.size === ref.size && JSON.stringify(fit.lines) === JSON.stringify(ref.lines)) continue;
+      // Si no, sólo puede ser el paso 1 (una línea al tamaño de siempre, ≥ 6 pt), que va antes del partido.
+      expect(fit, ctx).toMatchObject({ lines: [text], wrapped: false, overflows: false });
+      expect(fit.size, ctx).toBeGreaterThanOrEqual(6);
+      expect(f.widthOfTextAtSize(text, fit.size), ctx).toBeLessThanOrEqual(bw - 2 + 1e-6);
+    }
   });
 });
 

@@ -44,6 +44,8 @@ export interface SendResult {
   messageId: string | null;
   /** El dominio propio fue rechazado por SES (identidad sin verificar) y el correo salió desde la plataforma. */
   identityRejectedDomain?: string | null;
+  /** El correo salió firmado con DKIM desde el dominio propio (SES lo aceptó). */
+  dkimDomain?: string | null;
 }
 
 const mailboxDir = resolve(config.dataDir, "mailbox");
@@ -173,6 +175,24 @@ function platformFallbackFrom(m: OutboundMessage): string {
   return name ? `"${name.replace(/["\\\r\n]/g, "")}" <${addressOf(config.mail.from)}>` : config.mail.from;
 }
 
+/** Después de que SES rechaza un dominio propio, durante este tiempo los correos de ese dominio salen directamente desde
+ *  la plataforma (sin un intento que se sabe que va a fallar en cada correo). En memoria, por proceso. */
+const SES_IDENTITY_BACKOFF_MS = 15 * 60_000;
+const sesIdentityBackoff = new Map<string, number>();
+
+function inSesIdentityBackoff(domain: string): boolean {
+  const until = sesIdentityBackoff.get(domain.toLowerCase());
+  if (until === undefined) return false;
+  if (until > Date.now()) return true;
+  sesIdentityBackoff.delete(domain.toLowerCase());
+  return false;
+}
+
+/** Sólo para las pruebas. */
+export function resetSesIdentityBackoffForTests() {
+  sesIdentityBackoff.clear();
+}
+
 export async function sendEmail(m: OutboundMessage): Promise<SendResult> {
   transporter ??= nodemailer.createTransport(new SMTPTransport({ ...SMTP_TIMEOUTS, url: config.mail.smtpUrl! }));
   const send = (msg: OutboundMessage) =>
@@ -190,16 +210,25 @@ export async function sendEmail(m: OutboundMessage): Promise<SendResult> {
       // Rebotes y quejas por SNS (docs/CORREO-REBOTES.md).
       ...(isSesSmtp() ? { headers: sesHeaders(config.mail.sesConfigurationSet, msg.tenantId) } : {}),
     });
+  const viaPlatform = (msg: OutboundMessage) => send({ ...msg, from: platformFallbackFrom(msg), dkim: null, replyTo: msg.replyTo ?? (msg.from ? addressOf(msg.from) : null) });
   let info: SMTPSentMessageInfo;
   let identityRejectedDomain: string | null = null;
-  try {
-    info = await send(m);
-  } catch (err) {
-    // Dominio propio verificado por DNS (DKIM) pero no como identidad en SES: SES lo rechaza siempre (554). Se reintenta
-    // una vez desde la dirección de la plataforma con el nombre de la marca, y quien llama marca el dominio.
-    if (!m.dkim || !isSesIdentityRejection(err)) throw err;
-    identityRejectedDomain = m.dkim.domainName;
-    info = await send({ ...m, from: platformFallbackFrom(m), dkim: null, replyTo: m.replyTo ?? (m.from ? addressOf(m.from) : null) });
+  let dkimDomain: string | null = null;
+  if (m.dkim && inSesIdentityBackoff(m.dkim.domainName)) {
+    // SES rechazó este dominio hace poco (ya quedó anotado): directo desde la plataforma, sin otro intento fallido.
+    info = await viaPlatform(m);
+  } else {
+    try {
+      info = await send(m);
+      dkimDomain = m.dkim?.domainName ?? null;
+    } catch (err) {
+      // Dominio propio verificado por DNS (DKIM) pero no como identidad en SES: SES lo rechaza siempre (554). Se reintenta
+      // una vez desde la dirección de la plataforma con el nombre de la marca, y quien llama marca el dominio.
+      if (!m.dkim || !isSesIdentityRejection(err)) throw err;
+      identityRejectedDomain = m.dkim.domainName;
+      sesIdentityBackoff.set(identityRejectedDomain.toLowerCase(), Date.now() + SES_IDENTITY_BACKOFF_MS);
+      info = await viaPlatform(m);
+    }
   }
   // SES por SMTP responde "250 Ok <id de SES>": ese id (no el Message-ID del encabezado) es el que traen los avisos de
   // rebote y queja (mail.messageId) para asociarlos al envío.
@@ -207,6 +236,7 @@ export async function sendEmail(m: OutboundMessage): Promise<SendResult> {
     provider: "smtp",
     messageId: sesMessageId(info.response) ?? info.messageId ?? null,
     ...(identityRejectedDomain ? { identityRejectedDomain } : {}),
+    ...(dkimDomain ? { dkimDomain } : {}),
   };
 }
 
@@ -249,12 +279,15 @@ function addressOf(from: string): string {
 const WA_LANG: Record<string, string> = { es: "es", "pt-BR": "pt_BR", en: "en" };
 
 /**
- * Idioma de la plantilla para Meta: el del destinatario si está aprobado (WHATSAPP_TEMPLATE_LANGS); si no, español.
- * Pedir un idioma sin aprobar hace que Meta rechace el mensaje (132001).
+ * Idioma de la plantilla para Meta: el del destinatario si está aprobado (WHATSAPP_TEMPLATE_LANGS); si no, español; si
+ * el español tampoco está aprobado, el primero de la lista. Pedir un idioma sin aprobar hace que Meta rechace el mensaje
+ * (132001).
  */
 export function whatsAppLanguage(locale: string | undefined, approved: string[] = config.whatsapp.templateLangs): string {
+  const langs = approved.map((x) => x.trim().replace(/-/g, "_")).filter(Boolean);
   const code = WA_LANG[locale ?? "es"] ?? "es";
-  return approved.includes(code) ? code : "es";
+  if (langs.includes(code)) return code;
+  return langs.includes("es") || !langs.length ? "es" : langs[0]!;
 }
 
 /** Cuerpo del POST a la Cloud API de WhatsApp (separado para poder probarlo). */

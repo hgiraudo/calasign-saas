@@ -389,5 +389,22 @@ describe("auditoría", () => {
     const lines = res.body.trim().split("\r\n");
     expect(lines.length).toBe(50002);
     expect(lines[lines.length - 1]).toMatch(/TRUNCADO/);
+    // Las 50001 filas tienen el mismo occurred_at: continuar con beforeId trae exactamente la que faltó (con "to=<fecha>"
+    // se repetían todas o se perdía esa).
+    const next = res.headers["x-next-before-id"];
+    expect(lines[lines.length - 1]).toContain(`beforeId=${next}`);
+    const rest = await app.inject({ method: "GET", url: `/v1/audit-log.csv?action=bulk.test&beforeId=${next}`, headers });
+    expect(rest.statusCode).toBe(200);
+    expect(rest.headers["x-truncated"]).toBeUndefined();
+    const restLines = rest.body.trim().split("\r\n");
+    expect(restLines.length).toBe(2);
+    const idOf = (l: string) => Number(l.split(",")[0].replace(/"/g, ""));
+    const ids = new Set([...lines.slice(1, -1), ...restLines.slice(1)].map(idOf));
+    expect(ids.size).toBe(50001);
+    const all = await db.query<any>(`SELECT id FROM account_audit_log WHERE tenant_id = $1 AND action = 'bulk.test'`, [tenant]);
+    expect(all.every((r) => ids.has(Number(r.id)))).toBe(true);
+    // beforeId inválido o de otra organización: 400.
+    expect((await app.inject({ method: "GET", url: `/v1/audit-log.csv?beforeId=abc`, headers })).statusCode).toBe(400);
+    expect((await app.inject({ method: "GET", url: `/v1/audit-log.csv?beforeId=999999999`, headers })).statusCode).toBe(400);
   }, 60_000);
 });

@@ -9,7 +9,7 @@ import { config } from "../../config";
 import type { Db } from "../../infra/db";
 import { AppError, badRequest, conflict, forbidden } from "../../lib/errors";
 import { decrypt, encrypt, randomToken, sha256Hex, uuidv7 } from "../../lib/util";
-import { recordAudit } from "../audit";
+import { auditFromRequest, changedValues, recordAudit } from "../audit";
 import { authenticate, clientInfo, setSessionCookie, type AuthContext, type Services } from "../context";
 import { syncSsoDomains } from "../data/sso-domains";
 import { safeRequest } from "../webhooks";
@@ -87,6 +87,33 @@ function certFingerprint(pem: string | null): string | null {
   } catch {
     return null;
   }
+}
+
+/** Configuración SSO auditable (sin secretos: el client secret queda fuera; del certificado, solo la huella). */
+async function ssoAuditSnapshot(db: Db, tenantId: string) {
+  const c = await loadConfig(db, tenantId);
+  const domains = (await db.query<{ domain: string }>(`SELECT domain FROM sso_domains WHERE tenant_id = $1 ORDER BY domain`, [tenantId])).map((d) => d.domain);
+  return {
+    values: {
+      enabled: Boolean(c?.enabled),
+      protocol: c?.protocol ?? null,
+      issuer: c?.oidc_issuer ?? null,
+      clientId: c?.oidc_client_id ?? null,
+      scopes: c?.oidc_scopes ?? null,
+      trustUnverifiedEmail: c ? Boolean(c.oidc_trust_unverified_email) : null,
+      entryPoint: c?.saml_entry_point ?? null,
+      idpIssuer: c?.saml_idp_issuer ?? null,
+      // Del certificado del IdP, solo la huella SHA-256.
+      certFingerprint: certFingerprint(c?.saml_idp_cert ?? null),
+      emailAttribute: c?.saml_email_attribute ?? null,
+      enforce: Boolean(c?.enforce),
+      jitEnabled: c ? Boolean(c.jit_enabled) : null,
+      jitRole: c?.jit_role ?? null,
+      domains,
+      sessionTtlHours: c ? ssoSessionTtlHours(c) : null,
+    } as Record<string, unknown>,
+    secretEnc: (c?.oidc_client_secret_enc as string | null | undefined) ?? null,
+  };
 }
 
 async function toSettings(db: Db, tenantId: string): Promise<SsoSettings> {
@@ -553,6 +580,7 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
 
     const oidcIssuerChanged = (input.oidc?.issuer ?? cur?.oidc_issuer ?? null) !== (cur?.oidc_issuer ?? null);
     await s.db.tx(async (t) => {
+      const before = await ssoAuditSnapshot(t, a.tenantId);
       // Conserva la verificación DNS de los dominios que siguen (ver modules/data/sso-domains.ts).
       await syncSsoDomains(t, a.tenantId, input.domains ?? []);
       await t.query(
@@ -620,6 +648,16 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
           [a.tenantId],
         );
       }
+      // Auditoría con los valores anterior y nuevo de lo que cambió (no solo los nombres de los campos): quién cambió de
+      // IdP, aflojó la exigencia de SSO o el rol del alta JIT. Secretos nunca: del client secret, solo si cambió.
+      const after = await ssoAuditSnapshot(t, a.tenantId);
+      const diff = changedValues(before.values, after.values);
+      const secretChanged = before.secretEnc !== after.secretEnc;
+      await auditFromRequest(t, req, a, "settings.sso_updated", {
+        targetType: "settings",
+        targetId: "sso",
+        data: { changed: diff.changed, from: diff.from, to: diff.to, secretChanged },
+      });
     });
     return toSettings(s.db, a.tenantId);
   });

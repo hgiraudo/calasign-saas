@@ -227,12 +227,14 @@ export const config = {
      */
     otpTemplateKind: (env.WHATSAPP_OTP_TEMPLATE_KIND === "utility" ? "utility" : "authentication") as "authentication" | "utility",
     /**
-     * Idiomas aprobados en Meta para las plantillas (códigos de Meta: es, en, pt_BR). Un destinatario en otro idioma
-     * recibe la versión en español (pedir un idioma no aprobado hace que Meta rechace el mensaje).
+     * Idiomas aprobados en Meta para las plantillas (códigos de Meta: es, en, pt_BR; "pt-BR" se acepta como pt_BR).
+     * Por defecto los tres (como antes de existir la variable). Un destinatario en otro idioma recibe la versión en
+     * español, o el primero de la lista si el español no está (pedir un idioma no aprobado hace que Meta rechace el
+     * mensaje).
      */
-    templateLangs: (env.WHATSAPP_TEMPLATE_LANGS ?? "es")
+    templateLangs: (env.WHATSAPP_TEMPLATE_LANGS ?? "es,en,pt_BR")
       .split(",")
-      .map((x) => x.trim())
+      .map((x) => x.trim().replace(/-/g, "_"))
       .filter(Boolean),
     /**
      * Plantillas aprobadas para los otros avisos ({{1}} remitente, {{2}} asunto, {{3}} link o vacío). Sin ellas esos

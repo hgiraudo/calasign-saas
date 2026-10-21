@@ -21,7 +21,7 @@ import { AppError, badRequest, notFound } from "../lib/errors";
 import { createHash } from "node:crypto";
 import { decrypt, encrypt, iso, randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { hasPerm } from "./access";
-import { auditFromRequest } from "./audit";
+import { auditFromRequest, changedValues } from "./audit";
 import { authenticate, type Services } from "./context";
 import { assertPublicDestination, safeHttpAgent, safeHttpsAgent } from "./webhooks";
 import { evidenceCertificate, legacySafeBaseName, safeBaseName } from "./connectors/evidence-file";
@@ -976,7 +976,20 @@ export async function storageRoutes(app: FastifyInstance, s: Services) {
       `UPDATE storage_connections SET name = COALESCE($2, name), active = COALESCE($3, active), config = config || $4::jsonb, updated_at = now() WHERE id = $1`,
       [r.id, input.name ?? null, input.active ?? null, JSON.stringify(cfgPatch)],
     );
-    return toApi(await load(a.tenantId, r.id));
+    const updated = await load(a.tenantId, r.id);
+    // Pausar una conexión, cambiar la carpeta/prefijo de destino o dejar de exportar la evidencia cambia a dónde van (o si
+    // van) los documentos firmados: queda en la auditoría con el valor anterior y el nuevo.
+    const view = (x: any) => {
+      const cfg = (typeof x.config === "string" ? JSON.parse(x.config) : x.config) ?? {};
+      return { name: x.name, active: Boolean(x.active), folder: cfg.folder ?? null, prefix: cfg.prefix ?? null, includeEvidence: Boolean(cfg.includeEvidence) };
+    };
+    const diff = changedValues(view(r), view(updated));
+    await auditFromRequest(s.db, req, a, "storage.updated", {
+      targetType: "storage_connection",
+      targetId: r.id,
+      data: { provider: r.provider, changed: diff.changed, from: diff.from, to: diff.to },
+    });
+    return toApi(updated);
   });
 
   app.delete<{ Params: { id: string } }>("/v1/storage/connections/:id", { preHandler: auth }, async (req, reply) => {

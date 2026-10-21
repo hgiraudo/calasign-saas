@@ -626,11 +626,13 @@ export function layoutFieldText(font: PDFFont, text: string, bw: number, bh: num
   // 2a) Palabras enteras (CJK/tailandés, que no usan espacios, sí se parten por carácter a cualquier tamaño): el mayor
   //     tamaño entre el máximo y 4 pt; primero con los grupos numéricos ("$ 1.234,00") enteros, después en sus partes.
   // 2b) Sólo si a ningún tamaño ≥ 4 pt entran las palabras enteras, se parten por grafema, igual que antes.
-  // La factibilidad es monótona en el tamaño (todo ancho escala con él), así que se busca en binario.
+  // Entrar NO es monótono en el tamaño (un grupo numérico que a un tamaño entra entero en una línea, a uno menor puede
+  // pegarse a la palabra anterior y desplazar el resto), así que se recorren todos los tamaños de arriba hacia abajo.
+  // Los anchos se miden una vez a 1 pt (widthAt1) y el partido corta apenas sobran líneas: cada intento es aritmética.
   for (const [splitWords, numbersWhole] of [[false, true], [false, false], [true, true], [true, false]] as const) {
     const hit = largestFit(sizes, (s) => {
-      const w = wrapFieldUnits(units, width, s, wrapW, splitWords);
-      return (!numbersWhole || !w.numberSplit) && !w.wordSplit && !w.tooWide && fitsBox(w.lines.length, s, bh) ? w : null;
+      const w = wrapFieldUnits(units, width, s, wrapW, splitWords, maxLinesIn(s, bh));
+      return (!numbersWhole || !w.numberSplit) && !w.wordSplit && !w.tooWide && !w.tooTall && fitsBox(w.lines.length, s, bh) ? w : null;
     });
     if (hit) return result(hit.size, hit.value.lines);
   }
@@ -643,8 +645,8 @@ export function layoutFieldText(font: PDFFont, text: string, bw: number, bh: num
   }
   const below = (splitWords: boolean) =>
     largestFit(small, (s) => {
-      const w = wrapFieldUnits(units, width, s, wrapW, splitWords);
-      return !w.wordSplit && !w.tooWide && fitsBox(w.lines.length, s, availH) ? w : null;
+      const w = wrapFieldUnits(units, width, s, wrapW, splitWords, maxLinesIn(s, availH));
+      return !w.wordSplit && !w.tooWide && !w.tooTall && fitsBox(w.lines.length, s, availH) ? w : null;
     });
   const whole = below(false);
   const split = below(true);
@@ -654,21 +656,20 @@ export function layoutFieldText(font: PDFFont, text: string, bw: number, bh: num
   return result(last, wrapFieldUnits(units, width, last, wrapW, true).lines);
 }
 
-/** El primer tamaño de `sizes` (de mayor a menor) con el que `test` da un resultado, suponiendo que si un tamaño sirve
- *  también sirven todos los menores (búsqueda binaria: unas pocas pasadas en vez de una por cada 0,25 pt). */
+/** El primer tamaño de `sizes` (de mayor a menor) con el que `test` da un resultado. Recorre todos en orden: que un
+ *  tamaño sirva no implica que sirvan los menores (el partido no es monótono), así que no se puede buscar en binario. */
 function largestFit<T>(sizes: number[], test: (s: number) => T | null): { size: number; value: T } | null {
-  let lo = 0;
-  let hi = sizes.length - 1;
-  let found: { size: number; value: T } | null = null;
-  while (lo <= hi) {
-    const mid = (lo + hi) >> 1;
-    const v = test(sizes[mid]!);
-    if (v) {
-      found = { size: sizes[mid]!, value: v };
-      hi = mid - 1;
-    } else lo = mid + 1;
+  for (const size of sizes) {
+    const value = test(size);
+    if (value) return { size, value };
   }
-  return found;
+  return null;
+}
+
+/** Cuántas líneas de tamaño `s` entran en el alto `h` (para cortar el partido apenas sobran). */
+function maxLinesIn(s: number, h: number): number {
+  // +1 de margen por redondeo: el corte es sólo un atajo; lo que decide si entra es fitsBox.
+  return Number.isFinite(h) ? Math.floor((h + 1e-6) / (s * FIELD_LINE_HEIGHT)) + 1 : Infinity;
 }
 
 /** Ancho a 1 pt, con caché (el ancho es proporcional al tamaño; sumar anchos de partes nunca da menos que el real). */
@@ -726,7 +727,8 @@ function wrapFieldUnits(
   size: number,
   maxW: number,
   splitWords: boolean,
-): { lines: string[]; tooWide: boolean; numberSplit: boolean; wordSplit: boolean } {
+  maxLines = Infinity,
+): { lines: string[]; tooWide: boolean; numberSplit: boolean; wordSplit: boolean; tooTall: boolean } {
   const lines: string[] = [];
   const sp = width(" ") * size;
   let line = "";
@@ -749,6 +751,8 @@ function wrapFieldUnits(
     return false;
   };
   for (const u of units) {
+    // Ya sobran líneas: el resultado no sirve, no hace falta terminar de partir (un valor largo a tamaño grande).
+    if (lines.length > maxLines) return { lines, tooWide, numberSplit, wordSplit, tooTall: true };
     if (add(u, width(u) * size)) continue;
     if (!/\p{L}/u.test(u)) numberSplit = true;
     for (const tok of u.split(" ")) {
@@ -758,7 +762,7 @@ function wrapFieldUnits(
         if (!/\p{L}/u.test(tok)) numberSplit = true;
         if (!splitWords) {
           wordSplit = true;
-          return { lines, tooWide, numberSplit, wordSplit };
+          return { lines, tooWide, numberSplit, wordSplit, tooTall: false };
         }
       }
       if (line) lines.push(line);
@@ -784,8 +788,11 @@ function wrapFieldUnits(
     }
   }
   if (line) lines.push(line);
-  return { lines, tooWide, numberSplit, wordSplit };
+  return { lines, tooWide, numberSplit, wordSplit, tooTall: lines.length > maxLines };
 }
+
+/** @internal Sólo para las pruebas (comparar el tamaño elegido contra un recorrido exhaustivo). */
+export const fieldTextInternals = { wrapUnits, wrapFieldUnits, widthAt1, FIELD_LINE_HEIGHT, FIELD_MIN_WRAP_SIZE, FIELD_MIN_PAGE_SIZE };
 
 function drawPageFooter(page: PDFPage, fonts: Fonts, L: CertLabels, envelopeId: string) {
   withDisplayedSpace(page, (_W, H) => {

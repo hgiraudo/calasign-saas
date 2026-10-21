@@ -15,7 +15,8 @@ import { config } from "../../config";
 import { AppError, notFound } from "../../lib/errors";
 import { bearerToken, canonicalJson, hmacEqual, hmacSign, randomToken, sha256Hex, uuidv7 } from "../../lib/util";
 import { forgetCredential, rememberAuthenticatedCredential } from "../../lib/ip";
-import type { Services } from "../context";
+import { clientInfo, type Services } from "../context";
+import { recordAudit, type AuditRecord } from "../audit";
 import { sendPdf } from "../envelopes";
 import { assertUserTokenAllowed, isOAuthAccessToken, resolveAccessToken } from "../oauth-tokens";
 import { envelopesSentThisMonth, tenantPlan } from "../billing/plans";
@@ -646,14 +647,23 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
         // Versión vigente leída en la misma sentencia que crea el link: si una renovación del sello de archivo se
         // confirmaba entre la lectura y el INSERT, el link apuntaba a la versión anterior (con el hash de la nueva).
         // Con la credencial que lo pidió: al descargar se revalida que siga vigente (revocar al agente corta sus links).
-        const link = await s.db.one<{ sha256: string }>(
+        const link = await s.db.one<{ id: string; sha256: string }>(
           `INSERT INTO download_links (id, token_hash, tenant_id, envelope_id, file_id, created_by_label, expires_at, api_key_id, oauth_token_id)
            SELECT $1, $2, $3, e.id, e.signed_file_id, $5, $6, $7, $8 FROM envelopes e
             WHERE e.id = $4 AND e.tenant_id = $3 AND e.status = 'completed' AND e.signed_file_id IS NOT NULL
-           RETURNING (SELECT sha256 FROM files WHERE id = download_links.file_id) AS sha256`,
+           RETURNING id, (SELECT sha256 FROM files WHERE id = download_links.file_id) AS sha256`,
           [uuidv7(), sha256Hex(token), c.tenantId, a.envelopeId, `agente IA (${c.name})`, expiresAt.toISOString(), c.apiKeyId, c.oauthTokenId],
         );
         if (!link) return fail("El sobre no tiene PDF firmado.");
+        await recordAudit(s.db, {
+          tenantId: c.tenantId,
+          action: "envelope.download_link_created",
+          actor: await linkActor(s.db, c.apiKeyId, c.oauthTokenId, `agente IA (${c.name})`),
+          targetType: "envelope",
+          targetId: a.envelopeId,
+          data: { via: "mcp", linkId: link.id, expiresAt: expiresAt.toISOString(), maxDownloads: DOWNLOAD_MAX, apiKeyId: c.apiKeyId, oauthTokenId: c.oauthTokenId },
+          ip: c.ip ?? null,
+        }).catch(() => {});
         return { url: `${config.appUrl}/v1/downloads/${token}`, expiresAt: expiresAt.toISOString(), maxDownloads: DOWNLOAD_MAX, sha256: link.sha256 };
       }),
     );
@@ -971,6 +981,24 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
                    AND (fam.user_id IS NULL OR EXISTS (SELECT 1 FROM memberships m WHERE m.user_id = fam.user_id AND m.tenant_id = l.tenant_id))))`;
   const tokenOk = (t: string) => /^[A-Za-z0-9_-]{30,100}$/.test(t);
 
+  // Primera descarga de un link (una vez por link: las demás descargas y las continuaciones por partes no repiten el
+  // registro): quién se llevó el PDF firmado por un link de agente queda en la auditoría, como la descarga directa.
+  async function auditFirstDownload(req: FastifyRequest, l: any) {
+    try {
+      await recordAudit(s.db, {
+        tenantId: l.tenant_id,
+        action: "envelope.signed_pdf_downloaded",
+        actor: await linkActor(s.db, l.api_key_id, l.oauth_token_id, l.created_by_label),
+        targetType: "envelope",
+        targetId: l.envelope_id,
+        data: { via: "download_link", linkId: l.id, apiKeyId: l.api_key_id ?? null, oauthTokenId: l.oauth_token_id ?? null },
+        ...clientInfo(req),
+      });
+    } catch (err) {
+      req.log.error({ err }, "no se pudo registrar la auditoría de la descarga");
+    }
+  }
+
   // HEAD propio (sin el HEAD automático de Fastify, que ejecutaba el GET): las vistas previas de links de los chats y
   // los gestores de descargas preguntan antes de bajar, y cada HEAD gastaba una de las DOWNLOAD_MAX descargas.
   app.head<{ Params: { token: string } }>("/v1/downloads/:token", { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (req, reply) => {
@@ -1019,10 +1047,11 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
             `UPDATE download_links l SET downloads = l.downloads + 1, last_download_at = now(), bytes_served = l.bytes_served + ${LEN}
                FROM files f, envelopes e
               WHERE ${LINK_VALID} AND l.downloads < $2
-             RETURNING l.id, f.storage_key, e.subject`,
+             RETURNING l.id, l.downloads, l.tenant_id, l.envelope_id, l.api_key_id, l.oauth_token_id, l.created_by_label, f.storage_key, e.subject`,
             [hash, DOWNLOAD_MAX, start, endReq],
           );
       if (!l) throw notFound("Link");
+      if (!continuation && Number(l.downloads) === 1) await auditFirstDownload(req, l);
       const bytes = await s.blobs.get(l.storage_key);
       reply.header("accept-ranges", "bytes");
       if (!m) return sendPdf(reply, bytes, l.subject);
@@ -1034,4 +1063,18 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
       return sendPdf(reply, Buffer.from(bytes).subarray(start, end + 1), l.subject);
     },
   );
+}
+
+/**
+ * Actor de auditoría de una credencial de agente (la que pidió el link): la API key, o la persona (o la key de servicio)
+ * del token OAuth.
+ */
+async function linkActor(db: Services["db"], apiKeyId: string | null, oauthTokenId: string | null, label: string | null): Promise<AuditRecord["actor"]> {
+  if (apiKeyId) return { type: "api_key", id: apiKeyId, label };
+  if (oauthTokenId) {
+    const o = await db.one<any>(`SELECT user_id, service_api_key_id FROM oauth_tokens WHERE id = $1`, [oauthTokenId]);
+    if (o?.user_id) return { type: "user", id: o.user_id, label };
+    if (o?.service_api_key_id) return { type: "api_key", id: o.service_api_key_id, label };
+  }
+  return { type: "system", label };
 }

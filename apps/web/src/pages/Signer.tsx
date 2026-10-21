@@ -566,7 +566,7 @@ function stampLegible(text: string, boxW: number, boxH: number): boolean {
     else units.push(tok);
     prevNoLetters = noLetters;
   }
-  const lineCount = (size: number, splitWords: boolean, numbersWhole: boolean): number | null => {
+  const lineCount = (size: number, splitWords: boolean, numbersWhole: boolean, maxLines: number): number | null => {
     const sp = w1(" ") * size;
     let lines = 0;
     let lineW = -1; // -1: línea vacía
@@ -579,6 +579,7 @@ function stampLegible(text: string, boxW: number, boxH: number): boolean {
       return true;
     };
     for (const u of units) {
+      if (lines > maxLines) return lines; // ya no entra: no hace falta terminar
       if (add(w1(u) * size)) continue;
       if (numbersWhole && !/\p{L}/u.test(u)) return null;
       for (const tok of u.split(" ")) {
@@ -601,25 +602,18 @@ function stampLegible(text: string, boxW: number, boxH: number): boolean {
   };
   // El tamaño que elegiría el PDF: el mayor que entra en el alto con las palabras enteras; si no hay, partiéndolas.
   // Se avisa si ese tamaño no es legible (o si no entra en la caja ni a 4 pt).
-  // Entrar es monótono en el tamaño: búsqueda binaria del mayor que entra.
+  // Entrar NO es monótono en el tamaño (un grupo numérico que entra entero a un tamaño puede no entrar a uno menor):
+  // se recorren todos los tamaños de arriba hacia abajo, como el PDF. Cada intento es aritmética (anchos en caché) y
+  // corta apenas sobran líneas.
   const minSize = Math.min(STAMP_MIN_WRAP_SIZE, maxSize);
   const sizes: number[] = [];
   for (let s = maxSize; s > minSize; s -= 0.25) sizes.push(s);
   sizes.push(minSize);
   for (const [splitWords, numbersWhole] of [[false, true], [false, false], [true, true], [true, false]] as const) {
-    let lo = 0;
-    let hi = sizes.length - 1;
-    let best = -1;
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1;
-      const s = sizes[mid]!;
-      const n = lineCount(s, splitWords, numbersWhole);
-      if (n !== null && n * s * STAMP_LINE_HEIGHT <= boxH + 1e-6) {
-        best = mid;
-        hi = mid - 1;
-      } else lo = mid + 1;
+    for (const s of sizes) {
+      const n = lineCount(s, splitWords, numbersWhole, Math.floor((boxH + 1e-6) / (s * STAMP_LINE_HEIGHT)) + 1);
+      if (n !== null && n * s * STAMP_LINE_HEIGHT <= boxH + 1e-6) return s >= legible;
     }
-    if (best >= 0) return sizes[best]! >= legible;
   }
   return false;
 }

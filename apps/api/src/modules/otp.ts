@@ -11,7 +11,7 @@ import { enqueue } from "../infra/queue";
 import { AppError, conflict } from "../lib/errors";
 import { maskDestination, randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { deliver } from "../notifications/channels";
-import { clearBounceSuppression, isSuppressed, noteSesIdentityRejection } from "../notifications/outbound";
+import { clearBounceSuppression, isSuppressed, noteDkimSendResult } from "../notifications/outbound";
 import { normLocale } from "../notifications/templates";
 import type { Services } from "./context";
 import { lastEmbedSession } from "./embed";
@@ -236,7 +236,7 @@ export async function otpRoutes(app: FastifyInstance, s: Services) {
       await s.db.query(`UPDATE otp_challenges SET expires_at = now() WHERE id = $1`, [challengeId]);
       throw new AppError(502, "otp_delivery_failed", "No se pudo enviar el código. Probá de nuevo en unos segundos.");
     }
-    if (res.identityRejectedDomain) await noteSesIdentityRejection(s.db, e.tenant_id, res.identityRejectedDomain, req.log);
+    await noteDkimSendResult(s.db, e.tenant_id, res, req.log);
     await s.db.tx(async (t) => {
       const cur = await lockEnvelope(t, e.tenant_id, e.id);
       await t.query(

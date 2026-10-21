@@ -40,7 +40,6 @@ import {
 import { decrypt, encrypt, hashPassword, iso, maskDestination, randomToken, sha256Hex, uuidv7, verifyPassword } from "../lib/util";
 import { isSuppressed, sendTracked } from "../notifications/outbound";
 import { normLocale, render } from "../notifications/templates";
-import { tenantBaseUrl } from "./custom-domains";
 import { mailBranding, resolveBrand, senderFor } from "./white-label/brand";
 import { hasPerm } from "./access";
 import { auditFromRequest, recordAudit } from "./audit";
@@ -151,20 +150,28 @@ export async function clearLoginAttempts(db: Db, userId: string) {
  * una sola fila (la de la organización que lo invitó) y se cuentan todas: si no, el bloqueo no lo alcanzaba nunca.
  */
 export async function recentFailedLogins(db: Db, userId: string): Promise<number> {
+  const first = await db.one<{ tenant_id: string }>(`SELECT tenant_id FROM memberships WHERE user_id = $1::uuid ORDER BY created_at LIMIT 1`, [userId]);
+  // Con organización, solo sus filas; sin organizaciones, todas las del usuario. Dos consultas (y no un OR con
+  // "NOT EXISTS"), ambas sobre el índice (action, actor_id, occurred_at) y acotadas a la ventana de 15 minutos.
+  const params: unknown[] = [userId];
+  let scope = "";
+  if (first) {
+    params.push(first.tenant_id);
+    scope = ` AND tenant_id = $2::uuid`;
+  }
   const r = await db.one<{ n: number }>(
-    `WITH t AS (SELECT tenant_id FROM memberships WHERE user_id = $1::uuid ORDER BY created_at LIMIT 1)
-     SELECT count(*)::int AS n FROM account_audit_log
-     WHERE (tenant_id = (SELECT tenant_id FROM t) OR NOT EXISTS (SELECT 1 FROM t))
-       AND action = 'auth.login_failed' AND actor_id = $1::text AND occurred_at > now() - interval '15 minutes'
+    `SELECT count(*)::int AS n FROM account_audit_log
+     WHERE action = 'auth.login_failed' AND actor_id = $1::text AND occurred_at > now() - interval '15 minutes'${scope}
        -- Restablecer la contraseña (no solo pedirlo) desbloquea la cuenta. users.password_reset_at vale también sin
        -- organizaciones (ahí el restablecimiento no deja auditoría); la auditoría cubre los restablecimientos anteriores
-       -- a esa columna.
+       -- a esa columna. Solo importan los de la ventana (los fallos anteriores ya no cuentan); actor_id = target_id en
+       -- user.password_reset (lo hace la propia persona, auth.ts).
        AND occurred_at > COALESCE(GREATEST(
              (SELECT password_reset_at FROM users WHERE id = $1::uuid),
              (SELECT max(occurred_at) FROM account_audit_log
-               WHERE action = 'user.password_reset' AND target_id = $1::text
-                 AND (tenant_id = (SELECT tenant_id FROM t) OR NOT EXISTS (SELECT 1 FROM t)))), '-infinity')`,
-    [userId],
+               WHERE action = 'user.password_reset' AND actor_id = $1::text AND target_id = $1::text
+                 AND occurred_at > now() - interval '15 minutes'${scope})), '-infinity')`,
+    params,
   );
   return r?.n ?? 0;
 }
@@ -534,8 +541,9 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     });
     const org = await s.db.one<any>(`SELECT name, default_locale FROM tenants WHERE id = $1`, [a.tenantId]);
     const inviter = a.userId ? (await s.db.one<any>(`SELECT name FROM users WHERE id = $1`, [a.userId]))?.name : a.actor.label;
-    // En el dominio propio de la organización (si tiene), como los demás links de sus correos.
-    const acceptUrl = `${await tenantBaseUrl(s.db, a.tenantId)}/invite/${token}`;
+    // En la app principal, no en el dominio propio de la organización: las páginas de cuenta (aceptar la invitación,
+    // registrarse, iniciar sesión) no se sirven en los dominios propios. El correo sí sale con la marca.
+    const acceptUrl = `${config.appUrl}/invite/${token}`;
     const mailLocale = normLocale(input.locale ?? org.default_locale);
     const roleForMail = target.role === "custom" ? target.roleName : ROLE_LABEL_I18N[mailLocale][target.role as "owner" | "admin" | "member"];
     // Dirección suprimida (rebote permanente vigente, global, o queja contra esta organización): no se manda; el link
@@ -1111,6 +1119,21 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     });
   }
 
+  /**
+   * La 2FA es de la cuenta (vale en todas sus organizaciones), como la contraseña: el cambio se audita en cada
+   * organización de la que es miembro (y en la actual), no solo en la de la sesión. Si no, un administrador de otra
+   * organización no se enteraba de que un miembro apagó la verificación en dos pasos.
+   */
+  async function auditAccountSecurity(req: FastifyRequest, a: AuthContext, action: string, data: Record<string, unknown> = {}) {
+    const rows = await s.db.query<{ tenant_id: string }>(`SELECT tenant_id FROM memberships WHERE user_id = $1`, [a.userId]);
+    const tenantIds = new Set<string>([a.tenantId, ...rows.map((r) => r.tenant_id)]);
+    for (const tenantId of tenantIds) {
+      await auditFromRequest(s.db, req, { ...a, tenantId }, action, { targetType: "user", targetId: a.userId, data }).catch((err) =>
+        req.log.error({ err }, "no se pudo registrar la auditoría"),
+      );
+    }
+  }
+
   app.post("/v1/me/2fa/setup", { preHandler: auth }, async (req) => {
     const a = A(req);
     if (!a.userId) throw forbidden("Solo para usuarios");
@@ -1141,7 +1164,7 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
       [a.userId, encrypt(secret), step, codes.map((c) => sha256Hex(normalizeRecoveryCode(c)))],
     );
     const sessionsClosed = await closeOtherSessions(req, a.userId);
-    await auditFromRequest(s.db, req, a, "user.2fa_enabled", { targetType: "user", targetId: a.userId, data: { otherSessionsClosed: sessionsClosed } });
+    await auditAccountSecurity(req, a, "user.2fa_enabled", { otherSessionsClosed: sessionsClosed });
     return { recoveryCodes: codes };
   });
 
@@ -1160,7 +1183,7 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
       [a.userId],
     );
     const sessionsClosed = await closeOtherSessions(req, a.userId);
-    await auditFromRequest(s.db, req, a, "user.2fa_disabled", { targetType: "user", targetId: a.userId, data: { otherSessionsClosed: sessionsClosed } });
+    await auditAccountSecurity(req, a, "user.2fa_disabled", { otherSessionsClosed: sessionsClosed });
     return { ok: true };
   });
 
@@ -1171,7 +1194,7 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     if ((await checkSecondFactor(s.db, a.userId, code)) !== "totp") throw badRequest("invalid_code", "Código incorrecto");
     const codes = generateRecoveryCodes();
     await s.db.query(`UPDATE users SET totp_recovery_hashes = $2 WHERE id = $1`, [a.userId, codes.map((c) => sha256Hex(normalizeRecoveryCode(c)))]);
-    await auditFromRequest(s.db, req, a, "user.2fa_recovery_regenerated", { targetType: "user", targetId: a.userId });
+    await auditAccountSecurity(req, a, "user.2fa_recovery_regenerated");
     return { recoveryCodes: codes };
   });
 

@@ -32,17 +32,43 @@ export function OTP_MESSAGES(b: ResolvedBrand, localeIn: string, code: string, s
   return { subject: unmask(brandize(s.replace(/[\r\n]+/g, " "), b)).replace(/[\r\n]+/g, " "), text: unmask(brandize(t, b)) };
 }
 
-/** Texto corto del código por SMS (cada segmento cuesta; Twilio corta en 1600): código primero y asunto recortado. */
+/**
+ * Texto corto del código por SMS: sólo caracteres GSM-7 (sin tildes: con una sola letra fuera de GSM-7 el mensaje pasa a
+ * UCS-2 y entra en 70 caracteres por segmento en vez de 160), para que entre en un segmento.
+ */
 const SMS_SHORT = {
-  es: (code: string, product: string, subject: string) => `${code} es tu código de ${product} para firmar "${subject}". Vence en 10 min. No lo compartas.`,
-  "pt-BR": (code: string, product: string, subject: string) => `${code} é seu código da ${product} para assinar "${subject}". Expira em 10 min. Não compartilhe.`,
-  en: (code: string, product: string, subject: string) => `${code} is your ${product} code to sign "${subject}". Expires in 10 min. Don't share it.`,
+  es: (code: string, product: string) => `Tu codigo de ${product}: ${code}. Vence en 10 min. No lo compartas.`,
+  "pt-BR": (code: string, product: string) => `Seu codigo da ${product}: ${code}. Expira em 10 min. Nao compartilhe.`,
+  en: (code: string, product: string) => `Your ${product} code: ${code}. Expires in 10 min. Don't share it.`,
 } as const;
-const SMS_SUBJECT_MAX = 40;
-/** Plantilla propia de la marca: hasta ~2 segmentos. */
-export const SMS_OTP_MAX = 320;
-/** Más que esto (tope de Twilio) o sin el código: se usa el texto corto. */
-const SMS_OTP_HARD_MAX = 1600;
+const SMS_PRODUCT_MAX = 30;
+/** Plantilla propia de la marca: hasta 2 segmentos (cada segmento se cobra); si no entra, el texto corto. */
+export const SMS_OTP_MAX_SEGMENTS = 2;
+
+const GSM7_BASIC = new Set(
+  "@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà",
+);
+/** Ocupan dos septetos (escape + carácter). */
+const GSM7_EXTENDED = new Set("^{}\\[~]|€\f");
+
+/**
+ * Segmentos que ocupa un SMS: GSM-7 si todos los caracteres lo son (160 por mensaje, 153 por segmento si va partido;
+ * los de la tabla extendida cuentan doble), si no UCS-2 (70, o 67 por segmento, en unidades UTF-16).
+ */
+export function smsSegments(text: string): number {
+  let septets = 0;
+  let gsm = true;
+  for (const ch of text) {
+    if (GSM7_BASIC.has(ch)) septets += 1;
+    else if (GSM7_EXTENDED.has(ch)) septets += 2;
+    else {
+      gsm = false;
+      break;
+    }
+  }
+  if (gsm) return septets <= 160 ? 1 : Math.ceil(septets / 153);
+  return text.length <= 70 ? 1 : Math.ceil(text.length / 67);
+}
 
 function clip(s: string, max: number): string {
   const t = s.replace(/\s+/g, " ").trim();
@@ -50,18 +76,15 @@ function clip(s: string, max: number): string {
 }
 
 /**
- * Texto del código por SMS: con plantilla "otp_code" de la marca, esa (recortada a SMS_OTP_MAX); si no la hay, si
- * pasa de 1600 caracteres o si al recortarla se pierde el código, el texto corto (código, producto y asunto recortado).
+ * Texto del código por SMS: con plantilla "otp_code" de la marca, esa si entra en SMS_OTP_MAX_SEGMENTS segmentos y
+ * lleva el código; si no (o sin plantilla), el texto corto (código y producto, en GSM-7).
  */
 export function otpSmsText(b: ResolvedBrand, localeIn: string, code: string, subject: string): string {
   const locale = normLocale(localeIn);
-  const short = SMS_SHORT[locale](code, productLabel(b), clip(subject, SMS_SUBJECT_MAX));
+  const short = SMS_SHORT[locale](code, clip(productLabel(b), SMS_PRODUCT_MAX));
   if (!mailBranding(b, "otp_code", locale).template?.body?.trim()) return short;
   const full = OTP_MESSAGES(b, locale, code, subject).text.trim();
-  if (full.length > SMS_OTP_HARD_MAX || !full.includes(code)) return short;
-  if (full.length <= SMS_OTP_MAX) return full;
-  const cut = clip(full, SMS_OTP_MAX);
-  return cut.includes(code) ? cut : short;
+  return full.includes(code) && smsSegments(full) <= SMS_OTP_MAX_SEGMENTS ? full : short;
 }
 
 /**

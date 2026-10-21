@@ -144,9 +144,16 @@ export function createJobHandlers(d: Deps): Record<JobQueueName, JobHandler> {
 
 // ───────────────────────────── Notificaciones ─────────────────────────────
 
-/** Reply-To de los avisos al firmante: el correo de quien creó el sobre si sigue siendo miembro; si no, el de la marca. */
-export function signerReplyTo(creator: { email?: string | null; is_member?: boolean | null } | null | undefined, brandReplyTo: string | null): string | null {
-  return creator?.is_member && creator.email ? creator.email : brandReplyTo;
+/** Reply-To de los avisos al firmante: la dirección de respuesta que la marca configuró explícitamente (`email.replyTo`)
+ *  siempre gana; sin ella, el correo de quien creó el sobre si sigue siendo miembro; si no, el del remitente de la
+ *  marca (`fallback`, p. ej. su `fromEmail` sin dominio propio). */
+export function signerReplyTo(
+  creator: { email?: string | null; is_member?: boolean | null } | null | undefined,
+  explicitBrandReplyTo: string | null | undefined,
+  fallback: string | null,
+): string | null {
+  if (explicitBrandReplyTo) return explicitBrandReplyTo;
+  return creator?.is_member && creator.email ? creator.email : fallback;
 }
 
 async function notify(
@@ -174,9 +181,9 @@ async function notify(
   const mailBrand = (kind: TemplateKind, locale: string | null) => mailBranding(wl, kind, normLocale(locale));
   const sendAs = await senderFor(d.db, wl);
   const from = { from: sendAs.from, replyTo: sendAs.replyTo, dkim: sendAs.dkim, fallbackFrom: sendAs.fallbackFrom };
-  // Avisos al firmante: las respuestas van a quien envió el sobre (si sigue en la organización); si no, a la dirección
-  // de respuesta de la marca. Antes iban siempre a la de la marca (o a la casilla no-reply).
-  const signerFrom = { ...from, replyTo: signerReplyTo(sender, sendAs.replyTo) };
+  // Avisos al firmante: si la marca configuró una dirección de respuesta, va ahí; si no, a quien envió el sobre (si
+  // sigue en la organización); si no, a la del remitente de la marca (o la casilla no-reply).
+  const signerFrom = { ...from, replyTo: signerReplyTo(sender, wl.email.replyTo, sendAs.replyTo) };
   const base = {
     // Quien dejó la organización ya no habla en su nombre: los recordatorios y avisos salen con el de la marca u organización.
     senderName: (sender?.is_member ? sender.name : null) ?? (rebrands(wl) || e.brand_id ? wl.name : org?.name) ?? productLabel(wl),

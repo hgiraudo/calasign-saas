@@ -11,7 +11,7 @@ import { config } from "../../config";
 import type { Db } from "../../infra/db";
 import { AppError, notFound } from "../../lib/errors";
 import { bearerToken, iso, randomToken, sha256Hex, uuidv7 } from "../../lib/util";
-import { recordAudit } from "../audit";
+import { auditFromRequest, recordAudit } from "../audit";
 import { hasPerm } from "../access";
 import { authenticate, clientInfo, type AuthContext, type Services } from "../context";
 import { UPGRADE_URL, tenantPlan, usersCount } from "../billing/plans";
@@ -420,7 +420,18 @@ export async function scimRoutes(app: FastifyInstance, s: Services) {
   app.patch("/v1/settings/scim", { preHandler: auth }, async (req) => {
     const input = z.object({ defaultRole: z.enum(["admin", "member"]) }).parse(req.body);
     assertCanGrantScimRole(req.auth!, input.defaultRole);
-    await s.db.query(`UPDATE tenants SET scim_default_role = $2 WHERE id = $1`, [req.auth!.tenantId, input.defaultRole]);
+    // Con el valor anterior (FOR UPDATE: dos cambios simultáneos no registran el mismo "from").
+    await s.db.tx(async (t) => {
+      const prev = await t.one<any>(`SELECT scim_default_role FROM tenants WHERE id = $1 FOR UPDATE`, [req.auth!.tenantId]);
+      await t.query(`UPDATE tenants SET scim_default_role = $2 WHERE id = $1`, [req.auth!.tenantId, input.defaultRole]);
+      const from = prev?.scim_default_role ?? "member";
+      const changed = from !== input.defaultRole;
+      await auditFromRequest(t, req, req.auth!, "settings.scim_updated", {
+        targetType: "settings",
+        targetId: "scim",
+        data: changed ? { changed: ["defaultRole"], from: { defaultRole: from }, to: { defaultRole: input.defaultRole } } : { changed: [] },
+      });
+    });
     return settingsOut(req.auth!.tenantId);
   });
 
@@ -436,6 +447,11 @@ export async function scimRoutes(app: FastifyInstance, s: Services) {
       `INSERT INTO scim_tokens (id, tenant_id, name, prefix, token_hash, created_by) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
       [uuidv7(), req.auth!.tenantId, input.name, secret.slice(0, 14), sha256Hex(secret), await actingPerson(s.db, req.auth!)],
     );
+    await auditFromRequest(s.db, req, req.auth!, "scim.token_created", {
+      targetType: "scim_token",
+      targetId: row!.id,
+      data: { name: row!.name, prefix: row!.prefix },
+    });
     reply.code(201);
     return { token: toToken(row), secret };
   });
@@ -443,8 +459,16 @@ export async function scimRoutes(app: FastifyInstance, s: Services) {
   app.delete<{ Params: { id: string } }>("/v1/settings/scim/tokens/:id", { preHandler: auth }, async (req, reply) => {
     const tenantId = req.auth!.tenantId;
     const released = await s.db.tx(async (t) => {
-      const r = await t.query(`UPDATE scim_tokens SET revoked_at = now() WHERE id = $1 AND tenant_id = $2 AND revoked_at IS NULL RETURNING id`, [req.params.id, tenantId]);
+      const r = await t.query<any>(
+        `UPDATE scim_tokens SET revoked_at = now() WHERE id = $1 AND tenant_id = $2 AND revoked_at IS NULL RETURNING id, name, prefix`,
+        [req.params.id, tenantId],
+      );
       if (!r.length) throw notFound("Token SCIM");
+      await auditFromRequest(t, req, req.auth!, "scim.token_revoked", {
+        targetType: "scim_token",
+        targetId: r[0].id,
+        data: { name: r[0].name, prefix: r[0].prefix },
+      });
       // Era el último: sin IdP que administre, las bajas por SCIM ya no bloquean el alta JIT por SSO.
       return releaseScimJitBlocks(t, tenantId);
     });

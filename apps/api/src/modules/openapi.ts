@@ -1266,8 +1266,13 @@ const OPS: Op[] = [
     tag: "Auditoría",
     summary: "Exportar la auditoría a CSV",
     description:
-      "Mismos filtros que el listado, hasta 50.000 filas (si hay más, header `X-Truncated: true` y una fila final TRUNCADO). occurred_at en ISO UTC; con `tz` se agrega occurred_at_local y el header `X-Time-Zone` dice la zona usada (UTC si `tz` no se reconoce). La exportación misma queda registrada (audit.exported).",
-    query: [...AUDIT_QUERY, Q.sep, { ...Q.tz, description: `Agrega la columna occurred_at_local. ${Q.tz.description}` }],
+      "Mismos filtros que el listado, de la más nueva a la más vieja (occurred_at y id), hasta 50.000 filas (si hay más, headers `X-Truncated: true` y `X-Next-Before-Id`, y una fila final TRUNCADO: el resto se pide con los mismos filtros y `beforeId`). occurred_at en ISO UTC; con `tz` se agrega occurred_at_local y el header `X-Time-Zone` dice la zona usada (UTC si `tz` no se reconoce). La exportación misma queda registrada (audit.exported).",
+    query: [
+      ...AUDIT_QUERY,
+      Q.sep,
+      { ...Q.tz, description: `Agrega la columna occurred_at_local. ${Q.tz.description}` },
+      { name: "beforeId", description: "Continuar un export truncado: solo las filas anteriores a la fila con este id (el de `X-Next-Before-Id`), sin saltear ni repetir.", schema: { type: "string" } },
+    ],
     response: "csv",
     errors: ["invalid_query"],
   },

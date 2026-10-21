@@ -30,7 +30,7 @@ import { render, type TemplateKind } from "../../notifications/templates";
 import { auditFromRequest, recordAudit } from "../audit";
 import { authenticate, type AuthContext, type Services } from "../context";
 import { requireFeature, tenantPlan } from "../billing/plans";
-import { invalidateDomainCache, isPlatformHost, resolveTxt, routesToPlatform, webDomainLockKey } from "../custom-domains";
+import { assertClaimableDomain, invalidateDomainCache, isPlatformHost, resolveTxt, routesToPlatform, servingFields, webDomainLockKey } from "../custom-domains";
 import { deleteFileIfUnused, discardBlobsOnFailure } from "../file-cleanup";
 import {
   brandForHost,
@@ -48,7 +48,6 @@ import { OTP_MESSAGES, hasCodeVariable } from "./otp-text";
 
 const isLocalEnv = () => config.environment === "local";
 const appHost = () => new URL(config.appUrl).hostname.toLowerCase();
-const platformRoot = () => appHost().split(".").slice(-2).join(".");
 
 // Registros DNS con nombres neutros (sin la marca de la plataforma): los ve el administrador del cliente final.
 const brandTxtName = (d: string) => `_brand-verify.${d}`;
@@ -134,6 +133,7 @@ function domainToApi(r: any): BrandDomain {
     verifiedAt: iso(r.verified_at),
     lastCheckedAt: iso(r.last_checked_at),
     lastError: r.last_error,
+    ...servingFields(),
   };
 }
 
@@ -357,11 +357,8 @@ const isDirectLoopback = (req: FastifyRequest) => {
   return (ra === "127.0.0.1" || ra === "::1" || ra === "::ffff:127.0.0.1") && !req.headers["x-forwarded-for"];
 };
 
-function assertClaimable(domain: string) {
-  for (const root of new Set([platformRoot(), "calasign.com", "calasign.io"])) {
-    if (isPlatformHost(domain) || domain === root || domain.endsWith(`.${root}`)) throw badRequest("reserved_domain", `No se pueden usar dominios de ${root}`);
-  }
-}
+/** Como el dominio propio (custom-domains.ts): ni un host de la plataforma ni algo bajo sus dominios registrables. */
+const assertClaimable = assertClaimableDomain;
 
 // ───────────────────────────── Rutas ─────────────────────────────
 
@@ -700,6 +697,8 @@ export async function whiteLabelRoutes(app: FastifyInstance, s: Services) {
    * Restringido (sin CSS propio, sin fondo ni color de texto): la marca no puede cambiar cómo se ve el veredicto.
    */
   app.get<{ Querystring: { b?: string } }>("/v1/public/brand-theme", async (req, reply) => {
+    // Sin ?b= la respuesta depende del Host: un caché compartido no la tiene que servir a otro dominio.
+    reply.header("vary", "Host");
     const found = await brandFromKeyOrHost(s.db, req.query.b, req.headers.host);
     if (!found) return reply.code(404).send({ error: { code: "not_found", message: "Sin marca" } });
     reply.header("cache-control", "public, max-age=60");

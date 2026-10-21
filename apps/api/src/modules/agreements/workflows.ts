@@ -36,7 +36,7 @@ import { deleteBlobsQuietly, deleteFilesIfUnused } from "../file-cleanup";
 import { requireFeature, tenantPlan } from "../billing/plans";
 import { MIN_FILL_MS, publicStartsCapReached, publicTenantCapReached } from "../public-intake";
 import { captchaSiteKey, verifyTurnstile } from "../webforms";
-import { isPlatformHost, tenantForHost } from "../custom-domains";
+import { turnstileHostOk } from "../custom-domains";
 import { enqueueWorkflowApprovalNotice } from "./notices";
 import { ownerCanStillCreate } from "../owner-check";
 import { tenantBaseUrl } from "../custom-domains";
@@ -1401,7 +1401,7 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
     if (!wf || !wf.active || !(await publicPlanAllows(s.db, wf.tenant_id)) || (await publicOwnerProblem(s.db, wf))) throw notFound("Workflow");
     // Desafío anti-bots (como los formularios web): cada inicio crea una ejecución que puede mandar sobres.
     if (captchaSiteKey()) {
-      const hostOk = async (h: string) => isPlatformHost(h) || (await tenantForHost(s.db, h)) === wf.tenant_id;
+      const hostOk = turnstileHostOk(s.db, wf.tenant_id);
       const cap = await verifyTurnstile(typeof body.captchaToken === "string" ? body.captchaToken.slice(0, 4096) : null, req.ip, hostOk);
       if (!cap.ok) {
         if (cap.reason === "network") req.log.error({ workflowId: wf.id, detail: cap.detail }, "workflow público: no se pudo consultar a Turnstile");

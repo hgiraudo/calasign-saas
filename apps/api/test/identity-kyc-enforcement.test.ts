@@ -228,6 +228,31 @@ describe("nivel exigido con proveedores externos", () => {
     expect(det.json().unavailableReason).toContain("VERIFF_INTEGRATION_LEVEL");
   });
 
+  it("Veriff sin VERIFF_INTEGRATION_LEVEL: una verificación ya en curso se retoma (sin 503) y su nivel guardado decide la inferencia", async () => {
+    const { config } = await import("../src/config");
+    expect(config.identity.veriffIntegrationLevel).toBe(null);
+    // Iniciada cuando la variable estaba definida (document_selfie) y otra iniciada sin ella ("none").
+    for (const integrationLevel of ["document_selfie", "none"]) {
+      const x = await setup({ provider: "veriff", level: "document_selfie" });
+      const ref = `vf-resume-${integrationLevel}-${x.recipient}`;
+      const v = await pendingVerification(x.recipient, x.envelope, "veriff", ref, { level: "document_selfie", integrationLevel });
+      await db.query(`UPDATE identity_verifications SET redirect_url = $2 WHERE id = $1`, [v, `https://veriff.test/go/${ref}`]);
+      fetchCalls = [];
+      const st = await signing(x.token, "/identity/start", "POST");
+      expect(st.statusCode).toBe(200);
+      expect(fetchCalls).toEqual([]);
+      expect((await db.query(`SELECT id FROM identity_verifications WHERE recipient_id = $1`, [x.recipient])).length).toBe(1);
+      await veriffHook({ id: ref, status: "approved", person: { firstName: "Ana", lastName: "Pérez" } });
+      if (integrationLevel === "none") expect(await verification(v)).toMatchObject({ status: "failed", failure_reason: "level_not_met" });
+      else expect((await verification(v)).status).toBe("verified");
+    }
+    // Una verificación nueva sigue bloqueada (503 neutro para el firmante).
+    const y = await setup({ provider: "veriff", level: "document_selfie" });
+    const st = await signing(y.token, "/identity/start", "POST");
+    expect(st.statusCode).toBe(503);
+    expect(st.json().error.code).toBe("identity_provider_unavailable");
+  });
+
   it("Veriff: la aprobación sin datos biométricos cumple lo que declara VERIFF_INTEGRATION_LEVEL; un puntaje bajo gana", async () => {
     const { config } = await import("../src/config");
     const prev = config.identity.veriffIntegrationLevel;

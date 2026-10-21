@@ -8,6 +8,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { z } from "zod";
 import { inspectPdf, PdfIngestBusyError } from "@calasign/pdf";
 import { ENVELOPE_STATUSES, MCP_DEFAULT_SCOPES, OAUTH_SCOPES, RECIPIENT_ROLES, LOCALES } from "@calasign/shared";
@@ -938,8 +939,13 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
     // ejecutaba en paralelo, salteando el límite por pedido (100 tools/call, p. ej. 100 descargas de PDF, en un solo
     // POST). La especificación los sacó en 2025-06-18 y los clientes MCP actuales mandan un mensaje por POST. Para no
     // romper a los de 2025-03-26 (que pueden mandar todo como lote) se acepta un lote de un solo mensaje y uno de solo
-    // notificaciones (sin id: no ejecutan herramientas ni responden): no hay paralelismo de pedidos. El SDK los procesa
-    // como mensajes sueltos y responde con el formato de lote que espera ese cliente.
+    // notificaciones (sin id: no ejecutan herramientas ni responden, 202 sin cuerpo): no hay paralelismo de pedidos.
+    // Un lote de un solo pedido se le pasa al transporte como mensaje suelto y la respuesta (JSON, 200) se devuelve dentro
+    // de un array: el SDK, con un lote de una respuesta, contestaba un objeto suelto y no el lote que espera ese cliente
+    // (JSON-RPC 2.0: a un lote se responde con un array). Los errores del transporte (4xx/5xx, que responden al pedido
+    // HTTP y no a un mensaje del lote) quedan como objeto.
+    let body: unknown = req.body;
+    let asBatch = false;
     if (Array.isArray(req.body)) {
       const batch = req.body as unknown[];
       const isNotification = (m: unknown) => !!m && typeof m === "object" && !Array.isArray(m) && !("id" in (m as object));
@@ -951,8 +957,37 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
           id: null,
         });
       }
+      if (batch.length === 1 && !isNotification(batch[0])) {
+        body = batch[0];
+        asBatch = true;
+      }
     }
     const server = buildServer(caller, req);
+    if (asBatch) {
+      // Con el transporte web (Request/Response) para poder envolver la respuesta antes de mandarla.
+      const web = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+      try {
+        await server.connect(web);
+        const headers = new Headers();
+        for (const [k, v] of Object.entries(req.headers)) {
+          if (v === undefined || k === "host" || k === "content-length" || k === "connection" || k === "transfer-encoding") continue;
+          headers.set(k, Array.isArray(v) ? v.join(", ") : v);
+        }
+        const res = await web.handleRequest(new Request(new URL(req.url, config.appUrl), { method: "POST", headers }), { parsedBody: body });
+        const text = await res.text();
+        const json = res.status === 200 && /application\/json/i.test(res.headers.get("content-type") ?? "");
+        res.headers.forEach((v, k) => {
+          if (k !== "content-length") reply.header(k, v);
+        });
+        return reply.code(res.status).send(json ? `[${text}]` : text);
+      } catch (err) {
+        req.log.error({ err }, "error en el servidor MCP");
+        return reply.code(500).send({ jsonrpc: "2.0", error: { code: -32603, message: "Error interno" }, id: null });
+      } finally {
+        await web.close().catch(() => {});
+        await server.close().catch(() => {});
+      }
+    }
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     reply.hijack();
     reply.raw.on("close", () => {
@@ -961,7 +996,7 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
     });
     try {
       await server.connect(transport);
-      await transport.handleRequest(req.raw, reply.raw, req.body);
+      await transport.handleRequest(req.raw, reply.raw, body);
     } catch (err) {
       req.log.error({ err }, "error en el servidor MCP");
       if (!reply.raw.headersSent) {
@@ -1128,3 +1163,4 @@ async function linkActor(db: Services["db"], apiKeyId: string | null, oauthToken
   }
   return { type: "system", label };
 }
+

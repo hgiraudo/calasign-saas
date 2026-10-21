@@ -26,7 +26,7 @@ import { setFrameAncestors, tenantFrameAncestors } from "./embed";
 import { MIN_FILL_MS, publicTenantCapReached } from "./public-intake";
 import { sendEnvelope } from "./envelopes";
 import { insertEnvelopeFromTemplate, loadTemplateForUse, planFromTemplate, templateSendIssues, type LoadedTemplate } from "./templates";
-import { isPlatformHost, tenantBaseUrl, tenantForHost } from "./custom-domains";
+import { tenantBaseUrl, turnstileHostOk } from "./custom-domains";
 
 const MAX_FILL_MS = 2 * 3600_000;
 
@@ -546,8 +546,9 @@ export async function webFormRoutes(app: FastifyInstance, s: Services) {
       if (form.collect_phone && !input.phone) throw badRequest("phone_required", "El teléfono es obligatorio");
       // Desafío anti-bots (opcional, por configuración de la plataforma): el token es de un solo uso.
       if (captchaSiteKey()) {
-        // Hosts esperados: los de la plataforma o un dominio verificado de la organización del formulario.
-        const hostOk = async (h: string) => isPlatformHost(h) || (await tenantForHost(s.db, h)) === form.tenant_id;
+        // Hosts esperados: los de la plataforma o un dominio verificado de la organización del formulario (el propio o
+        // el web de una de sus sub-marcas).
+        const hostOk = turnstileHostOk(s.db, form.tenant_id);
         const cap = await verifyTurnstile(input.captchaToken, req.ip, hostOk);
         if (!cap.ok) {
           if (cap.reason === "network") req.log.error({ webFormId: form.id, detail: cap.detail }, "formulario web: no se pudo consultar a Turnstile");

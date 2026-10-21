@@ -971,7 +971,11 @@ export function CustomDomainPage() {
                 <span className={`badge ${dom.status === "verified" ? "badge-completed" : "badge-expired"}`}>{p(`dom.status.${dom.status}`)}</span>
               </div>
               {dom.status === "verified" ? (
-                <p className="small">{p("dom.verifiedAt", { when: formatDateTime(dom.verifiedAt, locale), domain: dom.domain })}</p>
+                <p className="small">
+                  {dom.servingEnabled === false
+                    ? p("dom.verifiedAtPlatform", { when: formatDateTime(dom.verifiedAt, locale) })
+                    : p("dom.verifiedAt", { when: formatDateTime(dom.verifiedAt, locale), domain: dom.domain })}
+                </p>
               ) : (
                 <>
                   <p className="small">{p("dom.step1")}</p>
@@ -980,6 +984,11 @@ export function CustomDomainPage() {
                   <Record type="CNAME" host={dom.domain} value={dom.cnameTarget} />
                   <p className="small">{p("dom.step3")}</p>
                 </>
+              )}
+              {dom.servingEnabled === false && (
+                <p className="small" role="note" style={{ color: "#92400e" }}>
+                  {p("dom.notServing")}
+                </p>
               )}
               {dom.lastCheckedAt && <span className="muted small">{p("dom.lastCheck", { when: formatDateTime(dom.lastCheckedAt, locale) })}</span>}
               {dom.lastError && dom.status !== "verified" && <span className="small" style={{ color: "#b91c1c" }}>{dom.lastError}</span>}

@@ -547,10 +547,14 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
     if (r.identity_status === "verified") return sessionOut(req.params.token);
     const settings = await getIdentitySettings(s.db, e.tenant_id);
     const provider = r.id_verification_provider as IdvProvider;
+    // Proveedor sin configurar: 503 (mensaje neutro para el firmante).
+    if (!providerReady(provider)) throw new AppError(503, "identity_provider_unavailable", SIGNER_UNAVAILABLE_MESSAGE);
     // Con el nivel: Truora sin flujo para el nivel (o una integración de Veriff que no llega) es un 503, no un 500 de
     // createSession después de reservar. Mensaje neutro para el firmante: el motivo lo ve el remitente (detalle del
-    // destinatario: unavailableReason) y lo arregla con identity/reset cambiando el nivel o el proveedor.
-    if (!providerReady(provider, r.id_verification_level)) throw new AppError(503, "identity_provider_unavailable", SIGNER_UNAVAILABLE_MESSAGE);
+    // destinatario: unavailableReason) y lo arregla con identity/reset cambiando el nivel o el proveedor. Solo bloquea
+    // verificaciones nuevas: una ya en curso se retoma igual (abajo), porque lo que se infiere de ella lo decide el nivel
+    // de integración guardado al iniciarla (integration_level; "none" no infiere nada), no la configuración actual.
+    const levelReady = providerReady(provider, r.id_verification_level);
 
     // Una reserva de modo redirect que quedó sin sesión del proveedor (el proceso murió o el proveedor no respondió)
     // se cancela antes de mirar la última verificación: si no, el inicio devolvía la reserva trabada para siempre.
@@ -573,6 +577,7 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
       await unbindOtherSession(s.db, current.id, sessionHash);
       return sessionOut(req.params.token);
     }
+    if (!levelReady) throw new AppError(503, "identity_provider_unavailable", SIGNER_UNAVAILABLE_MESSAGE);
     // La última terminó en level_not_met (el proveedor aprobó sin el control facial o la prueba de vida que pide el
     // nivel): no consumió un intento, pero repetirla daría lo mismo y abriría otra sesión paga. Queda bloqueada hasta que
     // el remitente revise la configuración y reinicie la verificación (identity/reset). Código propio

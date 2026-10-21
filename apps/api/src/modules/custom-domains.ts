@@ -5,10 +5,10 @@
 //      y Caddy emite el certificado bajo demanda preguntando a GET /internal/tls-allowed (docs/CUSTOM-DOMAINS.md).
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { SetCustomDomainInput, type CustomDomain, type HostBranding } from "@calasign/shared";
-import { config } from "../config";
+import { config, hostAndParentDomains } from "../config";
 import type { Db } from "../infra/db";
 import { AppError, badRequest, conflict, notFound } from "../lib/errors";
-import { iso, randomToken, requestPath, uuidv7 } from "../lib/util";
+import { iso, randomToken, requestPath, sha256Hex, uuidv7 } from "../lib/util";
 import { auditFromRequest, recordAudit } from "./audit";
 import { getTenantBranding } from "./branding";
 import { signerTokenHash } from "./signer-token";
@@ -16,8 +16,44 @@ import { authenticate, sessionCookieNames, type Services } from "./context";
 
 const appHost = () => new URL(config.appUrl).hostname.toLowerCase();
 const isLocalEnv = () => config.environment === "local";
-/** Dominio registrable de la plataforma (calasign.com): sus subdominios no se pueden reclamar. */
-const platformRoot = () => appHost().split(".").slice(-2).join(".");
+/**
+ * Dominios registrables de la plataforma (calasign.com, calasign.com.ar…): ni ellos ni sus subdominios se pueden
+ * reclamar. El de APP_URL y el de cada PLATFORM_HOSTS, con la regla de sufijos públicos de hostAndParentDomains (antes
+ * se tomaban las dos últimas etiquetas: con app.calasign.com.ar quedaba reservado "com.ar" y no "calasign.com.ar"),
+ * más los nombres de la marca.
+ */
+export function reservedDomainRoots(): string[] {
+  const roots = new Set<string>();
+  for (const h of [appHost(), ...config.platformHosts]) {
+    const root = hostAndParentDomains(`https://${h}`).at(-1);
+    if (root) roots.add(root);
+  }
+  roots.add("calasign.com");
+  roots.add("calasign.io");
+  return [...roots];
+}
+
+/** Error si el dominio es un host de la plataforma o está bajo uno de sus dominios registrables. */
+export function assertClaimableDomain(domain: string) {
+  const d = domain.toLowerCase().replace(/\.+$/, "");
+  if (isPlatformHost(d)) throw badRequest("reserved_domain", `No se pueden usar dominios de ${d}`);
+  for (const root of reservedDomainRoots()) {
+    if (d === root || d.endsWith(`.${root}`)) throw badRequest("reserved_domain", `No se pueden usar dominios de ${root}`);
+  }
+}
+
+/**
+ * Los dominios propios y de sub-marcas se sirven en este entorno (CUSTOM_DOMAINS_SERVING, junto con on_demand_tls de
+ * Caddy). Sin eso, los links quedan en APP_URL aunque el dominio esté verificado.
+ */
+export const customDomainsServing = () => config.customDomainsServing;
+/** Aviso de las respuestas de dominios cuando el entorno no los sirve. */
+export const CUSTOM_DOMAINS_NOT_SERVING_NOTICE =
+  "Los dominios propios no están habilitados en este entorno: el dominio se puede verificar, pero los links siguen usando el dominio de la plataforma";
+export const servingFields = () => ({
+  servingEnabled: customDomainsServing(),
+  notice: customDomainsServing() ? null : CUSTOM_DOMAINS_NOT_SERVING_NOTICE,
+});
 /** Host de la plataforma: el de APP_URL o uno de PLATFORM_HOSTS (no es un dominio de firmantes ni se puede reclamar). */
 export const isPlatformHost = (h: string) => h === appHost() || config.platformHosts.includes(h);
 
@@ -97,15 +133,30 @@ function cached<T extends string | null>(key: string, load: () => Promise<T>): P
   });
 }
 
+let generation = 0;
+/**
+ * Sube con cada invalidación: otra caché que depende de los dominios verificados (white-label/brand.ts: brandForHost)
+ * descarta lo que guardó con una generación anterior. Función (no un registro de oyentes al importar): brand.ts y este
+ * módulo se importan en ciclo.
+ */
+export function domainCacheGeneration(): number {
+  return generation;
+}
+
 function invalidate() {
+  generation++;
   cache.clear();
 }
 
 /** Cambió un dominio web de sub-marca (white-label/routes.ts): la caché de Host → organización ya no vale. */
 export const invalidateDomainCache = invalidate;
 
-/** URL base para los links de una organización: su dominio verificado o la de la plataforma. */
+/**
+ * URL base para los links de una organización: su dominio verificado o la de la plataforma. Si el entorno no sirve
+ * dominios propios (CUSTOM_DOMAINS_SERVING), siempre la de la plataforma: sin certificado el link no abriría.
+ */
 export async function tenantBaseUrl(db: Db, tenantId: string): Promise<string> {
+  if (!customDomainsServing()) return config.appUrl;
   const d = await cached(`t:${tenantId}`, async () => {
     const r = await db.one<any>(`SELECT domain FROM custom_domains WHERE tenant_id = $1 AND status = 'verified'`, [tenantId]);
     return r?.domain ?? null;
@@ -130,7 +181,7 @@ export async function tenantForHost(db: Db, host: string | undefined): Promise<s
  * una de sus sub-marcas (brand_domains). En los dos la organización controla el DNS, así que los dos necesitan el mismo
  * aislamiento de la sesión de cuenta y de los links de firma de otras organizaciones.
  */
-async function signerHostTenant(db: Db, host: string | undefined): Promise<string | null> {
+export async function signerHostTenant(db: Db, host: string | undefined): Promise<string | null> {
   const h = (host ?? "").split(":")[0].toLowerCase().replace(/\.+$/, "");
   if (!h || isPlatformHost(h) || h === "localhost" || h === "127.0.0.1") return null;
   return cached(`s:${h}`, async () => {
@@ -143,6 +194,14 @@ async function signerHostTenant(db: Db, host: string | undefined): Promise<strin
   });
 }
 
+/**
+ * Hostnames aceptados en el desafío Turnstile de una página pública de la organización (formularios web, workflows
+ * públicos): los de la plataforma, su dominio propio verificado o el dominio web verificado de una de sus sub-marcas.
+ */
+export function turnstileHostOk(db: Db, tenantId: string) {
+  return async (h: string) => isPlatformHost(h) || (await signerHostTenant(db, h)) === tenantId;
+}
+
 function toApi(r: any): CustomDomain {
   return {
     domain: r.domain,
@@ -153,6 +212,7 @@ function toApi(r: any): CustomDomain {
     verifiedAt: iso(r.verified_at),
     lastCheckedAt: iso(r.last_checked_at),
     lastError: r.last_error,
+    ...servingFields(),
   };
 }
 
@@ -181,7 +241,8 @@ export async function recheckVerifiedDomains(
   deps: { txt?: (name: string) => Promise<string[]>; routes?: (domain: string) => Promise<boolean>; limit?: number } = {},
 ) {
   const txt = deps.txt ?? resolveTxt;
-  const routes = deps.routes ?? routesToPlatform;
+  // En local no hay DNS que lleve a la plataforma (como al verificar): sin una función inyectada, no se chequea.
+  const routes = deps.routes ?? (isLocalEnv() ? async () => true : routesToPlatform);
   const rows = await d.db.query<any>(
     `SELECT * FROM custom_domains WHERE status = 'verified' AND (last_checked_at IS NULL OR last_checked_at < now() - make_interval(hours => $1))
       ORDER BY last_checked_at NULLS FIRST LIMIT $2`,
@@ -251,6 +312,42 @@ function isDirectLoopback(req: FastifyRequest) {
   return loop && !req.headers["x-forwarded-for"];
 }
 
+/**
+ * Para las rutas públicas con un link de una organización (token o id en la ruta), una función que devuelve la
+ * organización dueña del link (null si no existe: la ruta responde su propio 404). null si la ruta no es de esas.
+ */
+function linkOwnerLookup(path: string): ((db: Db) => Promise<string | null>) | null {
+  const seg = path.split("/");
+  const uuid = (v: string) => /^[0-9a-f-]{36}$/i.test(v);
+  const tokenOk = (v: string) => /^[A-Za-z0-9_-]{20,100}$/.test(v);
+  const tenantOf = async (db: Db, sql: string, arg: string) => (await db.one<{ tenant_id: string }>(sql, [arg]))?.tenant_id ?? null;
+  if (under(path, "/v1/signing") && seg[3]) {
+    const token = seg[3];
+    return async (db) => {
+      // El link permanente o un token de sesión del canje embebido (signer-token.ts).
+      const hash = await signerTokenHash(db, token);
+      return hash ? tenantOf(db, `SELECT tenant_id FROM recipients WHERE access_token_hash = $1`, hash) : null;
+    };
+  }
+  if (under(path, "/v1/public/negotiations") && seg[4] && tokenOk(seg[4])) {
+    const hash = sha256Hex(seg[4]);
+    return (db) => tenantOf(db, `SELECT tenant_id FROM negotiation_participants WHERE token_hash = $1`, hash);
+  }
+  if (under(path, "/v1/public/workflow-runs") && seg[4] && tokenOk(seg[4])) {
+    const hash = sha256Hex(seg[4]);
+    return (db) => tenantOf(db, `SELECT tenant_id FROM workflow_runs WHERE public_token_hash = $1`, hash);
+  }
+  if (under(path, "/v1/payments/return") && seg[4] && uuid(seg[4])) {
+    const id = seg[4];
+    return (db) => tenantOf(db, `SELECT e.tenant_id FROM envelope_payments p JOIN envelopes e ON e.id = p.envelope_id WHERE p.id = $1`, id);
+  }
+  if (under(path, "/v1/identity/return") && seg[4] && uuid(seg[4])) {
+    const id = seg[4];
+    return (db) => tenantOf(db, `SELECT tenant_id FROM identity_verifications WHERE id = $1`, id);
+  }
+  return null;
+}
+
 // ───────────────────────────── Rutas ─────────────────────────────
 
 export async function customDomainRoutes(app: FastifyInstance, s: Services) {
@@ -264,11 +361,7 @@ export async function customDomainRoutes(app: FastifyInstance, s: Services) {
   app.put("/v1/domains", { preHandler: auth }, async (req) => {
     const a = req.auth!;
     const { domain } = SetCustomDomainInput.parse(req.body);
-    for (const root of new Set([platformRoot(), "calasign.com", "calasign.io"])) {
-      if (isPlatformHost(domain) || domain === root || domain.endsWith(`.${root}`)) {
-        throw badRequest("reserved_domain", `No se pueden usar dominios de ${root}`);
-      }
-    }
+    assertClaimableDomain(domain);
     // Solo un dominio verificado por otra organización lo bloquea: uno pendiente no prueba nada (cualquiera puede
     // registrar un dominio ajeno) y gana quien publique su TXT.
     const taken = await s.db.one<any>(`SELECT tenant_id FROM custom_domains WHERE domain = $1 AND status = 'verified' AND tenant_id <> $2`, [domain, a.tenantId]);
@@ -364,14 +457,14 @@ export async function customDomainRoutes(app: FastifyInstance, s: Services) {
   // Marca de la organización según el Host (la web la usa en el login y en el encabezado).
   app.get("/v1/public/host-branding", async (req, reply) => {
     const tenantId = await tenantForHost(s.db, req.headers.host);
-    if (!tenantId) return reply.code(404).send({ error: { code: "not_found", message: "Sin dominio propio" } });
+    if (!tenantId) return reply.header("vary", "Host").code(404).send({ error: { code: "not_found", message: "Sin dominio propio" } });
     const [t, b] = await Promise.all([s.db.one<any>(`SELECT name FROM tenants WHERE id = $1`, [tenantId]), getTenantBranding(s.db, tenantId)]);
     const out: HostBranding = {
       organizationName: t?.name ?? "",
       primaryColor: b.primaryColor,
       logoUrl: b.logoUrl ? b.logoUrl.replace(config.appUrl, "") : null,
     };
-    reply.header("cache-control", "public, max-age=300");
+    reply.header("cache-control", "public, max-age=300").header("vary", "Host");
     return out;
   });
 
@@ -416,18 +509,16 @@ export async function customDomainRoutes(app: FastifyInstance, s: Services) {
     for (const n of names) if (req.cookies && n in req.cookies) delete req.cookies[n];
   });
 
-  // En un dominio propio, los links de firma de OTRAS organizaciones no funcionan.
+  // En un dominio propio (o de sub-marca), los links públicos de OTRAS organizaciones no funcionan: firma, negociación,
+  // ejecución de workflow y las vueltas de los proveedores de pago y de verificación de identidad. Si no, el dominio de
+  // una organización servía (con su marca y bajo su DNS) los links de otra.
   app.addHook("onRequest", async (req, reply) => {
-    const path = requestPath(req);
-    if (!path.startsWith("/v1/signing/")) return;
+    const ownerOf = linkOwnerLookup(requestPath(req));
+    if (!ownerOf) return;
     const tenantId = await signerHostTenant(s.db, req.headers.host);
     if (!tenantId) return;
-    const token = path.split("/")[3] ?? "";
-    // El link permanente o un token de sesión del canje embebido (signer-token.ts).
-    const hash = await signerTokenHash(s.db, token);
-    if (!hash) return;
-    const r = await s.db.one<any>(`SELECT tenant_id FROM recipients WHERE access_token_hash = $1`, [hash]);
-    if (r && r.tenant_id !== tenantId) return reply.code(404).send({ error: { code: "not_found", message: "Link no encontrado" } });
+    const owner = await ownerOf(s.db);
+    if (owner && owner !== tenantId) return reply.code(404).send({ error: { code: "not_found", message: "Link no encontrado" } });
   });
 
   if (isLocalEnv()) {

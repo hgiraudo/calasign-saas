@@ -8,7 +8,8 @@ links de otras organizaciones.
 
 1. **Ajustes → Dominio propio**: la organización escribe el dominio (`PUT /v1/domains`). Registrarlo y verificarlo
    exigen el dominio propio en el plan (402 `plan_limit`, Enterprise); quitarlo no. No se aceptan los hosts de la
-   plataforma (el de `APP_URL` y los de `PLATFORM_HOSTS`), subdominios del dominio de la plataforma o de
+   plataforma (el de `APP_URL` y los de `PLATFORM_HOSTS`), el dominio registrable de cada uno de ellos ni sus
+   subdominios (con los sufijos públicos: para `app.calasign.com.ar` se reserva `calasign.com.ar`), ni
    `calasign.com`/`calasign.io` (400 `reserved_domain`) ni un dominio ya verificado por otra organización.
 2. Crea en su DNS:
    - **TXT** `_calasign-challenge.firmas.cliente.com` con el valor `calasign-verify=<token>` (verificación de propiedad).
@@ -23,6 +24,25 @@ links de otras organizaciones.
    y quien se quede con un dominio vencido puede volver a publicarlo. Cada control fallido suma puntos (falta o no
    apunta: 2; error de DNS: 1) y con 4 el dominio vuelve a "pendiente" y los links pasan al dominio de la plataforma.
    Por eso el CNAME no puede estar detrás de un proxy (en Cloudflare, "solo DNS"): un proxy esconde el destino real.
+
+## `CUSTOM_DOMAINS_SERVING`: links al dominio propio solo si el entorno lo sirve
+
+Variable de entorno de la API. **Por defecto `false` en todos los entornos**; solo `true` (o `1`/`yes`/`on`) la
+habilita.
+
+- `false`: se puede registrar y verificar un dominio (propio o de sub-marca), pero los links de correos, WhatsApp,
+  Telegram, URLs embebidas y formularios siguen usando `APP_URL` (`tenantBaseUrl` y `brandBaseUrl` no cambian al
+  dominio verificado). Las respuestas de `/v1/domains` (incluida `POST /v1/domains/verify`) y de los dominios de
+  sub-marcas traen `servingEnabled: false` y un `notice`, y la web avisa "los dominios propios no están habilitados en
+  este entorno". Sin TLS bajo demanda en el proxy, un link a `https://firmas.cliente.com` no abriría (no hay
+  certificado para ese nombre).
+- `true`: los links usan el dominio verificado. **Hay que habilitarla junto con la configuración `on_demand_tls` de
+  Caddy de abajo** (o el equivalente del balanceador): con la variable en `true` y sin certificado bajo demanda, los
+  firmantes reciben links que no abren.
+
+En dev se configura con el parámetro SSM `/calasign-saas/dev/CUSTOM_DOMAINS_SERVING` (lo lee `scripts/deploy-dev.sh`
+como el resto de los parámetros). El resto del comportamiento por `Host` (marca, aislamiento de sesión y de links de
+otras organizaciones, `/internal/tls-allowed*`) no depende de la variable.
 
 ## Cambio en Caddy (no aplicado)
 
@@ -76,9 +96,10 @@ Notas:
 
 | Lugar | Comportamiento |
 |---|---|
-| Correos, WhatsApp, Telegram | Links `https://<dominio>/s/<token>` y `https://<dominio>/app/envelopes/<id>` (`tenantBaseUrl`). |
-| `GET /v1/public/host-branding` | Nombre, color y logo de la organización dueña del `Host` (404 si no es un dominio propio). |
-| `/v1/signing/*` por un dominio propio | 404 si el link es de otra organización. |
+| Correos, WhatsApp, Telegram | Links `https://<dominio>/s/<token>` y `https://<dominio>/app/envelopes/<id>` (`tenantBaseUrl`), solo con `CUSTOM_DOMAINS_SERVING=true`; si no, `APP_URL`. |
+| `GET /v1/public/host-branding` | Nombre, color y logo de la organización dueña del `Host` (404 si no es un dominio propio). Con `Vary: Host`. |
+| `/v1/signing/*`, `/v1/public/negotiations/:token*`, `/v1/public/workflow-runs/:token*`, `/v1/payments/return/:id`, `/v1/identity/return/:id` por un dominio propio o de sub-marca | 404 si el link es de otra organización. |
+| Desafío Turnstile (formularios web, workflows públicos) | Acepta el hostname de la plataforma, el dominio propio de la organización o el de una de sus sub-marcas. |
 | URLs embebidas, Telegram, Firmador | Usan el dominio de la marca del sobre (sub-marca con dominio propio, o el de la organización). |
 | Formularios web | Usan el dominio propio de la organización (`tenantBaseUrl`); no tienen sub-marca. |
 | La cuenta en cualquier host que no sea el de la plataforma (dominio propio, de sub-marca, uno que dejó de estar verificado o cualquier otro) | **No se sirve.** `/`, `/app`, `/login`, `/signup`, `/forgot`, `/reset`, `/invite`, `/oauth/authorize` y `/developers` redirigen (302) al dominio de la plataforma; `/v1/auth`, `/v1/invite`, `/v1/oauth/authorize`, `/v1/me` y `/v1/integrations/sso` responden 401 `use_platform_host`, y la cookie de sesión `cs_session` se ignora. La organización controla el DNS de su dominio: si se sirviera el login ahí podría quedarse con sesiones que valen en la plataforma y en otras organizaciones. API keys y tokens OAuth (`Authorization: Bearer`) funcionan igual. El Host se normaliza (sin puerto ni punto final). |

@@ -203,7 +203,7 @@ export function flatten(docs: DocText[]): FlatLine[] {
 /** Largo mínimo de una cita verificable (normalizada): al menos 20 caracteres o 4 palabras. */
 export const QUOTE_MIN_CHARS = 20;
 export const QUOTE_MIN_WORDS = 4;
-/** Con página citada: largo mínimo de una cita corta sin números (con un número alcanza con 3 caracteres). */
+/** Con página citada: largo mínimo de una cita corta sin números (y al menos 2 palabras; con un número alcanza con 3 caracteres). */
 export const QUOTE_SHORT_MIN_CHARS = 6;
 
 /**
@@ -211,9 +211,10 @@ export const QUOTE_SHORT_MIN_CHARS = 6;
  * para no aparecer por casualidad (una cita de 3 letras, "de la", siempre estaba en algún lado) y está en la página que
  * cita el modelo (`page`, desde 1; en cualquier documento); sin página, en cualquier lugar de los documentos. Una cita
  * que está en otra página que la citada no se da por verificada: la página que se muestra sería falsa.
- * Con página citada se aceptan también citas cortas con un número o de al menos QUOTE_SHORT_MIN_CHARS caracteres
- * ("USD 10.000", "30 días"): los montos y plazos son justo lo que se cita, y acotadas a una página es poco probable que
- * coincidan por casualidad. Sin página rige el mínimo de largo.
+ * Con página citada se aceptan también citas cortas con un número o de al menos QUOTE_SHORT_MIN_CHARS caracteres y 2
+ * palabras ("USD 10.000", "30 días", "de la factura"): los montos y plazos son justo lo que se cita, y acotadas a una
+ * página es poco probable que coincidan por casualidad. Las cortas tienen que coincidir con palabras y números enteros
+ * (no dentro de otro número o palabra). Sin página rige el mínimo de largo.
  */
 export function locateQuote(docs: DocText[], quote: string, page?: number | null): { documentId: string | null; page: number; verified: boolean } {
   const q = norm(quote).replace(/["“”«»]/g, "").trim();
@@ -221,13 +222,18 @@ export function locateQuote(docs: DocText[], quote: string, page?: number | null
   const wordCount = q.split(" ").filter(Boolean).length;
   const cited = typeof page === "number" && Number.isInteger(page) && page >= 1 ? page : null;
   const longEnough = q.length >= QUOTE_MIN_CHARS || wordCount >= QUOTE_MIN_WORDS;
-  const shortOk = cited != null && (q.length >= QUOTE_SHORT_MIN_CHARS || (/\d/.test(q) && q.length >= 3));
+  const shortOk = cited != null && ((/\d/.test(q) && q.length >= 3) || (q.length >= QUOTE_SHORT_MIN_CHARS && wordCount >= 2));
   if (!longEnough && !shortOk) return fallback;
+  // Una cita corta tiene que coincidir con palabras y números enteros: "10%" no está en "110%", "30 días" no está en
+  // "130 días" ni "USD 10.000" en "USD 10.000.000" (después no puede seguir una letra, un dígito ni un separador decimal
+  // o de miles con más dígitos).
+  const escaped = q.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+  const bounded = longEnough ? null : new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}]|[.,]\\d)`, "u");
   for (const d of docs) {
     for (const p of d.pages) {
       if (cited != null && p.page + 1 !== cited) continue;
       const pageText = norm(p.lines.map((l) => l.text).join(" "));
-      if (pageText.includes(q)) return { documentId: d.id, page: p.page + 1, verified: true };
+      if (bounded ? bounded.test(pageText) : pageText.includes(q)) return { documentId: d.id, page: p.page + 1, verified: true };
     }
   }
   return fallback;

@@ -20,7 +20,7 @@ import { config } from "../../config";
 import type { Db } from "../../infra/db";
 import { decrypt } from "../../lib/util";
 import { brandText, PLATFORM_NAME, type MailBranding, type TemplateKind } from "../../notifications/templates";
-import { tenantBaseUrl, tenantForHost } from "../custom-domains";
+import { customDomainsServing, domainCacheGeneration, tenantBaseUrl, tenantForHost } from "../custom-domains";
 
 export const DEFAULT_BRAND = "default";
 
@@ -126,7 +126,8 @@ export function defaultConfigOf(b: StoredTenantBranding): { config: BrandConfigI
 
 /** URL base de los links de una marca: dominio verificado de la sub-marca, el de la organización o el de la plataforma. */
 export async function brandBaseUrl(db: Db, tenantId: string, brandId: string | null | undefined): Promise<string> {
-  if (brandId) {
+  // Sin dominios propios servidos en este entorno (CUSTOM_DOMAINS_SERVING), los links quedan en la plataforma.
+  if (brandId && customDomainsServing()) {
     const d = await db.one<{ domain: string }>(`SELECT domain FROM brand_domains WHERE brand_id = $1 AND tenant_id = $2 AND status = 'verified'`, [brandId, tenantId]);
     if (d) return `https://${d.domain}`;
   }
@@ -139,16 +140,44 @@ export async function envelopeBaseUrl(db: Db, tenantId: string, envelopeId: stri
   return brandBaseUrl(db, tenantId, e?.brand_id ?? null);
 }
 
+type HostBrand = { tenantId: string; brandId: string | null } | null;
+/**
+ * Caché breve de Host → marca: la web la pide en cada carga (SPA, favicon, tema). LRU acotada (la clave sale del
+ * encabezado Host, que elige el cliente) y se limpia cuando cambia un dominio (invalidateDomainCache).
+ */
+const hostBrandCache = new Map<string, { value: HostBrand; at: number; gen: number }>();
+const HOST_BRAND_TTL_MS = 30_000;
+const HOST_BRAND_MAX = 1000;
+
 /** Marca dueña del Host (dominio de una sub-marca o dominio propio de la organización), o null. */
-export async function brandForHost(db: Db, host: string | undefined): Promise<{ tenantId: string; brandId: string | null } | null> {
+export async function brandForHost(db: Db, host: string | undefined): Promise<HostBrand> {
   // Sin el punto final, como tenantForHost y signerHostTenant: "firmas.marca.com." es el mismo dominio (el aislamiento de
   // sesión ya lo trataba así) y sin esto se servía la marca de la plataforma en el dominio de la sub-marca.
   const h = (host ?? "").split(":")[0].toLowerCase().replace(/\.+$/, "");
   if (!h || h === "localhost" || h === "127.0.0.1") return null;
+  // Un dominio cambió (invalidateDomainCache): lo guardado antes ya no vale.
+  const gen = domainCacheGeneration();
+  const hit = hostBrandCache.get(h);
+  if (hit && hit.gen !== gen) hostBrandCache.clear();
+  else if (hit && Date.now() - hit.at < HOST_BRAND_TTL_MS) {
+    // LRU: el usado pasa al final del orden de inserción.
+    hostBrandCache.delete(h);
+    hostBrandCache.set(h, hit);
+    return hit.value;
+  }
   const b = await db.one<{ tenant_id: string; brand_id: string }>(`SELECT tenant_id, brand_id FROM brand_domains WHERE domain = $1 AND status = 'verified'`, [h]);
-  if (b) return { tenantId: b.tenant_id, brandId: b.brand_id };
-  const t = await tenantForHost(db, h);
-  return t ? { tenantId: t, brandId: null } : null;
+  let value: HostBrand;
+  if (b) value = { tenantId: b.tenant_id, brandId: b.brand_id };
+  else {
+    const t = await tenantForHost(db, h);
+    value = t ? { tenantId: t, brandId: null } : null;
+  }
+  // Una consulta en curso durante un cambio no guarda el resultado anterior al cambio.
+  if (gen !== domainCacheGeneration()) return value;
+  hostBrandCache.delete(h);
+  if (hostBrandCache.size >= HOST_BRAND_MAX) hostBrandCache.delete(hostBrandCache.keys().next().value!);
+  hostBrandCache.set(h, { value, at: Date.now(), gen });
+  return value;
 }
 
 /**

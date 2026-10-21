@@ -114,6 +114,13 @@ export const config = {
     .split(",")
     .map((h) => h.trim().toLowerCase().replace(/:\d+$/, "").replace(/\.$/, ""))
     .filter(Boolean),
+  /**
+   * CUSTOM_DOMAINS_SERVING: el proxy de este entorno sirve los dominios propios y de sub-marcas (Caddy con on_demand_tls
+   * preguntando a /internal/tls-allowed-brand; docs/CUSTOM-DOMAINS.md). Solo con "true" (o 1/yes/on) los links de firma
+   * pasan al dominio verificado; por defecto false en todos los entornos: sin el certificado bajo demanda esos links
+   * no abren. Con false se puede igual registrar y verificar un dominio, pero los links siguen en APP_URL.
+   */
+  customDomainsServing: bool(env.CUSTOM_DOMAINS_SERVING, false),
   repoRoot,
   dataDir,
   /** Sin DATABASE_URL se usa PGlite (Postgres embebido) en var/pglite. */

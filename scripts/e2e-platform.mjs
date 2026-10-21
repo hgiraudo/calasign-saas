@@ -506,10 +506,12 @@ assert(tls.status === 404, "Caddy ask: dominio no verificado → 404");
 tls = await getWithHost(`/internal/tls-allowed?domain=${DOMAIN}`, "localhost", { "x-forwarded-for": "203.0.113.9" });
 assert(tls.status === 404, "Caddy ask: no responde a pedidos que vienen por el proxy");
 
-// Los links nuevos usan el dominio propio.
+// Los links nuevos usan el dominio propio si el entorno lo sirve (CUSTOM_DOMAINS_SERVING=true); si no, el de la
+// plataforma, y la respuesta lo avisa.
 const afterDomain = await sendEnvelope(owner, "dominio");
 const link = await linkFor(owner, afterDomain.signerName);
-assert(link.startsWith(`https://${DOMAIN}/s/`), `link de firma con el dominio propio: ${link}`);
+if (dom.servingEnabled) assert(link.startsWith(`https://${DOMAIN}/s/`), `link de firma con el dominio propio: ${link}`);
+else assert(!link.includes(DOMAIN) && link.includes("/s/") && dom.notice, `sin CUSTOM_DOMAINS_SERVING el link sigue en la plataforma, con aviso: ${link}`);
 const tokenMine = link.split("/s/")[1];
 let sg = await getWithHost(`/v1/signing/${tokenMine}`, DOMAIN);
 assert(sg.status === 200, "link propio por el dominio propio → 200");

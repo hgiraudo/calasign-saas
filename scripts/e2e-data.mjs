@@ -243,7 +243,8 @@ await A.api("PUT", `/v1/envelopes/${emb.envelope.id}/recipients`, { recipients: 
 await A.api("PUT", `/v1/envelopes/${emb.envelope.id}/fields`, { fields: [{ documentId: emb.doc.id, recipientId: signer, type: "signature", page: 0, x: 0.1, y: 0.8, width: 0.3, height: 0.08 }] });
 await A.api("POST", `/v1/envelopes/${emb.envelope.id}/send`);
 const su = await A.api("POST", `/v1/envelopes/${emb.envelope.id}/recipients/${signer}/signing-url`, {}, { expect: 201 });
-assert(su.url.startsWith(`https://${DOMAIN}/embed/`), `URL embebida con el dominio propio: ${su.url}`);
+if (dom.servingEnabled) assert(su.url.startsWith(`https://${DOMAIN}/embed/`), `URL embebida con el dominio propio: ${su.url}`);
+else assert(su.url.includes("/embed/") && !su.url.includes(DOMAIN), `URL embebida con el dominio de la plataforma (dominios propios deshabilitados): ${su.url}`);
 // Formulario web
 const { template } = await A.api("POST", "/v1/templates", { name: `Alta ${stamp}`, subject: "Alta" });
 const tfd = new FormData();
@@ -253,7 +254,8 @@ const role = randomUUID();
 await A.api("PUT", `/v1/templates/${template.id}/roles`, { roles: [{ id: role, name: "Cliente", role: "signer", routingOrder: 1 }] });
 await A.api("PUT", `/v1/templates/${template.id}/fields`, { fields: [{ documentId: tdoc.id, roleId: role, type: "signature", page: 0, x: 0.1, y: 0.8, width: 0.3, height: 0.08 }] });
 const form = await A.api("POST", "/v1/web-forms", { templateId: template.id, name: `Form ${stamp}`, signerRoleId: role, fixedRecipients: [] }, { expect: 201 });
-assert(form.url === `https://${DOMAIN}/f/${form.slug}`, `link del formulario con el dominio propio: ${form.url}`);
+if (dom.servingEnabled) assert(form.url === `https://${DOMAIN}/f/${form.slug}`, `link del formulario con el dominio propio: ${form.url}`);
+else assert(form.url.endsWith(`/f/${form.slug}`) && !form.url.includes(DOMAIN), `link del formulario con el dominio de la plataforma: ${form.url}`);
 ok("dominio propio: la URL de firma embebida y el link del formulario web usan el dominio de la organización");
 
 // ───────────────────────────── Dominios SSO ─────────────────────────────

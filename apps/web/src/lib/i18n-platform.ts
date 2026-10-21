@@ -184,6 +184,8 @@ const es = {
   "dom.value": "Valor",
   "dom.lastCheck": "Última verificación: {when}",
   "dom.verifiedAt": "Verificado el {when}. Los links nuevos usan https://{domain}.",
+  "dom.notServing": "Los dominios propios no están habilitados en este entorno: podés verificar el dominio, pero los links siguen usando el dominio de la plataforma.",
+  "dom.verifiedAtPlatform": "Verificado el {when}.",
 
   // Developers
   "dev.oauth": "OAuth 2.0",
@@ -370,6 +372,8 @@ const pt: Record<Key, string> = {
   "dom.value": "Valor",
   "dom.lastCheck": "Última verificação: {when}",
   "dom.verifiedAt": "Verificado em {when}. Os novos links usam https://{domain}.",
+  "dom.notServing": "Os domínios próprios não estão habilitados neste ambiente: você pode verificar o domínio, mas os links continuam usando o domínio da plataforma.",
+  "dom.verifiedAtPlatform": "Verificado em {when}.",
 
   "dev.oauth": "OAuth 2.0",
   "dev.oauthText":
@@ -553,6 +557,8 @@ const en: Record<Key, string> = {
   "dom.value": "Value",
   "dom.lastCheck": "Last check: {when}",
   "dom.verifiedAt": "Verified on {when}. New links use https://{domain}.",
+  "dom.notServing": "Custom domains are not enabled in this environment: you can verify the domain, but links keep using the platform domain.",
+  "dom.verifiedAtPlatform": "Verified on {when}.",
 
   "dev.oauth": "OAuth 2.0",
   "dev.oauthText":

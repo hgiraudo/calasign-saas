@@ -413,9 +413,14 @@ describe("MCP: lotes, lugares para PDFs, anotaciones, errores internos y vistas 
     const one = await rpc([{ jsonrpc: "2.0", id: 9001, method: "tools/list", params: {} }]);
     expect(one.statusCode).toBe(200);
     const body = one.json();
-    const msg = Array.isArray(body) ? body[0] : body;
-    expect(msg.id).toBe(9001);
-    expect(msg.result.tools.length).toBeGreaterThan(0);
+    expect(Array.isArray(body)).toBe(true);
+    expect(body).toHaveLength(1);
+    expect(body[0].id).toBe(9001);
+    expect(body[0].result.tools.length).toBeGreaterThan(0);
+    // Un mensaje suelto (sin lote) sigue respondiendo un objeto.
+    const single = (await rpc({ jsonrpc: "2.0", id: 9002, method: "tools/list", params: {} })).json();
+    expect(Array.isArray(single)).toBe(false);
+    expect(single.id).toBe(9002);
     // Lote de solo notificaciones: aceptado, sin respuesta.
     const notes = await rpc([{ jsonrpc: "2.0", method: "notifications/initialized" }, { jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 1 } }]);
     expect(notes.statusCode).toBe(202);

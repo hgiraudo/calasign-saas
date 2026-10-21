@@ -835,6 +835,11 @@ function DomainsEditor({ brand, onBrand, canAdd }: { brand: Brand; onBrand: (b: 
                 <b>{d.domain}</b> — {d.status === "verified" ? `✓ ${w("domains.verified")}` : w("domains.pending")}
               </p>
               <p className="muted">{w("domains.webHint", { target: d.cnameTarget })}</p>
+              {d.servingEnabled === false && (
+                <p className="small" role="note" style={{ color: "#92400e" }}>
+                  {w("domains.notServing")}
+                </p>
+              )}
               <code className="break">TXT {d.txtName} = {d.txtValue}</code>
               <code className="break">CNAME {d.domain} → {d.cnameTarget}</code>
               {d.lastError && <p className="error-text">{d.lastError}</p>}

@@ -240,7 +240,9 @@ describe("verificación de citas", () => {
     ];
     expect(H.locateQuote(money, "USD 10.000", 1)).toEqual({ documentId: "d2", page: 1, verified: true });
     expect(H.locateQuote(money, "30 días", 1)).toEqual({ documentId: "d2", page: 1, verified: true });
-    expect(H.locateQuote(money, "factura", 1).verified).toBe(true); // 7 caracteres
+    expect(H.locateQuote(money, "de la factura", 1).verified).toBe(true); // 6+ caracteres y 2 palabras
+    expect(H.locateQuote(money, "factura", 1).verified).toBe(false); // una sola palabra
+    expect(H.locateQuote(money, "Precio total", 1).verified).toBe(true);
     // En otra página que la citada: no.
     expect(H.locateQuote(money, "USD 10.000", 2).verified).toBe(false);
     // Sin página rige el mínimo de largo.
@@ -248,5 +250,19 @@ describe("verificación de citas", () => {
     expect(H.locateQuote(money, "30 días", null).verified).toBe(false);
     // Muy cortas sin número, ni con página.
     expect(H.locateQuote(docs, "de la", 1).verified).toBe(false);
+  });
+
+  it("una cita corta coincide con números y palabras enteros", () => {
+    const amounts: DocText[] = [
+      { id: "d3", name: "c.pdf", pages: [page(0, ["Precio: USD 10.000.000 pagaderos a 130 días; recargo del 110% (anual)."]), page(1, ["Precio: USD 10.000, a 30 días, recargo del 10%."])] },
+    ];
+    expect(H.locateQuote(amounts, "USD 10.000", 1).verified).toBe(false);
+    expect(H.locateQuote(amounts, "30 días", 1).verified).toBe(false);
+    expect(H.locateQuote(amounts, "10%", 1).verified).toBe(false);
+    expect(H.locateQuote(amounts, "USD 10.000", 2)).toEqual({ documentId: "d3", page: 2, verified: true });
+    expect(H.locateQuote(amounts, "30 días", 2).verified).toBe(true);
+    expect(H.locateQuote(amounts, "10%", 2).verified).toBe(true);
+    expect(H.locateQuote(amounts, "USD 10.000.000", 1).verified).toBe(true);
+    expect(H.locateQuote(amounts, "110% (anual)", 1).verified).toBe(true);
   });
 });

@@ -12,6 +12,8 @@ describe("dominio propio: re-verificación periódica", () => {
     const { createDb, migrate } = await import("../src/infra/db");
     const { recheckVerifiedDomains, tenantBaseUrl, tenantForHost } = await import("../src/modules/custom-domains");
     const { config } = await import("../src/config");
+    // Los links pasan al dominio verificado solo si el entorno sirve dominios propios.
+    config.customDomainsServing = true;
     const { uuidv7 } = await import("../src/lib/util");
     const db = await createDb();
     await migrate(db);

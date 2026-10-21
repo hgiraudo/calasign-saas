@@ -317,6 +317,13 @@ export interface CustomDomain {
   verifiedAt: string | null;
   lastCheckedAt: string | null;
   lastError: string | null;
+  /**
+   * Si este entorno sirve los dominios propios (CUSTOM_DOMAINS_SERVING). En false el dominio se puede verificar, pero
+   * los links siguen usando el dominio de la plataforma.
+   */
+  servingEnabled: boolean;
+  /** Aviso para mostrar cuando servingEnabled es false (null si no hay nada que avisar). */
+  notice: string | null;
 }
 
 /** Marca de la organización dueña del dominio por el que se entra (Host). */

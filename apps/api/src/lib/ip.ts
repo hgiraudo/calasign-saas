@@ -54,7 +54,7 @@ declare module "fastify" {
   interface FastifyContextConfig {
     /**
      * La ruta autentica una credencial Bearer por su cuenta (sin pasar por authenticate(), p. ej. /mcp): con límite
-     * propio, una credencial válida cuenta en su cupo. Las rutas con authenticate() en onRequest/preHandler se detectan
+     * propio, una credencial válida cuenta en el cupo de su organización (no en el de la IP). Las rutas con authenticate() en onRequest/preHandler se detectan
      * solas (bearerAuthRoute, ver markBearerAuthRoutes); este marcador no hace falta en ellas.
      */
     rateLimitByCredential?: boolean;
@@ -174,9 +174,9 @@ async function verifiedTenant(token: string, ipKey: string, verify: CredentialVe
 }
 
 export interface RateLimitIdentity {
-  /** Clave del cupo: `cred:<hash>` o la de la IP. */
+  /** Clave del cupo: `cred:<hash>` (límite global), `tenant:<id>` (límite propio de una ruta que autentica) o la de la IP. */
   key: string;
-  /** Organización de la credencial (solo con clave `cred:`). */
+  /** Organización de la credencial (con clave `cred:` o `tenant:`). */
   tenantId: string | null;
 }
 
@@ -188,13 +188,19 @@ type RateLimitReq = {
 
 /**
  * Clave del límite de pedidos (y organización, para el tope por IP y organización de app.ts).
- * - Con una credencial Bearer válida (verificada acá contra la base, con caché): un hash de la credencial, para que las
- *   integraciones detrás de un mismo NAT o proxy (un cliente MCP alojado, Zapier) no compartan el cupo y una key
- *   repartida entre muchas IPs no lo multiplique. Vale también en las rutas con límite propio que autentican (/mcp,
- *   /v1/xml/sign, …); en las rutas públicas con límite propio (login, alta, recupero, 2FA, invitaciones, firma, /v1/verify)
- *   cuenta siempre la IP: si no, cada key válida abría otro cupo contra esos límites.
- * - Sin credencial, o con una inventada, revocada o vencida: por IP (rateLimitIpKey). Un Bearer inventado distinto en
- *   cada pedido cuenta en el cupo de la IP y no abre cupos nuevos.
+ * - Con una credencial Bearer válida (verificada acá contra la base, con caché), en el límite global: un hash de la
+ *   credencial, para que las integraciones detrás de un mismo NAT o proxy (un cliente MCP alojado, Zapier) no compartan
+ *   el cupo y una key repartida entre muchas IPs no lo multiplique.
+ * - En las rutas con límite propio que autentican (authenticate(), o rateLimitByCredential: /mcp, las /test de
+ *   integraciones): por organización (`tenant:<id>`), no por credencial. Esos límites cuidan algo caro o abusable de
+ *   la organización (correos de invitación, consultas DNS, envíos a CRM/conectores, checkouts, pruebas de conexión,
+ *   llamadas MCP): por credencial, crear N keys multiplicaba el cupo por N. /mcp también: el tope es por organización.
+ * - En las rutas públicas con límite propio (login, alta, recupero, 2FA, invitaciones, firma, /v1/verify) cuenta
+ *   siempre la IP: si no, cada key válida abría otro cupo contra esos límites.
+ * - Sin Bearer (sesión web por cookie), o con uno inventado, revocado o vencido: por IP (rateLimitIpKey). La
+ *   organización de una cookie no se conoce sin consultar la sesión en cada pedido (y cambia al pasar de
+ *   organización); por IP, abrir más sesiones no abre más cupo. Un Bearer inventado distinto en cada pedido cuenta en
+ *   el cupo de la IP y no abre cupos nuevos.
  * En el store en memoria del límite (uno por réplica) queda el hash, no la credencial.
  */
 export async function rateLimitIdentity(req: RateLimitReq, verify: CredentialVerifier): Promise<RateLimitIdentity> {
@@ -205,7 +211,8 @@ export async function rateLimitIdentity(req: RateLimitReq, verify: CredentialVer
   const ownLimit = !!cfg && typeof cfg.rateLimit === "object" && cfg.rateLimit !== null;
   if (ownLimit && cfg.bearerAuthRoute !== true && cfg.rateLimitByCredential !== true) return { key: ipKey, tenantId: null };
   const tenantId = await verifiedTenant(token, ipKey, verify);
-  return tenantId ? { key: `cred:${credentialHash(token)}`, tenantId } : { key: ipKey, tenantId: null };
+  if (!tenantId) return { key: ipKey, tenantId: null };
+  return { key: ownLimit ? `tenant:${tenantId}` : `cred:${credentialHash(token)}`, tenantId };
 }
 
 /** Clave del límite de pedidos (ver rateLimitIdentity). */

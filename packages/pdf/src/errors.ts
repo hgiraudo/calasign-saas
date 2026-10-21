@@ -8,7 +8,8 @@ export type InvalidPdfCode =
   | "unreadable"
   | "ambiguous_pdf"
   | "pdf_hidden_layers"
-  | "pdf_form_unsupported";
+  | "pdf_form_unsupported"
+  | "pdf_page_size";
 
 export class InvalidPdfError extends Error {
   constructor(

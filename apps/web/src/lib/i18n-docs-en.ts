@@ -559,7 +559,7 @@ export const docsEn: Record<DocsKey, string> = {
   "err.c.bad":
     "Other request errors, with a specific `code`: invalid cursor, anchor text not found, field outside the page, a file that isn't a PDF (`not_pdf`, the same code on every upload path), text with disallowed characters such as the null character (`invalid_text`), more than 30 documents or 1000 pages in a draft or template when adding one (`too_many_documents`, `too_many_pages`)…",
   "err.c.pdf":
-    "The uploaded PDF can't be used: password-protected (`encrypted`), restricted by permissions even though it opens without a password (`pdf_restricted`), with no pages (`empty`), damaged or too heavy (`unreadable`), showing different things in different readers (`ambiguous_pdf`), with hidden layers (`pdf_hidden_layers`) or with a form that can't be fixed as it appears (`pdf_form_unsupported`). Export it again or print it to PDF and upload it again. Accepted PDFs are sanitized: forms flattened, active content and attachments removed, and prior digital signatures are lost (`info.hadSignatures`).",
+    "The uploaded PDF can't be used: password-protected (`encrypted`), restricted by permissions even though it opens without a password (`pdf_restricted`), with no pages (`empty`), damaged or too heavy (`unreadable`), showing different things in different readers (`ambiguous_pdf`), with hidden layers (`pdf_hidden_layers`) with a form that can't be fixed as it appears (`pdf_form_unsupported`) or with a page of invalid size: zero area or a side outside 3 to 14400 points (`pdf_page_size`). Export it again or print it to PDF and upload it again. Accepted PDFs are sanitized: forms flattened, active content and attachments removed, and prior digital signatures are lost (`info.hadSignatures`).",
   "err.c.oneshot":
     "Errors in the `multipart/form-data` of `POST /v1/envelopes`: a text field other than `payload` (`unknown_part`), a repeated part (`duplicate_part`), a `payload` that isn't valid JSON (`invalid_json`), more than 10 documents (`too_many_documents`) or two documents citing the same file part (`duplicate_document`).",
   "err.c.unauthorized": "The credential is missing, invalid, expired or revoked.",
@@ -588,7 +588,7 @@ export const docsEn: Record<DocsKey, string> = {
   "err.c.internal": "Our error. It's safe to retry with increasing backoff; if you use `Idempotency-Key`, nothing gets duplicated.",
   "err.c.upstream": "An external service failed: the timestamp authority (`tsa_unavailable`) or the AI provider (`ai_unavailable`). Retry in a few minutes.",
   "err.c.unavailable":
-    "Temporary unavailability: document storage (`storage_unavailable`), PDF reader busy (`pdf_reader_busy`) or AI provider overloaded (`ai_rate_limited`). The request wasn't processed: retry with increasing backoff. `ai_unavailable` with `503` means the server has no AI provider configured.",
+    "Temporary unavailability: document storage (`storage_unavailable`), PDF reader busy (`pdf_reader_busy`), too many PDFs being processed at once (`pdf_busy`, with `Retry-After`) or AI provider overloaded (`ai_rate_limited`). The request wasn't processed: retry with increasing backoff. `ai_unavailable` with `503` means the server has no AI provider configured.",
   "err.c.byok":
     "The organization's own encryption key (BYOK, in your KMS) is unavailable: documents can't be stored or read. **Don't retry it in a loop:** an administrator has to restore access to the key (`details.keyArn`).",
   "err.c.aiTimeout": "The AI provider didn't respond in time. Try again later.",

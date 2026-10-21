@@ -291,6 +291,9 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
     if (!file) throw badRequest("file_required", "Falta el archivo (campo 'file')");
     const uploaded = new Uint8Array(await file.toBuffer());
     if (file.file.truncated) throw new AppError(413, "file_too_large", "El archivo supera el tamaño máximo", { limit: "file" });
+    // La plantilla se verifica antes de normalizar el PDF (CPU y un lugar del tope de procesamiento).
+    const pre = await s.db.one(`SELECT 1 FROM templates WHERE id = $1 AND tenant_id = $2`, [req.params.id, a.tenantId]);
+    if (!pre) throw notFound("Plantilla");
     // PDF normalizado: lo que muestra el visor es lo que termina en cada sobre creado desde la plantilla.
     let info, bytes: Uint8Array;
     try {
@@ -299,8 +302,6 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
       if (e instanceof InvalidPdfError) throw badRequest(e.code, e.message);
       throw e;
     }
-    const pre = await s.db.one(`SELECT 1 FROM templates WHERE id = $1 AND tenant_id = $2`, [req.params.id, a.tenantId]);
-    if (!pre) throw notFound("Plantilla");
     const fileId = uuidv7();
     const docId = uuidv7();
     const key = `tenants/${a.tenantId}/templates/${req.params.id}/${fileId}.pdf`;

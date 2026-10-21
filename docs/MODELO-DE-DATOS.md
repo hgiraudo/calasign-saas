@@ -135,12 +135,22 @@ Reglas: una migración por bloque, solo aditiva salvo cuando se recrea un `CHECK
 migración ya aplicada en un entorno.
 
 Cada migración corre entera en su propia transacción (`migrate` en `apps/api/src/infra/db.ts`, con un candado para que
-dos procesos que arrancan juntos no la apliquen dos veces). Consecuencias:
+dos procesos que arrancan juntos no la apliquen dos veces), salvo las que llevan `-- no-transaction` como primera
+línea. Consecuencias:
 
-- No se pueden usar sentencias que no corren dentro de una transacción, como `CREATE INDEX CONCURRENTLY`. Un
-  `CREATE INDEX` común bloquea las escrituras de la tabla mientras se construye: en tablas grandes, crear el índice a
-  mano con `CONCURRENTLY` antes de desplegar y dejar en la migración el `CREATE INDEX IF NOT EXISTS` (que entonces no
-  hace nada).
+- Un `CREATE INDEX` común bloquea las escrituras de la tabla mientras se construye, y en la misma transacción que un
+  `ALTER TABLE` deja tomado el `ACCESS EXCLUSIVE` de la tabla (ni lecturas) hasta el commit. Índices sobre tablas
+  grandes (`jobs`, `envelopes`, `envelope_events`…): una migración aparte, marcada `-- no-transaction`, con
+  `CREATE INDEX CONCURRENTLY IF NOT EXISTS <nombre> …` (un índice por migración; ej. 0098-0100). En Postgres corre
+  sentencia por sentencia en una conexión fija, con el candado de migraciones de sesión y sin `statement_timeout`; si
+  un intento anterior dejó el índice `INVALID` (CONCURRENTLY falló o se cortó), se borra con `DROP INDEX CONCURRENTLY`
+  y se rehace. En PGlite (desarrollo, tests) se quita `CONCURRENTLY` y corre en una transacción. Tiene que ser
+  re-ejecutable (`IF NOT EXISTS`): si falla a mitad, lo hecho queda y se reintenta entera en el próximo arranque. No
+  mezclar en ella cambios de esquema que necesiten ser atómicos. Las columnas y tablas nuevas siguen en migraciones
+  comunes (sin índices sobre tablas grandes en la misma).
+- Excepción a "nunca se edita una migración aplicada": 0096 se aplicó en desarrollo con sus índices en la misma
+  transacción; se le quitaron y pasaron a 0098-0100 (`IF NOT EXISTS`: donde ya existen no hacen nada). El runner
+  compara por nombre, sin checksum.
 - Sobre tablas grandes (`jobs`, `envelope_events`, `envelopes`…), la migración se limita al cambio de esquema (columnas
   nulables, índices). Los backfills se hacen de a lotes desde el barrido periódico (`sweep` en
   `apps/api/src/modules/jobs.ts`), no en la migración: un `UPDATE` masivo dentro de ella retiene los bloqueos durante

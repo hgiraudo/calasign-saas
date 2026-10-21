@@ -22,6 +22,7 @@ import { prepareCompletionLogic, signerLogicFields } from "./logic";
 import { identityBlocking, signingIdentityFor } from "./identity/kyc";
 import { certificateStepFor } from "./certsign";
 import { deleteBlobsQuietly } from "./file-cleanup";
+import { purgedOriginal } from "./retention";
 
 /** Tope de píxeles de la imagen de firma o iniciales (el lienzo de la web es mucho menor). */
 const SIGNATURE_MAX_PIXELS = 2000 * 1000;
@@ -108,6 +109,7 @@ export async function buildSession(db: Db, token: string, r: any, e: any, authed
     e.created_by ? db.one<any>(`SELECT name FROM users WHERE id = $1`, [e.created_by]) : Promise.resolve(null),
     currentSignerGroup(db, e.id),
   ]);
+  const purgedDocs = new Set(docs.filter((d: any) => d.purged_at).map((d: any) => d.id));
   // Marca blanca: tema, textos y nombre del producto de la marca del sobre (white-label/brand.ts).
   const wl = await brandForEnvelope(db, e);
   const theme = publicTheme(wl);
@@ -138,8 +140,9 @@ export async function buildSession(db: Db, token: string, r: any, e: any, authed
       telegramLink: r.channels?.includes("telegram") && !r.telegram_chat_id && !blocked ? await telegramLinkFor(db, r) : null,
       authMethod: r.auth_method ?? "link",
     },
-    documents: blocked ? [] : docs.map(toDocument),
-    fields: blocked ? [] : fields.map(toField),
+    // Un original borrado por retención no se puede abrir (410 purged): no se lista, ni sus campos.
+    documents: blocked ? [] : docs.filter((d: any) => !d.purged_at).map(toDocument),
+    fields: blocked ? [] : fields.filter((f: any) => !purgedDocs.has(f.document_id)).map(toField),
     canSign,
     signedAvailable: !blocked && e.status === "completed" && Boolean(e.signed_file_id),
     copyAvailable: !blocked && copyAllowed(r, e),
@@ -189,10 +192,13 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
     const { envelope, recipient } = await resolveToken(s.db, req.params.token);
     assertCanReadDocuments(recipient, envelope);
     const d = await s.db.one<any>(
-      `SELECT f.storage_key FROM documents d JOIN files f ON f.id = d.file_id WHERE d.id = $1 AND d.envelope_id = $2`,
+      `SELECT f.storage_key, f.purged_at FROM documents d JOIN files f ON f.id = d.file_id WHERE d.id = $1 AND d.envelope_id = $2`,
       [req.params.documentId, envelope.id],
     );
     if (!d) throw notFound("Documento");
+    // Original borrado por retención (también con el sobre anulado o vencido, que el hook de retention.ts deja pasar):
+    // 410, no un 500 al no encontrar el archivo.
+    if (d.purged_at) throw purgedOriginal(envelope.status);
     const bytes = await s.blobs.get(d.storage_key);
     // Solo la descarga explícita (?download=1, el botón de la página): el visor pide el archivo en cada apertura.
     if (req.query.download === "1") await recordSignerDownload(s.db, req.log, envelope, recipientActor(req, recipient), "document", req.params.documentId);

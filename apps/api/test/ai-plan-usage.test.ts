@@ -290,7 +290,7 @@ describe("barrido de extracción automática", () => {
     expect(a).toEqual({ ai_metadata_attempted_at: null, ai_metadata_first_attempt_at: null, ai_metadata_retry_at: null });
   }, 60_000);
 
-  it("el reclamo es un arriendo de 6 h: un error no clasificado (o un proceso caído) se reintenta pasado el plazo", async () => {
+  it("el reclamo es un arriendo de 6 h: un error no clasificado se reintenta pasado el plazo, hasta el tope de intentos", async () => {
     const t = await tenant("business");
     await db.query(`UPDATE tenants SET ai_auto_extract = true WHERE id = $1`, [t]);
     const env = uuidv7();
@@ -300,31 +300,94 @@ describe("barrido de extracción automática", () => {
     // Los sobres de otras pruebas (misma base) quedan fuera de la tanda.
     await db.query(`UPDATE envelopes SET ai_metadata_retry_at = now() + interval '1 year' WHERE id <> $1 AND ai_metadata IS NULL`, [env]);
     let calls = 0;
+    const { AppError } = await import("../src/lib/errors");
     const base = P.getAiProvider();
     P.setAiProviderForTests(
       Object.assign(Object.create(Object.getPrototypeOf(base)), base, {
         extractMetadata: async () => {
           calls++;
-          throw new P.AiRefusalError("el modelo se negó"); // 422 ai_refused: ninguna rama lo clasifica
+          throw new AppError(500, "boom", "algo raro"); // ninguna rama lo clasifica
         },
       }),
     );
+    const expire = () => db.query(`UPDATE envelopes SET ai_metadata_retry_at = now() - interval '1 minute' WHERE id = $1 AND ai_metadata_retry_at IS NOT NULL`, [env]);
     try {
       await runAiSweep({ db, blobs, log });
-      const a = await db.one<any>(`SELECT ai_metadata_attempted_at, ai_metadata_retry_at FROM envelopes WHERE id = $1`, [env]);
+      const a = await db.one<any>(`SELECT ai_metadata_attempted_at, ai_metadata_retry_at, ai_metadata_failures FROM envelopes WHERE id = $1`, [env]);
       expect(calls).toBe(1);
+      expect(a.ai_metadata_failures).toBe(1);
       expect(a.ai_metadata_attempted_at).not.toBeNull();
       expect(new Date(a.ai_metadata_retry_at).getTime() - Date.now()).toBeGreaterThan(5 * 3600_000);
       // Dentro del arriendo no se vuelve a tomar.
       await runAiSweep({ db, blobs, log });
       expect(calls).toBe(1);
       // Vencido el arriendo, se reintenta (dentro de la ventana de 30 días).
-      await db.query(`UPDATE envelopes SET ai_metadata_retry_at = now() - interval '1 minute' WHERE id = $1`, [env]);
+      await expire();
       await runAiSweep({ db, blobs, log });
       expect(calls).toBe(2);
+      // Tercer intento fallido: tope alcanzado, no se reintenta más (cada intento se cobra).
+      await expire();
+      await runAiSweep({ db, blobs, log });
+      expect(calls).toBe(3);
+      const b = await db.one<any>(`SELECT ai_metadata_retry_at, ai_metadata_failures FROM envelopes WHERE id = $1`, [env]);
+      expect(b).toEqual({ ai_metadata_retry_at: null, ai_metadata_failures: 3 });
+      await runAiSweep({ db, blobs, log });
+      expect(calls).toBe(3);
+      // Un proceso caído a mitad (el arriendo quedó con el tope ya contado) tampoco se vuelve a tomar.
+      await db.query(`UPDATE envelopes SET ai_metadata_retry_at = now() - interval '1 minute' WHERE id = $1`, [env]);
+      await runAiSweep({ db, blobs, log });
+      expect(calls).toBe(3);
     } finally {
       P.setAiProviderForTests(undefined);
     }
+  }, 60_000);
+
+  it("errores del documento (modelo que se niega, salida inválida, PDF ilegible, metadatos que no validan) no se reintentan", async () => {
+    const t = await tenant("business");
+    await db.query(`UPDATE tenants SET ai_auto_extract = true WHERE id = $1`, [t]);
+    const blobs = { get: async () => new Uint8Array() } as any;
+    const log = { warn: () => {}, info: () => {} };
+    const { ZodError } = await import("zod");
+    const cases: Array<[string, () => Error]> = [
+      ["refused", () => new P.AiRefusalError("el modelo se negó")],
+      ["bad_output", () => new P.AiOutputError("json roto")],
+    ];
+    const base = P.getAiProvider();
+    for (const [name, mk] of cases) {
+      const env = uuidv7();
+      await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, completed_at) VALUES ($1, $2, $3, 'completed', now())`, [env, t, name]);
+      await db.query(`UPDATE envelopes SET ai_metadata_retry_at = now() + interval '1 year' WHERE id <> $1 AND ai_metadata IS NULL`, [env]);
+      let calls = 0;
+      P.setAiProviderForTests(
+        Object.assign(Object.create(Object.getPrototypeOf(base)), base, {
+          extractMetadata: async () => {
+            calls++;
+            throw mk();
+          },
+        }),
+      );
+      try {
+        await runAiSweep({ db, blobs, log });
+        expect(calls, name).toBe(1);
+        const a = await db.one<any>(`SELECT ai_metadata_attempted_at, ai_metadata_retry_at FROM envelopes WHERE id = $1`, [env]);
+        expect(a.ai_metadata_attempted_at, name).not.toBeNull();
+        expect(a.ai_metadata_retry_at, name).toBeNull();
+        await runAiSweep({ db, blobs, log });
+        expect(calls, name).toBe(1);
+      } finally {
+        P.setAiProviderForTests(undefined);
+      }
+    }
+    const S = await import("../src/modules/ai/sweep");
+    const { AppError } = await import("../src/lib/errors");
+    const { InvalidPdfError } = await import("@calasign/pdf");
+    // Metadatos que no validan al guardar (saveMetadata, fuera de callModel).
+    expect(S.isTerminalExtractError(new ZodError([]))).toBe(true);
+    expect(S.isTerminalExtractError(new AppError(410, "purged", "x"))).toBe(true);
+    expect(S.isTerminalExtractError(new AppError(404, "not_found", "x"))).toBe(true);
+    expect(S.isTerminalExtractError(new InvalidPdfError("unreadable", "y"))).toBe(true);
+    expect(S.isTerminalExtractError(new AppError(503, "ai_rate_limited", "x"))).toBe(false);
+    expect(S.isTerminalExtractError(new Error("x"))).toBe(false);
   }, 60_000);
 
   it("alerta de renovación: sale por la cola de avisos (con clave por fecha), por sendTracked y sin repetirse", async () => {

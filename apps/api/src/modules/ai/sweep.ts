@@ -10,7 +10,8 @@ import { brandForEnvelope, senderFor } from "../white-label/brand";
 import { tenantBaseUrl } from "../custom-domains";
 import { aiProviderStatus, getAiProvider } from "./provider";
 import { assertAiAvailable, inputEstimate, isAiError, loadEnvelopeDocs, recordAiUse, saveMetadata, withAiReservation, callModel } from "./service";
-import type { AppError } from "../../lib/errors";
+import { AppError } from "../../lib/errors";
+import { InvalidPdfError } from "@calasign/pdf";
 import { planAiCapSql } from "../billing/plans";
 import { AI_NOTICE_VERSION } from "@calasign/shared";
 
@@ -63,6 +64,26 @@ const ALERT = {
 } as const;
 
 /** Primer día del mes siguiente (UTC, como el corte del presupuesto mensual). */
+/**
+ * Tope de intentos seguidos de la extracción automática que terminan en un error no clasificado o en un proceso caído
+ * a mitad (o en timeout del proveedor): cada uno se cobra, así que pasado el tope el sobre no se vuelve a tomar.
+ */
+export const AI_EXTRACT_MAX_FAILURES = 3;
+
+/**
+ * ¿El error es del documento o de la respuesta del modelo para ESTE documento (reintentar da lo mismo y se vuelve a
+ * cobrar)? El modelo se negó (422 ai_refused) o devolvió algo inválido (502 ai_bad_output), los originales se purgaron
+ * (410) o no están (404), el PDF no se puede leer (InvalidPdfError, 422 pdf_too_heavy) o los metadatos no validan
+ * (ZodError en saveMetadata). Cualquier otro 4xx también: es del pedido, no del momento.
+ */
+export function isTerminalExtractError(err: unknown): boolean {
+  if (err instanceof InvalidPdfError) return true;
+  if ((err as Error)?.name === "ZodError") return true;
+  if (!(err instanceof AppError)) return false;
+  if (["ai_refused", "ai_bad_output", "purged", "not_found", "pdf_too_heavy"].includes(err.code)) return true;
+  return err.status >= 400 && err.status < 500;
+}
+
 export function nextMonthStart(now = new Date()): Date {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
 }
@@ -83,6 +104,8 @@ export async function runAiSweep(d: Deps, now = new Date()) {
             OR (e.ai_metadata_retry_at < now() AND COALESCE(e.ai_metadata_first_attempt_at, e.ai_metadata_attempted_at) > now() - interval '30 days'))
        -- Con la clave BYOK fallando no se puede leer el PDF: esos sobres esperan a que se recupere.
        AND t.byok_status <> 'failing'
+       -- Los que agotaron los intentos (errores no clasificados o procesos caídos a mitad) no se toman más.
+       AND e.ai_metadata_failures < ${AI_EXTRACT_MAX_FAILURES}
        AND t.ai_enabled AND t.ai_auto_extract
        -- Con el aviso de tratamiento de datos vigente aceptado (si cambió, la IA queda suspendida hasta aceptarlo).
        AND t.ai_notice_version = $1 AND t.ai_notice_accepted_at IS NOT NULL
@@ -98,11 +121,15 @@ export async function runAiSweep(d: Deps, now = new Date()) {
     // Se reclama el sobre: con varios workers (cada uno corre el barrido), dos tomaban el mismo y el modelo se llamaba
     // (y se cobraba) dos veces. El reclamo es un arriendo de 6 h (ai_metadata_retry_at): si el proceso muere a mitad o
     // el error no se reconoce abajo, el sobre se vuelve a tomar pasado ese plazo (dentro de la ventana de 30 días). Antes
-    // quedaba con retry_at NULL y no se reintentaba nunca.
+    // quedaba con retry_at NULL y no se reintentaba nunca. El reclamo suma un intento (ai_metadata_failures): las salidas
+    // que no son un intento cobrado lo devuelven abajo; uno no clasificado o un proceso caído quedan contados, y pasado
+    // el tope el sobre no se vuelve a tomar (cada intento se cobra).
     const claimed = await d.db.query(`UPDATE envelopes SET ai_metadata_attempted_at = now(), ai_metadata_retry_at = now() + interval '6 hours',
-          ai_metadata_first_attempt_at = COALESCE(ai_metadata_first_attempt_at, now())
-        WHERE id = $1 AND ((ai_metadata_attempted_at IS NULL AND (ai_metadata_retry_at IS NULL OR ai_metadata_retry_at <= now())) OR ai_metadata_retry_at < now())
-        RETURNING id`, [e.id]);
+          ai_metadata_first_attempt_at = COALESCE(ai_metadata_first_attempt_at, now()),
+          ai_metadata_failures = ai_metadata_failures + 1
+        WHERE id = $1 AND ai_metadata_failures < $2
+          AND ((ai_metadata_attempted_at IS NULL AND (ai_metadata_retry_at IS NULL OR ai_metadata_retry_at <= now())) OR ai_metadata_retry_at < now())
+        RETURNING id`, [e.id, AI_EXTRACT_MAX_FAILURES]);
     if (!claimed.length) continue;
     try {
       await assertAiAvailable(d.db, e.tenant_id, { reserve: false }); // antes de analizar el PDF
@@ -114,7 +141,7 @@ export async function runAiSweep(d: Deps, now = new Date()) {
         () => callModel(() => getAiProvider().extractMetadata(docs)),
       );
       await saveMetadata(d.db, e.id, e.tenant_id, r.result.metadata, r.result.confidence, "ai");
-      await d.db.query(`UPDATE envelopes SET ai_metadata_retry_at = NULL WHERE id = $1`, [e.id]);
+      await d.db.query(`UPDATE envelopes SET ai_metadata_retry_at = NULL, ai_metadata_failures = 0 WHERE id = $1`, [e.id]);
       await recordAiUse(d.db, { reservationId: rid, tenantId: e.tenant_id, envelopeId: e.id, feature: "extract_metadata", usage: r.usage, actor: SYSTEM, data: { automatic: true } });
       extracted++;
     } catch (err) {
@@ -137,23 +164,33 @@ export async function runAiSweep(d: Deps, now = new Date()) {
       // El proveedor rechazó el pedido (clave revocada, modelo mal configurado, saldo agotado): suele ser de la
       // configuración, no del sobre; se reintenta en 6 h (antes de esta pasada se perdía para siempre).
       // Un timeout (504 ai_timeout) también espera 6 h: el documento es pesado y cada intento se cobra.
-      const rejected = code === "ai_request_rejected" || code === "ai_timeout";
-      if (off) await d.db.query(`UPDATE envelopes SET ai_metadata_attempted_at = NULL, ai_metadata_retry_at = NULL,
+      const rejected = code === "ai_request_rejected";
+      // Del documento o de la respuesta del modelo para este documento: reintentar da lo mismo (y se cobra de nuevo).
+      const terminal = !off && !transient && !rejected && code !== "ai_budget_exceeded" && isTerminalExtractError(err);
+      // Las salidas que no son un intento fallido del sobre devuelven el intento que sumó el reclamo.
+      const giveBack = `ai_metadata_failures = GREATEST(ai_metadata_failures - 1, 0)`;
+      if (off) await d.db.query(`UPDATE envelopes SET ai_metadata_attempted_at = NULL, ai_metadata_retry_at = NULL, ${giveBack},
            -- Solo si este era el primer intento (el reclamo pone las dos con el mismo now()): si no, cada vez reiniciaba
            -- la ventana de 30 días.
            ai_metadata_first_attempt_at = CASE WHEN ai_metadata_first_attempt_at = ai_metadata_attempted_at THEN NULL ELSE ai_metadata_first_attempt_at END
          WHERE id = $1`, [e.id]);
       // Presupuesto del mes agotado: se reintenta el primer día del mes siguiente. Sin intento (attempted_at NULL): no
       // abre ni consume la ventana de 30 días (si no, un sobre del día 1 quedaba afuera al mes siguiente).
-      else if (monthSpent) await d.db.query(`UPDATE envelopes SET ai_metadata_attempted_at = NULL, ai_metadata_retry_at = $2,
+      else if (monthSpent) await d.db.query(`UPDATE envelopes SET ai_metadata_attempted_at = NULL, ai_metadata_retry_at = $2, ${giveBack},
            ai_metadata_first_attempt_at = CASE WHEN ai_metadata_first_attempt_at = ai_metadata_attempted_at THEN NULL ELSE ai_metadata_first_attempt_at END
          WHERE id = $1`, [e.id, nextMonthStart(now).toISOString()]);
-      else if (budgetBusy) await d.db.query(`UPDATE envelopes SET ai_metadata_retry_at = now() + interval '6 hours' WHERE id = $1`, [e.id]);
+      else if (budgetBusy) await d.db.query(`UPDATE envelopes SET ai_metadata_retry_at = now() + interval '6 hours', ${giveBack} WHERE id = $1`, [e.id]);
       // Transitoria: se reintenta en una hora (no en la próxima pasada).
-      else if (transient) await d.db.query(`UPDATE envelopes SET ai_metadata_retry_at = now() + interval '1 hour' WHERE id = $1`, [e.id]);
-      else if (rejected) await d.db.query(`UPDATE envelopes SET ai_metadata_retry_at = now() + interval '6 hours' WHERE id = $1`, [e.id]);
+      else if (transient) await d.db.query(`UPDATE envelopes SET ai_metadata_retry_at = now() + interval '1 hour', ${giveBack} WHERE id = $1`, [e.id]);
+      else if (rejected) await d.db.query(`UPDATE envelopes SET ai_metadata_retry_at = now() + interval '6 hours', ${giveBack} WHERE id = $1`, [e.id]);
+      // Error del documento: no se reintenta (antes quedaba el arriendo y se volvía a cobrar cada 6 h durante 30 días).
+      else if (terminal) await d.db.query(`UPDATE envelopes SET ai_metadata_retry_at = NULL WHERE id = $1`, [e.id]);
+      // Cualquier otro error (y un timeout del proveedor: documento pesado, cada intento se cobra): queda el arriendo
+      // del reclamo (reintento en 6 h, dentro de la ventana de 30 días) con el intento contado; con el tope alcanzado,
+      // no se reintenta más.
+      else await d.db.query(`UPDATE envelopes SET ai_metadata_retry_at = NULL WHERE id = $1 AND ai_metadata_failures >= $2`, [e.id, AI_EXTRACT_MAX_FAILURES]);
       if (transient) d.log.warn({ envelopeId: e.id, err: String(err) }, "extracción automática postergada (falla transitoria)");
-      // Cualquier otro error: queda el arriendo del reclamo (reintento en 6 h, mientras dure la ventana de 30 días).
+      else if (terminal) d.log.info({ envelopeId: e.id, code, err: String(err) }, "extracción automática descartada (error del documento)");
       else if (!isAiError(err)) d.log.warn({ envelopeId: e.id, err: String(err) }, "extracción automática de metadatos falló");
     }
   }

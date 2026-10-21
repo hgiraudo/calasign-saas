@@ -8,7 +8,11 @@ import { createBlobStore } from "./infra/storage";
 import { createJobHandlers, sweep } from "./modules/jobs";
 import { createTenantStorageResolver } from "./modules/data";
 import { checkAiProviderConfig } from "./modules/ai/provider";
+import { PDF_INGEST_LIMITS } from "@calasign/pdf";
 
+// Los jobs (conectores, documentos generados) no tienen a nadie esperando la respuesta: esperan lugar más tiempo.
+PDF_INGEST_LIMITS.maxConcurrent = config.pdfIngest.concurrency;
+PDF_INGEST_LIMITS.queueWaitMs = Math.max(config.pdfIngest.queueWaitMs, 120_000);
 const log = pino({ level: config.logLevel });
 const db = await createDb();
 const blobs = createBlobStore(createTenantStorageResolver(db));

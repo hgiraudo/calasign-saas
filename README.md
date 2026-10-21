@@ -80,6 +80,7 @@ Configuración: `apps/api/src/config.ts` y las variables de cada documento de `d
 | `MIGRATE_ON_START` | — | `1` aplica las migraciones al arrancar en producción (fuera de producción siempre) |
 | `DEV_MAILBOX` | `true` fuera de producción | Buzón de desarrollo (`/app/dev-mailbox`, API `/dev/mailbox`) |
 | `MAX_UPLOAD_MB` | `25` | Tamaño máximo de subida |
+| `PDF_INGEST_CONCURRENCY` | `2` | PDFs subidos normalizándose a la vez por proceso; el resto espera lugar y, pasado `PDF_INGEST_QUEUE_WAIT_MS` (`5000`), recibe 503 `pdf_busy` con Retry-After |
 | `WEB_DIST` | `apps/web/dist` | Web compilada que sirve la API |
 
 ### Pruebas

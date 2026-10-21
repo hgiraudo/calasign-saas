@@ -27,7 +27,7 @@ import {
   type ConnectorRun,
   type SendFromConnectorResponse,
 } from "@calasign/shared";
-import { InvalidPdfError, preparePdfUpload } from "@calasign/pdf";
+import { InvalidPdfError, PdfIngestBusyError, preparePdfUpload } from "@calasign/pdf";
 import { config } from "../../config";
 import type { Db } from "../../infra/db";
 import { appendEvent, type Actor } from "../../infra/evidence";
@@ -38,7 +38,7 @@ import { decrypt, encrypt, iso, sha256Hex, uuidv7 } from "../../lib/util";
 import { assertEnvelopeAccess, assertTemplateAccess, envelopeVisibilitySql, hasPerm } from "../access";
 import { auditFromRequest } from "../audit";
 import { authenticate, type AuthContext, type Services } from "../context";
-import { sendEnvelope, idempotent } from "../envelopes";
+import { assertDocumentLimits, sendEnvelope, idempotent } from "../envelopes";
 import { ownerCanStillCreate } from "../owner-check";
 import { insertEnvelopeFromTemplate, loadTemplateForUse, planFromTemplate } from "../templates";
 import { MappingError, mapPrefill, mapRecipients, neededProperties, statusForEvidence, statusValue } from "../crm/mapping";
@@ -157,6 +157,7 @@ function asAppError(err: unknown): AppError {
     const detail = err.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
     return new AppError(422, "connector_invalid_record", `El registro tiene datos que no sirven para el sobre: ${detail}`.slice(0, 1000));
   }
+  if (err instanceof PdfIngestBusyError) return new AppError(503, err.code, err.message);
   if (err instanceof InvalidPdfError) return new AppError(422, "connector_invalid_document", `El documento del sistema de origen no es un PDF válido: ${err.message}`);
   if (err instanceof ConnectorError) {
     if (err.authFailed) return new AppError(409, "connector_reauth_required", `La conexión ya no tiene acceso: hay que volver a conectarla (${err.message})`);
@@ -332,6 +333,8 @@ export async function sendFromConnector(
             data: { documentId: docId, name: source.name, sha256: source.sha, uploadedSha256: source.uploadedSha, pages: source.info.pageCount, source: connRow.provider, ...(source.info.hadSignatures ? { hadSignatures: true } : {}) },
           });
         }
+        // También sin enviar (sendEnvelope lo vuelve a chequear): el documento de origen se suma a los de la plantilla.
+        await assertDocumentLimits(t, "envelope", envelopeId);
         const linkId = uuidv7();
         // El vínculo va antes del envío: así el evento envelope.sent ya encuentra el registro.
         await t.query(`INSERT INTO connector_links (id, tenant_id, connection_id, flow_id, envelope_id, object_type, object_id) VALUES ($1,$2,$3,$4,$5,$6,$7)`, [

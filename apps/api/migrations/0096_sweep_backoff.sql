@@ -20,11 +20,7 @@ CREATE TABLE IF NOT EXISTS pending_file_deletions (
 );
 CREATE INDEX IF NOT EXISTS pending_file_deletions_attempted_idx ON pending_file_deletions (attempted_at NULLS FIRST);
 
--- Barrido de finalizaciones que agotaron sus intentos sin dejar envelope.finalize_failed (ver jobs.ts): sobres en
--- 'finalizing' (pocos) y sus jobs de finalización por sobre.
-CREATE INDEX IF NOT EXISTS envelopes_finalizing_idx ON envelopes (updated_at) WHERE status = 'finalizing';
-CREATE INDEX IF NOT EXISTS jobs_finalize_envelope_idx ON jobs ((payload->>'envelopeId')) WHERE queue = 'finalize';
-
--- Recordatorios y avisos de vencimiento también para sobres esperando firmas con certificado (reminders.ts).
-CREATE INDEX IF NOT EXISTS envelopes_awaiting_cert_reminders_idx ON envelopes (status)
-  WHERE status = 'awaiting_certificates' AND (reminder_every_days IS NOT NULL OR expiry_warning_days IS NOT NULL);
+-- Los índices de este bloque sobre envelopes y jobs (tablas grandes) están en 0098-0100, con CREATE INDEX
+-- CONCURRENTLY fuera de una transacción: acá, en la misma transacción que los ALTER TABLE, el ACCESS EXCLUSIVE de
+-- envelopes quedaba tomado mientras se construían (y el CREATE INDEX común sobre jobs bloqueaba sus escrituras).
+-- Donde 0096 ya se aplicó con los índices, 0098-0100 no hacen nada (IF NOT EXISTS).

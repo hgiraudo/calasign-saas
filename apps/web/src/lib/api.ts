@@ -204,6 +204,14 @@ const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
     "pt-BR": "O PDF tem um formulário cujos campos não podem ser fixados como aparecem: imprima-o como PDF e envie de novo.",
     en: "The PDF has a form whose fields can't be fixed as they appear: print it to PDF and upload it again.",
   },
+  pdf_page_size: {
+    "pt-BR": "O PDF tem uma página de tamanho inválido (cada lado deve medir entre 3 e 14400 pontos): exporte-o novamente ou imprima-o como PDF.",
+    en: "The PDF has a page with an invalid size (each side must be between 3 and 14400 points): export it again or print it to PDF.",
+  },
+  pdf_busy: {
+    "pt-BR": "Há muitos documentos sendo processados neste momento; tente de novo em alguns segundos.",
+    en: "Many documents are being processed right now; try again in a few seconds.",
+  },
   empty: { "pt-BR": "O PDF não tem páginas.", en: "The PDF has no pages." },
   too_many_pages: { "pt-BR": "O PDF tem páginas demais.", en: "The PDF has too many pages." },
   unreadable: {

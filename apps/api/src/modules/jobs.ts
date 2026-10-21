@@ -674,7 +674,7 @@ export async function requeueStuckJobsAndClose(d: Deps) {
 /**
  * Sobres en 'finalizing' cuyo último job de finalización quedó 'failed', sin otro pendiente o en curso, y sin un
  * envelope.finalize_failed posterior a la creación de ese job: se registra y se avisa (finalizeGaveUp, idempotente con
- * `unlessReportedSince`). De a 20 por pasada; los sobres en 'finalizing' son pocos (índice parcial, 0096).
+ * `unlessReportedSince`). De a 20 por pasada; los sobres en 'finalizing' son pocos (índice parcial, 0098).
  */
 export async function sweepUnreportedFinalizeFailures(d: Deps) {
   const rows = await d.db.query<{ id: string; tenant_id: string; created_at: Date; last_error: string | null }>(

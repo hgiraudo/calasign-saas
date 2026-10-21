@@ -4,6 +4,7 @@ import Fastify, { type FastifyError, type FastifyRequest } from "fastify";
 import cookie from "@fastify/cookie";
 import helmet from "@fastify/helmet";
 import multipart from "@fastify/multipart";
+import { PdfIngestBusyError } from "@calasign/pdf";
 import rateLimit from "@fastify/rate-limit";
 import fastifyStatic from "@fastify/static";
 import { ZodError } from "zod";
@@ -137,14 +138,16 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
     });
   }
   await app.register(cookie);
-  await app.register(multipart, { limits: { files: 1, fileSize: config.maxUploadBytes } });
+  // Campos de texto acotados: sin tope, busboy admitía ~1000 campos de 1 MB por pedido (todos en memoria). Las rutas que
+  // necesitan más (subida en un paso, "meta" de un acuerdo) pasan los suyos en req.parts()/req.file().
+  await app.register(multipart, { limits: { files: 1, fileSize: config.maxUploadBytes, fields: 10, fieldSize: 64 * 1024, parts: 12, headerPairs: 50 } });
   // X-Request-Id en toda respuesta (también errores, 429 del límite, 404 y las que escriben directo sobre la conexión,
   // como el stream de eventos y /mcp): es el id de los logs, el que los SDK muestran como requestId. Antes de los
   // hooks del límite de pedidos para que el 429 también lo lleve.
   app.addHook("onRequest", async (req, reply) => {
     reply.raw.setHeader("x-request-id", req.id);
   });
-  // Rutas con authenticate(): con límite propio cuentan por credencial (lib/ip.ts rateLimitIdentity).
+  // Rutas con authenticate(): con límite propio cuentan por organización de la credencial (lib/ip.ts rateLimitIdentity).
   app.addHook("onRoute", (opts) => markBearerAuthRoutes(opts));
   // Clave del límite, una vez por pedido (la usan el tope por IP y organización y el límite global o de la ruta).
   const rateLimitIds = new WeakMap<FastifyRequest, Promise<RateLimitIdentity>>();
@@ -159,7 +162,7 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
     max: 600,
     timeWindow: "1 minute",
     // Por IP y, en IPv6, por /64; con una credencial Bearer válida (verificada contra la base, con caché), por
-    // credencial (hash), también en las rutas con límite propio que autentican (lib/ip.ts rateLimitIdentity). El store
+    // credencial (hash); en las rutas con límite propio que autentican, por organización (lib/ip.ts rateLimitIdentity). El store
     // es el de memoria del proceso: el límite es por réplica. Las IPs sin límite del entorno local se comparan con la
     // clave de IP (loopback queda igual; ::ffff:127.0.0.1 pasa a 127.0.0.1), también con credencial.
     keyGenerator: async (req) => (await identityOf(req)).key,
@@ -178,7 +181,7 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
   });
   app.addHook("onRequest", async (req, reply) => {
     if (isInternalAgentRequest(req)) return;
-    if (!(await identityOf(req)).key.startsWith("cred:")) return;
+    if (!(await identityOf(req)).tenantId) return;
     const r = await ipCeiling(req);
     if (r.isAllowed || !r.isExceeded) return;
     reply.header("retry-after", r.ttlInSeconds);
@@ -197,6 +200,11 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
     }
     if (err instanceof AppError) {
       return reply.code(err.status).send({ error: { code: err.code, message: err.message, details: err.details } });
+    }
+    // Tope de PDFs procesándose a la vez (packages/pdf ingest-limit): reintentable.
+    if (err instanceof PdfIngestBusyError) {
+      reply.header("retry-after", String(err.retryAfterSeconds));
+      return reply.code(503).send({ error: { code: err.code, message: err.message } });
     }
     // Errores de Postgres que son del pedido, no del servidor: un id que no es UUID (22P02) o una carrera contra
     // una restricción única (23505, p. ej. dos altas simultáneas con el mismo correo).

@@ -1,7 +1,7 @@
 // Adjuntos del firmante: sube un archivo (PDF/JPG/PNG) para un campo de tipo "attachment".
 import type { FastifyInstance } from "fastify";
 import { ATTACHMENT_MAX_BYTES } from "@calasign/shared";
-import { assertEmbeddableImage, InvalidPdfError, preparePdfUpload } from "@calasign/pdf";
+import { assertEmbeddableImage, InvalidPdfError, PdfIngestBusyError, preparePdfUpload } from "@calasign/pdf";
 import { appendEvent } from "../infra/evidence";
 import { AppError, badRequest, conflict, notFound } from "../lib/errors";
 import { sha256Hex, uuidv7 } from "../lib/util";
@@ -61,6 +61,7 @@ export async function attachmentRoutes(app: FastifyInstance, s: Services) {
         const prepared = await preparePdfUpload(new Uint8Array(buf));
         buf = Buffer.from(prepared.bytes.buffer, prepared.bytes.byteOffset, prepared.bytes.byteLength);
       } catch (e) {
+        if (e instanceof PdfIngestBusyError) throw e; // 503 reintentable, no un adjunto inválido
         // Con el motivo concreto (capas ocultas, restricciones, contraseña…) cuando se conoce.
         throw badRequest("invalid_attachment", e instanceof InvalidPdfError ? e.message : "El PDF está dañado o protegido con contraseña");
       }

@@ -285,24 +285,44 @@ describe("recordatorios", () => {
     const ev = await db.query<any>(`SELECT type, data FROM envelope_events WHERE envelope_id = $1 ORDER BY seq`, [env]);
     expect(ev[0]).toMatchObject({ type: "envelope.reminded", data: { stage: "certificates" } });
   }, 60_000);
+
+  it("esperando firmas con certificado: sin recordatorio al firmante que no recibe avisos (embebido)", async () => {
+    const t = await tenant();
+    const env = uuidv7();
+    const r = uuidv7();
+    const now = new Date("2027-05-10T12:00:00Z");
+    const at = (days: number) => new Date(now.getTime() + days * 86400_000).toISOString();
+    await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, sent_at, reminder_every_days) VALUES ($1,$2,'S','awaiting_certificates',$3,2)`, [env, t, at(-10)]);
+    await db.query(`INSERT INTO recipients (id, tenant_id, envelope_id, role, routing_order, name, email, status, sent_at, embedded) VALUES ($1,$2,$3,'signer',1,'E','e@x.com','signed',$4,true)`, [r, t, env, at(-10)]);
+    await db.query(`INSERT INTO certificate_signatures (id, tenant_id, envelope_id, recipient_id, position, field_name, created_at) VALUES ($1,$2,$3,$4,1,'F1',$5)`, [uuidv7(), t, env, r, at(-8)]);
+    await runAutomaticReminders(db, now);
+    expect(await db.query(`SELECT 1 FROM jobs WHERE payload->>'envelopeId' = $1`, [env])).toEqual([]);
+  }, 60_000);
 });
 
 describe("borrado de archivos sin uso", () => {
-  it("si el almacenamiento falla, la fila queda y el barrido lo reintenta", async () => {
+  it("dos fases: la fila se borra (y se anota con su clave) antes de tocar el almacenamiento; si este falla, el barrido lo reintenta", async () => {
     const t = await tenant();
     const f = uuidv7();
     await db.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original','k-fail','application/pdf',1,'x')`, [f, t]);
     let down = true;
     const deleted: string[] = [];
+    let inTx: boolean | null = null;
     const blobs = {
       delete: async (k: string) => {
+        // El blob se borra fuera de la transacción: la fila ya no está y la anotación ya se confirmó.
+        inTx = !(await db.one(`SELECT 1 FROM pending_file_deletions WHERE file_id = $1 AND storage_key = $2`, [f, k]));
         if (down) throw new Error("almacenamiento caído");
         deleted.push(k);
       },
     } as any;
     expect(await FC.deleteFilesIfUnused(db, blobs, [f])).toBe(1);
-    expect(await db.one(`SELECT 1 FROM files WHERE id = $1`, [f])).not.toBeNull();
-    expect(await db.one(`SELECT 1 FROM pending_file_deletions WHERE file_id = $1`, [f])).not.toBeNull();
+    expect(inTx).toBe(false);
+    expect(await db.one(`SELECT 1 FROM files WHERE id = $1`, [f])).toBeNull();
+    expect(await db.one<any>(`SELECT storage_key, error FROM pending_file_deletions WHERE file_id = $1`, [f])).toEqual({ storage_key: "k-fail", error: "almacenamiento caído" });
+    // Recién anotada: el barrido la deja (su llamador podría estar borrando el archivo ahora).
+    expect((await FC.retryPendingFileDeletions(db, blobs)).seen).toBe(0);
+    await db.query(`UPDATE pending_file_deletions SET queued_at = now() - interval '10 minutes' WHERE file_id = $1`, [f]);
     // Sigue caído: queda para dentro de una hora.
     await FC.retryPendingFileDeletions(db, blobs);
     expect((await db.one<any>(`SELECT attempted_at FROM pending_file_deletions WHERE file_id = $1`, [f]))?.attempted_at).not.toBeNull();
@@ -310,7 +330,25 @@ describe("borrado de archivos sin uso", () => {
     await db.query(`UPDATE pending_file_deletions SET attempted_at = now() - interval '2 hours'`);
     expect((await FC.retryPendingFileDeletions(db, blobs)).deleted).toBe(1);
     expect(deleted).toEqual(["k-fail"]);
-    expect(await db.one(`SELECT 1 FROM files WHERE id = $1`, [f])).toBeNull();
     expect(await db.one(`SELECT 1 FROM pending_file_deletions WHERE file_id = $1`, [f])).toBeNull();
+  }, 60_000);
+
+  it("un archivo en uso no se borra ni se anota; una anotación vieja sin clave se resuelve con el borrado entero", async () => {
+    const t = await tenant();
+    const f = uuidv7();
+    await db.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original','k-used','application/pdf',1,'x')`, [f, t]);
+    const env = uuidv7();
+    await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status) VALUES ($1, $2, 'S', 'draft')`, [env, t]);
+    await db.query(`INSERT INTO documents (id, tenant_id, envelope_id, file_id, name, position, page_count, pages) VALUES ($1, $4, $2, $3, 'd', 0, 1, '[]')`, [uuidv7(), env, f, t]);
+    const deleted: string[] = [];
+    const blobs = { delete: async (k: string) => void deleted.push(k) } as any;
+    expect(await FC.deleteFileIfUnused(db, blobs, f)).toBe(false);
+    expect(await db.one(`SELECT 1 FROM files WHERE id = $1`, [f])).not.toBeNull();
+    expect(await db.one(`SELECT 1 FROM pending_file_deletions WHERE file_id = $1`, [f])).toBeNull();
+    // Anotación sin clave (de antes del cambio) de un archivo que hoy está en uso: se descarta sin borrar nada.
+    await db.query(`INSERT INTO pending_file_deletions (file_id, queued_at) VALUES ($1, now() - interval '1 day')`, [f]);
+    await FC.retryPendingFileDeletions(db, blobs);
+    expect(await db.one(`SELECT 1 FROM pending_file_deletions WHERE file_id = $1`, [f])).toBeNull();
+    expect(deleted).toEqual([]);
   }, 60_000);
 });

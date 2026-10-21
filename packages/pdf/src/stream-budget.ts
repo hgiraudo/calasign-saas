@@ -11,17 +11,36 @@ export const MAX_STRUCTURE_BYTES = 128 * 1024 * 1024;
 
 const decodeNames = (s: string) => s.replace(/#([0-9a-fA-F]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
 
+/** Hasta dónde se busca hacia atrás el "obj" que abre el diccionario de un stream. */
+const DICT_WINDOW = 8 * 1024;
+/** Streams de objetos/referencias comprimidos admitidos (cada descompresión tiene un costo fijo de ~50 µs). */
+const MAX_STRUCTURE_STREAMS = 4096;
+// Espacio en blanco (PDF y lo que \s aceptaba en latin1).
+const isSpace = (c: number) => c === 0x20 || (c >= 0x09 && c <= 0x0d) || c === 0x00 || c === 0xa0;
+
 /** true si los streams estructurales del PDF entran en el tope. */
 export function structureWithinBudget(pdf: Uint8Array, budget = MAX_STRUCTURE_BYTES): boolean {
   const buf = Buffer.from(pdf.buffer, pdf.byteOffset, pdf.byteLength);
   let remaining = budget;
+  // Lineal en el tamaño del archivo: cada "stream" mira hacia atrás a lo sumo DICT_WINDOW bytes, y lo leído en total
+  // (búsquedas y diccionarios) tiene un tope proporcional al archivo. Un PDF real lee cada diccionario una vez; uno
+  // armado con miles de "stream" seguidos (antes, cuadrático: 1 MB tardaba 30 s) agota el tope y se rechaza.
+  let work = 4 * buf.length + 1024 * 1024;
+  let streams = 0;
   for (let at = buf.indexOf("stream"); at >= 0; at = buf.indexOf("stream", at + 6)) {
     // "endstream" no abre un stream.
-    if (at >= 3 && buf.toString("latin1", at - 3, at) === "end") continue;
-    const dictEnd = buf.lastIndexOf(">>", at);
-    if (dictEnd < 0 || /\S/.test(buf.toString("latin1", dictEnd + 2, at))) continue;
-    const dictStart = buf.lastIndexOf("obj", dictEnd);
-    if (dictStart < 0) continue;
+    if (at >= 3 && buf[at - 3] === 0x65 && buf[at - 2] === 0x6e && buf[at - 1] === 0x64) continue;
+    // Entre ">>" y "stream" solo puede haber espacio (lo recorrido no se solapa con el de otro "stream").
+    let i = at;
+    while (i > 0 && isSpace(buf[i - 1])) i--;
+    if (i < 2 || buf[i - 1] !== 0x3e || buf[i - 2] !== 0x3e) continue;
+    const dictEnd = i - 2;
+    const from = Math.max(0, dictEnd - DICT_WINDOW);
+    const rel = buf.subarray(from, dictEnd).lastIndexOf("obj");
+    work -= rel < 0 ? dictEnd - from : dictEnd - from - rel;
+    if (work < 0) return false;
+    if (rel < 0) continue;
+    const dictStart = from + rel;
     const dict = decodeNames(buf.toString("latin1", dictStart, dictEnd + 2));
     if (!/\/Type\s*\/(ObjStm|XRef)\b/.test(dict)) continue;
     const filters = [...dict.matchAll(/\/Filter\s*(\[[^\]]*\]|\/[A-Za-z0-9]+)/g)].map((m) => m[1]).join(" ");
@@ -29,9 +48,12 @@ export function structureWithinBudget(pdf: Uint8Array, budget = MAX_STRUCTURE_BY
     if (names.length === 0) continue; // sin filtro: ocupa lo que ocupa en el archivo
     // Solo FlateDecode (lo que usan los generadores reales); otro filtro no se puede acotar acá.
     if (names.some((n) => n !== "/FlateDecode" && n !== "/Fl")) return false;
+    if (++streams > MAX_STRUCTURE_STREAMS) return false;
     let dataStart = at + 6;
     if (buf[dataStart] === 0x0d) dataStart++;
     if (buf[dataStart] === 0x0a) dataStart++;
+    // Sin encabezado zlib válido zlib falla enseguida: datos dañados, lo decide quien carga el PDF.
+    if (dataStart + 1 >= buf.length || (buf[dataStart] & 0x0f) !== 8 || ((buf[dataStart] << 8) | buf[dataStart + 1]) % 31 !== 0) continue;
     try {
       // Hasta el final del archivo: zlib se detiene al terminar el stream comprimido.
       let out = buf.subarray(dataStart);

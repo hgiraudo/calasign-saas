@@ -90,7 +90,7 @@ export const toField = (r: any): Field => ({
 
 export async function loadDocuments(db: Db, envelopeId: string) {
   return db.query(
-    `SELECT d.*, f.sha256, f.size_bytes, f.storage_key FROM documents d JOIN files f ON f.id = d.file_id
+    `SELECT d.*, f.sha256, f.size_bytes, f.storage_key, f.purged_at FROM documents d JOIN files f ON f.id = d.file_id
      WHERE d.envelope_id = $1 ORDER BY d.position`,
     [envelopeId],
   );

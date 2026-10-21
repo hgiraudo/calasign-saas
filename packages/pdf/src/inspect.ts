@@ -1,12 +1,14 @@
 import { PDFDocument } from "pdf-lib";
-import { displayedSize } from "./layout";
+import { LETTER_MEDIABOX, displayedSize, lacksMediaBox } from "./layout";
 import { viewerDiffersFromPdfLib } from "./revisions";
 import { DecodeBudgetError, structureWithinBudget, withDecodeBudget } from "./stream-budget";
 import { InvalidPdfError } from "./errors";
+import { withIngestSlot } from "./ingest-limit";
 import { opensWithoutPassword } from "./encryption";
 import { compressPlainStreams, dropUnreachable, flattenForm, hasSignedSignatureFields, resolveOptionalContent, stripActiveContent } from "./sanitize";
 
 export { InvalidPdfError, type InvalidPdfCode } from "./errors";
+export { PDF_INGEST_LIMITS, PdfIngestBusyError } from "./ingest-limit";
 
 export interface PdfInfo {
   pageCount: number;
@@ -31,7 +33,7 @@ export interface PdfInfo {
  * Para lo que termina dentro del PDF final de un sobre conviene `preparePdfUpload`, que elimina la ambigüedad.
  */
 export async function inspectPdf(bytes: Uint8Array, maxPages = 500): Promise<PdfInfo> {
-  return budgeted(() => inspectPdfUnbudgeted(bytes, maxPages));
+  return withIngestSlot(() => budgeted(() => inspectPdfUnbudgeted(bytes, maxPages)));
 }
 
 async function inspectPdfUnbudgeted(bytes: Uint8Array, maxPages: number): Promise<PdfInfo> {
@@ -70,11 +72,11 @@ export interface PreparedPdf {
  * - `info.formAppearanceMismatch`: con NeedAppearances, alguna apariencia no se pudo regenerar y se fijó la guardada.
  */
 export async function preparePdfUpload(bytes: Uint8Array, maxPages = 500): Promise<PreparedPdf> {
-  return budgeted(() => preparePdfUploadUnbudgeted(bytes, maxPages));
+  return withIngestSlot(() => budgeted(() => preparePdfUploadUnbudgeted(bytes, maxPages)));
 }
 
 async function preparePdfUploadUnbudgeted(bytes: Uint8Array, maxPages: number): Promise<PreparedPdf> {
-  const doc = await loadChecked(bytes, maxPages);
+  const doc = await loadChecked(bytes, maxPages, true);
   const hadSignatures = hasSignedSignatureFields(doc);
   resolveOptionalContent(doc);
   const { appearanceMismatch } = await flattenForm(doc, true);
@@ -94,7 +96,8 @@ async function preparePdfUploadUnbudgeted(bytes: Uint8Array, maxPages: number): 
   return { info: infoOf(again, hadSignatures, appearanceMismatch), bytes: out };
 }
 
-async function loadChecked(bytes: Uint8Array, maxPages: number): Promise<PDFDocument> {
+/** `fixMediaBox`: escribe Carta en las páginas sin /MediaBox (solo al reescribir: inspectPdf compara el documento con el archivo). */
+async function loadChecked(bytes: Uint8Array, maxPages: number, fixMediaBox = false): Promise<PDFDocument> {
   if (bytes.length < 5 || Buffer.from(bytes.subarray(0, 1024)).indexOf("%PDF-") === -1) {
     throw new InvalidPdfError("not_pdf", "El archivo no es un PDF");
   }
@@ -121,7 +124,42 @@ async function loadChecked(bytes: Uint8Array, maxPages: number): Promise<PDFDocu
   }
   if (pages.length === 0) throw new InvalidPdfError("empty", "El PDF no tiene páginas");
   if (pages.length > maxPages) throw new InvalidPdfError("too_many_pages", `Máximo ${maxPages} páginas`);
+  checkPageGeometry(pages, fixMediaBox);
   return doc;
+}
+
+/** Tamaño admitido de una página (ancho y alto visibles), en puntos: el rango de la especificación (ISO 32000, anexo C). */
+export const MIN_PAGE_SIDE = 3;
+export const MAX_PAGE_SIDE = 14400;
+
+/**
+ * Cajas y rotación de cada página. Una caja o un /Rotate de tipo equivocado hacía tirar a pdf-lib
+ * (UnexpectedObjectTypeError → 500): ahora es `unreadable`. Sin /MediaBox se usa Carta, como pdf.js (layout.ts), y
+ * preparePdfUpload la escribe en la página (el PDF guardado la lleva). Una página de área cero, de medidas no finitas o fuera del rango de la
+ * especificación no se puede mostrar ni sellar con sentido (los campos son fracciones del tamaño): `pdf_page_size`.
+ */
+function checkPageGeometry(pages: ReturnType<PDFDocument["getPages"]>, fixMediaBox: boolean) {
+  for (const page of pages) {
+    let size: { width: number; height: number };
+    try {
+      if (fixMediaBox && lacksMediaBox(page)) {
+        const { x, y, width, height } = LETTER_MEDIABOX;
+        page.setMediaBox(x, y, width, height);
+      }
+      size = displayedSize(page);
+    } catch (e) {
+      if (e instanceof DecodeBudgetError) throw e;
+      throw new InvalidPdfError("unreadable", "No se pudo leer el PDF");
+    }
+    for (const side of [size.width, size.height]) {
+      if (!Number.isFinite(side) || side < MIN_PAGE_SIDE || side > MAX_PAGE_SIDE) {
+        throw new InvalidPdfError(
+          "pdf_page_size",
+          `El PDF tiene una página de tamaño inválido (cada lado tiene que medir entre ${MIN_PAGE_SIDE} y ${MAX_PAGE_SIDE} puntos)`,
+        );
+      }
+    }
+  }
 }
 
 /** Toda la operación (cargar, analizar revisiones, reescribir) con un tope total de descompresión. */

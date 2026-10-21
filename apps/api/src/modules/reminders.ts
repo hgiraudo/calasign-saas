@@ -44,7 +44,7 @@ export async function runAutomaticReminders(db: Db, now = new Date()) {
         const underCap = (r: any) => !(capped && Number(r.auto_reminders_sent ?? 0) >= config.reminders.automaticMaxWithoutExpiry);
         // Candidatos con el momento desde el que se cuentan los N días (su invitación, o el pedido de firma con certificado).
         const candidates: { r: any; since: number }[] = certStage
-          ? await pendingCertificateSigner(t, e.id).then((c) => (c && underCap(c) ? [{ r: c, since: new Date(c.requested_at).getTime() }] : []))
+          ? await pendingCertificateSigner(t, e.id).then((c) => (c && receivesSignerNotices(c) && underCap(c) ? [{ r: c, since: new Date(c.requested_at).getTime() }] : []))
           : (await currentSignerGroup(t, e.id)).recipients
               .filter((r) => (r.status === "sent" || r.status === "viewed") && receivesSignerNotices(r) && r.sent_at && underCap(r))
               .map((r) => ({ r, since: new Date(r.sent_at).getTime() }));

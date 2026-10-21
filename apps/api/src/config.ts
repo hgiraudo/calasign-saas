@@ -244,6 +244,14 @@ export const config = {
   /** Corre el worker dentro del proceso de la API (desarrollo / entornos chicos). */
   workerInline: bool(env.WORKER_INLINE, !production),
   maxUploadBytes: Number(env.MAX_UPLOAD_MB ?? 25) * 1024 * 1024,
+  /**
+   * PDFs de afuera normalizándose o inspeccionándose a la vez por proceso (packages/pdf ingest-limit), y cuánto espera
+   * uno lugar antes de responder 503 pdf_busy (Retry-After).
+   */
+  pdfIngest: {
+    concurrency: Math.max(1, Number(env.PDF_INGEST_CONCURRENCY ?? 2) || 2),
+    queueWaitMs: Math.max(0, Number(env.PDF_INGEST_QUEUE_WAIT_MS ?? 5000) || 0),
+  },
   webDist: resolve(env.WEB_DIST ?? resolve(repoRoot, "apps/web/dist")),
   logLevel: env.LOG_LEVEL ?? "info",
   /**

@@ -7,7 +7,7 @@ const CODES: [string, string, string][] = [
   ["400", "validation_error", "err.c.validation"],
   ["400", "invalid_id", "err.c.invalidId"],
   ["400", "invalid_cursor · anchor_not_found · invalid_field · not_pdf · invalid_text · …", "err.c.bad"],
-  ["400", "encrypted · pdf_restricted · empty · unreadable · ambiguous_pdf · pdf_hidden_layers · pdf_form_unsupported", "err.c.pdf"],
+  ["400", "encrypted · pdf_restricted · empty · unreadable · ambiguous_pdf · pdf_hidden_layers · pdf_form_unsupported · pdf_page_size", "err.c.pdf"],
   ["400", "unknown_part · duplicate_part · invalid_json · too_many_documents · duplicate_document", "err.c.oneshot"],
   ["401", "unauthorized", "err.c.unauthorized"],
   ["402", "plan_limit", "err.c.plan"],
@@ -26,7 +26,7 @@ const CODES: [string, string, string][] = [
   ["429", "reminded_recently · reminder_daily_limit · form_rate_limited · ai_signer_limit · …", "err.c.rateBiz"],
   ["500", "internal_error", "err.c.internal"],
   ["502", "tsa_unavailable · ai_unavailable", "err.c.upstream"],
-  ["503", "storage_unavailable · pdf_reader_busy · ai_rate_limited · ai_unavailable", "err.c.unavailable"],
+  ["503", "storage_unavailable · pdf_reader_busy · pdf_busy · ai_rate_limited · ai_unavailable", "err.c.unavailable"],
   ["503", "byok_key_unavailable", "err.c.byok"],
   ["504", "ai_timeout", "err.c.aiTimeout"],
 ];

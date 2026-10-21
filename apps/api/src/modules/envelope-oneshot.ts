@@ -33,6 +33,7 @@ import {
   sendEnvelope,
   type PreparedPdfDocument,
   assertEnvelopeLogicOrder,
+  assertDocumentLimits,
 } from "./envelopes";
 import { assignFieldIds } from "./logic";
 import { loadDetail } from "./mappers";
@@ -67,7 +68,8 @@ async function readMultipart(req: FastifyRequest): Promise<{ body: unknown; file
   const files = new Map<string, UploadedPart>();
   let total = 0;
   const parts = req.parts({
-    limits: { files: ONE_SHOT_MAX_DOCUMENTS + 1, fileSize: config.maxUploadBytes, fields: 10, fieldSize: 2 * 1024 * 1024 },
+    // `parts` (archivos + campos): el tope global de app.ts (12) no alcanza para 10 documentos + payload + campos.
+    limits: { files: ONE_SHOT_MAX_DOCUMENTS + 1, fileSize: config.maxUploadBytes, fields: 10, fieldSize: 2 * 1024 * 1024, parts: ONE_SHOT_MAX_DOCUMENTS + 1 + 10 },
   });
   for await (const part of parts) {
     if (part.type === "field") {
@@ -261,6 +263,8 @@ async function createEnvelope(
       await applyEnvelopeBrand(t, a.tenantId, id, input.brandId);
       await appendEvent(t, { tenantId: a.tenantId, envelopeId: id, type: "envelope.created", actor: a.actor, data: { subject: input.subject } });
       for (const d of docs) await insertPreparedDocument(t, a.tenantId, a.actor, id, d);
+      // También con send: false (sendEnvelope lo vuelve a chequear): un borrador no puede quedar por encima del tope.
+      await assertDocumentLimits(t, "envelope", id);
       if (recipients.length) await replaceRecipients(t, a, id, recipients);
       if (fields.length) {
         await replaceFields(t, a.tenantId, id, fields);

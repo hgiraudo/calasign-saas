@@ -485,7 +485,8 @@ export async function repositoryRoutes(app: FastifyInstance, s: Services) {
   // Carga de un acuerdo firmado fuera de CalaSign. Multipart: "meta" (JSON) ANTES que "file" (PDF).
   app.post("/v1/agreements/upload", { preHandler: auth }, async (req, reply) => {
     const a = A(req);
-    const file = await req.file({ limits: { fileSize: config.maxUploadBytes } });
+    // "meta" puede traer metadatos y contrapartes: hasta 1 MB, como un cuerpo JSON (el tope global de un campo es 64 KB).
+    const file = await req.file({ limits: { fileSize: config.maxUploadBytes, fieldSize: 1024 * 1024 } });
     if (!file) throw badRequest("file_required", "Falta el archivo (campo 'file')");
     const metaField = (file.fields as any).meta;
     const metaRaw = metaField && !Array.isArray(metaField) && "value" in metaField ? String(metaField.value) : "";

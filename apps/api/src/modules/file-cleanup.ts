@@ -11,31 +11,55 @@ const isForeignKeyViolation = (e: unknown) => (e as { code?: string })?.code ===
  * un borrador o de una plantilla borrados quedaba en el almacenamiento para siempre (la retención solo purga sobres
  * completados). Devuelve si se borró.
  *
- * La fila se borra en una transacción propia que se confirma recién después de borrar el archivo del almacenamiento:
- * si ese borrado falla, la fila vuelve (la transacción se deshace), queda anotado en pending_file_deletions para que el
- * barrido lo reintente y el error sale. Antes se borraba la fila primero y
- * un fallo del almacenamiento dejaba el archivo sin nada que lo referenciara (y los llamadores ignoraban el error).
+ * En dos fases:
+ * 1. Transacción corta: DELETE de la fila (las claves foráneas comprueban que nada la usa) y, en la misma, la anotación
+ *    en pending_file_deletions con la clave del almacenamiento. Al confirmar, la fila ya no existe: nada puede volver a
+ *    referenciarla (un INSERT que la apunte falla por la clave foránea), así que no hay carrera con quien la reuse.
+ * 2. Fuera de la transacción: el borrado en el almacenamiento (puede necesitar otra conexión, p. ej. el resolver BYOK,
+ *    y no retiene una conexión del pool mientras habla con el almacenamiento) y, si salió bien, se quita la anotación.
+ *    Si falla, la anotación (con la clave) queda y el barrido lo reintenta: el archivo no queda huérfano.
+ * Antes el blob se borraba dentro de la transacción abierta: con el pool justo y el resolver BYOK esperando otra
+ * conexión se trababa, y si el COMMIT fallaba después de borrar el blob la fila quedaba apuntando a un archivo que ya no
+ * existía.
  */
 export async function deleteFileIfUnused(db: Db, blobs: BlobStore, fileId: string | null | undefined): Promise<boolean> {
   if (!fileId) return false;
+  let key: string | null;
   try {
-    return await db.tx(async (t) => {
+    key = await db.tx(async (t) => {
       const row = await t.one<{ storage_key: string }>(`DELETE FROM files WHERE id = $1 RETURNING storage_key`, [fileId]);
-      if (!row) return false;
-      await blobs.delete(row.storage_key);
-      return true;
+      if (!row) return null;
+      await t.query(
+        `INSERT INTO pending_file_deletions (file_id, storage_key) VALUES ($1, $2)
+         ON CONFLICT (file_id) DO UPDATE SET storage_key = EXCLUDED.storage_key`,
+        [fileId, row.storage_key],
+      );
+      return row.storage_key;
     });
   } catch (e) {
     if (isForeignKeyViolation(e)) return false;
-    // El barrido lo reintenta (retryPendingFileDeletions): varios llamadores ignoran el error.
+    // La primera fase falló (base): la fila sigue; el barrido repite el borrado entero (varios llamadores ignoran el error).
     await db
-      .query(`INSERT INTO pending_file_deletions (file_id, error) VALUES ($1, $2) ON CONFLICT (file_id) DO UPDATE SET error = EXCLUDED.error`, [
-        fileId,
-        String((e as Error)?.message ?? e).slice(0, 1000),
-      ])
+      .query(`INSERT INTO pending_file_deletions (file_id, error) VALUES ($1, $2) ON CONFLICT (file_id) DO UPDATE SET error = EXCLUDED.error`, [fileId, errText(e)])
       .catch(() => {});
     throw e;
   }
+  if (key === null) return false;
+  await deleteBlobAndMark(db, blobs, fileId, key);
+  return true;
+}
+
+const errText = (e: unknown) => String((e as Error)?.message ?? e).slice(0, 1000);
+
+/** Segunda fase: borra el archivo del almacenamiento y la anotación; si falla, la anotación queda con el error. */
+async function deleteBlobAndMark(db: Db, blobs: BlobStore, fileId: string, key: string) {
+  try {
+    await blobs.delete(key);
+  } catch (e) {
+    await db.query(`UPDATE pending_file_deletions SET error = $2 WHERE file_id = $1`, [fileId, errText(e)]).catch(() => {});
+    throw e;
+  }
+  await db.query(`DELETE FROM pending_file_deletions WHERE file_id = $1`, [fileId]);
 }
 
 /**
@@ -95,24 +119,30 @@ export async function deleteFilesIfUnused(db: Db, blobs: BlobStore, fileIds: (st
 
 /**
  * Barrido: reintenta los borrados de pending_file_deletions (de a `limit`, primero los nunca reintentados; uno que falló
- * espera una hora). La fila se descarta si el archivo ya no existe o lo volvió a usar algo (deleteFileIfUnused no lo
- * borra), o al borrarlo.
+ * espera una hora). Con la clave anotada (la fila de `files` ya se borró), solo el archivo del almacenamiento. Sin clave
+ * (primera fase fallida o anotación anterior al borrado en dos fases), el borrado entero: la anotación se descarta si
+ * la fila ya no existe o la volvió a usar algo. Una anotación recién hecha (menos de 5 minutos) se deja: su llamador
+ * está borrando el archivo en este momento.
  */
 export async function retryPendingFileDeletions(db: Db, blobs: BlobStore, limit = 100) {
-  const rows = await db.query<{ file_id: string }>(
-    `SELECT file_id FROM pending_file_deletions WHERE attempted_at IS NULL OR attempted_at < now() - interval '1 hour'
+  const rows = await db.query<{ file_id: string; storage_key: string | null }>(
+    `SELECT file_id, storage_key FROM pending_file_deletions
+      WHERE (attempted_at IS NULL AND queued_at < now() - interval '5 minutes') OR attempted_at < now() - interval '1 hour'
       ORDER BY attempted_at NULLS FIRST, queued_at LIMIT $1`,
     [limit],
   );
   let deleted = 0;
   for (const r of rows) {
     try {
+      if (r.storage_key) {
+        await deleteBlobAndMark(db, blobs, r.file_id, r.storage_key);
+        deleted++;
+        continue;
+      }
       if (await deleteFileIfUnused(db, blobs, r.file_id)) deleted++;
-      await db.query(`DELETE FROM pending_file_deletions WHERE file_id = $1`, [r.file_id]);
+      else await db.query(`DELETE FROM pending_file_deletions WHERE file_id = $1 AND storage_key IS NULL`, [r.file_id]);
     } catch (err) {
-      await db
-        .query(`UPDATE pending_file_deletions SET attempted_at = now(), error = $2 WHERE file_id = $1`, [r.file_id, String((err as Error)?.message ?? err).slice(0, 1000)])
-        .catch(() => {});
+      await db.query(`UPDATE pending_file_deletions SET attempted_at = now(), error = $2 WHERE file_id = $1`, [r.file_id, errText(err)]).catch(() => {});
     }
   }
   return { deleted, seen: rows.length };

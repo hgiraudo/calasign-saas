@@ -9,7 +9,7 @@ OAuth endpoints use the RFC 6749 shape `{"error": "...", "error_description": ".
 | 400 | `validation_error` | Body doesn't match the schema → read `details`, fix the field |
 | 400 | `invalid_field` | Field on a missing document/page, or recipient isn't a signer |
 | 400 | `anchor_not_found` | Anchor text not in the PDF → check spelling/case, or `ignoreIfNotPresent` |
-| 400 | `file_required`, `not_pdf`, `encrypted`, `pdf_restricted`, `empty`, `unreadable`, `too_many_pages`, `ambiguous_pdf`, `pdf_hidden_layers`, `pdf_form_unsupported` | Upload missing or PDF not usable (password-protected PDFs, PDFs with permission restrictions, hidden layers or forms that can't be flattened as shown are rejected) → export again or print to PDF. `not_pdf` is the same code on every upload path (multipart, `base64`, `url`). Accepted PDFs are sanitized (forms flattened, active content and attachments removed); prior digital signatures are lost (`info.hadSignatures: true`) |
+| 400 | `file_required`, `not_pdf`, `encrypted`, `pdf_restricted`, `empty`, `unreadable`, `too_many_pages`, `ambiguous_pdf`, `pdf_hidden_layers`, `pdf_form_unsupported`, `pdf_page_size` | Upload missing or PDF not usable (password-protected PDFs, PDFs with permission restrictions, hidden layers or forms that can't be flattened as shown are rejected) → export again or print to PDF. `not_pdf` is the same code on every upload path (multipart, `base64`, `url`). Accepted PDFs are sanitized (forms flattened, active content and attachments removed); prior digital signatures are lost (`info.hadSignatures: true`) |
 | 400 | `document_fetch_failed` | `POST /v1/envelopes`: a document's `url` couldn't be downloaded → check the URL is public https |
 | 400 | `payload_required`, `invalid_json`, `unknown_part`, `duplicate_part`, `file_part_missing`, `unused_file_part`, `duplicate_document`, `too_many_documents` | `POST /v1/envelopes` as multipart: missing `payload` part, `payload` isn't valid JSON, a text part other than `payload`, a repeated part, a document citing a missing file part, a file part no document cites, two documents citing the same part, more than 10 documents → fix the request |
 | 400 | `invalid_text` | Text contains disallowed characters (e.g. the NUL character) → clean the text |
@@ -55,7 +55,7 @@ OAuth endpoints use the RFC 6749 shape `{"error": "...", "error_description": ".
 | 500 | `internal_error` | Retry with the same `Idempotency-Key` |
 | 502 | `tsa_unavailable` | Timestamp authority failed → retry in a few minutes |
 | 502 | `ai_unavailable` | Couldn't reach the AI provider → retry in a few minutes (a `503 ai_unavailable` means AI isn't configured on the server) |
-| 503 | `storage_unavailable`, `pdf_reader_busy`, `ai_rate_limited` | Temporary, the request wasn't processed → retry shortly with backoff |
+| 503 | `storage_unavailable`, `pdf_reader_busy`, `pdf_busy`, `ai_rate_limited` | Temporary, the request wasn't processed → retry shortly with backoff |
 | 503 | `byok_key_unavailable` | The organization's own encryption key (BYOK) is unavailable: documents can't be stored or read → **don't retry in a loop**; an admin must restore access to the key (`details.keyArn`) |
 | 504 | `ai_timeout` | The AI provider didn't answer in time → try again later |
 

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { PDFDocument, PDFFont, PDFPage, concatTransformationMatrix, popGraphicsState, pushGraphicsState } from "pdf-lib";
+import { PDFDocument, PDFFont, PDFName, PDFPage, concatTransformationMatrix, popGraphicsState, pushGraphicsState } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
 
 const fontsDir = fileURLToPath(new URL("../fonts/", import.meta.url));
@@ -38,13 +38,26 @@ function normalized(b: Box): Box {
  * del tamaño mostrado) se estampaban fuera del lugar que vio el firmante, o fuera de la página.
  */
 export function visibleBox(page: PDFPage): Box {
-  const media = normalized(page.getMediaBox());
-  const crop = normalized(page.getCropBox());
+  const media = normalized(mediaBox(page));
+  const crop = page.node.CropBox() ? normalized(page.getCropBox()) : media;
   const x1 = Math.max(media.x, crop.x);
   const y1 = Math.max(media.y, crop.y);
   const x2 = Math.min(media.x + media.width, crop.x + crop.width);
   const y2 = Math.min(media.y + media.height, crop.y + crop.height);
   return x2 > x1 && y2 > y1 ? { x: x1, y: y1, width: x2 - x1, height: y2 - y1 } : media;
+}
+
+/** Tamaño Carta: el que usa pdf.js para una página sin /MediaBox (ni propia ni heredada). */
+export const LETTER_MEDIABOX: Box = { x: 0, y: 0, width: 612, height: 792 };
+
+/** true si la página no tiene /MediaBox (pdf-lib tiraba UnexpectedObjectTypeError al leerla). */
+export function lacksMediaBox(page: PDFPage): boolean {
+  return page.node.getInheritableAttribute(PDFName.of("MediaBox")) === undefined;
+}
+
+/** La MediaBox, o Carta si falta (como pdf.js). */
+export function mediaBox(page: PDFPage): Box {
+  return lacksMediaBox(page) ? { ...LETTER_MEDIABOX } : page.getMediaBox();
 }
 
 /** Tamaño de la página tal como se ve (CropBox + /Rotate), igual que pdf.js. */

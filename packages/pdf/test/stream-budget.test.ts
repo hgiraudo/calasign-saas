@@ -80,6 +80,25 @@ describe("tope de descompresión al cargar un PDF", () => {
     expect(structureWithinBudget(pdfWithObjStm(512 * 1024), 1024 * 1024)).toBe(true);
   });
 
+  // Antes, por cada "stream" se buscaba hacia atrás sin límite y se armaba un string con todo el tramo: 1 MB de
+  // "stream" repetido tardaba ~30 s (sincrónico, alcanzable sin autenticación por /v1/validate).
+  it("es lineal con miles de \"stream\" seguidos", () => {
+    const n = Math.floor((4 * 1024 * 1024) / 10);
+    const variants = [
+      "%PDF-1.4\n" + "stream".repeat(n),
+      "%PDF-1.4\n<<>>\n" + "stream".repeat(n),
+      "%PDF-1.4\n" + "<<>>stream".repeat(n),
+      "%PDF-1.4\n1 0 obj\n" + "<</Type/ObjStm>>stream".repeat(n / 2),
+      "%PDF-1.4\n" + "1 0 obj<</Type/ObjStm/Filter/FlateDecode>>stream\n".repeat(n / 5),
+      "%PDF-1.4\n" + "1 0 obj<</Type/ObjStm/Filter/FlateDecode>>stream\nx\x9c".repeat(n / 5),
+    ];
+    for (const v of variants) {
+      const t0 = performance.now();
+      structureWithinBudget(new Uint8Array(Buffer.from(v, "latin1")));
+      expect(performance.now() - t0).toBeLessThan(3000);
+    }
+  });
+
   it("la subida rechaza el PDF sin cargarlo entero en memoria", async () => {
     const err = await preparePdfUpload(pdfWithObjStm(160 * 1024 * 1024)).catch((e) => e);
     expect(err).toBeInstanceOf(InvalidPdfError);

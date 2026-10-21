@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { PGlite } from "@electric-sql/pglite";
 import { DEACTIVATED_REASON, toEndpoint } from "../src/modules/webhooks";
+import { stripConcurrently } from "../src/infra/db";
 
 const migrations = fileURLToPath(new URL("../migrations/", import.meta.url));
 
@@ -15,7 +16,7 @@ describe("webhooks: deactivatedReason", () => {
     await db.query(`CREATE TABLE schema_migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())`);
     for (const f of readdirSync(migrations).filter((f) => f.endsWith(".sql")).sort()) {
       const sql = readFileSync(migrations + f, "utf8").replace(/--[^\n]*(\n|$)/g, "\n").split(/;\s*(?:\n|$)/).map((s) => s.trim()).filter(Boolean);
-      for (const st of sql) await db.query(st);
+      for (const st of sql) await db.query(stripConcurrently(st));
       await db.query(`INSERT INTO schema_migrations (name) VALUES ($1)`, [f]);
     }
     // Sin claves foráneas: alcanza con filas de webhook_endpoints (la API key referida no existe = revocada/borrada).

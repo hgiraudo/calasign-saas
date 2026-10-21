@@ -183,6 +183,23 @@ describe("desactivación automática", () => {
     expect(await runNotices(o.tenant)).toBe(0);
   });
 
+  it("job abandonado (worker caído en el último intento): la entrega pasa a failed y suma a la racha; una manual, sin racha", async () => {
+    const o = await org();
+    const id = await endpoint(o.tenant);
+    const d1 = await delivery(o.tenant, id);
+    await wh.webhookJobGaveUp({ db, log }, { kind: "deliver", deliveryId: d1 }, "worker caído");
+    expect(await db.one<any>(`SELECT status, last_error FROM webhook_deliveries WHERE id = $1`, [d1])).toEqual({ status: "failed", last_error: "worker caído" });
+    expect((await ep(id)).consecutive_failures).toBe(1);
+    // Idempotente: otra llamada (ya failed) no vuelve a contar.
+    await wh.webhookJobGaveUp({ db, log }, { kind: "deliver", deliveryId: d1 }, "worker caído");
+    expect((await ep(id)).consecutive_failures).toBe(1);
+    // Manual (reintento o prueba): failed, pero no suma a la racha.
+    const d2 = await delivery(o.tenant, id);
+    await wh.webhookJobGaveUp({ db, log }, { kind: "deliver", deliveryId: d2, manual: true }, "worker caído");
+    expect((await db.one<any>(`SELECT status FROM webhook_deliveries WHERE id = $1`, [d2]))!.status).toBe("failed");
+    expect((await ep(id)).consecutive_failures).toBe(1);
+  });
+
   it("410 Gone de la URL vieja: no desactiva el endpoint al que le cambiaron la URL durante la entrega", async () => {
     const o = await org();
     const id = await endpoint(o.tenant, { apiKey: o.keyId });
@@ -603,11 +620,16 @@ describe("límite de pedidos y esquema Bearer", () => {
     expect((await id("203.0.113.9", "Bearer otra")).key).toBe("203.0.113.9");
     expect((await id("203.0.113.9", "Bearer otra")).key).toBe("203.0.113.9");
     expect(calls).toBe(2);
-    // Límite propio: ruta pública (login, firma…) por IP aunque la credencial sea válida; ruta que autentica, por credencial.
+    // Límite propio: ruta pública (login, firma…) por IP aunque la credencial sea válida; ruta que autentica, por
+    // organización (crear más keys no multiplica el cupo).
     const rl = { max: 10, timeWindow: "1 minute" };
+    valid.set("cs_live_def", "tenant-a");
     expect((await id("203.0.113.9", "Bearer cs_live_abc", { rateLimit: rl })).key).toBe("203.0.113.9");
-    expect((await id("203.0.113.9", "Bearer cs_live_abc", { rateLimit: rl, bearerAuthRoute: true })).key).toBe(k);
-    expect((await id("203.0.113.9", "Bearer cs_live_abc", { rateLimit: rl, rateLimitByCredential: true })).key).toBe(k);
+    expect(await id("203.0.113.9", "Bearer cs_live_abc", { rateLimit: rl, bearerAuthRoute: true })).toEqual({ key: "tenant:tenant-a", tenantId: "tenant-a" });
+    expect((await id("203.0.113.11", "Bearer cs_live_def", { rateLimit: rl, bearerAuthRoute: true })).key).toBe("tenant:tenant-a");
+    expect((await id("203.0.113.9", "Bearer cs_live_abc", { rateLimit: rl, rateLimitByCredential: true })).key).toBe("tenant:tenant-a");
+    // En el límite global, cada credencial sigue con su cupo.
+    expect((await id("203.0.113.9", "Bearer cs_live_def")).key).toBe(`cred:${util.sha256Hex("cs_live_def").slice(0, 32)}`);
     expect((await id("203.0.113.9", "Bearer otra", { rateLimit: rl, bearerAuthRoute: true })).key).toBe("203.0.113.9");
     // Revocada: deja de contar por credencial.
     ip.forgetCredential("cs_live_abc");
@@ -618,6 +640,28 @@ describe("límite de pedidos y esquema Bearer", () => {
     for (let i = 0; i < 1300; i++) await id("198.51.100.250", `Bearer x${i}`);
     expect(calls).toBeLessThanOrEqual(1200);
     expect(calls).toBeGreaterThan(600);
+    ip.resetKnownCredentials();
+  });
+
+  it("token OAuth: un error del momento al autenticar no lo deja en la caché negativa; un 401 sí", async () => {
+    const ip = await import("../src/lib/ip");
+    const { authenticate } = await import("../src/modules/context");
+    ip.resetKnownCredentials();
+    const token = `csat_${util.randomToken(16)}`;
+    ip.rememberAuthenticatedCredential(token, "tenant-o");
+    const verify = async () => null; // si se consultara, contaría como inválida
+    const key = async () => (await ip.rateLimitIdentity({ ip: "203.0.113.50", headers: { authorization: `Bearer ${token}` } }, verify)).key;
+    const req = (_dbErr: boolean) => ({
+      headers: { authorization: `Bearer ${token}` },
+      ip: "203.0.113.50",
+      cookies: {},
+    });
+    const failing = { one: async () => { throw new Error("base caída"); }, query: async () => { throw new Error("base caída"); } } as any;
+    await expect(authenticate({ db: failing, blobs: {} as any })(req(true) as any, {} as any)).rejects.toThrow("base caída");
+    expect(await key()).toMatch(/^cred:/);
+    const empty = { one: async () => null, query: async () => [] } as any;
+    await expect(authenticate({ db: empty, blobs: {} as any })(req(false) as any, {} as any)).rejects.toMatchObject({ status: 401 });
+    expect(await key()).toBe("203.0.113.50");
     ip.resetKnownCredentials();
   });
 
@@ -661,7 +705,7 @@ describe("límite de pedidos y esquema Bearer", () => {
     expect(remaining(await get(`Bearer cs_live_${util.randomToken(12)}`))).toBe(remaining(r2) - 1);
   });
 
-  it("rutas autenticadas con límite propio (/mcp, /v1/xml/sign): cada credencial tiene su cupo aunque compartan IP", async () => {
+  it("rutas autenticadas con límite propio (/mcp, /v1/xml/sign): cada organización tiene su cupo aunque compartan IP; las keys de una misma organización lo comparten", async () => {
     const { resetKnownCredentials } = await import("../src/lib/ip");
     resetKnownCredentials();
     const a = await org();
@@ -679,6 +723,11 @@ describe("límite de pedidos y esquema Bearer", () => {
       expect(max).toBeLessThan(600);
       expect(remaining(ra)).toBe(max - 1);
       expect(remaining(rb)).toBe(max - 1);
+      // Otra key de la organización A (otra IP): mismo cupo, no uno nuevo.
+      const key2 = `cs_test_${util.randomToken(12)}`;
+      await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash, role) VALUES ($1, $2, 'k2', 'cs_test', $3, 'admin')`, [util.uuidv7(), a.tenant, util.sha256Hex(key2)]);
+      const ra2 = await app.inject({ method: "POST", url, headers: { authorization: `Bearer ${key2}`, "content-type": "application/json", accept: "application/json, text/event-stream" }, payload: {}, remoteAddress: "198.51.100.26" });
+      expect(remaining(ra2)).toBe(max - 2);
       if (url !== "/mcp") continue; // /v1/xml/sign autentica antes del límite: sin credencial válida responde 401 sin contar
       // Sin credencial válida, el cupo de la IP.
       const anon = await post({ authorization: `Bearer cs_live_${util.randomToken(12)}` });
@@ -700,7 +749,7 @@ describe("límite de pedidos y esquema Bearer", () => {
     expect((await get(o.auth.authorization)).statusCode).toBe(200);
   }, 60_000);
 
-  it("POST /v1/webhooks/:id/test: 10 por minuto por credencial (otra key desde la misma IP tiene su cupo)", async () => {
+  it("POST /v1/webhooks/:id/test: 10 por minuto por organización (otra key de la misma organización no abre otro cupo; otra organización sí tiene el suyo)", async () => {
     const o = await org();
     const id = await endpoint(o.tenant);
     const key2 = `cs_test_${util.randomToken(12)}`;
@@ -710,7 +759,12 @@ describe("límite de pedidos y esquema Bearer", () => {
     const over = await send(o.auth.authorization);
     expect(over.statusCode).toBe(429);
     expect(over.json().error.code).toBe("rate_limited");
-    expect((await send(`Bearer ${key2}`)).statusCode).not.toBe(429);
+    // Crear más keys no multiplica el límite (antes contaba por credencial).
+    expect((await send(`Bearer ${key2}`)).statusCode).toBe(429);
+    const other = await org();
+    const otherId = await endpoint(other.tenant);
+    const r = await app.inject({ method: "POST", url: `/v1/webhooks/${otherId}/test`, headers: other.auth, remoteAddress: "198.51.100.7" });
+    expect(r.statusCode).not.toBe(429);
   });
 });
 

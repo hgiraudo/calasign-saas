@@ -187,7 +187,7 @@ export const ERRORS: Record<string, Err> = {
     code: "not_pdf",
     message: "El archivo no es un PDF",
     summary:
-      "El archivo (subido, en base64 o descargado de `url`) no es un PDF; también un base64 inválido. Mismo código en todas las vías de subida. Otros problemas del PDF: encrypted, pdf_restricted, empty, too_many_pages, unreadable, ambiguous_pdf, pdf_hidden_layers, pdf_form_unsupported (400)",
+      "El archivo (subido, en base64 o descargado de `url`) no es un PDF; también un base64 inválido. Mismo código en todas las vías de subida. Otros problemas del PDF: encrypted, pdf_restricted, empty, too_many_pages, unreadable, ambiguous_pdf, pdf_hidden_layers, pdf_form_unsupported, pdf_page_size (400)",
   },
   pdf_restricted: {
     status: 400,
@@ -206,6 +206,18 @@ export const ERRORS: Record<string, Err> = {
     code: "pdf_form_unsupported",
     message: "El PDF tiene un formulario cuyos campos no se pueden fijar tal como se ven: imprimilo a PDF y volvé a subirlo.",
     summary: "Los campos de formulario del PDF se fijan en la página al subirlo; uno no se pudo dibujar tal como lo muestra un lector (p. ej. NeedAppearances con caracteres que la fuente estándar no tiene). Imprimirlo a PDF",
+  },
+  pdf_page_size: {
+    status: 400,
+    code: "pdf_page_size",
+    message: "El PDF tiene una página de tamaño inválido (cada lado tiene que medir entre 3 y 14400 puntos)",
+    summary: "Una página del PDF tiene área cero, medidas no finitas o un lado fuera de 3..14400 puntos (el rango de la especificación PDF). Una página sin MediaBox se toma como Carta (612×792), como los lectores",
+  },
+  pdf_busy: {
+    status: 503,
+    code: "pdf_busy",
+    message: "Hay muchos documentos procesándose en este momento; probá de nuevo en unos segundos",
+    summary: "Tope de PDFs normalizándose a la vez en el servidor. Reintentable: trae Retry-After (segundos)",
   },
   unknown_part: {
     status: 400,

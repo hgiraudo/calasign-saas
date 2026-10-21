@@ -366,15 +366,22 @@ export async function handleWebhookJob(d: Deps, p: WebhookJob, job?: Omit<JobCon
 
 /**
  * El job de una entrega no va a correr más (último intento fallido o worker muerto en el último intento): la entrega
- * que siguiera 'pending' pasa a 'failed'. Idempotente; los jobs de fanout y avisos no tienen fila propia.
+ * que siguiera 'pending' pasa a 'failed' y, si era automática, cuenta como falla definitiva en la racha del endpoint
+ * (como en deliverOne: si no, un endpoint cuyas entregas mueren siempre fuera del POST nunca se desactivaba). Una
+ * manual (reintento, prueba) no suma a la racha, igual que en deliverOne; también se marca 'failed' (el reintento
+ * manual la dejó 'pending'). Idempotente: solo la llamada que la pasa a 'failed' cuenta la falla. Los jobs de fanout y
+ * avisos no tienen fila propia.
  */
-export async function webhookJobGaveUp(d: Pick<Deps, "db">, p: WebhookJob, error: string) {
+export async function webhookJobGaveUp(d: Deps, p: WebhookJob, error: string) {
   if (p?.kind !== "deliver" || !p.deliveryId) return;
-  await d.db.query(
-    `UPDATE webhook_deliveries SET status = 'failed', next_retry_at = NULL, last_error = left(COALESCE(last_error || E'\\n', '') || $2, 1000)
-      WHERE id = $1 AND status = 'pending'`,
+  const row = await d.db.one<{ tenant_id: string; endpoint_id: string; url: string }>(
+    `UPDATE webhook_deliveries dl SET status = 'failed', next_retry_at = NULL, last_error = left(COALESCE(dl.last_error || E'\\n', '') || $2, 1000)
+       FROM webhook_endpoints ep
+      WHERE dl.id = $1 AND dl.status = 'pending' AND ep.id = dl.endpoint_id
+      RETURNING dl.tenant_id, dl.endpoint_id, ep.url`,
     [p.deliveryId, error],
   );
+  if (row && !p.manual) await recordEndpointFailure(d, row.tenant_id, row.endpoint_id, row.url);
 }
 
 /**
@@ -962,7 +969,7 @@ export async function webhookRoutes(app: FastifyInstance, s: Services) {
     return toDelivery({ ...row, status: "pending", next_retry_at: null });
   });
 
-  // Cada prueba es un POST a la URL del cliente: con límite propio (10 por minuto por credencial o IP).
+  // Cada prueba es un POST a la URL del cliente: con límite propio (10 por minuto por organización de la credencial o, con sesión web, por IP).
   app.post<P>("/v1/webhooks/:id/test", { preHandler: auth, config: { rateLimit: { max: 10, timeWindow: "1 minute" }, rateLimitByCredential: true } }, async (req, reply) => {
     const a = A(req);
     const ep = await load(a.tenantId, req.params.id);

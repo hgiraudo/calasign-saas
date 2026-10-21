@@ -567,7 +567,7 @@ export const docsEs = {
   "err.c.bad":
     "Otros errores del pedido, con un `code` específico: cursor inválido, texto ancla no encontrado, campo fuera de la página, un archivo que no es un PDF (`not_pdf`, el mismo código en todas las subidas), texto con caracteres no admitidos como el carácter nulo (`invalid_text`), más de 30 documentos o 1000 páginas en un borrador o plantilla al agregar uno (`too_many_documents`, `too_many_pages`)…",
   "err.c.pdf":
-    "El PDF subido no se puede usar: protegido con contraseña (`encrypted`), con restricciones de permisos aunque abra sin contraseña (`pdf_restricted`), sin páginas (`empty`), dañado o demasiado pesado (`unreadable`), que muestra cosas distintas en cada lector (`ambiguous_pdf`), con capas ocultas (`pdf_hidden_layers`) o con un formulario que no se puede fijar tal como se ve (`pdf_form_unsupported`). Volvé a exportarlo o imprimilo a PDF y subilo de nuevo. Los PDFs aceptados se sanean: formularios aplanados, contenido activo y adjuntos eliminados, y las firmas digitales previas se pierden (`info.hadSignatures`).",
+    "El PDF subido no se puede usar: protegido con contraseña (`encrypted`), con restricciones de permisos aunque abra sin contraseña (`pdf_restricted`), sin páginas (`empty`), dañado o demasiado pesado (`unreadable`), que muestra cosas distintas en cada lector (`ambiguous_pdf`), con capas ocultas (`pdf_hidden_layers`) con un formulario que no se puede fijar tal como se ve (`pdf_form_unsupported`) o con una página de tamaño inválido: área cero o un lado fuera de 3 a 14400 puntos (`pdf_page_size`). Volvé a exportarlo o imprimilo a PDF y subilo de nuevo. Los PDFs aceptados se sanean: formularios aplanados, contenido activo y adjuntos eliminados, y las firmas digitales previas se pierden (`info.hadSignatures`).",
   "err.c.oneshot":
     "Errores del `multipart/form-data` de `POST /v1/envelopes`: un campo de texto que no es `payload` (`unknown_part`), una parte repetida (`duplicate_part`), `payload` que no es JSON válido (`invalid_json`), más de 10 documentos (`too_many_documents`) o dos documentos que citan la misma parte de archivo (`duplicate_document`).",
   "err.c.unauthorized": "Falta la credencial, es inválida, venció o fue revocada.",
@@ -597,7 +597,7 @@ export const docsEs = {
   "err.c.upstream":
     "Falló un servicio externo: la autoridad de sellado de tiempo (`tsa_unavailable`) o el proveedor de IA (`ai_unavailable`). Reintentá en unos minutos.",
   "err.c.unavailable":
-    "Indisponibilidad temporal: almacenamiento de documentos (`storage_unavailable`), lector de PDF ocupado (`pdf_reader_busy`) o proveedor de IA saturado (`ai_rate_limited`). El pedido no se procesó: reintentá con espera creciente. `ai_unavailable` con `503` significa que el servidor no tiene proveedor de IA configurado.",
+    "Indisponibilidad temporal: almacenamiento de documentos (`storage_unavailable`), lector de PDF ocupado (`pdf_reader_busy`), demasiados PDF procesándose a la vez (`pdf_busy`, con `Retry-After`) o proveedor de IA saturado (`ai_rate_limited`). El pedido no se procesó: reintentá con espera creciente. `ai_unavailable` con `503` significa que el servidor no tiene proveedor de IA configurado.",
   "err.c.byok":
     "La clave de cifrado propia de la organización (BYOK, en tu KMS) no está disponible: no se pueden guardar ni leer documentos. **No lo reintentes en un loop:** un administrador tiene que restablecer el acceso a la clave (`details.keyArn`).",
   "err.c.aiTimeout": "El proveedor de IA no respondió a tiempo. Probá de nuevo más tarde.",

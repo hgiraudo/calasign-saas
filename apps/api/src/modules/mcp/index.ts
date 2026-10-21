@@ -882,7 +882,7 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
   // ───────── Transporte Streamable HTTP (sin sesión: cada POST es independiente) ─────────
 
   // bodyLimit: create_envelope puede traer el PDF en base64 (tope PDF_MAX_BYTES, ~4/3 en base64).
-  // rateLimitByCredential: /mcp autentica por su cuenta (resolveCaller), así que el límite cuenta por credencial válida.
+  // rateLimitByCredential: /mcp autentica por su cuenta (resolveCaller), con una credencial válida, el límite propio cuenta por su organización.
   app.post("/mcp", { bodyLimit: PDF_MAX_BASE64 + 1024 * 1024, config: { rateLimit: { max: 300, timeWindow: "1 minute" }, rateLimitByCredential: true } }, async (req, reply) => {
     const caller = await resolveCaller(req);
     if (!caller) return unauthorizedReply(reply, "Hace falta un access token OAuth o una API key válidos");

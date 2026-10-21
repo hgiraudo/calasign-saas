@@ -1,3 +1,4 @@
+import { PDF_INGEST_LIMITS } from "@calasign/pdf";
 import { buildApp } from "./app";
 import { config } from "./config";
 import { createDb, migrate } from "./infra/db";
@@ -8,6 +9,9 @@ import { createJobHandlers, sweep } from "./modules/jobs";
 import { createTenantStorageResolver } from "./modules/data";
 import { checkAiProviderConfig } from "./modules/ai/provider";
 import { warnIfTitleIndexMissing } from "./modules/agreements/repository";
+
+PDF_INGEST_LIMITS.maxConcurrent = config.pdfIngest.concurrency;
+PDF_INGEST_LIMITS.queueWaitMs = config.pdfIngest.queueWaitMs;
 
 const db = await createDb();
 const blobs = createBlobStore(createTenantStorageResolver(db));

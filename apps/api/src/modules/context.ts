@@ -5,7 +5,7 @@ import type { BlobStore } from "../infra/storage";
 import type { Actor } from "../infra/evidence";
 import { bearerToken, sha256Hex } from "../lib/util";
 import { AUTHENTICATES, forgetCredential, rememberAuthenticatedCredential } from "../lib/ip";
-import { unauthorized } from "../lib/errors";
+import { AppError, unauthorized } from "../lib/errors";
 import { assertExpectedSession } from "../lib/expected-tenant";
 import { enforceRoutePolicy, loadAccess, type AccessInfo } from "./access";
 import { accessTokenTenant, enforceOAuthScope, isOAuthAccessToken, oauthAuthContext, restrictAccessToScopes } from "./oauth-tokens";
@@ -105,7 +105,10 @@ export function authenticate(s: Services) {
         try {
           req.auth = await oauthAuthContext(s.db, key, ip, userAgent);
         } catch (e) {
-          forgetCredential(key);
+          // Solo un rechazo de la credencial (401/403: token vencido, revocado, membresía quitada) la deja en la caché
+          // negativa del límite. Un error del momento (base caída, timeout) no: si no, una credencial válida contaba
+          // 60 s en el cupo de la IP.
+          if (e instanceof AppError && (e.status === 401 || e.status === 403)) forgetCredential(key);
           throw e;
         }
         // Credencial válida: cuenta en su propio cupo del límite (lib/ip.ts rateLimitIdentity) sin volver a consultarla.
@@ -164,6 +167,6 @@ export function authenticate(s: Services) {
     // Pedidos que hace el servidor MCP en nombre de un agente de IA: la evidencia lo nombra.
     if (req.auth) applyAgentActor(req, req.auth);
   };
-  // Las rutas que lo usan cuentan en el cupo de la credencial también con límite propio (lib/ip.ts markBearerAuthRoutes).
+  // Las rutas que lo usan, con límite propio, cuentan en el cupo de la organización de la credencial (lib/ip.ts markBearerAuthRoutes).
   return Object.assign(handler, { [AUTHENTICATES]: true });
 }

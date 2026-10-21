@@ -329,11 +329,11 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
     if (!file) throw badRequest("file_required", "Falta el archivo (campo 'file')");
     const uploaded = new Uint8Array(await file.toBuffer());
     if (file.file.truncated) throw new AppError(413, "file_too_large", "El archivo supera el tamaño máximo", { limit: "file" });
-    const doc = await preparePdfDocument(a.tenantId, req.params.id, uploaded, file.filename || "documento.pdf");
-    // Verificar el sobre antes de subir el archivo.
+    // Verificar el sobre antes de normalizar el PDF (CPU y un lugar del tope de procesamiento) y de subirlo.
     const pre = await s.db.one<any>(`SELECT status FROM envelopes WHERE id = $1 AND tenant_id = $2`, [req.params.id, a.tenantId]);
     if (!pre) throw notFound("Sobre");
     requireDraft(pre);
+    const doc = await preparePdfDocument(a.tenantId, req.params.id, uploaded, file.filename || "documento.pdf");
     await s.blobs.put(doc.key, doc.bytes, "application/pdf");
     // Si el sobre dejó de ser borrador (o se borró) entre el chequeo y acá, el PDF subido no lo referencia nada.
     await discardBlobsOnFailure(s.blobs, [doc.key], () => s.db.tx(async (t) => {

@@ -344,6 +344,10 @@ const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
     en: "That recipient is responsible for the payment: remove or change the payment first.",
   },
   duplicate_roles: { "pt-BR": "Há dois papéis com o mesmo nome.", en: "Two roles have the same name." },
+  provider_unavailable: {
+    "pt-BR": "O meio de cobrança não está disponível no momento: tente novamente em alguns minutos.",
+    en: "The payment provider isn't available right now: try again in a few minutes.",
+  },
   identity_provider_unavailable: {
     "pt-BR": "O provedor de verificação de identidade não está configurado ou disponível.",
     en: "The identity verification provider isn't configured or available.",

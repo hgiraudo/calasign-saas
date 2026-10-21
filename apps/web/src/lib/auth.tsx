@@ -3,7 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { Navigate, useLocation } from "react-router-dom";
 import type { MeResponse } from "@calasign/shared";
 import { api, errorText, HttpError, UNAUTHORIZED_EVENT } from "./api";
-import { hasUnsavedChanges } from "./i18n";
+import { confirmUnload, hasUnsavedChanges } from "./i18n";
 import { usePasswordText } from "./i18n-password";
 import { Modal, Spinner } from "../components/ui";
 
@@ -56,13 +56,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [endSession]);
 
+  // Recarga completa al login (no navegación de la SPA): descarta todo lo que quedó en memoria de la sesión (PDFs y
+  // datos cacheados, estado de las páginas) y la página no queda en el historial como una vista con datos. Quien la
+  // llama ya confirmó descartar los cambios sin guardar (confirmDiscardUnsaved).
   const logout = useCallback(async () => {
     try {
       await api("/v1/auth/logout", { method: "POST" });
     } finally {
       setMe(null);
+      confirmUnload();
+      window.location.assign("/login");
     }
   }, []);
+
+  // Página restaurada desde el bfcache (botón Atrás después de salir, o de cerrar sesión en otra pestaña): se vuelve a
+  // consultar /v1/me; sin sesión, RequireAuth manda al login en vez de mostrar los datos de antes.
+  useEffect(() => {
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) void refresh();
+    };
+    window.addEventListener("pageshow", onPageShow);
+    return () => window.removeEventListener("pageshow", onPageShow);
+  }, [refresh]);
 
   useEffect(() => {
     void refresh();

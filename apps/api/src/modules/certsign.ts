@@ -56,7 +56,7 @@ import { envelopeBaseUrl } from "./white-label/brand";
 import { lockEnvelope, pastExpiry } from "./envelopes";
 import { guardedFetch, trustAnchors } from "./evidence-seal";
 import { recipientActor, resolveToken } from "./signing";
-import { normalizeRequirements } from "./certsign-requirements";
+import { idMatchSkipped, normalizeRequirements } from "./certsign-requirements";
 import { deleteBlobsQuietly } from "./file-cleanup";
 export { normalizeRequirements };
 
@@ -123,6 +123,15 @@ export async function discardCertsignFiles(db: Db, blobs: BlobStore, envelopeId:
       ok = false;
     }
   }
+  // Preparados reemplazados que todavía esperaban el margen del barrido: el sobre está cerrado, ya no los baja nadie.
+  for (const x of await db.query<{ storage_key: string }>(`SELECT storage_key FROM certsign_stale_blobs WHERE envelope_id = $1`, [envelopeId])) {
+    try {
+      await blobs.delete(x.storage_key);
+      await db.query(`DELETE FROM certsign_stale_blobs WHERE storage_key = $1`, [x.storage_key]);
+    } catch {
+      ok = false;
+    }
+  }
   const cs = await db.one<{ working_key: string }>(`SELECT working_key FROM envelope_certsign WHERE envelope_id = $1`, [envelopeId]);
   if (cs) {
     try {
@@ -135,11 +144,58 @@ export async function discardCertsignFiles(db: Db, blobs: BlobStore, envelopeId:
   return ok;
 }
 
+/** Margen antes de borrar un preparado reemplazado: el Firmador puede estar bajándolo o firmándolo todavía. */
+export const STALE_PREPARED_GRACE_MS = 10 * 60_000;
+
+/** El archivo ya no existe (se reemplazó y el barrido lo borró, o se purgó). */
+function isMissingBlob(e: unknown): boolean {
+  const x = e as { code?: string; name?: string; Code?: string; $metadata?: { httpStatusCode?: number } } | null;
+  return x?.code === "ENOENT" || x?.name === "NoSuchKey" || x?.name === "NotFound" || x?.Code === "NoSuchKey" || x?.$metadata?.httpStatusCode === 404;
+}
+
+/** El PDF preparado de la sesión; si ya no está (una preparación más nueva lo reemplazó), 409 document_changed. */
+async function getPreparedBlob(blobs: BlobStore, key: string): Promise<Uint8Array> {
+  try {
+    return await blobs.get(key);
+  } catch (e) {
+    if (isMissingBlob(e)) throw conflict("document_changed", "El documento se volvió a preparar: firmá de nuevo");
+    throw e;
+  }
+}
+
 /**
- * Barrido: PDF preparados de códigos que vencieron sin usarse (o de sesiones ya cerradas que todavía los referencian).
- * De a `limit` por pasada. Devuelve cuántos borró.
+ * Barrido: preparados reemplazados (pasado el margen), PDF de trabajo de sobres cerrados y PDF preparados de códigos
+ * que vencieron sin usarse (o de sesiones ya cerradas que todavía los referencian). De a `limit` por pasada. Devuelve
+ * cuántos borró.
  */
 export async function sweepCertsignPrepared(db: Db, blobs: BlobStore, limit = 200): Promise<number> {
+  // Preparados reemplazados por otra preparación de la misma sesión, pasado el margen.
+  const stale = await db.query<{ storage_key: string }>(
+    `SELECT storage_key FROM certsign_stale_blobs WHERE superseded_at < now() - make_interval(secs => $1) ORDER BY superseded_at LIMIT $2`,
+    [STALE_PREPARED_GRACE_MS / 1000, limit],
+  );
+  let removed = 0;
+  for (const x of stale) {
+    try {
+      await blobs.delete(x.storage_key);
+      await db.query(`DELETE FROM certsign_stale_blobs WHERE storage_key = $1`, [x.storage_key]);
+      removed++;
+    } catch {
+      /* se reintenta en la próxima pasada */
+    }
+  }
+  // PDF de trabajo de sobres anulados o vencidos cuyo borrado falló en su momento: sin esto quedaban hasta la purga por
+  // retención, que no corre en organizaciones sin retention_days.
+  const closed = await db.query<{ envelope_id: string }>(
+    `SELECT c.envelope_id FROM envelope_certsign c JOIN envelopes e ON e.id = c.envelope_id
+      WHERE e.status IN ('voided','expired','declined') ORDER BY c.updated_at LIMIT $1`,
+    [limit],
+  );
+  for (const x of closed) if (await discardCertsignFiles(db, blobs, x.envelope_id).catch(() => false)) removed++;
+  return removed + (await sweepSessionPrepared(db, blobs, limit));
+}
+
+async function sweepSessionPrepared(db: Db, blobs: BlobStore, limit: number): Promise<number> {
   const rows = await db.query<{ id: string; prepared_key: string }>(
     `SELECT id, prepared_key FROM certsign_sessions
       WHERE prepared_key IS NOT NULL AND (status IN ('expired','failed','completed') OR expires_at < now())
@@ -458,9 +514,10 @@ export async function certsignRoutes(app: FastifyInstance, s: Services) {
     const { e, cs, pending } = await assertStillCurrent(s.db, sess);
     const r = await s.db.one<any>(`SELECT * FROM recipients WHERE id = $1`, [sess.recipient_id]);
     const reqs = normalizeRequirements(r.certificate_requirements, Boolean(r.id_document_number));
-    // Exige corresponder al documento pero no hay documento (sobres de antes del control al guardar): no se firma con
-    // cualquier certificado; el remitente tiene que corregir el destinatario.
-    if (reqs.matchIdDocument && !String(r.id_document_number ?? "").trim()) throw missingIdDocument(r.name, 422);
+    // Se pedía que corresponda al documento pero el destinatario no tiene número de documento (sobre creado antes del
+    // control al guardar, o desde una plantilla, un reemplazo…): no se traba el sobre; se firma sin ese control
+    // (normalizeRequirements ya lo deja en false) y la evidencia registra que no se pudo comparar.
+    const idMatch = idMatchSkipped(r.certificate_requirements, r.id_document_number) ? { idDocumentMatch: "skipped_missing_id_document" as const } : {};
     let chainIn: Uint8Array[];
     try {
       chainIn = parseChain(input.chain);
@@ -513,6 +570,7 @@ export async function certsignRoutes(app: FastifyInstance, s: Services) {
             certSha256: check.sha256,
             errors: check.errors,
             ...(revocation ? { revocation: revocation.status, revocationSource: revocation.source } : {}),
+            ...idMatch,
           },
         });
       });
@@ -550,9 +608,17 @@ export async function certsignRoutes(app: FastifyInstance, s: Services) {
             JSON.stringify(check.chainDer.map((d) => Buffer.from(d).toString("base64"))),
             prep.signatureAlgorithm,
             prep.namedCurve,
-            JSON.stringify({ ...check, chainDer: undefined, revocation }),
+            JSON.stringify({ ...check, chainDer: undefined, revocation, ...idMatch }),
           ],
         );
+        // El preparado anterior de esta misma sesión ya no es el vigente (una firma sobre él se rechaza: ver abajo), pero
+        // el Firmador puede estar bajándolo todavía: lo borra el barrido pasado un margen (STALE_PREPARED_GRACE_MS).
+        if (cur.prepared_key)
+          await t.query(`INSERT INTO certsign_stale_blobs (storage_key, tenant_id, envelope_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, [
+            cur.prepared_key,
+            e.tenant_id,
+            e.id,
+          ]);
         return { previous: cur.prepared_key };
       })
       .catch(async (err) => {
@@ -564,8 +630,6 @@ export async function certsignRoutes(app: FastifyInstance, s: Services) {
       await s.blobs.delete(key).catch(() => {});
       throw new AppError(410, "code_used", "Este código ya no es válido: generá uno nuevo desde el link de firma");
     }
-    // El preparado anterior de esta misma sesión ya no lo referencia nada (una firma sobre él se rechaza: ver abajo).
-    if (replaced.previous) await s.blobs.delete(replaced.previous).catch(() => {});
     const res: CertsignPrepared = {
       digestToSign: Buffer.from(prep.digestToSign).toString("base64"),
       dataToSign: Buffer.from(prep.signedAttrsDer).toString("base64"),
@@ -593,8 +657,9 @@ export async function certsignRoutes(app: FastifyInstance, s: Services) {
     const sess = await sessionByCode(s.db, req.params.code);
     if (sess.status !== "prepared" || !sess.prepared_key) throw conflict("not_prepared", "Primero hay que enviar el certificado");
     await assertStillCurrent(s.db, sess);
+    const pdf = await getPreparedBlob(s.blobs, sess.prepared_key);
     reply.header("content-type", "application/pdf").header("cache-control", "private, no-store");
-    return reply.send(Buffer.from(await s.blobs.get(sess.prepared_key)));
+    return reply.send(Buffer.from(pdf));
   });
 
   // Firmador: firma del hash → CMS + inserción incremental → avance.
@@ -606,7 +671,7 @@ export async function certsignRoutes(app: FastifyInstance, s: Services) {
     const r = await s.db.one<any>(`SELECT * FROM recipients WHERE id = $1`, [sess.recipient_id]);
     const chainDer = (sess.chain_der as string[]).map((b) => new Uint8Array(Buffer.from(b, "base64")));
     const prepared = {
-      preparedPdf: await s.blobs.get(sess.prepared_key),
+      preparedPdf: await getPreparedBlob(s.blobs, sess.prepared_key),
       byteRange: sess.byte_range as [number, number, number, number],
       signedAttrsDer: new Uint8Array(Buffer.from(sess.signed_attrs, "base64")),
       signatureAlgorithm: sess.signature_algorithm,
@@ -682,6 +747,8 @@ export async function certsignRoutes(app: FastifyInstance, s: Services) {
           certSha256: check.sha256,
           trusted: Boolean(check.trusted),
           identityMatch: check.identityMatch?.source ?? null,
+          // Se pedía corresponder al documento pero no había documento con qué comparar: el control no se aplicó.
+          ...(check.idDocumentMatch ? { idDocumentMatch: check.idDocumentMatch } : {}),
           // Estado de revocación al momento de preparar la firma ("not_checked" si la CA no respondió).
           revocation: check.revocation?.status ?? "not_checked",
           revocationSource: check.revocation?.source ?? null,

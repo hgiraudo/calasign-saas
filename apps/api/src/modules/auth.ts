@@ -4,7 +4,7 @@ import { conflict, notFound, unauthorized } from "../lib/errors";
 import { hashPassword, iso, randomToken, sha256Hex, slugify, uuidv7, verifyPassword } from "../lib/util";
 import { config } from "../config";
 import { cellForSignup, registerTenantCell } from "./data/cells";
-import { SESSION_COOKIE, authenticate, clientInfo, type Services } from "./context";
+import { authenticate, clearSessionCookie, clientInfo, sessionCookieToken, setSessionCookie, type Services } from "./context";
 import { assertCanManageApiKey, clearLoginAttempts, createTwoFactorChallenge, takeLoginAttempt } from "./teams";
 import { passwordLoginTenant } from "./identity/sso";
 import { AppError } from "../lib/errors";
@@ -35,13 +35,7 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
        VALUES ($1, $2, $3, $4, $5, now() + interval '${SESSION_DAYS} days')`,
       [sha256Hex(token), userId, tenantId, ip, userAgent],
     );
-    reply.setCookie(SESSION_COOKIE, token, {
-      path: "/",
-      httpOnly: true,
-      sameSite: "lax",
-      secure: config.cookieSecure,
-      maxAge: SESSION_DAYS * 86400,
-    });
+    setSessionCookie(reply, token, SESSION_DAYS * 86400);
   }
 
   async function me(userId: string, tenantId: string): Promise<MeResponse> {
@@ -239,9 +233,9 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
   });
 
   app.post("/v1/auth/logout", async (req, reply) => {
-    const token = req.cookies?.[SESSION_COOKIE];
+    const token = sessionCookieToken(req);
     if (token) await s.db.query(`DELETE FROM sessions WHERE token_hash = $1`, [sha256Hex(token)]);
-    reply.clearCookie(SESSION_COOKIE, { path: "/" });
+    clearSessionCookie(reply);
     return reply.code(204).send();
   });
 

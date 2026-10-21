@@ -119,6 +119,11 @@ describe("moneda de Mercado Pago desconocida", () => {
     const ars = await p.subscriptionProvidersFor("ARS");
     expect(ars.find((x) => x.id === "mercadopago")).toMatchObject({ configured: false, currencies: [] });
     expect(meCalls).toBe(1);
+    // Pedirlo explícitamente: 503 pasajero con reintento, no «no cobra en esa moneda».
+    const { pickProvider } = await import("../src/modules/billing/subscriptions");
+    const err = await pickProvider("mercadopago", "BRL").catch((e) => e);
+    expect(err).toMatchObject({ status: 503, code: "provider_unavailable" });
+    expect(err.details.retryAfterSeconds).toBeGreaterThan(0);
   });
 
   it("/users/me tiene timeout corto (4 s)", async () => {

@@ -42,7 +42,7 @@ import { isSuppressed, sendTracked } from "../notifications/outbound";
 import { normLocale } from "../notifications/templates";
 import { hasPerm } from "./access";
 import { auditFromRequest, recordAudit } from "./audit";
-import { SESSION_COOKIE, authenticate, clientInfo, type AuthContext, type Services } from "./context";
+import { authenticate, clientInfo, sessionCookieToken, setSessionCookie, type AuthContext, type Services } from "./context";
 import { assertSessionAllowed } from "./identity/sso";
 import { assertInvitationCapacity, tenantPlan } from "./billing/plans";
 import { actingPerson, revokeMemberAccess } from "./member-access";
@@ -66,7 +66,7 @@ export async function createUserSession(db: Db, req: FastifyRequest, reply: Fast
      VALUES ($1, $2, $3, $4, $5, now() + interval '${SESSION_DAYS} days')`,
     [sha256Hex(token), userId, tenantId, ip, userAgent],
   );
-  reply.setCookie(SESSION_COOKIE, token, { path: "/", httpOnly: true, sameSite: "lax", secure: config.cookieSecure, maxAge: SESSION_DAYS * 86400 });
+  setSessionCookie(reply, token, SESSION_DAYS * 86400);
 }
 
 async function meResponse(db: Db, userId: string, tenantId: string) {
@@ -349,7 +349,7 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     if (!m) throw notFound("Organización");
     // SSO (Fase 5): una sesión SSO no cambia de organización; una con contraseña no entra a una que exige SSO.
     // Solo una sesión web (cookie) cambia de organización; un token OAuth/API no tiene sesión que mover.
-    const cookie = req.cookies?.[SESSION_COOKIE];
+    const cookie = sessionCookieToken(req);
     if (!cookie) throw forbidden("Solo para sesiones de usuario");
     const sess = await s.db.one<any>(`SELECT user_id, auth_method, sso_tenant_id FROM sessions WHERE token_hash = $1`, [sha256Hex(cookie)]);
     if (!sess || sess.user_id !== a.userId) throw forbidden("Solo para sesiones de usuario");
@@ -660,7 +660,7 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
 
     // ¿Hay sesión iniciada con ese mismo correo?
     let sessionUserId: string | null = null;
-    const cookie = req.cookies?.[SESSION_COOKIE];
+    const cookie = sessionCookieToken(req);
     if (cookie) {
       const srow = await s.db.one<any>(
         // Una sesión SSO solo sirve como prueba de identidad dentro de su propia organización (Fase 5).
@@ -1071,7 +1071,7 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
    * de un miembro: sus ingresos con contraseña en las demás organizaciones quedaban bloqueados.
    */
   async function sessionAuthMethod(req: FastifyRequest): Promise<string | null> {
-    const cookie = req.cookies?.[SESSION_COOKIE];
+    const cookie = sessionCookieToken(req);
     const sess = cookie ? await s.db.one<any>(`SELECT auth_method FROM sessions WHERE token_hash = $1`, [sha256Hex(cookie)]) : null;
     return sess?.auth_method ?? null;
   }
@@ -1088,7 +1088,7 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
    * la desactiva desde una sesión robada no deja abiertas las del dueño sin enterarse. Devuelve cuántas sesiones cerró.
    */
   async function closeOtherSessions(req: FastifyRequest, userId: string): Promise<number> {
-    const cookie = req.cookies?.[SESSION_COOKIE];
+    const cookie = sessionCookieToken(req);
     return s.db.tx(async (t) => {
       const closed = await t.query(`DELETE FROM sessions WHERE user_id = $1 AND token_hash <> $2 RETURNING user_id`, [userId, cookie ? sha256Hex(cookie) : ""]);
       await t.query(`UPDATE oauth_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL`, [userId]);

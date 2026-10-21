@@ -128,8 +128,11 @@ install -d -o calasign-build -g calasign-build -m 0700 \$BUILD_HOME
 chown -R calasign-build:calasign-build \$D
 cd \$D
 # 9>&-: el lock del deploy no pasa a pnpm (ni a algo que deje corriendo).
+# --prod: sin devDependencies (typescript, vitest, @types/*) en el host. Lo que la API usa al correr está en
+# dependencies (tsx incluido: arranca server.ts, worker.ts y migrate.ts); solo esbuild y pkcs11js corren scripts de
+# instalación (onlyBuiltDependencies en pnpm-workspace.yaml).
 sudo -u calasign-build env HOME=\$BUILD_HOME COREPACK_HOME=\$BUILD_HOME/corepack PATH=\$PATH COREPACK_ENABLE_DOWNLOAD_PROMPT=0 CI=true \
-  corepack pnpm install --frozen-lockfile --config.package-import-method=copy --config.store-dir=\$BUILD_HOME/pnpm-store \
+  corepack pnpm install --prod --frozen-lockfile --config.package-import-method=copy --config.store-dir=\$BUILD_HOME/pnpm-store \
   --filter '@calasign/api...' 9>&- 2>&1 | tail -3
 # Instalado: el código queda de root (la app lo lee, no lo puede modificar), legible para todos sin depender del umask
 # de quien desplegó (tar conserva los modos locales). Copia, no hardlinks al store de pnpm: el chown no lo alcanza.

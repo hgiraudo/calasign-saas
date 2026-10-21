@@ -402,6 +402,15 @@ BambooHR, HiBob y Juro no requieren nada del lado del servidor: cada organizaci�
 
 - Redirect URI: `{APP_URL}/v1/storage/oauth/box/callback`.
 
+**Dropbox** (checklist de despliegue)
+
+- Redirect URI: `{APP_URL}/v1/storage/oauth/dropbox/callback`.
+- En *Permissions* de la app tienen que estar marcados `files.content.write`, `files.metadata.read` y
+  `account_info.read` (y guardar con *Submit*). CalaSign pide los tres al conectar; si la app no tiene
+  `files.metadata.read`, Dropbox rechaza la autorización, y las conexiones anteriores a pedirlo suben igual pero sin
+  reconocer lo que ya subió un intento anterior (un reintento puede dejar una copia). Después de agregar el permiso,
+  esas organizaciones tienen que volver a conectar Dropbox.
+
 **Microsoft (Entra ID)**
 
 - En la app de OneDrive:

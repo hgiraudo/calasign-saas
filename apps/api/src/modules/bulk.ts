@@ -481,7 +481,8 @@ export async function bulkRoutes(app: FastifyInstance, s: Services) {
     const name = tpl.template.name.replace(/[^\p{L}\p{N} _-]+/gu, "").trim().slice(0, 60) || "plantilla";
     reply
       .header("content-type", "text/csv; charset=utf-8")
-      .header("content-disposition", `attachment; filename="envio-masivo.csv"; filename*=UTF-8''${encodeURIComponent(name)}-envio-masivo.csv`);
+      .header("content-disposition", `attachment; filename="envio-masivo.csv"; filename*=UTF-8''${encodeURIComponent(name)}-envio-masivo.csv`)
+      .header("cache-control", "private, no-store");
     return "﻿" + csvSkeleton(tpl);
   });
 
@@ -607,7 +608,10 @@ export async function bulkRoutes(app: FastifyInstance, s: Services) {
     const lines = [["row", "status", "envelopeId", "recipients", "error"].join(",")];
     // csvCell: los nombres vienen de datos externos; sin neutralizar, "=…" se ejecuta como fórmula en la planilla.
     for (const r of rows.map(toItem)) lines.push([r.row, r.status, r.envelopeId ?? "", r.recipients.join(" | "), r.error ?? ""].map(csvCell).join(","));
-    reply.header("content-type", "text/csv; charset=utf-8").header("content-disposition", `attachment; filename="resultados-${req.params.id}.csv"`);
+    reply
+      .header("content-type", "text/csv; charset=utf-8")
+      .header("content-disposition", `attachment; filename="resultados-${req.params.id}.csv"`)
+      .header("cache-control", "private, no-store");
     return "﻿" + lines.join("\r\n") + "\r\n";
   });
 

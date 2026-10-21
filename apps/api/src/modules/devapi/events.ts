@@ -8,7 +8,7 @@ import { badRequest } from "../../lib/errors";
 import { iso, queryList, sha256Hex } from "../../lib/util";
 import { envelopeVisibilitySql, loadAccess, type AccessInfo } from "../access";
 import { tenantPlan } from "../billing/plans";
-import { SESSION_COOKIE, authenticate, type AuthContext, type Services } from "../context";
+import { authenticate, sessionCookieToken, type AuthContext, type Services } from "../context";
 import { isOAuthAccessToken, resolveAccessToken, restrictAccessToScopes } from "../oauth-tokens";
 
 /**
@@ -284,7 +284,7 @@ export async function eventRoutes(app: FastifyInstance, s: Services) {
     const authz = req.headers.authorization;
     const bearer = authz?.startsWith("Bearer ") ? authz.slice(7).trim() : null;
     const oauthToken = bearer && isOAuthAccessToken(bearer) ? bearer : null;
-    const sessionToken = bearer ? null : (req.cookies?.[SESSION_COOKIE] ?? null);
+    const sessionToken = bearer ? null : (sessionCookieToken(req) ?? null);
     const stillAllowed = async () => {
       if (oauthToken && !(await resolveAccessToken(s.db, oauthToken))) return false;
       if (sessionToken && !(await s.db.one(`SELECT 1 FROM sessions WHERE token_hash = $1 AND expires_at > now()`, [sha256Hex(sessionToken)]))) return false;

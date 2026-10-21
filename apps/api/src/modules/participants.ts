@@ -14,6 +14,7 @@ import { isEmbeddedSigner, isUnverifiedSelfRegistered } from "./otp";
 import { assertLinkCurrent, recipientActor, resolveToken } from "./signing";
 import { inheritIdentityRequirement } from "./identity/kyc";
 import { deleteBlobsQuietly, discardRecipientAttachments } from "./file-cleanup";
+import { downgradeIdMatchSql } from "./certsign-requirements";
 
 /** Aplica los campos opcionales de recordatorios/delegación de Create/UpdateEnvelopeInput (solo los presentes). */
 export async function applyEnvelopeSettings(
@@ -108,8 +109,10 @@ export async function replaceRecipient(
     [old.id, id],
   );
   await inheritIdentityRequirement(db, old, id);
-  // El reemplazo también firma con certificado si el original debía hacerlo.
-  await db.query(`UPDATE recipients SET signature_type = $2, certificate_requirements = $3 WHERE id = $1`, [
+  // El reemplazo también firma con certificado si el original debía hacerlo. No trae número de documento: si se pedía
+  // que el certificado corresponda al documento, el control se baja (con la marca para la evidencia) en vez de trabar
+  // un sobre en curso.
+  await db.query(`UPDATE recipients SET signature_type = $2, certificate_requirements = ${downgradeIdMatchSql("$3::jsonb", "id_document_number")} WHERE id = $1`, [
     id,
     old.signature_type ?? "electronic",
     old.certificate_requirements ? JSON.stringify(old.certificate_requirements) : null,

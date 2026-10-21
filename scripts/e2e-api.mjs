@@ -22,7 +22,7 @@ async function api(method, path, body, { raw = false, expect, headers = {}, sess
   }
   const res = await fetch(BASE + path, { method, headers: h, body: payload });
   const set = res.headers.get("set-cookie");
-  if (set && set.startsWith("cs_session")) cookie = set.split(";")[0];
+  if (set && /^(__Host-)?cs_session=/.test(set)) cookie = set.split(";")[0];
   if (raw) return res;
   const text = await res.text();
   let data = null;

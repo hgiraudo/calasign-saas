@@ -386,7 +386,7 @@ for (const mode of ["bad_nonce", "bad_aud", "bad_sig"]) {
   idp.mode = mode;
   const c = new Client(mode);
   loc = await oidcLogin(c, `ana@${domain}`);
-  assert(/\/login\?sso_error=/.test(loc ?? "") && !c.cookies.has("cs_session"), `${mode} rechazado (${loc})`);
+  assert(/\/login\?sso_error=/.test(loc ?? "") && !c.cookies.has("cs_session") && !c.cookies.has("__Host-cs_session"), `${mode} rechazado (${loc})`);
 }
 idp.mode = "ok";
 // Reusar el state ya consumido no funciona.
@@ -408,7 +408,7 @@ const csrfStart = await csrfAttacker.raw("GET", (await csrfAttacker.api("POST", 
 const csrfCb = new URL((await fetch(csrfStart.headers.get("location"), { redirect: "manual" })).headers.get("location"));
 const csrfVictim = new Client("csrf-victim");
 const csrfRes = await csrfVictim.raw("GET", `${csrfCb.pathname}${csrfCb.search}`);
-assert(/sso_state_invalid/.test(csrfRes.headers.get("location") ?? "") && !csrfVictim.cookies.has("cs_session"), "el callback de otro navegador no abre sesión (login CSRF)");
+assert(/sso_state_invalid/.test(csrfRes.headers.get("location") ?? "") && !csrfVictim.cookies.has("cs_session") && !csrfVictim.cookies.has("__Host-cs_session"), "el callback de otro navegador no abre sesión (login CSRF)");
 ok("OIDC rechaza nonce, aud y firma inválidos; el state no se puede reusar ni usar desde otro navegador");
 
 // Sesión SSO atada a su organización: Ana también es miembro de otra organización (vía SCIM de esa organización),

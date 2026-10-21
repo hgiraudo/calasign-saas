@@ -16,13 +16,14 @@ export interface CertDraft {
   allowedIssuers: string;
 }
 
-export const EMPTY_CERT_DRAFT: CertDraft = { signatureType: "electronic", matchIdDocument: true, requireQualified: false, allowedIssuers: "" };
+// «Corresponde al documento» es opt-in: solo traba el envío si el remitente lo marca en un destinatario con documento.
+export const EMPTY_CERT_DRAFT: CertDraft = { signatureType: "electronic", matchIdDocument: false, requireQualified: false, allowedIssuers: "" };
 
 export function certToDraft(r: { signatureType?: SignatureType; certificateRequirements?: { matchIdDocument: boolean; allowedIssuers: string[]; requireQualified: boolean } | null }): CertDraft {
   const q = r.certificateRequirements;
   return {
     signatureType: r.signatureType ?? "electronic",
-    matchIdDocument: q?.matchIdDocument ?? true,
+    matchIdDocument: q?.matchIdDocument ?? false,
     requireQualified: q?.requireQualified ?? false,
     allowedIssuers: (q?.allowedIssuers ?? []).join(", "),
   };
@@ -45,7 +46,21 @@ export function draftToCert(d: CertDraft, role: string) {
   };
 }
 
-export function CertificateOption({ value, hasIdDocument, onChange }: { value: CertDraft; hasIdDocument: boolean; onChange: (v: CertDraft) => void }) {
+/**
+ * `hasIdDocument`: el destinatario tiene número de documento. `template`: en una plantilla el documento llega en cada
+ * sobre (o no llega: formularios web, envíos masivos, CRM…), así que no se ofrece exigir que corresponda.
+ */
+export function CertificateOption({
+  value,
+  hasIdDocument,
+  template = false,
+  onChange,
+}: {
+  value: CertDraft;
+  hasIdDocument: boolean;
+  template?: boolean;
+  onChange: (v: CertDraft) => void;
+}) {
   const c = useCertsignText();
   return (
     <div className="certsign-option">
@@ -54,10 +69,9 @@ export function CertificateOption({ value, hasIdDocument, onChange }: { value: C
         <select
           value={value.signatureType}
           onChange={(e) => {
-            const signatureType = e.target.value as SignatureType;
-            // Al pasar a firma con certificado sin documento cargado, el control del documento empieza desmarcado (exigirlo
-            // sin documento no se puede guardar).
-            onChange({ ...value, signatureType, ...(signatureType === "certificate" && value.signatureType !== "certificate" && !hasIdDocument ? { matchIdDocument: false } : {}) });
+            // El control del documento no se marca ni se desmarca solo: queda lo que eligió el remitente (si lo marcó y
+            // falta el documento, se muestra el aviso).
+            onChange({ ...value, signatureType: e.target.value as SignatureType });
           }}
         >
           <option value="electronic">{c("edit.signatureType.electronic")}</option>
@@ -67,14 +81,28 @@ export function CertificateOption({ value, hasIdDocument, onChange }: { value: C
       {value.signatureType === "certificate" && (
         <div className="certsign-reqs">
           <p className="muted small">{c("edit.certHint")}</p>
-          <label className="check">
-            <input type="checkbox" checked={value.matchIdDocument} onChange={(e) => onChange({ ...value, matchIdDocument: e.target.checked })} />
-            <span>{c("edit.certMatch")}</span>
-          </label>
-          {value.matchIdDocument && !hasIdDocument && (
-            <p className="error-text small" role="alert">
-              {c("edit.certMatchNoDoc")}
-            </p>
+          {template ? (
+            <p className="muted small">{c("edit.certMatchTemplate")}</p>
+          ) : (
+            <>
+              <label className="check">
+                <input type="checkbox" checked={value.matchIdDocument} onChange={(e) => onChange({ ...value, matchIdDocument: e.target.checked })} />
+                <span>{c("edit.certMatch")}</span>
+              </label>
+              {value.matchIdDocument && !hasIdDocument && (
+                <p className="error-text small" role="alert">
+                  {c("edit.certMatchNoDoc")}
+                </p>
+              )}
+              {!value.matchIdDocument && hasIdDocument && (
+                <p className="muted small">
+                  {c("edit.certMatchOffer")}{" "}
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => onChange({ ...value, matchIdDocument: true })}>
+                    {c("edit.certMatchEnable")}
+                  </button>
+                </p>
+              )}
+            </>
           )}
           <label className="check">
             <input type="checkbox" checked={value.requireQualified} onChange={(e) => onChange({ ...value, requireQualified: e.target.checked })} />

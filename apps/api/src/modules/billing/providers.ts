@@ -380,6 +380,11 @@ export async function mpSubscriptionCurrencies(): Promise<string[]> {
   return mpCurrencyInflight;
 }
 
+/** Segundos hasta la próxima consulta de la moneda de Mercado Pago (Retry-After de provider_unavailable). */
+export function mpCurrencyRetryAfterSeconds(): number {
+  return Math.max(1, Math.ceil((mpCurrencyRetryAt - Date.now()) / 1000));
+}
+
 /** Solo para pruebas: olvida la moneda de la cuenta de Mercado Pago consultada. */
 export function resetMpCurrencyCache() {
   mpCurrencyKnown = null;

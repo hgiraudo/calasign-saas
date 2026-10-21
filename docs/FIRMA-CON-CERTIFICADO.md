@@ -27,7 +27,7 @@ privada nunca sale del dispositivo: el servidor manda un hash y recibe una firma
   reasignación pasan el tipo de firma y los requisitos al nuevo destinatario.
 - Un firmante con certificado no necesita un campo de firma en el documento. Si tiene campos, los completa en la
   firma electrónica, como siempre.
-- `matchIdDocument` solo se aplica si el destinatario tiene `idDocumentNumber`. Cuando se aplica, la cadena tiene que llegar a una raíz de confianza (`TRUST_STORE_DIR`): cualquiera puede emitirse un certificado con el documento de otra persona, así que la coincidencia sola no prueba la identidad.
+- `matchIdDocument` es `false` por defecto y solo se aplica si el destinatario tiene `idDocumentNumber`. Pedido a mano sin documento, el guardado responde 400 `missing_id_document`; en sobres creados desde plantillas (formularios web, envíos masivos, CRM, conectores, lowcode), reemplazos y sobres en curso se omite y la evidencia lo registra (`idDocumentMatch: skipped_missing_id_document` en `recipient.certificate_signed`/`recipient.certificate_rejected`). Cuando se aplica, la cadena tiene que llegar a una raíz de confianza (`TRUST_STORE_DIR`): cualquiera puede emitirse un certificado con el documento de otra persona, así que la coincidencia sola no prueba la identidad.
 
 ## 2. Ciclo del sobre
 
@@ -109,6 +109,14 @@ POST /v1/signing/:token/certsign/pairing ─▶ código XXXXX-XXXXX (10 min, un 
 | **Token/tarjeta (PKCS#11)** | `pkcs11js`: `CKM_RSA_PKCS` sobre el DigestInfo SHA-256, o `CKM_ECDSA` sobre el hash. Detecta los módulos más comunes (SafeNet eTokenPass, Feitian, Bit4id, Watchdata, OpenSC, SoftHSM) por sistema operativo; también acepta una ruta. Pide el PIN. |
 | **Almacén de Windows** | PowerShell con `-EncodedCommand`: busca en `Cert:\CurrentUser\My` los certificados con clave y firma el hash (`RSA.SignHash` Pkcs1 o `ECDsa.SignHash`). Windows muestra su propio diálogo de PIN si el certificado es de un token. |
 | **Archivo .p12/.pfx** | `node-forge` (cifrados modernos y legados). Firma con `crypto.sign` de Node. |
+
+**`node-forge` y GHSA-86w9-cpqp-85rv.** Versión fijada exacta (1.4.0, la misma en `apps/api` y `packages/firmador`).
+El aviso (verificación de firmas RSA PKCS#1 v1.5 que acepta elementos DigestAlgorithm anidados de más; afecta
+`<= 1.4.0`, sin versión corregida) no es explotable acá: `node-forge` solo se usa para **parsear** PKCS#12/ASN.1
+(abrir el `.p12`, extraer clave y cadena, leer los atributos firmados en `protocol.ts`). Ninguna firma se verifica
+con `node-forge` (ni `publicKey.verify`, ni `certificate.verify`, ni PKCS#7): las firmas se hacen y verifican con
+`node:crypto`, `pkijs` y `@peculiar/x509`. Si alguna vez se usa para verificar, hay que cambiarlo de librería o
+actualizar a una versión corregida.
 
 - **Interfaz local.** Un servidor en `127.0.0.1` con puerto al azar y una ruta con token secreto. Rechaza otro
   `Host` (protege contra DNS rebinding), acepta solo JSON y tiene CSP estricta. Se abre en el navegador. Muestra

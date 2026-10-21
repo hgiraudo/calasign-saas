@@ -52,12 +52,68 @@ describe("custodia: contexto de cifrado", () => {
     await expect(custody.openKey({ ...row, key_wrapped: other.wrapped, id: CERT_2 })).rejects.toThrow();
   });
 
-  it("v2 BYOK: el contexto de KMS lleva el certificado", async () => {
-    const sealed = await custody.sealKey("CLAVE-BYOK", { tenantId: TENANT_A, certificateId: CERT_1 }, { tenantId: TENANT_A, keyArn: OK_ARN });
-    const row = { id: CERT_1, tenant_id: TENANT_A, key_ciphertext: sealed.ciphertext, key_wrapped: sealed.wrapped, key_wrap_method: sealed.method, key_wrap_key_arn: OK_ARN };
-    expect(await custody.openKey(row)).toBe("CLAVE-BYOK");
-    await expect(custody.openKey({ ...row, id: CERT_2 })).rejects.toMatchObject({ code: "byok_key_unavailable" });
+  it("v2 BYOK: contexto de KMS con propósito y organización (política recomendada); el certificado va en el AAD", async () => {
+    const seen: Record<string, string>[] = [];
+    const real = kms.mockKms();
+    kms.setKmsClientFactory(() => ({
+      ...real,
+      encrypt: async (i: any) => (seen.push(i.EncryptionContext), real.encrypt(i)),
+    }));
+    try {
+      const sealed = await custody.sealKey("CLAVE-BYOK", { tenantId: TENANT_A, certificateId: CERT_1 }, { tenantId: TENANT_A, keyArn: OK_ARN });
+      expect(seen.at(-1)).toEqual({ purpose: "calasign-tenant-certificate", tenant: TENANT_A });
+      const row = { id: CERT_1, tenant_id: TENANT_A, key_ciphertext: sealed.ciphertext, key_wrapped: sealed.wrapped, key_wrap_method: sealed.method, key_wrap_key_arn: OK_ARN };
+      expect(await custody.openKey(row)).toBe("CLAVE-BYOK");
+      // Otro certificado: KMS abre la clave de datos, pero el AAD de AES-GCM no coincide.
+      await expect(custody.openKey({ ...row, id: CERT_2 })).rejects.toThrow();
+      // Otra organización: el contexto de KMS no coincide.
+      await expect(custody.openKey({ ...row, tenant_id: TENANT_B })).rejects.toMatchObject({ code: "byok_key_unavailable" });
+    } finally {
+      kms.setKmsClientFactory(() => kms.mockKms());
+    }
   });
+
+  it("v2 BYOK escrita con el certificado en el contexto de KMS (formato anterior) se sigue abriendo", async () => {
+    const dataKey = randomBytes(32);
+    const iv = randomBytes(12);
+    const c = createCipheriv("aes-256-gcm", dataKey, iv);
+    c.setAAD(Buffer.from(`calasign-tenant-certificate|${TENANT_A}|${CERT_1}`, "utf8"));
+    const enc = Buffer.concat([c.update("CLAVE-VIEJA", "utf8"), c.final()]);
+    const wrapped = await kms.kmsForKey(OK_ARN).encrypt({
+      KeyId: OK_ARN,
+      Plaintext: dataKey,
+      EncryptionContext: { purpose: "calasign-tenant-certificate", tenant: TENANT_A, certificate: CERT_1 },
+    });
+    const row = {
+      id: CERT_1,
+      tenant_id: TENANT_A,
+      key_ciphertext: `v2.${iv.toString("base64url")}.${enc.toString("base64url")}.${c.getAuthTag().toString("base64url")}`,
+      key_wrapped: Buffer.from(wrapped.CiphertextBlob).toString("base64"),
+      key_wrap_method: "kms-byok",
+      key_wrap_key_arn: OK_ARN,
+    };
+    expect(await custody.openKey(row)).toBe("CLAVE-VIEJA");
+    await expect(custody.openKey({ ...row, id: CERT_2 })).rejects.toThrow();
+  });
+
+  it("si la migración a v2 falla, no se reintenta en cada uso", async () => {
+    const { generateDevRootCa } = await import("@calasign/pdf");
+    const ca = await generateDevRootCa("Custodia Reintento");
+    const row: any = { id: CERT_2, tenant_id: TENANT_B, chain_pem: ca.certPem, ...legacySeal(ca.keyPem) };
+    let attempts = 0;
+    const db = {
+      query: async (sql: string) => {
+        if (/UPDATE tenant_certificates SET key_ciphertext/.test(sql)) {
+          attempts++;
+          throw new Error("base caída");
+        }
+        return [];
+      },
+    };
+    await custody.tenantCertificateProvider(db as any, row);
+    await custody.tenantCertificateProvider(db as any, row);
+    expect(attempts).toBe(1);
+  }, 60_000);
 
   it("una clave v1 se sigue abriendo y se vuelve a cifrar en v2 al usarla", async () => {
     const { generateDevRootCa } = await import("@calasign/pdf");

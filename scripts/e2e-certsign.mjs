@@ -176,9 +176,9 @@ await api("PUT", `/v1/envelopes/${envelope.id}/recipients`, {
 }, { expect: 400 });
 await api("PUT", `/v1/envelopes/${envelope.id}/recipients`, {
   recipients: [
-    { id: A, name: nameA, email: `a${stamp}@example.com`, routingOrder: 1, idDocumentType: "dni", idDocumentNumber: "12345678", signatureType: "certificate", certificateRequirements: { allowedIssuers: ["CalaSign Lab"], requireQualified: true } },
+    { id: A, name: nameA, email: `a${stamp}@example.com`, routingOrder: 1, idDocumentType: "dni", idDocumentNumber: "12345678", signatureType: "certificate", certificateRequirements: { matchIdDocument: true, allowedIssuers: ["CalaSign Lab"], requireQualified: true } },
     { id: B, name: nameB, email: `b${stamp}@example.com`, routingOrder: 2 },
-    { id: C, name: nameC, email: `c${stamp}@example.com`, routingOrder: 3, idDocumentType: "cpf", idDocumentNumber: "123.456.789-09", signatureType: "certificate" },
+    { id: C, name: nameC, email: `c${stamp}@example.com`, routingOrder: 3, idDocumentType: "cpf", idDocumentNumber: "123.456.789-09", signatureType: "certificate", certificateRequirements: { matchIdDocument: true, allowedIssuers: [], requireQualified: false } },
   ],
 });
 // A tiene firma visual; C firma solo con certificado (sin campo de firma: está permitido).

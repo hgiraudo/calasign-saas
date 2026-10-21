@@ -141,6 +141,9 @@ antes de la migración quedan sin verificar.
 - **BYOK en S3:** nada nuevo en el rol propio (S3 usa la clave del cliente con la política del cliente).
 - **BYOK directo** (custodia y disco): `kms:Encrypt`, `kms:Decrypt`, `kms:GenerateDataKey`, `kms:DescribeKey`
   sobre `arn:aws:kms:*:*:key/*` (claves de otras cuentas: el permiso efectivo lo da la política de la clave del
-  cliente). Conviene limitarlo con `kms:EncryptionContextKeys` = `purpose`, `tenant`.
+  cliente). Conviene limitarlo con `kms:EncryptionContextKeys` = `purpose`, `tenant`: es el contexto que usan
+  tanto los archivos en disco como la custodia de certificados (la clave de cada certificado queda atada además al
+  certificado por el AAD de AES-GCM, no por el contexto de KMS). Las claves de certificados guardadas con un
+  `certificate` en el contexto (versión anterior) se siguen abriendo si la política lo permite.
 - **Celdas S3 adicionales:** los mismos permisos de S3 que hoy (`s3:GetObject/PutObject/ListBucket`,
   `ListBucketVersions`, `DeleteObject`, `DeleteObjectVersion`) sobre cada bucket de celda.

@@ -57,8 +57,14 @@ export async function evidenceCertificate(db: Db, envelopeId: string, opts: { si
        FROM recipients WHERE envelope_id = $1 ORDER BY routing_order, created_at`,
     [envelopeId],
   );
+  // Eventos hasta el cierre del sobre (envelope.completed incluido): los posteriores (descargas, exportaciones,
+  // renovaciones del sello…) cambiaban los bytes en cada reintento y el destino guardaba otra copia. La cadena sigue
+  // siendo verificable: es un prefijo de la del sobre. Sin evento de cierre, todos.
   const events = await db.query<any>(
-    `SELECT seq, type, actor_type, actor_id, actor_label, ip, user_agent, data, occurred_at, prev_hash, hash FROM envelope_events WHERE envelope_id = $1 ORDER BY seq`,
+    `SELECT seq, type, actor_type, actor_id, actor_label, ip, user_agent, data, occurred_at, prev_hash, hash FROM envelope_events
+      WHERE envelope_id = $1
+        AND seq <= COALESCE((SELECT min(seq) FROM envelope_events WHERE envelope_id = $1 AND type = 'envelope.completed'), 9223372036854775807)
+      ORDER BY seq`,
     [envelopeId],
   );
   // Mismo link que el certificado del PDF (jobs.ts): dominio de la marca del sobre y ?b= si aplica una submarca.
@@ -67,6 +73,8 @@ export async function evidenceCertificate(db: Db, envelopeId: string, opts: { si
   const doc = {
     type: "calasign.evidence-certificate",
     version: 1,
+    // No es la hora en que se generó el archivo sino la de corte de la evidencia que contiene (el cierre del sobre):
+    // se conserva el nombre del campo por compatibilidad con quienes ya leen este JSON.
     // Determinista: con la hora actual, cada reintento de una exportación generaba bytes distintos y los destinos que
     // deduplican por contenido (Dropbox: content_hash; Drive: sha256 en appProperties) dejaban una copia por intento.
     // Es el cierre del sobre (las exportaciones y los conectores solo corren con el sobre completado); si no lo tuviera,

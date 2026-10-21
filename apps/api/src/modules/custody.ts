@@ -65,7 +65,7 @@ export function parseP12(p12: Buffer, password: string): ParsedP12 {
 let kmsP: Promise<{ m: typeof import("@aws-sdk/client-kms"); c: import("@aws-sdk/client-kms").KMSClient }> | null = null;
 const kms = () => (kmsP ??= import("@aws-sdk/client-kms").then((m) => ({ m, c: new m.KMSClient({ region: config.storage.region }) })));
 
-/** A quién pertenece la clave: va en el contexto de KMS y en el AAD de AES-GCM (v2). */
+/** A quién pertenece la clave: va en el AAD de AES-GCM (v2) y, con el KMS de la plataforma, en su contexto. */
 export interface CustodyContext {
   tenantId: string;
   certificateId: string;
@@ -73,16 +73,25 @@ export interface CustodyContext {
 
 const aad = (ctx: CustodyContext) => Buffer.from(`${CUSTODY_PURPOSE}|${ctx.tenantId}|${ctx.certificateId}`, "utf8");
 
-/** Contexto de cifrado de KMS. v2: atado a la organización y al certificado; v1 (claves anteriores): solo el propósito
- * (BYOK: propósito y organización). */
-function kmsContext(version: "v1" | "v2", ctx: { tenantId: string; certificateId?: string }, byok: boolean): Record<string, string> {
+/**
+ * Contexto de cifrado de KMS. BYOK (v1 y v2): propósito y organización, lo que permite la política recomendada para la
+ * clave del cliente (kms:EncryptionContextKeys = purpose, tenant; docs/DATOS.md): el certificado queda atado solo por
+ * el AAD de AES-GCM. KMS de la plataforma: v2 con organización y certificado; v1, solo el propósito.
+ * `legacyByokV2`: claves BYOK v2 escritas con el certificado también en el contexto (se siguen abriendo).
+ */
+function kmsContext(version: "v1" | "v2", ctx: { tenantId: string; certificateId?: string }, byok: boolean, legacyByokV2 = false): Record<string, string> {
+  if (byok) return legacyByokV2 && version === "v2" ? { purpose: CUSTODY_PURPOSE, tenant: ctx.tenantId, certificate: ctx.certificateId ?? "" } : { purpose: CUSTODY_PURPOSE, tenant: ctx.tenantId };
   if (version === "v2") return { purpose: CUSTODY_PURPOSE, tenant: ctx.tenantId, certificate: ctx.certificateId ?? "" };
-  return byok ? { purpose: CUSTODY_PURPOSE, tenant: ctx.tenantId } : { purpose: CUSTODY_PURPOSE };
+  return { purpose: CUSTODY_PURPOSE };
 }
+
+/** KMS rechazó el texto cifrado (p. ej. el contexto no coincide). */
+const isInvalidCiphertext = (e: unknown) => /InvalidCiphertext/.test(`${(e as Error)?.name ?? ""} ${(e as Error)?.message ?? e}`);
 
 /**
  * Cifra el PKCS#8 (formato v2): AES-256-GCM con AAD = propósito|organización|certificado, y la clave de datos envuelta
- * con KMS (contexto con organización y certificado), la clave BYOK de la organización o la SECRET_KEY local. Una
+ * con KMS (contexto con organización y certificado), la clave BYOK de la organización (contexto con propósito y
+ * organización) o la SECRET_KEY local. Una
  * clave copiada a otra fila (otra organización u otro certificado) no se abre.
  */
 export async function sealKey(
@@ -139,12 +148,21 @@ export async function openKey(row: SealedKeyRow): Promise<string> {
   if (version === "v2" && (!row.tenant_id || !row.id)) throw new Error("falta la organización o el certificado de la clave");
   let dataKey: Buffer;
   if (row.key_wrap_method === "kms-byok") {
-    try {
-      const r = await kmsForKey(row.key_wrap_key_arn!).decrypt({
+    const unwrap = (legacy: boolean) =>
+      kmsForKey(row.key_wrap_key_arn!).decrypt({
         CiphertextBlob: Buffer.from(row.key_wrapped, "base64"),
         KeyId: row.key_wrap_key_arn!,
-        EncryptionContext: kmsContext(version, ctx, true),
+        EncryptionContext: kmsContext(version, ctx, true, legacy),
       });
+    try {
+      let r;
+      try {
+        r = await unwrap(false);
+      } catch (e) {
+        // Claves BYOK v2 guardadas con el certificado en el contexto (antes de sacarlo): se prueban con ese contexto.
+        if (version !== "v2" || !isInvalidCiphertext(e)) throw e;
+        r = await unwrap(true);
+      }
       dataKey = Buffer.from(r.Plaintext);
     } catch (e) {
       throw new AppError(503, "byok_key_unavailable", "La clave de cifrado de tu organización (BYOK) no está disponible", { cause: String((e as Error)?.message ?? e).slice(0, 300) });
@@ -176,12 +194,19 @@ export async function openKey(row: SealedKeyRow): Promise<string> {
   }
 }
 
+/** Certificados cuya migración a v2 falló: no se reintenta hasta la hora (por proceso). */
+const upgradeFailedUntil = new Map<string, number>();
+const UPGRADE_RETRY_MS = 60 * 60_000;
+
 /**
  * Clave en el formato anterior (v1): se vuelve a cifrar en v2 con el mismo método (BYOK con la misma clave del cliente)
- * después de abrirla. Si falla (KMS caído, otra pasada ya la migró), queda como estaba: se reintenta en el próximo uso.
+ * después de abrirla. Si falla (KMS caído, la política de la clave del cliente no lo permite), queda como estaba y no se
+ * reintenta en cada firma (cada intento sumaba una llamada a KMS): se vuelve a probar pasada una hora.
  */
 async function upgradeKey(db: Db, row: any, keyPem: string) {
   if (keyFormat(row) !== "v1" || !row.id || !row.tenant_id) return;
+  const until = upgradeFailedUntil.get(row.id);
+  if (until && until > Date.now()) return;
   try {
     const byok = row.key_wrap_method === "kms-byok" && row.key_wrap_key_arn ? { tenantId: row.tenant_id, keyArn: row.key_wrap_key_arn } : null;
     if (row.key_wrap_method === "kms" && !config.evidence.custodyKmsKeyId) return;
@@ -191,8 +216,10 @@ async function upgradeKey(db: Db, row: any, keyPem: string) {
         WHERE id = $1 AND key_ciphertext = $5 AND deleted_at IS NULL`,
       [row.id, sealed.ciphertext, sealed.wrapped, sealed.method, row.key_ciphertext],
     );
+    upgradeFailedUntil.delete(row.id);
   } catch {
-    /* se reintenta en el próximo uso */
+    if (upgradeFailedUntil.size > 10_000) upgradeFailedUntil.clear();
+    upgradeFailedUntil.set(row.id, Date.now() + UPGRADE_RETRY_MS);
   }
 }
 

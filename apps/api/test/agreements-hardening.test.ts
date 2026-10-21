@@ -579,6 +579,14 @@ describe("negociaciones", () => {
     const other = await app.inject({ method: "POST", url: `/v1/public/negotiations/${token}/proposals`, payload: { kind: "clause", key: "negc1", newValue: "Uno\n\n{{clausula:negc1}}" } });
     expect(other.statusCode, other.body).toBe(400);
     expect(other.json().error.code).toBe("template_syntax");
+    // Ni una que deja el ciclo heredado y suma otro (la búsqueda encontraba primero el heredado y la aceptaba).
+    const both = await app.inject({
+      method: "POST",
+      url: `/v1/public/negotiations/${token}/proposals`,
+      payload: { kind: "clause", key: "negc1", newValue: "Uno\n\n{{clausula:negc2}}\n\n{{clausula:negc1}}" },
+    });
+    expect(both.statusCode, both.body).toBe(400);
+    expect(both.json().error.code).toBe("template_syntax");
     // Y arreglarlo también.
     expect((await app.inject({ method: "PATCH", url: `/v1/negotiations/${id}`, headers: H(), payload: { clauseOverrides: { negc2: "Dos." } } })).statusCode).toBe(200);
     // Sin el ciclo heredado, una propuesta que lo vuelve a cerrar es 400 otra vez.

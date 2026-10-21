@@ -10,7 +10,7 @@ import type { Db } from "../../infra/db";
 import { AppError, badRequest, conflict, forbidden } from "../../lib/errors";
 import { decrypt, encrypt, randomToken, sha256Hex, uuidv7 } from "../../lib/util";
 import { recordAudit } from "../audit";
-import { SESSION_COOKIE, authenticate, clientInfo, type AuthContext, type Services } from "../context";
+import { authenticate, clientInfo, setSessionCookie, type AuthContext, type Services } from "../context";
 import { syncSsoDomains } from "../data/sso-domains";
 import { safeRequest } from "../webhooks";
 import { tenantPlan, usersCount } from "../billing/plans";
@@ -400,7 +400,7 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
        VALUES ($1,$2,$3,$4,$5, now() + make_interval(hours => $6::int), 'sso', $3)`,
       [sha256Hex(token), userId, tenantId, ip, userAgent, hours],
     );
-    reply.setCookie(SESSION_COOKIE, token, { path: "/", httpOnly: true, sameSite: "lax", secure: config.cookieSecure, maxAge: hours * 3600 });
+    setSessionCookie(reply, token, hours * 3600);
   }
 
   /** Une la identidad del IdP con un usuario (alta JIT si corresponde) y abre la sesión. */

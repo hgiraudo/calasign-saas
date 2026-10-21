@@ -882,6 +882,13 @@ export function placeholderText(key: keyof typeof PLACEHOLDERS): string {
 
 // Editores con cambios sin guardar montados ahora (lo usan los botones que navegan por código: organización, salir).
 let unsavedEditors = 0;
+// Salida ya confirmada (p. ej. cerrar sesión tras confirmDiscardUnsaved): la recarga no vuelve a preguntar.
+let unloadConfirmed = false;
+
+/** La persona ya confirmó salir: la próxima recarga/navegación completa no muestra el aviso del navegador. */
+export function confirmUnload(): void {
+  unloadConfirmed = true;
+}
 
 /** true si hay algún editor montado con cambios sin guardar (p. ej. para no mandar al login si vence la sesión). */
 export function hasUnsavedChanges(): boolean {
@@ -904,6 +911,7 @@ export function useUnsavedWarning(dirty: boolean) {
     if (!dirty) return;
     unsavedEditors++;
     const h = (e: BeforeUnloadEvent) => {
+      if (unloadConfirmed) return;
       e.preventDefault();
       e.returnValue = "";
     };

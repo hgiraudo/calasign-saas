@@ -87,4 +87,11 @@ describe("conectores de firma de la plataforma", () => {
     // Otra organización tiene su propio cupo.
     expect((await test(KEY_B)).statusCode).toBe(200);
   });
+
+  it("pruebas en paralelo no pasan el tope (candado por organización)", async () => {
+    // KEY_B ya usó 1: de 8 simultáneas pasan exactamente 4.
+    const rs = await Promise.all(Array.from({ length: 8 }, () => test(KEY_B)));
+    expect(rs.filter((r) => r.statusCode === 200)).toHaveLength(4);
+    expect(rs.filter((r) => r.statusCode === 429)).toHaveLength(4);
+  });
 });

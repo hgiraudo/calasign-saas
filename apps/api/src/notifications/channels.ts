@@ -1,6 +1,6 @@
 import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import nodemailer from "nodemailer";
+import nodemailer, { type SMTPSentMessageInfo, type SMTPTransportOptions, type Transporter } from "nodemailer";
 import SMTPTransport from "nodemailer/lib/smtp-transport/index.js";
 import { config } from "../config";
 import { uuidv7 } from "../lib/util";
@@ -124,7 +124,8 @@ export async function readMailbox(tenantId: string | null, limit = 100) {
   }
 }
 
-let transporter: nodemailer.Transporter | null = null;
+// nodemailer 10 trae sus propios tipos (ya no @types/nodemailer): sin namespace, se importan los tipos por nombre.
+let transporter: Transporter<SMTPSentMessageInfo, SMTPTransportOptions> | null = null;
 
 // Timeouts explícitos: los de nodemailer por defecto llegan a 10 minutos de inactividad, lo mismo que espera el sweep
 // para devolver a la cola un job "trabado". Un SMTP colgado haría que el aviso vuelva a la cola mientras el primer

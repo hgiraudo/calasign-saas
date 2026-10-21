@@ -25,6 +25,7 @@ import { checkSenderValue, insertEnvelopeField } from "./fieldvalues";
 import { applyInPersonFlags } from "./experience";
 import { applyIdentityFlags } from "./identity/kyc";
 import { MISSING_ID_DOCUMENT_SQL, applyCertificateFlags, discardCertsignFiles } from "./certsign";
+import { downgradeIdMatchSql } from "./certsign-requirements";
 import { assignFieldIds, formulaRefs, pruneDanglingConditions, saveFieldLogic } from "./logic";
 import { paymentBlocksCompletion } from "./billing/payments";
 import { enforceEnvelopeQuota, requireFeature, tenantPlan } from "./billing/plans";
@@ -1008,8 +1009,15 @@ export async function sendEnvelope(t: Db, tenantId: string, envelopeId: string, 
     if (s1.signature_type !== "certificate" && !fields.some((f) => f.recipient_id === s1.id && f.type === "signature"))
       problems.push(signerWithoutSignature(s1.name));
   }
-  // Exige que el certificado corresponda a su documento pero no tiene el número cargado (p. ej. un sobre creado desde una
-  // plantilla que lo pide): antes el control se salteaba en silencio al firmar.
+  // Exige que el certificado corresponda a su documento pero no tiene el número cargado. Un sobre creado desde una
+  // plantilla (formulario web, envío masivo, CRM, conectores, lowcode…) no lo pidió a mano para esta persona: el control
+  // se baja con la marca para la evidencia en vez de trabar el envío. Si el remitente lo pidió a mano, es un problema.
+  if (typeof e.metadata?.templateId === "string")
+    await t.query(
+      `UPDATE recipients SET certificate_requirements = ${downgradeIdMatchSql("certificate_requirements", "id_document_number")}
+        WHERE envelope_id = $1 AND ${MISSING_ID_DOCUMENT_SQL}`,
+      [e.id],
+    );
   for (const m of await t.query<{ name: string }>(`SELECT name FROM recipients WHERE envelope_id = $1 AND ${MISSING_ID_DOCUMENT_SQL} ORDER BY routing_order, name`, [e.id]))
     problems.push({ code: "missing_id_document", params: { name: m.name }, message: `${m.name}: para exigir que el certificado corresponda a su documento hay que cargar el número de documento` });
   if (e.expires_at && new Date(e.expires_at) <= new Date())

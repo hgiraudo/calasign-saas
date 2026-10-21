@@ -32,7 +32,7 @@ import { AppError, badRequest, notFound } from "../lib/errors";
 import { iso, randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { hasPerm } from "./access";
 import { auditFromRequest } from "./audit";
-import { authenticate, SESSION_COOKIE, type AuthContext, type Services } from "./context";
+import { authenticate, sessionCookieToken, type AuthContext, type Services } from "./context";
 import { CODE_PREFIX, CODE_TTL_SEC, REFRESH_PREFIX, assertUserTokenAllowed, issueTokens, requireUserSession, ssoCodeDeadline, ssoFamilyDeadline } from "./oauth-tokens";
 import { actingPerson } from "./member-access";
 
@@ -698,7 +698,7 @@ export async function oauthRoutes(app: FastifyInstance, s: Services) {
     }
     // Cómo se autenticó la sesión que autoriza: los tokens lo heredan y valen solo mientras esa sesión valdría
     // (p. ej. con "SSO obligatorio", un token autorizado con contraseña deja de valer).
-    const sess = await s.db.one<any>(`SELECT auth_method, sso_tenant_id, expires_at FROM sessions WHERE token_hash = $1`, [sha256Hex(req.cookies?.[SESSION_COOKIE] ?? "")]);
+    const sess = await s.db.one<any>(`SELECT auth_method, sso_tenant_id, expires_at FROM sessions WHERE token_hash = $1`, [sha256Hex(sessionCookieToken(req) ?? "")]);
     const code = CODE_PREFIX + randomToken(32);
     await s.db.tx(async (t) => {
       await t.query(

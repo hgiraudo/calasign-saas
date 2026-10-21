@@ -25,6 +25,7 @@ import { assignFieldIds, copyFieldLogic, pruneDanglingConditions, saveFieldLogic
 import { loadDetail, loadDocuments, toDocument } from "./mappers";
 import { deleteFilesIfUnused, discardBlobsOnFailure } from "./file-cleanup";
 import { guardTemplateForms } from "./webforms";
+import { downgradeIdMatchSql } from "./certsign-requirements";
 
 const toTemplate = (r: any) => ({
   id: r.id,
@@ -729,9 +730,12 @@ export async function insertEnvelopeFromTemplate(
         r.idDocumentNumber ?? null,
       ],
     );
-    // Firma con certificado: la hereda del rol de la plantilla (sobres, envíos masivos y formularios web).
+    // Firma con certificado: la hereda del rol de la plantilla (sobres, envíos masivos y formularios web). Si el rol
+    // pide que el certificado corresponda al documento y el destinatario no trae número de documento (formulario web,
+    // envío masivo, CRM, conectores…), el control se baja y queda la marca para la evidencia en vez de trabar el sobre.
     await t.query(
-      `UPDATE recipients SET signature_type = tr.signature_type, certificate_requirements = tr.certificate_requirements
+      `UPDATE recipients SET signature_type = tr.signature_type,
+         certificate_requirements = ${downgradeIdMatchSql("tr.certificate_requirements", "recipients.id_document_number")}
        FROM template_roles tr WHERE recipients.id = $1 AND tr.id = $2 AND tr.signature_type = 'certificate' AND recipients.role = 'signer'`,
       [rid, role.id],
     );

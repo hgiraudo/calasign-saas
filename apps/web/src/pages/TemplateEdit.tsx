@@ -618,7 +618,7 @@ function RolesStep({
                   <option value="approver">{t("edit.role.approver")}</option>
                 </select>
               </label>
-              {r.role === "signer" && <CertificateOption value={r.cert ?? EMPTY_CERT_DRAFT} hasIdDocument onChange={(v) => set(i, { cert: v })} />}
+              {r.role === "signer" && <CertificateOption value={r.cert ?? EMPTY_CERT_DRAFT} hasIdDocument={false} template onChange={(v) => set(i, { cert: v })} />}
               <button type="button" className="btn btn-ghost btn-sm" onClick={() => (roles[i]?.isNew || confirmAction()) && onChange(roles.filter((_, j) => j !== i))}>
                 {t("common.delete")}
               </button>

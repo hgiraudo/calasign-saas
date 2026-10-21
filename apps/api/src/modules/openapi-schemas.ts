@@ -111,7 +111,7 @@ export const UploadedDocumentSchema = named(
 export const CertificateRequirementsSchema = named(
   "CertificateRequirements",
   z.object({
-    matchIdDocument: z.boolean().describe("El certificado tiene que corresponder al documento declarado del firmante."),
+    matchIdDocument: z.boolean().describe("El certificado tiene que corresponder al documento declarado del firmante (false por defecto; solo rige si el destinatario tiene idDocumentNumber)."),
     allowedIssuers: z.array(z.string()).describe("Partes del DN del emisor permitidas. Vacío = cualquiera."),
     requireQualified: z.boolean().describe("Exige una CA del almacén de confianza de la plataforma."),
   }),

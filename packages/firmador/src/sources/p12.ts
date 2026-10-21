@@ -1,4 +1,6 @@
 // Certificado en archivo .p12/.pfx: se abre con la contraseña y la clave queda solo en memoria.
+// node-forge solo PARSEA el PKCS#12 (nunca verifica firmas): el aviso GHSA-86w9-cpqp-85rv (verificación RSA PKCS#1
+// v1.5) no aplica. Ver docs/FIRMA-CON-CERTIFICADO.md §4.
 import { X509Certificate, createPrivateKey, createPublicKey, sign as cryptoSign, type KeyObject } from "node:crypto";
 import { readFileSync } from "node:fs";
 import forge from "node-forge";

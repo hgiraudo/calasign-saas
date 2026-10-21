@@ -13,6 +13,7 @@ import {
   analyzeTemplate,
   blocksToText,
   checkClauseGraph,
+  clauseRefs,
   diffWords,
   renderTemplate,
   TemplateSyntaxError,
@@ -142,13 +143,54 @@ function clauseGraphError(clauses: Record<string, string>, key: string): Templat
   }
 }
 
+/** Cadena de cláusulas que nombra un error del grafo (ciclo o exceso de niveles). */
+function graphErrorChain(e: TemplateSyntaxError): string[] {
+  if (e.reason === "clause_cycle") return [...e.message.matchAll(/\{\{clausula:([^}]+)\}\}/g)].map((m) => m[1]);
+  const i = e.message.lastIndexOf("): ");
+  return i < 0 ? [] : e.message.slice(i + 3).split(" → ");
+}
+
+/** El grafo de citas de las cláusulas sin las aristas `cut` ("de\0a"), como fuentes sintéticas para checkClauseGraph. */
+function cutClauseGraph(clauses: Record<string, string>, cut: Set<string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [slug, src] of Object.entries(clauses)) {
+    if (src == null) continue;
+    let refs: string[];
+    try {
+      refs = clauseRefs(src);
+    } catch {
+      refs = [];
+    }
+    out[slug] = refs
+      .filter((r) => !cut.has(`${slug}\0${r}`))
+      .map((r) => `{{clausula:${r}}}`)
+      .join("\n");
+  }
+  return out;
+}
+
 /**
- * ¿El error del grafo con la propuesta es exactamente el heredado? Mismo motivo y misma cadena de cláusulas (el mensaje
- * la nombra entera): una propuesta que deja el ciclo de antes como está se acepta, una que arma otro ciclo (u otra
- * cadena demasiado larga) no.
+ * ¿La propuesta arma un ciclo (o una cadena demasiado larga) que la copia actual no tenía? Se quitan del grafo las
+ * aristas de todos los errores heredados desde esa cláusula (los de la copia actual) y se revisa el grafo con la
+ * propuesta: si igual falla, el error es nuevo. Comparar solo el primer error no alcanzaba: la búsqueda se corta en
+ * el primero que encuentra, y una propuesta que deja el ciclo heredado y suma otro pasaba.
  */
-function sameGraphError(e: unknown, inherited: TemplateSyntaxError | null): boolean {
-  return Boolean(inherited) && isLegacyGraphError(e) && (e as TemplateSyntaxError).reason === inherited!.reason && (e as TemplateSyntaxError).message === inherited!.message;
+function graphHasNewError(current: Record<string, string>, proposed: Record<string, string>, key: string): boolean {
+  const cut = new Set<string>();
+  for (let i = 0; i < 64; i++) {
+    const inherited = clauseGraphError(cutClauseGraph(current, cut), key);
+    if (!inherited) break;
+    const chain = graphErrorChain(inherited);
+    const before = cut.size;
+    for (let j = 0; j + 1 < chain.length; j++) cut.add(`${chain[j]}\0${chain[j + 1]}`);
+    if (cut.size === before) break;
+  }
+  try {
+    checkClauseGraph(cutClauseGraph(proposed, cut), [key]);
+    return false;
+  } catch {
+    return true;
+  }
 }
 
 function negotiableVariables(n: any): string[] {
@@ -787,7 +829,7 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
         // la propuesta) no la bloquea: mismo criterio que strictFails al crear la versión. Si no, esa cláusula no se
         // podía negociar nunca, ni siquiera para arreglar el ciclo. Solo si es el MISMO error (motivo y cadena): una
         // propuesta que arma un ciclo distinto (con la excusa de que ya había uno) se rechaza.
-        if (!sameGraphError(e, clauseGraphError(c, input.key))) {
+        if (!isLegacyGraphError(e) || graphHasNewError(c, { ...c, [input.key]: input.newValue }, input.key)) {
           if (e instanceof TemplateSyntaxError) throw badRequest("template_syntax", e.message, { line: e.line });
           throw badRequest("template_syntax", e instanceof Error ? e.message : String(e));
         }

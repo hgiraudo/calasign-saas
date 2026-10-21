@@ -2,3 +2,12 @@ packages:
   - apps/*
   - packages/*
   - integrations
+
+# Solo estos paquetes pueden correr scripts de instalación (pre/post-install, node-gyp). Cualquier dependencia nueva
+# que traiga uno queda bloqueada hasta revisarla y agregarla acá.
+#  - esbuild: el postinstall valida/instala el binario de la plataforma (vite, tsx e integrations lo usan).
+#  - pkcs11js: módulo nativo (node-gyp) del Firmador para tokens PKCS#11; dependencia opcional, si no compila el
+#    Firmador sigue funcionando sin soporte de token.
+onlyBuiltDependencies:
+  - esbuild
+  - pkcs11js

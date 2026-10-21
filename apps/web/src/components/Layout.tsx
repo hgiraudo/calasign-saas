@@ -1,6 +1,6 @@
 // Estructura de la consola del remitente.
 import { useEffect, useState } from "react";
-import { Navigate, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { Navigate, NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 import { confirmDiscardUnsaved, useI18n } from "../lib/i18n";
 import { LocaleSwitcher, Logo } from "./ui";
@@ -29,7 +29,6 @@ export function useDevMailboxAvailable(): boolean {
 export function Layout() {
   const { me, logout } = useAuth();
   const { t } = useI18n();
-  const nav = useNavigate();
   const mailbox = useDevMailboxAvailable();
   const tt = useIntText();
   const tm = useTeamsText();
@@ -92,8 +91,8 @@ export function Layout() {
             className="btn btn-ghost btn-sm on-dark"
             onClick={async () => {
               if (!confirmDiscardUnsaved()) return;
+              // logout() recarga la página en /login (limpia la memoria de la sesión).
               await logout();
-              nav("/login");
             }}
           >
             {t("nav.logout")}

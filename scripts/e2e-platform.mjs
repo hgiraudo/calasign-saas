@@ -523,7 +523,7 @@ const appPage = await getWithHost("/app/envelopes/x", DOMAIN);
 assert(appPage.status === 302 && !appPage.headers.location?.includes(DOMAIN), "/app en el dominio propio redirige a la plataforma");
 const loginRes = await fetch(`${BASE}/v1/auth/login`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: `owner-plat+${stamp}@example.com`, password: "una-clave-segura-123" }) });
 const sessionCookie = (loginRes.headers.get("set-cookie") ?? "").split(";")[0];
-assert(loginRes.ok && sessionCookie.startsWith("cs_session="), "sesión en la plataforma");
+assert(loginRes.ok && /^(__Host-)?cs_session=/.test(sessionCookie), "sesión en la plataforma");
 assert((await getWithHost("/v1/me", "localhost", { cookie: sessionCookie })).status === 200, "la sesión vale en la plataforma");
 assert((await getWithHost("/v1/me", DOMAIN, { cookie: sessionCookie })).status === 401, "la cookie de sesión se ignora en el dominio propio");
 { const r = await getWithHost("/v1/envelopes", DOMAIN, { cookie: sessionCookie }); assert(r.status === 401, `ni para la API de la cuenta (${r.status} ${r.body.slice(0, 120)})`); }

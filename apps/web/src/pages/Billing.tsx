@@ -377,7 +377,14 @@ export function BillingPage() {
               {data.providers.map((p) => (
                 <option key={p.id} value={p.id} disabled={!p.configured}>
                   {providerName(p.id)}
-                  {p.configured ? "" : p.currencies?.length && !p.currencies.includes(currency) ? ` (${b("billing.currencyUnsupported", { currency })})` : ` (${b("billing.notConfigured")})`}
+                  {p.configured
+                    ? ""
+                    : p.currencies?.length && !p.currencies.includes(currency)
+                      ? ` (${b("billing.currencyUnsupported", { currency })})`
+                      : // Configurado pero sin saber todavía su moneda (la consulta al proveedor falló): pasajero.
+                        p.currencies && p.currencies.length === 0
+                        ? ` (${b("billing.unavailableNow")})`
+                        : ` (${b("billing.notConfigured")})`}
                 </option>
               ))}
             </select>

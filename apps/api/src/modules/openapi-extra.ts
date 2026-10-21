@@ -751,7 +751,7 @@ export const ERRORS: Record<string, Err> = {
     message: "Ana Pérez: para exigir que el certificado corresponda al documento, cargá su número de documento",
     details: { recipient: "Ana Pérez" },
     summary:
-      "Se exige que el certificado del firmante corresponda a su documento (matchIdDocument) pero el destinatario no tiene número de documento. 400 al guardar destinatarios; 422 al presentar el certificado en el Firmador; al enviar aparece como problema dentro de envelope_incomplete.",
+      "Se exige que el certificado del firmante corresponda a su documento (matchIdDocument) pero el destinatario no tiene número de documento. 400 al guardar destinatarios (pedido explícito); al enviar un sobre armado a mano aparece como problema dentro de envelope_incomplete. En sobres creados desde una plantilla, reemplazos y sobres en curso no es error: el control se omite y la evidencia lo registra (idDocumentMatch = skipped_missing_id_document).",
   },
   provider_test_limit: {
     status: 429,

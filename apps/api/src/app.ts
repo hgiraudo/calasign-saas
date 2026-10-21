@@ -53,6 +53,22 @@ import { sendBrandedIndex, whiteLabelModule } from "./modules/white-label";
 import { devApiRoutes } from "./modules/devapi";
 import { INTEGRATIONS_PREFIX, integrationsStaticHeaders } from "./modules/integrations-static";
 
+/** Ver el hook que la pone en buildApp. */
+export const PERMISSIONS_POLICY = "camera=(self), microphone=(), geolocation=(), payment=(), usb=()";
+
+/** Suma `origin` a script-src y frame-src de un CSP (frame-src se crea si no está, con 'self' como el default-src). */
+export function withTurnstile(csp: string, origin: string): string {
+  const parts = csp.split(";").map((d) => d.trim()).filter(Boolean);
+  const add = (name: string, fallback: string) => {
+    const k = parts.findIndex((d) => d.split(/\s+/)[0].toLowerCase() === name);
+    if (k >= 0) parts[k] = `${parts[k]} ${origin}`;
+    else parts.push(`${name} ${fallback} ${origin}`);
+  };
+  add("script-src", "'self'");
+  add("frame-src", "'self'");
+  return parts.join(";");
+}
+
 export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolean | object }) {
   // Logs sin secretos: los tokens de firma, invitaciones, códigos y credenciales viajan en la URL o en headers.
   const safeLogger = { level: config.logLevel, serializers: { req: safeRequestSerializer }, redact: { paths: LOG_REDACT_PATHS, censor: "[redactado]" } };
@@ -72,14 +88,14 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
     genReqId: () => crypto.randomUUID(),
   });
 
-  // Cloudflare Turnstile en los formularios web públicos (opcional): su script y su iframe, solo si está configurado.
-  const turnstile = config.webForms.turnstileSiteKey && config.webForms.turnstileSecretKey ? ["https://challenges.cloudflare.com"] : [];
+  // Cloudflare Turnstile en los formularios web públicos (opcional): su script y su iframe, solo si está configurado y
+  // solo en el documento de /f/* (ver el onSend de abajo): el resto de la app no le permite cargar scripts de terceros.
+  const turnstile = config.webForms.turnstileSiteKey && config.webForms.turnstileSecretKey ? "https://challenges.cloudflare.com" : null;
   await app.register(helmet, {
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        scriptSrc: ["'self'", ...turnstile],
-        ...(turnstile.length ? { frameSrc: ["'self'", ...turnstile] } : {}),
+        scriptSrc: ["'self'"],
         // Google Fonts: tipografía de la marca blanca (white-label/brand.ts).
         styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
         imgSrc: ["'self'", "data:", "blob:"],
@@ -94,6 +110,25 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
     },
     crossOriginEmbedderPolicy: false,
   });
+  // Permissions-Policy: la cámara solo para el propio origen (captura de identidad del firmante, IdentityGate). En la
+  // página del firmante embebida en un iframe del integrador, "self" es nuestro origen (el del documento del iframe),
+  // así que la cámara sigue disponible si el integrador la delega con allow="camera": esta política limita lo que
+  // nosotros delegamos a iframes de terceros dentro de nuestras páginas, no lo que el padre nos delega a nosotros. El
+  // resto de las capacidades no se usan en ninguna página.
+  app.addHook("onRequest", async (_req, reply) => {
+    reply.header("permissions-policy", PERMISSIONS_POLICY);
+  });
+  if (turnstile) {
+    // El CSP se arma por respuesta: solo el documento del formulario público (/f/:slug) suma Turnstile. Se entra ahí
+    // siempre con una carga completa (link público o iframe), así que el CSP del documento es el de /f/*.
+    app.addHook("onSend", async (req, reply, payload) => {
+      if (req.method !== "GET" && req.method !== "HEAD") return payload;
+      if (!requestPath(req).startsWith("/f/")) return payload;
+      const csp = reply.getHeader("content-security-policy");
+      if (typeof csp === "string" && csp) reply.header("content-security-policy", withTurnstile(csp, turnstile));
+      return payload;
+    });
+  }
   await app.register(cookie);
   await app.register(multipart, { limits: { files: 1, fileSize: config.maxUploadBytes } });
   // En el entorno local (pruebas de punta a punta seguidas) la IP local no tiene límite; en dev y prod sí.
@@ -158,6 +193,14 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
     if (!origin || req.headers.authorization) return;
     const allowed = new Set([new URL(config.appUrl).origin, `${req.protocol}://${req.headers.host}`]);
     if (!allowed.has(origin)) return reply.code(403).send({ error: { code: "bad_origin", message: "Origen no permitido" } });
+  });
+
+  // La API no se cachea en el navegador ni en proxies salvo que la ruta lo diga (logo de marca, PDFs de vista previa,
+  // OpenAPI…): toda respuesta /v1/* sin cache-control propio sale "private, no-store" (datos de la sesión, links de
+  // firma, errores). Las rutas que ponen su encabezado lo conservan.
+  app.addHook("onSend", async (req, reply, payload) => {
+    if (!reply.hasHeader("cache-control") && requestPath(req).startsWith("/v1/")) reply.header("cache-control", "private, no-store");
+    return payload;
   });
 
   // Conectores MCP desde el navegador: CORS abierto (sin cookies) en los endpoints OAuth/MCP (ver mcp/cors.ts).

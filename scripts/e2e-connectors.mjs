@@ -317,7 +317,7 @@ async function api(method, path, body, opts = {}) {
   }
   const res = await fetch(BASE + path, { method, headers: h, body: payload, redirect: "manual" });
   const set = res.headers.get("set-cookie");
-  if (set && set.startsWith("cs_session")) cookie = set.split(";")[0];
+  if (set && /^(__Host-)?cs_session=/.test(set)) cookie = set.split(";")[0];
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
   const expect = opts.expect ?? [200, 201, 202, 204];

@@ -23,6 +23,7 @@ import { mockPage, mockPageCsp } from "./mock-page";
 import { planById, tenantPlan, usageThisMonth } from "./plans";
 import {
   ProviderError,
+  mpCurrencyRetryAfterSeconds,
   mpCancelPreapproval,
   mpCreatePreapproval,
   stripeCancelSubscription,
@@ -142,6 +143,14 @@ export async function pickProvider(requested: BillingProvider | undefined, curre
   const ok = (id: BillingProvider) => available.some((p) => p.id === id && p.configured);
   if (requested) {
     if (ok(requested)) return requested;
+    // Mercado Pago configurado pero sin saber todavía en qué moneda cobra (falló /users/me o site_id desconocido): es
+    // pasajero, no que la moneda no se admita.
+    const mp = available.find((p) => p.id === requested);
+    if (requested === "mercadopago" && subscriptionProviderConfigured(requested) && mp?.currencies?.length === 0) {
+      throw new AppError(503, "provider_unavailable", "Mercado Pago no está disponible por ahora: probá de nuevo en unos minutos", {
+        retryAfterSeconds: mpCurrencyRetryAfterSeconds(),
+      });
+    }
     if (subscriptionProviderConfigured(requested)) {
       throw badRequest("provider_currency_unsupported", `El proveedor ${requested} no cobra suscripciones en ${currency}`);
     }
@@ -165,14 +174,17 @@ export async function subscriptionRoutes(app: FastifyInstance, s: Services) {
     return billingOverview(s.db, req.auth!.tenantId);
   });
 
-  app.post("/v1/billing/checkout", { preHandler: auth, config: { rateLimit: { max: 20, timeWindow: "1 minute" } } }, async (req) => {
+  app.post("/v1/billing/checkout", { preHandler: auth, config: { rateLimit: { max: 20, timeWindow: "1 minute" } } }, async (req, reply) => {
     const a = req.auth!;
     const input = BillingCheckoutInput.parse(req.body);
     const t = await s.db.one<any>(`SELECT * FROM tenants WHERE id = $1`, [a.tenantId]);
     const currency = (input.currency ?? t.billing_currency ?? "USD") as BillingCurrency;
     const amount = priceOf(input.plan, currency);
     if (!amount) throw badRequest("invalid_plan", "Ese plan no tiene precio en esa moneda");
-    const provider = await pickProvider(input.provider, currency);
+    const provider = await pickProvider(input.provider, currency).catch((err) => {
+      if (err instanceof AppError && err.code === "provider_unavailable") reply.header("retry-after", String((err.details as { retryAfterSeconds: number }).retryAfterSeconds));
+      throw err;
+    });
     // Cambio de plan con una suscripción vigente: es un checkout nuevo. Cuando se confirma, el webhook cancela la
     // anterior (webhooks.ts), así no cobran las dos. El portal de Stripe no sirve para esto: los precios se crean en
     // cada checkout (price_data) y el portal solo cambia a productos del catálogo, así que mandar ahí dejaba al cliente

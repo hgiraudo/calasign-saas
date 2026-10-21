@@ -1,4 +1,5 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
+import { config } from "../config";
 import type { Db } from "../infra/db";
 import type { BlobStore } from "../infra/storage";
 import type { Actor } from "../infra/evidence";
@@ -31,7 +32,45 @@ declare module "fastify" {
   }
 }
 
-export const SESSION_COOKIE = "cs_session";
+/**
+ * Cookie de la sesión web. Con HTTPS (cookieSecure: dev y producción) lleva el prefijo __Host-: el navegador solo la
+ * acepta con Secure, Path=/ y sin Domain, así que un subdominio (p. ej. un dominio propio mal configurado o un
+ * servicio en *.calasign…) no puede plantar ni pisar la sesión. En local sin HTTPS queda "cs_session".
+ */
+export const SESSION_COOKIE = config.cookieSecure ? "__Host-cs_session" : "cs_session";
+/**
+ * Nombre anterior. Transición: se sigue leyendo si no está la nueva (las sesiones abiertas antes del cambio no se
+ * cierran de golpe) y cada login o logout la borra. Quitar cuando pase la vida máxima de una sesión (SESSION_DAYS)
+ * desde el deploy que introdujo __Host-cs_session.
+ */
+export const LEGACY_SESSION_COOKIE = "cs_session";
+const SESSION_COOKIE_NAMES = SESSION_COOKIE === LEGACY_SESSION_COOKIE ? [SESSION_COOKIE] : [SESSION_COOKIE, LEGACY_SESSION_COOKIE];
+
+/** Token de la sesión web del pedido (cookie nueva o, durante la transición, la vieja). */
+export function sessionCookieToken(req: FastifyRequest): string | undefined {
+  for (const n of SESSION_COOKIE_NAMES) {
+    const v = req.cookies?.[n];
+    if (v) return v;
+  }
+  return undefined;
+}
+
+/** Todos los nombres con los que puede llegar la sesión web (para quitarla de un pedido). */
+export function sessionCookieNames(): readonly string[] {
+  return SESSION_COOKIE_NAMES;
+}
+
+/** Deja la cookie de sesión (y borra la del nombre viejo si quedaba). */
+export function setSessionCookie(reply: FastifyReply, token: string, maxAgeSeconds: number) {
+  reply.setCookie(SESSION_COOKIE, token, { path: "/", httpOnly: true, sameSite: "lax", secure: config.cookieSecure, maxAge: maxAgeSeconds });
+  if (SESSION_COOKIE !== LEGACY_SESSION_COOKIE) reply.clearCookie(LEGACY_SESSION_COOKIE, { path: "/", secure: config.cookieSecure });
+}
+
+/** Borra la cookie de sesión con cualquiera de sus nombres. */
+export function clearSessionCookie(reply: FastifyReply) {
+  // Secure también al borrar: el navegador rechaza un Set-Cookie __Host- sin Secure (y la cookie no se borraría).
+  for (const n of SESSION_COOKIE_NAMES) reply.clearCookie(n, { path: "/", secure: config.cookieSecure });
+}
 
 export function clientInfo(req: FastifyRequest) {
   return { ip: req.ip ?? null, userAgent: (req.headers["user-agent"] as string | undefined)?.slice(0, 500) ?? null };
@@ -71,7 +110,7 @@ export function authenticate(s: Services) {
       await enforceRoutePolicy(s.db, req, req.auth);
       return;
     }
-    const token = req.cookies?.[SESSION_COOKIE];
+    const token = sessionCookieToken(req);
     if (!token) throw unauthorized();
     const row = await s.db.one<any>(
       `SELECT s.user_id, s.tenant_id, s.auth_method, s.sso_tenant_id, u.name, u.email FROM sessions s JOIN users u ON u.id = s.user_id

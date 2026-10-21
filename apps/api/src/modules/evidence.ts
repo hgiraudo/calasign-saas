@@ -252,29 +252,35 @@ export async function evidenceRoutes(app: FastifyInstance, s: Services) {
   app.post<{ Params: { id: string } }>("/v1/signature-providers/:id/test", { preHandler: auth }, async (req) => {
     const provider = getCscProvider(req.params.id);
     if (!provider) throw notFound("Conector");
-    const recent = await s.db.one<{ n: number }>(
-      `SELECT count(*)::int AS n FROM account_audit_log WHERE tenant_id = $1 AND action = 'signature_provider.tested' AND occurred_at > now() - interval '1 hour'`,
-      [req.auth!.tenantId],
-    );
-    if ((recent?.n ?? 0) >= SIGNATURE_PROVIDER_TESTS_PER_HOUR) {
-      throw new AppError(429, "provider_test_limit", `Se pueden hacer hasta ${SIGNATURE_PROVIDER_TESTS_PER_HOUR} pruebas de conectores por hora: probá más tarde`, {
-        max: SIGNATURE_PROVIDER_TESTS_PER_HOUR,
-      });
-    }
+    // El tope se cuenta y la prueba se registra con un candado por organización: dos pruebas simultáneas ya no ven las
+    // dos el mismo conteo (antes la auditoría se insertaba después de firmar y se podía pasar del tope en paralelo).
+    // La transacción queda abierta durante la prueba (una por organización a la vez; son pocas por hora).
     const res: SignatureProviderTestResult = { id: req.params.id, ok: false, holder: null, signatureVerified: false, error: null };
-    try {
-      const chain = await provider.certificateChain();
-      res.holder = commonName(parseCert(chain[0]).subject) ?? null;
-      // Firma de prueba sobre datos aleatorios: signDigest ya la verifica con la clave pública del certificado de la
-      // credencial (RSA o ECDSA) y falla si no corresponde.
-      await provider.signDigest(sha256Bytes(randomBytes(32)));
-      res.signatureVerified = true;
-      res.ok = true;
-    } catch (e) {
-      req.log.warn({ provider: req.params.id, err: String((e as Error)?.message ?? e).slice(0, 500) }, "prueba de conector de firma fallida");
-      res.error = "No se pudo firmar con el conector: revisá su configuración (el detalle quedó en el log del servidor)";
-    }
-    await auditFromRequest(s.db, req, req.auth!, "signature_provider.tested", { targetType: "signature_provider", targetId: req.params.id, data: { ok: res.ok } });
+    await s.db.tx(async (t) => {
+      await t.query(`SELECT pg_advisory_xact_lock(hashtext('signature_provider.tested:' || $1::text))`, [req.auth!.tenantId]);
+      const recent = await t.one<{ n: number }>(
+        `SELECT count(*)::int AS n FROM account_audit_log WHERE tenant_id = $1 AND action = 'signature_provider.tested' AND occurred_at > now() - interval '1 hour'`,
+        [req.auth!.tenantId],
+      );
+      if ((recent?.n ?? 0) >= SIGNATURE_PROVIDER_TESTS_PER_HOUR) {
+        throw new AppError(429, "provider_test_limit", `Se pueden hacer hasta ${SIGNATURE_PROVIDER_TESTS_PER_HOUR} pruebas de conectores por hora: probá más tarde`, {
+          max: SIGNATURE_PROVIDER_TESTS_PER_HOUR,
+        });
+      }
+      try {
+        const chain = await provider.certificateChain();
+        res.holder = commonName(parseCert(chain[0]).subject) ?? null;
+        // Firma de prueba sobre datos aleatorios: signDigest ya la verifica con la clave pública del certificado de la
+        // credencial (RSA o ECDSA) y falla si no corresponde.
+        await provider.signDigest(sha256Bytes(randomBytes(32)));
+        res.signatureVerified = true;
+        res.ok = true;
+      } catch (e) {
+        req.log.warn({ provider: req.params.id, err: String((e as Error)?.message ?? e).slice(0, 500) }, "prueba de conector de firma fallida");
+        res.error = "No se pudo firmar con el conector: revisá su configuración (el detalle quedó en el log del servidor)";
+      }
+      await auditFromRequest(t, req, req.auth!, "signature_provider.tested", { targetType: "signature_provider", targetId: req.params.id, data: { ok: res.ok } });
+    });
     return res;
   });
 }

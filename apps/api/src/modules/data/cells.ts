@@ -8,7 +8,7 @@ import type { Db } from "../../infra/db";
 import { CELL_CATALOG, cellById, cells, defaultCell, isConfiguredCell, servedCells, servesAllCells } from "../../infra/cells";
 import { badRequest } from "../../lib/errors";
 import { sha256Hex } from "../../lib/util";
-import { SESSION_COOKIE, type Services } from "../context";
+import { sessionCookieToken, type Services } from "../context";
 import { signerTokenHash } from "../signer-token";
 
 export function publicCells(): CellInfo[] {
@@ -63,7 +63,7 @@ export async function tenantOfRequest(db: Db, req: FastifyRequest): Promise<stri
     const r = hash ? await db.one<any>(`SELECT tenant_id FROM recipients WHERE access_token_hash = $1`, [hash]) : null;
     if (r) return r.tenant_id;
   }
-  const cookie = req.cookies?.[SESSION_COOKIE];
+  const cookie = sessionCookieToken(req);
   if (cookie) {
     const sess = await db.one<any>(`SELECT tenant_id FROM sessions WHERE token_hash = $1`, [sha256Hex(cookie)]);
     if (sess) return sess.tenant_id;

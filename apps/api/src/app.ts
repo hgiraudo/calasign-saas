@@ -6,7 +6,6 @@ import helmet from "@fastify/helmet";
 import multipart from "@fastify/multipart";
 import { PdfIngestBusyError } from "@calasign/pdf";
 import rateLimit from "@fastify/rate-limit";
-import fastifyStatic from "@fastify/static";
 import { ZodError } from "zod";
 import { config } from "./config";
 import { queueHealth } from "./infra/queue";
@@ -54,7 +53,8 @@ import { dataRoutes } from "./modules/data";
 import { certsignRoutes } from "./modules/certsign";
 import { sendBrandedIndex, whiteLabelModule } from "./modules/white-label";
 import { devApiRoutes } from "./modules/devapi";
-import { INTEGRATIONS_PREFIX, integrationsStaticHeaders } from "./modules/integrations-static";
+import { integrationsStaticHeaders } from "./modules/integrations-static";
+import { registerSpa } from "./spa";
 
 /** Ver el hook que la pone en buildApp. */
 export const PERMISSIONS_POLICY = "camera=(self), microphone=(), geolocation=(), payment=(), usb=()";
@@ -320,30 +320,7 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
   if (existsSync(resolve(config.webDist, "index.html"))) {
     // /integrations/*: descargas y complemento de Office (encabezados propios, ver integrations-static.ts).
     integrationsStaticHeaders(app);
-    await app.register(fastifyStatic, {
-      root: config.webDist,
-      wildcard: true,
-      setHeaders(res, path) {
-        if (path.endsWith(".mjs")) res.header("content-type", "text/javascript; charset=utf-8");
-        // PWA: el service worker y el manifest se revalidan siempre (si no, una versión vieja queda pegada).
-        if (path.endsWith("/sw.js") || path.endsWith(".webmanifest") || path.endsWith("/offline.html")) res.header("cache-control", "no-cache");
-        if (path.endsWith(".webmanifest")) res.header("content-type", "application/manifest+json; charset=utf-8");
-        if (path.includes("/assets/")) res.header("cache-control", "public, max-age=31536000, immutable");
-      },
-    });
-    app.setNotFoundHandler(async (req, reply) => {
-      const path = req.url.split("?")[0];
-      const isAsset = /\.[a-z0-9]{2,5}$/i.test(path) || path.startsWith("/assets/") || path.startsWith("/pdfjs/");
-      // /integrations/ no cae en la SPA: un archivo que falta es un 404 (no una página de la app con estado 200).
-      const isIntegration = path === "/integrations" || path.startsWith(INTEGRATIONS_PREFIX);
-      if (req.method === "GET" && !isAsset && !isIntegration && !path.startsWith("/v1/") && !path.startsWith("/dev/")) {
-        reply.header("cache-control", "no-cache");
-        // Marca blanca: link de firma, formulario, verificación o dominio de una marca → index.html con su tema.
-        if (await sendBrandedIndex(deps.db, req, reply)) return reply;
-        return reply.sendFile("index.html");
-      }
-      return reply.code(404).send({ error: { code: "not_found", message: "Ruta no encontrada" } });
-    });
+    await registerSpa(app, { root: config.webDist, sendBrandedIndex: (req, reply) => sendBrandedIndex(deps.db, req, reply) });
   } else {
     app.setNotFoundHandler((_req, reply) => reply.code(404).send({ error: { code: "not_found", message: "Ruta no encontrada" } }));
   }

@@ -1,5 +1,5 @@
 // Revisiones posteriores a una firma que cambian lo que se ve o lo que se ejecuta y antes pasaban como "evidence_only".
-import { PDFArray, PDFDict, PDFDocument, PDFName, PDFRef, PDFString } from "pdf-lib";
+import { PDFArray, PDFContext, PDFDict, PDFDocument, PDFName, PDFRef, PDFString } from "pdf-lib";
 import { describe, expect, it } from "vitest";
 import { IncrementalUpdate, changesAfterRevision, findLastStartXref, revisionCache, withDecodeBudget } from "../src";
 
@@ -302,8 +302,8 @@ describe("changesAfterRevision: regresiones de la 145ª pasada", () => {
     expect(await changesAfterRevision(empty.full, empty.end, new Set())).toBe("content");
   });
 
-  it("campo de firma vacío con claves fuera de la lista (/Contents, /Q) → content", async () => {
-    for (const extra of [{ Contents: PDFString.of("x") }, { Q: 1 }]) {
+  it("campo de firma vacío con claves fuera de la lista (/Contents, /C) → content", async () => {
+    for (const extra of [{ Contents: PDFString.of("x") }, { C: [1, 0, 0] }]) {
       const { full, end } = await laterAnnot(extra, false);
       expect(await changesAfterRevision(full, end, new Set())).toBe("content");
     }
@@ -316,11 +316,14 @@ describe("changesAfterRevision: regresiones de la 145ª pasada", () => {
     expect(await changesAfterRevision(withAp.full, withAp.end, new Set())).toBe("evidence_only");
   });
 
-  it("campo de firma vacío de área cero con /AP que dibuja: content salvo con Hidden", async () => {
-    const shown = await laterAnnot(fullPageAp, false);
-    expect(await changesAfterRevision(shown.full, shown.end, new Set())).toBe("content");
+  it("campo de firma vacío con /AP que dibuja: de área cero no se ve (evidence_only); con rectángulo, content aunque sea Hidden", async () => {
+    // La apariencia se escala al rectángulo: con área cero no se dibuja (146ª pasada: ya no hace falta Hidden).
+    const zero = await laterAnnot(fullPageAp, false);
+    expect(await changesAfterRevision(zero.full, zero.end, new Set())).toBe("evidence_only");
     const hidden = await laterAnnot((u) => ({ ...fullPageAp(u), F: 2 }), false);
     expect(await changesAfterRevision(hidden.full, hidden.end, new Set())).toBe("evidence_only");
+    const rect = await laterAnnot((u) => ({ ...fullPageAp(u), F: 2, Rect: [0, 0, 200, 200] }), false);
+    expect(await changesAfterRevision(rect.full, rect.end, new Set())).toBe("content");
   });
 
   it("widget de firma con NoView y Print (/F 36), de página entera y /AP → content", async () => {
@@ -333,6 +336,9 @@ describe("changesAfterRevision: regresiones de la 145ª pasada", () => {
     // NoView sin Print no se ve ni se imprime.
     const noPrint = await laterAnnot((u) => ({ ...extra(u), F: 32 }), true);
     expect(await changesAfterRevision(noPrint.full, noPrint.end, new Set([noPrint.key]))).toBe("evidence_only");
+    // Salvo con ToggleNoView (256): se muestra al pasar el mouse.
+    const toggle = await laterAnnot((u) => ({ ...extra(u), F: 32 | 256 }), true);
+    expect(await changesAfterRevision(toggle.full, toggle.end, new Set([toggle.key]))).toBe("content");
   });
 
   /** Campo de firma vacío y visible en lo firmado; la revisión posterior le cuelga otro widget (fuera de /Annots). */
@@ -379,4 +385,121 @@ describe("changesAfterRevision: regresiones de la 145ª pasada", () => {
     third.set(good.full);
     expect(await changesAfterRevision(third, good.end, new Set([good.key]))).toBe("evidence_only");
   });
+
+  /**
+   * Campo de firma vacío pre-creado por un editor (en la revisión firmada) que una revisión posterior firma: el widget
+   * recibe /V y una apariencia nueva.
+   */
+  async function preplacedThenSigned(widget: (ctx: PDFContext) => Record<string, unknown>, opts: { verified?: boolean; tamper?: (u: IncrementalUpdate, w: PDFDict) => void } = {}) {
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([200, 200]);
+    page.drawText("hello");
+    const ctx = doc.context;
+    const w = ctx.register(ctx.obj({ Type: "Annot", Subtype: "Widget", FT: "Sig", T: PDFString.of("Firma2"), Rect: [0, 0, 0, 0], F: 132, P: page.ref, ...widget(ctx) } as never));
+    page.node.set(PDFName.of("Annots"), ctx.obj([w]));
+    doc.catalog.set(PDFName.of("AcroForm"), ctx.obj({ Fields: [w] }));
+    const signed = await doc.save({ useObjectStreams: false });
+    const end = signed.length;
+    const u = await IncrementalUpdate.open(signed);
+    const br = [0, 10, 20, end + 1000];
+    const sig = u.add(u.context.obj({ Type: "Sig", ByteRange: br, Contents: PDFString.of("x") }));
+    const wd = u.context.lookup(w) as PDFDict;
+    wd.set(PDFName.of("V"), sig);
+    wd.set(PDFName.of("AP"), u.context.obj({ N: u.add(u.context.stream("% DSBlank\n", { Type: "XObject", Subtype: "Form", BBox: [0, 0, 0, 0] })) }));
+    opts.tamper?.(u, wd);
+    u.touch(w);
+    const full = u.serialize();
+    return changesAfterRevision(full, end, opts.verified === false ? new Set() : new Set([br.join(",")]));
+  }
+  const blankAp = (ctx: PDFContext, content: string) => ({ AP: ctx.obj({ N: ctx.register(ctx.stream(content, { Type: "XObject", Subtype: "Form", BBox: [0, 0, 50, 20] })) }) });
+
+  it("campo pre-creado con /DV, /Q, /AS, /H y apariencia en blanco de Acrobat, firmado después → evidence_only", async () => {
+    const dv = (ctx: PDFContext) => ({ DV: ctx.obj({ Type: "Sig" }), Q: 1, AS: PDFName.of("N"), H: PDFName.of("P") });
+    expect(await preplacedThenSigned(dv)).toBe("evidence_only");
+    expect(await preplacedThenSigned((ctx) => ({ ...dv(ctx), ...blankAp(ctx, "% DSBlank\n") }))).toBe("evidence_only");
+    expect(await preplacedThenSigned((ctx) => ({ ...blankAp(ctx, "q Q") }))).toBe("evidence_only");
+    expect(await preplacedThenSigned((ctx) => ({ ...blankAp(ctx, "q\n% DSBlank\nq Q\nQ\n") }))).toBe("evidence_only");
+    // Con rectángulo pero Hidden y una apariencia cualquiera (no se ve): firmado y verificado, se compara sin la lista estricta.
+    expect(await preplacedThenSigned((ctx) => ({ ...blankAp(ctx, "1 0 0 rg 0 0 50 20 re f"), F: 2, Rect: [10, 10, 60, 30], C: [1, 0, 0] }))).toBe(
+      "evidence_only",
+    );
+  });
+
+  it("campo pre-creado: lo que sigue contando", async () => {
+    // Sin firma que verifique, la lista estricta: /C no está.
+    expect(await preplacedThenSigned((ctx) => ({ ...blankAp(ctx, "1 0 0 rg 0 0 50 20 re f"), F: 2, Rect: [10, 10, 60, 30], C: [1, 0, 0] }), { verified: false })).toBe(
+      "content",
+    );
+    // Acciones en lo firmado o agregadas después.
+    expect(await preplacedThenSigned((ctx) => ({ AA: ctx.obj({ PO: ctx.obj({ S: "JavaScript", JS: PDFString.of("x") }) }) }))).toBe("content");
+    expect(
+      await preplacedThenSigned(() => ({}), { tamper: (u, w) => w.set(PDFName.of("A"), u.context.obj({ S: "Launch", F: PDFString.of("calc.exe") })) }),
+    ).toBe("content");
+    // La firma posterior lo vuelve visible.
+    expect(await preplacedThenSigned(() => ({}), { tamper: (u, w) => w.set(PDFName.of("Rect"), u.context.obj([0, 0, 200, 200])) })).toBe("content");
+  });
+
+  it("apariencias que no son en blanco: operadores u operandos, q/Q desbalanceados", async () => {
+    const { blankContent } = await import("../src/revisions");
+    const b = (s: string) => blankContent(Buffer.from(s, "latin1"));
+    expect(b("")).toBe(true);
+    expect(b("% DSBlank\n")).toBe(true);
+    expect(b("q Q")).toBe(true);
+    expect(b("q q Q Q % x")).toBe(true);
+    expect(b("qQ")).toBe(false);
+    expect(b("q")).toBe(false);
+    expect(b("Q q")).toBe(false);
+    expect(b("q 0 0 m Q")).toBe(false);
+    expect(b("q /Fm0 Do Q")).toBe(false);
+    expect(b("q (x) Tj Q")).toBe(false);
+    // Vacío en lo firmado con apariencia que dibuja y rectángulo (sin Hidden ni firma después) → content.
+    const doc = await PDFDocument.create();
+    doc.addPage([200, 200]).drawText("hello");
+    const signed = await doc.save({ useObjectStreams: false });
+    const u = await IncrementalUpdate.open(signed);
+    const p = u.doc.getPages()[0];
+    const ap = u.context.obj({ N: u.add(u.context.stream("q 1 0 0 rg 0 0 200 200 re f Q", { Type: "XObject", Subtype: "Form", BBox: [0, 0, 200, 200] })) });
+    const w = u.add(u.context.obj({ Type: "Annot", Subtype: "Widget", FT: "Sig", Rect: [0, 0, 200, 200], F: 32, P: p.ref, T: PDFString.of("F"), AP: ap } as never));
+    p.node.set(PDFName.of("Annots"), u.context.obj([w]));
+    u.touch(p.ref);
+    expect(await changesAfterRevision(u.serialize(), signed.length, new Set())).toBe("content");
+  });
+
+  /** Un campo de firma con `n` widgets (todos en /Annots) en lo firmado; la revisión posterior agrega un objeto suelto. */
+  async function manyKids(n: number) {
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([3000, 200]);
+    const ctx = doc.context;
+    const parent = ctx.register(ctx.obj({ FT: "Sig", T: PDFString.of("p") }));
+    const kids = ctx.obj([]);
+    for (let i = 0; i < n; i++) kids.push(ctx.register(ctx.obj({ Type: "Annot", Subtype: "Widget", Rect: [i, 0, i + 10, 10], F: 4, Parent: parent, P: page.ref })));
+    (ctx.lookup(parent) as PDFDict).set(PDFName.of("Kids"), kids);
+    page.node.set(PDFName.of("Annots"), kids);
+    doc.catalog.set(PDFName.of("AcroForm"), ctx.obj({ Fields: [parent] }));
+    const signed = await doc.save({ useObjectStreams: false });
+    const u = await IncrementalUpdate.open(signed);
+    return { u, parent, kids: kids.asArray() as PDFRef[], end: signed.length };
+  }
+
+  it("campo de firma con 2000 widgets: se compara en menos de 2 s", async () => {
+    const { u, end } = await manyKids(2000);
+    u.add(u.context.obj({ Unused: true }));
+    const full = u.serialize();
+    // Una vuelta de calentamiento (JIT): se mide la segunda. Con la comparación cuadrática tardaba casi un minuto.
+    expect(await changesAfterRevision(full, end, new Set())).toBe("evidence_only");
+    const t = Date.now();
+    expect(await changesAfterRevision(full, end, new Set())).toBe("evidence_only");
+    expect(Date.now() - t).toBeLessThan(2000);
+  }, 30_000);
+
+  it("con muchos hijos, un widget nuevo colgado del campo (fuera de /Annots) sigue contando", async () => {
+    for (const n of [20, 600]) {
+      const { u, parent, kids, end } = await manyKids(n);
+      const pageRef = u.doc.getPages()[0].ref;
+      const extra = u.add(u.context.obj({ Type: "Annot", Subtype: "Widget", Rect: [0, 0, 200, 200], F: 4, P: pageRef, Parent: parent }));
+      (u.context.lookup(parent) as PDFDict).set(PDFName.of("Kids"), u.context.obj([...kids, extra]));
+      u.touch(parent);
+      expect(await changesAfterRevision(u.serialize(), end, new Set())).toBe("content");
+    }
+  }, 30_000);
 });

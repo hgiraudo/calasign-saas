@@ -1,4 +1,5 @@
 // Página pública de un formulario web (/f/:slug): la persona deja nombre y correo y entra directo a firmar.
+import { useTitle } from "../lib/white-label";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { contrastText, type PublicWebForm, type SubmitWebFormResponse } from "@calasign/shared";
@@ -92,6 +93,7 @@ export function PublicFormPage() {
   const { locale, setLocale, explicit } = useI18n();
   const [form, setForm] = useState<PublicWebForm | null>(null);
   const [notFound, setNotFound] = useState(false);
+  useTitle(notFound ? st("pub.unavailable") : form?.name);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");

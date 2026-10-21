@@ -1,9 +1,9 @@
 // Estructura de la consola del remitente.
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { Navigate, NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 import { confirmDiscardUnsaved, useI18n } from "../lib/i18n";
-import { LocaleSwitcher, Logo } from "./ui";
+import { LocaleSwitcher, Logo, Spinner } from "./ui";
 import { useIntText } from "../lib/integrations-i18n";
 import { useAccess } from "../lib/access";
 import { useTeamsText } from "../lib/i18n-teams";
@@ -26,6 +26,41 @@ export function useDevMailboxAvailable(): boolean {
   return ok;
 }
 
+/**
+ * Al cambiar de página (navegación del lado del cliente) el foco quedaba en el link tocado, fuera del contenido nuevo:
+ * se lleva al h1 de la página (o al main si no tiene), para lectores de pantalla y teclado. Las páginas lazy y las que
+ * cargan datos dibujan el h1 un poco después: se espera hasta ~2 s. No se mueve si el foco ya está dentro del contenido.
+ */
+function useFocusMainOnNavigate(pathname: string) {
+  const mainRef = useRef<HTMLElement>(null);
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) {
+      first.current = false;
+      return;
+    }
+    let tries = 0;
+    let timer = 0;
+    const tick = () => {
+      const main = mainRef.current;
+      if (!main) return;
+      if (main.contains(document.activeElement) && document.activeElement !== main) return;
+      const h1 = main.querySelector<HTMLElement>("h1");
+      if (h1) {
+        if (!h1.hasAttribute("tabindex")) h1.setAttribute("tabindex", "-1");
+        h1.focus({ preventScroll: true });
+      } else if (++tries < 20) {
+        timer = window.setTimeout(tick, 100);
+      } else {
+        main.focus({ preventScroll: true });
+      }
+    };
+    timer = window.setTimeout(tick, 0);
+    return () => window.clearTimeout(timer);
+  }, [pathname]);
+  return mainRef;
+}
+
 export function Layout() {
   const { me, logout } = useAuth();
   const { t } = useI18n();
@@ -38,6 +73,7 @@ export function Layout() {
   const install = useInstallPrompt();
   const ag = useAgrText();
   const [open, setOpen] = useState(false);
+  const mainRef = useFocusMainOnNavigate(loc.pathname);
 
   // Organización que exige 2FA y el usuario no lo tiene: solo puede ir a Seguridad.
   if (access?.twoFactor.setupRequired && loc.pathname !== "/app/settings/security") {
@@ -46,6 +82,9 @@ export function Layout() {
 
   return (
     <div className="shell">
+      <a href="#main-content" className="skip-link">
+        {t("nav.skipToContent")}
+      </a>
       <header className="topbar">
         <NavLink to="/app" className="brand" onClick={() => setOpen(false)}>
           <Logo light />
@@ -101,8 +140,11 @@ export function Layout() {
       </header>
       {/* La clave por organización vuelve a montar la página al cambiar de organización: sin esto, una vista ya
           abierta (p. ej. el listado de sobres) seguiría mostrando los datos de la organización anterior. */}
-      <main className="content" key={me?.tenant.id ?? "none"}>
-        <Outlet />
+      <main className="content" id="main-content" tabIndex={-1} ref={mainRef} key={me?.tenant.id ?? "none"}>
+        {/* Las páginas se cargan aparte (App.tsx): mientras llega una, la barra queda y solo el contenido espera. */}
+        <Suspense fallback={<Spinner />}>
+          <Outlet />
+        </Suspense>
       </main>
     </div>
   );

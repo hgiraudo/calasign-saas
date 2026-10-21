@@ -1,5 +1,6 @@
 // Páginas públicas de Fase 6: iniciar un workflow desde un link (/wf/:slug), completar sus datos (/w/:token)
 // y revisar una negociación como contraparte (/n/:token).
+import { useTitle } from "../lib/white-label";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import type { NegotiationView, PublicWorkflowRun, PublicWorkflowStart } from "@calasign/shared";
@@ -68,6 +69,7 @@ export function PublicWorkflowStartPage() {
   const ta = useAgrText();
   const nav = useNavigate();
   const [info, setInfo] = useState<PublicWorkflowStart | null>(null);
+  useTitle(info?.workflowName);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // El workflow arrancó pero su primer paso no es un formulario público (p. ej. una aprobación interna): no es un error.
@@ -131,6 +133,7 @@ export function PublicWorkflowRunPage() {
   const { token } = useParams();
   const ta = useAgrText();
   const [view, setView] = useState<PublicWorkflowRun | null>(null);
+  useTitle(view ? (view.step?.title ?? view.workflowName) : null);
   const [values, setValues] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -302,6 +305,7 @@ export function PublicNegotiationPage() {
   const { token } = useParams();
   const ta = useAgrText();
   const [view, setView] = useState<(NegotiationView & { organizationName?: string }) | null>(null);
+  useTitle(view?.negotiation.title);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     api<NegotiationView & { organizationName?: string }>(`/v1/public/negotiations/${encodeURIComponent(token ?? "")}`)

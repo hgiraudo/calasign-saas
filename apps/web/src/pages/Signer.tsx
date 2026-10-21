@@ -1,6 +1,6 @@
 // Experiencia del firmante: /s/:token. Sin cuenta, mobile-first.
 import { useFieldLogic } from "../lib/logic";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useParams } from "react-router-dom";
 import type { CompleteSigningInput, Field, SignatureImageInput, SigningSession } from "@calasign/shared";
 import { AUTO_FIELD_TYPES, ATTACHMENT_MAX_BYTES, contrastText, formatSigningDate, parseNumberLoose, signingDateForDisplay } from "@calasign/shared";
@@ -20,7 +20,7 @@ import { PaymentGate, SignerPaymentAfterSign } from "../components/BillingExtras
 import { AiSignerAssist } from "../components/AiPanels";
 import { SignerCertificateStep } from "../components/CertSign";
 import { BrandFooter } from "../components/BrandFooter";
-import { brandTheme, setBrandTheme } from "../lib/white-label";
+import { brandTheme, setBrandTheme, useTitle } from "../lib/white-label";
 
 type Adopted = SignatureImageInput & { dataUrl: string };
 
@@ -88,7 +88,10 @@ export function SignerPage() {
     [explicit, setLocale],
   );
 
+  // "Reintentar" después de un error de red o de tiempo agotado en la carga vuelve a pedir la sesión.
+  const [loadAttempt, setLoadAttempt] = useState(0);
   useEffect(() => {
+    setError(null);
     api<SigningSession>(base)
       .then(apply)
       .catch((e) => {
@@ -96,7 +99,8 @@ export function SignerPage() {
         else setError(errorText(e));
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [base]);
+  }, [base, loadAttempt]);
+  useTitle(session?.envelope.subject);
   useEmbedBridge(token, session, invalid);
   // Pago antes de firmar: al cambiar, el PaymentGate vuelve a consultar el pago (p. ej. "Finalizar" respondió 402).
   const [paymentCheck, setPaymentCheck] = useState(0);
@@ -175,7 +179,20 @@ export function SignerPage() {
       </SignerShell>
     );
   if (!session)
-    return <SignerShell>{error ? <ErrorBox error={error} /> : <Spinner />}</SignerShell>;
+    return (
+      <SignerShell>
+        {error ? (
+          <div className="stack">
+            <ErrorBox error={error} />
+            <button type="button" className="btn btn-primary" onClick={() => setLoadAttempt((n) => n + 1)}>
+              {t("common.retry")}
+            </button>
+          </div>
+        ) : (
+          <Spinner />
+        )}
+      </SignerShell>
+    );
   if (delegatedTo)
     return (
       <SignerShell org={session.envelope.organizationName}>
@@ -375,7 +392,9 @@ type SessionBranding = SigningSession["branding"];
 function brandBarStyle(b: SessionBranding) {
   if (!b?.primaryColor) return undefined;
   // Texto legible sobre el color de la marca (el que fijó la marca, o blanco/oscuro según contraste).
-  return { background: b.primaryColor, color: brandTheme()?.theme.headerTextColor ?? contrastText(b.primaryColor) };
+  const fg = brandTheme()?.theme.headerTextColor ?? contrastText(b.primaryColor);
+  // --bar-fg: el anillo de foco y el progreso de la barra siguen a este color (styles.css, styles-experience.css).
+  return { background: b.primaryColor, color: fg, "--bar-fg": fg } as CSSProperties;
 }
 
 function BrandOrg({ org, branding }: { org?: string; branding?: SessionBranding }) {
@@ -423,15 +442,19 @@ function Final({ icon, title, text, ok, children }: { icon: string; title: strin
   );
 }
 
-function EnvelopeIntro({ session, downloads }: { session: SigningSession; downloads?: ReactNode }) {
+function EnvelopeIntro({ session, downloads, focus }: { session: SigningSession; downloads?: ReactNode; focus?: boolean }) {
   const { t, locale } = useI18n();
   const e = session.envelope;
+  // En el flujo de firma, el foco empieza en el asunto (lectores de pantalla y teclado: no queda en la pantalla anterior).
+  const heading = useFocusOnMount<HTMLHeadingElement>();
   return (
     <div className="intro">
       <p className="muted small">
         <strong>{e.senderName}</strong> ({e.organizationName}) {t("sign.sentBy")}
       </p>
-      <h1>{e.subject}</h1>
+      <h1 ref={focus ? heading : undefined} tabIndex={focus ? -1 : undefined}>
+        {e.subject}
+      </h1>
       {e.message && <p className="message-box">{e.message}</p>}
       {downloads && <div className="row-wrap">{downloads}</div>}
       {session.recipient.telegramLink && (
@@ -658,6 +681,8 @@ function SigningFlow({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
+  /** Carga de cada PDF: no se finaliza sobre un documento que no se llegó a ver (sin PDF tampoco se muestran sus campos). */
+  const [docStatus, setDocStatus] = useState<Record<string, "loading" | "ready" | "error">>({});
   /** Campo señalado por el último error de "Finalizar" (aria-invalid + aria-describedby al texto del error). */
   const [invalidId, setInvalidId] = useState<string | null>(null);
   /** Campos que el servidor rechazó en el último "Finalizar" (422): siguen marcados aunque la página los vea completos. */
@@ -763,6 +788,12 @@ function SigningFlow({
   const finish = async () => {
     // Con un adjunto todavía subiendo, se completaba sin él y la subida fallaba después (el firmante lo creía adjuntado).
     if (uploading) return;
+    const unseen = session.documents.find((d) => docStatus[d.id] !== "ready");
+    if (unseen) {
+      setError(sx(docStatus[unseen.id] === "error" ? "doc.failedFinish" : "doc.notLoaded", { name: unseen.name }));
+      document.querySelector(`[data-document="${CSS.escape(unseen.id)}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
     setServerProblems(new Set());
     if (pending.length) {
       const f = pending[0];
@@ -808,7 +839,9 @@ function SigningFlow({
     if (signature) body.signature = strip(signature);
     if (initials) body.initials = strip(initials);
     try {
-      const s = await api<SigningSession>(`${base}/complete`, { method: "POST", body });
+      // Tope más largo que el de los demás pedidos: firma, estampado y evidencia. Si vence, se puede volver a tocar
+      // Finalizar: si el primero llegó a completarse, el servidor responde 409 already_signed y se recarga la sesión.
+      const s = await api<SigningSession>(`${base}/complete`, { method: "POST", body, timeoutMs: 90_000 });
       window.scrollTo({ top: 0 });
       onDone(s);
     } catch (e) {
@@ -1082,6 +1115,7 @@ function SigningFlow({
       <main className="signer-main">
         <EnvelopeIntro
           session={session}
+          focus
           downloads={session.documents.map((d) => (
             <SignerDownload
               key={d.id}
@@ -1103,6 +1137,7 @@ function SigningFlow({
               doc={d}
               url={`${base}/documents/${d.id}/file`}
               headingLevel={2}
+              onStatus={(st) => setDocStatus((m) => (m[d.id] === st ? m : { ...m, [d.id]: st }))}
               renderOverlay={(page, widthPx) => {
                 const size = d.pages[page];
                 const pageHeightPx = widthPx * (size.height / size.width);

@@ -12,8 +12,14 @@ a:focus-visible, [role="tab"]:focus-visible, .sfield:focus-visible {
   outline: 3px solid #0d9488;
   outline-offset: 2px;
 }
-.on-dark:focus-visible, .signer-bar :focus-visible, .topbar :focus-visible { outline-color: #5eead4; }
-h1[tabindex="-1"]:focus, h2[tabindex="-1"]:focus { outline: none; }
+.on-dark:focus-visible, .topbar :focus-visible { outline-color: #5eead4; }
+/* Barra del firmante: el anillo de foco sigue al color del texto de la barra (con una marca clara el turquesa no se veía;
+   los botones con color propio, como el de acento, no sirven de referencia: se usa el de la barra). */
+.signer-bar :focus-visible { outline: 2px solid var(--bar-fg, currentColor); outline-offset: 2px; }
+h1[tabindex="-1"]:focus, h2[tabindex="-1"]:focus, main[tabindex="-1"]:focus { outline: none; }
+/* "Saltar al contenido": oculto hasta que recibe el foco con el teclado. */
+.skip-link { position: absolute; left: 8px; top: -100px; z-index: 100; padding: 8px 14px; background: #fff; color: var(--navy); border-radius: 6px; font-weight: 600; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25); }
+.skip-link:focus { top: 8px; }
 /* Campos dentro del documento: el contorno va en la caja del campo (el del control quedaba recortado por overflow:hidden). */
 .sfield:focus-within { outline: 3px solid #0d9488; outline-offset: 2px; }
 .sfield input:focus-visible, .sfield select:focus-visible { outline: none; }

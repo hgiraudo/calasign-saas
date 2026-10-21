@@ -1,4 +1,5 @@
 // Ajustes → Inteligencia artificial: activación con aviso de tratamiento de datos, presupuesto, consumo y playbook.
+import { useTitle } from "../lib/white-label";
 import { useEffect, useState } from "react";
 import type { AiSettings } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
@@ -9,6 +10,7 @@ import { ErrorBox, OrderInput, Spinner } from "../components/ui";
 
 export function AiSettingsPage() {
   const ai = useAiText();
+  useTitle(ai("ai.title"));
   const { locale } = useI18n();
   const { can } = useAccess();
   const canEdit = can("settings:manage");

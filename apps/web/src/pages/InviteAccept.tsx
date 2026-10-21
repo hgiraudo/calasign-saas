@@ -10,7 +10,7 @@ import { broadcastSessionChange } from "../lib/session-sync";
 import { useRoleLabel, useTeamsText } from "../lib/i18n-teams";
 import { ErrorBox, LocaleSwitcher, Logo, Spinner } from "../components/ui";
 import { TwoFactorStep } from "../components/TwoFactorStep";
-import { productName, useBrandTheme } from "../lib/white-label";
+import { productName, useBrandTheme, useTitle } from "../lib/white-label";
 
 export function InviteAcceptPage() {
   const { token } = useParams();
@@ -20,6 +20,7 @@ export function InviteAcceptPage() {
   const brand = useBrandTheme();
   const nav = useNavigate();
   const [inv, setInv] = useState<InvitationPreview | null>(null);
+  useTitle(inv ? tt("inv.title", { org: inv.organizationName }) : null);
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [challenge, setChallenge] = useState<string | null>(null);

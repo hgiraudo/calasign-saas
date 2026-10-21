@@ -1,4 +1,5 @@
 // Página pública de descarga del Firmador CalaSign (/firmador).
+import { useTitle } from "../lib/white-label";
 import { useEffect, useState } from "react";
 import type { FirmadorDownload } from "@calasign/shared";
 import { api } from "../lib/api";
@@ -17,6 +18,7 @@ function detectOs(): Os {
 
 export function FirmadorPage() {
   const c = useCertsignText();
+  useTitle(c("firmador.title"));
   const [items, setItems] = useState<FirmadorDownload[] | null>(null);
   const os = detectOs();
   useEffect(() => {

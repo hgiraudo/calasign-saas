@@ -1,4 +1,5 @@
 // Ajustes del bloque Identidad: verificación de identidad (KYC), inicio de sesión único (SSO) y SCIM.
+import { useTitle } from "../lib/white-label";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import type { IdentitySettings, IdvLevel, IdvProvider, ScimSettings, SsoSettings, SsoSettingsInput } from "@calasign/shared";
 import { IDV_LEVELS, MOCK_DECISIONS, PERMISSIONS } from "@calasign/shared";
@@ -23,6 +24,7 @@ function useLoad<T>(path: string) {
 }
 
 function Page({ title, intro, children }: { title: string; intro: string; children: ReactNode }) {
+  useTitle(title);
   return (
     <div className="page idn-page">
       <div className="page-head">

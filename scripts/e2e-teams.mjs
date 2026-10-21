@@ -91,7 +91,7 @@ async function draftEnvelope(c, subject) {
 
 const owner = new Client("owner");
 const ownerEmail = `owner+${stamp}@example.com`;
-const ownerPw = "clave-del-owner-123";
+const ownerPw = "clave-de-olga-123";
 await owner.api("POST", "/v1/auth/signup", { name: "Olga Owner", email: ownerEmail, password: ownerPw, organization: `Equipos ${stamp}` });
 const ownerMe = await owner.api("GET", "/v1/me");
 const orgX = ownerMe.tenant.id;
@@ -126,7 +126,7 @@ step("Bob aceptó con cuenta nueva (contraseña débil → 400; reutilizar el li
 
 // Carol ya tiene cuenta (con su propia organización) y acepta con su contraseña.
 const carol = new Client("carol");
-await carol.api("POST", "/v1/auth/signup", { name: "Carol Revisora", email: carolEmail, password: "clave-de-carol-123", organization: `Carol SRL ${stamp}` });
+await carol.api("POST", "/v1/auth/signup", { name: "Carol Revisora", email: carolEmail, password: "clave-revisora-123", organization: `Carol SRL ${stamp}` });
 const orgY = (await carol.api("GET", "/v1/me")).tenant.id;
 const carolToken = invCarol.acceptUrl.split("/invite/")[1];
 const carolAnon = new Client("carol-anon");
@@ -319,7 +319,7 @@ step("2FA: login pide segundo factor; código incorrecto → 401; código de rec
 // contraseña de Bob lo invita a su propia organización y acepta por él; Bob no tiene que quedar como miembro.
 {
   const mallory = new Client("mallory");
-  await mallory.api("POST", "/v1/auth/signup", { name: "Mallory", email: `mallory+${stamp}@example.com`, password: "clave-de-mallory-123", organization: `Mallory SA ${stamp}` });
+  await mallory.api("POST", "/v1/auth/signup", { name: "Mallory", email: `mallory+${stamp}@example.com`, password: "clave-atacante-123", organization: `Mallory SA ${stamp}` });
   const invM = await mallory.api("POST", "/v1/invitations", { email: bobEmail, role: "member" });
   const tokM = invM.acceptUrl.split("/invite/")[1];
   const thief = new Client("thief");
@@ -345,8 +345,8 @@ const blockedBody = await blocked.json();
 if (blocked.status !== 403 || blockedBody.error.code !== "two_factor_setup_required") throw new Error("carol debería estar bloqueada hasta activar 2FA");
 acc = await carol.api("GET", "/v1/me/access");
 if (!acc.twoFactor.setupRequired) throw new Error("setupRequired");
-const cSetup = await carol.api("POST", "/v1/me/2fa/setup", { password: "clave-de-carol-123" });
-await carol.api("POST", "/v1/me/2fa/enable", { code: totp(cSetup.secret, nowStep()), password: "clave-de-carol-123" });
+const cSetup = await carol.api("POST", "/v1/me/2fa/setup", { password: "clave-revisora-123" });
+await carol.api("POST", "/v1/me/2fa/enable", { code: totp(cSetup.secret, nowStep()), password: "clave-revisora-123" });
 await carol.api("GET", "/v1/envelopes");
 await bob3.api("POST", "/v1/me/2fa/disable", { code: totp(setup.secret, nowStep() + 1) }, [400, 409]);
 step("exigir 2FA: no se puede activar sin tenerlo uno mismo (409); sin 2FA se bloquea el acceso (403) hasta activarlo");
@@ -356,7 +356,7 @@ step("exigir 2FA: no se puede activar sin tenerlo uno mismo (409); sin 2FA se bl
 // por IP de la ruta corta antes.)
 if (/^http:\/\/(localhost|127\.0\.0\.1)/.test(BASE)) {
   const chs = [];
-  for (let i = 0; i < 3; i++) chs.push((await new Client(`carol-ch${i}`).api("POST", "/v1/auth/login", { email: carolEmail, password: "clave-de-carol-123" })).challengeToken);
+  for (let i = 0; i < 3; i++) chs.push((await new Client(`carol-ch${i}`).api("POST", "/v1/auth/login", { email: carolEmail, password: "clave-revisora-123" })).challengeToken);
   const guesser = new Client("carol-guess");
   // 401 hasta llegar al límite; Carol ya tenía fallos (la contraseña incorrecta al aceptar la invitación también
   // cuenta), así que el bloqueo (429) puede llegar antes del décimo código.

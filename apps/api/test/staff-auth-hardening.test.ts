@@ -140,17 +140,33 @@ describe("restablecer la contraseña", () => {
     expect(await jobsOf(u.id, "password_changed")).toHaveLength(1);
   });
 
-  it("el tope de pedidos es por (cuenta, red): otra red recibe su link y reemplaza a los anteriores", async () => {
+  it("el tope de pedidos es por (cuenta, red): otra red recibe su link sin invalidar los de la persona", async () => {
     const t = await newTenant();
     const u = await newUser(t);
     const ask = (ip: string) => app.inject({ method: "POST", url: "/v1/auth/password/forgot", payload: { email: u.email }, remoteAddress: ip });
     for (const ip of ["192.0.2.1", "192.0.2.2", "192.0.2.3", "192.0.2.4"]) expect((await ask(ip)).statusCode).toBe(202);
-    // La 4.ª desde la misma /24 no crea otro link.
+    // La 4.ª desde la misma /24 no crea otro link; cada pedido desde la misma red reemplaza al anterior.
     expect((await db.query(`SELECT 1 FROM password_resets WHERE user_id = $1`, [u.id])).length).toBe(3);
     await ask("198.51.100.20");
     const rows = await db.query<any>(`SELECT ip_key, used_at FROM password_resets WHERE user_id = $1 ORDER BY created_at`, [u.id]);
     expect(rows).toHaveLength(4);
-    expect(rows.filter((r) => r.used_at === null)).toEqual([expect.objectContaining({ ip_key: "198.51.100.0/24" })]);
+    // El pedido desde otra red no invalida el último link de 192.0.2.0/24 (vence solo).
+    expect(rows.filter((r) => r.used_at === null).map((r) => r.ip_key)).toEqual(["192.0.2.0/24", "198.51.100.0/24"]);
+  });
+
+  it("el techo por cuenta es alto (50/h): muchas redes ajenas no dejan sin link a la persona", async () => {
+    const t = await newTenant();
+    const u = await newUser(t);
+    for (let i = 0; i < 25; i++) {
+      await db.query(`INSERT INTO password_resets (token_hash, user_id, ip_key, expires_at) VALUES ($1,$2,$3, now() + interval '30 minutes')`, [
+        util.sha256Hex(util.randomToken()),
+        u.id,
+        `10.${i}.0.0/24`,
+      ]);
+    }
+    await app.inject({ method: "POST", url: "/v1/auth/password/forgot", payload: { email: u.email }, remoteAddress: "198.51.100.44" });
+    expect(await db.query(`SELECT 1 FROM password_resets WHERE user_id = $1 AND ip_key = '198.51.100.0/24' AND used_at IS NULL`, [u.id])).toHaveLength(1);
+    expect(await db.query(`SELECT 1 FROM password_resets WHERE user_id = $1 AND used_at IS NULL`, [u.id])).toHaveLength(26);
   });
 });
 
@@ -161,9 +177,39 @@ describe("bloqueo de ingresos", () => {
     for (let i = 0; i < 10; i++) expect((await login(u.email, "mala-contraseña-x", `203.0.113.${i + 1}`)).statusCode).toBe(401);
     expect((await login(u.email, PW, "203.0.113.200")).statusCode).toBe(429);
     expect((await login(u.email, PW, "198.51.100.5")).statusCode).toBe(200);
-    // Techo global de la cuenta.
-    await db.query(`UPDATE login_attempts SET n = 100, window_start = now() WHERE user_id = $1 AND scope = 'account'`, [u.id]);
+    // Techo global de la cuenta: bloquea las redes desconocidas, no la red desde la que ya ingresó.
+    await db.query(`UPDATE login_attempts SET n = 50, window_start = now() WHERE user_id = $1 AND scope = 'account'`, [u.id]);
     expect((await login(u.email, PW, "192.0.2.50")).statusCode).toBe(429);
+    expect((await login(u.email, PW, "198.51.100.77")).statusCode).toBe(200);
+    // La red conocida sigue con su propio cupo.
+    for (let i = 0; i < 10; i++) await login(u.email, "mala-contraseña-x", "198.51.100.78");
+    expect((await login(u.email, PW, "198.51.100.79")).statusCode).toBe(429);
+  });
+
+  it("el techo global solo cuenta fallos: ingresos y re-autenticaciones correctos no lo acercan", async () => {
+    const t = await newTenant();
+    const u = await newUser(t);
+    const acct = async () => (await db.one<any>(`SELECT n FROM login_attempts WHERE user_id = $1 AND scope = 'account'`, [u.id]))?.n ?? 0;
+    for (let i = 0; i < 3; i++) expect((await login(u.email, PW, `203.0.113.${i + 1}`)).statusCode).toBe(200);
+    expect(await acct()).toBe(0);
+    await login(u.email, "mala-contraseña-x", "203.0.113.9");
+    expect(await acct()).toBe(1);
+    const cookies = { cs_session: await newSession(u.id, t, { authenticatedAgo: "2 hours" }) };
+    expect((await app.inject({ method: "POST", url: "/v1/me/2fa/setup", cookies, payload: { password: PW }, remoteAddress: "203.0.113.1" })).statusCode).toBe(200);
+    expect(await acct()).toBe(1);
+    // Con 2FA, la contraseña correcta ya devuelve el intento (antes del código).
+    const secret = totp.generateTotpSecret();
+    await db.query(`UPDATE users SET totp_secret_enc = $2, totp_enabled_at = now() WHERE id = $1`, [u.id, util.encrypt(secret)]);
+    expect((await login(u.email, PW, "192.0.2.80")).json().twoFactorRequired).toBe(true);
+    expect(await acct()).toBe(1);
+    // Una red desconocida con la cuenta en el techo queda bloqueada; el titular, desde una red conocida, no.
+    await db.query(`UPDATE login_attempts SET n = 50, window_start = now() WHERE user_id = $1 AND scope = 'account'`, [u.id]);
+    expect((await login(u.email, PW, "192.0.2.81")).statusCode).toBe(429);
+    expect(await acct()).toBe(50);
+    expect((await login(u.email, PW, "203.0.113.2")).json().twoFactorRequired).toBe(true);
+    // Una red conocida hace más de 30 días ya no lo es.
+    await db.query(`UPDATE login_attempts SET window_start = now() - interval '31 days' WHERE user_id = $1 AND scope = 'ok:203.0.113.0/24'`, [u.id]);
+    expect((await login(u.email, PW, "203.0.113.3")).statusCode).toBe(429);
   });
 
   it("un desafío de 2FA ya abierto no lo bloquean los fallos de contraseña desde otras redes", async () => {
@@ -304,6 +350,14 @@ describe("política de contraseñas", () => {
     expect(weakPasswordReason("ana.perez-2026", "ana.perez@acme.com")).toBe("email");
     expect(weakPasswordReason("ana.perez@acme.com", "ana.perez@acme.com")).toBe("email");
     expect(weakPasswordReason("una-clave-segura-123", "ana@acme.com")).toBeNull();
+    // Parte local corta: contenerla no alcanza; sí armarse con ella (al derecho, al revés o repetida). Sin "+etiqueta".
+    expect(weakPasswordReason("bananas-in-pyjamas-7", "ana@acme.com")).toBeNull();
+    expect(weakPasswordReason("Roberto2024!!", "roberto@acme.com")).toBe("email");
+    expect(weakPasswordReason("bobbobbob12", "bob+x@acme.com")).toBe("email");
+    expect(weakPasswordReason("Bob-2024-!!!", "bob+news@acme.com")).toBe("email");
+    expect(weakPasswordReason("ANA-ana-2024", "ana@acme.com")).toBe("email");
+    expect(weakPasswordReason("trebor-2024-!!", "robert+tag@acme.com")).toBe("email");
+    expect(weakPasswordReason("lisa-montaña-1987", "lis@acme.com")).toBeNull();
     const signup = await app.inject({ method: "POST", url: "/v1/auth/signup", payload: { name: "X", email: "nuevo-x@acme.test", password: "iloveyou123", organization: "Org X" } });
     expect(signup.statusCode).toBe(400);
     expect(signup.json().error.code).toBe("weak_password");

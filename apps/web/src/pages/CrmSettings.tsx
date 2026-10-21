@@ -1,4 +1,5 @@
 // Ajustes → CRM y ERP: conexiones (OAuth o token), mapeos registro → plantilla, envío desde un registro y actividad.
+import { useTitle } from "../lib/white-label";
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
@@ -69,6 +70,7 @@ function statusPlaceholder(provider: CrmProvider | undefined, t: (k: string) => 
 
 export function CrmSettingsPage() {
   const t = useCrmText();
+  useTitle(t("title"));
   const { locale, t: tc } = useI18n();
   // Conexiones, mapeos y reintentos piden además envelopes:view_all en la API (enviar desde un registro, no).
   const canEdit = useAccess().can("envelopes:view_all");

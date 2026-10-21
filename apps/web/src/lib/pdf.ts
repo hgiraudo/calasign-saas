@@ -1,13 +1,42 @@
 // pdf.js: carga y render de páginas en el navegador.
-import * as pdfjsLib from "pdfjs-dist";
+// Build "legacy" de pdf.js: la normal usa Promise.withResolvers y otras APIs recientes que no existen en Safari < 17.4
+// (iOS 16) ni en Chrome < 119, donde ningún PDF se mostraba. Se carga aparte (import dinámico): solo la bajan las
+// pantallas que muestran un PDF, no la consola ni las páginas públicas sin documento.
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { fetchArrayBuffer } from "./api";
-
-pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
+import { reloadAfterDeploy } from "./deploy-reload";
 
 export type { PDFDocumentProxy };
-export { TextLayer } from "pdfjs-dist";
+export type PdfJs = typeof import("pdfjs-dist");
+
+let lib: Promise<PdfJs> | null = null;
+/** El módulo de pdf.js (TextLayer, getDocument…), cargado una sola vez. */
+export function pdfjs(): Promise<PdfJs> {
+  if (!lib) {
+    lib = Promise.all([
+      import("pdfjs-dist/legacy/build/pdf.mjs") as Promise<PdfJs>,
+      import("pdfjs-dist/legacy/build/pdf.worker.min.mjs?url"),
+    ]).then(([m, worker]) => {
+      m.GlobalWorkerOptions.workerSrc = worker.default;
+      return m;
+    });
+    // Un fallo (red, deploy) no queda guardado: el próximo intento vuelve a pedirlo.
+    lib.catch(() => {
+      lib = null;
+    });
+  }
+  return lib;
+}
+
+/**
+ * El worker de pdf.js no arrancó: en una pestaña abierta antes de un deploy, su archivo con hash ya no existe (404) y
+ * pdf.js cae al "fake worker", que también falla. Se recarga una vez (como con los trozos lazy) para tomar la versión
+ * nueva; si no se recarga, el error se muestra.
+ */
+function isWorkerSetupError(e: unknown): boolean {
+  // pdf.js 4: si el Worker no carga, prueba el "fake worker" (import del mismo archivo) y rechaza con este texto.
+  return /Setting up fake worker failed/i.test(String((e as Error)?.message ?? e ?? ""));
+}
 
 const cache = new Map<string, Promise<PDFDocumentProxy>>();
 /** Vistas que usan cada PDF ahora: uno sin uso se conserva un rato (volver a abrirlo es instantáneo) pero no para siempre. */
@@ -53,16 +82,22 @@ export function releasePdf(url: string) {
 function loadPdf(url: string): Promise<PDFDocumentProxy> {
   let p = cache.get(url);
   if (!p) {
-    p = fetchArrayBuffer(url).then(
-      (data) => pdfjsLib.getDocument({
-        data: new Uint8Array(data),
-        isEvalSupported: false,
-        // Fuentes estándar y CMaps servidos por la propia app (ver vite.config.ts).
-        standardFontDataUrl: "/pdfjs/standard_fonts/",
-        cMapUrl: "/pdfjs/cmaps/",
-        cMapPacked: true,
-      }).promise,
-    );
+    p = Promise.all([fetchArrayBuffer(url), pdfjs()])
+      .then(([data, m]) =>
+        m.getDocument({
+          data: new Uint8Array(data),
+          isEvalSupported: false,
+          // Fuentes estándar y CMaps servidos por la propia app (ver vite.config.ts).
+          standardFontDataUrl: "/pdfjs/standard_fonts/",
+          cMapUrl: "/pdfjs/cmaps/",
+          cMapPacked: true,
+        }).promise,
+      )
+      .catch((e: unknown) => {
+        // Mientras se recarga la página no se muestra el error (la promesa queda pendiente).
+        if (isWorkerSetupError(e) && reloadAfterDeploy()) return new Promise<never>(() => undefined);
+        throw e;
+      });
     // Solo si sigue siendo la entrada del caché: una carga desalojada que falla después no borra la que la reemplazó
     // (quedaba fuera del caché, sin destroy() al liberarse, y el PDF se volvía a bajar en la próxima vista).
     const mine = p;

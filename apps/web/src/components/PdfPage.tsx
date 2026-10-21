@@ -2,7 +2,7 @@
 // La capa usa coordenadas en % (0..1 * 100) desde arriba a la izquierda.
 import { useEffect, useRef, useState, type PointerEvent as RPointerEvent, type ReactNode, type Ref } from "react";
 import type { PageSize } from "@calasign/shared";
-import { TextLayer, type PDFDocumentProxy } from "../lib/pdf";
+import { pdfjs, type PdfJs, type PDFDocumentProxy } from "../lib/pdf";
 
 /**
  * Solo se liberan canvas en documentos de más páginas que esto. La impresión del navegador saca una foto de la página
@@ -11,6 +11,58 @@ import { TextLayer, type PDFDocumentProxy } from "../lib/pdf";
  * que no se libera nada y se imprimen completos; en los largos se prioriza no agotar la memoria del móvil.
  */
 const RELEASE_MIN_PAGES = 20;
+
+/**
+ * Tope de píxeles de un canvas: con dpr 2.5 una página grande (A3, plano) pasaba los límites del navegador (Safari no
+ * dibuja un canvas de más de ~16 MP y lo deja en blanco). Se baja la escala para que el área quede por debajo.
+ */
+const MAX_CANVAS_PIXELS = 16_000_000;
+/**
+ * Presupuesto de píxeles de todos los canvas vivos (todas las páginas de todos los documentos abiertos): varios
+ * documentos cortos (que no liberan por distancia) en un móvil agotaban la memoria de canvas igual que uno largo.
+ */
+const CANVAS_BUDGET =
+  typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches ? 60_000_000 : 150_000_000;
+
+interface CanvasSlot {
+  /** Píxeles del canvas dibujado (0: liberado). */
+  area: number;
+  /** Cerca de la pantalla ahora (no se libera). */
+  near: boolean;
+  /** Última vez que estuvo cerca de la pantalla. */
+  lastNear: number;
+  /** Libera el canvas de esa página. */
+  evict: () => void;
+}
+const slots = new Set<CanvasSlot>();
+let printing = 0;
+
+/** Registra el canvas dibujado y, si se pasa del presupuesto, libera los que hace más que no están cerca de la pantalla. */
+function reserveCanvas(slot: CanvasSlot, area: number) {
+  slot.area = area;
+  slots.add(slot);
+  if (printing) return;
+  let total = 0;
+  for (const s of slots) total += s.area;
+  if (total <= CANVAS_BUDGET) return;
+  const victims = [...slots].filter((s) => s !== slot && !s.near && s.area > 0).sort((a, b) => a.lastNear - b.lastNear);
+  for (const v of victims) {
+    if (total <= CANVAS_BUDGET) break;
+    total -= v.area;
+    v.area = 0;
+    v.evict();
+  }
+}
+
+/** Mientras se imprime no se libera nada por presupuesto (la impresión necesita todas las páginas dibujadas). */
+function printingPages(delta: number) {
+  printing = Math.max(0, printing + delta);
+}
+
+function releaseCanvas(slot: CanvasSlot) {
+  slot.area = 0;
+  slots.delete(slot);
+}
 
 interface Props {
   pdf: PDFDocumentProxy | null;
@@ -36,6 +88,11 @@ export function PdfPage({ pdf, pageIndex, size, overlay, onOverlayPointerDown, o
   /** El documento es largo: hay presión de memoria y vale la pena liberar los canvas lejanos (ver RELEASE_MIN_PAGES). */
   const releasableRef = useRef(false);
   releasableRef.current = (pdf?.numPages ?? 0) > RELEASE_MIN_PAGES;
+  const slotRef = useRef<CanvasSlot | null>(null);
+  if (!slotRef.current) slotRef.current = { area: 0, near: false, lastNear: 0, evict: () => undefined };
+  const slot = slotRef.current;
+  slot.evict = () => setVisible(false);
+  useEffect(() => () => releaseCanvas(slot), [slot]);
 
   // Ancho real del contenedor.
   useEffect(() => {
@@ -65,6 +122,7 @@ export function PdfPage({ pdf, pageIndex, size, overlay, onOverlayPointerDown, o
     const el = wrapRef.current;
     if (!el) return;
     if (typeof IntersectionObserver === "undefined") {
+      slot.near = true;
       setVisible(true);
       return;
     }
@@ -80,7 +138,11 @@ export function PdfPage({ pdf, pageIndex, size, overlay, onOverlayPointerDown, o
       }
     };
     const near = observer((entries) => {
-      if (entries.some((e) => e.isIntersecting)) setVisible(true);
+      const last = entries[entries.length - 1];
+      if (!last) return;
+      slot.near = last.isIntersecting;
+      slot.lastNear = performance.now();
+      if (last.isIntersecting) setVisible(true);
     }, "100% 0px");
     const far = observer((entries) => {
       const last = entries[entries.length - 1];
@@ -89,10 +151,12 @@ export function PdfPage({ pdf, pageIndex, size, overlay, onOverlayPointerDown, o
     near.observe(el);
     far.observe(el);
     const onBeforePrint = () => {
+      if (!printing) printingPages(1);
       printing = true;
       setVisible(true);
     };
     const onAfterPrint = () => {
+      if (printing) printingPages(-1);
       printing = false;
       // Volver a observar entrega el estado actual: las páginas lejanas que se dibujaron para imprimir se liberan.
       far.unobserve(el);
@@ -101,12 +165,13 @@ export function PdfPage({ pdf, pageIndex, size, overlay, onOverlayPointerDown, o
     window.addEventListener("beforeprint", onBeforePrint);
     window.addEventListener("afterprint", onAfterPrint);
     return () => {
+      if (printing) printingPages(-1);
       near.disconnect();
       far.disconnect();
       window.removeEventListener("beforeprint", onBeforePrint);
       window.removeEventListener("afterprint", onAfterPrint);
     };
-  }, []);
+  }, [slot]);
 
   // Otro documento (cambió la URL): hasta que se dibuje, se muestra el marcador y no la página del anterior.
   useEffect(() => {
@@ -132,20 +197,24 @@ export function PdfPage({ pdf, pageIndex, size, overlay, onOverlayPointerDown, o
           .then((page) => page.cleanup())
           .catch(() => undefined);
       }
+      releaseCanvas(slot);
       setRendered(false);
       return;
     }
     if (!pdf || widthPx < 10) return;
     let cancelled = false;
     let task: { cancel: () => void; promise: Promise<unknown> } | null = null;
-    let text: TextLayer | null = null;
+    let text: InstanceType<PdfJs["TextLayer"]> | null = null;
     const timer = window.setTimeout(async () => {
       try {
         const page = await pdf.getPage(pageIndex + 1);
         if (cancelled) return;
         const base = page.getViewport({ scale: 1 });
         const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
-        const viewport = page.getViewport({ scale: (widthPx / base.width) * dpr });
+        let scale = (widthPx / base.width) * dpr;
+        const area = base.width * base.height * scale * scale;
+        if (area > MAX_CANVAS_PIXELS) scale *= Math.sqrt(MAX_CANVAS_PIXELS / area);
+        const viewport = page.getViewport({ scale });
         const canvas = canvasRef.current;
         if (!canvas) return;
         const ctx = canvas.getContext("2d");
@@ -153,6 +222,7 @@ export function PdfPage({ pdf, pageIndex, size, overlay, onOverlayPointerDown, o
         canvas.width = Math.floor(viewport.width);
         canvas.height = Math.floor(viewport.height);
         drawnRef.current = true;
+        reserveCanvas(slot, canvas.width * canvas.height);
         task = page.render({ canvasContext: ctx, viewport });
         await task.promise;
         if (cancelled) return;
@@ -164,6 +234,8 @@ export function PdfPage({ pdf, pageIndex, size, overlay, onOverlayPointerDown, o
         const cssViewport = page.getViewport({ scale: widthPx / base.width });
         box.replaceChildren();
         box.style.setProperty("--scale-factor", String(cssViewport.scale));
+        const { TextLayer } = await pdfjs();
+        if (cancelled) return;
         text = new TextLayer({ textContentSource: page.streamTextContent(), container: box, viewport: cssViewport });
         await text.render();
       } catch (e) {
@@ -177,7 +249,7 @@ export function PdfPage({ pdf, pageIndex, size, overlay, onOverlayPointerDown, o
       task?.cancel();
       text?.cancel();
     };
-  }, [pdf, pageIndex, widthPx, visible]);
+  }, [pdf, pageIndex, widthPx, visible, slot]);
 
   return (
     <div

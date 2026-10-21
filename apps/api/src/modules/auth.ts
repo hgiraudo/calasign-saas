@@ -7,7 +7,7 @@ import { config } from "../config";
 import { cellForSignup, registerTenantCell } from "./data/cells";
 import { authenticate, clearSessionCookie, clientInfo, sessionCookieToken, type Services } from "./context";
 import { assertCanManageApiKey, createTwoFactorChallenge } from "./teams";
-import { clearLoginAttempts, takeLoginAttempt } from "./login-attempts";
+import { clearLoginAttempts, passwordAccepted, takeLoginAttempt } from "./login-attempts";
 import { openPasswordSession } from "./sessions";
 import { enqueueSecurityNotice } from "./security-notices";
 import { assertPasswordStrength } from "../lib/password-policy";
@@ -22,7 +22,7 @@ import { actingPerson, credentialsCreatedBy } from "./member-access";
 
 /** "Olvidé mi contraseña": pedidos por hora por (cuenta, red del cliente) y techo por cuenta desde cualquier red. */
 const RESETS_PER_NETWORK_HOUR = 3;
-const RESETS_PER_ACCOUNT_HOUR = 20;
+const RESETS_PER_ACCOUNT_HOUR = 50;
 
 const ForgotPasswordInput = z.object({ email: z.string().trim().toLowerCase().email().max(320) });
 const ResetPasswordInput = z.object({
@@ -182,16 +182,21 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
     }
     const m = { tenant_id: pick.tenantId };
     const challenge = await createTwoFactorChallenge(s.db, u.id, m.tenant_id, null, { rememberMe: input.rememberMe });
-    // Con segundo factor, el contador se vacía recién cuando el código es correcto.
-    if (challenge) return challenge;
+    // Con segundo factor, el cupo de la red se vacía recién cuando el código es correcto (el techo global de la cuenta
+    // solo cuenta fallos: el intento se devuelve ya).
+    if (challenge) {
+      await passwordAccepted(s.db, u.id);
+      return challenge;
+    }
     await clearLoginAttempts(s.db, u.id, ip);
     await createSession(reply, req, u.id, m.tenant_id, { rememberMe: input.rememberMe });
     return me(u.id, m.tenant_id);
   });
 
   // ───────── Recuperación de contraseña ─────────
-  // Siempre 202 (no revela si el correo existe). Límite por IP (ruta), por (cuenta, red) (3 pedidos por hora) y un techo
-  // por cuenta (20 por hora, contra el bombardeo de correos). Pedidos desde otra red no agotan el cupo de la persona.
+  // Siempre 202 (no revela si el correo existe). Límite por IP (ruta), por (cuenta, red) (3 pedidos por hora, el límite
+  // principal) y un techo alto por cuenta (50 por hora, contra el bombardeo de correos desde muchas redes).
+  // Pedidos desde otra red no agotan el cupo de la persona ni invalidan sus links.
 
   app.post("/v1/auth/password/forgot", { config: { rateLimit: { max: 5, timeWindow: "15 minutes" } } }, async (req, reply) => {
     const input = ForgotPasswordInput.parse(req.body);
@@ -212,8 +217,10 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
           // El tope es por (cuenta, red): un tercero que pide links para el correo de otra persona agota solo su cupo,
           // no el de ella (antes, 3 pedidos ajenos dejaban sin correo el pedido legítimo durante una hora).
           if ((recent?.fromNetwork ?? 0) >= RESETS_PER_NETWORK_HOUR || (recent?.total ?? 0) >= RESETS_PER_ACCOUNT_HOUR) return;
-          // Un pedido nuevo reemplaza a los anteriores: invalida los links que no se usaron.
-          await t.query(`UPDATE password_resets SET used_at = now() WHERE user_id = $1 AND used_at IS NULL`, [u.id]);
+          // Un pedido nuevo reemplaza a los anteriores desde la misma red: invalida esos links sin usar. Los pedidos desde
+          // otras redes vencen solos (30 minutos): si no, un tercero que pide links para el correo de otra persona
+          // invalidaba el que ella acababa de recibir.
+          await t.query(`UPDATE password_resets SET used_at = now() WHERE user_id = $1 AND used_at IS NULL AND ip_key IS NOT DISTINCT FROM $2`, [u.id, ipKey]);
           await t.query(`INSERT INTO password_resets (token_hash, user_id, ip, ip_key, expires_at) VALUES ($1,$2,$3,$4, now() + interval '30 minutes')`, [
             sha256Hex(token),
             u.id,

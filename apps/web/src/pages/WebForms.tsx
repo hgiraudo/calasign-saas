@@ -1,4 +1,5 @@
 // Formularios web públicos (Fase 4): listado, editor y detalle con link, código para embeber y sobres creados.
+import { useTitle } from "../lib/white-label";
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import type { EnvelopeStatus, TemplateDetail, TemplateSummary, WebForm } from "@calasign/shared";
@@ -319,6 +320,7 @@ function formSignerRoles<R extends { role: string; routingOrder: number }>(roles
 
 export function WebFormsPage() {
   const st = useScaleText();
+  useTitle(st("forms.title"));
   const nav = useNavigate();
   const [params] = useSearchParams();
   const [items, setItems] = useState<WebForm[] | null>(null);
@@ -412,6 +414,7 @@ export function WebFormDetailPage() {
   const nav = useNavigate();
   const [form, setForm] = useState<WebForm | null>(null);
   const [envs, setEnvs] = useState<FormEnvelope[]>([]);
+  useTitle(form?.name);
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);

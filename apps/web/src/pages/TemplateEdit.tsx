@@ -1,4 +1,5 @@
 // Editor de plantilla: datos, documentos, roles y campos (mismo editor que los sobres, en modo roles).
+import { useTitle } from "../lib/white-label";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import type { Document, RecipientRole, TemplateDetail } from "@calasign/shared";
@@ -54,6 +55,7 @@ export function TemplateEditPage() {
   const [detail, setDetail] = useState<TemplateDetail | null>(null);
   const [step, setStep] = useState<Step>("details");
   const [info, setInfo] = useState({ name: "", description: "", subject: "", message: "", locale: "es" });
+  useTitle(info.name || detail?.template.name);
   const [roles, setRoles] = useState<DraftRole[]>([]);
   const [fields, setFields] = useState<DraftField[]>([]);
   const [dirty, setDirty] = useState({ info: false, roles: false, fields: false });

@@ -1,5 +1,6 @@
 // Ajustes → Cifrado con tu clave (BYOK): política a agregar en la clave KMS del cliente, activación con prueba,
 // estado y desactivación.
+import { useTitle } from "../lib/white-label";
 import { useEffect, useState, type FormEvent } from "react";
 import type { ByokSettings, ByokTestResult } from "@calasign/shared";
 import { api, errorText, HttpError } from "../lib/api";
@@ -11,6 +12,7 @@ const STATUS_BADGE = { none: "badge-draft", active: "badge-completed", failing: 
 
 export function ByokSettingsPage() {
   const dt = useDataText();
+  useTitle(dt("nav.byok"));
   const { locale } = useI18n();
   const [data, setData] = useState<ByokSettings | null>(null);
   const [arn, setArn] = useState("");

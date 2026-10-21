@@ -1,6 +1,6 @@
 // Política de contraseñas del personal (alta, restablecimiento y cuenta creada al aceptar una invitación): además del
 // mínimo de 10 caracteres del esquema compartido, se rechazan las contraseñas comunes (lista sin conexión) y las que
-// son o contienen la parte local del correo.
+// se arman con la parte local del correo (basedOnEmail).
 //
 // Lista: common-passwords.txt.gz, las entradas de 10 o más caracteres (en minúsculas, sin repetir) de SecLists
 // 100k-most-used-passwords-NCSC.txt (licencia MIT, ver common-passwords.LICENSE). Las más cortas ya las rechaza el mínimo.
@@ -44,12 +44,32 @@ const WEAK_BASES = new Set([
   "administrador",
 ]);
 
+/** Letras de una cadena (sin dígitos, símbolos ni espacios). */
+const lettersOf = (s: string) => s.replace(/[\d\W_]+/gu, "");
+
+/**
+ * ¿La contraseña (en minúsculas) es o se arma con la parte local del correo (sin el "+etiqueta")? Contenerla cuenta
+ * solo si la parte local tiene 5 o más caracteres (con una corta como "ana" se rechazaban contraseñas que nada tienen
+ * que ver, como "bananas-in-pyjamas-7"). Con cualquier largo, cuenta si sus letras son las de la parte local, al derecho
+ * o al revés, una o más veces ("Bob2024!", "bobbobbob12" con bob@).
+ */
+function basedOnEmail(p: string, email: string): boolean {
+  const full = email.toLowerCase().trim();
+  if (p === full) return true;
+  const local = (full.split("@")[0] ?? "").replace(/\+.*$/u, "");
+  if (local.length >= 5 && p.includes(local)) return true;
+  const core = lettersOf(p);
+  const localCore = lettersOf(local);
+  if (localCore.length < 2 || !core) return false;
+  const reversed = [...localCore].reverse().join("");
+  return [localCore, reversed].some((x) => core.length % x.length === 0 && x.repeat(core.length / x.length) === core);
+}
+
 /** Motivo por el que la contraseña es débil, o null. */
 export function weakPasswordReason(password: string, email?: string | null): "too_short" | "common" | "email" | null {
   if (password.length < 10) return "too_short";
   const p = password.toLowerCase();
-  const local = (email ?? "").split("@")[0]?.toLowerCase().trim() ?? "";
-  if (email && (p === email.toLowerCase().trim() || (local.length >= 3 && p.includes(local)))) return "email";
+  if (email && basedOnEmail(p, email)) return "email";
   if (commonPasswords().has(p)) return "common";
   // Un solo carácter repetido ("aaaaaaaaaa") o una palabra base con relleno de números y símbolos al final.
   if (/^(.)\1+$/u.test(p)) return "common";

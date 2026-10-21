@@ -49,7 +49,7 @@ import { authenticate, clientInfo, sessionAliveSql, sessionCookieToken, type Aut
 import { assertSessionAllowed } from "./identity/sso";
 import { assertInvitationCapacity, tenantPlan } from "./billing/plans";
 import { actingPerson, clearConsoleRemoval, recordConsoleRemoval, revokeMemberAccess } from "./member-access";
-import { clearLoginAttempts, clearTwoFactorAttempts, takeLoginAttempt, takeTwoFactorAttempt } from "./login-attempts";
+import { clearLoginAttempts, clearTwoFactorAttempts, passwordAccepted, takeLoginAttempt, takeTwoFactorAttempt } from "./login-attempts";
 import { assertRecentAuth, openPasswordSession } from "./sessions";
 import { enqueueSecurityNotice } from "./security-notices";
 import { assertPasswordStrength } from "../lib/password-policy";
@@ -676,6 +676,7 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     // Si entró con contraseña y tiene 2FA, falta el segundo factor: la invitación se acepta recién al verificarlo.
     // Si no, alguien con solo la contraseña sumaba la cuenta de la víctima a su propia organización.
     if (user && verifiedByPassword && user.totp_enabled_at) {
+      await passwordAccepted(s.db, user.id);
       return createTwoFactorChallenge(s.db, user.id, inv.tenant_id, inv.id);
     }
     // Sin segundo factor pendiente: el ingreso con contraseña terminó bien (con 2FA se vacía al verificar el código).

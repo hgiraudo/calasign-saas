@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTitle } from "../lib/white-label";
 import type { DevMailboxItem } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
 import { formatDateTime, useI18n } from "../lib/i18n";
@@ -6,6 +7,7 @@ import { ErrorBox, Spinner } from "../components/ui";
 
 export function DevMailboxPage() {
   const { t, locale } = useI18n();
+  useTitle(t("mailbox.title"));
   const [items, setItems] = useState<DevMailboxItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 

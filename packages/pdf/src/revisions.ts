@@ -12,6 +12,7 @@ import {
   PDFNumber,
   PDFObjectParser,
   PDFObjectStreamParser,
+  PDFPageLeaf,
   PDFRawStream,
   PDFRef,
   PDFStream,
@@ -75,42 +76,100 @@ class Canon {
    * entrar el /V que se quiere omitir) sino como el conjunto de sus hijos, cada uno sin /Parent, /Kids ni `omit` (y
    * con sus propios hijos, recursivamente): un widget nuevo colgado de un campo de firma existente cuenta, salvo que
    * `isEvidence` diga que es un widget de evidencia (los que pageFingerprints no compara).
+   *
+   * Cada campo padre se canoniza una sola vez por Canon (y por `omit`): todos los widgets de un campo comparten el mismo
+   * conjunto de hijos, y recalcularlo por widget era O(N²) (2000 hijos: casi un minuto en /v1/validate). Por eso
+   * `isEvidence` tiene que ser la misma función en todas las llamadas sobre un mismo Canon (pageFingerprints usa uno
+   * propio). El conjunto incluye al propio widget (también se compara aparte); con más de MAX_KIDS_PER_FIELD hijos se
+   * compara solo la lista de referencias.
    */
-  field(chain: PDFDict[], omit: ReadonlySet<string>, isEvidence: (kid: PDFDict) => boolean): string {
-    const own = new Set([...omit, "Parent"]);
-    const parent = new Set([...own, "Kids"]);
-    const inChain = new Set(chain);
-    return chain
-      .map((d, i) => (i === 0 ? this.dict(d, undefined, own) : this.dict(d, undefined, parent) + this.kids(d, parent, isEvidence, inChain, new Set(), 0)))
-      .join(">");
+  field(chain: PDFDict[], omit: ReadonlySet<string>, isEvidence: KidFilter): string {
+    const { own, parent } = this.omitSets(omit);
+    return chain.map((d, i) => (i === 0 ? this.dict(d, undefined, own) : this.parentDict(d, parent) + this.kids(d, parent, isEvidence))).join(">");
   }
 
-  /** Los hijos (/Kids) de un campo como conjunto; los de la cadena se comparan aparte y los de evidencia no cuentan. */
-  private kids(d: PDFDict, omit: ReadonlySet<string>, isEvidence: (kid: PDFDict) => boolean, inChain: Set<PDFDict>, seen: Set<PDFDict>, depth: number): string {
+  private derived = new Map<ReadonlySet<string>, { own: ReadonlySet<string>; parent: ReadonlySet<string> }>();
+  private parentMemo = new Map<ReadonlySet<string>, Map<PDFDict, string>>();
+  private kidsMemo = new Map<ReadonlySet<string>, Map<PDFDict, string>>();
+  private kidVisits = 0;
+
+  private omitSets(omit: ReadonlySet<string>) {
+    let v = this.derived.get(omit);
+    if (!v) {
+      const own = new Set([...omit, "Parent"]);
+      this.derived.set(omit, (v = { own, parent: new Set([...own, "Kids"]) }));
+    }
+    return v;
+  }
+
+  private static memoOf(m: Map<ReadonlySet<string>, Map<PDFDict, string>>, omit: ReadonlySet<string>): Map<PDFDict, string> {
+    let v = m.get(omit);
+    if (!v) m.set(omit, (v = new Map()));
+    return v;
+  }
+
+  private parentDict(d: PDFDict, omit: ReadonlySet<string>): string {
+    const memo = Canon.memoOf(this.parentMemo, omit);
+    let v = memo.get(d);
+    if (v === undefined) memo.set(d, (v = this.dict(d, undefined, omit)));
+    return v;
+  }
+
+  /** Los hijos (/Kids) de un campo como conjunto (un hash); los de evidencia no cuentan. Una vez por campo y `omit`. */
+  private kids(d: PDFDict, omit: ReadonlySet<string>, isEvidence: KidFilter): string {
+    const memo = Canon.memoOf(this.kidsMemo, omit);
+    let v = memo.get(d);
+    if (v === undefined) memo.set(d, (v = this.kidsOf(d, omit, isEvidence, new Set([d]), 0)));
+    return v;
+  }
+
+  private kidsOf(d: PDFDict, omit: ReadonlySet<string>, isEvidence: KidFilter, seen: Set<PDFDict>, depth: number): string {
     const raw = d.get(PDFName.of("Kids"));
     if (raw === undefined) return "";
     const arr = raw instanceof PDFRef ? this.ctx.lookup(raw) : raw;
     if (!(arr instanceof PDFArray)) return `{K:${this.of(raw)}}`;
     if (depth > 8) return "{K:deep}";
+    const items = arr.asArray();
+    this.spend(items.length);
+    if (items.length > MAX_KIDS_PER_FIELD) {
+      // Demasiados hijos para canonizarlos uno por uno: cuenta la lista de referencias (los que están en /Annots se
+      // comparan de todos modos uno por uno en pageFingerprints).
+      const refs = items.map((k) => (k instanceof PDFRef ? k.tag : k instanceof PDFDict ? this.dict(k, undefined, omit) : this.of(k)));
+      return `{K:many:${items.length}:${h(refs.join(","))}}`;
+    }
     const out: string[] = [];
-    for (const k of arr.asArray()) {
+    for (const k of items) {
       const kid = k instanceof PDFRef ? this.ctx.lookup(k) : k;
       if (!(kid instanceof PDFDict)) {
         out.push(this.of(k));
         continue;
       }
-      if (inChain.has(kid)) continue;
       if (seen.has(kid)) {
         out.push("cycle");
         continue;
       }
-      if (isEvidence(kid)) continue;
+      if (isEvidence(kid, k instanceof PDFRef ? k.tag : null)) continue;
       seen.add(kid);
-      out.push(this.dict(kid, undefined, omit) + this.kids(kid, omit, isEvidence, inChain, seen, depth + 1));
+      out.push(this.dict(kid, undefined, omit) + this.kidsOf(kid, omit, isEvidence, seen, depth + 1));
     }
-    return `{K:${out.sort().join(",")}}`;
+    return `{K:${h(out.sort().join(","))}}`;
+  }
+
+  /** Tope de hijos recorridos por Canon: más allá, no se puede afirmar nada (el llamador responde "content"). */
+  private spend(n: number) {
+    this.kidVisits += n;
+    if (this.kidVisits > MAX_KID_VISITS) throw new Error("demasiados widgets en los campos de firma");
   }
 }
+
+/** ¿Es un hijo de evidencia (no se compara)? `tag`: su referencia, si la tiene. */
+type KidFilter = (kid: PDFDict, tag: string | null) => boolean;
+/** Hijos de un campo que se canonizan uno por uno; con más, se compara la lista de referencias. */
+const MAX_KIDS_PER_FIELD = 500;
+/** Hijos recorridos (en total) al comparar los campos de firma de un documento. */
+const MAX_KID_VISITS = 100_000;
+/** Anotaciones (en total, en todas las páginas) de un documento que se comparan. */
+const MAX_ANNOTATIONS = 50_000;
 
 /** Subtipos de anotación (ISO 32000-2, 12.5.6). */
 const ANNOT_SUBTYPES = new Set([
@@ -138,11 +197,14 @@ function isAnnotation(d: PDFDict): boolean {
 const DENIED_FIELD_KEYS = ["A", "AA", "OC", "FS", "AF", "Contents", "Popup", "RichMediaContent"].map((k) => PDFName.of(k));
 /**
  * Un campo de firma vacío no está respaldado por ninguna firma: solo se saltea con estas claves (lista de inclusión) en
- * toda su cadena. /AP se admite aparte (emptyFieldSkippable).
+ * toda su cadena. /AP se admite aparte (emptyFieldSkippable). /DV (valor por defecto), /Q (alineación), /AS (estado de
+ * apariencia, que elige entre las de /AP, todas controladas) y /H (resaltado al hacer clic) las ponen Acrobat y otros
+ * editores en campos pre-creados y no dibujan nada en un widget que no se ve. Si la revisión posterior firma el campo
+ * (firma que verifica), del lado firmado no se aplica esta lista (ver laterSignatureWidgets).
  */
 const EMPTY_FIELD_ALLOWED_KEYS = new Set([
   "Type", "Subtype", "FT", "Rect", "F", "P", "T", "Ff", "DA", "MK", "Parent", "Kids", "StructParent", "TU", "NM", "M",
-  "Border", "BS", "DR", "Lock", "SV",
+  "Border", "BS", "DR", "Lock", "SV", "DV", "Q", "AS", "H",
 ]);
 /**
  * Del widget de un campo de firma (y de sus campos padre) no se comparan /Lock ni /SV (qué campos bloquear al firmar y
@@ -201,7 +263,8 @@ function zeroAreaRect(ctx: PDFContext, annot: PDFDict): boolean {
 }
 
 /**
- * Widget que no se ve: bandera Hidden (2), rectángulo de área cero, o NoView (32) sin Print (4) (con Print se imprime).
+ * Widget que no se ve: bandera Hidden (2), rectángulo de área cero, o NoView (32) sin Print (4) (con Print se imprime) ni
+ * ToggleNoView (256, que lo muestra al pasar el mouse o al seleccionarlo).
  * Solo esos cuentan como evidencia: un widget de firma visible puede dibujar cualquier cosa encima de la página (su
  * apariencia es un dibujo arbitrario), así que una firma posterior visible —aunque verifique, por ejemplo con un
  * certificado autofirmado— sí cambia lo que se ve.
@@ -209,11 +272,40 @@ function zeroAreaRect(ctx: PDFContext, annot: PDFDict): boolean {
 function isInvisibleWidget(ctx: PDFContext, annot: PDFDict): boolean {
   const flags = flagsOf(ctx, annot);
   if (flags & 2) return true;
-  if (flags & 32 && !(flags & 4)) return true;
+  if (flags & 32 && !(flags & 4) && !(flags & 256)) return true;
   return zeroAreaRect(ctx, annot);
 }
 
-/** ¿El stream (o cada stream de un diccionario de estados) no dibuja nada? Solo espacios tras decodificarlo. */
+const isPdfSpace = (c: number) => c === 0x20 || c === 0x09 || c === 0x0a || c === 0x0d || c === 0x0c || c === 0x00;
+const isPdfDelimiter = (c: number) => c === 0x28 || c === 0x29 || c === 0x3c || c === 0x3e || c === 0x5b || c === 0x5d || c === 0x7b || c === 0x7d || c === 0x2f || c === 0x25;
+
+/**
+ * ¿El contenido no dibuja nada? Solo espacios, comentarios ("% DSBlank", que deja Acrobat en los campos de firma vacíos)
+ * y operadores q/Q balanceados ("q Q"). Cualquier otro operador u operando cuenta como dibujo.
+ */
+export function blankContent(bytes: Uint8Array): boolean {
+  let depth = 0;
+  for (let i = 0; i < bytes.length; ) {
+    const c = bytes[i];
+    if (isPdfSpace(c)) {
+      i++;
+      continue;
+    }
+    if (c === 0x25) {
+      while (i < bytes.length && bytes[i] !== 0x0a && bytes[i] !== 0x0d) i++;
+      continue;
+    }
+    let j = i;
+    while (j < bytes.length && !isPdfSpace(bytes[j]) && !isPdfDelimiter(bytes[j])) j++;
+    if (j - i !== 1) return false;
+    if (c === 0x71) depth++;
+    else if (c !== 0x51 || --depth < 0) return false;
+    i = j;
+  }
+  return depth === 0;
+}
+
+/** ¿El stream (o cada stream de un diccionario de estados) no dibuja nada (blankContent tras decodificarlo)? */
 function drawsNothing(ctx: PDFContext, o: PDFObject | undefined, depth = 0): boolean {
   const v = o instanceof PDFRef ? ctx.lookup(o) : o;
   if (v instanceof PDFRawStream) {
@@ -223,9 +315,9 @@ function drawsNothing(ctx: PDFContext, o: PDFObject | undefined, depth = 0): boo
     } catch {
       return false;
     }
-    return bytes.every((c) => c === 0x20 || c === 0x09 || c === 0x0a || c === 0x0d || c === 0x0c || c === 0x00);
+    return blankContent(bytes);
   }
-  if (v instanceof PDFStream) return v.getContents().every((c) => c === 0x20 || c === 0x09 || c === 0x0a || c === 0x0d || c === 0x0c || c === 0x00);
+  if (v instanceof PDFStream) return blankContent(v.getContents());
   if (v instanceof PDFDict && depth === 0 && !(v.get(PDFName.of("Type")) || v.get(PDFName.of("Subtype")))) {
     return [...v.entries()].every(([, x]) => drawsNothing(ctx, x, 1));
   }
@@ -234,7 +326,8 @@ function drawsNothing(ctx: PDFContext, o: PDFObject | undefined, depth = 0): boo
 
 /**
  * Un campo de firma vacío se saltea solo si cada diccionario de su cadena tiene claves de EMPTY_FIELD_ALLOWED_KEYS y, si
- * tiene /AP, o sus apariencias no dibujan nada o el widget tiene área cero y la bandera Hidden.
+ * tiene /AP, o sus apariencias no dibujan nada (blankContent) o el widget tiene área cero (la apariencia se escala a
+ * su rectángulo: no se ve).
  */
 function emptyFieldSkippable(ctx: PDFContext, chain: PDFDict[]): boolean {
   for (const d of chain) {
@@ -247,7 +340,7 @@ function emptyFieldSkippable(ctx: PDFContext, chain: PDFDict[]): boolean {
   const widget = chain[0];
   const ap = widget.get(PDFName.of("AP"));
   if (ap === undefined) return true;
-  if (zeroAreaRect(ctx, widget) && flagsOf(ctx, widget) & 2) return true;
+  if (zeroAreaRect(ctx, widget)) return true;
   const apd = lookupDict(ctx, ap);
   if (!apd) return false;
   return [...apd.entries()].every(([, x]) => drawsNothing(ctx, x));
@@ -255,12 +348,20 @@ function emptyFieldSkippable(ctx: PDFContext, chain: PDFDict[]): boolean {
 
 /**
  * ¿pageFingerprints no compara este widget? Widgets invisibles, sin claves prohibidas en su cadena, de firmas posteriores
- * que verifican (únicos con su ByteRange) o de campos de firma vacíos que pasan emptyFieldSkippable.
+ * que verifican (únicos con su ByteRange) o de campos de firma vacíos que pasan emptyFieldSkippable. Con `signedLater`
+ * (el widget de la revisión firmada que en el documento completo es una firma posterior que verifica), un campo vacío
+ * se saltea sin la lista estricta: del otro lado también se saltea, con las mismas condiciones (invisible y sin claves
+ * prohibidas), así que lo que pre-creó el editor (/DV, una apariencia en blanco…) no lo vuelve "contenido".
  */
-function isEvidenceWidget(ctx: PDFContext, d: PDFDict, sig: SignatureField | null, evidence: Set<string>, widgets: Map<string, Set<unknown>>): boolean {
+function isEvidenceWidget(ctx: PDFContext, d: PDFDict, sig: SignatureField | null, evidence: Set<string>, widgets: Map<string, Set<unknown>>, signedLater = false): boolean {
   if (!sig || hasDeniedKeys(sig.chain) || !isInvisibleWidget(ctx, d)) return false;
-  if (sig.key && evidence.has(sig.key) && widgets.get(sig.key)?.size === 1) return true;
-  return sig.empty && emptyFieldSkippable(ctx, sig.chain);
+  if (laterSignature(sig, evidence, widgets)) return true;
+  return sig.empty && (signedLater || emptyFieldSkippable(ctx, sig.chain));
+}
+
+/** ¿Es el widget de una firma posterior que verifica (único widget con ese ByteRange)? */
+function laterSignature(sig: SignatureField, evidence: Set<string>, widgets: Map<string, Set<unknown>>): boolean {
+  return !!sig.key && evidence.has(sig.key) && widgets.get(sig.key)?.size === 1;
 }
 
 /**
@@ -414,23 +515,28 @@ function lookupDict(ctx: PDFContext, o: PDFObject | undefined): PDFDict | undefi
   return v instanceof PDFDict ? v : undefined;
 }
 
+interface PageAnnots {
+  node: PDFPageLeaf;
+  annots: { tag: string | null; d: PDFDict; sig: SignatureField | null }[];
+}
+
 /**
- * Huella de cada página: diccionario (con atributos heredados), contenido, recursos y anotaciones. No cuentan los widgets
- * invisibles y sin acciones (ni propias ni de su cadena de campos) de campos de firma vacíos o de firmas posteriores que
- * verifican (`evidence`). Cada uno de estos últimos tiene que ser el único widget con ese ByteRange, para que no se
- * pueda colgar una apariencia falsa del valor de una firma real. Un campo de firma vacío que no se ve se omite en las
- * dos revisiones: si una revisión posterior lo firma (lo más común con varios firmantes) deja de estar vacío y pasa a
- * ser evidencia; si lo vuelve visible o le agrega una acción, cuenta en la revisión posterior y no en la firmada.
+ * Anotaciones de cada página (con su campo de firma, si lo son) y los widgets de cada ByteRange. Con más de
+ * MAX_ANNOTATIONS anotaciones no se compara (error: el llamador responde "content").
  */
-function pageFingerprints(doc: PDFDocument, evidence: Set<string>): string[] {
+function collectAnnots(doc: PDFDocument): { pages: PageAnnots[]; widgets: Map<string, Set<unknown>> } {
   const ctx = doc.context;
-  const canon = new Canon(ctx);
+  let total = 0;
   const pages = doc.getPages().map((p) => {
-    const annots = (lookupArray(ctx, p.node.get(PDFName.of("Annots"))) ?? []).map((a) => {
+    const raw = lookupArray(ctx, p.node.get(PDFName.of("Annots"))) ?? [];
+    total += raw.length;
+    if (total > MAX_ANNOTATIONS) throw new Error("demasiadas anotaciones");
+    const annots: PageAnnots["annots"] = [];
+    for (const a of raw) {
       const d = lookupDict(ctx, a);
-      return { tag: a instanceof PDFRef ? a.tag : null, d, sig: d ? signatureField(ctx, d) : null };
-    });
-    return { node: p.node, annots: annots.filter((a): a is { tag: string | null; d: PDFDict; sig: SignatureField | null } => !!a.d) };
+      if (d) annots.push({ tag: a instanceof PDFRef ? a.tag : null, d, sig: signatureField(ctx, d) });
+    }
+    return { node: p.node, annots };
   });
   const widgets = new Map<string, Set<unknown>>();
   for (const p of pages) {
@@ -439,17 +545,53 @@ function pageFingerprints(doc: PDFDocument, evidence: Set<string>): string[] {
       if (key) widgets.set(key, (widgets.get(key) ?? new Set()).add(a.tag ?? a.d));
     }
   }
+  return { pages, widgets };
+}
+
+/** Referencias de los widgets del documento (completo) que son evidencia por ser firmas posteriores que verifican. */
+function laterSignatureWidgets(doc: PDFDocument, evidence: Set<string>): Set<string> {
+  const out = new Set<string>();
+  if (!evidence.size) return out;
+  const { pages, widgets } = collectAnnots(doc);
+  for (const { annots } of pages) {
+    for (const { tag, d, sig } of annots) {
+      if (tag && sig && laterSignature(sig, evidence, widgets) && isEvidenceWidget(doc.context, d, sig, evidence, widgets)) out.add(tag);
+    }
+  }
+  return out;
+}
+
+/**
+ * Huella de cada página: diccionario (con atributos heredados), contenido, recursos y anotaciones. No cuentan los widgets
+ * invisibles y sin acciones (ni propias ni de su cadena de campos) de campos de firma vacíos o de firmas posteriores que
+ * verifican (`evidence`). Cada uno de estos últimos tiene que ser el único widget con ese ByteRange, para que no se
+ * pueda colgar una apariencia falsa del valor de una firma real. Un campo de firma vacío que no se ve se omite en las
+ * dos revisiones: si una revisión posterior lo firma (lo más común con varios firmantes) deja de estar vacío y pasa a
+ * ser evidencia; si lo vuelve visible o le agrega una acción, cuenta en la revisión posterior y no en la firmada.
+ * `signedLater` (solo para la revisión firmada): widgets que en el documento completo son firmas posteriores que
+ * verifican (laterSignatureWidgets); vacíos, se saltean sin la lista estricta de emptyFieldSkippable.
+ */
+function pageFingerprints(doc: PDFDocument, evidence: Set<string>, signedLater: ReadonlySet<string> = new Set()): string[] {
+  const ctx = doc.context;
+  const canon = new Canon(ctx);
+  const { pages, widgets } = collectAnnots(doc);
+  // Una vez por hijo: todos los widgets de un campo preguntan por los mismos hijos.
+  const kidEvidence = new Map<PDFDict, boolean>();
+  const isEvidenceKid = (kid: PDFDict, tag: string | null) => {
+    let v = kidEvidence.get(kid);
+    if (v === undefined) kidEvidence.set(kid, (v = isEvidenceWidget(ctx, kid, signatureField(ctx, kid), evidence, widgets, !!tag && signedLater.has(tag))));
+    return v;
+  };
   return pages.map(({ node, annots }) => {
     const inherited = new Map(INHERITABLE.map((k) => [k, node.getInheritableAttribute(PDFName.of(k)) as PDFObject | undefined]));
     const visible: string[] = [];
-    const isEvidenceKid = (kid: PDFDict) => isEvidenceWidget(ctx, kid, signatureField(ctx, kid), evidence, widgets);
-    for (const { d, sig } of annots) {
+    for (const { tag, d, sig } of annots) {
       if (!sig) {
         visible.push(h(canon.dict(d)));
         continue;
       }
-      if (isEvidenceWidget(ctx, d, sig, evidence, widgets)) continue;
-      const later = !!sig.key && evidence.has(sig.key) && widgets.get(sig.key)?.size === 1;
+      if (isEvidenceWidget(ctx, d, sig, evidence, widgets, !!tag && signedLater.has(tag))) continue;
+      const later = laterSignature(sig, evidence, widgets);
       visible.push(h(canon.field(sig.chain, later ? LATER_SIGNATURE_OMIT : SIGNATURE_FIELD_OMIT, isEvidenceKid)));
     }
     visible.sort();
@@ -502,11 +644,16 @@ export async function changesAfterRevision(
       const [, , c, d] = k.split(",").map(Number);
       return c + d > end;
     }));
-    const a = pageFingerprints(signed, evidence);
     const docA = documentFingerprint(signed);
+    // La huella de lo firmado depende de qué widgets firma después cada lectura (pageFingerprints, `signedLater`).
+    const signedPages = new Map<string, string[]>();
     // Cada lectura posible del documento completo tiene que mostrar lo firmado (más evidencia).
     for (const start of viewerStarts(pdf)) {
       const full = await asViewerSees(pdf, end, loaded, start, rc);
+      const later = laterSignatureWidgets(full, evidence);
+      const laterKey = [...later].sort().join("|");
+      let a = signedPages.get(laterKey);
+      if (!a) signedPages.set(laterKey, (a = pageFingerprints(signed, evidence, later)));
       const b = pageFingerprints(full, evidence);
       const samePages = a.length === b.length && a.every((x, i) => x === b[i]);
       if (!samePages || docA !== documentFingerprint(full)) return "content";

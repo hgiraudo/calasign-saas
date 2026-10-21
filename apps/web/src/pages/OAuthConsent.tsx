@@ -1,5 +1,6 @@
 // /oauth/authorize — pantalla de consentimiento de OAuth 2.0 (authorization code + PKCE).
 // La app de terceros redirige acá; si no hay sesión, RequireAuth manda al login y vuelve con la misma query.
+import { useTitle } from "../lib/white-label";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import type { AuthorizeInfo, AuthorizeResult } from "@calasign/shared";
@@ -15,6 +16,7 @@ const PARAMS = ["response_type", "client_id", "redirect_uri", "scope", "state", 
 
 export function OAuthConsentPage() {
   const p = usePlatformText();
+  useTitle(p("consent.title"));
   const [search] = useSearchParams();
   const query = useMemo(() => {
     const q: Record<string, string> = {};

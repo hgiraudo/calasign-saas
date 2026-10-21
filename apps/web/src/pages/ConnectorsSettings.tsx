@@ -1,5 +1,6 @@
 // Ajustes → RR. HH. y contratos: conexiones (clave u OAuth) con BambooHR, HiBob, Factorial, Ironclad y Juro, flujos
 // registro → plantilla, envío desde un empleado o contrato (con búsqueda) y actividad.
+import { useTitle } from "../lib/white-label";
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
@@ -40,6 +41,7 @@ const STATUS_OK = (p: ConnectorProvider, objectType: string) => p === "bamboohr"
 
 export function ConnectorsSettingsPage() {
   const t = useConnText();
+  useTitle(t("title"));
   const { locale, t: tc } = useI18n();
   // Conexiones, flujos y reintentos piden además envelopes:view_all en la API (enviar desde un registro, no).
   const canEdit = useAccess().can("envelopes:view_all");

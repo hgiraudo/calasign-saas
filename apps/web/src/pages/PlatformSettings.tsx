@@ -1,4 +1,5 @@
 // Ajustes de plataforma: apps OAuth, avisos a canales (Slack, Teams, Discord…), Zapier/Make, almacenamiento en la nube y dominio propio.
+import { useTitle } from "../lib/white-label";
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
@@ -31,6 +32,7 @@ import { canManagePerms, PlanNotice, useAccess } from "../lib/access";
 
 function Page({ title, intro, children }: { title: string; intro: string; children: ReactNode }) {
   const p = usePlatformText();
+  useTitle(title);
   return (
     <div className="page narrow">
       <Link to="/app/settings" className="muted small">

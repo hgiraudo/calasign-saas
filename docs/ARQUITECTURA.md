@@ -336,14 +336,18 @@ Resultado de las rondas de revisión de código de octubre de 2026; cada una tie
   contraseña (solo SSO) solo tienen la segunda opción. Sin ninguna: 403 `reauth_required` (`details.password`);
   contraseña incorrecta: 403 `invalid_password`.
 - **Bloqueo de ingresos** (`login-attempts.ts`): 10 intentos de contraseña en 15 minutos por (cuenta, red /24 o /64)
-  bloquean esa red; 100 por hora desde cualquier red bloquean la cuenta (contra la prueba distribuida). Los fallos
-  desde otra red no bloquean a la persona. Los códigos del segundo paso tienen su propio cupo (10 en 15 minutos por
-  cuenta, además de 5 por desafío): un desafío que ya pasó la contraseña no lo cortan los fallos de contraseña de
-  terceros. Aceptar una invitación sin contraseña no cuenta un intento. "Olvidé mi contraseña" tiene tope por
-  (cuenta, red) (3 por hora) y un techo por cuenta (20 por hora); cada pedido nuevo invalida los links anteriores.
+  bloquean esa red; 50 fallos por hora desde cualquier red bloquean la cuenta para las redes desconocidas (contra la
+  prueba distribuida). Solo cuentan los fallos (un ingreso o una re-autenticación correctos devuelven el intento), y
+  las redes desde las que la cuenta ingresó bien en los últimos 30 días no quedan bloqueadas por ese techo (siguen con
+  su cupo por red). Los fallos desde otra red no bloquean a la persona. Los códigos del segundo paso tienen su propio
+  cupo (10 en 15 minutos por cuenta, además de 5 por desafío): un desafío que ya pasó la contraseña no lo cortan los
+  fallos de contraseña de terceros. Aceptar una invitación sin contraseña no cuenta un intento. "Olvidé mi contraseña"
+  tiene tope por (cuenta, red) (3 por hora) y un techo alto por cuenta (50 por hora); un pedido nuevo invalida los
+  links anteriores pedidos desde la misma red (los de otras redes vencen solos a los 30 minutos).
 - **Contraseñas**: además del mínimo de 10 caracteres, el alta, el restablecimiento y la cuenta creada al aceptar una
   invitación rechazan (400 `weak_password`, `details.reason`) las contraseñas comunes (lista sin conexión
-  `apps/api/src/lib/common-passwords.txt.gz`, de SecLists, MIT) y las que son o contienen la parte local del correo.
+  `apps/api/src/lib/common-passwords.txt.gz`, de SecLists, MIT) y las basadas en la parte local del correo (sin la
+  "+etiqueta"): contenerla, si tiene 5 o más caracteres, o tener sus mismas letras (al derecho, al revés o repetidas).
 - **Avisos de seguridad**: cambiar la contraseña (restablecerla), activar o desactivar la 2FA y regenerar los códigos de
   recuperación mandan un correo a la cuenta (con la fecha y la red enmascarada), con la marca de la plataforma, por la
   cola `notify` (respeta la supresión por rebote).

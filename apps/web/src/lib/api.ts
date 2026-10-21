@@ -95,7 +95,62 @@ interface RequestOptions {
   form?: FormData;
   headers?: Record<string, string>;
   signal?: AbortSignal;
+  /**
+   * Tope en ms para la respuesta completa (encabezados y cuerpo). Por defecto 30 s en lecturas (GET); las escrituras no
+   * tienen tope salvo que se pida (algunas tardan legítimamente: IA, subidas, envíos masivos). null: sin tope.
+   */
+  timeoutMs?: number | null;
 }
+
+/** Tope por defecto de una lectura JSON. */
+const GET_TIMEOUT_MS = 30_000;
+/** Una descarga (PDF) que no recibe nada durante este tiempo se corta. */
+const STALL_TIMEOUT_MS = 30_000;
+
+export function timeoutError(): HttpError {
+  return new HttpError(0, "timeout", "El servidor tardó demasiado en responder. Revisá tu conexión y volvé a intentar.");
+}
+
+/**
+ * Señal que se aborta con la de quien llama o cuando vence el tope (AbortSignal.any/timeout no existen en Safari viejo).
+ * `timedOut()` distingue un tope vencido (error "timeout") de un aborto pedido por quien llama (se propaga tal cual).
+ */
+function deadline(outer: AbortSignal | undefined, ms: number | null) {
+  const ctrl = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let expired = false;
+  const onOuter = () => ctrl.abort();
+  if (outer) {
+    if (outer.aborted) ctrl.abort();
+    else outer.addEventListener("abort", onOuter, { once: true });
+  }
+  const arm = () => {
+    if (ms == null) return;
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      expired = true;
+      ctrl.abort();
+    }, ms);
+  };
+  arm();
+  return {
+    signal: ctrl.signal,
+    /** Vuelve a empezar la cuenta (hubo progreso). */
+    touch: arm,
+    timedOut: () => expired,
+    done: () => {
+      clearTimeout(timer);
+      outer?.removeEventListener("abort", onOuter);
+    },
+  };
+}
+
+/** Un pedido idempotente que falló por red (no por tope ni por aborto) se repite una vez, tras una pausa corta. */
+function isRetryableNetworkError(e: unknown): boolean {
+  return e instanceof HttpError && e.code === "network_error";
+}
+const RETRY_DELAY_MS = 700;
+const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** Error de red (no el TypeError del navegador, "Failed to fetch", en inglés en cualquier idioma); un aborto se propaga. */
 function networkError(e: unknown): never {
@@ -125,6 +180,20 @@ function assertSafePath(path: string) {
 
 export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   assertSafePath(path);
+  const method = opts.method ?? (opts.form || opts.body !== undefined ? "POST" : "GET");
+  if (method !== "GET") return apiOnce<T>(path, opts);
+  try {
+    return await apiOnce<T>(path, opts);
+  } catch (e) {
+    // Lecturas: una caída momentánea de la red (cambio de wifi a datos) se reintenta una vez sola. Las escrituras no
+    // (podrían haberse aplicado): quien llama ofrece reintentar a mano.
+    if (!isRetryableNetworkError(e) || opts.signal?.aborted) throw e;
+    await pause(RETRY_DELAY_MS);
+    return apiOnce<T>(path, opts);
+  }
+}
+
+async function apiOnce<T>(path: string, opts: RequestOptions): Promise<T> {
   const headers: Record<string, string> = { Accept: "application/json", ...(opts.headers ?? {}) };
   let body: BodyInit | undefined;
   if (opts.form) {
@@ -135,19 +204,28 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
   }
   let res: Response;
   const method = opts.method ?? (body ? "POST" : "GET");
+  const dl = deadline(opts.signal, opts.timeoutMs !== undefined ? opts.timeoutMs : method === "GET" ? GET_TIMEOUT_MS : null);
+  let text: string;
   try {
-    res = await fetch(path, {
-      method,
-      headers: withExpectedTenant(method, headers, path),
-      body,
-      credentials: "include",
-      signal: opts.signal,
-    });
+    try {
+      res = await fetch(path, {
+        method,
+        headers: withExpectedTenant(method, headers, path),
+        body,
+        credentials: "include",
+        signal: dl.signal,
+      });
+    } catch (e) {
+      networkError(e);
+    }
+    if (res.status === 204) return undefined as T;
+    text = await readBody(res.text());
   } catch (e) {
-    networkError(e);
+    if (dl.timedOut()) throw timeoutError();
+    throw e;
+  } finally {
+    dl.done();
   }
-  if (res.status === 204) return undefined as T;
-  const text = await readBody(res.text());
   let data: unknown = undefined;
   if (text) {
     try {
@@ -171,6 +249,10 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
 // español queda el texto de la API, que puede traer detalle, p. ej. el máximo de páginas).
 export const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
   network_error: { "pt-BR": "Não foi possível conectar ao servidor.", en: "Couldn't connect to the server." },
+  timeout: {
+    "pt-BR": "O servidor demorou demais para responder. Verifique sua conexão e tente de novo.",
+    en: "The server took too long to respond. Check your connection and try again.",
+  },
   provider_test_limit: {
     "pt-BR": "Muitos testes de conectores de assinatura na última hora: tente mais tarde.",
     en: "Too many signature connector tests in the last hour: try again later.",
@@ -828,12 +910,54 @@ export async function fetchResponse(path: string, init: RequestInit = {}): Promi
 }
 
 export async function fetchArrayBuffer(path: string): Promise<ArrayBuffer> {
-  const res = await fetchResponse(path).catch((e: unknown) => {
-    // Código propio (no http_N): así se traduce para firmantes en pt-BR o en (antes el texto quedaba en español).
-    if (e instanceof HttpError && e.status > 0) throw new HttpError(e.status, "download_failed", "No se pudo descargar el documento.");
+  try {
+    return await fetchArrayBufferOnce(path);
+  } catch (e) {
+    // GET idempotente: un corte de red momentáneo se reintenta una vez.
+    if (!isRetryableNetworkError(e)) throw e;
+    await pause(RETRY_DELAY_MS);
+    return fetchArrayBufferOnce(path);
+  }
+}
+
+/**
+ * Descarga con tope por estancamiento: si no llega nada (ni encabezados ni datos) durante STALL_TIMEOUT_MS, se corta
+ * con "timeout". Un PDF grande en una conexión lenta pero viva no se corta (cada trozo reinicia la cuenta); uno
+ * colgado (red móvil que se cayó sin cerrar la conexión) ya no deja la página cargando para siempre.
+ */
+async function fetchArrayBufferOnce(path: string): Promise<ArrayBuffer> {
+  const dl = deadline(undefined, STALL_TIMEOUT_MS);
+  try {
+    const res = await fetchResponse(path, { signal: dl.signal }).catch((e: unknown) => {
+      // Código propio (no http_N): así se traduce para firmantes en pt-BR o en (antes el texto quedaba en español).
+      if (e instanceof HttpError && e.status > 0) throw new HttpError(e.status, "download_failed", "No se pudo descargar el documento.");
+      throw e;
+    });
+    dl.touch();
+    const reader = res.body?.getReader();
+    if (!reader) return await readBody(res.arrayBuffer());
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    for (;;) {
+      const { done, value } = await readBody(reader.read());
+      if (done) break;
+      dl.touch();
+      chunks.push(value);
+      size += value.byteLength;
+    }
+    const out = new Uint8Array(size);
+    let at = 0;
+    for (const c of chunks) {
+      out.set(c, at);
+      at += c.byteLength;
+    }
+    return out.buffer;
+  } catch (e) {
+    if (dl.timedOut()) throw timeoutError();
     throw e;
-  });
-  return readBody(res.arrayBuffer());
+  } finally {
+    dl.done();
+  }
 }
 
 /**

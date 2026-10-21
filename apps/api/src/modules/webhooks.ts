@@ -600,7 +600,7 @@ async function notifyWebhookDeactivated(d: Deps, p: Extract<WebhookJob, { kind: 
     const out = await sendTracked(
       d.db,
       { tenantId: p.tenantId, template: "webhook_deactivated", jobId, log: d.log },
-      { channel: "email", to: u.email, subject: m.subject, text: m.text, html: m.html, link, locale, tenantId: p.tenantId, from: sendAs.from, replyTo: sendAs.replyTo, dkim: sendAs.dkim },
+      { channel: "email", to: u.email, subject: m.subject, text: m.text, html: m.html, link, locale, tenantId: p.tenantId, from: sendAs.from, replyTo: sendAs.replyTo, dkim: sendAs.dkim, fallbackFrom: sendAs.fallbackFrom },
     );
     if (out.status === "failed") {
       if (out.transient) transient.push(out.error);

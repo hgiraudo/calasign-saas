@@ -134,6 +134,25 @@ describe("validación del envío masivo", () => {
     expect(r.json().error.message).toMatch(/línea 3/);
   });
 
+  it("CSV con saltos \\r solos (Mac clásico): filas y líneas distintas, el alta no choca; U+FFFD con la línea correcta", async () => {
+    const t = await makeTemplate("Retorno de carro", [["signature", null]]);
+    const csv = ["Cliente.name,Cliente.email", "Ana,ana@x.com", '"Bea\rGómez",bea@x.com', "Caro,caro@x", "Dani,dani@x.com"].join("\r");
+    const v = await validate({ templateId: t.tpl, csv });
+    expect(v.statusCode).toBe(200);
+    expect(v.json()).toMatchObject({ total: 4, invalid: 1 });
+    expect(v.json().errors).toMatchObject([{ row: 3, line: 5 }]);
+    const created = await app.inject({ method: "POST", url: "/v1/bulk-sends", headers: auth, payload: { templateId: t.tpl, csv, skipInvalid: true } });
+    expect(created.statusCode).toBe(201);
+    const items = await db.query<any>(`SELECT row_number, line_number FROM bulk_send_items WHERE bulk_send_id = $1 ORDER BY row_number`, [created.json().id]);
+    expect(items.map((i) => [i.row_number, i.line_number])).toEqual([[1, 2], [2, 3], [3, 5], [4, 6]]);
+    const res = await app.inject({ method: "GET", url: `/v1/bulk-sends/${created.json().id}/results.csv`, headers: auth });
+    const out = res.body.replace(/^\uFEFF/, "").split("\r\n");
+    expect(out[0]).toBe("row,status,envelopeId,recipients,error,line");
+    expect(out[3]).toMatch(/^3,failed,.*,5$/);
+    const { assertCsvEncoding } = await import("../src/modules/bulk");
+    expect(() => assertCsvEncoding("a\rb\r\nc\nJos\uFFFD")).toThrow(/línea 4/);
+  });
+
   it("plantilla con un firmante sin campo de firma → 422 template_not_sendable; vencimiento pasado → 400", async () => {
     const t = await makeTemplate("Sin firma", [["text", "Plan"]]);
     const r = await validate({ templateId: t.tpl, csv: "Cliente.name,Cliente.email\nAna,ana@x.com\n" });
@@ -162,8 +181,10 @@ describe("validación del envío masivo", () => {
     expect(r.statusCode).toBe(200);
     const body = r.json();
     expect(body.total).toBe(3);
-    // Fila de Bea: empieza en la línea 4 (hay una vacía antes y su nombre ocupa dos líneas); la de Caro, en la 6.
-    expect(body.errors.map((e: any) => e.row)).toEqual([4, 6]);
+    // `row`: número de fila de datos (Bea es la 2ª, Caro la 3ª). `line`: la de Bea empieza en la línea 4 del archivo
+    // (hay una vacía antes y su nombre ocupa dos líneas); la de Caro, en la 6.
+    expect(body.errors.map((e: any) => e.row)).toEqual([2, 3]);
+    expect(body.errors.map((e: any) => e.line)).toEqual([4, 6]);
     expect(body.errors[0].errors.join()).toMatch(/Cliente\.phone: falta el código de país/);
     expect(body.errors[1].errors.join()).toMatch(/Cliente\.locale/);
     expect(body.errors[1].errors.join()).not.toMatch(/phone/);
@@ -236,5 +257,67 @@ describe("prellenado por etiqueta", () => {
     expect(header.match(/field\./gi)).toHaveLength(1);
     expect(header).toContain("field.plan");
     expect(header).not.toContain("Acepto");
+  });
+});
+
+describe("plantilla que no se deja leer entera y errores del momento", () => {
+  /** La base, pero el sello de la plantilla cambia en cada lectura (una edición tras otra) o una consulta da 40001. */
+  const flaky = (mode: "stamp" | "serialization") => {
+    let n = 0;
+    return new Proxy(db, {
+      get(target, prop, recv) {
+        if (prop === "one" && mode === "stamp")
+          return async (sql: string, params?: unknown[]) =>
+            /^SELECT updated_at::text AS v FROM templates WHERE id = \$1 AND tenant_id = \$2$/.test(sql) ? { v: `v${n++}` } : target.one(sql, params as any);
+        if (prop === "query" && mode === "serialization")
+          return async (sql: string, params?: unknown[]) => {
+            if (/FROM bulk_sends WHERE tenant_id/.test(sql)) throw Object.assign(new Error("could not serialize access"), { code: "40001" });
+            return target.query(sql, params as any);
+          };
+        const v = Reflect.get(target, prop, recv);
+        return typeof v === "function" ? v.bind(target) : v;
+      },
+    }) as Db;
+  };
+
+  it("loadTemplateForUse → 503 template_busy con Retry-After; el envío masivo lo trata como del momento", async () => {
+    const { loadTemplateForUse } = await import("../src/modules/templates");
+    const { isTransientError } = await import("../src/modules/bulk");
+    const t = await makeTemplate("Ocupada", [["signature", null]]);
+    const err = await loadTemplateForUse(flaky("stamp"), tenant, t.tpl).catch((e) => e);
+    expect(err).toMatchObject({ status: 503, code: "template_busy" });
+    expect(isTransientError(err)).toBe(true);
+
+    const { createBlobStore } = await import("../src/infra/storage");
+    const { buildApp } = await import("../src/app");
+    for (const [mode, code, retry] of [["stamp", "template_busy", "2"], ["serialization", "concurrent_update", "1"]] as const) {
+      const other = await buildApp({ db: flaky(mode), blobs: createBlobStore(), logger: false });
+      await other.ready();
+      try {
+        const r =
+          mode === "stamp"
+            ? await other.inject({ method: "POST", url: "/v1/bulk-sends/validate", headers: auth, payload: { templateId: t.tpl, csv: "Cliente.name,Cliente.email\nAna,ana@x.com\n" } })
+            : await other.inject({ method: "GET", url: "/v1/bulk-sends", headers: auth });
+        expect(r.statusCode, mode).toBe(503);
+        expect(r.json().error.code).toBe(code);
+        expect(r.headers["retry-after"]).toBe(retry);
+      } finally {
+        await other.close();
+      }
+    }
+  });
+
+  it("filas fallidas: datos o plantilla → no reintentables; el resto de los AppError (proveedor, configuración) → reintentables", async () => {
+    const { bulkRowRetryable } = await import("../src/modules/bulk");
+    const { AppError, badRequest } = await import("../src/lib/errors");
+    const { ZodError } = await import("zod");
+    for (const code of ["validation_error", "unknown_prefill", "readonly_field", "duplicate_prefill", "roles_missing", "template_deleted", "template_not_sendable", "invalid_expiry"])
+      expect(bulkRowRetryable(badRequest(code, "x")), code).toBe(false);
+    expect(bulkRowRetryable(new ZodError([]))).toBe(false);
+    for (const code of ["identity_provider_unavailable", "provider_not_configured", "plan_limit", "forbidden"])
+      expect(bulkRowRetryable(new AppError(409, code, "x")), code).toBe(true);
+    expect(bulkRowRetryable(new Error("boom"))).toBe(true);
+    expect(bulkRowRetryable(new AppError(409, "bulk_unavailable", "x"), false)).toBe(false);
+    expect(bulkRowRetryable(new AppError(409, "bulk_unavailable", "x"), true)).toBe(true);
   });
 });

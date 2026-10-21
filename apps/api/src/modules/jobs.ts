@@ -9,7 +9,7 @@ import { applyEvidencePipeline, planEvidence } from "./evidence-seal";
 import type { BlobStore } from "../infra/storage";
 import { BUMP_UPDATED_AT, decrypt, maskDestination, sha256Hex, uuidv7 } from "../lib/util";
 import { deliver } from "../notifications/channels";
-import { scrubPii, sendTracked } from "../notifications/outbound";
+import { isSuppressed, scrubPii, sendTracked } from "../notifications/outbound";
 import { pastExpiry, receivesSignerNotices } from "./envelopes";
 import { isUnverifiedSelfRegistered } from "./otp";
 import { normLocale, render, type TemplateKind } from "../notifications/templates";
@@ -144,6 +144,11 @@ export function createJobHandlers(d: Deps): Record<JobQueueName, JobHandler> {
 
 // ───────────────────────────── Notificaciones ─────────────────────────────
 
+/** Reply-To de los avisos al firmante: el correo de quien creó el sobre si sigue siendo miembro; si no, el de la marca. */
+export function signerReplyTo(creator: { email?: string | null; is_member?: boolean | null } | null | undefined, brandReplyTo: string | null): string | null {
+  return creator?.is_member && creator.email ? creator.email : brandReplyTo;
+}
+
 async function notify(
   d: Deps,
   p: { kind: TemplateKind; envelopeId: string; tenantId: string; recipientId?: string; declinedBy?: string; userId?: string; tokenEnc?: string; reason?: string },
@@ -168,7 +173,10 @@ async function notify(
   const wl = await brandForEnvelope(d.db, e);
   const mailBrand = (kind: TemplateKind, locale: string | null) => mailBranding(wl, kind, normLocale(locale));
   const sendAs = await senderFor(d.db, wl);
-  const from = { from: sendAs.from, replyTo: sendAs.replyTo, dkim: sendAs.dkim };
+  const from = { from: sendAs.from, replyTo: sendAs.replyTo, dkim: sendAs.dkim, fallbackFrom: sendAs.fallbackFrom };
+  // Avisos al firmante: las respuestas van a quien envió el sobre (si sigue en la organización); si no, a la dirección
+  // de respuesta de la marca. Antes iban siempre a la de la marca (o a la casilla no-reply).
+  const signerFrom = { ...from, replyTo: signerReplyTo(sender, sendAs.replyTo) };
   const base = {
     // Quien dejó la organización ya no habla en su nombre: los recordatorios y avisos salen con el de la marca u organización.
     senderName: (sender?.is_member ? sender.name : null) ?? (rebrands(wl) || e.brand_id ? wl.name : org?.name) ?? productLabel(wl),
@@ -291,7 +299,7 @@ async function notify(
         templateParams: [base.senderName, e.subject, link ?? "-"].map(waParam),
         ...(waTemplate ? { template: waTemplate } : {}),
         tenantId: e.tenant_id,
-        ...(channel === "email" ? from : {}),
+        ...(channel === "email" ? signerFrom : {}),
       },
     );
     if (out.status === "failed") {
@@ -350,7 +358,7 @@ async function notifyStaff(
   message: (u: { name: string; locale: string | null }) => { subject: string; text: string; html: string },
   link: string,
   localeOf: (u: { locale: string | null }) => string,
-  from: { from?: string | null; replyTo?: string | null; dkim?: { domainName: string; keySelector: string; privateKey: string } | null } = {},
+  from: { from?: string | null; replyTo?: string | null; dkim?: { domainName: string; keySelector: string; privateKey: string } | null; fallbackFrom?: string | null } = {},
   jobId?: number,
 ) {
   const errors: { error: string; transient: boolean }[] = [];
@@ -385,8 +393,15 @@ async function notifyPasswordReset(d: Deps, p: { userId?: string; tokenEnc?: str
   const link = `${config.appUrl}/reset/${token}`;
   const vars = { recipientName: u.name, senderName: "CalaSign", organizationName: "CalaSign", subject: "", link };
   const m = render("password_reset", u.locale, { ...vars, subject: render("password_reset", u.locale, vars).subject });
+  // Rebote permanente vigente (supresión global, tenant_id NULL): no se le escribe. No hay fila en notifications (es
+  // un correo de la plataforma, sin organización): queda en el log.
+  if (await isSuppressed(d.db, u.email, null)) {
+    d.log.warn({ userId: p.userId }, "restablecimiento de contraseña no enviado: dirección suprimida (rebote permanente)");
+    return;
+  }
   try {
-    await deliver({ channel: "email", to: u.email, subject: m.subject, text: m.text, html: m.html, link, locale: u.locale });
+    const res = await deliver({ channel: "email", to: u.email, subject: m.subject, text: m.text, html: m.html, link, locale: u.locale });
+    d.log.info({ userId: p.userId, provider: res.provider, messageId: res.messageId }, "restablecimiento de contraseña enviado");
   } catch (e) {
     // Sin la dirección (ni el link con el token) en el error: termina en jobs.last_error y en los logs. Los
     // proveedores SMTP suelen repetir el destinatario en el rechazo ("550 <ana@…>: user unknown").

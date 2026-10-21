@@ -123,7 +123,8 @@ export function parseCsvWithLines(text: string, maxRecords = Infinity): { rows: 
   };
   for (let i = 0; i < src.length && rows.length <= maxRecords; i++) {
     const c = src[i];
-    if (c === "\n") line++;
+    // Saltos de línea: \n, \r\n (uno solo, se cuenta en el \n) y \r solo (archivos de Mac clásico), también dentro de comillas.
+    if (c === "\n" || (c === "\r" && src[i + 1] !== "\n")) line++;
     if (q) {
       if (c === '"') {
         if (src[i + 1] === '"') {
@@ -298,7 +299,10 @@ export function csvSkeleton(tpl: Awaited<ReturnType<typeof loadTemplateDetail>>)
 // ───────────────────────────── Validación ─────────────────────────────
 
 interface Prepared {
+  /** Número de fila de datos (1 = la primera después del encabezado, o el primer elemento de `rows`). */
   row: number;
+  /** Línea del archivo donde empieza la fila (sólo CSV): cuenta el encabezado, las líneas vacías y los saltos entre comillas. */
+  line?: number;
   input: FromTemplateInput | null;
   errors: string[];
   names: string[];
@@ -327,7 +331,7 @@ function normalizeRecipient(r: BulkRowInput["recipients"][number]) {
   return x;
 }
 
-/** `lineNumbers`: la línea del archivo de cada fila (CSV); sin ella, la posición en la lista (JSON). */
+/** `lineNumbers`: la línea del archivo de cada fila (CSV). `row` es siempre la posición de la fila de datos (1, 2, …). */
 function prepareRows(
   l: LoadedTemplate,
   rows: BulkRowInput[],
@@ -336,7 +340,7 @@ function prepareRows(
 ) {
   const roleName = new Map(l.tpl.roles.map((r) => [r.id, r.name]));
   return rows.map((row, i): Prepared => {
-    const rowNo = lineNumbers?.[i] ?? i + 1;
+    const at = { row: i + 1, ...(lineNumbers?.[i] !== undefined ? { line: lineNumbers[i] } : {}) };
     const names = row.recipients.map((r) => r.name ?? "").filter(Boolean);
     const recipients = row.recipients.map(normalizeRecipient);
     const candidate = {
@@ -365,13 +369,13 @@ function prepareRows(
         }
         return `${iss.path.join(".") || "fila"}: ${iss.message}`;
       });
-      return { row: rowNo, input: null, errors, names };
+      return { ...at, input: null, errors, names };
     }
     try {
       planFromTemplate(l, parsed.data);
-      return { row: rowNo, input: parsed.data, errors: [], names };
+      return { ...at, input: parsed.data, errors: [], names };
     } catch (e) {
-      return { row: rowNo, input: null, errors: [e instanceof AppError ? e.message : String(e)], names };
+      return { ...at, input: null, errors: [e instanceof AppError ? e.message : String(e)], names };
     }
   });
 }
@@ -420,13 +424,14 @@ async function resolveRows(s: Services, a: AuthContext, raw: unknown) {
 export function assertCsvEncoding(csv: string) {
   const at = csv.indexOf("\uFFFD");
   if (at < 0) return;
-  const line = csv.slice(0, at).split("\n").length;
+  // \r\n, \n y \r solo cuentan como un salto cada uno (igual que parseCsvWithLines).
+  const line = csv.slice(0, at).split(/\r\n|\r|\n/).length;
   const msg = `El archivo tiene caracteres que no se pudieron leer (línea ${line}): guardalo como "CSV UTF-8" y volvé a subirlo`;
   throw new AppError(422, "csv_encoding", msg, { fileErrors: [msg], line });
 }
 
 function validationResult(prepared: Prepared[], columns: string[]): BulkValidationResult {
-  const errors: BulkRowError[] = prepared.filter((p) => p.errors.length).map((p) => ({ row: p.row, errors: p.errors }));
+  const errors: BulkRowError[] = prepared.filter((p) => p.errors.length).map((p) => ({ row: p.row, ...(p.line !== undefined ? { line: p.line } : {}), errors: p.errors }));
   return { total: prepared.length, valid: prepared.length - errors.length, invalid: errors.length, errors, columns };
 }
 
@@ -548,6 +553,7 @@ function toBulk(b: any, n: (id: string, status: string) => number): BulkSend {
 const toItem = (r: any): BulkSendItem => ({
   id: r.id,
   row: r.row_number,
+  line: r.line_number ?? null,
   status: r.status,
   envelopeId: r.envelope_id,
   recipients: (r.input?.recipients ?? []).map((x: any) => x.name).filter(Boolean),
@@ -634,13 +640,14 @@ export async function bulkRoutes(app: FastifyInstance, s: Services) {
         const ok = p.errors.length === 0;
         if (ok) pendingIds.push(itemId);
         await t.query(
-          `INSERT INTO bulk_send_items (id, tenant_id, bulk_send_id, row_number, input, status, error, processed_at, retryable)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+          `INSERT INTO bulk_send_items (id, tenant_id, bulk_send_id, row_number, line_number, input, status, error, processed_at, retryable)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
           [
             itemId,
             a.tenantId,
             id,
             p.row,
+            p.line ?? null,
             JSON.stringify(p.input ?? { recipients: p.names.map((name) => ({ name })) }),
             ok ? "pending" : "failed",
             ok ? null : p.errors.join("; ").slice(0, 2000),
@@ -701,9 +708,10 @@ export async function bulkRoutes(app: FastifyInstance, s: Services) {
     const a = A(req);
     await loadBulk(s.db, a, req.params.id);
     const rows = await s.db.query<any>(`SELECT * FROM bulk_send_items WHERE bulk_send_id = $1 ORDER BY row_number`, [req.params.id]);
-    const lines = [["row", "status", "envelopeId", "recipients", "error"].join(",")];
+    // "line": línea del CSV de origen (vacía si las filas vinieron en JSON); al final, para no mover las columnas de antes.
+    const lines = [["row", "status", "envelopeId", "recipients", "error", "line"].join(",")];
     // csvCell: los nombres vienen de datos externos; sin neutralizar, "=…" se ejecuta como fórmula en la planilla.
-    for (const r of rows.map(toItem)) lines.push([r.row, r.status, r.envelopeId ?? "", r.recipients.join(" | "), r.error ?? ""].map(csvCell).join(","));
+    for (const r of rows.map(toItem)) lines.push([r.row, r.status, r.envelopeId ?? "", r.recipients.join(" | "), r.error ?? "", r.line ?? ""].map(csvCell).join(","));
     reply
       .header("content-type", "text/csv; charset=utf-8")
       .header("content-disposition", `attachment; filename="resultados-${req.params.id}.csv"`)
@@ -762,8 +770,41 @@ export async function bulkRoutes(app: FastifyInstance, s: Services) {
 type BulkDeps = { db: Db; log: { info(o: object, m?: string): void; warn(o: object, m?: string): void } };
 type BulkJobPayload = { bulkSendId: string; tenantId: string; itemIds: string[]; retryRound?: number };
 
-/** Error de una fila que no se arregla reintentando (plantilla borrada, dueño sin permiso, plan): la fila queda fallida. */
-const permanent = (e: unknown) => e instanceof AppError || e instanceof ZodError;
+/** Error de una fila que no se arregla reintentando el job (plantilla borrada, dueño sin permiso, plan): la fila queda
+ *  fallida. template_busy (la plantilla se estaba editando) es del momento: se reintenta el job. */
+const permanent = (e: unknown) => (e instanceof AppError && e.code !== "template_busy") || e instanceof ZodError;
+
+/**
+ * Errores de una fila que vienen de sus datos o de la plantilla: "Reintentar fallidas" fallaría igual (se corrigen en un
+ * envío nuevo). Cualquier otro (cupo, plan, permisos de quien lo lanzó, proveedor de identidad caído, configuración del
+ * entorno, error temporal o interno) queda reintentable.
+ */
+const NON_RETRYABLE_CODES = new Set([
+  "validation_error",
+  "unknown_prefill",
+  "invalid_prefill",
+  "readonly_field",
+  "duplicate_prefill",
+  "unknown_role",
+  "duplicate_role",
+  "roles_missing",
+  "template_deleted",
+  "template_empty",
+  "template_not_sendable",
+  "not_found",
+  "invalid_expiry",
+  "invalid_field",
+  "envelope_incomplete",
+  "logic_order",
+]);
+
+/** Si una fila fallida se puede reintentar (ver NON_RETRYABLE_CODES). `loadRetryable`: si el bulk_unavailable de esta
+ *  ronda fue por algo ajeno a la plantilla (plan, dueño). */
+export function bulkRowRetryable(e: unknown, loadRetryable = false): boolean {
+  if (e instanceof ZodError) return false;
+  if (e instanceof AppError) return e.code === "bulk_unavailable" ? loadRetryable : !NON_RETRYABLE_CODES.has(e.code);
+  return true;
+}
 
 /** Códigos de Postgres de un problema del momento: conexión (08xxx), serialización, deadlock, servidor reiniciándose. */
 const TRANSIENT_PG = /^(08...|40001|40P01|57P0[123]|53300)$/;
@@ -776,6 +817,7 @@ const TRANSIENT_NET = new Set(["ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "EPIPE
  */
 export function isTransientError(e: unknown): boolean {
   for (let cur: any = e, depth = 0; cur && depth < 4; cur = cur.cause, depth++) {
+    if (cur instanceof AppError && cur.code === "template_busy") return true;
     const code = typeof cur.code === "string" ? cur.code : "";
     if (TRANSIENT_PG.test(code) || TRANSIENT_NET.has(code)) return true;
     if (/connection (terminated|reset|refused)|Connection terminated unexpectedly|socket hang up/i.test(String(cur.message ?? ""))) return true;
@@ -904,7 +946,7 @@ async function runBulkJob(d: BulkDeps, p: BulkJobPayload, job?: JobContext) {
       }
       // Se puede reintentar lo del momento o ajeno a la fila (error temporal o interno, cupo, plan o permisos de quien
       // lo lanzó); lo que es de sus datos o de la plantilla (validación, prellenado, plantilla borrada) fallaría igual.
-      const retryable = e instanceof AppError ? e.code === "plan_limit" || (e.code === "bulk_unavailable" && loadRetryable) : !(e instanceof ZodError);
+      const retryable = bulkRowRetryable(e, loadRetryable);
       if (e instanceof AppError && e.code === "plan_limit") {
         // Cupo del mes agotado: las filas que faltan (de todo el envío) fallarían igual. Se marcan sin intentarlas.
         await d.db.query(`UPDATE bulk_send_items SET status = 'failed', error = $2, processed_at = now(), retryable = true WHERE bulk_send_id = $1 AND status = 'pending'`, [

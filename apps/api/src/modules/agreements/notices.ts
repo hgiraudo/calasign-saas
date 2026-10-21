@@ -87,7 +87,7 @@ async function sendAll(
     const out = await sendTracked(
       d.db,
       { tenantId, template: kind, jobId, log: d.log },
-      { channel: "email", to: u.email, subject: m.subject, text: m.text, html: m.html, link: u.link, locale, tenantId, from: sendAs.from, replyTo: sendAs.replyTo, dkim: sendAs.dkim },
+      { channel: "email", to: u.email, subject: m.subject, text: m.text, html: m.html, link: u.link, locale, tenantId, from: sendAs.from, replyTo: sendAs.replyTo, dkim: sendAs.dkim, fallbackFrom: sendAs.fallbackFrom },
     );
     if (out.status === "failed") {
       if (out.transient) transient.push(out.error);

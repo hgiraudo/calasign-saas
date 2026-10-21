@@ -1,6 +1,6 @@
 // Contrato compartido (@calasign/shared): validaciones que la API aplica tal cual.
 import { describe, expect, it } from "vitest";
-import { AnchorFieldInput, CreateOAuthAppInput, WorkflowStep } from "@calasign/shared";
+import { AnchorFieldInput, CreateOAuthAppInput, GenerateRecipientInput, WorkflowStep } from "@calasign/shared";
 
 describe("URI de redirección de apps OAuth", () => {
   const app = (uri: string) => CreateOAuthAppInput.safeParse({ name: "App", grantTypes: ["authorization_code"], redirectUris: [uri], scopes: ["envelopes:read"] });
@@ -46,5 +46,23 @@ describe("pasos de recolección de datos de un workflow", () => {
     expect(step([{ key: "plan", label: "Plan", type: "select", options: [] }]).success).toBe(false);
     expect(step([{ key: "plan", label: "Plan", type: "select", options: ["Básico", "Pro"] }]).success).toBe(true);
     expect(step([{ key: "nombre", label: "Nombre", type: "text" }]).success).toBe(true);
+  });
+});
+
+describe("destinatarios sin telegramChatId (generación de documentos, workflows)", () => {
+  it("solo Telegram se rechaza al guardar (el envío respondería 422 telegram_unlinked); con otro canal, sí", () => {
+    const base = { role: "Cliente", name: "Ana", email: "ana@x.com" };
+    expect(GenerateRecipientInput.safeParse({ ...base, channels: ["telegram"] }).success).toBe(false);
+    expect(GenerateRecipientInput.safeParse({ ...base, channels: ["telegram", "email"] }).success).toBe(true);
+    expect(GenerateRecipientInput.safeParse(base).success).toBe(true);
+    const step = (channels: string[]) =>
+      WorkflowStep.safeParse({
+        id: "0190a000-0000-7000-8000-000000000001",
+        name: "Firma",
+        type: "send_for_signature",
+        config: { document: "doc", envelopeKey: "env", subject: "Firmá", recipients: [{ role: "Cliente", name: "{{cliente.nombre}}", email: "{{cliente.email}}", channels }] },
+      });
+    expect(step(["telegram"]).success).toBe(false);
+    expect(step(["telegram", "whatsapp"]).success).toBe(true);
   });
 });

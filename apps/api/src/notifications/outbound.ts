@@ -89,7 +89,22 @@ export interface TrackedSend {
   template: string;
   /** Job que lo envía: con él, un reintento no repite lo que ya salió para el mismo canal y destino. */
   jobId?: number | null;
-  log?: { error(o: object, m?: string): void };
+  log?: { error(o: object, m?: string): void; warn?(o: object, m?: string): void };
+}
+
+/** Texto que queda en email_domains.last_error (lo ve el administrador en Ajustes → Marca → Dominios de correo). */
+export const SES_IDENTITY_ERROR = "SES rechazó el remitente: el dominio no está verificado como identidad en Amazon SES. Los correos salen desde la dirección de la plataforma hasta que se verifique.";
+
+/**
+ * SES rechazó el dominio propio (554 identidad sin verificar) y el correo salió desde la plataforma (channels.sendEmail):
+ * se deja anotado en el dominio para que el administrador lo vea, y en el log. No hace fallar el envío.
+ */
+export async function noteSesIdentityRejection(db: Db, tenantId: string | null | undefined, domain: string, log?: TrackedSend["log"]) {
+  (log?.warn ?? log?.error)?.call(log, { tenantId, domain }, "SES rechazó el dominio de correo propio (identidad sin verificar en SES): se envió desde la dirección de la plataforma");
+  if (!tenantId) return;
+  await db
+    .query(`UPDATE email_domains SET last_error = $3 WHERE tenant_id = $1 AND domain = $2 AND last_error IS DISTINCT FROM $3`, [tenantId, domain, SES_IDENTITY_ERROR])
+    .catch((e) => log?.error({ err: scrubPii(String(e)), domain }, "no se pudo anotar el rechazo de SES en el dominio"));
 }
 
 /**
@@ -162,5 +177,6 @@ export async function sendTracked(db: Db, t: TrackedSend, m: OutboundMessage & {
     return { status: "failed", error, transient: isTransientSendError(err) };
   }
   if (queued) await finish("sent", { provider: res.provider, messageId: res.messageId });
+  if (res.identityRejectedDomain) await noteSesIdentityRejection(db, t.tenantId, res.identityRejectedDomain, t.log);
   return { status: "sent", res, id };
 }

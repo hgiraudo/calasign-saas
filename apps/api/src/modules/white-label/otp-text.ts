@@ -32,14 +32,56 @@ export function OTP_MESSAGES(b: ResolvedBrand, localeIn: string, code: string, s
   return { subject: unmask(brandize(s.replace(/[\r\n]+/g, " "), b)).replace(/[\r\n]+/g, " "), text: unmask(brandize(t, b)) };
 }
 
+/** Texto corto del código por SMS (cada segmento cuesta; Twilio corta en 1600): código primero y asunto recortado. */
+const SMS_SHORT = {
+  es: (code: string, product: string, subject: string) => `${code} es tu código de ${product} para firmar "${subject}". Vence en 10 min. No lo compartas.`,
+  "pt-BR": (code: string, product: string, subject: string) => `${code} é seu código da ${product} para assinar "${subject}". Expira em 10 min. Não compartilhe.`,
+  en: (code: string, product: string, subject: string) => `${code} is your ${product} code to sign "${subject}". Expires in 10 min. Don't share it.`,
+} as const;
+const SMS_SUBJECT_MAX = 40;
+/** Plantilla propia de la marca: hasta ~2 segmentos. */
+export const SMS_OTP_MAX = 320;
+/** Más que esto (tope de Twilio) o sin el código: se usa el texto corto. */
+const SMS_OTP_HARD_MAX = 1600;
+
+function clip(s: string, max: number): string {
+  const t = s.replace(/\s+/g, " ").trim();
+  return t.length <= max ? t : `${t.slice(0, max - 3).trimEnd()}...`;
+}
+
+/**
+ * Texto del código por SMS: con plantilla "otp_code" de la marca, esa (recortada a SMS_OTP_MAX); si no la hay, si
+ * pasa de 1600 caracteres o si al recortarla se pierde el código, el texto corto (código, producto y asunto recortado).
+ */
+export function otpSmsText(b: ResolvedBrand, localeIn: string, code: string, subject: string): string {
+  const locale = normLocale(localeIn);
+  const short = SMS_SHORT[locale](code, productLabel(b), clip(subject, SMS_SUBJECT_MAX));
+  if (!mailBranding(b, "otp_code", locale).template?.body?.trim()) return short;
+  const full = OTP_MESSAGES(b, locale, code, subject).text.trim();
+  if (full.length > SMS_OTP_HARD_MAX || !full.includes(code)) return short;
+  if (full.length <= SMS_OTP_MAX) return full;
+  const cut = clip(full, SMS_OTP_MAX);
+  return cut.includes(code) ? cut : short;
+}
+
 /**
  * Lo que otp.ts agrega al mensaje del código: asunto/texto con la marca y remitente propio. `defSubject`/`defText`
  * son los textos de la plataforma (se usan si la marca no tiene plantilla propia); `defText` arma el texto con el código
- * y el asunto (se le pasan enmascarados para que la marca blanca no toque el asunto del sobre).
+ * y el asunto (se le pasan enmascarados para que la marca blanca no toque el asunto del sobre). Por SMS, el texto corto
+ * de otpSmsText.
  */
-export async function brandedOtpMessage(db: Db, e: { tenant_id: string; brand_id?: string | null; subject: string }, locale: string, code: string, defSubject: string, defText: (code: string, subject: string) => string) {
+export async function brandedOtpMessage(
+  db: Db,
+  e: { tenant_id: string; brand_id?: string | null; subject: string },
+  locale: string,
+  code: string,
+  defSubject: string,
+  defText: (code: string, subject: string) => string,
+  channel?: string,
+) {
   const b = await brandForEnvelope(db, e);
   const m = OTP_MESSAGES(b, locale, code, e.subject, { subject: defSubject, text: defText });
+  const text = channel === "sms" ? otpSmsText(b, locale, code, e.subject) : m.text;
   const sender = await senderFor(db, b);
-  return { subject: m.subject, text: m.text, from: sender.from, replyTo: sender.replyTo, dkim: sender.dkim, smsFrom: b.smsSenderId };
+  return { subject: m.subject, text, from: sender.from, replyTo: sender.replyTo, dkim: sender.dkim, fallbackFrom: sender.fallbackFrom, smsFrom: b.smsSenderId };
 }

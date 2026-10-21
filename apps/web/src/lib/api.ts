@@ -469,6 +469,14 @@ const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
     en: "The template can't be sent: every signer role needs a signature field and formulas can't reference fields that no longer exist.",
   },
   invalid_expiry: { "pt-BR": "A data de vencimento é inválida ou já passou.", en: "The expiration date is invalid or has already passed." },
+  template_busy: {
+    "pt-BR": "O modelo está sendo alterado neste momento: tente de novo em alguns segundos.",
+    en: "The template is being changed right now: try again in a few seconds.",
+  },
+  concurrent_update: {
+    "pt-BR": "Outra alteração simultânea cruzou este pedido: tente de novo em alguns segundos.",
+    en: "Another simultaneous change got in the way of this request: try again in a few seconds.",
+  },
   duplicate_ids: { "pt-BR": "Há IDs de destinatários repetidos.", en: "Some recipient IDs are repeated." },
   id_in_use: { "pt-BR": "O ID do destinatário já está em uso.", en: "The recipient ID is already in use." },
   crm_account_unknown: {

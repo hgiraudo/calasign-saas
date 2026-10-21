@@ -17,9 +17,10 @@ export type AgreementTemplateKind = "agreement_expiry" | "negotiation_invite" | 
 
 /**
  * Avisos a la organización sobre su cuenta (no sobre un sobre): mismo diseño y marca. webhook_deactivated: `detail` es
- * el host del webhook y `reason` el motivo ya traducido.
+ * el host del webhook y `reason` el motivo ya traducido. team_invitation: `senderName` quien invita, `detail` el rol y
+ * `days` los días hasta que vence.
  */
-export type OrgNoticeKind = "webhook_deactivated";
+export type OrgNoticeKind = "webhook_deactivated" | "team_invitation";
 
 export interface TemplateVars {
   recipientName: string;
@@ -154,6 +155,14 @@ const T: Record<"es" | "pt-BR" | "en", Dict> = {
       ],
       cta: "Revisalo y reactivalo en Ajustes → Integraciones",
     },
+    team_invitation: {
+      subject: (v) => `Te invitaron a ${v.organizationName} en CalaSign`,
+      lines: (v) => [
+        `${v.senderName} te invitó a sumarte a ${v.organizationName} en CalaSign con el rol ${v.detail ?? ""}.`,
+        `La invitación vence en ${v.days ?? 0} días.`,
+      ],
+      cta: "Aceptar invitación",
+    },
   },
   "pt-BR": {
     invite: {
@@ -263,6 +272,14 @@ const T: Record<"es" | "pt-BR" | "en", Dict> = {
         v.reason ?? "",
       ],
       cta: "Revise e reative em Configurações → Integrações",
+    },
+    team_invitation: {
+      subject: (v) => `Você foi convidado para ${v.organizationName} na CalaSign`,
+      lines: (v) => [
+        `${v.senderName} convidou você para participar de ${v.organizationName} na CalaSign com o perfil ${v.detail ?? ""}.`,
+        `O convite expira em ${v.days ?? 0} dias.`,
+      ],
+      cta: "Aceitar convite",
     },
   },
   en: {
@@ -374,6 +391,11 @@ const T: Record<"es" | "pt-BR" | "en", Dict> = {
       ],
       cta: "Review it and turn it back on in Settings → Integrations",
     },
+    team_invitation: {
+      subject: (v) => `You've been invited to ${v.organizationName} on CalaSign`,
+      lines: (v) => [`${v.senderName} invited you to join ${v.organizationName} on CalaSign as ${v.detail ?? ""}.`, `The invitation expires in ${v.days ?? 0} days.`],
+      cta: "Accept invitation",
+    },
   },
 };
 
@@ -468,6 +490,11 @@ export function render(kind: TemplateKind | AgreementTemplateKind | OrgNoticeKin
   const locale = normLocale(localeIn);
   const t = T[locale][kind];
   const B = (s: string) => brandText(s, brand);
+  const tpl = brand.template ?? null;
+  // La marca blanca se aplica a la plantilla con los valores enmascarados; después se ponen los valores reales.
+  const mv = maskVars(v);
+  // finalize_failed: la explicación estándar del fallo (sin el saludo), para {{reason}} en una plantilla propia.
+  const finalizeDetail = kind === "finalize_failed" ? t.lines(mv.masked).slice(1).map((l) => mv.unmask(B(l))) : [];
   const vars: Record<string, string> = {
     recipientName: v.recipientName,
     senderName: v.senderName,
@@ -475,15 +502,16 @@ export function render(kind: TemplateKind | AgreementTemplateKind | OrgNoticeKin
     subject: v.subject,
     message: v.message ?? "",
     link: v.link ?? "",
-    reason: v.reason ?? "",
+    reason: v.reason ?? (finalizeDetail.length ? finalizeDetail.join("\n") : ""),
     declinedBy: v.declinedBy ?? "",
     productName: brand.productName || brand.brandName || PLATFORM_NAME,
     supportUrl: brand.supportUrl ?? "",
+    // finalize_failed: código del error de un documento que no se puede sellar.
+    code: v.unsealableCode ?? "",
   };
-  const tpl = brand.template ?? null;
-  // La marca blanca se aplica a la plantilla con los valores enmascarados; después se ponen los valores reales.
-  const mv = maskVars(v);
   const mvars = maskVars(vars);
+  // {{message}} con o sin espacios (fillTemplate acepta los dos): si la plantilla lo incluye, no se repite el mensaje.
+  const tplHasMessage = Boolean(tpl?.body && /\{\{\s*message\s*\}\}/.test(tpl.body));
   const subject = tpl?.subject?.trim()
     ? mvars.unmask(B(fillTemplate(tpl.subject, mvars.masked))).replace(/[\r\n]+/g, " ").trim()
     : mv.unmask(B(t.subject(mv.masked)));
@@ -494,11 +522,14 @@ export function render(kind: TemplateKind | AgreementTemplateKind | OrgNoticeKin
           .map((p) => mvars.unmask(B(p.trim())))
       : t.lines(mv.masked).map((l) => mv.unmask(B(l)))
   ).filter(Boolean);
+  // Plantilla propia de finalize_failed sin {{reason}} ni {{code}} y un documento que no se puede sellar: se agrega la
+  // explicación estándar (reintentar no lo resuelve; sin esto, el aviso no decía qué hacer).
+  if (tpl?.body?.trim() && v.unsealableCode && finalizeDetail.length && !/\{\{\s*(reason|code)\s*\}\}/.test(tpl.body)) lines.push(...finalizeDetail);
   const cta = tpl?.cta?.trim() ? tpl.cta.trim() : t.cta ?? null;
   const footer = brand.hidePoweredBy ? null : B(FOOTER[locale]);
   const text = [
     ...lines,
-    v.message && !tpl?.body?.includes("{{message}}") ? `\n${MSG_LABEL[locale]}: ${v.message}` : "",
+    v.message && !tplHasMessage ? `\n${MSG_LABEL[locale]}: ${v.message}` : "",
     v.link && cta ? `\n${cta}: ${v.link}` : "",
     brand.footer ? `\n${brand.footer}` : "",
     footer ? `\n— ${footer}` : "",
@@ -521,7 +552,7 @@ ${
 <p style="margin:0 0 6px;font-size:13px;color:#5b6576">${esc(v.organizationName)}</p>
 <h1 style="margin:0 0 18px;font-size:20px">${esc(v.subject)}</h1>
 ${lines.map((l) => `<p style="margin:0 0 12px;font-size:15px;line-height:1.5;white-space:pre-wrap">${esc(l)}</p>`).join("")}
-${v.message && !tpl?.body?.includes("{{message}}") ? `<div style="margin:16px 0;padding:12px 14px;background:${bg};border-left:3px solid ${accent};font-size:14px;white-space:pre-wrap">${esc(v.message)}</div>` : ""}
+${v.message && !tplHasMessage ? `<div style="margin:16px 0;padding:12px 14px;background:${bg};border-left:3px solid ${accent};font-size:14px;white-space:pre-wrap">${esc(v.message)}</div>` : ""}
 ${v.link && cta ? `<p style="margin:24px 0"><a href="${esc(v.link)}" style="background:${btn};color:${btnText};text-decoration:none;padding:12px 22px;border-radius:${radius}px;font-weight:bold;display:inline-block">${esc(cta)}</a></p><p style="font-size:12px;color:#5b6576;word-break:break-all">${esc(v.link)}</p>` : ""}
 </td></tr>
 ${

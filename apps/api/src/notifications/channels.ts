@@ -17,6 +17,11 @@ export interface OutboundMessage {
   templateParams?: string[];
   /** Para WhatsApp: plantilla a usar (por defecto, la del pedido de firma). */
   template?: string;
+  /**
+   * Para WhatsApp: parámetros del botón URL (índice 0) de la plantilla. Las plantillas de autenticación de Meta
+   * (código de verificación) exigen el código también acá, en el botón de copiar código.
+   */
+  buttonParams?: string[];
   locale?: string;
   /** Para filtrar el buzón de desarrollo por organización. */
   tenantId?: string;
@@ -25,6 +30,11 @@ export interface OutboundMessage {
   replyTo?: string | null;
   /** Firma DKIM con la clave del dominio de correo verificado de la organización. */
   dkim?: { domainName: string; keySelector: string; privateKey: string } | null;
+  /**
+   * Remitente de reserva (dirección de la plataforma con el nombre de la marca) si SES rechaza el dominio propio por
+   * no estar verificado en SES (554). Sin esto, el nombre de `from` con MAIL_FROM.
+   */
+  fallbackFrom?: string | null;
   /** SMS: remitente alfanumérico de la marca (si el proveedor y el país lo permiten). */
   smsFrom?: string | null;
 }
@@ -32,6 +42,8 @@ export interface OutboundMessage {
 export interface SendResult {
   provider: string;
   messageId: string | null;
+  /** El dominio propio fue rechazado por SES (identidad sin verificar) y el correo salió desde la plataforma. */
+  identityRejectedDomain?: string | null;
 }
 
 const mailboxDir = resolve(config.dataDir, "mailbox");
@@ -132,25 +144,70 @@ let transporter: Transporter<SMTPSentMessageInfo, SMTPTransportOptions> | null =
 // envío sigue vivo, y saldría dos veces. Los parámetros de la URL (p. ej. ?socketTimeout=) siguen teniendo prioridad.
 const SMTP_TIMEOUTS = { dnsTimeout: 15_000, connectionTimeout: 30_000, greetingTimeout: 30_000, socketTimeout: 60_000 };
 
-async function sendEmail(m: OutboundMessage): Promise<SendResult> {
+/** Solo para pruebas: reemplaza el transporte SMTP (null: se vuelve a crear con SMTP_URL). */
+export function setMailTransportForTests(t: Pick<Transporter<SMTPSentMessageInfo, SMTPTransportOptions>, "sendMail"> | null) {
+  transporter = t as Transporter<SMTPSentMessageInfo, SMTPTransportOptions> | null;
+}
+
+/**
+ * Rechazo de SES por remitente sin verificar en SES ("554 Message rejected: Email address is not verified. The
+ * following identities failed the check…"). Es permanente: reintentar el mismo remitente no sirve.
+ */
+export function isSesIdentityRejection(err: unknown): boolean {
+  const e = err as any;
+  const msg = String(e?.response ?? e?.message ?? e ?? "");
+  const is554 = Number(e?.responseCode) === 554 || /(^|\s)554[\s-]/.test(msg);
+  return is554 && /not verified|identities failed the check/i.test(msg);
+}
+
+/** Nombre visible de un remitente ("Firmas ACME" <a@b.com> → Firmas ACME). */
+function displayNameOf(from: string): string | null {
+  const m = /^\s*"?([^"<]*?)"?\s*<[^>]+>\s*$/.exec(from);
+  return m?.[1]?.trim() || null;
+}
+
+/** Dirección de la plataforma con el nombre de la marca: reserva si SES rechaza el dominio propio. */
+function platformFallbackFrom(m: OutboundMessage): string {
+  if (m.fallbackFrom) return m.fallbackFrom;
+  const name = m.from ? displayNameOf(m.from) : null;
+  return name ? `"${name.replace(/["\\\r\n]/g, "")}" <${addressOf(config.mail.from)}>` : config.mail.from;
+}
+
+export async function sendEmail(m: OutboundMessage): Promise<SendResult> {
   transporter ??= nodemailer.createTransport(new SMTPTransport({ ...SMTP_TIMEOUTS, url: config.mail.smtpUrl! }));
-  const info = await transporter.sendMail({
-    from: m.from ?? config.mail.from,
-    // Con un remitente propio sin DKIM (dominio no verificado no llega acá: ver white-label/mail.ts) el sobre SMTP
-    // sigue saliendo con la dirección de la plataforma, que es la que el proveedor autoriza (SPF).
-    ...(m.from && !m.dkim ? { envelope: { from: addressOf(config.mail.from), to: m.to } } : {}),
-    replyTo: m.replyTo ?? undefined,
-    to: m.to,
-    subject: m.subject,
-    text: m.text,
-    html: m.html,
-    ...(m.dkim ? { dkim: m.dkim } : {}),
-    // Rebotes y quejas por SNS (docs/CORREO-REBOTES.md).
-    ...(isSesSmtp() ? { headers: sesHeaders(config.mail.sesConfigurationSet, m.tenantId) } : {}),
-  });
+  const send = (msg: OutboundMessage) =>
+    transporter!.sendMail({
+      from: msg.from ?? config.mail.from,
+      // Con un remitente propio sin DKIM (dominio no verificado no llega acá: ver white-label/mail.ts) el sobre SMTP
+      // sigue saliendo con la dirección de la plataforma, que es la que el proveedor autoriza (SPF).
+      ...(msg.from && !msg.dkim ? { envelope: { from: addressOf(config.mail.from), to: msg.to } } : {}),
+      replyTo: msg.replyTo ?? undefined,
+      to: msg.to,
+      subject: msg.subject,
+      text: msg.text,
+      html: msg.html,
+      ...(msg.dkim ? { dkim: msg.dkim } : {}),
+      // Rebotes y quejas por SNS (docs/CORREO-REBOTES.md).
+      ...(isSesSmtp() ? { headers: sesHeaders(config.mail.sesConfigurationSet, msg.tenantId) } : {}),
+    });
+  let info: SMTPSentMessageInfo;
+  let identityRejectedDomain: string | null = null;
+  try {
+    info = await send(m);
+  } catch (err) {
+    // Dominio propio verificado por DNS (DKIM) pero no como identidad en SES: SES lo rechaza siempre (554). Se reintenta
+    // una vez desde la dirección de la plataforma con el nombre de la marca, y quien llama marca el dominio.
+    if (!m.dkim || !isSesIdentityRejection(err)) throw err;
+    identityRejectedDomain = m.dkim.domainName;
+    info = await send({ ...m, from: platformFallbackFrom(m), dkim: null, replyTo: m.replyTo ?? (m.from ? addressOf(m.from) : null) });
+  }
   // SES por SMTP responde "250 Ok <id de SES>": ese id (no el Message-ID del encabezado) es el que traen los avisos de
   // rebote y queja (mail.messageId) para asociarlos al envío.
-  return { provider: "smtp", messageId: sesMessageId(info.response) ?? info.messageId ?? null };
+  return {
+    provider: "smtp",
+    messageId: sesMessageId(info.response) ?? info.messageId ?? null,
+    ...(identityRejectedDomain ? { identityRejectedDomain } : {}),
+  };
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -191,21 +248,35 @@ function addressOf(from: string): string {
 
 const WA_LANG: Record<string, string> = { es: "es", "pt-BR": "pt_BR", en: "en" };
 
+/**
+ * Idioma de la plantilla para Meta: el del destinatario si está aprobado (WHATSAPP_TEMPLATE_LANGS); si no, español.
+ * Pedir un idioma sin aprobar hace que Meta rechace el mensaje (132001).
+ */
+export function whatsAppLanguage(locale: string | undefined, approved: string[] = config.whatsapp.templateLangs): string {
+  const code = WA_LANG[locale ?? "es"] ?? "es";
+  return approved.includes(code) ? code : "es";
+}
+
+/** Cuerpo del POST a la Cloud API de WhatsApp (separado para poder probarlo). */
+export function whatsAppPayload(m: OutboundMessage) {
+  const components: unknown[] = [{ type: "body", parameters: (m.templateParams ?? []).map((text) => ({ type: "text", text })) }];
+  if (m.buttonParams?.length) {
+    components.push({ type: "button", sub_type: "url", index: "0", parameters: m.buttonParams.map((text) => ({ type: "text", text })) });
+  }
+  return {
+    messaging_product: "whatsapp",
+    to: m.to.replace(/^\+/, ""),
+    type: "template",
+    template: { name: m.template ?? config.whatsapp.template, language: { code: whatsAppLanguage(m.locale) }, components },
+  };
+}
+
 async function sendWhatsApp(m: OutboundMessage): Promise<SendResult> {
-  const { token, phoneNumberId, template } = config.whatsapp;
+  const { token, phoneNumberId } = config.whatsapp;
   const res = await fetch(`https://graph.facebook.com/v21.0/${phoneNumberId}/messages`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      messaging_product: "whatsapp",
-      to: m.to.replace(/^\+/, ""),
-      type: "template",
-      template: {
-        name: m.template ?? template,
-        language: { code: WA_LANG[m.locale ?? "es"] ?? "es" },
-        components: [{ type: "body", parameters: (m.templateParams ?? []).map((text) => ({ type: "text", text })) }],
-      },
-    }),
+    body: JSON.stringify(whatsAppPayload(m)),
     signal: AbortSignal.timeout(15_000),
   });
   const body: any = await res.json().catch(() => ({}));

@@ -16,7 +16,11 @@ export interface Message {
   linkLabel?: string;
   /** Para el color de la tarjeta (Discord, Mattermost, Rocket.Chat). */
   event?: NotificationEvent | "test";
+  /** Nombre del producto que firma el mensaje (marca blanca: productLabel de la marca). Sin él, CalaSign. */
+  product?: string;
 }
+
+const productOf = (m: Message) => m.product?.trim() || "CalaSign";
 
 /** Topes propios, muy por debajo de los de cada plataforma (Discord: descripción 4096; Rocket.Chat: 5000 por defecto…). */
 export const LIMITS = { subject: 500, detail: 300 } as const;
@@ -121,7 +125,7 @@ export function discordPayload(m: Message) {
     .filter(Boolean)
     .join("\n");
   return {
-    username: "CalaSign",
+    username: clip(productOf(m), 80),
     allowed_mentions: { parse: [] as string[] },
     embeds: [
       {
@@ -146,7 +150,7 @@ export function googleChatPayload(m: Message) {
       {
         cardId: `calasign-${(m.event ?? "test").replace(/\./g, "-")}`,
         card: {
-          header: { title: m.title, subtitle: "CalaSign" },
+          header: { title: m.title, subtitle: productOf(m) },
           ...(widgets.length ? { sections: [{ widgets }] } : {}),
         },
       },

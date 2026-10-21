@@ -339,6 +339,8 @@ export interface BrandSender {
   dkim: { domainName: string; keySelector: string; privateKey: string } | null;
   customDomain: boolean;
   warning: string | null;
+  /** Con dominio propio: la dirección de la plataforma con el nombre de la marca, si SES rechaza el dominio (554). */
+  fallbackFrom?: string | null;
 }
 
 /**
@@ -348,6 +350,7 @@ export interface BrandSender {
  */
 export async function senderFor(db: Db, b: ResolvedBrand): Promise<BrandSender> {
   const name = b.email.fromName || (rebrands(b) ? productLabel(b) : null);
+  const base = b.whiteLabel && config.mail.whiteLabelFrom ? config.mail.whiteLabelFrom : config.mail.from;
   let warning: string | null = null;
   if (b.email.fromEmail) {
     const domain = b.email.fromEmail.split("@")[1] ?? "";
@@ -359,11 +362,11 @@ export async function senderFor(db: Db, b: ResolvedBrand): Promise<BrandSender> 
         dkim: { domainName: domain, keySelector: d.dkim_selector, privateKey: decrypt(d.dkim_private_key_enc) },
         customDomain: true,
         warning: null,
+        fallbackFrom: `${quoteName(name || b.name)} <${addressOf(base)}>`,
       };
     }
     warning = `El dominio ${domain} no está verificado: los correos salen desde la dirección de la plataforma`;
   }
-  const base = b.whiteLabel && config.mail.whiteLabelFrom ? config.mail.whiteLabelFrom : config.mail.from;
   return {
     from: name ? `${quoteName(name)} <${addressOf(base)}>` : base,
     // Sin dominio propio, las respuestas van a la dirección elegida (si hay) en vez de a la casilla no-reply.

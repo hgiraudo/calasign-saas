@@ -277,6 +277,7 @@ export async function notifyAiRenewalAlert(
       from: sendAs.from,
       replyTo: sendAs.replyTo,
       dkim: sendAs.dkim,
+      fallbackFrom: sendAs.fallbackFrom,
     },
   );
   if (out.status === "failed") {

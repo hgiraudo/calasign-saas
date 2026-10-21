@@ -1,6 +1,6 @@
 // Fase 6 — Plataforma de acuerdos: repositorio, generación de documentos, workflows y negociación.
 import { z } from "zod";
-import { CHANNELS, LOCALES, UserMetadata } from "./api";
+import { CHANNELS, LOCALES, UserMetadata, telegramOnlyWithoutChat } from "./api";
 import type { DiffPart, ResolvedBlock, TemplateAnalysis } from "./agreements-engine";
 
 export * from "./agreements-engine";
@@ -205,6 +205,17 @@ export interface Clause {
   updatedAt: string;
 }
 
+/** Canales de un destinatario que no admite telegramChatId (generación de documentos, workflows): con solo Telegram no
+ *  habría a qué chat mandarle el link y el envío respondería 422 telegram_unlinked; se rechaza al guardar. */
+const TelegramSafeChannels = () =>
+  z
+    .array(z.enum(CHANNELS))
+    .min(1)
+    .refine((ch) => !telegramOnlyWithoutChat({ channels: ch }), {
+      message: "con solo Telegram no hay un chat vinculado al que mandar el link: agregá email o WhatsApp",
+    })
+    .optional();
+
 export const GenerateRecipientInput = z.object({
   /** Rol de las marcas {{firma:Rol}} del documento. */
   role: z.string().trim().min(1).max(80),
@@ -216,7 +227,7 @@ export const GenerateRecipientInput = z.object({
     .regex(/^\+[1-9]\d{6,14}$/)
     .nullable()
     .optional(),
-  channels: z.array(z.enum(CHANNELS)).min(1).optional(),
+  channels: TelegramSafeChannels(),
   locale: z.enum(LOCALES).nullable().optional(),
   routingOrder: z.number().int().min(1).max(100).optional(),
   /** Recibe copia, no firma. */
@@ -342,7 +353,7 @@ export const WorkflowStep = z.discriminatedUnion("type", [
             name: z.string().trim().min(1).max(300),
             email: z.string().trim().max(300).nullable().optional(),
             phone: z.string().trim().max(300).nullable().optional(),
-            channels: z.array(z.enum(CHANNELS)).min(1).optional(),
+            channels: TelegramSafeChannels(),
             cc: z.boolean().optional(),
           }),
         )

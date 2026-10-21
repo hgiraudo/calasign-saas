@@ -211,6 +211,8 @@ export async function guardTemplateForms(t: Db, tenantId: string, templateId: st
     try {
       l = await loadTemplateForUse(t, tenantId, templateId);
     } catch (e) {
+      // La plantilla cambiaba mientras se leía (503 template_busy): no es un problema de los formularios, se relanza.
+      if (e instanceof AppError && e.code === "template_busy") throw e;
       return new Map<string, FormIssue[]>(forms.map((f) => [f.id, [{ kind: "config", message: (e as Error).message }]]));
     }
     return new Map<string, FormIssue[]>(forms.map((f) => [f.id, formTemplateIssues(l, f)]));

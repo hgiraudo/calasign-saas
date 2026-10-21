@@ -621,6 +621,16 @@ export interface LoadedTemplate {
 }
 
 /**
+ * La plantilla cambió en cada intento de leerla entera: 503 template_busy (Retry-After). `cause` con el código de
+ * serialización de Postgres (40001): isTransientError (envío masivo, colas) lo trata como error del momento.
+ */
+export function templateBusyError(): AppError {
+  const e = new AppError(503, "template_busy", "La plantilla se está modificando: probá de nuevo en unos segundos", { retryAfterSeconds: 2 });
+  (e as Error & { cause?: unknown }).cause = Object.assign(new Error("template changed while being read"), { code: "40001" });
+  return e;
+}
+
+/**
  * La plantilla entera (fila, roles, campos y documentos) de una misma versión. Las lecturas son varias consultas: en
  * READ COMMITTED, una edición confirmada entre una y otra (p. ej. PUT fields entre los roles y los campos) daba una
  * mezcla de versiones. Toda edición sube updated_at (touch) en su misma transacción: si cambió entre antes y después de
@@ -640,8 +650,8 @@ export async function loadTemplateForUse(db: Db, tenantId: string, templateId: s
       if (docs.length === 0) throw badRequest("template_empty", "La plantilla no tiene documentos");
       return { tpl, row, docs, stamp: after };
     }
-    // Código de serialización: quien llama lo trata como error del momento (el envío masivo reintenta el job).
-    if (attempt >= 4) throw Object.assign(new Error("La plantilla se está modificando: probá de nuevo en unos segundos"), { code: "40001" });
+    // Error del momento: por HTTP, 503 template_busy con Retry-After; el envío masivo reintenta el job.
+    if (attempt >= 4) throw templateBusyError();
   }
 }
 

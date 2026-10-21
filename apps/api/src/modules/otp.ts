@@ -11,7 +11,7 @@ import { enqueue } from "../infra/queue";
 import { AppError, conflict } from "../lib/errors";
 import { maskDestination, randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { deliver } from "../notifications/channels";
-import { clearBounceSuppression, isSuppressed } from "../notifications/outbound";
+import { clearBounceSuppression, isSuppressed, noteSesIdentityRejection } from "../notifications/outbound";
 import { normLocale } from "../notifications/templates";
 import type { Services } from "./context";
 import { lastEmbedSession } from "./embed";
@@ -222,9 +222,11 @@ export async function otpRoutes(app: FastifyInstance, s: Services) {
         channel,
         to: destination,
         // Marca blanca: plantilla, nombre del producto y remitente de la marca del sobre (white-label/otp-text.ts).
-        ...(await brandedOtpMessage(s.db, e, locale, code, m.subject, m.text)),
+        ...(await brandedOtpMessage(s.db, e, locale, code, m.subject, m.text, channel)),
         locale,
         templateParams: [code],
+        // Plantilla de autenticación de Meta: el botón de copiar código lleva el código como parámetro (sin él, Meta la rechaza).
+        ...(channel === "whatsapp" && config.whatsapp.otpTemplateKind === "authentication" ? { buttonParams: [code] } : {}),
         // La plantilla del pedido de firma espera remitente, asunto y link: con solo el código, Meta la rechaza.
         template: config.whatsapp.otpTemplate,
         tenantId: e.tenant_id,
@@ -234,6 +236,7 @@ export async function otpRoutes(app: FastifyInstance, s: Services) {
       await s.db.query(`UPDATE otp_challenges SET expires_at = now() WHERE id = $1`, [challengeId]);
       throw new AppError(502, "otp_delivery_failed", "No se pudo enviar el código. Probá de nuevo en unos segundos.");
     }
+    if (res.identityRejectedDomain) await noteSesIdentityRejection(s.db, e.tenant_id, res.identityRejectedDomain, req.log);
     await s.db.tx(async (t) => {
       const cur = await lockEnvelope(t, e.tenant_id, e.id);
       await t.query(

@@ -39,7 +39,9 @@ import {
 } from "../lib/totp";
 import { decrypt, encrypt, hashPassword, iso, maskDestination, randomToken, sha256Hex, uuidv7, verifyPassword } from "../lib/util";
 import { isSuppressed, sendTracked } from "../notifications/outbound";
-import { normLocale } from "../notifications/templates";
+import { normLocale, render } from "../notifications/templates";
+import { tenantBaseUrl } from "./custom-domains";
+import { mailBranding, resolveBrand, senderFor } from "./white-label/brand";
 import { hasPerm } from "./access";
 import { auditFromRequest, recordAudit } from "./audit";
 import { authenticate, clientInfo, sessionCookieToken, setSessionCookie, type AuthContext, type Services } from "./context";
@@ -250,42 +252,28 @@ function invitationStatus(r: any): Invitation["status"] {
   return "pending";
 }
 
-const INVITE_TEXT = {
-  es: {
-    subject: (org: string) => `Te invitaron a ${org} en CalaSign`,
-    body: (inviter: string, org: string, role: string) => `${inviter} te invitó a sumarte a ${org} en CalaSign con el rol ${role}.`,
-    cta: "Aceptar invitación",
-    expires: (d: number) => `La invitación vence en ${d} días.`,
-  },
-  "pt-BR": {
-    subject: (org: string) => `Você foi convidado para ${org} na CalaSign`,
-    body: (inviter: string, org: string, role: string) => `${inviter} convidou você para participar de ${org} na CalaSign com o perfil ${role}.`,
-    cta: "Aceitar convite",
-    expires: (d: number) => `O convite expira em ${d} dias.`,
-  },
-  en: {
-    subject: (org: string) => `You've been invited to ${org} on CalaSign`,
-    body: (inviter: string, org: string, role: string) => `${inviter} invited you to join ${org} on CalaSign as ${role}.`,
-    cta: "Accept invitation",
-    expires: (d: number) => `The invitation expires in ${d} days.`,
-  },
-} as const;
+const INVITE_HEADING = { es: "Invitación al equipo", "pt-BR": "Convite para a equipe", en: "Team invitation" } as const;
 
-const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
-
-async function sendInvitationEmail(db: Db, tenantId: string, to: string, org: string, inviter: string, roleName: string, link: string, localeIn?: string | null) {
-  const L = INVITE_TEXT[normLocale(localeIn)];
-  const subject = L.subject(org);
-  const line = L.body(inviter, org, roleName);
-  const text = `${line}\n\n${L.cta}: ${link}\n\n${L.expires(INVITE_DAYS)}`;
-  const html = `<!doctype html><html><body style="font-family:Arial,Helvetica,sans-serif;color:#0b1f3a;background:#f3f5f8;padding:24px">
-<div style="max-width:520px;margin:auto;background:#fff;border-radius:10px;padding:28px">
-<p style="font-size:18px;font-weight:bold;margin:0 0 16px">Cala<span style="color:#2ec4b6">Sign</span></p>
-<p style="font-size:15px;line-height:1.5">${esc(line)}</p>
-<p style="margin:24px 0"><a href="${esc(link)}" style="background:#0f7c7c;color:#fff;text-decoration:none;padding:12px 22px;border-radius:6px;font-weight:bold">${esc(L.cta)}</a></p>
-<p style="font-size:12px;color:#5b6576">${esc(L.expires(INVITE_DAYS))}<br>${esc(link)}</p></div></body></html>`;
+/**
+ * Correo de invitación con la marca de la organización (colores, logo, plantilla, marca blanca) y su remitente (dominio
+ * de correo propio si lo tiene), como los demás avisos a la organización (webhooks.ts notifyWebhookDeactivated).
+ */
+export async function sendInvitationEmail(db: Db, tenantId: string, to: string, org: string, inviter: string, roleName: string, link: string, localeIn?: string | null) {
+  const locale = normLocale(localeIn);
+  const wl = await resolveBrand(db, tenantId, null);
+  const sendAs = await senderFor(db, wl);
+  const m = render(
+    "team_invitation",
+    locale,
+    { recipientName: "", senderName: inviter, organizationName: org, subject: INVITE_HEADING[locale], detail: roleName, days: INVITE_DAYS, link },
+    mailBranding(wl, null, locale),
+  );
   // Registrado en notifications (con la organización): un rebote o una queja de este correo se atribuye a ella.
-  const out = await sendTracked(db, { tenantId, template: "invitation" }, { channel: "email", to, subject, text, html, link, tenantId, locale: localeIn ?? "es" });
+  const out = await sendTracked(
+    db,
+    { tenantId, template: "invitation" },
+    { channel: "email", to, subject: m.subject, text: m.text, html: m.html, link, tenantId, locale, from: sendAs.from, replyTo: sendAs.replyTo, dkim: sendAs.dkim, fallbackFrom: sendAs.fallbackFrom },
+  );
   if (out.status === "failed") throw new Error(`no se pudo enviar la invitación: ${out.error}`);
 }
 
@@ -546,7 +534,8 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     });
     const org = await s.db.one<any>(`SELECT name, default_locale FROM tenants WHERE id = $1`, [a.tenantId]);
     const inviter = a.userId ? (await s.db.one<any>(`SELECT name FROM users WHERE id = $1`, [a.userId]))?.name : a.actor.label;
-    const acceptUrl = `${config.appUrl}/invite/${token}`;
+    // En el dominio propio de la organización (si tiene), como los demás links de sus correos.
+    const acceptUrl = `${await tenantBaseUrl(s.db, a.tenantId)}/invite/${token}`;
     const mailLocale = normLocale(input.locale ?? org.default_locale);
     const roleForMail = target.role === "custom" ? target.roleName : ROLE_LABEL_I18N[mailLocale][target.role as "owner" | "admin" | "member"];
     // Dirección suprimida (rebote permanente vigente, global, o queja contra esta organización): no se manda; el link

@@ -589,10 +589,11 @@ export interface FieldTextLayout {
  * 1. Si entra en UNA línea al tamaño que elegía siempre fitFontSize (de min(0.7·alto, 11) pt achicando de a 0.25) y ese
  *    tamaño es ≥ FIELD_LEGIBLE_FONT_SIZE (6 pt): una línea exactamente como antes, sin partir (las plantillas
  *    existentes no cambian; una caja alta que sólo necesitaba achicar un poco no se parte).
- * 2. Si no, se parte: primero en los espacios; los grupos numéricos "pegados" (importes, teléfonos) van juntos si entran
- *    en una línea; una palabra que no entra en el ancho se parte por carácter (grafema): CJK, tailandés, nombres de
- *    archivo, números largos. Se elige el mayor tamaño entre 4 pt y min(0.7·alto, 11) con el que todas las líneas entran
- *    en el alto de la caja (un grupo o número sin letras sólo se parte si a ningún tamaño ≥ 4 pt entra entero).
+ * 2. Si no, se parte en los espacios, al mayor tamaño entre 4 pt y min(0.7·alto, 11) con el que todas las líneas entran
+ *    en el alto de la caja, sin partir ninguna palabra (ni los grupos numéricos "pegados": importes, teléfonos) si hay
+ *    algún tamaño ≥ 4 pt con el que entran enteras. Sólo el texto en escrituras sin espacios (CJK, tailandés) se parte
+ *    por carácter a cualquier tamaño. Si ningún tamaño ≥ 4 pt sirve con las palabras enteras (un nombre de archivo, un
+ *    correo o un número largo), la palabra que no entra se parte por grafema y cada pedazo empieza su propia línea.
  * 3. Si ni a 4 pt entran en el alto, quedan a 4 pt y las líneas de más siguen debajo de la caja, hasta el borde visible
  *    de la página (`room`); si ni así entran, se achica más (hasta 1 pt) para que todo quede dentro de la página.
  * El ancho de partido es el de la caja, limitado por el borde derecho de la página.
@@ -600,10 +601,17 @@ export interface FieldTextLayout {
 export function layoutFieldText(font: PDFFont, text: string, bw: number, bh: number, room: { below?: number; right?: number } = {}): FieldTextLayout {
   const maxW = bw - 2;
   const maxSize = Math.min(bh * 0.7, 11);
-  const single = fitFontSize(font, text, maxW, maxSize);
-  if (single >= FIELD_LEGIBLE_FONT_SIZE && font.widthOfTextAtSize(text, single) <= maxW) return { size: single, lines: [text], wrapped: false, overflows: false };
-
   const width = widthAt1(font);
+  // fitFontSize mide el texto entero en cada paso de 0.25 pt: sólo se llama si a 6 pt podría entrar en una línea. La
+  // estimación suma los anchos de las palabras (con caché, los reusa el partido) con margen por el interletrado; medir
+  // el texto entero de un valor de 2000 caracteres costaba más que todo el partido.
+  const words = text.split(" ");
+  const approxW = words.reduce((acc, w) => acc + (w ? width(w) : 0), 0) + (words.length - 1) * width(" ");
+  if (approxW * FIELD_LEGIBLE_FONT_SIZE <= maxW * 1.1) {
+    const single = fitFontSize(font, text, maxW, maxSize);
+    if (single >= FIELD_LEGIBLE_FONT_SIZE && font.widthOfTextAtSize(text, single) <= maxW) return { size: single, lines: [text], wrapped: false, overflows: false };
+  }
+
   const units = wrapUnits(text);
   const wrapW = Math.max(1, Math.min(bw, room.right ?? Infinity) - 2);
   const minSize = Math.min(FIELD_MIN_WRAP_SIZE, maxSize);
@@ -614,19 +622,53 @@ export function layoutFieldText(font: PDFFont, text: string, bw: number, bh: num
   const sizes: number[] = [];
   for (let s = maxSize; s > minSize; s -= 0.25) sizes.push(s);
   sizes.push(minSize);
-  // Un importe, teléfono o número no se parte si a algún tamaño ≥ 4 pt entra entero en una línea; las palabras con
-  // letras (incluido CJK o tailandés, sin espacios) se parten por carácter al mayor tamaño posible.
-  for (const numbersWhole of [true, false]) {
-    for (const s of sizes) {
-      const w = wrapFieldUnits(units, width, s, wrapW);
-      if ((!numbersWhole || !w.numberSplit) && !w.tooWide && w.lines.length * s * FIELD_LINE_HEIGHT <= bh + 1e-6) return result(s, w.lines);
-    }
+  const fitsBox = (lines: number, s: number, h: number) => lines * s * FIELD_LINE_HEIGHT <= h + 1e-6;
+  // 2a) Palabras enteras (CJK/tailandés, que no usan espacios, sí se parten por carácter a cualquier tamaño): el mayor
+  //     tamaño entre el máximo y 4 pt; primero con los grupos numéricos ("$ 1.234,00") enteros, después en sus partes.
+  // 2b) Sólo si a ningún tamaño ≥ 4 pt entran las palabras enteras, se parten por grafema, igual que antes.
+  // La factibilidad es monótona en el tamaño (todo ancho escala con él), así que se busca en binario.
+  for (const [splitWords, numbersWhole] of [[false, true], [false, false], [true, true], [true, false]] as const) {
+    const hit = largestFit(sizes, (s) => {
+      const w = wrapFieldUnits(units, width, s, wrapW, splitWords);
+      return (!numbersWhole || !w.numberSplit) && !w.wordSplit && !w.tooWide && fitsBox(w.lines.length, s, bh) ? w : null;
+    });
+    if (hit) return result(hit.size, hit.value.lines);
   }
+  // 3) Ni a 4 pt entra en el alto: sigue debajo de la caja; a cada tamaño se prefieren las palabras enteras.
   const availH = Math.max(1, room.below ?? Infinity);
+  const small: number[] = [];
   for (let s = minSize; ; s -= 0.25) {
-    const w = wrapFieldUnits(units, width, s, wrapW);
-    if ((!w.tooWide && w.lines.length * s * FIELD_LINE_HEIGHT <= availH + 1e-6) || s - 0.25 < FIELD_MIN_PAGE_SIZE) return result(s, w.lines);
+    small.push(s);
+    if (s - 0.25 < FIELD_MIN_PAGE_SIZE) break;
   }
+  const below = (splitWords: boolean) =>
+    largestFit(small, (s) => {
+      const w = wrapFieldUnits(units, width, s, wrapW, splitWords);
+      return !w.wordSplit && !w.tooWide && fitsBox(w.lines.length, s, availH) ? w : null;
+    });
+  const whole = below(false);
+  const split = below(true);
+  const best = whole && (!split || whole.size >= split.size) ? whole : split;
+  if (best) return result(best.size, best.value.lines);
+  const last = small[small.length - 1]!;
+  return result(last, wrapFieldUnits(units, width, last, wrapW, true).lines);
+}
+
+/** El primer tamaño de `sizes` (de mayor a menor) con el que `test` da un resultado, suponiendo que si un tamaño sirve
+ *  también sirven todos los menores (búsqueda binaria: unas pocas pasadas en vez de una por cada 0,25 pt). */
+function largestFit<T>(sizes: number[], test: (s: number) => T | null): { size: number; value: T } | null {
+  let lo = 0;
+  let hi = sizes.length - 1;
+  let found: { size: number; value: T } | null = null;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const v = test(sizes[mid]!);
+    if (v) {
+      found = { size: sizes[mid]!, value: v };
+      hi = mid - 1;
+    } else lo = mid + 1;
+  }
+  return found;
 }
 
 /** Ancho a 1 pt, con caché (el ancho es proporcional al tamaño; sumar anchos de partes nunca da menos que el real). */
@@ -656,19 +698,42 @@ function wrapUnits(text: string): string[] {
 }
 
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+const graphemeCache = new Map<string, string[]>();
+function graphemesOf(tok: string): string[] {
+  let g = graphemeCache.get(tok);
+  if (!g) {
+    g = Array.from(graphemes.segment(tok), (x) => x.segment);
+    if (graphemeCache.size > 5000) graphemeCache.clear();
+    graphemeCache.set(tok, g);
+  }
+  return g;
+}
+
+/** Escrituras que no separan las palabras con espacios (chino, japonés, tailandés, laosiano, jemer, birmano, tibetano):
+ *  una "palabra" de esas es en realidad una frase y se parte por carácter a cualquier tamaño. */
+const NO_SPACE_SCRIPT = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}\p{Script=Tibetan}]/u;
 
 /**
  * Líneas de a lo sumo `maxW` a tamaño `size`: se corta en los espacios; una unidad que no entra sola en el ancho se
- * separa en sus palabras, y una palabra que no entra se parte por grafema. `tooWide`: algún grafema solo ya es más
- * ancho que `maxW` (va solo en su línea). `numberSplit`: hubo que partir un grupo o token sin letras (importe, número).
+ * separa en sus palabras. Una palabra que no entra: si es de una escritura sin espacios (CJK, tailandés) se parte por
+ * grafema siempre; si no, sólo con `splitWords` (si no, `wordSplit` y el resultado no sirve), y sus pedazos empiezan
+ * cada uno su línea y la palabra siguiente también (que "Bueno|s Aires" no se lea como "s Aires").
+ * `tooWide`: algún grafema solo ya es más ancho que `maxW`. `numberSplit`: hubo que partir un grupo o token sin letras.
  */
-function wrapFieldUnits(units: string[], width: (s: string) => number, size: number, maxW: number): { lines: string[]; tooWide: boolean; numberSplit: boolean } {
+function wrapFieldUnits(
+  units: string[],
+  width: (s: string) => number,
+  size: number,
+  maxW: number,
+  splitWords: boolean,
+): { lines: string[]; tooWide: boolean; numberSplit: boolean; wordSplit: boolean } {
   const lines: string[] = [];
   const sp = width(" ") * size;
   let line = "";
   let lineW = 0;
   let tooWide = false;
   let numberSplit = false;
+  let wordSplit = false;
   const add = (tok: string, w: number): boolean => {
     if (line && lineW + sp + w <= maxW) {
       line += ` ${tok}`;
@@ -688,10 +753,18 @@ function wrapFieldUnits(units: string[], width: (s: string) => number, size: num
     if (!/\p{L}/u.test(u)) numberSplit = true;
     for (const tok of u.split(" ")) {
       if (add(tok, width(tok) * size)) continue;
+      const free = NO_SPACE_SCRIPT.test(tok);
+      if (!free) {
+        if (!/\p{L}/u.test(tok)) numberSplit = true;
+        if (!splitWords) {
+          wordSplit = true;
+          return { lines, tooWide, numberSplit, wordSplit };
+        }
+      }
       if (line) lines.push(line);
       line = "";
       lineW = 0;
-      for (const { segment: ch } of graphemes.segment(tok)) {
+      for (const ch of graphemesOf(tok)) {
         const cw = width(ch) * size;
         if (cw > maxW) tooWide = true;
         if (line && lineW + cw > maxW) {
@@ -703,10 +776,15 @@ function wrapFieldUnits(units: string[], width: (s: string) => number, size: num
           lineW += cw;
         }
       }
+      if (!free && line) {
+        lines.push(line);
+        line = "";
+        lineW = 0;
+      }
     }
   }
   if (line) lines.push(line);
-  return { lines, tooWide, numberSplit };
+  return { lines, tooWide, numberSplit, wordSplit };
 }
 
 function drawPageFooter(page: PDFPage, fonts: Fonts, L: CertLabels, envelopeId: string) {

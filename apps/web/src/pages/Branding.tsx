@@ -693,6 +693,7 @@ function EmailEditor(p: {
           <code key={v} style={{ marginRight: 6 }}>{`{{${v}}}`}</code>
         ))}
       </p>
+      {event === "finalize_failed" && <p className="muted small">{w("email.varsFinalizeFailed")}</p>}
       {/* El evento y el idioma elegidos los usa la vista previa del correo (columna derecha). */}
       <EmailPreviewTarget event={event} locale={locale} />
     </>

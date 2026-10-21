@@ -13,6 +13,8 @@ import type { TenantStorage, TenantStorageResolver } from "../../infra/storage";
 import { AppError } from "../../lib/errors";
 import { iso } from "../../lib/util";
 import { sendTracked } from "../../notifications/outbound";
+import { normLocale } from "../../notifications/templates";
+import { productLabel, resolveBrand, senderFor } from "../white-label/brand";
 import { auditFromRequest, recordAudit } from "../audit";
 import { authenticate, type Services } from "../context";
 
@@ -90,24 +92,65 @@ export async function markKeyFailing(db: Db, tenantId: string, keyArn: string, e
   const prev = { name };
   await recordAudit(db, { tenantId, action: "byok.key_failing", actor: { type: "system", label: "CalaSign" }, data: { keyArn, error: error.slice(0, 300) } });
   const admins = await db.query<any>(
-    `SELECT u.email, u.name FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.tenant_id = $1 AND m.role IN ('owner','admin')`,
+    `SELECT u.email, u.name, u.locale FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.tenant_id = $1 AND m.role IN ('owner','admin')`,
     [tenantId],
   );
+  if (!admins.length) return;
+  // Con la marca de la organización (nombre del producto en marca blanca y su remitente) y en el idioma de cada persona.
+  const wl = await resolveBrand(db, tenantId, null);
+  const sendAs = await senderFor(db, wl);
+  const product = productLabel(wl);
+  const org = prev?.name ?? null;
+  const err = error.slice(0, 300);
   for (const a of admins) {
+    const L = BYOK_ALERT[normLocale(a.locale)];
     // Registrado en notifications: un rebote o una queja de la alerta se atribuye a la organización.
-    await sendTracked(db, { tenantId, template: "byok_key_failing" }, {
-      channel: "email",
-      to: a.email,
-      tenantId,
-      subject: "CalaSign: la clave de cifrado de tu organización (BYOK) no responde",
-      text:
-        `Hola ${a.name}:\n\nCalaSign no puede usar la clave de AWS KMS de ${prev?.name ?? "tu organización"} (${keyArn}).\n` +
-        `Mientras no se restablezca el acceso, no se pueden guardar ni leer documentos (los envíos y firmas fallan).\n\n` +
-        `Error: ${error.slice(0, 300)}\n\nRevisá en AWS que la clave esté habilitada y que su política siga autorizando a CalaSign, y después ` +
-        `usá «Probar clave» en Ajustes → Cifrado con tu clave.\n\n— CalaSign`,
-    }).catch(() => {});
+    const out = await sendTracked(
+      db,
+      { tenantId, template: "byok_key_failing", log: console },
+      {
+        channel: "email",
+        to: a.email,
+        tenantId,
+        locale: normLocale(a.locale),
+        subject: L.subject(product),
+        text: L.text(a.name ?? "", product, org, keyArn, err),
+        from: sendAs.from,
+        replyTo: sendAs.replyTo,
+        dkim: sendAs.dkim,
+        fallbackFrom: sendAs.fallbackFrom,
+      },
+    ).catch((e) => ({ status: "failed" as const, error: String(e), transient: true }));
+    if (out.status === "failed") console.warn(`[byok] alerta de clave fallida no enviada (organización ${tenantId}): ${out.error.slice(0, 300)}`);
   }
 }
+
+const BYOK_ALERT = {
+  es: {
+    subject: (p: string) => `${p}: la clave de cifrado de tu organización (BYOK) no responde`,
+    text: (name: string, p: string, org: string | null, arn: string, err: string) =>
+      `Hola ${name}:\n\n${p} no puede usar la clave de AWS KMS de ${org ?? "tu organización"} (${arn}).\n` +
+      `Mientras no se restablezca el acceso, no se pueden guardar ni leer documentos (los envíos y firmas fallan).\n\n` +
+      `Error: ${err}\n\nRevisá en AWS que la clave esté habilitada y que su política siga autorizando a ${p}, y después ` +
+      `usá «Probar clave» en Ajustes → Cifrado con tu clave (BYOK).\n\n— ${p}`,
+  },
+  "pt-BR": {
+    subject: (p: string) => `${p}: a chave de criptografia da sua organização (BYOK) não responde`,
+    text: (name: string, p: string, org: string | null, arn: string, err: string) =>
+      `Olá ${name},\n\n${p} não consegue usar a chave do AWS KMS de ${org ?? "sua organização"} (${arn}).\n` +
+      `Enquanto o acesso não for restabelecido, não é possível salvar nem ler documentos (envios e assinaturas falham).\n\n` +
+      `Erro: ${err}\n\nVerifique na AWS se a chave está habilitada e se a política dela continua autorizando ${p}; depois, ` +
+      `use «Testar chave» em Configurações → Criptografia com sua chave (BYOK).\n\n— ${p}`,
+  },
+  en: {
+    subject: (p: string) => `${p}: your organization's encryption key (BYOK) is not responding`,
+    text: (name: string, p: string, org: string | null, arn: string, err: string) =>
+      `Hi ${name},\n\n${p} can't use the AWS KMS key of ${org ?? "your organization"} (${arn}).\n` +
+      `Until access is restored, documents can't be stored or read (sending and signing fail).\n\n` +
+      `Error: ${err}\n\nCheck in AWS that the key is enabled and that its policy still authorizes ${p}, then ` +
+      `use "Test key" in Settings → Encryption with your key (BYOK).\n\n— ${p}`,
+  },
+} as const;
 
 export async function markKeyHealthy(db: Db, tenantId: string) {
   // Varios pedidos concurrentes pueden detectar la recuperación: solo el que cambia el estado deja constancia.

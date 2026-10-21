@@ -199,6 +199,9 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
       });
     }
     if (err instanceof AppError) {
+      // Errores del momento (503 template_busy, …): cuándo reintentar.
+      const retryAfter = (err.details as { retryAfterSeconds?: unknown } | undefined)?.retryAfterSeconds;
+      if (err.status === 503 && typeof retryAfter === "number") reply.header("retry-after", String(retryAfter));
       return reply.code(err.status).send({ error: { code: err.code, message: err.message, details: err.details } });
     }
     // Tope de PDFs procesándose a la vez (packages/pdf ingest-limit): reintentable.
@@ -211,6 +214,11 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
     const pgCode = (err as { code?: unknown }).code;
     if (pgCode === "22P02") return reply.code(400).send({ error: { code: "invalid_id", message: "Identificador inválido" } });
     if (pgCode === "23505") return reply.code(409).send({ error: { code: "conflict", message: "El recurso ya existe o cambió al mismo tiempo; reintentá" } });
+    // Serialización (40001) o deadlock (40P01) contra otro pedido simultáneo: del momento, se reintenta.
+    if (pgCode === "40001" || pgCode === "40P01") {
+      reply.header("retry-after", "1");
+      return reply.code(503).send({ error: { code: "concurrent_update", message: "Otro cambio simultáneo cruzó este pedido: reintentá en unos segundos" } });
+    }
     // Texto con el carácter NUL (\u0000): Postgres lo rechaza en columnas de texto (22021) y en jsonb (22P05). Lo manda
     // el cliente (p. ej. el motivo de un rechazo o un asunto): es un pedido inválido, no un error interno.
     // La TSA externa falló (red, rechazo): no es un error interno de la plataforma.

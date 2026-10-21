@@ -222,6 +222,19 @@ export const config = {
     /** Plantilla aprobada para el código de verificación del firmante: recibe {{1}} el código. */
     otpTemplate: env.WHATSAPP_OTP_TEMPLATE ?? "calasign_verification_code",
     /**
+     * Categoría de la plantilla del código en Meta: "authentication" (las de autenticación exigen, además del cuerpo, el
+     * botón de copiar código con el código como parámetro) o "utility" (solo el cuerpo con {{1}}).
+     */
+    otpTemplateKind: (env.WHATSAPP_OTP_TEMPLATE_KIND === "utility" ? "utility" : "authentication") as "authentication" | "utility",
+    /**
+     * Idiomas aprobados en Meta para las plantillas (códigos de Meta: es, en, pt_BR). Un destinatario en otro idioma
+     * recibe la versión en español (pedir un idioma no aprobado hace que Meta rechace el mensaje).
+     */
+    templateLangs: (env.WHATSAPP_TEMPLATE_LANGS ?? "es")
+      .split(",")
+      .map((x) => x.trim())
+      .filter(Boolean),
+    /**
      * Plantillas aprobadas para los otros avisos ({{1}} remitente, {{2}} asunto, {{3}} link o vacío). Sin ellas esos
      * avisos no salen por WhatsApp (van por los otros canales): con la de "te enviaron a firmar" un sobre anulado,
      * rechazado o completado llegaba como un pedido de firma.

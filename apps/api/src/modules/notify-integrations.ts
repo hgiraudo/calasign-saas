@@ -17,6 +17,7 @@ import { auditFromRequest } from "./audit";
 import { authenticate, type Services } from "./context";
 import { tenantBaseUrl } from "./custom-domains";
 import { payloadFor, type Message } from "./notify-format";
+import { brandForEnvelope, productLabel, resolveBrand } from "./white-label/brand";
 import { postToCustomerUrl } from "./webhooks";
 
 const isLocalEnv = () => config.environment === "local";
@@ -76,7 +77,7 @@ const TXT = {
     "envelope.expired": "⌛ Sobre vencido",
     "recipient.signed": "✍️ Firmó",
     "recipient.approved": "👍 Aprobó",
-    test: "🔔 Mensaje de prueba de CalaSign: la integración funciona.",
+    test: (p: string) => `🔔 Mensaje de prueba de ${p}: la integración funciona.`,
     open: "Ver sobre",
     by: "por",
   },
@@ -88,7 +89,7 @@ const TXT = {
     "envelope.expired": "⌛ Envelope expirado",
     "recipient.signed": "✍️ Assinou",
     "recipient.approved": "👍 Aprovou",
-    test: "🔔 Mensagem de teste da CalaSign: a integração funciona.",
+    test: (p: string) => `🔔 Mensagem de teste de ${p}: a integração funciona.`,
     open: "Ver envelope",
     by: "por",
   },
@@ -100,7 +101,7 @@ const TXT = {
     "envelope.expired": "⌛ Envelope expired",
     "recipient.signed": "✍️ Signed",
     "recipient.approved": "👍 Approved",
-    test: "🔔 CalaSign test message: the integration works.",
+    test: (p: string) => `🔔 ${p} test message: the integration works.`,
     open: "View envelope",
     by: "by",
   },
@@ -128,7 +129,7 @@ async function recordResult(db: Db, id: string, r: { status: number | null; ok: 
 export async function deliverNotificationJob(db: Db, p: { integrationId: string; envelopeId: string; event: NotificationEvent; recipientId?: string | null }) {
   const it = await db.one<any>(`SELECT * FROM notification_integrations WHERE id = $1 AND active`, [p.integrationId]);
   if (!it) return;
-  const e = await db.one<any>(`SELECT e.id, e.subject, e.tenant_id, t.name AS org, t.default_locale FROM envelopes e JOIN tenants t ON t.id = e.tenant_id WHERE e.id = $1`, [p.envelopeId]);
+  const e = await db.one<any>(`SELECT e.id, e.subject, e.tenant_id, e.brand_id, t.name AS org, t.default_locale FROM envelopes e JOIN tenants t ON t.id = e.tenant_id WHERE e.id = $1`, [p.envelopeId]);
   if (!e) return;
   const r = p.recipientId ? await db.one<any>(`SELECT name FROM recipients WHERE id = $1`, [p.recipientId]) : null;
   const L = TXT[(e.default_locale as keyof typeof TXT) ?? "es"] ?? TXT.es;
@@ -140,6 +141,7 @@ export async function deliverNotificationJob(db: Db, p: { integrationId: string;
     link: `${base}/app/envelopes/${e.id}`,
     linkLabel: L.open,
     event: p.event,
+    product: productLabel(await brandForEnvelope(db, e)),
   };
   let result;
   try {
@@ -217,7 +219,8 @@ export async function notificationIntegrationRoutes(app: FastifyInstance, s: Ser
     const t = await s.db.one<any>(`SELECT default_locale FROM tenants WHERE id = $1`, [a.tenantId]);
     const L = TXT[(t?.default_locale as keyof typeof TXT) ?? "es"] ?? TXT.es;
     try {
-      const res = await postToChannel(r.kind, decrypt(r.url_enc), { title: L.test, event: "test" });
+      const product = productLabel(await resolveBrand(s.db, a.tenantId, null));
+      const res = await postToChannel(r.kind, decrypt(r.url_enc), { title: L.test(product), event: "test", product });
       await recordResult(s.db, r.id, { status: res.status, ok: res.ok, error: res.ok ? null : `HTTP ${res.status}: ${res.text}` });
       return { ok: res.ok, status: res.status, error: res.ok ? null : res.text || `HTTP ${res.status}` };
     } catch (err) {

@@ -348,7 +348,10 @@ export function BulkNewPage() {
                       <tbody>
                         {result.errors.slice(0, 200).map((e) => (
                           <tr key={e.row}>
-                            <td>{e.row}</td>
+                            <td>
+                              {e.row}
+                              {e.line !== undefined && <div className="muted small">{st("bulk.line", { n: String(e.line) })}</div>}
+                            </td>
                             <td className="small">{e.errors.join(" · ")}</td>
                           </tr>
                         ))}
@@ -553,7 +556,10 @@ export function BulkDetailPage() {
           <tbody>
             {items.map((it) => (
               <tr key={it.id}>
-                <td>{it.row}</td>
+                <td>
+                  {it.row}
+                  {it.line != null && <div className="muted small">{st("bulk.line", { n: String(it.line) })}</div>}
+                </td>
                 <td>
                   {it.recipients.join(", ") || "—"}
                   {it.error && <div className="err-text small">{it.error}</div>}

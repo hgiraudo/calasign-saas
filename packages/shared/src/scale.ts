@@ -61,7 +61,10 @@ export const CreateBulkSendInput = z
 export type CreateBulkSendInput = z.input<typeof CreateBulkSendInput>;
 
 export interface BulkRowError {
+  /** Número de fila de datos (1 = la primera después del encabezado, o el primer elemento de `rows`). */
   row: number;
+  /** Línea del archivo donde empieza la fila (sólo CSV: cuenta el encabezado, líneas vacías y saltos entre comillas). */
+  line?: number;
   errors: string[];
 }
 
@@ -103,7 +106,10 @@ export interface BulkSend {
 
 export interface BulkSendItem {
   id: string;
+  /** Número de fila de datos (1, 2, …). */
   row: number;
+  /** Línea del CSV de origen (null si las filas vinieron en JSON o el envío es anterior a este dato). */
+  line?: number | null;
   status: BulkItemStatus;
   envelopeId: string | null;
   recipients: string[];

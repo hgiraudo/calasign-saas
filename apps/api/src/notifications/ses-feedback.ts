@@ -200,15 +200,22 @@ export async function applySesEvent(db: Db, ev: any): Promise<string> {
     return permanent ? "bounce_permanent" : "bounce_transient";
   }
   if (type === "Complaint") {
+    // "not-spam": el proveedor avisa que la persona sacó el correo de spam (lo marcó como deseado). No es una queja: no
+    // se suprime la dirección ni se marca el aviso como queja; queda solo el detalle.
+    const notSpam = String(ev.complaint?.complaintFeedbackType ?? "").toLowerCase() === "not-spam";
     const list: any[] = Array.isArray(ev.complaint?.complainedRecipients) ? ev.complaint.complainedRecipients : [];
     for (const r of list) {
       const address = typeof r?.emailAddress === "string" ? normAddress(r.emailAddress) : "";
       if (!address) continue;
       const detail = `complaint${ev.complaint?.complaintFeedbackType ? `/${ev.complaint.complaintFeedbackType}` : ""}`.slice(0, 200);
+      if (notSpam) {
+        await markNotifications(db, messageId, address, null, detail);
+        continue;
+      }
       await suppressComplaint(db, address, detail, messageId, tenantTag(ev));
       await markNotifications(db, messageId, address, "complained", detail);
     }
-    return "complaint";
+    return notSpam ? "complaint_not_spam" : "complaint";
   }
   return "ignored";
 }

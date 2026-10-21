@@ -60,6 +60,48 @@ describe("layoutFieldText (texto estampado en la caja del campo, sin perder cara
     expect(fit.size).toBe(fitFontSize(f, text, w - 2, Math.min(h * 0.7, 11)));
   });
 
+  it.each([
+    ["Buenos Aires", 40, 30],
+    ["Departamento", 40, 20],
+    ["Responsable de Administración", 60, 40],
+  ])("%s en %d×%d: las palabras quedan enteras (se achica antes de partir una palabra)", async (text, w, h) => {
+    const f = await font();
+    const fit = layoutFieldText(f, text, w, h, { below: 600, right: 400 });
+    expect(fit.lines.join(" ")).toBe(text);
+    const words = new Set(text.split(" "));
+    for (const l of fit.lines) for (const word of l.split(" ")) expect(words.has(word)).toBe(true);
+    for (const l of fit.lines) expect(f.widthOfTextAtSize(l, fit.size)).toBeLessThanOrEqual(w - 2 + 1e-6);
+    expect(fit.size).toBeGreaterThanOrEqual(4);
+    expect(fit.overflows).toBe(false);
+  });
+
+  it("palabra que no entra ni a 4 pt: el pedazo partido no se pega a la palabra siguiente", async () => {
+    const f = await font();
+    const text = "archivo_muy_largo_sin_espacios_final.pdf adjunto";
+    const fit = layoutFieldText(f, text, 40, 60, { below: 600, right: 400 });
+    expect(fit.lines.join("").replace(/ /g, "")).toBe(text.replace(/ /g, ""));
+    expect(fit.lines).toContain("adjunto");
+    for (const l of fit.lines) expect(l.includes(" ")).toBe(false);
+  });
+
+  it("valor de 2000 caracteres: rápido (búsqueda binaria del tamaño)", async () => {
+    const f = await font();
+    const base = "Buenos Aires Departamento Responsable de Administración $ 1.234,00 東京都渋谷区 ";
+    let text = "";
+    while (text.length < 2000) text += base;
+    text = text.slice(0, 2000).trim();
+    layoutFieldText(f, text, 120, 40, { below: 600, right: 400 }); // calienta cachés de la fuente
+    // El mejor de 5 (la máquina de CI puede estar ocupada con otras suites en paralelo).
+    let best = Infinity;
+    for (let i = 0; i < 5; i++) {
+      const t0 = performance.now();
+      const fit = layoutFieldText(f, `${text} x${i}`, 120, 40, { below: 600, right: 400 });
+      best = Math.min(best, performance.now() - t0);
+      expect(fit.lines.join("").replace(/ /g, "")).toBe(`${text} x${i}`.replace(/ /g, ""));
+    }
+    expect(best).toBeLessThan(30);
+  });
+
   it("CJK sin espacios: se parte por carácter, sin perder ninguno", async () => {
     const f = await font();
     const text = "東京都渋谷区神南一丁目二十三番十号株式会社カラサイン契約書";

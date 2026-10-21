@@ -528,13 +528,16 @@ const VALUE_TYPES = ["text", "number", "dropdown", "company", "title"];
 
 // Aproximación del ajuste del texto estampado (packages/pdf layoutFieldText), con las mismas reglas: nunca se pierde un
 // carácter. 1) Si entra en una línea al tamaño de siempre (desde min(0.7·alto, 11) pt achicando) y ese tamaño es
-// ≥ 6 pt, una línea. 2) Si no, partido en los espacios (los grupos sin letras, como "$ 1.234,00", juntos si entran; una
-// palabra que no entra en el ancho, por carácter) al mayor tamaño entre 4 pt y el máximo con el que entra en el alto.
-// 3) Si ni a 4 pt entra en el alto, sigue debajo de la caja. Se avisa cuando quedaría por debajo de ~6 pt (o del máximo
-// de la caja, si es más chica) o saliéndose de la caja. Se mide con una fuente parecida a DejaVu Sans.
+// ≥ 6 pt, una línea. 2) Si no, partido en los espacios al mayor tamaño entre 4 pt y el máximo con el que entra en el
+// alto, sin partir palabras (ni grupos sin letras como "$ 1.234,00") si a algún tamaño ≥ 4 pt entran enteras; sólo el
+// texto sin espacios (CJK, tailandés) se parte por carácter a cualquier tamaño. Si no hay ninguno, la palabra que no
+// entra se parte por carácter (cada pedazo en su línea). 3) Si ni a 4 pt entra en el alto, sigue debajo de la caja.
+// Se avisa cuando quedaría por debajo de ~6 pt (o del máximo de la caja, si es más chica) o saliéndose de la caja.
+// Se mide con una fuente parecida a DejaVu Sans.
 const STAMP_LEGIBLE_SIZE = 6;
 const STAMP_MIN_WRAP_SIZE = 4;
 const STAMP_LINE_HEIGHT = 1.15;
+const STAMP_NO_SPACE_SCRIPT = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}\p{Script=Tibetan}]/u;
 let measureCtx: CanvasRenderingContext2D | null | undefined;
 function stampLegible(text: string, boxW: number, boxH: number): boolean {
   if (measureCtx === undefined) measureCtx = typeof document === "undefined" ? null : document.createElement("canvas").getContext("2d");
@@ -553,7 +556,8 @@ function stampLegible(text: string, boxW: number, boxH: number): boolean {
   };
   // 1) Una línea al tamaño de siempre.
   if (Math.min(maxSize, maxW / Math.max(1e-6, w1(text))) >= legible) return true;
-  // 2) Partido: cantidad de líneas a tamaño s (aproximada, como wrapFieldUnits en el PDF).
+  // 2) Partido: cantidad de líneas a tamaño s (aproximada, como wrapFieldUnits en el PDF); null si con `splitWords`
+  //    falso habría que partir una palabra (o, con `numbersWhole`, un grupo sin letras).
   const units: string[] = [];
   let prevNoLetters = false;
   for (const tok of text.split(" ").filter(Boolean)) {
@@ -562,7 +566,7 @@ function stampLegible(text: string, boxW: number, boxH: number): boolean {
     else units.push(tok);
     prevNoLetters = noLetters;
   }
-  const lineCount = (s: string[], size: number) => {
+  const lineCount = (size: number, splitWords: boolean, numbersWhole: boolean): number | null => {
     const sp = w1(" ") * size;
     let lines = 0;
     let lineW = -1; // -1: línea vacía
@@ -574,10 +578,13 @@ function stampLegible(text: string, boxW: number, boxH: number): boolean {
       } else return false;
       return true;
     };
-    for (const u of s) {
+    for (const u of units) {
       if (add(w1(u) * size)) continue;
+      if (numbersWhole && !/\p{L}/u.test(u)) return null;
       for (const tok of u.split(" ")) {
         if (add(w1(tok) * size)) continue;
+        const free = STAMP_NO_SPACE_SCRIPT.test(tok);
+        if (!free && (!splitWords || (numbersWhole && !/\p{L}/u.test(tok)))) return null;
         lineW = -1;
         for (const ch of Array.from(tok)) {
           const cw = w1(ch) * size;
@@ -587,13 +594,32 @@ function stampLegible(text: string, boxW: number, boxH: number): boolean {
             lineW = cw;
           }
         }
+        if (!free) lineW = -1; // el pedazo final no se pega a la palabra siguiente
       }
     }
     return lines;
   };
-  // El mayor tamaño legible con el que entra en el alto de la caja; si no hay, se avisa.
-  for (let s = maxSize; s >= Math.min(STAMP_MIN_WRAP_SIZE, maxSize) - 0.01 && s >= legible; s -= 0.25) {
-    if (lineCount(units, s) * s * STAMP_LINE_HEIGHT <= boxH + 1e-6) return true;
+  // El tamaño que elegiría el PDF: el mayor que entra en el alto con las palabras enteras; si no hay, partiéndolas.
+  // Se avisa si ese tamaño no es legible (o si no entra en la caja ni a 4 pt).
+  // Entrar es monótono en el tamaño: búsqueda binaria del mayor que entra.
+  const minSize = Math.min(STAMP_MIN_WRAP_SIZE, maxSize);
+  const sizes: number[] = [];
+  for (let s = maxSize; s > minSize; s -= 0.25) sizes.push(s);
+  sizes.push(minSize);
+  for (const [splitWords, numbersWhole] of [[false, true], [false, false], [true, true], [true, false]] as const) {
+    let lo = 0;
+    let hi = sizes.length - 1;
+    let best = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      const s = sizes[mid]!;
+      const n = lineCount(s, splitWords, numbersWhole);
+      if (n !== null && n * s * STAMP_LINE_HEIGHT <= boxH + 1e-6) {
+        best = mid;
+        hi = mid - 1;
+      } else lo = mid + 1;
+    }
+    if (best >= 0) return sizes[best]! >= legible;
   }
   return false;
 }

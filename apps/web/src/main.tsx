@@ -1,6 +1,6 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { BrowserRouter } from "react-router-dom";
+import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import "@fontsource/dancing-script/400.css";
 import "./styles.css";
 import "./styles-productivity.css";
@@ -17,7 +17,7 @@ import "./styles-agreements.css";
 import "./styles-data.css";
 import "./styles-certsign.css";
 import { App } from "./App";
-import { I18nProvider } from "./lib/i18n";
+import { I18nProvider, UnsavedChangesGuard } from "./lib/i18n";
 import { AuthProvider } from "./lib/auth";
 
 registerServiceWorker();
@@ -44,14 +44,25 @@ window.addEventListener("vite:preloadError", (ev) => {
   window.location.reload();
 });
 
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <BrowserRouter>
+// Router "de datos" (createBrowserRouter) en lugar de BrowserRouter: es el único que permite bloquear la navegación
+// (useBlocker), así el botón Atrás y las navegaciones por código también avisan de cambios sin guardar. Todas las
+// rutas siguen declaradas con <Routes> dentro de App (una sola ruta comodín acá).
+const router = createBrowserRouter([
+  {
+    path: "*",
+    element: (
       <I18nProvider>
         <AuthProvider>
+          <UnsavedChangesGuard />
           <App />
         </AuthProvider>
       </I18nProvider>
-    </BrowserRouter>
+    ),
+  },
+]);
+
+createRoot(document.getElementById("root")!).render(
+  <StrictMode>
+    <RouterProvider router={router} />
   </StrictMode>,
 );

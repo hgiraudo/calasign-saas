@@ -1,7 +1,26 @@
 export * from "./provider";
 export * from "./cms";
 export * from "./inspect";
-export * from "./finalize";
+// Lista explícita (no export *): finalize.ts expone también fieldTextInternals, sólo para las pruebas del paquete.
+export {
+  finalizeEnvelopePdf,
+  renderEnvelopePdf,
+  renderProgressCopyPdf,
+  findChainHeadKeyword,
+  readCertificateChainHead,
+  sealPdfDocument,
+  layoutFieldText,
+  FIELD_LEGIBLE_FONT_SIZE,
+  type StampFieldType,
+  type StampField,
+  type CertificateRecipient,
+  type CertificateIdentity,
+  type CertificateData,
+  type FinalizeAttachment,
+  type FinalizeInput,
+  type SealOptions,
+  type FieldTextLayout,
+} from "./finalize";
 export { displayedSize } from "./layout";
 export { findTextAnchors, type AnchorMatch } from "./anchors";
 export * from "./incremental";

@@ -4,7 +4,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import type { CollectField, DocumentTemplateSummary, Member, Workflow, WorkflowRun, WorkflowStep, WorkflowStepType } from "@calasign/shared";
 import { WORKFLOW_STEP_TYPES } from "@calasign/shared";
 import { api, errorText, uuid } from "../lib/api";
-import { confirmAction, formatDateTime, placeholderText, useI18n } from "../lib/i18n";
+import { allowNextNavigation, confirmAction, formatDateTime, placeholderText, useI18n, useUnsavedWarning } from "../lib/i18n";
 import { useAccess } from "../lib/access";
 import { useAuth } from "../lib/auth";
 import { useAgrText, type AgreementsTextKey } from "../lib/i18n-agreements";
@@ -393,6 +393,10 @@ export function WorkflowEditPage() {
   const draft = { name: name.trim(), description: description.trim() || null, active, publicStart, steps };
   // Sin cambios no se guarda al iniciar: cada "Iniciar" dejaba un PATCH y un "workflow.updated" en la auditoría.
   const dirty = !wf || JSON.stringify(draft) !== JSON.stringify({ name: wf.name, description: wf.description, active: wf.active, publicStart: wf.publicStart, steps: wf.steps });
+  // Aviso al salir: un flujo nuevo solo si ya se escribió algo; uno existente, cuando ya cargó y difiere de lo guardado.
+  useUnsavedWarning(
+    editable && (isNew ? !!(description.trim() || steps.length || (name.trim() && name.trim() !== ta("wf.new"))) : !!wf && dirty),
+  );
 
   /** Guarda el flujo; devuelve false si no se pudo (para no iniciar una ejecución con la versión anterior). */
   const save = async (e?: FormEvent): Promise<boolean> => {
@@ -402,7 +406,11 @@ export function WorkflowEditPage() {
     try {
       const body = draft;
       const w = isNew ? await api<WorkflowWithSecret>("/v1/workflows", { method: "POST", body }) : await api<WorkflowWithSecret>(`/v1/workflows/${id}`, { method: "PATCH", body });
-      if (isNew) nav(`/app/workflows/${w.id}`, { replace: true });
+      if (isNew) {
+        // Recién guardado: pasar a la URL del flujo creado no es salir con cambios sin guardar.
+        allowNextNavigation();
+        nav(`/app/workflows/${w.id}`, { replace: true });
+      }
       setWf(w);
       setSteps(w.steps);
       setSaved(true);

@@ -8,7 +8,7 @@ import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import type { Channel, Document, Envelope, EnvelopeDetail, Locale, RecipientRole } from "@calasign/shared";
 import { CHANNELS, ID_DOCUMENT_TYPES, LOCALES, PREFILLABLE_FIELD_TYPES } from "@calasign/shared";
 import { HttpError, api, errorText, fieldErrorIndex, isVersionChanged, uuid, type VersionedSave } from "../lib/api";
-import { LOCALE_LABELS, expiryFromDateInput, localDateInput, useI18n, useUnsavedWarning, confirmAction } from "../lib/i18n";
+import { LOCALE_LABELS, allowNextNavigation, expiryFromDateInput, localDateInput, useI18n, useUnsavedWarning, confirmAction } from "../lib/i18n";
 import { forgetPdf } from "../lib/pdf";
 import { FieldEditor, validateFields, type DraftField } from "../components/FieldEditor";
 import { PHONE_RE, normalizePhone } from "../components/SignerExtras";
@@ -481,7 +481,11 @@ export function EnvelopeEditPage() {
           setError={setError}
           fail={fail}
           expected={expected}
-          onSent={() => nav(`/app/envelopes/${id}`)}
+          onSent={() => {
+            // Ya se envió (con lo cargado en la revisión): no hay nada sin guardar que avisar al ir al detalle.
+            allowNextNavigation();
+            nav(`/app/envelopes/${id}`);
+          }}
           onUpdated={track}
           versioned={versioned}
           draft={reviewDraft}

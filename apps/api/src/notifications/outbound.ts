@@ -99,31 +99,36 @@ export const SES_IDENTITY_ERROR = "SES rechazó el remitente: el dominio no est�
  * SES rechazó el dominio propio (554 identidad sin verificar) y el correo salió desde la plataforma (channels.sendEmail):
  * se deja anotado en el dominio para que el administrador lo vea, y en el log. No hace fallar el envío.
  */
-export async function noteSesIdentityRejection(db: Db, tenantId: string | null | undefined, domain: string, log?: TrackedSend["log"]) {
-  (log?.warn ?? log?.error)?.call(log, { tenantId, domain }, "SES rechazó el dominio de correo propio (identidad sin verificar en SES): se envió desde la dirección de la plataforma");
+export async function noteSesIdentityRejection(db: Db, tenantId: string | null | undefined, domain: string, log?: TrackedSend["log"], opts: { quiet?: boolean } = {}) {
+  if (!opts.quiet) (log?.warn ?? log?.error)?.call(log, { tenantId, domain }, "SES rechazó el dominio de correo propio (identidad sin verificar en SES): se envió desde la dirección de la plataforma");
   if (!tenantId) return;
   sesErrorClean.delete(`${tenantId}:${domain.toLowerCase()}`);
+  // Con IS DISTINCT FROM, si el aviso ya está anotado la fila no coincide y no se escribe nada (los envíos en espera
+  // por el rechazo pasan por acá en cada correo).
   await db
     .query(`UPDATE email_domains SET last_error = $3 WHERE tenant_id = $1 AND domain = $2 AND last_error IS DISTINCT FROM $3`, [tenantId, domain, SES_IDENTITY_ERROR])
     .catch((e) => log?.error({ err: scrubPii(String(e)), domain }, "no se pudo anotar el rechazo de SES en el dominio"));
 }
 
 /**
- * Dominios propios (organización:dominio) que en este proceso ya se sabe que no tienen anotado el rechazo de SES: tras
- * un envío con DKIM aceptado, el aviso se borra una sola vez por dominio y proceso (no una escritura por correo).
+ * Dominios propios (organización:dominio → vence) que en este proceso ya se sabe que no tienen anotado el rechazo de
+ * SES: tras un envío con DKIM aceptado, el aviso se borra una vez por dominio y proceso cada SES_CLEAN_TTL_MS (no una
+ * escritura por correo). Con vencimiento porque otra réplica puede volver a anotarlo (su envío fue rechazado) y, si
+ * SES ya lo acepta, esta lo tiene que poder borrar más adelante.
  */
-const sesErrorClean = new Set<string>();
+const sesErrorClean = new Map<string, number>();
+const SES_CLEAN_TTL_MS = 10 * 60_000;
 
 /** Después de un envío: anota el rechazo de SES del dominio propio, o lo borra si SES ya aceptó un correo firmado con él. */
 export async function noteDkimSendResult(db: Db, tenantId: string | null | undefined, res: SendResult, log?: TrackedSend["log"]) {
-  if (res.identityRejectedDomain) return noteSesIdentityRejection(db, tenantId, res.identityRejectedDomain, log);
+  if (res.identityRejectedDomain) return noteSesIdentityRejection(db, tenantId, res.identityRejectedDomain, log, { quiet: res.identityBackoff === true });
   if (!res.dkimDomain || !tenantId) return;
   const key = `${tenantId}:${res.dkimDomain.toLowerCase()}`;
-  if (sesErrorClean.has(key)) return;
+  if ((sesErrorClean.get(key) ?? 0) > Date.now()) return;
   await db.query(`UPDATE email_domains SET last_error = NULL WHERE tenant_id = $1 AND domain = $2 AND last_error = $3`, [tenantId, res.dkimDomain, SES_IDENTITY_ERROR]).then(
     () => {
       if (sesErrorClean.size > 10_000) sesErrorClean.clear();
-      sesErrorClean.add(key);
+      sesErrorClean.set(key, Date.now() + SES_CLEAN_TTL_MS);
     },
     (e) => log?.error({ err: scrubPii(String(e)), domain: res.dkimDomain }, "no se pudo borrar el rechazo de SES del dominio"),
   );

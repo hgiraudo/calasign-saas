@@ -197,6 +197,9 @@ export function SsoSettingsPage() {
   // (como en la API cuando no se manda), salvo que se marque a mano; si se vuelve al issuer guardado, se restablece.
   const [savedOidc, setSavedOidc] = useState<{ issuer: string; trust: boolean } | null>(null);
   const [trustTouched, setTrustTouched] = useState(false);
+  // Duración de la sesión como texto mientras se escribe: acotarla en cada tecla impedía borrar el número para
+  // escribir otro (vaciar el campo lo volvía 1). Se acota al salir del campo y al guardar.
+  const [ttlText, setTtlText] = useState<string | null>(null);
   useEffect(() => {
     if (data && !savedOidc) setSavedOidc({ issuer: data.oidc?.issuer ?? "", trust: data.oidc?.trustUnverifiedEmail ?? false });
   }, [data, savedOidc]);
@@ -210,6 +213,10 @@ export function SsoSettingsPage() {
   const oidc = data.oidc ?? { issuer: "", clientId: "", scopes: "openid email profile", hasClientSecret: false, trustUnverifiedEmail: false };
   const saml = data.saml ?? { entryPoint: "", idpIssuer: "", idpCertFingerprint: null, emailAttribute: null };
   const domainText = domains ?? data.domains.join(", ");
+  const clampTtl = (v: string | number) => {
+    const n = Math.trunc(Number(v));
+    return Number.isFinite(n) && n >= 1 ? Math.min(336, n) : data.sessionTtlHours;
+  };
 
   const save = async (e: FormEvent) => {
     e.preventDefault();
@@ -227,7 +234,7 @@ export function SsoSettingsPage() {
       jitRole: data.jitRole,
       // La API rechaza "exigir" sin SSO habilitado (sso_disabled): sin esto, apagar el SSO fallaba siempre.
       enforce: data.enabled && data.enforce,
-      sessionTtlHours: data.sessionTtlHours,
+      sessionTtlHours: ttlText === null ? data.sessionTtlHours : clampTtl(ttlText),
       oidc:
         data.protocol === "oidc" && oidc.issuer
           ? { issuer: oidc.issuer, clientId: oidc.clientId, scopes: oidc.scopes, trustUnverifiedEmail: oidc.trustUnverifiedEmail, ...(secret ? { clientSecret: secret } : {}) }
@@ -246,6 +253,7 @@ export function SsoSettingsPage() {
       setSecret("");
       setCert("");
       setDomains(null);
+      setTtlText(null);
       setSaved(true);
     } catch (err) {
       setError(errorText(err));
@@ -380,8 +388,13 @@ export function SsoSettingsPage() {
               max={336}
               step={1}
               required
-              value={data.sessionTtlHours}
-              onChange={(e) => setData({ ...data, sessionTtlHours: Math.max(1, Math.min(336, Math.trunc(Number(e.target.value)) || 1)) })}
+              value={ttlText ?? String(data.sessionTtlHours)}
+              onChange={(e) => setTtlText(e.target.value)}
+              onBlur={() => {
+                if (ttlText === null) return;
+                setData({ ...data, sessionTtlHours: clampTtl(ttlText) });
+                setTtlText(null);
+              }}
             />
             <small className="muted">{tx("sso.sessionTtlHint")}</small>
           </label>

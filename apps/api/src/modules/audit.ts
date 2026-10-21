@@ -379,7 +379,7 @@ export async function auditRoutes(app: FastifyInstance, s: Services) {
     if (truncated) {
       const last = rows[rows.length - 1];
       lines.push(
-        ["", "", `TRUNCADO: se exportaron las ${CSV_MAX_ROWS} filas más recientes; hay más. Para el resto, repetí la exportación con los mismos filtros y beforeId=${last.id}.`]
+        ["", "", `TRUNCADO: se exportaron las ${CSV_MAX_ROWS} filas más recientes; hay más. Para el resto, acotá las fechas o continuá la exportación con los mismos filtros y beforeId=${last.id}.`]
           .map(csvCell)
           .join(sep),
       );

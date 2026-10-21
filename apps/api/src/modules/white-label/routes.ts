@@ -26,7 +26,6 @@ import type { Db } from "../../infra/db";
 import { AppError, badRequest, conflict, notFound } from "../../lib/errors";
 import { encrypt, iso, randomToken, sha256Hex, slugify, uuidv7 } from "../../lib/util";
 import { render, type TemplateKind } from "../../notifications/templates";
-import { SES_IDENTITY_ERROR } from "../../notifications/outbound";
 import { auditFromRequest, recordAudit } from "../audit";
 import { authenticate, type AuthContext, type Services } from "../context";
 import { requireFeature, tenantPlan } from "../billing/plans";
@@ -341,12 +340,9 @@ export async function recheckWhiteLabelDomains(d: { db: Db; log: { warn(o: objec
     if (f && (!f.own || !f.dkim)) {
       await d.db.query(`UPDATE email_domains SET status = 'pending', last_checked_at = now(), last_error = $2 WHERE id = $1`, [r.id, "Re-verificación: falta el TXT de propiedad o la clave DKIM"]);
     } else if (f) {
-      // El aviso de rechazo de SES se borra en cada re-verificación: si SES lo sigue rechazando, el próximo correo con
-      // DKIM lo vuelve a anotar (y si ya lo acepta, no queda un aviso viejo a la vista hasta el próximo correo).
-      await d.db.query(
-        `UPDATE email_domains SET last_checked_at = now(), spf_ok = $2, dmarc_ok = $3, last_error = CASE WHEN last_error = $4 THEN NULL ELSE last_error END WHERE id = $1`,
-        [r.id, f.spf, f.dmarc, SES_IDENTITY_ERROR],
-      );
+      // El aviso de rechazo de SES no se toca: el DNS no dice nada de la identidad en SES. Lo borra el primer correo con
+      // DKIM que SES acepte, y mientras lo siga rechazando cada envío lo mantiene (outbound.noteDkimSendResult).
+      await d.db.query(`UPDATE email_domains SET last_checked_at = now(), spf_ok = $2, dmarc_ok = $3 WHERE id = $1`, [r.id, f.spf, f.dmarc]);
     } else {
       await d.db.query(`UPDATE email_domains SET last_checked_at = now() WHERE id = $1`, [r.id]);
     }

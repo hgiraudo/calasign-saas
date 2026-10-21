@@ -51,6 +51,8 @@ export function EnvelopeListPage() {
     setError(null);
     // El cursor es del filtro anterior: sin esto, "cargar más" podía pedir la página siguiente de la lista vieja.
     setCursor(null);
+    // Las filas son del filtro anterior: si la carga nueva falla, no deben quedar a la vista bajo el filtro nuevo.
+    setItems([]);
     load(null, ac.signal)
       .then((r) => {
         setItems(r.items);
@@ -115,7 +117,7 @@ export function EnvelopeListPage() {
       {loading ? (
         <Spinner />
       ) : items.length === 0 ? (
-        <div className="empty">{t("list.empty")}</div>
+        error ? null : <div className="empty">{t("list.empty")}</div>
       ) : (
         <div className="card list-card">
           <table className="table">

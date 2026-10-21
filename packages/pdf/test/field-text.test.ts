@@ -1,6 +1,7 @@
 import { PDFDocument } from "pdf-lib";
 import { describe, expect, it } from "vitest";
-import { fieldTextInternals, layoutFieldText } from "../src";
+import { layoutFieldText } from "../src";
+import { fieldTextInternals } from "../src/finalize";
 import { embedFonts, fitFontSize, wrapText } from "../src/layout";
 
 async function font() {

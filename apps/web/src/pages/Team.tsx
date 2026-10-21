@@ -16,6 +16,7 @@ import { formatDateTime, useI18n, confirmAction, placeholderText } from "../lib/
 import { useRoleLabel, useTeamsText } from "../lib/i18n-teams";
 import { ErrorBox, Modal, Spinner } from "../components/ui";
 import { useTitle } from "../lib/white-label";
+import { interpolate } from "../lib/interpolate";
 
 type Tab = "members" | "invitations" | "roles" | "groups";
 interface RolesResponse {
@@ -36,18 +37,20 @@ function RoleSelect({
   roles,
   allowOwner,
   ariaLabel,
+  disabled,
 }: {
   value: string;
   onChange: (v: string) => void;
   roles: RolesResponse | null;
   allowOwner: boolean;
   ariaLabel?: string;
+  disabled?: boolean;
 }) {
   const label = useRoleLabel();
   // La API no deja otorgar permisos que uno no tiene (assertCanGrant): esos roles se muestran deshabilitados.
   const { access } = useAccess();
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value)} aria-label={ariaLabel}>
+    <select value={value} onChange={(e) => onChange(e.target.value)} aria-label={ariaLabel} disabled={disabled}>
       {(roles?.builtin ?? [])
         .filter((b) => allowOwner || b.role !== "owner")
         .map((b) => (
@@ -63,6 +66,37 @@ function RoleSelect({
     </select>
   );
 }
+
+// Textos del diálogo de cambio de rol (aparte de i18n-teams para no tocar ese diccionario).
+const ROLE_CHANGE_TEXT = {
+  es: {
+    title: "Cambiar rol",
+    body: "¿Cambiar el rol de {name} de «{from}» a «{to}»?",
+    demotion:
+      "El nuevo rol tiene menos permisos: se revocarán las claves de API, las invitaciones pendientes que envió y las credenciales de aplicaciones de servicio y SCIM de esta persona.",
+    self: "Estás cambiando tu propio rol: puede que pierdas acceso a esta pantalla.",
+    owner: "Este cambio afecta la propiedad de la organización.",
+    apply: "Cambiar rol",
+  },
+  "pt-BR": {
+    title: "Alterar função",
+    body: "Alterar a função de {name} de «{from}» para «{to}»?",
+    demotion:
+      "A nova função tem menos permissões: as chaves de API, os convites pendentes enviados e as credenciais de aplicativos de serviço e SCIM desta pessoa serão revogados.",
+    self: "Você está alterando sua própria função: pode perder o acesso a esta tela.",
+    owner: "Esta alteração afeta a propriedade da organização.",
+    apply: "Alterar função",
+  },
+  en: {
+    title: "Change role",
+    body: "Change {name}'s role from “{from}” to “{to}”?",
+    demotion:
+      "The new role has fewer permissions: this person's API keys, the pending invitations they sent, and their service-app and SCIM credentials will be revoked.",
+    self: "You're changing your own role: you may lose access to this page.",
+    owner: "This change affects ownership of the organization.",
+    apply: "Change role",
+  },
+} as const;
 
 function toAssignment(v: string) {
   return v.startsWith("custom:") ? { role: "custom", roleId: v.slice(7) } : { role: v, roleId: null };
@@ -122,6 +156,11 @@ function MembersTab({ roles, manage, reloadRoles }: { roles: RolesResponse | nul
   const [removing, setRemoving] = useState<Member | null>(null);
   // Doble clic en "Quitar": el segundo DELETE respondía 404 y se mostraba un error aunque el miembro sí se quitó.
   const [removeBusy, setRemoveBusy] = useState(false);
+  // Cambio de rol: se elige en el select y se aplica tras confirmar (bajar de rol revoca credenciales en el servidor).
+  const [pendingRole, setPendingRole] = useState<{ member: Member; value: string } | null>(null);
+  const [roleBusy, setRoleBusy] = useState<string | null>(null);
+  const { locale } = useI18n();
+  const rt = ROLE_CHANGE_TEXT[locale as keyof typeof ROLE_CHANGE_TEXT] ?? ROLE_CHANGE_TEXT.es;
 
   const load = () =>
     api<{ items: Member[] }>("/v1/members")
@@ -132,6 +171,8 @@ function MembersTab({ roles, manage, reloadRoles }: { roles: RolesResponse | nul
   }, []);
 
   const changeRole = async (m: Member, v: string) => {
+    if (roleBusy) return;
+    setRoleBusy(m.userId);
     setError(null);
     try {
       await api(`/v1/members/${m.userId}`, { method: "PATCH", body: toAssignment(v) });
@@ -140,8 +181,12 @@ function MembersTab({ roles, manage, reloadRoles }: { roles: RolesResponse | nul
       await load();
       // Los conteos de miembros por rol cambiaron.
       void reloadRoles();
+      setPendingRole(null);
     } catch (e) {
+      setPendingRole(null);
       setError(errorText(e));
+    } finally {
+      setRoleBusy(null);
     }
   };
 
@@ -200,7 +245,16 @@ function MembersTab({ roles, manage, reloadRoles }: { roles: RolesResponse | nul
                   </td>
                   <td>
                     {manage && canTouch ? (
-                      <RoleSelect value={value} roles={roles} allowOwner={isOwner} onChange={(v) => changeRole(m, v)} ariaLabel={tt("team.roleOf", { name: m.name })} />
+                      <RoleSelect
+                        value={pendingRole?.member.userId === m.userId ? pendingRole.value : value}
+                        roles={roles}
+                        allowOwner={isOwner}
+                        disabled={roleBusy !== null}
+                        onChange={(v) => {
+                          if (v !== value) setPendingRole({ member: m, value: v });
+                        }}
+                        ariaLabel={tt("team.roleOf", { name: m.name })}
+                      />
                     ) : (
                       label(m.role, m.roleName)
                     )}
@@ -233,6 +287,50 @@ function MembersTab({ roles, manage, reloadRoles }: { roles: RolesResponse | nul
               </button>
             </div>
           ) : null;
+        })()}
+      {pendingRole &&
+        (() => {
+          const m = pendingRole.member;
+          const target = toAssignment(pendingRole.value);
+          const before = permsOfMember(roles, m);
+          const after = permsOfMember(roles, target);
+          // Lo mismo que decide la API (revokeMemberAccess): pierde algún permiso o deja de ser propietario. Sin los
+          // permisos de alguno de los dos roles, se avisa por las dudas.
+          const demotion =
+            (m.role === "owner" && target.role !== "owner") || !before || !after || before.some((p) => !after.includes(p));
+          const self = m.userId === me?.user.id;
+          const ownerChange = m.role === "owner" || target.role === "owner";
+          const targetLabel =
+            target.role === "custom" ? roles?.items.find((r) => r.id === target.roleId)?.name ?? target.roleId ?? "" : label(target.role);
+          const close = () => {
+            if (!roleBusy) setPendingRole(null);
+          };
+          return (
+            <Modal
+              title={rt.title}
+              onClose={close}
+              footer={
+                <>
+                  <button type="button" className="btn" disabled={roleBusy !== null} onClick={close}>
+                    {tt("common.cancel")}
+                  </button>
+                  <button
+                    type="button"
+                    className={demotion ? "btn btn-danger" : "btn btn-primary"}
+                    disabled={roleBusy !== null}
+                    onClick={() => void changeRole(m, pendingRole.value)}
+                  >
+                    {rt.apply}
+                  </button>
+                </>
+              }
+            >
+              <p>{interpolate(rt.body, { name: m.name, from: label(m.role, m.roleName), to: targetLabel })}</p>
+              {demotion && <p className="muted">{rt.demotion}</p>}
+              {self && <p className="muted">{rt.self}</p>}
+              {ownerChange && <p className="muted">{rt.owner}</p>}
+            </Modal>
+          );
         })()}
       {removing && (
         <Modal

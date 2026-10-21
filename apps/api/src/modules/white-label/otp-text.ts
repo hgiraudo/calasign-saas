@@ -41,6 +41,12 @@ const SMS_SHORT = {
   "pt-BR": (code: string, product: string) => `Seu codigo da ${product}: ${code}. Expira em 10 min. Nao compartilhe.`,
   en: (code: string, product: string) => `Your ${product} code: ${code}. Expires in 10 min. Don't share it.`,
 } as const;
+/** Sin el nombre del producto: último recurso si con él no entra en un segmento GSM-7. */
+const SMS_SHORT_BARE = {
+  es: (code: string) => `Tu codigo de verificacion: ${code}. Vence en 10 min. No lo compartas.`,
+  "pt-BR": (code: string) => `Seu codigo de verificacao: ${code}. Expira em 10 min. Nao compartilhe.`,
+  en: (code: string) => `Your verification code: ${code}. Expires in 10 min. Don't share it.`,
+} as const;
 const SMS_PRODUCT_MAX = 30;
 /** Plantilla propia de la marca: hasta 2 segmentos (cada segmento se cobra); si no entra, el texto corto. */
 export const SMS_OTP_MAX_SEGMENTS = 2;
@@ -70,6 +76,23 @@ export function smsSegments(text: string): number {
   return text.length <= 70 ? 1 : Math.ceil(text.length / 67);
 }
 
+/**
+ * Nombre del producto en GSM-7: los caracteres que ya lo son quedan (é, ñ, ü, Ç...); el resto se translitera quitando
+ * los diacríticos (á→a, ã→a, ç→c, õ→o) y lo que aun así no entra en GSM-7 se descarta. Con una sola letra fuera de
+ * GSM-7 el SMS pasa a UCS-2 (70 caracteres) y el texto corto ocupa 2 segmentos.
+ */
+export function toGsm7(s: string): string {
+  let out = "";
+  for (const ch of s) {
+    if (GSM7_BASIC.has(ch) || GSM7_EXTENDED.has(ch)) {
+      out += ch;
+      continue;
+    }
+    for (const c of ch.normalize("NFD").replace(/\p{M}/gu, "")) if (GSM7_BASIC.has(c) || GSM7_EXTENDED.has(c)) out += c;
+  }
+  return out.replace(/\s+/g, " ").trim();
+}
+
 function clip(s: string, max: number): string {
   const t = s.replace(/\s+/g, " ").trim();
   return t.length <= max ? t : `${t.slice(0, max - 3).trimEnd()}...`;
@@ -81,7 +104,10 @@ function clip(s: string, max: number): string {
  */
 export function otpSmsText(b: ResolvedBrand, localeIn: string, code: string, subject: string): string {
   const locale = normLocale(localeIn);
-  const short = SMS_SHORT[locale](code, clip(productLabel(b), SMS_PRODUCT_MAX));
+  const product = clip(toGsm7(productLabel(b)), SMS_PRODUCT_MAX);
+  let short = product ? SMS_SHORT[locale](code, product) : SMS_SHORT_BARE[locale](code);
+  // Último resguardo (p. ej. caracteres de la tabla extendida que cuentan doble): sin el nombre del producto.
+  if (smsSegments(short) > 1) short = SMS_SHORT_BARE[locale](code);
   if (!mailBranding(b, "otp_code", locale).template?.body?.trim()) return short;
   const full = OTP_MESSAGES(b, locale, code, subject).text.trim();
   return full.includes(code) && smsSegments(full) <= SMS_OTP_MAX_SEGMENTS ? full : short;

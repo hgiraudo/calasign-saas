@@ -791,7 +791,7 @@ function wrapFieldUnits(
   return { lines, tooWide, numberSplit, wordSplit, tooTall: lines.length > maxLines };
 }
 
-/** @internal Sólo para las pruebas (comparar el tamaño elegido contra un recorrido exhaustivo). */
+/** @internal Sólo para las pruebas (comparar el tamaño elegido contra un recorrido exhaustivo); index.ts no lo re-exporta. */
 export const fieldTextInternals = { wrapUnits, wrapFieldUnits, widthAt1, FIELD_LINE_HEIGHT, FIELD_MIN_WRAP_SIZE, FIELD_MIN_PAGE_SIZE };
 
 function drawPageFooter(page: PDFPage, fonts: Fonts, L: CertLabels, envelopeId: string) {

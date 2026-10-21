@@ -23,7 +23,7 @@ import {
 import { api, errorText } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { PlanNotice, useAccess } from "../lib/access";
-import { confirmAction, formatNumber, LOCALE_LABELS, useI18n } from "../lib/i18n";
+import { confirmAction, confirmDiscardUnsaved, formatNumber, LOCALE_LABELS, useI18n, useUnsavedWarning } from "../lib/i18n";
 import { useWlText, type WlKey } from "../lib/i18n-white-label";
 import { ErrorBox, Spinner } from "../components/ui";
 import { useTitle } from "../lib/white-label";
@@ -176,6 +176,8 @@ export function BrandingPage() {
   // Cambios sin guardar en la configuración o el nombre de la marca (si no hay, Guardar no hace el PUT).
   const [dirty, setDirty] = useState(false);
   const [newName, setNewName] = useState("");
+  // Aviso al salir con cambios sin guardar (configuración/nombre de la marca, o el nombre de la organización).
+  useUnsavedWarning(dirty || (sel === "default" && !!me && orgName.trim() !== me.tenant.name));
 
   const brand = brands?.find((b) => b.id === sel) ?? null;
 
@@ -201,6 +203,8 @@ export function BrandingPage() {
   const pick = (id: string) => {
     const b = brands?.find((x) => x.id === id);
     if (!b) return;
+    // Cambiar de marca descarta lo editado en la actual.
+    if (id !== sel && dirty && !confirmDiscardUnsaved()) return;
     setSel(id);
     setCfg(b.config ?? {});
     setName(b.name);
@@ -256,15 +260,19 @@ export function BrandingPage() {
       setSaved(true);
     });
 
-  const create = () =>
-    run(async () => {
+  const create = () => {
+    // Crear abre la marca nueva: lo editado en la actual se descartaría.
+    if (dirty && !confirmDiscardUnsaved()) return;
+    return run(async () => {
       const b = await api<Brand>("/v1/settings/brands", { method: "POST", body: { name: newName.trim() } });
       setNewName("");
       await load(b.id);
     });
+  };
 
   const remove = () => {
     if (sel === "default" || !confirmAction()) return;
+    if (dirty && !confirmDiscardUnsaved()) return;
     run(async () => {
       await api(`/v1/settings/brands/${sel}`, { method: "DELETE" });
       await load("default");

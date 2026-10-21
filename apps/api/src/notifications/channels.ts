@@ -44,6 +44,11 @@ export interface SendResult {
   messageId: string | null;
   /** El dominio propio fue rechazado por SES (identidad sin verificar) y el correo salió desde la plataforma. */
   identityRejectedDomain?: string | null;
+  /**
+   * Con identityRejectedDomain: el dominio estaba en espera por un rechazo reciente y el correo salió directo desde la
+   * plataforma (sin otro intento). Se vuelve a anotar el aviso (por si se borró), sin repetir el log.
+   */
+  identityBackoff?: boolean;
   /** El correo salió firmado con DKIM desde el dominio propio (SES lo aceptó). */
   dkimDomain?: string | null;
 }
@@ -214,9 +219,13 @@ export async function sendEmail(m: OutboundMessage): Promise<SendResult> {
   let info: SMTPSentMessageInfo;
   let identityRejectedDomain: string | null = null;
   let dkimDomain: string | null = null;
+  let identityBackoff = false;
   if (m.dkim && inSesIdentityBackoff(m.dkim.domainName)) {
-    // SES rechazó este dominio hace poco (ya quedó anotado): directo desde la plataforma, sin otro intento fallido.
+    // SES rechazó este dominio hace poco: directo desde la plataforma, sin otro intento fallido. Se informa igual el
+    // rechazo para que el aviso siga anotado en el dominio (si algo lo borró mientras SES lo sigue rechazando).
     info = await viaPlatform(m);
+    identityRejectedDomain = m.dkim.domainName;
+    identityBackoff = true;
   } else {
     try {
       info = await send(m);
@@ -236,6 +245,7 @@ export async function sendEmail(m: OutboundMessage): Promise<SendResult> {
     provider: "smtp",
     messageId: sesMessageId(info.response) ?? info.messageId ?? null,
     ...(identityRejectedDomain ? { identityRejectedDomain } : {}),
+    ...(identityBackoff ? { identityBackoff } : {}),
     ...(dkimDomain ? { dkimDomain } : {}),
   };
 }

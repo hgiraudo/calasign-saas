@@ -3,8 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import type { Agreement, AgreementFieldDef, AgreementStatus, AgreementView, Counterparty, ListAgreementsResponse } from "@calasign/shared";
 import { api, errorText } from "../lib/api";
-import { formatDay, useI18n, confirmAction } from "../lib/i18n";
-import { csvFormatParams } from "../lib/csv";
+import { allowNextNavigation, formatDay, useI18n, confirmAction, useUnsavedWarning } from "../lib/i18n";
+import { csvFormatParams, downloadCsv } from "../lib/csv";
 import { useAccess } from "../lib/access";
 import { parseAmountText } from "../lib/logic";
 import { useAgrText } from "../lib/i18n-agreements";
@@ -163,6 +163,21 @@ export function AgreementsPage() {
 
   // Separador según el idioma (";" para Excel en español o portugués).
   const exportUrl = `/v1/agreements/export.csv?${[query, csvFormatParams(locale).toString()].filter(Boolean).join("&")}`;
+  // Con fetch (downloadCsv): un error (sin permiso, sesión vencida) se muestra traducido; con <a href download> el
+  // navegador guardaba el JSON del error como si fuera el CSV.
+  const [exporting, setExporting] = useState(false);
+  const exportCsv = async () => {
+    if (exporting) return;
+    setExporting(true);
+    setError(null);
+    try {
+      await downloadCsv(exportUrl, `acuerdos-${new Date().toISOString().slice(0, 10)}.csv`);
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setExporting(false);
+    }
+  };
 
   return (
     <div className="page">
@@ -178,9 +193,9 @@ export function AgreementsPage() {
               {ta("repo.fields")}
             </button>
           )}
-          <a className="btn" href={exportUrl} download>
+          <button type="button" className="btn" disabled={exporting} onClick={() => void exportCsv()}>
             {ta("repo.export")}
-          </a>
+          </button>
           <button type="button" className="btn btn-primary" onClick={() => setUploading(true)}>
             {ta("repo.upload")}
           </button>
@@ -811,6 +826,7 @@ export function AgreementDetailPage() {
   }, [id]);
 
   const dirty = useMemo(() => a && JSON.stringify(draftFrom(a)) !== JSON.stringify(d), [a, d]);
+  useUnsavedWarning(!!dirty);
 
   const save = async (e: FormEvent) => {
     e.preventDefault();
@@ -911,6 +927,8 @@ export function AgreementDetailPage() {
               onClick={async () => {
                 try {
                   await api(`/v1/agreements/${a.id}`, { method: "DELETE" });
+                  // Ya no existe: lo editado sin guardar no tiene dónde guardarse, no se pregunta.
+                  allowNextNavigation();
                   nav("/app/agreements");
                 } catch (e) {
                   setError(errorText(e));

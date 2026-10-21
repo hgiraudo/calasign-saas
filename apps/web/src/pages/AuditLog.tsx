@@ -48,7 +48,11 @@ export function AuditLogPage() {
     setError(null);
     setLoadingMore(more);
     // Con filtros nuevos, el cursor viejo no sirve: se oculta "cargar más" hasta que llegue la primera página.
-    if (!more) setCursor(null);
+    if (!more) {
+      setCursor(null);
+      // Las filas son de los filtros anteriores: no quedan a la vista mientras carga (o si falla) la búsqueda nueva.
+      setItems(null);
+    }
     try {
       const r = await api<AuditLogResponse>(`/v1/audit-log?${query(f, more ? cursor : null)}`);
       if (n !== gen.current) return;
@@ -68,16 +72,21 @@ export function AuditLogPage() {
   }, [applied]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [downloading, setDownloading] = useState(false);
-  const [csvTruncated, setCsvTruncated] = useState(false);
-  const exportCsv = async () => {
+  // Export truncado: filtros con los que se exportó (no los que estén en el formulario) e id de la última fila, para
+  // descargar la parte siguiente con beforeId (X-Next-Before-Id).
+  const [csvNext, setCsvNext] = useState<{ filters: Filters; beforeId: string | null; part: number } | null>(null);
+  const exportCsv = async (cont?: { filters: Filters; beforeId: string; part: number }) => {
     setDownloading(true);
     setError(null);
-    setCsvTruncated(false);
+    // Una exportación nueva descarta la continuación de la anterior; si falla una continuación, se puede reintentar.
+    if (!cont) setCsvNext(null);
+    const f = cont?.filters ?? applied;
     try {
       const day = new Date().toISOString().slice(0, 10);
-      const qs = [query(applied), csvFormatParams(locale, { tz: true }).toString()].filter(Boolean).join("&");
-      const r = await downloadCsv(`/v1/audit-log.csv?${qs}`, `auditoria-${day}.csv`);
-      setCsvTruncated(r.truncated);
+      const qs = [query(f), csvFormatParams(locale, { tz: true }).toString(), cont ? `beforeId=${encodeURIComponent(cont.beforeId)}` : ""].filter(Boolean).join("&");
+      const part = cont ? cont.part + 1 : 1;
+      const r = await downloadCsv(`/v1/audit-log.csv?${qs}`, part > 1 ? `auditoria-${day}-${part}.csv` : `auditoria-${day}.csv`);
+      setCsvNext(r.truncated ? { filters: f, beforeId: r.nextBeforeId, part } : null);
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -103,7 +112,16 @@ export function AuditLogPage() {
           {tt("audit.export")}
         </button>
       </div>
-      {csvTruncated && <p className="muted small">{tt("audit.csvTruncated")}</p>}
+      {csvNext && (
+        <p className="muted small row-wrap" style={{ alignItems: "center", gap: ".5rem" }}>
+          <span>{tt("audit.csvTruncated")}</span>
+          {csvNext.beforeId && (
+            <button type="button" className="btn btn-sm" disabled={downloading} onClick={() => void exportCsv({ filters: csvNext.filters, beforeId: csvNext.beforeId!, part: csvNext.part })}>
+              {tt("audit.exportContinue")}
+            </button>
+          )}
+        </p>
+      )}
       <form className="card pad row-wrap" onSubmit={submit} style={{ marginBottom: "1rem" }}>
         <label className="field grow">
           <span>{tt("audit.filterAction")}</span>
@@ -125,7 +143,7 @@ export function AuditLogPage() {
       </form>
       <ErrorBox error={error} />
       {!items ? (
-        <Spinner />
+        error ? null : <Spinner />
       ) : items.length === 0 ? (
         <div className="empty">{tt("audit.empty")}</div>
       ) : (

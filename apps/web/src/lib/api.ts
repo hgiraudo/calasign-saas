@@ -1,5 +1,6 @@
 // Cliente HTTP mínimo para la API v1 (mismo origen, cookie de sesión).
 import type { ApiError } from "@calasign/shared";
+import { MORE_CODE_TEXT } from "./api-error-text";
 import { currentLocale, fieldTypeLabel } from "./i18n";
 
 export class HttpError extends Error {
@@ -748,7 +749,7 @@ function httpErrorText(e: HttpError, loc: "es" | "pt-BR" | "en"): string {
       return `${PROBLEMS_HEADER[e.code][loc] ?? PROBLEMS_HEADER[e.code].es} ${problems.map((p) => problemText(p, loc)).join(". ")}`;
     }
     if (e.code === "file_too_large" && (e.details as { limit?: unknown } | undefined)?.limit === "total") return FILE_TOO_LARGE_TOTAL[loc] ?? FILE_TOO_LARGE_TOTAL.es;
-    const tr = loc !== "es" ? detailText(e.code, e.details, loc) ?? CODE_TEXT[e.code]?.[loc] : undefined;
+    const tr = loc !== "es" ? detailText(e.code, e.details, loc) ?? (CODE_TEXT[e.code] ?? MORE_CODE_TEXT[e.code])?.[loc] : undefined;
     return tr ?? (e.message || (NO_MESSAGE[loc] ?? NO_MESSAGE.es)(e.status));
   }
 }

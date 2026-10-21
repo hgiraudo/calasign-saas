@@ -39,7 +39,7 @@ function fileNameOf(res: Response, fallback: string): string {
  * la página muestra traducido. Con un <a href>, el navegador abría el JSON del error como si fuera el archivo.
  * Devuelve si la exportación se cortó (header X-Truncated).
  */
-export async function downloadCsv(path: string, fallbackName: string): Promise<{ truncated: boolean }> {
+export async function downloadCsv(path: string, fallbackName: string): Promise<{ truncated: boolean; nextBeforeId: string | null }> {
   const res = await fetchResponse(path);
   const blob = await readBody(res.blob());
   const url = URL.createObjectURL(blob);
@@ -50,5 +50,6 @@ export async function downloadCsv(path: string, fallbackName: string): Promise<{
   a.click();
   a.remove();
   window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
-  return { truncated: res.headers.get("x-truncated") === "true" };
+  // X-Next-Before-Id (auditoría): con él se pide la parte siguiente de un export truncado.
+  return { truncated: res.headers.get("x-truncated") === "true", nextBeforeId: res.headers.get("x-next-before-id") };
 }

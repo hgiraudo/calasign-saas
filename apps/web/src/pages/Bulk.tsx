@@ -4,6 +4,7 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import type { BulkSend, BulkSendItem, BulkValidationResult, TemplateDetail, TemplateSummary } from "@calasign/shared";
 import { api, errorText, HttpError, uuid } from "../lib/api";
 import { formatDateTime, useI18n } from "../lib/i18n";
+import { downloadCsv } from "../lib/csv";
 import { useScaleText } from "../lib/i18n-scale";
 import { ErrorBox, Modal, Spinner } from "../components/ui";
 import { useTitle } from "../lib/white-label";
@@ -148,6 +149,20 @@ export function BulkNewPage() {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // CSV con fetch: un error se muestra traducido (con <a href download> se guardaba el JSON del error como archivo).
+  const [downloading, setDownloading] = useState(false);
+  const downloadSkeleton = async () => {
+    if (downloading) return;
+    setDownloading(true);
+    setError(null);
+    try {
+      await downloadCsv(`/v1/templates/${templateId}/bulk-csv`, "envio-masivo.csv");
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   useEffect(() => {
     let alive = true;
@@ -286,9 +301,9 @@ export function BulkNewPage() {
             <h2>{st("bulk.step2")}</h2>
             <p className="muted small">{st("bulk.skeletonHint")}</p>
             <div className="row-wrap">
-              <a className="btn btn-sm" href={`/v1/templates/${templateId}/bulk-csv`} download>
+              <button type="button" className="btn btn-sm" disabled={downloading} onClick={() => void downloadSkeleton()}>
                 ⬇ {st("bulk.downloadSkeleton")}
-              </a>
+              </button>
               <label className="btn btn-sm file-btn">
                 ⬆ {st("bulk.uploadCsv")}
                 <input
@@ -411,6 +426,20 @@ export function BulkDetailPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Resultados en CSV con fetch: un error se muestra traducido en lugar de descargarse como archivo.
+  const [downloading, setDownloading] = useState(false);
+  const downloadResults = async () => {
+    if (downloading) return;
+    setDownloading(true);
+    setError(null);
+    try {
+      await downloadCsv(`/v1/bulk-sends/${id}/results.csv`, `envio-masivo-${id}.csv`);
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   // Solo se aplica la respuesta más reciente: al cambiar de filtro, una respuesta vieja no pisa la lista nueva.
   const seq = useRef(0);
@@ -486,9 +515,9 @@ export function BulkDetailPage() {
           </p>
         </div>
         <div className="row-wrap">
-          <a className="btn" href={`/v1/bulk-sends/${b.id}/results.csv`} download>
+          <button type="button" className="btn" disabled={downloading} onClick={() => void downloadResults()}>
             ⬇ {st("bulk.downloadResults")}
-          </a>
+          </button>
           {/* Solo si hay fallidas que se pueden reintentar (las que fallaron por sus datos se corrigen en un envío nuevo). */}
           {b.status !== "cancelled" && (b.retryable ?? 0) > 0 && (
             <button type="button" className="btn" disabled={busy} onClick={retryFailed}>

@@ -124,11 +124,24 @@ describe("SMS del código de verificación", () => {
     expect(smsSegments("ó".repeat(134))).toBe(2);
     expect(smsSegments("ó".repeat(135))).toBe(3);
 
-    // Producto con tilde (pasa a UCS-2): sigue en un segmento.
+    // Producto con tildes (pasaría a UCS-2 y a 2 segmentos): se translitera a GSM-7 y entra en un segmento.
     const own = await resolveBrand(db, t, null, { override: { productName: "Firmación Ágil" } });
     const o = otpSmsText(own, "es", "654321", "NDA");
-    expect(o).toBe("Tu codigo de Firmación Ágil: 654321. Vence en 10 min. No lo compartas.");
+    expect(o).toBe("Tu codigo de Firmacion Agil: 654321. Vence en 10 min. No lo compartas.");
     expect(smsSegments(o)).toBe(1);
+    const pt = await resolveBrand(db, t, null, { override: { productName: "Assinatura Fácil" } });
+    const op = otpSmsText(pt, "pt-BR", "654321", "NDA");
+    expect(op).toBe("Seu codigo da Assinatura Facil: 654321. Expira em 10 min. Nao compartilhe.");
+    expect(smsSegments(op)).toBe(1);
+    // Los que ya son GSM-7 (é, ñ, ü) quedan; lo que no tiene equivalente se descarta.
+    const { toGsm7 } = await import("../src/modules/white-label/otp-text");
+    expect(toGsm7("Señal Café Über ção õ 签名")).toBe("Señal Café Über cao o");
+    // Producto sin nada transliterable: el texto sin el nombre del producto.
+    const cjk = await resolveBrand(db, t, null, { override: { productName: "签名" } });
+    expect(otpSmsText(cjk, "es", "654321", "NDA")).toBe("Tu codigo de verificacion: 654321. Vence en 10 min. No lo compartas.");
+    // Tabla extendida (cuenta doble) hasta el máximo: sigue en un segmento.
+    const ext = await resolveBrand(db, t, null, { override: { productName: "€".repeat(40) } });
+    expect(smsSegments(otpSmsText(ext, "es", "654321", "NDA"))).toBe(1);
 
     // Plantilla propia de más de 2 segmentos: el texto corto (antes se recortaba a 320 caracteres, que con una tilde son 5 segmentos).
     const long = await resolveBrand(db, t, null, { override: { templates: { otp_code: { es: { body: `Código {{code}}. ${"x".repeat(200)}` } } } } });
@@ -190,7 +203,9 @@ describe("rechazo de SES del dominio propio", () => {
       expect(calls).toHaveLength(1);
       expect(calls[0].dkim).toBeUndefined();
       expect(calls[0].from).toContain("Firmas ACME");
-      expect(again.identityRejectedDomain).toBeUndefined();
+      // Se informa igual el rechazo (en espera) para que el aviso siga anotado en el dominio.
+      expect(again.identityRejectedDomain).toBe("acme.test");
+      expect(again.identityBackoff).toBe(true);
       expect(again.dkimDomain).toBeUndefined();
       // Otro dominio no está en espera; un envío con DKIM aceptado lo informa.
       calls.length = 0;
@@ -240,11 +255,49 @@ describe("rechazo de SES del dominio propio", () => {
     } finally {
       spy.mockRestore();
     }
+    // Otra réplica lo vuelve a anotar: pasado el vencimiento del caché, un envío aceptado lo borra otra vez.
+    await db.query(`UPDATE email_domains SET last_error = $2 WHERE tenant_id = $1`, [t, SES_IDENTITY_ERROR]);
+    await send({ dkimDomain: "acme5.test" });
+    expect(await lastError()).toBe(SES_IDENTITY_ERROR);
+    vi.useFakeTimers({ now: Date.now() + 11 * 60_000, toFake: ["Date"] });
+    try {
+      await send({ dkimDomain: "acme5.test" });
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(await lastError()).toBeNull();
     // Un error distinto (p. ej. de la re-verificación) no se borra.
     await send({ identityRejectedDomain: "acme5.test" });
     await db.query(`UPDATE email_domains SET last_error = 'otro' WHERE tenant_id = $1`, [t]);
     await send({ dkimDomain: "acme5.test" });
     expect(await lastError()).toBe("otro");
+  });
+
+  it("en espera por el rechazo: cada envío vuelve a anotar el aviso si se borró (sin escribir si ya está, sin repetir el log)", async () => {
+    const { sendTracked, SES_IDENTITY_ERROR } = await import("../src/notifications/outbound");
+    const t = await newTenant();
+    await verifiedMailDomain(t, "acme6.test");
+    const warn = vi.fn();
+    const send = async (r: Record<string, unknown>) => {
+      nextResult = r;
+      try {
+        await sendTracked(db, { tenantId: t, template: "invite", log: { error: vi.fn(), warn } }, { channel: "email", to: "ana@x.com", subject: "s", text: "t", tenantId: t });
+      } finally {
+        nextResult = {};
+      }
+    };
+    await db.query(`UPDATE email_domains SET last_error = NULL WHERE tenant_id = $1`, [t]);
+    await send({ identityRejectedDomain: "acme6.test", identityBackoff: true });
+    expect((await db.one<any>(`SELECT last_error FROM email_domains WHERE tenant_id = $1`, [t])).last_error).toBe(SES_IDENTITY_ERROR);
+    expect(warn).not.toHaveBeenCalled();
+    // Ya anotado: la consulta no coincide con ninguna fila (IS DISTINCT FROM), no hay escritura (la versión de la fila no cambia).
+    const version = async () => (await db.one<any>(`SELECT xmin::text AS v FROM email_domains WHERE tenant_id = $1`, [t])).v;
+    const before = await version();
+    await send({ identityRejectedDomain: "acme6.test", identityBackoff: true });
+    expect(await version()).toBe(before);
+    // Un rechazo nuevo (no en espera) sí se registra en el log.
+    await send({ identityRejectedDomain: "acme6.test" });
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 
   it("el envío registrado anota el rechazo en el dominio de correo", async () => {

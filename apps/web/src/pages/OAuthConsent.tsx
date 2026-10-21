@@ -1,11 +1,15 @@
 // /oauth/authorize — pantalla de consentimiento de OAuth 2.0 (authorization code + PKCE).
 // La app de terceros redirige acá; si no hay sesión, RequireAuth manda al login y vuelve con la misma query.
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import type { AuthorizeInfo, AuthorizeResult } from "@calasign/shared";
 import { api, errorText, HttpError } from "../lib/api";
 import { usePlatformText } from "../lib/i18n-platform";
 import { ErrorBox, LocaleSwitcher, Logo, Spinner } from "../components/ui";
+
+// Anti-clickjacking/"doble clic": "Permitir" no responde hasta este tiempo después de aparecer o de que la ventana
+// recupere el foco (un clic o Enter pensado para otra ventana o para la pantalla anterior no autoriza la app).
+const ALLOW_ARM_MS = 500;
 
 const PARAMS = ["response_type", "client_id", "redirect_uri", "scope", "state", "code_challenge", "code_challenge_method", "resource"] as const;
 
@@ -26,6 +30,30 @@ export function OAuthConsentPage() {
   const [needs2fa, setNeeds2fa] = useState(false);
   const [busy, setBusy] = useState(false);
   const [leaving, setLeaving] = useState(false);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const armedAt = useRef(Date.now());
+
+  useEffect(() => {
+    const rearm = () => {
+      armedAt.current = Date.now();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") rearm();
+    };
+    window.addEventListener("focus", rearm);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("focus", rearm);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, []);
+
+  // Con los datos a la vista, el foco va al título (no a "Permitir": un Enter no debe autorizar sin leer).
+  useEffect(() => {
+    if (!info) return;
+    armedAt.current = Date.now();
+    headingRef.current?.focus();
+  }, [info]);
 
   useEffect(() => {
     api<AuthorizeInfo>(`/v1/oauth/authorize/info?${new URLSearchParams(query)}`)
@@ -37,6 +65,7 @@ export function OAuthConsentPage() {
   }, [query]);
 
   const decide = async (approve: boolean) => {
+    if (approve && Date.now() - armedAt.current < ALLOW_ARM_MS) return;
     setBusy(true);
     setError(null);
     try {
@@ -65,7 +94,9 @@ export function OAuthConsentPage() {
       <main className="content">
         <div className="page narrow" style={{ maxWidth: 520 }}>
           <div className="card pad stack" style={{ marginTop: 24 }}>
-            <h1 style={{ margin: 0 }}>{p("consent.title")}</h1>
+            <h1 ref={headingRef} tabIndex={-1} style={{ margin: 0, outline: "none" }}>
+              {p("consent.title")}
+            </h1>
             {error && !info ? (
               <>
                 <p className="muted">{p("consent.invalid")}</p>
@@ -113,7 +144,7 @@ export function OAuthConsentPage() {
                     <button type="button" className="btn" disabled={busy} onClick={() => decide(false)}>
                       {p("consent.deny")}
                     </button>
-                    <button type="button" className="btn btn-primary" disabled={busy} onClick={() => decide(true)} autoFocus>
+                    <button type="button" className="btn btn-primary" disabled={busy} onClick={() => decide(true)}>
                       {p("consent.allow")}
                     </button>
                   </div>

@@ -1,5 +1,6 @@
 // i18n mínimo: diccionarios planos es / pt-BR / en.
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useBlocker } from "react-router-dom";
 import type { Locale } from "@calasign/shared";
 import { prodEn, prodEs, prodPt, type ProdKey } from "./i18n-productivity";
 import { brandText, useBrandVersion } from "./white-label";
@@ -907,16 +908,55 @@ export function hasUnsavedChanges(): boolean {
   return unsavedEditors > 0;
 }
 
-/** true si no hay cambios sin guardar o si la persona confirma descartarlos. */
-export function confirmDiscardUnsaved(): boolean {
-  return unsavedEditors === 0 || typeof window === "undefined" || window.confirm(DICTS[activeLocale]["common.unsavedLeave"]);
+// Quien navega por código tras confirmDiscardUnsaved() (p. ej. cambiar de organización y volver al inicio) ya
+// confirmó: el bloqueo de navegación no vuelve a preguntar si navega poco después.
+let navConfirmedAt = 0;
+const NAV_CONFIRM_WINDOW_MS = 30_000;
+
+/**
+ * true si no hay cambios sin guardar o si la persona confirma descartarlos. Con `navigating` (quien llama va a
+ * navegar por código enseguida), el bloqueo de navegación no vuelve a preguntar.
+ */
+export function confirmDiscardUnsaved(opts: { navigating?: boolean } = {}): boolean {
+  if (unsavedEditors === 0 || typeof window === "undefined") return true;
+  if (!window.confirm(DICTS[activeLocale]["common.unsavedLeave"])) return false;
+  if (opts.navigating) navConfirmedAt = Date.now();
+  return true;
+}
+
+/** La navegación por código que sigue no pregunta por cambios sin guardar (p. ej. tras borrar lo que se editaba). */
+export function allowNextNavigation(): void {
+  navConfirmedAt = Date.now();
+}
+
+/**
+ * Bloqueo de navegación dentro de la app con cambios sin guardar: enlaces, botón Atrás/Adelante y navegate() por
+ * código. Se monta una sola vez (main.tsx): React Router admite un único useBlocker activo a la vez.
+ */
+export function UnsavedChangesGuard() {
+  const blocker = useBlocker(({ currentLocation, nextLocation }) => {
+    // Mismo lugar (anclas #, o el mismo filtro): no se pregunta.
+    if (currentLocation.pathname === nextLocation.pathname && currentLocation.search === nextLocation.search) return false;
+    // Navegación ya confirmada: vale para esta sola navegación (se consume aunque no haya nada sin guardar).
+    const confirmed = Date.now() - navConfirmedAt < NAV_CONFIRM_WINDOW_MS;
+    navConfirmedAt = 0;
+    if (confirmed || unsavedEditors === 0 || unloadConfirmed) return false;
+    return true;
+  });
+  useEffect(() => {
+    if (blocker.state !== "blocked") return;
+    // Al guardar y navegar en el mismo paso (setDirty(false) + navigate), el bloqueo se decide antes de que el editor
+    // se dé por limpio; acá (después del commit) el contador ya está al día y se deja pasar sin preguntar.
+    if (unsavedEditors === 0 || window.confirm(DICTS[activeLocale]["common.unsavedLeave"])) blocker.proceed();
+    else blocker.reset();
+  }, [blocker]);
+  return null;
 }
 
 /**
  * Aviso al salir con cambios sin guardar (los editores solo guardan con "Guardar" o al cambiar de paso: antes se
- * perdían sin aviso). El navegador avisa al cerrar o recargar la pestaña; dentro de la app (BrowserRouter no tiene
- * bloqueo de navegación) se intercepta el clic en los enlaces internos (Link/NavLink del menú, "← Sobres"…) antes de
- * que React Router navegue, y se pide confirmación.
+ * perdían sin aviso). El navegador avisa al cerrar o recargar la pestaña; dentro de la app (enlaces, Atrás/Adelante,
+ * navegación por código) avisa UnsavedChangesGuard con el bloqueo del router.
  */
 export function useUnsavedWarning(dirty: boolean) {
   useEffect(() => {
@@ -927,30 +967,10 @@ export function useUnsavedWarning(dirty: boolean) {
       e.preventDefault();
       e.returnValue = "";
     };
-    // En captura sobre document: corre antes del onClick de React (que escucha en la raíz de la app).
-    const onClick = (e: MouseEvent) => {
-      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-      const a = (e.target as Element | null)?.closest?.("a[href]") as HTMLAnchorElement | null;
-      if (!a || a.hasAttribute("download") || (a.target && a.target !== "_self")) return;
-      let url: URL;
-      try {
-        url = new URL(a.href, window.location.href);
-      } catch {
-        return;
-      }
-      // Externos (abren otra página: los cubre beforeunload) o el mismo lugar (anclas #): no se pregunta.
-      if (url.origin !== window.location.origin) return;
-      if (url.pathname === window.location.pathname && url.search === window.location.search) return;
-      if (window.confirm(DICTS[activeLocale]["common.unsavedLeave"])) return;
-      e.preventDefault();
-      e.stopPropagation();
-    };
     window.addEventListener("beforeunload", h);
-    document.addEventListener("click", onClick, true);
     return () => {
       unsavedEditors--;
       window.removeEventListener("beforeunload", h);
-      document.removeEventListener("click", onClick, true);
     };
   }, [dirty]);
 }

@@ -516,6 +516,12 @@ export const ERRORS: Record<string, Err> = {
   id_in_use: { status: 409, code: "id_in_use", message: "Id de destinatario en uso", summary: "Un id de cliente ya lo usa otro sobre" },
   not_voidable: { status: 409, code: "not_voidable", message: "Solo se puede anular un sobre enviado y en curso", summary: "Estado distinto de sent / awaiting_certificates" },
   not_in_progress: { status: 409, code: "not_in_progress", message: "El sobre no está en curso", summary: "El sobre no está en estado sent" },
+  identity_not_required: {
+    status: 409,
+    code: "identity_not_required",
+    message: "Este destinatario no tiene verificación de identidad",
+    summary: "El destinatario (o el link) no tiene verificación de identidad",
+  },
   not_finalizing: { status: 409, code: "not_finalizing", message: "El sobre no está esperando la finalización", summary: "El sobre no está en finalizing" },
   finalize_in_progress: { status: 409, code: "finalize_in_progress", message: "La finalización ya está en curso", summary: "Ya hay una finalización encolada o corriendo" },
   not_available: { status: 409, code: "not_available", message: "El sobre no está en curso", summary: "Sobre no enviado o destinatario todavía no activo" },

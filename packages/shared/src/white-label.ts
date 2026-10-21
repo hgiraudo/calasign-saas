@@ -342,7 +342,11 @@ export interface EmailDomain {
   records: EmailDomainRecord[];
   verifiedAt: string | null;
   lastCheckedAt: string | null;
+  /** Último error de la verificación por DNS. */
   lastError: string | null;
+  /** Amazon SES rechazó el dominio como remitente (identidad sin verificar): los correos salen desde la plataforma. */
+  sesIdentityError?: string | null;
+  sesIdentityErrorAt?: string | null;
 }
 
 // ───────────────────────────── CSS del tema ─────────────────────────────

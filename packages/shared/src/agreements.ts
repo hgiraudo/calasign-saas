@@ -615,6 +615,8 @@ export interface NegotiationView {
   clauses: { slug: string; title: string; text: string }[];
   /** Solo en la vista de la contraparte. */
   me?: NegotiationParticipant;
+  /** Remitente: los datos, el texto y los comentarios se borraron por la política de retención (no hay PDF ni diferencias). */
+  dataPurgedAt?: string;
 }
 
 export const NegotiationCommentInput = z.object({

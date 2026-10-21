@@ -5,6 +5,7 @@ import type { BlobStore } from "../../infra/storage";
 import { hasPerm, envelopeVisibilitySql } from "../access";
 import type { AuthContext } from "../context";
 import { iso } from "../../lib/util";
+import { badRequest } from "../../lib/errors";
 
 export interface Deps {
   db: Db;
@@ -57,7 +58,7 @@ export function getPath(data: unknown, path: string): unknown {
 
 export function setPath(data: Record<string, unknown>, path: string, value: unknown) {
   const parts = path.split(".");
-  if (parts.some((p) => p === "__proto__" || p === "constructor" || p === "prototype")) throw new Error("ruta inválida");
+  if (parts.some((p) => p === "__proto__" || p === "constructor" || p === "prototype")) throw badRequest("invalid_path", `Ruta inválida: ${path}`);
   // Se entra a objetos y listas existentes ("partes.0.nombre" cambia el nombre del primer elemento de la lista): antes
   // una lista se reemplazaba por un objeto {"0": {...}} y el documento perdía el resto de sus elementos. Solo se crea un
   // objeto vacío donde no hay nada o hay un valor simple.
@@ -67,7 +68,7 @@ export function setPath(data: Record<string, unknown>, path: string, value: unkn
   const put = (c: Record<string, unknown> | unknown[], p: string, v: unknown) => {
     if (Array.isArray(c)) {
       // En una lista solo valen índices (una clave "nombre" en una lista se perdería al guardar el JSON).
-      if (!isIndex(p)) throw new Error("ruta inválida");
+      if (!isIndex(p)) throw badRequest("invalid_path", `Ruta inválida: ${path}`);
       c[Number(p)] = v;
     } else c[p] = v;
   };

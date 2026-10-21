@@ -190,6 +190,15 @@ export const config = {
      */
     retentionDays: Math.max(1, Number(env.JOBS_RETENTION_DAYS ?? 30) || 30),
   },
+  identity: {
+    /**
+     * Horas que una verificación de un proveedor externo (Veriff, Truora) puede quedar esperando el resultado. Pasado
+     * ese plazo se da por vencida (provider_timeout) sin consumir un intento y el firmante puede volver a empezar.
+     */
+    pendingTimeoutHours: Math.max(1, Number(env.IDV_PENDING_TIMEOUT_HOURS ?? 24) || 24),
+    /** Similitud mínima (0..1) entre la selfie y la foto del documento para los niveles con selfie. */
+    faceMatchThreshold: Math.min(1, Math.max(0, Number.isFinite(Number(env.IDV_FACE_MATCH_THRESHOLD ?? 0.8)) ? Number(env.IDV_FACE_MATCH_THRESHOLD ?? 0.8) : 0.8)),
+  },
   webhooks: {
     /** Entregas fallidas definitivas seguidas (agotados los reintentos) que desactivan el endpoint (motivo "failing"). */
     maxConsecutiveFailures: Math.max(1, Number(env.WEBHOOK_MAX_CONSECUTIVE_FAILURES ?? 50) || 50),

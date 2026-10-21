@@ -261,7 +261,10 @@ export async function usageThisMonth(db: Db, tenantId: string): Promise<BillingU
   let kycChecks = 0;
   if (await tableExists(db, "identity_verifications")) {
     const r = await db.one<{ n: number }>(
-      `SELECT count(*)::int AS n FROM identity_verifications WHERE tenant_id = $1 AND created_at >= $2`,
+      // Sin las reservas canceladas que nunca abrieron una sesión en el proveedor (el proveedor no respondió, dos inicios
+      // simultáneos, el sobre se cerró antes): no se cobraron.
+      `SELECT count(*)::int AS n FROM identity_verifications WHERE tenant_id = $1 AND created_at >= $2
+          AND NOT (status = 'canceled' AND provider_ref IS NULL)`,
       [tenantId, start.toISOString()],
     );
     kycChecks = Number(r?.n ?? 0);

@@ -377,6 +377,7 @@ export function NegotiationPanel({
     <div className="stack">
       <ErrorBox error={error} />
       {!open && <div className="alert">{ta("neg.closed")}</div>}
+      {view.dataPurgedAt && <div className="alert">{ta("neg.purged")}</div>}
       {pendingView && (
         <div className="alert row-between" role="status">
           <span>{ta("neg.newVersionPending", { n: pendingView.negotiation.currentVersion })}</span>
@@ -389,9 +390,11 @@ export function NegotiationPanel({
         <div className="stack">
           <div className="row-between">
             <span className="muted small">{ta("neg.version", { n: n.currentVersion })}</span>
-            <a className="btn btn-sm" href={`${base}/pdf`} target="_blank" rel="noreferrer">
-              {ta("neg.pdf")}
-            </a>
+            {!view.dataPurgedAt && (
+              <a className="btn btn-sm" href={`${base}/pdf`} target="_blank" rel="noreferrer">
+                {ta("neg.pdf")}
+              </a>
+            )}
           </div>
           {n.source === "pdf" ? (
             <>
@@ -503,7 +506,7 @@ export function NegotiationPanel({
                   <span>
                     v{v.version} · {v.summary} <span className="muted">({v.author.name})</span>
                   </span>
-                  {v.version > 1 && (
+                  {v.version > 1 && !view.dataPurgedAt && (
                     <button type="button" className="btn btn-sm btn-ghost" onClick={() => showDiff(v.version)}>
                       {ta("neg.compare")}
                     </button>

@@ -29,7 +29,7 @@ import { brandLogoForPdf, recheckWhiteLabelDomains } from "./white-label";
 import { handlePlatformJob } from "./platform-fanout";
 import { recheckVerifiedDomains, tenantBaseUrl } from "./custom-domains";
 import { dataSweep } from "./data";
-import { identityForCertificate, maskDocNumber } from "./identity/kyc";
+import { expireStaleVerifications, identityForCertificate, maskDocNumber } from "./identity/kyc";
 import { closeStaleCheckouts, paymentsForCertificate, refundPaymentsOnClosedEnvelopes } from "./billing/payments";
 import { cancelPendingSubscriptions } from "./billing/webhooks";
 import { runAiSweep } from "./ai";
@@ -746,6 +746,9 @@ export async function sweep(d: Deps, signal?: AbortSignal) {
       },
     ],
     ["reminders", () => runAutomaticReminders(d.db)],
+    // Verificaciones de identidad de Veriff o Truora sin resultado pasado IDV_PENDING_TIMEOUT_HOURS: vencen sin consumir
+    // un intento (el webhook no llegó nunca y bloqueaban todo nuevo inicio).
+    ["identity-stale", () => expireStaleVerifications(d.db)],
     ["retention", () => purgeExpiredEnvelopes(d)],
     // Archivos sin uso cuyo borrado en el almacenamiento falló (deleteFileIfUnused los anota): se reintentan.
     ["file-deletions", () => retryPendingFileDeletions(d.db, d.blobs)],

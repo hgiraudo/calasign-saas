@@ -69,6 +69,17 @@ describe("coincidencia de nombres", () => {
     expect(nameScore("Fernández Rojas Lucía", "LUCIA FERNANDES ROJAS")).toBe(1);
     expect(nameScore("Lucía Fernández", "PEDRO RAMIREZ SOSA")).toBe(0);
   });
+  it("translitera letras sin descomposición y compara cirílico y griego en su escritura", () => {
+    expect(nameScore("Łukasz Wójcik", "LUKASZ WOJCIK")).toBe(1);
+    expect(nameScore("Mehmet Yılmaz", "MEHMET YILMAZ")).toBe(1);
+    expect(nameScore("Søren Ødegård", "SOREN ODEGARD")).toBe(1);
+    expect(nameScore("Thomas Straße", "THOMAS STRASSE")).toBe(1);
+    expect(nameScore("Đorđe Æsir", "DORDE AESIR")).toBe(1);
+    expect(nameScore("Иван Петров", "ИВАН ПЕТРОВ")).toBe(1);
+    expect(nameScore("Ελένη Παπαδοπούλου", "ΕΛΕΝΗ ΠΑΠΑΔΟΠΟΥΛΟΥ")).toBe(1);
+    // Otra persona en cirílico no coincide (antes todo el cirílico se descartaba y el puntaje era 0 siempre).
+    expect(nameScore("Иван Петров", "СЕРГЕЙ СМИРНОВ")).toBe(0);
+  });
   it("un solo token declarado no alcanza si el documento tiene más", () => {
     expect(nameScore("María", "MARIA JOSE GOMEZ")).toBe(0.5);
   });
@@ -106,10 +117,12 @@ describe("Veriff", () => {
     expect(r.person.fullName).toBe("MARÍA JOSÉ GÓMEZ PÉREZ");
     expect(r.document).toEqual({ type: "ID_CARD", number: "00112345678", country: "DO", expiresOn: "2031-01-01" });
     expect(r.reference).toBe(VERIFF_DECISION.verification.id);
+    // Veriff pide volver a enviar las fotos en la misma sesión: no es una decisión final (queda en revisión).
     expect(mapVeriffDecision({ ...VERIFF_DECISION.verification, status: "resubmission_requested", reason: "Photo blurry" })).toMatchObject({
-      status: "declined",
-      declineReason: "Photo blurry",
+      status: "review",
+      riskFlags: ["resubmission_requested"],
     });
+    expect(mapVeriffDecision({ ...VERIFF_DECISION.verification, status: "declined", reason: "Fraud" })).toMatchObject({ status: "declined", declineReason: "Fraud" });
   });
   it("verifica la firma HMAC del webhook", () => {
     process.env.VERIFF_API_KEY = "k";
@@ -117,7 +130,7 @@ describe("Veriff", () => {
     const raw = Buffer.from(JSON.stringify(VERIFF_DECISION));
     const sig = createHmac("sha256", "s3cret").update(raw).digest("hex");
     expect(veriffSignature(raw, "s3cret")).toBe(sig);
-    const parsed = getAdapter("veriff").parseWebhook!(raw, { "x-hmac-signature": sig });
+    const [parsed] = getAdapter("veriff").parseWebhook!(raw, { "x-hmac-signature": sig });
     expect(parsed.providerRef).toBe(VERIFF_DECISION.verification.id);
     expect(parsed.result?.status).toBe("approved");
     expect(() => getAdapter("veriff").parseWebhook!(raw, { "x-hmac-signature": "00" + sig.slice(2) })).toThrow(WebhookSignatureError);
@@ -143,10 +156,68 @@ describe("Truora", () => {
     process.env.TRUORA_API_KEY = "k";
     process.env.TRUORA_FLOW_ID = "f";
     process.env.TRUORA_WEBHOOK_SECRET = "whsec";
-    const parsed = getAdapter("truora").parseWebhook!(Buffer.from(`${h}.${p}.${s}`), {});
+    const [parsed] = getAdapter("truora").parseWebhook!(Buffer.from(`${h}.${p}.${s}`), {});
     expect(parsed.providerRef).toBe(TRUORA_RESULT.account_id);
     expect(parsed.processId).toBe(TRUORA_RESULT.process_id);
     expect(parsed.result?.status).toBe("approved");
+    expect(parsed.result?.faceMatched).toBe(true);
+  });
+  it("procesa todos los eventos de un webhook en lote", () => {
+    process.env.TRUORA_API_KEY = "k";
+    process.env.TRUORA_FLOW_ID = "f";
+    process.env.TRUORA_WEBHOOK_SECRET = "whsec";
+    const h = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
+    const p = Buffer.from(
+      JSON.stringify({
+        events: [
+          { event_type: "digital-identity", object: { account_id: "acc-1", process_id: "IDP1", status: "pending" } },
+          { event_type: "other", object: {} },
+          { event_type: "digital-identity", object: { ...TRUORA_RESULT, account_id: "acc-2" } },
+        ],
+      }),
+    ).toString("base64url");
+    const s = createHmac("sha256", "whsec").update(`${h}.${p}`).digest("base64url");
+    const out = getAdapter("truora").parseWebhook!(Buffer.from(`${h}.${p}.${s}`), {});
+    expect(out.map((x) => [x.providerRef, x.processId, x.result?.status ?? null])).toEqual([
+      ["acc-1", "IDP1", null],
+      ["acc-2", TRUORA_RESULT.process_id, "approved"],
+    ]);
+  });
+  it("usa el flujo del nivel si está configurado", async () => {
+    const { truoraFlowId } = await import("../src/modules/identity/providers");
+    process.env.TRUORA_FLOW_ID = "IPFgeneral";
+    process.env.TRUORA_FLOW_ID_DOCUMENT_SELFIE_LIVENESS = "IPFlive";
+    expect(truoraFlowId("document_selfie_liveness")).toBe("IPFlive");
+    expect(truoraFlowId("document")).toBe("IPFgeneral");
+    delete process.env.TRUORA_FLOW_ID_DOCUMENT_SELFIE_LIVENESS;
+  });
+});
+
+describe("nivel exigido", () => {
+  const base = mapTruoraProcess(TRUORA_RESULT);
+  it("exige coincidencia facial para los niveles con selfie y prueba de vida para el de liveness", async () => {
+    const { levelSatisfied } = await import("../src/modules/identity/kyc");
+    // Aprobado solo con el documento (flujo de Truora sin reconocimiento facial): no cumple document_selfie.
+    const docOnly = { ...base, faceMatchScore: null, faceMatched: null, liveness: null };
+    expect(levelSatisfied("document", docOnly, 0.8)).toBe(true);
+    expect(levelSatisfied("document_selfie", docOnly, 0.8)).toBe(false);
+    expect(levelSatisfied("document_selfie", { ...docOnly, faceMatchScore: 0.79 }, 0.8)).toBe(false);
+    expect(levelSatisfied("document_selfie", { ...docOnly, faceMatchScore: 0.8 }, 0.8)).toBe(true);
+    expect(levelSatisfied("document_selfie", { ...docOnly, faceMatched: true }, 0.8)).toBe(true);
+    expect(levelSatisfied("document_selfie", { ...docOnly, faceMatchScore: 0.95, faceMatched: false }, 0.8)).toBe(false);
+    // Liveness: además la prueba de vida explícitamente aprobada.
+    expect(levelSatisfied("document_selfie_liveness", { ...docOnly, faceMatchScore: 0.95 }, 0.8)).toBe(false);
+    expect(levelSatisfied("document_selfie_liveness", { ...docOnly, faceMatchScore: 0.95, liveness: false }, 0.8)).toBe(false);
+    expect(levelSatisfied("document_selfie_liveness", { ...docOnly, faceMatchScore: 0.95, liveness: true }, 0.8)).toBe(true);
+    // Veriff aprobado sin datos biométricos en la decisión.
+    expect(levelSatisfied("document_selfie", mapVeriffDecision(VERIFF_DECISION.verification), 0.8)).toBe(false);
+    expect(levelSatisfied("document_selfie", mapVeriffDecision({ ...VERIFF_DECISION.verification, faceMatch: { similarity: 0.91 } }), 0.8)).toBe(true);
+  });
+  it("la referencia de Truora es el process_id", async () => {
+    const { providerReference } = await import("../src/modules/identity/kyc");
+    expect(providerReference({ provider: "truora", provider_ref: "verif-id", provider_process_id: "IDP9" })).toBe("IDP9");
+    expect(providerReference({ provider: "truora", provider_ref: "verif-id", provider_process_id: null }, base)).toBe(TRUORA_RESULT.process_id);
+    expect(providerReference({ provider: "veriff", provider_ref: "sess-1", provider_process_id: null }, base)).toBe("sess-1");
   });
 });
 

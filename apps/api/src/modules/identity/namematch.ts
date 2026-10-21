@@ -6,15 +6,29 @@ import type { NameMatchResult } from "@calasign/shared";
 
 const PARTICLES = new Set(["de", "del", "la", "las", "los", "da", "das", "do", "dos", "e", "y", "van", "von"]);
 
+/**
+ * Letras latinas sin descomposición canónica (NFD no les saca nada): se transliteran como en los documentos de viaje
+ * (ICAO 9303), así "Łukasz" coincide con "LUKASZ" y "Yılmaz" con "YILMAZ". Antes se descartaban y el token quedaba
+ * partido ("ukasz").
+ */
+const TRANSLIT: Record<string, string> = { ł: "l", ı: "i", ø: "o", đ: "d", ð: "d", æ: "ae", ß: "ss", œ: "oe", þ: "th", ħ: "h", ŧ: "t", ŀ: "l" };
+const TRANSLIT_RE = new RegExp(`[${Object.keys(TRANSLIT).join("")}]`, "gu");
+
 export function normalizeName(s: string): string[] {
-  return s
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase()
-    .replace(/[^a-zñ\s'-]/g, " ")
-    .replace(/['-]/g, " ")
-    .split(/\s+/)
-    .filter((t) => t.length > 0 && !PARTICLES.has(t));
+  return (
+    s
+      // Mayúsculas primero: "Ł" → "ł", "İ" → "i̇" (el punto combinante se va con las marcas).
+      .toLowerCase()
+      .replace(TRANSLIT_RE, (c) => TRANSLIT[c] ?? c)
+      .normalize("NFD")
+      .replace(/\p{M}/gu, "")
+      .normalize("NFC")
+      // Letras de cualquier escritura (cirílico, griego…): esos nombres se comparan en su escritura.
+      .replace(/[^\p{L}\s'-]/gu, " ")
+      .replace(/['-]/g, " ")
+      .split(/\s+/)
+      .filter((t) => t.length > 0 && !PARTICLES.has(t))
+  );
 }
 
 export function normalizeDocumentNumber(s: string | null | undefined): string {

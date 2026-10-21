@@ -231,7 +231,7 @@ describe("rechazo de SES del dominio propio", () => {
   });
 
   it("un envío con DKIM aceptado borra el aviso de rechazo de SES (una sola vez por dominio y proceso)", async () => {
-    const { sendTracked, SES_IDENTITY_ERROR } = await import("../src/notifications/outbound");
+    const { sendTracked } = await import("../src/notifications/outbound");
     const t = await newTenant();
     await verifiedMailDomain(t, "acme5.test");
     const send = async (r: Record<string, unknown>) => {
@@ -242,11 +242,14 @@ describe("rechazo de SES del dominio propio", () => {
         nextResult = {};
       }
     };
+    const sesFlag = async () => (await db.one<any>(`SELECT ses_identity_error_at FROM email_domains WHERE tenant_id = $1`, [t])).ses_identity_error_at != null;
     const lastError = async () => (await db.one<any>(`SELECT last_error FROM email_domains WHERE tenant_id = $1`, [t])).last_error;
     await send({ identityRejectedDomain: "acme5.test" });
-    expect(await lastError()).toBe(SES_IDENTITY_ERROR);
-    await send({ dkimDomain: "acme5.test" });
+    expect(await sesFlag()).toBe(true);
+    // El aviso de SES va en su columna: last_error queda para la verificación por DNS.
     expect(await lastError()).toBeNull();
+    await send({ dkimDomain: "acme5.test" });
+    expect(await sesFlag()).toBe(false);
     // Ya limpio en este proceso: los envíos siguientes no escriben en email_domains.
     const spy = vi.spyOn(db, "query");
     try {
@@ -256,25 +259,33 @@ describe("rechazo de SES del dominio propio", () => {
       spy.mockRestore();
     }
     // Otra réplica lo vuelve a anotar: pasado el vencimiento del caché, un envío aceptado lo borra otra vez.
-    await db.query(`UPDATE email_domains SET last_error = $2 WHERE tenant_id = $1`, [t, SES_IDENTITY_ERROR]);
+    await db.query(`UPDATE email_domains SET ses_identity_error_at = now() WHERE tenant_id = $1`, [t]);
     await send({ dkimDomain: "acme5.test" });
-    expect(await lastError()).toBe(SES_IDENTITY_ERROR);
+    expect(await sesFlag()).toBe(true);
     vi.useFakeTimers({ now: Date.now() + 11 * 60_000, toFake: ["Date"] });
     try {
       await send({ dkimDomain: "acme5.test" });
     } finally {
       vi.useRealTimers();
     }
-    expect(await lastError()).toBeNull();
-    // Un error distinto (p. ej. de la re-verificación) no se borra.
-    await send({ identityRejectedDomain: "acme5.test" });
+    expect(await sesFlag()).toBe(false);
+    // Un error de DNS (last_error) no lo toca el envío: ni al anotar el rechazo ni al borrarlo.
     await db.query(`UPDATE email_domains SET last_error = 'otro' WHERE tenant_id = $1`, [t]);
-    await send({ dkimDomain: "acme5.test" });
+    await send({ identityRejectedDomain: "acme5.test" });
     expect(await lastError()).toBe("otro");
+    expect(await sesFlag()).toBe(true);
+    vi.useFakeTimers({ now: Date.now() + 22 * 60_000, toFake: ["Date"] });
+    try {
+      await send({ dkimDomain: "acme5.test" });
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(await lastError()).toBe("otro");
+    expect(await sesFlag()).toBe(false);
   });
 
   it("en espera por el rechazo: el envío no escribe en el dominio ni repite el log (solo un rechazo real anota)", async () => {
-    const { sendTracked, SES_IDENTITY_ERROR } = await import("../src/notifications/outbound");
+    const { sendTracked } = await import("../src/notifications/outbound");
     const t = await newTenant();
     await verifiedMailDomain(t, "acme6.test");
     const warn = vi.fn();
@@ -287,25 +298,25 @@ describe("rechazo de SES del dominio propio", () => {
       }
     };
     const version = async () => (await db.one<any>(`SELECT xmin::text AS v FROM email_domains WHERE tenant_id = $1`, [t])).v;
-    const lastError = async () => (await db.one<any>(`SELECT last_error FROM email_domains WHERE tenant_id = $1`, [t])).last_error;
+    const sesFlag = async () => (await db.one<any>(`SELECT ses_identity_error_at FROM email_domains WHERE tenant_id = $1`, [t])).ses_identity_error_at != null;
     // Sin aviso anotado (p. ej. lo borró un envío aceptado de otra réplica): en espera no se vuelve a anotar (no oscila).
-    await db.query(`UPDATE email_domains SET last_error = NULL WHERE tenant_id = $1`, [t]);
+    await db.query(`UPDATE email_domains SET ses_identity_error_at = NULL WHERE tenant_id = $1`, [t]);
     let before = await version();
     await send({ identityRejectedDomain: "acme6.test", identityBackoff: true });
     expect(await version()).toBe(before);
-    expect(await lastError()).toBeNull();
+    expect(await sesFlag()).toBe(false);
     expect(warn).not.toHaveBeenCalled();
     // Con el aviso anotado: tampoco escribe.
-    await db.query(`UPDATE email_domains SET last_error = $2 WHERE tenant_id = $1`, [t, SES_IDENTITY_ERROR]);
+    await db.query(`UPDATE email_domains SET ses_identity_error_at = now() WHERE tenant_id = $1`, [t]);
     before = await version();
     await send({ identityRejectedDomain: "acme6.test", identityBackoff: true });
     expect(await version()).toBe(before);
-    expect(await lastError()).toBe(SES_IDENTITY_ERROR);
+    expect(await sesFlag()).toBe(true);
     // Un rechazo real (no en espera) sí se registra en el log (y anota si hace falta).
-    await db.query(`UPDATE email_domains SET last_error = NULL WHERE tenant_id = $1`, [t]);
+    await db.query(`UPDATE email_domains SET ses_identity_error_at = NULL WHERE tenant_id = $1`, [t]);
     await send({ identityRejectedDomain: "acme6.test" });
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(await lastError()).toBe(SES_IDENTITY_ERROR);
+    expect(await sesFlag()).toBe(true);
   });
 
   it("el envío registrado anota el rechazo en el dominio de correo", async () => {
@@ -319,9 +330,10 @@ describe("rechazo de SES del dominio propio", () => {
     } finally {
       nextResult = {};
     }
-    const d = await db.one<any>(`SELECT status, last_error FROM email_domains WHERE tenant_id = $1`, [t]);
+    const d = await db.one<any>(`SELECT status, last_error, ses_identity_error_at FROM email_domains WHERE tenant_id = $1`, [t]);
     expect(d.status).toBe("verified");
-    expect(d.last_error).toMatch(/Amazon SES/);
+    expect(d.ses_identity_error_at).toBeTruthy();
+    expect(d.last_error).toBeNull();
   });
 
   it("senderFor da la dirección de la plataforma de reserva con un dominio propio", async () => {

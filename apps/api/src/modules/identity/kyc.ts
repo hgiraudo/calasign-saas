@@ -134,6 +134,20 @@ export function identityBlocking(r: any): boolean {
   return identityRequired(r) && r.identity_status !== "verified";
 }
 
+/** El sobre en curso (y no vencido) y el destinatario todavía de turno: si no, no se suben fotos ni se evalúan. */
+function assertSignable(e: any, r: any) {
+  if (e.status !== "sent" || pastExpiry(e)) throw new AppError(410, "envelope_closed", "El sobre ya no está disponible");
+  if (!["sent", "viewed"].includes(r?.status)) throw conflict("not_signable", "Ya no podés firmar este sobre");
+}
+
+/** assertSignable con el sobre bloqueado y releído (dentro de la transacción), y el link del destinatario vigente. */
+async function lockedSignable(t: Db, e: any, r: any) {
+  const cur = await lockEnvelope(t, e.tenant_id, e.id);
+  const rNow = await t.one<any>(`SELECT status, access_token_hash FROM recipients WHERE id = $1`, [r.id]);
+  assertLinkCurrent(rNow, r);
+  assertSignable(cur, rNow);
+}
+
 // ───────────────────────────── Sesión del firmante ─────────────────────────────
 
 async function latestVerification(db: Db, recipientId: string) {
@@ -206,6 +220,29 @@ export function storedIdvResult(result: IdvResult): IdvResult {
 
 const PROVIDER_NAMES: Record<string, string> = { mock: "CalaSign (prueba)", truora: "Truora", veriff: "Veriff" };
 
+/**
+ * Referencia del proveedor para la evidencia, el certificado y el detalle del remitente. En Truora provider_ref es el
+ * id de nuestra verificación (account_id): la referencia que sirve para buscar el caso en Truora es el process_id.
+ */
+export function providerReference(v: { provider: string; provider_ref?: string | null; provider_process_id?: string | null }, res?: IdvResult | null): string | null {
+  if (v.provider === "truora") return v.provider_process_id ?? res?.reference ?? v.provider_ref ?? null;
+  return v.provider_ref ?? res?.reference ?? null;
+}
+
+/**
+ * Lo que exige el nivel pedido, más allá de que el proveedor apruebe: el flujo o la integración configurados en el
+ * proveedor pueden no incluir la selfie o la prueba de vida (y aprobar solo con el documento). Sin coincidencia facial
+ * (puntaje sobre el umbral o decisión explícita) o sin prueba de vida, la verificación no cumple el nivel.
+ */
+export function levelSatisfied(level: IdvLevel, result: IdvResult, faceThreshold = config.identity.faceMatchThreshold): boolean {
+  if (level === "document") return true;
+  const score = typeof result.faceMatchScore === "number" ? result.faceMatchScore : null;
+  const faceOk = result.faceMatched === false ? false : (score !== null && score >= faceThreshold) || result.faceMatched === true;
+  if (!faceOk) return false;
+  if (level === "document_selfie_liveness" && result.liveness !== true) return false;
+  return true;
+}
+
 export async function identityForCertificate(db: Db, recipients: any[]): Promise<Map<string, CertificateIdentity>> {
   const out = new Map<string, CertificateIdentity>();
   for (const r of recipients) {
@@ -226,7 +263,7 @@ export async function identityForCertificate(db: Db, recipients: any[]): Promise
       documentNumberMatched: nm.documentNumberMatched ?? null,
       faceMatchScore: res.faceMatchScore ?? null,
       liveness: res.liveness ?? null,
-      reference: v.provider_ref ?? res.reference ?? null,
+      reference: providerReference(v, res),
       verifiedAt: iso(v.completed_at),
     });
   }
@@ -247,7 +284,8 @@ async function finalizeVerification(db: Db, verificationId: string, result: IdvR
     // El resultado llega tarde (webhook o consulta minutos después): si el sobre ya se anuló, rechazó o venció, o el
     // destinatario fue reemplazado (delegó, lo reasignaron), la verificación se cancela sin sumar
     // recipient.identity_verified / identity_failed a la evidencia de un sobre cerrado o de alguien que ya no firma.
-    if (e.status !== "sent" || !["sent", "viewed"].includes(r?.status)) {
+    // Vencido aunque el barrido todavía no lo haya marcado: tampoco suma eventos.
+    if (e.status !== "sent" || pastExpiry(e) || !["sent", "viewed"].includes(r?.status)) {
       await t.query(`UPDATE identity_verifications SET status = 'canceled', updated_at = now() WHERE id = $1`, [v.id]);
       // Sin verificación en curso, el destinatario no queda "in_progress" (la sesión mostraba una verificación en curso
       // sin verificationId y la página esperaba un resultado que ya no iba a llegar).
@@ -268,6 +306,8 @@ async function finalizeVerification(db: Db, verificationId: string, result: IdvR
     );
     let reason: string | null = null;
     if (result.status !== "approved") reason = result.declineReason ?? "declined";
+    // Aprobado por el proveedor pero sin la coincidencia facial o la prueba de vida que pide el nivel.
+    else if (!levelSatisfied(v.level as IdvLevel, result)) reason = "level_not_met";
     else if (!nameMatch.matched) reason = "name_mismatch";
     else if (nameMatch.documentNumberMatched === false) reason = "document_number_mismatch";
     const ok = reason === null;
@@ -281,7 +321,7 @@ async function finalizeVerification(db: Db, verificationId: string, result: IdvR
       provider: v.provider,
       level: v.level,
       attempt: v.attempt,
-      reference: v.provider_ref ?? result.reference,
+      reference: providerReference(v, result),
       document: { type: result.document.type, country: result.document.country, number: maskDoc(result.document.number) },
       nameMatch: { score: nameMatch.score, threshold: nameMatch.threshold },
       documentNumberMatched: nameMatch.documentNumberMatched,
@@ -309,6 +349,51 @@ async function finalizeVerification(db: Db, verificationId: string, result: IdvR
     }
     return ok ? "verified" : "failed";
   });
+}
+
+/**
+ * Verificaciones de un proveedor externo que esperan el resultado hace más de IDV_PENDING_TIMEOUT_HOURS (24 h): el
+ * webhook no llegó nunca (o el firmante abandonó la página del proveedor). Se dan por vencidas (status 'expired',
+ * provider_timeout) sin consumir un intento —no hubo una decisión— y el firmante puede volver a empezar. Antes quedaban
+ * "en curso" para siempre y bloqueaban todo nuevo inicio. De a 200 por pasada.
+ */
+export async function expireStaleVerifications(db: Db, hours = config.identity.pendingTimeoutHours): Promise<number> {
+  const stale = await db.query<{ id: string; tenant_id: string; envelope_id: string }>(
+    `SELECT id, tenant_id, envelope_id FROM identity_verifications
+      WHERE status = 'pending' AND provider <> 'mock' AND created_at < now() - make_interval(hours => $1::int)
+      ORDER BY created_at LIMIT 200`,
+    [hours],
+  );
+  let n = 0;
+  for (const s of stale) {
+    const done = await db.tx(async (t) => {
+      const e = await lockEnvelope(t, s.tenant_id, s.envelope_id);
+      const v = await t.one<any>(`SELECT * FROM identity_verifications WHERE id = $1 FOR UPDATE`, [s.id]);
+      if (v?.status !== "pending") return false;
+      await t.query(
+        `UPDATE identity_verifications SET status = 'expired', failure_reason = 'provider_timeout', completed_at = now(), updated_at = now() WHERE id = $1`,
+        [v.id],
+      );
+      const open = e.status === "sent" && !pastExpiry(e);
+      await t.query(
+        `UPDATE recipients SET identity_status = 'pending', identity_failure_reason = CASE WHEN $2 THEN 'provider_timeout' ELSE identity_failure_reason END
+          WHERE id = $1 AND identity_status = 'in_progress'`,
+        [v.recipient_id, open],
+      );
+      if (open) {
+        await appendEvent(t, {
+          tenantId: v.tenant_id,
+          envelopeId: v.envelope_id,
+          type: "recipient.identity_expired",
+          actor: { type: "system", label: PROVIDER_NAMES[v.provider] ?? v.provider },
+          data: { verificationId: v.id, provider: v.provider, level: v.level, attempt: v.attempt, reference: providerReference(v), reason: "provider_timeout", hours },
+        });
+      }
+      return true;
+    });
+    if (done) n++;
+  }
+  return n;
 }
 
 // ───────────────────────────── Rutas ─────────────────────────────
@@ -499,8 +584,11 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
     const kind = req.params.kind as IdvCaptureKind;
     if (!(IDV_CAPTURE_KINDS as readonly string[]).includes(kind)) throw badRequest("invalid_capture", "Tipo de captura inválido");
     if (!requiredCaptures(r.id_verification_level).includes(kind)) throw badRequest("invalid_capture", "Esta captura no corresponde al nivel pedido");
+    assertSignable(e, r);
     const v = await latestVerification(s.db, r.id);
     if (!v || v.status !== "created" || getAdapter(v.provider).mode !== "builtin") throw conflict("no_active_capture", "Primero iniciá la verificación");
+    // El proveedor de prueba deshabilitado (producción sin IDV_MOCK_ENABLED) no recibe fotos de documentos.
+    if (!providerReady(v.provider)) throw new AppError(503, "identity_provider_unavailable", "El proveedor de verificación no está disponible");
 
     const file = await req.file({ limits: { fileSize: MAX_IMAGE_BYTES } });
     if (!file) throw badRequest("file_required", "Falta la imagen (campo 'file')");
@@ -526,6 +614,9 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
     // Si la transacción falla (la verificación ya se envió, o dos subidas simultáneas de la misma foto), la imagen
     // cifrada recién subida no la referencia nada y quedaría para siempre.
     const replaced = await discardBlobsOnFailure(s.blobs, [key], () => s.db.tx(async (t) => {
+      // Con el sobre bloqueado: una foto que llega con el sobre ya anulado, rechazado, vencido o purgado (o el
+      // destinatario reemplazado) no queda guardada; la purga del sobre ya no la vería y quedaba para siempre.
+      await lockedSignable(t, e, r);
       // Con la verificación bloqueada: una captura que llega después del envío no reemplaza la foto ya evaluada, y dos
       // subidas simultáneas del mismo tipo no chocan con UNIQUE (verification_id, kind).
       const cur = await t.one<any>(`SELECT status FROM identity_verifications WHERE id = $1 FOR UPDATE`, [v.id]);
@@ -559,21 +650,35 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
 
   app.post<P>("/v1/signing/:token/identity/submit", rl, async (req) => {
     const { r, e } = await context(req);
+    assertSignable(e, r);
     const v = await latestVerification(s.db, r.id);
     if (!v || !["created", "pending"].includes(v.status)) throw conflict("no_active_verification", "No hay una verificación en curso");
     const adapter = getAdapter(v.provider);
+    if (!providerReady(v.provider)) throw new AppError(503, "identity_provider_unavailable", "El proveedor de verificación no está disponible");
     const actor = recipientActor(req, r);
+    let outcome: string | null = null;
     if (adapter.mode === "builtin") {
-      const caps = await s.db.query<any>(`SELECT kind, sha256 FROM identity_captures WHERE verification_id = $1`, [v.id]);
+      // Las fotos se leen con el sobre bloqueado (lockedSignable): no se evalúa con el sobre ya cerrado.
+      const caps = await s.db.tx(async (t) => {
+        await lockedSignable(t, e, r);
+        return t.query<any>(`SELECT kind, sha256 FROM identity_captures WHERE verification_id = $1`, [v.id]);
+      });
       const missing = requiredCaptures(v.level).filter((k) => !caps.some((c) => c.kind === k));
       if (missing.length) throw new AppError(422, "captures_incomplete", `Faltan fotos: ${missing.join(", ")}`, { missing });
       const settings = await getIdentitySettings(s.db, e.tenant_id);
       const result = mockDecide(v.level, caps, settings.mock, { name: r.name, documentNumber: r.id_document_number ?? null }, v.id);
-      await finalizeVerification(s.db, v.id, result, { ...actor, label: `${actor.label} · ${adapter.name}` });
+      outcome = await finalizeVerification(s.db, v.id, result, { ...actor, label: `${actor.label} · ${adapter.name}` });
     } else if (adapter.fetchResult) {
+      // Sin sesión en el proveedor (la reserva todavía no la creó o falló) no hay nada que consultar.
+      if (!v.provider_ref) throw conflict("verification_not_started", "La verificación todavía no empezó en el proveedor");
+      // Como la consulta del GET: como máximo una cada 5 s por verificación (el botón no dispara una consulta paga por clic).
+      const turn = await s.db.query(`UPDATE identity_verifications SET updated_at = now() WHERE id = $1 AND updated_at < now() - interval '5 seconds' RETURNING id`, [v.id]);
+      if (!turn.length) return sessionOut(req.params.token);
       const res = await adapter.fetchResult(v.provider_ref, v.provider_process_id);
-      if (res.status !== "pending") await finalizeVerification(s.db, v.id, res, { type: "system", label: adapter.name });
+      if (res.status !== "pending") outcome = await finalizeVerification(s.db, v.id, res, { type: "system", label: adapter.name });
     }
+    // El sobre se cerró (o el destinatario fue reemplazado) entre el control de arriba y el resultado.
+    if (outcome === "canceled") throw new AppError(410, "envelope_closed", "El sobre ya no está disponible");
     return sessionOut(req.params.token);
   });
 
@@ -588,21 +693,27 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
       const adapter = getAdapter(provider);
       if (!adapter.configured() || !adapter.parseWebhook) return reply.code(503).send({ error: { code: "not_configured", message: "Proveedor no configurado" } });
       const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from(String(req.body ?? ""));
-      let parsed;
+      let events;
       try {
-        parsed = adapter.parseWebhook(raw, req.headers);
+        events = adapter.parseWebhook(raw, req.headers);
       } catch (err) {
         if (err instanceof WebhookSignatureError) return reply.code(401).send({ error: { code: "invalid_signature", message: err.message } });
         return reply.code(400).send({ error: { code: "invalid_payload", message: String((err as Error).message ?? err) } });
       }
-      const v = await s.db.one<any>(`SELECT * FROM identity_verifications WHERE provider = $1 AND provider_ref = $2`, [provider, parsed.providerRef]);
-      if (!v) return { ok: true, ignored: "unknown_reference" };
-      if (parsed.processId && parsed.processId !== v.provider_process_id) {
-        await s.db.query(`UPDATE identity_verifications SET provider_process_id = $2, updated_at = now() WHERE id = $1`, [v.id, parsed.processId]);
+      // Todos los eventos del lote (Truora agrupa varios, de distintas verificaciones): antes solo se miraba el primero.
+      let processed = 0;
+      for (const parsed of events) {
+        const v = await s.db.one<any>(`SELECT * FROM identity_verifications WHERE provider = $1 AND provider_ref = $2`, [provider, parsed.providerRef]);
+        if (!v) continue;
+        processed++;
+        if (parsed.processId && parsed.processId !== v.provider_process_id) {
+          await s.db.query(`UPDATE identity_verifications SET provider_process_id = $2, updated_at = now() WHERE id = $1`, [v.id, parsed.processId]);
+        }
+        let result = parsed.result;
+        if (!result && adapter.fetchResult) result = await adapter.fetchResult(v.provider_ref, parsed.processId ?? v.provider_process_id);
+        if (result && result.status !== "pending") await finalizeVerification(s.db, v.id, result, { type: "system", label: `${adapter.name} (webhook)` });
       }
-      let result = parsed.result;
-      if (!result && adapter.fetchResult) result = await adapter.fetchResult(v.provider_ref, parsed.processId ?? v.provider_process_id);
-      if (result && result.status !== "pending") await finalizeVerification(s.db, v.id, result, { type: "system", label: `${adapter.name} (webhook)` });
+      if (!processed) return { ok: true, ignored: "unknown_reference" };
       return { ok: true };
     });
   });
@@ -628,12 +739,41 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
     return getIdentitySettings(s.db, req.auth!.tenantId);
   });
 
-  app.get<{ Params: { id: string; recipientId: string } }>("/v1/envelopes/:id/recipients/:recipientId/identity", { preHandler: auth }, async (req) => {
-    const r = await s.db.one<any>(`SELECT * FROM recipients WHERE id = $1 AND envelope_id = $2 AND tenant_id = $3`, [
-      req.params.recipientId,
-      req.params.id,
-      req.auth!.tenantId,
-    ]);
+  // El remitente vuelve a empezar la verificación de un destinatario: anula las anteriores (aprobadas, fallidas y la que
+  // esté en curso) y le devuelve todos los intentos. P. ej. agotó los intentos por fotos malas, o el proveedor quedó
+  // trabado sin resultado.
+  app.post<{ Params: { id: string; recipientId: string } }>("/v1/envelopes/:id/recipients/:recipientId/identity/reset", { preHandler: auth }, async (req) => {
+    const a = req.auth!;
+    await s.db.tx(async (t) => {
+      const e = await lockEnvelope(t, a.tenantId, req.params.id);
+      if (e.status !== "sent" || pastExpiry(e)) throw conflict("not_in_progress", "Solo se reinicia la verificación en un sobre en curso");
+      const r = await t.one<any>(`SELECT * FROM recipients WHERE id = $1 AND envelope_id = $2 FOR UPDATE`, [req.params.recipientId, e.id]);
+      if (!r) throw notFound("Destinatario");
+      if (!identityRequired(r)) throw conflict("identity_not_required", "Este destinatario no tiene verificación de identidad");
+      if (!["created", "sent", "viewed"].includes(r.status)) throw conflict("recipient_immutable", `${r.name} ya firmó o terminó su participación: no se puede modificar`);
+      const canceled = await t.query<{ id: string; status: string }>(
+        `UPDATE identity_verifications SET status = 'canceled', updated_at = now()
+          WHERE recipient_id = $1 AND status IN ('created','pending','verified','failed','expired') RETURNING id, status`,
+        [r.id],
+      );
+      await t.query(`UPDATE recipients SET identity_status = 'pending', identity_verified_at = NULL, identity_failure_reason = NULL WHERE id = $1`, [r.id]);
+      await appendEvent(t, {
+        tenantId: e.tenant_id,
+        envelopeId: e.id,
+        type: "recipient.identity_reset",
+        actor: a.actor,
+        data: { recipientId: r.id, previousStatus: r.identity_status ?? "pending", canceledVerifications: canceled.length },
+      });
+    });
+    return getRecipientIdentityDetail(req.params.id, req.params.recipientId, a.tenantId);
+  });
+
+  app.get<{ Params: { id: string; recipientId: string } }>("/v1/envelopes/:id/recipients/:recipientId/identity", { preHandler: auth }, async (req) =>
+    getRecipientIdentityDetail(req.params.id, req.params.recipientId, req.auth!.tenantId),
+  );
+
+  async function getRecipientIdentityDetail(envelopeId: string, recipientId: string, tenantId: string) {
+    const r = await s.db.one<any>(`SELECT * FROM recipients WHERE id = $1 AND envelope_id = $2 AND tenant_id = $3`, [recipientId, envelopeId, tenantId]);
     if (!r) throw notFound("Destinatario");
     const rows = await s.db.query<any>(`SELECT * FROM identity_verifications WHERE recipient_id = $1 ORDER BY created_at`, [r.id]);
     return {
@@ -646,7 +786,7 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
           provider: v.provider,
           level: v.level,
           status: v.status,
-          reference: v.provider_ref,
+          reference: providerReference(v, res),
           failureReason: v.failure_reason,
           createdAt: iso(v.created_at),
           completedAt: iso(v.completed_at),
@@ -667,6 +807,5 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
         };
       }),
     };
-  });
+  }
 }
-

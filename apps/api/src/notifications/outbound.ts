@@ -92,7 +92,10 @@ export interface TrackedSend {
   log?: { error(o: object, m?: string): void; warn?(o: object, m?: string): void };
 }
 
-/** Texto que queda en email_domains.last_error (lo ve el administrador en Ajustes → Marca → Dominios de correo). */
+/**
+ * Texto del aviso (email_domains.ses_identity_error_at; la API lo devuelve en sesIdentityError y el administrador lo ve
+ * en Ajustes → Marca → Dominios de correo). Columna propia: last_error es de la verificación por DNS.
+ */
 export const SES_IDENTITY_ERROR = "SES rechazó el remitente: el dominio no está verificado como identidad en Amazon SES. Los correos salen desde la dirección de la plataforma hasta que se verifique.";
 
 /**
@@ -103,9 +106,9 @@ export async function noteSesIdentityRejection(db: Db, tenantId: string | null |
   (log?.warn ?? log?.error)?.call(log, { tenantId, domain }, "SES rechazó el dominio de correo propio (identidad sin verificar en SES): se envió desde la dirección de la plataforma");
   if (!tenantId) return;
   sesErrorClean.delete(`${tenantId}:${domain.toLowerCase()}`);
-  // Con IS DISTINCT FROM, si el aviso ya está anotado la fila no coincide y no se escribe nada.
+  // Si el aviso ya está anotado la fila no coincide y no se escribe nada.
   await db
-    .query(`UPDATE email_domains SET last_error = $3 WHERE tenant_id = $1 AND domain = $2 AND last_error IS DISTINCT FROM $3`, [tenantId, domain, SES_IDENTITY_ERROR])
+    .query(`UPDATE email_domains SET ses_identity_error_at = now() WHERE tenant_id = $1 AND domain = $2 AND ses_identity_error_at IS NULL`, [tenantId, domain])
     .catch((e) => log?.error({ err: scrubPii(String(e)), domain }, "no se pudo anotar el rechazo de SES en el dominio"));
 }
 
@@ -130,7 +133,7 @@ export async function noteDkimSendResult(db: Db, tenantId: string | null | undef
   if (!res.dkimDomain || !tenantId) return;
   const key = `${tenantId}:${res.dkimDomain.toLowerCase()}`;
   if ((sesErrorClean.get(key) ?? 0) > Date.now()) return;
-  await db.query(`UPDATE email_domains SET last_error = NULL WHERE tenant_id = $1 AND domain = $2 AND last_error = $3`, [tenantId, res.dkimDomain, SES_IDENTITY_ERROR]).then(
+  await db.query(`UPDATE email_domains SET ses_identity_error_at = NULL WHERE tenant_id = $1 AND domain = $2 AND ses_identity_error_at IS NOT NULL`, [tenantId, res.dkimDomain]).then(
     () => {
       if (sesErrorClean.size > 10_000) sesErrorClean.clear();
       sesErrorClean.set(key, Date.now() + SES_CLEAN_TTL_MS);

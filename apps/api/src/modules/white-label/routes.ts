@@ -267,6 +267,8 @@ function emailDomainToApi(r: any, found?: Parameters<typeof emailDomainRecords>[
     verifiedAt: iso(r.verified_at),
     lastCheckedAt: iso(r.last_checked_at),
     lastError: r.last_error,
+    sesIdentityError: r.ses_identity_error_at ? SES_IDENTITY_ERROR : null,
+    sesIdentityErrorAt: iso(r.ses_identity_error_at),
   };
 }
 
@@ -668,10 +670,10 @@ export async function whiteLabelRoutes(app: FastifyInstance, s: Services) {
       await s.db.query(
         `UPDATE email_domains SET status = CASE WHEN $2 THEN 'verified' WHEN $6 THEN status ELSE 'pending' END, verified_at = CASE WHEN $2 AND verified_at IS NULL THEN now() ELSE verified_at END,
            spf_ok = CASE WHEN $6 THEN spf_ok ELSE $3 END, dmarc_ok = CASE WHEN $6 THEN dmarc_ok ELSE $4 END, last_checked_at = now(),
-           last_error = CASE WHEN $5::text IS NULL AND last_error = $7 THEN last_error ELSE $5 END WHERE id = $1`,
-        // Con el DNS bien, el aviso de rechazo de SES se conserva: el DNS no dice nada de la identidad en SES (solo lo
-        // borra un correo con DKIM aceptado; ver outbound.noteDkimSendResult).
-        [r.id, ok, f.spf, f.dmarc, error, unknown, SES_IDENTITY_ERROR],
+           last_error = $5 WHERE id = $1`,
+        // El aviso de rechazo de SES (ses_identity_error_at) no se toca: el DNS no dice nada de la identidad en SES (solo
+        // lo borra un correo con DKIM aceptado; ver outbound.noteDkimSendResult).
+        [r.id, ok, f.spf, f.dmarc, error, unknown],
       );
     } catch (e) {
       if ((e as { code?: string }).code !== "23505") throw e;

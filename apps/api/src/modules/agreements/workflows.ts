@@ -666,11 +666,18 @@ async function executeStep(d: Deps, run: any, step: WorkflowStep, index: number)
       if (!doc) throw new StepFailure(`No hay un documento generado con la clave "${step.config.document}"`);
       const recipients = step.config.recipients.map((r) => {
         const email = interpolate(r.email, data, locale).trim().toLowerCase() || null;
-        const phone = interpolate(r.phone, data, locale).replace(/[^\d+]/g, "") || null;
+        let phone = interpolate(r.phone, data, locale).replace(/[^\d+]/g, "") || null;
         if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new StepFailure(`Correo inválido para ${r.role}: ${email}`);
-        // El mismo formato que la API de generación (GenerateRecipientInput): +código de país y número, sin espacios.
-        if (phone && !E164_PHONE.test(phone)) throw new StepFailure(`Teléfono inválido para ${r.role}: usá el formato internacional (+5491122334455)`);
         const channels = r.channels ?? (email ? ["email" as const] : ["whatsapp" as const]);
+        // El mismo formato que la API de generación (GenerateRecipientInput): +código de país y número, sin espacios.
+        // Solo se exige si el teléfono se usa (canal WhatsApp); si no, un teléfono mal cargado se descarta en vez de
+        // hacer fallar un paso que no lo necesita.
+        if (phone && !E164_PHONE.test(phone)) {
+          if ((channels as readonly string[]).includes("whatsapp")) {
+            throw new StepFailure(`Teléfono inválido para ${r.role}: usá el formato internacional (+5491122334455)`);
+          }
+          phone = null;
+        }
         // Algún canal con dirección: con solo WhatsApp y sin teléfono (o solo correo y sin correo) el sobre salía sin
         // poder avisarle a nadie y el firmante nunca recibía el link.
         if (!channelHasAddress(channels, { email, phone })) {
@@ -1249,6 +1256,15 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
       });
       await advanceNow(deps, runId);
       return { status: 201, body: await toRun(s.db, await s.db.one(`SELECT * FROM workflow_runs WHERE id = $1`, [runId]), a) };
+    }, undefined, {
+      // collectUrl lleva el token público en claro: no se guarda en idempotency_keys; al repetir se rearma (descifrando
+      // public_token_enc), con el estado actual del run (sin link si ya no está en curso).
+      redactStored: (body) => ({ ...body, collectUrl: null }),
+      rehydrate: async (stored) => {
+        if (!stored?.id) return stored;
+        const r = await s.db.one<any>(`SELECT * FROM workflow_runs WHERE id = $1 AND tenant_id = $2`, [stored.id, a.tenantId]);
+        return r ? { ...stored, collectUrl: (await toRun(s.db, r, a)).collectUrl } : stored;
+      },
     });
   });
 
@@ -1346,7 +1362,7 @@ export async function workflowRoutes(app: FastifyInstance, s: Services) {
       const run = await t.one<any>(`SELECT * FROM workflow_runs WHERE id = $1 FOR UPDATE`, [run0.id]);
       const st = await t.one<any>(`SELECT * FROM workflow_run_steps WHERE run_id = $1 AND idx = $2`, [run.id, run.current_step]);
       if (run.status !== "failed" || st?.status !== "failed") throw conflict("not_failed", "Solo se reintenta una ejecución con un paso fallido");
-      if (run.data_purged_at) throw conflict("not_retryable", "Los datos de esta ejecución se borraron por la política de retención: iniciá una nueva ejecución");
+      if (run.data_purged_at) throw conflict("run_purged", "Los datos de esta ejecución se borraron por la política de retención: iniciá una nueva ejecución");
       if (st.type === "approval" || st.type === "wait_for_completion") throw conflict("not_retryable", "Este paso no se puede reintentar: iniciá una nueva ejecución");
       if (run.context?.documentsCleaned) {
         // Solo si algún paso pendiente envía un PDF generado antes (ya borrado). Si no, el reintento sigue: los

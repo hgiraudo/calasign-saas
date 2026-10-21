@@ -242,6 +242,8 @@ async function summary(db: Db, n: any): Promise<NegotiationSummary> {
   };
 }
 
+const purgedError = () => new AppError(410, "purged", "Los datos de esta negociación se borraron por la política de retención");
+
 async function fullView(db: Db, n: any, me?: any): Promise<NegotiationView> {
   const [versions, comments, proposals, cur] = await Promise.all([
     db.query<any>(`SELECT version, author_type, author_name, summary, created_at FROM negotiation_versions WHERE negotiation_id = $1 ORDER BY version`, [n.id]),
@@ -504,17 +506,24 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
     const a = A(req);
     const n = await loadForUser(a, req.params.id);
     // canManage: lo mismo que exige loadForManage (la web no ofrece aceptar, cancelar ni decidir si la API lo rechazaría).
-    return { ...(await fullView(s.db, n)), canManage: n.created_by === a.userId || hasPerm(a, "envelopes:manage_all") };
+    return {
+      ...(await fullView(s.db, n)),
+      canManage: n.created_by === a.userId || hasPerm(a, "envelopes:manage_all"),
+      ...(n.data_purged_at ? { dataPurgedAt: iso(n.data_purged_at)! } : {}),
+    };
   });
 
   app.get<{ Params: { id: string }; Querystring: { from?: string; to?: string } }>("/v1/negotiations/:id/diff", { preHandler: auth }, async (req) => {
     const n = await loadForUser(A(req), req.params.id);
+    if (n.data_purged_at) throw purgedError();
     return diffFor(s.db, n, Number(req.query.from ?? n.current_version - 1), Number(req.query.to ?? n.current_version));
   });
 
   app.get<{ Params: { id: string } }>("/v1/negotiations/:id/pdf", { preHandler: auth }, async (req, reply) => {
     const a = A(req);
     const n = await loadForUser(a, req.params.id);
+    // Datos borrados por la retención: el PDF saldría con las variables vacías y los diffs, de textos vacíos.
+    if (n.data_purged_at) throw purgedError();
     return sendPdf(reply, await negotiationPdf(n), n.title);
   });
 
@@ -768,7 +777,7 @@ export async function negotiationRoutes(app: FastifyInstance, s: Services) {
     const n = await s.db.one<any>(`SELECT * FROM negotiations WHERE id = $1`, [p.negotiation_id]);
     if (!n) throw notFound("Negociación");
     // Datos borrados por la retención (negociación cerrada hace tiempo): el link de la contraparte ya no muestra nada.
-    if (n.data_purged_at) throw new AppError(410, "purged", "Esta negociación ya no está disponible");
+    if (n.data_purged_at) throw purgedError();
     return { p, n };
   }
   const partAuthor = (p: any): NegotiationAuthor => ({ type: "participant", name: p.name });

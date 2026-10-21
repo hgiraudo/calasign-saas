@@ -687,7 +687,7 @@ export function WorkflowRunPage() {
           </div>
         </div>
         <div className="row-wrap">
-          {run.canManage !== false && run.status === "failed" && failedStep && failedStep.type !== "approval" && failedStep.type !== "wait_for_completion" && (
+          {run.canManage !== false && run.status === "failed" && !run.dataPurgedAt && failedStep && failedStep.type !== "approval" && failedStep.type !== "wait_for_completion" && (
             <button type="button" className="btn" disabled={busy} onClick={() => act(`/v1/workflow-runs/${run.id}/retry`)}>
               {ta("run.retry")}
             </button>
@@ -701,6 +701,11 @@ export function WorkflowRunPage() {
         </div>
       </div>
       <ErrorBox error={error ?? loadError} />
+      {run.dataPurgedAt && (
+        <div className="alert" role="status" style={{ marginBottom: "1rem" }}>
+          {ta("run.purged")} <span className="muted small">({formatDateTime(run.dataPurgedAt, locale)})</span>
+        </div>
+      )}
       {run.collectUrl && (
         <div className="card pad small stack" style={{ marginBottom: "1rem" }}>
           <strong>{ta("run.collectLink")}</strong>

@@ -49,6 +49,11 @@ export interface IdvResult {
   };
   /** 0..1, null si el nivel no incluye selfie. */
   faceMatchScore: number | null;
+  /**
+   * Decisión explícita del proveedor sobre la coincidencia selfie / documento (p. ej. la validación face-recognition de
+   * Truora en "success"), cuando no da un puntaje. null/ausente = sin decisión explícita.
+   */
+  faceMatched?: boolean | null;
   /** null si el nivel no incluye prueba de vida. */
   liveness: boolean | null;
   riskFlags: string[];

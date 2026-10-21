@@ -111,6 +111,15 @@ describe("utilidades de datos", () => {
     expect(data.nuevo).toEqual({ a: { b: true } });
     expect(() => setPath(data, "partes.nombre", "z")).toThrow();
     expect(() => setPath(data, "a.__proto__.b", 1)).toThrow();
+    // Error de la API (400 invalid_path), no un Error suelto que terminaba en 500.
+    for (const bad of ["partes.nombre", "a.__proto__.b"]) {
+      try {
+        setPath(data, bad, 1);
+        expect.unreachable();
+      } catch (e) {
+        expect(e).toMatchObject({ status: 400, code: "invalid_path" });
+      }
+    }
   });
 
   it("mergeDataPatch: fusión profunda, null borra, listas reemplazan", async () => {
@@ -208,6 +217,25 @@ describe("workflows: pasos HTTP", () => {
     // Otro cuerpo con la misma clave: 409.
     expect((await startRun(wf.id, { pedido: 2 }, key)).statusCode).toBe(409);
   });
+
+  it("Idempotency-Key con link público: la respuesta guardada no lleva el token y el reintento devuelve el collectUrl", async () => {
+    const wf = await createWorkflow({
+      name: `Idem link ${randomUUID().slice(0, 6)}`,
+      steps: [{ id: randomUUID(), type: "collect_data", name: "Datos", config: { title: "Datos", fields: [{ key: "dni", label: "DNI", type: "text" }] } }],
+    });
+    const key = `run-${randomUUID()}`;
+    const a = await startRun(wf.id, {}, { "idempotency-key": key });
+    expect(a.statusCode).toBe(201);
+    const url = a.json().collectUrl as string;
+    expect(url).toMatch(/\/w\//);
+    const token = url.split("/w/")[1];
+    const stored = await db.one<any>(`SELECT response FROM idempotency_keys WHERE key LIKE $1`, [`%|${key}`]);
+    expect(JSON.stringify(stored.response)).not.toContain(token);
+    const b = await startRun(wf.id, {}, { "idempotency-key": key });
+    expect(b.headers["idempotent-replay"]).toBe("true");
+    expect(b.json().id).toBe(a.json().id);
+    expect(b.json().collectUrl).toBe(url);
+  });
 });
 
 describe("workflows: envíos, formularios y vistas", () => {
@@ -227,6 +255,26 @@ describe("workflows: envíos, formularios y vistas", () => {
     };
     expect(await mk({ phone: "{{tel}}", channels: ["whatsapp"] })).toContain("Teléfono inválido");
     expect(await mk({ email: "ana@x.test", channels: ["whatsapp"] })).toContain("ningún canal");
+
+    // Teléfono mal cargado que no se usa (solo correo): no hace fallar el paso; el teléfono se descarta.
+    const wf = await createWorkflow({
+      name: `Envío correo ${randomUUID().slice(0, 6)}`,
+      steps: [
+        { id: randomUUID(), type: "generate_document", name: "Generar", config: { documentTemplateId: tplId, output: "doc" } },
+        {
+          id: randomUUID(),
+          type: "send_for_signature",
+          name: "Enviar",
+          config: { document: "doc", envelopeKey: "e", subject: "Firma", recipients: [{ role: "Cliente", name: "{{nombre}}", email: "ana@x.test", phone: "{{tel}}", channels: ["email"] }] },
+        },
+      ],
+    });
+    const run = await startRun(wf.id, { nombre: "Ana", tel: "123" });
+    expect(run.json().steps[1].status).not.toBe("failed");
+    const envId = run.json().context.envelopes.e?.envelopeId as string;
+    expect(envId).toBeTruthy();
+    const rcp = await db.one<any>(`SELECT email, phone FROM recipients WHERE envelope_id = $1`, [envId]);
+    expect(rcp).toEqual({ email: "ana@x.test", phone: null });
   }, 60_000);
 
   it("los números y fechas del formulario se leen en el idioma de la organización", async () => {
@@ -461,6 +509,12 @@ describe("retención de datos", () => {
     expect(r.context.data).toEqual({ dni: "87654321" });
     const view = await app.inject({ method: "GET", url: `/v1/workflow-runs/${old.id}`, headers: H() });
     expect(view.json().dataPurgedAt).toBeTruthy();
+    // Un run purgado no se reintenta: código propio (no el del envío masivo cancelado).
+    await db.query(`UPDATE workflow_runs SET status = 'failed', current_step = 0 WHERE id = $1`, [old.id]);
+    await db.query(`UPDATE workflow_run_steps SET status = 'failed' WHERE run_id = $1 AND idx = 0`, [old.id]);
+    const retry = await app.inject({ method: "POST", url: `/v1/workflow-runs/${old.id}/retry`, headers: H() });
+    expect(retry.statusCode).toBe(409);
+    expect(retry.json().error.code).toBe("run_purged");
 
     // La retención de la organización manda sobre la de la plataforma.
     await db.query(`UPDATE tenants SET retention_days = 3000 WHERE id = $1`, [tenant]);
@@ -483,6 +537,15 @@ describe("retención de datos", () => {
     expect((await db.one<any>(`SELECT body FROM negotiation_comments WHERE negotiation_id = $1`, [nid])).body).toBe("");
     const pub = await app.inject({ method: "GET", url: `/v1/public/negotiations/${decrypt(tokenRow.token_enc)}` });
     expect(pub.statusCode).toBe(410);
+    // Remitente: la vista dice que se purgó; el PDF y las diferencias, 410 purged (saldrían vacíos).
+    const own = await app.inject({ method: "GET", url: `/v1/negotiations/${nid}`, headers: H() });
+    expect(own.statusCode).toBe(200);
+    expect(own.json().dataPurgedAt).toBeTruthy();
+    for (const path of ["pdf", "diff?from=1&to=1"]) {
+      const r = await app.inject({ method: "GET", url: `/v1/negotiations/${nid}/${path}`, headers: H() });
+      expect(r.statusCode).toBe(410);
+      expect(r.json().error.code).toBe("purged");
+    }
   }, 60_000);
 });
 

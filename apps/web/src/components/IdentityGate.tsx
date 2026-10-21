@@ -11,7 +11,16 @@ import { DeclineModal } from "./DeclineModal";
 import { useI18n } from "../lib/i18n";
 
 const PROVIDER_NAMES: Record<string, string> = { mock: "CalaSign", truora: "Truora", veriff: "Veriff" };
-const REASONS = ["name_mismatch", "document_number_mismatch", "document_unreadable", "face_mismatch", "liveness_failed", "document_front_back_identical"];
+const REASONS = [
+  "name_mismatch",
+  "document_number_mismatch",
+  "document_unreadable",
+  "face_mismatch",
+  "liveness_failed",
+  "document_front_back_identical",
+  "level_not_met",
+  "provider_timeout",
+];
 
 export function IdentityGate({
   session,
@@ -161,7 +170,7 @@ export function IdentityGate({
         <>
           <p>{tx("idv.intro", { org })}</p>
           <p className="idv-level">{tx(`idv.level.${idn.level}` as IdnKey)}</p>
-          {idn.failureReason && idn.attemptsLeft > 0 && <p className="muted small">{tx("idv.attemptsLeft", { n: idn.attemptsLeft })}</p>}
+          {idn.failureReason && idn.attemptsLeft > 0 && <p className="muted small">{tx(idn.attemptsLeft === 1 ? "idv.attemptsLeftOne" : "idv.attemptsLeft", { n: idn.attemptsLeft })}</p>}
           <p className="muted small">{tx("idv.privacy", { org })}</p>
           <button type="button" className="btn btn-primary btn-block" disabled={busy} onClick={() => call("/start")}>
             {idn.failureReason ? tx("idv.retry") : tx("idv.start")}
@@ -361,10 +370,10 @@ function CaptureCard({ kind, busy, onCapture }: { kind: IdvCaptureKind; busy: bo
           </button>
         ) : (
           typeof navigator !== "undefined" &&
-          typeof navigator.mediaDevices?.getUserMedia === "function" &&
-          camera !== "error" && (
-            <button type="button" className="btn btn-primary" onClick={start} disabled={busy || camera === "starting"}>
-              📷 {tx("idv.useCamera")}
+          typeof navigator.mediaDevices?.getUserMedia === "function" && (
+            // Después de un error (permiso denegado, cámara ocupada) se puede volver a intentar: start() pide la cámara de nuevo.
+            <button type="button" className={`btn ${camera === "error" ? "btn-ghost" : "btn-primary"}`} onClick={start} disabled={busy || camera === "starting"}>
+              📷 {tx(camera === "error" ? "idv.cameraRetry" : "idv.useCamera")}
             </button>
           )
         )}

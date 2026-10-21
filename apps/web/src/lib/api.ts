@@ -247,7 +247,8 @@ export const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
     "pt-BR": "Não há linhas para tentar novamente (as que têm erros nos dados são corrigidas em um envio novo).",
     en: "There are no rows to retry (rows with data errors must be fixed in a new send).",
   },
-  not_retryable: { "pt-BR": "O envio em massa foi cancelado.", en: "The bulk send was canceled." },
+  // Lo usan el envío masivo cancelado, los flujos, el CRM y los conectores: texto genérico.
+  not_retryable: { "pt-BR": "Não é possível tentar novamente: inicie um novo envio ou execução.", en: "This can't be retried: start a new send or run." },
   otp_expired: { "pt-BR": "O código expirou ou já foi usado. Peça um novo.", en: "The code expired or was already used. Request a new one." },
   otp_locked: { "pt-BR": "Tentativas demais. Peça um código novo.", en: "Too many attempts. Request a new code." },
   otp_delivery_failed: { "pt-BR": "Não foi possível enviar o código. Tente de novo em alguns segundos.", en: "The code couldn't be sent. Try again in a few seconds." },
@@ -386,8 +387,9 @@ export const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
     en: "The webhook is disabled: turn it back on to retry the delivery.",
   },
   purged: {
-    "pt-BR": "Os originais deste envelope foram excluídos pela política de retenção.",
-    en: "This envelope's originals were deleted by the retention policy.",
+    // Sobres, acuerdos y negociaciones: texto genérico.
+    "pt-BR": "Esses dados foram excluídos pela política de retenção.",
+    en: "This data was deleted by the retention policy.",
   },
   not_embedded: {
     "pt-BR": "O destinatário não é incorporado e não tem outra autenticação: crie-o com embedded: true ou exija um código (OTP).",

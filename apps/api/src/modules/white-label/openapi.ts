@@ -85,7 +85,9 @@ const EmailDomainSchema = named(
     ),
     verifiedAt: iso,
     lastCheckedAt: iso,
-    lastError: z.string().nullable(),
+    lastError: z.string().nullable().describe("Último error de la verificación por DNS"),
+    sesIdentityError: z.string().nullable().describe("Amazon SES rechazó el dominio como remitente (identidad sin verificar): los correos salen desde la plataforma"),
+    sesIdentityErrorAt: iso,
   }),
 );
 

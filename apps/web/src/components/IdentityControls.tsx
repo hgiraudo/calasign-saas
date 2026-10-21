@@ -1,8 +1,8 @@
 // Controles de identidad para el remitente: selector de verificación por destinatario y estado en el detalle.
 import { useEffect, useState } from "react";
-import type { IdentitySettings, RecipientIdentity } from "@calasign/shared";
+import type { IdentitySettings, Recipient, RecipientIdentity } from "@calasign/shared";
 import { IDV_LEVELS } from "@calasign/shared";
-import { api } from "../lib/api";
+import { api, errorText } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useIdnText, type IdnKey } from "../lib/i18n-identity";
 
@@ -81,5 +81,41 @@ export function IdentityBadge({ identity }: { identity: RecipientIdentity | null
     <span className={`badge ${cls} idv-badge`} title={identity.failureReason ?? undefined}>
       🪪 {tx(`idv.status.${identity.status}` as IdnKey)}
     </span>
+  );
+}
+
+/**
+ * El remitente reinicia la verificación de identidad de un destinatario (POST …/identity/reset): se anulan las
+ * anteriores y vuelve a tener todos los intentos. P. ej. agotó los intentos por fotos malas o el proveedor no respondió.
+ */
+export function IdentityResetButton({
+  envelopeId,
+  recipient,
+  onDone,
+  onError,
+}: {
+  envelopeId: string;
+  recipient: Recipient;
+  onDone: (msg: string) => void;
+  onError: (e: string) => void;
+}) {
+  const tx = useIdnText();
+  const [busy, setBusy] = useState(false);
+  const reset = async () => {
+    if (!window.confirm(tx("idv.resetConfirm", { name: recipient.name }))) return;
+    setBusy(true);
+    try {
+      await api(`/v1/envelopes/${envelopeId}/recipients/${recipient.id}/identity/reset`, { method: "POST" });
+      onDone(tx("idv.resetDone", { name: recipient.name }));
+    } catch (e) {
+      onError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={reset}>
+      🪪 {tx("idv.reset")}
+    </button>
   );
 }

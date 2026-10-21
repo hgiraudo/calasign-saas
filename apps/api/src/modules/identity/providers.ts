@@ -35,8 +35,11 @@ export interface IdvAdapter {
   configured(): boolean;
   createSession?(input: CreateSessionInput): Promise<{ providerRef: string; redirectUrl: string | null }>;
   fetchResult?(providerRef: string, processId?: string | null): Promise<IdvResult>;
-  /** Verifica la firma y extrae el resultado. Lanza si la firma no es válida. */
-  parseWebhook?(rawBody: Buffer, headers: Record<string, string | string[] | undefined>): WebhookParseResult;
+  /**
+   * Verifica la firma y extrae los resultados (un webhook de Truora puede traer varios eventos, de distintas
+   * verificaciones). Lanza si la firma no es válida.
+   */
+  parseWebhook?(rawBody: Buffer, headers: Record<string, string | string[] | undefined>): WebhookParseResult[];
 }
 
 export class WebhookSignatureError extends Error {}
@@ -142,7 +145,9 @@ const mockAdapter: IdvAdapter = {
 const VERIFF_STATUS: Record<string, IdvResult["status"]> = {
   approved: "approved",
   declined: "declined",
-  resubmission_requested: "declined",
+  // Veriff pide volver a enviar fotos en la MISMA sesión (la URL sigue sirviendo): no es una decisión final. Queda en
+  // revisión y la decisión que llegue después para la misma sesión la reemplaza.
+  resubmission_requested: "review",
   expired: "declined",
   abandoned: "declined",
   review: "review",
@@ -219,13 +224,23 @@ const veriffAdapter: IdvAdapter = {
     if (!sig || !c.secret || !safeEqualHex(sig, veriffSignature(raw, c.secret))) throw new WebhookSignatureError("firma de Veriff inválida");
     const body = JSON.parse(raw.toString("utf8"));
     // Decision webhook: { status, verification: {...} }. Event webhook (started/submitted): { id, action, ... }.
-    if (body?.verification?.id) return { providerRef: String(body.verification.id), result: mapVeriffDecision(body.verification) };
-    if (body?.id) return { providerRef: String(body.id), result: null };
+    if (body?.verification?.id) return [{ providerRef: String(body.verification.id), result: mapVeriffDecision(body.verification) }];
+    if (body?.id) return [{ providerRef: String(body.id), result: null }];
     throw new Error("Veriff: webhook sin id de sesión");
   },
 };
 
 // ───────────────────────────── Truora ─────────────────────────────
+
+/**
+ * Flujo de Truora para un nivel: TRUORA_FLOW_ID_<NIVEL> (p. ej. TRUORA_FLOW_ID_DOCUMENT_SELFIE_LIVENESS) y, si no está,
+ * TRUORA_FLOW_ID. Cada flujo se arma en el panel de Truora con las validaciones del nivel (documento; documento +
+ * reconocimiento facial; documento + reconocimiento facial con prueba de vida). Igual se controla el resultado
+ * (finalizeVerification): un flujo que no incluye lo que pide el nivel termina en level_not_met.
+ */
+export function truoraFlowId(level: IdvLevel): string {
+  return process.env[`TRUORA_FLOW_ID_${level.toUpperCase()}`] || process.env.TRUORA_FLOW_ID || "";
+}
 
 function truoraConfig() {
   return {
@@ -254,11 +269,15 @@ export function mapTruoraProcess(p: any): IdvResult {
   for (const v of validations) if (v?.validation_status && v.validation_status !== "success") risk.push(`${v.validation_type}:${v.validation_status}`);
   const liveness =
     typeof fr.passive_liveness_status === "string" ? fr.passive_liveness_status === "success" : typeof fr.liveness === "boolean" ? fr.liveness : null;
+  // Decisión explícita de la validación facial (cuando no viene el puntaje de similitud).
+  const faceStatus = typeof fr.similarity_status === "string" ? fr.similarity_status : faceV?.validation_status;
+  const faceMatched = typeof faceStatus === "string" ? faceStatus === "success" : null;
   return {
     status,
     document: { type: dd.document_type ?? null, number: dd.document_number ?? null, country: dd.country ?? null, expiresOn: dd.expiration_date ?? null },
     person: { firstName: first, lastName: last, fullName: [first, last].filter(Boolean).join(" ") || null, birthDate: dd.date_of_birth ?? null },
     faceMatchScore: typeof fr.confidence_score === "number" ? fr.confidence_score : null,
+    faceMatched,
     liveness,
     riskFlags: risk,
     reference: p?.process_id ?? null,
@@ -285,9 +304,12 @@ const truoraAdapter: IdvAdapter = {
   id: "truora",
   name: "Truora",
   mode: "redirect",
-  configured: () => Boolean(truoraConfig().key && truoraConfig().flowId && truoraConfig().webhookSecret),
+  configured: () =>
+    Boolean(truoraConfig().key && truoraConfig().webhookSecret && (truoraConfig().flowId || Object.keys(process.env).some((k) => k.startsWith("TRUORA_FLOW_ID_") && process.env[k]))),
   async createSession(input) {
     const c = truoraConfig();
+    const flowId = truoraFlowId(input.level);
+    if (!flowId) throw new Error(`Truora: falta TRUORA_FLOW_ID (o TRUORA_FLOW_ID_${input.level.toUpperCase()}) para el nivel ${input.level}`);
     // account_id = id de nuestra verificación: Truora lo devuelve en los webhooks y une el proceso con la verificación.
     const form = new URLSearchParams({
       key_type: "web",
@@ -295,7 +317,7 @@ const truoraAdapter: IdvAdapter = {
       api_key_version: "1",
       country: "ALL",
       redirect_url: input.returnUrl,
-      flow_id: c.flowId,
+      flow_id: flowId,
       account_id: input.verificationId,
     });
     const body = await fetchJson(`${c.accountBase}/v1/api-keys`, {
@@ -306,6 +328,9 @@ const truoraAdapter: IdvAdapter = {
     if (!body?.api_key) throw new Error("Truora: respuesta sin api_key");
     return { providerRef: input.verificationId, redirectUrl: `${c.webBase}/?token=${encodeURIComponent(body.api_key)}` };
   },
+  // Sin process_id (el webhook todavía no llegó) no se consulta: la API de Digital Identity consulta resultados por
+  // process_id y no documenta una búsqueda por account_id. El resultado llega por el webhook y, si no llega nunca, la
+  // verificación vence por provider_timeout (expireStaleVerifications) sin consumir un intento.
   async fetchResult(_providerRef, processId) {
     if (!processId) return emptyResult("pending", null);
     const c = truoraConfig();
@@ -318,13 +343,22 @@ const truoraAdapter: IdvAdapter = {
     const c = truoraConfig();
     if (!c.webhookSecret) throw new WebhookSignatureError("Truora sin secreto de webhook");
     const payload = verifyHs256Jwt(raw.toString("utf8"), c.webhookSecret);
+    // Un webhook puede traer varios eventos (de distintas verificaciones): se procesan todos, no solo el primero.
     const events: any[] = Array.isArray(payload?.events) ? payload.events : [payload];
-    const ev = events.find((e) => e?.object?.account_id) ?? events[0];
-    const obj = ev?.object ?? {};
-    if (!obj.account_id) throw new Error("Truora: webhook sin account_id");
-    // El evento trae el estado; el detalle de las validaciones se consulta con el process_id.
-    const terminal = ["success", "failure", "expired"].includes(String(obj.status ?? ""));
-    return { providerRef: String(obj.account_id), result: terminal && Array.isArray(obj.validations) ? mapTruoraProcess(obj) : null, processId: obj.process_id ?? null };
+    const out: WebhookParseResult[] = [];
+    for (const ev of events) {
+      const obj = ev?.object ?? {};
+      if (!obj.account_id) continue;
+      // El evento trae el estado; el detalle de las validaciones se consulta con el process_id.
+      const terminal = ["success", "failure", "expired"].includes(String(obj.status ?? ""));
+      out.push({
+        providerRef: String(obj.account_id),
+        result: terminal && Array.isArray(obj.validations) ? mapTruoraProcess(obj) : null,
+        processId: obj.process_id ?? null,
+      });
+    }
+    if (!out.length) throw new Error("Truora: webhook sin account_id");
+    return out;
   },
 };
 

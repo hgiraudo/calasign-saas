@@ -41,8 +41,9 @@ import { csvBody, csvSep, localTsSql, resolveTimeZone } from "../lib/csv";
 import { loadDetail } from "./mappers";
 import { SIGNER_COOKIE, isUnverifiedSelfRegistered } from "./otp";
 import { assertLinkCurrent, recipientActor, resolveToken } from "./signing";
-import { applyIdentityFlags } from "./identity/kyc";
-import { applyCertificateFlags } from "./certsign";
+import { applyIdentityFlags, maskDocNumber } from "./identity/kyc";
+import { normalizeDocumentNumber } from "./identity/namematch";
+import { applyCertificateFlags, missingIdDocument } from "./certsign";
 import { deleteBlobsQuietly, discardRecipientAttachments } from "./file-cleanup";
 
 const IN_PERSON_SESSION_MIN = 60;
@@ -226,6 +227,7 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
       phone: p.phone !== undefined ? p.phone : r.phone,
       channels: p.channels ?? r.channels,
       locale: p.locale !== undefined ? p.locale : r.locale,
+      idDocumentNumber: p.idDocumentNumber !== undefined ? p.idDocumentNumber?.trim() || null : (r.id_document_number ?? null),
     };
     const contactMoved = (next.email ?? null) !== (r.email ?? null) || (next.phone ?? null) !== (r.phone ?? null);
     checkContact(
@@ -244,23 +246,34 @@ export async function correctEnvelope(db: Db, a: AuthContext, envelopeId: string
     if ((next.phone ?? null) !== (r.phone ?? null)) changes.phone = { from: masked(r.phone), to: masked(next.phone) };
     if (JSON.stringify(next.channels) !== JSON.stringify(r.channels)) changes.channels = { from: r.channels, to: next.channels };
     if ((next.locale ?? null) !== (r.locale ?? null)) changes.locale = { from: r.locale, to: next.locale };
+    // Mismo número escrito distinto ("20.123.456" / "20123456") no es un cambio.
+    const idDocChanged = normalizeDocumentNumber(next.idDocumentNumber) !== normalizeDocumentNumber(r.id_document_number);
+    if (idDocChanged) {
+      changes.idDocumentNumber = { from: r.id_document_number ? maskDocNumber(r.id_document_number) : null, to: next.idDocumentNumber ? maskDocNumber(next.idDocumentNumber) : null };
+    }
     if (!Object.keys(changes).length) continue;
+    // Firma con certificado que exige corresponder al documento: no se le puede quitar el número.
+    if (changes.idDocumentNumber && !next.idDocumentNumber && r.role === "signer" && r.signature_type === "certificate" && r.certificate_requirements?.matchIdDocument === true) {
+      throw missingIdDocument(r.name, 400);
+    }
     const contactChanged = Boolean(changes.email || changes.phone || changes.channels);
     // Otro correo o teléfono puede ser otra persona; cambiar solo los canales (p. ej. sumar WhatsApp) no.
     const destinationChanged = Boolean(changes.email || changes.phone);
-    await db.query(`UPDATE recipients SET name = $2, email = $3, phone = $4, channels = $5, locale = $6 WHERE id = $1`, [
+    await db.query(`UPDATE recipients SET name = $2, email = $3, phone = $4, channels = $5, locale = $6, id_document_number = $7 WHERE id = $1`, [
       r.id,
       next.name,
       next.email ?? null,
       next.phone ?? null,
       next.channels,
       next.locale ?? null,
+      next.idDocumentNumber ?? null,
     ]);
     // Si cambió la persona (nombre o contacto), su verificación de identidad previa ya no la representa: ni la
     // aprobada ni las fallidas. Se anulan y la verificación empieza de nuevo, con todos los intentos. Si no, el caso
     // típico (el nombre estaba mal tipeado, la verificación falló por name_mismatch hasta agotar los intentos y el
     // remitente lo corrige) dejaba al firmante sin intentos y el sobre trabado.
-    if ((changes.name || destinationChanged) && r.id_verification_provider) {
+    // Lo mismo con otro número de documento: la verificación se contrastó con el anterior.
+    if ((changes.name || destinationChanged || idDocChanged) && r.id_verification_provider) {
       const canceled = await db.query(
         `UPDATE identity_verifications SET status = 'canceled', updated_at = now() WHERE recipient_id = $1 AND status IN ('created','pending','verified','failed') RETURNING id`,
         [r.id],
@@ -767,7 +780,7 @@ export async function experienceRoutes(app: FastifyInstance, s: Services) {
           idDocumentDeclared: input.idDocumentNumber ? maskDestination(input.idDocumentNumber) : null,
           idDocumentMatches:
             input.idDocumentNumber && r.id_document_number
-              ? input.idDocumentNumber.replace(/\W/g, "") === String(r.id_document_number).replace(/\W/g, "")
+              ? normalizeDocumentNumber(input.idDocumentNumber) === normalizeDocumentNumber(r.id_document_number)
               : null,
         },
       });

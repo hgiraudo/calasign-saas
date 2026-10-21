@@ -442,4 +442,13 @@ export const MORE_CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
     "pt-BR": "Uma execução com falha deixou envelopes em assinatura: cancele a execução primeiro (isso anula esses envelopes).",
     en: "A failed run left envelopes out for signature: cancel the run first (that voids those envelopes).",
   },
+  invalid_path: { "pt-BR": "Caminho de variável inválido.", en: "Invalid variable path." },
+  run_purged: {
+    "pt-BR": "Os dados desta execução foram apagados pela política de retenção: inicie uma nova execução.",
+    en: "This run's data was deleted by the retention policy: start a new run.",
+  },
+  verification_not_started: {
+    "pt-BR": "A verificação ainda não começou no provedor: toque em continuar para abrir a página de verificação.",
+    en: "The verification hasn't started at the provider yet: tap continue to open the verification page.",
+  },
 };

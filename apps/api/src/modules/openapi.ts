@@ -1246,6 +1246,17 @@ const OPS: Op[] = [
     description: "Sin imágenes ni el número de documento completo.",
     response: RecipientIdentityDetailSchema,
   },
+  {
+    method: "post",
+    path: "/v1/envelopes/{id}/recipients/{recipientId}/identity/reset",
+    operationId: "resetRecipientIdentity",
+    tag: "Verificación de identidad",
+    summary: "Reiniciar la verificación de identidad de un destinatario",
+    description:
+      "Anula sus verificaciones anteriores (aprobada, fallidas o en curso) y le devuelve todos los intentos: tiene que verificarse de nuevo antes de ver los documentos. Solo en un sobre en curso y para un destinatario que todavía no firmó. Queda en la evidencia (recipient.identity_reset).",
+    response: RecipientIdentityDetailSchema,
+    errors: ["not_in_progress", "identity_not_required", "recipient_immutable"],
+  },
 
   // Auditoría
   {

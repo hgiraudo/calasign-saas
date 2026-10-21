@@ -199,8 +199,13 @@ export async function purgeExpiredEnvelopes(d: Deps, opts: { tenantId?: string; 
   const orphans = await d.db.query<any>(
     `SELECT f.id, f.storage_key FROM files f
       WHERE f.purged_at IS NULL AND f.kind <> 'signed'
-        AND EXISTS (SELECT 1 FROM documents dd JOIN envelopes ee ON ee.id = dd.envelope_id WHERE dd.file_id = f.id AND ee.purged_at IS NOT NULL)
-        AND NOT EXISTS (SELECT 1 FROM documents dd JOIN envelopes ee ON ee.id = dd.envelope_id WHERE dd.file_id = f.id AND ee.purged_at IS NULL)
+        AND ((EXISTS (SELECT 1 FROM documents dd JOIN envelopes ee ON ee.id = dd.envelope_id WHERE dd.file_id = f.id AND ee.purged_at IS NOT NULL)
+              AND NOT EXISTS (SELECT 1 FROM documents dd JOIN envelopes ee ON ee.id = dd.envelope_id WHERE dd.file_id = f.id AND ee.purged_at IS NULL))
+          -- Fotos de identidad guardadas en un sobre ya purgado (una subida que terminó mientras se purgaba): la purga
+          -- no las vio y quedaban para siempre.
+          OR (f.kind = 'identity' AND EXISTS (
+                SELECT 1 FROM identity_captures ic JOIN identity_verifications iv ON iv.id = ic.verification_id JOIN envelopes ee ON ee.id = iv.envelope_id
+                 WHERE ic.file_id = f.id AND ee.purged_at IS NOT NULL)))
         AND NOT EXISTS (SELECT 1 FROM template_documents td WHERE td.file_id = f.id)
         AND NOT EXISTS (SELECT 1 FROM agreements ag WHERE ag.file_id = f.id)
         AND NOT EXISTS (SELECT 1 FROM negotiations ng WHERE ng.file_id = f.id)

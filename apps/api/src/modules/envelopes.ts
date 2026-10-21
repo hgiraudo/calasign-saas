@@ -125,6 +125,12 @@ export async function idempotent<T>(
   reply: FastifyReply,
   fn: () => Promise<{ status: number; body: T }>,
   hashMaterial?: string,
+  opts?: {
+    /** Quita de lo que se guarda los campos con secretos (p. ej. un link con token en claro): la tabla no los guarda. */
+    redactStored?: (body: T) => unknown;
+    /** Reconstruye esos campos al repetir la respuesta guardada. */
+    rehydrate?: (stored: any) => Promise<unknown>;
+  },
 ) {
   let key = req.headers["idempotency-key"] as string | undefined;
   if (!key) {
@@ -159,7 +165,7 @@ export async function idempotent<T>(
     if (!prev || prev.status_code === 0) throw conflict("idempotency_in_progress", "Ya hay un pedido en curso con esta Idempotency-Key; reintentá en unos segundos");
     reply.code(prev.status_code);
     reply.header("idempotent-replay", "true");
-    return prev.response;
+    return opts?.rehydrate ? await opts.rehydrate(prev.response) : prev.response;
   }
   let r: { status: number; body: T };
   try {
@@ -173,7 +179,7 @@ export async function idempotent<T>(
     tenantId,
     key,
     r.status,
-    JSON.stringify(r.body),
+    JSON.stringify(opts?.redactStored ? opts.redactStored(r.body) : r.body),
   ]);
   reply.code(r.status);
   return r.body;

@@ -883,6 +883,7 @@ function DomainsEditor({ brand, onBrand, canAdd }: { brand: Brand; onBrand: (b: 
             </tbody>
           </table>
           {m.lastError && <p className="error-text">{m.lastError}</p>}
+          {m.sesIdentityErrorAt && <p className="error-text">{w("domains.sesIdentityError")}</p>}
           <div className="row-wrap">
             <button type="button" className="btn btn-sm" disabled={busy} onClick={() => run(async () => (await api(`/v1/settings/email-domains/${m.domain}/verify`, { method: "POST" }), await reload(), refreshBrand()))}>
               {w("domains.verify")}

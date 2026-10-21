@@ -12,7 +12,7 @@ import { ShareControl } from "../components/ShareControl";
 import { AiMetadataPanel } from "../components/AiPanels";
 import { CorrectionModal, InPersonButton, ResendCopyButton } from "../components/EnvelopeExperience";
 import { useExpText } from "../lib/i18n-experience";
-import { IdentityBadge } from "../components/IdentityControls";
+import { IdentityBadge, IdentityResetButton } from "../components/IdentityControls";
 import { EnvelopePaymentSummary } from "../components/BillingExtras";
 import { ArchivePanel } from "../components/DataExtras";
 import { CertificateProgressPanel } from "../components/CertSign";
@@ -249,6 +249,17 @@ export function EnvelopeDetailPage() {
                       )}
                       {env.status === "completed" && !["delegated", "reassigned"].includes(r.status) && (r.email || r.phone) && (
                         <ResendCopyButton envelopeId={id} recipient={r} onDone={setNotice} onError={setError} />
+                      )}
+                      {canManage && isOpen && r.identity && r.identity.status !== "pending" && ["created", "sent", "viewed"].includes(r.status) && (
+                        <IdentityResetButton
+                          envelopeId={id}
+                          recipient={r}
+                          onDone={(msg) => {
+                            setNotice(msg);
+                            void load();
+                          }}
+                          onError={setError}
+                        />
                       )}
                       {canManage && isOpen && r.role !== "cc" && ["created", "sent", "viewed"].includes(r.status) && (
                         <button type="button" className="btn btn-ghost btn-sm" onClick={() => setReassigning(r)}>

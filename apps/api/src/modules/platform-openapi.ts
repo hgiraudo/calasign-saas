@@ -112,12 +112,15 @@ const NotificationIntegration = z.object({
 
 const StorageConnection = z.object({
   id: z.string().uuid(),
-  provider: z.enum(["gdrive", "dropbox", "onedrive", "s3"]),
+  provider: z.enum(["gdrive", "dropbox", "onedrive", "sharepoint", "box", "s3"]),
   name: z.string(),
   target: z.string(),
   accountLabel: z.string().nullable(),
   active: z.boolean(),
+  includeEvidence: z.boolean(),
   createdAt: iso,
+  createdBy: z.object({ id: z.string().uuid(), name: z.string().nullable(), email: z.string().nullable(), member: z.boolean() }).nullable(),
+  deactivatedReason: z.enum(["creator_removed"]).nullable(),
   lastSuccessAt: iso.nullable(),
   lastError: z.string().nullable(),
 });
@@ -252,7 +255,7 @@ export const PLATFORM_OPS: PlatformOp[] = [
   { method: "get", path: "/v1/storage/connections", operationId: "listStorageConnections", tag: "Almacenamiento", summary: "Conexiones", response: z.object({ items: z.array(StorageConnection) }) },
   { method: "post", path: "/v1/storage/connections/s3", operationId: "createS3Connection", tag: "Almacenamiento", summary: "Conectar un bucket compatible con S3 (se prueba al crear)", body: CreateS3ConnectionInput, status: 201, response: StorageConnection },
   { method: "post", path: "/v1/storage/oauth/{provider}/start", operationId: "startStorageOAuth", tag: "Almacenamiento", summary: "Conectar Google Drive, Dropbox, OneDrive, SharePoint o Box: devuelve la URL de autorización (solo sesión web)", description: "provider: gdrive, dropbox, onedrive, sharepoint o box. Lo usa la web (Configuración → Almacenamiento): devuelve la URL a la que hay que llevar el navegador del usuario para que autorice; con API key u OAuth responde 403 session_required. SharePoint exige `siteUrl` (y opcionalmente `library`). Para conectar almacenamiento desde una integración, usar POST /v1/storage/connections/s3.", body: ConnectStorageOAuthInput, response: z.object({ authorizeUrl: z.string() }), errors: ["session_required", "storage_provider_not_configured", "site_required", "too_many_connections"] },
-  { method: "patch", path: "/v1/storage/connections/{id}", operationId: "updateStorageConnection", tag: "Almacenamiento", summary: "Modificar (nombre, carpeta, activa)", body: UpdateStorageConnectionInput, response: StorageConnection },
+  { method: "patch", path: "/v1/storage/connections/{id}", operationId: "updateStorageConnection", tag: "Almacenamiento", summary: "Modificar (nombre, carpeta, activa)", body: UpdateStorageConnectionInput, response: StorageConnection, errors: ["storage_reconnect_required"] },
   { method: "delete", path: "/v1/storage/connections/{id}", operationId: "deleteStorageConnection", tag: "Almacenamiento", summary: "Desconectar", response: "none", status: 204 },
   { method: "post", path: "/v1/storage/connections/{id}/test", operationId: "testStorageConnection", tag: "Almacenamiento", summary: "Probar escritura", response: z.object({ ok: z.boolean(), ref: z.string().nullable(), error: z.string().nullable() }) },
   {

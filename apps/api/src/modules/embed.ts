@@ -15,7 +15,7 @@ import { config } from "../config";
 import type { Db } from "../infra/db";
 import { appendEvent } from "../infra/evidence";
 import { badRequest, conflict, notFound } from "../lib/errors";
-import { randomToken, sha256Hex, uuidv7 } from "../lib/util";
+import { decrypt, encrypt, randomToken, sha256Hex, uuidv7 } from "../lib/util";
 import { authenticate, clientInfo, type AuthContext, type Services } from "./context";
 import { envelopeBaseUrl } from "./white-label/brand";
 import { issueSignerSessionToken, signerTokenHash } from "./signer-token";
@@ -102,7 +102,19 @@ export function pageStillAuthenticates(r: { auth_method?: string | null; id_veri
  * Crea una URL de firma embebida de un solo uso para un destinatario activo, dentro de la transacción del llamador.
  * La usan POST …/signing-url y POST /v1/envelopes cuando envía un sobre con firmantes embebidos.
  */
-export async function issueSigningUrl(t: Db, a: AuthContext, envelopeId: string, recipientId: string, input: CreateSigningUrlInput): Promise<SigningUrlResponse> {
+/**
+ * `replayable`: la emite POST /v1/envelopes (creación rápida), que no guarda el código en la respuesta idempotente. Se
+ * guarda cifrado (embed_sessions.replay_code_enc, migración 0113, se borra al canjearlo) para que repetir el pedido
+ * devuelva el mismo código mientras no se canjee ni venza (reusableSigningUrl) en vez de emitir uno nuevo cada vez.
+ */
+export async function issueSigningUrl(
+  t: Db,
+  a: AuthContext,
+  envelopeId: string,
+  recipientId: string,
+  input: CreateSigningUrlInput,
+  opts: { replayable?: boolean } = {},
+): Promise<SigningUrlResponse> {
   const allowed = await tenantFrameAncestors(t, a.tenantId);
   const requested = (input.frameAncestors ?? []).map((o) => o.toLowerCase().replace(/\/$/, ""));
   const notAllowed = requested.filter((o) => !allowed.includes(o));
@@ -137,9 +149,20 @@ export async function issueSigningUrl(t: Db, a: AuthContext, envelopeId: string,
     throw conflict("otp_not_embeddable", "Un firmante con código OTP no se puede mostrar dentro de un iframe: quitale el OTP (lo autentica tu aplicación) o abrí la URL en una pestaña");
   }
   await t.query(
-    `INSERT INTO embed_sessions (id, tenant_id, envelope_id, recipient_id, code_hash, return_url, frame_ancestors, created_by_actor, expires_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-    [uuidv7(), a.tenantId, e.id, r.id, sha256Hex(code), input.returnUrl ?? null, otp ? [TAB_ONLY] : requested, a.actor.label ?? a.actor.type, expiresAt.toISOString()],
+    `INSERT INTO embed_sessions (id, tenant_id, envelope_id, recipient_id, code_hash, return_url, frame_ancestors, created_by_actor, expires_at, replay_code_enc)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+    [
+      uuidv7(),
+      a.tenantId,
+      e.id,
+      r.id,
+      sha256Hex(code),
+      input.returnUrl ?? null,
+      otp ? [TAB_ONLY] : requested,
+      a.actor.label ?? a.actor.type,
+      expiresAt.toISOString(),
+      opts.replayable ? encrypt(code) : null,
+    ],
   );
   await appendEvent(t, {
     tenantId: a.tenantId,
@@ -149,6 +172,45 @@ export async function issueSigningUrl(t: Db, a: AuthContext, envelopeId: string,
     data: { recipientId: r.id, returnHost: input.returnUrl ? new URL(input.returnUrl).host : null, frameAncestors: requested, ...(otp ? { tabOnly: true } : {}) },
   });
   return { url: `${await envelopeBaseUrl(t, a.tenantId, e.id)}/embed/${code}`, expiresAt: expiresAt.toISOString(), ...(otp ? { tabOnly: true } : {}) };
+}
+
+/**
+ * URL de firma todavía sin canjear de una emisión repetible (issueSigningUrl con `replayable`) para el mismo
+ * destinatario, emisor y opciones (returnUrl, frameAncestors), con al menos 30 s de vida: la repetición idempotente de
+ * POST /v1/envelopes la devuelve en vez de emitir una nueva. null si no hay. El canje vuelve a validar todo.
+ */
+export async function reusableSigningUrl(
+  t: Db,
+  a: AuthContext,
+  envelopeId: string,
+  recipientId: string,
+  input: CreateSigningUrlInput,
+): Promise<SigningUrlResponse | null> {
+  const requested = (input.frameAncestors ?? []).map((o) => o.toLowerCase().replace(/\/$/, ""));
+  const row = await t.one<any>(
+    `SELECT replay_code_enc, expires_at, frame_ancestors FROM embed_sessions
+      WHERE tenant_id = $1 AND envelope_id = $2 AND recipient_id = $3 AND created_by_actor IS NOT DISTINCT FROM $4
+        AND return_url IS NOT DISTINCT FROM $5 AND replay_code_enc IS NOT NULL AND used_at IS NULL
+        AND expires_at > now() + interval '30 seconds'
+        AND (frame_ancestors = $6::text[] OR frame_ancestors = ARRAY[$7]::text[])
+      ORDER BY created_at DESC LIMIT 1`,
+    [a.tenantId, envelopeId, recipientId, a.actor.label ?? a.actor.type, input.returnUrl ?? null, requested, TAB_ONLY],
+  );
+  if (!row) return null;
+  let code: string;
+  try {
+    code = decrypt(row.replay_code_enc);
+  } catch {
+    return null;
+  }
+  const tabOnly = (row.frame_ancestors ?? []).includes(TAB_ONLY);
+  // Una URL "para pestaña" (firmante con OTP) no sirve si ahora se piden orígenes para el iframe.
+  if (tabOnly && requested.length) return null;
+  return {
+    url: `${await envelopeBaseUrl(t, a.tenantId, envelopeId)}/embed/${code}`,
+    expiresAt: new Date(row.expires_at).toISOString(),
+    ...(tabOnly ? { tabOnly: true } : {}),
+  };
 }
 
 export async function embedRoutes(app: FastifyInstance, s: Services) {
@@ -200,7 +262,7 @@ export async function embedRoutes(app: FastifyInstance, s: Services) {
     const { ip, userAgent } = clientInfo(req);
     const sess = /^[A-Za-z0-9_-]{20,64}$/.test(code)
       ? await s.db.one<any>(
-          `UPDATE embed_sessions SET used_at = now(), used_ip = $2 WHERE code_hash = $1 AND used_at IS NULL AND expires_at > now() RETURNING *`,
+          `UPDATE embed_sessions SET used_at = now(), used_ip = $2, replay_code_enc = NULL WHERE code_hash = $1 AND used_at IS NULL AND expires_at > now() RETURNING *`,
           [sha256Hex(code), ip],
         )
       : null;

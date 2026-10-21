@@ -3,6 +3,7 @@ import pino from "pino";
 import { config } from "./config";
 import { createDb } from "./infra/db";
 import { startWorker } from "./infra/queue";
+import { servedCells, servesAllCells } from "./infra/cells";
 import { getSealProvider } from "./infra/seal";
 import { createBlobStore } from "./infra/storage";
 import { createJobHandlers, sweep } from "./modules/jobs";
@@ -25,7 +26,8 @@ const worker = startWorker(db, {
   concurrency: Number(process.env.WORKER_CONCURRENCY ?? 4),
   onTick: (signal) => sweep(deps, signal),
 });
-log.info({ env: config.environment }, "worker iniciado");
+// Con SERVED_CELLS, solo toma los jobs de esas celdas (y los sin celda) y los barridos solo miran sus organizaciones.
+log.info({ env: config.environment, cells: servesAllCells() ? "all" : [...servedCells()] }, "worker iniciado");
 
 for (const sig of ["SIGINT", "SIGTERM"] as const) {
   process.on(sig, async () => {

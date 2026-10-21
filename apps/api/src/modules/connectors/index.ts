@@ -404,7 +404,7 @@ async function queueRun(db: Db, r: RunSpec, dedupeKey: string) {
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT (dedupe_key) DO NOTHING RETURNING id`,
     [id, r.tenantId, r.connectionId, r.flowId, r.linkId, r.envelopeId, r.kind, r.event, r.objectType, r.objectId, JSON.stringify(r.detail ?? {}), dedupeKey],
   );
-  if (ins.length) await enqueue(db, "platform", { kind: "connector", runId: id }, { dedupeKey: `cnjob:${id}` });
+  if (ins.length) await enqueue(db, "platform", { kind: "connector", runId: id }, { dedupeKey: `cnjob:${id}`, tenantId: r.tenantId });
   return ins.length > 0;
 }
 
@@ -935,7 +935,7 @@ export async function connectorRoutes(app: FastifyInstance, s: Services) {
     if (r.status === "succeeded") throw new AppError(409, "already_succeeded", "Ya se completó");
     if (r.kind === "send" && !r.detail?.webhook) throw new AppError(409, "not_retryable", "Un envío manual se vuelve a hacer desde el registro (POST /v1/connectors/flows/:id/send)");
     await s.db.query(`UPDATE connector_runs SET status = 'pending', error = NULL, updated_at = now() WHERE id = $1`, [r.id]);
-    await enqueue(s.db, "platform", { kind: "connector", runId: r.id }, { dedupeKey: `cnjob:${r.id}:${Date.now()}` });
+    await enqueue(s.db, "platform", { kind: "connector", runId: r.id }, { dedupeKey: `cnjob:${r.id}:${Date.now()}`, tenantId: a.tenantId });
     reply.code(202);
     return { queued: true };
   });

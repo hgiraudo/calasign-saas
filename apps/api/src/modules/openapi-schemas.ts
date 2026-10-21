@@ -588,6 +588,10 @@ export const IdentitySettingsSchema = named(
 
 export const RecipientIdentityDetailSchema = z.object({
   identity: RecipientIdentitySchema.nullable(),
+  unavailableReason: z
+    .string()
+    .nullable()
+    .describe("Por qué el proveedor no puede hacer el nivel pedido en este entorno (null si puede). Se resuelve reiniciando con otro nivel o proveedor."),
   attempts: z.array(
     z.object({
       id: uuid(),

@@ -226,10 +226,20 @@ describe("nivel exigido", () => {
   it("completa la aprobación con lo que declara la integración, sin pisar datos contrarios", async () => {
     const { withIntegrationCapabilities } = await import("../src/modules/identity/providers");
     const approved = mapVeriffDecision(VERIFF_DECISION.verification);
-    // VERIFF_INTEGRATION_LEVEL por defecto: document_selfie.
-    expect(withIntegrationCapabilities("veriff", "document_selfie", approved, 0.8)).toMatchObject({ result: { faceMatched: true, liveness: null }, inferred: ["faceMatched"] });
-    expect(withIntegrationCapabilities("veriff", "document_selfie", { ...approved, faceMatchScore: 0.3 }, 0.8).result.faceMatched ?? null).toBe(null);
-    expect(withIntegrationCapabilities("veriff", "document_selfie", { ...approved, status: "declined" }, 0.8).inferred).toEqual([]);
+    const { config } = await import("../src/config");
+    const prevLevel = config.identity.veriffIntegrationLevel;
+    // VERIFF_INTEGRATION_LEVEL por defecto: document (a prueba de fallas): no se infiere la coincidencia facial.
+    expect(prevLevel).toBe("document");
+    expect(withIntegrationCapabilities("veriff", "document_selfie", approved, 0.8)).toMatchObject({ inferred: [] });
+    expect(withIntegrationCapabilities("veriff", "document_selfie", approved, 0.8).result.faceMatched ?? null).toBe(null);
+    try {
+      (config.identity as { veriffIntegrationLevel: string }).veriffIntegrationLevel = "document_selfie";
+      expect(withIntegrationCapabilities("veriff", "document_selfie", approved, 0.8)).toMatchObject({ result: { faceMatched: true, liveness: null }, inferred: ["faceMatched"] });
+      expect(withIntegrationCapabilities("veriff", "document_selfie", { ...approved, faceMatchScore: 0.3 }, 0.8).result.faceMatched ?? null).toBe(null);
+      expect(withIntegrationCapabilities("veriff", "document_selfie", { ...approved, status: "declined" }, 0.8).inferred).toEqual([]);
+    } finally {
+      (config.identity as { veriffIntegrationLevel: string }).veriffIntegrationLevel = prevLevel;
+    }
     // Truora: solo con un flujo propio del nivel; el genérico no declara nada.
     const prev = process.env.TRUORA_FLOW_ID_DOCUMENT_SELFIE;
     try {

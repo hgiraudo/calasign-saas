@@ -14,6 +14,8 @@ import { BUMP_UPDATED_AT, iso, sha256Hex, uuidv7 } from "../../lib/util";
 import { authenticate, type Services } from "../context";
 import { guardedFetch, resolveSealLevel, trustAnchors } from "../evidence-seal";
 import { discardBlobsOnFailure } from "../file-cleanup";
+import { alertTenantAdmins, claimTenantAlert, type AlertLocale } from "../admin-alerts";
+import { servedCellsSql } from "../../infra/cells";
 
 const env = process.env;
 export const archiveConfig = () => ({
@@ -149,8 +151,8 @@ async function renewClaimed(d: Deps, envelopeId: string, tsaUrl: string, actor: 
       [uuidv7(), e.tenant_id, e.id, fileId, versionNo, next.last!.tsaNotAfter],
     );
     await t.query(
-      `UPDATE envelopes SET signed_file_id = $2, archive_valid_until = $3, archive_checked_at = now(), archive_renewals = archive_renewals + 1,
-         archive_error = $4, updated_at = ${BUMP_UPDATED_AT} WHERE id = $1`,
+      `UPDATE envelopes SET signed_file_id = $2, archive_valid_until = $3, archive_checked_at = now(), archive_renewed_at = now(),
+         archive_renewals = archive_renewals + 1, archive_error = $4, updated_at = ${BUMP_UPDATED_AT} WHERE id = $1`,
       [e.id, fileId, next.last!.tsaNotAfter, notExtended ? "La TSA actual vence igual o antes que la anterior: conviene renovar con otra TSA" : null],
     );
     // El repositorio de acuerdos y los enlaces de descarga vigentes pasan a la versión renovada (si no, seguían
@@ -224,7 +226,7 @@ export async function archiveSweep(d: Deps, opts: { days?: number; force?: boole
        AND (archive_checked_at IS NULL
             OR (archive_error IS NOT NULL AND archive_error NOT LIKE 'LTV pendiente%'
                 AND ($3::boolean OR archive_checked_at < now() - interval '1 day')))
-       AND ($2::uuid IS NULL OR id = $2)
+       AND ($2::uuid IS NULL OR id = $2) AND ${servedCellsSql("tenant_id")}
      ORDER BY archive_checked_at NULLS FIRST, completed_at LIMIT $1`,
     [cfg.batch * 5, opts.envelopeId ?? null, Boolean(opts.force)],
   );
@@ -246,7 +248,7 @@ export async function archiveSweep(d: Deps, opts: { days?: number; force?: boole
     `SELECT id FROM envelopes WHERE status = 'completed' AND archive_valid_until IS NULL
        AND (archive_error = 'LTV pendiente'
             OR (archive_error LIKE 'LTV pendiente:%' AND ($3::boolean OR archive_checked_at < now() - interval '1 day')))
-       AND ($2::uuid IS NULL OR id = $2)
+       AND ($2::uuid IS NULL OR id = $2) AND ${servedCellsSql("tenant_id")}
      ORDER BY (archive_error = 'LTV pendiente') DESC, completed_at LIMIT $1`,
     [cfg.batch, opts.envelopeId ?? null, Boolean(opts.force)],
   );
@@ -264,14 +266,17 @@ export async function archiveSweep(d: Deps, opts: { days?: number; force?: boole
     }
   }
   const due = await d.db.query<any>(
-    `SELECT id, archive_valid_until FROM envelopes WHERE status = 'completed' AND archive_valid_until IS NOT NULL
+    `SELECT id, tenant_id, archive_valid_until FROM envelopes WHERE status = 'completed' AND archive_valid_until IS NOT NULL
        AND archive_valid_until < now() + make_interval(days => $1)
-       AND (archive_renewals = 0 OR $3::boolean OR archive_checked_at < now() - make_interval(days => $4))
+       -- Intervalo mínimo desde la última renovación EXITOSA (archive_renewed_at, 0116): antes se medía desde
+       -- archive_checked_at, que también mueve una falla, y un sobre ya renovado que fallaba esperaba 30 días en vez de
+       -- reintentarse al día siguiente.
+       AND (archive_renewals = 0 OR $3::boolean OR archive_renewed_at IS NULL OR archive_renewed_at < now() - make_interval(days => $4))
        -- Tras una falla (TSA caída, OCSP inaccesible) no se reintenta en cada barrido horario: una vez por día.
        AND ($3::boolean OR archive_error IS NULL OR archive_checked_at < now() - interval '1 day')
        AND ($5::uuid IS NULL OR id = $5)
        -- El tope de renovaciones de la ruta manual vale también para el barrido.
-       AND archive_renewals < $6
+       AND archive_renewals < $6 AND ${servedCellsSql("tenant_id")}
      ORDER BY archive_valid_until LIMIT $2`,
     [days, cfg.batch, Boolean(opts.force), cfg.minIntervalDays, opts.envelopeId ?? null, MAX_RENEWALS],
   );
@@ -281,21 +286,83 @@ export async function archiveSweep(d: Deps, opts: { days?: number; force?: boole
   // sobres; como van ordenados por vencimiento, a partir del primero que se saltea se saltean todos. `force` (solo el
   // barrido de desarrollo y los tests) no lo aplica.
   const tsaNotAfter = due.length && !opts.force ? await currentTsaNotAfter(config.seal.tsaUrl) : null;
+  // Sobres que vencen dentro de la ventana y que la TSA actual no puede extender: renovar no sirve. Quedan con el error a
+  // la vista (se vuelven a mirar una vez por día, como cualquier falla) y se avisa una vez por organización.
+  const stuck: { id: string; tenant_id: string; archive_valid_until: string }[] = [];
   for (const e of due) {
-    if (tsaNotAfter && new Date(e.archive_valid_until).getTime() >= new Date(tsaNotAfter).getTime()) continue;
+    if (tsaNotAfter && new Date(e.archive_valid_until).getTime() >= new Date(tsaNotAfter).getTime()) {
+      stuck.push(e);
+      continue;
+    }
     try {
       await renewEnvelopeArchive(d, e.id);
       renewed++;
     } catch (err) {
-      // Otra renovación (p. ej. una manual) en curso: no es una falla de este sobre.
-      if (err instanceof AppError && err.code === "archive_renewal_in_progress") continue;
+      // Otra renovación (p. ej. una manual) en curso, o el PDF cambió mientras tanto (la ganó otra): no es una falla de
+      // este sobre (el próximo barrido lo vuelve a mirar con el PDF nuevo).
+      if (err instanceof AppError && (err.code === "archive_renewal_in_progress" || err.code === "archive_changed")) continue;
       failed++;
       d.log.error({ envelopeId: e.id, err: String(err) }, "falló la renovación del sello de archivo");
       await d.db.query(`UPDATE envelopes SET archive_checked_at = now(), archive_error = $2 WHERE id = $1`, [e.id, String(err).slice(0, 500)]);
     }
   }
-  return { inspected, renewed, failed };
+  if (stuck.length && tsaNotAfter) await reportTsaCannotExtend(d, stuck, tsaNotAfter);
+  return { inspected, renewed, failed, ...(stuck.length ? { notExtendable: stuck.length } : {}) };
 }
+
+/** archive_error de un sobre cuyo sello de archivo vence y la TSA configurada no lo puede extender. */
+export const TSA_CANNOT_EXTEND =
+  "No se puede renovar: el certificado de la TSA configurada vence antes que (o junto con) el sello de archivo actual. Hay que configurar otra TSA (TSA_URL)";
+
+/**
+ * Sobres por vencer que la TSA actual no puede extender: error visible en cada uno y, una sola vez por organización y
+ * certificado de TSA (tenant_alerts), aviso a propietarios y administradores. Para la plataforma queda en el log.
+ */
+async function reportTsaCannotExtend(d: Deps, stuck: { id: string; tenant_id: string; archive_valid_until: string }[], tsaNotAfter: string) {
+  await d.db.query(`UPDATE envelopes SET archive_checked_at = now(), archive_error = $2 WHERE id = ANY($1::uuid[])`, [stuck.map((e) => e.id), TSA_CANNOT_EXTEND]);
+  const byTenant = new Map<string, { n: number; first: string }>();
+  for (const e of stuck) {
+    const cur = byTenant.get(e.tenant_id);
+    const at = new Date(e.archive_valid_until).toISOString();
+    if (!cur) byTenant.set(e.tenant_id, { n: 1, first: at });
+    else byTenant.set(e.tenant_id, { n: cur.n + 1, first: at < cur.first ? at : cur.first });
+  }
+  const key = new Date(tsaNotAfter).toISOString();
+  for (const [tenantId, info] of byTenant) {
+    try {
+      if (!(await claimTenantAlert(d.db, tenantId, "archive_tsa_cannot_extend", key))) continue;
+      d.log.error({ tenantId, tsaNotAfter: key, envelopes: info.n }, "sello de archivo: la TSA configurada no puede extender la validez; configurar otra TSA (TSA_URL)");
+      const date = info.first.slice(0, 10);
+      await alertTenantAdmins(d.db, tenantId, "archive_tsa_cannot_extend", (L, c) => TSA_ALERT[L](c.product, c.name, c.org, date), { log: d.log });
+    } catch (err) {
+      d.log.error({ tenantId, err: String(err) }, "no se pudo avisar que el sello de archivo no se puede renovar");
+    }
+  }
+}
+
+const TSA_ALERT: Record<AlertLocale, (p: string, name: string, org: string | null, date: string) => { subject: string; text: string }> = {
+  es: (p, name, org, date) => ({
+    subject: `${p}: no se puede renovar el sello de archivo de documentos firmados`,
+    text:
+      `Hola ${name}:\n\nLa validez a largo plazo (sello de archivo) de documentos firmados de ${org ?? "tu organización"} vence a partir del ${date} ` +
+      `y no se puede renovar: el certificado de la autoridad de sellado de tiempo (TSA) que usa ${p} vence antes que (o junto con) el sello actual.\n\n` +
+      `Hace falta configurar otra TSA. Escribile al soporte de ${p} para que lo resuelva antes de esa fecha; los documentos afectados muestran el aviso en su panel de archivo.\n\n— ${p}`,
+  }),
+  en: (p, name, org, date) => ({
+    subject: `${p}: the archive timestamp of signed documents can't be renewed`,
+    text:
+      `Hi ${name},\n\nThe long-term validity (archive timestamp) of signed documents of ${org ?? "your organization"} expires starting ${date} ` +
+      `and can't be renewed: the certificate of the timestamping authority (TSA) used by ${p} expires before (or together with) the current timestamp.\n\n` +
+      `Another TSA has to be configured. Contact ${p} support so it's fixed before that date; the affected documents show the notice in their archive panel.\n\n— ${p}`,
+  }),
+  "pt-BR": (p, name, org, date) => ({
+    subject: `${p}: não é possível renovar o carimbo de arquivo de documentos assinados`,
+    text:
+      `Olá ${name},\n\nA validade de longo prazo (carimbo de arquivo) de documentos assinados de ${org ?? "sua organização"} vence a partir de ${date} ` +
+      `e não pode ser renovada: o certificado da autoridade de carimbo do tempo (TSA) usada por ${p} vence antes do (ou junto com o) carimbo atual.\n\n` +
+      `É preciso configurar outra TSA. Fale com o suporte de ${p} para resolver antes dessa data; os documentos afetados mostram o aviso no painel de arquivo.\n\n— ${p}`,
+  }),
+};
 
 export async function archiveInfo(db: Db, envelopeId: string): Promise<ArchiveInfo> {
   const e = await db.one<any>(`SELECT archive_valid_until, archive_checked_at, archive_renewals, archive_error FROM envelopes WHERE id = $1`, [envelopeId]);
@@ -309,6 +376,7 @@ export async function archiveInfo(db: Db, envelopeId: string): Promise<ArchiveIn
     checkedAt: iso(e?.archive_checked_at),
     renewals: Number(e?.archive_renewals ?? 0),
     error: e?.archive_error ?? null,
+    errorCode: e?.archive_error === TSA_CANNOT_EXTEND ? "tsa_cannot_extend" : null,
     versions: versions.map((v) => ({ version: v.version, reason: v.reason, sha256: v.sha256, validUntil: iso(v.valid_until), createdAt: iso(v.created_at)! })),
   };
 }

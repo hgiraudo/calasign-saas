@@ -675,7 +675,7 @@ async function fanout(d: Deps, p: Extract<WebhookJob, { kind: "fanout" }>) {
         [id, p.tenantId, ep.id, eventId, p.type, p.envelopeId, JSON.stringify(payload)],
       );
       if (!ins.length) continue; // ya registrada por una ejecución anterior
-      await enqueue(t, "webhook", { kind: "deliver", deliveryId: id }, { maxAttempts: MAX_ATTEMPTS, dedupeKey: `whdel:${id}` });
+      await enqueue(t, "webhook", { kind: "deliver", deliveryId: id }, { maxAttempts: MAX_ATTEMPTS, dedupeKey: `whdel:${id}`, tenantId: p.tenantId });
     }
   });
 }
@@ -963,7 +963,7 @@ export async function webhookRoutes(app: FastifyInstance, s: Services) {
       );
       if (live) throw conflict("delivery_pending", "La entrega ya se está reintentando");
       await t.query(`UPDATE webhook_deliveries SET status = 'pending', next_retry_at = NULL WHERE id = $1`, [row.id]);
-      await enqueue(t, "webhook", { kind: "deliver", deliveryId: row.id, manual: true }, { maxAttempts: 1 });
+      await enqueue(t, "webhook", { kind: "deliver", deliveryId: row.id, manual: true }, { maxAttempts: 1, tenantId: a.tenantId });
     });
     reply.code(202);
     return toDelivery({ ...row, status: "pending", next_retry_at: null });
@@ -987,7 +987,7 @@ export async function webhookRoutes(app: FastifyInstance, s: Services) {
         `INSERT INTO webhook_deliveries (id, tenant_id, endpoint_id, event_id, event_type, envelope_id, payload) VALUES ($1,$2,$3,$4,'webhook.test',NULL,$5) RETURNING *`,
         [id, a.tenantId, ep.id, eventId, JSON.stringify(payload)],
       );
-      await enqueue(t, "webhook", { kind: "deliver", deliveryId: id, manual: true }, { maxAttempts: 1 });
+      await enqueue(t, "webhook", { kind: "deliver", deliveryId: id, manual: true }, { maxAttempts: 1, tenantId: a.tenantId });
       return r;
     });
     reply.code(202);

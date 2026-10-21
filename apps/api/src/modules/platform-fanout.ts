@@ -7,7 +7,7 @@ import type { Db } from "../infra/db";
 import { enqueue, type JobContext } from "../infra/queue";
 import type { BlobStore } from "../infra/storage";
 import { EVIDENCE_TO_NOTIFICATION, deliverNotificationJob } from "./notify-integrations";
-import { exportEnvelopeJob, queueStorageExports } from "./storage-export";
+import { exportEnvelopeJob, notifyStorageMemberRemoved, queueStorageExports } from "./storage-export";
 import { handleCrmJob, queueCrmEvents } from "./crm";
 import { handleConnectorJob, queueConnectorEvents } from "./connectors";
 
@@ -31,11 +31,14 @@ type PlatformJob =
   | { kind: "notify"; integrationId: string; envelopeId: string; event: NotificationEvent; recipientId: string | null }
   | { kind: "export"; connectionId: string; envelopeId: string }
   | { kind: "crm"; runId: string }
-  | { kind: "connector"; runId: string };
+  | { kind: "connector"; runId: string }
+  /** Aviso: conexiones de almacenamiento desactivadas porque quien las conectó dejó la organización (member-access.ts). */
+  | { kind: "storage_member_removed"; tenantId: string; userId: string; connectionIds: string[] };
 
-export async function handlePlatformJob(d: { db: Db; blobs: BlobStore }, p: PlatformJob, job?: JobContext) {
+export async function handlePlatformJob(d: { db: Db; blobs: BlobStore; log?: { error(o: object, m?: string): void } }, p: PlatformJob, job?: JobContext) {
   if (p.kind === "notify") return deliverNotificationJob(d.db, p);
   if (p.kind === "export") return exportEnvelopeJob(d.db, d.blobs, p);
   if (p.kind === "crm") return handleCrmJob(d, p, job);
   if (p.kind === "connector") return handleConnectorJob(d, p, job);
+  if (p.kind === "storage_member_removed") return notifyStorageMemberRemoved(d.db, p, job, d.log);
 }

@@ -215,13 +215,14 @@ export const config = {
      */
     faceMatchThreshold: Math.min(1, Math.max(0, numEnv(env.IDV_FACE_MATCH_THRESHOLD, 0.8))),
     /**
-     * Qué controles hace la integración de Veriff configurada en su panel (VERIFF_INTEGRATION_LEVEL): document,
-     * document_selfie (default) o document_selfie_liveness. La decisión de Veriff no siempre trae el puntaje facial ni la
-     * prueba de vida: una aprobación cuenta como coincidencia facial / prueba de vida si la integración las hace, salvo
-     * que la decisión traiga un dato contrario explícito. Los sobres que piden un nivel mayor que el de la integración
-     * no se pueden enviar con Veriff (providerReady).
+     * Qué controles hace la integración de Veriff configurada en su panel (VERIFF_INTEGRATION_LEVEL): document
+     * (default), document_selfie o document_selfie_liveness. La decisión de Veriff no siempre trae el puntaje facial ni
+     * la prueba de vida: una aprobación cuenta como coincidencia facial / prueba de vida si la integración las hace,
+     * salvo que la decisión traiga un dato contrario explícito. Default "document" (a prueba de fallas): sin declararlo,
+     * la evidencia no da por hecha una coincidencia facial que pudo no ocurrir. Los sobres que piden un nivel mayor que
+     * el de la integración no se pueden enviar con Veriff (providerReady): hay que definir la variable explícitamente.
      */
-    veriffIntegrationLevel: idvLevelEnv(env.VERIFF_INTEGRATION_LEVEL, "document_selfie"),
+    veriffIntegrationLevel: idvLevelEnv(env.VERIFF_INTEGRATION_LEVEL, "document"),
   },
   webhooks: {
     /** Entregas fallidas definitivas seguidas (agotados los reintentos) que desactivan el endpoint (motivo "failing"). */

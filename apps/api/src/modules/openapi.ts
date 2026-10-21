@@ -26,6 +26,8 @@ import {
   ONE_SHOT_MAX_DOCUMENTS,
   FieldInput,
   IdentitySettingsInput,
+  IDV_LEVELS,
+  IDV_PROVIDERS,
   InPersonConfirmInput,
   InviteMemberInput,
   LoginInput,
@@ -910,7 +912,7 @@ const OPS: Op[] = [
     body: EnvelopePaymentInput,
     response: PaymentStateSchema,
     expectedUpdatedAt: true,
-    errors: ["provider_not_configured", "invalid_payer", "not_draft", "plan_limit_payments", "version_changed"],
+    errors: ["provider_not_configured", "payment_webhook_not_configured", "invalid_payer", "not_draft", "plan_limit_payments", "version_changed"],
   },
   {
     method: "delete",
@@ -1257,9 +1259,10 @@ const OPS: Op[] = [
     tag: "Verificación de identidad",
     summary: "Reiniciar la verificación de identidad de un destinatario",
     description:
-      "Anula sus verificaciones anteriores (aprobada, fallidas o en curso) y le devuelve todos los intentos: tiene que verificarse de nuevo antes de ver los documentos. Solo en un sobre en curso y para un destinatario que todavía no firmó. Queda en la evidencia (recipient.identity_reset).",
+      "Anula sus verificaciones anteriores (aprobada, fallidas o en curso) y le devuelve todos los intentos: tiene que verificarse de nuevo antes de ver los documentos. Solo en un sobre en curso y para un destinatario que todavía no firmó. Con `provider` y/o `level` cambia además el proveedor o el nivel (mismas reglas que al armar el sobre). Si el proveedor no puede hacer el nivel actual y no se cambia, 409 identity_level_not_supported. Queda en la evidencia (recipient.identity_reset).",
+    body: z.object({ provider: z.enum(IDV_PROVIDERS).optional(), level: z.enum(IDV_LEVELS).optional() }),
     response: RecipientIdentityDetailSchema,
-    errors: ["not_in_progress", "identity_not_required", "recipient_immutable"],
+    errors: ["not_in_progress", "identity_not_required", "recipient_immutable", "identity_level_not_supported", "identity_provider_unavailable"],
   },
 
   // Auditoría

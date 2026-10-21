@@ -174,8 +174,30 @@ function upload(token: string, kind: string, seed: number) {
 }
 
 describe("nivel exigido con proveedores externos", () => {
+  it("Veriff: sin VERIFF_INTEGRATION_LEVEL (default document) un nivel con selfie no se pide, no se envía ni se inicia", async () => {
+    const { config } = await import("../src/config");
+    expect(config.identity.veriffIntegrationLevel).toBe("document");
+    const { applyIdentityFlags } = await import("../src/modules/identity/kyc");
+    const x = await setup({ provider: "veriff", level: "document_selfie" });
+    const err = await applyIdentityFlags(db, x.envelope, [{ id: x.recipient, role: "signer", idVerification: { provider: "veriff", level: "document_selfie" } }]).catch((e) => e);
+    expect(err).toMatchObject({ status: 400, code: "identity_provider_unavailable" });
+    expect(String(err.message)).toContain("VERIFF_INTEGRATION_LEVEL=document_selfie");
+    // Para el firmante, un mensaje neutro (sin variables del servidor).
+    const st = await signing(x.token, "/identity/start", "POST");
+    expect(st.statusCode).toBe(503);
+    expect(st.json().error.code).toBe("identity_provider_unavailable");
+    expect(st.json().error.message).not.toMatch(/VERIFF|Veriff/);
+    // Para el remitente, el motivo en el detalle del destinatario.
+    const det = await app.inject({ method: "GET", url: `/v1/envelopes/${x.envelope}/recipients/${x.recipient}/identity`, headers: auth });
+    expect(det.json().unavailableReason).toContain("VERIFF_INTEGRATION_LEVEL");
+  });
+
   it("Veriff: la aprobación sin datos biométricos cumple lo que declara VERIFF_INTEGRATION_LEVEL; un puntaje bajo gana", async () => {
-    // Integración document_selfie (default): la aprobación sin faceMatch cuenta como coincidencia facial.
+    const { config } = await import("../src/config");
+    const prev = config.identity.veriffIntegrationLevel;
+    (config.identity as any).veriffIntegrationLevel = "document_selfie";
+    try {
+    // Integración document_selfie (declarada): la aprobación sin faceMatch cuenta como coincidencia facial.
     const a = await setup({ provider: "veriff", level: "document_selfie" });
     expect((await signing(a.token, "/identity/start", "POST")).statusCode).toBe(200);
     const va = await db.one<any>(`SELECT * FROM identity_verifications WHERE recipient_id = $1`, [a.recipient]);
@@ -184,6 +206,10 @@ describe("nivel exigido con proveedores externos", () => {
     expect((await verification(va.id)).status).toBe("verified");
     const ev = await db.one<any>(`SELECT data FROM envelope_events WHERE envelope_id = $1 AND type = 'recipient.identity_verified'`, [a.envelope]);
     expect(ev.data.inferredFromIntegration).toEqual(["faceMatched"]);
+    // El certificado lo muestra como informado por la integración (sin puntaje).
+    const { identityForCertificate } = await import("../src/modules/identity/kyc");
+    const cert = (await identityForCertificate(db, [await recipientRow(a.recipient)])).get(a.recipient);
+    expect(cert).toMatchObject({ faceMatchScore: null, faceMatched: true, inferred: ["faceMatched"] });
 
     // Puntaje explícito bajo el umbral: falla del firmante (face_mismatch), consume un intento.
     const b = await setup({ provider: "veriff", level: "document_selfie" });
@@ -206,10 +232,8 @@ describe("nivel exigido con proveedores externos", () => {
     });
 
     // Con la integración declarada en document_selfie_liveness, la prueba de vida también se infiere; liveness false gana.
-    const { config } = await import("../src/config");
-    const prev = config.identity.veriffIntegrationLevel;
     (config.identity as any).veriffIntegrationLevel = "document_selfie_liveness";
-    try {
+    {
       expect((await signing(c.token, "/identity/start", "POST")).statusCode).toBe(200);
       const vc = await db.one<any>(`SELECT * FROM identity_verifications WHERE recipient_id = $1`, [c.recipient]);
       await veriffHook({ id: vc.provider_ref, status: "approved", person: { firstName: "Ana", lastName: "Pérez" } });
@@ -219,6 +243,7 @@ describe("nivel exigido con proveedores externos", () => {
       const vd = await db.one<any>(`SELECT * FROM identity_verifications WHERE recipient_id = $1`, [d.recipient]);
       await veriffHook({ id: vd.provider_ref, status: "approved", person: { firstName: "Ana", lastName: "Pérez" }, liveness: false });
       expect(await verification(vd.id)).toMatchObject({ status: "failed", failure_reason: "liveness_failed" });
+    }
     } finally {
       (config.identity as any).veriffIntegrationLevel = prev;
     }
@@ -238,7 +263,7 @@ describe("nivel exigido con proveedores externos", () => {
     // Repetirla daría lo mismo (y abriría otra sesión paga): queda bloqueada hasta que el remitente reinicie.
     const again = await signing(token, "/identity/start", "POST");
     expect(again.statusCode).toBe(409);
-    expect(again.json().error.code).toBe("identity_provider_unavailable");
+    expect(again.json().error.code).toBe("identity_level_not_supported");
     expect((await app.inject({ method: "POST", url: `/v1/envelopes/${envelope}/recipients/${recipient}/identity/reset`, headers: auth })).statusCode).toBe(200);
   });
 
@@ -587,5 +612,53 @@ describe("uso del plan", () => {
     expect(v.provider_ref).toMatch(/^vf_/);
     expect(v.redirect_url).toBeNull();
     expect((await usageThisMonth(db, tenant)).kycChecks - before).toBe(1);
+  });
+});
+
+describe("sobres con un nivel que el proveedor no puede hacer (de antes de las reglas por nivel)", () => {
+  it("al enviar: problema identity_provider_unavailable con el motivo para el remitente", async () => {
+    const { sendEnvelope } = await import("../src/modules/envelopes");
+    const { SYSTEM } = await import("../src/infra/evidence");
+    const envelope = util.uuidv7();
+    const recipient = util.uuidv7();
+    await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status) VALUES ($1, $2, 'Borrador', 'draft')`, [envelope, tenant]);
+    await db.query(
+      `INSERT INTO recipients (id, tenant_id, envelope_id, role, name, email, status, id_verification_provider, id_verification_level, identity_status)
+       VALUES ($1,$2,$3,'signer','Ana Pérez','ana@x.test','created','veriff','document_selfie','pending')`,
+      [recipient, tenant, envelope],
+    );
+    const err = await db.tx((t) => sendEnvelope(t, tenant, envelope, SYSTEM)).catch((e) => e);
+    expect(err.code).toBe("envelope_incomplete");
+    const issue = err.details.issues.find((p: any) => p.code === "identity_provider_unavailable");
+    expect(issue).toMatchObject({ params: { name: "Ana Pérez", provider: "veriff", level: "document_selfie" } });
+    expect(issue.message).toContain("VERIFF_INTEGRATION_LEVEL");
+  });
+
+  it("reinicio: sin cambio, 409 identity_level_not_supported; con un nivel posible, cambia el nivel y se puede iniciar", async () => {
+    const x = await setup({ provider: "veriff", level: "document_selfie" });
+    const reset = (payload?: unknown) =>
+      app.inject({ method: "POST", url: `/v1/envelopes/${x.envelope}/recipients/${x.recipient}/identity/reset`, headers: auth, ...(payload ? { payload: payload as any } : {}) });
+    const same = await reset();
+    expect(same.statusCode).toBe(409);
+    expect(same.json().error.code).toBe("identity_level_not_supported");
+    expect(same.json().error.message).toContain("VERIFF_INTEGRATION_LEVEL");
+    // Un nivel que tampoco puede: 400 con el motivo (mismas reglas que al armar el sobre).
+    const worse = await reset({ level: "document_selfie_liveness" });
+    expect(worse.statusCode).toBe(400);
+    expect(worse.json().error.code).toBe("identity_provider_unavailable");
+    expect((await recipientRow(x.recipient)).id_verification_level).toBe("document_selfie");
+    // Nivel posible: se cambia, queda en la evidencia y el firmante puede iniciar.
+    const ok = await reset({ level: "document" });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json().unavailableReason).toBeNull();
+    expect(await recipientRow(x.recipient)).toMatchObject({ id_verification_provider: "veriff", id_verification_level: "document", identity_status: "pending" });
+    const ev = await db.one<any>(`SELECT data FROM envelope_events WHERE envelope_id = $1 AND type = 'recipient.identity_reset'`, [x.envelope]);
+    expect(ev.data).toMatchObject({ previous: { provider: "veriff", level: "document_selfie" }, provider: "veriff", level: "document" });
+    expect((await signing(x.token, "/identity/start", "POST")).statusCode).toBe(200);
+    // Cambio de proveedor también (al de prueba).
+    const mock = await reset({ provider: "mock" });
+    expect(mock.statusCode).toBe(200);
+    expect((await recipientRow(x.recipient)).id_verification_provider).toBe("mock");
+    expect((await db.query<any>(`SELECT status FROM identity_verifications WHERE recipient_id = $1`, [x.recipient])).map((v) => v.status)).toEqual(["canceled"]);
   });
 });

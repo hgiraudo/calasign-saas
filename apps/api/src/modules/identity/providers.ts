@@ -390,7 +390,7 @@ export function levelUnsupportedReason(provider: IdvProvider, level: IdvLevel): 
     return `Truora no tiene un flujo configurado para el nivel ${level} (TRUORA_FLOW_ID_${level.toUpperCase()} o TRUORA_FLOW_ID)`;
   }
   if (provider === "veriff" && LEVEL_RANK[config.identity.veriffIntegrationLevel] < LEVEL_RANK[level]) {
-    return `La integración de Veriff hace el nivel ${config.identity.veriffIntegrationLevel} y el destinatario pide ${level} (VERIFF_INTEGRATION_LEVEL)`;
+    return `La integración de Veriff declara el nivel ${config.identity.veriffIntegrationLevel} y el destinatario pide ${level}: si la integración del panel de Veriff hace ese control, definí VERIFF_INTEGRATION_LEVEL=${level} en el servidor; si no, pedí otro nivel o proveedor`;
   }
   return null;
 }

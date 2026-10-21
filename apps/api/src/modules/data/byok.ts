@@ -6,7 +6,7 @@
 import type { FastifyInstance } from "fastify";
 import { SetByokInput, type ByokSettings, type ByokStatus, type ByokTestResult } from "@calasign/shared";
 import type { Db } from "../../infra/db";
-import { cellById } from "../../infra/cells";
+import { cellById, effectiveCellId, servedCellsSql } from "../../infra/cells";
 import { isKeyError, kmsForKey, kmsMockEnabled, regionOfArn, setMockKeyDisabled } from "../../infra/kms";
 import { config } from "../../config";
 import type { TenantStorage, TenantStorageResolver } from "../../infra/storage";
@@ -44,7 +44,7 @@ export async function tenantStorage(db: Db, tenantId: string, opts?: { fresh?: b
     [tenantId],
   );
   const v: TenantStorage = {
-    cell: cellById(r?.cell).id,
+    cell: effectiveCellId(r?.cell),
     byokKeyArn: r?.byok_key_arn ?? null,
     byokStatus: (r?.byok_status ?? "none") as TenantStorage["byokStatus"],
   };
@@ -309,7 +309,7 @@ async function settingsFor(db: Db, tenantId: string): Promise<ByokSettings> {
 export async function byokSweep(db: Db) {
   const rows = await db.query<any>(
     `SELECT t.id, t.byok_key_arn, t.byok_status, COALESCE(d.cell, t.cell) AS cell FROM tenants t LEFT JOIN tenant_directory d ON d.tenant_id = t.id
-     WHERE t.byok_status <> 'none' AND t.byok_key_arn IS NOT NULL
+     WHERE t.byok_status <> 'none' AND t.byok_key_arn IS NOT NULL AND ${servedCellsSql("t.id")}
        AND (t.byok_checked_at IS NULL OR (t.byok_status = 'active' AND t.byok_checked_at < now() - interval '6 hours')
             OR (t.byok_status = 'failing' AND t.byok_checked_at < now() - interval '1 hour'))
      LIMIT 50`,
@@ -363,11 +363,16 @@ export async function byokRoutes(app: FastifyInstance, s: Services) {
       // Probar no reactiva una clave desactivada: para eso está PUT /v1/settings/byok.
       // De 'failing' a 'active' con un UPDATE condicional: la recuperación queda en la auditoría (como markKeyHealthy),
       // una sola vez aunque haya pruebas concurrentes, y con quién la probó.
+      // Solo si la clave sigue siendo la probada: si entretanto se cambió (PUT) o desactivó y volvió a activar otra, el OK de
+      // esta prueba no puede marcar sana a la nueva (ni borrar su error).
       const recovered = await s.db.query(
-        `UPDATE tenants SET byok_status = 'active', byok_error = NULL, byok_checked_at = now() WHERE id = $1 AND byok_status = 'failing' RETURNING id`,
-        [a.tenantId],
+        `UPDATE tenants SET byok_status = 'active', byok_error = NULL, byok_checked_at = now() WHERE id = $1 AND byok_status = 'failing' AND byok_key_arn = $2 RETURNING id`,
+        [a.tenantId, t.byok_key_arn],
       );
-      await s.db.query(`UPDATE tenants SET byok_status = 'active', byok_error = NULL, byok_checked_at = now() WHERE id = $1 AND byok_status <> 'none'`, [a.tenantId]);
+      await s.db.query(`UPDATE tenants SET byok_status = 'active', byok_error = NULL, byok_checked_at = now() WHERE id = $1 AND byok_status <> 'none' AND byok_key_arn = $2`, [
+        a.tenantId,
+        t.byok_key_arn,
+      ]);
       invalidateTenantStorage(a.tenantId);
       if (recovered.length) await auditFromRequest(s.db, req, a, "byok.key_recovered", { targetType: "kms_key", targetId: t.byok_key_arn, data: { via: "test" } });
     } else {

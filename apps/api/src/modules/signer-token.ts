@@ -19,14 +19,17 @@ const SLIDE_EVERY = "1 minute";
  * (embed.ts pageStillAuthenticates: OTP, en persona, o verificación de identidad todavía no superada). Esa condición se
  * vuelve a exigir en cada uso del token: si no, quien tenía el token de sesión (el integrador) lo guardaba hasta que el
  * destinatario verificara su identidad desde su link y después firmaba en su nombre con la verificación ya hecha.
- * Elegimos rechazar el token de sesión de un destinatario no embebido en cuanto su identidad queda verificada, aunque la
- * verificación se haya hecho desde esa misma sesión: atar la verificación a la sesión que la hizo dependería del
- * camino de vuelta del proveedor (webhook, consulta, otra pestaña) y es fácil de equivocar. El destinatario sigue
- * teniendo su link permanente para terminar. Mismo criterio que pageStillAuthenticates (mantener en sincronía).
+ * Excepción: la verificación aprobada se inició desde ESA misma sesión (identity_verifications.session_token_hash, que
+ * se borra si la verificación se retoma, recibe fotos o se consulta desde otro token): es la ceremonia que el
+ * integrador abrió y tiene que poder terminarla. Una verificación hecha (o tocada) desde el link del destinatario o
+ * desde otra sesión sigue revocando el token. Mismo criterio que pageStillAuthenticates (mantener en sincronía).
  */
 const INTEGRATOR_SESSION_ALLOWED_SQL = `(r.embedded IS TRUE
   OR left(COALESCE(r.auth_method, ''), 4) = 'otp_' OR r.auth_method = 'in_person'
-  OR (r.id_verification_provider IS NOT NULL AND r.role IN ('signer', 'approver') AND r.identity_status IS DISTINCT FROM 'verified'))`;
+  OR (r.id_verification_provider IS NOT NULL AND r.role IN ('signer', 'approver') AND r.identity_status IS DISTINCT FROM 'verified')
+  OR (r.id_verification_provider IS NOT NULL AND r.role IN ('signer', 'approver') AND r.identity_status = 'verified'
+      AND EXISTS (SELECT 1 FROM identity_verifications iv
+                   WHERE iv.recipient_id = r.id AND iv.status = 'verified' AND iv.session_token_hash = st.token_hash)))`;
 
 /**
  * Token de sesión vigente (tabla signer_session_tokens, migración 0083): sin vencer ni revocar y con el link del
@@ -48,6 +51,7 @@ export async function resolveSessionToken(db: Db, hash: string): Promise<{ recip
   if (!st) return null;
   if (!st.integrator_allowed) {
     // Revocado en el acto (y para siempre: aunque la verificación se anulara después, el token ya no vuelve).
+    // Sin carrera con la verificación hecha desde la sesión: session_token_hash se graba al iniciarla, antes del resultado.
     await db.query(`UPDATE signer_session_tokens SET revoked_at = now() WHERE token_hash = $1 AND (revoked_at IS NULL OR revoked_at > now())`, [hash]);
     return null;
   }

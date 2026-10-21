@@ -346,7 +346,7 @@ async function queueRun(db: Db, r: RunSpec, dedupeKey: string) {
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT (dedupe_key) DO NOTHING RETURNING id`,
     [id, r.tenantId, r.connectionId, r.mappingId, r.linkId, r.envelopeId, r.kind, r.event, r.objectType, r.objectId, JSON.stringify(r.detail ?? {}), dedupeKey],
   );
-  if (ins.length) await enqueue(db, "platform", { kind: "crm", runId: id }, { dedupeKey: `crmjob:${id}` });
+  if (ins.length) await enqueue(db, "platform", { kind: "crm", runId: id }, { dedupeKey: `crmjob:${id}`, tenantId: r.tenantId });
 }
 
 // ───────────────────────────── Trabajos ─────────────────────────────
@@ -1077,7 +1077,7 @@ export async function crmRoutes(app: FastifyInstance, s: Services) {
       throw new AppError(409, "not_retryable", "Un envío manual se vuelve a hacer desde el registro (POST /v1/crm/mappings/:id/send)");
     }
     await s.db.query(`UPDATE crm_runs SET status = 'pending', error = NULL, updated_at = now() WHERE id = $1`, [r.id]);
-    await enqueue(s.db, "platform", { kind: "crm", runId: r.id }, { dedupeKey: `crmjob:${r.id}:${Date.now()}` });
+    await enqueue(s.db, "platform", { kind: "crm", runId: r.id }, { dedupeKey: `crmjob:${r.id}:${Date.now()}`, tenantId: a.tenantId });
     reply.code(202);
     return { queued: true };
   });

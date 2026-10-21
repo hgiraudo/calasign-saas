@@ -559,6 +559,11 @@ const PROBLEM_TEXT: Record<string, Record<"es" | "pt-BR" | "en", string>> = {
     "pt-BR": "{name}: tem só Telegram e nenhum chat vinculado; adicione e-mail ou WhatsApp (ou vincule o Telegram)",
     en: "{name}: has only Telegram and no linked chat; add email or WhatsApp (or link their Telegram)",
   },
+  identity_provider_unavailable: {
+    es: "{name}: el proveedor de verificación de identidad {provider} no puede hacer el nivel {level} en este entorno; cambiá el proveedor o el nivel",
+    "pt-BR": "{name}: o provedor de verificação de identidade {provider} não consegue fazer o nível {level} neste ambiente; altere o provedor ou o nível",
+    en: "{name}: the identity verification provider {provider} can't do level {level} in this environment; change the provider or the level",
+  },
   payer_not_signer: {
     es: "Quien paga el cobro tiene que ser un firmante",
     "pt-BR": "Quem paga a cobrança precisa ser um signatário",

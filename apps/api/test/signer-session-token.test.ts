@@ -551,3 +551,83 @@ describe("destinatario no embebido: la sesión del integrador no sobrevive a su 
     expect((await signing(session)).statusCode).toBe(200);
   });
 });
+
+describe("destinatario no embebido: verificación iniciada desde la sesión del integrador", () => {
+  async function withVeriff<T>(id: string, fn: () => Promise<T>): Promise<T> {
+    globalThis.fetch = (async (input: any, init?: any) => {
+      const url = String(input?.url ?? input);
+      if (url.startsWith("https://veriff.test/v1/sessions"))
+        return new Response(JSON.stringify({ verification: { id, url: `https://veriff.test/go/${id}` } }), { status: 201, headers: { "content-type": "application/json" } });
+      if (url.startsWith("https://veriff.test/")) return new Response(JSON.stringify({ verification: null }), { status: 200, headers: { "content-type": "application/json" } });
+      return real(input, init);
+    }) as typeof fetch;
+    try {
+      return await fn();
+    } finally {
+      globalThis.fetch = real;
+    }
+  }
+  async function approve(id: string) {
+    const { veriffSignature } = await import("../src/modules/identity/providers");
+    const raw = JSON.stringify({ status: "success", verification: { id, status: "approved", person: { firstName: "Ana" } } });
+    const wh = await app.inject({
+      method: "POST",
+      url: "/v1/integrations/identity/veriff/webhook",
+      payload: raw,
+      headers: { "content-type": "application/json", "x-hmac-signature": veriffSignature(raw, "veriff_test_secret") },
+    });
+    expect(wh.statusCode).toBe(200);
+  }
+
+  it("iniciada y terminada desde la misma sesión: la sesión sigue valiendo para terminar la firma", async () => {
+    const { envelope, recipient } = await setup({ embedded: false, idv: "veriff" });
+    const { session } = await redeem(envelope, recipient);
+    await withVeriff("vf_bound_1", async () => {
+      expect((await signing(session, "/identity/start", "POST")).statusCode).toBe(200);
+      expect((await signing(session, "/identity")).statusCode).toBe(200);
+      await approve("vf_bound_1");
+    });
+    expect((await db.one<any>(`SELECT identity_status FROM recipients WHERE id = $1`, [recipient])).identity_status).toBe("verified");
+    expect((await signing(session)).statusCode).toBe(200);
+    expect((await signing(session, "/consent", "POST")).statusCode).toBe(200);
+    const done = await signing(session, "/complete", "POST", { fields: [], signature: { kind: "drawn", imagePng: PNG } });
+    expect(done.statusCode).toBe(200);
+    // Otra sesión (otro canje) no se beneficia de esa verificación.
+    const { sha256Hex } = await import("../src/lib/util");
+    const v = await db.one<any>(`SELECT session_token_hash FROM identity_verifications WHERE recipient_id = $1`, [recipient]);
+    expect(v.session_token_hash).toBe(sha256Hex(session));
+  });
+
+  it("iniciada desde su link: la sesión se revoca al verificarse", async () => {
+    const { envelope, recipient, token } = await setup({ embedded: false, idv: "veriff" });
+    const { session } = await redeem(envelope, recipient);
+    await withVeriff("vf_link_1", async () => {
+      expect((await signing(token, "/identity/start", "POST")).statusCode).toBe(200);
+      await approve("vf_link_1");
+    });
+    expect((await signing(session)).statusCode).toBe(404);
+    expect((await signing(token)).statusCode).toBe(200);
+  });
+
+  it("iniciada desde la sesión pero retomada (o consultada) desde su link: la sesión se revoca al verificarse", async () => {
+    const { envelope, recipient, token } = await setup({ embedded: false, idv: "veriff" });
+    const { session } = await redeem(envelope, recipient);
+    await withVeriff("vf_mixed_1", async () => {
+      expect((await signing(session, "/identity/start", "POST")).statusCode).toBe(200);
+      expect((await signing(token, "/identity/start", "POST")).statusCode).toBe(200);
+      expect((await db.one<any>(`SELECT session_token_hash FROM identity_verifications WHERE recipient_id = $1`, [recipient])).session_token_hash).toBeNull();
+      await approve("vf_mixed_1");
+    });
+    expect((await signing(session)).statusCode).toBe(404);
+
+    // Lo mismo si su link solo consulta la verificación en curso (la respuesta revela la página del proveedor).
+    const b = await setup({ embedded: false, idv: "veriff" });
+    const sb = await redeem(b.envelope, b.recipient);
+    await withVeriff("vf_mixed_2", async () => {
+      expect((await signing(sb.session, "/identity/start", "POST")).statusCode).toBe(200);
+      expect((await signing(b.token, "/identity")).statusCode).toBe(200);
+      await approve("vf_mixed_2");
+    });
+    expect((await signing(sb.session)).statusCode).toBe(404);
+  });
+});

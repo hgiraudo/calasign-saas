@@ -5,7 +5,7 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { CellInfo, CellsResponse } from "@calasign/shared";
 import type { Db } from "../../infra/db";
-import { CELL_CATALOG, cellById, cells, defaultCell, isConfiguredCell, servedCells, servesAllCells } from "../../infra/cells";
+import { CELL_CATALOG, cells, defaultCell, effectiveCellId, isConfiguredCell, servedCells, servesAllCells } from "../../infra/cells";
 import { badRequest } from "../../lib/errors";
 import { bearerToken, sha256Hex } from "../../lib/util";
 import { sessionCookieToken, type Services } from "../context";
@@ -37,13 +37,69 @@ export async function registerTenantCell(db: Db, tenantId: string, slug: string,
   ]);
 }
 
-/** Celda de una organización según el directorio (ids viejos caen en la por defecto). */
+/**
+ * Celda de una organización según el directorio. Los ids viejos ("local", "dev") son la por defecto; un id que no está
+ * configurado en este despliegue se devuelve tal cual (no cae en la por defecto: ver misdirectedCell).
+ */
 export async function cellOfTenant(db: Db, tenantId: string): Promise<string> {
   const r = await db.one<any>(`SELECT COALESCE(d.cell, t.cell) AS cell FROM tenants t LEFT JOIN tenant_directory d ON d.tenant_id = t.id WHERE t.id = $1`, [tenantId]);
-  return cellById(r?.cell).id;
+  return effectiveCellId(r?.cell);
 }
 
 const SIGNING_RE = /^\/(?:v1\/signing|s|embed)\/([A-Za-z0-9_-]{20,100})(?:[/?]|$)/;
+
+/**
+ * Rutas públicas que no traen sesión ni token de firma pero sí identifican a la organización: formularios web (slug),
+ * negociaciones (token de la contraparte), workflows con inicio público (slug) y sus ejecuciones (token).
+ */
+const PUBLIC_FORM_RE = /^\/v1\/public\/forms\/([^/?]{1,200})(?:[/?]|$)/;
+const PUBLIC_NEGOTIATION_RE = /^\/v1\/public\/negotiations\/([A-Za-z0-9_-]{20,100})(?:[/?]|$)/;
+const PUBLIC_WORKFLOW_RE = /^\/v1\/public\/workflows\/([^/?]{1,200})(?:[/?]|$)/;
+const PUBLIC_RUN_RE = /^\/v1\/public\/workflow-runs\/([A-Za-z0-9_-]{20,100})(?:[/?]|$)/;
+
+/** Rutas públicas que no dependen de la organización (o la resuelven por el Host): nunca se redirigen. */
+export function cellExemptPath(url: string): boolean {
+  const path = url.split("?")[0];
+  return (
+    path === "/healthz" ||
+    path === "/v1/public/cells" ||
+    path === "/v1/public/brand-theme" ||
+    path === "/v1/public/host-branding" ||
+    path.startsWith("/v1/public/brand-assets/")
+  );
+}
+
+const decodeSeg = (x: string) => {
+  try {
+    return decodeURIComponent(x);
+  } catch {
+    return null;
+  }
+};
+
+async function tenantOfPublicPath(db: Db, url: string): Promise<string | null> {
+  let m = PUBLIC_FORM_RE.exec(url);
+  if (m) {
+    const slug = decodeSeg(m[1]);
+    return slug ? ((await db.one<any>(`SELECT tenant_id FROM web_forms WHERE slug = $1`, [slug]))?.tenant_id ?? null) : null;
+  }
+  m = PUBLIC_NEGOTIATION_RE.exec(url);
+  if (m) {
+    const r = await db.one<any>(
+      `SELECT n.tenant_id FROM negotiation_participants p JOIN negotiations n ON n.id = p.negotiation_id WHERE p.token_hash = $1`,
+      [sha256Hex(m[1])],
+    );
+    return r?.tenant_id ?? null;
+  }
+  m = PUBLIC_WORKFLOW_RE.exec(url);
+  if (m) {
+    const slug = decodeSeg(m[1]);
+    return slug ? ((await db.one<any>(`SELECT tenant_id FROM workflows WHERE public_slug = $1`, [slug]))?.tenant_id ?? null) : null;
+  }
+  m = PUBLIC_RUN_RE.exec(url);
+  if (m) return (await db.one<any>(`SELECT tenant_id FROM workflow_runs WHERE public_token_hash = $1`, [sha256Hex(m[1])]))?.tenant_id ?? null;
+  return null;
+}
 
 /** Organización detrás de un pedido: API key / token OAuth / sesión / link de firma. null si no se sabe. */
 export async function tenantOfRequest(db: Db, req: FastifyRequest): Promise<string | null> {
@@ -56,6 +112,7 @@ export async function tenantOfRequest(db: Db, req: FastifyRequest): Promise<stri
     if (o) return o.tenant_id;
     return null;
   }
+  if (req.url.startsWith("/v1/public/")) return tenantOfPublicPath(db, req.url);
   const m = SIGNING_RE.exec(req.url);
   if (m) {
     // El link permanente o un token de sesión del canje embebido (signer-token.ts).
@@ -71,14 +128,20 @@ export async function tenantOfRequest(db: Db, req: FastifyRequest): Promise<stri
   return null;
 }
 
-/** Decide si el pedido tiene que ir a otra celda. null = lo atiende este proceso. */
-export async function misdirectedCell(db: Db, req: FastifyRequest): Promise<{ cell: string; baseUrl: string | null } | null> {
+/**
+ * Decide si el pedido tiene que ir a otra celda. null = lo atiende este proceso. `unconfigured`: la celda de la
+ * organización no está configurada en este despliegue (no se sabe adónde mandarlo): se responde 503, nunca se atiende
+ * con la celda por defecto.
+ */
+export async function misdirectedCell(db: Db, req: FastifyRequest): Promise<{ cell: string; baseUrl: string | null; unconfigured?: true } | null> {
   if (servesAllCells()) return null;
   const tenantId = await tenantOfRequest(db, req);
   if (!tenantId) return null;
   const cell = await cellOfTenant(db, tenantId);
   if (servedCells().has(cell)) return null;
-  return { cell, baseUrl: cellById(cell).baseUrl };
+  const conf = cells().find((c) => c.id === cell);
+  if (!conf) return { cell, baseUrl: null, unconfigured: true };
+  return { cell, baseUrl: conf.baseUrl };
 }
 
 export async function cellRoutes(app: FastifyInstance, s: Services) {
@@ -86,11 +149,13 @@ export async function cellRoutes(app: FastifyInstance, s: Services) {
 
   app.addHook("onRequest", async (req, reply) => {
     if (servesAllCells()) return;
-    if (req.url.startsWith("/v1/public/") || req.url === "/healthz") return;
+    // Solo la lista de celdas y la marca (por Host o por clave pública) quedan afuera: los formularios, negociaciones y
+    // workflows públicos identifican a su organización (slug o token) y se redirigen como los links de firma.
+    if (cellExemptPath(req.url)) return;
     const wrong = await misdirectedCell(s.db, req);
     if (!wrong) return;
     if (wrong.baseUrl) reply.header("location", `${wrong.baseUrl}${req.url}`);
-    return reply.code(421).send({
+    return reply.code(wrong.unconfigured ? 503 : 421).send({
       error: { code: "wrong_cell", message: "Los datos de esta organización están en otra región", details: { cell: wrong.cell, baseUrl: wrong.baseUrl } },
     });
   });

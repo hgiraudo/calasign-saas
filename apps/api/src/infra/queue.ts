@@ -2,6 +2,7 @@
 import { hostname } from "node:os";
 import type { Db } from "./db";
 import { scrubPii } from "../notifications/outbound";
+import { cells, effectiveCellId, servedCells, servesAllCells } from "./cells";
 
 export type JobQueueName = "notify" | "finalize" | "webhook" | "bulk" | "platform" | "agreements";
 
@@ -11,6 +12,36 @@ export interface EnqueueOptions {
   maxAttempts?: number;
   /** Mayor primero. Sin valor: jobPriority(queue, payload). */
   priority?: number;
+  /**
+   * Organización del job, para fijar su celda (residencia de datos: solo lo toma un worker que atiende esa celda). Sin
+   * valor se toma de payload.tenantId o, si no, de la organización del sobre de payload.envelopeId.
+   */
+  tenantId?: string | null;
+  /** Celda explícita (gana sobre tenantId). */
+  cell?: string | null;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const uuidOrNull = (v: unknown) => (typeof v === "string" && UUID_RE.test(v) ? v : null);
+
+/**
+ * Celda en la que tiene que correr el job. Con una sola celda configurada es NULL (cualquier worker; nada cambia). Con
+ * varias, la de la organización (opts.tenantId, payload.tenantId o la organización del sobre de payload.envelopeId); los
+ * ids viejos ("local", "dev") son la por defecto. Sin organización deducible: NULL (cualquier worker).
+ */
+async function jobCell(db: Db, payload: unknown, opts: EnqueueOptions): Promise<string | null> {
+  if (opts.cell) return opts.cell;
+  if (cells().length <= 1) return null;
+  const p = (payload ?? {}) as { tenantId?: unknown; envelopeId?: unknown };
+  const tenantId = uuidOrNull(opts.tenantId) ?? uuidOrNull(p.tenantId);
+  const envelopeId = tenantId ? null : uuidOrNull(p.envelopeId);
+  if (!tenantId && !envelopeId) return null;
+  const r = await db.one<{ cell: string | null; found: boolean }>(
+    `SELECT COALESCE(d.cell, t.cell) AS cell, true AS found FROM tenants t LEFT JOIN tenant_directory d ON d.tenant_id = t.id
+      WHERE t.id = COALESCE($1::uuid, (SELECT tenant_id FROM envelopes WHERE id = $2::uuid))`,
+    [tenantId, envelopeId],
+  );
+  return r?.found ? effectiveCellId(r.cell) : null;
 }
 
 /**
@@ -35,11 +66,12 @@ export function jobPriority(queue: JobQueueName, payload: unknown): number {
  * insertó (false: ya había un job con la misma dedupeKey).
  */
 export async function enqueue(db: Db, queue: JobQueueName, payload: unknown, opts: EnqueueOptions = {}): Promise<boolean> {
+  const cell = await jobCell(db, payload, opts);
   const rows = await db.query(
-    `INSERT INTO jobs (queue, payload, run_at, dedupe_key, max_attempts, priority)
-     VALUES ($1, $2, COALESCE($3, now()), $4, $5, $6)
+    `INSERT INTO jobs (queue, payload, run_at, dedupe_key, max_attempts, priority, cell)
+     VALUES ($1, $2, COALESCE($3, now()), $4, $5, $6, $7)
      ON CONFLICT (dedupe_key) DO NOTHING RETURNING id`,
-    [queue, JSON.stringify(payload), opts.runAt ?? null, opts.dedupeKey ?? null, opts.maxAttempts ?? 8, opts.priority ?? jobPriority(queue, payload)],
+    [queue, JSON.stringify(payload), opts.runAt ?? null, opts.dedupeKey ?? null, opts.maxAttempts ?? 8, opts.priority ?? jobPriority(queue, payload), cell],
   );
   return rows.length > 0;
 }
@@ -112,6 +144,11 @@ export interface WorkerOptions {
    * local puede seguir hasta que el proceso salga y otro worker no tiene que tomarlo mientras tanto.
    */
   shutdownRequeueDelayMs?: number;
+  /**
+   * Celdas cuyos jobs toma este worker (además de los sin celda). Por defecto: SERVED_CELLS; null si atiende todas
+   * (un solo despliegue: no se filtra).
+   */
+  cells?: string[] | null;
 }
 
 /**
@@ -123,6 +160,9 @@ export interface WorkerOptions {
  */
 export const URGENT_PRIORITIES: number[] = [...new Set(Object.values(PRIORITY))].filter((p) => p > PRIORITY.bulk).sort((a, b) => b - a);
 
+/** Filtro de celda del claim ($5: celdas del worker, o NULL si atiende todas). */
+const CELL_FILTER = `AND ($5::text[] IS NULL OR c.cell IS NULL OR c.cell = ANY($5::text[]))`;
+
 /** Cada cuánto el worker registra su latido en worker_heartbeats. */
 const WORKER_BEAT_MS = 15_000;
 
@@ -131,6 +171,8 @@ export function startWorker(db: Db, opts: WorkerOptions) {
   const concurrency = opts.concurrency ?? 4;
   const pollMs = opts.pollMs ?? 1000;
   const claimCandidates = Math.max(1, opts.claimCandidates ?? 100);
+  // Residencia de datos: un worker que no atiende todas las celdas solo toma los jobs de las suyas (y los sin celda).
+  const claimCells: string[] | null = opts.cells !== undefined ? opts.cells : servesAllCells() ? null : [...servedCells()];
   // handlerDone: el handler ya terminó bien (puede estar reintentando registrar 'done'): al apagar no se devuelve a la cola.
   const inflight = new Map<number, JobRow & { handlerDone?: boolean }>();
   const abort = new AbortController();
@@ -151,15 +193,15 @@ export function startWorker(db: Db, opts: WorkerOptions) {
          WHERE id IN (
            SELECT j.id FROM jobs j
             WHERE j.id IN (
-                (SELECT c.id FROM jobs c WHERE c.status = 'pending' AND c.run_at <= now() ORDER BY c.run_at, c.id LIMIT $3)
+                (SELECT c.id FROM jobs c WHERE c.status = 'pending' AND c.run_at <= now() ${CELL_FILTER} ORDER BY c.run_at, c.id LIMIT $3)
                 UNION
                 (SELECT h.id FROM unnest($4::smallint[]) AS p(pr), LATERAL (
-                   SELECT c.id FROM jobs c WHERE c.status = 'pending' AND c.priority = p.pr AND c.run_at <= now()
+                   SELECT c.id FROM jobs c WHERE c.status = 'pending' AND c.priority = p.pr AND c.run_at <= now() ${CELL_FILTER}
                     ORDER BY c.run_at, c.id LIMIT $1) h))
               AND j.status = 'pending' AND j.run_at <= now()
             ORDER BY j.priority DESC, j.run_at, j.id LIMIT $1 FOR UPDATE SKIP LOCKED)
          RETURNING id, queue, payload, attempts, max_attempts, (created_at > now() - interval '7 days') AS postponable`,
-        [limit, workerId, claimCandidates, URGENT_PRIORITIES],
+        [limit, workerId, claimCandidates, URGENT_PRIORITIES, claimCells],
       ),
     );
   }

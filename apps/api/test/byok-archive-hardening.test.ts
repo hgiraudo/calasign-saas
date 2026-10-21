@@ -114,6 +114,36 @@ describe("BYOK: propietario, historial y aviso", () => {
   });
 });
 
+describe("BYOK: prueba de clave concurrente con un cambio", () => {
+  it("el OK de la prueba de una clave no marca sana a la que la reemplazó mientras tanto", async () => {
+    await db.query(`UPDATE tenants SET byok_key_arn = $2, byok_status = 'failing', byok_error = 'caída' WHERE id = $1`, [tenant, KEY1]);
+    byok.invalidateTenantStorage(tenant);
+    const kms = await import("../src/infra/kms");
+    // Mientras se prueba KEY1, otro pedido la cambia por KEY2 (que está fallando).
+    kms.setKmsClientFactory(() => {
+      const base = kms.mockKms();
+      return {
+        ...base,
+        async describeKey(i: any) {
+          await db.query(`UPDATE tenants SET byok_key_arn = $2, byok_status = 'failing', byok_error = 'KEY2 caída' WHERE id = $1`, [tenant, KEY2]);
+          return base.describeKey(i);
+        },
+      };
+    });
+    try {
+      const r = await app.inject({ method: "POST", url: "/v1/settings/byok/test", cookies: { cs_session: owner } });
+      expect(r.statusCode).toBe(200);
+      expect(r.json().ok).toBe(true);
+      const t = await db.one<any>(`SELECT byok_key_arn, byok_status, byok_error FROM tenants WHERE id = $1`, [tenant]);
+      expect(t).toEqual({ byok_key_arn: KEY2, byok_status: "failing", byok_error: "KEY2 caída" });
+    } finally {
+      kms.setKmsClientFactory(() => kms.mockKms());
+      await db.query(`UPDATE tenants SET byok_key_arn = NULL, byok_status = 'none', byok_error = NULL WHERE id = $1`, [tenant]);
+      byok.invalidateTenantStorage(tenant);
+    }
+  });
+});
+
 describe("renovación manual del sello de archivo", () => {
   async function completedEnvelope(cols: { validUntil?: string | null; error?: string | null }) {
     const file = util.uuidv7();

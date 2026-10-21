@@ -145,11 +145,17 @@ describe("renovación de sellos de archivo", () => {
     // Pasado el intervalo mínimo: el último sello ya es del certificado que la TSA usa hoy, así que "renovar" no
     // extendería nada. El barrido consulta ese certificado y saltea el sobre (antes renovaba cada 30 días).
     const { resetArchiveSweepClock } = await import("../src/modules/data/archive");
-    await db.query(`UPDATE envelopes SET archive_checked_at = now() - interval '31 days', archive_error = NULL WHERE id = $1`, [env]);
+    // El intervalo se mide desde la última renovación exitosa (archive_renewed_at), no desde el último chequeo.
+    expect((await db.one<any>(`SELECT archive_renewed_at IS NOT NULL AS ok FROM envelopes WHERE id = $1`, [env])).ok).toBe(true);
+    await db.query(`UPDATE envelopes SET archive_renewed_at = now() - interval '31 days', archive_checked_at = now() - interval '31 days', archive_error = NULL WHERE id = $1`, [env]);
     resetArchiveSweepClock();
     const sameTsa = await archiveSweep({ db, blobs, log }, { days: 2000 });
-    expect(sameTsa).toMatchObject({ renewed: 0, failed: 0 });
+    expect(sameTsa).toMatchObject({ renewed: 0, failed: 0, notExtendable: 1 });
     expect((await archiveInfo(db, env)).renewals).toBe(1);
+    // Queda a la vista que renovar no sirve con esta TSA (y se avisa una vez a la organización).
+    expect((await archiveInfo(db, env)).errorCode).toBe("tsa_cannot_extend");
+    expect(await db.query(`SELECT kind FROM tenant_alerts WHERE tenant_id = $1`, [tenant])).toEqual([{ kind: "archive_tsa_cannot_extend" }]);
+    await db.query(`UPDATE envelopes SET archive_error = NULL WHERE id = $1`, [env]);
 
     // El tope de renovaciones también vale para el barrido (aun forzado).
     await db.query(`UPDATE envelopes SET archive_renewals = 50 WHERE id = $1`, [env]);
@@ -178,5 +184,36 @@ describe("renovación de sellos de archivo", () => {
       ["completed", true],
       ["archive_renewal", false],
     ]);
+
+    // El PDF cambia mientras se renueva (otra renovación ganó): archive_changed no es una falla del sobre en el barrido.
+    const ch = uuidv7();
+    const chFile = uuidv7();
+    const chKey = `tenants/${tenant}/envelopes/${ch}/${chFile}-signed.pdf`;
+    await blobs.put(chKey, lta, "application/pdf");
+    await db.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'signed',$3,'application/pdf',$4,$5)`, [
+      chFile,
+      tenant,
+      chKey,
+      lta.length,
+      sha256Hex(lta),
+    ]);
+    await db.query(
+      `INSERT INTO envelopes (id, tenant_id, subject, status, completed_at, signed_file_id, archive_valid_until, archive_checked_at)
+       VALUES ($1,$2,'S','completed', now(), $3, now() + interval '10 days', now())`,
+      [ch, tenant, chFile],
+    );
+    const racing = {
+      ...blobs,
+      get: (k: string) => blobs.get(k),
+      put: async (k: string, b: Uint8Array, ct: string) => {
+        await blobs.put(k, b, ct);
+        // Justo antes de la transacción que guarda la versión renovada, otra ya cambió el PDF del sobre.
+        await db.query(`UPDATE envelopes SET signed_file_id = $2 WHERE id = $1`, [ch, file]);
+      },
+      delete: (k: string) => blobs.delete(k),
+    } as typeof blobs;
+    const raced = await archiveSweep({ db, blobs: racing, log }, { days: 2000, force: true, envelopeId: ch });
+    expect(raced).toMatchObject({ renewed: 0, failed: 0 });
+    expect((await archiveInfo(db, ch)).error).toBeNull();
   }, 120_000);
 });

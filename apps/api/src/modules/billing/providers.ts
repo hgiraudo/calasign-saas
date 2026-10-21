@@ -436,17 +436,42 @@ export function envelopePaymentProviderConfigured(id: "stripe" | "mercadopago" |
 
 /**
  * Controla que el cobro de un sobre se pueda hacer con este proveedor y en esta moneda (al configurarlo y al enviar el
- * sobre). Una cuenta de Mercado Pago cobra solo en la moneda de su país (MP_CURRENCIES o la de la cuenta): con otra la
- * preferencia falla o cobra otra cosa, y el firmante quedaría trabado. Si todavía no se sabe la moneda de la cuenta, 503
- * pasajero (o 422 si el país de la cuenta no se reconoce), como en las suscripciones.
+ * sobre). Credenciales y secreto del webhook por separado: sin el secreto el proveedor está "configurado" pero el pago
+ * nunca se confirmaría (payment_webhook_not_configured, con qué hacer). Una cuenta de Mercado Pago cobra solo en la
+ * moneda de su país (MP_CURRENCIES o la de la cuenta): con otra la preferencia falla o cobra otra cosa, y el firmante
+ * quedaría trabado. Al configurar el cobro (`atSend` falso), si todavía no se sabe la moneda de la cuenta se consulta
+ * (503 pasajero, o 422 si el país de la cuenta no se reconoce), como en las suscripciones. Al enviar (`atSend`, dentro
+ * de la transacción del envío con el sobre bloqueado) no se consulta a Mercado Pago: solo se controla la moneda si ya
+ * se conoce (MP_CURRENCIES o una consulta anterior); si no, se deja pasar (el cobro ya se validó al configurarlo).
  */
-export async function assertEnvelopePaymentProvider(provider: "stripe" | "mercadopago" | "mock", currency: string): Promise<void> {
+export async function assertEnvelopePaymentProvider(
+  provider: "stripe" | "mercadopago" | "mock",
+  currency: string,
+  opts: { atSend?: boolean } = {},
+): Promise<void> {
   if (!envelopePaymentProviderConfigured(provider)) {
+    if (provider !== "mock" && providerConfigured(provider)) {
+      const variable = provider === "stripe" ? "STRIPE_WEBHOOK_SECRET" : "MP_WEBHOOK_SECRET";
+      throw badRequest(
+        "payment_webhook_not_configured",
+        `El proveedor de cobro ${provider} no tiene configurado el secreto del webhook (${variable}) en este entorno: el pago no se podría confirmar. Quitá el cobro del sobre o elegí otro proveedor`,
+        { provider, variable },
+      );
+    }
     throw badRequest("provider_not_configured", `El proveedor de cobro ${provider} no está configurado en este entorno`);
   }
   if (provider !== "mercadopago") return;
-  const currencies = await mpSubscriptionCurrencies();
   const cur = currency.toUpperCase();
+  if (opts.atSend) {
+    const known = mpKnownCurrencies();
+    if (!known || known.includes(cur)) return;
+    throw badRequest(
+      "currency_not_supported",
+      `Mercado Pago cobra solo en ${known.join(", ")}: elegí esa moneda u otro proveedor para cobrar en ${cur}`,
+      { currency: cur, supported: known },
+    );
+  }
+  const currencies = await mpSubscriptionCurrencies();
   if (currencies.includes(cur)) return;
   if (!currencies.length) {
     if (mpCurrencyMisconfigured())
@@ -464,6 +489,13 @@ export async function assertEnvelopePaymentProvider(provider: "stripe" | "mercad
     `Mercado Pago cobra solo en ${currencies.join(", ")}: elegí esa moneda u otro proveedor para cobrar en ${cur}`,
     { currency: cur, supported: currencies },
   );
+}
+
+/** Monedas de Mercado Pago ya conocidas sin consultar (MP_CURRENCIES o la última respuesta buena), o null. */
+export function mpKnownCurrencies(): string[] | null {
+  const fixed = config.billing.mercadopago.currencies;
+  if (fixed.length) return fixed;
+  return mpCurrencyKnown;
 }
 
 /**

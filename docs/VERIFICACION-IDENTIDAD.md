@@ -20,35 +20,41 @@ no incluir la selfie o la prueba de vida. Para un nivel con selfie hace falta la
 **Capacidades declaradas de la integración.** La decisión de Veriff no suele traer `faceMatch.similarity` ni un
 booleano de prueba de vida. Por eso una aprobación se completa con lo que la integración declara hacer:
 
-- **Veriff**: `VERIFF_INTEGRATION_LEVEL` (una sola integración para todos los sobres). Con `document_selfie` una
-  aprobación cuenta como coincidencia facial; con `document_selfie_liveness`, además como prueba de vida.
+- **Veriff**: `VERIFF_INTEGRATION_LEVEL` (una sola integración para todos los sobres). Default `document` (a prueba
+  de fallas: sin declararlo, la evidencia no da por hecha una coincidencia facial que pudo no ocurrir). Con
+  `document_selfie` una aprobación cuenta como coincidencia facial; con `document_selfie_liveness`, además como prueba
+  de vida. Para pedir con Veriff un nivel con selfie hay que definir la variable explícitamente.
 - **Truora**: un flujo propio del nivel (`TRUORA_FLOW_ID_<NIVEL>`) se arma con las validaciones del nivel, así que una
   aprobación con ese flujo cumple el nivel. El flujo genérico (`TRUORA_FLOW_ID`) no declara nada: el resultado tiene que
   traer los datos.
 
 Un dato contrario explícito siempre gana: puntaje facial bajo el umbral o `faceMatched` en false (`face_mismatch`),
 `liveness` en false (`liveness_failed`). Esas son fallas del firmante y consumen un intento. Lo inferido queda en la
-evidencia (`inferredFromIntegration` en `recipient.identity_verified`).
+evidencia (`inferredFromIntegration` en `recipient.identity_verified` y en el resultado guardado) y el certificado lo
+muestra tal cual, sin puntaje: "rostro (informado por la integración del proveedor)".
 
 **`level_not_met`**: el proveedor aprobó pero el resultado no trae el control que pide el nivel y la integración no lo
 declara. Es un problema de configuración, no del firmante: **no consume un intento**, el evento
 `recipient.identity_failed` lleva `configurationIssue: true` y el remitente ve el motivo en el detalle del destinatario.
 Repetir la verificación daría lo mismo y abriría otra sesión paga, así que el inicio queda bloqueado (409
-`identity_provider_unavailable`) hasta que el remitente revise la configuración y reinicie la verificación.
+`identity_level_not_supported`) hasta que el remitente revise la configuración y reinicie la verificación.
 
 Después se controlan el nombre (`name_mismatch`) y el número de documento (`document_number_mismatch`).
 
 **Disponibilidad por nivel.** Un proveedor puede estar configurado y no poder hacer un nivel: Truora sin flujo para el
 nivel, o un nivel por encima de `VERIFF_INTEGRATION_LEVEL`. Pedir ese nivel al armar el sobre responde 400
-`identity_provider_unavailable` con el motivo, y el inicio de la verificación responde 503 (antes, un 500 al crear la
-sesión).
+`identity_provider_unavailable` con el motivo (para Veriff, la variable a definir). Un borrador armado antes de estas
+reglas (o de un cambio de configuración) no se envía: el envío lo informa como problema (`identity_provider_unavailable`
+en `envelope_incomplete`, con el destinatario, el proveedor y el nivel). En un sobre ya enviado, el inicio de la
+verificación responde 503 con un mensaje neutro para el firmante; el remitente ve el motivo en el detalle del
+destinatario (`unavailableReason`) y lo resuelve reiniciando con otro nivel o proveedor (ver "Reinicio").
 
 ## Configuración
 
 | Variable | Default | Uso |
 | --- | --- | --- |
 | `VERIFF_API_KEY`, `VERIFF_SHARED_SECRET`, `VERIFF_BASE_URL` | — | integración de Veriff (una sola). |
-| `VERIFF_INTEGRATION_LEVEL` | `document_selfie` | controles que hace la integración de Veriff (`document`, `document_selfie`, `document_selfie_liveness`). Una aprobación cumple hasta ese nivel salvo un dato contrario explícito; los niveles superiores no se pueden pedir con Veriff. Tiene que coincidir con lo configurado en el panel de Veriff. |
+| `VERIFF_INTEGRATION_LEVEL` | `document` | controles que hace la integración de Veriff (`document`, `document_selfie`, `document_selfie_liveness`). Una aprobación cumple hasta ese nivel salvo un dato contrario explícito; los niveles superiores no se pueden pedir con Veriff (al armar o enviar el sobre, 400 con el nombre de la variable). Tiene que coincidir con lo configurado en el panel de Veriff: definila explícitamente si la integración hace la selfie o la prueba de vida. |
 | `TRUORA_API_KEY`, `TRUORA_WEBHOOK_SECRET` | — | Truora (Digital Identity). |
 | `TRUORA_FLOW_ID` | — | flujo por defecto. |
 | `TRUORA_FLOW_ID_DOCUMENT`, `TRUORA_FLOW_ID_DOCUMENT_SELFIE`, `TRUORA_FLOW_ID_DOCUMENT_SELFIE_LIVENESS` | `TRUORA_FLOW_ID` | flujo por nivel (documento; + reconocimiento facial; + prueba de vida). Truora queda configurado con `TRUORA_FLOW_ID` o con al menos uno de estos; un nivel sin flujo no puede pedirse ni iniciarse. Un flujo propio del nivel declara sus controles (una aprobación cumple el nivel salvo un dato contrario). |
@@ -75,7 +81,15 @@ sesión).
   y el destinatario de turno, con el sobre bloqueado. Las fotos guardadas se borran con la retención del sobre.
 - **Reinicio por el remitente**: `POST /v1/envelopes/{id}/recipients/{recipientId}/identity/reset` (botón en el
   detalle del sobre) anula las verificaciones anteriores y devuelve todos los intentos (`recipient.identity_reset`).
+  Con `{provider, level}` (opcionales) cambia además el proveedor o el nivel, con las mismas reglas que al armar el
+  sobre (plan, rol, disponibilidad: 400 `identity_provider_unavailable`); el cambio queda en la evidencia. Sin cambio,
+  si el proveedor sigue sin poder hacer el nivel, 409 `identity_level_not_supported` (reiniciar no lo arreglaría).
   Una corrección que cambia el nombre, el contacto o el número de documento (`idDocumentNumber`) hace lo mismo.
+- **Firma integrada de un destinatario no embebido**: el token de sesión del integrador (canje de `/embed/:code`)
+  deja de valer cuando el destinatario queda verificado, salvo que la verificación aprobada se haya iniciado desde esa
+  misma sesión (`identity_verifications.session_token_hash`, migración `0112`): así la ceremonia que abrió el
+  integrador se puede terminar. Si la verificación se retoma, recibe fotos, se envía o se consulta desde otro token (el
+  link del destinatario u otra sesión), deja de estar atada y la sesión se revoca al verificarse.
 - **Uso del plan**: cuentan las verificaciones del mes salvo las reservas canceladas que nunca abrieron una sesión en el
   proveedor. Si la sesión se crea en el proveedor después de que la reserva se canceló (el sobre se cerró mientras
   tanto), `provider_ref` se guarda igual y cuenta.

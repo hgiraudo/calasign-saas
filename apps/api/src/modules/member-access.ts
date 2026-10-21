@@ -1,5 +1,47 @@
 import type { Db } from "../infra/db";
+import { enqueue } from "../infra/queue";
 import { randomToken, sha256Hex } from "../lib/util";
+import { recordAudit } from "./audit";
+
+/** Motivo de una conexión de almacenamiento desactivada porque quien la conectó dejó la organización. */
+export const STORAGE_CREATOR_REMOVED = "creator_removed";
+
+/**
+ * Conexiones de almacenamiento OAuth (Drive, Dropbox, OneDrive, SharePoint, Box) que la persona conectó con SU cuenta:
+ * se desactivan al sacarla de la organización (si no, los PDF firmados se seguían copiando a su cuenta personal). Quedan
+ * marcadas (deactivated_reason) para que no se reactiven sin volver a conectarlas, en la auditoría, y se avisa a
+ * propietarios y administradores (job en la misma transacción). Las S3 no: son credenciales del bucket de la
+ * organización, no de la persona.
+ */
+export async function deactivateMemberStorage(t: Db, tenantId: string, userId: string) {
+  const rows = await t.query<{ id: string; name: string; provider: string; was_active: boolean }>(
+    `WITH c AS (
+       SELECT id, active FROM storage_connections
+        WHERE tenant_id = $1 AND created_by = $2 AND provider <> 's3' AND deactivated_reason IS NULL FOR UPDATE)
+     UPDATE storage_connections s SET active = false, deactivated_reason = $3, updated_at = now()
+       FROM c WHERE s.id = c.id RETURNING s.id, s.name, s.provider, c.active AS was_active`,
+    [tenantId, userId, STORAGE_CREATOR_REMOVED],
+  );
+  for (const r of rows) {
+    await recordAudit(t, {
+      tenantId,
+      action: "storage.deactivated_member_removed",
+      actor: { type: "system", label: "CalaSign" },
+      targetType: "storage_connection",
+      targetId: r.id,
+      data: { provider: r.provider, name: r.name, createdBy: userId, wasActive: r.was_active },
+    });
+  }
+  if (rows.length) {
+    await enqueue(
+      t,
+      "platform",
+      { kind: "storage_member_removed", tenantId, userId, connectionIds: rows.map((r) => r.id) },
+      { dedupeKey: `sto-removed:${tenantId}:${userId}:${rows.map((r) => r.id).sort()[0]}`, tenantId, maxAttempts: 5 },
+    );
+  }
+  return rows.map((r) => ({ id: r.id, name: r.name, provider: r.provider }));
+}
 
 /**
  * Corta el acceso que una persona conserva en la organización después de dejar de ser miembro (baja desde la consola
@@ -35,6 +77,7 @@ export async function revokeMemberAccess(t: Db, tenantId: string, userId: string
     );
     await t.query(`DELETE FROM login_challenges WHERE tenant_id = $1 AND user_id = $2`, [tenantId, userId]);
   }
+  const storageConnections = removal ? await deactivateMemberStorage(t, tenantId, userId) : [];
   const scimTokens = await t.query<{ id: string }>(
     `UPDATE scim_tokens SET revoked_at = now() WHERE tenant_id = $1 AND created_by = $2 AND revoked_at IS NULL RETURNING id`,
     [tenantId, userId],
@@ -50,7 +93,7 @@ export async function revokeMemberAccess(t: Db, tenantId: string, userId: string
   }
   // Si era el último token SCIM activo, las bajas del IdP dejan de bloquear el JIT (ver releaseScimJitBlocks).
   if (scimTokens.length) await releaseScimJitBlocks(t, tenantId);
-  return { keys, invitations: invitations.length, serviceApps: apps.map((a) => a.client_id), scimTokens: scimTokens.length };
+  return { keys, invitations: invitations.length, serviceApps: apps.map((a) => a.client_id), scimTokens: scimTokens.length, storageConnections };
 }
 
 /**

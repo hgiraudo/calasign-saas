@@ -10,6 +10,7 @@
 // de la celda correcta (ver modules/data/cells.ts).
 import { resolve } from "node:path";
 import { config } from "../config";
+import { AppError } from "../lib/errors";
 
 export interface CellStorageConfig {
   driver: "local" | "s3";
@@ -98,9 +99,37 @@ export function resetCells() {
 
 export const defaultCell = () => cells().find((c) => c.default)!;
 
-/** Celda configurada para un id; ids viejos o desconocidos (p. ej. "local", "dev") caen en la por defecto. */
+/** Ids de antes de las celdas (tenants.cell por defecto 'local'; 'dev' en entornos viejos): son la celda por defecto. */
+const LEGACY_CELL_IDS = new Set(["", "local", "dev"]);
+export const isLegacyCellId = (id: string | null | undefined) => id == null || LEGACY_CELL_IDS.has(id);
+
+/** La celda de la organización no está configurada en este despliegue (falla cerrado: sus datos no viven acá). */
+export class CellNotConfiguredError extends AppError {
+  constructor(public readonly cell: string) {
+    super(503, "wrong_cell", "Los datos de esta organización están en una región que este servidor no atiende", { cell, baseUrl: null });
+    this.name = "CellNotConfiguredError";
+  }
+}
+
+/**
+ * Id efectivo de la celda de una organización: el configurado tal cual; los ids viejos ("local", "dev", vacío) son la
+ * por defecto. Un id que no está configurado acá (p. ej. "br" en un despliegue que solo tiene "us") se devuelve tal
+ * cual: NO cae en la por defecto (si no, los archivos de una organización de Brasil terminaban en el bucket de EE. UU.).
+ */
+export function effectiveCellId(id: string | null | undefined): string {
+  if (isLegacyCellId(id)) return defaultCell().id;
+  return id!;
+}
+
+/**
+ * Celda configurada para un id. Los ids viejos caen en la por defecto; un id de celda que no está configurada en este
+ * despliegue lanza CellNotConfiguredError (503 wrong_cell): nunca se guarda ni se lee en otra celda.
+ */
 export function cellById(id: string | null | undefined): CellConfig {
-  return cells().find((c) => c.id === id) ?? defaultCell();
+  const eff = effectiveCellId(id);
+  const c = cells().find((x) => x.id === eff);
+  if (!c) throw new CellNotConfiguredError(eff);
+  return c;
 }
 
 export function isConfiguredCell(id: string): boolean {
@@ -120,4 +149,22 @@ export function servedCells(): Set<string> {
 export function servesAllCells(): boolean {
   const served = servedCells();
   return cells().every((c) => served.has(c.id));
+}
+
+/**
+ * Condición SQL "la organización `tenantIdExpr` vive en una celda que atiende este proceso", para los barridos (archivo,
+ * BYOK, retención). Atendiendo todas las celdas es `TRUE` (un solo despliegue: nada cambia). Los ids viejos cuentan
+ * como la celda por defecto. Los ids de celda se validan con ID_RE al leerlos, así que van literales.
+ */
+export function servedCellsSql(tenantIdExpr: string): string {
+  if (servesAllCells()) return "TRUE";
+  const served = [...servedCells()].filter((c) => ID_RE.test(c));
+  const lit = (xs: string[]) => `ARRAY[${xs.map((x) => `'${x}'`).join(",")}]::text[]`;
+  const legacy = [...LEGACY_CELL_IDS].filter(Boolean);
+  // La expresión se evalúa en un SELECT sin FROM: así una columna sin calificar ("tenant_id") es la de la consulta de
+  // afuera y no la de tenant_directory.
+  const eff = `(SELECT CASE WHEN x.cell IS NULL OR x.cell = '' OR x.cell = ANY(${lit(legacy)}) THEN '${defaultCell().id}' ELSE x.cell END
+     FROM (SELECT COALESCE(cd.cell, ct.cell) AS cell FROM (SELECT ${tenantIdExpr} AS tid) q
+             JOIN tenants ct ON ct.id = q.tid LEFT JOIN tenant_directory cd ON cd.tenant_id = ct.id) x)`;
+  return served.length ? `(${eff} = ANY(${lit(served)}))` : "FALSE";
 }

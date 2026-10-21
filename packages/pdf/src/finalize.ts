@@ -82,7 +82,11 @@ export interface CertificateIdentity {
   nameScore: number | null;
   documentNumberMatched: boolean | null;
   faceMatchScore: number | null;
+  /** Decisión del proveedor (o de su integración) sobre la coincidencia facial cuando no hay puntaje. */
+  faceMatched?: boolean | null;
   liveness: boolean | null;
+  /** Controles que no vinieron en la decisión y se dieron por hechos porque la integración los declara. */
+  inferred?: ("faceMatched" | "liveness")[];
   reference: string | null;
   verifiedAt: string | null;
 }
@@ -943,8 +947,11 @@ async function drawCertificate(
       const matches: string[] = [];
       if (idv.nameScore != null) matches.push(`${L.idv_name} ${Math.round(idv.nameScore * 100)} %`);
       if (idv.documentNumberMatched === true) matches.push(L.idv_docnum);
+      // Lo inferido de la integración (sin dato en la decisión del proveedor) se dice tal cual, no como un control medido.
+      const byIntegration = (k: "faceMatched" | "liveness") => (idv.inferred ?? []).includes(k);
       if (idv.faceMatchScore != null) matches.push(`${L.idv_face} ${Math.round(idv.faceMatchScore * 100)} %`);
-      if (idv.liveness === true) matches.push(L.idv_liveness);
+      else if (idv.faceMatched === true) matches.push(byIntegration("faceMatched") ? `${L.idv_face} (${L.idv_by_integration})` : L.idv_face);
+      if (idv.liveness === true) matches.push(byIntegration("liveness") ? `${L.idv_liveness} (${L.idv_by_integration})` : L.idv_liveness);
       kv(L.idv_matched, matches.length ? matches.join(", ") : null, ix, 150, valueRight);
       kv(L.idv_reference, idv.reference, ix, 150, valueRight);
     }

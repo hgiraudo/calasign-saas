@@ -7,6 +7,8 @@ import { envelopeBaseUrl } from "../white-label/brand";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import {
   IDV_CAPTURE_KINDS,
+  IDV_LEVELS,
+  IDV_PROVIDERS,
   IdentitySettingsInput,
   requiredCaptures,
   type IdentitySettings,
@@ -22,6 +24,7 @@ import { config } from "../../config";
 import type { Db } from "../../infra/db";
 import { appendEvent, type Actor } from "../../infra/evidence";
 import { AppError, badRequest, conflict, notFound } from "../../lib/errors";
+import { z } from "zod";
 import { encrypt, encryptBytes, iso, sha256Hex, uuidv7 } from "../../lib/util";
 import { authenticate, type Services } from "../context";
 import { lockEnvelope, pastExpiry } from "../envelopes";
@@ -179,6 +182,21 @@ async function attemptsUsed(db: Db, recipientId: string): Promise<number> {
   return Number(r?.n ?? 0);
 }
 
+/** Para el firmante: neutro (el motivo concreto, para el remitente, va en el detalle del destinatario y al enviar). */
+const SIGNER_UNAVAILABLE_MESSAGE = "La verificación de identidad no está disponible por ahora: avisale al remitente";
+
+/**
+ * La verificación quedó atada a la sesión de firma integrada que la inició (session_token_hash, signer-token.ts): si se
+ * retoma, recibe fotos, se envía o se consulta desde otro token (el link del destinatario u otra sesión), deja de estarlo
+ * y su aprobación ya no mantiene viva esa sesión.
+ */
+async function unbindOtherSession(db: Db, verificationId: string, sessionHash: string | null) {
+  await db.query(
+    `UPDATE identity_verifications SET session_token_hash = NULL WHERE id = $1 AND session_token_hash IS NOT NULL AND session_token_hash IS DISTINCT FROM $2`,
+    [verificationId, sessionHash],
+  );
+}
+
 export async function signingIdentityFor(db: Db, r: any, e: any, opts: { revealSession: boolean }): Promise<SigningIdentity | null> {
   if (!identityRequired(r)) return null;
   const provider = r.id_verification_provider as IdvProvider;
@@ -297,7 +315,9 @@ export async function identityForCertificate(db: Db, recipients: any[]): Promise
       nameScore: typeof nm.score === "number" ? nm.score : null,
       documentNumberMatched: nm.documentNumberMatched ?? null,
       faceMatchScore: res.faceMatchScore ?? null,
+      faceMatched: res.faceMatched ?? null,
       liveness: res.liveness ?? null,
+      inferred: Array.isArray(res.inferredFromIntegration) ? res.inferredFromIntegration : [],
       reference: providerReference(v, res),
       verifiedAt: iso(v.completed_at),
     });
@@ -354,7 +374,9 @@ async function finalizeVerification(db: Db, verificationId: string, result: IdvR
     // Lo que la integración declara hacer (VERIFF_INTEGRATION_LEVEL, flujo de Truora por nivel) completa la aprobación
     // cuando la decisión no trae el puntaje facial o la prueba de vida.
     const caps = withIntegrationCapabilities(v.provider as IdvProvider, v.level as IdvLevel, result);
-    result = caps.result;
+    // Lo inferido queda guardado con el resultado: el certificado lo muestra como informado por la integración, no
+    // como un control con puntaje.
+    result = caps.inferred.length ? { ...caps.result, inferredFromIntegration: caps.inferred } : caps.result;
     // Aprobado por el proveedor pero sin la coincidencia facial o la prueba de vida que pide el nivel: levelFailure.
     let reason: string | null = result.status !== "approved" ? result.declineReason ?? "declined" : levelFailure(v.level as IdvLevel, result);
     if (!reason && !nameMatch.matched) reason = "name_mismatch";
@@ -378,6 +400,7 @@ async function finalizeVerification(db: Db, verificationId: string, result: IdvR
       nameMatch: { score: nameMatch.score, threshold: nameMatch.threshold },
       documentNumberMatched: nameMatch.documentNumberMatched,
       faceMatchScore: result.faceMatchScore,
+      faceMatched: result.faceMatched ?? null,
       liveness: result.liveness,
       riskFlags: result.riskFlags,
       // Controles que no vinieron en la decisión y se dan por hechos porque la integración los declara.
@@ -484,7 +507,8 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
   async function context(req: FastifyRequest<P>) {
     const { recipient: r, envelope: e, sessionToken } = await resolveToken(s.db, req.params.token);
     if (!identityRequired(r)) throw conflict("identity_not_required", "Este link no requiere verificación de identidad");
-    return { r, e, sessionToken };
+    // Hash del token de sesión del canje embebido con que se entró (null con el link permanente).
+    return { r, e, sessionToken, sessionHash: sessionToken ? sha256Hex(req.params.token) : null };
   }
 
   async function sessionOut(token: string) {
@@ -493,9 +517,12 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
   }
 
   app.get<P>("/v1/signing/:token/identity", rl, async (req) => {
-    const { r } = await context(req);
+    const { r, sessionHash } = await context(req);
     // Flujos "redirect": si el webhook todavía no llegó, se consulta al proveedor (como máximo cada 5 s).
     const v = await latestVerification(s.db, r.id);
+    // La respuesta revela la sesión del proveedor (redirectUrl): consultada desde otro token, deja de estar atada a la
+    // sesión de firma integrada que la inició.
+    if (v && ["created", "pending"].includes(v.status)) await unbindOtherSession(s.db, v.id, sessionHash);
     const adapter = getAdapter(r.id_verification_provider);
     if (v && v.status === "pending" && adapter.fetchResult && (!v.polled_at || Date.now() - new Date(v.polled_at).getTime() > 5000)) {
       try {
@@ -512,7 +539,7 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
   });
 
   app.post<P>("/v1/signing/:token/identity/start", rl, async (req, reply) => {
-    const { r, e, sessionToken } = await context(req);
+    const { r, e, sessionToken, sessionHash } = await context(req);
     // Vencido (aunque el barrido todavía no lo marcó): no se abre una sesión paga en el proveedor.
     if (e.status !== "sent" || pastExpiry(e)) throw new AppError(410, "envelope_closed", "El sobre ya no está disponible");
     if (!["sent", "viewed"].includes(r.status)) throw conflict("not_signable", "Ya no podés firmar este sobre");
@@ -520,8 +547,9 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
     const settings = await getIdentitySettings(s.db, e.tenant_id);
     const provider = r.id_verification_provider as IdvProvider;
     // Con el nivel: Truora sin flujo para el nivel (o una integración de Veriff que no llega) es un 503, no un 500 de
-    // createSession después de reservar.
-    if (!providerReady(provider, r.id_verification_level)) throw new AppError(503, "identity_provider_unavailable", "El proveedor de verificación no está disponible");
+    // createSession después de reservar. Mensaje neutro para el firmante: el motivo lo ve el remitente (detalle del
+    // destinatario: unavailableReason) y lo arregla con identity/reset cambiando el nivel o el proveedor.
+    if (!providerReady(provider, r.id_verification_level)) throw new AppError(503, "identity_provider_unavailable", SIGNER_UNAVAILABLE_MESSAGE);
 
     // Una reserva de modo redirect que quedó sin sesión del proveedor (el proceso murió o el proveedor no respondió)
     // se cancela antes de mirar la última verificación: si no, el inicio devolvía la reserva trabada para siempre.
@@ -541,13 +569,15 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
       // Un token de sesión vigente guardado (iframe embebido) no se pisa con el permanente (returnTokenEncToStore).
       const returnEnc = await returnTokenEncToStore(s.db, { token: req.params.token, sessionToken, storedTokenEnc: current.return_token_enc, recipientId: r.id });
       await s.db.query(`UPDATE identity_verifications SET return_token_enc = $2 WHERE id = $1 AND recipient_id = $3`, [current.id, returnEnc, r.id]);
+      await unbindOtherSession(s.db, current.id, sessionHash);
       return sessionOut(req.params.token);
     }
     // La última terminó en level_not_met (el proveedor aprobó sin el control facial o la prueba de vida que pide el
     // nivel): no consumió un intento, pero repetirla daría lo mismo y abriría otra sesión paga. Queda bloqueada hasta que
-    // el remitente revise la configuración y reinicie la verificación (identity/reset).
+    // el remitente revise la configuración y reinicie la verificación (identity/reset). Código propio
+    // (identity_level_not_supported), distinto del proveedor no disponible.
     if (current?.status === "failed" && current.failure_reason === "level_not_met") {
-      throw new AppError(409, "identity_provider_unavailable", "La verificación no se puede completar con la configuración actual del proveedor: pedile al remitente que la revise");
+      throw new AppError(409, "identity_level_not_supported", "La verificación no se puede completar con la configuración actual del proveedor: avisale al remitente");
     }
     const used = await attemptsUsed(s.db, r.id);
     if (used >= settings.maxAttempts) throw new AppError(429, "identity_attempts_exhausted", "Se agotaron los intentos de verificación");
@@ -587,9 +617,9 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
       const usedNow = await attemptsUsed(t, r.id);
       if (usedNow >= settings.maxAttempts) throw new AppError(429, "identity_attempts_exhausted", "Se agotaron los intentos de verificación");
       await t.query(
-        `INSERT INTO identity_verifications (id, tenant_id, envelope_id, recipient_id, provider, level, status, attempt, provider_ref, redirect_url, return_token_enc)
-         VALUES ($1,$2,$3,$4,$5,$6,'created',$7,NULL,NULL,$8)`,
-        [id, e.tenant_id, e.id, r.id, provider, r.id_verification_level, usedNow + 1, encrypt(req.params.token)],
+        `INSERT INTO identity_verifications (id, tenant_id, envelope_id, recipient_id, provider, level, status, attempt, provider_ref, redirect_url, return_token_enc, session_token_hash)
+         VALUES ($1,$2,$3,$4,$5,$6,'created',$7,NULL,NULL,$8,$9)`,
+        [id, e.tenant_id, e.id, r.id, provider, r.id_verification_level, usedNow + 1, encrypt(req.params.token), sessionHash],
       );
       await t.query(`UPDATE recipients SET identity_status = 'in_progress' WHERE id = $1`, [r.id]);
       await appendEvent(t, {
@@ -661,7 +691,7 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
   });
 
   app.post<P>("/v1/signing/:token/identity/captures/:kind", { ...rl, bodyLimit: MAX_IMAGE_BYTES + 1024 * 1024 }, async (req) => {
-    const { r, e } = await context(req);
+    const { r, e, sessionHash } = await context(req);
     const kind = req.params.kind as IdvCaptureKind;
     if (!(IDV_CAPTURE_KINDS as readonly string[]).includes(kind)) throw badRequest("invalid_capture", "Tipo de captura inválido");
     if (!requiredCaptures(r.id_verification_level).includes(kind)) throw badRequest("invalid_capture", "Esta captura no corresponde al nivel pedido");
@@ -669,7 +699,8 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
     const v = await latestVerification(s.db, r.id);
     if (!v || v.status !== "created" || getAdapter(v.provider).mode !== "builtin") throw conflict("no_active_capture", "Primero iniciá la verificación");
     // El proveedor de prueba deshabilitado (producción sin IDV_MOCK_ENABLED) no recibe fotos de documentos.
-    if (!providerReady(v.provider)) throw new AppError(503, "identity_provider_unavailable", "El proveedor de verificación no está disponible");
+    if (!providerReady(v.provider)) throw new AppError(503, "identity_provider_unavailable", SIGNER_UNAVAILABLE_MESSAGE);
+    await unbindOtherSession(s.db, v.id, sessionHash);
 
     const file = await req.file({ limits: { fileSize: MAX_IMAGE_BYTES } });
     if (!file) throw badRequest("file_required", "Falta la imagen (campo 'file')");
@@ -730,12 +761,13 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
   });
 
   app.post<P>("/v1/signing/:token/identity/submit", rl, async (req) => {
-    const { r, e } = await context(req);
+    const { r, e, sessionHash } = await context(req);
     assertSignable(e, r);
     const v = await latestVerification(s.db, r.id);
     if (!v || !["created", "pending"].includes(v.status)) throw conflict("no_active_verification", "No hay una verificación en curso");
     const adapter = getAdapter(v.provider);
-    if (!providerReady(v.provider)) throw new AppError(503, "identity_provider_unavailable", "El proveedor de verificación no está disponible");
+    if (!providerReady(v.provider)) throw new AppError(503, "identity_provider_unavailable", SIGNER_UNAVAILABLE_MESSAGE);
+    await unbindOtherSession(s.db, v.id, sessionHash);
     const actor = recipientActor(req, r);
     let outcome: string | null = null;
     if (adapter.mode === "builtin") {
@@ -825,9 +857,14 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
 
   // El remitente vuelve a empezar la verificación de un destinatario: anula las anteriores (aprobadas, fallidas y la que
   // esté en curso) y le devuelve todos los intentos. P. ej. agotó los intentos por fotos malas, o el proveedor quedó
-  // trabado sin resultado.
+  // trabado sin resultado. Con {provider, level} cambia además el proveedor o el nivel (con las mismas reglas que al
+  // armar el sobre, applyIdentityFlags): un sobre enviado con un nivel que el proveedor no puede hacer (de antes de esas
+  // reglas, o porque cambió VERIFF_INTEGRATION_LEVEL o el flujo de Truora) no queda trabado. Sin cambio, si el proveedor
+  // sigue sin poder hacer el nivel, 409 identity_level_not_supported (reiniciar no lo arreglaría).
+  const ResetInput = z.object({ provider: z.enum(IDV_PROVIDERS).optional(), level: z.enum(IDV_LEVELS).optional() });
   app.post<{ Params: { id: string; recipientId: string } }>("/v1/envelopes/:id/recipients/:recipientId/identity/reset", { preHandler: auth }, async (req) => {
     const a = req.auth!;
+    const input = ResetInput.parse(req.body ?? {});
     await s.db.tx(async (t) => {
       const e = await lockEnvelope(t, a.tenantId, req.params.id);
       if (e.status !== "sent" || pastExpiry(e)) throw conflict("not_in_progress", "Solo se reinicia la verificación en un sobre en curso");
@@ -835,6 +872,21 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
       if (!r) throw notFound("Destinatario");
       if (!identityRequired(r)) throw conflict("identity_not_required", "Este destinatario no tiene verificación de identidad");
       if (!["created", "sent", "viewed"].includes(r.status)) throw conflict("recipient_immutable", `${r.name} ya firmó o terminó su participación: no se puede modificar`);
+      const previous = { provider: r.id_verification_provider as IdvProvider, level: r.id_verification_level as IdvLevel };
+      const next = { provider: input.provider ?? previous.provider, level: input.level ?? previous.level };
+      const changed = next.provider !== previous.provider || next.level !== previous.level;
+      if (changed) {
+        // Plan, rol y disponibilidad del proveedor para el nivel (400 identity_provider_unavailable con el motivo).
+        await applyIdentityFlags(t, e.id, [{ id: r.id, role: r.role, idVerification: next }]);
+      } else {
+        const unavailable = providerUnavailableReason(next.provider, next.level);
+        if (unavailable)
+          throw conflict(
+            "identity_level_not_supported",
+            `${unavailable}. Reiniciar no lo resuelve: elegí otro nivel o proveedor (provider/level en el pedido) o corregí la configuración`,
+            { provider: next.provider, level: next.level },
+          );
+      }
       const canceled = await t.query<{ id: string; status: string }>(
         `UPDATE identity_verifications SET status = 'canceled', updated_at = now()
           WHERE recipient_id = $1 AND status IN ('created','pending','verified','failed','expired') RETURNING id, status`,
@@ -846,7 +898,12 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
         envelopeId: e.id,
         type: "recipient.identity_reset",
         actor: a.actor,
-        data: { recipientId: r.id, previousStatus: r.identity_status ?? "pending", canceledVerifications: canceled.length },
+        data: {
+          recipientId: r.id,
+          previousStatus: r.identity_status ?? "pending",
+          canceledVerifications: canceled.length,
+          ...(changed ? { previous, provider: next.provider, level: next.level } : {}),
+        },
       });
     });
     return getRecipientIdentityDetail(req.params.id, req.params.recipientId, a.tenantId);
@@ -862,6 +919,9 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
     const rows = await s.db.query<any>(`SELECT * FROM identity_verifications WHERE recipient_id = $1 ORDER BY created_at`, [r.id]);
     return {
       identity: toRecipientIdentity(r),
+      // Para el remitente: por qué el proveedor no puede hacer el nivel pedido (el firmante ve un mensaje neutro). Se
+      // resuelve con identity/reset eligiendo otro nivel o proveedor, o corrigiendo la configuración.
+      unavailableReason: r.id_verification_provider ? providerUnavailableReason(r.id_verification_provider, r.id_verification_level) : null,
       attempts: rows.map((v) => {
         const res = (v.result ?? null) as IdvResult | null;
         return {

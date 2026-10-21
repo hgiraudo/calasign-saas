@@ -129,6 +129,10 @@ export const MORE_CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
     "pt-BR": "Você atingiu o máximo de conexões de armazenamento da organização.",
     en: "You've reached the organization's maximum number of storage connections.",
   },
+  storage_reconnect_required: {
+    "pt-BR": "Quem conectou esta conta não faz mais parte da organização: conecte o armazenamento novamente.",
+    en: "The person who connected this account is no longer part of the organization: connect the storage again.",
+  },
   too_many_integrations: { "pt-BR": "Máximo de 20 integrações de avisos por organização.", en: "At most 20 notification integrations per organization." },
   site_required: { "pt-BR": "Informe a URL do site do SharePoint.", en: "Enter the SharePoint site URL." },
   storage_test_failed: {
@@ -454,5 +458,13 @@ export const MORE_CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
   currency_not_supported: {
     "pt-BR": "O Mercado Pago só cobra na moeda da conta: escolha essa moeda ou outro provedor.",
     en: "Mercado Pago only charges in its account's currency: choose that currency or another provider.",
+  },
+  identity_level_not_supported: {
+    "pt-BR": "A verificação de identidade não pode ser concluída com a configuração atual do provedor: escolha outro nível ou provedor (ou corrija a configuração) e reinicie-a.",
+    en: "The identity verification can't be completed with the provider's current setup: choose another level or provider (or fix the setup) and restart it.",
+  },
+  payment_webhook_not_configured: {
+    "pt-BR": "O provedor de cobrança não tem o segredo do webhook configurado neste ambiente e o pagamento não poderia ser confirmado: remova a cobrança do envelope ou escolha outro provedor.",
+    en: "The payment provider has no webhook secret configured in this environment, so the payment couldn't be confirmed: remove the payment from the envelope or choose another provider.",
   },
 };

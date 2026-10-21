@@ -24,7 +24,7 @@ import { AppError, badRequest } from "../lib/errors";
 import { sha256Hex, uuidv7 } from "../lib/util";
 import { expandAnchors } from "./anchors";
 import type { AuthContext, Services } from "./context";
-import { issueSigningUrl } from "./embed";
+import { issueSigningUrl, reusableSigningUrl } from "./embed";
 import {
   idempotent,
   insertPreparedDocument,
@@ -138,7 +138,10 @@ function signingUrlsReplay(s: Services, a: AuthContext, body: unknown) {
           const r = await s.db.tx(async (t) => {
             const cur = await t.one<any>(`SELECT embedded, status, role FROM recipients WHERE id = $1 AND envelope_id = $2`, [recipientId, envelopeId]);
             if (!cur?.embedded || cur.status !== "sent" || !["signer", "approver"].includes(cur.role)) return null;
-            return issueSigningUrl(t, a, envelopeId, recipientId, opts.success ? opts.data : {});
+            const input = opts.success ? opts.data : {};
+            // Una URL de esta misma creación (o de una repetición anterior) todavía sin canjear ni vencer se devuelve tal
+            // cual: repetir el pedido no emite un código nuevo cada vez.
+            return (await reusableSigningUrl(t, a, envelopeId, recipientId, input)) ?? issueSigningUrl(t, a, envelopeId, recipientId, input, { replayable: true });
           });
           if (r) signingUrls.push({ recipientId, ...r });
         } catch {
@@ -317,7 +320,8 @@ async function createEnvelope(
         `SELECT id FROM recipients WHERE envelope_id = $1 AND embedded AND status = 'sent' AND role IN ('signer','approver') ORDER BY routing_order, created_at`,
         [id],
       );
-      for (const r of active) signingUrls.push({ recipientId: r.id, ...(await issueSigningUrl(t, a, id, r.id, input.embeddedSigning ?? {})) });
+      for (const r of active)
+        signingUrls.push({ recipientId: r.id, ...(await issueSigningUrl(t, a, id, r.id, input.embeddedSigning ?? {}, { replayable: true })) });
     });
   };
   // Si algo falla (también a mitad de la subida), los PDF ya subidos se borran: no los referencia nada.

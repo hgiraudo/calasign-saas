@@ -60,6 +60,11 @@ export interface IdvResult {
   /** Id del proceso en el proveedor. */
   reference: string | null;
   declineReason: string | null;
+  /**
+   * Controles que la decisión no traía y se dieron por hechos porque la integración del proveedor los declara
+   * (VERIFF_INTEGRATION_LEVEL, flujo de Truora por nivel). Lo agrega CalaSign al guardar el resultado.
+   */
+  inferredFromIntegration?: ("faceMatched" | "liveness")[];
 }
 
 export interface NameMatchResult {

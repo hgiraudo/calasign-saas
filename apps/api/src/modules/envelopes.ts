@@ -23,7 +23,7 @@ import { setEmbeddedFlags } from "./embed";
 import { applyEnvelopeSettings } from "./participants";
 import { checkSenderValue, insertEnvelopeField } from "./fieldvalues";
 import { applyInPersonFlags } from "./experience";
-import { applyIdentityFlags } from "./identity/kyc";
+import { applyIdentityFlags, providerUnavailableReason } from "./identity/kyc";
 import { MISSING_ID_DOCUMENT_SQL, applyCertificateFlags, discardCertsignFiles } from "./certsign";
 import { downgradeIdMatchSql } from "./certsign-requirements";
 import { assignFieldIds, formulaRefs, pruneDanglingConditions, saveFieldLogic } from "./logic";
@@ -1050,6 +1050,20 @@ export async function sendEnvelope(t: Db, tenantId: string, envelopeId: string, 
         params: { name: r.name },
         message: `${r.name}: tiene solo Telegram y no tiene un chat vinculado; cargá telegramChatId o agregá email/WhatsApp`,
       });
+  // Verificación de identidad que el proveedor no puede hacer en este entorno (no configurado, Truora sin flujo para el
+  // nivel o por encima de VERIFF_INTEGRATION_LEVEL). applyIdentityFlags lo controla al pedirla, pero un borrador armado
+  // antes (o antes de un cambio de configuración) llegaba al firmante, que quedaba trabado con un 503 al verificarse.
+  for (const r of recips) {
+    if (!r.id_verification_provider || (r.role !== "signer" && r.role !== "approver")) continue;
+    const level = r.id_verification_level ?? "document_selfie";
+    const reason = providerUnavailableReason(r.id_verification_provider, level);
+    if (reason)
+      problems.push({
+        code: "identity_provider_unavailable",
+        params: { name: r.name, provider: r.id_verification_provider, level },
+        message: `${r.name}: ${reason}. Cambiá el proveedor o el nivel de verificación de identidad`,
+      });
+  }
   if (e.expires_at && new Date(e.expires_at) <= new Date())
     problems.push({ code: "expiry_past", params: {}, message: "La fecha de vencimiento ya pasó" });
   problems.push(...danglingFormulaProblems(fields));
@@ -1060,8 +1074,9 @@ export async function sendEnvelope(t: Db, tenantId: string, envelopeId: string, 
     // el proveedor ya no está configurado, el sobre no se envía (si no, se cobraba sin el plan o el firmante quedaba
     // trabado con un pago imposible). Cubre todos los caminos de envío, que pasan por acá.
     requireFeature((await tenantPlan(t, tenantId)).plan, "payments", "El cobro al firmar");
-    // Credenciales y webhook del proveedor (sin webhook el pago nunca se confirma) y, con Mercado Pago, la moneda.
-    await assertEnvelopePaymentProvider(pay.provider, pay.currency);
+    // Credenciales y webhook del proveedor (sin webhook el pago nunca se confirma) y, con Mercado Pago, la moneda si ya
+    // se conoce: sin consultar a Mercado Pago dentro de la transacción del envío (atSend).
+    await assertEnvelopePaymentProvider(pay.provider, pay.currency, { atSend: true });
   }
   if (pay && !signers.some((r) => r.id === pay.recipient_id))
     problems.push({ code: "payer_not_signer", params: {}, message: "Quien paga el cobro tiene que ser un firmante" });

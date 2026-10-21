@@ -71,6 +71,8 @@ export interface ArchiveInfo {
   checkedAt: string | null;
   renewals: number;
   error: string | null;
+  /** Error conocido, para mostrarlo traducido: tsa_cannot_extend = la TSA configurada no puede extender la validez. */
+  errorCode?: "tsa_cannot_extend" | null;
   versions: SignedVersion[];
 }
 

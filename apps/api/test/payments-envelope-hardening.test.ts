@@ -81,7 +81,10 @@ describe("proveedor del cobro: credenciales y webhook", () => {
     const s = await setup({ status: "draft", payStatus: null });
     const put = await putPayment(s.envelope, s.recipient, "stripe", "USD");
     expect(put.statusCode).toBe(400);
-    expect(put.json().error.code).toBe("provider_not_configured");
+    // Credenciales cargadas pero sin el secreto del webhook: lo dice (y qué hacer), no "no configurado".
+    expect(put.json().error.code).toBe("payment_webhook_not_configured");
+    expect(put.json().error.message).toContain("STRIPE_WEBHOOK_SECRET");
+    expect(put.json().error.message).toMatch(/Quitá el cobro|otro proveedor/);
 
     const saved = { secret: config.billing.stripe.webhookSecret, env: config.environment };
     try {
@@ -96,12 +99,22 @@ describe("proveedor del cobro: credenciales y webhook", () => {
     }
   });
 
-  it("al enviar: un cobro con Stripe sin webhook no deja enviar (400 provider_not_configured)", async () => {
+  it("al enviar: un cobro con Stripe sin webhook no deja enviar (400 payment_webhook_not_configured)", async () => {
     const { sendEnvelope } = await import("../src/modules/envelopes");
     const { SYSTEM } = await import("../src/infra/evidence");
     const s = await setup({ status: "draft", provider: "stripe" });
     const err = await db.tx((t) => sendEnvelope(t, tenant, s.envelope, SYSTEM)).catch((e) => e);
-    expect(err.code).toBe("provider_not_configured");
+    expect(err.code).toBe("payment_webhook_not_configured");
+    // Sin credenciales: sigue siendo provider_not_configured.
+    const { assertEnvelopePaymentProvider } = await import("../src/modules/billing/providers");
+    const { config } = await import("../src/config");
+    const prev = config.billing.stripe.secretKey;
+    try {
+      (config.billing.stripe as { secretKey: string | null }).secretKey = null;
+      await expect(assertEnvelopePaymentProvider("stripe", "USD")).rejects.toMatchObject({ code: "provider_not_configured" });
+    } finally {
+      (config.billing.stripe as { secretKey: string | null }).secretKey = prev;
+    }
   });
 });
 
@@ -125,6 +138,36 @@ describe("Mercado Pago: solo en la moneda de la cuenta", () => {
     // En ARS pasa ese control (y falla después por el borrador incompleto).
     await db.query(`UPDATE envelope_payments SET currency = 'ARS' WHERE envelope_id = $1`, [s.envelope]);
     expect((await db.tx((t) => sendEnvelope(t, tenant, s.envelope, SYSTEM)).catch((e) => e)).code).toBe("envelope_incomplete");
+  });
+
+  it("al enviar no se consulta a Mercado Pago (dentro de la transacción): moneda desconocida, se deja pasar", async () => {
+    const { sendEnvelope } = await import("../src/modules/envelopes");
+    const { SYSTEM } = await import("../src/infra/evidence");
+    const { config } = await import("../src/config");
+    const { resetMpCurrencyCache } = await import("../src/modules/billing/providers");
+    const prev = config.billing.mercadopago.currencies;
+    const real = globalThis.fetch;
+    const calls: string[] = [];
+    globalThis.fetch = (async (input: any, init?: any) => {
+      const url = String(input?.url ?? input);
+      if (url.startsWith("https://mp.test")) {
+        calls.push(url);
+        return new Response(JSON.stringify({ site_id: "MLA" }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return real(input, init);
+    }) as typeof fetch;
+    try {
+      (config.billing.mercadopago as { currencies: string[] }).currencies = [];
+      resetMpCurrencyCache();
+      const s = await setup({ status: "draft", provider: "mercadopago", currency: "USD" });
+      // Sin MP_CURRENCIES ni consulta previa: pasa ese control (y falla después por el borrador incompleto), sin red.
+      expect((await db.tx((t) => sendEnvelope(t, tenant, s.envelope, SYSTEM)).catch((e) => e)).code).toBe("envelope_incomplete");
+      expect(calls).toEqual([]);
+    } finally {
+      globalThis.fetch = real;
+      (config.billing.mercadopago as { currencies: string[] }).currencies = prev;
+      resetMpCurrencyCache();
+    }
   });
 });
 
@@ -208,10 +251,21 @@ describe("POST /v1/envelopes idempotente con firmantes embebidos", () => {
     expect(r2.envelope.id).toBe(body.envelope.id);
     expect(r2.signingUrls).toHaveLength(1);
     expect(r2.signingUrls[0].recipientId).toBe(body.signingUrls[0].recipientId);
-    expect(r2.signingUrls[0].url).not.toBe(url1);
+    // Sin canjear ni vencer: la misma URL (no se emite un código nuevo en cada repetición).
+    expect(r2.signingUrls[0].url).toBe(url1);
     expect(r2.signingUrlsHint).toBeUndefined();
+    const again2 = await app.inject({ method: "POST", url: "/v1/envelopes", headers, payload });
+    expect(again2.json().signingUrls[0].url).toBe(url1);
+    const sessions = await db.query<any>(`SELECT used_at, replay_code_enc FROM embed_sessions WHERE envelope_id = $1`, [body.envelope.id]);
+    expect(sessions).toHaveLength(1);
+    // Canjeada: la próxima repetición emite una nueva (y el código guardado se borra).
+    expect((await app.inject({ method: "GET", url: `/embed/${code1}` })).statusCode).toBe(302);
+    expect((await db.one<any>(`SELECT replay_code_enc FROM embed_sessions WHERE envelope_id = $1`, [body.envelope.id])).replay_code_enc).toBeNull();
+    const again3 = await app.inject({ method: "POST", url: "/v1/envelopes", headers, payload });
+    const url3 = String(again3.json().signingUrls[0].url);
+    expect(url3).not.toBe(url1);
     // La URL reemitida sirve.
-    expect((await app.inject({ method: "GET", url: `/embed/${String(r2.signingUrls[0].url).split("/embed/")[1]}` })).statusCode).toBe(302);
+    expect((await app.inject({ method: "GET", url: `/embed/${url3.split("/embed/")[1]}` })).statusCode).toBe(302);
 
     // Sobre anulado: ya no se puede emitir; se omite con la pista.
     await app.inject({ method: "POST", url: `/v1/envelopes/${body.envelope.id}/void`, headers: auth, payload: { reason: "x" } });

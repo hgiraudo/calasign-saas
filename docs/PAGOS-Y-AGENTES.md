@@ -60,12 +60,15 @@ Flujo del firmante: `GET /v1/signing/:token/payment` (si le toca pagar, monto y 
   esté configurado (400 `provider_not_configured`), en todos los caminos de envío.
 - **Proveedor configurado = credenciales + webhook**: como la confirmación solo llega por webhook, Stripe se ofrece
   (lista de proveedores, `PUT …/payment` y envío) solo con `STRIPE_SECRET_KEY` **y** `STRIPE_WEBHOOK_SECRET`; Mercado
-  Pago, con `MP_ACCESS_TOKEN` y, en producción, `MP_WEBHOOK_SECRET` (igual que las suscripciones). Si no, 400
-  `provider_not_configured`.
+  Pago, con `MP_ACCESS_TOKEN` y, en producción, `MP_WEBHOOK_SECRET` (igual que las suscripciones). Sin credenciales,
+  400 `provider_not_configured`; con credenciales pero sin el secreto del webhook, 400
+  `payment_webhook_not_configured` (el mensaje nombra la variable y propone quitar el cobro o cambiar de proveedor).
 - **Moneda de Mercado Pago**: una cuenta de Mercado Pago cobra solo en la moneda de su país (`MP_CURRENCIES` o la que
-  informa `GET /users/me`). Un cobro con Mercado Pago en otra moneda se rechaza al configurarlo y al enviar el sobre
-  (400 `currency_not_supported`); si la moneda de la cuenta todavía no se pudo consultar, 503 `provider_unavailable`
-  (con `Retry-After`), o 422 `provider_misconfigured` si el país de la cuenta no se reconoce.
+  informa `GET /users/me`). Un cobro con Mercado Pago en otra moneda se rechaza al configurarlo (400
+  `currency_not_supported`); si la moneda de la cuenta todavía no se pudo consultar, 503 `provider_unavailable` (con
+  `Retry-After`), o 422 `provider_misconfigured` si el país de la cuenta no se reconoce. Al enviar el sobre no se
+  consulta a Mercado Pago (el envío corre en una transacción con el sobre bloqueado): la moneda se controla solo si ya
+  se conoce (`MP_CURRENCIES` o una consulta anterior); si no, se deja pasar.
 
 ### Medios de pago por país
 

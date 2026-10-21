@@ -4,6 +4,7 @@
 import type { FastifyInstance } from "fastify";
 import { config } from "../config";
 import type { Db } from "../infra/db";
+import { servedCellsSql } from "../infra/cells";
 import { SYSTEM, appendEvent } from "../infra/evidence";
 import type { BlobStore } from "../infra/storage";
 import { AppError } from "../lib/errors";
@@ -17,7 +18,8 @@ export const PURGED_IDV_RESULT_SQL = `CASE WHEN result IS NULL THEN NULL ELSE js
   'status', result->'status',
   'document', jsonb_build_object('type', result->'document'->'type', 'country', result->'document'->'country', 'number', NULL, 'expiresOn', NULL),
   'person', jsonb_build_object('firstName', NULL, 'lastName', NULL, 'fullName', NULL, 'birthDate', NULL),
-  'faceMatchScore', result->'faceMatchScore', 'liveness', result->'liveness', 'riskFlags', COALESCE(result->'riskFlags', '[]'::jsonb),
+  'faceMatchScore', result->'faceMatchScore', 'faceMatched', result->'faceMatched', 'liveness', result->'liveness',
+  'inferredFromIntegration', result->'inferredFromIntegration', 'riskFlags', COALESCE(result->'riskFlags', '[]'::jsonb),
   'reference', result->'reference', 'declineReason', result->'declineReason', 'purged', true) END`;
 
 interface Deps {
@@ -101,7 +103,8 @@ const RETRY_BACKOFF = "6 hours";
 
 export async function purgeExpiredEnvelopes(d: Deps, opts: { tenantId?: string; ignoreAge?: boolean; limit?: number } = {}) {
   const params: unknown[] = [];
-  let where = `e.status IN ('completed','voided','declined','expired') AND e.purged_at IS NULL AND t.retention_days IS NOT NULL`;
+  // Solo las organizaciones de las celdas que atiende este proceso (residencia de datos: sus archivos están en otro lado).
+  let where = `e.status IN ('completed','voided','declined','expired') AND e.purged_at IS NULL AND t.retention_days IS NOT NULL AND ${servedCellsSql("e.tenant_id")}`;
   if (!opts.ignoreAge) {
     params.push(daySeconds());
     where += ` AND ${CLOSED_AT} < now() - make_interval(secs => t.retention_days * $${params.length}::double precision)`;
@@ -212,6 +215,7 @@ export async function purgeExpiredEnvelopes(d: Deps, opts: { tenantId?: string; 
         -- Uno que falló hace poco queda para después (si no, 100 que fallan siempre trababan la pasada).
         ${opts.ignoreAge ? "" : `AND (f.purge_attempted_at IS NULL OR f.purge_attempted_at < now() - interval '${RETRY_BACKOFF}')`}
         ${opts.tenantId ? "AND f.tenant_id = $1" : ""}
+        AND ${servedCellsSql("f.tenant_id")}
       ORDER BY f.purge_attempted_at NULLS FIRST
       LIMIT 100`,
     opts.tenantId ? [opts.tenantId] : [],

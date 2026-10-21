@@ -100,7 +100,7 @@ function pdfStrings(buf) {
 }
 
 const mailbox = async (api, pred, what) => {
-  for (let i = 0; i < 60; i++) {
+  for (let i = 0; i < 120; i++) {
     const { items } = await api("GET", "/dev/mailbox");
     const m = items.find(pred);
     if (m) return m;

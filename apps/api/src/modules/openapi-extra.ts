@@ -324,7 +324,25 @@ export const ERRORS: Record<string, Err> = {
   storage_provider_not_configured: { status: 409, code: "provider_not_configured", message: "Este proveedor no está configurado en el servidor", summary: "Proveedor de almacenamiento sin credenciales OAuth en el servidor" },
   site_required: { status: 400, code: "site_required", message: "Indicá la URL del sitio de SharePoint", summary: "SharePoint sin siteUrl" },
   too_many_connections: { status: 400, code: "too_many_connections", message: "Máximo 20 conexiones de almacenamiento por organización", summary: "Tope de 20 conexiones de almacenamiento" },
+  storage_reconnect_required: {
+    status: 409,
+    code: "storage_reconnect_required",
+    message: "Quien conectó esta cuenta ya no es parte de la organización: conectá el almacenamiento de nuevo",
+    summary: "Reactivar una conexión OAuth desactivada porque quien la conectó dejó la organización",
+  },
   provider_not_configured: { status: 400, code: "provider_not_configured", message: "El proveedor stripe no está configurado en este entorno", summary: "Proveedor de cobro no configurado" },
+  payment_webhook_not_configured: {
+    status: 400,
+    code: "payment_webhook_not_configured",
+    message: "El proveedor de cobro stripe no tiene configurado el secreto del webhook (STRIPE_WEBHOOK_SECRET) en este entorno: el pago no se podría confirmar. Quitá el cobro del sobre o elegí otro proveedor",
+    summary: "Proveedor de cobro con credenciales pero sin el secreto del webhook (el pago no se confirmaría)",
+  },
+  identity_level_not_supported: {
+    status: 409,
+    code: "identity_level_not_supported",
+    message: "La integración de Veriff declara el nivel document y el destinatario pide document_selfie: … Reiniciar no lo resuelve: elegí otro nivel o proveedor (provider/level en el pedido) o corregí la configuración",
+    summary: "El proveedor no puede hacer el nivel pedido: reiniciar con otro nivel o proveedor",
+  },
   invalid_payer: { status: 400, code: "invalid_payer", message: "El pagador tiene que ser un firmante", summary: "payerRecipientId no es un firmante del sobre" },
   invalid_logo: { status: 400, code: "invalid_logo", message: "El logo tiene que ser PNG, JPG o SVG", summary: "Formato no admitido o SVG con scripts/referencias externas" },
   identity_provider_unavailable: {

@@ -785,7 +785,18 @@ export function StoragePage() {
                   {c.accountLabel ? `${c.accountLabel} · ` : ""}
                   <code>{c.target}</code>
                 </span>
+                {c.createdBy && (
+                  <span className="muted small break">
+                    {p("sto.createdBy", {
+                      who: (() => {
+                        const who = [c.createdBy.name, c.createdBy.email ? `<${c.createdBy.email}>` : null].filter(Boolean).join(" ") || "?";
+                        return c.createdBy.member ? who : p("sto.createdByGone", { who });
+                      })(),
+                    })}
+                  </span>
+                )}
                 <span className="muted small">{c.lastSuccessAt ? p("sto.lastOk", { when: formatDateTime(c.lastSuccessAt, locale) }) : p("common.never")}</span>
+                {c.deactivatedReason === "creator_removed" && <span className="small" style={{ color: "#b91c1c" }}>{p("sto.creatorRemoved")}</span>}
                 {c.lastError && <span className="small" style={{ color: "#b91c1c" }}>{c.lastError}</span>}
               </div>
               <span className={`badge ${c.active ? "badge-completed" : "badge-voided"}`}>{c.active ? p("common.active") : p("common.inactive")}</span>
@@ -807,9 +818,12 @@ export function StoragePage() {
               >
                 {p("common.test")}
               </button>
-              <button type="button" className="btn btn-sm" onClick={() => act(() => api(`/v1/storage/connections/${c.id}`, { method: "PATCH", body: { active: !c.active } }))}>
-                {c.active ? p("common.deactivate") : p("common.activate")}
-              </button>
+              {/* Desactivada porque quien la conectó dejó la organización: no se reactiva, hay que volver a conectarla. */}
+              {!(c.deactivatedReason === "creator_removed" && !c.active) && (
+                <button type="button" className="btn btn-sm" onClick={() => act(() => api(`/v1/storage/connections/${c.id}`, { method: "PATCH", body: { active: !c.active } }))}>
+                  {c.active ? p("common.deactivate") : p("common.activate")}
+                </button>
+              )}
               <label className="row-wrap small">
                 <input
                   type="checkbox"

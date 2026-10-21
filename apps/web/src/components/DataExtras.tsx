@@ -138,6 +138,7 @@ export function ArchivePanel({ envelopeId, canManage }: { envelopeId: string; ca
           </ol>
         </>
       )}
+      {info.errorCode === "tsa_cannot_extend" && <p className="alert alert-warn">{dt("archive.tsaCannotExtend")}</p>}
       {done && <p className="alert alert-success" role="status">{dt("archive.renewed")}</p>}
       {canManage && info.validUntil && (
         <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => void renew()}>

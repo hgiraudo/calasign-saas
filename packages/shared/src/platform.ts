@@ -224,7 +224,11 @@ export interface StorageProviderInfo {
 
 export const ConnectStorageOAuthInput = z.object({
   name: z.string().trim().min(1).max(100),
-  /** Carpeta de destino (ruta, o id de carpeta en Google Drive). Vacía: raíz / carpeta de la app. */
+  /**
+   * Carpeta de destino: una ruta ("Contratos/2026": se crean las subcarpetas que falten) o, en Google Drive, también el id
+   * de una carpeta (o su URL …/folders/<id>) que la app pueda ver; si no la ve, se toma como nombre. Vacía: raíz /
+   * carpeta de la app.
+   */
   folder: z.string().trim().max(300).optional().default(""),
   /** SharePoint: URL del sitio (https://empresa.sharepoint.com/sites/Legal). Obligatoria para sharepoint. */
   siteUrl: z.string().trim().url().max(400).optional(),
@@ -268,6 +272,10 @@ export interface StorageConnection {
   /** También se sube el certificado de evidencia junto al PDF. */
   includeEvidence: boolean;
   createdAt: string;
+  /** Quién la conectó (las OAuth exportan a SU cuenta). member: sigue en la organización. */
+  createdBy: { id: string; name: string | null; email: string | null; member: boolean } | null;
+  /** Desactivada por el sistema: creator_removed = quien la conectó dejó la organización (hay que volver a conectarla). */
+  deactivatedReason: "creator_removed" | null;
   lastSuccessAt: string | null;
   lastError: string | null;
 }

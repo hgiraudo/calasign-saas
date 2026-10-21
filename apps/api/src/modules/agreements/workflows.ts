@@ -45,6 +45,7 @@ import { getPath, interpolate, interpolateValue, refreshSearchVector, setPath, t
 import { channelHasAddress } from "./documents";
 import { agreementMetaFromMapping, createEnvelopeFromPdf, insertFileRow, renderDocument, storeGeneratedPdf } from "./documents";
 import { ingestEnvelope } from "./repository";
+import { noteSettledPaymentOnClose } from "../billing/payment-close";
 
 const MAX_STEP_ATTEMPTS = 3;
 const STALE_CLAIM_MS = 10 * 60_000;
@@ -472,6 +473,7 @@ async function voidRunEnvelopes(t: Db, run: any, actor: Actor, reason: string) {
     if (env?.status !== "sent" && env?.status !== "awaiting_certificates") continue;
     await t.query(`UPDATE envelopes SET status = 'voided', voided_at = now(), void_reason = $2, updated_at = ${BUMP_UPDATED_AT}, version = version + 1 WHERE id = $1`, [env.id, reason]);
     await appendEvent(t, { tenantId: env.tenant_id, envelopeId: env.id, type: "envelope.voided", actor, data: { reason, workflowRunId: run.id } });
+    await noteSettledPaymentOnClose(t, env.id, "voided", actor);
     const notified = await t.query<any>(
       `SELECT r.id FROM recipients r WHERE r.envelope_id = $1 AND (r.status IN ('sent','viewed')
          OR EXISTS (SELECT 1 FROM certificate_signatures c WHERE c.recipient_id = r.id AND c.status = 'pending'))`,

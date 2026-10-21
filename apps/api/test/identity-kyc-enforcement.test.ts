@@ -174,28 +174,116 @@ function upload(token: string, kind: string, seed: number) {
 }
 
 describe("nivel exigido con proveedores externos", () => {
-  it("Veriff aprobado sin coincidencia facial no cumple document_selfie (level_not_met); con similitud sí", async () => {
+  it("Veriff: la aprobación sin datos biométricos cumple lo que declara VERIFF_INTEGRATION_LEVEL; un puntaje bajo gana", async () => {
+    // Integración document_selfie (default): la aprobación sin faceMatch cuenta como coincidencia facial.
     const a = await setup({ provider: "veriff", level: "document_selfie" });
     expect((await signing(a.token, "/identity/start", "POST")).statusCode).toBe(200);
     const va = await db.one<any>(`SELECT * FROM identity_verifications WHERE recipient_id = $1`, [a.recipient]);
     const wh = await veriffHook({ id: va.provider_ref, status: "approved", person: { firstName: "Ana", lastName: "Pérez" } });
     expect(wh.statusCode).toBe(200);
-    expect(await verification(va.id)).toMatchObject({ status: "failed", failure_reason: "level_not_met" });
-    expect((await recipientRow(a.recipient)).identity_failure_reason).toBe("level_not_met");
+    expect((await verification(va.id)).status).toBe("verified");
+    const ev = await db.one<any>(`SELECT data FROM envelope_events WHERE envelope_id = $1 AND type = 'recipient.identity_verified'`, [a.envelope]);
+    expect(ev.data.inferredFromIntegration).toEqual(["faceMatched"]);
 
+    // Puntaje explícito bajo el umbral: falla del firmante (face_mismatch), consume un intento.
     const b = await setup({ provider: "veriff", level: "document_selfie" });
     await signing(b.token, "/identity/start", "POST");
     const vb = await db.one<any>(`SELECT * FROM identity_verifications WHERE recipient_id = $1`, [b.recipient]);
-    await veriffHook({ id: vb.provider_ref, status: "approved", person: { firstName: "Ana", lastName: "Pérez" }, faceMatch: { similarity: 0.93 } });
-    expect((await verification(vb.id)).status).toBe("verified");
+    await veriffHook({ id: vb.provider_ref, status: "approved", person: { firstName: "Ana", lastName: "Pérez" }, faceMatch: { similarity: 0.4 } });
+    expect(await verification(vb.id)).toMatchObject({ status: "failed", failure_reason: "face_mismatch" });
+    expect((await signing(b.token, "/identity")).json().identity.attemptsLeft).toBe(2);
+
+    // Un nivel por encima de la integración: no se inicia (503, sin abrir una sesión paga) ni se puede pedir al enviar.
+    const c = await setup({ provider: "veriff", level: "document_selfie_liveness" });
+    fetchCalls = [];
+    const st = await signing(c.token, "/identity/start", "POST");
+    expect(st.statusCode).toBe(503);
+    expect(st.json().error.code).toBe("identity_provider_unavailable");
+    expect(fetchCalls).toEqual([]);
+    const { applyIdentityFlags } = await import("../src/modules/identity/kyc");
+    await expect(applyIdentityFlags(db, c.envelope, [{ id: c.recipient, role: "signer", idVerification: { provider: "veriff", level: "document_selfie_liveness" } }])).rejects.toMatchObject({
+      code: "identity_provider_unavailable",
+    });
+
+    // Con la integración declarada en document_selfie_liveness, la prueba de vida también se infiere; liveness false gana.
+    const { config } = await import("../src/config");
+    const prev = config.identity.veriffIntegrationLevel;
+    (config.identity as any).veriffIntegrationLevel = "document_selfie_liveness";
+    try {
+      expect((await signing(c.token, "/identity/start", "POST")).statusCode).toBe(200);
+      const vc = await db.one<any>(`SELECT * FROM identity_verifications WHERE recipient_id = $1`, [c.recipient]);
+      await veriffHook({ id: vc.provider_ref, status: "approved", person: { firstName: "Ana", lastName: "Pérez" } });
+      expect((await verification(vc.id)).status).toBe("verified");
+      const d = await setup({ provider: "veriff", level: "document_selfie_liveness" });
+      await signing(d.token, "/identity/start", "POST");
+      const vd = await db.one<any>(`SELECT * FROM identity_verifications WHERE recipient_id = $1`, [d.recipient]);
+      await veriffHook({ id: vd.provider_ref, status: "approved", person: { firstName: "Ana", lastName: "Pérez" }, liveness: false });
+      expect(await verification(vd.id)).toMatchObject({ status: "failed", failure_reason: "liveness_failed" });
+    } finally {
+      (config.identity as any).veriffIntegrationLevel = prev;
+    }
   });
 
-  it("Truora con liveness exige la prueba de vida aprobada", async () => {
-    const { recipient, envelope } = await setup({ provider: "truora", level: "document_selfie_liveness" });
+  it("Truora con el flujo genérico exige la prueba de vida en el resultado (level_not_met no consume un intento y bloquea el reinicio)", async () => {
+    const { recipient, envelope, token } = await setup({ provider: "truora", level: "document_selfie_liveness" });
     const v = await pendingVerification(recipient, envelope, "truora", `acc-live-${recipient}`, { level: "document_selfie_liveness" });
     const body = truoraJwt({ events: [{ object: truoraProcess(`acc-live-${recipient}`, "IDPlive", { face: true }) }] });
     expect((await app.inject({ method: "POST", url: "/v1/integrations/identity/truora/webhook", payload: body, headers: { "content-type": "text/plain" } })).statusCode).toBe(200);
     expect(await verification(v)).toMatchObject({ status: "failed", failure_reason: "level_not_met" });
+    const ses = (await signing(token, "/identity")).json().identity;
+    expect(ses.attemptsLeft).toBe(3);
+    expect(ses.failureReason).toBe("level_not_met");
+    const ev = await db.one<any>(`SELECT data FROM envelope_events WHERE envelope_id = $1 AND type = 'recipient.identity_failed'`, [envelope]);
+    expect(ev.data).toMatchObject({ reason: "level_not_met", configurationIssue: true, attemptsLeft: 3 });
+    // Repetirla daría lo mismo (y abriría otra sesión paga): queda bloqueada hasta que el remitente reinicie.
+    const again = await signing(token, "/identity/start", "POST");
+    expect(again.statusCode).toBe(409);
+    expect(again.json().error.code).toBe("identity_provider_unavailable");
+    expect((await app.inject({ method: "POST", url: `/v1/envelopes/${envelope}/recipients/${recipient}/identity/reset`, headers: auth })).statusCode).toBe(200);
+  });
+
+  it("Truora con un flujo propio del nivel: la aprobación cumple el nivel salvo un dato contrario explícito", async () => {
+    process.env.TRUORA_FLOW_ID_DOCUMENT_SELFIE_LIVENESS = "IPFlive";
+    try {
+      const a = await setup({ provider: "truora", level: "document_selfie_liveness" });
+      const va = await pendingVerification(a.recipient, a.envelope, "truora", `acc-flow-${a.recipient}`, { level: "document_selfie_liveness" });
+      const okBody = truoraJwt({ events: [{ object: truoraProcess(`acc-flow-${a.recipient}`, "IDPflow", { face: true }) }] });
+      await app.inject({ method: "POST", url: "/v1/integrations/identity/truora/webhook", payload: okBody, headers: { "content-type": "text/plain" } });
+      expect((await verification(va)).status).toBe("verified");
+
+      const b = await setup({ provider: "truora", level: "document_selfie_liveness" });
+      const vb = await pendingVerification(b.recipient, b.envelope, "truora", `acc-flow-${b.recipient}`, { level: "document_selfie_liveness" });
+      const proc = truoraProcess(`acc-flow-${b.recipient}`, "IDPflow2", { face: true });
+      (proc.validations[1] as any).details.face_recognition_validations.passive_liveness_status = "failure";
+      const badBody = truoraJwt({ events: [{ object: proc }] });
+      await app.inject({ method: "POST", url: "/v1/integrations/identity/truora/webhook", payload: badBody, headers: { "content-type": "text/plain" } });
+      expect(await verification(vb)).toMatchObject({ status: "failed", failure_reason: "liveness_failed" });
+    } finally {
+      delete process.env.TRUORA_FLOW_ID_DOCUMENT_SELFIE_LIVENESS;
+    }
+  });
+
+  it("Truora sin flujo para el nivel: no se puede pedir al enviar (400) ni iniciar (503 en lugar de 500)", async () => {
+    const prevFlow = process.env.TRUORA_FLOW_ID;
+    delete process.env.TRUORA_FLOW_ID;
+    process.env.TRUORA_FLOW_ID_DOCUMENT = "IPFdoc";
+    try {
+      const { applyIdentityFlags, providerReady } = await import("../src/modules/identity/kyc");
+      expect(providerReady("truora")).toBe(true);
+      expect(providerReady("truora", "document")).toBe(true);
+      expect(providerReady("truora", "document_selfie")).toBe(false);
+      const { recipient, envelope, token } = await setup({ provider: "truora", level: "document_selfie" });
+      const err = await applyIdentityFlags(db, envelope, [{ id: recipient, role: "signer", idVerification: { provider: "truora", level: "document_selfie" } }]).catch((e) => e);
+      expect(err).toMatchObject({ status: 400, code: "identity_provider_unavailable" });
+      expect(String(err.message)).toMatch(/TRUORA_FLOW_ID_DOCUMENT_SELFIE/);
+      const st = await signing(token, "/identity/start", "POST");
+      expect(st.statusCode).toBe(503);
+      expect(st.json().error.code).toBe("identity_provider_unavailable");
+      expect(await db.one(`SELECT 1 FROM identity_verifications WHERE recipient_id = $1`, [recipient])).toBeFalsy();
+    } finally {
+      process.env.TRUORA_FLOW_ID = prevFlow;
+      delete process.env.TRUORA_FLOW_ID_DOCUMENT;
+    }
   });
 });
 
@@ -248,6 +336,35 @@ describe("Truora", () => {
     expect(ses.attemptsLeft).toBe(3);
     expect(ses.failureReason).toBe("provider_timeout");
     expect(await db.one(`SELECT 1 FROM envelope_events WHERE envelope_id = $1 AND type = 'recipient.identity_expired'`, [envelope])).toBeTruthy();
+  });
+
+  it("el plazo corre desde la última actividad del proveedor (no la consulta del firmante) y un resultado tardío se registra", async () => {
+    const { expireStaleVerifications } = await import("../src/modules/identity/kyc");
+    // Creada hace 30 h pero con un webhook hace 1 h (revisión manual larga): no vence.
+    const a = await setup({ provider: "veriff" });
+    const va = await pendingVerification(a.recipient, a.envelope, "veriff", `vf_act_${a.recipient}`, { createdAgo: "30 hours" });
+    await db.query(`UPDATE identity_verifications SET updated_at = now() - interval '1 hour' WHERE id = $1`, [va]);
+    // Sin actividad del proveedor hace 25 h, aunque el firmante consulte: vence (la consulta no corre el plazo).
+    const b = await setup({ provider: "veriff" });
+    const vb = await pendingVerification(b.recipient, b.envelope, "veriff", `vf_late_${b.recipient}`, { createdAgo: "25 hours" });
+    expect((await signing(b.token, "/identity")).statusCode).toBe(200);
+    expect((await verification(vb)).polled_at).toBeTruthy();
+    await expireStaleVerifications(db, 24);
+    expect((await verification(va)).status).toBe("pending");
+    expect(await verification(vb)).toMatchObject({ status: "expired", failure_reason: "provider_timeout" });
+    // La aprobación llega tarde: se registra (era la última verificación y el sobre sigue en curso).
+    await veriffHook({ id: `vf_late_${b.recipient}`, status: "approved", person: { firstName: "Ana", lastName: "Pérez" } });
+    expect((await verification(vb)).status).toBe("verified");
+    expect((await recipientRow(b.recipient)).identity_status).toBe("verified");
+    const ev = await db.one<any>(`SELECT data FROM envelope_events WHERE envelope_id = $1 AND type = 'recipient.identity_verified'`, [b.envelope]);
+    expect(ev.data.lateAfterTimeout).toBe(true);
+    // Con otra verificación empezada después, el resultado tardío de la vencida se ignora.
+    const c = await setup({ provider: "veriff" });
+    const vc = await pendingVerification(c.recipient, c.envelope, "veriff", `vf_old_${c.recipient}`, { status: "expired", createdAgo: "26 hours" });
+    await db.query(`UPDATE identity_verifications SET failure_reason = 'provider_timeout' WHERE id = $1`, [vc]);
+    await pendingVerification(c.recipient, c.envelope, "veriff", `vf_new_${c.recipient}`);
+    await veriffHook({ id: `vf_old_${c.recipient}`, status: "approved", person: { firstName: "Ana", lastName: "Pérez" } });
+    expect((await verification(vc)).status).toBe("expired");
   });
 });
 
@@ -346,11 +463,11 @@ describe("envío y fotos: controles", () => {
 
     const b = await setup({ provider: "veriff" });
     const v = await pendingVerification(b.recipient, b.envelope, "veriff", `vf_thr_${b.recipient}`);
-    await db.query(`UPDATE identity_verifications SET updated_at = now() WHERE id = $1`, [v]);
+    await db.query(`UPDATE identity_verifications SET polled_at = now() WHERE id = $1`, [v]);
     fetchCalls = [];
     expect((await signing(b.token, "/identity/submit", "POST")).statusCode).toBe(200);
     expect(fetchCalls.filter((u) => u.includes(`vf_thr_${b.recipient}`))).toEqual([]);
-    await db.query(`UPDATE identity_verifications SET updated_at = now() - interval '10 seconds' WHERE id = $1`, [v]);
+    await db.query(`UPDATE identity_verifications SET polled_at = now() - interval '10 seconds' WHERE id = $1`, [v]);
     expect((await signing(b.token, "/identity/submit", "POST")).statusCode).toBe(200);
     expect((await signing(b.token, "/identity/submit", "POST")).statusCode).toBe(200);
     expect(fetchCalls.filter((u) => u.includes(`vf_thr_${b.recipient}`)).length).toBe(1);
@@ -446,5 +563,29 @@ describe("uso del plan", () => {
     await pendingVerification(recipient, envelope, "veriff", `vf_paid_${recipient}`, { status: "canceled" });
     await pendingVerification(recipient, envelope, "veriff", `vf_paid2_${recipient}`, { status: "failed" });
     expect((await usageThisMonth(db, tenant)).kycChecks - before).toBe(2);
+  });
+
+  it("la sesión creada en el proveedor después de cancelarse la reserva guarda provider_ref (cuenta en el uso)", async () => {
+    const { usageThisMonth } = await import("../src/modules/billing/plans");
+    const { recipient, token } = await setup({ provider: "veriff" });
+    const before = (await usageThisMonth(db, tenant)).kycChecks;
+    // El proveedor responde después de que la reserva se canceló (p. ej. el sobre se cerró mientras tanto).
+    const prevFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: any, init?: any) => {
+      if (String(input?.url ?? input) === "https://veriff.test/v1/sessions") {
+        await db.query(`UPDATE identity_verifications SET status = 'canceled' WHERE recipient_id = $1 AND status = 'created'`, [recipient]);
+      }
+      return prevFetch(input, init);
+    }) as typeof fetch;
+    try {
+      await signing(token, "/identity/start", "POST");
+    } finally {
+      globalThis.fetch = prevFetch;
+    }
+    const v = await db.one<any>(`SELECT * FROM identity_verifications WHERE recipient_id = $1`, [recipient]);
+    expect(v.status).toBe("canceled");
+    expect(v.provider_ref).toMatch(/^vf_/);
+    expect(v.redirect_url).toBeNull();
+    expect((await usageThisMonth(db, tenant)).kycChecks - before).toBe(1);
   });
 });

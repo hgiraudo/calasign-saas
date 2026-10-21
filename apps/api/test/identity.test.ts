@@ -213,6 +213,45 @@ describe("nivel exigido", () => {
     expect(levelSatisfied("document_selfie", mapVeriffDecision(VERIFF_DECISION.verification), 0.8)).toBe(false);
     expect(levelSatisfied("document_selfie", mapVeriffDecision({ ...VERIFF_DECISION.verification, faceMatch: { similarity: 0.91 } }), 0.8)).toBe(true);
   });
+  it("distingue el dato contrario explícito (consume un intento) del dato faltante (level_not_met, configuración)", async () => {
+    const { levelFailure } = await import("../src/modules/identity/kyc");
+    const docOnly = { ...base, faceMatchScore: null, faceMatched: null, liveness: null };
+    expect(levelFailure("document_selfie", docOnly, 0.8)).toBe("level_not_met");
+    expect(levelFailure("document_selfie", { ...docOnly, faceMatchScore: 0.5 }, 0.8)).toBe("face_mismatch");
+    expect(levelFailure("document_selfie", { ...docOnly, faceMatched: false }, 0.8)).toBe("face_mismatch");
+    expect(levelFailure("document_selfie_liveness", { ...docOnly, faceMatched: true }, 0.8)).toBe("level_not_met");
+    expect(levelFailure("document_selfie_liveness", { ...docOnly, faceMatched: true, liveness: false }, 0.8)).toBe("liveness_failed");
+    expect(levelFailure("document_selfie_liveness", { ...docOnly, faceMatched: true, liveness: true }, 0.8)).toBe(null);
+  });
+  it("completa la aprobación con lo que declara la integración, sin pisar datos contrarios", async () => {
+    const { withIntegrationCapabilities } = await import("../src/modules/identity/providers");
+    const approved = mapVeriffDecision(VERIFF_DECISION.verification);
+    // VERIFF_INTEGRATION_LEVEL por defecto: document_selfie.
+    expect(withIntegrationCapabilities("veriff", "document_selfie", approved, 0.8)).toMatchObject({ result: { faceMatched: true, liveness: null }, inferred: ["faceMatched"] });
+    expect(withIntegrationCapabilities("veriff", "document_selfie", { ...approved, faceMatchScore: 0.3 }, 0.8).result.faceMatched ?? null).toBe(null);
+    expect(withIntegrationCapabilities("veriff", "document_selfie", { ...approved, status: "declined" }, 0.8).inferred).toEqual([]);
+    // Truora: solo con un flujo propio del nivel; el genérico no declara nada.
+    const prev = process.env.TRUORA_FLOW_ID_DOCUMENT_SELFIE;
+    try {
+      delete process.env.TRUORA_FLOW_ID_DOCUMENT_SELFIE;
+      expect(withIntegrationCapabilities("truora", "document_selfie", approved, 0.8).inferred).toEqual([]);
+      process.env.TRUORA_FLOW_ID_DOCUMENT_SELFIE = "IPFsel";
+      expect(withIntegrationCapabilities("truora", "document_selfie", approved, 0.8).inferred).toEqual(["faceMatched"]);
+      expect(withIntegrationCapabilities("truora", "document_selfie", { ...approved, faceMatched: false }, 0.8).result.faceMatched).toBe(false);
+    } finally {
+      if (prev === undefined) delete process.env.TRUORA_FLOW_ID_DOCUMENT_SELFIE;
+      else process.env.TRUORA_FLOW_ID_DOCUMENT_SELFIE = prev;
+    }
+  });
+  it("las variables numéricas vacías usan el valor por defecto", async () => {
+    const { numEnv } = await import("../src/config");
+    expect(numEnv("", 0.8)).toBe(0.8);
+    expect(numEnv("  ", 0.8)).toBe(0.8);
+    expect(numEnv(undefined, 0.8)).toBe(0.8);
+    expect(numEnv("abc", 0.8)).toBe(0.8);
+    expect(numEnv("0", 0.8)).toBe(0);
+    expect(numEnv("0.65", 0.8)).toBe(0.65);
+  });
   it("la referencia de Truora es el process_id", async () => {
     const { providerReference } = await import("../src/modules/identity/kyc");
     expect(providerReference({ provider: "truora", provider_ref: "verif-id", provider_process_id: "IDP9" })).toBe("IDP9");

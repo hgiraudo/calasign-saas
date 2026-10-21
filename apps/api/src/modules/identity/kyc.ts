@@ -29,7 +29,7 @@ import { assertLinkCurrent, recipientActor, resolveToken } from "../signing";
 import { resolveSignerReturn, returnTokenEncToStore, sendNeutralReturn, setSignerReturnCookie, signerReturnUrl } from "../signer-return";
 import { matchIdentity } from "./namematch";
 import { stripImageMetadata } from "./image-meta";
-import { WebhookSignatureError, getAdapter, listProviders, mockDecide } from "./providers";
+import { WebhookSignatureError, getAdapter, levelUnsupportedReason, listProviders, mockDecide, withIntegrationCapabilities } from "./providers";
 import type { CertificateIdentity } from "@calasign/pdf";
 import { tenantBaseUrl } from "../custom-domains";
 import { requireFeature, tenantPlan } from "../billing/plans";
@@ -64,8 +64,19 @@ function mockEnabled() {
   return config.environment !== "prod" || process.env.IDV_MOCK_ENABLED === "1";
 }
 
-export function providerReady(p: IdvProvider) {
-  return p === "mock" ? mockEnabled() : getAdapter(p).configured();
+/**
+ * ¿El proveedor está disponible (y, con `level`, puede hacer ese nivel)? Con nivel: Truora necesita un flujo para el
+ * nivel y Veriff una integración que llegue al nivel (VERIFF_INTEGRATION_LEVEL). Ver levelUnsupportedReason.
+ */
+export function providerReady(p: IdvProvider, level?: IdvLevel) {
+  return providerUnavailableReason(p, level) === null;
+}
+
+/** Por qué el proveedor no está disponible para el nivel (mensaje para el remitente), o null si lo está. */
+export function providerUnavailableReason(p: IdvProvider, level?: IdvLevel): string | null {
+  const configured = p === "mock" ? mockEnabled() : getAdapter(p).configured();
+  if (!configured) return `El proveedor de verificación ${p} no está configurado`;
+  return level ? levelUnsupportedReason(p, level) : null;
 }
 
 // ───────────────────────────── Destinatarios ─────────────────────────────
@@ -95,7 +106,10 @@ export async function applyIdentityFlags(
     if (r.role === "cc") throw badRequest("identity_not_applicable", "La verificación de identidad aplica a firmantes y aprobadores");
     const { provider } = r.idVerification;
     const level = r.idVerification.level ?? "document_selfie";
-    if (!providerReady(provider)) throw badRequest("identity_provider_unavailable", `El proveedor de verificación ${provider} no está configurado`);
+    // Con el nivel: un nivel sin flujo de Truora (o por encima de la integración de Veriff) se rechaza al enviar, no
+    // cuando el firmante intenta verificarse (antes, un 500 en /identity/start).
+    const unavailable = providerUnavailableReason(provider, level);
+    if (unavailable) throw badRequest("identity_provider_unavailable", unavailable);
     await db.query(
       `UPDATE recipients SET id_verification_provider = $3, id_verification_level = $4,
          identity_status = CASE WHEN id_verification_provider IS DISTINCT FROM $3 OR id_verification_level IS DISTINCT FROM $4 OR identity_status IS NULL
@@ -154,8 +168,14 @@ async function latestVerification(db: Db, recipientId: string) {
   return db.one<any>(`SELECT * FROM identity_verifications WHERE recipient_id = $1 ORDER BY created_at DESC LIMIT 1`, [recipientId]);
 }
 
+/**
+ * Intentos consumidos: las verificaciones fallidas, salvo level_not_met (el proveedor aprobó pero el resultado no trajo
+ * la coincidencia facial o la prueba de vida que pide el nivel: es un problema de configuración, no del firmante).
+ */
+const ATTEMPT_USED_SQL = `status = 'failed' AND failure_reason IS DISTINCT FROM 'level_not_met'`;
+
 async function attemptsUsed(db: Db, recipientId: string): Promise<number> {
-  const r = await db.one<any>(`SELECT count(*)::int AS n FROM identity_verifications WHERE recipient_id = $1 AND status = 'failed'`, [recipientId]);
+  const r = await db.one<any>(`SELECT count(*)::int AS n FROM identity_verifications WHERE recipient_id = $1 AND ${ATTEMPT_USED_SQL}`, [recipientId]);
   return Number(r?.n ?? 0);
 }
 
@@ -235,12 +255,27 @@ export function providerReference(v: { provider: string; provider_ref?: string |
  * (puntaje sobre el umbral o decisión explícita) o sin prueba de vida, la verificación no cumple el nivel.
  */
 export function levelSatisfied(level: IdvLevel, result: IdvResult, faceThreshold = config.identity.faceMatchThreshold): boolean {
-  if (level === "document") return true;
+  return levelFailure(level, result, faceThreshold) === null;
+}
+
+/**
+ * Por qué una aprobación no cumple el nivel, o null si lo cumple:
+ *   face_mismatch / liveness_failed → dato contrario explícito (puntaje bajo el umbral, faceMatched o liveness en
+ *                                     false): falla del firmante, consume un intento
+ *   level_not_met                   → el resultado no trae el dato (la integración no hace ese control): problema de
+ *                                     configuración, no consume un intento
+ */
+export function levelFailure(
+  level: IdvLevel,
+  result: IdvResult,
+  faceThreshold = config.identity.faceMatchThreshold,
+): "face_mismatch" | "liveness_failed" | "level_not_met" | null {
+  if (level === "document") return null;
   const score = typeof result.faceMatchScore === "number" ? result.faceMatchScore : null;
   const faceOk = result.faceMatched === false ? false : (score !== null && score >= faceThreshold) || result.faceMatched === true;
-  if (!faceOk) return false;
-  if (level === "document_selfie_liveness" && result.liveness !== true) return false;
-  return true;
+  if (!faceOk) return result.faceMatched === false || score !== null ? "face_mismatch" : "level_not_met";
+  if (level === "document_selfie_liveness" && result.liveness !== true) return result.liveness === false ? "liveness_failed" : "level_not_met";
+  return null;
 }
 
 export async function identityForCertificate(db: Db, recipients: any[]): Promise<Map<string, CertificateIdentity>> {
@@ -279,8 +314,20 @@ async function finalizeVerification(db: Db, verificationId: string, result: IdvR
     if (!v0) throw notFound("Verificación");
     const e = await lockEnvelope(t, v0.tenant_id, v0.envelope_id);
     const v = await t.one<any>(`SELECT * FROM identity_verifications WHERE id = $1 FOR UPDATE`, [verificationId]);
-    if (!["created", "pending"].includes(v.status)) return v.status as string;
     const r = await t.one<any>(`SELECT * FROM recipients WHERE id = $1`, [v.recipient_id]);
+    // Resultado tardío de una verificación que el barrido dio por vencida (provider_timeout) sin que el firmante haya
+    // empezado otra: se registra normalmente (antes se descartaba una aprobación que llegó pasado el plazo). Solo una
+    // decisión final, con el sobre en curso, el destinatario de turno y todavía sin verificar.
+    const lateAfterTimeout =
+      v.status === "expired" &&
+      v.failure_reason === "provider_timeout" &&
+      (result.status === "approved" || result.status === "declined") &&
+      e.status === "sent" &&
+      !pastExpiry(e) &&
+      ["sent", "viewed"].includes(r?.status) &&
+      r?.identity_status !== "verified" &&
+      (await latestVerification(t, v.recipient_id))?.id === v.id;
+    if (!["created", "pending"].includes(v.status) && !lateAfterTimeout) return v.status as string;
     // El resultado llega tarde (webhook o consulta minutos después): si el sobre ya se anuló, rechazó o venció, o el
     // destinatario fue reemplazado (delegó, lo reasignaron), la verificación se cancela sin sumar
     // recipient.identity_verified / identity_failed a la evidencia de un sobre cerrado o de alguien que ya no firma.
@@ -304,13 +351,18 @@ async function finalizeVerification(db: Db, verificationId: string, result: IdvR
       { fullName: result.person.fullName, firstName: result.person.firstName, lastName: result.person.lastName, documentNumber: result.document.number },
       settings.nameMatchThreshold,
     );
-    let reason: string | null = null;
-    if (result.status !== "approved") reason = result.declineReason ?? "declined";
-    // Aprobado por el proveedor pero sin la coincidencia facial o la prueba de vida que pide el nivel.
-    else if (!levelSatisfied(v.level as IdvLevel, result)) reason = "level_not_met";
-    else if (!nameMatch.matched) reason = "name_mismatch";
-    else if (nameMatch.documentNumberMatched === false) reason = "document_number_mismatch";
+    // Lo que la integración declara hacer (VERIFF_INTEGRATION_LEVEL, flujo de Truora por nivel) completa la aprobación
+    // cuando la decisión no trae el puntaje facial o la prueba de vida.
+    const caps = withIntegrationCapabilities(v.provider as IdvProvider, v.level as IdvLevel, result);
+    result = caps.result;
+    // Aprobado por el proveedor pero sin la coincidencia facial o la prueba de vida que pide el nivel: levelFailure.
+    let reason: string | null = result.status !== "approved" ? result.declineReason ?? "declined" : levelFailure(v.level as IdvLevel, result);
+    if (!reason && !nameMatch.matched) reason = "name_mismatch";
+    else if (!reason && nameMatch.documentNumberMatched === false) reason = "document_number_mismatch";
     const ok = reason === null;
+    // level_not_met es de configuración (la integración no hace el control que pide el nivel): no consume un intento
+    // (attemptsUsed) y el inicio queda bloqueado hasta que el remitente revise la configuración y reinicie.
+    const configurationIssue = reason === "level_not_met";
 
     await t.query(
       `UPDATE identity_verifications SET status = $2, result = $3, name_match = $4, failure_reason = $5, completed_at = now(), updated_at = now() WHERE id = $1`,
@@ -328,6 +380,9 @@ async function finalizeVerification(db: Db, verificationId: string, result: IdvR
       faceMatchScore: result.faceMatchScore,
       liveness: result.liveness,
       riskFlags: result.riskFlags,
+      // Controles que no vinieron en la decisión y se dan por hechos porque la integración los declara.
+      ...(caps.inferred.length ? { inferredFromIntegration: caps.inferred } : {}),
+      ...(lateAfterTimeout ? { lateAfterTimeout: true } : {}),
     };
     if (ok) {
       await t.query(
@@ -344,7 +399,15 @@ async function finalizeVerification(db: Db, verificationId: string, result: IdvR
         envelopeId: v.envelope_id,
         type: "recipient.identity_failed",
         actor,
-        data: { ...summary, reason, attemptsLeft: left },
+        data: {
+          ...summary,
+          reason,
+          attemptsLeft: left,
+          // Para el remitente: no es una falla del firmante; hay que revisar VERIFF_INTEGRATION_LEVEL o el flujo de Truora.
+          ...(configurationIssue
+            ? { configurationIssue: true, detail: "El proveedor aprobó, pero el resultado no incluyó la coincidencia facial o la prueba de vida que pide el nivel: revisar la configuración de la integración" }
+            : {}),
+        },
       });
     }
     return ok ? "verified" : "failed";
@@ -352,16 +415,19 @@ async function finalizeVerification(db: Db, verificationId: string, result: IdvR
 }
 
 /**
- * Verificaciones de un proveedor externo que esperan el resultado hace más de IDV_PENDING_TIMEOUT_HOURS (24 h): el
- * webhook no llegó nunca (o el firmante abandonó la página del proveedor). Se dan por vencidas (status 'expired',
+ * Verificaciones de un proveedor externo sin actividad del proveedor hace más de IDV_PENDING_TIMEOUT_HOURS (24 h): el
+ * webhook no llegó nunca (o el firmante abandonó la página del proveedor). El plazo corre desde la última actividad
+ * (updated_at: inicio, webhooks, resultados en revisión), no desde created_at —una revisión manual larga vencía aunque
+ * el proveedor siguiera trabajando—; la consulta periódica del firmante (cada 5 s) usa polled_at y no lo corre. Un
+ * resultado que llega después del vencimiento igual se registra (finalizeVerification). Se dan por vencidas (status 'expired',
  * provider_timeout) sin consumir un intento —no hubo una decisión— y el firmante puede volver a empezar. Antes quedaban
  * "en curso" para siempre y bloqueaban todo nuevo inicio. De a 200 por pasada.
  */
 export async function expireStaleVerifications(db: Db, hours = config.identity.pendingTimeoutHours): Promise<number> {
   const stale = await db.query<{ id: string; tenant_id: string; envelope_id: string }>(
     `SELECT id, tenant_id, envelope_id FROM identity_verifications
-      WHERE status = 'pending' AND provider <> 'mock' AND created_at < now() - make_interval(hours => $1::int)
-      ORDER BY created_at LIMIT 200`,
+      WHERE status = 'pending' AND provider <> 'mock' AND updated_at < now() - make_interval(hours => $1::int)
+      ORDER BY updated_at LIMIT 200`,
     [hours],
   );
   let n = 0;
@@ -431,10 +497,10 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
     // Flujos "redirect": si el webhook todavía no llegó, se consulta al proveedor (como máximo cada 5 s).
     const v = await latestVerification(s.db, r.id);
     const adapter = getAdapter(r.id_verification_provider);
-    if (v && v.status === "pending" && adapter.fetchResult && Date.now() - new Date(v.updated_at).getTime() > 5000) {
+    if (v && v.status === "pending" && adapter.fetchResult && (!v.polled_at || Date.now() - new Date(v.polled_at).getTime() > 5000)) {
       try {
         // Solo un pedido consulta al proveedor cada 5 s (antes, consultas simultáneas llamaban todas).
-        const turn = await s.db.query(`UPDATE identity_verifications SET updated_at = now() WHERE id = $1 AND updated_at < now() - interval '5 seconds' RETURNING id`, [v.id]);
+        const turn = await s.db.query(`UPDATE identity_verifications SET polled_at = now() WHERE id = $1 AND (polled_at IS NULL OR polled_at < now() - interval '5 seconds') RETURNING id`, [v.id]);
         if (!turn.length) return sessionOut(req.params.token);
         const res = await adapter.fetchResult(v.provider_ref, v.provider_process_id);
         if (res.status !== "pending") await finalizeVerification(s.db, v.id, res, { type: "system", label: adapter.name });
@@ -453,7 +519,9 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
     if (r.identity_status === "verified") return sessionOut(req.params.token);
     const settings = await getIdentitySettings(s.db, e.tenant_id);
     const provider = r.id_verification_provider as IdvProvider;
-    if (!providerReady(provider)) throw new AppError(503, "identity_provider_unavailable", "El proveedor de verificación no está disponible");
+    // Con el nivel: Truora sin flujo para el nivel (o una integración de Veriff que no llega) es un 503, no un 500 de
+    // createSession después de reservar.
+    if (!providerReady(provider, r.id_verification_level)) throw new AppError(503, "identity_provider_unavailable", "El proveedor de verificación no está disponible");
 
     // Una reserva de modo redirect que quedó sin sesión del proveedor (el proceso murió o el proveedor no respondió)
     // se cancela antes de mirar la última verificación: si no, el inicio devolvía la reserva trabada para siempre.
@@ -474,6 +542,12 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
       const returnEnc = await returnTokenEncToStore(s.db, { token: req.params.token, sessionToken, storedTokenEnc: current.return_token_enc, recipientId: r.id });
       await s.db.query(`UPDATE identity_verifications SET return_token_enc = $2 WHERE id = $1 AND recipient_id = $3`, [current.id, returnEnc, r.id]);
       return sessionOut(req.params.token);
+    }
+    // La última terminó en level_not_met (el proveedor aprobó sin el control facial o la prueba de vida que pide el
+    // nivel): no consumió un intento, pero repetirla daría lo mismo y abriría otra sesión paga. Queda bloqueada hasta que
+    // el remitente revise la configuración y reinicie la verificación (identity/reset).
+    if (current?.status === "failed" && current.failure_reason === "level_not_met") {
+      throw new AppError(409, "identity_provider_unavailable", "La verificación no se puede completar con la configuración actual del proveedor: pedile al remitente que la revise");
     }
     const used = await attemptsUsed(s.db, r.id);
     if (used >= settings.maxAttempts) throw new AppError(429, "identity_attempts_exhausted", "Se agotaron los intentos de verificación");
@@ -510,7 +584,7 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
         [r.id],
       );
       if (active) return false;
-      const usedNow = (await t.one<any>(`SELECT count(*)::int AS n FROM identity_verifications WHERE recipient_id = $1 AND status = 'failed'`, [r.id])).n;
+      const usedNow = await attemptsUsed(t, r.id);
       if (usedNow >= settings.maxAttempts) throw new AppError(429, "identity_attempts_exhausted", "Se agotaron los intentos de verificación");
       await t.query(
         `INSERT INTO identity_verifications (id, tenant_id, envelope_id, recipient_id, provider, level, status, attempt, provider_ref, redirect_url, return_token_enc)
@@ -540,8 +614,15 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
           callbackUrl: `${config.appUrl}/v1/integrations/identity/${provider}/webhook`,
           locale: r.locale ?? e.locale,
         }));
+        // Si la reserva se canceló mientras tanto (el sobre se cerró, una corrección del contacto), la sesión ya existe en
+        // el proveedor: provider_ref se guarda igual (sin reabrirla) para que el uso del plan y la auditoría la cuenten.
         await s.db.query(
-          `UPDATE identity_verifications SET status = 'pending', provider_ref = $2, redirect_url = $3, updated_at = now() WHERE id = $1 AND status = 'created'`,
+          `UPDATE identity_verifications
+              SET provider_ref = $2,
+                  redirect_url = CASE WHEN status = 'created' THEN $3 ELSE redirect_url END,
+                  status = CASE WHEN status = 'created' THEN 'pending' ELSE status END,
+                  updated_at = now()
+            WHERE id = $1 AND (status = 'created' OR provider_ref IS NULL)`,
           [id, created.providerRef, created.redirectUrl],
         );
       } catch (err) {
@@ -672,7 +753,7 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
       // Sin sesión en el proveedor (la reserva todavía no la creó o falló) no hay nada que consultar.
       if (!v.provider_ref) throw conflict("verification_not_started", "La verificación todavía no empezó en el proveedor");
       // Como la consulta del GET: como máximo una cada 5 s por verificación (el botón no dispara una consulta paga por clic).
-      const turn = await s.db.query(`UPDATE identity_verifications SET updated_at = now() WHERE id = $1 AND updated_at < now() - interval '5 seconds' RETURNING id`, [v.id]);
+      const turn = await s.db.query(`UPDATE identity_verifications SET polled_at = now() WHERE id = $1 AND (polled_at IS NULL OR polled_at < now() - interval '5 seconds') RETURNING id`, [v.id]);
       if (!turn.length) return sessionOut(req.params.token);
       const res = await adapter.fetchResult(v.provider_ref, v.provider_process_id);
       if (res.status !== "pending") outcome = await finalizeVerification(s.db, v.id, res, { type: "system", label: adapter.name });
@@ -706,8 +787,11 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
         const v = await s.db.one<any>(`SELECT * FROM identity_verifications WHERE provider = $1 AND provider_ref = $2`, [provider, parsed.providerRef]);
         if (!v) continue;
         processed++;
+        // Todo webhook es actividad del proveedor (corre el plazo de provider_timeout, expireStaleVerifications).
         if (parsed.processId && parsed.processId !== v.provider_process_id) {
           await s.db.query(`UPDATE identity_verifications SET provider_process_id = $2, updated_at = now() WHERE id = $1`, [v.id, parsed.processId]);
+        } else if (["created", "pending"].includes(v.status)) {
+          await s.db.query(`UPDATE identity_verifications SET updated_at = now() WHERE id = $1 AND status IN ('created','pending')`, [v.id]);
         }
         let result = parsed.result;
         if (!result && adapter.fetchResult) result = await adapter.fetchResult(v.provider_ref, parsed.processId ?? v.provider_process_id);

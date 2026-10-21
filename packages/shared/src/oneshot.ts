@@ -69,4 +69,10 @@ export interface EnvelopeSigningUrl extends SigningUrlResponse {
 /** Respuesta de POST /v1/envelopes: el detalle del sobre y, si se envió con firmantes embebidos, sus URLs de firma. */
 export interface CreateEnvelopeResponse extends EnvelopeDetail {
   signingUrls?: EnvelopeSigningUrl[];
+  /**
+   * Solo al repetir un pedido con la misma Idempotency-Key: las URLs de firma no se guardan (llevan un código de un solo
+   * uso) y se emiten de nuevo; las que ya no se pueden emitir (sobre cerrado, destinatario que ya firmó o fue
+   * reemplazado) se omiten y este texto explica cómo pedirlas.
+   */
+  signingUrlsHint?: string;
 }

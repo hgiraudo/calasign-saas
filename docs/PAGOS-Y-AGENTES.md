@@ -14,7 +14,7 @@ Un sobre puede cobrarle a uno de sus firmantes (`PUT /v1/envelopes/:id/payment`,
 Flujo del firmante: `GET /v1/signing/:token/payment` (si le toca pagar, monto y estado) → `POST /v1/signing/:token/payment/checkout`
 → redirección al proveedor → vuelve a `/s/:token?payment=success`. La confirmación **solo** llega por webhook verificado
 (o por la página del proveedor simulado). Eventos: `payment.configured`, `payment.checkout_created`, `envelope.awaiting_payment`,
-`payment.failed`, `payment.completed`, `payment.refunded`, `payment.partially_refunded`, `payment.disputed`. El comprobante (monto, pagador, medio, referencia, fecha) va en el certificado de finalización.
+`payment.failed`, `payment.completed`, `payment.refunded`, `payment.partially_refunded`, `payment.disputed`, `payment.settled_on_closed_envelope`. El comprobante (monto, pagador, medio, referencia, fecha) va en el certificado de finalización.
 
 **Cambios del pagador y cierres** (barrido periódico del worker):
 
@@ -31,6 +31,16 @@ Flujo del firmante: `GET /v1/signing/:token/payment` (si le toca pagar, monto y 
 - Un sobre anulado, rechazado o vencido cierra su checkout abierto (`payment.checkout_closed`).
 - Un pago que se acredita con el sobre ya cerrado se reembolsa en el proveedor (`refund_required_at`). Un segundo
   cobro del mismo sobre (dos checkouts pagados) también se reembolsa, en Stripe y en Mercado Pago.
+- **Pago cobrado y sobre cerrado sin completarse** (el firmante pagó —p. ej. `before_sign`, o `after_sign` antes de
+  que otro rechazara— y después el sobre se anula, se rechaza o vence): **no se reembolsa automáticamente**. La
+  política de reembolso en ese caso (devolver todo, retener un cargo, dejarlo a criterio del remitente) es una
+  **decisión pendiente del producto**. Mientras tanto, al cerrarse el sobre (en todos los caminos: anular desde la
+  API o la consola, anulación por un flujo de acuerdos, rechazo del firmante y vencimiento del barrido) se registra
+  `payment.settled_on_closed_envelope` en la evidencia (monto, moneda, proveedor, id del pago en el proveedor, estado
+  de cierre, `refund: "manual"`), y el detalle del sobre le muestra al remitente un aviso: hay un pago cobrado en un
+  sobre que no se completó, para revisarlo o reembolsarlo desde el panel del proveedor. Si lo reembolsa ahí, el
+  webhook lo registra como cualquier reembolso del proveedor (`payment.refunded`, `reason: "provider"`). Distinto del
+  pago que **llega** con el sobre ya cerrado, que sí se reembolsa solo (siguiente punto).
 - Un sobre que superó su vencimiento no se corrige, reasigna ni delega.
 - **Reembolsos y contracargos hechos en el proveedor** (Stripe `charge.refunded` y `charge.dispute.created`; Mercado
   Pago, pagos en `refunded` o `charged_back`): sobre el pago acreditado del cobro. Reembolso total → el cobro pasa a
@@ -48,6 +58,14 @@ Flujo del firmante: `GET /v1/signing/:token/payment` (si le toca pagar, monto y 
     de contacto del mismo pagador no se puede distinguir de la vigente y se acredita como antes (sin reembolso).
 - **Plan**: enviar un borrador con cobro exige que el plan incluya `payments` (402 `plan_limit`) y que el proveedor
   esté configurado (400 `provider_not_configured`), en todos los caminos de envío.
+- **Proveedor configurado = credenciales + webhook**: como la confirmación solo llega por webhook, Stripe se ofrece
+  (lista de proveedores, `PUT …/payment` y envío) solo con `STRIPE_SECRET_KEY` **y** `STRIPE_WEBHOOK_SECRET`; Mercado
+  Pago, con `MP_ACCESS_TOKEN` y, en producción, `MP_WEBHOOK_SECRET` (igual que las suscripciones). Si no, 400
+  `provider_not_configured`.
+- **Moneda de Mercado Pago**: una cuenta de Mercado Pago cobra solo en la moneda de su país (`MP_CURRENCIES` o la que
+  informa `GET /users/me`). Un cobro con Mercado Pago en otra moneda se rechaza al configurarlo y al enviar el sobre
+  (400 `currency_not_supported`); si la moneda de la cuenta todavía no se pudo consultar, 503 `provider_unavailable`
+  (con `Retry-After`), o 422 `provider_misconfigured` si el país de la cuenta no se reconoce.
 
 ### Medios de pago por país
 

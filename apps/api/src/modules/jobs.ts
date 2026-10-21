@@ -35,6 +35,7 @@ import { cancelPendingSubscriptions } from "./billing/webhooks";
 import { runAiSweep } from "./ai";
 import { notifyAiRenewalAlert } from "./ai/sweep";
 import { agreementsSweep, handleAgreementsJob } from "./agreements";
+import { noteSettledPaymentOnClose } from "./billing/payment-close";
 
 interface Deps {
   db: Db;
@@ -843,6 +844,7 @@ export async function expireDueEnvelopes(d: Deps, signal?: AbortSignal) {
         if (cur?.status !== "sent" && cur?.status !== "awaiting_certificates") return false;
         await t.query(`UPDATE envelopes SET status = 'expired', updated_at = ${BUMP_UPDATED_AT}, version = version + 1 WHERE id = $1`, [e.id]);
         await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "envelope.expired", actor: SYSTEM });
+        await noteSettledPaymentOnClose(t, e.id, "expired", SYSTEM);
         return true;
       });
       // Firma con certificado a medias: el PDF de trabajo y los preparados ya no se usan (la retención reintenta).

@@ -161,7 +161,11 @@ const CreateEnvelopeResponseSchema = named("CreateEnvelopeResponse", EnvelopeDet
   signingUrls: z
     .array(SigningUrlSchema.extend({ recipientId: z.string().uuid() }))
     .optional()
-    .describe("Con send y destinatarios embedded: la URL de firma embebida (un solo uso, 5 minutos) de cada uno al que ya le toca."),
+    .describe("Con send y destinatarios embedded: la URL de firma embebida (un solo uso, 5 minutos) de cada uno al que ya le toca. Al repetir el pedido con la misma Idempotency-Key se emiten URLs nuevas (no se guardan)."),
+  signingUrlsHint: z
+    .string()
+    .optional()
+    .describe("Solo al repetir con la misma Idempotency-Key, si alguna URL ya no se pudo emitir: cómo pedirla (POST /v1/envelopes/{id}/recipients/{recipientId}/signing-url)."),
 }));
 
 const PaymentStateSchema = named(

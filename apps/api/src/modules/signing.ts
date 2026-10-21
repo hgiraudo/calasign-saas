@@ -8,6 +8,7 @@ import { AppError, badRequest, conflict, notFound } from "../lib/errors";
 import { BUMP_UPDATED_AT, sha256Hex, uuidv7 } from "../lib/util";
 import { telegramLinkFor } from "./telegram";
 import { resolveSessionToken, SIGNER_TOKEN_RE } from "./signer-token";
+import { noteSettledPaymentOnClose } from "./billing/payment-close";
 import { clientInfo, type Services } from "./context";
 import { advanceRouting, currentSignerGroup, lockEnvelope, pastExpiry, receivesSignerNotices, sendPdf } from "./envelopes";
 import { recordSignerDownload } from "./download-evidence";
@@ -461,6 +462,7 @@ export async function signingRoutes(app: FastifyInstance, s: Services) {
       await t.query(`UPDATE recipients SET status = 'declined', declined_at = now(), decline_reason = $2 WHERE id = $1`, [r.id, input.reason]);
       await t.query(`UPDATE envelopes SET status = 'declined', updated_at = ${BUMP_UPDATED_AT}, version = version + 1 WHERE id = $1`, [e.id]);
       await appendEvent(t, { tenantId: e.tenant_id, envelopeId: e.id, type: "recipient.declined", ...(await declineEvidence(t, req, r, e.id, input.reason)) });
+      await noteSettledPaymentOnClose(t, e.id, "declined", recipientActor(req, r));
       await enqueue(t, "notify", { kind: "sender_declined", envelopeId: e.id, tenantId: e.tenant_id, declinedBy: r.id });
       const others = (await t.query<any>(`SELECT * FROM recipients WHERE envelope_id = $1 AND id <> $2 AND status IN ('sent','viewed','signed')`, [e.id, r.id])).filter(
         // Embebidos, en persona y autorregistrados sin correo validado no reciben avisos (ver receivesSignerNotices).

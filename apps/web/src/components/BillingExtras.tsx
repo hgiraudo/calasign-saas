@@ -302,6 +302,12 @@ export function EnvelopePaymentSummary({ envelopeId, recipients, envelopeStatus 
       <p className="small">{b("pay.detailLine", { amount: formatMoney(p.amount, p.currency, locale), description: p.description, payer })}</p>
       {p.status === "refunded" && <p className="small muted">{b("pay.refundedLine")}</p>}
       {p.status !== "paid" && envelopeStatus === "sent" && allSigned && <p className="small muted">{b("pay.waitingEnvelope")}</p>}
+      {/* Cobrado antes de que el sobre se cerrara sin completarse: no se reembolsa solo (docs/PAGOS-Y-AGENTES.md). */}
+      {p.status === "paid" && !p.refundRequiredAt && CLOSED_ENVELOPE.includes(envelopeStatus) && (
+        <p className="small" role="alert" data-testid="payment-settled-on-closed">
+          {b("pay.settledOnClosed", { provider: p.provider === "mock" ? b("pay.provider.mock") : PROVIDER_LABEL[p.provider] })}
+        </p>
+      )}
     </section>
   );
 }
@@ -331,12 +337,20 @@ function SignerPaymentPanel({
   onPaidRef.current = onPaid;
   const onStaleRef = useRef(onStale);
   onStaleRef.current = onStale;
+  // El sondeo vio el pago de vuelta en pendiente o fallado (checkout descartado o rechazado): deja de mostrar
+  // "confirmando" (el botón de pagar vuelve a servir).
+  const [confirmStopped, setConfirmStopped] = useState(false);
+  // Cada pago nuevo abierto en otra pestaña vuelve a arrancar el sondeo (aunque el anterior se haya cortado).
+  const [pollRun, setPollRun] = useState(0);
+  // Cobrado: pagado o ya reembolsado (el pago se hizo; reembolsado no es "pendiente").
+  const settled = info.status === "paid" || info.status === "refunded";
 
   // Al volver del proveedor, el webhook puede tardar: se consulta hasta ver el pago confirmado. Cada 3 s el primer minuto
   // y medio y después cada 30 s (antes se dejaba de consultar a los 90 s y quedaba "confirmando" para siempre, con la
   // firma bloqueada si el pago era previo, hasta recargar la página).
   useEffect(() => {
-    if (returned !== "success" || info.status === "paid") return;
+    if (returned !== "success" || settled) return;
+    setConfirmStopped(false);
     let n = 0;
     let id = 0;
     let done = false;
@@ -344,10 +358,16 @@ function SignerPaymentPanel({
       api<SignerPaymentInfo>(`${base}/payment`)
         .then(async (r) => {
           if (done) return;
-          if (r.status === "paid") {
+          if (r.status === "paid" || r.status === "refunded") {
             done = true;
             window.clearTimeout(id);
             onPaidRef.current();
+            return;
+          }
+          if (r.status === "pending" || r.status === "failed") {
+            done = true;
+            window.clearTimeout(id);
+            setConfirmStopped(true);
             return;
           }
           if (r.canPay) return;
@@ -371,7 +391,7 @@ function SignerPaymentPanel({
       done = true;
       window.clearTimeout(id);
     };
-  }, [returned, info.status, base]);
+  }, [returned, settled, base, pollRun]);
 
   const pay = async () => {
     setBusy(true);
@@ -381,6 +401,7 @@ function SignerPaymentPanel({
       const r = await api<{ url: string }>(`${base}/payment/checkout`, { method: "POST" });
       if (tab.open(r.url) === "tab") {
         setOpenedTab(true);
+        setPollRun((n) => n + 1);
         setBusy(false);
       }
     } catch (e) {
@@ -394,7 +415,7 @@ function SignerPaymentPanel({
   };
 
   const amount = formatMoney(info.amount ?? 0, info.currency ?? "USD", locale);
-  if (info.status === "paid") {
+  if (settled) {
     return (
       <p className="small" role="status" data-testid="signer-payment-paid">
         ✓ {b("signerPay.paid")}
@@ -409,7 +430,7 @@ function SignerPaymentPanel({
       <p>{info.timing === "before_sign" ? b("signerPay.before") : b("signerPay.after")}</p>
       <p className="small muted">{info.description}</p>
       <p style={{ fontSize: 26, fontWeight: 700, margin: 0 }}>{amount}</p>
-      {returned === "success" && <p className="small" role="status">{b("signerPay.confirming")}</p>}
+      {returned === "success" && !confirmStopped && <p className="small" role="status">{b("signerPay.confirming")}</p>}
       {returned === "cancel" && <p className="small" role="alert">{b("signerPay.canceled")}</p>}
       {info.canPay && (
         <button type="button" className="btn btn-primary btn-block" disabled={busy} onClick={() => void pay()} data-testid="signer-pay-button">

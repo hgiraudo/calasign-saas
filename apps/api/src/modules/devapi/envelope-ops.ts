@@ -322,7 +322,7 @@ async function cloneRecipients(t: Services["db"], a: AuthContext, srcId: string,
   const hasKyc = withIdv.length > 0 && (await tenantPlan(t, a.tenantId)).plan.features.includes("kyc");
   const idv: { id: string; role: string; idVerification: { provider: any; level?: any } }[] = [];
   for (const r of withIdv) {
-    const reason = !hasKyc ? "plan_without_kyc" : !providerReady(r.id_verification_provider) ? "provider_unavailable" : r.role === "cc" ? "not_applicable" : null;
+    const reason = !hasKyc ? "plan_without_kyc" : !providerReady(r.id_verification_provider, r.id_verification_level ?? "document_selfie") ? "provider_unavailable" : r.role === "cc" ? "not_applicable" : null;
     if (!reason) {
       idv.push({ id: r.id, role: r.role, idVerification: { provider: r.id_verification_provider, level: r.id_verification_level ?? undefined } });
       continue;

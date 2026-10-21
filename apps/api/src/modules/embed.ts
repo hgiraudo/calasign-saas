@@ -228,8 +228,12 @@ export async function embedRoutes(app: FastifyInstance, s: Services) {
       // suma el inicio de sesión a su evidencia.
       if (["voided", "declined", "expired"].includes(cur?.status) || (cur?.status === "sent" && cur.expires_at != null && new Date(cur.expires_at).getTime() <= Date.now())) return null;
       // Ni para un destinatario reemplazado (delegó, lo reasignaron) o con el link rotado después de leerlo arriba.
-      const rNow = await t.one<any>(`SELECT access_token_hash FROM recipients WHERE id = $1`, [r.id]);
+      const rNow = await t.one<any>(`SELECT access_token_hash, embedded, auth_method, id_verification_provider, identity_status, role FROM recipients WHERE id = $1`, [r.id]);
       if (!rNow?.access_token_hash || rNow.access_token_hash !== r.access_token_hash) return null;
+      // Lo mismo que al emitir el código (issueSigningUrl): un destinatario no embebido solo se abre si la página igual
+      // le exige autenticarse. En los 5 minutos del código pudo verificar su identidad desde su link (o se le quitó el
+      // OTP): el código ya no abre una sesión (y resolveSessionToken rechaza las ya abiertas).
+      if (!rNow.embedded && !pageStillAuthenticates(rNow)) return null;
       const issued = await issueSignerSessionToken(t, {
         recipientId: r.id,
         envelopeId: sess.envelope_id,

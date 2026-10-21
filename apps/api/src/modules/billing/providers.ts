@@ -2,6 +2,7 @@
 // Las funciones de verificación son puras para poder probarlas con fixtures.
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { config } from "../../config";
+import { AppError, badRequest } from "../../lib/errors";
 
 export class ProviderError extends Error {
   constructor(
@@ -419,6 +420,50 @@ export function subscriptionProviderConfigured(id: "stripe" | "mercadopago" | "m
   if (id === "mock") return config.billing.mockEnabled && config.environment !== "prod";
   if (id === "stripe") return providerConfigured("stripe") && Boolean(config.billing.stripe.webhookSecret);
   return providerConfigured("mercadopago") && (Boolean(config.billing.mercadopago.webhookSecret) || config.environment !== "prod");
+}
+
+/**
+ * ¿Se puede ofrecer este proveedor para el cobro de un sobre? Igual que en las suscripciones, además de las credenciales
+ * hace falta el webhook: el pago del firmante se confirma solo por él (Stripe exige STRIPE_WEBHOOK_SECRET; Mercado Pago,
+ * MP_WEBHOOK_SECRET en producción). Sin él el firmante pagaría y el sobre quedaría esperando un pago que nunca se
+ * confirma. El simulado, cuando está habilitado (fuera de producción o con PAYMENTS_MOCK_ENABLED): se confirma desde
+ * su propia página, sin webhook.
+ */
+export function envelopePaymentProviderConfigured(id: "stripe" | "mercadopago" | "mock"): boolean {
+  if (id === "mock") return providerConfigured("mock");
+  return subscriptionProviderConfigured(id);
+}
+
+/**
+ * Controla que el cobro de un sobre se pueda hacer con este proveedor y en esta moneda (al configurarlo y al enviar el
+ * sobre). Una cuenta de Mercado Pago cobra solo en la moneda de su país (MP_CURRENCIES o la de la cuenta): con otra la
+ * preferencia falla o cobra otra cosa, y el firmante quedaría trabado. Si todavía no se sabe la moneda de la cuenta, 503
+ * pasajero (o 422 si el país de la cuenta no se reconoce), como en las suscripciones.
+ */
+export async function assertEnvelopePaymentProvider(provider: "stripe" | "mercadopago" | "mock", currency: string): Promise<void> {
+  if (!envelopePaymentProviderConfigured(provider)) {
+    throw badRequest("provider_not_configured", `El proveedor de cobro ${provider} no está configurado en este entorno`);
+  }
+  if (provider !== "mercadopago") return;
+  const currencies = await mpSubscriptionCurrencies();
+  const cur = currency.toUpperCase();
+  if (currencies.includes(cur)) return;
+  if (!currencies.length) {
+    if (mpCurrencyMisconfigured())
+      throw new AppError(
+        422,
+        "provider_misconfigured",
+        "Mercado Pago no está bien configurado en la plataforma (no se reconoce el país de la cuenta): elegí otro medio de pago o escribinos a soporte",
+      );
+    throw new AppError(503, "provider_unavailable", "Mercado Pago no está disponible por ahora: probá de nuevo en unos minutos", {
+      retryAfterSeconds: mpCurrencyRetryAfterSeconds(),
+    });
+  }
+  throw badRequest(
+    "currency_not_supported",
+    `Mercado Pago cobra solo en ${currencies.join(", ")}: elegí esa moneda u otro proveedor para cobrar en ${cur}`,
+    { currency: cur, supported: currencies },
+  );
 }
 
 /**

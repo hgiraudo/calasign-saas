@@ -29,7 +29,8 @@ import { downgradeIdMatchSql } from "./certsign-requirements";
 import { assignFieldIds, formulaRefs, pruneDanglingConditions, saveFieldLogic } from "./logic";
 import { paymentBlocksCompletion } from "./billing/payments";
 import { enforceEnvelopeQuota, requireFeature, tenantPlan } from "./billing/plans";
-import { providerConfigured } from "./billing/providers";
+import { assertEnvelopePaymentProvider } from "./billing/providers";
+import { noteSettledPaymentOnClose } from "./billing/payment-close";
 import { deleteFilesIfUnused, discardBlobsOnFailure } from "./file-cleanup";
 import { createEnvelopeRoute, ONE_SHOT_JSON_BODY_LIMIT } from "./envelope-oneshot";
 import { envelopeSearchSql } from "./devapi/search";
@@ -455,6 +456,7 @@ export async function envelopeRoutes(app: FastifyInstance, s: Services) {
         input.reason,
       ]);
       await appendEvent(t, { tenantId: a.tenantId, envelopeId: e.id, type: "envelope.voided", actor: a.actor, data: { reason: input.reason } });
+      await noteSettledPaymentOnClose(t, e.id, "voided", a.actor);
       // También quienes ya firmaron electrónicamente pero tenían pendiente la firma con certificado.
       // Embebidos, en persona y autorregistrados sin correo validado no reciben el aviso (receivesSignerNotices).
       const notified = (
@@ -1052,15 +1054,14 @@ export async function sendEnvelope(t: Db, tenantId: string, envelopeId: string, 
     problems.push({ code: "expiry_past", params: {}, message: "La fecha de vencimiento ya pasó" });
   problems.push(...danglingFormulaProblems(fields));
   // El cobro tiene que quedar a cargo de un firmante: si se le cambió el rol, el sobre no podría completarse.
-  const pay = await t.one<any>(`SELECT recipient_id, provider FROM envelope_payments WHERE envelope_id = $1`, [e.id]);
+  const pay = await t.one<any>(`SELECT recipient_id, provider, currency FROM envelope_payments WHERE envelope_id = $1`, [e.id]);
   if (pay) {
     // El cobro se configuró con el plan y el proveedor de ese momento: si la organización bajó a un plan sin cobros, o
     // el proveedor ya no está configurado, el sobre no se envía (si no, se cobraba sin el plan o el firmante quedaba
     // trabado con un pago imposible). Cubre todos los caminos de envío, que pasan por acá.
     requireFeature((await tenantPlan(t, tenantId)).plan, "payments", "El cobro al firmar");
-    if (!providerConfigured(pay.provider)) {
-      throw badRequest("provider_not_configured", `El proveedor de cobro ${pay.provider} no está configurado en este entorno`);
-    }
+    // Credenciales y webhook del proveedor (sin webhook el pago nunca se confirma) y, con Mercado Pago, la moneda.
+    await assertEnvelopePaymentProvider(pay.provider, pay.currency);
   }
   if (pay && !signers.some((r) => r.id === pay.recipient_id))
     problems.push({ code: "payer_not_signer", params: {}, message: "Quien paga el cobro tiene que ser un firmante" });

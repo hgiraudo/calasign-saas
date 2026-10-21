@@ -13,6 +13,22 @@ export const SIGNER_SESSION_TOKEN_MAX_HOURS = 8;
 const SLIDE_EVERY = "1 minute";
 
 /**
+ * Todos los tokens de sesión los emite el canje de un código de /embed/:code, que pide el integrador con su API key
+ * (origen "integrador": no los obtiene el destinatario con su link). Para un destinatario NO embebido (recibe su propio
+ * link por correo/SMS) issueSigningUrl solo entrega el código si la página igual le exige autenticarse
+ * (embed.ts pageStillAuthenticates: OTP, en persona, o verificación de identidad todavía no superada). Esa condición se
+ * vuelve a exigir en cada uso del token: si no, quien tenía el token de sesión (el integrador) lo guardaba hasta que el
+ * destinatario verificara su identidad desde su link y después firmaba en su nombre con la verificación ya hecha.
+ * Elegimos rechazar el token de sesión de un destinatario no embebido en cuanto su identidad queda verificada, aunque la
+ * verificación se haya hecho desde esa misma sesión: atar la verificación a la sesión que la hizo dependería del
+ * camino de vuelta del proveedor (webhook, consulta, otra pestaña) y es fácil de equivocar. El destinatario sigue
+ * teniendo su link permanente para terminar. Mismo criterio que pageStillAuthenticates (mantener en sincronía).
+ */
+const INTEGRATOR_SESSION_ALLOWED_SQL = `(r.embedded IS TRUE
+  OR left(COALESCE(r.auth_method, ''), 4) = 'otp_' OR r.auth_method = 'in_person'
+  OR (r.id_verification_provider IS NOT NULL AND r.role IN ('signer', 'approver') AND r.identity_status IS DISTINCT FROM 'verified'))`;
+
+/**
  * Token de sesión vigente (tabla signer_session_tokens, migración 0083): sin vencer ni revocar y con el link del
  * destinatario sin rotar desde el canje. El cierre del sobre (completado, rechazado, anulado, vencido) lo revoca con 15
  * minutos de gracia (disparador de la 0083): la página embebida muestra el cierre y el puente avisa `closed` como antes.
@@ -20,8 +36,9 @@ const SLIDE_EVERY = "1 minute";
  * hooks resuelven el token varias veces por pedido. Devuelve el destinatario y el hash de su link permanente, o null.
  */
 export async function resolveSessionToken(db: Db, hash: string): Promise<{ recipient_id: string; access_token_hash: string } | null> {
-  const st = await db.one<{ recipient_id: string; access_token_hash: string; stale: boolean }>(
-    `SELECT st.recipient_id, st.access_token_hash, (st.last_used_at IS NULL OR st.last_used_at < now() - interval '${SLIDE_EVERY}') AS stale
+  const st = await db.one<{ recipient_id: string; access_token_hash: string; stale: boolean; integrator_allowed: boolean }>(
+    `SELECT st.recipient_id, st.access_token_hash, (st.last_used_at IS NULL OR st.last_used_at < now() - interval '${SLIDE_EVERY}') AS stale,
+            ${INTEGRATOR_SESSION_ALLOWED_SQL} AS integrator_allowed
        FROM signer_session_tokens st
        JOIN recipients r ON r.id = st.recipient_id AND r.access_token_hash = st.access_token_hash
        JOIN envelopes e ON e.id = st.envelope_id AND e.status <> 'draft'
@@ -29,6 +46,11 @@ export async function resolveSessionToken(db: Db, hash: string): Promise<{ recip
     [hash],
   );
   if (!st) return null;
+  if (!st.integrator_allowed) {
+    // Revocado en el acto (y para siempre: aunque la verificación se anulara después, el token ya no vuelve).
+    await db.query(`UPDATE signer_session_tokens SET revoked_at = now() WHERE token_hash = $1 AND (revoked_at IS NULL OR revoked_at > now())`, [hash]);
+    return null;
+  }
   if (st.stale) {
     await db.query(
       `UPDATE signer_session_tokens SET expires_at = LEAST(now() + make_interval(hours => $2), max_expires_at), last_used_at = now()

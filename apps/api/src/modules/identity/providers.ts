@@ -7,6 +7,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { IdvCaptureKind, IdvLevel, IdvProvider, IdvResult, IdentityProviderInfo, IdentitySettings } from "@calasign/shared";
 import { requiredCaptures } from "@calasign/shared";
+import { config } from "../../config";
 
 export interface CreateSessionInput {
   verificationId: string;
@@ -361,6 +362,66 @@ const truoraAdapter: IdvAdapter = {
     return out;
   },
 };
+
+// ───────────────────────── Capacidades de la integración ─────────────────────────
+
+const LEVEL_RANK: Record<IdvLevel, number> = { document: 0, document_selfie: 1, document_selfie_liveness: 2 };
+
+/**
+ * Qué controles declara hacer la integración del proveedor para el nivel pedido (null = no declara nada: el resultado
+ * tiene que traer la coincidencia facial y la prueba de vida explícitas).
+ *   veriff → VERIFF_INTEGRATION_LEVEL (la integración del panel de Veriff es una sola para todos los sobres)
+ *   truora → el nivel pedido, si hay un flujo propio para ese nivel (TRUORA_FLOW_ID_<NIVEL>): el flujo se arma con las
+ *            validaciones del nivel. El flujo genérico (TRUORA_FLOW_ID) no declara nada.
+ *   mock   → null (decide con las capturas y devuelve los datos explícitos)
+ */
+export function integrationLevel(provider: IdvProvider, level: IdvLevel): IdvLevel | null {
+  if (provider === "veriff") return config.identity.veriffIntegrationLevel;
+  if (provider === "truora") return process.env[`TRUORA_FLOW_ID_${level.toUpperCase()}`] ? level : null;
+  return null;
+}
+
+/**
+ * Por qué el proveedor (ya configurado) no puede hacer el nivel pedido, o null si puede: Truora sin flujo para el nivel
+ * (createSession fallaba con un 500 al iniciar) o Veriff con una integración que no llega al nivel.
+ */
+export function levelUnsupportedReason(provider: IdvProvider, level: IdvLevel): string | null {
+  if (provider === "truora" && !truoraFlowId(level)) {
+    return `Truora no tiene un flujo configurado para el nivel ${level} (TRUORA_FLOW_ID_${level.toUpperCase()} o TRUORA_FLOW_ID)`;
+  }
+  if (provider === "veriff" && LEVEL_RANK[config.identity.veriffIntegrationLevel] < LEVEL_RANK[level]) {
+    return `La integración de Veriff hace el nivel ${config.identity.veriffIntegrationLevel} y el destinatario pide ${level} (VERIFF_INTEGRATION_LEVEL)`;
+  }
+  return null;
+}
+
+/**
+ * Completa una aprobación con lo que la integración declara hacer (integrationLevel): la decisión de Veriff no suele
+ * traer faceMatch.similarity ni un booleano de prueba de vida, y sin esto toda aprobación de un nivel con selfie
+ * terminaba en level_not_met. Un dato contrario explícito gana: un puntaje facial bajo el umbral, faceMatched = false o
+ * liveness = false no se pisan. Devuelve también qué se infirió (va a la evidencia).
+ */
+export function withIntegrationCapabilities(
+  provider: IdvProvider,
+  level: IdvLevel,
+  result: IdvResult,
+  faceThreshold = config.identity.faceMatchThreshold,
+): { result: IdvResult; inferred: ("faceMatched" | "liveness")[] } {
+  const cap = result.status === "approved" ? integrationLevel(provider, level) : null;
+  if (!cap) return { result, inferred: [] };
+  const out = { ...result };
+  const inferred: ("faceMatched" | "liveness")[] = [];
+  const score = typeof result.faceMatchScore === "number" ? result.faceMatchScore : null;
+  if (LEVEL_RANK[cap] >= 1 && result.faceMatched == null && (score === null || score >= faceThreshold)) {
+    out.faceMatched = true;
+    inferred.push("faceMatched");
+  }
+  if (LEVEL_RANK[cap] >= 2 && result.liveness == null) {
+    out.liveness = true;
+    inferred.push("liveness");
+  }
+  return { result: out, inferred };
+}
 
 // ───────────────────────────── Registro ─────────────────────────────
 

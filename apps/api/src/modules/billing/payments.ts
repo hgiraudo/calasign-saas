@@ -26,7 +26,8 @@ import {
   mpCreatePreference,
   mpExpirePreference,
   mpRefundPayment,
-  providerConfigured,
+  assertEnvelopePaymentProvider,
+  envelopePaymentProviderConfigured,
   stripeCreatePaymentCheckout,
   stripeExpireCheckoutSession,
   stripeGetCheckoutSession,
@@ -66,7 +67,7 @@ export function toPayment(r: any): EnvelopePayment {
 export function paymentProviders(): PaymentProviderInfo[] {
   return PAYMENT_PROVIDERS.filter((p) => p !== "mock" || config.billing.mockEnabled).map((id) => ({
     id,
-    configured: providerConfigured(id),
+    configured: envelopePaymentProviderConfigured(id),
     methods: PROVIDER_METHODS[id].map(([, label]) => label),
     methodCodes: PROVIDER_METHODS[id].map(([code]) => code),
   }));
@@ -538,9 +539,8 @@ export async function paymentRoutes(app: FastifyInstance, s: Services) {
   app.put<E>("/v1/envelopes/:id/payment", { preHandler: auth }, async (req) => {
     const a = req.auth!;
     const input = EnvelopePaymentInput.parse(req.body);
-    if (!providerConfigured(input.provider)) {
-      throw badRequest("provider_not_configured", `El proveedor ${input.provider} no está configurado en este entorno`);
-    }
+    // Credenciales y webhook (sin él el pago nunca se confirma) y, con Mercado Pago, la moneda de la cuenta.
+    await assertEnvelopePaymentProvider(input.provider, input.currency);
     return s.db.tx(async (t) => {
       const e = await lockEnvelope(t, a.tenantId, req.params.id);
       if (e.status !== "draft") throw conflict("not_draft", "El cobro se configura mientras el sobre es un borrador");

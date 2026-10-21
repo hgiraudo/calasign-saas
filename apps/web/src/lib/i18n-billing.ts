@@ -120,6 +120,7 @@ const es = {
   "pay.detailTitle": "Cobro",
   "pay.detailLine": "{amount} · {description} · paga {payer}",
   "pay.waitingEnvelope": "Firmaron todos: el sobre se completa cuando se confirme el pago.",
+  "pay.settledOnClosed": "Hay un pago cobrado en un sobre que no se completó; revisalo o reembolsalo desde el proveedor ({provider}). CalaSign no lo devuelve automáticamente.",
 
   "signerPay.title": "Pago",
   "signerPay.before": "Para firmar, primero completá el pago.",
@@ -260,6 +261,7 @@ const pt: Record<Key, string> = {
   "pay.detailTitle": "Cobrança",
   "pay.detailLine": "{amount} · {description} · paga {payer}",
   "pay.waitingEnvelope": "Todos assinaram: o envelope é concluído quando o pagamento for confirmado.",
+  "pay.settledOnClosed": "Há um pagamento cobrado em um envelope que não foi concluído; revise-o ou reembolse-o pelo provedor ({provider}). A CalaSign não o devolve automaticamente.",
   "signerPay.title": "Pagamento",
   "signerPay.before": "Para assinar, primeiro conclua o pagamento.",
   "signerPay.after": "Você assinou. Para concluir o processo falta o pagamento.",
@@ -396,6 +398,7 @@ const en: Record<Key, string> = {
   "pay.detailTitle": "Payment",
   "pay.detailLine": "{amount} · {description} · paid by {payer}",
   "pay.waitingEnvelope": "Everyone signed: the envelope completes once the payment is confirmed.",
+  "pay.settledOnClosed": "A payment was collected on an envelope that was not completed; review or refund it from the provider ({provider}). CalaSign does not refund it automatically.",
   "signerPay.title": "Payment",
   "signerPay.before": "To sign, complete the payment first.",
   "signerPay.after": "You signed. The payment is still needed to finish.",

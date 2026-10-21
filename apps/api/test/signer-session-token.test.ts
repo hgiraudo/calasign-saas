@@ -511,3 +511,43 @@ describe("canje embebido → token de sesión", () => {
     expect(left).not.toContain(sha256Hex(oldRevoked));
   }, 60_000);
 });
+
+describe("destinatario no embebido: la sesión del integrador no sobrevive a su verificación de identidad", () => {
+  it("con la identidad verificada desde su link, el token de sesión ya abierto se revoca y no se vuelve a aceptar", async () => {
+    const { envelope, recipient, token } = await setup({ embedded: false, idv: "veriff" });
+    const { session } = await redeem(envelope, recipient);
+    expect(session).not.toBe("");
+    // Mientras la identidad no está verificada, la página igual la exige: la sesión abre (y el control la pide).
+    expect((await signing(session)).statusCode).toBe(200);
+    // El destinatario verifica desde su propio link.
+    await db.query(`UPDATE recipients SET identity_status = 'verified' WHERE id = $1`, [recipient]);
+    expect((await signing(session)).statusCode).toBe(404);
+    expect((await signing(session, "/consent", "POST")).statusCode).toBe(404);
+    const { sha256Hex } = await import("../src/lib/util");
+    const row = await db.one<any>(`SELECT revoked_at FROM signer_session_tokens WHERE token_hash = $1`, [sha256Hex(session)]);
+    expect(row.revoked_at).not.toBeNull();
+    // Aunque la verificación volviera a 'pending', el token revocado no vuelve.
+    await db.query(`UPDATE recipients SET identity_status = 'pending' WHERE id = $1`, [recipient]);
+    expect((await signing(session)).statusCode).toBe(404);
+    // Su link permanente sigue andando.
+    expect((await signing(token)).statusCode).not.toBe(404);
+  });
+
+  it("un código emitido antes de la verificación ya no se canjea después (410), sin abrir sesión ni sumar evidencia", async () => {
+    const { envelope, recipient } = await setup({ embedded: false, idv: "veriff" });
+    const su = await app.inject({ method: "POST", url: `/v1/envelopes/${envelope}/recipients/${recipient}/signing-url`, headers: auth, payload: {} });
+    expect(su.statusCode).toBe(201);
+    await db.query(`UPDATE recipients SET identity_status = 'verified' WHERE id = $1`, [recipient]);
+    const ex = await app.inject({ method: "GET", url: `/embed/${String(su.json().url).split("/embed/")[1]}` });
+    expect(ex.statusCode).toBe(410);
+    expect(await db.one(`SELECT 1 FROM signer_session_tokens WHERE recipient_id = $1`, [recipient])).toBeFalsy();
+    expect(await db.one(`SELECT 1 FROM envelope_events WHERE envelope_id = $1 AND type = 'recipient.embedded_session_started'`, [envelope])).toBeFalsy();
+  });
+
+  it("embebido: la verificación no corta la sesión", async () => {
+    const { envelope, recipient } = await setup({ embedded: true, idv: "veriff" });
+    const { session } = await redeem(envelope, recipient);
+    await db.query(`UPDATE recipients SET identity_status = 'verified' WHERE id = $1`, [recipient]);
+    expect((await signing(session)).statusCode).toBe(200);
+  });
+});

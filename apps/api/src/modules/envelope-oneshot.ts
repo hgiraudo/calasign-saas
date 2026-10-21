@@ -12,6 +12,7 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 import {
   CreateEnvelopeRequest,
+  CreateSigningUrlInput,
   ONE_SHOT_MAX_DOCUMENTS,
   PutFieldsInput,
   type CreateEnvelopeResponse,
@@ -107,9 +108,48 @@ export async function createEnvelopeRoute(s: Services, req: FastifyRequest, repl
   if (req.isMultipart()) {
     const { body, files } = await readMultipart(req);
     const material = JSON.stringify({ body, files: [...files].map(([k, f]) => [k, f.filename, sha256Hex(f.bytes)]) });
-    return idempotent(s, req, reply, () => createEnvelope(s, a, body, files), material);
+    return idempotent(s, req, reply, () => createEnvelope(s, a, body, files), material, signingUrlsReplay(s, a, body));
   }
-  return idempotent(s, req, reply, () => createEnvelope(s, a, req.body, new Map()));
+  return idempotent(s, req, reply, () => createEnvelope(s, a, req.body, new Map()), undefined, signingUrlsReplay(s, a, req.body));
+}
+
+const SIGNING_URLS_REPLAY_HINT =
+  "Respuesta repetida (Idempotency-Key): algunas URLs de firma ya no se pueden emitir; pedí una nueva con POST /v1/envelopes/{id}/recipients/{recipientId}/signing-url";
+
+/**
+ * Idempotencia de POST /v1/envelopes con firmantes embebidos: las URLs de firma llevan un código de un solo uso en claro
+ * y no se guardan en idempotency_keys (solo el id de cada destinatario). Al repetir el pedido se emiten URLs nuevas con
+ * las mismas opciones (embeddedSigning del pedido); las que ya no se pueden emitir (sobre cerrado, destinatario que ya
+ * firmó, reemplazado o no embebido) se omiten con `signingUrlsHint`.
+ */
+function signingUrlsReplay(s: Services, a: AuthContext, body: unknown) {
+  return {
+    redactStored: (b: CreateEnvelopeResponse & { signingUrls?: EnvelopeSigningUrl[] }) =>
+      b.signingUrls ? { ...b, signingUrls: b.signingUrls.map((u) => ({ recipientId: u.recipientId })) } : b,
+    rehydrate: async (stored: any) => {
+      const ids: string[] = Array.isArray(stored?.signingUrls) ? stored.signingUrls.map((u: any) => String(u?.recipientId ?? "")).filter(Boolean) : [];
+      const envelopeId = String(stored?.envelope?.id ?? "");
+      if (!ids.length || !envelopeId) return stored;
+      const opts = CreateSigningUrlInput.safeParse((body as { embeddedSigning?: unknown } | null)?.embeddedSigning ?? {});
+      const signingUrls: EnvelopeSigningUrl[] = [];
+      for (const recipientId of ids) {
+        try {
+          // Cada una en su transacción: una que falla no deshace las demás.
+          const r = await s.db.tx(async (t) => {
+            const cur = await t.one<any>(`SELECT embedded, status, role FROM recipients WHERE id = $1 AND envelope_id = $2`, [recipientId, envelopeId]);
+            if (!cur?.embedded || cur.status !== "sent" || !["signer", "approver"].includes(cur.role)) return null;
+            return issueSigningUrl(t, a, envelopeId, recipientId, opts.success ? opts.data : {});
+          });
+          if (r) signingUrls.push({ recipientId, ...r });
+        } catch {
+          // Sobre cerrado, origen ya no autorizado, etc.: se omite y se avisa.
+        }
+      }
+      const out: Record<string, unknown> = { ...stored, signingUrls };
+      if (signingUrls.length < ids.length) out.signingUrlsHint = SIGNING_URLS_REPLAY_HINT;
+      return out;
+    },
+  };
 }
 
 /** Resuelve `recipient`/`document` de un campo (posición, ref o email) a ids. */

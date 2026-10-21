@@ -16,6 +16,19 @@ function bool(v: string | undefined, def: boolean) {
   return ["1", "true", "yes", "on"].includes(v.toLowerCase());
 }
 
+/** Variable numérica: vacía, ausente o ilegible = el valor por defecto (Number("") es 0, no "sin valor"). */
+export function numEnv(v: string | undefined, def: number): number {
+  if (v === undefined || v.trim() === "") return def;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : def;
+}
+
+type IdvLevelName = "document" | "document_selfie" | "document_selfie_liveness";
+function idvLevelEnv(v: string | undefined, def: IdvLevelName): IdvLevelName {
+  const x = (v ?? "").trim().toLowerCase();
+  return x === "document" || x === "document_selfie" || x === "document_selfie_liveness" ? x : def;
+}
+
 const env = process.env;
 const production = env.NODE_ENV === "production";
 
@@ -195,9 +208,20 @@ export const config = {
      * Horas que una verificación de un proveedor externo (Veriff, Truora) puede quedar esperando el resultado. Pasado
      * ese plazo se da por vencida (provider_timeout) sin consumir un intento y el firmante puede volver a empezar.
      */
-    pendingTimeoutHours: Math.max(1, Number(env.IDV_PENDING_TIMEOUT_HOURS ?? 24) || 24),
-    /** Similitud mínima (0..1) entre la selfie y la foto del documento para los niveles con selfie. */
-    faceMatchThreshold: Math.min(1, Math.max(0, Number.isFinite(Number(env.IDV_FACE_MATCH_THRESHOLD ?? 0.8)) ? Number(env.IDV_FACE_MATCH_THRESHOLD ?? 0.8) : 0.8)),
+    pendingTimeoutHours: Math.max(1, numEnv(env.IDV_PENDING_TIMEOUT_HOURS, 24) || 24),
+    /**
+     * Similitud mínima (0..1) entre la selfie y la foto del documento para los niveles con selfie. Vacía o ilegible =
+     * 0.8 (antes una variable vacía daba Number("") = 0 y cualquier puntaje alcanzaba).
+     */
+    faceMatchThreshold: Math.min(1, Math.max(0, numEnv(env.IDV_FACE_MATCH_THRESHOLD, 0.8))),
+    /**
+     * Qué controles hace la integración de Veriff configurada en su panel (VERIFF_INTEGRATION_LEVEL): document,
+     * document_selfie (default) o document_selfie_liveness. La decisión de Veriff no siempre trae el puntaje facial ni la
+     * prueba de vida: una aprobación cuenta como coincidencia facial / prueba de vida si la integración las hace, salvo
+     * que la decisión traiga un dato contrario explícito. Los sobres que piden un nivel mayor que el de la integración
+     * no se pueden enviar con Veriff (providerReady).
+     */
+    veriffIntegrationLevel: idvLevelEnv(env.VERIFF_INTEGRATION_LEVEL, "document_selfie"),
   },
   webhooks: {
     /** Entregas fallidas definitivas seguidas (agotados los reintentos) que desactivan el endpoint (motivo "failing"). */

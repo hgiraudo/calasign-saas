@@ -451,4 +451,8 @@ export const MORE_CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
     "pt-BR": "A verificação ainda não começou no provedor: toque em continuar para abrir a página de verificação.",
     en: "The verification hasn't started at the provider yet: tap continue to open the verification page.",
   },
+  currency_not_supported: {
+    "pt-BR": "O Mercado Pago só cobra na moeda da conta: escolha essa moeda ou outro provedor.",
+    en: "Mercado Pago only charges in its account's currency: choose that currency or another provider.",
+  },
 };

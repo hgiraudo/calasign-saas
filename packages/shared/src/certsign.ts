@@ -5,7 +5,7 @@ export const SIGNATURE_TYPES = ["electronic", "certificate"] as const;
 export type SignatureType = (typeof SIGNATURE_TYPES)[number];
 
 export const CertificateRequirementsInput = z.object({
-  /** El certificado tiene que corresponder al documento declarado del firmante (por defecto sí, si hay documento). */
+  /** El certificado tiene que corresponder al documento declarado del firmante. Por defecto no (false): solo si se pide y el destinatario tiene número de documento. */
   matchIdDocument: z.boolean().optional(),
   /** Partes del DN del emisor permitidas (ej. "ICP-Brasil", "RENIEC"). Vacío = cualquiera. */
   allowedIssuers: z.array(z.string().trim().min(2).max(200)).max(10).optional(),

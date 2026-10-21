@@ -310,7 +310,7 @@ export async function byokRoutes(app: FastifyInstance, s: Services) {
     return { ...(await settingsFor(s.db, a.tenantId)), notice: prev ? PREVIOUS_KEY_NOTICE(prev) : null };
   });
 
-  app.post("/v1/settings/byok/test", { preHandler: auth, config: { rateLimit: { max: 20, timeWindow: "1 minute" } } }, async (req): Promise<ByokTestResult> => {
+  app.post("/v1/settings/byok/test", { preHandler: auth, config: { rateLimit: { max: 20, timeWindow: "1 minute" }, rateLimitByCredential: true } }, async (req): Promise<ByokTestResult> => {
     const a = req.auth!;
     const t = await s.db.one<any>(`SELECT byok_key_arn, byok_status FROM tenants WHERE id = $1`, [a.tenantId]);
     if (!t?.byok_key_arn) throw new AppError(409, "byok_not_configured", "No hay una clave configurada");

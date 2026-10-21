@@ -50,14 +50,22 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
 
   app.post("/v1/auth/signup", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req, reply) => {
     const input = SignupInput.parse(req.body);
-    const exists = await s.db.one(`SELECT 1 FROM users WHERE lower(email) = lower($1)`, [input.email]);
-    if (exists) throw conflict("email_taken", "Ya existe una cuenta con ese correo");
-    const userId = uuidv7();
+    const existing = await s.db.one<any>(`SELECT id, password_hash, totp_enabled_at FROM users WHERE lower(email) = lower($1)`, [input.email]);
+    // Cuenta existente SIN organizaciones (p. ej. la quitaron de la única que tenía): con su contraseña (la misma prueba
+    // que el ingreso, con el mismo bloqueo por cuenta) crea una organización nueva para esa cuenta. No se crea otra
+    // cuenta ni se toca la existente (contraseña, nombre, 2FA). Con 2FA no: crear la organización abriría una sesión con
+    // solo la contraseña. Con organizaciones, o sin la contraseña correcta, sigue siendo email_taken (sin revelar más).
+    const userId = existing ? await existingAccountWithoutOrganization(existing, input.password) : uuidv7();
     const tenantId = uuidv7();
-    const pw = await hashPassword(input.password);
+    const pw = existing ? null : await hashPassword(input.password);
     const locale = input.locale ?? "es";
     const cell = cellForSignup(input.cell);
     await s.db.tx(async (t) => {
+      if (existing) {
+        // Con la cuenta bloqueada: una invitación aceptada a la vez la habría sumado a otra organización.
+        await t.query(`SELECT id FROM users WHERE id = $1 FOR UPDATE`, [userId]);
+        if (await t.one(`SELECT 1 FROM memberships WHERE user_id = $1 LIMIT 1`, [userId])) throw conflict("email_taken", "Ya existe una cuenta con ese correo");
+      }
       let slug = slugify(input.organization);
       if (await t.one(`SELECT 1 FROM tenants WHERE slug = $1`, [slug])) slug = `${slug}-${tenantId.slice(-6)}`;
       await t.query(`INSERT INTO tenants (id, slug, name, default_locale, cell) VALUES ($1,$2,$3,$4,$5)`, [
@@ -68,19 +76,47 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
         cell,
       ]);
       await registerTenantCell(t, tenantId, slug, cell);
-      await t.query(`INSERT INTO users (id, email, name, password_hash, locale) VALUES ($1,$2,$3,$4,$5)`, [
-        userId,
-        input.email,
-        input.name,
-        pw,
-        locale,
-      ]);
+      if (!existing) {
+        await t.query(`INSERT INTO users (id, email, name, password_hash, locale) VALUES ($1,$2,$3,$4,$5)`, [
+          userId,
+          input.email,
+          input.name,
+          pw,
+          locale,
+        ]);
+      }
       await t.query(`INSERT INTO memberships (tenant_id, user_id, role) VALUES ($1,$2,'owner')`, [tenantId, userId]);
     });
+    if (existing) {
+      await recordAudit(s.db, {
+        tenantId,
+        action: "auth.signup_existing_account",
+        actor: { type: "user", id: userId, label: input.email },
+        targetType: "user",
+        targetId: userId,
+        ...clientInfo(req),
+      }).catch(() => {});
+    }
     await createSession(reply, req, userId, tenantId);
     reply.code(201);
     return me(userId, tenantId);
   });
+
+  /** Signup con un correo ya registrado: el id de la cuenta si no tiene organizaciones y la contraseña es la suya. */
+  async function existingAccountWithoutOrganization(u: { id: string; password_hash: unknown; totp_enabled_at: unknown }, password: string): Promise<string> {
+    const taken = () => conflict("email_taken", "Ya existe una cuenta con ese correo");
+    if (await s.db.one(`SELECT 1 FROM memberships WHERE user_id = $1 LIMIT 1`, [u.id])) throw taken();
+    const hasPassword = typeof u.password_hash === "string" && u.password_hash.startsWith("scrypt$");
+    if (!hasPassword) throw taken();
+    // Mismo bloqueo por cuenta que /v1/auth/login: el signup no sirve para probar contraseñas sin límite.
+    await takeLoginAttempt(s.db, u.id);
+    if (!(await verifyPassword(password, u.password_hash as string))) throw taken();
+    await clearLoginAttempts(s.db, u.id);
+    if (u.totp_enabled_at) {
+      throw new AppError(409, "account_without_organization_2fa", "Tu cuenta tiene verificación en dos pasos y no pertenece a ninguna organización: pedí que te inviten a una.");
+    }
+    return u.id;
+  }
 
   app.post("/v1/auth/login", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req, reply) => {
     const input = LoginInput.parse(req.body);
@@ -98,7 +134,16 @@ export async function authRoutes(app: FastifyInstance, s: Services) {
 
     // SSO obligatorio (Fase 5): se entra a la primera organización que admite contraseña.
     const pick = await passwordLoginTenant(s.db, u.id);
-    if (!pick) throw unauthorized();
+    if (!pick) {
+      // Contraseña correcta pero sin organizaciones (la quitaron de la única que tenía, o una aceptación de invitación
+      // vieja dejó la cuenta suelta): no es un 401 genérico, que hacía pensar que la contraseña estaba mal.
+      await clearLoginAttempts(s.db, u.id);
+      throw new AppError(
+        403,
+        "no_organization",
+        "Tu cuenta no pertenece a ninguna organización. Para crear una, registrate con este mismo correo y contraseña, o pedí que te inviten.",
+      );
+    }
     // Contraseña correcta: si el acceso es por SSO o hay que restablecerla, no es un intento fallido (si no, se seguía
     // contando y terminaba en too_many_attempts en vez de la indicación de SSO).
     if ("passwordResetRequired" in pick || "ssoRequired" in pick) await clearLoginAttempts(s.db, u.id);

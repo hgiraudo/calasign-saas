@@ -4,6 +4,7 @@ import type { Db } from "../infra/db";
 import type { BlobStore } from "../infra/storage";
 import type { Actor } from "../infra/evidence";
 import { bearerToken, sha256Hex } from "../lib/util";
+import { forgetCredential, rememberAuthenticatedCredential } from "../lib/ip";
 import { unauthorized } from "../lib/errors";
 import { enforceRoutePolicy, loadAccess, type AccessInfo } from "./access";
 import { enforceOAuthScope, isOAuthAccessToken, oauthAuthContext, restrictAccessToScopes } from "./oauth-tokens";
@@ -89,7 +90,14 @@ export function authenticate(s: Services) {
     const key = bearerToken(req.headers.authorization);
     if (key) {
       if (isOAuthAccessToken(key)) {
-        req.auth = await oauthAuthContext(s.db, key, ip, userAgent);
+        try {
+          req.auth = await oauthAuthContext(s.db, key, ip, userAgent);
+        } catch (e) {
+          forgetCredential(key);
+          throw e;
+        }
+        // Credencial válida: desde el próximo pedido cuenta en su propio cupo del límite (lib/ip.ts rateLimitKey).
+        rememberAuthenticatedCredential(key);
         enforceOAuthScope(req, req.auth);
         req.auth.access = await loadAccess(s.db, req.auth);
         // Como la sesión web SSO: el segundo factor lo maneja el proveedor de identidad (si no, quien autorizó una app
@@ -103,7 +111,11 @@ export function authenticate(s: Services) {
         `SELECT id, tenant_id, name FROM api_keys WHERE key_hash = $1 AND revoked_at IS NULL`,
         [sha256Hex(key)],
       );
-      if (!row) throw unauthorized();
+      if (!row) {
+        forgetCredential(key);
+        throw unauthorized();
+      }
+      rememberAuthenticatedCredential(key);
       s.db.query(`UPDATE api_keys SET last_used_at = now() WHERE id = $1`, [row.id]).catch(() => {});
       req.auth = {
         tenantId: row.tenant_id,

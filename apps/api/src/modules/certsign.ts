@@ -56,7 +56,7 @@ import { envelopeBaseUrl } from "./white-label/brand";
 import { lockEnvelope, pastExpiry } from "./envelopes";
 import { guardedFetch, trustAnchors } from "./evidence-seal";
 import { recipientActor, resolveToken } from "./signing";
-import { idMatchSkipped, normalizeRequirements } from "./certsign-requirements";
+import { explicitRequirementsJson, idMatchSkipped, normalizeRequirements } from "./certsign-requirements";
 import { deleteBlobsQuietly } from "./file-cleanup";
 export { normalizeRequirements };
 
@@ -78,7 +78,7 @@ export async function applyCertificateFlags(
       `UPDATE recipients SET signature_type = COALESCE($3, signature_type),
          certificate_requirements = CASE WHEN $4::boolean THEN $5::jsonb ELSE certificate_requirements END
        WHERE id = $1 AND envelope_id = $2`,
-      [r.id, envelopeId, r.signatureType ?? null, r.certificateRequirements !== undefined, r.certificateRequirements ? JSON.stringify(r.certificateRequirements) : null],
+      [r.id, envelopeId, r.signatureType ?? null, r.certificateRequirements !== undefined, explicitRequirementsJson(r.certificateRequirements)],
     );
   }
   // Un rol que dejó de ser firmante no puede seguir con firma con certificado.
@@ -517,7 +517,11 @@ export async function certsignRoutes(app: FastifyInstance, s: Services) {
     // Se pedía que corresponda al documento pero el destinatario no tiene número de documento (sobre creado antes del
     // control al guardar, o desde una plantilla, un reemplazo…): no se traba el sobre; se firma sin ese control
     // (normalizeRequirements ya lo deja en false) y la evidencia registra que no se pudo comparar.
-    const idMatch = idMatchSkipped(r.certificate_requirements, r.id_document_number) ? { idDocumentMatch: "skipped_missing_id_document" as const } : {};
+    // Documento indicado por quien delegó (no por el remitente): la evidencia registra la procedencia del número.
+    const idMatch = {
+      ...(idMatchSkipped(r.certificate_requirements, r.id_document_number) ? { idDocumentMatch: "skipped_missing_id_document" as const } : {}),
+      ...(r.certificate_requirements?.idDocumentSource === "delegator" ? { idDocumentSource: "delegator" as const } : {}),
+    };
     let chainIn: Uint8Array[];
     try {
       chainIn = parseChain(input.chain);
@@ -749,6 +753,8 @@ export async function certsignRoutes(app: FastifyInstance, s: Services) {
           identityMatch: check.identityMatch?.source ?? null,
           // Se pedía corresponder al documento pero no había documento con qué comparar: el control no se aplicó.
           ...(check.idDocumentMatch ? { idDocumentMatch: check.idDocumentMatch } : {}),
+          // El número de documento lo indicó quien delegó la firma.
+          ...(check.idDocumentSource ? { idDocumentSource: check.idDocumentSource } : {}),
           // Estado de revocación al momento de preparar la firma ("not_checked" si la CA no respondió).
           revocation: check.revocation?.status ?? "not_checked",
           revocationSource: check.revocation?.source ?? null,

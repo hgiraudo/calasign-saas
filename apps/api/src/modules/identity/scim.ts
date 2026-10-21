@@ -4,7 +4,7 @@
 // (DELETE) hace lo mismo y lo oculta (404, RFC 7644 §3.6), pero la fila queda (deleted_at): el alta JIT por SSO no lo
 // vuelve a sumar, y un POST posterior del IdP lo vuelve a aprovisionar.
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { actingPerson, releaseScimJitBlocks, revokeMemberAccess } from "../member-access";
+import { actingPerson, blockedByConsoleRemoval, provisionMembership, releaseScimJitBlocks, revokeMemberAccess } from "../member-access";
 import { BUILTIN_ROLE_PERMISSIONS, CreateScimTokenInput, type ScimSettings, type ScimToken } from "@calasign/shared";
 import { z } from "zod";
 import { config } from "../../config";
@@ -147,17 +147,27 @@ const revokedData = (r: Revoked | null | undefined) =>
     : {};
 
 /** Resultado de activar o desactivar: lo revocado (baja). */
-type ActiveResult = { revoked: Revoked | null };
+type ActiveResult = { revoked: Revoked | null; joined?: { role: string; roleId: string | null; invitationId: string | null } | null };
 
 async function setActive(db: Db, tenantId: string, userId: string, active: boolean): Promise<ActiveResult> {
   let revoked: Revoked | null = null;
+  let joined: ActiveResult["joined"] = null;
   const m = await db.one<any>(`SELECT role FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [tenantId, userId]);
   if (active && !m) {
     // Cupo de usuarios del plan: una alta o reactivación por SCIM ocupa un lugar igual que una invitación.
     // Con la organización bloqueada (como en miembros e invitaciones): dos altas simultáneas no superan el cupo.
     await db.query(`SELECT id FROM tenants WHERE id = $1 FOR UPDATE`, [tenantId]);
+    const email = (await db.one<{ email: string }>(`SELECT email FROM users WHERE id = $1`, [userId]))?.email ?? "";
+    // Quitado desde la consola: el IdP no lo vuelve a sumar hasta que lo inviten de nuevo (si no, la baja no se sostenía).
+    if (await blockedByConsoleRemoval(db, tenantId, userId, email)) {
+      throw new ScimError(
+        403,
+        "Un administrador quitó a este usuario de la organización desde la consola: no se reactiva por SCIM hasta que lo vuelvan a invitar",
+      );
+    }
     const { plan } = await tenantPlan(db, tenantId);
-    if (plan.users !== null && (await usersCount(db, tenantId)) >= plan.users) {
+    // Su propia invitación pendiente (si la hay) no cuenta como un lugar más: la acepta esta alta.
+    if (plan.users !== null && (await usersCount(db, tenantId, email)) >= plan.users) {
       throw new ScimError(402, `plan_limit: el plan ${plan.name} permite hasta ${plan.users} usuario(s); ampliá el plan en ${UPGRADE_URL}`, "plan_limit");
     }
     // Acá se vincula la cuenta a la organización (alta activa, reactivación o PATCH/PUT active = true). Una cuenta YA
@@ -165,17 +175,9 @@ async function setActive(db: Db, tenantId: string, userId: string, active: boole
     // ajeno" en docs/ARQUITECTURA.md).
     const t = await db.one<any>(`SELECT scim_default_role FROM tenants WHERE id = $1`, [tenantId]);
     // Sin contraseña en esta organización hasta que el usuario la restablezca: si la cuenta ya existía, su contraseña
-    // pudo elegirla otra persona (el registro no verifica el correo). Ver 0029_r11_identity.
-    await db.query(`INSERT INTO memberships (tenant_id, user_id, role, password_allowed) VALUES ($1,$2,$3,false) ON CONFLICT DO NOTHING`, [
-      tenantId,
-      userId,
-      t?.scim_default_role ?? "member",
-    ]);
-    // Una invitación pendiente al mismo correo ya no hace falta: si quedara, después de una baja lo volvía a sumar.
-    await db.query(
-      `UPDATE invitations SET revoked_at = now() WHERE tenant_id = $1 AND accepted_at IS NULL AND revoked_at IS NULL AND lower(email) = (SELECT lower(email) FROM users WHERE id = $2)`,
-      [tenantId, userId],
-    );
+    // pudo elegirla otra persona (el registro no verifica el correo). Ver 0029_r11_identity. Con una invitación vigente
+    // para el correo, entra con el rol de la invitación (y la invitación queda aceptada); las demás pendientes se revocan.
+    joined = await provisionMembership(db, tenantId, userId, email, t?.scim_default_role ?? "member");
   } else if (!active && m) {
     // Los propietarios se administran desde la consola (allí solo otro propietario puede quitarlos): un token SCIM,
     // que puede crear un administrador, no puede desactivarlos.
@@ -187,7 +189,7 @@ async function setActive(db: Db, tenantId: string, userId: string, active: boole
     revoked = await revokeMemberAccess(db, tenantId, userId);
   }
   await db.query(`UPDATE scim_users SET active = $3, updated_at = now() WHERE tenant_id = $1 AND user_id = $2`, [tenantId, userId, active]);
-  return { revoked };
+  return { revoked, joined };
 }
 
 /**
@@ -269,6 +271,12 @@ async function applyUserAttrs(db: Db, tenantId: string, userId: string, attrs: R
       if (taken) throw new ScimError(409, "Ya existe un usuario con ese correo", "uniqueness");
       await assertVerifiedDomain(db, tenantId, email);
       await db.query(`UPDATE users SET email = $2 WHERE id = $1`, [userId, email]);
+      // Los links para restablecer la contraseña que se mandaron al correo anterior dejan de valer: si no, quien lee
+      // ese buzón (p. ej. una dirección reasignada) elegía la contraseña de la cuenta que ahora es de otro correo.
+      // También los desafíos de 2FA de un ingreso con contraseña empezado con el correo anterior. Las sesiones abiertas
+      // son de la misma persona y se mantienen (el IdP la renombró; no hubo cambio de quién controla la cuenta).
+      await db.query(`UPDATE password_resets SET used_at = now() WHERE user_id = $1 AND used_at IS NULL`, [userId]);
+      await db.query(`DELETE FROM login_challenges WHERE user_id = $1`, [userId]);
     }
   }
   return "active" in attrs ? setActive(db, tenantId, userId, asBool(attrs.active)) : null;
@@ -569,7 +577,7 @@ export async function scimRoutes(app: FastifyInstance, s: Services) {
       if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new ScimError(400, "userName (correo) es obligatorio", "invalidValue");
       const active = input.active === undefined ? true : asBool(input.active);
       await assertVerifiedDomain(s.db, tenantId, email);
-      const userId = await s.db.tx(async (t) => {
+      const { userId, joined } = await s.db.tx(async (t) => {
         let u = await t.one<any>(`SELECT id FROM users WHERE lower(email) = $1`, [email]);
         if (u) {
           // Un usuario borrado por SCIM (deleted_at) se puede volver a crear: el IdP no lo ve y no tiene otra forma.
@@ -590,10 +598,15 @@ export async function scimRoutes(app: FastifyInstance, s: Services) {
              active = EXCLUDED.active, deleted_at = NULL, updated_at = now()`,
           [tenantId, u.id, input.externalId ?? null, input.name?.givenName ?? null, input.name?.familyName ?? null, active],
         );
-        if (active) await setActive(t, tenantId, u.id, true);
-        return u.id as string;
+        const r = active ? await setActive(t, tenantId, u.id, true) : null;
+        return { userId: u.id as string, joined: r?.joined ?? null };
       });
-      await audit(req, "member.scim_provisioned", "user", userId, { email, active });
+      await audit(req, "member.scim_provisioned", "user", userId, {
+        email,
+        active,
+        // Entró aceptando una invitación pendiente: con su rol (no el rol por defecto de SCIM).
+        ...(joined?.invitationId ? { invitationId: joined.invitationId, role: joined.role, ...(joined.roleId ? { roleId: joined.roleId } : {}) } : {}),
+      });
       reply.code(201).header("location", `${scimBase()}/Users/${userId}`);
       return toScimUser(s.db, tenantId, await findUser(s.db, tenantId, userId));
     });

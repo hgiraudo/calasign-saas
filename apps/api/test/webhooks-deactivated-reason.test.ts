@@ -11,9 +11,12 @@ const migrations = fileURLToPath(new URL("../migrations/", import.meta.url));
 describe("webhooks: deactivatedReason", () => {
   it("credential_revoked solo para inactivos con la credencial de origen revocada", async () => {
     const db = await PGlite.create();
+    // Como migrate(): la tabla de migraciones existe antes y cada archivo queda registrado (la 0094 la consulta).
+    await db.query(`CREATE TABLE schema_migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())`);
     for (const f of readdirSync(migrations).filter((f) => f.endsWith(".sql")).sort()) {
       const sql = readFileSync(migrations + f, "utf8").replace(/--[^\n]*(\n|$)/g, "\n").split(/;\s*(?:\n|$)/).map((s) => s.trim()).filter(Boolean);
       for (const st of sql) await db.query(st);
+      await db.query(`INSERT INTO schema_migrations (name) VALUES ($1)`, [f]);
     }
     // Sin claves foráneas: alcanza con filas de webhook_endpoints (la API key referida no existe = revocada/borrada).
     await db.query("SET session_replication_role = replica");

@@ -2,7 +2,8 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import type { MeResponse } from "@calasign/shared";
-import { api, errorText, HttpError, UNAUTHORIZED_EVENT } from "./api";
+import { api, errorText, HttpError, setExpectedTenant, TENANT_MISMATCH_EVENT, UNAUTHORIZED_EVENT } from "./api";
+import { broadcastSessionChange, onSessionChange } from "./session-sync";
 import { confirmUnload, hasUnsavedChanges } from "./i18n";
 import { usePasswordText } from "./i18n-password";
 import { Modal, Spinner } from "../components/ui";
@@ -28,6 +29,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [sessionLost, setSessionLost] = useState(false);
   const meRef = useRef(me);
   meRef.current = me;
+  // Organización que muestra esta pestaña: va en x-calasign-tenant en cada escritura (409 tenant_mismatch si la sesión
+  // se movió a otra en otra pestaña). Se fija al renderizar para que el primer pedido después de setMe ya la lleve.
+  setExpectedTenant(me?.tenant.id ?? null);
   /** Sesión terminada: al login con aviso, salvo que haya cambios sin guardar (entonces, el aviso sin desmontar). */
   const endSession = useCallback(() => {
     if (meRef.current && hasUnsavedChanges()) {
@@ -63,6 +67,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       await api("/v1/auth/logout", { method: "POST" });
     } finally {
+      broadcastSessionChange({ kind: "logout", tenantId: null, userId: null });
       setMe(null);
       confirmUnload();
       window.location.assign("/login");
@@ -102,6 +107,45 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
     return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
   }, [endSession]);
+  // La sesión cambió en otra pestaña (aviso entre pestañas, o el servidor respondió 409 tenant_mismatch): esta pestaña
+  // muestra otra organización o cuenta y lo que guarde iría a otro lado. Se recarga con un aviso; con cambios sin
+  // guardar, solo el aviso (para copiarlos antes de recargar).
+  const [staleTab, setStaleTab] = useState(false);
+  const [reloadedNotice, setReloadedNotice] = useState(() => {
+    try {
+      const v = window.sessionStorage.getItem(TAB_RELOAD_FLASH);
+      window.sessionStorage.removeItem(TAB_RELOAD_FLASH);
+      return v === "1";
+    } catch {
+      return false;
+    }
+  });
+  const sessionChangedElsewhere = useCallback(() => {
+    if (hasUnsavedChanges()) {
+      setStaleTab(true);
+      return;
+    }
+    try {
+      window.sessionStorage.setItem(TAB_RELOAD_FLASH, "1");
+    } catch {
+      // sin almacenamiento: se recarga sin el aviso
+    }
+    window.location.reload();
+  }, []);
+  useEffect(() => {
+    const onMismatch = () => sessionChangedElsewhere();
+    window.addEventListener(TENANT_MISMATCH_EVENT, onMismatch);
+    const stop = onSessionChange((c) => {
+      const cur = meRef.current;
+      if (!cur) return;
+      if (c.kind === "logout" || c.tenantId !== cur.tenant.id || (c.userId !== null && c.userId !== cur.user.id)) sessionChangedElsewhere();
+    });
+    return () => {
+      window.removeEventListener(TENANT_MISMATCH_EVENT, onMismatch);
+      stop();
+    };
+  }, [sessionChangedElsewhere]);
+
   const setMeAndClear = useCallback((m: MeResponse | null) => {
     if (m) setExpired(false);
     setMe(m);
@@ -110,6 +154,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   return (
     <Ctx.Provider value={{ me, loading, refresh, setMe: setMeAndClear, logout, expired }}>
       {children}
+      {staleTab && (
+        <TabChangedModal
+          unsaved
+          onClose={() => setStaleTab(false)}
+          onReload={() => {
+            confirmUnload();
+            window.location.reload();
+          }}
+        />
+      )}
+      {reloadedNotice && <TabChangedModal onClose={() => setReloadedNotice(false)} />}
       {sessionLost && me && (
         <SessionLostModal
           me={me}
@@ -125,6 +180,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         />
       )}
     </Ctx.Provider>
+  );
+}
+
+const TAB_RELOAD_FLASH = "calasign:tab-reloaded";
+
+/** Aviso de que la sesión cambió en otra pestaña: después de recargar, o (con cambios sin guardar) antes de hacerlo. */
+function TabChangedModal({ unsaved, onClose, onReload }: { unsaved?: boolean; onClose: () => void; onReload?: () => void }) {
+  const pw = usePasswordText();
+  return (
+    <Modal
+      title={pw("tabChangedTitle")}
+      onClose={onClose}
+      footer={
+        unsaved ? (
+          <>
+            <button type="button" className="btn btn-ghost" onClick={onClose}>
+              {pw("tabOk")}
+            </button>
+            <button type="button" className="btn btn-primary" onClick={onReload}>
+              {pw("tabReload")}
+            </button>
+          </>
+        ) : (
+          <button type="button" className="btn btn-primary" onClick={onClose}>
+            {pw("tabOk")}
+          </button>
+        )
+      }
+    >
+      <p>{pw(unsaved ? "tabChangedUnsaved" : "tabChangedBody")}</p>
+    </Modal>
   );
 }
 

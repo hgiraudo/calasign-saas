@@ -25,6 +25,7 @@ import { assignFieldIds, copyFieldLogic, pruneDanglingConditions, saveFieldLogic
 import { loadDetail, loadDocuments, toDocument } from "./mappers";
 import { deleteFilesIfUnused, discardBlobsOnFailure } from "./file-cleanup";
 import { guardTemplateForms } from "./webforms";
+import { explicitRequirementsJson } from "./certsign-requirements";
 
 const toTemplate = (r: any) => ({
   id: r.id,
@@ -388,7 +389,7 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
           await t.query(
             `UPDATE template_roles SET signature_type = COALESCE($2, signature_type),
                certificate_requirements = CASE WHEN $3::boolean THEN $4::jsonb ELSE certificate_requirements END WHERE id = $1`,
-            [r.id, r.signatureType ?? null, r.certificateRequirements !== undefined, r.certificateRequirements ? JSON.stringify(r.certificateRequirements) : null],
+            [r.id, r.signatureType ?? null, r.certificateRequirements !== undefined, explicitRequirementsJson(r.certificateRequirements)],
           );
         }
       }
@@ -515,7 +516,7 @@ export async function templateRoutes(app: FastifyInstance, s: Services) {
         if (r.role === "signer" && r.signature_type === "certificate")
           await t.query(`UPDATE template_roles SET signature_type = 'certificate', certificate_requirements = $2 WHERE id = $1`, [
             rid,
-            r.certificate_requirements ? JSON.stringify(r.certificate_requirements) : null,
+            explicitRequirementsJson(r.certificate_requirements),
           ]);
       }
       const fields = await t.query<any>(`SELECT * FROM fields WHERE envelope_id = $1`, [env.id]);

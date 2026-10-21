@@ -150,3 +150,74 @@ export async function releaseScimJitBlocks(t: Db, tenantId: string): Promise<num
   const r = await t.query(`DELETE FROM scim_users WHERE tenant_id = $1 AND (active = false OR deleted_at IS NOT NULL) RETURNING user_id`, [tenantId]);
   return r.length;
 }
+
+// ───────── Bajas desde la consola y altas por SSO (JIT) o SCIM ─────────
+
+/**
+ * Baja desde la consola: queda registrada para que el alta JIT por SSO o una activación por SCIM no vuelvan a sumar a
+ * la persona (si no, la baja no se sostenía: el próximo ingreso por SSO o la sincronización del IdP la reincorporaban).
+ * La borra aceptar una invitación nueva (clearConsoleRemoval).
+ */
+export async function recordConsoleRemoval(t: Db, tenantId: string, userId: string, removedBy: string | null) {
+  await t.query(
+    `INSERT INTO member_removals (tenant_id, user_id, removed_by) VALUES ($1,$2,$3)
+     ON CONFLICT (tenant_id, user_id) DO UPDATE SET removed_by = EXCLUDED.removed_by, removed_at = now()`,
+    [tenantId, userId, removedBy],
+  );
+}
+
+export async function clearConsoleRemoval(t: Db, tenantId: string, userId: string) {
+  await t.query(`DELETE FROM member_removals WHERE tenant_id = $1 AND user_id = $2`, [tenantId, userId]);
+}
+
+export async function removedFromConsole(db: Db, tenantId: string, userId: string): Promise<boolean> {
+  return Boolean(await db.one(`SELECT 1 FROM member_removals WHERE tenant_id = $1 AND user_id = $2`, [tenantId, userId]));
+}
+
+/** Invitación vigente de la organización para ese correo (bloqueada: la acepta quien la toma primero). */
+export async function pendingInvitationFor(t: Db, tenantId: string, email: string) {
+  return t.one<{ id: string; role: string; role_id: string | null }>(
+    `SELECT id, role, role_id FROM invitations
+      WHERE tenant_id = $1 AND lower(email) = lower($2) AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now()
+      ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
+    [tenantId, email],
+  );
+}
+
+/**
+ * Alta por SSO (JIT) o SCIM, dentro de la transacción y con la organización bloqueada. Si hay una invitación vigente
+ * para el correo, se acepta con SU rol (no el rol por defecto del JIT/SCIM) y no cuenta como un lugar más del plan.
+ * Una baja desde la consola se respeta salvo que la persona tenga una invitación nueva. Sin membresía previa.
+ */
+export async function provisionMembership(
+  t: Db,
+  tenantId: string,
+  userId: string,
+  email: string,
+  defaultRole: string,
+): Promise<{ role: string; roleId: string | null; invitationId: string | null }> {
+  const inv = await pendingInvitationFor(t, tenantId, email);
+  const role = inv ? inv.role : defaultRole;
+  const roleId = inv ? inv.role_id : null;
+  // Sin contraseña en esta organización hasta que la restablezca (ver 0029_r11_identity).
+  await t.query(`INSERT INTO memberships (tenant_id, user_id, role, role_id, password_allowed) VALUES ($1,$2,$3,$4,false) ON CONFLICT DO NOTHING`, [
+    tenantId,
+    userId,
+    role,
+    roleId,
+  ]);
+  if (inv) await t.query(`UPDATE invitations SET accepted_at = now(), accepted_by = $2 WHERE id = $1`, [inv.id, userId]);
+  // Otra invitación pendiente al mismo correo ya no hace falta: si quedara, después de una baja lo volvía a sumar.
+  await t.query(`UPDATE invitations SET revoked_at = now() WHERE tenant_id = $1 AND lower(email) = lower($2) AND accepted_at IS NULL AND revoked_at IS NULL`, [
+    tenantId,
+    email,
+  ]);
+  await clearConsoleRemoval(t, tenantId, userId);
+  return { role, roleId, invitationId: inv?.id ?? null };
+}
+
+/** ¿La baja desde la consola impide el alta JIT/SCIM? Sí, salvo que la persona tenga una invitación vigente (nueva). */
+export async function blockedByConsoleRemoval(t: Db, tenantId: string, userId: string, email: string): Promise<boolean> {
+  if (!(await removedFromConsole(t, tenantId, userId))) return false;
+  return !(await pendingInvitationFor(t, tenantId, email));
+}

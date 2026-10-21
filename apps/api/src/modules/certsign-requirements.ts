@@ -33,3 +33,20 @@ export function downgradeIdMatchSql(req: string, doc: string) {
   return `CASE WHEN COALESCE((${req}->>'matchIdDocument')::boolean, false) AND COALESCE(btrim(${doc}), '') = ''
     THEN ${req} || '{"matchIdDocument": false, "idDocumentMatchSkipped": true}'::jsonb ELSE ${req} END`;
 }
+
+/**
+ * Requisitos para guardar (recipients / template_roles): el objeto recibido con `matchIdDocument` siempre booleano
+ * explícito (ausente o no booleano → false). Así lo guardado no depende de cuál era el valor por defecto al escribirlo
+ * (hasta la migración 0092 la clave ausente equivalía a true). null/no objeto → null.
+ */
+export function explicitRequirements(raw: unknown): Record<string, unknown> | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const r = raw as Record<string, unknown>;
+  return { ...r, matchIdDocument: r.matchIdDocument === true };
+}
+
+/** explicitRequirements serializado para un parámetro jsonb (o null). */
+export function explicitRequirementsJson(raw: unknown): string | null {
+  const r = explicitRequirements(raw);
+  return r ? JSON.stringify(r) : null;
+}

@@ -12,6 +12,11 @@ export interface ApiEvent {
    * envelope.declined) y el mismo `id` que el webhook de ese evento: UUIDv5 de (sobre, seq, tipo).
    */
   id: string;
+  /**
+   * @deprecated Id anterior al 2026-10-20 (`evt_<registro>` o `evt_<registro>_<n>`), solo para migrar ids guardados.
+   * Se va a quitar: usar `id`.
+   */
+  legacyId: string;
   /** Tipo público (el mismo de los webhooks) o, con `scope=all`, el tipo de evidencia. */
   type: string;
   occurredAt: string;

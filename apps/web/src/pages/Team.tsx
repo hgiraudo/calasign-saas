@@ -250,6 +250,7 @@ function MembersTab({ roles, manage, reloadRoles }: { roles: RolesResponse | nul
           }
         >
           <p>{tt("team.removeConfirm", { name: removing.name })}</p>
+          <p className="muted">{tt("team.removeSsoNote")}</p>
         </Modal>
       )}
     </>

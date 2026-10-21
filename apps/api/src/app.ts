@@ -52,6 +52,7 @@ import { certsignRoutes } from "./modules/certsign";
 import { sendBrandedIndex, whiteLabelModule } from "./modules/white-label";
 import { devApiRoutes } from "./modules/devapi";
 import { INTEGRATIONS_PREFIX, integrationsStaticHeaders } from "./modules/integrations-static";
+import { registerExpectedTenantCheck } from "./lib/expected-tenant";
 
 /** Ver el hook que la pone en buildApp. */
 export const PERMISSIONS_POLICY = "camera=(self), microphone=(), geolocation=(), payment=(), usb=()";
@@ -141,13 +142,25 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
   await app.register(rateLimit, {
     max: 600,
     timeWindow: "1 minute",
-    // Con credencial Bearer, por credencial (hash); sin ella, por IP y, en IPv6, por /64 (lib/ip.ts). El store es el
-    // de memoria del proceso: el límite es por réplica. Las IPs sin límite del entorno local se comparan con la clave
-    // de IP (loopback queda igual; ::ffff:127.0.0.1 pasa a 127.0.0.1), también con credencial.
+    // Por IP y, en IPv6, por /64; con una credencial Bearer ya autenticada en este proceso, por credencial (hash). Las
+    // rutas con límite propio (config.rateLimit) heredan este keyGenerator y cuentan siempre por IP salvo que pidan
+    // config.rateLimitByCredential (lib/ip.ts rateLimitKey). El store es el de memoria del proceso: el límite es por
+    // réplica. Las IPs sin límite del entorno local se comparan con la clave de IP (loopback queda igual;
+    // ::ffff:127.0.0.1 pasa a 127.0.0.1), también con credencial.
     keyGenerator: (req) => rateLimitKey(req),
     allowList: config.environment === "local" ? (req) => ["127.0.0.1", "::1"].includes(rateLimitIpKey(req.ip)) : [],
     // Código rate_limited y texto en español (los conectores y SDK tratan rate_limited igual que el bad_request de antes).
     errorResponseBuilder: rateLimitError,
+  });
+  // Tope grueso por IP también para el tráfico que cuenta por credencial: varias keys válidas desde una misma IP no
+  // multiplican sin fin el cupo. Holgado (5 veces el global) para no frenar a las integraciones detrás de un NAT.
+  const ipCeiling = app.createRateLimit({ max: 3000, timeWindow: "1 minute", keyGenerator: (req) => `ipceil:${rateLimitIpKey(req.ip)}` });
+  app.addHook("onRequest", async (req, reply) => {
+    if (!rateLimitKey(req).startsWith("cred:")) return;
+    const r = await ipCeiling(req);
+    if (r.isAllowed || !r.isExceeded) return;
+    reply.header("retry-after", r.ttlInSeconds);
+    throw rateLimitError(req, { statusCode: 429, ttl: r.ttl });
   });
 
   app.setErrorHandler((err: FastifyError | Error, req, reply) => {
@@ -212,6 +225,8 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
 
   // Conectores MCP desde el navegador: CORS abierto (sin cookies) en los endpoints OAuth/MCP (ver mcp/cors.ts).
   registerConnectorCors(app);
+  // Pestaña que quedó en otra organización (x-calasign-tenant distinto del de la sesión): 409 tenant_mismatch.
+  registerExpectedTenantCheck(app, deps.db);
 
   const services = { db: deps.db, blobs: deps.blobs };
   // Público (lo usa el deploy): sin datos del entorno.

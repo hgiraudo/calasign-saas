@@ -723,7 +723,7 @@ export async function connectorRoutes(app: FastifyInstance, s: Services) {
     return reply.code(204).send();
   });
 
-  app.post<{ Params: { id: string } }>("/v1/connectors/connections/:id/test", { preHandler: auth, config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req) => {
+  app.post<{ Params: { id: string } }>("/v1/connectors/connections/:id/test", { preHandler: auth, config: { rateLimit: { max: 10, timeWindow: "1 minute" }, rateLimitByCredential: true } }, async (req) => {
     const a = A(req);
     const r = await loadConn(s.db, a.tenantId, req.params.id);
     try {

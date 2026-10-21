@@ -14,6 +14,7 @@ import { authenticate, clientInfo, setSessionCookie, type AuthContext, type Serv
 import { syncSsoDomains } from "../data/sso-domains";
 import { safeRequest } from "../webhooks";
 import { tenantPlan, usersCount } from "../billing/plans";
+import { blockedByConsoleRemoval, provisionMembership } from "../member-access";
 
 /**
  * Duración absoluta (sin renovación) de una sesión abierta por SSO, configurable por organización
@@ -437,13 +438,16 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
           "Tu proveedor de identidad te desactivó en esta organización. Pedile a un administrador que te invite.",
         );
       }
-      const overLimit = await s.db.tx(async (t) => {
+      const outcome = await s.db.tx(async (t) => {
         // Cupo de usuarios del plan, como en invitaciones y SCIM (con la organización bloqueada: dos altas simultáneas
         // no lo superan). El SSO es de Enterprise (sin cupo), pero la configuración queda al bajar de plan: sin esto,
         // una organización que pasó a Business seguía sumando usuarios por JIT sin límite.
         await t.query(`SELECT id FROM tenants WHERE id = $1 FOR UPDATE`, [tenantId]);
+        // Quitado desde la consola: el JIT no lo vuelve a sumar hasta que lo inviten de nuevo.
+        if (user && (await blockedByConsoleRemoval(t, tenantId, user.id, email))) return { removed: true as const };
         const { plan } = await tenantPlan(t, tenantId);
-        if (plan.users !== null && (await usersCount(t, tenantId)) >= plan.users) return plan;
+        // Su propia invitación pendiente (si la hay) no cuenta como un lugar más: la acepta esta alta.
+        if (plan.users !== null && (await usersCount(t, tenantId, email)) >= plan.users) return { overLimit: plan };
         if (!user) {
           const id = uuidv7();
           await t.query(`INSERT INTO users (id, email, name, password_hash, locale) VALUES ($1,$2,$3,'sso-only','es')`, [id, email, name?.trim() || email.split("@")[0]]);
@@ -453,20 +457,19 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
         // tocan. Ver "Cuentas pre-registradas con un correo ajeno" en docs/ARQUITECTURA.md.
         // Sin contraseña en esta organización: si la cuenta ya existía, su contraseña pudo elegirla otra persona
         // (el registro no verifica el correo). Restablecerla (que prueba el control del correo) la habilita.
-        await t.query(`INSERT INTO memberships (tenant_id, user_id, role, password_allowed) VALUES ($1,$2,$3,false) ON CONFLICT DO NOTHING`, [
-          tenantId,
-          user.id,
-          c.jit_role,
-        ]);
-        // Una invitación pendiente al mismo correo ya no hace falta: si quedara, después de una baja lo volvía a sumar.
-        await t.query(`UPDATE invitations SET revoked_at = now() WHERE tenant_id = $1 AND lower(email) = lower($2) AND accepted_at IS NULL AND revoked_at IS NULL`, [tenantId, email]);
-        return null;
+        // Con una invitación vigente para el correo, entra con el rol de la invitación (y la invitación queda aceptada).
+        return { joined: await provisionMembership(t, tenantId, user.id, email, c.jit_role) };
       });
-      if (overLimit) {
+      if ("removed" in outcome) {
+        await recordAudit(s.db, { tenantId, action: "auth.sso_denied", actor: { type: "anonymous", label: email }, ip, userAgent, data: { protocol, reason: "removed_by_admin" } });
+        throw new AppError(403, "sso_member_removed", "Un administrador te quitó de esta organización. Para volver a entrar, pedile que te invite de nuevo.");
+      }
+      if ("overLimit" in outcome && outcome.overLimit) {
+        const overLimit = outcome.overLimit;
         await recordAudit(s.db, { tenantId, action: "auth.sso_denied", actor: { type: "anonymous", label: email }, ip, userAgent, data: { protocol, reason: "plan_limit", max: overLimit.users } });
         throw new AppError(402, "sso_plan_limit", `El plan ${overLimit.name} permite hasta ${overLimit.users} usuario(s): pedí al administrador que amplíe el plan`);
       }
-      member = { role: c.jit_role };
+      member = { role: outcome.joined.role };
       await recordAudit(s.db, {
         tenantId,
         action: "member.jit_provisioned",
@@ -475,7 +478,12 @@ export async function ssoRoutes(app: FastifyInstance, s: Services) {
         targetId: user!.id,
         ip,
         userAgent,
-        data: { email, role: c.jit_role },
+        data: {
+          email,
+          role: outcome.joined.role,
+          ...(outcome.joined.roleId ? { roleId: outcome.joined.roleId } : {}),
+          ...(outcome.joined.invitationId ? { invitationId: outcome.joined.invitationId } : {}),
+        },
       });
     }
     await createSsoSession(reply, req, user!.id, tenantId, c);

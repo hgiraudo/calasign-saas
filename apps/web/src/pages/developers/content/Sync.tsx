@@ -72,6 +72,9 @@ export function SyncGuide() {
         })}
       />
       <Callout kind="tip">{t("g.sync.events.note")}</Callout>
+      <Callout kind="warn">
+        <Md text={t("g.sync.events.ids")} />
+      </Callout>
 
       <H2 id="stream">{t("g.sync.stream.h")}</H2>
       <Md text={t("g.sync.stream.p")} />

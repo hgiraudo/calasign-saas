@@ -32,6 +32,11 @@ const ApiEventSchema = named(
   "ApiEvent",
   z.object({
     id: z.string().uuid().describe("Único por evento y el mismo que el `id` del webhook de ese evento (UUID determinístico por sobre, registro y tipo). Usarlo para descartar duplicados entre webhooks y eventos. No es un cursor: para seguir, `cursor`."),
+    legacyId: z
+      .string()
+      .describe(
+        "OBSOLETO: se va a quitar. El `id` anterior al 2026-10-20 (`evt_<registro>` o `evt_<registro>_<n>`), solo para migrar ids guardados con el formato viejo. Cambio incompatible del 2026-10-20: `id` pasó de `evt_…` a UUID.",
+      ),
     type: z.string().describe(`Tipo público (${WEBHOOK_EVENT_TYPES.join(", ")}) o, con scope=all, el tipo de evidencia.`),
     occurredAt: iso(),
     envelopeId: z.string().uuid(),

@@ -6,6 +6,7 @@ import type { InvitationPreview, MeResponse, TwoFactorChallenge } from "@calasig
 import { api, errorText, HttpError } from "../lib/api";
 import { usePasswordText } from "../lib/i18n-password";
 import { useAuth } from "../lib/auth";
+import { broadcastSessionChange } from "../lib/session-sync";
 import { useRoleLabel, useTeamsText } from "../lib/i18n-teams";
 import { ErrorBox, LocaleSwitcher, Logo, Spinner } from "../components/ui";
 import { TwoFactorStep } from "../components/TwoFactorStep";
@@ -39,6 +40,8 @@ export function InviteAcceptPage() {
 
   const done = (m: MeResponse) => {
     setMe(m);
+    // La sesión pasó a la organización de la invitación (o a otra cuenta): las demás pestañas se recargan.
+    broadcastSessionChange({ kind: "accept", tenantId: m.tenant.id, userId: m.user.id });
     nav("/app", { replace: true });
   };
 

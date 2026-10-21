@@ -45,7 +45,7 @@ import { auditFromRequest, recordAudit } from "./audit";
 import { authenticate, clientInfo, sessionCookieToken, setSessionCookie, type AuthContext, type Services } from "./context";
 import { assertSessionAllowed } from "./identity/sso";
 import { assertInvitationCapacity, tenantPlan } from "./billing/plans";
-import { actingPerson, revokeMemberAccess } from "./member-access";
+import { actingPerson, clearConsoleRemoval, recordConsoleRemoval, revokeMemberAccess } from "./member-access";
 
 const SESSION_DAYS = 14;
 const INVITE_DAYS = 7;
@@ -409,9 +409,13 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
       }
       // Con menos permisos que antes: las credenciales que creó con el rol anterior (API keys, apps de servicio, tokens
       // SCIM, invitaciones pendientes) tenían esos permisos y los conservaban. Se revocan, como en una baja.
+      // Dejar de ser propietario también es una reducción aunque la lista de permisos sea la misma (propietario →
+      // administrador): sin esto conservaba, p. ej., una invitación de propietario que se mandó a otro correo propio y,
+      // al aceptarla, recuperaba la propiedad. revokeMemberAccess revoca todas las invitaciones pendientes que mandó.
       const before = await permsOf(t, a.tenantId, cur.role, cur.role_id);
       const after = new Set(await permsOf(t, a.tenantId, target.role, target.roleId));
-      if (before.some((p) => !after.has(p))) revoked = await revokeMemberAccess(t, a.tenantId, req.params.userId!, { removal: false });
+      const demotedOwner = cur.role === "owner" && target.role !== "owner";
+      if (demotedOwner || before.some((p) => !after.has(p))) revoked = await revokeMemberAccess(t, a.tenantId, req.params.userId!, { removal: false });
     });
     const rv = revoked as Awaited<ReturnType<typeof revokeMemberAccess>> | null;
     await auditFromRequest(s.db, req, a, "member.role_changed", {
@@ -444,6 +448,8 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
       if (cur.role === "owner" && (await ownerCount(t, a.tenantId)) === 0) throw conflict("last_owner", "La organización tiene que tener al menos un propietario");
       // Cierra sus sesiones en esta organización.
       await t.query(`DELETE FROM sessions WHERE user_id = $1 AND tenant_id = $2`, [userId, a.tenantId]);
+      // La baja se sostiene: el alta JIT por SSO o una activación por SCIM no lo vuelven a sumar hasta que lo inviten.
+      await recordConsoleRemoval(t, a.tenantId, userId, await actingPerson(t, a));
       // Sobres en curso donde era anfitrión de una firma en persona: nadie más que un administrador (envelopes:manage_all)
       // puede abrir esa sesión. Se listan en la auditoría de la baja para que alguien los corrija o los abra.
       const hosted = await t.query<{ id: string }>(
@@ -616,31 +622,53 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     }
   }
 
-  /** Marca la invitación como aceptada y crea la membresía (una sola vez; una invitación revocada o vencida no sirve). */
-  async function joinByInvitation(req: FastifyRequest, invitationId: string, userId: string, email: string) {
-    const inv = await s.db.tx(async (t) => {
-      // Cupo de usuarios del plan al aceptar (no solo al invitar): después de bajar de plan, las invitaciones pendientes
-      // se seguían aceptando por encima del límite. Con la organización bloqueada, como el alta por SSO o SCIM.
-      const pre = await t.one<any>(`SELECT tenant_id FROM invitations WHERE id = $1`, [invitationId]);
-      if (pre) {
-        await t.query(`SELECT id FROM tenants WHERE id = $1 FOR UPDATE`, [pre.tenant_id]);
-        // Si ya es miembro no ocupa un lugar nuevo (la membresía existente se conserva).
-        const member = await t.one(`SELECT 1 FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [pre.tenant_id, userId]);
-        if (!member) await assertInvitationCapacity(t, pre.tenant_id, email);
+  /**
+   * Marca la invitación como aceptada y crea la membresía (una sola vez; una invitación revocada o vencida no sirve).
+   * `who`: el id de una cuenta existente o los datos de la cuenta nueva, que se crea en la MISMA transacción: si la
+   * aceptación falla (cupo del plan, invitación ya usada), no queda una cuenta sin organización que después no podía
+   * ingresar (401) ni registrarse (email_taken). Devuelve el id de la cuenta.
+   */
+  async function joinByInvitation(req: FastifyRequest, invitationId: string, who: string | { name: string; passwordHash: string; locale: string }, email: string) {
+    const userId = typeof who === "string" ? who : uuidv7();
+    let inv: any;
+    try {
+      inv = await s.db.tx(async (t) => {
+        // Cupo de usuarios del plan al aceptar (no solo al invitar): después de bajar de plan, las invitaciones pendientes
+        // se seguían aceptando por encima del límite. Con la organización bloqueada, como el alta por SSO o SCIM.
+        const pre = await t.one<any>(`SELECT tenant_id, email FROM invitations WHERE id = $1`, [invitationId]);
+        if (pre) {
+          await t.query(`SELECT id FROM tenants WHERE id = $1 FOR UPDATE`, [pre.tenant_id]);
+          // Si ya es miembro no ocupa un lugar nuevo (la membresía existente se conserva).
+          const member = typeof who === "string" ? await t.one(`SELECT 1 FROM memberships WHERE tenant_id = $1 AND user_id = $2`, [pre.tenant_id, userId]) : null;
+          if (!member) await assertInvitationCapacity(t, pre.tenant_id, email);
+        }
+        if (typeof who !== "string") {
+          if (!pre) throw new AppError(410, "invitation_used", "La invitación ya no es válida");
+          await t.query(`INSERT INTO users (id, email, name, password_hash, locale) VALUES ($1,$2,$3,$4,$5)`, [userId, pre.email, who.name, who.passwordHash, who.locale]);
+        }
+        const upd = await t.query<any>(
+          `UPDATE invitations SET accepted_at = now(), accepted_by = $2
+            WHERE id = $1 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now() RETURNING id, tenant_id, role, role_id`,
+          [invitationId, userId],
+        );
+        if (!upd.length) throw new AppError(410, "invitation_used", "La invitación ya no es válida");
+        const i = upd[0];
+        await t.query(
+          `INSERT INTO memberships (tenant_id, user_id, role, role_id) VALUES ($1,$2,$3,$4) ON CONFLICT (tenant_id, user_id) DO NOTHING`,
+          [i.tenant_id, userId, i.role, i.role_id],
+        );
+        // Invitado de nuevo después de una baja desde la consola: vuelve a valer el alta por SSO/SCIM.
+        await clearConsoleRemoval(t, i.tenant_id, userId);
+        return i;
+      });
+    } catch (e) {
+      // Dos aceptaciones simultáneas que crean la misma cuenta: la segunda choca con el índice único del correo. La
+      // cuenta ya existe (la creó la otra): se ingresa con su contraseña, no un 500.
+      if (typeof who !== "string" && (e as { code?: unknown })?.code === "23505") {
+        throw new AppError(409, "account_exists", "Ya se creó una cuenta con este correo: ingresá con tu contraseña para aceptar la invitación");
       }
-      const upd = await t.query<any>(
-        `UPDATE invitations SET accepted_at = now(), accepted_by = $2
-          WHERE id = $1 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now() RETURNING id, tenant_id, role, role_id`,
-        [invitationId, userId],
-      );
-      if (!upd.length) throw new AppError(410, "invitation_used", "La invitación ya no es válida");
-      const i = upd[0];
-      await t.query(
-        `INSERT INTO memberships (tenant_id, user_id, role, role_id) VALUES ($1,$2,$3,$4) ON CONFLICT (tenant_id, user_id) DO NOTHING`,
-        [i.tenant_id, userId, i.role, i.role_id],
-      );
-      return i;
-    });
+      throw e;
+    }
     await recordAudit(s.db, {
       tenantId: inv.tenant_id,
       action: "member.joined",
@@ -650,6 +678,7 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
       data: { role: inv.role, roleId: inv.role_id },
       ...clientInfo(req),
     });
+    return userId;
   }
 
   app.post<P>("/v1/invite/:token/accept", { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } }, async (req, reply) => {
@@ -671,8 +700,9 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
       if (srow && srow.email.toLowerCase() === inv.email.toLowerCase()) sessionUserId = srow.id;
     }
 
-    let user = await s.db.one<any>(`SELECT id, password_hash, totp_enabled_at FROM users WHERE lower(email) = lower($1)`, [inv.email]);
+    const user = await s.db.one<any>(`SELECT id, password_hash, totp_enabled_at FROM users WHERE lower(email) = lower($1)`, [inv.email]);
     let verifiedByPassword = false;
+    let newUser: { name: string; passwordHash: string; locale: string } | null = null;
     if (user && !sessionUserId) {
       // Es un ingreso con contraseña: mismo bloqueo por cuenta que /v1/auth/login, y los fallos cuentan para ese
       // bloqueo. Si no, alguien que invita el correo de otra persona a su propia organización prueba contraseñas acá
@@ -692,33 +722,26 @@ export async function teamRoutes(app: FastifyInstance, s: Services) {
     if (!user) {
       if (!input.name || !input.password) throw badRequest("account_required", "Para crear la cuenta hacen falta nombre y contraseña");
       if (input.password.length < 10) throw badRequest("weak_password", "La contraseña debe tener al menos 10 caracteres");
-      const id = uuidv7();
+      // La cuenta se crea junto con la membresía (joinByInvitation), en una sola transacción.
       const org = await s.db.one<any>(`SELECT default_locale FROM tenants WHERE id = $1`, [inv.tenant_id]);
-      await s.db.query(`INSERT INTO users (id, email, name, password_hash, locale) VALUES ($1,$2,$3,$4,$5)`, [
-        id,
-        inv.email,
-        input.name,
-        await hashPassword(input.password),
-        org?.default_locale ?? "es",
-      ]);
-      user = { id, totp_enabled_at: null };
+      newUser = { name: input.name, passwordHash: await hashPassword(input.password), locale: org?.default_locale ?? "es" };
     }
 
     // Si entró con contraseña y tiene 2FA, falta el segundo factor: la invitación se acepta recién al verificarlo.
     // Si no, alguien con solo la contraseña sumaba la cuenta de la víctima a su propia organización.
-    if (verifiedByPassword && user.totp_enabled_at) {
+    if (user && verifiedByPassword && user.totp_enabled_at) {
       return createTwoFactorChallenge(s.db, user.id, inv.tenant_id, inv.id);
     }
     // Sin segundo factor pendiente: el ingreso con contraseña terminó bien (con 2FA se vacía al verificar el código).
-    if (verifiedByPassword) await clearLoginAttempts(s.db, user.id);
-    await joinByInvitation(req, inv.id, user.id, inv.email);
-    await assertJoinedWithoutSso(inv.tenant_id, user.id, inv.email);
+    if (user && verifiedByPassword) await clearLoginAttempts(s.db, user.id);
+    const userId = await joinByInvitation(req, inv.id, user ? (user.id as string) : newUser!, inv.email);
+    await assertJoinedWithoutSso(inv.tenant_id, userId, inv.email);
     if (sessionUserId) {
       await s.db.query(`UPDATE sessions SET tenant_id = $2 WHERE token_hash = $1`, [sha256Hex(cookie!), inv.tenant_id]);
     } else {
-      await createUserSession(s.db, req, reply, user.id, inv.tenant_id);
+      await createUserSession(s.db, req, reply, userId, inv.tenant_id);
     }
-    return meResponse(s.db, user.id, inv.tenant_id);
+    return meResponse(s.db, userId, inv.tenant_id);
   });
 
   // ───────── Roles personalizados ─────────

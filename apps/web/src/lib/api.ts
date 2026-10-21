@@ -22,8 +22,27 @@ export const UNAUTHORIZED_EVENT = "calasign:unauthorized";
  */
 export const FORBIDDEN_EVENT = "calasign:forbidden";
 
+/**
+ * La sesión del servidor está en otra organización que la que cargó esta pestaña (se cambió en otra pestaña): 409
+ * tenant_mismatch. AuthProvider recarga la página con un aviso.
+ */
+export const TENANT_MISMATCH_EVENT = "calasign:tenant-mismatch";
+
+/** Organización que cargó esta pestaña (AuthProvider la fija con /v1/me); va en x-calasign-tenant en cada escritura. */
+let expectedTenantId: string | null = null;
+export function setExpectedTenant(id: string | null): void {
+  expectedTenantId = id;
+}
+
+/** Encabezado x-calasign-tenant para un pedido que modifica (no en lecturas, ni si quien llama ya lo puso). */
+function withExpectedTenant(method: string, headers: Record<string, string>): Record<string, string> {
+  if (!expectedTenantId || method === "GET" || method === "HEAD" || Object.keys(headers).some((k) => k.toLowerCase() === "x-calasign-tenant")) return headers;
+  return { ...headers, "x-calasign-tenant": expectedTenantId };
+}
+
 function signalAuthErrors(res: Response, path: string, code: string | undefined) {
   if (typeof window === "undefined") return;
+  if (res.status === 409 && code === "tenant_mismatch") window.dispatchEvent(new Event(TENANT_MISMATCH_EVENT));
   if (res.status === 401 && path !== "/v1/me") window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
   if (res.status === 403 && code === "forbidden" && !path.startsWith("/v1/me/access")) window.dispatchEvent(new Event(FORBIDDEN_EVENT));
 }
@@ -94,10 +113,11 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
     body = JSON.stringify(opts.body);
   }
   let res: Response;
+  const method = opts.method ?? (body ? "POST" : "GET");
   try {
     res = await fetch(path, {
-      method: opts.method ?? (body ? "POST" : "GET"),
-      headers,
+      method,
+      headers: withExpectedTenant(method, headers),
       body,
       credentials: "include",
       signal: opts.signal,
@@ -300,6 +320,22 @@ const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
     en: "This single sign-on session belongs to another organization: sign in again.",
   },
   email_taken: { "pt-BR": "Já existe uma conta com esse e-mail.", en: "An account with that email already exists." },
+  tenant_mismatch: {
+    "pt-BR": "A sessão mudou de organização em outra aba: recarregue a página para continuar.",
+    en: "The session switched organization in another tab: reload the page to continue.",
+  },
+  account_exists: {
+    "pt-BR": "Já foi criada uma conta com este e-mail: entre com sua senha para aceitar o convite.",
+    en: "An account with this email was already created: sign in with your password to accept the invitation.",
+  },
+  no_organization: {
+    "pt-BR": "Sua conta não pertence a nenhuma organização. Para criar uma, cadastre-se com este mesmo e-mail e senha, ou peça um convite.",
+    en: "Your account doesn't belong to any organization. To create one, sign up with this same email and password, or ask for an invitation.",
+  },
+  account_without_organization_2fa: {
+    "pt-BR": "Sua conta tem verificação em duas etapas e não pertence a nenhuma organização: peça um convite para uma.",
+    en: "Your account has two-step verification and doesn't belong to any organization: ask to be invited to one.",
+  },
   account_required: { "pt-BR": "Para aceitar, entre com sua conta.", en: "To accept, sign in with your account." },
   two_factor_setup_required: {
     "pt-BR": "Sua organização exige a verificação em duas etapas: ative-a em Configurações → Segurança.",
@@ -658,7 +694,9 @@ export async function fetchResponse(path: string, init: RequestInit = {}): Promi
   assertSafePath(path);
   let res: Response;
   try {
-    res = await fetch(path, { credentials: "include", ...init });
+    const method = (init.method ?? "GET").toUpperCase();
+    const headers = init.headers instanceof Headers ? Object.fromEntries(init.headers.entries()) : Array.isArray(init.headers) ? Object.fromEntries(init.headers) : { ...(init.headers ?? {}) };
+    res = await fetch(path, { credentials: "include", ...init, headers: withExpectedTenant(method, headers as Record<string, string>) });
   } catch (e) {
     networkError(e);
   }

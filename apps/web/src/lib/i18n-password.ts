@@ -39,6 +39,12 @@ const es = {
   lostStill: "Todavía no hay una sesión activa: iniciá sesión en la otra pestaña y volvé a tocar «Reintentar».",
   lostOtherAccount: "Iniciaste sesión con otra cuenta u organización: los cambios no se pueden guardar ahí. Ingresá con la misma cuenta y organización, y reintentá.",
   lostDiscard: "Descartar los cambios e ir al login",
+  // Otra pestaña cambió de organización, aceptó una invitación o cerró la sesión.
+  tabChangedTitle: "La sesión cambió en otra pestaña",
+  tabChangedBody: "Recargamos esta pestaña porque en otra se cambió de organización, se aceptó una invitación o se cerró la sesión.",
+  tabChangedUnsaved: "En otra pestaña se cambió de organización, se aceptó una invitación o se cerró la sesión: lo que guardes acá iría a otro lado. Copiá lo que necesites y recargá la página.",
+  tabReload: "Recargar",
+  tabOk: "Entendido",
 };
 type Key = keyof typeof es;
 
@@ -79,6 +85,11 @@ const pt: Record<Key, string> = {
   lostStill: "Ainda não há uma sessão ativa: entre na outra aba e toque em «Tentar novamente» outra vez.",
   lostOtherAccount: "Você entrou com outra conta ou organização: as alterações não podem ser salvas lá. Entre com a mesma conta e organização e tente novamente.",
   lostDiscard: "Descartar as alterações e ir para o login",
+  tabChangedTitle: "A sessão mudou em outra aba",
+  tabChangedBody: "Recarregamos esta aba porque em outra a organização foi trocada, um convite foi aceito ou a sessão foi encerrada.",
+  tabChangedUnsaved: "Em outra aba a organização foi trocada, um convite foi aceito ou a sessão foi encerrada: o que você salvar aqui iria para outro lugar. Copie o que precisar e recarregue a página.",
+  tabReload: "Recarregar",
+  tabOk: "Entendi",
 };
 
 const en: Record<Key, string> = {
@@ -118,6 +129,11 @@ const en: Record<Key, string> = {
   lostStill: "There's no active session yet: sign in in the other tab and tap “Retry” again.",
   lostOtherAccount: "You signed in with a different account or organization: the changes can't be saved there. Sign in with the same account and organization and retry.",
   lostDiscard: "Discard the changes and go to sign in",
+  tabChangedTitle: "The session changed in another tab",
+  tabChangedBody: "We reloaded this tab because another tab switched organization, accepted an invitation or signed out.",
+  tabChangedUnsaved: "Another tab switched organization, accepted an invitation or signed out: anything you save here would go somewhere else. Copy what you need and reload the page.",
+  tabReload: "Reload",
+  tabOk: "Got it",
 };
 
 const DICTS: Record<string, Record<Key, string>> = { es, "pt-BR": pt, en };

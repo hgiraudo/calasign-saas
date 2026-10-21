@@ -184,13 +184,15 @@ export async function readEvents(s: Services, a: AuthContext, f: Filters, limit:
     const recipientId =
       typeof data.recipientId === "string" ? data.recipientId : r.actor_type === "recipient" && typeof r.actor_id === "string" ? r.actor_id : null;
     const allTypes = f.all ? [r.type] : (EVIDENCE_TO_WEBHOOK[r.type] ?? []);
-    for (const type of allTypes) {
+    for (const [i, type] of allTypes.entries()) {
       if (!f.all && wanted && !wanted.has(type)) continue;
       items.push({
         // El mismo id que el evento de los webhooks (UUIDv5 de sobre, seq y tipo): un integrador que recibe los dos
         // canales deduplica por `id`. No depende de los filtros (un recipient.declined da recipient.declined y
         // envelope.declined, cada uno con su id, pidiendo uno solo o los dos). El cursor es aparte.
         id: webhookEventId(r.envelope_id, Number(r.seq), type),
+        // Obsoleto (transición): el id anterior al 2026-10-20, para quien guardó ids viejos. TODO: quitar.
+        legacyId: `evt_${r.id}${allTypes.length > 1 ? `_${i}` : ""}`,
         type,
         occurredAt: iso(r.occurred_at)!,
         envelopeId: r.envelope_id,

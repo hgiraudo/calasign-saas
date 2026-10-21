@@ -271,8 +271,16 @@ describe("delegación y reasignación de un firmante que debe corresponder a su 
     expect(d.statusCode, d.body).toBe(200);
     const r = await replacement(x.rec);
     expect(r.doc).toBe("40999888");
-    expect(r.r).toMatchObject({ matchIdDocument: true });
+    expect(r.r).toMatchObject({ matchIdDocument: true, idDocumentSource: "delegator" });
     expect(r.r.idDocumentMatchSkipped).toBeUndefined();
+    // El tipo de documento del original pasa al reemplazo; el evento registra el número enmascarado y su procedencia.
+    const y = await sentEnvelope(MATCH, "30111222");
+    await db.query(`UPDATE recipients SET id_document_type = 'dni' WHERE id = $1`, [y.rec]);
+    expect((await delegate(y.token, { idDocumentNumber: "40999888" })).statusCode).toBe(200);
+    expect((await db.one<any>(`SELECT id_document_type FROM recipients WHERE replaces = $1`, [y.rec])).id_document_type).toBe("dni");
+    const ev = await db.one<any>(`SELECT data FROM envelope_events WHERE envelope_id = $1 AND type = 'recipient.delegated'`, [y.env]);
+    expect(ev.data).toMatchObject({ idDocument: "****9888", idDocumentSource: "delegator" });
+    expect(JSON.stringify(ev.data)).not.toContain("40999888");
   });
 
   it("sin el control (o pedido sin documento, que no rige) se delega como siempre", async () => {
@@ -296,7 +304,7 @@ describe("delegación y reasignación de un firmante que debe corresponder a su 
 });
 
 describe("migración 0094: control del documento explícito en sobres no terminados", () => {
-  it("sin la clave y con documento pasa a true; el resto no cambia; idempotente", async () => {
+  it("sin la clave y con documento (creado antes de la 0092) pasa a true; el resto no cambia; idempotente", async () => {
     const noKey = { allowedIssuers: ["X"], requireQualified: false };
     const a = await awaitingEnvelope({ reqs: noKey, idDoc: "30111222" });
     const b = await awaitingEnvelope({ reqs: noKey, idDoc: "  " });
@@ -305,6 +313,12 @@ describe("migración 0094: control del documento explícito en sobres no termina
     await db.query(`UPDATE envelopes SET status = 'voided' WHERE id = $1`, [d.env]);
     const e = await awaitingEnvelope({ idDoc: "30111222" });
     await db.query(`UPDATE recipients SET certificate_requirements = NULL WHERE id = $1`, [e.rec]);
+    // Los anteriores se crearon antes de aplicar la 0092 (regla vieja); f, después (la clave ausente ya era false).
+    await db.query(
+      `UPDATE recipients SET created_at = (SELECT applied_at FROM schema_migrations WHERE name = '0092_certsign_id_match_default.sql') - interval '1 day' WHERE id = ANY($1)`,
+      [[a.rec, b.rec, c.rec, d.rec, e.rec]],
+    );
+    const f = await awaitingEnvelope({ reqs: noKey, idDoc: "30111222" });
     const sql = readFileSync(new URL("../migrations/0094_certsign_id_match_explicit.sql", import.meta.url), "utf8");
     const updates = sql.split(/;\s*$/m).map((s) => s.replace(/^\s*--.*$/gm, "").trim()).filter((s) => s.startsWith("UPDATE"));
     expect(updates).toHaveLength(1);
@@ -316,6 +330,7 @@ describe("migración 0094: control del documento explícito en sobres no termina
       expect(await req(c.rec)).toEqual({ ...noKey, matchIdDocument: false });
       expect(await req(d.rec)).toEqual(noKey);
       expect(await req(e.rec)).toEqual({ matchIdDocument: true });
+      expect(await req(f.rec)).toEqual(noKey);
     }
   });
 });

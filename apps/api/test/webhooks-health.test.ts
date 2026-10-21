@@ -498,6 +498,11 @@ describe("mismo evento en webhooks y GET /v1/events", () => {
     // Con filtro por tipo el id no cambia.
     const only = await read(["envelope.declined"]);
     expect(only.items.map((e) => e.id)).toEqual([wh.webhookEventId(o.env, seq, "envelope.declined")]);
+    // legacyId (obsoleto): el id viejo evt_<registro>_<n>, también sin depender del filtro.
+    const legacy = all.items.map((e) => e.legacyId);
+    expect(new Set(legacy).size).toBe(2);
+    for (const l of legacy) expect(l).toMatch(/^evt_.+_[01]$/);
+    expect(only.items[0]!.legacyId).toBe(all.items.find((e) => e.type === "envelope.declined")!.legacyId);
   });
 
   it("fanout sin registro de evidencia (job viejo o purgado): createdAt es la hora actual", async () => {
@@ -575,14 +580,56 @@ describe("límite de pedidos y esquema Bearer", () => {
     expect(util.bearerToken(undefined)).toBeNull();
   });
 
-  it("clave del límite: hash de la credencial con Bearer; IP sin ella", async () => {
-    const { rateLimitKey } = await import("../src/lib/ip");
-    const k = rateLimitKey({ ip: "203.0.113.9", headers: { authorization: "bearer cs_live_abc" } });
+  it("clave del límite: hash solo de una credencial ya autenticada; IP para una inventada y en rutas con límite propio", async () => {
+    const { rateLimitKey, rememberAuthenticatedCredential, forgetCredential } = await import("../src/lib/ip");
+    const withKey = (ip: string, authorization?: string, config?: Record<string, unknown>) =>
+      rateLimitKey({ ip, headers: authorization ? { authorization } : {}, routeOptions: { config } });
+    // No vista: cuenta en la IP (un Bearer inventado por pedido no abre cupos nuevos).
+    expect(withKey("203.0.113.9", "bearer cs_live_abc")).toBe("203.0.113.9");
+    rememberAuthenticatedCredential("cs_live_abc");
+    const k = withKey("203.0.113.9", "bearer cs_live_abc");
     expect(k).toBe(`cred:${util.sha256Hex("cs_live_abc").slice(0, 32)}`);
     expect(k).not.toContain("cs_live_abc");
-    expect(rateLimitKey({ ip: "203.0.113.10", headers: { authorization: "Bearer cs_live_abc" } })).toBe(k);
-    expect(rateLimitKey({ ip: "203.0.113.9", headers: {} })).toBe("203.0.113.9");
-    expect(rateLimitKey({ ip: "203.0.113.9", headers: { authorization: "Basic eDp5" } })).toBe("203.0.113.9");
+    expect(withKey("203.0.113.10", "Bearer cs_live_abc")).toBe(k);
+    expect(withKey("203.0.113.9")).toBe("203.0.113.9");
+    expect(withKey("203.0.113.9", "Basic eDp5")).toBe("203.0.113.9");
+    // Ruta con límite propio: por IP aunque la credencial sea conocida, salvo rateLimitByCredential.
+    const rl = { max: 10, timeWindow: "1 minute" };
+    expect(withKey("203.0.113.9", "Bearer cs_live_abc", { rateLimit: rl })).toBe("203.0.113.9");
+    expect(withKey("203.0.113.9", "Bearer cs_live_abc", { rateLimit: rl, rateLimitByCredential: true })).toBe(k);
+    expect(withKey("203.0.113.9", "Bearer otra", { rateLimit: rl, rateLimitByCredential: true })).toBe("203.0.113.9");
+    forgetCredential("cs_live_abc");
+    expect(withKey("203.0.113.9", "bearer cs_live_abc")).toBe("203.0.113.9");
+  });
+
+  it("POST /v1/auth/login: un Bearer inventado distinto en cada pedido no evita el límite por IP", async () => {
+    const ip = "198.51.100.21";
+    const login = () =>
+      app.inject({ method: "POST", url: "/v1/auth/login", headers: { authorization: `Bearer cs_live_${util.randomToken(12)}` }, payload: { email: "nadie@x.test", password: "x" }, remoteAddress: ip });
+    for (let i = 0; i < 10; i++) expect((await login()).statusCode).not.toBe(429);
+    const over = await login();
+    expect(over.statusCode).toBe(429);
+    expect(over.json().error.code).toBe("rate_limited");
+  });
+
+  it("ruta con el límite global: Bearer inventados comparten el cupo de la IP; una key válida tiene el suyo", async () => {
+    const ip = "198.51.100.22";
+    const get = (authorization: string) => app.inject({ method: "GET", url: "/v1/webhooks", headers: { authorization }, remoteAddress: ip });
+    const remaining = (r: { headers: Record<string, unknown> }) => Number(r.headers["x-ratelimit-remaining"]);
+    const r1 = await get(`Bearer cs_live_${util.randomToken(12)}`);
+    const r2 = await get(`Bearer cs_live_${util.randomToken(12)}`);
+    expect(r1.statusCode).toBe(401);
+    expect(remaining(r2)).toBe(remaining(r1) - 1);
+    const o = await org();
+    // El primer pedido de la key (todavía no vista) cuenta en la IP; desde el segundo, en su propio cupo.
+    const first = await get(o.auth.authorization);
+    expect(first.statusCode).toBe(200);
+    expect(remaining(first)).toBe(remaining(r2) - 1);
+    const second = await get(o.auth.authorization);
+    expect(second.statusCode).toBe(200);
+    expect(remaining(second)).toBe(599);
+    // La IP sigue con su cupo: otro Bearer inventado sigue descontando de él.
+    expect(remaining(await get(`Bearer cs_live_${util.randomToken(12)}`))).toBe(remaining(first) - 1);
   });
 
   it("POST /v1/webhooks/:id/test: 10 por minuto por credencial (otra key desde la misma IP tiene su cupo)", async () => {
@@ -590,6 +637,8 @@ describe("límite de pedidos y esquema Bearer", () => {
     const id = await endpoint(o.tenant);
     const key2 = `cs_test_${util.randomToken(12)}`;
     await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash, role) VALUES ($1,$2,'k2','cs_test',$3,'admin')`, [util.uuidv7(), o.tenant, util.sha256Hex(key2)]);
+    // Las keys autentican una vez (el límite por credencial vale para credenciales ya vistas).
+    for (const a of [o.auth.authorization, `Bearer ${key2}`]) expect((await app.inject({ method: "GET", url: "/v1/webhooks", headers: { authorization: a } })).statusCode).toBe(200);
     const send = (authorization: string) => app.inject({ method: "POST", url: `/v1/webhooks/${id}/test`, headers: { authorization }, remoteAddress: "198.51.100.7" });
     for (let i = 0; i < 10; i++) expect((await send(o.auth.authorization)).statusCode).not.toBe(429);
     const over = await send(o.auth.authorization);

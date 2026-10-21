@@ -735,14 +735,21 @@ export async function sweep(d: Deps, signal?: AbortSignal) {
 }
 
 const REPLACED = {
-  es: { delegated: "Delegó en", reassigned: "Reasignado a" },
-  "pt-BR": { delegated: "Delegou para", reassigned: "Reatribuído a" },
-  en: { delegated: "Delegated to", reassigned: "Reassigned to" },
+  es: { delegated: "Delegó en", reassigned: "Reasignado a", docByDelegator: "Número de documento indicado por quien delegó la firma" },
+  "pt-BR": { delegated: "Delegou para", reassigned: "Reatribuído a", docByDelegator: "Número de documento informado por quem delegou a assinatura" },
+  en: { delegated: "Delegated to", reassigned: "Reassigned to", docByDelegator: "ID document number provided by the delegating signer" },
 } as const;
 
-/** Nota del certificado para destinatarios reemplazados (delegó / fue reasignado). */
+/**
+ * Nota del certificado para destinatarios reemplazados (delegó / fue reasignado) y, en quien recibió una delegación, si
+ * su número de documento lo indicó quien delegó (no el remitente).
+ */
 function replacementNote(r: any, all: any[], locale: string): string | null {
-  if (r.status !== "delegated" && r.status !== "reassigned") return null;
+  if (r.status !== "delegated" && r.status !== "reassigned") {
+    if (r.replaces && r.certificate_requirements?.idDocumentSource === "delegator" && r.id_document_number)
+      return REPLACED[(locale in REPLACED ? locale : "es") as keyof typeof REPLACED].docByDelegator;
+    return null;
+  }
   const to = all.find((x) => x.id === r.replaced_by);
   const L = REPLACED[(locale in REPLACED ? locale : "es") as keyof typeof REPLACED];
   const base = `${L[r.status as "delegated" | "reassigned"]} ${to?.name ?? "?"}`;

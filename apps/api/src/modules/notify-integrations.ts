@@ -211,7 +211,7 @@ export async function notificationIntegrationRoutes(app: FastifyInstance, s: Ser
     return reply.code(204).send();
   });
 
-  app.post<{ Params: { id: string } }>("/v1/notification-integrations/:id/test", { preHandler: auth, config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req) => {
+  app.post<{ Params: { id: string } }>("/v1/notification-integrations/:id/test", { preHandler: auth, config: { rateLimit: { max: 10, timeWindow: "1 minute" }, rateLimitByCredential: true } }, async (req) => {
     const a = req.auth!;
     const r = await load(a.tenantId, req.params.id);
     const t = await s.db.one<any>(`SELECT default_locale FROM tenants WHERE id = $1`, [a.tenantId]);

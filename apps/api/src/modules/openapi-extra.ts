@@ -121,11 +121,18 @@ const INPUT_RULES: Record<string, string> = {
     "Una fila: un destinatario por rol (role = nombre del rol, o roleId). Los datos se validan por fila como en POST /v1/envelopes/from-template; sin channels, se usa email si hay correo y si no whatsapp.",
 };
 
+/** Propiedades obsoletas de esquemas con nombre (JSON Schema `deprecated: true`; Zod 3 no lo expresa). */
+const DEPRECATED_PROPS: Record<string, string[]> = {
+  ApiEvent: ["legacyId"],
+};
+
 /** components.schemas con todos los esquemas registrados. */
 export function componentSchemas(examples: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [name, schema] of REGISTRY) {
     out[name] = convert(schema, true);
+    const props = (out[name] as { properties?: Record<string, Record<string, unknown>> }).properties;
+    for (const p of DEPRECATED_PROPS[name] ?? []) if (props?.[p]) props[p].deprecated = true;
     if (INPUT_RULES[name]) (out[name] as Record<string, unknown>).description = INPUT_RULES[name];
     if (examples[name] !== undefined) (out[name] as Record<string, unknown>).example = examples[name];
   }

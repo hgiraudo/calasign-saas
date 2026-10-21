@@ -12,9 +12,9 @@ import { DISCARD_CHECKOUT_SET } from "./billing/payments";
 import { loadDetail } from "./mappers";
 import { isEmbeddedSigner, isUnverifiedSelfRegistered } from "./otp";
 import { assertLinkCurrent, recipientActor, resolveToken } from "./signing";
-import { inheritIdentityRequirement } from "./identity/kyc";
+import { inheritIdentityRequirement, maskDocNumber } from "./identity/kyc";
 import { deleteBlobsQuietly, discardRecipientAttachments } from "./file-cleanup";
-import { downgradeIdMatchSql, normalizeRequirements } from "./certsign-requirements";
+import { downgradeIdMatchSql, explicitRequirements, normalizeRequirements } from "./certsign-requirements";
 
 /** Aplica los campos opcionales de recordatorios/delegación de Create/UpdateEnvelopeInput (solo los presentes). */
 export async function applyEnvelopeSettings(
@@ -95,8 +95,8 @@ export async function replaceRecipient(
   const token = randomToken();
   await db.query(
     `INSERT INTO recipients (id, tenant_id, envelope_id, role, routing_order, name, email, phone, locale, channels, auth_method, replaces,
-       access_token_hash, access_token_enc, in_person_host_user_id, id_document_number)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+       access_token_hash, access_token_enc, in_person_host_user_id, id_document_number, id_document_type)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
     [
       id,
       e.tenant_id,
@@ -114,6 +114,8 @@ export async function replaceRecipient(
       encrypt(token),
       host,
       idDocumentNumber,
+      // El tipo del documento del original (DNI, CPF…): el número nuevo se compara con el certificado igual que el anterior.
+      idDocumentNumber ? (old.id_document_type ?? null) : null,
     ],
   );
   // Los adjuntos que subió el anterior no pasan al reemplazo; el llamador borra los archivos después de confirmar.
@@ -130,10 +132,16 @@ export async function replaceRecipient(
   // El reemplazo también firma con certificado si el original debía hacerlo. Si no trae número de documento (solo en una
   // reasignación: la delegación lo exige arriba) y se pedía que el certificado corresponda al documento, el control se
   // baja (con la marca para la evidencia) en vez de trabar un sobre en curso.
+  // Si el documento lo indicó quien delegó (no el remitente), queda la procedencia (idDocumentSource: "delegator") para
+  // la evidencia y el certificado de firma.
+  const inherited = explicitRequirements(old.certificate_requirements);
+  const { idDocumentSource: _prevSource, ...inheritedReqs } = inherited ?? {};
+  const delegatorDoc = kind === "delegated" && idDocumentNumber !== null;
+  const reqs = inherited || delegatorDoc ? { ...inheritedReqs, ...(delegatorDoc ? { idDocumentSource: "delegator" } : {}) } : null;
   await db.query(`UPDATE recipients SET signature_type = $2, certificate_requirements = ${downgradeIdMatchSql("$3::jsonb", "id_document_number")} WHERE id = $1`, [
     id,
     old.signature_type ?? "electronic",
-    old.certificate_requirements ? JSON.stringify(old.certificate_requirements) : null,
+    reqs ? JSON.stringify(reqs) : null,
   ]);
   await db.query(
     `UPDATE recipients SET status = $2, replaced_by = $3, replace_reason = $4, access_token_hash = NULL, access_token_enc = NULL WHERE id = $1`,
@@ -149,6 +157,9 @@ export async function replaceRecipient(
       from: { id: old.id, name: old.name },
       to: { id, name: c.name, email: c.email ? maskDestination(c.email) : null, phone: c.phone ? maskDestination(c.phone) : null },
       reason: c.reason ?? null,
+      ...(idDocumentNumber
+        ? { idDocument: maskDocNumber(idDocumentNumber), idDocumentSource: kind === "delegated" ? "delegator" : "sender" }
+        : {}),
     },
   });
   // Si el anterior ya estaba invitado, el nuevo recibe la invitación ahora; si no, cuando llegue su turno.

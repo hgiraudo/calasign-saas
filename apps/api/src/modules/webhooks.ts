@@ -939,7 +939,7 @@ export async function webhookRoutes(app: FastifyInstance, s: Services) {
   });
 
   // Cada prueba es un POST a la URL del cliente: con límite propio (10 por minuto por credencial o IP).
-  app.post<P>("/v1/webhooks/:id/test", { preHandler: auth, config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req, reply) => {
+  app.post<P>("/v1/webhooks/:id/test", { preHandler: auth, config: { rateLimit: { max: 10, timeWindow: "1 minute" }, rateLimitByCredential: true } }, async (req, reply) => {
     const a = A(req);
     const ep = await load(a.tenantId, req.params.id);
     const eventId = uuidv7();

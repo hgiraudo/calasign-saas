@@ -50,14 +50,78 @@ export function rateLimitIpKey(ip: string | undefined | null): string {
     .join(":")}::/64`;
 }
 
+declare module "fastify" {
+  interface FastifyContextConfig {
+    /**
+     * Ruta con límite propio (config.rateLimit) que se cuenta por credencial y no por IP. Solo para rutas que exigen
+     * autenticación (p. ej. las /test de integraciones): ahí la credencial ya pasó por authenticate().
+     */
+    rateLimitByCredential?: boolean;
+  }
+}
+
 /**
- * Clave del límite de pedidos: con una credencial Bearer (API key o token OAuth), un hash de la credencial; sin ella,
- * la IP (rateLimitIpKey). Por IP sola, las integraciones detrás de un mismo NAT o proxy (muchas organizaciones con la
- * misma IP de salida) compartían el cupo, y una sola key repartida entre muchas IPs lo multiplicaba. Una credencial
- * inventada obtiene su propio cupo, pero el pedido termina en 401 tras una búsqueda por hash indexada. En el store en
- * memoria del límite (uno por réplica) queda el hash, no la credencial.
+ * Credenciales Bearer (hash) que ya autenticaron bien en este proceso, con su vencimiento. Mapa con orden de inserción
+ * como LRU acotado: una credencial inventada nunca entra, así que no puede llenar el store del límite ni desalojar los
+ * cupos legítimos.
  */
-export function rateLimitKey(req: { ip?: string | null; headers: { authorization?: string | string[] } }): string {
+const KNOWN_CREDENTIALS_MAX = 10_000;
+const KNOWN_CREDENTIAL_TTL_MS = 10 * 60_000;
+const knownCredentials = new Map<string, number>();
+
+function credentialHash(token: string): string {
+  return sha256Hex(token).slice(0, 32);
+}
+
+/** Registra una credencial Bearer que acaba de autenticar bien (authenticate en context.ts). */
+export function rememberAuthenticatedCredential(token: string): void {
+  const h = credentialHash(token);
+  knownCredentials.delete(h);
+  knownCredentials.set(h, Date.now() + KNOWN_CREDENTIAL_TTL_MS);
+  while (knownCredentials.size > KNOWN_CREDENTIALS_MAX) knownCredentials.delete(knownCredentials.keys().next().value as string);
+}
+
+/** Olvida una credencial que dejó de autenticar (revocada o vencida). */
+export function forgetCredential(token: string): void {
+  knownCredentials.delete(credentialHash(token));
+}
+
+function isKnownCredential(h: string): boolean {
+  const exp = knownCredentials.get(h);
+  if (exp === undefined) return false;
+  if (exp <= Date.now()) {
+    knownCredentials.delete(h);
+    return false;
+  }
+  return true;
+}
+
+/** Solo para tests. */
+export function resetKnownCredentials(): void {
+  knownCredentials.clear();
+}
+
+/**
+ * Clave del límite de pedidos.
+ * - Rutas con límite propio (config.rateLimit, p. ej. login, alta, recupero de contraseña, 2FA, invitaciones, /oauth/token,
+ *   /v1/verify, rutas públicas de firma): por IP (rateLimitIpKey), salvo que la ruta pida config.rateLimitByCredential.
+ *   El plugin hereda el keyGenerator global en esas rutas: sin esta regla, un Bearer inventado distinto en cada pedido
+ *   daba un cupo nuevo por pedido y anulaba el límite.
+ * - Resto: con una credencial Bearer que ya autenticó bien en este proceso (rememberAuthenticatedCredential), un hash
+ *   de la credencial, para que las integraciones detrás de un mismo NAT o proxy no compartan el cupo y una key repartida
+ *   entre muchas IPs no lo multiplique. Una credencial no vista (inventada, o el primer pedido de una real) cuenta en el
+ *   cupo de la IP. En el store en memoria del límite (uno por réplica) queda el hash, no la credencial.
+ * El tope grueso por IP para el tráfico con credencial está en app.ts.
+ */
+export function rateLimitKey(req: {
+  ip?: string | null;
+  headers: { authorization?: string | string[] };
+  routeOptions?: { config?: { rateLimit?: unknown; rateLimitByCredential?: boolean } };
+}): string {
+  const cfg = req.routeOptions?.config;
+  if (cfg && typeof cfg.rateLimit === "object" && cfg.rateLimit !== null && cfg.rateLimitByCredential !== true) return rateLimitIpKey(req.ip);
   const token = bearerToken(req.headers.authorization as string | undefined);
-  return token ? `cred:${sha256Hex(token).slice(0, 32)}` : rateLimitIpKey(req.ip);
+  if (!token) return rateLimitIpKey(req.ip);
+  const h = credentialHash(token);
+  return isKnownCredential(h) ? `cred:${h}` : rateLimitIpKey(req.ip);
 }

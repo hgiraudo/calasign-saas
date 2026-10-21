@@ -20,13 +20,19 @@ no incluir la selfie o la prueba de vida. Para un nivel con selfie hace falta la
 **Capacidades declaradas de la integración.** La decisión de Veriff no suele traer `faceMatch.similarity` ni un
 booleano de prueba de vida. Por eso una aprobación se completa con lo que la integración declara hacer:
 
-- **Veriff**: `VERIFF_INTEGRATION_LEVEL` (una sola integración para todos los sobres). Default `document` (a prueba
-  de fallas: sin declararlo, la evidencia no da por hecha una coincidencia facial que pudo no ocurrir). Con
-  `document_selfie` una aprobación cuenta como coincidencia facial; con `document_selfie_liveness`, además como prueba
-  de vida. Para pedir con Veriff un nivel con selfie hay que definir la variable explícitamente.
+- **Veriff**: `VERIFF_INTEGRATION_LEVEL` (una sola integración para todos los sobres). Default `document_selfie` (el
+  flujo de verificación estándar de Veriff incluye selfie y coincidencia facial); sin definirla, la API y el worker
+  avisan al arrancar que conviene declararla. Con `document` una aprobación no cuenta como coincidencia facial; con
+  `document_selfie` sí; con `document_selfie_liveness`, además como prueba de vida. Si la integración del panel de
+  Veriff no hace la selfie, definí `VERIFF_INTEGRATION_LEVEL=document`.
 - **Truora**: un flujo propio del nivel (`TRUORA_FLOW_ID_<NIVEL>`) se arma con las validaciones del nivel, así que una
   aprobación con ese flujo cumple el nivel. El flujo genérico (`TRUORA_FLOW_ID`) no declara nada: el resultado tiene que
   traer los datos.
+
+Cada verificación guarda al iniciarse el nivel que declaraba la integración (`identity_verifications.integration_level`;
+`none` si no declaraba nada): el resultado se completa con ese nivel y no con la configuración del momento del
+resultado, así cambiar `VERIFF_INTEGRATION_LEVEL` o los flujos de Truora no afecta a las verificaciones en curso. Las
+filas anteriores a la columna usan la configuración actual.
 
 Un dato contrario explícito siempre gana: puntaje facial bajo el umbral o `faceMatched` en false (`face_mismatch`),
 `liveness` en false (`liveness_failed`). Esas son fallas del firmante y consumen un intento. Lo inferido queda en la
@@ -54,7 +60,7 @@ destinatario (`unavailableReason`) y lo resuelve reiniciando con otro nivel o pr
 | Variable | Default | Uso |
 | --- | --- | --- |
 | `VERIFF_API_KEY`, `VERIFF_SHARED_SECRET`, `VERIFF_BASE_URL` | — | integración de Veriff (una sola). |
-| `VERIFF_INTEGRATION_LEVEL` | `document` | controles que hace la integración de Veriff (`document`, `document_selfie`, `document_selfie_liveness`). Una aprobación cumple hasta ese nivel salvo un dato contrario explícito; los niveles superiores no se pueden pedir con Veriff (al armar o enviar el sobre, 400 con el nombre de la variable). Tiene que coincidir con lo configurado en el panel de Veriff: definila explícitamente si la integración hace la selfie o la prueba de vida. |
+| `VERIFF_INTEGRATION_LEVEL` | `document_selfie` (con aviso al arrancar) | controles que hace la integración de Veriff (`document`, `document_selfie`, `document_selfie_liveness`). Una aprobación cumple hasta ese nivel salvo un dato contrario explícito; los niveles superiores no se pueden pedir con Veriff (al armar o enviar el sobre, 400 con el nombre de la variable). Tiene que coincidir con lo configurado en el panel de Veriff: definila explícitamente (`document` si la integración no hace la selfie, `document_selfie_liveness` si hace la prueba de vida). |
 | `TRUORA_API_KEY`, `TRUORA_WEBHOOK_SECRET` | — | Truora (Digital Identity). |
 | `TRUORA_FLOW_ID` | — | flujo por defecto. |
 | `TRUORA_FLOW_ID_DOCUMENT`, `TRUORA_FLOW_ID_DOCUMENT_SELFIE`, `TRUORA_FLOW_ID_DOCUMENT_SELFIE_LIVENESS` | `TRUORA_FLOW_ID` | flujo por nivel (documento; + reconocimiento facial; + prueba de vida). Truora queda configurado con `TRUORA_FLOW_ID` o con al menos uno de estos; un nivel sin flujo no puede pedirse ni iniciarse. Un flujo propio del nivel declara sus controles (una aprobación cumple el nivel salvo un dato contrario). |

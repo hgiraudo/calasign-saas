@@ -22,6 +22,7 @@ import { assertUserTokenAllowed, isOAuthAccessToken, resolveAccessToken } from "
 import { envelopesSentThisMonth, tenantPlan } from "../billing/plans";
 import { decodePdfBase64, fetchPdf, fileNameFromUrl, maxBase64Length } from "../pdf-source";
 import { agentHeaders } from "./agent-actor";
+import { mcpPdfSlots, PdfSlotBusyError } from "./pdf-slots";
 
 interface Caller {
   authorization: string;
@@ -341,7 +342,8 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
       ...token,
     });
   /** Envuelve una herramienta: los errores de la API vuelven como resultado con isError (no como error de protocolo). */
-  const guard =
+  const makeGuard =
+    (log: FastifyRequest["log"], reqId: string) =>
     <A>(fn: (args: A) => Promise<unknown>) =>
     async (args: A) => {
       try {
@@ -363,7 +365,10 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
           }
           return fail(`Error ${err.status}${err.code ? ` ${err.code}` : ""}: ${err.message}${hint}`);
         }
-        throw err;
+        // Cualquier otro error (bug, base de datos…): se registra con el id del pedido y el agente recibe un mensaje
+        // genérico (sin detalles internos), como resultado de herramienta y no como error de protocolo.
+        log.error({ err, reqId }, "error en una herramienta MCP");
+        return fail(`Error interno (id ${reqId}). Si se repite, contactá a soporte con ese id.`);
       }
     };
 
@@ -393,7 +398,8 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
   /** "Nombre <contacto> (rol)" de un destinatario del sobre, marcado como texto de terceros. */
   const recipientLine = (r: any, role = true) => untrusted(`${r.name} <${r.email ?? r.phone ?? "—"}>${role ? ` (${r.role})` : ""}`);
 
-  function buildServer(c: Caller): McpServer {
+  function buildServer(c: Caller, req: FastifyRequest): McpServer {
+    const guard = makeGuard(req.log, String(req.id));
     const server = new McpServer(SERVER_INFO, { instructions: INSTRUCTIONS });
 
     server.registerTool(
@@ -531,7 +537,10 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
               {
                 templateId: a.templateId,
                 subject: a.subject ?? null,
+                // El mensaje que les llega a los destinatarios (lo pudo armar el agente con texto de terceros).
+                message: untrusted(a.message),
                 recipients: a.recipients.map((r: any) => `${r.name} <${r.email ?? r.phone ?? "—"}> (${r.role})`),
+                prefilledFields: Object.keys(a.prefill ?? {}).length,
               },
               issueConfirmToken(c, "create_envelope_from_template", target, ""),
             );
@@ -581,9 +590,12 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
             "enviar notifica a personas reales.",
             {
               subject: untrusted(d.envelope.subject),
+              message: untrusted(d.envelope.message),
               status: d.envelope.status,
               updatedAt: d.envelope.updatedAt,
+              documents: d.documents.map((x: any) => untrusted(x.name)),
               recipients: d.recipients.map((r: any) => recipientLine(r)),
+              fields: d.fields.length,
             },
             issueConfirmToken(c, "send_envelope", a.envelopeId, d.envelope.updatedAt),
           );
@@ -634,10 +646,11 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
       "download_signed_pdf",
       {
         title: "Descargar PDF firmado",
-        description: `Devuelve una URL temporal (${Math.round(config.mcp.downloadLinkTtlSec / 60)} min, hasta ${DOWNLOAD_MAX} descargas, mientras la credencial siga vigente) para descargar el PDF sellado con su certificado de finalización. Solo para sobres completados.`,
+        description: `Crea un link de descarga compartible (quien tenga la URL puede bajar el PDF) y devuelve esa URL temporal (${Math.round(config.mcp.downloadLinkTtlSec / 60)} min, hasta ${DOWNLOAD_MAX} descargas, mientras la credencial siga vigente) para descargar el PDF sellado con su certificado de finalización. Solo para sobres completados.`,
         inputSchema: { envelopeId: z.string().uuid() },
-        // Crea un link de descarga (registro interno), pero no cambia nada del sobre.
-        annotations: { title: "Descargar PDF firmado", ...READ_ONLY },
+        // Crea un link compartible nuevo en cada llamada (no cambia el sobre, pero no es de solo lectura ni idempotente) y
+        // el PDF sale a quien tenga la URL: openWorld.
+        annotations: { title: "Descargar PDF firmado", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
       },
       guard(async (a: { envelopeId: string }) => {
         const d = await api(c, "GET", `/v1/envelopes/${a.envelopeId}`); // control de acceso de la API
@@ -732,99 +745,111 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
         // solo lectura hacía que el servidor bajara y parseara hasta 10 MB de cualquier URL.
         const acc = await api(c, "GET", "/v1/me/access");
         if (!acc.permissions?.includes("envelopes:create")) return fail("Esta conexión no tiene permiso para crear sobres (envelopes:create).");
-        let pdf: Buffer;
+        // Un lugar por credencial y por proceso desde que se obtiene el PDF hasta que se crea el sobre: varias
+        // llamadas en paralelo no bajan ni tienen en memoria muchos PDFs a la vez (ver pdf-slots.ts).
         try {
-          pdf = a.document.base64 ? decodePdfBase64(a.document.base64, PDF_MAX_BYTES) : await fetchPdf(a.document.url, PDF_MAX_BYTES);
-        } catch (e) {
-          return fail(`No se pudo obtener el PDF: ${(e as Error).message}`);
-        }
-        for (const f of a.fields ?? []) {
-          const r = a.recipients[f.recipientIndex];
-          if (!r || (r.role ?? "signer") !== "signer") return fail(`fields: recipientIndex ${f.recipientIndex} no es un firmante de recipients`);
-        }
-        const fileName = pdfFileName(a.document.name ?? (a.document.url ? fileNameFromUrl(a.document.url) : null));
-        // El contenido del PDF (no solo la URL) entra en la huella: lo aprobado es este documento.
-        const pdfSha = sha256Hex(pdf);
-        if (a.send) {
-          const target = createConfirmTarget(a, pdfSha);
-          if (!a.confirmToken) {
-            return preview(
-              "con send=true se envía y les llega a personas reales.",
-              {
-                subject: a.subject,
-                // El nombre puede venir de la URL (o del documento): texto de terceros.
-                document: untrusted(fileName),
-                documentSha256: pdfSha,
-                recipients: a.recipients.map((r: any) => `${r.name} <${r.email ?? r.phone ?? "—"}> (${r.role ?? "signer"})`),
+          return await mcpPdfSlots.run(c.principal, async () => {
+            let pdf: Buffer;
+            try {
+              pdf = a.document.base64 ? decodePdfBase64(a.document.base64, PDF_MAX_BYTES) : await fetchPdf(a.document.url, PDF_MAX_BYTES);
+            } catch (e) {
+              return fail(`No se pudo obtener el PDF: ${(e as Error).message}`);
+            }
+            for (const f of a.fields ?? []) {
+              const r = a.recipients[f.recipientIndex];
+              if (!r || (r.role ?? "signer") !== "signer") return fail(`fields: recipientIndex ${f.recipientIndex} no es un firmante de recipients`);
+            }
+            const fileName = pdfFileName(a.document.name ?? (a.document.url ? fileNameFromUrl(a.document.url) : null));
+            // El contenido del PDF (no solo la URL) entra en la huella: lo aprobado es este documento.
+            const pdfSha = sha256Hex(pdf);
+            if (a.send) {
+              const target = createConfirmTarget(a, pdfSha);
+              if (!a.confirmToken) {
+                return preview(
+                  "con send=true se envía y les llega a personas reales.",
+                  {
+                    subject: a.subject,
+                    // El nombre puede venir de la URL (o del documento): texto de terceros.
+                    document: untrusted(fileName),
+                    documentSha256: pdfSha,
+                    message: untrusted(a.message),
+                    recipients: a.recipients.map((r: any) => `${r.name} <${r.email ?? r.phone ?? "—"}> (${r.role ?? "signer"})`),
+                    // Campos por texto ancla pedidos (más uno de firma al pie por cada firmante que no tenga).
+                    fields: (a.fields ?? []).length,
+                  },
+                  issueConfirmToken(c, "create_envelope", target, ""),
+                );
+              }
+              if (!verifyConfirmToken(c, "create_envelope", target, a.confirmToken)) return fail(INVALID_CONFIRM);
+            }
+            let pageCount: number;
+            try {
+              pageCount = (await inspectPdf(pdf)).pageCount;
+            } catch (e) {
+              // Sin lugar para procesar el PDF ahora: no es un PDF inválido, se puede reintentar con los mismos argumentos.
+              if (e instanceof PdfIngestBusyError) return fail(`${e.message} (reintentable: volvé a llamar con los mismos argumentos en ${e.retryAfterSeconds} s).`);
+              return fail(`El PDF no es válido: ${(e as Error).message}`);
+            }
+            const SIZE: Record<string, [number, number]> = { signature: [160, 45], initials: [60, 35], date_signed: [110, 20] };
+            const fields: any[] = (a.fields ?? []).map((f: any) => ({
+              recipient: f.recipientIndex,
+              type: f.type ?? "signature",
+              required: f.required ?? true,
+              anchor: {
+                text: f.anchorText,
+                offsetX: f.offsetX ?? 0,
+                offsetY: f.offsetY ?? 0,
+                width: f.width ?? SIZE[f.type ?? "signature"]?.[0] ?? 150,
+                height: f.height ?? SIZE[f.type ?? "signature"]?.[1] ?? 20,
               },
-              issueConfirmToken(c, "create_envelope", target, ""),
-            );
-          }
-          if (!verifyConfirmToken(c, "create_envelope", target, a.confirmToken)) return fail(INVALID_CONFIRM);
-        }
-        let pageCount: number;
-        try {
-          pageCount = (await inspectPdf(pdf)).pageCount;
-        } catch (e) {
-          // Sin lugar para procesar el PDF ahora: no es un PDF inválido, se puede reintentar con los mismos argumentos.
-          if (e instanceof PdfIngestBusyError) return fail(`${e.message} (reintentable: volvé a llamar con los mismos argumentos en ${e.retryAfterSeconds} s).`);
-          return fail(`El PDF no es válido: ${(e as Error).message}`);
-        }
-        const SIZE: Record<string, [number, number]> = { signature: [160, 45], initials: [60, 35], date_signed: [110, 20] };
-        const fields: any[] = (a.fields ?? []).map((f: any) => ({
-          recipient: f.recipientIndex,
-          type: f.type ?? "signature",
-          required: f.required ?? true,
-          anchor: {
-            text: f.anchorText,
-            offsetX: f.offsetX ?? 0,
-            offsetY: f.offsetY ?? 0,
-            width: f.width ?? SIZE[f.type ?? "signature"]?.[0] ?? 150,
-            height: f.height ?? SIZE[f.type ?? "signature"]?.[1] ?? 20,
-          },
-        }));
-        // Firmantes sin campo de firma: uno al pie de la última página (dos columnas), así el sobre se puede enviar.
-        const lastPage = Math.max(0, pageCount - 1);
-        let slot = 0;
-        a.recipients.forEach((r: any, i: number) => {
-          if ((r.role ?? "signer") !== "signer" || fields.some((f) => f.recipient === i && f.type === "signature")) return;
-          const row = Math.floor(slot / 2);
-          fields.push({
-            recipient: i,
-            document: 0,
-            type: "signature",
-            required: true,
-            page: lastPage,
-            x: slot % 2 === 0 ? 0.08 : 0.55,
-            y: Math.max(0.05, 0.86 - row * 0.09),
-            width: 0.32,
-            height: 0.07,
+            }));
+            // Firmantes sin campo de firma: uno al pie de la última página (dos columnas), así el sobre se puede enviar.
+            const lastPage = Math.max(0, pageCount - 1);
+            let slot = 0;
+            a.recipients.forEach((r: any, i: number) => {
+              if ((r.role ?? "signer") !== "signer" || fields.some((f) => f.recipient === i && f.type === "signature")) return;
+              const row = Math.floor(slot / 2);
+              fields.push({
+                recipient: i,
+                document: 0,
+                type: "signature",
+                required: true,
+                page: lastPage,
+                x: slot % 2 === 0 ? 0.08 : 0.55,
+                y: Math.max(0.05, 0.86 - row * 0.09),
+                width: 0.32,
+                height: 0.07,
+              });
+              slot++;
+            });
+            // Una sola llamada a la API (atómica): si algo falla, no queda un borrador a medias.
+            const { d, replayed } = await createEnvelope(c, "/v1/envelopes", {
+              subject: a.subject,
+              locale: a.locale,
+              message: a.message ?? null,
+              documents: [{ name: fileName, base64: pdf.toString("base64") }],
+              recipients: a.recipients.map((r: any) => ({
+                name: r.name,
+                email: r.email ?? null,
+                phone: r.phone ?? null,
+                role: r.role ?? "signer",
+                routingOrder: r.routingOrder ?? 1,
+                channels: r.email ? ["email"] : ["whatsapp"],
+              })),
+              fields,
+              send: Boolean(a.send),
+            }, mcpIdempotencyKeys(c.principal, "create_envelope", a, pdfSha));
+            if (replayed) return { ...summarizeDetail(d), replayed: true, note: REPLAYED_NOTE, ...(d.envelope.status === "draft" ? { next: NEXT_DRAFT } : {}) };
+            return {
+              ...summarizeDetail(d),
+              ...(slot ? { note: `Se agregó un campo de firma al pie de la última página para ${slot} firmante(s) sin campo.` } : {}),
+              ...(a.send ? {} : { next: NEXT_DRAFT }),
+            };
           });
-          slot++;
-        });
-        // Una sola llamada a la API (atómica): si algo falla, no queda un borrador a medias.
-        const { d, replayed } = await createEnvelope(c, "/v1/envelopes", {
-          subject: a.subject,
-          locale: a.locale,
-          message: a.message ?? null,
-          documents: [{ name: fileName, base64: pdf.toString("base64") }],
-          recipients: a.recipients.map((r: any) => ({
-            name: r.name,
-            email: r.email ?? null,
-            phone: r.phone ?? null,
-            role: r.role ?? "signer",
-            routingOrder: r.routingOrder ?? 1,
-            channels: r.email ? ["email"] : ["whatsapp"],
-          })),
-          fields,
-          send: Boolean(a.send),
-        }, mcpIdempotencyKeys(c.principal, "create_envelope", a, pdfSha));
-        if (replayed) return { ...summarizeDetail(d), replayed: true, note: REPLAYED_NOTE, ...(d.envelope.status === "draft" ? { next: NEXT_DRAFT } : {}) };
-        return {
-          ...summarizeDetail(d),
-          ...(slot ? { note: `Se agregó un campo de firma al pie de la última página para ${slot} firmante(s) sin campo.` } : {}),
-          ...(a.send ? {} : { next: NEXT_DRAFT }),
-        };
+        } catch (e) {
+          if (e instanceof PdfSlotBusyError) return fail(`${e.message} (reintentable: volvé a llamar con los mismos argumentos en ${e.retryAfterSeconds} s).`);
+          throw e;
+        }
       }),
     );
 
@@ -902,7 +927,17 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
     if (!plan.features.includes("api")) {
       return reply.code(402).send({ error: { code: "plan_limit", message: `El acceso por API y MCP no está incluido en el plan ${plan.name}` } });
     }
-    const server = buildServer(caller);
+    // Sin lotes JSON-RPC (un array de mensajes): el transporte del SDK los aceptaba (hasta 100) y los ejecutaba en
+    // paralelo, salteando el límite por pedido (100 tools/call, p. ej. 100 descargas de PDF, en un solo POST). La
+    // especificación los sacó en 2025-06-18 y los clientes MCP (SDK oficiales, ChatGPT, Claude) mandan un mensaje por POST.
+    if (Array.isArray(req.body)) {
+      return reply.code(400).send({
+        jsonrpc: "2.0",
+        error: { code: -32600, message: "Invalid Request: este servidor MCP no acepta lotes JSON-RPC; mandá un mensaje por pedido" },
+        id: null,
+      });
+    }
+    const server = buildServer(caller, req);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     reply.hijack();
     reply.raw.on("close", () => {

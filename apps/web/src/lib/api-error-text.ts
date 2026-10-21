@@ -467,4 +467,8 @@ export const MORE_CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
     "pt-BR": "O provedor de cobrança não tem o segredo do webhook configurado neste ambiente e o pagamento não poderia ser confirmado: remova a cobrança do envelope ou escolha outro provedor.",
     en: "The payment provider has no webhook secret configured in this environment, so the payment couldn't be confirmed: remove the payment from the envelope or choose another provider.",
   },
+  metadata_changed: {
+    "pt-BR": "Os metadados do contrato mudaram enquanto eram extraídos (alguém os editou ou extraiu de novo): revise-os e, se necessário, extraia-os novamente.",
+    en: "The contract metadata changed while it was being extracted (someone edited it or extracted it again): review it and, if needed, extract it again.",
+  },
 };

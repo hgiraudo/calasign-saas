@@ -163,7 +163,7 @@ export async function ingestEnvelope(d: Pick<Deps, "db" | "blobs" | "log">, enve
 export async function agreementExpirySweep(d: Deps) {
   await d.db.query(`UPDATE agreements SET status = 'expired', updated_at = now() WHERE status = 'active' AND expiry_date < current_date`);
   const due = await d.db.query<any>(
-    `SELECT ag.id, ag.expiry_date::text AS expiry
+    `SELECT ag.id, ag.tenant_id, ag.expiry_date::text AS expiry
      FROM agreements ag
      WHERE ag.status = 'active' AND ag.expiry_date IS NOT NULL
        AND ag.expiry_date - COALESCE(ag.notice_days, 30) <= current_date
@@ -182,7 +182,7 @@ export async function agreementExpirySweep(d: Deps) {
     const key = expiryNoticeKey(a.id, a.expiry);
     await d.db.tx(async (t) => {
       await t.query(`UPDATE jobs SET dedupe_key = NULL WHERE dedupe_key = $1 AND status IN ('done','failed')`, [key]);
-      await enqueue(t, "agreements", { kind: "expiry_notice", agreementId: a.id, expiryDate: a.expiry }, { dedupeKey: key });
+      await enqueue(t, "agreements", { kind: "expiry_notice", agreementId: a.id, expiryDate: a.expiry }, { dedupeKey: key, tenantId: a.tenant_id });
     });
   }
   return due.length;

@@ -35,7 +35,7 @@ Authorization: Bearer <API key (cs_live_… / cs_test_…) or OAuth access token
 - Cells (regions): if the organization lives in another cell, any call answers `421 wrong_cell` with
   `details.baseUrl` (and a `Location` header) without processing it → repeat once against that base URL and keep
   using it.
-- 5xx: retry with backoff (same `Idempotency-Key`), except `503 byok_key_unavailable` (an admin must restore the
+- 5xx: retry with backoff (same `Idempotency-Key`), except `503 wrong_cell` (the organization's cell isn't configured in that deployment) and `503 byok_key_unavailable` (an admin must restore the
   organization's encryption key).
 
 ## Main endpoints

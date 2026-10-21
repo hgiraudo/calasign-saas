@@ -69,11 +69,11 @@ export async function agreementsSweep(d: Deps) {
  * Una vez por run y por hora (clave de dedupe).
  */
 async function resumeStalledRuns(d: Deps) {
-  const rows = await d.db.query<{ id: string }>(
-    `SELECT id FROM workflow_runs WHERE status = 'running' AND updated_at < now() - interval '15 minutes' ORDER BY updated_at LIMIT 50`,
+  const rows = await d.db.query<{ id: string; tenant_id: string }>(
+    `SELECT id, tenant_id FROM workflow_runs WHERE status = 'running' AND updated_at < now() - interval '15 minutes' ORDER BY updated_at LIMIT 50`,
   );
   const hour = new Date().toISOString().slice(0, 13);
-  for (const r of rows) await enqueue(d.db, "agreements", { kind: "advance", runId: r.id }, { dedupeKey: `wf-resume:${r.id}:${hour}` });
+  for (const r of rows) await enqueue(d.db, "agreements", { kind: "advance", runId: r.id }, { dedupeKey: `wf-resume:${r.id}:${hour}`, tenantId: r.tenant_id });
 }
 
 /**

@@ -174,14 +174,19 @@ function upload(token: string, kind: string, seed: number) {
 }
 
 describe("nivel exigido con proveedores externos", () => {
-  it("Veriff: sin VERIFF_INTEGRATION_LEVEL (default document) un nivel con selfie no se pide, no se envía ni se inicia", async () => {
+  it("Veriff: sin VERIFF_INTEGRATION_LEVEL (default document_selfie) la prueba de vida no se pide, no se envía ni se inicia", async () => {
     const { config } = await import("../src/config");
-    expect(config.identity.veriffIntegrationLevel).toBe("document");
+    expect(config.identity.veriffIntegrationLevel).toBe("document_selfie");
+    // Arranque: avisa que conviene definirla explícitamente.
+    const { warnIdentityConfig } = await import("../src/modules/identity/providers");
+    const warns: string[] = [];
+    warnIdentityConfig({ warn: (m) => warns.push(m) });
+    expect(warns.join("\n")).toContain("VERIFF_INTEGRATION_LEVEL");
     const { applyIdentityFlags } = await import("../src/modules/identity/kyc");
-    const x = await setup({ provider: "veriff", level: "document_selfie" });
-    const err = await applyIdentityFlags(db, x.envelope, [{ id: x.recipient, role: "signer", idVerification: { provider: "veriff", level: "document_selfie" } }]).catch((e) => e);
+    const x = await setup({ provider: "veriff", level: "document_selfie_liveness" });
+    const err = await applyIdentityFlags(db, x.envelope, [{ id: x.recipient, role: "signer", idVerification: { provider: "veriff", level: "document_selfie_liveness" } }]).catch((e) => e);
     expect(err).toMatchObject({ status: 400, code: "identity_provider_unavailable" });
-    expect(String(err.message)).toContain("VERIFF_INTEGRATION_LEVEL=document_selfie");
+    expect(String(err.message)).toContain("VERIFF_INTEGRATION_LEVEL=document_selfie_liveness");
     // Para el firmante, un mensaje neutro (sin variables del servidor).
     const st = await signing(x.token, "/identity/start", "POST");
     expect(st.statusCode).toBe(503);
@@ -201,6 +206,9 @@ describe("nivel exigido con proveedores externos", () => {
     const a = await setup({ provider: "veriff", level: "document_selfie" });
     expect((await signing(a.token, "/identity/start", "POST")).statusCode).toBe(200);
     const va = await db.one<any>(`SELECT * FROM identity_verifications WHERE recipient_id = $1`, [a.recipient]);
+    expect(va.integration_level).toBe("document_selfie");
+    // Bajar la variable después de iniciar no afecta a la verificación en curso (usa el nivel guardado).
+    (config.identity as any).veriffIntegrationLevel = "document";
     const wh = await veriffHook({ id: va.provider_ref, status: "approved", person: { firstName: "Ana", lastName: "Pérez" } });
     expect(wh.statusCode).toBe(200);
     expect((await verification(va.id)).status).toBe("verified");
@@ -210,6 +218,7 @@ describe("nivel exigido con proveedores externos", () => {
     const { identityForCertificate } = await import("../src/modules/identity/kyc");
     const cert = (await identityForCertificate(db, [await recipientRow(a.recipient)])).get(a.recipient);
     expect(cert).toMatchObject({ faceMatchScore: null, faceMatched: true, inferred: ["faceMatched"] });
+    (config.identity as any).veriffIntegrationLevel = "document_selfie";
 
     // Puntaje explícito bajo el umbral: falla del firmante (face_mismatch), consume un intento.
     const b = await setup({ provider: "veriff", level: "document_selfie" });
@@ -616,6 +625,17 @@ describe("uso del plan", () => {
 });
 
 describe("sobres con un nivel que el proveedor no puede hacer (de antes de las reglas por nivel)", () => {
+  // Integración de Veriff declarada en document (sin selfie): los niveles con selfie no los puede hacer.
+  let prevLevel: string;
+  beforeAll(async () => {
+    const { config } = await import("../src/config");
+    prevLevel = config.identity.veriffIntegrationLevel;
+    (config.identity as any).veriffIntegrationLevel = "document";
+  });
+  afterAll(async () => {
+    const { config } = await import("../src/config");
+    (config.identity as any).veriffIntegrationLevel = prevLevel;
+  });
   it("al enviar: problema identity_provider_unavailable con el motivo para el remitente", async () => {
     const { sendEnvelope } = await import("../src/modules/envelopes");
     const { SYSTEM } = await import("../src/infra/evidence");

@@ -117,6 +117,37 @@ describe("barrido de sellos de archivo", () => {
     expect(sent.filter((m) => m.to === `admin-${t.slice(-8)}@org.test`)).toHaveLength(1);
   });
 
+  it("aviso de la TSA que no salió por una falla del momento: se suelta el reclamo y el próximo barrido lo manda", async () => {
+    const channels = await import("../src/notifications/channels");
+    const deliver = vi.mocked(channels.deliver);
+    const base = deliver.getMockImplementation()!;
+    const t = await tenantWithAdmin();
+    const a = await dueEnvelope(t, { validIn: "20 days" });
+    const admin = `admin-${t.slice(-8)}@org.test`;
+    const tsaNotAfter = new Date(Date.now() + 4 * 86_400_000).toISOString();
+    sent.length = 0;
+    deliver.mockImplementation(async (m: any) => {
+      if (m.to === admin) throw Object.assign(new Error("421 try later"), { responseCode: 421 });
+      return base(m);
+    });
+    try {
+      archive.resetArchiveSweepClock();
+      archive.primeTsaCacheForTests(config.seal.tsaUrl, tsaNotAfter);
+      await archive.archiveSweep({ db, blobs: blobs as any, log }, { days: 60 });
+    } finally {
+      deliver.mockImplementation(base);
+    }
+    expect((await row(a)).archive_error).toBe(archive.TSA_CANNOT_EXTEND);
+    expect(sent.filter((m) => m.to === admin)).toHaveLength(0);
+    expect(await db.one(`SELECT 1 AS x FROM tenant_alerts WHERE tenant_id = $1 AND kind = 'archive_tsa_cannot_extend'`, [t])).toBeNull();
+    // Próximo barrido (al día siguiente): sale.
+    await db.query(`UPDATE envelopes SET archive_checked_at = now() - interval '2 days' WHERE id = $1`, [a]);
+    archive.resetArchiveSweepClock();
+    archive.primeTsaCacheForTests(config.seal.tsaUrl, tsaNotAfter);
+    await archive.archiveSweep({ db, blobs: blobs as any, log }, { days: 60 });
+    expect(sent.filter((m) => m.to === admin)).toHaveLength(1);
+  });
+
   it("con SERVED_CELLS solo barre las organizaciones de sus celdas", async () => {
     await db.query(`UPDATE envelopes SET archive_error = 'fuera', archive_checked_at = now() - interval '1 hour'`); // aparta lo anterior
     const us = await tenantWithAdmin("us");

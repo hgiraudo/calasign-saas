@@ -66,6 +66,24 @@ describe("celda de los jobs", () => {
     ]);
   });
 
+  it("jobs de la cola agreements con solo el id del acuerdo / run / negociación: la celda de su organización", async () => {
+    setCells(TWO_CELLS, null);
+    const file = util.uuidv7();
+    await db.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original',$3,'application/pdf',1,$4)`, [
+      file,
+      T.br,
+      `tenants/${T.br}/a/${file}.pdf`,
+      "a".repeat(64),
+    ]);
+    const ag = util.uuidv7();
+    await db.query(`INSERT INTO agreements (id, tenant_id, source, file_id, file_name, title) VALUES ($1,$2,'external',$3,'a.pdf','A')`, [ag, T.br, file]);
+    await queue.enqueue(db, "agreements", { kind: "expiry_notice", agreementId: ag, expiryDate: "2030-01-01" }, { dedupeKey: "agr1" });
+    expect(await cellOf("agr1")).toBe("br");
+    // Un id que no existe: sin celda (cualquier worker), como antes.
+    await queue.enqueue(db, "agreements", { kind: "advance", runId: util.uuidv7() }, { dedupeKey: "agr2" });
+    expect(await cellOf("agr2")).toBeNull();
+  });
+
   it("con una sola celda no se fija (cualquier worker, como siempre)", async () => {
     setCells(null, null);
     await queue.enqueue(db, "notify", { kind: "invite", tenantId: T.br }, { dedupeKey: "s1" });

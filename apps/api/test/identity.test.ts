@@ -228,11 +228,20 @@ describe("nivel exigido", () => {
     const approved = mapVeriffDecision(VERIFF_DECISION.verification);
     const { config } = await import("../src/config");
     const prevLevel = config.identity.veriffIntegrationLevel;
-    // VERIFF_INTEGRATION_LEVEL por defecto: document (a prueba de fallas): no se infiere la coincidencia facial.
-    expect(prevLevel).toBe("document");
-    expect(withIntegrationCapabilities("veriff", "document_selfie", approved, 0.8)).toMatchObject({ inferred: [] });
-    expect(withIntegrationCapabilities("veriff", "document_selfie", approved, 0.8).result.faceMatched ?? null).toBe(null);
+    // VERIFF_INTEGRATION_LEVEL por defecto: document_selfie (flujo estándar de Veriff con selfie y coincidencia facial).
+    expect(prevLevel).toBe("document_selfie");
+    expect(config.identity.veriffIntegrationLevelExplicit).toBe(false);
     try {
+      // Declarada en document: no se infiere la coincidencia facial.
+      (config.identity as { veriffIntegrationLevel: string }).veriffIntegrationLevel = "document";
+      expect(withIntegrationCapabilities("veriff", "document_selfie", approved, 0.8)).toMatchObject({ inferred: [] });
+      expect(withIntegrationCapabilities("veriff", "document_selfie", approved, 0.8).result.faceMatched ?? null).toBe(null);
+      // El nivel guardado al iniciar gana sobre la configuración actual (en ambos sentidos); "none" no declara nada.
+      expect(withIntegrationCapabilities("veriff", "document_selfie", approved, 0.8, "document_selfie").inferred).toEqual(["faceMatched"]);
+      expect(withIntegrationCapabilities("veriff", "document_selfie", approved, 0.8, null).inferred).toEqual([]);
+      (config.identity as { veriffIntegrationLevel: string }).veriffIntegrationLevel = "document_selfie_liveness";
+      expect(withIntegrationCapabilities("veriff", "document_selfie", approved, 0.8, "document").inferred).toEqual([]);
+      expect(withIntegrationCapabilities("veriff", "document_selfie", approved, 0.8, "none").inferred).toEqual([]);
       (config.identity as { veriffIntegrationLevel: string }).veriffIntegrationLevel = "document_selfie";
       expect(withIntegrationCapabilities("veriff", "document_selfie", approved, 0.8)).toMatchObject({ result: { faceMatched: true, liveness: null }, inferred: ["faceMatched"] });
       expect(withIntegrationCapabilities("veriff", "document_selfie", { ...approved, faceMatchScore: 0.3 }, 0.8).result.faceMatched ?? null).toBe(null);

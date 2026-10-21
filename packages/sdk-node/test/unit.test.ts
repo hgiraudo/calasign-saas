@@ -446,6 +446,13 @@ describe("celdas (421 wrong_cell) y 503 no reintentables", () => {
     expect(f.calls).toHaveLength(1);
   });
 
+  it("503 wrong_cell (celda no configurada en ese despliegue) no se reintenta", async () => {
+    const f = fakeFetch([json(503, { error: { code: "wrong_cell", message: "celda no configurada" } })]);
+    const cs = new CalaSign({ apiKey: "k", baseUrl: "http://api", fetch: f.fn, maxRetries: 3 });
+    await expect(cs.envelopes.get("e1")).rejects.toMatchObject({ status: 503, code: "wrong_cell" });
+    expect(f.calls).toHaveLength(1);
+  });
+
   it("503 byok_key_unavailable no se reintenta; storage_unavailable y 503 sin código sí", async () => {
     const f = fakeFetch([json(503, { error: { code: "byok_key_unavailable", message: "clave", details: { keyArn: "arn" } } })]);
     const cs = new CalaSign({ apiKey: "k", baseUrl: "http://api", fetch: f.fn, maxRetries: 3 });

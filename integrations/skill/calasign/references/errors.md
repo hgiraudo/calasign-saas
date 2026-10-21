@@ -56,6 +56,7 @@ OAuth endpoints use the RFC 6749 shape `{"error": "...", "error_description": ".
 | 502 | `tsa_unavailable` | Timestamp authority failed → retry in a few minutes |
 | 502 | `ai_unavailable` | Couldn't reach the AI provider → retry in a few minutes (a `503 ai_unavailable` means AI isn't configured on the server) |
 | 503 | `storage_unavailable`, `pdf_reader_busy`, `pdf_busy`, `ai_rate_limited` | Temporary, the request wasn't processed → retry shortly with backoff |
+| 503 | `wrong_cell` | The organization belongs to a cell this deployment doesn't have configured (fails closed, never the default cell). A configuration problem, not transient → **don't retry**; the SDKs throw it right away |
 | 503 | `byok_key_unavailable` | The organization's own encryption key (BYOK) is unavailable: documents can't be stored or read → **don't retry in a loop**; an admin must restore access to the key (`details.keyArn`) |
 | 504 | `ai_timeout` | The AI provider didn't answer in time → try again later |
 

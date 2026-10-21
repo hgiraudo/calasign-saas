@@ -382,6 +382,23 @@ export function integrationLevel(provider: IdvProvider, level: IdvLevel): IdvLev
 }
 
 /**
+ * Lo que se guarda en identity_verifications.integration_level al iniciar una verificación: el nivel que la
+ * integración declara en ese momento, o "none" si no declara nada. NULL queda solo para filas anteriores a la columna.
+ */
+export function integrationLevelToStore(provider: IdvProvider, level: IdvLevel): IdvLevel | "none" {
+  return integrationLevel(provider, level) ?? "none";
+}
+
+/** Avisos de configuración de identidad al arrancar (API y worker). */
+export function warnIdentityConfig(log: { warn: (msg: string) => void }) {
+  if (veriffAdapter.configured() && !config.identity.veriffIntegrationLevelExplicit) {
+    log.warn(
+      `VERIFF_INTEGRATION_LEVEL no está definida (o no es válida): se asume ${config.identity.veriffIntegrationLevel} (flujo estándar de Veriff con selfie y coincidencia facial). Definila explícitamente con lo que hace la integración del panel de Veriff (document, document_selfie o document_selfie_liveness)`,
+    );
+  }
+}
+
+/**
  * Por qué el proveedor (ya configurado) no puede hacer el nivel pedido, o null si puede: Truora sin flujo para el nivel
  * (createSession fallaba con un 500 al iniciar) o Veriff con una integración que no llega al nivel.
  */
@@ -406,8 +423,16 @@ export function withIntegrationCapabilities(
   level: IdvLevel,
   result: IdvResult,
   faceThreshold = config.identity.faceMatchThreshold,
+  /**
+   * El nivel guardado al iniciar la verificación (integration_level): un cambio posterior de VERIFF_INTEGRATION_LEVEL o
+   * de los flujos de Truora no cambia lo que se infiere de una verificación en curso. undefined/null (filas anteriores
+   * a la columna) = la configuración actual.
+   */
+  storedIntegrationLevel?: string | null,
 ): { result: IdvResult; inferred: ("faceMatched" | "liveness")[] } {
-  const cap = result.status === "approved" ? integrationLevel(provider, level) : null;
+  const stored = storedIntegrationLevel == null ? undefined : storedIntegrationLevel === "none" ? null : (storedIntegrationLevel as IdvLevel);
+  const declared = stored === undefined ? integrationLevel(provider, level) : stored && stored in LEVEL_RANK ? stored : null;
+  const cap = result.status === "approved" ? declared : null;
   if (!cap) return { result, inferred: [] };
   const out = { ...result };
   const inferred: ("faceMatched" | "liveness")[] = [];

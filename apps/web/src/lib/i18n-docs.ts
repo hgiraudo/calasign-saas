@@ -602,7 +602,7 @@ export const docsEs = {
     "La clave de cifrado propia de la organización (BYOK, en tu KMS) no está disponible: no se pueden guardar ni leer documentos. **No lo reintentes en un loop:** un administrador tiene que restablecer el acceso a la clave (`details.keyArn`).",
   "err.c.aiTimeout": "El proveedor de IA no respondió a tiempo. Probá de nuevo más tarde.",
   "err.codes.retry":
-    "**Qué reintentar:** errores de red, el `429` del límite de pedidos (con `retry-after`) y `5xx`, con espera exponencial y algo de azar. **Qué no:** los `429` con código propio (topes de negocio, sin `retry-after`), el `503 byok_key_unavailable` (hace falta que un administrador restablezca la clave) y el resto de los `4xx`, que no van a cambiar si repetís el mismo pedido. El `421 wrong_cell` se repite una vez contra `details.baseUrl`. Los SDKs oficiales aplican estas reglas solos.",
+    "**Qué reintentar:** errores de red, el `429` del límite de pedidos (con `retry-after`) y `5xx`, con espera exponencial y algo de azar. **Qué no:** los `429` con código propio (topes de negocio, sin `retry-after`), el `503 byok_key_unavailable` (hace falta que un administrador restablezca la clave), el `503 wrong_cell` (la celda de la organización no está configurada en ese despliegue) y el resto de los `4xx`, que no van a cambiar si repetís el mismo pedido. El `421 wrong_cell` se repite una vez contra `details.baseUrl`. Los SDKs oficiales aplican estas reglas solos.",
   "err.idem.h": "Idempotencia",
   "err.idem.p":
     "Si un pedido de creación se corta (timeout, red), no sabés si llegó. Mandá el encabezado `Idempotency-Key` con un valor único por operación —por ejemplo, el id del pedido en tu sistema— y reintentá con el mismo valor: CalaSign ejecuta la operación una sola vez y a los reintentos les devuelve la respuesta guardada, con el encabezado `idempotent-replay: true`.",
@@ -632,7 +632,7 @@ export const docsEs = {
   "sdk.f.auth": "Autenticación",
   "sdk.f.retries": "Reintentos",
   "sdk.f.retries.v":
-    "Red, 429 del límite de pedidos (respeta Retry-After) y 5xx salvo byok_key_unavailable, backoff exponencial, 3 por defecto. 421 wrong_cell: un reintento contra details.baseUrl, que queda como URL base",
+    "Red, 429 del límite de pedidos (respeta Retry-After) y 5xx salvo byok_key_unavailable y 503 wrong_cell, backoff exponencial, 3 por defecto. 421 wrong_cell: un reintento contra details.baseUrl, que queda como URL base",
   "sdk.f.idem": "Idempotency-Key automática",
   "sdk.f.errors": "Errores",
   "sdk.install": "Instalación",

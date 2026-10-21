@@ -32,7 +32,7 @@ import { assertLinkCurrent, recipientActor, resolveToken } from "../signing";
 import { resolveSignerReturn, returnTokenEncToStore, sendNeutralReturn, setSignerReturnCookie, signerReturnUrl } from "../signer-return";
 import { matchIdentity } from "./namematch";
 import { stripImageMetadata } from "./image-meta";
-import { WebhookSignatureError, getAdapter, levelUnsupportedReason, listProviders, mockDecide, withIntegrationCapabilities } from "./providers";
+import { WebhookSignatureError, getAdapter, levelUnsupportedReason, integrationLevelToStore, listProviders, mockDecide, withIntegrationCapabilities } from "./providers";
 import type { CertificateIdentity } from "@calasign/pdf";
 import { tenantBaseUrl } from "../custom-domains";
 import { requireFeature, tenantPlan } from "../billing/plans";
@@ -373,7 +373,8 @@ async function finalizeVerification(db: Db, verificationId: string, result: IdvR
     );
     // Lo que la integración declara hacer (VERIFF_INTEGRATION_LEVEL, flujo de Truora por nivel) completa la aprobación
     // cuando la decisión no trae el puntaje facial o la prueba de vida.
-    const caps = withIntegrationCapabilities(v.provider as IdvProvider, v.level as IdvLevel, result);
+    // Con el nivel guardado al iniciar (integration_level), no el de la configuración actual.
+    const caps = withIntegrationCapabilities(v.provider as IdvProvider, v.level as IdvLevel, result, undefined, v.integration_level);
     // Lo inferido queda guardado con el resultado: el certificado lo muestra como informado por la integración, no
     // como un control con puntaje.
     result = caps.inferred.length ? { ...caps.result, inferredFromIntegration: caps.inferred } : caps.result;
@@ -617,9 +618,9 @@ export async function identityKycRoutes(app: FastifyInstance, s: Services) {
       const usedNow = await attemptsUsed(t, r.id);
       if (usedNow >= settings.maxAttempts) throw new AppError(429, "identity_attempts_exhausted", "Se agotaron los intentos de verificación");
       await t.query(
-        `INSERT INTO identity_verifications (id, tenant_id, envelope_id, recipient_id, provider, level, status, attempt, provider_ref, redirect_url, return_token_enc, session_token_hash)
-         VALUES ($1,$2,$3,$4,$5,$6,'created',$7,NULL,NULL,$8,$9)`,
-        [id, e.tenant_id, e.id, r.id, provider, r.id_verification_level, usedNow + 1, encrypt(req.params.token), sessionHash],
+        `INSERT INTO identity_verifications (id, tenant_id, envelope_id, recipient_id, provider, level, status, attempt, provider_ref, redirect_url, return_token_enc, session_token_hash, integration_level)
+         VALUES ($1,$2,$3,$4,$5,$6,'created',$7,NULL,NULL,$8,$9,$10)`,
+        [id, e.tenant_id, e.id, r.id, provider, r.id_verification_level, usedNow + 1, encrypt(req.params.token), sessionHash, integrationLevelToStore(provider as IdvProvider, r.id_verification_level as IdvLevel)],
       );
       await t.query(`UPDATE recipients SET identity_status = 'in_progress' WHERE id = $1`, [r.id]);
       await appendEvent(t, {

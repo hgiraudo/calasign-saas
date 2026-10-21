@@ -23,6 +23,11 @@ export async function claimTenantAlert(db: Db, tenantId: string, kind: string, k
   return r.length > 0;
 }
 
+/** Suelta un aviso reclamado que no salió (falla del momento): el próximo barrido lo vuelve a intentar. */
+export async function releaseTenantAlert(db: Db, tenantId: string, kind: string, key: string): Promise<void> {
+  await db.query(`DELETE FROM tenant_alerts WHERE tenant_id = $1 AND kind = $2 AND key = $3`, [tenantId, kind, key.slice(0, 200)]);
+}
+
 /**
  * Manda el aviso a propietarios y administradores. Devuelve cuántos salieron y si hubo fallos del momento (el llamador
  * decide si reintenta; con `jobId`, un reintento no repite a quien ya lo recibió).

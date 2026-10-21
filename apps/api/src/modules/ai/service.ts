@@ -477,19 +477,47 @@ export async function saveMetadata(
   metadataIn: ContractMetadata,
   confidence: Record<string, number>,
   source: "ai" | "manual",
-) {
+  /**
+   * Escritura condicional (extracción con IA, que llama al modelo antes de guardar): `onlyIfUnset`, solo si el sobre
+   * sigue sin metadatos (barrido automático); `expectUpdatedAt`, solo si ai_metadata_updated_at sigue siendo el leído
+   * antes de llamar al modelo (metadataVersion). Sin esto, una edición manual hecha mientras el modelo respondía se pisaba.
+   */
+  cond: { onlyIfUnset?: boolean; expectUpdatedAt?: string | null } = {},
+): Promise<boolean> {
   // Lo que devuelve el modelo es texto libre: fechas que no existen, textos largos o valores fuera de rango se
   // normalizan (lo manual ya llega validado y no cambia).
   const metadata: ContractMetadata = sanitizeAiMetadata(metadataIn);
   const t = await db.one<any>(`SELECT ai_renewal_alert_days FROM tenants WHERE id = $1`, [tenantId]);
   const alertAt = renewalAlertDate(metadata, Number(t?.ai_renewal_alert_days ?? 30));
-  await db.query(
+  const rows = await db.query(
     `UPDATE envelopes SET ai_metadata = $2, ai_metadata_confidence = $3, ai_metadata_source = $4, ai_metadata_updated_at = now(),
        ai_renewal_alert_at = $5::date,
        ai_renewal_alert_sent_at = CASE WHEN ai_renewal_alert_at IS DISTINCT FROM $5::date THEN NULL ELSE ai_renewal_alert_sent_at END
-     WHERE id = $1`,
-    [envelopeId, JSON.stringify(metadata), JSON.stringify(confidence), source, alertAt],
+     WHERE id = $1
+       AND (NOT $6::boolean OR ai_metadata IS NULL)
+       AND (NOT $7::boolean OR ai_metadata_updated_at::text IS NOT DISTINCT FROM $8::text)
+     RETURNING id`,
+    [
+      envelopeId,
+      JSON.stringify(metadata),
+      JSON.stringify(confidence),
+      source,
+      alertAt,
+      Boolean(cond.onlyIfUnset),
+      cond.expectUpdatedAt !== undefined,
+      cond.expectUpdatedAt ?? null,
+    ],
   );
+  return rows.length > 0;
+}
+
+/**
+ * Versión de los metadatos de un sobre (ai_metadata_updated_at como texto, con microsegundos: un Date de JS los
+ * pierde), para la escritura condicional de saveMetadata. null: sin metadatos todavía.
+ */
+export async function metadataVersion(db: Db, envelopeId: string): Promise<string | null> {
+  const r = await db.one<{ v: string | null }>(`SELECT ai_metadata_updated_at::text AS v FROM envelopes WHERE id = $1`, [envelopeId]);
+  return r?.v ?? null;
 }
 
 /**

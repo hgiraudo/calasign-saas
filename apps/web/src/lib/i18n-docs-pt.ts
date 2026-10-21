@@ -594,7 +594,7 @@ export const docsPt: Record<DocsKey, string> = {
     "A chave de criptografia própria da organização (BYOK, no seu KMS) não está disponível: não é possível salvar nem ler documentos. **Não tente novamente em loop:** um administrador precisa restabelecer o acesso à chave (`details.keyArn`).",
   "err.c.aiTimeout": "O provedor de IA não respondeu a tempo. Tente novamente mais tarde.",
   "err.codes.retry":
-    "**O que tentar novamente:** erros de rede, o `429` do limite de requisições (com `retry-after`) e `5xx`, com espera exponencial e um pouco de aleatoriedade. **O que não:** os `429` com código próprio (limites de negócio, sem `retry-after`), o `503 byok_key_unavailable` (um administrador precisa restabelecer a chave) e os demais `4xx`, que não vão mudar se você repetir a mesma requisição. Repita um `421 wrong_cell` uma vez contra `details.baseUrl`. Os SDKs oficiais aplicam essas regras sozinhos.",
+    "**O que tentar novamente:** erros de rede, o `429` do limite de requisições (com `retry-after`) e `5xx`, com espera exponencial e um pouco de aleatoriedade. **O que não:** os `429` com código próprio (limites de negócio, sem `retry-after`), o `503 byok_key_unavailable` (um administrador precisa restabelecer a chave), o `503 wrong_cell` (a célula da organização não está configurada nessa implantação) e os demais `4xx`, que não vão mudar se você repetir a mesma requisição. Repita um `421 wrong_cell` uma vez contra `details.baseUrl`. Os SDKs oficiais aplicam essas regras sozinhos.",
   "err.idem.h": "Idempotência",
   "err.idem.p":
     "Se uma requisição de criação é interrompida (timeout, rede), você não sabe se ela chegou. Envie o cabeçalho `Idempotency-Key` com um valor único por operação —por exemplo, o id do pedido no seu sistema— e tente novamente com o mesmo valor: a CalaSign executa a operação uma única vez e devolve às novas tentativas a resposta guardada, com o cabeçalho `idempotent-replay: true`.",
@@ -624,7 +624,7 @@ export const docsPt: Record<DocsKey, string> = {
   "sdk.f.auth": "Autenticação",
   "sdk.f.retries": "Novas tentativas",
   "sdk.f.retries.v":
-    "Rede, 429 do limite de requisições (respeita Retry-After) e 5xx exceto byok_key_unavailable, backoff exponencial, 3 por padrão. 421 wrong_cell: uma nova tentativa contra details.baseUrl, que passa a ser a URL base",
+    "Rede, 429 do limite de requisições (respeita Retry-After) e 5xx exceto byok_key_unavailable e 503 wrong_cell, backoff exponencial, 3 por padrão. 421 wrong_cell: uma nova tentativa contra details.baseUrl, que passa a ser a URL base",
   "sdk.f.idem": "Idempotency-Key automática",
   "sdk.f.errors": "Erros",
   "sdk.install": "Instalação",

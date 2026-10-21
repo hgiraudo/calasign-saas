@@ -313,7 +313,15 @@ try:
 except CalaSignError as e:
     assert (e.status, e.code) == (503, "ai_unavailable")
 assert len(_cell_log) == 1, _cell_log
-ok("503 byok_key_unavailable y ai_unavailable no se reintentan; storage_unavailable sí")
+_cell_log.clear()
+_qa[:] = [(503, {"error": {"code": "wrong_cell", "message": "celda no configurada"}})]
+try:
+    CalaSign(api_key="k", base_url=_base_a, max_retries=3).envelopes.get("e1")
+    raise AssertionError("debió fallar")
+except CalaSignError as e:
+    assert (e.status, e.code) == (503, "wrong_cell")
+assert len(_cell_log) == 1, _cell_log
+ok("503 byok_key_unavailable, ai_unavailable y wrong_cell no se reintentan; storage_unavailable sí")
 
 # expected_updated_at en void (sin reintento ante 5xx), remind y send; remove_document y webhooks.deliveries.
 _cell_log.clear()

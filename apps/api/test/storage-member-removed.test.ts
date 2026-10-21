@@ -66,12 +66,12 @@ afterAll(async () => {
   await db?.close();
 });
 
-async function conn(provider: string, createdBy: string, config: Record<string, unknown> = {}) {
+async function conn(provider: string, createdBy: string, config: Record<string, unknown> = {}, label: string | null = null) {
   const id = util.uuidv7();
   const creds = provider === "s3" ? { accessKeyId: "AK", secretAccessKey: "S" } : { access_token: "at", refresh_token: `rt-${id.slice(-4)}`, expires_at: Date.now() + 3_600_000 };
   await db.query(
-    `INSERT INTO storage_connections (id, tenant_id, provider, name, config, credentials_enc, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-    [id, tenant, provider, `${provider}-${id.slice(-4)}`, JSON.stringify(config), util.encrypt(JSON.stringify(creds)), createdBy],
+    `INSERT INTO storage_connections (id, tenant_id, provider, name, config, credentials_enc, created_by, account_label) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+    [id, tenant, provider, `${provider}-${id.slice(-4)}`, JSON.stringify(config), util.encrypt(JSON.stringify(creds)), createdBy, label],
   );
   return id;
 }
@@ -115,7 +115,7 @@ describe("almacenamiento de una persona que deja la organización", () => {
   });
 
   it("al desconectar se revoca el acceso en el proveedor (lo mejor posible)", async () => {
-    const drive = await conn("gdrive", users.owner);
+    const drive = await conn("gdrive", users.owner, {}, "solo@gmail.test");
     const calls: { url: string; body: string }[] = [];
     globalThis.fetch = (async (u: any, init: any = {}) => {
       calls.push({ url: String(u), body: String(init.body ?? "") });
@@ -125,10 +125,56 @@ describe("almacenamiento de una persona que deja la organización", () => {
     expect(r.statusCode).toBe(204);
     expect(calls).toEqual([{ url: "https://oauth2.googleapis.com/revoke", body: `token=rt-${drive.slice(-4)}` }]);
     // Si el proveedor falla, la desconexión igual se hace.
-    const other = await conn("gdrive", users.owner);
+    const other = await conn("gdrive", users.owner, {}, "otro@gmail.test");
     globalThis.fetch = (async () => new Response("no", { status: 500 })) as typeof fetch;
     expect((await app.inject({ method: "DELETE", url: `/v1/storage/connections/${other}`, cookies: { cs_session: sessions.owner } })).statusCode).toBe(204);
     expect(await connRow(other)).toBeNull();
+  });
+
+  it("Google: no se revoca si otra conexión (de cualquier organización) usa la misma cuenta (revocar corta toda la concesión)", async () => {
+    const otherTenant = util.uuidv7();
+    await db.query(`INSERT INTO tenants (id, slug, name) VALUES ($1, $2, 'Otra')`, [otherTenant, `t-${otherTenant.slice(-8)}`]);
+    const shared = "Compartida@gmail.test";
+    const elsewhere = util.uuidv7();
+    await db.query(
+      `INSERT INTO storage_connections (id, tenant_id, provider, name, config, credentials_enc, account_label) VALUES ($1,$2,'gdrive','Otra','{}',$3,$4)`,
+      [elsewhere, otherTenant, util.encrypt(JSON.stringify({ access_token: "x", refresh_token: "rx", expires_at: 0 })), "compartida@gmail.test"],
+    );
+    const a = await conn("gdrive", users.owner, {}, shared);
+    const calls: string[] = [];
+    globalThis.fetch = (async (u: any) => {
+      calls.push(String(u));
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+    expect((await app.inject({ method: "DELETE", url: `/v1/storage/connections/${a}`, cookies: { cs_session: sessions.owner } })).statusCode).toBe(204);
+    expect(calls).toEqual([]);
+    expect(await connRow(a)).toBeNull();
+
+    // Callback que obtuvo tokens de esa cuenta pero no pudo guardar la conexión (el insert falla por una restricción
+    // agregada para la prueba): tampoco revoca.
+    const idToken = `h.${Buffer.from(JSON.stringify({ email: "compartida@gmail.test" })).toString("base64url")}.s`;
+    globalThis.fetch = (async (u: any) => {
+      calls.push(String(u));
+      if (String(u).includes("/token")) return new Response(JSON.stringify({ access_token: "na", refresh_token: "nr", expires_in: 3600, id_token: idToken }), { status: 200 });
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+    const st = util.encrypt(JSON.stringify({ t: tenant, u: users.owner, p: "gdrive", n: "x".repeat(10_000), f: "", exp: Date.now() + 60_000 }));
+    await db.query(`ALTER TABLE storage_connections ADD CONSTRAINT test_name_len CHECK (length(name) < 1000) NOT VALID`);
+    try {
+      const r = await app.inject({ method: "GET", url: `/v1/storage/oauth/gdrive/callback?code=c&state=${encodeURIComponent(st)}`, cookies: { cs_session: sessions.owner } });
+      expect(r.headers.location).toContain("error=");
+    } finally {
+      await db.query(`ALTER TABLE storage_connections DROP CONSTRAINT test_name_len`);
+    }
+    expect(calls.some((u) => u.endsWith("/token"))).toBe(true);
+    expect(calls.filter((u) => u.includes("revoke"))).toEqual([]);
+
+    // Ya sin otra conexión con esa cuenta, sí se revoca.
+    await db.query(`DELETE FROM storage_connections WHERE id = $1`, [elsewhere]);
+    const b = await conn("gdrive", users.owner, {}, shared);
+    calls.length = 0;
+    expect((await app.inject({ method: "DELETE", url: `/v1/storage/connections/${b}`, cookies: { cs_session: sessions.owner } })).statusCode).toBe(204);
+    expect(calls).toEqual(["https://oauth2.googleapis.com/revoke"]);
   });
 
   it("el callback OAuth exige también envelopes:view_all (como el resto de /v1/storage)", async () => {
@@ -146,6 +192,72 @@ describe("almacenamiento de una persona que deja la organización", () => {
     expect(r.statusCode).toBe(302);
     expect(r.headers.location).toContain("error=forbidden");
     expect(fetched).toBe(false);
+  });
+});
+
+describe("regresiones de la ronda 142", () => {
+  it("PATCH active=true: si la conexión se desactiva por la baja entre la lectura y el UPDATE, 409 y sigue desactivada", async () => {
+    const c = await conn("gdrive", users.owner);
+    await db.query(`UPDATE storage_connections SET active = false WHERE id = $1`, [c]);
+    const orig = db.query.bind(db);
+    (db as any).query = async (sql: string, params?: unknown[]) => {
+      if (/UPDATE storage_connections SET name = COALESCE/.test(sql)) {
+        await orig(`UPDATE storage_connections SET deactivated_reason = 'creator_removed' WHERE id = $1`, [c]);
+      }
+      return orig(sql, params);
+    };
+    try {
+      const r = await app.inject({ method: "PATCH", url: `/v1/storage/connections/${c}`, cookies: { cs_session: sessions.owner }, payload: { active: true } });
+      expect(r.statusCode).toBe(409);
+      expect(r.json().error.code).toBe("storage_reconnect_required");
+    } finally {
+      (db as any).query = orig;
+    }
+    expect(await connRow(c)).toMatchObject({ active: false, deactivated_reason: "creator_removed" });
+    // Otros cambios (nombre) sobre una desactivada sí se guardan.
+    const n = await app.inject({ method: "PATCH", url: `/v1/storage/connections/${c}`, cookies: { cs_session: sessions.owner }, payload: { name: "Renombrada" } });
+    expect(n.statusCode).toBe(200);
+  });
+
+  it("aviso de la baja: un envío transitorio fallido reintenta el job aunque otro haya salido (sin repetir el enviado)", async () => {
+    const { notifyStorageMemberRemoved } = await import("../src/modules/storage-export");
+    const channels = await import("../src/notifications/channels");
+    const c = await conn("box", users.beto);
+    await db.query(`UPDATE storage_connections SET active = false, deactivated_reason = 'creator_removed' WHERE id = $1`, [c]);
+    const deliver = vi.mocked(channels.deliver);
+    const base = deliver.getMockImplementation()!;
+    sent.length = 0;
+    deliver.mockImplementation(async (m: any) => {
+      if (m.to === "ana@org.test") throw Object.assign(new Error("421 try later"), { responseCode: 421 });
+      return base(m);
+    });
+    const job = { id: 9_142_001 };
+    try {
+      await expect(notifyStorageMemberRemoved(db, { tenantId: tenant, userId: users.beto, connectionIds: [c] }, job)).rejects.toThrow(/no se pudo avisar/);
+      expect(sent.map((m) => m.to)).toEqual(["owner@org.test"]);
+    } finally {
+      deliver.mockImplementation(base);
+    }
+    // Reintento del job: solo a quien faltaba.
+    await notifyStorageMemberRemoved(db, { tenantId: tenant, userId: users.beto, connectionIds: [c] }, job);
+    expect(sent.map((m) => m.to)).toEqual(["owner@org.test", "ana@org.test"]);
+  });
+
+  it("Drive: un id suelto que la app no ve da el mismo error claro que una URL (no crea una carpeta con ese nombre); unidades compartidas", async () => {
+    const id = "1AbCdEfGhIjKlMnOpQrStUvWxYz012345";
+    const c = await conn("gdrive", users.owner, { folder: id });
+    const calls: { url: string; method: string }[] = [];
+    globalThis.fetch = (async (u: any, init: any = {}) => {
+      calls.push({ url: String(u), method: init.method ?? "GET" });
+      return new Response("{}", { status: 404 });
+    }) as typeof fetch;
+    const r = await app.inject({ method: "POST", url: `/v1/storage/connections/${c}/test`, cookies: { cs_session: sessions.owner } });
+    expect(r.json()).toMatchObject({ ok: false });
+    expect(r.json().error).toMatch(/no existe o la app no tiene acceso/);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toContain(`/drive/v3/files/${id}?`);
+    expect(calls[0].url).toContain("supportsAllDrives=true");
+    expect(calls.some((c) => c.method === "POST")).toBe(false);
   });
 });
 

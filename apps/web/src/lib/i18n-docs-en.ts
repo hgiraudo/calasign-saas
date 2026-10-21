@@ -593,7 +593,7 @@ export const docsEn: Record<DocsKey, string> = {
     "The organization's own encryption key (BYOK, in your KMS) is unavailable: documents can't be stored or read. **Don't retry it in a loop:** an administrator has to restore access to the key (`details.keyArn`).",
   "err.c.aiTimeout": "The AI provider didn't respond in time. Try again later.",
   "err.codes.retry":
-    "**What to retry:** network errors, the rate-limit `429` (with `retry-after`) and `5xx`, with exponential backoff and some jitter. **What not to:** `429`s with their own code (business caps, no `retry-after`), `503 byok_key_unavailable` (an administrator has to restore the key) and the rest of the `4xx` errors, which won't change if you repeat the same request. Repeat a `421 wrong_cell` once against `details.baseUrl`. The official SDKs apply these rules for you.",
+    "**What to retry:** network errors, the rate-limit `429` (with `retry-after`) and `5xx`, with exponential backoff and some jitter. **What not to:** `429`s with their own code (business caps, no `retry-after`), `503 byok_key_unavailable` (an administrator has to restore the key), `503 wrong_cell` (the organization's cell isn't configured in that deployment) and the rest of the `4xx` errors, which won't change if you repeat the same request. Repeat a `421 wrong_cell` once against `details.baseUrl`. The official SDKs apply these rules for you.",
   "err.idem.h": "Idempotency",
   "err.idem.p":
     "If a create request is cut off (timeout, network), you don't know whether it went through. Send the `Idempotency-Key` header with a unique value per operation — for example, the request id in your system — and retry with the same value: CalaSign runs the operation only once and returns the stored response to retries, with the `idempotent-replay: true` header.",
@@ -623,7 +623,7 @@ export const docsEn: Record<DocsKey, string> = {
   "sdk.f.auth": "Authentication",
   "sdk.f.retries": "Retries",
   "sdk.f.retries.v":
-    "Network, rate-limit 429 (honors Retry-After) and 5xx except byok_key_unavailable, exponential backoff, 3 by default. 421 wrong_cell: one retry against details.baseUrl, which becomes the base URL",
+    "Network, rate-limit 429 (honors Retry-After) and 5xx except byok_key_unavailable and 503 wrong_cell, exponential backoff, 3 by default. 421 wrong_cell: one retry against details.baseUrl, which becomes the base URL",
   "sdk.f.idem": "Automatic Idempotency-Key",
   "sdk.f.errors": "Errors",
   "sdk.install": "Installation",

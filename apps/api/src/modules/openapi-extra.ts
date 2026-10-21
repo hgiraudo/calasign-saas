@@ -430,6 +430,18 @@ export const ERRORS: Record<string, Err> = {
     details: { noticeVersion: "ai-notice-v2" },
     summary: "Falta aceptar el aviso de tratamiento de datos vigente (al usar la IA, o al habilitarla sin acceptNotice: true)",
   },
+  documents_changed: {
+    status: 409,
+    code: "documents_changed",
+    message: "Los documentos del sobre cambiaron durante la revisión: volvé a revisarlo",
+    summary: "Los documentos del sobre cambiaron mientras el modelo respondía: el resultado no se guardó (el consumo de IA se registra igual)",
+  },
+  metadata_changed: {
+    status: 409,
+    code: "metadata_changed",
+    message: "Los metadatos del contrato cambiaron mientras se extraían (alguien los editó o los volvió a extraer): revisalos y, si hace falta, volvé a extraerlos",
+    summary: "Los metadatos del contrato cambiaron (edición manual u otra extracción) mientras el modelo respondía: el resultado no se guardó (el consumo de IA se registra igual)",
+  },
   payment_required: {
     status: 402,
     code: "payment_required",

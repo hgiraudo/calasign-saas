@@ -140,10 +140,11 @@ export async function runAiSweep(d: Deps, now = new Date()) {
         { tenantId: e.tenant_id, reservationId: rid, envelopeId: e.id, feature: "extract_metadata", actor: SYSTEM },
         () => callModel(() => getAiProvider().extractMetadata(docs)),
       );
-      await saveMetadata(d.db, e.id, e.tenant_id, r.result.metadata, r.result.confidence, "ai");
+      // Solo si sigue sin metadatos: si alguien los cargó a mano (o los extrajo) mientras el modelo respondía, no se pisan.
+      const saved = await saveMetadata(d.db, e.id, e.tenant_id, r.result.metadata, r.result.confidence, "ai", { onlyIfUnset: true });
       await d.db.query(`UPDATE envelopes SET ai_metadata_retry_at = NULL, ai_metadata_failures = 0 WHERE id = $1`, [e.id]);
-      await recordAiUse(d.db, { reservationId: rid, tenantId: e.tenant_id, envelopeId: e.id, feature: "extract_metadata", usage: r.usage, actor: SYSTEM, data: { automatic: true } });
-      extracted++;
+      await recordAiUse(d.db, { reservationId: rid, tenantId: e.tenant_id, envelopeId: e.id, feature: "extract_metadata", usage: r.usage, actor: SYSTEM, data: { automatic: true, ...(saved ? {} : { discarded: "metadata_changed" }) } });
+      if (saved) extracted++;
     } catch (err) {
       // Presupuesto del mes agotado (o IA apagada): no es un intento, queda para cuando vuelva a haber. Un sobre que
       // solo no entra en lo que queda (o choca con otras llamadas en curso) espera 6 h: si se volvía a tomar en cada

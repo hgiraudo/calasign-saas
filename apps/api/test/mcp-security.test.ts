@@ -382,3 +382,151 @@ describe("tomar el control de una app OAuth (URIs, secreto)", () => {
     expect((await patchOwn(LIMITED2)).statusCode).toBe(403);
   });
 });
+
+describe("MCP: lotes, lugares para PDFs, anotaciones, errores internos y vistas previas", () => {
+  const rpc = (payload: unknown, key = ADMIN_KEY) =>
+    app.inject({
+      method: "POST",
+      url: "/mcp",
+      headers: { authorization: `Bearer ${key}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
+      payload: payload as any,
+    });
+  const pdfB64 = Buffer.from("%PDF-1.4\n%%EOF\n").toString("base64");
+
+  it("un lote JSON-RPC (array) se rechaza con -32600 sin ejecutar nada", async () => {
+    const before = await db.one<any>(`SELECT count(*)::int AS n FROM envelopes WHERE tenant_id = $1`, [tenant]);
+    const call = (i: number) => ({
+      jsonrpc: "2.0",
+      id: 1000 + i,
+      method: "tools/call",
+      params: { name: "create_envelope", arguments: { subject: `Lote ${i}`, recipients: [{ name: "A", email: "a@x.test" }], document: { base64: pdfB64 } } },
+    });
+    const r = await rpc([call(1), call(2), call(3)]);
+    expect(r.statusCode).toBe(400);
+    expect(r.json()).toMatchObject({ jsonrpc: "2.0", id: null, error: { code: -32600 } });
+    // Ni siquiera un lote de uno.
+    expect((await rpc([call(4)])).statusCode).toBe(400);
+    const after = await db.one<any>(`SELECT count(*)::int AS n FROM envelopes WHERE tenant_id = $1`, [tenant]);
+    expect(after.n).toBe(before.n);
+  });
+
+  it("lugares para PDFs: 2 por credencial y 4 por proceso; lo demás espera poco y después falla (reintentable)", async () => {
+    const { createPdfSlots, PdfSlotBusyError } = await import("../src/modules/mcp/pdf-slots");
+    const slots = createPdfSlots({ perCredential: 2, perProcess: 4, queueWaitMs: 50, maxQueue: 16, maxQueuePerCredential: 2 });
+    const a1 = await slots.acquire("a");
+    const a2 = await slots.acquire("a");
+    // La tercera de "a" espera; si se libera una a tiempo, entra.
+    const a3 = slots.acquire("a");
+    a1();
+    const rel3 = await a3;
+    // Otras credenciales tienen su lugar hasta el tope del proceso.
+    const b1 = await slots.acquire("b");
+    const c1 = await slots.acquire("c");
+    expect(slots.stats().active).toBe(4);
+    // Proceso lleno: "d" espera y falla al vencer la espera.
+    await expect(slots.acquire("d")).rejects.toBeInstanceOf(PdfSlotBusyError);
+    // Cola por credencial acotada: la tercera espera de "a" falla en el acto.
+    const w1 = slots.acquire("a").catch((e) => e);
+    const w2 = slots.acquire("a").catch((e) => e);
+    await expect(slots.acquire("a")).rejects.toBeInstanceOf(PdfSlotBusyError);
+    expect(await w1).toBeInstanceOf(PdfSlotBusyError);
+    expect(await w2).toBeInstanceOf(PdfSlotBusyError);
+    // run libera aunque falle.
+    a2();
+    rel3();
+    await expect(slots.run("a", async () => Promise.reject(new Error("x")))).rejects.toThrow("x");
+    b1();
+    c1();
+    expect(slots.stats()).toEqual({ active: 0, waiting: 0 });
+  });
+
+  it("create_envelope sin lugar para el PDF responde un error reintentable (no descarga ni procesa)", async () => {
+    const { mcpPdfSlots, MCP_PDF_SLOT_LIMITS } = await import("../src/modules/mcp/pdf-slots");
+    const held = await Promise.all(Array.from({ length: MCP_PDF_SLOT_LIMITS.perCredential }, () => mcpPdfSlots.acquire(`k:${adminKeyId}`)));
+    try {
+      const args = { subject: "Sin lugar", recipients: [{ name: "A", email: "a@x.test" }], document: { base64: pdfB64 }, send: true };
+      const r = await callTool(ADMIN_KEY, "create_envelope", args);
+      expect(r.isError).toBe(true);
+      expect(r.text).toMatch(/reintentable/);
+    } finally {
+      for (const h of held) h();
+    }
+  }, 20_000);
+
+  it("download_signed_pdf se anuncia como no de solo lectura, abierta y no idempotente (crea un link compartible)", async () => {
+    const r = await rpc({ jsonrpc: "2.0", id: ++rpcId, method: "tools/list", params: {} });
+    expect(r.statusCode).toBe(200);
+    const tool = r.json().result.tools.find((t: any) => t.name === "download_signed_pdf");
+    expect(tool.annotations).toMatchObject({ readOnlyHint: false, openWorldHint: true, idempotentHint: false, destructiveHint: false });
+    expect(tool.description).toMatch(/compartible/);
+  });
+
+  it("un error inesperado de una herramienta vuelve como resultado genérico con el id del pedido (sin detalles internos)", async () => {
+    const env = util.uuidv7();
+    const file = util.uuidv7();
+    await db.query(`INSERT INTO files (id, tenant_id, kind, storage_key, sha256, size_bytes, content_type) VALUES ($1,$2,'signed',$3,'x',15,'application/pdf')`, [
+      file,
+      tenant,
+      `test/${file}.pdf`,
+    ]);
+    await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, signed_file_id) VALUES ($1,$2,'Firmado','completed',$3)`, [env, tenant, file]);
+    const orig = db.one.bind(db);
+    const spy = vi.spyOn(db, "one").mockImplementation((async (sql: string, params?: unknown[]) => {
+      if (String(sql).includes("INSERT INTO download_links")) throw new Error("detalle interno: conexión perdida a 10.0.0.5");
+      return orig(sql as any, params as any);
+    }) as any);
+    try {
+      const r = await callTool(ADMIN_KEY, "download_signed_pdf", { envelopeId: env });
+      expect(r.isError).toBe(true);
+      expect(r.text).toMatch(/^Error interno \(id [0-9a-f-]{36}\)/);
+      expect(r.text).not.toMatch(/10\.0\.0\.5/);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("vistas previas: mensaje (no confiable), cantidad de campos/prefill y, en send_envelope, documentos del borrador", async () => {
+    const tpl = await callTool(ADMIN_KEY, "create_envelope_from_template", {
+      templateId: util.uuidv7(),
+      message: "Firmá ya, es urgente",
+      recipients: [{ role: "Cliente", name: "Ana", email: "ana@x.test" }],
+      prefill: { Monto: "100", Plazo: "12" },
+      send: true,
+    });
+    expect(tpl.text).toMatch(/Confirmación requerida/);
+    const tv = jsonOf(tpl.text);
+    expect(tv.message).toEqual({ untrusted: "Firmá ya, es urgente" });
+    expect(tv.prefilledFields).toBe(2);
+
+    const pdf = await callTool(ADMIN_KEY, "create_envelope", {
+      subject: "Con campos",
+      message: "Hola",
+      recipients: [{ name: "Ana", email: "ana@x.test" }],
+      document: { base64: pdfB64, name: "contrato.pdf" },
+      fields: [{ recipientIndex: 0, type: "signature", anchorText: "Firma:" }],
+      send: true,
+    });
+    const pv = jsonOf(pdf.text);
+    expect(pv.message).toEqual({ untrusted: "Hola" });
+    expect(pv.fields).toBe(1);
+
+    const e = await draft("Con documento");
+    await app.inject({ method: "PATCH", url: `/v1/envelopes/${e.id}`, headers: { authorization: `Bearer ${ADMIN_KEY}` }, payload: { message: "Mensaje del borrador" } });
+    const file = util.uuidv7();
+    await db.query(`INSERT INTO files (id, tenant_id, kind, storage_key, content_type, size_bytes, sha256) VALUES ($1,$2,'original',$3,'application/pdf',1,'h')`, [
+      file,
+      tenant,
+      `k-${file}`,
+    ]);
+    await db.query(`INSERT INTO documents (id, tenant_id, envelope_id, position, name, file_id, page_count, pages) VALUES ($1,$2,$3,1,'anexo.pdf',$4,1,'[]')`, [
+      util.uuidv7(),
+      tenant,
+      e.id,
+      file,
+    ]);
+    const sv = jsonOf((await callTool(ADMIN_KEY, "send_envelope", { envelopeId: e.id })).text);
+    expect(sv.message).toEqual({ untrusted: "Mensaje del borrador" });
+    expect(sv.documents).toEqual([{ untrusted: "anexo.pdf" }]);
+    expect(sv.fields).toBe(0);
+  });
+});

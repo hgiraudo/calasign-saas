@@ -8,6 +8,7 @@ import { createBlobStore } from "./infra/storage";
 import { createJobHandlers, sweep } from "./modules/jobs";
 import { createTenantStorageResolver } from "./modules/data";
 import { checkAiProviderConfig } from "./modules/ai/provider";
+import { warnIdentityConfig } from "./modules/identity/providers";
 import { warnIfTitleIndexMissing } from "./modules/agreements/repository";
 
 PDF_INGEST_LIMITS.maxConcurrent = config.pdfIngest.concurrency;
@@ -22,6 +23,7 @@ if (!config.production || process.env.MIGRATE_ON_START === "1") await migrate(db
 await warnIfTitleIndexMissing(db, app.log);
 await getSealProvider();
 checkAiProviderConfig(app.log);
+warnIdentityConfig(app.log);
 
 let worker: { stop(): Promise<void> } | null = null;
 if (config.workerInline) {

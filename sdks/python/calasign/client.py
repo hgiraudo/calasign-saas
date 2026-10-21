@@ -29,9 +29,10 @@ _MAYBE_PROCESSED_STATUS = {500, 502, 504}
 _NETWORK_ERRORS = (OSError, http.client.HTTPException)
 # 503 que no se arreglan reintentando en segundos: la clave KMS propia de la organización (BYOK) no responde o se revocó;
 # requiere que un administrador restablezca el acceso. Tampoco ai_unavailable (503: el servidor no tiene proveedor de IA
-# configurado; el 502 ai_unavailable del proveedor caído sí se reintenta). El resto de los 503 (storage_unavailable,
+# configurado; el 502 ai_unavailable del proveedor caído sí se reintenta), ni wrong_cell (503: la organización es de una
+# celda que ese despliegue no tiene configurada; es de configuración, no pasajero). El resto de los 503 (storage_unavailable,
 # pdf_reader_busy, ai_rate_limited, sin código…) sí se reintentan.
-_NON_RETRYABLE_503_CODES = {"byok_key_unavailable", "ai_unavailable"}
+_NON_RETRYABLE_503_CODES = {"byok_key_unavailable", "ai_unavailable", "wrong_cell"}
 
 
 # ───────────────────────────── Tipos (subconjunto del contrato de la API) ─────────────────────────────
@@ -350,7 +351,7 @@ class CalaSign:
                 # Un 429 sin Retry-After y con código propio (reminded_recently, form_rate_limited, ai_signer_limit…) es un
                 # tope de negocio que no se libera en segundos: no se reintenta. Solo el límite por IP (con Retry-After) sí.
                 business_429 = status == 429 and not retry_after and _is_business_429(body)
-                # 503 byok_key_unavailable / ai_unavailable: requieren acción de un administrador; reintentar no sirve.
+                # 503 byok_key_unavailable / ai_unavailable / wrong_cell: requieren acción de un administrador; reintentar no sirve.
                 final_503 = status == 503 and _error_code(body) in _NON_RETRYABLE_503_CODES
                 if status in _RETRY_STATUS and attempt < self.max_retries and (retryable or status in (429, 503)) and not business_429 and not final_503:
                     time.sleep(_retry_delay(attempt, retry_after))

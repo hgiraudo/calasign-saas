@@ -26,20 +26,31 @@ const uuidOrNull = (v: unknown) => (typeof v === "string" && UUID_RE.test(v) ? v
 
 /**
  * Celda en la que tiene que correr el job. Con una sola celda configurada es NULL (cualquier worker; nada cambia). Con
- * varias, la de la organización (opts.tenantId, payload.tenantId o la organización del sobre de payload.envelopeId); los
+ * varias, la de la organización (opts.tenantId, payload.tenantId o la organización del sobre de payload.envelopeId, del
+ * run de payload.runId, de la negociación de payload.negotiationId o del acuerdo de payload.agreementId); los
  * ids viejos ("local", "dev") son la por defecto. Sin organización deducible: NULL (cualquier worker).
  */
 async function jobCell(db: Db, payload: unknown, opts: EnqueueOptions): Promise<string | null> {
   if (opts.cell) return opts.cell;
   if (cells().length <= 1) return null;
-  const p = (payload ?? {}) as { tenantId?: unknown; envelopeId?: unknown };
+  const p = (payload ?? {}) as { tenantId?: unknown; envelopeId?: unknown; runId?: unknown; negotiationId?: unknown; agreementId?: unknown };
   const tenantId = uuidOrNull(opts.tenantId) ?? uuidOrNull(p.tenantId);
-  const envelopeId = tenantId ? null : uuidOrNull(p.envelopeId);
-  if (!tenantId && !envelopeId) return null;
+  // Sin organización explícita: la del sobre, o la del run de workflow, la negociación o el acuerdo (jobs de la cola
+  // "agreements", que llevan solo ese id). Si no, quedaban con celda NULL y los tomaba un worker de cualquier celda.
+  const ref = (v: unknown) => (tenantId ? null : uuidOrNull(v));
+  const envelopeId = ref(p.envelopeId);
+  const runId = ref(p.runId);
+  const negotiationId = ref(p.negotiationId);
+  const agreementId = ref(p.agreementId);
+  if (!tenantId && !envelopeId && !runId && !negotiationId && !agreementId) return null;
   const r = await db.one<{ cell: string | null; found: boolean }>(
     `SELECT COALESCE(d.cell, t.cell) AS cell, true AS found FROM tenants t LEFT JOIN tenant_directory d ON d.tenant_id = t.id
-      WHERE t.id = COALESCE($1::uuid, (SELECT tenant_id FROM envelopes WHERE id = $2::uuid))`,
-    [tenantId, envelopeId],
+      WHERE t.id = COALESCE($1::uuid,
+        (SELECT tenant_id FROM envelopes WHERE id = $2::uuid),
+        (SELECT tenant_id FROM workflow_runs WHERE id = $3::uuid),
+        (SELECT tenant_id FROM negotiations WHERE id = $4::uuid),
+        (SELECT tenant_id FROM agreements WHERE id = $5::uuid))`,
+    [tenantId, envelopeId, runId, negotiationId, agreementId],
   );
   return r?.found ? effectiveCellId(r.cell) : null;
 }
@@ -160,8 +171,33 @@ export interface WorkerOptions {
  */
 export const URGENT_PRIORITIES: number[] = [...new Set(Object.values(PRIORITY))].filter((p) => p > PRIORITY.bulk).sort((a, b) => b - a);
 
-/** Filtro de celda del claim ($5: celdas del worker, o NULL si atiende todas). */
-const CELL_FILTER = `AND ($5::text[] IS NULL OR c.cell IS NULL OR c.cell = ANY($5::text[]))`;
+/**
+ * Candidatos del claim ($1 límite, $3 candidatos, $4 prioridades altas). Un worker que atiende todas las celdas: los
+ * listos más viejos (jobs_pending_run_at_idx) más los de cada prioridad alta (jobs_claim_idx), como siempre. Uno que
+ * atiende solo algunas ($5): lo mismo por cada celda suya y por los sin celda (cell IS NULL), con búsquedas por rango
+ * en jobs_cell_pending_run_at_idx / jobs_cell_claim_idx (0119-0120). Antes un filtro "cell = ANY($5)" sobre el recorrido
+ * general pasaba por todos los pendientes de las otras celdas antes de llegar a uno propio.
+ */
+const CANDIDATES_ALL = `
+    (SELECT c.id FROM jobs c WHERE c.status = 'pending' AND c.run_at <= now() ORDER BY c.run_at, c.id LIMIT $3)
+    UNION
+    (SELECT h.id FROM unnest($4::smallint[]) AS p(pr), LATERAL (
+       SELECT c.id FROM jobs c WHERE c.status = 'pending' AND c.priority = p.pr AND c.run_at <= now()
+        ORDER BY c.run_at, c.id LIMIT $1) h)`;
+const CANDIDATES_CELLS = `
+    (SELECT h.id FROM unnest($5::text[]) AS cc(cell), LATERAL (
+       SELECT c.id FROM jobs c WHERE c.status = 'pending' AND c.cell = cc.cell AND c.run_at <= now()
+        ORDER BY c.run_at, c.id LIMIT $3) h)
+    UNION
+    (SELECT c.id FROM jobs c WHERE c.status = 'pending' AND c.cell IS NULL AND c.run_at <= now() ORDER BY c.run_at, c.id LIMIT $3)
+    UNION
+    (SELECT h.id FROM unnest($4::smallint[]) AS p(pr), unnest($5::text[]) AS cc(cell), LATERAL (
+       SELECT c.id FROM jobs c WHERE c.status = 'pending' AND c.cell = cc.cell AND c.priority = p.pr AND c.run_at <= now()
+        ORDER BY c.run_at, c.id LIMIT $1) h)
+    UNION
+    (SELECT h.id FROM unnest($4::smallint[]) AS p(pr), LATERAL (
+       SELECT c.id FROM jobs c WHERE c.status = 'pending' AND c.cell IS NULL AND c.priority = p.pr AND c.run_at <= now()
+        ORDER BY c.run_at, c.id LIMIT $1) h)`;
 
 /** Cada cuánto el worker registra su latido en worker_heartbeats. */
 const WORKER_BEAT_MS = 15_000;
@@ -192,16 +228,11 @@ export function startWorker(db: Db, opts: WorkerOptions) {
         `UPDATE jobs SET status = 'running', locked_at = now(), locked_by = $2, attempts = attempts + 1
          WHERE id IN (
            SELECT j.id FROM jobs j
-            WHERE j.id IN (
-                (SELECT c.id FROM jobs c WHERE c.status = 'pending' AND c.run_at <= now() ${CELL_FILTER} ORDER BY c.run_at, c.id LIMIT $3)
-                UNION
-                (SELECT h.id FROM unnest($4::smallint[]) AS p(pr), LATERAL (
-                   SELECT c.id FROM jobs c WHERE c.status = 'pending' AND c.priority = p.pr AND c.run_at <= now() ${CELL_FILTER}
-                    ORDER BY c.run_at, c.id LIMIT $1) h))
+            WHERE j.id IN (${claimCells ? CANDIDATES_CELLS : CANDIDATES_ALL})
               AND j.status = 'pending' AND j.run_at <= now()
             ORDER BY j.priority DESC, j.run_at, j.id LIMIT $1 FOR UPDATE SKIP LOCKED)
          RETURNING id, queue, payload, attempts, max_attempts, (created_at > now() - interval '7 days') AS postponable`,
-        [limit, workerId, claimCandidates, URGENT_PRIORITIES, claimCells],
+        claimCells ? [limit, workerId, claimCandidates, URGENT_PRIORITIES, claimCells] : [limit, workerId, claimCandidates, URGENT_PRIORITIES],
       ),
     );
   }

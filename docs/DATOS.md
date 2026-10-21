@@ -61,7 +61,9 @@ SERVED_CELLS=us   # celdas que atiende este proceso (por defecto: todas las conf
 - En disco, la celda por defecto sigue en `var/blobs`; las demás en `var/blobs-<id>` (o `storage.dir`).
 - **Enrutamiento:** si un proceso no atiende la celda de la organización (API key, token OAuth, sesión o link
   de firma de otra celda), responde **421 `wrong_cell`** con `location` = `baseUrl` de la celda correcta. Con
-  un solo despliegue que atiende todo, no se consulta nada.
+  un solo despliegue que atiende todo, no se consulta nada. Si la celda de la organización no está configurada en ese
+  despliegue, responde **503 `wrong_cell`** (falla cerrada, nunca la celda por defecto): es de configuración, así que
+  los SDKs no lo reintentan.
 - **Fuera de alcance:** mover una organización existente de celda (copiar archivos, re-cifrar, cambiar el
   directorio). Hoy la celda se fija en el alta.
 - Producción: la base de cada celda es independiente; el directorio global debería vivir en una base

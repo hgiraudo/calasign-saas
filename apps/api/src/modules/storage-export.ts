@@ -190,9 +190,37 @@ export async function revokeProviderToken(p: StorageProvider, creds: Partial<OAu
   }
 }
 
+/**
+ * Google revoca toda la concesión (la app y la cuenta de Google), no un token: revocar el de una conexión cortaba
+ * también las demás conexiones de Drive con la misma cuenta (de esta u otra organización), que seguían "activas" con un
+ * refresh token muerto. Solo se revoca si ninguna otra conexión usa esa cuenta. La cuenta es account_label (el email
+ * del id_token); sin etiqueta no se sabe cuál es, así que cuenta como compartida con otra conexión sin etiqueta.
+ */
+async function googleGrantShared(db: Db, accountLabel: string | null, excludeId: string | null): Promise<boolean> {
+  const other = await db.one<any>(
+    `SELECT 1 AS x FROM storage_connections
+      WHERE provider = 'gdrive' AND ($2::uuid IS NULL OR id <> $2::uuid)
+        AND (CASE WHEN $1::text IS NULL THEN account_label IS NULL ELSE lower(account_label) = lower($1::text) END)
+      LIMIT 1`,
+    [accountLabel, excludeId],
+  );
+  return Boolean(other);
+}
+
 /** Revoca los tokens de una conexión guardada (credenciales cifradas); los fallos van al log. */
-async function revokeStoredCreds(provider: StorageProvider, credsEnc: string, log: { warn(o: object, m?: string): void }, connectionId?: string) {
+async function revokeStoredCreds(
+  db: Db,
+  provider: StorageProvider,
+  credsEnc: string,
+  log: { warn(o: object, m?: string): void; info?(o: object, m?: string): void },
+  connectionId: string,
+  accountLabel: string | null,
+) {
   if (provider === "s3") return;
+  if (provider === "gdrive" && (await googleGrantShared(db, accountLabel, connectionId))) {
+    log.info?.({ provider, connectionId }, "no se revoca el acceso de Google: otra conexión usa la misma cuenta");
+    return;
+  }
   let creds: Partial<OAuthCreds>;
   try {
     creds = JSON.parse(decrypt(credsEnc));
@@ -282,14 +310,22 @@ export function gdriveFolderQuery(folder: string, parentId?: string | null): str
   return `name = '${lit(folder)}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false` + (parentId ? ` and '${lit(parentId)}' in parents` : "");
 }
 
+/**
+ * Las llamadas a la API de Drive aceptan unidades compartidas (Shared Drives): sin supportsAllDrives, una carpeta de una
+ * unidad compartida da 404 y no se puede usar como destino. Las búsquedas dentro de una carpeta (in parents) también
+ * tienen que incluir los elementos de las unidades compartidas.
+ */
+const DRIVE_ALL = "supportsAllDrives=true";
+const driveListAll = (parentId: string | null | undefined) => (parentId ? `${DRIVE_ALL}&includeItemsFromAllDrives=true&corpora=allDrives` : DRIVE_ALL);
+
 /** ¿Parece un id de carpeta de Drive (lo que va después de /folders/ en la URL)? Sin barras ni espacios. */
 export const looksLikeGdriveId = (v: string) => /^[A-Za-z0-9_-]{25,}$/.test(v);
 
 /**
  * Carpeta de destino de Drive. `folder` puede ser:
- *  - el id de una carpeta (o la URL …/folders/<id>): se usa si la app la ve, es una carpeta y no está en la papelera
- *    (con el scope drive.file la app solo ve lo que creó o lo que el usuario abrió con ella; si no la ve, se toma como
- *    nombre);
+ *  - el id de una carpeta (o la URL …/folders/<id>), también de una unidad compartida: se usa si la app la ve, es una
+ *    carpeta y no está en la papelera (con el scope drive.file la app solo ve lo que creó o lo que el usuario abrió con
+ *    ella). Si no la ve, error claro (antes un id suelto se tomaba como nombre y se creaba una carpeta con ese nombre);
  *  - una ruta "Contratos/2026": se busca (o crea) cada carpeta dentro de la anterior, como en Box. Antes "Contratos/2026"
  *    creaba UNA carpeta con la barra en el nombre.
  */
@@ -299,14 +335,15 @@ async function findOrCreateGdriveFolder(token: string, folder: string): Promise<
   const fromUrl = /^https?:\/\//i.test(raw) ? (/\/folders\/([A-Za-z0-9_-]{10,})/.exec(raw)?.[1] ?? null) : null;
   const id = fromUrl ?? (looksLikeGdriveId(raw) ? raw : null);
   if (id) {
-    const res = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?fields=id,mimeType,trashed`, { headers: auth, signal: AbortSignal.timeout(15_000) });
+    const res = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?fields=id,mimeType,trashed&${DRIVE_ALL}`, { headers: auth, signal: AbortSignal.timeout(15_000) });
     if (res.ok) {
       const f: any = await res.json().catch(() => ({}));
       if (f?.id && f.mimeType === "application/vnd.google-apps.folder" && f.trashed !== true) return String(f.id);
     } else if (res.status !== 404 && res.status !== 403) await check(res, "revisar carpeta");
   }
-  // Una URL de una carpeta que la app no ve (o que no es una carpeta viva): no se arma una ruta con sus pedazos.
-  if (/^https?:\/\//i.test(raw)) throw new Error("la carpeta de Drive indicada no existe o la app no tiene acceso: usá una ruta (Contratos/2026) o el id de una carpeta creada por la app");
+  // Una URL o un id de una carpeta que la app no ve (o que no es una carpeta viva): no se arma una ruta con sus pedazos
+  // ni se crea una carpeta llamada como el id.
+  if (id || /^https?:\/\//i.test(raw)) throw new Error("la carpeta de Drive indicada no existe o la app no tiene acceso: usá una ruta (Contratos/2026) o el id de una carpeta creada por la app");
   const segments = raw.split("/").map((x) => x.trim()).filter(Boolean);
   let parent: string | null = null;
   for (const seg of segments.length ? segments : [raw]) {
@@ -315,7 +352,7 @@ async function findOrCreateGdriveFolder(token: string, folder: string): Promise<
     const q = gdriveFolderQuery(seg, parent);
     const found: any = await (
       await check(
-        await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id)`, { headers: auth, signal: AbortSignal.timeout(15_000) }),
+        await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id)&${driveListAll(parent)}`, { headers: auth, signal: AbortSignal.timeout(15_000) }),
         "buscar carpeta",
       )
     ).json();
@@ -325,7 +362,7 @@ async function findOrCreateGdriveFolder(token: string, folder: string): Promise<
     }
     const created: any = await (
       await check(
-        await fetch("https://www.googleapis.com/drive/v3/files?fields=id", {
+        await fetch(`https://www.googleapis.com/drive/v3/files?fields=id&${DRIVE_ALL}`, {
           method: "POST",
           headers: { ...auth, "content-type": "application/json" },
           body: JSON.stringify({ name: seg.slice(0, 255), mimeType: "application/vnd.google-apps.folder", ...(parent ? { parents: [parent] } : {}) }),
@@ -345,7 +382,7 @@ async function findOrCreateGdriveFolder(token: string, folder: string): Promise<
  * daría OK y el PDF se perdería. Y si la papelera se vació, la carpeta da 404 y todas las exportaciones fallarían.
  */
 export async function gdriveFolderUsable(token: string, folderId: string): Promise<boolean> {
-  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(folderId)}?fields=id,trashed`, {
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(folderId)}?fields=id,trashed&${DRIVE_ALL}`, {
     headers: { authorization: `Bearer ${token}` },
     signal: AbortSignal.timeout(15_000),
   });
@@ -418,7 +455,7 @@ export async function uploadGdrive(
     const q = gdriveExportQuery(opts.envelopeId, opts.kind, folderId);
     const found: any = await (
       await check(
-        await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,webViewLink,appProperties)&pageSize=10`, {
+        await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,webViewLink,appProperties)&pageSize=10&${driveListAll(folderId)}`, {
           headers: auth,
           signal: AbortSignal.timeout(15_000),
         }),
@@ -440,7 +477,7 @@ export async function uploadGdrive(
       ]);
       const upd: any = await (
         await check(
-          await fetch(`https://www.googleapis.com/upload/drive/v3/files/${encodeURIComponent(prev.id)}?uploadType=multipart&fields=id,webViewLink`, {
+          await fetch(`https://www.googleapis.com/upload/drive/v3/files/${encodeURIComponent(prev.id)}?uploadType=multipart&fields=id,webViewLink&${DRIVE_ALL}`, {
             method: "PATCH",
             headers: { ...auth, "content-type": `multipart/related; boundary=${boundary}` },
             body,
@@ -462,7 +499,7 @@ export async function uploadGdrive(
   ]);
   const res: any = await (
     await check(
-      await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink", {
+      await fetch(`https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink&${DRIVE_ALL}`, {
         method: "POST",
         headers: { ...auth, "content-type": `multipart/related; boundary=${boundary}` },
         body,
@@ -1019,7 +1056,9 @@ export async function notifyStorageMemberRemoved(
   const list = conns.map((c) => `- ${c.name} (${PROVIDER_LABEL[c.provider] ?? c.provider})`).join("\n");
   const link = `${await tenantBaseUrl(db, p.tenantId)}/app/settings/storage`;
   const r = await alertTenantAdmins(db, p.tenantId, "storage_member_removed", (L, c) => MEMBER_REMOVED_ALERT[L](c.product, c.name, who, list, link), { jobId: job?.id, log });
-  if (!r.sent && r.transient.length) throw new Error(`no se pudo avisar la desactivación del almacenamiento: ${r.transient.join("; ")}`);
+  // Con un envío transitorio fallido se reintenta aunque otros hayan salido: la deduplicación por job (sendTracked con
+  // jobId) no repite los ya enviados.
+  if (r.transient.length) throw new Error(`no se pudo avisar la desactivación del almacenamiento: ${r.transient.join("; ")}`);
 }
 
 const PROVIDER_LABEL: Record<string, string> = { gdrive: "Google Drive", dropbox: "Dropbox", onedrive: "OneDrive", sharepoint: "SharePoint", box: "Box", s3: "S3" };
@@ -1194,8 +1233,12 @@ export async function storageRoutes(app: FastifyInstance, s: Services) {
       if (await tooManyConnections(a.tenantId)) return back("error=too_many_connections");
       // Tokens ya obtenidos: si después no se guarda la conexión, se revocan (si no, el acceso quedaba concedido sin uso).
       let obtained: OAuthCreds | null = null;
+      let obtainedLabel: string | null = null;
       const revokeObtained = async () => {
         if (!obtained) return;
+        // Google: los tokens nuevos son de la misma concesión que los de otra conexión con esa cuenta; revocarlos la
+        // cortaba también (ver googleGrantShared).
+        if (st.p === "gdrive" && (await googleGrantShared(s.db, obtainedLabel, null).catch(() => true))) return;
         const r = await revokeProviderToken(st.p, obtained);
         if (!r.ok) req.log.warn({ provider: st.p, err: r.error }, "no se pudo revocar el acceso obtenido para una conexión que no se guardó");
       };
@@ -1204,6 +1247,7 @@ export async function storageRoutes(app: FastifyInstance, s: Services) {
         const creds: OAuthCreds = { access_token: body.access_token, refresh_token: body.refresh_token, expires_at: Date.now() + Number(body.expires_in ?? 3600) * 1000 };
         obtained = creds;
         const label = await accountLabel(st.p, body);
+        obtainedLabel = label;
         const cfg: Record<string, unknown> = { folder: st.f, includeEvidence: Boolean(st.ev) };
         if (st.p === "sharepoint") {
           try {
@@ -1248,10 +1292,21 @@ export async function storageRoutes(app: FastifyInstance, s: Services) {
     }
     if (input.includeEvidence !== undefined) cfgPatch.includeEvidence = input.includeEvidence;
     if (input.prefix !== undefined && r.provider === "s3") cfgPatch.prefix = input.prefix && !input.prefix.endsWith("/") ? `${input.prefix}/` : input.prefix;
-    await s.db.query(
-      `UPDATE storage_connections SET name = COALESCE($2, name), active = COALESCE($3, active), config = config || $4::jsonb, updated_at = now() WHERE id = $1`,
-      [r.id, input.name ?? null, input.active ?? null, JSON.stringify(cfgPatch)],
+    // La condición se vuelve a mirar en el UPDATE: si la persona deja la organización entre la lectura y la escritura
+    // (deactivateMemberStorage), no se reactiva una conexión recién desactivada.
+    const upd = await s.db.query(
+      `UPDATE storage_connections SET name = COALESCE($2, name), active = COALESCE($3, active), config = config || $4::jsonb, updated_at = now()
+        WHERE id = $1 AND NOT ($3::boolean IS TRUE AND deactivated_reason IS NOT DISTINCT FROM $5::text)
+        RETURNING id`,
+      [r.id, input.name ?? null, input.active ?? null, JSON.stringify(cfgPatch), STORAGE_CREATOR_REMOVED],
     );
+    if (!upd.length) {
+      // Sin fila actualizada: se desactivó por la baja de quien la conectó (409) o se eliminó (404, como load).
+      if (await s.db.one<any>(`SELECT 1 AS x FROM storage_connections WHERE id = $1`, [r.id])) {
+        throw new AppError(409, "storage_reconnect_required", "Quien conectó esta cuenta ya no es parte de la organización: conectá el almacenamiento de nuevo");
+      }
+      throw notFound("Conexión");
+    }
     const updated = await load(a.tenantId, r.id);
     // Pausar una conexión, cambiar la carpeta/prefijo de destino o dejar de exportar la evidencia cambia a dónde van (o si
     // van) los documentos firmados: queda en la auditoría con el valor anterior y el nuevo.
@@ -1274,7 +1329,7 @@ export async function storageRoutes(app: FastifyInstance, s: Services) {
     const del = await s.db.query(`DELETE FROM storage_connections WHERE id = $1 RETURNING id`, [r.id]);
     await auditFromRequest(s.db, req, a, "storage.disconnected", { targetType: "storage_connection", targetId: r.id, data: { provider: r.provider, name: r.name } });
     // Lo mejor posible, después de borrarla: que la app deje de tener acceso a esa cuenta en el proveedor.
-    if (del.length) await revokeStoredCreds(r.provider, r.credentials_enc, req.log, r.id);
+    if (del.length) await revokeStoredCreds(s.db, r.provider, r.credentials_enc, req.log, r.id, r.account_label ?? null).catch((err) => req.log.warn({ err: String(err) }, "no se pudo revocar el acceso de la conexión de almacenamiento"));
     return reply.code(204).send();
   });
 

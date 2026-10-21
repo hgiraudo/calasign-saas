@@ -200,17 +200,30 @@ export function flatten(docs: DocText[]): FlatLine[] {
   return docs.flatMap((d) => d.pages.flatMap((p) => p.lines.map((l) => ({ documentId: d.id, page: p.page, text: l.text, n: norm(l.text) }))));
 }
 
-/** Verifica que una cita aparezca en el texto (normalizado) y devuelve dónde. */
+/** Largo mínimo de una cita verificable (normalizada): al menos 20 caracteres o 4 palabras. */
+export const QUOTE_MIN_CHARS = 20;
+export const QUOTE_MIN_WORDS = 4;
+
+/**
+ * Verifica que una cita aparezca en el texto (normalizado) y devuelve dónde. Verificada solo si es lo bastante larga
+ * para no aparecer por casualidad (una cita de 3 letras, "de la", siempre estaba en algún lado) y está en la página que
+ * cita el modelo (`page`, desde 1; en cualquier documento); sin página, en cualquier lugar de los documentos. Una cita
+ * que está en otra página que la citada no se da por verificada: la página que se muestra sería falsa.
+ */
 export function locateQuote(docs: DocText[], quote: string, page?: number | null): { documentId: string | null; page: number; verified: boolean } {
-  const q = norm(quote).replace(/["“”«»]/g, "");
-  if (q.length < 3) return { documentId: null, page: page ?? 1, verified: false };
+  const q = norm(quote).replace(/["“”«»]/g, "").trim();
+  const fallback = { documentId: null, page: page ?? 1, verified: false };
+  const wordCount = q.split(" ").filter(Boolean).length;
+  if (q.length < QUOTE_MIN_CHARS && wordCount < QUOTE_MIN_WORDS) return fallback;
+  const cited = typeof page === "number" && Number.isInteger(page) && page >= 1 ? page : null;
   for (const d of docs) {
     for (const p of d.pages) {
+      if (cited != null && p.page + 1 !== cited) continue;
       const pageText = norm(p.lines.map((l) => l.text).join(" "));
       if (pageText.includes(q)) return { documentId: d.id, page: p.page + 1, verified: true };
     }
   }
-  return { documentId: null, page: page ?? 1, verified: false };
+  return fallback;
 }
 
 // ───────────────────────────── Mock: resumen y preguntas ─────────────────────────────

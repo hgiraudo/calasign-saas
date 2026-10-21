@@ -45,7 +45,8 @@ CalaSign(oauth=ClientCredentials("csapp_…", "cssec_…", scope="envelopes:read
   por sobre).
 - Los 503 (`storage_unavailable`, `pdf_reader_busy`, `ai_rate_limited`, sin código…) se reintentan, salvo
   `byok_key_unavailable` (la clave de cifrado propia de la organización —BYOK— no está disponible y hace falta que un
-  administrador restablezca el acceso) y `ai_unavailable` (el servidor no tiene IA configurada), que se lanzan enseguida.
+  administrador restablezca el acceso), `ai_unavailable` (el servidor no tiene IA configurada) y `wrong_cell` (503: la
+  organización es de una celda que ese despliegue no tiene configurada), que se lanzan enseguida.
 - Celdas (regiones): si la organización vive en otra celda, la API responde 421 `wrong_cell` con `details["baseUrl"]`
   (y header `Location`). El cliente repite el pedido una sola vez contra esa URL (es seguro: la API no lo procesó) y la
   guarda en `cs.base_url` para los siguientes, también para pedir el token OAuth. Como la credencial viaja a esa URL,

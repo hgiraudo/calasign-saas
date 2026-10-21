@@ -45,6 +45,7 @@ import {
   previewText,
   recordAiUse,
   saveMetadata,
+  metadataVersion,
   sentSummary,
   usageInfo,
   recomputeRenewalAlerts,
@@ -116,6 +117,17 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
       monthlyTokenBudget: before?.ai_monthly_token_budget ?? null,
     };
     const noticeOk = t?.ai_notice_accepted_at && t?.ai_notice_version === AI_NOTICE_VERSION;
+    // Aceptar el aviso de tratamiento de datos (y habilitar la IA cuando nunca se aceptó el vigente) lo hace una persona
+    // con sesión web: queda a su nombre (ai_notice_accepted_by). Con una API key o una app OAuth quedaba aceptado por nadie.
+    if (input.acceptNotice || (input.enabled === true && !before?.ai_enabled && !noticeOk)) {
+      if (!a.userId || a.apiKeyId || a.oauth) {
+        throw new AppError(
+          403,
+          "session_required",
+          "Aceptar el aviso de tratamiento de datos de la IA (o habilitarla por primera vez) requiere iniciar sesión en la web: no se puede con una API key ni una app OAuth",
+        );
+      }
+    }
     // Al habilitar hace falta el aviso vigente. Ya habilitada con un aviso anterior se pueden guardar los demás ajustes:
     // la IA queda en pausa (assertAiAvailable: 403 ai_notice_required) hasta que se acepte la versión vigente.
     if (input.enabled === true && !before?.ai_enabled && !noticeOk && !input.acceptNotice) {
@@ -287,6 +299,10 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
   app.post<P>("/v1/envelopes/:id/ai/extract-metadata", { preHandler: auth }, async (req) => {
     const { a, e } = await envelopeOf(s, req);
     await assertAiAvailable(s.db, a.tenantId, { reserve: false });
+    // Antes de llamar al modelo: la versión de los metadatos y la huella de los documentos. Si cualquiera cambia mientras
+    // el modelo responde (edición manual, otra extracción, documentos subidos o quitados), el resultado no se guarda.
+    const version = await metadataVersion(s.db, e.id);
+    const docsKey = await reviewDocsKey(s.db, e.id);
     const docs = await loadEnvelopeDocs(s.db, s.blobs, e.id);
     const rid = await assertAiAvailable(s.db, a.tenantId, { estimate: inputEstimate(docs), envelopeId: e.id });
     const provider = getAiProvider();
@@ -295,8 +311,26 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
       { tenantId: a.tenantId, reservationId: rid, envelopeId: e.id, feature: "extract_metadata", actor: a.actor },
       () => callModel(() => provider.extractMetadata(docs)),
     );
-    await saveMetadata(s.db, e.id, a.tenantId, r.result.metadata, r.result.confidence, "ai");
-    await recordAiUse(s.db, { reservationId: rid, tenantId: a.tenantId, envelopeId: e.id, feature: "extract_metadata", usage: r.usage, actor: a.actor });
+    const outcome = await s.db.tx(async (tx) => {
+      await tx.query(`SELECT id FROM envelopes WHERE id = $1 FOR UPDATE`, [e.id]);
+      if ((await reviewDocsKey(tx, e.id)) !== docsKey) return "documents_changed" as const;
+      const saved = await saveMetadata(tx, e.id, a.tenantId, r.result.metadata, r.result.confidence, "ai", { expectUpdatedAt: version });
+      return saved ? ("saved" as const) : ("metadata_changed" as const);
+    });
+    // El uso se registra igual: el modelo ya respondió (y consumió).
+    await recordAiUse(s.db, {
+      reservationId: rid,
+      tenantId: a.tenantId,
+      envelopeId: e.id,
+      feature: "extract_metadata",
+      usage: r.usage,
+      actor: a.actor,
+      ...(outcome === "saved" ? {} : { data: { discarded: outcome } }),
+    });
+    if (outcome === "documents_changed") throw conflict("documents_changed", "Los documentos del sobre cambiaron durante la extracción: volvé a extraer los metadatos");
+    if (outcome === "metadata_changed") {
+      throw conflict("metadata_changed", "Los metadatos del contrato cambiaron mientras se extraían (alguien los editó o los volvió a extraer): revisalos y, si hace falta, volvé a extraerlos");
+    }
     return { ...(await metadataView(s, e.id)), usage: usageInfo(r.usage) };
   });
 

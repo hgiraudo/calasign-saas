@@ -124,8 +124,8 @@ export interface CalaSignOptions {
   /**
    * Reintentos ante errores de red, 429 (límite por IP) y 5xx. Por defecto 3. No se reintentan los 429 de negocio ni los
    * 503 `byok_key_unavailable` (la clave de cifrado propia de la organización no está disponible: requiere que un
-   * administrador restablezca el acceso) y `ai_unavailable` (el servidor no tiene IA configurada): no se arreglan
-   * esperando unos segundos.
+   * administrador restablezca el acceso), `ai_unavailable` (el servidor no tiene IA configurada) y `wrong_cell` (la
+   * organización es de una celda que ese despliegue no tiene configurada): no se arreglan esperando unos segundos.
    */
   maxRetries?: number;
   /** Tiempo máximo por intento. Por defecto 30 s. */
@@ -197,10 +197,11 @@ const RETRY_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
 /**
  * 503 que no se arreglan reintentando en segundos: `byok_key_unavailable` (la clave KMS propia de la organización no
  * responde o se revocó; requiere acción de un administrador) y `ai_unavailable` (el servidor no tiene proveedor de IA
- * configurado; el 502 `ai_unavailable` del proveedor caído sí se reintenta). El resto de los 503 (`storage_unavailable`,
+ * configurado; el 502 `ai_unavailable` del proveedor caído sí se reintenta) y `wrong_cell` (la organización es de una
+ * celda que ese despliegue no tiene configurada: es de configuración, no pasajero). El resto de los 503 (`storage_unavailable`,
  * `pdf_reader_busy`, `ai_rate_limited`, sin código…) sí se reintentan.
  */
-const NON_RETRYABLE_503_CODES = new Set(["byok_key_unavailable", "ai_unavailable"]);
+const NON_RETRYABLE_503_CODES = new Set(["byok_key_unavailable", "ai_unavailable", "wrong_cell"]);
 /** Estados reintentables tras los que el pedido pudo haberse procesado igual (el resto se rechaza antes de procesarlo). */
 const MAYBE_PROCESSED_STATUS = new Set([500, 502, 504]);
 
@@ -414,7 +415,7 @@ export class CalaSign {
             text = await res.text().catch(() => "");
             retry = !isBusiness429(text);
           }
-          // 503 byok_key_unavailable / ai_unavailable: requieren acción de un administrador; reintentar no sirve.
+          // 503 byok_key_unavailable / ai_unavailable / wrong_cell: requieren acción de un administrador; reintentar no sirve.
           if (res.status === 503) {
             text ??= await res.text().catch(() => "");
             if (NON_RETRYABLE_503_CODES.has(errorCode(text) ?? "")) retry = false;

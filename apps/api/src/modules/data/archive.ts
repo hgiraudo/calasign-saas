@@ -14,7 +14,7 @@ import { BUMP_UPDATED_AT, iso, sha256Hex, uuidv7 } from "../../lib/util";
 import { authenticate, type Services } from "../context";
 import { guardedFetch, resolveSealLevel, trustAnchors } from "../evidence-seal";
 import { discardBlobsOnFailure } from "../file-cleanup";
-import { alertTenantAdmins, claimTenantAlert, type AlertLocale } from "../admin-alerts";
+import { alertTenantAdmins, claimTenantAlert, releaseTenantAlert, type AlertLocale } from "../admin-alerts";
 import { servedCellsSql } from "../../infra/cells";
 
 const env = process.env;
@@ -329,13 +329,23 @@ async function reportTsaCannotExtend(d: Deps, stuck: { id: string; tenant_id: st
   }
   const key = new Date(tsaNotAfter).toISOString();
   for (const [tenantId, info] of byTenant) {
+    let claimed = false;
     try {
       if (!(await claimTenantAlert(d.db, tenantId, "archive_tsa_cannot_extend", key))) continue;
+      claimed = true;
       d.log.error({ tenantId, tsaNotAfter: key, envelopes: info.n }, "sello de archivo: la TSA configurada no puede extender la validez; configurar otra TSA (TSA_URL)");
       const date = info.first.slice(0, 10);
-      await alertTenantAdmins(d.db, tenantId, "archive_tsa_cannot_extend", (L, c) => TSA_ALERT[L](c.product, c.name, c.org, date), { log: d.log });
+      const r = await alertTenantAdmins(d.db, tenantId, "archive_tsa_cannot_extend", (L, c) => TSA_ALERT[L](c.product, c.name, c.org, date), { log: d.log });
+      // No salió ninguno por una falla del momento (SMTP caído): se suelta el reclamo para reintentar en el próximo
+      // barrido. Si no, el aviso no se mandaba nunca.
+      if (r.sent === 0 && r.transient.length) throw new Error(`aviso no entregado (se reintenta): ${r.transient.join("; ")}`);
     } catch (err) {
       d.log.error({ tenantId, err: String(err) }, "no se pudo avisar que el sello de archivo no se puede renovar");
+      if (claimed) {
+        await releaseTenantAlert(d.db, tenantId, "archive_tsa_cannot_extend", key).catch((e) =>
+          d.log.error({ tenantId, err: String(e) }, "no se pudo soltar el reclamo del aviso del sello de archivo"),
+        );
+      }
     }
   }
 }

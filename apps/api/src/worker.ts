@@ -9,6 +9,7 @@ import { createBlobStore } from "./infra/storage";
 import { createJobHandlers, sweep } from "./modules/jobs";
 import { createTenantStorageResolver } from "./modules/data";
 import { checkAiProviderConfig } from "./modules/ai/provider";
+import { warnIdentityConfig } from "./modules/identity/providers";
 import { PDF_INGEST_LIMITS } from "@calasign/pdf";
 
 // Los jobs (conectores, documentos generados) no tienen a nadie esperando la respuesta: esperan lugar más tiempo.
@@ -19,6 +20,7 @@ const db = await createDb();
 const blobs = createBlobStore(createTenantStorageResolver(db));
 await getSealProvider();
 checkAiProviderConfig(log);
+warnIdentityConfig(log);
 const deps = { db, blobs, log };
 const worker = startWorker(db, {
   handlers: createJobHandlers(deps),

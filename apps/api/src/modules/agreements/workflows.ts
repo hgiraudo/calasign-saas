@@ -585,14 +585,14 @@ export async function workflowRunsSweep(d: Deps) {
 export async function onEnvelopeEventForWorkflows(d: Deps, envelopeId: string) {
   const env = await d.db.one<any>(`SELECT status FROM envelopes WHERE id = $1`, [envelopeId]);
   if (!env || !["completed", "declined", "voided", "expired"].includes(env.status)) return;
-  const runs = await d.db.query<any>(`SELECT id FROM workflow_runs WHERE status = 'waiting' AND context->'waitingEnvelope' = to_jsonb($1::text)`, [envelopeId]);
+  const runs = await d.db.query<any>(`SELECT id, tenant_id FROM workflow_runs WHERE status = 'waiting' AND context->'waitingEnvelope' = to_jsonb($1::text)`, [envelopeId]);
   for (const r of runs) {
     const failed = await d.db.tx(async (t) => {
       await t.query(`SELECT id FROM workflow_runs WHERE id = $1 FOR UPDATE`, [r.id]);
       const resolved = await resolveEnvelopeWait(t, r.id, envelopeId, env.status);
       const resumed = resolved && env.status === "completed";
       // En la misma transacción que lo pasa a "running": si el proceso caía entre las dos, el run quedaba trabado.
-      if (resumed) await enqueue(t, "agreements", { kind: "advance", runId: r.id });
+      if (resumed) await enqueue(t, "agreements", { kind: "advance", runId: r.id }, { tenantId: r.tenant_id });
       return resolved && !resumed;
     });
     if (failed) await cleanupRunDocuments(d, r.id);

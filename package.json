@@ -20,5 +20,11 @@
     "tsx": "^4.23.15",
     "xml-crypto": "6.4.0"
   },
-  "type": "module"
+  "type": "module",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "pkcs11js"
+    ]
+  }
 }

@@ -97,8 +97,10 @@ export interface BillingOverview {
   /**
    * Proveedores para la moneda de la organización: `configured` = se puede pagar con él en esa moneda (credenciales,
    * webhook y moneda soportada); `currencies` = monedas que acepta (null = todas). Mercado Pago cobra solo en la de su cuenta.
+   * `misconfigured`: configurado pero con un error permanente de configuración de la plataforma (Mercado Pago: el país
+   * de la cuenta no se reconoce y no hay MP_CURRENCIES); no se arregla reintentando.
    */
-  providers: { id: BillingProvider; configured: boolean; currencies?: string[] | null }[];
+  providers: { id: BillingProvider; configured: boolean; currencies?: string[] | null; misconfigured?: boolean }[];
 }
 
 export const BillingCheckoutInput = z.object({

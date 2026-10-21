@@ -1,4 +1,5 @@
 import { isIPv6 } from "node:net";
+import { bearerToken, sha256Hex } from "./util";
 
 /** Los 8 grupos (números) de una IPv6 válida, con "::" expandido y una IPv4 final (a.b.c.d) como dos grupos. */
 function ipv6Groups(v: string): number[] {
@@ -47,4 +48,16 @@ export function rateLimitIpKey(ip: string | undefined | null): string {
     .slice(0, 4)
     .map((x) => x.toString(16))
     .join(":")}::/64`;
+}
+
+/**
+ * Clave del límite de pedidos: con una credencial Bearer (API key o token OAuth), un hash de la credencial; sin ella,
+ * la IP (rateLimitIpKey). Por IP sola, las integraciones detrás de un mismo NAT o proxy (muchas organizaciones con la
+ * misma IP de salida) compartían el cupo, y una sola key repartida entre muchas IPs lo multiplicaba. Una credencial
+ * inventada obtiene su propio cupo, pero el pedido termina en 401 tras una búsqueda por hash indexada. En el store en
+ * memoria del límite (uno por réplica) queda el hash, no la credencial.
+ */
+export function rateLimitKey(req: { ip?: string | null; headers: { authorization?: string | string[] } }): string {
+  const token = bearerToken(req.headers.authorization as string | undefined);
+  return token ? `cred:${sha256Hex(token).slice(0, 32)}` : rateLimitIpKey(req.ip);
 }

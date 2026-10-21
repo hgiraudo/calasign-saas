@@ -514,10 +514,10 @@ export const docsPt: Record<DocsKey, string> = {
   "wh.payload.headers": "Cabeçalhos",
   "wh.payload.body": "Corpo",
   "wh.col.field": "Campo",
-  "wh.f.id": "Id único do evento. É o mesmo em todos os seus endpoints e nas novas tentativas: use-o para não processar duas vezes.",
+  "wh.f.id": "Id único do evento. É o mesmo em todos os seus endpoints, nas novas tentativas e em `GET /v1/events`: use-o para não processar duas vezes.",
   "wh.f.type": "Tipo de evento.",
-  "wh.f.createdAt": "Quando o evento foi gerado.",
-  "wh.f.envelope": "Estado do envelope quando o evento foi gerado (`null` em `webhook.test`).",
+  "wh.f.createdAt": "Quando o evento ocorreu (o mesmo instante que `occurredAt` em `GET /v1/events`).",
+  "wh.f.envelope": "Estado do envelope quando a entrega foi montada, segundos depois do evento: pode refletir mudanças posteriores (p. ex. um `recipient.signed` que já mostra o envelope `completed`). Para o momento do evento, use `createdAt` e `type`. `null` em `webhook.test`.",
   "wh.f.recipientId": "Destinatário que originou o evento (`viewed`, `signed`, `approved`, `declined`), quando aplicável.",
   "wh.f.reason": "Motivo da recusa ou da anulação, quando aplicável.",
   "wh.verify.h": "Verificar a assinatura",
@@ -535,7 +535,7 @@ export const docsPt: Record<DocsKey, string> = {
   "wh.col.wait": "Espera desde a anterior",
   "wh.retries.immediate": "imediata",
   "wh.retries.after":
-    "Após a última tentativa a entrega fica `failed`. Você pode ver cada entrega (código de resposta, primeiros caracteres da resposta, erro, próxima tentativa) e reenviá-la manualmente em **Configurações → Integrações** ou com `POST /v1/webhook-deliveries/{id}/retry` (exige webhooks no plano; se já houver uma tentativa em andamento ou um reenvio manual pedido, `409 delivery_pending`; com o endpoint inativo, `409 endpoint_inactive`: reative-o primeiro). Se você pausar um endpoint, as entregas pendentes são marcadas como falhas.\n\nUm endpoint é desativado automaticamente (`active: false`, com `deactivatedReason`) se responder **410 Gone** (`gone`, sem mais tentativas), após **50 entregas com falha seguidas** ou **7 dias falhando** sem nenhuma bem-sucedida (`failing`), ou se a chave de API ou o aplicativo que o criou perder as permissões (`permission_lost`). Fica registrado na auditoria e avisamos por e-mail quem administra webhooks. As entregas são guardadas por 90 dias.",
+    "Após a última tentativa a entrega fica `failed`. Você pode ver cada entrega (código de resposta, primeiros caracteres da resposta, erro, próxima tentativa) e reenviá-la manualmente em **Configurações → Integrações** ou com `POST /v1/webhook-deliveries/{id}/retry` (exige webhooks no plano; se já houver uma tentativa em andamento ou um reenvio manual pedido, `409 delivery_pending`; com o endpoint inativo, `409 endpoint_inactive`: reative-o primeiro). Se você pausar um endpoint, as entregas pendentes são marcadas como falhas.\n\nUm endpoint é desativado automaticamente (`active: false`, com `deactivatedReason`) se responder **410 Gone** (`gone`, sem mais tentativas), após **50 entregas com falha seguidas** ou **7 dias falhando** sem nenhuma bem-sucedida e com pelo menos 5 falhas seguidas (`failing`), ou se a chave de API ou o aplicativo que o criou perder as permissões (`permission_lost`). Fica registrado na auditoria e avisamos por e-mail quem administra webhooks. As entregas são guardadas por 90 dias.",
   "wh.receive.h": "Boas práticas ao receber",
   "wh.receive.p":
     "- **Responda rápido.** Verifique a assinatura, salve o evento e responda `200`; processe depois em uma fila. Se você demorar mais de 10 segundos, a CalaSign conta como falha e tenta novamente.\n- **Idempotência.** Um mesmo evento pode chegar mais de uma vez (novas tentativas, redes instáveis). Guarde `id` (também vem em `CalaSign-Event-Id`) e descarte os repetidos.\n- **Sem ordem garantida.** Os eventos são entregues de forma independente: `recipient.signed` pode chegar depois de `envelope.completed`. Use `createdAt` e, na dúvida, consulte o estado atual com `GET /v1/envelopes/{id}`.\n- **Eventos desconhecidos.** Responda `2xx` aos tipos que você não trata.\n- **Rotação do segredo.** Use `POST /v1/webhooks/{id}/rotate-secret`: ele retorna o segredo novo e, durante `graceHours` (24 por padrão), cada entrega vai assinada com os dois, assim você troca o segredo no seu servidor sem perder eventos.",
@@ -582,7 +582,7 @@ export const docsPt: Record<DocsKey, string> = {
   "err.c.wrongCell":
     "Os dados da organização estão em outra célula (região) do CalaSign. `details.cell` é a célula e `details.baseUrl` a URL da API que a atende (também no cabeçalho `Location`, com o mesmo caminho). A requisição não foi processada: repita contra `details.baseUrl` e use essa URL daí em diante. Os SDKs fazem isso sozinhos (uma vez).",
   "err.c.unprocessable": "A requisição é válida, mas não pode ser processada com esses dados (faltam papéis do modelo, linhas inválidas, PDF pesado demais para buscar âncoras).",
-  "err.c.rate": "Você excedeu o limite de requisições por IP (código `rate_limited`; versões anteriores da API enviavam `bad_request`). Aguarde o tempo indicado no cabeçalho `retry-after` (segundos) e tente novamente.",
+  "err.c.rate": "Você excedeu o limite de requisições (código `rate_limited`; versões anteriores da API enviavam `bad_request`). Aguarde o tempo indicado no cabeçalho `retry-after` (segundos) e tente novamente.",
   "err.c.rateBiz":
     "Limite de negócio com código próprio (`reminded_recently`, `reminder_daily_limit`, `form_rate_limited`, `workflow_rate_limited`, `ai_signer_limit`, `ai_budget_exceeded`, `too_many_comments`, `too_many_proposals`, `archive_recently_renewed`, `too_many_attempts`). Não traz `retry-after`: não tente novamente em loop; avise o usuário ou tente bem mais tarde.",
   "err.c.internal": "Erro nosso. É seguro tentar novamente com espera crescente; se você usa `Idempotency-Key`, nada é duplicado.",
@@ -594,7 +594,7 @@ export const docsPt: Record<DocsKey, string> = {
     "A chave de criptografia própria da organização (BYOK, no seu KMS) não está disponível: não é possível salvar nem ler documentos. **Não tente novamente em loop:** um administrador precisa restabelecer o acesso à chave (`details.keyArn`).",
   "err.c.aiTimeout": "O provedor de IA não respondeu a tempo. Tente novamente mais tarde.",
   "err.codes.retry":
-    "**O que tentar novamente:** erros de rede, o `429` do limite por IP (com `retry-after`) e `5xx`, com espera exponencial e um pouco de aleatoriedade. **O que não:** os `429` com código próprio (limites de negócio, sem `retry-after`), o `503 byok_key_unavailable` (um administrador precisa restabelecer a chave) e os demais `4xx`, que não vão mudar se você repetir a mesma requisição. Repita um `421 wrong_cell` uma vez contra `details.baseUrl`. Os SDKs oficiais aplicam essas regras sozinhos.",
+    "**O que tentar novamente:** erros de rede, o `429` do limite de requisições (com `retry-after`) e `5xx`, com espera exponencial e um pouco de aleatoriedade. **O que não:** os `429` com código próprio (limites de negócio, sem `retry-after`), o `503 byok_key_unavailable` (um administrador precisa restabelecer a chave) e os demais `4xx`, que não vão mudar se você repetir a mesma requisição. Repita um `421 wrong_cell` uma vez contra `details.baseUrl`. Os SDKs oficiais aplicam essas regras sozinhos.",
   "err.idem.h": "Idempotência",
   "err.idem.p":
     "Se uma requisição de criação é interrompida (timeout, rede), você não sabe se ela chegou. Envie o cabeçalho `Idempotency-Key` com um valor único por operação —por exemplo, o id do pedido no seu sistema— e tente novamente com o mesmo valor: a CalaSign executa a operação uma única vez e devolve às novas tentativas a resposta guardada, com o cabeçalho `idempotent-replay: true`.",
@@ -606,9 +606,9 @@ export const docsPt: Record<DocsKey, string> = {
   "err.page.iter.h": "Percorrer todas as páginas",
   "err.rate.h": "Limites de requisições",
   "err.rate.p":
-    "Os limites são contados **por endereço IP** em janelas de um minuto. O limite geral é de 600 requisições por minuto para o conjunto da API; alguns endpoints têm um limite próprio, contado à parte. Cada resposta traz `x-ratelimit-limit`, `x-ratelimit-remaining` e `x-ratelimit-reset`; ao excedê-lo, a resposta é `429` com `retry-after`.",
+    "Os limites são contados **por credencial** (cada chave de API ou token OAuth do header `Authorization: Bearer`) e, sem credencial, **por endereço IP**, em janelas de um minuto. Cada servidor da API mantém sua própria contagem, então o limite efetivo pode ser um pouco maior; não conte com isso. O limite geral é de 600 requisições por minuto para o conjunto da API; alguns endpoints têm um limite próprio, contado à parte. Cada resposta traz `x-ratelimit-limit`, `x-ratelimit-remaining` e `x-ratelimit-reset`; ao excedê-lo, a resposta é `429` com `retry-after`.",
   "err.col.route": "Rota",
-  "err.col.limit": "Limite por IP",
+  "err.col.limit": "Limite (por credencial ou IP)",
   "err.rate.tip":
     "Para acompanhar o estado de muitos envelopes, use [webhooks](/developers/webhooks) em vez de consultar em loop. Se você precisa de limites maiores, fale com a gente.",
   // ───────── SDKs ─────────
@@ -624,7 +624,7 @@ export const docsPt: Record<DocsKey, string> = {
   "sdk.f.auth": "Autenticação",
   "sdk.f.retries": "Novas tentativas",
   "sdk.f.retries.v":
-    "Rede, 429 do limite por IP (respeita Retry-After) e 5xx exceto byok_key_unavailable, backoff exponencial, 3 por padrão. 421 wrong_cell: uma nova tentativa contra details.baseUrl, que passa a ser a URL base",
+    "Rede, 429 do limite de requisições (respeita Retry-After) e 5xx exceto byok_key_unavailable, backoff exponencial, 3 por padrão. 421 wrong_cell: uma nova tentativa contra details.baseUrl, que passa a ser a URL base",
   "sdk.f.idem": "Idempotency-Key automática",
   "sdk.f.errors": "Erros",
   "sdk.install": "Instalação",
@@ -678,7 +678,7 @@ export const docsPt: Record<DocsKey, string> = {
   "mcp.auth.row.v": "OAuth 2.1 (descoberta + registro dinâmico) ou `Authorization: Bearer <API key>`",
   "mcp.plan": "Plano",
   "mcp.plan.v": "Starter ou superior (acesso via API). Sem ele, `402 plan_limit`.",
-  "mcp.connect.p": "Limite: 300 requisições por minuto por IP.",
+  "mcp.connect.p": "Limite: 300 requisições por minuto por credencial.",
   "mcp.auth.h": "Autenticação",
   "mcp.auth.p":
     "**OAuth (recomendado para pessoas).** O cliente descobre tudo sozinho: a primeira requisição sem credencial recebe `401` com o link para os metadados, o cliente se registra com [registro dinâmico](/developers/authentication#dynamic-registration), abre a tela de consentimento da CalaSign e a pessoa escolhe o que permitir. Peça `offline_access` para não precisar fazer login de novo a cada hora.\n\n**API key (scripts e ambientes sem navegador).** Envie `Authorization: Bearer cs_test_…`. O agente age com o papel dessa key: para um agente, convém uma key com papel `member` ou um papel personalizado, não `admin`.",

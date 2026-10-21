@@ -18,6 +18,23 @@ function bool(v: string | undefined, def: boolean) {
 
 const env = process.env;
 const production = env.NODE_ENV === "production";
+
+/**
+ * El host de una URL y sus dominios padre (app.calasign.com → app.calasign.com, calasign.com), sin el último nivel
+ * solo (com). Vacío para localhost o una IP. Un sufijo público (com.ar) puede quedar en la lista: el navegador ignora un
+ * Set-Cookie con ese Domain.
+ */
+function hostAndParentDomains(url: string): string[] {
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase().replace(/\.$/, "");
+  } catch {
+    return [];
+  }
+  if (!host.includes(".") || /^[\d.]+$/.test(host) || host.includes(":") || host.endsWith(".localhost")) return [];
+  const labels = host.split(".");
+  return labels.slice(0, -1).map((_, i) => labels.slice(i).join("."));
+}
 // Entorno: solo local | dev | prod. Un valor mal escrito ("production", "staging") caía en las ramas "no prod" (mock de
 // pagos, plan enterprise por defecto, claves cs_test) sin aviso; se aborta el arranque. Sin APP_ENV: prod con
 // NODE_ENV=production, local si no (tests y e2e locales no la definen). "local" relaja controles (allowList del rate
@@ -58,6 +75,19 @@ export const config = {
   /** 32 bytes en base64. Cifra los tokens de firmante. Sin valor: se genera en var/secret.key (solo fuera de producción). */
   secretKey: env.SECRET_KEY || null,
   cookieSecure: bool(env.COOKIE_SECURE, production),
+  /**
+   * Dominios (Domain=) con los que el cierre de sesión borra además la cookie de nombre viejo (cs_session): una
+   * cs_session plantada desde un subdominio con Domain= de un dominio padre no se borraba con el Set-Cookie sin Domain
+   * y, mientras se lea la cookie vieja, volvía a abrir una sesión después del logout. Por defecto, el host de APP_URL y
+   * sus dominios padre; SESSION_COOKIE_PARENT_DOMAINS (separados por coma) los reemplaza.
+   */
+  legacySessionCookieDomains: env.SESSION_COOKIE_PARENT_DOMAINS !== undefined ? list(env.SESSION_COOKIE_PARENT_DOMAINS) : hostAndParentDomains(env.APP_URL ?? ""),
+  /**
+   * Hasta cuándo se sigue leyendo la cookie de sesión de nombre viejo (cs_session). __Host-cs_session llegó con el
+   * deploy del 2026-10-20 y una sesión dura como máximo 14 días: pasada esta fecha ya no queda ninguna sesión válida con
+   * el nombre viejo. TODO(2026-11-10): quitar LEGACY_SESSION_COOKIE y esta opción (context.ts).
+   */
+  legacySessionCookieReadUntil: Date.parse(env.LEGACY_SESSION_COOKIE_READ_UNTIL || "2026-11-10T00:00:00Z"),
   storage: {
     driver: (env.STORAGE_DRIVER ?? (env.S3_BUCKET ? "s3" : "local")) as "local" | "s3",
     bucket: env.S3_BUCKET ?? "",
@@ -128,6 +158,11 @@ export const config = {
     maxConsecutiveFailures: Math.max(1, Number(env.WEBHOOK_MAX_CONSECUTIVE_FAILURES ?? 50) || 50),
     /** Días fallando sin ninguna entrega exitosa que también lo desactivan. */
     failingDays: Math.max(1, Number(env.WEBHOOK_FAILING_DAYS ?? 7) || 7),
+    /**
+     * Fallas definitivas seguidas mínimas para que los failingDays desactiven el endpoint (con tope en
+     * maxConsecutiveFailures): si no, dos fallas separadas por una semana en una organización con pocos eventos bastaban.
+     */
+    failingDaysMinFailures: Math.max(1, Number(env.WEBHOOK_FAILING_DAYS_MIN_FAILURES ?? 5) || 5),
     /**
      * Horas mínimas fallando sin ningún éxito para que la racha (maxConsecutiveFailures) desactive el endpoint: si no,
      * una caída de 15 minutos del receptor durante un envío masivo de 50 sobres lo desactivaba.

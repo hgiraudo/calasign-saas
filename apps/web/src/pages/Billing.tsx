@@ -381,10 +381,13 @@ export function BillingPage() {
                     ? ""
                     : p.currencies?.length && !p.currencies.includes(currency)
                       ? ` (${b("billing.currencyUnsupported", { currency })})`
-                      : // Configurado pero sin saber todavía su moneda (la consulta al proveedor falló): pasajero.
-                        p.currencies && p.currencies.length === 0
-                        ? ` (${b("billing.unavailableNow")})`
-                        : ` (${b("billing.notConfigured")})`}
+                      : // Configurado, pero su moneda no se conoce por un error de configuración (no se arregla reintentando).
+                        p.misconfigured
+                        ? ` (${b("billing.misconfigured")})`
+                        : // Configurado pero sin saber todavía su moneda (la consulta al proveedor falló): pasajero.
+                          p.currencies && p.currencies.length === 0
+                          ? ` (${b("billing.unavailableNow")})`
+                          : ` (${b("billing.notConfigured")})`}
                 </option>
               ))}
             </select>

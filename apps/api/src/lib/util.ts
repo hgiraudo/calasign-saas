@@ -192,3 +192,24 @@ export function requestPath(req: { url: string }): string {
     return raw;
   }
 }
+
+/**
+ * Credencial de un header `Authorization: Bearer <token>`. El esquema no distingue mayúsculas (RFC 7235 §2.1:
+ * "bearer", "BEARER"…): con `startsWith("Bearer ")` un cliente que mandaba "bearer" quedaba como anónimo.
+ * null si el header no es Bearer o viene vacío.
+ */
+export function bearerToken(header: string | string[] | undefined | null): string | null {
+  if (typeof header !== "string") return null;
+  const m = /^bearer\s+(.*)$/is.exec(header);
+  const token = m?.[1].trim();
+  return token ? token : null;
+}
+
+/** Host de una URL (sin ruta ni query: la de un webhook puede llevar un secreto, ?token=…). null si no es una URL. */
+export function hostOf(url: string): string | null {
+  try {
+    return new URL(url).host;
+  } catch {
+    return null;
+  }
+}

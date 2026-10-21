@@ -31,7 +31,7 @@ export const ENVELOPE_SEARCH_QUERY = [
 const ApiEventSchema = named(
   "ApiEvent",
   z.object({
-    id: z.string().describe("Único por evento (evt_…). Usarlo para descartar duplicados."),
+    id: z.string().uuid().describe("Único por evento y el mismo que el `id` del webhook de ese evento (UUID determinístico por sobre, registro y tipo). Usarlo para descartar duplicados entre webhooks y eventos. No es un cursor: para seguir, `cursor`."),
     type: z.string().describe(`Tipo público (${WEBHOOK_EVENT_TYPES.join(", ")}) o, con scope=all, el tipo de evidencia.`),
     occurredAt: iso(),
     envelopeId: z.string().uuid(),
@@ -127,7 +127,7 @@ export const DEVAPI_OPS: Op[] = [
     description:
       "`text/event-stream`: cada mensaje lleva `id:` (cursor), `event:` (tipo) y `data:` (ApiEvent en JSON). Retoma desde `after` o el header `Last-Event-ID`; sin ninguno, desde `since` si se indica y si no, ahora. " +
       "La conexión se cierra a los `max_seconds` (por defecto 300) con `event: end`; EventSource reconecta solo. Máximo 5 streams abiertos por organización (429 too_many_streams). Cada minuto se revisa la credencial: si se revoca (key, token, sesión), la persona deja la organización, cambian sus permisos o el plan deja de incluir el acceso por API, el stream termina con `event: end` y `{\"reason\":\"unauthorized\"}`; al reconectar rige el acceso nuevo.",
-    query: [...EVENT_QUERY.map((q) => (q.name === "since" ? date("since", "Sin `after` ni `Last-Event-ID`: empieza desde esta fecha en lugar de ahora.") : q)), { name: "max_seconds", description: "Duración máxima de la conexión (5..3600, por defecto 300).", schema: { type: "integer", minimum: 5, maximum: 3600, default: 300 } }],
+    query: [...EVENT_QUERY.map((q) => (q.name === "since" ? date("since", "Sin `after` ni `Last-Event-ID`: empieza desde esta fecha en lugar de ahora.") : q)), { name: "max_seconds", description: "Duración máxima de la conexión en segundos (60..3600, por defecto 300; fuera de rango se ajusta al extremo).", schema: { type: "integer", minimum: 60, maximum: 3600, default: 300 } }],
     responseDescription: "Stream de eventos (text/event-stream).",
     errors: ["invalid_cursor"],
   },

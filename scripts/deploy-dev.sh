@@ -130,7 +130,7 @@ cd \$D
 # 9>&-: el lock del deploy no pasa a pnpm (ni a algo que deje corriendo).
 # --prod: sin devDependencies (typescript, vitest, @types/*) en el host. Lo que la API usa al correr está en
 # dependencies (tsx incluido: arranca server.ts, worker.ts y migrate.ts); solo esbuild y pkcs11js corren scripts de
-# instalación (onlyBuiltDependencies en pnpm-workspace.yaml).
+# instalación ("pnpm".onlyBuiltDependencies del package.json raíz; pnpm 9 no la lee de pnpm-workspace.yaml).
 sudo -u calasign-build env HOME=\$BUILD_HOME COREPACK_HOME=\$BUILD_HOME/corepack PATH=\$PATH COREPACK_ENABLE_DOWNLOAD_PROMPT=0 CI=true \
   corepack pnpm install --prod --frozen-lockfile --config.package-import-method=copy --config.store-dir=\$BUILD_HOME/pnpm-store \
   --filter '@calasign/api...' 9>&- 2>&1 | tail -3

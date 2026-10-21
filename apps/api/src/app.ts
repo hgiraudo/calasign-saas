@@ -12,7 +12,7 @@ import { queueHealth } from "./infra/queue";
 import type { Db } from "./infra/db";
 import type { BlobStore } from "./infra/storage";
 import { AppError, rateLimitError } from "./lib/errors";
-import { rateLimitIpKey } from "./lib/ip";
+import { rateLimitIpKey, rateLimitKey } from "./lib/ip";
 import { requestPath } from "./lib/util";
 import { LOG_REDACT_PATHS, safeRequestSerializer } from "./lib/redact";
 import { readMailbox } from "./notifications/channels";
@@ -55,6 +55,10 @@ import { INTEGRATIONS_PREFIX, integrationsStaticHeaders } from "./modules/integr
 
 /** Ver el hook que la pone en buildApp. */
 export const PERMISSIONS_POLICY = "camera=(self), microphone=(), geolocation=(), payment=(), usb=()";
+// Páginas públicas del front que muestran el captcha de Turnstile (<Captcha>): el formulario público (/f/:slug,
+// PublicForm) y el inicio de un flujo público (/wf/:slug, PublicWorkflowStartPage). Una página nueva con captcha tiene
+// que sumarse acá, si no el navegador bloquea el script y el iframe de Cloudflare.
+export const TURNSTILE_PAGE_PREFIXES = ["/f/", "/wf/"] as const;
 
 /** Suma `origin` a script-src y frame-src de un CSP (frame-src se crea si no está, con 'self' como el default-src). */
 export function withTurnstile(csp: string, origin: string): string {
@@ -119,11 +123,13 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
     reply.header("permissions-policy", PERMISSIONS_POLICY);
   });
   if (turnstile) {
-    // El CSP se arma por respuesta: solo el documento del formulario público (/f/:slug) suma Turnstile. Se entra ahí
-    // siempre con una carga completa (link público o iframe), así que el CSP del documento es el de /f/*.
+    // El CSP se arma por respuesta: solo los documentos de las páginas públicas que muestran el captcha suman
+    // Turnstile (TURNSTILE_PAGE_PREFIXES). Se entra ahí siempre con una carga completa (link público o iframe), así que
+    // el CSP del documento es el de esa ruta.
     app.addHook("onSend", async (req, reply, payload) => {
       if (req.method !== "GET" && req.method !== "HEAD") return payload;
-      if (!requestPath(req).startsWith("/f/")) return payload;
+      const path = requestPath(req);
+      if (!TURNSTILE_PAGE_PREFIXES.some((p) => path.startsWith(p))) return payload;
       const csp = reply.getHeader("content-security-policy");
       if (typeof csp === "string" && csp) reply.header("content-security-policy", withTurnstile(csp, turnstile));
       return payload;
@@ -135,10 +141,11 @@ export async function buildApp(deps: { db: Db; blobs: BlobStore; logger?: boolea
   await app.register(rateLimit, {
     max: 600,
     timeWindow: "1 minute",
-    // Por IP y, en IPv6, por /64 (lib/ip.ts): un cliente IPv6 tiene el bloque entero. La lista de IPs sin límite se
-    // compara con esa clave (loopback queda igual; ::ffff:127.0.0.1 pasa a 127.0.0.1).
-    keyGenerator: (req) => rateLimitIpKey(req.ip),
-    allowList: config.environment === "local" ? ["127.0.0.1", "::1"] : [],
+    // Con credencial Bearer, por credencial (hash); sin ella, por IP y, en IPv6, por /64 (lib/ip.ts). El store es el
+    // de memoria del proceso: el límite es por réplica. Las IPs sin límite del entorno local se comparan con la clave
+    // de IP (loopback queda igual; ::ffff:127.0.0.1 pasa a 127.0.0.1), también con credencial.
+    keyGenerator: (req) => rateLimitKey(req),
+    allowList: config.environment === "local" ? (req) => ["127.0.0.1", "::1"].includes(rateLimitIpKey(req.ip)) : [],
     // Código rate_limited y texto en español (los conectores y SDK tratan rate_limited igual que el bad_request de antes).
     errorResponseBuilder: rateLimitError,
   });

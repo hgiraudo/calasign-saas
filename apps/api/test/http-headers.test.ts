@@ -1,9 +1,9 @@
-// Encabezados HTTP globales: cache-control por defecto de /v1/*, Permissions-Policy, CSP con Turnstile solo en /f/* y
+// Encabezados HTTP globales: cache-control por defecto de /v1/*, Permissions-Policy, CSP con Turnstile solo en /f/* y /wf/* y
 // la cookie de sesión __Host-cs_session (con HTTPS) leyendo todavía la de nombre viejo. App real sobre PGlite.
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "calasign-http-headers-"));
 delete process.env.DATABASE_URL;
@@ -11,6 +11,7 @@ delete process.env.DATABASE_URL;
 process.env.COOKIE_SECURE = "true";
 process.env.TURNSTILE_SITE_KEY = "site-key-test";
 process.env.TURNSTILE_SECRET_KEY = "secret-key-test";
+process.env.SESSION_COOKIE_PARENT_DOMAINS = "app.calasign.test,calasign.test";
 
 type Db = Awaited<ReturnType<typeof import("../src/infra/db")["createDb"]>>;
 type App = Awaited<ReturnType<typeof import("../src/app")["buildApp"]>>;
@@ -73,13 +74,15 @@ describe("Permissions-Policy y CSP", () => {
       expect(res.headers["permissions-policy"]).toBe("camera=(self), microphone=(), geolocation=(), payment=(), usb=()");
     }
   });
-  it("Turnstile solo en el CSP de /f/*", async () => {
-    const form = String((await app.inject({ method: "GET", url: "/f/un-formulario" })).headers["content-security-policy"]);
-    expect(form).toMatch(/(^|;)script-src 'self' https:\/\/challenges\.cloudflare\.com(;|$)/);
-    expect(form).toMatch(/(^|;)frame-src 'self' https:\/\/challenges\.cloudflare\.com(;|$)/);
-    // script-src-attr no se toca.
-    expect(form).toMatch(/script-src-attr 'none'/);
-    for (const url of ["/login", "/s/abc", "/v1/me", "/app/f/x"]) {
+  it("Turnstile solo en el CSP de las páginas con captcha (/f/* y /wf/*)", async () => {
+    for (const url of ["/f/un-formulario", "/wf/un-flujo"]) {
+      const form = String((await app.inject({ method: "GET", url })).headers["content-security-policy"]);
+      expect(form).toMatch(/(^|;)script-src 'self' https:\/\/challenges\.cloudflare\.com(;|$)/);
+      expect(form).toMatch(/(^|;)frame-src 'self' https:\/\/challenges\.cloudflare\.com(;|$)/);
+      // script-src-attr no se toca.
+      expect(form).toMatch(/script-src-attr 'none'/);
+    }
+    for (const url of ["/login", "/s/abc", "/v1/me", "/app/f/x", "/app/wf/x", "/wfx"]) {
       const csp = String((await app.inject({ method: "GET", url })).headers["content-security-policy"]);
       expect(csp).toContain("script-src 'self'");
       expect(csp).not.toContain("challenges.cloudflare.com");
@@ -99,8 +102,28 @@ describe("cookie de sesión __Host-cs_session", () => {
     const out = await app.inject({ method: "POST", url: "/v1/auth/logout", headers: ORIGIN, cookies: { cs_session: tok } });
     expect(out.statusCode).toBe(204);
     const cleared = out.cookies.filter((x) => !x.value);
-    expect(cleared.map((x) => x.name).sort()).toEqual(["__Host-cs_session", "cs_session"]);
+    // La vieja también con Domain= de los dominios configurados (una plantada desde un subdominio).
+    expect(cleared.map((x) => `${x.name}@${x.domain ?? ""}`).sort()).toEqual([
+      "__Host-cs_session@",
+      "cs_session@",
+      "cs_session@app.calasign.test",
+      "cs_session@calasign.test",
+    ]);
     expect(cleared.every((x) => x.secure && x.path === "/")).toBe(true);
     expect((await app.inject({ method: "GET", url: "/v1/me", cookies: { "__Host-cs_session": tok } })).statusCode).toBe(401);
+  });
+  it("pasada la fecha de la transición, la cookie vieja ya no abre sesión", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-11-10T00:00:01Z"));
+      // (La sesión misma también vence a los 14 días: el control positivo con la cookie vieja está en el primer caso.)
+      const { sessionCookieToken } = await import("../src/modules/context");
+      expect(sessionCookieToken({ cookies: { cs_session: "viejo" } } as any)).toBeUndefined();
+      expect(sessionCookieToken({ cookies: { "__Host-cs_session": "nuevo", cs_session: "viejo" } } as any)).toBe("nuevo");
+      vi.setSystemTime(new Date("2026-11-09T23:59:59Z"));
+      expect(sessionCookieToken({ cookies: { cs_session: "viejo" } } as any)).toBe("viejo");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

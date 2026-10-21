@@ -348,6 +348,41 @@ describe("expiresAt: ausente = 30 días, null = sin vencimiento", () => {
   });
 });
 
+describe("plantilla con firma con certificado que corresponda al documento", () => {
+  it("el sobre nace con el requisito del rol; al enviar se baja (con la marca) solo si falta el documento", async () => {
+    const t = await templateWithForm("certsign-id-match");
+    await db.query(`UPDATE template_roles SET signature_type = 'certificate', certificate_requirements = $2 WHERE id = $1`, [
+      t.role,
+      JSON.stringify({ matchIdDocument: true, allowedIssuers: [], requireQualified: false }),
+    ]);
+    const reqs = async (env: string) =>
+      (await db.one<any>(`SELECT certificate_requirements AS r FROM recipients WHERE envelope_id = $1 AND role = 'signer'`, [env])).r;
+    const create = async (idDocumentNumber?: string) => {
+      const r = await app.inject({
+        method: "POST",
+        url: "/v1/envelopes/from-template",
+        headers: auth,
+        payload: { templateId: t.tpl, recipients: [{ roleId: t.role, name: "Ana", email: "ana@x.test", ...(idDocumentNumber ? { idDocumentNumber } : {}) }] },
+      });
+      expect(r.statusCode, r.body).toBe(201);
+      return r.json().envelope.id as string;
+    };
+    const send = async (env: string) => {
+      const r = await app.inject({ method: "POST", url: `/v1/envelopes/${env}/send`, headers: auth, payload: {} });
+      expect(r.statusCode, r.body).toBe(200);
+    };
+    // Sin documento: el borrador conserva el pedido (el remitente todavía puede cargar el documento); al enviar se baja.
+    const sin = await create();
+    expect(await reqs(sin)).toEqual({ matchIdDocument: true, allowedIssuers: [], requireQualified: false });
+    await send(sin);
+    expect(await reqs(sin)).toMatchObject({ matchIdDocument: false, idDocumentMatchSkipped: true });
+    // Con documento se conserva al crear y al enviar.
+    const con = await create("30111222");
+    await send(con);
+    expect(await reqs(con)).toEqual({ matchIdDocument: true, allowedIssuers: [], requireQualified: false });
+  });
+});
+
 describe("búsqueda con comodines literales", () => {
   it("% y _ se buscan como texto en sobres y plantillas", async () => {
     for (const subject of ["Descuento 50% marzo", "Descuento 50 marzo", "Plan a_b", "Plan axb"]) {

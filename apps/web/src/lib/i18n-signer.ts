@@ -32,6 +32,9 @@ const es = {
   "delegate.phoneInvalid": "El teléfono tiene que empezar con + y el código de país (por ejemplo +5491122334455).",
   "delegate.reason": "Motivo",
   "delegate.confirm": "Delegar",
+  "delegate.idDoc": "Número de documento de la persona",
+  "delegate.idDocRequired":
+    "Este documento se firma con un certificado digital que tiene que corresponder al documento de identidad del firmante. Para delegar, indicá el número de documento de la persona: su certificado tendrá que corresponder a ese número.",
   "delegate.doneTitle": "Delegaste la firma",
   "delegate.doneText": "Le enviamos el documento a {name}. Este link ya no está activo.",
   "edit.authMethod": "Verificación de identidad",
@@ -117,6 +120,9 @@ const ptBR: Dict = {
   "delegate.phoneInvalid": "O telefone precisa começar com + e o código do país (por exemplo +5511912345678).",
   "delegate.reason": "Motivo",
   "delegate.confirm": "Delegar",
+  "delegate.idDoc": "Número do documento da pessoa",
+  "delegate.idDocRequired":
+    "Este documento é assinado com um certificado digital que precisa corresponder ao documento de identidade do signatário. Para delegar, informe o número do documento da pessoa: o certificado dela terá que corresponder a esse número.",
   "delegate.doneTitle": "Você delegou a assinatura",
   "delegate.doneText": "Enviamos o documento para {name}. Este link não está mais ativo.",
   "edit.authMethod": "Verificação de identidade",
@@ -199,6 +205,9 @@ const en: Dict = {
   "delegate.phoneInvalid": "The phone number must start with + and the country code (for example +14155550123).",
   "delegate.reason": "Reason",
   "delegate.confirm": "Delegate",
+  "delegate.idDoc": "The person's ID document number",
+  "delegate.idDocRequired":
+    "This document is signed with a digital certificate that must match the signer's ID document. To delegate, enter the person's ID document number: their certificate will have to match that number.",
   "delegate.doneTitle": "You delegated the signature",
   "delegate.doneText": "We sent the document to {name}. This link is no longer active.",
   "edit.authMethod": "Identity verification",

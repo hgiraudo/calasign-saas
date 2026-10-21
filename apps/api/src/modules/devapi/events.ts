@@ -5,9 +5,10 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { WEBHOOK_EVENT_TYPES, type ApiEvent, type ListEventsResponse } from "@calasign/shared";
 import { EVIDENCE_TO_WEBHOOK } from "../../infra/webhook-outbox";
 import { badRequest } from "../../lib/errors";
-import { iso, queryList, sha256Hex } from "../../lib/util";
+import { bearerToken, iso, queryList, sha256Hex } from "../../lib/util";
 import { envelopeVisibilitySql, loadAccess, type AccessInfo } from "../access";
 import { tenantPlan } from "../billing/plans";
+import { webhookEventId } from "../webhooks";
 import { authenticate, sessionCookieToken, type AuthContext, type Services } from "../context";
 import { isOAuthAccessToken, resolveAccessToken, restrictAccessToScopes } from "../oauth-tokens";
 
@@ -169,7 +170,7 @@ export async function readEvents(s: Services, a: AuthContext, f: Filters, limit:
   }
   params.push(limit + 1);
   const rows = await s.db.query<any>(
-    `SELECT ev.id::text AS id, ev.pos::text AS pos, ev.type, ev.occurred_at, ev.envelope_id, ev.actor_type, ev.actor_id, ev.data,
+    `SELECT ev.id::text AS id, ev.pos::text AS pos, ev.seq, ev.type, ev.occurred_at, ev.envelope_id, ev.actor_type, ev.actor_id, ev.data,
             e.subject, e.status, e.metadata
        FROM envelope_events ev JOIN envelopes e ON e.id = ev.envelope_id
       WHERE ${where} ORDER BY ev.pos LIMIT $${params.length}`,
@@ -182,13 +183,14 @@ export async function readEvents(s: Services, a: AuthContext, f: Filters, limit:
     const data = (r.data ?? {}) as Record<string, unknown>;
     const recipientId =
       typeof data.recipientId === "string" ? data.recipientId : r.actor_type === "recipient" && typeof r.actor_id === "string" ? r.actor_id : null;
-    // El id sale de la posición entre TODOS los tipos públicos del registro, no entre los filtrados: si no, el mismo
-    // envelope.declined era evt_N_1 sin filtro y evt_N con types=envelope.declined (y no se podía deduplicar).
     const allTypes = f.all ? [r.type] : (EVIDENCE_TO_WEBHOOK[r.type] ?? []);
-    allTypes.forEach((type, i) => {
-      if (!f.all && wanted && !wanted.has(type)) return;
+    for (const type of allTypes) {
+      if (!f.all && wanted && !wanted.has(type)) continue;
       items.push({
-        id: `evt_${r.id}${allTypes.length > 1 ? `_${i}` : ""}`,
+        // El mismo id que el evento de los webhooks (UUIDv5 de sobre, seq y tipo): un integrador que recibe los dos
+        // canales deduplica por `id`. No depende de los filtros (un recipient.declined da recipient.declined y
+        // envelope.declined, cada uno con su id, pidiendo uno solo o los dos). El cursor es aparte.
+        id: webhookEventId(r.envelope_id, Number(r.seq), type),
         type,
         occurredAt: iso(r.occurred_at)!,
         envelopeId: r.envelope_id,
@@ -198,7 +200,7 @@ export async function readEvents(s: Services, a: AuthContext, f: Filters, limit:
         data: f.all ? data : typeof data.reason === "string" ? { reason: data.reason } : {},
         cursor: `p${r.pos}`,
       });
-    });
+    }
   }
   const last = page[page.length - 1];
   return { items, nextCursor: last ? `p${last.pos}` : f.after, hasMore: rows.length > limit };
@@ -234,7 +236,7 @@ export async function eventRoutes(app: FastifyInstance, s: Services) {
     // El `id:` de cada mensaje es el cursor; EventSource lo devuelve en Last-Event-ID al reconectar.
     const f = parseFilters(req.query, (req.headers["last-event-id"] as string | undefined)?.trim() || undefined);
     const startAfter = f.after || f.since ? f.after : await currentCursor(s, a.tenantId);
-    const maxSec = Math.min(3600, Math.max(5, Math.trunc(Number(req.query.max_seconds ?? 300)) || 300));
+    const maxSec = Math.min(3600, Math.max(60, Math.trunc(Number(req.query.max_seconds ?? 300)) || 300));
     if (shuttingDown) {
       return reply.code(503).header("retry-after", "5").send({ error: { code: "shutting_down", message: "El servidor se está reiniciando" } });
     }
@@ -281,8 +283,7 @@ export async function eventRoutes(app: FastifyInstance, s: Services) {
     // La credencial se validó al abrir: una API key revocada o un miembro dado de baja no siguen recibiendo eventos.
     // Tampoco un access token OAuth vencido (dura 1 h, como el stream más largo) o revocado (él o su app), ni una
     // sesión cerrada: antes el stream seguía hasta `max_seconds` con esa credencial ya inválida.
-    const authz = req.headers.authorization;
-    const bearer = authz?.startsWith("Bearer ") ? authz.slice(7).trim() : null;
+    const bearer = bearerToken(req.headers.authorization);
     const oauthToken = bearer && isOAuthAccessToken(bearer) ? bearer : null;
     const sessionToken = bearer ? null : (sessionCookieToken(req) ?? null);
     const stillAllowed = async () => {

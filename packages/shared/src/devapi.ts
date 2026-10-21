@@ -7,7 +7,10 @@ import { UserMetadata } from "./api";
 
 /** Evento de la organización tal como lo devuelven GET /v1/events y /v1/events/stream. */
 export interface ApiEvent {
-  /** Único por evento (un registro de evidencia puede producir más de un evento, p. ej. recipient.declined + envelope.declined). */
+  /**
+   * Único por evento (un registro de evidencia puede producir más de un evento, p. ej. recipient.declined +
+   * envelope.declined) y el mismo `id` que el webhook de ese evento: UUIDv5 de (sobre, seq, tipo).
+   */
   id: string;
   /** Tipo público (el mismo de los webhooks) o, con `scope=all`, el tipo de evidencia. */
   type: string;

@@ -290,7 +290,7 @@ export const WebhookSchema = named(
       .nullable()
       .optional()
       .describe(
-        "Solo lectura. `credential_revoked`: inactivo porque se revocó la API key o la app OAuth que lo creó (o el usuario dejó la organización). `permission_lost`: esa credencial sigue vigente pero ya no tiene `webhooks:manage` y `envelopes:view_all` (cambio de rol o de scopes). En los dos casos, reactivarlo con `active: true` lo ata a la credencial actual. `gone`: el receptor respondió 410 Gone. `failing`: N entregas fallidas definitivas seguidas (50 por defecto) o 7 días fallando sin ninguna exitosa. `null`: activo o pausado a mano. Las desactivaciones automáticas quedan en la auditoría (webhook.deactivated) y se avisan por correo a quienes tienen `webhooks:manage`.",
+        "Solo lectura. `credential_revoked`: inactivo porque se revocó la API key o la app OAuth que lo creó (o el usuario dejó la organización). `permission_lost`: esa credencial sigue vigente pero ya no tiene `webhooks:manage` y `envelopes:view_all` (cambio de rol o de scopes). En los dos casos, reactivarlo con `active: true` lo ata a la credencial actual. `gone`: el receptor respondió 410 Gone. `failing`: N entregas fallidas definitivas seguidas (50 por defecto) o 7 días fallando sin ninguna exitosa (con al menos 5 fallas definitivas seguidas). `null`: activo o pausado a mano. Las desactivaciones automáticas quedan en la auditoría (webhook.deactivated) y se avisan por correo a quienes tienen `webhooks:manage`.",
       ),
     createdAt: iso(),
     updatedAt: iso(),
@@ -321,9 +321,11 @@ export const WebhookEventSchema = named(
   "WebhookEvent",
   z
     .object({
-      id: uuid().describe("Id del evento (igual al header CalaSign-Event-Id). Usarlo para deduplicar: los reintentos repiten el mismo id."),
+      id: uuid().describe(
+        "Id del evento (igual al header CalaSign-Event-Id y al `id` del mismo evento en GET /v1/events). Usarlo para deduplicar: los reintentos y la API de eventos repiten el mismo id.",
+      ),
       type: z.enum([...WEBHOOK_EVENT_TYPES, "webhook.test"]),
-      createdAt: iso(),
+      createdAt: iso().describe("Cuándo ocurrió el evento (= occurredAt en GET /v1/events), no cuándo se armó la entrega."),
       tenantId: uuid(),
       data: z.object({
         envelope: z
@@ -347,7 +349,7 @@ export const WebhookEventSchema = named(
             ),
           })
           .nullable()
-          .describe("Estado del sobre al momento de armar el evento. null en webhook.test."),
+          .describe("Estado del sobre cuando se armó la entrega (segundos después del evento: puede reflejar cambios posteriores). null en webhook.test."),
         recipientId: uuid().nullable().optional().describe("Destinatario que originó el evento (recipient.*). No viene en webhook.test."),
         reason: z.string().nullable().optional().describe("Motivo (rechazo o anulación), si lo hay. No viene en webhook.test."),
       }),

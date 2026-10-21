@@ -21,7 +21,7 @@ import { config } from "../config";
 import type { Db } from "../infra/db";
 import { enqueue } from "../infra/queue";
 import { badRequest, conflict, notFound } from "../lib/errors";
-import { decrypt, encrypt, iso, randomToken, uuidv5, uuidv7 } from "../lib/util";
+import { decrypt, encrypt, hostOf, iso, randomToken, uuidv5, uuidv7 } from "../lib/util";
 import { sendTracked } from "../notifications/outbound";
 import { normLocale, render } from "../notifications/templates";
 import { loadAccess } from "./access";
@@ -591,8 +591,9 @@ async function recordEndpointSuccess(db: Db, endpointId: string) {
  * Entrega fallida definitiva (agotados los reintentos automáticos, o un 410 de un endpoint creado a mano): suma a la
  * racha y desactiva el endpoint ("failing") con config.webhooks.maxConsecutiveFailures seguidas Y al menos
  * failingMinHours horas fallando sin ningún éxito (un receptor caído 15 minutos durante un envío masivo junta 50 fallas
- * sin estar roto), o con failingDays días fallando sin ningún éxito. `url`: la URL a la que se entregó; si el endpoint
- * ya apunta a otra (se la cambiaron, lo que reinicia la racha), la falla no cuenta.
+ * sin estar roto), o con failingDays días fallando sin ningún éxito y al menos failingDaysMinFailures fallas seguidas.
+ * `url`: la URL a la que se entregó; si el endpoint ya apunta a otra (se la cambiaron, lo que reinicia la racha), la
+ * falla no cuenta.
  */
 async function recordEndpointFailure(d: Deps, tenantId: string, endpointId: string, url: string) {
   const r = await d.db.one<any>(
@@ -603,7 +604,10 @@ async function recordEndpointFailure(d: Deps, tenantId: string, endpointId: stri
     [endpointId, config.webhooks.failingDays, config.webhooks.failingMinHours, url],
   );
   if (!r?.active) return;
-  if ((r.consecutive_failures >= config.webhooks.maxConsecutiveFailures && r.long_enough) || r.stale) {
+  // Los días fallando también piden un mínimo de fallas seguidas: con pocos eventos, dos fallas separadas por una semana
+  // (un receptor que tuvo dos cortes cortos) desactivaban un endpoint que funciona.
+  const staleMin = Math.min(config.webhooks.failingDaysMinFailures, config.webhooks.maxConsecutiveFailures);
+  if ((r.consecutive_failures >= config.webhooks.maxConsecutiveFailures && r.long_enough) || (r.stale && r.consecutive_failures >= staleMin)) {
     await autoDeactivate(d, tenantId, endpointId, "failing", { consecutiveFailures: r.consecutive_failures }, url);
   }
 }
@@ -617,10 +621,17 @@ async function fanout(d: Deps, p: Extract<WebhookJob, { kind: "fanout" }>) {
   // Determinístico: un reintento del job (o un worker que se cayó a mitad) no duplica las entregas (UNIQUE endpoint_id,
   // event_id). Los jobs viejos sin seq siguen con un id nuevo por ejecución.
   const eventId = typeof p.seq === "number" ? webhookEventId(p.envelopeId, p.seq, p.type) : uuidv7();
+  // createdAt: cuándo ocurrió el evento (el registro de evidencia), no cuándo corrió el fanout: con la cola atrasada o
+  // un reintento del job, la hora del fanout no coincidía con occurredAt de GET /v1/events. Los jobs sin seq (anteriores
+  // a 0087) o sin registro (purgado) usan la hora actual. data.envelope sí es el estado al armar la entrega (documentado).
+  const occurred =
+    typeof p.seq === "number"
+      ? await d.db.one<{ occurred_at: Date | string }>(`SELECT occurred_at FROM envelope_events WHERE envelope_id = $1 AND seq = $2`, [p.envelopeId, p.seq])
+      : null;
   const payload: WebhookEventPayload = {
     id: eventId,
     type: p.type as WebhookEventPayload["type"],
-    createdAt: new Date().toISOString(),
+    createdAt: occurred ? iso(occurred.occurred_at)! : new Date().toISOString(),
     tenantId: p.tenantId,
     data: { envelope: await envelopeSnapshot(d.db, p.envelopeId), recipientId: p.recipientId ?? null, reason: p.reason ?? null },
   };
@@ -639,14 +650,6 @@ async function fanout(d: Deps, p: Extract<WebhookJob, { kind: "fanout" }>) {
 }
 
 /** Un intento de entrega. Lanza si falla, para que la cola reintente con backoff. */
-function hostOf(url: string): string | null {
-  try {
-    return new URL(url).host;
-  } catch {
-    return null;
-  }
-}
-
 async function deliverOne(d: Deps, deliveryId: string, attempt: number, manual: boolean) {
   const row = await d.db.one<any>(
     `SELECT dl.*, ep.url, ep.secret_enc, ep.active, ep.created_by_api_key, ep.oauth_client_id,
@@ -655,13 +658,17 @@ async function deliverOne(d: Deps, deliveryId: string, attempt: number, manual: 
     [deliveryId],
   );
   if (!row || row.status === "succeeded") return;
-  // Una entrega encolada antes de revocar la credencial que creó la suscripción tampoco sale.
-  if (row.active && !manual) {
+  // Una entrega encolada antes de revocar la credencial que creó la suscripción (o de que perdiera los permisos) tampoco
+  // sale. También las manuales (reintento, prueba): si no, un reintento pedido justo antes de revocar la key, o una
+  // prueba sobre un endpoint huérfano todavía activo, mandaba los datos del sobre a la integración ya cortada.
+  let revoked = false;
+  if (row.active) {
     await deactivateOrphanedEndpoints(d.db, row.tenant_id);
     await deactivateEndpointsWithoutPermission(d, row.tenant_id);
     row.active = Boolean((await d.db.one<any>(`SELECT active FROM webhook_endpoints WHERE id = $1`, [row.endpoint_id]))?.active);
+    revoked = !row.active;
   }
-  if (!row.active && !manual) {
+  if ((!row.active && !manual) || revoked) {
     await d.db.query(`UPDATE webhook_deliveries SET status = 'failed', last_error = 'endpoint desactivado', next_retry_at = NULL WHERE id = $1`, [deliveryId]);
     return;
   }
@@ -806,6 +813,8 @@ export async function webhookRoutes(app: FastifyInstance, s: Services) {
     const a = A(req);
     const input = UpdateWebhookInput.parse(req.body);
     const cur = await load(a.tenantId, req.params.id);
+    // Para la auditoría (audit.ts): la URL anterior, de la que solo se registra el host.
+    (req as FastifyRequest & { auditBefore?: Record<string, unknown> }).auditBefore = { url: cur.url };
     // Reactivar una suscripción que se desactivó porque se revocó la credencial que la creó (o porque perdió los
     // permisos) la pasa a quien la reactiva (si no, se volvía a desactivar sola en el próximo evento). Solo en ese caso:
     // pausar y reanudar una que funciona no le cambia el origen (si no, dejaba de cortarse al revocar la key de
@@ -886,6 +895,9 @@ export async function webhookRoutes(app: FastifyInstance, s: Services) {
     const a = A(req);
     const row = await s.db.one<any>(`SELECT * FROM webhook_deliveries WHERE id = $1 AND tenant_id = $2`, [req.params.id, a.tenantId]);
     if (!row) throw notFound("Entrega");
+    // Primero se desactivan los de una credencial revocada o sin permisos (como al listar): si no, el reintento pasaba el
+    // chequeo de activo y salía hacia la integración ya cortada.
+    await refresh(a.tenantId);
     // Con el endpoint inactivo (pausado o desactivado por fallas, 410 o permisos) no sale: primero hay que reactivarlo.
     const endpointActive = async (db: Db) => Boolean((await db.one<any>(`SELECT active FROM webhook_endpoints WHERE id = $1`, [row.endpoint_id]))?.active);
     if (!(await endpointActive(s.db))) throw conflict("endpoint_inactive", "El webhook está desactivado: reactivalo para reintentar la entrega");
@@ -926,7 +938,8 @@ export async function webhookRoutes(app: FastifyInstance, s: Services) {
     return toDelivery({ ...row, status: "pending", next_retry_at: null });
   });
 
-  app.post<P>("/v1/webhooks/:id/test", { preHandler: auth }, async (req, reply) => {
+  // Cada prueba es un POST a la URL del cliente: con límite propio (10 por minuto por credencial o IP).
+  app.post<P>("/v1/webhooks/:id/test", { preHandler: auth, config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req, reply) => {
     const a = A(req);
     const ep = await load(a.tenantId, req.params.id);
     const eventId = uuidv7();

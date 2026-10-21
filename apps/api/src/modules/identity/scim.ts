@@ -10,7 +10,7 @@ import { z } from "zod";
 import { config } from "../../config";
 import type { Db } from "../../infra/db";
 import { AppError, notFound } from "../../lib/errors";
-import { iso, randomToken, sha256Hex, uuidv7 } from "../../lib/util";
+import { bearerToken, iso, randomToken, sha256Hex, uuidv7 } from "../../lib/util";
 import { recordAudit } from "../audit";
 import { hasPerm } from "../access";
 import { authenticate, clientInfo, type AuthContext, type Services } from "../context";
@@ -481,8 +481,7 @@ export async function scimRoutes(app: FastifyInstance, s: Services) {
 
     // Autenticación por token Bearer de la organización.
     sub.addHook("onRequest", async (req: FastifyRequest) => {
-      const h = req.headers.authorization ?? "";
-      const token = h.startsWith("Bearer ") ? h.slice(7).trim() : "";
+      const token = bearerToken(req.headers.authorization) ?? "";
       if (!token) throw new ScimError(401, "Falta el token");
       const row = await s.db.one<any>(`SELECT id, tenant_id, name FROM scim_tokens WHERE token_hash = $1 AND revoked_at IS NULL`, [sha256Hex(token)]);
       if (!row) throw new ScimError(401, "Token inválido");

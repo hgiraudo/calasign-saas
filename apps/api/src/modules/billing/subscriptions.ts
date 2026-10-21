@@ -143,10 +143,17 @@ export async function pickProvider(requested: BillingProvider | undefined, curre
   const ok = (id: BillingProvider) => available.some((p) => p.id === id && p.configured);
   if (requested) {
     if (ok(requested)) return requested;
-    // Mercado Pago configurado pero sin saber todavía en qué moneda cobra (falló /users/me o site_id desconocido): es
-    // pasajero, no que la moneda no se admita.
+    // Mercado Pago configurado pero sin saber todavía en qué moneda cobra. Si /users/me respondió con un país que no
+    // conocemos (sin MP_CURRENCIES) es un error de configuración: no se arregla reintentando (sin Retry-After). Si la
+    // consulta falló, es pasajero (503 con Retry-After), no que la moneda no se admita.
     const mp = available.find((p) => p.id === requested);
     if (requested === "mercadopago" && subscriptionProviderConfigured(requested) && mp?.currencies?.length === 0) {
+      if (mp.misconfigured)
+        throw new AppError(
+          422,
+          "provider_misconfigured",
+          "Mercado Pago no está bien configurado en la plataforma (no se reconoce el país de la cuenta): elegí otro medio de pago o escribinos a soporte",
+        );
       throw new AppError(503, "provider_unavailable", "Mercado Pago no está disponible por ahora: probá de nuevo en unos minutos", {
         retryAfterSeconds: mpCurrencyRetryAfterSeconds(),
       });

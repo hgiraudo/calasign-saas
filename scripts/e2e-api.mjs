@@ -235,12 +235,14 @@ try {
     // Cursores anteriores (el id solo, y "<tx>.<id>" de 0048): se traducen al mismo punto que el cursor nuevo.
     const mid = all[0].cursor;
     assert(/^p\d+$/.test(mid), `formato del cursor: ${mid}`);
-    const rowId = all[0].id.replace(/^evt_/, "").split("_")[0];
+    // El id del evento es el del webhook (UUID), no da el id del registro: se comparan los cursores viejos desde el
+    // principio ("0" y "<tx>.0") contra "p0".
+    assert(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(all[0].id), `formato del id (UUIDv5, el del webhook): ${all[0].id}`);
     const ids = (p) => JSON.stringify(p.items.map((e) => e.id));
-    const fromNew = await api("GET", `/v1/events?envelope_id=${A.id}&after=${mid}`);
-    const fromLegacy = await api("GET", `/v1/events?envelope_id=${A.id}&after=${rowId}`);
-    const fromTx = await api("GET", `/v1/events?envelope_id=${A.id}&after=12345.${rowId}`);
-    assert(ids(fromNew) === ids(fromLegacy) && ids(fromNew) === ids(fromTx), "cursores viejos equivalentes al nuevo");
+    const fromNew = await api("GET", `/v1/events?envelope_id=${A.id}&after=p0&limit=500`);
+    const fromLegacy = await api("GET", `/v1/events?envelope_id=${A.id}&after=0&limit=500`);
+    const fromTx = await api("GET", `/v1/events?envelope_id=${A.id}&after=12345.0&limit=500`);
+    assert(fromNew.items.length > 0 && ids(fromNew) === ids(fromLegacy) && ids(fromNew) === ids(fromTx), "cursores viejos equivalentes al nuevo");
     await api("GET", "/v1/events?after=abc", null, { expect: 400 });
     await api("GET", "/v1/events?after=1.2.3", null, { expect: 400 });
     await api("GET", "/v1/events?after=p1x", null, { expect: 400 });
@@ -271,7 +273,7 @@ try {
     // ───────── SSE: el envío del clon llega por el stream ─────────
     const cur = (await api("GET", "/v1/events?limit=500")).nextCursor;
     const ctrl = new AbortController();
-    const res = await fetch(`${BASE}/v1/events/stream?max_seconds=20&envelope_id=${B.envelope.id}`, { headers: { authorization: `Bearer ${bearer}`, "last-event-id": cur ?? "" }, signal: ctrl.signal });
+    const res = await fetch(`${BASE}/v1/events/stream?max_seconds=60&envelope_id=${B.envelope.id}`, { headers: { authorization: `Bearer ${bearer}`, "last-event-id": cur ?? "" }, signal: ctrl.signal });
     assert(res.status === 200 && res.headers.get("content-type").startsWith("text/event-stream"), "stream abierto");
     await api("POST", `/v1/envelopes/${B.envelope.id}/send`);
     const reader = res.body.getReader();

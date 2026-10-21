@@ -40,6 +40,11 @@ const Contact = {
     .regex(/^\+[1-9]\d{6,14}$/)
     .optional()
     .nullable(),
+  /**
+   * Número de documento de la persona nueva. Si el firmante original debía firmar con un certificado que corresponda a
+   * su documento (matchIdDocument), la delegación lo exige (409 delegation_requires_id_match) y el control se mantiene.
+   */
+  idDocumentNumber: z.string().trim().max(50).optional().nullable(),
 };
 
 export const DelegateInput = z

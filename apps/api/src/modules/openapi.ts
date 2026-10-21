@@ -644,7 +644,7 @@ const OPS: Op[] = [
     operationId: "createWebhook",
     tag: "Webhooks",
     summary: "Crear webhook (el secreto se devuelve una sola vez)",
-    description: "URL https (sin credenciales ni destinos locales). Máximo 20 por organización (cuentan los activos y los desactivados en los últimos 30 días). Sin `events`, recibe todos. Responde con el header `Location` (URL del webhook): DELETE a esa URL lo borra, como hacen los triggers REST hook de Power Automate y Logic Apps. Un webhook recibe los datos de todos los sobres de la organización: crearlo o modificarlo pide `webhooks:manage` y además `envelopes:view_all` (p. ej. el rol admin). Creado con una API key o con el token OAuth de un usuario (REST hooks de Zapier, Make, Power Automate), queda atado a esa credencial: si se revoca la key o la app, el usuario la desconecta (o se revocan sus tokens) o deja la organización, el webhook pasa a `active: false` (al listar los webhooks o en el próximo evento, antes de cualquier entrega; queda en la auditoría como webhook.deactivated). Reactivar uno desactivado por eso (PATCH `active: true`) lo pasa a la credencial de quien lo reactiva; desde una sesión web queda como webhook de la organización, sin credencial de origen. Pausar y reanudar uno que funciona no cambia su origen. Lo mismo si la credencial sigue vigente pero pierde `webhooks:manage` o `envelopes:view_all` (cambio de rol de la key o del usuario, o scopes de la app): `deactivatedReason: permission_lost`. Además se desactiva solo si el receptor responde 410 Gone (`gone`, sin reintentos) o con 50 entregas fallidas definitivas seguidas o 7 días fallando sin ninguna exitosa (`failing`); cada desactivación automática queda en la auditoría y se avisa por correo a quienes tienen `webhooks:manage`. Cada evento lleva un `id` estable: re-procesarlo no genera una entrega nueva para el mismo endpoint.",
+    description: "URL https (sin credenciales ni destinos locales). Máximo 20 por organización (cuentan los activos y los desactivados en los últimos 30 días). Sin `events`, recibe todos. Responde con el header `Location` (URL del webhook): DELETE a esa URL lo borra, como hacen los triggers REST hook de Power Automate y Logic Apps. Un webhook recibe los datos de todos los sobres de la organización: crearlo o modificarlo pide `webhooks:manage` y además `envelopes:view_all` (p. ej. el rol admin). Creado con una API key o con el token OAuth de un usuario (REST hooks de Zapier, Make, Power Automate), queda atado a esa credencial: si se revoca la key o la app, el usuario la desconecta (o se revocan sus tokens) o deja la organización, el webhook pasa a `active: false` (al listar los webhooks o en el próximo evento, antes de cualquier entrega; queda en la auditoría como webhook.deactivated). Reactivar uno desactivado por eso (PATCH `active: true`) lo pasa a la credencial de quien lo reactiva; desde una sesión web queda como webhook de la organización, sin credencial de origen. Pausar y reanudar uno que funciona no cambia su origen. Lo mismo si la credencial sigue vigente pero pierde `webhooks:manage` o `envelopes:view_all` (cambio de rol de la key o del usuario, o scopes de la app): `deactivatedReason: permission_lost`. Además se desactiva solo si el receptor responde 410 Gone (`gone`, sin reintentos) o con 50 entregas fallidas definitivas seguidas o 7 días fallando sin ninguna exitosa y con al menos 5 fallas seguidas (`failing`); cada desactivación automática queda en la auditoría y se avisa por correo a quienes tienen `webhooks:manage`. Cada evento lleva un `id` estable: re-procesarlo no genera una entrega nueva para el mismo endpoint.",
     body: CreateWebhookInput,
     status: 201,
     response: z.object({ webhook: WebhookSchema, secret: z.string().describe("whsec_…: verifica la firma HMAC. Se muestra una sola vez.") }),
@@ -668,7 +668,7 @@ const OPS: Op[] = [
     operationId: "testWebhook",
     tag: "Webhooks",
     summary: "Enviar un evento de prueba",
-    description: "Encola un evento webhook.test (un solo intento, también con el endpoint inactivo). Exige webhooks en el plan (402).",
+    description: "Encola un evento webhook.test (un solo intento, también con el endpoint inactivo). Exige webhooks en el plan (402). Hasta 10 pruebas por minuto (429 rate_limited).",
     status: 202,
     response: WebhookDeliverySchema,
     errors: ["plan_limit_webhooks"],
@@ -1007,11 +1007,11 @@ const OPS: Op[] = [
     tag: "Firmante",
     summary: "Delegar en otra persona",
     description:
-      "El nuevo destinatario hereda rol, campos y requisitos, y recibe la invitación; el link actual queda revocado. 403 forbidden si el remitente no permite delegar, si el firmante es embebido o si no validó su correo; 409 same_person (el mismo correo), not_replaceable o too_many_replacements; 410 envelope_closed. 10 pedidos por minuto.",
+      "El nuevo destinatario hereda rol, campos y requisitos, y recibe la invitación; el link actual queda revocado. 403 forbidden si el remitente no permite delegar, si el firmante es embebido o si no validó su correo; 409 same_person (el mismo correo), not_replaceable, too_many_replacements o delegation_requires_id_match (el firmante debe firmar con un certificado que corresponda a su documento: hay que indicar idDocumentNumber de la persona nueva y el control se mantiene); 410 envelope_closed. 10 pedidos por minuto.",
     body: DelegateInput,
     response: z.object({ delegated: z.literal(true), to: z.string().describe("Nombre de la persona en la que se delegó.") }),
     auth: "token",
-    errors: ["same_person", "not_replaceable", "too_many_replacements", "envelope_closed"],
+    errors: ["same_person", "not_replaceable", "too_many_replacements", "delegation_requires_id_match", "envelope_closed"],
   },
   {
     method: "get",
@@ -1181,7 +1181,7 @@ const OPS: Op[] = [
     auth: "none",
   },
   { method: "get", path: "/v1/signature-providers", operationId: "listSignatureProviders", tag: "Evidencia", summary: "Conectores de firma (plataforma, CSC v2, CA de Calasign)" },
-  { method: "post", path: "/v1/signature-providers/{id}/test", operationId: "testSignatureProvider", tag: "Evidencia", summary: "Probar un conector CSC (firma un hash de prueba; devuelve si funcionó y el titular, sin credenciales; hasta 5 por hora por organización)", errors: ["provider_test_limit"] },
+  { method: "post", path: "/v1/signature-providers/{id}/test", operationId: "testSignatureProvider", tag: "Evidencia", summary: "Probar un conector CSC (firma un hash de prueba; devuelve si funcionó y el titular, sin credenciales; hasta 5 por hora por organización, una a la vez)", errors: ["provider_test_limit", "provider_test_in_progress"] },
 
   // Firma XML
   {
@@ -1689,7 +1689,7 @@ export function buildOpenApi() {
         "500 internal_error y 503 storage_unavailable (reintentable) o byok_key_unavailable (no reintentable: requiere que un administrador restablezca la clave BYOK). " +
         "Reintentables con espera creciente: 429 rate_limited (según Retry-After), 502 tsa_unavailable y ai_unavailable, 503 storage_unavailable, pdf_reader_busy y ai_rate_limited, 504 ai_timeout; los 429 con código propio (reminded_recently, form_rate_limited…) no traen Retry-After y no se reintentan en un loop. " +
         "Nombres: cuerpos y respuestas JSON en camelCase. Los parámetros de query también, salvo los filtros de búsqueda de GET /v1/envelopes (created_from, sent_to, template_id, created_via…) y de GET /v1/events (envelope_id, max_seconds), en snake_case, y los de /oauth/* (RFC 6749). " +
-        "Límite general: 600 pedidos por minuto por IP, para todas las credenciales que salen de esa IP (algunas rutas tienen uno menor); cada respuesta trae X-RateLimit-Limit, X-RateLimit-Remaining y X-RateLimit-Reset, y un 429 trae Retry-After. " +
+        "Límite general: 600 pedidos por minuto por credencial (API key o token OAuth del header Authorization: Bearer) y, sin credencial, por IP (algunas rutas tienen uno menor); cada servidor de la API lleva su propia cuenta; cada respuesta trae X-RateLimit-Limit, X-RateLimit-Remaining y X-RateLimit-Reset, y un 429 trae Retry-After. " +
         "Webhooks firmados con `CalaSign-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, \"<t>.<body>\")>` (ver la sección webhooks). " +
         `Eventos: ${WEBHOOK_EVENT_TYPES.join(", ")}.`,
     },

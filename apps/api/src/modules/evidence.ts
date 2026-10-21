@@ -30,6 +30,8 @@ import { getCscProvider, guardedFetch, listSignatureProviders, resolveSealLevel,
 
 /** Pruebas de conectores de firma por organización y hora. */
 const SIGNATURE_PROVIDER_TESTS_PER_HOUR = 5;
+/** Una prueba iniciada sin resultado deja de bloquear a las demás pasado este lapso (proceso caído a mitad de prueba). */
+const SIGNATURE_PROVIDER_TEST_STALE = "3 minutes";
 
 export async function evidenceRoutes(app: FastifyInstance, s: Services) {
   const auth = authenticate(s);
@@ -252,34 +254,60 @@ export async function evidenceRoutes(app: FastifyInstance, s: Services) {
   app.post<{ Params: { id: string } }>("/v1/signature-providers/:id/test", { preHandler: auth }, async (req) => {
     const provider = getCscProvider(req.params.id);
     if (!provider) throw notFound("Conector");
-    // El tope se cuenta y la prueba se registra con un candado por organización: dos pruebas simultáneas ya no ven las
-    // dos el mismo conteo (antes la auditoría se insertaba después de firmar y se podía pasar del tope en paralelo).
-    // La transacción queda abierta durante la prueba (una por organización a la vez; son pocas por hora).
-    const res: SignatureProviderTestResult = { id: req.params.id, ok: false, holder: null, signatureVerified: false, error: null };
+    // Reserva corta: con un candado por organización (sin esperar: si otra reserva lo tiene, 429) se cuenta el tope y
+    // se registra el inicio de la prueba (signature_provider.test_started, que cuenta para el tope). Las llamadas al
+    // prestador (hasta ~50 s) corren después, fuera de la transacción: antes la transacción y el candado quedaban
+    // abiertos durante la prueba y tenían tomada una conexión del pool. Mientras haya un inicio sin resultado
+    // (signature_provider.tested con el mismo testId) de hace menos de SIGNATURE_PROVIDER_TEST_STALE, otra prueba de la
+    // organización responde 429 provider_test_in_progress; si el proceso se cae a mitad de la prueba, se libera sola.
+    const tenantId = req.auth!.tenantId;
+    const testId = uuidv7();
+    const busy = () =>
+      new AppError(429, "provider_test_in_progress", "Ya hay una prueba de conector en curso en tu organización: esperá a que termine");
     await s.db.tx(async (t) => {
-      await t.query(`SELECT pg_advisory_xact_lock(hashtext('signature_provider.tested:' || $1::text))`, [req.auth!.tenantId]);
+      const lock = await t.one<{ ok: boolean }>(`SELECT pg_try_advisory_xact_lock(hashtext('signature_provider.tested:' || $1::text)) AS ok`, [tenantId]);
+      if (!lock?.ok) throw busy();
+      const running = await t.one(
+        `SELECT 1 FROM account_audit_log st
+          WHERE st.tenant_id = $1 AND st.action = 'signature_provider.test_started' AND st.occurred_at > now() - $2::interval
+            AND NOT EXISTS (SELECT 1 FROM account_audit_log r WHERE r.tenant_id = $1 AND r.action = 'signature_provider.tested'
+                             AND r.occurred_at >= st.occurred_at AND r.data->>'testId' = st.data->>'testId')
+          LIMIT 1`,
+        [tenantId, SIGNATURE_PROVIDER_TEST_STALE],
+      );
+      if (running) throw busy();
+      // Cuentan los inicios (cada uno es una firma en el prestador) y los resultados anteriores a la reserva (sin testId).
       const recent = await t.one<{ n: number }>(
-        `SELECT count(*)::int AS n FROM account_audit_log WHERE tenant_id = $1 AND action = 'signature_provider.tested' AND occurred_at > now() - interval '1 hour'`,
-        [req.auth!.tenantId],
+        `SELECT count(*)::int AS n FROM account_audit_log
+          WHERE tenant_id = $1 AND occurred_at > now() - interval '1 hour'
+            AND (action = 'signature_provider.test_started' OR (action = 'signature_provider.tested' AND NOT (data ? 'testId')))`,
+        [tenantId],
       );
       if ((recent?.n ?? 0) >= SIGNATURE_PROVIDER_TESTS_PER_HOUR) {
         throw new AppError(429, "provider_test_limit", `Se pueden hacer hasta ${SIGNATURE_PROVIDER_TESTS_PER_HOUR} pruebas de conectores por hora: probá más tarde`, {
           max: SIGNATURE_PROVIDER_TESTS_PER_HOUR,
         });
       }
-      try {
-        const chain = await provider.certificateChain();
-        res.holder = commonName(parseCert(chain[0]).subject) ?? null;
-        // Firma de prueba sobre datos aleatorios: signDigest ya la verifica con la clave pública del certificado de la
-        // credencial (RSA o ECDSA) y falla si no corresponde.
-        await provider.signDigest(sha256Bytes(randomBytes(32)));
-        res.signatureVerified = true;
-        res.ok = true;
-      } catch (e) {
-        req.log.warn({ provider: req.params.id, err: String((e as Error)?.message ?? e).slice(0, 500) }, "prueba de conector de firma fallida");
-        res.error = "No se pudo firmar con el conector: revisá su configuración (el detalle quedó en el log del servidor)";
-      }
-      await auditFromRequest(t, req, req.auth!, "signature_provider.tested", { targetType: "signature_provider", targetId: req.params.id, data: { ok: res.ok } });
+      await auditFromRequest(t, req, req.auth!, "signature_provider.test_started", { targetType: "signature_provider", targetId: req.params.id, data: { testId } });
+    });
+    const res: SignatureProviderTestResult = { id: req.params.id, ok: false, holder: null, signatureVerified: false, error: null };
+    try {
+      const chain = await provider.certificateChain();
+      res.holder = commonName(parseCert(chain[0]).subject) ?? null;
+      // Firma de prueba sobre datos aleatorios: signDigest ya la verifica con la clave pública del certificado de la
+      // credencial (RSA o ECDSA) y falla si no corresponde.
+      await provider.signDigest(sha256Bytes(randomBytes(32)));
+      res.signatureVerified = true;
+      res.ok = true;
+    } catch (e) {
+      req.log.warn({ provider: req.params.id, err: String((e as Error)?.message ?? e).slice(0, 500) }, "prueba de conector de firma fallida");
+      res.error = "No se pudo firmar con el conector: revisá su configuración (el detalle quedó en el log del servidor)";
+    }
+    // El resultado cierra la reserva (la libera para otra prueba).
+    await auditFromRequest(s.db, req, req.auth!, "signature_provider.tested", {
+      targetType: "signature_provider",
+      targetId: req.params.id,
+      data: { ok: res.ok, testId },
     });
     return res;
   });

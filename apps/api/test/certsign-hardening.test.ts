@@ -235,6 +235,91 @@ describe("documento de identidad exigido sin documento", () => {
   });
 });
 
+describe("delegación y reasignación de un firmante que debe corresponder a su documento", () => {
+  /** Sobre enviado con un firmante con certificado de turno (link vigente). */
+  async function sentEnvelope(reqs: object | null, idDoc: string | null) {
+    const env = util.uuidv7();
+    const rec = util.uuidv7();
+    const token = util.randomToken();
+    await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status, sent_at) VALUES ($1, $2, 'Contrato', 'sent', now())`, [env, tenant]);
+    await db.query(
+      `INSERT INTO recipients (id, tenant_id, envelope_id, role, name, email, status, signature_type, certificate_requirements, id_document_number,
+         access_token_hash, access_token_enc)
+       VALUES ($1,$2,$3,'signer','Juana','j@x.test','sent','certificate',$4,$5,$6,$7)`,
+      [rec, tenant, env, reqs ? JSON.stringify(reqs) : null, idDoc, util.sha256Hex(token), util.encrypt(token)],
+    );
+    return { env, rec, token };
+  }
+  const delegate = (token: string, extra: object = {}) =>
+    app.inject({ method: "POST", url: `/v1/signing/${token}/delegate`, payload: { name: "Beto", email: "beto@x.test", reason: "Viaje", ...extra } });
+  const replacement = async (rec: string) =>
+    db.one<any>(`SELECT certificate_requirements AS r, id_document_number AS doc, status FROM recipients WHERE replaces = $1`, [rec]);
+  const MATCH = { matchIdDocument: true, allowedIssuers: [], requireQualified: false };
+
+  it("delegar sin documento de la persona nueva: 409 delegation_requires_id_match y nada cambia", async () => {
+    const x = await sentEnvelope(MATCH, "30111222");
+    const d = await delegate(x.token);
+    expect(d.statusCode).toBe(409);
+    expect(d.json().error.code).toBe("delegation_requires_id_match");
+    expect(await replacement(x.rec)).toBeNull();
+    expect((await db.one<any>(`SELECT status FROM recipients WHERE id = $1`, [x.rec])).status).toBe("sent");
+  });
+
+  it("delegar con el documento de la persona nueva: el control se mantiene contra ese número", async () => {
+    const x = await sentEnvelope(MATCH, "30111222");
+    const d = await delegate(x.token, { idDocumentNumber: " 40999888 " });
+    expect(d.statusCode, d.body).toBe(200);
+    const r = await replacement(x.rec);
+    expect(r.doc).toBe("40999888");
+    expect(r.r).toMatchObject({ matchIdDocument: true });
+    expect(r.r.idDocumentMatchSkipped).toBeUndefined();
+  });
+
+  it("sin el control (o pedido sin documento, que no rige) se delega como siempre", async () => {
+    for (const [reqs, doc] of [[{ ...MATCH, matchIdDocument: false }, "30111222"], [MATCH, null], [null, "30111222"]] as const) {
+      const x = await sentEnvelope(reqs, doc);
+      expect((await delegate(x.token)).statusCode).toBe(200);
+    }
+  });
+
+  it("reasignar (lo decide el remitente) sin documento: se baja con la marca para la evidencia", async () => {
+    const x = await sentEnvelope(MATCH, "30111222");
+    const r = await app.inject({
+      method: "POST",
+      url: `/v1/envelopes/${x.env}/recipients/${x.rec}/reassign`,
+      headers,
+      payload: { name: "Beto", email: "beto@x.test" },
+    });
+    expect(r.statusCode, r.body).toBe(200);
+    expect((await replacement(x.rec)).r).toMatchObject({ matchIdDocument: false, idDocumentMatchSkipped: true });
+  });
+});
+
+describe("migración 0094: control del documento explícito en sobres no terminados", () => {
+  it("sin la clave y con documento pasa a true; el resto no cambia; idempotente", async () => {
+    const noKey = { allowedIssuers: ["X"], requireQualified: false };
+    const a = await awaitingEnvelope({ reqs: noKey, idDoc: "30111222" });
+    const b = await awaitingEnvelope({ reqs: noKey, idDoc: "  " });
+    const c = await awaitingEnvelope({ reqs: { ...noKey, matchIdDocument: false }, idDoc: "30111222" });
+    const d = await awaitingEnvelope({ reqs: noKey, idDoc: "30111222" });
+    await db.query(`UPDATE envelopes SET status = 'voided' WHERE id = $1`, [d.env]);
+    const e = await awaitingEnvelope({ idDoc: "30111222" });
+    await db.query(`UPDATE recipients SET certificate_requirements = NULL WHERE id = $1`, [e.rec]);
+    const sql = readFileSync(new URL("../migrations/0094_certsign_id_match_explicit.sql", import.meta.url), "utf8");
+    const updates = sql.split(/;\s*$/m).map((s) => s.replace(/^\s*--.*$/gm, "").trim()).filter((s) => s.startsWith("UPDATE"));
+    expect(updates).toHaveLength(1);
+    const req = async (rec: string) => (await db.one<any>(`SELECT certificate_requirements AS r FROM recipients WHERE id = $1`, [rec])).r;
+    for (let i = 0; i < 2; i++) {
+      await db.query(updates[0]!);
+      expect(await req(a.rec)).toEqual({ ...noKey, matchIdDocument: true });
+      expect(await req(b.rec)).toEqual(noKey);
+      expect(await req(c.rec)).toEqual({ ...noKey, matchIdDocument: false });
+      expect(await req(d.rec)).toEqual(noKey);
+      expect(await req(e.rec)).toEqual({ matchIdDocument: true });
+    }
+  });
+});
+
 describe("PDF de la firma con certificado al cerrar el sobre", () => {
   it("anular borra el PDF de trabajo y los preparados", async () => {
     const x = await awaitingEnvelope();

@@ -3,7 +3,7 @@ import { config } from "../config";
 import type { Db } from "../infra/db";
 import type { BlobStore } from "../infra/storage";
 import type { Actor } from "../infra/evidence";
-import { sha256Hex } from "../lib/util";
+import { bearerToken, sha256Hex } from "../lib/util";
 import { unauthorized } from "../lib/errors";
 import { enforceRoutePolicy, loadAccess, type AccessInfo } from "./access";
 import { enforceOAuthScope, isOAuthAccessToken, oauthAuthContext, restrictAccessToScopes } from "./oauth-tokens";
@@ -40,19 +40,20 @@ declare module "fastify" {
 export const SESSION_COOKIE = config.cookieSecure ? "__Host-cs_session" : "cs_session";
 /**
  * Nombre anterior. Transición: se sigue leyendo si no está la nueva (las sesiones abiertas antes del cambio no se
- * cierran de golpe) y cada login o logout la borra. Quitar cuando pase la vida máxima de una sesión (SESSION_DAYS)
- * desde el deploy que introdujo __Host-cs_session.
+ * cierran de golpe) hasta config.legacySessionCookieReadUntil, y cada login o logout la borra.
+ * TODO(2026-11-10): quitar (pasada la vida máxima de una sesión, SESSION_DAYS, desde el deploy del 2026-10-20 que
+ * introdujo __Host-cs_session) junto con legacySessionCookieDomains y legacySessionCookieReadUntil de config.ts.
  */
 export const LEGACY_SESSION_COOKIE = "cs_session";
 const SESSION_COOKIE_NAMES = SESSION_COOKIE === LEGACY_SESSION_COOKIE ? [SESSION_COOKIE] : [SESSION_COOKIE, LEGACY_SESSION_COOKIE];
 
 /** Token de la sesión web del pedido (cookie nueva o, durante la transición, la vieja). */
 export function sessionCookieToken(req: FastifyRequest): string | undefined {
-  for (const n of SESSION_COOKIE_NAMES) {
-    const v = req.cookies?.[n];
-    if (v) return v;
-  }
-  return undefined;
+  const v = req.cookies?.[SESSION_COOKIE];
+  if (v) return v;
+  // Pasada la transición, la vieja ya no abre sesión: sin el prefijo __Host-, un subdominio la puede plantar.
+  if (SESSION_COOKIE !== LEGACY_SESSION_COOKIE && Date.now() >= config.legacySessionCookieReadUntil) return undefined;
+  return req.cookies?.[LEGACY_SESSION_COOKIE] || undefined;
 }
 
 /** Todos los nombres con los que puede llegar la sesión web (para quitarla de un pedido). */
@@ -70,6 +71,10 @@ export function setSessionCookie(reply: FastifyReply, token: string, maxAgeSecon
 export function clearSessionCookie(reply: FastifyReply) {
   // Secure también al borrar: el navegador rechaza un Set-Cookie __Host- sin Secure (y la cookie no se borraría).
   for (const n of SESSION_COOKIE_NAMES) reply.clearCookie(n, { path: "/", secure: config.cookieSecure });
+  // La vieja también con Domain= del host y sus dominios padre: una cs_session plantada desde un subdominio con
+  // Domain=<padre> no se borra con el Set-Cookie sin Domain (los atributos tienen que coincidir).
+  if (SESSION_COOKIE !== LEGACY_SESSION_COOKIE)
+    for (const domain of config.legacySessionCookieDomains) reply.clearCookie(LEGACY_SESSION_COOKIE, { path: "/", domain, secure: config.cookieSecure });
 }
 
 export function clientInfo(req: FastifyRequest) {
@@ -80,9 +85,9 @@ export function clientInfo(req: FastifyRequest) {
 export function authenticate(s: Services) {
   const inner = async (req: FastifyRequest, _reply: FastifyReply) => {
     const { ip, userAgent } = clientInfo(req);
-    const authz = req.headers.authorization;
-    if (authz?.startsWith("Bearer ")) {
-      const key = authz.slice(7).trim();
+    // El esquema sin distinguir mayúsculas ("bearer …" también es Bearer, RFC 7235).
+    const key = bearerToken(req.headers.authorization);
+    if (key) {
       if (isOAuthAccessToken(key)) {
         req.auth = await oauthAuthContext(s.db, key, ip, userAgent);
         enforceOAuthScope(req, req.auth);

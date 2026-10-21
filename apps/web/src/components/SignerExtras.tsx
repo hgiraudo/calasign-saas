@@ -171,9 +171,13 @@ export function DelegateModal({
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [reason, setReason] = useState("");
+  // El firmante debe firmar con un certificado que corresponda a su documento: la API pide el documento de la persona
+  // nueva (409 delegation_requires_id_match) y recién ahí se muestra el campo.
+  const [needsIdDoc, setNeedsIdDoc] = useState(false);
+  const [idDoc, setIdDoc] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const valid = name.trim() && email.trim() && reason.trim();
+  const valid = name.trim() && email.trim() && reason.trim() && (!needsIdDoc || idDoc.trim());
 
   const submit = async () => {
     // Sin "+código de país" la API respondía un error genérico de validación.
@@ -186,12 +190,17 @@ export function DelegateModal({
     try {
       const r = await api<{ delegated: boolean; to: string }>(`${base}/delegate`, {
         method: "POST",
-        body: { name: name.trim(), email: email.trim(), phone: phone.trim() || null, reason: reason.trim() },
+        body: { name: name.trim(), email: email.trim(), phone: phone.trim() || null, reason: reason.trim(), idDocumentNumber: idDoc.trim() || null },
       });
       onDone(r.to);
     } catch (e) {
-      setError(errorText(e));
       setBusy(false);
+      if (e instanceof HttpError && e.status === 409 && e.code === "delegation_requires_id_match") {
+        setNeedsIdDoc(true);
+        setError(sx("delegate.idDocRequired"));
+        return;
+      }
+      setError(errorText(e));
       // Solo cierran el formulario los errores de sesión (vencida, link inexistente, sobre cerrado) y el 409
       // not_replaceable (el firmante ya no puede delegar). Los demás 409 (otp_destination_required, invalid_channels,
       // too_many_replacements, same_person) son datos a corregir: el modal sigue abierto con el error.
@@ -237,6 +246,12 @@ export function DelegateModal({
           <span>{sx("delegate.reason")}</span>
           <textarea rows={2} maxLength={1000} value={reason} onChange={(e) => setReason(e.target.value)} />
         </label>
+        {needsIdDoc && (
+          <label className="field">
+            <span>{sx("delegate.idDoc")}</span>
+            <input value={idDoc} maxLength={50} onChange={(e) => setIdDoc(e.target.value)} autoFocus />
+          </label>
+        )}
       </div>
     </Modal>
   );

@@ -506,6 +506,12 @@ export const ERRORS: Record<string, Err> = {
     message: "Este destinatario ya no está pendiente",
     summary: "No es firmante/aprobador pendiente (también invalid_channels, otp_destination_required)",
   },
+  delegation_requires_id_match: {
+    status: 409,
+    code: "delegation_requires_id_match",
+    message: "Para delegar, indicá el número de documento de la persona",
+    summary: "El firmante debe firmar con un certificado que corresponda a su documento: la delegación necesita idDocumentNumber",
+  },
   not_cancellable: { status: 409, code: "not_cancellable", message: "El envío ya terminó", summary: "El envío masivo ya terminó o se canceló" },
   nothing_to_retry: {
     status: 409,
@@ -760,6 +766,12 @@ export const ERRORS: Record<string, Err> = {
     details: { max: 5 },
     summary: "Tope de 5 pruebas por hora por organización de los conectores de firma remota (pueden tener costo por firma). Sin Retry-After.",
   },
+  provider_test_in_progress: {
+    status: 429,
+    code: "provider_test_in_progress",
+    message: "Ya hay una prueba de conector en curso en tu organización: esperá a que termine",
+    summary: "Otra prueba de conector de firma de la organización todavía está corriendo (una a la vez por organización). Sin Retry-After.",
+  },
   workflow_rate_limited: {
     status: 429,
     code: "workflow_rate_limited",
@@ -870,7 +882,7 @@ export const ERRORS: Record<string, Err> = {
     status: 429,
     code: "rate_limited",
     message: "Demasiados pedidos seguidos: esperá 42 s y reintentá",
-    summary: "Límite de pedidos por IP superado: esperar lo que indica Retry-After (segundos) y reintentar. Versiones anteriores de la API respondían este 429 con el código bad_request.",
+    summary: "Límite de pedidos (por credencial o, sin ella, por IP) superado: esperar lo que indica Retry-After (segundos) y reintentar. Versiones anteriores de la API respondían este 429 con el código bad_request.",
   },
 };
 
@@ -943,8 +955,8 @@ export function errorComponents() {
     examples,
     responses,
     headers: {
-      RetryAfter: int("Segundos hasta que se renueva la ventana. Solo en el 429 del límite por IP: los 429 con código propio (topes de negocio como reminded_recently) no lo traen y no se reintentan en un loop."),
-      RateLimitLimit: int("Pedidos permitidos en la ventana (600/min por IP en general; algunas rutas tienen un límite menor)."),
+      RetryAfter: int("Segundos hasta que se renueva la ventana. Solo en el 429 del límite de pedidos: los 429 con código propio (topes de negocio como reminded_recently) no lo traen y no se reintentan en un loop."),
+      RateLimitLimit: int("Pedidos permitidos en la ventana (600/min por credencial o, sin ella, por IP en general; algunas rutas tienen un límite menor)."),
       RateLimitRemaining: int("Pedidos que quedan en la ventana actual."),
       RateLimitReset: int("Segundos hasta que se renueva la ventana."),
       TimeZone: { description: "Zona horaria IANA (nombre canónico) usada en las columnas *_local: la pedida con `tz`, o UTC si no se reconoce.", schema: { type: "string" } },
@@ -1262,7 +1274,7 @@ export function webhooksObject() {
       "CalaSign-Signature",
       "t=<unix>,v1=<hex>. v1 = HMAC-SHA256(secreto whsec_…, \"<t>.<cuerpo crudo>\"). Durante el período de gracia de una rotación (POST /v1/webhooks/{id}/rotate-secret) lleva un v1 por secreto vigente (t=…,v1=<nuevo>,v1=<anterior>): aceptar si alguno coincide. Verificar con el cuerpo tal cual llega y rechazar timestamps viejos. Se recalcula en cada intento.",
     ),
-    header("CalaSign-Event-Id", "Id del evento (= cuerpo.id). Igual en todos los reintentos y en todos los endpoints que lo reciben: usarlo para deduplicar."),
+    header("CalaSign-Event-Id", "Id del evento (= cuerpo.id). Igual en todos los reintentos, en todos los endpoints que lo reciben y en GET /v1/events: usarlo para deduplicar."),
     header("CalaSign-Event-Type", "Tipo de evento (= cuerpo.type)."),
     header("CalaSign-Delivery-Id", "Id de la entrega (una por endpoint); es el que se reintenta con POST /v1/webhook-deliveries/{id}/retry."),
   ];

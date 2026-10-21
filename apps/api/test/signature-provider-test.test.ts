@@ -10,7 +10,7 @@ process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "calasign-sigprov-"));
 delete process.env.DATABASE_URL;
 process.env.CSC_CONNECTORS = JSON.stringify([{ id: "csc:prestador", baseUrl: "https://csc.prestador-secreto.example/csc/v2", auth: { type: "bearer", token: "t" } }]);
 
-const fake: { chain: Uint8Array[]; fail: Error | null } = { chain: [], fail: null };
+const fake: { chain: Uint8Array[]; fail: Error | null; hold: Promise<void> | null } = { chain: [], fail: null, hold: null };
 vi.mock("../src/modules/evidence-seal", async (orig) => ({
   ...(await orig<typeof import("../src/modules/evidence-seal")>()),
   getCscProvider: (id: string) =>
@@ -21,6 +21,7 @@ vi.mock("../src/modules/evidence-seal", async (orig) => ({
           client: { listCredentials: async () => ["cred-secreta-1", "cred-secreta-2"] },
           certificateChain: async () => fake.chain,
           signDigest: async () => {
+            if (fake.hold) await fake.hold;
             if (fake.fail) throw fake.fail;
             return new Uint8Array(256);
           },
@@ -88,10 +89,37 @@ describe("conectores de firma de la plataforma", () => {
     expect((await test(KEY_B)).statusCode).toBe(200);
   });
 
-  it("pruebas en paralelo no pasan el tope (candado por organización)", async () => {
-    // KEY_B ya usó 1: de 8 simultáneas pasan exactamente 4.
-    const rs = await Promise.all(Array.from({ length: 8 }, () => test(KEY_B)));
-    expect(rs.filter((r) => r.statusCode === 200)).toHaveLength(4);
-    expect(rs.filter((r) => r.statusCode === 429)).toHaveLength(4);
+  it("una prueba a la vez por organización, sin transacción abierta durante la llamada al prestador", async () => {
+    // KEY_B ya usó 1. Mientras una prueba espera al prestador, las demás de la organización responden 429 en curso y la
+    // base sigue atendiendo (la reserva ya se confirmó).
+    let release!: () => void;
+    fake.hold = new Promise<void>((r) => (release = r));
+    const first = test(KEY_B);
+    await vi.waitFor(async () => {
+      expect(await db.one(`SELECT 1 FROM account_audit_log WHERE action = 'signature_provider.test_started' AND occurred_at > now() - interval '1 minute' AND data ? 'testId' AND NOT EXISTS (SELECT 1 FROM account_audit_log r WHERE r.action = 'signature_provider.tested' AND r.data->>'testId' = account_audit_log.data->>'testId')`)).toBeTruthy();
+    });
+    const rs = await Promise.all(Array.from({ length: 4 }, () => test(KEY_B)));
+    expect(rs.map((r) => r.statusCode)).toEqual([429, 429, 429, 429]);
+    expect(rs.every((r) => r.json().error.code === "provider_test_in_progress")).toBe(true);
+    fake.hold = null;
+    release();
+    expect((await first).statusCode).toBe(200);
+    // Las rechazadas no cuentan para el tope: KEY_B lleva 2 de 5.
+    for (let i = 0; i < 3; i++) expect((await test(KEY_B)).statusCode).toBe(200);
+    expect((await test(KEY_B)).json().error.code).toBe("provider_test_limit");
+  });
+
+  it("pruebas en paralelo no pasan el tope", async () => {
+    const { uuidv7, sha256Hex } = await import("../src/lib/util");
+    const tenant = uuidv7();
+    const key = "cs_test_sigprov_c";
+    await db.query(`INSERT INTO tenants (id, slug, name) VALUES ($1, $2, 'T')`, [tenant, `t-${tenant.slice(-8)}`]);
+    await db.query(`INSERT INTO api_keys (id, tenant_id, name, prefix, key_hash) VALUES ($1, $2, 'k', 'cs_test', $3)`, [uuidv7(), tenant, sha256Hex(key)]);
+    const rs = await Promise.all(Array.from({ length: 8 }, () => test(key)));
+    expect(rs.filter((r) => r.statusCode === 200).length).toBeGreaterThanOrEqual(1);
+    expect(rs.filter((r) => r.statusCode === 200).length).toBeLessThanOrEqual(5);
+    expect(rs.filter((r) => r.statusCode !== 200).every((r) => r.statusCode === 429)).toBe(true);
+    const n = await db.one<{ n: number }>(`SELECT count(*)::int AS n FROM account_audit_log WHERE tenant_id = $1 AND action = 'signature_provider.test_started'`, [tenant]);
+    expect(n!.n).toBe(rs.filter((r) => r.statusCode === 200).length);
   });
 });

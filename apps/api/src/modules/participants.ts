@@ -14,7 +14,7 @@ import { isEmbeddedSigner, isUnverifiedSelfRegistered } from "./otp";
 import { assertLinkCurrent, recipientActor, resolveToken } from "./signing";
 import { inheritIdentityRequirement } from "./identity/kyc";
 import { deleteBlobsQuietly, discardRecipientAttachments } from "./file-cleanup";
-import { downgradeIdMatchSql } from "./certsign-requirements";
+import { downgradeIdMatchSql, normalizeRequirements } from "./certsign-requirements";
 
 /** Aplica los campos opcionales de recordatorios/delegación de Create/UpdateEnvelopeInput (solo los presentes). */
 export async function applyEnvelopeSettings(
@@ -41,6 +41,7 @@ interface NewContact {
   channels?: ("email" | "whatsapp" | "telegram")[];
   locale?: string | null;
   reason?: string | null;
+  idDocumentNumber?: string | null;
 }
 
 /**
@@ -74,12 +75,28 @@ export async function replaceRecipient(
   if ((auth === "otp_sms" || auth === "otp_whatsapp") && !c.phone)
     throw conflict("otp_destination_required", "Este firmante se verifica con un código por SMS/WhatsApp: indicá el teléfono de la persona");
 
+  // Firma con certificado que tiene que corresponder al documento: el firmante no puede delegar en alguien sin
+  // documento, porque el reemplazo bajaría el control y cualquiera firmaría con cualquier certificado válido. Si indica
+  // el documento de la persona nueva, el control se mantiene contra ese número. La reasignación la decide el remitente:
+  // ahí sí se baja (con la marca para la evidencia) si no trae documento.
+  const idDocumentNumber = c.idDocumentNumber?.trim() || null;
+  if (
+    kind === "delegated" &&
+    !idDocumentNumber &&
+    old.signature_type === "certificate" &&
+    normalizeRequirements(old.certificate_requirements, String(old.id_document_number ?? "").trim() !== "").matchIdDocument
+  )
+    throw conflict(
+      "delegation_requires_id_match",
+      "Este firmante tiene que firmar con un certificado que corresponda a su documento de identidad: para delegar, indicá el número de documento de la persona",
+    );
+
   const id = uuidv7();
   const token = randomToken();
   await db.query(
     `INSERT INTO recipients (id, tenant_id, envelope_id, role, routing_order, name, email, phone, locale, channels, auth_method, replaces,
-       access_token_hash, access_token_enc, in_person_host_user_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+       access_token_hash, access_token_enc, in_person_host_user_id, id_document_number)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
     [
       id,
       e.tenant_id,
@@ -96,6 +113,7 @@ export async function replaceRecipient(
       sha256Hex(token),
       encrypt(token),
       host,
+      idDocumentNumber,
     ],
   );
   // Los adjuntos que subió el anterior no pasan al reemplazo; el llamador borra los archivos después de confirmar.
@@ -109,9 +127,9 @@ export async function replaceRecipient(
     [old.id, id],
   );
   await inheritIdentityRequirement(db, old, id);
-  // El reemplazo también firma con certificado si el original debía hacerlo. No trae número de documento: si se pedía
-  // que el certificado corresponda al documento, el control se baja (con la marca para la evidencia) en vez de trabar
-  // un sobre en curso.
+  // El reemplazo también firma con certificado si el original debía hacerlo. Si no trae número de documento (solo en una
+  // reasignación: la delegación lo exige arriba) y se pedía que el certificado corresponda al documento, el control se
+  // baja (con la marca para la evidencia) en vez de trabar un sobre en curso.
   await db.query(`UPDATE recipients SET signature_type = $2, certificate_requirements = ${downgradeIdMatchSql("$3::jsonb", "id_document_number")} WHERE id = $1`, [
     id,
     old.signature_type ?? "electronic",

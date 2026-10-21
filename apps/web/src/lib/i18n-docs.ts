@@ -522,10 +522,10 @@ export const docsEs = {
   "wh.payload.headers": "Encabezados",
   "wh.payload.body": "Cuerpo",
   "wh.col.field": "Campo",
-  "wh.f.id": "Id único del evento. Es el mismo en todos tus endpoints y en los reintentos: usalo para no procesar dos veces.",
+  "wh.f.id": "Id único del evento. Es el mismo en todos tus endpoints, en los reintentos y en `GET /v1/events`: usalo para no procesar dos veces.",
   "wh.f.type": "Tipo de evento.",
-  "wh.f.createdAt": "Cuándo se generó el evento.",
-  "wh.f.envelope": "Estado del sobre al generarse el evento (`null` en `webhook.test`).",
+  "wh.f.createdAt": "Cuándo ocurrió el evento (el mismo instante que `occurredAt` en `GET /v1/events`).",
+  "wh.f.envelope": "Estado del sobre cuando se armó la entrega, segundos después del evento: puede reflejar cambios posteriores (p. ej. un `recipient.signed` que ya muestra el sobre `completed`). Para el momento del evento, usá `createdAt` y `type`. `null` en `webhook.test`.",
   "wh.f.recipientId": "Destinatario que originó el evento (`viewed`, `signed`, `approved`, `declined`), si corresponde.",
   "wh.f.reason": "Motivo del rechazo o de la anulación, si corresponde.",
   "wh.verify.h": "Verificar la firma",
@@ -543,7 +543,7 @@ export const docsEs = {
   "wh.col.wait": "Espera desde el anterior",
   "wh.retries.immediate": "inmediato",
   "wh.retries.after":
-    "Después del último intento la entrega queda `failed`. Podés ver cada entrega (código de respuesta, primeros caracteres de la respuesta, error, próximo intento) y reintentarla a mano desde **Ajustes → Integraciones** o con `POST /v1/webhook-deliveries/{id}/retry` (exige webhooks en el plan; si ya hay un intento en curso o un reintento manual pedido, `409 delivery_pending`; con el endpoint inactivo, `409 endpoint_inactive`: reactivalo primero). Si pausás un endpoint, las entregas pendientes se marcan como fallidas.\n\nUn endpoint se desactiva solo (`active: false`, con `deactivatedReason`) si responde **410 Gone** (`gone`, sin más reintentos), si acumula **50 entregas fallidas seguidas** o pasa **7 días fallando** sin ninguna exitosa (`failing`), o si la API key o app que lo creó pierde los permisos (`permission_lost`). Queda en la auditoría y avisamos por correo a quienes administran webhooks. Las entregas se guardan 90 días.",
+    "Después del último intento la entrega queda `failed`. Podés ver cada entrega (código de respuesta, primeros caracteres de la respuesta, error, próximo intento) y reintentarla a mano desde **Ajustes → Integraciones** o con `POST /v1/webhook-deliveries/{id}/retry` (exige webhooks en el plan; si ya hay un intento en curso o un reintento manual pedido, `409 delivery_pending`; con el endpoint inactivo, `409 endpoint_inactive`: reactivalo primero). Si pausás un endpoint, las entregas pendientes se marcan como fallidas.\n\nUn endpoint se desactiva solo (`active: false`, con `deactivatedReason`) si responde **410 Gone** (`gone`, sin más reintentos), si acumula **50 entregas fallidas seguidas** o pasa **7 días fallando** sin ninguna exitosa y con al menos 5 fallas seguidas (`failing`), o si la API key o app que lo creó pierde los permisos (`permission_lost`). Queda en la auditoría y avisamos por correo a quienes administran webhooks. Las entregas se guardan 90 días.",
   "wh.receive.h": "Buenas prácticas al recibir",
   "wh.receive.p":
     "- **Respondé rápido.** Verificá la firma, guardá el evento y respondé `200`; procesá después en una cola. Si tardás más de 10 segundos, CalaSign lo cuenta como fallo y reintenta.\n- **Idempotencia.** Un mismo evento puede llegar más de una vez (reintentos, redes inestables). Guardá `id` (también viene en `CalaSign-Event-Id`) y descartá los repetidos.\n- **Sin orden garantizado.** Los eventos se entregan de forma independiente: `recipient.signed` puede llegar después de `envelope.completed`. Usá `createdAt` y, ante la duda, consultá el estado actual con `GET /v1/envelopes/{id}`.\n- **Eventos desconocidos.** Respondé `2xx` a los tipos que no manejes.\n- **Rotación del secreto.** Usá `POST /v1/webhooks/{id}/rotate-secret`: devuelve el secreto nuevo y, durante `graceHours` (24 por defecto), cada entrega va firmada con los dos, así cambiás el secreto en tu servidor sin perder eventos.",
@@ -590,7 +590,7 @@ export const docsEs = {
   "err.c.wrongCell":
     "Los datos de la organización están en otra celda (región) de CalaSign. `details.cell` es la celda y `details.baseUrl` la URL de la API que la atiende (también en el encabezado `Location`, con la misma ruta). El pedido no se procesó: repetilo contra `details.baseUrl` y usá esa URL de ahí en más. Los SDKs lo hacen solos (una vez).",
   "err.c.unprocessable": "El pedido es válido pero no se puede procesar con esos datos (faltan roles de la plantilla, filas inválidas, PDF demasiado pesado para buscar anclas).",
-  "err.c.rate": "Superaste el límite de pedidos por IP (código `rate_limited`; versiones anteriores de la API mandaban `bad_request`). Esperá lo que indica el encabezado `retry-after` (segundos) y reintentá.",
+  "err.c.rate": "Superaste el límite de pedidos (código `rate_limited`; versiones anteriores de la API mandaban `bad_request`). Esperá lo que indica el encabezado `retry-after` (segundos) y reintentá.",
   "err.c.rateBiz":
     "Tope de negocio con código propio (`reminded_recently`, `reminder_daily_limit`, `form_rate_limited`, `workflow_rate_limited`, `ai_signer_limit`, `ai_budget_exceeded`, `too_many_comments`, `too_many_proposals`, `archive_recently_renewed`, `too_many_attempts`). No trae `retry-after`: no lo reintentes en un loop; avisale al usuario o probá mucho más tarde.",
   "err.c.internal": "Error nuestro. Es seguro reintentar con espera creciente; si usás `Idempotency-Key`, no se duplica nada.",
@@ -602,7 +602,7 @@ export const docsEs = {
     "La clave de cifrado propia de la organización (BYOK, en tu KMS) no está disponible: no se pueden guardar ni leer documentos. **No lo reintentes en un loop:** un administrador tiene que restablecer el acceso a la clave (`details.keyArn`).",
   "err.c.aiTimeout": "El proveedor de IA no respondió a tiempo. Probá de nuevo más tarde.",
   "err.codes.retry":
-    "**Qué reintentar:** errores de red, el `429` del límite por IP (con `retry-after`) y `5xx`, con espera exponencial y algo de azar. **Qué no:** los `429` con código propio (topes de negocio, sin `retry-after`), el `503 byok_key_unavailable` (hace falta que un administrador restablezca la clave) y el resto de los `4xx`, que no van a cambiar si repetís el mismo pedido. El `421 wrong_cell` se repite una vez contra `details.baseUrl`. Los SDKs oficiales aplican estas reglas solos.",
+    "**Qué reintentar:** errores de red, el `429` del límite de pedidos (con `retry-after`) y `5xx`, con espera exponencial y algo de azar. **Qué no:** los `429` con código propio (topes de negocio, sin `retry-after`), el `503 byok_key_unavailable` (hace falta que un administrador restablezca la clave) y el resto de los `4xx`, que no van a cambiar si repetís el mismo pedido. El `421 wrong_cell` se repite una vez contra `details.baseUrl`. Los SDKs oficiales aplican estas reglas solos.",
   "err.idem.h": "Idempotencia",
   "err.idem.p":
     "Si un pedido de creación se corta (timeout, red), no sabés si llegó. Mandá el encabezado `Idempotency-Key` con un valor único por operación —por ejemplo, el id del pedido en tu sistema— y reintentá con el mismo valor: CalaSign ejecuta la operación una sola vez y a los reintentos les devuelve la respuesta guardada, con el encabezado `idempotent-replay: true`.",
@@ -614,9 +614,9 @@ export const docsEs = {
   "err.page.iter.h": "Recorrer todas las páginas",
   "err.rate.h": "Límites de pedidos",
   "err.rate.p":
-    "Los límites se cuentan **por dirección IP** en ventanas de un minuto. El límite general es de 600 pedidos por minuto para el conjunto de la API; algunos endpoints tienen un límite propio, que se cuenta aparte. Cada respuesta trae `x-ratelimit-limit`, `x-ratelimit-remaining` y `x-ratelimit-reset`; al superarlo, la respuesta es `429` con `retry-after`.",
+    "Los límites se cuentan **por credencial** (cada API key o token OAuth del header `Authorization: Bearer`) y, sin credencial, **por dirección IP**, en ventanas de un minuto. Cada servidor de la API lleva su propia cuenta, así que el límite efectivo puede ser algo mayor; no cuentes con eso. El límite general es de 600 pedidos por minuto para el conjunto de la API; algunos endpoints tienen un límite propio, que se cuenta aparte. Cada respuesta trae `x-ratelimit-limit`, `x-ratelimit-remaining` y `x-ratelimit-reset`; al superarlo, la respuesta es `429` con `retry-after`.",
   "err.col.route": "Ruta",
-  "err.col.limit": "Límite por IP",
+  "err.col.limit": "Límite (por credencial o IP)",
   "err.rate.tip":
     "Para seguir el estado de muchos sobres, usá [webhooks](/developers/webhooks) en lugar de consultar en bucle. Si necesitás límites más altos, escribinos.",
   // ───────── SDKs ─────────
@@ -632,7 +632,7 @@ export const docsEs = {
   "sdk.f.auth": "Autenticación",
   "sdk.f.retries": "Reintentos",
   "sdk.f.retries.v":
-    "Red, 429 del límite por IP (respeta Retry-After) y 5xx salvo byok_key_unavailable, backoff exponencial, 3 por defecto. 421 wrong_cell: un reintento contra details.baseUrl, que queda como URL base",
+    "Red, 429 del límite de pedidos (respeta Retry-After) y 5xx salvo byok_key_unavailable, backoff exponencial, 3 por defecto. 421 wrong_cell: un reintento contra details.baseUrl, que queda como URL base",
   "sdk.f.idem": "Idempotency-Key automática",
   "sdk.f.errors": "Errores",
   "sdk.install": "Instalación",
@@ -686,7 +686,7 @@ export const docsEs = {
   "mcp.auth.row.v": "OAuth 2.1 (descubrimiento + registro dinámico) o `Authorization: Bearer <API key>`",
   "mcp.plan": "Plan",
   "mcp.plan.v": "Starter o superior (acceso por API). Sin él, `402 plan_limit`.",
-  "mcp.connect.p": "Límite: 300 pedidos por minuto por IP.",
+  "mcp.connect.p": "Límite: 300 pedidos por minuto por credencial.",
   "mcp.auth.h": "Autenticación",
   "mcp.auth.p":
     "**OAuth (recomendado para personas).** El cliente descubre todo solo: el primer pedido sin credencial recibe `401` con el enlace a los metadatos, el cliente se registra con [registro dinámico](/developers/authentication#dynamic-registration), abre la pantalla de consentimiento de CalaSign y la persona elige qué permitir. Pedí `offline_access` para no tener que volver a iniciar sesión cada hora.\n\n**API key (scripts y entornos sin navegador).** Mandá `Authorization: Bearer cs_test_…`. El agente actúa con el rol de esa key: para un agente conviene una key con rol `member` o un rol personalizado, no `admin`.",

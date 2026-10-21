@@ -73,8 +73,10 @@ async function authenticateClient(db: Db, req: FastifyRequest, body: Record<stri
   let clientId = body.client_id;
   let secret = body.client_secret;
   const h = req.headers.authorization;
-  if (h?.startsWith("Basic ")) {
-    const raw = Buffer.from(h.slice(6), "base64").toString("utf8");
+  // El esquema sin distinguir mayúsculas (RFC 7235 §2.1).
+  const basic = h ? /^basic\s+(.*)$/is.exec(h) : null;
+  if (basic) {
+    const raw = Buffer.from(basic[1].trim(), "base64").toString("utf8");
     const i = raw.indexOf(":");
     if (i < 0) throw new OAuthError(401, "invalid_client", "Credenciales del cliente mal formadas");
     try {

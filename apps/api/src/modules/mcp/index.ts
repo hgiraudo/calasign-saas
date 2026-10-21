@@ -13,7 +13,7 @@ import { inspectPdf } from "@calasign/pdf";
 import { ENVELOPE_STATUSES, MCP_DEFAULT_SCOPES, OAUTH_SCOPES, RECIPIENT_ROLES, LOCALES } from "@calasign/shared";
 import { config } from "../../config";
 import { AppError, notFound } from "../../lib/errors";
-import { canonicalJson, hmacEqual, hmacSign, randomToken, sha256Hex, uuidv7 } from "../../lib/util";
+import { bearerToken, canonicalJson, hmacEqual, hmacSign, randomToken, sha256Hex, uuidv7 } from "../../lib/util";
 import type { Services } from "../context";
 import { sendPdf } from "../envelopes";
 import { assertUserTokenAllowed, isOAuthAccessToken, resolveAccessToken } from "../oauth-tokens";
@@ -207,9 +207,10 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
   }
 
   async function resolveCaller(req: FastifyRequest): Promise<Caller | null> {
-    const authz = req.headers.authorization;
-    if (!authz?.startsWith("Bearer ")) return null;
-    const token = authz.slice(7).trim();
+    // El esquema sin distinguir mayúsculas; los pedidos internos (app.inject) llevan la forma canónica.
+    const token = bearerToken(req.headers.authorization);
+    if (!token) return null;
+    const authz = `Bearer ${token}`;
     if (isOAuthAccessToken(token)) {
       const o = await resolveAccessToken(s.db, token);
       if (!o) return null;

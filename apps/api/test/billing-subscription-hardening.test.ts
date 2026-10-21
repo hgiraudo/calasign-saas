@@ -124,6 +124,28 @@ describe("moneda de Mercado Pago desconocida", () => {
     const err = await pickProvider("mercadopago", "BRL").catch((e) => e);
     expect(err).toMatchObject({ status: 503, code: "provider_unavailable" });
     expect(err.details.retryAfterSeconds).toBeGreaterThan(0);
+    expect(ars.find((x) => x.id === "mercadopago")?.misconfigured).toBeUndefined();
+  });
+
+  it("site_id desconocido: error de configuración (422 provider_misconfigured, sin reintento), no 503", async () => {
+    const p = await setup({ mpToken: "TEST-1" });
+    siteId = "MXX";
+    try {
+      expect(await p.mpSubscriptionCurrencies()).toEqual([]);
+      expect(p.mpCurrencyMisconfigured()).toBe(true);
+      const ars = await p.subscriptionProvidersFor("ARS");
+      expect(ars.find((x) => x.id === "mercadopago")).toMatchObject({ configured: false, currencies: [], misconfigured: true });
+      const { pickProvider } = await import("../src/modules/billing/subscriptions");
+      const err = await pickProvider("mercadopago", "BRL").catch((e) => e);
+      expect(err).toMatchObject({ status: 422, code: "provider_misconfigured" });
+      expect(err.details?.retryAfterSeconds).toBeUndefined();
+      // Con MP_CURRENCIES definido ya no es un error.
+      const { config } = await import("../src/config");
+      config.billing.mercadopago.currencies = ["MXN"];
+      expect(p.mpCurrencyMisconfigured()).toBe(false);
+    } finally {
+      siteId = "MLB";
+    }
   });
 
   it("/users/me tiene timeout corto (4 s)", async () => {

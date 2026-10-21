@@ -7,7 +7,7 @@ import type { CellInfo, CellsResponse } from "@calasign/shared";
 import type { Db } from "../../infra/db";
 import { CELL_CATALOG, cellById, cells, defaultCell, isConfiguredCell, servedCells, servesAllCells } from "../../infra/cells";
 import { badRequest } from "../../lib/errors";
-import { sha256Hex } from "../../lib/util";
+import { bearerToken, sha256Hex } from "../../lib/util";
 import { sessionCookieToken, type Services } from "../context";
 import { signerTokenHash } from "../signer-token";
 
@@ -47,9 +47,9 @@ const SIGNING_RE = /^\/(?:v1\/signing|s|embed)\/([A-Za-z0-9_-]{20,100})(?:[/?]|$
 
 /** Organización detrás de un pedido: API key / token OAuth / sesión / link de firma. null si no se sabe. */
 export async function tenantOfRequest(db: Db, req: FastifyRequest): Promise<string | null> {
-  const authz = req.headers.authorization;
-  if (authz?.startsWith("Bearer ")) {
-    const h = sha256Hex(authz.slice(7).trim());
+  const bearer = bearerToken(req.headers.authorization);
+  if (bearer) {
+    const h = sha256Hex(bearer);
     const k = await db.one<any>(`SELECT tenant_id FROM api_keys WHERE key_hash = $1`, [h]);
     if (k) return k.tenant_id;
     const o = await db.one<any>(`SELECT tenant_id FROM oauth_tokens WHERE token_hash = $1`, [h]).catch(() => null);

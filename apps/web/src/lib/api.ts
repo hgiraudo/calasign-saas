@@ -134,6 +134,10 @@ const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
     "pt-BR": "Muitos testes de conectores de assinatura na última hora: tente mais tarde.",
     en: "Too many signature connector tests in the last hour: try again later.",
   },
+  provider_test_in_progress: {
+    "pt-BR": "Já há um teste de conector em andamento na sua organização: aguarde até que termine.",
+    en: "A connector test is already running in your organization: wait for it to finish.",
+  },
   use_portal: { "pt-BR": "As assinaturas do Stripe são canceladas pelo portal de faturamento.", en: "Stripe subscriptions are canceled from the billing portal." },
   sso_session_2fa: {
     "pt-BR": "Com login único (SSO), o segundo fator é gerenciado pelo provedor de identidade: entre com sua senha para ativá-lo.",
@@ -347,6 +351,10 @@ const CODE_TEXT: Record<string, { "pt-BR": string; en: string }> = {
   provider_unavailable: {
     "pt-BR": "O meio de cobrança não está disponível no momento: tente novamente em alguns minutos.",
     en: "The payment provider isn't available right now: try again in a few minutes.",
+  },
+  provider_misconfigured: {
+    "pt-BR": "O Mercado Pago não está bem configurado na plataforma (o país da conta não é reconhecido): escolha outro meio de pagamento ou fale com o suporte.",
+    en: "Mercado Pago isn't set up correctly on the platform (the account's country isn't recognized): choose another payment method or contact support.",
   },
   identity_provider_unavailable: {
     "pt-BR": "O provedor de verificação de identidade não está configurado ou disponível.",

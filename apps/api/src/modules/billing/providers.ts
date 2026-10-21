@@ -342,6 +342,8 @@ const MP_SITE_CURRENCY: Record<string, string> = { MLA: "ARS", MLB: "BRL", MLM: 
 let mpCurrencyKnown: string[] | null = null;
 let mpCurrencyRetryAt = 0;
 let mpCurrencyInflight: Promise<string[]> | null = null;
+/** site_id que devolvió /users/me y no está en MP_SITE_CURRENCY: error de configuración, no pasajero. */
+let mpUnknownSiteId: string | null = null;
 const MP_ME_TIMEOUT_MS = 4_000;
 const MP_ME_RETRY_MS = 60_000;
 
@@ -363,11 +365,17 @@ export async function mpSubscriptionCurrencies(): Promise<string[]> {
     mpCurrencyInflight = (async () => {
       try {
         const me = await mp("/users/me", null, "GET", undefined, MP_ME_TIMEOUT_MS);
-        const cur = MP_SITE_CURRENCY[String(me?.site_id ?? "")];
+        const site = String(me?.site_id ?? "");
+        const cur = MP_SITE_CURRENCY[site];
         if (cur) {
+          mpUnknownSiteId = null;
           mpCurrencyKnown = [cur];
           return mpCurrencyKnown;
         }
+        // Respondió, pero con un país que no conocemos: hay que definir MP_CURRENCIES (o sumar el país). Se sigue
+        // consultando cada tanto por si cambia la cuenta, pero el error se informa como de configuración.
+        mpUnknownSiteId = site || "(vacío)";
+        console.error(JSON.stringify({ level: "error", msg: "Mercado Pago: site_id desconocido; definí MP_CURRENCIES con la moneda de la cuenta", siteId: mpUnknownSiteId }));
       } catch {
         // Error del momento (timeout, red, 5xx): desconocida; se vuelve a consultar en un rato.
       }
@@ -385,8 +393,17 @@ export function mpCurrencyRetryAfterSeconds(): number {
   return Math.max(1, Math.ceil((mpCurrencyRetryAt - Date.now()) / 1000));
 }
 
+/**
+ * Mercado Pago respondió con un país de cuenta (site_id) que no conocemos y no hay MP_CURRENCIES: error permanente de
+ * configuración de la plataforma (reintentar no lo arregla), a diferencia de una consulta fallida.
+ */
+export function mpCurrencyMisconfigured(): boolean {
+  return mpUnknownSiteId !== null && !config.billing.mercadopago.currencies.length && !mpCurrencyKnown;
+}
+
 /** Solo para pruebas: olvida la moneda de la cuenta de Mercado Pago consultada. */
 export function resetMpCurrencyCache() {
+  mpUnknownSiteId = null;
   mpCurrencyKnown = null;
   mpCurrencyRetryAt = 0;
   mpCurrencyInflight = null;
@@ -408,14 +425,17 @@ export function subscriptionProviderConfigured(id: "stripe" | "mercadopago" | "m
  * Proveedores de suscripción para una moneda: `configured` es si se puede pagar con él en esa moneda; `currencies`,
  * las monedas que acepta (null = todas).
  */
-export async function subscriptionProvidersFor(currency: string): Promise<{ id: "stripe" | "mercadopago" | "mock"; configured: boolean; currencies: string[] | null }[]> {
+export async function subscriptionProvidersFor(
+  currency: string,
+): Promise<{ id: "stripe" | "mercadopago" | "mock"; configured: boolean; currencies: string[] | null; misconfigured?: boolean }[]> {
   const ids = (["stripe", "mercadopago", "mock"] as const).filter((p) => p !== "mock" || subscriptionProviderConfigured("mock"));
   const out = [];
   for (const id of ids) {
     const ready = subscriptionProviderConfigured(id);
     // La moneda de Mercado Pago solo se consulta si está configurado (sin token no hay a quién preguntarle).
     const currencies = id === "mercadopago" && ready ? await mpSubscriptionCurrencies() : null;
-    out.push({ id, configured: ready && (currencies === null || currencies.includes(currency)), currencies });
+    const misconfigured = id === "mercadopago" && ready && currencies?.length === 0 && mpCurrencyMisconfigured();
+    out.push({ id, configured: ready && (currencies === null || currencies.includes(currency)), currencies, ...(misconfigured ? { misconfigured } : {}) });
   }
   return out;
 }

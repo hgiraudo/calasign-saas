@@ -143,7 +143,13 @@ export interface SealedKeyRow {
 export const keyFormat = (row: Pick<SealedKeyRow, "key_ciphertext">) => (String(row.key_ciphertext).startsWith("v2.") ? "v2" : "v1");
 
 export async function openKey(row: SealedKeyRow): Promise<string> {
+  return (await openKeyDetailed(row)).keyPem;
+}
+
+/** Abre la clave e informa si la clave de datos se abrió con el contexto BYOK anterior (con el certificado). */
+async function openKeyDetailed(row: SealedKeyRow): Promise<{ keyPem: string; legacyContext: boolean }> {
   const version = keyFormat(row);
+  let legacyContext = false;
   const ctx = { tenantId: row.tenant_id ?? "", certificateId: row.id ?? "" };
   if (version === "v2" && (!row.tenant_id || !row.id)) throw new Error("falta la organización o el certificado de la clave");
   let dataKey: Buffer;
@@ -162,6 +168,7 @@ export async function openKey(row: SealedKeyRow): Promise<string> {
         // Claves BYOK v2 guardadas con el certificado en el contexto (antes de sacarlo): se prueban con ese contexto.
         if (version !== "v2" || !isInvalidCiphertext(e)) throw e;
         r = await unwrap(true);
+        legacyContext = true;
       }
       dataKey = Buffer.from(r.Plaintext);
     } catch (e) {
@@ -187,14 +194,14 @@ export async function openKey(row: SealedKeyRow): Promise<string> {
     const d = createDecipheriv("aes-256-gcm", dataKey, Buffer.from(iv, "base64url"), { authTagLength: 16 });
     if (v === "v2") d.setAAD(aad(ctx));
     d.setAuthTag(authTag);
-    return Buffer.concat([d.update(Buffer.from(enc, "base64url")), d.final()]).toString("utf8");
+    return { keyPem: Buffer.concat([d.update(Buffer.from(enc, "base64url")), d.final()]).toString("utf8"), legacyContext };
   } finally {
     // También si el descifrado falla (texto alterado, formato desconocido).
     dataKey.fill(0);
   }
 }
 
-/** Certificados cuya migración a v2 falló: no se reintenta hasta la hora (por proceso). */
+/** Certificados cuya migración a v2 (o al contexto BYOK nuevo) falló: no se reintenta hasta la hora (por proceso). */
 const upgradeFailedUntil = new Map<string, number>();
 const UPGRADE_RETRY_MS = 60 * 60_000;
 
@@ -202,9 +209,12 @@ const UPGRADE_RETRY_MS = 60 * 60_000;
  * Clave en el formato anterior (v1): se vuelve a cifrar en v2 con el mismo método (BYOK con la misma clave del cliente)
  * después de abrirla. Si falla (KMS caído, la política de la clave del cliente no lo permite), queda como estaba y no se
  * reintenta en cada firma (cada intento sumaba una llamada a KMS): se vuelve a probar pasada una hora.
+ * También las claves BYOK v2 que se abrieron con el contexto anterior (con el certificado; `legacyContext`): se vuelven
+ * a cifrar con {purpose, tenant}, el contexto que permite la política kms:EncryptionContextKeys de docs/DATOS.md (con
+ * esa política aplicada, el contexto anterior ya no se puede abrir).
  */
-async function upgradeKey(db: Db, row: any, keyPem: string) {
-  if (keyFormat(row) !== "v1" || !row.id || !row.tenant_id) return;
+async function upgradeKey(db: Db, row: any, keyPem: string, legacyContext = false) {
+  if ((keyFormat(row) !== "v1" && !legacyContext) || !row.id || !row.tenant_id) return;
   const until = upgradeFailedUntil.get(row.id);
   if (until && until > Date.now()) return;
   try {
@@ -253,8 +263,8 @@ export async function loadTenantCertificate(db: Db, tenantId: string, id: string
 
 /** SignatureProvider con la clave del certificado de la organización (se descifra en memoria). */
 export async function tenantCertificateProvider(db: Db, row: any): Promise<SignatureProvider & { level: "advanced" }> {
-  const keyPem = await openKey(row);
-  await upgradeKey(db, row, keyPem);
+  const { keyPem, legacyContext } = await openKeyDetailed(row);
+  await upgradeKey(db, row, keyPem, legacyContext);
   const p = new LocalKeyProvider(`tenant-certificate:${row.id}`, keyPem, row.chain_pem);
   await db.query(`UPDATE tenant_certificates SET last_used_at = now() WHERE id = $1`, [row.id]);
   return Object.assign(p, { level: "advanced" as const });

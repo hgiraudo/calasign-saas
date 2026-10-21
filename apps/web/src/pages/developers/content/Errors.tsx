@@ -39,6 +39,7 @@ const LIMITS: [string, string][] = [
   ["POST /v1/verify · POST /v1/validate", "20 / min"],
   ["POST /v1/certificates", "20 / min"],
   ["POST /v1/xml/sign", "120 / min"],
+  ["POST /v1/webhooks/{id}/test", "10 / min"],
   ["/v1/signing/{token}/…", "120 / min"],
   ["POST /v1/auth/login · /v1/auth/signup", "10 / min"],
 ];

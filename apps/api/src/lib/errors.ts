@@ -13,7 +13,7 @@ export const notFound = (what = "Recurso") => new AppError(404, "not_found", `${
 export const conflict = (code: string, message: string, details?: unknown) => new AppError(409, code, message, details);
 export const badRequest = (code: string, message: string, details?: unknown) => new AppError(400, code, message, details);
 /**
- * 429 del límite de pedidos por IP (@fastify/rate-limit, global y por ruta): código rate_limited y mensaje en español
+ * 429 del límite de pedidos por credencial o IP (@fastify/rate-limit, global y por ruta): código rate_limited y mensaje en español
  * (el del plugin era bad_request con "Rate limit exceeded, retry in 1 minute"). Retry-After lo pone el plugin.
  */
 export function rateLimitError(_req: unknown, ctx: { statusCode: number; ttl: number }) {

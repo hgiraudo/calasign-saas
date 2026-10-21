@@ -5,7 +5,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { AuditLogEntry, AuditLogResponse } from "@calasign/shared";
 import type { Db } from "../infra/db";
 import { badRequest } from "../lib/errors";
-import { iso, likeContains } from "../lib/util";
+import { hostOf, iso, likeContains } from "../lib/util";
 import { csvBody, csvSep, localTsSql, resolveTimeZone } from "../lib/csv";
 import { authenticate, clientInfo, type AuthContext, type Services } from "./context";
 
@@ -93,8 +93,22 @@ const ROUTE_ACTIONS: Record<string, { action: string; extract?: Extract; dedupeM
     extract: ({ body, params }) => ({ targetType: "template", targetId: body?.template?.id, data: { name: body?.template?.name, fromEnvelope: params.envelopeId } }),
   },
   "DELETE /v1/templates/:id": { action: "template.deleted", extract: ({ params }) => ({ targetType: "template", targetId: params.id }) },
-  "POST /v1/webhooks": { action: "webhook.created", extract: ({ body }) => ({ targetType: "webhook", targetId: body?.webhook?.id, data: { url: body?.webhook?.url } }) },
-  "PATCH /v1/webhooks/:id": { action: "webhook.updated", extract: ({ params, req }) => ({ targetType: "webhook", targetId: params.id, data: { fields: Object.keys((req.body as object) ?? {}) } }) },
+  // De la URL solo el host: los integradores suelen poner un secreto en ella (?token=…) y la auditoría la ven todos los
+  // administradores (y se exporta).
+  "POST /v1/webhooks": {
+    action: "webhook.created",
+    extract: ({ body }) => ({ targetType: "webhook", targetId: body?.webhook?.id, data: { host: typeof body?.webhook?.url === "string" ? hostOf(body.webhook.url) : null } }),
+  },
+  "PATCH /v1/webhooks/:id": {
+    action: "webhook.updated",
+    extract: ({ params, req, body }) => {
+      const before = (req as AuditedRequest).auditBefore?.url;
+      const after = body?.url;
+      // Cambio de URL: el host anterior y el nuevo (también si cambió solo la ruta o la query, con el mismo host).
+      const url = typeof before === "string" && typeof after === "string" && before !== after ? { fromHost: hostOf(before), toHost: hostOf(after) } : {};
+      return { targetType: "webhook", targetId: params.id, data: { fields: Object.keys((req.body as object) ?? {}), ...url } };
+    },
+  },
   "DELETE /v1/webhooks/:id": { action: "webhook.deleted", extract: ({ params }) => ({ targetType: "webhook", targetId: params.id }) },
   "POST /v1/webhooks/:id/rotate-secret": { action: "webhook.secret_rotated", extract: ({ params, req }) => ({ targetType: "webhook", targetId: params.id, data: { graceHours: (req.body as { graceHours?: number } | null)?.graceHours ?? 24 } }) },
   // Un formulario web publica un link que crea sobres a nombre de su dueño: quién lo creó, cambió (p. ej. el firmante

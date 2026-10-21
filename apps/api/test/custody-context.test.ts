@@ -96,6 +96,73 @@ describe("custodia: contexto de cifrado", () => {
     await expect(custody.openKey({ ...row, id: CERT_2 })).rejects.toThrow();
   });
 
+  it("v2 BYOK con el contexto anterior: al usarla se vuelve a cifrar con {purpose, tenant} (una sola vez si falla)", async () => {
+    const { generateDevRootCa } = await import("@calasign/pdf");
+    const ca = await generateDevRootCa("Custodia Contexto Viejo");
+    /** Clave BYOK v2 escrita con el certificado también en el contexto de KMS (versión anterior). */
+    const legacyByok = async (certificateId: string) => {
+      const dataKey = randomBytes(32);
+      const iv = randomBytes(12);
+      const c = createCipheriv("aes-256-gcm", dataKey, iv);
+      c.setAAD(Buffer.from(`calasign-tenant-certificate|${TENANT_A}|${certificateId}`, "utf8"));
+      const enc = Buffer.concat([c.update(ca.keyPem, "utf8"), c.final()]);
+      const wrapped = await kms.kmsForKey(OK_ARN).encrypt({
+        KeyId: OK_ARN,
+        Plaintext: dataKey,
+        EncryptionContext: { purpose: "calasign-tenant-certificate", tenant: TENANT_A, certificate: certificateId },
+      });
+      return {
+        id: certificateId,
+        tenant_id: TENANT_A,
+        chain_pem: ca.certPem,
+        key_ciphertext: `v2.${iv.toString("base64url")}.${enc.toString("base64url")}.${c.getAuthTag().toString("base64url")}`,
+        key_wrapped: Buffer.from(wrapped.CiphertextBlob).toString("base64"),
+        key_wrap_method: "kms-byok",
+        key_wrap_key_arn: OK_ARN,
+      };
+    };
+    const CERT_3 = "0192f0e0-0000-7000-8000-0000000000c3";
+    const CERT_4 = "0192f0e0-0000-7000-8000-0000000000c4";
+    const row = await legacyByok(CERT_3);
+    const updates: unknown[][] = [];
+    const db = { query: async (sql: string, params: unknown[]) => (/UPDATE tenant_certificates SET key_ciphertext/.test(sql) ? (updates.push(params), []) : []) };
+    const decrypts: Record<string, string>[] = [];
+    const real = kms.mockKms();
+    kms.setKmsClientFactory(() => ({ ...real, decrypt: async (i: any) => (decrypts.push(i.EncryptionContext), real.decrypt(i)) }));
+    try {
+      await custody.tenantCertificateProvider(db as any, row);
+      expect(updates).toHaveLength(1);
+      const [id, ciphertext, newWrapped, method, prev] = updates[0] as string[];
+      expect([id, method, prev]).toEqual([CERT_3, "kms-byok", row.key_ciphertext]);
+      const resealed = { ...row, key_ciphertext: ciphertext, key_wrapped: newWrapped };
+      decrypts.length = 0;
+      expect(await custody.openKey(resealed)).toBe(ca.keyPem);
+      // Se abre al primer intento con el contexto nuevo (el que permite la política de la clave del cliente).
+      expect(decrypts).toEqual([{ purpose: "calasign-tenant-certificate", tenant: TENANT_A }]);
+      // Ya re-cifrada: no se vuelve a cifrar.
+      updates.length = 0;
+      await custody.tenantCertificateProvider(db as any, resealed);
+      expect(updates).toHaveLength(0);
+    } finally {
+      kms.setKmsClientFactory(() => kms.mockKms());
+    }
+    // Si el UPDATE falla, no se reintenta en cada uso.
+    let attempts = 0;
+    const failing = {
+      query: async (sql: string) => {
+        if (/UPDATE tenant_certificates SET key_ciphertext/.test(sql)) {
+          attempts++;
+          throw new Error("base caída");
+        }
+        return [];
+      },
+    };
+    const row4 = await legacyByok(CERT_4);
+    await custody.tenantCertificateProvider(failing as any, row4);
+    await custody.tenantCertificateProvider(failing as any, row4);
+    expect(attempts).toBe(1);
+  }, 60_000);
+
   it("si la migración a v2 falla, no se reintenta en cada uso", async () => {
     const { generateDevRootCa } = await import("@calasign/pdf");
     const ca = await generateDevRootCa("Custodia Reintento");

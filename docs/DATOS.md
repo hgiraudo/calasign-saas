@@ -143,7 +143,14 @@ antes de la migración quedan sin verificar.
   sobre `arn:aws:kms:*:*:key/*` (claves de otras cuentas: el permiso efectivo lo da la política de la clave del
   cliente). Conviene limitarlo con `kms:EncryptionContextKeys` = `purpose`, `tenant`: es el contexto que usan
   tanto los archivos en disco como la custodia de certificados (la clave de cada certificado queda atada además al
-  certificado por el AAD de AES-GCM, no por el contexto de KMS). Las claves de certificados guardadas con un
-  `certificate` en el contexto (versión anterior) se siguen abriendo si la política lo permite.
+  certificado por el AAD de AES-GCM, no por el contexto de KMS).
+  **Aplicar esa condición recién después de re-cifrar las claves viejas.** Las claves de certificados guardadas con un
+  `certificate` en el contexto (versión anterior) se abren con ese contexto y, al usarlas, se vuelven a cifrar con
+  `purpose`, `tenant`. Con la condición ya aplicada, KMS rechaza (AccessDenied) el contexto anterior y esos
+  certificados dejan de firmar. Antes de aplicarla, cada certificado en custodia subido antes de este cambio tiene que
+  haberse usado al menos una vez (firma XML o sello de PDF) después del despliegue (`lastUsedAt` en
+  `GET /v1/certificates`) o volver a subirse. Si el re-cifrado falló (KMS caído, falta `kms:Encrypt`), se reintenta
+  en el próximo uso pasada una hora: confirmarlo en CloudTrail (Encrypt con el contexto nuevo) antes de aplicar la
+  condición.
 - **Celdas S3 adicionales:** los mismos permisos de S3 que hoy (`s3:GetObject/PutObject/ListBucket`,
   `ListBucketVersions`, `DeleteObject`, `DeleteObjectVersion`) sobre cada bucket de celda.

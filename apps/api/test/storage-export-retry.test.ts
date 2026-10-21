@@ -246,7 +246,7 @@ describe("Drive: carpeta como ruta o como id", () => {
     expect(r.config).toEqual({ folderId: "id-2026" });
   });
 
-  it("un id de carpeta que la app ve (también de una unidad compartida) se usa tal cual; si no la ve, error claro", async () => {
+  it("un id de carpeta que la app ve (también de una unidad compartida) se usa tal cual; si no la ve, se toma como nombre (como URL, error claro)", async () => {
     const { uploadGdrive } = await import("../src/modules/storage-export");
     const id = "1AbCdEfGhIjKlMnOpQrStUvWxYz012345";
     let calls = mockFetch((url) =>
@@ -262,9 +262,11 @@ describe("Drive: carpeta como ruta o como id", () => {
       if (url.includes("?q=")) return json(200, { files: [{ id: "byname" }] });
       return init.method === "POST" ? json(200, { id: "up" }) : json(500, "no");
     });
-    // Un id suelto que la app no ve: el mismo error que una URL (antes creaba o usaba una carpeta llamada como el id).
-    await expect(uploadGdrive(creds, { folder: id }, "C.pdf", bytes, "application/pdf")).rejects.toThrow(/no tiene acceso/);
-    expect(calls.some((c) => c.url.includes("?q=") || c.init.method === "POST")).toBe(false);
+    // Un id suelto que la app no ve (404/403): se toma como nombre de carpeta (un nombre puede tener forma de id).
+    r = await uploadGdrive(creds, { folder: id }, "C.pdf", bytes, "application/pdf");
+    expect(r.config).toEqual({ folderId: "byname" });
+    expect(calls.some((c) => c.url.includes("?q="))).toBe(true);
+    calls = mockFetch((url) => (url.includes(`/files/${id}?`) ? json(404, { error: { message: "not found" } }) : json(500, "no")));
     // Como URL (…/folders/<id>): si la app no la ve, falla en vez de crear carpetas con los pedazos de la URL.
     await expect(uploadGdrive(creds, { folder: `https://drive.google.com/drive/folders/${id}` }, "C.pdf", bytes, "application/pdf")).rejects.toThrow(/no tiene acceso/);
   });

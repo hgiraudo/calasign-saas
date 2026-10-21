@@ -1,7 +1,7 @@
 // Validador de firmas PDF: integridad criptográfica, cobertura, sello de tiempo, cadena hasta una raíz
 // de confianza, revocación (DSS incrustado u online) y nivel PAdES detectado.
 import { X509Certificate } from "node:crypto";
-import { fetchCrl, fetchOcsp, statusFromCrl, statusFromOcsp, type Fetcher, type RevocationStatus } from "./pki";
+import { fetchCrl, fetchOcsp, hasTimeStampingEku, statusFromCrl, statusFromOcsp, type Fetcher, type RevocationStatus } from "./pki";
 import {
   asn1js,
   HASH_BY_OID,
@@ -112,7 +112,6 @@ function summary(c: pkijs.Certificate): CertSummary {
   };
 }
 
-const EKU_TIME_STAMPING = "1.3.6.1.5.5.7.3.8";
 
 // ───────────────────── Algoritmos débiles ─────────────────────
 const WEAK_DIGESTS: Record<string, string> = { "1.3.14.3.2.26": "SHA-1", "1.2.840.113549.2.5": "MD5" };
@@ -192,12 +191,6 @@ function signingCertificateIssue(sd: pkijs.SignedData, signer: pkijs.Certificate
   } catch {
     return bad;
   }
-}
-
-function hasTimeStampingEku(c: pkijs.Certificate): boolean {
-  const ext = c.extensions?.find((e) => e.extnID === "2.5.29.37");
-  const ids: string[] = ((ext?.parsedValue as pkijs.ExtKeyUsage | undefined)?.keyPurposes ?? []).map(String);
-  return ids.includes(EKU_TIME_STAMPING);
 }
 
 async function verifyToken(token: pkijs.SignedData, imprintOf: Uint8Array, pool: pkijs.Certificate[], anchors: Set<string>, weak: Set<string>) {
@@ -396,14 +389,16 @@ async function validatePdfUnbudgeted(pdf: Uint8Array, opts: ValidateOptions): Pr
 
       if (s.type === "DocTimeStamp") {
         const ts = await verifyToken(sd, content, pool, anchors, weak);
+        const tsIntegrity: SignatureReport["integrity"] = brIssue ? { valid: false, reason: brIssue } : ts.valid ? { valid: true } : { valid: false, reason: "El sello de documento no corresponde al contenido" };
         reports.push({
           ...base,
           kind: "document_timestamp",
           signer: signer ? summary(signer) : null,
           signingTime: ts.time,
           timestamp: ts,
-          integrity: brIssue ? { valid: false, reason: brIssue } : ts.valid ? { valid: true } : { valid: false, reason: "El sello de documento no corresponde al contenido" },
-          chain: signer ? await chainReport(signer, pool, anchors, dss, opts, new Date(ts.time), weak) : { trusted: false, anchor: null, entries: [] },
+          integrity: tsIntegrity,
+          // Como en las firmas: sin integridad no se arma la cadena (un sello que no verifica no puede quedar "confiable").
+          chain: signer && tsIntegrity.valid ? await chainReport(signer, pool, anchors, dss, opts, new Date(ts.time), weak) : { trusted: false, anchor: null, entries: [] },
           level: null,
           ...weakOf(),
         });
@@ -516,7 +511,7 @@ async function validatePdfUnbudgeted(pdf: Uint8Array, opts: ValidateOptions): Pr
     summary: {
       count: reports.length,
       allValid: reports.length > 0 && !modifiedAfterSigning && reports.every((r) => r.integrity.valid && (!r.timestamp || r.timestamp.valid) && !r.weakAlgorithm),
-      allTrusted: reports.length > 0 && reports.every((r) => r.chain.trusted && r.chain.timeValid !== false && !r.chain.revoked && !r.weakAlgorithm),
+      allTrusted: reports.length > 0 && reports.every((r) => r.integrity.valid && r.chain.trusted && r.chain.timeValid !== false && !r.chain.revoked && !r.weakAlgorithm),
       anyRevoked: reports.some((r) => r.chain.entries.some((e) => e.revocation.status === "revoked")),
       modifiedAfterSigning,
       revocationUnknown: reports.some((r) => r.chain.revocationUnknown === true),

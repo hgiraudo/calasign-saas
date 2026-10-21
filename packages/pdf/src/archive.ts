@@ -3,6 +3,7 @@
 // vencimiento se acerca hay que agregar DSS + un nuevo sello de documento (applyLtv con nivel B-LTA).
 import { randomBytes } from "node:crypto";
 import { requestTimestampToken } from "./cms";
+import { sha256 } from "./provider";
 import { commonName, nameToString, parseSignedData, signatureTimestamp, signerCertOf, tstInfoOf } from "./pki";
 import { readPdfSignatures } from "./signatures";
 
@@ -48,8 +49,8 @@ export async function archiveTimestampInfo(pdf: Uint8Array): Promise<ArchiveTime
  * "renovar" un archivo cuyo último sello ya es de ese mismo certificado: la renovación no extendería la validez.
  */
 export async function tsaCertificateNotAfter(url: string, authHeader?: string | null): Promise<string> {
-  const digest = new Uint8Array(randomBytes(32));
-  const token = await requestTimestampToken(url, digest, authHeader);
+  const data = new Uint8Array(randomBytes(32));
+  const token = await requestTimestampToken(url, sha256(data), authHeader, data);
   const cert = signerCertOf(parseSignedData(token));
   if (!cert) throw new Error("La TSA devolvió un sello sin su certificado");
   return cert.notAfter.value.toISOString();

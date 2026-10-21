@@ -190,19 +190,41 @@ export async function revokeProviderToken(p: StorageProvider, creds: Partial<OAu
   }
 }
 
+/** La cuenta de Google de una conexión (o de tokens recién obtenidos), para googleGrantShared. */
+interface GoogleAccount {
+  /** `sub` del id_token (id estable de la cuenta). */
+  sub: string | null;
+  /** account_label: el email del id_token. */
+  label: string | null;
+  /** Organización y persona que conectó: con qué comparar cuando no se sabe la cuenta. */
+  tenantId: string;
+  createdBy: string | null;
+}
+
 /**
  * Google revoca toda la concesión (la app y la cuenta de Google), no un token: revocar el de una conexión cortaba
  * también las demás conexiones de Drive con la misma cuenta (de esta u otra organización), que seguían "activas" con un
- * refresh token muerto. Solo se revoca si ninguna otra conexión usa esa cuenta. La cuenta es account_label (el email
- * del id_token); sin etiqueta no se sabe cuál es, así que cuenta como compartida con otra conexión sin etiqueta.
+ * refresh token muerto. Solo se revoca si ninguna otra conexión usa esa cuenta:
+ *  - con `sub` (id_token): otra conexión con el mismo sub, o una anterior a la columna (sin sub) con el mismo email;
+ *  - sin sub pero con email: otra conexión con ese email (en cualquier organización);
+ *  - sin sub ni email no se sabe la cuenta: solo cuentan las conexiones de Drive de la misma organización conectadas
+ *    por la misma persona (antes, cualquier conexión sin etiqueta de cualquier organización impedía revocar).
+ * En todos los casos, otra conexión de cuenta desconocida de la misma organización y persona también cuenta.
  */
-async function googleGrantShared(db: Db, accountLabel: string | null, excludeId: string | null): Promise<boolean> {
+async function googleGrantShared(db: Db, acc: GoogleAccount, excludeId: string | null): Promise<boolean> {
   const other = await db.one<any>(
     `SELECT 1 AS x FROM storage_connections
-      WHERE provider = 'gdrive' AND ($2::uuid IS NULL OR id <> $2::uuid)
-        AND (CASE WHEN $1::text IS NULL THEN account_label IS NULL ELSE lower(account_label) = lower($1::text) END)
+      WHERE provider = 'gdrive' AND ($5::uuid IS NULL OR id <> $5::uuid)
+        AND (CASE
+               WHEN $1::text IS NOT NULL THEN account_sub = $1::text
+                 OR (account_sub IS NULL AND $2::text IS NOT NULL AND lower(account_label) = lower($2::text))
+               WHEN $2::text IS NOT NULL THEN lower(account_label) = lower($2::text)
+               ELSE tenant_id = $3::uuid AND created_by IS NOT DISTINCT FROM $4::uuid
+             END
+             -- Otra conexión de cuenta desconocida (sin sub ni email) de la misma organización y persona: puede ser esta.
+             OR (account_sub IS NULL AND account_label IS NULL AND tenant_id = $3::uuid AND created_by IS NOT DISTINCT FROM $4::uuid))
       LIMIT 1`,
-    [accountLabel, excludeId],
+    [acc.sub, acc.label, acc.tenantId, acc.createdBy, excludeId],
   );
   return Boolean(other);
 }
@@ -214,10 +236,10 @@ async function revokeStoredCreds(
   credsEnc: string,
   log: { warn(o: object, m?: string): void; info?(o: object, m?: string): void },
   connectionId: string,
-  accountLabel: string | null,
+  account: GoogleAccount,
 ) {
   if (provider === "s3") return;
-  if (provider === "gdrive" && (await googleGrantShared(db, accountLabel, connectionId))) {
+  if (provider === "gdrive" && (await googleGrantShared(db, account, connectionId))) {
     log.info?.({ provider, connectionId }, "no se revoca el acceso de Google: otra conexión usa la misma cuenta");
     return;
   }
@@ -229,6 +251,17 @@ async function revokeStoredCreds(
   }
   const r = await revokeProviderToken(provider, creds);
   if (!r.ok) log.warn({ provider, connectionId, err: r.error }, "no se pudo revocar el acceso de la conexión de almacenamiento en el proveedor");
+}
+
+/** `sub` del id_token de Google (sin verificar la firma: viene directo del endpoint de tokens por TLS), o null. */
+function googleSub(tokenBody: any): string | null {
+  try {
+    if (!tokenBody?.id_token) return null;
+    const payload = JSON.parse(Buffer.from(String(tokenBody.id_token).split(".")[1], "base64url").toString("utf8"));
+    return typeof payload.sub === "string" && payload.sub ? payload.sub : null;
+  } catch {
+    return null;
+  }
 }
 
 async function accountLabel(p: OAuthProvider, tokenBody: any): Promise<string | null> {
@@ -318,32 +351,41 @@ export function gdriveFolderQuery(folder: string, parentId?: string | null): str
 const DRIVE_ALL = "supportsAllDrives=true";
 const driveListAll = (parentId: string | null | undefined) => (parentId ? `${DRIVE_ALL}&includeItemsFromAllDrives=true&corpora=allDrives` : DRIVE_ALL);
 
+const GDRIVE_FOLDER_UNAVAILABLE =
+  "la carpeta de Drive indicada no existe o la app no tiene acceso: usá una ruta (Contratos/2026) o el id de una carpeta creada por la app";
+
 /** ¿Parece un id de carpeta de Drive (lo que va después de /folders/ en la URL)? Sin barras ni espacios. */
 export const looksLikeGdriveId = (v: string) => /^[A-Za-z0-9_-]{25,}$/.test(v);
 
 /**
  * Carpeta de destino de Drive. `folder` puede ser:
- *  - el id de una carpeta (o la URL …/folders/<id>), también de una unidad compartida: se usa si la app la ve, es una
- *    carpeta y no está en la papelera (con el scope drive.file la app solo ve lo que creó o lo que el usuario abrió con
- *    ella). Si no la ve, error claro (antes un id suelto se tomaba como nombre y se creaba una carpeta con ese nombre);
+ *  - la URL …/folders/<id> de una carpeta (también de una unidad compartida): se usa si la app la ve, es una carpeta y
+ *    no está en la papelera (con el scope drive.file la app solo ve lo que creó o lo que el usuario abrió con ella). Si
+ *    no la ve, error claro (no se arma una ruta con los pedazos de la URL);
+ *  - un id suelto: igual, pero si Drive responde 404/403 se toma como nombre de carpeta (comportamiento anterior): un
+ *    nombre como "CalaSign_Signed_Documents" tiene forma de id y antes de esto las exportaciones de esas conexiones
+ *    empezaban a fallar. Si existe pero no es una carpeta viva, error (es claramente un id);
  *  - una ruta "Contratos/2026": se busca (o crea) cada carpeta dentro de la anterior, como en Box. Antes "Contratos/2026"
  *    creaba UNA carpeta con la barra en el nombre.
  */
 async function findOrCreateGdriveFolder(token: string, folder: string): Promise<string> {
   const auth = { authorization: `Bearer ${token}` };
   const raw = folder.trim();
-  const fromUrl = /^https?:\/\//i.test(raw) ? (/\/folders\/([A-Za-z0-9_-]{10,})/.exec(raw)?.[1] ?? null) : null;
+  const isUrl = /^https?:\/\//i.test(raw);
+  const fromUrl = isUrl ? (/\/folders\/([A-Za-z0-9_-]{10,})/.exec(raw)?.[1] ?? null) : null;
   const id = fromUrl ?? (looksLikeGdriveId(raw) ? raw : null);
   if (id) {
     const res = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?fields=id,mimeType,trashed&${DRIVE_ALL}`, { headers: auth, signal: AbortSignal.timeout(15_000) });
     if (res.ok) {
       const f: any = await res.json().catch(() => ({}));
       if (f?.id && f.mimeType === "application/vnd.google-apps.folder" && f.trashed !== true) return String(f.id);
+      // Existe pero no es una carpeta viva: es un id, no un nombre.
+      throw new Error(GDRIVE_FOLDER_UNAVAILABLE);
     } else if (res.status !== 404 && res.status !== 403) await check(res, "revisar carpeta");
   }
-  // Una URL o un id de una carpeta que la app no ve (o que no es una carpeta viva): no se arma una ruta con sus pedazos
-  // ni se crea una carpeta llamada como el id.
-  if (id || /^https?:\/\//i.test(raw)) throw new Error("la carpeta de Drive indicada no existe o la app no tiene acceso: usá una ruta (Contratos/2026) o el id de una carpeta creada por la app");
+  // Una URL que no lleva a una carpeta que la app vea: no se arma una ruta con sus pedazos. Un id suelto que la app no
+  // ve sigue como nombre de carpeta.
+  if (isUrl) throw new Error(GDRIVE_FOLDER_UNAVAILABLE);
   const segments = raw.split("/").map((x) => x.trim()).filter(Boolean);
   let parent: string | null = null;
   for (const seg of segments.length ? segments : [raw]) {
@@ -1234,11 +1276,12 @@ export async function storageRoutes(app: FastifyInstance, s: Services) {
       // Tokens ya obtenidos: si después no se guarda la conexión, se revocan (si no, el acceso quedaba concedido sin uso).
       let obtained: OAuthCreds | null = null;
       let obtainedLabel: string | null = null;
+      let obtainedSub: string | null = null;
       const revokeObtained = async () => {
         if (!obtained) return;
         // Google: los tokens nuevos son de la misma concesión que los de otra conexión con esa cuenta; revocarlos la
         // cortaba también (ver googleGrantShared).
-        if (st.p === "gdrive" && (await googleGrantShared(s.db, obtainedLabel, null).catch(() => true))) return;
+        if (st.p === "gdrive" && (await googleGrantShared(s.db, { sub: obtainedSub, label: obtainedLabel, tenantId: a.tenantId, createdBy: a.userId }, null).catch(() => true))) return;
         const r = await revokeProviderToken(st.p, obtained);
         if (!r.ok) req.log.warn({ provider: st.p, err: r.error }, "no se pudo revocar el acceso obtenido para una conexión que no se guardó");
       };
@@ -1248,6 +1291,8 @@ export async function storageRoutes(app: FastifyInstance, s: Services) {
         obtained = creds;
         const label = await accountLabel(st.p, body);
         obtainedLabel = label;
+        const sub = st.p === "gdrive" ? googleSub(body) : null;
+        obtainedSub = sub;
         const cfg: Record<string, unknown> = { folder: st.f, includeEvidence: Boolean(st.ev) };
         if (st.p === "sharepoint") {
           try {
@@ -1262,8 +1307,8 @@ export async function storageRoutes(app: FastifyInstance, s: Services) {
         const id = uuidv7();
         await insertConnection(
           a.tenantId,
-          `INSERT INTO storage_connections (id, tenant_id, provider, name, config, credentials_enc, account_label, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-          [id, a.tenantId, st.p, st.n, JSON.stringify(cfg), encrypt(JSON.stringify(creds)), label, a.userId],
+          `INSERT INTO storage_connections (id, tenant_id, provider, name, config, credentials_enc, account_label, created_by, account_sub) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+          [id, a.tenantId, st.p, st.n, JSON.stringify(cfg), encrypt(JSON.stringify(creds)), label, a.userId, sub],
         );
         await auditFromRequest(s.db, req, a, "storage.connected", { targetType: "storage_connection", targetId: id, data: { provider: st.p, name: st.n } });
         return back(`connected=${st.p}`);
@@ -1329,7 +1374,12 @@ export async function storageRoutes(app: FastifyInstance, s: Services) {
     const del = await s.db.query(`DELETE FROM storage_connections WHERE id = $1 RETURNING id`, [r.id]);
     await auditFromRequest(s.db, req, a, "storage.disconnected", { targetType: "storage_connection", targetId: r.id, data: { provider: r.provider, name: r.name } });
     // Lo mejor posible, después de borrarla: que la app deje de tener acceso a esa cuenta en el proveedor.
-    if (del.length) await revokeStoredCreds(s.db, r.provider, r.credentials_enc, req.log, r.id, r.account_label ?? null).catch((err) => req.log.warn({ err: String(err) }, "no se pudo revocar el acceso de la conexión de almacenamiento"));
+    if (del.length) await revokeStoredCreds(s.db, r.provider, r.credentials_enc, req.log, r.id, {
+        sub: r.account_sub ?? null,
+        label: r.account_label ?? null,
+        tenantId: r.tenant_id,
+        createdBy: r.created_by ?? null,
+      }).catch((err) => req.log.warn({ err: String(err) }, "no se pudo revocar el acceso de la conexión de almacenamiento"));
     return reply.code(204).send();
   });
 

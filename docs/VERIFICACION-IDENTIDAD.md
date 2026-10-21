@@ -20,19 +20,26 @@ no incluir la selfie o la prueba de vida. Para un nivel con selfie hace falta la
 **Capacidades declaradas de la integración.** La decisión de Veriff no suele traer `faceMatch.similarity` ni un
 booleano de prueba de vida. Por eso una aprobación se completa con lo que la integración declara hacer:
 
-- **Veriff**: `VERIFF_INTEGRATION_LEVEL` (una sola integración para todos los sobres). Default `document_selfie` (el
-  flujo de verificación estándar de Veriff incluye selfie y coincidencia facial); sin definirla, la API y el worker
-  avisan al arrancar que conviene declararla. Con `document` una aprobación no cuenta como coincidencia facial; con
-  `document_selfie` sí; con `document_selfie_liveness`, además como prueba de vida. Si la integración del panel de
-  Veriff no hace la selfie, definí `VERIFF_INTEGRATION_LEVEL=document`.
+- **Veriff**: `VERIFF_INTEGRATION_LEVEL` (una sola integración para todos los sobres). Política:
+  - **Definida explícitamente**: con `document` una aprobación no cuenta como coincidencia facial; con
+    `document_selfie` sí; con `document_selfie_liveness`, además como prueba de vida (salvo un dato contrario).
+  - **Sin definir (o con un valor inválido)**: no se infiere **nada** de la integración; la evidencia nunca afirma un
+    control que Veriff no informó. Como la decisión de Veriff no suele traer el puntaje facial ni la prueba de vida,
+    una verificación con selfie terminaría siempre en `level_not_met` y el firmante quedaría trabado: por eso, sin la
+    variable, Veriff solo se ofrece para el nivel `document`. Pedir `document_selfie` o `document_selfie_liveness` con
+    Veriff responde 400 `identity_provider_unavailable` al armar el sobre y bloquea el envío, con un mensaje para el
+    remitente que nombra `VERIFF_INTEGRATION_LEVEL`. La API y el worker avisan al arrancar.
+
+  Definila con lo que hace la integración del panel de Veriff (`document` si no hace la selfie, `document_selfie` para
+  el flujo estándar con selfie y coincidencia facial, `document_selfie_liveness` si hace la prueba de vida).
 - **Truora**: un flujo propio del nivel (`TRUORA_FLOW_ID_<NIVEL>`) se arma con las validaciones del nivel, así que una
   aprobación con ese flujo cumple el nivel. El flujo genérico (`TRUORA_FLOW_ID`) no declara nada: el resultado tiene que
   traer los datos.
 
-Cada verificación guarda al iniciarse el nivel que declaraba la integración (`identity_verifications.integration_level`;
-`none` si no declaraba nada): el resultado se completa con ese nivel y no con la configuración del momento del
+Cada verificación guarda al iniciarse el nivel que declaraba explícitamente la integración
+(`identity_verifications.integration_level`; `none` si no declaraba nada, p. ej. Veriff sin la variable): el resultado se completa con ese nivel y no con la configuración del momento del
 resultado, así cambiar `VERIFF_INTEGRATION_LEVEL` o los flujos de Truora no afecta a las verificaciones en curso. Las
-filas anteriores a la columna usan la configuración actual.
+filas anteriores a la columna (`NULL`) cuentan como `none`: no se infiere nada.
 
 Un dato contrario explícito siempre gana: puntaje facial bajo el umbral o `faceMatched` en false (`face_mismatch`),
 `liveness` en false (`liveness_failed`). Esas son fallas del firmante y consumen un intento. Lo inferido queda en la
@@ -48,7 +55,7 @@ Repetir la verificación daría lo mismo y abriría otra sesión paga, así que 
 Después se controlan el nombre (`name_mismatch`) y el número de documento (`document_number_mismatch`).
 
 **Disponibilidad por nivel.** Un proveedor puede estar configurado y no poder hacer un nivel: Truora sin flujo para el
-nivel, o un nivel por encima de `VERIFF_INTEGRATION_LEVEL`. Pedir ese nivel al armar el sobre responde 400
+nivel, o un nivel por encima de `VERIFF_INTEGRATION_LEVEL` (sin definirla, por encima de `document`). Pedir ese nivel al armar el sobre responde 400
 `identity_provider_unavailable` con el motivo (para Veriff, la variable a definir). Un borrador armado antes de estas
 reglas (o de un cambio de configuración) no se envía: el envío lo informa como problema (`identity_provider_unavailable`
 en `envelope_incomplete`, con el destinatario, el proveedor y el nivel). En un sobre ya enviado, el inicio de la
@@ -60,7 +67,7 @@ destinatario (`unavailableReason`) y lo resuelve reiniciando con otro nivel o pr
 | Variable | Default | Uso |
 | --- | --- | --- |
 | `VERIFF_API_KEY`, `VERIFF_SHARED_SECRET`, `VERIFF_BASE_URL` | — | integración de Veriff (una sola). |
-| `VERIFF_INTEGRATION_LEVEL` | `document_selfie` (con aviso al arrancar) | controles que hace la integración de Veriff (`document`, `document_selfie`, `document_selfie_liveness`). Una aprobación cumple hasta ese nivel salvo un dato contrario explícito; los niveles superiores no se pueden pedir con Veriff (al armar o enviar el sobre, 400 con el nombre de la variable). Tiene que coincidir con lo configurado en el panel de Veriff: definila explícitamente (`document` si la integración no hace la selfie, `document_selfie_liveness` si hace la prueba de vida). |
+| `VERIFF_INTEGRATION_LEVEL` | sin definir (con aviso al arrancar): no se infiere nada y Veriff solo se ofrece para `document` | controles que hace la integración de Veriff (`document`, `document_selfie`, `document_selfie_liveness`). Definida, una aprobación cumple hasta ese nivel salvo un dato contrario explícito; los niveles superiores no se pueden pedir con Veriff (al armar o enviar el sobre, 400 con el nombre de la variable). Tiene que coincidir con lo configurado en el panel de Veriff. |
 | `TRUORA_API_KEY`, `TRUORA_WEBHOOK_SECRET` | — | Truora (Digital Identity). |
 | `TRUORA_FLOW_ID` | — | flujo por defecto. |
 | `TRUORA_FLOW_ID_DOCUMENT`, `TRUORA_FLOW_ID_DOCUMENT_SELFIE`, `TRUORA_FLOW_ID_DOCUMENT_SELFIE_LIVENESS` | `TRUORA_FLOW_ID` | flujo por nivel (documento; + reconocimiento facial; + prueba de vida). Truora queda configurado con `TRUORA_FLOW_ID` o con al menos uno de estos; un nivel sin flujo no puede pedirse ni iniciarse. Un flujo propio del nivel declara sus controles (una aprobación cumple el nivel salvo un dato contrario). |

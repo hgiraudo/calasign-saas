@@ -119,18 +119,21 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
     const noticeOk = t?.ai_notice_accepted_at && t?.ai_notice_version === AI_NOTICE_VERSION;
     // Aceptar el aviso de tratamiento de datos (y habilitar la IA cuando nunca se aceptó el vigente) lo hace una persona
     // con sesión web: queda a su nombre (ai_notice_accepted_by). Con una API key o una app OAuth quedaba aceptado por nadie.
-    if (input.acceptNotice || (input.enabled === true && !before?.ai_enabled && !noticeOk)) {
-      if (!a.userId || a.apiKeyId || a.oauth) {
-        throw new AppError(
-          403,
-          "session_required",
-          "Aceptar el aviso de tratamiento de datos de la IA (o habilitarla por primera vez) requiere iniciar sesión en la web: no se puede con una API key ni una app OAuth",
-        );
-      }
+    // Solo cuando el aviso vigente falta: con el aviso ya aceptado, una integración que reenvía acceptNotice (p. ej. el
+    // objeto completo de GET) puede guardar los demás ajustes; su acceptNotice se ignora (no vuelve a sellar la aceptación).
+    const sessionCaller = Boolean(a.userId && !a.apiKeyId && !a.oauth);
+    const enabling = input.enabled === true && !before?.ai_enabled;
+    if (!noticeOk && (input.acceptNotice || enabling) && !sessionCaller) {
+      throw new AppError(
+        403,
+        "session_required",
+        "Aceptar el aviso de tratamiento de datos de la IA (o habilitarla por primera vez) requiere iniciar sesión en la web: no se puede con una API key ni una app OAuth",
+      );
     }
+    const stampNotice = Boolean(input.acceptNotice) && sessionCaller;
     // Al habilitar hace falta el aviso vigente. Ya habilitada con un aviso anterior se pueden guardar los demás ajustes:
     // la IA queda en pausa (assertAiAvailable: 403 ai_notice_required) hasta que se acepte la versión vigente.
-    if (input.enabled === true && !before?.ai_enabled && !noticeOk && !input.acceptNotice) {
+    if (enabling && !noticeOk && !input.acceptNotice) {
       throw new AppError(403, "ai_notice_required", "Para habilitar la IA hay que aceptar el aviso de tratamiento de datos");
     }
     // Tope de tokens de IA del plan: el presupuesto de la organización no puede superarlo (lo paga la plataforma), y un
@@ -159,7 +162,7 @@ export async function aiRoutes(app: FastifyInstance, s: Services) {
         input.autoExtractMetadata ?? null,
         input.renewalAlertDays ?? null,
         input.playbook ? JSON.stringify(input.playbook) : null,
-        Boolean(input.acceptNotice),
+        stampNotice,
         AI_NOTICE_VERSION,
         a.userId,
       ],

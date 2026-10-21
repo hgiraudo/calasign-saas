@@ -405,6 +405,13 @@ export async function statusFromCrl(crlDer: Uint8Array, cert: pkijs.Certificate,
 }
 
 /** Los certificados dentro de un SignedData (CMS) en DER. */
+/** ¿El certificado tiene el uso extendido timeStamping (1.3.6.1.5.5.7.3.8)? Lo exige RFC 3161 al certificado de una TSA. */
+export function hasTimeStampingEku(c: pkijs.Certificate): boolean {
+  const ext = c.extensions?.find((e) => e.extnID === "2.5.29.37");
+  const ids: string[] = ((ext?.parsedValue as pkijs.ExtKeyUsage | undefined)?.keyPurposes ?? []).map(String);
+  return ids.includes("1.3.6.1.5.5.7.3.8");
+}
+
 export function cmsCertificates(sd: pkijs.SignedData): pkijs.Certificate[] {
   return (sd.certificates ?? []).filter((c): c is pkijs.Certificate => c instanceof pkijs.Certificate);
 }

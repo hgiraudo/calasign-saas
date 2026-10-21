@@ -120,7 +120,7 @@ export async function applyLtv(pdf: Uint8Array, opts: LtvOptions): Promise<{ pdf
       type: "DocTimeStamp",
       fieldName: `DocTimeStamp${Date.now()}`,
       signatureLength: 12_000,
-      sign: (content) => requestTimestampToken(opts.tsaUrl!, sha256(content), opts.tsaAuthHeader),
+      sign: (content) => requestTimestampToken(opts.tsaUrl!, sha256(content), opts.tsaAuthHeader, content),
     });
   }
   return { pdf: out, report: { level: opts.level, certs: data.certs.length, ocsps: data.ocsps.length, crls: data.crls.length, missingRevocation: missing } };

@@ -1,7 +1,13 @@
-// Lugares para obtener y procesar el PDF de create_envelope (descarga de una URL o base64): como mucho `perCredential`
-// a la vez por credencial y `perProcess` en el proceso. Lo que no consigue lugar espera hasta `queueWaitMs` en una cola
-// corta y, si no, falla con PdfSlotBusyError (reintentable). Sin esto, muchas llamadas en paralelo (o un lote JSON-RPC)
-// hacían que el servidor bajara y tuviera en memoria decenas de PDFs de 10 MB a la vez.
+// Lugares para create_envelope del MCP, por clave (la organización: tenantId; antes era la credencial y una organización
+// con varias API keys o apps OAuth multiplicaba su cupo) y por proceso. Lo que no consigue lugar espera hasta
+// `queueWaitMs` en una cola corta y, si no, falla con PdfSlotBusyError (reintentable). Sin esto, muchas llamadas en
+// paralelo (o un lote JSON-RPC) hacían que el servidor bajara y tuviera en memoria decenas de PDFs de 10 MB a la vez.
+// Dos juegos:
+//   mcpCreateSlots → sobres en curso por organización (2), desde que se obtiene el PDF hasta que se crea el sobre: acota
+//                    los PDFs decodificados que una organización tiene en memoria (inspección y alta incluidas).
+//   mcpPdfSlots    → descargas/decodificaciones a la vez en el proceso (8): solo mientras se obtienen los bytes (la
+//                    descarga tiene su propio plazo corto), no durante la inspección ni el alta del sobre. Antes el lugar
+//                    del proceso se tenía todo el recorrido y cuatro altas lentas bloqueaban a todas las organizaciones.
 
 export class PdfSlotBusyError extends Error {
   constructor(readonly retryAfterSeconds = 5) {
@@ -11,6 +17,7 @@ export class PdfSlotBusyError extends Error {
 }
 
 export interface PdfSlotLimits {
+  /** Lugares por clave (la organización). */
   perCredential: number;
   perProcess: number;
   queueWaitMs: number;
@@ -19,7 +26,12 @@ export interface PdfSlotLimits {
   maxQueuePerCredential: number;
 }
 
-export const MCP_PDF_SLOT_LIMITS: PdfSlotLimits = { perCredential: 2, perProcess: 4, queueWaitMs: 3_000, maxQueue: 16, maxQueuePerCredential: 2 };
+/** Obtener los bytes del PDF (descarga o base64): por organización y por proceso. */
+export const MCP_PDF_SLOT_LIMITS: PdfSlotLimits = { perCredential: 2, perProcess: 8, queueWaitMs: 3_000, maxQueue: 16, maxQueuePerCredential: 2 };
+/** Plazo de la descarga del PDF dentro del lugar (más corto que el general de fetchPdf). */
+export const MCP_PDF_FETCH_TIMEOUT_MS = 15_000;
+/** Sobres en curso (PDF en memoria) por organización y por proceso. */
+export const MCP_CREATE_SLOT_LIMITS: PdfSlotLimits = { perCredential: 2, perProcess: 16, queueWaitMs: 3_000, maxQueue: 32, maxQueuePerCredential: 2 };
 
 interface Waiter {
   key: string;
@@ -98,3 +110,4 @@ export function createPdfSlots(limits: PdfSlotLimits) {
 
 /** Los del proceso (create_envelope del MCP). */
 export const mcpPdfSlots = createPdfSlots(MCP_PDF_SLOT_LIMITS);
+export const mcpCreateSlots = createPdfSlots(MCP_CREATE_SLOT_LIMITS);

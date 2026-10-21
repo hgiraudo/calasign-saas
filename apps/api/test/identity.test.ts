@@ -228,9 +228,10 @@ describe("nivel exigido", () => {
     const approved = mapVeriffDecision(VERIFF_DECISION.verification);
     const { config } = await import("../src/config");
     const prevLevel = config.identity.veriffIntegrationLevel;
-    // VERIFF_INTEGRATION_LEVEL por defecto: document_selfie (flujo estándar de Veriff con selfie y coincidencia facial).
-    expect(prevLevel).toBe("document_selfie");
-    expect(config.identity.veriffIntegrationLevelExplicit).toBe(false);
+    // VERIFF_INTEGRATION_LEVEL sin definir: null, no se infiere nada (ni con la configuración actual ni con filas viejas).
+    expect(prevLevel).toBe(null);
+    expect(withIntegrationCapabilities("veriff", "document_selfie", approved, 0.8).inferred).toEqual([]);
+    expect(withIntegrationCapabilities("veriff", "document_selfie_liveness", approved, 0.8).result.liveness ?? null).toBe(null);
     try {
       // Declarada en document: no se infiere la coincidencia facial.
       (config.identity as { veriffIntegrationLevel: string }).veriffIntegrationLevel = "document";
@@ -240,6 +241,8 @@ describe("nivel exigido", () => {
       expect(withIntegrationCapabilities("veriff", "document_selfie", approved, 0.8, "document_selfie").inferred).toEqual(["faceMatched"]);
       expect(withIntegrationCapabilities("veriff", "document_selfie", approved, 0.8, null).inferred).toEqual([]);
       (config.identity as { veriffIntegrationLevel: string }).veriffIntegrationLevel = "document_selfie_liveness";
+      // NULL (filas anteriores a la columna) = "none", no la configuración actual.
+      expect(withIntegrationCapabilities("veriff", "document_selfie", approved, 0.8, null).inferred).toEqual([]);
       expect(withIntegrationCapabilities("veriff", "document_selfie", approved, 0.8, "document").inferred).toEqual([]);
       expect(withIntegrationCapabilities("veriff", "document_selfie", approved, 0.8, "none").inferred).toEqual([]);
       (config.identity as { veriffIntegrationLevel: string }).veriffIntegrationLevel = "document_selfie";
@@ -247,7 +250,7 @@ describe("nivel exigido", () => {
       expect(withIntegrationCapabilities("veriff", "document_selfie", { ...approved, faceMatchScore: 0.3 }, 0.8).result.faceMatched ?? null).toBe(null);
       expect(withIntegrationCapabilities("veriff", "document_selfie", { ...approved, status: "declined" }, 0.8).inferred).toEqual([]);
     } finally {
-      (config.identity as { veriffIntegrationLevel: string }).veriffIntegrationLevel = prevLevel;
+      (config.identity as { veriffIntegrationLevel: string | null }).veriffIntegrationLevel = prevLevel;
     }
     // Truora: solo con un flujo propio del nivel; el genérico no declara nada.
     const prev = process.env.TRUORA_FLOW_ID_DOCUMENT_SELFIE;

@@ -199,6 +199,15 @@ describe("aviso de tratamiento de datos de la IA", () => {
     // Ya aceptado: apagar y volver a habilitar con la API key no acepta nada nuevo y vale.
     expect((await patch(bearer, { enabled: false })).statusCode).toBe(200);
     expect((await patch(bearer, { enabled: true })).statusCode).toBe(200);
+    // Ya aceptado: una integración que reenvía acceptNotice con la API key guarda lo demás y no vuelve a sellar el aviso.
+    const before = await db.one<any>(`SELECT ai_notice_accepted_at, ai_notice_accepted_by FROM tenants WHERE id = $1`, [tenant]);
+    const again = await patch(bearer, { acceptNotice: true, renewalAlertDays: 60 });
+    expect(again.statusCode).toBe(200);
+    const after = await db.one<any>(`SELECT ai_notice_accepted_at, ai_notice_accepted_by, ai_renewal_alert_days FROM tenants WHERE id = $1`, [tenant]);
+    expect(after).toEqual({ ...before, ai_renewal_alert_days: 60 });
+    // Con un aviso anterior (versión vieja) vuelve a hacer falta la sesión.
+    await db.query(`UPDATE tenants SET ai_notice_version = 'old' WHERE id = $1`, [tenant]);
+    expect((await patch(bearer, { acceptNotice: true })).json().error.code).toBe("session_required");
   });
 });
 
@@ -223,5 +232,21 @@ describe("verificación de citas", () => {
     expect(H.locateQuote(docs, "la ley aplicable es la de Chile", 1)).toEqual({ documentId: null, page: 1, verified: false });
     expect(H.locateQuote(docs, "la ley aplicable es la de Chile", null)).toEqual({ documentId: "d1", page: 2, verified: true });
     expect(H.locateQuote(docs, "una cita que no está en ninguna parte", 1).verified).toBe(false);
+  });
+
+  it("con página citada, una cita corta con un número o de 6+ caracteres se verifica si está en esa página", () => {
+    const money: DocText[] = [
+      { id: "d2", name: "b.pdf", pages: [page(0, ["Precio total: USD 10.000 pagaderos a 30 días de la factura."]), page(1, ["Firmas."])] },
+    ];
+    expect(H.locateQuote(money, "USD 10.000", 1)).toEqual({ documentId: "d2", page: 1, verified: true });
+    expect(H.locateQuote(money, "30 días", 1)).toEqual({ documentId: "d2", page: 1, verified: true });
+    expect(H.locateQuote(money, "factura", 1).verified).toBe(true); // 7 caracteres
+    // En otra página que la citada: no.
+    expect(H.locateQuote(money, "USD 10.000", 2).verified).toBe(false);
+    // Sin página rige el mínimo de largo.
+    expect(H.locateQuote(money, "USD 10.000").verified).toBe(false);
+    expect(H.locateQuote(money, "30 días", null).verified).toBe(false);
+    // Muy cortas sin número, ni con página.
+    expect(H.locateQuote(docs, "de la", 1).verified).toBe(false);
   });
 });

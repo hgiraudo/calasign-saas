@@ -60,7 +60,9 @@ export async function trustAnchors(): Promise<Uint8Array[]> {
       }
     }
   }
-  // La raíz de la cadena del sello de plataforma (dev/local: la CA de desarrollo).
+  // La raíz de la cadena ACTUAL del sello de plataforma (dev/local: la CA de desarrollo). Las raíces de sellos anteriores
+  // (rotación) tienen que estar en TRUST_STORE_DIR para que los PDF ya sellados sigan figurando como confiables
+  // (docs/EVIDENCIA.md, "Rotación del sello de plataforma").
   const chain = await (await getSealProvider()).certificateChain();
   const last = chain[chain.length - 1];
   if (last) {

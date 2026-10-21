@@ -177,6 +177,62 @@ describe("almacenamiento de una persona que deja la organización", () => {
     expect(calls).toEqual(["https://oauth2.googleapis.com/revoke"]);
   });
 
+  it("Google: sin email ni sub solo cuentan las conexiones de la misma organización y persona; con sub se compara por sub", async () => {
+    const otherTenant = util.uuidv7();
+    await db.query(`INSERT INTO tenants (id, slug, name) VALUES ($1, $2, 'Otra2')`, [otherTenant, `t-${otherTenant.slice(-8)}`]);
+    const calls: string[] = [];
+    globalThis.fetch = (async (u: any) => {
+      calls.push(String(u));
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+    const del = async (id: string) => {
+      calls.length = 0;
+      expect((await app.inject({ method: "DELETE", url: `/v1/storage/connections/${id}`, cookies: { cs_session: sessions.owner } })).statusCode).toBe(204);
+      return calls.filter((u) => u.includes("revoke")).length > 0;
+    };
+    // Sin etiqueta en otra organización: no impide revocar.
+    const elsewhere = util.uuidv7();
+    await db.query(`INSERT INTO storage_connections (id, tenant_id, provider, name, config, credentials_enc) VALUES ($1,$2,'gdrive','Sin etiqueta','{}',$3)`, [
+      elsewhere,
+      otherTenant,
+      util.encrypt(JSON.stringify({ access_token: "x", refresh_token: "rx", expires_at: 0 })),
+    ]);
+    expect(await del(await conn("gdrive", users.owner))).toBe(true);
+    // Sin etiqueta, de otra persona de la misma organización: tampoco.
+    const byAna = await conn("gdrive", users.ana);
+    expect(await del(await conn("gdrive", users.owner))).toBe(true);
+    // Sin etiqueta, de la misma persona y organización: no se revoca (puede ser la misma cuenta).
+    const mine = await conn("gdrive", users.owner);
+    expect(await del(await conn("gdrive", users.owner))).toBe(false);
+    await db.query(`DELETE FROM storage_connections WHERE id = ANY($1::uuid[])`, [[elsewhere, byAna, mine]]);
+
+    // Con sub: misma cuenta aunque cambió el email; otra cuenta con el mismo email (sub distinto) no impide revocar.
+    const a = await conn("gdrive", users.owner, {}, "viejo@gmail.test");
+    const b = await conn("gdrive", users.owner, {}, "nuevo@gmail.test");
+    await db.query(`UPDATE storage_connections SET account_sub = 'sub-1' WHERE id = ANY($1::uuid[])`, [[a, b]]);
+    expect(await del(a)).toBe(false);
+    const c = await conn("gdrive", users.owner, {}, "nuevo@gmail.test");
+    await db.query(`UPDATE storage_connections SET account_sub = 'sub-2' WHERE id = $1`, [c]);
+    expect(await del(b)).toBe(true);
+    // Una fila anterior a la columna (sin sub) con el mismo email cuenta como la misma cuenta.
+    const legacy = await conn("gdrive", users.ana, {}, "Nuevo@gmail.test");
+    expect(await del(c)).toBe(false);
+    await db.query(`DELETE FROM storage_connections WHERE id = $1`, [legacy]);
+  });
+
+  it("Google: el callback guarda el sub del id_token", async () => {
+    const idToken = `h.${Buffer.from(JSON.stringify({ email: "subby@gmail.test", sub: "1234567890" })).toString("base64url")}.s`;
+    globalThis.fetch = (async (u: any) => {
+      if (String(u).includes("/token")) return new Response(JSON.stringify({ access_token: "na", refresh_token: "nr", expires_in: 3600, id_token: idToken }), { status: 200 });
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+    const st = util.encrypt(JSON.stringify({ t: tenant, u: users.owner, p: "gdrive", n: "Con sub", f: "", exp: Date.now() + 60_000 }));
+    const r = await app.inject({ method: "GET", url: `/v1/storage/oauth/gdrive/callback?code=c&state=${encodeURIComponent(st)}`, cookies: { cs_session: sessions.owner } });
+    expect(r.headers.location).toContain("connected=gdrive");
+    const row = await db.one<any>(`SELECT account_sub, account_label FROM storage_connections WHERE tenant_id = $1 AND name = 'Con sub'`, [tenant]);
+    expect(row).toEqual({ account_sub: "1234567890", account_label: "subby@gmail.test" });
+  });
+
   it("el callback OAuth exige también envelopes:view_all (como el resto de /v1/storage)", async () => {
     const st = util.encrypt(JSON.stringify({ t: tenant, u: users.ajustes, p: "gdrive", n: "X", f: "", exp: Date.now() + 60_000 }));
     let fetched = false;
@@ -243,9 +299,9 @@ describe("regresiones de la ronda 142", () => {
     expect(sent.map((m) => m.to)).toEqual(["owner@org.test", "ana@org.test"]);
   });
 
-  it("Drive: un id suelto que la app no ve da el mismo error claro que una URL (no crea una carpeta con ese nombre); unidades compartidas", async () => {
+  it("Drive: una URL de carpeta que la app no ve da un error claro (no crea una carpeta); unidades compartidas", async () => {
     const id = "1AbCdEfGhIjKlMnOpQrStUvWxYz012345";
-    const c = await conn("gdrive", users.owner, { folder: id });
+    const c = await conn("gdrive", users.owner, { folder: `https://drive.google.com/drive/folders/${id}` });
     const calls: { url: string; method: string }[] = [];
     globalThis.fetch = (async (u: any, init: any = {}) => {
       calls.push({ url: String(u), method: init.method ?? "GET" });
@@ -258,6 +314,28 @@ describe("regresiones de la ronda 142", () => {
     expect(calls[0].url).toContain(`/drive/v3/files/${id}?`);
     expect(calls[0].url).toContain("supportsAllDrives=true");
     expect(calls.some((c) => c.method === "POST")).toBe(false);
+  });
+
+  it("Drive: un nombre con forma de id (CalaSign_Signed_Documents) que da 404/403 se toma como nombre de carpeta", async () => {
+    for (const status of [404, 403]) {
+      const name = "CalaSign_Signed_Documents";
+      const c = await conn("gdrive", users.owner, { folder: name });
+      const calls: { url: string; method: string; body?: string }[] = [];
+      globalThis.fetch = (async (u: any, init: any = {}) => {
+        const url = String(u);
+        calls.push({ url, method: init.method ?? "GET", body: typeof init.body === "string" ? init.body : undefined });
+        if (url.includes(`/drive/v3/files/${name}?`)) return new Response("{}", { status });
+        if (url.includes("/drive/v3/files?q=")) return new Response(JSON.stringify({ files: [] }), { status: 200 });
+        if ((init.method ?? "GET") === "POST" && url.includes("/drive/v3/files?")) return new Response(JSON.stringify({ id: "nueva-carpeta" }), { status: 200 });
+        return new Response(JSON.stringify({ id: "x" }), { status: 200 });
+      }) as typeof fetch;
+      const r = await app.inject({ method: "POST", url: `/v1/storage/connections/${c}/test`, cookies: { cs_session: sessions.owner } });
+      expect(String(r.json().error ?? "")).not.toMatch(/no existe o la app no tiene acceso/);
+      const search = calls.find((x) => x.url.includes("/drive/v3/files?q="));
+      expect(search && decodeURIComponent(search.url)).toContain(name);
+      const created = calls.find((x) => x.method === "POST" && x.body?.includes("application/vnd.google-apps.folder"));
+      expect(created?.body).toContain(`"name":"${name}"`);
+    }
   });
 });
 

@@ -393,7 +393,7 @@ describe("MCP: lotes, lugares para PDFs, anotaciones, errores internos y vistas 
     });
   const pdfB64 = Buffer.from("%PDF-1.4\n%%EOF\n").toString("base64");
 
-  it("un lote JSON-RPC (array) se rechaza con -32600 sin ejecutar nada", async () => {
+  it("un lote JSON-RPC con varios pedidos se rechaza con -32600 sin ejecutar nada; uno de un mensaje o de notificaciones se acepta", async () => {
     const before = await db.one<any>(`SELECT count(*)::int AS n FROM envelopes WHERE tenant_id = $1`, [tenant]);
     const call = (i: number) => ({
       jsonrpc: "2.0",
@@ -404,10 +404,21 @@ describe("MCP: lotes, lugares para PDFs, anotaciones, errores internos y vistas 
     const r = await rpc([call(1), call(2), call(3)]);
     expect(r.statusCode).toBe(400);
     expect(r.json()).toMatchObject({ jsonrpc: "2.0", id: null, error: { code: -32600 } });
-    // Ni siquiera un lote de uno.
-    expect((await rpc([call(4)])).statusCode).toBe(400);
+    // Un pedido con una notificación (dos mensajes) tampoco pasa, ni un lote vacío.
+    expect((await rpc([{ jsonrpc: "2.0", method: "notifications/initialized" }, { jsonrpc: "2.0", id: 7, method: "tools/list", params: {} }])).statusCode).toBe(400);
+    expect((await rpc([])).statusCode).toBe(400);
     const after = await db.one<any>(`SELECT count(*)::int AS n FROM envelopes WHERE tenant_id = $1`, [tenant]);
     expect(after.n).toBe(before.n);
+    // Lote de un solo mensaje (clientes 2025-03-26): se procesa y responde como lote.
+    const one = await rpc([{ jsonrpc: "2.0", id: 9001, method: "tools/list", params: {} }]);
+    expect(one.statusCode).toBe(200);
+    const body = one.json();
+    const msg = Array.isArray(body) ? body[0] : body;
+    expect(msg.id).toBe(9001);
+    expect(msg.result.tools.length).toBeGreaterThan(0);
+    // Lote de solo notificaciones: aceptado, sin respuesta.
+    const notes = await rpc([{ jsonrpc: "2.0", method: "notifications/initialized" }, { jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 1 } }]);
+    expect(notes.statusCode).toBe(202);
   });
 
   it("lugares para PDFs: 2 por credencial y 4 por proceso; lo demás espera poco y después falla (reintentable)", async () => {
@@ -441,16 +452,60 @@ describe("MCP: lotes, lugares para PDFs, anotaciones, errores internos y vistas 
   });
 
   it("create_envelope sin lugar para el PDF responde un error reintentable (no descarga ni procesa)", async () => {
-    const { mcpPdfSlots, MCP_PDF_SLOT_LIMITS } = await import("../src/modules/mcp/pdf-slots");
-    const held = await Promise.all(Array.from({ length: MCP_PDF_SLOT_LIMITS.perCredential }, () => mcpPdfSlots.acquire(`k:${adminKeyId}`)));
+    const { mcpPdfSlots, mcpCreateSlots, MCP_PDF_SLOT_LIMITS, MCP_CREATE_SLOT_LIMITS } = await import("../src/modules/mcp/pdf-slots");
+    const args = { subject: "Sin lugar", recipients: [{ name: "A", email: "a@x.test" }], document: { base64: pdfB64 }, send: true };
+    // El cupo es de la organización (no de la credencial): sobres en curso de la organización.
+    let held = await Promise.all(Array.from({ length: MCP_CREATE_SLOT_LIMITS.perCredential }, () => mcpCreateSlots.acquire(tenant)));
     try {
-      const args = { subject: "Sin lugar", recipients: [{ name: "A", email: "a@x.test" }], document: { base64: pdfB64 }, send: true };
       const r = await callTool(ADMIN_KEY, "create_envelope", args);
       expect(r.isError).toBe(true);
       expect(r.text).toMatch(/reintentable/);
     } finally {
       for (const h of held) h();
     }
+    // Lugares del proceso para obtener el PDF ocupados (por otras organizaciones).
+    held = await Promise.all(Array.from({ length: MCP_PDF_SLOT_LIMITS.perProcess }, (_, i) => mcpPdfSlots.acquire(`otra-${i % 4}`)));
+    try {
+      const r = await callTool(ADMIN_KEY, "create_envelope", args);
+      expect(r.isError).toBe(true);
+      expect(r.text).toMatch(/reintentable/);
+    } finally {
+      for (const h of held) h();
+    }
+    expect(mcpCreateSlots.stats()).toEqual({ active: 0, waiting: 0 });
+  }, 20_000);
+
+  it("create_envelope: el lugar del proceso se tiene solo mientras se obtiene el PDF (no durante el alta del sobre)", async () => {
+    const { mcpPdfSlots, mcpCreateSlots } = await import("../src/modules/mcp/pdf-slots");
+    const seen: { fetch: number; create: number }[] = [];
+    // Las transacciones de la API (el alta del sobre) ven el estado de los lugares en ese momento.
+    const orig = db.tx.bind(db);
+    const spy = vi.spyOn(db, "tx").mockImplementation(((...args: any[]) => {
+      seen.push({ fetch: mcpPdfSlots.stats().active, create: mcpCreateSlots.stats().active });
+      return (orig as any)(...args);
+    }) as any);
+    try {
+      const objs = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] >>"];
+      let out = "%PDF-1.4\n";
+      const offsets: number[] = [];
+      objs.forEach((o, i) => {
+        offsets.push(out.length);
+        out += `${i + 1} 0 obj\n${o}\nendobj\n`;
+      });
+      const xref = out.length;
+      out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n` + offsets.map((o) => `${String(o).padStart(10, "0")} 00000 n \n`).join("");
+      out += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+      const base64 = Buffer.from(out, "latin1").toString("base64");
+      const r = await callTool(ADMIN_KEY, "create_envelope", { subject: "Lugar corto", recipients: [{ name: "A", email: "a@x.test" }], document: { base64 } });
+      expect(r.isError, r.text).toBeFalsy();
+    } finally {
+      spy.mockRestore();
+    }
+    const during = seen.filter((x) => x.create === 1);
+    expect(during.length).toBeGreaterThan(0);
+    expect(during.every((x) => x.fetch === 0)).toBe(true);
+    expect(mcpPdfSlots.stats().active).toBe(0);
+    expect(mcpCreateSlots.stats().active).toBe(0);
   }, 20_000);
 
   it("download_signed_pdf se anuncia como no de solo lectura, abierta y no idempotente (crea un link compartible)", async () => {

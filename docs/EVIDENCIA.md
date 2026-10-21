@@ -58,6 +58,20 @@ revisiones posteriores), sello de tiempo (messageImprint + firma del token), cad
 confianza (`TRUST_STORE_DIR` + la raíz del sello de plataforma), revocación (OCSP/CRL del DSS; online solo si
 `VALIDATE_ONLINE_REVOCATION=true`, con protección SSRF: solo http(s) a IPs públicas) y nivel PAdES detectado.
 
+### Rotación del sello de plataforma
+
+Las raíces de confianza son las de `TRUST_STORE_DIR` (solo certificados autofirmados) más la raíz de la cadena
+**actual** del sello (`SEAL_CHAIN_FILE`, o la CA de desarrollo en `var/keys`). Al rotar el sello a una cadena con otra
+raíz, los PDF sellados antes dejan de figurar como confiables (`chain.trusted: false`) salvo que la raíz anterior esté
+en el almacén: antes de cambiar `SEAL_CHAIN_FILE`, copiar la raíz de la cadena vieja (PEM o DER) a `TRUST_STORE_DIR` y
+mantenerla ahí mientras haya PDF sellados con ella. Las raíces se leen una vez por proceso: reiniciar la API después
+de agregarlas.
+
+Al sellar se comprueba cada firma con la clave pública del primer certificado de la cadena (`buildPadesCms`): si la
+clave (`SEAL_KEY_FILE` o `KMS_KEY_ID`) no corresponde a `SEAL_CHAIN_FILE` —por ejemplo, se rotó una y no la otra—, el
+job de finalización falla con `SignatureKeyMismatchError` y se reintenta, en vez de entregar un PDF con una firma que
+no verifica. Rotar clave y cadena juntas.
+
 `chain.revocationUnknown` (por firma) y `summary.revocationUnknown` (en todo el PDF) indican que de algún
 certificado que no es la raíz no se pudo saber si estaba revocado: sin OCSP/CRL en el DSS ni consulta online, o
 solo con respuestas OCSP "unknown" (un "unknown" es provisional: se sigue buscando un OCSP "good"/"revoked" o una

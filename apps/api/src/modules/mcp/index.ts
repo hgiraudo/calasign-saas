@@ -22,7 +22,7 @@ import { assertUserTokenAllowed, isOAuthAccessToken, resolveAccessToken } from "
 import { envelopesSentThisMonth, tenantPlan } from "../billing/plans";
 import { decodePdfBase64, fetchPdf, fileNameFromUrl, maxBase64Length } from "../pdf-source";
 import { agentHeaders } from "./agent-actor";
-import { mcpPdfSlots, PdfSlotBusyError } from "./pdf-slots";
+import { MCP_PDF_FETCH_TIMEOUT_MS, mcpCreateSlots, mcpPdfSlots, PdfSlotBusyError } from "./pdf-slots";
 
 interface Caller {
   authorization: string;
@@ -194,6 +194,9 @@ const REPLAYED_NOTE =
 
 const INVALID_CONFIRM =
   "El confirmToken no es válido, es de otra acción o sobre, o venció (vale 5 minutos). Volvé a llamar sin confirmToken para obtener una vista previa nueva y mostrársela al usuario.";
+
+/** Notificaciones por lote JSON-RPC (clientes 2025-03-26): sin respuesta ni herramientas, pero acotadas igual. */
+const MCP_MAX_NOTIFICATION_BATCH = 20;
 
 export async function mcpRoutes(app: FastifyInstance, s: Services) {
   const resourceUrl = `${config.appUrl}/mcp`;
@@ -745,14 +748,18 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
         // solo lectura hacía que el servidor bajara y parseara hasta 10 MB de cualquier URL.
         const acc = await api(c, "GET", "/v1/me/access");
         if (!acc.permissions?.includes("envelopes:create")) return fail("Esta conexión no tiene permiso para crear sobres (envelopes:create).");
-        // Un lugar por credencial y por proceso desde que se obtiene el PDF hasta que se crea el sobre: varias
-        // llamadas en paralelo no bajan ni tienen en memoria muchos PDFs a la vez (ver pdf-slots.ts).
+        // Lugares por organización (ver pdf-slots.ts): un sobre en curso (PDF en memoria) desde que se obtiene el PDF
+        // hasta que se crea el sobre, y un lugar del proceso solo mientras se obtienen los bytes (descarga con plazo
+        // corto o base64). Varias llamadas en paralelo no bajan ni tienen en memoria muchos PDFs a la vez.
         try {
-          return await mcpPdfSlots.run(c.principal, async () => {
+          return await mcpCreateSlots.run(c.tenantId, async () => {
             let pdf: Buffer;
             try {
-              pdf = a.document.base64 ? decodePdfBase64(a.document.base64, PDF_MAX_BYTES) : await fetchPdf(a.document.url, PDF_MAX_BYTES);
+              pdf = await mcpPdfSlots.run(c.tenantId, async () =>
+                a.document.base64 ? decodePdfBase64(a.document.base64, PDF_MAX_BYTES) : await fetchPdf(a.document.url, PDF_MAX_BYTES, MCP_PDF_FETCH_TIMEOUT_MS),
+              );
             } catch (e) {
+              if (e instanceof PdfSlotBusyError) throw e;
               return fail(`No se pudo obtener el PDF: ${(e as Error).message}`);
             }
             for (const f of a.fields ?? []) {
@@ -927,15 +934,23 @@ export async function mcpRoutes(app: FastifyInstance, s: Services) {
     if (!plan.features.includes("api")) {
       return reply.code(402).send({ error: { code: "plan_limit", message: `El acceso por API y MCP no está incluido en el plan ${plan.name}` } });
     }
-    // Sin lotes JSON-RPC (un array de mensajes): el transporte del SDK los aceptaba (hasta 100) y los ejecutaba en
-    // paralelo, salteando el límite por pedido (100 tools/call, p. ej. 100 descargas de PDF, en un solo POST). La
-    // especificación los sacó en 2025-06-18 y los clientes MCP (SDK oficiales, ChatGPT, Claude) mandan un mensaje por POST.
+    // Sin lotes JSON-RPC con varios pedidos (un array de mensajes): el transporte del SDK los aceptaba (hasta 100) y los
+    // ejecutaba en paralelo, salteando el límite por pedido (100 tools/call, p. ej. 100 descargas de PDF, en un solo
+    // POST). La especificación los sacó en 2025-06-18 y los clientes MCP actuales mandan un mensaje por POST. Para no
+    // romper a los de 2025-03-26 (que pueden mandar todo como lote) se acepta un lote de un solo mensaje y uno de solo
+    // notificaciones (sin id: no ejecutan herramientas ni responden): no hay paralelismo de pedidos. El SDK los procesa
+    // como mensajes sueltos y responde con el formato de lote que espera ese cliente.
     if (Array.isArray(req.body)) {
-      return reply.code(400).send({
-        jsonrpc: "2.0",
-        error: { code: -32600, message: "Invalid Request: este servidor MCP no acepta lotes JSON-RPC; mandá un mensaje por pedido" },
-        id: null,
-      });
+      const batch = req.body as unknown[];
+      const isNotification = (m: unknown) => !!m && typeof m === "object" && !Array.isArray(m) && !("id" in (m as object));
+      const ok = batch.length === 1 || (batch.length > 0 && batch.length <= MCP_MAX_NOTIFICATION_BATCH && batch.every(isNotification));
+      if (!ok) {
+        return reply.code(400).send({
+          jsonrpc: "2.0",
+          error: { code: -32600, message: "Invalid Request: este servidor MCP no acepta lotes JSON-RPC con varios pedidos; mandá un mensaje por pedido" },
+          id: null,
+        });
+      }
     }
     const server = buildServer(caller, req);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });

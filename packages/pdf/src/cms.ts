@@ -1,9 +1,10 @@
 // Firma CMS para PAdES Baseline (ETSI EN 319 142-1): SubFilter ETSI.CAdES.detached,
 // atributos firmados contentType + messageDigest + signingCertificateV2, y opcionalmente
 // signatureTimeStampToken (B-T) como atributo no firmado.
-import { webcrypto, randomBytes } from "node:crypto";
+import { X509Certificate, randomBytes, verify as cryptoVerify, webcrypto } from "node:crypto";
 import * as asn1js from "asn1js";
 import * as pkijs from "pkijs";
+import { hasTimeStampingEku, signerCertOf } from "./pki";
 import { sha256, type SignatureProvider } from "./provider";
 import { normalizeEcdsaSignature, signingAlgorithmFor, type CmsSignatureAlgorithm } from "./sigalg";
 
@@ -38,7 +39,33 @@ export async function buildPadesCms(content: Uint8Array, provider: SignatureProv
   const { algorithm, namedCurve } = signingAlgorithmFor(chainDer[0]);
   const raw = await provider.signDigest(sha256(signedAttrsDer));
   const signature = algorithm === "ECDSA" ? normalizeEcdsaSignature(raw, namedCurve) : raw;
+  assertSignatureMatchesCertificate(signedAttrsDer, signature, chainDer[0], provider.id);
   return assembleCms({ signedAttrsDer, chainDer, signature, signatureAlgorithm: algorithm }, opts);
+}
+
+/** La firma del proveedor no verifica con la clave pública de su certificado (chain[0]). */
+export class SignatureKeyMismatchError extends Error {
+  override name = "SignatureKeyMismatchError";
+}
+
+/**
+ * Comprueba la firma recién hecha con la clave pública del certificado firmante. Si la clave del proveedor (KMS, PEM,
+ * CSC) no corresponde al certificado de su cadena —por ejemplo, tras rotar la clave y no la cadena—, el PDF saldría con
+ * una firma que ningún validador acepta; mejor fallar acá (el job de finalización falla con este error y se reintenta).
+ */
+export function assertSignatureMatchesCertificate(signedAttrsDer: Uint8Array, signature: Uint8Array, certDer: Uint8Array, providerId = "?"): void {
+  let ok = false;
+  try {
+    const key = new X509Certificate(certDer).publicKey;
+    ok = cryptoVerify("sha256", signedAttrsDer, key.asymmetricKeyType === "ec" ? { key, dsaEncoding: "der" } : key, signature);
+  } catch {
+    ok = false;
+  }
+  if (!ok) {
+    throw new SignatureKeyMismatchError(
+      `La firma del proveedor "${providerId}" no verifica con la clave pública de su certificado: la clave de firma no corresponde al primer certificado de la cadena (revisar SEAL_KEY_FILE / KMS_KEY_ID y SEAL_CHAIN_FILE)`,
+    );
+  }
 }
 
 /**
@@ -110,7 +137,7 @@ export async function assembleCms(
   });
 
   if (opts.tsaUrl) {
-    const token = await requestTimestampToken(opts.tsaUrl, sha256(signature), opts.tsaAuthHeader);
+    const token = await requestTimestampToken(opts.tsaUrl, sha256(signature), opts.tsaAuthHeader, signature);
     const parsed = asn1js.fromBER(toAB(token));
     if (parsed.offset === -1) throw new Error("token de sello de tiempo inválido");
     signerInfo.unsignedAttrs = new pkijs.SignedAndUnsignedAttributes({
@@ -136,15 +163,19 @@ export class TsaError extends Error {
   override name = "TsaError";
 }
 
-export async function requestTimestampToken(url: string, digest: Uint8Array, authHeader?: string | null) {
+/**
+ * `digest` es el SHA-256 de `data` (lo sellado). `data` hace falta para verificar el token antes de incrustarlo: pkijs
+ * comprueba el messageImprint contra el hash de los datos.
+ */
+export async function requestTimestampToken(url: string, digest: Uint8Array, authHeader: string | null | undefined, data: Uint8Array) {
   try {
-    return await requestTimestampTokenRaw(url, digest, authHeader);
+    return await requestTimestampTokenRaw(url, digest, authHeader, data);
   } catch (e) {
     throw e instanceof TsaError ? e : new TsaError(e instanceof Error ? e.message : String(e));
   }
 }
 
-async function requestTimestampTokenRaw(url: string, digest: Uint8Array, authHeader?: string | null) {
+async function requestTimestampTokenRaw(url: string, digest: Uint8Array, authHeader: string | null | undefined, data: Uint8Array) {
   const nonce = randomBytes(8);
   nonce[0] &= 0x7f;
   const req = new pkijs.TimeStampReq({
@@ -184,5 +215,27 @@ async function requestTimestampTokenRaw(url: string, digest: Uint8Array, authHea
   const gotNonce = tst.nonce ? Buffer.from(tst.nonce.valueBlock.valueHexView) : null;
   const strip = (b: Buffer) => b.subarray(b.findIndex((x) => x !== 0) < 0 ? b.length : b.findIndex((x) => x !== 0));
   if (!gotNonce || !strip(gotNonce).equals(strip(nonce))) throw new Error("La TSA devolvió un sello con otro nonce");
+  await checkTimestampToken(token, tst, data);
   return new Uint8Array(resp.timeStampToken.toSchema().toBER(false));
+}
+
+/**
+ * Lo mismo que exige el validador (validate.ts, verifyToken) a un sello de tiempo, antes de incrustarlo: firma CMS del
+ * token correcta (con el messageImprint sobre `data`), certificado de la TSA presente y con uso extendido timeStamping, y
+ * vigente en genTime. Un sello que no pasa esto dejaría la firma en un B-T que el validador reporta inválido; mejor fallar
+ * con TsaError (quien sella puede caer a B-B).
+ */
+async function checkTimestampToken(token: pkijs.SignedData, tst: pkijs.TSTInfo, data: Uint8Array): Promise<void> {
+  let ok = false;
+  try {
+    ok = (await token.verify({ signer: 0, data: toAB(data), checkChain: false, extendedMode: true })).signatureVerified === true;
+  } catch {
+    ok = false;
+  }
+  if (!ok) throw new Error("La firma del sello de tiempo de la TSA no verifica");
+  const tsa = signerCertOf(token);
+  if (!tsa) throw new Error("La TSA devolvió un sello sin su certificado");
+  if (!hasTimeStampingEku(tsa)) throw new Error("El certificado de la TSA no tiene el uso extendido timeStamping");
+  const at = tst.genTime;
+  if (!(tsa.notBefore.value <= at && at <= tsa.notAfter.value)) throw new Error("El certificado de la TSA no estaba vigente en la hora del sello");
 }

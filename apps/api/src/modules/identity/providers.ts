@@ -370,7 +370,8 @@ const LEVEL_RANK: Record<IdvLevel, number> = { document: 0, document_selfie: 1, 
 /**
  * Qué controles declara hacer la integración del proveedor para el nivel pedido (null = no declara nada: el resultado
  * tiene que traer la coincidencia facial y la prueba de vida explícitas).
- *   veriff → VERIFF_INTEGRATION_LEVEL (la integración del panel de Veriff es una sola para todos los sobres)
+ *   veriff → VERIFF_INTEGRATION_LEVEL si está definida explícitamente (la integración del panel de Veriff es una sola
+ *            para todos los sobres); sin definir, null: no se infiere nada.
  *   truora → el nivel pedido, si hay un flujo propio para ese nivel (TRUORA_FLOW_ID_<NIVEL>): el flujo se arma con las
  *            validaciones del nivel. El flujo genérico (TRUORA_FLOW_ID) no declara nada.
  *   mock   → null (decide con las capturas y devuelve los datos explícitos)
@@ -383,7 +384,8 @@ export function integrationLevel(provider: IdvProvider, level: IdvLevel): IdvLev
 
 /**
  * Lo que se guarda en identity_verifications.integration_level al iniciar una verificación: el nivel que la
- * integración declara en ese momento, o "none" si no declara nada. NULL queda solo para filas anteriores a la columna.
+ * integración declara explícitamente en ese momento, o "none" si no declara nada (Veriff sin VERIFF_INTEGRATION_LEVEL).
+ * NULL queda solo para filas anteriores a la columna y se trata igual que "none".
  */
 export function integrationLevelToStore(provider: IdvProvider, level: IdvLevel): IdvLevel | "none" {
   return integrationLevel(provider, level) ?? "none";
@@ -391,32 +393,42 @@ export function integrationLevelToStore(provider: IdvProvider, level: IdvLevel):
 
 /** Avisos de configuración de identidad al arrancar (API y worker). */
 export function warnIdentityConfig(log: { warn: (msg: string) => void }) {
-  if (veriffAdapter.configured() && !config.identity.veriffIntegrationLevelExplicit) {
+  if (veriffAdapter.configured() && !config.identity.veriffIntegrationLevel) {
     log.warn(
-      `VERIFF_INTEGRATION_LEVEL no está definida (o no es válida): se asume ${config.identity.veriffIntegrationLevel} (flujo estándar de Veriff con selfie y coincidencia facial). Definila explícitamente con lo que hace la integración del panel de Veriff (document, document_selfie o document_selfie_liveness)`,
+      "VERIFF_INTEGRATION_LEVEL no está definida (o no es válida): no se infiere ningún control de la integración de Veriff y solo se ofrece el nivel document (los destinatarios con selfie o prueba de vida no se pueden pedir ni enviar con Veriff). Definila explícitamente con lo que hace la integración del panel de Veriff (document, document_selfie o document_selfie_liveness)",
     );
   }
 }
 
 /**
  * Por qué el proveedor (ya configurado) no puede hacer el nivel pedido, o null si puede: Truora sin flujo para el nivel
- * (createSession fallaba con un 500 al iniciar) o Veriff con una integración que no llega al nivel.
+ * (createSession fallaba con un 500 al iniciar) o Veriff con una integración que no llega al nivel. Veriff sin
+ * VERIFF_INTEGRATION_LEVEL solo llega a "document": no se infiere nada y la decisión de Veriff no suele traer el puntaje
+ * facial ni la prueba de vida, así que una verificación con selfie terminaría siempre en level_not_met (el firmante
+ * quedaría trabado). Se rechaza antes, al pedirla y al enviar, con un mensaje para el remitente.
  */
 export function levelUnsupportedReason(provider: IdvProvider, level: IdvLevel): string | null {
   if (provider === "truora" && !truoraFlowId(level)) {
     return `Truora no tiene un flujo configurado para el nivel ${level} (TRUORA_FLOW_ID_${level.toUpperCase()} o TRUORA_FLOW_ID)`;
   }
-  if (provider === "veriff" && LEVEL_RANK[config.identity.veriffIntegrationLevel] < LEVEL_RANK[level]) {
-    return `La integración de Veriff declara el nivel ${config.identity.veriffIntegrationLevel} y el destinatario pide ${level}: si la integración del panel de Veriff hace ese control, definí VERIFF_INTEGRATION_LEVEL=${level} en el servidor; si no, pedí otro nivel o proveedor`;
+  if (provider === "veriff") {
+    const declared = config.identity.veriffIntegrationLevel;
+    if (!declared && LEVEL_RANK[level] > 0) {
+      return `VERIFF_INTEGRATION_LEVEL no está definida en el servidor y el destinatario pide ${level}: sin declararla, Veriff solo se ofrece para el nivel document. Si la integración del panel de Veriff hace ese control, definí VERIFF_INTEGRATION_LEVEL=${level}; si no, pedí otro nivel o proveedor`;
+    }
+    if (declared && LEVEL_RANK[declared] < LEVEL_RANK[level]) {
+      return `La integración de Veriff declara el nivel ${declared} y el destinatario pide ${level}: si la integración del panel de Veriff hace ese control, definí VERIFF_INTEGRATION_LEVEL=${level} en el servidor; si no, pedí otro nivel o proveedor`;
+    }
   }
   return null;
 }
 
 /**
- * Completa una aprobación con lo que la integración declara hacer (integrationLevel): la decisión de Veriff no suele
- * traer faceMatch.similarity ni un booleano de prueba de vida, y sin esto toda aprobación de un nivel con selfie
- * terminaba en level_not_met. Un dato contrario explícito gana: un puntaje facial bajo el umbral, faceMatched = false o
- * liveness = false no se pisan. Devuelve también qué se infirió (va a la evidencia).
+ * Completa una aprobación con lo que la integración declara hacer: la decisión de Veriff no suele traer
+ * faceMatch.similarity ni un booleano de prueba de vida, y sin esto toda aprobación de un nivel con selfie terminaba en
+ * level_not_met. Solo con un nivel declarado explícitamente (nunca se infiere sin declaración). Un dato contrario
+ * explícito gana: un puntaje facial bajo el umbral, faceMatched = false o liveness = false no se pisan. Devuelve también
+ * qué se infirió (va a la evidencia).
  */
 export function withIntegrationCapabilities(
   provider: IdvProvider,
@@ -425,13 +437,17 @@ export function withIntegrationCapabilities(
   faceThreshold = config.identity.faceMatchThreshold,
   /**
    * El nivel guardado al iniciar la verificación (integration_level): un cambio posterior de VERIFF_INTEGRATION_LEVEL o
-   * de los flujos de Truora no cambia lo que se infiere de una verificación en curso. undefined/null (filas anteriores
-   * a la columna) = la configuración actual.
+   * de los flujos de Truora no cambia lo que se infiere de una verificación en curso. undefined = la configuración
+   * actual (solo para usos sin fila); null (filas anteriores a la columna) y "none" = no se infiere nada.
    */
   storedIntegrationLevel?: string | null,
 ): { result: IdvResult; inferred: ("faceMatched" | "liveness")[] } {
-  const stored = storedIntegrationLevel == null ? undefined : storedIntegrationLevel === "none" ? null : (storedIntegrationLevel as IdvLevel);
-  const declared = stored === undefined ? integrationLevel(provider, level) : stored && stored in LEVEL_RANK ? stored : null;
+  const declared =
+    storedIntegrationLevel === undefined
+      ? integrationLevel(provider, level)
+      : storedIntegrationLevel && storedIntegrationLevel in LEVEL_RANK
+        ? (storedIntegrationLevel as IdvLevel)
+        : null;
   const cap = result.status === "approved" ? declared : null;
   if (!cap) return { result, inferred: [] };
   const out = { ...result };

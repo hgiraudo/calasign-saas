@@ -49,20 +49,53 @@ class Canon {
     return `${o.constructor.name}:${o.toString()}`;
   }
 
-  /** Diccionario con claves ordenadas. Sin /P (anotación → página) ni, en páginas, /Parent y /Annots (van aparte). */
-  dict(d: PDFDict, extra?: Map<string, PDFObject | undefined>): string {
+  /**
+   * Diccionario con claves ordenadas. Sin /P en anotaciones (anotación → página: la página se compara aparte) ni, en
+   * páginas, /Parent y /Annots (van aparte). En cualquier otro diccionario /P sí cuenta: en un OCMD es la política de
+   * visibilidad (AllOn/AnyOn/AllOff…), en una acción Launch o un elemento de estructura es parte de lo que hace.
+   */
+  dict(d: PDFDict, extra?: Map<string, PDFObject | undefined>, omit?: ReadonlySet<string>): string {
     const type = d.get(PDFName.of("Type"));
     const isPage = type instanceof PDFName && (type.decodeText() === "Page" || type.decodeText() === "Pages");
+    const annot = isAnnotation(d);
     const entries = new Map<string, PDFObject | undefined>();
     for (const [k, v] of d.entries()) {
       const key = k.decodeText();
-      if (key === "P" || (isPage && (key === "Parent" || key === "Annots" || key === "Kids"))) continue;
+      if ((annot && key === "P") || (isPage && (key === "Parent" || key === "Annots" || key === "Kids")) || omit?.has(key)) continue;
       entries.set(key, v);
     }
     for (const [k, v] of extra ?? []) if (!entries.has(k) && v !== undefined) entries.set(k, v);
     const keys = [...entries.keys()].sort();
     return `<<${keys.map((k) => `/${k}=${this.of(entries.get(k))}`).join(";")}>>`;
   }
+}
+
+/** Subtipos de anotación (ISO 32000-2, 12.5.6). */
+const ANNOT_SUBTYPES = new Set([
+  "Text", "Link", "FreeText", "Line", "Square", "Circle", "Polygon", "PolyLine", "Highlight", "Underline", "Squiggly",
+  "StrikeOut", "Caret", "Stamp", "Ink", "Popup", "FileAttachment", "Sound", "Movie", "Screen", "Widget", "PrinterMark",
+  "TrapNet", "Watermark", "3D", "Redact", "Projection", "RichMedia",
+]);
+
+/** ¿Es un diccionario de anotación? /Type /Annot o, sin /Type (es opcional), un /Subtype de anotación. */
+function isAnnotation(d: PDFDict): boolean {
+  const type = d.get(PDFName.of("Type"));
+  if (type instanceof PDFName) return type.decodeText() === "Annot";
+  const sub = d.get(PDFName.of("Subtype"));
+  return sub instanceof PDFName && ANNOT_SUBTYPES.has(sub.decodeText());
+}
+
+/**
+ * Claves que puede tener el widget de una firma posterior para contar como evidencia. Cualquier otra (/A, /AA, /Parent
+ * con acciones heredables, /OC, /BS…) hace que el widget se compare como contenido: una acción (JavaScript al abrir la
+ * página, Launch) no es evidencia aunque la firma verifique.
+ */
+const EVIDENCE_WIDGET_KEYS = new Set(["Type", "Subtype", "FT", "Rect", "V", "T", "F", "P", "AP", "MK", "DA", "Ff"]);
+/** Del widget de una firma posterior que no es evidencia se compara todo menos /V (el valor de la firma). */
+const SIGNATURE_VALUE = new Set(["V"]);
+
+function hasOnlyEvidenceKeys(annot: PDFDict): boolean {
+  return annot.keys().every((k) => EVIDENCE_WIDGET_KEYS.has(k.decodeText()));
 }
 
 /**
@@ -268,13 +301,14 @@ function pageFingerprints(doc: PDFDocument, evidence: Set<string>): string[] {
   }
   return pages.map(({ node, annots }) => {
     const inherited = new Map(INHERITABLE.map((k) => [k, node.getInheritableAttribute(PDFName.of(k)) as PDFObject | undefined]));
-    const visible = annots
-      .filter((a) => {
-        const key = signatureWidgetKey(ctx, a.d);
-        return !(key && evidence.has(key) && widgets.get(key)?.size === 1 && isInvisibleWidget(ctx, a.d));
-      })
-      .map((a) => h(canon.dict(a.d)))
-      .sort();
+    const visible: string[] = [];
+    for (const a of annots) {
+      const key = signatureWidgetKey(ctx, a.d);
+      const later = !!key && evidence.has(key) && widgets.get(key)?.size === 1;
+      if (later && hasOnlyEvidenceKeys(a.d) && isInvisibleWidget(ctx, a.d)) continue;
+      visible.push(h(later ? canon.dict(a.d, undefined, SIGNATURE_VALUE) : canon.dict(a.d)));
+    }
+    visible.sort();
     return h(`${canon.dict(node, inherited)}|${visible.join(",")}`);
   });
 }
@@ -293,7 +327,13 @@ export async function changesAfterRevision(pdf: Uint8Array, end: number, laterSi
   if (end >= pdf.length) return "none";
   try {
     const loaded = current ?? (await PDFDocument.load(pdf, { updateMetadata: false, ignoreEncryption: true }));
-    const signed = await PDFDocument.load(pdf.subarray(0, end), { updateMetadata: false, ignoreEncryption: true });
+    const signedBytes = pdf.subarray(0, end);
+    const signed = await PDFDocument.load(signedBytes, { updateMetadata: false, ignoreEncryption: true });
+    // Lo firmado se compara en la vista de pdf-lib (la última definición de cada objeto). Si un lector, por el xref, ve
+    // otra cosa en la revisión firmada (un objeto duplicado al final que el xref no lista), una revisión posterior podía
+    // apuntar el xref a ese duplicado: pdf-lib veía lo mismo antes y después ("evidence_only") y el lector, que antes
+    // mostraba el original, pasaba a mostrar el reemplazo. Una revisión firmada ambigua no permite afirmar nada.
+    if (await viewerDiffersFromPdfLib(signedBytes, signed)) return "content";
     const evidence = new Set([...laterSignatures].filter((k) => {
       const [, , c, d] = k.split(",").map(Number);
       return c + d > end;

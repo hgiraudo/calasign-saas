@@ -133,12 +133,21 @@ const truoraProcess = (accountId: string, processId: string, o: { face?: boolean
   ],
 });
 
-async function pendingVerification(recipient: string, envelope: string, provider: string, ref: string | null, o: { status?: string; createdAgo?: string; level?: string } = {}) {
+async function pendingVerification(
+  recipient: string,
+  envelope: string,
+  provider: string,
+  ref: string | null,
+  o: { status?: string; createdAgo?: string; level?: string; integrationLevel?: string | null } = {},
+) {
   const id = util.uuidv7();
+  // integration_level como lo guarda /identity/start (la integración en ese momento); null = fila anterior a la columna.
+  const { integrationLevelToStore } = await import("../src/modules/identity/providers");
+  const integration = o.integrationLevel !== undefined ? o.integrationLevel : integrationLevelToStore(provider as any, (o.level ?? "document") as any);
   await db.query(
-    `INSERT INTO identity_verifications (id, tenant_id, envelope_id, recipient_id, provider, level, status, attempt, provider_ref, created_at, updated_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,1,$8, now() - $9::interval, now() - $9::interval)`,
-    [id, tenant, envelope, recipient, provider, o.level ?? "document", o.status ?? "pending", ref, o.createdAgo ?? "1 minute"],
+    `INSERT INTO identity_verifications (id, tenant_id, envelope_id, recipient_id, provider, level, status, attempt, provider_ref, created_at, updated_at, integration_level)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,1,$8, now() - $9::interval, now() - $9::interval, $10)`,
+    [id, tenant, envelope, recipient, provider, o.level ?? "document", o.status ?? "pending", ref, o.createdAgo ?? "1 minute", integration],
   );
   await db.query(`UPDATE recipients SET identity_status = 'in_progress' WHERE id = $1`, [recipient]);
   return id;
@@ -174,9 +183,9 @@ function upload(token: string, kind: string, seed: number) {
 }
 
 describe("nivel exigido con proveedores externos", () => {
-  it("Veriff: sin VERIFF_INTEGRATION_LEVEL (default document_selfie) la prueba de vida no se pide, no se envía ni se inicia", async () => {
+  it("Veriff: sin VERIFF_INTEGRATION_LEVEL solo se ofrece document: la selfie no se pide, no se envía ni se inicia", async () => {
     const { config } = await import("../src/config");
-    expect(config.identity.veriffIntegrationLevel).toBe("document_selfie");
+    expect(config.identity.veriffIntegrationLevel).toBe(null);
     // Arranque: avisa que conviene definirla explícitamente.
     const { warnIdentityConfig } = await import("../src/modules/identity/providers");
     const warns: string[] = [];
@@ -187,6 +196,28 @@ describe("nivel exigido con proveedores externos", () => {
     const err = await applyIdentityFlags(db, x.envelope, [{ id: x.recipient, role: "signer", idVerification: { provider: "veriff", level: "document_selfie_liveness" } }]).catch((e) => e);
     expect(err).toMatchObject({ status: 400, code: "identity_provider_unavailable" });
     expect(String(err.message)).toContain("VERIFF_INTEGRATION_LEVEL=document_selfie_liveness");
+    expect(String(err.message)).toContain("no está definida");
+    // document_selfie (el flujo estándar) tampoco: sin la variable no se infiere la coincidencia facial.
+    const err2 = await applyIdentityFlags(db, x.envelope, [{ id: x.recipient, role: "signer", idVerification: { provider: "veriff", level: "document_selfie" } }]).catch((e) => e);
+    expect(err2).toMatchObject({ status: 400, code: "identity_provider_unavailable" });
+    expect(String(err2.message)).toContain("VERIFF_INTEGRATION_LEVEL=document_selfie");
+    // document sí.
+    const y = await setup({ provider: "veriff", level: "document" });
+    await applyIdentityFlags(db, y.envelope, [{ id: y.recipient, role: "signer", idVerification: { provider: "veriff", level: "document" } }]);
+    // Al enviar un borrador armado antes: problema identity_provider_unavailable con la variable.
+    const { sendEnvelope } = await import("../src/modules/envelopes");
+    const { SYSTEM } = await import("../src/infra/evidence");
+    const draft = util.uuidv7();
+    await db.query(`INSERT INTO envelopes (id, tenant_id, subject, status) VALUES ($1, $2, 'Borrador', 'draft')`, [draft, tenant]);
+    await db.query(
+      `INSERT INTO recipients (id, tenant_id, envelope_id, role, name, email, status, id_verification_provider, id_verification_level, identity_status)
+       VALUES ($1,$2,$3,'signer','Ana Pérez','ana@x.test','created','veriff','document_selfie','pending')`,
+      [util.uuidv7(), tenant, draft],
+    );
+    const sendErr = await db.tx((t) => sendEnvelope(t, tenant, draft, SYSTEM)).catch((e) => e);
+    expect(sendErr.code).toBe("envelope_incomplete");
+    const issue = sendErr.details.issues.find((p: any) => p.code === "identity_provider_unavailable");
+    expect(issue.message).toContain("VERIFF_INTEGRATION_LEVEL");
     // Para el firmante, un mensaje neutro (sin variables del servidor).
     const st = await signing(x.token, "/identity/start", "POST");
     expect(st.statusCode).toBe(503);
@@ -626,7 +657,7 @@ describe("uso del plan", () => {
 
 describe("sobres con un nivel que el proveedor no puede hacer (de antes de las reglas por nivel)", () => {
   // Integración de Veriff declarada en document (sin selfie): los niveles con selfie no los puede hacer.
-  let prevLevel: string;
+  let prevLevel: string | null;
   beforeAll(async () => {
     const { config } = await import("../src/config");
     prevLevel = config.identity.veriffIntegrationLevel;

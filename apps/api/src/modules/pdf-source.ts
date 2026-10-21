@@ -35,7 +35,7 @@ export function decodePdfBase64(b64: string, maxBytes = config.maxUploadBytes): 
 }
 
 /** Descarga un PDF de una URL pública: solo https, sin redirecciones, con tope de tamaño y sin destinos internos (SSRF). */
-export async function fetchPdf(url: string, maxBytes = config.maxUploadBytes): Promise<Buffer> {
+export async function fetchPdf(url: string, maxBytes = config.maxUploadBytes, timeoutMs = 20_000): Promise<Buffer> {
   let u: URL;
   try {
     u = new URL(url);
@@ -46,7 +46,7 @@ export async function fetchPdf(url: string, maxBytes = config.maxUploadBytes): P
   if (u.username || u.password) throw new PdfSourceError("invalid_url", "la URL no puede llevar credenciales");
   let r;
   try {
-    r = await safeRequest(url, { method: "GET", headers: { accept: "application/pdf" }, timeoutMs: 20_000, maxBytes });
+    r = await safeRequest(url, { method: "GET", headers: { accept: "application/pdf" }, timeoutMs, maxBytes });
   } catch (e) {
     if (/demasiado grande/.test(String((e as Error).message))) throw new PdfSourceError("file_too_large", `el PDF supera ${mb(maxBytes)}`);
     throw new PdfSourceError("download_failed", `no se pudo descargar (${(e as Error).message})`);

@@ -1,0 +1,47 @@
+#!/bin/bash
+# Hook pre-commit de CalaSign (docs/estandares/contribuir.md §3.3). Corre en < 2 s sobre lo que está en stage:
+#   1. secretos en texto plano en las líneas agregadas (claves de AWS, privadas, de Anthropic, Stripe, Mercado Pago,
+#      Slack, GitHub, Google, Telegram y API keys cs_live_) y archivos que nunca se versionan (.env, tfstate, .p12…)
+#   2. el trinquete de calidad sobre los archivos en stage (scripts/check-calidad.mjs --staged)
+#   3. bash -n de los scripts de shell en stage
+# Instalarlo (una vez por clon):   git config core.hooksPath scripts/hooks
+# Saltearlo, sólo ante un falso positivo y diciéndolo en el commit:   git commit --no-verify
+set -uo pipefail
+cd "$(git rev-parse --show-toplevel)"
+fail=0
+
+# ── 1. secretos ──
+# Una línea que lleva el marcador "calidad:permitir-secreto" (p. ej. una clave falsa de un test) no se marca.
+PATTERNS='AKIA[0-9A-Z]{16}|-----BEGIN ([A-Z]+ )?PRIVATE KEY-----[A-Za-z0-9+/=\\n]{40,}|sk-ant-[A-Za-z0-9_-]{20,}|cs_live_[A-Za-z0-9_-]{20,}|sk_live_[A-Za-z0-9]{16,}|rk_live_[A-Za-z0-9]{16,}|whsec_[A-Za-z0-9]{24,}|APP_USR-[0-9]{6,}-[0-9]{6}-[a-f0-9]{32}|xox[bpas]-[A-Za-z0-9-]{10,}|ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{40,}|AIza[0-9A-Za-z_-]{35}|[0-9]{8,10}:AA[A-Za-z0-9_-]{33}'
+hits=$(git diff --cached -U0 --no-color --diff-filter=ACMR -- . ':(exclude)pnpm-lock.yaml' \
+  | grep -E '^\+[^+]' | grep -v 'calidad:permitir-secreto' | grep -nE -- "$PATTERNS" || true)
+if [ -n "$hits" ]; then
+  echo "✗ pre-commit: posible secreto en texto plano en lo que está en stage:" >&2
+  echo "$hits" | cut -c1-140 | sed 's/^/    /' >&2
+  echo "  Los secretos van a SSM (/calasign-saas/<entorno>/<VARIABLE>) o a var/, nunca al repo." >&2
+  echo "  Si es una clave falsa de un test: marcá la línea con un comentario 'calidad:permitir-secreto'." >&2
+  fail=1
+fi
+bad=$(git diff --cached --name-only --diff-filter=ACR | grep -E '(^|/)\.env(\.[^/]*)?$|\.tfstate|\.tfvars$|(^|/)var/|\.(p12|pfx|jks)$' | grep -vE '\.env\.example$|example\.tfvars$' || true)
+if [ -n "$bad" ]; then
+  echo "✗ pre-commit: archivos que no se versionan (secretos, estado de Terraform, datos locales):" >&2
+  echo "$bad" | sed 's/^/    /' >&2
+  fail=1
+fi
+
+# ── 2. trinquete de calidad ──
+if ! node scripts/check-calidad.mjs --staged; then fail=1; fi
+
+# ── 3. scripts de shell ──
+for f in $(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.sh$|^scripts/hooks/' || true); do
+  if ! git show ":$f" | bash -n 2>/tmp/.calasign-bash-n.$$; then
+    echo "✗ pre-commit: $f no pasa bash -n:" >&2; sed 's/^/    /' /tmp/.calasign-bash-n.$$ >&2; fail=1
+  fi
+  rm -f /tmp/.calasign-bash-n.$$
+done
+
+if [ $fail -ne 0 ]; then
+  echo "  (commit cancelado; los tests completos son ./scripts/qa.sh)" >&2
+  exit 1
+fi
+exit 0

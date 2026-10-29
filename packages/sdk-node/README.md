@@ -118,6 +118,9 @@ CALASIGN_TEST_BASE=http://localhost:4000 corepack pnpm --filter @calasign/sdk te
 corepack pnpm --filter @calasign/sdk build                                  # dist/ (JS ESM + .d.ts)
 ```
 
+`./scripts/qa.sh --e2e` corre la integración contra una API efímera y falla si se saltea (sin API, vitest la marca
+*skipped* y da verde).
+
 `build` compila con `tsc` y después `scripts/bundle-types.mjs` expande en `dist/shared-types.d.ts` los tipos que
 vienen de `@calasign/shared` (privado, no se publica): el paquete publicado no depende de él ni de zod. Dentro del
 monorepo el paquete apunta a `src/index.ts`; al empaquetar (`pnpm pack`/`pnpm publish`), `publishConfig` cambia

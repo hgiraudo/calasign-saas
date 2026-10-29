@@ -21,8 +21,9 @@ protegidos por una única política de permisos (`modules/access.ts`, RBAC + sco
 | Acuerdos e IA | `agreements/`, `ai/` | [`IA.md`](IA.md) |
 | Cobro | `billing/` | [`PAGOS-Y-AGENTES.md`](PAGOS-Y-AGENTES.md) |
 
-Cada área tiene su prueba de punta a punta en `scripts/e2e-*.mjs`; el contrato completo y vigente de la API se publica en
-`GET /v1/openapi.json` y en la página `/developers`. La §12 de abajo es el contrato original del MVP y queda como referencia.
+Cada área tiene su prueba de punta a punta en `scripts/e2e-*.mjs` (todas juntas, contra una API efímera: `./scripts/qa.sh --e2e`);
+el contrato completo y vigente de la API se publica en `GET /v1/openapi.json` y en la página `/developers`. Las reglas de
+código, calidad y tests de cada capa están en [`estandares/`](estandares/README.md). La §12 de abajo es el contrato original del MVP y queda como referencia.
 
 ## 1. Requisitos que mandan sobre el diseño
 

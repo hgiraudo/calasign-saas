@@ -118,3 +118,5 @@ def hook():
 python3 -I sdks/python/smoke_test.py                        # sin red
 python3 -I sdks/python/smoke_test.py http://localhost:4000  # contra una API local
 ```
+
+`./scripts/qa.sh` corre la prueba sin red y `./scripts/qa.sh --e2e`, la prueba contra una API efímera.

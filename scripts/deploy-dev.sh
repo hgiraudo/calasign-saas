@@ -1,5 +1,6 @@
 #!/bin/bash
 # Despliega el working tree actual en dev.calasign.com.
+#   0. corre ./scripts/qa.sh --rapido (typecheck + reglas; SKIP_QA=1 lo saltea)
 #   1. compila la web
 #   2. empaqueta el repo (archivos versionados, con sus cambios sin commitear, + apps/web/dist) y lo sube a S3
 #   3. por SSM (sin SSH): descarga, instala dependencias, rota el symlink, reinicia y espera /healthz
@@ -20,6 +21,15 @@ if [ -n "$NEW_SRC" ]; then
   echo "Hay archivos nuevos sin versionar que no viajarían en el paquete (agregalos con git add o ignoralos):" >&2
   echo "$NEW_SRC" >&2
   exit 1
+fi
+# QA antes de subir (docs/estandares/tests-automatizados.md §4.3): typecheck de los 7 paquetes, trinquete de calidad,
+# migraciones y códigos de error, ~45 s. SKIP_QA=1 lo saltea (emergencias: decilo en el commit o en la sesión).
+if [ "${SKIP_QA:-0}" != "1" ]; then
+  echo "▶ QA rápido (SKIP_QA=1 lo saltea)"
+  if ! ./scripts/qa.sh --rapido; then
+    echo "QA en rojo: deploy abortado sin tocar dev. Corré ./scripts/qa.sh --rapido para ver qué falla." >&2
+    exit 1
+  fi
 fi
 REL="$(date -u +%Y%m%d%H%M%S)-$(git rev-parse --short HEAD)$([ -z "$(git status --porcelain --untracked-files=no)" ] || echo -dirty)"
 

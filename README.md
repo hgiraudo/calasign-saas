@@ -19,6 +19,7 @@ Entorno de desarrollo: **https://dev.calasign.com**.
 | [`docs/DATOS.md`](docs/DATOS.md) | BYOK, celdas de residencia de datos y renovación de sellos de archivo |
 | [`docs/FIRMA-CON-CERTIFICADO.md`](docs/FIRMA-CON-CERTIFICADO.md) | Firma con el certificado del titular (token PKCS#11, almacén de Windows, .p12) y el Firmador CalaSign |
 | [`docs/MCP-CONECTORES.md`](docs/MCP-CONECTORES.md) | Conectores MCP para Claude, ChatGPT, Claude Code y Gemini: registro dinámico de clientes OAuth (RFC 7591), `resource` (RFC 8707), herramientas |
+| [`docs/estandares/`](docs/estandares/README.md) | **Estándares de código, calidad y tests**: backend, frontend, SQL y migraciones, decisiones, cómo contribuir, mapa de tests y reglas de seguridad `SEG-NN` |
 | [`integrations/README.md`](integrations/README.md) | Skill de Claude, plugin de Claude Code, extensión MCPB, Gemini CLI, ChatGPT y complemento de Word/Outlook (`/integrations/`) |
 
 La API completa y vigente está en `GET /v1/openapi.json` y en el portal de desarrolladores `/developers` (guías, referencia generada del OpenAPI, webhooks, SDKs e IA y agentes, en ES/PT-BR/EN).
@@ -85,6 +86,18 @@ Configuración: `apps/api/src/config.ts` y las variables de cada documento de `d
 | `WEB_DIST` | `apps/web/dist` | Web compilada que sirve la API |
 
 ### Pruebas
+
+Todo junto, en un comando (mapa de capas y qué test escribir para cada cambio en
+[`docs/estandares/tests-automatizados.md`](docs/estandares/tests-automatizados.md)):
+
+```bash
+./scripts/qa.sh            # typecheck + reglas + unit + integraciones + SDKs (~5 min)
+./scripts/qa.sh --rapido   # typecheck + reglas (~45 s; lo corre deploy-dev.sh)
+./scripts/qa.sh --e2e      # lo anterior + las 23 suites e2e contra una API efímera en :4199 (~10 min)
+git config core.hooksPath scripts/hooks   # una vez por clon: hook de pre-commit (secretos y trinquete de calidad)
+```
+
+Las suites por separado:
 
 ```bash
 for t in e2e e2e-integrations e2e-signer e2e-productivity e2e-teams e2e-experience e2e-scale \

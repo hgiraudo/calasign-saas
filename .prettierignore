@@ -1,0 +1,19 @@
+# Prettier formatea sólo el código TypeScript/JavaScript (docs/estandares/decisiones-de-diseno.md §7).
+# Markdown, CSS, JSON, SQL y HTML quedan como están: las tablas de los docs y las reglas de una línea del CSS
+# están escritas a mano a propósito.
+*.md
+*.css
+*.json
+*.html
+*.yaml
+*.yml
+*.sql
+*.svg
+node_modules/
+dist/
+var/
+.claude/
+apps/web/public/integrations/
+packages/firmador/build/out/
+infra/
+sdks/python/

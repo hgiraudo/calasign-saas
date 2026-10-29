@@ -14,13 +14,16 @@
     "qa": "bash scripts/qa.sh",
     "qa:rapido": "bash scripts/qa.sh --rapido",
     "qa:e2e": "bash scripts/qa.sh --e2e",
-    "calidad": "node scripts/check-calidad.mjs"
+    "calidad": "node scripts/check-calidad.mjs",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "devDependencies": {
     "@aws-sdk/client-kms": "^3.1152.0",
     "@aws-sdk/client-ssm": "^3.1152.0",
     "@calasign/pdf": "workspace:^",
     "@modelcontextprotocol/sdk": "1.32.1",
+    "prettier": "3.3.3",
     "tsx": "^4.23.15",
     "xml-crypto": "6.4.0"
   },
